@@ -181,10 +181,17 @@ func Screenshot(ctx context.Context, browser, url, out string, w, h int) error {
 	abs, _ := filepath.Abs(out)
 	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, browser, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
-		"--disable-extensions", "--hide-scrollbars", "--user-data-dir="+prof, fmt.Sprintf("--window-size=%d,%d", w, h),
-		"--virtual-time-budget=8000", "--screenshot="+abs, url)
-	b, err := cmd.CombinedOutput()
+	args := []string{"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+		"--disable-extensions", "--hide-scrollbars", "--user-data-dir=" + prof, fmt.Sprintf("--window-size=%d,%d", w, h),
+		"--virtual-time-budget=8000", "--screenshot=" + abs}
+	b, err := exec.CommandContext(cctx, browser, append(args, url)...).CombinedOutput()
+	if err != nil && strings.Contains(string(b), "No usable sandbox") {
+		// Linux distros that restrict unprivileged user namespaces
+		// (AppArmor, e.g. Ubuntu 23.10+) leave Chromium without a sandbox
+		// unless it is installed with its setuid helper. The page is this
+		// process's own loopback UI, so render it without one.
+		b, err = exec.CommandContext(cctx, browser, append(args, "--no-sandbox", url)...).CombinedOutput()
+	}
 	if fi, serr := os.Stat(abs); serr == nil && fi.Size() > 0 {
 		return nil
 	}

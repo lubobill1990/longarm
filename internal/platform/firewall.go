@@ -84,8 +84,7 @@ func sameFile(a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
-	a, _ = filepath.Abs(a)
-	b, _ = filepath.Abs(b)
+	a, b = longPath(a), longPath(b)
 	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
 }
 
