@@ -151,6 +151,7 @@ func TestFirewallBlockRule(t *testing.T) {
 	}
 	exe := filepath.Join(t.TempDir(), "longarm-fw-block.exe")
 	os.WriteFile(exe, []byte("x"), 0o755)
+	exe = longPath(exe) // netsh is called directly below
 	name := fmt.Sprintf("Longarm test %d", os.Getpid())
 	block := fmt.Sprintf("Longarm test block %d", os.Getpid())
 	t.Cleanup(func() {

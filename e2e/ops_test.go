@@ -90,14 +90,16 @@ func TestOps(t *testing.T) {
 		if r := e.longarm(e.client, "admin", "gc", "w1"); r.code == 0 || !strings.Contains(r.stderr, "PermissionDenied") {
 			t.Fatalf("client ran gc: %+v", r)
 		}
-		dry := e.mustLongarm(e.admin, "admin", "gc", "w1", "--keep", "0s", "--dry-run")
+		dry := e.mustLongarm(e.admin, "admin", "gc", "w1", "--keep", "0s", "--min-free", "0", "--dry-run")
 		if !strings.Contains(dry, "jobs/"+wsJob) || strings.Contains(dry, running) || !strings.Contains(dry, "would free") {
 			t.Fatalf("dry run:\n%s", dry)
 		}
 		if _, err := os.Stat(filepath.Join(e.dataDir, "jobs", wsJob)); err != nil {
 			t.Fatal("dry run removed something")
 		}
-		res := e.mustLongarm(e.admin, "admin", "gc", "w1", "--keep", "0s")
+		// --min-free 0: the disk-space pass (which also removes mirrors) is
+		// tested in internal/gc; CI disks are often more than 90 % full.
+		res := e.mustLongarm(e.admin, "admin", "gc", "w1", "--keep", "0s", "--min-free", "0")
 		if !strings.Contains(res, "jobs/"+wsJob) {
 			t.Fatalf("gc:\n%s", res)
 		}

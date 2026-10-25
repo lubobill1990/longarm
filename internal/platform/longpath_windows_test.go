@@ -16,6 +16,9 @@ func TestLongPath(t *testing.T) {
 	os.MkdirAll(dir, 0o755)
 	exe := filepath.Join(dir, "program.exe")
 	os.WriteFile(exe, nil, 0o644)
+	if l, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = l // TEMP itself may be an 8.3 path
+	}
 	if got := longPath(exe); !strings.EqualFold(got, exe) {
 		t.Fatalf("longPath(%s) = %s", exe, got)
 	}

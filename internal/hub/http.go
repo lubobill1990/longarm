@@ -382,6 +382,13 @@ func (h *Hub) sse(w http.ResponseWriter, r *http.Request, _ string) {
 	if k := q.Get("kinds"); k != "" {
 		kinds = strings.Split(k, ",")
 	}
+	if len(kinds) == 0 {
+		kinds = []string{"job", "node", "queue"}
+	}
+	// Subscribe before the headers go out: a client that sees the stream
+	// open must not miss an event it triggers right after.
+	sub := h.bus.subscribe(kinds, q.Get("job"))
+	defer h.bus.unsubscribe(sub)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -389,11 +396,6 @@ func (h *Hub) sse(w http.ResponseWriter, r *http.Request, _ string) {
 	fl.Flush()
 	ping := time.NewTicker(25 * time.Second) // keeps proxies from timing the stream out
 	defer ping.Stop()
-	if len(kinds) == 0 {
-		kinds = []string{"job", "node", "queue"}
-	}
-	sub := h.bus.subscribe(kinds, q.Get("job"))
-	defer h.bus.unsubscribe(sub)
 	for {
 		select {
 		case <-r.Context().Done():
