@@ -129,7 +129,10 @@ func Open(cfg *Config, log *slog.Logger) (*Hub, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, err := store.Open(filepath.Join(cfg.DataDir, DBFile))
+	if err := os.MkdirAll(filepath.Dir(cfg.DatabasePath()), 0o700); err != nil {
+		return nil, err
+	}
+	st, err := store.Open(cfg.DatabasePath())
 	if err != nil {
 		return nil, err
 	}

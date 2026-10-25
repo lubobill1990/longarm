@@ -10,6 +10,8 @@
 //	longarm-hub release verify <file> --version V [--name N]   (signature check, used by deploy/hub/longarm-hub-deploy)
 //	longarm-hub issue --role admin --name root --out DIR      (local, for bootstrap; --role release for CI)
 //	longarm-hub healthcheck                                   (container health check)
+//	longarm-hub bootstrap [--admin-code-ttl 24h]              (CA + admin join code when missing; idempotent)
+//	longarm-hub container                                     (image entrypoint: litestream restore, bootstrap, serve)
 //
 // Every subcommand takes --config (default $LONGARM_HUB_CONFIG) and/or
 // --data-dir (default $LONGARM_HUB_DATA_DIR or ~/.longarm-hub).
@@ -66,7 +68,7 @@ func main() {
 	}
 	root.PersistentFlags().StringVar(&configPath, "config", os.Getenv("LONGARM_HUB_CONFIG"), "hub.toml (env LONGARM_HUB_CONFIG)")
 	root.PersistentFlags().StringVar(&dataDir, "data-dir", "", "data directory (overrides hub.toml data_dir; env LONGARM_HUB_DATA_DIR)")
-	root.AddCommand(serveCmd(), caCmd(), userCmd(), joinCodeCmd(), releaseCmd(), issueCmd(), healthcheckCmd())
+	root.AddCommand(serveCmd(), caCmd(), userCmd(), joinCodeCmd(), releaseCmd(), issueCmd(), healthcheckCmd(), bootstrapCmd(), containerCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "longarm-hub:", err)
 		os.Exit(1)
@@ -121,10 +123,10 @@ func openStore() (*store.Store, *hub.Config, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cfg.DatabasePath()), 0o700); err != nil {
 		return nil, nil, err
 	}
-	st, err := store.Open(cfg.DataDir + string(os.PathSeparator) + hub.DBFile)
+	st, err := store.Open(cfg.DatabasePath())
 	return st, cfg, err
 }
 

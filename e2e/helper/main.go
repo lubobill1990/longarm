@@ -9,6 +9,9 @@
 //	helper tree PIDFILE                spawn 2 children, each with 1 grandchild;
 //	                                   every process appends its pid to PIDFILE
 //	                                   and sleeps (5 processes in total)
+//	helper restore|replicate ...       a fake litestream (HELPER_LITESTREAM_LOG: args are
+//	                                   appended there; restore exits HELPER_LITESTREAM_RESTORE_EXIT;
+//	                                   replicate runs the -exec command and exits with it)
 package main
 
 import (
@@ -128,8 +131,61 @@ func main() {
 				fmt.Fprintf(c, "%d bytes\n", n)
 			}()
 		}
+	case "restore", "replicate":
+		fakeLitestream(os.Args[1:])
 	default:
 		fmt.Fprintln(os.Stderr, "unknown mode", os.Args[1])
 		os.Exit(2)
 	}
+}
+
+func fakeLitestream(args []string) {
+	if f, err := os.OpenFile(os.Getenv("HELPER_LITESTREAM_LOG"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		fmt.Fprintln(f, strings.Join(args, "|"))
+		f.Close()
+	}
+	if args[0] == "restore" {
+		code, _ := strconv.Atoi(os.Getenv("HELPER_LITESTREAM_RESTORE_EXIT"))
+		os.Exit(code)
+	}
+	for i, a := range args {
+		if a == "-exec" && i+1 < len(args) {
+			argv := shellSplit(args[i+1])
+			c := exec.Command(argv[0], argv[1:]...)
+			c.Stdout, c.Stderr = os.Stdout, os.Stderr
+			if err := c.Run(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+	}
+	os.Exit(2)
+}
+
+// shellSplit splits on blanks and honours single quotes (enough for the
+// -exec strings longarm-hub container builds).
+func shellSplit(s string) []string {
+	var out []string
+	var cur strings.Builder
+	inQ, have := false, false
+	for _, r := range s {
+		switch {
+		case r == '\'':
+			inQ, have = !inQ, true
+		case (r == ' ' || r == '\t') && !inQ:
+			if have {
+				out = append(out, cur.String())
+				cur.Reset()
+				have = false
+			}
+		default:
+			cur.WriteRune(r)
+			have = true
+		}
+	}
+	if have {
+		out = append(out, cur.String())
+	}
+	return out
 }
