@@ -5,8 +5,9 @@ release is cut and rolled back. Everything runs on GitHub-hosted runners.
 
 | Workflow | Trigger | Jobs |
 |---|---|---|
-| [`ci.yml`](../.github/workflows/ci.yml) | pull request, push to `main`, manual | **lint** (ubuntu): `scripts/privacy-check.sh`, gitleaks, gofmt, `go vet`, cross-compile (vet + build + e2e test binary) for windows/linux/darwin × amd64/arm64, shellcheck, actionlint · **test** (ubuntu-latest, windows-latest, macos-latest): `go build`, `go test ./...` |
-| [`release.yml`](../.github/workflows/release.yml) | tag `v*` | **build** (windows-latest) → **publish** → **hub** → **rollout**; hub and rollout only run when a deployment is configured |
+| [`ci.yml`](../.github/workflows/ci.yml) | pull request, push to `main`, manual | **lint** (ubuntu): `scripts/privacy-check.sh`, gitleaks, gofmt, `go vet`, cross-compile (vet + build + e2e test binary) for windows/linux/darwin × amd64/arm64, shellcheck, actionlint · **test** (ubuntu-latest, windows-latest, macos-latest): `go build`, `go test ./...` · **azure** (ubuntu): `bicep build` of deploy/azure/main.bicep must equal the committed `azuredeploy.json`, `bicep lint` without warnings, PSScriptAnalyzer on deploy.ps1 |
+| [`image.yml`](../.github/workflows/image.yml) | pull request, push to `main`, called by release.yml | **smoke** (ubuntu): build the hub image (deploy/hub/Dockerfile), `deploy/azure/test/container-smoke.sh` with Azurite (bootstrap, admin join, restore after the container is replaced, health) · **publish** (push to main, releases): `ghcr.io/<owner>/longarm-hub` for linux/amd64+arm64 with SBOM and provenance: `:edge` + `:sha-<commit>` from main, `:X.Y.Z` (+ `:latest` for stable releases) from a tag |
+| [`release.yml`](../.github/workflows/release.yml) | tag `v*` | **build** (windows-latest) → **publish** → **image** (image.yml) and **hub** → **rollout**; hub and rollout only run when a deployment is configured |
 | [`deploy.yml`](../.github/workflows/deploy.yml) | manual | hub deploy / rollback / status, fleet push of a version already on the hub |
 
 Nothing is assumed on the runners beyond what GitHub's images ship: Go comes
@@ -261,6 +262,11 @@ git push origin v1.4.0
    `packaging/hubrelease` → unsigned `hub-release/` (canonical names).
    Artifact `release` (hub-release, longarm-hub debs, checksums.txt), kept 14
    days (re-run publish within that time).
+   **image** (after publish, next to hub): image.yml builds and smoke-tests the
+   hub image, then pushes `ghcr.io/<owner>/longarm-hub:<v>` (and `:latest`
+   for a stable tag) with the job's `GITHUB_TOKEN` (packages: write). The
+   first push creates a private package: make it public once so
+   [deploy/azure](../deploy/azure/README.md) can pull it anonymously.
 2. **publish**: builds `longarm` from the tag, signs every file
    (`<file>.minisig`, trusted comment = file name + version) and - with
    `LONGARM_HUB` - uploads them with the release certificate; the hub

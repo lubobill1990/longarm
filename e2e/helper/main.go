@@ -9,6 +9,11 @@
 //	helper tree PIDFILE                spawn 2 children, each with 1 grandchild;
 //	                                   every process appends its pid to PIDFILE
 //	                                   and sleeps (5 processes in total)
+//	az ...                             (the binary copied to az[.exe]) a fake Azure CLI, fakeaz.go
+//	helper restore|replicate ...       a fake litestream (HELPER_LITESTREAM_LOG: args are
+//	                                   appended there; restore exits HELPER_LITESTREAM_RESTORE_EXIT;
+//	                                   replicate runs the -exec command (pid in <log>.child)
+//	                                   and exits with it)
 //	helper whoami                      print the account the process runs as
 //	helper write FILE TEXT             write TEXT to FILE
 //	helper ls DIR                      list DIR (exit 1 on error)
@@ -27,6 +32,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +41,10 @@ import (
 )
 
 func main() {
+	if strings.HasPrefix(strings.ToLower(filepath.Base(os.Args[0])), "az") {
+		fakeAz(os.Args[1:]) // copied to az / az.exe (fakeaz.go)
+		return
+	}
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: helper print|env|sleep|tree ...")
 		os.Exit(2)
@@ -137,6 +147,8 @@ func main() {
 				fmt.Fprintf(c, "%d bytes\n", n)
 			}()
 		}
+	case "restore", "replicate":
+		fakeLitestream(os.Args[1:])
 	case "whoami":
 		u, err := user.Current()
 		if err != nil {
@@ -203,4 +215,61 @@ func main() {
 		fmt.Fprintln(os.Stderr, "unknown mode", os.Args[1])
 		os.Exit(2)
 	}
+}
+
+func fakeLitestream(args []string) {
+	if f, err := os.OpenFile(os.Getenv("HELPER_LITESTREAM_LOG"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		fmt.Fprintln(f, strings.Join(args, "|"))
+		f.Close()
+	}
+	if args[0] == "restore" {
+		code, _ := strconv.Atoi(os.Getenv("HELPER_LITESTREAM_RESTORE_EXIT"))
+		os.Exit(code)
+	}
+	for i, a := range args {
+		if a == "-exec" && i+1 < len(args) {
+			argv := shellSplit(args[i+1])
+			c := exec.Command(argv[0], argv[1:]...)
+			c.Stdout, c.Stderr = os.Stdout, os.Stderr
+			if err := c.Start(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			// the test kills the -exec child by this pid (no process groups on Windows)
+			os.WriteFile(os.Getenv("HELPER_LITESTREAM_LOG")+".child", []byte(strconv.Itoa(c.Process.Pid)), 0o644)
+			if err := c.Wait(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+	}
+	os.Exit(2)
+}
+
+// shellSplit splits on blanks and honours single quotes (enough for the
+// -exec strings longarm-hub container builds).
+func shellSplit(s string) []string {
+	var out []string
+	var cur strings.Builder
+	inQ, have := false, false
+	for _, r := range s {
+		switch {
+		case r == '\'':
+			inQ, have = !inQ, true
+		case (r == ' ' || r == '\t') && !inQ:
+			if have {
+				out = append(out, cur.String())
+				cur.Reset()
+				have = false
+			}
+		default:
+			cur.WriteRune(r)
+			have = true
+		}
+	}
+	if have {
+		out = append(out, cur.String())
+	}
+	return out
 }

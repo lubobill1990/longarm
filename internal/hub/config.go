@@ -41,6 +41,10 @@ func (d Duration) MarshalText() ([]byte, error) { return []byte(d.String()), nil
 // Config is hub.toml.
 type Config struct {
 	DataDir string `toml:"data_dir"`
+	// DBPath is the SQLite database (default <data_dir>/hub.db; env
+	// LONGARM_HUB_DB). Containers keep it on local disk, replicated by
+	// Litestream, while data_dir is a network share (deploy/azure).
+	DBPath string `toml:"db_path"`
 	// Name is the DNS name in the hub's certificate (clients don't check it
 	// unless configured; the role and the CA are always checked).
 	Name string `toml:"name"`
@@ -254,6 +258,9 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 	}
+	if err := c.applyEnv(); err != nil {
+		return nil, err
+	}
 	return c, c.applyDefaults()
 }
 
@@ -331,6 +338,14 @@ func (c *Config) applyDefaults() error {
 		return errors.New("public_url must start with http:// or https://")
 	}
 	return nil
+}
+
+// DatabasePath is db_path, or hub.db in the data dir.
+func (c *Config) DatabasePath() string {
+	if c.DBPath != "" {
+		return c.DBPath
+	}
+	return filepath.Join(c.DataDir, DBFile)
 }
 
 // SchedParams are the scheduler parameters with defaults.

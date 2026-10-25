@@ -1,0 +1,393 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.48.1.52935",
+      "templateHash": "16144112127198559954"
+    }
+  },
+  "parameters": {
+    "name": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 40,
+      "metadata": {
+        "description": "Hub name: the DNS label (<name>.<region>.azurecontainer.io) and the prefix of the resources. Lowercase letters, digits and hyphens, starting with a letter."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region (default: the resource group's)."
+      }
+    },
+    "image": {
+      "type": "string",
+      "defaultValue": "ghcr.io/lubobill1990/longarm-hub:latest",
+      "metadata": {
+        "description": "longarm-hub image. Pin a version (ghcr.io/<owner>/longarm-hub:X.Y.Z) for reproducible upgrades; :latest is the newest release, :edge the main branch."
+      }
+    },
+    "size": {
+      "type": "string",
+      "defaultValue": "small",
+      "allowedValues": [
+        "small",
+        "medium"
+      ],
+      "metadata": {
+        "description": "Hub size: small = 1 vCPU / 1.5 GB, medium = 2 vCPU / 3 GB."
+      }
+    },
+    "enablePanel": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Serve the web panel and install scripts over HTTPS (Caddy sidecar on 80/443 with a Let's Encrypt certificate for the azurecontainer.io name)."
+      }
+    },
+    "acmeEmail": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "E-mail for Let's Encrypt expiry notices (optional)."
+      }
+    },
+    "caddyImage": {
+      "type": "string",
+      "defaultValue": "docker.io/library/caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f",
+      "metadata": {
+        "description": "Caddy image of the panel sidecar (pinned by digest; point it at a mirror if Docker Hub rate limits bite)."
+      }
+    },
+    "enableLogAnalytics": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Send container logs to a new Log Analytics workspace (about 2-3 USD per GB ingested)."
+      }
+    },
+    "storageSku": {
+      "type": "string",
+      "defaultValue": "Standard_LRS",
+      "allowedValues": [
+        "Standard_LRS",
+        "Standard_ZRS",
+        "Standard_GRS"
+      ],
+      "metadata": {
+        "description": "Storage redundancy of the account holding the Litestream replica and the state share."
+      }
+    },
+    "adminCodeTtlHours": {
+      "type": "int",
+      "defaultValue": 24,
+      "minValue": 1,
+      "maxValue": 168,
+      "metadata": {
+        "description": "Lifetime in hours of the one-time admin join code created on the first start."
+      }
+    },
+    "relayUdpPort": {
+      "type": "int",
+      "defaultValue": 7443,
+      "minValue": 1024,
+      "maxValue": 65534,
+      "metadata": {
+        "description": "UDP port of the longnet relay (QUIC + STUN); the second STUN port is this + 1. Keep 7443 unless the region refuses the same port for TCP and UDP (workers then listen on longnet://<fqdn>:<port>?tcp=<fqdn>:7443)."
+      }
+    },
+    "sasExpiry": {
+      "type": "string",
+      "defaultValue": "[dateTimeAdd(utcNow('u'), 'P10Y', 'yyyy-MM-ddTHH:mm:ssZ')]",
+      "metadata": {
+        "description": "Expiry of the Litestream SAS (blob container scoped); every deployment (deploy.sh re-run) renews it."
+      }
+    },
+    "registryServer": {
+      "type": "string",
+      "defaultValue": "ghcr.io",
+      "metadata": {
+        "description": "Registry login for a private image (empty = anonymous pull)."
+      }
+    },
+    "registryUsername": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "registryPassword": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "tailscaleOAuthSecret": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional Tailscale OAuth client secret for the hub's [tailnet] provider (deploy/hub/README.md \"Tailnet provider\")."
+      }
+    }
+  },
+  "variables": {
+    "sizes": {
+      "small": {
+        "cpu": 1,
+        "memoryInGB": "[json('1.5')]"
+      },
+      "medium": {
+        "cpu": 2,
+        "memoryInGB": "[json('3.0')]"
+      }
+    },
+    "fqdn": "[format('{0}.{1}.azurecontainer.io', parameters('name'), toLower(replace(parameters('location'), ' ', '')))]",
+    "hubAddress": "[format('{0}:7443', variables('fqdn'))]",
+    "storageName": "[take(format('lahub{0}', uniqueString(resourceGroup().id, parameters('name'))), 24)]",
+    "tags": {
+      "longarm-hub": "[parameters('name')]"
+    },
+    "caddyfile": "{\n\tadmin off\n\t{EMAIL}\n}\n{FQDN} {\n\treverse_proxy 127.0.0.1:7480 {\n\t\tflush_interval -1\n\t}\n}\n",
+    "caddyfileText": "[replace(replace(variables('caddyfile'), '{FQDN}', variables('fqdn')), '{EMAIL}', if(empty(parameters('acmeEmail')), '', format('email {0}', parameters('acmeEmail'))))]",
+    "probe": {
+      "exec": {
+        "command": [
+          "/usr/local/bin/longarm-hub",
+          "healthcheck"
+        ]
+      }
+    },
+    "hubPorts": [
+      {
+        "port": 7443,
+        "protocol": "TCP"
+      },
+      {
+        "port": "[parameters('relayUdpPort')]",
+        "protocol": "UDP"
+      },
+      {
+        "port": "[add(parameters('relayUdpPort'), 1)]",
+        "protocol": "UDP"
+      }
+    ],
+    "caddyContainer": {
+      "name": "caddy",
+      "properties": {
+        "image": "[parameters('caddyImage')]",
+        "command": [
+          "caddy",
+          "run",
+          "--config",
+          "/etc/caddy/Caddyfile",
+          "--adapter",
+          "caddyfile"
+        ],
+        "resources": {
+          "requests": {
+            "cpu": "[json('0.25')]",
+            "memoryInGB": "[json('0.25')]"
+          }
+        },
+        "ports": [
+          {
+            "port": 80,
+            "protocol": "TCP"
+          },
+          {
+            "port": 443,
+            "protocol": "TCP"
+          }
+        ],
+        "volumeMounts": [
+          {
+            "name": "caddyfile",
+            "mountPath": "/etc/caddy",
+            "readOnly": true
+          },
+          {
+            "name": "caddy",
+            "mountPath": "/data"
+          }
+        ]
+      }
+    },
+    "panelPorts": [
+      {
+        "port": 80,
+        "protocol": "TCP"
+      },
+      {
+        "port": 443,
+        "protocol": "TCP"
+      }
+    ]
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[variables('storageName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "[parameters('storageSku')]"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "accessTier": "Hot",
+        "allowBlobPublicAccess": false,
+        "allowSharedKeyAccess": true,
+        "minimumTlsVersion": "TLS1_2",
+        "supportsHttpsTrafficOnly": true
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
+      "properties": {
+        "deleteRetentionPolicy": {
+          "enabled": true,
+          "days": 7
+        },
+        "containerDeleteRetentionPolicy": {
+          "enabled": true,
+          "days": 7
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'litestream')]",
+      "properties": {
+        "publicAccess": "None"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/fileServices",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
+      "properties": {
+        "shareDeleteRetentionPolicy": {
+          "enabled": true,
+          "days": 7
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'state')]",
+      "properties": {
+        "shareQuota": 10
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('storageName'), 'default')]"
+      ]
+    },
+    {
+      "condition": "[parameters('enablePanel')]",
+      "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'caddy')]",
+      "properties": {
+        "shareQuota": 1
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('storageName'), 'default')]"
+      ]
+    },
+    {
+      "condition": "[parameters('enableLogAnalytics')]",
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[format('{0}-logs', parameters('name'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 30
+      }
+    },
+    {
+      "type": "Microsoft.ContainerInstance/containerGroups",
+      "apiVersion": "2025-09-01",
+      "name": "[parameters('name')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "osType": "Linux",
+        "sku": "Standard",
+        "restartPolicy": "Always",
+        "containers": "[if(parameters('enablePanel'), createArray(createObject('name', 'hub', 'properties', createObject('image', parameters('image'), 'resources', createObject('requests', variables('sizes')[parameters('size')]), 'ports', variables('hubPorts'), 'environmentVariables', concat(createArray(createObject('name', 'LONGARM_HUB_DATA_DIR', 'value', '/data'), createObject('name', 'LONGARM_HUB_CONFIG', 'value', '/data/hub.toml'), createObject('name', 'LONGARM_HUB_DB', 'value', '/var/lib/longarm-hub/hub.db'), createObject('name', 'LONGARM_HUB_ADVERTISE', 'value', variables('fqdn')), createObject('name', 'LONGARM_HUB_HTTP', 'value', '127.0.0.1:7480'), createObject('name', 'LONGARM_HUB_BOOTSTRAP', 'value', '1'), createObject('name', 'LONGARM_HUB_BOOTSTRAP_TTL', 'value', format('{0}h', parameters('adminCodeTtlHours'))), createObject('name', 'LONGARM_HUB_RELAY_UDP', 'value', format(':{0}', parameters('relayUdpPort'))), createObject('name', 'LONGARM_HUB_RELAY_STUN2', 'value', format(':{0}', add(parameters('relayUdpPort'), 1))), createObject('name', 'LONGARM_HUB_LITESTREAM_CONFIG', 'value', '/etc/longarm-hub/litestream-abs.yml'), createObject('name', 'LONGARM_HUB_BLOB_ACCOUNT', 'value', variables('storageName')), createObject('name', 'LONGARM_HUB_BLOB_CONTAINER', 'value', 'litestream'), createObject('name', 'LONGARM_HUB_BLOB_ENDPOINT', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'LITESTREAM_AZURE_SAS_TOKEN', 'secureValue', listServiceSas(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01', createObject('canonicalizedResource', format('/blob/{0}/litestream', variables('storageName')), 'signedResource', 'c', 'signedPermission', 'racwdl', 'signedProtocol', 'https', 'signedExpiry', parameters('sasExpiry'))).serviceSasToken)), if(parameters('enablePanel'), createArray(createObject('name', 'LONGARM_HUB_PUBLIC_URL', 'value', format('https://{0}', variables('fqdn')))), createArray()), if(empty(parameters('tailscaleOAuthSecret')), createArray(), createArray(createObject('name', 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', 'secureValue', parameters('tailscaleOAuthSecret'))))), 'volumeMounts', createArray(createObject('name', 'state', 'mountPath', '/data')), 'livenessProbe', union(variables('probe'), createObject('initialDelaySeconds', 180, 'periodSeconds', 30, 'timeoutSeconds', 10, 'failureThreshold', 4)), 'readinessProbe', union(variables('probe'), createObject('initialDelaySeconds', 5, 'periodSeconds', 10, 'timeoutSeconds', 10, 'failureThreshold', 3)))), variables('caddyContainer')), createArray(createObject('name', 'hub', 'properties', createObject('image', parameters('image'), 'resources', createObject('requests', variables('sizes')[parameters('size')]), 'ports', variables('hubPorts'), 'environmentVariables', concat(createArray(createObject('name', 'LONGARM_HUB_DATA_DIR', 'value', '/data'), createObject('name', 'LONGARM_HUB_CONFIG', 'value', '/data/hub.toml'), createObject('name', 'LONGARM_HUB_DB', 'value', '/var/lib/longarm-hub/hub.db'), createObject('name', 'LONGARM_HUB_ADVERTISE', 'value', variables('fqdn')), createObject('name', 'LONGARM_HUB_HTTP', 'value', '127.0.0.1:7480'), createObject('name', 'LONGARM_HUB_BOOTSTRAP', 'value', '1'), createObject('name', 'LONGARM_HUB_BOOTSTRAP_TTL', 'value', format('{0}h', parameters('adminCodeTtlHours'))), createObject('name', 'LONGARM_HUB_RELAY_UDP', 'value', format(':{0}', parameters('relayUdpPort'))), createObject('name', 'LONGARM_HUB_RELAY_STUN2', 'value', format(':{0}', add(parameters('relayUdpPort'), 1))), createObject('name', 'LONGARM_HUB_LITESTREAM_CONFIG', 'value', '/etc/longarm-hub/litestream-abs.yml'), createObject('name', 'LONGARM_HUB_BLOB_ACCOUNT', 'value', variables('storageName')), createObject('name', 'LONGARM_HUB_BLOB_CONTAINER', 'value', 'litestream'), createObject('name', 'LONGARM_HUB_BLOB_ENDPOINT', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'LITESTREAM_AZURE_SAS_TOKEN', 'secureValue', listServiceSas(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01', createObject('canonicalizedResource', format('/blob/{0}/litestream', variables('storageName')), 'signedResource', 'c', 'signedPermission', 'racwdl', 'signedProtocol', 'https', 'signedExpiry', parameters('sasExpiry'))).serviceSasToken)), if(parameters('enablePanel'), createArray(createObject('name', 'LONGARM_HUB_PUBLIC_URL', 'value', format('https://{0}', variables('fqdn')))), createArray()), if(empty(parameters('tailscaleOAuthSecret')), createArray(), createArray(createObject('name', 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', 'secureValue', parameters('tailscaleOAuthSecret'))))), 'volumeMounts', createArray(createObject('name', 'state', 'mountPath', '/data')), 'livenessProbe', union(variables('probe'), createObject('initialDelaySeconds', 180, 'periodSeconds', 30, 'timeoutSeconds', 10, 'failureThreshold', 4)), 'readinessProbe', union(variables('probe'), createObject('initialDelaySeconds', 5, 'periodSeconds', 10, 'timeoutSeconds', 10, 'failureThreshold', 3))))))]",
+        "imageRegistryCredentials": "[if(empty(parameters('registryUsername')), createArray(), createArray(createObject('server', parameters('registryServer'), 'username', parameters('registryUsername'), 'password', parameters('registryPassword'))))]",
+        "ipAddress": {
+          "type": "Public",
+          "dnsNameLabel": "[parameters('name')]",
+          "ports": "[if(parameters('enablePanel'), concat(variables('hubPorts'), variables('panelPorts')), variables('hubPorts'))]"
+        },
+        "volumes": "[if(parameters('enablePanel'), concat(createArray(createObject('name', 'state', 'azureFile', createObject('shareName', 'state', 'storageAccountName', variables('storageName'), 'storageAccountKey', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').keys[0].value))), createArray(createObject('name', 'caddy', 'azureFile', createObject('shareName', 'caddy', 'storageAccountName', variables('storageName'), 'storageAccountKey', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').keys[0].value)), createObject('name', 'caddyfile', 'secret', createObject('Caddyfile', base64(variables('caddyfileText')))))), createArray(createObject('name', 'state', 'azureFile', createObject('shareName', 'state', 'storageAccountName', variables('storageName'), 'storageAccountKey', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').keys[0].value))))]",
+        "diagnostics": "[if(parameters('enableLogAnalytics'), createObject('logAnalytics', createObject('workspaceId', reference(resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('name'))), '2023-09-01').customerId, 'workspaceKey', listKeys(resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('name'))), '2023-09-01').primarySharedKey)), null())]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageName'), 'default', 'caddy')]",
+        "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('name')))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'litestream')]",
+        "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageName'), 'default', 'state')]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "hubAddress": {
+      "type": "string",
+      "metadata": {
+        "description": "Hub address for longarm join / longarmd join."
+      },
+      "value": "[variables('hubAddress')]"
+    },
+    "fqdn": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerInstance/containerGroups', parameters('name')), '2025-09-01').ipAddress.fqdn]"
+    },
+    "ipAddress": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerInstance/containerGroups', parameters('name')), '2025-09-01').ipAddress.ip]"
+    },
+    "panelUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "Web panel and install scripts (empty without the panel)."
+      },
+      "value": "[if(parameters('enablePanel'), format('https://{0}', variables('fqdn')), '')]"
+    },
+    "storageAccount": {
+      "type": "string",
+      "value": "[variables('storageName')]"
+    },
+    "relayUdpPort": {
+      "type": "int",
+      "metadata": {
+        "description": "UDP port of the longnet relay (workers: --listen longnet://<fqdn>:<port>)."
+      },
+      "value": "[parameters('relayUdpPort')]"
+    },
+    "containerGroup": {
+      "type": "string",
+      "value": "[parameters('name')]"
+    }
+  }
+}

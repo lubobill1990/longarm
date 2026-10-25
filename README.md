@@ -113,7 +113,16 @@ You need a hub reachable from everywhere (a small VM with a public IP: ports
 all platforms are on the [releases page](https://github.com/lubobill1990/longarm/releases);
 or build from source with Go ≥ 1.27.3: `go build -o bin/ ./cmd/...`.
 
-**1. Hub** (details: [deploy/hub](deploy/hub/README.md)):
+**1. Hub** - on Azure in one command (Container Instances, about 44 USD/month; details:
+[deploy/azure](deploy/azure/README.md)), which prints the join command for step 2:
+
+```sh
+az login && cd deploy/azure && ./deploy.sh --name myhub --location eastasia   # or deploy.ps1, or:
+```
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Flubobill1990%2Flongarm%2Fmain%2Fdeploy%2Fazure%2Fazuredeploy.json)
+
+Or on any host with a public IP (details: [deploy/hub](deploy/hub/README.md)):
 
 ```sh
 longarm-hub --data-dir /var/lib/longarm-hub ca init        # the fleet's CA

@@ -1,0 +1,11 @@
+# docker build context (deploy/hub/Dockerfile): sources only
+.git
+**/node_modules
+/bin
+/dist
+/dist-tray
+/.wix
+/e2e/work
+/.privacy-patterns
+*.exe
+*.test

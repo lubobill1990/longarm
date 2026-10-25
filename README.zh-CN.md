@@ -107,7 +107,16 @@ Hub 只负责协调。命令、输出、文件和终端都在客户端与 worker
 [releases 页面](https://github.com/lubobill1990/longarm/releases)；
 也可以用 Go ≥ 1.27.3 从源码构建：`go build -o bin/ ./cmd/...`。
 
-**1. Hub**（详见 [deploy/hub](deploy/hub/README.md)）：
+**1. Hub**——一条命令部署到 Azure（容器实例，约 44 美元/月；详见
+[deploy/azure](deploy/azure/README.md)），完成后会打印第 2 步要用的加入命令：
+
+```sh
+az login && cd deploy/azure && ./deploy.sh --name myhub --location eastasia   # 或 deploy.ps1，或：
+```
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Flubobill1990%2Flongarm%2Fmain%2Fdeploy%2Fazure%2Fazuredeploy.json)
+
+或者部署在任意有公网 IP 的主机上（详见 [deploy/hub](deploy/hub/README.md)）：
 
 ```sh
 longarm-hub --data-dir /var/lib/longarm-hub ca init        # 集群的 CA
