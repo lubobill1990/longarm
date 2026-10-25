@@ -27,10 +27,36 @@ import (
 func NewContainer(opts ptypes.ContainerOptions) (*unix.Container, error) {
 	c := unix.NewContainer(opts)
 	c.ListPIDs = listPIDs
-	if opts.KillOnOwnerDeath {
-		c.PreStart = func(cmd *exec.Cmd) {
+	var cg *cgroup
+	if opts.Cgroup != "" {
+		var err error
+		if cg, err = newCgroup(opts.Cgroup, opts.MemLimitBytes, opts.CPULimit); err != nil {
+			return nil, err
+		}
+		c.OnKill, c.OnClose = cg.kill, cg.remove
+	}
+	var cgFD *os.File
+	c.PreStart = func(cmd *exec.Cmd) {
+		if opts.KillOnOwnerDeath {
 			runtime.LockOSThread()
 			cmd.SysProcAttr.Pdeathsig = syscall.SIGKILL
+		}
+		if cg != nil {
+			// Born inside the cgroup (clone3 CLONE_INTO_CGROUP): not even
+			// the first fork can escape the limits.
+			if f, err := cg.open(); err == nil && clone3Cgroup() {
+				cgFD = f
+				cmd.SysProcAttr.UseCgroupFD, cmd.SysProcAttr.CgroupFD = true, int(f.Fd())
+			}
+		}
+	}
+	c.PostStart = func(cmd *exec.Cmd, err error) {
+		if cgFD != nil {
+			cgFD.Close()
+			cgFD = nil
+		}
+		if err == nil && cg != nil && !cmd.SysProcAttr.UseCgroupFD {
+			cg.add(cmd.Process.Pid)
 		}
 	}
 	return c, nil

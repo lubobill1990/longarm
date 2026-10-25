@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -31,6 +32,8 @@ const KilledExitCode = 137
 type Container struct {
 	mu  sync.Mutex
 	job windows.Handle
+	// user: processes start as this logged-on account (per-user isolation).
+	user *UserSession
 }
 
 // NewContainer creates the Job Object.
@@ -50,7 +53,63 @@ func NewContainer(opts ptypes.ContainerOptions) (*Container, error) {
 		windows.CloseHandle(job)
 		return nil, fmt.Errorf("SetInformationJobObject: %w", err)
 	}
-	return &Container{job: job}, nil
+	if opts.CPULimit > 0 {
+		if err := setCPULimit(job, opts.CPULimit); err != nil {
+			windows.CloseHandle(job)
+			return nil, err
+		}
+	}
+	c := &Container{job: job}
+	if opts.RunAs != nil {
+		s, err := Logon(opts.RunAs)
+		if err != nil {
+			windows.CloseHandle(job)
+			return nil, err
+		}
+		c.user = s
+	}
+	return c, nil
+}
+
+// cpuRateControl is JOBOBJECT_CPU_RATE_CONTROL_INFORMATION (CpuRate form).
+type cpuRateControl struct {
+	ControlFlags uint32
+	CpuRate      uint32
+}
+
+// setCPULimit hard-caps the job at cores worth of CPU (CpuRate is in 1/100 %
+// of the whole machine).
+func setCPULimit(job windows.Handle, cores float64) error {
+	const enable, hardCap = 0x1, 0x4
+	rate := uint32(cores / float64(runtime.NumCPU()) * 10000)
+	if rate < 1 {
+		rate = 1
+	}
+	if rate >= 10000 {
+		return nil // at least the whole machine: no cap
+	}
+	info := cpuRateControl{ControlFlags: enable | hardCap, CpuRate: rate}
+	if _, err := windows.SetInformationJobObject(job, windows.JobObjectCpuRateControlInformation,
+		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
+		return fmt.Errorf("job CPU limit: %w", err)
+	}
+	return nil
+}
+
+// UserEnv is the environment of the container's account (nil without one).
+func (c *Container) UserEnv() []string {
+	if c.user == nil {
+		return nil
+	}
+	return append([]string(nil), c.user.Env...)
+}
+
+// UserHome is the profile directory of the container's account.
+func (c *Container) UserHome() string {
+	if c.user == nil {
+		return ""
+	}
+	return c.user.Home
 }
 
 const (
@@ -67,6 +126,9 @@ const (
 // console programs from popping up their own window. The new process group
 // keeps Ctrl+C in an interactive longarmd from reaching jobs.
 func (c *Container) Start(cmd *exec.Cmd) error {
+	if c.user != nil {
+		return c.startAs(cmd)
+	}
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
@@ -180,6 +242,9 @@ func (c *Container) PIDs() ([]int, error) {
 func (c *Container) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.user != nil {
+		defer c.user.Close()
+	}
 	if c.job == 0 {
 		return nil
 	}

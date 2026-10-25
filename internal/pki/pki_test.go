@@ -142,7 +142,7 @@ func TestMTLS(t *testing.T) {
 	}
 
 	id, err := handshake(t, srv, client.ClientConfig("w1"))
-	if err != nil || id != (Identity{RoleClient, "alice"}) {
+	if err != nil || id != (Identity{Role: RoleClient, Name: "alice"}) {
 		t.Fatalf("client handshake: %v %v", id, err)
 	}
 	id, err = handshake(t, srv, admin.ClientConfig("w1"))
@@ -169,5 +169,44 @@ func TestMTLS(t *testing.T) {
 	cc.InsecureSkipVerify = true // isolate the VerifyConnection role check
 	if _, err := handshake(t, fake, cc); err == nil || !strings.Contains(err.Error(), "not a worker") {
 		t.Fatalf("expected role rejection, got %v", err)
+	}
+}
+
+// TestUserIdentity: a certificate issued for a device of a user carries the
+// user (?user= on the identity URI); Owner falls back to the name.
+func TestUserIdentity(t *testing.T) {
+	ca, err := InitCA(t.TempDir(), "test", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, _, err := ca.Issue(IssueOptions{Role: RoleClient, Name: "alice-laptop", User: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := ParseCertPEM(certPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := IdentityFromCert(c)
+	if err != nil || id.User != "alice" || id.Name != "alice-laptop" || id.Owner() != "alice" {
+		t.Fatalf("identity %+v %v", id, err)
+	}
+	if got := (Identity{Role: RoleClient, Name: "bob"}).Owner(); got != "bob" {
+		t.Fatalf("owner without user = %q", got)
+	}
+	for _, bad := range []IssueOptions{
+		{Role: RoleClient, Name: "x", User: "Alice"},
+		{Role: RoleClient, Name: "x", User: "a-very-long-user-name"},
+		{Role: RoleWorker, Name: "w", User: "alice"},
+	} {
+		if _, _, err := ca.Issue(bad); err == nil {
+			t.Errorf("issued %+v", bad)
+		}
+	}
+	// same user as name: no query (older binaries see the same URI)
+	certPEM, _, _ = ca.Issue(IssueOptions{Role: RoleClient, Name: "bob", User: "bob"})
+	c, _ = ParseCertPEM(certPEM)
+	if len(c.URIs) != 1 || c.URIs[0].String() != "longarm://client/bob" {
+		t.Fatalf("uri %v", c.URIs)
 	}
 }
