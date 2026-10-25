@@ -1,0 +1,9 @@
+/bin/
+/dist/
+*.exe
+*.test
+/coverage*
+/dist-tray/
+/.wix/
+/e2e/work
+/.privacy-patterns

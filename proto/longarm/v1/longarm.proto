@@ -1,0 +1,524 @@
+// Longarm worker API (served by longarmd, consumed by longarm / later longarm-hub / longarm-tray).
+//
+// One proto package, one service per capability area so that later phases add
+// services rather than mutate existing ones:
+//   P0a: Node, Exec, Jobs, Metrics, Admin
+//   P0b: Sessions (named PTY sessions: attach/detach/resize, ConPTY / pty),
+//        Forward (one bidi byte stream per forwarded TCP connection, plus the
+//        stream behind `longarm proxy` into the built-in sshd), Files (chunked
+//        read/write with offsets + sha256 for resumable transfers), Workspace
+//        (git mirror + worktree sync).
+//
+// Transport-agnostic: everything runs over gRPC + app-level mTLS on top of a
+// net.Conn supplied by a Transport backend (tcp / tailscale tsnet / longnet).
+// Authorization is by the role embedded in the caller's certificate.
+syntax = "proto3";
+
+package longarm.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1";
+
+// ---------------------------------------------------------------- Node
+
+service Node {
+  // Info describes the worker and echoes the caller identity. Any role.
+  rpc Info(InfoRequest) returns (InfoResponse);
+}
+
+message InfoRequest {}
+
+message InfoResponse {
+  string name = 1; // worker name (from its certificate)
+  string version = 2;
+  string os = 3;
+  string arch = 4;
+  string hostname = 5;
+  int32 num_cpu = 6;
+  string data_dir = 7;
+  google.protobuf.Timestamp started_at = 8;
+  string caller_name = 9;
+  string caller_role = 10;
+  repeated string listeners = 11; // e.g. "tcp://100.64.0.11:7701"
+  // Public host key of the built-in sshd in authorized_keys format; clients
+  // learn it over mTLS (longarm ssh-config writes it to a known_hosts file).
+  string ssh_host_key = 12;
+}
+
+// ---------------------------------------------------------------- Exec
+
+service Exec {
+  // Run executes a short command synchronously (no job dir). The whole process
+  // tree is contained and killed on timeout. Output is captured as raw bytes.
+  rpc Run(ExecRequest) returns (ExecResponse);
+}
+
+enum OutputMode {
+  OUTPUT_MODE_UNSPECIFIED = 0; // = SEPARATE
+  OUTPUT_MODE_SEPARATE = 1; // stdout and stderr captured separately
+  OUTPUT_MODE_COMBINED = 2; // both into one interleaved buffer
+}
+
+message ExecRequest {
+  repeated string argv = 1;
+  string cwd = 2;
+  map<string, string> env = 3;
+  // Values are passed to the child env only and redacted from the output.
+  map<string, string> secret_env = 4;
+  google.protobuf.Duration timeout = 5; // default 60s, max 1h
+  OutputMode output = 6;
+  int64 max_output_bytes = 7; // per buffer; default 1 MiB
+  bytes stdin = 8;
+}
+
+message ExecResponse {
+  int32 exit_code = 1; // -1 if the process could not be started
+  bytes stdout = 2; // SEPARATE mode
+  bytes stderr = 3; // SEPARATE mode
+  bytes combined = 4; // COMBINED mode
+  bool timed_out = 5;
+  bool truncated = 6;
+  google.protobuf.Duration duration = 7;
+  string error = 8; // start failure etc.
+}
+
+// ---------------------------------------------------------------- Jobs
+
+service Jobs {
+  // Submit is idempotent on spec.id (client-generated ULID): re-submitting the
+  // same id with the same spec returns the existing job; a different spec
+  // under an existing id fails with ALREADY_EXISTS.
+  rpc Submit(SubmitRequest) returns (Job);
+  rpc Get(GetJobRequest) returns (Job);
+  rpc List(ListJobsRequest) returns (ListJobsResponse);
+  // Logs streams out.log from a byte offset. With follow, the stream stays
+  // open until the job is terminal and all bytes were sent. Clients resume
+  // after a disconnect by re-calling with offset = last offset + len(data).
+  rpc Logs(LogsRequest) returns (stream LogChunk);
+  // Wait pushes the job's current snapshot, then one per state change, and
+  // ends after a terminal state was sent.
+  rpc Wait(WaitRequest) returns (stream Job);
+  // Kill terminates the job's whole process tree and returns the final job.
+  rpc Kill(KillRequest) returns (Job);
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_QUEUED = 1; // hub-side (P1)
+  JOB_STATE_ASSIGNED = 2; // hub-side (P1)
+  JOB_STATE_PREPARING = 3;
+  JOB_STATE_RUNNING = 4;
+  JOB_STATE_DONE = 5; // exit code 0
+  JOB_STATE_FAILED = 6; // non-zero exit or failed to start
+  JOB_STATE_KILLED = 7;
+  JOB_STATE_LOST = 8; // supervisor (shim) vanished; outcome unknown
+}
+
+message JobSpec {
+  string id = 1; // [0-9A-Za-z_-]{1,64}; normally a ULID
+  string name = 2;
+  repeated string argv = 3;
+  string cwd = 4;
+  map<string, string> env = 5; // persisted in job.json
+  repeated string secret_env_names = 6; // names only; values never persisted
+  int64 mem_limit_bytes = 7; // 0 = none (best effort per platform)
+  map<string, string> labels = 8;
+  // Prepare a git worktree as the job's working directory (the job stays
+  // "preparing" until it is ready). cwd is then relative to the worktree.
+  JobWorkspace workspace = 9;
+  // reserved for P1: agent type, retries.
+  reserved 10 to 15;
+  // Output only: the caller that submitted the job ("client/alice"), set
+  // by the worker from the caller's certificate (ignored on submit).
+  string submitted_by = 16;
+}
+
+message JobWorkspace {
+  // Mirror key on the worker (<data>/mirrors/<repo>.git), [0-9A-Za-z._-].
+  string repo = 1;
+  // Fetch url (e.g. https://github.com/o/r). For https urls the job's
+  // GH_TOKEN secret, if any, authenticates the fetch (memory only).
+  string url = 2;
+  string ref = 3; // ref to fetch from url (default HEAD)
+  // Exact commit to check out; set when the objects were sent with
+  // Workspace.Sync (stage_only), otherwise resolved from url + ref.
+  string commit = 4;
+  // Uncommitted changes uploaded by Workspace.Sync (stage_only) to apply.
+  string staging_id = 5;
+}
+
+message SubmitRequest {
+  JobSpec spec = 1;
+  map<string, string> secret_env = 2; // memory-only on the worker
+}
+
+message Job {
+  JobSpec spec = 1;
+  JobState state = 2;
+  bool has_exit_code = 3;
+  int32 exit_code = 4;
+  int32 pid = 5; // main process of the job
+  int32 shim_pid = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp started_at = 8;
+  google.protobuf.Timestamp ended_at = 9;
+  int64 log_size = 10;
+  string reason = 11; // human readable cause for failed/killed/lost
+  bool orphaned = 12; // shim died but the process is still alive (read-only adoption)
+  string workdir = 13; // prepared worktree (workspace jobs)
+}
+
+message GetJobRequest {
+  string id = 1;
+}
+
+message ListJobsRequest {
+  repeated JobState states = 1; // empty = all
+  int32 limit = 2; // newest first; 0 = all
+}
+
+message ListJobsResponse {
+  repeated Job jobs = 1;
+}
+
+message LogsRequest {
+  string id = 1;
+  // Byte offset into out.log. Negative = that many bytes before the current end.
+  int64 offset = 2;
+  bool follow = 3;
+}
+
+message LogChunk {
+  int64 offset = 1; // offset of data[0] in out.log
+  bytes data = 2;
+}
+
+message WaitRequest {
+  string id = 1;
+}
+
+message KillRequest {
+  string id = 1;
+}
+
+// ---------------------------------------------------------------- Metrics
+
+service Metrics {
+  rpc Snapshot(MetricsRequest) returns (MetricsSnapshot);
+  rpc Stream(MetricsStreamRequest) returns (stream MetricsSnapshot);
+}
+
+message MetricsRequest {}
+
+message MetricsStreamRequest {
+  google.protobuf.Duration interval = 1; // default 2s, min 500ms
+}
+
+message ProcGroup {
+  string name = 1; // process name without extension
+  int32 count = 2;
+  uint64 mem_bytes = 3; // working set / RSS sum
+  double cpu_percent = 4; // of the whole machine
+}
+
+message AgentStat {
+  int32 sessions = 1; // leaf processes (no same-name child)
+  int32 processes = 2;
+  uint64 mem_bytes = 3;
+}
+
+message MetricsSnapshot {
+  google.protobuf.Timestamp time = 1;
+  double cpu_percent = 2;
+  int32 threads = 3; // logical CPUs
+  uint64 mem_total_bytes = 4;
+  uint64 mem_used_bytes = 5;
+  int32 jobs_running = 6;
+  int64 uptime_seconds = 7;
+  int32 nproc = 8;
+  map<string, AgentStat> agents = 9; // "claude", "copilot"
+  repeated ProcGroup top_cpu = 10;
+  repeated ProcGroup top_mem = 11;
+  uint64 disk_free_bytes = 12; // volume holding the data dir
+  uint64 disk_total_bytes = 13;
+}
+
+// ---------------------------------------------------------------- Admin
+
+service Admin {
+  // Shutdown stops longarmd gracefully. Jobs keep running in their shims and are
+  // re-adopted on the next start. Admin role only.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+  // Gc removes old terminal jobs and sessions (with their worktrees and
+  // staging data) and unused mirrors, like the automatic collector. Admin only.
+  rpc Gc(GcRequest) returns (GcResponse);
+}
+
+message ShutdownRequest {}
+
+message ShutdownResponse {}
+
+message GcRequest {
+  // Remove terminal jobs/sessions that ended longer ago than this
+  // (unset = longarmd.toml [gc] keep).
+  google.protobuf.Duration keep = 1;
+  // Then remove the oldest terminal jobs until this % of the disk is free
+  // (0 = longarmd.toml [gc] min_free_percent, negative = skip).
+  double min_free_percent = 2;
+  bool dry_run = 3;
+}
+
+message GcResponse {
+  repeated string removed = 1; // "jobs/<id>", "sessions/<name>", "mirrors/<repo>.git", ...
+  int64 freed_bytes = 2;
+}
+
+// ---------------------------------------------------------------- Sessions
+
+// Sessions are named interactive PTY sessions (ConPTY on Windows, pty on
+// Unix), tmux-like: the process lives in a per-session shim, survives client
+// disconnects and longarmd restarts, and a re-attach replays recent output from a
+// scrollback ring before going live. Several clients may attach at once.
+service Sessions {
+  // Attach: the first input message must be `open`. The session is created
+  // if it does not exist (unless no_create). The first output message is
+  // `started`; then `data` until the client detaches (closes its send side or
+  // sends detach) or the session's process exits (`exit`, then end).
+  rpc Attach(stream AttachInput) returns (stream AttachOutput);
+  rpc List(ListSessionsRequest) returns (ListSessionsResponse);
+  // Kill terminates the session's whole process tree.
+  rpc Kill(KillSessionRequest) returns (Session);
+  // Logs streams the session transcript (raw terminal output, secrets
+  // redacted) like Jobs.Logs; id = session name.
+  rpc Logs(LogsRequest) returns (stream LogChunk);
+}
+
+message AttachInput {
+  oneof msg {
+    AttachOpen open = 1;
+    bytes data = 2; // keyboard input
+    TermSize resize = 3;
+    bool detach = 4;
+  }
+}
+
+message AttachOpen {
+  string name = 1; // [0-9A-Za-z_-]{1,64}; default "default"
+  repeated string argv = 2; // default: the user's shell (pwsh on Windows)
+  string cwd = 3;
+  map<string, string> env = 4;
+  // Injected when the session is created; memory-only, redacted from the
+  // transcript on disk. Ignored when attaching to an existing session.
+  map<string, string> secret_env = 5;
+  TermSize size = 6;
+  bool no_create = 7; // fail with NOT_FOUND instead of creating
+  bool no_replay = 8; // skip the scrollback replay
+}
+
+message TermSize {
+  uint32 cols = 1;
+  uint32 rows = 2;
+}
+
+message AttachOutput {
+  oneof msg {
+    AttachStarted started = 1;
+    bytes data = 2; // terminal output (raw VT bytes)
+    int32 exit_code = 3; // the session's process exited; stream ends
+  }
+}
+
+message AttachStarted {
+  Session session = 1;
+  bool created = 2;
+}
+
+message Session {
+  string name = 1;
+  JobState state = 2; // running, done, failed, killed, lost
+  repeated string argv = 3;
+  string cwd = 4;
+  int32 pid = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp ended_at = 7;
+  bool has_exit_code = 8;
+  int32 exit_code = 9;
+  int32 attached = 10; // clients currently attached
+  int64 log_size = 11;
+  string created_by = 12;
+}
+
+message ListSessionsRequest {
+  bool all = 1; // include ended sessions
+}
+
+message ListSessionsResponse {
+  repeated Session sessions = 1;
+}
+
+message KillSessionRequest {
+  string name = 1;
+}
+
+// ---------------------------------------------------------------- Forward
+
+service Forward {
+  // Open carries one TCP connection to target on the worker. The first
+  // client frame sets target ("127.0.0.1:3131"; a bare port means
+  // 127.0.0.1); then data flows both ways. The client half-closes with
+  // CloseSend; the worker signals the target's half-close with eof=true and
+  // ends the stream once both directions are done.
+  rpc Open(stream ForwardFrame) returns (stream ForwardFrame);
+  // Ssh is the same byte pipe, connected to longarmd's built-in sshd instead of a
+  // TCP target (used by `longarm proxy` as an OpenSSH ProxyCommand). The ssh
+  // connection inherits the caller's mTLS identity; no ssh-level auth.
+  rpc Ssh(stream ForwardFrame) returns (stream ForwardFrame);
+}
+
+message ForwardFrame {
+  string target = 1;
+  bytes data = 2;
+  bool eof = 3;
+}
+
+// ---------------------------------------------------------------- Files
+
+// Paths are worker paths; relative paths are relative to the home directory
+// of longarmd's account. Transfers resume: an interrupted Write leaves
+// "<path>.lapart", whose size and sha256 a client learns with Stat(partial)
+// and continues from after verifying its own prefix hash.
+service Files {
+  rpc Stat(FileStatRequest) returns (FileInfo);
+  // List walks a directory recursively (symlinks are reported, not followed).
+  rpc List(FileListRequest) returns (FileListResponse);
+  rpc Read(FileReadRequest) returns (stream FileChunk);
+  // Write: header first, then data from header.offset; the file appears
+  // atomically at path only after its sha256 matched header.sha256.
+  rpc Write(stream FileWriteRequest) returns (FileWriteResult);
+  rpc Mkdir(MkdirRequest) returns (FileInfo);
+}
+
+message FileStatRequest {
+  string path = 1;
+  bool partial = 2; // stat "<path>.lapart" instead
+  bool hash = 3; // compute sha256
+  int64 hash_limit = 4; // hash only the first N bytes (0 = whole file)
+}
+
+message FileInfo {
+  string path = 1; // as requested (List: relative, '/'-separated)
+  string abs_path = 2;
+  bool exists = 3;
+  bool is_dir = 4;
+  bool is_symlink = 5;
+  int64 size = 6;
+  uint32 mode = 7; // permission bits
+  google.protobuf.Timestamp mtime = 8;
+  bytes sha256 = 9; // when requested
+}
+
+message FileListRequest {
+  string path = 1;
+}
+
+message FileListResponse {
+  string abs_path = 1;
+  repeated FileInfo entries = 2; // directories before their contents
+}
+
+message FileReadRequest {
+  string path = 1;
+  int64 offset = 2;
+}
+
+message FileChunk {
+  int64 offset = 1;
+  bytes data = 2;
+}
+
+message FileWriteRequest {
+  oneof msg {
+    FileWriteHeader header = 1;
+    bytes data = 2;
+  }
+}
+
+message FileWriteHeader {
+  string path = 1;
+  int64 offset = 2; // resume: keep this many bytes of the existing .lapart
+  int64 size = 3; // final size
+  bytes sha256 = 4; // of the whole final file
+  uint32 mode = 5; // 0 = 0644
+  google.protobuf.Timestamp mtime = 6;
+}
+
+message FileWriteResult {
+  string abs_path = 1;
+  int64 size = 2;
+}
+
+message MkdirRequest {
+  string path = 1;
+  uint32 mode = 2;
+}
+
+// ---------------------------------------------------------------- Workspace
+
+// Code sync (DESIGN §5.3): per-repo bare mirror <data>/mirrors/<repo>.git and
+// one git worktree per target directory or job.
+service Workspace {
+  // Refs lists the commits the worker's mirror has at its ref tips, so the
+  // client can bundle only the missing objects.
+  rpc Refs(RefsRequest) returns (RefsResponse);
+  // Sync uploads a git bundle (may be empty), a binary diff of uncommitted
+  // changes and a tar of untracked files, in that order, then either applies
+  // them onto a worktree at header.path or stages them for a job.
+  rpc Sync(stream SyncChunk) returns (SyncResult);
+}
+
+message RefsRequest {
+  string repo = 1;
+}
+
+message RefsResponse {
+  bool exists = 1;
+  repeated string commits = 2;
+}
+
+message SyncChunk {
+  oneof msg {
+    SyncHeader header = 1;
+    SyncData data = 2;
+  }
+}
+
+message SyncHeader {
+  string repo = 1;
+  string commit = 2; // HEAD of the client checkout
+  string branch = 3; // informational, e.g. "main"
+  string path = 4; // worktree path on the worker (ignored with stage_only)
+  bool stage_only = 5; // keep for a job (JobWorkspace.staging_id)
+}
+
+enum SyncPart {
+  SYNC_PART_UNSPECIFIED = 0;
+  SYNC_PART_BUNDLE = 1;
+  SYNC_PART_PATCH = 2;
+  SYNC_PART_UNTRACKED_TAR = 3;
+}
+
+message SyncData {
+  SyncPart part = 1;
+  bytes data = 2;
+}
+
+message SyncResult {
+  string path = 1;
+  string commit = 2;
+  string staging_id = 3;
+  int64 bundle_bytes = 4;
+  int64 patch_bytes = 5;
+  int64 untracked_bytes = 6;
+}

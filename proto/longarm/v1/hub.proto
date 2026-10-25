@@ -1,0 +1,804 @@
+// longarm-hub control-plane API (DESIGN §3.3, §5, §6, §7; P1).
+//
+// Served by longarm-hub on its public port (:7443/tcp, gRPC over TLS; the same
+// port also carries the longnet relay's TLS fallback, told apart by ALPN).
+// The hub never sits on the data plane: exec, logs, files and PTYs stay
+// client <-> worker. Workers are the source of truth for jobs (§2); the hub
+// keeps a cache rebuilt from their reports.
+//
+// Authorization is by the certificate role, like longarmd:
+//   Enroll           no certificate needed (the join code is the credential)
+//   HubNode.Connect  worker
+//   HubNode.Renew    any enrolled role
+//   Fleet            client, admin (ListNodes also worker)
+//   HubAdmin         admin
+//   Fleet.ReportLinks / Links / History  client, admin
+syntax = "proto3";
+
+package longarm.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "longarm/v1/longarm.proto";
+
+option go_package = "github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1";
+
+// ---------------------------------------------------------------- Enroll
+
+service Enroll {
+  // Join redeems a one-time join code: the node sends a CSR for a key it
+  // generated itself and gets a certificate (role and name are the hub's
+  // decision), or state "pending" and a poll token when the node waits for
+  // approval (`longarm admin approve <name>`).
+  rpc Join(JoinRequest) returns (JoinResponse);
+  // JoinStatus polls a pending enrollment with its poll token.
+  rpc JoinStatus(JoinStatusRequest) returns (JoinResponse);
+}
+
+message JoinRequest {
+  string code = 1; // "K7P-Q2M" (dash and case optional)
+  bytes csr_pem = 2;
+  string name = 3; // requested node name (default: hostname)
+  string hostname = 4;
+  string os = 5;
+  string arch = 6;
+  string version = 7;
+}
+
+message JoinResponse {
+  string state = 1; // "approved" | "pending" | "rejected"
+  string name = 2;
+  string role = 3;
+  bytes ca_pem = 4;
+  bytes cert_pem = 5; // when approved
+  string poll_token = 6; // when pending
+  string message = 7;
+  string hub_name = 8; // the name in the hub's certificate
+  // Tailnet enrollment (Headscale, DESIGN §4.4) when the hub has one
+  // configured and the node is approved: a pre-auth key for the embedded
+  // tsnet node.
+  TailnetAuth tailnet = 9;
+}
+
+message JoinStatusRequest {
+  string poll_token = 1;
+}
+
+// ---------------------------------------------------------------- HubNode
+
+service HubNode {
+  // Connect is a worker's session with the hub: the worker reports
+  // (hello first, then metrics every 2 s, job changes, audit lines,
+  // toolchain state); the hub pushes commands (revocation list, toolchain
+  // profile, drain, audit acks). The worker reconnects with backoff; the
+  // hub being away never affects the worker's data plane.
+  rpc Connect(stream NodeReport) returns (stream HubCommand);
+  // Renew issues a fresh certificate for the caller's identity (not when
+  // revoked). The caller sends a CSR for a new key.
+  rpc Renew(RenewRequest) returns (RenewResponse);
+  // Leave: the calling node deregisters itself (its certificates are
+  // revoked, it disappears from scheduling); used by longarmd leave / longarm leave and
+  // the uninstallers.
+  rpc Leave(LeaveRequest) returns (LeaveResponse);
+}
+
+message NodeReport {
+  oneof msg {
+    NodeHello hello = 1;
+    MetricsSnapshot metrics = 2;
+    JobsReport jobs = 3;
+    AuditBatch audit = 4;
+    ToolchainReport toolchain = 5;
+    NodeState state = 6; // local drain changes etc.
+    UpdateStatus update = 7; // self-update progress (P2)
+    // Answer to a hub request (kill, logs, submit, toolchain apply) by
+    // request_id.
+    HubReply reply = 8;
+  }
+}
+
+// HubReply answers a HubCommand that carries a request_id.
+message HubReply {
+  string request_id = 1;
+  string error = 2; // "" = ok
+  int32 code = 3; // grpc status code of error
+  Job job = 4; // kill / submit
+  LogChunk log = 5; // logs: data from the requested offset
+  int64 log_size = 6; // logs: current size of out.log
+  bool log_eof = 7; // logs: the job is terminal and data reaches the end
+}
+
+message NodeHello {
+  string version = 1;
+  string os = 2;
+  string arch = 3;
+  string hostname = 4;
+  int32 num_cpu = 5;
+  // Endpoints clients can use (longarmd.endpoints, or [hub] advertise).
+  repeated string endpoints = 6;
+  map<string, string> labels = 7; // from longarmd.toml [hub] labels
+  repeated string mirrors = 8; // repo keys with a mirror (scheduler affinity)
+  repeated string warm_repos = 9; // mirrors used recently (warm dependency caches)
+  NodeState state = 10;
+  int64 revocation_version = 11;
+  string channel = 12; // release channel the node follows (stable, beta ...)
+  UpdateStatus update = 13; // outcome of the last self-update
+  bool update_enabled = 14; // the build has an update key and updates are on
+  TailnetState tailnet = 15; // the embedded tailscale node (hub-managed tailnet)
+}
+
+message NodeState {
+  bool draining = 1; // local drain (longarmd drain, toolchain update)
+  string reason = 2;
+  // Local limits (longarmd limits / the tray's worker tab): the scheduler
+  // places no more than max_jobs active jobs here (0 = no limit) and keeps
+  // reserved_mem_gb of memory free for the desktop user.
+  int32 max_jobs = 3;
+  double reserved_mem_gb = 4;
+}
+
+message JobsReport {
+  // full: this is every job the worker knows (the hub replaces its cache
+  // for this worker); otherwise these are changes.
+  bool full = 1;
+  repeated Job jobs = 2;
+  repeated string removed = 3; // ids gone from the worker (GC)
+}
+
+message AuditBatch {
+  // Raw JSON lines of the worker's audit.log; next_offset is the byte
+  // offset after the last line (the hub acks it).
+  repeated string lines = 1;
+  int64 next_offset = 2;
+}
+
+message ToolSpec {
+  string name = 1; // git, gh, node, pnpm, uv, pwsh, claude, copilot, go
+  string version = 2; // exact version prefix ("22", "2.45.0") or "latest"
+}
+
+message ToolchainReport {
+  string profile = 1;
+  int64 revision = 2;
+  // "ok" | "pending" (waiting for running jobs to finish) | "applying" |
+  // "failed" | "none" (no profile)
+  string state = 3;
+  string error = 4;
+  map<string, string> versions = 5; // installed versions ("" = missing)
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+message HubCommand {
+  oneof msg {
+    HubWelcome welcome = 1;
+    Revocations revocations = 2;
+    ToolchainDesired toolchain = 3;
+    AuditAck audit_ack = 4;
+    DrainCommand drain = 5;
+    UpdateHint update = 6; // the node's target version changed: check now
+    // Requests from the hub's web panel / longarm admin (answered by a
+    // NodeReport.reply with the same request_id).
+    HubJobKill kill_job = 7;
+    HubLogRequest log_request = 8;
+    HubJobSubmit submit_job = 9;
+    HubToolchainApply toolchain_apply = 10;
+    // The hub's tailnet changed for this node (longarm admin tailnet rekey sets
+    // rekey): apply like HubWelcome.tailnet.
+    TailnetInfo tailnet = 11;
+  }
+}
+
+message HubJobKill {
+  string request_id = 1;
+  string id = 2;
+  string by = 3; // "web/alice", "admin/root" (audited on the worker)
+}
+
+message HubLogRequest {
+  string request_id = 1;
+  string id = 2;
+  int64 offset = 3; // negative = that many bytes before the end
+  int32 max_bytes = 4; // default 64 KiB, at most 1 MiB
+  string by = 5;
+}
+
+// HubJobSubmit runs a command job submitted from the panel or longarm admin run:
+// no secrets and no repo upload (those stay client -> worker, §5.4).
+message HubJobSubmit {
+  string request_id = 1;
+  JobSpec spec = 2;
+  string by = 3;
+}
+
+message HubToolchainApply {
+  string request_id = 1;
+  string by = 2;
+}
+
+message HubWelcome {
+  string node_state = 1; // approved
+  int64 audit_offset = 2; // resume audit forwarding here
+  google.protobuf.Duration metrics_interval = 3;
+  google.protobuf.Duration renew_before = 4; // renew the cert when it expires sooner
+  bool hub_draining = 5; // drained by an admin
+  // The hub's tailnet: a node whose embedded tailscale node uses another
+  // control server switches (new key, own state dir per control URL).
+  TailnetInfo tailnet = 6;
+}
+
+message Revocations {
+  int64 version = 1;
+  repeated RevokedCert certs = 2; // full list
+}
+
+message RevokedCert {
+  string serial = 1; // hex
+  google.protobuf.Timestamp not_after = 2;
+  string node = 3;
+}
+
+message ToolchainDesired {
+  string profile = 1; // "" = none assigned
+  int64 revision = 2;
+  repeated ToolSpec tools = 3;
+}
+
+message AuditAck {
+  int64 offset = 1;
+}
+
+message DrainCommand {
+  bool draining = 1;
+}
+
+message RenewRequest {
+  bytes csr_pem = 1;
+}
+
+message RenewResponse {
+  bytes cert_pem = 1;
+  bytes ca_pem = 2;
+}
+
+// ---------------------------------------------------------------- Fleet
+
+service Fleet {
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc ListJobs(FleetJobsRequest) returns (FleetJobsResponse);
+  // GetJob finds a job by id (worker optional).
+  rpc GetJob(FleetJobRequest) returns (FleetJob);
+  // WaitJob pushes the job's snapshot and every change until it is terminal
+  // (from worker reports).
+  rpc WaitJob(FleetJobRequest) returns (stream FleetJob);
+  // Events streams fleet events (jobs, nodes, queue) for longarm wait, the tray
+  // and MCP.
+  rpc Events(EventsRequest) returns (stream FleetEvent);
+  // Place picks a worker for a job (DESIGN §5.2) and reserves its memory.
+  // When no worker passes the gate the request is queued: the stream sends
+  // "queued" updates (with the position) until a worker is assigned, then
+  // "assigned" and ends. Cancelling the call leaves the queue.
+  rpc Place(PlaceRequest) returns (stream PlaceUpdate);
+  // Audit returns audit records forwarded by workers (admin only).
+  rpc Audit(AuditRequest) returns (AuditResponse);
+  // Whoami echoes the caller as the hub sees it (and the hub's identity).
+  rpc Whoami(WhoamiRequest) returns (WhoamiResponse);
+  // TailnetKey mints a pre-auth key for the caller's embedded tailscale
+  // node (Headscale; tag:longarm-worker / tag:longarm-client by role).
+  rpc TailnetKey(TailnetKeyRequest) returns (TailnetAuth);
+  // CheckUpdate tells a worker which version it should run (P2 self-update).
+  rpc CheckUpdate(UpdateCheckRequest) returns (UpdateCheckResponse);
+  // DownloadRelease streams a release file (workers fetch updates through
+  // the gRPC port; they don't know the hub's public HTTP URL).
+  rpc DownloadRelease(ReleaseFileRequest) returns (stream FileChunk);
+  // ReportLinks: a client (longarm daemon) reports how it reaches each worker
+  // (legs, path, RTT); the hub keeps the latest report per client for the
+  // panel's per-pair view.
+  rpc ReportLinks(LinkReport) returns (ReportLinksResponse);
+  // Links returns the latest report of every client.
+  rpc Links(LinksRequest) returns (LinksResponse);
+  // History returns the hub's recent metrics (CPU / memory, ~5 min at the
+  // heartbeat interval) per worker, for sparklines.
+  rpc History(HistoryRequest) returns (HistoryResponse);
+}
+
+// LinkSample is one RTT probe.
+message LinkSample {
+  google.protobuf.Timestamp time = 1;
+  double rtt_ms = 2; // < 0 = the probe failed
+}
+
+// LegStatus is one way (transport endpoint) a client reaches a worker.
+message LegStatus {
+  string transport = 1; // tcp | tailscale | longnet
+  string endpoint = 2; // the endpoint URL / address dialed
+  string kind = 3; // direct | peer-relay | derp | relay | unknown
+  string detail = 4; // remote address, DERP region, "udp relay:7443, nat easy/hard"
+  string nat = 5; // "easy/hard" (longnet: ours/peer's), "" = unknown
+  double rtt_ms = 6; // latest RTT (0 = none yet)
+  bool up = 7;
+  string error = 8; // last probe error
+  google.protobuf.Timestamp since = 9; // up/down or path kind unchanged since
+  bool active = 10; // the leg longarm uses for this worker
+  repeated LinkSample history = 11; // ~5 min, every 2 s (omitted in hub reports)
+  google.protobuf.Timestamp relay_since = 12; // on a relayed path since (unset = not relayed)
+  string label = 13; // "longnet relay-udp", "tailscale direct", "tcp"
+}
+
+message WorkerLink {
+  string worker = 1;
+  repeated LegStatus legs = 2;
+  string state = 3; // online | connecting | offline (from this client)
+  google.protobuf.Timestamp since = 4;
+  string active = 5; // label of the active leg
+  double rtt_ms = 6; // active leg's RTT
+}
+
+message LinkReport {
+  string client = 1; // set by the hub from the caller's certificate
+  google.protobuf.Timestamp time = 2;
+  repeated WorkerLink links = 3;
+}
+
+message ReportLinksResponse {}
+
+message LinksRequest {}
+
+message LinksResponse {
+  repeated LinkReport reports = 1;
+}
+
+message HistoryRequest {
+  string node = 1; // "" = all workers
+}
+
+message MetricsPoint {
+  google.protobuf.Timestamp time = 1;
+  double cpu = 2; // percent
+  double mem = 3; // percent of total
+}
+
+message NodeHistory {
+  string node = 1;
+  repeated MetricsPoint points = 2;
+}
+
+message HistoryResponse {
+  repeated NodeHistory nodes = 1;
+}
+
+message NodeInfo {
+  string name = 1;
+  string role = 2;
+  string state = 3; // pending | approved | revoked
+  bool online = 4;
+  bool draining = 5; // admin drain or local drain
+  string drain_reason = 6;
+  map<string, string> labels = 7;
+  string os = 8;
+  string arch = 9;
+  string version = 10;
+  string hostname = 11;
+  repeated string endpoints = 12;
+  MetricsSnapshot metrics = 13;
+  google.protobuf.Timestamp last_seen = 14;
+  google.protobuf.Timestamp joined_at = 15;
+  google.protobuf.Timestamp cert_not_after = 16;
+  repeated string mirrors = 17;
+  string profile = 18;
+  ToolchainReport toolchain = 19;
+  int32 jobs_active = 20;
+  double reserved_gb = 21;
+  bool admin_drain = 22;
+  repeated string warm_repos = 23;
+  int32 max_jobs = 24; // local limits (NodeState)
+  double reserved_mem_gb = 25;
+  TailnetState tailnet = 26; // workers: as reported; clients: none
+}
+
+message ListNodesRequest {
+  bool all = 1; // include clients/admins and revoked nodes
+}
+
+message ListNodesResponse {
+  repeated NodeInfo nodes = 1;
+}
+
+message FleetJob {
+  string worker = 1;
+  Job job = 2;
+  google.protobuf.Timestamp updated_at = 3;
+  bool worker_online = 4;
+}
+
+message FleetJobsRequest {
+  string worker = 1; // "" = all
+  repeated JobState states = 2;
+  int32 limit = 3;
+}
+
+message FleetJobsResponse {
+  repeated FleetJob jobs = 1;
+}
+
+message FleetJobRequest {
+  string id = 1;
+  string worker = 2; // optional
+}
+
+message EventsRequest {
+  repeated string kinds = 1; // "job", "node", "queue"; empty = all
+  string job_id = 2; // only this job
+}
+
+message FleetEvent {
+  google.protobuf.Timestamp time = 1;
+  string kind = 2; // job | node | queue
+  string node = 3;
+  FleetJob job = 4;
+  NodeInfo node_info = 5;
+  string message = 6;
+}
+
+message PlaceRequest {
+  string job_id = 1;
+  string repo = 2; // mirror key, for cache affinity
+  double mem_gb = 3; // reservation; 0 = by type
+  string type = 4; // claude | copilot | build | ... (default mem by type)
+  map<string, string> require = 5; // label constraints, e.g. os=linux
+  bool no_queue = 6; // fail instead of queueing
+  repeated string exclude = 7;
+}
+
+message PlaceUpdate {
+  string state = 1; // queued | assigned
+  int32 position = 2; // 1-based queue position
+  string worker = 3;
+  double score = 4;
+  string reason = 5; // why nobody passed / the winning score
+  double mem_gb = 6; // the reservation made
+  NodeInfo node = 7;
+}
+
+message AuditRequest {
+  string node = 1;
+  google.protobuf.Timestamp since = 2;
+  int32 limit = 3; // newest first; default 200
+}
+
+message AuditRecord {
+  string node = 1;
+  google.protobuf.Timestamp time = 2;
+  string who = 3;
+  string method = 4;
+  string json = 5; // the full record
+}
+
+message AuditResponse {
+  repeated AuditRecord records = 1;
+}
+
+message WhoamiRequest {}
+
+message WhoamiResponse {
+  string name = 1;
+  string role = 2;
+  string hub_name = 3;
+  string hub_version = 4;
+  google.protobuf.Timestamp cert_not_after = 5;
+  google.protobuf.Duration renew_before = 6;
+  TailnetInfo tailnet = 7; // the hub's tailnet (clients switch / re-key on it)
+}
+
+// ---------------------------------------------------------------- HubAdmin
+
+service HubAdmin {
+  rpc CreateJoinCode(CreateJoinCodeRequest) returns (JoinCode);
+  rpc ListJoinCodes(ListJoinCodesRequest) returns (ListJoinCodesResponse);
+  rpc Approve(NodeRequest) returns (NodeInfo);
+  // Revoke revokes all certificates of the node; workers get the new list
+  // with their next heartbeat and reject the node's certificates.
+  rpc Revoke(NodeRequest) returns (NodeInfo);
+  rpc SetDrain(SetDrainRequest) returns (NodeInfo);
+  rpc SetLabels(SetLabelsRequest) returns (NodeInfo);
+  rpc PutProfile(Profile) returns (Profile);
+  rpc ListProfiles(ListProfilesRequest) returns (ListProfilesResponse);
+  rpc AssignProfile(AssignProfileRequest) returns (NodeInfo);
+  rpc ListReleases(ListReleasesRequest) returns (ListReleasesResponse);
+  rpc PushRelease(PushReleaseRequest) returns (Rollout);
+  // PublishRelease uploads release files signed on the admin's machine
+  // (longarm admin release publish): the hub never holds the private key.
+  rpc PublishRelease(stream ReleaseUpload) returns (ReleaseVersion);
+  rpc GetRollout(GetRolloutRequest) returns (Rollout);
+  rpc AbortRollout(GetRolloutRequest) returns (Rollout);
+  // KillJob kills a job through its worker's hub session (web panel,
+  // longarm admin kill).
+  rpc KillJob(FleetJobRequest) returns (FleetJob);
+  // JobLogs reads a job's output through its worker's hub session (polling
+  // the worker while follow is set). Meant for the panel; longarm logs talks to
+  // the worker directly.
+  rpc JobLogs(HubLogsRequest) returns (stream LogChunk);
+  // SubmitJob runs a command job on a worker ("" / "auto" = placed by the
+  // scheduler) through its hub session: no secrets, no repo upload.
+  rpc SubmitJob(HubSubmitRequest) returns (FleetJob);
+  // ToolchainApply asks a worker to reconcile its toolchain profile now
+  // (longarmd toolchain apply, remotely).
+  rpc ToolchainApply(NodeRequest) returns (NodeInfo);
+  // TailnetStatus: the hub's tailnet provider and every node's tailnet
+  // state (longarm admin tailnet status).
+  rpc TailnetStatus(TailnetStatusRequest) returns (TailnetStatusResponse);
+  // TailnetRekey makes a node drop its tailnet identity and enrol again
+  // with a fresh key: pushed to an online worker at once, otherwise on its
+  // next hub session (clients: their next hub contact).
+  rpc TailnetRekey(NodeRequest) returns (TailnetNodeStatus);
+}
+
+message HubLogsRequest {
+  string id = 1;
+  string worker = 2;
+  int64 offset = 3; // negative = that many bytes before the end
+  bool follow = 4;
+}
+
+message HubSubmitRequest {
+  string worker = 1; // "" or "auto" = placed by the scheduler
+  repeated string argv = 2;
+  string name = 3;
+  string cwd = 4;
+  map<string, string> env = 5;
+  map<string, string> labels = 6;
+  map<string, string> require = 7; // placement label constraints
+  double mem_gb = 8;
+}
+
+message CreateJoinCodeRequest {
+  string role = 1; // worker (default) | client | admin
+  google.protobuf.Duration ttl = 2; // default 10m
+  map<string, string> labels = 3;
+  string profile = 4; // toolchain profile for workers
+  string name = 5; // optional fixed node name
+}
+
+message JoinCode {
+  string code = 1; // only in the CreateJoinCode response
+  string role = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  map<string, string> labels = 4;
+  string profile = 5;
+  string created_by = 6;
+  bool used = 7;
+  string used_by = 8;
+  string id = 9; // short id (hash prefix), for listing
+  string name = 10;
+}
+
+message ListJoinCodesRequest {}
+
+message ListJoinCodesResponse {
+  repeated JoinCode codes = 1;
+}
+
+message NodeRequest {
+  string name = 1;
+}
+
+message SetDrainRequest {
+  string name = 1;
+  bool draining = 2;
+}
+
+message SetLabelsRequest {
+  string name = 1;
+  map<string, string> labels = 2; // "" value deletes
+}
+
+message Profile {
+  string name = 1;
+  repeated ToolSpec tools = 2;
+  int64 revision = 3; // assigned by the hub
+  google.protobuf.Timestamp updated_at = 4;
+  // Rollout of the latest revision: "canary" (one node first) ->
+  // "rolling" (all nodes) -> "done"; "halted" when the canary failed.
+  string rollout = 5;
+  string canary = 6;
+  string message = 7;
+}
+
+message ListProfilesRequest {}
+
+message ListProfilesResponse {
+  repeated Profile profiles = 1;
+}
+
+message AssignProfileRequest {
+  string node = 1;
+  string profile = 2; // "" = none
+}
+
+// ------------------------------------------------------------- tailnet (P2)
+
+message TailnetAuth {
+  string control_url = 1; // tsnet ControlURL (Tailscale's or a Headscale URL; never empty)
+  string auth_key = 2; // one-time pre-authorized key
+  string hostname = 3; // suggested tailnet hostname (longarm-<name> / longarm-client-<name>)
+  repeated string tags = 4; // tags the key carries
+  bool ephemeral = 5;
+  string provider = 6; // tailscale | headscale
+}
+
+message TailnetKeyRequest {
+  // Why the node needs a key (logged by the hub): "enrol", "no state",
+  // "login needed", "provider switch", "rekey".
+  string reason = 1;
+}
+
+// TailnetInfo is the hub's tailnet as told to nodes.
+message TailnetInfo {
+  string provider = 1; // tailscale | headscale | "" = none (nodes stop their hub-managed leg)
+  string control_url = 2;
+  bool rekey = 3; // an admin asked this node to enrol again (longarm admin tailnet rekey)
+}
+
+// TailnetState is a node's embedded tailscale node.
+message TailnetState {
+  string control_url = 1;
+  // starting | running | needs-key | error | off
+  string state = 2;
+  string hostname = 3; // requested hostname
+  string dns_name = 4; // the name the control server gave it (Tailscale may suffix -1, -2 ...)
+  repeated string ips = 5;
+  string error = 6;
+  google.protobuf.Timestamp since = 7;
+}
+
+message TailnetStatusRequest {}
+
+message TailnetNodeStatus {
+  string name = 1;
+  string role = 2;
+  bool online = 3; // workers: hub session
+  TailnetState state = 4; // workers' report
+  google.protobuf.Timestamp key_minted_at = 5; // last key the hub minted for it
+  string key_control_url = 6; // ... and for which control server
+  string key_reason = 7;
+  bool rekey_pending = 8;
+}
+
+message TailnetStatusResponse {
+  string provider = 1; // tailscale | headscale | none
+  string control_url = 2;
+  string tailnet = 3; // tailscale: the tailnet the keys are minted in
+  repeated string worker_tags = 4;
+  repeated string client_tags = 5;
+  bool ephemeral_clients = 6;
+  google.protobuf.Duration key_ttl = 7;
+  repeated TailnetNodeStatus nodes = 8;
+  // The last key the hub failed to mint (cleared by the next minted key):
+  // error text (redacted), when and for which node.
+  string last_mint_error = 9;
+  google.protobuf.Timestamp last_mint_error_at = 10;
+  string last_mint_error_node = 11;
+}
+
+// -------------------------------------------------------- self-update (P2)
+
+message UpdateStatus {
+  // applying | restarting | checking | ok | rolled_back | failed
+  string state = 1;
+  string from = 2;
+  string to = 3;
+  string error = 4;
+  google.protobuf.Timestamp at = 5;
+}
+
+message UpdateHint {
+  string version = 1;
+}
+
+message UpdateCheckRequest {
+  string os = 1;
+  string arch = 2;
+  string version = 3; // running version
+  string channel = 4;
+}
+
+message UpdateCheckResponse {
+  string version = 1; // target version; "" or == running = stay
+  repeated ReleaseFile files = 2; // files of the target for the node's os/arch
+  string rollout = 3; // human-readable rollout state
+}
+
+message ReleaseFile {
+  string name = 1; // longarmd-windows-amd64.exe
+  string sha256 = 2; // hex
+  int64 size = 3;
+  bytes signature = 4; // the .minisig file
+  string os = 5;
+  string arch = 6;
+}
+
+message ReleaseFileRequest {
+  string version = 1;
+  string name = 2;
+  int64 offset = 3; // resume
+}
+
+message ReleaseVersion {
+  string version = 1;
+  string channel = 2;
+  google.protobuf.Timestamp added_at = 3;
+  repeated ReleaseFile files = 4;
+  bool signed = 5; // every update binary has a signature
+}
+
+// ReleaseUpload is one message of PublishRelease: the header first, then
+// every file as chunks (name on each chunk; the signature, if any, on the
+// file's last chunk).
+message ReleaseUpload {
+  oneof msg {
+    ReleaseUploadHeader header = 1;
+    ReleaseUploadChunk chunk = 2;
+  }
+}
+
+message ReleaseUploadHeader {
+  string version = 1;
+  string channel = 2; // default stable
+  bool replace = 3; // overwrite an existing version (else refused)
+}
+
+message ReleaseUploadChunk {
+  string name = 1; // longarmd-windows-amd64.exe, longarm-linux-amd64.deb ...
+  bytes data = 2;
+  bool last = 3; // the file is complete
+  bytes signature = 4; // <name>.minisig (with last)
+}
+
+message ListReleasesRequest {}
+
+message ListReleasesResponse {
+  repeated ReleaseVersion releases = 1;
+  Rollout rollout = 2; // the current / last rollout
+}
+
+message PushReleaseRequest {
+  string version = 1;
+  int32 canary = 2; // canary nodes first (default 1; 0 = no canary)
+  google.protobuf.Duration wait = 3; // canary must stay healthy this long (default 30m)
+  int32 batch = 4; // nodes per batch after the canary (0 = all at once)
+  google.protobuf.Duration batch_wait = 5; // between batches (default 5m)
+  bool allow_downgrade = 6;
+  repeated string nodes = 7; // limit to these workers (default: all of the channel)
+}
+
+message GetRolloutRequest {}
+
+message Rollout {
+  string version = 1;
+  string channel = 2;
+  string state = 3; // canary | rolling | done | halted | aborted
+  repeated string canary = 4;
+  repeated string targeted = 5; // nodes told to run version
+  repeated string updated = 6; // nodes that report version and are healthy
+  repeated string failed = 7; // nodes that rolled back / failed
+  repeated string waiting = 8; // nodes not targeted yet
+  string message = 9;
+  google.protobuf.Timestamp started_at = 10;
+  google.protobuf.Timestamp phase_since = 11; // start of the current wait
+  google.protobuf.Duration wait = 12;
+  int32 batch = 13;
+  google.protobuf.Duration batch_wait = 14;
+  string previous = 15; // version most nodes ran before
+  bool allow_downgrade = 16;
+}
+
+message LeaveRequest {
+  string reason = 1;
+  // longarmd leave --force (local API): leave locally even if the hub is
+  // unreachable (the hub ignores it).
+  bool force = 2;
+}
+
+message LeaveResponse {
+  string name = 1;
+  string message = 2;
+}

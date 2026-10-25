@@ -1,0 +1,21 @@
+name: Feature request
+description: Suggest an idea or an improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How could Longarm help? Alternatives you considered?
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Agents you use (Claude Code, Copilot CLI, ...), number and OS of workers, network setup.

@@ -1,0 +1,66 @@
+# longarm-hub configuration (longarm-hub serve --config hub.toml)
+data_dir = "/data"                 # /var/lib/longarm-hub with the systemd unit
+name = "hub"                       # name in the hub's certificate
+listen = ":7443"                   # gRPC API + longnet relay TLS fallback (told apart by ALPN)
+relay_udp = ":7443"                # longnet relay (QUIC); "off" disables the relay
+relay_stun2 = ":7444"              # second STUN port (NAT type detection; "auto" = relay_udp port + 1, "off")
+# relay_stun_advertise = [":7443", ":7444"]   # STUN endpoints told to nodes (":port" = hub IP, or host:port)
+relay_rate = "32M"                 # per relay session, bytes/s ("0" = unlimited)
+http = "0.0.0.0:7480"              # in docker; use "127.0.0.1:7480" with systemd
+public_url = "https://hub.example.com"   # base URL in install scripts
+public_addr = "203.0.113.10:7443"             # address nodes dial (install scripts, cert SAN)
+hosts = ["hub.example.com"]              # extra SANs of the hub certificate
+auto_approve = false               # joining workers wait for `longarm admin approve <name>`
+
+[certs]
+worker_ttl = "2160h"               # 90 days
+client_ttl = "720h"                # 30 days (client and admin)
+# renew_before = "240h"            # default: a third of each TTL; must be shorter than both
+
+[scheduler]
+gate_free_gb = 20.0                # DESIGN §5.2 gate: free memory >= 20 GB
+gate_cpu = 70.0                    # and CPU < 70 %
+reservation_ttl = "2m"             # placements never submitted are released
+[scheduler.mem_gb]                 # reservations by job type (longarm run --type / --mem-gb)
+claude = 2.0
+copilot = 2.0
+build = 8.0
+test = 4.0
+default = 2.0
+
+[web]
+session_ttl = "12h"
+trusted_proxies = ["127.0.0.0/8", "172.16.0.0/12"]   # Caddy on the host -> docker bridge
+
+[heartbeat]
+interval = "2s"                    # metrics period asked from workers
+offline = "10s"                    # no report for this long = offline
+
+[releases]                         # self-update (longarm admin release push)
+# public_key = "RWQ..."            # minisign key of `longarm-hub release keygen`: release add then refuses bad signatures
+
+# The tailscale leg: the embedded tsnet node of longarmd / longarm (no tailscaled needed).
+# The hub mints one-time, pre-authorized, tagged keys (tag:longarm-worker / tag:longarm-client)
+# for every node it enrolls. One switch picks the control plane (README:
+# "Tailnet provider: Tailscale (default) or Headscale").
+[tailnet]
+provider = "tailscale"             # "tailscale" | "headscale" | "none"
+ephemeral_clients = true           # longarm / longarm daemon / longarm mcp nodes; workers are never ephemeral
+key_ttl = "1h"                     # lifetime of a minted (one-time) key
+# worker_tags = ["tag:longarm-worker"]
+# client_tags = ["tag:longarm-client"]
+
+[tailnet.tailscale]                # trust credential (OAuth client): scope auth_keys only, tag tag:longarm-hub (owner of the node tags; deploy/hub/README.md)
+oauth_secret_file = "/etc/longarm-hub/tailscale-oauth.secret"   # root:longarm-hub 0640; or env LONGARM_HUB_TAILSCALE_OAUTH_SECRET
+# oauth_client_id = ""             # default: from the secret (tskey-client-<id>-...)
+# tailnet = "-"                    # the OAuth client's tailnet
+# api_url = "https://api.tailscale.com"
+# control_url = ""                 # Tailscale's default control server
+
+# Self-hosted alternative (deploy/headscale); provider = "headscale" to use it.
+# (The old [headscale] section is still accepted and means provider = "headscale".)
+# [tailnet.headscale]
+# url = "https://hs.example.com"        # tsnet ControlURL handed to nodes
+# api_url = "http://127.0.0.1:8080"      # where the hub reaches the REST API (default: url)
+# api_key_file = "/etc/longarm-hub/headscale-api.key"   # or env LONGARM_HUB_HEADSCALE_API_KEY
+# user = ""                              # Headscale < 0.28: keys need a user

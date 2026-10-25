@@ -1,0 +1,8 @@
+# Litestream: replicate the hub database to Azure Blob Storage.
+dbs:
+  - path: /data/hub.db
+    replicas:
+      - type: abs
+        account-name: YOUR_STORAGE_ACCOUNT
+        bucket: longarm-hub
+        path: hub.db

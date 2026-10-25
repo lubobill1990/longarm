@@ -1,0 +1,23 @@
+name: go-setup
+description: >-
+  Go from go.mod (actions/setup-go) plus a tool dir ($LONGARM_TOOLS) for the
+  pinned tools of .github/scripts/fetch-tool.sh. CI jobs use the actions
+  cache; release jobs pass cache: "false" so they build from fresh module
+  and build caches (nothing a pull request job saved can end up in a
+  release or next to its secrets).
+inputs:
+  cache:
+    description: Use the actions cache for Go modules and the build cache
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: tool dir
+      shell: bash
+      run: |
+        mkdir -p "$RUNNER_TEMP/longarm-tools"
+        echo "LONGARM_TOOLS=$RUNNER_TEMP/longarm-tools" >>"$GITHUB_ENV"
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+        cache: ${{ inputs.cache == 'true' }}

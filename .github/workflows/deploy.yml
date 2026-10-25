@@ -1,0 +1,115 @@
+# Manual deploys and rollbacks of a version that is already on the hub
+# (docs/ci-cd.md "Rolling back"). Same repository secrets, same
+# credentials and the same order as release.yml: hub first, then the fleet.
+# Runs only from main. Needs the variables LONGARM_HUB (fleet) and HUB_SSH (hub).
+#
+#   hub:   deploy <version> | rollback (longarm-hub.prev) | status | none
+#   fleet: longarm admin release push <version> --canary 1 --wait <canary_wait>;
+#          fails when the rollout halts. Moving workers to an OLDER version is
+#          admin-only (longarm admin release push <v> --allow-downgrade with an
+#          admin certificate): the CI's release certificate can't downgrade.
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version on the hub (e.g. 1.4.2); ignored by hub rollback/status
+        required: true
+        type: string
+      hub:
+        description: longarm-hub on the hub
+        type: choice
+        options: [none, deploy, rollback, status]
+        default: none
+      fleet:
+        description: Roll the version out to the workers (not older than theirs)
+        type: boolean
+        default: false
+      canary_wait:
+        description: How long the canary must stay healthy
+        type: string
+        default: 15m
+
+permissions:
+  contents: read
+
+concurrency:
+  group: longarm-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: check inputs
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: validate
+        env:
+          VERSION: ${{ inputs.version }}
+          WAIT: ${{ inputs.canary_wait }}
+        run: |
+          if ! [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.]{0,31})?$ ]]; then
+            echo "::error::version '$VERSION' is not MAJOR.MINOR.PATCH[-prerelease] (no leading v)"
+            exit 1
+          fi
+          if ! [[ $WAIT =~ ^[0-9]+(s|m|h)$ ]]; then
+            echo "::error::canary_wait '$WAIT' is not like 15m"
+            exit 1
+          fi
+
+  hub:
+    name: hub (${{ inputs.hub }})
+    needs: check
+    if: github.ref == 'refs/heads/main' && inputs.hub != 'none'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github
+      - name: longarm-hub-deploy
+        env:
+          HUB_SSH: ${{ vars.HUB_SSH }}
+          HUB_DEPLOY_SSH_KEY: ${{ secrets.HUB_DEPLOY_SSH_KEY }}
+          HUB_SSH_KNOWN_HOSTS: ${{ secrets.HUB_SSH_KNOWN_HOSTS }}
+          ACTION: ${{ inputs.hub }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          case $ACTION in
+          deploy)
+            .github/scripts/hub-deploy.sh check "$VERSION"
+            .github/scripts/hub-deploy.sh deploy "$VERSION"
+            ;;
+          rollback | status) .github/scripts/hub-deploy.sh "$ACTION" ;;
+          esac
+
+  fleet:
+    name: fleet (push ${{ inputs.version }})
+    needs: [check, hub]
+    # after the hub (when it ran and succeeded), or alone
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && inputs.fleet && needs.check.result == 'success' && (needs.hub.result == 'success' || needs.hub.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/go-setup
+        with:
+          cache: "false"
+      - name: build longarm
+        run: go build -trimpath -o "$RUNNER_TEMP/longarm" ./cmd/longarm
+      - name: longarm admin release push
+        env:
+          LONGARM_HUB: ${{ vars.LONGARM_HUB }}
+          LONGARM_RELEASE_TLS: ${{ secrets.LONGARM_RELEASE_TLS }}
+          VERSION: ${{ inputs.version }}
+          WAIT: ${{ inputs.canary_wait }}
+        run: .github/scripts/longarm-release.sh rollout "$RUNNER_TEMP/longarm" "$VERSION" "$WAIT"

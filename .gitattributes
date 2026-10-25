@@ -1,0 +1,2 @@
+internal/webui/dist/** linguist-generated=true -diff
+proto/longarm/v1/*.pb.go linguist-generated=true

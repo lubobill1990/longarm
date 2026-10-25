@@ -1,0 +1,302 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Longarm MSI (WiX v5): longarm, longarmd (+ longarm-tray when built), DESIGN §11.2.
+
+  Build:  pwsh packaging/windows/build-msi.ps1 -BinDir <dir with longarm.exe longarmd.exe [longarm-tray.exe]> -Version 1.2.3 -Arch x64
+  Silent: msiexec /i longarm.msi /qn ROLES=worker HUB=hub.example.com JOIN_CODE=K7P-Q2M [CA_FINGERPRINT=...]
+          SERVICE_USER=.\alice SERVICE_PASSWORD=...   (required for workers; or SERVICE_ACCOUNT=LocalSystem)
+          [SERVICE_NAME=longarmd] [DATADIR=C:\ProgramData\Longarm\longarmd]
+          [LISTEN=tcp://100.64.0.11:7701,longnet://hub:7443?name=w1]   (longarmd.toml when the data dir has none)
+          [CLIENT_JOIN_CODE=...]   (ROLES=both: JOIN_CODE is the worker's code, CLIENT_JOIN_CODE the client's)
+  Remove: msiexec /x longarm.msi /qn [KEEP_DATA=1]   (the worker leaves its hub first)
+
+  Roles: client = longarm (+ tray); worker = + the longarmd service (auto start, restart on failure);
+  both = the two. The service runs as a normal user account (DESIGN §3.1: jobs then find
+  that user's git / npm / claude settings): interactively the worker role asks for it
+  (default: the installing user) and its password; silently SERVICE_USER + SERVICE_PASSWORD
+  are required, unless SERVICE_ACCOUNT=LocalSystem is given explicitly (jobs then run as
+  SYSTEM; the install log and longarmd.log warn). The account gets "Log on as a service". The
+  data dir is protected (SYSTEM, Administrators and the service account only). Upgrades with
+  a newer MSI keep the account (remembered) but need SERVICE_PASSWORD again for a user account.
+  Inbound UDP+TCP allow rules for longarm.exe, longarmd.exe and longarm-tray.exe (all profiles) are added
+  and removed with the product: Windows Firewall otherwise drops unsolicited inbound UDP,
+  which breaks hole punching (longnet) and Tailscale's direct paths.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
+
+  <?ifndef HasTray ?><?define HasTray = 0 ?><?endif?>
+
+  <Package Name="Longarm" Manufacturer="Longarm contributors" Version="$(var.Version)" Language="1033"
+           UpgradeCode="0d623137-abc8-4dc1-8e7d-32fc483c9e93" Scope="perMachine" Compressed="yes" InstallerVersion="500">
+    <SummaryInformation Description="Longarm client and worker (longarm, longarmd, longarm-tray)" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Longarm is already installed." Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Public properties (silent install), remembered for upgrades/uninstall. -->
+    <Property Id="ROLES" Value="client" Secure="yes">
+      <RegistrySearch Id="RegRoles" Root="HKLM" Key="Software\Longarm" Name="Roles" Type="raw" />
+    </Property>
+    <Property Id="HUB" Secure="yes">
+      <RegistrySearch Id="RegHub" Root="HKLM" Key="Software\Longarm" Name="Hub" Type="raw" />
+    </Property>
+    <Property Id="SERVICE_NAME" Value="longarmd" Secure="yes">
+      <RegistrySearch Id="RegSvc" Root="HKLM" Key="Software\Longarm" Name="ServiceName" Type="raw" />
+    </Property>
+    <Property Id="DATADIR" Secure="yes">
+      <RegistrySearch Id="RegData" Root="HKLM" Key="Software\Longarm" Name="DataDir" Type="raw" />
+    </Property>
+    <Property Id="JOIN_CODE" Secure="yes" Hidden="yes" />
+    <Property Id="CLIENT_JOIN_CODE" Secure="yes" Hidden="yes" />
+    <Property Id="CA_FINGERPRINT" Secure="yes" />
+    <Property Id="NODE_NAME" Secure="yes" />
+    <Property Id="LISTEN" Value="tcp://127.0.0.1:7701" Secure="yes" />
+    <Property Id="SERVICE_USER" Secure="yes" />
+    <Property Id="SERVICE_PASSWORD" Secure="yes" Hidden="yes" />
+    <!-- The account the service runs as: SERVICE_USER, or LocalSystem only when asked for. -->
+    <Property Id="SERVICE_ACCOUNT" Secure="yes" />
+    <Property Id="SAVED_SERVICE_ACCOUNT" Secure="yes">
+      <RegistrySearch Id="RegSvcAccount" Root="HKLM" Key="Software\Longarm" Name="ServiceAccount" Type="raw" />
+    </Property>
+    <Property Id="KEEP_DATA" Secure="yes" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <!-- Repair would re-create the service and needs the account password again (msiexec /fa ... SERVICE_PASSWORD=...). -->
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/lubobill1990/longarm" />
+
+    <!-- Derived (private) properties, computed before costing in both sequences. -->
+    <SetProperty Id="DATADIR" Value="[CommonAppDataFolder]longarm\longarmd" Before="CostFinalize" Sequence="both" Condition="NOT DATADIR" />
+    <SetProperty Id="IsWorker" Value="1" Before="CostFinalize" Sequence="both" Condition='ROLES="worker" OR ROLES="both"' />
+    <SetProperty Id="IsClient" Value="1" Before="CostFinalize" Sequence="both" Condition='ROLES="client" OR ROLES="both"' />
+    <!-- Interactive default for the service account: the installing user. -->
+    <SetProperty Id="SERVICE_USER" Action="SetServiceUserDefault" Value="[%USERDOMAIN]\[LogonUser]" Before="CostFinalize" Sequence="ui"
+                 Condition='NOT SERVICE_USER AND NOT SAVED_SERVICE_ACCOUNT AND %USERDOMAIN~&lt;&gt;"AzureAD"' />
+    <SetProperty Id="SERVICE_USER" Action="SetServiceUserSaved" Value="[SAVED_SERVICE_ACCOUNT]" Before="SetServiceUserDefault" Sequence="ui"
+                 Condition='NOT SERVICE_USER AND SAVED_SERVICE_ACCOUNT AND SAVED_SERVICE_ACCOUNT~&lt;&gt;"LocalSystem"' />
+    <SetProperty Id="SVC_LOCALSYSTEM" Action="SetLocalSystemSaved" Value="1" Before="CostFinalize" Sequence="ui"
+                 Condition='SAVED_SERVICE_ACCOUNT~="LocalSystem"' />
+    <SetProperty Id="SERVICE_ACCOUNT" Action="SetServiceAccountUser" Value="[SERVICE_USER]" Before="SetServiceAccountSaved" Sequence="execute"
+                 Condition='SERVICE_USER AND SERVICE_ACCOUNT~&lt;&gt;"LocalSystem"' />
+    <SetProperty Id="SERVICE_ACCOUNT" Action="SetServiceAccountSaved" Value="[SAVED_SERVICE_ACCOUNT]" Before="CheckServiceAccount" Sequence="execute"
+                 Condition='NOT SERVICE_ACCOUNT AND SAVED_SERVICE_ACCOUNT' />
+    <!-- Workers never fall back to LocalSystem silently (jobs would run as SYSTEM). -->
+    <CustomAction Id="CheckServiceAccount" Error="A worker install needs the account the longarmd service runs jobs as: SERVICE_USER=.\you SERVICE_PASSWORD=... (it gets 'Log on as a service'). To run it as LocalSystem instead (jobs run as SYSTEM, not recommended) pass SERVICE_ACCOUNT=LocalSystem." />
+    <!-- Secrets (JOIN_CODE, CLIENT_JOIN_CODE, CLIENT_CODE, SERVICE_PASSWORD) stay out of verbose
+         logs (msiexec /l*v): the properties are Hidden (masked in property dumps and changes), and
+         every custom action whose target contains one has HideTarget="yes". Hidden alone does not
+         mask a deferred action's formatted command line (CustomActionSchedule(... Target=...)). -->
+    <Property Id="CLIENT_CODE" Hidden="yes" />
+    <CustomAction Id="SetClientCodeJoin" Property="CLIENT_CODE" Value="[JOIN_CODE]" HideTarget="yes" />
+    <CustomAction Id="SetClientCodeClient" Property="CLIENT_CODE" Value="[CLIENT_JOIN_CODE]" HideTarget="yes" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Longarm" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="MenuFolder" Name="Longarm" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="Product" Directory="INSTALLFOLDER">
+      <Component Id="LongarmExe">
+        <File Id="longarm.exe" Source="$(var.BinDir)\longarm.exe" KeyPath="yes">
+          <fw:FirewallException Id="FwLongarmUdp" Name="Longarm longarm (UDP)" Protocol="udp" Scope="any" Profile="all" Description="Longarm: direct (hole-punched) connections" />
+          <fw:FirewallException Id="FwLongarmTcp" Name="Longarm longarm (TCP)" Protocol="tcp" Scope="any" Profile="all" Description="Longarm: port forwards, direct connections" />
+        </File>
+      </Component>
+
+      <!-- longarmd: with the service for workers, without it otherwise (exclusive conditions). -->
+      <Component Id="LongarmdService" Condition="IsWorker" Guid="3e96d676-1a38-455f-a841-7b7642e651c8">
+        <File Id="longarmd.exe" Source="$(var.BinDir)\longarmd.exe" KeyPath="yes">
+          <fw:FirewallException Id="FwLongarmdUdp" Name="Longarm longarmd (UDP)" Protocol="udp" Scope="any" Profile="all" Description="Longarm worker: direct connections (longnet, tailscale)" />
+          <fw:FirewallException Id="FwLongarmdTcp" Name="Longarm longarmd (TCP)" Protocol="tcp" Scope="any" Profile="all" Description="Longarm worker: listeners" />
+        </File>
+        <ServiceInstall Id="LongarmdSvc" Name="[SERVICE_NAME]" DisplayName="Longarm worker ([SERVICE_NAME])"
+                        Description="Longarm worker daemon: runs remote jobs for longarm clients"
+                        Type="ownProcess" Start="auto" ErrorControl="normal" Vital="yes"
+                        Account="[SERVICE_ACCOUNT]" Password="[SERVICE_PASSWORD]"
+                        Arguments='run --data-dir "[DATADIR]" --service-name [SERVICE_NAME] --log-file "[DATADIR]\longarmd.log"'>
+          <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
+                              RestartServiceDelayInSeconds="5" ResetPeriodInDays="1" />
+        </ServiceInstall>
+        <ServiceControl Id="LongarmdSvcCtl" Name="[SERVICE_NAME]" Stop="both" Remove="uninstall" Wait="yes" />
+        <Environment Id="EnvLongarmdData" Name="LONGARM_DATA_DIR" Value="[DATADIR]" System="yes" Action="set" Permanent="no" />
+      </Component>
+      <Component Id="LongarmdPlain" Condition="NOT IsWorker" Guid="0afe2b69-cb68-4395-a6fb-5a51b76aef5b">
+        <File Id="longarmd.plain.exe" Name="longarmd.exe" Source="$(var.BinDir)\longarmd.exe" KeyPath="yes">
+          <fw:FirewallException Id="FwLongarmdPUdp" Name="Longarm longarmd (UDP)" Protocol="udp" Scope="any" Profile="all" Description="Longarm worker: direct connections (longnet, tailscale)" />
+          <fw:FirewallException Id="FwLongarmdPTcp" Name="Longarm longarmd (TCP)" Protocol="tcp" Scope="any" Profile="all" Description="Longarm worker: listeners" />
+        </File>
+      </Component>
+      <!-- Start the service only when it can enroll (a join code was given). -->
+      <Component Id="LongarmdStart" Condition="IsWorker AND JOIN_CODE AND HUB" Guid="5380e22b-7c1c-4756-8c00-1616ee2b4647">
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="ServiceStartedByInstaller" Type="integer" Value="1" KeyPath="yes" />
+        <!-- Wait: a wrong account password fails the install (service logon error) instead of
+             leaving a service that never starts. longarmd reports "running" at once (even while its
+             enrollment waits for approval). -->
+        <ServiceControl Id="LongarmdSvcStart" Name="[SERVICE_NAME]" Start="install" Wait="yes" />
+      </Component>
+
+      <Component Id="Settings" Guid="165786a7-faa0-43e1-9643-f87e8ab45911">
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Roles" Type="string" Value="[ROLES]" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Hub" Type="string" Value="[HUB]" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="ServiceName" Type="string" Value="[SERVICE_NAME]" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="DataDir" Type="string" Value="[DATADIR]" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="ServiceAccount" Type="string" Value="[SERVICE_ACCOUNT]" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
+        <Environment Id="EnvPath" Name="PATH" Value="[INSTALLFOLDER]" Part="last" System="yes" Action="set" Permanent="no" />
+      </Component>
+
+      <?if $(var.HasTray) = 1 ?>
+      <Component Id="Tray">
+        <File Id="longarm_tray.exe" Name="longarm-tray.exe" Source="$(var.BinDir)\longarm-tray.exe" KeyPath="yes">
+          <fw:FirewallException Id="FwTrayUdp" Name="Longarm longarm-tray (UDP)" Protocol="udp" Scope="any" Profile="all" />
+          <fw:FirewallException Id="FwTrayTcp" Name="Longarm longarm-tray (TCP)" Protocol="tcp" Scope="any" Profile="all" />
+        </File>
+        <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="longarm-tray" Type="string" Value='"[INSTALLFOLDER]longarm-tray.exe"' />
+      </Component>
+      <Component Id="TrayShortcut" Directory="MenuFolder" Guid="936cbf15-9d7c-4e3d-8b7a-173b2bb11b9d">
+        <Shortcut Id="TrayMenu" Name="Longarm" Description="Longarm tray" Target="[INSTALLFOLDER]longarm-tray.exe" WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveMenu" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\Longarm" Name="MenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <?endif?>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="longarm" Level="1">
+      <ComponentGroupRef Id="Product" />
+    </Feature>
+
+    <!-- Worker setup: protected data dir, logon right, enrollment (as SYSTEM). -->
+    <CustomAction Id="LongarmdSetup" FileRef="longarmd.exe" Execute="deferred" Impersonate="no" Return="check" HideTarget="yes"
+                  ExeCommand='install-helper setup --data-dir "[DATADIR]" --user "[SERVICE_ACCOUNT]" --hub "[HUB]" --code "[JOIN_CODE]" --ca-fingerprint "[CA_FINGERPRINT]" --listen "[LISTEN]" --name "[NODE_NAME]" --log "[TempFolder]longarm-install.log"' />
+    <!-- An install that fails after LongarmdSetup (e.g. the service can't log on: wrong password)
+         takes back the enrollment LongarmdSetup made (a marker file says so); an existing
+         enrollment (earlier install, KEEP_DATA) is never touched. -->
+    <CustomAction Id="LongarmdSetupRollback" FileRef="longarmd.exe" Execute="rollback" Impersonate="no" Return="ignore"
+                  ExeCommand='install-helper rollback --data-dir "[DATADIR]" --log "[TempFolder]longarm-install.log"' />
+    <!-- Client enrollment, as the installing user (writes ~\.config\longarm). -->
+    <CustomAction Id="LongarmJoin" FileRef="longarm.exe" Execute="deferred" Impersonate="yes" Return="ignore" HideTarget="yes"
+                  ExeCommand='join "[HUB]" "[CLIENT_CODE]" --ca-fingerprint "[CA_FINGERPRINT]" --name "[NODE_NAME]"' />
+    <!-- Uninstall: leave the hub, stop jobs, remove the data dir (KEEP_DATA=1 keeps jobs/mirrors). -->
+    <CustomAction Id="LongarmdRemove" FileRef="longarmd.exe" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand='install-helper remove --data-dir "[DATADIR]" --log "[TempFolder]longarm-uninstall.log"' />
+    <CustomAction Id="LongarmdRemoveKeep" FileRef="longarmd.exe" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand='install-helper remove --keep-data --data-dir "[DATADIR]" --log "[TempFolder]longarm-uninstall.log"' />
+
+    <InstallExecuteSequence>
+      <Custom Action="CheckServiceAccount" Before="InstallInitialize"
+              Condition='IsWorker AND NOT REMOVE="ALL" AND (NOT Installed OR REINSTALL) AND (NOT SERVICE_ACCOUNT OR (SERVICE_ACCOUNT~&lt;&gt;"LocalSystem" AND NOT SERVICE_PASSWORD))' />
+      <Custom Action="SetClientCodeJoin" Before="SetClientCodeClient" Condition='ROLES="client" AND JOIN_CODE' />
+      <Custom Action="SetClientCodeClient" Before="InstallInitialize" Condition='CLIENT_JOIN_CODE' />
+      <Custom Action="LongarmdSetupRollback" Before="LongarmdSetup" Condition='IsWorker AND JOIN_CODE AND HUB AND NOT REMOVE="ALL"' />
+      <Custom Action="LongarmdSetup" After="InstallServices" Condition='IsWorker AND NOT REMOVE="ALL"' />
+      <Custom Action="LongarmJoin" After="LongarmdSetup" Condition='IsClient AND CLIENT_CODE AND HUB AND NOT REMOVE="ALL"' />
+      <Custom Action="LongarmdRemove" After="StopServices" Condition='IsWorker AND REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND NOT KEEP_DATA' />
+      <Custom Action="LongarmdRemoveKeep" After="StopServices" Condition='IsWorker AND REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND KEEP_DATA' />
+    </InstallExecuteSequence>
+
+    <UIRef Id="LongarmUI" />
+  </Package>
+
+  <!-- UI: Welcome -> Roles (client / worker / both, hub, join code) -> Ready. -->
+  <Fragment>
+    <UI Id="LongarmUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+      <DialogRef Id="WelcomeDlg" />
+      <DialogRef Id="VerifyReadyDlg" />
+      <DialogRef Id="MaintenanceWelcomeDlg" />
+      <DialogRef Id="MaintenanceTypeDlg" />
+
+      <Dialog Id="RolesDlg" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Role of this machine" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Use it to run jobs remotely (client), offer it as a worker, or both." />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="Roles" Type="RadioButtonGroup" X="20" Y="54" Width="330" Height="54" Property="ROLES">
+          <RadioButtonGroup Property="ROLES">
+            <RadioButton Value="client" X="0" Y="0" Width="330" Height="16" Text="&amp;Client: longarm (and the tray) to use the fleet" />
+            <RadioButton Value="worker" X="0" Y="18" Width="330" Height="16" Text="&amp;Worker: install the longarmd service and accept jobs" />
+            <RadioButton Value="both" X="0" Y="36" Width="330" Height="16" Text="&amp;Both" />
+          </RadioButtonGroup>
+        </Control>
+        <Control Id="HubLabel" Type="Text" X="20" Y="116" Width="330" Height="10" Text="Hub address (optional, e.g. hub.example.com):" />
+        <Control Id="HubEdit" Type="Edit" X="20" Y="128" Width="330" Height="17" Property="HUB" />
+        <Control Id="CodeLabel" Type="Text" X="20" Y="152" Width="330" Height="10" Text="Join code (optional; for Both, the worker's code - or enter it later in the tray):" />
+        <Control Id="CodeEdit" Type="Edit" X="20" Y="164" Width="120" Height="17" Property="JOIN_CODE" />
+        <Control Id="FpLabel" Type="Text" X="20" Y="188" Width="330" Height="10" Text="Hub CA fingerprint (optional, recommended):" />
+        <Control Id="FpEdit" Type="Edit" X="20" Y="200" Width="330" Height="17" Property="CA_FINGERPRINT" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="ServiceAccountDlg" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Worker service account" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="The longarmd service runs remote jobs as this Windows account." />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="Explain" Type="Text" X="20" Y="54" Width="330" Height="30" NoPrefix="yes"
+                 Text="Jobs see this account's profile: its git, npm, pnpm and claude settings and credentials. It gets the 'Log on as a service' right. Usually your own account." />
+        <Control Id="UserLabel" Type="Text" X="20" Y="90" Width="330" Height="10" Text="Account (DOMAIN\user or .\user):" />
+        <Control Id="UserEdit" Type="Edit" X="20" Y="102" Width="220" Height="17" Property="SERVICE_USER" />
+        <Control Id="PassLabel" Type="Text" X="20" Y="126" Width="330" Height="10" Text="Password of that account:" />
+        <Control Id="PassEdit" Type="Edit" X="20" Y="138" Width="220" Height="17" Property="SERVICE_PASSWORD" Password="yes" />
+        <Control Id="LocalSystem" Type="CheckBox" X="20" Y="168" Width="330" Height="17" Property="SVC_LOCALSYSTEM" CheckBoxValue="1"
+                 Text="Run as LocalSystem instead (jobs run as SYSTEM; not recommended)" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+      <Dialog Id="NeedPasswordDlg" Width="260" Height="85" Title="[ProductName] Setup" NoMinimize="yes">
+        <Control Id="Text" Type="Text" X="15" Y="12" Width="230" Height="40" NoPrefix="yes"
+                 Text="Enter the account and its password, or choose to run the service as LocalSystem." />
+        <Control Id="OK" Type="PushButton" X="102" Y="58" Width="56" Height="17" Default="yes" Cancel="yes" Text="!(loc.WixUIOK)">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="RolesDlg" Condition="NOT Installed" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="Installed AND PATCH" />
+      <Publish Dialog="RolesDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
+      <Publish Dialog="RolesDlg" Control="Next" Event="NewDialog" Value="ServiceAccountDlg" Condition='ROLES="worker" OR ROLES="both"' />
+      <Publish Dialog="RolesDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition='ROLES="client"' />
+      <Publish Dialog="ServiceAccountDlg" Control="Back" Event="NewDialog" Value="RolesDlg" />
+      <Publish Dialog="ServiceAccountDlg" Control="Next" Property="SERVICE_ACCOUNT" Value="LocalSystem" Order="1" Condition="SVC_LOCALSYSTEM" />
+      <Publish Dialog="ServiceAccountDlg" Control="Next" Property="SERVICE_ACCOUNT" Value="{}" Order="2" Condition="NOT SVC_LOCALSYSTEM" />
+      <Publish Dialog="ServiceAccountDlg" Control="Next" Event="SpawnDialog" Value="NeedPasswordDlg" Order="3"
+               Condition="NOT SVC_LOCALSYSTEM AND (NOT SERVICE_USER OR NOT SERVICE_PASSWORD)" />
+      <Publish Dialog="ServiceAccountDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4"
+               Condition="SVC_LOCALSYSTEM OR (SERVICE_USER AND SERVICE_PASSWORD)" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ServiceAccountDlg" Order="1" Condition='NOT Installed AND (ROLES="worker" OR ROLES="both")' />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="RolesDlg" Order="1" Condition='NOT Installed AND ROLES="client"' />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3" Condition="Installed AND PATCH" />
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+    </UI>
+    <UIRef Id="WixUI_Common" />
+  </Fragment>
+</Wix>

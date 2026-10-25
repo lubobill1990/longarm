@@ -1,0 +1,81 @@
+# Headscale configuration for the Longarm tailnet (Headscale 0.29).
+# Reference: https://github.com/juanfont/headscale/blob/v0.29.5/config-example.yaml
+
+# The public URL nodes use (tsnet ControlURL); TLS is terminated by Caddy.
+server_url: https://hs.example.com
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 0.0.0.0:9090
+# The gRPC API is not needed (the hub uses the REST API on listen_addr).
+grpc_listen_addr: 127.0.0.1:50443
+grpc_allow_insecure: false
+
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+  allocation: sequential
+
+derp:
+  server:
+    # Embedded DERP relay, reached at https://hs.example.com/derp through
+    # Caddy (HTTP Upgrade), and STUN on 3478/udp: region 900, next to
+    # Tailscale's public regions below.
+    enabled: true
+    region_id: 900
+    region_code: "longarm"
+    region_name: "Longarm hub"
+    verify_clients: true
+    # STUN: must be reachable from the internet (UDP 3478 in the firewall).
+    stun_listen_addr: "0.0.0.0:3478"
+    private_key_path: /var/lib/headscale/derp_server_private.key
+    automatically_add_embedded_derp_region: true
+    # The VM's public address (helps clients when DNS is flaky).
+    ipv4: 203.0.113.10
+  # Tailscale's public DERP map as well (default): when UDP to this host's
+  # STUN port is filtered on a client's network, the client still finds a
+  # working STUN server and can go direct instead of staying on DERP. Their DERP
+  # servers only relay WireGuard-encrypted packets (end to end between the
+  # nodes) and see node public keys and IPs.
+  # Fully self-hosted instead (nothing at Tailscale Inc.): set `urls: []`
+  # and make sure UDP 3478 to this host is reachable from every network
+  # your nodes use (else they stay on the DERP relay).
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  paths: []
+  # Refresh the fetched map (Tailscale adds and moves regions).
+  auto_update_enabled: true
+  update_frequency: 24h
+
+disable_check_updates: true
+
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+    write_ahead_log: true
+
+log:
+  level: info
+  format: text
+
+policy:
+  mode: file
+  path: /etc/headscale/policy.hujson
+
+dns:
+  # Longarm addresses workers by tailnet IP (advertised through longarm-hub);
+  # MagicDNS is not needed and would only touch the hosts' resolvers.
+  magic_dns: false
+  override_local_dns: false
+  base_domain: longarm.internal
+  nameservers:
+    global: []
+
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"
+
+node:
+  ephemeral:
+    inactivity_timeout: 30m

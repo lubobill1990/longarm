@@ -1,0 +1,35 @@
+# Headscale: the self-hosted Tailscale control plane for Longarm's second
+# network leg (DESIGN §4.2, §4.4), with its embedded DERP relay and STUN.
+#
+#   hs.example.com  ->  the host's existing Caddy (TLS)  ->  127.0.0.1:8080
+#   3478/udp         ->  STUN (public, straight to the container)
+#
+# DERP runs over the same HTTPS port as the control API (HTTP Upgrade, which
+# Caddy's reverse_proxy passes through); only STUN needs its own port.
+#
+#   cd deploy/headscale
+#   docker compose up -d
+#   docker compose exec headscale headscale apikeys create --expiration 365d   # -> longarm-hub [headscale] api key
+#
+# See README.md for the full runbook.
+services:
+  headscale:
+    image: headscale/headscale:v0.29.5
+    restart: unless-stopped
+    command: serve
+    ports:
+      - "127.0.0.1:8080:8080/tcp"   # control API + DERP (behind Caddy)
+      - "127.0.0.1:9090:9090/tcp"   # metrics (local only)
+      - "3478:3478/udp"             # STUN for the embedded DERP (public)
+    volumes:
+      - ./config:/etc/headscale:ro
+      - headscale-data:/var/lib/headscale
+    healthcheck:
+      test: ["CMD", "headscale", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    mem_limit: 256m
+
+volumes:
+  headscale-data:

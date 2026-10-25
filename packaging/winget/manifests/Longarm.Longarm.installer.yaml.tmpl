@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: Longarm.Longarm
+PackageVersion: {{VERSION}}
+MinimumOSVersion: 10.0.17763.0
+InstallerType: wix
+Scope: machine
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+# Role and enrollment go through the MSI properties, e.g.
+#   winget install Longarm.Longarm --override "/qn ROLES=worker HUB=hub.example.com JOIN_CODE=K7P-Q2M SERVICE_USER=.\you SERVICE_PASSWORD=..."
+InstallerSwitches:
+  Custom: ROLES=client
+UpgradeBehavior: install
+Commands:
+  - longarm
+  - longarmd
+Installers:
+  - Architecture: x64
+    InstallerUrl: {{URL_X64}}
+    InstallerSha256: {{SHA256_X64}}
+  - Architecture: arm64
+    InstallerUrl: {{URL_ARM64}}
+    InstallerSha256: {{SHA256_ARM64}}
+ManifestType: installer
+ManifestVersion: 1.6.0

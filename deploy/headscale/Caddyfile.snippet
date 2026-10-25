@@ -1,0 +1,26 @@
+# Add to the host's Caddyfile (next to hub.example.com). Caddy terminates
+# TLS; reverse_proxy passes the HTTP Upgrade that Tailscale's control
+# protocol (/ts2021) and the embedded DERP (/derp) use, and streams
+# long-polls without buffering.
+
+# Tailscale clients probe captive portals over plain HTTP.
+http://hs.example.com {
+	handle /generate_204 {
+		respond 204
+	}
+	handle {
+		redir https://{host}{uri}
+	}
+}
+
+hs.example.com {
+	reverse_proxy 127.0.0.1:8080 {
+		header_up X-Real-IP {remote_host}
+		flush_interval -1
+		# Long-lived map polls and DERP connections.
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+}

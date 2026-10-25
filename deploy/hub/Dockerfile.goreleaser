@@ -1,0 +1,17 @@
+# longarm-hub image built by GoReleaser (dockers_v2) from its prebuilt static
+# binary; same runtime layout as deploy/hub/Dockerfile (distroless, non-root).
+FROM busybox:1.37 AS prep
+RUN mkdir -p /out/data && chown 65532:65532 /out/data
+
+FROM gcr.io/distroless/static-debian12:nonroot
+ARG TARGETPLATFORM
+COPY ${TARGETPLATFORM}/longarm-hub /usr/local/bin/longarm-hub
+COPY --from=prep --chown=65532:65532 /out/data /data
+ENV LONGARM_HUB_DATA_DIR=/data LONGARM_HUB_CONFIG=/etc/longarm-hub/hub.toml
+VOLUME /data
+# 7443/tcp gRPC API + relay TLS fallback, 7443/udp relay (QUIC), 7444/udp second STUN port, 7480 panel/API
+EXPOSE 7443/tcp 7443/udp 7444/udp 7480/tcp
+USER nonroot:nonroot
+HEALTHCHECK --interval=30s --timeout=5s CMD ["/usr/local/bin/longarm-hub", "healthcheck"]
+ENTRYPOINT ["/usr/local/bin/longarm-hub"]
+CMD ["serve"]

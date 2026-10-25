@@ -1,0 +1,18 @@
+// Headscale ACL policy for the Longarm tailnet (DESIGN §4.4).
+//
+// Nodes join with one-time pre-auth keys minted by longarm-hub, tagged
+//   tag:longarm-worker  (longarmd)  /  tag:longarm-client  (longarm, longarm daemon, longarm mcp)
+// The only traffic the fleet needs is client -> worker on longarmd's port
+// (7701; ssh, port forwards and file transfers all go through it, inside
+// Longarm's own mTLS). Deny everything else.
+{
+  "tagOwners": {
+    // Keys are minted by the hub with an API key, so no user needs to own
+    // the tags; add users here only if people should tag devices themselves.
+    "tag:longarm-worker": [],
+    "tag:longarm-client": [],
+  },
+  "acls": [
+    {"action": "accept", "src": ["tag:longarm-client"], "dst": ["tag:longarm-worker:7701"]},
+  ],
+}

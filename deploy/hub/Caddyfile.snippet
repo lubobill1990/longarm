@@ -1,0 +1,6 @@
+# Add to the host's Caddyfile: the panel/API and install scripts.
+hub.example.com {
+	reverse_proxy 127.0.0.1:7480 {
+		flush_interval -1   # server-sent events (/api/events)
+	}
+}

@@ -1,0 +1,225 @@
+// Local control API (DESIGN §11.3): served by longarmd and by the client-side
+// session daemon `longarm daemon` on a channel only the local user can reach
+// (Windows: a named pipe with an owner-only DACL; elsewhere a 0600 unix
+// socket in a private 0700 directory). The same listener also speaks a
+// JSON/SSE gateway (HTTP/1.1) for the tray/UI. Every operation here is
+// also a CLI command (longarmd status|drain|undrain|toolchain|limits|jobs|logs|
+// kill|leave, longarm daemon ..., longarm pool, longarm transport,
+// longarm forward --bg/--list/--stop).
+syntax = "proto3";
+
+package longarm.v1;
+
+import "google/protobuf/timestamp.proto";
+import "longarm/v1/hub.proto";
+import "longarm/v1/longarm.proto";
+
+option go_package = "github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1";
+
+// ---------------------------------------------------------------- longarmd
+
+service LocalWorker {
+  rpc Status(LocalStatusRequest) returns (WorkerStatus);
+  // SetDrain pauses (or resumes) accepting new work: the hub's scheduler
+  // skips a draining worker. Running jobs continue.
+  rpc SetDrain(LocalDrainRequest) returns (WorkerStatus);
+  // ToolchainApply reconciles the assigned toolchain profile now (it still
+  // waits until no job runs).
+  rpc ToolchainApply(ToolchainApplyRequest) returns (ToolchainReport);
+  // Events streams local job changes.
+  rpc Events(LocalEventsRequest) returns (stream LocalEvent);
+  // ListJobs / JobLogs / KillJob: this worker's jobs (longarmd jobs|logs|kill).
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+  rpc JobLogs(LogsRequest) returns (stream LogChunk);
+  rpc KillJob(KillRequest) returns (Job);
+  // SetLimits sets the local limits (persisted; reported to the hub).
+  rpc SetLimits(LocalLimits) returns (WorkerStatus);
+  // Leave unregisters this worker from the hub (its certificates are
+  // revoked) and stops longarmd (longarmd leave).
+  rpc Leave(LeaveRequest) returns (LeaveResponse);
+}
+
+message LocalStatusRequest {}
+
+message LocalLimits {
+  int32 max_jobs = 1; // 0 = no limit
+  double reserved_mem_gb = 2; // memory kept free for the desktop user
+}
+
+message HubLink {
+  string address = 1; // "" = no hub configured
+  bool connected = 2;
+  string error = 3; // last connection error
+  google.protobuf.Timestamp since = 4; // connected / disconnected since
+  string node_state = 5;
+}
+
+message WorkerStatus {
+  string name = 1;
+  string version = 2;
+  string data_dir = 3;
+  repeated string endpoints = 4;
+  HubLink hub = 5;
+  NodeState state = 6;
+  int32 jobs_running = 7;
+  int32 sessions_running = 8;
+  ToolchainReport toolchain = 9;
+  google.protobuf.Timestamp cert_not_after = 10;
+  MetricsSnapshot metrics = 11;
+  int32 revoked_certs = 12;
+  int32 pid = 13;
+  LocalLimits limits = 14;
+  string os = 15;
+  string arch = 16;
+  FirewallStatus firewall = 17; // longarmd.exe (Windows only)
+}
+
+// Windows Firewall verdict for the executable that does the hole punching
+// (longarm.exe for longarm daemon, longarmd.exe for longarmd). Unset outside Windows.
+message FirewallStatus {
+  string program = 1;
+  bool ok = 2;            // an inbound allow rule (UDP) and no Block rule
+  bool allowed = 3;       // an enabled inbound allow rule covers UDP
+  repeated string blocking = 4; // enabled inbound Block rules ("name (profiles)")
+  string problem = 5;     // one line, "" when ok
+  string fix = 6;         // the command that fixes it (run elevated)
+}
+
+message LocalDrainRequest {
+  bool draining = 1;
+  string reason = 2;
+}
+
+message ToolchainApplyRequest {}
+
+message LocalEventsRequest {}
+
+message LocalEvent {
+  google.protobuf.Timestamp time = 1;
+  string kind = 2; // job | hub | drain | toolchain
+  Job job = 3;
+  string message = 4;
+}
+
+// ---------------------------------------------------------------- longarm daemon
+
+service LocalClient {
+  rpc Status(LocalStatusRequest) returns (ClientStatus);
+  // StartForward opens a port forward hosted by the daemon (it outlives the
+  // calling longarm / MCP process).
+  rpc StartForward(StartForwardRequest) returns (ForwardInfo);
+  rpc ListForwards(ListForwardsRequest) returns (ListForwardsResponse);
+  rpc StopForward(StopForwardRequest) returns (ListForwardsResponse);
+  // Events relays the hub's fleet events (notifications for the tray).
+  rpc Events(EventsRequest) returns (stream FleetEvent);
+  // Pool is this client's live view of every worker (longarm pool): metrics
+  // (from the hub's event stream when reachable, else streamed from each
+  // worker directly), and the latency monitor's legs (RTT every 2 s on
+  // every advertised leg, path kind, 5-min history).
+  rpc Pool(PoolRequest) returns (PoolView);
+  // WatchPool streams the pool view every 2 s.
+  rpc WatchPool(PoolRequest) returns (stream PoolView);
+  // ListJobs: jobs from the hub's index (else asked from each worker);
+  // mine = only jobs this client submitted.
+  rpc ListJobs(ClientJobsRequest) returns (FleetJobsResponse);
+  rpc JobLogs(ClientLogsRequest) returns (stream LogChunk);
+  rpc KillJob(FleetJobRequest) returns (Job);
+  // Settings: the transport policy (longarm transport).
+  rpc GetSettings(GetSettingsRequest) returns (ClientSettings);
+  rpc SetSettings(ClientSettings) returns (ClientSettings);
+  // DrainWorker drains / resumes a worker through the hub (longarm admin drain /
+  // undrain; needs this client's certificate to have the admin role).
+  rpc DrainWorker(SetDrainRequest) returns (NodeInfo);
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+message ClientStatus {
+  string identity = 1;
+  HubLink hub = 2;
+  int32 forwards = 3;
+  google.protobuf.Timestamp started_at = 4;
+  int32 pid = 5;
+  string version = 6;
+  string config_dir = 7;
+  string transport = 8; // transport policy (longarm transport)
+  FirewallStatus firewall = 9; // the daemon's longarm.exe (Windows only)
+}
+
+message PoolRequest {
+  bool history = 1; // include per-leg RTT and metrics history
+}
+
+message PoolView {
+  google.protobuf.Timestamp time = 1;
+  // Where the metrics come from: "hub" (all from the hub's stream),
+  // "direct" (all streamed from the workers), "mixed", "none".
+  string source = 2;
+  HubLink hub = 3;
+  repeated PoolWorker workers = 4;
+  string transport = 5; // transport policy
+  string identity = 6;
+  FirewallStatus firewall = 7; // the daemon's longarm.exe (Windows only)
+}
+
+message PoolWorker {
+  string name = 1;
+  string state = 2; // online | connecting | offline
+  google.protobuf.Timestamp since = 3;
+  string source = 4; // hub | direct | none
+  MetricsSnapshot metrics = 5;
+  repeated MetricsPoint history = 6; // ~5 min, every 2 s
+  WorkerLink link = 7; // this client's latency monitor
+  NodeInfo node = 8; // the hub's view (draining, labels, version ...), if known
+  string error = 9;
+  int32 my_jobs = 10; // active jobs this client submitted
+}
+
+message ClientJobsRequest {
+  string worker = 1;
+  bool mine = 2;
+  bool active = 3; // only non-terminal jobs
+  int32 limit = 4;
+}
+
+message ClientLogsRequest {
+  string id = 1;
+  string worker = 2;
+  int64 offset = 3;
+  bool follow = 4;
+}
+
+message GetSettingsRequest {}
+
+message ClientSettings {
+  // The transport policy: race (all legs, the first mTLS handshake wins;
+  // sticky winner) | tcp | tailscale | longnet (prefer that transport).
+  // Persisted in settings.json; LONGARM_TRANSPORT overrides it per process.
+  string transport = 1;
+}
+
+message StartForwardRequest {
+  string worker = 1;
+  string target = 2; // "3131" or "host:port" on the worker
+  int32 local_port = 3; // 0 = same as the target port if free, else any
+  string bind = 4; // default 127.0.0.1
+}
+
+message ForwardInfo {
+  string worker = 1;
+  string target = 2;
+  string local_addr = 3;
+  string url = 4; // http://127.0.0.1:<port>/
+  int64 connections = 5;
+  google.protobuf.Timestamp started_at = 6;
+  string error = 7; // last dial error
+}
+
+message ListForwardsRequest {}
+
+message ListForwardsResponse {
+  repeated ForwardInfo forwards = 1;
+}
+
+message StopForwardRequest {
+  string local_addr = 1; // "127.0.0.1:3131" or the port; "all" = every forward
+}

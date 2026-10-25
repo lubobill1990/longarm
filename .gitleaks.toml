@@ -1,0 +1,10 @@
+# gitleaks (CI lint job): the default rules plus allowlisted test fixtures.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "test fixtures, not secrets"
+regexes = [
+  '''^kAbc123CNTRL$''',            # fake Tailscale key id (internal/hub/tailscale_test.go)
+  '''^LONGARM_TEST_TRAY_URL=$''',   # env var name (e2e/ui_playwright_test.go)
+]

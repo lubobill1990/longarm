@@ -1,0 +1,32 @@
+# systemd unit for longarm-hub without docker:
+#   useradd --system --home /var/lib/longarm-hub longarm-hub
+#   install -m 0755 longarm-hub /usr/local/bin/ && install -D -m 0640 hub.toml /etc/longarm-hub/hub.toml
+#   (data_dir = "/var/lib/longarm-hub", http = "127.0.0.1:7480")
+#   systemctl enable --now longarm-hub
+[Unit]
+Description=Longarm hub (control plane + relay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=longarm-hub
+Group=longarm-hub
+Environment=LONGARM_HUB_DATA_DIR=/var/lib/longarm-hub
+ExecStart=/usr/local/bin/longarm-hub serve --config /etc/longarm-hub/hub.toml
+Restart=always
+RestartSec=2
+StateDirectory=longarm-hub
+StateDirectoryMode=0700
+LimitNOFILE=65536
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/var/lib/longarm-hub
+
+[Install]
+WantedBy=multi-user.target

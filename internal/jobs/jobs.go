@@ -1,0 +1,166 @@
+// Package jobs defines the job model shared by longarmd and its per-job shim:
+// the state machine (DESIGN §5.1), the on-disk job directory and the log
+// offset reader.
+//
+// Job directory (DESIGN §5, <data dir>\jobs\<id>):
+//
+//	<data>/jobs/<id>/
+//	  job.json     spec (written once by longarmd at submit; no secret values)
+//	  status.json  full runtime status; the source of truth (atomic replace)
+//	  state        compat: one word, e.g. "running"
+//	  pid          compat: pid of the job's main process
+//	  exit         compat: exit code, once terminal
+//	  out.log      stdout+stderr bytes, secrets redacted
+//	  result.md    optional, written by agent jobs themselves
+//	  kill         marker: longarmd asks the shim to kill the tree
+//	  shim.log     the shim's own diagnostics
+//
+// Ownership: longarmd writes status.json before spawning the shim and only after
+// the shim is gone; while the shim lives, only the shim writes it.
+package jobs
+
+import (
+	"fmt"
+	"regexp"
+	"time"
+)
+
+// State is a job state (DESIGN §5.1).
+type State string
+
+const (
+	Queued    State = "queued"   // hub-side (P1)
+	Assigned  State = "assigned" // hub-side (P1)
+	Preparing State = "preparing"
+	Running   State = "running"
+	Done      State = "done"
+	Failed    State = "failed"
+	Killed    State = "killed"
+	Lost      State = "lost"
+)
+
+// AllStates in lifecycle order.
+var AllStates = []State{Queued, Assigned, Preparing, Running, Done, Failed, Killed, Lost}
+
+// Terminal reports whether no further transitions happen without outside
+// action. Lost is terminal for P0a (retry/resume policies arrive in P1, which
+// adds lost -> running).
+func (s State) Terminal() bool {
+	switch s {
+	case Done, Failed, Killed, Lost:
+		return true
+	}
+	return false
+}
+
+// Valid reports whether s is a known state.
+func (s State) Valid() bool {
+	for _, x := range AllStates {
+		if s == x {
+			return true
+		}
+	}
+	return false
+}
+
+var transitions = map[State][]State{
+	Queued:    {Assigned, Killed},
+	Assigned:  {Preparing, Queued, Killed},
+	Preparing: {Running, Failed, Killed, Lost},
+	Running:   {Done, Failed, Killed, Lost},
+	Lost:      {Running}, // resume with retries (P1)
+}
+
+// CanTransition reports whether from -> to is allowed. Re-asserting the same
+// state is allowed (idempotent writes).
+func CanTransition(from, to State) bool {
+	if from == to {
+		return true
+	}
+	for _, s := range transitions[from] {
+		if s == to {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckTransition returns an error for a disallowed transition.
+func CheckTransition(from, to State) error {
+	if !CanTransition(from, to) {
+		return fmt.Errorf("invalid job state transition %s -> %s", from, to)
+	}
+	return nil
+}
+
+// Spec is job.json.
+type Spec struct {
+	ID             string            `json:"id"`
+	Name           string            `json:"name,omitempty"`
+	Argv           []string          `json:"argv"`
+	Cwd            string            `json:"cwd,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	SecretEnvNames []string          `json:"secret_env_names,omitempty"`
+	MemLimitBytes  int64             `json:"mem_limit_bytes,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+	SubmittedBy    string            `json:"submitted_by,omitempty"`
+	CreatedAt      time.Time         `json:"created_at"`
+	// Workspace: prepare a git worktree as the working directory (P0b).
+	Workspace *Workspace `json:"workspace,omitempty"`
+	// Pty: run the command in a pseudo terminal with an attach channel
+	// (interactive sessions, <data>/sessions/<name>).
+	Pty bool `json:"pty,omitempty"`
+	// Initial terminal size for Pty.
+	Cols uint16 `json:"cols,omitempty"`
+	Rows uint16 `json:"rows,omitempty"`
+	// LogMaxBytes caps out.log; it rotates to out.log.1 (0 = unlimited).
+	LogMaxBytes int64 `json:"log_max_bytes,omitempty"`
+}
+
+// Workspace describes a git worktree prepared for a job (DESIGN §5.3).
+type Workspace struct {
+	Repo      string `json:"repo"`
+	URL       string `json:"url,omitempty"`
+	Ref       string `json:"ref,omitempty"`
+	Commit    string `json:"commit,omitempty"`
+	StagingID string `json:"staging_id,omitempty"`
+}
+
+// Status is status.json.
+type Status struct {
+	State     State     `json:"state"`
+	Seq       uint64    `json:"seq"` // bumped on every write; change detection
+	CreatedAt time.Time `json:"created_at"`
+	StartedAt time.Time `json:"started_at,omitzero"`
+	EndedAt   time.Time `json:"ended_at,omitzero"`
+	// Main process of the job and its creation-time token (pid reuse guard).
+	PID      int    `json:"pid,omitempty"`
+	PIDStart uint64 `json:"pid_start,omitempty"`
+	// The shim supervising the job.
+	ShimPID   int    `json:"shim_pid,omitempty"`
+	ShimStart uint64 `json:"shim_start,omitempty"`
+	ExitCode  *int   `json:"exit_code,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	// Orphaned: the shim is gone but the main process is still alive; longarmd
+	// adopts it read-only (watches the pid; the exit code will be unknown).
+	Orphaned bool `json:"orphaned,omitempty"`
+	// AttachAddr is the shim's attach channel (Pty jobs): a named pipe on
+	// Windows, a unix socket path elsewhere.
+	AttachAddr string `json:"attach_addr,omitempty"`
+	// Workdir is the prepared worktree of a workspace job.
+	Workdir string `json:"workdir,omitempty"`
+}
+
+var idRE = regexp.MustCompile(`^[0-9A-Za-z_-]{1,64}$`)
+
+// ValidID reports whether id is safe to use as a directory name.
+// Windows reserved device names (CON, NUL, COM1, ...) are rejected on every
+// platform so job dirs stay portable.
+func ValidID(id string) bool { return idRE.MatchString(id) && !reservedRE.MatchString(id) }
+
+var reservedRE = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[0-9]|lpt[0-9])$`)
+
+// Exit codes for jobs without a natural one.
+const (
+	ExitNotFound = 127 // command could not be started
+)

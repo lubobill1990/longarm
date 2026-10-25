@@ -1,0 +1,28 @@
+# longarm-hub from the .deb (config: /etc/longarm-hub/hub.toml, data: /var/lib/longarm-hub)
+[Unit]
+Description=Longarm hub (control plane + relay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=longarm-hub
+Group=longarm-hub
+Environment=LONGARM_HUB_DATA_DIR=/var/lib/longarm-hub
+ExecStart=/usr/bin/longarm-hub serve --config /etc/longarm-hub/hub.toml
+Restart=always
+RestartSec=2
+StateDirectory=longarm-hub
+StateDirectoryMode=0700
+LimitNOFILE=65536
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/var/lib/longarm-hub
+
+[Install]
+WantedBy=multi-user.target

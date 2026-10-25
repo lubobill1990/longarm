@@ -1,0 +1,120 @@
+# CI on GitHub-hosted runners (docs/ci-cd.md).
+#   lint:    privacy check, gofmt, go vet, cross-compile 6 targets, shellcheck, actionlint
+#   test:    full go test on ubuntu-latest, windows-latest and macos-latest
+# Pull requests from forks run with a read-only token and no secrets (the
+# privacy check then skips its private deny-list).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same PR / branch cancels the older run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Opt-in tests (services, MSI, live tailnets, browsers) stay off in CI.
+  LONGARM_SERVICE_TEST: ""
+  LONGARM_MSI_TEST: ""
+  LONGARM_PLAYWRIGHT: ""
+  LONGARM_SCREENSHOTS: ""
+  LONGARM_GITHUB_TEST: ""
+  LONGARM_HEADSCALE_BIN: ""
+  LONGARM_HEADSCALE_DATAPATH: ""
+  LONGARM_TAILSCALE_OAUTH_SECRET_FILE: ""
+  LONGARM_TRAY_CGO: ""
+  TS_AUTHKEY: ""
+
+jobs:
+  lint:
+    name: lint (privacy, fmt, vet, cross-compile, shellcheck, actionlint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: privacy check
+        env:
+          # The deny-list is a secret (publishing it would publish what it
+          # protects); fork PRs don't get it and run the generic checks only.
+          LONGARM_PRIVACY_PATTERNS: ${{ secrets.PRIVACY_PATTERNS }}
+          LONGARM_PRIVACY_REQUIRED: ${{ github.event_name == 'push' && '1' || '' }}
+        run: scripts/privacy-check.sh
+      - uses: ./.github/actions/go-setup
+      - name: gitleaks
+        run: |
+          gl=$(.github/scripts/fetch-tool.sh gitleaks v8.30.1 \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb gitleaks)
+          "$gl/gitleaks" git --redact --no-banner --exit-code 1 .
+          "$gl/gitleaks" dir --redact --no-banner --exit-code 1 .
+      - name: gofmt
+        run: |
+          bad=$(git ls-files -z '*.go' | xargs -0 gofmt -l)
+          if [ -n "$bad" ]; then
+            echo "::error::gofmt -w needed:"
+            echo "$bad"
+            exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: cross-compile (vet, build, e2e test binary) for 6 targets
+        run: |
+          for t in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            echo "::group::$t"
+            export GOOS=${t%/*} GOARCH=${t#*/}
+            go vet ./...
+            go build -o /dev/null ./...
+            go test -c -o /dev/null ./e2e
+            echo "::endgroup::"
+          done
+      - name: shellcheck
+        run: |
+          sc=$(.github/scripts/fetch-tool.sh shellcheck v0.11.0 \
+            https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.gz \
+            b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6 shellcheck-v0.11.0/shellcheck)
+          "$sc/shellcheck" deploy/hub/longarm-hub-deploy .github/scripts/*.sh scripts/*.sh \
+            packaging/build.sh packaging/linux/*.sh packaging/macos/*.sh packaging/macos/scripts/*
+      - name: actionlint
+        # shellcheck (on PATH from the step above) also checks the run: scripts
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -color
+
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash # = bash -eo pipefail: "go test | tee" fails when go test does
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/go-setup
+      - name: go build
+        run: go build ./...
+      - name: go test
+        run: go test -count=1 -timeout 30m ./... 2>&1 | tee "$RUNNER_TEMP/go-test.log"
+      - name: upload test log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: go-test-${{ matrix.os }}
+          path: ${{ runner.temp }}/go-test.log
+          if-no-files-found: ignore
+          retention-days: 14

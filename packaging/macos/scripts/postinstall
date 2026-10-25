@@ -1,0 +1,37 @@
+#!/bin/sh
+# Longarm postinstall (runs as root). Optional unattended setup, read from
+# /Library/Preferences/com.longarm.plist before installing:
+#   sudo defaults write /Library/Preferences/com.longarm Roles worker
+#   sudo defaults write /Library/Preferences/com.longarm Hub hub.example.com
+#   sudo defaults write /Library/Preferences/com.longarm JoinCode K7P-Q2M
+#   sudo defaults write /Library/Preferences/com.longarm User alice
+#   sudo installer -pkg longarm-1.2.3.pkg -target /
+pref=/Library/Preferences/com.longarm
+get() { defaults read "$pref" "$1" 2>/dev/null || true; }
+roles=$(get Roles); hub=$(get Hub); code=$(get JoinCode); user=$(get User); fp=$(get CAFingerprint)
+
+# Application firewall: allow incoming connections for longarm and longarmd (hole
+# punching / tailscale direct paths), only if the firewall is on.
+fw=/usr/libexec/ApplicationFirewall/socketfilterfw
+if [ -x "$fw" ] && "$fw" --getglobalstate | grep -q enabled; then
+  for b in /usr/local/bin/longarmd /usr/local/bin/longarm; do
+    "$fw" --add "$b" >/dev/null 2>&1 || true
+    "$fw" --unblockapp "$b" >/dev/null 2>&1 || true
+  done
+fi
+
+[ -n "$roles" ] && [ -n "$hub" ] && [ -n "$code" ] && [ -n "$user" ] || exit 0
+if [ -n "$fp" ]; then set -- --ca-fingerprint "$fp"; else set --; fi
+case "$roles" in
+  worker|both)
+    sudo -u "$user" /usr/local/bin/longarmd join "$hub" "$code" --no-wait "$@" || exit 0
+    if /usr/local/bin/longarmd service install --user "$user" --data-dir "$(eval echo ~"$user")/.longarm"; then
+      /usr/local/bin/longarmd service start || true
+    fi
+    ;;
+  client)
+    sudo -u "$user" /usr/local/bin/longarm join "$hub" "$code" "$@" || true
+    ;;
+esac
+defaults delete "$pref" JoinCode 2>/dev/null || true
+exit 0

@@ -1,0 +1,49 @@
+name: Bug report
+description: Something doesn't work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! Please remove hostnames, IP addresses, join codes,
+        keys and certificates from logs before posting. Security issues: see
+        SECURITY.md instead of opening an issue.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. longarmd join hub.example.com:7443 <code>
+        2. longarm run worker-1 -- ...
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `longarm --version` / `longarmd --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating systems involved
+      multiple: true
+      options: [Windows, Linux, macOS]
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      multiple: true
+      options: [tcp, tailscale, longnet, not sure]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: longarmd.log / longarm-hub output (redacted)
+      render: text

@@ -1,0 +1,21 @@
+# longarmd as a normal user account (DESIGN §3.1): one instance per account,
+#   systemctl enable --now longarmd@alice
+# runs `longarmd run` as alice with alice's home (~/.longarm, her git/npm/claude).
+# KillMode=process: jobs live in their own shims and survive restarts and
+# self-updates of longarmd.
+[Unit]
+Description=Longarm worker daemon (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+ExecStart=/usr/bin/longarmd run
+Restart=always
+RestartSec=5
+KillMode=process
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

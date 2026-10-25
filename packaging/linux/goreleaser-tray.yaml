@@ -1,0 +1,48 @@
+# GoReleaser (v2) config for the native Linux tray (longarm-tray with Wails v3:
+# GTK 4, WebKitGTK 6.0, libsoup 3 through cgo) and its deb. It needs a Linux
+# amd64 builder with the -dev packages:
+#   sudo apt install build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev
+# packaging/build.sh runs it after the main release when pkg-config finds them:
+#   goreleaser release --clean --snapshot --config packaging/linux/goreleaser-tray.yaml
+version: 2
+project_name: longarm-tray
+dist: dist-tray
+
+builds:
+  - id: longarm-tray-linux
+    main: ./cmd/longarm-tray
+    binary: longarm-tray
+    goos: [linux]
+    goarch: [amd64]
+    env: [CGO_ENABLED=1]
+    flags: [-trimpath, -tags=traynative]
+    ldflags:
+      - -s -w
+      - -X github.com/lubobill1990/longarm/internal/version.Version={{ .Version }}
+
+archives:
+  - id: longarm-tray
+    ids: [longarm-tray-linux]
+    name_template: "longarm-tray_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+
+nfpms:
+  - id: longarm-tray
+    package_name: longarm-tray
+    ids: [longarm-tray-linux]
+    formats: [deb]
+    vendor: Longarm
+    homepage: https://github.com/lubobill1990/longarm
+    maintainer: Longarm contributors <lubobill1990@users.noreply.github.com>
+    description: Longarm tray app (worker load, latency, jobs; popup UI).
+    license: MIT
+    bindir: /usr/bin
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
+    # Runtime libraries of Wails v3's default (GTK 4) Linux backend.
+    dependencies: [longarm, libgtk-4-1, libwebkitgtk-6.0-4, libsoup-3.0-0]
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  disable: true

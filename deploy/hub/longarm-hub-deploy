@@ -1,0 +1,391 @@
+#!/bin/bash
+# longarm-hub-deploy: update longarm-hub on this host to a signed release from the
+# hub's own release store - the only thing the CI's SSH key can do here.
+#
+# Install (docs/ci-cd.md, "Hub deploy user"):
+#   install -o root -g root -m 0755 deploy/hub/longarm-hub-deploy /usr/local/bin/longarm-hub-deploy
+# ~deploy/.ssh/authorized_keys (root-owned, one line):
+#   restrict,command="/usr/local/bin/longarm-hub-deploy",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA... longarm-ci
+# /etc/sudoers.d/longarm-hub-deploy (visudo -cf; no SETENV, keep env_reset):
+#   deploy ALL=(root) NOPASSWD: /usr/local/bin/longarm-hub-deploy --root *
+#
+# Commands (SSH_ORIGINAL_COMMAND, or the arguments when run by hand):
+#   <version> | deploy <version>  fetch longarm-hub-linux-<arch> + .minisig for <version> from the
+#                                 release store, verify the signature against hub.toml
+#                                 [releases] public_key, stop longarm-hub, snapshot its database,
+#                                 keep longarm-hub.prev, install, start, wait for /healthz to
+#                                 report <version> (60 s); on any failure put the previous
+#                                 binary and the database snapshot back and start that
+#   check <version>               dry run: fetch + verify + version probe, change nothing
+#   rollback                      swap longarm-hub and longarm-hub.prev (the database stays), restart,
+#                                 health check; if the old binary doesn't come up (e.g. a
+#                                 newer database schema), swap back
+#   status                        installed / previous version, /healthz
+#
+# The signature is checked by the INSTALLED longarm-hub (`longarm-hub release verify`),
+# or by minisign(1) when the installed longarm-hub predates that subcommand - never
+# by the binary being installed. Everything is logged to journald
+# (tag longarm-hub-deploy) and to stderr (= the CI log). A dropped SSH session
+# doesn't interrupt a deploy (SIGHUP/SIGPIPE are ignored once it runs).
+#
+# Exit status: 0 ok, 1 failed and rolled back (or nothing changed), 2 refused
+# (bad command, bad signature, missing file), 3 failed and the rollback
+# failed too: look at the hub.
+#
+# Test hooks (LONGARM_HUB_DEPLOY_* variables, see below) are ignored under sudo.
+set -euo pipefail
+umask 022
+export LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}
+
+SELF=/usr/local/bin/longarm-hub-deploy
+VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.]{0,31})?$'
+
+log() {
+	# stderr may be a dead SSH session: never fail on it
+	echo "longarm-hub-deploy: $*" >&2 2>/dev/null || true
+	if command -v logger >/dev/null 2>&1; then
+		logger -t longarm-hub-deploy -- "$*" 2>/dev/null || true
+	fi
+}
+die() { # die <exit status> <message>
+	local code=$1
+	shift
+	log "error: $*"
+	exit "$code"
+}
+# log_output <prefix> <text>: multi-line command output, line by line.
+log_output() {
+	local line
+	while IFS= read -r line; do
+		[[ -n $line ]] && log "$1: $line"
+	done <<<"$2"
+}
+
+# parse_command <words...>: sets CMD and VER, or refuses.
+parse_command() {
+	CMD="" VER=""
+	case $# in
+	1)
+		case $1 in
+		status | rollback) CMD=$1 ;;
+		*) CMD=deploy VER=$1 ;;
+		esac
+		;;
+	2)
+		case $1 in
+		deploy | check) CMD=$1 VER=$2 ;;
+		*) die 2 "unknown command '$1 $2' (want: <version> | deploy <version> | check <version> | rollback | status)" ;;
+		esac
+		;;
+	*) die 2 "want one of: <version> | deploy <version> | check <version> | rollback | status" ;;
+	esac
+	if [[ $CMD == deploy || $CMD == check ]] && ! [[ $VER =~ $VERSION_RE ]]; then
+		die 2 "invalid version '${VER:0:80}'"
+	fi
+}
+
+# ---------------------------------------------------------------- entry
+if [[ ${1:-} == --root ]]; then
+	shift
+	words=("$@")
+elif [[ -n ${SSH_ORIGINAL_COMMAND+x} ]]; then
+	# Forced command: only ever split on spaces; nothing is evaluated.
+	bad_chars='[^0-9A-Za-z. -]'
+	if [[ $SSH_ORIGINAL_COMMAND =~ $bad_chars ]] || ((${#SSH_ORIGINAL_COMMAND} > 100)); then
+		die 2 "refused command (allowed characters: 0-9 A-Z a-z . - space)"
+	fi
+	read -r -a words <<<"$SSH_ORIGINAL_COMMAND"
+else
+	words=("$@")
+fi
+parse_command "${words[@]+"${words[@]}"}"
+
+if [[ $(id -u) != 0 && -z ${LONGARM_HUB_DEPLOY_NO_SUDO:-} ]]; then
+	# The deploy user: re-run as root through the one sudoers rule.
+	exec sudo -n "$SELF" --root "$CMD" ${VER:+"$VER"}
+fi
+
+# From here on, finish what was started even if the SSH client goes away.
+trap '' HUP PIPE
+
+# ---------------------------------------------------------------- settings
+if [[ -n ${SUDO_USER:-} ]]; then
+	# Defense in depth (sudo's env_reset already drops these).
+	for v in $(compgen -v LONGARM_HUB_DEPLOY_ || true); do unset "$v"; done
+fi
+BIN=${LONGARM_HUB_DEPLOY_BIN:-/usr/local/bin/longarm-hub}
+CONFIG=${LONGARM_HUB_DEPLOY_CONFIG:-/etc/longarm-hub/hub.toml}
+SERVICE=${LONGARM_HUB_DEPLOY_SERVICE:-longarm-hub}
+SYSTEMCTL=${LONGARM_HUB_DEPLOY_SYSTEMCTL:-systemctl}
+MINISIGN=${LONGARM_HUB_DEPLOY_MINISIGN:-minisign}
+TIMEOUT=${LONGARM_HUB_DEPLOY_TIMEOUT:-60}
+LOCK=${LONGARM_HUB_DEPLOY_LOCK:-/run/longarm-hub-deploy.lock}
+STATE=${LONGARM_HUB_DEPLOY_STATE:-/var/lib/longarm-hub-deploy} # database snapshots (root only)
+
+# toml_string <key>: the top-level string value of key in hub.toml.
+toml_string() {
+	[[ -r $CONFIG ]] || return 0
+	awk -v k="$1" '
+		/^[[:space:]]*\[/ { exit }
+		$0 ~ "^[[:space:]]*" k "[[:space:]]*=" {
+			sub(/^[^=]*=[[:space:]]*"/, ""); sub(/".*$/, ""); print; exit
+		}' "$CONFIG"
+}
+# releases_public_key: public_key in the [releases] table.
+releases_public_key() {
+	[[ -r $CONFIG ]] || return 0
+	awk '
+		/^[[:space:]]*\[/ { in_rel = ($0 ~ /^[[:space:]]*\[releases\][[:space:]]*(#.*)?$/); next }
+		in_rel && /^[[:space:]]*public_key[[:space:]]*=/ {
+			sub(/^[^=]*=[[:space:]]*"/, ""); sub(/".*$/, ""); print; exit
+		}' "$CONFIG"
+}
+
+DATA_DIR=${LONGARM_HUB_DEPLOY_DATA_DIR:-$(toml_string data_dir)}
+DATA_DIR=${DATA_DIR:-/var/lib/longarm-hub}
+DB=$DATA_DIR/hub.db
+http_addr=$(toml_string http)
+http_addr=${http_addr:-127.0.0.1:7480}
+case $http_addr in
+off) [[ $CMD == status ]] || die 2 "hub.toml has http = \"off\": no /healthz to check a deploy against" ;;
+:* | 0.0.0.0:* | \[::\]:*) http_addr=127.0.0.1:${http_addr##*:} ;;
+esac
+HTTP_BASE=${LONGARM_HUB_DEPLOY_HTTP:-http://$http_addr}
+case ${LONGARM_HUB_DEPLOY_ARCH:-$(uname -m)} in
+x86_64 | amd64) ARCH=amd64 ;;
+aarch64 | arm64) ARCH=arm64 ;;
+*) die 2 "unsupported architecture $(uname -m)" ;;
+esac
+FILE=longarm-hub-linux-$ARCH
+
+# ---------------------------------------------------------------- helpers
+# bin_version <binary>: the version it reports ("longarm-hub version X").
+bin_version() {
+	[[ -f $1 ]] || return 0
+	"$1" --version 2>/dev/null | sed -n 's/^longarm-hub version //p' | head -n 1
+}
+
+# healthz: prints the version /healthz reports when it says ok.
+healthz() {
+	local body
+	body=$(curl -fsS --max-time 5 "$HTTP_BASE/healthz" 2>/dev/null) || return 1
+	[[ $body =~ \"ok\":[[:space:]]*true ]] || return 1
+	sed -n 's/.*"version":[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$body"
+}
+
+# wait_healthy <version>: /healthz reports version ("" = any) within
+# TIMEOUT seconds.
+wait_healthy() {
+	local want=$1 got="" i
+	for ((i = 0; i < TIMEOUT; i++)); do
+		if got=$(healthz) && [[ -z $want || $got == "$want" ]]; then
+			return 0
+		fi
+		sleep 1
+	done
+	log "health check: /healthz did not report ${want:-ok} within ${TIMEOUT}s (last: ${got:-no answer})"
+	return 1
+}
+
+# svc <stop|start|restart>
+svc() {
+	local out
+	log "$1 $SERVICE"
+	if ! out=$("$SYSTEMCTL" "$1" "$SERVICE" 2>&1); then
+		log_output systemctl "$out"
+		return 1
+	fi
+}
+
+# fetch <dir>: copies $FILE and $FILE.minisig of $VER into dir - from the
+# release store on disk (works while the hub is down), else over the hub's
+# local HTTP listener. Only regular files, no symlinks.
+fetch() {
+	local dst=$1 src=$DATA_DIR/releases/$VER/$FILE
+	if [[ -f $src && ! -L $src && -f $src.minisig && ! -L $src.minisig ]]; then
+		cp "$src" "$dst/$FILE"
+		cp "$src.minisig" "$dst/$FILE.minisig"
+		log "fetched $FILE $VER from $DATA_DIR/releases"
+		return 0
+	fi
+	command -v curl >/dev/null 2>&1 || die 2 "$VER is not in $DATA_DIR/releases and curl is missing"
+	if ! curl -fsS --max-time 300 -o "$dst/$FILE" "$HTTP_BASE/releases/$VER/$FILE" 2>/dev/null ||
+		! curl -fsS --max-time 30 -o "$dst/$FILE.minisig" "$HTTP_BASE/releases/$VER/$FILE.minisig" 2>/dev/null; then
+		die 2 "no signed $FILE for $VER in the release store (publish it first: longarm admin release publish)"
+	fi
+	log "fetched $FILE $VER from $HTTP_BASE"
+}
+
+# has_verify: the installed longarm-hub has `release verify --public-key` (older
+# ones print the `release` help for an unknown subcommand and exit 0).
+has_verify() {
+	local help
+	[[ -x $BIN ]] || return 1
+	help=$("$BIN" release verify --help 2>&1 || true)
+	[[ $help == *--public-key* ]]
+}
+
+# verify <file>: the release signature, checked by trusted code.
+verify() {
+	local f=$1 pub out tc
+	pub=$(releases_public_key)
+	if has_verify; then
+		out=$("$BIN" release verify "$f" --version "$VER" --name "$FILE" --public-key "$pub" 2>&1) ||
+			{ log_output verify "$out"; die 2 "signature check failed for $FILE $VER"; }
+	elif command -v "$MINISIGN" >/dev/null 2>&1; then
+		out=$("$MINISIGN" -V -P "$pub" -m "$f" -x "$f.minisig" 2>&1) ||
+			{ log_output minisign "$out"; die 2 "signature check failed for $FILE $VER"; }
+		tc=$(sed -n 's/^Trusted comment: //p' <<<"$out")
+		[[ $tc == "longarm file:$FILE version:$VER" ]] || die 2 "signature is for '$tc', want 'longarm file:$FILE version:$VER'"
+	else
+		die 2 "the installed longarm-hub has no 'release verify' and minisign is not installed (apt install minisign once)"
+	fi
+	log "signature OK: $FILE $VER"
+}
+
+# install_file <src> <dst>: atomic replace (same directory).
+install_file() {
+	local t=$2.tmp.$$
+	if cp "$1" "$t" && chmod 0755 "$t" && chown_root "$t" && mv -f "$t" "$2"; then
+		return 0
+	fi
+	rm -f "$t"
+	return 1
+}
+chown_root() {
+	if [[ $(id -u) == 0 ]]; then chown root:root "$1"; fi
+}
+
+# db_snapshot <dir> / db_restore <dir>: the hub's SQLite database (stopped
+# hub), so a failed deploy can go back to a schema the old binary reads.
+db_snapshot() {
+	local d=$1 f
+	rm -rf "$d"
+	(umask 077 && mkdir "$d") || return 1
+	for f in "$DB" "$DB-wal" "$DB-shm"; do
+		if [[ -f $f ]]; then cp -p "$f" "$d/" || return 1; fi
+	done
+}
+db_restore() {
+	local d=$1 f
+	[[ -d $d ]] || return 0
+	rm -f "$DB-wal" "$DB-shm"
+	for f in "$d"/*; do
+		[[ -f $f ]] || continue
+		cp -p "$f" "$DATA_DIR/" || return 1
+	done
+}
+
+lock() {
+	if command -v flock >/dev/null 2>&1; then
+		exec 9>"$LOCK"
+		flock -w 120 9 || die 2 "another longarm-hub-deploy is running"
+	fi
+}
+
+# ---------------------------------------------------------------- commands
+cmd_status() {
+	echo "installed: $(bin_version "$BIN")"
+	echo "previous:  $(bin_version "$BIN.prev")"
+	echo "healthz:   $(healthz || echo down)"
+}
+
+cmd_check() {
+	local tmp=$1 v
+	[[ -n $(releases_public_key) ]] || die 2 "no [releases] public_key in $CONFIG: refusing to install an unverifiable binary"
+	fetch "$tmp"
+	verify "$tmp/$FILE"
+	chmod 0755 "$tmp/$FILE"
+	v=$(bin_version "$tmp/$FILE")
+	[[ $v == "$VER" ]] || die 2 "$FILE of $VER reports version '${v:-none}' (wrong file or architecture)"
+	log "check $VER: OK (installed: $(bin_version "$BIN"); nothing changed)"
+}
+
+cmd_deploy() {
+	local tmp=$1 cur snap
+	cmd_check "$tmp"
+	cur=$(bin_version "$BIN")
+	if [[ $cur == "$VER" ]]; then
+		# A re-run: leave the binaries, .prev and the database alone.
+		if [[ $(healthz || true) == "$VER" ]]; then
+			log "longarm-hub $VER is already installed and healthy"
+			return 0
+		fi
+		if svc restart && wait_healthy "$VER"; then
+			log "longarm-hub $VER was installed but not healthy; healthy after a restart"
+			return 0
+		fi
+		die 1 "longarm-hub $VER is installed but unhealthy (longarm-hub-deploy rollback goes back to $(bin_version "$BIN.prev"))"
+	fi
+	log "deploying longarm-hub $VER (installed: ${cur:-none})"
+	snap=$STATE/db-before-$VER
+	(umask 077 && mkdir -p "$STATE")
+	# Keep the current binary as .prev; the older .prev comes back if this
+	# deploy fails, so `rollback` keeps meaning "the one before".
+	if [[ -f $BIN.prev ]]; then cp -p "$BIN.prev" "$tmp/prev.old"; fi
+	if [[ -f $BIN ]]; then cp -p "$BIN" "$tmp/cur"; fi
+	svc stop || die 1 "could not stop $SERVICE; nothing changed"
+	local snapped=""
+	if db_snapshot "$snap" && snapped=1 &&
+		{ [[ ! -f $tmp/cur ]] || install_file "$tmp/cur" "$BIN.prev"; } &&
+		install_file "$tmp/$FILE" "$BIN" &&
+		svc start && wait_healthy "$VER"; then
+		log "longarm-hub $VER deployed and healthy (previous: ${cur:-none}; database before it: $snap)"
+		return 0
+	fi
+	# ---- back to the previous binary and database
+	if [[ ! -f $tmp/cur ]]; then
+		die 3 "longarm-hub $VER failed and there was no previous binary to go back to"
+	fi
+	log "longarm-hub $VER failed: going back to ${cur:-the previous binary}"
+	svc stop || true
+	if [[ -n $snapped ]] && ! db_restore "$snap"; then
+		die 3 "could not restore the database snapshot $snap: $SERVICE is stopped"
+	fi
+	install_file "$tmp/cur" "$BIN" || die 3 "could not put the previous binary back to $BIN: $SERVICE is stopped"
+	if [[ -f $tmp/prev.old ]]; then
+		install_file "$tmp/prev.old" "$BIN.prev" || true
+	else
+		rm -f "$BIN.prev"
+	fi
+	if svc start && wait_healthy "$cur"; then
+		die 1 "deploy of $VER failed; rolled back to ${cur:-the previous binary}${snapped:+ (database restored)}"
+	fi
+	die 3 "deploy of $VER failed and ${cur:-the previous binary} is unhealthy too"
+}
+
+cmd_rollback() {
+	local tmp=$1 cur prev
+	[[ -f $BIN.prev && -f $BIN ]] || die 2 "no $BIN.prev to roll back to"
+	cur=$(bin_version "$BIN")
+	prev=$(bin_version "$BIN.prev")
+	log "rolling back longarm-hub ${cur:-?} -> ${prev:-?}"
+	cp -p "$BIN" "$tmp/cur"
+	cp -p "$BIN.prev" "$tmp/prev"
+	if install_file "$tmp/prev" "$BIN" && install_file "$tmp/cur" "$BIN.prev" &&
+		svc restart && wait_healthy "$prev"; then
+		log "rolled back to $prev (previous: $cur)"
+		return 0
+	fi
+	# The older binary doesn't come up (a newer database schema, most
+	# likely): go back to the current one. The database snapshot taken
+	# before the current version was deployed is in $STATE.
+	log "rollback to ${prev:-?} failed: back to ${cur:-?} (database snapshots: $STATE)"
+	if install_file "$tmp/cur" "$BIN" && install_file "$tmp/prev" "$BIN.prev" &&
+		svc restart && wait_healthy "$cur"; then
+		die 1 "rollback to ${prev:-?} failed; still on $cur"
+	fi
+	die 3 "rollback to ${prev:-?} failed and ${cur:-?} is unhealthy too"
+}
+
+case $CMD in
+status) cmd_status ;;
+*)
+	lock
+	# Work dir next to the binary: same file system (atomic rename) and not
+	# a noexec /tmp (the version probe runs the new binary).
+	tmp=$(mktemp -d "$(dirname "$BIN")/.longarm-hub-deploy.XXXXXX")
+	trap 'rm -rf "$tmp"' EXIT
+	"cmd_$CMD" "$tmp"
+	;;
+esac

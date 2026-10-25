@@ -1,0 +1,41 @@
+# longarm-hub on a small VM (1-2 vCPU / 2 GB): gRPC + relay on 7443 (tcp+udp, public),
+# the relay's second STUN port 7444/udp (public),
+# the panel/API on 127.0.0.1:7480 for the host's Caddy (hub.example.com).
+#
+#   cd deploy/hub && cp hub.toml.example hub.toml && $EDITOR hub.toml
+#   docker compose run --rm longarm-hub ca import /import   # see README.md
+#   docker compose up -d
+services:
+  longarm-hub:
+    build:
+      context: ../..
+      dockerfile: deploy/hub/Dockerfile
+    image: longarm-hub:latest
+    restart: unless-stopped
+    ports:
+      - "7443:7443/tcp"
+      - "7443:7443/udp"
+      - "7444:7444/udp"
+      - "127.0.0.1:7480:7480/tcp"
+    volumes:
+      - longarm-hub-data:/data
+      - ./hub.toml:/etc/longarm-hub/hub.toml:ro
+      - ./import:/import:ro          # CA to import once (ca.crt + ca.key); remove afterwards
+      # - /etc/longarm-hub/tailscale-oauth.secret:/etc/longarm-hub/tailscale-oauth.secret:ro   # [tailnet.tailscale]
+    environment:
+      LONGARM_HUB_CONFIG: /etc/longarm-hub/hub.toml
+    mem_limit: 512m
+
+  # Optional: continuous SQLite backup to Azure Blob (DESIGN §3.3).
+  # litestream:
+  #   image: litestream/litestream:0.3
+  #   restart: unless-stopped
+  #   command: replicate
+  #   volumes:
+  #     - longarm-hub-data:/data
+  #     - ./litestream.yml:/etc/litestream.yml:ro
+  #   environment:
+  #     LITESTREAM_AZURE_ACCOUNT_KEY: ${LITESTREAM_AZURE_ACCOUNT_KEY}
+
+volumes:
+  longarm-hub-data:

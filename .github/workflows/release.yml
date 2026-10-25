@@ -1,0 +1,245 @@
+# Release on a v* tag (docs/ci-cd.md "Cutting a release").
+#
+#   build    windows-latest: goreleaser (all targets, --skip=publish,docker) +
+#            MSIs + packaging/hubrelease -> hub-release/; the repository
+#            variable LONGARM_UPDATE_PUBKEY (if set) is built into longarmd
+#            (without it the binaries have self-update turned off)
+#   publish  ubuntu-latest: sign with the secret LONGARM_RELEASE_KEY (if set),
+#            upload to the hub with the release-role certificate (only when
+#            the variable LONGARM_HUB is set), then the GitHub Release
+#   hub      longarm-hub update over SSH (forced command longarm-hub-deploy:
+#            verify, install, health check, roll back); needs LONGARM_HUB + HUB_SSH
+#   rollout  longarm admin release push <v> --canary 1 --wait 15m; fails when
+#            the rollout halts; needs LONGARM_HUB
+#
+# Without a deployment (forks, or the repository without the variables) the
+# workflow still builds and publishes a GitHub Release; hub and rollout are
+# skipped.
+#
+# Order: hub BEFORE the fleet. The control plane goes first (like Kubernetes'
+# version skew rule: control plane >= nodes): the new hub serves both the old
+# and the new longarmd, a new longarmd never has to talk to an older hub, the
+# rollout itself is run by the new hub, and the hub's restart (workers
+# reconnect) can never land inside the canary's health window. A failed hub
+# deploy rolls back by itself and stops the workflow before any worker is
+# touched.
+#
+# Prerelease tags (v1.2.3-rc1, any "-" suffix): channel beta, GitHub
+# prerelease; no hub deploy, no fleet rollout (push it by hand to beta workers).
+#
+# Isolation: every job starts from fresh Go caches (no actions cache), and the
+# longarm that handles the signing key and the release certificate is built
+# from the tag's source in the job itself, never taken from the build
+# artifact. To require a manual approval before anything is signed or
+# deployed, see docs/ci-cd.md "Approval gate".
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+# One release (or deploy.yml) at a time; never cancel a running one.
+concurrency:
+  group: longarm-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      channel: ${{ steps.meta.outputs.channel }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # goreleaser: changelog, previous tag
+          persist-credentials: false
+      - name: version, channel
+        id: meta
+        env:
+          TAG: ${{ github.ref_name }}
+          PUBKEY: ${{ vars.LONGARM_UPDATE_PUBKEY }}
+        run: |
+          if ($env:TAG -cnotmatch '^v(\d+\.\d+\.\d+)(-[0-9A-Za-z][0-9A-Za-z.]{0,31})?$') {
+            throw "tag '$env:TAG' is not vMAJOR.MINOR.PATCH[-prerelease]"
+          }
+          $pre = [bool]$Matches[2]
+          if (-not $pre) {
+            # stable releases only from main
+            git merge-base --is-ancestor HEAD origin/main
+            if ($LASTEXITCODE) { throw "$env:TAG is not on main" }
+          }
+          if (-not $env:PUBKEY) {
+            Write-Output '::warning::repository variable LONGARM_UPDATE_PUBKEY is not set: the binaries are built with self-update turned off (docs/ci-cd.md)'
+          }
+          "version=$($env:TAG.Substring(1))" >> $env:GITHUB_OUTPUT
+          "prerelease=$($pre.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          "channel=$(if ($pre) { 'beta' } else { 'stable' })" >> $env:GITHUB_OUTPUT
+      - uses: ./.github/actions/go-setup
+        with:
+          cache: "false"
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 8.0.x
+      - name: tools (goreleaser, WiX; pinned)
+        run: |
+          # the official prebuilt GoReleaser, pinned by SHA256 (from its v2.19.0 checksums.txt)
+          $gr = Join-Path $env:LONGARM_TOOLS 'goreleaser'
+          New-Item -ItemType Directory -Force $gr | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'goreleaser.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Windows_x86_64.zip' -OutFile $zip
+          $sha = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          if ($sha -ne '67807490e909a37f58ef40b67601896d8d4da2411c9839221dae55732c243fe9') { throw "goreleaser zip sha256 mismatch: $sha" }
+          Expand-Archive -Force $zip $gr
+          Remove-Item $zip
+          "GORELEASER=$gr\goreleaser.exe" >> $env:GITHUB_ENV
+          $wix = Join-Path $env:LONGARM_TOOLS 'wix'
+          dotnet tool install wix --version 5.0.2 --tool-path $wix
+          if ($LASTEXITCODE) { throw 'dotnet tool install wix failed' }
+          $wix >> $env:GITHUB_PATH
+          # Extensions go to .wix\ in the repo root (wix build runs there; gitignored).
+          & "$wix\wix.exe" extension add WixToolset.UI.wixext/5.0.2 WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2
+          if ($LASTEXITCODE) { throw 'wix extension add failed' }
+      - name: build (goreleaser + MSIs + hub-release)
+        env:
+          LONGARM_UPDATE_PUBKEY: ${{ vars.LONGARM_UPDATE_PUBKEY }}
+        run: ./packaging/build.ps1 -SkipPublish
+      - name: stage the artifact
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          $v = (Get-Content dist/metadata.json | ConvertFrom-Json).version
+          if ($v -ne $env:VERSION) { throw "goreleaser built $v, tag says $env:VERSION" }
+          New-Item -ItemType Directory upload/hub, upload/extra | Out-Null
+          Copy-Item dist/hub-release/* upload/hub/
+          Copy-Item dist/longarm-hub_*.deb, dist/checksums.txt upload/extra/
+          Get-ChildItem upload -Recurse -File | Format-Table FullName, Length -AutoSize
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: upload
+          if-no-files-found: error
+          retention-days: 14 # lets a failed publish be re-run
+
+  publish:
+    name: publish (sign, hub, GitHub Release)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # the GitHub Release
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      CHANNEL: ${{ needs.build.outputs.channel }}
+      PRERELEASE: ${{ needs.build.outputs.prerelease }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/go-setup
+        with:
+          cache: "false"
+      - name: build longarm from the tag
+        run: go build -trimpath -o "$RUNNER_TEMP/longarm" ./cmd/longarm
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+      - name: sign (LONGARM_RELEASE_KEY)
+        env:
+          LONGARM_RELEASE_KEY: ${{ secrets.LONGARM_RELEASE_KEY }}
+          LONGARM_RELEASE_KEY_PASSWORD: ${{ secrets.LONGARM_RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$LONGARM_RELEASE_KEY" ]; then
+            echo "::warning::secret LONGARM_RELEASE_KEY is not set: the release is not signed (self-update needs signed releases)"
+            exit 0
+          fi
+          .github/scripts/longarm-release.sh sign "$RUNNER_TEMP/longarm" "$RUNNER_TEMP/release/hub" "$VERSION"
+      - name: upload to the hub (release-role certificate)
+        if: vars.LONGARM_HUB != ''
+        env:
+          LONGARM_HUB: ${{ vars.LONGARM_HUB }}
+          LONGARM_RELEASE_TLS: ${{ secrets.LONGARM_RELEASE_TLS }}
+          LONGARM_RELEASE_KEY: ${{ secrets.LONGARM_RELEASE_KEY }}
+          LONGARM_RELEASE_KEY_PASSWORD: ${{ secrets.LONGARM_RELEASE_KEY_PASSWORD }}
+        run: .github/scripts/longarm-release.sh publish "$RUNNER_TEMP/longarm" "$RUNNER_TEMP/release/hub" "$VERSION" "$CHANNEL"
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$RUNNER_TEMP/release"
+          (cd hub && sha256sum -- *) >SHA256SUMS
+          (cd extra && sha256sum -- *) >>SHA256SUMS
+          flags=(--title "Longarm $VERSION" --generate-notes --verify-tag)
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}"
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber hub/* extra/* SHA256SUMS
+
+  hub:
+    name: hub (longarm-hub over SSH forced command)
+    needs: [build, publish]
+    if: needs.build.outputs.prerelease == 'false' && vars.LONGARM_HUB != '' && vars.HUB_SSH != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github
+      - name: deploy longarm-hub
+        env:
+          HUB_SSH: ${{ vars.HUB_SSH }}
+          HUB_DEPLOY_SSH_KEY: ${{ secrets.HUB_DEPLOY_SSH_KEY }}
+          HUB_SSH_KNOWN_HOSTS: ${{ secrets.HUB_SSH_KNOWN_HOSTS }}
+        # check = dry run (fetch + signature + version probe); deploy rolls
+        # back by itself when /healthz doesn't report the version in 60 s.
+        run: |
+          .github/scripts/hub-deploy.sh check "$VERSION"
+          .github/scripts/hub-deploy.sh deploy "$VERSION"
+
+  rollout:
+    name: rollout (canary, then the fleet)
+    needs: [build, publish, hub]
+    # after the hub deploy (or without one when HUB_SSH isn't set)
+    if: ${{ !cancelled() && needs.build.outputs.prerelease == 'false' && vars.LONGARM_HUB != '' && needs.publish.result == 'success' && (needs.hub.result == 'success' || needs.hub.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/go-setup
+        with:
+          cache: "false"
+      - name: build longarm from the tag
+        run: go build -trimpath -o "$RUNNER_TEMP/longarm" ./cmd/longarm
+      - name: longarm admin release push --canary 1 --wait 15m
+        env:
+          LONGARM_HUB: ${{ vars.LONGARM_HUB }}
+          LONGARM_RELEASE_TLS: ${{ secrets.LONGARM_RELEASE_TLS }}
+        run: .github/scripts/longarm-release.sh rollout "$RUNNER_TEMP/longarm" "$VERSION" 15m

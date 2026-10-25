@@ -1,0 +1,8 @@
+{
+  "comment": "Load colour levels (CPU / memory percent), shared by the tray icon (internal/tray/icon.go embeds this file) and the web UI (web/src/lib/format.ts imports it): green below 60 %, amber below 85 %, red from 85 %. The last level has no limit.",
+  "levels": [
+    { "below": 60, "color": "#3fb950" },
+    { "below": 85, "color": "#d29922" },
+    { "below": null, "color": "#f85149" }
+  ]
+}

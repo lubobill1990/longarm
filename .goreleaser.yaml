@@ -1,0 +1,170 @@
+# GoReleaser (v2) config for Longarm. Use the wrappers, which also build
+# the MSI and the hub release dir with minisign signatures:
+#
+#   pwsh packaging/build.ps1 [-Snapshot]          # Windows (MSI needs WiX v5)
+#   sh   packaging/build.sh  [--snapshot]         # Linux / macOS
+#
+# Env:
+#   LONGARM_UPDATE_PUBKEY   minisign public key built into longarmd (self-update); empty = updates off
+#   LONGARM_TRAY=1          also build cmd/longarm-tray (set by the wrappers when it exists)
+#   (the native Linux tray + its deb: packaging/linux/goreleaser-tray.yaml, run by build.sh)
+version: 2
+project_name: longarm
+
+before:
+  hooks:
+    - go mod download
+
+env:
+  - CGO_ENABLED=0
+
+builds:
+  - id: longarm
+    main: ./cmd/longarm
+    binary: longarm
+    goos: [windows, linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: &ldflags
+      - -s -w
+      - -X github.com/lubobill1990/longarm/internal/version.Version={{ .Version }}
+      - -X github.com/lubobill1990/longarm/internal/update.PublicKey={{ envOrDefault "LONGARM_UPDATE_PUBKEY" "" }}
+  - id: longarmd
+    main: ./cmd/longarmd
+    binary: longarmd
+    goos: [windows, linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: *ldflags
+  - id: longarm-hub
+    main: ./cmd/longarm-hub
+    binary: longarm-hub
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: *ldflags
+  - id: longarm-relay
+    main: ./cmd/longarm-relay
+    binary: longarm-relay
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: *ldflags
+  # The tray (built on the ui branch). Windows only by default: the shells
+  # for macOS/Linux use system WebViews that need cgo (build those natively).
+  - id: longarm-tray
+    main: ./cmd/longarm-tray
+    binary: longarm-tray
+    skip: '{{ not (isEnvSet "LONGARM_TRAY") }}'
+    goos: [windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -H windowsgui
+      - -X github.com/lubobill1990/longarm/internal/version.Version={{ .Version }}
+
+archives:
+  # Client + worker bundle: longarm, longarmd (+ longarm-tray).
+  - id: longarm
+    ids: [longarm, longarmd, longarm-tray]
+    # longarm-tray is built for Windows only here.
+    allow_different_binary_count: true
+    name_template: "longarm_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE*
+  - id: longarm-hub
+    ids: [longarm-hub, longarm-relay]
+    name_template: "longarm-hub_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - deploy/hub/hub.toml.example
+      - deploy/hub/README.md
+
+nfpms:
+  - id: longarm
+    package_name: longarm
+    ids: [longarm, longarmd]
+    formats: [deb, rpm]
+    vendor: Longarm
+    homepage: https://github.com/lubobill1990/longarm
+    maintainer: Longarm contributors <lubobill1990@users.noreply.github.com>
+    description: |-
+      Longarm client and worker: run Claude Code / Copilot CLI sessions,
+      commands and jobs on a pool of remote workers (longarm, longarmd).
+    license: MIT
+    bindir: /usr/bin
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
+    recommends: [git]
+    suggests: [longarm-tray]
+    contents:
+      - src: packaging/linux/longarmd@.service
+        dst: /lib/systemd/system/longarmd@.service
+      - src: packaging/linux/join.env.example
+        dst: /etc/longarm/join.env.example
+        type: config|noreplace
+    scripts:
+      postinstall: packaging/linux/postinst.sh
+      preremove: packaging/linux/prerm.sh
+  - id: longarm-hub
+    package_name: longarm-hub
+    ids: [longarm-hub, longarm-relay]
+    formats: [deb]
+    vendor: Longarm
+    homepage: https://github.com/lubobill1990/longarm
+    maintainer: Longarm contributors <lubobill1990@users.noreply.github.com>
+    description: Longarm hub (control plane, CA, scheduler, relay).
+    license: MIT
+    bindir: /usr/bin
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
+    contents:
+      - src: packaging/linux/longarm-hub.service
+        dst: /lib/systemd/system/longarm-hub.service
+      - src: deploy/hub/hub.toml.example
+        dst: /etc/longarm-hub/hub.toml.example
+    scripts:
+      postinstall: packaging/linux/hub-postinst.sh
+
+checksum:
+  name_template: checksums.txt
+
+dockers_v2:
+  - id: longarm-hub
+    ids: [longarm-hub]
+    dockerfile: deploy/hub/Dockerfile.goreleaser
+    images:
+      - 'ghcr.io/{{ envOrDefault "LONGARM_IMAGE_OWNER" "your-org" }}/longarm-hub'
+    tags:
+      - "{{ .Version }}"
+      - "latest"
+    platforms: [linux/amd64, linux/arm64]
+
+homebrew_casks:
+  - name: longarm
+    ids: [longarm]
+    binaries: [longarm, longarmd]
+    homepage: https://github.com/lubobill1990/longarm
+    description: Longarm client and worker (longarm, longarmd)
+    skip_upload: true   # template only: packaging/homebrew/README.md
+    repository:
+      owner: '{{ envOrDefault "HOMEBREW_TAP_OWNER" "your-org" }}'
+      name: homebrew-tap
+    directory: Casks
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-SNAPSHOT-{{ .ShortCommit }}"
+
+release:
+  draft: true
+  prerelease: auto
+
+changelog:
+  use: git
+  sort: asc
