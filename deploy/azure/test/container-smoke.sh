@@ -54,7 +54,7 @@ for _ in $(seq 1 30); do
 	az storage container create -n litestream --connection-string "$conn" -o none 2>/dev/null && break
 	sleep 1
 done
-az storage container exists -n litestream --connection-string "$conn" -o tsv | grep -qx True || fail "azurite: no container"
+[[ $(az storage container exists -n litestream --connection-string "$conn" -o tsv) == True ]] || fail "azurite: no container"
 
 # hub_run NAME [extra docker args]: the environment of deploy/azure/main.bicep
 hub_run() {
@@ -95,6 +95,14 @@ bootstrap() {
 	docker logs "$1" 2>/dev/null | sed -n 's/^LONGARM_BOOTSTRAP //p' | tail -n 1 | tr ' ' '\n' | sed -n "s/^$2=//p"
 }
 
+# logs_have NAME TEXT: the container log contains TEXT (not "docker logs | grep -q":
+# grep's early exit makes docker logs fail with SIGPIPE, and pipefail reports that)
+logs_have() {
+	local l
+	l=$(docker logs "$1" 2>&1)
+	grep -qF -- "$2" <<<"$l"
+}
+
 la() { LONGARM_CONFIG_DIR=$work/laptop "$longarm" "$@"; }
 
 step "first start"
@@ -105,8 +113,8 @@ code=$(bootstrap "$p-hub" admin_join_code)
 addr=$(bootstrap "$p-hub" hub_address)
 [[ ${#fp} -eq 64 && -n $code && $addr == 127.0.0.1:7443 ]] || fail "bootstrap line: fp=$fp code=$code addr=$addr"
 [[ $(bootstrap "$p-hub" admin_joined) == false ]] || fail "admin_joined on a fresh hub"
-docker logs "$p-hub" 2>&1 | grep -q "no matching backups found" || fail "first start: no empty-replica restore"
-docker exec "$p-hub" /usr/local/bin/longarm-hub ca show | grep -q "$fp" || fail "ca show"
+logs_have "$p-hub" "no matching backups found" || fail "first start: no empty-replica restore"
+[[ $(docker exec "$p-hub" /usr/local/bin/longarm-hub ca show) == *"$fp"* ]] || fail "ca show"
 # runs as nonroot (65532), the share holds the state, not the database
 [[ $(docker exec "$p-hub" /usr/local/bin/longarm-hub --version) == *longarm-hub* ]] || fail "version"
 [[ $(docker inspect -f '{{.Config.User}}' "$p-hub") == nonroot:nonroot ]] || fail "image user"
@@ -122,8 +130,8 @@ docker exec -i "$p-hub" /usr/local/bin/longarm-hub user add bob --password-stdin
 
 step "replace the container (SIGTERM, rm)"
 docker stop -t 60 "$p-hub" >/dev/null
-docker logs "$p-hub" 2>&1 | grep -q "longarm-hub stopped" || fail "hub did not stop gracefully"
-docker logs "$p-hub" 2>&1 | grep -q "litestream shut down" || fail "litestream did not shut down"
+logs_have "$p-hub" "longarm-hub stopped" || fail "hub did not stop gracefully"
+logs_have "$p-hub" "litestream shut down" || fail "litestream did not shut down"
 [[ $(docker inspect -f '{{.State.ExitCode}}' "$p-hub") == 0 ]] || fail "exit code $(docker inspect -f '{{.State.ExitCode}}' "$p-hub")"
 docker rm "$p-hub" >/dev/null
 n=$(az storage blob list -c litestream --connection-string "$conn" --query "length(@)" -o tsv)
@@ -131,7 +139,7 @@ n=$(az storage blob list -c litestream --connection-string "$conn" --query "leng
 
 hub_run "$p-hub2"
 wait_healthy "$p-hub2"
-docker logs "$p-hub2" 2>&1 | grep -q "no matching backups found" && fail "hub2 found no replica"
+logs_have "$p-hub2" "no matching backups found" && fail "hub2 found no replica"
 [[ $(bootstrap "$p-hub2" ca_fingerprint) == "$fp" ]] || fail "CA changed"
 [[ $(bootstrap "$p-hub2" admin_joined) == true ]] || fail "the restored database lost the admin"
 [[ -z $(bootstrap "$p-hub2" admin_join_code) ]] || fail "a new admin code after the admin joined"
@@ -148,6 +156,6 @@ for _ in $(seq 1 60); do
 	sleep 1
 done
 [[ $(docker inspect -f '{{.State.Running}}' "$p-hub3") == false ]] || fail "started with a wrong storage key"
-docker logs "$p-hub3" 2>&1 | grep -q "litestream restore" || fail "no restore error in the log"
+logs_have "$p-hub3" "litestream restore" || fail "no restore error in the log"
 
 echo "container-smoke: ok"
