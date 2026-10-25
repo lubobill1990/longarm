@@ -4,6 +4,8 @@
 #            MSIs + packaging/hubrelease -> hub-release/; the repository
 #            variable LONGARM_UPDATE_PUBKEY (if set) is built into longarmd
 #            (without it the binaries have self-update turned off)
+#   image    ubuntu-latest (image.yml): ghcr.io/<owner>/longarm-hub:X.Y.Z (+ :latest
+#            for stable releases), after the image smoke test
 #   publish  ubuntu-latest: sign with the secret LONGARM_RELEASE_KEY (if set),
 #            upload to the hub with the release-role certificate (only when
 #            the variable LONGARM_HUB is set), then the GitHub Release
@@ -129,6 +131,17 @@ jobs:
           path: upload
           if-no-files-found: error
           retention-days: 14 # lets a failed publish be re-run
+
+  image:
+    name: image (ghcr.io)
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image.yml
+    with:
+      version: ${{ needs.build.outputs.version }}
+      prerelease: ${{ needs.build.outputs.prerelease }}
 
   publish:
     name: publish (sign, hub, GitHub Release)

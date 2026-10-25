@@ -56,10 +56,12 @@ else
 fi
 
 # The repository owner's account name only in the module path / repository
-# URLs, the noreply e-mail address and the LICENSE.
+# URLs, the hub image (ghcr.io/<owner>/longarm-hub), the "Deploy to Azure"
+# link (its URL-encoded raw.githubusercontent.com path), the noreply e-mail
+# address and the LICENSE.
 owner=$(sed -n -E 's#^module github\.com/([^/]+)/.*#\1#p' go.mod)
 if out=$(git grep -n -I -F "$owner" -- . ':!LICENSE' |
-	sed -E "s#github\.com/$owner/longarm##g; s#$owner@users\.noreply\.github\.com##g" |
+	sed -E "s#github\.com/$owner/longarm##g; s#ghcr\.io/$owner/longarm-hub##g; s#githubusercontent\.com%2F$owner%2Flongarm%2F##g; s#$owner@users\.noreply\.github\.com##g" |
 	grep -F "$owner"); then
 	report "account name outside the module path / repository URLs" "$out"
 fi

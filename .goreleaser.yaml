@@ -135,16 +135,8 @@ nfpms:
 checksum:
   name_template: checksums.txt
 
-dockers_v2:
-  - id: longarm-hub
-    ids: [longarm-hub]
-    dockerfile: deploy/hub/Dockerfile.goreleaser
-    images:
-      - 'ghcr.io/{{ envOrDefault "LONGARM_IMAGE_OWNER" "your-org" }}/longarm-hub'
-    tags:
-      - "{{ .Version }}"
-      - "latest"
-    platforms: [linux/amd64, linux/arm64]
+# The longarm-hub container image is not built here: .github/workflows/image.yml
+# (deploy/hub/Dockerfile, with Litestream) publishes it.
 
 homebrew_casks:
   - name: longarm

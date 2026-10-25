@@ -1,0 +1,124 @@
+# The longarm-hub container image (deploy/hub/Dockerfile: distroless, non-root,
+# Litestream) for deploy/azure and docker compose: ghcr.io/<owner>/longarm-hub.
+#
+#   smoke    every run: build linux/amd64, run deploy/azure/test/container-smoke.sh
+#            (Azurite as Blob Storage: first-start bootstrap, an admin joins,
+#            restore after the container is replaced, health)
+#   publish  push to main: linux/amd64+arm64 as :edge and :sha-<commit>;
+#            from release.yml (v* tag): :X.Y.Z, plus :latest for stable
+#            releases. SBOM + provenance attestations (buildx).
+#
+# GITHUB_TOKEN with packages:write publishes; a new package starts private:
+# make it public once (package settings) so Azure can pull it anonymously
+# (deploy/azure/README.md).
+name: image
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: release version without the v (X.Y.Z[-pre])
+        required: true
+        type: string
+      prerelease:
+        description: '"true" for a prerelease (no :latest)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: image smoke test (docker + Azurite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/go-setup
+        with:
+          cache: ${{ inputs.version == '' && 'true' || 'false' }}
+      - name: build longarm (the admin's CLI in the test)
+        run: go build -trimpath -o "$RUNNER_TEMP/longarm" ./cmd/longarm
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: build the image (linux/amd64)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/hub/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: longarm-hub:smoke
+          build-args: VERSION=${{ inputs.version || format('0.0.0-ci+{0}', github.sha) }}
+      - name: container smoke test
+        run: deploy/azure/test/container-smoke.sh longarm-hub:smoke "$RUNNER_TEMP/longarm"
+
+  publish:
+    name: publish (ghcr.io, amd64 + arm64)
+    needs: smoke
+    if: inputs.version != '' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    # two pushes to main finish in order (:edge is the newest commit)
+    concurrency:
+      group: image-publish-${{ github.ref }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: image name and tags
+        id: meta
+        env:
+          OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          img="ghcr.io/${OWNER,,}/longarm-hub"
+          if [ -n "$VERSION" ]; then
+            tags="$img:$VERSION"
+            if [ "$PRERELEASE" = false ]; then tags="$tags,$img:latest"; fi
+            version=$VERSION
+          else
+            tags="$img:edge,$img:sha-${GITHUB_SHA::12}"
+            version="0.0.0-edge+${GITHUB_SHA::12}"
+          fi
+          echo "tags=$tags" >>"$GITHUB_OUTPUT"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "image $tags (version $version)"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/hub/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: VERSION=${{ steps.meta.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: mode=max
+          sbom: true

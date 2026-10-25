@@ -1,5 +1,7 @@
 # CI on GitHub-hosted runners (docs/ci-cd.md).
 #   lint:    privacy check, gofmt, go vet, cross-compile 6 targets, shellcheck, actionlint
+#   azure:   deploy/azure: bicep build (azuredeploy.json up to date) + lint, PSScriptAnalyzer
+#   (the hub image and its docker smoke test: image.yml)
 #   test:    full go test on ubuntu-latest, windows-latest and macos-latest
 # Pull requests from forks run with a read-only token and no secrets (the
 # privacy check then skips its private deny-list).
@@ -85,10 +87,46 @@ jobs:
             https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.gz \
             b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6 shellcheck-v0.11.0/shellcheck)
           "$sc/shellcheck" deploy/hub/longarm-hub-deploy .github/scripts/*.sh scripts/*.sh \
-            packaging/build.sh packaging/linux/*.sh packaging/macos/*.sh packaging/macos/scripts/*
+            packaging/build.sh packaging/linux/*.sh packaging/macos/*.sh packaging/macos/scripts/* \
+            deploy/azure/*.sh deploy/azure/test/*.sh
       - name: actionlint
         # shellcheck (on PATH from the step above) also checks the run: scripts
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -color
+
+  azure:
+    name: azure template (bicep, PSScriptAnalyzer)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: bicep build + lint (pinned bicep CLI)
+        run: |
+          bicep=$RUNNER_TEMP/bicep
+          curl -fsSL --retry 3 -o "$bicep" https://github.com/Azure/bicep/releases/download/v0.48.1/bicep-linux-x64
+          echo "b09ec25a9d376c1f8e33ede6ed22b587f915ad68488d5db77a6f9541748c7f6e  $bicep" | sha256sum -c -
+          chmod +x "$bicep"
+          "$bicep" build deploy/azure/main.bicep --outfile "$RUNNER_TEMP/azuredeploy.json" 2>&1 | tee "$RUNNER_TEMP/bicep.log"
+          if ! diff -u deploy/azure/azuredeploy.json "$RUNNER_TEMP/azuredeploy.json"; then
+            echo "::error::deploy/azure/azuredeploy.json is stale: bicep build deploy/azure/main.bicep --outfile deploy/azure/azuredeploy.json"
+            exit 1
+          fi
+          "$bicep" lint deploy/azure/main.bicep 2>&1 | tee -a "$RUNNER_TEMP/bicep.log"
+          if [ -s "$RUNNER_TEMP/bicep.log" ]; then
+            echo "::error::bicep reported warnings"
+            exit 1
+          fi
+      - name: PSScriptAnalyzer (deploy/azure/deploy.ps1)
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+          $r = Invoke-ScriptAnalyzer -Path deploy/azure/deploy.ps1 -Settings deploy/azure/PSScriptAnalyzerSettings.psd1
+          $r | Format-Table RuleName, Severity, Line, Message -AutoSize -Wrap
+          if ($r) { throw "PSScriptAnalyzer: $(@($r).Count) findings" }
 
   test:
     name: test (${{ matrix.os }})
