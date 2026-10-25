@@ -81,7 +81,7 @@ func TestStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.SchemaVersion() != 2 { // 1 initial, 2 release channels/signatures (P2)
+	if st.SchemaVersion() != 3 { // 1 initial, 2 release channels/signatures (P2), 3 tenants
 		st.Close()
 		t.Fatalf("schema %d", st.SchemaVersion())
 	}
@@ -125,7 +125,7 @@ func TestStore(t *testing.T) {
 	if len(nodes) != 1 || nodes[0].Labels["a"] != "b" {
 		t.Fatalf("nodes %v", nodes)
 	}
-	if v, _ := st.Meta("schema_version"); v != "2" {
+	if v, _ := st.Meta("schema_version"); v != "3" {
 		t.Fatal(v)
 	}
 }

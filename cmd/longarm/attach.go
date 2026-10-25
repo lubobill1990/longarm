@@ -28,7 +28,7 @@ import (
 const detachPrefix = 0x1d
 
 func attachCmd() *cobra.Command {
-	var session, cwd string
+	var session, cwd, owner string
 	var env, secrets []string
 	var kill, noReplay, noCreate bool
 	c := &cobra.Command{
@@ -82,7 +82,7 @@ on the worker and redacted from the session transcript (longarm logs --session).
 				}
 				ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 				defer cancel()
-				ss, err := conn.Sessions().Kill(ctx, &pb.KillSessionRequest{Name: name})
+				ss, err := conn.Sessions().Kill(ctx, &pb.KillSessionRequest{Name: name, Owner: owner})
 				if err != nil {
 					return err
 				}
@@ -90,7 +90,7 @@ on the worker and redacted from the session transcript (longarm logs --session).
 				return nil
 			}
 			open := &pb.AttachOpen{Name: session, Argv: argv, Cwd: cwd, Env: envM, SecretEnv: sec,
-				NoCreate: noCreate, NoReplay: noReplay}
+				NoCreate: noCreate, NoReplay: noReplay, Owner: owner}
 			return runAttach(cmd.Context(), conn, open)
 		},
 	}
@@ -101,6 +101,7 @@ on the worker and redacted from the session transcript (longarm logs --session).
 	c.Flags().BoolVar(&kill, "kill", false, "kill the session's process tree instead of attaching")
 	c.Flags().BoolVar(&noReplay, "no-replay", false, "do not replay recent output")
 	c.Flags().BoolVar(&noCreate, "no-create", false, "fail if the session does not exist")
+	c.Flags().StringVar(&owner, "owner", "", "admins: another user's session (multi-tenancy)")
 	return c
 }
 
@@ -359,6 +360,7 @@ func recvErr(st pb.Sessions_AttachClient, err error) error {
 
 func sessionsCmd() *cobra.Command {
 	var all, asJSON bool
+	var owner string
 	c := &cobra.Command{
 		Use:   "sessions <worker>",
 		Short: "List interactive sessions on a worker",
@@ -376,7 +378,7 @@ func sessionsCmd() *cobra.Command {
 			defer conn.Close()
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
-			resp, err := conn.Sessions().List(ctx, &pb.ListSessionsRequest{All: all})
+			resp, err := conn.Sessions().List(ctx, &pb.ListSessionsRequest{All: all, Owner: owner})
 			if err != nil {
 				return err
 			}
@@ -389,7 +391,7 @@ func sessionsCmd() *cobra.Command {
 				return nil
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "NAME\tSTATE\tEXIT\tPID\tATTACHED\tCREATED\tBY\tCOMMAND")
+			fmt.Fprintln(tw, "NAME\tOWNER\tSTATE\tEXIT\tPID\tATTACHED\tCREATED\tBY\tCOMMAND")
 			for _, ss := range resp.Sessions {
 				exit := "-"
 				if ss.HasExitCode {
@@ -403,7 +405,7 @@ func sessionsCmd() *cobra.Command {
 				if len(cmdline) > 50 {
 					cmdline = cmdline[:47] + "..."
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\n", ss.Name, stateName(ss.State), exit, ss.Pid,
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\n", ss.Name, ss.Owner, stateName(ss.State), exit, ss.Pid,
 					ss.Attached, created, ss.CreatedBy, cmdline)
 			}
 			return tw.Flush()
@@ -411,6 +413,7 @@ func sessionsCmd() *cobra.Command {
 	}
 	c.Flags().BoolVar(&all, "all", false, "include ended sessions")
 	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
+	c.Flags().StringVar(&owner, "owner", "", "only this user's sessions (admins see everybody's)")
 	return c
 }
 

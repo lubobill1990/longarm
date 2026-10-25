@@ -72,6 +72,12 @@ type Hub struct {
 	tailnetMintErr                         map[string]mintFailure // last failed mint per role (tailnetMu)
 	pending                                map[string]*pendingReq // requests relayed to workers, by request id
 	links                                  map[string]*linkEntry  // latest link report per client
+	// multi-tenancy: users, the policy version workers have to have, users
+	// whose data workers purge, and whether separation was on at the last push
+	tenants        map[string]*tenant
+	tenancyVersion int64
+	purged         []string
+	lastTenancyOn  bool
 
 	started time.Time
 	relay   *relay.Server
@@ -112,6 +118,7 @@ type reservation struct {
 	worker string
 	memGB  float64
 	at     time.Time
+	owner  string // the user who placed it (quotas)
 }
 
 // Open loads the hub's state; the CA must exist.
@@ -139,7 +146,7 @@ func Open(cfg *Config, log *slog.Logger) (*Hub, error) {
 		tailnetWorkerLimit: newIPLimiter(1.0/3600, 5), tailnetClientLimit: newIPLimiter(1.0/600, 10), nodes: map[string]*node{},
 		jobs: map[string]map[string]*jobEntry{}, reservations: map[string]*reservation{},
 		profiles: map[string]*pb.Profile{}, stable: map[string]*pb.Profile{}, knownSerials: map[string]bool{}, kick: make(chan struct{}, 1),
-		pending: map[string]*pendingReq{}, links: map[string]*linkEntry{},
+		pending: map[string]*pendingReq{}, links: map[string]*linkEntry{}, tenants: map[string]*tenant{},
 		started: time.Now(), addrs: map[string]string{},
 	}
 	if h.tailnet, err = newTailnetProvider(cfg.Tailnet); err != nil {
@@ -220,6 +227,14 @@ func (h *Hub) load() error {
 		}
 	}
 	h.loadRollout()
+	if err := h.loadTenants(); err != nil {
+		return err
+	}
+	h.lastTenancyOn = h.tenancyOnLocked()
+	if on, _ := h.store.Meta("tenancy_on"); on != strconv.FormatBool(h.lastTenancyOn) {
+		// separation turned on or off (hub.toml) since the last policy
+		h.tenancyChangedLocked()
+	}
 	v, _ := h.store.Meta("revocation_version")
 	h.revVersion, _ = strconv.ParseInt(v, 10, 64)
 	h.revoked, _ = pki.LoadRevocationList("")

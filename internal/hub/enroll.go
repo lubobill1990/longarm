@@ -69,6 +69,14 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 	if req.Name != "" && !pki.ValidName(req.Name) {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid name %q", req.Name)
 	}
+	if req.User != "" {
+		if r != pki.RoleClient && r != pki.RoleAdmin {
+			return nil, status.Error(codes.InvalidArgument, "only client and admin codes belong to a user")
+		}
+		if !pki.ValidUser(req.User) {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid user name %q", req.User)
+		}
+	}
 	ttl := 10 * time.Minute
 	if req.Ttl != nil {
 		ttl = req.Ttl.AsDuration()
@@ -91,7 +99,7 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 	hash := codeHash(code)
 	now := time.Now().UTC()
 	jc := &store.JoinCode{ID: hash[:8], Role: role, Name: req.Name, Labels: req.Labels, Profile: req.Profile,
-		CreatedBy: by, CreatedAt: now, ExpiresAt: now.Add(ttl)}
+		CreatedBy: by, CreatedAt: now, ExpiresAt: now.Add(ttl), User: req.User}
 	if err := h.store.AddJoinCode(hash, jc); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -103,7 +111,7 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 
 func joinCodePB(c *store.JoinCode) *pb.JoinCode {
 	return &pb.JoinCode{Id: c.ID, Role: c.Role, ExpiresAt: tspb(c.ExpiresAt), Labels: c.Labels, Profile: c.Profile,
-		CreatedBy: c.CreatedBy, Used: !c.UsedAt.IsZero(), UsedBy: c.UsedBy, Name: c.Name}
+		CreatedBy: c.CreatedBy, Used: !c.UsedAt.IsZero(), UsedBy: c.UsedBy, Name: c.Name, User: c.User}
 }
 
 type enrollServer struct {
@@ -156,7 +164,7 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 		return nil, errBadCode
 	}
 	rec := &store.Node{Name: name, Role: jc.Role, Labels: maps.Clone(jc.Labels), Profile: jc.Profile,
-		Hostname: req.Hostname, OS: req.Os, Arch: req.Arch, Version: req.Version, JoinedAt: now}
+		Hostname: req.Hostname, OS: req.Os, Arch: req.Arch, Version: req.Version, JoinedAt: now, User: jc.User}
 	resp := &pb.JoinResponse{Name: name, Role: jc.Role, CaPem: h.ca.CertPEM, HubName: h.cfg.Name}
 	if jc.Role == string(pki.RoleWorker) && !h.cfg.AutoApprove {
 		tok := randomToken()
@@ -228,7 +236,7 @@ func (h *Hub) joinStatusLocked(th string) *pb.JoinResponse {
 func (h *Hub) issue(rec *store.Node, csr []byte) ([]byte, error) {
 	ttl := h.cfg.TTL(rec.Role)
 	cert, err := h.ca.SignCSR(csr, pki.IssueOptions{Role: pki.Role(rec.Role), Name: rec.Name, Validity: ttl,
-		Hosts: nil})
+		Hosts: nil, User: rec.User})
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "sign: %v", err)
 	}

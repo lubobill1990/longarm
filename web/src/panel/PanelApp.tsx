@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { hubApi } from '../api/hub'
+import { hubApi, isAdmin } from '../api/hub'
 import { ApiError } from '../api/http'
 import type { Me } from '../api/types'
 import { Toasts } from '../components/common'
@@ -9,19 +9,32 @@ import { JobsPage } from './JobsPage'
 import { JoinCodesPage } from './JoinCodesPage'
 import { LinksPage } from './LinksPage'
 import { LoginPage } from './LoginPage'
+import { MePage } from './MePage'
 import { NodesPage } from './NodesPage'
 import { ProfilesPage } from './ProfilesPage'
+import { TenantsPage } from './TenantsPage'
 import { UsersPage } from './UsersPage'
 
-const NAV: [string, string][] = [
+const ADMIN_NAV: [string, string][] = [
   ['/nodes', 'Nodes'],
   ['/jobs', 'Jobs'],
   ['/joincodes', 'Add machine'],
+  ['/tenants', 'People'],
   ['/profiles', 'Toolchains'],
   ['/links', 'Links'],
   ['/audit', 'Audit'],
-  ['/users', 'Users'],
+  ['/users', 'Panel logins'],
 ]
+
+// panel logins with role "user": their own (and team-shared) jobs, the
+// workers (read-only) and their quota
+const USER_NAV: [string, string][] = [
+  ['/jobs', 'My jobs'],
+  ['/nodes', 'Nodes'],
+  ['/me', 'Me'],
+]
+
+const home = (me: Me) => (isAdmin(me) ? '/nodes' : '/jobs')
 
 /** The hub's web panel (fleet-wide). */
 export function PanelApp() {
@@ -41,14 +54,17 @@ export function PanelApp() {
           onLogin={() =>
             hubApi.me().then((m) => {
               setMe(m)
-              if (path === '/' || path === '/login') navigate('/nodes')
+              if (path === '/' || path === '/login') navigate(home(m))
             })
           }
         />
       </Toasts>
     )
   }
-  const page = path === '/' || path === '/login' ? '/nodes' : '/' + path.split('/')[1]
+  const admin = isAdmin(me)
+  const nav = admin ? ADMIN_NAV : USER_NAV
+  const page = path === '/' || path === '/login' ? home(me) : '/' + path.split('/')[1]
+  const allowed = page === '/me' || nav.some(([to]) => to === page)
   return (
     <Toasts>
       <div className="shell">
@@ -58,14 +74,17 @@ export function PanelApp() {
             {me.hub} · {me.version}
           </span>
           <nav>
-            {NAV.map(([to, label]) => (
+            {nav.map(([to, label]) => (
               <Link key={to} to={to} className={page === to ? 'active' : ''}>
                 {label}
               </Link>
             ))}
           </nav>
           <span className="spacer" />
-          <span className="muted">{me.user}</span>
+          <Link to="/me" className="muted">
+            {me.user}
+            {!admin && me.tenant && me.tenant !== me.user ? ` (${me.tenant})` : ''}
+          </Link>
           <button
             onClick={async () => {
               await hubApi.logout().catch(() => {})
@@ -76,13 +95,16 @@ export function PanelApp() {
           </button>
         </header>
         <main className="content">
-          {page === '/nodes' && <NodesPage />}
-          {page === '/jobs' && <JobsPage path={path} />}
-          {page === '/joincodes' && <JoinCodesPage me={me} />}
-          {page === '/profiles' && <ProfilesPage />}
-          {page === '/links' && <LinksPage />}
-          {page === '/audit' && <AuditPage />}
-          {page === '/users' && <UsersPage me={me} />}
+          {!allowed && <div className="notice">This page is for administrators only.</div>}
+          {page === '/nodes' && <NodesPage admin={admin} />}
+          {page === '/jobs' && <JobsPage path={path} me={me} />}
+          {page === '/me' && <MePage me={me} />}
+          {admin && page === '/joincodes' && <JoinCodesPage me={me} />}
+          {admin && page === '/tenants' && <TenantsPage me={me} />}
+          {admin && page === '/profiles' && <ProfilesPage />}
+          {admin && page === '/links' && <LinksPage />}
+          {admin && page === '/audit' && <AuditPage />}
+          {admin && page === '/users' && <UsersPage me={me} />}
         </main>
       </div>
     </Toasts>

@@ -16,19 +16,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
+	"github.com/pkg/sftp"
 	"github.com/spf13/cobra"
 
 	"github.com/lubobill1990/longarm/internal/gc"
 	"github.com/lubobill1990/longarm/internal/longarmd"
 	"github.com/lubobill1990/longarm/internal/platform"
+	"github.com/lubobill1990/longarm/internal/server"
 	"github.com/lubobill1990/longarm/internal/shim"
 	"github.com/lubobill1990/longarm/internal/update"
+	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/version"
 )
 
@@ -53,6 +58,7 @@ func main() {
 	root.AddCommand(localCmds()...)
 	root.AddCommand(updateCmd(), updateWatchCmd(), installHelperCmd())
 	root.AddCommand(uiCmds()...)
+	root.AddCommand(userHelperCmd(), sftpServerCmd())
 	root.AddCommand(runCmd(), joinCmd(), shimCmd(), conhostCmd(), serviceCmd(), gcCmd(), &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",
@@ -128,6 +134,50 @@ func runCmd() *cobra.Command {
 	return c
 }
 
+// userHelperCmd is the per-user helper (internal): longarmd starts it as a
+// user's OS account and talks gRPC over its stdin/stdout.
+func userHelperCmd() *cobra.Command {
+	var root string
+	c := &cobra.Command{
+		Use:    userspace.HelperCommand + " --root DIR",
+		Short:  "Serve file and git operations as the current account on stdin/stdout (internal; per-user isolation)",
+		Args:   cobra.NoArgs,
+		Hidden: true,
+		RunE: func(*cobra.Command, []string) error {
+			return server.ServeUserHelper(root, os.Stdin, os.Stdout)
+		},
+	}
+	c.Flags().StringVar(&root, "root", "", "the user's space")
+	return c
+}
+
+// sftpServerCmd serves sftp on stdin/stdout (internal; the built-in sshd
+// runs it as the caller's account with per-user isolation).
+func sftpServerCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    longarmd.SFTPCommand,
+		Short:  "Serve sftp on stdin/stdout (internal)",
+		Args:   cobra.NoArgs,
+		Hidden: true,
+		RunE: func(*cobra.Command, []string) error {
+			srv, err := sftp.NewServer(stdio{})
+			if err != nil {
+				return err
+			}
+			if err := srv.Serve(); err != nil && !errors.Is(err, io.EOF) {
+				return err
+			}
+			return nil
+		},
+	}
+}
+
+type stdio struct{}
+
+func (stdio) Read(b []byte) (int, error)  { return os.Stdin.Read(b) }
+func (stdio) Write(b []byte) (int, error) { return os.Stdout.Write(b) }
+func (stdio) Close() error                { os.Stdin.Close(); return os.Stdout.Close() }
+
 func shimCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "shim <jobdir>",
@@ -160,7 +210,7 @@ func serviceCmd() *cobra.Command {
 	}
 	c.PersistentFlags().StringVar(&name, "name", defaultServiceName, "service name")
 
-	var dataDir, user, passwordEnv string
+	var dataDir, user, passwordEnv, isolation string
 	var listen []string
 	install := &cobra.Command{
 		Use:   "install",
@@ -191,7 +241,20 @@ macOS: LaunchDaemon with UserName and AbandonProcessGroup.`,
 				Description: "Longarm worker daemon: runs remote jobs for longarm clients",
 				Exe:         exe, Args: args, User: user, Password: os.Getenv(passwordEnv),
 			}
-			if user == "" {
+			switch {
+			case isolation == "per-user" && user != "":
+				return errors.New("--isolation per-user runs the service as LocalSystem / root: drop --user")
+			case isolation == "per-user":
+				if err := platform.CanIsolate(); err != nil && runtime.GOOS == "darwin" {
+					return err
+				}
+				if err := longarmd.SetIsolation(dataDir, isolation); err != nil {
+					return err
+				}
+				fmt.Fprintln(os.Stderr, "per-user isolation: the service runs as LocalSystem / root and runs every user's work as an OS account of its own")
+			case isolation != "" && isolation != "shared":
+				return fmt.Errorf("--isolation %q: want shared or per-user", isolation)
+			case user == "":
 				fmt.Fprintln(os.Stderr, "warning: no --user given; the service runs as LocalSystem/root, which DESIGN §3.1 advises against")
 			}
 			if err := platform.InstallService(cfg); err != nil {
@@ -206,6 +269,7 @@ macOS: LaunchDaemon with UserName and AbandonProcessGroup.`,
 	install.Flags().StringArrayVar(&listen, "listen", nil, "listen URL(s) (default: longarmd.toml in the data dir)")
 	install.Flags().StringVar(&user, "user", "", "account to run as")
 	install.Flags().StringVar(&passwordEnv, "password-env", "LONGARM_SERVICE_PASSWORD", "env var holding the Windows account password")
+	install.Flags().StringVar(&isolation, "isolation", "", "per-user: run as LocalSystem / root and isolate users (writes [isolation] to longarmd.toml; docs/security.md)")
 
 	simple := func(use, short string, fn func(string) error, done string) *cobra.Command {
 		return &cobra.Command{

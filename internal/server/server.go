@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"runtime"
@@ -23,7 +24,10 @@ import (
 	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/metrics"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/supervisor"
+	"github.com/lubobill1990/longarm/internal/tenancy"
+	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/workspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -64,19 +68,20 @@ type Server struct {
 	// Listeners are the listen URLs set before serving; listeners that come
 	// up later (tailscale) are added with AddListener.
 	Listeners []string
-	Mgr       *supervisor.Manager // jobs
-	Sessions  *supervisor.Manager // interactive PTY sessions
-	Sampler   *metrics.Sampler
-	Audit     *Audit
-	Log       *slog.Logger
+	// Spaces are the users' jobs, sessions and data (one shared space
+	// unless [isolation] mode = "per-user").
+	Spaces *userspace.Spaces
+	// Policy is the hub's tenancy policy (users, teams, quotas); nil = none.
+	Policy  *tenancy.Policy
+	Sampler *metrics.Sampler
+	Audit   *Audit
+	Log     *slog.Logger
 	// ExecWrapper is prepended to Exec argv (Windows: longarmd conhost --).
 	ExecWrapper []string
 	// Shutdown is invoked (asynchronously) by Admin.Shutdown.
 	Shutdown func()
 	// LogMaxBytes caps out.log of new jobs and sessions (0 = unlimited).
 	LogMaxBytes int64
-	// WS is the workspace store (mirrors, worktrees).
-	WS *workspace.Store
 
 	lmu  sync.Mutex
 	late []string
@@ -91,6 +96,9 @@ type Server struct {
 	Conns *conntrack.Tracker
 	// GC runs a garbage collection for Admin.Gc.
 	GC func(ctx context.Context, req *pb.GcRequest) (*pb.GcResponse, error)
+
+	// helperWS: this Server is a user helper's (ServeUserHelper).
+	helperWS *workspace.Store
 }
 
 // GRPC builds the gRPC server with mTLS and the authorization interceptors.
@@ -130,12 +138,20 @@ type nodeServer struct {
 func (n *nodeServer) Info(ctx context.Context, _ *pb.InfoRequest) (*pb.InfoResponse, error) {
 	host, _ := os.Hostname()
 	id := IdentityFrom(ctx)
-	return &pb.InfoResponse{
+	out := &pb.InfoResponse{
 		Name: n.s.Name, Version: n.s.Version, Os: runtime.GOOS, Arch: runtime.GOARCH,
 		Hostname: host, NumCpu: int32(runtime.NumCPU()), DataDir: n.s.DataDir,
 		StartedAt: timestamppb.New(n.s.StartedAt), CallerName: id.Name, CallerRole: string(id.Role),
 		Listeners: n.s.ListenerNames(), SshHostKey: n.s.SSHHostKey,
-	}, nil
+		Isolation: n.s.Spaces.Mode(), CallerUser: id.Owner(),
+	}
+	if n.s.perUser() {
+		out.Account = n.s.Spaces.AccountName(id.Owner())
+		if !n.s.callerOf(ctx).Admin {
+			out.DataDir = "" // where other users' data lives is none of a client's business
+		}
+	}
+	return out, nil
 }
 
 // ---------------------------------------------------------------- Admin
@@ -192,7 +208,16 @@ func (m *metricsServer) Snapshot(ctx context.Context, _ *pb.MetricsRequest) (*pb
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	return SnapshotToPB(snap), nil
+	return m.s.metricsFor(ctx, SnapshotToPB(snap)), nil
+}
+
+// metricsFor strips the machine's top-process lists for non-admins when
+// users are separated: other users' process names and sizes are theirs.
+func (s *Server) metricsFor(ctx context.Context, m *pb.MetricsSnapshot) *pb.MetricsSnapshot {
+	if s.enforce() && !s.callerOf(ctx).Admin {
+		m.TopCpu, m.TopMem = nil, nil
+	}
+	return m
 }
 
 func (m *metricsServer) Stream(req *pb.MetricsStreamRequest, st pb.Metrics_StreamServer) error {
@@ -210,7 +235,7 @@ func (m *metricsServer) Stream(req *pb.MetricsStreamRequest, st pb.Metrics_Strea
 		if err != nil {
 			return status.Error(codes.Internal, err.Error())
 		}
-		if err := st.Send(SnapshotToPB(snap)); err != nil {
+		if err := st.Send(m.s.metricsFor(st.Context(), SnapshotToPB(snap))); err != nil {
 			return err
 		}
 		select {
@@ -258,7 +283,8 @@ func JobToPB(j supervisor.Job) *pb.Job {
 		Spec: &pb.JobSpec{
 			Id: j.Spec.ID, Name: j.Spec.Name, Argv: j.Spec.Argv, Cwd: j.Spec.Cwd, Env: j.Spec.Env,
 			SecretEnvNames: j.Spec.SecretEnvNames, MemLimitBytes: j.Spec.MemLimitBytes, Labels: j.Spec.Labels,
-			SubmittedBy: j.Spec.SubmittedBy,
+			SubmittedBy: j.Spec.SubmittedBy, Owner: j.Spec.OwnerName(), ShareTeams: j.Spec.ShareTeams,
+			CpuLimit: j.Spec.CPULimit,
 		},
 		State: stateToPB[j.Status.State], Pid: int32(j.Status.PID), ShimPid: int32(j.Status.ShimPID),
 		CreatedAt: ts(j.Status.CreatedAt), StartedAt: ts(j.Status.StartedAt), EndedAt: ts(j.Status.EndedAt),
@@ -294,10 +320,11 @@ func (j *jobsServer) Submit(ctx context.Context, req *pb.SubmitRequest) (*pb.Job
 		return nil, status.Error(codes.InvalidArgument, "missing spec")
 	}
 	id := IdentityFrom(ctx)
+	owner := id.Owner()
 	spec := jobs.Spec{
 		ID: req.Spec.Id, Name: req.Spec.Name, Argv: req.Spec.Argv, Cwd: req.Spec.Cwd, Env: req.Spec.Env,
 		MemLimitBytes: req.Spec.MemLimitBytes, Labels: req.Spec.Labels, SubmittedBy: id.String(),
-		LogMaxBytes: j.s.LogMaxBytes,
+		LogMaxBytes: j.s.LogMaxBytes, Owner: owner, CPULimit: req.Spec.CpuLimit,
 	}
 	if w := req.Spec.Workspace; w != nil {
 		if !workspace.ValidRepo(w.Repo) {
@@ -305,15 +332,60 @@ func (j *jobsServer) Submit(ctx context.Context, req *pb.SubmitRequest) (*pb.Job
 		}
 		spec.Workspace = &jobs.Workspace{Repo: w.Repo, URL: w.Url, Ref: w.Ref, Commit: w.Commit, StagingID: w.StagingId}
 	}
-	job, err := j.s.Mgr.Submit(ctx, spec, req.SecretEnv)
+	job, err := j.submit(ctx, owner, spec, req.SecretEnv, req.Share)
 	j.s.Audit.Log(id, pb.Jobs_Submit_FullMethodName, map[string]any{
 		"job": spec.ID, "argv": spec.Argv, "cwd": spec.Cwd, "env_keys": keys(spec.Env),
-		"secret_keys": keys(req.SecretEnv), "error": errString(err),
+		"secret_keys": keys(req.SecretEnv), "share": req.Share, "error": errString(err),
 	})
 	if err != nil {
+		if _, ok := status.FromError(err); ok {
+			return nil, err
+		}
 		return nil, MgrErr(err)
 	}
 	return JobToPB(job), nil
+}
+
+// SubmitAs submits a job for owner (the hub's SubmitJob relays it with the
+// owner it checked).
+func (s *Server) SubmitAs(ctx context.Context, owner string, spec jobs.Spec, secrets map[string]string) (supervisor.Job, error) {
+	spec.Owner = owner
+	return (&jobsServer{s: s}).submit(ctx, owner, spec, secrets, nil)
+}
+
+// submit places a job in owner's space with the owner's sharing, limits and
+// per-worker quota.
+func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, secrets map[string]string, share []string) (supervisor.Job, error) {
+	var teams []string
+	if j.s.Policy != nil {
+		teams = j.s.Policy.Teams(owner)
+	}
+	var err error
+	if spec.ShareTeams, err = tenancy.ResolveShare(share, teams); err != nil {
+		return supervisor.Job{}, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if !jobs.ValidID(spec.ID) {
+		return supervisor.Job{}, fmt.Errorf("%w: bad id %q", supervisor.ErrInvalid, spec.ID)
+	}
+	sp, err := j.s.spaceFor(owner)
+	if err != nil {
+		return supervisor.Job{}, err
+	}
+	if esp, existing, err := j.s.Spaces.FindJob(spec.ID); err == nil {
+		if esp != sp || existing.Spec.OwnerName() != owner {
+			return supervisor.Job{}, supervisor.ErrAlreadyExists // somebody else's id
+		}
+		// a retried submit: the supervisor compares the specs
+	} else if j.s.enforce() {
+		q := j.s.quota(owner)
+		if spec.MemLimitBytes, spec.CPULimit, err = tenancy.JobLimits(q, spec.MemLimitBytes, spec.CPULimit); err != nil {
+			return supervisor.Job{}, status.Error(codes.InvalidArgument, err.Error())
+		}
+		if err := j.s.checkJobQuota(sp, owner, q, spec.MemLimitBytes, spec.Labels[sched.LabelMemGB]); err != nil {
+			return supervisor.Job{}, err
+		}
+	}
+	return j.s.Spaces.SubmitJob(ctx, sp, spec, secrets)
 }
 
 func errString(err error) string {
@@ -323,24 +395,31 @@ func errString(err error) string {
 	return err.Error()
 }
 
-func (j *jobsServer) Get(_ context.Context, req *pb.GetJobRequest) (*pb.Job, error) {
-	job, err := j.s.Mgr.Get(req.Id)
+func (j *jobsServer) Get(ctx context.Context, req *pb.GetJobRequest) (*pb.Job, error) {
+	_, job, err := j.s.findJob(ctx, req.Id, false)
 	if err != nil {
-		return nil, MgrErr(err)
+		return nil, err
 	}
 	return JobToPB(job), nil
 }
 
-func (j *jobsServer) List(_ context.Context, req *pb.ListJobsRequest) (*pb.ListJobsResponse, error) {
+func (j *jobsServer) List(ctx context.Context, req *pb.ListJobsRequest) (*pb.ListJobsResponse, error) {
 	var states []jobs.State
 	for _, s := range req.States {
 		if st, ok := StateFromPB(s); ok {
 			states = append(states, st)
 		}
 	}
+	c := j.s.callerOf(ctx)
 	out := &pb.ListJobsResponse{}
-	for _, job := range j.s.Mgr.List(states, int(req.Limit)) {
+	for _, job := range j.s.Spaces.ListJobs(states, 0) {
+		if !c.CanRead(job.Spec.OwnerName(), job.Spec.ShareTeams) {
+			continue
+		}
 		out.Jobs = append(out.Jobs, JobToPB(job))
+		if req.Limit > 0 && len(out.Jobs) >= int(req.Limit) {
+			break
+		}
 	}
 	return out, nil
 }
@@ -348,7 +427,11 @@ func (j *jobsServer) List(_ context.Context, req *pb.ListJobsRequest) (*pb.ListJ
 const logChunk = 64 << 10
 
 func (j *jobsServer) Logs(req *pb.LogsRequest, st pb.Jobs_LogsServer) error {
-	return StreamLogs(j.s.Mgr, req, st)
+	sp, _, err := j.s.findJob(st.Context(), req.Id, false)
+	if err != nil {
+		return err
+	}
+	return StreamLogs(sp.Jobs, req, st)
 }
 
 // StreamLogs serves Jobs.Logs and Sessions.Logs (and longarmd's local API).
@@ -398,12 +481,16 @@ func StreamLogs(mgr *supervisor.Manager, req *pb.LogsRequest, st interface {
 
 func (j *jobsServer) Wait(req *pb.WaitRequest, st pb.Jobs_WaitServer) error {
 	ctx := st.Context()
+	sp, _, err := j.s.findJob(ctx, req.Id, false)
+	if err != nil {
+		return err
+	}
 	var lastSeq uint64
 	var lastState jobs.State
 	first := true
 	for {
-		changed := j.s.Mgr.Changed()
-		job, err := j.s.Mgr.Get(req.Id)
+		changed := sp.Jobs.Changed()
+		job, err := sp.Jobs.Get(req.Id)
 		if err != nil {
 			return MgrErr(err)
 		}
@@ -425,10 +512,15 @@ func (j *jobsServer) Wait(req *pb.WaitRequest, st pb.Jobs_WaitServer) error {
 }
 
 func (j *jobsServer) Kill(ctx context.Context, req *pb.KillRequest) (*pb.Job, error) {
-	job, err := j.s.Mgr.Kill(ctx, req.Id)
+	sp, _, err := j.s.findJob(ctx, req.Id, true)
+	var job supervisor.Job
+	if err == nil {
+		job, err = sp.Jobs.Kill(ctx, req.Id)
+		err = MgrErr(err)
+	}
 	j.s.Audit.Log(IdentityFrom(ctx), pb.Jobs_Kill_FullMethodName, map[string]any{"job": req.Id, "error": errString(err)})
 	if err != nil {
-		return nil, MgrErr(err)
+		return nil, err
 	}
 	return JobToPB(job), nil
 }

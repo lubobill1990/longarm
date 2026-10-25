@@ -42,9 +42,16 @@ func TestMain(m *testing.M) {
 	// Client-side placement must not depend on this machine's load.
 	os.Setenv("LONGARM_GATE_CPU", "101")
 	os.Setenv("LONGARM_GATE_FREE_GB", "0")
-	dir, err := os.MkdirTemp("", "longarm-e2e-bin-")
-	if err != nil {
-		panic(err)
+	// LONGARM_E2E_BIN_DIR: prebuilt longarmd, longarm, helper and longarm-hub
+	// (CI runs the per-user tests as root from a test binary and must not
+	// build with root's - empty - Go caches).
+	prebuilt := os.Getenv("LONGARM_E2E_BIN_DIR")
+	dir := prebuilt
+	if dir == "" {
+		var err error
+		if dir, err = os.MkdirTemp("", "longarm-e2e-bin-"); err != nil {
+			panic(err)
+		}
 	}
 	bins.dir = dir
 	bins.longarmd, bins.longarm, bins.helper = filepath.Join(dir, exeName("longarmd")), filepath.Join(dir, exeName("longarm")), filepath.Join(dir, exeName("helper"))
@@ -53,13 +60,21 @@ func TestMain(m *testing.M) {
 		goBin = "go"
 	}
 	for pkg, out := range map[string]string{"../cmd/longarmd": bins.longarmd, "../cmd/longarm": bins.longarm, "./helper": bins.helper} {
+		if prebuilt != "" {
+			if _, err := os.Stat(out); err != nil {
+				bins.buildErr = fmt.Errorf("LONGARM_E2E_BIN_DIR: %v", err)
+			}
+			continue
+		}
 		if b, err := exec.Command(goBin, "build", "-o", out, pkg).CombinedOutput(); err != nil {
 			bins.buildErr = fmt.Errorf("build %s: %v\n%s", pkg, err, b)
 			break
 		}
 	}
 	code := m.Run()
-	os.RemoveAll(dir)
+	if prebuilt == "" {
+		os.RemoveAll(dir)
+	}
 	os.Exit(code)
 }
 

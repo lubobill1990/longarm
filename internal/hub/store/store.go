@@ -97,6 +97,11 @@ var migrations = []string{
 	`ALTER TABLE releases ADD COLUMN channel TEXT NOT NULL DEFAULT 'stable';
 	ALTER TABLE releases ADD COLUMN kind TEXT NOT NULL DEFAULT 'binary';
 	ALTER TABLE releases ADD COLUMN sig BLOB;`,
+	// 3: multi-tenancy: Longarm users (teams, quotas)
+	`CREATE TABLE tenants (
+		name TEXT PRIMARY KEY,
+		data TEXT NOT NULL
+	);`,
 }
 
 // Open opens (creating if needed) the database at path and migrates it.
@@ -223,6 +228,10 @@ type Node struct {
 	TailnetKeyControl string          `json:"tailnet_key_control,omitempty"`
 	TailnetKeyReason  string          `json:"tailnet_key_reason,omitempty"`
 	TailnetRekey      bool            `json:"tailnet_rekey,omitempty"`
+	// User is the Longarm user of a client/admin node's certificates
+	// ("" = its name); Isolation the worker's [isolation] mode.
+	User      string `json:"user,omitempty"`
+	Isolation string `json:"isolation,omitempty"`
 }
 
 // PutNode inserts or replaces a node.
@@ -336,6 +345,7 @@ type JoinCode struct {
 	ID        string            `json:"id"`
 	Role      string            `json:"role"`
 	Name      string            `json:"name,omitempty"`
+	User      string            `json:"user,omitempty"` // client/admin: the Longarm user of the certificate
 	Labels    map[string]string `json:"labels,omitempty"`
 	Profile   string            `json:"profile,omitempty"`
 	CreatedBy string            `json:"created_by"`
@@ -544,7 +554,14 @@ type User struct {
 	TOTPSecret string    `json:"totp_secret"`
 	CreatedAt  time.Time `json:"created_at"`
 	LastTOTP   int64     `json:"last_totp,omitempty"` // last accepted time step (replay protection)
+	// Role: "" or "admin" = a panel administrator (everything); "user" = a
+	// Longarm user (Tenant) seeing only their own jobs (multi-tenancy).
+	Role   string `json:"role,omitempty"`
+	Tenant string `json:"tenant,omitempty"`
 }
+
+// Admin reports whether the panel account administers the hub.
+func (u *User) Admin() bool { return u.Role == "" || u.Role == "admin" }
 
 // PutUser inserts or replaces a user.
 func (s *Store) PutUser(u *User) error {
@@ -711,4 +728,45 @@ func (s *Store) PeekJoinCode(hash string, now time.Time) (*JoinCode, error) {
 func (s *Store) DeleteUserSessions(name string) error {
 	_, err := s.db.Exec(`DELETE FROM web_sessions WHERE user=?`, name)
 	return err
+}
+
+// ---------------------------------------------------------------- tenants
+
+// Tenant is a Longarm user (multi-tenancy): teams, quota overrides,
+// disabled flag. Data is the protojson of pb.TenantUser.
+type Tenant struct {
+	Name string
+	Data []byte
+}
+
+// PutTenant inserts or replaces a tenant.
+func (s *Store) PutTenant(name string, data []byte) error {
+	_, err := s.db.Exec(`INSERT INTO tenants(name,data) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`, name, string(data))
+	return err
+}
+
+// DeleteTenant removes a tenant.
+func (s *Store) DeleteTenant(name string) error {
+	_, err := s.db.Exec(`DELETE FROM tenants WHERE name=?`, name)
+	return err
+}
+
+// Tenants returns every tenant.
+func (s *Store) Tenants() ([]Tenant, error) {
+	rows, err := s.db.Query(`SELECT name,data FROM tenants ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Tenant
+	for rows.Next() {
+		var t Tenant
+		var d string
+		if err := rows.Scan(&t.Name, &d); err != nil {
+			return nil, err
+		}
+		t.Data = []byte(d)
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }

@@ -118,7 +118,7 @@ test('hub panel: TOTP login, approve, live metrics, jobs, logs, kill, every page
   await expect(page.getByTestId('audit')).toContainText('web/ops via hub')
   await shot(page, 'panel-audit')
 
-  await page.getByRole('link', { name: 'Users' }).click()
+  await page.getByRole('link', { name: 'Panel logins' }).click()
   await page.getByLabel('new user name').fill('eve')
   await page.getByLabel('new user password').fill('a long enough password')
   await page.getByLabel('your password').fill(env('LONGARM_TEST_PASS'))

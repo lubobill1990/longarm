@@ -12,6 +12,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -21,6 +22,7 @@ type queued struct {
 	req      *pb.PlaceRequest
 	memGB    float64
 	by       string
+	owner    string // the user (fleet-wide quota)
 	at       time.Time
 	ch       chan *pb.PlaceUpdate
 	position int
@@ -32,6 +34,13 @@ type queued struct {
 // job (then the job's own mem_gb label counts while it is active) or until
 // reservation_ttl passes without a submission.
 func (h *Hub) Place(ctx context.Context, by string, req *pb.PlaceRequest, send func(*pb.PlaceUpdate) error) error {
+	return h.PlaceFor(ctx, by, tenancy.OwnerFromBy(by), req, send)
+}
+
+// PlaceFor places a job of owner: with multi-tenancy the owner's fleet-wide
+// quota must allow it (else it queues, or fails with no_queue), and only
+// the owner's mirrors count for affinity on per-user workers.
+func (h *Hub) PlaceFor(ctx context.Context, by, owner string, req *pb.PlaceRequest, send func(*pb.PlaceUpdate) error) error {
 	if !jobs.ValidID(req.JobId) {
 		return status.Error(codes.InvalidArgument, "job_id must be a valid job id (client-generated ULID)")
 	}
@@ -48,27 +57,41 @@ func (h *Hub) Place(ctx context.Context, by string, req *pb.PlaceRequest, send f
 	for w := range h.jobs {
 		if e := h.jobs[w][req.JobId]; e != nil {
 			h.mu.Unlock()
+			if !h.viewerLocked(owner, false).CanRead(tenancy.OwnerOf(e.job.GetSpec()), nil) {
+				return status.Errorf(codes.AlreadyExists, "job id %s is in use", req.JobId)
+			}
 			return status.Errorf(codes.AlreadyExists, "job %s already runs on %s", req.JobId, w)
 		}
 	}
-	res := h.pickLocked(req, mem)
+	res := h.pickLocked(req, mem, owner)
+	quota := h.overQuotaLocked(owner, mem)
+	if quota != "" {
+		res = sched.Result{}
+	}
 	if res.Worker != "" {
-		r := h.reserveLocked(req.JobId, res.Worker, mem)
+		r := h.reserveLocked(req.JobId, res.Worker, mem, owner)
 		u := h.assignedLocked(r, res.Score)
 		h.log.Info("placed", "job", req.JobId, "worker", res.Worker, "score", res.Score, "mem_gb", mem, "by", by)
 		h.mu.Unlock()
 		return send(u)
 	}
+	reason := res.Summary()
+	if quota != "" {
+		reason = quota
+	}
 	if req.NoQueue {
 		h.mu.Unlock()
-		return status.Errorf(codes.ResourceExhausted, "no worker passes the gate: %s", res.Summary())
+		if quota != "" {
+			return status.Error(codes.ResourceExhausted, quota)
+		}
+		return status.Errorf(codes.ResourceExhausted, "no worker passes the gate: %s", reason)
 	}
 	h.queueSeq++
-	q := &queued{seq: h.queueSeq, req: req, memGB: mem, by: by, at: time.Now(), ch: make(chan *pb.PlaceUpdate, 8),
-		reason: res.Summary()}
+	q := &queued{seq: h.queueSeq, req: req, memGB: mem, by: by, owner: owner, at: time.Now(), ch: make(chan *pb.PlaceUpdate, 8),
+		reason: reason}
 	h.queue = append(h.queue, q)
 	q.position = len(h.queue)
-	h.bus.publish(&pb.FleetEvent{Kind: "queue", Message: fmt.Sprintf("job %s queued (position %d): %s", req.JobId, q.position, q.reason)})
+	h.bus.publishOwned(&pb.FleetEvent{Kind: "queue", Message: fmt.Sprintf("job %s queued (position %d): %s", req.JobId, q.position, q.reason)}, owner)
 	h.log.Info("queued", "job", req.JobId, "position", q.position, "reason", q.reason)
 	first := &pb.PlaceUpdate{State: "queued", Position: int32(q.position), Reason: q.reason, MemGb: mem}
 	h.mu.Unlock()
@@ -128,13 +151,18 @@ func (h *Hub) runQueue() {
 	}
 	kept := h.queue[:0]
 	for _, q := range h.queue {
-		res := h.pickLocked(q.req, q.memGB)
+		if why := h.overQuotaLocked(q.owner, q.memGB); why != "" {
+			q.reason = why
+			kept = append(kept, q)
+			continue
+		}
+		res := h.pickLocked(q.req, q.memGB, q.owner)
 		if res.Worker == "" {
 			q.reason = res.Summary()
 			kept = append(kept, q)
 			continue
 		}
-		r := h.reserveLocked(q.req.JobId, res.Worker, q.memGB)
+		r := h.reserveLocked(q.req.JobId, res.Worker, q.memGB, q.owner)
 		h.log.Info("placed from queue", "job", q.req.JobId, "worker", res.Worker, "waited", time.Since(q.at).Round(time.Millisecond))
 		for len(q.ch) > 0 { // drop stale position updates so this send cannot block
 			select {
@@ -143,16 +171,16 @@ func (h *Hub) runQueue() {
 			}
 		}
 		q.ch <- h.assignedLocked(r, res.Score) // the only "assigned" for q; only sent under h.mu
-		h.bus.publish(&pb.FleetEvent{Kind: "queue", Node: res.Worker,
-			Message: fmt.Sprintf("job %s assigned to %s after %s", q.req.JobId, res.Worker, time.Since(q.at).Round(time.Second))})
+		h.bus.publishOwned(&pb.FleetEvent{Kind: "queue", Node: res.Worker,
+			Message: fmt.Sprintf("job %s assigned to %s after %s", q.req.JobId, res.Worker, time.Since(q.at).Round(time.Second))}, q.owner)
 	}
 	clear(h.queue[len(kept):])
 	h.queue = kept
 	h.renumberLocked()
 }
 
-func (h *Hub) reserveLocked(jobID, worker string, mem float64) *reservation {
-	r := &reservation{jobID: jobID, worker: worker, memGB: mem, at: time.Now()}
+func (h *Hub) reserveLocked(jobID, worker string, mem float64, owner string) *reservation {
+	r := &reservation{jobID: jobID, worker: worker, memGB: mem, at: time.Now(), owner: owner}
 	h.reservations[jobID] = r
 	return r
 }
@@ -165,8 +193,9 @@ func (h *Hub) assignedLocked(r *reservation, score float64) *pb.PlaceUpdate {
 	return u
 }
 
-// candidatesLocked describes every worker for the scheduler.
-func (h *Hub) candidatesLocked(repo string) []sched.Candidate {
+// candidatesLocked describes every worker for the scheduler (repo affinity
+// for owner: workers with per-user isolation keep "<user>/<repo>" mirrors).
+func (h *Hub) candidatesLocked(repo, owner string) []sched.Candidate {
 	var out []sched.Candidate
 	for _, n := range h.nodes {
 		if n.rec.Role != string(pki.RoleWorker) || n.rec.State == stateRevoked {
@@ -194,14 +223,15 @@ func (h *Hub) candidatesLocked(repo string) []sched.Candidate {
 			c.Eligible, c.Why = false, "at its job limit ("+itoa(int64(n.maxJobs))+")"
 		}
 		if repo != "" {
-			c.HasMirror = slices.Contains(n.rec.Mirrors, repo)
-			c.Warm = slices.Contains(n.rec.WarmRepos, repo)
+			userRepo := owner + "/" + repo
+			c.HasMirror = slices.Contains(n.rec.Mirrors, repo) || slices.Contains(n.rec.Mirrors, userRepo)
+			c.Warm = slices.Contains(n.rec.WarmRepos, repo) || slices.Contains(n.rec.WarmRepos, userRepo)
 		}
 		out = append(out, c)
 	}
 	return out
 }
 
-func (h *Hub) pickLocked(req *pb.PlaceRequest, mem float64) sched.Result {
-	return sched.Pick(h.params, h.candidatesLocked(req.Repo), sched.Request{MemGB: mem, Require: req.Require, Exclude: req.Exclude})
+func (h *Hub) pickLocked(req *pb.PlaceRequest, mem float64, owner string) sched.Result {
+	return sched.Pick(h.params, h.candidatesLocked(req.Repo, owner), sched.Request{MemGB: mem, Require: req.Require, Exclude: req.Exclude})
 }

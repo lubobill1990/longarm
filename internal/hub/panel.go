@@ -13,6 +13,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/version"
 	"github.com/lubobill1990/longarm/internal/webui"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -39,11 +40,11 @@ import (
 // panelCSP: everything from this origin; inline styles for the charts.
 const panelCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
-func (h *Hub) panelRoutes(mux *http.ServeMux, api func(string, func(http.ResponseWriter, *http.Request, string))) {
+func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.ResponseWriter, *http.Request, string))) {
 	spa := webui.Handler("/api/", "/releases/")
 	mux.Handle("GET /{$}", withCSP(spa))
 	mux.Handle("GET /assets/", withCSP(spa))
-	for _, p := range []string{"nodes", "jobs", "joincodes", "profiles", "audit", "users", "links", "login", "tray"} {
+	for _, p := range []string{"nodes", "jobs", "joincodes", "profiles", "audit", "users", "links", "login", "tray", "tenants", "me"} {
 		mux.Handle("GET /"+p, withCSP(spa))
 		mux.Handle("GET /"+p+"/", withCSP(spa))
 	}
@@ -68,33 +69,42 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api func(string, func(http.Respons
 		if len(argv) == 0 {
 			argv = splitCommand(body.Command)
 		}
-		fj, err := h.SubmitJob(r.Context(), "web/"+user, &pb.HubSubmitRequest{Worker: body.Worker, Argv: argv, Name: body.Name,
+		fj, err := h.SubmitJobAs(r.Context(), "web/"+user, h.panelViewer(user).User, &pb.HubSubmitRequest{Worker: body.Worker, Argv: argv, Name: body.Name,
 			Cwd: body.Cwd, Env: body.Env, Require: body.Require, MemGb: body.MemGB})
 		writeResult(w, fj, err)
 	})
 	api("POST /api/jobs/{id}/kill", func(w http.ResponseWriter, r *http.Request, user string) {
-		fj, err := h.KillJob(r.Context(), "web/"+user, r.PathValue("id"), r.URL.Query().Get("worker"))
+		id, worker := r.PathValue("id"), r.URL.Query().Get("worker")
+		if err := h.mayControl(h.panelViewer(user), id, worker); err != nil {
+			writeResult(w, nil, err)
+			return
+		}
+		fj, err := h.KillJob(r.Context(), "web/"+user, id, worker)
 		writeResult(w, fj, err)
 	})
 	api("GET /api/jobs/{id}/logs", func(w http.ResponseWriter, r *http.Request, user string) {
 		q := r.URL.Query()
 		off, _ := strconv.ParseInt(q.Get("offset"), 10, 64)
 		req := &pb.HubLogsRequest{Id: r.PathValue("id"), Worker: q.Get("worker"), Offset: off, Follow: q.Get("follow") == "1" || q.Get("follow") == "true"}
+		if _, err := h.GetJobFor(h.panelViewer(user), req.Id, req.Worker); err != nil {
+			writeResult(w, nil, err)
+			return
+		}
 		h.sseRun(w, r, func(send func(kind string, m any) error) error {
 			return h.JobLogs(r.Context(), "web/"+user, req, func(c *pb.LogChunk) error { return send("log", c) })
 		})
 	})
-	api("POST /api/nodes/{name}/toolchain/apply", func(w http.ResponseWriter, r *http.Request, user string) {
+	admin("POST /api/nodes/{name}/toolchain/apply", func(w http.ResponseWriter, r *http.Request, user string) {
 		info, err := h.ToolchainApply(r.Context(), "web/"+user, r.PathValue("name"))
 		writeResult(w, info, err)
 	})
 	api("GET /api/history", func(w http.ResponseWriter, r *http.Request, _ string) {
 		writePB(w, h.History(r.URL.Query().Get("node")))
 	})
-	api("GET /api/links", func(w http.ResponseWriter, r *http.Request, _ string) {
+	admin("GET /api/links", func(w http.ResponseWriter, r *http.Request, _ string) {
 		writePB(w, h.Links())
 	})
-	api("GET /api/install", func(w http.ResponseWriter, r *http.Request, _ string) {
+	admin("GET /api/install", func(w http.ResponseWriter, r *http.Request, _ string) {
 		q := r.URL.Query()
 		code, role := q.Get("code"), q.Get("role")
 		if code == "" {
@@ -106,7 +116,7 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api func(string, func(http.Respons
 		}
 		writeJSON(w, installCommands(h.baseURL(r), code, role))
 	})
-	api("GET /api/users", func(w http.ResponseWriter, _ *http.Request, _ string) {
+	admin("GET /api/users", func(w http.ResponseWriter, _ *http.Request, _ string) {
 		names, err := h.store.Users()
 		if err != nil {
 			httpError(w, 500, err.Error())
@@ -115,18 +125,23 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api func(string, func(http.Respons
 		type userInfo struct {
 			Name      string    `json:"name"`
 			CreatedAt time.Time `json:"created_at"`
+			Role      string    `json:"role"`
+			Tenant    string    `json:"tenant,omitempty"`
 		}
 		out := []userInfo{}
 		for _, n := range names {
-			ui := userInfo{Name: n}
+			ui := userInfo{Name: n, Role: "admin"}
 			if u, err := h.store.GetUser(n); err == nil {
 				ui.CreatedAt = u.CreatedAt
+				if !u.Admin() {
+					ui.Role, ui.Tenant = u.Role, u.Tenant
+				}
 			}
 			out = append(out, ui)
 		}
 		writeJSON(w, map[string]any{"users": out})
 	})
-	api("POST /api/users", func(w http.ResponseWriter, r *http.Request, user string) {
+	admin("POST /api/users", func(w http.ResponseWriter, r *http.Request, user string) {
 		var body struct {
 			Name     string `json:"name"`
 			Password string `json:"password"`
@@ -148,7 +163,7 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api func(string, func(http.Respons
 		h.log.Info("panel user added", "user", body.Name, "by", "web/"+user, "reset", body.Reset)
 		writeJSON(w, map[string]string{"name": body.Name, "totp_secret": secret, "otpauth": TOTPURI(body.Name, secret)})
 	})
-	api("DELETE /api/users/{name}", func(w http.ResponseWriter, r *http.Request, user string) {
+	admin("DELETE /api/users/{name}", func(w http.ResponseWriter, r *http.Request, user string) {
 		var body struct {
 			Current string `json:"current_password"`
 		}
@@ -215,10 +230,25 @@ func withCSP(next http.Handler) http.Handler {
 	})
 }
 
-// meInfo is GET /api/me.
+// meInfo is GET /api/me (+ role: admin | user; for users their Longarm
+// user, teams, quota and usage).
 func (h *Hub) meInfo(r *http.Request, user string) map[string]any {
-	return map[string]any{"user": user, "hub": h.cfg.Name, "version": version.Version,
-		"hub_address": h.hubAddr(r), "ca_fingerprint": pki.Fingerprint(h.ca.Cert), "base_url": h.baseURL(r)}
+	v := h.panelViewer(user)
+	role := "admin"
+	if !h.panelAdmin(user) {
+		role = "user"
+	}
+	m := map[string]any{"user": user, "hub": h.cfg.Name, "version": version.Version,
+		"hub_address": h.hubAddr(r), "ca_fingerprint": pki.Fingerprint(h.ca.Cert), "base_url": h.baseURL(r),
+		"role": role, "tenant": v.User, "teams": v.Teams}
+	h.mu.Lock()
+	m["tenancy"] = h.tenancyOnLocked()
+	if q := h.quotaLocked(v.User); !tenancy.QuotaEmpty(q) {
+		m["quota"] = json.RawMessage(protoJSON(q))
+	}
+	m["usage"] = json.RawMessage(protoJSON(h.usageLocked(v.User)))
+	h.mu.Unlock()
+	return m
 }
 
 // joinCodeArgRE accepts what may go into a generated command line: join

@@ -4,7 +4,11 @@ import type { Me } from '../api/types'
 import { ErrorBox, useAction, usePoll } from '../components/common'
 import { fmtTime } from '../lib/format'
 
-/** Panel accounts (password + TOTP), like longarm-hub user add/ls/rm. */
+/**
+ * Panel accounts (password + TOTP), like longarm-hub user add/ls/rm. Logins
+ * added here are administrators; logins of people (role user) are made
+ * under People.
+ */
 export function UsersPage({ me }: { me: Me }) {
   const users = usePoll(hubApi.users, 0)
   const { run, busy } = useAction()
@@ -15,7 +19,7 @@ export function UsersPage({ me }: { me: Me }) {
   return (
     <div>
       <div className="page-title">
-        <h1>Users</h1>
+        <h1>Panel logins</h1>
       </div>
       <ErrorBox error={users.error} />
       <div className="cards">
@@ -26,6 +30,10 @@ export function UsersPage({ me }: { me: Me }) {
                 <tr key={u.name} data-testid={`user-${u.name}`}>
                   <td>
                     <b>{u.name}</b> {u.name === me.user && <span className="muted">(you)</span>}
+                  </td>
+                  <td>
+                    <span className={`pill ${u.role === 'user' ? '' : 'info'}`}>{u.role || 'admin'}</span>
+                    {u.role === 'user' && u.tenant && u.tenant !== u.name && <span className="muted small"> as {u.tenant}</span>}
                   </td>
                   <td className="small muted">created {fmtTime(u.created_at)}</td>
                   <td style={{ textAlign: 'right' }}>
@@ -65,6 +73,7 @@ export function UsersPage({ me }: { me: Me }) {
               Add user
             </button>
           </p>
+          <p className="muted small">Adds an administrator. People who should only see their own jobs get a login under People (“web panel login”).</p>
           {made && (
             <div data-testid="totp-secret">
               <p className="small">

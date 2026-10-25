@@ -156,7 +156,7 @@ func hubAdminCmds() []*cobra.Command {
 	nodes.Flags().BoolVar(&all, "all", false, "include clients, admins and revoked nodes")
 	nodes.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 
-	var role, profile, codeName string
+	var role, profile, codeName, codeUser string
 	var ttl time.Duration
 	var labels []string
 	joinCode := &cobra.Command{
@@ -170,7 +170,7 @@ func hubAdminCmds() []*cobra.Command {
 			}
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
 				jc, err := h.Admin().CreateJoinCode(ctx, &pb.CreateJoinCodeRequest{Role: role, Ttl: durationpb.New(ttl), Labels: lm,
-					Profile: profile, Name: codeName})
+					Profile: profile, Name: codeName, User: codeUser})
 				if err != nil {
 					return err
 				}
@@ -196,6 +196,7 @@ func hubAdminCmds() []*cobra.Command {
 	joinCode.Flags().StringArrayVar(&labels, "labels", nil, "labels for the node: KEY=VALUE[,KEY=VALUE...] (repeatable)")
 	joinCode.Flags().StringVar(&profile, "profile", "", "toolchain profile for a worker")
 	joinCode.Flags().StringVar(&codeName, "name", "", "fixed node name")
+	joinCode.Flags().StringVar(&codeUser, "user", "", "client/admin: the Longarm user the certificate belongs to (see longarm admin user)")
 
 	codes := &cobra.Command{
 		Use: "join-codes", Short: "List recent join codes (not the codes themselves)", Args: cobra.NoArgs,

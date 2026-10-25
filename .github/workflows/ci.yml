@@ -22,6 +22,7 @@ concurrency:
 env:
   # Opt-in tests (services, MSI, live tailnets, browsers) stay off in CI.
   LONGARM_SERVICE_TEST: ""
+  LONGARM_PERUSER_TEST: "" # set in the per-user steps below
   LONGARM_MSI_TEST: ""
   LONGARM_PLAYWRIGHT: ""
   LONGARM_SCREENSHOTS: ""
@@ -110,6 +111,27 @@ jobs:
         run: go build ./...
       - name: go test
         run: go test -count=1 -timeout 30m ./... 2>&1 | tee "$RUNNER_TEMP/go-test.log"
+      # Multi-tenancy with OS-level per-user isolation (docs/security.md):
+      # longarmd as root / LocalSystem creating temporary accounts - only on
+      # throwaway runners. Linux: the e2e test binary runs as root with
+      # binaries built beforehand (root has no Go caches); Windows: the
+      # runner is an administrator (the test installs a temporary service).
+      - name: per-user isolation (root)
+        if: runner.os == 'Linux'
+        run: |
+          bin="$RUNNER_TEMP/e2e-bin"
+          mkdir -p "$bin"
+          for c in longarmd longarm longarm-hub; do go build -o "$bin/$c" "./cmd/$c"; done
+          go build -o "$bin/helper" ./e2e/helper
+          go test -c -o "$bin/e2e.test" ./e2e
+          cd e2e
+          sudo env LONGARM_PERUSER_TEST=1 LONGARM_E2E_BIN_DIR="$bin" LONGARM_GATE_CPU=101 LONGARM_GATE_FREE_GB=0 \
+            "$bin/e2e.test" -test.run 'PerUser' -test.v -test.timeout 15m 2>&1 | tee -a "$RUNNER_TEMP/go-test.log"
+      - name: per-user isolation (administrator)
+        if: runner.os == 'Windows'
+        env:
+          LONGARM_PERUSER_TEST: "1"
+        run: go test -count=1 -timeout 15m -run 'PerUser' -v ./e2e 2>&1 | tee -a "$RUNNER_TEMP/go-test.log"
       - name: upload test log
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

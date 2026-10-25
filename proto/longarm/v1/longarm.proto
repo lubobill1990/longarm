@@ -11,7 +11,9 @@
 //
 // Transport-agnostic: everything runs over gRPC + app-level mTLS on top of a
 // net.Conn supplied by a Transport backend (tcp / tailscale tsnet / longnet).
-// Authorization is by the role embedded in the caller's certificate.
+// Authorization is by the role embedded in the caller's certificate, and -
+// with multi-tenancy - by ownership: jobs, sessions, files and forwards
+// belong to the caller's user (docs/security.md).
 syntax = "proto3";
 
 package longarm.v1;
@@ -45,6 +47,9 @@ message InfoResponse {
   // Public host key of the built-in sshd in authorized_keys format; clients
   // learn it over mTLS (longarm ssh-config writes it to a known_hosts file).
   string ssh_host_key = 12;
+  string isolation = 13; // "shared" | "per-user" (longarmd.toml [isolation] mode)
+  string caller_user = 14; // the user the caller acts as (owner of what it creates)
+  string account = 15; // per-user isolation: the caller's OS account on this worker
 }
 
 // ---------------------------------------------------------------- Exec
@@ -133,6 +138,17 @@ message JobSpec {
   // Output only: the caller that submitted the job ("client/alice"), set
   // by the worker from the caller's certificate (ignored on submit).
   string submitted_by = 16;
+  // Output only: the user owning the job (the caller's certificate user,
+  // else its name), set by the worker. Only the owner, members of teams it
+  // is shared with (read-only) and admins see a job (multi-tenancy).
+  string owner = 17;
+  // Output only: teams that may read the job (state and logs), resolved by
+  // the worker from SubmitRequest.share.
+  repeated string share_teams = 18;
+  // CPU limit of the job's process tree in cores (0 = none, or the owner's
+  // default from the hub's tenancy policy). Windows: Job Object CPU rate
+  // cap; Linux: cgroup cpu.max (per-user isolation only).
+  double cpu_limit = 19;
 }
 
 message JobWorkspace {
@@ -152,6 +168,9 @@ message JobWorkspace {
 message SubmitRequest {
   JobSpec spec = 1;
   map<string, string> secret_env = 2; // memory-only on the worker
+  // Share the job read-only (state, logs) with teams of the owner: "team" =
+  // every team of the owner, "team:<name>" = that team. Default private.
+  repeated string share = 3;
 }
 
 message Job {
@@ -188,6 +207,8 @@ message LogsRequest {
   // Byte offset into out.log. Negative = that many bytes before the current end.
   int64 offset = 2;
   bool follow = 3;
+  // Sessions.Logs, admins only: another user's session (default: own).
+  string owner = 4;
 }
 
 message LogChunk {
@@ -315,6 +336,8 @@ message AttachOpen {
   TermSize size = 6;
   bool no_create = 7; // fail with NOT_FOUND instead of creating
   bool no_replay = 8; // skip the scrollback replay
+  // Admins only: attach to another user's session (default: the caller's).
+  string owner = 9;
 }
 
 message TermSize {
@@ -348,10 +371,13 @@ message Session {
   int32 attached = 10; // clients currently attached
   int64 log_size = 11;
   string created_by = 12;
+  string owner = 13; // the user owning the session
 }
 
 message ListSessionsRequest {
   bool all = 1; // include ended sessions
+  // Admins see every user's sessions; owner limits the list to one user.
+  string owner = 2;
 }
 
 message ListSessionsResponse {
@@ -360,6 +386,7 @@ message ListSessionsResponse {
 
 message KillSessionRequest {
   string name = 1;
+  string owner = 2; // admins only: another user's session
 }
 
 // ---------------------------------------------------------------- Forward
@@ -522,3 +549,34 @@ message SyncResult {
   int64 patch_bytes = 5;
   int64 untracked_bytes = 6;
 }
+
+// ---------------------------------------------------------------- UserHelper
+
+// UserHelper is internal to longarmd with per-user isolation: for every
+// Files / Workspace call, job preparation and cleanup in a user's data,
+// longarmd starts `longarmd user-helper` as that user's OS account and talks
+// gRPC to it over the helper's stdin/stdout (the helper also serves Files
+// and Workspace there). It is never served on a network listener, so the
+// file system is only ever touched with the user's own rights.
+service UserHelper {
+  // PrepareJob fetches / imports into the user's mirror and creates the
+  // job's worktree; log lines stream back, the last message has workdir.
+  rpc PrepareJob(PrepareJobRequest) returns (stream PrepareJobOutput);
+  // Prune runs `git worktree prune` in every mirror of the user.
+  rpc Prune(PruneRequest) returns (PruneResponse);
+}
+
+message PrepareJobRequest {
+  string job_id = 1;
+  JobWorkspace workspace = 2;
+  map<string, string> secret_env = 3; // GH_TOKEN authenticates https fetches
+}
+
+message PrepareJobOutput {
+  bytes log = 1;
+  string workdir = 2; // final message
+}
+
+message PruneRequest {}
+
+message PruneResponse {}

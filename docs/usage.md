@@ -245,6 +245,72 @@ macOS), only while no job runs (it drains meanwhile), and reports versions. A
 changed profile goes to one canary worker first; the rest follow when it
 reports ok, a failure halts the rollout.
 
+### Users, teams and quotas (sharing a hub)
+
+Several people can share the hub and its workers; [security.md](security.md)
+has the threat model, what is isolated and what isn't. Users are separated
+as soon as one exists (or a worker runs with per-user isolation, or
+`[tenancy] enabled = true` in hub.toml):
+
+```sh
+longarm admin user add alice [--team web]... [--max-jobs 8] [--max-mem-gb 64] [--max-jobs-per-worker 2] \
+    [--max-mem-gb-per-worker 32] [--max-sessions-per-worker 4] [--job-mem-gb 4] [--max-job-mem-gb 16] \
+    [--job-cpus 4] [--max-job-cpus 8] [--device alice-laptop] [--admin] [--ttl 24h] [--panel] [--no-code]
+#   prints a client join code bound to the user (the device's certificate names the user);
+#   --panel also creates a web panel login (role user: "My jobs", nodes, "Me") and prints
+#   its generated password and TOTP secret once
+longarm admin user code alice [--device alice-desktop]     # a join code for another device
+longarm admin user set alice --team web --team infra       # replace teams; quota flags change the quota
+longarm admin user set alice --clear-quota                 # back to the default quota
+longarm admin user ls [--json]                             # devices, teams, usage, quotas
+longarm admin user disable|enable alice                    # refused on the hub and every worker
+longarm admin user remove alice [--purge]                  # revoke all of alice's devices; --purge: workers
+                                                           # delete her jobs, data and OS account
+longarm admin team add web alice bob; longarm admin team rm web bob; longarm admin team ls
+longarm admin join-code --role client --user alice --name alice-2   # the same, by hand
+longarm admin issue --role client --name alice-pc --user alice --out DIR   # without a hub
+longarm whoami                                             # this device: user, teams, quota, usage
+longarm run --share team -- make test                      # team members may read it (team:<name> = one team)
+longarm run --cpus 4 --mem-limit 8G -- make                # per-job limits (capped by the user's quota)
+```
+
+`hub.toml`:
+
+```toml
+[tenancy]
+# enabled = true                     # separate users before the first `longarm admin user add`
+[tenancy.default_quota]              # 0 = no limit
+max_jobs = 16                        # active jobs per user in the fleet (the scheduler queues beyond)
+max_mem_gb = 128                     # memory reserved by a user's active jobs in the fleet
+max_jobs_per_worker = 4              # enforced by every worker
+max_mem_gb_per_worker = 48
+max_sessions_per_worker = 4
+job_mem_gb = 8                       # default memory limit of a job (Job Object / cgroup)
+max_job_mem_gb = 32
+job_cpus = 4                         # default CPU limit (cores)
+max_job_cpus = 16
+```
+
+Workers that several people use run with **per-user isolation**: longarmd as
+LocalSystem / root, every user's jobs, sessions, shells, `exec`, sftp, file
+transfers and git as a local account `la-<user>` (created on first use),
+data in `<data>/users/la-<user>` (private), mirrors per user, forwards only
+to the caller's own loopback ports, process lists hidden from users.
+Windows and Linux; macOS refuses the mode.
+
+```toml
+# longarmd.toml
+[isolation]
+mode = "per-user"                    # shared (default) | per-user
+# users_dir = "/var/lib/longarm-users"   # default <data>/users (Unix: parents need o+x)
+# account_prefix = "la-"
+# cgroup_root = "/sys/fs/cgroup/longarm" # Linux; "off" = process groups only
+```
+
+Install: `longarmd service install --isolation per-user` (no `--user`), MSI
+`ISOLATION=per-user`, deb `LONGARM_ISOLATION=per-user` (`longarmd-peruser.service`,
+data in `/var/lib/longarmd`). On Linux mount `/proc` with `hidepid=invisible`.
+
 ### Local control API, longarm daemon
 
 `longarmd` and `longarm daemon` serve a local-only control API (named pipe with an
@@ -283,7 +349,9 @@ labels = { region = "eu" }           # scheduler constraints (longarm run --requ
 
 One frontend, two shells. **The hub panel** is served on longarm-hub's HTTP
 listener at `/` (the old server-rendered page moved to `/status`). Log in with
-an account from `longarm-hub user add` + TOTP. Pages: nodes (online state, CPU and
+an account from `longarm-hub user add` + TOTP (panel administrators; logins of
+Longarm users, created with `longarm admin user add --panel` or on the
+"People" page, see only "My jobs", the nodes read-only and "Me"). Pages: nodes (online state, CPU and
 memory sparklines, Claude/Copilot sessions, each client's path and RTT to the
 worker, labels, approve pending, drain/resume, revoke, toolchain profile and
 "update now"), jobs (filter, live logs, kill, run a command), "add machine"

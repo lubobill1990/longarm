@@ -108,11 +108,11 @@ func execCmd() *cobra.Command {
 }
 
 func runCmd() *cobra.Command {
-	var env, secrets, labels, require []string
+	var env, secrets, labels, require, share []string
 	var cwd, name, id, repo, ref, on, typ string
 	var wait, follow, noQueue bool
 	var memLimit string
-	var memGB float64
+	var memGB, cpus float64
 	c := &cobra.Command{
 		Use:   "run [<worker>] -- command [args...]",
 		Short: "Submit a job; prints the job id (with --wait/--follow, exits with the job's code). Without a worker (or --on auto) the scheduler places it",
@@ -188,9 +188,10 @@ reachable hub longarm picks among the known workers itself.`,
 			}
 			req := &pb.SubmitRequest{
 				Spec: &pb.JobSpec{Id: id, Name: name, Argv: argv, Cwd: cwd, Env: envM, MemLimitBytes: mem, Labels: labelM,
-					Workspace: ws},
+					Workspace: ws, CpuLimit: cpus},
 				// secrets are sent once, memory-only on the worker
 				SecretEnv: sec,
+				Share:     share,
 			}
 			ctx := cmd.Context()
 			// Retrying with the same id is safe: Submit is idempotent.
@@ -237,6 +238,8 @@ reachable hub longarm picks among the known workers itself.`,
 	c.Flags().Float64Var(&memGB, "mem-gb", 0, "memory to reserve on the worker in GB (default: by --type)")
 	c.Flags().StringArrayVar(&require, "require", nil, "KEY=VALUE[,KEY=VALUE...] labels the worker must have, e.g. os=linux,region=eu (repeatable)")
 	c.Flags().BoolVar(&noQueue, "no-queue", false, "fail instead of queueing when no worker passes the gate")
+	c.Flags().StringArrayVar(&share, "share", nil, "let team members read the job (state, logs): team = all your teams, team:<name> = one")
+	c.Flags().Float64Var(&cpus, "cpus", 0, "CPU limit of the job's process tree in cores (Windows; Linux with per-user isolation)")
 	return c
 }
 
@@ -374,6 +377,7 @@ func jobTarget(ctx context.Context, s *session, args []string) (worker, id strin
 func logsCmd() *cobra.Command {
 	var follow, session bool
 	var from int64
+	var owner string
 	c := &cobra.Command{
 		Use:   "logs [<worker>] <job-id | session-name>",
 		Short: "Print a job's (or with --session, a session's) output from a byte offset; -f follows until it ends",
@@ -398,7 +402,11 @@ func logsCmd() *cobra.Command {
 			defer conn.Close()
 			logs := logsFunc(conn.Jobs().Logs)
 			if session {
-				logs = conn.Sessions().Logs
+				sl := conn.Sessions().Logs
+				logs = func(ctx context.Context, in *pb.LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[pb.LogChunk], error) {
+					in.Owner = owner
+					return sl(ctx, in, opts...)
+				}
 			}
 			if follow {
 				return followLogsWith(cmd.Context(), conn, logs, id, from, os.Stdout)
@@ -422,6 +430,7 @@ func logsCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&session, "session", false, "show an interactive session's transcript (raw terminal output)")
+	c.Flags().StringVar(&owner, "owner", "", "with --session, admins: another user's session")
 	c.Flags().BoolVarP(&follow, "follow", "f", false, "keep streaming until the job ends (reconnects automatically)")
 	c.Flags().Int64Var(&from, "from", 0, "start at this byte offset (negative: that many bytes before the end)")
 	return c

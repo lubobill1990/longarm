@@ -24,7 +24,10 @@ func (w *workspaceServer) Refs(ctx context.Context, req *pb.RefsRequest) (*pb.Re
 	if !workspace.ValidRepo(req.Repo) {
 		return nil, status.Errorf(codes.InvalidArgument, "bad repo %q", req.Repo)
 	}
-	exists, commits, err := w.s.WS.Refs(ctx, req.Repo)
+	if w.s.perUser() {
+		return w.proxyRefs(ctx, req)
+	}
+	exists, commits, err := w.s.ws().Refs(ctx, req.Repo)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -43,6 +46,9 @@ func (w *workspaceServer) Sync(st pb.Workspace_SyncServer) error {
 	}
 	if !workspace.ValidRepo(h.Repo) {
 		return status.Errorf(codes.InvalidArgument, "bad repo %q", h.Repo)
+	}
+	if w.s.perUser() {
+		return w.proxySync(st, first)
 	}
 	var dst string
 	if !h.StageOnly {
@@ -115,14 +121,14 @@ func (w *workspaceServer) Sync(st pb.Workspace_SyncServer) error {
 		Commit: h.Commit, BundleBytes: sizes[pb.SyncPart_SYNC_PART_BUNDLE],
 		PatchBytes: sizes[pb.SyncPart_SYNC_PART_PATCH], UntrackedBytes: sizes[pb.SyncPart_SYNC_PART_UNTRACKED_TAR],
 	}
-	err = w.s.WS.ImportBundle(ctx, h.Repo, path(pb.SyncPart_SYNC_PART_BUNDLE), h.Branch, h.Commit)
+	err = w.s.ws().ImportBundle(ctx, h.Repo, path(pb.SyncPart_SYNC_PART_BUNDLE), h.Branch, h.Commit)
 	if err == nil {
 		if h.StageOnly {
 			res.StagingId = ulid.Make().String()
-			err = w.s.WS.Stage(res.StagingId, path(pb.SyncPart_SYNC_PART_PATCH), path(pb.SyncPart_SYNC_PART_UNTRACKED_TAR))
+			err = w.s.ws().Stage(res.StagingId, path(pb.SyncPart_SYNC_PART_PATCH), path(pb.SyncPart_SYNC_PART_UNTRACKED_TAR))
 		} else {
 			res.Path = dst
-			err = w.s.WS.Checkout(ctx, h.Repo, h.Commit, dst, path(pb.SyncPart_SYNC_PART_PATCH),
+			err = w.s.ws().Checkout(ctx, h.Repo, h.Commit, dst, path(pb.SyncPart_SYNC_PART_PATCH),
 				path(pb.SyncPart_SYNC_PART_UNTRACKED_TAR), nil)
 		}
 	}

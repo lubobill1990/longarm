@@ -125,6 +125,8 @@ message NodeHello {
   UpdateStatus update = 13; // outcome of the last self-update
   bool update_enabled = 14; // the build has an update key and updates are on
   TailnetState tailnet = 15; // the embedded tailscale node (hub-managed tailnet)
+  string isolation = 16; // longarmd.toml [isolation] mode: "shared" | "per-user"
+  int64 tenancy_version = 17; // version of the tenancy policy the worker has
 }
 
 message NodeState {
@@ -185,6 +187,9 @@ message HubCommand {
     // The hub's tailnet changed for this node (longarm admin tailnet rekey sets
     // rekey): apply like HubWelcome.tailnet.
     TailnetInfo tailnet = 11;
+    // Users, teams, quotas and removals (multi-tenancy); sent at connect
+    // when the worker's version differs and on every change.
+    TenancyPolicy tenancy = 12;
   }
 }
 
@@ -208,6 +213,9 @@ message HubJobSubmit {
   string request_id = 1;
   JobSpec spec = 2;
   string by = 3;
+  // The user the job belongs to (and, with per-user isolation, runs as):
+  // the hub checked that "by" may act for this user.
+  string owner = 4;
 }
 
 message HubToolchainApply {
@@ -393,6 +401,8 @@ message NodeInfo {
   int32 max_jobs = 24; // local limits (NodeState)
   double reserved_mem_gb = 25;
   TailnetState tailnet = 26; // workers: as reported; clients: none
+  string isolation = 27; // workers: "shared" | "per-user"
+  string user = 28; // clients/admins: the user the node's certificates belong to
 }
 
 message ListNodesRequest {
@@ -487,6 +497,122 @@ message WhoamiResponse {
   google.protobuf.Timestamp cert_not_after = 5;
   google.protobuf.Duration renew_before = 6;
   TailnetInfo tailnet = 7; // the hub's tailnet (clients switch / re-key on it)
+  string user = 8; // the user the caller acts as (owner of its jobs)
+  repeated string teams = 9;
+  Quota quota = 10; // effective quota (defaults applied); unset = unlimited
+  QuotaUsage usage = 11; // fleet-wide, as the hub sees it
+  bool tenancy = 12; // the hub separates users (multi-tenancy is on)
+}
+
+// ---------------------------------------------------------------- tenancy
+
+// Quota limits one user (0 = unlimited / no default). Fleet-wide limits are
+// enforced by the hub's scheduler, per-worker ones by every worker.
+message Quota {
+  int32 max_jobs = 1; // active jobs in the whole fleet
+  double max_mem_gb = 2; // reserved memory of active jobs in the whole fleet
+  int32 max_jobs_per_worker = 3;
+  double max_mem_gb_per_worker = 4;
+  int32 max_sessions_per_worker = 5;
+  double job_mem_gb = 6; // default memory limit of a job's process tree
+  double max_job_mem_gb = 7; // cap on a job's memory limit
+  double job_cpus = 8; // default CPU limit of a job (cores)
+  double max_job_cpus = 9; // cap on a job's CPU limit
+}
+
+message QuotaUsage {
+  int32 jobs = 1;
+  double mem_gb = 2;
+}
+
+// TenantUser is a Longarm user: people share a hub and its workers, each
+// with their own certificates (devices), jobs, data and OS accounts.
+message TenantUser {
+  string name = 1;
+  repeated string teams = 2;
+  Quota quota = 3; // overrides; zero fields fall back to the hub's default
+  bool disabled = 4; // calls are refused until enabled again
+  google.protobuf.Timestamp created_at = 5;
+  string created_by = 6;
+  repeated string devices = 7; // output: nodes with certificates of this user
+  QuotaUsage usage = 8; // output
+  bool panel = 9; // output: has a web panel login
+}
+
+// TenancyPolicy is what workers need to know about users.
+message TenancyPolicy {
+  int64 version = 1;
+  // enabled: the hub separates users - workers enforce ownership on their
+  // API even in shared isolation mode.
+  bool enabled = 2;
+  repeated TenantUser users = 3;
+  Quota default_quota = 4;
+  // Users removed with --purge: workers kill their jobs and sessions and
+  // delete their data and OS accounts.
+  repeated string purge = 5;
+}
+
+message PutUserRequest {
+  string name = 1;
+  bool create = 2; // fail if the user exists
+  bool set_teams = 3;
+  repeated string teams = 4;
+  bool set_quota = 5;
+  Quota quota = 6;
+  bool set_disabled = 7;
+  bool disabled = 8;
+  // join_code: also return a client join code bound to the user (a device
+  // enrols with it: longarm join <hub> <code>).
+  bool join_code = 9;
+  google.protobuf.Duration ttl = 10; // of the join code (default 24h)
+  string device = 11; // node name of that device (default: the user name, else <user>-<n>)
+  bool admin = 12; // the join code issues an admin certificate
+  // panel: create (or reset) a web panel login for the user (role user):
+  // the response carries a generated password and TOTP secret, once.
+  bool panel = 13;
+}
+
+message PutUserResponse {
+  TenantUser user = 1;
+  JoinCode join_code = 2;
+  string panel_password = 3;
+  string totp_secret = 4;
+  string otpauth = 5;
+}
+
+message ListUsersRequest {}
+
+message ListUsersResponse {
+  repeated TenantUser users = 1;
+  Quota default_quota = 2;
+  bool tenancy = 3;
+}
+
+message RemoveUserRequest {
+  string name = 1;
+  bool purge = 2; // workers delete the user's data and OS account
+}
+
+message RemoveUserResponse {
+  repeated string revoked = 1; // nodes whose certificates were revoked
+  bool purge = 2;
+}
+
+message SetTeamRequest {
+  string team = 1;
+  repeated string add = 2;
+  repeated string remove = 3;
+}
+
+message Team {
+  string name = 1;
+  repeated string members = 2;
+}
+
+message ListTeamsRequest {}
+
+message ListTeamsResponse {
+  repeated Team teams = 1;
 }
 
 // ---------------------------------------------------------------- HubAdmin
@@ -530,6 +656,14 @@ service HubAdmin {
   // with a fresh key: pushed to an online worker at once, otherwise on its
   // next hub session (clients: their next hub contact).
   rpc TailnetRekey(NodeRequest) returns (TailnetNodeStatus);
+  // Users, teams and quotas (multi-tenancy, docs/security.md).
+  rpc PutUser(PutUserRequest) returns (PutUserResponse);
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  // RemoveUser revokes every certificate of the user and, with purge, has
+  // the workers delete the user's data and OS account.
+  rpc RemoveUser(RemoveUserRequest) returns (RemoveUserResponse);
+  rpc SetTeam(SetTeamRequest) returns (ListTeamsResponse);
+  rpc ListTeams(ListTeamsRequest) returns (ListTeamsResponse);
 }
 
 message HubLogsRequest {
@@ -556,6 +690,9 @@ message CreateJoinCodeRequest {
   map<string, string> labels = 3;
   string profile = 4; // toolchain profile for workers
   string name = 5; // optional fixed node name
+  // client/admin codes: the user the certificate belongs to (multi-tenancy;
+  // several devices of one user share it). Default: the node name.
+  string user = 6;
 }
 
 message JoinCode {
@@ -569,6 +706,7 @@ message JoinCode {
   string used_by = 8;
   string id = 9; // short id (hash prefix), for listing
   string name = 10;
+  string user = 11;
 }
 
 message ListJoinCodesRequest {}

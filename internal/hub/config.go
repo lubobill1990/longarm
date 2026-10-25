@@ -22,6 +22,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/lubobill1990/longarm/internal/sched"
+	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
 // Duration is a TOML string like "10m".
@@ -82,6 +83,7 @@ type Config struct {
 	Heartbeat HeartbeatConfig `toml:"heartbeat"`
 	Releases  ReleaseConfig   `toml:"releases"`
 	Tailnet   TailnetConfig   `toml:"tailnet"`
+	Tenancy   TenancyConfig   `toml:"tenancy"`
 	// Headscale is P2's [headscale] section; still accepted (it means
 	// [tailnet] provider = "headscale" with these settings).
 	Headscale HeadscaleConfig `toml:"headscale"`
@@ -174,6 +176,36 @@ type HeadscaleConfig struct {
 	ClientTags []string `toml:"client_tags"`
 	Ephemeral  bool     `toml:"ephemeral"`
 	KeyTTL     Duration `toml:"key_ttl"`
+}
+
+// TenancyConfig is [tenancy]: several people share the hub and its
+// workers (docs/security.md). Separation is on as soon as a user exists
+// (longarm admin user add), a worker isolates users ([isolation] mode =
+// "per-user") or enabled is set.
+type TenancyConfig struct {
+	Enabled bool `toml:"enabled"`
+	// DefaultQuota applies to every user without an override (0 = no limit).
+	DefaultQuota QuotaConfig `toml:"default_quota"`
+}
+
+// QuotaConfig is a quota in hub.toml.
+type QuotaConfig struct {
+	MaxJobs              int32   `toml:"max_jobs"`              // active jobs in the fleet
+	MaxMemGB             float64 `toml:"max_mem_gb"`            // reserved memory in the fleet
+	MaxJobsPerWorker     int32   `toml:"max_jobs_per_worker"`   // enforced by each worker
+	MaxMemGBPerWorker    float64 `toml:"max_mem_gb_per_worker"` // enforced by each worker
+	MaxSessionsPerWorker int32   `toml:"max_sessions_per_worker"`
+	JobMemGB             float64 `toml:"job_mem_gb"`     // default memory limit of a job
+	MaxJobMemGB          float64 `toml:"max_job_mem_gb"` // cap on a job's memory limit
+	JobCPUs              float64 `toml:"job_cpus"`       // default CPU limit of a job (cores)
+	MaxJobCPUs           float64 `toml:"max_job_cpus"`   // cap on a job's CPU limit
+}
+
+// PB converts the quota.
+func (q QuotaConfig) PB() *pb.Quota {
+	return &pb.Quota{MaxJobs: q.MaxJobs, MaxMemGb: q.MaxMemGB, MaxJobsPerWorker: q.MaxJobsPerWorker,
+		MaxMemGbPerWorker: q.MaxMemGBPerWorker, MaxSessionsPerWorker: q.MaxSessionsPerWorker, JobMemGb: q.JobMemGB,
+		MaxJobMemGb: q.MaxJobMemGB, JobCpus: q.JobCPUs, MaxJobCpus: q.MaxJobCPUs}
 }
 
 // CertConfig is [certs].

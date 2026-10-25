@@ -57,6 +57,11 @@ type Options struct {
 	// the directory. log is the job's out.log (secrets redacted). Runs on a
 	// goroutine; ctx is cancelled when the job is killed meanwhile.
 	Prepare func(ctx context.Context, dir jobs.Dir, spec jobs.Spec, secrets map[string]string, log io.Writer) (string, error)
+	// OnChange is called (with the manager's lock held: it must not block
+	// or call back) whenever a job changed.
+	OnChange func()
+	// DirMode is the mode of new job directories (default 0755).
+	DirMode os.FileMode
 }
 
 // Job is a snapshot of one job.
@@ -177,6 +182,9 @@ func (m *Manager) Changed() <-chan struct{} {
 func (m *Manager) broadcastLocked() {
 	close(m.changed)
 	m.changed = make(chan struct{})
+	if m.opts.OnChange != nil {
+		m.opts.OnChange()
+	}
 }
 
 func (m *Manager) pollOnce() {
@@ -379,7 +387,8 @@ func sameSpec(a, b *jobs.Spec) bool {
 	return a.Name == b.Name && slices.Equal(a.Argv, b.Argv) && a.Cwd == b.Cwd &&
 		maps.Equal(a.Env, b.Env) && slices.Equal(a.SecretEnvNames, b.SecretEnvNames) &&
 		a.MemLimitBytes == b.MemLimitBytes && maps.Equal(a.Labels, b.Labels) &&
-		a.Pty == b.Pty && reflect.DeepEqual(a.Workspace, b.Workspace)
+		a.Pty == b.Pty && reflect.DeepEqual(a.Workspace, b.Workspace) && a.Owner == b.Owner &&
+		slices.Equal(a.ShareTeams, b.ShareTeams) && a.CPULimit == b.CPULimit
 }
 
 // Submit creates and starts a job. It is idempotent on spec.ID.
@@ -414,7 +423,11 @@ func (m *Manager) Submit(ctx context.Context, spec jobs.Spec, secrets map[string
 	}
 
 	dir := jobs.Dir(filepath.Join(m.opts.JobsDir, spec.ID))
-	if err := os.Mkdir(string(dir), 0o755); err != nil {
+	mode := m.opts.DirMode
+	if mode == 0 {
+		mode = 0o755
+	}
+	if err := os.Mkdir(string(dir), mode); err != nil {
 		return Job{}, err
 	}
 	spec.CreatedAt = time.Now().UTC()

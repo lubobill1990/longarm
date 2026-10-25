@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/version"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -22,6 +23,12 @@ type fleetServer struct {
 
 // ListNodes returns workers (all = every node, sorted by name).
 func (h *Hub) ListNodes(all bool) []*pb.NodeInfo {
+	return h.ListNodesFor(tenancy.Caller{Admin: true}, all)
+}
+
+// ListNodesFor is ListNodes as v may see it: other users' devices, process
+// lists and mirrors are left out for non-admins.
+func (h *Hub) ListNodesFor(v tenancy.Caller, all bool) []*pb.NodeInfo {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var out []*pb.NodeInfo
@@ -29,18 +36,26 @@ func (h *Hub) ListNodes(all bool) []*pb.NodeInfo {
 		if !all && n.rec.Role != string(pki.RoleWorker) { // revoked workers too: clients must stop using them
 			continue
 		}
-		out = append(out, h.nodeInfoLocked(n))
+		if !v.Admin && n.rec.Role != string(pki.RoleWorker) && nodeUser(n.rec) != v.User {
+			continue
+		}
+		out = append(out, nodeView(v, h.nodeInfoLocked(n)))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-func (s *fleetServer) ListNodes(_ context.Context, req *pb.ListNodesRequest) (*pb.ListNodesResponse, error) {
-	return &pb.ListNodesResponse{Nodes: s.h.ListNodes(req.All)}, nil
+func (s *fleetServer) ListNodes(ctx context.Context, req *pb.ListNodesRequest) (*pb.ListNodesResponse, error) {
+	return &pb.ListNodesResponse{Nodes: s.h.ListNodesFor(s.h.viewer(callerFrom(ctx)), req.All)}, nil
 }
 
 // ListJobs returns cached jobs, newest first.
 func (h *Hub) ListJobs(req *pb.FleetJobsRequest) []*pb.FleetJob {
+	return h.ListJobsFor(tenancy.Caller{Admin: true}, req)
+}
+
+// ListJobsFor is ListJobs as v may see it (own and team-shared jobs).
+func (h *Hub) ListJobsFor(v tenancy.Caller, req *pb.FleetJobsRequest) []*pb.FleetJob {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var out []*pb.FleetJob
@@ -50,6 +65,9 @@ func (h *Hub) ListJobs(req *pb.FleetJobsRequest) []*pb.FleetJob {
 		}
 		for _, e := range jm {
 			if len(req.States) > 0 && !slices.Contains(req.States, e.job.State) {
+				continue
+			}
+			if !canSeeJob(v, e.job) {
 				continue
 			}
 			out = append(out, h.fleetJobLocked(w, e))
@@ -68,23 +86,28 @@ func (h *Hub) ListJobs(req *pb.FleetJobsRequest) []*pb.FleetJob {
 	return out
 }
 
-func (s *fleetServer) ListJobs(_ context.Context, req *pb.FleetJobsRequest) (*pb.FleetJobsResponse, error) {
-	return &pb.FleetJobsResponse{Jobs: s.h.ListJobs(req)}, nil
+func (s *fleetServer) ListJobs(ctx context.Context, req *pb.FleetJobsRequest) (*pb.FleetJobsResponse, error) {
+	return &pb.FleetJobsResponse{Jobs: s.h.ListJobsFor(s.h.viewer(callerFrom(ctx)), req)}, nil
 }
 
 // GetJob finds a job.
 func (h *Hub) GetJob(id, worker string) (*pb.FleetJob, error) {
+	return h.GetJobFor(tenancy.Caller{Admin: true}, id, worker)
+}
+
+// GetJobFor finds a job v may see (others' jobs are "not known").
+func (h *Hub) GetJobFor(v tenancy.Caller, id, worker string) (*pb.FleetJob, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	w, e := h.findJobLocked(id, worker)
-	if e == nil {
+	if e == nil || !canSeeJob(v, e.job) {
 		return nil, status.Errorf(codes.NotFound, "job %s not known to the hub", id)
 	}
 	return h.fleetJobLocked(w, e), nil
 }
 
-func (s *fleetServer) GetJob(_ context.Context, req *pb.FleetJobRequest) (*pb.FleetJob, error) {
-	return s.h.GetJob(req.Id, req.Worker)
+func (s *fleetServer) GetJob(ctx context.Context, req *pb.FleetJobRequest) (*pb.FleetJob, error) {
+	return s.h.GetJobFor(s.h.viewer(callerFrom(ctx)), req.Id, req.Worker)
 }
 
 // waitAppear is how long WaitJob waits for an unknown job to be reported.
@@ -92,9 +115,14 @@ var waitAppear = 15 * time.Second
 
 // WaitJob streams a job's snapshots until it is terminal.
 func (h *Hub) WaitJob(ctx context.Context, req *pb.FleetJobRequest, send func(*pb.FleetJob) error) error {
-	sub := h.bus.subscribe([]string{"job"}, req.Id)
+	return h.WaitJobFor(ctx, tenancy.Caller{Admin: true}, req, send)
+}
+
+// WaitJobFor is WaitJob for a job v may see.
+func (h *Hub) WaitJobFor(ctx context.Context, v tenancy.Caller, req *pb.FleetJobRequest, send func(*pb.FleetJob) error) error {
+	sub := h.bus.subscribeFiltered([]string{"job"}, req.Id, eventFilter(v))
 	defer h.bus.unsubscribe(sub)
-	fj, err := h.GetJob(req.Id, req.Worker)
+	fj, err := h.GetJobFor(v, req.Id, req.Worker)
 	if err == nil {
 		if err := send(fj); err != nil {
 			return err
@@ -132,17 +160,22 @@ func (h *Hub) WaitJob(ctx context.Context, req *pb.FleetJobRequest, send func(*p
 }
 
 func (s *fleetServer) WaitJob(req *pb.FleetJobRequest, st pb.Fleet_WaitJobServer) error {
-	return s.h.WaitJob(st.Context(), req, st.Send)
+	return s.h.WaitJobFor(st.Context(), s.h.viewer(callerFrom(st.Context())), req, st.Send)
 }
 
 // Events streams fleet events. "metrics" events (one per worker every 2 s)
 // are only sent when asked for explicitly.
 func (h *Hub) Events(ctx context.Context, req *pb.EventsRequest, send func(*pb.FleetEvent) error) error {
+	return h.EventsFor(ctx, tenancy.Caller{Admin: true}, req, send)
+}
+
+// EventsFor streams the events v may see (eventFilter).
+func (h *Hub) EventsFor(ctx context.Context, v tenancy.Caller, req *pb.EventsRequest, send func(*pb.FleetEvent) error) error {
 	kinds := req.Kinds
 	if len(kinds) == 0 {
 		kinds = []string{"job", "node", "queue"}
 	}
-	sub := h.bus.subscribe(kinds, req.JobId)
+	sub := h.bus.subscribeFiltered(kinds, req.JobId, eventFilter(v))
 	defer h.bus.unsubscribe(sub)
 	for {
 		select {
@@ -160,11 +193,12 @@ func (h *Hub) Events(ctx context.Context, req *pb.EventsRequest, send func(*pb.F
 }
 
 func (s *fleetServer) Events(req *pb.EventsRequest, st pb.Fleet_EventsServer) error {
-	return s.h.Events(st.Context(), req, st.Send)
+	return s.h.EventsFor(st.Context(), s.h.viewer(callerFrom(st.Context())), req, st.Send)
 }
 
 func (s *fleetServer) Place(req *pb.PlaceRequest, st pb.Fleet_PlaceServer) error {
-	return s.h.Place(st.Context(), callerFrom(st.Context()).id.String(), req, st.Send)
+	c := callerFrom(st.Context())
+	return s.h.PlaceFor(st.Context(), c.id.String(), c.id.Owner(), req, st.Send)
 }
 
 // Audit returns forwarded audit records.
@@ -190,7 +224,19 @@ func (s *fleetServer) Audit(_ context.Context, req *pb.AuditRequest) (*pb.AuditR
 
 func (s *fleetServer) Whoami(ctx context.Context, _ *pb.WhoamiRequest) (*pb.WhoamiResponse, error) {
 	c := callerFrom(ctx)
-	return &pb.WhoamiResponse{Name: c.id.Name, Role: string(c.id.Role), HubName: s.h.cfg.Name, HubVersion: version.Version,
+	resp := &pb.WhoamiResponse{Name: c.id.Name, Role: string(c.id.Role), HubName: s.h.cfg.Name, HubVersion: version.Version,
 		CertNotAfter: tspb(c.cert.NotAfter), RenewBefore: durationpb.New(s.h.cfg.RenewBefore(string(c.id.Role))),
-		Tailnet: s.h.callerTailnet(c.id.Name)}, nil
+		Tailnet: s.h.callerTailnet(c.id.Name), User: c.id.Owner()}
+	s.h.mu.Lock()
+	if resp.Tenancy = s.h.tenancyOnLocked(); resp.Tenancy && c.id.Role != pki.RoleWorker {
+		if t := s.h.tenants[c.id.Owner()]; t != nil {
+			resp.Teams = t.u.Teams
+		}
+		if q := s.h.quotaLocked(c.id.Owner()); !tenancy.QuotaEmpty(q) {
+			resp.Quota = q
+		}
+		resp.Usage = s.h.usageLocked(c.id.Owner())
+	}
+	s.h.mu.Unlock()
+	return resp, nil
 }

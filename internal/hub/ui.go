@@ -17,6 +17,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -219,6 +220,12 @@ func (h *Hub) JobLogs(ctx context.Context, by string, req *pb.HubLogsRequest, se
 // SubmitJob places (worker "" / "auto") and submits a command job through
 // the worker's hub session.
 func (h *Hub) SubmitJob(ctx context.Context, by string, req *pb.HubSubmitRequest) (*pb.FleetJob, error) {
+	return h.SubmitJobAs(ctx, by, tenancy.OwnerFromBy(by), req)
+}
+
+// SubmitJobAs is SubmitJob for a job of owner (it runs as owner on workers
+// with per-user isolation, within the owner's quota).
+func (h *Hub) SubmitJobAs(ctx context.Context, by, owner string, req *pb.HubSubmitRequest) (*pb.FleetJob, error) {
 	if len(req.Argv) == 0 || strings.TrimSpace(req.Argv[0]) == "" {
 		return nil, status.Error(codes.InvalidArgument, "missing command")
 	}
@@ -234,7 +241,7 @@ func (h *Hub) SubmitJob(ctx context.Context, by string, req *pb.HubSubmitRequest
 	labels["longarm.via"] = "hub"
 	if worker == "" || worker == "auto" {
 		var assigned string
-		err := h.Place(ctx, by, &pb.PlaceRequest{JobId: id, MemGb: req.MemGb, Type: typ, Require: req.Require, NoQueue: true},
+		err := h.PlaceFor(ctx, by, owner, &pb.PlaceRequest{JobId: id, MemGb: req.MemGb, Type: typ, Require: req.Require, NoQueue: true},
 			func(u *pb.PlaceUpdate) error {
 				if u.State == "assigned" {
 					assigned = u.Worker
@@ -250,8 +257,16 @@ func (h *Hub) SubmitJob(ctx context.Context, by string, req *pb.HubSubmitRequest
 		worker = assigned
 	}
 	spec := &pb.JobSpec{Id: id, Name: req.Name, Argv: req.Argv, Cwd: req.Cwd, Env: req.Env, Labels: labels}
+	if req.Worker != "" && req.Worker != "auto" { // placed jobs passed the quota already
+		h.mu.Lock()
+		why := h.overQuotaLocked(owner, mem)
+		h.mu.Unlock()
+		if why != "" {
+			return nil, status.Error(codes.ResourceExhausted, why)
+		}
+	}
 	r, err := h.request(ctx, worker, func(rid string) *pb.HubCommand {
-		return &pb.HubCommand{Msg: &pb.HubCommand_SubmitJob{SubmitJob: &pb.HubJobSubmit{RequestId: rid, Spec: spec, By: by}}}
+		return &pb.HubCommand{Msg: &pb.HubCommand_SubmitJob{SubmitJob: &pb.HubJobSubmit{RequestId: rid, Spec: spec, By: by, Owner: owner}}}
 	})
 	if err != nil {
 		h.mu.Lock()
@@ -342,7 +357,7 @@ func (s *hubAdminServer) JobLogs(req *pb.HubLogsRequest, st pb.HubAdmin_JobLogsS
 }
 
 func (s *hubAdminServer) SubmitJob(ctx context.Context, req *pb.HubSubmitRequest) (*pb.FleetJob, error) {
-	return s.h.SubmitJob(ctx, by(ctx), req)
+	return s.h.SubmitJobAs(ctx, by(ctx), callerFrom(ctx).id.Owner(), req)
 }
 
 func (s *hubAdminServer) ToolchainApply(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
