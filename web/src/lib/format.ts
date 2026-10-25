@@ -1,5 +1,5 @@
 // Formatting helpers.
-import type { Int64, JobState, MetricsSnapshot } from '../api/types'
+import type { Int64, JobSpec, JobState, MetricsSnapshot } from '../api/types'
 // The one load-colour table, shared with the tray icon (Go embeds the same
 // file): internal/tray/levels.json.
 import levelTable from '../../../internal/tray/levels.json'
@@ -149,4 +149,12 @@ export function stripAnsi(s: string): string {
 /** "tcp" / "longnet relay-udp" / "tailscale derp" -> "relayed" when not direct. */
 export function isRelayed(kind?: string): boolean {
   return !!kind && kind !== 'direct' && kind !== 'unknown'
+}
+
+/** The user a job belongs to: spec.owner, else the name in "role/name" submitted_by. */
+export function jobOwner(spec: JobSpec): string {
+  if (spec.owner) return spec.owner
+  const by = spec.submitted_by ?? ''
+  const i = by.indexOf('/')
+  return i >= 0 ? by.slice(i + 1) : by
 }

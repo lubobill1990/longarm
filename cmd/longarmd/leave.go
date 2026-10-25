@@ -15,7 +15,7 @@ import (
 // installHelperCmd is run by the MSI's custom actions (as SYSTEM).
 func installHelperCmd() *cobra.Command {
 	c := &cobra.Command{Use: "install-helper", Short: "Installer steps (internal; used by the MSI)", Hidden: true}
-	var dataDir, user, hub, code, fp, logFile, nodeName string
+	var dataDir, user, hub, code, fp, logFile, nodeName, isolation string
 	var listen []string
 	var keep bool
 	out := func() (io.Writer, func()) {
@@ -36,7 +36,7 @@ func installHelperCmd() *cobra.Command {
 			fmt.Fprintf(w, "%s longarmd install-helper setup --data-dir %s\n", time.Now().Format(time.RFC3339), dataDir)
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
 			defer cancel()
-			err := longarmd.InstallSetup(ctx, dataDir, longarmd.SetupOptions{ServiceUser: user, Hub: hub, Code: code, Fingerprint: fp, Listen: listen, Name: nodeName, Out: w})
+			err := longarmd.InstallSetup(ctx, dataDir, longarmd.SetupOptions{ServiceUser: user, Hub: hub, Code: code, Fingerprint: fp, Listen: listen, Name: nodeName, Out: w, Isolation: isolation})
 			if err != nil {
 				fmt.Fprintln(w, "error:", err)
 			}
@@ -51,6 +51,7 @@ func installHelperCmd() *cobra.Command {
 	setup.Flags().StringVar(&nodeName, "name", "", "node name (default: hostname)")
 	setup.Flags().StringVar(&logFile, "log", "", "append output here")
 	setup.Flags().StringSliceVar(&listen, "listen", nil, "listen URLs for a new longarmd.toml (comma-separated)")
+	setup.Flags().StringVar(&isolation, "isolation", "", "per-user: isolate users (the service runs as LocalSystem; docs/security.md)")
 	setup.MarkFlagRequired("data-dir")
 	rollback := &cobra.Command{
 		Use: "rollback", Args: cobra.NoArgs,

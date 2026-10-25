@@ -38,6 +38,7 @@ import (
 	"github.com/pkg/sftp"
 	gossh "golang.org/x/crypto/ssh"
 
+	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
 )
 
@@ -58,6 +59,22 @@ type Config struct {
 	// Audit records sessions, sftp and forwards (who, what, details).
 	Audit func(who, what string, fields map[string]any)
 	Log   *slog.Logger
+	// Session (per-user isolation) says how a caller's ssh processes run;
+	// nil = everything as longarmd's account.
+	Session func(id pki.Identity) (*Session, error)
+}
+
+// Session is how one caller's shells, commands, sftp and forwards run
+// (per-user isolation: as the caller's OS account).
+type Session struct {
+	Account *platform.Account // nil: as longarmd
+	Env     []string          // base environment (nil: longarmd's)
+	Home    string
+	Cgroup  func(name string) string // the container's cgroup ("" = none)
+	// SFTP serves the sftp subsystem on rw as the account (nil: in-process).
+	SFTP func(rw io.ReadWriteCloser) error
+	// Forward approves a direct-tcpip target (nil: anything).
+	Forward func(host string, port int) error
 }
 
 // Server is the built-in sshd.
@@ -120,7 +137,14 @@ func (s *Server) newServer(keyAuth bool) *ssh.Server {
 		},
 		SubsystemHandlers: map[string]ssh.SubsystemHandler{"sftp": s.handleSFTP},
 		LocalPortForwardingCallback: func(ctx ssh.Context, host string, port uint32) bool {
-			s.cfg.Audit(who(ctx), "ssh direct-tcpip", map[string]any{"target": net.JoinHostPort(host, fmt.Sprint(port))})
+			target := net.JoinHostPort(host, fmt.Sprint(port))
+			if us := sessionOf(ctx); us != nil && us.Forward != nil {
+				if err := us.Forward(host, int(port)); err != nil {
+					s.cfg.Audit(who(ctx), "ssh direct-tcpip", map[string]any{"target": target, "denied": err.Error()})
+					return false
+				}
+			}
+			s.cfg.Audit(who(ctx), "ssh direct-tcpip", map[string]any{"target": target})
 			return true
 		},
 		PtyCallback: func(ssh.Context, ssh.Pty) bool { return true },
@@ -136,19 +160,53 @@ func (s *Server) newServer(keyAuth bool) *ssh.Server {
 // identConn tags a proxied connection with the caller's mTLS identity.
 type identConn struct {
 	net.Conn
-	who string
+	addr identAddr
 }
 
-type identAddr string
+// identAddr carries the caller and its Session through gliderlabs' context
+// (as the connection's remote address).
+type identAddr struct {
+	who  string
+	sess *Session
+}
 
 func (a identAddr) Network() string { return "longarm" }
-func (a identAddr) String() string  { return string(a) }
+func (a identAddr) String() string  { return a.who }
 
-func (c *identConn) RemoteAddr() net.Addr { return identAddr(c.who) }
+func (c *identConn) RemoteAddr() net.Addr { return c.addr }
 
 // HandleProxyConn serves one connection that came through Forward.Ssh.
-func (s *Server) HandleProxyConn(c net.Conn, who string) {
-	s.proxy.HandleConn(&identConn{Conn: c, who: who})
+func (s *Server) HandleProxyConn(c net.Conn, id pki.Identity) {
+	var us *Session
+	if s.cfg.Session != nil {
+		var err error
+		if us, err = s.cfg.Session(id); err != nil {
+			s.cfg.Log.Warn("ssh: no session for caller", "who", id.String(), "err", err)
+			c.Close()
+			return
+		}
+	}
+	s.proxy.HandleConn(&identConn{Conn: c, addr: identAddr{who: id.String(), sess: us}})
+}
+
+// sessionOf returns the caller's Session (nil = as longarmd).
+func sessionOf(ctx ssh.Context) *Session {
+	if a, ok := ctx.RemoteAddr().(identAddr); ok {
+		return a.sess
+	}
+	return nil
+}
+
+// containerOpts are the container options of a caller's process.
+func containerOpts(ctx ssh.Context, name string) platform.ContainerOptions {
+	o := platform.ContainerOptions{Name: name}
+	if us := sessionOf(ctx); us != nil && us.Account != nil {
+		o.RunAs = us.Account
+		if us.Cgroup != nil {
+			o.Cgroup = us.Cgroup(fmt.Sprintf("ssh-%d", time.Now().UnixNano()))
+		}
+	}
+	return o
 }
 
 // Serve accepts direct connections (public-key auth) on ln until Close.
@@ -174,7 +232,7 @@ func who(ctx ssh.Context) string {
 		return v
 	}
 	if a, ok := ctx.RemoteAddr().(identAddr); ok {
-		return string(a)
+		return a.who
 	}
 	return "ssh@" + ctx.RemoteAddr().String()
 }
@@ -236,11 +294,17 @@ func (s *Server) handleSession(sess ssh.Session) {
 		what = "ssh exec"
 	}
 	s.cfg.Audit(who(ctx), what, map[string]any{"command": raw, "pty": isPty, "user": sess.User()})
-	env := append(os.Environ(), sess.Environ()...)
+	base, home := os.Environ(), ""
+	if us := sessionOf(ctx); us != nil && us.Account != nil {
+		base, home = us.Env, us.Home
+	}
+	env := append(append([]string(nil), base...), sess.Environ()...)
 	if isPty && ptyReq.Term != "" {
 		env = append(env, "TERM="+ptyReq.Term)
 	}
-	home, _ := os.UserHomeDir()
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
 	var code int
 	var err error
 	if isPty {
@@ -297,7 +361,7 @@ const drainTimeout = 5 * time.Second
 
 func (s *Server) runPlain(sess ssh.Session, raw, home string, env []string) (int, error) {
 	argv, cmdline := s.argv(raw, false)
-	ctr, err := platform.NewContainer(platform.ContainerOptions{Name: "longarm-ssh"})
+	ctr, err := platform.NewContainer(containerOpts(sess.Context(), "longarm-ssh"))
 	if err != nil {
 		return 255, err
 	}
@@ -401,7 +465,7 @@ func (s *Server) runPTY(sess ssh.Session, raw, home string, env []string, req ss
 	} else {
 		opts.Argv, opts.CmdLine = argv, cmdline
 	}
-	ctr, err := platform.NewContainer(platform.ContainerOptions{Name: "longarm-ssh"})
+	ctr, err := platform.NewContainer(containerOpts(sess.Context(), "longarm-ssh"))
 	if err != nil {
 		return 255, err
 	}
@@ -458,6 +522,20 @@ func (s *Server) runPTY(sess ssh.Session, raw, home string, env []string, req ss
 
 func (s *Server) handleSFTP(sess ssh.Session) {
 	s.cfg.Audit(who(sess.Context()), "ssh sftp", nil)
+	if us := sessionOf(sess.Context()); us != nil && us.SFTP != nil {
+		// As the caller's account, in its own process.
+		err := us.SFTP(sess)
+		if err != nil {
+			s.cfg.Log.Warn("sftp", "who", who(sess.Context()), "err", err)
+		}
+		code := 0
+		if err != nil {
+			code = 1
+		}
+		sess.Exit(code)
+		sess.Close()
+		return
+	}
 	// No WithServerWorkingDirectory: pkg/sftp would join "C:/x" (not
 	// '/'-prefixed) onto it. longarmd runs in the home directory instead (see
 	// longarmd.Run), so relative paths still resolve there, like OpenSSH.

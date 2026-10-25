@@ -41,6 +41,28 @@ type ContainerOptions struct {
 	// direct child, which pins the calling goroutine to its OS thread for good,
 	// so only the long-lived shim main goroutine should ask for it.
 	KillOnOwnerDeath bool
+	// RunAs starts the processes as this OS account (per-user isolation);
+	// nil = as the caller. Needs root / SYSTEM. Windows: an S4U logon token
+	// of the account (with its profile loaded) and a window station of its
+	// own logon session; the standard handles must be *os.File (or nil).
+	// Unix: setuid/setgid with no supplementary groups.
+	RunAs *Account
+	// CPULimit caps the tree's CPU use in cores (0 = none). Windows: Job
+	// Object hard cap; Linux: cgroup cpu.max (needs Cgroup).
+	CPULimit float64
+	// Cgroup (Linux) is the cgroup v2 directory created for the container
+	// (its parent must exist or be creatable; memory/cpu/pids controllers
+	// are enabled on the way); "" = process group only. The memory limit,
+	// CPU limit and whole-tree kill then use the cgroup.
+	Cgroup string
+}
+
+// Account is a local OS account workloads run as (per-user isolation).
+type Account struct {
+	Name     string // OS account name (la-<user>)
+	UID, GID int    // Unix
+	SID      string // Windows
+	Home     string // home directory / profile
 }
 
 // ServiceConfig describes the longarmd system service.

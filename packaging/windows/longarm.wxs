@@ -8,6 +8,9 @@
           [SERVICE_NAME=longarmd] [DATADIR=C:\ProgramData\Longarm\longarmd]
           [LISTEN=tcp://100.64.0.11:7701,longnet://hub:7443?name=w1]   (longarmd.toml when the data dir has none)
           [CLIENT_JOIN_CODE=...]   (ROLES=both: JOIN_CODE is the worker's code, CLIENT_JOIN_CODE the client's)
+          [ISOLATION=per-user]   (a worker shared by several people, docs/security.md: the service runs
+                                  as LocalSystem and runs every Longarm user's work as a local account of
+                                  its own; implies SERVICE_ACCOUNT=LocalSystem, no SERVICE_USER needed)
   Remove: msiexec /x longarm.msi /qn [KEEP_DATA=1]   (the worker leaves its hub first)
 
   Roles: client = longarm (+ tray); worker = + the longarmd service (auto start, restart on failure);
@@ -61,6 +64,8 @@
       <RegistrySearch Id="RegSvcAccount" Root="HKLM" Key="Software\Longarm" Name="ServiceAccount" Type="raw" />
     </Property>
     <Property Id="KEEP_DATA" Secure="yes" />
+    <!-- per-user = multi-tenancy with OS isolation (LocalSystem service); "" = shared -->
+    <Property Id="ISOLATION" Secure="yes" />
     <Property Id="ARPNOMODIFY" Value="1" />
     <!-- Repair would re-create the service and needs the account password again (msiexec /fa ... SERVICE_PASSWORD=...). -->
     <Property Id="ARPNOREPAIR" Value="1" />
@@ -77,6 +82,11 @@
                  Condition='NOT SERVICE_USER AND SAVED_SERVICE_ACCOUNT AND SAVED_SERVICE_ACCOUNT~&lt;&gt;"LocalSystem"' />
     <SetProperty Id="SVC_LOCALSYSTEM" Action="SetLocalSystemSaved" Value="1" Before="CostFinalize" Sequence="ui"
                  Condition='SAVED_SERVICE_ACCOUNT~="LocalSystem"' />
+    <!-- Per-user isolation needs LocalSystem (S4U logons of the users' accounts). -->
+    <SetProperty Id="SVC_LOCALSYSTEM" Action="SetLocalSystemPerUser" Value="1" Before="CostFinalize" Sequence="ui"
+                 Condition='ISOLATION="per-user"' />
+    <SetProperty Id="SERVICE_ACCOUNT" Action="SetServiceAccountPerUser" Value="LocalSystem" Before="SetServiceAccountUser" Sequence="execute"
+                 Condition='ISOLATION="per-user"' />
     <SetProperty Id="SERVICE_ACCOUNT" Action="SetServiceAccountUser" Value="[SERVICE_USER]" Before="SetServiceAccountSaved" Sequence="execute"
                  Condition='SERVICE_USER AND SERVICE_ACCOUNT~&lt;&gt;"LocalSystem"' />
     <SetProperty Id="SERVICE_ACCOUNT" Action="SetServiceAccountSaved" Value="[SAVED_SERVICE_ACCOUNT]" Before="CheckServiceAccount" Sequence="execute"
@@ -170,7 +180,7 @@
 
     <!-- Worker setup: protected data dir, logon right, enrollment (as SYSTEM). -->
     <CustomAction Id="LongarmdSetup" FileRef="longarmd.exe" Execute="deferred" Impersonate="no" Return="check" HideTarget="yes"
-                  ExeCommand='install-helper setup --data-dir "[DATADIR]" --user "[SERVICE_ACCOUNT]" --hub "[HUB]" --code "[JOIN_CODE]" --ca-fingerprint "[CA_FINGERPRINT]" --listen "[LISTEN]" --name "[NODE_NAME]" --log "[TempFolder]longarm-install.log"' />
+                  ExeCommand='install-helper setup --data-dir "[DATADIR]" --user "[SERVICE_ACCOUNT]" --hub "[HUB]" --code "[JOIN_CODE]" --ca-fingerprint "[CA_FINGERPRINT]" --listen "[LISTEN]" --name "[NODE_NAME]" --isolation "[ISOLATION]" --log "[TempFolder]longarm-install.log"' />
     <!-- An install that fails after LongarmdSetup (e.g. the service can't log on: wrong password)
          takes back the enrollment LongarmdSetup made (a marker file says so); an existing
          enrollment (earlier install, KEEP_DATA) is never touched. -->

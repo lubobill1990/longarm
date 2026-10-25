@@ -25,12 +25,20 @@ type sub struct {
 	kinds  []string
 	jobID  string
 	closed bool
+	// filter (multi-tenancy) drops (nil) or redacts events for this
+	// subscriber; owner is the user an event is about ("" = none). It runs
+	// with the bus locked and must not take the hub's lock.
+	filter func(ev *pb.FleetEvent, owner string) *pb.FleetEvent
 }
 
 func newBus() *bus { return &bus{subs: map[*sub]struct{}{}} }
 
 func (b *bus) subscribe(kinds []string, jobID string) *sub {
-	s := &sub{ch: make(chan *pb.FleetEvent, 512), kinds: kinds, jobID: jobID}
+	return b.subscribeFiltered(kinds, jobID, nil)
+}
+
+func (b *bus) subscribeFiltered(kinds []string, jobID string, filter func(*pb.FleetEvent, string) *pb.FleetEvent) *sub {
+	s := &sub{ch: make(chan *pb.FleetEvent, 512), kinds: kinds, jobID: jobID, filter: filter}
 	b.mu.Lock()
 	b.subs[s] = struct{}{}
 	b.mu.Unlock()
@@ -49,7 +57,10 @@ func (b *bus) unsubscribe(s *sub) {
 	}
 }
 
-func (b *bus) publish(ev *pb.FleetEvent) {
+func (b *bus) publish(ev *pb.FleetEvent) { b.publishOwned(ev, "") }
+
+// publishOwned publishes an event about owner's things (queue events).
+func (b *bus) publishOwned(ev *pb.FleetEvent, owner string) {
 	if ev.Time == nil {
 		ev.Time = timestamppb.Now()
 	}
@@ -62,8 +73,14 @@ func (b *bus) publish(ev *pb.FleetEvent) {
 		if s.jobID != "" && (ev.Job == nil || ev.Job.Job.GetSpec().GetId() != s.jobID) {
 			continue
 		}
+		out := ev
+		if s.filter != nil {
+			if out = s.filter(ev, owner); out == nil {
+				continue
+			}
+		}
 		select {
-		case s.ch <- ev:
+		case s.ch <- out:
 		default: // too slow: drop the subscriber
 			delete(b.subs, s)
 			s.closed = true

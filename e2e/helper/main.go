@@ -14,6 +14,14 @@
 //	                                   appended there; restore exits HELPER_LITESTREAM_RESTORE_EXIT;
 //	                                   replicate runs the -exec command (pid in <log>.child)
 //	                                   and exits with it)
+//	helper whoami                      print the account the process runs as
+//	helper write FILE TEXT             write TEXT to FILE
+//	helper ls DIR                      list DIR (exit 1 on error)
+//	helper procenv PID                 read another process's environment
+//	                                   (Windows: open it for memory reading)
+//	helper serve SECONDS               TCP echo server on 127.0.0.1:0; prints
+//	                                   "port N", serves for SECONDS
+//	helper connect PORT                connect to 127.0.0.1:PORT, send "hi", print the answer
 package main
 
 import (
@@ -24,6 +32,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"os/user"
 	"strconv"
 	"strings"
 	"time"
@@ -140,6 +149,68 @@ func main() {
 		}
 	case "restore", "replicate":
 		fakeLitestream(os.Args[1:])
+	case "whoami":
+		u, err := user.Current()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("user %s home %s\n", u.Username, os.Getenv(homeVar()))
+	case "write":
+		if err := os.WriteFile(os.Args[2], []byte(os.Args[3]), 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("written")
+	case "ls":
+		ents, err := os.ReadDir(os.Args[2])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		for _, e := range ents {
+			fmt.Println(e.Name())
+		}
+	case "procenv":
+		pid, _ := strconv.Atoi(os.Args[2])
+		out, err := procEnv(pid)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "procenv:", err)
+			os.Exit(1)
+		}
+		fmt.Println(out)
+	case "serve":
+		secs, _ := strconv.Atoi(os.Args[2])
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("port %d\n", ln.Addr().(*net.TCPAddr).Port)
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				go func() {
+					defer c.Close()
+					buf := make([]byte, 64)
+					n, _ := c.Read(buf)
+					fmt.Fprintf(c, "echo %s\n", buf[:n])
+				}()
+			}
+		}()
+		time.Sleep(time.Duration(secs) * time.Second)
+	case "connect":
+		c, err := net.DialTimeout("tcp", "127.0.0.1:"+os.Args[2], 5*time.Second)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		c.Write([]byte("hi"))
+		b, _ := io.ReadAll(c)
+		fmt.Printf("got %s", b)
 	default:
 		fmt.Fprintln(os.Stderr, "unknown mode", os.Args[1])
 		os.Exit(2)

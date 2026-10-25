@@ -3,6 +3,7 @@ package longarmd
 import (
 	"bufio"
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
@@ -23,8 +24,9 @@ import (
 	"github.com/lubobill1990/longarm/internal/metrics"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/server"
-	"github.com/lubobill1990/longarm/internal/supervisor"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/toolchain"
+	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/version"
 	"github.com/lubobill1990/longarm/internal/workspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -43,8 +45,9 @@ type hubAgent struct {
 	dataDir   string
 	reloader  *pki.Reloader
 	live      *pki.Bundle
-	jobs      *supervisor.Manager
-	ws        *workspace.Store
+	spaces    *userspace.Spaces
+	srv       *server.Server
+	policy    *tenancy.Policy
 	sampler   *metrics.Sampler
 	revoked   *pki.RevocationList
 	endpoints func() []string
@@ -265,20 +268,32 @@ func (a *hubAgent) hello() *pb.NodeHello {
 	}
 	h.Mirrors, h.WarmRepos = a.mirrors()
 	h.Tailnet = a.tailnet.state()
+	h.Isolation = a.spaces.Mode()
+	h.TenancyVersion = a.policy.Version()
 	return h
 }
 
 // mirrors lists repo keys with a mirror and those used in the last day.
+// Per-user isolation: users' mirrors are "<user>/<repo>" (the scheduler's
+// affinity is per user: nobody else's mirror helps).
 func (a *hubAgent) mirrors() (all, warm []string) {
-	ents, _ := os.ReadDir(filepath.Join(a.dataDir, workspace.MirrorsDir))
-	for _, e := range ents {
-		repo, ok := strings.CutSuffix(e.Name(), ".git")
-		if !e.IsDir() || !ok {
-			continue
+	for _, sp := range a.spaces.All() {
+		prefix := ""
+		if sp.Owner != "" {
+			prefix = sp.Owner + "/"
+		} else if a.spaces.PerUser() {
+			continue // legacy data: used by nobody any more
 		}
-		all = append(all, repo)
-		if time.Since(a.ws.MirrorLastUsed(repo)) < 24*time.Hour {
-			warm = append(warm, repo)
+		ents, _ := os.ReadDir(filepath.Join(sp.Root, workspace.MirrorsDir))
+		for _, e := range ents {
+			repo, ok := strings.CutSuffix(e.Name(), ".git")
+			if !e.IsDir() || !ok {
+				continue
+			}
+			all = append(all, prefix+repo)
+			if time.Since(sp.WS.MirrorLastUsed(repo)) < 24*time.Hour {
+				warm = append(warm, prefix+repo)
+			}
 		}
 	}
 	return all, warm
@@ -371,7 +386,7 @@ func (a *hubAgent) session(ctx context.Context) error {
 	sent := map[string]*pb.Job{}
 	full := &pb.JobsReport{Full: true}
 	terminal := 0
-	for _, j := range a.jobs.List(nil, 0) {
+	for _, j := range a.spaces.ListJobs(nil, 0) {
 		p := server.JobToPB(j)
 		if j.Status.State.Terminal() {
 			if terminal++; terminal > fullJobLimit {
@@ -396,7 +411,7 @@ func (a *hubAgent) session(ctx context.Context) error {
 	defer slowT.Stop()
 	a.maybeRenew(sctx, conn)
 	for {
-		changed := a.jobs.Changed()
+		changed := a.spaces.Changed()
 		select {
 		case <-sctx.Done():
 			return ctx.Err()
@@ -421,7 +436,7 @@ func (a *hubAgent) session(ctx context.Context) error {
 func (a *hubAgent) reportJobs(sent map[string]*pb.Job, includeRemoved bool) {
 	rep := &pb.JobsReport{}
 	seen := map[string]bool{}
-	for _, j := range a.jobs.List(nil, 0) {
+	for _, j := range a.spaces.ListJobs(nil, 0) {
 		p := server.JobToPB(j)
 		id := p.Spec.Id
 		seen[id] = true
@@ -535,6 +550,8 @@ func (a *hubAgent) handle(cmd *pb.HubCommand) {
 		}
 	case *pb.HubCommand_Tailnet:
 		a.tailnet.apply(x.Tailnet)
+	case *pb.HubCommand_Tenancy:
+		a.applyTenancy(x.Tenancy)
 	case *pb.HubCommand_AuditAck:
 	case *pb.HubCommand_KillJob, *pb.HubCommand_LogRequest, *pb.HubCommand_SubmitJob, *pb.HubCommand_ToolchainApply:
 		go a.hubRequest(cmd) // may take a while (kill waits for the tree); never block the session
@@ -603,8 +620,8 @@ func (a *hubAgent) watchJobs(ctx context.Context) {
 	last := map[string]pb.JobState{}
 	first := true
 	for {
-		changed := a.jobs.Changed()
-		for _, j := range a.jobs.List(nil, 200) {
+		changed := a.spaces.Changed()
+		for _, j := range a.spaces.ListJobs(nil, 200) {
 			p := server.JobToPB(j)
 			if old, ok := last[p.Spec.Id]; !first && (!ok || old != p.State) {
 				a.notify(&pb.LocalEvent{Kind: "job", Job: p})
@@ -618,4 +635,36 @@ func (a *hubAgent) watchJobs(ctx context.Context) {
 		case <-changed:
 		}
 	}
+}
+
+// applyTenancy stores the hub's tenancy policy (users, teams, quotas) and
+// purges the data of removed users.
+func (a *hubAgent) applyTenancy(p *pb.TenancyPolicy) {
+	old := a.policy.Version()
+	if err := a.policy.Set(p); err != nil {
+		a.log.Warn("hub: save tenancy policy", "err", err)
+	}
+	a.log.Info("hub: tenancy policy", "version", p.Version, "enabled", p.Enabled, "users", len(p.Users), "purge", p.Purge)
+	// Disabled and purged users lose what they still have open (attached
+	// sessions, followed logs) - their next calls are refused anyway.
+	if n := a.srv.Conns.CloseIf(func(c *x509.Certificate) bool {
+		id, err := pki.IdentityFromCert(c)
+		return err == nil && (id.Role == pki.RoleClient || id.Role == pki.RoleAdmin) && a.policy.Disabled(id.Owner())
+	}); n > 0 {
+		a.log.Info("closed connections of disabled users", "count", n)
+	}
+	if p.Version == old || len(p.Purge) == 0 {
+		return
+	}
+	go func() {
+		for _, u := range p.Purge {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			err := a.spaces.Purge(ctx, u)
+			cancel()
+			a.audit.LogAs("hub", "tenancy/purge", map[string]any{"user": u, "error": errText(err)})
+			if err != nil {
+				a.log.Warn("purge user", "user", u, "err", err)
+			}
+		}
+	}()
 }

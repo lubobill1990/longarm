@@ -39,6 +39,7 @@ func (c *Container) StartPTY(o ptypes.PTYOptions) (*PTY, error) {
 	cmd := exec.Command(o.Argv[0], o.Argv[1:]...)
 	cmd.Dir, cmd.Env = o.Dir, o.Env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+	c.runAs(cmd.SysProcAttr)
 	if c.PreStart != nil {
 		c.PreStart(cmd)
 	}
@@ -49,7 +50,16 @@ func (c *Container) StartPTY(o ptypes.PTYOptions) (*PTY, error) {
 	if rows == 0 {
 		rows = 25
 	}
-	f, err := pty.StartWithAttrs(cmd, &pty.Winsize{Cols: cols, Rows: rows}, cmd.SysProcAttr)
+	var f *os.File
+	var err error
+	if u := c.opts.RunAs; u != nil {
+		f, err = startPTYAs(cmd, u, &pty.Winsize{Cols: cols, Rows: rows})
+	} else {
+		f, err = pty.StartWithAttrs(cmd, &pty.Winsize{Cols: cols, Rows: rows}, cmd.SysProcAttr)
+	}
+	if c.PostStart != nil {
+		c.PostStart(cmd, err)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -57,6 +67,33 @@ func (c *Container) StartPTY(o ptypes.PTYOptions) (*PTY, error) {
 	c.pgid, c.sid = cmd.Process.Pid, cmd.Process.Pid
 	c.mu.Unlock()
 	return &PTY{f: f, cmd: cmd}, nil
+}
+
+// startPTYAs is pty.StartWithAttrs for a process of another account: the
+// terminal (slave) is handed to the account first, like login does, so
+// programs that check their tty's owner work.
+func startPTYAs(cmd *exec.Cmd, u *ptypes.Account, ws *pty.Winsize) (*os.File, error) {
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer tty.Close()
+	if err := tty.Chown(u.UID, u.GID); err != nil {
+		ptmx.Close()
+		return nil, err
+	}
+	tty.Chmod(0o620)
+	if err := pty.Setsize(ptmx, ws); err != nil {
+		ptmx.Close()
+		return nil, err
+	}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = tty, tty, tty
+	cmd.SysProcAttr.Ctty = 0 // fd 0 of the child
+	if err := cmd.Start(); err != nil {
+		ptmx.Close()
+		return nil, err
+	}
+	return ptmx, nil
 }
 
 // Read reads terminal output; EIO (all slave fds closed) reads as EOF.

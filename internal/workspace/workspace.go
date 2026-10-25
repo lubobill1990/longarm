@@ -83,6 +83,9 @@ func RepoKey(s string) string {
 type Store struct {
 	Root string // longarmd data dir
 	Git  string // git executable (default "git")
+	// Prune replaces PruneAll's git runs (per-user isolation: the user's
+	// mirrors are pruned as the user).
+	Prune func(ctx context.Context)
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
@@ -392,6 +395,10 @@ func (s *Store) RemoveWorktree(ctx context.Context, dir string) error {
 
 // PruneAll runs `git worktree prune` in every mirror.
 func (s *Store) PruneAll(ctx context.Context) {
+	if s.Prune != nil {
+		s.Prune(ctx)
+		return
+	}
 	ents, _ := os.ReadDir(filepath.Join(s.Root, MirrorsDir))
 	for _, e := range ents {
 		if e.IsDir() && strings.HasSuffix(e.Name(), ".git") {

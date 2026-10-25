@@ -28,6 +28,12 @@ func buildHub(t *testing.T) string {
 	t.Helper()
 	hubBin.once.Do(func() {
 		hubBin.path = filepath.Join(bins.dir, exeName("longarm-hub"))
+		if os.Getenv("LONGARM_E2E_BIN_DIR") != "" { // prebuilt
+			if _, err := os.Stat(hubBin.path); err != nil {
+				hubBin.err = err
+			}
+			return
+		}
 		goBin := filepath.Join(runtime.GOROOT(), "bin", exeName("go"))
 		if _, err := os.Stat(goBin); err != nil {
 			goBin = "go"

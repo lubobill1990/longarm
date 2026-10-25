@@ -41,6 +41,11 @@ type Container struct {
 	GroupLive func(pgid int) bool
 	// sid is the session id of a StartPTY container (= the leader's pid).
 	sid int
+	// PostStart runs after the start attempt (cgroup bookkeeping); err is
+	// the start error.
+	PostStart func(cmd *exec.Cmd, err error)
+	// OnKill / OnClose extend Kill and Close (Linux: the job's cgroup).
+	OnKill, OnClose func()
 }
 
 // NewContainer returns an empty container.
@@ -54,10 +59,15 @@ func (c *Container) Start(cmd *exec.Cmd) error {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.Setpgid = true
+	c.runAs(cmd.SysProcAttr)
 	if c.PreStart != nil {
 		c.PreStart(cmd)
 	}
-	if err := cmd.Start(); err != nil {
+	err := cmd.Start()
+	if c.PostStart != nil {
+		c.PostStart(cmd, err)
+	}
+	if err != nil {
 		return err
 	}
 	c.mu.Lock()
@@ -66,10 +76,21 @@ func (c *Container) Start(cmd *exec.Cmd) error {
 	return nil
 }
 
+// runAs makes the process start as the container's account: uid, gid and
+// no supplementary groups (per-user isolation).
+func (c *Container) runAs(a *syscall.SysProcAttr) {
+	if u := c.opts.RunAs; u != nil {
+		a.Credential = &syscall.Credential{Uid: uint32(u.UID), Gid: uint32(u.GID), Groups: []uint32{}}
+	}
+}
+
 // Kill sends SIGKILL to the whole process group and, for a PTY container,
 // to every process of its terminal session (background jobs of an
 // interactive shell run in their own process groups).
 func (c *Container) Kill() error {
+	if c.OnKill != nil {
+		c.OnKill()
+	}
 	c.mu.Lock()
 	pgid, sid := c.pgid, c.sid
 	c.mu.Unlock()
@@ -105,6 +126,9 @@ func (c *Container) Close() error {
 	c.pgid = 0
 	c.sid = 0
 	c.mu.Unlock()
+	if c.OnClose != nil {
+		c.OnClose()
+	}
 	return nil
 }
 

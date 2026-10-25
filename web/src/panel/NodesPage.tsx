@@ -42,10 +42,11 @@ export function useLiveNodes() {
   return { nodes, hist, error, reload }
 }
 
-export function NodesPage() {
+/** admin=false: a user-role login sees the workers read-only (no links, toolchains or actions). */
+export function NodesPage({ admin = true }: { admin?: boolean }) {
   const { nodes, hist, error, reload } = useLiveNodes()
-  const links = usePoll(hubApi.links, 10000)
-  const profiles = usePoll(hubApi.profiles, 30000)
+  const links = usePoll(() => (admin ? hubApi.links() : Promise.resolve([])), admin ? 10000 : 0, [admin])
+  const profiles = usePoll(() => (admin ? hubApi.profiles() : Promise.resolve([])), admin ? 30000 : 0, [admin])
   const list = useMemo(() => Object.values(nodes).sort((a, b) => a.name.localeCompare(b.name)), [nodes])
   const pending = list.filter((n) => n.state === 'pending')
   const workers = list.filter((n) => n.role === 'worker' && n.state !== 'pending')
@@ -62,7 +63,7 @@ export function NodesPage() {
         <button onClick={reload}>Refresh</button>
       </div>
       <ErrorBox error={error} />
-      {pending.length > 0 && (
+      {admin && pending.length > 0 && (
         <div className="card" style={{ marginBottom: 12, borderColor: '#9e6a03' }} data-testid="pending">
           <h3 style={{ margin: '0 0 8px' }}>Waiting for approval</h3>
           <table className="grid">
@@ -82,20 +83,20 @@ export function NodesPage() {
             <th>memory (5 min)</th>
             <th title="Claude Code / Copilot CLI sessions">CC / CP</th>
             <th>jobs</th>
-            <th>links (client → path, RTT)</th>
+            {admin && <th>links (client → path, RTT)</th>}
             <th>labels</th>
             <th>toolchain</th>
-            <th />
+            {admin && <th />}
           </tr>
         </thead>
         <tbody>
           {workers.map((n) => (
-            <NodeRow key={n.name} n={n} hist={hist[n.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} />
+            <NodeRow key={n.name} n={n} hist={hist[n.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} />
           ))}
           {workers.length === 0 && (
             <tr>
-              <td colSpan={9} className="notice">
-                No workers yet: create a join code under “Add machine”.
+              <td colSpan={admin ? 9 : 7} className="notice">
+                {admin ? 'No workers yet: create a join code under “Add machine”.' : 'No workers.'}
               </td>
             </tr>
           )}
@@ -109,7 +110,7 @@ export function NodesPage() {
           <table className="grid">
             <tbody>
               {others.map((n) => (
-                <OtherRow key={n.name} n={n} />
+                <OtherRow key={n.name} n={n} admin={admin} />
               ))}
             </tbody>
           </table>
@@ -142,7 +143,7 @@ function PendingRow({ n }: { n: NodeInfo }) {
   )
 }
 
-function NodeRow({ n, hist, links, profiles }: { n: NodeInfo; hist: MetricsPoint[]; links: LinkReport[]; profiles: Profile[] }) {
+function NodeRow({ n, hist, links, profiles, admin }: { n: NodeInfo; hist: MetricsPoint[]; links: LinkReport[]; profiles: Profile[]; admin: boolean }) {
   const { run, busy } = useAction()
   const m = n.online ? n.metrics : undefined
   const revoked = n.state === 'revoked'
@@ -177,6 +178,7 @@ function NodeRow({ n, hist, links, profiles }: { n: NodeInfo; hist: MetricsPoint
         </div>
         <div className="muted small">
           {n.online ? 'online' : `offline ${fmtAgo(since(n.last_seen))}`} · {n.os}/{n.arch} · {n.version}
+          {n.isolation === 'per-user' && <span title="jobs run under per-user OS accounts"> · per-user</span>}
         </div>
       </td>
       <td style={{ width: 170 }}>
@@ -206,19 +208,21 @@ function NodeRow({ n, hist, links, profiles }: { n: NodeInfo; hist: MetricsPoint
         {n.max_jobs ? `/${n.max_jobs}` : ''}
         {(n.reserved_gb ?? 0) > 0 && <div className="muted small">{(n.reserved_gb ?? 0).toFixed(0)} GB res.</div>}
       </td>
-      <td className="small">
-        {pairs.length === 0 && <span className="faint">no client reports</span>}
-        {pairs.map(({ client, l }) => {
-          const act = (l.legs ?? []).find((x) => x.active)
-          const color = l.state !== 'online' ? RED : act && isRelayed(act.kind) ? AMBER : GREEN
-          return (
-            <div key={client} className="nowrap">
-              {client}: <span style={{ color }}>{l.active || l.state}</span> <span className="mono">{fmtRTT(l.rtt_ms)}</span>
-              {act?.nat && <span className="faint"> nat {act.nat}</span>}
-            </div>
-          )
-        })}
-      </td>
+      {admin && (
+        <td className="small">
+          {pairs.length === 0 && <span className="faint">no client reports</span>}
+          {pairs.map(({ client, l }) => {
+            const act = (l.legs ?? []).find((x) => x.active)
+            const color = l.state !== 'online' ? RED : act && isRelayed(act.kind) ? AMBER : GREEN
+            return (
+              <div key={client} className="nowrap">
+                {client}: <span style={{ color }}>{l.active || l.state}</span> <span className="mono">{fmtRTT(l.rtt_ms)}</span>
+                {act?.nat && <span className="faint"> nat {act.nat}</span>}
+              </div>
+            )
+          })}
+        </td>
+      )}
       <td className="small">
         {Object.entries(n.labels ?? {})
           .filter(([k]) => k !== 'os' && k !== 'arch')
@@ -227,64 +231,71 @@ function NodeRow({ n, hist, links, profiles }: { n: NodeInfo; hist: MetricsPoint
               {k}={v}
             </span>
           ))}
-        {!revoked && (
+        {admin && !revoked && (
           <button className="link small" onClick={editLabels}>
             edit
           </button>
         )}
       </td>
       <td className="small">
-        <select
-          aria-label={`profile of ${n.name}`}
-          value={n.profile ?? ''}
-          disabled={revoked || busy}
-          onChange={(e) => run(() => hubApi.assignProfile(n.name, e.target.value), 'profile assigned')}
-        >
-          <option value="">(none)</option>
-          {profiles.map((p) => (
-            <option key={p.name} value={p.name}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        {admin ? (
+          <select
+            aria-label={`profile of ${n.name}`}
+            value={n.profile ?? ''}
+            disabled={revoked || busy}
+            onChange={(e) => run(() => hubApi.assignProfile(n.name, e.target.value), 'profile assigned')}
+          >
+            <option value="">(none)</option>
+            {profiles.map((p) => (
+              <option key={p.name} value={p.name}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          n.profile
+        )}
         {n.toolchain && n.toolchain.state !== 'none' && (
           <div title={n.toolchain.error}>
             r{n.toolchain.revision} <StatePill state={n.toolchain.state} />
           </div>
         )}
       </td>
-      <td className="nowrap" style={{ textAlign: 'right' }}>
-        {!revoked && (
-          <>
-            <button disabled={busy} onClick={() => run(() => hubApi.drain(n.name, !n.admin_drain), n.admin_drain ? 'resumed' : 'drained')}>
-              {n.admin_drain ? 'Resume' : 'Drain'}
-            </button>{' '}
-            <button disabled={busy || !n.online} title="reconcile the toolchain profile now" onClick={() => run(() => hubApi.toolchainApply(n.name), 'toolchain apply requested')}>
-              Update
-            </button>{' '}
-            <button className="danger" disabled={busy} onClick={() => confirm(`Revoke ${n.name}? Its certificates stop working everywhere.`) && run(() => hubApi.revoke(n.name), `${n.name} revoked`)}>
-              Revoke
-            </button>
-          </>
-        )}
-      </td>
+      {admin && (
+        <td className="nowrap" style={{ textAlign: 'right' }}>
+          {!revoked && (
+            <>
+              <button disabled={busy} onClick={() => run(() => hubApi.drain(n.name, !n.admin_drain), n.admin_drain ? 'resumed' : 'drained')}>
+                {n.admin_drain ? 'Resume' : 'Drain'}
+              </button>{' '}
+              <button disabled={busy || !n.online} title="reconcile the toolchain profile now" onClick={() => run(() => hubApi.toolchainApply(n.name), 'toolchain apply requested')}>
+                Update
+              </button>{' '}
+              <button className="danger" disabled={busy} onClick={() => confirm(`Revoke ${n.name}? Its certificates stop working everywhere.`) && run(() => hubApi.revoke(n.name), `${n.name} revoked`)}>
+                Revoke
+              </button>
+            </>
+          )}
+        </td>
+      )}
     </tr>
   )
 }
 
-function OtherRow({ n }: { n: NodeInfo }) {
+function OtherRow({ n, admin }: { n: NodeInfo; admin: boolean }) {
   const { run, busy } = useAction()
   return (
     <tr>
       <td>
         <b>{n.name}</b> <span className="muted">{n.role}</span>
+        {n.user && n.user !== n.name && <span className="muted small"> · user {n.user}</span>}
       </td>
       <td>
         <StatePill state={n.state} />
       </td>
       <td className="muted small">last seen {n.last_seen ? `${fmtAgo(since(n.last_seen))} ago` : '—'}</td>
       <td style={{ textAlign: 'right' }}>
-        {n.state !== 'revoked' && (
+        {admin && n.state !== 'revoked' && (
           <button className="danger" disabled={busy} onClick={() => confirm(`Revoke ${n.name}?`) && run(() => hubApi.revoke(n.name), `${n.name} revoked`)}>
             Revoke
           </button>

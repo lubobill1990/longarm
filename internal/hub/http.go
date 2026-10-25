@@ -53,15 +53,20 @@ func (h *Hub) httpHandler() http.Handler {
 	mux.HandleFunc("POST /api/login", h.apiLogin)
 	mux.HandleFunc("POST /login", h.formLogin)
 	mux.HandleFunc("POST /logout", h.formLogout)
+	// api: any logged-in panel account (users see only their own jobs);
+	// admin: panel administrators only.
 	api := func(pattern string, fn func(w http.ResponseWriter, r *http.Request, user string)) {
 		mux.HandleFunc(pattern, h.requireUser(fn))
+	}
+	admin := func(pattern string, fn func(w http.ResponseWriter, r *http.Request, user string)) {
+		mux.HandleFunc(pattern, h.requireUser(h.adminOnly(fn)))
 	}
 	api("POST /api/logout", h.apiLogout)
 	api("GET /api/me", func(w http.ResponseWriter, r *http.Request, user string) {
 		writeJSON(w, h.meInfo(r, user))
 	})
-	api("GET /api/nodes", func(w http.ResponseWriter, r *http.Request, _ string) {
-		writePB(w, &pb.ListNodesResponse{Nodes: h.ListNodes(r.URL.Query().Get("all") != "")})
+	api("GET /api/nodes", func(w http.ResponseWriter, r *http.Request, user string) {
+		writePB(w, &pb.ListNodesResponse{Nodes: h.ListNodesFor(h.panelViewer(user), r.URL.Query().Get("all") != "")})
 	})
 	nodeAction := func(fn func(by, name string) (*pb.NodeInfo, error)) func(http.ResponseWriter, *http.Request, string) {
 		return func(w http.ResponseWriter, r *http.Request, user string) {
@@ -69,11 +74,11 @@ func (h *Hub) httpHandler() http.Handler {
 			writeResult(w, info, err)
 		}
 	}
-	api("POST /api/nodes/{name}/approve", nodeAction(h.Approve))
-	api("POST /api/nodes/{name}/revoke", nodeAction(h.Revoke))
-	api("POST /api/nodes/{name}/drain", nodeAction(func(by, n string) (*pb.NodeInfo, error) { return h.SetDrain(by, n, true) }))
-	api("POST /api/nodes/{name}/undrain", nodeAction(func(by, n string) (*pb.NodeInfo, error) { return h.SetDrain(by, n, false) }))
-	api("PUT /api/nodes/{name}/labels", func(w http.ResponseWriter, r *http.Request, user string) {
+	admin("POST /api/nodes/{name}/approve", nodeAction(h.Approve))
+	admin("POST /api/nodes/{name}/revoke", nodeAction(h.Revoke))
+	admin("POST /api/nodes/{name}/drain", nodeAction(func(by, n string) (*pb.NodeInfo, error) { return h.SetDrain(by, n, true) }))
+	admin("POST /api/nodes/{name}/undrain", nodeAction(func(by, n string) (*pb.NodeInfo, error) { return h.SetDrain(by, n, false) }))
+	admin("PUT /api/nodes/{name}/labels", func(w http.ResponseWriter, r *http.Request, user string) {
 		var labels map[string]string
 		if !readJSON(w, r, &labels) {
 			return
@@ -81,7 +86,7 @@ func (h *Hub) httpHandler() http.Handler {
 		info, err := h.SetLabels("web/"+user, r.PathValue("name"), labels)
 		writeResult(w, info, err)
 	})
-	api("PUT /api/nodes/{name}/profile", func(w http.ResponseWriter, r *http.Request, user string) {
+	admin("PUT /api/nodes/{name}/profile", func(w http.ResponseWriter, r *http.Request, user string) {
 		var body struct {
 			Profile string `json:"profile"`
 		}
@@ -91,7 +96,7 @@ func (h *Hub) httpHandler() http.Handler {
 		info, err := h.AssignProfile("web/"+user, r.PathValue("name"), body.Profile)
 		writeResult(w, info, err)
 	})
-	api("GET /api/jobs", func(w http.ResponseWriter, r *http.Request, _ string) {
+	api("GET /api/jobs", func(w http.ResponseWriter, r *http.Request, user string) {
 		q := r.URL.Query()
 		req := &pb.FleetJobsRequest{Worker: q.Get("worker")}
 		req.Limit = int32(atoiDefault(q.Get("limit"), 0))
@@ -100,24 +105,25 @@ func (h *Hub) httpHandler() http.Handler {
 				req.States = append(req.States, pb.JobState(v))
 			}
 		}
-		writePB(w, &pb.FleetJobsResponse{Jobs: h.ListJobs(req)})
+		writePB(w, &pb.FleetJobsResponse{Jobs: h.ListJobsFor(h.panelViewer(user), req)})
 	})
-	api("GET /api/jobs/{id}", func(w http.ResponseWriter, r *http.Request, _ string) {
-		fj, err := h.GetJob(r.PathValue("id"), r.URL.Query().Get("worker"))
+	api("GET /api/jobs/{id}", func(w http.ResponseWriter, r *http.Request, user string) {
+		fj, err := h.GetJobFor(h.panelViewer(user), r.PathValue("id"), r.URL.Query().Get("worker"))
 		writeResult(w, fj, err)
 	})
-	api("POST /api/joincodes", func(w http.ResponseWriter, r *http.Request, user string) {
+	admin("POST /api/joincodes", func(w http.ResponseWriter, r *http.Request, user string) {
 		var body struct {
 			Role    string            `json:"role"`
 			TTL     string            `json:"ttl"`
 			Labels  map[string]string `json:"labels"`
 			Profile string            `json:"profile"`
 			Name    string            `json:"name"`
+			User    string            `json:"user"`
 		}
 		if !readJSON(w, r, &body) {
 			return
 		}
-		req := &pb.CreateJoinCodeRequest{Role: body.Role, Labels: body.Labels, Profile: body.Profile, Name: body.Name}
+		req := &pb.CreateJoinCodeRequest{Role: body.Role, Labels: body.Labels, Profile: body.Profile, Name: body.Name, User: body.User}
 		if body.TTL != "" {
 			d, err := time.ParseDuration(body.TTL)
 			if err != nil {
@@ -129,19 +135,19 @@ func (h *Hub) httpHandler() http.Handler {
 		jc, err := h.CreateJoinCode("web/"+user, req)
 		writeResult(w, jc, err)
 	})
-	api("GET /api/joincodes", func(w http.ResponseWriter, _ *http.Request, _ string) {
+	admin("GET /api/joincodes", func(w http.ResponseWriter, _ *http.Request, _ string) {
 		res, err := h.ListJoinCodes()
 		writeResult(w, res, err)
 	})
-	api("GET /api/audit", func(w http.ResponseWriter, r *http.Request, _ string) {
+	admin("GET /api/audit", func(w http.ResponseWriter, r *http.Request, _ string) {
 		q := r.URL.Query()
 		res, err := h.Audit(&pb.AuditRequest{Node: q.Get("node"), Limit: int32(atoiDefault(q.Get("limit"), 200))})
 		writeResult(w, res, err)
 	})
-	api("GET /api/profiles", func(w http.ResponseWriter, _ *http.Request, _ string) {
+	admin("GET /api/profiles", func(w http.ResponseWriter, _ *http.Request, _ string) {
 		writePB(w, &pb.ListProfilesResponse{Profiles: h.Profiles()})
 	})
-	api("PUT /api/profiles/{name}", func(w http.ResponseWriter, r *http.Request, user string) {
+	admin("PUT /api/profiles/{name}", func(w http.ResponseWriter, r *http.Request, user string) {
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		if err != nil || !jsonRequest(w, r) {
 			return
@@ -155,7 +161,7 @@ func (h *Hub) httpHandler() http.Handler {
 		res, err := h.PutProfile("web/"+user, p)
 		writeResult(w, res, err)
 	})
-	api("GET /api/releases", func(w http.ResponseWriter, _ *http.Request, _ string) {
+	admin("GET /api/releases", func(w http.ResponseWriter, _ *http.Request, _ string) {
 		rels, err := h.store.Releases()
 		if err != nil {
 			httpError(w, 500, err.Error())
@@ -164,7 +170,8 @@ func (h *Hub) httpHandler() http.Handler {
 		writeJSON(w, rels)
 	})
 	api("GET /api/events", h.sse)
-	h.panelRoutes(mux, api)
+	h.panelRoutes(mux, api, admin)
+	h.tenancyRoutes(api, admin)
 	return securityHeaders(mux)
 }
 
@@ -362,6 +369,10 @@ func (h *Hub) requireUser(fn func(http.ResponseWriter, *http.Request, string)) h
 			httpError(w, http.StatusUnauthorized, "login required")
 			return
 		}
+		if h.panelDisabled(user) {
+			httpError(w, http.StatusForbidden, "this user is disabled")
+			return
+		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && !jsonRequest(w, r) {
 			return
 		}
@@ -371,7 +382,7 @@ func (h *Hub) requireUser(fn func(http.ResponseWriter, *http.Request, string)) h
 
 // ---------------------------------------------------------------- SSE
 
-func (h *Hub) sse(w http.ResponseWriter, r *http.Request, _ string) {
+func (h *Hub) sse(w http.ResponseWriter, r *http.Request, user string) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
 		httpError(w, 500, "streaming unsupported")
@@ -382,6 +393,13 @@ func (h *Hub) sse(w http.ResponseWriter, r *http.Request, _ string) {
 	if k := q.Get("kinds"); k != "" {
 		kinds = strings.Split(k, ",")
 	}
+	if len(kinds) == 0 {
+		kinds = []string{"job", "node", "queue"}
+	}
+	// Subscribe before the headers go out: a client that sees the stream
+	// open must not miss an event it triggers right after.
+	sub := h.bus.subscribeFiltered(kinds, q.Get("job"), eventFilter(h.panelViewer(user)))
+	defer h.bus.unsubscribe(sub)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -389,16 +407,14 @@ func (h *Hub) sse(w http.ResponseWriter, r *http.Request, _ string) {
 	fl.Flush()
 	ping := time.NewTicker(25 * time.Second) // keeps proxies from timing the stream out
 	defer ping.Stop()
-	if len(kinds) == 0 {
-		kinds = []string{"job", "node", "queue"}
-	}
-	sub := h.bus.subscribe(kinds, q.Get("job"))
-	defer h.bus.unsubscribe(sub)
 	for {
 		select {
 		case <-r.Context().Done():
 			return
 		case <-ping.C:
+			if h.sessionUser(r) != user { // logged out, or the login was disabled meanwhile
+				return
+			}
 			fmt.Fprint(w, ": ping\n\n")
 			fl.Flush()
 		case ev, ok := <-sub.ch:
@@ -531,6 +547,7 @@ func (h *Hub) statusPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	pageTmpl.Execute(w, map[string]any{"User": user, "Version": version.Version, "Nodes": h.ListNodes(false),
-		"Jobs": h.ListJobs(&pb.FleetJobsRequest{Limit: 50})})
+	v := h.panelViewer(user)
+	pageTmpl.Execute(w, map[string]any{"User": user, "Version": version.Version, "Nodes": h.ListNodesFor(v, false),
+		"Jobs": h.ListJobsFor(v, &pb.FleetJobsRequest{Limit: 50})})
 }

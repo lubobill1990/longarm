@@ -11,13 +11,14 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lubobill1990/longarm/internal/pki"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
-// SSHHandler serves one ssh connection (the built-in sshd); who is the
+// SSHHandler serves one ssh connection (the built-in sshd); id is the
 // authenticated mTLS identity of the caller.
 type SSHHandler interface {
-	HandleProxyConn(c net.Conn, who string)
+	HandleProxyConn(c net.Conn, id pki.Identity)
 }
 
 type forwardServer struct {
@@ -52,6 +53,10 @@ func (f *forwardServer) Open(st pb.Forward_OpenServer) error {
 	if err != nil {
 		return status.Errorf(codes.InvalidArgument, "target %q: %v", first.Target, err)
 	}
+	if err := f.s.forwardAllowed(st.Context(), target); err != nil {
+		f.s.Audit.Log(IdentityFrom(st.Context()), pb.Forward_Open_FullMethodName, map[string]any{"target": target, "denied": status.Convert(err).Message()})
+		return err
+	}
 	f.s.Audit.Log(IdentityFrom(st.Context()), pb.Forward_Open_FullMethodName, map[string]any{"target": target})
 	c, err := net.DialTimeout("tcp", target, 10*time.Second)
 	if err != nil {
@@ -77,7 +82,7 @@ func (f *forwardServer) Ssh(st pb.Forward_SshServer) error {
 	id := IdentityFrom(st.Context())
 	a, b := net.Pipe()
 	defer a.Close()
-	go f.s.SSH.HandleProxyConn(b, id.String())
+	go f.s.SSH.HandleProxyConn(b, id)
 	if len(first.Data) > 0 {
 		if _, err := a.Write(first.Data); err != nil {
 			return status.Error(codes.Unavailable, err.Error())

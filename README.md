@@ -176,6 +176,41 @@ Everything else - workers without a hub, Tailscale/Headscale, the relay, the
 tray app, self-update, packages, firewalls - is in the
 [usage reference](docs/usage.md).
 
+## Sharing a hub with your team
+
+Several people can share one hub and its workers without seeing each
+other's work ([docs/security.md](docs/security.md) has the threat model and
+the limits):
+
+```sh
+# on the admin's laptop: one user per person (optionally in teams, with quotas)
+longarm admin user add alice --team web --max-jobs 8 --max-mem-gb-per-worker 64 --panel
+longarm admin user add bob   --team web
+#   -> a join code per user; on their laptops: longarm join hub.example.com:7443 <code> ...
+longarm admin user code alice --device alice-desktop   # another device of alice
+longarm admin team ls ; longarm admin user ls          # devices, usage, quotas
+
+# workers that several people use: per-user OS isolation (LocalSystem / root)
+sudo longarmd service install --isolation per-user      # or MSI ISOLATION=per-user,
+                                                        # deb LONGARM_ISOLATION=per-user
+```
+
+- Every job, session, file, port forward and mirror belongs to the user of
+  the certificate that created it. Users see only their own jobs and
+  sessions (`longarm jobs`, the panel's "My jobs", MCP tools), admins see
+  everything; `longarm run --share team -- ...` lets team members read a
+  job's output.
+- With `[isolation] mode = "per-user"` a worker runs each user's jobs,
+  sessions, shells, `exec`, file transfers and git as a local account of its
+  own (`la-alice`): users can't read each other's files, code, logs,
+  secrets or process memory, not even from inside their own jobs, and
+  forwards only reach their own dev servers. Windows and Linux; macOS
+  workers stay in shared mode.
+- Quotas (active jobs, reserved memory - fleet-wide and per worker -
+  sessions, per-job memory/CPU limits) are enforced by the scheduler and
+  every worker. `longarm admin user disable|remove [--purge]` locks a user
+  out (and deletes their data and accounts on the workers).
+
 ## Security model
 
 - **mTLS everywhere.** Every node has a certificate from the fleet's own CA
@@ -189,9 +224,11 @@ tray app, self-update, packages, firewalls - is in the
 - **The hub never sees your data.** It coordinates but isn't on the data path;
   the relay forwards opaque, end-to-end encrypted packets.
 - **Jobs run as the worker's service account**, not as SYSTEM/root (unless you
-  explicitly choose so). Treat every client with the `client` role as able to
-  run arbitrary code on the workers it can reach - that is the point of the
-  tool. Use separate fleets (CAs) for separate trust domains.
+  explicitly choose so) - or, on workers shared by several people, as a
+  local account per user ([multi-tenancy](docs/security.md)). Treat every
+  client with the `client` role as able to run arbitrary code on the workers
+  it can reach - that is the point of the tool. Users who don't trust each
+  other at all need separate fleets (CAs) or VMs.
 - **Secrets** (`--secret-env`) travel over mTLS, live only in the job's
   memory and environment, and are redacted from logs. The MCP server only
   forwards secrets the operator allow-listed (`LONGARM_MCP_SECRETS`).
@@ -213,8 +250,10 @@ rough edges, and expect the configuration format to change before 1.0.
 - The fleet is designed for one team or one person: tens of workers, not
   thousands. One hub; no high availability (it isn't on the data path, so a
   hub outage only pauses scheduling and enrollment).
-- Workers are trusted machines: there is no sandboxing beyond the service
-  account. Run untrusted code in VMs or containers yourself.
+- Workers are trusted machines: there is no sandboxing beyond OS accounts
+  (the service account, or one per user with per-user isolation; see
+  [docs/security.md](docs/security.md) for what that does and doesn't
+  separate). Run untrusted code in VMs or containers yourself.
 - The tray app on Linux needs GTK 4 + WebKitGTK 6 (or GTK 3 with a build tag);
   macOS installers must be signed and notarized on a Mac.
 - Hole punching can't beat every NAT; behind two symmetric NATs connections

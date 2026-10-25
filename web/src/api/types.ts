@@ -68,6 +68,8 @@ export interface NodeInfo {
   warm_repos?: string[]
   max_jobs?: number
   reserved_mem_gb?: number
+  isolation?: string // workers: "shared" | "per-user"
+  user?: string // clients/admins: the user the node's certificates belong to
 }
 
 export type JobState =
@@ -88,6 +90,8 @@ export interface JobSpec {
   cwd?: string
   labels?: Record<string, string>
   submitted_by?: string
+  owner?: string // the user the job belongs to (older jobs: from submitted_by)
+  share_teams?: string[] // read-only sharing: "team" (every team of the owner) or "team:<name>"
 }
 
 export interface Job {
@@ -296,4 +300,91 @@ export interface Me {
   hub_address?: string
   ca_fingerprint?: string
   base_url?: string
+  role?: 'admin' | 'user' // missing: an older hub (administrator)
+  tenant?: string // the Longarm user the login acts as
+  teams?: string[]
+  tenancy?: boolean // users are separated
+  quota?: Quota // effective quota (normalized from protojson camelCase)
+  usage?: QuotaUsage
+}
+
+// ---------------------------------------------------------------- tenancy
+
+/** A user's quota; zero / missing fields: no limit (or the hub's default). */
+export interface Quota {
+  max_jobs?: number
+  max_mem_gb?: number
+  max_jobs_per_worker?: number
+  max_mem_gb_per_worker?: number
+  max_sessions_per_worker?: number
+  job_mem_gb?: number
+  max_job_mem_gb?: number
+  job_cpus?: number
+  max_job_cpus?: number
+}
+
+export interface QuotaUsage {
+  jobs?: number
+  mem_gb?: number
+}
+
+/** A Longarm user (a person sharing the hub), not a panel login. */
+export interface TenantUser {
+  name: string
+  teams?: string[]
+  quota?: Quota // overrides of the default quota
+  disabled?: boolean
+  created_at?: string
+  created_by?: string
+  devices?: string[]
+  usage?: QuotaUsage
+  panel?: boolean // has a web panel login
+}
+
+export interface ListUsersResponse {
+  users: TenantUser[]
+  default_quota?: Quota
+  tenancy?: boolean
+}
+
+export interface PutUserRequest {
+  name: string
+  create?: boolean
+  set_teams?: boolean
+  teams?: string[]
+  set_quota?: boolean
+  quota?: Quota
+  set_disabled?: boolean
+  disabled?: boolean
+  join_code?: boolean // also issue a client join code for a device
+  ttl?: string // protojson Duration, e.g. "86400s"
+  device?: string
+  admin?: boolean // the join code issues an admin certificate
+  panel?: boolean // create / reset a panel login (password + TOTP, shown once)
+}
+
+export interface PutUserResponse {
+  user?: TenantUser
+  join_code?: JoinCode
+  panel_password?: string
+  totp_secret?: string
+  otpauth?: string
+}
+
+export interface RemoveUserResponse {
+  revoked?: string[]
+  purge?: boolean
+}
+
+export interface Team {
+  name: string
+  members?: string[]
+}
+
+/** A web panel account (GET /api/users). */
+export interface PanelLogin {
+  name: string
+  created_at?: string
+  role?: string // "admin" | "user"
+  tenant?: string // role user: the Longarm user it acts as
 }

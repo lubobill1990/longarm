@@ -90,9 +90,30 @@ func ValidName(name string) bool { return nameRE.MatchString(name) }
 type Identity struct {
 	Role Role
 	Name string
+	// User is the Longarm user a client/admin certificate belongs to
+	// (multi-tenancy: a user may have several devices, each with its own
+	// certificate and name). Carried as "?user=" on the identity URI; empty
+	// for older certificates, whose user is their name (see Owner).
+	User string
 }
 
 func (i Identity) String() string { return string(i.Role) + "/" + i.Name }
+
+// Owner is the user the identity acts as: its User, else its Name. Jobs,
+// sessions, files and forwards belong to an owner.
+func (i Identity) Owner() string {
+	if i.User != "" {
+		return i.User
+	}
+	return i.Name
+}
+
+var userRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,16}$`)
+
+// ValidUser reports whether name can be a Longarm user name set explicitly
+// (longarm admin user add): lower case, at most 17 characters, so that the
+// worker OS account (la-<user>) stays within Windows' 20-character limit.
+func ValidUser(name string) bool { return userRE.MatchString(name) }
 
 // IdentityFromCert extracts the identity from the longarm:// URI SAN.
 func IdentityFromCert(c *x509.Certificate) (Identity, error) {
@@ -108,9 +129,26 @@ func IdentityFromCert(c *x509.Certificate) (Identity, error) {
 		if !ValidName(name) {
 			return Identity{}, fmt.Errorf("bad name %q in identity URI", name)
 		}
-		return Identity{Role: role, Name: name}, nil
+		id := Identity{Role: role, Name: name}
+		if u := u.Query().Get("user"); u != "" {
+			if !ValidUser(u) {
+				return Identity{}, fmt.Errorf("bad user %q in identity URI", u)
+			}
+			id.User = u
+		}
+		return id, nil
 	}
 	return Identity{}, errors.New("certificate has no longarm identity")
+}
+
+// IdentityURI is the URI SAN of an identity: longarm://<role>/<name>, plus
+// ?user=<user> when the certificate belongs to a user other than its name.
+func IdentityURI(id Identity) *url.URL {
+	u := &url.URL{Scheme: URIScheme, Host: string(id.Role), Path: "/" + id.Name}
+	if id.User != "" && id.User != id.Name {
+		u.RawQuery = url.Values{"user": {id.User}}.Encode()
+	}
+	return u
 }
 
 // CA is a loaded certificate authority.
@@ -216,6 +254,7 @@ func LoadCA(dir string) (*CA, error) {
 type IssueOptions struct {
 	Role     Role
 	Name     string
+	User     string   // clients/admins: the Longarm user (multi-tenancy); "" = the name
 	Hosts    []string // extra DNS names / IPs (workers, relays)
 	Validity time.Duration
 }
@@ -246,6 +285,9 @@ func (ca *CA) sign(pub any, o IssueOptions) ([]byte, error) {
 	if !ValidName(o.Name) {
 		return nil, fmt.Errorf("invalid name %q (letters, digits, . _ -)", o.Name)
 	}
+	if o.User != "" && (!ValidUser(o.User) || (o.Role != RoleClient && o.Role != RoleAdmin)) {
+		return nil, fmt.Errorf("invalid user %q (a-z 0-9 _ -, at most 17 characters; clients and admins only)", o.User)
+	}
 	if o.Validity == 0 {
 		o.Validity = DefaultValidity(o.Role)
 	}
@@ -265,7 +307,7 @@ func (ca *CA) sign(pub any, o IssueOptions) ([]byte, error) {
 		NotAfter:    now.Add(o.Validity),
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		URIs:        []*url.URL{{Scheme: URIScheme, Host: string(o.Role), Path: "/" + o.Name}},
+		URIs:        []*url.URL{IdentityURI(Identity{Role: o.Role, Name: o.Name, User: o.User})},
 	}
 	if o.Role == RoleWorker || o.Role == RoleRelay || o.Role == RoleHub {
 		tmpl.ExtKeyUsage = append(tmpl.ExtKeyUsage, x509.ExtKeyUsageServerAuth)

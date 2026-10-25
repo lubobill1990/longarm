@@ -108,7 +108,17 @@ func (c *Container) StartPTY(o ptypes.PTYOptions) (*PTY, error) {
 	env := envBlock(o.Env)
 	var pi windows.ProcessInformation
 	flags := uint32(windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_UNICODE_ENVIRONMENT | createSuspended)
-	if err := windows.CreateProcess(appPtr, cmdline, nil, nil, false, flags, env, dirPtr, &si.StartupInfo, &pi); err != nil {
+	if c.user != nil {
+		// As the container's account, in its own logon session's window
+		// station (see startAs).
+		if len(o.Env) == 0 {
+			env = envBlock(c.user.Env)
+		}
+		si.Desktop = &emptyDesktop[0]
+		if err := windows.CreateProcessAsUser(c.user.Token, appPtr, cmdline, nil, nil, false, flags, env, dirPtr, &si.StartupInfo, &pi); err != nil {
+			return fail(fmt.Errorf("CreateProcessAsUser %s: %w", app, err))
+		}
+	} else if err := windows.CreateProcess(appPtr, cmdline, nil, nil, false, flags, env, dirPtr, &si.StartupInfo, &pi); err != nil {
 		return fail(fmt.Errorf("CreateProcess %s: %w", app, err))
 	}
 	defer windows.CloseHandle(pi.Thread)

@@ -83,6 +83,11 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	if err := h.store.PutNode(n.rec); err != nil {
 		h.log.Warn("save node", "err", err)
 	}
+	h.checkTenancyFlipLocked()
+	var policy *pb.TenancyPolicy
+	if hello.TenancyVersion != h.tenancyVersion {
+		policy = h.policyLocked()
+	}
 	welcome := &pb.HubWelcome{
 		NodeState: n.rec.State, AuditOffset: n.rec.AuditOffset,
 		MetricsInterval: durationpb.New(h.cfg.Heartbeat.Interval.Duration),
@@ -104,6 +109,9 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 		send(h.revocationsMsg())
 	}
 	send(&pb.HubCommand{Msg: &pb.HubCommand_Toolchain{Toolchain: desired}})
+	if policy != nil {
+		send(&pb.HubCommand{Msg: &pb.HubCommand_Tenancy{Tenancy: policy}})
+	}
 
 	go func() {
 		for {
@@ -161,6 +169,7 @@ func (h *Hub) applyHelloLocked(n *node, hello *pb.NodeHello) {
 	r.Version, r.OS, r.Arch, r.Hostname = hello.Version, hello.Os, hello.Arch, hello.Hostname
 	r.Endpoints, r.Mirrors, r.WarmRepos = hello.Endpoints, hello.Mirrors, hello.WarmRepos
 	r.HelloLabels = hello.Labels
+	r.Isolation = hello.Isolation
 	if st := hello.State; st != nil {
 		n.localDrain, n.localReason = st.Draining, st.Reason
 		n.maxJobs, n.reservedGB = st.MaxJobs, st.ReservedMemGb
@@ -223,6 +232,7 @@ func (h *Hub) handleReport(n *node, sess *nodeSession, m *pb.NodeReport) {
 		h.applyHelloLocked(n, x.Hello)
 		h.store.PutNode(n.rec)
 		h.publishNodeLocked(n, "hello")
+		h.checkTenancyFlipLocked()
 	}
 }
 
@@ -375,7 +385,10 @@ func (h *Hub) nodeInfoLocked(n *node) *pb.NodeInfo {
 		Os: r.OS, Arch: r.Arch, Version: r.Version, Hostname: r.Hostname, Endpoints: r.Endpoints,
 		Metrics: n.metrics, LastSeen: tspb(r.LastSeen), JoinedAt: tspb(r.JoinedAt), CertNotAfter: tspb(r.CertNotAfter),
 		Mirrors: r.Mirrors, WarmRepos: r.WarmRepos, Profile: r.Profile, Toolchain: n.toolchain,
-		MaxJobs: n.maxJobs, ReservedMemGb: n.reservedGB, Tailnet: n.tailnet,
+		MaxJobs: n.maxJobs, ReservedMemGb: n.reservedGB, Tailnet: n.tailnet, Isolation: r.Isolation,
+	}
+	if r.Role != string(pki.RoleWorker) {
+		info.User = nodeUser(r)
 	}
 	switch {
 	case r.AdminDrain:

@@ -1,25 +1,84 @@
 // The hub's panel API (/api/..., cookie session after password + TOTP).
-import { get, post, put, request, sse } from './http'
+import { del, get, post, put, request, sse } from './http'
 import type {
   AuditRecord,
   FleetEvent,
   FleetJob,
   JoinCode,
   LinkReport,
+  ListUsersResponse,
   LogChunk,
   Me,
   MetricsPoint,
   NodeInfo,
+  PanelLogin,
   Profile,
+  PutUserRequest,
+  PutUserResponse,
+  Quota,
+  QuotaUsage,
+  RemoveUserResponse,
+  Team,
+  TenantUser,
   ToolSpec,
 } from './types'
 
 const enc = encodeURIComponent
 
+// Quota field names: proto (snake_case, writePB) and protojson's default
+// lowerCamelCase (/api/me embeds plain protojson). Both are accepted.
+const QUOTA_FIELDS: [keyof Quota, string][] = [
+  ['max_jobs', 'maxJobs'],
+  ['max_mem_gb', 'maxMemGb'],
+  ['max_jobs_per_worker', 'maxJobsPerWorker'],
+  ['max_mem_gb_per_worker', 'maxMemGbPerWorker'],
+  ['max_sessions_per_worker', 'maxSessionsPerWorker'],
+  ['job_mem_gb', 'jobMemGb'],
+  ['max_job_mem_gb', 'maxJobMemGb'],
+  ['job_cpus', 'jobCpus'],
+  ['max_job_cpus', 'maxJobCpus'],
+]
+
+function field(o: Record<string, unknown>, snake: string, camel: string): number | undefined {
+  const v = o[snake] ?? o[camel]
+  if (v === undefined || v === null || v === '') return undefined
+  const n = Number(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
+/** A Quota in either JSON spelling -> snake_case (undefined if not an object). */
+export function normQuota(raw: unknown): Quota | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const o = raw as Record<string, unknown>
+  const q: Quota = {}
+  for (const [snake, camel] of QUOTA_FIELDS) {
+    const v = field(o, snake, camel)
+    if (v !== undefined) q[snake] = v
+  }
+  return q
+}
+
+export function normUsage(raw: unknown): QuotaUsage | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const o = raw as Record<string, unknown>
+  return { jobs: field(o, 'jobs', 'jobs') ?? 0, mem_gb: field(o, 'mem_gb', 'memGb') ?? 0 }
+}
+
+function normMe(m: Me): Me {
+  return { ...m, quota: normQuota(m.quota), usage: normUsage(m.usage) }
+}
+
+function normTenant(u: TenantUser): TenantUser {
+  return { ...u, quota: normQuota(u.quota), usage: normUsage(u.usage) }
+}
+
+/** Panel logins with role "user" see their own jobs only (no fleet administration). */
+export const isAdmin = (me: Me) => me.role !== 'user'
+
 export const hubApi = {
   login: (user: string, password: string, totp: string) => post<{ user: string }>('/api/login', { user, password, totp }),
   logout: () => post('/api/logout'),
-  me: () => get<Me>('/api/me'),
+  me: () => get<Me>('/api/me').then(normMe),
   nodes: (all = false) => get<{ nodes?: NodeInfo[] }>(`/api/nodes${all ? '?all=1' : ''}`).then((r) => r.nodes ?? []),
   approve: (name: string) => post<NodeInfo>(`/api/nodes/${enc(name)}/approve`),
   revoke: (name: string) => post<NodeInfo>(`/api/nodes/${enc(name)}/revoke`),
@@ -61,8 +120,19 @@ export const hubApi = {
   putProfile: (name: string, tools: ToolSpec[]) => put<Profile>(`/api/profiles/${enc(name)}`, { tools }),
   audit: (node?: string, limit = 200) =>
     get<{ records?: AuditRecord[] }>(`/api/audit?limit=${limit}${node ? `&node=${enc(node)}` : ''}`).then((r) => r.records ?? []),
-  users: () => get<{ users: { name: string; created_at?: string }[] }>('/api/users').then((r) => r.users ?? []),
+  users: () => get<{ users: PanelLogin[] }>('/api/users').then((r) => r.users ?? []),
   addUser: (name: string, password: string, current_password: string, reset = false) =>
     post<{ name: string; totp_secret: string; otpauth: string }>('/api/users', { name, password, reset, current_password }),
   deleteUser: (name: string, current_password: string) => request('DELETE', `/api/users/${enc(name)}`, { current_password }),
+  // multi-tenancy (longarm admin user | team)
+  tenants: () =>
+    get<Partial<ListUsersResponse>>('/api/tenants').then(
+      (r): ListUsersResponse => ({ users: (r.users ?? []).map(normTenant), default_quota: normQuota(r.default_quota), tenancy: !!r.tenancy }),
+    ),
+  putTenant: (req: PutUserRequest) =>
+    post<PutUserResponse>('/api/tenants', req).then((r) => ({ ...r, user: r.user ? normTenant(r.user) : undefined })),
+  removeTenant: (name: string, purge = false) => del<RemoveUserResponse>(`/api/tenants/${enc(name)}${purge ? '?purge=1' : ''}`),
+  teams: () => get<{ teams?: Team[] }>('/api/teams').then((r) => r.teams ?? []),
+  setTeam: (team: string, add: string[], remove: string[] = []) =>
+    post<{ teams?: Team[] }>(`/api/teams/${enc(team)}`, { add, remove }).then((r) => r.teams ?? []),
 }

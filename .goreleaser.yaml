@@ -107,6 +107,8 @@ nfpms:
     contents:
       - src: packaging/linux/longarmd@.service
         dst: /lib/systemd/system/longarmd@.service
+      - src: packaging/linux/longarmd-peruser.service
+        dst: /lib/systemd/system/longarmd-peruser.service
       - src: packaging/linux/join.env.example
         dst: /etc/longarm/join.env.example
         type: config|noreplace

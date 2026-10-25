@@ -35,10 +35,7 @@ func netsh(args ...string) (string, error) {
 // AddFirewallRules (re)creates inbound allow rules named "<name> (UDP)" and
 // "<name> (TCP)" for program. Needs an elevated process.
 func AddFirewallRules(name, program string) error {
-	program, err := filepath.Abs(program)
-	if err != nil {
-		return err
-	}
+	program = longPath(program)
 	RemoveFirewallRules(name, program)
 	for i, proto := range []string{"UDP", "TCP"} {
 		if _, err := netsh("add", "rule", "name="+FirewallRuleNames(name)[i], "dir=in", "action=allow",
@@ -66,11 +63,7 @@ func RemoveFirewallRules(name, program string) error {
 func deleteRule(name, program string) error {
 	args := []string{"delete", "rule", "name=" + name, "dir=in"}
 	if program != "" {
-		p, err := filepath.Abs(program)
-		if err != nil {
-			return err
-		}
-		args = append(args, "program="+p)
+		args = append(args, "program="+longPath(program))
 	}
 	if out, err := netsh(args...); err != nil && !strings.Contains(out, "No rules match") {
 		return err

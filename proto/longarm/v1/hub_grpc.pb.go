@@ -1051,6 +1051,11 @@ const (
 	HubAdmin_ToolchainApply_FullMethodName = "/longarm.v1.HubAdmin/ToolchainApply"
 	HubAdmin_TailnetStatus_FullMethodName  = "/longarm.v1.HubAdmin/TailnetStatus"
 	HubAdmin_TailnetRekey_FullMethodName   = "/longarm.v1.HubAdmin/TailnetRekey"
+	HubAdmin_PutUser_FullMethodName        = "/longarm.v1.HubAdmin/PutUser"
+	HubAdmin_ListUsers_FullMethodName      = "/longarm.v1.HubAdmin/ListUsers"
+	HubAdmin_RemoveUser_FullMethodName     = "/longarm.v1.HubAdmin/RemoveUser"
+	HubAdmin_SetTeam_FullMethodName        = "/longarm.v1.HubAdmin/SetTeam"
+	HubAdmin_ListTeams_FullMethodName      = "/longarm.v1.HubAdmin/ListTeams"
 )
 
 // HubAdminClient is the client API for HubAdmin service.
@@ -1095,6 +1100,14 @@ type HubAdminClient interface {
 	// with a fresh key: pushed to an online worker at once, otherwise on its
 	// next hub session (clients: their next hub contact).
 	TailnetRekey(ctx context.Context, in *NodeRequest, opts ...grpc.CallOption) (*TailnetNodeStatus, error)
+	// Users, teams and quotas (multi-tenancy, docs/security.md).
+	PutUser(ctx context.Context, in *PutUserRequest, opts ...grpc.CallOption) (*PutUserResponse, error)
+	ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error)
+	// RemoveUser revokes every certificate of the user and, with purge, has
+	// the workers delete the user's data and OS account.
+	RemoveUser(ctx context.Context, in *RemoveUserRequest, opts ...grpc.CallOption) (*RemoveUserResponse, error)
+	SetTeam(ctx context.Context, in *SetTeamRequest, opts ...grpc.CallOption) (*ListTeamsResponse, error)
+	ListTeams(ctx context.Context, in *ListTeamsRequest, opts ...grpc.CallOption) (*ListTeamsResponse, error)
 }
 
 type hubAdminClient struct {
@@ -1317,6 +1330,56 @@ func (c *hubAdminClient) TailnetRekey(ctx context.Context, in *NodeRequest, opts
 	return out, nil
 }
 
+func (c *hubAdminClient) PutUser(ctx context.Context, in *PutUserRequest, opts ...grpc.CallOption) (*PutUserResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PutUserResponse)
+	err := c.cc.Invoke(ctx, HubAdmin_PutUser_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hubAdminClient) ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListUsersResponse)
+	err := c.cc.Invoke(ctx, HubAdmin_ListUsers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hubAdminClient) RemoveUser(ctx context.Context, in *RemoveUserRequest, opts ...grpc.CallOption) (*RemoveUserResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RemoveUserResponse)
+	err := c.cc.Invoke(ctx, HubAdmin_RemoveUser_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hubAdminClient) SetTeam(ctx context.Context, in *SetTeamRequest, opts ...grpc.CallOption) (*ListTeamsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListTeamsResponse)
+	err := c.cc.Invoke(ctx, HubAdmin_SetTeam_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hubAdminClient) ListTeams(ctx context.Context, in *ListTeamsRequest, opts ...grpc.CallOption) (*ListTeamsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListTeamsResponse)
+	err := c.cc.Invoke(ctx, HubAdmin_ListTeams_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HubAdminServer is the server API for HubAdmin service.
 // All implementations must embed UnimplementedHubAdminServer
 // for forward compatibility.
@@ -1359,6 +1422,14 @@ type HubAdminServer interface {
 	// with a fresh key: pushed to an online worker at once, otherwise on its
 	// next hub session (clients: their next hub contact).
 	TailnetRekey(context.Context, *NodeRequest) (*TailnetNodeStatus, error)
+	// Users, teams and quotas (multi-tenancy, docs/security.md).
+	PutUser(context.Context, *PutUserRequest) (*PutUserResponse, error)
+	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
+	// RemoveUser revokes every certificate of the user and, with purge, has
+	// the workers delete the user's data and OS account.
+	RemoveUser(context.Context, *RemoveUserRequest) (*RemoveUserResponse, error)
+	SetTeam(context.Context, *SetTeamRequest) (*ListTeamsResponse, error)
+	ListTeams(context.Context, *ListTeamsRequest) (*ListTeamsResponse, error)
 	mustEmbedUnimplementedHubAdminServer()
 }
 
@@ -1428,6 +1499,21 @@ func (UnimplementedHubAdminServer) TailnetStatus(context.Context, *TailnetStatus
 }
 func (UnimplementedHubAdminServer) TailnetRekey(context.Context, *NodeRequest) (*TailnetNodeStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method TailnetRekey not implemented")
+}
+func (UnimplementedHubAdminServer) PutUser(context.Context, *PutUserRequest) (*PutUserResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PutUser not implemented")
+}
+func (UnimplementedHubAdminServer) ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListUsers not implemented")
+}
+func (UnimplementedHubAdminServer) RemoveUser(context.Context, *RemoveUserRequest) (*RemoveUserResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveUser not implemented")
+}
+func (UnimplementedHubAdminServer) SetTeam(context.Context, *SetTeamRequest) (*ListTeamsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetTeam not implemented")
+}
+func (UnimplementedHubAdminServer) ListTeams(context.Context, *ListTeamsRequest) (*ListTeamsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListTeams not implemented")
 }
 func (UnimplementedHubAdminServer) mustEmbedUnimplementedHubAdminServer() {}
 func (UnimplementedHubAdminServer) testEmbeddedByValue()                  {}
@@ -1792,6 +1878,96 @@ func _HubAdmin_TailnetRekey_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HubAdmin_PutUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PutUserRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HubAdminServer).PutUser(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HubAdmin_PutUser_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HubAdminServer).PutUser(ctx, req.(*PutUserRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HubAdmin_ListUsers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListUsersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HubAdminServer).ListUsers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HubAdmin_ListUsers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HubAdminServer).ListUsers(ctx, req.(*ListUsersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HubAdmin_RemoveUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveUserRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HubAdminServer).RemoveUser(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HubAdmin_RemoveUser_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HubAdminServer).RemoveUser(ctx, req.(*RemoveUserRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HubAdmin_SetTeam_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetTeamRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HubAdminServer).SetTeam(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HubAdmin_SetTeam_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HubAdminServer).SetTeam(ctx, req.(*SetTeamRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HubAdmin_ListTeams_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListTeamsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HubAdminServer).ListTeams(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HubAdmin_ListTeams_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HubAdminServer).ListTeams(ctx, req.(*ListTeamsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // HubAdmin_ServiceDesc is the grpc.ServiceDesc for HubAdmin service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1870,6 +2046,26 @@ var HubAdmin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TailnetRekey",
 			Handler:    _HubAdmin_TailnetRekey_Handler,
+		},
+		{
+			MethodName: "PutUser",
+			Handler:    _HubAdmin_PutUser_Handler,
+		},
+		{
+			MethodName: "ListUsers",
+			Handler:    _HubAdmin_ListUsers_Handler,
+		},
+		{
+			MethodName: "RemoveUser",
+			Handler:    _HubAdmin_RemoveUser_Handler,
+		},
+		{
+			MethodName: "SetTeam",
+			Handler:    _HubAdmin_SetTeam_Handler,
+		},
+		{
+			MethodName: "ListTeams",
+			Handler:    _HubAdmin_ListTeams_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

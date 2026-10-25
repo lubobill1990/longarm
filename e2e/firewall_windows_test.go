@@ -29,6 +29,11 @@ func TestLongarmFirewall(t *testing.T) {
 	if err := os.WriteFile(exe, b, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The long path: the test adds a rule with netsh itself, which can't
+	// resolve 8.3 names (a TEMP like C:\Users\RUNNER~1\...).
+	if p, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = p
+	}
 	run := func(args ...string) result {
 		t.Helper()
 		cmd := exec.Command(exe, args...)

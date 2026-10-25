@@ -88,7 +88,10 @@ func hashFile(p string, limit int64) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
-func (f *filesServer) Stat(_ context.Context, req *pb.FileStatRequest) (*pb.FileInfo, error) {
+func (f *filesServer) Stat(ctx context.Context, req *pb.FileStatRequest) (*pb.FileInfo, error) {
+	if f.s.perUser() {
+		return f.proxyStat(ctx, req)
+	}
 	abs, err := resolvePath(req.Path)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -113,7 +116,10 @@ func (f *filesServer) Stat(_ context.Context, req *pb.FileStatRequest) (*pb.File
 	return out, nil
 }
 
-func (f *filesServer) List(_ context.Context, req *pb.FileListRequest) (*pb.FileListResponse, error) {
+func (f *filesServer) List(ctx context.Context, req *pb.FileListRequest) (*pb.FileListResponse, error) {
+	if f.s.perUser() {
+		return f.proxyList(ctx, req)
+	}
 	abs, err := resolvePath(req.Path)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -147,6 +153,9 @@ func (f *filesServer) List(_ context.Context, req *pb.FileListRequest) (*pb.File
 }
 
 func (f *filesServer) Read(req *pb.FileReadRequest, st pb.Files_ReadServer) error {
+	if f.s.perUser() {
+		return f.proxyRead(req, st)
+	}
 	abs, err := resolvePath(req.Path)
 	if err != nil {
 		return status.Error(codes.InvalidArgument, err.Error())
@@ -188,6 +197,9 @@ func (f *filesServer) Write(st pb.Files_WriteServer) error {
 	h := first.GetHeader()
 	if h == nil {
 		return status.Error(codes.InvalidArgument, "first message must be the header")
+	}
+	if f.s.perUser() {
+		return f.proxyWrite(st, first)
 	}
 	abs, err := resolvePath(h.Path)
 	if err != nil {
@@ -295,6 +307,9 @@ func (f *filesServer) write(st pb.Files_WriteServer, h *pb.FileWriteHeader, abs 
 }
 
 func (f *filesServer) Mkdir(ctx context.Context, req *pb.MkdirRequest) (*pb.FileInfo, error) {
+	if f.s.perUser() {
+		return f.proxyMkdir(ctx, req)
+	}
 	abs, err := resolvePath(req.Path)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())

@@ -38,7 +38,7 @@ func ChannelName(dir string) string {
 // runSession runs an interactive session: the command on a pseudo terminal,
 // its output into the scrollback ring, every attached client and out.log.
 func (j *job) runSession(ctr platform.Container) error {
-	argv := j.spec.Argv
+	argv := j.command(j.spec.Argv)
 	if runtime.GOOS == "windows" {
 		// Run through `longarmd conhost --pty` so the pseudo console uses UTF-8
 		// code pages and Ctrl+C reaching the console cannot end the session.
@@ -52,7 +52,7 @@ func (j *job) runSession(ctr platform.Container) error {
 	}
 	defer ln.Close()
 	p, err := platform.StartPTY(ctr, platform.PTYOptions{
-		Argv: argv, Dir: j.workdir(), Env: os.Environ(), Cols: j.spec.Cols, Rows: j.spec.Rows,
+		Argv: argv, Dir: j.workdir(), Env: j.env, Cols: j.spec.Cols, Rows: j.spec.Rows,
 	})
 	if err != nil {
 		return j.failStart("failed to start "+j.spec.Argv[0], err)

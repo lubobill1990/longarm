@@ -43,7 +43,7 @@ Implementation phases: **P0 builds `longarmd`/`longarm` on the Tailscale backend
 - Credentials are **injected per job and never written to the worker's disk**.
 - Windows pitfalls: processes started from an SSH session die when it disconnects, scheduled tasks lose stderr, the console's OEM code page garbles output, and npm `.ps1` shims are subject to execution policy — addressed at the root by using a **resident service + Job Objects + ConPTY + explicit UTF-8**.
 
-**Non-goals**: multi-tenancy, GPU scheduling, distributed builds across workers, replacing CI.
+**Non-goals** (of v1): GPU scheduling, distributed builds across workers, replacing CI. Multi-tenancy was a v1 non-goal; level 2 (semi-trusted users sharing a hub, OS account per user on workers) was added later - see [security.md](security.md).
 
 ---
 
@@ -249,7 +249,7 @@ A port that "executes commands" is a remote code execution service, so:
 3. **Join tokens**: `longarm admin token --ttl 1h --uses 1` generates a one-time join token; `longarmd join` exchanges it for a certificate. Newly joined workers are `pending` by default, optionally requiring approval in the panel.
 4. **Audit**: every exec/attach/job/file write is logged both locally on the worker and on the hub (who, which machine, what command, exit code).
 5. **Least privilege**: client certificates can be restricted to worker labels; dangerous operations (uninstalling/upgrading `longarmd`, profile changes) are `admin`-only.
-6. Worker process isolation only goes as far as "same user account + Job Object resource limits" (single-tenant, sufficient); container-level isolation is not a goal.
+6. Worker process isolation goes as far as OS accounts: the service account (single-tenant), or one account per user with per-user isolation (multi-tenancy level 2, [security.md](security.md)); container-level isolation is level 3.
 
 ---
 
