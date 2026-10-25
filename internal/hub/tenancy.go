@@ -570,7 +570,6 @@ func (s *hubAdminServer) ListTeams(context.Context, *pb.ListTeamsRequest) (*pb.L
 	return s.h.ListTeams(), nil
 }
 
-
 // eventFilter is what a viewer may see of the event stream: its jobs and
 // those shared with its teams, nodes without other users' process lists
 // and mirrors, its own queue events; link reports are admins'.

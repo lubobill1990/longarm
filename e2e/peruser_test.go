@@ -290,7 +290,6 @@ func TestPerUserIsolation(t *testing.T) {
 
 	ca, cb, cc, cr := dialAs(t, alice), dialAs(t, bob), dialAs(t, carol), dialAs(t, root)
 
-
 	// --- identities: every user runs as its own account
 	info, err := ca.Node().Info(ctxT(t), &pb.InfoRequest{})
 	if err != nil || info.Isolation != tenancy.PerUser || info.Account != w.account("alice") || info.CallerUser != "alice" {
