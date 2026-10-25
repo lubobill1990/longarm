@@ -26,6 +26,13 @@ func checkTraversable(string) error { return nil }
 // attributes for local users on the dir itself, which programs like git
 // need to resolve paths into their own data below it.
 func secureDataDir(dir string) error {
+	// The MSI's parent (C:\ProgramData\Longarm): nobody may swap the data
+	// dir underneath it, but the accounts must reach through it.
+	if parent := filepath.Dir(dir); strings.EqualFold(filepath.Base(parent), "longarm") {
+		if err := win.SecureTraverseDir(parent, "BU"); err != nil {
+			return err
+		}
+	}
 	if win.HasSDDL(dir, win.TraverseSDDL("BU")) {
 		return nil // locked down already (by an earlier start)
 	}

@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -209,7 +210,7 @@ func serviceCmd() *cobra.Command {
 	}
 	c.PersistentFlags().StringVar(&name, "name", defaultServiceName, "service name")
 
-	var dataDir, user, passwordEnv string
+	var dataDir, user, passwordEnv, isolation string
 	var listen []string
 	install := &cobra.Command{
 		Use:   "install",
@@ -240,7 +241,20 @@ macOS: LaunchDaemon with UserName and AbandonProcessGroup.`,
 				Description: "Longarm worker daemon: runs remote jobs for longarm clients",
 				Exe:         exe, Args: args, User: user, Password: os.Getenv(passwordEnv),
 			}
-			if user == "" {
+			switch {
+			case isolation == "per-user" && user != "":
+				return errors.New("--isolation per-user runs the service as LocalSystem / root: drop --user")
+			case isolation == "per-user":
+				if err := platform.CanIsolate(); err != nil && runtime.GOOS == "darwin" {
+					return err
+				}
+				if err := longarmd.SetIsolation(dataDir, isolation); err != nil {
+					return err
+				}
+				fmt.Fprintln(os.Stderr, "per-user isolation: the service runs as LocalSystem / root and runs every user's work as an OS account of its own")
+			case isolation != "" && isolation != "shared":
+				return fmt.Errorf("--isolation %q: want shared or per-user", isolation)
+			case user == "":
 				fmt.Fprintln(os.Stderr, "warning: no --user given; the service runs as LocalSystem/root, which DESIGN §3.1 advises against")
 			}
 			if err := platform.InstallService(cfg); err != nil {
@@ -255,6 +269,7 @@ macOS: LaunchDaemon with UserName and AbandonProcessGroup.`,
 	install.Flags().StringArrayVar(&listen, "listen", nil, "listen URL(s) (default: longarmd.toml in the data dir)")
 	install.Flags().StringVar(&user, "user", "", "account to run as")
 	install.Flags().StringVar(&passwordEnv, "password-env", "LONGARM_SERVICE_PASSWORD", "env var holding the Windows account password")
+	install.Flags().StringVar(&isolation, "isolation", "", "per-user: run as LocalSystem / root and isolate users (writes [isolation] to longarmd.toml; docs/security.md)")
 
 	simple := func(use, short string, fn func(string) error, done string) *cobra.Command {
 		return &cobra.Command{

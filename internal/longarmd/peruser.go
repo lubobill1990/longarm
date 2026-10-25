@@ -1,15 +1,19 @@
 package longarmd
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/server"
 	"github.com/lubobill1990/longarm/internal/sshd"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/userspace"
 )
 
@@ -80,4 +84,56 @@ func runSFTP(sp *userspace.Space, exe string, env []string, rw io.ReadWriteClose
 	rw.Close()
 	wg.Wait()
 	return err
+}
+
+// SetIsolation writes [isolation] mode into the data dir's longarmd.toml
+// (installers: MSI ISOLATION=per-user, longarmd service install --isolation).
+// A file that already has an [isolation] section is left alone.
+func SetIsolation(dataDir, mode string) error {
+	if mode == "" || mode == tenancy.Shared {
+		return nil
+	}
+	if mode != tenancy.PerUser {
+		return fmt.Errorf("isolation %q: want %q or %q", mode, tenancy.Shared, tenancy.PerUser)
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return err
+	}
+	p := filepath.Join(dataDir, ConfigFile)
+	b, err := os.ReadFile(p)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if strings.Contains(string(b), "[isolation]") {
+		return nil
+	}
+	if len(b) > 0 && !strings.HasSuffix(string(b), "\n") {
+		b = append(b, '\n')
+	}
+	b = append(b, "\n# multi-tenancy (docs/security.md): every user's work runs as an OS account of its own\n[isolation]\nmode = \"per-user\"\n"...)
+	return os.WriteFile(p, b, 0o600)
+}
+
+// deleteUserAccounts deletes the OS accounts of the users' spaces
+// (per-user isolation; longarmd leave --purge, uninstall).
+func deleteUserAccounts(cfg Config, out io.Writer) {
+	if cfg.Isolation.Mode != tenancy.PerUser || platform.CanIsolate() != nil {
+		return
+	}
+	usersDir := cfg.Isolation.UsersDir
+	if usersDir == "" {
+		usersDir = filepath.Join(cfg.DataDir, userspace.UsersDir)
+	}
+	ents, _ := os.ReadDir(usersDir)
+	for _, e := range ents {
+		if _, err := os.Stat(filepath.Join(usersDir, e.Name(), userspace.OwnerFile)); err != nil || !e.IsDir() {
+			continue
+		}
+		if err := platform.DeleteAccount(e.Name()); err != nil {
+			fmt.Fprintf(out, "warning: delete account %s: %v\n", e.Name(), err)
+		} else {
+			fmt.Fprintf(out, "deleted account %s\n", e.Name())
+		}
+		os.RemoveAll(filepath.Join(usersDir, e.Name()))
+	}
 }

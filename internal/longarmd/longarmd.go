@@ -531,6 +531,9 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	go func() { defer wg.Done(); <-ctx.Done(); legs.wait() }()
 	if hubOn && !cfg.Toolchain.Disabled {
 		backend, err := toolchain.New(cfg.Toolchain.Backend, cfg.Toolchain.FakeState)
+		if sys, ok := backend.(*toolchain.System); ok {
+			sys.MachineWide = perUser
+		}
 		if err != nil {
 			log.Warn("toolchain disabled", "err", err)
 		} else {

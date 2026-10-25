@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -109,7 +111,15 @@ func (f *Fake) Install(_ context.Context, tool, version string, _ *slog.Logger) 
 // --installer-type wix; npm global packages are installed with npm.cmd
 // (npm.ps1 may be blocked by the execution policy); winget runs fully
 // non-interactive. On Linux, apt needs root or passwordless sudo.
-type System struct{}
+type System struct {
+	// MachineWide (per-user isolation: longarmd is LocalSystem / root and
+	// the workloads run as other accounts) installs for every account:
+	// winget --scope machine, npm global packages next to node on Windows
+	// (C:\Program Files\nodejs, on the machine PATH), uv into
+	// /usr/local/bin on Linux. Per-user agent settings (~/.claude, ...)
+	// stay in each account's profile.
+	MachineWide bool
+}
 
 var versionArgs = map[string][]string{
 	"git": {"git", "--version"}, "gh": {"gh", "--version"}, "node": {"node", "--version"},
@@ -178,7 +188,14 @@ func (s *System) Install(ctx context.Context, tool, version string, log *slog.Lo
 		if v := exact(version); v != "" {
 			spec = pkg + "@" + v
 		}
-		return run(ctx, log, npm, "install", "-g", spec)
+		args := []string{npm, "install", "-g", spec}
+		if s.MachineWide && runtime.GOOS == "windows" {
+			// LocalSystem's own npm prefix is in its profile, on nobody's PATH
+			if node, err := exec.LookPath("node.exe"); err == nil {
+				args = append(args, "--prefix", filepath.Dir(node))
+			}
+		}
+		return run(ctx, log, args...)
 	}
 	switch runtime.GOOS {
 	case "windows":
@@ -202,8 +219,11 @@ func (s *System) winget(ctx context.Context, tool, version string, log *slog.Log
 	if !ok {
 		return fmt.Errorf("no winget package for %s", tool)
 	}
-	args := []string{"winget", "install", "--id", id, "--exact", "--silent", "--disable-interactivity",
+	args := []string{wingetExe(), "install", "--id", id, "--exact", "--silent", "--disable-interactivity",
 		"--accept-package-agreements", "--accept-source-agreements"}
+	if s.MachineWide {
+		args = append(args, "--scope", "machine")
+	}
 	if v := exact(version); v != "" && strings.Count(v, ".") >= 2 {
 		args = append(args, "--version", v, "--force")
 	}
@@ -237,6 +257,9 @@ func (s *System) linux(ctx context.Context, tool, version string, log *slog.Logg
 		}
 		return sh("curl -fsSL https://deb.nodesource.com/setup_" + major + ".x | bash - && apt-get install -y nodejs")
 	case "uv":
+		if s.MachineWide {
+			return run(ctx, log, "sh", "-c", "curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh")
+		}
 		return run(ctx, log, "sh", "-c", "curl -LsSf https://astral.sh/uv/install.sh | sh")
 	case "pwsh":
 		return run(ctx, log, append(sudo, "snap", "install", "powershell", "--classic")...)
@@ -252,3 +275,24 @@ func (s *System) linux(ctx context.Context, tool, version string, log *slog.Logg
 }
 
 var safeVersion = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$`)
+
+// wingetExe finds winget: LocalSystem has no App Installer alias on its
+// PATH, but the package's winget.exe runs for it.
+func wingetExe() string {
+	if p, err := exec.LookPath("winget"); err == nil {
+		return p
+	}
+	pf := os.Getenv("ProgramFiles")
+	if pf == "" {
+		pf = `C:\Program Files`
+	}
+	matches, _ := filepath.Glob(filepath.Join(pf, "WindowsApps", "Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe", "winget.exe"))
+	if len(matches) == 0 {
+		matches, _ = filepath.Glob(filepath.Join(pf, "WindowsApps", "Microsoft.DesktopAppInstaller_*", "winget.exe"))
+	}
+	if len(matches) > 0 {
+		sort.Strings(matches)
+		return matches[len(matches)-1] // the newest version
+	}
+	return "winget"
+}

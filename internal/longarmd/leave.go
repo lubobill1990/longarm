@@ -15,6 +15,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/transport"
 	"github.com/lubobill1990/longarm/internal/userspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -93,6 +94,7 @@ func Leave(ctx context.Context, dataDir string, o LeaveOptions) (string, error) 
 	}
 	if o.Purge && !o.locked {
 		unlock()
+		deleteUserAccounts(cfg, o.Out)
 		if err := os.RemoveAll(dataDir); err != nil {
 			return msg, fmt.Errorf("remove %s: %w", dataDir, err)
 		}
@@ -177,6 +179,9 @@ type SetupOptions struct {
 	Listen      []string // written to a new longarmd.toml (listen = [...])
 	Name        string   // node name (default: hostname)
 	Out         io.Writer
+	// Isolation "per-user": longarmd (LocalSystem) runs each user's work as
+	// an OS account of its own (docs/security.md).
+	Isolation string
 }
 
 // InstallSetup prepares a machine-wide data dir for the longarmd service: the
@@ -187,15 +192,24 @@ func InstallSetup(ctx context.Context, dataDir string, o SetupOptions) error {
 	if o.Out == nil {
 		o.Out = io.Discard
 	}
+	perUser := o.Isolation == tenancy.PerUser
+	if perUser && o.ServiceUser != "" && !strings.EqualFold(o.ServiceUser, "LocalSystem") {
+		return fmt.Errorf("per-user isolation needs the service to run as LocalSystem, not %s", o.ServiceUser)
+	}
 	// The installer's own parent (C:\ProgramData\Longarm) is locked down
-	// too, so nobody can swap the data dir underneath it.
-	if parent := filepath.Dir(dataDir); strings.EqualFold(filepath.Base(parent), "longarm") {
+	// too, so nobody can swap the data dir underneath it. (Per-user
+	// isolation: longarmd locks both down itself, leaving the accounts
+	// only traverse rights to reach their data.)
+	if parent := filepath.Dir(dataDir); strings.EqualFold(filepath.Base(parent), "longarm") && !perUser {
 		if err := platform.SecureDir(parent, o.ServiceUser); err != nil {
 			return fmt.Errorf("secure %s: %w", parent, err)
 		}
 	}
 	if err := platform.SecureDir(dataDir, o.ServiceUser); err != nil {
 		return fmt.Errorf("secure %s: %w", dataDir, err)
+	}
+	if err := SetIsolation(dataDir, o.Isolation); err != nil {
+		return err
 	}
 	o.Listen = slices.DeleteFunc(o.Listen, func(s string) bool { return strings.TrimSpace(s) == "" })
 	if len(o.Listen) > 0 {
@@ -212,6 +226,8 @@ func InstallSetup(ctx context.Context, dataDir string, o SetupOptions) error {
 		if err := platform.GrantServiceLogon(o.ServiceUser); err != nil {
 			return err
 		}
+	} else if perUser {
+		fmt.Fprintln(o.Out, "per-user isolation: longarmd runs as LocalSystem and runs every Longarm user's work as an account of its own (la-<user>)")
 	} else {
 		fmt.Fprintln(o.Out, "WARNING: the longarmd service runs as LocalSystem (SERVICE_ACCOUNT=LocalSystem): jobs run as SYSTEM "+
 			"with the system profile, not as a user with git / npm / claude settings (DESIGN §3.1 recommends a user account)")
