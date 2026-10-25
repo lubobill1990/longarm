@@ -9,6 +9,7 @@
 //	helper tree PIDFILE                spawn 2 children, each with 1 grandchild;
 //	                                   every process appends its pid to PIDFILE
 //	                                   and sleeps (5 processes in total)
+//	az ...                             (the binary copied to az[.exe]) a fake Azure CLI, fakeaz.go
 //	helper restore|replicate ...       a fake litestream (HELPER_LITESTREAM_LOG: args are
 //	                                   appended there; restore exits HELPER_LITESTREAM_RESTORE_EXIT;
 //	                                   replicate runs the -exec command (pid in <log>.child)
@@ -22,6 +23,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +32,10 @@ import (
 )
 
 func main() {
+	if strings.HasPrefix(strings.ToLower(filepath.Base(os.Args[0])), "az") {
+		fakeAz(os.Args[1:]) // copied to az / az.exe (fakeaz.go)
+		return
+	}
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: helper print|env|sleep|tree ...")
 		os.Exit(2)

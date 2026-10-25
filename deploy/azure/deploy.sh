@@ -13,6 +13,9 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# the Azure CLI; tests put a fake here (e2e/azure_deploy_test.go)
+AZ=${LONGARM_DEPLOY_AZ:-az}
+az() { "$AZ" "$@"; }
 template=$here/azuredeploy.json
 
 name='' location='' size=small panel=true rg='' image='' teardown=false yes=false
@@ -78,7 +81,7 @@ done
 [[ $timeout =~ ^[0-9]+$ ]] || die "--timeout: seconds"
 rg=${rg:-$name-rg}
 
-command -v az >/dev/null 2>&1 || die "the Azure CLI (az) is missing: https://aka.ms/azure-cli (or use Azure Cloud Shell)"
+command -v "$AZ" >/dev/null 2>&1 || die "the Azure CLI (az) is missing: https://aka.ms/azure-cli (or use Azure Cloud Shell)"
 if [[ -n $subscription ]]; then
 	az account set --subscription "$subscription"
 fi
@@ -88,7 +91,7 @@ az account show -o none 2>/dev/null || die "not logged in: run az login"
 tcp_open() {
 	(exec 3<>"/dev/tcp/$1/$2") 2>/dev/null &
 	local pid=$! rc=0
-	(sleep 5 && kill "$pid" 2>/dev/null) &
+	(sleep 5 && kill "$pid") >/dev/null 2>&1 &
 	local killer=$!
 	wait "$pid" || rc=$?
 	kill "$killer" 2>/dev/null || true
@@ -128,7 +131,7 @@ else
 	az group create -n "$rg" -l "$location" --tags "longarm-hub=$name" -o none
 fi
 
-prev_image=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].image | [0]" -o tsv 2>/dev/null || true)
+prev_image=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].image" -o tsv 2>/dev/null || true)
 if $recreate && [[ -n $prev_image ]]; then
 	echo "deleting container group $name (storage and data stay)"
 	az container delete -g "$rg" -n "$name" --yes -o none
@@ -181,7 +184,7 @@ outputs=$(printf '%s\n' "$outputs" | tr -d '\r' | tr '\t' '\n')
 } <<<"$outputs"
 [[ -n $hub_addr && -n $fqdn && -n $account ]] || die "deployment returned no outputs: $outputs"
 
-new_image=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].image | [0]" -o tsv)
+new_image=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].image" -o tsv)
 if [[ -n $prev_image && $prev_image == "$new_image" && $new_image =~ :(latest|edge)$ ]]; then
 	echo "pulling $new_image again (az container restart)"
 	az container restart -g "$rg" -n "$name" -o none
@@ -191,12 +194,12 @@ echo "waiting for the hub at $hub_addr"
 deadline=$((SECONDS + timeout))
 state=''
 until [[ $state == Running ]]; do
-	state=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].instanceView.currentState.state | [0]" -o tsv 2>/dev/null || true)
+	state=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv 2>/dev/null || true)
 	((SECONDS < deadline)) || die "the hub container is not running ($state): az container logs -g $rg -n $name --container-name hub"
 	[[ $state == Running ]] || sleep 10
 done
-until tcp_open "$fqdn" 7443; do
-	((SECONDS < deadline)) || die "$fqdn:7443 does not answer: az container logs -g $rg -n $name --container-name hub"
+until tcp_open "$fqdn" "${hub_addr##*:}"; do
+	((SECONDS < deadline)) || die "$hub_addr does not answer: az container logs -g $rg -n $name --container-name hub"
 	sleep 5
 done
 
