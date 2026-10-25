@@ -30,9 +30,14 @@ longarm-hub is up.
      claude mcp add longarm -- longarm mcp
 ```
 
-With the button, the admin join code and CA fingerprint are in the container
-log (`az container logs -g <rg> -n <name> --container-name hub`, line
-`LONGARM_BOOTSTRAP ...`) and in `bootstrap.env` on the `state` file share.
+With the button: the admin join code is only in `bootstrap.env` on the
+`state` file share (Portal: storage account `lahub...` → File shares → state →
+bootstrap.env; or
+`az storage file download --account-name <account> -s state -p bootstrap.env --dest bootstrap.env`).
+It is never written to the container log, which more people can read (the
+Reader role) than the share (the storage key). The log has the CA fingerprint
+(line `LONGARM_BOOTSTRAP ...`). `./deploy.sh --name <name> --resource-group <rg>` (a re-run: it
+restarts the hub) prints everything too.
 
 ## Options
 
@@ -48,6 +53,7 @@ log (`az container logs -g <rg> -n <name> --container-name hub`, line
 | `--tailscale-secret-file F` | `-TailscaleSecretFile` | Tailscale OAuth secret ([tailnet] provider, [deploy/hub](../hub/README.md#tailnet-provider-tailscale-default-or-headscale)) |
 | `--acme-email E` | `-AcmeEmail` | Let's Encrypt contact |
 | `--log-analytics` | `-LogAnalytics` | container logs to a Log Analytics workspace |
+| `--panel` | `-Panel` | turn the panel back on (with `--recreate`) |
 | `--recreate` | `-Recreate` | delete the container group first (to change size or panel; data stays) |
 | `--admin-code` | `-AdminCode` | print a new one-time admin join code |
 | `--teardown [--yes]` | `-Teardown [-Yes]` | delete the resource group (only one the script created) |
@@ -84,8 +90,10 @@ temporary parameters file, never on a command line.
 - **First start** (`longarm-hub bootstrap`, idempotent, every start): writes a
   `hub.toml` template to the share, creates the CA, and as long as no admin
   has joined keeps one valid one-time admin join code (24 h; a new one after
-  it expired). Values go to `bootstrap.env` on the share and to one
-  `LONGARM_BOOTSTRAP` log line.
+  it expired). Values go to `bootstrap.env` on the share; one
+  `LONGARM_BOOTSTRAP` log line repeats them without the code. A CA is only
+  created for a hub that never issued anything: a database with nodes next to
+  an empty share stops the start (restore the CA instead).
 - **Configuration** comes from the environment (set by the template), which
   wins over `hub.toml`: `LONGARM_HUB_ADVERTISE` (the FQDN: `public_addr` +
   certificate name), `LONGARM_HUB_PUBLIC_URL`, `LONGARM_HUB_HTTP`,
@@ -108,13 +116,15 @@ temporary parameters file, never on a command line.
 | Caddy's ACME account and certificates | Azure Files share `caddy` | a container restart must not request a new Let's Encrypt certificate (rate limits). |
 
 Credentials: ACI mounts Azure Files only with the storage account key, so the
-template passes the key as a **secure** environment value (Litestream) and in
-the volume definition; neither is readable back through the ACI API.
-Litestream 0.5 could use a managed identity, but the share needs the key
-anyway, and a role assignment would require Owner / User Access
-Administrator rights for a one-click deployment. Anyone who can read the
-storage account keys (Contributor on the resource group) can read the CA key:
-treat the resource group like the hub's root of trust.
+key is in the container group's volume definition (never readable back through
+the ACI API). Litestream - and the hub, its child process - get only a **SAS
+for the `litestream` blob container** (10 years; every `deploy.sh` run renews
+it), not the account key that also opens the share with the CA. Litestream
+0.5 could use a managed identity, but the share needs the key anyway, and a
+role assignment would require Owner / User Access Administrator rights for a
+one-click deployment. Anyone who can read the storage account keys
+(Contributor on the resource group) can read the CA key: treat the resource
+group like the hub's root of trust.
 
 **Durability (RPO/RTO).** Litestream ships WAL changes every second; a
 crash or host loss loses at most about a second of hub writes (a join, a
@@ -143,12 +153,17 @@ clients keep talking to workers they already know.
 ./deploy.sh --name myhub --image ghcr.io/lubobill1990/longarm-hub:1.4.0
 ```
 
-Re-running the script is an upgrade: the template is applied again (same
-storage, same data) and ACI restarts the group with the new image. With a
-moving tag (`:latest`, `:edge`) the script restarts the group so the newest
-image is pulled. Changing `--size` or the panel needs `--recreate` (ACI can't
-change a running group's resources or ports); data is kept either way. The
-hub is down for about a minute; workers and clients reconnect by themselves.
+Re-running the script is an upgrade: the template is applied again with the
+running hub's settings (image, size, panel, Log Analytics) unless an option
+changes them - same storage, same data - and the hub restarts (the script
+waits for the new start). With a moving tag (`:latest`, `:edge`) and no new
+image it restarts the group so the newest image is pulled. Secrets can't be
+read back from ACI: a hub deployed with `--registry-user` or
+`--tailscale-secret-file` needs them again on every run (the script refuses
+otherwise), and `--acme-email` too if you want to keep it. Changing `--size`
+or the panel needs `--recreate` (ACI can't change a running group's resources
+or ports); data is kept either way. The hub is down for about a minute;
+workers and clients reconnect by themselves.
 
 ## Costs
 
@@ -188,8 +203,20 @@ traffic relayed by the longnet relay leaves Azure and counts. Direct
 - **Install scripts** (`/install.sh`, `/install.ps1`) need the panel and a
   release in the hub's release store (`longarm admin release publish`);
   until then install `longarm` / `longarmd` from the GitHub releases.
-- **Panel accounts**: `az container exec -g <rg> -n <name> --container-name hub --exec-command "/usr/local/bin/longarm-hub user add admin"`
-  (interactive: password + TOTP secret).
+- **`az container exec` takes no arguments** (one program, interactive TTY).
+  The image has argument-free names for what you need there:
+  `/usr/local/bin/longarm-hub-admin-code` (a 24 h admin join code; what
+  `deploy.sh --admin-code` runs), `/usr/local/bin/longarm-hub-user-add` (panel
+  account: asks for name and password, prints the TOTP secret) and
+  `/usr/local/bin/longarm-hub-users`:
+  `az container exec -g <rg> -n <name> --container-name hub --exec-command /usr/local/bin/longarm-hub-user-add`
+  (from Git Bash on Windows prefix `MSYS_NO_PATHCONV=1`).
+- **Azure public cloud only**: the template builds the name
+  `<name>.<region>.azurecontainer.io`, the public cloud's ACI DNS zone.
+- **UDP 7443 next to TCP 7443**: the template opens 7443 for both protocols.
+  Should a region refuse that, deploy with the template parameter
+  `relayUdpPort=7445` (STUN then on 7446); workers then listen on
+  `longnet://<fqdn>:7445?tcp=<fqdn>:7443&name=<worker>`.
 
 ## Files
 

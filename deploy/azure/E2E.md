@@ -61,13 +61,17 @@ az resource list -g $RG -o table                        # storage account lahub.
 az container show -g $RG -n $NAME --query "{state:instanceView.state, ip:ipAddress.ip, fqdn:ipAddress.fqdn, ports:ipAddress.ports}" -o json
 #   ports: 7443 TCP, 7443 UDP, 7444 UDP, 80 TCP, 443 TCP
 az container logs -g $RG -n $NAME --container-name hub | head -40
-#   "no matching backups found" (first start), "created a new CA", LONGARM_BOOTSTRAP line, "longarm-hub started"
+#   "no matching backups found" (first start), "created a new CA", LONGARM_BOOTSTRAP line
+#   (fingerprint, no join code), "longarm-hub started"; record whether the group
+#   accepted 7443 TCP+UDP (if the deployment fails on the ports: relayUdpPort=7445, README "Limits")
 curl -fsS https://$NAME.$LOC.azurecontainer.io/healthz            # valid Let's Encrypt certificate, JSON health
 curl -fsS https://$NAME.$LOC.azurecontainer.io/ca.crt | openssl x509 -outform der | sha256sum
 #   = the printed CA fingerprint
 ACCT=$(az storage account list -g $RG --query "[0].name" -o tsv)
 KEY=$(az storage account keys list -g $RG -n $ACCT --query "[0].value" -o tsv)
 az storage file list -s state --account-name $ACCT --account-key "$KEY" -o table    # bootstrap.env, ca, hub.toml, tls
+az container show -g $RG -n $NAME --query "containers[0].environmentVariables[].name" -o tsv
+#   LITESTREAM_AZURE_SAS_TOKEN, no LITESTREAM_AZURE_ACCOUNT_KEY
 az storage blob list -c litestream --account-name $ACCT --account-key "$KEY" -o table  # hub.db/... LTX files
 ```
 
@@ -86,7 +90,8 @@ Negative check: the same code again from another config dir fails
 Panel account (interactive; password + TOTP secret):
 
 ```sh
-az container exec -g $RG -n $NAME --container-name hub --exec-command "/usr/local/bin/longarm-hub user add admin"
+az container exec -g $RG -n $NAME --container-name hub --exec-command /usr/local/bin/longarm-hub-user-add
+./deploy.sh --name $NAME --admin-code       # a second admin code (az container exec of longarm-hub-admin-code)
 ```
 
 Log in at `https://$NAME.$LOC.azurecontainer.io/` and see the laptop node.
@@ -127,7 +132,7 @@ port is not reachable). Tailscale leg: only if the hub has a tailnet provider
 ```sh
 az container restart -g $RG -n $NAME          # in-place restart (SIGTERM -> Litestream flush)
 az container logs -g $RG -n $NAME --container-name hub | head -30
-#   no "created a new CA"; LONGARM_BOOTSTRAP ... admin_joined=true admin_join_code= ; same ca_fingerprint
+#   no "created a new CA"; LONGARM_BOOTSTRAP ... admin_joined=true, a new boot_id, same ca_fingerprint
 longarm ls                                     # e2e-w1 back online within ~30 s, no re-join
 longarm admin join-code --role worker          # admin certificate still valid
 ```
@@ -141,11 +146,13 @@ az container show -g $RG -n $NAME --query ipAddress.ip -o tsv     # record the I
 az container show -g $RG -n $NAME --query ipAddress.ip -o tsv     # may differ: clients use the DNS name
 az container logs -g $RG -n $NAME --container-name hub | head -30  # litestream restore lines, no "no matching backups found"
 longarm ls                                                         # e2e-w1 online again, joined state intact
-az container exec -g $RG -n $NAME --container-name hub --exec-command "/usr/local/bin/longarm-hub user ls"   # admin still there
+az container exec -g $RG -n $NAME --container-name hub --exec-command /usr/local/bin/longarm-hub-users   # the panel user still there
 ```
 
-Also an upgrade by re-running with the same mutable tag:
-`./deploy.sh --name $NAME --image $IMG` → "pulling ... again (az container restart)".
+Also a plain re-run (`./deploy.sh --name $NAME`): it keeps image, size and
+panel ("deploying ... small, panel true, <image>"), restarts the hub, prints
+the same fingerprint and "An admin has joined already". And
+`./deploy.sh --name $NAME --size medium` must refuse without `--recreate`.
 
 ## 6. Teardown
 
