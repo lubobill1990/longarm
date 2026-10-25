@@ -81,6 +81,29 @@ type Space struct {
 
 	sp     *Spaces
 	cancel context.CancelFunc
+	// releaseProfile ends longarmd's hold on the account's profile.
+	releaseProfile func()
+}
+
+// holdProfile keeps the account's profile loaded while the space exists
+// (Windows: HKCU for every process of the user; see platform.LoadProfile).
+func (sp *Space) holdProfile() {
+	if sp.Account == nil || sp.releaseProfile != nil {
+		return
+	}
+	release, err := platform.LoadProfile(sp.Account)
+	if err != nil {
+		sp.sp.log.Warn("load user profile", "user", sp.Owner, "err", err)
+		return
+	}
+	sp.releaseProfile = release
+}
+
+func (sp *Space) dropProfile() {
+	if sp.releaseProfile != nil {
+		sp.releaseProfile()
+		sp.releaseProfile = nil
+	}
 }
 
 // Spaces are all spaces of a longarmd.
@@ -199,8 +222,16 @@ func (s *Spaces) start(sp *Space) {
 	go func() { defer s.wg.Done(); sp.Sessions.Run(ctx) }()
 }
 
-// Wait waits for the supervisors' loops (after ctx is done).
-func (s *Spaces) Wait() { s.wg.Wait() }
+// Wait waits for the supervisors' loops (after ctx is done) and releases
+// the users' profiles.
+func (s *Spaces) Wait() {
+	s.wg.Wait()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sp := range s.users {
+		sp.dropProfile()
+	}
+}
 
 // Shared is the shared space.
 func (s *Spaces) Shared() *Space { return s.shared }
@@ -250,6 +281,7 @@ func (s *Spaces) For(owner string) (*Space, error) {
 				return nil, err
 			}
 			sp.Account = acct
+			sp.holdProfile()
 		}
 		return sp, nil
 	}
@@ -301,6 +333,7 @@ func (s *Spaces) openUser(owner, root string, acct *platform.Account) (*Space, e
 	}
 	sp := &Space{Owner: owner, Root: root, Account: acct, Tmp: filepath.Join(root, TmpDir), sp: s}
 	sp.WS = &workspace.Store{Root: root, Prune: sp.prune}
+	sp.holdProfile()
 	var err error
 	if sp.Jobs, err = s.newManager(filepath.Join(root, JobsDir), JobsDir, sp.prepare, 0o700); err != nil {
 		return nil, err
@@ -349,6 +382,9 @@ func (s *Spaces) loadUsers() error {
 // prepareUsersDir creates the users dir (LocalSystem/root only, traversable
 // on Unix) and checks that the accounts can reach their data below it.
 func (s *Spaces) prepareUsersDir() error {
+	if err := secureDataDir(s.cfg.DataDir); err != nil {
+		return fmt.Errorf("data dir: %w", err)
+	}
 	dir := s.cfg.UsersDir
 	if err := secureUsersDir(dir); err != nil {
 		return fmt.Errorf("users dir: %w", err)
@@ -527,6 +563,7 @@ func (s *Spaces) Purge(ctx context.Context, owner string) error {
 		sp.cancel()
 		s.mu.Lock()
 		delete(s.users, owner)
+		sp.dropProfile()
 		s.mu.Unlock()
 		s.notify()
 	}

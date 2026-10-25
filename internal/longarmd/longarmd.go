@@ -266,10 +266,20 @@ func Run(ctx context.Context, cfg Config) error {
 			return err
 		}
 		defer f.Close()
-		logW = io.MultiWriter(os.Stderr, f)
+		// A service has no usable stderr; its write errors must not keep
+		// the lines from the file (io.MultiWriter stops at the first error).
+		logW = io.MultiWriter(bestEffort{os.Stderr}, f)
 	}
 	log := slog.New(slog.NewTextHandler(logW, nil))
 	slog.SetDefault(log)
+	err := run(ctx, cfg, log)
+	if err != nil && !errors.Is(err, update.ErrRestart) {
+		log.Error("longarmd failed", "err", err) // a service has nowhere else to say it
+	}
+	return err
+}
+
+func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	if err := platform.SetupConsole(); err != nil { // Exec children inherit it
 		log.Warn("no UTF-8 console", "err", err)
 	}
@@ -690,4 +700,12 @@ func GC(ctx context.Context, cfg Config, o gc.Options) (gc.Result, error) {
 		return gc.Result{}, err
 	}
 	return st.collect(ctx, o), nil
+}
+
+// bestEffort is a writer whose errors are ignored.
+type bestEffort struct{ w io.Writer }
+
+func (b bestEffort) Write(p []byte) (int, error) {
+	b.w.Write(p)
+	return len(p), nil
 }

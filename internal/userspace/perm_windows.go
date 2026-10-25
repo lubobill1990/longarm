@@ -2,13 +2,36 @@
 
 package userspace
 
-import "github.com/lubobill1990/longarm/internal/platform"
+import (
+	"path/filepath"
+	"strings"
 
-// secureUsersDir creates the users dir (SYSTEM and Administrators only; the
-// accounts reach their data below it by "bypass traverse checking").
-func secureUsersDir(dir string) error { return platform.SecurePrivateDir(dir) }
+	"github.com/lubobill1990/longarm/internal/platform"
+	win "github.com/lubobill1990/longarm/internal/platform/windows"
+)
 
-// secureSpaceRoot creates a user's space root (SYSTEM and Administrators).
-func secureSpaceRoot(dir string, _ *platform.Account) error { return platform.SecurePrivateDir(dir) }
+// secureUsersDir creates the users dir (SYSTEM and Administrators; local
+// users may only traverse it and read its attributes, not list it).
+func secureUsersDir(dir string) error { return win.SecureTraverseDir(dir, "BU") }
+
+// secureSpaceRoot creates a user's space root (SYSTEM and Administrators;
+// the account may traverse it).
+func secureSpaceRoot(dir string, a *platform.Account) error { return win.SecureTraverseDir(dir, a.SID) }
 
 func checkTraversable(string) error { return nil }
+
+// secureDataDir locks longarmd's data dir down for per-user isolation:
+// SYSTEM and Administrators only, inherited by everything in it (reset
+// explicitly; the users dir has ACLs of its own), plus traverse/read
+// attributes for local users on the dir itself, which programs like git
+// need to resolve paths into their own data below it.
+func secureDataDir(dir string) error {
+	if win.HasSDDL(dir, win.TraverseSDDL("BU")) {
+		return nil // locked down already (by an earlier start)
+	}
+	if err := win.SecureTraverseDir(dir, "BU"); err != nil {
+		return err
+	}
+	users := filepath.Join(dir, UsersDir)
+	return win.ResetInherited(dir, func(p string) bool { return strings.EqualFold(p, users) })
+}

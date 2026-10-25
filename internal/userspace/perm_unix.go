@@ -57,3 +57,21 @@ func checkTraversable(dir string) error {
 		}
 	}
 }
+
+// secureDataDir locks longarmd's data dir down for per-user isolation: root
+// only, but traversable when the users dir lies below it; legacy job,
+// session and workspace dirs from shared mode become root's only.
+func secureDataDir(dir string) error {
+	if err := os.Chmod(dir, 0o711); err != nil {
+		return err
+	}
+	for _, d := range []string{"jobs", "sessions", "mirrors", "worktrees", "staging", "tls"} {
+		p := filepath.Join(dir, d)
+		if fi, err := os.Lstat(p); err == nil && fi.IsDir() {
+			if err := os.Chmod(p, 0o700); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

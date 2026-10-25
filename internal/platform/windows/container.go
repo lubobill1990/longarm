@@ -61,7 +61,7 @@ func NewContainer(opts ptypes.ContainerOptions) (*Container, error) {
 	}
 	c := &Container{job: job}
 	if opts.RunAs != nil {
-		s, err := Logon(opts.RunAs)
+		s, err := LogonUser(opts.RunAs, false)
 		if err != nil {
 			windows.CloseHandle(job)
 			return nil, err

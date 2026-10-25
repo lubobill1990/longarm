@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -130,7 +131,7 @@ func EnsureAccount(name string) (*ptypes.Account, error) {
 	acct := &ptypes.Account{Name: name, SID: sid.String()}
 	// The first profile load creates C:\Users\<name> (owner, SYSTEM and
 	// Administrators only).
-	s, err := Logon(acct)
+	s, err := LogonUser(acct, true)
 	if err != nil {
 		return nil, err
 	}
@@ -181,9 +182,23 @@ func DeleteAccount(name string) error {
 	}
 	var errs []error
 	if procDeleteProfileW.Find() == nil {
+		// The profile service may still hold the hive for a while after the
+		// account's last process ended.
 		s, _ := windows.UTF16PtrFromString(sid.String())
-		if r, _, e := procDeleteProfileW.Call(uintptr(unsafe.Pointer(s)), 0, 0); r == 0 && !errors.Is(e, windows.ERROR_FILE_NOT_FOUND) {
-			errs = append(errs, fmt.Errorf("DeleteProfile: %w", e))
+		var last error
+		for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(time.Second) {
+			r, _, e := procDeleteProfileW.Call(uintptr(unsafe.Pointer(s)), 0, 0)
+			if r != 0 || errors.Is(e, windows.ERROR_FILE_NOT_FOUND) {
+				last = nil
+				break
+			}
+			last = e
+			if time.Now().After(deadline) {
+				break
+			}
+		}
+		if last != nil {
+			errs = append(errs, fmt.Errorf("DeleteProfile (the profile stays until it is unloaded, at the latest at the next reboot): %w", last))
 		}
 	}
 	removeAllAccountRights(sid)
@@ -405,20 +420,28 @@ func enablePrivileges() {
 	})
 }
 
-// Logon starts a session for acct: S4U token + loaded profile.
-func Logon(acct *ptypes.Account) (*UserSession, error) {
+// LogonUser starts a session for acct: an S4U token, with loadProfile the
+// account's profile loaded too (a reference the profile service keeps
+// until Close: a process killed before Close leaks it - and the hive stays
+// loaded until reboot). Processes of the account see its HKCU while any
+// session holds the profile; longarmd holds one per user (LoadProfile), so
+// the per-job sessions in shims don't.
+func LogonUser(acct *ptypes.Account, loadProfile bool) (*UserSession, error) {
 	enablePrivileges()
 	tok, err := s4uToken(acct.Name)
 	if err != nil {
 		return nil, err
 	}
-	pi := profileInfo{Flags: piNoUI, UserName: windows.StringToUTF16Ptr(acct.Name)}
-	pi.Size = uint32(unsafe.Sizeof(pi))
-	if r, _, e := procLoadUserProfileW.Call(uintptr(tok), uintptr(unsafe.Pointer(&pi))); r == 0 {
-		tok.Close()
-		return nil, fmt.Errorf("LoadUserProfile %s: %w", acct.Name, e)
+	s := &UserSession{Token: tok, name: acct.Name}
+	if loadProfile {
+		pi := profileInfo{Flags: piNoUI, UserName: windows.StringToUTF16Ptr(acct.Name)}
+		pi.Size = uint32(unsafe.Sizeof(pi))
+		if r, _, e := procLoadUserProfileW.Call(uintptr(tok), uintptr(unsafe.Pointer(&pi))); r == 0 {
+			tok.Close()
+			return nil, fmt.Errorf("LoadUserProfile %s: %w", acct.Name, e)
+		}
+		s.profile = pi.Profile
 	}
-	s := &UserSession{Token: tok, name: acct.Name, profile: pi.Profile}
 	if dir, err := tok.GetUserProfileDirectory(); err == nil {
 		s.Home = dir
 	}
@@ -440,12 +463,22 @@ func (s *UserSession) Close() {
 
 // AccountEnv returns the base environment of acct's processes.
 func AccountEnv(acct *ptypes.Account) ([]string, error) {
-	s, err := Logon(acct)
+	s, err := LogonUser(acct, false)
 	if err != nil {
 		return nil, err
 	}
 	defer s.Close()
 	return s.Env, nil
+}
+
+// LoadProfile loads acct's profile (HKCU for all its processes) until
+// release is called.
+func LoadProfile(acct *ptypes.Account) (release func(), err error) {
+	s, err := LogonUser(acct, true)
+	if err != nil {
+		return nil, err
+	}
+	return s.Close, nil
 }
 
 // TokenSID returns the user SID of a process ("" if unknown).

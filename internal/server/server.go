@@ -371,9 +371,9 @@ func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, s
 	if err != nil {
 		return supervisor.Job{}, err
 	}
-	if existing, err := sp.Jobs.Get(spec.ID); err == nil {
-		if existing.Spec.OwnerName() != owner {
-			return supervisor.Job{}, supervisor.ErrAlreadyExists
+	if esp, existing, err := j.s.Spaces.FindJob(spec.ID); err == nil {
+		if esp != sp || existing.Spec.OwnerName() != owner {
+			return supervisor.Job{}, supervisor.ErrAlreadyExists // somebody else's id
 		}
 		// a retried submit: the supervisor compares the specs
 	} else if j.s.enforce() {

@@ -18,3 +18,5 @@ func AccountEnv(*Account) ([]string, error)        { return nil, ErrNoIsolation 
 func SecureUserDir(string, *Account) error         { return ErrNoIsolation }
 func SecurePrivateDir(string) error                { return ErrNoIsolation }
 func PortOwners(int, *Account) (bool, bool, error) { return false, false, ErrNoIsolation }
+
+func LoadProfile(*Account) (func(), error) { return nil, ErrNoIsolation }

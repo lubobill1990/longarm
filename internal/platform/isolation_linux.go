@@ -69,3 +69,7 @@ func PortOwners(port int, a *Account) (mine, others bool, err error) {
 	}
 	return mine, others, nil
 }
+
+// LoadProfile keeps a's profile loaded (Windows: HKCU of all its
+// processes) until release; no-op elsewhere.
+func LoadProfile(*Account) (release func(), err error) { return func() {}, nil }
