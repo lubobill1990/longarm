@@ -7,6 +7,10 @@ relay's second STUN port) and
 serves its panel/API + install scripts on **127.0.0.1:7480** for Caddy
 (`hub.example.com`).
 
+**Azure:** [deploy/azure](../azure/README.md) deploys this image to Azure
+Container Instances in one command (database streamed to Blob Storage by
+Litestream, state on Azure Files, optional HTTPS panel).
+
 ## docker compose
 
 ```sh
@@ -22,6 +26,16 @@ docker compose run --rm -T longarm-hub user add ops --password-stdin <<< 'a long
 docker compose up -d
 curl -s 127.0.0.1:7480/healthz
 ```
+
+The image (`deploy/hub/Dockerfile`, published as `ghcr.io/<owner>/longarm-hub`)
+runs `longarm-hub container`: plain `serve` here; with
+`LONGARM_HUB_LITESTREAM_CONFIG` it restores and replicates the database with the
+bundled Litestream, with `LONGARM_HUB_BOOTSTRAP=1` it creates the CA and an admin
+join code on the first start (`longarm-hub bootstrap`; see deploy/azure). Settings
+can also come from the environment, which wins over hub.toml:
+`LONGARM_HUB_ADVERTISE` (public host: `public_addr` + certificate name),
+`LONGARM_HUB_PUBLIC_URL`, `LONGARM_HUB_HTTP`, `LONGARM_HUB_LISTEN`, `LONGARM_HUB_DB`
+(`db_path`: the database outside the data dir).
 
 Caddy: add [Caddyfile.snippet](Caddyfile.snippet) (`reverse_proxy
 127.0.0.1:7480` with `flush_interval -1` for server-sent events) and reload.
