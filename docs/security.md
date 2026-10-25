@@ -197,8 +197,9 @@ containers. These remain:
 - **Shared isolation mode.** Without `mode = "per-user"` (and on macOS)
   every workload runs as the same service account: the API hides other
   users' jobs, sessions and process lists, but any job can read the service
-  account's files - including other users' worktrees and logs. Use it only
-  for people who trust each other.
+  account's files - including other users' worktrees and logs - and port
+  forwards reach any address the worker can reach. Use it only for people
+  who trust each other.
 - **Fleet-wide quotas** are enforced by the hub's scheduler. A client that
   submits to a worker directly (`longarm run --on w1`) is bound only by the
   per-worker quotas there.
@@ -208,6 +209,10 @@ containers. These remain:
   sessions); worker administrators can read everything on their machine; the
   hub can submit jobs as any user to workers with `[hub] remote_jobs =
   "all"`.
+- **Disabling a user** refuses new calls at once and closes the user's open
+  connections on the hub and - when the policy arrives, within seconds - on
+  every worker; jobs that are already running keep running (kill them, or
+  remove the user with `--purge`).
 - **Windows profiles** stay loaded until reboot if longarmd itself is killed
   (not stopped); a later purge then removes the account but leaves
   `C:\Users\la-<user>` until the next reboot.

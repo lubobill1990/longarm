@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"crypto/x509"
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -474,12 +475,18 @@ func (h *Hub) savePurgeLocked() {
 	h.store.SetMeta("tenancy_purge", string(b))
 }
 
-// closeUserConns ends the hub streams of a disabled user's devices (their
-// next calls are refused).
+// closeUserConns ends what a disabled user still has open on the hub: the
+// connections of its devices (event streams, waits) and its panel
+// sessions. Workers close theirs when the policy arrives.
 func (h *Hub) closeUserConns(user string) {
-	// Workers refuse the user from their next call on (policy); the hub
-	// refuses in authorize. Long-lived streams end when they next check.
-	_ = user
+	n := h.conns.CloseIf(func(c *x509.Certificate) bool {
+		id, err := pki.IdentityFromCert(c)
+		return err == nil && (id.Role == pki.RoleClient || id.Role == pki.RoleAdmin) && id.Owner() == user
+	})
+	if pu, err := h.store.GetUser(user); err == nil && pu.Tenant == user {
+		h.store.DeleteUserSessions(user)
+	}
+	h.log.Info("user disabled: connections closed", "user", user, "connections", n)
 }
 
 // SetTeam adds and removes members of a team.
@@ -706,4 +713,15 @@ func (h *Hub) tenancyRoutes(api, admin func(string, func(http.ResponseWriter, *h
 		res, err := h.SetTeam("web/"+user, &pb.SetTeamRequest{Team: r.PathValue("team"), Add: body.Add, Remove: body.Remove})
 		writeResult(w, res, err)
 	})
+}
+
+// panelDisabled reports whether a panel login acts for a disabled user.
+func (h *Hub) panelDisabled(login string) bool {
+	u, err := h.store.GetUser(login)
+	if err != nil || u.Admin() {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.userDisabledLocked(u.Tenant)
 }

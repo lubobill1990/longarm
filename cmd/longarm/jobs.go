@@ -377,6 +377,7 @@ func jobTarget(ctx context.Context, s *session, args []string) (worker, id strin
 func logsCmd() *cobra.Command {
 	var follow, session bool
 	var from int64
+	var owner string
 	c := &cobra.Command{
 		Use:   "logs [<worker>] <job-id | session-name>",
 		Short: "Print a job's (or with --session, a session's) output from a byte offset; -f follows until it ends",
@@ -401,7 +402,11 @@ func logsCmd() *cobra.Command {
 			defer conn.Close()
 			logs := logsFunc(conn.Jobs().Logs)
 			if session {
-				logs = conn.Sessions().Logs
+				sl := conn.Sessions().Logs
+				logs = func(ctx context.Context, in *pb.LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[pb.LogChunk], error) {
+					in.Owner = owner
+					return sl(ctx, in, opts...)
+				}
 			}
 			if follow {
 				return followLogsWith(cmd.Context(), conn, logs, id, from, os.Stdout)
@@ -425,6 +430,7 @@ func logsCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&session, "session", false, "show an interactive session's transcript (raw terminal output)")
+	c.Flags().StringVar(&owner, "owner", "", "with --session, admins: another user's session")
 	c.Flags().BoolVarP(&follow, "follow", "f", false, "keep streaming until the job ends (reconnects automatically)")
 	c.Flags().Int64Var(&from, "from", 0, "start at this byte offset (negative: that many bytes before the end)")
 	return c

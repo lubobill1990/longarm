@@ -369,6 +369,10 @@ func (h *Hub) requireUser(fn func(http.ResponseWriter, *http.Request, string)) h
 			httpError(w, http.StatusUnauthorized, "login required")
 			return
 		}
+		if h.panelDisabled(user) {
+			httpError(w, http.StatusForbidden, "this user is disabled")
+			return
+		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && !jsonRequest(w, r) {
 			return
 		}
@@ -408,6 +412,9 @@ func (h *Hub) sse(w http.ResponseWriter, r *http.Request, user string) {
 		case <-r.Context().Done():
 			return
 		case <-ping.C:
+			if h.sessionUser(r) != user { // logged out, or the login was disabled meanwhile
+				return
+			}
 			fmt.Fprint(w, ": ping\n\n")
 			fl.Flush()
 		case ev, ok := <-sub.ch:

@@ -49,9 +49,11 @@ var accountRE = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
 
 // AccountName maps a user to its OS account on workers: prefix+user when
 // that is a valid account name of at most 20 characters, else prefix + a
-// cleaned-up start of the user name + "-" + 6 hex digits of its hash (older
+// cleaned-up start of the user name + "-" + 8 hex digits of its hash (older
 // certificates have names like "Alice.Laptop"). Deterministic: every
-// worker picks the same name.
+// worker picks the same name. Two users whose names collide that way
+// cannot both use a worker (the second is refused: the space's owner file
+// names the first), but never share an account.
 func AccountName(prefix, user string) string {
 	if prefix == "" {
 		prefix = DefaultAccountPrefix
@@ -70,14 +72,14 @@ func AccountName(prefix, user string) string {
 		return -1
 	}, user)
 	sum := sha256.Sum256([]byte(user))
-	keep := maxAccountName - len(prefix) - 7
+	keep := maxAccountName - len(prefix) - 9
 	if keep < 0 {
 		keep = 0
 	}
 	if len(clean) > keep {
 		clean = clean[:keep]
 	}
-	return prefix + clean + "-" + hex.EncodeToString(sum[:3])
+	return prefix + clean + "-" + hex.EncodeToString(sum[:4])
 }
 
 // OwnerOf returns the owner of a job spec: its owner field, else (jobs

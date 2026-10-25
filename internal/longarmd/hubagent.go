@@ -3,6 +3,7 @@ package longarmd
 import (
 	"bufio"
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
@@ -644,6 +645,14 @@ func (a *hubAgent) applyTenancy(p *pb.TenancyPolicy) {
 		a.log.Warn("hub: save tenancy policy", "err", err)
 	}
 	a.log.Info("hub: tenancy policy", "version", p.Version, "enabled", p.Enabled, "users", len(p.Users), "purge", p.Purge)
+	// Disabled and purged users lose what they still have open (attached
+	// sessions, followed logs) - their next calls are refused anyway.
+	if n := a.srv.Conns.CloseIf(func(c *x509.Certificate) bool {
+		id, err := pki.IdentityFromCert(c)
+		return err == nil && (id.Role == pki.RoleClient || id.Role == pki.RoleAdmin) && a.policy.Disabled(id.Owner())
+	}); n > 0 {
+		a.log.Info("closed connections of disabled users", "count", n)
+	}
 	if p.Version == old || len(p.Purge) == 0 {
 		return
 	}

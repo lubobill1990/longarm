@@ -285,6 +285,14 @@ func (s *Spaces) For(owner string) (*Space, error) {
 			if err != nil {
 				return nil, err
 			}
+			// A re-created account is a new account (Windows: a new SID):
+			// its directories need its rights again.
+			if err := secureSpaceRoot(sp.Root, acct); err != nil {
+				return nil, err
+			}
+			if err := secureUserDirs(sp.Root, acct); err != nil {
+				return nil, err
+			}
 			sp.Account = acct
 			sp.holdProfile()
 		}
@@ -330,10 +338,8 @@ func (s *Spaces) openUser(owner, root string, acct *platform.Account) (*Space, e
 		}
 	}
 	if acct != nil {
-		for _, d := range []string{workspace.MirrorsDir, workspace.WorktreesDir, workspace.StagingDir, TmpDir} {
-			if err := platform.SecureUserDir(filepath.Join(root, d), acct); err != nil {
-				return nil, err
-			}
+		if err := secureUserDirs(root, acct); err != nil {
+			return nil, err
 		}
 	}
 	sp := &Space{Owner: owner, Root: root, Account: acct, Tmp: filepath.Join(root, TmpDir), sp: s}
@@ -614,4 +620,14 @@ func (s *Spaces) Purge(ctx context.Context, owner string) error {
 	}
 	s.log.Info("user purged", "user", owner, "account", name)
 	return errors.Join(errs...)
+}
+
+// secureUserDirs gives the account its private dirs in the space.
+func secureUserDirs(root string, acct *platform.Account) error {
+	for _, d := range []string{workspace.MirrorsDir, workspace.WorktreesDir, workspace.StagingDir, TmpDir} {
+		if err := platform.SecureUserDir(filepath.Join(root, d), acct); err != nil {
+			return err
+		}
+	}
+	return nil
 }

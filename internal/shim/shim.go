@@ -76,6 +76,8 @@ type job struct {
 	secrets map[string]string
 	logf    *logfile.Writer
 	out     *redact.Writer // redacting writer into logf
+	env     []string       // the workload's environment
+	home    string         // the workload account's home ("" = the shim's)
 }
 
 func (j *job) finish(state jobs.State, code int, reason string) error {
@@ -106,8 +108,53 @@ func (j *job) workdir() string {
 	if j.spec.Cwd != "" {
 		return j.spec.Cwd
 	}
+	if j.home != "" {
+		return j.home
+	}
 	home, _ := os.UserHomeDir()
 	return home
+}
+
+// command resolves argv[0] with the workload's PATH (per-user isolation:
+// the account's, not the shim's).
+func (j *job) command(argv []string) []string {
+	if j.spec.RunAs == nil || strings.ContainsAny(argv[0], `/\`) {
+		return argv
+	}
+	path := ""
+	for _, kv := range j.env {
+		if k, v, ok := strings.Cut(kv, "="); ok && strings.EqualFold(k, "PATH") {
+			path = v
+		}
+	}
+	for _, dir := range filepath.SplitList(path) {
+		if dir == "" {
+			continue
+		}
+		if p, err := exec.LookPath(filepath.Join(dir, argv[0])); err == nil {
+			return append([]string{p}, argv[1:]...)
+		}
+	}
+	return argv
+}
+
+// dedupEnv keeps the last value of every key (case-insensitive on Windows).
+func dedupEnv(env []string) []string {
+	idx := map[string]int{}
+	var out []string
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if runtime.GOOS == "windows" {
+			k = strings.ToUpper(k)
+		}
+		if i, ok := idx[k]; ok {
+			out[i] = kv
+			continue
+		}
+		idx[k] = len(out)
+		out = append(out, kv)
+	}
+	return out
 }
 
 // watchKill polls the kill marker until stop is closed; on a request it sets
@@ -193,9 +240,17 @@ func run(d jobs.Dir, stdin io.Reader, log *slog.Logger) error {
 	j.out = redact.NewWriter(j.logf, redact.New(values))
 	j.logf.OnRotateError = func(err error) { log.Warn("log rotation failed; will retry", "err", err) }
 
+	keys := make([]string, 0, len(spec.Env))
+	for k := range spec.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	// Per-user isolation: the workload runs as the user's account, with that
-	// account's environment (nothing of LocalSystem's / root's) and - on
-	// Unix - a private umask.
+	// account's environment (nothing of LocalSystem's / root's) plus job env
+	// plus secrets, and - on Unix - a private umask. The (privileged) shim
+	// keeps its own environment: the account's (HKCU\Environment, ...) is
+	// the user's to write and only ever reaches the user's processes.
 	var acct *platform.Account
 	if ra := spec.RunAs; ra != nil {
 		if acct, err = platform.LookupAccount(ra.Account); err != nil {
@@ -205,32 +260,29 @@ func run(d jobs.Dir, stdin io.Reader, log *slog.Logger) error {
 		if err != nil {
 			return j.failStart("environment of "+ra.Account, err)
 		}
-		os.Clearenv()
-		for _, kv := range base {
-			if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
-				os.Setenv(k, v)
-			}
-		}
+		env := append([]string(nil), base...)
 		if ra.Tmp != "" && runtime.GOOS != "windows" {
-			os.Setenv("TMPDIR", ra.Tmp)
+			env = append(env, "TMPDIR="+ra.Tmp)
 		}
+		for _, k := range keys {
+			env = append(env, k+"="+spec.Env[k])
+		}
+		for k, v := range secrets {
+			env = append(env, k+"="+v)
+		}
+		j.env, j.home = dedupEnv(env), acct.Home
 		privateUmask()
-	}
-
-	// The child inherits the shim's environment (= longarmd's, i.e. the service
-	// account's, or the per-user account's) plus job env plus secrets. Setting
-	// them on the shim itself also makes exec's PATH lookup honour a
-	// job-provided PATH.
-	keys := make([]string, 0, len(spec.Env))
-	for k := range spec.Env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		os.Setenv(k, spec.Env[k])
-	}
-	for k, v := range secrets {
-		os.Setenv(k, v)
+	} else {
+		// The child inherits the shim's environment (= longarmd's, i.e. the
+		// service account's) plus job env plus secrets. Setting them on the
+		// shim itself also makes exec's PATH lookup honour a job-provided PATH.
+		for _, k := range keys {
+			os.Setenv(k, spec.Env[k])
+		}
+		for k, v := range secrets {
+			os.Setenv(k, v)
+		}
+		j.env = os.Environ()
 	}
 
 	copts := platform.ContainerOptions{
@@ -257,13 +309,13 @@ func (j *job) runPipe(ctr platform.Container) error {
 	if err != nil {
 		return err
 	}
-	argv := j.spec.Argv
+	argv := j.command(j.spec.Argv)
 	if ra := j.spec.RunAs; ra != nil && len(ra.Wrapper) > 0 {
 		argv = append(append([]string(nil), ra.Wrapper...), argv...)
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = j.workdir()
-	cmd.Env = os.Environ()
+	cmd.Env = j.env
 	cmd.Stdout, cmd.Stderr = pw, pw // one pipe: interleaving preserved
 	startErr := ctr.Start(cmd)
 	pw.Close()
