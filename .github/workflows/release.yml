@@ -4,11 +4,11 @@
 #            MSIs + packaging/hubrelease -> hub-release/; the repository
 #            variable LONGARM_UPDATE_PUBKEY (if set) is built into longarmd
 #            (without it the binaries have self-update turned off)
-#   image    ubuntu-latest (image.yml): ghcr.io/<owner>/longarm-hub:X.Y.Z (+ :latest
-#            for stable releases), after the image smoke test
 #   publish  ubuntu-latest: sign with the secret LONGARM_RELEASE_KEY (if set),
 #            upload to the hub with the release-role certificate (only when
 #            the variable LONGARM_HUB is set), then the GitHub Release
+#   image    ubuntu-latest (image.yml), after publish: smoke test, then
+#            ghcr.io/<owner>/longarm-hub:X.Y.Z (+ :latest for stable releases)
 #   hub      longarm-hub update over SSH (forced command longarm-hub-deploy:
 #            verify, install, health check, roll back); needs LONGARM_HUB + HUB_SSH
 #   rollout  longarm admin release push <v> --canary 1 --wait 15m; fails when
@@ -134,7 +134,9 @@ jobs:
 
   image:
     name: image (ghcr.io)
-    needs: build
+    # after publish: :X.Y.Z / :latest only for a release that was signed and
+    # published (and approved, with the approval gate of docs/ci-cd.md 2.5)
+    needs: [build, publish]
     permissions:
       contents: read
       packages: write

@@ -6,7 +6,8 @@
 #   LONGARM_HUB_BLOB_CONTAINER     blob container
 #   LONGARM_HUB_BLOB_ENDPOINT      optional: another endpoint (Azurite in CI),
 #                                  e.g. http://azurite:10000/devstoreaccount1
-#   LITESTREAM_AZURE_ACCOUNT_KEY   account key (read by Litestream itself)
+#   LITESTREAM_AZURE_SAS_TOKEN     SAS for the container (deploy/azure), or
+#   LITESTREAM_AZURE_ACCOUNT_KEY   the account key (both read by Litestream itself)
 # Used by `longarm-hub container` when LONGARM_HUB_LITESTREAM_CONFIG points here.
 dbs:
   - path: ${LONGARM_HUB_DB}

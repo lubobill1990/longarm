@@ -8,8 +8,9 @@
 #   ./deploy.sh --name myhub --admin-code                                # a new admin join code
 #   ./deploy.sh --name myhub --teardown                                  # delete everything
 #
-# Re-running is an upgrade: the template is applied again (same storage,
-# same data) and a mutable image tag (:latest, :edge) is pulled again.
+# Re-running is an upgrade: the template is applied again with the running
+# hub's settings (image, size, panel, ...) unless an option changes them,
+# same storage, same data, and the hub restarts.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -18,9 +19,10 @@ AZ=${LONGARM_DEPLOY_AZ:-az}
 az() { "$AZ" "$@"; }
 template=$here/azuredeploy.json
 
-name='' location='' size=small panel=true rg='' image='' teardown=false yes=false
-recreate=false admin_code=false subscription='' acme_email='' log_analytics=false
-registry_user='' tailscale_secret_file='' timeout=900
+# empty = not given (a re-run keeps the running hub's value)
+name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=false yes=false
+recreate=false admin_code=false subscription='' acme_email='' registry_user='' tailscale_secret_file=''
+timeout=900
 
 usage() {
 	cat <<'EOF'
@@ -29,15 +31,15 @@ usage: deploy.sh --name NAME [--location REGION] [options]
   --name NAME              hub name = DNS label: NAME.REGION.azurecontainer.io
   --location REGION        Azure region, e.g. eastasia, westeurope (needed on the first run)
   --size small|medium      small = 1 vCPU / 1.5 GB (default), medium = 2 vCPU / 3 GB
-  --no-panel               no HTTPS panel (no Caddy sidecar, no ports 80/443)
+  --no-panel / --panel     without / with the HTTPS panel (Caddy sidecar on 80/443; default with)
   --resource-group RG      default: NAME-rg
-  --image IMAGE            longarm-hub image (default: the template's, :latest)
+  --image IMAGE            longarm-hub image (first run: the template's :latest; re-run: the running one)
   --registry-user USER     private image: registry login, password in $LONGARM_REGISTRY_PASSWORD
   --tailscale-secret-file F  Tailscale OAuth client secret for the hub's tailnet provider
   --acme-email EMAIL       Let's Encrypt contact for the panel certificate
   --log-analytics          send container logs to a Log Analytics workspace
   --subscription ID        Azure subscription (default: az account show)
-  --recreate               delete the container group first (needed to change --size or --no-panel)
+  --recreate               delete the container group first (needed to change --size or the panel)
   --admin-code             print a new one-time admin join code (az container exec)
   --teardown               delete the resource group (asks for the name unless --yes)
   --yes                    don't ask
@@ -56,6 +58,7 @@ while [[ $# -gt 0 ]]; do
 	--location) location=${2:?}; shift ;;
 	--size) size=${2:?}; shift ;;
 	--no-panel) panel=false ;;
+	--panel) panel=true ;;
 	--resource-group) rg=${2:?}; shift ;;
 	--image) image=${2:?}; shift ;;
 	--registry-user) registry_user=${2:?}; shift ;;
@@ -77,8 +80,9 @@ done
 [[ -n $name ]] || { usage >&2; die "--name is required"; }
 [[ $name =~ ^[a-z][a-z0-9-]{1,38}[a-z0-9]$ ]] ||
 	die "--name: 3-40 lowercase letters, digits and hyphens, starting with a letter"
-[[ $size == small || $size == medium ]] || die "--size: small or medium"
+[[ -z $size || $size == small || $size == medium ]] || die "--size: small or medium"
 [[ $timeout =~ ^[0-9]+$ ]] || die "--timeout: seconds"
+[[ -z $tailscale_secret_file || -r $tailscale_secret_file ]] || die "--tailscale-secret-file: can't read $tailscale_secret_file"
 rg=${rg:-$name-rg}
 
 command -v "$AZ" >/dev/null 2>&1 || die "the Azure CLI (az) is missing: https://aka.ms/azure-cli (or use Azure Cloud Shell)"
@@ -100,6 +104,22 @@ tcp_open() {
 
 rg_exists() { [[ $(az group exists -n "$rg" -o tsv) == true ]]; }
 
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+chmod 700 "$tmp"
+
+# fetch_bootstrap ACCOUNT KEY: bootstrap.env from the state share into
+# $tmp/bootstrap.env (the key goes through the environment, not argv)
+fetch_bootstrap() {
+	rm -f "$tmp/bootstrap.env"
+	AZURE_STORAGE_KEY=$2 az storage file download --account-name "$1" --share-name state \
+		--path bootstrap.env --dest "$tmp/bootstrap.env" --no-progress -o none >/dev/null 2>&1 &&
+		[[ -s $tmp/bootstrap.env ]]
+}
+
+# bootstrap_value KEY: a value of $tmp/bootstrap.env
+bootstrap_value() { sed -n "s/^$1=//p" "$tmp/bootstrap.env" | tr -d '\r' | head -n 1; }
+
 if $teardown; then
 	rg_exists || die "resource group $rg does not exist"
 	tag=$(az group show -n "$rg" --query "tags.\"longarm-hub\"" -o tsv)
@@ -115,9 +135,11 @@ if $teardown; then
 fi
 
 if $admin_code; then
-	echo "New one-time admin join code (valid 24 h):" >&2
-	az container exec -g "$rg" -n "$name" --container-name hub \
-		--exec-command "/usr/local/bin/longarm-hub join-code --role admin --ttl 24h"
+	# az container exec runs one program without arguments: an alias of
+	# longarm-hub join-code --role admin --ttl 24h (cmd/longarm-hub/container.go)
+	echo "A new one-time admin join code (valid 24 h):" >&2
+	# MSYS_NO_PATHCONV: Git Bash on Windows would turn the path into C:/Program Files/Git/usr/...
+	MSYS_NO_PATHCONV=1 az container exec -g "$rg" -n "$name" --container-name hub --exec-command /usr/local/bin/longarm-hub-admin-code
 	exit 0
 fi
 
@@ -131,17 +153,58 @@ else
 	az group create -n "$rg" -l "$location" --tags "longarm-hub=$name" -o none
 fi
 
-prev_image=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].image" -o tsv 2>/dev/null || true)
-if $recreate && [[ -n $prev_image ]]; then
+# A re-run keeps the running hub's settings. Secrets can't be read back
+# from ACI: a hub that has them needs them again.
+cur=$(az container show -g "$rg" -n "$name" -o tsv --query "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId]" 2>/dev/null || true)
+cur_image='' prev_boot='' account='' key=''
+if [[ -n $cur ]]; then
+	# one field per line; null fields are empty lines
+	{
+		read -r cur_image
+		read -r cur_cpu
+		read -r cur_c1
+		read -r cur_registry
+		read -r cur_env
+		read -r cur_logs || true
+	} <<<"$(printf '%s\n' "$cur" | tr -d '\r' | tr '\t' '\n')"
+	cur_size=small
+	[[ ${cur_cpu%%.*} -lt 2 ]] || cur_size=medium
+	cur_panel=false
+	[[ $cur_c1 != caddy ]] || cur_panel=true
+	if ! $recreate; then
+		[[ -z $size || $size == "$cur_size" ]] ||
+			die "the hub is $cur_size; ACI can't resize a running container group: add --recreate (data is kept)"
+		[[ -z $panel || $panel == "$cur_panel" ]] ||
+			die "the panel is $([[ $cur_panel == true ]] && echo on || echo off); ACI can't change the ports of a running group: add --recreate (data is kept)"
+	fi
+	image=${image:-$cur_image}
+	size=${size:-$cur_size}
+	panel=${panel:-$cur_panel}
+	[[ -n $log_analytics || -z $cur_logs ]] || log_analytics=true
+	[[ -z $cur_registry || -n $registry_user ]] ||
+		die "the hub pulls its image with a login for $cur_registry, which can't be read back: pass --registry-user again (password in LONGARM_REGISTRY_PASSWORD)"
+	[[ ,$cur_env, != *,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,* || -n $tailscale_secret_file ]] ||
+		die "the hub has a Tailscale OAuth secret, which can't be read back: pass --tailscale-secret-file again"
+	# this start's bootstrap.env must differ from the running one's (boot_id)
+	account=$(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv | tr -d '\r' | head -n 1)
+	if [[ -n $account ]]; then
+		key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv | tr -d '\r')
+		if fetch_bootstrap "$account" "$key"; then
+			prev_boot=$(bootstrap_value boot_id)
+		fi
+	fi
+fi
+size=${size:-small}
+panel=${panel:-true}
+log_analytics=${log_analytics:-false}
+
+if $recreate && [[ -n $cur_image ]]; then
 	echo "deleting container group $name (storage and data stay)"
 	az container delete -g "$rg" -n "$name" --yes -o none
-	prev_image=''
 fi
 
-# parameters in a private file: no secrets on the command line
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-chmod 700 "$tmp"
+# parameters in a private file: no secrets on the command line. The
+# location is the resource group's (its programmatic name).
 json_str() {
 	local s=$1
 	s=${s//\\/\\\\}
@@ -153,7 +216,6 @@ json_str() {
 {
 	printf '{"contentVersion":"1.0.0.0","parameters":{'
 	printf '"name":{"value":%s}' "$(json_str "$name")"
-	printf ',"location":{"value":%s}' "$(json_str "$location")"
 	printf ',"size":{"value":%s}' "$(json_str "$size")"
 	printf ',"enablePanel":{"value":%s}' "$panel"
 	printf ',"enableLogAnalytics":{"value":%s}' "$log_analytics"
@@ -170,64 +232,56 @@ json_str() {
 	printf '}}\n'
 } >"$tmp/params.json"
 
-echo "deploying $name to $rg ($location, $size, panel $panel); this takes a few minutes"
+echo "deploying $name to $rg ($location, $size, panel $panel${image:+, $image}); this takes a few minutes"
 outputs=$(az deployment group create -g "$rg" -n longarm-hub --template-file "$template" \
 	--parameters "@$tmp/params.json" -o tsv \
-	--query "[properties.outputs.hubAddress.value, properties.outputs.fqdn.value, properties.outputs.storageAccount.value, properties.outputs.panelUrl.value]")
+	--query "[properties.outputs.hubAddress.value, properties.outputs.fqdn.value, properties.outputs.storageAccount.value, properties.outputs.relayUdpPort.value, properties.outputs.panelUrl.value]")
 # one value per line (az prints a list as tab-separated fields; panelUrl last: empty without the panel)
 outputs=$(printf '%s\n' "$outputs" | tr -d '\r' | tr '\t' '\n')
 {
 	read -r hub_addr
 	read -r fqdn
 	read -r account
+	read -r relay_port
 	read -r panel_url || true
 } <<<"$outputs"
 [[ -n $hub_addr && -n $fqdn && -n $account ]] || die "deployment returned no outputs: $outputs"
+key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv | tr -d '\r')
 
-new_image=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].image" -o tsv)
-if [[ -n $prev_image && $prev_image == "$new_image" && $new_image =~ :(latest|edge)$ ]]; then
+new_image=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].image" -o tsv | tr -d '\r')
+if ! $recreate && [[ -n $cur_image && $cur_image == "$new_image" && $new_image =~ :(latest|edge)$ ]]; then
 	echo "pulling $new_image again (az container restart)"
 	az container restart -g "$rg" -n "$name" -o none
 fi
 
 echo "waiting for the hub at $hub_addr"
+logs_hint="az container logs -g $rg -n $name --container-name hub"
 deadline=$((SECONDS + timeout))
 state=''
 until [[ $state == Running ]]; do
-	state=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv 2>/dev/null || true)
-	((SECONDS < deadline)) || die "the hub container is not running ($state): az container logs -g $rg -n $name --container-name hub"
+	state=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv 2>/dev/null | tr -d '\r' || true)
+	((SECONDS < deadline)) || die "the hub container is not running ($state): $logs_hint"
 	[[ $state == Running ]] || sleep 10
 done
-until tcp_open "$fqdn" "${hub_addr##*:}"; do
-	((SECONDS < deadline)) || die "$hub_addr does not answer: az container logs -g $rg -n $name --container-name hub"
+# bootstrap.env of this start (a new boot_id; restart once if the update
+# didn't restart the hub)
+restarted=false
+until fetch_bootstrap "$account" "$key" && [[ $(bootstrap_value boot_id) != "$prev_boot" ]]; do
+	((SECONDS < deadline)) || die "no bootstrap.env from this start on the share: $logs_hint"
+	if [[ -n $prev_boot ]] && ! $restarted && ((SECONDS > deadline - timeout + 240)); then
+		echo "the hub did not restart: az container restart"
+		az container restart -g "$rg" -n "$name" -o none
+		restarted=true
+	fi
 	sleep 5
 done
-
-# bootstrap.env from the state share (else the container log)
-key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv)
-boot=''
-until [[ -n $boot ]]; do
-	if az storage file download --account-name "$account" --account-key "$key" --share-name state \
-		--path bootstrap.env --dest "$tmp/bootstrap.env" --no-progress -o none 2>/dev/null; then
-		boot=$(cat "$tmp/bootstrap.env")
-	else
-		boot=$(az container logs -g "$rg" -n "$name" --container-name hub 2>/dev/null |
-			sed -n 's/^LONGARM_BOOTSTRAP //p' | tail -n 1 | tr ' ' '\n')
-	fi
-	if [[ -z $boot ]]; then
-		((SECONDS < deadline)) || die "no bootstrap.env on the share yet: az container logs -g $rg -n $name --container-name hub"
-		sleep 5
-	fi
+until tcp_open "$fqdn" "${hub_addr##*:}"; do
+	((SECONDS < deadline)) || die "$hub_addr does not answer: $logs_hint"
+	sleep 5
 done
-fp='' code='' expires='' joined=''
-while IFS='=' read -r k v; do
-	case $k in
-	ca_fingerprint) fp=$v ;;
-	admin_join_code) code=$v ;;
-	admin_join_code_expires) expires=$v ;;
-	admin_joined) joined=$v ;;
-	esac
-done <<<"$boot"
+fp=$(bootstrap_value ca_fingerprint)
+code=$(bootstrap_value admin_join_code)
+expires=$(bootstrap_value admin_join_code_expires)
 
 if [[ -n $panel_url ]]; then
 	ok=false
@@ -269,7 +323,7 @@ if [[ -n $code ]]; then
 EOF
 else
 	cat <<EOF
-1. An admin has joined already (admin_joined=$joined). Another admin: ./deploy.sh --name $name --admin-code
+1. An admin has joined already. Another admin: ./deploy.sh --name $name --admin-code
 EOF
 fi
 cat <<EOF
@@ -279,13 +333,14 @@ cat <<EOF
      longarmd join $hub_addr <worker-code> --ca-fingerprint $fp --name worker-1
      longarm admin approve worker-1                 # on the laptop
      sudo longarmd service install --user "\$USER" && sudo longarmd service start
+   Through the hub's relay (workers behind NAT): longarmd run --listen "longnet://$fqdn:${relay_port:-7443}?name=worker-1"
 EOF
 if [[ -n $panel_url ]]; then
 	cat <<EOF
    Or, once a release is on the hub (longarm admin release publish, docs/usage.md):
      curl -fsSL $panel_url/install.sh | sh -s -- --join <worker-code>                      # Linux/macOS
      \$env:LONGARM_JOIN='<worker-code>'; irm $panel_url/install.ps1 | iex                   # Windows
-   Panel login: az container exec -g $rg -n $name --container-name hub --exec-command "/usr/local/bin/longarm-hub user add admin"
+   Panel login: az container exec -g $rg -n $name --container-name hub --exec-command /usr/local/bin/longarm-hub-user-add
 EOF
 fi
 cat <<EOF

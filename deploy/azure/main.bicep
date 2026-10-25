@@ -50,8 +50,18 @@ param enableLogAnalytics bool = false
 ])
 param storageSku string = 'Standard_LRS'
 
-@description('Lifetime of the one-time admin join code created on the first start (Go duration, max 168h).')
-param adminCodeTtl string = '24h'
+@description('Lifetime in hours of the one-time admin join code created on the first start.')
+@minValue(1)
+@maxValue(168)
+param adminCodeTtlHours int = 24
+
+@description('UDP port of the longnet relay (QUIC + STUN); the second STUN port is this + 1. Keep 7443 unless the region refuses the same port for TCP and UDP (workers then listen on longnet://<fqdn>:<port>?tcp=<fqdn>:7443).')
+@minValue(1024)
+@maxValue(65534)
+param relayUdpPort int = 7443
+
+@description('Expiry of the Litestream SAS (blob container scoped); every deployment (deploy.sh re-run) renews it.')
+param sasExpiry string = dateTimeAdd(utcNow('u'), 'P10Y', 'yyyy-MM-ddTHH:mm:ssZ')
 
 @description('Registry login for a private image (empty = anonymous pull).')
 param registryServer string = 'ghcr.io'
@@ -73,7 +83,8 @@ var sizes = {
     memoryInGB: json('3.0')
   }
 }
-var fqdn = '${name}.${location}.azurecontainer.io'
+// the region's programmatic name ("East Asia" -> eastasia)
+var fqdn = '${name}.${toLower(replace(location, ' ', ''))}.azurecontainer.io'
 var hubAddress = '${fqdn}:7443'
 var storageName = take('lahub${uniqueString(resourceGroup().id, name)}', 24)
 var tags = {
@@ -173,6 +184,13 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (enable
 }
 
 var storageKey = storage.listKeys().keys[0].value
+var replicaSas = storage.listServiceSas('2023-05-01', {
+  canonicalizedResource: '/blob/${storage.name}/litestream'
+  signedResource: 'c'
+  signedPermission: 'racwdl'
+  signedProtocol: 'https'
+  signedExpiry: sasExpiry
+}).serviceSasToken
 var probe = {
   exec: {
     command: [
@@ -190,15 +208,27 @@ var hubEnv = concat(
     { name: 'LONGARM_HUB_ADVERTISE', value: fqdn }
     { name: 'LONGARM_HUB_HTTP', value: '127.0.0.1:7480' }
     { name: 'LONGARM_HUB_BOOTSTRAP', value: '1' }
-    { name: 'LONGARM_HUB_BOOTSTRAP_TTL', value: adminCodeTtl }
+    { name: 'LONGARM_HUB_BOOTSTRAP_TTL', value: '${adminCodeTtlHours}h' }
+    { name: 'LONGARM_HUB_RELAY_UDP', value: ':${relayUdpPort}' }
+    { name: 'LONGARM_HUB_RELAY_STUN2', value: ':${relayUdpPort + 1}' }
     { name: 'LONGARM_HUB_LITESTREAM_CONFIG', value: '/etc/longarm-hub/litestream-abs.yml' }
     { name: 'LONGARM_HUB_BLOB_ACCOUNT', value: storage.name }
     { name: 'LONGARM_HUB_BLOB_CONTAINER', value: replicaContainer.name }
-    { name: 'LITESTREAM_AZURE_ACCOUNT_KEY', secureValue: storageKey }
+    // this cloud's blob endpoint (public, China, Government)
+    { name: 'LONGARM_HUB_BLOB_ENDPOINT', value: storage.properties.primaryEndpoints.blob }
+    // a SAS for the replica container only: the hub process (Litestream's
+    // child) never sees the account key, which opens the share with the CA
+    { name: 'LITESTREAM_AZURE_SAS_TOKEN', secureValue: replicaSas }
   ],
   enablePanel ? [{ name: 'LONGARM_HUB_PUBLIC_URL', value: 'https://${fqdn}' }] : [],
   empty(tailscaleOAuthSecret) ? [] : [{ name: 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', secureValue: tailscaleOAuthSecret }]
 )
+
+var hubPorts = [
+  { port: 7443, protocol: 'TCP' }
+  { port: relayUdpPort, protocol: 'UDP' }
+  { port: relayUdpPort + 1, protocol: 'UDP' }
+]
 
 var hubContainer = {
   name: 'hub'
@@ -207,17 +237,13 @@ var hubContainer = {
     resources: {
       requests: sizes[size]
     }
-    ports: [
-      { port: 7443, protocol: 'TCP' }
-      { port: 7443, protocol: 'UDP' }
-      { port: 7444, protocol: 'UDP' }
-    ]
+    ports: hubPorts
     environmentVariables: hubEnv
     volumeMounts: [
       { name: 'state', mountPath: '/data' }
     ]
     // restore + bootstrap run before the hub listens
-    livenessProbe: union(probe, { initialDelaySeconds: 90, periodSeconds: 30, timeoutSeconds: 10, failureThreshold: 4 })
+    livenessProbe: union(probe, { initialDelaySeconds: 180, periodSeconds: 30, timeoutSeconds: 10, failureThreshold: 4 })
     readinessProbe: union(probe, { initialDelaySeconds: 5, periodSeconds: 10, timeoutSeconds: 10, failureThreshold: 3 })
   }
 }
@@ -278,11 +304,6 @@ var panelVolumes = [
   }
 ]
 
-var hubPorts = [
-  { port: 7443, protocol: 'TCP' }
-  { port: 7443, protocol: 'UDP' }
-  { port: 7444, protocol: 'UDP' }
-]
 var panelPorts = [
   { port: 80, protocol: 'TCP' }
   { port: 443, protocol: 'TCP' }
@@ -329,4 +350,6 @@ output ipAddress string = group.properties.ipAddress.ip
 @description('Web panel and install scripts (empty without the panel).')
 output panelUrl string = enablePanel ? 'https://${fqdn}' : ''
 output storageAccount string = storage.name
+@description('UDP port of the longnet relay (workers: --listen longnet://<fqdn>:<port>).')
+output relayUdpPort int = relayUdpPort
 output containerGroup string = group.name

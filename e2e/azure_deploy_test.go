@@ -111,18 +111,46 @@ func TestAzureDeployScripts(t *testing.T) {
 				t.Fatalf("bad name accepted: %+v", res)
 			}
 
-			res := run([]string{"LONGARM_REGISTRY_PASSWORD=s3cret-pw"}, name, "myhub", loc, "eastasia", noPanel,
-				r.flag("--registry-user", "-RegistryUser"), "bot", r.flag("--timeout", "-TimeoutSeconds"), "60")
-			if res.code != 0 {
-				t.Fatalf("deploy: %+v\ncalls:\n%s", res, calls())
+			pw := []string{"LONGARM_REGISTRY_PASSWORD=s3cret-pw"}
+			regUser, size, image := r.flag("--registry-user", "-RegistryUser"), r.flag("--size", "-Size"), r.flag("--image", "-Image")
+			recreate := r.flag("--recreate", "-Recreate")
+			params := func() map[string]any {
+				t.Helper()
+				var doc struct {
+					Parameters map[string]struct{ Value any } `json:"parameters"`
+				}
+				if err := json.Unmarshal(must(os.ReadFile(filepath.Join(dir, "params.json"))), &doc); err != nil {
+					t.Fatal(err)
+				}
+				m := map[string]any{}
+				for k, v := range doc.Parameters {
+					m[k] = v.Value
+				}
+				return m
 			}
+			ok := func(res result, what string) {
+				t.Helper()
+				if res.code != 0 {
+					t.Fatalf("%s: %+v\ncalls:\n%s", what, res, calls())
+				}
+			}
+			refused := func(res result, what, why string) {
+				t.Helper()
+				if res.code == 0 || !strings.Contains(strings.ToLower(res.stderr+res.stdout), why) {
+					t.Fatalf("%s: not refused with %q: %+v", what, why, res)
+				}
+			}
+			restarts := func() int { return strings.Count(calls(), "container restart") }
+
+			res := run(pw, name, "myhub", loc, "East Asia", noPanel, regUser, "bot", r.flag("--timeout", "-TimeoutSeconds"), "60")
+			ok(res, "deploy")
 			joinRE := regexp.MustCompile(`longarm join (\S+) (\S+) --ca-fingerprint (\S+)`)
 			m := joinRE.FindStringSubmatch(res.stdout)
 			if m == nil || m[1] != b["hub_address"] || m[3] != b["ca_fingerprint"] {
 				t.Fatalf("no join command for %v in:\n%s", b, res.stdout)
 			}
 			for _, want := range []string{"longarmd join " + b["hub_address"] + " <worker-code> --ca-fingerprint " + b["ca_fingerprint"],
-				"claude mcp add longarm -- longarm mcp", "USD/month", "panel           off"} {
+				"claude mcp add longarm -- longarm mcp", "USD/month", "panel           off", "longnet://127.0.0.1:7443?name=worker-1"} {
 				if !strings.Contains(res.stdout, want) {
 					t.Errorf("output lacks %q:\n%s", want, res.stdout)
 				}
@@ -135,39 +163,55 @@ func TestAzureDeployScripts(t *testing.T) {
 					t.Fatalf("printed join: %+v", j)
 				}
 			}
-			var params struct {
-				Parameters map[string]struct{ Value any } `json:"parameters"`
-			}
-			if err := json.Unmarshal(must(os.ReadFile(filepath.Join(dir, "params.json"))), &params); err != nil {
-				t.Fatal(err)
-			}
-			p := params.Parameters
-			if p["name"].Value != "myhub" || p["location"].Value != "eastasia" || p["size"].Value != "small" ||
-				p["enablePanel"].Value != false || p["registryPassword"].Value != "s3cret-pw" {
+			// the location is the resource group's, not a template parameter
+			// ("East Asia" would make a broken DNS name)
+			p := params()
+			if _, has := p["location"]; has || p["name"] != "myhub" || p["size"] != "small" || p["enablePanel"] != false || p["registryPassword"] != "s3cret-pw" {
 				t.Fatalf("parameters %+v", p)
 			}
 			cl := calls()
-			if strings.Contains(cl, "s3cret-pw") {
-				t.Fatal("secret on az's command line")
+			if strings.Contains(cl, "s3cret-pw") || strings.Contains(cl, "dGVzdGtleQ==") {
+				t.Fatal("a secret (registry password, storage key) on az's command line:\n" + cl)
 			}
-			if !strings.Contains(cl, "group create -n myhub-rg -l eastasia --tags longarm-hub=myhub") {
+			if !strings.Contains(cl, "group create -n myhub-rg -l East Asia --tags longarm-hub=myhub") {
 				t.Fatalf("calls:\n%s", cl)
 			}
 
-			// upgrade: same mutable tag twice -> pulled again (restart); a
-			// pinned tag change is the template's update, no restart
-			const edge = "ghcr.io/example/longarm-hub:edge"
-			for range 2 {
-				if res := run(nil, name, "myhub", r.flag("--image", "-Image"), edge, noPanel); res.code != 0 {
-					t.Fatalf("upgrade: %+v", res)
-				}
+			// a re-run keeps the running hub's settings; what can't be read
+			// back (the registry password) must be given again
+			refused(run(nil, name, "myhub"), "re-run without the registry login", "registry")
+			ok(run(pw, name, "myhub", regUser, "bot"), "re-run")
+			if p := params(); p["enablePanel"] != false || p["size"] != "small" || p["image"] != "ghcr.io/example/longarm-hub:latest" {
+				t.Fatalf("re-run lost settings: %+v", p)
 			}
-			if n := strings.Count(calls(), "container restart"); n != 1 {
+			n := restarts() // same mutable tag: pulled again
+			if n != 1 {
 				t.Fatalf("%d restarts:\n%s", n, calls())
 			}
-			if res := run(nil, name, "myhub", r.flag("--image", "-Image"), "ghcr.io/example/longarm-hub:1.2.3", noPanel); res.code != 0 ||
-				strings.Count(calls(), "container restart") != 1 {
-				t.Fatalf("pinned upgrade: %+v", res)
+			// resizing needs --recreate (ACI can't resize a group)
+			refused(run(pw, name, "myhub", regUser, "bot", size, "medium"), "resize", "recreate")
+			ok(run(pw, name, "myhub", regUser, "bot", size, "medium", recreate), "resize with recreate")
+			if p := params(); p["size"] != "medium" || p["enablePanel"] != false || !strings.Contains(calls(), "container delete -g myhub-rg -n myhub --yes") {
+				t.Fatalf("recreate: %+v\n%s", p, calls())
+			}
+
+			// upgrades: a new tag is the template's update; the same mutable
+			// tag again is pulled again (restart); a pinned one is not
+			const edge = "ghcr.io/example/longarm-hub:edge"
+			ok(run(pw, name, "myhub", regUser, "bot", image, edge), "upgrade to edge")
+			ok(run(pw, name, "myhub", regUser, "bot"), "re-run on edge")
+			if restarts() != n+1 || params()["image"] != edge {
+				t.Fatalf("edge re-run: %d restarts, %+v", restarts(), params())
+			}
+			ok(run(pw, name, "myhub", regUser, "bot", image, "ghcr.io/example/longarm-hub:1.2.3"), "pinned upgrade")
+			ok(run(pw, name, "myhub", regUser, "bot"), "re-run on 1.2.3")
+			if restarts() != n+1 || params()["image"] != "ghcr.io/example/longarm-hub:1.2.3" {
+				t.Fatalf("pinned re-run: %d restarts, %+v", restarts(), params())
+			}
+
+			// a new admin code: az container exec of the argument-free alias
+			if res := run(nil, name, "myhub", r.flag("--admin-code", "-AdminCode")); res.code != 0 || !strings.Contains(res.stdout, "ABC-DEF") {
+				t.Fatalf("admin code: %+v", res)
 			}
 
 			// teardown: only a group created for this hub

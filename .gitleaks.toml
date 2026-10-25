@@ -9,5 +9,4 @@ regexes = [
   '''^LONGARM_TEST_TRAY_URL=$''',   # env var name (e2e/ui_playwright_test.go)
   # Azurite's public development account key (deploy/azure/test/container-smoke.sh)
   '''Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==''',
-  '''^d3Jvbmcta2V5$''',             # base64("wrong-key"), same script
 ]

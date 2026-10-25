@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.48.1.52935",
-      "templateHash": "1460310700127688490"
+      "templateHash": "16144112127198559954"
     }
   },
   "parameters": {
@@ -82,11 +82,29 @@
         "description": "Storage redundancy of the account holding the Litestream replica and the state share."
       }
     },
-    "adminCodeTtl": {
-      "type": "string",
-      "defaultValue": "24h",
+    "adminCodeTtlHours": {
+      "type": "int",
+      "defaultValue": 24,
+      "minValue": 1,
+      "maxValue": 168,
       "metadata": {
-        "description": "Lifetime of the one-time admin join code created on the first start (Go duration, max 168h)."
+        "description": "Lifetime in hours of the one-time admin join code created on the first start."
+      }
+    },
+    "relayUdpPort": {
+      "type": "int",
+      "defaultValue": 7443,
+      "minValue": 1024,
+      "maxValue": 65534,
+      "metadata": {
+        "description": "UDP port of the longnet relay (QUIC + STUN); the second STUN port is this + 1. Keep 7443 unless the region refuses the same port for TCP and UDP (workers then listen on longnet://<fqdn>:<port>?tcp=<fqdn>:7443)."
+      }
+    },
+    "sasExpiry": {
+      "type": "string",
+      "defaultValue": "[dateTimeAdd(utcNow('u'), 'P10Y', 'yyyy-MM-ddTHH:mm:ssZ')]",
+      "metadata": {
+        "description": "Expiry of the Litestream SAS (blob container scoped); every deployment (deploy.sh re-run) renews it."
       }
     },
     "registryServer": {
@@ -123,7 +141,7 @@
         "memoryInGB": "[json('3.0')]"
       }
     },
-    "fqdn": "[format('{0}.{1}.azurecontainer.io', parameters('name'), parameters('location'))]",
+    "fqdn": "[format('{0}.{1}.azurecontainer.io', parameters('name'), toLower(replace(parameters('location'), ' ', '')))]",
     "hubAddress": "[format('{0}:7443', variables('fqdn'))]",
     "storageName": "[take(format('lahub{0}', uniqueString(resourceGroup().id, parameters('name'))), 24)]",
     "tags": {
@@ -139,6 +157,20 @@
         ]
       }
     },
+    "hubPorts": [
+      {
+        "port": 7443,
+        "protocol": "TCP"
+      },
+      {
+        "port": "[parameters('relayUdpPort')]",
+        "protocol": "UDP"
+      },
+      {
+        "port": "[add(parameters('relayUdpPort'), 1)]",
+        "protocol": "UDP"
+      }
+    ],
     "caddyContainer": {
       "name": "caddy",
       "properties": {
@@ -180,20 +212,6 @@
         ]
       }
     },
-    "hubPorts": [
-      {
-        "port": 7443,
-        "protocol": "TCP"
-      },
-      {
-        "port": 7443,
-        "protocol": "UDP"
-      },
-      {
-        "port": 7444,
-        "protocol": "UDP"
-      }
-    ],
     "panelPorts": [
       {
         "port": 80,
@@ -314,7 +332,7 @@
         "osType": "Linux",
         "sku": "Standard",
         "restartPolicy": "Always",
-        "containers": "[if(parameters('enablePanel'), createArray(createObject('name', 'hub', 'properties', createObject('image', parameters('image'), 'resources', createObject('requests', variables('sizes')[parameters('size')]), 'ports', createArray(createObject('port', 7443, 'protocol', 'TCP'), createObject('port', 7443, 'protocol', 'UDP'), createObject('port', 7444, 'protocol', 'UDP')), 'environmentVariables', concat(createArray(createObject('name', 'LONGARM_HUB_DATA_DIR', 'value', '/data'), createObject('name', 'LONGARM_HUB_CONFIG', 'value', '/data/hub.toml'), createObject('name', 'LONGARM_HUB_DB', 'value', '/var/lib/longarm-hub/hub.db'), createObject('name', 'LONGARM_HUB_ADVERTISE', 'value', variables('fqdn')), createObject('name', 'LONGARM_HUB_HTTP', 'value', '127.0.0.1:7480'), createObject('name', 'LONGARM_HUB_BOOTSTRAP', 'value', '1'), createObject('name', 'LONGARM_HUB_BOOTSTRAP_TTL', 'value', parameters('adminCodeTtl')), createObject('name', 'LONGARM_HUB_LITESTREAM_CONFIG', 'value', '/etc/longarm-hub/litestream-abs.yml'), createObject('name', 'LONGARM_HUB_BLOB_ACCOUNT', 'value', variables('storageName')), createObject('name', 'LONGARM_HUB_BLOB_CONTAINER', 'value', 'litestream'), createObject('name', 'LITESTREAM_AZURE_ACCOUNT_KEY', 'secureValue', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').keys[0].value)), if(parameters('enablePanel'), createArray(createObject('name', 'LONGARM_HUB_PUBLIC_URL', 'value', format('https://{0}', variables('fqdn')))), createArray()), if(empty(parameters('tailscaleOAuthSecret')), createArray(), createArray(createObject('name', 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', 'secureValue', parameters('tailscaleOAuthSecret'))))), 'volumeMounts', createArray(createObject('name', 'state', 'mountPath', '/data')), 'livenessProbe', union(variables('probe'), createObject('initialDelaySeconds', 90, 'periodSeconds', 30, 'timeoutSeconds', 10, 'failureThreshold', 4)), 'readinessProbe', union(variables('probe'), createObject('initialDelaySeconds', 5, 'periodSeconds', 10, 'timeoutSeconds', 10, 'failureThreshold', 3)))), variables('caddyContainer')), createArray(createObject('name', 'hub', 'properties', createObject('image', parameters('image'), 'resources', createObject('requests', variables('sizes')[parameters('size')]), 'ports', createArray(createObject('port', 7443, 'protocol', 'TCP'), createObject('port', 7443, 'protocol', 'UDP'), createObject('port', 7444, 'protocol', 'UDP')), 'environmentVariables', concat(createArray(createObject('name', 'LONGARM_HUB_DATA_DIR', 'value', '/data'), createObject('name', 'LONGARM_HUB_CONFIG', 'value', '/data/hub.toml'), createObject('name', 'LONGARM_HUB_DB', 'value', '/var/lib/longarm-hub/hub.db'), createObject('name', 'LONGARM_HUB_ADVERTISE', 'value', variables('fqdn')), createObject('name', 'LONGARM_HUB_HTTP', 'value', '127.0.0.1:7480'), createObject('name', 'LONGARM_HUB_BOOTSTRAP', 'value', '1'), createObject('name', 'LONGARM_HUB_BOOTSTRAP_TTL', 'value', parameters('adminCodeTtl')), createObject('name', 'LONGARM_HUB_LITESTREAM_CONFIG', 'value', '/etc/longarm-hub/litestream-abs.yml'), createObject('name', 'LONGARM_HUB_BLOB_ACCOUNT', 'value', variables('storageName')), createObject('name', 'LONGARM_HUB_BLOB_CONTAINER', 'value', 'litestream'), createObject('name', 'LITESTREAM_AZURE_ACCOUNT_KEY', 'secureValue', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').keys[0].value)), if(parameters('enablePanel'), createArray(createObject('name', 'LONGARM_HUB_PUBLIC_URL', 'value', format('https://{0}', variables('fqdn')))), createArray()), if(empty(parameters('tailscaleOAuthSecret')), createArray(), createArray(createObject('name', 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', 'secureValue', parameters('tailscaleOAuthSecret'))))), 'volumeMounts', createArray(createObject('name', 'state', 'mountPath', '/data')), 'livenessProbe', union(variables('probe'), createObject('initialDelaySeconds', 90, 'periodSeconds', 30, 'timeoutSeconds', 10, 'failureThreshold', 4)), 'readinessProbe', union(variables('probe'), createObject('initialDelaySeconds', 5, 'periodSeconds', 10, 'timeoutSeconds', 10, 'failureThreshold', 3))))))]",
+        "containers": "[if(parameters('enablePanel'), createArray(createObject('name', 'hub', 'properties', createObject('image', parameters('image'), 'resources', createObject('requests', variables('sizes')[parameters('size')]), 'ports', variables('hubPorts'), 'environmentVariables', concat(createArray(createObject('name', 'LONGARM_HUB_DATA_DIR', 'value', '/data'), createObject('name', 'LONGARM_HUB_CONFIG', 'value', '/data/hub.toml'), createObject('name', 'LONGARM_HUB_DB', 'value', '/var/lib/longarm-hub/hub.db'), createObject('name', 'LONGARM_HUB_ADVERTISE', 'value', variables('fqdn')), createObject('name', 'LONGARM_HUB_HTTP', 'value', '127.0.0.1:7480'), createObject('name', 'LONGARM_HUB_BOOTSTRAP', 'value', '1'), createObject('name', 'LONGARM_HUB_BOOTSTRAP_TTL', 'value', format('{0}h', parameters('adminCodeTtlHours'))), createObject('name', 'LONGARM_HUB_RELAY_UDP', 'value', format(':{0}', parameters('relayUdpPort'))), createObject('name', 'LONGARM_HUB_RELAY_STUN2', 'value', format(':{0}', add(parameters('relayUdpPort'), 1))), createObject('name', 'LONGARM_HUB_LITESTREAM_CONFIG', 'value', '/etc/longarm-hub/litestream-abs.yml'), createObject('name', 'LONGARM_HUB_BLOB_ACCOUNT', 'value', variables('storageName')), createObject('name', 'LONGARM_HUB_BLOB_CONTAINER', 'value', 'litestream'), createObject('name', 'LONGARM_HUB_BLOB_ENDPOINT', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'LITESTREAM_AZURE_SAS_TOKEN', 'secureValue', listServiceSas(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01', createObject('canonicalizedResource', format('/blob/{0}/litestream', variables('storageName')), 'signedResource', 'c', 'signedPermission', 'racwdl', 'signedProtocol', 'https', 'signedExpiry', parameters('sasExpiry'))).serviceSasToken)), if(parameters('enablePanel'), createArray(createObject('name', 'LONGARM_HUB_PUBLIC_URL', 'value', format('https://{0}', variables('fqdn')))), createArray()), if(empty(parameters('tailscaleOAuthSecret')), createArray(), createArray(createObject('name', 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', 'secureValue', parameters('tailscaleOAuthSecret'))))), 'volumeMounts', createArray(createObject('name', 'state', 'mountPath', '/data')), 'livenessProbe', union(variables('probe'), createObject('initialDelaySeconds', 180, 'periodSeconds', 30, 'timeoutSeconds', 10, 'failureThreshold', 4)), 'readinessProbe', union(variables('probe'), createObject('initialDelaySeconds', 5, 'periodSeconds', 10, 'timeoutSeconds', 10, 'failureThreshold', 3)))), variables('caddyContainer')), createArray(createObject('name', 'hub', 'properties', createObject('image', parameters('image'), 'resources', createObject('requests', variables('sizes')[parameters('size')]), 'ports', variables('hubPorts'), 'environmentVariables', concat(createArray(createObject('name', 'LONGARM_HUB_DATA_DIR', 'value', '/data'), createObject('name', 'LONGARM_HUB_CONFIG', 'value', '/data/hub.toml'), createObject('name', 'LONGARM_HUB_DB', 'value', '/var/lib/longarm-hub/hub.db'), createObject('name', 'LONGARM_HUB_ADVERTISE', 'value', variables('fqdn')), createObject('name', 'LONGARM_HUB_HTTP', 'value', '127.0.0.1:7480'), createObject('name', 'LONGARM_HUB_BOOTSTRAP', 'value', '1'), createObject('name', 'LONGARM_HUB_BOOTSTRAP_TTL', 'value', format('{0}h', parameters('adminCodeTtlHours'))), createObject('name', 'LONGARM_HUB_RELAY_UDP', 'value', format(':{0}', parameters('relayUdpPort'))), createObject('name', 'LONGARM_HUB_RELAY_STUN2', 'value', format(':{0}', add(parameters('relayUdpPort'), 1))), createObject('name', 'LONGARM_HUB_LITESTREAM_CONFIG', 'value', '/etc/longarm-hub/litestream-abs.yml'), createObject('name', 'LONGARM_HUB_BLOB_ACCOUNT', 'value', variables('storageName')), createObject('name', 'LONGARM_HUB_BLOB_CONTAINER', 'value', 'litestream'), createObject('name', 'LONGARM_HUB_BLOB_ENDPOINT', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'LITESTREAM_AZURE_SAS_TOKEN', 'secureValue', listServiceSas(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01', createObject('canonicalizedResource', format('/blob/{0}/litestream', variables('storageName')), 'signedResource', 'c', 'signedPermission', 'racwdl', 'signedProtocol', 'https', 'signedExpiry', parameters('sasExpiry'))).serviceSasToken)), if(parameters('enablePanel'), createArray(createObject('name', 'LONGARM_HUB_PUBLIC_URL', 'value', format('https://{0}', variables('fqdn')))), createArray()), if(empty(parameters('tailscaleOAuthSecret')), createArray(), createArray(createObject('name', 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', 'secureValue', parameters('tailscaleOAuthSecret'))))), 'volumeMounts', createArray(createObject('name', 'state', 'mountPath', '/data')), 'livenessProbe', union(variables('probe'), createObject('initialDelaySeconds', 180, 'periodSeconds', 30, 'timeoutSeconds', 10, 'failureThreshold', 4)), 'readinessProbe', union(variables('probe'), createObject('initialDelaySeconds', 5, 'periodSeconds', 10, 'timeoutSeconds', 10, 'failureThreshold', 3))))))]",
         "imageRegistryCredentials": "[if(empty(parameters('registryUsername')), createArray(), createArray(createObject('server', parameters('registryServer'), 'username', parameters('registryUsername'), 'password', parameters('registryPassword'))))]",
         "ipAddress": {
           "type": "Public",
@@ -359,6 +377,13 @@
     "storageAccount": {
       "type": "string",
       "value": "[variables('storageName')]"
+    },
+    "relayUdpPort": {
+      "type": "int",
+      "metadata": {
+        "description": "UDP port of the longnet relay (workers: --listen longnet://<fqdn>:<port>)."
+      },
+      "value": "[parameters('relayUdpPort')]"
     },
     "containerGroup": {
       "type": "string",

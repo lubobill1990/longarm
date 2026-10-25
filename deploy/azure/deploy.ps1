@@ -6,7 +6,9 @@
   The PowerShell twin of deploy.sh: creates the resource group, deploys
   azuredeploy.json (storage, Litestream replica container, state share,
   the container group), waits for the hub and prints what to run on the
-  admin's laptop and on workers. Re-running is an upgrade (data kept).
+  admin's laptop and on workers. Re-running is an upgrade: the running
+  hub's settings (image, size, panel, ...) are kept unless a parameter
+  changes them, the data stays, the hub restarts.
   Needs the Azure CLI (az login); works in Azure Cloud Shell (pwsh) and in
   Windows PowerShell 5.1.
 
@@ -21,8 +23,11 @@
 param(
     [Parameter(Mandatory = $true)][ValidatePattern('^[a-z][a-z0-9-]{1,38}[a-z0-9]$')][string]$Name,
     [string]$Location = '',
-    [ValidateSet('small', 'medium')][string]$Size = 'small',
+    # small = 1 vCPU / 1.5 GB (first run default), medium = 2 vCPU / 3 GB
+    [ValidateSet('', 'small', 'medium')][string]$Size = '',
+    # without / with the HTTPS panel (first run default: with)
     [switch]$NoPanel,
+    [switch]$Panel,
     [string]$ResourceGroup = '',
     [string]$Image = '',
     # private image: the password comes from $env:LONGARM_REGISTRY_PASSWORD
@@ -31,7 +36,7 @@ param(
     [string]$AcmeEmail = '',
     [switch]$LogAnalytics,
     [string]$Subscription = '',
-    # delete the container group first (to change -Size or -NoPanel)
+    # delete the container group first (to change -Size or the panel)
     [switch]$Recreate,
     # print a new one-time admin join code
     [switch]$AdminCode,
@@ -54,18 +59,18 @@ function Invoke-Az {
     $out
 }
 
-function Test-Az {
-    # az for a yes/no question: $true on exit 0, output discarded
-    Invoke-AzQuiet @args | Out-Null
-    $LASTEXITCODE -eq 0
-}
-
 function Invoke-AzQuiet {
     # az whose failure is an answer, not an error: stdout only, $LASTEXITCODE
     # set (Windows PowerShell 5.1 turns redirected native stderr into errors,
     # fatal under ErrorActionPreference Stop)
     $ErrorActionPreference = 'Continue'
     & $script:AzCli @args 2>$null
+}
+
+function Test-Az {
+    # az for a yes/no question: $true on exit 0, output discarded
+    Invoke-AzQuiet @args | Out-Null
+    $LASTEXITCODE -eq 0
 }
 
 function Test-TcpPort([string]$HostName, [int]$Port) {
@@ -80,6 +85,33 @@ function Test-TcpPort([string]$HostName, [int]$Port) {
     }
 }
 
+function Get-Bootstrap([string]$Account, [string]$Key, [string]$Dest) {
+    # bootstrap.env from the state share as a hashtable ($null if missing);
+    # the key goes through the environment, not the command line
+    Remove-Item -Force $Dest -ErrorAction SilentlyContinue
+    $env:AZURE_STORAGE_KEY = $Key
+    try {
+        Invoke-AzQuiet storage file download --account-name $Account --share-name state --path bootstrap.env --dest $Dest --no-progress -o none | Out-Null
+    } finally {
+        Remove-Item Env:\AZURE_STORAGE_KEY -ErrorAction SilentlyContinue
+    }
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Dest)) { return $null }
+    $kv = @{}
+    foreach ($l in Get-Content $Dest) {
+        $i = $l.IndexOf('=')
+        if ($i -gt 0 -and -not $l.StartsWith('#')) { $kv[$l.Substring(0, $i).Trim()] = $l.Substring($i + 1).Trim() }
+    }
+    if ($kv.Count -eq 0) { return $null }
+    $kv
+}
+
+function Get-Value($Map, [string]$Key) {
+    if ($Map -and $Map.ContainsKey($Key)) { return $Map[$Key] }
+    ''
+}
+
+if ($NoPanel -and $Panel) { throw '-NoPanel and -Panel exclude each other' }
+if ($TailscaleSecretFile -and -not (Test-Path $TailscaleSecretFile)) { throw "-TailscaleSecretFile: can't read $TailscaleSecretFile" }
 if (-not $ResourceGroup) { $ResourceGroup = "$Name-rg" }
 $rg = $ResourceGroup
 $template = Join-Path $PSScriptRoot 'azuredeploy.json'
@@ -109,8 +141,10 @@ if ($Teardown) {
 }
 
 if ($AdminCode) {
-    Write-Host 'New one-time admin join code (valid 24 h):'
-    Invoke-Az container exec -g $rg -n $Name --container-name hub --exec-command '/usr/local/bin/longarm-hub join-code --role admin --ttl 24h'
+    # az container exec runs one program without arguments: an alias of
+    # longarm-hub join-code --role admin --ttl 24h (cmd/longarm-hub/container.go)
+    Write-Host 'A new one-time admin join code (valid 24 h):'
+    Invoke-Az container exec -g $rg -n $Name --container-name hub --exec-command /usr/local/bin/longarm-hub-admin-code
     return
 }
 
@@ -124,27 +158,60 @@ if (Test-ResourceGroup) {
     Invoke-Az group create -n $rg -l $Location --tags "longarm-hub=$Name" -o none | Out-Null
 }
 
-$hubImageQuery = "containers[?name=='hub'].image"
-$prevImage = ''
-if (Test-Az container show -g $rg -n $Name -o none) {
-    $prevImage = Invoke-Az container show -g $rg -n $Name --query $hubImageQuery -o tsv
-}
-if ($Recreate -and $prevImage) {
-    Write-Host "deleting container group $Name (storage and data stay)"
-    Invoke-Az container delete -g $rg -n $Name --yes -o none | Out-Null
-    $prevImage = ''
-}
-
-# parameters in a private file: no secrets on the command line
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("longarm-deploy-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tmp | Out-Null
+if ($PSVersionTable.PSEdition -eq 'Core' -and -not $IsWindows) { & chmod 700 $tmp }
 try {
+    $bootFile = Join-Path $tmp 'bootstrap.env'
+    $panelOn = $null
+    if ($NoPanel) { $panelOn = $false }
+    if ($Panel) { $panelOn = $true }
+    $logsOn = [bool]$LogAnalytics
+
+    # A re-run keeps the running hub's settings. Secrets can't be read back
+    # from ACI: a hub that has them needs them again.
+    $curQuery = "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId]"
+    $curLine = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $curQuery) -join ''
+    $curImage = ''
+    $prevBoot = ''
+    if ($LASTEXITCODE -eq 0 -and $curLine) {
+        $f = @($curLine.Trim("`r", "`n") -split "`t") + @('', '', '', '', '', '')
+        $curImage = $f[0]
+        $curSize = 'small'
+        if ([double]$f[1] -ge 2) { $curSize = 'medium' }
+        $curPanel = ($f[2] -eq 'caddy')
+        if (-not $Recreate) {
+            if ($Size -and $Size -ne $curSize) { throw "the hub is $curSize; ACI can't resize a running container group: add -Recreate (data is kept)" }
+            if ($null -ne $panelOn -and $panelOn -ne $curPanel) { throw "ACI can't change the ports of a running group (panel on/off): add -Recreate (data is kept)" }
+        }
+        if (-not $Image) { $Image = $curImage }
+        if (-not $Size) { $Size = $curSize }
+        if ($null -eq $panelOn) { $panelOn = $curPanel }
+        if ($f[5]) { $logsOn = $true }
+        if ($f[3] -and -not $RegistryUser) { throw "the hub pulls its image with a login for $($f[3]), which can't be read back: pass -RegistryUser again (password in `$env:LONGARM_REGISTRY_PASSWORD)" }
+        if ((",$($f[4]),") -like '*,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,*' -and -not $TailscaleSecretFile) { throw "the hub has a Tailscale OAuth secret, which can't be read back: pass -TailscaleSecretFile again" }
+        # this start's bootstrap.env must differ from the running one's (boot_id)
+        $acct = @(Invoke-Az storage account list -g $rg --query "[?starts_with(name, 'lahub')].name" -o tsv) | Select-Object -First 1
+        if ($acct) {
+            $k = Invoke-Az storage account keys list -g $rg -n $acct --query '[0].value' -o tsv
+            $prevBoot = Get-Value (Get-Bootstrap $acct $k $bootFile) 'boot_id'
+        }
+    }
+    if (-not $Size) { $Size = 'small' }
+    if ($null -eq $panelOn) { $panelOn = $true }
+
+    if ($Recreate -and $curImage) {
+        Write-Host "deleting container group $Name (storage and data stay)"
+        Invoke-Az container delete -g $rg -n $Name --yes -o none | Out-Null
+    }
+
+    # parameters in a private file: no secrets on the command line. The
+    # location is the resource group's (its programmatic name).
     $p = [ordered]@{
         name               = @{ value = $Name }
-        location           = @{ value = $Location }
         size               = @{ value = $Size }
-        enablePanel        = @{ value = (-not $NoPanel) }
-        enableLogAnalytics = @{ value = [bool]$LogAnalytics }
+        enablePanel        = @{ value = $panelOn }
+        enableLogAnalytics = @{ value = $logsOn }
     }
     if ($Image) { $p.image = @{ value = $Image } }
     if ($AcmeEmail) { $p.acmeEmail = @{ value = $AcmeEmail } }
@@ -160,22 +227,26 @@ try {
     $doc = @{ contentVersion = '1.0.0.0'; parameters = $p }
     [System.IO.File]::WriteAllText($paramsFile, ($doc | ConvertTo-Json -Depth 5))
 
-    Write-Host "deploying $Name to $rg ($Location, $Size, panel $(-not $NoPanel)); this takes a few minutes"
-    $query = '[properties.outputs.hubAddress.value, properties.outputs.fqdn.value, properties.outputs.storageAccount.value, properties.outputs.panelUrl.value]'
+    Write-Host "deploying $Name to $rg ($Location, $Size, panel $panelOn, $Image); this takes a few minutes"
+    $query = '[properties.outputs.hubAddress.value, properties.outputs.fqdn.value, properties.outputs.storageAccount.value, properties.outputs.relayUdpPort.value, properties.outputs.panelUrl.value]'
     # one tab-separated line; panelUrl last (empty without the panel)
     $outLine = (Invoke-Az deployment group create -g $rg -n longarm-hub --template-file $template --parameters "@$paramsFile" --query $query -o tsv) -join ''
-    $outs = @($outLine.Trim("`r", "`n") -split "`t") + @('', '', '', '')
-    $hubAddr, $fqdn, $account, $panelUrl = $outs[0], $outs[1], $outs[2], $outs[3]
+    $outs = @($outLine.Trim("`r", "`n") -split "`t") + @('', '', '', '', '')
+    $hubAddr, $fqdn, $account, $relayPort, $panelUrl = $outs[0], $outs[1], $outs[2], $outs[3], $outs[4]
     if (-not $hubAddr -or -not $fqdn -or -not $account) { throw "deployment returned no outputs: $outLine" }
+    if (-not $relayPort) { $relayPort = '7443' }
+    $key = Invoke-Az storage account keys list -g $rg -n $account --query '[0].value' -o tsv
 
+    $hubImageQuery = "containers[?name=='hub'].image"
     $newImage = Invoke-Az container show -g $rg -n $Name --query $hubImageQuery -o tsv
-    if ($prevImage -and $prevImage -eq $newImage -and $newImage -match ':(latest|edge)$') {
+    if (-not $Recreate -and $curImage -and $curImage -eq $newImage -and $newImage -match ':(latest|edge)$') {
         Write-Host "pulling $newImage again (az container restart)"
         Invoke-Az container restart -g $rg -n $Name -o none | Out-Null
     }
 
     Write-Host "waiting for the hub at $hubAddr"
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $start = Get-Date
+    $deadline = $start.AddSeconds($TimeoutSeconds)
     $logsHint = "az container logs -g $rg -n $Name --container-name hub"
     while ($true) {
         $state = Invoke-AzQuiet container show -g $rg -n $Name --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv
@@ -183,37 +254,28 @@ try {
         if ((Get-Date) -gt $deadline) { throw "the hub container is not running ($state): $logsHint" }
         Start-Sleep -Seconds 10
     }
+    # bootstrap.env of this start (a new boot_id; restart once if the update
+    # didn't restart the hub)
+    $restarted = $false
+    while ($true) {
+        $boot = Get-Bootstrap $account $key $bootFile
+        if ($boot -and (Get-Value $boot 'boot_id') -ne $prevBoot) { break }
+        if ((Get-Date) -gt $deadline) { throw "no bootstrap.env from this start on the share: $logsHint" }
+        if ($prevBoot -and -not $restarted -and ((Get-Date) - $start).TotalSeconds -gt 240) {
+            Write-Host 'the hub did not restart: az container restart'
+            Invoke-Az container restart -g $rg -n $Name -o none | Out-Null
+            $restarted = $true
+        }
+        Start-Sleep -Seconds 5
+    }
     $port = [int]($hubAddr.Substring($hubAddr.LastIndexOf(':') + 1))
     while (-not (Test-TcpPort $fqdn $port)) {
         if ((Get-Date) -gt $deadline) { throw "$hubAddr does not answer: $logsHint" }
         Start-Sleep -Seconds 5
     }
-
-    # bootstrap.env from the state share (else the container log)
-    $key = Invoke-Az storage account keys list -g $rg -n $account --query '[0].value' -o tsv
-    $bootFile = Join-Path $tmp 'bootstrap.env'
-    $boot = @()
-    while ($boot.Count -eq 0) {
-        Invoke-AzQuiet storage file download --account-name $account --account-key $key --share-name state --path bootstrap.env --dest $bootFile --no-progress -o none | Out-Null
-        if ($LASTEXITCODE -eq 0 -and (Test-Path $bootFile)) {
-            $boot = @(Get-Content $bootFile)
-        } else {
-            $line = @(Invoke-AzQuiet container logs -g $rg -n $Name --container-name hub | Where-Object { $_ -like 'LONGARM_BOOTSTRAP *' } | Select-Object -Last 1)
-            if ($line.Count -gt 0) { $boot = @($line[0].Substring('LONGARM_BOOTSTRAP '.Length) -split ' ') }
-        }
-        if ($boot.Count -eq 0) {
-            if ((Get-Date) -gt $deadline) { throw "no bootstrap.env on the share yet: $logsHint" }
-            Start-Sleep -Seconds 5
-        }
-    }
-    $kv = @{}
-    foreach ($l in $boot) {
-        $i = $l.IndexOf('=')
-        if ($i -gt 0 -and -not $l.StartsWith('#')) { $kv[$l.Substring(0, $i).Trim()] = $l.Substring($i + 1).Trim() }
-    }
-    $fp = $kv['ca_fingerprint']
-    $code = $kv['admin_join_code']
-    $expires = $kv['admin_join_code_expires']
+    $fp = Get-Value $boot 'ca_fingerprint'
+    $code = Get-Value $boot 'admin_join_code'
+    $expires = Get-Value $boot 'admin_join_code_expires'
 
     if ($panelUrl) {
         $ok = $false
@@ -235,7 +297,7 @@ try {
 # and 0.0045 USD per GB-hour in US regions; other regions differ by up to ~20 %).
 $cpu = 1.0; $mem = 1.5
 if ($Size -eq 'medium') { $cpu = 2.0; $mem = 3.0 }
-if (-not $NoPanel) { $cpu += 0.25; $mem += 0.25 }
+if ($panelOn) { $cpu += 0.25; $mem += 0.25 }
 $cost = [math]::Round(730 * ($cpu * 0.0405 + $mem * 0.0045) + 1)
 
 $panelText = if ($panelUrl) { $panelUrl } else { 'off (-NoPanel)' }
@@ -265,13 +327,14 @@ Write-Host @"
      longarmd join $hubAddr <worker-code> --ca-fingerprint $fp --name worker-1
      longarm admin approve worker-1                 # on the laptop
      longarmd service install --user .\<you>; longarmd service start   # elevated (Linux/macOS: sudo ... --user `$USER)
+   Through the hub's relay (workers behind NAT): longarmd run --listen "longnet://${fqdn}:${relayPort}?name=worker-1"
 "@
 if ($panelUrl) {
     Write-Host @"
    Or, once a release is on the hub (longarm admin release publish, docs/usage.md):
      curl -fsSL $panelUrl/install.sh | sh -s -- --join <worker-code>                      # Linux/macOS
      `$env:LONGARM_JOIN='<worker-code>'; irm $panelUrl/install.ps1 | iex                   # Windows
-   Panel login: az container exec -g $rg -n $Name --container-name hub --exec-command "/usr/local/bin/longarm-hub user add admin"
+   Panel login: az container exec -g $rg -n $Name --container-name hub --exec-command /usr/local/bin/longarm-hub-user-add
 "@
 }
 Write-Host @"

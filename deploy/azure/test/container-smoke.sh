@@ -55,6 +55,11 @@ for _ in $(seq 1 30); do
 	sleep 1
 done
 [[ $(az storage container exists -n litestream --connection-string "$conn" -o tsv) == True ]] || fail "azurite: no container"
+# Litestream gets a SAS for its container only, like on Azure (main.bicep)
+sas=$(az storage container generate-sas -n litestream --connection-string "$conn" --permissions racwdl \
+	--expiry "$(date -u -d '+1 day' +%Y-%m-%dT%H:%MZ)" -o tsv)
+[[ -n $sas ]] || fail "no SAS"
+hub_sas=$sas
 
 # hub_run NAME [extra docker args]: the environment of deploy/azure/main.bicep
 hub_run() {
@@ -70,11 +75,13 @@ hub_run() {
 		-e LONGARM_HUB_HTTP=127.0.0.1:7480 \
 		-e LONGARM_HUB_BOOTSTRAP=1 \
 		-e LONGARM_HUB_BOOTSTRAP_TTL=24h \
+		-e LONGARM_HUB_RELAY_UDP=:7443 \
+		-e LONGARM_HUB_RELAY_STUN2=:7444 \
 		-e LONGARM_HUB_LITESTREAM_CONFIG=/etc/longarm-hub/litestream-abs.yml \
 		-e LONGARM_HUB_BLOB_ACCOUNT=$acct \
 		-e LONGARM_HUB_BLOB_CONTAINER=litestream \
 		-e LONGARM_HUB_BLOB_ENDPOINT=http://azurite:10000/$acct \
-		-e LITESTREAM_AZURE_ACCOUNT_KEY=$key \
+		-e LITESTREAM_AZURE_SAS_TOKEN="$hub_sas" \
 		"$@" "$image" >/dev/null
 }
 
@@ -95,6 +102,13 @@ bootstrap() {
 	docker logs "$1" 2>/dev/null | sed -n 's/^LONGARM_BOOTSTRAP //p' | tail -n 1 | tr ' ' '\n' | sed -n "s/^$2=//p"
 }
 
+# bootfile NAME KEY: a value of bootstrap.env on the share (the only place
+# with the admin code)
+bootfile() {
+	docker cp "$1:/data/bootstrap.env" "$work/bootstrap.env" >/dev/null
+	sed -n "s/^$2=//p" "$work/bootstrap.env"
+}
+
 # logs_have NAME TEXT: the container log contains TEXT (not "docker logs | grep -q":
 # grep's early exit makes docker logs fail with SIGPIPE, and pipefail reports that)
 logs_have() {
@@ -109,9 +123,13 @@ step "first start"
 hub_run "$p-hub"
 wait_healthy "$p-hub"
 fp=$(bootstrap "$p-hub" ca_fingerprint)
-code=$(bootstrap "$p-hub" admin_join_code)
 addr=$(bootstrap "$p-hub" hub_address)
-[[ ${#fp} -eq 64 && -n $code && $addr == 127.0.0.1:7443 ]] || fail "bootstrap line: fp=$fp code=$code addr=$addr"
+boot1=$(bootstrap "$p-hub" boot_id)
+code=$(bootfile "$p-hub" admin_join_code)
+[[ ${#fp} -eq 64 && -n $code && $addr == 127.0.0.1:7443 ]] || fail "bootstrap: fp=$fp code=$code addr=$addr"
+[[ $(bootfile "$p-hub" ca_fingerprint) == "$fp" && $(bootfile "$p-hub" boot_id) == "$(bootstrap "$p-hub" boot_id)" ]] ||
+	fail "bootstrap.env and the log line differ"
+logs_have "$p-hub" "$code" && fail "the admin join code is in the container log"
 [[ $(bootstrap "$p-hub" admin_joined) == false ]] || fail "admin_joined on a fresh hub"
 logs_have "$p-hub" "no matching backups found" || fail "first start: no empty-replica restore"
 [[ $(docker exec "$p-hub" /usr/local/bin/longarm-hub ca show) == *"$fp"* ]] || fail "ca show"
@@ -126,6 +144,9 @@ la join "$addr" "$code" --ca-fingerprint "$fp" --name ci-admin
 la admin join-code --role worker >/dev/null
 docker exec -i "$p-hub" /usr/local/bin/longarm-hub user add alice --password-stdin <<<'a long passphrase' >/dev/null
 # a write right before the stop: must survive through the shutdown sync
+# the argument-free aliases for az container exec
+[[ $(docker exec "$p-hub" /usr/local/bin/longarm-hub-admin-code 2>/dev/null) =~ ^[0-9A-Z]{3}-[0-9A-Z]{3}$ ]] || fail "longarm-hub-admin-code"
+[[ $(docker exec "$p-hub" /usr/local/bin/longarm-hub-users) == *alice* ]] || fail "longarm-hub-users"
 docker exec -i "$p-hub" /usr/local/bin/longarm-hub user add bob --password-stdin <<<'another passphrase' >/dev/null
 
 step "replace the container (SIGTERM, rm)"
@@ -142,7 +163,8 @@ wait_healthy "$p-hub2"
 logs_have "$p-hub2" "no matching backups found" && fail "hub2 found no replica"
 [[ $(bootstrap "$p-hub2" ca_fingerprint) == "$fp" ]] || fail "CA changed"
 [[ $(bootstrap "$p-hub2" admin_joined) == true ]] || fail "the restored database lost the admin"
-[[ -z $(bootstrap "$p-hub2" admin_join_code) ]] || fail "a new admin code after the admin joined"
+[[ -z $(bootfile "$p-hub2" admin_join_code) ]] || fail "a new admin code after the admin joined"
+[[ $(bootstrap "$p-hub2" boot_id) != "$boot1" ]] || fail "same boot_id after the replacement"
 users=$(docker exec "$p-hub2" /usr/local/bin/longarm-hub user ls)
 grep -qx alice <<<"$users" || fail "alice lost: $users"
 grep -qx bob <<<"$users" || fail "bob (written just before the stop) lost: $users"
@@ -150,7 +172,8 @@ la admin join-code --role worker >/dev/null || fail "admin certificate after the
 docker rm -f "$p-hub2" >/dev/null
 
 step "unreadable replica: no start"
-hub_run "$p-hub3" -e LITESTREAM_AZURE_ACCOUNT_KEY=d3Jvbmcta2V5 --restart no
+hub_sas="sv=2021-08-06&sr=c&sp=racwdl&se=2030-01-01T00:00Z&sig=bm90LWEtc2lnbmF0dXJl"
+hub_run "$p-hub3" --restart no
 for _ in $(seq 1 60); do
 	[[ $(docker inspect -f '{{.State.Running}}' "$p-hub3") == true ]] || break
 	sleep 1

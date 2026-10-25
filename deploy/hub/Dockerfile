@@ -22,7 +22,9 @@ ARG TARGETOS=linux
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
       -ldflags "-s -w -X github.com/lubobill1990/longarm/internal/version.Version=${VERSION}" \
-      -o /out/longarm-hub ./cmd/longarm-hub
+      -o /out/bin/longarm-hub ./cmd/longarm-hub
+# argument-free names for az container exec (cmd/longarm-hub/container.go execAliases)
+RUN for a in longarm-hub-admin-code longarm-hub-user-add longarm-hub-users; do ln -s longarm-hub /out/bin/$a; done
 RUN mkdir -p /out/data /out/var/lib/longarm-hub && chown 65532:65532 /out/data /out/var/lib/longarm-hub
 
 # Litestream (pinned release, SHA-256 from its checksums.txt)
@@ -46,7 +48,7 @@ LABEL org.opencontainers.image.title="longarm-hub" \
       org.opencontainers.image.description="Longarm control plane (CA, registry, scheduler, relay, panel API) with Litestream" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version="${VERSION}"
-COPY --from=build /out/longarm-hub /usr/local/bin/longarm-hub
+COPY --from=build /out/bin/ /usr/local/bin/
 COPY --from=litestream /out/litestream /usr/local/bin/litestream
 COPY deploy/hub/litestream-abs.yml /etc/longarm-hub/litestream-abs.yml
 COPY --from=build --chown=65532:65532 /out/data /data
