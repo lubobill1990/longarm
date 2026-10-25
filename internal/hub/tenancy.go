@@ -2,8 +2,8 @@ package hub
 
 import (
 	"context"
-	"crypto/x509"
 	"crypto/rand"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"math/big"
