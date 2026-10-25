@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { hubApi } from '../api/hub'
-import type { FleetJob } from '../api/types'
+import { hubApi, isAdmin } from '../api/hub'
+import type { FleetJob, JobSpec, Me } from '../api/types'
 import { ErrorBox, LogView, StatePill, useAction, usePoll } from '../components/common'
-import { fmtTime, isActive, stateName } from '../lib/format'
+import { fmtTime, isActive, jobOwner, stateName } from '../lib/format'
 import { Link, navigate } from '../lib/router'
 
 const STATES = ['', 'running', 'preparing', 'done', 'failed', 'killed', 'lost']
@@ -29,13 +29,27 @@ function useLiveJobs(limit: number) {
   return { jobs, error }
 }
 
-export function JobsPage({ path }: { path: string }) {
+/** Administrators control every job; a user-role login only its own (shared jobs are read-only). */
+const mayControl = (me: Me, spec: JobSpec) => isAdmin(me) || jobOwner(spec) === (me.tenant || me.user)
+
+export function JobsPage({ path, me }: { path: string; me: Me }) {
   const id = path.split('/')[2]
-  if (id) return <JobDetail id={decodeURIComponent(id)} />
-  return <JobList />
+  if (id) return <JobDetail id={decodeURIComponent(id)} me={me} />
+  return <JobList me={me} />
 }
 
-function JobList() {
+/** "shared with" indicator: the teams that may read the job. */
+function Shared({ spec }: { spec: JobSpec }) {
+  const teams = spec.share_teams ?? []
+  if (teams.length === 0) return null
+  return (
+    <span className="pill info" title={`shared read-only with ${teams.join(', ')}`} data-testid={`shared-${spec.id}`}>
+      shared: {teams.join(', ')}
+    </span>
+  )
+}
+
+function JobList({ me }: { me: Me }) {
   const { jobs, error } = useLiveJobs(500)
   const nodes = usePoll(() => hubApi.nodes(false), 30000)
   const [worker, setWorker] = useState('')
@@ -53,7 +67,8 @@ function JobList() {
           j.job.spec.id.toLowerCase().includes(ql) ||
           (j.job.spec.name ?? '').toLowerCase().includes(ql) ||
           (j.job.spec.argv ?? []).join(' ').toLowerCase().includes(ql) ||
-          (j.job.spec.submitted_by ?? '').toLowerCase().includes(ql),
+          (j.job.spec.submitted_by ?? '').toLowerCase().includes(ql) ||
+          jobOwner(j.job.spec).toLowerCase().includes(ql),
       )
       .sort((a, b) => (b.job.created_at ?? '').localeCompare(a.job.created_at ?? ''))
       .slice(0, 300)
@@ -61,7 +76,7 @@ function JobList() {
   return (
     <div>
       <div className="page-title">
-        <h1>Jobs</h1>
+        <h1>{isAdmin(me) ? 'Jobs' : 'My jobs'}</h1>
         <select aria-label="worker filter" value={worker} onChange={(e) => setWorker(e.target.value)}>
           <option value="">all workers</option>
           {(nodes.data ?? []).map((n) => (
@@ -90,6 +105,7 @@ function JobList() {
             <th>worker</th>
             <th>state</th>
             <th>exit</th>
+            <th>owner</th>
             <th>by</th>
             <th>created</th>
             <th>command</th>
@@ -98,11 +114,11 @@ function JobList() {
         </thead>
         <tbody>
           {list.map((j) => (
-            <JobRow key={`${j.worker}/${j.job.spec.id}`} j={j} />
+            <JobRow key={`${j.worker}/${j.job.spec.id}`} j={j} me={me} />
           ))}
           {list.length === 0 && (
             <tr>
-              <td colSpan={8} className="notice">
+              <td colSpan={9} className="notice">
                 no jobs
               </td>
             </tr>
@@ -113,7 +129,7 @@ function JobList() {
   )
 }
 
-function JobRow({ j }: { j: FleetJob }) {
+function JobRow({ j, me }: { j: FleetJob; me: Me }) {
   const { run, busy } = useAction()
   const s = j.job.spec
   return (
@@ -126,13 +142,16 @@ function JobRow({ j }: { j: FleetJob }) {
         <StatePill state={j.job.state} />
       </td>
       <td className="mono">{j.job.has_exit_code ? (j.job.exit_code ?? 0) : ''}</td>
+      <td className="small nowrap">
+        {jobOwner(s)} <Shared spec={s} />
+      </td>
       <td className="small muted">{s.submitted_by}</td>
       <td className="small muted nowrap">{fmtTime(j.job.created_at)}</td>
       <td className="mono small" style={{ maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={(s.argv ?? []).join(' ')}>
         {(s.argv ?? []).join(' ')}
       </td>
       <td>
-        {isActive(j.job.state) && (
+        {isActive(j.job.state) && mayControl(me, s) && (
           <button className="danger" disabled={busy || !j.worker_online} onClick={() => run(() => hubApi.kill(s.id, j.worker), 'killed')}>
             Kill
           </button>
@@ -186,7 +205,7 @@ function NewJob({ workers, onDone }: { workers: string[]; onDone: () => void }) 
   )
 }
 
-function JobDetail({ id }: { id: string }) {
+function JobDetail({ id, me }: { id: string; me: Me }) {
   const worker = new URLSearchParams(location.search).get('worker') ?? undefined
   const job = usePoll(() => hubApi.job(id, worker), 2000, [id, worker])
   const { run, busy } = useAction()
@@ -195,12 +214,12 @@ function JobDetail({ id }: { id: string }) {
   return (
     <div>
       <div className="page-title">
-        <Link to="/jobs">← Jobs</Link>
+        <Link to="/jobs">← {isAdmin(me) ? 'Jobs' : 'My jobs'}</Link>
         <h1 className="mono">{j?.job.spec.name || id}</h1>
         {j && <StatePill state={j.job.state} />}
         {j?.job.has_exit_code && <span className="mono">exit {j.job.exit_code ?? 0}</span>}
         <span className="spacer" />
-        {j && isActive(j.job.state) && (
+        {j && isActive(j.job.state) && mayControl(me, j.job.spec) && (
           <button className="danger" disabled={busy} onClick={() => run(() => hubApi.kill(id, j.worker), 'killed').then(() => job.reload())}>
             Kill
           </button>
@@ -216,6 +235,10 @@ function JobDetail({ id }: { id: string }) {
             <span>{j.worker}</span>
             <span className="muted">command</span>
             <span className="mono">{(j.job.spec.argv ?? []).join(' ')}</span>
+            <span className="muted">owner</span>
+            <span>
+              {jobOwner(j.job.spec)} <Shared spec={j.job.spec} />
+            </span>
             <span className="muted">by</span>
             <span>{j.job.spec.submitted_by}</span>
             <span className="muted">created / ended</span>
