@@ -1,0 +1,22 @@
+# Litestream for the longarm-hub image (/etc/longarm-hub/litestream-abs.yml):
+# the hub database on local disk -> Azure Blob Storage, configured only by
+# the environment (deploy/azure sets it; Litestream expands ${VAR}):
+#   LONGARM_HUB_DB                 the database (local disk, not a network share)
+#   LONGARM_HUB_BLOB_ACCOUNT       storage account name
+#   LONGARM_HUB_BLOB_CONTAINER     blob container
+#   LONGARM_HUB_BLOB_ENDPOINT      optional: another endpoint (Azurite in CI),
+#                                  e.g. http://azurite:10000/devstoreaccount1
+#   LITESTREAM_AZURE_ACCOUNT_KEY   account key (read by Litestream itself)
+# Used by `longarm-hub container` when LONGARM_HUB_LITESTREAM_CONFIG points here.
+dbs:
+  - path: ${LONGARM_HUB_DB}
+    replica:
+      type: abs
+      account-name: ${LONGARM_HUB_BLOB_ACCOUNT}
+      bucket: ${LONGARM_HUB_BLOB_CONTAINER}
+      endpoint: ${LONGARM_HUB_BLOB_ENDPOINT}
+      path: hub.db
+      sync-interval: 1s
+# On SIGTERM the hub stops first, then Litestream ships the last WAL frames
+# (up to this long) before it exits.
+shutdown-sync-timeout: 20s

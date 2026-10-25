@@ -11,7 +11,8 @@
 //	                                   and sleeps (5 processes in total)
 //	helper restore|replicate ...       a fake litestream (HELPER_LITESTREAM_LOG: args are
 //	                                   appended there; restore exits HELPER_LITESTREAM_RESTORE_EXIT;
-//	                                   replicate runs the -exec command and exits with it)
+//	                                   replicate runs the -exec command (pid in <log>.child)
+//	                                   and exits with it)
 package main
 
 import (
@@ -153,7 +154,13 @@ func fakeLitestream(args []string) {
 			argv := shellSplit(args[i+1])
 			c := exec.Command(argv[0], argv[1:]...)
 			c.Stdout, c.Stderr = os.Stdout, os.Stderr
-			if err := c.Run(); err != nil {
+			if err := c.Start(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			// the test kills the -exec child by this pid (no process groups on Windows)
+			os.WriteFile(os.Getenv("HELPER_LITESTREAM_LOG")+".child", []byte(strconv.Itoa(c.Process.Pid)), 0o644)
+			if err := c.Wait(); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}

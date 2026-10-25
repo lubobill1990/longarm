@@ -1,0 +1,332 @@
+// longarm-hub on Azure Container Instances (deploy/azure/README.md).
+//
+//   az deployment group create -g <rg> --template-file main.bicep -p name=myhub
+//
+// One container group with a public IP and DNS label
+// (<name>.<region>.azurecontainer.io): the hub on 7443/tcp (gRPC, mTLS end to
+// end), 7443/udp (longnet relay, QUIC) and 7444/udp (second STUN port), and
+// optionally Caddy on 80/443 (Let's Encrypt) in front of the panel on
+// 127.0.0.1:7480. The SQLite database stays on the container's local disk and
+// Litestream streams it to a blob container (restored on start); CA, hub.toml,
+// server certificates, release store and bootstrap.env live on an Azure Files
+// share. azuredeploy.json is this file compiled (bicep build) for the
+// "Deploy to Azure" button; CI checks that it is up to date.
+
+@description('Hub name: the DNS label (<name>.<region>.azurecontainer.io) and the prefix of the resources. Lowercase letters, digits and hyphens, starting with a letter.')
+@minLength(3)
+@maxLength(40)
+param name string
+
+@description('Azure region (default: the resource group\'s).')
+param location string = resourceGroup().location
+
+@description('longarm-hub image. Pin a version (ghcr.io/<owner>/longarm-hub:X.Y.Z) for reproducible upgrades; :latest is the newest release, :edge the main branch.')
+param image string = 'ghcr.io/lubobill1990/longarm-hub:latest'
+
+@description('Hub size: small = 1 vCPU / 1.5 GB, medium = 2 vCPU / 3 GB.')
+@allowed([
+  'small'
+  'medium'
+])
+param size string = 'small'
+
+@description('Serve the web panel and install scripts over HTTPS (Caddy sidecar on 80/443 with a Let\'s Encrypt certificate for the azurecontainer.io name).')
+param enablePanel bool = true
+
+@description('E-mail for Let\'s Encrypt expiry notices (optional).')
+param acmeEmail string = ''
+
+@description('Caddy image of the panel sidecar (pinned by digest; point it at a mirror if Docker Hub rate limits bite).')
+param caddyImage string = 'docker.io/library/caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f'
+
+@description('Send container logs to a new Log Analytics workspace (about 2-3 USD per GB ingested).')
+param enableLogAnalytics bool = false
+
+@description('Storage redundancy of the account holding the Litestream replica and the state share.')
+@allowed([
+  'Standard_LRS'
+  'Standard_ZRS'
+  'Standard_GRS'
+])
+param storageSku string = 'Standard_LRS'
+
+@description('Lifetime of the one-time admin join code created on the first start (Go duration, max 168h).')
+param adminCodeTtl string = '24h'
+
+@description('Registry login for a private image (empty = anonymous pull).')
+param registryServer string = 'ghcr.io'
+param registryUsername string = ''
+@secure()
+param registryPassword string = ''
+
+@description('Optional Tailscale OAuth client secret for the hub\'s [tailnet] provider (deploy/hub/README.md "Tailnet provider").')
+@secure()
+param tailscaleOAuthSecret string = ''
+
+var sizes = {
+  small: {
+    cpu: 1
+    memoryInGB: json('1.5')
+  }
+  medium: {
+    cpu: 2
+    memoryInGB: json('3.0')
+  }
+}
+var fqdn = '${name}.${location}.azurecontainer.io'
+var hubAddress = '${fqdn}:7443'
+var storageName = take('lahub${uniqueString(resourceGroup().id, name)}', 24)
+var tags = {
+  'longarm-hub': name
+}
+var caddyfile = '''
+{
+	admin off
+	{EMAIL}
+}
+{FQDN} {
+	reverse_proxy 127.0.0.1:7480 {
+		flush_interval -1
+	}
+}
+'''
+var caddyfileText = replace(replace(caddyfile, '{FQDN}', fqdn), '{EMAIL}', empty(acmeEmail) ? '' : 'email ${acmeEmail}')
+
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: storageName
+  location: location
+  tags: tags
+  sku: {
+    name: storageSku
+  }
+  kind: 'StorageV2'
+  properties: {
+    accessTier: 'Hot'
+    allowBlobPublicAccess: false
+    // ACI mounts Azure Files with the account key, Litestream uses it too
+    allowSharedKeyAccess: true
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+  }
+}
+
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+  properties: {
+    deleteRetentionPolicy: {
+      enabled: true
+      days: 7
+    }
+    containerDeleteRetentionPolicy: {
+      enabled: true
+      days: 7
+    }
+  }
+}
+
+resource replicaContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: 'litestream'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+  properties: {
+    shareDeleteRetentionPolicy: {
+      enabled: true
+      days: 7
+    }
+  }
+}
+
+resource stateShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
+  parent: fileService
+  name: 'state'
+  properties: {
+    shareQuota: 10
+  }
+}
+
+resource caddyShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = if (enablePanel) {
+  parent: fileService
+  name: 'caddy'
+  properties: {
+    shareQuota: 1
+  }
+}
+
+resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (enableLogAnalytics) {
+  name: '${name}-logs'
+  location: location
+  tags: tags
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 30
+  }
+}
+
+var storageKey = storage.listKeys().keys[0].value
+var probe = {
+  exec: {
+    command: [
+      '/usr/local/bin/longarm-hub'
+      'healthcheck'
+    ]
+  }
+}
+
+var hubEnv = concat(
+  [
+    { name: 'LONGARM_HUB_DATA_DIR', value: '/data' }
+    { name: 'LONGARM_HUB_CONFIG', value: '/data/hub.toml' }
+    { name: 'LONGARM_HUB_DB', value: '/var/lib/longarm-hub/hub.db' }
+    { name: 'LONGARM_HUB_ADVERTISE', value: fqdn }
+    { name: 'LONGARM_HUB_HTTP', value: '127.0.0.1:7480' }
+    { name: 'LONGARM_HUB_BOOTSTRAP', value: '1' }
+    { name: 'LONGARM_HUB_BOOTSTRAP_TTL', value: adminCodeTtl }
+    { name: 'LONGARM_HUB_LITESTREAM_CONFIG', value: '/etc/longarm-hub/litestream-abs.yml' }
+    { name: 'LONGARM_HUB_BLOB_ACCOUNT', value: storage.name }
+    { name: 'LONGARM_HUB_BLOB_CONTAINER', value: replicaContainer.name }
+    { name: 'LITESTREAM_AZURE_ACCOUNT_KEY', secureValue: storageKey }
+  ],
+  enablePanel ? [{ name: 'LONGARM_HUB_PUBLIC_URL', value: 'https://${fqdn}' }] : [],
+  empty(tailscaleOAuthSecret) ? [] : [{ name: 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', secureValue: tailscaleOAuthSecret }]
+)
+
+var hubContainer = {
+  name: 'hub'
+  properties: {
+    image: image
+    resources: {
+      requests: sizes[size]
+    }
+    ports: [
+      { port: 7443, protocol: 'TCP' }
+      { port: 7443, protocol: 'UDP' }
+      { port: 7444, protocol: 'UDP' }
+    ]
+    environmentVariables: hubEnv
+    volumeMounts: [
+      { name: 'state', mountPath: '/data' }
+    ]
+    // restore + bootstrap run before the hub listens
+    livenessProbe: union(probe, { initialDelaySeconds: 90, periodSeconds: 30, timeoutSeconds: 10, failureThreshold: 4 })
+    readinessProbe: union(probe, { initialDelaySeconds: 5, periodSeconds: 10, timeoutSeconds: 10, failureThreshold: 3 })
+  }
+}
+
+var caddyContainer = {
+  name: 'caddy'
+  properties: {
+    image: caddyImage
+    command: [
+      'caddy'
+      'run'
+      '--config'
+      '/etc/caddy/Caddyfile'
+      '--adapter'
+      'caddyfile'
+    ]
+    resources: {
+      requests: {
+        cpu: json('0.25')
+        memoryInGB: json('0.25')
+      }
+    }
+    ports: [
+      { port: 80, protocol: 'TCP' }
+      { port: 443, protocol: 'TCP' }
+    ]
+    volumeMounts: [
+      { name: 'caddyfile', mountPath: '/etc/caddy', readOnly: true }
+      { name: 'caddy', mountPath: '/data' }
+    ]
+  }
+}
+
+var baseVolumes = [
+  {
+    name: 'state'
+    azureFile: {
+      shareName: stateShare.name
+      storageAccountName: storage.name
+      storageAccountKey: storageKey
+    }
+  }
+]
+var panelVolumes = [
+  {
+    name: 'caddy'
+    azureFile: {
+      shareName: 'caddy'
+      storageAccountName: storage.name
+      storageAccountKey: storageKey
+    }
+  }
+  {
+    name: 'caddyfile'
+    secret: {
+      Caddyfile: base64(caddyfileText)
+    }
+  }
+]
+
+var hubPorts = [
+  { port: 7443, protocol: 'TCP' }
+  { port: 7443, protocol: 'UDP' }
+  { port: 7444, protocol: 'UDP' }
+]
+var panelPorts = [
+  { port: 80, protocol: 'TCP' }
+  { port: 443, protocol: 'TCP' }
+]
+
+resource group 'Microsoft.ContainerInstance/containerGroups@2025-09-01' = {
+  name: name
+  location: location
+  tags: tags
+  dependsOn: [
+    caddyShare
+  ]
+  properties: {
+    osType: 'Linux'
+    sku: 'Standard'
+    restartPolicy: 'Always'
+    containers: enablePanel ? [hubContainer, caddyContainer] : [hubContainer]
+    imageRegistryCredentials: empty(registryUsername) ? [] : [
+      {
+        server: registryServer
+        username: registryUsername
+        password: registryPassword
+      }
+    ]
+    ipAddress: {
+      type: 'Public'
+      dnsNameLabel: name
+      ports: enablePanel ? concat(hubPorts, panelPorts) : hubPorts
+    }
+    volumes: enablePanel ? concat(baseVolumes, panelVolumes) : baseVolumes
+    diagnostics: enableLogAnalytics ? {
+      logAnalytics: {
+        workspaceId: logs!.properties.customerId
+        workspaceKey: logs!.listKeys().primarySharedKey
+      }
+    } : null
+  }
+}
+
+@description('Hub address for longarm join / longarmd join.')
+output hubAddress string = hubAddress
+output fqdn string = group.properties.ipAddress.fqdn
+output ipAddress string = group.properties.ipAddress.ip
+@description('Web panel and install scripts (empty without the panel).')
+output panelUrl string = enablePanel ? 'https://${fqdn}' : ''
+output storageAccount string = storage.name
+output containerGroup string = group.name
