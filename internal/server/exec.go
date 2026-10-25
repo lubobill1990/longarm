@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -104,14 +105,47 @@ func (e *execServer) Run(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResp
 	argv := append(append([]string(nil), e.s.ExecWrapper...), req.Argv...)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = req.Cwd
+	base := os.Environ()
+	copts := platform.ContainerOptions{Name: "longarm-exec"}
+	var code int
+	var timedOut bool
+	var err error
+	if e.s.perUser() {
+		// As the caller's OS account, with its environment and home.
+		sp, serr := e.s.spaceFor(IdentityFrom(ctx).Owner())
+		if serr != nil {
+			return nil, serr
+		}
+		if base, err = sp.Env(); err != nil {
+			return nil, status.Errorf(codes.Internal, "environment: %v", err)
+		}
+		copts.RunAs, copts.Cgroup = sp.Account, sp.Cgroup(fmt.Sprintf("exec-%d", time.Now().UnixNano()))
+		if cmd.Dir == "" {
+			cmd.Dir = sp.Home()
+		}
+	}
 	if cmd.Dir == "" {
 		cmd.Dir, _ = os.UserHomeDir()
 	}
-	cmd.Env = mergeEnv(os.Environ(), req.Env, req.SecretEnv)
+	cmd.Env = mergeEnv(base, req.Env, req.SecretEnv)
+	var stdin *os.File
 	if len(req.Stdin) > 0 {
-		cmd.Stdin = bytes.NewReader(req.Stdin)
+		// a pipe (processes of other accounts get files only)
+		r, w, perr := os.Pipe()
+		if perr != nil {
+			return nil, status.Error(codes.Internal, perr.Error())
+		}
+		cmd.Stdin, stdin = r, w
+		go func() {
+			w.Write(req.Stdin)
+			w.Close()
+		}()
+		defer r.Close()
 	}
-	code, timedOut, err := runContained(ctx, cmd, outW, errW, timeout)
+	code, timedOut, err = runContained(ctx, copts, cmd, outW, errW, timeout)
+	if stdin != nil {
+		stdin.Close()
+	}
 	outW.Flush()
 	errW.Flush()
 	resp.ExitCode = int32(code)
@@ -146,8 +180,8 @@ func keys(m map[string]string) []string {
 // for grandchildren that inherited the pipe). On timeout or ctx cancellation
 // the whole tree is killed; when the main process exits, leftovers are killed
 // too. stdout and stderr may be the same writer (one shared pipe).
-func runContained(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Writer, timeout time.Duration) (code int, timedOut bool, err error) {
-	ctr, err := platform.NewContainer(platform.ContainerOptions{Name: "longarm-exec"})
+func runContained(ctx context.Context, opts platform.ContainerOptions, cmd *exec.Cmd, stdout, stderr io.Writer, timeout time.Duration) (code int, timedOut bool, err error) {
+	ctr, err := platform.NewContainer(opts)
 	if err != nil {
 		return -1, false, err
 	}

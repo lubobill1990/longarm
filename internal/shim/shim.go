@@ -32,7 +32,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -191,9 +193,34 @@ func run(d jobs.Dir, stdin io.Reader, log *slog.Logger) error {
 	j.out = redact.NewWriter(j.logf, redact.New(values))
 	j.logf.OnRotateError = func(err error) { log.Warn("log rotation failed; will retry", "err", err) }
 
+	// Per-user isolation: the workload runs as the user's account, with that
+	// account's environment (nothing of LocalSystem's / root's) and - on
+	// Unix - a private umask.
+	var acct *platform.Account
+	if ra := spec.RunAs; ra != nil {
+		if acct, err = platform.LookupAccount(ra.Account); err != nil {
+			return j.failStart("account "+ra.Account, err)
+		}
+		base, err := platform.AccountEnv(acct)
+		if err != nil {
+			return j.failStart("environment of "+ra.Account, err)
+		}
+		os.Clearenv()
+		for _, kv := range base {
+			if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
+				os.Setenv(k, v)
+			}
+		}
+		if ra.Tmp != "" && runtime.GOOS != "windows" {
+			os.Setenv("TMPDIR", ra.Tmp)
+		}
+		privateUmask()
+	}
+
 	// The child inherits the shim's environment (= longarmd's, i.e. the service
-	// account's) plus job env plus secrets. Setting them on the shim itself
-	// also makes exec's PATH lookup honour a job-provided PATH.
+	// account's, or the per-user account's) plus job env plus secrets. Setting
+	// them on the shim itself also makes exec's PATH lookup honour a
+	// job-provided PATH.
 	keys := make([]string, 0, len(spec.Env))
 	for k := range spec.Env {
 		keys = append(keys, k)
@@ -206,9 +233,14 @@ func run(d jobs.Dir, stdin io.Reader, log *slog.Logger) error {
 		os.Setenv(k, v)
 	}
 
-	ctr, err := platform.NewContainer(platform.ContainerOptions{
+	copts := platform.ContainerOptions{
 		Name: "longarm-" + spec.ID, MemLimitBytes: uint64(spec.MemLimitBytes), KillOnOwnerDeath: true,
-	})
+		RunAs: acct, CPULimit: spec.CPULimit,
+	}
+	if spec.RunAs != nil {
+		copts.Cgroup = spec.RunAs.Cgroup
+	}
+	ctr, err := platform.NewContainer(copts)
 	if err != nil {
 		return j.failStart("cannot create job container", err)
 	}
@@ -225,7 +257,11 @@ func (j *job) runPipe(ctr platform.Container) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(j.spec.Argv[0], j.spec.Argv[1:]...)
+	argv := j.spec.Argv
+	if ra := j.spec.RunAs; ra != nil && len(ra.Wrapper) > 0 {
+		argv = append(append([]string(nil), ra.Wrapper...), argv...)
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = j.workdir()
 	cmd.Env = os.Environ()
 	cmd.Stdout, cmd.Stderr = pw, pw // one pipe: interleaving preserved

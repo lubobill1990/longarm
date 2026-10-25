@@ -108,11 +108,11 @@ func execCmd() *cobra.Command {
 }
 
 func runCmd() *cobra.Command {
-	var env, secrets, labels, require []string
+	var env, secrets, labels, require, share []string
 	var cwd, name, id, repo, ref, on, typ string
 	var wait, follow, noQueue bool
 	var memLimit string
-	var memGB float64
+	var memGB, cpus float64
 	c := &cobra.Command{
 		Use:   "run [<worker>] -- command [args...]",
 		Short: "Submit a job; prints the job id (with --wait/--follow, exits with the job's code). Without a worker (or --on auto) the scheduler places it",
@@ -188,9 +188,10 @@ reachable hub longarm picks among the known workers itself.`,
 			}
 			req := &pb.SubmitRequest{
 				Spec: &pb.JobSpec{Id: id, Name: name, Argv: argv, Cwd: cwd, Env: envM, MemLimitBytes: mem, Labels: labelM,
-					Workspace: ws},
+					Workspace: ws, CpuLimit: cpus},
 				// secrets are sent once, memory-only on the worker
 				SecretEnv: sec,
+				Share:     share,
 			}
 			ctx := cmd.Context()
 			// Retrying with the same id is safe: Submit is idempotent.
@@ -237,6 +238,8 @@ reachable hub longarm picks among the known workers itself.`,
 	c.Flags().Float64Var(&memGB, "mem-gb", 0, "memory to reserve on the worker in GB (default: by --type)")
 	c.Flags().StringArrayVar(&require, "require", nil, "KEY=VALUE[,KEY=VALUE...] labels the worker must have, e.g. os=linux,region=eu (repeatable)")
 	c.Flags().BoolVar(&noQueue, "no-queue", false, "fail instead of queueing when no worker passes the gate")
+	c.Flags().StringArrayVar(&share, "share", nil, "let team members read the job (state, logs): team = all your teams, team:<name> = one")
+	c.Flags().Float64Var(&cpus, "cpus", 0, "CPU limit of the job's process tree in cores (Windows; Linux with per-user isolation)")
 	return c
 }
 

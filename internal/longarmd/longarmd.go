@@ -29,11 +29,12 @@ import (
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/server"
 	"github.com/lubobill1990/longarm/internal/sshd"
-	"github.com/lubobill1990/longarm/internal/supervisor"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/toolchain"
 	"github.com/lubobill1990/longarm/internal/transport"
 	_ "github.com/lubobill1990/longarm/internal/transport/longnet" // registers longnet://
 	"github.com/lubobill1990/longarm/internal/update"
+	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/version"
 	"github.com/lubobill1990/longarm/internal/workspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -79,6 +80,25 @@ type FileConfig struct {
 	Hub         HubConfig       `toml:"hub"`
 	Toolchain   ToolchainConfig `toml:"toolchain"`
 	Update      UpdateConfig    `toml:"update"`
+	Isolation   IsolationConfig `toml:"isolation"`
+}
+
+// IsolationConfig is the [isolation] section (multi-tenancy,
+// docs/security.md).
+type IsolationConfig struct {
+	// Mode: "shared" (default; every workload runs as longarmd's account) or
+	// "per-user" (longarmd runs as LocalSystem / root and runs each user's
+	// jobs, sessions, shells, file access and git as a local account
+	// la-<user> of its own; Windows and Linux).
+	Mode string `toml:"mode"`
+	// UsersDir holds the users' data (default <data>/users). Unix: every
+	// parent must be traversable (o+x) for the accounts.
+	UsersDir string `toml:"users_dir"`
+	// AccountPrefix of the users' OS accounts (default "la-").
+	AccountPrefix string `toml:"account_prefix"`
+	// CgroupRoot (Linux) is the parent of the jobs' cgroups (default
+	// /sys/fs/cgroup/longarm; "off" = process groups only).
+	CgroupRoot string `toml:"cgroup_root"`
 }
 
 // HubConfig is the [hub] section. The address usually comes from hub.toml,
@@ -162,6 +182,7 @@ type Config struct {
 	Warnings     []string  // config problems longarmd logs at start (and keeps running)
 	Toolchain    ToolchainConfig
 	Update       UpdateConfig
+	Isolation    IsolationConfig
 	// How longarmd was started, for the restart after a self-update: "service"
 	// (the service manager restarts it) or "exec" (longarmd relaunches itself
 	// with Args).
@@ -201,6 +222,17 @@ func LoadConfig(dataDir string, listenOverride []string) (Config, error) {
 	}
 	cfg.SSH = fc.SSH
 	cfg.Hub, cfg.Toolchain, cfg.Update = fc.Hub, fc.Toolchain, fc.Update
+	cfg.Isolation = fc.Isolation
+	switch cfg.Isolation.Mode {
+	case "":
+		cfg.Isolation.Mode = tenancy.Shared
+	case tenancy.Shared, tenancy.PerUser:
+	default:
+		return cfg, fmt.Errorf("%s: [isolation] mode %q: want %q or %q", ConfigFile, cfg.Isolation.Mode, tenancy.Shared, tenancy.PerUser)
+	}
+	if cfg.Isolation.UsersDir != "" && !filepath.IsAbs(cfg.Isolation.UsersDir) {
+		cfg.Isolation.UsersDir = filepath.Join(dataDir, cfg.Isolation.UsersDir)
+	}
 	// Invalid labels (an older longarmd.toml: "eu,os=windows", values with
 	// spaces) are dropped with a warning instead of keeping longarmd (and longarmd
 	// leave, the uninstaller) from starting.
@@ -280,15 +312,24 @@ func Run(ctx context.Context, cfg Config) error {
 	cancel := func() { cancelCause(nil) }
 	defer cancel()
 
-	st, err := openState(cfg, log)
+	perUser := cfg.Isolation.Mode == tenancy.PerUser
+	if perUser {
+		privateUmask() // longarmd's own files: LocalSystem / root only
+	}
+	st, err := openState(ctx, cfg, log)
 	if err != nil {
 		return err
 	}
-	sampler := &metrics.Sampler{Interval: 2 * time.Second, JobsFn: st.jobs.RunningCount, DiskPath: cfg.DataDir}
+	policy, err := tenancy.LoadPolicy(filepath.Join(cfg.DataDir, tenancy.PolicyFile))
+	if err != nil {
+		log.Warn("tenancy policy unreadable; starting empty", "err", err)
+		policy, _ = tenancy.LoadPolicy("")
+	}
+	sampler := &metrics.Sampler{Interval: 2 * time.Second, JobsFn: st.spaces.RunningJobs, DiskPath: cfg.DataDir}
 
 	srv := &server.Server{
 		Name: bundle.Identity.Name, Version: version.Version, DataDir: cfg.DataDir, StartedAt: time.Now(),
-		Mgr: st.jobs, Sessions: st.sessions, WS: st.ws, LogMaxBytes: cfg.MaxLogBytes, Sampler: sampler,
+		Spaces: st.spaces, Policy: policy, LogMaxBytes: cfg.MaxLogBytes, Sampler: sampler,
 		Audit: server.NewAudit(filepath.Join(cfg.DataDir, AuditFile)), Log: log, Shutdown: cancel,
 		Revoked: revoked, Conns: conntrack.New(),
 	}
@@ -305,7 +346,7 @@ func Run(ctx context.Context, cfg Config) error {
 			o.MinFreePercent = req.MinFreePercent
 		}
 		o.DryRun = req.DryRun
-		res := st.collector.Run(ctx, o)
+		res := st.collect(ctx, o)
 		return &pb.GcResponse{Removed: res.Removed, FreedBytes: res.Freed}, nil
 	}
 
@@ -323,6 +364,9 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 		if runtime.GOOS == "windows" && exe != "" {
 			sc.ConsoleHost = []string{exe, "conhost"}
+		}
+		if perUser {
+			sc.Session = sshSession(srv, exe)
 		}
 		if sshSrv, err = sshd.New(sc); err != nil {
 			return fmt.Errorf("sshd: %w", err)
@@ -378,7 +422,9 @@ func Run(ctx context.Context, cfg Config) error {
 		listeners = append(listeners, ln)
 		srv.Listeners = append(srv.Listeners, name)
 	}
-	if sshSrv != nil {
+	if sshSrv != nil && perUser && len(cfg.SSH.Listen) > 0 {
+		log.Warn("per-user isolation: [ssh] listen (direct listeners with authorized_keys) is ignored; use longarm ssh (mTLS identities)")
+	} else if sshSrv != nil {
 		for _, u := range cfg.SSH.Listen {
 			ln, name, err := listen(u)
 			if err != nil {
@@ -414,16 +460,15 @@ func Run(ctx context.Context, cfg Config) error {
 	defer os.Remove(endpoints)
 
 	var wg sync.WaitGroup
-	wg.Add(5)
-	go func() { defer wg.Done(); st.jobs.Run(ctx) }()
-	go func() { defer wg.Done(); st.sessions.Run(ctx) }()
+	wg.Add(4)
+	go func() { defer wg.Done(); <-ctx.Done(); st.spaces.Wait() }()
 	go func() { defer wg.Done(); sampler.Run(ctx) }()
 	go func() { defer wg.Done(); reloader.Watch(ctx, TLSReloadInterval) }()
 	go func() { defer wg.Done(); st.gcLoop(ctx, cfg) }()
 
 	// Hub session, toolchain reconciler and the local control API.
 	agent := newHubAgent(cfg.Hub.Address, &hubAgent{
-		dataDir: cfg.DataDir, reloader: reloader, live: reloader.LiveBundle(), jobs: st.jobs, ws: st.ws,
+		dataDir: cfg.DataDir, reloader: reloader, live: reloader.LiveBundle(), spaces: st.spaces, srv: srv, policy: policy,
 		sampler: sampler, revoked: revoked, labels: cfg.Hub.Labels, log: log.With("component", "hub"),
 		audit: srv.Audit, remoteJobs: cfg.Hub.RemoteJobs, stop: cancel, logMaxBytes: cfg.MaxLogBytes,
 		endpoints: func() []string {
@@ -480,7 +525,7 @@ func Run(ctx context.Context, cfg Config) error {
 			log.Warn("toolchain disabled", "err", err)
 		} else {
 			agent.tc = &toolchain.Reconciler{Backend: backend, Log: log.With("component", "toolchain"),
-				Running: st.jobs.RunningCount, Drain: agent.setToolDrain, Interval: cfg.Toolchain.Interval.Duration,
+				Running: st.spaces.RunningJobs, Drain: agent.setToolDrain, Interval: cfg.Toolchain.Interval.Duration,
 				Report: func(r *pb.ToolchainReport) {
 					agent.send(&pb.NodeReport{Msg: &pb.NodeReport_Toolchain{Toolchain: r}}, false)
 					agent.notify(&pb.LocalEvent{Kind: "toolchain", Message: r.State + " " + r.Error})
@@ -519,11 +564,11 @@ func Run(ctx context.Context, cfg Config) error {
 	for _, w := range cfg.Warnings {
 		log.Warn(w)
 	}
-	if runtime.GOOS == "windows" && platform.RunningAsSystem() {
+	if runtime.GOOS == "windows" && platform.RunningAsSystem() && !perUser {
 		log.Warn("longarmd runs as LocalSystem: jobs run as SYSTEM with the system profile, not as a user (DESIGN §3.1); reinstall the service with a user account (MSI SERVICE_USER/SERVICE_PASSWORD, longarmd service install --user)")
 	}
 	log.Info("longarmd started", "name", srv.Name, "version", version.Version, "data", cfg.DataDir,
-		"listen", srv.Listeners, "pid", os.Getpid())
+		"listen", srv.Listeners, "pid", os.Getpid(), "isolation", cfg.Isolation.Mode)
 
 	var runErr error
 	select {
@@ -569,26 +614,42 @@ func lockDataDir(dataDir string) (func(), error) {
 	return func() { lock.Close() }, nil
 }
 
-// state is the persistent part of longarmd: job and session supervisors, the
-// workspace store and the garbage collector over them.
+// state is the persistent part of longarmd: the users' spaces (job and
+// session supervisors, workspace stores) and the garbage collection over
+// them.
 type state struct {
-	jobs, sessions *supervisor.Manager
-	ws             *workspace.Store
-	collector      *gc.Collector
+	spaces *userspace.Spaces
+	log    *slog.Logger
 }
 
-func openState(cfg Config, log *slog.Logger) (*state, error) {
-	ws := &workspace.Store{Root: cfg.DataDir}
-	jm, err := supervisor.New(supervisor.Options{JobsDir: filepath.Join(cfg.DataDir, JobsDir), Logger: log, Prepare: ws.PrepareJob})
+func openState(ctx context.Context, cfg Config, log *slog.Logger) (*state, error) {
+	shared := &workspace.Store{Root: cfg.DataDir}
+	sp, err := userspace.Open(ctx, userspace.Config{
+		Mode: cfg.Isolation.Mode, DataDir: cfg.DataDir, UsersDir: cfg.Isolation.UsersDir,
+		Prefix: cfg.Isolation.AccountPrefix, CgroupRoot: cfg.Isolation.CgroupRoot, Log: log, Prepare: shared.PrepareJob,
+	})
 	if err != nil {
 		return nil, err
 	}
-	sm, err := supervisor.New(supervisor.Options{JobsDir: filepath.Join(cfg.DataDir, SessionsDir), Logger: log.With("kind", "session")})
-	if err != nil {
-		return nil, err
+	return &state{spaces: sp, log: log}, nil
+}
+
+// collect runs a collection in every space.
+func (s *state) collect(ctx context.Context, o gc.Options) gc.Result {
+	var res gc.Result
+	for _, sp := range s.spaces.All() {
+		c := &gc.Collector{DataDir: sp.Root, Jobs: sp.Jobs, Sessions: sp.Sessions, WS: sp.WS, Log: s.log}
+		r := c.Run(ctx, o)
+		prefix := ""
+		if sp.Owner != "" {
+			prefix = "users/" + sp.Owner + "/"
+		}
+		for _, x := range r.Removed {
+			res.Removed = append(res.Removed, prefix+x)
+		}
+		res.Freed += r.Freed
 	}
-	return &state{jobs: jm, sessions: sm, ws: ws,
-		collector: &gc.Collector{DataDir: cfg.DataDir, Jobs: jm, Sessions: sm, WS: ws, Log: log}}, nil
+	return res
 }
 
 func (c Config) gcOptions() gc.Options {
@@ -609,7 +670,7 @@ func (s *state) gcLoop(ctx context.Context, cfg Config) {
 		case <-first:
 		case <-t.C:
 		}
-		s.collector.Run(ctx, cfg.gcOptions())
+		s.collect(ctx, cfg.gcOptions())
 	}
 }
 
@@ -622,9 +683,11 @@ func GC(ctx context.Context, cfg Config, o gc.Options) (gc.Result, error) {
 	}
 	defer unlock()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	st, err := openState(cfg, log)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	st, err := openState(ctx, cfg, log)
 	if err != nil {
 		return gc.Result{}, err
 	}
-	return st.collector.Run(ctx, o), nil
+	return st.collect(ctx, o), nil
 }

@@ -83,6 +83,10 @@ func (s *Server) authorize(ctx context.Context, method string) (context.Context,
 		s.Audit.Log(id, method, map[string]any{"denied": true, "peer": p.Addr.String()})
 		return nil, status.Errorf(codes.PermissionDenied, "%s may not call %s", id, method)
 	}
+	if s.Policy != nil && s.Policy.Disabled(id.Owner()) {
+		s.Audit.Log(id, method, map[string]any{"denied": "user disabled", "peer": p.Addr.String()})
+		return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled", id.Owner())
+	}
 	return context.WithValue(ctx, idKey{}, id), nil
 }
 
@@ -123,8 +127,15 @@ type Audit struct {
 // NewAudit returns an audit log writing to path ("" = disabled).
 func NewAudit(path string) *Audit { return &Audit{path: path} }
 
-// Log appends a record.
+// Log appends a record (with the acting user when the certificate is a
+// device of a user).
 func (a *Audit) Log(id pki.Identity, method string, fields map[string]any) {
+	if id.User != "" && id.User != id.Name {
+		if fields == nil {
+			fields = map[string]any{}
+		}
+		fields["user"] = id.User
+	}
 	a.write(id.String(), method, fields)
 }
 

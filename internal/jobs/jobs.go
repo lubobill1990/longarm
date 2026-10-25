@@ -22,6 +22,7 @@ package jobs
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -115,6 +116,40 @@ type Spec struct {
 	Rows uint16 `json:"rows,omitempty"`
 	// LogMaxBytes caps out.log; it rotates to out.log.1 (0 = unlimited).
 	LogMaxBytes int64 `json:"log_max_bytes,omitempty"`
+	// Owner is the user the job belongs to (multi-tenancy); ShareTeams may
+	// read it.
+	Owner      string   `json:"owner,omitempty"`
+	ShareTeams []string `json:"share_teams,omitempty"`
+	// CPULimit caps the tree's CPU in cores (0 = none).
+	CPULimit float64 `json:"cpu_limit,omitempty"`
+	// RunAs: per-user isolation - the shim (LocalSystem / root) starts the
+	// workload as this account. Written by longarmd only; job directories
+	// are not writable by the account.
+	RunAs *RunAs `json:"run_as,omitempty"`
+}
+
+// OwnerName is the job's owner; jobs from before multi-tenancy: the name in
+// SubmittedBy ("client/alice").
+func (s *Spec) OwnerName() string {
+	if s.Owner != "" {
+		return s.Owner
+	}
+	if _, name, ok := strings.Cut(s.SubmittedBy, "/"); ok {
+		return name
+	}
+	return s.SubmittedBy
+}
+
+// RunAs describes how a per-user job runs.
+type RunAs struct {
+	Account string `json:"account"`
+	// Cgroup (Linux): the job's cgroup v2 directory ("" = none).
+	Cgroup string `json:"cgroup,omitempty"`
+	// Tmp is the account's private temp dir (TMPDIR on Unix).
+	Tmp string `json:"tmp,omitempty"`
+	// Wrapper is prepended to the command (Windows: longarmd conhost --,
+	// which gives the workload a UTF-8 console of its own).
+	Wrapper []string `json:"wrapper,omitempty"`
 }
 
 // Workspace describes a git worktree prepared for a job (DESIGN §5.3).

@@ -38,8 +38,8 @@ type localWorker struct {
 func (l *localWorker) Status(ctx context.Context, _ *pb.LocalStatusRequest) (*pb.WorkerStatus, error) {
 	s := &pb.WorkerStatus{
 		Name: l.srv.Name, Version: version.Version, DataDir: l.srv.DataDir, Endpoints: l.srv.ListenerNames(),
-		Hub: l.agent.Link(), State: l.agent.State(), JobsRunning: int32(l.st.jobs.RunningCount()),
-		SessionsRunning: int32(l.st.sessions.RunningCount()), RevokedCerts: int32(l.agent.revoked.Len()),
+		Hub: l.agent.Link(), State: l.agent.State(), JobsRunning: int32(l.st.spaces.RunningJobs()),
+		SessionsRunning: int32(l.st.spaces.RunningSessions()), RevokedCerts: int32(l.agent.revoked.Len()),
 		Pid: int32(os.Getpid()), CertNotAfter: timestamppb.New(l.agent.live.Leaf().NotAfter),
 		Limits: l.agent.Limits(), Os: runtime.GOOS, Arch: runtime.GOARCH, Firewall: l.fw.Get(),
 	}
@@ -115,7 +115,11 @@ func (l *localWorker) gateway() http.Handler {
 		off, _ := strconv.ParseInt(q.Get("offset"), 10, 64)
 		req := &pb.LogsRequest{Id: r.PathValue("id"), Offset: off, Follow: q.Get("follow") == "1" || q.Get("follow") == "true"}
 		localapi.SSEStream(w, r, "log", func(ctx context.Context, send func(proto.Message) error) error {
-			return server.StreamLogs(l.srv.Mgr, req, sendStream[*pb.LogChunk]{ctx: ctx, send: send})
+			sp, _, err := l.st.spaces.FindJob(req.Id)
+			if err != nil {
+				return server.MgrErr(err)
+			}
+			return server.StreamLogs(sp.Jobs, req, sendStream[*pb.LogChunk]{ctx: ctx, send: send})
 		})
 	})
 	mux.HandleFunc("POST /v1/jobs/{id}/kill", func(w http.ResponseWriter, r *http.Request) {
@@ -186,19 +190,31 @@ func (l *localWorker) ListJobs(ctx context.Context, req *pb.ListJobsRequest) (*p
 		}
 	}
 	out := &pb.ListJobsResponse{}
-	for _, j := range l.srv.Mgr.List(states, int(req.Limit)) {
+	for _, j := range l.st.spaces.ListJobs(states, int(req.Limit)) {
 		out.Jobs = append(out.Jobs, server.JobToPB(j))
 	}
 	return out, nil
 }
 
+// The local control API is the machine's (its channel is LocalSystem's /
+// root's, or the service account's): like an admin, it sees every user's
+// jobs.
+
 func (l *localWorker) JobLogs(req *pb.LogsRequest, st pb.LocalWorker_JobLogsServer) error {
-	return server.StreamLogs(l.srv.Mgr, req, st)
+	sp, _, err := l.st.spaces.FindJob(req.Id)
+	if err != nil {
+		return server.MgrErr(err)
+	}
+	return server.StreamLogs(sp.Jobs, req, st)
 }
 
 // KillJob kills one of this worker's jobs (audited as the local user).
 func (l *localWorker) KillJob(ctx context.Context, req *pb.KillRequest) (*pb.Job, error) {
-	j, err := l.srv.Mgr.Kill(ctx, req.Id)
+	sp, _, err := l.st.spaces.FindJob(req.Id)
+	if err != nil {
+		return nil, server.MgrErr(err)
+	}
+	j, err := sp.Jobs.Kill(ctx, req.Id)
 	l.srv.Audit.LogAs("local", pb.Jobs_Kill_FullMethodName, map[string]any{"job": req.Id, "error": errText(err)})
 	if err != nil {
 		return nil, server.MgrErr(err)

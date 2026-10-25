@@ -72,6 +72,11 @@ var hubMethodRoles = map[string][]pki.Role{
 	pb.HubAdmin_PublishRelease_FullMethodName: releaser,
 	pb.HubAdmin_GetRollout_FullMethodName:     releaser,
 	pb.HubAdmin_AbortRollout_FullMethodName:   releaser,
+	pb.HubAdmin_PutUser_FullMethodName:        adminOnly,
+	pb.HubAdmin_ListUsers_FullMethodName:      adminOnly,
+	pb.HubAdmin_RemoveUser_FullMethodName:     adminOnly,
+	pb.HubAdmin_SetTeam_FullMethodName:        adminOnly,
+	pb.HubAdmin_ListTeams_FullMethodName:      adminOnly,
 }
 
 type callerKey struct{}
@@ -115,6 +120,14 @@ func (h *Hub) authorize(ctx context.Context, method string) (context.Context, er
 	if err := h.checkNode(id, cert); err != nil {
 		return nil, err
 	}
+	if id.Role == pki.RoleClient || id.Role == pki.RoleAdmin {
+		h.mu.Lock()
+		disabled := h.userDisabledLocked(id.Owner())
+		h.mu.Unlock()
+		if disabled {
+			return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled", id.Owner())
+		}
+	}
 	c.id, c.cert = id, cert
 	return context.WithValue(ctx, callerKey{}, c), nil
 }
@@ -131,7 +144,7 @@ func (h *Hub) checkNode(id pki.Identity, cert *x509.Certificate) error {
 	switch {
 	case n == nil:
 		rec := &store.Node{Name: id.Name, Role: string(id.Role), State: stateApproved, JoinedAt: time.Now().UTC(),
-			ApprovedAt: time.Now().UTC(), CertSerial: serial, CertNotAfter: cert.NotAfter}
+			ApprovedAt: time.Now().UTC(), CertSerial: serial, CertNotAfter: cert.NotAfter, User: id.User}
 		if err := h.store.PutNode(rec); err != nil {
 			return status.Error(codes.Internal, err.Error())
 		}

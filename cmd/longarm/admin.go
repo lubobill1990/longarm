@@ -43,7 +43,7 @@ func adminCmd() *cobra.Command {
 	caInit.Flags().IntVar(&caYears, "years", 10, "validity in years")
 	ca.AddCommand(caInit)
 
-	var role, name, out string
+	var role, name, out, issueUser string
 	var hosts []string
 	var days int
 	var install bool
@@ -75,7 +75,7 @@ func adminCmd() *cobra.Command {
 			if days > 0 {
 				validity = time.Duration(days) * 24 * time.Hour
 			}
-			certPEM, keyPEM, err := ca.Issue(pki.IssueOptions{Role: r, Name: name, Hosts: hosts, Validity: validity})
+			certPEM, keyPEM, err := ca.Issue(pki.IssueOptions{Role: r, Name: name, Hosts: hosts, Validity: validity, User: issueUser})
 			if err != nil {
 				return err
 			}
@@ -105,6 +105,7 @@ func adminCmd() *cobra.Command {
 	issue.Flags().StringVar(&out, "out", "", "output directory")
 	issue.Flags().BoolVar(&install, "install", false, "install as this longarm's own bundle (<config-dir>/tls)")
 	issue.Flags().StringVar(&caDir, "ca-dir", "", "CA directory (default <config-dir>/ca)")
+	issue.Flags().StringVar(&issueUser, "user", "", "client/admin: the Longarm user the certificate belongs to (multi-tenancy; default: the name)")
 	issue.MarkFlagRequired("role")
 	issue.MarkFlagRequired("name")
 
@@ -184,5 +185,6 @@ func adminCmd() *cobra.Command {
 	c.AddCommand(hubAdminCmds()...)
 	c.AddCommand(tailnetAdminCmd())
 	c.AddCommand(hubUICmds()...)
+	c.AddCommand(userAdminCmd(), teamAdminCmd())
 	return c
 }

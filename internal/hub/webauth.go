@@ -116,16 +116,37 @@ func TOTPURI(user, secret string) string {
 // AddUser creates (or with replace, resets) a panel account; it returns
 // the TOTP secret to enroll in an authenticator app.
 func AddUser(st *store.Store, name, password string, replace bool) (string, error) {
+	return AddPanelUser(st, name, password, "admin", "", replace)
+}
+
+// AddPanelUser creates (or resets) a panel account with a role: "admin"
+// (everything) or "user" - the Longarm user tenant, who sees only its own
+// jobs. A user login never replaces an administrator's account.
+func AddPanelUser(st *store.Store, name, password, role, tenant string, replace bool) (string, error) {
 	if !pki.ValidName(name) {
 		return "", fmt.Errorf("invalid user name %q", name)
+	}
+	if role != "admin" && role != "user" {
+		return "", fmt.Errorf("invalid panel role %q (admin or user)", role)
+	}
+	if role == "user" && tenant == "" {
+		return "", errors.New("a panel login with role user needs its Longarm user")
 	}
 	if len(password) < 10 {
 		return "", errors.New("the password must have at least 10 characters")
 	}
-	if _, err := st.GetUser(name); err == nil && !replace {
-		return "", fmt.Errorf("user %s exists (use --reset to replace the password and TOTP secret)", name)
+	if old, err := st.GetUser(name); err == nil {
+		if !replace {
+			return "", fmt.Errorf("user %s exists (use --reset to replace the password and TOTP secret)", name)
+		}
+		if role == "user" && old.Admin() {
+			return "", fmt.Errorf("%s is a panel administrator's login", name)
+		}
 	}
 	u := &store.User{Name: name, PassHash: hashPassword(password), TOTPSecret: NewTOTPSecret(), CreatedAt: time.Now().UTC()}
+	if role == "user" {
+		u.Role, u.Tenant = role, tenant
+	}
 	return u.TOTPSecret, st.PutUser(u)
 }
 

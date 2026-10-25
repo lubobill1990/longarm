@@ -16,19 +16,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/pkg/sftp"
 	"github.com/spf13/cobra"
 
 	"github.com/lubobill1990/longarm/internal/gc"
 	"github.com/lubobill1990/longarm/internal/longarmd"
 	"github.com/lubobill1990/longarm/internal/platform"
+	"github.com/lubobill1990/longarm/internal/server"
 	"github.com/lubobill1990/longarm/internal/shim"
 	"github.com/lubobill1990/longarm/internal/update"
+	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/version"
 )
 
@@ -53,6 +57,7 @@ func main() {
 	root.AddCommand(localCmds()...)
 	root.AddCommand(updateCmd(), updateWatchCmd(), installHelperCmd())
 	root.AddCommand(uiCmds()...)
+	root.AddCommand(userHelperCmd(), sftpServerCmd())
 	root.AddCommand(runCmd(), joinCmd(), shimCmd(), conhostCmd(), serviceCmd(), gcCmd(), &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",
@@ -127,6 +132,50 @@ func runCmd() *cobra.Command {
 	c.Flags().StringVar(&serviceName, "service-name", defaultServiceName, "service name when started by the service manager")
 	return c
 }
+
+// userHelperCmd is the per-user helper (internal): longarmd starts it as a
+// user's OS account and talks gRPC over its stdin/stdout.
+func userHelperCmd() *cobra.Command {
+	var root string
+	c := &cobra.Command{
+		Use:    userspace.HelperCommand + " --root DIR",
+		Short:  "Serve file and git operations as the current account on stdin/stdout (internal; per-user isolation)",
+		Args:   cobra.NoArgs,
+		Hidden: true,
+		RunE: func(*cobra.Command, []string) error {
+			return server.ServeUserHelper(root, os.Stdin, os.Stdout)
+		},
+	}
+	c.Flags().StringVar(&root, "root", "", "the user's space")
+	return c
+}
+
+// sftpServerCmd serves sftp on stdin/stdout (internal; the built-in sshd
+// runs it as the caller's account with per-user isolation).
+func sftpServerCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    longarmd.SFTPCommand,
+		Short:  "Serve sftp on stdin/stdout (internal)",
+		Args:   cobra.NoArgs,
+		Hidden: true,
+		RunE: func(*cobra.Command, []string) error {
+			srv, err := sftp.NewServer(stdio{})
+			if err != nil {
+				return err
+			}
+			if err := srv.Serve(); err != nil && !errors.Is(err, io.EOF) {
+				return err
+			}
+			return nil
+		},
+	}
+}
+
+type stdio struct{}
+
+func (stdio) Read(b []byte) (int, error)  { return os.Stdin.Read(b) }
+func (stdio) Write(b []byte) (int, error) { return os.Stdout.Write(b) }
+func (stdio) Close() error                { os.Stdin.Close(); return os.Stdout.Close() }
 
 func shimCmd() *cobra.Command {
 	return &cobra.Command{

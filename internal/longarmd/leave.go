@@ -16,6 +16,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/transport"
+	"github.com/lubobill1990/longarm/internal/userspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -128,6 +129,26 @@ func hubLeave(ctx context.Context, addr string, b *pki.Bundle, reason string) (s
 // KillShims kills the shims (and main processes) of running jobs and
 // sessions in dataDir; it returns how many processes it killed.
 func KillShims(dataDir string) int {
+	n := 0
+	roots := []string{dataDir}
+	usersDir := filepath.Join(dataDir, userspace.UsersDir)
+	if cfg, err := LoadConfig(dataDir, nil); err == nil && cfg.Isolation.UsersDir != "" {
+		usersDir = cfg.Isolation.UsersDir
+	}
+	users, _ := os.ReadDir(usersDir)
+	for _, u := range users {
+		if u.IsDir() {
+			roots = append(roots, filepath.Join(usersDir, u.Name()))
+		}
+	}
+	for _, root := range roots {
+		n += killShimsIn(root)
+	}
+	return n
+}
+
+// killShimsIn kills the shims of one space.
+func killShimsIn(dataDir string) int {
 	n := 0
 	for _, kind := range []string{JobsDir, SessionsDir} {
 		ents, _ := os.ReadDir(filepath.Join(dataDir, kind))

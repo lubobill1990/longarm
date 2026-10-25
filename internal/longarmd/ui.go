@@ -15,6 +15,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/server"
+	"github.com/lubobill1990/longarm/internal/supervisor"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -104,7 +105,11 @@ func (a *hubAgent) hubRequest(cmd *pb.HubCommand) {
 			fail(denied("kill"))
 			break
 		}
-		j, err := a.jobs.Kill(ctx, x.KillJob.Id)
+		var j supervisor.Job
+		sp, _, err := a.spaces.FindJob(x.KillJob.Id)
+		if err == nil {
+			j, err = sp.Jobs.Kill(ctx, x.KillJob.Id)
+		}
 		a.audit.LogAs(x.KillJob.By+" via hub", pb.Jobs_Kill_FullMethodName, map[string]any{"job": x.KillJob.Id, "error": errText(err)})
 		if err != nil {
 			fail(jobErr(err))
@@ -118,13 +123,13 @@ func (a *hubAgent) hubRequest(cmd *pb.HubCommand) {
 			fail(denied("reading logs"))
 			break
 		}
-		j, err := a.jobs.Get(r.Id)
+		sp, j, err := a.spaces.FindJob(r.Id)
 		if err != nil {
 			fail(jobErr(err))
 			break
 		}
 		terminal := j.Status.State.Terminal() // before reading: output precedes the terminal status
-		dir, err := a.jobs.Dir(r.Id)
+		dir, err := sp.Jobs.Dir(r.Id)
 		if err != nil {
 			fail(jobErr(err))
 			break
@@ -155,7 +160,11 @@ func (a *hubAgent) hubRequest(cmd *pb.HubCommand) {
 		}
 		spec := jobs.Spec{ID: r.Spec.Id, Name: r.Spec.Name, Argv: r.Spec.Argv, Cwd: r.Spec.Cwd, Env: r.Spec.Env,
 			Labels: r.Spec.Labels, SubmittedBy: r.By, LogMaxBytes: a.logMaxBytes}
-		j, err := a.jobs.Submit(ctx, spec, nil)
+		owner := r.Owner
+		if owner == "" { // an older hub: the requester's name
+			owner = spec.OwnerName()
+		}
+		j, err := a.srv.SubmitAs(ctx, owner, spec, nil)
 		a.audit.LogAs(r.By+" via hub", pb.Jobs_Submit_FullMethodName, map[string]any{
 			"job": spec.ID, "argv": spec.Argv, "cwd": spec.Cwd, "error": errText(err)})
 		if err != nil {

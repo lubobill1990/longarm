@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/supervisor"
+	"github.com/lubobill1990/longarm/internal/userspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -60,14 +62,17 @@ func (ss *sessionsServer) count(name string, d int) {
 	}
 }
 
-func (ss *sessionsServer) toPB(j supervisor.Job) *pb.Session {
+// attachKey counts attached clients per space and session.
+func attachKey(sp *userspace.Space, name string) string { return sp.Root + "\x00" + name }
+
+func (ss *sessionsServer) toPB(sp *userspace.Space, j supervisor.Job) *pb.Session {
 	ss.mu.Lock()
-	n := ss.attached[j.Spec.ID]
+	n := ss.attached[attachKey(sp, j.Spec.ID)]
 	ss.mu.Unlock()
 	out := &pb.Session{
 		Name: j.Spec.ID, State: stateToPB[j.Status.State], Argv: j.Spec.Argv, Cwd: j.Spec.Cwd,
 		Pid: int32(j.Status.PID), CreatedAt: ts(j.Status.CreatedAt), EndedAt: ts(j.Status.EndedAt),
-		Attached: int32(n), LogSize: j.LogSize, CreatedBy: j.Spec.SubmittedBy,
+		Attached: int32(n), LogSize: j.LogSize, CreatedBy: j.Spec.SubmittedBy, Owner: j.Spec.OwnerName(),
 	}
 	if j.Status.ExitCode != nil {
 		out.HasExitCode, out.ExitCode = true, int32(*j.Status.ExitCode)
@@ -75,9 +80,34 @@ func (ss *sessionsServer) toPB(j supervisor.Job) *pb.Session {
 	return out
 }
 
+// sessionSpace finds owner's space holding session name. Shared isolation
+// has one namespace of names: with ownership enforced another user's
+// session is reported as not found (create: "name in use").
+func (ss *sessionsServer) sessionSpace(ctx context.Context, owner, name string, create bool) (*userspace.Space, error) {
+	var sp *userspace.Space
+	var err error
+	if create {
+		sp, err = ss.s.spaceFor(owner)
+	} else if sp = ss.s.Spaces.Lookup(owner); sp == nil {
+		return nil, status.Errorf(codes.NotFound, "no session %q", name)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if j, err := sp.Sessions.Get(name); err == nil && !ss.s.perUser() && ss.s.enforce() && j.Spec.OwnerName() != owner {
+		if create && !j.Status.State.Terminal() {
+			return nil, status.Errorf(codes.AlreadyExists, "session name %q is in use by another user (shared isolation has one namespace)", name)
+		}
+		if !create {
+			return nil, status.Errorf(codes.NotFound, "no session %q", name)
+		}
+	}
+	return sp, nil
+}
+
 // ensure returns the running session, creating it if needed.
-func (ss *sessionsServer) ensure(ctx context.Context, o *pb.AttachOpen, name, by string) (supervisor.Job, bool, error) {
-	mgr := ss.s.Sessions
+func (ss *sessionsServer) ensure(ctx context.Context, sp *userspace.Space, o *pb.AttachOpen, name, owner, by string) (supervisor.Job, bool, error) {
+	mgr := sp.Sessions
 	j, err := mgr.Get(name)
 	if err == nil && !j.Status.State.Terminal() {
 		return j, false, nil
@@ -93,15 +123,29 @@ func (ss *sessionsServer) ensure(ctx context.Context, o *pb.AttachOpen, name, by
 			return j, false, MgrErr(err)
 		}
 	}
+	if ss.s.enforce() {
+		if err := ss.s.checkSessionQuota(sp, owner); err != nil {
+			return j, false, err
+		}
+	}
 	argv := o.Argv
 	if len(argv) == 0 {
 		argv = DefaultShell()
+		if sp.Account != nil && runtime.GOOS != "windows" {
+			if env, err := sp.Env(); err == nil {
+				for _, kv := range env {
+					if sh, ok := strings.CutPrefix(kv, "SHELL="); ok && sh != "" {
+						argv = []string{sh}
+					}
+				}
+			}
+		}
 	}
 	spec := jobs.Spec{
-		ID: name, Name: name, Argv: argv, Cwd: o.Cwd, Env: o.Env, Pty: true, SubmittedBy: by,
+		ID: name, Name: name, Argv: argv, Cwd: o.Cwd, Env: o.Env, Pty: true, SubmittedBy: by, Owner: owner,
 		Cols: uint16(o.GetSize().GetCols()), Rows: uint16(o.GetSize().GetRows()), LogMaxBytes: ss.s.LogMaxBytes,
 	}
-	j, err = mgr.Submit(ctx, spec, o.SecretEnv)
+	j, err = ss.s.Spaces.SubmitSession(ctx, sp, spec, o.SecretEnv)
 	if errors.Is(err, supervisor.ErrAlreadyExists) { // created concurrently by someone else
 		if j, err = mgr.Get(name); err == nil && !j.Status.State.Terminal() {
 			return j, false, nil
@@ -115,11 +159,11 @@ func (ss *sessionsServer) ensure(ctx context.Context, o *pb.AttachOpen, name, by
 
 // waitAttachable waits until the session's shim published its channel (or
 // the session ended).
-func (ss *sessionsServer) waitAttachable(ctx context.Context, name string) (supervisor.Job, error) {
+func (ss *sessionsServer) waitAttachable(ctx context.Context, sp *userspace.Space, name string) (supervisor.Job, error) {
 	deadline := time.After(15 * time.Second)
 	for {
-		ch := ss.s.Sessions.Changed()
-		j, err := ss.s.Sessions.Get(name)
+		ch := sp.Sessions.Changed()
+		j, err := sp.Sessions.Get(name)
 		if err != nil {
 			return j, MgrErr(err)
 		}
@@ -155,19 +199,28 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 	if !jobs.ValidID(name) {
 		return status.Errorf(codes.InvalidArgument, "bad session name %q", name)
 	}
-	j, created, err := ss.ensure(ctx, o, name, id.String())
+	owner, err := ss.s.targetOwner(ctx, o.Owner)
+	if err != nil {
+		return err
+	}
+	var j supervisor.Job
+	var created bool
+	sp, err := ss.sessionSpace(ctx, owner, name, !o.NoCreate)
+	if err == nil {
+		j, created, err = ss.ensure(ctx, sp, o, name, owner, id.String())
+	}
 	ss.s.Audit.Log(id, pb.Sessions_Attach_FullMethodName, map[string]any{
-		"session": name, "created": created, "argv": j.Spec.Argv, "env_keys": keys(o.Env),
+		"session": name, "owner": owner, "created": created, "argv": j.Spec.Argv, "env_keys": keys(o.Env),
 		"secret_keys": keys(o.SecretEnv), "error": errString(err),
 	})
 	if err != nil {
 		return err
 	}
-	if j, err = ss.waitAttachable(ctx, name); err != nil {
+	if j, err = ss.waitAttachable(ctx, sp, name); err != nil {
 		return err
 	}
 	if j.Status.State.Terminal() { // e.g. the command failed to start
-		if err := st.Send(&pb.AttachOutput{Msg: &pb.AttachOutput_Started{Started: &pb.AttachStarted{Session: ss.toPB(j), Created: created}}}); err != nil {
+		if err := st.Send(&pb.AttachOutput{Msg: &pb.AttachOutput_Started{Started: &pb.AttachStarted{Session: ss.toPB(sp, j), Created: created}}}); err != nil {
 			return err
 		}
 		return ss.sendExit(st, j)
@@ -198,9 +251,9 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 	if sz := o.GetSize(); !created && sz.GetCols() > 0 && sz.GetRows() > 0 {
 		conn.WriteFrame(attach.Resize, attach.ResizePayload(uint16(sz.Cols), uint16(sz.Rows)))
 	}
-	ss.count(name, 1)
-	defer ss.count(name, -1)
-	if err := st.Send(&pb.AttachOutput{Msg: &pb.AttachOutput_Started{Started: &pb.AttachStarted{Session: ss.toPB(j), Created: created}}}); err != nil {
+	ss.count(attachKey(sp, name), 1)
+	defer ss.count(attachKey(sp, name), -1)
+	if err := st.Send(&pb.AttachOutput{Msg: &pb.AttachOutput_Started{Started: &pb.AttachStarted{Session: ss.toPB(sp, j), Created: created}}}); err != nil {
 		return err
 	}
 
@@ -248,7 +301,7 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 			case attach.Exit:
 				// Let the supervisor see the final state first, so a client
 				// that lists sessions right after the exit sees it ended.
-				ss.waitTerminal(ctx, name, 2*time.Second)
+				ss.waitTerminal(ctx, sp, name, 2*time.Second)
 				err = st.Send(&pb.AttachOutput{Msg: &pb.AttachOutput_ExitCode{ExitCode: int32(attach.ParseExit(p))}})
 				ended <- errSessionExited
 				return
@@ -271,7 +324,7 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 		}
 		// The channel broke without an exit frame: the shim died or the
 		// session ended right now. Report the final state if we can.
-		if j, werr := ss.waitTerminal(ctx, name, 3*time.Second); werr == nil {
+		if j, werr := ss.waitTerminal(ctx, sp, name, 3*time.Second); werr == nil {
 			return ss.sendExit(st, j)
 		}
 		return status.Errorf(codes.Unavailable, "session %q: attach channel closed: %v", name, err)
@@ -280,11 +333,11 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 
 var errSessionExited = errors.New("session exited")
 
-func (ss *sessionsServer) waitTerminal(ctx context.Context, name string, d time.Duration) (supervisor.Job, error) {
+func (ss *sessionsServer) waitTerminal(ctx context.Context, sp *userspace.Space, name string, d time.Duration) (supervisor.Job, error) {
 	deadline := time.After(d)
 	for {
-		ch := ss.s.Sessions.Changed()
-		j, err := ss.s.Sessions.Get(name)
+		ch := sp.Sessions.Changed()
+		j, err := sp.Sessions.Get(name)
 		if err != nil {
 			return j, err
 		}
@@ -310,27 +363,68 @@ func (ss *sessionsServer) sendExit(st pb.Sessions_AttachServer, j supervisor.Job
 	return st.Send(&pb.AttachOutput{Msg: &pb.AttachOutput_ExitCode{ExitCode: code}})
 }
 
-func (ss *sessionsServer) List(_ context.Context, req *pb.ListSessionsRequest) (*pb.ListSessionsResponse, error) {
+func (ss *sessionsServer) List(ctx context.Context, req *pb.ListSessionsRequest) (*pb.ListSessionsResponse, error) {
 	var states []jobs.State
 	if !req.All {
 		states = []jobs.State{jobs.Preparing, jobs.Running}
 	}
+	c := ss.s.callerOf(ctx)
+	own := IdentityFrom(ctx).Owner()
 	out := &pb.ListSessionsResponse{}
-	for _, j := range ss.s.Sessions.List(states, 0) {
-		out.Sessions = append(out.Sessions, ss.toPB(j))
+	for _, sp := range ss.s.Spaces.All() {
+		for _, j := range sp.Sessions.List(states, 0) {
+			owner := j.Spec.OwnerName()
+			if req.Owner != "" && owner != req.Owner {
+				continue
+			}
+			// Sessions are private (no team sharing); admins see all of
+			// them, everybody else only their own.
+			if ss.s.enforce() && owner != own && !c.Admin {
+				continue
+			}
+			out.Sessions = append(out.Sessions, ss.toPB(sp, j))
+		}
 	}
 	return out, nil
 }
 
-func (ss *sessionsServer) Kill(ctx context.Context, req *pb.KillSessionRequest) (*pb.Session, error) {
-	j, err := ss.s.Sessions.Kill(ctx, req.Name)
-	ss.s.Audit.Log(IdentityFrom(ctx), pb.Sessions_Kill_FullMethodName, map[string]any{"session": req.Name, "error": errString(err)})
+// lookup finds a session the caller may act on (admins: owner's).
+func (ss *sessionsServer) lookup(ctx context.Context, owner, name string) (*userspace.Space, error) {
+	o, err := ss.s.targetOwner(ctx, owner)
 	if err != nil {
+		return nil, err
+	}
+	if !ss.s.enforce() && owner == "" {
+		return ss.s.Spaces.Shared(), nil
+	}
+	sp, err := ss.sessionSpace(ctx, o, name, false)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := sp.Sessions.Get(name); err != nil {
 		return nil, MgrErr(err)
 	}
-	return ss.toPB(j), nil
+	return sp, nil
+}
+
+func (ss *sessionsServer) Kill(ctx context.Context, req *pb.KillSessionRequest) (*pb.Session, error) {
+	sp, err := ss.lookup(ctx, req.Owner, req.Name)
+	var j supervisor.Job
+	if err == nil {
+		j, err = sp.Sessions.Kill(ctx, req.Name)
+		err = MgrErr(err)
+	}
+	ss.s.Audit.Log(IdentityFrom(ctx), pb.Sessions_Kill_FullMethodName, map[string]any{"session": req.Name, "owner": req.Owner, "error": errString(err)})
+	if err != nil {
+		return nil, err
+	}
+	return ss.toPB(sp, j), nil
 }
 
 func (ss *sessionsServer) Logs(req *pb.LogsRequest, st pb.Sessions_LogsServer) error {
-	return StreamLogs(ss.s.Sessions, req, st)
+	sp, err := ss.lookup(st.Context(), req.Owner, req.Id)
+	if err != nil {
+		return err
+	}
+	return StreamLogs(sp.Sessions, req, st)
 }
