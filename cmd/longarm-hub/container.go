@@ -69,19 +69,14 @@ func runBootstrap(ttl time.Duration) error {
 	if err != nil {
 		return err
 	}
-	// stdout: the values once, in a form the deploy scripts can grep from
-	// the container log (they prefer bootstrap.env on the share)
+	// stdout: one greppable line without the code (container logs are
+	// readable by more people than the data dir)
 	fmt.Println(res.LogLine())
-	switch {
-	case res.AdminJoined:
+	if res.AdminJoined {
 		fmt.Fprintf(os.Stderr, "longarm-hub bootstrap: CA %s; an admin has joined (new codes: longarm admin join-code)\n", res.Fingerprint)
-	default:
-		addr := res.HubAddress
-		if addr == "" {
-			addr = "<hub>:7443"
-		}
-		fmt.Fprintf(os.Stderr, "longarm-hub bootstrap: admin join code valid until %s:\n  longarm join %s %s --ca-fingerprint %s\n",
-			res.AdminCodeExpires.UTC().Format(time.RFC3339), addr, res.AdminCode, res.Fingerprint)
+	} else {
+		fmt.Fprintf(os.Stderr, "longarm-hub bootstrap: CA %s; the one-time admin join code (valid until %s) is in %s\n",
+			res.Fingerprint, res.AdminCodeExpires.UTC().Format(time.RFC3339), filepath.Join(cfg.DataDir, hub.BootstrapFile))
 	}
 	return nil
 }
@@ -174,4 +169,32 @@ func shellJoin(args []string) string {
 		q[i] = "'" + strings.ReplaceAll(a, "'", `'"'"'`) + "'"
 	}
 	return strings.Join(q, " ")
+}
+
+// Argument-free names of longarm-hub (symlinks in the image) for
+// `az container exec`, which runs a single program without arguments
+// (deploy/azure README "Operations").
+var execAliases = map[string][]string{
+	"longarm-hub-admin-code": {"join-code", "--role", "admin", "--ttl", "24h"},
+	"longarm-hub-user-add":   {"user", "add"}, // + the name, asked for
+	"longarm-hub-users":      {"user", "ls"},
+}
+
+// aliasArgs maps argv[0] to subcommand arguments (nil: not an alias).
+func aliasArgs(argv0 string) ([]string, error) {
+	name := strings.TrimSuffix(filepath.Base(argv0), ".exe")
+	args, ok := execAliases[name]
+	if !ok {
+		return nil, nil
+	}
+	args = append([]string(nil), args...)
+	if name == "longarm-hub-user-add" {
+		fmt.Fprint(os.Stderr, "panel user name: ")
+		var user string
+		if _, err := fmt.Fscanln(os.Stdin, &user); err != nil || user == "" {
+			return nil, fmt.Errorf("no user name: %v", err)
+		}
+		args = append(args, user)
+	}
+	return args, nil
 }

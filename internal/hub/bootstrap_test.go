@@ -90,13 +90,14 @@ func TestBootstrap(t *testing.T) {
 	if kv["admin_join_code"] != r1.AdminCode || kv["ca_fingerprint"] != r1.Fingerprint || kv["admin_joined"] != "false" {
 		t.Fatalf("bootstrap.env %v", kv)
 	}
-	if l := r1.LogLine(); !strings.HasPrefix(l, BootstrapLogPrefix+" ca_fingerprint="+r1.Fingerprint) || !strings.Contains(l, "admin_join_code="+r1.AdminCode) {
-		t.Fatal(l)
+	if l := r1.LogLine(); !strings.HasPrefix(l, BootstrapLogPrefix+" boot_id="+r1.BootID+" ca_fingerprint="+r1.Fingerprint) ||
+		strings.Contains(l, r1.AdminCode) || len(r1.BootID) != 16 {
+		t.Fatal("log line (never the code):", l)
 	}
 
 	// a restart keeps the CA and the still valid code
 	r2, err := Bootstrap(cfg, time.Hour, nil)
-	if err != nil || r2.NewCA || r2.AdminCode != r1.AdminCode || r2.Fingerprint != r1.Fingerprint {
+	if err != nil || r2.NewCA || r2.AdminCode != r1.AdminCode || r2.Fingerprint != r1.Fingerprint || r2.BootID == r1.BootID {
 		t.Fatalf("second: %+v %v", r2, err)
 	}
 
@@ -125,9 +126,38 @@ func TestBootstrap(t *testing.T) {
 		t.Fatalf("bootstrap.env after join %v", kv)
 	}
 
-	// half a CA is never replaced
+	// no new CA next to a database with nodes (lost or wrong share): half a
+	// CA, or none at all
 	os.Remove(filepath.Join(root, "share", CADir, pki.CAKeyFile))
-	if _, err := Bootstrap(cfg, time.Hour, nil); err == nil || !strings.Contains(err.Error(), "incomplete") {
-		t.Fatalf("incomplete CA: %v", err)
+	if _, err := Bootstrap(cfg, time.Hour, nil); err == nil || !strings.Contains(err.Error(), "has 1 nodes") {
+		t.Fatalf("incomplete CA with nodes: %v", err)
+	}
+	os.RemoveAll(filepath.Join(root, "share", CADir))
+	if _, err := Bootstrap(cfg, time.Hour, nil); err == nil || !strings.Contains(err.Error(), "ca import") {
+		t.Fatalf("no CA with nodes: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "share", CADir)); err == nil {
+		t.Fatal("a CA was created")
+	}
+
+	// half a CA on a hub that never issued anything (an interrupted first
+	// start): set aside, a new CA
+	fresh := filepath.Join(root, "fresh")
+	t.Setenv(EnvDB, filepath.Join(fresh, "hub.db"))
+	t.Setenv("LONGARM_HUB_DATA_DIR", fresh)
+	cfg2, err := LoadConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InitCA(fresh); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(filepath.Join(fresh, CADir, pki.CAKeyFile))
+	r5, err := Bootstrap(cfg2, time.Hour, nil)
+	if err != nil || !r5.NewCA || r5.AdminCode == "" {
+		t.Fatalf("interrupted first start: %+v %v", r5, err)
+	}
+	if m, _ := filepath.Glob(filepath.Join(fresh, CADir+".incomplete-*")); len(m) != 1 {
+		t.Fatalf("incomplete CA not kept aside: %v", m)
 	}
 }

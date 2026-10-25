@@ -13,10 +13,12 @@ import (
 // win over hub.toml, so one image runs with a generated or no hub.toml.
 // LONGARM_HUB_DATA_DIR is older and only a default (hub.toml data_dir wins).
 const (
-	EnvDB        = "LONGARM_HUB_DB"         // db_path
-	EnvListen    = "LONGARM_HUB_LISTEN"     // listen
-	EnvHTTP      = "LONGARM_HUB_HTTP"       // http
-	EnvPublicURL = "LONGARM_HUB_PUBLIC_URL" // public_url
+	EnvDB        = "LONGARM_HUB_DB"          // db_path
+	EnvListen    = "LONGARM_HUB_LISTEN"      // listen
+	EnvHTTP      = "LONGARM_HUB_HTTP"        // http
+	EnvPublicURL = "LONGARM_HUB_PUBLIC_URL"  // public_url
+	EnvRelayUDP  = "LONGARM_HUB_RELAY_UDP"   // relay_udp
+	EnvSTUN2     = "LONGARM_HUB_RELAY_STUN2" // relay_stun2
 	// EnvAdvertise is the host (or host:port) nodes dial, e.g. the FQDN of a
 	// cloud container: public_addr = host:<listen port>, and host joins the
 	// certificate's SANs (hosts).
@@ -27,7 +29,8 @@ func (c *Config) applyEnv() error {
 	for _, kv := range []struct {
 		env string
 		dst *string
-	}{{EnvDB, &c.DBPath}, {EnvListen, &c.Listen}, {EnvHTTP, &c.HTTP}, {EnvPublicURL, &c.PublicURL}} {
+	}{{EnvDB, &c.DBPath}, {EnvListen, &c.Listen}, {EnvHTTP, &c.HTTP}, {EnvPublicURL, &c.PublicURL},
+		{EnvRelayUDP, &c.RelayUDP}, {EnvSTUN2, &c.RelaySTUN2}} {
 		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
 			*kv.dst = v
 		}

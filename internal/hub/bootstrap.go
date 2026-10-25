@@ -13,6 +13,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -35,6 +36,23 @@ type BootstrapResult struct {
 	AdminCode        string
 	AdminCodeExpires time.Time
 	AdminJoined      bool
+	// BootID is new on every run: the deploy scripts wait for a new one
+	// after a restart, so they never print a previous start's values.
+	BootID string
+}
+
+// countNodes is the number of nodes in the database at path (0 when new).
+func countNodes(path string) (int, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return 0, err
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer st.Close()
+	nodes, err := st.Nodes()
+	return len(nodes), err
 }
 
 // Bootstrap prepares a hub for its first (or any) start without operator
@@ -49,20 +67,40 @@ func Bootstrap(cfg *Config, codeTTL time.Duration, log *slog.Logger) (*Bootstrap
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return nil, err
 	}
-	res := &BootstrapResult{HubAddress: cfg.PublicAddr}
+	res := &BootstrapResult{HubAddress: cfg.PublicAddr, BootID: randomToken()[:16]}
 	caDir := filepath.Join(cfg.DataDir, CADir)
 	_, crtErr := os.Stat(filepath.Join(caDir, pki.CACertFile))
 	_, keyErr := os.Stat(filepath.Join(caDir, pki.CAKeyFile))
-	switch {
-	case errors.Is(crtErr, os.ErrNotExist) && errors.Is(keyErr, os.ErrNotExist):
+	for _, err := range []error{crtErr, keyErr} {
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	}
+	if crtErr != nil || keyErr != nil {
+		// A CA is only made for a hub that never issued anything. A database
+		// with nodes next to a missing CA means the data dir was lost or is
+		// the wrong one: a new CA would silently cut off every node.
+		n, err := countNodes(cfg.DatabasePath())
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			return nil, fmt.Errorf("the database has %d nodes but %s has no complete CA (%s + %s): restore the CA (longarm-hub ca import) instead of creating a new one",
+				n, caDir, pki.CACertFile, pki.CAKeyFile)
+		}
+		if crtErr == nil || keyErr == nil {
+			// half a CA and nothing issued: an interrupted first start
+			old := fmt.Sprintf("%s.incomplete-%d", caDir, time.Now().Unix())
+			if err := os.Rename(caDir, old); err != nil {
+				return nil, err
+			}
+			log.Warn("bootstrap: moved an incomplete CA aside", "to", old)
+		}
 		if _, err := InitCA(cfg.DataDir); err != nil {
 			return nil, fmt.Errorf("init CA: %w", err)
 		}
 		res.NewCA = true
 		log.Info("bootstrap: created a new CA", "dir", caDir)
-	case crtErr != nil || keyErr != nil:
-		// half a CA: never overwrite what might be the fleet's only key
-		return nil, fmt.Errorf("CA in %s is incomplete (%s and %s must both exist): %v %v", caDir, pki.CACertFile, pki.CAKeyFile, crtErr, keyErr)
 	}
 
 	h, err := Open(cfg, log)
@@ -108,33 +146,38 @@ func Bootstrap(cfg *Config, codeTTL time.Duration, log *slog.Logger) (*Bootstrap
 func (r *BootstrapResult) env() []byte {
 	var b bytes.Buffer
 	b.WriteString("# longarm-hub bootstrap (rewritten on every container start)\n")
-	for _, kv := range r.pairs() {
+	for _, kv := range r.pairs(true) {
 		fmt.Fprintf(&b, "%s=%s\n", kv[0], kv[1])
 	}
 	return b.Bytes()
 }
 
-// LogLine is the single-line form (BootstrapLogPrefix key=value ...).
+// LogLine is the single-line form (BootstrapLogPrefix key=value ...) for
+// the container log. It never has the join code: an Azure container's log
+// needs less to read (Reader) than the file share (the storage key).
 func (r *BootstrapResult) LogLine() string {
 	parts := []string{BootstrapLogPrefix}
-	for _, kv := range r.pairs() {
+	for _, kv := range r.pairs(false) {
 		parts = append(parts, kv[0]+"="+kv[1])
 	}
 	return strings.Join(parts, " ")
 }
 
-func (r *BootstrapResult) pairs() [][2]string {
+func (r *BootstrapResult) pairs(withCode bool) [][2]string {
 	exp := ""
 	if !r.AdminCodeExpires.IsZero() {
 		exp = r.AdminCodeExpires.UTC().Format(time.RFC3339)
 	}
-	return [][2]string{
+	kv := [][2]string{
+		{"boot_id", r.BootID},
 		{"ca_fingerprint", r.Fingerprint},
 		{"hub_address", r.HubAddress},
 		{"admin_joined", fmt.Sprint(r.AdminJoined)},
-		{"admin_join_code", r.AdminCode},
-		{"admin_join_code_expires", exp},
 	}
+	if withCode {
+		kv = append(kv, [2]string{"admin_join_code", r.AdminCode})
+	}
+	return append(kv, [2]string{"admin_join_code_expires", exp})
 }
 
 // readKV reads key=value lines (missing file = empty).

@@ -69,6 +69,12 @@ func main() {
 	root.PersistentFlags().StringVar(&configPath, "config", os.Getenv("LONGARM_HUB_CONFIG"), "hub.toml (env LONGARM_HUB_CONFIG)")
 	root.PersistentFlags().StringVar(&dataDir, "data-dir", "", "data directory (overrides hub.toml data_dir; env LONGARM_HUB_DATA_DIR)")
 	root.AddCommand(serveCmd(), caCmd(), userCmd(), joinCodeCmd(), releaseCmd(), issueCmd(), healthcheckCmd(), bootstrapCmd(), containerCmd())
+	if args, err := aliasArgs(os.Args[0]); err != nil {
+		fmt.Fprintln(os.Stderr, "longarm-hub:", err)
+		os.Exit(1)
+	} else if args != nil {
+		root.SetArgs(args)
+	}
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "longarm-hub:", err)
 		os.Exit(1)

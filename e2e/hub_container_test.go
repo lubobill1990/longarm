@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,6 +86,21 @@ func (c *containerHub) kill(cmd *exec.Cmd, done chan struct{}) {
 	}
 }
 
+// bootstrapFile is bootstrap.env on the "share".
+func (c *containerHub) bootstrapFile() map[string]string {
+	b, err := os.ReadFile(filepath.Join(c.share, "bootstrap.env"))
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	m := map[string]string{}
+	for _, l := range strings.Split(string(b), "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(l), "="); ok && !strings.HasPrefix(k, "#") {
+			m[k] = v
+		}
+	}
+	return m
+}
+
 func (c *containerHub) healthy(hubBin string) bool {
 	hc := exec.Command(hubBin, "healthcheck")
 	hc.Env = c.env()
@@ -136,12 +152,14 @@ func TestHubContainerStart(t *testing.T) {
 
 	b := bootstrapLine(t, out.String())
 	want := fmt.Sprintf("127.0.0.1:%d", c.port)
-	if b["hub_address"] != want || len(b["ca_fingerprint"]) != 64 || b["admin_join_code"] == "" || b["admin_joined"] != "false" {
+	if b["hub_address"] != want || len(b["ca_fingerprint"]) != 64 || b["admin_joined"] != "false" || b["boot_id"] == "" {
 		t.Fatalf("bootstrap %v", b)
 	}
-	envFile, err := os.ReadFile(filepath.Join(c.share, "bootstrap.env"))
-	if err != nil || !strings.Contains(string(envFile), "admin_join_code="+b["admin_join_code"]+"\n") {
-		t.Fatalf("bootstrap.env: %s %v", envFile, err)
+	// the code only on the share, never in the log
+	bf := c.bootstrapFile()
+	code := bf["admin_join_code"]
+	if code == "" || bf["boot_id"] != b["boot_id"] || bf["ca_fingerprint"] != b["ca_fingerprint"] || strings.Contains(out.String(), code) {
+		t.Fatalf("bootstrap.env %v / log:\n%s", bf, out.String())
 	}
 	for _, f := range []string{"hub.toml", "ca/ca.crt", "ca/ca.key", "tls/hub/node.crt"} {
 		if _, err := os.Stat(filepath.Join(c.share, f)); err != nil {
@@ -166,7 +184,7 @@ func TestHubContainerStart(t *testing.T) {
 	// the admin's laptop: the printed command
 	e := &env{t: t, root: c.root}
 	laptop := filepath.Join(c.root, "laptop")
-	r := e.longarm(laptop, "join", b["hub_address"], b["admin_join_code"], "--ca-fingerprint", b["ca_fingerprint"], "--name", "laptop")
+	r := e.longarm(laptop, "join", b["hub_address"], code, "--ca-fingerprint", b["ca_fingerprint"], "--name", "laptop")
 	if r.code != 0 || !strings.Contains(r.stdout+r.stderr, "joined") {
 		t.Fatalf("join: %+v", r)
 	}
@@ -174,8 +192,28 @@ func TestHubContainerStart(t *testing.T) {
 		t.Fatal("no worker code")
 	}
 	// the code was one-time
-	if r := e.longarm(filepath.Join(c.root, "eve"), "join", b["hub_address"], b["admin_join_code"], "--ca-fingerprint", b["ca_fingerprint"]); r.code == 0 {
+	if r := e.longarm(filepath.Join(c.root, "eve"), "join", b["hub_address"], code, "--ca-fingerprint", b["ca_fingerprint"]); r.code == 0 {
 		t.Fatal("admin code reused")
+	}
+
+	// the argument-free names for az container exec (symlinks in the image)
+	alias := func(name, stdin string) string {
+		p := filepath.Join(c.root, exeName(name))
+		copyBin(t, hubBin, p)
+		cmd := exec.Command(p)
+		cmd.Env, cmd.Stdin = c.env(), strings.NewReader(stdin)
+		b, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, b)
+		}
+		return string(b)
+	}
+	if out := alias("longarm-hub-admin-code", ""); !regexp.MustCompile(`(?m)^[0-9A-Z]{3}-[0-9A-Z]{3}\r?$`).MatchString(out) {
+		t.Fatalf("admin code alias: %s", out)
+	}
+	alias("longarm-hub-user-add", "ops\na long passphrase\n")
+	if out := alias("longarm-hub-users", ""); !strings.Contains(out, "ops") {
+		t.Fatalf("users alias: %s", out)
 	}
 
 	// replace the container: same share, same (restored) database
@@ -183,8 +221,10 @@ func TestHubContainerStart(t *testing.T) {
 	_, out2, done2 := c.start(hubBin)
 	c.waitHealthy(hubBin, out2, done2)
 	b2 := bootstrapLine(t, out2.String())
-	if b2["ca_fingerprint"] != b["ca_fingerprint"] || b2["admin_joined"] != "true" || b2["admin_join_code"] != "" {
-		t.Fatalf("restart bootstrap %v", b2)
+	bf2 := c.bootstrapFile()
+	if b2["ca_fingerprint"] != b["ca_fingerprint"] || b2["admin_joined"] != "true" || bf2["admin_join_code"] != "" ||
+		b2["boot_id"] == b["boot_id"] || bf2["boot_id"] != b2["boot_id"] {
+		t.Fatalf("restart bootstrap %v / %v", b2, bf2)
 	}
 	if out := e.mustLongarm(laptop, "admin", "join-code", "--role", "worker"); strings.TrimSpace(out) == "" {
 		t.Fatal("admin cert after restart")
