@@ -155,6 +155,7 @@ func Open(ctx context.Context, cfg Config) (*Spaces, error) {
 			return nil, err
 		}
 		s.cgroup = s.cgroupUsable()
+		s.checkProcHidden()
 	}
 	shared, err := s.openShared()
 	if err != nil {
@@ -394,6 +395,28 @@ func (s *Spaces) prepareUsersDir() error {
 		return fmt.Errorf("users dir: %w", err)
 	}
 	return checkTraversable(dir)
+}
+
+// checkProcHidden warns when other users' processes (command lines!) are
+// visible in /proc (Linux without hidepid): docs/security.md.
+func (s *Spaces) checkProcHidden() {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	b, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		return
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		f := strings.Fields(l)
+		if len(f) >= 4 && f[1] == "/proc" && f[2] == "proc" {
+			if strings.Contains(f[3], "hidepid=") && !strings.Contains(f[3], "hidepid=0") && !strings.Contains(f[3], "hidepid=off") {
+				return
+			}
+		}
+	}
+	s.log.Warn("per-user isolation: /proc shows every process's command line to every account; mount it with hidepid=invisible " +
+		"(mount -o remount,hidepid=invisible /proc, and in /etc/fstab) - see docs/security.md")
 }
 
 // cgroupUsable reports whether per-user jobs can get cgroups.

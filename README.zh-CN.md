@@ -160,6 +160,34 @@ claude mcp add longarm -- longarm mcp
 其他内容——不依赖 hub 的 worker、Tailscale/Headscale、中继、托盘应用、自更新、
 安装包、防火墙——都在[使用参考](docs/usage.md)中。
 
+## 与团队共享一个 hub
+
+多个人可以共享同一个 hub 和它的 worker，而彼此看不到对方的工作（威胁模型和
+局限见 [docs/security.md](docs/security.md)）：
+
+```sh
+# 在管理员的笔记本上：每人一个用户（可选团队、配额）
+longarm admin user add alice --team web --max-jobs 8 --max-mem-gb-per-worker 64 --panel
+longarm admin user add bob   --team web
+#   -> 每个用户一个加入码；在他们的笔记本上：longarm join hub.example.com:7443 <code> ...
+longarm admin user code alice --device alice-desktop   # alice 的另一台设备
+
+# 多人共用的 worker：按用户隔离操作系统账户（以 LocalSystem / root 运行）
+sudo longarmd service install --isolation per-user      # 或 MSI ISOLATION=per-user、
+                                                        # deb LONGARM_ISOLATION=per-user
+```
+
+- 每个作业、会话、文件、端口转发和镜像都属于创建它的证书所对应的用户。用户只
+  能看到自己的作业和会话，管理员能看到全部；`longarm run --share team -- ...`
+  让团队成员可以读取作业输出。
+- 在 `[isolation] mode = "per-user"` 的 worker 上，每个用户的作业、会话、shell、
+  `exec`、文件传输和 git 都以该用户专属的本地账户（`la-alice`）运行：即使在自己的
+  作业里也读不到别人的文件、代码、日志、密钥和进程内存，端口转发也只能到达自己
+  的开发服务器。支持 Windows 和 Linux；macOS worker 保持共享模式。
+- 配额（活动作业数、预留内存——全集群和单个 worker——会话数、单作业内存/CPU
+  限制）由调度器和每个 worker 执行。`longarm admin user disable|remove [--purge]`
+  可以停用用户（并在 worker 上删除其数据和账户）。
+
 ## 安全模型
 
 - **全程 mTLS。** 每个节点都持有一张由集群自有 CA 签发的证书，身份为
