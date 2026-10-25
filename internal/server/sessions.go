@@ -95,12 +95,10 @@ func (ss *sessionsServer) sessionSpace(ctx context.Context, owner, name string, 
 		return nil, err
 	}
 	if j, err := sp.Sessions.Get(name); err == nil && !ss.s.perUser() && ss.s.enforce() && j.Spec.OwnerName() != owner {
-		if create && !j.Status.State.Terminal() {
-			return nil, status.Errorf(codes.AlreadyExists, "session name %q is in use by another user (shared isolation has one namespace)", name)
+		if create { // even an ended one: re-creating would delete its transcript
+			return nil, status.Errorf(codes.AlreadyExists, "session name %q is in use by another user (shared isolation has one namespace of names)", name)
 		}
-		if !create {
-			return nil, status.Errorf(codes.NotFound, "no session %q", name)
-		}
+		return nil, status.Errorf(codes.NotFound, "no session %q", name)
 	}
 	return sp, nil
 }

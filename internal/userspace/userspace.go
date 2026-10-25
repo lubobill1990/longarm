@@ -25,6 +25,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -64,6 +65,8 @@ type Config struct {
 	Log *slog.Logger
 	// Prepare readies the worktree of a workspace job in the shared space.
 	Prepare func(ctx context.Context, dir jobs.Dir, spec jobs.Spec, secrets map[string]string, log io.Writer) (string, error)
+	// ShimCommand overrides the shim (tests); default `<longarmd> shim <dir>`.
+	ShimCommand func(dir string) *exec.Cmd
 }
 
 // Space is the data of one user (or the shared space).
@@ -191,7 +194,8 @@ func (s *Spaces) Changed() <-chan struct{} {
 }
 
 func (s *Spaces) newManager(dir, kind string, prepare func(context.Context, jobs.Dir, jobs.Spec, map[string]string, io.Writer) (string, error), mode os.FileMode) (*supervisor.Manager, error) {
-	o := supervisor.Options{JobsDir: dir, Logger: s.log, Prepare: prepare, OnChange: s.notify, DirMode: mode}
+	o := supervisor.Options{JobsDir: dir, Logger: s.log, Prepare: prepare, OnChange: s.notify, DirMode: mode,
+		ShimCommand: s.cfg.ShimCommand}
 	if kind == SessionsDir {
 		o.Logger = s.log.With("kind", "session")
 	}
