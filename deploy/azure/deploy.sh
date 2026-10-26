@@ -96,7 +96,9 @@ done
 [[ $stuck_timeout =~ ^[0-9]+$ ]] || die "--stuck-timeout: seconds"
 [[ $poll =~ ^[0-9]+$ ]] || die "LONGARM_DEPLOY_POLL_SECONDS: seconds"
 ! $build_in_acr || [[ -z $image ]] || die "--build-in-acr builds the image: drop --image"
-[[ -z $stun_servers || $stun_servers =~ ^[A-Za-z0-9.:,\[\]-]+$ ]] || die "--stun-servers: host:port,host:port or none"
+# host:port, [v6]:port; "]" first in the bracket expression
+stun_re='^[][A-Za-z0-9.:,-]+$'
+[[ -z $stun_servers || $stun_servers =~ $stun_re ]] || die "--stun-servers: host:port,host:port or none"
 [[ -z $tailscale_secret_file || -r $tailscale_secret_file ]] || die "--tailscale-secret-file: can't read $tailscale_secret_file"
 rg=${rg:-$name-rg}
 

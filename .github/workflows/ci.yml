@@ -128,7 +128,11 @@ jobs:
       - name: PSScriptAnalyzer (deploy/azure/deploy.ps1)
         shell: pwsh
         run: |
-          Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+          # the PowerShell Gallery fails now and then ("No match was found"): retry
+          for ($i = 1; ; $i++) {
+            try { Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force -ErrorAction Stop; break }
+            catch { if ($i -ge 4) { throw }; Write-Warning "Install-Module: $_ (retry $i)"; Start-Sleep -Seconds (15 * $i) }
+          }
           $r = Invoke-ScriptAnalyzer -Path deploy/azure/deploy.ps1 -Settings deploy/azure/PSScriptAnalyzerSettings.psd1
           $r | Format-Table RuleName, Severity, Line, Message -AutoSize -Wrap
           if ($r) { throw "PSScriptAnalyzer: $(@($r).Count) findings" }
