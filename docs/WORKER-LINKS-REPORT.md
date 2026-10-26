@@ -1,4 +1,3 @@
-| CI on the PR (ubuntu, windows, macos, lint, azure template, image smoke) | all green; ubuntu needed reruns for unrelated flakes (`TestHubContainerStart` "text file busy", `TestAzureDeployScripts` missing `bootstrap.env`) and once for the intermittent `TestPerUserLinks` hang below; final run: `--- PASS: TestPerUserLinks (36.41s)` on Linux as root |
 # WORKER-LINKS report: port links between workers (joint debugging)
 
 A user's processes on worker A reach a loopback port of worker B as
