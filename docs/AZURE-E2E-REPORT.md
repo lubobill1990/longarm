@@ -55,7 +55,7 @@ Results:
 | Where | Result |
 |---|---|
 | this machine (Windows 11, elevated) | `go test -count=1 ./...`: all 31 packages ok in 267 s (e2e 247 s); `TestAzureDeployScripts` deploy.sh / pwsh / powershell 5.1 pass; `TestPerUserServiceDataDirWindows` and the Windows data dir ACL tests pass (temporary service removed); vet + e2e test binary for 6 targets; gofmt; shellcheck 0.11; PSScriptAnalyzer 1.24 (0 findings); bicep 0.48.1 build (identical) + lint (clean); acirules ok; privacy-check ok |
-| CI (GitHub-hosted) | lint, azure (bicep, ACI rules, PSScriptAnalyzer), image smoke (+ `acr` stage) and the test matrix on ubuntu (incl. per-user + loopguard as root), windows (incl. administrator) and macos: green on `8120b0a`; later runs: see the PR checks (flaky tests seen and re-run: `TestE2E/job_logs_wait_exit_code`, `TestUITraySmoke`, macOS `TestSelfUpdate` - also flaky on main) |
+| CI (GitHub-hosted) | lint, azure (bicep, ACI rules, PSScriptAnalyzer), image smoke (+ `acr` stage) and the test matrix on ubuntu (incl. per-user + loopguard as root), windows (incl. administrator) and macos: green on `5539dcf` (the report commit), incl. as root on ubuntu `TestRulesetNftCheck`, the data dir tests, `TestPerUserIsolation` with the loopback checks and `TestPerUserRootDataDirDefault`, and as administrator on windows the data dir ACL tests and `TestPerUserServiceDataDirWindows` (flaky tests seen earlier and re-run: `TestE2E/job_logs_wait_exit_code`, `TestUITraySmoke`, macOS `TestSelfUpdate` - also flaky on main) |
 
 ## Design decisions and deviations
 
