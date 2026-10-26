@@ -38,7 +38,7 @@ cat "$d/token.txt"
 	t.Setenv(EnvAz, path)
 	f := &fakeAz{dir: dir}
 	f.set("type.txt", "user")
-	f.set("token.txt", "eyJ0b2tlbg.eyJ1c2VyIjoxfQ.c2ln")
+	f.set("token.txt", "fake-access-token") // opaque to longarm login; gitleaks flags JWT-shaped strings
 	return f
 }
 
@@ -62,7 +62,7 @@ func TestAzAccessToken(t *testing.T) {
 
 	// a user: the delegated scope, in the hub's tenant
 	tok, err := azAccessToken(ctx, info, "")
-	if err != nil || tok != "eyJ0b2tlbg.eyJ1c2VyIjoxfQ.c2ln" {
+	if err != nil || tok != "fake-access-token" {
 		t.Fatalf("token %q %v", tok, err)
 	}
 	if call := az.lastCall(t); !strings.Contains(call, "get-access-token --scope api://cccc/longarm.connect") || !strings.Contains(call, "--tenant tttt") {

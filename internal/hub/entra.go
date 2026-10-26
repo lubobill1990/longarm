@@ -23,6 +23,9 @@ import (
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
+// maxAutoDeviceName bounds a derived device name (<user>-<host>).
+const maxAutoDeviceName = 56
+
 // Sign-in with Microsoft Entra ID (docs/usage.md, docs/security.md): the
 // hub vouches for a user after verifying a Microsoft token. `longarm
 // login` sends the access token of the user's `az login` (Enroll.EntraJoin)
@@ -466,8 +469,14 @@ func (s *enrollServer) EntraJoin(ctx context.Context, req *pb.EntraJoinRequest) 
 	name, explicit := req.Name, req.Name != ""
 	if !explicit {
 		name = user
-		if host := sanitizeName(req.Hostname); host != "" {
+		// the short host name: CI runners and cloud VMs have long FQDNs
+		host, _, _ := strings.Cut(req.Hostname, ".")
+		if host := sanitizeName(host); host != "" {
 			name = user + "-" + host
+		}
+		// room for a collision suffix (-2, -3, ...) within pki.ValidName's 63
+		if len(name) > maxAutoDeviceName {
+			name = strings.TrimRight(name[:maxAutoDeviceName], "-._")
 		}
 	}
 	if !pki.ValidName(name) {
