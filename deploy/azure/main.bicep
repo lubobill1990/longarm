@@ -87,6 +87,23 @@ param registryPassword string = ''
 @secure()
 param tailscaleOAuthSecret string = ''
 
+@description('Optional: sign-in with Microsoft Entra ID (docs/usage.md "Sign in with Microsoft Entra ID"): the directory (tenant) ID. Empty: no Entra sign-in.')
+param entraTenantId string = ''
+
+@description('Entra sign-in: the app registration\'s application (client) ID.')
+param entraClientId string = ''
+
+@description('Entra sign-in: admins, comma-separated (user@example.com, *@example.com or object IDs).')
+param entraAdmins string = ''
+
+@description('Entra sign-in for the web panel: spa (no credential; SPA redirect URI https://<fqdn>/auth/spa-callback), confidential (storageAuth identity: the managed identity as a federated credential; Web redirect URI https://<fqdn>/auth/callback) or off.')
+@allowed([
+  'spa'
+  'confidential'
+  'off'
+])
+param entraWeb string = 'spa'
+
 var sizes = {
   small: {
     cpu: 1
@@ -295,6 +312,20 @@ var hubEnv = concat(
       )
     : [],
   empty(tailscaleOAuthSecret) ? [] : [{ name: 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', secureValue: tailscaleOAuthSecret }],
+  empty(entraTenantId)
+    ? []
+    : concat(
+        [
+          { name: 'LONGARM_HUB_ENTRA_TENANT_ID', value: entraTenantId }
+          { name: 'LONGARM_HUB_ENTRA_CLIENT_ID', value: entraClientId }
+          { name: 'LONGARM_HUB_ENTRA_WEB', value: entraWeb }
+        ],
+        empty(entraAdmins) ? [] : [{ name: 'LONGARM_HUB_ENTRA_ADMINS', value: entraAdmins }],
+        // the managed identity (AZURE_CLIENT_ID) redeems the panel's codes
+        entraWeb == 'confidential' && !useKey
+          ? [{ name: 'LONGARM_HUB_ENTRA_CLIENT_ASSERTION', value: 'managed-identity' }]
+          : []
+      ),
   // self = the hub's own STUN ports; it drops them once it sees that ACI
   // source-NATs them (internal/relay snatVerdict). Always set: deploy.sh
   // reads it back on a re-run.

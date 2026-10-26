@@ -231,7 +231,7 @@ func (s *fleetServer) Whoami(ctx context.Context, _ *pb.WhoamiRequest) (*pb.Whoa
 	s.h.mu.Lock()
 	if resp.Tenancy = s.h.tenancyOnLocked(); resp.Tenancy && c.id.Role != pki.RoleWorker {
 		if t := s.h.tenants[c.id.Owner()]; t != nil {
-			resp.Teams, resp.CanShare = t.u.Teams, t.u.CanShare
+			resp.Teams, resp.CanShare, resp.Upn = t.u.Teams, t.u.CanShare, t.u.Upn
 		}
 		if q := s.h.quotaLocked(c.id.Owner()); !tenancy.QuotaEmpty(q) {
 			resp.Quota = q

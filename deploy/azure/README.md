@@ -120,7 +120,12 @@ temporary parameters file, never on a command line.
   `LONGARM_HUB_DB`, `LONGARM_HUB_DATA_DIR`, `LONGARM_HUB_CONFIG`. Your own
   settings (auto_approve, certificate TTLs, scheduler, tailnet, release
   public key) go into `hub.toml` on the share; restart the container group
-  afterwards (`az container restart -g <rg> -n <name>`).
+  afterwards (`az container restart -g <rg> -n <name>`). Sign-in with
+  Microsoft Entra ID: the template parameters `entraTenantId`,
+  `entraClientId`, `entraAdmins` and `entraWeb` set the `LONGARM_HUB_ENTRA_*`
+  variables (docs/usage.md "Sign in with Microsoft Entra ID"; `entraWeb =
+  confidential` with `storageAuth = identity` redeems codes with the managed
+  identity: `identityPrincipalId` is the federated credential's subject).
 - **Health**: `longarm-hub healthcheck` (GET `/healthz` on 127.0.0.1:7480) is
   the liveness and readiness probe.
 - **Stop** (restart, upgrade, ACI maintenance): SIGTERM reaches Litestream
