@@ -460,6 +460,85 @@ lines and hashes; `verify --file` checks a copy, which may start
 mid-chain). Records written while longarmd was stopped don't exist, and
 what a sink lost to an overflow is only counted.
 
+## End-to-end trust (the hub is not trusted with access)
+
+Everything above trusts the hub: its CA decides who a certificate belongs
+to, so whoever holds the CA key - the hub's operators, an admin with access
+to its host or storage, a thief of its database replica - can mint a
+certificate for any name ("alice", an admin, a worker) and use it.
+**End-to-end trust** removes that power: workers accept only devices that a
+**user key** endorsed, and clients accept only workers a user key
+endorsed. User keys never leave the users' devices; the hub only carries
+the proof and can't produce one.
+
+**How it works** (`internal/pki/trust.go`):
+
+- Every node (worker, client device) has a long-lived Ed25519 **node key**
+  (`<data>/trust/node.key`, `<config>/trust/node.key`), created at `join`.
+- Its certificate carries an extension with the node key's signature over
+  the certificate's TLS key (**binding** - the extension can't be moved to
+  another certificate) and, once a user endorsed it, the **endorsement**:
+  the user key's signature over the node key, the node's kind (`worker` or
+  `device`), its name and the user. Nodes put it into their CSRs; the hub
+  checks the binding and copies it unchanged into the certificate (join and
+  every renewal).
+- A worker with trusted users in `<data>/trust/trust.toml` checks every
+  client certificate in the TLS handshake: endorsed by the pinned key of the
+  certificate's user, as a device, under the certificate's name, not a
+  denied node key. A client with `require_workers = true` checks workers the
+  same way (its own user key and the users it added). Refusals are audited
+  (`trust/denied`).
+- With trusted users, the hub session's default `[hub] remote_jobs` is
+  `"none"` (logs are users' data); set it explicitly to allow more.
+
+**Setting it up**
+
+```sh
+# alice's laptop: a user key, this device endorsed (the certificate is renewed to carry it)
+longarm trust init                        # prints alice's user key line
+# every worker alice may use (its owner):
+longarmd trust add-user <alice's user key line>
+# alice's workers, so her clients can verify them:
+longarmd trust request                    # on the worker
+longarm trust endorse <request>           # on alice's laptop
+longarmd trust accept <endorsement>       # on the worker (renewed within seconds)
+longarm trust require on                  # on alice's devices, once her workers are endorsed
+# alice's second device: longarm trust request there, longarm trust endorse <it> on the
+# laptop, longarm trust accept <endorsement> there (or move the user key: export-key / import-key)
+```
+
+**What it protects against**
+
+| Who | Without | With end-to-end trust |
+|---|---|---|
+| hub admin with an admin certificate | exec, files, sessions, forwards on every worker | refused by workers that don't trust the admin's own user key |
+| anyone holding the CA key (hub operator, stolen replica) | mint "alice" or a worker and use it | minted certificates carry no endorsement: refused; a minted worker is refused by clients that require trust |
+| the hub's relay / a network position plus the CA key | impersonate a worker to clients (MITM) | the client refuses the unendorsed certificate |
+| the hub session (panel, `longarm admin logs/kill/run`) | control by default | none by default |
+
+**What it does not change**
+
+- The hub can still **deny**: revoke certificates, disable users, refuse
+  to renew. It can't grant.
+- The hub still sees **metadata**: which nodes exist and are online, load,
+  job ids and states, audit lines (combine with the worker's `[access]
+  hub_job_details = false` to drop command lines) and the endpoints it
+  relays.
+- Teams come from the hub: a job shared with `--share team` can be read by
+  whoever the hub puts into the owner's team - among the users the worker
+  trusts. Don't share with a team when that matters.
+- A worker's local administrators see everything on their machine; a
+  user's devices hold that user's key.
+- Toolchain profiles (a fixed set of tools) and signed self-updates (the
+  release key is not the hub's) still come through the hub.
+- A lost or leaked **user key**: create a new one (`longarm trust init` on a
+  device without one), re-endorse your devices and workers, and have the
+  owners replace it (`longarmd trust add-user` replaces a user's key). A
+  lost device: `longarmd trust deny-node <its node key>` on the workers, and
+  revoke it on the hub.
+- A hub too old to copy the extension issues certificates without it: peers
+  that require trust refuse them (fail closed).
+
 ## Operations
 
 - **Turning it on for an existing fleet**: add the users on the hub

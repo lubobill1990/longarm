@@ -27,6 +27,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/supervisor"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/toolchain"
+	"github.com/lubobill1990/longarm/internal/trust"
 	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/version"
 	"github.com/lubobill1990/longarm/internal/workspace"
@@ -64,6 +65,10 @@ type hubAgent struct {
 	remoteJobs string
 	// hideJobDetails: [access] hub_job_details = false (hubredact.go).
 	hideJobDetails bool
+	// trust: the end-to-end trust policy (its default for remoteJobs is
+	// "none"); trustStore: the node key and endorsement for renewals.
+	trust          *pki.TrustSource
+	trustStore     trust.Store
 	stop           context.CancelFunc // stops longarmd (after longarmd leave)
 	logMaxBytes    int64
 
@@ -591,12 +596,22 @@ func (a *hubAgent) maybeRenew(ctx context.Context, conn *hubclient.Conn) {
 	rb := a.renewBefore
 	a.mu.Unlock()
 	leaf := a.live.Leaf()
-	if !hubclient.NeedsRenewal(leaf, rb) {
+	// a new endorsement (longarmd trust accept) needs a certificate that
+	// carries it: renew now
+	asked := a.trustStore.Dir != "" && a.trustStore.RenewalRequested()
+	if !asked && !hubclient.NeedsRenewal(leaf, rb) {
 		return
+	}
+	var tr *pki.CSRTrust
+	if a.trustStore.Dir != "" {
+		var err error
+		if tr, err = a.trustStore.CSRTrust(); err != nil {
+			a.log.Warn("hub: end-to-end trust material unreadable; renewing without it", "err", err)
+		}
 	}
 	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	certPEM, keyPEM, caPEM, err := hubclient.Renew(rctx, conn, a.live.Identity.Name, nil)
+	certPEM, keyPEM, caPEM, err := hubclient.Renew(rctx, conn, a.live.Identity.Name, tr)
 	if err != nil {
 		a.log.Warn("hub: certificate renewal failed", "err", err, "not_after", leaf.NotAfter)
 		return
@@ -609,7 +624,10 @@ func (a *hubAgent) maybeRenew(ctx context.Context, conn *hubclient.Conn) {
 		a.log.Warn("hub: load renewed certificate", "err", err)
 		return
 	}
-	a.log.Info("hub: certificate renewed", "not_after", a.live.Leaf().NotAfter)
+	if asked {
+		a.trustStore.RenewalDone()
+	}
+	a.log.Info("hub: certificate renewed", "not_after", a.live.Leaf().NotAfter, "endorsed", endorsedBy(a.live.Leaf()))
 	a.notify(&pb.LocalEvent{Kind: "hub", Message: "certificate renewed"})
 }
 
@@ -691,4 +709,19 @@ func (a *hubAgent) applyTenancy(p *pb.TenancyPolicy) {
 			}
 		}
 	}()
+}
+
+// endorsedBy describes a certificate's end-to-end trust for logs.
+func endorsedBy(c *x509.Certificate) string {
+	t, err := pki.TrustOf(c)
+	switch {
+	case err != nil:
+		return "invalid: " + err.Error()
+	case t == nil:
+		return "no"
+	case t.Endorsement == nil:
+		return "bound, not endorsed"
+	default:
+		return "by " + t.Endorsement.User + " (" + pki.KeyID(t.Endorsement.UserKey) + ")"
+	}
 }

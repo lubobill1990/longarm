@@ -34,6 +34,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/toolchain"
 	"github.com/lubobill1990/longarm/internal/transport"
 	_ "github.com/lubobill1990/longarm/internal/transport/longnet" // registers longnet://
+	"github.com/lubobill1990/longarm/internal/trust"
 	"github.com/lubobill1990/longarm/internal/update"
 	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/version"
@@ -48,6 +49,7 @@ const (
 	JobsDir            = "jobs"
 	SessionsDir        = "sessions"
 	TSNetDir           = "tsnet"
+	TrustDir           = "trust" // end-to-end trust (internal/trust)
 	LockFile           = "longarmd.lock"
 	EndpointsFile      = "longarmd.endpoints" // listening URLs of the running longarmd, one per line
 	AuditFile          = "audit.log"
@@ -360,6 +362,18 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("%w (join a hub with `longarmd join <hub> <code>`, or issue one with `longarm admin issue --role worker --name <name> --out %s`)", err, tlsDir)
 	}
+	// End-to-end trust: with users in <data>/trust/trust.toml, clients must
+	// present certificates endorsed by one of their keys (pki/trust.go). A
+	// broken policy file stops the start: serving without it would open
+	// the worker to every certificate the hub's CA can mint.
+	trustStore := trust.Store{Dir: filepath.Join(cfg.DataDir, TrustDir)}
+	trustSrc, err := trustStore.Source(false)
+	if err != nil {
+		return fmt.Errorf("end-to-end trust: %w", err)
+	}
+	reloader.SetTrust(trustSrc)
+	go trustStore.Watch(ctx, trustSrc, false, 5*time.Second, log)
+	log.Info("end-to-end trust", "policy", trust.Summary(trustSrc.Load()))
 	bundle := reloader.Bundle()
 	if time.Until(bundle.NotAfter) < 7*24*time.Hour {
 		log.Warn("worker certificate expires soon", "not_after", bundle.NotAfter)
@@ -394,6 +408,9 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		Spaces: st.spaces, Policy: policy, LogMaxBytes: cfg.MaxLogBytes, Sampler: sampler,
 		Audit: audit, Log: log, Shutdown: cancel,
 		Revoked: revoked, Conns: conntrack.New(), Access: cfg.Access,
+	}
+	trustSrc.Denied = func(err error) {
+		srv.Audit.LogAs("tls", "trust/denied", map[string]any{"error": err.Error()})
 	}
 	exe, _ := os.Executable()
 	if runtime.GOOS == "windows" && exe != "" {
@@ -532,7 +549,8 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	agent := newHubAgent(cfg.Hub.Address, &hubAgent{
 		dataDir: cfg.DataDir, reloader: reloader, live: reloader.LiveBundle(), spaces: st.spaces, srv: srv, policy: policy,
 		sampler: sampler, revoked: revoked, labels: cfg.Hub.Labels, log: log.With("component", "hub"),
-		audit: srv.Audit, remoteJobs: cfg.Hub.RemoteJobs, hideJobDetails: !cfg.HubJobDetails, stop: cancel, logMaxBytes: cfg.MaxLogBytes,
+		audit: srv.Audit, remoteJobs: cfg.Hub.RemoteJobs, hideJobDetails: !cfg.HubJobDetails, trust: trustSrc, trustStore: trustStore,
+		stop: cancel, logMaxBytes: cfg.MaxLogBytes,
 		endpoints: func() []string {
 			if len(cfg.Hub.Advertise) > 0 {
 				return cfg.Hub.Advertise

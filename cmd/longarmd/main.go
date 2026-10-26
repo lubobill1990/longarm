@@ -59,7 +59,7 @@ func main() {
 	root.AddCommand(localCmds()...)
 	root.AddCommand(updateCmd(), updateWatchCmd(), installHelperCmd())
 	root.AddCommand(uiCmds()...)
-	root.AddCommand(userHelperCmd(), sftpServerCmd())
+	root.AddCommand(userHelperCmd(), sftpServerCmd(), trustCmd())
 	root.AddCommand(runCmd(), joinCmd(), shimCmd(), conhostCmd(), serviceCmd(), gcCmd(), auditCmd(), &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",

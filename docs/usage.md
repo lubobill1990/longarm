@@ -421,6 +421,26 @@ owners, who keep acting on everything as before; with `users` set or
 refuses to start with an unknown `admins` value or an invalid user name and
 logs the effective policy at start (`access policy ...`).
 
+### End-to-end trust on workers
+
+A worker can refuse every certificate the hub's CA mints on its own and
+accept only devices endorsed by user keys its owner pinned
+([docs/security.md](security.md#end-to-end-trust-the-hub-is-not-trusted-with-access)).
+The state lives in `<data>/trust/` (never written by the hub); a running
+longarmd picks up changes within seconds.
+
+```sh
+longarmd trust add-user <longarm-user-key line>   # trust a user's endorsed devices (the first one turns it on)
+longarmd trust remove-user alice                   # the last one turns it off
+longarmd trust deny-node <node key>                # a lost device, even though endorsed
+longarmd trust request                             # this worker's endorsement request -> longarm trust endorse
+longarmd trust accept <longarm-endorsement line>   # the certificate is renewed to carry it
+longarmd trust status                              # policy, node key, endorsement, certificate
+```
+
+With trusted users the hub session's `[hub] remote_jobs` defaults to
+`"none"`.
+
 ### Local control API, longarm daemon
 
 `longarmd` and `longarm daemon` serve a local-only control API (named pipe with an
