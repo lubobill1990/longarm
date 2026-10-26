@@ -223,6 +223,61 @@ resource replicaRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (
   }
 }
 
+// storageAuth identity: diagnostic bundles (longarm diag --upload, longarmd
+// diag --upload) that the hub writes with the managed identity; deleted 30
+// days after the upload (the lifecycle rule below). Who can read them:
+// docs/security.md "Diagnostic bundles".
+resource diagContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (!useKey) {
+  parent: blobService
+  name: 'diagnostics'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+// Storage Blob Data Contributor, on the diagnostics container only
+resource diagRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!useKey) {
+  name: guid(diagContainer.id, '${name}-id', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+  scope: diagContainer
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+    principalId: identity!.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource lifecycle 'Microsoft.Storage/storageAccounts/managementPolicies@2023-05-01' = if (!useKey) {
+  parent: storage
+  name: 'default'
+  properties: {
+    policy: {
+      rules: [
+        {
+          name: 'diagnostics-30-days'
+          enabled: true
+          type: 'Lifecycle'
+          definition: {
+            filters: {
+              blobTypes: ['blockBlob']
+              prefixMatch: ['diagnostics/']
+            }
+            actions: {
+              baseBlob: {
+                delete: {
+                  daysAfterCreationGreaterThan: 30
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+  dependsOn: [
+    diagContainer
+  ]
+}
+
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = if (useAcr) {
   name: acrName
 }
@@ -283,6 +338,8 @@ var hubEnv = concat(
     : [
         { name: 'AZURE_CLIENT_ID', value: identity!.properties.clientId }
         { name: 'LONGARM_HUB_CA_IN_DB', value: '1' }
+        // diagnostic bundles: the container above (internal/diag)
+        { name: 'LONGARM_HUB_DIAG_BLOB_URL', value: '${storage.properties.primaryEndpoints.blob}${diagContainer.name}' }
       ],
   enablePanel ? [{ name: 'LONGARM_HUB_PUBLIC_URL', value: 'https://${fqdn}' }] : [],
   hubTls
@@ -399,6 +456,7 @@ resource group 'Microsoft.ContainerInstance/containerGroups@2025-09-01' = {
   dependsOn: [
     caddyShare
     replicaRole
+    diagRole
     acrRole
   ]
   properties: {

@@ -17,6 +17,7 @@
 //	longarm proxy <w>; longarm ssh-config              built-in sshd for ssh/scp/sftp/VS Code
 //	longarm admin ca init | issue | shutdown <w> | gc <w>
 //	longarm trust init | show | request | endorse | accept | require on|off ...   end-to-end trust
+//	longarm diag [--upload] [--since 24h]          diagnostic bundle for a bug report; longarm admin diag ls|get
 //
 // <w> is a worker name from workers.toml, or an ad-hoc "certname@host:port".
 package main
@@ -73,7 +74,7 @@ func main() {
 	root.AddCommand(whoamiCmd())
 	root.AddCommand(lsCmd(), infoCmd(), execCmd(), runCmd(), logsCmd(), waitCmd(), killCmd(), jobsCmd(), adminCmd(),
 		attachCmd(), sessionsCmd(), forwardCmd(), putCmd(), getCmd(), syncCmd(), proxyCmd(), sshConfigCmd(),
-		joinCmd(), leaveCmd(), daemonCmd(), mcpCmd(), trustCmd())
+		joinCmd(), leaveCmd(), daemonCmd(), mcpCmd(), trustCmd(), diagCmd())
 	err := root.Execute()
 	if err == nil {
 		return

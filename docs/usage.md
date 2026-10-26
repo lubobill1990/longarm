@@ -237,6 +237,80 @@ longarmd audit verify [--file PATH]                # check audit.log's hash chai
 longarmd reloads `<data>/tls` (ca.crt, node.crt, node.key) within ~5 s when the
 files change: re-issue the worker certificate in place, no restart needed.
 
+### Bug reports / diagnostics
+
+One command collects what a maintainer needs - logs, versions,
+configuration, state - with personal data and secrets removed, shows what it
+collected, writes a zip and (optionally) uploads it through the hub:
+
+```sh
+longarmd diag [--upload] [--yes] [--since 24h] [--note "..."] [--out F.zip]   # on a worker (as longarmd's account / admin)
+         [--include-audit] [--include-job ID ...] [--log-file PATH ...] [--data-dir D]
+longarm diag  [--upload] [--yes] [--since 24h] [--note "..."] [--out F.zip] [--no-probe]   # on a client device
+longarm exec w1 -- longarmd diag --upload --yes   # a worker's bundle, from a client (longarm diag --worker w1 says so)
+longarm admin diag ls [--since 168h]               # admins: uploaded bundles
+longarm admin diag get LAR-20261027-7F3K9Q [--out F.zip]
+```
+
+The zip is always written locally (default `longarmd-diag-<time>.zip` /
+`longarm-diag-<time>.zip` in the current directory) and the command first
+prints every file with its size and why it is there; look inside before
+you send it anywhere. `--upload` asks before uploading (`--yes`: don't),
+then prints a **report id** like `LAR-20261027-7F3K9Q` on stdout (and the
+blob path on stderr): put it into the bug report. A hub without
+`[diagnostics]` refuses uploads; attach the zip by hand then.
+
+**Included** (each a file; `manifest.json` lists them with size, reason and
+a count of replacements per kind):
+
+| | worker (`longarmd diag`) | client (`longarm diag`) |
+|---|---|---|
+| versions, OS / kernel, uptime, memory, free disk | `system.json` | `system.json` |
+| process logs of `--since` (rotated and `.gz` copies too, newest first, 20 MiB in all) | `<data>/longarmd.log`, `update-watch.log`, `--log-file` | `<config>/daemon.log`, `tray.log` |
+| configuration, values of secret-holding keys (password, token, secret, key, webhook ...) removed after parsing the TOML | `longarmd.toml`, `hub.toml` | `workers.toml`, `hub.toml` |
+| certificate metadata: identity (pseudonyms), role, serial, expiry, issuer fingerprint, trust extension status | `certs.json` (`tls/`) | `certs.json` (`tls/`), `ca-certs.json` |
+| policies | `trust.json`, `policy.json` (access, isolation, hub settings, tenancy summary) | `trust.json` |
+| state | `status.json` (the running longarmd), `jobs.json` (ids, states, times, exit codes), `update.json`, drain / limits / endpoints, revocation list size | transport settings and cache, hub state |
+| connectivity | | `connectivity.json`: hub reachable?, the transport leg each known worker answered on |
+| crash reports | `<data>/telemetry/crash-*.txt` | `<config>/telemetry/crash-*.txt` |
+
+**Never included**: private keys (`node.key`, `user.key`, `ca.key`, the SSH
+host key), token and tailnet state files, environment values; binary files.
+**Only on request**: the audit log (`--include-audit`; it contains command
+lines) and a job's command line, environment names and the last 256 KiB of
+its output (`--include-job ID`, after a warning: output can hold secrets
+the scrubber doesn't recognise).
+
+Every text file goes through the same scrubber as telemetry
+(`internal/pii`): names of people and machines known locally (node, users,
+workers, host, OS user, the hub's host) become pseudonyms like
+`<node:3f2a9c>` - the same in every bundle of the fleet (salted with the
+fleet CA), so a maintainer can follow one machine across reports without
+learning its name - and secrets, e-mail and IP addresses (except loopback)
+become tags. Scrubbing free text is best effort: check the zip.
+
+**Upload**: any enrolled node (worker, client, admin) may upload; the hub
+checks the size (`max_mb`, default 50) and a rate per node
+(`per_node_per_hour`, default 10), streams the zip to
+`<container>/<yyyy>/<mm>/<dd>/<report-id>.zip` with metadata (component,
+version, node pseudonym, uploader role, the scrubbed `--note`) and logs one
+line per upload (report id, size, uploader pseudonym). hub.toml:
+
+```toml
+[diagnostics]
+blob_url = "https://<account>.blob.core.windows.net/diagnostics"   # env LONGARM_HUB_DIAG_BLOB_URL; or file:///var/lib/longarm-hub/diagnostics
+max_mb = 50
+per_node_per_hour = 10
+```
+
+Azure Blob Storage is used through its REST API with a Microsoft Entra ID
+token of the hub's managed identity (`AZURE_CLIENT_ID`; role **Storage Blob
+Data Contributor** on the container) - no account keys, no SAS; users need
+no Azure credentials. deploy/azure (`storageAuth=identity`) creates the
+container `diagnostics`, the role assignment and a lifecycle rule deleting
+bundles after 30 days. A `file://` directory serves self-hosted hubs and
+tests. Who can read bundles: docs/security.md "Diagnostic bundles".
+
 ## Fleet with longarm-hub
 
 `longarm-hub` is the control plane: CA and enrollment with one-time join codes,

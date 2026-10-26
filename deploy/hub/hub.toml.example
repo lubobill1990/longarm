@@ -69,3 +69,11 @@ oauth_secret_file = "/etc/longarm-hub/tailscale-oauth.secret"   # root:longarm-h
 # api_url = "http://127.0.0.1:8080"      # where the hub reaches the REST API (default: url)
 # api_key_file = "/etc/longarm-hub/headscale-api.key"   # or env LONGARM_HUB_HEADSCALE_API_KEY
 # user = ""                              # Headscale < 0.28: keys need a user
+
+# Diagnostic bundles (`longarm diag --upload`, `longarmd diag --upload`; docs/usage.md
+# "Bug reports / diagnostics"). Without blob_url the hub refuses uploads (users attach
+# the local zip by hand). Readable by admins (`longarm admin diag ls|get`).
+# [diagnostics]
+# blob_url = "https://<account>.blob.core.windows.net/diagnostics"   # Entra ID (managed identity, Storage Blob Data Contributor); no keys / SAS. Or file:///var/lib/longarm-hub/diagnostics. Env LONGARM_HUB_DIAG_BLOB_URL
+# max_mb = 50                      # largest bundle
+# per_node_per_hour = 10           # uploads per node and hour

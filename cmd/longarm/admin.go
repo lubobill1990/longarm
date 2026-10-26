@@ -186,5 +186,6 @@ func adminCmd() *cobra.Command {
 	c.AddCommand(tailnetAdminCmd())
 	c.AddCommand(hubUICmds()...)
 	c.AddCommand(userAdminCmd(), teamAdminCmd())
+	c.AddCommand(adminDiagCmd())
 	return c
 }
