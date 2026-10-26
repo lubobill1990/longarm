@@ -590,6 +590,20 @@ isolation if other users share the machine.
   policy). `longarmd leave --purge` and uninstalling a per-user worker
   delete all `la-*` accounts it created.
 
+## Telemetry
+
+A hub with an Application Insights connection string collects telemetry
+from itself and its nodes ([docs/telemetry.md](docs/telemetry.md)). In the
+terms of this threat model: the data leaves the fleet (to whoever can read
+the Application Insights resource), so it is scrubbed on the node before it
+is queued and again on the hub - no command lines, environment, job output,
+addresses or names in clear (names become keyed hashes salted with the
+fleet's CA). The hub is an insider: it can turn telemetry on for the fleet,
+but not for a machine whose owner turned it off (`[telemetry] enabled =
+false` in longarmd.toml, `longarm telemetry off`, `LONGARM_TELEMETRY=0`) -
+the worker's local policy wins, like `[access]`. Telemetry items of a user
+never reach other users: they go node → hub → Application Insights only.
+
 ## Level 3 outlook
 
 Untrusted users need more than accounts: a job per container or micro-VM

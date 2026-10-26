@@ -22,6 +22,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/sched"
+	"github.com/lubobill1990/longarm/internal/telemetry"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -94,6 +95,8 @@ func (s *session) hubDown(err error) {
 		if !quietHub {
 			fmt.Fprintf(os.Stderr, "longarm: hub %s unreachable (%s); talking to workers directly\n", s.cfg.Hub.Address, oneLine(err))
 		}
+		telemetry.Event(context.Background(), "hub.unreachable", map[string]string{"error": client.ErrClass(err.Error()),
+			"grpc_code": status.Code(err).String()}, nil)
 	}
 }
 

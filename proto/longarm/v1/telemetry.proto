@@ -1,0 +1,95 @@
+// Telemetry: nodes (longarmd, longarm, longarm-tray through longarm) push
+// scrubbed telemetry items to longarm-hub, which re-scrubs them, stamps the
+// fleet and the caller's pseudonyms and forwards them to Azure Application
+// Insights (docs/telemetry.md). Kept apart from hub.proto on purpose.
+//
+// Served by longarm-hub on its gRPC port. Authorization: worker, client and
+// admin certificates (like HubNode.Renew).
+syntax = "proto3";
+
+package longarm.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1";
+
+service Telemetry {
+  // Push hands the hub a batch of items. An empty batch only asks whether
+  // the hub collects telemetry (TelemetryAck.collecting).
+  rpc Push(TelemetryBatch) returns (TelemetryAck);
+}
+
+message TelemetryBatch {
+  repeated TelemetryItem items = 1;
+}
+
+message TelemetryAck {
+  // collecting = false: the hub has no telemetry destination. The node
+  // stops collecting, drops its queue and asks again after retry_after_seconds.
+  bool collecting = 1;
+  // Largest batch the hub takes (items); more are refused.
+  int32 max_batch = 2;
+  int64 retry_after_seconds = 3;
+  // Items of this batch the hub dropped (rate limit, size).
+  int32 dropped = 4;
+}
+
+// TelemetryItem mirrors internal/telemetry.Item. Every string has been
+// scrubbed (internal/pii) on the node before it was queued.
+message TelemetryItem {
+  // event | exception | request | dependency | trace | metric
+  string kind = 1;
+  google.protobuf.Timestamp time = 2;
+  // event / request / dependency / metric name; exception type
+  string name = 3;
+  // trace message; exception message
+  string message = 4;
+  // trace / exception: verbose | info | warning | error | critical
+  string severity = 5;
+  map<string, string> props = 6;
+  map<string, double> measurements = 7;
+
+  // W3C trace context: operation (trace) id, parent span id, own span id
+  // (requests, dependencies).
+  string operation_id = 8;
+  string parent_id = 9;
+  string id = 10;
+
+  // request / dependency
+  double duration_ms = 11;
+  bool success = 12;
+  string result_code = 13;
+  // dependency type (grpc, http, dial); target kind (worker, hub) - never an address
+  string type = 14;
+  string target = 15;
+
+  // exception stack: function and file:line only
+  repeated TelemetryFrame stack = 16;
+
+  // metric: value (sum), count, min, max
+  double value = 17;
+  int64 count = 18;
+  double min = 19;
+  double max = 20;
+
+  TelemetryContext context = 21;
+}
+
+message TelemetryFrame {
+  string function = 1;
+  string file = 2;
+  int32 line = 3;
+}
+
+// TelemetryContext is attached to every item: who sent it (pseudonymous).
+message TelemetryContext {
+  string component = 1; // longarm | longarmd | longarm-hub | longarm-tray
+  string version = 2;
+  string os = 3;
+  string arch = 4;
+  string session = 5; // random per process
+  string fleet = 6;   // short hash of the CA fingerprint (stamped by the hub)
+  string node = 7;    // <node:hash> (stamped by the hub from the certificate)
+  string user = 8;    // <user:hash>
+  string role = 9;    // worker | client | admin
+}

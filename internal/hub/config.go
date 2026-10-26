@@ -116,6 +116,7 @@ type Config struct {
 	Releases  ReleaseConfig   `toml:"releases"`
 	Tailnet   TailnetConfig   `toml:"tailnet"`
 	Tenancy   TenancyConfig   `toml:"tenancy"`
+	Telemetry TelemetryConfig `toml:"telemetry"`
 	// Headscale is P2's [headscale] section; still accepted (it means
 	// [tailnet] provider = "headscale" with these settings).
 	Headscale HeadscaleConfig `toml:"headscale"`

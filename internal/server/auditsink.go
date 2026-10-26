@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lubobill1990/longarm/internal/telemetry"
 )
 
 // AuditSinks is the [audit] section of longarmd.toml: copies of every audit
@@ -288,6 +290,7 @@ func (q *sinkQueue) run() {
 		if dropped > 0 {
 			// Through the chain, so the gap is on record everywhere.
 			q.audit.LogAs("longarmd", "audit/dropped", map[string]any{"sink": q.name, "count": dropped})
+			telemetry.Count("audit.sink_dropped", map[string]string{"sink": q.name}, float64(dropped))
 		}
 	}
 }

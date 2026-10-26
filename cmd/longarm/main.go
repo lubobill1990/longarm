@@ -17,11 +17,13 @@
 //	longarm proxy <w>; longarm ssh-config              built-in sshd for ssh/scp/sftp/VS Code
 //	longarm admin ca init | issue | shutdown <w> | gc <w>
 //	longarm trust init | show | request | endorse | accept | require on|off ...   end-to-end trust
+//	longarm telemetry status | show | flush | on | off   scrubbed telemetry to the hub (docs/telemetry.md)
 //
 // <w> is a worker name from workers.toml, or an ad-hoc "certname@host:port".
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -35,6 +37,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
+	"github.com/lubobill1990/longarm/internal/telemetry"
 	"github.com/lubobill1990/longarm/internal/version"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -73,24 +76,40 @@ func main() {
 	root.AddCommand(whoamiCmd())
 	root.AddCommand(lsCmd(), infoCmd(), execCmd(), runCmd(), logsCmd(), waitCmd(), killCmd(), jobsCmd(), adminCmd(),
 		attachCmd(), sessionsCmd(), forwardCmd(), putCmd(), getCmd(), syncCmd(), proxyCmd(), sshConfigCmd(),
-		joinCmd(), leaveCmd(), daemonCmd(), mcpCmd(), trustCmd())
+		joinCmd(), leaveCmd(), daemonCmd(), mcpCmd(), trustCmd(), telemetryCmd())
+	// One operation per run (telemetry.go): its trace context goes with
+	// every call to workers and the hub.
+	cli.start, cli.span = time.Now(), telemetry.NewSpan()
+	telemetry.SetFallback(cli.span)
+	root.SetContext(telemetry.WithSpan(context.Background(), cli.span))
+	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) { startTelemetry(cmd) }
+	defer telemetry.Guard()
 	err := root.Execute()
-	if err == nil {
-		return
-	}
+	code := 0
 	var ee *exitError
-	if errors.As(err, &ee) {
+	switch {
+	case err == nil:
+	case errors.As(err, &ee):
+		code = ee.code
+	default:
+		code = exitLongarmError
+	}
+	finishTelemetry(code, err)
+	switch {
+	case err == nil:
+		return
+	case ee != nil:
 		if ee.msg != "" {
 			fmt.Fprintln(os.Stderr, "longarm:", ee.msg)
 		}
 		os.Exit(ee.code)
 	}
 	if msg, ok := client.TrustRefusal(err); ok {
-		fmt.Fprintln(os.Stderr, "longarm:", msg)
+		fmt.Fprintln(os.Stderr, "longarm:", msg+traceNote())
 	} else if s, ok := status.FromError(err); ok {
-		fmt.Fprintf(os.Stderr, "longarm: %s: %s\n", s.Code(), s.Message())
+		fmt.Fprintf(os.Stderr, "longarm: %s: %s%s\n", s.Code(), s.Message(), traceNote())
 	} else {
-		fmt.Fprintln(os.Stderr, "longarm:", err)
+		fmt.Fprintln(os.Stderr, "longarm:", err.Error()+traceNote())
 	}
 	os.Exit(exitLongarmError)
 }
@@ -146,7 +165,7 @@ func openSession() (*session, error) {
 func (s *session) close() {
 	s.dialer.Close()
 	s.hubMu.Lock()
-	if s.hubConn != nil {
+	if s.hubConn != nil && !keepHubForExit(s.hubConn) {
 		s.hubConn.Close()
 	}
 	s.hubMu.Unlock()

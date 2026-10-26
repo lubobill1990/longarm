@@ -98,6 +98,7 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	revVersion := h.revVersion
 	desired := h.desiredToolchainLocked(n)
 	h.log.Info("node online", "node", n.rec.Name, "version", hello.Version, "endpoints", hello.Endpoints)
+	h.tel().Count("node.connected", map[string]string{"node_version": hello.Version, "os": hello.Os, "isolation": hello.Isolation}, 1)
 	h.publishNodeLocked(n, "online")
 	h.advanceReleaseLocked()
 	h.mu.Unlock()
@@ -224,6 +225,7 @@ func (h *Hub) handleReport(n *node, sess *nodeSession, m *pb.NodeReport) {
 			h.store.PutNode(n.rec)
 		}
 		h.log.Info("node update", "node", n.rec.Name, "state", x.Update.State, "from", x.Update.From, "to", x.Update.To, "err", x.Update.Error)
+		h.event(context.Background(), "node.update", map[string]string{"state": x.Update.State, "from": x.Update.From, "to": x.Update.To, "error": x.Update.Error})
 		h.publishNodeLocked(n, "update "+x.Update.State+" "+x.Update.To)
 		h.advanceReleaseLocked()
 	case *pb.NodeReport_Reply:

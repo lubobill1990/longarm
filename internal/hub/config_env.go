@@ -42,7 +42,7 @@ func (c *Config) applyEnv() error {
 		dst *string
 	}{{EnvDB, &c.DBPath}, {EnvListen, &c.Listen}, {EnvHTTP, &c.HTTP}, {EnvPublicURL, &c.PublicURL},
 		{EnvRelayUDP, &c.RelayUDP}, {EnvSTUN2, &c.RelaySTUN2}, {EnvHTTPS, &c.HTTPS}, {EnvRedirect, &c.HTTPSRedirect},
-		{EnvACMEEmail, &c.ACMEEmail}, {EnvACMEDir, &c.ACMEDirectory}} {
+		{EnvACMEEmail, &c.ACMEEmail}, {EnvACMEDir, &c.ACMEDirectory}, {EnvAppInsights, &c.Telemetry.ConnectionString}} {
 		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
 			*kv.dst = v
 		}

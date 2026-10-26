@@ -78,6 +78,7 @@ func (u *updater) setStatus(s *pb.UpdateStatus) {
 	u.mu.Unlock()
 	u.agent.send(&pb.NodeReport{Msg: &pb.NodeReport_Update{Update: s}}, false)
 	u.agent.notify(&pb.LocalEvent{Kind: "update", Message: fmt.Sprintf("%s %s -> %s %s", s.State, s.From, s.To, s.Error)})
+	u.agent.tel.event("update.status", map[string]string{"state": s.State, "from": s.From, "to": s.To, "error": s.Error})
 }
 
 func (u *updater) Run(ctx context.Context) {

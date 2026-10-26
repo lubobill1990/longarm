@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"strings"
 
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
@@ -15,7 +16,10 @@ const acmeMetaPrefix = "acme/"
 
 // acmeCache is autocert's cache in the database: replicated with it, so a
 // hub whose disk is gone (a container) keeps its certificate.
-type acmeCache struct{ st *store.Store }
+type acmeCache struct {
+	st *store.Store
+	h  *Hub // telemetry of new certificates (nil = none)
+}
 
 func (c acmeCache) Get(_ context.Context, key string) ([]byte, error) {
 	v, err := c.st.Meta(acmeMetaPrefix + key)
@@ -29,7 +33,11 @@ func (c acmeCache) Get(_ context.Context, key string) ([]byte, error) {
 }
 
 func (c acmeCache) Put(_ context.Context, key string, data []byte) error {
-	return c.st.SetMeta(acmeMetaPrefix+key, string(data))
+	err := c.st.SetMeta(acmeMetaPrefix+key, string(data))
+	if c.h != nil && !strings.Contains(key, "+") { // a certificate (not the account key)
+		c.h.event(context.Background(), "acme.certificate", map[string]string{"stored": boolStr(err == nil)})
+	}
+	return err
 }
 
 func (c acmeCache) Delete(_ context.Context, key string) error {
@@ -41,7 +49,7 @@ func (c acmeCache) Delete(_ context.Context, key string) error {
 func (h *Hub) acmeManager() *autocert.Manager {
 	m := &autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
-		Cache:      acmeCache{h.store},
+		Cache:      acmeCache{h.store, h},
 		HostPolicy: autocert.HostWhitelist(h.cfg.ACMEHost()),
 		Email:      h.cfg.ACMEEmail,
 	}

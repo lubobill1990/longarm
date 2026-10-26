@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/server"
 	"github.com/lubobill1990/longarm/internal/sshd"
+	"github.com/lubobill1990/longarm/internal/telemetry"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/toolchain"
 	"github.com/lubobill1990/longarm/internal/transport"
@@ -74,6 +76,8 @@ type FileConfig struct {
 	// Audit: copies of audit.log for the worker's owner (docs/security.md).
 	Audit  server.AuditSinks `toml:"audit"`
 	Access AccessConfig      `toml:"access"`
+	// Telemetry: the owner's opt-out (docs/telemetry.md).
+	Telemetry TelemetryConfig `toml:"telemetry"`
 }
 
 // AccessConfig is the [access] section: what the hub's admins and users may
@@ -214,6 +218,8 @@ type Config struct {
 	UpdateMode  string
 	ServiceName string
 	Args        []string
+	// Telemetry is [telemetry] (the owner's opt-out).
+	Telemetry TelemetryConfig
 }
 
 // LoadConfig reads longarmd.toml (if present); flags given in override win.
@@ -275,6 +281,7 @@ func LoadConfig(dataDir string, listenOverride []string) (Config, error) {
 		cfg.Isolation.UsersDir = filepath.Join(dataDir, cfg.Isolation.UsersDir)
 	}
 	cfg.Audit = fc.Audit
+	cfg.Telemetry = fc.Telemetry
 	for _, p := range []*string{&cfg.Audit.File, &cfg.Audit.WebhookTokenFile} {
 		if *p != "" && !filepath.IsAbs(*p) {
 			*p = filepath.Join(dataDir, *p)
@@ -317,7 +324,9 @@ func Run(ctx context.Context, cfg Config) error {
 		// the lines from the file (io.MultiWriter stops at the first error).
 		logW = io.MultiWriter(bestEffort{os.Stderr}, f)
 	}
-	log := slog.New(slog.NewTextHandler(logW, nil))
+	// telemetry.Handler: trace=<id> on records of an operation; WARN and
+	// ERROR also become telemetry traces when telemetry is on.
+	log := slog.New(telemetry.NewHandler(slog.NewTextHandler(logW, nil)))
 	slog.SetDefault(log)
 	err := run(ctx, cfg, log)
 	if err != nil && !errors.Is(err, update.ErrRestart) {
@@ -375,6 +384,8 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	go trustStore.Watch(ctx, trustSrc, false, 5*time.Second, log)
 	log.Info("end-to-end trust", "policy", trust.Summary(trustSrc.Load()))
 	bundle := reloader.Bundle()
+	wtel := startTelemetry(cfg, bundle, cfg.Hub.Address != "" && !cfg.Hub.Disabled)
+	defer wtel.client().WatchCrashes()()
 	if time.Until(bundle.NotAfter) < 7*24*time.Hour {
 		log.Warn("worker certificate expires soon", "not_after", bundle.NotAfter)
 	}
@@ -409,8 +420,10 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		Audit: audit, Log: log, Shutdown: cancel,
 		Revoked: revoked, Conns: conntrack.New(), Access: cfg.Access,
 	}
+	srv.UnaryInterceptors, srv.StreamInterceptors = wtel.interceptors()
 	trustSrc.Denied = func(err error) {
 		srv.Audit.LogAs("tls", "trust/denied", map[string]any{"error": err.Error()})
+		wtel.client().Count("trust.denied", nil, 1)
 	}
 	exe, _ := os.Executable()
 	if runtime.GOOS == "windows" && exe != "" {
@@ -550,7 +563,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		dataDir: cfg.DataDir, reloader: reloader, live: reloader.LiveBundle(), spaces: st.spaces, srv: srv, policy: policy,
 		sampler: sampler, revoked: revoked, labels: cfg.Hub.Labels, log: log.With("component", "hub"),
 		audit: srv.Audit, remoteJobs: cfg.Hub.RemoteJobs, hideJobDetails: !cfg.HubJobDetails, trust: trustSrc, trustStore: trustStore,
-		stop: cancel, logMaxBytes: cfg.MaxLogBytes,
+		stop: cancel, logMaxBytes: cfg.MaxLogBytes, tel: wtel,
 		endpoints: func() []string {
 			if len(cfg.Hub.Advertise) > 0 {
 				return cfg.Hub.Advertise
@@ -610,6 +623,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 			agent.tc = &toolchain.Reconciler{Backend: backend, Log: log.With("component", "toolchain"),
 				Running: st.spaces.RunningJobs, Drain: agent.setToolDrain, Interval: cfg.Toolchain.Interval.Duration,
 				Report: func(r *pb.ToolchainReport) {
+					wtel.event("toolchain.reconcile", map[string]string{"state": r.State, "error": r.Error, "profile": r.Profile})
 					agent.send(&pb.NodeReport{Msg: &pb.NodeReport_Toolchain{Toolchain: r}}, false)
 					agent.notify(&pb.LocalEvent{Kind: "toolchain", Message: r.State + " " + r.Error})
 				}}
@@ -659,6 +673,16 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	}
 	log.Info("longarmd started", "name", srv.Name, "version", version.Version, "data", cfg.DataDir,
 		"listen", srv.Listeners, "pid", os.Getpid(), "isolation", cfg.Isolation.Mode)
+	wtel.event("process.start", map[string]string{"isolation": cfg.Isolation.Mode, "update_mode": cfg.UpdateMode,
+		"trust": strconv.FormatBool(trustSrc.Load().Active()), "access": strconv.FormatBool(cfg.Access != nil),
+		"ssh": strconv.FormatBool(sshSrv != nil), "listeners": strconv.Itoa(len(srv.Listeners))})
+	if wtel != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			wtel.run(ctx, cfg.Hub.Address, reloader.LiveBundle(), log.With("component", "telemetry"), srv.StartedAt)
+		}()
+	}
 
 	var runErr error
 	select {
