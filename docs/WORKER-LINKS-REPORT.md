@@ -71,7 +71,7 @@ Results on this machine (Windows 11, elevated shell), after the review fixes:
 | `LONGARM_PERUSER_TEST=1 go test -run TestPerUserLinks ./e2e` | `--- PASS: TestPerUserLinks (28.65s)`; temporary services, `lt????-*` accounts and profiles all removed afterwards |
 | `scripts/privacy-check.sh`, gofmt | ok |
 | web `pnpm typecheck`, `pnpm test` | ok (26 tests) |
-| CI on the PR (ubuntu, windows, macos, lint, azure template, image smoke) | all green; ubuntu needed reruns for unrelated flakes (`TestHubContainerStart` "text file busy", `TestAzureDeployScripts` missing `bootstrap.env`) and once for the intermittent `TestPerUserLinks` hang below; final run: `--- PASS: TestPerUserLinks (36.41s)` on Linux as root |
+| CI on the PR (ubuntu, windows, macos, lint, azure template, image smoke) | all green; ubuntu needed reruns for unrelated flakes (`TestHubContainerStart` "text file busy", `TestAzureDeployScripts` missing `bootstrap.env`) and for `TestPerUserLinks` timing out on a slow first `useradd` (see Known gaps; fixed in the test); final run: `--- PASS: TestPerUserLinks (36.41s)` on Linux as root |
 
 The e2e package takes about 5 minutes on this machine with everything else
 running in parallel (the new tests add about 20 s and 15 s, in parallel with
@@ -148,15 +148,17 @@ the branch found no authorization bypass; its findings and what was done:
   restrict who connects to a listener locally.
 - Per-connection audit on B can be chatty for clients without keep-alive.
 - The panel page was built and unit-tested, not driven with Playwright.
-- **Intermittent, Linux CI, unexplained:** in 1 of 2 CI runs of
-  `TestPerUserLinks` (two per-user longarmd on one ubuntu runner) the second
-  worker stopped reporting to the hub right after connecting and its gRPC
-  port stopped answering, while it still received hub pushes; the rerun
-  passed (`--- PASS: TestPerUserLinks (36.41s)`), Windows (local and CI)
-  always passed. No cause found by reading the code (no lock shared between
-  the stuck paths). The Linux per-user e2e helper now sends SIGQUIT to
-  longarmd when a test fails, so the next occurrence leaves a goroutine dump
-  in the test log.
+- **Found on Linux CI, not part of this change:** the first `useradd` on a
+  fresh ubuntu runner can take over 30 s. `userspace.Spaces` holds its mutex
+  while it creates an account, and the metrics sampler (`RunningJobs`) and
+  the hub session wait for that mutex. The worker sends no reports for that
+  long, and the hub marks it offline. `TestPerUserLinks` hit this twice:
+  it ran first, used the CLI (30 s call deadline), and the goroutine dump
+  showed `EnsureAccount` → `useradd`. The test now creates the accounts
+  first with a 3-minute deadline, as `TestPerUserIsolation` does. The
+  locking in `userspace` should be fixed separately: create the account
+  outside the mutex. The Linux per-user e2e helper now dumps longarmd's
+  goroutines (SIGQUIT) when a test fails.
 - `longarm link` needs the hub (no hub-less mode: grants come from the hub).
 
 ## Needs from a human
@@ -165,7 +167,7 @@ the branch found no authorization bypass; its findings and what was done:
    merges first, the branch needs a rebase: expected conflicts in
    `docs/usage.md`, `docs/security.md`, `README.md`, `deploy/azure/E2E.md`,
    `internal/hub/config.go` and `internal/relay/server.go` (textual only).
-2. Run the Linux per-user suite (CI does: `-run PerUser` as root) - a few more times: see the intermittent hang under "Known gaps" and, if
+2. Run the Linux per-user suite (CI does: `-run PerUser` as root) and, if
    wanted, the Azure E2E step 4b with two real workers on different
    networks.
 3. Tailnets in use: add the worker → worker tcp:7701 rule (Headscale policy

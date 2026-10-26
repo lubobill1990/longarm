@@ -13,6 +13,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/client"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -329,6 +330,13 @@ func TestPerUserLinks(t *testing.T) {
 		})
 	}
 
+	// Create the accounts first, with time to spare: the first useradd on a
+	// fresh CI runner can take more than the CLI's call deadline.
+	for _, w := range []*puWorker{a, b} {
+		for _, cfg := range []string{alice, bob} {
+			warmAccount(t, cfg, w)
+		}
+	}
 	portA, jobA := jobPort(t, h, alice, "w2", b.helper, "http-serve", "600") // alice's server (as her account on w2)
 	portB, jobB := jobPort(t, h, bob, "w2", b.helper, "http-serve", "600")   // bob's
 	lport := strconv.Itoa(freePort(t))
@@ -376,4 +384,32 @@ func TestPerUserLinks(t *testing.T) {
 	h.mustLongarm(alice, "link", "rm", id, id2)
 	h.longarm(alice, "kill", jobA)
 	h.longarm(bob, "kill", jobB)
+}
+
+// warmAccount runs a command on per-user worker w as the user of cfg (which
+// creates the user's account there) with a generous deadline.
+func warmAccount(t *testing.T, cfg string, w *puWorker) {
+	t.Helper()
+	c, err := client.LoadConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := client.NewDialer(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	name := filepath.Base(w.dataDir)
+	conn, err := d.Dial(client.Worker{Name: name, CertName: name, Transport: "tcp", Address: fmt.Sprintf("127.0.0.1:%d", w.port)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	r, err := conn.Exec().Run(ctx, &pb.ExecRequest{Argv: []string{w.helper, "whoami"}, Output: pb.OutputMode_OUTPUT_MODE_COMBINED,
+		Timeout: durationpb.New(time.Minute)})
+	if err != nil || r.ExitCode != 0 {
+		t.Fatalf("first command as %s on %s: %v %v", cfg, name, r, err)
+	}
 }
