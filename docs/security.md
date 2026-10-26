@@ -353,10 +353,15 @@ visibility of what the worker's users run.
 
 **What it does not protect against**:
 
-- Whoever holds the **hub's CA key** (the hub operator, a compromised hub)
-  can mint a certificate that claims to be an owner, or a user in `users`;
-  the worker cannot tell it apart. End-to-end trust in owners' certificates
-  (independent of the hub's CA) is a separate feature.
+- **Names are the hub's word.** `owners` and `users` match the user a
+  certificate names, and the hub decides that: any hub admin can enroll a
+  device as an owner (`longarm admin join-code --role admin --user alice`
+  - no CA key needed), and whoever holds the CA key can mint one. The worker
+  can't tell such a certificate from alice's own. Against insiders the
+  policy only holds together with end-to-end trust (owners' certificates
+  endorsed by keys pinned on the worker); without it, it stops admins who
+  use their own certificates and the hub session, nothing more. longarmd
+  warns at start when `owners` / `users` are set without it.
 - **Local administrators** of the worker machine (they can edit
   `longarmd.toml` and read everything).
 - **Shared isolation**: `admins = "own"` makes an admin an ordinary user,

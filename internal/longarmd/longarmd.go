@@ -618,6 +618,11 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	}
 	log.Info("access policy", "policy", cfg.Access.String(), "remote_jobs", nonEmpty(cfg.Hub.RemoteJobs, "control"),
 		"hub_job_details", cfg.HubJobDetails)
+	if len(cfg.Access.Owners)+len(cfg.Access.Users) > 0 {
+		// the names are what the hub's CA vouches for: any hub admin can
+		// enroll a device under an owner's name (docs/security.md)
+		log.Warn("[access] owners/users name users the hub vouches for: a hub admin can enroll a device under such a name; pin owners' keys with end-to-end trust to stop that")
+	}
 	log.Info("longarmd started", "name", srv.Name, "version", version.Version, "data", cfg.DataDir,
 		"listen", srv.Listeners, "pid", os.Getpid(), "isolation", cfg.Isolation.Mode)
 
