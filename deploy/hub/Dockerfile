@@ -27,7 +27,7 @@ RUN go mod download
 COPY . .
 ARG VERSION=dev
 ARG TARGETARCH
-RUN sh deploy/hub/image-build.sh /out
+RUN tr -d '\r' < deploy/hub/image-build.sh | sh -s /out
 
 FROM ${RUNTIME_IMAGE} AS runtime
 ARG VERSION=dev
@@ -61,7 +61,7 @@ RUN go mod download
 COPY . .
 ARG VERSION=dev
 ARG TARGETARCH
-RUN sh deploy/hub/image-build.sh /out
+RUN tr -d '\r' < deploy/hub/image-build.sh | sh -s /out
 
 FROM runtime
 COPY --from=build /out/bin/ /usr/local/bin/

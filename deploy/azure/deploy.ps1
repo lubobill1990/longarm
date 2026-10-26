@@ -247,13 +247,13 @@ try {
 
     # A re-run keeps the running hub's settings. Secrets can't be read back
     # from ACI: a hub that has them needs them again.
-    $curQuery = "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId]"
+    $curQuery = "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId, containers[0].environmentVariables[?name=='LONGARM_HUB_RELAY_STUN_ADVERTISE'].value | [0]]"
     $curLine = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $curQuery) -join ''
     $curImage = ''
     $curRegistry = ''
     $prevBoot = ''
     if ($LASTEXITCODE -eq 0 -and $curLine) {
-        $f = @($curLine.Trim("`r", "`n") -split "`t") + @('', '', '', '', '', '')
+        $f = @($curLine.Trim("`r", "`n") -split "`t") + @('', '', '', '', '', '', '')
         $curImage = $f[0]
         $curSize = 'small'
         if ([double]$f[1] -ge 2) { $curSize = 'medium' }
@@ -266,6 +266,11 @@ try {
         if (-not $Size) { $Size = $curSize }
         if ($null -eq $panelOn) { $panelOn = $curPanel }
         if ($f[5]) { $logsOn = $true }
+        # the template sets self[,<stunServers>]; absent = a hub from before (template default)
+        if (-not $StunServers) {
+            if ($f[6] -eq 'self') { $StunServers = 'none' }
+            elseif ($f[6] -like 'self,*') { $StunServers = $f[6].Substring(5) }
+        }
         $curRegistry = $f[3]
         if ((",$($f[4]),") -like '*,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,*' -and -not $TailscaleSecretFile) { throw "the hub has a Tailscale OAuth secret, which can't be read back: pass -TailscaleSecretFile again" }
         # this start's bootstrap.env must differ from the running one's (boot_id)
@@ -287,7 +292,12 @@ try {
         Register-Provider 'Microsoft.ContainerRegistry'
         $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
         if (-not (Test-Path (Join-Path $root 'deploy/hub/Dockerfile')) -or -not (Test-Path (Join-Path $root 'go.mod'))) { throw '-BuildInAcr: run from a checkout of the repository' }
-        $acr = (Invoke-Az acr list -g $rg --query "[?tags.\`"longarm-hub\`"=='$Name'].name | [0]" -o tsv) -join ''
+        # filtered here: an embedded " in --query breaks with pwsh 7.3+ native argument passing
+        $acr = ''
+        $regs = ((Invoke-Az acr list -g $rg -o json) -join "`n") | ConvertFrom-Json
+        foreach ($r in @($regs)) {
+            if ($null -ne $r -and $r.PSObject.Properties['tags'] -and $r.tags -and $r.tags.PSObject.Properties['longarm-hub'] -and $r.tags.'longarm-hub' -eq $Name) { $acr = $r.name; break }
+        }
         if (-not $acr) {
             $acr = 'lahub' + [guid]::NewGuid().ToString('N').Substring(0, 12)
             Write-Host "creating the container registry $acr in $rg (Basic, about 5 USD/month)"

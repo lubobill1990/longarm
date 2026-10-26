@@ -227,8 +227,9 @@ var hubEnv = concat(
   enablePanel ? [{ name: 'LONGARM_HUB_PUBLIC_URL', value: 'https://${fqdn}' }] : [],
   empty(tailscaleOAuthSecret) ? [] : [{ name: 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', secureValue: tailscaleOAuthSecret }],
   // self = the hub's own STUN ports; it drops them once it sees that ACI
-  // source-NATs them (internal/relay snatVerdict)
-  empty(stunServers) ? [] : [{ name: 'LONGARM_HUB_RELAY_STUN_ADVERTISE', value: 'self,${stunServers}' }]
+  // source-NATs them (internal/relay snatVerdict). Always set: deploy.sh
+  // reads it back on a re-run.
+  [{ name: 'LONGARM_HUB_RELAY_STUN_ADVERTISE', value: empty(stunServers) ? 'self' : 'self,${stunServers}' }]
 )
 
 var hubPorts = [

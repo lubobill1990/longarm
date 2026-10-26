@@ -138,7 +138,15 @@ func fakeAz(args []string) {
 			if g["tailscaleOAuthSecret"] != nil {
 				env += ",LONGARM_HUB_TAILSCALE_OAUTH_SECRET"
 			}
-			tsv(fmt.Sprint(g["image"]), cpu, caddy, reg, env, logs)
+			// LONGARM_HUB_RELAY_STUN_ADVERTISE as the template sets it
+			stun := "self,stun.cloudflare.com:3478,stun.l.google.com:19302"
+			if s, ok := g["stunServers"].(string); ok {
+				stun = "self"
+				if s != "" {
+					stun += "," + s
+				}
+			}
+			tsv(fmt.Sprint(g["image"]), cpu, caddy, reg, env, logs, stun)
 		case strings.Contains(q, "image"):
 			fmt.Println(g["image"])
 		default:
@@ -207,8 +215,18 @@ func fakeAz(args []string) {
 	case "deployment operation":
 		fmt.Println(`[{"resource": "myhub", "error": {"code": "InaccessibleImage", "message": "fake failure"}}]`)
 	case "acr list":
-		// one registry at most; queries by tag or by login server
-		if n := read("acr"); n != "" && (strings.Contains(q, "tags") || strings.Contains(q, n+".azurecr.io")) {
+		// one registry at most; queries by tag or by login server, or all as JSON
+		n := read("acr")
+		switch {
+		case flag("-o") == "json":
+			regs := []map[string]any{} // az prints [] for none
+			if n != "" {
+				hub := strings.Split(read("rg"), "\n")[1]
+				regs = append(regs, map[string]any{"name": n, "loginServer": n + ".azurecr.io", "tags": map[string]string{"longarm-hub": hub}})
+			}
+			b, _ := json.Marshal(regs)
+			fmt.Println(string(b))
+		case n != "" && (strings.Contains(q, "tags") || strings.Contains(q, n+".azurecr.io")):
 			fmt.Println(n)
 		}
 	case "acr create":

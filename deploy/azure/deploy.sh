@@ -253,7 +253,7 @@ ensure_providers Microsoft.ContainerInstance Microsoft.Storage
 
 # A re-run keeps the running hub's settings. Secrets can't be read back
 # from ACI: a hub that has them needs them again.
-cur=$(az container show -g "$rg" -n "$name" -o tsv --query "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId]" 2>/dev/null || true)
+cur=$(az container show -g "$rg" -n "$name" -o tsv --query "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId, containers[0].environmentVariables[?name=='LONGARM_HUB_RELAY_STUN_ADVERTISE'].value | [0]]" 2>/dev/null || true)
 cur_image='' cur_registry='' prev_boot='' account='' key=''
 if [[ -n $cur ]]; then
 	# one field per line; null fields are empty lines
@@ -264,6 +264,7 @@ if [[ -n $cur ]]; then
 		read -r cur_registry
 		read -r cur_env
 		read -r cur_logs || true
+		read -r cur_stun || true
 	} <<<"$(printf '%s\n' "$cur" | tr -d '\r' | tr '\t' '\n')"
 	cur_size=small
 	[[ ${cur_cpu%%.*} -lt 2 ]] || cur_size=medium
@@ -279,6 +280,13 @@ if [[ -n $cur ]]; then
 	size=${size:-$cur_size}
 	panel=${panel:-$cur_panel}
 	[[ -n $log_analytics || -z $cur_logs ]] || log_analytics=true
+	# the template sets self[,<stunServers>]; absent = a hub from before (template default)
+	if [[ -z $stun_servers ]]; then
+		case ${cur_stun:-} in
+		self) stun_servers=none ;;
+		self,*) stun_servers=${cur_stun#self,} ;;
+		esac
+	fi
 	[[ ,$cur_env, != *,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,* || -n $tailscale_secret_file ]] ||
 		die "the hub has a Tailscale OAuth secret, which can't be read back: pass --tailscale-secret-file again"
 	# this start's bootstrap.env must differ from the running one's (boot_id)

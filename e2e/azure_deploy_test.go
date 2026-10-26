@@ -79,6 +79,7 @@ func TestAzureDeployScripts(t *testing.T) {
 
 	for i, r := range deployRunners(t) {
 		t.Run(r.name, func(t *testing.T) {
+			t.Parallel() // own fake az state each; the hub is shared read-only
 			dir := t.TempDir()
 			az := filepath.Join(dir, exeName("az"))
 			copyBin(t, bins.helper, az)
@@ -260,6 +261,10 @@ func TestAzureDeployScripts(t *testing.T) {
 			ok(run(pw, name, "myhub", regUser, "bot", stun, "none"), "no STUN servers")
 			if p := params(); p["stunServers"] != "" {
 				t.Fatalf("no STUN servers: %+v", p)
+			}
+			ok(run(pw, name, "myhub", regUser, "bot"), "re-run keeps the STUN servers")
+			if p := params(); p["stunServers"] != "" {
+				t.Fatalf("re-run lost --stun-servers none: %+v", p)
 			}
 			refused(run(pw, name, "myhub", regUser, "bot", stun, "a b"), "bad STUN servers", "stun")
 
