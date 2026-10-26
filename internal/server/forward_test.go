@@ -1,9 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -92,5 +95,30 @@ func TestParseForwardTargets(t *testing.T) {
 	}
 	if _, err := ParseForwardTargets("lan"); err == nil {
 		t.Fatal("bad value accepted")
+	}
+}
+
+// TestForwardTargetsWarnOnce: the first refused non-loopback target logs
+// once which setting allows it (an upgrade from before [forward] targets
+// changes what shared workers forward to).
+func TestForwardTargetsWarnOnce(t *testing.T) {
+	var buf bytes.Buffer
+	s := &Server{Log: slog.New(slog.NewTextHandler(&buf, nil))}
+	s.ForwardTargetCheck("127.0.0.1", 22)
+	if buf.Len() != 0 {
+		t.Fatalf("loopback logged: %s", buf.String())
+	}
+	for range 3 {
+		if err := s.ForwardTargetCheck("192.0.2.1", 22); status.Code(err) != codes.PermissionDenied {
+			t.Fatalf("refused: %v", err)
+		}
+	}
+	ctx := context.WithValue(context.Background(), idKey{}, pki.Identity{Role: pki.RoleAdmin, Name: "root"})
+	if err := s.forwardAllowed(ctx, "192.0.2.2:80"); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("refused: %v", err)
+	}
+	out := buf.String()
+	if strings.Count(out, "level=WARN") != 1 || !strings.Contains(out, `[forward] targets = \"any\"`) || !strings.Contains(out, "192.0.2.1") {
+		t.Fatalf("log:\n%s", out)
 	}
 }

@@ -279,7 +279,8 @@ containers. These remain:
   local process can use every port link listening on that worker. (Port
   forwards reach only the worker's loopback ports unless `[forward] targets
   = "any"`; before that setting existed they reached any address the worker
-  could reach.) Use it only for people who trust each other.
+  could reach - see "Upgrading: forward targets" under Operations.) Use it
+  only for people who trust each other.
 - **Fleet-wide quotas** are enforced by the hub's scheduler. A client that
   submits to a worker directly (`longarm run --on w1`) is bound only by the
   per-worker quotas there.
@@ -320,6 +321,15 @@ containers. These remain:
   that are offline purge when they reconnect (the purge list is part of the
   policy). `longarmd leave --purge` and uninstalling a per-user worker
   delete all `la-*` accounts it created.
+- **Upgrading: forward targets (breaking).** Since `[forward] targets`
+  exists (the release with port links), forwards - `longarm forward`, ssh
+  `-L`/`-D` through the built-in sshd, port links - reach only the worker's
+  own loopback ports by default, for every caller including admins. Shared
+  workers used to forward to any host:port they could reach; a deployment
+  relying on that (forwards to LAN hosts) needs `[forward] targets = "any"`
+  in longarmd.toml after the upgrade. longarmd logs a warning naming that
+  setting the first time it refuses a non-loopback target. See
+  [CHANGELOG.md](../CHANGELOG.md#upgrading).
 
 ## Level 3 outlook
 

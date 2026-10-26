@@ -192,6 +192,12 @@ func (s *Server) targetAllowed(host string) error {
 	if s.ForwardTargets == ForwardAny || loopbackHost(host) {
 		return nil
 	}
+	if !s.forwardWarned.Swap(true) && s.Log != nil {
+		// Forwards to other hosts were allowed before [forward] targets
+		// existed: say once what turns them back on.
+		s.Log.Warn(`forward to a non-loopback target refused: this worker forwards to its own loopback ports only; set [forward] targets = "any" in longarmd.toml to allow other hosts (the behaviour before this setting existed; logged once)`,
+			"target", host)
+	}
 	return status.Errorf(codes.PermissionDenied, "this worker forwards to its own loopback ports only, not to %s ([forward] targets = %q)", host, ForwardLoopback)
 }
 

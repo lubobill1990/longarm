@@ -202,7 +202,8 @@ mTLS-authenticated gRPC channel; such connections need no ssh keys. It
 supports exec/shell with or without a pty, the sftp subsystem (scp uses it),
 and `-L`/`-D` forwarding (VS Code Remote-SSH). Forwards (`longarm forward`, ssh
 `-L`/`-D`, port links) reach the worker's own loopback ports only, unless
-`[forward] targets = "any"`. Optionally longarmd also listens
+`[forward] targets = "any"` (a breaking change for forwards to other hosts:
+see [CHANGELOG.md](../CHANGELOG.md#upgrading)). Optionally longarmd also listens
 directly, accepting the public keys in `<data>/authorized_keys`:
 
 ```toml

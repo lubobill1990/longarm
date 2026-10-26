@@ -11,6 +11,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -88,6 +89,8 @@ type Server struct {
 	// ForwardTargets is [forward] targets: ForwardLoopback ("" too) or
 	// ForwardAny.
 	ForwardTargets string
+	// forwardWarned: the refusal of a non-loopback target was logged.
+	forwardWarned atomic.Bool
 
 	lmu  sync.Mutex
 	late []string
