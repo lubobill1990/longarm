@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/lubobill1990/longarm/internal/loopguard"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/server"
@@ -119,6 +120,11 @@ func SetIsolation(dataDir, mode string) error {
 func deleteUserAccounts(cfg Config, out io.Writer) {
 	if cfg.Isolation.Mode != tenancy.PerUser || platform.CanIsolate() != nil {
 		return
+	}
+	if loopguard.Supported {
+		if err := loopguard.Remove(); err != nil {
+			fmt.Fprintf(out, "warning: remove the loopback isolation rules (nftables table inet %s): %v\n", loopguard.Table, err)
+		}
 	}
 	usersDir := cfg.Isolation.UsersDir
 	if usersDir == "" {

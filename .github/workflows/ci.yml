@@ -162,6 +162,12 @@ jobs:
           for c in longarmd longarm longarm-hub; do go build -o "$bin/$c" "./cmd/$c"; done
           go build -o "$bin/helper" ./e2e/helper
           go test -c -o "$bin/e2e.test" ./e2e
+          # loopback isolation between the accounts needs nft (the tests
+          # skip it with a warning if it can't be installed)
+          command -v nft >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq nftables; } ||
+            echo "::warning::nftables not installed: loopback isolation is not tested"
+          go test -c -o "$bin/loopguard.test" ./internal/loopguard
+          sudo "$bin/loopguard.test" -test.v 2>&1 | tee -a "$RUNNER_TEMP/go-test.log"
           cd e2e
           sudo env LONGARM_PERUSER_TEST=1 LONGARM_E2E_BIN_DIR="$bin" LONGARM_GATE_CPU=101 LONGARM_GATE_FREE_GB=0 \
             "$bin/e2e.test" -test.run 'PerUser' -test.v -test.timeout 15m 2>&1 | tee -a "$RUNNER_TEMP/go-test.log"
