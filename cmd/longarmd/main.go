@@ -348,9 +348,13 @@ Per-user isolation refuses a data dir whose users dir the accounts cannot reach
 	}
 	c.AddCommand(install,
 		simple("uninstall", "Stop and remove the service", func(n string) error {
+			cleanup := perUserLoopbackCleanup(n) // read the unit before it goes
 			err := platform.UninstallService(n)
 			if err == nil {
 				serviceFirewall(n, "", false)
+				if cleanup != nil {
+					cleanup()
+				}
 			}
 			return err
 		}, "uninstalled"),

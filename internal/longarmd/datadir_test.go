@@ -211,14 +211,40 @@ func TestMigrateEnrollment(t *testing.T) {
 		"jobs/j1/meta.json": "{}", "longarmd.log": "log",
 	})
 	if runtime.GOOS != "windows" {
-		os.Chmod(filepath.Join(src, "tls", "ca.crt"), 0o664)
+		os.Chmod(filepath.Join(src, "tls", "ca.crt"), 0o644)
 		if err := os.Symlink("/etc/passwd", filepath.Join(src, "authorized_keys")); err != nil {
 			t.Fatal(err)
 		}
+		// A file others may write: refused, and nothing is left in dst.
+		os.Chmod(filepath.Join(src, "tls", "node.crt"), 0o666)
+		err := MigrateEnrollment(src, dst, nil)
+		if err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+			t.Fatalf("group/world-writable source file: %v", err)
+		}
+		if DataDirInUse(dst) {
+			t.Fatal("a failed migration left a half enrollment")
+		}
+		if m, _ := filepath.Glob(filepath.Join(dst, migrateTmpPrefix+"*")); len(m) > 0 {
+			t.Fatalf("staging dir left: %v", m)
+		}
+		os.Chmod(filepath.Join(src, "tls", "node.crt"), 0o644)
+		// So is a source dir others may write.
+		os.Chmod(src, 0o777)
+		if err := MigrateEnrollment(src, dst, nil); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+			t.Fatalf("world-writable source dir: %v", err)
+		}
+		os.Chmod(src, 0o700)
+	}
+	// A leftover staging dir of an interrupted run is cleaned up.
+	if err := os.MkdirAll(filepath.Join(dst, migrateTmpPrefix+"old", "tls"), 0o700); err != nil {
+		t.Fatal(err)
 	}
 	var out strings.Builder
 	if err := MigrateEnrollment(src, dst, &out); err != nil {
 		t.Fatal(err)
+	}
+	if m, _ := filepath.Glob(filepath.Join(dst, migrateTmpPrefix+"*")); len(m) > 0 {
+		t.Errorf("staging dirs left: %v", m)
 	}
 	for name, want := range map[string]string{
 		"tls/ca.crt": "CA", "tls/node.key": "KEY", "tls/node.crt": "CERT", "hub.toml": "address = \"hub.example.com:7443\"\n",
@@ -244,7 +270,8 @@ func TestMigrateEnrollment(t *testing.T) {
 		if !strings.Contains(out.String(), "skipped "+filepath.Join(src, "authorized_keys")+" (a symlink)") {
 			t.Errorf("output: %s", out.String())
 		}
-		for name, want := range map[string]os.FileMode{"tls": 0o700, "tls/node.key": 0o600, "tls/ca.crt": 0o644, "hub.toml": 0o600} {
+		for name, want := range map[string]os.FileMode{"tls": 0o700, "tls/node.key": 0o600, "tls/ca.crt": 0o600, "hub.toml": 0o600,
+			"tsnet-ctl.example.com": 0o700, "tsnet-ctl.example.com/state": 0o600, "tsnet.authkey": 0o600} {
 			fi, err := os.Stat(filepath.Join(dst, filepath.FromSlash(name)))
 			if err != nil {
 				t.Error(err)

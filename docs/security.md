@@ -197,12 +197,12 @@ table inet longarm {
 	}
 	chain sender {                          # who opened the connection
 		ct mark set ct mark and 0x0000ffff
-		meta skuid 1001 ct mark set ct mark or 0x00010000 return   # la-alice
-		meta skuid 1002 ct mark set ct mark or 0x00020000 return   # la-bob
+		meta skuid 1001 ct mark set ct mark or 0x03e90000 return   # la-alice
+		meta skuid 1002 ct mark set ct mark or 0x03ea0000 return   # la-bob
 	}
 	chain answer {                          # who answers it
-		ct mark and 0xffff0000 == 0x00010000 meta skuid 1001 return
-		ct mark and 0xffff0000 == 0x00020000 meta skuid 1002 return
+		ct mark and 0xffff0000 == 0x03e90000 meta skuid 1001 return
+		ct mark and 0xffff0000 == 0x03ea0000 meta skuid 1002 return
 		meta skuid != { 1001, 1002 } return
 		ct mark set ct mark or 0xffff0000 counter drop
 	}
@@ -210,14 +210,25 @@ table inet longarm {
 ```
 
 How it works: the first packet of a connection on `lo` records the sending
-account (`meta skuid` of the socket) in bits 16-31 of the conntrack mark
-(0 for root and every non-account uid). The listener's answer - the
-SYN-ACK, which the kernel attributes to the listening socket - is checked
-in the output hook: an answer from another account's socket (or from no
-identifiable socket) is dropped and the connection marked blocked; the
-client's retransmitted SYN then gets a TCP reset, so `connect()` fails with
-"connection refused" after about a second. UDP replies between accounts
-are dropped the same way.
+account (`meta skuid` of the socket) in bits 16-31 of the conntrack mark:
+its tag, the low 16 bits of its uid (0 for root and every non-account uid).
+The listener's answer - the SYN-ACK, which the kernel attributes to the
+listening socket, SYN-cookie and retransmitted SYN-ACKs included - is
+checked in the output hook: an answer from another account's socket (or
+one without a full socket the rule can attribute, which is rare) is
+dropped and the connection marked blocked; the client's retransmitted SYN
+then gets a TCP reset, so `connect()` fails with "connection refused"
+after about a second. UDP replies between accounts are dropped the same
+way.
+
+The tags depend on the uid alone, so replacing the table when accounts are
+added or purged never re-labels running connections (a position in the
+account list would: long-lived connections would then count as another
+account's). Accounts with uids below 65535 - useradd's usual range - are
+their own tag; two accounts whose uids agree in the low 16 bits (e.g. 1001
+and 66537), or a uid ending in 0x0000 / 0xffff, cannot be told apart: the
+rules are then refused like an `nft` failure (warning, or no start / no new
+account with `loopback = "require"`) - give the account another uid.
 
 - **Kept working**: connections within one account (IPv4 and IPv6),
   root's connections to the accounts' ports (Longarm's port forwards, ssh
@@ -229,9 +240,16 @@ are dropped the same way.
 - **Lifecycle**: longarmd replaces the table atomically (`nft -f`) at start
   and whenever an account is created or purged; it stays while longarmd is
   stopped or restarting (the jobs outlive longarmd); `longarmd leave
-  --purge`, uninstalling (deb prerm) and `loopback = "allow"` remove it.
-  Remove it by hand with `nft delete table inet longarm`. Only one per-user
-  longarmd per machine (the table name is fixed).
+  --purge`, uninstalling (deb prerm; `longarmd service uninstall` of a
+  per-user service) and `loopback = "allow"` remove it. A longarmd switched
+  to shared mode by editing `longarmd.toml` leaves it (it cannot tell its
+  old table from another per-user longarmd's): remove it by hand with `nft
+  delete table inet longarm`. Only one per-user longarmd per machine (the
+  table name is fixed).
+- **Ordering**: at start the table is in place before any space's
+  supervisor runs a job; a new account (or a re-created one) is added to
+  the table before anything runs as it - with `loopback = "require"` a
+  failure leaves the user without a space (their next call retries).
 - **Failure**: without `nft` (package `nftables`), without root or when the
   kernel refuses the rules, longarmd logs a warning and runs on unprotected;
   `loopback = "require"` makes it refuse to start (and to create accounts)
@@ -244,12 +262,18 @@ are dropped the same way.
   if nothing else (ufw, Docker, firewalld) did - all traffic is then
   tracked; mind `nf_conntrack_max` on very busy hosts. An account's
   SYN-ACK that conntrack considers invalid (sender unknown) is dropped too.
-- **Limits**: one-way UDP datagrams still arrive (only the replies are
-  dropped); unix sockets (filesystem: protect them with file permissions;
-  abstract ones are reachable by everyone) are not covered; neither are
-  raw protocols other than TCP and UDP. Under a SYN flood (SYN cookies) the
-  kernel answers without a socket and the rule fails closed: accounts'
-  connections to that listener then fail until the flood is over. With
+- **Limits**: UDP between accounts is one-way deliverable: a datagram from
+  bob's socket to a port alice's process bound on `lo` **arrives** (it
+  opens the conntrack flow; the output hook sees only the sender's socket,
+  and in the input path the receiving socket is generally not looked up
+  yet, so no rule can match its uid); only alice's replies are dropped. So bob can send requests
+  to alice's UDP services (DNS-like or "fire and forget" protocols act on
+  them) but gets no answers; protect UDP listeners by authentication or
+  bind them elsewhere. Unix sockets (filesystem: protect them with file
+  permissions; abstract ones are reachable by everyone) are not covered;
+  neither are raw protocols other than TCP and UDP. SYN-cookie SYN-ACKs
+  carry the listening socket and are judged like others; answers the
+  kernel sends without a full socket (rare) fail closed. With
   `net.ipv4.tcp_fastopen` server mode enabled (not the default) data in a
   Fast Open SYN reaches the listener before the answer is dropped. A
   connection is attributed to the uid that **created** the socket.
@@ -273,8 +297,9 @@ containers. These remain:
   Linux without nftables or with `[isolation] loopback = "allow"`: B's
   process can connect to A's dev server on `127.0.0.1:3000` directly (only
   Longarm's own forwards check the port's owner). On Linux with the default
-  rules ([above](#loopback-between-users-linux)) TCP is refused; one-way
-  UDP datagrams and unix sockets are not covered. Bind dev servers with
+  rules ([above](#loopback-between-users-linux)) TCP is refused; UDP
+  datagrams still reach another account's socket (only its replies are
+  dropped), and unix sockets are not covered. Bind dev servers with
   authentication, prefer unix sockets in the user's home, or use level 3
   (network namespaces).
 - **Process lists.** On Linux every account sees every process and its
@@ -329,11 +354,15 @@ containers. These remain:
   install --isolation per-user` refuses it (with `--data-dir`) and longarmd
   refuses to start on it, both naming the blocking directory. Without
   `--data-dir`, the install uses `/var/lib/longarmd` and copies an
-  enrollment an older longarmd left in `~root/.longarm` (keys stay 0600,
-  dirs 0700; remove the old copy afterwards). On Windows the per-user
-  default is `C:\ProgramData\Longarm\longarmd`, created with a protected
-  DACL (SYSTEM and Administrators) - ProgramData's inherited ACL would let
-  every local user read the node key. See docs/usage.md "Data directory".
+  enrollment an older longarmd left in `~root/.longarm` (root's passwd home,
+  not `$HOME`; copies 0600, dirs 0700; a source not owned by root or
+  writable by group/others is refused; remove the old copy afterwards). On
+  Windows the per-user default is `C:\ProgramData\Longarm\longarmd`, created
+  with a protected DACL (SYSTEM and Administrators) - ProgramData's
+  inherited ACL would let every local user read the node key. Any local
+  user may pre-create it, so an existing one owned by another account is
+  refused, and one with an inherited or open ACL is locked down again
+  before anything is written to it. See docs/usage.md "Data directory".
 - **cgroups** (Linux): longarmd creates `/sys/fs/cgroup/longarm`; with
   systemd you may prefer `Delegate=yes` and `[isolation] cgroup_root`
   inside the unit's cgroup. Without cgroup v2, jobs run in process groups

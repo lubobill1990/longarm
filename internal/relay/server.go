@@ -334,8 +334,13 @@ func (s *Server) observed(ap netip.AddrPort) netip.AddrPort {
 const EnvTestFakeSNAT = "LONGARM_RELAY_TEST_FAKE_SNAT"
 
 // updateSNAT re-evaluates whether our own STUN answers are SNATed (see
-// snatVerdict) and logs transitions.
+// snatVerdict) and logs transitions. snatMu is taken before the sessions
+// are read, so that a verdict on an older snapshot never overwrites a newer
+// one (lock order: snatMu, then s.mu, then a session's infoMu; callers
+// hold none of them).
 func (s *Server) updateSNAT() {
+	s.snatMu.Lock() // serializes snapshots, transitions and their log lines
+	defer s.snatMu.Unlock()
 	s.mu.Lock()
 	views := make([]snatView, 0, len(s.sessions))
 	for _, ss := range s.sessions {
@@ -347,8 +352,6 @@ func (s *Server) updateSNAT() {
 		ss.infoMu.Unlock()
 	}
 	s.mu.Unlock()
-	s.snatMu.Lock() // serializes transitions (and their log lines)
-	defer s.snatMu.Unlock()
 	v, known := snatVerdict(views)
 	if !known || s.snat.Swap(v) == v {
 		return

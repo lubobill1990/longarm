@@ -8,20 +8,29 @@
 //
 //   - On lo, the first packet of every connection (conntrack "new", and every
 //     TCP SYN) records its sender in bits 16-31 of the conntrack mark: the
-//     index of the sending account (meta skuid of the socket), 0 for every
-//     other uid (root, system services, people's own accounts).
+//     tag of the sending account (meta skuid of the socket; the low 16 bits
+//     of its uid, see Tag), 0 for every other uid (root, system services,
+//     people's own accounts).
 //   - The listener's answer - the TCP SYN-ACK, which the kernel attributes to
-//     the listening socket, and every UDP reply - is checked in the output
-//     hook: if an account opened the connection and the answering socket
-//     belongs to another account (or to no identifiable socket, e.g. a SYN
-//     cookie), the answer is dropped and the connection marked blocked.
+//     the listening socket (also a SYN-cookie or retransmitted one: the skb
+//     carries the listener or its request socket, skb_to_full_sk), and every
+//     UDP reply - is checked in the output hook: if an account opened the
+//     connection and the answering socket belongs to another account, or
+//     the answer has no full socket the rule can attribute, the answer is
+//     dropped and the connection marked blocked.
 //   - The client's retransmitted SYN of a blocked connection is answered with
 //     a TCP reset: connect() fails with "connection refused" after about a
 //     second instead of hanging.
 //
 // Connections between processes of the same account, from or to non-account
 // processes (root: longarmd's own forwards, system services) and everything
-// not on lo are untouched.
+// not on lo are untouched. A UDP datagram that opens a "connection" is not
+// an answer: it reaches another account's socket; only that socket's
+// replies are dropped (the output hook only knows the sender's socket).
+//
+// The tags are stable: an account keeps its tag while accounts come and go,
+// so conntrack entries of long-lived connections never point at another
+// account after the table is replaced.
 package loopguard
 
 import (
@@ -50,8 +59,6 @@ const (
 	markKeep    = 0x0000ffff
 	markBlocked = 0xffff0000
 	markShift   = 16
-	// MaxUsers is the most accounts the mark can tell apart.
-	MaxUsers = 0xfffe
 )
 
 // ParseMode validates an [isolation] loopback value ("" = default).
@@ -69,6 +76,17 @@ type User struct {
 	UID  int
 }
 
+// Tag is the sender tag of uid in the conntrack mark (bits 16-31): the low
+// 16 bits of the uid. It depends on the uid alone, so it never changes
+// while the account exists, whichever accounts are added or purged (a
+// position in the account list would shift, and conntrack entries of
+// running connections would then name another account). Account uids
+// below 65535 - useradd's usual range - are their own tag. Two accounts
+// whose uids agree in the low 16 bits, or a uid whose low 16 bits are 0
+// or 0xffff (0 = "not an account", 0xffff = blocked), cannot be told apart:
+// Ruleset refuses them.
+func Tag(uid int) uint32 { return uint32(uid&0xffff) << markShift }
+
 // normalize sorts users by uid and drops duplicates and root.
 func normalize(users []User) []User {
 	out := make([]User, 0, len(users))
@@ -84,12 +102,29 @@ func normalize(users []User) []User {
 	return out
 }
 
+// checkTags fails when two accounts would share a tag or one has an
+// unusable one.
+func checkTags(users []User) error {
+	byTag := map[uint32]User{}
+	for _, u := range users {
+		t := Tag(u.UID)
+		if t == 0 || t == markBlocked {
+			return fmt.Errorf("loopback isolation: account %s has uid %d, whose low 16 bits (%#x) cannot tag connections; give it another uid", u.Name, u.UID, u.UID&0xffff)
+		}
+		if o, ok := byTag[t]; ok {
+			return fmt.Errorf("loopback isolation: accounts %s (uid %d) and %s (uid %d) agree in the low 16 bits of their uids and cannot be told apart; give one another uid", o.Name, o.UID, u.Name, u.UID)
+		}
+		byTag[t] = u
+	}
+	return nil
+}
+
 // Ruleset returns the nft script that (re)creates the table for users in
 // one transaction (nft -f): idempotent, whether the table exists or not.
 func Ruleset(users []User) (string, error) {
 	users = normalize(users)
-	if len(users) > MaxUsers {
-		return "", fmt.Errorf("loopback isolation: %d accounts, at most %d", len(users), MaxUsers)
+	if err := checkTags(users); err != nil {
+		return "", err
 	}
 	var b strings.Builder
 	b.WriteString(RemoveScript())
@@ -122,27 +157,25 @@ func Ruleset(users []User) (string, error) {
 	// sender: record which account opened the connection (0 = none).
 	b.WriteString("\tchain sender {\n")
 	fmt.Fprintf(&b, "\t\tct mark set ct mark and 0x%08x\n", uint32(markKeep))
-	for i, u := range users {
-		fmt.Fprintf(&b, "\t\tmeta skuid %d ct mark set ct mark or 0x%08x return # %s\n", u.UID, tag(i), comment(u.Name))
+	for _, u := range users {
+		fmt.Fprintf(&b, "\t\tmeta skuid %d ct mark set ct mark or 0x%08x return # %s\n", u.UID, Tag(u.UID), comment(u.Name))
 	}
 	b.WriteString("\t}\n")
 
 	// answer: the listener's answer to a connection an account opened.
 	b.WriteString("\tchain answer {\n")
-	for i, u := range users {
-		fmt.Fprintf(&b, "\t\tct mark and 0x%08x == 0x%08x meta skuid %d return # %s to itself\n", uint32(markMask), tag(i), u.UID, comment(u.Name))
+	for _, u := range users {
+		fmt.Fprintf(&b, "\t\tct mark and 0x%08x == 0x%08x meta skuid %d return # %s to itself\n", uint32(markMask), Tag(u.UID), u.UID, comment(u.Name))
 	}
 	// Not an account's socket: root, system services, other people. An
-	// answer without a socket (SYN cookies) matches neither rule and is
-	// dropped: fail closed.
+	// answer without a full socket (meta skuid cannot match: rare, as
+	// SYN-ACKs - SYN cookies included - carry the listener) matches neither
+	// rule and is dropped: fail closed.
 	fmt.Fprintf(&b, "\t\tmeta skuid != %s return\n", set)
 	fmt.Fprintf(&b, "\t\tct mark set ct mark or 0x%08x counter drop\n", uint32(markBlocked))
 	b.WriteString("\t}\n}\n")
 	return b.String(), nil
 }
-
-// tag is the conntrack mark of the i-th account (index i+1 in bits 16-31).
-func tag(i int) uint32 { return uint32(i+1) << markShift }
 
 // comment makes s safe as an nft line comment.
 func comment(s string) string {
