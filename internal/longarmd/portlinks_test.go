@@ -2,6 +2,7 @@ package longarmd
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -202,8 +203,8 @@ func TestLinkExpiryWithoutHub(t *testing.T) {
 	if time.Now().Before(expires) {
 		t.Fatal("cut before the link expired")
 	}
-	if _, _, ok := p.b.Incoming(l.Id); ok {
-		t.Fatal("wb still accepts the expired link")
+	if _, _, _, err := p.b.Incoming(l.Id); !errors.Is(err, server.ErrLinkInactive) {
+		t.Fatalf("wb still accepts the expired link: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for listening(l) {
@@ -265,5 +266,85 @@ func TestLinkJobEndWithoutHub(t *testing.T) {
 	p.a.mu.Unlock()
 	if back {
 		t.Fatal("the ended job's link came back")
+	}
+}
+
+// TestLinkConnCap: [links] max_conns caps a link's open connections on
+// the source (further local connections are refused) and on the target
+// (further streams are refused).
+func TestLinkConnCap(t *testing.T) {
+	p := newLinkPair(t)
+	p.a.maxConns = 2
+	pl := p.link(t, "", time.Now().Add(time.Hour), time.Now().Add(time.Hour))
+	l := pl.Links[0].Link
+	p.a.apply(pl, false)
+	p.b.apply(pl, false)
+	c1, c2 := connect(t, l), connect(t, l)
+	defer c1.Close()
+	defer c2.Close()
+	c3, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(l.ListenPort))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitCut(t, c3, 5*time.Second)
+	if rep := p.a.statusReport(); len(rep.Links) != 1 || rep.Links[0].Refused != 1 || rep.Links[0].Active != 2 {
+		t.Fatalf("status %v", rep)
+	}
+	c2.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for p.a.statusReport().Links[0].Active != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("closed connection still counted")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	connect(t, l).Close() // a slot is free again
+
+	// the target: wb's slots are those of its streams
+	p.b.maxConns = 1
+	_, _, release, err := p.b.Incoming(l.Id) // c1's stream holds one already
+	if err == nil || errors.Is(err, server.ErrLinkInactive) || !strings.Contains(err.Error(), "max 1") {
+		t.Fatalf("over the target's cap: %v", err)
+	}
+	c1.Close()
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		_, _, release, err = p.b.Incoming(l.Id)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("target slot not freed: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	release()
+}
+
+// TestLinkCutConns: disabling the owner cuts the link's open connections
+// on both workers; the link itself stays.
+func TestLinkCutConns(t *testing.T) {
+	for _, side := range []string{"source", "target"} {
+		t.Run(side, func(t *testing.T) {
+			p := newLinkPair(t)
+			pl := p.link(t, "", time.Now().Add(time.Hour), time.Now().Add(time.Hour))
+			l := pl.Links[0].Link
+			p.a.apply(pl, false)
+			p.b.apply(pl, false)
+			c := connect(t, l)
+			defer c.Close()
+			m := p.a
+			if side == "target" {
+				m = p.b
+			}
+			if n := m.cutConns(func(owner string) bool { return owner == "bob" }); n != 0 {
+				t.Fatalf("cut %d links of bob", n)
+			}
+			if n := m.cutConns(func(owner string) bool { return owner == "alice" }); n != 1 {
+				t.Fatalf("cut %d links of alice", n)
+			}
+			waitCut(t, c, 5*time.Second)
+			connect(t, l).Close() // the link still works (re-enabled; the target checks the policy)
+		})
 	}
 }

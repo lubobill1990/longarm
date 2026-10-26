@@ -215,7 +215,9 @@ rights** on each other.
    jobs only get the link's variables while it is bound, so another
    account can't catch the owner's traffic on a free twin port. With
    users separated, only admins may link a shared-isolation source to a
-   per-user target.
+   per-user target; the hub re-checks this whenever separation or a
+   worker's isolation changes (and at start) and removes links no longer
+   allowed.
 
 **Revocation.** Removing a link (or its TTL, its job ending, its owner being
 removed, either worker being revoked) pushes new lists to both workers;
@@ -223,10 +225,13 @@ both close the listener and cut every open connection through it, and the
 hub stops relaying between the two workers when no link remains. Workers
 also expire links themselves, so a link ends at its TTL even when the hub
 is unreachable, and the source worker ends a link bound to a job when the
-job ends there (the job always runs on the source). Workers keep the last list across restarts
-(`<data>/port-links.json`) so links work while the hub is down; a link
-removed during a hub outage ends when the hub is back or at its TTL
-(default 8h, `[links] max_ttl`).
+job ends there (the job always runs on the source). Workers keep the last
+list across restarts (`<data>/port-links.json`) so links work while the
+hub is down; a link removed during a hub outage ends when the hub is back
+or at its TTL (default 8h, `[links] max_ttl`). Disabling the owner cuts
+the open connections on both workers (the target refuses new ones). Each
+worker caps a link's open connections (`[links] max_conns` in
+longarmd.toml, default 64).
 
 **What a compromised worker can do** (it holds its worker key and can run
 anything as longarmd):

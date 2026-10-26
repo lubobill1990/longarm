@@ -85,6 +85,7 @@ type FileConfig struct {
 	Update      UpdateConfig    `toml:"update"`
 	Isolation   IsolationConfig `toml:"isolation"`
 	Forward     ForwardConfig   `toml:"forward"`
+	Links       LinksConfig     `toml:"links"`
 }
 
 // IsolationConfig is the [isolation] section (multi-tenancy,
@@ -114,6 +115,16 @@ type ForwardConfig struct {
 	// before this setting existed that was the behaviour in shared isolation).
 	Targets string `toml:"targets"`
 }
+
+// LinksConfig is the [links] section (port links through this worker).
+type LinksConfig struct {
+	// MaxConns caps the open connections of each link, as its source and as
+	// its target (default DefaultLinkMaxConns; -1 = no cap).
+	MaxConns int `toml:"max_conns"`
+}
+
+// DefaultLinkMaxConns is [links] max_conns by default.
+const DefaultLinkMaxConns = 64
 
 // HubConfig is the [hub] section. The address usually comes from hub.toml,
 // written by `longarmd join`.
@@ -198,6 +209,7 @@ type Config struct {
 	Update       UpdateConfig
 	Isolation    IsolationConfig
 	Forward      ForwardConfig // Targets normalized
+	Links        LinksConfig   // MaxConns: 0 = no cap
 	// How longarmd was started, for the restart after a self-update: "service"
 	// (the service manager restarts it) or "exec" (longarmd relaunches itself
 	// with Args).
@@ -250,6 +262,14 @@ func LoadConfig(dataDir string, listenOverride []string) (Config, error) {
 		return cfg, fmt.Errorf("%s: %w", ConfigFile, err)
 	}
 	cfg.Forward.Targets = targets
+	switch cfg.Links = fc.Links; {
+	case cfg.Links.MaxConns == 0:
+		cfg.Links.MaxConns = DefaultLinkMaxConns
+	case cfg.Links.MaxConns == -1:
+		cfg.Links.MaxConns = 0
+	case cfg.Links.MaxConns < 0:
+		return cfg, fmt.Errorf("%s: [links] max_conns %d: want a positive number or -1 (no cap)", ConfigFile, fc.Links.MaxConns)
+	}
 	if cfg.Isolation.UsersDir != "" && !filepath.IsAbs(cfg.Isolation.UsersDir) {
 		cfg.Isolation.UsersDir = filepath.Join(dataDir, cfg.Isolation.UsersDir)
 	}
@@ -431,6 +451,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	}
 	defer linkDialer.Close()
 	links := newLinkManager(ctx, cfg.DataDir, srv.Name, reloader.LiveBundle(), st.spaces, srv.Audit, log.With("component", "links"), linkDialer)
+	links.maxConns = cfg.Links.MaxConns
 	srv.Links = links
 	defer func() {
 		closersMu.Lock()

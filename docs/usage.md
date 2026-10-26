@@ -174,6 +174,8 @@ longarm link rm lk-0123456789ab                       # cuts open connections at
   reach another process holding the port on one of them); while the port is
   taken by another process the link shows `error` and is left out of the
   job variables. `max_ttl` is at most 720h.
+  In longarmd.toml, `[links] max_conns` (64, -1 = no cap) caps each
+  link's open connections on both workers; more are refused.
 - **Panel.** "Port links" lists your links (admins: everybody's) with a
   Remove button. MCP: `fleet_link` (create / list / remove).
 
@@ -220,6 +222,9 @@ listen = ["tcp://100.64.0.11:2222"]   # optional direct sshd (authorized_keys)
 # targets = "loopback"          # what forwards (longarm forward, ssh -L/-D, port links) may reach:
 #                               # loopback (default) = this worker's 127.0.0.1/::1 ports only;
 #                               # "any" = any host:port the worker reaches (LAN, other machines)
+
+[links]
+# max_conns = 64                # open connections per port link through this worker (-1 = no cap)
 
 [gc]
 # disabled = true

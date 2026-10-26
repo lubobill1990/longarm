@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"net"
 	"strconv"
 	"time"
@@ -20,13 +21,19 @@ import (
 type LinkRegistry interface {
 	// Roots verify the hub's grant signatures (the fleet CA).
 	Roots() *x509.CertPool
-	// Incoming returns the active link id whose target is this worker, and
-	// a context that ends when the link is removed or expires.
-	Incoming(id string) (*pb.PortLink, context.Context, bool)
+	// Incoming returns the active link id whose target is this worker and
+	// takes one of its connection slots (release frees it), with a context
+	// that ends when the link is removed or expires or its connections are
+	// cut (owner disabled). Errors: ErrLinkInactive, or the link has too
+	// many open connections.
+	Incoming(id string) (l *pb.PortLink, ctx context.Context, release func(), err error)
 	// Env is the environment of a job of owner on this worker: the owner's
 	// links from here (portlink.Env); nil = none.
 	Env(owner string) map[string]string
 }
+
+// ErrLinkInactive: the link is not (yet / any more) in this worker's list.
+var ErrLinkInactive = errors.New("link not active")
 
 type linkTunnelServer struct {
 	pb.UnimplementedLinkTunnelServer
@@ -62,12 +69,16 @@ func (t *linkTunnelServer) Dial(st pb.LinkTunnel_DialServer) error {
 	case g.To != s.Name:
 		return deny(codes.PermissionDenied, fields, "link %s targets %s, not this worker", g.Id, g.To)
 	}
-	l, linkCtx, ok := s.Links.Incoming(g.Id)
-	if !ok {
+	l, linkCtx, release, err := s.Links.Incoming(g.Id)
+	if errors.Is(err, ErrLinkInactive) {
 		// Not (yet / any more) in the hub's list for this worker: removed,
 		// expired, or the hub's push has not arrived yet (the caller retries).
 		return deny(codes.FailedPrecondition, fields, "link %s is not active on %s", g.Id, s.Name)
 	}
+	if err != nil {
+		return deny(codes.ResourceExhausted, fields, "%v", err)
+	}
+	defer release()
 	if l.Owner != g.Owner || l.From != g.From || l.Port != g.Port {
 		return deny(codes.PermissionDenied, fields, "link %s: grant and the hub's list disagree", g.Id)
 	}
@@ -96,7 +107,7 @@ func (t *linkTunnelServer) Dial(st pb.LinkTunnel_DialServer) error {
 	if err := st.Send(&pb.ForwardFrame{}); err != nil {
 		return err
 	}
-	stop := context.AfterFunc(linkCtx, func() { c.Close() }) // link removed: cut
+	stop := context.AfterFunc(linkCtx, func() { c.Close() }) // link removed, owner disabled: cut
 	defer stop()
 	if len(first.Data) > 0 {
 		if _, err := c.Write(first.Data); err != nil {
@@ -105,7 +116,7 @@ func (t *linkTunnelServer) Dial(st pb.LinkTunnel_DialServer) error {
 	}
 	pipeStream(st, c, first.Eof, linkCtx.Done())
 	if linkCtx.Err() != nil {
-		return status.Errorf(codes.Aborted, "link %s was removed", g.Id)
+		return status.Errorf(codes.Aborted, "link %s was removed (or its owner disabled)", g.Id)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -30,18 +31,22 @@ type fakeLinks struct {
 	ctxs  map[string]context.CancelFunc
 	cctx  map[string]context.Context
 	env   map[string]map[string]string
+	full  bool // Incoming: too many connections
 }
 
 func (f *fakeLinks) Roots() *x509.CertPool { return f.roots }
 
-func (f *fakeLinks) Incoming(id string) (*pb.PortLink, context.Context, bool) {
+func (f *fakeLinks) Incoming(id string) (*pb.PortLink, context.Context, func(), error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	l := f.links[id]
 	if l == nil {
-		return nil, nil, false
+		return nil, nil, nil, ErrLinkInactive
 	}
-	return l, f.cctx[id], true
+	if f.full {
+		return nil, nil, nil, errors.New("link " + id + " has 1 open connections (max 1)")
+	}
+	return l, f.cctx[id], func() {}, nil
 }
 
 func (f *fakeLinks) Env(owner string) map[string]string { return f.env[owner] }
@@ -201,6 +206,13 @@ func TestLinkTunnel(t *testing.T) {
 	}
 	_, err = open(wa, good)
 	want("removed link", err, codes.FailedPrecondition, "not active")
+
+	// too many open connections
+	links.add(link)
+	links.full = true
+	_, err = open(wa, good)
+	want("connection cap", err, codes.ResourceExhausted, "max 1")
+	links.full = false
 
 	// a disabled owner's links are refused
 	links.add(link)

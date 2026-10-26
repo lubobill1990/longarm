@@ -8,6 +8,8 @@
   loopback port of another worker as `127.0.0.1:<port>`
   ([docs/usage.md](docs/usage.md#port-links-worker-to-worker)).
 - `[forward] targets` in longarmd.toml: what port forwards may reach.
+- `[links] max_conns` in longarmd.toml: open connections per port link
+  (default 64).
 
 ### Breaking changes
 

@@ -661,6 +661,11 @@ func (a *hubAgent) applyTenancy(p *pb.TenancyPolicy) {
 	}); n > 0 {
 		a.log.Info("closed connections of disabled users", "count", n)
 	}
+	if a.links != nil {
+		if n := a.links.cutConns(a.policy.Disabled); n > 0 { // their port links' too (the links stay)
+			a.log.Info("cut port link connections of disabled users", "links", n)
+		}
+	}
 	if p.Version == old || len(p.Purge) == 0 {
 		return
 	}

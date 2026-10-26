@@ -79,6 +79,9 @@ type linkManager struct {
 	// jobEnded says whether a job on this worker has ended (or is gone):
 	// links bound to it end.
 	jobEnded func(id string) bool
+	// maxConns caps each link's open connections, on either side ([links]
+	// max_conns; 0 = no cap).
+	maxConns int
 
 	mu      sync.Mutex
 	links   map[string]*linkState  // every link naming this worker
@@ -96,6 +99,8 @@ type linkState struct {
 	cancel context.CancelFunc
 
 	mu       sync.Mutex
+	cctx     context.Context // the open connections': ends with ctx or cut
+	ccancel  context.CancelFunc
 	state    string // listening | error
 	bound    bool   // the listener is up
 	err      string
@@ -122,7 +127,7 @@ type linkTarget struct {
 func newLinkManager(ctx context.Context, dataDir, name string, bundle *pki.Bundle, spaces *userspace.Spaces, audit *server.Audit,
 	log *slog.Logger, dialer *client.Dialer) *linkManager {
 	m := &linkManager{ctx: ctx, dataDir: dataDir, name: name, bundle: bundle, spaces: spaces, audit: audit, log: log,
-		dialer: dialer, links: map[string]*linkState{}, targets: map[string]*linkTarget{}}
+		dialer: dialer, links: map[string]*linkState{}, targets: map[string]*linkTarget{}, maxConns: DefaultLinkMaxConns}
 	m.jobEnded = func(id string) bool {
 		if spaces == nil {
 			return false
@@ -149,14 +154,56 @@ func newLinkManager(ctx context.Context, dataDir, name string, bundle *pki.Bundl
 func (m *linkManager) Roots() *x509.CertPool { return m.bundle.Pool }
 
 // Incoming implements server.LinkRegistry.
-func (m *linkManager) Incoming(id string) (*pb.PortLink, context.Context, bool) {
+func (m *linkManager) Incoming(id string) (*pb.PortLink, context.Context, func(), error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ls := m.links[id]
 	if ls == nil || ls.link.To != m.name || expired(ls.link, time.Now()) {
-		return nil, nil, false
+		return nil, nil, nil, server.ErrLinkInactive
 	}
-	return ls.link, ls.ctx, true
+	if err := m.take(ls); err != nil {
+		return nil, nil, nil, err
+	}
+	return ls.link, ls.connCtx(), func() { ls.active.Add(-1) }, nil
+}
+
+// take counts one more open connection of ls (undo: ls.active.Add(-1)),
+// unless it has maxConns.
+func (m *linkManager) take(ls *linkState) error {
+	if n := ls.active.Add(1); m.maxConns > 0 && int(n) > m.maxConns {
+		ls.active.Add(-1)
+		return fmt.Errorf("link %s has %d open connections (max %d, [links] max_conns on %s)", ls.link.Id, n-1, m.maxConns, m.name)
+	}
+	return nil
+}
+
+// connCtx is the context of ls's open connections.
+func (ls *linkState) connCtx() context.Context {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	return ls.cctx
+}
+
+// cutConns closes the open connections of the links of the owners cond
+// selects (disabled users); the links stay. It returns how many links had
+// connections.
+func (m *linkManager) cutConns(cond func(owner string) bool) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, ls := range m.links {
+		if !cond(ls.link.Owner) {
+			continue
+		}
+		if ls.active.Load() > 0 {
+			n++
+		}
+		ls.mu.Lock()
+		ls.ccancel()
+		ls.cctx, ls.ccancel = context.WithCancel(ls.ctx)
+		ls.mu.Unlock()
+	}
+	return n
 }
 
 // Env implements server.LinkRegistry: the owner's links from here.
@@ -220,6 +267,7 @@ func (m *linkManager) apply(pl *pb.PortLinks, persist bool) {
 		}
 		ctx, cancel := context.WithCancel(m.ctx)
 		ls := &linkState{link: l, a: a, ctx: ctx, cancel: cancel}
+		ls.cctx, ls.ccancel = context.WithCancel(ctx)
 		m.links[l.Id] = ls
 		if l.From == m.name {
 			m.log.Info("port link: listening for it", "link", l.Id, "owner", l.Owner, "listen", l.ListenPort, "to", fmt.Sprintf("%s:%d", l.To, l.Port))
@@ -444,7 +492,11 @@ func (m *linkManager) listen(ls *linkState) {
 func (m *linkManager) serveConn(ls *linkState, c net.Conn) {
 	defer c.Close()
 	l := ls.link
-	if err := m.checkPeer(l, c); err != nil {
+	err := m.checkPeer(l, c)
+	if err == nil {
+		err = m.take(ls)
+	}
+	if err != nil {
 		ls.mu.Lock()
 		ls.refused++
 		ls.mu.Unlock()
@@ -452,14 +504,13 @@ func (m *linkManager) serveConn(ls *linkState, c net.Conn) {
 		m.log.Info("port link: refused a local connection", "link", l.Id, "peer", c.RemoteAddr().String(), "why", err)
 		return
 	}
+	defer ls.active.Add(-1)
 	ls.mu.Lock()
 	ls.conns++
 	ls.mu.Unlock()
-	ls.active.Add(1)
-	defer ls.active.Add(-1)
-	ctx, cancel := context.WithCancel(ls.ctx)
+	ctx, cancel := context.WithCancel(ls.connCtx())
 	defer cancel()
-	stop := context.AfterFunc(ctx, func() { c.Close() }) // link removed: cut
+	stop := context.AfterFunc(ctx, func() { c.Close() }) // link removed or connections cut
 	defer stop()
 	st, t, err := m.open(ctx, ls)
 	if err != nil {

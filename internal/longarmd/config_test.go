@@ -23,3 +23,22 @@ func TestLoadConfigDropsInvalidLabels(t *testing.T) {
 		t.Fatalf("warnings %q", cfg.Warnings)
 	}
 }
+
+// [links] max_conns: 64 by default, -1 = no cap (0 inside), other
+// negatives are an error.
+func TestLoadConfigLinkMaxConns(t *testing.T) {
+	for in, want := range map[string]int{"": DefaultLinkMaxConns, "[links]\nmax_conns = 8\n": 8, "[links]\nmax_conns = -1\n": 0, "[links]\nmax_conns = -2\n": -2} {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, ConfigFile), []byte(in), 0o600)
+		cfg, err := LoadConfig(dir, nil)
+		if want < 0 {
+			if err == nil {
+				t.Errorf("%q: no error", in)
+			}
+			continue
+		}
+		if err != nil || cfg.Links.MaxConns != want {
+			t.Errorf("%q: %d %v, want %d", in, cfg.Links.MaxConns, err, want)
+		}
+	}
+}
