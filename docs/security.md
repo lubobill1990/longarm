@@ -55,6 +55,9 @@ compromised admins, hubs or workers; level 3 (untrusted code).
   join code **bound to the user**: the device that enrols with it gets a
   certificate of user `alice` (device name `alice`, or `alice-2`, ... or
   `--device`). More devices: `longarm admin user code alice`.
+- With Microsoft Entra ID sign-in, `longarm login` and the panel create
+  the user on first sign-in and enroll the device without a code (see
+  "Sign-in with Microsoft Entra ID").
 - Teams are hub-side groups (`longarm admin team add t1 alice bob`). A job
   submitted with `longarm run --share team` (or `--share team:t1`) may be
   **read** (state, logs) by the members of the owner's team(s); only the
@@ -522,6 +525,51 @@ is the off-machine copy: compare audit.log with a sink's copy (the same
 lines and hashes; `verify --file` checks a copy, which may start
 mid-chain). Records written while longarmd was stopped don't exist, and
 what a sink lost to an overflow is only counted.
+
+## Sign-in with Microsoft Entra ID
+
+With `[auth.entra]` (docs/usage.md "Sign in with Microsoft Entra ID") the
+hub issues certificates and panel sessions to whoever Microsoft vouches for,
+instead of to holders of a join code or a panel password: **the hub vouches
+for the user after verifying the Microsoft token**. It checks every token
+itself - RS256 signature against the tenant's published keys (fetched from
+`<authority>/<tenant>/discovery/v2.0/keys`, cached, refetched for an unknown
+key at most once a minute; `none` and HMAC algorithms are refused), issuer
+`<authority>/<tenant>/v2.0`, tenant (`tid`), audience (the hub's app: access
+tokens `<client id>` or `api://<client id>`, ID tokens `<client id>`),
+expiry and not-before (2 minutes of skew), an object ID (`oid`), and:
+
+- `longarm login` (Enroll.EntraJoin, no certificate needed, rate limited per
+  IP like join): the delegated scope (`scp` contains `longarm.connect`), or
+  an app-only token of an app listed in `apps` (CI, acting as its configured
+  user, never as an admin);
+- web sign-in: the nonce of this sign-in. State, nonce and PKCE verifier
+  live in an HMAC-signed, HttpOnly, SameSite=Lax cookie for 10 minutes,
+  each state is accepted once, the target after sign-in is a path on the
+  hub, and only top-level navigations start a sign-in. In spa mode the
+  browser redeems the code (no client credential exists) and posts the ID
+  token, same-origin only; app-only tokens never open panel sessions.
+
+What it changes:
+
+- The Entra tenant becomes an authority over the hub: anyone it lets sign
+  in (narrow with `allowed`) gets a client certificate of their own user,
+  and whoever matches `admins` gets an **admin** certificate. An Entra
+  account takeover, or a too broad `admins` entry like `*@domain`, is an
+  admin compromise of the hub. Users are tied to the Entra object ID, not
+  the UPN, so a renamed or reused UPN doesn't inherit another user.
+- Tokens are never logged or stored (the hub logs the user, UPN, object ID
+  and why a token was refused; sign-ins are audited as `entra/login` and
+  `entra/panel-login`, users it creates as `users/add` by `entra/<upn>`).
+- `longarm login` sends the token to the hub over TLS verified like `longarm
+  join`: pin the CA with `--ca-fingerprint`. Without a pin (trust on first
+  use) a man in the middle could relay the token - valid about an hour and
+  only for this hub's app - to the real hub and enroll a device as the user.
+- **End-to-end trust still applies on top**: a device enrolled by Entra
+  sign-in binds its node key like any other, and workers with trusted users
+  refuse it until the user's key endorsed it (`longarm trust ...`). Entra
+  sign-in replaces the join code, not the user keys - the hub (and now the
+  Entra tenant) still can't mint access to such workers.
 
 ## End-to-end trust (the hub is not trusted with access)
 

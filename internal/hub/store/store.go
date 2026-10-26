@@ -609,6 +609,9 @@ type User struct {
 	// Longarm user (Tenant) seeing only their own jobs (multi-tenancy).
 	Role   string `json:"role,omitempty"`
 	Tenant string `json:"tenant,omitempty"`
+	// Entra is the object ID of the Microsoft Entra user signing in to this
+	// account (web sign-in; such an account may have no password).
+	Entra string `json:"entra,omitempty"`
 }
 
 // Admin reports whether the panel account administers the hub.

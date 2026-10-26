@@ -21,9 +21,11 @@ import (
 	"github.com/BurntSushi/toml"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
@@ -330,6 +332,55 @@ func Join(ctx context.Context, addr, code string, o JoinOptions) (*JoinResult, e
 	defer c.Close()
 	host, _ := os.Hostname()
 	resp, err := c.Enroll().Join(ctx, &pb.JoinRequest{Code: code, CsrPem: csrPEM, Name: o.Name, Hostname: host,
+		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version})
+	if err != nil {
+		return nil, err
+	}
+	return checkResult(resp, ca, keyPEM, o.Fingerprint)
+}
+
+// ErrNoEntra: the hub has no Microsoft Entra sign-in.
+var ErrNoEntra = errors.New("this hub has no Microsoft Entra sign-in (enroll with a join code: longarm join)")
+
+// LoginOptions for Login: like JoinOptions, plus where the access token
+// comes from.
+type LoginOptions struct {
+	JoinOptions
+	// Token returns an access token for the hub's Entra settings (the
+	// tenant and the scope to request).
+	Token func(ctx context.Context, info *pb.AuthInfoResponse) (string, error)
+}
+
+// Login enrolls with a Microsoft Entra access token instead of a join
+// code (Enroll.EntraJoin): the hub's sign-in settings are asked for over
+// the same verified connection the token then goes to.
+func Login(ctx context.Context, addr string, o LoginOptions) (*JoinResult, error) {
+	var ca *x509.Certificate
+	c, err := dial(NormalizeAddr(addr), enrollTLS(o.Fingerprint, &ca))
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	info, err := c.Enroll().AuthInfo(ctx, &pb.AuthInfoRequest{})
+	if status.Code(err) == codes.Unimplemented {
+		return nil, errors.New("this hub is too old for longarm login (update it, or use longarm join)")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if info.EntraScope == "" || info.EntraTenantId == "" {
+		return nil, ErrNoEntra
+	}
+	tok, err := o.Token(ctx, info)
+	if err != nil {
+		return nil, err
+	}
+	keyPEM, csrPEM, err := pki.NewKeyAndCSR(o.Name, o.Trust)
+	if err != nil {
+		return nil, err
+	}
+	host, _ := os.Hostname()
+	resp, err := c.Enroll().EntraJoin(ctx, &pb.EntraJoinRequest{AccessToken: tok, CsrPem: csrPEM, Name: o.Name, Hostname: host,
 		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version})
 	if err != nil {
 		return nil, err

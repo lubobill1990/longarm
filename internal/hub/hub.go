@@ -79,6 +79,7 @@ type Hub struct {
 	tenancyVersion int64
 	purged         []string
 	lastTenancyOn  bool
+	entra          *entraState // nil = no [auth.entra]
 
 	started time.Time
 	relay   *relay.Server
@@ -151,7 +152,7 @@ func Open(cfg *Config, log *slog.Logger) (*Hub, error) {
 		jobs: map[string]map[string]*jobEntry{}, reservations: map[string]*reservation{},
 		profiles: map[string]*pb.Profile{}, stable: map[string]*pb.Profile{}, knownSerials: map[string]bool{}, kick: make(chan struct{}, 1),
 		pending: map[string]*pendingReq{}, links: map[string]*linkEntry{}, tenants: map[string]*tenant{},
-		started: time.Now(), addrs: map[string]string{},
+		started: time.Now(), addrs: map[string]string{}, entra: newEntraState(&cfg.Auth.Entra),
 	}
 	if h.tailnet, err = newTailnetProvider(cfg.Tailnet); err != nil {
 		st.Close()

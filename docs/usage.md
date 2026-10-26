@@ -255,6 +255,7 @@ longarm-hub --data-dir ./hub serve                             # :7443 gRPC+rela
 longarm-hub --data-dir ./hub ca show                           # CA fingerprint for --ca-fingerprint
 longarm-hub --data-dir ./hub join-code --role admin            # bootstrap the first admin (or longarm-hub issue)
 longarm join hub.example.com:7443 K7P-Q2M --ca-fingerprint <fp>  # this longarm: client/admin cert + hub.toml
+longarm login hub.example.com:7443 --ca-fingerprint <fp>      # or: sign in with Microsoft Entra ID (see below)
 ```
 
 Adding machines:
@@ -476,6 +477,95 @@ locally too - `longarmd join` prints the hint: `[access] users = ["alice"]`,
 `owners = ["alice"]` (plus whom you share with) and end-to-end trust
 ([security.md](security.md#user-owned-workers)). The hub's rule only ever
 narrows what `[access]` and trust allow on the worker.
+
+### Sign in with Microsoft Entra ID
+
+Instead of join codes and panel passwords, people can sign in with their
+Microsoft Entra ID (Azure AD) account: `longarm login` uses the token of
+their Azure CLI sign-in (`az login`), the web panel has a "Sign in with
+Microsoft" link. The hub verifies Microsoft's token and maps the Entra user
+(its object ID) to a Longarm user, which it **creates on first sign-in**
+(named after the UPN's local part: `alice@example.com` -> `alice`; taken
+names get a digit, `alice2`; the UPN is kept, see `longarm admin user ls`).
+Like `longarm admin user add`, the first user turns multi-tenancy on.
+
+```sh
+longarm login hub.example.com:7443 --ca-fingerprint <fp>   # client cert of your user (admin cert for
+                                                           # the hub's Entra admins), hub.toml, like join
+#   device name <user>-<hostname> (--name to choose); signing in again on the same
+#   machine (expired certificate) replaces the device's certificate, no --force needed
+#   if az has no token for the hub: it prints the exact command, e.g.
+#     az login --tenant <tenant> --scope api://<client id>/longarm.connect
+longarm login hub.example.com:7443 --scope api://<client id>/.default   # another scope (rarely needed)
+```
+
+`longarm login` finds `az` on PATH (Windows: also under `Program Files\Microsoft
+SDKs\Azure\CLI2\wbin`), or at `$LONGARM_AZ`. The token goes only to the hub,
+over the TLS connection that `--ca-fingerprint` pins (without it: trust on
+first use, with a warning, as `longarm join`); it is never printed or stored.
+
+`hub.toml` (every key also as an environment variable, for containers):
+
+```toml
+[auth.entra]
+tenant_id = "<tenant id>"          # LONGARM_HUB_ENTRA_TENANT_ID (a GUID)
+client_id = "<client id>"          # LONGARM_HUB_ENTRA_CLIENT_ID: the app registration; token audience
+scope = "longarm.connect"          # LONGARM_HUB_ENTRA_SCOPE: the delegated scope tokens must carry
+admins = ["*@example.com", "boss@example.com", "<object id>"]   # LONGARM_HUB_ENTRA_ADMINS (comma-separated):
+                                   # admin certificates and the panel's admin role
+allowed = []                       # LONGARM_HUB_ENTRA_ALLOWED: who may sign in (empty: anyone in the
+                                   # tenant); same entries: UPN, *@domain or object ID, any case
+apps = ["<app id>=ci"]             # LONGARM_HUB_ENTRA_APPS: app-only tokens (CI) of these apps, as user ci
+web = "spa"                        # LONGARM_HUB_ENTRA_WEB: the panel's sign-in: confidential | spa | off
+                                   # (default: confidential with a client credential below, else spa)
+client_assertion = "managed-identity"   # LONGARM_HUB_ENTRA_CLIENT_ASSERTION (confidential): the hub's
+                                   # managed identity (AZURE_CLIENT_ID) as a federated credential
+client_secret_file = ""            # LONGARM_HUB_ENTRA_CLIENT_SECRET_FILE (confidential, hubs outside Azure)
+# authority = "https://login.microsoftonline.com"   # national clouds: their login endpoint
+```
+
+**App registration** (Entra admin center -> App registrations, one per hub):
+
+- **Expose an API**: Application ID URI `api://<client id>`; a delegated
+  scope `longarm.connect` (admins and users may consent); under
+  *Authorized client applications* pre-authorize the Azure CLI
+  `04b07795-8ddb-461a-bbee-02f9e1bf7b46` for that scope, so `az login
+  --scope` needs no consent prompt.
+- **Manifest**: `"requestedAccessTokenVersion": 2` (`api.requestedAccessTokenVersion`
+  in the Graph manifest): the hub accepts v2 tokens only (issuer
+  `https://login.microsoftonline.com/<tenant>/v2.0`).
+- **Authentication**, for the web panel, one of:
+  - `web = "spa"` (no credential at all): platform *Single-page application*,
+    redirect URI `<public_url>/auth/spa-callback`. The browser redeems the
+    code (PKCE) and hands the ID token to the hub, which checks it like any
+    other. Use this where the tenant's policy forbids client secrets,
+    certificates and federated credentials on app registrations (e.g. the
+    Microsoft corporate tenant: only spa works there).
+  - `web = "confidential"`: platform *Web*, redirect URI
+    `<public_url>/auth/callback`; the hub redeems the code with a client
+    credential. In Azure: *Certificates & secrets -> Federated credentials ->
+    Other issuer*, issuer `https://login.microsoftonline.com/<tenant>/v2.0`,
+    subject identifier = the hub's managed identity's **principal (object)
+    ID** (deploy/azure outputs it as `identityPrincipalId`), audience
+    `api://AzureADTokenExchange`, and `client_assertion = "managed-identity"`.
+    Elsewhere a client secret in `client_secret_file`.
+- **CI** (`apps`): an app registration (or managed identity) for the pipeline, e.g. with a GitHub
+  Actions federated credential. Any app of the tenant can get an app-only token for
+  `api://<client id>/.default`, so the hub's `apps` list is what admits it (by its app
+  ID, the token's `azp`). In the workflow `az login --service-principal ...
+  --federated-token ...`, then `longarm login <hub> --ca-fingerprint <fp>`:
+  with a service principal signed in it asks for `api://<client id>/.default`;
+  the hub accepts that app-only token only for apps in `apps`, as the
+  configured user (client certificates, never admin, created on first use;
+  never in the web panel). End with `longarm leave` so runners don't pile up
+  as devices.
+
+The panel login of an Entra user is named like its Longarm user (role user,
+or admin for `admins`; the user's own password login, if any, stays usable).
+Notes: a removed user who signs in again is created again (to block someone
+use `allowed`, or `longarm admin user disable`); a change to `admins` applies
+at the next sign-in (panel sessions last `[web] session_ttl`, certificates
+their TTL).
 
 ### End-to-end trust on workers
 

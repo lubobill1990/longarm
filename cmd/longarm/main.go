@@ -74,7 +74,7 @@ func main() {
 	root.AddCommand(whoamiCmd())
 	root.AddCommand(lsCmd(), infoCmd(), execCmd(), runCmd(), logsCmd(), waitCmd(), killCmd(), jobsCmd(), adminCmd(),
 		attachCmd(), sessionsCmd(), forwardCmd(), putCmd(), getCmd(), syncCmd(), proxyCmd(), sshConfigCmd(),
-		joinCmd(), leaveCmd(), daemonCmd(), mcpCmd(), trustCmd(), workerCmd())
+		joinCmd(), loginCmd(), leaveCmd(), daemonCmd(), mcpCmd(), trustCmd(), workerCmd())
 	err := root.Execute()
 	if err == nil {
 		return
