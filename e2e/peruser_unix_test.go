@@ -70,13 +70,13 @@ func TestPerUserRefusedOnMacOS(t *testing.T) {
 	}
 }
 
-// TestRootDataDirDefault: as root on Linux, `longarmd join` without
+// TestPerUserRootDataDirDefault: as root on Linux, `longarmd join` without
 // --data-dir enrolls into the system data dir (/var/lib/longarmd; here a
 // temp dir via LONGARM_TEST_SYSTEM_DATA_DIR), `longarmd service install
 // --isolation per-user` accepts it, refuses a data dir below a home the
 // accounts cannot traverse, and adopts a legacy enrollment in ~root/.longarm.
 // Only --dry-run installs: no service is created.
-func TestRootDataDirDefault(t *testing.T) {
+func TestPerUserRootDataDirDefault(t *testing.T) {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		t.Skip("Linux, as root")
 	}
