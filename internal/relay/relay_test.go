@@ -358,3 +358,53 @@ func TestRelayCallMeMaybeRateLimit(t *testing.T) {
 		t.Fatalf("%d of 50 CallMeMaybes forwarded", n)
 	}
 }
+
+// TestRelayWorkerPairs: worker <-> worker only for the pairs the hub's port
+// links allow, both directions, and cut as soon as the pair goes.
+func TestRelayWorkerPairs(t *testing.T) {
+	e := newEnv(t)
+	ha, hb, hc := newRecorder(), newRecorder(), newRecorder()
+	wa := e.connect(t, e.p.Bundle(t, pki.RoleWorker, "wa"), relay.ModeUDP, ha)
+	wb := e.connect(t, e.p.Bundle(t, pki.RoleWorker, "wb"), relay.ModeTCP, hb)
+	wc := e.connect(t, e.p.Bundle(t, pki.RoleWorker, "wc"), relay.ModeUDP, hc)
+	srv := e.relay.Server
+	drops := func() uint64 { return srv.Stats().DropPolicy }
+
+	// default: never
+	wa.SendData(wb.Self(), []byte("no link yet"))
+	wa.SendCallMeMaybe(wb.Self(), relay.CallMeMaybe{Reply: true})
+	waitDrops := func(n uint64) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for drops() < n {
+			if time.Now().After(deadline) {
+				t.Fatalf("drops %d, want %d", drops(), n)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	waitDrops(2)
+
+	srv.SetWorkerPairs([][2]string{{"wb", "wa"}})
+	wa.SendData(wb.Self(), []byte("a to b"))
+	hb.waitFor(t, "a->b", func() bool { return len(hb.data[wa.Self()]) == 1 })
+	wb.SendData(wa.Self(), []byte("b to a"))
+	ha.waitFor(t, "b->a", func() bool { return len(ha.data[wb.Self()]) == 1 })
+	wa.SendCallMeMaybe(wb.Self(), relay.CallMeMaybe{Reply: true})
+	hb.waitFor(t, "rendezvous a->b", func() bool { return len(hb.cmms) == 1 })
+	// another worker is not covered by that pair
+	wc.SendData(wa.Self(), []byte("c to a"))
+	waitDrops(3)
+
+	// the link goes: cut at once
+	srv.SetWorkerPairs(nil)
+	wa.SendData(wb.Self(), []byte("after removal"))
+	waitDrops(4)
+	time.Sleep(200 * time.Millisecond)
+	hb.mu.Lock()
+	n := len(hb.data[wa.Self()])
+	hb.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("data after the pair was removed: %d packets", n)
+	}
+}

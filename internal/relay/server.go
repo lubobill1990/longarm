@@ -99,6 +99,9 @@ type Server struct {
 	callMeMaybes   atomic.Uint64
 	handshakeFails atomic.Uint64
 	stunRequests   atomic.Uint64
+
+	// workerPairs: worker pairs allowed to talk (SetWorkerPairs).
+	workerPairs atomic.Pointer[map[pairKey]struct{}]
 }
 
 func (s *Server) init() {
@@ -456,7 +459,7 @@ func (s *Server) forward(src *session, dst ID, pkt []byte) {
 		src.peerGone(dst)
 		return
 	}
-	if !allowed(src.ident.Role, d.ident.Role) {
+	if !s.allowed(src.ident, d.ident) {
 		s.dropPolicy.Add(1)
 		return
 	}
@@ -511,7 +514,7 @@ func (s *Server) handleCtrl(ss *session, typ byte, p []byte) error {
 			ss.peerGone(dst)
 			return nil
 		}
-		if !allowed(ss.ident.Role, d.ident.Role) {
+		if !s.allowed(ss.ident, d.ident) {
 			s.dropPolicy.Add(1)
 			return nil
 		}

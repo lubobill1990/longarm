@@ -1816,3 +1816,129 @@ var UserHelper_ServiceDesc = grpc.ServiceDesc{
 	},
 	Metadata: "longarm/v1/longarm.proto",
 }
+
+const (
+	LinkTunnel_Dial_FullMethodName = "/longarm.v1.LinkTunnel/Dial"
+)
+
+// LinkTunnelClient is the client API for LinkTunnel service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// LinkTunnel is the data path of a port link (docs/usage.md "Port links"):
+// processes on worker A reach a loopback port of worker B at
+// 127.0.0.1:<listen_port> on A. A's longarmd dials B with its worker
+// certificate and calls Dial once per accepted connection.
+//
+// Worker certificates may call nothing else on a worker, and Dial only
+// with a grant the hub signed for this exact link (from = the caller's
+// certificate name, to = this worker), unexpired and still in the list of
+// active links the hub pushed to this worker. The target is always
+// 127.0.0.1:<grant.port> and passes the same checks as Forward.Open for
+// the link's owner (per-user isolation: a process of the owner's account
+// listens on it).
+type LinkTunnelClient interface {
+	// Dial: the first frame carries the grant (and may carry data); then
+	// bytes flow both ways like Forward.Open.
+	Dial(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardFrame, ForwardFrame], error)
+}
+
+type linkTunnelClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewLinkTunnelClient(cc grpc.ClientConnInterface) LinkTunnelClient {
+	return &linkTunnelClient{cc}
+}
+
+func (c *linkTunnelClient) Dial(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardFrame, ForwardFrame], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &LinkTunnel_ServiceDesc.Streams[0], LinkTunnel_Dial_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ForwardFrame, ForwardFrame]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type LinkTunnel_DialClient = grpc.BidiStreamingClient[ForwardFrame, ForwardFrame]
+
+// LinkTunnelServer is the server API for LinkTunnel service.
+// All implementations must embed UnimplementedLinkTunnelServer
+// for forward compatibility.
+//
+// LinkTunnel is the data path of a port link (docs/usage.md "Port links"):
+// processes on worker A reach a loopback port of worker B at
+// 127.0.0.1:<listen_port> on A. A's longarmd dials B with its worker
+// certificate and calls Dial once per accepted connection.
+//
+// Worker certificates may call nothing else on a worker, and Dial only
+// with a grant the hub signed for this exact link (from = the caller's
+// certificate name, to = this worker), unexpired and still in the list of
+// active links the hub pushed to this worker. The target is always
+// 127.0.0.1:<grant.port> and passes the same checks as Forward.Open for
+// the link's owner (per-user isolation: a process of the owner's account
+// listens on it).
+type LinkTunnelServer interface {
+	// Dial: the first frame carries the grant (and may carry data); then
+	// bytes flow both ways like Forward.Open.
+	Dial(grpc.BidiStreamingServer[ForwardFrame, ForwardFrame]) error
+	mustEmbedUnimplementedLinkTunnelServer()
+}
+
+// UnimplementedLinkTunnelServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedLinkTunnelServer struct{}
+
+func (UnimplementedLinkTunnelServer) Dial(grpc.BidiStreamingServer[ForwardFrame, ForwardFrame]) error {
+	return status.Error(codes.Unimplemented, "method Dial not implemented")
+}
+func (UnimplementedLinkTunnelServer) mustEmbedUnimplementedLinkTunnelServer() {}
+func (UnimplementedLinkTunnelServer) testEmbeddedByValue()                    {}
+
+// UnsafeLinkTunnelServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to LinkTunnelServer will
+// result in compilation errors.
+type UnsafeLinkTunnelServer interface {
+	mustEmbedUnimplementedLinkTunnelServer()
+}
+
+func RegisterLinkTunnelServer(s grpc.ServiceRegistrar, srv LinkTunnelServer) {
+	// If the following call panics, it indicates UnimplementedLinkTunnelServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&LinkTunnel_ServiceDesc, srv)
+}
+
+func _LinkTunnel_Dial_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(LinkTunnelServer).Dial(&grpc.GenericServerStream[ForwardFrame, ForwardFrame]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type LinkTunnel_DialServer = grpc.BidiStreamingServer[ForwardFrame, ForwardFrame]
+
+// LinkTunnel_ServiceDesc is the grpc.ServiceDesc for LinkTunnel service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var LinkTunnel_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "longarm.v1.LinkTunnel",
+	HandlerType: (*LinkTunnelServer)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Dial",
+			Handler:       _LinkTunnel_Dial_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
+	Metadata: "longarm/v1/longarm.proto",
+}
