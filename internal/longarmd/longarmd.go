@@ -26,6 +26,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/localapi"
 	"github.com/lubobill1990/longarm/internal/loopguard"
 	"github.com/lubobill1990/longarm/internal/metrics"
+	"github.com/lubobill1990/longarm/internal/pii"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/sched"
@@ -285,6 +286,14 @@ func LoadConfig(dataDir string, listenOverride []string) (Config, error) {
 	for _, p := range []*string{&cfg.Audit.File, &cfg.Audit.WebhookTokenFile} {
 		if *p != "" && !filepath.IsAbs(*p) {
 			*p = filepath.Join(dataDir, *p)
+		}
+	}
+	// a webhook URL may carry its credential in the path: never in
+	// telemetry or diagnostic bundles (both scrub with pii)
+	pii.RegisterSecret(cfg.Audit.Webhook)
+	if cfg.Audit.WebhookTokenFile != "" {
+		if b, err := os.ReadFile(cfg.Audit.WebhookTokenFile); err == nil {
+			pii.RegisterSecret(string(b))
 		}
 	}
 	// Invalid labels (an older longarmd.toml: "eu,os=windows", values with

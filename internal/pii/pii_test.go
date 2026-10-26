@@ -68,3 +68,21 @@ func TestScrubLocal(t *testing.T) {
 		}
 	}
 }
+
+func TestScrubSecrets(t *testing.T) {
+	hook := "https://hooks.example.net/services/T000/B000/SECRETCAPABILITY123"
+	s := New(Options{NoLocal: true, Secrets: []string{hook, "short"}})
+	if got := s.String(`Post "` + hook + `": dial tcp: timeout`); got != `Post "<secret>": dial tcp: timeout` {
+		t.Fatalf("got %q", got)
+	}
+	if got := s.String("a short word"); got != "a short word" {
+		t.Fatalf("short secret replaced: %q", got)
+	}
+}
+
+func TestRegisterSecret(t *testing.T) {
+	RegisterSecret("tok-registered-1234")
+	if got := New(Options{NoLocal: true}).String("x tok-registered-1234 y"); got != "x <secret> y" {
+		t.Fatalf("registered secret: %q", got)
+	}
+}

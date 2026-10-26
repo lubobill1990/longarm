@@ -20,6 +20,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -43,17 +44,22 @@ type Options struct {
 	// NoLocal leaves out the local machine's host name, OS user and home
 	// directory (New adds them by default).
 	NoLocal bool
+	// Secrets are exact values replaced by "<secret>" wherever they appear
+	// (configured URLs that carry a credential in their path, tokens read
+	// from files). Values shorter than 8 characters are ignored.
+	Secrets []string
 }
 
 // Scrubber replaces personal and secret data in text. Safe for concurrent
 // use; a nil *Scrubber returns its input unchanged.
 type Scrubber struct {
-	salt  []byte
-	names *regexp.Regexp // known names, longest first
-	kinds map[string]string
-	homes []string // home directories, longest first
-	mu    sync.Mutex
-	cache map[string]string
+	salt    []byte
+	names   *regexp.Regexp // known names, longest first
+	kinds   map[string]string
+	homes   []string // home directories, longest first
+	secrets []string // exact secret values, longest first
+	mu      sync.Mutex
+	cache   map[string]string
 }
 
 // New builds a Scrubber.
@@ -95,6 +101,12 @@ func New(o Options) *Scrubber {
 		}
 	}
 	sort.Slice(s.homes, func(i, j int) bool { return len(s.homes[i]) > len(s.homes[j]) })
+	for _, v := range o.Secrets {
+		if v = strings.TrimSpace(v); len(v) >= 8 {
+			s.secrets = append(s.secrets, v)
+		}
+	}
+	sort.Slice(s.secrets, func(i, j int) bool { return len(s.secrets[i]) > len(s.secrets[j]) })
 	if len(s.kinds) > 0 {
 		names := make([]string, 0, len(s.kinds))
 		for n := range s.kinds {
@@ -166,6 +178,12 @@ func (s *Scrubber) String(in string) string {
 		return in
 	}
 	out := in
+	for _, v := range s.secrets {
+		out = strings.ReplaceAll(out, v, "<secret>")
+	}
+	for _, v := range registered() {
+		out = strings.ReplaceAll(out, v, "<secret>")
+	}
 	for _, h := range s.homes {
 		out = strings.ReplaceAll(out, h, "~")
 	}
@@ -247,4 +265,32 @@ func (s *Scrubber) Map(m map[string]string) map[string]string {
 func FleetSalt(caDER []byte) []byte {
 	h := sha256.Sum256(append([]byte("longarm-pii-salt-v1\x00"), caDER...))
 	return h[:]
+}
+
+// The process-wide secret values: whatever reads a secret from its
+// configuration registers it once (an audit webhook URL with a credential
+// in its path, a token file), and every Scrubber of the process - telemetry,
+// diagnostic bundles - replaces it, without each one having to know.
+var (
+	regMu   sync.RWMutex
+	regVals []string
+)
+
+// RegisterSecret adds exact secret values (shorter than 8 characters are
+// ignored).
+func RegisterSecret(values ...string) {
+	regMu.Lock()
+	defer regMu.Unlock()
+	for _, v := range values {
+		if v = strings.TrimSpace(v); len(v) >= 8 && !slices.Contains(regVals, v) {
+			regVals = append(regVals, v)
+		}
+	}
+	sort.Slice(regVals, func(i, j int) bool { return len(regVals[i]) > len(regVals[j]) })
+}
+
+func registered() []string {
+	regMu.RLock()
+	defer regMu.RUnlock()
+	return regVals
 }

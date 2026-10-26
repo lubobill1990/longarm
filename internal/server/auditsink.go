@@ -483,6 +483,13 @@ func (s *webhookSink) send(ctx context.Context, lines [][]byte) (int, error) {
 	}
 	resp, err := s.client.Do(req)
 	if err != nil {
+		// *url.Error carries the whole URL, and webhook URLs often hold
+		// their credential in the path (Slack, Teams): it would reach
+		// longarmd.log, telemetry and diagnostic bundles. Name the host only.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			return 0, fmt.Errorf("webhook %s %s: %w", ue.Op, redactedURL(s.url), ue.Err)
+		}
 		return 0, err
 	}
 	defer resp.Body.Close()
@@ -495,3 +502,12 @@ func (s *webhookSink) send(ctx context.Context, lines [][]byte) (int, error) {
 }
 
 func (s *webhookSink) close() { s.client.CloseIdleConnections() }
+
+// redactedURL is u without path, query and user info ("https://host/…").
+func redactedURL(u string) string {
+	p, err := url.Parse(u)
+	if err != nil || p.Host == "" {
+		return "<webhook>"
+	}
+	return p.Scheme + "://" + p.Host + "/…"
+}

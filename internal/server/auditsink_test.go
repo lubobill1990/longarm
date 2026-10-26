@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"log/slog"
 	"net"
@@ -361,5 +362,21 @@ func TestAuditWebhookNoRedirect(t *testing.T) {
 	defer mu.Unlock()
 	if leaked != 0 {
 		t.Fatalf("the redirect was followed %d times", leaked)
+	}
+}
+
+// A failed request names the webhook's host only: the path often is the
+// credential (review finding).
+func TestAuditWebhookErrorHidesURL(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close() // nothing listens: connection refused
+	w := &webhookSink{url: "http://" + addr + "/services/T000/B000/SECRETCAPABILITY", client: &http.Client{Timeout: 2 * time.Second}}
+	_, err = w.send(context.Background(), [][]byte{[]byte("{}\n")})
+	if err == nil || strings.Contains(err.Error(), "SECRETCAPABILITY") || !strings.Contains(err.Error(), addr) {
+		t.Fatalf("error %v", err)
 	}
 }
