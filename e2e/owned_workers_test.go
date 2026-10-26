@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -71,6 +72,29 @@ func TestOwnedWorkers(t *testing.T) {
 	}
 	id := strings.TrimSpace(h.mustLongarm(alice, append([]string{"run", "aw"}, print1...)...))
 	h.mustLongarm(alice, "wait", "aw", id)
+
+	// The hub session is no way around it: an admin can't read alice's job
+	// through the hub (remote_jobs is "control" there) - alice can, in the panel.
+	if r := h.longarm(root, "admin", "logs", id); r.code == 0 || !strings.Contains(r.stderr, "PermissionDenied") ||
+		!strings.Contains(r.stderr, "own worker") {
+		t.Fatalf("admin logs of alice's job through the hub: %+v", r)
+	}
+	if r := h.longarm(root, "admin", "run", "aw", "--", bins.helper, "print", "1", "0", "0"); r.code == 0 || !strings.Contains(r.stderr, "PermissionDenied") {
+		t.Fatalf("admin submits to alice's worker through the hub: %+v", r)
+	}
+	pr := h.longarm(root, "admin", "user", "set", "alice", "--panel")
+	m := regexp.MustCompile(`password (\S+)\nTOTP secret (\S+)`).FindStringSubmatch(pr.stderr)
+	if pr.code != 0 || m == nil {
+		t.Fatalf("panel login for alice: %+v", pr)
+	}
+	p := (&uiStack{hubEnv: h, user: "alice", pass: m[1], secret: m[2]}).login(t)
+	waitFor(t, "alice's job in the hub index", 20*time.Second, func() bool {
+		code, _ := p.do("GET", "/api/jobs/"+id, "")
+		return code == 200
+	})
+	if logs := logText(sseEvents(t, p.c, h.httpURL()+"/api/jobs/"+id+"/logs?worker=aw", 30*time.Second)); !strings.Contains(logs, "line 1") {
+		t.Fatalf("alice's panel logs: %q", logs)
+	}
 	if out := h.mustLongarm(alice, "ls"); !strings.Contains(out, "OWNER") || !lineStarts(out, "aw ") {
 		t.Fatalf("alice's ls:\n%s", out)
 	}

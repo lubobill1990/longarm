@@ -310,3 +310,21 @@ func (h *Hub) workerRoutes(api func(string, func(http.ResponseWriter, *http.Requ
 		writeResult(w, info, err)
 	})
 }
+
+// relayCheck guards what the hub relays to a worker's session for a caller
+// (kill, logs, submit: panel and longarm admin): on a user-owned worker the
+// caller's user must be one who may use it - admins included, or the hub
+// session would be a way around "owner only". Refusals are audited.
+func (h *Hub) relayCheck(by, user, worker, action, job string) error {
+	h.mu.Lock()
+	n := h.nodes[worker]
+	ok := n == nil || n.rec.Owner == "" || h.mayUseLocked(user, n)
+	h.mu.Unlock()
+	if ok {
+		return nil
+	}
+	h.auditHub(by, "workers/denied", map[string]any{"worker": worker, "action": action, "job": job, "user": user})
+	h.log.Info("hub request on a user-owned worker refused", "worker", worker, "action", action, "job", job, "by", by)
+	return status.Errorf(codes.PermissionDenied, "user %q may not %s on worker %s (a user's own worker, not shared with them)",
+		user, action, worker)
+}

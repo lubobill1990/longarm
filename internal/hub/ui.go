@@ -146,10 +146,13 @@ func (h *Hub) failPendingLocked(worker string, sessID uint64) {
 	}
 }
 
-// KillJob kills a job through its worker.
-func (h *Hub) KillJob(ctx context.Context, by, id, worker string) (*pb.FleetJob, error) {
+// KillJob kills a job through its worker (user: the caller's, see relayCheck).
+func (h *Hub) KillJob(ctx context.Context, by, user, id, worker string) (*pb.FleetJob, error) {
 	w, err := h.jobWorker(id, worker)
 	if err != nil {
+		return nil, err
+	}
+	if err := h.relayCheck(by, user, w, "kill jobs", id); err != nil {
 		return nil, err
 	}
 	r, err := h.request(ctx, w, func(rid string) *pb.HubCommand {
@@ -183,9 +186,12 @@ func (h *Hub) jobWorker(id, worker string) (string, error) {
 }
 
 // JobLogs reads a job's output through its worker, polling while follow.
-func (h *Hub) JobLogs(ctx context.Context, by string, req *pb.HubLogsRequest, send func(*pb.LogChunk) error) error {
+func (h *Hub) JobLogs(ctx context.Context, by, user string, req *pb.HubLogsRequest, send func(*pb.LogChunk) error) error {
 	w, err := h.jobWorker(req.Id, req.Worker)
 	if err != nil {
+		return err
+	}
+	if err := h.relayCheck(by, user, w, "read logs", req.Id); err != nil {
 		return err
 	}
 	off := req.Offset
@@ -228,12 +234,13 @@ func (h *Hub) JobLogs(ctx context.Context, by string, req *pb.HubLogsRequest, se
 // SubmitJob places (worker "" / "auto") and submits a command job through
 // the worker's hub session.
 func (h *Hub) SubmitJob(ctx context.Context, by string, req *pb.HubSubmitRequest) (*pb.FleetJob, error) {
-	return h.SubmitJobAs(ctx, by, tenancy.OwnerFromBy(by), req)
+	return h.SubmitJobAs(ctx, by, tenancy.OwnerFromBy(by), true, req)
 }
 
 // SubmitJobAs is SubmitJob for a job of owner (it runs as owner on workers
-// with per-user isolation, within the owner's quota).
-func (h *Hub) SubmitJobAs(ctx context.Context, by, owner string, req *pb.HubSubmitRequest) (*pb.FleetJob, error) {
+// with per-user isolation, within the owner's quota); admin: the caller is
+// an admin (refusals on others' own workers say so instead of "not found").
+func (h *Hub) SubmitJobAs(ctx context.Context, by, owner string, admin bool, req *pb.HubSubmitRequest) (*pb.FleetJob, error) {
 	if len(req.Argv) == 0 || strings.TrimSpace(req.Argv[0]) == "" {
 		return nil, status.Error(codes.InvalidArgument, "missing command")
 	}
@@ -266,8 +273,14 @@ func (h *Hub) SubmitJobAs(ctx context.Context, by, owner string, req *pb.HubSubm
 	}
 	spec := &pb.JobSpec{Id: id, Name: req.Name, Argv: req.Argv, Cwd: req.Cwd, Env: req.Env, Labels: labels}
 	if req.Worker != "" && req.Worker != "auto" { // placed jobs passed the quota already
+		if err := h.relayCheck(by, owner, worker, "submit jobs", id); err != nil {
+			if !admin { // others' own workers don't exist for users (admins see them)
+				return nil, status.Errorf(codes.NotFound, "no worker %q", worker)
+			}
+			return nil, err
+		}
 		h.mu.Lock()
-		if n := h.nodes[worker]; n == nil || !h.mayUseLocked(owner, n) { // others' own workers don't exist for owner
+		if h.nodes[worker] == nil {
 			h.mu.Unlock()
 			return nil, status.Errorf(codes.NotFound, "no worker %q", worker)
 		}
@@ -361,15 +374,15 @@ func (h *Hub) Links() *pb.LinksResponse {
 // ---------------------------------------------------------------- gRPC
 
 func (s *hubAdminServer) KillJob(ctx context.Context, req *pb.FleetJobRequest) (*pb.FleetJob, error) {
-	return s.h.KillJob(ctx, by(ctx), req.Id, req.Worker)
+	return s.h.KillJob(ctx, by(ctx), callerFrom(ctx).id.Owner(), req.Id, req.Worker)
 }
 
 func (s *hubAdminServer) JobLogs(req *pb.HubLogsRequest, st pb.HubAdmin_JobLogsServer) error {
-	return s.h.JobLogs(st.Context(), by(st.Context()), req, st.Send)
+	return s.h.JobLogs(st.Context(), by(st.Context()), callerFrom(st.Context()).id.Owner(), req, st.Send)
 }
 
 func (s *hubAdminServer) SubmitJob(ctx context.Context, req *pb.HubSubmitRequest) (*pb.FleetJob, error) {
-	return s.h.SubmitJobAs(ctx, by(ctx), callerFrom(ctx).id.Owner(), req)
+	return s.h.SubmitJobAs(ctx, by(ctx), callerFrom(ctx).id.Owner(), true, req)
 }
 
 func (s *hubAdminServer) ToolchainApply(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {

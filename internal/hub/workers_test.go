@@ -134,8 +134,33 @@ func TestOwnedWorkers(t *testing.T) {
 	if w, err := place(t, h, "bob"); err == nil || strings.Contains(err.Error(), "aw") || strings.Contains(err.Error(), "quota") {
 		t.Fatalf("bob placed on %q: %v", w, err)
 	}
-	if _, err := h.SubmitJobAs(tctx(t), "client/bob-laptop", "bob", &pb.HubSubmitRequest{Worker: "aw", Argv: []string{"x"}}); status.Code(err) != codes.NotFound {
+	if _, err := h.SubmitJobAs(tctx(t), "client/bob-laptop", "bob", false, &pb.HubSubmitRequest{Worker: "aw", Argv: []string{"x"}}); status.Code(err) != codes.NotFound {
 		t.Fatalf("bob submits to aw through the hub: %v", err)
+	}
+
+	// the hub session: admins can't kill, read or submit on alice's worker
+	h.mu.Lock()
+	h.applyJobsLocked(h.nodes["aw"], &pb.JobsReport{Jobs: []*pb.Job{{Spec: &pb.JobSpec{Id: "JAW", Owner: "alice"}, State: pb.JobState_JOB_STATE_RUNNING}}})
+	h.mu.Unlock()
+	if _, err := pb.NewHubAdminClient(th.root).KillJob(tctx(t), &pb.FleetJobRequest{Id: "JAW"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("admin kills alice's job through the hub: %v", err)
+	}
+	st, err := pb.NewHubAdminClient(th.root).JobLogs(tctx(t), &pb.HubLogsRequest{Id: "JAW"})
+	if err == nil {
+		_, err = st.Recv()
+	}
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("admin reads alice's job through the hub: %v", err)
+	}
+	if _, err := pb.NewHubAdminClient(th.root).SubmitJob(tctx(t), &pb.HubSubmitRequest{Worker: "aw", Argv: []string{"x"}}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("admin submits to alice's worker through the hub: %v", err)
+	}
+	// alice herself (her panel login acts as alice) passes the check
+	if err := h.relayCheck("web/alice", "alice", "aw", "kill jobs", "JAW"); err != nil {
+		t.Fatalf("alice through the hub: %v", err)
+	}
+	if err := h.relayCheck("admin/root", "root", "w1", "kill jobs", "JB"); err != nil {
+		t.Fatalf("admin on a fleet worker: %v", err)
 	}
 
 	// sharing needs can_share; others can't touch it
@@ -179,6 +204,9 @@ func TestOwnedWorkers(t *testing.T) {
 	if w, err := place(t, h, "bob"); err != nil || w != "aw" {
 		t.Fatalf("bob placed on %q: %v", w, err)
 	}
+	if err := h.relayCheck("web/bob", "bob", "aw", "read logs", "JAW"); err != nil {
+		t.Errorf("bob (shared) through the hub: %v", err)
+	}
 	if _, ok := nodeNames(t, th.carol)["aw"]; ok {
 		t.Error("carol sees a worker shared with bob")
 	}
@@ -218,7 +246,7 @@ func TestOwnedWorkers(t *testing.T) {
 	for _, r := range rows {
 		methods = append(methods, r.Method)
 	}
-	for _, m := range []string{"workers/code", "workers/join", "workers/share"} {
+	for _, m := range []string{"workers/code", "workers/join", "workers/share", "workers/denied"} {
 		if !slices.Contains(methods, m) {
 			t.Errorf("no %s audit record in %v", m, methods)
 		}

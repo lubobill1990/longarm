@@ -466,7 +466,9 @@ Removing a user (`longarm admin user remove`) also revokes the user's workers.
 
 The hub enforces this when listing and placing, and pushes owner and shares
 to the worker (`<data>/worker-access.json`), which refuses everybody else
-on every call (audited as `worker owner/shares`; `Node.Info` stays open). The
+on every call (audited as `worker owner/shares`; `Node.Info` stays open); the
+hub relays kill, logs and submit from the panel or `longarm admin` to it only
+for users who may use it (admins included). The
 worker's copy comes from the hub, so against the hub's operators pin it
 locally too - `longarmd join` prints the hint: `[access] users = ["alice"]`,
 `owners = ["alice"]` (plus whom you share with) and end-to-end trust

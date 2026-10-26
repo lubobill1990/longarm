@@ -69,7 +69,7 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 		if len(argv) == 0 {
 			argv = splitCommand(body.Command)
 		}
-		fj, err := h.SubmitJobAs(r.Context(), "web/"+user, h.panelViewer(user).User, &pb.HubSubmitRequest{Worker: body.Worker, Argv: argv, Name: body.Name,
+		fj, err := h.SubmitJobAs(r.Context(), "web/"+user, h.panelViewer(user).User, h.panelAdmin(user), &pb.HubSubmitRequest{Worker: body.Worker, Argv: argv, Name: body.Name,
 			Cwd: body.Cwd, Env: body.Env, Require: body.Require, MemGb: body.MemGB})
 		writeResult(w, fj, err)
 	})
@@ -79,7 +79,7 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 			writeResult(w, nil, err)
 			return
 		}
-		fj, err := h.KillJob(r.Context(), "web/"+user, id, worker)
+		fj, err := h.KillJob(r.Context(), "web/"+user, h.panelViewer(user).User, id, worker)
 		writeResult(w, fj, err)
 	})
 	api("GET /api/jobs/{id}/logs", func(w http.ResponseWriter, r *http.Request, user string) {
@@ -91,7 +91,7 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 			return
 		}
 		h.sseRun(w, r, func(send func(kind string, m any) error) error {
-			return h.JobLogs(r.Context(), "web/"+user, req, func(c *pb.LogChunk) error { return send("log", c) })
+			return h.JobLogs(r.Context(), "web/"+user, h.panelViewer(user).User, req, func(c *pb.LogChunk) error { return send("log", c) })
 		})
 	})
 	admin("POST /api/nodes/{name}/toolchain/apply", func(w http.ResponseWriter, r *http.Request, user string) {

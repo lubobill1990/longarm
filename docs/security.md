@@ -408,9 +408,13 @@ pushed rule is applied strictly as an **extra deny after** the worker's own
 `[access]` policy and end-to-end trust: it can never grant what those deny,
 the hub has no way to write `longarmd.toml` or `trust/trust.toml`, and it
 does not widen `[hub] remote_jobs` (jobs the hub submits must be for a user
-the worker serves; the hub session's kill / logs keep following
-`remote_jobs`, which defaults to `none` once `[access] users` is set or
-trust is on).
+the worker serves). **The hub session** is no way around it either: the hub
+relays kill, logs and submit (panel, `longarm admin kill|logs|run`) to a
+user-owned worker only for a caller whose user may use it - admins
+included; others get `PermissionDenied` (audited as `workers/denied`). The
+owner's own panel login acts as the owner and keeps working (with
+`remote_jobs = "control"`, the default without `[access] users` or trust;
+the worker's `remote_jobs` still applies on top).
 
 **Against hub insiders** pin it on the machine, as `longarmd join` suggests:
 `[access] users = ["alice"]` and `owners = ["alice"]` (plus whom alice shares
