@@ -167,6 +167,9 @@ func pipeStream(st frameStream, c net.Conn, clientDone bool, abort <-chan struct
 	select {
 	case <-done:
 	case <-abort: // nil: never
+		// The client->conn goroutine may still be in st.Recv / drain: it only
+		// receives (never sends) and returns with an error once the handler
+		// has returned and gRPC ended the stream.
 	}
 	return nil
 }

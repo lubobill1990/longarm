@@ -112,6 +112,11 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 			return nil, status.Errorf(codes.NotFound, "no worker %q", name)
 		}
 	}
+	// A shared-isolation source lets every local process use the listener: it
+	// would expose a per-user target's private port to other users there.
+	if h.tenancyOnLocked() && !v.Admin && h.nodes[req.From].rec.Isolation != tenancy.PerUser && h.nodes[req.To].rec.Isolation == tenancy.PerUser {
+		return nil, status.Errorf(codes.FailedPrecondition, "%s isolates users and %s does not: everybody on %s could use the link (an admin may create it)", req.To, req.From, req.From)
+	}
 	if req.JobId != "" {
 		e := h.jobs[req.From][req.JobId]
 		if e == nil || !v.CanRead(tenancy.OwnerOf(e.job.GetSpec()), e.job.GetSpec().GetShareTeams()) {

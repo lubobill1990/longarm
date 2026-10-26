@@ -892,6 +892,9 @@ func (t *mcpTools) link(ctx context.Context, _ *mcp.CallToolRequest, in linkIn) 
 		if err != nil {
 			return nil, out, err
 		}
+		if in.ListenPort < 0 || in.ListenPort > 65535 {
+			return nil, out, fmt.Errorf("listen_port %d: want 1-65535", in.ListenPort)
+		}
 		if in.On == "" {
 			return nil, out, errors.New("create needs on (the worker to listen on) and target (<worker>:<port>)")
 		}

@@ -147,7 +147,9 @@ longarm link rm lk-0123456789ab                       # cuts open connections at
   `/proc/net/tcp`, Windows via the owning process); on B the port must be
   listened on by a process of your account, like `longarm forward`. On a
   worker in shared isolation every local process can connect to the
-  listener (it is a loopback port like any other).
+  listener (it is a loopback port like any other). So when users are
+  separated, only admins may link from a shared-isolation worker to a
+  per-user one (it would expose the owner's private port there).
 - **Discovery.** Your jobs, sessions and `longarm exec` on A get
   `LONGARM_LINKS=wb:8080=127.0.0.1:18080,...` and
   `LONGARM_LINK_WB_8080=127.0.0.1:18080` (worker name upper-cased, other
@@ -167,7 +169,10 @@ longarm link rm lk-0123456789ab                       # cuts open connections at
   standalone `longarm-relay` never does).
 - **Limits.** `[links]` in hub.toml: `max_per_user` (20), `default_ttl`
   (8h), `max_ttl` (168h), `disabled`. Listen ports are 1024-65535 and
-  unique per worker. TCP only; the listener binds 127.0.0.1 (not ::1).
+  unique per worker. TCP only; the listener binds 127.0.0.1 and ::1 (so that `localhost` can't
+  reach another process holding the port on one of them); while the port is
+  taken by another process the link shows `error` and is left out of the
+  job variables. `max_ttl` is at most 720h.
 - **Panel.** "Port links" lists your links (admins: everybody's) with a
   Remove button. MCP: `fleet_link` (create / list / remove).
 

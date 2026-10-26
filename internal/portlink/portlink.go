@@ -190,11 +190,19 @@ func Env(links []Link) map[string]string {
 		return links[i].Port < links[j].Port
 	})
 	env := map[string]string{}
+	clash := map[string]bool{}
 	parts := make([]string, 0, len(links))
 	for _, l := range links {
 		addr := "127.0.0.1:" + strconv.Itoa(int(l.ListenPort))
 		parts = append(parts, fmt.Sprintf("%s:%d=%s", l.To, l.Port, addr))
-		env[EnvName(l.To, l.Port)] = addr
+		n := EnvName(l.To, l.Port)
+		if old, taken := env[n]; taken && old != addr {
+			clash[n] = true // workers "a-b" and "a_b": only LONGARM_LINKS tells them apart
+		}
+		env[n] = addr
+	}
+	for n := range clash {
+		delete(env, n)
 	}
 	env[EnvLinks] = strings.Join(parts, ",")
 	return env

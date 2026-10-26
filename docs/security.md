@@ -211,7 +211,11 @@ rights** on each other.
    the client socket in `/proc/net/tcp{,6}`; Windows: the owning process of
    the client socket (`GetExtendedTcpTable`) and its token's user). macOS
    workers have no per-user isolation; in shared isolation any local
-   process may use the listener.
+   process may use the listener. The listener binds both 127.0.0.1 and ::1, and
+   jobs only get the link's variables while it is bound, so another
+   account can't catch the owner's traffic on a free twin port. With
+   users separated, only admins may link a shared-isolation source to a
+   per-user target.
 
 **Revocation.** Removing a link (or its TTL, its job ending, its owner being
 removed, either worker being revoked) pushes new lists to both workers;

@@ -69,6 +69,9 @@ or with longarm link rm.`,
 			if on == "" {
 				return fmt.Errorf("--on <worker>: the worker to listen on")
 			}
+			if port < 0 || port > 65535 {
+				return fmt.Errorf("--port %d: want 1-65535", port)
+			}
 			req := &pb.CreatePortLinkRequest{From: on, To: to, Port: p, ListenPort: int32(port), JobId: job}
 			if ttl > 0 {
 				req.Ttl = durationpb.New(ttl)

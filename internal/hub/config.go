@@ -342,6 +342,11 @@ func (c *Config) applyDefaults() error {
 	if c.Links.MaxTTL.Duration <= 0 {
 		c.Links.MaxTTL.Duration = 7 * 24 * time.Hour
 	}
+	if c.Links.MaxTTL.Duration > 30*24*time.Hour {
+		// grants are signed with the hub certificate, renewed 30 days before
+		// it expires: a longer link could outlive its grant's certificate
+		return fmt.Errorf("links.max_ttl (%s) is longer than 720h", c.Links.MaxTTL.Duration)
+	}
 	if c.Links.DefaultTTL.Duration > c.Links.MaxTTL.Duration {
 		return fmt.Errorf("links.default_ttl (%s) exceeds links.max_ttl (%s)", c.Links.DefaultTTL.Duration, c.Links.MaxTTL.Duration)
 	}

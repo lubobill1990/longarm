@@ -16,6 +16,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/portlink"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -31,6 +32,7 @@ func linkNode(h *Hub, name string, endpoints ...string) chan *pb.HubCommand {
 	}
 	n.rec.Endpoints = endpoints
 	n.sess = &nodeSession{id: 1000 + uint64(len(h.nodes)), out: out, cancel: func() {}}
+	n.lastReport = time.Now().Add(time.Hour) // the hub's offline sweep must not end the fake session
 	return out
 }
 
@@ -175,6 +177,14 @@ func TestPortLinks(t *testing.T) {
 	if _, err := create(th.alice, &pb.CreatePortLinkRequest{From: "w1", To: "w2", Port: 5432, JobId: "JA"}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("link to an ended job: %v", err)
 	}
+
+	// a shared source worker would expose a per-user target's port to everybody there
+	if _, err := create(th.alice, &pb.CreatePortLinkRequest{From: "w2", To: "w1", Port: 3000, ListenPort: 13000}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("shared -> per-user: %v", err)
+	}
+	h.mu.Lock()
+	h.nodes["w2"].rec.Isolation = tenancy.PerUser
+	h.mu.Unlock()
 
 	// expiry
 	le, err := create(th.alice, &pb.CreatePortLinkRequest{From: "w2", To: "w1", Port: 3000, ListenPort: 13000, Ttl: durationpb.New(time.Minute)})

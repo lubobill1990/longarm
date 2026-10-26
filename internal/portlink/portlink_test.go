@@ -135,3 +135,10 @@ func TestEnv(t *testing.T) {
 		t.Fatal("ids")
 	}
 }
+
+func TestEnvClash(t *testing.T) {
+	env := Env([]Link{{To: "a-b", Port: 80, ListenPort: 18080}, {To: "a_b", Port: 80, ListenPort: 18081}})
+	if _, ok := env["LONGARM_LINK_A_B_80"]; ok || env[EnvLinks] != "a-b:80=127.0.0.1:18080,a_b:80=127.0.0.1:18081" {
+		t.Fatalf("env %v", env)
+	}
+}

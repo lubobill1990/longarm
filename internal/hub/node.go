@@ -59,6 +59,7 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
+	revs := h.revocationsMsg() // (takes h.mu itself)
 	h.mu.Lock()
 	n := h.nodes[c.id.Name]
 	if n == nil || n.rec.State != stateApproved {
@@ -83,7 +84,6 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	if err := h.store.PutNode(n.rec); err != nil {
 		h.log.Warn("save node", "err", err)
 	}
-	h.checkTenancyFlipLocked()
 	var policy *pb.TenancyPolicy
 	if hello.TenancyVersion != h.tenancyVersion {
 		policy = h.policyLocked()
@@ -95,26 +95,27 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 		HubDraining:     n.rec.AdminDrain,
 		Tailnet:         h.tailnetInfo(n),
 	}
-	revVersion := h.revVersion
-	desired := h.desiredToolchainLocked(n)
-	linksMsg := h.portLinksMsgLocked(n.rec.Name)
+	// The session's first messages are queued before h.mu is released: from
+	// then on other goroutines may push to it too (port links, updates), and
+	// the worker expects the welcome first and the initial state before any
+	// change.
+	send := func(cmd *pb.HubCommand) { sess.out <- cmd } // fresh channel: cannot block yet
+	send(&pb.HubCommand{Msg: &pb.HubCommand_Welcome{Welcome: welcome}})
+	if hello.RevocationVersion != revs.GetRevocations().GetVersion() {
+		send(revs)
+	}
+	send(&pb.HubCommand{Msg: &pb.HubCommand_Toolchain{Toolchain: h.desiredToolchainLocked(n)}})
+	if policy != nil {
+		send(&pb.HubCommand{Msg: &pb.HubCommand_Tenancy{Tenancy: policy}})
+	}
+	send(h.portLinksMsgLocked(n.rec.Name))    // always: the list is authoritative (empty = none)
 	h.portLinkTargetChangedLocked(n.rec.Name) // its endpoints may have changed
+	h.checkTenancyFlipLocked()                // may push a new policy (after the welcome)
 	h.log.Info("node online", "node", n.rec.Name, "version", hello.Version, "endpoints", hello.Endpoints)
 	h.publishNodeLocked(n, "online")
 	h.advanceReleaseLocked()
 	h.mu.Unlock()
 	h.kickQueue()
-
-	send := func(cmd *pb.HubCommand) { sess.out <- cmd } // fresh channel: cannot block yet
-	send(&pb.HubCommand{Msg: &pb.HubCommand_Welcome{Welcome: welcome}})
-	if hello.RevocationVersion != revVersion {
-		send(h.revocationsMsg())
-	}
-	send(&pb.HubCommand{Msg: &pb.HubCommand_Toolchain{Toolchain: desired}})
-	if policy != nil {
-		send(&pb.HubCommand{Msg: &pb.HubCommand_Tenancy{Tenancy: policy}})
-	}
-	send(linksMsg) // always: the list is authoritative (empty = none)
 
 	go func() {
 		for {
