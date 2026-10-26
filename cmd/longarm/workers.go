@@ -300,6 +300,9 @@ func lsCmd() *cobra.Command {
 }
 
 func oneLine(err error) string {
+	if msg, ok := client.TrustRefusal(err); ok {
+		return msg
+	}
 	s := err.Error()
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]

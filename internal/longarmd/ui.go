@@ -77,7 +77,14 @@ func (a *hubAgent) allowRemote(kind string) bool {
 		return false
 	case "all":
 		return true
-	default: // "", "control"
+	case "":
+		// with end-to-end trust the hub must not reach users' work through
+		// its session either (logs are users' data): opt in explicitly
+		if a.trust.Load().Active() {
+			return false
+		}
+		return kind == "control"
+	default: // "control"
 		return kind == "control"
 	}
 }

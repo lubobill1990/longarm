@@ -10,7 +10,7 @@ import (
 
 func TestSignCSRUsesGivenIdentity(t *testing.T) {
 	ca := mustCA(t, filepath.Join(t.TempDir(), "ca"))
-	keyPEM, csrPEM, err := NewKeyAndCSR("evil-admin") // the CSR subject is ignored
+	keyPEM, csrPEM, err := NewKeyAndCSR("evil-admin", nil) // the CSR subject is ignored
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,6 +16,7 @@
 //	longarm run <w> --repo . [--ref R] -- cmd...  job in a fresh worktree
 //	longarm proxy <w>; longarm ssh-config              built-in sshd for ssh/scp/sftp/VS Code
 //	longarm admin ca init | issue | shutdown <w> | gc <w>
+//	longarm trust init | show | request | endorse | accept | require on|off ...   end-to-end trust
 //
 // <w> is a worker name from workers.toml, or an ad-hoc "certname@host:port".
 package main
@@ -72,7 +73,7 @@ func main() {
 	root.AddCommand(whoamiCmd())
 	root.AddCommand(lsCmd(), infoCmd(), execCmd(), runCmd(), logsCmd(), waitCmd(), killCmd(), jobsCmd(), adminCmd(),
 		attachCmd(), sessionsCmd(), forwardCmd(), putCmd(), getCmd(), syncCmd(), proxyCmd(), sshConfigCmd(),
-		joinCmd(), leaveCmd(), daemonCmd(), mcpCmd())
+		joinCmd(), leaveCmd(), daemonCmd(), mcpCmd(), trustCmd())
 	err := root.Execute()
 	if err == nil {
 		return
@@ -84,7 +85,9 @@ func main() {
 		}
 		os.Exit(ee.code)
 	}
-	if s, ok := status.FromError(err); ok {
+	if msg, ok := client.TrustRefusal(err); ok {
+		fmt.Fprintln(os.Stderr, "longarm:", msg)
+	} else if s, ok := status.FromError(err); ok {
 		fmt.Fprintf(os.Stderr, "longarm: %s: %s\n", s.Code(), s.Message())
 	} else {
 		fmt.Fprintln(os.Stderr, "longarm:", err)

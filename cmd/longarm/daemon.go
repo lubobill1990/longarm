@@ -411,6 +411,7 @@ func runDaemon(ctx context.Context) error {
 		go d.relayHubEvents(ctx)
 	}
 	go d.maintain(ctx)
+	go s.dialer.WatchTrust(ctx, nil)
 	monDone := make(chan struct{})
 	go func() { d.mon.Run(ctx); close(monDone) }()
 	go d.poolSideLoops(ctx)

@@ -222,6 +222,11 @@ func NewDialer(cfg *Config) (*Dialer, error) {
 	if b.Identity.Role == pki.RoleWorker {
 		return nil, fmt.Errorf("%s holds a worker certificate; longarm needs a client or admin one", filepath.Join(cfg.Dir, TLSDir))
 	}
+	// A broken trust.toml fails here rather than silently trusting every
+	// worker (fail closed).
+	if b.Trust, err = TrustStore(cfg.Dir).Source(true); err != nil {
+		return nil, fmt.Errorf("end-to-end trust: %w", err)
+	}
 	d := &Dialer{cfg: cfg, bundle: b.Live(), reEvaluate: DefaultReEvaluate, cache: loadLegCache(cfg.Dir)}
 	if v, err := time.ParseDuration(cfg.Dial.ReEvaluate); err == nil {
 		d.reEvaluate = v
@@ -237,7 +242,8 @@ func NewDialer(cfg *Config) (*Dialer, error) {
 }
 
 // Reload picks up a renewed client certificate from <dir>/tls; new
-// connections (and reconnects) present it.
+// connections (and reconnects) present it. The trust policy stays the
+// bundle's (WatchTrust).
 func (d *Dialer) Reload() error {
 	b, err := pki.LoadBundle(filepath.Join(d.cfg.Dir, TLSDir))
 	if err != nil {
@@ -493,7 +499,7 @@ func (d *Dialer) Dial(w Worker) (*Conn, error) {
 	bo.MaxDelay = 5 * time.Second
 	cc, err := grpc.NewClient("passthrough:///"+w.Name,
 		grpc.WithContextDialer(dial),
-		grpc.WithTransportCredentials(preHandshaked{credentials.NewTLS(d.bundle.ClientConfig(w.CertName))}),
+		grpc.WithTransportCredentials(preHandshaked{credentials.NewTLS(d.tlsConfig(w))}),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bo, MinConnectTimeout: connectTimeout()}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 30 * time.Second, Timeout: 20 * time.Second, PermitWithoutStream: false}),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(256<<20)),
@@ -518,6 +524,9 @@ func (d *Dialer) isConfigured(name string) bool {
 // Retryable reports whether err is a transient connectivity failure worth
 // retrying (worker restarting, network blip).
 func Retryable(err error) bool {
+	if _, ok := TrustRefusal(err); ok {
+		return false // the worker stays refused until someone endorses it
+	}
 	switch status.Code(err) {
 	case codes.Unavailable, codes.Aborted, codes.Internal, codes.Unknown:
 		return true

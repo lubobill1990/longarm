@@ -266,6 +266,9 @@ type JoinOptions struct {
 	// Fingerprint pins the hub's CA (sha256 of its DER, hex); empty =
 	// trust on first use (the fingerprint is reported in the result).
 	Fingerprint string
+	// Trust (optional): the node key whose binding the certificate carries
+	// (end-to-end trust, pki/trust.go).
+	Trust *pki.CSRTrust
 }
 
 // JoinResult is what Join and Poll return.
@@ -311,7 +314,7 @@ func enrollTLS(fingerprint string, caOut **x509.Certificate) *tls.Config {
 // Join redeems a join code: it creates the node key and a CSR and asks the
 // hub for a certificate (or a pending enrollment).
 func Join(ctx context.Context, addr, code string, o JoinOptions) (*JoinResult, error) {
-	keyPEM, csrPEM, err := pki.NewKeyAndCSR(o.Name)
+	keyPEM, csrPEM, err := pki.NewKeyAndCSR(o.Name, o.Trust)
 	if err != nil {
 		return nil, err
 	}
@@ -391,9 +394,10 @@ func WaitApproved(ctx context.Context, addr, token string, caPEM, keyPEM []byte,
 }
 
 // Renew obtains a fresh certificate for a new key over an authenticated
-// connection and returns (certPEM, keyPEM, caPEM).
-func Renew(ctx context.Context, c *Conn, name string) ([]byte, []byte, []byte, error) {
-	keyPEM, csrPEM, err := pki.NewKeyAndCSR(name)
+// connection and returns (certPEM, keyPEM, caPEM); t (optional) is the
+// node's end-to-end trust material for the new certificate.
+func Renew(ctx context.Context, c *Conn, name string, t *pki.CSRTrust) ([]byte, []byte, []byte, error) {
+	keyPEM, csrPEM, err := pki.NewKeyAndCSR(name, t)
 	if err != nil {
 		return nil, nil, nil, err
 	}

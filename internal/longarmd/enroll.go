@@ -12,6 +12,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/trust"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -40,7 +41,13 @@ func Join(ctx context.Context, dataDir, hubAddr, code string, o JoinOptions) err
 		return err
 	}
 	hubAddr = hubclient.NormalizeAddr(hubAddr)
-	r, err := hubclient.Join(ctx, hubAddr, code, hubclient.JoinOptions{Name: o.Name, Fingerprint: o.Fingerprint})
+	// the certificate binds the node key from the start, so an
+	// endorsement (longarmd trust accept) only needs a renewal
+	tr, err := trust.Store{Dir: filepath.Join(dataDir, TrustDir)}.CSRTrust()
+	if err != nil {
+		return err
+	}
+	r, err := hubclient.Join(ctx, hubAddr, code, hubclient.JoinOptions{Name: o.Name, Fingerprint: o.Fingerprint, Trust: tr})
 	if err != nil {
 		return err
 	}

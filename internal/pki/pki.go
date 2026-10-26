@@ -257,6 +257,8 @@ type IssueOptions struct {
 	User     string   // clients/admins: the Longarm user (multi-tenancy); "" = the name
 	Hosts    []string // extra DNS names / IPs (workers, relays)
 	Validity time.Duration
+
+	extra []pkix.Extension // SignCSR: the CSR's trust extension
 }
 
 // Issue creates a key pair and a certificate signed by the CA.
@@ -303,11 +305,12 @@ func (ca *CA) sign(pub any, o IssueOptions) ([]byte, error) {
 			OrganizationalUnit: []string{string(o.Role)},
 			Organization:       []string{"longarm"},
 		},
-		NotBefore:   now.Add(-time.Hour),
-		NotAfter:    now.Add(o.Validity),
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		URIs:        []*url.URL{IdentityURI(Identity{Role: o.Role, Name: o.Name, User: o.User})},
+		NotBefore:       now.Add(-time.Hour),
+		NotAfter:        now.Add(o.Validity),
+		KeyUsage:        x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		URIs:            []*url.URL{IdentityURI(Identity{Role: o.Role, Name: o.Name, User: o.User})},
+		ExtraExtensions: o.extra,
 	}
 	if o.Role == RoleWorker || o.Role == RoleRelay || o.Role == RoleHub {
 		tmpl.ExtKeyUsage = append(tmpl.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
@@ -347,6 +350,10 @@ type Bundle struct {
 	Cert     tls.Certificate
 	Identity Identity
 	NotAfter time.Time
+	// Trust, when its policy is active, also demands end-to-end trust
+	// (trust.go) of peers: clients of a worker's server, workers a client
+	// dials.
+	Trust *TrustSource
 
 	// live, when set (Reloader.LiveBundle), holds the current certificate:
 	// TLS configs built from this bundle present it on every handshake, so
@@ -407,12 +414,22 @@ func (b *Bundle) ServerConfig() (*tls.Config, error) {
 	if b.Identity.Role != RoleWorker {
 		return nil, fmt.Errorf("longarmd needs a worker certificate, got %s", b.Identity)
 	}
+	trust := b.Trust
 	return &tls.Config{
 		MinVersion:     tls.VersionTLS13,
 		GetCertificate: b.GetCertificate,
 		ClientAuth:     tls.RequireAndVerifyClientCert,
 		ClientCAs:      b.Pool,
 		NextProtos:     []string{"h2"},
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if p := trust.Load(); p.Active() && len(cs.PeerCertificates) > 0 {
+				if _, err := p.Check(cs.PeerCertificates[0]); err != nil {
+					trust.denied(err)
+					return err
+				}
+			}
+			return nil
+		},
 	}, nil
 }
 
@@ -435,6 +452,17 @@ func (b *Bundle) ClientConfig(serverName string) *tls.Config {
 			}
 			if id.Role != RoleWorker {
 				return fmt.Errorf("server %s is not a worker", id)
+			}
+			if p := b.Trust.Load(); p.Active() {
+				// the name the user signed (Check: endorsement name ==
+				// identity name) must be the worker we asked for; the DNS
+				// SANs that matched serverName are the CA's word only
+				if id.Name != serverName {
+					return fmt.Errorf("end-to-end trust: asked for worker %q, %s answered", serverName, id)
+				}
+				if _, err := p.Check(cs.PeerCertificates[0]); err != nil {
+					return fmt.Errorf("end-to-end trust: %w", err)
+				}
 			}
 			return nil
 		},

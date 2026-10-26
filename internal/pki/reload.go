@@ -25,6 +25,19 @@ type Reloader struct {
 	bundle *Bundle
 	stamp  string
 	live   *Bundle // see LiveBundle
+	trust  *TrustSource
+}
+
+// SetTrust makes the server demand end-to-end trust of clients whenever
+// t's policy is active (call before LiveBundle and serving).
+func (r *Reloader) SetTrust(t *TrustSource) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.trust = t
+	r.bundle.Trust = t
+	if cfg, err := r.bundle.ServerConfig(); err == nil {
+		r.cfg = cfg
+	}
 }
 
 // NewReloader loads the bundle in dir; it must hold a worker certificate.
@@ -58,6 +71,7 @@ func (r *Reloader) load() error {
 	if err != nil {
 		return err
 	}
+	b.Trust = r.trust
 	cfg, err := b.ServerConfig()
 	if err != nil {
 		return err
