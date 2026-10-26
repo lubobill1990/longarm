@@ -98,8 +98,8 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 		info, err := h.ToolchainApply(r.Context(), "web/"+user, r.PathValue("name"))
 		writeResult(w, info, err)
 	})
-	api("GET /api/history", func(w http.ResponseWriter, r *http.Request, _ string) {
-		writePB(w, h.History(r.URL.Query().Get("node")))
+	api("GET /api/history", func(w http.ResponseWriter, r *http.Request, user string) {
+		writePB(w, h.HistoryFor(h.panelViewer(user), r.URL.Query().Get("node")))
 	})
 	admin("GET /api/links", func(w http.ResponseWriter, r *http.Request, _ string) {
 		writePB(w, h.Links())
@@ -247,6 +247,9 @@ func (h *Hub) meInfo(r *http.Request, user string) map[string]any {
 		m["quota"] = json.RawMessage(protoJSON(q))
 	}
 	m["usage"] = json.RawMessage(protoJSON(h.usageLocked(v.User)))
+	if t := h.tenants[v.User]; t != nil {
+		m["can_share"] = t.u.CanShare
+	}
 	h.mu.Unlock()
 	return m
 }

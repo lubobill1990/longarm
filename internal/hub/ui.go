@@ -55,11 +55,19 @@ func recordMetricsLocked(n *node, m *pb.MetricsSnapshot) {
 
 // History returns the metrics history of one or all workers.
 func (h *Hub) History(node string) *pb.HistoryResponse {
+	return h.HistoryFor(tenancy.Caller{Admin: true}, node)
+}
+
+// HistoryFor is History of the workers v may see.
+func (h *Hub) HistoryFor(v tenancy.Caller, node string) *pb.HistoryResponse {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	out := &pb.HistoryResponse{}
 	for name, n := range h.nodes {
 		if (node != "" && name != node) || n.rec.Role != string(pki.RoleWorker) {
+			continue
+		}
+		if !v.Admin && !tenancy.MayUseWorker(v.User, v.Teams, n.rec.Owner, sharesPB(n.rec.Shares)) {
 			continue
 		}
 		out.Nodes = append(out.Nodes, &pb.NodeHistory{Node: name, Points: append([]*pb.MetricsPoint(nil), n.history...)})
@@ -259,6 +267,10 @@ func (h *Hub) SubmitJobAs(ctx context.Context, by, owner string, req *pb.HubSubm
 	spec := &pb.JobSpec{Id: id, Name: req.Name, Argv: req.Argv, Cwd: req.Cwd, Env: req.Env, Labels: labels}
 	if req.Worker != "" && req.Worker != "auto" { // placed jobs passed the quota already
 		h.mu.Lock()
+		if n := h.nodes[worker]; n == nil || !h.mayUseLocked(owner, n) { // others' own workers don't exist for owner
+			h.mu.Unlock()
+			return nil, status.Errorf(codes.NotFound, "no worker %q", worker)
+		}
 		why := h.overQuotaLocked(owner, mem)
 		h.mu.Unlock()
 		if why != "" {
@@ -373,6 +385,6 @@ func (s *fleetServer) Links(context.Context, *pb.LinksRequest) (*pb.LinksRespons
 	return s.h.Links(), nil
 }
 
-func (s *fleetServer) History(_ context.Context, req *pb.HistoryRequest) (*pb.HistoryResponse, error) {
-	return s.h.History(req.Node), nil
+func (s *fleetServer) History(ctx context.Context, req *pb.HistoryRequest) (*pb.HistoryResponse, error) {
+	return s.h.HistoryFor(s.h.viewer(callerFrom(ctx)), req.Node), nil
 }

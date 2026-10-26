@@ -97,6 +97,7 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	}
 	revVersion := h.revVersion
 	desired := h.desiredToolchainLocked(n)
+	access := workerAccessLocked(n)
 	h.log.Info("node online", "node", n.rec.Name, "version", hello.Version, "endpoints", hello.Endpoints)
 	h.publishNodeLocked(n, "online")
 	h.advanceReleaseLocked()
@@ -105,6 +106,8 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 
 	send := func(cmd *pb.HubCommand) { sess.out <- cmd } // fresh channel: cannot block yet
 	send(&pb.HubCommand{Msg: &pb.HubCommand_Welcome{Welcome: welcome}})
+	// always: small, and it corrects whatever the worker kept from before
+	send(workerAccessCmd(access))
 	if hello.RevocationVersion != revVersion {
 		send(h.revocationsMsg())
 	}
@@ -389,6 +392,8 @@ func (h *Hub) nodeInfoLocked(n *node) *pb.NodeInfo {
 	}
 	if r.Role != string(pki.RoleWorker) {
 		info.User = nodeUser(r)
+	} else {
+		info.Owner, info.Shares = r.Owner, sharesPB(r.Shares)
 	}
 	switch {
 	case r.AdminDrain:

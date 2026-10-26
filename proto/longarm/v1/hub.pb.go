@@ -334,7 +334,10 @@ type JoinResponse struct {
 	// Tailnet enrollment (Headscale, DESIGN §4.4) when the hub has one
 	// configured and the node is approved: a pre-auth key for the embedded
 	// tsnet node.
-	Tailnet       *TailnetAuth `protobuf:"bytes,9,opt,name=tailnet,proto3" json:"tailnet,omitempty"`
+	Tailnet *TailnetAuth `protobuf:"bytes,9,opt,name=tailnet,proto3" json:"tailnet,omitempty"`
+	// worker codes with an owner (Fleet.CreateWorkerCode): the user who owns
+	// the worker - it joined approved, usable by that user only until shared
+	Owner         string `protobuf:"bytes,10,opt,name=owner,proto3" json:"owner,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -430,6 +433,13 @@ func (x *JoinResponse) GetTailnet() *TailnetAuth {
 		return x.Tailnet
 	}
 	return nil
+}
+
+func (x *JoinResponse) GetOwner() string {
+	if x != nil {
+		return x.Owner
+	}
+	return ""
 }
 
 type JoinStatusRequest struct {
@@ -8006,7 +8016,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\bhostname\x18\x04 \x01(\tR\bhostname\x12\x0e\n" +
 	"\x02os\x18\x05 \x01(\tR\x02os\x12\x12\n" +
 	"\x04arch\x18\x06 \x01(\tR\x04arch\x12\x18\n" +
-	"\aversion\x18\a \x01(\tR\aversion\"\x85\x02\n" +
+	"\aversion\x18\a \x01(\tR\aversion\"\x9b\x02\n" +
 	"\fJoinResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
@@ -8017,7 +8027,9 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"poll_token\x18\x06 \x01(\tR\tpollToken\x12\x18\n" +
 	"\amessage\x18\a \x01(\tR\amessage\x12\x19\n" +
 	"\bhub_name\x18\b \x01(\tR\ahubName\x121\n" +
-	"\atailnet\x18\t \x01(\v2\x17.longarm.v1.TailnetAuthR\atailnet\"2\n" +
+	"\atailnet\x18\t \x01(\v2\x17.longarm.v1.TailnetAuthR\atailnet\x12\x14\n" +
+	"\x05owner\x18\n" +
+	" \x01(\tR\x05owner\"2\n" +
 	"\x11JoinStatusRequest\x12\x1d\n" +
 	"\n" +
 	"poll_token\x18\x01 \x01(\tR\tpollToken\"\xa7\x03\n" +

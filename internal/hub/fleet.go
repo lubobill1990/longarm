@@ -36,10 +36,11 @@ func (h *Hub) ListNodesFor(v tenancy.Caller, all bool) []*pb.NodeInfo {
 		if !all && n.rec.Role != string(pki.RoleWorker) { // revoked workers too: clients must stop using them
 			continue
 		}
-		if !v.Admin && n.rec.Role != string(pki.RoleWorker) && nodeUser(n.rec) != v.User {
+		info := h.nodeInfoLocked(n)
+		if !canSeeNode(v, info) { // other users' devices and workers
 			continue
 		}
-		out = append(out, nodeView(v, h.nodeInfoLocked(n)))
+		out = append(out, nodeView(v, info))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -230,7 +231,7 @@ func (s *fleetServer) Whoami(ctx context.Context, _ *pb.WhoamiRequest) (*pb.Whoa
 	s.h.mu.Lock()
 	if resp.Tenancy = s.h.tenancyOnLocked(); resp.Tenancy && c.id.Role != pki.RoleWorker {
 		if t := s.h.tenants[c.id.Owner()]; t != nil {
-			resp.Teams = t.u.Teams
+			resp.Teams, resp.CanShare = t.u.Teams, t.u.CanShare
 		}
 		if q := s.h.quotaLocked(c.id.Owner()); !tenancy.QuotaEmpty(q) {
 			resp.Quota = q

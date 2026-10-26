@@ -238,6 +238,19 @@ type Node struct {
 	// ("" = its name); Isolation the worker's [isolation] mode.
 	User      string `json:"user,omitempty"`
 	Isolation string `json:"isolation,omitempty"`
+	// Owner is the user who registered a worker (a worker code;
+	// "" = a shared fleet worker), Shares who else may use it, and
+	// AccessVersion counts their changes (HubCommand.worker_access).
+	Owner         string        `json:"owner,omitempty"`
+	Shares        *WorkerShares `json:"shares,omitempty"`
+	AccessVersion int64         `json:"access_version,omitempty"`
+}
+
+// WorkerShares: who besides its owner may use a worker.
+type WorkerShares struct {
+	Users    []string `json:"users,omitempty"`
+	Teams    []string `json:"teams,omitempty"`
+	Everyone bool     `json:"everyone,omitempty"`
 }
 
 // PutNode inserts or replaces a node.
@@ -351,7 +364,8 @@ type JoinCode struct {
 	ID        string            `json:"id"`
 	Role      string            `json:"role"`
 	Name      string            `json:"name,omitempty"`
-	User      string            `json:"user,omitempty"` // client/admin: the Longarm user of the certificate
+	User      string            `json:"user,omitempty"`  // client/admin: the Longarm user of the certificate
+	Owner     string            `json:"owner,omitempty"` // worker: the user who will own it
 	Labels    map[string]string `json:"labels,omitempty"`
 	Profile   string            `json:"profile,omitempty"`
 	CreatedBy string            `json:"created_by"`

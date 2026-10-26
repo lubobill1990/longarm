@@ -579,6 +579,8 @@ func (a *hubAgent) handle(cmd *pb.HubCommand) {
 		}
 	case *pb.HubCommand_Tailnet:
 		a.tailnet.apply(x.Tailnet)
+	case *pb.HubCommand_WorkerAccess:
+		a.applyWorkerAccess(x.WorkerAccess)
 	case *pb.HubCommand_Tenancy:
 		a.applyTenancy(x.Tenancy)
 	case *pb.HubCommand_AuditAck:
@@ -724,4 +726,33 @@ func endorsedBy(c *x509.Certificate) string {
 	default:
 		return "by " + t.Endorsement.User + " (" + pki.KeyID(t.Endorsement.UserKey) + ")"
 	}
+}
+
+// applyWorkerAccess stores the owner and shares the hub sent (a user-owned
+// worker) and closes what users no longer allowed still have open. The rule
+// only ever restricts further what [access] and end-to-end trust allow
+// (server.authorize); nothing here touches either.
+func (a *hubAgent) applyWorkerAccess(wa *pb.WorkerAccess) {
+	if a.srv.WorkerAccess == nil {
+		return
+	}
+	old := a.srv.WorkerAccess.Get()
+	if err := a.srv.WorkerAccess.Set(wa); err != nil {
+		a.log.Warn("hub: save worker access", "err", err)
+	}
+	if proto.Equal(old, wa) {
+		return
+	}
+	a.log.Info("hub: worker access", "version", wa.Version, "owner", wa.Owner, "shared_users", wa.GetShares().GetUsers(),
+		"shared_teams", wa.GetShares().GetTeams(), "shared_everyone", wa.GetShares().GetEveryone())
+	a.audit.LogAs("hub", "worker/access", map[string]any{"version": wa.Version, "owner": wa.Owner,
+		"users": wa.GetShares().GetUsers(), "teams": wa.GetShares().GetTeams(), "everyone": wa.GetShares().GetEveryone()})
+	if n := a.srv.Conns.CloseIf(func(c *x509.Certificate) bool {
+		id, err := pki.IdentityFromCert(c)
+		return err == nil && (id.Role == pki.RoleClient || id.Role == pki.RoleAdmin) &&
+			!a.srv.WorkerAccess.Allows(id.Owner(), a.policy.Teams(id.Owner()))
+	}); n > 0 {
+		a.log.Info("closed connections of users no longer allowed", "count", n)
+	}
+	a.notify(&pb.LocalEvent{Kind: "hub", Message: "worker access updated (owner " + nonEmpty(wa.Owner, "none") + ")"})
 }

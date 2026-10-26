@@ -23,7 +23,7 @@ import (
 //
 //	longarm admin user add <name> [--team T]... [quota flags] [--device D] [--admin] [--ttl 24h] [--panel] [--no-code]
 //	longarm admin user code <name> [--device D] [--admin] [--ttl 24h]   join code for another device
-//	longarm admin user set <name> [--team T]... [quota flags] [--clear-quota]
+//	longarm admin user set <name> [--team T]... [quota flags] [--clear-quota] [--can-share[=false]]
 //	longarm admin user ls [--json]
 //	longarm admin user disable|enable <name>
 //	longarm admin user remove <name> [--purge]
@@ -176,13 +176,16 @@ creates belongs to the user and - on workers with [isolation] mode =
 
 	var steams []string
 	var sqf quotaFlags
-	var clearQuota, spanel bool
+	var clearQuota, spanel, canShare bool
 	set := &cobra.Command{
 		Use:   "set <name>",
-		Short: "Change a user's teams (--team replaces them) or quota (given flags; --clear-quota = the default)",
+		Short: "Change a user's teams (--team replaces them), quota (given flags; --clear-quota = the default) or --can-share",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req := &pb.PutUserRequest{Name: args[0], Panel: spanel}
+			if cmd.Flags().Changed("can-share") {
+				req.SetCanShare, req.CanShare = true, canShare
+			}
 			if cmd.Flags().Changed("team") {
 				req.Teams, req.SetTeams = steams, true
 			}
@@ -196,7 +199,8 @@ creates belongs to the user and - on workers with [isolation] mode =
 				if err != nil {
 					return err
 				}
-				fmt.Printf("%s: teams %s, quota %s\n", r.User.Name, strings.Join(r.User.Teams, ","), quotaString(r.User.Quota))
+				fmt.Printf("%s: teams %s, quota %s, can share workers: %v\n", r.User.Name, strings.Join(r.User.Teams, ","),
+					quotaString(r.User.Quota), r.User.CanShare)
 				printPanel(r)
 				return nil
 			})
@@ -206,6 +210,7 @@ creates belongs to the user and - on workers with [isolation] mode =
 	sqf.bind(set)
 	set.Flags().BoolVar(&clearQuota, "clear-quota", false, "drop the user's quota overrides")
 	set.Flags().BoolVar(&spanel, "panel", false, "create or reset the user's web panel login")
+	set.Flags().BoolVar(&canShare, "can-share", false, "may share own workers with other users, teams or everyone (longarm worker share); --can-share=false revokes")
 
 	var asJSON bool
 	ls := &cobra.Command{
@@ -225,14 +230,14 @@ creates belongs to the user and - on workers with [isolation] mode =
 				}
 				fmt.Printf("multi-tenancy %s; default quota: %s\n", state, quotaString(r.DefaultQuota))
 				tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(tw, "USER\tSTATE\tTEAMS\tDEVICES\tJOBS\tMEM GB\tQUOTA")
+				fmt.Fprintln(tw, "USER\tSTATE\tTEAMS\tDEVICES\tJOBS\tMEM GB\tQUOTA\tCAN SHARE")
 				for _, u := range r.Users {
 					st := "active"
 					if u.Disabled {
 						st = "disabled"
 					}
-					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%.1f\t%s\n", u.Name, st, strings.Join(u.Teams, ","),
-						strings.Join(u.Devices, ","), u.Usage.GetJobs(), u.Usage.GetMemGb(), quotaString(u.Quota))
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%.1f\t%s\t%v\n", u.Name, st, strings.Join(u.Teams, ","),
+						strings.Join(u.Devices, ","), u.Usage.GetJobs(), u.Usage.GetMemGb(), quotaString(u.Quota), u.CanShare)
 				}
 				return tw.Flush()
 			})
@@ -348,6 +353,7 @@ func whoamiCmd() *cobra.Command {
 				if r.Tenancy {
 					fmt.Printf("teams: %s\nquota: %s\nusage: %d active jobs, %.1f GB reserved\n", strings.Join(r.Teams, ","),
 						quotaString(r.Quota), r.Usage.GetJobs(), r.Usage.GetMemGb())
+					fmt.Printf("can share own workers: %v\n", r.CanShare)
 				}
 				return nil
 			})

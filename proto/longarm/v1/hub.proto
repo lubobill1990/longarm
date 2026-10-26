@@ -87,6 +87,9 @@ message JoinResponse {
   // configured and the node is approved: a pre-auth key for the embedded
   // tsnet node.
   TailnetAuth tailnet = 9;
+  // worker codes with an owner (Fleet.CreateWorkerCode): the user who owns
+  // the worker - it joined approved, usable by that user only until shared
+  string owner = 10;
 }
 
 message JoinStatusRequest {

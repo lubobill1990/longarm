@@ -77,6 +77,22 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 			return nil, status.Errorf(codes.InvalidArgument, "invalid user name %q", req.User)
 		}
 	}
+	if req.Owner != "" {
+		if r != pki.RoleWorker {
+			return nil, status.Error(codes.InvalidArgument, "only worker codes have an owner")
+		}
+		if !pki.ValidUser(req.Owner) {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid owner %q", req.Owner)
+		}
+		// cheap abuse guard: owned workers join without approval
+		n, err := h.activeWorkerCodes(req.Owner)
+		if err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		if n >= maxWorkerCodes {
+			return nil, status.Errorf(codes.ResourceExhausted, "%s has %d unused worker codes already (they expire; max %d)", req.Owner, n, maxWorkerCodes)
+		}
+	}
 	ttl := 10 * time.Minute
 	if req.Ttl != nil {
 		ttl = req.Ttl.AsDuration()
@@ -99,11 +115,14 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 	hash := codeHash(code)
 	now := time.Now().UTC()
 	jc := &store.JoinCode{ID: hash[:8], Role: role, Name: req.Name, Labels: req.Labels, Profile: req.Profile,
-		CreatedBy: by, CreatedAt: now, ExpiresAt: now.Add(ttl), User: req.User}
+		CreatedBy: by, CreatedAt: now, ExpiresAt: now.Add(ttl), User: req.User, Owner: req.Owner}
 	if err := h.store.AddJoinCode(hash, jc); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	h.log.Info("join code created", "id", jc.ID, "role", role, "by", by, "expires", jc.ExpiresAt)
+	h.log.Info("join code created", "id", jc.ID, "role", role, "owner", jc.Owner, "by", by, "expires", jc.ExpiresAt)
+	if jc.Owner != "" {
+		h.auditHub(by, "workers/code", map[string]any{"id": jc.ID, "owner": jc.Owner, "name": jc.Name, "expires": jc.ExpiresAt})
+	}
 	out := joinCodePB(jc)
 	out.Code = code
 	return out, nil
@@ -111,7 +130,7 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 
 func joinCodePB(c *store.JoinCode) *pb.JoinCode {
 	return &pb.JoinCode{Id: c.ID, Role: c.Role, ExpiresAt: tspb(c.ExpiresAt), Labels: c.Labels, Profile: c.Profile,
-		CreatedBy: c.CreatedBy, Used: !c.UsedAt.IsZero(), UsedBy: c.UsedBy, Name: c.Name, User: c.User}
+		CreatedBy: c.CreatedBy, Used: !c.UsedAt.IsZero(), UsedBy: c.UsedBy, Name: c.Name, User: c.User, Owner: c.Owner}
 }
 
 type enrollServer struct {
@@ -159,6 +178,10 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name, or revoke the old node)", name)
 	}
+	if jc.Owner != "" && h.userDisabledLocked(jc.Owner) { // disabled since the code was made
+		h.mu.Unlock()
+		return nil, errBadCode
+	}
 	h.mu.Unlock()
 	if jc, err = h.store.UseJoinCode(hash, name, now); err != nil {
 		return nil, errBadCode
@@ -166,7 +189,12 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 	rec := &store.Node{Name: name, Role: jc.Role, Labels: maps.Clone(jc.Labels), Profile: jc.Profile,
 		Hostname: req.Hostname, OS: req.Os, Arch: req.Arch, Version: req.Version, JoinedAt: now, User: jc.User}
 	resp := &pb.JoinResponse{Name: name, Role: jc.Role, CaPem: h.ca.CertPEM, HubName: h.cfg.Name}
-	if jc.Role == string(pki.RoleWorker) && !h.cfg.AutoApprove {
+	if jc.Role == string(pki.RoleWorker) && jc.Owner != "" {
+		// A user's own machine: nobody else may use it (until shared), so
+		// there is nothing for an admin to approve.
+		rec.Owner, rec.AccessVersion, resp.Owner = jc.Owner, 1, jc.Owner
+	}
+	if jc.Role == string(pki.RoleWorker) && !h.cfg.AutoApprove && jc.Owner == "" {
 		tok := randomToken()
 		rec.State, rec.CSR, rec.PollTokenHash = statePending, string(req.CsrPem), tokenHash(tok)
 		resp.State, resp.PollToken = statePending, tok
@@ -190,9 +218,15 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 	}
 	n := &node{rec: rec}
 	h.nodes[name] = n
-	h.log.Info("node joined", "node", name, "role", rec.Role, "state", rec.State, "code", jc.ID, "remote", c.addr)
+	h.log.Info("node joined", "node", name, "role", rec.Role, "state", rec.State, "owner", rec.Owner, "code", jc.ID, "remote", c.addr)
 	h.publishNodeLocked(n, "joined ("+rec.State+")")
+	if rec.Owner != "" {
+		h.checkTenancyFlipLocked() // an owned worker separates users
+	}
 	h.mu.Unlock()
+	if rec.Owner != "" {
+		h.auditHub("node/"+name, "workers/join", map[string]any{"worker": name, "owner": rec.Owner, "code": jc.ID, "remote": c.addr})
+	}
 	h.attachTailnet(ctx, resp) // after the race check, not under h.mu (HTTP to Headscale)
 	return resp, nil
 }

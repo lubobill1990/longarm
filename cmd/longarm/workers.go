@@ -238,8 +238,29 @@ func lsCmd() *cobra.Command {
 				enc.SetIndent("", "  ")
 				return enc.Encode(out)
 			}
+			// OWNER (last, only when some worker has one: existing parsers
+			// of the table keep working): "-" = a fleet worker, else its
+			// owner, "+shared" when the owner shares it (owners and admins see that).
+			owners := false
+			for _, r := range rows {
+				owners = owners || r.node.GetOwner() != ""
+			}
+			ownerCol := func(r row) string {
+				if !owners {
+					return ""
+				}
+				o := dash(r.node.GetOwner())
+				if sharesString(r.node.GetShares()) != "-" {
+					o += " +shared"
+				}
+				return "\t" + o
+			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "WORKER\tSTATE\tCPU%\tMEM GB\tJOBS\tCLAUDE\tCOPILOT\tDISK FREE\tUPTIME\tTOP CPU\tPATH")
+			head := "WORKER\tSTATE\tCPU%\tMEM GB\tJOBS\tCLAUDE\tCOPILOT\tDISK FREE\tUPTIME\tTOP CPU\tPATH"
+			if owners {
+				head += "\tOWNER"
+			}
+			fmt.Fprintln(tw, head)
 			failed := 0
 			for _, r := range rows {
 				if r.err != nil {
@@ -249,7 +270,7 @@ func lsCmd() *cobra.Command {
 				}
 				m := r.snap
 				if m == nil {
-					fmt.Fprintf(tw, "%s\t%s\t-\t-\t-\t-\t-\t-\t-\t-\t%s\n", r.name, r.state, r.path)
+					fmt.Fprintf(tw, "%s\t%s\t-\t-\t-\t-\t-\t-\t-\t-\t%s%s\n", r.name, r.state, r.path, ownerCol(r))
 					continue
 				}
 				agent := func(k string) string {
@@ -270,10 +291,10 @@ func lsCmd() *cobra.Command {
 				if r.node != nil && r.node.ReservedGb > 0 {
 					jobsCol = fmt.Sprintf("%d (%.0fG res)", r.node.JobsActive, r.node.ReservedGb)
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%.1f\t%s/%s\t%s\t%s\t%s\t%s G\t%s\t%s\t%s\n", r.name, r.state, m.CpuPercent,
+				fmt.Fprintf(tw, "%s\t%s\t%.1f\t%s/%s\t%s\t%s\t%s\t%s G\t%s\t%s\t%s%s\n", r.name, r.state, m.CpuPercent,
 					humanBytes(m.MemUsedBytes), humanBytes(m.MemTotalBytes), jobsCol, agent("claude"),
 					agent("copilot"), humanBytes(m.DiskFreeBytes), humanDuration(time.Duration(m.UptimeSeconds)*time.Second),
-					strings.Join(top, ", "), r.path)
+					strings.Join(top, ", "), r.path, ownerCol(r))
 			}
 			tw.Flush()
 			var relayed []string

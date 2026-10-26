@@ -421,6 +421,58 @@ owners, who keep acting on everything as before; with `users` set or
 refuses to start with an unknown `admins` value or an invalid user name and
 logs the effective policy at start (`access policy ...`).
 
+### Your own workers
+
+Any user can register their **own** machines as workers and use them from
+their client devices - by name (`longarm run --on`/`longarm exec <worker>`) or by
+automatic placement, which picks the least loaded worker the user may use.
+A worker a user registers is usable **by that user only**: other users don't
+see it (`longarm ls`, the panel, events, metrics history), can't call it, and
+the scheduler never places their jobs on it. Workers registered by admins
+(join codes without owner) stay the shared fleet, as before.
+
+```sh
+longarm worker add [<name>] [--ttl 24h] [--label k=v]...   # prints a join code (stdout) and the command:
+#   longarmd join <hub> <code> --ca-fingerprint <fp> --name <name>   # on the new worker, then
+#   longarmd service install ...                                     # (see "Install a worker")
+#   the worker joins approved (no admin needed) and owned by you; at most 10 unused codes per user
+longarm worker ls [--json]                # your workers, workers shared with you, the fleet (owner, shares, load)
+longarm worker share <worker> [--user bob]... [--team web]... [--everyone]
+longarm worker unshare <worker> [--user bob]... [--team web]... [--everyone]
+longarm worker remove <worker>            # revoke it (owner or admin)
+longarm ls                                # an OWNER column appears once a worker has an owner
+                                          # ("-" = fleet, "+shared" = shared by its owner)
+```
+
+**Sharing is off by default**: an admin lets a user share their workers,
+and admins share and unshare any user's worker (`longarm worker share` with
+an admin certificate):
+
+```sh
+longarm admin user set alice --can-share          # --can-share=false takes it back (existing shares stay;
+                                                  # an admin unshares them)
+longarm admin join-code --role worker --owner alice [--name alice-box]   # a worker code owned by alice
+longarm whoami                                    # ... can share own workers: true|false
+```
+
+Who is shared with is shown to the owner and admins only. Sharing a worker
+shares the machine, not the owner's work: on a shared worker everybody sees
+and controls only their own jobs and sessions (an admin certificate shared
+with gets no admin rights over the owner's jobs). **Admins are not exempt**:
+an admin certificate whose user is neither the owner nor shared with is
+refused on an owned worker like anybody else (`Admin.Shutdown`/`Gc`
+included); admins still see it on the hub, share, unshare and remove it.
+Removing a user (`longarm admin user remove`) also revokes the user's workers.
+
+The hub enforces this when listing and placing, and pushes owner and shares
+to the worker (`<data>/worker-access.json`), which refuses everybody else
+on every call (audited as `worker owner/shares`; `Node.Info` stays open). The
+worker's copy comes from the hub, so against the hub's operators pin it
+locally too - `longarmd join` prints the hint: `[access] users = ["alice"]`,
+`owners = ["alice"]` (plus whom you share with) and end-to-end trust
+([security.md](security.md#user-owned-workers)). The hub's rule only ever
+narrows what `[access]` and trust allow on the worker.
+
 ### End-to-end trust on workers
 
 A worker can refuse every certificate the hub's CA mints on its own and

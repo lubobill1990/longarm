@@ -61,13 +61,13 @@ func (h *Hub) loadTenants() error {
 }
 
 // tenancyOnLocked: users are separated once a user exists, a worker
-// isolates users or [tenancy] enabled is set.
+// isolates users or has an owner, or [tenancy] enabled is set.
 func (h *Hub) tenancyOnLocked() bool {
 	if h.cfg.Tenancy.Enabled || len(h.tenants) > 0 {
 		return true
 	}
 	for _, n := range h.nodes {
-		if n.rec.Isolation == tenancy.PerUser && n.rec.State != stateRevoked {
+		if (n.rec.Isolation == tenancy.PerUser || n.rec.Owner != "") && n.rec.State != stateRevoked {
 			return true
 		}
 	}
@@ -115,6 +115,9 @@ func nodeView(v tenancy.Caller, n *pb.NodeInfo) *pb.NodeInfo {
 	n = proto.Clone(n).(*pb.NodeInfo)
 	if n.Metrics != nil {
 		n.Metrics.TopCpu, n.Metrics.TopMem = nil, nil
+	}
+	if n.Owner != v.User { // whom else a worker is shared with is its owner's business
+		n.Shares = nil
 	}
 	own := func(repos []string) []string {
 		var out []string
@@ -323,6 +326,9 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 	if req.SetDisabled {
 		u.Disabled = req.Disabled
 	}
+	if req.SetCanShare {
+		u.CanShare = req.CanShare
+	}
 	if err := h.saveTenantLocked(u); err != nil {
 		h.mu.Unlock()
 		return nil, status.Error(codes.Internal, err.Error())
@@ -335,7 +341,7 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 	h.tenancyChangedLocked()
 	h.mu.Unlock()
 	h.auditHub(by, map[bool]string{true: "users/add", false: "users/update"}[created], map[string]any{
-		"user": u.Name, "teams": u.Teams, "disabled": u.Disabled, "quota": protoJSON(u.Quota)})
+		"user": u.Name, "teams": u.Teams, "disabled": u.Disabled, "quota": protoJSON(u.Quota), "can_share": u.CanShare})
 	h.log.Info("user saved", "user", u.Name, "by", by, "created", created)
 	if u.Disabled {
 		h.closeUserConns(u.Name)
@@ -439,6 +445,12 @@ func (h *Hub) RemoveUser(by string, req *pb.RemoveUserRequest) (*pb.RemoveUserRe
 	h.mu.Lock()
 	_, known := h.tenants[req.Name]
 	devices := h.devicesLocked(req.Name)
+	// the user's own workers go too: nobody else could use them anyway
+	for _, n := range h.nodes {
+		if n.rec.Owner == req.Name && n.rec.Role == string(pki.RoleWorker) && n.rec.State != stateRevoked {
+			devices = append(devices, n.rec.Name)
+		}
+	}
 	h.mu.Unlock()
 	if !known && len(devices) == 0 && !req.Purge {
 		return nil, status.Errorf(codes.NotFound, "no user %q", req.Name)
@@ -600,7 +612,7 @@ func eventFilter(v tenancy.Caller) func(*pb.FleetEvent, string) *pb.FleetEvent {
 			if ev.NodeInfo == nil {
 				return ev
 			}
-			if ev.NodeInfo.Role != string(pki.RoleWorker) && nodeUserOf(ev.NodeInfo) != v.User {
+			if !canSeeNode(v, ev.NodeInfo) {
 				return nil
 			}
 			c := proto.Clone(ev).(*pb.FleetEvent)

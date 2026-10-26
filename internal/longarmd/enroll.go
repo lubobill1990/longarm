@@ -61,6 +61,14 @@ func Join(ctx context.Context, dataDir, hubAddr, code string, o JoinOptions) err
 			return err
 		}
 		fmt.Fprintf(o.Out, "joined as worker %s\n", r.Resp.Name)
+		if ow := r.Resp.Owner; ow != "" {
+			// The rule comes from the hub; pinning the owner locally holds
+			// even against the hub's operators. Never written from hub data.
+			fmt.Fprintf(o.Out, "owned by %s: only %s (and whom %s shares it with) may use it\n", ow, ow, ow)
+			fmt.Fprintf(o.Out, "to hold that even against the hub's admins, pin it in longarmd.toml: [access] owners = [%q], users = [%q]\n"+
+				"(plus whom you share with), and use end-to-end trust (longarmd trust add-user <%s's key line from longarm trust show>; docs/security.md)\n",
+				ow, ow, ow)
+		}
 		return nil
 	}
 	// Pending: keep the key and the CA until an admin approves.

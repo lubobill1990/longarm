@@ -401,13 +401,27 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		log.Warn("tenancy policy unreadable; starting empty", "err", err)
 		policy, _ = tenancy.LoadPolicy("")
 	}
+	waPath := filepath.Join(cfg.DataDir, tenancy.WorkerAccessFile)
+	workerAccess, err := tenancy.LoadWorkerAccess(waPath)
+	if err != nil {
+		// fail closed: nobody gets in (Node.Info aside) until the hub
+		// sends owner and shares again
+		log.Warn("worker access unreadable; refusing every user until the hub sends it", "err", err)
+		workerAccess, _ = tenancy.LoadWorkerAccess("")
+		workerAccess.Set(&pb.WorkerAccess{Owner: "?"})
+		workerAccess.SetPath(waPath)
+	}
+	if o := workerAccess.Owner(); o != "" {
+		sh := workerAccess.Get().GetShares()
+		log.Info("user-owned worker", "owner", o, "shared_users", sh.GetUsers(), "shared_teams", sh.GetTeams(), "shared_everyone", sh.GetEveryone())
+	}
 	sampler := &metrics.Sampler{Interval: 2 * time.Second, JobsFn: st.spaces.RunningJobs, DiskPath: cfg.DataDir}
 
 	srv := &server.Server{
 		Name: bundle.Identity.Name, Version: version.Version, DataDir: cfg.DataDir, StartedAt: time.Now(),
 		Spaces: st.spaces, Policy: policy, LogMaxBytes: cfg.MaxLogBytes, Sampler: sampler,
 		Audit: audit, Log: log, Shutdown: cancel,
-		Revoked: revoked, Conns: conntrack.New(), Access: cfg.Access,
+		Revoked: revoked, Conns: conntrack.New(), Access: cfg.Access, WorkerAccess: workerAccess,
 	}
 	trustSrc.Denied = func(err error) {
 		srv.Audit.LogAs("tls", "trust/denied", map[string]any{"error": err.Error()})

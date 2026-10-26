@@ -68,7 +68,7 @@ compromised admins, hubs or workers; level 3 (untrusted code).
 ## When users are separated
 
 The **hub** separates users as soon as one user exists (`longarm admin user
-add`), a worker with per-user isolation has connected, or `[tenancy]
+add`), a worker with per-user isolation has connected, a user-owned worker has joined, or `[tenancy]
 enabled = true` is set in `hub.toml`. Until then everybody sees everything,
 as in a one-person fleet (so a person with a laptop and a desktop as two
 plain client certificates keeps seeing both machines' jobs).
@@ -98,6 +98,7 @@ but the worker's owners - its `[access]` policy restricts anybody
 | audit log, users, teams, join codes, links, releases, profiles | no | | no | yes |
 | web panel | "My jobs", nodes (read-only), "Me" for user logins | | | everything ("People" page for users, teams, quotas) |
 | a worker with `[access]` | users not in `users` get node info only | | | an admin certificate of a non-owner gets what `admins` allows (`own`: the "Owner" column; `observe`; `none`) |
+| a user-owned worker (`longarm worker add`) | its owner; users it is shared with | | hidden on the hub, never placed, node info only on the worker | sees, shares, unshares and removes it on the hub; on the worker refused like anybody unless owner or shared with ([below](#user-owned-workers)) |
 
 The "Admin" column is the default (`[access] admins = "full"`); a worker's
 owner can narrow it on that worker, and the worker's owners always keep it.
@@ -371,6 +372,54 @@ visibility of what the worker's users run.
   per-user isolation, or `observe` / `none`.
 - Jobs and sessions started before a policy change keep running; the
   policy is read at start (change it, restart longarmd).
+
+## User-owned workers
+
+A user can register their own machine as a worker (`longarm worker add`,
+[usage](usage.md#your-own-workers)). The worker code names the user as the
+worker's **owner**; the worker joins approved and is usable by its owner
+only, until shared - by user, team or everyone. Only users an admin
+granted `can_share` (`longarm admin user set <u> --can-share`) may share
+their workers; admins share and unshare any. Workers without owner (admins'
+join codes) are the shared fleet as before. An owned worker turns user
+separation on (like the first user).
+
+| Caller (its user) | On a user-owned worker |
+|---|---|
+| the owner | everything its role allows, as on any worker |
+| a user it is shared with (by name, a team of theirs, or everyone) | like any user of a multi-user worker: its own jobs and sessions only |
+| anybody else, **admin certificates included** | hub: the worker is hidden (lists, events, history, panel) and never placed for them, a named submit is "not found"; worker: `Node.Info` only, everything else (`Admin.Shutdown` / `Gc` too) `PermissionDenied`, audited as `worker owner/shares` |
+| hub admins (the hub's API, panel) | see it with owner and shares, share, unshare and remove it |
+
+Admin certificates shared with get no admin rights over the owner's jobs
+and sessions there. Every code, join, share, unshare and removal is audited
+on the hub (`workers/code`, `workers/join`, `workers/share`, `workers/remove`);
+the worker audits every change it receives (`worker/access`).
+
+**Enforced twice, decided once.** The hub applies the rule when it lists
+and places, and pushes owner and shares to the worker
+(`HubCommand.worker_access` at every connect and change; kept in
+`<data>/worker-access.json` across restarts and hub outages, an unreadable
+file refuses everybody until the hub sends it again). The worker refuses
+everybody else on every call. But the worker's copy **comes from the hub**:
+whoever controls the hub (its admins, its database, the CA key) can change
+the owner or the shares, or enroll a device under the owner's name. The
+pushed rule is applied strictly as an **extra deny after** the worker's own
+`[access]` policy and end-to-end trust: it can never grant what those deny,
+the hub has no way to write `longarmd.toml` or `trust/trust.toml`, and it
+does not widen `[hub] remote_jobs` (jobs the hub submits must be for a user
+the worker serves; the hub session's kill / logs keep following
+`remote_jobs`, which defaults to `none` once `[access] users` is set or
+trust is on).
+
+**Against hub insiders** pin it on the machine, as `longarmd join` suggests:
+`[access] users = ["alice"]` and `owners = ["alice"]` (plus whom alice shares
+with), and [end-to-end trust](#end-to-end-trust-the-hub-is-not-trusted-with-access)
+(`longarmd trust add-user <alice's key>`), so only devices alice endorsed get
+in. With trust on, **sharing needs the worker's owner too**: a worker shared
+with bob on the hub still refuses bob's devices until bob's user key is in
+that worker's `trust.toml` (`longarmd trust add-user <bob's key>`), and bob
+in `[access] users` if alice pinned it.
 
 ## What is not isolated (known gaps)
 
