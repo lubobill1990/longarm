@@ -78,6 +78,9 @@ type Hub struct {
 	tenancyVersion int64
 	purged         []string
 	lastTenancyOn  bool
+	// port links (portlinks.go): by id; the version counts pushes
+	portLinks        map[string]*portLinkEntry
+	portLinksVersion int64
 
 	started time.Time
 	relay   *relay.Server
@@ -149,7 +152,7 @@ func Open(cfg *Config, log *slog.Logger) (*Hub, error) {
 		tailnetWorkerLimit: newIPLimiter(1.0/3600, 5), tailnetClientLimit: newIPLimiter(1.0/600, 10), nodes: map[string]*node{},
 		jobs: map[string]map[string]*jobEntry{}, reservations: map[string]*reservation{},
 		profiles: map[string]*pb.Profile{}, stable: map[string]*pb.Profile{}, knownSerials: map[string]bool{}, kick: make(chan struct{}, 1),
-		pending: map[string]*pendingReq{}, links: map[string]*linkEntry{}, tenants: map[string]*tenant{},
+		pending: map[string]*pendingReq{}, links: map[string]*linkEntry{}, tenants: map[string]*tenant{}, portLinks: map[string]*portLinkEntry{},
 		started: time.Now(), addrs: map[string]string{},
 	}
 	if h.tailnet, err = newTailnetProvider(cfg.Tailnet); err != nil {
@@ -231,6 +234,9 @@ func (h *Hub) load() error {
 	}
 	h.loadRollout()
 	if err := h.loadTenants(); err != nil {
+		return err
+	}
+	if err := h.loadPortLinks(); err != nil {
 		return err
 	}
 	h.lastTenancyOn = h.tenancyOnLocked()
@@ -392,6 +398,9 @@ func (h *Hub) Serve(ctx context.Context) error {
 			run("relay stun2", func() error { return h.relay.ServeSTUN(stunPC) })
 		}
 		run("relay udp", func() error { return h.relay.ServeQUIC(pc) })
+		h.mu.Lock()
+		h.updateRelayPairsLocked() // linked workers may talk through the relay
+		h.mu.Unlock()
 	}
 	run("mux", mux.Serve)
 	run("grpc", func() error { return g.Serve(grpcLn) })
@@ -499,6 +508,7 @@ func (h *Hub) sweep() {
 			delete(h.reservations, id)
 		}
 	}
+	h.sweepPortLinksLocked(now)
 	h.advanceRolloutsLocked()
 	h.advanceReleaseLocked()
 }

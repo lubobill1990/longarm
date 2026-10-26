@@ -97,6 +97,8 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	}
 	revVersion := h.revVersion
 	desired := h.desiredToolchainLocked(n)
+	linksMsg := h.portLinksMsgLocked(n.rec.Name)
+	h.portLinkTargetChangedLocked(n.rec.Name) // its endpoints may have changed
 	h.log.Info("node online", "node", n.rec.Name, "version", hello.Version, "endpoints", hello.Endpoints)
 	h.publishNodeLocked(n, "online")
 	h.advanceReleaseLocked()
@@ -112,6 +114,7 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	if policy != nil {
 		send(&pb.HubCommand{Msg: &pb.HubCommand_Tenancy{Tenancy: policy}})
 	}
+	send(linksMsg) // always: the list is authoritative (empty = none)
 
 	go func() {
 		for {
@@ -226,10 +229,13 @@ func (h *Hub) handleReport(n *node, sess *nodeSession, m *pb.NodeReport) {
 		h.log.Info("node update", "node", n.rec.Name, "state", x.Update.State, "from", x.Update.From, "to", x.Update.To, "err", x.Update.Error)
 		h.publishNodeLocked(n, "update "+x.Update.State+" "+x.Update.To)
 		h.advanceReleaseLocked()
+	case *pb.NodeReport_PortLinks:
+		h.applyPortLinkReportLocked(n, x.PortLinks)
 	case *pb.NodeReport_Reply:
 		h.deliverReplyLocked(n, sess, x.Reply)
 	case *pb.NodeReport_Hello:
 		h.applyHelloLocked(n, x.Hello)
+		h.portLinkTargetChangedLocked(n.rec.Name)
 		h.store.PutNode(n.rec)
 		h.publishNodeLocked(n, "hello")
 		h.checkTenancyFlipLocked()
@@ -293,6 +299,7 @@ func (h *Hub) applyJobsLocked(n *node, rep *pb.JobsReport) {
 			h.log.Warn("save jobs", "err", err)
 		}
 	}
+	h.portLinkJobsLocked(worker)
 	if changed {
 		h.kickQueue()
 	}

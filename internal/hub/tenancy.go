@@ -456,6 +456,7 @@ func (h *Hub) RemoveUser(by string, req *pb.RemoveUserRequest) (*pb.RemoveUserRe
 		h.mu.Unlock()
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+	h.removePortLinksLocked(func(l *pb.PortLink) bool { return l.Owner == req.Name }, by, "user removed")
 	if req.Purge && !slices.Contains(h.purged, req.Name) {
 		h.purged = append(h.purged, req.Name)
 		h.savePurgeLocked()

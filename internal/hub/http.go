@@ -172,6 +172,7 @@ func (h *Hub) httpHandler() http.Handler {
 	api("GET /api/events", h.sse)
 	h.panelRoutes(mux, api, admin)
 	h.tenancyRoutes(api, admin)
+	h.portLinkRoutes(api)
 	return securityHeaders(mux)
 }
 

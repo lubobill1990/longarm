@@ -322,6 +322,7 @@ func (h *Hub) Revoke(by, name string) (*pb.NodeInfo, error) {
 		n.sess.cancel()
 		h.setOfflineLocked(n, n.sess.id)
 	}
+	h.removePortLinksLocked(func(l *pb.PortLink) bool { return l.From == name || l.To == name }, by, "node revoked")
 	role := n.rec.Role
 	h.log.Info("node revoked", "node", name, "by", by, "revocation_version", h.revVersion)
 	h.publishNodeLocked(n, "revoked by "+by)

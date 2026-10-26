@@ -39,6 +39,8 @@ func TestTenancyRoleTable(t *testing.T) {
 		pb.Fleet_ListJobs_FullMethodName, pb.Fleet_ListNodes_FullMethodName, pb.Fleet_Place_FullMethodName,
 		pb.Fleet_ReportLinks_FullMethodName, pb.Fleet_TailnetKey_FullMethodName, pb.Fleet_WaitJob_FullMethodName,
 		pb.Fleet_Whoami_FullMethodName, pb.HubNode_Leave_FullMethodName, pb.HubNode_Renew_FullMethodName,
+		// port links: ownership checked per link (TestPortLinks)
+		pb.Fleet_CreatePortLink_FullMethodName, pb.Fleet_ListPortLinks_FullMethodName, pb.Fleet_RemovePortLink_FullMethodName,
 	}
 	sort.Strings(clientMay)
 	var got []string
