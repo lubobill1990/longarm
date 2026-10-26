@@ -12,9 +12,19 @@ body:
     id: what
     attributes:
       label: What happened
-      description: What you did, what you expected, what happened instead.
+      description: What you did, what you expected, what happened instead. Errors of `longarm` end with `(trace xxxxxxxx)` - keep it.
     validations:
       required: true
+  - type: input
+    id: report
+    attributes:
+      label: Diagnostic bundle id
+      description: |
+        `longarm diag --upload` on the machine with the problem (on a worker: `longarmd diag --upload`,
+        or `longarm exec <worker> -- longarmd diag --upload --yes`) prints a report id. It removes
+        personal data and secrets; no upload possible? Attach the local zip it wrote (check it first).
+        See docs/troubleshooting.md.
+      placeholder: LAR-20261027-7F3K9Q
   - type: textarea
     id: repro
     attributes:

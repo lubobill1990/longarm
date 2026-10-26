@@ -43,6 +43,21 @@ param caddyImage string = 'docker.io/library/caddy:2.11.7-alpine@sha256:eb4d35b7
 @description('Send container logs to a new Log Analytics workspace (about 2-3 USD per GB ingested).')
 param enableLogAnalytics bool = false
 
+@description('Telemetry (docs/telemetry.md): a Log Analytics workspace and a workspace-based Application Insights resource the hub sends the fleet\'s scrubbed telemetry to. With storageAuth identity the hub authenticates with its managed identity (Monitoring Metrics Publisher) and the resource accepts no instrumentation-key ingestion.')
+param enableTelemetry bool = false
+
+@description('Days Application Insights / Log Analytics keep telemetry.')
+@minValue(30)
+@maxValue(730)
+param telemetryRetentionDays int = 90
+
+@description('Diagnostic bundles (longarm diag --upload): a blob container "diagnostics" the hub writes with its managed identity (storageAuth identity only), deleted by a lifecycle rule after diagnosticsRetentionDays.')
+param enableDiagnostics bool = false
+
+@minValue(1)
+@maxValue(365)
+param diagnosticsRetentionDays int = 30
+
 @description('Storage redundancy of the account holding the Litestream replica and the state share.')
 @allowed([
   'Standard_LRS'
@@ -106,6 +121,7 @@ var useAcr = !useKey && !empty(acrName)
 // identity: the hub serves the panel over https itself (LONGARM_HUB_HTTPS):
 // its certificate lives in the database, Caddy's would die with the container
 var hubTls = !useKey && enablePanel
+var useDiag = enableDiagnostics && !useKey
 var tags = {
   'longarm-hub': name
 }
@@ -165,6 +181,44 @@ resource replicaContainer 'Microsoft.Storage/storageAccounts/blobServices/contai
   }
 }
 
+resource diagContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (useDiag) {
+  parent: blobService
+  name: 'diagnostics'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+// bundles carry (scrubbed) logs: they go away on their own
+resource lifecycle 'Microsoft.Storage/storageAccounts/managementPolicies@2023-05-01' = if (useDiag) {
+  parent: storage
+  name: 'default'
+  properties: {
+    policy: {
+      rules: [
+        {
+          name: 'diagnostics-retention'
+          enabled: true
+          type: 'Lifecycle'
+          definition: {
+            filters: {
+              blobTypes: ['blockBlob']
+              prefixMatch: ['diagnostics/']
+            }
+            actions: {
+              baseBlob: {
+                delete: {
+                  daysAfterModificationGreaterThan: diagnosticsRetentionDays
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+
 resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = if (useKey) {
   parent: storage
   name: 'default'
@@ -218,6 +272,55 @@ resource replicaRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (
   scope: replicaContainer
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+    principalId: identity!.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Storage Blob Data Contributor on the diagnostics container only
+resource diagRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (useDiag) {
+  name: guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', storage.name, 'default', 'diagnostics'), '${name}-id', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+  scope: diagContainer
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+    principalId: identity!.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource telemetryWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (enableTelemetry) {
+  name: '${name}-telemetry'
+  location: location
+  tags: tags
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: telemetryRetentionDays
+  }
+}
+
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = if (enableTelemetry) {
+  name: '${name}-ai'
+  location: location
+  tags: tags
+  kind: 'other'
+  properties: {
+    Application_Type: 'other'
+    WorkspaceResourceId: telemetryWorkspace.id
+    RetentionInDays: telemetryRetentionDays
+    // identity: only Entra ID tokens (the hub's managed identity) may ingest
+    DisableLocalAuth: !useKey
+    IngestionMode: 'LogAnalytics'
+  }
+}
+
+// Monitoring Metrics Publisher: ingest into this Application Insights only
+resource telemetryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableTelemetry && !useKey) {
+  name: guid(resourceId('Microsoft.Insights/components', '${name}-ai'), '${name}-id', '3913510d-42f4-4e42-8a64-420c390055eb')
+  scope: appInsights
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')
     principalId: identity!.properties.principalId
     principalType: 'ServicePrincipal'
   }
@@ -285,6 +388,10 @@ var hubEnv = concat(
         { name: 'LONGARM_HUB_CA_IN_DB', value: '1' }
       ],
   enablePanel ? [{ name: 'LONGARM_HUB_PUBLIC_URL', value: 'https://${fqdn}' }] : [],
+  // the connection string names the resource; with identity it is useless
+  // without the hub's token (local auth off)
+  enableTelemetry ? [{ name: 'LONGARM_HUB_APPINSIGHTS_CONNECTION_STRING', secureValue: appInsights!.properties.ConnectionString }] : [],
+  useDiag ? [{ name: 'LONGARM_HUB_DIAG_BLOB_URL', value: '${storage.properties.primaryEndpoints.blob}diagnostics' }] : [],
   hubTls
     ? concat(
         [
@@ -400,6 +507,8 @@ resource group 'Microsoft.ContainerInstance/containerGroups@2025-09-01' = {
     caddyShare
     replicaRole
     acrRole
+    diagRole
+    telemetryRole
   ]
   properties: {
     osType: 'Linux'
@@ -445,3 +554,7 @@ output relayUdpPort int = relayUdpPort
 output containerGroup string = group.name
 @description('storageAuth identity: the managed identity\'s principal ID (empty with key).')
 output identityPrincipalId string = useKey ? '' : identity!.properties.principalId
+@description('Application Insights resource (empty without enableTelemetry).')
+output appInsights string = enableTelemetry ? appInsights.name : ''
+@description('Blob URL of the diagnostics container (empty without it).')
+output diagnosticsUrl string = useDiag ? '${storage.properties.primaryEndpoints.blob}diagnostics' : ''

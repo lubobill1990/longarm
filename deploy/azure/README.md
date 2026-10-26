@@ -62,6 +62,8 @@ restarts the hub) prints everything too.
 | `--log-analytics` | `-LogAnalytics` | container logs to a Log Analytics workspace |
 | `--storage-auth key\|identity` | | `identity`: no storage account keys, panel served by the hub ([below](#without-storage-account-keys)); deploy.sh only for now |
 | `--acr NAME` | | with `identity`: pull the image from this Azure Container Registry (same resource group) |
+| `--telemetry` | | Application Insights + Log Analytics for the fleet's scrubbed telemetry ([below](#telemetry-and-diagnostic-bundles)) |
+| `--diagnostics` | | with `identity`: a blob container for uploaded diagnostic bundles, deleted after 30 days |
 | `--panel` | `-Panel` | turn the panel back on (with `--recreate`) |
 | `--recreate` | `-Recreate` | delete the container group first (to change size or panel; data stays) |
 | `--admin-code` | `-AdminCode` | print a new one-time admin join code |
@@ -222,6 +224,30 @@ otherwise), and `--acme-email` too if you want to keep it. Changing `--size`
 or the panel needs `--recreate` (ACI can't change a running group's resources
 or ports); data is kept either way. The hub is down for about a minute;
 workers and clients reconnect by themselves.
+
+## Telemetry and diagnostic bundles
+
+```sh
+./deploy.sh --name myhub --storage-auth identity --telemetry --diagnostics
+```
+
+- `--telemetry` creates a Log Analytics workspace `<name>-telemetry` and a
+  workspace-based Application Insights `<name>-ai` (retention 90 days,
+  template parameter `telemetryRetentionDays`). The hub gets
+  `LONGARM_HUB_APPINSIGHTS_CONNECTION_STRING`; workers and clients send their
+  scrubbed telemetry to the hub, which forwards it
+  ([docs/telemetry.md](../../docs/telemetry.md)). With `identity` the
+  resource accepts only Entra ID ingestion (local auth off) and the hub's
+  identity has **Monitoring Metrics Publisher** on it - the connection string
+  alone lets nobody write.
+- `--diagnostics` creates the blob container `diagnostics` (the hub's
+  identity: Storage Blob Data Contributor on it only) and a lifecycle rule
+  deleting bundles after 30 days (`diagnosticsRetentionDays`). Users upload
+  with `longarm diag --upload` / `longarmd diag --upload`; maintainers read
+  them with `longarm admin diag ls|get`
+  ([docs/troubleshooting.md](../../docs/troubleshooting.md)).
+- Cost: Application Insights / Log Analytics bill per GB ingested (about
+  2-3 USD/GB; a small fleet sends a few MB a day); bundles are a few MB each.
 
 ## Costs
 

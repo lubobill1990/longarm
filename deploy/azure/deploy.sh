@@ -26,6 +26,7 @@ template=$here/azuredeploy.json
 name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=false yes=false
 recreate=false admin_code=false subscription='' acme_email='' registry_user='' tailscale_secret_file=''
 build_in_acr=false stun_servers='' storage_auth='' acr='' timeout=1200 stuck_timeout=600
+telemetry='' diagnostics=''
 # seconds between status polls (tests make it short)
 poll=${LONGARM_DEPLOY_POLL_SECONDS:-10}
 
@@ -50,6 +51,8 @@ usage: deploy.sh --name NAME [--location REGION] [options]
   --storage-auth key|identity  key (default): storage account keys; identity: a managed
                            identity, shared key access off (subscriptions whose policy denies keys)
   --acr NAME               with identity: pull the image from this registry in the resource group
+  --telemetry              Application Insights + Log Analytics for the fleet's telemetry (docs/telemetry.md)
+  --diagnostics            a blob container for uploaded diagnostic bundles (identity only; 30 days)
   --subscription ID        Azure subscription (default: az account show)
   --recreate               delete the container group first (needed to change --size or the panel)
   --admin-code             print a new one-time admin join code (az container exec)
@@ -82,6 +85,8 @@ while [[ $# -gt 0 ]]; do
 	--log-analytics) log_analytics=true ;;
 	--storage-auth) storage_auth=${2:?}; shift ;;
 	--acr) acr=${2:?}; shift ;;
+	--telemetry) telemetry=true ;;
+	--diagnostics) diagnostics=true ;;
 	--subscription) subscription=${2:?}; shift ;;
 	--recreate) recreate=true ;;
 	--admin-code) admin_code=true ;;
@@ -298,7 +303,8 @@ ensure_providers Microsoft.ContainerInstance Microsoft.Storage
 cur=$(az container show -g "$rg" -n "$name" -o tsv --query "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId, containers[0].environmentVariables[?name=='LONGARM_HUB_RELAY_STUN_ADVERTISE'].value | [0]]" 2>/dev/null || true)
 cur_image='' cur_registry='' prev_boot='' account='' key='' build_acr=''
 if [[ -n $cur ]]; then
-	# one field per line; null fields are empty lines
+	# one field per line; null fields are empty lines (the real az prints
+	# "None" for them in a tsv list: a hub without registry credentials)
 	{
 		read -r cur_image
 		read -r cur_cpu
@@ -307,7 +313,7 @@ if [[ -n $cur ]]; then
 		read -r cur_env
 		read -r cur_logs || true
 		read -r cur_stun || true
-	} <<<"$(printf '%s\n' "$cur" | tr -d '\r' | tr '\t' '\n')"
+	} <<<"$(printf '%s\n' "$cur" | tr -d '\r' | tr '\t' '\n' | sed 's/^None$//')"
 	cur_size=small
 	[[ ${cur_cpu%%.*} -lt 2 ]] || cur_size=medium
 	cur_panel=false
@@ -315,6 +321,9 @@ if [[ -n $cur ]]; then
 	[[ $cur_c1 != caddy && ,$cur_env, != *,LONGARM_HUB_HTTPS,* ]] || cur_panel=true
 	cur_auth=key
 	[[ ,$cur_env, != *,LONGARM_HUB_CA_IN_DB,* ]] || cur_auth=identity
+	# a re-run keeps telemetry / diagnostics on
+	[[ -n $telemetry || ,$cur_env, != *,LONGARM_HUB_APPINSIGHTS_CONNECTION_STRING,* ]] || telemetry=true
+	[[ -n $diagnostics || ,$cur_env, != *,LONGARM_HUB_DIAG_BLOB_URL,* ]] || diagnostics=true
 	[[ -z $storage_auth || $storage_auth == "$cur_auth" ]] ||
 		die "the hub uses --storage-auth $cur_auth; switching needs a new deployment (another --name or --resource-group)"
 	storage_auth=$cur_auth
@@ -355,10 +364,13 @@ if [[ -n $cur ]]; then
 	fi
 fi
 storage_auth=${storage_auth:-key}
+[[ ${diagnostics:-false} != true || $storage_auth == identity ]] || die "--diagnostics needs --storage-auth identity (the hub writes bundles with its managed identity)"
 [[ -z $acr || $storage_auth == identity ]] || die "--acr needs --storage-auth identity"
 size=${size:-small}
 panel=${panel:-true}
 log_analytics=${log_analytics:-false}
+telemetry=${telemetry:-false}
+diagnostics=${diagnostics:-false}
 ! $log_analytics || ensure_providers Microsoft.OperationalInsights
 
 if $build_in_acr; then
@@ -422,6 +434,7 @@ json_str() {
 	printf ',"enablePanel":{"value":%s}' "$panel"
 	printf ',"enableLogAnalytics":{"value":%s}' "$log_analytics"
 	printf ',"storageAuth":{"value":%s}' "$(json_str "$storage_auth")"
+	printf ',"enableTelemetry":{"value":%s},"enableDiagnostics":{"value":%s}' "$telemetry" "$diagnostics"
 	[[ -z $acr ]] || printf ',"acrName":{"value":%s}' "$(json_str "$acr")"
 	[[ -z $image ]] || printf ',"image":{"value":%s}' "$(json_str "$image")"
 	[[ -z $acme_email ]] || printf ',"acmeEmail":{"value":%s}' "$(json_str "$acme_email")"
