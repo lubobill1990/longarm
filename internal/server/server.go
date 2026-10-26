@@ -82,6 +82,9 @@ type Server struct {
 	Shutdown func()
 	// LogMaxBytes caps out.log of new jobs and sessions (0 = unlimited).
 	LogMaxBytes int64
+	// ForwardTargets is [forward] targets: ForwardLoopback ("" too) or
+	// ForwardAny.
+	ForwardTargets string
 
 	lmu  sync.Mutex
 	late []string

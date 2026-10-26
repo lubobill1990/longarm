@@ -81,6 +81,7 @@ type FileConfig struct {
 	Toolchain   ToolchainConfig `toml:"toolchain"`
 	Update      UpdateConfig    `toml:"update"`
 	Isolation   IsolationConfig `toml:"isolation"`
+	Forward     ForwardConfig   `toml:"forward"`
 }
 
 // IsolationConfig is the [isolation] section (multi-tenancy,
@@ -99,6 +100,16 @@ type IsolationConfig struct {
 	// CgroupRoot (Linux) is the parent of the jobs' cgroups (default
 	// /sys/fs/cgroup/longarm; "off" = process groups only).
 	CgroupRoot string `toml:"cgroup_root"`
+}
+
+// ForwardConfig is the [forward] section: what port forwards may reach
+// (Forward.Open from longarm forward / fleet_forward, the built-in sshd's
+// direct-tcpip and incoming port links).
+type ForwardConfig struct {
+	// Targets: "loopback" (default: this worker's own 127.0.0.1 / ::1 ports)
+	// or "any" (any host:port the worker can reach - its LAN, other workers;
+	// before this setting existed that was the behaviour in shared isolation).
+	Targets string `toml:"targets"`
 }
 
 // HubConfig is the [hub] section. The address usually comes from hub.toml,
@@ -183,6 +194,7 @@ type Config struct {
 	Toolchain    ToolchainConfig
 	Update       UpdateConfig
 	Isolation    IsolationConfig
+	Forward      ForwardConfig // Targets normalized
 	// How longarmd was started, for the restart after a self-update: "service"
 	// (the service manager restarts it) or "exec" (longarmd relaunches itself
 	// with Args).
@@ -230,6 +242,11 @@ func LoadConfig(dataDir string, listenOverride []string) (Config, error) {
 	default:
 		return cfg, fmt.Errorf("%s: [isolation] mode %q: want %q or %q", ConfigFile, cfg.Isolation.Mode, tenancy.Shared, tenancy.PerUser)
 	}
+	targets, err := server.ParseForwardTargets(fc.Forward.Targets)
+	if err != nil {
+		return cfg, fmt.Errorf("%s: %w", ConfigFile, err)
+	}
+	cfg.Forward.Targets = targets
 	if cfg.Isolation.UsersDir != "" && !filepath.IsAbs(cfg.Isolation.UsersDir) {
 		cfg.Isolation.UsersDir = filepath.Join(dataDir, cfg.Isolation.UsersDir)
 	}
@@ -342,6 +359,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		Spaces: st.spaces, Policy: policy, LogMaxBytes: cfg.MaxLogBytes, Sampler: sampler,
 		Audit: server.NewAudit(filepath.Join(cfg.DataDir, AuditFile)), Log: log, Shutdown: cancel,
 		Revoked: revoked, Conns: conntrack.New(),
+		ForwardTargets: cfg.Forward.Targets,
 	}
 	exe, _ := os.Executable()
 	if runtime.GOOS == "windows" && exe != "" {
@@ -375,6 +393,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		if runtime.GOOS == "windows" && exe != "" {
 			sc.ConsoleHost = []string{exe, "conhost"}
 		}
+		sc.Forward = srv.ForwardTargetCheck
 		if perUser {
 			sc.Session = sshSession(srv, exe)
 		}

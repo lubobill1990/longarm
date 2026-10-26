@@ -159,23 +159,68 @@ func (s *Server) spaceFor(owner string) (*userspace.Space, error) {
 	return sp, nil
 }
 
-// forwardAllowed: with per-user isolation a non-admin may only reach a
-// loopback port a process of its own account listens on.
-func (s *Server) forwardAllowed(ctx context.Context, target string) error {
-	c := s.callerOf(ctx)
-	if !s.perUser() || c.Admin {
+// Forward target policies (longarmd.toml [forward] targets).
+const (
+	// ForwardLoopback: forwards (Forward.Open, the built-in sshd's
+	// direct-tcpip, port links) reach the worker's own loopback ports only
+	// (the default).
+	ForwardLoopback = "loopback"
+	// ForwardAny: any host:port the worker can reach (other machines on its
+	// LAN, other workers) - opt-in.
+	ForwardAny = "any"
+)
+
+// ParseForwardTargets validates a [forward] targets value ("" = loopback).
+func ParseForwardTargets(s string) (string, error) {
+	switch s {
+	case "", ForwardLoopback:
+		return ForwardLoopback, nil
+	case ForwardAny:
+		return ForwardAny, nil
+	}
+	return "", fmt.Errorf("[forward] targets %q: want %q or %q", s, ForwardLoopback, ForwardAny)
+}
+
+// loopbackHost reports whether host names this machine's loopback.
+func loopbackHost(host string) bool {
+	ip := net.ParseIP(host)
+	return host == "localhost" || (ip != nil && ip.IsLoopback())
+}
+
+// targetAllowed applies [forward] targets to every caller (admins too).
+func (s *Server) targetAllowed(host string) error {
+	if s.ForwardTargets == ForwardAny || loopbackHost(host) {
 		return nil
 	}
+	return status.Errorf(codes.PermissionDenied, "this worker forwards to its own loopback ports only, not to %s ([forward] targets = %q)", host, ForwardLoopback)
+}
+
+// forwardAllowed: the worker's [forward] targets for everybody; with
+// per-user isolation a non-admin may only reach a loopback port a process
+// of its own account listens on.
+func (s *Server) forwardAllowed(ctx context.Context, target string) error {
 	host, port, err := net.SplitHostPort(target)
 	if err != nil {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
-	ip := net.ParseIP(host)
-	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+	if err := s.targetAllowed(host); err != nil {
+		return err
+	}
+	c := s.callerOf(ctx)
+	if !s.perUser() || c.Admin {
+		return nil
+	}
+	if !loopbackHost(host) {
 		return status.Errorf(codes.PermissionDenied, "per-user isolation: forwards only reach loopback ports of your own processes (not %s)", host)
 	}
 	p, _ := strconv.Atoi(port)
-	sp := s.Spaces.Lookup(c.User)
+	return s.portOwnedBy(c.User, p)
+}
+
+// portOwnedBy checks that a process of user's account (and nobody else's)
+// listens on loopback port p (per-user isolation).
+func (s *Server) portOwnedBy(user string, p int) error {
+	sp := s.Spaces.Lookup(user)
 	if sp == nil || sp.Account == nil {
 		return status.Errorf(codes.PermissionDenied, "port %d is not listened on by a process of yours", p)
 	}
@@ -194,6 +239,10 @@ func (s *Server) ForwardCheck(id pki.Identity, host string, port int) error {
 	ctx := context.WithValue(context.Background(), idKey{}, id)
 	return s.forwardAllowed(ctx, net.JoinHostPort(host, strconv.Itoa(port)))
 }
+
+// ForwardTargetCheck applies [forward] targets alone (the built-in sshd's
+// direct-tcpip in shared isolation, also on direct listeners).
+func (s *Server) ForwardTargetCheck(host string, _ int) error { return s.targetAllowed(host) }
 
 // AccountFor returns the OS account a caller's ssh session runs as (nil =
 // longarmd's), creating it on first use.
