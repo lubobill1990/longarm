@@ -78,7 +78,12 @@ type Server struct {
 	Policy *tenancy.Policy
 	// Access is the worker owner's local access policy ([access]); nil =
 	// none. The hub cannot change it.
-	Access  *Access
+	Access *Access
+	// WorkerAccess is the owner and shares the hub pushed (user-owned
+	// workers); nil = none. Only ever an extra restriction after Access
+	// and end-to-end trust (auth.go).
+	WorkerAccess *tenancy.WorkerAccess
+
 	Sampler *metrics.Sampler
 	Audit   *Audit
 	Log     *slog.Logger
@@ -368,6 +373,9 @@ func (j *jobsServer) Submit(ctx context.Context, req *pb.SubmitRequest) (*pb.Job
 func (s *Server) SubmitAs(ctx context.Context, owner string, spec jobs.Spec, secrets map[string]string) (supervisor.Job, error) {
 	if !s.Access.AllowsUser(owner) { // the hub admits whom it likes; this worker's users are local
 		return supervisor.Job{}, status.Errorf(codes.PermissionDenied, "user %s may not use this worker ([access] users)", owner)
+	}
+	if why := s.ownerDeny(owner); why != "" {
+		return supervisor.Job{}, status.Errorf(codes.PermissionDenied, "user %s may not use this worker (%s)", owner, why)
 	}
 	spec.Owner = owner
 	return (&jobsServer{s: s}).submit(ctx, owner, spec, secrets, nil)

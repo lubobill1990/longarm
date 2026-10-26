@@ -117,7 +117,7 @@ func newMCPServer(s *session) *mcp.Server {
 			"sessions), fleet_read/fleet_write/fleet_sync for files and code, fleet_forward to reach a worker port.",
 	})
 	t := &mcpTools{s: s}
-	addTool(srv, &mcp.Tool{Name: "fleet_status", Description: "Overview of the worker pool: who is online, load, free memory, running jobs, repo caches, labels."}, t.status)
+	addTool(srv, &mcp.Tool{Name: "fleet_status", Description: "Overview of the worker pool: who is online, load, free memory, running jobs, repo caches, labels, owner (user-owned workers)."}, t.status)
 	addTool(srv, &mcp.Tool{Name: "fleet_exec", Description: "Run a command on a worker (worker \"auto\" = scheduler's choice) and wait for it. Returns the exit code and the output, truncated to head+tail when large; the full output stays in the job log (see fleet_job_logs with the returned job handle)."}, t.exec)
 	addTool(srv, &mcp.Tool{Name: "fleet_job_submit", Description: "Start a long-running job (build, test matrix, a whole `claude -p` / `copilot -p` session) on a worker and return its handle at once. With repo set, the job runs in a fresh git worktree of that local checkout (uncommitted changes included) or clone URL."}, t.submit)
 	addTool(srv, &mcp.Tool{Name: "fleet_job_wait", Description: "Wait until a job ends (or timeout_seconds passes) and return its state and exit code."}, t.wait)
@@ -149,6 +149,7 @@ type workerStatus struct {
 	DiskFreeGB float64           `json:"disk_free_gb"`
 	Labels     map[string]string `json:"labels,omitempty"`
 	Mirrors    []string          `json:"mirrors,omitempty"`
+	Owner      string            `json:"owner,omitempty"` // a user's own worker ("" = the shared fleet)
 	Error      string            `json:"error,omitempty"`
 }
 
@@ -181,7 +182,7 @@ func (t *mcpTools) status(ctx context.Context, _ *mcp.CallToolRequest, in status
 			if in.Worker != "" && n.Name != in.Worker {
 				continue
 			}
-			w := workerStatus{Name: n.Name, State: "online", Labels: n.Labels, Mirrors: n.Mirrors, ReservedGB: n.ReservedGb}
+			w := workerStatus{Name: n.Name, State: "online", Labels: n.Labels, Mirrors: n.Mirrors, ReservedGB: n.ReservedGb, Owner: n.Owner}
 			switch {
 			case n.State != "approved":
 				w.State = n.State

@@ -41,7 +41,7 @@ import (
 const panelCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
 func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.ResponseWriter, *http.Request, string))) {
-	spa := webui.Handler("/api/", "/releases/")
+	spa := h.withEntraLink(webui.Handler("/api/", "/releases/"))
 	mux.Handle("GET /{$}", withCSP(spa))
 	mux.Handle("GET /assets/", withCSP(spa))
 	for _, p := range []string{"nodes", "jobs", "joincodes", "profiles", "audit", "users", "links", "login", "tray", "tenants", "me"} {
@@ -69,7 +69,7 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 		if len(argv) == 0 {
 			argv = splitCommand(body.Command)
 		}
-		fj, err := h.SubmitJobAs(r.Context(), "web/"+user, h.panelViewer(user).User, &pb.HubSubmitRequest{Worker: body.Worker, Argv: argv, Name: body.Name,
+		fj, err := h.SubmitJobAs(r.Context(), "web/"+user, h.panelViewer(user).User, h.panelAdmin(user), &pb.HubSubmitRequest{Worker: body.Worker, Argv: argv, Name: body.Name,
 			Cwd: body.Cwd, Env: body.Env, Require: body.Require, MemGb: body.MemGB})
 		writeResult(w, fj, err)
 	})
@@ -79,7 +79,7 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 			writeResult(w, nil, err)
 			return
 		}
-		fj, err := h.KillJob(r.Context(), "web/"+user, id, worker)
+		fj, err := h.KillJob(r.Context(), "web/"+user, h.panelViewer(user).User, id, worker)
 		writeResult(w, fj, err)
 	})
 	api("GET /api/jobs/{id}/logs", func(w http.ResponseWriter, r *http.Request, user string) {
@@ -91,15 +91,15 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 			return
 		}
 		h.sseRun(w, r, func(send func(kind string, m any) error) error {
-			return h.JobLogs(r.Context(), "web/"+user, req, func(c *pb.LogChunk) error { return send("log", c) })
+			return h.JobLogs(r.Context(), "web/"+user, h.panelViewer(user).User, req, func(c *pb.LogChunk) error { return send("log", c) })
 		})
 	})
 	admin("POST /api/nodes/{name}/toolchain/apply", func(w http.ResponseWriter, r *http.Request, user string) {
 		info, err := h.ToolchainApply(r.Context(), "web/"+user, r.PathValue("name"))
 		writeResult(w, info, err)
 	})
-	api("GET /api/history", func(w http.ResponseWriter, r *http.Request, _ string) {
-		writePB(w, h.History(r.URL.Query().Get("node")))
+	api("GET /api/history", func(w http.ResponseWriter, r *http.Request, user string) {
+		writePB(w, h.HistoryFor(h.panelViewer(user), r.URL.Query().Get("node")))
 	})
 	admin("GET /api/links", func(w http.ResponseWriter, r *http.Request, _ string) {
 		writePB(w, h.Links())
@@ -247,6 +247,9 @@ func (h *Hub) meInfo(r *http.Request, user string) map[string]any {
 		m["quota"] = json.RawMessage(protoJSON(q))
 	}
 	m["usage"] = json.RawMessage(protoJSON(h.usageLocked(v.User)))
+	if t := h.tenants[v.User]; t != nil {
+		m["can_share"] = t.u.CanShare
+	}
 	h.mu.Unlock()
 	return m
 }

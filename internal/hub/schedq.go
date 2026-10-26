@@ -206,12 +206,15 @@ func (h *Hub) assignedLocked(r *reservation, score float64) *pb.PlaceUpdate {
 	return u
 }
 
-// candidatesLocked describes every worker for the scheduler (repo affinity
+// candidatesLocked describes every worker owner may use for the scheduler (repo affinity
 // for owner: workers with per-user isolation keep "<user>/<repo>" mirrors).
 func (h *Hub) candidatesLocked(repo, owner string) []sched.Candidate {
 	var out []sched.Candidate
 	for _, n := range h.nodes {
 		if n.rec.Role != string(pki.RoleWorker) || n.rec.State == stateRevoked {
+			continue
+		}
+		if !h.mayUseLocked(owner, n) { // other users' own workers: not even in the reasons
 			continue
 		}
 		c := sched.Candidate{Name: n.rec.Name, Labels: labelsOf(n), Online: n.sess != nil && n.metrics != nil, Eligible: true}

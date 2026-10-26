@@ -281,10 +281,3 @@ Turn it off on this machine with "longarm telemetry off" or LONGARM_TELEMETRY=0.
 	c.AddCommand(st, show, on, off, flush)
 	return c
 }
-
-func dash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
-}

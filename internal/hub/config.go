@@ -119,6 +119,7 @@ type Config struct {
 	Telemetry TelemetryConfig `toml:"telemetry"`
 	// Diagnostics: where uploaded diagnostic bundles are stored (diag.go).
 	Diagnostics DiagConfig `toml:"diagnostics"`
+	Auth      AuthConfig      `toml:"auth"` // entra.go
 	// Headscale is P2's [headscale] section; still accepted (it means
 	// [tailnet] provider = "headscale" with these settings).
 	Headscale HeadscaleConfig `toml:"headscale"`
@@ -368,6 +369,9 @@ func (c *Config) applyDefaults() error {
 		return err
 	}
 	if err := c.diagEnvDefaults(); err != nil {
+		return err
+	}
+	if err := c.Auth.Entra.applyDefaults(); err != nil {
 		return err
 	}
 	c.PublicURL = strings.TrimRight(c.PublicURL, "/")

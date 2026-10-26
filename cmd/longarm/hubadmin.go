@@ -47,39 +47,46 @@ func joinCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !r.Pinned {
-				fmt.Fprintf(os.Stderr, "warning: hub CA not pinned; trusting %s on first use (pass --ca-fingerprint to verify)\n", r.CAFingerprint)
-			}
 			if r.Resp.Role == string(pki.RoleWorker) {
 				return errors.New("this join code is for a worker: use `longarmd join` on the worker")
 			}
-			if r.Resp.State != "approved" {
-				return fmt.Errorf("enrollment is %s: %s", r.Resp.State, r.Resp.Message)
-			}
-			if err := pki.WriteBundleAtomic(tlsDir, r.Resp.CaPem, r.Resp.CertPem, r.KeyPEM); err != nil {
-				return err
-			}
-			hc := hubclient.Config{Address: addr}
-			if err := hubclient.SaveTailnet(configDir, &hc, r.Resp.Tailnet); err != nil {
-				return err
-			}
-			if err := hubclient.SaveFile(configDir, hc); err != nil {
-				return err
-			}
-			fmt.Printf("joined %s as %s/%s (config %s)\n", addr, r.Resp.Role, r.Resp.Name, configDir)
-			if tr.Endorsement != nil && tr.Endorsement.Name != r.Resp.Name {
-				fmt.Fprintf(os.Stderr, "warning: this device's endorsement is for %q; get one for %s (longarm trust request / accept)\n", tr.Endorsement.Name, r.Resp.Name)
-			}
-			if t := r.Resp.Tailnet; t != nil {
-				fmt.Printf("tailnet %s: key for %s (%s) stored; the tailscale leg starts on first use\n", t.ControlUrl, t.Hostname, strings.Join(t.Tags, ","))
-			}
-			return nil
+			return installEnrollment(addr, r, tr, "joined")
 		},
 	}
 	c.Flags().StringVar(&name, "name", "", "client name (default: hostname)")
 	c.Flags().StringVar(&fp, "ca-fingerprint", "", "expected sha256 fingerprint of the hub CA (longarm-hub ca show)")
 	c.Flags().BoolVar(&force, "force", false, "enroll again although a certificate exists")
 	return c
+}
+
+// installEnrollment stores what join / login got from the hub: the
+// certificate bundle, a tailnet key and hub.toml.
+func installEnrollment(addr string, r *hubclient.JoinResult, tr *pki.CSRTrust, verb string) error {
+	if !r.Pinned {
+		fmt.Fprintf(os.Stderr, "warning: hub CA not pinned; trusting %s on first use (pass --ca-fingerprint to verify)\n", r.CAFingerprint)
+	}
+	if r.Resp.State != "approved" {
+		return fmt.Errorf("enrollment is %s: %s", r.Resp.State, r.Resp.Message)
+	}
+	tlsDir := filepath.Join(configDir, client.TLSDir)
+	if err := pki.WriteBundleAtomic(tlsDir, r.Resp.CaPem, r.Resp.CertPem, r.KeyPEM); err != nil {
+		return err
+	}
+	hc := hubclient.Config{Address: addr}
+	if err := hubclient.SaveTailnet(configDir, &hc, r.Resp.Tailnet); err != nil {
+		return err
+	}
+	if err := hubclient.SaveFile(configDir, hc); err != nil {
+		return err
+	}
+	fmt.Printf("%s %s as %s/%s (config %s)\n", verb, addr, r.Resp.Role, r.Resp.Name, configDir)
+	if tr.Endorsement != nil && tr.Endorsement.Name != r.Resp.Name {
+		fmt.Fprintf(os.Stderr, "warning: this device's endorsement is for %q; get one for %s (longarm trust request / accept)\n", tr.Endorsement.Name, r.Resp.Name)
+	}
+	if t := r.Resp.Tailnet; t != nil {
+		fmt.Printf("tailnet %s: key for %s (%s) stored; the tailscale leg starts on first use\n", t.ControlUrl, t.Hostname, strings.Join(t.Tags, ","))
+	}
+	return nil
 }
 
 // withHub runs fn with a hub connection (admin commands need the hub).
@@ -165,7 +172,7 @@ func hubAdminCmds() []*cobra.Command {
 	nodes.Flags().BoolVar(&all, "all", false, "include clients, admins and revoked nodes")
 	nodes.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 
-	var role, profile, codeName, codeUser string
+	var role, profile, codeName, codeUser, codeOwner string
 	var ttl time.Duration
 	var labels []string
 	joinCode := &cobra.Command{
@@ -179,22 +186,21 @@ func hubAdminCmds() []*cobra.Command {
 			}
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
 				jc, err := h.Admin().CreateJoinCode(ctx, &pb.CreateJoinCodeRequest{Role: role, Ttl: durationpb.New(ttl), Labels: lm,
-					Profile: profile, Name: codeName, User: codeUser})
+					Profile: profile, Name: codeName, User: codeUser, Owner: codeOwner})
 				if err != nil {
 					return err
 				}
 				fmt.Println(jc.Code)
-				fp := "<longarm-hub ca show>"
-				if ca, err := os.ReadFile(filepath.Join(s.cfg.Dir, client.TLSDir, pki.CACertFile)); err == nil {
-					if c, err := pki.ParseCertPEM(ca); err == nil {
-						fp = pki.Fingerprint(c)
-					}
-				}
+				fp := caFingerprint(s)
 				join := "longarmd join"
 				if jc.Role != "worker" {
 					join = "longarm join"
 				}
-				fmt.Fprintf(os.Stderr, "role %s, expires %s\non the new machine: %s %s %s --ca-fingerprint %s\n", jc.Role,
+				owned := ""
+				if jc.Owner != "" {
+					owned = ", owned by " + jc.Owner
+				}
+				fmt.Fprintf(os.Stderr, "role %s%s, expires %s\non the new machine: %s %s %s --ca-fingerprint %s\n", jc.Role, owned,
 					jc.ExpiresAt.AsTime().Local().Format("15:04:05"), join, h.Addr, jc.Code, fp)
 				return nil
 			})
@@ -206,6 +212,7 @@ func hubAdminCmds() []*cobra.Command {
 	joinCode.Flags().StringVar(&profile, "profile", "", "toolchain profile for a worker")
 	joinCode.Flags().StringVar(&codeName, "name", "", "fixed node name")
 	joinCode.Flags().StringVar(&codeUser, "user", "", "client/admin: the Longarm user the certificate belongs to (see longarm admin user)")
+	joinCode.Flags().StringVar(&codeOwner, "owner", "", "worker: the user who owns it (it joins approved, usable by that user only; see longarm worker)")
 
 	codes := &cobra.Command{
 		Use: "join-codes", Short: "List recent join codes (not the codes themselves)", Args: cobra.NoArgs,

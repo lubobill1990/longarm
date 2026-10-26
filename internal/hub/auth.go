@@ -26,11 +26,13 @@ var (
 	releaser = []pki.Role{pki.RoleAdmin, pki.RoleRelease}
 )
 
-// openMethods need no client certificate: the join code / poll token is the
-// credential.
+// openMethods need no client certificate: the join code / poll token (or
+// for EntraJoin the Microsoft access token) is the credential.
 var openMethods = map[string]bool{
 	pb.Enroll_Join_FullMethodName:       true,
 	pb.Enroll_JoinStatus_FullMethodName: true,
+	pb.Enroll_AuthInfo_FullMethodName:   true,
+	pb.Enroll_EntraJoin_FullMethodName:  true,
 }
 
 // hubMethodRoles is the hub's authorization table (default deny).
@@ -53,6 +55,10 @@ var hubMethodRoles = map[string][]pki.Role{
 	pb.Fleet_Events_FullMethodName:            users,
 	pb.Fleet_Place_FullMethodName:             users,
 	pb.Fleet_Audit_FullMethodName:             adminOnly,
+	// own workers: the handlers check owner / can_share / admin
+	pb.Fleet_CreateWorkerCode_FullMethodName:  users,
+	pb.Fleet_ShareWorker_FullMethodName:       users,
+	pb.Fleet_RemoveWorker_FullMethodName:      users,
 	pb.HubAdmin_CreateJoinCode_FullMethodName: adminOnly,
 	pb.HubAdmin_ListJoinCodes_FullMethodName:  adminOnly,
 	pb.HubAdmin_Approve_FullMethodName:        adminOnly,

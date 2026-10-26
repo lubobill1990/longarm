@@ -87,7 +87,30 @@ func (s *Server) authorize(ctx context.Context, method string) (context.Context,
 		s.Audit.Log(id, method, map[string]any{"denied": why, "peer": p.Addr.String()})
 		return nil, status.Errorf(codes.PermissionDenied, "%s may not call %s on this worker (%s)", id, method, why)
 	}
+	// Last: the hub's owner/shares rule can only take away what passed the
+	// checks above (and the TLS layer's end-to-end trust), never grant.
+	if why := s.ownerDeny(id.Owner()); why != "" && method != pb.Node_Info_FullMethodName {
+		s.Audit.Log(id, method, map[string]any{"denied": why, "peer": p.Addr.String()})
+		return nil, status.Errorf(codes.PermissionDenied, "%s may not call %s on this worker (%s)", id, method, why)
+	}
 	return context.WithValue(ctx, idKey{}, id), nil
+}
+
+// ownerDeny says why user may not use this user-owned worker ("" = may):
+// not its owner, not shared with the user, one of its teams or everyone.
+// Admin certificates are no exception - owner-only means owner-only.
+func (s *Server) ownerDeny(user string) string {
+	if s.WorkerAccess.Owner() == "" {
+		return ""
+	}
+	var teams []string
+	if s.Policy != nil {
+		teams = s.Policy.Teams(user)
+	}
+	if s.WorkerAccess.Allows(user, teams) {
+		return ""
+	}
+	return "worker owner/shares"
 }
 
 func (s *Server) unaryAuth(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {

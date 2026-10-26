@@ -34,6 +34,16 @@ const (
 	// cloud container: public_addr = host:<listen port>, and host joins the
 	// certificate's SANs (hosts).
 	EnvAdvertise = "LONGARM_HUB_ADVERTISE"
+	// [auth.entra]; the lists are comma-separated.
+	EnvEntraTenant          = "LONGARM_HUB_ENTRA_TENANT_ID"
+	EnvEntraClient          = "LONGARM_HUB_ENTRA_CLIENT_ID"
+	EnvEntraScope           = "LONGARM_HUB_ENTRA_SCOPE"
+	EnvEntraAdmins          = "LONGARM_HUB_ENTRA_ADMINS"
+	EnvEntraAllowed         = "LONGARM_HUB_ENTRA_ALLOWED"
+	EnvEntraClientAssertion = "LONGARM_HUB_ENTRA_CLIENT_ASSERTION"
+	EnvEntraSecretFile      = "LONGARM_HUB_ENTRA_CLIENT_SECRET_FILE"
+	EnvEntraWeb             = "LONGARM_HUB_ENTRA_WEB"
+	EnvEntraApps            = "LONGARM_HUB_ENTRA_APPS"
 )
 
 func (c *Config) applyEnv() error {
@@ -42,16 +52,25 @@ func (c *Config) applyEnv() error {
 		dst *string
 	}{{EnvDB, &c.DBPath}, {EnvListen, &c.Listen}, {EnvHTTP, &c.HTTP}, {EnvPublicURL, &c.PublicURL},
 		{EnvRelayUDP, &c.RelayUDP}, {EnvSTUN2, &c.RelaySTUN2}, {EnvHTTPS, &c.HTTPS}, {EnvRedirect, &c.HTTPSRedirect},
-		{EnvACMEEmail, &c.ACMEEmail}, {EnvACMEDir, &c.ACMEDirectory}, {EnvAppInsights, &c.Telemetry.ConnectionString}} {
+		{EnvACMEEmail, &c.ACMEEmail}, {EnvACMEDir, &c.ACMEDirectory},
+		{EnvEntraTenant, &c.Auth.Entra.TenantID}, {EnvEntraClient, &c.Auth.Entra.ClientID}, {EnvEntraScope, &c.Auth.Entra.Scope},
+		{EnvEntraClientAssertion, &c.Auth.Entra.ClientAssertion}, {EnvEntraSecretFile, &c.Auth.Entra.ClientSecretFile},
+		{EnvEntraWeb, &c.Auth.Entra.Web}, {EnvAppInsights, &c.Telemetry.ConnectionString}} {
 		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
 			*kv.dst = v
 		}
 	}
-	if v := strings.TrimSpace(os.Getenv(EnvSTUNAdvertise)); v != "" {
-		c.RelaySTUNAdvertise = nil
-		for _, s := range strings.Split(v, ",") {
-			if s = strings.TrimSpace(s); s != "" {
-				c.RelaySTUNAdvertise = append(c.RelaySTUNAdvertise, s)
+	for _, kv := range []struct {
+		env string
+		dst *[]string
+	}{{EnvSTUNAdvertise, &c.RelaySTUNAdvertise}, {EnvEntraAdmins, &c.Auth.Entra.Admins}, {EnvEntraAllowed, &c.Auth.Entra.Allowed},
+		{EnvEntraApps, &c.Auth.Entra.Apps}} {
+		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
+			*kv.dst = nil
+			for _, s := range strings.Split(v, ",") {
+				if s = strings.TrimSpace(s); s != "" {
+					*kv.dst = append(*kv.dst, s)
+				}
 			}
 		}
 	}

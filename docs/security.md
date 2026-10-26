@@ -55,6 +55,9 @@ compromised admins, hubs or workers; level 3 (untrusted code).
   join code **bound to the user**: the device that enrols with it gets a
   certificate of user `alice` (device name `alice`, or `alice-2`, ... or
   `--device`). More devices: `longarm admin user code alice`.
+- With Microsoft Entra ID sign-in, `longarm login` and the panel create
+  the user on first sign-in and enroll the device without a code (see
+  "Sign-in with Microsoft Entra ID").
 - Teams are hub-side groups (`longarm admin team add t1 alice bob`). A job
   submitted with `longarm run --share team` (or `--share team:t1`) may be
   **read** (state, logs) by the members of the owner's team(s); only the
@@ -68,7 +71,7 @@ compromised admins, hubs or workers; level 3 (untrusted code).
 ## When users are separated
 
 The **hub** separates users as soon as one user exists (`longarm admin user
-add`), a worker with per-user isolation has connected, or `[tenancy]
+add`), a worker with per-user isolation has connected, a user-owned worker has joined, or `[tenancy]
 enabled = true` is set in `hub.toml`. Until then everybody sees everything,
 as in a one-person fleet (so a person with a laptop and a desktop as two
 plain client certificates keeps seeing both machines' jobs).
@@ -98,6 +101,7 @@ but the worker's owners - its `[access]` policy restricts anybody
 | audit log, users, teams, join codes, links, releases, profiles | no | | no | yes |
 | web panel | "My jobs", nodes (read-only), "Me" for user logins | | | everything ("People" page for users, teams, quotas) |
 | a worker with `[access]` | users not in `users` get node info only | | | an admin certificate of a non-owner gets what `admins` allows (`own`: the "Owner" column; `observe`; `none`) |
+| a user-owned worker (`longarm worker add`) | its owner; users it is shared with | | hidden on the hub, never placed, node info only on the worker | sees, shares, unshares and removes it on the hub; on the worker refused like anybody unless owner or shared with ([below](#user-owned-workers)) |
 
 The "Admin" column is the default (`[access] admins = "full"`); a worker's
 owner can narrow it on that worker, and the worker's owners always keep it.
@@ -372,6 +376,67 @@ visibility of what the worker's users run.
 - Jobs and sessions started before a policy change keep running; the
   policy is read at start (change it, restart longarmd).
 
+## User-owned workers
+
+A user can register their own machine as a worker (`longarm worker add`,
+[usage](usage.md#your-own-workers)). The worker code names the user as the
+worker's **owner**; the worker joins approved and is usable by its owner
+only, until shared - by user, team or everyone. Only users an admin
+granted `can_share` (`longarm admin user set <u> --can-share`) may share
+their workers; admins share and unshare any. Workers without owner (admins'
+join codes) are the shared fleet as before. An owned worker turns user
+separation on (like the first user).
+
+| Caller (its user) | On a user-owned worker |
+|---|---|
+| the owner | everything its role allows, as on any worker |
+| a user it is shared with (by name, a team of theirs, or everyone) | like any user of a multi-user worker: its own jobs and sessions only |
+| anybody else, **admin certificates included** | hub: the worker is hidden (lists, events, history, panel) and never placed for them, a named submit is "not found"; worker: `Node.Info` only, everything else (`Admin.Shutdown` / `Gc` too) `PermissionDenied`, audited as `worker owner/shares` |
+| hub admins (the hub's API, panel) | see it with owner and shares, share, unshare and remove it |
+
+Admin certificates shared with get no admin rights over the owner's jobs
+and sessions there. Every code, join, share, unshare and removal is audited
+on the hub (`workers/code`, `workers/join`, `workers/share`, `workers/remove`);
+the worker audits every change it receives (`worker/access`).
+
+**Enforced twice, decided once.** The hub applies the rule when it lists
+and places, and pushes owner and shares to the worker
+(`HubCommand.worker_access` at every connect and change; kept in
+`<data>/worker-access.json` across restarts and hub outages). The owner
+holds from enrollment on: `longarmd join` writes it (and remembers the owned
+code in the data dir's `hub.toml`), so a worker started before it ever
+reached the hub - or without its file - serves its owner only; an
+unreadable file refuses everybody until the hub sends the rule again. Pushes
+carry a version: a late, older push never undoes a newer unshare. The
+worker refuses everybody else on every call, and closes the connections -
+with their sessions, forwards, ssh and log streams - of users who lose
+access, whether by an unshare or by leaving a team the worker is shared
+with. Followed log streams through the hub are re-checked on every poll.
+Disabling or removing a user drops the user's unused worker codes; a code
+whose owner is no longer a user does not join. But the worker's copy **comes from the hub**:
+whoever controls the hub (its admins, its database, the CA key) can change
+the owner or the shares, or enroll a device under the owner's name. The
+pushed rule is applied strictly as an **extra deny after** the worker's own
+`[access]` policy and end-to-end trust: it can never grant what those deny,
+the hub has no way to write `longarmd.toml` or `trust/trust.toml`, and it
+does not widen `[hub] remote_jobs` (jobs the hub submits must be for a user
+the worker serves). **The hub session** is no way around it either: the hub
+relays kill, logs and submit (panel, `longarm admin kill|logs|run`) to a
+user-owned worker only for a caller whose user may use it - admins
+included; others get `PermissionDenied` (audited as `workers/denied`). The
+owner's own panel login acts as the owner and keeps working (with
+`remote_jobs = "control"`, the default without `[access] users` or trust;
+the worker's `remote_jobs` still applies on top).
+
+**Against hub insiders** pin it on the machine, as `longarmd join` suggests:
+`[access] users = ["alice"]` and `owners = ["alice"]` (plus whom alice shares
+with), and [end-to-end trust](#end-to-end-trust-the-hub-is-not-trusted-with-access)
+(`longarmd trust add-user <alice's key>`), so only devices alice endorsed get
+in. With trust on, **sharing needs the worker's owner too**: a worker shared
+with bob on the hub still refuses bob's devices until bob's user key is in
+that worker's `trust.toml` (`longarmd trust add-user <bob's key>`), and bob
+in `[access] users` if alice pinned it.
+
 ## What is not isolated (known gaps)
 
 Level 2 keeps users apart through the OS's user separation, not through
@@ -460,6 +525,51 @@ is the off-machine copy: compare audit.log with a sink's copy (the same
 lines and hashes; `verify --file` checks a copy, which may start
 mid-chain). Records written while longarmd was stopped don't exist, and
 what a sink lost to an overflow is only counted.
+
+## Sign-in with Microsoft Entra ID
+
+With `[auth.entra]` (docs/usage.md "Sign in with Microsoft Entra ID") the
+hub issues certificates and panel sessions to whoever Microsoft vouches for,
+instead of to holders of a join code or a panel password: **the hub vouches
+for the user after verifying the Microsoft token**. It checks every token
+itself - RS256 signature against the tenant's published keys (fetched from
+`<authority>/<tenant>/discovery/v2.0/keys`, cached, refetched for an unknown
+key at most once a minute; `none` and HMAC algorithms are refused), issuer
+`<authority>/<tenant>/v2.0`, tenant (`tid`), audience (the hub's app: access
+tokens `<client id>` or `api://<client id>`, ID tokens `<client id>`),
+expiry and not-before (2 minutes of skew), an object ID (`oid`), and:
+
+- `longarm login` (Enroll.EntraJoin, no certificate needed, rate limited per
+  IP like join): the delegated scope (`scp` contains `longarm.connect`), or
+  an app-only token of an app listed in `apps` (CI, acting as its configured
+  user, never as an admin);
+- web sign-in: the nonce of this sign-in. State, nonce and PKCE verifier
+  live in an HMAC-signed, HttpOnly, SameSite=Lax cookie for 10 minutes,
+  each state is accepted once, the target after sign-in is a path on the
+  hub, and only top-level navigations start a sign-in. In spa mode the
+  browser redeems the code (no client credential exists) and posts the ID
+  token, same-origin only; app-only tokens never open panel sessions.
+
+What it changes:
+
+- The Entra tenant becomes an authority over the hub: anyone it lets sign
+  in (narrow with `allowed`) gets a client certificate of their own user,
+  and whoever matches `admins` gets an **admin** certificate. An Entra
+  account takeover, or a too broad `admins` entry like `*@domain`, is an
+  admin compromise of the hub. Users are tied to the Entra object ID, not
+  the UPN, so a renamed or reused UPN doesn't inherit another user.
+- Tokens are never logged or stored (the hub logs the user, UPN, object ID
+  and why a token was refused; sign-ins are audited as `entra/login` and
+  `entra/panel-login`, users it creates as `users/add` by `entra/<upn>`).
+- `longarm login` sends the token to the hub over TLS verified like `longarm
+  join`: pin the CA with `--ca-fingerprint`. Without a pin (trust on first
+  use) a man in the middle could relay the token - valid about an hour and
+  only for this hub's app - to the real hub and enroll a device as the user.
+- **End-to-end trust still applies on top**: a device enrolled by Entra
+  sign-in binds its node key like any other, and workers with trusted users
+  refuse it until the user's key endorsed it (`longarm trust ...`). Entra
+  sign-in replaces the join code, not the user keys - the hub (and now the
+  Entra tenant) still can't mint access to such workers.
 
 ## End-to-end trust (the hub is not trusted with access)
 
