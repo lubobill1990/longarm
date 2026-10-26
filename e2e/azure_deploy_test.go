@@ -250,6 +250,19 @@ func TestAzureDeployScripts(t *testing.T) {
 				t.Fatalf("pinned re-run: %d restarts, %+v", restarts(), params())
 			}
 
+			// the external STUN servers the hub advertises (template default
+			// unless given; "none" = only the hub's own ports)
+			stun := r.flag("--stun-servers", "-StunServers")
+			ok(run(pw, name, "myhub", regUser, "bot", stun, "stun.example.net:3478,[2001:db8::1]:3478"), "STUN servers")
+			if p := params(); p["stunServers"] != "stun.example.net:3478,[2001:db8::1]:3478" {
+				t.Fatalf("STUN servers: %+v", p)
+			}
+			ok(run(pw, name, "myhub", regUser, "bot", stun, "none"), "no STUN servers")
+			if p := params(); p["stunServers"] != "" {
+				t.Fatalf("no STUN servers: %+v", p)
+			}
+			refused(run(pw, name, "myhub", regUser, "bot", stun, "a b"), "bad STUN servers", "stun")
+
 			// an image from another registry: the login is for that registry,
 			// and needed again on a re-run
 			const acrImage = "example.azurecr.io/longarm-hub:1.2.3"
