@@ -39,6 +39,196 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type AuthInfoRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AuthInfoRequest) Reset() {
+	*x = AuthInfoRequest{}
+	mi := &file_longarm_v1_hub_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthInfoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthInfoRequest) ProtoMessage() {}
+
+func (x *AuthInfoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_hub_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthInfoRequest.ProtoReflect.Descriptor instead.
+func (*AuthInfoRequest) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{0}
+}
+
+type AuthInfoResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EntraTenantId string                 `protobuf:"bytes,1,opt,name=entra_tenant_id,json=entraTenantId,proto3" json:"entra_tenant_id,omitempty"`
+	EntraClientId string                 `protobuf:"bytes,2,opt,name=entra_client_id,json=entraClientId,proto3" json:"entra_client_id,omitempty"`
+	// Full scope to request, e.g. "api://<client id>/longarm.connect"
+	// (az account get-access-token --scope <scope>).
+	EntraScope    string `protobuf:"bytes,3,opt,name=entra_scope,json=entraScope,proto3" json:"entra_scope,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AuthInfoResponse) Reset() {
+	*x = AuthInfoResponse{}
+	mi := &file_longarm_v1_hub_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthInfoResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthInfoResponse) ProtoMessage() {}
+
+func (x *AuthInfoResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_hub_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthInfoResponse.ProtoReflect.Descriptor instead.
+func (*AuthInfoResponse) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *AuthInfoResponse) GetEntraTenantId() string {
+	if x != nil {
+		return x.EntraTenantId
+	}
+	return ""
+}
+
+func (x *AuthInfoResponse) GetEntraClientId() string {
+	if x != nil {
+		return x.EntraClientId
+	}
+	return ""
+}
+
+func (x *AuthInfoResponse) GetEntraScope() string {
+	if x != nil {
+		return x.EntraScope
+	}
+	return ""
+}
+
+type EntraJoinRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccessToken   string                 `protobuf:"bytes,1,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`
+	CsrPem        []byte                 `protobuf:"bytes,2,opt,name=csr_pem,json=csrPem,proto3" json:"csr_pem,omitempty"`
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"` // requested device name (default <user>-<hostname>)
+	Hostname      string                 `protobuf:"bytes,4,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	Os            string                 `protobuf:"bytes,5,opt,name=os,proto3" json:"os,omitempty"`
+	Arch          string                 `protobuf:"bytes,6,opt,name=arch,proto3" json:"arch,omitempty"`
+	Version       string                 `protobuf:"bytes,7,opt,name=version,proto3" json:"version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EntraJoinRequest) Reset() {
+	*x = EntraJoinRequest{}
+	mi := &file_longarm_v1_hub_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EntraJoinRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EntraJoinRequest) ProtoMessage() {}
+
+func (x *EntraJoinRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_hub_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EntraJoinRequest.ProtoReflect.Descriptor instead.
+func (*EntraJoinRequest) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *EntraJoinRequest) GetAccessToken() string {
+	if x != nil {
+		return x.AccessToken
+	}
+	return ""
+}
+
+func (x *EntraJoinRequest) GetCsrPem() []byte {
+	if x != nil {
+		return x.CsrPem
+	}
+	return nil
+}
+
+func (x *EntraJoinRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *EntraJoinRequest) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *EntraJoinRequest) GetOs() string {
+	if x != nil {
+		return x.Os
+	}
+	return ""
+}
+
+func (x *EntraJoinRequest) GetArch() string {
+	if x != nil {
+		return x.Arch
+	}
+	return ""
+}
+
+func (x *EntraJoinRequest) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
 type JoinRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"` // "K7P-Q2M" (dash and case optional)
@@ -54,7 +244,7 @@ type JoinRequest struct {
 
 func (x *JoinRequest) Reset() {
 	*x = JoinRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[0]
+	mi := &file_longarm_v1_hub_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -66,7 +256,7 @@ func (x *JoinRequest) String() string {
 func (*JoinRequest) ProtoMessage() {}
 
 func (x *JoinRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[0]
+	mi := &file_longarm_v1_hub_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -79,7 +269,7 @@ func (x *JoinRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinRequest.ProtoReflect.Descriptor instead.
 func (*JoinRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{0}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *JoinRequest) GetCode() string {
@@ -151,7 +341,7 @@ type JoinResponse struct {
 
 func (x *JoinResponse) Reset() {
 	*x = JoinResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[1]
+	mi := &file_longarm_v1_hub_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -163,7 +353,7 @@ func (x *JoinResponse) String() string {
 func (*JoinResponse) ProtoMessage() {}
 
 func (x *JoinResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[1]
+	mi := &file_longarm_v1_hub_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -176,7 +366,7 @@ func (x *JoinResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinResponse.ProtoReflect.Descriptor instead.
 func (*JoinResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{1}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *JoinResponse) GetState() string {
@@ -251,7 +441,7 @@ type JoinStatusRequest struct {
 
 func (x *JoinStatusRequest) Reset() {
 	*x = JoinStatusRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[2]
+	mi := &file_longarm_v1_hub_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -263,7 +453,7 @@ func (x *JoinStatusRequest) String() string {
 func (*JoinStatusRequest) ProtoMessage() {}
 
 func (x *JoinStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[2]
+	mi := &file_longarm_v1_hub_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -276,7 +466,7 @@ func (x *JoinStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinStatusRequest.ProtoReflect.Descriptor instead.
 func (*JoinStatusRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{2}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *JoinStatusRequest) GetPollToken() string {
@@ -305,7 +495,7 @@ type NodeReport struct {
 
 func (x *NodeReport) Reset() {
 	*x = NodeReport{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[3]
+	mi := &file_longarm_v1_hub_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -317,7 +507,7 @@ func (x *NodeReport) String() string {
 func (*NodeReport) ProtoMessage() {}
 
 func (x *NodeReport) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[3]
+	mi := &file_longarm_v1_hub_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -330,7 +520,7 @@ func (x *NodeReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeReport.ProtoReflect.Descriptor instead.
 func (*NodeReport) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{3}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *NodeReport) GetMsg() isNodeReport_Msg {
@@ -482,7 +672,7 @@ type HubReply struct {
 
 func (x *HubReply) Reset() {
 	*x = HubReply{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[4]
+	mi := &file_longarm_v1_hub_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -494,7 +684,7 @@ func (x *HubReply) String() string {
 func (*HubReply) ProtoMessage() {}
 
 func (x *HubReply) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[4]
+	mi := &file_longarm_v1_hub_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -507,7 +697,7 @@ func (x *HubReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HubReply.ProtoReflect.Descriptor instead.
 func (*HubReply) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{4}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *HubReply) GetRequestId() string {
@@ -585,7 +775,7 @@ type NodeHello struct {
 
 func (x *NodeHello) Reset() {
 	*x = NodeHello{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[5]
+	mi := &file_longarm_v1_hub_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -597,7 +787,7 @@ func (x *NodeHello) String() string {
 func (*NodeHello) ProtoMessage() {}
 
 func (x *NodeHello) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[5]
+	mi := &file_longarm_v1_hub_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -610,7 +800,7 @@ func (x *NodeHello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeHello.ProtoReflect.Descriptor instead.
 func (*NodeHello) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{5}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *NodeHello) GetVersion() string {
@@ -747,7 +937,7 @@ type NodeState struct {
 
 func (x *NodeState) Reset() {
 	*x = NodeState{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[6]
+	mi := &file_longarm_v1_hub_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -759,7 +949,7 @@ func (x *NodeState) String() string {
 func (*NodeState) ProtoMessage() {}
 
 func (x *NodeState) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[6]
+	mi := &file_longarm_v1_hub_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -772,7 +962,7 @@ func (x *NodeState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeState.ProtoReflect.Descriptor instead.
 func (*NodeState) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{6}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *NodeState) GetDraining() bool {
@@ -816,7 +1006,7 @@ type JobsReport struct {
 
 func (x *JobsReport) Reset() {
 	*x = JobsReport{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[7]
+	mi := &file_longarm_v1_hub_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -828,7 +1018,7 @@ func (x *JobsReport) String() string {
 func (*JobsReport) ProtoMessage() {}
 
 func (x *JobsReport) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[7]
+	mi := &file_longarm_v1_hub_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -841,7 +1031,7 @@ func (x *JobsReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobsReport.ProtoReflect.Descriptor instead.
 func (*JobsReport) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{7}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *JobsReport) GetFull() bool {
@@ -877,7 +1067,7 @@ type AuditBatch struct {
 
 func (x *AuditBatch) Reset() {
 	*x = AuditBatch{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[8]
+	mi := &file_longarm_v1_hub_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -889,7 +1079,7 @@ func (x *AuditBatch) String() string {
 func (*AuditBatch) ProtoMessage() {}
 
 func (x *AuditBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[8]
+	mi := &file_longarm_v1_hub_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -902,7 +1092,7 @@ func (x *AuditBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditBatch.ProtoReflect.Descriptor instead.
 func (*AuditBatch) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{8}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *AuditBatch) GetLines() []string {
@@ -929,7 +1119,7 @@ type ToolSpec struct {
 
 func (x *ToolSpec) Reset() {
 	*x = ToolSpec{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[9]
+	mi := &file_longarm_v1_hub_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -941,7 +1131,7 @@ func (x *ToolSpec) String() string {
 func (*ToolSpec) ProtoMessage() {}
 
 func (x *ToolSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[9]
+	mi := &file_longarm_v1_hub_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -954,7 +1144,7 @@ func (x *ToolSpec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolSpec.ProtoReflect.Descriptor instead.
 func (*ToolSpec) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{9}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ToolSpec) GetName() string {
@@ -987,7 +1177,7 @@ type ToolchainReport struct {
 
 func (x *ToolchainReport) Reset() {
 	*x = ToolchainReport{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[10]
+	mi := &file_longarm_v1_hub_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -999,7 +1189,7 @@ func (x *ToolchainReport) String() string {
 func (*ToolchainReport) ProtoMessage() {}
 
 func (x *ToolchainReport) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[10]
+	mi := &file_longarm_v1_hub_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1012,7 +1202,7 @@ func (x *ToolchainReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolchainReport.ProtoReflect.Descriptor instead.
 func (*ToolchainReport) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{10}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ToolchainReport) GetProfile() string {
@@ -1073,6 +1263,7 @@ type HubCommand struct {
 	//	*HubCommand_ToolchainApply
 	//	*HubCommand_Tailnet
 	//	*HubCommand_Tenancy
+	//	*HubCommand_WorkerAccess
 	Msg           isHubCommand_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1080,7 +1271,7 @@ type HubCommand struct {
 
 func (x *HubCommand) Reset() {
 	*x = HubCommand{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[11]
+	mi := &file_longarm_v1_hub_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1092,7 +1283,7 @@ func (x *HubCommand) String() string {
 func (*HubCommand) ProtoMessage() {}
 
 func (x *HubCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[11]
+	mi := &file_longarm_v1_hub_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1105,7 +1296,7 @@ func (x *HubCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HubCommand.ProtoReflect.Descriptor instead.
 func (*HubCommand) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{11}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *HubCommand) GetMsg() isHubCommand_Msg {
@@ -1223,6 +1414,15 @@ func (x *HubCommand) GetTenancy() *TenancyPolicy {
 	return nil
 }
 
+func (x *HubCommand) GetWorkerAccess() *WorkerAccess {
+	if x != nil {
+		if x, ok := x.Msg.(*HubCommand_WorkerAccess); ok {
+			return x.WorkerAccess
+		}
+	}
+	return nil
+}
+
 type isHubCommand_Msg interface {
 	isHubCommand_Msg()
 }
@@ -1281,6 +1481,13 @@ type HubCommand_Tenancy struct {
 	Tenancy *TenancyPolicy `protobuf:"bytes,12,opt,name=tenancy,proto3,oneof"`
 }
 
+type HubCommand_WorkerAccess struct {
+	// Who may use this worker (its owner and shares); sent at connect and
+	// on every change. The worker applies it only as an extra restriction
+	// after its own [access] and end-to-end trust: it never widens them.
+	WorkerAccess *WorkerAccess `protobuf:"bytes,13,opt,name=worker_access,json=workerAccess,proto3,oneof"`
+}
+
 func (*HubCommand_Welcome) isHubCommand_Msg() {}
 
 func (*HubCommand_Revocations) isHubCommand_Msg() {}
@@ -1305,6 +1512,131 @@ func (*HubCommand_Tailnet) isHubCommand_Msg() {}
 
 func (*HubCommand_Tenancy) isHubCommand_Msg() {}
 
+func (*HubCommand_WorkerAccess) isHubCommand_Msg() {}
+
+// WorkerAccess: a user-owned worker is usable by its owner and whoever it
+// is shared with; a worker without owner (registered by an admin) by
+// everyone the hub admits (unchanged).
+type WorkerAccess struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Version       int64                  `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	Owner         string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"` // "" = no owner
+	Shares        *WorkerShares          `protobuf:"bytes,3,opt,name=shares,proto3" json:"shares,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkerAccess) Reset() {
+	*x = WorkerAccess{}
+	mi := &file_longarm_v1_hub_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkerAccess) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkerAccess) ProtoMessage() {}
+
+func (x *WorkerAccess) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_hub_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkerAccess.ProtoReflect.Descriptor instead.
+func (*WorkerAccess) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *WorkerAccess) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *WorkerAccess) GetOwner() string {
+	if x != nil {
+		return x.Owner
+	}
+	return ""
+}
+
+func (x *WorkerAccess) GetShares() *WorkerShares {
+	if x != nil {
+		return x.Shares
+	}
+	return nil
+}
+
+type WorkerShares struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Users         []string               `protobuf:"bytes,1,rep,name=users,proto3" json:"users,omitempty"`
+	Teams         []string               `protobuf:"bytes,2,rep,name=teams,proto3" json:"teams,omitempty"`
+	Everyone      bool                   `protobuf:"varint,3,opt,name=everyone,proto3" json:"everyone,omitempty"` // every user of the hub
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkerShares) Reset() {
+	*x = WorkerShares{}
+	mi := &file_longarm_v1_hub_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkerShares) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkerShares) ProtoMessage() {}
+
+func (x *WorkerShares) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_hub_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkerShares.ProtoReflect.Descriptor instead.
+func (*WorkerShares) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *WorkerShares) GetUsers() []string {
+	if x != nil {
+		return x.Users
+	}
+	return nil
+}
+
+func (x *WorkerShares) GetTeams() []string {
+	if x != nil {
+		return x.Teams
+	}
+	return nil
+}
+
+func (x *WorkerShares) GetEveryone() bool {
+	if x != nil {
+		return x.Everyone
+	}
+	return false
+}
+
 type HubJobKill struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
@@ -1316,7 +1648,7 @@ type HubJobKill struct {
 
 func (x *HubJobKill) Reset() {
 	*x = HubJobKill{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[12]
+	mi := &file_longarm_v1_hub_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1328,7 +1660,7 @@ func (x *HubJobKill) String() string {
 func (*HubJobKill) ProtoMessage() {}
 
 func (x *HubJobKill) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[12]
+	mi := &file_longarm_v1_hub_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1341,7 +1673,7 @@ func (x *HubJobKill) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HubJobKill.ProtoReflect.Descriptor instead.
 func (*HubJobKill) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{12}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *HubJobKill) GetRequestId() string {
@@ -1378,7 +1710,7 @@ type HubLogRequest struct {
 
 func (x *HubLogRequest) Reset() {
 	*x = HubLogRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[13]
+	mi := &file_longarm_v1_hub_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1390,7 +1722,7 @@ func (x *HubLogRequest) String() string {
 func (*HubLogRequest) ProtoMessage() {}
 
 func (x *HubLogRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[13]
+	mi := &file_longarm_v1_hub_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1403,7 +1735,7 @@ func (x *HubLogRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HubLogRequest.ProtoReflect.Descriptor instead.
 func (*HubLogRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{13}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *HubLogRequest) GetRequestId() string {
@@ -1457,7 +1789,7 @@ type HubJobSubmit struct {
 
 func (x *HubJobSubmit) Reset() {
 	*x = HubJobSubmit{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[14]
+	mi := &file_longarm_v1_hub_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1469,7 +1801,7 @@ func (x *HubJobSubmit) String() string {
 func (*HubJobSubmit) ProtoMessage() {}
 
 func (x *HubJobSubmit) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[14]
+	mi := &file_longarm_v1_hub_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1482,7 +1814,7 @@ func (x *HubJobSubmit) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HubJobSubmit.ProtoReflect.Descriptor instead.
 func (*HubJobSubmit) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{14}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *HubJobSubmit) GetRequestId() string {
@@ -1523,7 +1855,7 @@ type HubToolchainApply struct {
 
 func (x *HubToolchainApply) Reset() {
 	*x = HubToolchainApply{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[15]
+	mi := &file_longarm_v1_hub_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1535,7 +1867,7 @@ func (x *HubToolchainApply) String() string {
 func (*HubToolchainApply) ProtoMessage() {}
 
 func (x *HubToolchainApply) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[15]
+	mi := &file_longarm_v1_hub_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1548,7 +1880,7 @@ func (x *HubToolchainApply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HubToolchainApply.ProtoReflect.Descriptor instead.
 func (*HubToolchainApply) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{15}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *HubToolchainApply) GetRequestId() string {
@@ -1581,7 +1913,7 @@ type HubWelcome struct {
 
 func (x *HubWelcome) Reset() {
 	*x = HubWelcome{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[16]
+	mi := &file_longarm_v1_hub_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1593,7 +1925,7 @@ func (x *HubWelcome) String() string {
 func (*HubWelcome) ProtoMessage() {}
 
 func (x *HubWelcome) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[16]
+	mi := &file_longarm_v1_hub_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1606,7 +1938,7 @@ func (x *HubWelcome) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HubWelcome.ProtoReflect.Descriptor instead.
 func (*HubWelcome) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{16}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *HubWelcome) GetNodeState() string {
@@ -1661,7 +1993,7 @@ type Revocations struct {
 
 func (x *Revocations) Reset() {
 	*x = Revocations{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[17]
+	mi := &file_longarm_v1_hub_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1673,7 +2005,7 @@ func (x *Revocations) String() string {
 func (*Revocations) ProtoMessage() {}
 
 func (x *Revocations) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[17]
+	mi := &file_longarm_v1_hub_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1686,7 +2018,7 @@ func (x *Revocations) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Revocations.ProtoReflect.Descriptor instead.
 func (*Revocations) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{17}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *Revocations) GetVersion() int64 {
@@ -1714,7 +2046,7 @@ type RevokedCert struct {
 
 func (x *RevokedCert) Reset() {
 	*x = RevokedCert{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[18]
+	mi := &file_longarm_v1_hub_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1726,7 +2058,7 @@ func (x *RevokedCert) String() string {
 func (*RevokedCert) ProtoMessage() {}
 
 func (x *RevokedCert) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[18]
+	mi := &file_longarm_v1_hub_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1739,7 +2071,7 @@ func (x *RevokedCert) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokedCert.ProtoReflect.Descriptor instead.
 func (*RevokedCert) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{18}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *RevokedCert) GetSerial() string {
@@ -1774,7 +2106,7 @@ type ToolchainDesired struct {
 
 func (x *ToolchainDesired) Reset() {
 	*x = ToolchainDesired{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[19]
+	mi := &file_longarm_v1_hub_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1786,7 +2118,7 @@ func (x *ToolchainDesired) String() string {
 func (*ToolchainDesired) ProtoMessage() {}
 
 func (x *ToolchainDesired) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[19]
+	mi := &file_longarm_v1_hub_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1799,7 +2131,7 @@ func (x *ToolchainDesired) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolchainDesired.ProtoReflect.Descriptor instead.
 func (*ToolchainDesired) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{19}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ToolchainDesired) GetProfile() string {
@@ -1832,7 +2164,7 @@ type AuditAck struct {
 
 func (x *AuditAck) Reset() {
 	*x = AuditAck{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[20]
+	mi := &file_longarm_v1_hub_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1844,7 +2176,7 @@ func (x *AuditAck) String() string {
 func (*AuditAck) ProtoMessage() {}
 
 func (x *AuditAck) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[20]
+	mi := &file_longarm_v1_hub_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1857,7 +2189,7 @@ func (x *AuditAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditAck.ProtoReflect.Descriptor instead.
 func (*AuditAck) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{20}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *AuditAck) GetOffset() int64 {
@@ -1876,7 +2208,7 @@ type DrainCommand struct {
 
 func (x *DrainCommand) Reset() {
 	*x = DrainCommand{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[21]
+	mi := &file_longarm_v1_hub_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1888,7 +2220,7 @@ func (x *DrainCommand) String() string {
 func (*DrainCommand) ProtoMessage() {}
 
 func (x *DrainCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[21]
+	mi := &file_longarm_v1_hub_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1901,7 +2233,7 @@ func (x *DrainCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DrainCommand.ProtoReflect.Descriptor instead.
 func (*DrainCommand) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{21}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DrainCommand) GetDraining() bool {
@@ -1920,7 +2252,7 @@ type RenewRequest struct {
 
 func (x *RenewRequest) Reset() {
 	*x = RenewRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[22]
+	mi := &file_longarm_v1_hub_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1932,7 +2264,7 @@ func (x *RenewRequest) String() string {
 func (*RenewRequest) ProtoMessage() {}
 
 func (x *RenewRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[22]
+	mi := &file_longarm_v1_hub_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1945,7 +2277,7 @@ func (x *RenewRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenewRequest.ProtoReflect.Descriptor instead.
 func (*RenewRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{22}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *RenewRequest) GetCsrPem() []byte {
@@ -1965,7 +2297,7 @@ type RenewResponse struct {
 
 func (x *RenewResponse) Reset() {
 	*x = RenewResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[23]
+	mi := &file_longarm_v1_hub_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1977,7 +2309,7 @@ func (x *RenewResponse) String() string {
 func (*RenewResponse) ProtoMessage() {}
 
 func (x *RenewResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[23]
+	mi := &file_longarm_v1_hub_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1990,7 +2322,7 @@ func (x *RenewResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RenewResponse.ProtoReflect.Descriptor instead.
 func (*RenewResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{23}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *RenewResponse) GetCertPem() []byte {
@@ -2018,7 +2350,7 @@ type LinkSample struct {
 
 func (x *LinkSample) Reset() {
 	*x = LinkSample{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[24]
+	mi := &file_longarm_v1_hub_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2030,7 +2362,7 @@ func (x *LinkSample) String() string {
 func (*LinkSample) ProtoMessage() {}
 
 func (x *LinkSample) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[24]
+	mi := &file_longarm_v1_hub_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2043,7 +2375,7 @@ func (x *LinkSample) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LinkSample.ProtoReflect.Descriptor instead.
 func (*LinkSample) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{24}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *LinkSample) GetTime() *timestamppb.Timestamp {
@@ -2082,7 +2414,7 @@ type LegStatus struct {
 
 func (x *LegStatus) Reset() {
 	*x = LegStatus{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[25]
+	mi := &file_longarm_v1_hub_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2094,7 +2426,7 @@ func (x *LegStatus) String() string {
 func (*LegStatus) ProtoMessage() {}
 
 func (x *LegStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[25]
+	mi := &file_longarm_v1_hub_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2107,7 +2439,7 @@ func (x *LegStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LegStatus.ProtoReflect.Descriptor instead.
 func (*LegStatus) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{25}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *LegStatus) GetTransport() string {
@@ -2215,7 +2547,7 @@ type WorkerLink struct {
 
 func (x *WorkerLink) Reset() {
 	*x = WorkerLink{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[26]
+	mi := &file_longarm_v1_hub_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2227,7 +2559,7 @@ func (x *WorkerLink) String() string {
 func (*WorkerLink) ProtoMessage() {}
 
 func (x *WorkerLink) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[26]
+	mi := &file_longarm_v1_hub_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2240,7 +2572,7 @@ func (x *WorkerLink) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkerLink.ProtoReflect.Descriptor instead.
 func (*WorkerLink) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{26}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *WorkerLink) GetWorker() string {
@@ -2296,7 +2628,7 @@ type LinkReport struct {
 
 func (x *LinkReport) Reset() {
 	*x = LinkReport{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[27]
+	mi := &file_longarm_v1_hub_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2308,7 +2640,7 @@ func (x *LinkReport) String() string {
 func (*LinkReport) ProtoMessage() {}
 
 func (x *LinkReport) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[27]
+	mi := &file_longarm_v1_hub_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2321,7 +2653,7 @@ func (x *LinkReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LinkReport.ProtoReflect.Descriptor instead.
 func (*LinkReport) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{27}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *LinkReport) GetClient() string {
@@ -2353,7 +2685,7 @@ type ReportLinksResponse struct {
 
 func (x *ReportLinksResponse) Reset() {
 	*x = ReportLinksResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[28]
+	mi := &file_longarm_v1_hub_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2365,7 +2697,7 @@ func (x *ReportLinksResponse) String() string {
 func (*ReportLinksResponse) ProtoMessage() {}
 
 func (x *ReportLinksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[28]
+	mi := &file_longarm_v1_hub_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2378,7 +2710,7 @@ func (x *ReportLinksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportLinksResponse.ProtoReflect.Descriptor instead.
 func (*ReportLinksResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{28}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{33}
 }
 
 type LinksRequest struct {
@@ -2389,7 +2721,7 @@ type LinksRequest struct {
 
 func (x *LinksRequest) Reset() {
 	*x = LinksRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[29]
+	mi := &file_longarm_v1_hub_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2401,7 +2733,7 @@ func (x *LinksRequest) String() string {
 func (*LinksRequest) ProtoMessage() {}
 
 func (x *LinksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[29]
+	mi := &file_longarm_v1_hub_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2414,7 +2746,7 @@ func (x *LinksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LinksRequest.ProtoReflect.Descriptor instead.
 func (*LinksRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{29}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{34}
 }
 
 type LinksResponse struct {
@@ -2426,7 +2758,7 @@ type LinksResponse struct {
 
 func (x *LinksResponse) Reset() {
 	*x = LinksResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[30]
+	mi := &file_longarm_v1_hub_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2438,7 +2770,7 @@ func (x *LinksResponse) String() string {
 func (*LinksResponse) ProtoMessage() {}
 
 func (x *LinksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[30]
+	mi := &file_longarm_v1_hub_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2451,7 +2783,7 @@ func (x *LinksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LinksResponse.ProtoReflect.Descriptor instead.
 func (*LinksResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{30}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *LinksResponse) GetReports() []*LinkReport {
@@ -2470,7 +2802,7 @@ type HistoryRequest struct {
 
 func (x *HistoryRequest) Reset() {
 	*x = HistoryRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[31]
+	mi := &file_longarm_v1_hub_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2482,7 +2814,7 @@ func (x *HistoryRequest) String() string {
 func (*HistoryRequest) ProtoMessage() {}
 
 func (x *HistoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[31]
+	mi := &file_longarm_v1_hub_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2495,7 +2827,7 @@ func (x *HistoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoryRequest.ProtoReflect.Descriptor instead.
 func (*HistoryRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{31}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *HistoryRequest) GetNode() string {
@@ -2516,7 +2848,7 @@ type MetricsPoint struct {
 
 func (x *MetricsPoint) Reset() {
 	*x = MetricsPoint{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[32]
+	mi := &file_longarm_v1_hub_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2528,7 +2860,7 @@ func (x *MetricsPoint) String() string {
 func (*MetricsPoint) ProtoMessage() {}
 
 func (x *MetricsPoint) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[32]
+	mi := &file_longarm_v1_hub_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2541,7 +2873,7 @@ func (x *MetricsPoint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricsPoint.ProtoReflect.Descriptor instead.
 func (*MetricsPoint) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{32}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *MetricsPoint) GetTime() *timestamppb.Timestamp {
@@ -2575,7 +2907,7 @@ type NodeHistory struct {
 
 func (x *NodeHistory) Reset() {
 	*x = NodeHistory{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[33]
+	mi := &file_longarm_v1_hub_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2587,7 +2919,7 @@ func (x *NodeHistory) String() string {
 func (*NodeHistory) ProtoMessage() {}
 
 func (x *NodeHistory) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[33]
+	mi := &file_longarm_v1_hub_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2600,7 +2932,7 @@ func (x *NodeHistory) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeHistory.ProtoReflect.Descriptor instead.
 func (*NodeHistory) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{33}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *NodeHistory) GetNode() string {
@@ -2626,7 +2958,7 @@ type HistoryResponse struct {
 
 func (x *HistoryResponse) Reset() {
 	*x = HistoryResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[34]
+	mi := &file_longarm_v1_hub_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2638,7 +2970,7 @@ func (x *HistoryResponse) String() string {
 func (*HistoryResponse) ProtoMessage() {}
 
 func (x *HistoryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[34]
+	mi := &file_longarm_v1_hub_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2651,7 +2983,7 @@ func (x *HistoryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoryResponse.ProtoReflect.Descriptor instead.
 func (*HistoryResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{34}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *HistoryResponse) GetNodes() []*NodeHistory {
@@ -2691,13 +3023,15 @@ type NodeInfo struct {
 	Tailnet       *TailnetState          `protobuf:"bytes,26,opt,name=tailnet,proto3" json:"tailnet,omitempty"`     // workers: as reported; clients: none
 	Isolation     string                 `protobuf:"bytes,27,opt,name=isolation,proto3" json:"isolation,omitempty"` // workers: "shared" | "per-user"
 	User          string                 `protobuf:"bytes,28,opt,name=user,proto3" json:"user,omitempty"`           // clients/admins: the user the node's certificates belong to
+	Owner         string                 `protobuf:"bytes,29,opt,name=owner,proto3" json:"owner,omitempty"`         // workers: the user who registered it ("" = shared fleet worker)
+	Shares        *WorkerShares          `protobuf:"bytes,30,opt,name=shares,proto3" json:"shares,omitempty"`       // workers with an owner: who else may use it
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *NodeInfo) Reset() {
 	*x = NodeInfo{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[35]
+	mi := &file_longarm_v1_hub_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2709,7 +3043,7 @@ func (x *NodeInfo) String() string {
 func (*NodeInfo) ProtoMessage() {}
 
 func (x *NodeInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[35]
+	mi := &file_longarm_v1_hub_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2722,7 +3056,7 @@ func (x *NodeInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeInfo.ProtoReflect.Descriptor instead.
 func (*NodeInfo) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{35}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *NodeInfo) GetName() string {
@@ -2921,6 +3255,20 @@ func (x *NodeInfo) GetUser() string {
 	return ""
 }
 
+func (x *NodeInfo) GetOwner() string {
+	if x != nil {
+		return x.Owner
+	}
+	return ""
+}
+
+func (x *NodeInfo) GetShares() *WorkerShares {
+	if x != nil {
+		return x.Shares
+	}
+	return nil
+}
+
 type ListNodesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	All           bool                   `protobuf:"varint,1,opt,name=all,proto3" json:"all,omitempty"` // include clients/admins and revoked nodes
@@ -2930,7 +3278,7 @@ type ListNodesRequest struct {
 
 func (x *ListNodesRequest) Reset() {
 	*x = ListNodesRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[36]
+	mi := &file_longarm_v1_hub_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2942,7 +3290,7 @@ func (x *ListNodesRequest) String() string {
 func (*ListNodesRequest) ProtoMessage() {}
 
 func (x *ListNodesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[36]
+	mi := &file_longarm_v1_hub_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2955,7 +3303,7 @@ func (x *ListNodesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNodesRequest.ProtoReflect.Descriptor instead.
 func (*ListNodesRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{36}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *ListNodesRequest) GetAll() bool {
@@ -2974,7 +3322,7 @@ type ListNodesResponse struct {
 
 func (x *ListNodesResponse) Reset() {
 	*x = ListNodesResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[37]
+	mi := &file_longarm_v1_hub_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2986,7 +3334,7 @@ func (x *ListNodesResponse) String() string {
 func (*ListNodesResponse) ProtoMessage() {}
 
 func (x *ListNodesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[37]
+	mi := &file_longarm_v1_hub_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2999,7 +3347,7 @@ func (x *ListNodesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNodesResponse.ProtoReflect.Descriptor instead.
 func (*ListNodesResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{37}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ListNodesResponse) GetNodes() []*NodeInfo {
@@ -3021,7 +3369,7 @@ type FleetJob struct {
 
 func (x *FleetJob) Reset() {
 	*x = FleetJob{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[38]
+	mi := &file_longarm_v1_hub_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3033,7 +3381,7 @@ func (x *FleetJob) String() string {
 func (*FleetJob) ProtoMessage() {}
 
 func (x *FleetJob) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[38]
+	mi := &file_longarm_v1_hub_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3046,7 +3394,7 @@ func (x *FleetJob) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetJob.ProtoReflect.Descriptor instead.
 func (*FleetJob) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{38}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *FleetJob) GetWorker() string {
@@ -3088,7 +3436,7 @@ type FleetJobsRequest struct {
 
 func (x *FleetJobsRequest) Reset() {
 	*x = FleetJobsRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[39]
+	mi := &file_longarm_v1_hub_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3100,7 +3448,7 @@ func (x *FleetJobsRequest) String() string {
 func (*FleetJobsRequest) ProtoMessage() {}
 
 func (x *FleetJobsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[39]
+	mi := &file_longarm_v1_hub_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3113,7 +3461,7 @@ func (x *FleetJobsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetJobsRequest.ProtoReflect.Descriptor instead.
 func (*FleetJobsRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{39}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *FleetJobsRequest) GetWorker() string {
@@ -3146,7 +3494,7 @@ type FleetJobsResponse struct {
 
 func (x *FleetJobsResponse) Reset() {
 	*x = FleetJobsResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[40]
+	mi := &file_longarm_v1_hub_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3158,7 +3506,7 @@ func (x *FleetJobsResponse) String() string {
 func (*FleetJobsResponse) ProtoMessage() {}
 
 func (x *FleetJobsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[40]
+	mi := &file_longarm_v1_hub_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3171,7 +3519,7 @@ func (x *FleetJobsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetJobsResponse.ProtoReflect.Descriptor instead.
 func (*FleetJobsResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{40}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *FleetJobsResponse) GetJobs() []*FleetJob {
@@ -3191,7 +3539,7 @@ type FleetJobRequest struct {
 
 func (x *FleetJobRequest) Reset() {
 	*x = FleetJobRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[41]
+	mi := &file_longarm_v1_hub_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3203,7 +3551,7 @@ func (x *FleetJobRequest) String() string {
 func (*FleetJobRequest) ProtoMessage() {}
 
 func (x *FleetJobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[41]
+	mi := &file_longarm_v1_hub_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3216,7 +3564,7 @@ func (x *FleetJobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetJobRequest.ProtoReflect.Descriptor instead.
 func (*FleetJobRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{41}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *FleetJobRequest) GetId() string {
@@ -3243,7 +3591,7 @@ type EventsRequest struct {
 
 func (x *EventsRequest) Reset() {
 	*x = EventsRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[42]
+	mi := &file_longarm_v1_hub_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3255,7 +3603,7 @@ func (x *EventsRequest) String() string {
 func (*EventsRequest) ProtoMessage() {}
 
 func (x *EventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[42]
+	mi := &file_longarm_v1_hub_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3268,7 +3616,7 @@ func (x *EventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EventsRequest.ProtoReflect.Descriptor instead.
 func (*EventsRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{42}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *EventsRequest) GetKinds() []string {
@@ -3299,7 +3647,7 @@ type FleetEvent struct {
 
 func (x *FleetEvent) Reset() {
 	*x = FleetEvent{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[43]
+	mi := &file_longarm_v1_hub_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3311,7 +3659,7 @@ func (x *FleetEvent) String() string {
 func (*FleetEvent) ProtoMessage() {}
 
 func (x *FleetEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[43]
+	mi := &file_longarm_v1_hub_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3324,7 +3672,7 @@ func (x *FleetEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetEvent.ProtoReflect.Descriptor instead.
 func (*FleetEvent) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{43}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *FleetEvent) GetTime() *timestamppb.Timestamp {
@@ -3384,7 +3732,7 @@ type PlaceRequest struct {
 
 func (x *PlaceRequest) Reset() {
 	*x = PlaceRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[44]
+	mi := &file_longarm_v1_hub_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3396,7 +3744,7 @@ func (x *PlaceRequest) String() string {
 func (*PlaceRequest) ProtoMessage() {}
 
 func (x *PlaceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[44]
+	mi := &file_longarm_v1_hub_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3409,7 +3757,7 @@ func (x *PlaceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaceRequest.ProtoReflect.Descriptor instead.
 func (*PlaceRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{44}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *PlaceRequest) GetJobId() string {
@@ -3476,7 +3824,7 @@ type PlaceUpdate struct {
 
 func (x *PlaceUpdate) Reset() {
 	*x = PlaceUpdate{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[45]
+	mi := &file_longarm_v1_hub_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3488,7 +3836,7 @@ func (x *PlaceUpdate) String() string {
 func (*PlaceUpdate) ProtoMessage() {}
 
 func (x *PlaceUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[45]
+	mi := &file_longarm_v1_hub_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3501,7 +3849,7 @@ func (x *PlaceUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaceUpdate.ProtoReflect.Descriptor instead.
 func (*PlaceUpdate) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{45}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *PlaceUpdate) GetState() string {
@@ -3564,7 +3912,7 @@ type AuditRequest struct {
 
 func (x *AuditRequest) Reset() {
 	*x = AuditRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[46]
+	mi := &file_longarm_v1_hub_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3576,7 +3924,7 @@ func (x *AuditRequest) String() string {
 func (*AuditRequest) ProtoMessage() {}
 
 func (x *AuditRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[46]
+	mi := &file_longarm_v1_hub_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3589,7 +3937,7 @@ func (x *AuditRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditRequest.ProtoReflect.Descriptor instead.
 func (*AuditRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{46}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *AuditRequest) GetNode() string {
@@ -3626,7 +3974,7 @@ type AuditRecord struct {
 
 func (x *AuditRecord) Reset() {
 	*x = AuditRecord{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[47]
+	mi := &file_longarm_v1_hub_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3638,7 +3986,7 @@ func (x *AuditRecord) String() string {
 func (*AuditRecord) ProtoMessage() {}
 
 func (x *AuditRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[47]
+	mi := &file_longarm_v1_hub_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3651,7 +3999,7 @@ func (x *AuditRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditRecord.ProtoReflect.Descriptor instead.
 func (*AuditRecord) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{47}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *AuditRecord) GetNode() string {
@@ -3698,7 +4046,7 @@ type AuditResponse struct {
 
 func (x *AuditResponse) Reset() {
 	*x = AuditResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[48]
+	mi := &file_longarm_v1_hub_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3710,7 +4058,7 @@ func (x *AuditResponse) String() string {
 func (*AuditResponse) ProtoMessage() {}
 
 func (x *AuditResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[48]
+	mi := &file_longarm_v1_hub_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3723,7 +4071,7 @@ func (x *AuditResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditResponse.ProtoReflect.Descriptor instead.
 func (*AuditResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{48}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *AuditResponse) GetRecords() []*AuditRecord {
@@ -3741,7 +4089,7 @@ type WhoamiRequest struct {
 
 func (x *WhoamiRequest) Reset() {
 	*x = WhoamiRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[49]
+	mi := &file_longarm_v1_hub_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3753,7 +4101,7 @@ func (x *WhoamiRequest) String() string {
 func (*WhoamiRequest) ProtoMessage() {}
 
 func (x *WhoamiRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[49]
+	mi := &file_longarm_v1_hub_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3766,7 +4114,159 @@ func (x *WhoamiRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WhoamiRequest.ProtoReflect.Descriptor instead.
 func (*WhoamiRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{49}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{54}
+}
+
+type CreateWorkerCodeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // the worker's name (default: its hostname)
+	Ttl           *durationpb.Duration   `protobuf:"bytes,2,opt,name=ttl,proto3" json:"ttl,omitempty"`   // default 24h
+	Labels        map[string]string      `protobuf:"bytes,3,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateWorkerCodeRequest) Reset() {
+	*x = CreateWorkerCodeRequest{}
+	mi := &file_longarm_v1_hub_proto_msgTypes[55]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateWorkerCodeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateWorkerCodeRequest) ProtoMessage() {}
+
+func (x *CreateWorkerCodeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_hub_proto_msgTypes[55]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateWorkerCodeRequest.ProtoReflect.Descriptor instead.
+func (*CreateWorkerCodeRequest) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{55}
+}
+
+func (x *CreateWorkerCodeRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateWorkerCodeRequest) GetTtl() *durationpb.Duration {
+	if x != nil {
+		return x.Ttl
+	}
+	return nil
+}
+
+func (x *CreateWorkerCodeRequest) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+type ShareWorkerRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Worker        string                 `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"`
+	AddUsers      []string               `protobuf:"bytes,2,rep,name=add_users,json=addUsers,proto3" json:"add_users,omitempty"`
+	RemoveUsers   []string               `protobuf:"bytes,3,rep,name=remove_users,json=removeUsers,proto3" json:"remove_users,omitempty"`
+	AddTeams      []string               `protobuf:"bytes,4,rep,name=add_teams,json=addTeams,proto3" json:"add_teams,omitempty"`
+	RemoveTeams   []string               `protobuf:"bytes,5,rep,name=remove_teams,json=removeTeams,proto3" json:"remove_teams,omitempty"`
+	SetEveryone   bool                   `protobuf:"varint,6,opt,name=set_everyone,json=setEveryone,proto3" json:"set_everyone,omitempty"`
+	Everyone      bool                   `protobuf:"varint,7,opt,name=everyone,proto3" json:"everyone,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ShareWorkerRequest) Reset() {
+	*x = ShareWorkerRequest{}
+	mi := &file_longarm_v1_hub_proto_msgTypes[56]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShareWorkerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShareWorkerRequest) ProtoMessage() {}
+
+func (x *ShareWorkerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_hub_proto_msgTypes[56]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShareWorkerRequest.ProtoReflect.Descriptor instead.
+func (*ShareWorkerRequest) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{56}
+}
+
+func (x *ShareWorkerRequest) GetWorker() string {
+	if x != nil {
+		return x.Worker
+	}
+	return ""
+}
+
+func (x *ShareWorkerRequest) GetAddUsers() []string {
+	if x != nil {
+		return x.AddUsers
+	}
+	return nil
+}
+
+func (x *ShareWorkerRequest) GetRemoveUsers() []string {
+	if x != nil {
+		return x.RemoveUsers
+	}
+	return nil
+}
+
+func (x *ShareWorkerRequest) GetAddTeams() []string {
+	if x != nil {
+		return x.AddTeams
+	}
+	return nil
+}
+
+func (x *ShareWorkerRequest) GetRemoveTeams() []string {
+	if x != nil {
+		return x.RemoveTeams
+	}
+	return nil
+}
+
+func (x *ShareWorkerRequest) GetSetEveryone() bool {
+	if x != nil {
+		return x.SetEveryone
+	}
+	return false
+}
+
+func (x *ShareWorkerRequest) GetEveryone() bool {
+	if x != nil {
+		return x.Everyone
+	}
+	return false
 }
 
 type WhoamiResponse struct {
@@ -3780,16 +4280,18 @@ type WhoamiResponse struct {
 	Tailnet       *TailnetInfo           `protobuf:"bytes,7,opt,name=tailnet,proto3" json:"tailnet,omitempty"` // the hub's tailnet (clients switch / re-key on it)
 	User          string                 `protobuf:"bytes,8,opt,name=user,proto3" json:"user,omitempty"`       // the user the caller acts as (owner of its jobs)
 	Teams         []string               `protobuf:"bytes,9,rep,name=teams,proto3" json:"teams,omitempty"`
-	Quota         *Quota                 `protobuf:"bytes,10,opt,name=quota,proto3" json:"quota,omitempty"`      // effective quota (defaults applied); unset = unlimited
-	Usage         *QuotaUsage            `protobuf:"bytes,11,opt,name=usage,proto3" json:"usage,omitempty"`      // fleet-wide, as the hub sees it
-	Tenancy       bool                   `protobuf:"varint,12,opt,name=tenancy,proto3" json:"tenancy,omitempty"` // the hub separates users (multi-tenancy is on)
+	Quota         *Quota                 `protobuf:"bytes,10,opt,name=quota,proto3" json:"quota,omitempty"`                        // effective quota (defaults applied); unset = unlimited
+	Usage         *QuotaUsage            `protobuf:"bytes,11,opt,name=usage,proto3" json:"usage,omitempty"`                        // fleet-wide, as the hub sees it
+	Tenancy       bool                   `protobuf:"varint,12,opt,name=tenancy,proto3" json:"tenancy,omitempty"`                   // the hub separates users (multi-tenancy is on)
+	CanShare      bool                   `protobuf:"varint,13,opt,name=can_share,json=canShare,proto3" json:"can_share,omitempty"` // may share own workers (ShareWorker)
+	Upn           string                 `protobuf:"bytes,14,opt,name=upn,proto3" json:"upn,omitempty"`                            // Entra users: the sign-in name
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *WhoamiResponse) Reset() {
 	*x = WhoamiResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[50]
+	mi := &file_longarm_v1_hub_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3801,7 +4303,7 @@ func (x *WhoamiResponse) String() string {
 func (*WhoamiResponse) ProtoMessage() {}
 
 func (x *WhoamiResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[50]
+	mi := &file_longarm_v1_hub_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3814,7 +4316,7 @@ func (x *WhoamiResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WhoamiResponse.ProtoReflect.Descriptor instead.
 func (*WhoamiResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{50}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *WhoamiResponse) GetName() string {
@@ -3901,6 +4403,20 @@ func (x *WhoamiResponse) GetTenancy() bool {
 	return false
 }
 
+func (x *WhoamiResponse) GetCanShare() bool {
+	if x != nil {
+		return x.CanShare
+	}
+	return false
+}
+
+func (x *WhoamiResponse) GetUpn() string {
+	if x != nil {
+		return x.Upn
+	}
+	return ""
+}
+
 // Quota limits one user (0 = unlimited / no default). Fleet-wide limits are
 // enforced by the hub's scheduler, per-worker ones by every worker.
 type Quota struct {
@@ -3920,7 +4436,7 @@ type Quota struct {
 
 func (x *Quota) Reset() {
 	*x = Quota{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[51]
+	mi := &file_longarm_v1_hub_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3932,7 +4448,7 @@ func (x *Quota) String() string {
 func (*Quota) ProtoMessage() {}
 
 func (x *Quota) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[51]
+	mi := &file_longarm_v1_hub_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3945,7 +4461,7 @@ func (x *Quota) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Quota.ProtoReflect.Descriptor instead.
 func (*Quota) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{51}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *Quota) GetMaxJobs() int32 {
@@ -4021,7 +4537,7 @@ type QuotaUsage struct {
 
 func (x *QuotaUsage) Reset() {
 	*x = QuotaUsage{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[52]
+	mi := &file_longarm_v1_hub_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4033,7 +4549,7 @@ func (x *QuotaUsage) String() string {
 func (*QuotaUsage) ProtoMessage() {}
 
 func (x *QuotaUsage) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[52]
+	mi := &file_longarm_v1_hub_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4046,7 +4562,7 @@ func (x *QuotaUsage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QuotaUsage.ProtoReflect.Descriptor instead.
 func (*QuotaUsage) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{52}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *QuotaUsage) GetJobs() int32 {
@@ -4073,16 +4589,18 @@ type TenantUser struct {
 	Disabled      bool                   `protobuf:"varint,4,opt,name=disabled,proto3" json:"disabled,omitempty"` // calls are refused until enabled again
 	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	CreatedBy     string                 `protobuf:"bytes,6,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
-	Devices       []string               `protobuf:"bytes,7,rep,name=devices,proto3" json:"devices,omitempty"` // output: nodes with certificates of this user
-	Usage         *QuotaUsage            `protobuf:"bytes,8,opt,name=usage,proto3" json:"usage,omitempty"`     // output
-	Panel         bool                   `protobuf:"varint,9,opt,name=panel,proto3" json:"panel,omitempty"`    // output: has a web panel login
+	Devices       []string               `protobuf:"bytes,7,rep,name=devices,proto3" json:"devices,omitempty"`                     // output: nodes with certificates of this user
+	Usage         *QuotaUsage            `protobuf:"bytes,8,opt,name=usage,proto3" json:"usage,omitempty"`                         // output
+	Panel         bool                   `protobuf:"varint,9,opt,name=panel,proto3" json:"panel,omitempty"`                        // output: has a web panel login
+	Upn           string                 `protobuf:"bytes,10,opt,name=upn,proto3" json:"upn,omitempty"`                            // users created by Entra sign-in: their sign-in name
+	CanShare      bool                   `protobuf:"varint,11,opt,name=can_share,json=canShare,proto3" json:"can_share,omitempty"` // may share own workers (set by an admin)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TenantUser) Reset() {
 	*x = TenantUser{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[53]
+	mi := &file_longarm_v1_hub_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4094,7 +4612,7 @@ func (x *TenantUser) String() string {
 func (*TenantUser) ProtoMessage() {}
 
 func (x *TenantUser) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[53]
+	mi := &file_longarm_v1_hub_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4107,7 +4625,7 @@ func (x *TenantUser) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantUser.ProtoReflect.Descriptor instead.
 func (*TenantUser) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{53}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *TenantUser) GetName() string {
@@ -4173,6 +4691,20 @@ func (x *TenantUser) GetPanel() bool {
 	return false
 }
 
+func (x *TenantUser) GetUpn() string {
+	if x != nil {
+		return x.Upn
+	}
+	return ""
+}
+
+func (x *TenantUser) GetCanShare() bool {
+	if x != nil {
+		return x.CanShare
+	}
+	return false
+}
+
 // TenancyPolicy is what workers need to know about users.
 type TenancyPolicy struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
@@ -4191,7 +4723,7 @@ type TenancyPolicy struct {
 
 func (x *TenancyPolicy) Reset() {
 	*x = TenancyPolicy{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[54]
+	mi := &file_longarm_v1_hub_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4203,7 +4735,7 @@ func (x *TenancyPolicy) String() string {
 func (*TenancyPolicy) ProtoMessage() {}
 
 func (x *TenancyPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[54]
+	mi := &file_longarm_v1_hub_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4216,7 +4748,7 @@ func (x *TenancyPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenancyPolicy.ProtoReflect.Descriptor instead.
 func (*TenancyPolicy) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{54}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *TenancyPolicy) GetVersion() int64 {
@@ -4273,13 +4805,15 @@ type PutUserRequest struct {
 	// panel: create (or reset) a web panel login for the user (role user):
 	// the response carries a generated password and TOTP secret, once.
 	Panel         bool `protobuf:"varint,13,opt,name=panel,proto3" json:"panel,omitempty"`
+	SetCanShare   bool `protobuf:"varint,14,opt,name=set_can_share,json=setCanShare,proto3" json:"set_can_share,omitempty"`
+	CanShare      bool `protobuf:"varint,15,opt,name=can_share,json=canShare,proto3" json:"can_share,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PutUserRequest) Reset() {
 	*x = PutUserRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[55]
+	mi := &file_longarm_v1_hub_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4291,7 +4825,7 @@ func (x *PutUserRequest) String() string {
 func (*PutUserRequest) ProtoMessage() {}
 
 func (x *PutUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[55]
+	mi := &file_longarm_v1_hub_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4304,7 +4838,7 @@ func (x *PutUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutUserRequest.ProtoReflect.Descriptor instead.
 func (*PutUserRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{55}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *PutUserRequest) GetName() string {
@@ -4398,6 +4932,20 @@ func (x *PutUserRequest) GetPanel() bool {
 	return false
 }
 
+func (x *PutUserRequest) GetSetCanShare() bool {
+	if x != nil {
+		return x.SetCanShare
+	}
+	return false
+}
+
+func (x *PutUserRequest) GetCanShare() bool {
+	if x != nil {
+		return x.CanShare
+	}
+	return false
+}
+
 type PutUserResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	User          *TenantUser            `protobuf:"bytes,1,opt,name=user,proto3" json:"user,omitempty"`
@@ -4411,7 +4959,7 @@ type PutUserResponse struct {
 
 func (x *PutUserResponse) Reset() {
 	*x = PutUserResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[56]
+	mi := &file_longarm_v1_hub_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4423,7 +4971,7 @@ func (x *PutUserResponse) String() string {
 func (*PutUserResponse) ProtoMessage() {}
 
 func (x *PutUserResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[56]
+	mi := &file_longarm_v1_hub_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4436,7 +4984,7 @@ func (x *PutUserResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutUserResponse.ProtoReflect.Descriptor instead.
 func (*PutUserResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{56}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *PutUserResponse) GetUser() *TenantUser {
@@ -4482,7 +5030,7 @@ type ListUsersRequest struct {
 
 func (x *ListUsersRequest) Reset() {
 	*x = ListUsersRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[57]
+	mi := &file_longarm_v1_hub_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4494,7 +5042,7 @@ func (x *ListUsersRequest) String() string {
 func (*ListUsersRequest) ProtoMessage() {}
 
 func (x *ListUsersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[57]
+	mi := &file_longarm_v1_hub_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4507,7 +5055,7 @@ func (x *ListUsersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListUsersRequest.ProtoReflect.Descriptor instead.
 func (*ListUsersRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{57}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{64}
 }
 
 type ListUsersResponse struct {
@@ -4521,7 +5069,7 @@ type ListUsersResponse struct {
 
 func (x *ListUsersResponse) Reset() {
 	*x = ListUsersResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[58]
+	mi := &file_longarm_v1_hub_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4533,7 +5081,7 @@ func (x *ListUsersResponse) String() string {
 func (*ListUsersResponse) ProtoMessage() {}
 
 func (x *ListUsersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[58]
+	mi := &file_longarm_v1_hub_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4546,7 +5094,7 @@ func (x *ListUsersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListUsersResponse.ProtoReflect.Descriptor instead.
 func (*ListUsersResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{58}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *ListUsersResponse) GetUsers() []*TenantUser {
@@ -4580,7 +5128,7 @@ type RemoveUserRequest struct {
 
 func (x *RemoveUserRequest) Reset() {
 	*x = RemoveUserRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[59]
+	mi := &file_longarm_v1_hub_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4592,7 +5140,7 @@ func (x *RemoveUserRequest) String() string {
 func (*RemoveUserRequest) ProtoMessage() {}
 
 func (x *RemoveUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[59]
+	mi := &file_longarm_v1_hub_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4605,7 +5153,7 @@ func (x *RemoveUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveUserRequest.ProtoReflect.Descriptor instead.
 func (*RemoveUserRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{59}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *RemoveUserRequest) GetName() string {
@@ -4632,7 +5180,7 @@ type RemoveUserResponse struct {
 
 func (x *RemoveUserResponse) Reset() {
 	*x = RemoveUserResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[60]
+	mi := &file_longarm_v1_hub_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4644,7 +5192,7 @@ func (x *RemoveUserResponse) String() string {
 func (*RemoveUserResponse) ProtoMessage() {}
 
 func (x *RemoveUserResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[60]
+	mi := &file_longarm_v1_hub_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4657,7 +5205,7 @@ func (x *RemoveUserResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveUserResponse.ProtoReflect.Descriptor instead.
 func (*RemoveUserResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{60}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *RemoveUserResponse) GetRevoked() []string {
@@ -4685,7 +5233,7 @@ type SetTeamRequest struct {
 
 func (x *SetTeamRequest) Reset() {
 	*x = SetTeamRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[61]
+	mi := &file_longarm_v1_hub_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4697,7 +5245,7 @@ func (x *SetTeamRequest) String() string {
 func (*SetTeamRequest) ProtoMessage() {}
 
 func (x *SetTeamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[61]
+	mi := &file_longarm_v1_hub_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4710,7 +5258,7 @@ func (x *SetTeamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetTeamRequest.ProtoReflect.Descriptor instead.
 func (*SetTeamRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{61}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *SetTeamRequest) GetTeam() string {
@@ -4744,7 +5292,7 @@ type Team struct {
 
 func (x *Team) Reset() {
 	*x = Team{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[62]
+	mi := &file_longarm_v1_hub_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4756,7 +5304,7 @@ func (x *Team) String() string {
 func (*Team) ProtoMessage() {}
 
 func (x *Team) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[62]
+	mi := &file_longarm_v1_hub_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4769,7 +5317,7 @@ func (x *Team) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Team.ProtoReflect.Descriptor instead.
 func (*Team) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{62}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *Team) GetName() string {
@@ -4794,7 +5342,7 @@ type ListTeamsRequest struct {
 
 func (x *ListTeamsRequest) Reset() {
 	*x = ListTeamsRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[63]
+	mi := &file_longarm_v1_hub_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4806,7 +5354,7 @@ func (x *ListTeamsRequest) String() string {
 func (*ListTeamsRequest) ProtoMessage() {}
 
 func (x *ListTeamsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[63]
+	mi := &file_longarm_v1_hub_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4819,7 +5367,7 @@ func (x *ListTeamsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTeamsRequest.ProtoReflect.Descriptor instead.
 func (*ListTeamsRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{63}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{70}
 }
 
 type ListTeamsResponse struct {
@@ -4831,7 +5379,7 @@ type ListTeamsResponse struct {
 
 func (x *ListTeamsResponse) Reset() {
 	*x = ListTeamsResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[64]
+	mi := &file_longarm_v1_hub_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4843,7 +5391,7 @@ func (x *ListTeamsResponse) String() string {
 func (*ListTeamsResponse) ProtoMessage() {}
 
 func (x *ListTeamsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[64]
+	mi := &file_longarm_v1_hub_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4856,7 +5404,7 @@ func (x *ListTeamsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTeamsResponse.ProtoReflect.Descriptor instead.
 func (*ListTeamsResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{64}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *ListTeamsResponse) GetTeams() []*Team {
@@ -4878,7 +5426,7 @@ type HubLogsRequest struct {
 
 func (x *HubLogsRequest) Reset() {
 	*x = HubLogsRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[65]
+	mi := &file_longarm_v1_hub_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4890,7 +5438,7 @@ func (x *HubLogsRequest) String() string {
 func (*HubLogsRequest) ProtoMessage() {}
 
 func (x *HubLogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[65]
+	mi := &file_longarm_v1_hub_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4903,7 +5451,7 @@ func (x *HubLogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HubLogsRequest.ProtoReflect.Descriptor instead.
 func (*HubLogsRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{65}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *HubLogsRequest) GetId() string {
@@ -4950,7 +5498,7 @@ type HubSubmitRequest struct {
 
 func (x *HubSubmitRequest) Reset() {
 	*x = HubSubmitRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[66]
+	mi := &file_longarm_v1_hub_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4962,7 +5510,7 @@ func (x *HubSubmitRequest) String() string {
 func (*HubSubmitRequest) ProtoMessage() {}
 
 func (x *HubSubmitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[66]
+	mi := &file_longarm_v1_hub_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4975,7 +5523,7 @@ func (x *HubSubmitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HubSubmitRequest.ProtoReflect.Descriptor instead.
 func (*HubSubmitRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{66}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *HubSubmitRequest) GetWorker() string {
@@ -5043,14 +5591,17 @@ type CreateJoinCodeRequest struct {
 	Name    string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`       // optional fixed node name
 	// client/admin codes: the user the certificate belongs to (multi-tenancy;
 	// several devices of one user share it). Default: the node name.
-	User          string `protobuf:"bytes,6,opt,name=user,proto3" json:"user,omitempty"`
+	User string `protobuf:"bytes,6,opt,name=user,proto3" json:"user,omitempty"`
+	// worker codes: the user who will own the worker (admins; users get
+	// their own through Fleet.CreateWorkerCode)
+	Owner         string `protobuf:"bytes,7,opt,name=owner,proto3" json:"owner,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateJoinCodeRequest) Reset() {
 	*x = CreateJoinCodeRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[67]
+	mi := &file_longarm_v1_hub_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5062,7 +5613,7 @@ func (x *CreateJoinCodeRequest) String() string {
 func (*CreateJoinCodeRequest) ProtoMessage() {}
 
 func (x *CreateJoinCodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[67]
+	mi := &file_longarm_v1_hub_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5075,7 +5626,7 @@ func (x *CreateJoinCodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateJoinCodeRequest.ProtoReflect.Descriptor instead.
 func (*CreateJoinCodeRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{67}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *CreateJoinCodeRequest) GetRole() string {
@@ -5120,6 +5671,13 @@ func (x *CreateJoinCodeRequest) GetUser() string {
 	return ""
 }
 
+func (x *CreateJoinCodeRequest) GetOwner() string {
+	if x != nil {
+		return x.Owner
+	}
+	return ""
+}
+
 type JoinCode struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"` // only in the CreateJoinCode response
@@ -5133,13 +5691,14 @@ type JoinCode struct {
 	Id            string                 `protobuf:"bytes,9,opt,name=id,proto3" json:"id,omitempty"` // short id (hash prefix), for listing
 	Name          string                 `protobuf:"bytes,10,opt,name=name,proto3" json:"name,omitempty"`
 	User          string                 `protobuf:"bytes,11,opt,name=user,proto3" json:"user,omitempty"`
+	Owner         string                 `protobuf:"bytes,12,opt,name=owner,proto3" json:"owner,omitempty"` // worker codes: the worker's owner
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *JoinCode) Reset() {
 	*x = JoinCode{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[68]
+	mi := &file_longarm_v1_hub_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5151,7 +5710,7 @@ func (x *JoinCode) String() string {
 func (*JoinCode) ProtoMessage() {}
 
 func (x *JoinCode) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[68]
+	mi := &file_longarm_v1_hub_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5164,7 +5723,7 @@ func (x *JoinCode) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinCode.ProtoReflect.Descriptor instead.
 func (*JoinCode) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{68}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *JoinCode) GetCode() string {
@@ -5244,6 +5803,13 @@ func (x *JoinCode) GetUser() string {
 	return ""
 }
 
+func (x *JoinCode) GetOwner() string {
+	if x != nil {
+		return x.Owner
+	}
+	return ""
+}
+
 type ListJoinCodesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -5252,7 +5818,7 @@ type ListJoinCodesRequest struct {
 
 func (x *ListJoinCodesRequest) Reset() {
 	*x = ListJoinCodesRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[69]
+	mi := &file_longarm_v1_hub_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5264,7 +5830,7 @@ func (x *ListJoinCodesRequest) String() string {
 func (*ListJoinCodesRequest) ProtoMessage() {}
 
 func (x *ListJoinCodesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[69]
+	mi := &file_longarm_v1_hub_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5277,7 +5843,7 @@ func (x *ListJoinCodesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListJoinCodesRequest.ProtoReflect.Descriptor instead.
 func (*ListJoinCodesRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{69}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{76}
 }
 
 type ListJoinCodesResponse struct {
@@ -5289,7 +5855,7 @@ type ListJoinCodesResponse struct {
 
 func (x *ListJoinCodesResponse) Reset() {
 	*x = ListJoinCodesResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[70]
+	mi := &file_longarm_v1_hub_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5301,7 +5867,7 @@ func (x *ListJoinCodesResponse) String() string {
 func (*ListJoinCodesResponse) ProtoMessage() {}
 
 func (x *ListJoinCodesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[70]
+	mi := &file_longarm_v1_hub_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5314,7 +5880,7 @@ func (x *ListJoinCodesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListJoinCodesResponse.ProtoReflect.Descriptor instead.
 func (*ListJoinCodesResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{70}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *ListJoinCodesResponse) GetCodes() []*JoinCode {
@@ -5333,7 +5899,7 @@ type NodeRequest struct {
 
 func (x *NodeRequest) Reset() {
 	*x = NodeRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[71]
+	mi := &file_longarm_v1_hub_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5345,7 +5911,7 @@ func (x *NodeRequest) String() string {
 func (*NodeRequest) ProtoMessage() {}
 
 func (x *NodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[71]
+	mi := &file_longarm_v1_hub_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5358,7 +5924,7 @@ func (x *NodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeRequest.ProtoReflect.Descriptor instead.
 func (*NodeRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{71}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *NodeRequest) GetName() string {
@@ -5378,7 +5944,7 @@ type SetDrainRequest struct {
 
 func (x *SetDrainRequest) Reset() {
 	*x = SetDrainRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[72]
+	mi := &file_longarm_v1_hub_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5390,7 +5956,7 @@ func (x *SetDrainRequest) String() string {
 func (*SetDrainRequest) ProtoMessage() {}
 
 func (x *SetDrainRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[72]
+	mi := &file_longarm_v1_hub_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5403,7 +5969,7 @@ func (x *SetDrainRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetDrainRequest.ProtoReflect.Descriptor instead.
 func (*SetDrainRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{72}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *SetDrainRequest) GetName() string {
@@ -5430,7 +5996,7 @@ type SetLabelsRequest struct {
 
 func (x *SetLabelsRequest) Reset() {
 	*x = SetLabelsRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[73]
+	mi := &file_longarm_v1_hub_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5442,7 +6008,7 @@ func (x *SetLabelsRequest) String() string {
 func (*SetLabelsRequest) ProtoMessage() {}
 
 func (x *SetLabelsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[73]
+	mi := &file_longarm_v1_hub_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5455,7 +6021,7 @@ func (x *SetLabelsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetLabelsRequest.ProtoReflect.Descriptor instead.
 func (*SetLabelsRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{73}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *SetLabelsRequest) GetName() string {
@@ -5489,7 +6055,7 @@ type Profile struct {
 
 func (x *Profile) Reset() {
 	*x = Profile{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[74]
+	mi := &file_longarm_v1_hub_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5501,7 +6067,7 @@ func (x *Profile) String() string {
 func (*Profile) ProtoMessage() {}
 
 func (x *Profile) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[74]
+	mi := &file_longarm_v1_hub_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5514,7 +6080,7 @@ func (x *Profile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Profile.ProtoReflect.Descriptor instead.
 func (*Profile) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{74}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *Profile) GetName() string {
@@ -5574,7 +6140,7 @@ type ListProfilesRequest struct {
 
 func (x *ListProfilesRequest) Reset() {
 	*x = ListProfilesRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[75]
+	mi := &file_longarm_v1_hub_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5586,7 +6152,7 @@ func (x *ListProfilesRequest) String() string {
 func (*ListProfilesRequest) ProtoMessage() {}
 
 func (x *ListProfilesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[75]
+	mi := &file_longarm_v1_hub_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5599,7 +6165,7 @@ func (x *ListProfilesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListProfilesRequest.ProtoReflect.Descriptor instead.
 func (*ListProfilesRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{75}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{82}
 }
 
 type ListProfilesResponse struct {
@@ -5611,7 +6177,7 @@ type ListProfilesResponse struct {
 
 func (x *ListProfilesResponse) Reset() {
 	*x = ListProfilesResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[76]
+	mi := &file_longarm_v1_hub_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5623,7 +6189,7 @@ func (x *ListProfilesResponse) String() string {
 func (*ListProfilesResponse) ProtoMessage() {}
 
 func (x *ListProfilesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[76]
+	mi := &file_longarm_v1_hub_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5636,7 +6202,7 @@ func (x *ListProfilesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListProfilesResponse.ProtoReflect.Descriptor instead.
 func (*ListProfilesResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{76}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *ListProfilesResponse) GetProfiles() []*Profile {
@@ -5656,7 +6222,7 @@ type AssignProfileRequest struct {
 
 func (x *AssignProfileRequest) Reset() {
 	*x = AssignProfileRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[77]
+	mi := &file_longarm_v1_hub_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5668,7 +6234,7 @@ func (x *AssignProfileRequest) String() string {
 func (*AssignProfileRequest) ProtoMessage() {}
 
 func (x *AssignProfileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[77]
+	mi := &file_longarm_v1_hub_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5681,7 +6247,7 @@ func (x *AssignProfileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignProfileRequest.ProtoReflect.Descriptor instead.
 func (*AssignProfileRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{77}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *AssignProfileRequest) GetNode() string {
@@ -5712,7 +6278,7 @@ type TailnetAuth struct {
 
 func (x *TailnetAuth) Reset() {
 	*x = TailnetAuth{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[78]
+	mi := &file_longarm_v1_hub_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5724,7 +6290,7 @@ func (x *TailnetAuth) String() string {
 func (*TailnetAuth) ProtoMessage() {}
 
 func (x *TailnetAuth) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[78]
+	mi := &file_longarm_v1_hub_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5737,7 +6303,7 @@ func (x *TailnetAuth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TailnetAuth.ProtoReflect.Descriptor instead.
 func (*TailnetAuth) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{78}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{85}
 }
 
 func (x *TailnetAuth) GetControlUrl() string {
@@ -5793,7 +6359,7 @@ type TailnetKeyRequest struct {
 
 func (x *TailnetKeyRequest) Reset() {
 	*x = TailnetKeyRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[79]
+	mi := &file_longarm_v1_hub_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5805,7 +6371,7 @@ func (x *TailnetKeyRequest) String() string {
 func (*TailnetKeyRequest) ProtoMessage() {}
 
 func (x *TailnetKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[79]
+	mi := &file_longarm_v1_hub_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5818,7 +6384,7 @@ func (x *TailnetKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TailnetKeyRequest.ProtoReflect.Descriptor instead.
 func (*TailnetKeyRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{79}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{86}
 }
 
 func (x *TailnetKeyRequest) GetReason() string {
@@ -5840,7 +6406,7 @@ type TailnetInfo struct {
 
 func (x *TailnetInfo) Reset() {
 	*x = TailnetInfo{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[80]
+	mi := &file_longarm_v1_hub_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5852,7 +6418,7 @@ func (x *TailnetInfo) String() string {
 func (*TailnetInfo) ProtoMessage() {}
 
 func (x *TailnetInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[80]
+	mi := &file_longarm_v1_hub_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5865,7 +6431,7 @@ func (x *TailnetInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TailnetInfo.ProtoReflect.Descriptor instead.
 func (*TailnetInfo) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{80}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *TailnetInfo) GetProvider() string {
@@ -5906,7 +6472,7 @@ type TailnetState struct {
 
 func (x *TailnetState) Reset() {
 	*x = TailnetState{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[81]
+	mi := &file_longarm_v1_hub_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5918,7 +6484,7 @@ func (x *TailnetState) String() string {
 func (*TailnetState) ProtoMessage() {}
 
 func (x *TailnetState) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[81]
+	mi := &file_longarm_v1_hub_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5931,7 +6497,7 @@ func (x *TailnetState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TailnetState.ProtoReflect.Descriptor instead.
 func (*TailnetState) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{81}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{88}
 }
 
 func (x *TailnetState) GetControlUrl() string {
@@ -5991,7 +6557,7 @@ type TailnetStatusRequest struct {
 
 func (x *TailnetStatusRequest) Reset() {
 	*x = TailnetStatusRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[82]
+	mi := &file_longarm_v1_hub_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6003,7 +6569,7 @@ func (x *TailnetStatusRequest) String() string {
 func (*TailnetStatusRequest) ProtoMessage() {}
 
 func (x *TailnetStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[82]
+	mi := &file_longarm_v1_hub_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6016,7 +6582,7 @@ func (x *TailnetStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TailnetStatusRequest.ProtoReflect.Descriptor instead.
 func (*TailnetStatusRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{82}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{89}
 }
 
 type TailnetNodeStatus struct {
@@ -6035,7 +6601,7 @@ type TailnetNodeStatus struct {
 
 func (x *TailnetNodeStatus) Reset() {
 	*x = TailnetNodeStatus{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[83]
+	mi := &file_longarm_v1_hub_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6047,7 +6613,7 @@ func (x *TailnetNodeStatus) String() string {
 func (*TailnetNodeStatus) ProtoMessage() {}
 
 func (x *TailnetNodeStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[83]
+	mi := &file_longarm_v1_hub_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6060,7 +6626,7 @@ func (x *TailnetNodeStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TailnetNodeStatus.ProtoReflect.Descriptor instead.
 func (*TailnetNodeStatus) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{83}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{90}
 }
 
 func (x *TailnetNodeStatus) GetName() string {
@@ -6140,7 +6706,7 @@ type TailnetStatusResponse struct {
 
 func (x *TailnetStatusResponse) Reset() {
 	*x = TailnetStatusResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[84]
+	mi := &file_longarm_v1_hub_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6152,7 +6718,7 @@ func (x *TailnetStatusResponse) String() string {
 func (*TailnetStatusResponse) ProtoMessage() {}
 
 func (x *TailnetStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[84]
+	mi := &file_longarm_v1_hub_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6165,7 +6731,7 @@ func (x *TailnetStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TailnetStatusResponse.ProtoReflect.Descriptor instead.
 func (*TailnetStatusResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{84}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{91}
 }
 
 func (x *TailnetStatusResponse) GetProvider() string {
@@ -6259,7 +6825,7 @@ type UpdateStatus struct {
 
 func (x *UpdateStatus) Reset() {
 	*x = UpdateStatus{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[85]
+	mi := &file_longarm_v1_hub_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6271,7 +6837,7 @@ func (x *UpdateStatus) String() string {
 func (*UpdateStatus) ProtoMessage() {}
 
 func (x *UpdateStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[85]
+	mi := &file_longarm_v1_hub_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6284,7 +6850,7 @@ func (x *UpdateStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateStatus.ProtoReflect.Descriptor instead.
 func (*UpdateStatus) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{85}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{92}
 }
 
 func (x *UpdateStatus) GetState() string {
@@ -6331,7 +6897,7 @@ type UpdateHint struct {
 
 func (x *UpdateHint) Reset() {
 	*x = UpdateHint{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[86]
+	mi := &file_longarm_v1_hub_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6343,7 +6909,7 @@ func (x *UpdateHint) String() string {
 func (*UpdateHint) ProtoMessage() {}
 
 func (x *UpdateHint) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[86]
+	mi := &file_longarm_v1_hub_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6356,7 +6922,7 @@ func (x *UpdateHint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateHint.ProtoReflect.Descriptor instead.
 func (*UpdateHint) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{86}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{93}
 }
 
 func (x *UpdateHint) GetVersion() string {
@@ -6378,7 +6944,7 @@ type UpdateCheckRequest struct {
 
 func (x *UpdateCheckRequest) Reset() {
 	*x = UpdateCheckRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[87]
+	mi := &file_longarm_v1_hub_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6390,7 +6956,7 @@ func (x *UpdateCheckRequest) String() string {
 func (*UpdateCheckRequest) ProtoMessage() {}
 
 func (x *UpdateCheckRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[87]
+	mi := &file_longarm_v1_hub_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6403,7 +6969,7 @@ func (x *UpdateCheckRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateCheckRequest.ProtoReflect.Descriptor instead.
 func (*UpdateCheckRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{87}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{94}
 }
 
 func (x *UpdateCheckRequest) GetOs() string {
@@ -6445,7 +7011,7 @@ type UpdateCheckResponse struct {
 
 func (x *UpdateCheckResponse) Reset() {
 	*x = UpdateCheckResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[88]
+	mi := &file_longarm_v1_hub_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6457,7 +7023,7 @@ func (x *UpdateCheckResponse) String() string {
 func (*UpdateCheckResponse) ProtoMessage() {}
 
 func (x *UpdateCheckResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[88]
+	mi := &file_longarm_v1_hub_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6470,7 +7036,7 @@ func (x *UpdateCheckResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateCheckResponse.ProtoReflect.Descriptor instead.
 func (*UpdateCheckResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{88}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{95}
 }
 
 func (x *UpdateCheckResponse) GetVersion() string {
@@ -6508,7 +7074,7 @@ type ReleaseFile struct {
 
 func (x *ReleaseFile) Reset() {
 	*x = ReleaseFile{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[89]
+	mi := &file_longarm_v1_hub_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6520,7 +7086,7 @@ func (x *ReleaseFile) String() string {
 func (*ReleaseFile) ProtoMessage() {}
 
 func (x *ReleaseFile) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[89]
+	mi := &file_longarm_v1_hub_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6533,7 +7099,7 @@ func (x *ReleaseFile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseFile.ProtoReflect.Descriptor instead.
 func (*ReleaseFile) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{89}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{96}
 }
 
 func (x *ReleaseFile) GetName() string {
@@ -6589,7 +7155,7 @@ type ReleaseFileRequest struct {
 
 func (x *ReleaseFileRequest) Reset() {
 	*x = ReleaseFileRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[90]
+	mi := &file_longarm_v1_hub_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6601,7 +7167,7 @@ func (x *ReleaseFileRequest) String() string {
 func (*ReleaseFileRequest) ProtoMessage() {}
 
 func (x *ReleaseFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[90]
+	mi := &file_longarm_v1_hub_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6614,7 +7180,7 @@ func (x *ReleaseFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseFileRequest.ProtoReflect.Descriptor instead.
 func (*ReleaseFileRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{90}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{97}
 }
 
 func (x *ReleaseFileRequest) GetVersion() string {
@@ -6651,7 +7217,7 @@ type ReleaseVersion struct {
 
 func (x *ReleaseVersion) Reset() {
 	*x = ReleaseVersion{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[91]
+	mi := &file_longarm_v1_hub_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6663,7 +7229,7 @@ func (x *ReleaseVersion) String() string {
 func (*ReleaseVersion) ProtoMessage() {}
 
 func (x *ReleaseVersion) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[91]
+	mi := &file_longarm_v1_hub_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6676,7 +7242,7 @@ func (x *ReleaseVersion) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseVersion.ProtoReflect.Descriptor instead.
 func (*ReleaseVersion) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{91}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{98}
 }
 
 func (x *ReleaseVersion) GetVersion() string {
@@ -6730,7 +7296,7 @@ type ReleaseUpload struct {
 
 func (x *ReleaseUpload) Reset() {
 	*x = ReleaseUpload{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[92]
+	mi := &file_longarm_v1_hub_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6742,7 +7308,7 @@ func (x *ReleaseUpload) String() string {
 func (*ReleaseUpload) ProtoMessage() {}
 
 func (x *ReleaseUpload) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[92]
+	mi := &file_longarm_v1_hub_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6755,7 +7321,7 @@ func (x *ReleaseUpload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseUpload.ProtoReflect.Descriptor instead.
 func (*ReleaseUpload) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{92}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{99}
 }
 
 func (x *ReleaseUpload) GetMsg() isReleaseUpload_Msg {
@@ -6810,7 +7376,7 @@ type ReleaseUploadHeader struct {
 
 func (x *ReleaseUploadHeader) Reset() {
 	*x = ReleaseUploadHeader{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[93]
+	mi := &file_longarm_v1_hub_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6822,7 +7388,7 @@ func (x *ReleaseUploadHeader) String() string {
 func (*ReleaseUploadHeader) ProtoMessage() {}
 
 func (x *ReleaseUploadHeader) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[93]
+	mi := &file_longarm_v1_hub_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6835,7 +7401,7 @@ func (x *ReleaseUploadHeader) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseUploadHeader.ProtoReflect.Descriptor instead.
 func (*ReleaseUploadHeader) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{93}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{100}
 }
 
 func (x *ReleaseUploadHeader) GetVersion() string {
@@ -6871,7 +7437,7 @@ type ReleaseUploadChunk struct {
 
 func (x *ReleaseUploadChunk) Reset() {
 	*x = ReleaseUploadChunk{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[94]
+	mi := &file_longarm_v1_hub_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6883,7 +7449,7 @@ func (x *ReleaseUploadChunk) String() string {
 func (*ReleaseUploadChunk) ProtoMessage() {}
 
 func (x *ReleaseUploadChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[94]
+	mi := &file_longarm_v1_hub_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6896,7 +7462,7 @@ func (x *ReleaseUploadChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseUploadChunk.ProtoReflect.Descriptor instead.
 func (*ReleaseUploadChunk) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{94}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{101}
 }
 
 func (x *ReleaseUploadChunk) GetName() string {
@@ -6935,7 +7501,7 @@ type ListReleasesRequest struct {
 
 func (x *ListReleasesRequest) Reset() {
 	*x = ListReleasesRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[95]
+	mi := &file_longarm_v1_hub_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6947,7 +7513,7 @@ func (x *ListReleasesRequest) String() string {
 func (*ListReleasesRequest) ProtoMessage() {}
 
 func (x *ListReleasesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[95]
+	mi := &file_longarm_v1_hub_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6960,7 +7526,7 @@ func (x *ListReleasesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListReleasesRequest.ProtoReflect.Descriptor instead.
 func (*ListReleasesRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{95}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{102}
 }
 
 type ListReleasesResponse struct {
@@ -6973,7 +7539,7 @@ type ListReleasesResponse struct {
 
 func (x *ListReleasesResponse) Reset() {
 	*x = ListReleasesResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[96]
+	mi := &file_longarm_v1_hub_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6985,7 +7551,7 @@ func (x *ListReleasesResponse) String() string {
 func (*ListReleasesResponse) ProtoMessage() {}
 
 func (x *ListReleasesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[96]
+	mi := &file_longarm_v1_hub_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6998,7 +7564,7 @@ func (x *ListReleasesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListReleasesResponse.ProtoReflect.Descriptor instead.
 func (*ListReleasesResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{96}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{103}
 }
 
 func (x *ListReleasesResponse) GetReleases() []*ReleaseVersion {
@@ -7030,7 +7596,7 @@ type PushReleaseRequest struct {
 
 func (x *PushReleaseRequest) Reset() {
 	*x = PushReleaseRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[97]
+	mi := &file_longarm_v1_hub_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7042,7 +7608,7 @@ func (x *PushReleaseRequest) String() string {
 func (*PushReleaseRequest) ProtoMessage() {}
 
 func (x *PushReleaseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[97]
+	mi := &file_longarm_v1_hub_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7055,7 +7621,7 @@ func (x *PushReleaseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PushReleaseRequest.ProtoReflect.Descriptor instead.
 func (*PushReleaseRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{97}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{104}
 }
 
 func (x *PushReleaseRequest) GetVersion() string {
@@ -7115,7 +7681,7 @@ type GetRolloutRequest struct {
 
 func (x *GetRolloutRequest) Reset() {
 	*x = GetRolloutRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[98]
+	mi := &file_longarm_v1_hub_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7127,7 +7693,7 @@ func (x *GetRolloutRequest) String() string {
 func (*GetRolloutRequest) ProtoMessage() {}
 
 func (x *GetRolloutRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[98]
+	mi := &file_longarm_v1_hub_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7140,7 +7706,7 @@ func (x *GetRolloutRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRolloutRequest.ProtoReflect.Descriptor instead.
 func (*GetRolloutRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{98}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{105}
 }
 
 type Rollout struct {
@@ -7167,7 +7733,7 @@ type Rollout struct {
 
 func (x *Rollout) Reset() {
 	*x = Rollout{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[99]
+	mi := &file_longarm_v1_hub_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7179,7 +7745,7 @@ func (x *Rollout) String() string {
 func (*Rollout) ProtoMessage() {}
 
 func (x *Rollout) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[99]
+	mi := &file_longarm_v1_hub_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7192,7 +7758,7 @@ func (x *Rollout) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Rollout.ProtoReflect.Descriptor instead.
 func (*Rollout) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{99}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{106}
 }
 
 func (x *Rollout) GetVersion() string {
@@ -7319,7 +7885,7 @@ type LeaveRequest struct {
 
 func (x *LeaveRequest) Reset() {
 	*x = LeaveRequest{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[100]
+	mi := &file_longarm_v1_hub_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7331,7 +7897,7 @@ func (x *LeaveRequest) String() string {
 func (*LeaveRequest) ProtoMessage() {}
 
 func (x *LeaveRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[100]
+	mi := &file_longarm_v1_hub_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7344,7 +7910,7 @@ func (x *LeaveRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaveRequest.ProtoReflect.Descriptor instead.
 func (*LeaveRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{100}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{107}
 }
 
 func (x *LeaveRequest) GetReason() string {
@@ -7371,7 +7937,7 @@ type LeaveResponse struct {
 
 func (x *LeaveResponse) Reset() {
 	*x = LeaveResponse{}
-	mi := &file_longarm_v1_hub_proto_msgTypes[101]
+	mi := &file_longarm_v1_hub_proto_msgTypes[108]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7383,7 +7949,7 @@ func (x *LeaveResponse) String() string {
 func (*LeaveResponse) ProtoMessage() {}
 
 func (x *LeaveResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_hub_proto_msgTypes[101]
+	mi := &file_longarm_v1_hub_proto_msgTypes[108]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7396,7 +7962,7 @@ func (x *LeaveResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaveResponse.ProtoReflect.Descriptor instead.
 func (*LeaveResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{101}
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{108}
 }
 
 func (x *LeaveResponse) GetName() string {
@@ -7418,7 +7984,21 @@ var File_longarm_v1_hub_proto protoreflect.FileDescriptor
 const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\n" +
 	"\x14longarm/v1/hub.proto\x12\n" +
-	"longarm.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18longarm/v1/longarm.proto\"\xa8\x01\n" +
+	"longarm.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18longarm/v1/longarm.proto\"\x11\n" +
+	"\x0fAuthInfoRequest\"\x83\x01\n" +
+	"\x10AuthInfoResponse\x12&\n" +
+	"\x0fentra_tenant_id\x18\x01 \x01(\tR\rentraTenantId\x12&\n" +
+	"\x0fentra_client_id\x18\x02 \x01(\tR\rentraClientId\x12\x1f\n" +
+	"\ventra_scope\x18\x03 \x01(\tR\n" +
+	"entraScope\"\xbc\x01\n" +
+	"\x10EntraJoinRequest\x12!\n" +
+	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12\x17\n" +
+	"\acsr_pem\x18\x02 \x01(\fR\x06csrPem\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1a\n" +
+	"\bhostname\x18\x04 \x01(\tR\bhostname\x12\x0e\n" +
+	"\x02os\x18\x05 \x01(\tR\x02os\x12\x12\n" +
+	"\x04arch\x18\x06 \x01(\tR\x04arch\x12\x18\n" +
+	"\aversion\x18\a \x01(\tR\aversion\"\xa8\x01\n" +
 	"\vJoinRequest\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x17\n" +
 	"\acsr_pem\x18\x02 \x01(\fR\x06csrPem\x12\x12\n" +
@@ -7512,7 +8092,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x1a;\n" +
 	"\rVersionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbf\x05\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x80\x06\n" +
 	"\n" +
 	"HubCommand\x122\n" +
 	"\awelcome\x18\x01 \x01(\v2\x16.longarm.v1.HubWelcomeH\x00R\awelcome\x12;\n" +
@@ -7529,8 +8109,17 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x0ftoolchain_apply\x18\n" +
 	" \x01(\v2\x1d.longarm.v1.HubToolchainApplyH\x00R\x0etoolchainApply\x123\n" +
 	"\atailnet\x18\v \x01(\v2\x17.longarm.v1.TailnetInfoH\x00R\atailnet\x125\n" +
-	"\atenancy\x18\f \x01(\v2\x19.longarm.v1.TenancyPolicyH\x00R\atenancyB\x05\n" +
-	"\x03msg\"K\n" +
+	"\atenancy\x18\f \x01(\v2\x19.longarm.v1.TenancyPolicyH\x00R\atenancy\x12?\n" +
+	"\rworker_access\x18\r \x01(\v2\x18.longarm.v1.WorkerAccessH\x00R\fworkerAccessB\x05\n" +
+	"\x03msg\"p\n" +
+	"\fWorkerAccess\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\x03R\aversion\x12\x14\n" +
+	"\x05owner\x18\x02 \x01(\tR\x05owner\x120\n" +
+	"\x06shares\x18\x03 \x01(\v2\x18.longarm.v1.WorkerSharesR\x06shares\"V\n" +
+	"\fWorkerShares\x12\x14\n" +
+	"\x05users\x18\x01 \x03(\tR\x05users\x12\x14\n" +
+	"\x05teams\x18\x02 \x03(\tR\x05teams\x12\x1a\n" +
+	"\beveryone\x18\x03 \x01(\bR\beveryone\"K\n" +
 	"\n" +
 	"HubJobKill\x12\x1d\n" +
 	"\n" +
@@ -7630,7 +8219,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x120\n" +
 	"\x06points\x18\x02 \x03(\v2\x18.longarm.v1.MetricsPointR\x06points\"@\n" +
 	"\x0fHistoryResponse\x12-\n" +
-	"\x05nodes\x18\x01 \x03(\v2\x17.longarm.v1.NodeHistoryR\x05nodes\"\x91\b\n" +
+	"\x05nodes\x18\x01 \x03(\v2\x17.longarm.v1.NodeHistoryR\x05nodes\"\xd9\b\n" +
 	"\bNodeInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12\x14\n" +
@@ -7664,7 +8253,9 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x0freserved_mem_gb\x18\x19 \x01(\x01R\rreservedMemGb\x122\n" +
 	"\atailnet\x18\x1a \x01(\v2\x18.longarm.v1.TailnetStateR\atailnet\x12\x1c\n" +
 	"\tisolation\x18\x1b \x01(\tR\tisolation\x12\x12\n" +
-	"\x04user\x18\x1c \x01(\tR\x04user\x1a9\n" +
+	"\x04user\x18\x1c \x01(\tR\x04user\x12\x14\n" +
+	"\x05owner\x18\x1d \x01(\tR\x05owner\x120\n" +
+	"\x06shares\x18\x1e \x01(\v2\x18.longarm.v1.WorkerSharesR\x06shares\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"$\n" +
@@ -7729,7 +8320,22 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x04json\x18\x05 \x01(\tR\x04json\"B\n" +
 	"\rAuditResponse\x121\n" +
 	"\arecords\x18\x01 \x03(\v2\x17.longarm.v1.AuditRecordR\arecords\"\x0f\n" +
-	"\rWhoamiRequest\"\xc2\x03\n" +
+	"\rWhoamiRequest\"\xde\x01\n" +
+	"\x17CreateWorkerCodeRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12+\n" +
+	"\x03ttl\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x03ttl\x12G\n" +
+	"\x06labels\x18\x03 \x03(\v2/.longarm.v1.CreateWorkerCodeRequest.LabelsEntryR\x06labels\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xeb\x01\n" +
+	"\x12ShareWorkerRequest\x12\x16\n" +
+	"\x06worker\x18\x01 \x01(\tR\x06worker\x12\x1b\n" +
+	"\tadd_users\x18\x02 \x03(\tR\baddUsers\x12!\n" +
+	"\fremove_users\x18\x03 \x03(\tR\vremoveUsers\x12\x1b\n" +
+	"\tadd_teams\x18\x04 \x03(\tR\baddTeams\x12!\n" +
+	"\fremove_teams\x18\x05 \x03(\tR\vremoveTeams\x12!\n" +
+	"\fset_everyone\x18\x06 \x01(\bR\vsetEveryone\x12\x1a\n" +
+	"\beveryone\x18\a \x01(\bR\beveryone\"\xf1\x03\n" +
 	"\x0eWhoamiResponse\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12\x19\n" +
@@ -7744,7 +8350,9 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x05quota\x18\n" +
 	" \x01(\v2\x11.longarm.v1.QuotaR\x05quota\x12,\n" +
 	"\x05usage\x18\v \x01(\v2\x16.longarm.v1.QuotaUsageR\x05usage\x12\x18\n" +
-	"\atenancy\x18\f \x01(\bR\atenancy\"\xd8\x02\n" +
+	"\atenancy\x18\f \x01(\bR\atenancy\x12\x1b\n" +
+	"\tcan_share\x18\r \x01(\bR\bcanShare\x12\x10\n" +
+	"\x03upn\x18\x0e \x01(\tR\x03upn\"\xd8\x02\n" +
 	"\x05Quota\x12\x19\n" +
 	"\bmax_jobs\x18\x01 \x01(\x05R\amaxJobs\x12\x1c\n" +
 	"\n" +
@@ -7761,7 +8369,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\n" +
 	"QuotaUsage\x12\x12\n" +
 	"\x04jobs\x18\x01 \x01(\x05R\x04jobs\x12\x15\n" +
-	"\x06mem_gb\x18\x02 \x01(\x01R\x05memGb\"\xb3\x02\n" +
+	"\x06mem_gb\x18\x02 \x01(\x01R\x05memGb\"\xe2\x02\n" +
 	"\n" +
 	"TenantUser\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
@@ -7774,13 +8382,16 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"created_by\x18\x06 \x01(\tR\tcreatedBy\x12\x18\n" +
 	"\adevices\x18\a \x03(\tR\adevices\x12,\n" +
 	"\x05usage\x18\b \x01(\v2\x16.longarm.v1.QuotaUsageR\x05usage\x12\x14\n" +
-	"\x05panel\x18\t \x01(\bR\x05panel\"\xbf\x01\n" +
+	"\x05panel\x18\t \x01(\bR\x05panel\x12\x10\n" +
+	"\x03upn\x18\n" +
+	" \x01(\tR\x03upn\x12\x1b\n" +
+	"\tcan_share\x18\v \x01(\bR\bcanShare\"\xbf\x01\n" +
 	"\rTenancyPolicy\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\x12\x18\n" +
 	"\aenabled\x18\x02 \x01(\bR\aenabled\x12,\n" +
 	"\x05users\x18\x03 \x03(\v2\x16.longarm.v1.TenantUserR\x05users\x126\n" +
 	"\rdefault_quota\x18\x04 \x01(\v2\x11.longarm.v1.QuotaR\fdefaultQuota\x12\x14\n" +
-	"\x05purge\x18\x05 \x03(\tR\x05purge\"\x82\x03\n" +
+	"\x05purge\x18\x05 \x03(\tR\x05purge\"\xc3\x03\n" +
 	"\x0ePutUserRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
 	"\x06create\x18\x02 \x01(\bR\x06create\x12\x1b\n" +
@@ -7795,7 +8406,9 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	" \x01(\v2\x19.google.protobuf.DurationR\x03ttl\x12\x16\n" +
 	"\x06device\x18\v \x01(\tR\x06device\x12\x14\n" +
 	"\x05admin\x18\f \x01(\bR\x05admin\x12\x14\n" +
-	"\x05panel\x18\r \x01(\bR\x05panel\"\xd2\x01\n" +
+	"\x05panel\x18\r \x01(\bR\x05panel\x12\"\n" +
+	"\rset_can_share\x18\x0e \x01(\bR\vsetCanShare\x12\x1b\n" +
+	"\tcan_share\x18\x0f \x01(\bR\bcanShare\"\xd2\x01\n" +
 	"\x0fPutUserResponse\x12*\n" +
 	"\x04user\x18\x01 \x01(\v2\x16.longarm.v1.TenantUserR\x04user\x121\n" +
 	"\tjoin_code\x18\x02 \x01(\v2\x14.longarm.v1.JoinCodeR\bjoinCode\x12%\n" +
@@ -7846,17 +8459,18 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a:\n" +
 	"\fRequireEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9c\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb2\x02\n" +
 	"\x15CreateJoinCodeRequest\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12+\n" +
 	"\x03ttl\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x03ttl\x12E\n" +
 	"\x06labels\x18\x03 \x03(\v2-.longarm.v1.CreateJoinCodeRequest.LabelsEntryR\x06labels\x12\x18\n" +
 	"\aprofile\x18\x04 \x01(\tR\aprofile\x12\x12\n" +
 	"\x04name\x18\x05 \x01(\tR\x04name\x12\x12\n" +
-	"\x04user\x18\x06 \x01(\tR\x04user\x1a9\n" +
+	"\x04user\x18\x06 \x01(\tR\x04user\x12\x14\n" +
+	"\x05owner\x18\a \x01(\tR\x05owner\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x80\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x96\x03\n" +
 	"\bJoinCode\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x129\n" +
@@ -7871,7 +8485,8 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x02id\x18\t \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\n" +
 	" \x01(\tR\x04name\x12\x12\n" +
-	"\x04user\x18\v \x01(\tR\x04user\x1a9\n" +
+	"\x04user\x18\v \x01(\tR\x04user\x12\x14\n" +
+	"\x05owner\x18\f \x01(\tR\x05owner\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x16\n" +
@@ -8043,15 +8658,17 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x05force\x18\x02 \x01(\bR\x05force\"=\n" +
 	"\rLeaveResponse\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2\x8a\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage2\x96\x02\n" +
 	"\x06Enroll\x129\n" +
 	"\x04Join\x12\x17.longarm.v1.JoinRequest\x1a\x18.longarm.v1.JoinResponse\x12E\n" +
 	"\n" +
-	"JoinStatus\x12\x1d.longarm.v1.JoinStatusRequest\x1a\x18.longarm.v1.JoinResponse2\xc4\x01\n" +
+	"JoinStatus\x12\x1d.longarm.v1.JoinStatusRequest\x1a\x18.longarm.v1.JoinResponse\x12E\n" +
+	"\bAuthInfo\x12\x1b.longarm.v1.AuthInfoRequest\x1a\x1c.longarm.v1.AuthInfoResponse\x12C\n" +
+	"\tEntraJoin\x12\x1c.longarm.v1.EntraJoinRequest\x1a\x18.longarm.v1.JoinResponse2\xc4\x01\n" +
 	"\aHubNode\x12=\n" +
 	"\aConnect\x12\x16.longarm.v1.NodeReport\x1a\x16.longarm.v1.HubCommand(\x010\x01\x12<\n" +
 	"\x05Renew\x12\x18.longarm.v1.RenewRequest\x1a\x19.longarm.v1.RenewResponse\x12<\n" +
-	"\x05Leave\x12\x18.longarm.v1.LeaveRequest\x1a\x19.longarm.v1.LeaveResponse2\xbf\a\n" +
+	"\x05Leave\x12\x18.longarm.v1.LeaveRequest\x1a\x19.longarm.v1.LeaveResponse2\x92\t\n" +
 	"\x05Fleet\x12H\n" +
 	"\tListNodes\x12\x1c.longarm.v1.ListNodesRequest\x1a\x1d.longarm.v1.ListNodesResponse\x12G\n" +
 	"\bListJobs\x12\x1c.longarm.v1.FleetJobsRequest\x1a\x1d.longarm.v1.FleetJobsResponse\x12;\n" +
@@ -8067,7 +8684,10 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x0fDownloadRelease\x12\x1e.longarm.v1.ReleaseFileRequest\x1a\x15.longarm.v1.FileChunk0\x01\x12F\n" +
 	"\vReportLinks\x12\x16.longarm.v1.LinkReport\x1a\x1f.longarm.v1.ReportLinksResponse\x12<\n" +
 	"\x05Links\x12\x18.longarm.v1.LinksRequest\x1a\x19.longarm.v1.LinksResponse\x12B\n" +
-	"\aHistory\x12\x1a.longarm.v1.HistoryRequest\x1a\x1b.longarm.v1.HistoryResponse2\xe2\r\n" +
+	"\aHistory\x12\x1a.longarm.v1.HistoryRequest\x1a\x1b.longarm.v1.HistoryResponse\x12M\n" +
+	"\x10CreateWorkerCode\x12#.longarm.v1.CreateWorkerCodeRequest\x1a\x14.longarm.v1.JoinCode\x12C\n" +
+	"\vShareWorker\x12\x1e.longarm.v1.ShareWorkerRequest\x1a\x14.longarm.v1.NodeInfo\x12=\n" +
+	"\fRemoveWorker\x12\x17.longarm.v1.NodeRequest\x1a\x14.longarm.v1.NodeInfo2\xe2\r\n" +
 	"\bHubAdmin\x12I\n" +
 	"\x0eCreateJoinCode\x12!.longarm.v1.CreateJoinCodeRequest\x1a\x14.longarm.v1.JoinCode\x12T\n" +
 	"\rListJoinCodes\x12 .longarm.v1.ListJoinCodesRequest\x1a!.longarm.v1.ListJoinCodesResponse\x128\n" +
@@ -8110,341 +8730,364 @@ func file_longarm_v1_hub_proto_rawDescGZIP() []byte {
 	return file_longarm_v1_hub_proto_rawDescData
 }
 
-var file_longarm_v1_hub_proto_msgTypes = make([]protoimpl.MessageInfo, 112)
+var file_longarm_v1_hub_proto_msgTypes = make([]protoimpl.MessageInfo, 120)
 var file_longarm_v1_hub_proto_goTypes = []any{
-	(*JoinRequest)(nil),           // 0: longarm.v1.JoinRequest
-	(*JoinResponse)(nil),          // 1: longarm.v1.JoinResponse
-	(*JoinStatusRequest)(nil),     // 2: longarm.v1.JoinStatusRequest
-	(*NodeReport)(nil),            // 3: longarm.v1.NodeReport
-	(*HubReply)(nil),              // 4: longarm.v1.HubReply
-	(*NodeHello)(nil),             // 5: longarm.v1.NodeHello
-	(*NodeState)(nil),             // 6: longarm.v1.NodeState
-	(*JobsReport)(nil),            // 7: longarm.v1.JobsReport
-	(*AuditBatch)(nil),            // 8: longarm.v1.AuditBatch
-	(*ToolSpec)(nil),              // 9: longarm.v1.ToolSpec
-	(*ToolchainReport)(nil),       // 10: longarm.v1.ToolchainReport
-	(*HubCommand)(nil),            // 11: longarm.v1.HubCommand
-	(*HubJobKill)(nil),            // 12: longarm.v1.HubJobKill
-	(*HubLogRequest)(nil),         // 13: longarm.v1.HubLogRequest
-	(*HubJobSubmit)(nil),          // 14: longarm.v1.HubJobSubmit
-	(*HubToolchainApply)(nil),     // 15: longarm.v1.HubToolchainApply
-	(*HubWelcome)(nil),            // 16: longarm.v1.HubWelcome
-	(*Revocations)(nil),           // 17: longarm.v1.Revocations
-	(*RevokedCert)(nil),           // 18: longarm.v1.RevokedCert
-	(*ToolchainDesired)(nil),      // 19: longarm.v1.ToolchainDesired
-	(*AuditAck)(nil),              // 20: longarm.v1.AuditAck
-	(*DrainCommand)(nil),          // 21: longarm.v1.DrainCommand
-	(*RenewRequest)(nil),          // 22: longarm.v1.RenewRequest
-	(*RenewResponse)(nil),         // 23: longarm.v1.RenewResponse
-	(*LinkSample)(nil),            // 24: longarm.v1.LinkSample
-	(*LegStatus)(nil),             // 25: longarm.v1.LegStatus
-	(*WorkerLink)(nil),            // 26: longarm.v1.WorkerLink
-	(*LinkReport)(nil),            // 27: longarm.v1.LinkReport
-	(*ReportLinksResponse)(nil),   // 28: longarm.v1.ReportLinksResponse
-	(*LinksRequest)(nil),          // 29: longarm.v1.LinksRequest
-	(*LinksResponse)(nil),         // 30: longarm.v1.LinksResponse
-	(*HistoryRequest)(nil),        // 31: longarm.v1.HistoryRequest
-	(*MetricsPoint)(nil),          // 32: longarm.v1.MetricsPoint
-	(*NodeHistory)(nil),           // 33: longarm.v1.NodeHistory
-	(*HistoryResponse)(nil),       // 34: longarm.v1.HistoryResponse
-	(*NodeInfo)(nil),              // 35: longarm.v1.NodeInfo
-	(*ListNodesRequest)(nil),      // 36: longarm.v1.ListNodesRequest
-	(*ListNodesResponse)(nil),     // 37: longarm.v1.ListNodesResponse
-	(*FleetJob)(nil),              // 38: longarm.v1.FleetJob
-	(*FleetJobsRequest)(nil),      // 39: longarm.v1.FleetJobsRequest
-	(*FleetJobsResponse)(nil),     // 40: longarm.v1.FleetJobsResponse
-	(*FleetJobRequest)(nil),       // 41: longarm.v1.FleetJobRequest
-	(*EventsRequest)(nil),         // 42: longarm.v1.EventsRequest
-	(*FleetEvent)(nil),            // 43: longarm.v1.FleetEvent
-	(*PlaceRequest)(nil),          // 44: longarm.v1.PlaceRequest
-	(*PlaceUpdate)(nil),           // 45: longarm.v1.PlaceUpdate
-	(*AuditRequest)(nil),          // 46: longarm.v1.AuditRequest
-	(*AuditRecord)(nil),           // 47: longarm.v1.AuditRecord
-	(*AuditResponse)(nil),         // 48: longarm.v1.AuditResponse
-	(*WhoamiRequest)(nil),         // 49: longarm.v1.WhoamiRequest
-	(*WhoamiResponse)(nil),        // 50: longarm.v1.WhoamiResponse
-	(*Quota)(nil),                 // 51: longarm.v1.Quota
-	(*QuotaUsage)(nil),            // 52: longarm.v1.QuotaUsage
-	(*TenantUser)(nil),            // 53: longarm.v1.TenantUser
-	(*TenancyPolicy)(nil),         // 54: longarm.v1.TenancyPolicy
-	(*PutUserRequest)(nil),        // 55: longarm.v1.PutUserRequest
-	(*PutUserResponse)(nil),       // 56: longarm.v1.PutUserResponse
-	(*ListUsersRequest)(nil),      // 57: longarm.v1.ListUsersRequest
-	(*ListUsersResponse)(nil),     // 58: longarm.v1.ListUsersResponse
-	(*RemoveUserRequest)(nil),     // 59: longarm.v1.RemoveUserRequest
-	(*RemoveUserResponse)(nil),    // 60: longarm.v1.RemoveUserResponse
-	(*SetTeamRequest)(nil),        // 61: longarm.v1.SetTeamRequest
-	(*Team)(nil),                  // 62: longarm.v1.Team
-	(*ListTeamsRequest)(nil),      // 63: longarm.v1.ListTeamsRequest
-	(*ListTeamsResponse)(nil),     // 64: longarm.v1.ListTeamsResponse
-	(*HubLogsRequest)(nil),        // 65: longarm.v1.HubLogsRequest
-	(*HubSubmitRequest)(nil),      // 66: longarm.v1.HubSubmitRequest
-	(*CreateJoinCodeRequest)(nil), // 67: longarm.v1.CreateJoinCodeRequest
-	(*JoinCode)(nil),              // 68: longarm.v1.JoinCode
-	(*ListJoinCodesRequest)(nil),  // 69: longarm.v1.ListJoinCodesRequest
-	(*ListJoinCodesResponse)(nil), // 70: longarm.v1.ListJoinCodesResponse
-	(*NodeRequest)(nil),           // 71: longarm.v1.NodeRequest
-	(*SetDrainRequest)(nil),       // 72: longarm.v1.SetDrainRequest
-	(*SetLabelsRequest)(nil),      // 73: longarm.v1.SetLabelsRequest
-	(*Profile)(nil),               // 74: longarm.v1.Profile
-	(*ListProfilesRequest)(nil),   // 75: longarm.v1.ListProfilesRequest
-	(*ListProfilesResponse)(nil),  // 76: longarm.v1.ListProfilesResponse
-	(*AssignProfileRequest)(nil),  // 77: longarm.v1.AssignProfileRequest
-	(*TailnetAuth)(nil),           // 78: longarm.v1.TailnetAuth
-	(*TailnetKeyRequest)(nil),     // 79: longarm.v1.TailnetKeyRequest
-	(*TailnetInfo)(nil),           // 80: longarm.v1.TailnetInfo
-	(*TailnetState)(nil),          // 81: longarm.v1.TailnetState
-	(*TailnetStatusRequest)(nil),  // 82: longarm.v1.TailnetStatusRequest
-	(*TailnetNodeStatus)(nil),     // 83: longarm.v1.TailnetNodeStatus
-	(*TailnetStatusResponse)(nil), // 84: longarm.v1.TailnetStatusResponse
-	(*UpdateStatus)(nil),          // 85: longarm.v1.UpdateStatus
-	(*UpdateHint)(nil),            // 86: longarm.v1.UpdateHint
-	(*UpdateCheckRequest)(nil),    // 87: longarm.v1.UpdateCheckRequest
-	(*UpdateCheckResponse)(nil),   // 88: longarm.v1.UpdateCheckResponse
-	(*ReleaseFile)(nil),           // 89: longarm.v1.ReleaseFile
-	(*ReleaseFileRequest)(nil),    // 90: longarm.v1.ReleaseFileRequest
-	(*ReleaseVersion)(nil),        // 91: longarm.v1.ReleaseVersion
-	(*ReleaseUpload)(nil),         // 92: longarm.v1.ReleaseUpload
-	(*ReleaseUploadHeader)(nil),   // 93: longarm.v1.ReleaseUploadHeader
-	(*ReleaseUploadChunk)(nil),    // 94: longarm.v1.ReleaseUploadChunk
-	(*ListReleasesRequest)(nil),   // 95: longarm.v1.ListReleasesRequest
-	(*ListReleasesResponse)(nil),  // 96: longarm.v1.ListReleasesResponse
-	(*PushReleaseRequest)(nil),    // 97: longarm.v1.PushReleaseRequest
-	(*GetRolloutRequest)(nil),     // 98: longarm.v1.GetRolloutRequest
-	(*Rollout)(nil),               // 99: longarm.v1.Rollout
-	(*LeaveRequest)(nil),          // 100: longarm.v1.LeaveRequest
-	(*LeaveResponse)(nil),         // 101: longarm.v1.LeaveResponse
-	nil,                           // 102: longarm.v1.NodeHello.LabelsEntry
-	nil,                           // 103: longarm.v1.ToolchainReport.VersionsEntry
-	nil,                           // 104: longarm.v1.NodeInfo.LabelsEntry
-	nil,                           // 105: longarm.v1.PlaceRequest.RequireEntry
-	nil,                           // 106: longarm.v1.HubSubmitRequest.EnvEntry
-	nil,                           // 107: longarm.v1.HubSubmitRequest.LabelsEntry
-	nil,                           // 108: longarm.v1.HubSubmitRequest.RequireEntry
-	nil,                           // 109: longarm.v1.CreateJoinCodeRequest.LabelsEntry
-	nil,                           // 110: longarm.v1.JoinCode.LabelsEntry
-	nil,                           // 111: longarm.v1.SetLabelsRequest.LabelsEntry
-	(*MetricsSnapshot)(nil),       // 112: longarm.v1.MetricsSnapshot
-	(*Job)(nil),                   // 113: longarm.v1.Job
-	(*LogChunk)(nil),              // 114: longarm.v1.LogChunk
-	(*timestamppb.Timestamp)(nil), // 115: google.protobuf.Timestamp
-	(*JobSpec)(nil),               // 116: longarm.v1.JobSpec
-	(*durationpb.Duration)(nil),   // 117: google.protobuf.Duration
-	(JobState)(0),                 // 118: longarm.v1.JobState
-	(*FileChunk)(nil),             // 119: longarm.v1.FileChunk
+	(*AuthInfoRequest)(nil),         // 0: longarm.v1.AuthInfoRequest
+	(*AuthInfoResponse)(nil),        // 1: longarm.v1.AuthInfoResponse
+	(*EntraJoinRequest)(nil),        // 2: longarm.v1.EntraJoinRequest
+	(*JoinRequest)(nil),             // 3: longarm.v1.JoinRequest
+	(*JoinResponse)(nil),            // 4: longarm.v1.JoinResponse
+	(*JoinStatusRequest)(nil),       // 5: longarm.v1.JoinStatusRequest
+	(*NodeReport)(nil),              // 6: longarm.v1.NodeReport
+	(*HubReply)(nil),                // 7: longarm.v1.HubReply
+	(*NodeHello)(nil),               // 8: longarm.v1.NodeHello
+	(*NodeState)(nil),               // 9: longarm.v1.NodeState
+	(*JobsReport)(nil),              // 10: longarm.v1.JobsReport
+	(*AuditBatch)(nil),              // 11: longarm.v1.AuditBatch
+	(*ToolSpec)(nil),                // 12: longarm.v1.ToolSpec
+	(*ToolchainReport)(nil),         // 13: longarm.v1.ToolchainReport
+	(*HubCommand)(nil),              // 14: longarm.v1.HubCommand
+	(*WorkerAccess)(nil),            // 15: longarm.v1.WorkerAccess
+	(*WorkerShares)(nil),            // 16: longarm.v1.WorkerShares
+	(*HubJobKill)(nil),              // 17: longarm.v1.HubJobKill
+	(*HubLogRequest)(nil),           // 18: longarm.v1.HubLogRequest
+	(*HubJobSubmit)(nil),            // 19: longarm.v1.HubJobSubmit
+	(*HubToolchainApply)(nil),       // 20: longarm.v1.HubToolchainApply
+	(*HubWelcome)(nil),              // 21: longarm.v1.HubWelcome
+	(*Revocations)(nil),             // 22: longarm.v1.Revocations
+	(*RevokedCert)(nil),             // 23: longarm.v1.RevokedCert
+	(*ToolchainDesired)(nil),        // 24: longarm.v1.ToolchainDesired
+	(*AuditAck)(nil),                // 25: longarm.v1.AuditAck
+	(*DrainCommand)(nil),            // 26: longarm.v1.DrainCommand
+	(*RenewRequest)(nil),            // 27: longarm.v1.RenewRequest
+	(*RenewResponse)(nil),           // 28: longarm.v1.RenewResponse
+	(*LinkSample)(nil),              // 29: longarm.v1.LinkSample
+	(*LegStatus)(nil),               // 30: longarm.v1.LegStatus
+	(*WorkerLink)(nil),              // 31: longarm.v1.WorkerLink
+	(*LinkReport)(nil),              // 32: longarm.v1.LinkReport
+	(*ReportLinksResponse)(nil),     // 33: longarm.v1.ReportLinksResponse
+	(*LinksRequest)(nil),            // 34: longarm.v1.LinksRequest
+	(*LinksResponse)(nil),           // 35: longarm.v1.LinksResponse
+	(*HistoryRequest)(nil),          // 36: longarm.v1.HistoryRequest
+	(*MetricsPoint)(nil),            // 37: longarm.v1.MetricsPoint
+	(*NodeHistory)(nil),             // 38: longarm.v1.NodeHistory
+	(*HistoryResponse)(nil),         // 39: longarm.v1.HistoryResponse
+	(*NodeInfo)(nil),                // 40: longarm.v1.NodeInfo
+	(*ListNodesRequest)(nil),        // 41: longarm.v1.ListNodesRequest
+	(*ListNodesResponse)(nil),       // 42: longarm.v1.ListNodesResponse
+	(*FleetJob)(nil),                // 43: longarm.v1.FleetJob
+	(*FleetJobsRequest)(nil),        // 44: longarm.v1.FleetJobsRequest
+	(*FleetJobsResponse)(nil),       // 45: longarm.v1.FleetJobsResponse
+	(*FleetJobRequest)(nil),         // 46: longarm.v1.FleetJobRequest
+	(*EventsRequest)(nil),           // 47: longarm.v1.EventsRequest
+	(*FleetEvent)(nil),              // 48: longarm.v1.FleetEvent
+	(*PlaceRequest)(nil),            // 49: longarm.v1.PlaceRequest
+	(*PlaceUpdate)(nil),             // 50: longarm.v1.PlaceUpdate
+	(*AuditRequest)(nil),            // 51: longarm.v1.AuditRequest
+	(*AuditRecord)(nil),             // 52: longarm.v1.AuditRecord
+	(*AuditResponse)(nil),           // 53: longarm.v1.AuditResponse
+	(*WhoamiRequest)(nil),           // 54: longarm.v1.WhoamiRequest
+	(*CreateWorkerCodeRequest)(nil), // 55: longarm.v1.CreateWorkerCodeRequest
+	(*ShareWorkerRequest)(nil),      // 56: longarm.v1.ShareWorkerRequest
+	(*WhoamiResponse)(nil),          // 57: longarm.v1.WhoamiResponse
+	(*Quota)(nil),                   // 58: longarm.v1.Quota
+	(*QuotaUsage)(nil),              // 59: longarm.v1.QuotaUsage
+	(*TenantUser)(nil),              // 60: longarm.v1.TenantUser
+	(*TenancyPolicy)(nil),           // 61: longarm.v1.TenancyPolicy
+	(*PutUserRequest)(nil),          // 62: longarm.v1.PutUserRequest
+	(*PutUserResponse)(nil),         // 63: longarm.v1.PutUserResponse
+	(*ListUsersRequest)(nil),        // 64: longarm.v1.ListUsersRequest
+	(*ListUsersResponse)(nil),       // 65: longarm.v1.ListUsersResponse
+	(*RemoveUserRequest)(nil),       // 66: longarm.v1.RemoveUserRequest
+	(*RemoveUserResponse)(nil),      // 67: longarm.v1.RemoveUserResponse
+	(*SetTeamRequest)(nil),          // 68: longarm.v1.SetTeamRequest
+	(*Team)(nil),                    // 69: longarm.v1.Team
+	(*ListTeamsRequest)(nil),        // 70: longarm.v1.ListTeamsRequest
+	(*ListTeamsResponse)(nil),       // 71: longarm.v1.ListTeamsResponse
+	(*HubLogsRequest)(nil),          // 72: longarm.v1.HubLogsRequest
+	(*HubSubmitRequest)(nil),        // 73: longarm.v1.HubSubmitRequest
+	(*CreateJoinCodeRequest)(nil),   // 74: longarm.v1.CreateJoinCodeRequest
+	(*JoinCode)(nil),                // 75: longarm.v1.JoinCode
+	(*ListJoinCodesRequest)(nil),    // 76: longarm.v1.ListJoinCodesRequest
+	(*ListJoinCodesResponse)(nil),   // 77: longarm.v1.ListJoinCodesResponse
+	(*NodeRequest)(nil),             // 78: longarm.v1.NodeRequest
+	(*SetDrainRequest)(nil),         // 79: longarm.v1.SetDrainRequest
+	(*SetLabelsRequest)(nil),        // 80: longarm.v1.SetLabelsRequest
+	(*Profile)(nil),                 // 81: longarm.v1.Profile
+	(*ListProfilesRequest)(nil),     // 82: longarm.v1.ListProfilesRequest
+	(*ListProfilesResponse)(nil),    // 83: longarm.v1.ListProfilesResponse
+	(*AssignProfileRequest)(nil),    // 84: longarm.v1.AssignProfileRequest
+	(*TailnetAuth)(nil),             // 85: longarm.v1.TailnetAuth
+	(*TailnetKeyRequest)(nil),       // 86: longarm.v1.TailnetKeyRequest
+	(*TailnetInfo)(nil),             // 87: longarm.v1.TailnetInfo
+	(*TailnetState)(nil),            // 88: longarm.v1.TailnetState
+	(*TailnetStatusRequest)(nil),    // 89: longarm.v1.TailnetStatusRequest
+	(*TailnetNodeStatus)(nil),       // 90: longarm.v1.TailnetNodeStatus
+	(*TailnetStatusResponse)(nil),   // 91: longarm.v1.TailnetStatusResponse
+	(*UpdateStatus)(nil),            // 92: longarm.v1.UpdateStatus
+	(*UpdateHint)(nil),              // 93: longarm.v1.UpdateHint
+	(*UpdateCheckRequest)(nil),      // 94: longarm.v1.UpdateCheckRequest
+	(*UpdateCheckResponse)(nil),     // 95: longarm.v1.UpdateCheckResponse
+	(*ReleaseFile)(nil),             // 96: longarm.v1.ReleaseFile
+	(*ReleaseFileRequest)(nil),      // 97: longarm.v1.ReleaseFileRequest
+	(*ReleaseVersion)(nil),          // 98: longarm.v1.ReleaseVersion
+	(*ReleaseUpload)(nil),           // 99: longarm.v1.ReleaseUpload
+	(*ReleaseUploadHeader)(nil),     // 100: longarm.v1.ReleaseUploadHeader
+	(*ReleaseUploadChunk)(nil),      // 101: longarm.v1.ReleaseUploadChunk
+	(*ListReleasesRequest)(nil),     // 102: longarm.v1.ListReleasesRequest
+	(*ListReleasesResponse)(nil),    // 103: longarm.v1.ListReleasesResponse
+	(*PushReleaseRequest)(nil),      // 104: longarm.v1.PushReleaseRequest
+	(*GetRolloutRequest)(nil),       // 105: longarm.v1.GetRolloutRequest
+	(*Rollout)(nil),                 // 106: longarm.v1.Rollout
+	(*LeaveRequest)(nil),            // 107: longarm.v1.LeaveRequest
+	(*LeaveResponse)(nil),           // 108: longarm.v1.LeaveResponse
+	nil,                             // 109: longarm.v1.NodeHello.LabelsEntry
+	nil,                             // 110: longarm.v1.ToolchainReport.VersionsEntry
+	nil,                             // 111: longarm.v1.NodeInfo.LabelsEntry
+	nil,                             // 112: longarm.v1.PlaceRequest.RequireEntry
+	nil,                             // 113: longarm.v1.CreateWorkerCodeRequest.LabelsEntry
+	nil,                             // 114: longarm.v1.HubSubmitRequest.EnvEntry
+	nil,                             // 115: longarm.v1.HubSubmitRequest.LabelsEntry
+	nil,                             // 116: longarm.v1.HubSubmitRequest.RequireEntry
+	nil,                             // 117: longarm.v1.CreateJoinCodeRequest.LabelsEntry
+	nil,                             // 118: longarm.v1.JoinCode.LabelsEntry
+	nil,                             // 119: longarm.v1.SetLabelsRequest.LabelsEntry
+	(*MetricsSnapshot)(nil),         // 120: longarm.v1.MetricsSnapshot
+	(*Job)(nil),                     // 121: longarm.v1.Job
+	(*LogChunk)(nil),                // 122: longarm.v1.LogChunk
+	(*timestamppb.Timestamp)(nil),   // 123: google.protobuf.Timestamp
+	(*JobSpec)(nil),                 // 124: longarm.v1.JobSpec
+	(*durationpb.Duration)(nil),     // 125: google.protobuf.Duration
+	(JobState)(0),                   // 126: longarm.v1.JobState
+	(*FileChunk)(nil),               // 127: longarm.v1.FileChunk
 }
 var file_longarm_v1_hub_proto_depIdxs = []int32{
-	78,  // 0: longarm.v1.JoinResponse.tailnet:type_name -> longarm.v1.TailnetAuth
-	5,   // 1: longarm.v1.NodeReport.hello:type_name -> longarm.v1.NodeHello
-	112, // 2: longarm.v1.NodeReport.metrics:type_name -> longarm.v1.MetricsSnapshot
-	7,   // 3: longarm.v1.NodeReport.jobs:type_name -> longarm.v1.JobsReport
-	8,   // 4: longarm.v1.NodeReport.audit:type_name -> longarm.v1.AuditBatch
-	10,  // 5: longarm.v1.NodeReport.toolchain:type_name -> longarm.v1.ToolchainReport
-	6,   // 6: longarm.v1.NodeReport.state:type_name -> longarm.v1.NodeState
-	85,  // 7: longarm.v1.NodeReport.update:type_name -> longarm.v1.UpdateStatus
-	4,   // 8: longarm.v1.NodeReport.reply:type_name -> longarm.v1.HubReply
-	113, // 9: longarm.v1.HubReply.job:type_name -> longarm.v1.Job
-	114, // 10: longarm.v1.HubReply.log:type_name -> longarm.v1.LogChunk
-	102, // 11: longarm.v1.NodeHello.labels:type_name -> longarm.v1.NodeHello.LabelsEntry
-	6,   // 12: longarm.v1.NodeHello.state:type_name -> longarm.v1.NodeState
-	85,  // 13: longarm.v1.NodeHello.update:type_name -> longarm.v1.UpdateStatus
-	81,  // 14: longarm.v1.NodeHello.tailnet:type_name -> longarm.v1.TailnetState
-	113, // 15: longarm.v1.JobsReport.jobs:type_name -> longarm.v1.Job
-	103, // 16: longarm.v1.ToolchainReport.versions:type_name -> longarm.v1.ToolchainReport.VersionsEntry
-	115, // 17: longarm.v1.ToolchainReport.updated_at:type_name -> google.protobuf.Timestamp
-	16,  // 18: longarm.v1.HubCommand.welcome:type_name -> longarm.v1.HubWelcome
-	17,  // 19: longarm.v1.HubCommand.revocations:type_name -> longarm.v1.Revocations
-	19,  // 20: longarm.v1.HubCommand.toolchain:type_name -> longarm.v1.ToolchainDesired
-	20,  // 21: longarm.v1.HubCommand.audit_ack:type_name -> longarm.v1.AuditAck
-	21,  // 22: longarm.v1.HubCommand.drain:type_name -> longarm.v1.DrainCommand
-	86,  // 23: longarm.v1.HubCommand.update:type_name -> longarm.v1.UpdateHint
-	12,  // 24: longarm.v1.HubCommand.kill_job:type_name -> longarm.v1.HubJobKill
-	13,  // 25: longarm.v1.HubCommand.log_request:type_name -> longarm.v1.HubLogRequest
-	14,  // 26: longarm.v1.HubCommand.submit_job:type_name -> longarm.v1.HubJobSubmit
-	15,  // 27: longarm.v1.HubCommand.toolchain_apply:type_name -> longarm.v1.HubToolchainApply
-	80,  // 28: longarm.v1.HubCommand.tailnet:type_name -> longarm.v1.TailnetInfo
-	54,  // 29: longarm.v1.HubCommand.tenancy:type_name -> longarm.v1.TenancyPolicy
-	116, // 30: longarm.v1.HubJobSubmit.spec:type_name -> longarm.v1.JobSpec
-	117, // 31: longarm.v1.HubWelcome.metrics_interval:type_name -> google.protobuf.Duration
-	117, // 32: longarm.v1.HubWelcome.renew_before:type_name -> google.protobuf.Duration
-	80,  // 33: longarm.v1.HubWelcome.tailnet:type_name -> longarm.v1.TailnetInfo
-	18,  // 34: longarm.v1.Revocations.certs:type_name -> longarm.v1.RevokedCert
-	115, // 35: longarm.v1.RevokedCert.not_after:type_name -> google.protobuf.Timestamp
-	9,   // 36: longarm.v1.ToolchainDesired.tools:type_name -> longarm.v1.ToolSpec
-	115, // 37: longarm.v1.LinkSample.time:type_name -> google.protobuf.Timestamp
-	115, // 38: longarm.v1.LegStatus.since:type_name -> google.protobuf.Timestamp
-	24,  // 39: longarm.v1.LegStatus.history:type_name -> longarm.v1.LinkSample
-	115, // 40: longarm.v1.LegStatus.relay_since:type_name -> google.protobuf.Timestamp
-	25,  // 41: longarm.v1.WorkerLink.legs:type_name -> longarm.v1.LegStatus
-	115, // 42: longarm.v1.WorkerLink.since:type_name -> google.protobuf.Timestamp
-	115, // 43: longarm.v1.LinkReport.time:type_name -> google.protobuf.Timestamp
-	26,  // 44: longarm.v1.LinkReport.links:type_name -> longarm.v1.WorkerLink
-	27,  // 45: longarm.v1.LinksResponse.reports:type_name -> longarm.v1.LinkReport
-	115, // 46: longarm.v1.MetricsPoint.time:type_name -> google.protobuf.Timestamp
-	32,  // 47: longarm.v1.NodeHistory.points:type_name -> longarm.v1.MetricsPoint
-	33,  // 48: longarm.v1.HistoryResponse.nodes:type_name -> longarm.v1.NodeHistory
-	104, // 49: longarm.v1.NodeInfo.labels:type_name -> longarm.v1.NodeInfo.LabelsEntry
-	112, // 50: longarm.v1.NodeInfo.metrics:type_name -> longarm.v1.MetricsSnapshot
-	115, // 51: longarm.v1.NodeInfo.last_seen:type_name -> google.protobuf.Timestamp
-	115, // 52: longarm.v1.NodeInfo.joined_at:type_name -> google.protobuf.Timestamp
-	115, // 53: longarm.v1.NodeInfo.cert_not_after:type_name -> google.protobuf.Timestamp
-	10,  // 54: longarm.v1.NodeInfo.toolchain:type_name -> longarm.v1.ToolchainReport
-	81,  // 55: longarm.v1.NodeInfo.tailnet:type_name -> longarm.v1.TailnetState
-	35,  // 56: longarm.v1.ListNodesResponse.nodes:type_name -> longarm.v1.NodeInfo
-	113, // 57: longarm.v1.FleetJob.job:type_name -> longarm.v1.Job
-	115, // 58: longarm.v1.FleetJob.updated_at:type_name -> google.protobuf.Timestamp
-	118, // 59: longarm.v1.FleetJobsRequest.states:type_name -> longarm.v1.JobState
-	38,  // 60: longarm.v1.FleetJobsResponse.jobs:type_name -> longarm.v1.FleetJob
-	115, // 61: longarm.v1.FleetEvent.time:type_name -> google.protobuf.Timestamp
-	38,  // 62: longarm.v1.FleetEvent.job:type_name -> longarm.v1.FleetJob
-	35,  // 63: longarm.v1.FleetEvent.node_info:type_name -> longarm.v1.NodeInfo
-	105, // 64: longarm.v1.PlaceRequest.require:type_name -> longarm.v1.PlaceRequest.RequireEntry
-	35,  // 65: longarm.v1.PlaceUpdate.node:type_name -> longarm.v1.NodeInfo
-	115, // 66: longarm.v1.AuditRequest.since:type_name -> google.protobuf.Timestamp
-	115, // 67: longarm.v1.AuditRecord.time:type_name -> google.protobuf.Timestamp
-	47,  // 68: longarm.v1.AuditResponse.records:type_name -> longarm.v1.AuditRecord
-	115, // 69: longarm.v1.WhoamiResponse.cert_not_after:type_name -> google.protobuf.Timestamp
-	117, // 70: longarm.v1.WhoamiResponse.renew_before:type_name -> google.protobuf.Duration
-	80,  // 71: longarm.v1.WhoamiResponse.tailnet:type_name -> longarm.v1.TailnetInfo
-	51,  // 72: longarm.v1.WhoamiResponse.quota:type_name -> longarm.v1.Quota
-	52,  // 73: longarm.v1.WhoamiResponse.usage:type_name -> longarm.v1.QuotaUsage
-	51,  // 74: longarm.v1.TenantUser.quota:type_name -> longarm.v1.Quota
-	115, // 75: longarm.v1.TenantUser.created_at:type_name -> google.protobuf.Timestamp
-	52,  // 76: longarm.v1.TenantUser.usage:type_name -> longarm.v1.QuotaUsage
-	53,  // 77: longarm.v1.TenancyPolicy.users:type_name -> longarm.v1.TenantUser
-	51,  // 78: longarm.v1.TenancyPolicy.default_quota:type_name -> longarm.v1.Quota
-	51,  // 79: longarm.v1.PutUserRequest.quota:type_name -> longarm.v1.Quota
-	117, // 80: longarm.v1.PutUserRequest.ttl:type_name -> google.protobuf.Duration
-	53,  // 81: longarm.v1.PutUserResponse.user:type_name -> longarm.v1.TenantUser
-	68,  // 82: longarm.v1.PutUserResponse.join_code:type_name -> longarm.v1.JoinCode
-	53,  // 83: longarm.v1.ListUsersResponse.users:type_name -> longarm.v1.TenantUser
-	51,  // 84: longarm.v1.ListUsersResponse.default_quota:type_name -> longarm.v1.Quota
-	62,  // 85: longarm.v1.ListTeamsResponse.teams:type_name -> longarm.v1.Team
-	106, // 86: longarm.v1.HubSubmitRequest.env:type_name -> longarm.v1.HubSubmitRequest.EnvEntry
-	107, // 87: longarm.v1.HubSubmitRequest.labels:type_name -> longarm.v1.HubSubmitRequest.LabelsEntry
-	108, // 88: longarm.v1.HubSubmitRequest.require:type_name -> longarm.v1.HubSubmitRequest.RequireEntry
-	117, // 89: longarm.v1.CreateJoinCodeRequest.ttl:type_name -> google.protobuf.Duration
-	109, // 90: longarm.v1.CreateJoinCodeRequest.labels:type_name -> longarm.v1.CreateJoinCodeRequest.LabelsEntry
-	115, // 91: longarm.v1.JoinCode.expires_at:type_name -> google.protobuf.Timestamp
-	110, // 92: longarm.v1.JoinCode.labels:type_name -> longarm.v1.JoinCode.LabelsEntry
-	68,  // 93: longarm.v1.ListJoinCodesResponse.codes:type_name -> longarm.v1.JoinCode
-	111, // 94: longarm.v1.SetLabelsRequest.labels:type_name -> longarm.v1.SetLabelsRequest.LabelsEntry
-	9,   // 95: longarm.v1.Profile.tools:type_name -> longarm.v1.ToolSpec
-	115, // 96: longarm.v1.Profile.updated_at:type_name -> google.protobuf.Timestamp
-	74,  // 97: longarm.v1.ListProfilesResponse.profiles:type_name -> longarm.v1.Profile
-	115, // 98: longarm.v1.TailnetState.since:type_name -> google.protobuf.Timestamp
-	81,  // 99: longarm.v1.TailnetNodeStatus.state:type_name -> longarm.v1.TailnetState
-	115, // 100: longarm.v1.TailnetNodeStatus.key_minted_at:type_name -> google.protobuf.Timestamp
-	117, // 101: longarm.v1.TailnetStatusResponse.key_ttl:type_name -> google.protobuf.Duration
-	83,  // 102: longarm.v1.TailnetStatusResponse.nodes:type_name -> longarm.v1.TailnetNodeStatus
-	115, // 103: longarm.v1.TailnetStatusResponse.last_mint_error_at:type_name -> google.protobuf.Timestamp
-	115, // 104: longarm.v1.UpdateStatus.at:type_name -> google.protobuf.Timestamp
-	89,  // 105: longarm.v1.UpdateCheckResponse.files:type_name -> longarm.v1.ReleaseFile
-	115, // 106: longarm.v1.ReleaseVersion.added_at:type_name -> google.protobuf.Timestamp
-	89,  // 107: longarm.v1.ReleaseVersion.files:type_name -> longarm.v1.ReleaseFile
-	93,  // 108: longarm.v1.ReleaseUpload.header:type_name -> longarm.v1.ReleaseUploadHeader
-	94,  // 109: longarm.v1.ReleaseUpload.chunk:type_name -> longarm.v1.ReleaseUploadChunk
-	91,  // 110: longarm.v1.ListReleasesResponse.releases:type_name -> longarm.v1.ReleaseVersion
-	99,  // 111: longarm.v1.ListReleasesResponse.rollout:type_name -> longarm.v1.Rollout
-	117, // 112: longarm.v1.PushReleaseRequest.wait:type_name -> google.protobuf.Duration
-	117, // 113: longarm.v1.PushReleaseRequest.batch_wait:type_name -> google.protobuf.Duration
-	115, // 114: longarm.v1.Rollout.started_at:type_name -> google.protobuf.Timestamp
-	115, // 115: longarm.v1.Rollout.phase_since:type_name -> google.protobuf.Timestamp
-	117, // 116: longarm.v1.Rollout.wait:type_name -> google.protobuf.Duration
-	117, // 117: longarm.v1.Rollout.batch_wait:type_name -> google.protobuf.Duration
-	0,   // 118: longarm.v1.Enroll.Join:input_type -> longarm.v1.JoinRequest
-	2,   // 119: longarm.v1.Enroll.JoinStatus:input_type -> longarm.v1.JoinStatusRequest
-	3,   // 120: longarm.v1.HubNode.Connect:input_type -> longarm.v1.NodeReport
-	22,  // 121: longarm.v1.HubNode.Renew:input_type -> longarm.v1.RenewRequest
-	100, // 122: longarm.v1.HubNode.Leave:input_type -> longarm.v1.LeaveRequest
-	36,  // 123: longarm.v1.Fleet.ListNodes:input_type -> longarm.v1.ListNodesRequest
-	39,  // 124: longarm.v1.Fleet.ListJobs:input_type -> longarm.v1.FleetJobsRequest
-	41,  // 125: longarm.v1.Fleet.GetJob:input_type -> longarm.v1.FleetJobRequest
-	41,  // 126: longarm.v1.Fleet.WaitJob:input_type -> longarm.v1.FleetJobRequest
-	42,  // 127: longarm.v1.Fleet.Events:input_type -> longarm.v1.EventsRequest
-	44,  // 128: longarm.v1.Fleet.Place:input_type -> longarm.v1.PlaceRequest
-	46,  // 129: longarm.v1.Fleet.Audit:input_type -> longarm.v1.AuditRequest
-	49,  // 130: longarm.v1.Fleet.Whoami:input_type -> longarm.v1.WhoamiRequest
-	79,  // 131: longarm.v1.Fleet.TailnetKey:input_type -> longarm.v1.TailnetKeyRequest
-	87,  // 132: longarm.v1.Fleet.CheckUpdate:input_type -> longarm.v1.UpdateCheckRequest
-	90,  // 133: longarm.v1.Fleet.DownloadRelease:input_type -> longarm.v1.ReleaseFileRequest
-	27,  // 134: longarm.v1.Fleet.ReportLinks:input_type -> longarm.v1.LinkReport
-	29,  // 135: longarm.v1.Fleet.Links:input_type -> longarm.v1.LinksRequest
-	31,  // 136: longarm.v1.Fleet.History:input_type -> longarm.v1.HistoryRequest
-	67,  // 137: longarm.v1.HubAdmin.CreateJoinCode:input_type -> longarm.v1.CreateJoinCodeRequest
-	69,  // 138: longarm.v1.HubAdmin.ListJoinCodes:input_type -> longarm.v1.ListJoinCodesRequest
-	71,  // 139: longarm.v1.HubAdmin.Approve:input_type -> longarm.v1.NodeRequest
-	71,  // 140: longarm.v1.HubAdmin.Revoke:input_type -> longarm.v1.NodeRequest
-	72,  // 141: longarm.v1.HubAdmin.SetDrain:input_type -> longarm.v1.SetDrainRequest
-	73,  // 142: longarm.v1.HubAdmin.SetLabels:input_type -> longarm.v1.SetLabelsRequest
-	74,  // 143: longarm.v1.HubAdmin.PutProfile:input_type -> longarm.v1.Profile
-	75,  // 144: longarm.v1.HubAdmin.ListProfiles:input_type -> longarm.v1.ListProfilesRequest
-	77,  // 145: longarm.v1.HubAdmin.AssignProfile:input_type -> longarm.v1.AssignProfileRequest
-	95,  // 146: longarm.v1.HubAdmin.ListReleases:input_type -> longarm.v1.ListReleasesRequest
-	97,  // 147: longarm.v1.HubAdmin.PushRelease:input_type -> longarm.v1.PushReleaseRequest
-	92,  // 148: longarm.v1.HubAdmin.PublishRelease:input_type -> longarm.v1.ReleaseUpload
-	98,  // 149: longarm.v1.HubAdmin.GetRollout:input_type -> longarm.v1.GetRolloutRequest
-	98,  // 150: longarm.v1.HubAdmin.AbortRollout:input_type -> longarm.v1.GetRolloutRequest
-	41,  // 151: longarm.v1.HubAdmin.KillJob:input_type -> longarm.v1.FleetJobRequest
-	65,  // 152: longarm.v1.HubAdmin.JobLogs:input_type -> longarm.v1.HubLogsRequest
-	66,  // 153: longarm.v1.HubAdmin.SubmitJob:input_type -> longarm.v1.HubSubmitRequest
-	71,  // 154: longarm.v1.HubAdmin.ToolchainApply:input_type -> longarm.v1.NodeRequest
-	82,  // 155: longarm.v1.HubAdmin.TailnetStatus:input_type -> longarm.v1.TailnetStatusRequest
-	71,  // 156: longarm.v1.HubAdmin.TailnetRekey:input_type -> longarm.v1.NodeRequest
-	55,  // 157: longarm.v1.HubAdmin.PutUser:input_type -> longarm.v1.PutUserRequest
-	57,  // 158: longarm.v1.HubAdmin.ListUsers:input_type -> longarm.v1.ListUsersRequest
-	59,  // 159: longarm.v1.HubAdmin.RemoveUser:input_type -> longarm.v1.RemoveUserRequest
-	61,  // 160: longarm.v1.HubAdmin.SetTeam:input_type -> longarm.v1.SetTeamRequest
-	63,  // 161: longarm.v1.HubAdmin.ListTeams:input_type -> longarm.v1.ListTeamsRequest
-	1,   // 162: longarm.v1.Enroll.Join:output_type -> longarm.v1.JoinResponse
-	1,   // 163: longarm.v1.Enroll.JoinStatus:output_type -> longarm.v1.JoinResponse
-	11,  // 164: longarm.v1.HubNode.Connect:output_type -> longarm.v1.HubCommand
-	23,  // 165: longarm.v1.HubNode.Renew:output_type -> longarm.v1.RenewResponse
-	101, // 166: longarm.v1.HubNode.Leave:output_type -> longarm.v1.LeaveResponse
-	37,  // 167: longarm.v1.Fleet.ListNodes:output_type -> longarm.v1.ListNodesResponse
-	40,  // 168: longarm.v1.Fleet.ListJobs:output_type -> longarm.v1.FleetJobsResponse
-	38,  // 169: longarm.v1.Fleet.GetJob:output_type -> longarm.v1.FleetJob
-	38,  // 170: longarm.v1.Fleet.WaitJob:output_type -> longarm.v1.FleetJob
-	43,  // 171: longarm.v1.Fleet.Events:output_type -> longarm.v1.FleetEvent
-	45,  // 172: longarm.v1.Fleet.Place:output_type -> longarm.v1.PlaceUpdate
-	48,  // 173: longarm.v1.Fleet.Audit:output_type -> longarm.v1.AuditResponse
-	50,  // 174: longarm.v1.Fleet.Whoami:output_type -> longarm.v1.WhoamiResponse
-	78,  // 175: longarm.v1.Fleet.TailnetKey:output_type -> longarm.v1.TailnetAuth
-	88,  // 176: longarm.v1.Fleet.CheckUpdate:output_type -> longarm.v1.UpdateCheckResponse
-	119, // 177: longarm.v1.Fleet.DownloadRelease:output_type -> longarm.v1.FileChunk
-	28,  // 178: longarm.v1.Fleet.ReportLinks:output_type -> longarm.v1.ReportLinksResponse
-	30,  // 179: longarm.v1.Fleet.Links:output_type -> longarm.v1.LinksResponse
-	34,  // 180: longarm.v1.Fleet.History:output_type -> longarm.v1.HistoryResponse
-	68,  // 181: longarm.v1.HubAdmin.CreateJoinCode:output_type -> longarm.v1.JoinCode
-	70,  // 182: longarm.v1.HubAdmin.ListJoinCodes:output_type -> longarm.v1.ListJoinCodesResponse
-	35,  // 183: longarm.v1.HubAdmin.Approve:output_type -> longarm.v1.NodeInfo
-	35,  // 184: longarm.v1.HubAdmin.Revoke:output_type -> longarm.v1.NodeInfo
-	35,  // 185: longarm.v1.HubAdmin.SetDrain:output_type -> longarm.v1.NodeInfo
-	35,  // 186: longarm.v1.HubAdmin.SetLabels:output_type -> longarm.v1.NodeInfo
-	74,  // 187: longarm.v1.HubAdmin.PutProfile:output_type -> longarm.v1.Profile
-	76,  // 188: longarm.v1.HubAdmin.ListProfiles:output_type -> longarm.v1.ListProfilesResponse
-	35,  // 189: longarm.v1.HubAdmin.AssignProfile:output_type -> longarm.v1.NodeInfo
-	96,  // 190: longarm.v1.HubAdmin.ListReleases:output_type -> longarm.v1.ListReleasesResponse
-	99,  // 191: longarm.v1.HubAdmin.PushRelease:output_type -> longarm.v1.Rollout
-	91,  // 192: longarm.v1.HubAdmin.PublishRelease:output_type -> longarm.v1.ReleaseVersion
-	99,  // 193: longarm.v1.HubAdmin.GetRollout:output_type -> longarm.v1.Rollout
-	99,  // 194: longarm.v1.HubAdmin.AbortRollout:output_type -> longarm.v1.Rollout
-	38,  // 195: longarm.v1.HubAdmin.KillJob:output_type -> longarm.v1.FleetJob
-	114, // 196: longarm.v1.HubAdmin.JobLogs:output_type -> longarm.v1.LogChunk
-	38,  // 197: longarm.v1.HubAdmin.SubmitJob:output_type -> longarm.v1.FleetJob
-	35,  // 198: longarm.v1.HubAdmin.ToolchainApply:output_type -> longarm.v1.NodeInfo
-	84,  // 199: longarm.v1.HubAdmin.TailnetStatus:output_type -> longarm.v1.TailnetStatusResponse
-	83,  // 200: longarm.v1.HubAdmin.TailnetRekey:output_type -> longarm.v1.TailnetNodeStatus
-	56,  // 201: longarm.v1.HubAdmin.PutUser:output_type -> longarm.v1.PutUserResponse
-	58,  // 202: longarm.v1.HubAdmin.ListUsers:output_type -> longarm.v1.ListUsersResponse
-	60,  // 203: longarm.v1.HubAdmin.RemoveUser:output_type -> longarm.v1.RemoveUserResponse
-	64,  // 204: longarm.v1.HubAdmin.SetTeam:output_type -> longarm.v1.ListTeamsResponse
-	64,  // 205: longarm.v1.HubAdmin.ListTeams:output_type -> longarm.v1.ListTeamsResponse
-	162, // [162:206] is the sub-list for method output_type
-	118, // [118:162] is the sub-list for method input_type
-	118, // [118:118] is the sub-list for extension type_name
-	118, // [118:118] is the sub-list for extension extendee
-	0,   // [0:118] is the sub-list for field type_name
+	85,  // 0: longarm.v1.JoinResponse.tailnet:type_name -> longarm.v1.TailnetAuth
+	8,   // 1: longarm.v1.NodeReport.hello:type_name -> longarm.v1.NodeHello
+	120, // 2: longarm.v1.NodeReport.metrics:type_name -> longarm.v1.MetricsSnapshot
+	10,  // 3: longarm.v1.NodeReport.jobs:type_name -> longarm.v1.JobsReport
+	11,  // 4: longarm.v1.NodeReport.audit:type_name -> longarm.v1.AuditBatch
+	13,  // 5: longarm.v1.NodeReport.toolchain:type_name -> longarm.v1.ToolchainReport
+	9,   // 6: longarm.v1.NodeReport.state:type_name -> longarm.v1.NodeState
+	92,  // 7: longarm.v1.NodeReport.update:type_name -> longarm.v1.UpdateStatus
+	7,   // 8: longarm.v1.NodeReport.reply:type_name -> longarm.v1.HubReply
+	121, // 9: longarm.v1.HubReply.job:type_name -> longarm.v1.Job
+	122, // 10: longarm.v1.HubReply.log:type_name -> longarm.v1.LogChunk
+	109, // 11: longarm.v1.NodeHello.labels:type_name -> longarm.v1.NodeHello.LabelsEntry
+	9,   // 12: longarm.v1.NodeHello.state:type_name -> longarm.v1.NodeState
+	92,  // 13: longarm.v1.NodeHello.update:type_name -> longarm.v1.UpdateStatus
+	88,  // 14: longarm.v1.NodeHello.tailnet:type_name -> longarm.v1.TailnetState
+	121, // 15: longarm.v1.JobsReport.jobs:type_name -> longarm.v1.Job
+	110, // 16: longarm.v1.ToolchainReport.versions:type_name -> longarm.v1.ToolchainReport.VersionsEntry
+	123, // 17: longarm.v1.ToolchainReport.updated_at:type_name -> google.protobuf.Timestamp
+	21,  // 18: longarm.v1.HubCommand.welcome:type_name -> longarm.v1.HubWelcome
+	22,  // 19: longarm.v1.HubCommand.revocations:type_name -> longarm.v1.Revocations
+	24,  // 20: longarm.v1.HubCommand.toolchain:type_name -> longarm.v1.ToolchainDesired
+	25,  // 21: longarm.v1.HubCommand.audit_ack:type_name -> longarm.v1.AuditAck
+	26,  // 22: longarm.v1.HubCommand.drain:type_name -> longarm.v1.DrainCommand
+	93,  // 23: longarm.v1.HubCommand.update:type_name -> longarm.v1.UpdateHint
+	17,  // 24: longarm.v1.HubCommand.kill_job:type_name -> longarm.v1.HubJobKill
+	18,  // 25: longarm.v1.HubCommand.log_request:type_name -> longarm.v1.HubLogRequest
+	19,  // 26: longarm.v1.HubCommand.submit_job:type_name -> longarm.v1.HubJobSubmit
+	20,  // 27: longarm.v1.HubCommand.toolchain_apply:type_name -> longarm.v1.HubToolchainApply
+	87,  // 28: longarm.v1.HubCommand.tailnet:type_name -> longarm.v1.TailnetInfo
+	61,  // 29: longarm.v1.HubCommand.tenancy:type_name -> longarm.v1.TenancyPolicy
+	15,  // 30: longarm.v1.HubCommand.worker_access:type_name -> longarm.v1.WorkerAccess
+	16,  // 31: longarm.v1.WorkerAccess.shares:type_name -> longarm.v1.WorkerShares
+	124, // 32: longarm.v1.HubJobSubmit.spec:type_name -> longarm.v1.JobSpec
+	125, // 33: longarm.v1.HubWelcome.metrics_interval:type_name -> google.protobuf.Duration
+	125, // 34: longarm.v1.HubWelcome.renew_before:type_name -> google.protobuf.Duration
+	87,  // 35: longarm.v1.HubWelcome.tailnet:type_name -> longarm.v1.TailnetInfo
+	23,  // 36: longarm.v1.Revocations.certs:type_name -> longarm.v1.RevokedCert
+	123, // 37: longarm.v1.RevokedCert.not_after:type_name -> google.protobuf.Timestamp
+	12,  // 38: longarm.v1.ToolchainDesired.tools:type_name -> longarm.v1.ToolSpec
+	123, // 39: longarm.v1.LinkSample.time:type_name -> google.protobuf.Timestamp
+	123, // 40: longarm.v1.LegStatus.since:type_name -> google.protobuf.Timestamp
+	29,  // 41: longarm.v1.LegStatus.history:type_name -> longarm.v1.LinkSample
+	123, // 42: longarm.v1.LegStatus.relay_since:type_name -> google.protobuf.Timestamp
+	30,  // 43: longarm.v1.WorkerLink.legs:type_name -> longarm.v1.LegStatus
+	123, // 44: longarm.v1.WorkerLink.since:type_name -> google.protobuf.Timestamp
+	123, // 45: longarm.v1.LinkReport.time:type_name -> google.protobuf.Timestamp
+	31,  // 46: longarm.v1.LinkReport.links:type_name -> longarm.v1.WorkerLink
+	32,  // 47: longarm.v1.LinksResponse.reports:type_name -> longarm.v1.LinkReport
+	123, // 48: longarm.v1.MetricsPoint.time:type_name -> google.protobuf.Timestamp
+	37,  // 49: longarm.v1.NodeHistory.points:type_name -> longarm.v1.MetricsPoint
+	38,  // 50: longarm.v1.HistoryResponse.nodes:type_name -> longarm.v1.NodeHistory
+	111, // 51: longarm.v1.NodeInfo.labels:type_name -> longarm.v1.NodeInfo.LabelsEntry
+	120, // 52: longarm.v1.NodeInfo.metrics:type_name -> longarm.v1.MetricsSnapshot
+	123, // 53: longarm.v1.NodeInfo.last_seen:type_name -> google.protobuf.Timestamp
+	123, // 54: longarm.v1.NodeInfo.joined_at:type_name -> google.protobuf.Timestamp
+	123, // 55: longarm.v1.NodeInfo.cert_not_after:type_name -> google.protobuf.Timestamp
+	13,  // 56: longarm.v1.NodeInfo.toolchain:type_name -> longarm.v1.ToolchainReport
+	88,  // 57: longarm.v1.NodeInfo.tailnet:type_name -> longarm.v1.TailnetState
+	16,  // 58: longarm.v1.NodeInfo.shares:type_name -> longarm.v1.WorkerShares
+	40,  // 59: longarm.v1.ListNodesResponse.nodes:type_name -> longarm.v1.NodeInfo
+	121, // 60: longarm.v1.FleetJob.job:type_name -> longarm.v1.Job
+	123, // 61: longarm.v1.FleetJob.updated_at:type_name -> google.protobuf.Timestamp
+	126, // 62: longarm.v1.FleetJobsRequest.states:type_name -> longarm.v1.JobState
+	43,  // 63: longarm.v1.FleetJobsResponse.jobs:type_name -> longarm.v1.FleetJob
+	123, // 64: longarm.v1.FleetEvent.time:type_name -> google.protobuf.Timestamp
+	43,  // 65: longarm.v1.FleetEvent.job:type_name -> longarm.v1.FleetJob
+	40,  // 66: longarm.v1.FleetEvent.node_info:type_name -> longarm.v1.NodeInfo
+	112, // 67: longarm.v1.PlaceRequest.require:type_name -> longarm.v1.PlaceRequest.RequireEntry
+	40,  // 68: longarm.v1.PlaceUpdate.node:type_name -> longarm.v1.NodeInfo
+	123, // 69: longarm.v1.AuditRequest.since:type_name -> google.protobuf.Timestamp
+	123, // 70: longarm.v1.AuditRecord.time:type_name -> google.protobuf.Timestamp
+	52,  // 71: longarm.v1.AuditResponse.records:type_name -> longarm.v1.AuditRecord
+	125, // 72: longarm.v1.CreateWorkerCodeRequest.ttl:type_name -> google.protobuf.Duration
+	113, // 73: longarm.v1.CreateWorkerCodeRequest.labels:type_name -> longarm.v1.CreateWorkerCodeRequest.LabelsEntry
+	123, // 74: longarm.v1.WhoamiResponse.cert_not_after:type_name -> google.protobuf.Timestamp
+	125, // 75: longarm.v1.WhoamiResponse.renew_before:type_name -> google.protobuf.Duration
+	87,  // 76: longarm.v1.WhoamiResponse.tailnet:type_name -> longarm.v1.TailnetInfo
+	58,  // 77: longarm.v1.WhoamiResponse.quota:type_name -> longarm.v1.Quota
+	59,  // 78: longarm.v1.WhoamiResponse.usage:type_name -> longarm.v1.QuotaUsage
+	58,  // 79: longarm.v1.TenantUser.quota:type_name -> longarm.v1.Quota
+	123, // 80: longarm.v1.TenantUser.created_at:type_name -> google.protobuf.Timestamp
+	59,  // 81: longarm.v1.TenantUser.usage:type_name -> longarm.v1.QuotaUsage
+	60,  // 82: longarm.v1.TenancyPolicy.users:type_name -> longarm.v1.TenantUser
+	58,  // 83: longarm.v1.TenancyPolicy.default_quota:type_name -> longarm.v1.Quota
+	58,  // 84: longarm.v1.PutUserRequest.quota:type_name -> longarm.v1.Quota
+	125, // 85: longarm.v1.PutUserRequest.ttl:type_name -> google.protobuf.Duration
+	60,  // 86: longarm.v1.PutUserResponse.user:type_name -> longarm.v1.TenantUser
+	75,  // 87: longarm.v1.PutUserResponse.join_code:type_name -> longarm.v1.JoinCode
+	60,  // 88: longarm.v1.ListUsersResponse.users:type_name -> longarm.v1.TenantUser
+	58,  // 89: longarm.v1.ListUsersResponse.default_quota:type_name -> longarm.v1.Quota
+	69,  // 90: longarm.v1.ListTeamsResponse.teams:type_name -> longarm.v1.Team
+	114, // 91: longarm.v1.HubSubmitRequest.env:type_name -> longarm.v1.HubSubmitRequest.EnvEntry
+	115, // 92: longarm.v1.HubSubmitRequest.labels:type_name -> longarm.v1.HubSubmitRequest.LabelsEntry
+	116, // 93: longarm.v1.HubSubmitRequest.require:type_name -> longarm.v1.HubSubmitRequest.RequireEntry
+	125, // 94: longarm.v1.CreateJoinCodeRequest.ttl:type_name -> google.protobuf.Duration
+	117, // 95: longarm.v1.CreateJoinCodeRequest.labels:type_name -> longarm.v1.CreateJoinCodeRequest.LabelsEntry
+	123, // 96: longarm.v1.JoinCode.expires_at:type_name -> google.protobuf.Timestamp
+	118, // 97: longarm.v1.JoinCode.labels:type_name -> longarm.v1.JoinCode.LabelsEntry
+	75,  // 98: longarm.v1.ListJoinCodesResponse.codes:type_name -> longarm.v1.JoinCode
+	119, // 99: longarm.v1.SetLabelsRequest.labels:type_name -> longarm.v1.SetLabelsRequest.LabelsEntry
+	12,  // 100: longarm.v1.Profile.tools:type_name -> longarm.v1.ToolSpec
+	123, // 101: longarm.v1.Profile.updated_at:type_name -> google.protobuf.Timestamp
+	81,  // 102: longarm.v1.ListProfilesResponse.profiles:type_name -> longarm.v1.Profile
+	123, // 103: longarm.v1.TailnetState.since:type_name -> google.protobuf.Timestamp
+	88,  // 104: longarm.v1.TailnetNodeStatus.state:type_name -> longarm.v1.TailnetState
+	123, // 105: longarm.v1.TailnetNodeStatus.key_minted_at:type_name -> google.protobuf.Timestamp
+	125, // 106: longarm.v1.TailnetStatusResponse.key_ttl:type_name -> google.protobuf.Duration
+	90,  // 107: longarm.v1.TailnetStatusResponse.nodes:type_name -> longarm.v1.TailnetNodeStatus
+	123, // 108: longarm.v1.TailnetStatusResponse.last_mint_error_at:type_name -> google.protobuf.Timestamp
+	123, // 109: longarm.v1.UpdateStatus.at:type_name -> google.protobuf.Timestamp
+	96,  // 110: longarm.v1.UpdateCheckResponse.files:type_name -> longarm.v1.ReleaseFile
+	123, // 111: longarm.v1.ReleaseVersion.added_at:type_name -> google.protobuf.Timestamp
+	96,  // 112: longarm.v1.ReleaseVersion.files:type_name -> longarm.v1.ReleaseFile
+	100, // 113: longarm.v1.ReleaseUpload.header:type_name -> longarm.v1.ReleaseUploadHeader
+	101, // 114: longarm.v1.ReleaseUpload.chunk:type_name -> longarm.v1.ReleaseUploadChunk
+	98,  // 115: longarm.v1.ListReleasesResponse.releases:type_name -> longarm.v1.ReleaseVersion
+	106, // 116: longarm.v1.ListReleasesResponse.rollout:type_name -> longarm.v1.Rollout
+	125, // 117: longarm.v1.PushReleaseRequest.wait:type_name -> google.protobuf.Duration
+	125, // 118: longarm.v1.PushReleaseRequest.batch_wait:type_name -> google.protobuf.Duration
+	123, // 119: longarm.v1.Rollout.started_at:type_name -> google.protobuf.Timestamp
+	123, // 120: longarm.v1.Rollout.phase_since:type_name -> google.protobuf.Timestamp
+	125, // 121: longarm.v1.Rollout.wait:type_name -> google.protobuf.Duration
+	125, // 122: longarm.v1.Rollout.batch_wait:type_name -> google.protobuf.Duration
+	3,   // 123: longarm.v1.Enroll.Join:input_type -> longarm.v1.JoinRequest
+	5,   // 124: longarm.v1.Enroll.JoinStatus:input_type -> longarm.v1.JoinStatusRequest
+	0,   // 125: longarm.v1.Enroll.AuthInfo:input_type -> longarm.v1.AuthInfoRequest
+	2,   // 126: longarm.v1.Enroll.EntraJoin:input_type -> longarm.v1.EntraJoinRequest
+	6,   // 127: longarm.v1.HubNode.Connect:input_type -> longarm.v1.NodeReport
+	27,  // 128: longarm.v1.HubNode.Renew:input_type -> longarm.v1.RenewRequest
+	107, // 129: longarm.v1.HubNode.Leave:input_type -> longarm.v1.LeaveRequest
+	41,  // 130: longarm.v1.Fleet.ListNodes:input_type -> longarm.v1.ListNodesRequest
+	44,  // 131: longarm.v1.Fleet.ListJobs:input_type -> longarm.v1.FleetJobsRequest
+	46,  // 132: longarm.v1.Fleet.GetJob:input_type -> longarm.v1.FleetJobRequest
+	46,  // 133: longarm.v1.Fleet.WaitJob:input_type -> longarm.v1.FleetJobRequest
+	47,  // 134: longarm.v1.Fleet.Events:input_type -> longarm.v1.EventsRequest
+	49,  // 135: longarm.v1.Fleet.Place:input_type -> longarm.v1.PlaceRequest
+	51,  // 136: longarm.v1.Fleet.Audit:input_type -> longarm.v1.AuditRequest
+	54,  // 137: longarm.v1.Fleet.Whoami:input_type -> longarm.v1.WhoamiRequest
+	86,  // 138: longarm.v1.Fleet.TailnetKey:input_type -> longarm.v1.TailnetKeyRequest
+	94,  // 139: longarm.v1.Fleet.CheckUpdate:input_type -> longarm.v1.UpdateCheckRequest
+	97,  // 140: longarm.v1.Fleet.DownloadRelease:input_type -> longarm.v1.ReleaseFileRequest
+	32,  // 141: longarm.v1.Fleet.ReportLinks:input_type -> longarm.v1.LinkReport
+	34,  // 142: longarm.v1.Fleet.Links:input_type -> longarm.v1.LinksRequest
+	36,  // 143: longarm.v1.Fleet.History:input_type -> longarm.v1.HistoryRequest
+	55,  // 144: longarm.v1.Fleet.CreateWorkerCode:input_type -> longarm.v1.CreateWorkerCodeRequest
+	56,  // 145: longarm.v1.Fleet.ShareWorker:input_type -> longarm.v1.ShareWorkerRequest
+	78,  // 146: longarm.v1.Fleet.RemoveWorker:input_type -> longarm.v1.NodeRequest
+	74,  // 147: longarm.v1.HubAdmin.CreateJoinCode:input_type -> longarm.v1.CreateJoinCodeRequest
+	76,  // 148: longarm.v1.HubAdmin.ListJoinCodes:input_type -> longarm.v1.ListJoinCodesRequest
+	78,  // 149: longarm.v1.HubAdmin.Approve:input_type -> longarm.v1.NodeRequest
+	78,  // 150: longarm.v1.HubAdmin.Revoke:input_type -> longarm.v1.NodeRequest
+	79,  // 151: longarm.v1.HubAdmin.SetDrain:input_type -> longarm.v1.SetDrainRequest
+	80,  // 152: longarm.v1.HubAdmin.SetLabels:input_type -> longarm.v1.SetLabelsRequest
+	81,  // 153: longarm.v1.HubAdmin.PutProfile:input_type -> longarm.v1.Profile
+	82,  // 154: longarm.v1.HubAdmin.ListProfiles:input_type -> longarm.v1.ListProfilesRequest
+	84,  // 155: longarm.v1.HubAdmin.AssignProfile:input_type -> longarm.v1.AssignProfileRequest
+	102, // 156: longarm.v1.HubAdmin.ListReleases:input_type -> longarm.v1.ListReleasesRequest
+	104, // 157: longarm.v1.HubAdmin.PushRelease:input_type -> longarm.v1.PushReleaseRequest
+	99,  // 158: longarm.v1.HubAdmin.PublishRelease:input_type -> longarm.v1.ReleaseUpload
+	105, // 159: longarm.v1.HubAdmin.GetRollout:input_type -> longarm.v1.GetRolloutRequest
+	105, // 160: longarm.v1.HubAdmin.AbortRollout:input_type -> longarm.v1.GetRolloutRequest
+	46,  // 161: longarm.v1.HubAdmin.KillJob:input_type -> longarm.v1.FleetJobRequest
+	72,  // 162: longarm.v1.HubAdmin.JobLogs:input_type -> longarm.v1.HubLogsRequest
+	73,  // 163: longarm.v1.HubAdmin.SubmitJob:input_type -> longarm.v1.HubSubmitRequest
+	78,  // 164: longarm.v1.HubAdmin.ToolchainApply:input_type -> longarm.v1.NodeRequest
+	89,  // 165: longarm.v1.HubAdmin.TailnetStatus:input_type -> longarm.v1.TailnetStatusRequest
+	78,  // 166: longarm.v1.HubAdmin.TailnetRekey:input_type -> longarm.v1.NodeRequest
+	62,  // 167: longarm.v1.HubAdmin.PutUser:input_type -> longarm.v1.PutUserRequest
+	64,  // 168: longarm.v1.HubAdmin.ListUsers:input_type -> longarm.v1.ListUsersRequest
+	66,  // 169: longarm.v1.HubAdmin.RemoveUser:input_type -> longarm.v1.RemoveUserRequest
+	68,  // 170: longarm.v1.HubAdmin.SetTeam:input_type -> longarm.v1.SetTeamRequest
+	70,  // 171: longarm.v1.HubAdmin.ListTeams:input_type -> longarm.v1.ListTeamsRequest
+	4,   // 172: longarm.v1.Enroll.Join:output_type -> longarm.v1.JoinResponse
+	4,   // 173: longarm.v1.Enroll.JoinStatus:output_type -> longarm.v1.JoinResponse
+	1,   // 174: longarm.v1.Enroll.AuthInfo:output_type -> longarm.v1.AuthInfoResponse
+	4,   // 175: longarm.v1.Enroll.EntraJoin:output_type -> longarm.v1.JoinResponse
+	14,  // 176: longarm.v1.HubNode.Connect:output_type -> longarm.v1.HubCommand
+	28,  // 177: longarm.v1.HubNode.Renew:output_type -> longarm.v1.RenewResponse
+	108, // 178: longarm.v1.HubNode.Leave:output_type -> longarm.v1.LeaveResponse
+	42,  // 179: longarm.v1.Fleet.ListNodes:output_type -> longarm.v1.ListNodesResponse
+	45,  // 180: longarm.v1.Fleet.ListJobs:output_type -> longarm.v1.FleetJobsResponse
+	43,  // 181: longarm.v1.Fleet.GetJob:output_type -> longarm.v1.FleetJob
+	43,  // 182: longarm.v1.Fleet.WaitJob:output_type -> longarm.v1.FleetJob
+	48,  // 183: longarm.v1.Fleet.Events:output_type -> longarm.v1.FleetEvent
+	50,  // 184: longarm.v1.Fleet.Place:output_type -> longarm.v1.PlaceUpdate
+	53,  // 185: longarm.v1.Fleet.Audit:output_type -> longarm.v1.AuditResponse
+	57,  // 186: longarm.v1.Fleet.Whoami:output_type -> longarm.v1.WhoamiResponse
+	85,  // 187: longarm.v1.Fleet.TailnetKey:output_type -> longarm.v1.TailnetAuth
+	95,  // 188: longarm.v1.Fleet.CheckUpdate:output_type -> longarm.v1.UpdateCheckResponse
+	127, // 189: longarm.v1.Fleet.DownloadRelease:output_type -> longarm.v1.FileChunk
+	33,  // 190: longarm.v1.Fleet.ReportLinks:output_type -> longarm.v1.ReportLinksResponse
+	35,  // 191: longarm.v1.Fleet.Links:output_type -> longarm.v1.LinksResponse
+	39,  // 192: longarm.v1.Fleet.History:output_type -> longarm.v1.HistoryResponse
+	75,  // 193: longarm.v1.Fleet.CreateWorkerCode:output_type -> longarm.v1.JoinCode
+	40,  // 194: longarm.v1.Fleet.ShareWorker:output_type -> longarm.v1.NodeInfo
+	40,  // 195: longarm.v1.Fleet.RemoveWorker:output_type -> longarm.v1.NodeInfo
+	75,  // 196: longarm.v1.HubAdmin.CreateJoinCode:output_type -> longarm.v1.JoinCode
+	77,  // 197: longarm.v1.HubAdmin.ListJoinCodes:output_type -> longarm.v1.ListJoinCodesResponse
+	40,  // 198: longarm.v1.HubAdmin.Approve:output_type -> longarm.v1.NodeInfo
+	40,  // 199: longarm.v1.HubAdmin.Revoke:output_type -> longarm.v1.NodeInfo
+	40,  // 200: longarm.v1.HubAdmin.SetDrain:output_type -> longarm.v1.NodeInfo
+	40,  // 201: longarm.v1.HubAdmin.SetLabels:output_type -> longarm.v1.NodeInfo
+	81,  // 202: longarm.v1.HubAdmin.PutProfile:output_type -> longarm.v1.Profile
+	83,  // 203: longarm.v1.HubAdmin.ListProfiles:output_type -> longarm.v1.ListProfilesResponse
+	40,  // 204: longarm.v1.HubAdmin.AssignProfile:output_type -> longarm.v1.NodeInfo
+	103, // 205: longarm.v1.HubAdmin.ListReleases:output_type -> longarm.v1.ListReleasesResponse
+	106, // 206: longarm.v1.HubAdmin.PushRelease:output_type -> longarm.v1.Rollout
+	98,  // 207: longarm.v1.HubAdmin.PublishRelease:output_type -> longarm.v1.ReleaseVersion
+	106, // 208: longarm.v1.HubAdmin.GetRollout:output_type -> longarm.v1.Rollout
+	106, // 209: longarm.v1.HubAdmin.AbortRollout:output_type -> longarm.v1.Rollout
+	43,  // 210: longarm.v1.HubAdmin.KillJob:output_type -> longarm.v1.FleetJob
+	122, // 211: longarm.v1.HubAdmin.JobLogs:output_type -> longarm.v1.LogChunk
+	43,  // 212: longarm.v1.HubAdmin.SubmitJob:output_type -> longarm.v1.FleetJob
+	40,  // 213: longarm.v1.HubAdmin.ToolchainApply:output_type -> longarm.v1.NodeInfo
+	91,  // 214: longarm.v1.HubAdmin.TailnetStatus:output_type -> longarm.v1.TailnetStatusResponse
+	90,  // 215: longarm.v1.HubAdmin.TailnetRekey:output_type -> longarm.v1.TailnetNodeStatus
+	63,  // 216: longarm.v1.HubAdmin.PutUser:output_type -> longarm.v1.PutUserResponse
+	65,  // 217: longarm.v1.HubAdmin.ListUsers:output_type -> longarm.v1.ListUsersResponse
+	67,  // 218: longarm.v1.HubAdmin.RemoveUser:output_type -> longarm.v1.RemoveUserResponse
+	71,  // 219: longarm.v1.HubAdmin.SetTeam:output_type -> longarm.v1.ListTeamsResponse
+	71,  // 220: longarm.v1.HubAdmin.ListTeams:output_type -> longarm.v1.ListTeamsResponse
+	172, // [172:221] is the sub-list for method output_type
+	123, // [123:172] is the sub-list for method input_type
+	123, // [123:123] is the sub-list for extension type_name
+	123, // [123:123] is the sub-list for extension extendee
+	0,   // [0:123] is the sub-list for field type_name
 }
 
 func init() { file_longarm_v1_hub_proto_init() }
@@ -8453,7 +9096,7 @@ func file_longarm_v1_hub_proto_init() {
 		return
 	}
 	file_longarm_v1_longarm_proto_init()
-	file_longarm_v1_hub_proto_msgTypes[3].OneofWrappers = []any{
+	file_longarm_v1_hub_proto_msgTypes[6].OneofWrappers = []any{
 		(*NodeReport_Hello)(nil),
 		(*NodeReport_Metrics)(nil),
 		(*NodeReport_Jobs)(nil),
@@ -8463,7 +9106,7 @@ func file_longarm_v1_hub_proto_init() {
 		(*NodeReport_Update)(nil),
 		(*NodeReport_Reply)(nil),
 	}
-	file_longarm_v1_hub_proto_msgTypes[11].OneofWrappers = []any{
+	file_longarm_v1_hub_proto_msgTypes[14].OneofWrappers = []any{
 		(*HubCommand_Welcome)(nil),
 		(*HubCommand_Revocations)(nil),
 		(*HubCommand_Toolchain)(nil),
@@ -8476,8 +9119,9 @@ func file_longarm_v1_hub_proto_init() {
 		(*HubCommand_ToolchainApply)(nil),
 		(*HubCommand_Tailnet)(nil),
 		(*HubCommand_Tenancy)(nil),
+		(*HubCommand_WorkerAccess)(nil),
 	}
-	file_longarm_v1_hub_proto_msgTypes[92].OneofWrappers = []any{
+	file_longarm_v1_hub_proto_msgTypes[99].OneofWrappers = []any{
 		(*ReleaseUpload_Header)(nil),
 		(*ReleaseUpload_Chunk)(nil),
 	}
@@ -8487,7 +9131,7 @@ func file_longarm_v1_hub_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_longarm_v1_hub_proto_rawDesc), len(file_longarm_v1_hub_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   112,
+			NumMessages:   120,
 			NumExtensions: 0,
 			NumServices:   4,
 		},
