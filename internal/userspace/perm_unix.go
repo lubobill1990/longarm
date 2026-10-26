@@ -42,15 +42,25 @@ func secureSpaceRoot(dir string, a *platform.Account) error {
 
 // checkTraversable fails when an account could not reach dir: every parent
 // needs the execute bit for others.
-func checkTraversable(dir string) error {
+func checkTraversable(dir string) error { return traversable(dir, "", false) }
+
+// CheckReachable is checkTraversable before longarmd ran (`longarmd
+// service install --isolation per-user`): parents of usersDir that do not
+// exist yet are skipped (longarmd creates them traversable), and so is
+// dataDir, which longarmd makes traversable (0711) itself.
+func CheckReachable(usersDir, dataDir string) error {
+	return traversable(filepath.Clean(usersDir), filepath.Clean(dataDir), true)
+}
+
+func traversable(dir, skip string, missingOK bool) error {
 	for d := filepath.Dir(dir); ; d = filepath.Dir(d) {
 		fi, err := os.Stat(d)
-		if err != nil {
+		switch {
+		case err != nil && !(missingOK && os.IsNotExist(err)):
 			return err
-		}
-		if fi.Mode().Perm()&0o001 == 0 {
+		case err == nil && d != skip && fi.Mode().Perm()&0o001 == 0:
 			return fmt.Errorf("per-user isolation: the accounts cannot reach %s because %s is not traversable (mode %v); "+
-				"move the data dir or set [isolation] users_dir to a path whose parents have o+x (e.g. /var/lib/longarm-users)", dir, d, fi.Mode().Perm())
+				"move the data dir (the default for root is /var/lib/longarmd) or set [isolation] users_dir to a path whose parents have o+x (e.g. /var/lib/longarm-users)", dir, d, fi.Mode().Perm())
 		}
 		if p := filepath.Dir(d); p == d {
 			return nil
