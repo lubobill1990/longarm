@@ -96,9 +96,16 @@ done
 [[ $stuck_timeout =~ ^[0-9]+$ ]] || die "--stuck-timeout: seconds"
 [[ $poll =~ ^[0-9]+$ ]] || die "LONGARM_DEPLOY_POLL_SECONDS: seconds"
 ! $build_in_acr || [[ -z $image ]] || die "--build-in-acr builds the image: drop --image"
-# host:port, [v6]:port; "]" first in the bracket expression
-stun_re='^[][A-Za-z0-9.:,-]+$'
-[[ -z $stun_servers || $stun_servers =~ $stun_re ]] || die "--stun-servers: host:port,host:port or none"
+# none alone, or host:port / [v6]:port entries (the hub refuses a missing
+# port: the container would crash-loop until --timeout)
+stun_re='^([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\]):[0-9]{1,5}$'
+if [[ -n $stun_servers && $stun_servers != none ]]; then
+	IFS=, read -ra stun_list <<<"$stun_servers"
+	[[ ${#stun_list[@]} -gt 0 && $stun_servers != *, ]] || die "--stun-servers: host:port,host:port or none"
+	for s in "${stun_list[@]}"; do
+		[[ $s =~ $stun_re ]] || die "--stun-servers: $s is not host:port or [v6]:port (none goes alone)"
+	done
+fi
 [[ -z $tailscale_secret_file || -r $tailscale_secret_file ]] || die "--tailscale-secret-file: can't read $tailscale_secret_file"
 rg=${rg:-$name-rg}
 
@@ -145,7 +152,7 @@ fetch_bootstrap() {
 }
 
 # bootstrap_value KEY: a value of the last fetched bootstrap.env
-bootstrap_value() { awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' <<<"$bootstrap"; }
+bootstrap_value() { printf '%s\n' "$bootstrap" | awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }'; }
 
 # ensure_providers NAMESPACE...: register the resource providers the
 # deployment needs (a new subscription has e.g. Microsoft.ContainerInstance

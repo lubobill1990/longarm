@@ -72,7 +72,7 @@ Results:
 - SNAT detection looks at UDP sessions only (whether ACI also SNATs TCP is unknown; TCP relay sessions don't affect STUN).
 - Loopback guard: one-way UDP datagrams between accounts still arrive (only replies are dropped); unix sockets are not covered; needs conntrack on `lo`; one per-user longarmd per machine (fixed table name); uids whose low 16 bits collide are refused (warning, error with `require`); Windows keeps the loopback gap. Nothing of it was run on Linux here: CI runs it as root.
 - `/proc` command lines of other users stay visible unless `/proc` is mounted `hidepid=invisible` (documented; longarmd warns).
-- `deploy.sh` once failed on CI reading `bootstrap.env` right after fetching it (not reproduced; the script now keeps the file in memory and deletes it at once).
+- `deploy.sh` once failed on CI reading `bootstrap.env` right after fetching it (not reproduced; the scripts download it into a private 0700 temp dir, read it into memory and delete it at once; `deploy.sh` parses it through a pipe, not a here-string, which bash < 5.1 backs with a `$TMPDIR` file).
 
 ## Needs from a human
 

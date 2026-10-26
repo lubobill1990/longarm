@@ -115,8 +115,11 @@ function Get-Bootstrap([string]$Account, [string]$Key, [string]$Dest) {
         foreach ($n in $hidden.Keys) { [Environment]::SetEnvironmentVariable($n, $hidden[$n], 'Process') }
     }
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Dest)) { return $null }
+    # the file holds the admin join code: read it and remove it at once
+    $lines = Get-Content $Dest
+    Remove-Item $Dest -Force -ErrorAction SilentlyContinue
     $kv = @{}
-    foreach ($l in Get-Content $Dest) {
+    foreach ($l in $lines) {
         $i = $l.IndexOf('=')
         if ($i -gt 0 -and -not $l.StartsWith('#')) { $kv[$l.Substring(0, $i).Trim()] = $l.Substring($i + 1).Trim() }
     }
@@ -188,7 +191,12 @@ if ($NoPanel -and $Panel) { throw '-NoPanel and -Panel exclude each other' }
 if ($TailscaleSecretFile -and -not (Test-Path $TailscaleSecretFile)) { throw "-TailscaleSecretFile: can't read $TailscaleSecretFile" }
 if (-not $ResourceGroup) { $ResourceGroup = "$Name-rg" }
 if ($BuildInAcr -and $Image) { throw '-BuildInAcr builds the image: drop -Image' }
-if ($StunServers -and $StunServers -notmatch '^[A-Za-z0-9.:,\[\]-]+$') { throw '-StunServers: host:port,host:port or none' }
+# none alone, or host:port / [v6]:port entries (the hub refuses a missing port: the container would crash-loop)
+if ($StunServers -and $StunServers -ne 'none') {
+    foreach ($s in $StunServers.Split(',')) {
+        if ($s -notmatch '^([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\]):[0-9]{1,5}$') { throw "-StunServers: '$s' is not host:port or [v6]:port (none goes alone)" }
+    }
+}
 $rg = $ResourceGroup
 $template = Join-Path $PSScriptRoot 'azuredeploy.json'
 
