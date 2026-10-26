@@ -12,9 +12,14 @@ git clone https://github.com/lubobill1990/longarm && cd longarm/deploy/azure
 ./deploy.sh --name myhub --location eastasia          # PowerShell: ./deploy.ps1 -Name myhub -Location eastasia
 ```
 
-The script creates the resource group `myhub-rg`, deploys
-[`main.bicep`](main.bicep) (compiled: [`azuredeploy.json`](azuredeploy.json)),
-waits until the hub answers, and prints everything you need next:
+The script creates the resource group `myhub-rg`, registers the resource
+providers a new subscription lacks (`Microsoft.ContainerInstance`,
+`Microsoft.Storage`, plus `Microsoft.OperationalInsights` with
+`--log-analytics` and `Microsoft.ContainerRegistry` with `--build-in-acr`;
+this needs the right to register providers, e.g. Contributor on the
+subscription), deploys [`main.bicep`](main.bicep) (compiled:
+[`azuredeploy.json`](azuredeploy.json)), waits until the hub answers, and
+prints everything you need next (a first deployment takes about 4 minutes):
 
 ```text
 longarm-hub is up.
@@ -49,7 +54,9 @@ restarts the hub) prints everything too.
 | `--no-panel` | `-NoPanel` | no Caddy sidecar, no ports 80/443 (no panel, no install scripts) |
 | `--resource-group RG` | `-ResourceGroup` | default `NAME-rg` |
 | `--image IMAGE` | `-Image` | default `ghcr.io/lubobill1990/longarm-hub:latest` |
-| `--registry-user USER` | `-RegistryUser` | private image; password in `LONGARM_REGISTRY_PASSWORD` |
+| `--registry-user USER` | `-RegistryUser` | private image; password in `LONGARM_REGISTRY_PASSWORD`; the login goes to the image's registry (ghcr.io, `<acr>.azurecr.io`, ...) |
+| `--build-in-acr` | `-BuildInAcr` | build the image from this checkout in an Azure Container Registry ([below](#building-the-image-in-azure-no-docker)) |
+| `--stun-servers LIST` | `-StunServers` | external STUN servers the hub advertises (default Cloudflare + Google, `none` = only the hub's own; [Direct connections](#direct-connections-longnet-on-aci)) |
 | `--tailscale-secret-file F` | `-TailscaleSecretFile` | Tailscale OAuth secret ([tailnet] provider, [deploy/hub](../hub/README.md#tailnet-provider-tailscale-default-or-headscale)) |
 | `--acme-email E` | `-AcmeEmail` | Let's Encrypt contact |
 | `--log-analytics` | `-LogAnalytics` | container logs to a Log Analytics workspace |
@@ -57,6 +64,17 @@ restarts the hub) prints everything too.
 | `--recreate` | `-Recreate` | delete the container group first (to change size or panel; data stays) |
 | `--admin-code` | `-AdminCode` | print a new one-time admin join code |
 | `--teardown [--yes]` | `-Teardown [-Yes]` | delete the resource group (only one the script created) |
+| `--timeout S` | `-TimeoutSeconds` | how long to wait for the deployment and the hub (default 1200) |
+| `--stuck-timeout S` | `-StuckTimeoutSeconds` | give up on a group stuck in `Creating` without any event (default 600) |
+
+**A group stuck in Creating.** Once, a deployment sat in `Creating` with
+both containers `Waiting` and no events at all for over 30 minutes (not
+reproduced: the same deployment with `--recreate` was up in 3.5 minutes, and
+Caddy alone runs fine). The scripts deploy with `--no-wait` and watch the
+group: after `--stuck-timeout` seconds in that state they stop with what to
+do - `./deploy.sh --name <name> --recreate` (storage and data are kept), or
+`--no-panel --recreate` to rule out the sidecar. A failed deployment prints
+the failed operations (e.g. `InaccessibleImage`).
 
 Secrets (registry password, Tailscale secret) go to the deployment through a
 temporary parameters file, never on a command line.
@@ -69,8 +87,8 @@ temporary parameters file, never on a command line.
   │  hub  ghcr.io/.../longarm-hub (non-root)            caddy (optional)                   │
   │   PID 1 litestream replicate -exec "longarm-hub serve"   :443/:80 Let's Encrypt         │
   │     :7443/tcp gRPC API + relay TLS fallback (mTLS)       reverse_proxy 127.0.0.1:7480   │
-  │     :7443/udp longnet relay (QUIC) + STUN                                                │
-  │     :7444/udp second STUN port                                                           │
+  │     :7445/udp longnet relay (QUIC) + STUN                                                │
+  │     :7446/udp second STUN port                                                           │
   │     127.0.0.1:7480 panel / API / install scripts / healthz                               │
   │   /var/lib/longarm-hub/hub.db  (container disk)    /data  (state share)  /data (caddy)  │
   └──────────────┬──────────────────────────────────────────┬──────────────────┬──────────┘
@@ -213,10 +231,72 @@ traffic relayed by the longnet relay leaves Azure and counts. Direct
   (from Git Bash on Windows prefix `MSYS_NO_PATHCONV=1`).
 - **Azure public cloud only**: the template builds the name
   `<name>.<region>.azurecontainer.io`, the public cloud's ACI DNS zone.
-- **UDP 7443 next to TCP 7443**: the template opens 7443 for both protocols.
-  Should a region refuse that, deploy with the template parameter
-  `relayUdpPort=7445` (STUN then on 7446); workers then listen on
-  `longnet://<fqdn>:7445?tcp=<fqdn>:7443&name=<worker>`.
+- **UDP 7445 and 7446, not 7443**: ACI refuses one port number for TCP and
+  UDP in a container (`DuplicateContainerPorts`), so the relay's UDP port is
+  `relayUdpPort` (default 7445, at least 7444; STUN's second port is the next
+  one) and its TLS fallback stays on 7443/tcp. Workers listen on
+  `longnet://<fqdn>:7445?tcp=<fqdn>:7443&name=<worker>` (the scripts print
+  it). CI checks the template against ACI's rules for every parameter
+  combination ([test/acirules](test/acirules/main.go)): ports per container,
+  memory in 0.1 GB steps, CPU, group limits.
+- **ACI rewrites the source address of inbound UDP** (see below): the hub's
+  own STUN answers are useless for NAT detection there.
+
+## Building the image in Azure (no docker)
+
+The default image is `ghcr.io/lubobill1990/longarm-hub` (public once the
+package is made public). To run your own build - a branch, a fork, or while
+the GHCR package is private - without docker:
+
+```sh
+./deploy.sh --name myhub --location eastasia --build-in-acr     # PowerShell: -BuildInAcr
+```
+
+The script creates an Azure Container Registry (Basic, about 5 USD/month)
+in the hub's resource group on the first use, runs `az acr build --target
+acr` on this checkout (ACR Tasks, a few minutes), and deploys
+`<registry>.azurecr.io/longarm-hub:build-<UTC time>` with the registry's
+admin login. Re-runs without `--build-in-acr` keep that image and find the
+login by themselves; `--build-in-acr` again builds and deploys a new one.
+By hand:
+
+```sh
+az acr build -r <registry> -t longarm-hub:mytag --target acr -f deploy/hub/Dockerfile .
+```
+
+`--target acr` matters: ACR Tasks scans every `FROM` line up to the target
+for base images and only understands `FROM <image> [AS <name>]`; the
+default (last) stage uses `FROM --platform=$BUILDPLATFORM` for BuildKit's
+cross-compiling multi-arch build (CI), which ACR Tasks rejects with "failed
+to scan dependencies". The `acr` stage builds natively (`--platform
+linux/arm64` gives an arm64 image).
+
+## Direct connections (longnet) on ACI
+
+ACI rewrites the **source address of inbound UDP**: the hub sees every node
+as coming from an internal address (`10.92.0.x` on the real run), so the
+reflexive addresses its STUN ports report are useless - every node looked
+like a hard (symmetric) NAT and longnet never tried hole punching (relay
+only, about 105 ms between a laptop and a worker that are 30 ms apart).
+
+What happens now:
+
+- Nodes ignore STUN answers with a private, CGNAT, link-local or loopback
+  mapped address from a STUN server on a public address (logged once); NAT
+  types are derived from public observations only, and fewer than two
+  give "unknown" (punching is tried), not "hard".
+- The template sets `LONGARM_HUB_RELAY_STUN_ADVERTISE` so the hub tells
+  nodes to use **public STUN servers** (default
+  `stun.cloudflare.com:3478,stun.l.google.com:19302`, the
+  `stunServers` parameter / `--stun-servers`) next to its own ports.
+- The hub notices that its own STUN answers are SNATed (nodes it sees from a
+  private address report public addresses from other STUN servers) and then
+  stops advertising its own STUN ports.
+
+So **direct connections on ACI need the external STUN servers**: with
+`--stun-servers none` everything goes through the relay (it works, just
+slower and billed as egress). Nodes can also bring their own:
+`LONGARM_NET_STUN=host:port,...` or `?stun=` on the longnet URL.
 
 ## Files
 
@@ -226,4 +306,5 @@ traffic relayed by the longnet relay leaves Azure and counts. Direct
 | [azuredeploy.json](azuredeploy.json) | `bicep build main.bicep --outfile azuredeploy.json` (CI checks it is current) |
 | [deploy.sh](deploy.sh) / [deploy.ps1](deploy.ps1) | the one-command deploy / upgrade / teardown |
 | [test/container-smoke.sh](test/container-smoke.sh) | the image test in CI (docker + Azurite) |
+| [test/acirules](test/acirules/main.go) | ACI's rules (ports, memory/CPU steps, limits) for every parameter combination, in CI |
 | [E2E.md](E2E.md) | the manual end-to-end test on a real subscription |
