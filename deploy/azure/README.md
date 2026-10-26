@@ -59,6 +59,9 @@ restarts the hub) prints everything too.
 | `--stun-servers LIST` | `-StunServers` | external STUN servers the hub advertises (default Cloudflare + Google, `none` = only the hub's own; [Direct connections](#direct-connections-longnet-on-aci)) |
 | `--tailscale-secret-file F` | `-TailscaleSecretFile` | Tailscale OAuth secret ([tailnet] provider, [deploy/hub](../hub/README.md#tailnet-provider-tailscale-default-or-headscale)) |
 | `--acme-email E` | `-AcmeEmail` | Let's Encrypt contact |
+| `--entra-tenant ID --entra-client ID` | | Sign in with Microsoft Entra ID (`longarm login`, panel); a re-run keeps them ([usage](../../docs/usage.md)) |
+| `--entra-admins LIST` | | Entra admins: UPNs, `*@domain` or object IDs, comma-separated |
+| `--entra-web spa\|confidential\|off` | | panel sign-in mode (default spa) |
 | `--log-analytics` | `-LogAnalytics` | container logs to a Log Analytics workspace |
 | `--storage-auth key\|identity` | | `identity`: no storage account keys, panel served by the hub ([below](#without-storage-account-keys)); deploy.sh only for now |
 | `--acr NAME` | | with `identity`: pull the image from this Azure Container Registry (same resource group) |
