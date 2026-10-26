@@ -462,3 +462,26 @@ func migrateTailnetState(cfg Config, hf hubclient.TailnetConfig) {
 		transport.MigrateStateDir(base, hf.ControlURL)
 	}
 }
+
+// dialer is a running tailscale node of this worker to dial other nodes
+// with (port links), nil if none: the managed leg's, else a static one's.
+func (m *tailnetLegs) dialer() transport.Transport {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	legs := append([]*tsLeg{m.managed}, m.static...)
+	m.mu.Unlock()
+	for _, l := range legs {
+		if l == nil {
+			continue
+		}
+		l.mu.Lock()
+		tr := l.tr
+		l.mu.Unlock()
+		if tr != nil && tr.Started() {
+			return tr
+		}
+	}
+	return nil
+}

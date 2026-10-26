@@ -1,0 +1,510 @@
+package longarmd
+
+import (
+	"context"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/lubobill1990/longarm/internal/client"
+	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/platform"
+	"github.com/lubobill1990/longarm/internal/portlink"
+	"github.com/lubobill1990/longarm/internal/server"
+	"github.com/lubobill1990/longarm/internal/userspace"
+	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+)
+
+// Port links on a worker (docs/usage.md "Port links"). The hub pushes the
+// list of links naming this worker on the hub session; it is kept in
+// port-links.json so links keep working while the hub is away.
+//
+//   - As "from" (A): listen on 127.0.0.1:<listen port>; every accepted
+//     connection - with per-user isolation only from a process of the
+//     owner's account - becomes a LinkTunnel.Dial stream to the target
+//     worker, presenting the hub-signed grant. The target is reached like a
+//     client reaches workers (transport race over its advertised endpoints),
+//     with this worker's own longnet / tailscale nodes where it has them.
+//   - As "to" (B): server.LinkTunnel checks the grant and asks Incoming
+//     whether the link is (still) in the list.
+//
+// A link that leaves the list (removed, expired) is cut on both sides:
+// listener closed, open connections closed.
+
+// PortLinksFile holds the hub's last list of port links naming this worker.
+const PortLinksFile = "port-links.json"
+
+// linkDialDir holds the link dialer's transport cache.
+const linkDialDir = "links"
+
+// Retry timing (variables for tests).
+var (
+	linkListenRetry   = 10 * time.Second // listen port busy
+	linkInactiveRetry = 4 * time.Second  // the target has not got the hub's push yet
+	linkReportEvery   = 2 * time.Second
+)
+
+type linkManager struct {
+	dataDir string
+	name    string // this worker
+	bundle  *pki.Bundle
+	spaces  *userspace.Spaces
+	audit   *server.Audit
+	log     *slog.Logger
+	dialer  *client.Dialer
+	// report sends link states to the hub (the agent's session; dropped
+	// while offline).
+	report func(*pb.PortLinkReport)
+
+	mu      sync.Mutex
+	links   map[string]*linkState  // every link naming this worker
+	targets map[string]*linkTarget // gRPC connections to target workers
+	lastRep string                 // last report sent
+	ctx     context.Context
+}
+
+// linkState is one link; for "from" links also its listener and counters.
+type linkState struct {
+	link   *pb.PortLink           // fixed for the link's lifetime (sameLink)
+	a      *pb.PortLinkAssignment // latest grant and target endpoints (m.mu)
+	ctx    context.Context        // ends when the link goes
+	cancel context.CancelFunc
+
+	mu       sync.Mutex
+	state    string // listening | error
+	err      string
+	path     string
+	conns    int64
+	refused  int64
+	active   atomic.Int32
+	sent     atomic.Int64
+	received atomic.Int64
+}
+
+type linkTarget struct {
+	key  string // endpoints the connection was made for
+	conn *client.Conn
+}
+
+func newLinkManager(ctx context.Context, dataDir, name string, bundle *pki.Bundle, spaces *userspace.Spaces, audit *server.Audit,
+	log *slog.Logger, dialer *client.Dialer) *linkManager {
+	m := &linkManager{ctx: ctx, dataDir: dataDir, name: name, bundle: bundle, spaces: spaces, audit: audit, log: log,
+		dialer: dialer, links: map[string]*linkState{}, targets: map[string]*linkTarget{}}
+	if b, err := os.ReadFile(filepath.Join(dataDir, PortLinksFile)); err == nil {
+		pl := &pb.PortLinks{}
+		if err := protojson.Unmarshal(b, pl); err != nil {
+			log.Warn("port links: unreadable "+PortLinksFile+"; waiting for the hub", "err", err)
+		} else {
+			m.apply(pl, false)
+		}
+	}
+	return m
+}
+
+// Roots implement server.LinkRegistry.
+func (m *linkManager) Roots() *x509.CertPool { return m.bundle.Pool }
+
+// Incoming implements server.LinkRegistry.
+func (m *linkManager) Incoming(id string) (*pb.PortLink, context.Context, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ls := m.links[id]
+	if ls == nil || ls.link.To != m.name || expired(ls.link, time.Now()) {
+		return nil, nil, false
+	}
+	return ls.link, ls.ctx, true
+}
+
+// Env implements server.LinkRegistry: the owner's links from here.
+func (m *linkManager) Env(owner string) map[string]string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var ls []portlink.Link
+	now := time.Now()
+	for _, s := range m.links {
+		l := s.link
+		if l.From == m.name && l.Owner == owner && !expired(l, now) {
+			ls = append(ls, portlink.Link{To: l.To, Port: l.Port, ListenPort: l.ListenPort})
+		}
+	}
+	return portlink.Env(ls)
+}
+
+func expired(l *pb.PortLink, now time.Time) bool {
+	return l.ExpiresAt != nil && !now.Before(l.ExpiresAt.AsTime())
+}
+
+// apply makes pl (the hub's list) the current set of links; persist saves
+// it for restarts.
+func (m *linkManager) apply(pl *pb.PortLinks, persist bool) {
+	if persist {
+		if b, err := protojson.Marshal(pl); err == nil {
+			if err := writeFileAtomic(filepath.Join(m.dataDir, PortLinksFile), b); err != nil {
+				m.log.Warn("port links: save", "err", err)
+			}
+		}
+	}
+	now := time.Now()
+	m.mu.Lock()
+	keep := map[string]bool{}
+	for _, a := range pl.Links {
+		l := a.GetLink()
+		if l == nil || !portlink.ValidID(l.Id) || (l.From != m.name && l.To != m.name) || expired(l, now) {
+			continue
+		}
+		keep[l.Id] = true
+		if old := m.links[l.Id]; old != nil {
+			if sameLink(old.link, l) {
+				old.a = a // a new grant / target endpoints: used by new connections
+				continue
+			}
+			m.removeLocked(old, "changed")
+		}
+		ctx, cancel := context.WithCancel(m.ctx)
+		ls := &linkState{link: l, a: a, ctx: ctx, cancel: cancel}
+		m.links[l.Id] = ls
+		if l.From == m.name {
+			m.log.Info("port link: listening for it", "link", l.Id, "owner", l.Owner, "listen", l.ListenPort, "to", fmt.Sprintf("%s:%d", l.To, l.Port))
+			go m.listen(ls)
+		} else {
+			m.log.Info("port link: accepting it", "link", l.Id, "owner", l.Owner, "from", l.From, "port", l.Port)
+		}
+	}
+	for id, ls := range m.links {
+		if !keep[id] {
+			m.removeLocked(ls, "removed")
+		}
+	}
+	m.pruneTargetsLocked()
+	m.mu.Unlock()
+	m.sendReport(true)
+}
+
+// sameLink: the fields a listener or an accepted stream depends on.
+func sameLink(a, b *pb.PortLink) bool {
+	return a.Owner == b.Owner && a.From == b.From && a.To == b.To && a.Port == b.Port && a.ListenPort == b.ListenPort &&
+		a.ExpiresAt.AsTime().Equal(b.ExpiresAt.AsTime())
+}
+
+// removeLocked ends a link: listener and connections (both sides).
+func (m *linkManager) removeLocked(ls *linkState, why string) {
+	delete(m.links, ls.link.Id)
+	ls.cancel()
+	m.log.Info("port link ended", "link", ls.link.Id, "reason", why)
+}
+
+// pruneTargetsLocked closes connections to workers no link targets any more.
+func (m *linkManager) pruneTargetsLocked() {
+	used := map[string]bool{}
+	for _, ls := range m.links {
+		if ls.link.From == m.name {
+			used[ls.link.To] = true
+		}
+	}
+	for to, t := range m.targets {
+		if !used[to] {
+			t.conn.Close()
+			delete(m.targets, to)
+		}
+	}
+}
+
+// run expires links locally (also without the hub) and reports the states
+// of the links listened for.
+func (m *linkManager) run(ctx context.Context) {
+	t := time.NewTicker(linkReportEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			m.mu.Lock()
+			for _, ls := range m.links {
+				ls.cancel()
+			}
+			for _, t := range m.targets {
+				t.conn.Close()
+			}
+			m.targets = map[string]*linkTarget{}
+			m.mu.Unlock()
+			return
+		case <-t.C:
+		}
+		now := time.Now()
+		m.mu.Lock()
+		for _, ls := range m.links {
+			if expired(ls.link, now) {
+				m.removeLocked(ls, "expired")
+			}
+		}
+		m.pruneTargetsLocked()
+		m.mu.Unlock()
+		m.sendReport(false)
+	}
+}
+
+// statusReport is the state of the links this worker listens for.
+func (m *linkManager) statusReport() *pb.PortLinkReport {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rep := &pb.PortLinkReport{}
+	for _, ls := range m.links {
+		if ls.link.From != m.name {
+			continue
+		}
+		ls.mu.Lock()
+		s := &pb.PortLinkStatus{Id: ls.link.Id, State: ls.state, Error: ls.err, Connections: ls.conns, Refused: ls.refused,
+			Active: ls.active.Load(), BytesSent: ls.sent.Load(), BytesReceived: ls.received.Load(), Path: ls.path}
+		ls.mu.Unlock()
+		if s.State == "" {
+			s.State = "pending"
+		}
+		rep.Links = append(rep.Links, s)
+	}
+	sort.Slice(rep.Links, func(i, j int) bool { return rep.Links[i].Id < rep.Links[j].Id })
+	return rep
+}
+
+// sendReport sends the states when they changed (force: always).
+func (m *linkManager) sendReport(force bool) {
+	if m.report == nil {
+		return
+	}
+	rep := m.statusReport()
+	b, _ := proto.Marshal(rep)
+	m.mu.Lock()
+	same := string(b) == m.lastRep
+	m.lastRep = string(b)
+	m.mu.Unlock()
+	if same && !force {
+		return
+	}
+	m.report(rep)
+}
+
+func (ls *linkState) set(state, err string) {
+	ls.mu.Lock()
+	ls.state, ls.err = state, err
+	ls.mu.Unlock()
+}
+
+// listen serves a "from" link until it ends.
+func (m *linkManager) listen(ls *linkState) {
+	l := ls.link
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(l.ListenPort)))
+	for ls.ctx.Err() == nil {
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			ls.set("error", fmt.Sprintf("listen %s: %v", addr, err))
+			m.log.Warn("port link: listen", "link", l.Id, "addr", addr, "err", err)
+			select {
+			case <-ls.ctx.Done():
+			case <-time.After(linkListenRetry):
+			}
+			continue
+		}
+		ls.set("listening", "")
+		stop := context.AfterFunc(ls.ctx, func() { ln.Close() })
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				break
+			}
+			go m.serveConn(ls, c)
+		}
+		stop()
+		ln.Close()
+		if ls.ctx.Err() == nil {
+			time.Sleep(time.Second) // accept failed: listen again
+		}
+	}
+}
+
+// serveConn carries one local connection to the target worker.
+func (m *linkManager) serveConn(ls *linkState, c net.Conn) {
+	defer c.Close()
+	l := ls.link
+	if err := m.checkPeer(l, c); err != nil {
+		ls.mu.Lock()
+		ls.refused++
+		ls.mu.Unlock()
+		m.audit.LogAs("longarmd", "link/refused", map[string]any{"link": l.Id, "owner": l.Owner, "peer": c.RemoteAddr().String(), "why": err.Error()})
+		m.log.Info("port link: refused a local connection", "link", l.Id, "peer", c.RemoteAddr().String(), "why", err)
+		return
+	}
+	ls.mu.Lock()
+	ls.conns++
+	ls.mu.Unlock()
+	ls.active.Add(1)
+	defer ls.active.Add(-1)
+	ctx, cancel := context.WithCancel(ls.ctx)
+	defer cancel()
+	stop := context.AfterFunc(ctx, func() { c.Close() }) // link removed: cut
+	defer stop()
+	st, conn, err := m.open(ctx, ls)
+	if err != nil {
+		ls.set("error", err.Error())
+		m.log.Warn("port link: dial target", "link", l.Id, "to", l.To, "err", err)
+		return
+	}
+	ls.mu.Lock()
+	ls.state, ls.err, ls.path = "listening", "", conn.Path().String()
+	ls.mu.Unlock()
+	go func() { // local -> target
+		buf := make([]byte, 32<<10)
+		for {
+			n, err := c.Read(buf)
+			if n > 0 {
+				if st.Send(&pb.ForwardFrame{Data: buf[:n]}) != nil {
+					cancel()
+					return
+				}
+				ls.sent.Add(int64(n))
+			}
+			if err != nil {
+				st.CloseSend()
+				return
+			}
+		}
+	}()
+	for { // target -> local
+		f, err := st.Recv()
+		if err != nil {
+			if !errors.Is(err, io.EOF) && ctx.Err() == nil && status.Code(err) != codes.Canceled {
+				m.log.Debug("port link: stream", "link", l.Id, "err", err)
+			}
+			return
+		}
+		if len(f.Data) > 0 {
+			if _, err := c.Write(f.Data); err != nil {
+				return
+			}
+			ls.received.Add(int64(len(f.Data)))
+		}
+		if f.Eof {
+			if tc, ok := c.(*net.TCPConn); ok {
+				tc.CloseWrite()
+			}
+		}
+	}
+}
+
+// checkPeer: with per-user isolation only processes of the link owner's
+// account may use the link (the listener belongs to longarmd).
+func (m *linkManager) checkPeer(l *pb.PortLink, c net.Conn) error {
+	if !m.spaces.PerUser() {
+		return nil
+	}
+	sp := m.spaces.Lookup(l.Owner)
+	if sp == nil || sp.Account == nil {
+		return fmt.Errorf("%s has no account on this worker", l.Owner)
+	}
+	ok, err := platform.PeerIsAccount(c, sp.Account)
+	if err != nil {
+		return fmt.Errorf("peer process: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("not a process of %s", sp.Account.Name)
+	}
+	return nil
+}
+
+// open starts a LinkTunnel.Dial stream to the target and waits for its
+// answer. A target that does not know the link yet (the hub's push to it
+// is still on its way) is asked again for a few seconds.
+func (m *linkManager) open(ctx context.Context, ls *linkState) (pb.LinkTunnel_DialClient, *client.Conn, error) {
+	deadline := time.Now().Add(linkInactiveRetry)
+	wait := 100 * time.Millisecond
+	for {
+		m.mu.Lock()
+		a := ls.a
+		m.mu.Unlock()
+		conn, err := m.target(a)
+		if err != nil {
+			return nil, nil, err
+		}
+		st, err := pb.NewLinkTunnelClient(conn.ClientConn).Dial(ctx)
+		if err == nil {
+			if err = st.Send(&pb.ForwardFrame{Grant: a.Grant}); err == nil {
+				_, err = st.Recv() // the target's answer: an empty frame, or why not
+			}
+		}
+		if err == nil {
+			return st, conn, nil
+		}
+		if status.Code(err) != codes.FailedPrecondition || time.Now().After(deadline) || ctx.Err() != nil {
+			return nil, nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(wait):
+		}
+		wait = min(wait*2, time.Second)
+	}
+}
+
+// target returns the connection to a's target worker over its current
+// endpoints.
+func (m *linkManager) target(a *pb.PortLinkAssignment) (*client.Conn, error) {
+	to := a.Link.To
+	key := strings.Join(a.TargetEndpoints, " ")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if t := m.targets[to]; t != nil {
+		if t.key == key {
+			return t.conn, nil
+		}
+		t.conn.Close() // the target's endpoints changed
+		delete(m.targets, to)
+	}
+	w := client.Worker{Name: to, CertName: to}
+	for _, s := range a.TargetEndpoints {
+		e, err := client.ParseEndpoint(s)
+		if err != nil {
+			continue
+		}
+		if w.Address == "" {
+			w.Transport, w.Address = e.Transport, e.Address
+		} else {
+			w.Alt = append(w.Alt, e)
+		}
+	}
+	if w.Address == "" {
+		return nil, fmt.Errorf("worker %s has no endpoints (has it ever been online?)", to)
+	}
+	conn, err := m.dialer.Dial(w)
+	if err != nil {
+		return nil, err
+	}
+	m.targets[to] = &linkTarget{key: key, conn: conn}
+	return conn, nil
+}
+
+// writeFileAtomic writes b to path via a temporary file.
+func writeFileAtomic(path string, b []byte) error {
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	if err := platform.ReplaceFile(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}

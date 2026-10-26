@@ -10,15 +10,18 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/conntrack"
 	"github.com/lubobill1990/longarm/internal/gc"
 	"github.com/lubobill1990/longarm/internal/hubclient"
@@ -32,7 +35,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/toolchain"
 	"github.com/lubobill1990/longarm/internal/transport"
-	_ "github.com/lubobill1990/longarm/internal/transport/longnet" // registers longnet://
+	"github.com/lubobill1990/longarm/internal/transport/longnet" // also registers longnet://
 	"github.com/lubobill1990/longarm/internal/update"
 	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/version"
@@ -408,6 +411,27 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	var listeners, sshListeners []net.Listener
 	var closers []closer
 	var closersMu sync.Mutex
+	longnets := map[string]*longnet.Transport{} // by relay address (closersMu): port links dial with them
+	var tsLegs atomic.Pointer[tailnetLegs]      // set below; port links dial with its node
+	linkDialer := client.NewDialerFor(&client.Config{Dir: filepath.Join(cfg.DataDir, linkDialDir)}, reloader.LiveBundle())
+	linkDialer.LegTransport = func(e client.Endpoint) transport.Transport {
+		switch e.Transport {
+		case "longnet":
+			closersMu.Lock()
+			defer closersMu.Unlock()
+			if lt := longnets[e.Address]; lt != nil {
+				return lt
+			}
+		case "tailscale":
+			if tr := tsLegs.Load().dialer(); tr != nil {
+				return tr
+			}
+		}
+		return nil // tcp; a relay or tailnet this worker doesn't use itself: a node of the dialer's own
+	}
+	defer linkDialer.Close()
+	links := newLinkManager(ctx, cfg.DataDir, srv.Name, reloader.LiveBundle(), st.spaces, srv.Audit, log.With("component", "links"), linkDialer)
+	srv.Links = links
 	defer func() {
 		closersMu.Lock()
 		defer closersMu.Unlock()
@@ -424,6 +448,13 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 			closersMu.Lock()
 			closers = append(closers, c)
 			closersMu.Unlock()
+		}
+		if lt, ok := tr.(*longnet.Transport); ok {
+			if pu, err := url.Parse(u); err == nil {
+				closersMu.Lock()
+				longnets[pu.Host] = lt
+				closersMu.Unlock()
+			}
 		}
 		ln, err := tr.Listen(ctx)
 		if err != nil {
@@ -535,6 +566,13 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		legs.env.TailnetKey = legs.hubKey
 	}
 	agent.tailnet = legs
+	tsLegs.Store(legs)
+	agent.links = links
+	links.report = func(r *pb.PortLinkReport) {
+		agent.send(&pb.NodeReport{Msg: &pb.NodeReport_PortLinks{PortLinks: r}}, false)
+	}
+	wg.Add(1)
+	go func() { defer wg.Done(); links.run(ctx) }()
 	agent.channel = cfg.Update.Channel
 	if agent.channel == "" {
 		agent.channel = "stable"

@@ -207,6 +207,9 @@ type Dialer struct {
 	// long-lived monitor sees it (longarm daemon's pool view); a race uses it to
 	// distrust a sticky winner whose path degraded. nil/empty = unknown.
 	LiveLegs func(ctx context.Context, worker string) []LiveLeg
+	// LegTransport, if set, may supply the transport of a leg (longarmd: its
+	// own longnet / tailscale nodes for port links); nil = the default.
+	LegTransport func(e Endpoint) transport.Transport
 	// OneShot: this process exits soon. Close doesn't wait for the
 	// tailscale node to shut down, and a cold own tailscale node gets no
 	// head start (the other legs race it at once).
@@ -234,6 +237,13 @@ func NewDialer(cfg *Config) (*Dialer, error) {
 		return nil, err
 	}
 	return d, nil
+}
+
+// NewDialerFor is a dialer with an already loaded bundle of any role (the
+// "from" worker of a port link dials the target worker with its worker
+// certificate); transport-cache.json goes to cfg.Dir. Policy: race.
+func NewDialerFor(cfg *Config, b *pki.Bundle) *Dialer {
+	return &Dialer{cfg: cfg, bundle: b, reEvaluate: DefaultReEvaluate, cache: loadLegCache(cfg.Dir), policy: PolicyRace}
 }
 
 // Reload picks up a renewed client certificate from <dir>/tls; new

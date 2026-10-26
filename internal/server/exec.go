@@ -127,7 +127,7 @@ func (e *execServer) Run(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResp
 	if cmd.Dir == "" {
 		cmd.Dir, _ = os.UserHomeDir()
 	}
-	cmd.Env = mergeEnv(base, req.Env, req.SecretEnv)
+	cmd.Env = mergeEnv(base, e.s.linkEnv(IdentityFrom(ctx).Owner(), req.Env), req.SecretEnv)
 	var stdin *os.File
 	if len(req.Stdin) > 0 {
 		// a pipe (processes of other accounts get files only)

@@ -82,6 +82,9 @@ type Server struct {
 	Shutdown func()
 	// LogMaxBytes caps out.log of new jobs and sessions (0 = unlimited).
 	LogMaxBytes int64
+	// Links are longarmd's port links (LinkTunnel.Dial, job environment);
+	// nil = none.
+	Links LinkRegistry
 	// ForwardTargets is [forward] targets: ForwardLoopback ("" too) or
 	// ForwardAny.
 	ForwardTargets string
@@ -128,6 +131,7 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 	pb.RegisterForwardServer(g, &forwardServer{s: s})
 	pb.RegisterFilesServer(g, &filesServer{s: s})
 	pb.RegisterWorkspaceServer(g, &workspaceServer{s: s})
+	pb.RegisterLinkTunnelServer(g, &linkTunnelServer{s: s})
 	return g
 }
 
@@ -378,14 +382,19 @@ func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, s
 		if esp != sp || existing.Spec.OwnerName() != owner {
 			return supervisor.Job{}, supervisor.ErrAlreadyExists // somebody else's id
 		}
-		// a retried submit: the supervisor compares the specs
-	} else if j.s.enforce() {
-		q := j.s.quota(owner)
-		if spec.MemLimitBytes, spec.CPULimit, err = tenancy.JobLimits(q, spec.MemLimitBytes, spec.CPULimit); err != nil {
-			return supervisor.Job{}, status.Error(codes.InvalidArgument, err.Error())
-		}
-		if err := j.s.checkJobQuota(sp, owner, q, spec.MemLimitBytes, spec.Labels[sched.LabelMemGB]); err != nil {
-			return supervisor.Job{}, err
+		// a retried submit: the supervisor compares the specs (with the
+		// link variables the first submit got)
+		spec.Env = retryLinkEnv(spec.Env, existing.Spec.Env)
+	} else {
+		spec.Env = j.s.linkEnv(owner, spec.Env) // a new job: the owner's port links
+		if j.s.enforce() {
+			q := j.s.quota(owner)
+			if spec.MemLimitBytes, spec.CPULimit, err = tenancy.JobLimits(q, spec.MemLimitBytes, spec.CPULimit); err != nil {
+				return supervisor.Job{}, status.Error(codes.InvalidArgument, err.Error())
+			}
+			if err := j.s.checkJobQuota(sp, owner, q, spec.MemLimitBytes, spec.Labels[sched.LabelMemGB]); err != nil {
+				return supervisor.Job{}, err
+			}
 		}
 	}
 	return j.s.Spaces.SubmitJob(ctx, sp, spec, secrets)

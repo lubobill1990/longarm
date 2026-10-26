@@ -140,7 +140,7 @@ func (ss *sessionsServer) ensure(ctx context.Context, sp *userspace.Space, o *pb
 		}
 	}
 	spec := jobs.Spec{
-		ID: name, Name: name, Argv: argv, Cwd: o.Cwd, Env: o.Env, Pty: true, SubmittedBy: by, Owner: owner,
+		ID: name, Name: name, Argv: argv, Cwd: o.Cwd, Env: ss.s.linkEnv(owner, o.Env), Pty: true, SubmittedBy: by, Owner: owner,
 		Cols: uint16(o.GetSize().GetCols()), Rows: uint16(o.GetSize().GetRows()), LogMaxBytes: ss.s.LogMaxBytes,
 	}
 	j, err = ss.s.Spaces.SubmitSession(ctx, sp, spec, o.SecretEnv)

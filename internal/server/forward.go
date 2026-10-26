@@ -68,7 +68,7 @@ func (f *forwardServer) Open(st pb.Forward_OpenServer) error {
 			return status.Errorf(codes.Unavailable, "write %s: %v", target, err)
 		}
 	}
-	return pipeStream(st, c, first.Eof)
+	return pipeStream(st, c, first.Eof, nil)
 }
 
 func (f *forwardServer) Ssh(st pb.Forward_SshServer) error {
@@ -88,7 +88,7 @@ func (f *forwardServer) Ssh(st pb.Forward_SshServer) error {
 			return status.Error(codes.Unavailable, err.Error())
 		}
 	}
-	return pipeStream(st, a, first.Eof)
+	return pipeStream(st, a, first.Eof, nil)
 }
 
 type frameStream interface {
@@ -107,8 +107,10 @@ func closeWrite(c net.Conn) {
 
 // pipeStream copies between a forward stream and a connection, keeping TCP
 // half-close semantics in both directions. It returns once the connection's
-// read side ended (eof sent) and the client finished sending.
-func pipeStream(st frameStream, c net.Conn, clientDone bool) error {
+// read side ended (eof sent) and the client finished sending - or, when
+// abort closes, as soon as the connection's side ended (the caller closes c
+// and returns from the handler, which ends the client's side too).
+func pipeStream(st frameStream, c net.Conn, clientDone bool, abort <-chan struct{}) error {
 	var wg sync.WaitGroup
 	if clientDone {
 		closeWrite(c)
@@ -160,7 +162,12 @@ func pipeStream(st frameStream, c net.Conn, clientDone bool) error {
 	if sendErr != nil {
 		c.Close()
 	}
-	wg.Wait()
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-abort: // nil: never
+	}
 	return nil
 }
 

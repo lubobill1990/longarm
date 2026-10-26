@@ -55,6 +55,7 @@ type hubAgent struct {
 	tc        *toolchain.Reconciler
 	upd       *updater // nil when self-update is off
 	tailnet   *tailnetLegs
+	links     *linkManager // port links (nil in tests)
 	channel   string
 	connected atomic.Bool // a session reached the welcome at least once
 	log       *slog.Logger
@@ -400,6 +401,9 @@ func (a *hubAgent) session(ctx context.Context) error {
 	if a.tc != nil {
 		a.send(&pb.NodeReport{Msg: &pb.NodeReport_Toolchain{Toolchain: a.tc.Status()}}, false)
 	}
+	if a.links != nil {
+		a.links.sendReport(true)
+	}
 	if m, err := a.sampler.Latest(sctx); err == nil {
 		a.send(&pb.NodeReport{Msg: &pb.NodeReport_Metrics{Metrics: server.SnapshotToPB(m)}}, true)
 	}
@@ -552,6 +556,10 @@ func (a *hubAgent) handle(cmd *pb.HubCommand) {
 		a.tailnet.apply(x.Tailnet)
 	case *pb.HubCommand_Tenancy:
 		a.applyTenancy(x.Tenancy)
+	case *pb.HubCommand_PortLinks:
+		if a.links != nil {
+			a.links.apply(x.PortLinks, true)
+		}
 	case *pb.HubCommand_AuditAck:
 	case *pb.HubCommand_KillJob, *pb.HubCommand_LogRequest, *pb.HubCommand_SubmitJob, *pb.HubCommand_ToolchainApply:
 		go a.hubRequest(cmd) // may take a while (kill waits for the tree); never block the session

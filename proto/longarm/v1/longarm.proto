@@ -597,8 +597,11 @@ message PruneResponse {}
 // the link's owner (per-user isolation: a process of the owner's account
 // listens on it).
 service LinkTunnel {
-  // Dial: the first frame carries the grant (and may carry data); then
-  // bytes flow both ways like Forward.Open.
+  // Dial: the first frame carries the grant; the worker answers with an
+  // empty frame once it accepted the link and connected to the target (an
+  // error otherwise: FailedPrecondition = the link is not in its list
+  // (yet), the caller may retry briefly); then bytes flow both ways like
+  // Forward.Open.
   rpc Dial(stream ForwardFrame) returns (stream ForwardFrame);
 }
 

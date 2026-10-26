@@ -25,7 +25,8 @@ var (
 
 // MethodRoles is the authorization table: which certificate roles may call
 // each RPC. Methods missing from the table are denied (default deny).
-// Worker certificates are for serving; they get no client rights in P0a.
+// Worker certificates are for serving; they get no client rights - only
+// LinkTunnel.Dial, which needs a grant from the hub for a port link.
 var MethodRoles = map[string][]pki.Role{
 	pb.Node_Info_FullMethodName:        anyUser,
 	pb.Exec_Run_FullMethodName:         anyUser,
@@ -52,6 +53,9 @@ var MethodRoles = map[string][]pki.Role{
 	pb.Files_Mkdir_FullMethodName:      anyUser,
 	pb.Workspace_Refs_FullMethodName:   anyUser,
 	pb.Workspace_Sync_FullMethodName:   anyUser,
+	// The one RPC of worker certificates: port link data, with a hub-signed
+	// grant naming the caller (linktunnel.go).
+	pb.LinkTunnel_Dial_FullMethodName: {pki.RoleWorker},
 }
 
 type idKey struct{}
