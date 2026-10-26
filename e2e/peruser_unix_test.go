@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -41,6 +42,14 @@ func startPerUserWorker(t *testing.T, w *puWorker, exe string) func() {
 	exited := make(chan struct{})
 	go func() { cmd.Wait(); close(exited) }()
 	return func() {
+		if t.Failed() {
+			// goroutine dump into the log (a hung worker is otherwise opaque)
+			cmd.Process.Signal(syscall.SIGQUIT)
+			select {
+			case <-exited:
+			case <-time.After(3 * time.Second):
+			}
+		}
 		cmd.Process.Kill()
 		<-exited
 		killShims(w.dataDir)
@@ -51,7 +60,7 @@ func startPerUserWorker(t *testing.T, w *puWorker, exe string) func() {
 		time.Sleep(300 * time.Millisecond)
 		if t.Failed() {
 			b, _ := os.ReadFile(w.logPath)
-			t.Logf("per-user longarmd log:\n%s", tail(string(b), 20000))
+			t.Logf("per-user longarmd log:\n%s", tail(string(b), 80000))
 		}
 	}
 }
