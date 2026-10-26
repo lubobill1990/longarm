@@ -33,6 +33,9 @@ func Join(ctx context.Context, dataDir, hubAddr, code string, o JoinOptions) err
 	if _, err := os.Stat(filepath.Join(tlsDir, pki.NodeCertFile)); err == nil && !o.Force {
 		return fmt.Errorf("%s already holds a certificate (use --force to enroll again)", tlsDir)
 	}
+	if err := EnsureSystemDataDir(dataDir); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(tlsDir, 0o700); err != nil {
 		return err
 	}

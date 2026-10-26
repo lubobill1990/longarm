@@ -204,9 +204,13 @@ case "$ROLE" in
   client) "$PREFIX/longarm" join "$HUB_ADDR" "$JOIN" --ca-fingerprint "$CA_FP" $NAMEARG ;;
   worker)
     DD=''; [ -n "$DATA_DIR" ] && DD="--data-dir $DATA_DIR"
-    "$PREFIX/longarmd" join "$HUB_ADDR" "$JOIN" --ca-fingerprint "$CA_FP" --no-wait $NAMEARG $DD
+    U="${SUDO_USER:-$(id -un)}"
+    # The service runs as $U with $U's data dir (~$U/.longarm): enroll as $U
+    # too (root's own default data dir is /var/lib/longarmd on Linux).
+    AS=''
+    if [ "$SERVICE" = 1 ] && [ "$(id -u)" = 0 ] && [ "$U" != root ]; then AS="sudo -H -u $U"; fi
+    $AS "$PREFIX/longarmd" join "$HUB_ADDR" "$JOIN" --ca-fingerprint "$CA_FP" --no-wait $NAMEARG $DD
     if [ "$SERVICE" = 1 ]; then
-      U="${SUDO_USER:-$(id -un)}"
       "$PREFIX/longarmd" service install --user "$U" $DD && "$PREFIX/longarmd" service start
       echo "longarmd service started; it finishes enrolling once an admin runs: longarm admin approve <name>"
     fi ;;

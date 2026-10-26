@@ -45,7 +45,7 @@ CGO_ENABLED=1 go build -tags traynative -o bin/ ./cmd/longarm-tray    # Linux (o
 longarm admin ca init                                     # ~/.config/longarm/ca
 longarm admin issue --role admin --name me --install      # client cert for this longarm (admin role)
 longarm admin issue --role worker --name w1 --out ./w1-tls
-# copy ./w1-tls to the worker as <longarmd data dir>/tls  (default data dir: ~/.longarm)
+# copy ./w1-tls to the worker as <longarmd data dir>/tls  (default data dir: ~/.longarm; root: see "Data directory")
 
 # on the worker
 longarmd run --listen tcp://$(tailscale ip -4):7701       # foreground
@@ -53,6 +53,49 @@ longarmd run --listen tcp://$(tailscale ip -4):7701       # foreground
 #   $env:LONGARM_SERVICE_PASSWORD = '...'; longarmd service install --user .\me --listen tcp://100.x.y.z:7701
 #   longarmd service start
 ```
+
+### Data directory
+
+longarmd keeps its certificate (`tls/`), hub address (`hub.toml`), config
+(`longarmd.toml`), jobs, sessions and mirrors in one data dir. `--data-dir`
+and `LONGARM_DATA_DIR` always win; otherwise:
+
+| longarmd runs as | default data dir |
+|---|---|
+| a normal account (any OS) | `~/.longarm` |
+| root on Linux | `/var/lib/longarmd` (also the deb's `longarmd-peruser.service`) |
+| root on macOS | `~/.longarm` (`/var/root/.longarm`; the pkg passes `--data-dir` explicitly) |
+| LocalSystem on Windows | `C:\ProgramData\Longarm\longarmd` (also the MSI's `DATADIR`, which sets `LONGARM_DATA_DIR` system-wide) |
+| an elevated administrator on Windows | `~\.longarm`, unless only `C:\ProgramData\Longarm\longarmd` holds an enrollment |
+
+So `sudo longarmd join ...` and `sudo longarmd service install ...` agree
+without flags. Existing installs keep working: as long as `/var/lib/longarmd`
+holds no enrollment (`tls/`, `hub.toml` or `longarmd.toml`) but root's
+`~/.longarm` does (enrolled by an older longarmd), root's default stays
+`~/.longarm` (the same for LocalSystem's profile on Windows).
+
+`longarmd service install` picks the service's dir like this (`--dry-run`
+prints it and changes nothing):
+
+- `--data-dir` / `LONGARM_DATA_DIR`: as given;
+- `--isolation per-user`: the system dir (`/var/lib/longarmd`,
+  `C:\ProgramData\Longarm\longarmd`, created locked down). If it holds no
+  enrollment yet but the default dir or `~/.longarm` does (e.g. a `sudo
+  longarmd join` by an older longarmd), the enrollment is **copied** over
+  (tls/, hub.toml, longarmd.toml, ssh host key, authorized_keys, tailnet
+  keys/state; permissions kept, group/other write dropped) and the old dir is
+  named so you can remove it. An existing service of the same name must be
+  uninstalled first;
+- `--user NAME` as root on Linux/macOS (shared mode): NAME's `~/.longarm` -
+  enroll as that account (`sudo -u NAME longarmd join ...`); an enrollment
+  only root's dir holds is refused (the account could not read it). Windows
+  keeps the invoking account's default;
+- otherwise the default above.
+
+Per-user isolation also needs every parent of the users dir (`<data>/users`
+or `[isolation] users_dir`) traversable by the accounts (Unix `o+x`), which a
+home like `/root` (0700) is not: `service install` refuses such a dir with a
+message naming the blocking directory, and longarmd refuses to start on it.
 
 `~/.config/longarm/workers.toml` on the client:
 
@@ -196,6 +239,7 @@ longarm admin join-code [--role worker|client] [--ttl 10m] [--labels region=eu,o
 # labels: KEY=VALUE, comma-separated and/or repeated; also longarm admin label w3 region=eu,pool=big (KEY= deletes)
 # worker (installs nothing else; the service is separate):
 longarmd join hub.example.com:7443 K7P-Q2M --ca-fingerprint <fp> [--name w3] [--no-wait]
+#   run it as the account the service runs as (root: /var/lib/longarmd; see "Data directory")
 longarm admin nodes                      # w3 is "pending"
 longarm admin approve w3                 # (hub.toml auto_approve = true skips this)
 # or the one-liners (download from the hub's release store, verify sha256, join, install the service):
@@ -308,7 +352,9 @@ mode = "per-user"                    # shared (default) | per-user
 # loopback = "isolate"                   # Linux: isolate (default) | require | allow
 ```
 
-Install: `longarmd service install --isolation per-user` (no `--user`), MSI
+Install: `sudo longarmd join <hub> <code>` then `sudo longarmd service install
+--isolation per-user` (no `--user`; data in `/var/lib/longarmd`, Windows
+`C:\ProgramData\Longarm\longarmd`, see [Data directory](#data-directory)), MSI
 `ISOLATION=per-user`, deb `LONGARM_ISOLATION=per-user` (`longarmd-peruser.service`,
 data in `/var/lib/longarmd`). On Linux mount `/proc` with `hidepid=invisible`
 and install `nftables`.

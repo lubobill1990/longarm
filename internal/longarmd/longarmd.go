@@ -56,19 +56,6 @@ const (
 	AuthorizedKeysFile = "authorized_keys" // keys for direct sshd listeners
 )
 
-// DefaultDataDir is ~/.longarm (longarmd runs as a normal user account);
-// --data-dir or LONGARM_DATA_DIR override it.
-func DefaultDataDir() string {
-	if d := os.Getenv("LONGARM_DATA_DIR"); d != "" {
-		return d
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ".longarm"
-	}
-	return filepath.Join(home, ".longarm")
-}
-
 // FileConfig is <data>/longarmd.toml.
 type FileConfig struct {
 	// Listen URLs, see transport.ParseListen.

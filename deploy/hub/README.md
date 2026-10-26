@@ -76,7 +76,9 @@ longarm-hub release add ./dist --version 0.2.0   # binaries for install.ps1 / in
 
 Existing workers keep their hand-issued certificates (same CA): add
 `[hub] address = "203.0.113.10:7443"` to their longarmd.toml and restart longarmd; they
-register themselves as approved.
+register themselves as approved. (longarmd.toml lives in the worker's data dir:
+`~/.longarm` of the service account, `/var/lib/longarmd` for root on Linux,
+`C:\ProgramData\Longarm\longarmd` for the MSI / LocalSystem; docs/usage.md "Data directory".)
 
 ## Tailnet provider: Tailscale (default) or Headscale
 

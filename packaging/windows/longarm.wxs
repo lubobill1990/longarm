@@ -5,7 +5,8 @@
   Build:  pwsh packaging/windows/build-msi.ps1 -BinDir <dir with longarm.exe longarmd.exe [longarm-tray.exe]> -Version 1.2.3 -Arch x64
   Silent: msiexec /i longarm.msi /qn ROLES=worker HUB=hub.example.com JOIN_CODE=K7P-Q2M [CA_FINGERPRINT=...]
           SERVICE_USER=.\alice SERVICE_PASSWORD=...   (required for workers; or SERVICE_ACCOUNT=LocalSystem)
-          [SERVICE_NAME=longarmd] [DATADIR=C:\ProgramData\Longarm\longarmd]
+          [SERVICE_NAME=longarmd] [DATADIR=C:\ProgramData\Longarm\longarmd]   (the default; also longarmd's
+                                  own default as LocalSystem and for service install isolation per-user)
           [LISTEN=tcp://100.64.0.11:7701,longnet://hub:7443?name=w1]   (longarmd.toml when the data dir has none)
           [CLIENT_JOIN_CODE=...]   (ROLES=both: JOIN_CODE is the worker's code, CLIENT_JOIN_CODE the client's)
           [ISOLATION=per-user]   (a worker shared by several people, docs/security.md: the service runs
@@ -72,7 +73,9 @@
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/lubobill1990/longarm" />
 
     <!-- Derived (private) properties, computed before costing in both sequences. -->
-    <SetProperty Id="DATADIR" Value="[CommonAppDataFolder]longarm\longarmd" Before="CostFinalize" Sequence="both" Condition="NOT DATADIR" />
+    <!-- The same dir longarmd defaults to as LocalSystem and for service install isolation per-user
+         (internal/longarmd/datadir.go); LONGARM_DATA_DIR (set below) points every elevated longarmd command at it. -->
+    <SetProperty Id="DATADIR" Value="[CommonAppDataFolder]Longarm\longarmd" Before="CostFinalize" Sequence="both" Condition="NOT DATADIR" />
     <SetProperty Id="IsWorker" Value="1" Before="CostFinalize" Sequence="both" Condition='ROLES="worker" OR ROLES="both"' />
     <SetProperty Id="IsClient" Value="1" Before="CostFinalize" Sequence="both" Condition='ROLES="client" OR ROLES="both"' />
     <!-- Interactive default for the service account: the installing user. -->

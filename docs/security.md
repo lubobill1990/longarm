@@ -324,8 +324,16 @@ containers. These remain:
   and change the service account), start it. Jobs from shared mode stay
   visible to admins (legacy space) until GC removes them.
 - **Data dir on Linux**: every parent of the users dir must be traversable
-  by the accounts (`o+x`): `/var/lib/longarmd` (the deb's per-user unit) is;
-  `~root/.longarm` is not - longarmd refuses to start then and says so.
+  by the accounts (`o+x`): `/var/lib/longarmd` (root's default data dir and
+  the deb's per-user unit's) is; `~root/.longarm` is not - `longarmd service
+  install --isolation per-user` refuses it (with `--data-dir`) and longarmd
+  refuses to start on it, both naming the blocking directory. Without
+  `--data-dir`, the install uses `/var/lib/longarmd` and copies an
+  enrollment an older longarmd left in `~root/.longarm` (keys stay 0600,
+  dirs 0700; remove the old copy afterwards). On Windows the per-user
+  default is `C:\ProgramData\Longarm\longarmd`, created with a protected
+  DACL (SYSTEM and Administrators) - ProgramData's inherited ACL would let
+  every local user read the node key. See docs/usage.md "Data directory".
 - **cgroups** (Linux): longarmd creates `/sys/fs/cgroup/longarm`; with
   systemd you may prefer `Delegate=yes` and `[isolation] cgroup_root`
   inside the unit's cgroup. Without cgroup v2, jobs run in process groups
