@@ -72,6 +72,7 @@ Results on this machine (Windows 11, elevated shell), after the review fixes:
 | `LONGARM_PERUSER_TEST=1 go test -run TestPerUserLinks ./e2e` | `--- PASS: TestPerUserLinks (28.65s)`; temporary services, `lt????-*` accounts and profiles all removed afterwards |
 | `scripts/privacy-check.sh`, gofmt | ok |
 | web `pnpm typecheck`, `pnpm test` | ok (26 tests) |
+| CI on the PR (ubuntu, windows, macos, lint, azure template, image smoke) | all green; ubuntu needed reruns for unrelated flakes (`TestHubContainerStart` "text file busy", `TestAzureDeployScripts` missing `bootstrap.env`) and once for the intermittent `TestPerUserLinks` hang below; final run: `--- PASS: TestPerUserLinks (36.41s)` on Linux as root |
 
 The e2e package takes about 5 minutes on this machine with everything else
 running in parallel (the new tests add about 20 s and 15 s, in parallel with
