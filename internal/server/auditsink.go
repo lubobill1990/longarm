@@ -116,7 +116,10 @@ func (a *Audit) StartSinks(c AuditSinks, log *slog.Logger) error {
 		add("syslog", &netSyslogSink{network: network, addr: addr, host: syslogHostname()}, 0)
 	}
 	if c.Webhook != "" {
-		w := &webhookSink{url: c.Webhook, client: &http.Client{Timeout: 30 * time.Second}}
+		// no redirects: one could lead the token and the records to plain
+		// http or another host; a 3xx is an error like any non-2xx
+		w := &webhookSink{url: c.Webhook, client: &http.Client{Timeout: 30 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 		if c.WebhookTokenFile != "" {
 			b, err := os.ReadFile(c.WebhookTokenFile)
 			if err != nil {

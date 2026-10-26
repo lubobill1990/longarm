@@ -327,3 +327,39 @@ func TestAuditSinkHangingDoesNotBlock(t *testing.T) {
 		t.Fatalf("Close took %v", d)
 	}
 }
+
+// A redirect is not followed: it could take the token and the records to
+// plain http or another host.
+func TestAuditWebhookNoRedirect(t *testing.T) {
+	fastSinks(t)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "token"), []byte("s3cret\n"), 0o600)
+	var mu sync.Mutex
+	leaked := 0
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		leaked++
+		mu.Unlock()
+	}))
+	defer other.Close()
+	redirects := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		redirects++
+		mu.Unlock()
+		http.Redirect(w, r, other.URL, http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+	a := NewAudit(filepath.Join(dir, "audit.log"))
+	if err := a.StartSinks(AuditSinks{Webhook: srv.URL, WebhookTokenFile: filepath.Join(dir, "token")}, discardLog); err != nil {
+		t.Fatal(err)
+	}
+	a.LogAs("x", "test", nil)
+	waitUntil(t, "a retried redirect", func() bool { mu.Lock(); defer mu.Unlock(); return redirects >= 2 })
+	a.Close(100 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if leaked != 0 {
+		t.Fatalf("the redirect was followed %d times", leaked)
+	}
+}
