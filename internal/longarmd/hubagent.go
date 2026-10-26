@@ -596,7 +596,7 @@ func (a *hubAgent) maybeRenew(ctx context.Context, conn *hubclient.Conn) {
 	}
 	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	certPEM, keyPEM, caPEM, err := hubclient.Renew(rctx, conn, a.live.Identity.Name)
+	certPEM, keyPEM, caPEM, err := hubclient.Renew(rctx, conn, a.live.Identity.Name, nil)
 	if err != nil {
 		a.log.Warn("hub: certificate renewal failed", "err", err, "not_after", leaf.NotAfter)
 		return

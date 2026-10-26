@@ -364,7 +364,7 @@ func (s *session) maybeRenew(ctx context.Context, h *hubclient.Conn) {
 	if !hubclient.NeedsRenewal(b.Leaf(), who.RenewBefore.AsDuration()) {
 		return
 	}
-	certPEM, keyPEM, caPEM, err := hubclient.Renew(cctx, h, b.Identity.Name)
+	certPEM, keyPEM, caPEM, err := hubclient.Renew(cctx, h, b.Identity.Name, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "longarm: certificate renewal failed: %s\n", oneLine(err))
 		return

@@ -1,6 +1,7 @@
 package pki
 
 import (
+	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -26,15 +27,31 @@ import (
 // from the CSR's subject). Renewal works the same over the authenticated
 // channel.
 
-// NewKeyAndCSR creates a node key and a CSR for it.
-func NewKeyAndCSR(name string) (keyPEM, csrPEM []byte, err error) {
+// CSRTrust is a node's end-to-end trust material (trust.go) for its CSRs:
+// the node key and, once a user endorsed it, the endorsement.
+type CSRTrust struct {
+	NodeKey     ed25519.PrivateKey
+	Endorsement *Endorsement
+}
+
+// NewKeyAndCSR creates a TLS key and a CSR for it; with t the CSR asks for
+// the trust extension binding t's node key to the new key.
+func NewKeyAndCSR(name string, t *CSRTrust) (keyPEM, csrPEM []byte, err error) {
 	key, err := newKey()
 	if err != nil {
 		return nil, nil, err
 	}
-	der, err := x509.CreateCertificateRequest(nil, &x509.CertificateRequest{
+	tmpl := &x509.CertificateRequest{
 		Subject: pkix.Name{CommonName: name, Organization: []string{"longarm"}},
-	}, key)
+	}
+	if t != nil && t.NodeKey != nil {
+		ext, err := TrustExtension(t.NodeKey, &key.PublicKey, t.Endorsement)
+		if err != nil {
+			return nil, nil, err
+		}
+		tmpl.ExtraExtensions = []pkix.Extension{ext}
+	}
+	der, err := x509.CreateCertificateRequest(nil, tmpl, key)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -61,11 +78,20 @@ func ParseCSR(csrPEM []byte) (*x509.CertificateRequest, error) {
 }
 
 // SignCSR issues a certificate for the CSR's public key with the identity,
-// usages and lifetime of o.
+// usages and lifetime of o. A trust extension in the CSR (bound to its key)
+// is copied as is: the only part of a CSR besides the key that reaches the
+// certificate.
 func (ca *CA) SignCSR(csrPEM []byte, o IssueOptions) ([]byte, error) {
 	csr, err := ParseCSR(csrPEM)
 	if err != nil {
 		return nil, err
+	}
+	ext, err := csrTrustExt(csr)
+	if err != nil {
+		return nil, err
+	}
+	if ext != nil {
+		o.extra = append(o.extra, *ext)
 	}
 	return ca.sign(csr.PublicKey, o)
 }
