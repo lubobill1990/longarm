@@ -776,7 +776,9 @@ longarm admin issue --role relay --name relay1 --host relay.example.com --out ./
 longarm-relay --listen :7800 --tls-dir ./relay-tls --metrics 127.0.0.1:7801   # UDP+TCP :7800, STUN on UDP :7801
 #   --tcp :443 to put the TLS fallback on another port; --rate 32M per-node limit (0 = off)
 #   --stun2 ADDR: second STUN port for NAT type detection (default: UDP port + 1; open it in
-#   the firewall too); --stun-advertise ":7800,:7801,stun.example.net:3478" overrides the list
+#   the firewall too); --stun-advertise "self,stun.example.net:3478" overrides the list
+#   ("self" = this relay's STUN ports, ":port" = this relay's IP, host:port = an external
+#   server, resolved by the nodes; "off" = none)
 #   GET /metrics (Prometheus) and /sessions (JSON: per node transport, reflexive address,
 #   NAT type, STUN-mapped addresses, candidates, bytes) on --metrics
 
@@ -811,3 +813,17 @@ longarm and longarmd): `LONGARM_NET_DISABLE_DIRECT=1` (always relay), `LONGARM_N
 (`LONGARM_NET_FORCE_TCP=1` = tcp), `LONGARM_NET_STUN=host:port,...` (extra STUN servers),
 `LONGARM_NET_LOG=1|debug` (longarm prints relay/NAT/punch events on stderr, e.g. why a
 punch attempt failed).
+
+**STUN behind source NAT.** Some platforms (Azure Container Instances) rewrite the source
+address of every inbound UDP packet: a relay there sees every node at an internal private
+address, and so do its STUN answers. Nodes ignore a private STUN answer from a server on a
+public address (it is neither a candidate nor counted for the NAT type; logged once per
+server); with fewer than two usable answers the NAT type is unknown and nodes punch
+normally. A private answer from a server on a private address (a hub on the LAN) is used as
+before. The relay notices the situation itself — nodes report public STUN-mapped addresses
+(from other servers) but connect from private ones, and no node connects from a public
+address — logs it, shows `"stun_snat": true` in `/sessions`, stops advertising its own STUN
+ports and stops passing its observed addresses to peers as candidates. Direct connections
+then need external STUN servers: advertise them from the relay (`--stun-advertise`, hub
+`relay_stun_advertise` / `LONGARM_HUB_RELAY_STUN_ADVERTISE`) or set them on the nodes
+(`LONGARM_NET_STUN`, URL option `stun=`).

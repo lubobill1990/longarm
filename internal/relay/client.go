@@ -62,6 +62,7 @@ type Conn struct {
 	self      ID
 	reflexive netip.AddrPort
 	stun      []string
+	nodeInfo  bool // the relay understands FrameNodeInfo
 	h         Handler
 	log       *slog.Logger
 
@@ -136,7 +137,7 @@ func readWelcome(c *Conn, typ byte, p []byte) error {
 	if err != nil {
 		return err
 	}
-	c.self, c.reflexive, c.stun = id, w.Reflexive, w.STUN
+	c.self, c.reflexive, c.stun, c.nodeInfo = id, w.Reflexive, w.STUN, w.NodeInfo || len(w.STUN) > 0
 	return nil
 }
 
@@ -334,9 +335,9 @@ func (c *Conn) SendCallMeMaybe(dst ID, cm CallMeMaybe) error {
 }
 
 // SendNodeInfo tells the relay our candidates and NAT type (only when the
-// relay advertised STUN, i.e. understands it; otherwise a no-op).
+// relay understands it: Welcome.NodeInfo or a STUN list; otherwise a no-op).
 func (c *Conn) SendNodeInfo(ni NodeInfo) error {
-	if len(c.stun) == 0 {
+	if !c.nodeInfo {
 		return nil
 	}
 	f, err := jsonFrame(FrameNodeInfo, ni)

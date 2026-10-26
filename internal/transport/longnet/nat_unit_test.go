@@ -35,6 +35,57 @@ func TestClassifyNAT(t *testing.T) {
 			t.Errorf("%s: %q %v, want %q with %d mapped", tc.name, typ, mapped, tc.want, tc.mapped)
 		}
 	}
+
+	// A hub behind its platform's source NAT (Azure Container Instances)
+	// answers every client with a private address: ignored, the type comes
+	// from the public answers of the external servers only.
+	ext1, ext2, lan := ap("198.51.100.53:3478"), ap("203.0.113.53:19302"), ap("192.168.1.1:3478")
+	snat1, snat2 := ap("10.0.0.7:4000"), ap("10.0.0.8:4000")
+	pubLocal := append([]netip.AddrPort{ap("198.51.100.9:5000")}, local...)
+	for _, tc := range []struct {
+		name   string
+		obs    map[netip.AddrPort]netip.AddrPort
+		local  []netip.AddrPort
+		want   string
+		mapped []netip.AddrPort
+	}{
+		{"only SNATed answers", map[netip.AddrPort]netip.AddrPort{relayMain: snat1, relay2: snat2}, local, relay.NATUnknown, nil},
+		{"SNATed + one public", map[netip.AddrPort]netip.AddrPort{relayMain: snat1, relay2: snat1, ext1: ap("198.51.100.1:4000")},
+			local, relay.NATUnknown, []netip.AddrPort{ap("198.51.100.1:4000")}},
+		{"SNATed + two equal public", map[netip.AddrPort]netip.AddrPort{relayMain: snat1, relay2: snat2,
+			ext1: ap("198.51.100.1:4000"), ext2: ap("198.51.100.1:4000")}, local, relay.NATEasy, []netip.AddrPort{ap("198.51.100.1:4000")}},
+		{"SNATed + two different public", map[netip.AddrPort]netip.AddrPort{relayMain: snat1,
+			ext1: ap("198.51.100.1:4000"), ext2: ap("198.51.100.1:4001")}, local, relay.NATHard,
+			[]netip.AddrPort{ap("198.51.100.1:4000"), ap("198.51.100.1:4001")}},
+		// A LAN server's private answer is a candidate, but isn't compared
+		// with the public ones (no "hard" from mixing the two).
+		{"LAN + public", map[netip.AddrPort]netip.AddrPort{lan: ap("192.168.1.5:5000"), ext1: ap("198.51.100.1:4000"),
+			ext2: ap("198.51.100.1:4000")}, local, relay.NATEasy, []netip.AddrPort{ap("192.168.1.5:5000"), ap("198.51.100.1:4000")}},
+		{"LAN + one public", map[netip.AddrPort]netip.AddrPort{lan: ap("192.168.1.5:5000"), ext1: ap("198.51.100.1:4000")},
+			local, relay.NATUnknown, []netip.AddrPort{ap("192.168.1.5:5000"), ap("198.51.100.1:4000")}},
+		{"LAN only: open as before", map[netip.AddrPort]netip.AddrPort{lan: ap("192.168.1.5:5000")}, local, relay.NATOpen,
+			[]netip.AddrPort{ap("192.168.1.5:5000")}},
+		// Everything on loopback (the tests): private answers from a
+		// private server are kept.
+		{"loopback hard", map[netip.AddrPort]netip.AddrPort{ap("127.0.0.1:7443"): ap("127.0.0.1:4000"), ap("127.0.0.1:7444"): ap("127.0.0.1:4001")},
+			nil, relay.NATHard, []netip.AddrPort{ap("127.0.0.1:4000"), ap("127.0.0.1:4001")}},
+		{"loopback open", map[netip.AddrPort]netip.AddrPort{ap("127.0.0.1:7443"): ap("127.0.0.1:5000")}, local, relay.NATOpen,
+			[]netip.AddrPort{ap("127.0.0.1:5000")}},
+		// A host with a public address of its own.
+		{"public open", map[netip.AddrPort]netip.AddrPort{relayMain: snat1, ext1: ap("198.51.100.9:5000")}, pubLocal, relay.NATOpen,
+			[]netip.AddrPort{ap("198.51.100.9:5000")}},
+	} {
+		typ, mapped := classifyNAT(tc.obs, tc.local)
+		if typ != tc.want || !slices.Equal(mapped, tc.mapped) {
+			t.Errorf("%s: %q %v, want %q %v", tc.name, typ, mapped, tc.want, tc.mapped)
+		}
+	}
+	if !usableSTUN(relayMain, ap("198.51.100.1:1"), local) || usableSTUN(relayMain, ap("100.64.0.1:1"), local) || usableSTUN(relayMain, ap("[fd00::1]:1"), local) ||
+		!usableSTUN(ap("10.0.0.1:3478"), ap("10.0.0.2:1"), local) || usableSTUN(relayMain, netip.AddrPort{}, local) ||
+		!usableSTUN(relayMain, ap("192.168.1.5:5000"), local) || usableSTUN(relayMain, ap("192.168.1.5:5001"), local) {
+		t.Error("usableSTUN")
+	}
+
 	if c := mergeCandidates([]netip.AddrPort{ap("1.2.3.4:5")}, []netip.AddrPort{ap("10.0.0.1:5"), ap("1.2.3.4:5")}); len(c) != 2 || c[0] != ap("1.2.3.4:5") {
 		t.Fatalf("merge %v", c)
 	}

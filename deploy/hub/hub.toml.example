@@ -5,7 +5,7 @@ name = "hub"                       # name in the hub's certificate
 listen = ":7443"                   # gRPC API + longnet relay TLS fallback (told apart by ALPN)
 relay_udp = ":7443"                # longnet relay (QUIC); "off" disables the relay
 relay_stun2 = ":7444"              # second STUN port (NAT type detection; "auto" = relay_udp port + 1, "off")
-# relay_stun_advertise = [":7443", ":7444"]   # STUN endpoints told to nodes (":port" = hub IP, or host:port)
+# relay_stun_advertise = ["self", "stun.example.net:3478"]   # STUN servers told to nodes: "self" = this hub's ports (default), ":port" = hub IP, host:port, "off"
 relay_rate = "32M"                 # per relay session, bytes/s ("0" = unlimited)
 http = "0.0.0.0:7480"              # in docker; use "127.0.0.1:7480" with systemd
 public_url = "https://hub.example.com"   # base URL in install scripts

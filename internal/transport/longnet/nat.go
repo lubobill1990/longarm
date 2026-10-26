@@ -22,6 +22,13 @@ import (
 //   - Comparing them gives the NAT type (as in tailscale netcheck's
 //     MappingVariesByDestIP): one address for every destination = easy,
 //     different ones = hard (symmetric), our own local address = open.
+//   - A server on a public address that answers with a private address is
+//     behind source NAT itself (a hub in Azure Container Instances sees
+//     every client at an internal address): such answers are ignored, for
+//     candidates and for the NAT type (see usableSTUN, classifyNAT). The
+//     relay notices the same situation and stops advertising its own STUN
+//     ports and its observed addresses (relay.snatVerdict); external STUN
+//     servers (relay_stun_advertise, LONGARM_NET_STUN) then do the job.
 //   - A pong whose "observed" address has our public IP but another port
 //     hints that the mapping changed or varies: it only triggers an early
 //     STUN round (a NAT rebinding looks the same, and a peer could lie).
@@ -48,19 +55,59 @@ type natState struct {
 	cands      []netip.AddrPort // what we advertise (mapped first, then local)
 	sentTo     *relay.Conn      // relay session that has our latest NodeInfo
 	lastKick   time.Time
+	snatLogged map[netip.AddrPort]bool // STUN servers whose SNATed answers we logged (once per server)
+}
+
+// usableSTUN reports whether a STUN answer (server → mapped) is a real
+// reflexive address. A private (non-public: RFC 1918, CGNAT, link-local,
+// loopback, ULA, ...) mapped address from a server at a public address is
+// not: on the Internet nobody can see us from a private address, so the
+// server sits behind its hosting platform's source NAT (e.g. Azure
+// Container Instances answers every client with an internal 10.x address)
+// and reports the platform's address, not ours. A private mapped address
+// from a server at a private or loopback address is legitimate: a hub on
+// the LAN, or the tests, where everything runs on 127.0.0.1. So is one
+// equal to one of our own socket addresses (ip and port): no NAT between
+// us and the server (a routed private network), "open" as before — a
+// platform's SNAT can't come up with exactly our address.
+func usableSTUN(server, mapped netip.AddrPort, local []netip.AddrPort) bool {
+	return mapped.IsValid() && (relay.PublicAddr(mapped.Addr()) || !relay.PublicAddr(server.Addr()) || slices.Contains(local, mapped))
 }
 
 // classifyNAT derives the NAT type from STUN observations (server →
-// mapped address). Observations are only compared within an address family.
+// mapped address) and returns it with the distinct usable mapped addresses
+// (our reflexive candidates).
+//
+//   - Unusable answers (see usableSTUN) are ignored altogether.
+//   - When some answers are public addresses, only those are compared:
+//     a private answer (from a LAN server) next to public ones (from
+//     Internet servers) says nothing about the NAT's mapping behaviour.
+//   - Among the compared answers: one equal to a local address = open; two
+//     or more of one address family all equal = easy, different = hard;
+//     fewer than two = unknown (punch normally). Families are not mixed.
 func classifyNAT(obs map[netip.AddrPort]netip.AddrPort, local []netip.AddrPort) (string, []netip.AddrPort) {
+	use := map[netip.AddrPort]netip.AddrPort{}
 	var mapped []netip.AddrPort
-	for _, m := range obs {
-		if m.IsValid() && !slices.Contains(mapped, m) {
+	anyPublic := false
+	for s, m := range obs {
+		if !usableSTUN(s, m, local) {
+			continue
+		}
+		use[s] = m
+		anyPublic = anyPublic || relay.PublicAddr(m.Addr())
+		if !slices.Contains(mapped, m) {
 			mapped = append(mapped, m)
 		}
 	}
 	slices.SortFunc(mapped, func(a, b netip.AddrPort) int { return a.Compare(b) })
-	for _, m := range mapped {
+	if anyPublic {
+		for s, m := range use {
+			if !relay.PublicAddr(m.Addr()) {
+				delete(use, s)
+			}
+		}
+	}
+	for _, m := range use {
 		if slices.Contains(local, m) {
 			return relay.NATOpen, mapped
 		}
@@ -69,8 +116,8 @@ func classifyNAT(obs map[netip.AddrPort]netip.AddrPort, local []netip.AddrPort) 
 	for _, v6 := range []bool{false, true} {
 		var points int
 		var distinct []netip.AddrPort
-		for _, m := range obs {
-			if !m.IsValid() || m.Addr().Is6() != v6 {
+		for _, m := range use {
+			if m.Addr().Is6() != v6 {
 				continue
 			}
 			points++
@@ -332,6 +379,27 @@ func (n *Node) evaluateNAT(obs map[netip.AddrPort]netip.AddrPort, incomplete boo
 			// and goes stale when the NAT rebinds.
 			primary = rc.Reflexive()
 			obs[udpAddrPort(ra)] = primary
+		}
+	}
+	// SNATed answers (see usableSTUN) are no candidates and don't count:
+	// with fewer than two usable ones the type stays unknown.
+	for s, m := range obs {
+		if usableSTUN(s, m, local) {
+			continue
+		}
+		delete(obs, s)
+		if s == n.nat.primarySrv || m == primary {
+			primary = netip.AddrPort{}
+		}
+		if n.nat.snatLogged == nil {
+			n.nat.snatLogged = map[netip.AddrPort]bool{}
+		}
+		if !n.nat.snatLogged[s] {
+			n.nat.snatLogged[s] = true
+			n.log.Info("longnet: ignoring STUN answers of a server on a public address that sees us at a private one "+
+				"(source NAT in front of the STUN server, e.g. a hub in a cloud container); "+
+				"configure external STUN servers (hub relay_stun_advertise, LONGARM_NET_STUN) for direct connections",
+				"server", s, "mapped", m)
 		}
 	}
 	typ, mapped := classifyNAT(obs, local)

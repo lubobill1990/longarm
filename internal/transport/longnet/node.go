@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -407,8 +408,18 @@ func (n *Node) RelayData(src relay.ID, pkt []byte) {
 
 // RelayCallMeMaybe implements relay.Handler.
 func (n *Node) RelayCallMeMaybe(src relay.ID, cm relay.CallMeMaybe) {
+	cands := cm.Candidates
+	// The peer's address as the relay saw it: when that is private while
+	// the relay is on a public address, the relay sits behind its platform's
+	// source NAT (see usableSTUN) and the address is the platform's, not the
+	// peer's. Newer relays leave it out themselves once they notice.
+	if refl := cm.Reflexive; refl.IsValid() && !relay.PublicAddr(refl.Addr()) {
+		if ra := n.relayUDP.Load(); ra != nil && relay.PublicAddr(udpAddrPort(ra).Addr()) {
+			cands = slices.DeleteFunc(slices.Clone(cands), func(a netip.AddrPort) bool { return a == refl })
+		}
+	}
 	n.mu.Lock()
-	acts := n.pm.onCallMeMaybe(src, cm.Candidates, cm.Reply, cm.NAT, time.Now())
+	acts := n.pm.onCallMeMaybe(src, cands, cm.Reply, cm.NAT, time.Now())
 	n.mu.Unlock()
 	n.run(acts)
 }

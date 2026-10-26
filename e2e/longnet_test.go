@@ -55,7 +55,11 @@ type longnetEnv struct {
 
 var relayLineRE = regexp.MustCompile(`longarm-relay listening udp=(\S+) tcp=(\S+) metrics=(\S+)`)
 
-func newLongNetEnv(t *testing.T) *longnetEnv {
+func newLongNetEnv(t *testing.T) *longnetEnv { return newLongNetEnvWith(t, nil, nil) }
+
+// newLongNetEnvWith passes extra arguments and environment variables to
+// longarm-relay.
+func newLongNetEnvWith(t *testing.T, relayArgs, relayEnv []string) *longnetEnv {
 	t.Helper()
 	relayExe := buildRelay(t)
 	e := newEnv(t)
@@ -69,8 +73,9 @@ func newLongNetEnv(t *testing.T) *longnetEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(relayExe, "--listen", fmt.Sprintf("127.0.0.1:%d", port), "--tls-dir", relayTLS,
-		"--metrics", "127.0.0.1:0", "--log-interval", "0", "--rate", "0")
+	cmd := exec.Command(relayExe, append([]string{"--listen", fmt.Sprintf("127.0.0.1:%d", port), "--tls-dir", relayTLS,
+		"--metrics", "127.0.0.1:0", "--log-interval", "0", "--rate", "0"}, relayArgs...)...)
+	cmd.Env = append(os.Environ(), relayEnv...)
 	stdout, _ := cmd.StdoutPipe()
 	cmd.Stderr = logf
 	if err := cmd.Start(); err != nil {
@@ -178,14 +183,16 @@ func (re *longnetEnv) startLongarmdLongNet(extraEnv ...string) {
 
 type relayStats struct {
 	Sessions []struct {
-		Node      string   `json:"node"`
-		Transport string   `json:"transport"`
-		NAT       string   `json:"nat"`
-		Reflexive string   `json:"reflexive"`
-		Mapped    []string `json:"mapped"`
+		Node       string   `json:"node"`
+		Transport  string   `json:"transport"`
+		NAT        string   `json:"nat"`
+		Reflexive  string   `json:"reflexive"`
+		Mapped     []string `json:"mapped"`
+		Candidates []string `json:"candidates"`
 	} `json:"sessions"`
 	BytesRelayed uint64 `json:"bytes_relayed"`
 	STUNRequests uint64 `json:"stun_requests"`
+	STUNSNAT     bool   `json:"stun_snat"`
 }
 
 func (re *longnetEnv) relayStats() relayStats {

@@ -21,6 +21,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/lubobill1990/longarm/internal/relay"
 	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -62,7 +63,11 @@ type Config struct {
 	RelaySTUN2 string `toml:"relay_stun2"`
 	// RelaySTUNAdvertise overrides the STUN endpoints told to nodes
 	// (longarm-relay --stun-advertise): ":port" = the hub's IP as the node dialed
-	// it, or "host:port". Default: the ports actually served.
+	// it, "host:port" (names are resolved by the nodes), "self" = the ports
+	// actually served (relay_udp and relay_stun2), "off" = none. Default:
+	// ["self"]. Env: LONGARM_HUB_RELAY_STUN_ADVERTISE (comma-separated).
+	// Behind a source NAT that hides the clients' addresses (Azure Container
+	// Instances) the hub's own answers are useless: list external servers.
 	RelaySTUNAdvertise []string `toml:"relay_stun_advertise"`
 	// RelayRate limits each relay session (bytes/s, e.g. "32M"); "0" = off.
 	RelayRate string `toml:"relay_rate"`
@@ -291,8 +296,11 @@ func (c *Config) applyDefaults() error {
 		}
 	}
 	for _, s := range c.RelaySTUNAdvertise {
+		if relay.STUNKeyword(s) {
+			continue
+		}
 		if _, _, err := net.SplitHostPort(s); err != nil {
-			return fmt.Errorf("relay_stun_advertise %q: want \":port\" or host:port: %w", s, err)
+			return fmt.Errorf("relay_stun_advertise %q: want \"self\", \"off\", \":port\" or host:port: %w", s, err)
 		}
 	}
 	if c.RelayRate == "" {

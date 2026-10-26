@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -99,6 +100,12 @@ type Server struct {
 	callMeMaybes   atomic.Uint64
 	handshakeFails atomic.Uint64
 	stunRequests   atomic.Uint64
+
+	// SNAT detection (see updateSNAT); fakeSNAT is a test hook
+	// (EnvTestFakeSNAT).
+	snatMu   sync.Mutex
+	snat     atomic.Bool
+	fakeSNAT netip.Addr
 }
 
 func (s *Server) init() {
@@ -109,6 +116,12 @@ func (s *Server) init() {
 			s.Logger = slog.New(slog.DiscardHandler)
 		}
 		s.stunLim = map[netip.Addr]*rate.Limiter{}
+		if v := os.Getenv(EnvTestFakeSNAT); v != "" {
+			if ip, err := netip.ParseAddr(v); err == nil {
+				s.fakeSNAT = ip.Unmap()
+				s.Logger.Warn("relay: TEST HOOK: pretending that every UDP source address is "+ip.String(), "env", EnvTestFakeSNAT)
+			}
+		}
 	})
 }
 
@@ -280,14 +293,122 @@ func (s *Server) addSTUNPort(a net.Addr) {
 	s.mu.Unlock()
 }
 
+// stunEndpoints is the STUN list for Welcome. Once our own STUN answers
+// look SNATed (see updateSNAT), our own ":port" endpoints are left out:
+// only external servers remain.
 func (s *Server) stunEndpoints() []string {
+	var eps []string
 	if s.STUN != nil {
-		return s.STUN
+		eps = s.STUN
+	} else {
+		s.mu.Lock()
+		eps = append([]string(nil), s.stunPorts...)
+		s.mu.Unlock()
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.stunPorts...)
+	if !s.snat.Load() {
+		return eps
+	}
+	var out []string
+	for _, e := range eps {
+		if host, _, err := net.SplitHostPort(e); err == nil && host != "" {
+			out = append(out, e)
+		}
+	}
+	return out
 }
+
+// observed is the address a packet from ap appears to come from (ap,
+// unless the EnvTestFakeSNAT test hook rewrites it).
+func (s *Server) observed(ap netip.AddrPort) netip.AddrPort {
+	if s.fakeSNAT.IsValid() && ap.IsValid() {
+		return netip.AddrPortFrom(s.fakeSNAT, ap.Port())
+	}
+	return ap
+}
+
+// EnvTestFakeSNAT is a test hook for the end-to-end tests: set to an IP
+// address, the relay pretends that every UDP packet arrives from that
+// address (keeping the port) — in its STUN answers and in the session
+// addresses it observes — like a relay behind a hosting platform's source
+// NAT (Azure Container Instances). Never set it in production.
+const EnvTestFakeSNAT = "LONGARM_RELAY_TEST_FAKE_SNAT"
+
+// updateSNAT re-evaluates whether our own STUN answers are SNATed (see
+// snatVerdict) and logs transitions.
+func (s *Server) updateSNAT() {
+	s.mu.Lock()
+	views := make([]snatView, 0, len(s.sessions))
+	for _, ss := range s.sessions {
+		if ss.kind != "udp" {
+			continue
+		}
+		ss.infoMu.Lock()
+		views = append(views, snatView{remote: ss.reflexive().Addr(), mapped: ss.mapped})
+		ss.infoMu.Unlock()
+	}
+	s.mu.Unlock()
+	s.snatMu.Lock() // serializes transitions (and their log lines)
+	defer s.snatMu.Unlock()
+	v, known := snatVerdict(views)
+	if !known || s.snat.Swap(v) == v {
+		return
+	}
+	if v {
+		s.Logger.Warn("relay: our STUN answers look source-NATed by the hosting platform: nodes report public STUN-mapped addresses " +
+			"but reach us from private ones, and none from a public one. No longer advertising this relay as a STUN server " +
+			"(only external ones, relay_stun_advertise) and not passing relay-observed addresses to peers as candidates")
+	} else {
+		s.Logger.Info("relay: STUN source-NAT suspicion cleared (a node reaches us from a public address); advertising our STUN endpoints again")
+	}
+}
+
+// snatView is what SNAT detection knows of one UDP session.
+type snatView struct {
+	remote netip.Addr       // the node's source IP as the relay sees it
+	mapped []netip.AddrPort // the node's STUN-mapped addresses (its NodeInfo)
+}
+
+// snatVerdict decides whether the source addresses the relay observes are
+// rewritten by source NAT on our side (e.g. Azure Container Instances,
+// where every inbound UDP packet appears to come from an internal 10.x
+// address). Then our STUN answers and relay-observed reflexive addresses
+// are useless to nodes and to their peers.
+//
+// Rule, over the current UDP sessions: SNATed when at least one node
+// reports a public STUN-mapped address (from some other STUN server; nodes
+// ignore private answers from public servers, so ours don't count) while
+// we see it coming from a non-public IP of the same family, and no session
+// at all comes from a public IP. SNAT rewrites every source address, so a
+// single node seen at a public address rules it out — including the
+// ordinary setup of a hub behind a port forward. A false positive (only LAN
+// nodes, which also use public STUN servers, connected to a hub on a
+// private address) costs little: those nodes still get their mapped
+// addresses from the external servers and their LAN candidates still work.
+//
+// known is false when the sessions say nothing either way (none from a
+// public IP, no suspect): the previous verdict stands, so that nodes coming
+// and going don't make it flap.
+func snatVerdict(views []snatView) (snat, known bool) {
+	suspect := false
+	for _, v := range views {
+		if !v.remote.IsValid() {
+			continue
+		}
+		if PublicAddr(v.remote) {
+			return false, true
+		}
+		for _, m := range v.mapped {
+			if m.Addr().Is4() == v.remote.Is4() && PublicAddr(m.Addr()) {
+				suspect = true
+			}
+		}
+	}
+	return suspect, suspect
+}
+
+// SNATDetected reports whether the relay concluded that its observed
+// source addresses are SNATed (see snatVerdict).
+func (s *Server) SNATDetected() bool { return s.snat.Load() }
 
 // stunReply answers a binding request (nil for anything else).
 func (s *Server) stunReply(b []byte, from net.Addr) []byte {
@@ -299,7 +420,7 @@ func (s *Server) stunReply(b []byte, from net.Addr) []byte {
 		return nil
 	}
 	s.stunRequests.Add(1)
-	return stunResponse(b, ap)
+	return stunResponse(b, s.observed(ap))
 }
 
 // addSession counts a session goroutine unless the server is closing (Close
@@ -351,7 +472,7 @@ func (ss *session) reflexive() netip.AddrPort {
 	if ss.udp == nil {
 		return netip.AddrPort{}
 	}
-	return addrPortOf(ss.udp.RemoteAddr())
+	return ss.srv.observed(addrPortOf(ss.udp.RemoteAddr()))
 }
 
 // remoteIP is the node's current IP as seen by the relay.
@@ -421,6 +542,7 @@ func (s *Server) register(ss *session) error {
 		old.close("replaced by a newer session")
 	}
 	s.Logger.Info("relay: session up", "node", ss.ident, "id", ss.id, "transport", ss.kind, "remote", ss.remote)
+	s.updateSNAT()
 	return nil
 }
 
@@ -430,6 +552,7 @@ func (s *Server) unregister(ss *session) {
 		delete(s.sessions, ss.id)
 	}
 	s.mu.Unlock()
+	s.updateSNAT()
 	s.Logger.Info("relay: session down", "node", ss.ident, "id", ss.id, "transport", ss.kind,
 		"bytes_in", ss.bytesIn.Load(), "bytes_out", ss.bytesOut.Load(), "duration", time.Since(ss.since).Round(time.Second))
 }
@@ -441,8 +564,11 @@ func (s *Server) lookup(id ID) *session {
 }
 
 func (s *Server) welcome(ss *session) []byte {
-	f, _ := jsonFrame(FrameWelcome, Welcome{ID: ss.id.String(), Reflexive: ss.reflexive(), Transport: ss.kind,
-		STUN: s.stunEndpoints()})
+	w := Welcome{ID: ss.id.String(), Reflexive: ss.reflexive(), Transport: ss.kind, STUN: s.stunEndpoints(), NodeInfo: true}
+	if s.snat.Load() { // our observation is the SNAT address: meaningless to the node
+		w.Reflexive = netip.AddrPort{}
+	}
+	f, _ := jsonFrame(FrameWelcome, w)
 	return f
 }
 
@@ -530,7 +656,12 @@ func (s *Server) handleCtrl(ss *session, typ byte, p []byte) error {
 		// The relay-observed address first (the one that works behind an
 		// easy NAT); loopback only for a peer on the same IP (same host or
 		// behind the same NAT) — elsewhere it would hit the peer's own host.
+		// Not when our observations are SNATed: the address is our
+		// hosting platform's, useless (or worse) to the peer.
 		refl := ss.reflexive()
+		if s.snat.Load() {
+			refl = netip.AddrPort{}
+		}
 		var extra []netip.AddrPort
 		if refl.IsValid() {
 			extra = append(extra, refl)
@@ -560,6 +691,7 @@ func (s *Server) handleCtrl(ss *session, typ byte, p []byte) error {
 		ss.infoMu.Lock()
 		ss.cands, ss.nat, ss.mapped = cleanCandidates(ni.Candidates), ni.NAT, cleanCandidates(ni.Mapped)
 		ss.infoMu.Unlock()
+		s.updateSNAT()
 	case FramePing:
 		f, _ := AppendFrame(nil, FramePong, p)
 		ss.sendCtrl(f)
@@ -839,6 +971,7 @@ type Stats struct {
 	CallMeMaybes   uint64         `json:"call_me_maybes"`
 	HandshakeFails uint64         `json:"handshake_fails"`
 	STUNRequests   uint64         `json:"stun_requests"`
+	STUNSNAT       bool           `json:"stun_snat,omitempty"` // our STUN answers look source-NATed (see snatVerdict)
 }
 
 // Stats returns a snapshot.
@@ -881,6 +1014,7 @@ func (s *Server) Stats() Stats {
 	st.CallMeMaybes = s.callMeMaybes.Load()
 	st.HandshakeFails = s.handshakeFails.Load()
 	st.STUNRequests = s.stunRequests.Load()
+	st.STUNSNAT = s.snat.Load()
 	return st
 }
 
