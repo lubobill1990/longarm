@@ -1,6 +1,8 @@
 # longarmd as a normal user account (DESIGN §3.1): one instance per account,
 #   systemctl enable --now longarmd@alice
 # runs `longarmd run` as alice with alice's home (~/.longarm, her git/npm/claude).
+# Enroll as alice too (sudo -u alice longarmd join <hub> <code>): `sudo longarmd
+# join` alone enrolls root's data dir (/var/lib/longarmd), which alice can't read.
 # KillMode=process: jobs live in their own shims and survive restarts and
 # self-updates of longarmd.
 [Unit]

@@ -382,13 +382,15 @@ func (h *Hub) Serve(ctx context.Context) error {
 		}
 		// The advertised STUN endpoints are fixed before any node connects
 		// (ServeSTUN registers its port only once its goroutine runs).
-		h.relay.STUN = h.cfg.RelaySTUNAdvertise
-		if len(h.relay.STUN) == 0 {
-			h.relay.STUN = []string{fmt.Sprintf(":%d", pc.LocalAddr().(*net.UDPAddr).Port)}
-			if stunPC != nil {
-				h.relay.STUN = append(h.relay.STUN, fmt.Sprintf(":%d", stunPC.LocalAddr().(*net.UDPAddr).Port))
-			}
+		// relay_stun_advertise may mix "self" (these ports) with external
+		// servers. Should our own answers turn out to be SNATed (cloud
+		// containers), the relay drops its ":port" entries by itself.
+		own := []string{fmt.Sprintf(":%d", pc.LocalAddr().(*net.UDPAddr).Port)}
+		if stunPC != nil {
+			own = append(own, fmt.Sprintf(":%d", stunPC.LocalAddr().(*net.UDPAddr).Port))
 		}
+		h.relay.STUN = relay.ExpandSTUN(h.cfg.RelaySTUNAdvertise, own)
+		h.log.Info("relay: advertised STUN servers", "stun", h.relay.STUN)
 		if stunPC != nil {
 			run("relay stun2", func() error { return h.relay.ServeSTUN(stunPC) })
 		}

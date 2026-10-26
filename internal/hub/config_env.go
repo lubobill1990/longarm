@@ -24,6 +24,12 @@ const (
 	EnvRedirect  = "LONGARM_HUB_HTTPS_REDIRECT" // https_redirect
 	EnvACMEEmail = "LONGARM_HUB_ACME_EMAIL"     // acme_email
 	EnvACMEDir   = "LONGARM_HUB_ACME_DIRECTORY" // acme_directory
+	// EnvSTUNAdvertise is relay_stun_advertise, comma-separated, e.g.
+	// "stun.cloudflare.com:3478,stun.l.google.com:19302" (a hub whose own
+	// STUN answers are useless behind its platform's source NAT, like Azure
+	// Container Instances) or "self,stun.example.net:3478". "off" (or
+	// "none") advertises no STUN server at all.
+	EnvSTUNAdvertise = "LONGARM_HUB_RELAY_STUN_ADVERTISE"
 	// EnvAdvertise is the host (or host:port) nodes dial, e.g. the FQDN of a
 	// cloud container: public_addr = host:<listen port>, and host joins the
 	// certificate's SANs (hosts).
@@ -39,6 +45,14 @@ func (c *Config) applyEnv() error {
 		{EnvACMEEmail, &c.ACMEEmail}, {EnvACMEDir, &c.ACMEDirectory}} {
 		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
 			*kv.dst = v
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvSTUNAdvertise)); v != "" {
+		c.RelaySTUNAdvertise = nil
+		for _, s := range strings.Split(v, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				c.RelaySTUNAdvertise = append(c.RelaySTUNAdvertise, s)
+			}
 		}
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvCAInDB)); v != "" {

@@ -117,7 +117,8 @@ or build from source with Go ≥ 1.27.3: `go build -o bin/ ./cmd/...`.
 [deploy/azure](deploy/azure/README.md)), which prints the join command for step 2:
 
 ```sh
-az login && cd deploy/azure && ./deploy.sh --name myhub --location eastasia   # or deploy.ps1, or:
+az login && cd deploy/azure && ./deploy.sh --name myhub --location eastasia   # or deploy.ps1
+# --build-in-acr: the image built from your checkout in Azure (no docker); or the button:
 ```
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Flubobill1990%2Flongarm%2Fmain%2Fdeploy%2Fazure%2Fazuredeploy.json)
@@ -141,11 +142,17 @@ longarm admin join-code --role worker          # a one-time code for each worker
 **3. A worker** - enroll, approve, run as a service:
 
 ```sh
-longarmd join hub.example.com:7443 <worker-code> --ca-fingerprint <fp> --name worker-1
+longarmd join hub.example.com:7443 <worker-code> --ca-fingerprint <fp> --name worker-1   # as alice
 longarm admin approve worker-1                 # on the laptop (or auto_approve on the hub)
 sudo longarmd service install --user alice      # Windows (elevated): longarmd service install --user .\alice
 longarmd service start
 ```
+
+longarmd's data dir (certificate, hub address, jobs) is `~/.longarm` of the
+account it runs as; `sudo longarmd service install --user alice` uses
+alice's. As root on Linux the default is `/var/lib/longarmd`, as LocalSystem
+on Windows `C:\ProgramData\Longarm\longarmd` (also the MSI's);
+`--data-dir` / `LONGARM_DATA_DIR` override it ([docs/usage.md](docs/usage.md#data-directory)).
 
 Or use the hub's one-liners: `curl -fsSL https://hub.example.com/install.sh | sh -s -- --join <code>`
 (Linux/macOS), `$env:LONGARM_JOIN='<code>'; irm https://hub.example.com/install.ps1 | iex`
@@ -191,6 +198,7 @@ longarm admin user code alice --device alice-desktop   # another device of alice
 longarm admin team ls ; longarm admin user ls          # devices, usage, quotas
 
 # workers that several people use: per-user OS isolation (LocalSystem / root)
+sudo longarmd join hub.example.com:7443 <worker-code>   # data: /var/lib/longarmd (C:\ProgramData\Longarm\longarmd)
 sudo longarmd service install --isolation per-user      # or MSI ISOLATION=per-user,
                                                         # deb LONGARM_ISOLATION=per-user
 ```

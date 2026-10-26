@@ -53,6 +53,21 @@ func TestConfigEnv(t *testing.T) {
 			t.Errorf("advertise %q accepted", bad)
 		}
 	}
+	t.Setenv(EnvAdvertise, "")
+
+	// relay_stun_advertise from the environment: names, "self", ":port".
+	t.Setenv(EnvSTUNAdvertise, " stun.example.net:3478, self ,:7444,")
+	if c, err = LoadConfig(p); err != nil || strings.Join(c.RelaySTUNAdvertise, ",") != "stun.example.net:3478,self,:7444" {
+		t.Fatalf("stun advertise: %+v %v", c, err)
+	}
+	t.Setenv(EnvSTUNAdvertise, "off")
+	if c, err = LoadConfig(p); err != nil || strings.Join(c.RelaySTUNAdvertise, ",") != "off" {
+		t.Fatalf("stun advertise off: %+v %v", c, err)
+	}
+	t.Setenv(EnvSTUNAdvertise, "stun.example.net")
+	if _, err := LoadConfig(p); err == nil {
+		t.Error("stun advertise without port accepted")
+	}
 }
 
 func TestBootstrap(t *testing.T) {

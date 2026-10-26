@@ -153,15 +153,11 @@ func main() {
 					stunPC = pc
 				}
 			}
-			srv.STUN = stunEPs
+			var adv []string
 			if stunAdvertise != "" {
-				srv.STUN = nil
-				for _, s := range strings.Split(stunAdvertise, ",") {
-					if s = strings.TrimSpace(s); s != "" {
-						srv.STUN = append(srv.STUN, s)
-					}
-				}
+				adv = strings.Split(stunAdvertise, ",")
 			}
+			srv.STUN = relay.ExpandSTUN(adv, stunEPs)
 			if quicPC != nil {
 				go func() { errc <- fmt.Errorf("udp: %w", srv.ServeQUIC(quicPC)) }()
 			}
@@ -223,7 +219,7 @@ func main() {
 	f.StringVar(&udpAddr, "udp", "", "UDP/QUIC listen address (default --listen; empty with the flag set = off)")
 	f.StringVar(&tcpAddr, "tcp", "", "TLS/TCP listen address (default --listen; empty with the flag set = off), e.g. :443")
 	f.StringVar(&stun2Addr, "stun2", "auto", "second UDP STUN port for NAT type detection (auto = UDP port + 1 on the same host; empty = off)")
-	f.StringVar(&stunAdvertise, "stun-advertise", "", "override the STUN endpoints told to nodes, comma-separated (\":port\" = this relay's IP, or host:port), e.g. \":7443,:7444,stun.l.google.com:19302\"")
+	f.StringVar(&stunAdvertise, "stun-advertise", "", "override the STUN endpoints told to nodes, comma-separated: \"self\" = this relay's STUN ports, \":port\" = this relay's IP, host:port (resolved by the nodes), \"off\" = none; e.g. \"self,stun.l.google.com:19302\"")
 	f.StringVar(&tlsDir, "tls-dir", defaultTLSDir(), "relay certificate bundle (ca.crt, node.crt, node.key); env LONGARM_RELAY_TLS_DIR")
 	f.StringVar(&metricsAddr, "metrics", "", "serve /metrics (Prometheus) and /sessions (JSON) on this address, e.g. 127.0.0.1:7801")
 	f.StringVar(&rateStr, "rate", "32M", "per-node relay rate limit in bytes/s (K/M/G suffixes; 0 = unlimited)")

@@ -111,7 +111,8 @@ Hub 只负责协调。命令、输出、文件和终端都在客户端与 worker
 [deploy/azure](deploy/azure/README.md)），完成后会打印第 2 步要用的加入命令：
 
 ```sh
-az login && cd deploy/azure && ./deploy.sh --name myhub --location eastasia   # 或 deploy.ps1，或：
+az login && cd deploy/azure && ./deploy.sh --name myhub --location eastasia   # 或 deploy.ps1
+# --build-in-acr：在 Azure 中从你的代码构建镜像（无需 docker）；或者用按钮：
 ```
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Flubobill1990%2Flongarm%2Fmain%2Fdeploy%2Fazure%2Fazuredeploy.json)
@@ -135,11 +136,16 @@ longarm admin join-code --role worker          # 为每台 worker 生成一个�
 **3. 一台 worker**——注册、审批、以服务形式运行：
 
 ```sh
-longarmd join hub.example.com:7443 <worker-code> --ca-fingerprint <fp> --name worker-1
+longarmd join hub.example.com:7443 <worker-code> --ca-fingerprint <fp> --name worker-1   # 以 alice 身份
 longarm admin approve worker-1                 # 在笔记本上执行（或在 hub 上开启 auto_approve）
 sudo longarmd service install --user alice      # Windows（管理员权限）：longarmd service install --user .\alice
 longarmd service start
 ```
+
+longarmd 的数据目录（证书、hub 地址、作业）是其运行账户的 `~/.longarm`；
+`sudo longarmd service install --user alice` 使用 alice 的。Linux 上以 root 运行时默认为
+`/var/lib/longarmd`，Windows 上以 LocalSystem 运行时为 `C:\ProgramData\Longarm\longarmd`
+（与 MSI 相同）；`--data-dir` / `LONGARM_DATA_DIR` 可覆盖（见 [docs/usage.md](docs/usage.md#data-directory)）。
 
 也可以使用 hub 提供的一行命令：`curl -fsSL https://hub.example.com/install.sh | sh -s -- --join <code>`
 （Linux/macOS），`$env:LONGARM_JOIN='<code>'; irm https://hub.example.com/install.ps1 | iex`
@@ -182,6 +188,7 @@ longarm admin user add bob   --team web
 longarm admin user code alice --device alice-desktop   # alice 的另一台设备
 
 # 多人共用的 worker：按用户隔离操作系统账户（以 LocalSystem / root 运行）
+sudo longarmd join hub.example.com:7443 <worker-code>   # 数据：/var/lib/longarmd（C:\ProgramData\Longarm\longarmd）
 sudo longarmd service install --isolation per-user      # 或 MSI ISOLATION=per-user、
                                                         # deb LONGARM_ISOLATION=per-user
 ```

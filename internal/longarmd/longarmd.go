@@ -23,6 +23,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/gc"
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/localapi"
+	"github.com/lubobill1990/longarm/internal/loopguard"
 	"github.com/lubobill1990/longarm/internal/metrics"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
@@ -55,19 +56,6 @@ const (
 	AuthorizedKeysFile = "authorized_keys" // keys for direct sshd listeners
 )
 
-// DefaultDataDir is ~/.longarm (longarmd runs as a normal user account);
-// --data-dir or LONGARM_DATA_DIR override it.
-func DefaultDataDir() string {
-	if d := os.Getenv("LONGARM_DATA_DIR"); d != "" {
-		return d
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ".longarm"
-	}
-	return filepath.Join(home, ".longarm")
-}
-
 // FileConfig is <data>/longarmd.toml.
 type FileConfig struct {
 	// Listen URLs, see transport.ParseListen.
@@ -99,6 +87,12 @@ type IsolationConfig struct {
 	// CgroupRoot (Linux) is the parent of the jobs' cgroups (default
 	// /sys/fs/cgroup/longarm; "off" = process groups only).
 	CgroupRoot string `toml:"cgroup_root"`
+	// Loopback (Linux, per-user): "isolate" (default: nftables table inet
+	// longarm keeps the accounts from connecting to each other's loopback
+	// ports; if it can't be installed longarmd warns and runs on),
+	// "require" (refuse to start / to create an account without it) or
+	// "allow".
+	Loopback string `toml:"loopback"`
 }
 
 // HubConfig is the [hub] section. The address usually comes from hub.toml,
@@ -229,6 +223,9 @@ func LoadConfig(dataDir string, listenOverride []string) (Config, error) {
 	case tenancy.Shared, tenancy.PerUser:
 	default:
 		return cfg, fmt.Errorf("%s: [isolation] mode %q: want %q or %q", ConfigFile, cfg.Isolation.Mode, tenancy.Shared, tenancy.PerUser)
+	}
+	if _, err := loopguard.ParseMode(cfg.Isolation.Loopback); err != nil {
+		return cfg, fmt.Errorf("%s: %w", ConfigFile, err)
 	}
 	if cfg.Isolation.UsersDir != "" && !filepath.IsAbs(cfg.Isolation.UsersDir) {
 		cfg.Isolation.UsersDir = filepath.Join(dataDir, cfg.Isolation.UsersDir)
@@ -639,7 +636,7 @@ func openState(ctx context.Context, cfg Config, log *slog.Logger) (*state, error
 	shared := &workspace.Store{Root: cfg.DataDir}
 	sp, err := userspace.Open(ctx, userspace.Config{
 		Mode: cfg.Isolation.Mode, DataDir: cfg.DataDir, UsersDir: cfg.Isolation.UsersDir,
-		Prefix: cfg.Isolation.AccountPrefix, CgroupRoot: cfg.Isolation.CgroupRoot, Log: log, Prepare: shared.PrepareJob,
+		Prefix: cfg.Isolation.AccountPrefix, CgroupRoot: cfg.Isolation.CgroupRoot, Loopback: cfg.Isolation.Loopback, Log: log, Prepare: shared.PrepareJob,
 	})
 	if err != nil {
 		return nil, err

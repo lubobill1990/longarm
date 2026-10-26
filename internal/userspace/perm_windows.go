@@ -20,6 +20,10 @@ func secureSpaceRoot(dir string, a *platform.Account) error { return win.SecureT
 
 func checkTraversable(string) error { return nil }
 
+// CheckReachable: Windows ACLs (SecureTraverseDir) let the accounts reach
+// the users dir wherever it lies; nothing to check before longarmd runs.
+func CheckReachable(string, string) error { return nil }
+
 // secureDataDir locks longarmd's data dir down for per-user isolation:
 // SYSTEM and Administrators only, inherited by everything in it (reset
 // explicitly; the users dir has ACLs of its own), plus traverse/read

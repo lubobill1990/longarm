@@ -45,7 +45,7 @@ CGO_ENABLED=1 go build -tags traynative -o bin/ ./cmd/longarm-tray    # Linux (o
 longarm admin ca init                                     # ~/.config/longarm/ca
 longarm admin issue --role admin --name me --install      # client cert for this longarm (admin role)
 longarm admin issue --role worker --name w1 --out ./w1-tls
-# copy ./w1-tls to the worker as <longarmd data dir>/tls  (default data dir: ~/.longarm)
+# copy ./w1-tls to the worker as <longarmd data dir>/tls  (default data dir: ~/.longarm; root: see "Data directory")
 
 # on the worker
 longarmd run --listen tcp://$(tailscale ip -4):7701       # foreground
@@ -53,6 +53,67 @@ longarmd run --listen tcp://$(tailscale ip -4):7701       # foreground
 #   $env:LONGARM_SERVICE_PASSWORD = '...'; longarmd service install --user .\me --listen tcp://100.x.y.z:7701
 #   longarmd service start
 ```
+
+### Data directory
+
+longarmd keeps its certificate (`tls/`), hub address (`hub.toml`), config
+(`longarmd.toml`), jobs, sessions and mirrors in one data dir. `--data-dir`
+and `LONGARM_DATA_DIR` always win; otherwise:
+
+| longarmd runs as | default data dir |
+|---|---|
+| a normal account (any OS) | `~/.longarm` |
+| root on Linux | `/var/lib/longarmd` (also the deb's `longarmd-peruser.service`) |
+| root on macOS | `~/.longarm` (`/var/root/.longarm`; the pkg passes `--data-dir` explicitly) |
+| LocalSystem on Windows | `C:\ProgramData\Longarm\longarmd` (also the MSI's `DATADIR`, which sets `LONGARM_DATA_DIR` system-wide) |
+| an elevated administrator on Windows | `~\.longarm`, unless only `C:\ProgramData\Longarm\longarmd` holds an enrollment |
+
+So `sudo longarmd join ...` and `sudo longarmd service install ...` agree
+without flags. Existing installs keep working: as long as `/var/lib/longarmd`
+holds no enrollment (`tls/`, `hub.toml` or `longarmd.toml`) but root's
+`~/.longarm` does (enrolled by an older longarmd), root's default stays
+`~/.longarm` (the same for LocalSystem's profile on Windows). As root /
+LocalSystem, "`~`" is the account's own home from the passwd database /
+its profile, never `$HOME` / `%USERPROFILE%` (`sudo -E` keeps the invoking
+user's).
+
+The system dir is created locked down (Linux 0700 root; Windows owner
+Administrators, a protected DACL for SYSTEM and Administrators). An
+existing one is checked first - ProgramData lets every local user create
+directories, so `C:\ProgramData\Longarm\longarmd` may have been pre-created
+by somebody else: owned by another account (Linux: not root, or writable by
+group/others) it is refused with a message naming it - check and remove it,
+then retry. On Windows one that inherits its ACL or grants Everyone, Users
+and the like more than traverse rights is locked down again (its contents
+must be owned by SYSTEM, Administrators or the installing account, else it
+is refused too); the same goes for the `...\Longarm` parent.
+
+`longarmd service install` picks the service's dir like this (`--dry-run`
+prints it and changes nothing):
+
+- `--data-dir` / `LONGARM_DATA_DIR`: as given;
+- `--isolation per-user`: the system dir (`/var/lib/longarmd`,
+  `C:\ProgramData\Longarm\longarmd`, created locked down). If it holds no
+  enrollment yet but the default dir or `~/.longarm` does (e.g. a `sudo
+  longarmd join` by an older longarmd), the enrollment is **copied** over
+  (tls/, hub.toml, longarmd.toml, ssh host key, authorized_keys, tailnet
+  keys/state; files 0600, dirs 0700, on Windows with the system dir's ACL)
+  and the old dir is named so you can remove it. The source and everything
+  copied must be owned by root / SYSTEM / Administrators (or the installing
+  account) and not be writable by group or others, else nothing is copied;
+  symlinks are skipped. The copy is staged in the system dir and moved into
+  place at the end, so a failed one leaves nothing behind and can be
+  retried. An existing service of the same name must be uninstalled first;
+- `--user NAME` as root on Linux/macOS (shared mode): NAME's `~/.longarm` -
+  enroll as that account (`sudo -u NAME longarmd join ...`); an enrollment
+  only root's dir holds is refused (the account could not read it). Windows
+  keeps the invoking account's default;
+- otherwise the default above.
+
+Per-user isolation also needs every parent of the users dir (`<data>/users`
+or `[isolation] users_dir`) traversable by the accounts (Unix `o+x`), which a
+home like `/root` (0700) is not: `service install` refuses such a dir with a
+message naming the blocking directory, and longarmd refuses to start on it.
 
 `~/.config/longarm/workers.toml` on the client:
 
@@ -196,6 +257,7 @@ longarm admin join-code [--role worker|client] [--ttl 10m] [--labels region=eu,o
 # labels: KEY=VALUE, comma-separated and/or repeated; also longarm admin label w3 region=eu,pool=big (KEY= deletes)
 # worker (installs nothing else; the service is separate):
 longarmd join hub.example.com:7443 K7P-Q2M --ca-fingerprint <fp> [--name w3] [--no-wait]
+#   run it as the account the service runs as (root: /var/lib/longarmd; see "Data directory")
 longarm admin nodes                      # w3 is "pending"
 longarm admin approve w3                 # (hub.toml auto_approve = true skips this)
 # or the one-liners (download from the hub's release store, verify sha256, join, install the service):
@@ -305,11 +367,25 @@ mode = "per-user"                    # shared (default) | per-user
 # users_dir = "/var/lib/longarm-users"   # default <data>/users (Unix: parents need o+x)
 # account_prefix = "la-"
 # cgroup_root = "/sys/fs/cgroup/longarm" # Linux; "off" = process groups only
+# loopback = "isolate"                   # Linux: isolate (default) | require | allow
 ```
 
-Install: `longarmd service install --isolation per-user` (no `--user`), MSI
+Install: `sudo longarmd join <hub> <code>` then `sudo longarmd service install
+--isolation per-user` (no `--user`; data in `/var/lib/longarmd`, Windows
+`C:\ProgramData\Longarm\longarmd`, see [Data directory](#data-directory)), MSI
 `ISOLATION=per-user`, deb `LONGARM_ISOLATION=per-user` (`longarmd-peruser.service`,
-data in `/var/lib/longarmd`). On Linux mount `/proc` with `hidepid=invisible`.
+data in `/var/lib/longarmd`). On Linux mount `/proc` with `hidepid=invisible`
+and install `nftables`.
+
+`loopback` (Linux): with `isolate` longarmd installs the nftables table
+`inet longarm` so that one account's processes cannot connect to another
+account's loopback ports (`127.0.0.1`, `::1`, the machine's own addresses);
+connections within one account, from root (Longarm's forwards) and from
+other system users keep working. Without `nft` longarmd logs a warning and
+runs on; `require` makes it refuse to start instead; `allow` turns it off.
+The table stays while longarmd is stopped (jobs outlive it) and is removed
+by `longarmd leave --purge`, uninstalling and `loopback = "allow"`. Details
+and limits: [security.md](security.md#loopback-between-users-linux).
 
 ### Local control API, longarm daemon
 
@@ -718,7 +794,9 @@ longarm admin issue --role relay --name relay1 --host relay.example.com --out ./
 longarm-relay --listen :7800 --tls-dir ./relay-tls --metrics 127.0.0.1:7801   # UDP+TCP :7800, STUN on UDP :7801
 #   --tcp :443 to put the TLS fallback on another port; --rate 32M per-node limit (0 = off)
 #   --stun2 ADDR: second STUN port for NAT type detection (default: UDP port + 1; open it in
-#   the firewall too); --stun-advertise ":7800,:7801,stun.example.net:3478" overrides the list
+#   the firewall too); --stun-advertise "self,stun.example.net:3478" overrides the list
+#   ("self" = this relay's STUN ports, ":port" = this relay's IP, host:port = an external
+#   server, resolved by the nodes; "off" = none)
 #   GET /metrics (Prometheus) and /sessions (JSON: per node transport, reflexive address,
 #   NAT type, STUN-mapped addresses, candidates, bytes) on --metrics
 
@@ -753,3 +831,17 @@ longarm and longarmd): `LONGARM_NET_DISABLE_DIRECT=1` (always relay), `LONGARM_N
 (`LONGARM_NET_FORCE_TCP=1` = tcp), `LONGARM_NET_STUN=host:port,...` (extra STUN servers),
 `LONGARM_NET_LOG=1|debug` (longarm prints relay/NAT/punch events on stderr, e.g. why a
 punch attempt failed).
+
+**STUN behind source NAT.** Some platforms (Azure Container Instances) rewrite the source
+address of every inbound UDP packet: a relay there sees every node at an internal private
+address, and so do its STUN answers. Nodes ignore a private STUN answer from a server on a
+public address (it is neither a candidate nor counted for the NAT type; logged once per
+server); with fewer than two usable answers the NAT type is unknown and nodes punch
+normally. A private answer from a server on a private address (a hub on the LAN) is used as
+before. The relay notices the situation itself — nodes report public STUN-mapped addresses
+(from other servers) but connect from private ones, and no node connects from a public
+address — logs it, shows `"stun_snat": true` in `/sessions`, stops advertising its own STUN
+ports and stops passing its observed addresses to peers as candidates. Direct connections
+then need external STUN servers: advertise them from the relay (`--stun-advertise`, hub
+`relay_stun_advertise` / `LONGARM_HUB_RELAY_STUN_ADVERTISE`) or set them on the nodes
+(`LONGARM_NET_STUN`, URL option `stun=`).

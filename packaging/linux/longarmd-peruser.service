@@ -1,9 +1,12 @@
 # longarmd with per-user isolation (docs/security.md): runs as root and
 # runs each Longarm user's jobs, sessions, shells, file access and git as a
-# local account of its own (la-<user>). Data in /var/lib/longarmd
-# (longarmd.toml there sets [isolation] mode = "per-user"):
-#   sudo longarmd join <hub> <code> --data-dir /var/lib/longarmd
+# local account of its own (la-<user>). Data in /var/lib/longarmd, root's
+# default data dir (longarmd.toml there sets [isolation] mode = "per-user"):
+#   sudo longarmd join <hub> <code>          (as root: --data-dir /var/lib/longarmd is the default)
 #   sudo systemctl enable --now longarmd-peruser
+# (or `sudo longarmd service install --isolation per-user`, which writes an
+# equivalent unit and copies an enrollment from an older ~root/.longarm.)
+# Not below /root: the accounts must traverse every parent of the users dir.
 # KillMode=process: jobs live in their own shims and survive restarts and
 # self-updates of longarmd. The jobs' cgroups are created below
 # /sys/fs/cgroup/longarm ([isolation] cgroup_root).

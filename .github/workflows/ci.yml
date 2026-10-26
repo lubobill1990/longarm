@@ -1,6 +1,7 @@
 # CI on GitHub-hosted runners (docs/ci-cd.md).
 #   lint:    privacy check, gofmt, go vet, cross-compile 6 targets, shellcheck, actionlint
-#   azure:   deploy/azure: bicep build (azuredeploy.json up to date) + lint, PSScriptAnalyzer
+#   azure:   deploy/azure: bicep build (azuredeploy.json up to date) + lint, ACI rules
+#            (deploy/azure/test/acirules), PSScriptAnalyzer
 #   (the hub image and its docker smoke test: image.yml)
 #   test:    full go test on ubuntu-latest, windows-latest and macos-latest
 # Pull requests from forks run with a read-only token and no secrets (the
@@ -89,13 +90,13 @@ jobs:
             b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6 shellcheck-v0.11.0/shellcheck)
           "$sc/shellcheck" deploy/hub/longarm-hub-deploy .github/scripts/*.sh scripts/*.sh \
             packaging/build.sh packaging/linux/*.sh packaging/macos/*.sh packaging/macos/scripts/* \
-            deploy/azure/*.sh deploy/azure/test/*.sh
+            deploy/azure/*.sh deploy/azure/test/*.sh deploy/hub/image-build.sh
       - name: actionlint
         # shellcheck (on PATH from the step above) also checks the run: scripts
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -color
 
   azure:
-    name: azure template (bicep, PSScriptAnalyzer)
+    name: azure template (bicep, ACI rules, PSScriptAnalyzer)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -121,10 +122,17 @@ jobs:
             echo "::error::bicep reported warnings"
             exit 1
           fi
+      - uses: ./.github/actions/go-setup
+      - name: ACI rules (ports, memory/CPU steps, env, volumes) for every parameter combination
+        run: go run ./deploy/azure/test/acirules deploy/azure/azuredeploy.json
       - name: PSScriptAnalyzer (deploy/azure/deploy.ps1)
         shell: pwsh
         run: |
-          Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+          # the PowerShell Gallery fails now and then ("No match was found"): retry
+          for ($i = 1; ; $i++) {
+            try { Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force -ErrorAction Stop; break }
+            catch { if ($i -ge 4) { throw }; Write-Warning "Install-Module: $_ (retry $i)"; Start-Sleep -Seconds (15 * $i) }
+          }
           $r = Invoke-ScriptAnalyzer -Path deploy/azure/deploy.ps1 -Settings deploy/azure/PSScriptAnalyzerSettings.psd1
           $r | Format-Table RuleName, Severity, Line, Message -AutoSize -Wrap
           if ($r) { throw "PSScriptAnalyzer: $(@($r).Count) findings" }
@@ -162,6 +170,15 @@ jobs:
           for c in longarmd longarm longarm-hub; do go build -o "$bin/$c" "./cmd/$c"; done
           go build -o "$bin/helper" ./e2e/helper
           go test -c -o "$bin/e2e.test" ./e2e
+          # loopback isolation between the accounts needs nft (the tests
+          # skip it with a warning if it can't be installed)
+          command -v nft >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq nftables; } ||
+            echo "::warning::nftables not installed: loopback isolation is not tested"
+          go test -c -o "$bin/loopguard.test" ./internal/loopguard
+          sudo "$bin/loopguard.test" -test.v 2>&1 | tee -a "$RUNNER_TEMP/go-test.log"
+          # root's data dir checks and the enrollment migration (root-only cases)
+          go test -c -o "$bin/longarmd.test" ./internal/longarmd
+          sudo "$bin/longarmd.test" -test.run 'DataDir|Migrate|RootHome' -test.v 2>&1 | tee -a "$RUNNER_TEMP/go-test.log"
           cd e2e
           sudo env LONGARM_PERUSER_TEST=1 LONGARM_E2E_BIN_DIR="$bin" LONGARM_GATE_CPU=101 LONGARM_GATE_FREE_GB=0 \
             "$bin/e2e.test" -test.run 'PerUser' -test.v -test.timeout 15m 2>&1 | tee -a "$RUNNER_TEMP/go-test.log"
@@ -169,7 +186,9 @@ jobs:
         if: runner.os == 'Windows'
         env:
           LONGARM_PERUSER_TEST: "1"
-        run: go test -count=1 -timeout 15m -run 'PerUser' -v ./e2e 2>&1 | tee -a "$RUNNER_TEMP/go-test.log"
+        run: |
+          go test -count=1 -run 'DataDir|Migrate|LockedDACL' -v ./internal/longarmd ./internal/platform/windows 2>&1 | tee -a "$RUNNER_TEMP/go-test.log"
+          go test -count=1 -timeout 15m -run 'PerUser' -v ./e2e 2>&1 | tee -a "$RUNNER_TEMP/go-test.log"
       - name: upload test log
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

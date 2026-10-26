@@ -187,7 +187,7 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("port %d\n", ln.Addr().(*net.TCPAddr).Port)
-		go func() {
+		serve := func(ln net.Listener) {
 			for {
 				c, err := ln.Accept()
 				if err != nil {
@@ -200,10 +200,21 @@ func main() {
 					fmt.Fprintf(c, "echo %s\n", buf[:n])
 				}()
 			}
-		}()
+		}
+		go serve(ln)
+		// ... and on [::1] where the host has IPv6 loopback
+		if ln6, err := net.Listen("tcp", "[::1]:0"); err == nil {
+			fmt.Printf("v6port %d\n", ln6.Addr().(*net.TCPAddr).Port)
+			go serve(ln6)
+		}
 		time.Sleep(time.Duration(secs) * time.Second)
 	case "connect":
-		c, err := net.DialTimeout("tcp", "127.0.0.1:"+os.Args[2], 5*time.Second)
+		// connect PORT [HOST]: HOST defaults to 127.0.0.1
+		host := "127.0.0.1"
+		if len(os.Args) > 3 {
+			host = os.Args[3]
+		}
+		c, err := net.DialTimeout("tcp", net.JoinHostPort(host, os.Args[2]), 5*time.Second)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

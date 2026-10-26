@@ -35,9 +35,11 @@ fi
 if [ -z "$ROLES" ] || [ -z "$HUB" ] || [ -z "$CODE" ] || [ -z "$USR" ]; then
   echo "Longarm installed. Join a hub with:"
   echo "  worker: sudo -u <user> longarmd join <hub> <code> && sudo systemctl enable --now longarmd@<user>"
+  echo "          (data in ~<user>/.longarm)"
   echo "  worker shared by several people (per-user isolation, docs/security.md):"
-  echo "          sudo longarmd join <hub> <code> --data-dir /var/lib/longarmd, [isolation] mode = \"per-user\" in"
-  echo "          /var/lib/longarmd/longarmd.toml, sudo systemctl enable --now longarmd-peruser"
+  echo "          sudo longarmd join <hub> <code> && sudo longarmd service install --isolation per-user"
+  echo "          (data in /var/lib/longarmd, root's default; or set [isolation] mode = \"per-user\" in"
+  echo "          /var/lib/longarmd/longarmd.toml and sudo systemctl enable --now longarmd-peruser)"
   echo "  client: longarm join <hub> <code>"
   exit 0
 fi

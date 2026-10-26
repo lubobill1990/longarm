@@ -36,12 +36,13 @@ finishes the enrollment once approved.`,
 			if err != nil {
 				return err
 			}
+			fmt.Printf("data dir %s\n", dataDir)
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			return longarmd.Join(ctx, dataDir, args[0], args[1], longarmd.JoinOptions{Name: name, Fingerprint: fp, NoWait: noWait, Force: force, Out: os.Stdout})
 		},
 	}
-	c.Flags().StringVar(&dataDir, "data-dir", longarmd.DefaultDataDir(), "data directory; env LONGARM_DATA_DIR")
+	c.Flags().StringVar(&dataDir, "data-dir", longarmd.DefaultDataDir(), "data directory (root: /var/lib/longarmd, LocalSystem: C:\\ProgramData\\Longarm\\longarmd, else ~/.longarm); env LONGARM_DATA_DIR")
 	c.Flags().StringVar(&name, "name", "", "worker name (default: hostname)")
 	c.Flags().StringVar(&fp, "ca-fingerprint", "", "expected sha256 fingerprint of the hub CA (printed by longarm-hub ca show)")
 	c.Flags().BoolVar(&noWait, "no-wait", false, "don't wait for approval")

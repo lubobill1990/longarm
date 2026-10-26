@@ -4,7 +4,8 @@
 //
 // One container group with a public IP and DNS label
 // (<name>.<region>.azurecontainer.io): the hub on 7443/tcp (gRPC, mTLS end to
-// end), 7443/udp (longnet relay, QUIC) and 7444/udp (second STUN port), and
+// end, relay TLS fallback), 7445/udp (longnet relay, QUIC) and 7446/udp (second
+// STUN port), and
 // optionally Caddy on 80/443 (Let's Encrypt) in front of the panel on
 // 127.0.0.1:7480. The SQLite database stays on the container's local disk and
 // Litestream streams it to a blob container (restored on start); CA, hub.toml,
@@ -55,10 +56,13 @@ param storageSku string = 'Standard_LRS'
 @maxValue(168)
 param adminCodeTtlHours int = 24
 
-@description('UDP port of the longnet relay (QUIC + STUN); the second STUN port is this + 1. Not 7443: ACI refuses one port number for TCP and UDP (DuplicateIpAddressPorts); workers listen on longnet://<fqdn>:<port>?tcp=<fqdn>:7443.')
-@minValue(1024)
+@description('UDP port of the longnet relay (QUIC + STUN); the second STUN port is this + 1. Not 7443: ACI refuses one port number for TCP and UDP (DuplicateContainerPorts / DuplicateIpAddressPorts). Workers listen on longnet://<fqdn>:<port>?tcp=<fqdn>:7443 (the relay TLS fallback uses the hub TCP port).')
+@minValue(7444)
 @maxValue(65534)
 param relayUdpPort int = 7445
+
+@description('External STUN servers the hub advertises to the nodes next to its own STUN ports (comma-separated host:port; empty = only its own). ACI rewrites the source address of inbound UDP, so the hub\'s own STUN answers are useless there: direct (peer-to-peer) connections need these (README "Direct connections").')
+param stunServers string = 'stun.cloudflare.com:3478,stun.l.google.com:19302'
 
 @description('Expiry of the Litestream SAS (blob container scoped); every deployment (deploy.sh re-run) renews it.')
 param sasExpiry string = dateTimeAdd(utcNow('u'), 'P10Y', 'yyyy-MM-ddTHH:mm:ssZ')
@@ -290,7 +294,11 @@ var hubEnv = concat(
         empty(acmeEmail) ? [] : [{ name: 'LONGARM_HUB_ACME_EMAIL', value: acmeEmail }]
       )
     : [],
-  empty(tailscaleOAuthSecret) ? [] : [{ name: 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', secureValue: tailscaleOAuthSecret }]
+  empty(tailscaleOAuthSecret) ? [] : [{ name: 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', secureValue: tailscaleOAuthSecret }],
+  // self = the hub's own STUN ports; it drops them once it sees that ACI
+  // source-NATs them (internal/relay snatVerdict). Always set: deploy.sh
+  // reads it back on a re-run.
+  [{ name: 'LONGARM_HUB_RELAY_STUN_ADVERTISE', value: empty(stunServers) ? 'self' : 'self,${stunServers}' }]
 )
 
 var hubPorts = [

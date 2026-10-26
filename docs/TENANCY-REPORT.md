@@ -21,6 +21,7 @@ platform details and known gaps: [security.md](security.md).
 | Files / Workspace / git / sftp | done by a per-request helper (`longarmd user-helper`, gRPC over stdio) or `longarmd sftp-server` running as the user; job preparation and worktree pruning too | `internal/server/userhelper.go`, `internal/userspace/helper.go`, `internal/longarmd/peruser.go` |
 | Exec, sshd | as the user's account (environment, home, cgroup); direct ssh listeners ignored in per-user mode | `internal/server/exec.go`, `internal/sshd` |
 | Forwards | per-user: loopback ports listened on by the caller's own processes only (Windows owning PID → token user; Linux `/proc/net/tcp{,6}` uid); also ssh direct-tcpip | `internal/server/tenancy.go`, `internal/platform/*/ports*` |
+| Loopback (Linux) | nftables table `inet longarm` (`[isolation] loopback = "isolate"` default, `require`, `allow`): the sender account is recorded in the conntrack mark, the listener's SYN-ACK / UDP reply from another account is dropped, the retried SYN reset; updated on account create/purge, removed by `leave --purge`/uninstall | `internal/loopguard`, `internal/userspace` |
 | Quotas | fleet-wide (hub scheduler: queue or fail), per worker (jobs, memory, sessions), per-job memory/CPU defaults and caps (Job Object / cgroup) | `internal/hub/tenancy.go`, `internal/server/tenancy.go`, `internal/tenancy` |
 | Toolchain | machine-wide in per-user mode (winget `--scope machine` incl. LocalSystem's winget path, npm globals next to node on Windows, uv in /usr/local/bin) | `internal/toolchain/backends.go` |
 | Installers | MSI `ISOLATION=per-user`, deb `LONGARM_ISOLATION=per-user` + `longarmd-peruser.service`, `longarmd service install --isolation per-user`; `longarmd leave --purge`/uninstall delete the accounts | `packaging/`, `cmd/longarmd`, `internal/longarmd/leave.go` |
@@ -109,8 +110,11 @@ change); the new unit tests add about 15 s, the opt-in per-user e2e
 ## Known gaps
 
 See [security.md "What is not isolated"](security.md#what-is-not-isolated-known-gaps):
-loopback TCP between users' processes on one worker (only Longarm's own
-forwards check port owners); `/proc` command lines on Linux unless mounted
+loopback TCP between users' processes on one worker on Windows (only
+Longarm's own forwards check port owners; on Linux the nftables table
+`inet longarm`, `[isolation] loopback = "isolate"` by default, refuses it
+between accounts - not verified on this Windows-only development machine:
+the root e2e on CI asserts it - one-way UDP and unix sockets stay open); `/proc` command lines on Linux unless mounted
 with `hidepid=invisible` (longarmd warns); world-accessible OS objects that
 workloads create themselves (`/tmp` mitigated by umask 077); shared
 isolation mode gives API separation only (and unrestricted forwards);

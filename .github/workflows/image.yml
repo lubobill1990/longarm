@@ -62,6 +62,23 @@ jobs:
           build-args: VERSION=${{ inputs.version || format('0.0.0-ci+{0}', github.sha) }}
       - name: container smoke test
         run: deploy/azure/test/container-smoke.sh longarm-hub:smoke "$RUNNER_TEMP/longarm"
+      # what az acr build --target acr builds (deploy.sh --build-in-acr): ACR Tasks
+      # can't parse the BuildKit stages, so the image has a native stage of its own
+      - name: build the ACR Tasks stage (linux/amd64, --target acr)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/hub/Dockerfile
+          target: acr
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: longarm-hub:acr
+          build-args: VERSION=${{ inputs.version || format('0.0.0-ci+{0}', github.sha) }}
+      - name: the ACR stage starts (healthcheck command, Litestream)
+        run: |
+          docker run --rm --entrypoint /usr/local/bin/litestream longarm-hub:acr version
+          docker run --rm longarm-hub:acr --version
 
   publish:
     name: publish (ghcr.io, amd64 + arm64)

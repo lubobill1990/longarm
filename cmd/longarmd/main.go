@@ -212,6 +212,7 @@ func serviceCmd() *cobra.Command {
 
 	var dataDir, user, passwordEnv, isolation string
 	var listen []string
+	var dryRun bool
 	install := &cobra.Command{
 		Use:   "install",
 		Short: "Install longarmd as a service running as a user account",
@@ -221,9 +222,17 @@ Windows: SCM service logging on as --user (".\name" or "DOMAIN\name"); the
 password is read from the environment variable named by --password-env
 (default LONGARM_SERVICE_PASSWORD). The account is granted "Log on as a service".
 Linux: systemd unit with User= and KillMode=process (shims survive restarts).
-macOS: LaunchDaemon with UserName and AbandonProcessGroup.`,
+macOS: LaunchDaemon with UserName and AbandonProcessGroup.
+
+Data dir without --data-dir / LONGARM_DATA_DIR: --isolation per-user uses the
+system data dir (Linux /var/lib/longarmd, Windows C:\ProgramData\Longarm\longarmd)
+and copies an enrollment from the default data dir / ~/.longarm into it when it
+has none yet; --user NAME as root (Linux, macOS) uses NAME's ~/.longarm;
+otherwise the default data dir (root on Linux: /var/lib/longarmd, else ~/.longarm).
+Per-user isolation refuses a data dir whose users dir the accounts cannot reach
+(e.g. below /root).`,
 		Args: cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			exe, err := os.Executable()
 			if err != nil {
 				return err
@@ -232,6 +241,26 @@ macOS: LaunchDaemon with UserName and AbandonProcessGroup.`,
 			if err != nil {
 				return err
 			}
+			perUser := isolation == "per-user"
+			switch {
+			case perUser && user != "":
+				return errors.New("--isolation per-user runs the service as LocalSystem / root: drop --user")
+			case perUser:
+				if err := platform.CanIsolate(); err != nil && runtime.GOOS == "darwin" {
+					return err
+				}
+			case isolation != "" && isolation != "shared":
+				return fmt.Errorf("--isolation %q: want shared or per-user", isolation)
+			}
+			sd, err := longarmd.ResolveServiceDataDir(longarmd.ServiceDirRequest{
+				DataDir:  dataDir,
+				Explicit: cmd.Flags().Changed("data-dir") || os.Getenv(longarmd.DataDirEnv) != "",
+				PerUser:  perUser, User: user,
+			})
+			if err != nil {
+				return err
+			}
+			dataDir = sd.Dir
 			args := []string{"run", "--data-dir", dataDir, "--service-name", name}
 			for _, l := range listen {
 				args = append(args, "--listen", l)
@@ -241,19 +270,38 @@ macOS: LaunchDaemon with UserName and AbandonProcessGroup.`,
 				Description: "Longarm worker daemon: runs remote jobs for longarm clients",
 				Exe:         exe, Args: args, User: user, Password: os.Getenv(passwordEnv),
 			}
+			if dryRun {
+				fmt.Printf("data dir %s\n", dataDir)
+				if sd.MigrateFrom != "" {
+					fmt.Printf("would copy the enrollment from %s to %s\n", sd.MigrateFrom, dataDir)
+				}
+				if perUser {
+					fmt.Printf("users dir %s\nwould set [isolation] mode = \"per-user\" in %s\n", sd.UsersDir, filepath.Join(dataDir, longarmd.ConfigFile))
+				}
+				fmt.Printf("would install service %q (%s %v, user %q)\n", name, exe, args, user)
+				return nil
+			}
+			if sd.MigrateFrom != "" {
+				// Check first: an old service (e.g. root's shared one on
+				// the old dir) must go before its enrollment is copied.
+				if st, err := platform.QueryService(name); err == nil && st != platform.ServiceNotInstalled {
+					return fmt.Errorf("service %q is already installed (%s): longarmd service uninstall --name %s first", name, st, name)
+				}
+				fmt.Printf("copying the enrollment from %s to %s:\n", sd.MigrateFrom, dataDir)
+				if err := longarmd.MigrateEnrollment(sd.MigrateFrom, dataDir, os.Stdout); err != nil {
+					return err
+				}
+				fmt.Printf("%s is no longer used by this service; remove it once the service runs (it holds a copy of the node key)\n", sd.MigrateFrom)
+			}
 			switch {
-			case isolation == "per-user" && user != "":
-				return errors.New("--isolation per-user runs the service as LocalSystem / root: drop --user")
-			case isolation == "per-user":
-				if err := platform.CanIsolate(); err != nil && runtime.GOOS == "darwin" {
+			case perUser:
+				if err := longarmd.EnsureSystemDataDir(dataDir); err != nil {
 					return err
 				}
 				if err := longarmd.SetIsolation(dataDir, isolation); err != nil {
 					return err
 				}
-				fmt.Fprintln(os.Stderr, "per-user isolation: the service runs as LocalSystem / root and runs every user's work as an OS account of its own")
-			case isolation != "" && isolation != "shared":
-				return fmt.Errorf("--isolation %q: want shared or per-user", isolation)
+				fmt.Fprintf(os.Stderr, "per-user isolation: the service runs as LocalSystem / root (data dir %s) and runs every user's work as an OS account of its own\n", dataDir)
 			case user == "":
 				fmt.Fprintln(os.Stderr, "warning: no --user given; the service runs as LocalSystem/root, which DESIGN §3.1 advises against")
 			}
@@ -265,7 +313,8 @@ macOS: LaunchDaemon with UserName and AbandonProcessGroup.`,
 			return nil
 		},
 	}
-	install.Flags().StringVar(&dataDir, "data-dir", longarmd.DefaultDataDir(), "data directory for the service")
+	install.Flags().StringVar(&dataDir, "data-dir", longarmd.DefaultDataDir(), "data directory for the service (default: see above); env LONGARM_DATA_DIR")
+	install.Flags().BoolVar(&dryRun, "dry-run", false, "check and print the data dir and service, change nothing")
 	install.Flags().StringArrayVar(&listen, "listen", nil, "listen URL(s) (default: longarmd.toml in the data dir)")
 	install.Flags().StringVar(&user, "user", "", "account to run as")
 	install.Flags().StringVar(&passwordEnv, "password-env", "LONGARM_SERVICE_PASSWORD", "env var holding the Windows account password")
@@ -299,9 +348,13 @@ macOS: LaunchDaemon with UserName and AbandonProcessGroup.`,
 	}
 	c.AddCommand(install,
 		simple("uninstall", "Stop and remove the service", func(n string) error {
+			cleanup := perUserLoopbackCleanup(n) // read the unit before it goes
 			err := platform.UninstallService(n)
 			if err == nil {
 				serviceFirewall(n, "", false)
+				if cleanup != nil {
+					cleanup()
+				}
 			}
 			return err
 		}, "uninstalled"),
