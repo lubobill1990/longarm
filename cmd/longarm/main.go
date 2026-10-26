@@ -69,7 +69,7 @@ func main() {
 		"transport policy: race (default: all legs at once, first mTLS handshake wins) | tcp | tailscale | longnet (prefer); env LONGARM_TRANSPORT; persistent: longarm transport <policy>")
 	root.PersistentFlags().BoolVar(&noHub, "no-hub", os.Getenv("LONGARM_NO_HUB") == "1", "ignore the hub; talk to workers directly (env LONGARM_NO_HUB=1)")
 	root.AddCommand(poolCmd(), transportCmd(), firewallCmd())
-	root.AddCommand(whoamiCmd())
+	root.AddCommand(whoamiCmd(), linkCmd())
 	root.AddCommand(lsCmd(), infoCmd(), execCmd(), runCmd(), logsCmd(), waitCmd(), killCmd(), jobsCmd(), adminCmd(),
 		attachCmd(), sessionsCmd(), forwardCmd(), putCmd(), getCmd(), syncCmd(), proxyCmd(), sshConfigCmd(),
 		joinCmd(), leaveCmd(), daemonCmd(), mcpCmd())
