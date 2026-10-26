@@ -112,9 +112,13 @@ chmod 700 "$tmp"
 # $tmp/bootstrap.env (the key goes through the environment, not argv)
 fetch_bootstrap() {
 	rm -f "$tmp/bootstrap.env"
-	AZURE_STORAGE_KEY=$2 az storage file download --account-name "$1" --share-name state \
-		--path bootstrap.env --dest "$tmp/bootstrap.env" --no-progress -o none >/dev/null 2>&1 &&
-		[[ -s $tmp/bootstrap.env ]]
+	# az prefers a connection string or SAS from the caller's environment over the key: drop them
+	# (seen on a real run: a global AZURE_STORAGE_CONNECTION_STRING pointed at another account -> ShareNotFound)
+	(
+		unset AZURE_STORAGE_CONNECTION_STRING AZURE_STORAGE_SAS_TOKEN AZURE_STORAGE_ACCOUNT AZURE_STORAGE_AUTH_MODE
+		AZURE_STORAGE_KEY=$2 az storage file download --account-name "$1" --share-name state \
+			--path bootstrap.env --dest "$tmp/bootstrap.env" --no-progress -o none >/dev/null 2>&1
+	) && [[ -s $tmp/bootstrap.env ]]
 }
 
 # bootstrap_value KEY: a value of $tmp/bootstrap.env

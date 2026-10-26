@@ -89,11 +89,19 @@ function Get-Bootstrap([string]$Account, [string]$Key, [string]$Dest) {
     # bootstrap.env from the state share as a hashtable ($null if missing);
     # the key goes through the environment, not the command line
     Remove-Item -Force $Dest -ErrorAction SilentlyContinue
+    # az prefers a connection string / SAS from the caller's environment over the key: hide them for
+    # this call (a global AZURE_STORAGE_CONNECTION_STRING for another account gave ShareNotFound)
+    $hidden = @{}
+    foreach ($n in 'AZURE_STORAGE_CONNECTION_STRING', 'AZURE_STORAGE_SAS_TOKEN', 'AZURE_STORAGE_ACCOUNT', 'AZURE_STORAGE_AUTH_MODE') {
+        $v = [Environment]::GetEnvironmentVariable($n, 'Process')
+        if ($null -ne $v) { $hidden[$n] = $v; [Environment]::SetEnvironmentVariable($n, $null, 'Process') }
+    }
     $env:AZURE_STORAGE_KEY = $Key
     try {
         Invoke-AzQuiet storage file download --account-name $Account --share-name state --path bootstrap.env --dest $Dest --no-progress -o none | Out-Null
     } finally {
         Remove-Item Env:\AZURE_STORAGE_KEY -ErrorAction SilentlyContinue
+        foreach ($n in $hidden.Keys) { [Environment]::SetEnvironmentVariable($n, $hidden[$n], 'Process') }
     }
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Dest)) { return $null }
     $kv = @{}
