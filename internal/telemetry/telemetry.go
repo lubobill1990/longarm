@@ -187,7 +187,14 @@ type Client struct {
 	// off: the hub doesn't collect (until recheck).
 	off     bool
 	recheck time.Time
+	// optedOut: settings.json says off (`longarm telemetry off` while this
+	// process runs); settingsAt: when it was last looked at.
+	optedOut   bool
+	settingsAt time.Time
 }
+
+// settingsEvery is how often a running process re-reads settings.json.
+const settingsEvery = 2 * time.Second
 
 // New builds a Client. It does not start anything; Start also makes it
 // the default and reports crashes of earlier runs.
@@ -290,7 +297,29 @@ func (c *Client) Enabled() bool {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return !c.off
+	c.checkSettingsLocked()
+	return !c.off && !c.optedOut
+}
+
+// checkSettingsLocked follows a later `longarm telemetry off|on` of the
+// same directory: a daemon, MCP server or tray started before must stop
+// too, and drop what it holds - nothing recorded so far is sent.
+func (c *Client) checkSettingsLocked() {
+	if c.cfg.Dir == "" || time.Since(c.settingsAt) < settingsEvery {
+		return
+	}
+	c.settingsAt = time.Now()
+	st, err := LoadSettings(c.cfg.Dir)
+	if err != nil {
+		return
+	}
+	if st.Disabled && !c.optedOut {
+		c.buf = nil
+		if c.queue != nil {
+			c.queue.Clear()
+		}
+	}
+	c.optedOut = st.Disabled
 }
 
 // Uptime is the time since the client was created.
@@ -496,10 +525,12 @@ func (c *Client) Flush() error {
 		return nil
 	}
 	c.mu.Lock()
+	c.checkSettingsLocked()
 	buf := c.buf
 	c.buf = nil
+	opted := c.optedOut
 	c.mu.Unlock()
-	if len(buf) == 0 || c.queue == nil {
+	if opted || len(buf) == 0 || c.queue == nil {
 		return nil
 	}
 	if _, err := c.queue.Append(buf); err != nil {
@@ -574,7 +605,8 @@ func (c *Client) RecheckDue() bool {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.off && time.Now().After(c.recheck)
+	c.checkSettingsLocked()
+	return c.off && !c.optedOut && time.Now().After(c.recheck)
 }
 
 // State is what the hub last said (<dir>/state.json), shared by the

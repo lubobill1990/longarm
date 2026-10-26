@@ -3,7 +3,9 @@ package telemetry
 import (
 	"context"
 	"log/slog"
+	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -64,7 +66,7 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 		if a.Key == "trace" || len(props) >= MaxProps {
 			return
 		}
-		props[key] = v.String()
+		props[key] = attrValue(a.Key, v)
 	}
 	for _, a := range h.attrs {
 		add("", a)
@@ -155,4 +157,59 @@ func (l *limiter) allow(msg string) (int, bool) {
 	s := e.suppressed
 	e.suppressed = 0
 	return s, true
+}
+
+// Log attributes are free-form: an error text can hold a command line, a
+// subprocess's output or a URL whose path is a credential (a failed git
+// fetch). Only what is structured by construction leaves the machine:
+// numbers, booleans, durations, times; strings only under keys known to
+// hold enum-like values, and only token-shaped; errors as a class.
+var safeAttrKeys = map[string]bool{
+	"method": true, "code": true, "status": true, "state": true, "phase": true, "role": true,
+	"component": true, "kind": true, "transport": true, "outcome": true, "mode": true,
+	"version": true, "from": true, "to": true, "os": true, "arch": true, "isolation": true,
+	"sink": true, "leg": true, "via": true, "type": true, "level": true, "policy": true,
+}
+
+var tokenValue = regexp.MustCompile(`^[A-Za-z0-9_./:+-]{0,64}$`)
+
+func attrValue(key string, v slog.Value) string {
+	switch v.Kind() {
+	case slog.KindInt64, slog.KindUint64, slog.KindFloat64, slog.KindBool, slog.KindDuration, slog.KindTime:
+		return v.String()
+	}
+	s := v.String()
+	k := strings.ToLower(key)
+	switch k {
+	case "err", "error", "reason", "cause", "failure":
+		return "class:" + ErrorClass(s)
+	}
+	if safeAttrKeys[k] && tokenValue.MatchString(s) {
+		return s
+	}
+	return "<omitted>"
+}
+
+// ErrorClass reduces an error text to a class (no content of it leaves the
+// machine).
+func ErrorClass(s string) string {
+	s = strings.ToLower(s)
+	for _, c := range []struct{ class, needle string }{
+		{"canceled", "context canceled"}, {"timeout", "deadline exceeded"}, {"timeout", "timeout"},
+		{"timeout", "timed out"}, {"refused", "connection refused"}, {"reset", "connection reset"},
+		{"eof", "eof"}, {"tls", "x509"}, {"tls", "tls"}, {"tls", "certificate"},
+		{"unauthenticated", "unauthenticated"}, {"denied", "permission denied"}, {"denied", "access is denied"},
+		{"denied", "permissiondenied"}, {"not_found", "not found"}, {"not_found", "no such"},
+		{"not_found", "cannot find"}, {"exists", "already exists"}, {"unavailable", "unavailable"},
+		{"no_space", "no space"}, {"no_space", "disk full"}, {"invalid", "invalid"},
+		{"git", "git"}, {"exit_status", "exit status"},
+	} {
+		if strings.Contains(s, c.needle) {
+			return c.class
+		}
+	}
+	if s == "" {
+		return "none"
+	}
+	return "other"
 }

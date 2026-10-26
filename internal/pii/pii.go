@@ -162,6 +162,9 @@ var rules = []rule{
 	// URL query strings (SAS tokens, codes) and user info
 	{regexp.MustCompile(`(https?://)[^/\s@]+@`), "${1}<userinfo>@"},
 	{regexp.MustCompile(`(https?://[^\s?#"']+)\?[^\s"'#]*`), "${1}?<query>"},
+	// URL paths: a repository, a webhook or an API path can be the
+	// credential itself (opaque tokens in the path) or name a person's work
+	{regexp.MustCompile(`\b((?:https?|wss?|ssh|git)://[^/\s"']+)/[^\s"'?#:]+`), "${1}/<path>"},
 	{regexp.MustCompile(`(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b`), "<email>"},
 	// IPv4 (loopback and unspecified stay: they say "local")
 	{regexp.MustCompile(`\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b`), "\x00ip4"},

@@ -35,8 +35,10 @@ func TestScrub(t *testing.T) {
 		{"join with H62-ZQV now", "join with <join-code> now"},
 		{"SHA-256 and AES-128 stay", "SHA-256 and AES-128 stay"},
 		// URLs, e-mail, IPs
-		{"GET https://acct.blob.core.windows.net/c/b?sv=2021&sig=abc", "GET https://acct.blob.core.windows.net/c/b?<query>"},
-		{"https://user:pw@example.com/x", "https://<userinfo>@example.com/x"},
+		{"GET https://acct.blob.core.windows.net/c/b?sv=2021&sig=abc", "GET https://acct.blob.core.windows.net/<path>?<query>"},
+		{"https://user:pw@example.com/x", "https://<userinfo>@example.com/<path>"},
+		{"fetch https://git.example.net/opaqueCanaryCredential0123456789/repo.git: 403", "fetch https://git.example.net/<path>: 403"},
+		{"see https://example.com/ and ssh://git.host/a/b", "see https://example.com/ and ssh://git.host/<path>"},
 		{"mail bob.smith@contoso.com", "mail <email>"},
 		{"dial 10.92.0.5:7443 and 127.0.0.1:7480 and 0.0.0.0", "dial <ip>:7443 and 127.0.0.1:7480 and 0.0.0.0"},
 		{"addr [2404:f801:10:128:b8a8:6cc6:6dc8:d9f4]:64965 ::1", "addr [<ip>]:64965 ::1"},

@@ -212,6 +212,10 @@ func TestOptOut(t *testing.T) {
 	if s, _ := LoadSettings(dir); !s.Disabled {
 		t.Fatal("setting not saved")
 	}
+	// on again (running processes follow the setting: TestLiveOptOut)
+	if err := SaveSettings(dir, Settings{}); err != nil {
+		t.Fatal(err)
+	}
 
 	// the hub doesn't collect: queue gone, nothing recorded, state shared
 	c.Event(context.Background(), "y", nil, nil)
