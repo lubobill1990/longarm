@@ -23,7 +23,11 @@ func TestWorkerOwner(t *testing.T) {
 	e := newAuthzEnv(t)
 	wa, _ := tenancy.LoadWorkerAccess("")
 	e.srv.WorkerAccess = wa
-	set := func(s *pb.WorkerShares) { wa.Set(&pb.WorkerAccess{Version: 1, Owner: "alice", Shares: s}) }
+	var version int64
+	set := func(s *pb.WorkerShares) {
+		version++
+		wa.Set(&pb.WorkerAccess{Version: version, Owner: "alice", Shares: s})
+	}
 	set(nil)
 	list := func(c *grpc.ClientConn) error {
 		_, err := pb.NewJobsClient(c).List(cctx(t), &pb.ListJobsRequest{})
@@ -93,7 +97,7 @@ func TestWorkerOwner(t *testing.T) {
 	e.srv.Access = nil
 
 	// no owner: as before
-	wa.Set(&pb.WorkerAccess{Version: 2})
+	wa.Set(&pb.WorkerAccess{Version: version + 1})
 	if err := list(e.bob); err != nil {
 		t.Errorf("no owner: %v", err)
 	}

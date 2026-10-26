@@ -97,17 +97,18 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	}
 	revVersion := h.revVersion
 	desired := h.desiredToolchainLocked(n)
-	access := workerAccessLocked(n)
+	// Welcome and the worker's access go out under h.mu: a share change
+	// (sendLocked, also under h.mu) can only queue after this snapshot, never
+	// before it. Access always: small, and it corrects what the worker kept.
+	sess.out <- &pb.HubCommand{Msg: &pb.HubCommand_Welcome{Welcome: welcome}} // fresh channel: cannot block
+	sess.out <- workerAccessCmd(workerAccessLocked(n))
 	h.log.Info("node online", "node", n.rec.Name, "version", hello.Version, "endpoints", hello.Endpoints)
 	h.publishNodeLocked(n, "online")
 	h.advanceReleaseLocked()
 	h.mu.Unlock()
 	h.kickQueue()
 
-	send := func(cmd *pb.HubCommand) { sess.out <- cmd } // fresh channel: cannot block yet
-	send(&pb.HubCommand{Msg: &pb.HubCommand_Welcome{Welcome: welcome}})
-	// always: small, and it corrects whatever the worker kept from before
-	send(workerAccessCmd(access))
+	send := func(cmd *pb.HubCommand) { sess.out <- cmd } // cannot block yet
 	if hello.RevocationVersion != revVersion {
 		send(h.revocationsMsg())
 	}

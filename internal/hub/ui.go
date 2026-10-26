@@ -191,12 +191,13 @@ func (h *Hub) JobLogs(ctx context.Context, by, user string, req *pb.HubLogsReque
 	if err != nil {
 		return err
 	}
-	if err := h.relayCheck(by, user, w, "read logs", req.Id); err != nil {
-		return err
-	}
 	off := req.Offset
 	idle := 250 * time.Millisecond
 	for {
+		// every poll: a followed stream ends once the worker is unshared
+		if err := h.relayCheck(by, user, w, "read logs", req.Id); err != nil {
+			return err
+		}
 		r, err := h.request(ctx, w, func(rid string) *pb.HubCommand {
 			return &pb.HubCommand{Msg: &pb.HubCommand_LogRequest{LogRequest: &pb.HubLogRequest{RequestId: rid, Id: req.Id, Offset: off, MaxBytes: 256 << 10, By: by}}}
 		})

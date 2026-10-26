@@ -328,3 +328,17 @@ func (h *Hub) relayCheck(by, user, worker, action, job string) error {
 	return status.Errorf(codes.PermissionDenied, "user %q may not %s on worker %s (a user's own worker, not shared with them)",
 		user, action, worker)
 }
+
+// dropWorkerCodes invalidates owner's unused worker codes (the user was
+// removed or disabled: owned codes join without approval).
+func (h *Hub) dropWorkerCodes(by, owner string) {
+	ids, err := h.store.DeleteOwnedJoinCodes(owner)
+	if err != nil {
+		h.log.Warn("drop worker codes", "owner", owner, "err", err)
+		return
+	}
+	if len(ids) > 0 {
+		h.auditHub(by, "workers/codes-dropped", map[string]any{"owner": owner, "ids": ids})
+		h.log.Info("worker codes dropped", "owner", owner, "ids", ids)
+	}
+}

@@ -337,3 +337,102 @@ func TestCanSeeNode(t *testing.T) {
 		t.Error("admins see every worker")
 	}
 }
+
+// TestFollowedLogsEndOnUnshare: a followed log stream through the hub is
+// re-authorized on every poll: unsharing ends bob's stream.
+func TestFollowedLogsEndOnUnshare(t *testing.T) {
+	th, out := ownedHub(t)
+	h := th.h
+	if _, err := h.ShareWorker("test", "", true, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); err != nil {
+		t.Fatal(err)
+	}
+	// the fake worker answers every log request with one more byte, never EOF
+	go func() {
+		for c := range out {
+			lr := c.GetLogRequest()
+			if lr == nil {
+				continue
+			}
+			h.mu.Lock()
+			if n := h.nodes["aw"]; n.sess != nil {
+				h.deliverReplyLocked(n, n.sess, &pb.HubReply{RequestId: lr.RequestId,
+					Log: &pb.LogChunk{Offset: lr.Offset, Data: []byte("x")}, LogSize: lr.Offset + 1})
+			}
+			h.mu.Unlock()
+		}
+	}()
+	got := make(chan struct{}, 100)
+	done := make(chan error, 1)
+	go func() {
+		done <- h.JobLogs(tctx(t), "client/bob-laptop", "bob", &pb.HubLogsRequest{Id: "JAW", Worker: "aw", Follow: true},
+			func(*pb.LogChunk) error { got <- struct{}{}; return nil })
+	}()
+	select {
+	case <-got:
+	case err := <-done:
+		t.Fatalf("bob's stream ended at once: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("no log output for bob")
+	}
+	if _, err := h.ShareWorker("test", "", true, &pb.ShareWorkerRequest{Worker: "aw", RemoveUsers: []string{"bob"}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if status.Code(err) != codes.PermissionDenied {
+			t.Fatalf("stream ended with %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("bob's followed stream survived the unshare")
+	}
+}
+
+// TestWorkerCodesDie: a removed or disabled user's unused worker codes are
+// gone, and codes of unknown users are neither made nor redeemed.
+func TestWorkerCodesDie(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	if _, err := h.CreateJoinCode("test", &pb.CreateJoinCodeRequest{Role: "worker", Owner: "dave"}); status.Code(err) != codes.NotFound {
+		t.Fatalf("code for an unknown user: %v", err)
+	}
+	join := func(code string) error {
+		_, err := hubclient.Join(tctx(t), h.Addr("grpc"), code, hubclient.JoinOptions{Fingerprint: pki.Fingerprint(th.ca.Cert)})
+		return err
+	}
+	bobs, err := h.CreateWorkerCode("test", "bob", &pb.CreateWorkerCodeRequest{Name: "bw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	carols, err := h.CreateWorkerCode("test", "carol", &pb.CreateWorkerCodeRequest{Name: "cw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.RemoveUser("test", &pb.RemoveUserRequest{Name: "bob"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.PutUser("test", &pb.PutUserRequest{Name: "carol", SetDisabled: true, Disabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []string{"bob", "carol"} {
+		if n, err := h.activeWorkerCodes(u); n != 0 || err != nil {
+			t.Errorf("%s still has %d worker codes (%v)", u, n, err)
+		}
+	}
+	for _, c := range []string{bobs.Code, carols.Code} {
+		if err := join(c); status.Code(err) != codes.PermissionDenied {
+			t.Errorf("join with a dropped code: %v", err)
+		}
+	}
+	// a code made for a user who is gone by the time it is used (e.g.
+	// removed while the store write raced) is refused at the join too
+	alices, err := h.CreateWorkerCode("test", "alice", &pb.CreateWorkerCodeRequest{Name: "aw2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	delete(h.tenants, "alice")
+	h.mu.Unlock()
+	if err := join(alices.Code); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("join with the code of a vanished user: %v", err)
+	}
+}

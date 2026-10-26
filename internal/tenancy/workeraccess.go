@@ -46,13 +46,17 @@ const WorkerAccessFile = "worker-access.json"
 
 // WorkerAccess holds the owner and shares the hub pushed to this worker.
 type WorkerAccess struct {
-	mu   sync.RWMutex
-	path string
-	a    *pb.WorkerAccess
+	mu      sync.RWMutex
+	path    string
+	a       *pb.WorkerAccess
+	missing bool // LoadWorkerAccess found no file
+	// pending: not synchronized with the hub (no or unreadable file): the
+	// next push is taken whatever its version
+	pending bool
 }
 
 // LoadWorkerAccess reads path ("" = memory only); a missing file means no
-// owner.
+// owner (Missing reports it: an owned worker must not read that as "open").
 func LoadWorkerAccess(path string) (*WorkerAccess, error) {
 	w := &WorkerAccess{path: path, a: &pb.WorkerAccess{}}
 	if path == "" {
@@ -60,6 +64,7 @@ func LoadWorkerAccess(path string) (*WorkerAccess, error) {
 	}
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
+		w.missing = true
 		return w, nil
 	}
 	if err != nil {
@@ -73,16 +78,37 @@ func LoadWorkerAccess(path string) (*WorkerAccess, error) {
 	return w, nil
 }
 
-// Set replaces the owner and shares and saves them.
-func (w *WorkerAccess) Set(a *pb.WorkerAccess) error {
+// PendingWorkerAccess is a worker owned by owner ("?" = unknown: nobody
+// gets in) that waits for the hub's word; it saves to path.
+func PendingWorkerAccess(path, owner string) *WorkerAccess {
+	return &WorkerAccess{path: path, a: &pb.WorkerAccess{Owner: owner}, pending: true}
+}
+
+// Missing reports whether LoadWorkerAccess found no file.
+func (w *WorkerAccess) Missing() bool { return w != nil && w.missing }
+
+// Set takes the hub's owner and shares and saves them. Pushes older than
+// the version held are refused (a late, stale push must not undo a newer
+// unshare) and the same version is a no-op - unless the worker has not
+// heard from the hub yet. It reports whether a was applied.
+func (w *WorkerAccess) Set(a *pb.WorkerAccess) (bool, error) {
 	a = proto.Clone(a).(*pb.WorkerAccess)
 	w.mu.Lock()
-	w.a = a
+	if !w.pending && !w.missing && a.Version <= w.a.Version {
+		w.mu.Unlock()
+		return false, nil
+	}
+	w.a, w.pending, w.missing = a, false, false
 	path := w.path
 	w.mu.Unlock()
 	if path == "" {
-		return nil
+		return true, nil
 	}
+	return true, WriteWorkerAccess(path, a)
+}
+
+// WriteWorkerAccess saves a to path (enrollment: the owner the join named).
+func WriteWorkerAccess(path string, a *pb.WorkerAccess) error {
 	b, err := protojson.MarshalOptions{Indent: "  "}.Marshal(a)
 	if err != nil {
 		return err
@@ -122,11 +148,4 @@ func (w *WorkerAccess) Allows(user string, teams []string) bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return MayUseWorker(user, teams, w.a.Owner, w.a.Shares)
-}
-
-// SetPath sets the file later Sets save to.
-func (w *WorkerAccess) SetPath(path string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.path = path
 }

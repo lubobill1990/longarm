@@ -462,7 +462,9 @@ with gets no admin rights over the owner's jobs). **Admins are not exempt**:
 an admin certificate whose user is neither the owner nor shared with is
 refused on an owned worker like anybody else (`Admin.Shutdown`/`Gc`
 included); admins still see it on the hub, share, unshare and remove it.
-Removing a user (`longarm admin user remove`) also revokes the user's workers.
+Removing a user (`longarm admin user remove`) also revokes the user's workers;
+removing or disabling a user drops the user's unused worker codes. Owners
+are users (`longarm admin user add`): codes for anybody else are refused.
 
 The hub enforces this when listing and placing, and pushes owner and shares
 to the worker (`<data>/worker-access.json`), which refuses everybody else

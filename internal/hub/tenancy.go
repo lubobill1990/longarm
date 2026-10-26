@@ -345,6 +345,7 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 	h.log.Info("user saved", "user", u.Name, "by", by, "created", created)
 	if u.Disabled {
 		h.closeUserConns(u.Name)
+		h.dropWorkerCodes(by, u.Name)
 	}
 
 	resp := &pb.PutUserResponse{}
@@ -477,6 +478,7 @@ func (h *Hub) RemoveUser(by string, req *pb.RemoveUserRequest) (*pb.RemoveUserRe
 	if pu, err := h.store.GetUser(req.Name); err == nil && pu.Tenant == req.Name {
 		h.store.DeleteUser(req.Name)
 	}
+	h.dropWorkerCodes(by, req.Name)
 	h.auditHub(by, "users/remove", map[string]any{"user": req.Name, "purge": req.Purge, "revoked": resp.Revoked})
 	h.log.Info("user removed", "user", req.Name, "by", by, "purge", req.Purge, "revoked", resp.Revoked)
 	return resp, nil

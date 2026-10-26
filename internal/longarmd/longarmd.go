@@ -403,13 +403,17 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	}
 	waPath := filepath.Join(cfg.DataDir, tenancy.WorkerAccessFile)
 	workerAccess, err := tenancy.LoadWorkerAccess(waPath)
-	if err != nil {
+	switch {
+	case err != nil:
 		// fail closed: nobody gets in (Node.Info aside) until the hub
 		// sends owner and shares again
 		log.Warn("worker access unreadable; refusing every user until the hub sends it", "err", err)
-		workerAccess, _ = tenancy.LoadWorkerAccess("")
-		workerAccess.Set(&pb.WorkerAccess{Owner: "?"})
-		workerAccess.SetPath(waPath)
+		workerAccess = tenancy.PendingWorkerAccess(waPath, nonEmpty(hubFile.Owner, "?"))
+	case workerAccess.Missing() && hubFile.Owner != "":
+		// enrolled with an owned code but the file is gone: the owner only
+		// (never "no owner") until the hub says more
+		log.Warn("worker access missing; serving its owner only until the hub sends it", "owner", hubFile.Owner)
+		workerAccess = tenancy.PendingWorkerAccess(waPath, hubFile.Owner)
 	}
 	if o := workerAccess.Owner(); o != "" {
 		sh := workerAccess.Get().GetShares()

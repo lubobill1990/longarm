@@ -697,6 +697,8 @@ func (a *hubAgent) applyTenancy(p *pb.TenancyPolicy) {
 	}); n > 0 {
 		a.log.Info("closed connections of disabled users", "count", n)
 	}
+	a.closeDisallowed() // left a team this worker is shared with
+
 	if p.Version == old || len(p.Purge) == 0 {
 		return
 	}
@@ -736,23 +738,35 @@ func (a *hubAgent) applyWorkerAccess(wa *pb.WorkerAccess) {
 	if a.srv.WorkerAccess == nil {
 		return
 	}
-	old := a.srv.WorkerAccess.Get()
-	if err := a.srv.WorkerAccess.Set(wa); err != nil {
+	applied, err := a.srv.WorkerAccess.Set(wa)
+	if err != nil {
 		a.log.Warn("hub: save worker access", "err", err)
 	}
-	if proto.Equal(old, wa) {
+	if !applied { // older than (or as old as) what this worker has: a stale push
 		return
 	}
 	a.log.Info("hub: worker access", "version", wa.Version, "owner", wa.Owner, "shared_users", wa.GetShares().GetUsers(),
 		"shared_teams", wa.GetShares().GetTeams(), "shared_everyone", wa.GetShares().GetEveryone())
 	a.audit.LogAs("hub", "worker/access", map[string]any{"version": wa.Version, "owner": wa.Owner,
 		"users": wa.GetShares().GetUsers(), "teams": wa.GetShares().GetTeams(), "everyone": wa.GetShares().GetEveryone()})
+	a.closeDisallowed()
+	a.notify(&pb.LocalEvent{Kind: "hub", Message: "worker access updated (owner " + nonEmpty(wa.Owner, "none") + ")"})
+}
+
+// closeDisallowed closes the connections (and with them their sessions,
+// forwards, ssh and log streams) of users this user-owned worker no longer
+// serves - after a WorkerAccess change and after every tenancy-policy
+// change (team membership decides team shares).
+func (a *hubAgent) closeDisallowed() {
+	wa := a.srv.WorkerAccess
+	if wa.Owner() == "" {
+		return
+	}
 	if n := a.srv.Conns.CloseIf(func(c *x509.Certificate) bool {
 		id, err := pki.IdentityFromCert(c)
 		return err == nil && (id.Role == pki.RoleClient || id.Role == pki.RoleAdmin) &&
-			!a.srv.WorkerAccess.Allows(id.Owner(), a.policy.Teams(id.Owner()))
+			!wa.Allows(id.Owner(), a.policy.Teams(id.Owner()))
 	}); n > 0 {
-		a.log.Info("closed connections of users no longer allowed", "count", n)
+		a.log.Info("closed connections of users this worker no longer serves", "count", n)
 	}
-	a.notify(&pb.LocalEvent{Kind: "hub", Message: "worker access updated (owner " + nonEmpty(wa.Owner, "none") + ")"})
 }

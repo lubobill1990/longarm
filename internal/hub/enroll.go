@@ -84,6 +84,12 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 		if !pki.ValidUser(req.Owner) {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid owner %q", req.Owner)
 		}
+		h.mu.Lock()
+		known := h.tenants[req.Owner] != nil
+		h.mu.Unlock()
+		if !known { // codes of removed users must die with them: owners are users
+			return nil, status.Errorf(codes.NotFound, "no user %q (longarm admin user add %s)", req.Owner, req.Owner)
+		}
 		// cheap abuse guard: owned workers join without approval
 		n, err := h.activeWorkerCodes(req.Owner)
 		if err != nil {
@@ -178,7 +184,7 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name, or revoke the old node)", name)
 	}
-	if jc.Owner != "" && h.userDisabledLocked(jc.Owner) { // disabled since the code was made
+	if jc.Owner != "" && (h.tenants[jc.Owner] == nil || h.userDisabledLocked(jc.Owner)) { // removed or disabled since
 		h.mu.Unlock()
 		return nil, errBadCode
 	}
@@ -252,7 +258,8 @@ func (h *Hub) joinStatusLocked(th string) *pb.JoinResponse {
 		if n.rec.PollTokenHash == "" || n.rec.PollTokenHash != th {
 			continue
 		}
-		resp := &pb.JoinResponse{Name: n.rec.Name, Role: n.rec.Role, CaPem: h.ca.CertPEM, HubName: h.cfg.Name, State: n.rec.State}
+		resp := &pb.JoinResponse{Name: n.rec.Name, Role: n.rec.Role, CaPem: h.ca.CertPEM, HubName: h.cfg.Name, State: n.rec.State,
+			Owner: n.rec.Owner}
 		switch n.rec.State {
 		case stateApproved:
 			resp.CertPem = []byte(n.rec.IssuedCert)

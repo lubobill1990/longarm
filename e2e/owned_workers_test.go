@@ -45,7 +45,28 @@ func TestOwnedWorkers(t *testing.T) {
 	if j.code != 0 || !strings.Contains(j.stdout, "joined as worker aw") || !strings.Contains(j.stdout, "owned by alice") {
 		t.Fatalf("longarmd join: %+v", j)
 	}
+	// The owner holds from the enrollment on: with the hub down, and even
+	// without worker-access.json (hub.toml remembers the owned code), the
+	// worker serves alice only - never everybody.
+	if b, err := os.ReadFile(filepath.Join(aw.dataDir, tenancy.WorkerAccessFile)); err != nil || !strings.Contains(string(b), `"alice"`) {
+		t.Fatalf("worker access after join: %s %v", b, err)
+	}
+	os.Remove(filepath.Join(aw.dataDir, tenancy.WorkerAccessFile))
+	h.killHub()
 	aw.start(t, true)
+	direct := fmt.Sprintf("aw@127.0.0.1:%d", aw.port)
+	print1 := []string{"--", bins.helper, "print", "1", "0", "0"}
+	exec := func(cfg, worker string) result {
+		return h.longarm(cfg, append([]string{"exec", worker}, print1...)...)
+	}
+	if r := exec(bob, direct); r.code == 0 || !strings.Contains(r.stderr, "worker owner/shares") {
+		t.Fatalf("hub down, no access file: bob exec: %+v", r)
+	}
+	if r := exec(alice, direct); r.code != 0 || !strings.Contains(r.stdout, "line 1") {
+		t.Fatalf("hub down, no access file: alice exec: %+v", r)
+	}
+	h.startHub(t)
+	os.Remove(filepath.Join(bob, "hub-state.json")) // bob's longarm remembered the hub as down
 	for _, w := range []string{"wf", "aw"} {
 		h.waitNode(t, w, "online", func(n map[string]any) bool { return isTrue(n["online"]) })
 	}
@@ -62,11 +83,6 @@ func TestOwnedWorkers(t *testing.T) {
 	}
 	waitAccess("owner alice", func(s string) bool { return strings.Contains(s, `"alice"`) })
 
-	direct := fmt.Sprintf("aw@127.0.0.1:%d", aw.port)
-	print1 := []string{"--", bins.helper, "print", "1", "0", "0"}
-	exec := func(cfg, worker string) result {
-		return h.longarm(cfg, append([]string{"exec", worker}, print1...)...)
-	}
 	if r := exec(alice, "aw"); r.code != 0 || !strings.Contains(r.stdout, "line 1") {
 		t.Fatalf("alice exec on her worker: %+v", r)
 	}
@@ -146,6 +162,26 @@ func TestOwnedWorkers(t *testing.T) {
 	h.mustLongarm(alice, "worker", "unshare", "aw", "--user", "bob")
 	waitAccess("unshared", func(s string) bool { return !strings.Contains(s, `"bob"`) })
 	bobLocked("unshared")
+
+	// Shared with a team: bob leaving the team ends what he has open there
+	// (the tenancy policy push re-checks open connections), not just new calls.
+	h.mustLongarm(root, "admin", "team", "add", "t1", "bob")
+	h.mustLongarm(alice, "worker", "share", "aw", "--team", "t1")
+	waitAccess("shared with t1", func(s string) bool { return strings.Contains(s, `"t1"`) })
+	waitFor(t, "bob in t1 on the worker", 30*time.Second, func() bool {
+		b, _ := os.ReadFile(filepath.Join(aw.dataDir, tenancy.PolicyFile))
+		return strings.Contains(string(b), `"t1"`) && exec(bob, direct).code == 0
+	})
+	long := h.longarmBG(t, bob, "exec", direct, "--timeout", "5m", "--", bins.helper, "sleep", "120")
+	time.Sleep(3 * time.Second) // running
+	start := time.Now()
+	h.mustLongarm(root, "admin", "team", "rm", "t1", "bob")
+	if code := long.wait(t, 90*time.Second); code == 0 || time.Since(start) > 40*time.Second {
+		t.Fatalf("bob's exec after leaving the team: exit %d after %s\n%s", code, time.Since(start), long.stderr.String())
+	}
+	if r := exec(bob, direct); r.code == 0 || !strings.Contains(r.stderr, "worker owner/shares") {
+		t.Fatalf("bob after leaving the team: %+v", r)
+	}
 
 	waitFor(t, "hub audit of the sharing", 20*time.Second, func() bool {
 		out := h.longarm(root, "admin", "audit", "--node", "hub", "--limit", "100", "--json").stdout

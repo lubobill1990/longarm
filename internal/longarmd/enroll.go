@@ -12,6 +12,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/trust"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -100,7 +101,13 @@ func installEnrollment(dataDir, hubAddr string, r *hubclient.JoinResult) error {
 		return err
 	}
 	os.Remove(filepath.Join(dataDir, TLSDir, hubclient.PendingKeyFile))
-	hc := hubclient.Config{Address: hubAddr}
+	// The owner the join named holds from the start - before the first hub
+	// session, also with the hub down (version 0: any push of the hub wins).
+	// Only ever a restriction, and a fresh enrollment's: overwrite.
+	if err := tenancy.WriteWorkerAccess(filepath.Join(dataDir, tenancy.WorkerAccessFile), &pb.WorkerAccess{Owner: r.Resp.Owner}); err != nil {
+		return err
+	}
+	hc := hubclient.Config{Address: hubAddr, Owner: r.Resp.Owner}
 	// The hub's Headscale minted a tailnet key: longarmd's embedded tailscale
 	// node joins with it (an extra transport leg, DESIGN §4.4).
 	if err := hubclient.SaveTailnet(dataDir, &hc, r.Resp.Tailnet); err != nil {

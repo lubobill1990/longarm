@@ -399,9 +399,18 @@ the worker audits every change it receives (`worker/access`).
 **Enforced twice, decided once.** The hub applies the rule when it lists
 and places, and pushes owner and shares to the worker
 (`HubCommand.worker_access` at every connect and change; kept in
-`<data>/worker-access.json` across restarts and hub outages, an unreadable
-file refuses everybody until the hub sends it again). The worker refuses
-everybody else on every call. But the worker's copy **comes from the hub**:
+`<data>/worker-access.json` across restarts and hub outages). The owner
+holds from enrollment on: `longarmd join` writes it (and remembers the owned
+code in the data dir's `hub.toml`), so a worker started before it ever
+reached the hub - or without its file - serves its owner only; an
+unreadable file refuses everybody until the hub sends the rule again. Pushes
+carry a version: a late, older push never undoes a newer unshare. The
+worker refuses everybody else on every call, and closes the connections -
+with their sessions, forwards, ssh and log streams - of users who lose
+access, whether by an unshare or by leaving a team the worker is shared
+with. Followed log streams through the hub are re-checked on every poll.
+Disabling or removing a user drops the user's unused worker codes; a code
+whose owner is no longer a user does not join. But the worker's copy **comes from the hub**:
 whoever controls the hub (its admins, its database, the CA key) can change
 the owner or the shares, or enroll a device under the owner's name. The
 pushed rule is applied strictly as an **extra deny after** the worker's own
