@@ -1,6 +1,7 @@
 # longarm-hub configuration (longarm-hub serve --config hub.toml)
 data_dir = "/data"                 # /var/lib/longarm-hub with the systemd unit
 # db_path = "/var/lib/longarm-hub/hub.db"   # default <data_dir>/hub.db; keep it on local disk (never SMB/NFS)
+# ca_in_db = false                 # keep a copy of the CA in the database (restored when data_dir/ca is gone)
 name = "hub"                       # name in the hub's certificate
 listen = ":7443"                   # gRPC API + longnet relay TLS fallback (told apart by ALPN)
 relay_udp = ":7443"                # longnet relay (QUIC); "off" disables the relay
@@ -9,6 +10,9 @@ relay_stun2 = ":7444"              # second STUN port (NAT type detection; "auto
 relay_rate = "32M"                 # per relay session, bytes/s ("0" = unlimited)
 http = "0.0.0.0:7480"              # in docker; use "127.0.0.1:7480" with systemd
 public_url = "https://hub.example.com"   # base URL in install scripts
+# https = ":443"                  # serve the panel over https itself (Let's Encrypt for public_url's host, cert in the database)
+# https_redirect = ":80"          # plain http -> https (needs https)
+# acme_email = "ops@example.com"   # Let's Encrypt contact (optional)
 public_addr = "203.0.113.10:7443"             # address nodes dial (install scripts, cert SAN)
 hosts = ["hub.example.com"]              # extra SANs of the hub certificate
 auto_approve = false               # joining workers wait for `longarm admin approve <name>`

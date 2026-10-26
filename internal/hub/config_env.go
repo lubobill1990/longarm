@@ -13,13 +13,17 @@ import (
 // win over hub.toml, so one image runs with a generated or no hub.toml.
 // LONGARM_HUB_DATA_DIR is older and only a default (hub.toml data_dir wins).
 const (
-	EnvDB        = "LONGARM_HUB_DB"          // db_path
-	EnvListen    = "LONGARM_HUB_LISTEN"      // listen
-	EnvHTTP      = "LONGARM_HUB_HTTP"        // http
-	EnvPublicURL = "LONGARM_HUB_PUBLIC_URL"  // public_url
-	EnvRelayUDP  = "LONGARM_HUB_RELAY_UDP"   // relay_udp
-	EnvSTUN2     = "LONGARM_HUB_RELAY_STUN2" // relay_stun2
-	EnvCAInDB    = "LONGARM_HUB_CA_IN_DB"    // ca_in_db (true/false, 1/0)
+	EnvDB        = "LONGARM_HUB_DB"             // db_path
+	EnvListen    = "LONGARM_HUB_LISTEN"         // listen
+	EnvHTTP      = "LONGARM_HUB_HTTP"           // http
+	EnvPublicURL = "LONGARM_HUB_PUBLIC_URL"     // public_url
+	EnvRelayUDP  = "LONGARM_HUB_RELAY_UDP"      // relay_udp
+	EnvSTUN2     = "LONGARM_HUB_RELAY_STUN2"    // relay_stun2
+	EnvCAInDB    = "LONGARM_HUB_CA_IN_DB"       // ca_in_db (true/false, 1/0)
+	EnvHTTPS     = "LONGARM_HUB_HTTPS"          // https
+	EnvRedirect  = "LONGARM_HUB_HTTPS_REDIRECT" // https_redirect
+	EnvACMEEmail = "LONGARM_HUB_ACME_EMAIL"     // acme_email
+	EnvACMEDir   = "LONGARM_HUB_ACME_DIRECTORY" // acme_directory
 	// EnvAdvertise is the host (or host:port) nodes dial, e.g. the FQDN of a
 	// cloud container: public_addr = host:<listen port>, and host joins the
 	// certificate's SANs (hosts).
@@ -31,7 +35,8 @@ func (c *Config) applyEnv() error {
 		env string
 		dst *string
 	}{{EnvDB, &c.DBPath}, {EnvListen, &c.Listen}, {EnvHTTP, &c.HTTP}, {EnvPublicURL, &c.PublicURL},
-		{EnvRelayUDP, &c.RelayUDP}, {EnvSTUN2, &c.RelaySTUN2}} {
+		{EnvRelayUDP, &c.RelayUDP}, {EnvSTUN2, &c.RelaySTUN2}, {EnvHTTPS, &c.HTTPS}, {EnvRedirect, &c.HTTPSRedirect},
+		{EnvACMEEmail, &c.ACMEEmail}, {EnvACMEDir, &c.ACMEDirectory}} {
 		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
 			*kv.dst = v
 		}

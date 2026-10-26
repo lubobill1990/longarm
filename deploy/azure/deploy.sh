@@ -197,7 +197,8 @@ if [[ -n $cur ]]; then
 	cur_size=small
 	[[ ${cur_cpu%%.*} -lt 2 ]] || cur_size=medium
 	cur_panel=false
-	[[ $cur_c1 != caddy ]] || cur_panel=true
+	# the panel: Caddy (storage-auth key) or the hub on 443 (identity)
+	[[ $cur_c1 != caddy && ,$cur_env, != *,LONGARM_HUB_HTTPS,* ]] || cur_panel=true
 	cur_auth=key
 	[[ ,$cur_env, != *,LONGARM_HUB_CA_IN_DB,* ]] || cur_auth=identity
 	[[ -z $storage_auth || $storage_auth == "$cur_auth" ]] ||
@@ -339,15 +340,15 @@ if [[ -n $panel_url ]]; then
 		fi
 		sleep 10
 	done
-	$ok || echo "note: $panel_url/healthz does not answer yet (Let's Encrypt can take a few minutes): az container logs -g $rg -n $name --container-name caddy" >&2
+	$ok || echo "note: $panel_url/healthz does not answer yet (Let's Encrypt can take a few minutes): az container logs -g $rg -n $name --container-name $([[ $storage_auth == identity ]] && echo hub || echo caddy)" >&2
 fi
 
 # Rough monthly cost (Linux ACI pay-as-you-go, about 0.0405 USD per vCPU-hour
 # and 0.0045 USD per GB-hour in US regions; other regions differ by up to ~20 %).
 cost() {
-	awk -v s="$size" -v p="$panel" 'BEGIN {
+	awk -v s="$size" -v p="$panel" -v a="$storage_auth" 'BEGIN {
 		cpu = (s == "medium") ? 2 : 1; mem = (s == "medium") ? 3 : 1.5
-		if (p == "true") { cpu += 0.25; mem += 0.3 }
+		if (p == "true" && a == "key") { cpu += 0.25; mem += 0.3 } # Caddy
 		printf "%.0f", 730 * (cpu * 0.0405 + mem * 0.0045) + 1
 	}'
 }

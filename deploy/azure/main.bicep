@@ -30,7 +30,7 @@ param image string = 'ghcr.io/lubobill1990/longarm-hub:latest'
 ])
 param size string = 'small'
 
-@description('Serve the web panel and install scripts over HTTPS (Caddy sidecar on 80/443 with a Let\'s Encrypt certificate for the azurecontainer.io name).')
+@description('Serve the web panel and install scripts over HTTPS on 80/443 with a Let\'s Encrypt certificate for the azurecontainer.io name: a Caddy sidecar (storageAuth key), or the hub itself with the certificate in its replicated database (storageAuth identity).')
 param enablePanel bool = true
 
 @description('E-mail for Let\'s Encrypt expiry notices (optional).')
@@ -63,7 +63,7 @@ param relayUdpPort int = 7445
 @description('Expiry of the Litestream SAS (blob container scoped); every deployment (deploy.sh re-run) renews it.')
 param sasExpiry string = dateTimeAdd(utcNow('u'), 'P10Y', 'yyyy-MM-ddTHH:mm:ssZ')
 
-@description('How the hub reaches its storage account. key: the account key (Azure Files share for the data dir, a SAS for Litestream). identity: a user-assigned managed identity with Storage Blob Data Contributor on the replica container and shared key access off, for subscriptions whose policy denies it: no file shares, the data dir is the container\'s own disk and the CA is kept in the replicated database (LONGARM_HUB_CA_IN_DB). Needs Owner or User Access Administrator on the resource group (role assignments).')
+@description('How the hub reaches its storage account. key: the account key (Azure Files share for the data dir, a SAS for Litestream). identity: a user-assigned managed identity with Storage Blob Data Contributor on the replica container and shared key access off, for subscriptions whose policy denies it: no file shares, the data dir is the container\'s own disk and the CA is kept in the replicated database (LONGARM_HUB_CA_IN_DB), and the hub serves the panel over https itself (no Caddy; its certificate in the database too). Needs Owner or User Access Administrator on the resource group (role assignments).')
 @allowed([
   'key'
   'identity'
@@ -99,6 +99,9 @@ var hubAddress = '${fqdn}:7443'
 var storageName = take('lahub${uniqueString(resourceGroup().id, name)}', 24)
 var useKey = storageAuth == 'key'
 var useAcr = !useKey && !empty(acrName)
+// identity: the hub serves the panel over https itself (LONGARM_HUB_HTTPS):
+// its certificate lives in the database, Caddy's would die with the container
+var hubTls = !useKey && enablePanel
 var tags = {
   'longarm-hub': name
 }
@@ -278,6 +281,15 @@ var hubEnv = concat(
         { name: 'LONGARM_HUB_CA_IN_DB', value: '1' }
       ],
   enablePanel ? [{ name: 'LONGARM_HUB_PUBLIC_URL', value: 'https://${fqdn}' }] : [],
+  hubTls
+    ? concat(
+        [
+          { name: 'LONGARM_HUB_HTTPS', value: ':443' }
+          { name: 'LONGARM_HUB_HTTPS_REDIRECT', value: ':80' }
+        ],
+        empty(acmeEmail) ? [] : [{ name: 'LONGARM_HUB_ACME_EMAIL', value: acmeEmail }]
+      )
+    : [],
   empty(tailscaleOAuthSecret) ? [] : [{ name: 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', secureValue: tailscaleOAuthSecret }]
 )
 
@@ -294,7 +306,7 @@ var hubContainer = {
     resources: {
       requests: sizes[size]
     }
-    ports: hubPorts
+    ports: hubTls ? concat(hubPorts, panelPorts) : hubPorts
     environmentVariables: hubEnv
     // identity: /data is the image's own directory (owned by nonroot)
     volumeMounts: useKey ? [{ name: 'state', mountPath: '/data' }] : []
@@ -326,12 +338,10 @@ var caddyContainer = {
       { port: 80, protocol: 'TCP' }
       { port: 443, protocol: 'TCP' }
     ]
-    // identity: Caddy's certificate lives as long as the container (a
-    // restart asks Let's Encrypt for a new one)
-    volumeMounts: concat(
-      [{ name: 'caddyfile', mountPath: '/etc/caddy', readOnly: true }],
-      useKey ? [{ name: 'caddy', mountPath: '/data' }] : []
-    )
+    volumeMounts: [
+      { name: 'caddyfile', mountPath: '/etc/caddy', readOnly: true }
+      { name: 'caddy', mountPath: '/data' }
+    ]
   }
 }
 
@@ -345,7 +355,7 @@ var baseVolumes = !useKey ? [] : [
     }
   }
 ]
-var panelVolumes = concat(!useKey ? [] : [
+var panelVolumes = [
   {
     name: 'caddy'
     azureFile: {
@@ -354,14 +364,13 @@ var panelVolumes = concat(!useKey ? [] : [
       storageAccountKey: storageKey
     }
   }
-], [
   {
     name: 'caddyfile'
     secret: {
       Caddyfile: base64(caddyfileText)
     }
   }
-])
+]
 
 var panelPorts = [
   { port: 80, protocol: 'TCP' }
@@ -388,7 +397,7 @@ resource group 'Microsoft.ContainerInstance/containerGroups@2025-09-01' = {
     osType: 'Linux'
     sku: 'Standard'
     restartPolicy: 'Always'
-    containers: enablePanel ? [hubContainer, caddyContainer] : [hubContainer]
+    containers: enablePanel && useKey ? [hubContainer, caddyContainer] : [hubContainer]
     imageRegistryCredentials: useAcr ? [
       {
         server: acr!.properties.loginServer
@@ -406,7 +415,7 @@ resource group 'Microsoft.ContainerInstance/containerGroups@2025-09-01' = {
       dnsNameLabel: name
       ports: enablePanel ? concat(hubPorts, panelPorts) : hubPorts
     }
-    volumes: enablePanel ? concat(baseVolumes, panelVolumes) : baseVolumes
+    volumes: enablePanel && useKey ? concat(baseVolumes, panelVolumes) : baseVolumes
     diagnostics: enableLogAnalytics ? {
       logAnalytics: {
         workspaceId: logs!.properties.customerId

@@ -23,6 +23,9 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
       -ldflags "-s -w -X github.com/lubobill1990/longarm/internal/version.Version=${VERSION}" \
       -o /out/bin/longarm-hub ./cmd/longarm-hub
+# https = ":443" (hub.toml, LONGARM_HUB_HTTPS) as user nonroot: only the
+# right to bind ports below 1024 (deploy/azure without Caddy)
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends libcap2-bin >/dev/null &&     setcap cap_net_bind_service=+ep /out/bin/longarm-hub && getcap /out/bin/longarm-hub
 # argument-free names for az container exec (cmd/longarm-hub/container.go execAliases)
 RUN for a in longarm-hub-admin-code longarm-hub-user-add longarm-hub-users; do ln -s longarm-hub /out/bin/$a; done
 RUN mkdir -p /out/data /out/var/lib/longarm-hub && chown 65532:65532 /out/data /out/var/lib/longarm-hub
@@ -55,8 +58,9 @@ COPY --from=build --chown=65532:65532 /out/data /data
 COPY --from=build --chown=65532:65532 /out/var/lib/longarm-hub /var/lib/longarm-hub
 ENV LONGARM_HUB_DATA_DIR=/data LONGARM_HUB_CONFIG=/etc/longarm-hub/hub.toml
 VOLUME /data
-# 7443/tcp gRPC API + relay TLS fallback, 7443/udp relay (QUIC), 7444/udp second STUN port, 7480 panel/API
-EXPOSE 7443/tcp 7443/udp 7444/udp 7480/tcp
+# 7443/tcp gRPC API + relay TLS fallback, 7443/udp relay (QUIC), 7444/udp second STUN port, 7480 panel/API,
+# 443/80 panel over https (optional)
+EXPOSE 7443/tcp 7443/udp 7444/udp 7480/tcp 443/tcp 80/tcp
 USER nonroot:nonroot
 HEALTHCHECK --interval=30s --timeout=5s CMD ["/usr/local/bin/longarm-hub", "healthcheck"]
 ENTRYPOINT ["/usr/local/bin/longarm-hub"]
