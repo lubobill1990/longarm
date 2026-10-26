@@ -102,9 +102,9 @@ az account show -o none 2>/dev/null || die "not logged in: run az login"
 
 # tcp_open HOST PORT: a TCP connect within 5 s (bash /dev/tcp; macOS has no coreutils timeout)
 tcp_open() {
-	(exec 3<>"/dev/tcp/$1/$2") 2>/dev/null &
+	(trap - EXIT; exec 3<>"/dev/tcp/$1/$2") 2>/dev/null &
 	local pid=$! rc=0
-	(sleep 5 && kill "$pid") >/dev/null 2>&1 &
+	(trap - EXIT; sleep 5 && kill "$pid") >/dev/null 2>&1 &
 	local killer=$!
 	wait "$pid" || rc=$?
 	kill "$killer" 2>/dev/null || true
@@ -115,9 +115,10 @@ rg_exists() { [[ $(az group exists -n "$rg" -o tsv) == true ]]; }
 
 tmp=$(mktemp -d)
 # only the script itself cleans up: a background subshell that is killed
-# (tcp_open) runs an inherited EXIT trap too, and took $tmp with it
-main_pid=$BASHPID
-trap '[[ $BASHPID != "$main_pid" ]] || rm -rf "$tmp"' EXIT
+# (tcp_open) runs an inherited EXIT trap too, and took $tmp with it. bash
+# 3.2 (macOS) has no BASHPID: there tcp_open's trap - EXIT does it alone
+main_pid=${BASHPID:-$$}
+trap '[[ ${BASHPID:-$$} != "$main_pid" ]] || rm -rf "$tmp"' EXIT
 chmod 700 "$tmp"
 
 # fetch_bootstrap ACCOUNT KEY: bootstrap.env from the state share into
