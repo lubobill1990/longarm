@@ -40,6 +40,10 @@ Longarm lets the agent (or you) say *"run this over there"*:
   several clients at once, detach with `Ctrl-] d`, re-attach with replay.
 - **Port forwarding** - `longarm forward worker-1 3000` puts the worker's dev
   server on your `localhost`.
+- **Port links between workers** - `longarm link create backend:8080 --on
+  frontend` lets your jobs on one worker reach another worker's port as
+  `127.0.0.1:8080`, worker to worker (frontend + tests here, backend there),
+  authorized by grants the hub signs per link.
 - **Code sync** - `longarm sync .` mirrors your checkout (commits, uncommitted
   changes, untracked files) into a git worktree on the worker; `longarm run
   --repo .` gives a job a fresh worktree.
@@ -47,7 +51,7 @@ Longarm lets the agent (or you) say *"run this over there"*:
   the same mTLS channel, no SSH keys to manage.
 - **MCP server** - `longarm mcp` gives Claude Code and Copilot CLI tools such as
   `fleet_status`, `fleet_exec`, `fleet_job_submit`, `fleet_job_wait`,
-  `fleet_sync` and `fleet_forward`. Secrets are passed by name, never through
+  `fleet_sync`, `fleet_forward` and `fleet_link`. Secrets are passed by name, never through
   the model.
 - **Scheduler with a memory gate** - `longarm run -- make` picks the least loaded
   worker that has enough free memory and CPU headroom, reserves memory per job
@@ -159,6 +163,7 @@ longarm exec worker-1 -- git --version         # short command, exit code mirror
 longarm run --repo . -f -- pnpm test           # scheduled job in a fresh worktree, follow its output
 longarm attach worker-1 -s agent -- claude     # an interactive agent session you can detach from
 longarm forward worker-1 3000                  # worker's dev server on localhost:3000
+longarm link create worker-2:8080 --on worker-1   # worker-2's :8080 as 127.0.0.1:8080 for your jobs on worker-1
 ```
 
 **5. Hand it to your agent:**
@@ -223,6 +228,11 @@ sudo longarmd service install --isolation per-user      # or MSI ISOLATION=per-u
   reaches every worker with its next heartbeat.
 - **The hub never sees your data.** It coordinates but isn't on the data path;
   the relay forwards opaque, end-to-end encrypted packets.
+- **Workers have no rights on each other.** A port link lets one worker open
+  connections to one port of another, with a grant the hub signed for that
+  link; nothing else ([security.md](docs/security.md#port-links)). Port
+  forwards reach a worker's own loopback ports only, unless
+  `[forward] targets = "any"`.
 - **Jobs run as the worker's service account**, not as SYSTEM/root (unless you
   explicitly choose so) - or, on workers shared by several people, as a
   local account per user ([multi-tenancy](docs/security.md)). Treat every

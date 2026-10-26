@@ -100,6 +100,7 @@ longarm logs <job> [-f] ; longarm wait <job> ; longarm kill <job> ; longarm resu
 longarm attach worker-3 [--session dev]     # interactive PTY; detach and re-attach to the same session
 longarm exec worker-3 -- git status         # short command, returns synchronously (no job created)
 longarm forward worker-3:3131 [:3131]       # port forwarding
+longarm link create worker-4:8080 --on worker-3   # port link: worker-3's jobs reach worker-4:8080 at 127.0.0.1:8080
 longarm sync . worker-3:C:/work/proj        # includes uncommitted changes (see §5.3)
 longarm ssh-config >> ~/.ssh/config         # Host longarm-* → ProxyCommand longarm proxy %h
 longarm mcp                                 # stdio MCP server for claude / copilot
@@ -116,6 +117,7 @@ MCP tools (for the agent on the interactive machine):
 | `fleet_job_submit / wait / logs / kill` | Long-running jobs (including whole claude/copilot sub-agents) |
 | `fleet_read / fleet_write / fleet_sync` | Read/write remote files, sync the local workspace over |
 | `fleet_forward` | Open a port forward, returns a local URL |
+| `fleet_link` | Port links between workers (create / list / remove) |
 
 This lets a local Claude Code have "its brain local and its hands remote": heavy `tsc`, `next build`, and test matrices are dispatched to workers; or 8 sub-agents fan out to 8 machines at once.
 
@@ -250,6 +252,7 @@ A port that "executes commands" is a remote code execution service, so:
 4. **Audit**: every exec/attach/job/file write is logged both locally on the worker and on the hub (who, which machine, what command, exit code).
 5. **Least privilege**: client certificates can be restricted to worker labels; dangerous operations (uninstalling/upgrading `longarmd`, profile changes) are `admin`-only.
 6. Worker process isolation goes as far as OS accounts: the service account (single-tenant), or one account per user with per-user isolation (multi-tenancy level 2, [security.md](security.md)); container-level isolation is level 3.
+7. **Port links** (joint debugging across workers): workers get no rights on each other; the hub signs a grant per link (id, owner, from, to, ports, expiry) with its CA-issued hub certificate and pushes each worker the authoritative list of links naming it; the target worker accepts a worker's `LinkTunnel.Dial` only with a grant naming both and a link still in its list, and checks the target port for the owner like `Forward.Open`; the relay carries worker ↔ worker traffic only for linked pairs ([security.md](security.md#port-links)).
 
 ---
 

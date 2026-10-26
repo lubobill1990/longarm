@@ -11,6 +11,7 @@ import { LinksPage } from './LinksPage'
 import { LoginPage } from './LoginPage'
 import { MePage } from './MePage'
 import { NodesPage } from './NodesPage'
+import { PortLinksPage } from './PortLinksPage'
 import { ProfilesPage } from './ProfilesPage'
 import { TenantsPage } from './TenantsPage'
 import { UsersPage } from './UsersPage'
@@ -22,15 +23,17 @@ const ADMIN_NAV: [string, string][] = [
   ['/tenants', 'People'],
   ['/profiles', 'Toolchains'],
   ['/links', 'Links'],
+  ['/port-links', 'Port links'],
   ['/audit', 'Audit'],
   ['/users', 'Panel logins'],
 ]
 
 // panel logins with role "user": their own (and team-shared) jobs, the
-// workers (read-only) and their quota
+// workers (read-only), their port links and their quota
 const USER_NAV: [string, string][] = [
   ['/jobs', 'My jobs'],
   ['/nodes', 'Nodes'],
+  ['/port-links', 'Port links'],
   ['/me', 'Me'],
 ]
 
@@ -98,6 +101,7 @@ export function PanelApp() {
           {!allowed && <div className="notice">This page is for administrators only.</div>}
           {page === '/nodes' && <NodesPage admin={admin} />}
           {page === '/jobs' && <JobsPage path={path} me={me} />}
+          {page === '/port-links' && <PortLinksPage admin={admin} />}
           {page === '/me' && <MePage me={me} />}
           {admin && page === '/joincodes' && <JoinCodesPage me={me} />}
           {admin && page === '/tenants' && <TenantsPage me={me} />}

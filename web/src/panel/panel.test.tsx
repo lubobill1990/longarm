@@ -106,7 +106,7 @@ describe('multi-tenancy', () => {
     job: { spec: { id, argv: ['make', 'test'], owner, submitted_by: `client/${owner}`, share_teams: share }, state: 'JOB_STATE_RUNNING', created_at: '2026-01-01T00:00:00Z' },
   })
 
-  it('shows user-role logins only My jobs, Nodes and Me (with quota and usage)', async () => {
+  it('shows user-role logins only My jobs, Nodes, Port links and Me (with quota and usage)', async () => {
     vi.stubGlobal('EventSource', FakeEventSource)
     history.pushState(null, '', '/')
     const calls = mockFetch({
@@ -118,7 +118,7 @@ describe('multi-tenancy', () => {
     render(<PanelApp />)
     expect(await screen.findByRole('heading', { name: 'My jobs' })).toBeTruthy()
     const nav = screen.getByRole('navigation')
-    expect(Array.from(nav.querySelectorAll('a')).map((a) => a.textContent)).toEqual(['My jobs', 'Nodes', 'Me'])
+    expect(Array.from(nav.querySelectorAll('a')).map((a) => a.textContent)).toEqual(['My jobs', 'Nodes', 'Port links', 'Me'])
     fireEvent.click(screen.getByText('Nodes'))
     expect(await screen.findByTestId('node-wa')).toBeTruthy()
     expect(screen.queryByText('Drain')).toBeNull()
@@ -257,5 +257,88 @@ describe('multi-tenancy', () => {
       const c = calls.find((x) => x.url === '/api/teams/dev')
       expect(c && JSON.parse(String(c.init?.body))).toEqual({ add: ['bob'], remove: [] })
     })
+  })
+})
+
+describe('PortLinksPage', () => {
+  const userMe = { user: 'alice', hub: 'hub1', version: 'dev', role: 'user', tenant: 'alice' }
+  const inHours = (h: number) => new Date(Date.now() + h * 3600e3).toISOString()
+  // plain protojson (lowerCamelCase, int64 as strings, zero fields omitted)
+  const link = {
+    id: 'pl-1',
+    owner: 'alice',
+    from: 'wa',
+    to: 'wb',
+    port: 5432,
+    listenPort: 15432,
+    expiresAt: inHours(3),
+    jobId: 'job-abc',
+    createdBy: 'client/alice-laptop',
+    status: { id: 'pl-1', state: 'listening', connections: '7', active: 2, bytesSent: '2048', bytesReceived: '3145728', path: 'tcp/direct 1ms', refused: '1' },
+  }
+
+  it('lists the links with their state, counters and expiry', async () => {
+    history.pushState(null, '', '/port-links')
+    mockFetch({
+      '/api/me': () => [200, userMe],
+      '/api/port-links': () => [
+        200,
+        {
+          links: [
+            link,
+            // proto names (writePB), not reported yet
+            { id: 'pl-2', owner: 'alice', from: 'wb', to: 'wa', port: 8080, listen_port: 9090, expires_at: inHours(-1), status: { state: 'error', error: 'address in use' } },
+          ],
+        },
+      ],
+    })
+    render(<PanelApp />)
+    const row = await screen.findByTestId('port-link-pl-1')
+    expect(screen.getByRole('heading', { name: 'Port links' })).toBeTruthy()
+    expect(row.textContent).toContain('wa → 127.0.0.1:15432')
+    expect(row.textContent).toContain('wb:5432')
+    expect(row.textContent).toContain('listening')
+    expect(row.textContent).toContain('tcp/direct 1ms')
+    expect(row.textContent).toContain('7 / 2 / 1')
+    expect(row.textContent).toContain('2K / 3M')
+    expect(row.textContent).toMatch(/in (2|3)h/)
+    expect(row.textContent).toContain('job-abc')
+    const bad = screen.getByTestId('port-link-pl-2')
+    expect(bad.textContent).toContain('wb → 127.0.0.1:9090')
+    expect(bad.textContent).toContain('address in use')
+    expect(bad.textContent).toContain('expired')
+    expect(Array.from(screen.getByRole('navigation').querySelectorAll('a')).map((a) => a.textContent)).toContain('Port links')
+  })
+
+  it('explains port links and the CLI when there are none', async () => {
+    history.pushState(null, '', '/port-links')
+    mockFetch({
+      '/api/me': () => [200, { user: 'ops', hub: 'hub1', version: 'dev', role: 'admin' }],
+      '/api/port-links': () => [200, {}],
+    })
+    render(<PanelApp />)
+    const empty = await screen.findByTestId('port-links-empty')
+    expect(empty.textContent).toContain('longarm link create <worker>:<port> --on <worker> [--port N] [--ttl 8h] [--job <id>]')
+    expect(screen.getByText('Port links', { selector: 'nav a' })).toBeTruthy()
+  })
+
+  it('removes a link with DELETE /api/port-links/<id> and reloads', async () => {
+    history.pushState(null, '', '/port-links')
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    let removed = false
+    const calls = mockFetch({
+      '/api/me': () => [200, userMe],
+      '/api/port-links/pl-1': (init) => {
+        removed = init?.method === 'DELETE'
+        return [200, link]
+      },
+      '/api/port-links': () => [200, { links: removed ? [] : [link] }],
+    })
+    render(<PanelApp />)
+    const row = await screen.findByTestId('port-link-pl-1')
+    fireEvent.click(row.querySelector('button.danger')!)
+    await waitFor(() => expect(calls.some((c) => c.url === '/api/port-links/pl-1' && c.init?.method === 'DELETE')).toBe(true))
+    expect(await screen.findByTestId('port-links-empty')).toBeTruthy()
+    expect(screen.queryByTestId('port-link-pl-1')).toBeNull()
   })
 })
