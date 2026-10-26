@@ -28,9 +28,10 @@ Ask reporters for three things (the issue template does):
 
 All three use the same pseudonyms: a node is `<node:3f2a9c>` everywhere
 (keyed hash, fleet-specific), so a node in a bundle is the same node in
-telemetry. The hub's admins can map a pseudonym back to a name
-(`longarm admin pseudonym <name>` prints it - the mapping needs the
-fleet's CA, which telemetry readers don't have).
+telemetry. Members of the fleet can compute the pseudonym of a name
+(`longarm admin pseudonym <name>` - it needs the fleet's CA certificate,
+which telemetry readers don't have) and so find a known node or user in
+telemetry; the other way round there is no table to look up.
 
 ## Step 1: find the operation
 
@@ -56,7 +57,7 @@ No trace id - search around the time and node of the report:
 ```kusto
 union exceptions, traces
 | where timestamp between (datetime(2026-10-27 09:00) .. 2h)
-| where customDimensions.node == "<node:3f2a9c>" or cloud_RoleInstance == "<node:3f2a9c>"
+| where cloud_RoleInstance == "<node:3f2a9c>"
 | where severityLevel >= 2 or itemType == "exception"
 | project timestamp, cloud_RoleName, message = coalesce(outerMessage, message), problemId, customDimensions
 ```
@@ -80,11 +81,19 @@ requests
 ```
 
 ```kusto
-// connection problems: which transport leg fails, where
+// connection problems: how dials to workers end (resultCode = error class),
+// which leg wins, and the per-leg outcomes ("tcp:won,longnet:timeout")
 dependencies
-| where timestamp > ago(1d) and type == "worker-dial"
+| where timestamp > ago(1d) and type == "dial"
 | summarize total = count(), failed = countif(success == false), p95 = percentile(duration, 95)
-    by target, tostring(customDimensions.leg), tostring(customDimensions.error_class)
+    by resultCode, winner = tostring(customDimensions.winner), cloud_RoleInstance
+```
+
+```kusto
+// per-leg outcomes per minute, fleet-wide
+customMetrics
+| where timestamp > ago(1d) and name == "dial.leg"
+| summarize n = sum(valueCount) by transport = tostring(customDimensions.transport), outcome = tostring(customDimensions.outcome)
 ```
 
 ```kusto
@@ -139,7 +148,7 @@ longarm admin diag get LAR-20261027-7F3K9Q       # downloads the zip
 |---|---|---|
 | `worker w1 refused by end-to-end trust` | client error text, `longarm trust show` | worker not endorsed, or the hub dropped the extension (old hub) |
 | `x509: certificate has expired` | `state/certificate.json` | node offline past renewal; `longarmd join --force` |
-| exec hangs, then `relay` errors | `dependencies` worker-dial by leg | UDP blocked; TCP fallback on 7443 |
-| job queued forever | hub `customEvents` placement outcome | no worker fits (memory gate), all drained |
+| exec hangs, then `relay` errors | `dependencies` of type `dial`, `dial.leg` metric | UDP blocked; TCP fallback on 7443 |
+| job queued forever | hub `customEvents` `scheduler.placement` (outcome `no_fit`, `queued`) | no worker fits (memory gate), all drained |
 | worker crashes in a loop | `exceptions` crash, bundle `telemetry/crash-*.txt` | panic - fix with a test |
 | hub restarts | Azure: `az container logs`, `exceptions` from `longarm-hub` | liveness probe, Litestream restore error |
