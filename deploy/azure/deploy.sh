@@ -16,7 +16,7 @@ set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # the Azure CLI; tests put a fake here (e2e/azure_deploy_test.go)
 AZ=${LONGARM_DEPLOY_AZ:-az}
-az() { "$AZ" "$@"; }
+az() { if [[ $AZ == az ]]; then command az "$@"; else "$AZ" "$@"; fi; }
 template=$here/azuredeploy.json
 
 # empty = not given (a re-run keeps the running hub's value)
@@ -223,6 +223,11 @@ json_str() {
 	[[ -z $acme_email ]] || printf ',"acmeEmail":{"value":%s}' "$(json_str "$acme_email")"
 	if [[ -n $registry_user ]]; then
 		[[ -n ${LONGARM_REGISTRY_PASSWORD:-} ]] || die "--registry-user needs LONGARM_REGISTRY_PASSWORD"
+		# the login is for the registry the image comes from (the template defaults to ghcr.io)
+		reg_host=${image%%/*}
+		if [[ $image == */* && ( $reg_host == *.* || $reg_host == *:* || $reg_host == localhost ) ]]; then
+			printf ',"registryServer":{"value":%s}' "$(json_str "$reg_host")"
+		fi
 		printf ',"registryUsername":{"value":%s}' "$(json_str "$registry_user")"
 		printf ',"registryPassword":{"value":%s}' "$(json_str "$LONGARM_REGISTRY_PASSWORD")"
 	fi

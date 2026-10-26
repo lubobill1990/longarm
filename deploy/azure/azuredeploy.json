@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.48.1.52935",
-      "templateHash": "16144112127198559954"
+      "templateHash": "13260630792919484539"
     }
   },
   "parameters": {
@@ -93,7 +93,7 @@
     },
     "relayUdpPort": {
       "type": "int",
-      "defaultValue": 7443,
+      "defaultValue": 7445,
       "minValue": 1024,
       "maxValue": 65534,
       "metadata": {
@@ -186,7 +186,7 @@
         "resources": {
           "requests": {
             "cpu": "[json('0.25')]",
-            "memoryInGB": "[json('0.25')]"
+            "memoryInGB": "[json('0.3')]"
           }
         },
         "ports": [

@@ -58,7 +58,7 @@ param adminCodeTtlHours int = 24
 @description('UDP port of the longnet relay (QUIC + STUN); the second STUN port is this + 1. Keep 7443 unless the region refuses the same port for TCP and UDP (workers then listen on longnet://<fqdn>:<port>?tcp=<fqdn>:7443).')
 @minValue(1024)
 @maxValue(65534)
-param relayUdpPort int = 7443
+param relayUdpPort int = 7445
 
 @description('Expiry of the Litestream SAS (blob container scoped); every deployment (deploy.sh re-run) renews it.')
 param sasExpiry string = dateTimeAdd(utcNow('u'), 'P10Y', 'yyyy-MM-ddTHH:mm:ssZ')
@@ -263,7 +263,7 @@ var caddyContainer = {
     resources: {
       requests: {
         cpu: json('0.25')
-        memoryInGB: json('0.25')
+        memoryInGB: json('0.3')
       }
     }
     ports: [
