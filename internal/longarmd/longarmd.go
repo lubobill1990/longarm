@@ -652,7 +652,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	}
 	log.Info("access policy", "policy", cfg.Access.String(), "remote_jobs", nonEmpty(cfg.Hub.RemoteJobs, "control"),
 		"hub_job_details", cfg.HubJobDetails)
-	if a := cfg.Access; a != nil && len(a.Owners)+len(a.Users) > 0 {
+	if a := cfg.Access; a != nil && len(a.Owners)+len(a.Users) > 0 && !trustSrc.Load().Active() {
 		// the names are what the hub's CA vouches for: any hub admin can
 		// enroll a device under an owner's name (docs/security.md)
 		log.Warn("[access] owners/users name users the hub vouches for: a hub admin can enroll a device under such a name; pin owners' keys with end-to-end trust to stop that")

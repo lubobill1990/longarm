@@ -67,10 +67,10 @@ type hubAgent struct {
 	hideJobDetails bool
 	// trust: the end-to-end trust policy (its default for remoteJobs is
 	// "none"); trustStore: the node key and endorsement for renewals.
-	trust          *pki.TrustSource
-	trustStore     trust.Store
-	stop           context.CancelFunc // stops longarmd (after longarmd leave)
-	logMaxBytes    int64
+	trust       *pki.TrustSource
+	trustStore  trust.Store
+	stop        context.CancelFunc // stops longarmd (after longarmd leave)
+	logMaxBytes int64
 
 	mu          sync.Mutex
 	link        *pb.HubLink

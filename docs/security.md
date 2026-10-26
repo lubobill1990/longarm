@@ -358,8 +358,9 @@ visibility of what the worker's users run.
   device as an owner (`longarm admin join-code --role admin --user alice`
   - no CA key needed), and whoever holds the CA key can mint one. The worker
   can't tell such a certificate from alice's own. Against insiders the
-  policy only holds together with end-to-end trust (owners' certificates
-  endorsed by keys pinned on the worker); without it, it stops admins who
+  policy only holds together with [end-to-end
+  trust](#end-to-end-trust-the-hub-is-not-trusted-with-access) (owners'
+  certificates endorsed by keys pinned on the worker); without it, it stops admins who
   use their own certificates and the hub session, nothing more. longarmd
   warns at start when `owners` / `users` are set without it.
 - **Local administrators** of the worker machine (they can edit
@@ -506,6 +507,22 @@ longarm trust require on                  # on alice's devices, once her workers
 # alice's second device: longarm trust request there, longarm trust endorse <it> on the
 # laptop, longarm trust accept <endorsement> there (or move the user key: export-key / import-key)
 ```
+
+**A worker insiders should stay out of** combines it with the worker-side
+access policy and an audit copy off the machine:
+
+```toml
+# <data>/longarmd.toml
+[access]
+owners = ["alice"]          # names alone are the hub's word; trust.toml makes them alice's key
+admins = "none"
+hub_job_details = false     # no command lines to the hub
+[audit]
+webhook = "https://audit.example.com/ingest"   # or syslog / file: a copy the hub can't touch
+```
+
+plus `longarmd trust add-user <alice's key>` (trust.toml) and per-user
+isolation if other users share the machine.
 
 **What it protects against**
 
