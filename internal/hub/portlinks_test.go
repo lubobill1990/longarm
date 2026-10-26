@@ -2,6 +2,7 @@ package hub
 
 import (
 	"crypto/x509"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -267,4 +268,79 @@ func poolOf(ca *pki.CA) *x509.CertPool {
 	p := x509.NewCertPool()
 	p.AddCert(ca.Cert)
 	return p
+}
+
+// TestPortLinksIsolationRecheck: a link from a shared worker to one that
+// turns per-user later is removed (it would expose the owner's private port
+// to everybody on the source), on the worker's hello and at hub start; links
+// an admin created stay.
+func TestPortLinksIsolationRecheck(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	out2 := linkNode(h, "w2", "tcp://10.0.0.2:7701")
+	out3 := linkNode(h, "w3", "tcp://10.0.0.3:7701")
+	ctx := tctx(t)
+	create := func(c *grpc.ClientConn, port int32) *pb.PortLink {
+		t.Helper()
+		l, err := pb.NewFleetClient(c).CreatePortLink(ctx, &pb.CreatePortLinkRequest{From: "w2", To: "w3", Port: port, ListenPort: 10000 + port})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return l
+	}
+	la, lr := create(th.alice, 3000), create(th.root, 3001)
+	lastLinks(t, out2)
+	lastLinks(t, out3)
+
+	// w3 reports per-user isolation
+	h.mu.Lock()
+	n3 := h.nodes["w3"]
+	h.mu.Unlock()
+	h.handleReport(n3, n3.sess, &pb.NodeReport{Msg: &pb.NodeReport_Hello{Hello: &pb.NodeHello{Isolation: tenancy.PerUser, Endpoints: []string{"tcp://10.0.0.3:7701"}}}})
+	h.mu.Lock()
+	_, kept := h.portLinks[la.Id]
+	_, keptAdmin := h.portLinks[lr.Id]
+	h.mu.Unlock()
+	if kept || !keptAdmin {
+		t.Fatalf("after w3 turned per-user: alice's link kept %v, root's %v", kept, keptAdmin)
+	}
+	for name, out := range map[string]chan *pb.HubCommand{"w2": out2, "w3": out3} {
+		if p := lastLinks(t, out); len(p.Links) != 1 || p.Links[0].Link.Id != lr.Id {
+			t.Fatalf("%s's list after the recheck: %v", name, p)
+		}
+	}
+	rows, err := h.store.Audit("hub", time.Time{}, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range rows {
+		found = found || (r.Method == "links/remove" && strings.Contains(r.Line, la.Id) && strings.Contains(r.Line, "not allowed any more"))
+	}
+	if !found {
+		t.Fatal("removal not audited with a reason")
+	}
+
+	// at start: w3's isolation changed while the hub was down
+	h.mu.Lock()
+	n3.rec.Isolation = ""
+	h.mu.Unlock()
+	lb := create(th.alice, 3002)
+	h.mu.Lock()
+	n3.rec.Isolation = tenancy.PerUser
+	if err := errors.Join(h.store.PutNode(n3.rec), h.store.PutNode(h.nodes["w2"].rec)); err != nil {
+		h.mu.Unlock()
+		t.Fatal(err)
+	}
+	h.mu.Unlock()
+	h2, err := Open(h.cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, kept = h2.portLinks[lb.Id]
+	_, keptAdmin = h2.portLinks[lr.Id]
+	h2.Close()
+	if kept || !keptAdmin {
+		t.Fatalf("reopened hub: alice's link kept %v, root's %v", kept, keptAdmin)
+	}
 }

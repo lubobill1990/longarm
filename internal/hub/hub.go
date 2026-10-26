@@ -244,6 +244,7 @@ func (h *Hub) load() error {
 		// separation turned on or off (hub.toml) since the last policy
 		h.tenancyChangedLocked()
 	}
+	h.recheckPortLinksLocked() // isolation or hub.toml may have changed since
 	v, _ := h.store.Meta("revocation_version")
 	h.revVersion, _ = strconv.ParseInt(v, 10, 64)
 	h.revoked, _ = pki.LoadRevocationList("")

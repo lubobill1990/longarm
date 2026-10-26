@@ -216,14 +216,17 @@ func (h *Hub) tenancyChangedLocked() {
 			h.sendLocked(n, cmd)
 		}
 	}
+	h.recheckPortLinksLocked()
 }
 
 // checkTenancyFlipLocked pushes a new policy when separation turned on or
-// off (a worker with per-user isolation joined or left).
+// off (a worker with per-user isolation joined or left) and removes the port
+// links a worker's (new) isolation no longer allows.
 func (h *Hub) checkTenancyFlipLocked() {
 	if on := h.tenancyOnLocked(); on != h.lastTenancyOn {
 		h.tenancyChangedLocked()
 	}
+	h.recheckPortLinksLocked()
 }
 
 func (h *Hub) saveTenantLocked(u *pb.TenantUser) error {

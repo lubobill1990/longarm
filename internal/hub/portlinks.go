@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -112,10 +113,8 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 			return nil, status.Errorf(codes.NotFound, "no worker %q", name)
 		}
 	}
-	// A shared-isolation source lets every local process use the listener: it
-	// would expose a per-user target's private port to other users there.
-	if h.tenancyOnLocked() && !v.Admin && h.nodes[req.From].rec.Isolation != tenancy.PerUser && h.nodes[req.To].rec.Isolation == tenancy.PerUser {
-		return nil, status.Errorf(codes.FailedPrecondition, "%s isolates users and %s does not: everybody on %s could use the link (an admin may create it)", req.To, req.From, req.From)
+	if why := h.portLinkExposesLocked(req.From, req.To, v.Admin); why != "" {
+		return nil, status.Errorf(codes.FailedPrecondition, "%s (an admin may create it)", why)
 	}
 	if req.JobId != "" {
 		e := h.jobs[req.From][req.JobId]
@@ -245,6 +244,38 @@ func (h *Hub) removePortLinksLocked(cond func(*pb.PortLink) bool, by, reason str
 	}
 }
 
+// portLinkExposesLocked says why a link from -> to would expose a user's
+// private port ("" = it does not): a shared-isolation source lets every local
+// process use the listener, so it would open a per-user target's port to the
+// other users there. Links an admin creates are exempt.
+func (h *Hub) portLinkExposesLocked(from, to string, admin bool) string {
+	if admin || !h.tenancyOnLocked() {
+		return ""
+	}
+	f, t := h.nodes[from], h.nodes[to]
+	if f == nil || t == nil || f.rec.Isolation == tenancy.PerUser || t.rec.Isolation != tenancy.PerUser {
+		return ""
+	}
+	return fmt.Sprintf("%s isolates users and %s does not: everybody on %s could use the link", to, from, from)
+}
+
+// recheckPortLinksLocked removes the links that are no longer allowed: their
+// target turned per-user (or separation turned on) after they were created.
+// Called whenever tenancy or a worker's isolation may have changed, and at
+// start.
+func (h *Hub) recheckPortLinksLocked() {
+	why := map[*portLinkEntry]string{}
+	for _, e := range h.portLinks {
+		admin := strings.HasPrefix(e.l.CreatedBy, string(pki.RoleAdmin)+"/")
+		if w := h.portLinkExposesLocked(e.l.From, e.l.To, admin); w != "" {
+			why[e] = w
+		}
+	}
+	for e, w := range why {
+		h.removePortLinkLocked(e, "hub", "not allowed any more: "+w)
+	}
+}
+
 // sweepPortLinksLocked removes expired links.
 func (h *Hub) sweepPortLinksLocked(now time.Time) {
 	h.removePortLinksLocked(func(l *pb.PortLink) bool { return !l.ExpiresAt.AsTime().After(now) }, "hub", "expired")
@@ -273,7 +304,7 @@ func (h *Hub) portLinksChangedLocked(workers ...string) {
 			continue
 		}
 		done[w] = true
-		if n := h.nodes[w]; n != nil {
+		if n := h.nodes[w]; n != nil && n.sess != nil {
 			h.sendLocked(n, h.portLinksMsgLocked(w))
 		}
 	}
