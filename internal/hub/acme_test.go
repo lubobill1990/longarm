@@ -68,10 +68,10 @@ func TestACMECache(t *testing.T) {
 	if _, err := c.Get(ctx, "hub.example.com"); !errors.Is(err, autocert.ErrCacheMiss) {
 		t.Fatalf("empty: %v", err)
 	}
-	if err := c.Put(ctx, "hub.example.com", []byte("-----BEGIN EC PRIVATE KEY-----\n...")); err != nil {
+	if err := c.Put(ctx, "hub.example.com", []byte("autocert cache entry\n")); err != nil {
 		t.Fatal(err)
 	}
-	if b, err := c.Get(ctx, "hub.example.com"); err != nil || string(b) != "-----BEGIN EC PRIVATE KEY-----\n..." {
+	if b, err := c.Get(ctx, "hub.example.com"); err != nil || string(b) != "autocert cache entry\n" {
 		t.Fatalf("get: %q %v", b, err)
 	}
 	if v, _ := st.Meta(acmeMetaPrefix + "hub.example.com"); v == "" {
