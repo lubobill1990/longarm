@@ -69,6 +69,26 @@ type FileConfig struct {
 	Toolchain   ToolchainConfig `toml:"toolchain"`
 	Update      UpdateConfig    `toml:"update"`
 	Isolation   IsolationConfig `toml:"isolation"`
+	Access      AccessConfig    `toml:"access"`
+}
+
+// AccessConfig is the [access] section: what the hub's admins and users may
+// do on this machine, decided by its owner (docs/security.md, "Worker-side
+// access policy"). Nothing the hub sends changes it.
+type AccessConfig struct {
+	// Users may use this worker at all (empty = everybody the hub admits).
+	Users []string `toml:"users"`
+	// Owners always keep full rights for their certificates' role; they are
+	// users implicitly.
+	Owners []string `toml:"owners"`
+	// Admins is what other admin certificates may do here: "full" (default),
+	// "own" (like a client of their user), "observe" (node info, metrics
+	// without process lists) or "none" (node info).
+	Admins string `toml:"admins"`
+	// HubJobDetails = false keeps command lines, environment names, working
+	// directories and paths out of the job reports, audit lines and process
+	// lists sent to the hub (the local audit.log keeps them). Default true.
+	HubJobDetails *bool `toml:"hub_job_details"`
 }
 
 // IsolationConfig is the [isolation] section (multi-tenancy,
@@ -177,6 +197,12 @@ type Config struct {
 	Toolchain    ToolchainConfig
 	Update       UpdateConfig
 	Isolation    IsolationConfig
+	// Access is the [access] policy (validated; nil when the section sets
+	// nothing).
+	Access *server.Access
+	// HubJobDetails: send command lines etc. to the hub ([access]
+	// hub_job_details, default true).
+	HubJobDetails bool
 	// How longarmd was started, for the restart after a self-update: "service"
 	// (the service manager restarts it) or "exec" (longarmd relaunches itself
 	// with Args).
@@ -226,6 +252,19 @@ func LoadConfig(dataDir string, listenOverride []string) (Config, error) {
 	}
 	if _, err := loopguard.ParseMode(cfg.Isolation.Loopback); err != nil {
 		return cfg, fmt.Errorf("%s: %w", ConfigFile, err)
+	}
+	acc := &server.Access{Users: fc.Access.Users, Owners: fc.Access.Owners, Admins: fc.Access.Admins}
+	if err := acc.Validate(); err != nil {
+		return cfg, fmt.Errorf("%s: [access] %w", ConfigFile, err)
+	}
+	if acc.Active() {
+		cfg.Access = acc
+	}
+	cfg.HubJobDetails = fc.Access.HubJobDetails == nil || *fc.Access.HubJobDetails
+	// Admins limited here must not get around it through the hub session
+	// (panel kill / logs, longarm admin run): off unless the file says so.
+	if cfg.Hub.RemoteJobs == "" && (len(acc.Users) > 0 || acc.Admins != "" && acc.Admins != server.AdminsFull) {
+		cfg.Hub.RemoteJobs = "none"
 	}
 	if cfg.Isolation.UsersDir != "" && !filepath.IsAbs(cfg.Isolation.UsersDir) {
 		cfg.Isolation.UsersDir = filepath.Join(dataDir, cfg.Isolation.UsersDir)
@@ -338,7 +377,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		Name: bundle.Identity.Name, Version: version.Version, DataDir: cfg.DataDir, StartedAt: time.Now(),
 		Spaces: st.spaces, Policy: policy, LogMaxBytes: cfg.MaxLogBytes, Sampler: sampler,
 		Audit: server.NewAudit(filepath.Join(cfg.DataDir, AuditFile)), Log: log, Shutdown: cancel,
-		Revoked: revoked, Conns: conntrack.New(),
+		Revoked: revoked, Conns: conntrack.New(), Access: cfg.Access,
 	}
 	exe, _ := os.Executable()
 	if runtime.GOOS == "windows" && exe != "" {
@@ -477,7 +516,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	agent := newHubAgent(cfg.Hub.Address, &hubAgent{
 		dataDir: cfg.DataDir, reloader: reloader, live: reloader.LiveBundle(), spaces: st.spaces, srv: srv, policy: policy,
 		sampler: sampler, revoked: revoked, labels: cfg.Hub.Labels, log: log.With("component", "hub"),
-		audit: srv.Audit, remoteJobs: cfg.Hub.RemoteJobs, stop: cancel, logMaxBytes: cfg.MaxLogBytes,
+		audit: srv.Audit, remoteJobs: cfg.Hub.RemoteJobs, hideJobDetails: !cfg.HubJobDetails, stop: cancel, logMaxBytes: cfg.MaxLogBytes,
 		endpoints: func() []string {
 			if len(cfg.Hub.Advertise) > 0 {
 				return cfg.Hub.Advertise
@@ -576,6 +615,13 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	}
 	if runtime.GOOS == "windows" && platform.RunningAsSystem() && !perUser {
 		log.Warn("longarmd runs as LocalSystem: jobs run as SYSTEM with the system profile, not as a user (DESIGN §3.1); reinstall the service with a user account (MSI SERVICE_USER/SERVICE_PASSWORD, longarmd service install --user)")
+	}
+	log.Info("access policy", "policy", cfg.Access.String(), "remote_jobs", nonEmpty(cfg.Hub.RemoteJobs, "control"),
+		"hub_job_details", cfg.HubJobDetails)
+	if a := cfg.Access; a != nil && len(a.Owners)+len(a.Users) > 0 {
+		// the names are what the hub's CA vouches for: any hub admin can
+		// enroll a device under an owner's name (docs/security.md)
+		log.Warn("[access] owners/users name users the hub vouches for: a hub admin can enroll a device under such a name; pin owners' keys with end-to-end trust to stop that")
 	}
 	log.Info("longarmd started", "name", srv.Name, "version", version.Version, "data", cfg.DataDir,
 		"listen", srv.Listeners, "pid", os.Getpid(), "isolation", cfg.Isolation.Mode)

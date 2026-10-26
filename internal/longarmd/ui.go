@@ -115,7 +115,7 @@ func (a *hubAgent) hubRequest(cmd *pb.HubCommand) {
 			fail(jobErr(err))
 			break
 		}
-		rep.Job = server.JobToPB(j)
+		rep.Job = a.jobForHub(j)
 	case *pb.HubCommand_LogRequest:
 		r := x.LogRequest
 		rep.RequestId = r.RequestId
@@ -171,7 +171,7 @@ func (a *hubAgent) hubRequest(cmd *pb.HubCommand) {
 			fail(jobErr(err))
 			break
 		}
-		rep.Job = server.JobToPB(j)
+		rep.Job = a.jobForHub(j)
 	case *pb.HubCommand_ToolchainApply:
 		rep.RequestId = x.ToolchainApply.RequestId
 		if !a.allowRemote("control") {

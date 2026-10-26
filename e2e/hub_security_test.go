@@ -90,6 +90,53 @@ func TestHubRevocation(t *testing.T) {
 	})
 }
 
+// TestWorkerAccessPolicy: a worker whose owner (alice) keeps the hub's
+// admins out ([access] admins = "none") and the command lines of its jobs
+// from the hub (hub_job_details = false). alice works as before; root's
+// admin certificate only gets node info, the hub session's remote jobs are
+// off by default, and the hub learns the job but not what it runs.
+func TestWorkerAccessPolicy(t *testing.T) {
+	t.Parallel()
+	h := newHubEnv(t, "")
+	wa := h.newWorkerDir(t, "wa", "[access]\nowners = [\"alice\"]\nadmins = \"none\"\nhub_job_details = false\n")
+	h.joinWorker(t, wa, true)
+	wa.start(t, true)
+	h.waitNode(t, "wa", "online", func(n map[string]any) bool { return isTrue(n["online"]) })
+
+	if r := h.longarm(h.client, "exec", "wa", "--", bins.helper, "print", "1", "0", "0"); r.code != 0 || !strings.Contains(r.stdout, "line 1") {
+		t.Fatalf("owner exec: %+v", r)
+	}
+	id := strings.TrimSpace(h.mustLongarm(h.client, "run", "wa", "--", bins.helper, "print", "2", "0", "0"))
+	h.mustLongarm(h.client, "wait", "wa", id)
+	if r := h.longarm(h.admin, "exec", "wa", "--", bins.helper, "print", "1", "0", "0"); r.code == 0 || !strings.Contains(r.stderr, "admins = none") {
+		t.Fatalf("admin exec: %+v", r)
+	}
+	if r := h.longarm(h.admin, "admin", "logs", id); r.code == 0 || !strings.Contains(r.stderr, "remote_jobs") {
+		t.Fatalf("admin logs through the hub: %+v", r)
+	}
+	var jobs string
+	waitFor(t, "the job in the hub index", 20*time.Second, func() bool {
+		jobs = h.longarm(h.admin, "jobs", "--json").stdout
+		return strings.Contains(jobs, id) && strings.Contains(jobs, "DONE")
+	})
+	if strings.Contains(jobs, "print") || strings.Contains(jobs, "argv") {
+		t.Fatalf("command line reached the hub: %s", jobs)
+	}
+	waitFor(t, "forwarded audit", 20*time.Second, func() bool {
+		r := h.longarm(h.admin, "admin", "audit", "--node", "wa", "--limit", "100", "--json")
+		return strings.Contains(r.stdout, "Jobs/Submit") && strings.Contains(r.stdout, "admins = none")
+	})
+	if r := h.longarm(h.admin, "admin", "audit", "--node", "wa", "--limit", "100", "--json"); strings.Contains(r.stdout, "print") {
+		t.Fatalf("command line in the hub's audit: %s", r.stdout)
+	}
+	if local, _ := os.ReadFile(filepath.Join(wa.dataDir, "audit.log")); !strings.Contains(string(local), `"print"`) {
+		t.Fatalf("local audit.log lost the command line:\n%s", local)
+	}
+	if log, _ := os.ReadFile(wa.logPath); !strings.Contains(string(log), "users=any owners=alice admins=none") {
+		t.Fatalf("no access policy log line:\n%s", log)
+	}
+}
+
 // TestHubRenewalOverRelay: a worker reachable only through longnet via the
 // relay built into the hub; its certificate is renewed automatically (short
 // TTL) and the longnet listener presents the renewed certificate: new

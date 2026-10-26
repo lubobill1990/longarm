@@ -94,7 +94,7 @@ func (ss *sessionsServer) sessionSpace(ctx context.Context, owner, name string, 
 	if err != nil {
 		return nil, err
 	}
-	if j, err := sp.Sessions.Get(name); err == nil && !ss.s.perUser() && ss.s.enforce() && j.Spec.OwnerName() != owner {
+	if j, err := sp.Sessions.Get(name); err == nil && !ss.s.perUser() && ss.s.enforceFor(ctx) && j.Spec.OwnerName() != owner {
 		if create { // even an ended one: re-creating would delete its transcript
 			return nil, status.Errorf(codes.AlreadyExists, "session name %q is in use by another user (shared isolation has one namespace of names)", name)
 		}
@@ -377,7 +377,7 @@ func (ss *sessionsServer) List(ctx context.Context, req *pb.ListSessionsRequest)
 			}
 			// Sessions are private (no team sharing); admins see all of
 			// them, everybody else only their own.
-			if ss.s.enforce() && owner != own && !c.Admin {
+			if ss.s.enforceFor(ctx) && owner != own && !c.Admin {
 				continue
 			}
 			out.Sessions = append(out.Sessions, ss.toPB(sp, j))
@@ -392,7 +392,7 @@ func (ss *sessionsServer) lookup(ctx context.Context, owner, name string) (*user
 	if err != nil {
 		return nil, err
 	}
-	if !ss.s.enforce() && owner == "" {
+	if !ss.s.enforceFor(ctx) && owner == "" {
 		return ss.s.Spaces.Shared(), nil
 	}
 	sp, err := ss.sessionSpace(ctx, o, name, false)

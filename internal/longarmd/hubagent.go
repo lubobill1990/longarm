@@ -24,6 +24,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/metrics"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/server"
+	"github.com/lubobill1990/longarm/internal/supervisor"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/toolchain"
 	"github.com/lubobill1990/longarm/internal/userspace"
@@ -60,9 +61,11 @@ type hubAgent struct {
 	log       *slog.Logger
 	audit     *server.Audit
 	// remoteJobs: what hub requests may do (see HubConfig.RemoteJobs).
-	remoteJobs  string
-	stop        context.CancelFunc // stops longarmd (after longarmd leave)
-	logMaxBytes int64
+	remoteJobs string
+	// hideJobDetails: [access] hub_job_details = false (hubredact.go).
+	hideJobDetails bool
+	stop           context.CancelFunc // stops longarmd (after longarmd leave)
+	logMaxBytes    int64
 
 	mu          sync.Mutex
 	link        *pb.HubLink
@@ -387,7 +390,7 @@ func (a *hubAgent) session(ctx context.Context) error {
 	full := &pb.JobsReport{Full: true}
 	terminal := 0
 	for _, j := range a.spaces.ListJobs(nil, 0) {
-		p := server.JobToPB(j)
+		p := a.jobForHub(j)
 		if j.Status.State.Terminal() {
 			if terminal++; terminal > fullJobLimit {
 				continue
@@ -401,7 +404,7 @@ func (a *hubAgent) session(ctx context.Context) error {
 		a.send(&pb.NodeReport{Msg: &pb.NodeReport_Toolchain{Toolchain: a.tc.Status()}}, false)
 	}
 	if m, err := a.sampler.Latest(sctx); err == nil {
-		a.send(&pb.NodeReport{Msg: &pb.NodeReport_Metrics{Metrics: server.SnapshotToPB(m)}}, true)
+		a.send(&pb.NodeReport{Msg: &pb.NodeReport_Metrics{Metrics: a.metricsForHub(m)}}, true)
 	}
 
 	auditOff := w.AuditOffset
@@ -421,7 +424,7 @@ func (a *hubAgent) session(ctx context.Context) error {
 			a.reportJobs(sent, false)
 		case <-metricsT.C:
 			if m, err := a.sampler.Latest(sctx); err == nil {
-				a.send(&pb.NodeReport{Msg: &pb.NodeReport_Metrics{Metrics: server.SnapshotToPB(m)}}, true)
+				a.send(&pb.NodeReport{Msg: &pb.NodeReport_Metrics{Metrics: a.metricsForHub(m)}}, true)
 			}
 		case <-slowT.C:
 			a.reportJobs(sent, true)
@@ -431,13 +434,31 @@ func (a *hubAgent) session(ctx context.Context) error {
 	}
 }
 
+// jobForHub is a job as reported to the hub.
+func (a *hubAgent) jobForHub(j supervisor.Job) *pb.Job {
+	p := server.JobToPB(j)
+	if a.hideJobDetails {
+		return redactJob(p)
+	}
+	return p
+}
+
+// metricsForHub is a metrics snapshot as reported to the hub.
+func (a *hubAgent) metricsForHub(m metrics.Snapshot) *pb.MetricsSnapshot {
+	p := server.SnapshotToPB(m)
+	if a.hideJobDetails {
+		return redactMetrics(p)
+	}
+	return p
+}
+
 // reportJobs sends the jobs that changed since the last report (and ids
 // that disappeared, e.g. by GC).
 func (a *hubAgent) reportJobs(sent map[string]*pb.Job, includeRemoved bool) {
 	rep := &pb.JobsReport{}
 	seen := map[string]bool{}
 	for _, j := range a.spaces.ListJobs(nil, 0) {
-		p := server.JobToPB(j)
+		p := a.jobForHub(j)
 		id := p.Spec.Id
 		seen[id] = true
 		c := comparable(p)
@@ -494,6 +515,9 @@ func (a *hubAgent) forwardAudit(off int64) int64 {
 		}
 		next += int64(len(line))
 		if l := strings.TrimSpace(line); l != "" {
+			if a.hideJobDetails {
+				l = redactAuditLine(l)
+			}
 			lines = append(lines, l)
 		}
 	}

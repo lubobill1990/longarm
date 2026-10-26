@@ -23,3 +23,35 @@ func TestLoadConfigDropsInvalidLabels(t *testing.T) {
 		t.Fatalf("warnings %q", cfg.Warnings)
 	}
 }
+
+// [access]: validated at load; a restricting policy turns the hub session's
+// remote jobs off unless the file sets remote_jobs.
+func TestLoadConfigAccess(t *testing.T) {
+	load := func(toml string) (Config, error) {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, ConfigFile), []byte(toml), 0o600)
+		return LoadConfig(dir, nil)
+	}
+	cfg, err := load("")
+	if err != nil || cfg.Access != nil || !cfg.HubJobDetails || cfg.Hub.RemoteJobs != "" {
+		t.Fatalf("defaults: %+v %v", cfg, err)
+	}
+	cfg, err = load("[access]\nusers = [\"bob\"]\nowners = [\"alice\"]\nadmins = \"observe\"\nhub_job_details = false\n")
+	if err != nil || cfg.Access == nil || cfg.Access.Admins != "observe" || cfg.HubJobDetails || cfg.Hub.RemoteJobs != "none" {
+		t.Fatalf("restricted: %+v %v", cfg, err)
+	}
+	if cfg, err = load("[hub]\nremote_jobs = \"control\"\n[access]\nadmins = \"none\"\n"); err != nil || cfg.Hub.RemoteJobs != "control" {
+		t.Fatalf("explicit remote_jobs: %q %v", cfg.Hub.RemoteJobs, err)
+	}
+	if cfg, err = load("[access]\nowners = [\"alice\"]\n"); err != nil || cfg.Access == nil || cfg.Hub.RemoteJobs != "" {
+		t.Fatalf("owners only: %+v %v", cfg, err)
+	}
+	for toml, want := range map[string]string{
+		"[access]\nadmins = \"readonly\"\n": `[access] admins "readonly"`,
+		"[access]\nusers = [\"Bob\"]\n":     `[access] users: invalid user name "Bob"`,
+	} {
+		if _, err := load(toml); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", toml, err, want)
+		}
+	}
+}

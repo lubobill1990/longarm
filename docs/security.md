@@ -20,8 +20,9 @@ vulnerabilities see [SECURITY.md](../SECURITY.md).
 workers. Each user has one or more devices; every device has its own client
 certificate from the hub's CA, which names the user. **Admins** (admin
 certificates, panel administrators) are trusted: they manage users, workers
-and releases and may act on everything. The hub operator and the machines'
-local administrators are trusted. Workers are trusted to enforce the rules
+and releases and may act on everything - except where a worker's owner
+limits them locally ([worker-side access policy](#worker-side-access-policy)).
+The hub operator and the machines' local administrators are trusted. Workers are trusted to enforce the rules
 for the users they serve.
 
 **Assets of a user A.** A's jobs and sessions (existence, command lines,
@@ -75,7 +76,9 @@ plain client certificates keeps seeing both machines' jobs).
 The hub pushes a **tenancy policy** to every worker (users, teams, quotas,
 disabled and purged users; persisted in `<data>/tenancy.json`). A worker
 enforces ownership on its API when the policy says users are separated
-**or** it runs with `[isolation] mode = "per-user"`.
+**or** it runs with `[isolation] mode = "per-user"` **or** - for everybody
+but the worker's owners - its `[access]` policy restricts anybody
+([below](#worker-side-access-policy)).
 
 ## What is enforced
 
@@ -94,6 +97,10 @@ enforces ownership on its API when the policy says users are separated
 | hub node list | workers without process lists and others' mirrors; own devices | | others' devices hidden | everything |
 | audit log, users, teams, join codes, links, releases, profiles | no | | no | yes |
 | web panel | "My jobs", nodes (read-only), "Me" for user logins | | | everything ("People" page for users, teams, quotas) |
+| a worker with `[access]` | users not in `users` get node info only | | | an admin certificate of a non-owner gets what `admins` allows (`own`: the "Owner" column; `observe`; `none`) |
+
+The "Admin" column is the default (`[access] admins = "full"`); a worker's
+owner can narrow it on that worker, and the worker's owners always keep it.
 
 Every worker audit record carries the acting certificate and, for devices
 of a user, the user (`"user": "alice"`); the hub's records name the caller
@@ -288,6 +295,82 @@ Go, a large dependency) and `iptables -m owner` (sender only).
 **Windows** has no equivalent (Windows Firewall does not filter loopback
 traffic of ordinary processes): the gap below stays there.
 
+## Worker-side access policy
+
+The owner of a worker machine limits, **on the worker**, what the hub's
+admins and users may do there. The policy is `[access]` in
+`<data>/longarmd.toml` - nothing the hub sends (tenancy policy, profiles,
+commands) can change it:
+
+```toml
+[access]
+users  = ["alice", "bob"]   # who may use this worker (default: everybody the hub admits)
+owners = ["alice"]          # always full rights for their role; users implicitly
+admins = "own"              # other admin certificates: full (default) | own | observe | none
+hub_job_details = false     # default true
+```
+
+| Caller (its user = the certificate's `user`, else its name) | Gets |
+|---|---|
+| user not in `users` ∪ `owners` (when `users` is set) | `Node.Info` only; everything else `PermissionDenied`, audited with the reason |
+| an owner | today's rights for its role: an owner's admin certificate is a full admin, an owner's client certificates act on everything when the hub does not separate users |
+| admin certificate of a non-owner, `admins = "full"` | everything (as without `[access]`) |
+| ... `admins = "own"` | what a client certificate of its user gets: its own jobs and sessions, no `Admin.Gc` / `Admin.Shutdown`, no process lists, no attaching to or killing others' sessions and jobs, port forwards as for any user |
+| ... `admins = "observe"` | `Node.Info`, `Metrics.Snapshot` / `Metrics.Stream` without process lists |
+| ... `admins = "none"` | `Node.Info` |
+| client certificates | unchanged (subject to `users` and ownership) |
+
+- A restricting policy (`users` or `owners` set, or `admins` other than
+  `full`) turns on **ownership checks** on the worker even when the hub
+  does not separate users - otherwise in a one-person fleet everybody
+  acts as an admin. The owners are exempt: their devices keep seeing and
+  controlling each other's jobs and sessions as before (with plain
+  certificates without a user, list the certificate names as owners).
+  Per-worker quotas still come only from the hub's tenancy policy.
+- The **hub session**: with `users` set or `admins` other than `full`,
+  `[hub] remote_jobs` defaults to `none` (the panel's and `longarm admin`'s
+  kill / logs / run through the hub are refused); an explicit value in the
+  file wins. Jobs the hub submits (`remote_jobs = "all"`) must still be for
+  a user in `users`.
+- `hub_job_details = false`: the job reports, the audit lines forwarded to
+  the hub and the metrics the worker sends to the hub carry no command
+  lines, environment (names), working directories, workspace repositories,
+  file paths, ssh commands, forward targets, error texts or process lists.
+  The hub keeps job id, owner, submitter, sharing, state, times, exit code
+  and resources (a `type` label replaces the command for the scheduler's
+  sizing of claude / copilot jobs), so scheduling, quotas and the panel's
+  job list keep working. Repository names in the worker's mirror list (the
+  scheduler's cache affinity) are still reported. The local `audit.log`
+  keeps the full records.
+- longarmd refuses to start with an unknown `admins` value or an invalid
+  user name, and logs the effective policy once at start
+  (`access policy policy="users=... owners=... admins=..." remote_jobs=... hub_job_details=...`).
+
+**What it protects against**: hub admins acting with their admin
+certificates (directly or through clients and MCP tools) and through the
+hub session (web panel, `longarm admin kill|logs|run`), and hub-side
+visibility of what the worker's users run.
+
+**What it does not protect against**:
+
+- **Names are the hub's word.** `owners` and `users` match the user a
+  certificate names, and the hub decides that: any hub admin can enroll a
+  device as an owner (`longarm admin join-code --role admin --user alice`
+  - no CA key needed), and whoever holds the CA key can mint one. The worker
+  can't tell such a certificate from alice's own. Against insiders the
+  policy only holds together with end-to-end trust (owners' certificates
+  endorsed by keys pinned on the worker); without it, it stops admins who
+  use their own certificates and the hub session, nothing more. longarmd
+  warns at start when `owners` / `users` are set without it.
+- **Local administrators** of the worker machine (they can edit
+  `longarmd.toml` and read everything).
+- **Shared isolation**: `admins = "own"` makes an admin an ordinary user,
+  and in shared mode ordinary users' `exec`, files and sshd run as the
+  service account, which can read other users' worktrees and logs. Use
+  per-user isolation, or `observe` / `none`.
+- Jobs and sessions started before a policy change keep running; the
+  policy is read at start (change it, restart longarmd).
+
 ## What is not isolated (known gaps)
 
 Level 2 keeps users apart through the OS's user separation, not through
@@ -326,9 +409,9 @@ containers. These remain:
 - **Disk space** is not limited per user (GC still collects old jobs and
   mirrors); neither is network bandwidth.
 - **Admins** see and do everything (including attaching to others'
-  sessions); worker administrators can read everything on their machine; the
-  hub can submit jobs as any user to workers with `[hub] remote_jobs =
-  "all"`.
+  sessions) on workers whose owner did not limit them with `[access]`;
+  worker administrators can read everything on their machine; the hub can
+  submit jobs as any user to workers with `[hub] remote_jobs = "all"`.
 - **Disabling a user** refuses new calls at once and closes the user's open
   connections on the hub and - when the policy arrives, within seconds - on
   every worker; jobs that are already running keep running (kill them, or

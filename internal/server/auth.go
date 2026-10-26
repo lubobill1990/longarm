@@ -87,6 +87,10 @@ func (s *Server) authorize(ctx context.Context, method string) (context.Context,
 		s.Audit.Log(id, method, map[string]any{"denied": "user disabled", "peer": p.Addr.String()})
 		return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled", id.Owner())
 	}
+	if why := s.Access.Deny(id, method); why != "" {
+		s.Audit.Log(id, method, map[string]any{"denied": why, "peer": p.Addr.String()})
+		return nil, status.Errorf(codes.PermissionDenied, "%s may not call %s on this worker (%s)", id, method, why)
+	}
 	return context.WithValue(ctx, idKey{}, id), nil
 }
 
