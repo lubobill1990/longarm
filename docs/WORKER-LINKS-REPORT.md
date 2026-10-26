@@ -1,4 +1,4 @@
-| `go test -count=1 ./...` | every package ok except e2e load flakes in full runs, each passing alone: `TestHubDownFast` (timing), `TestDaemonLegProxy` (known), `TestHubRevocation` (job output timeout under load); the link tests pass in every run |# WORKER-LINKS report: port links between workers (joint debugging)
+# WORKER-LINKS report: port links between workers (joint debugging)
 
 A user's processes on worker A reach a loopback port of worker B as
 `127.0.0.1:<port>` on A - frontend and tests on A, backend on B - with
@@ -67,7 +67,7 @@ Results on this machine (Windows 11, elevated shell), after the review fixes:
 | Run | Result |
 |---|---|
 | `go vet ./...` for windows/linux/darwin × amd64/arm64 | ok |
-| `go test -count=1 ./...` | all packages ok except load flakes known from before (e2e `TestHubDownFast` timing, passes alone: `ok 37s`) |
+| `go test -count=1 ./...` | every package ok except e2e load flakes in full runs, each passing alone: `TestHubDownFast` (timing), `TestDaemonLegProxy` (known), `TestHubRevocation` (job output timeout under load); the link tests pass in every run |
 | `LONGARM_PERUSER_TEST=1 go test -run TestPerUserLinks ./e2e` | `--- PASS: TestPerUserLinks (28.65s)`; temporary services, `lt????-*` accounts and profiles all removed afterwards |
 | `scripts/privacy-check.sh`, gofmt | ok |
 | web `pnpm typecheck`, `pnpm test` | ok (26 tests) |
