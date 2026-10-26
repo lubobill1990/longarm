@@ -239,3 +239,12 @@ func (s *Scrubber) Map(m map[string]string) map[string]string {
 	}
 	return m
 }
+
+// FleetSalt derives the name-hash salt from the fleet's CA certificate
+// (DER): every node of a fleet knows it, so all of them - and the hub -
+// hash a name the same way without another secret to hand out; outside
+// the fleet (telemetry readers) the names stay unknown.
+func FleetSalt(caDER []byte) []byte {
+	h := sha256.Sum256(append([]byte("longarm-pii-salt-v1\x00"), caDER...))
+	return h[:]
+}
