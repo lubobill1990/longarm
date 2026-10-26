@@ -6,7 +6,8 @@ pool of workers that Claude Code, Copilot CLI or you can run commands, builds,
 test suites and whole agent sessions on - from any laptop, through any NAT.
 
 [中文说明](README.zh-CN.md) · [Usage reference](docs/usage.md) ·
-[Design](docs/design.md) · [CI/CD](docs/ci-cd.md)
+[Design](docs/design.md) · [CI/CD](docs/ci-cd.md) · [Security](docs/security.md) ·
+[Telemetry](docs/telemetry.md)
 
 ## Why
 
@@ -181,7 +182,11 @@ Then ask: *"Run the full test suite on the fleet and tell me what fails"* or
 
 Everything else - workers without a hub, Tailscale/Headscale, the relay, the
 tray app, self-update, packages, firewalls - is in the
-[usage reference](docs/usage.md).
+[usage reference](docs/usage.md). A hub can collect scrubbed telemetry
+(errors, crashes, durations; no command lines or names) into Azure
+Application Insights; it is off unless the hub has a connection string, and
+every machine can opt out (`longarm telemetry off`,
+[docs/telemetry.md](docs/telemetry.md)).
 
 ## Sharing a hub with your team
 

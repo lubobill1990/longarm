@@ -27,6 +27,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
+	"github.com/lubobill1990/longarm/internal/telemetry/tgrpc"
 	"github.com/lubobill1990/longarm/internal/transport"
 	"github.com/lubobill1990/longarm/internal/version"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -241,12 +242,12 @@ func dial(addr string, tc *tls.Config) (*Conn, error) {
 	bo := backoff.DefaultConfig
 	bo.MaxDelay = 5 * time.Second
 	d := net.Dialer{Timeout: 5 * time.Second}
-	cc, err := grpc.NewClient("passthrough:///"+addr,
+	cc, err := grpc.NewClient("passthrough:///"+addr, append([]grpc.DialOption{
 		grpc.WithContextDialer(func(ctx context.Context, a string) (net.Conn, error) { return d.DialContext(ctx, "tcp", a) }),
 		grpc.WithTransportCredentials(credentials.NewTLS(tc)),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bo, MinConnectTimeout: 5 * time.Second}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 30 * time.Second, Timeout: 20 * time.Second}),
-	)
+	}, tgrpc.DialOptions("hub")...)...)
 	if err != nil {
 		return nil, err
 	}

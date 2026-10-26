@@ -12,6 +12,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
+	"github.com/lubobill1990/longarm/internal/telemetry"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -27,6 +28,7 @@ type queued struct {
 	ch       chan *pb.PlaceUpdate
 	position int
 	reason   string
+	span     telemetry.Span // the operation that asked (telemetry)
 }
 
 // Place implements Fleet.Place: pick a worker now or queue (DESIGN §5.2).
@@ -71,7 +73,8 @@ func (h *Hub) PlaceFor(ctx context.Context, by, owner string, req *pb.PlaceReque
 	if res.Worker != "" {
 		r := h.reserveLocked(req.JobId, res.Worker, mem, owner)
 		u := h.assignedLocked(r, res.Score)
-		h.log.Info("placed", "job", req.JobId, "worker", res.Worker, "score", res.Score, "mem_gb", mem, "by", by)
+		h.log.InfoContext(ctx, "placed", "job", req.JobId, "worker", res.Worker, "score", res.Score, "mem_gb", mem, "by", by)
+		h.tel().Event(ctx, "scheduler.placement", map[string]string{"outcome": "placed", "type": req.Type}, map[string]float64{"mem_gb": mem})
 		h.mu.Unlock()
 		return send(u)
 	}
@@ -79,8 +82,13 @@ func (h *Hub) PlaceFor(ctx context.Context, by, owner string, req *pb.PlaceReque
 	if quota != "" {
 		reason = quota
 	}
+	outcome := "no_fit"
+	if quota != "" {
+		outcome = "over_quota"
+	}
 	if req.NoQueue {
 		h.mu.Unlock()
+		h.tel().Event(ctx, "scheduler.placement", map[string]string{"outcome": outcome, "type": req.Type, "queue": "false"}, map[string]float64{"mem_gb": mem})
 		if quota != "" {
 			return status.Error(codes.ResourceExhausted, quota)
 		}
@@ -89,10 +97,13 @@ func (h *Hub) PlaceFor(ctx context.Context, by, owner string, req *pb.PlaceReque
 	h.queueSeq++
 	q := &queued{seq: h.queueSeq, req: req, memGB: mem, by: by, owner: owner, at: time.Now(), ch: make(chan *pb.PlaceUpdate, 8),
 		reason: reason}
+	q.span, _ = telemetry.SpanFrom(ctx)
 	h.queue = append(h.queue, q)
 	q.position = len(h.queue)
 	h.bus.publishOwned(&pb.FleetEvent{Kind: "queue", Message: fmt.Sprintf("job %s queued (position %d): %s", req.JobId, q.position, q.reason)}, owner)
-	h.log.Info("queued", "job", req.JobId, "position", q.position, "reason", q.reason)
+	h.log.InfoContext(ctx, "queued", "job", req.JobId, "position", q.position, "reason", q.reason)
+	h.tel().Event(ctx, "scheduler.placement", map[string]string{"outcome": "queued", "why": outcome, "type": req.Type},
+		map[string]float64{"mem_gb": mem, "position": float64(q.position)})
 	first := &pb.PlaceUpdate{State: "queued", Position: int32(q.position), Reason: q.reason, MemGb: mem}
 	h.mu.Unlock()
 	defer h.dequeue(q)
@@ -164,6 +175,8 @@ func (h *Hub) runQueue() {
 		}
 		r := h.reserveLocked(q.req.JobId, res.Worker, q.memGB, q.owner)
 		h.log.Info("placed from queue", "job", q.req.JobId, "worker", res.Worker, "waited", time.Since(q.at).Round(time.Millisecond))
+		h.tel().Event(telemetry.WithSpan(context.Background(), q.span), "scheduler.placement", map[string]string{"outcome": "placed_from_queue", "type": q.req.Type},
+			map[string]float64{"mem_gb": q.memGB, "waited_s": time.Since(q.at).Seconds()})
 		for len(q.ch) > 0 { // drop stale position updates so this send cannot block
 			select {
 			case <-q.ch:

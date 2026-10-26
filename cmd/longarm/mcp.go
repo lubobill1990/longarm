@@ -23,6 +23,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/sched"
+	"github.com/lubobill1990/longarm/internal/telemetry"
 	"github.com/lubobill1990/longarm/internal/version"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -75,6 +76,9 @@ environment (secret_env); only names listed in LONGARM_MCP_SECRETS may be used:
 			os.Stdout = os.Stderr
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			pctx, pcancel := context.WithCancel(ctx)
+			waitPush := runPusher(pctx, s)
+			defer func() { pcancel(); waitPush() }()
 			return newMCPServer(s).Run(ctx, &mcp.IOTransport{Reader: os.Stdin, Writer: out})
 		},
 	}
@@ -86,7 +90,19 @@ type mcpTools struct{ s *session }
 // refused by end-to-end trust (gRPC buries that in a connection error).
 func addTool[In, Out any](srv *mcp.Server, t *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
 	mcp.AddTool(srv, t, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+		// every tool call is an operation of its own (telemetry)
+		sp := telemetry.NewSpan()
+		ctx = telemetry.WithSpan(ctx, sp)
+		start := time.Now()
 		res, out, err := h(ctx, req, in)
+		code := "ok"
+		if err != nil {
+			code = errType(err)
+		} else if res != nil && res.IsError {
+			code = "tool_error"
+		}
+		telemetry.RecordRequest(ctx, telemetry.Request{Name: "mcp " + t.Name, Span: sp, Duration: time.Since(start), Code: code,
+			Success: err == nil, Always: true})
 		if msg, ok := client.TrustRefusal(err); ok {
 			err = errors.New(msg)
 		}

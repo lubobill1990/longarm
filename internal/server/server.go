@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,6 +28,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/supervisor"
+	"github.com/lubobill1990/longarm/internal/telemetry"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/workspace"
@@ -100,6 +103,11 @@ type Server struct {
 	// GC runs a garbage collection for Admin.Gc.
 	GC func(ctx context.Context, req *pb.GcRequest) (*pb.GcResponse, error)
 
+	// UnaryInterceptors / StreamInterceptors run before the authorization
+	// (telemetry: they also see refused calls).
+	UnaryInterceptors  []grpc.UnaryServerInterceptor
+	StreamInterceptors []grpc.StreamServerInterceptor
+
 	// helperWS: this Server is a user helper's (ServeUserHelper).
 	helperWS *workspace.Store
 }
@@ -112,8 +120,8 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 	}
 	g := grpc.NewServer(
 		grpc.Creds(creds),
-		grpc.ChainUnaryInterceptor(s.unaryAuth),
-		grpc.ChainStreamInterceptor(s.streamAuth),
+		grpc.ChainUnaryInterceptor(append(slices.Clip(s.UnaryInterceptors), s.unaryAuth)...),
+		grpc.ChainStreamInterceptor(append(slices.Clip(s.StreamInterceptors), s.streamAuth)...),
 		// Long-lived Wait/Logs streams cross NATs: keep them warm and allow
 		// client pings.
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 30 * time.Second, Timeout: 20 * time.Second}),
@@ -335,6 +343,7 @@ func (j *jobsServer) Submit(ctx context.Context, req *pb.SubmitRequest) (*pb.Job
 		}
 		spec.Workspace = &jobs.Workspace{Repo: w.Repo, URL: w.Url, Ref: w.Ref, Commit: w.Commit, StagingID: w.StagingId}
 	}
+	telemetry.Remember(ctx, "job/"+spec.ID) // before it starts: it may end at once
 	job, err := j.submit(ctx, owner, spec, req.SecretEnv, req.Share)
 	j.s.Audit.Log(id, pb.Jobs_Submit_FullMethodName, map[string]any{
 		"job": spec.ID, "argv": spec.Argv, "cwd": spec.Cwd, "env_keys": keys(spec.Env),
@@ -346,6 +355,11 @@ func (j *jobsServer) Submit(ctx context.Context, req *pb.SubmitRequest) (*pb.Job
 		}
 		return nil, MgrErr(err)
 	}
+	// telemetry: what kind of job, never its command line
+	telemetry.Event(ctx, "job.submitted", map[string]string{"workspace": strconv.FormatBool(spec.Workspace != nil),
+		"shared": strconv.FormatBool(len(req.Share) > 0), "secrets": strconv.FormatBool(len(req.SecretEnv) > 0),
+		"caller_role": string(id.Role), "isolation": j.s.Spaces.Mode()},
+		map[string]float64{"mem_limit_gb": float64(job.Spec.MemLimitBytes) / (1 << 30), "cpu_limit": job.Spec.CPULimit})
 	return JobToPB(job), nil
 }
 

@@ -27,6 +27,8 @@ import (
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/relay"
 	"github.com/lubobill1990/longarm/internal/sched"
+	"github.com/lubobill1990/longarm/internal/telemetry"
+	"github.com/lubobill1990/longarm/internal/telemetry/tgrpc"
 	"github.com/lubobill1990/longarm/internal/version"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -82,6 +84,7 @@ type Hub struct {
 
 	started time.Time
 	relay   *relay.Server
+	telem   *hubTelemetry // nil = telemetry off (telemetry.go)
 
 	addrMu sync.Mutex
 	addrs  map[string]string // "grpc", "http", "udp" -> bound address
@@ -309,11 +312,12 @@ func (h *Hub) Serve(ctx context.Context) error {
 
 	g := grpc.NewServer(
 		grpc.Creds(h.conns.Wrap(credentials.NewTLS(h.apiTLS()))),
-		grpc.ChainUnaryInterceptor(h.unaryAuth),
-		grpc.ChainStreamInterceptor(h.streamAuth),
+		grpc.ChainUnaryInterceptor(tgrpc.UnaryServer(h.tel), h.unaryAuth),
+		grpc.ChainStreamInterceptor(tgrpc.StreamServer(h.tel), h.streamAuth),
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 30 * time.Second, Timeout: 20 * time.Second}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 10 * time.Second, PermitWithoutStream: true}),
 	)
+	pb.RegisterTelemetryServer(g, &telemetryServer{h: h})
 	pb.RegisterEnrollServer(g, &enrollServer{h: h})
 	pb.RegisterHubNodeServer(g, &hubNodeServer{h: h})
 	pb.RegisterFleetServer(g, &fleetServer{h: h})
@@ -396,6 +400,7 @@ func (h *Hub) Serve(ctx context.Context) error {
 		}
 		run("relay udp", func() error { return h.relay.ServeQUIC(pc) })
 	}
+	h.startTelemetry(ctx, run)
 	run("mux", mux.Serve)
 	run("grpc", func() error { return g.Serve(grpcLn) })
 
@@ -448,6 +453,15 @@ func (h *Hub) Serve(ctx context.Context) error {
 	if h.cfg.HTTPS != "" {
 		m := h.acmeManager()
 		tc := m.TLSConfig()
+		if get := tc.GetCertificate; get != nil {
+			tc.GetCertificate = func(hi *tls.ClientHelloInfo) (*tls.Certificate, error) {
+				c, err := get(hi)
+				if err != nil && hi.ServerName == h.cfg.ACMEHost() {
+					h.tel().Count("acme.get_certificate_failed", nil, 1) // the error itself is in the log
+				}
+				return c, err
+			}
+		}
 		tc.MinVersion = tls.VersionTLS12
 		if err := serveHTTP("https", h.cfg.HTTPS, &http.Server{Handler: handler, TLSConfig: tc, ReadHeaderTimeout: 10 * time.Second}); err != nil {
 			return err
@@ -579,5 +593,7 @@ func NewLogger(cfg *Config) (*slog.Logger, io.Closer, error) {
 		}
 		w, c = io.MultiWriter(os.Stderr, f), f
 	}
-	return slog.New(slog.NewTextHandler(w, nil)), c, nil
+	// WARN / ERROR records also become telemetry traces (when the hub
+	// collects telemetry), records of an operation get trace=<id>.
+	return slog.New(telemetry.NewHandler(slog.NewTextHandler(w, nil))), c, nil
 }

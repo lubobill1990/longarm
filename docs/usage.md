@@ -237,6 +237,15 @@ longarmd audit verify [--file PATH]                # check audit.log's hash chai
 longarmd reloads `<data>/tls` (ca.crt, node.crt, node.key) within ~5 s when the
 files change: re-issue the worker certificate in place, no restart needed.
 
+Telemetry ([docs/telemetry.md](telemetry.md)): only when the hub has
+`[telemetry] connection_string`; scrubbed on the machine before it is queued.
+
+```sh
+longarm telemetry status | show | flush   # on or off and why, pseudonyms, queue; queued items as JSON; send now
+longarm telemetry off | on                # this machine (also LONGARM_TELEMETRY=0)
+# worker: [telemetry] enabled = false in <data>/longarmd.toml
+```
+
 ## Fleet with longarm-hub
 
 `longarm-hub` is the control plane: CA and enrollment with one-time join codes,

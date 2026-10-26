@@ -63,7 +63,7 @@ func TestACMECache(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	c := acmeCache{st}
+	c := acmeCache{st: st}
 	ctx := context.Background()
 	if _, err := c.Get(ctx, "hub.example.com"); !errors.Is(err, autocert.ErrCacheMiss) {
 		t.Fatalf("empty: %v", err)

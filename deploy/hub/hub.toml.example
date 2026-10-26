@@ -69,3 +69,13 @@ oauth_secret_file = "/etc/longarm-hub/tailscale-oauth.secret"   # root:longarm-h
 # api_url = "http://127.0.0.1:8080"      # where the hub reaches the REST API (default: url)
 # api_key_file = "/etc/longarm-hub/headscale-api.key"   # or env LONGARM_HUB_HEADSCALE_API_KEY
 # user = ""                              # Headscale < 0.28: keys need a user
+
+# Telemetry (docs/telemetry.md): scrubbed errors, crashes, request counts and
+# durations of the hub and its nodes, forwarded to Azure Application Insights.
+# No connection string = off fleet-wide (nodes then collect nothing). With a
+# managed identity (AZURE_CLIENT_ID) the hub sends Entra ID tokens; grant it
+# "Monitoring Metrics Publisher" on the resource. Env override:
+# LONGARM_HUB_APPINSIGHTS_CONNECTION_STRING.
+# [telemetry]
+# connection_string = "InstrumentationKey=...;IngestionEndpoint=https://<region>.in.applicationinsights.azure.com/"
+# enabled = true

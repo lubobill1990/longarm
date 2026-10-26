@@ -77,6 +77,7 @@ var hubMethodRoles = map[string][]pki.Role{
 	pb.HubAdmin_RemoveUser_FullMethodName:     adminOnly,
 	pb.HubAdmin_SetTeam_FullMethodName:        adminOnly,
 	pb.HubAdmin_ListTeams_FullMethodName:      adminOnly,
+	pb.Telemetry_Push_FullMethodName:          anyNode,
 }
 
 type callerKey struct{}
