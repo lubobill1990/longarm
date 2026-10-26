@@ -156,6 +156,7 @@ function Get-RegistryHost([string]$Ref) {
 }
 
 $script:StuckSince = $null
+$script:StuckTimeout = $StuckTimeoutSeconds
 function Test-Stuck {
     # throws when the container group has sat in Creating with waiting
     # containers and no events at all for -StuckTimeoutSeconds (seen once on
@@ -169,7 +170,7 @@ function Test-Stuck {
     if (($f[0] -eq 'Creating' -or $f[0] -eq 'Pending') -and ($f[1] -eq '' -or $f[1] -eq 'Waiting') -and $events -eq 0) {
         if (-not $script:StuckSince) { $script:StuckSince = Get-Date }
         $secs = [int]((Get-Date) - $script:StuckSince).TotalSeconds
-        if ($secs -ge $StuckTimeoutSeconds) {
+        if ($secs -ge $script:StuckTimeout) {
             throw @"
 the container group $Name has been $($f[0]) for $secs s with its containers waiting and no events at all.
 That is an Azure Container Instances hiccup, not the template (seen once: the same deployment came up in 3.5 min after a recreate).
