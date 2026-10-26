@@ -70,7 +70,9 @@ func TestHubDockerfileACRTasks(t *testing.T) {
 	if !reached {
 		t.Fatal("no stage acr (az acr build --target acr)")
 	}
-	b := string(must(os.ReadFile("../deploy/hub/Dockerfile")))
+	b := strings.ReplaceAll(string(must(os.ReadFile("../deploy/hub/Dockerfile"))), "
+", "
+") // a Windows checkout
 	if !strings.Contains(b, "FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS build\n") || !crossLast {
 		t.Fatal("the default stage must stay the cross-compiling BuildKit one")
 	}

@@ -78,7 +78,7 @@ jobs:
       - name: the ACR stage starts (healthcheck command, Litestream)
         run: |
           docker run --rm --entrypoint /usr/local/bin/litestream longarm-hub:acr version
-          docker run --rm longarm-hub:acr version
+          docker run --rm longarm-hub:acr --version
 
   publish:
     name: publish (ghcr.io, amd64 + arm64)
