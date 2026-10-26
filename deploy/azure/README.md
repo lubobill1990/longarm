@@ -183,6 +183,30 @@ ingested), and **egress** beyond 100 GB/month (about 0.08-0.12 USD/GB):
 traffic relayed by the longnet relay leaves Azure and counts. Direct
 (peer-to-peer) connections between clients and workers don't touch the hub.
 
+## Direct connections (longnet) on ACI
+
+Azure Container Instances rewrites the source address of inbound UDP: the hub
+sees every node at an internal private address of the platform, so its own
+STUN answers (relay port 7443 and 7444) are useless for finding a node's public
+address, and its relay-observed addresses are useless as candidates. Nodes
+ignore private STUN answers from a server on a public address, and the hub
+notices the situation by itself (log line "look source-NATed", `"stun_snat":
+true` in the relay's `/sessions`): it stops advertising its own STUN ports and
+stops passing its observed addresses to peers. Sessions still work through the
+relay either way.
+
+Direct (peer-to-peer) connections therefore need **external STUN servers**.
+The template advertises `stun.cloudflare.com:3478` and
+`stun.l.google.com:19302` to the nodes by default, through the environment
+variable `LONGARM_HUB_RELAY_STUN_ADVERTISE` (comma-separated `host:port`; same
+as `relay_stun_advertise` in hub.toml; the environment wins). Nodes resolve the
+names themselves and send the STUN requests from their own UDP socket, so the
+servers must be reachable over UDP from the nodes, not from Azure. To change the
+list, set the variable (template parameter) to other servers; to disable it,
+set it to `off` (nodes then find no public address and most pairs stay on the
+relay unless both are on one LAN). A node can add servers of its own with
+`LONGARM_NET_STUN=host:port,...`.
+
 ## Limits
 
 - **Single instance.** One container group; no high availability. A hub

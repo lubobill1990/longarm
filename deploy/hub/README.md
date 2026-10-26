@@ -35,7 +35,9 @@ join code on the first start (`longarm-hub bootstrap`; see deploy/azure). Settin
 can also come from the environment, which wins over hub.toml:
 `LONGARM_HUB_ADVERTISE` (public host: `public_addr` + certificate name),
 `LONGARM_HUB_PUBLIC_URL`, `LONGARM_HUB_HTTP`, `LONGARM_HUB_LISTEN`, `LONGARM_HUB_DB`
-(`db_path`: the database outside the data dir).
+(`db_path`: the database outside the data dir), `LONGARM_HUB_RELAY_UDP`,
+`LONGARM_HUB_RELAY_STUN2`, `LONGARM_HUB_RELAY_STUN_ADVERTISE` (`relay_stun_advertise`,
+comma-separated, see below).
 
 Caddy: add [Caddyfile.snippet](Caddyfile.snippet) (`reverse_proxy
 127.0.0.1:7480` with `flush_interval -1` for server-sent events) and reload.
@@ -46,6 +48,18 @@ script URLs use the real client.
 Firewall (cloud security group, ufw, ...): allow 7443/tcp, 7443/udp and 7444/udp inbound. 7444/udp
 is the relay's second STUN port (`relay_stun2`): with only one STUN point,
 nodes can't tell easy from hard NAT and `longarm ls` shows no `nat x/y`.
+
+`relay_stun_advertise` (env `LONGARM_HUB_RELAY_STUN_ADVERTISE`, comma-separated) sets
+the STUN servers the hub tells nodes about: `"self"` = the hub's own ports
+(`relay_udp`, `relay_stun2`; the default), `":port"` = the hub's IP, `host:port` = an
+external server (names are resolved by the nodes), `"off"` = none. Example:
+`relay_stun_advertise = ["self", "stun.cloudflare.com:3478"]`. A hub behind a
+platform's source NAT, where every client appears to come from a private address
+(Azure Container Instances), answers STUN uselessly: nodes ignore such answers, the hub
+detects it (log line "look source-NATed", `"stun_snat": true` in the relay's
+`/sessions`), drops its own ports from the list and stops passing its observed
+addresses to peers. Direct connections there need external servers in this list (see
+[deploy/azure](../azure/README.md#direct-connections-longnet-on-aci)).
 
 ## systemd (no docker)
 

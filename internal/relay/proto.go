@@ -121,6 +121,10 @@ type Welcome struct {
 	// IP (the address the node dialed), "host:port" an explicit server.
 	// Non-empty also means the relay understands FrameNodeInfo.
 	STUN []string `json:"stun,omitempty"`
+	// NodeInfo: the relay understands FrameNodeInfo even with an empty STUN
+	// list (a relay that stopped advertising its own SNATed STUN ports and
+	// has no external servers configured).
+	NodeInfo bool `json:"node_info,omitempty"`
 }
 
 // CallMeMaybe carries candidate addresses for hole punching. Sent by a node
