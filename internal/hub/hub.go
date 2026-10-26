@@ -322,6 +322,11 @@ func (h *Hub) Serve(ctx context.Context) error {
 	pb.RegisterHubNodeServer(g, &hubNodeServer{h: h})
 	pb.RegisterFleetServer(g, &fleetServer{h: h})
 	pb.RegisterHubAdminServer(g, &hubAdminServer{h: h})
+	ds, err := newDiagServer(h)
+	if err != nil {
+		return err
+	}
+	pb.RegisterDiagnosticsServer(g, ds)
 
 	tcp, err := net.Listen("tcp", h.cfg.Listen)
 	if err != nil {

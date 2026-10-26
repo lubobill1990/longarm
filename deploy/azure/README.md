@@ -169,8 +169,11 @@ identity` (template parameter `storageAuth=identity`) deploys without keys:
 ./deploy.sh --name myhub --location eastasia --storage-auth identity
 ```
 
-- The storage account has `allowSharedKeyAccess: false` and only the blob
-  container `litestream`; no file shares.
+- The storage account has `allowSharedKeyAccess: false` and only blob
+  containers: `litestream` (and `diagnostics` with `--diagnostics`, see
+  [below](#telemetry-and-diagnostic-bundles)); no file shares. With
+  `storageAuth=key` the hub has no managed identity and doesn't collect
+  diagnostic bundles (users attach the zip by hand).
 - A user-assigned managed identity `<name>-id` gets **Storage Blob Data
   Contributor** on that container; Litestream finds it through
   `AZURE_CLIENT_ID` (Azure SDK DefaultAzureCredential). The role

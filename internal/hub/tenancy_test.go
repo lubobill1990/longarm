@@ -40,6 +40,7 @@ func TestTenancyRoleTable(t *testing.T) {
 		pb.Fleet_ReportLinks_FullMethodName, pb.Fleet_TailnetKey_FullMethodName, pb.Fleet_WaitJob_FullMethodName,
 		pb.Fleet_Whoami_FullMethodName, pb.HubNode_Leave_FullMethodName, pb.HubNode_Renew_FullMethodName,
 		pb.Telemetry_Push_FullMethodName, // the node's own, scrubbed telemetry
+		pb.Diagnostics_Upload_FullMethodName,
 	}
 	sort.Strings(clientMay)
 	var got []string

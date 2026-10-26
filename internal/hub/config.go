@@ -117,6 +117,8 @@ type Config struct {
 	Tailnet   TailnetConfig   `toml:"tailnet"`
 	Tenancy   TenancyConfig   `toml:"tenancy"`
 	Telemetry TelemetryConfig `toml:"telemetry"`
+	// Diagnostics: where uploaded diagnostic bundles are stored (diag.go).
+	Diagnostics DiagConfig `toml:"diagnostics"`
 	// Headscale is P2's [headscale] section; still accepted (it means
 	// [tailnet] provider = "headscale" with these settings).
 	Headscale HeadscaleConfig `toml:"headscale"`
@@ -363,6 +365,9 @@ func (c *Config) applyDefaults() error {
 		}
 	}
 	if err := c.tailnetDefaults(); err != nil {
+		return err
+	}
+	if err := c.diagEnvDefaults(); err != nil {
 		return err
 	}
 	c.PublicURL = strings.TrimRight(c.PublicURL, "/")

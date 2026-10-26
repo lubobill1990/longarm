@@ -1,0 +1,71 @@
+// Diagnostic bundles (bug reports with logs): `longarmd diag --upload` and
+// `longarm diag --upload` send a zip they collected and scrubbed
+// (internal/diag) to the hub, which stores it in the fleet's Azure Blob
+// Storage container ([diagnostics] in hub.toml) and answers with a report
+// id for the bug report. Admins list and download bundles.
+//
+// Authorization by certificate role:
+//   Diagnostics.Upload            worker, client, admin
+//   Diagnostics.List / Download   admin
+syntax = "proto3";
+
+package longarm.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1";
+
+service Diagnostics {
+  // Upload: the first chunk carries meta (and may carry data), the others
+  // data only. The hub enforces a size limit and a per-node rate limit.
+  rpc Upload(stream DiagChunk) returns (DiagReceipt);
+  // List: bundles uploaded within since (default 7 days), newest first.
+  rpc List(DiagListRequest) returns (DiagListResponse);
+  // Download: the first chunk carries meta, then the zip's bytes.
+  rpc Download(DiagDownloadRequest) returns (stream DiagChunk);
+}
+
+// DiagMeta describes a bundle. Uploaders fill component .. sha256; the hub
+// fills the rest (and replaces node with its own pseudonym of the caller).
+message DiagMeta {
+  string component = 1; // longarmd | longarm
+  string version = 2;
+  string node = 3; // pseudonym of the uploading node ("<node:3f2a9c>")
+  string note = 4; // the user's --note, scrubbed
+  int64 size = 5; // bytes of the zip
+  string sha256 = 6; // hex of the zip
+  string os = 7;
+  string arch = 8;
+  // set by the hub
+  string report_id = 9;
+  string uploader_role = 10;
+  google.protobuf.Timestamp created = 11;
+  string blob = 12; // <yyyy>/<mm>/<dd>/<report-id>.zip
+}
+
+message DiagChunk {
+  DiagMeta meta = 1;
+  bytes data = 2;
+}
+
+message DiagReceipt {
+  string report_id = 1;
+  string blob = 2; // path in the container
+  string location = 3; // the container (https://<account>.blob.core.windows.net/<container>)
+  int64 size = 4;
+  string sha256 = 5;
+}
+
+message DiagListRequest {
+  google.protobuf.Duration since = 1;
+  int32 limit = 2; // default 100
+}
+
+message DiagListResponse {
+  repeated DiagMeta reports = 1;
+}
+
+message DiagDownloadRequest {
+  string report_id = 1;
+}
