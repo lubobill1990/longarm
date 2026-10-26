@@ -301,3 +301,79 @@ func TestPortLinksRelay(t *testing.T) {
 	h.mustLongarm(alice, "link", "rm", id)
 	h.longarm(alice, "kill", srvJob)
 }
+
+var refusedRE = regexp.MustCompile(`(\d+) refused`)
+
+// TestPerUserLinks: port links between two workers with per-user
+// isolation (opt-in like TestPerUserIsolation: LONGARM_PERUSER_TEST=1,
+// elevated / root). On "from" only the owner's processes may use the
+// listener; on "to" the target port must be the owner's (like
+// Forward.Open).
+func TestPerUserLinks(t *testing.T) {
+	requirePerUser(t)
+	h := newHubEnv(t, "")
+	a := newPerUserWorkerNamed(t, h, "w1", "")
+	b := newPerUserWorkerNamed(t, h, "w2", "")
+	alice := h.client
+	os.Remove(filepath.Join(alice, "workers.toml")) // both workers come from the hub
+	bob := linkUser(t, h, "bob-laptop", "bob")
+	for _, n := range []string{"w1", "w2"} {
+		h.waitNode(t, n, "online", func(n map[string]any) bool { return isTrue(n["online"]) })
+	}
+	h.mustLongarm(h.admin, "admin", "user", "add", "alice", "--no-code")
+	h.mustLongarm(h.admin, "admin", "user", "add", "bob", "--no-code")
+	for _, w := range []*puWorker{a, b} {
+		waitFor(t, "the tenancy policy on the worker", 30*time.Second, func() bool {
+			b, err := os.ReadFile(filepath.Join(w.dataDir, "tenancy.json"))
+			return err == nil && strings.Contains(string(b), "bob")
+		})
+	}
+
+	portA, jobA := jobPort(t, h, alice, "w2", b.helper, "http-serve", "600") // alice's server (as her account on w2)
+	portB, jobB := jobPort(t, h, bob, "w2", b.helper, "http-serve", "600")   // bob's
+	lport := strconv.Itoa(freePort(t))
+	id := linkCreate(t, h, alice, "w2:"+portA, "--on", "w1", "--port", lport)
+
+	// alice's process on w1 reaches her server on w2 - which runs as her account there
+	var r result
+	waitFor(t, "alice's server through the link", 60*time.Second, func() bool {
+		r = linkGet(h, alice, "w1", a.helper, "$LONGARM_LINK_W2_"+portA, "/pu")
+		return strings.Contains(r.stdout, "status 200: hello /pu from")
+	})
+	if !strings.Contains(strings.ToLower(r.stdout), b.account("alice")) {
+		t.Fatalf("the server does not run as alice's account on w2: %q", r.stdout)
+	}
+
+	// bob's process on w1 can't use alice's listener
+	r = linkGet(h, bob, "w1", a.helper, "127.0.0.1:"+lport, "/bob")
+	if r.code == 0 || strings.Contains(r.stdout, "hello") {
+		t.Fatalf("bob used alice's link: %+v", r)
+	}
+	waitFor(t, "the refusal in link ls", 20*time.Second, func() bool {
+		m := refusedRE.FindStringSubmatch(linkStatus(t, h, alice, id))
+		return m != nil && m[1] != "0"
+	})
+
+	// alice can't link to bob's server: w2 refuses (not her port)
+	lport2 := strconv.Itoa(freePort(t))
+	id2 := linkCreate(t, h, alice, "w2:"+portB, "--on", "w1", "--port", lport2)
+	waitFor(t, "w2 refusing alice's link to bob's port", 60*time.Second, func() bool {
+		r := linkGet(h, alice, "w1", a.helper, "127.0.0.1:"+lport2, "/steal")
+		if strings.Contains(r.stdout, "hello") {
+			t.Fatalf("alice reached bob's server: %+v", r)
+		}
+		return strings.Contains(linkStatus(t, h, alice, id2), "not listened on by a process of yours")
+	})
+	// and bob can't take alice's listen port
+	if r := h.longarm(bob, "link", "create", "w2:"+portB, "--on", "w1", "--port", lport); r.code == 0 {
+		t.Fatalf("bob squats alice's port: %+v", r)
+	}
+	// audit on w2: the refusal
+	waitFor(t, "w2's audit of the refused link", 30*time.Second, func() bool {
+		out := h.longarm(h.admin, "admin", "audit", "--node", "w2", "--json", "--limit", "500").stdout
+		return strings.Contains(out, id2) && strings.Contains(out, "denied")
+	})
+	h.mustLongarm(alice, "link", "rm", id, id2)
+	h.longarm(alice, "kill", jobA)
+	h.longarm(bob, "kill", jobB)
+}
