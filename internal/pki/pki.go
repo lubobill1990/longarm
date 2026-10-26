@@ -454,6 +454,12 @@ func (b *Bundle) ClientConfig(serverName string) *tls.Config {
 				return fmt.Errorf("server %s is not a worker", id)
 			}
 			if p := b.Trust.Load(); p.Active() {
+				// the name the user signed (Check: endorsement name ==
+				// identity name) must be the worker we asked for; the DNS
+				// SANs that matched serverName are the CA's word only
+				if id.Name != serverName {
+					return fmt.Errorf("end-to-end trust: asked for worker %q, %s answered", serverName, id)
+				}
 				if _, err := p.Check(cs.PeerCertificates[0]); err != nil {
 					return fmt.Errorf("end-to-end trust: %w", err)
 				}

@@ -232,7 +232,11 @@ func TestTrustHandshake(t *testing.T) {
 	var denied []string
 	on.Denied = func(err error) { denied = append(denied, err.Error()) }
 
-	handshake := func(server, client *Bundle) (serr, cerr error) {
+	handshake := func(server, client *Bundle, asked ...string) (serr, cerr error) {
+		name := server.Identity.Name
+		if len(asked) > 0 {
+			name = asked[0]
+		}
 		scfg, err := server.ServerConfig()
 		if err != nil {
 			t.Fatal(err)
@@ -264,7 +268,7 @@ func TestTrustHandshake(t *testing.T) {
 			t.Fatal(err)
 		}
 		b.SetDeadline(time.Now().Add(10 * time.Second))
-		c := tls.Client(b, client.ClientConfig(server.Identity.Name))
+		c := tls.Client(b, client.ClientConfig(name))
 		cerr = c.Handshake()
 		if cerr == nil {
 			c.Write([]byte{0}) // TLS 1.3: the client learns of a refused certificate on first use
@@ -293,6 +297,13 @@ func TestTrustHandshake(t *testing.T) {
 	wForged := bundle(IssueOptions{Role: RoleWorker, Name: "w1"}, nil, nil)
 	if _, cerr := handshake(wForged, cGood); cerr == nil || !strings.Contains(cerr.Error(), "end-to-end trust") {
 		t.Fatalf("forged worker accepted: %v", cerr)
+	}
+
+	// another endorsed worker, with a CA-issued DNS name of w1: a client
+	// asking for w1 refuses it (the user signed "w2", not "w1")
+	w2 := bundle(IssueOptions{Role: RoleWorker, Name: "w2", Hosts: []string{"w1"}}, f.endorsed("alice", KindWorker, "w2", newNodeKey()), on)
+	if _, cerr := handshake(w2, cGood, "w1"); cerr == nil || !strings.Contains(cerr.Error(), `asked for worker "w1"`) {
+		t.Fatalf("w2 posing as w1: %v", cerr)
 	}
 
 	// policies off (nil source / no users): today's behavior
