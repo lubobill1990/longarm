@@ -211,10 +211,14 @@ type TrustPolicy struct {
 	Users map[string]ed25519.PublicKey
 	// DenyNodes are node keys refused even when endorsed (a lost device).
 	DenyNodes [][]byte
+	// DenyAll: endorsements are required but no key is trusted (a client
+	// with require_workers after its last trusted user was removed):
+	// everybody is refused - never "off".
+	DenyAll bool
 }
 
 // Active reports whether the policy demands endorsements.
-func (p *TrustPolicy) Active() bool { return p != nil && len(p.Users) > 0 }
+func (p *TrustPolicy) Active() bool { return p != nil && (len(p.Users) > 0 || p.DenyAll) }
 
 // Check verifies that c's node is endorsed by a trusted user key as what c
 // claims to be: a worker endorsed as a worker under its name; a client or
@@ -224,6 +228,9 @@ func (p *TrustPolicy) Check(c *x509.Certificate) (string, error) {
 	id, err := IdentityFromCert(c)
 	if err != nil {
 		return "", err
+	}
+	if len(p.Users) == 0 {
+		return "", fmt.Errorf("%s: no user key is trusted (require_workers without trusted users)", id)
 	}
 	t, err := TrustOf(c)
 	if err != nil {

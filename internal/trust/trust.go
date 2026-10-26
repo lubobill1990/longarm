@@ -350,7 +350,10 @@ func (s Store) Policy(forClient bool) (*pki.TrustPolicy, error) {
 			p.Users[user] = k.Public().(ed25519.PublicKey)
 		}
 		if len(p.Users) == 0 {
-			return nil, fmt.Errorf("%s: require_workers without a user key or users", s.path(PolicyFile))
+			// the last trusted user was removed: refuse every worker
+			// rather than fail to load (a running daemon would keep the
+			// previous policy, still trusting the removed key)
+			p.DenyAll = true
 		}
 	}
 	return p, nil
@@ -406,7 +409,11 @@ func (s Store) SetRequireWorkers(on bool) error {
 	if err := s.SavePolicyFile(f); err != nil {
 		return err
 	}
-	if _, err := s.Policy(true); err != nil {
+	p, err := s.Policy(true)
+	if err == nil && on && p.DenyAll {
+		err = errors.New("require_workers needs a user key (longarm trust init / import-key) or trusted users (longarm trust add-user)")
+	}
+	if err != nil {
 		s.SavePolicyFile(&old)
 		return err
 	}
@@ -464,6 +471,9 @@ func (s Store) stamp() string {
 func Summary(p *pki.TrustPolicy) string {
 	if !p.Active() {
 		return "off"
+	}
+	if len(p.Users) == 0 {
+		return "refuse all (required, but no trusted user keys)"
 	}
 	var us []string
 	for u, k := range p.Users {

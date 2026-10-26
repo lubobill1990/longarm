@@ -145,6 +145,9 @@ func TestTrustCheck(t *testing.T) {
 		}
 	}
 
+	if _, err := (&TrustPolicy{DenyAll: true}).Check(good); err == nil || !(&TrustPolicy{DenyAll: true}).Active() {
+		t.Error("a deny-all policy accepted an endorsed certificate")
+	}
 	p.DenyNodes = [][]byte{laptopKey.Public().(ed25519.PublicKey)}
 	if _, err := p.Check(good); err == nil || !strings.Contains(err.Error(), "denied") {
 		t.Errorf("denied node: %v", err)

@@ -165,3 +165,24 @@ func TestClientPolicy(t *testing.T) {
 		t.Fatal(Summary(p))
 	}
 }
+
+// A device without a user key that trusted bob, then removed him: every
+// worker is refused (not "policy off", not "keep the old policy").
+func TestClientPolicyLastUserRemoved(t *testing.T) {
+	s := Store{Dir: filepath.Join(t.TempDir(), "trust")}
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	s.AddUser(pki.UserKeyLine{User: "bob", Key: pub})
+	if err := s.SetRequireWorkers(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveUser("bob"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Policy(true)
+	if err != nil || !p.Active() || !p.DenyAll || len(p.Users) != 0 {
+		t.Fatalf("after removing the last user: %+v %v", p, err)
+	}
+	if !strings.Contains(Summary(p), "refuse all") {
+		t.Fatal(Summary(p))
+	}
+}
