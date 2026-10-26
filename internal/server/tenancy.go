@@ -24,11 +24,21 @@ import (
 // Multi-tenancy on the worker (docs/security.md). Ownership is enforced
 // when the worker isolates users ([isolation] mode = "per-user") or the
 // hub separates them (its tenancy policy is enabled); otherwise - one
-// person's fleet - every client acts on everything, as before.
+// person's fleet - every client acts on everything, as before. A worker
+// access policy ([access]) enforces it, too, for everybody but its owners.
 
-// enforce reports whether ownership checks apply.
+// enforce reports whether ownership checks apply because users are
+// separated (isolation or the hub's policy; quotas come with it).
 func (s *Server) enforce() bool {
 	return s.perUser() || (s.Policy != nil && s.Policy.Enabled())
+}
+
+// enforceFor reports whether ownership checks apply to the caller: always
+// when users are separated; with only an access policy, to everybody but the
+// worker's owners - they keep the one-person-fleet view they had (their
+// devices' plain certificates act on each other's jobs and sessions).
+func (s *Server) enforceFor(ctx context.Context) bool {
+	return s.enforce() || (s.Access.Active() && !s.Access.IsOwner(IdentityFrom(ctx).Owner()))
 }
 
 // perUser reports per-user OS isolation (never inside the user helper,
@@ -51,7 +61,8 @@ func (s *Server) callerOf(ctx context.Context) tenancy.Caller {
 		teams = s.Policy.Teams(id.Owner())
 	}
 	c := tenancy.CallerOf(id, teams)
-	if !s.enforce() {
+	c.Admin = c.Admin && s.Access.AdminRights(id)
+	if !s.enforceFor(ctx) {
 		c.Admin = true // single-user fleet: no separation
 	}
 	return c

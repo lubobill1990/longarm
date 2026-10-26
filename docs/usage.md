@@ -387,6 +387,33 @@ The table stays while longarmd is stopped (jobs outlive it) and is removed
 by `longarmd leave --purge`, uninstalling and `loopback = "allow"`. Details
 and limits: [security.md](security.md#loopback-between-users-linux).
 
+The **owner of a worker machine** decides locally what the hub's admins and
+users may do on it - the hub cannot change this
+([security.md](security.md#worker-side-access-policy)):
+
+```toml
+# longarmd.toml
+[access]
+users  = ["alice", "bob"]   # who may use this worker at all (default: everybody the hub admits);
+                            # others only get Node.Info (longarm ls / info), every refusal is audited
+owners = ["alice"]          # full rights for their role, whatever `admins` says; users implicitly
+admins = "full"             # what OTHER admin certificates may do here: full (default) |
+                            # own (like a client of their user: own jobs and sessions only, no
+                            # admin gc/shutdown, no process lists) | observe (node info and metrics
+                            # without process lists) | none (node info)
+hub_job_details = true      # false: job reports, forwarded audit lines and process lists sent to
+                            # the hub carry no command lines, env names, directories, paths or
+                            # process names (the local audit.log keeps everything)
+```
+
+Users are the users of the certificates (`?user=`), or the certificate name
+for certificates without one. A restricting `[access]` (users or owners set,
+or `admins` other than full) turns on ownership checks for everybody but the
+owners, who keep acting on everything as before; with `users` set or
+`admins` other than full, `[hub] remote_jobs` defaults to `none`. longarmd
+refuses to start with an unknown `admins` value or an invalid user name and
+logs the effective policy at start (`access policy ...`).
+
 ### Local control API, longarm daemon
 
 `longarmd` and `longarm daemon` serve a local-only control API (named pipe with an
@@ -415,7 +442,8 @@ labels = { region = "eu" }           # scheduler constraints (longarm run --requ
 # advertise = ["tcp://100.64.0.11:7701"]   # endpoints clients get (default: the listeners)
 # remote_jobs = "control"          # what the hub (web panel, longarm admin kill|logs|run) may do here:
 #                                  # control = kill, logs, toolchain apply (default); all = also
-#                                  # run commands submitted through the hub; none
+#                                  # run commands submitted through the hub; none (the default
+#                                  # when [access] sets users or limits admins)
 [toolchain]
 # backend = "system"                 # or "fake" (tests): fake_state = "path.json"
 # interval = "30m"

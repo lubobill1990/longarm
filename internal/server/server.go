@@ -72,7 +72,10 @@ type Server struct {
 	// unless [isolation] mode = "per-user").
 	Spaces *userspace.Spaces
 	// Policy is the hub's tenancy policy (users, teams, quotas); nil = none.
-	Policy  *tenancy.Policy
+	Policy *tenancy.Policy
+	// Access is the worker owner's local access policy ([access]); nil =
+	// none. The hub cannot change it.
+	Access  *Access
 	Sampler *metrics.Sampler
 	Audit   *Audit
 	Log     *slog.Logger
@@ -214,7 +217,7 @@ func (m *metricsServer) Snapshot(ctx context.Context, _ *pb.MetricsRequest) (*pb
 // metricsFor strips the machine's top-process lists for non-admins when
 // users are separated: other users' process names and sizes are theirs.
 func (s *Server) metricsFor(ctx context.Context, m *pb.MetricsSnapshot) *pb.MetricsSnapshot {
-	if s.enforce() && !s.callerOf(ctx).Admin {
+	if s.enforceFor(ctx) && !s.callerOf(ctx).Admin {
 		m.TopCpu, m.TopMem = nil, nil
 	}
 	return m
@@ -349,6 +352,9 @@ func (j *jobsServer) Submit(ctx context.Context, req *pb.SubmitRequest) (*pb.Job
 // SubmitAs submits a job for owner (the hub's SubmitJob relays it with the
 // owner it checked).
 func (s *Server) SubmitAs(ctx context.Context, owner string, spec jobs.Spec, secrets map[string]string) (supervisor.Job, error) {
+	if !s.Access.AllowsUser(owner) { // the hub admits whom it likes; this worker's users are local
+		return supervisor.Job{}, status.Errorf(codes.PermissionDenied, "user %s may not use this worker ([access] users)", owner)
+	}
 	spec.Owner = owner
 	return (&jobsServer{s: s}).submit(ctx, owner, spec, secrets, nil)
 }
