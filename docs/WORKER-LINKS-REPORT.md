@@ -1,3 +1,4 @@
+| CI on the PR (ubuntu, windows, macos, lint, azure template, image smoke) | all green; ubuntu needed reruns for unrelated flakes (`TestHubContainerStart` "text file busy", `TestAzureDeployScripts` missing `bootstrap.env`) and once for the intermittent `TestPerUserLinks` hang below; final run: `--- PASS: TestPerUserLinks (36.41s)` on Linux as root |
 # WORKER-LINKS report: port links between workers (joint debugging)
 
 A user's processes on worker A reach a loopback port of worker B as
@@ -147,6 +148,15 @@ the branch found no authorization bypass; its findings and what was done:
   restrict who connects to a listener locally.
 - Per-connection audit on B can be chatty for clients without keep-alive.
 - The panel page was built and unit-tested, not driven with Playwright.
+- **Intermittent, Linux CI, unexplained:** in 1 of 2 CI runs of
+  `TestPerUserLinks` (two per-user longarmd on one ubuntu runner) the second
+  worker stopped reporting to the hub right after connecting and its gRPC
+  port stopped answering, while it still received hub pushes; the rerun
+  passed (`--- PASS: TestPerUserLinks (36.41s)`), Windows (local and CI)
+  always passed. No cause found by reading the code (no lock shared between
+  the stuck paths). The Linux per-user e2e helper now sends SIGQUIT to
+  longarmd when a test fails, so the next occurrence leaves a goroutine dump
+  in the test log.
 - `longarm link` needs the hub (no hub-less mode: grants come from the hub).
 
 ## Needs from a human
@@ -155,7 +165,7 @@ the branch found no authorization bypass; its findings and what was done:
    merges first, the branch needs a rebase: expected conflicts in
    `docs/usage.md`, `docs/security.md`, `README.md`, `deploy/azure/E2E.md`,
    `internal/hub/config.go` and `internal/relay/server.go` (textual only).
-2. Run the Linux per-user suite (CI does: `-run PerUser` as root) and, if
+2. Run the Linux per-user suite (CI does: `-run PerUser` as root) - a few more times: see the intermittent hang under "Known gaps" and, if
    wanted, the Azure E2E step 4b with two real workers on different
    networks.
 3. Tailnets in use: add the worker → worker tcp:7701 rule (Headscale policy
