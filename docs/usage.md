@@ -159,7 +159,8 @@ longarm link rm lk-0123456789ab                       # cuts open connections at
   `longarm link rm`, when its owner is removed or a worker is revoked;
   both workers then close the listener and every open connection. The hub
   keeps links across restarts; workers keep their last list, so links work
-  while the hub is down (a link removed meanwhile only ends when the hub
+  while the hub is down: A ends a link at its TTL and when its `--job` ends
+  by itself, B at its TTL (a link removed meanwhile only ends when the hub
   is back or its TTL runs out).
 - **Paths.** A dials B like a client does: the transport race over B's
   advertised endpoints (tcp, tailscale, longnet), with A's own longnet and

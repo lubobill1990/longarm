@@ -27,6 +27,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/portlink"
 	"github.com/lubobill1990/longarm/internal/server"
+	"github.com/lubobill1990/longarm/internal/supervisor"
 	"github.com/lubobill1990/longarm/internal/userspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -45,7 +46,11 @@ import (
 //     whether the link is (still) in the list.
 //
 // A link that leaves the list (removed, expired) is cut on both sides:
-// listener closed, open connections closed.
+// listener closed, open connections closed. Expiry and the end of the job a
+// link is bound to are also enforced here, without the hub: a link may only
+// be bound to a job on its "from" worker, so A ends it when the job ends (the
+// target cannot see A's jobs; with A no longer dialing, it has nothing to
+// accept).
 
 // PortLinksFile holds the hub's last list of port links naming this worker.
 const PortLinksFile = "port-links.json"
@@ -71,6 +76,9 @@ type linkManager struct {
 	// report sends link states to the hub (the agent's session; dropped
 	// while offline).
 	report func(*pb.PortLinkReport)
+	// jobEnded says whether a job on this worker has ended (or is gone):
+	// links bound to it end.
+	jobEnded func(id string) bool
 
 	mu      sync.Mutex
 	links   map[string]*linkState  // every link naming this worker
@@ -115,6 +123,13 @@ func newLinkManager(ctx context.Context, dataDir, name string, bundle *pki.Bundl
 	log *slog.Logger, dialer *client.Dialer) *linkManager {
 	m := &linkManager{ctx: ctx, dataDir: dataDir, name: name, bundle: bundle, spaces: spaces, audit: audit, log: log,
 		dialer: dialer, links: map[string]*linkState{}, targets: map[string]*linkTarget{}}
+	m.jobEnded = func(id string) bool {
+		if spaces == nil {
+			return false
+		}
+		_, j, err := spaces.FindJob(id)
+		return errors.Is(err, supervisor.ErrNotFound) || (err == nil && j.Status.State.Terminal())
+	}
 	if ln, err := net.Listen("tcp6", "[::1]:0"); err == nil {
 		m.ipv6 = true
 		ln.Close()
@@ -171,6 +186,12 @@ func expired(l *pb.PortLink, now time.Time) bool {
 	return l.ExpiresAt != nil && !now.Before(l.ExpiresAt.AsTime())
 }
 
+// jobGone: l is bound to a job here that has ended (the hub ends such links
+// too, but it may be away).
+func (m *linkManager) jobGone(l *pb.PortLink) bool {
+	return l.From == m.name && l.JobId != "" && m.jobEnded(l.JobId)
+}
+
 // apply makes pl (the hub's list) the current set of links; persist saves
 // it for restarts.
 func (m *linkManager) apply(pl *pb.PortLinks, persist bool) {
@@ -186,7 +207,7 @@ func (m *linkManager) apply(pl *pb.PortLinks, persist bool) {
 	keep := map[string]bool{}
 	for _, a := range pl.Links {
 		l := a.GetLink()
-		if l == nil || !portlink.ValidID(l.Id) || (l.From != m.name && l.To != m.name) || expired(l, now) {
+		if l == nil || !portlink.ValidID(l.Id) || (l.From != m.name && l.To != m.name) || expired(l, now) || m.jobGone(l) {
 			continue
 		}
 		keep[l.Id] = true
@@ -266,13 +287,18 @@ func (m *linkManager) release(t *linkTarget) {
 	}
 }
 
-// run expires links locally (also without the hub) and reports the states
-// of the links listened for.
+// run expires links and ends those of ended jobs locally (also without the
+// hub) and reports the states of the links listened for.
 func (m *linkManager) run(ctx context.Context) {
 	t := time.NewTicker(linkReportEvery)
 	defer t.Stop()
 	for {
+		var jobsChanged <-chan struct{}
+		if m.spaces != nil {
+			jobsChanged = m.spaces.Changed()
+		}
 		select {
+		case <-jobsChanged:
 		case <-ctx.Done():
 			m.mu.Lock()
 			for _, ls := range m.links {
@@ -290,6 +316,8 @@ func (m *linkManager) run(ctx context.Context) {
 		for _, ls := range m.links {
 			if expired(ls.link, now) {
 				m.removeLocked(ls, "expired")
+			} else if m.jobGone(ls.link) {
+				m.removeLocked(ls, "job ended")
 			}
 		}
 		m.pruneTargetsLocked()
@@ -485,7 +513,7 @@ func (m *linkManager) serveConn(ls *linkState, c net.Conn) {
 // checkPeer: with per-user isolation only processes of the link owner's
 // account may use the link (the listener belongs to longarmd).
 func (m *linkManager) checkPeer(l *pb.PortLink, c net.Conn) error {
-	if !m.spaces.PerUser() {
+	if m.spaces == nil || !m.spaces.PerUser() {
 		return nil
 	}
 	sp := m.spaces.Lookup(l.Owner)

@@ -222,7 +222,8 @@ removed, either worker being revoked) pushes new lists to both workers;
 both close the listener and cut every open connection through it, and the
 hub stops relaying between the two workers when no link remains. Workers
 also expire links themselves, so a link ends at its TTL even when the hub
-is unreachable. Workers keep the last list across restarts
+is unreachable, and the source worker ends a link bound to a job when the
+job ends there (the job always runs on the source). Workers keep the last list across restarts
 (`<data>/port-links.json`) so links work while the hub is down; a link
 removed during a hub outage ends when the hub is back or at its TTL
 (default 8h, `[links] max_ttl`).
