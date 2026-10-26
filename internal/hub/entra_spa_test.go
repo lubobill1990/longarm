@@ -260,3 +260,63 @@ func TestEntraSPASignIn(t *testing.T) {
 		t.Fatalf("forged state: %d", resp.StatusCode)
 	}
 }
+
+// TestEntraStaleMapping: a removed user's name may go to someone else; the
+// first person's next sign-in must not land on the new owner's account.
+func TestEntraStaleMapping(t *testing.T) {
+	f := newFakeEntra(t)
+	h := newEntraHub(t, f, nil)
+	const (
+		oidA = "aaaaaaaa-0000-4000-8000-00000000000a"
+		oidB = "bbbbbbbb-0000-4000-8000-00000000000b"
+	)
+	a := entraIdentity{oid: oidA, upn: "alice@a.example"}
+	b := entraIdentity{oid: oidB, upn: "alice@b.example"}
+	if u, _, err := h.entraSignIn(a, "web"); err != nil || u != "alice" {
+		t.Fatalf("A: %q %v", u, err)
+	}
+	if err := h.entraPanelLogin("alice", oidA, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.RemoveUser("test", &pb.RemoveUserRequest{Name: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if u, _, err := h.entraSignIn(b, "web"); err != nil || u != "alice" {
+		t.Fatalf("B after alice's removal: %q %v (the name is free: no devices, panel account removed)", u, err)
+	}
+	if err := h.entraPanelLogin("alice", oidB, false); err != nil {
+		t.Fatalf("B's panel account: %v", err)
+	}
+	u, _, err := h.entraSignIn(a, "web")
+	if err != nil || u == "alice" {
+		t.Fatalf("A again: %q %v - must not become B's alice", u, err)
+	}
+	h.mu.Lock()
+	upn := h.tenants["alice"].u.Upn
+	h.mu.Unlock()
+	if upn != "alice@b.example" {
+		t.Fatalf("B's UPN overwritten: %q", upn)
+	}
+	if u2, _, err := h.entraSignIn(b, "web"); err != nil || u2 != "alice" {
+		t.Fatalf("B again: %q %v", u2, err)
+	}
+	if u3, _, err := h.entraSignIn(a, "web"); err != nil || u3 != u {
+		t.Fatalf("A's new user is stable: %q, want %q (%v)", u3, u, err)
+	}
+
+	// A removed user with devices: the name keeps that history.
+	r, err := hubclient.Login(tctx(t), h.Addr("grpc"), hubclient.LoginOptions{
+		JoinOptions: hubclient.JoinOptions{Name: "bobdev"},
+		Token: func(context.Context, *pb.AuthInfoResponse) (string, error) {
+			return f.sign(f.accessClaims("cccccccc-0000-4000-8000-00000000000c", "bob@c.example")), nil
+		}})
+	if err != nil || r.Resp.Name != "bobdev" {
+		t.Fatalf("bob: %v %v", r, err)
+	}
+	if _, err := h.RemoveUser("test", &pb.RemoveUserRequest{Name: "bob"}); err != nil {
+		t.Fatal(err)
+	}
+	if u, _, err := h.entraSignIn(entraIdentity{oid: "dddddddd-0000-4000-8000-00000000000d", upn: "bob@d.example"}, "web"); err != nil || u != "bob2" {
+		t.Fatalf("a new bob: %q %v, want bob2", u, err)
+	}
+}

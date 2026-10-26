@@ -266,8 +266,23 @@ func (h *Hub) entraAppUser(app, oid string) (string, error) {
 	return user, nil
 }
 
-// entraOIDKey is the meta key mapping an Entra object ID to its user.
-func entraOIDKey(oid string) string { return "entra_oid:" + strings.ToLower(oid) }
+// entraOIDKey is the meta key mapping an Entra object ID to its user;
+// entraUserKey binds the user to that object ID (the user record's
+// immutable Entra identity, kept next to the protojson record in the
+// store). A sign-in only lands on a user when both agree.
+func entraOIDKey(oid string) string   { return "entra_oid:" + strings.ToLower(oid) }
+func entraUserKey(user string) string { return "entra_user:" + user }
+
+// entraForgetLocked drops user's Entra binding (RemoveUser): its name may
+// go to someone else later, never back through a stale mapping.
+func (h *Hub) entraForgetLocked(user string) {
+	if oid, _ := h.store.Meta(entraUserKey(user)); oid != "" {
+		if u, _ := h.store.Meta(entraOIDKey(oid)); u == user {
+			h.store.DeleteMeta(entraOIDKey(oid))
+		}
+		h.store.DeleteMeta(entraUserKey(user))
+	}
+}
 
 // entraSignIn maps a verified Entra user to its Longarm user - created on
 // first sign-in, named after the UPN - and says whether it is one of the
@@ -285,6 +300,18 @@ func (h *Hub) entraSignIn(id entraIdentity, by string) (user string, admin bool,
 	if err != nil {
 		h.mu.Unlock()
 		return "", false, status.Error(codes.Internal, err.Error())
+	}
+	if user != "" {
+		bound, err := h.store.Meta(entraUserKey(user))
+		if err != nil {
+			h.mu.Unlock()
+			return "", false, status.Error(codes.Internal, err.Error())
+		}
+		if h.tenants[user] == nil || bound != id.oid { // removed, or its name went to someone else
+			h.log.Warn("entra sign-in: stale user mapping dropped", "user", user, "oid", id.oid, "via", by)
+			h.store.DeleteMeta(entraOIDKey(id.oid))
+			user = ""
+		}
 	}
 	created := false
 	if t := h.tenants[user]; user != "" && t != nil {
@@ -305,6 +332,10 @@ func (h *Hub) entraSignIn(id entraIdentity, by string) (user string, admin bool,
 		user = h.freeUserNameLocked(entraUserName(id.upn))
 		u := &pb.TenantUser{Name: user, CreatedAt: tspb(time.Now().UTC()), CreatedBy: "entra", Upn: id.upn}
 		if err := h.saveTenantLocked(u); err != nil {
+			h.mu.Unlock()
+			return "", false, status.Error(codes.Internal, err.Error())
+		}
+		if err := h.store.SetMeta(entraUserKey(user), id.oid); err != nil {
 			h.mu.Unlock()
 			return "", false, status.Error(codes.Internal, err.Error())
 		}
@@ -352,17 +383,20 @@ func entraUserName(upn string) string {
 // identity or other panel account uses - a legacy client certificate named
 // alice acts as user alice, and the user's panel login gets its name.
 func (h *Hub) freeUserNameLocked(base string) string {
+	// Taken: a live or purged user, an Entra binding, any panel account,
+	// and any node of that name or user - revoked ones too: a name with
+	// another person's history is never handed out again.
 	taken := func(n string) bool {
 		if h.tenants[n] != nil || slices.Contains(h.purged, n) {
 			return true
 		}
-		if pu, err := h.store.GetUser(n); err == nil && pu.Tenant != n {
+		if oid, _ := h.store.Meta(entraUserKey(n)); oid != "" {
+			return true
+		}
+		if _, err := h.store.GetUser(n); err == nil {
 			return true
 		}
 		for _, x := range h.nodes {
-			if x.rec.State == stateRevoked {
-				continue
-			}
 			if x.rec.Name == n || x.rec.Role != string(pki.RoleWorker) && nodeUser(x.rec) == n {
 				return true
 			}

@@ -562,8 +562,10 @@ client_secret_file = ""            # LONGARM_HUB_ENTRA_CLIENT_SECRET_FILE (confi
 
 The panel login of an Entra user is named like its Longarm user (role user,
 or admin for `admins`; the user's own password login, if any, stays usable).
-Notes: a removed user who signs in again is created again (to block someone
-use `allowed`, or `longarm admin user disable`); a change to `admins` applies
+Notes: users are bound to their Entra object ID; a removed user who signs in
+again gets a new user (a fresh name if the old one has history: devices, a
+panel account), never another person's - to block someone
+use `allowed`, or `longarm admin user disable`; a change to `admins` applies
 at the next sign-in (panel sessions last `[web] session_ttl`, certificates
 their TTL).
 

@@ -465,6 +465,7 @@ func (h *Hub) RemoveUser(by string, req *pb.RemoveUserRequest) (*pb.RemoveUserRe
 	}
 	h.mu.Lock()
 	delete(h.tenants, req.Name)
+	h.entraForgetLocked(req.Name) // the name may go to someone else
 	if err := h.store.DeleteTenant(req.Name); err != nil {
 		h.mu.Unlock()
 		return nil, status.Error(codes.Internal, err.Error())
