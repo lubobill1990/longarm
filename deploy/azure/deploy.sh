@@ -299,19 +299,18 @@ if $build_in_acr; then
 	ensure_providers Microsoft.ContainerRegistry
 	root=$(cd "$here/../.." && pwd)
 	[[ -f $root/deploy/hub/Dockerfile && -f $root/go.mod ]] || die "--build-in-acr: run from a checkout of the repository"
-	acr=$(az acr list -g "$rg" --query "[?tags.\"longarm-hub\"=='$name'].name | [0]" -o tsv | tr -d '')
+	acr=$(az acr list -g "$rg" --query "[?tags.\"longarm-hub\"=='$name'].name | [0]" -o tsv | tr -d '\r')
 	if [[ -z $acr ]]; then
-		acr=lahub$(od -An -tx1 -N6 /dev/urandom | tr -d ' 
-')
+		acr=lahub$(od -An -tx1 -N6 /dev/urandom | tr -d ' \n')
 		echo "creating the container registry $acr in $rg (Basic, about 5 USD/month)"
 		az acr create -g "$rg" -n "$acr" -l "$location" --sku Basic --admin-enabled true --tags "longarm-hub=$name" -o none
 	fi
-	login_server=$(az acr show -g "$rg" -n "$acr" --query loginServer -o tsv | tr -d '')
+	login_server=$(az acr show -g "$rg" -n "$acr" --query loginServer -o tsv | tr -d '\r')
 	version=$(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo dev)
 	tag=build-$(date -u +%Y%m%d%H%M%S)
 	echo "building $login_server/longarm-hub:$tag from $root (az acr build, a few minutes)"
 	# --target acr: ACR Tasks can't parse the BuildKit stages (deploy/hub/Dockerfile)
-	az acr build -g "$rg" -r "$acr" -t "longarm-hub:$tag" --target acr --platform linux/amd64 
+	az acr build -g "$rg" -r "$acr" -t "longarm-hub:$tag" --target acr --platform linux/amd64 \
 		--build-arg "VERSION=$version" -f deploy/hub/Dockerfile "$root" ||
 		die "az acr build failed (the build log is above)"
 	image=$login_server/longarm-hub:$tag
@@ -320,7 +319,7 @@ fi
 # admin login (no --registry-user needed, also on re-runs)
 reg_host=$(registry_host "$image")
 if [[ -z $registry_user && $reg_host == *.azurecr.io ]]; then
-	acr=${acr:-$(az acr list -g "$rg" --query "[?loginServer=='$reg_host'].name | [0]" -o tsv 2>/dev/null | tr -d '' || true)}
+	acr=${acr:-$(az acr list -g "$rg" --query "[?loginServer=='$reg_host'].name | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)}
 	[[ -z $acr ]] || acr_login "$acr"
 fi
 [[ -z $cur_registry || -n $registry_user ]] ||
