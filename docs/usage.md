@@ -305,11 +305,23 @@ mode = "per-user"                    # shared (default) | per-user
 # users_dir = "/var/lib/longarm-users"   # default <data>/users (Unix: parents need o+x)
 # account_prefix = "la-"
 # cgroup_root = "/sys/fs/cgroup/longarm" # Linux; "off" = process groups only
+# loopback = "isolate"                   # Linux: isolate (default) | require | allow
 ```
 
 Install: `longarmd service install --isolation per-user` (no `--user`), MSI
 `ISOLATION=per-user`, deb `LONGARM_ISOLATION=per-user` (`longarmd-peruser.service`,
-data in `/var/lib/longarmd`). On Linux mount `/proc` with `hidepid=invisible`.
+data in `/var/lib/longarmd`). On Linux mount `/proc` with `hidepid=invisible`
+and install `nftables`.
+
+`loopback` (Linux): with `isolate` longarmd installs the nftables table
+`inet longarm` so that one account's processes cannot connect to another
+account's loopback ports (`127.0.0.1`, `::1`, the machine's own addresses);
+connections within one account, from root (Longarm's forwards) and from
+other system users keep working. Without `nft` longarmd logs a warning and
+runs on; `require` makes it refuse to start instead; `allow` turns it off.
+The table stays while longarmd is stopped (jobs outlive it) and is removed
+by `longarmd leave --purge`, uninstalling and `loopback = "allow"`. Details
+and limits: [security.md](security.md#loopback-between-users-linux).
 
 ### Local control API, longarm daemon
 

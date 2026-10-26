@@ -173,15 +173,110 @@ pnpm, uv, pwsh, claude and copilot; per-user agent settings (`~/.claude`,
 setuid per user is not implemented); they stay usable in shared mode, with
 API ownership only.
 
+### Loopback between users (Linux)
+
+Without help from the firewall, every local process can connect to every
+loopback listener: bob's job could talk to alice's dev server on
+`127.0.0.1:3000`. With `[isolation] loopback = "isolate"` (the default)
+longarmd installs and owns the nftables table `inet longarm` that refuses
+TCP connections between **different isolation accounts** over `lo`
+(`127.0.0.0/8`, `::1` and the machine's own addresses, which are routed
+via `lo` too):
+
+```
+table inet longarm {
+	chain output {
+		type filter hook output priority 0; policy accept;
+		oif != "lo" return
+		ct direction original ct mark and 0xffff0000 == 0xffff0000 tcp flags & (syn | ack) == syn reject with tcp reset
+		ct state invalid tcp flags & (syn | ack) == syn | ack meta skuid { 1001, 1002 } counter drop
+		ct state new jump sender
+		ct direction original tcp flags & (syn | ack) == syn jump sender
+		ct direction reply ct mark and 0xffff0000 != 0x00000000 tcp flags & (syn | ack) == syn | ack jump answer
+		ct direction reply ct mark and 0xffff0000 != 0x00000000 meta l4proto udp jump answer
+	}
+	chain sender {                          # who opened the connection
+		ct mark set ct mark and 0x0000ffff
+		meta skuid 1001 ct mark set ct mark or 0x00010000 return   # la-alice
+		meta skuid 1002 ct mark set ct mark or 0x00020000 return   # la-bob
+	}
+	chain answer {                          # who answers it
+		ct mark and 0xffff0000 == 0x00010000 meta skuid 1001 return
+		ct mark and 0xffff0000 == 0x00020000 meta skuid 1002 return
+		meta skuid != { 1001, 1002 } return
+		ct mark set ct mark or 0xffff0000 counter drop
+	}
+}
+```
+
+How it works: the first packet of a connection on `lo` records the sending
+account (`meta skuid` of the socket) in bits 16-31 of the conntrack mark
+(0 for root and every non-account uid). The listener's answer - the
+SYN-ACK, which the kernel attributes to the listening socket - is checked
+in the output hook: an answer from another account's socket (or from no
+identifiable socket) is dropped and the connection marked blocked; the
+client's retransmitted SYN then gets a TCP reset, so `connect()` fails with
+"connection refused" after about a second. UDP replies between accounts
+are dropped the same way.
+
+- **Kept working**: connections within one account (IPv4 and IPv6),
+  root's connections to the accounts' ports (Longarm's port forwards, ssh
+  `direct-tcpip`), the accounts' connections to root and system services
+  (DNS on `127.0.0.53`, databases, longarmd's local API), everything not
+  on `lo`, and other uids among themselves. It is uid based, so jobs,
+  sessions, `exec`, sftp and the user helper are covered alike, with or
+  without cgroups.
+- **Lifecycle**: longarmd replaces the table atomically (`nft -f`) at start
+  and whenever an account is created or purged; it stays while longarmd is
+  stopped or restarting (the jobs outlive longarmd); `longarmd leave
+  --purge`, uninstalling (deb prerm) and `loopback = "allow"` remove it.
+  Remove it by hand with `nft delete table inet longarm`. Only one per-user
+  longarmd per machine (the table name is fixed).
+- **Failure**: without `nft` (package `nftables`), without root or when the
+  kernel refuses the rules, longarmd logs a warning and runs on unprotected;
+  `loopback = "require"` makes it refuse to start (and to create accounts)
+  instead. `loopback = "allow"` turns it off.
+- **Requirements**: nftables with conntrack on `lo` (the default; a
+  `notrack` rule for `lo` disables the protection), kernel and nft from
+  the last years (`ct mark`, `meta skuid`, `reject` in output: Linux 4.x,
+  nft 0.9). The upper 16 bits of the conntrack mark of loopback
+  connections belong to Longarm. The table turns connection tracking on
+  if nothing else (ufw, Docker, firewalld) did - all traffic is then
+  tracked; mind `nf_conntrack_max` on very busy hosts. An account's
+  SYN-ACK that conntrack considers invalid (sender unknown) is dropped too.
+- **Limits**: one-way UDP datagrams still arrive (only the replies are
+  dropped); unix sockets (filesystem: protect them with file permissions;
+  abstract ones are reachable by everyone) are not covered; neither are
+  raw protocols other than TCP and UDP. Under a SYN flood (SYN cookies) the
+  kernel answers without a socket and the rule fails closed: accounts'
+  connections to that listener then fail until the flood is over. With
+  `net.ipv4.tcp_fastopen` server mode enabled (not the default) data in a
+  Fast Open SYN reaches the listener before the answer is dropped. A
+  connection is attributed to the uid that **created** the socket.
+
+Evaluated and not used: per-job network namespaces (outbound networking
+would need veth/NAT or slirp per job), the `socket cgroupv2` match on the
+receiving side (only listeners inside a job's cgroup would be covered -
+not sessions or the user helper - cgroup ids are resolved when the rule is
+loaded, kernel 5.13+), cgroup `connect4/6` BPF programs (BPF loading in
+Go, a large dependency) and `iptables -m owner` (sender only).
+
+**Windows** has no equivalent (Windows Firewall does not filter loopback
+traffic of ordinary processes): the gap below stays there.
+
 ## What is not isolated (known gaps)
 
 Level 2 keeps users apart through the OS's user separation, not through
 containers. These remain:
 
-- **Loopback networking between users on one worker.** B's process can
-  connect to A's dev server on `127.0.0.1:3000` directly (only Longarm's own
-  forwards check the port's owner). Bind dev servers with authentication or
-  use level 3 (network namespaces).
+- **Loopback networking between users on one worker** on Windows, and on
+  Linux without nftables or with `[isolation] loopback = "allow"`: B's
+  process can connect to A's dev server on `127.0.0.1:3000` directly (only
+  Longarm's own forwards check the port's owner). On Linux with the default
+  rules ([above](#loopback-between-users-linux)) TCP is refused; one-way
+  UDP datagrams and unix sockets are not covered. Bind dev servers with
+  authentication, prefer unix sockets in the user's home, or use level 3
+  (network namespaces).
 - **Process lists.** On Linux every account sees every process and its
   command line in `/proc` unless `/proc` is mounted with
   `hidepid=invisible` - longarmd warns at start. Do it:

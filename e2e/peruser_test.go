@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -318,7 +319,7 @@ func TestPerUserIsolation(t *testing.T) {
 	var portA int
 	waitFor(t, "alice's server port", 60*time.Second, func() bool {
 		l, _ := readLog(t, ca, jobA)
-		if m := regexp.MustCompile(`port (\d+)`).FindStringSubmatch(l); m != nil {
+		if m := regexp.MustCompile(`(?m)^port (\d+)`).FindStringSubmatch(l); m != nil {
 			portA, _ = strconv.Atoi(m[1])
 			return true
 		}
@@ -430,6 +431,12 @@ func TestPerUserIsolation(t *testing.T) {
 		t.Fatalf("bob forwarded to alice's port: %v", err)
 	}
 
+	// --- loopback between the accounts (Linux: [isolation] loopback,
+	// nftables): bob's processes can't connect to alice's server directly
+	if runtime.GOOS == "linux" {
+		checkLoopbackIsolation(t, w, ca, cb, jobA, portA)
+	}
+
 	// --- team sharing: carol (team t1) reads the shared job, not the other
 	waitFor(t, "shared job done", 30*time.Second, func() bool {
 		j, err := ca.Jobs().Get(ctxT(t), &pb.GetJobRequest{Id: jobShared})
@@ -512,6 +519,93 @@ func TestPerUserIsolation(t *testing.T) {
 	})
 	if _, err := cb.Node().Info(ctxT(t), &pb.InfoRequest{}); status.Code(err) != codes.Unauthenticated && status.Code(err) != codes.PermissionDenied && status.Code(err) != codes.Unavailable {
 		t.Fatalf("bob's revoked certificate still works: %v", err)
+	}
+}
+
+// checkLoopbackIsolation: with the default [isolation] loopback = "isolate"
+// longarmd installed the nftables table inet longarm; bob's process can't
+// connect to alice's server (job jobA, helper serve) on 127.0.0.1 and ::1,
+// alice's own process and root (the test, longarmd's forward) can. Skipped
+// with a warning where nftables is missing or unusable.
+func checkLoopbackIsolation(t *testing.T, w *puWorker, ca, cb *client.Conn, jobA string, portA int) {
+	t.Helper()
+	nft, err := exec.LookPath("nft")
+	if err != nil {
+		for _, p := range []string{"/usr/sbin/nft", "/sbin/nft"} {
+			if _, serr := os.Stat(p); serr == nil {
+				nft, err = p, nil
+				break
+			}
+		}
+	}
+	if err != nil {
+		t.Log("warning: nft not installed - loopback isolation between the accounts NOT tested")
+		return
+	}
+	if out, err := exec.Command(nft, "list", "tables").CombinedOutput(); err != nil {
+		t.Logf("warning: nftables unusable here (%v: %s) - loopback isolation between the accounts NOT tested", err, out)
+		return
+	}
+	t.Cleanup(func() {
+		exec.Command(nft, "delete", "table", "inet", "longarm").Run()
+	})
+	out, err := exec.Command(nft, "list", "table", "inet", "longarm").CombinedOutput()
+	if err != nil {
+		t.Fatalf("longarmd did not install the loopback rules: %v: %s", err, out)
+	}
+	for _, u := range []string{"alice", "bob"} {
+		a, err := platform.LookupAccount(w.account(u))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(out), fmt.Sprintf("skuid %d ", a.UID)) && !strings.Contains(string(out), a.Name) {
+			t.Fatalf("the loopback rules lack %s (uid %d):\n%s", a.Name, a.UID, out)
+		}
+	}
+	l, err := readLog(t, ca, jobA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port6 := ""
+	if m := regexp.MustCompile(`(?m)^v6port (\d+)`).FindStringSubmatch(l); m != nil {
+		port6 = m[1]
+	}
+	type target struct{ host, port string }
+	targets := []target{{"127.0.0.1", strconv.Itoa(portA)}}
+	if port6 != "" {
+		targets = append(targets, target{"::1", port6})
+	} else {
+		t.Log("warning: no IPv6 loopback here - ::1 NOT tested")
+	}
+	for _, tg := range targets {
+		// alice reaches her own server
+		if out, code := execAs(t, ca, w.helper, "connect", tg.port, tg.host); code != 0 || !strings.Contains(out, "echo hi") {
+			t.Errorf("alice cannot connect to her own server on [%s]:%s: %s", tg.host, tg.port, out)
+		}
+		// bob does not
+		start := time.Now()
+		if out, code := execAs(t, cb, w.helper, "connect", tg.port, tg.host); code == 0 {
+			t.Errorf("bob's process connected to alice's server on [%s]:%s:\n%s", tg.host, tg.port, out)
+		} else {
+			t.Logf("bob -> alice [%s]:%s refused after %v: %s", tg.host, tg.port, time.Since(start).Round(time.Millisecond), strings.TrimSpace(out))
+		}
+		// root (this test) does
+		c, err := net.DialTimeout("tcp", net.JoinHostPort(tg.host, tg.port), 5*time.Second)
+		if err != nil {
+			t.Errorf("root cannot connect to alice's server on [%s]:%s: %v", tg.host, tg.port, err)
+			continue
+		}
+		c.SetDeadline(time.Now().Add(10 * time.Second))
+		c.Write([]byte("hi"))
+		b, _ := io.ReadAll(c)
+		c.Close()
+		if !strings.Contains(string(b), "echo hi") {
+			t.Errorf("root's connection to alice's server on [%s]:%s got %q", tg.host, tg.port, b)
+		}
+	}
+	// longarmd's forward (root) to alice's port still works
+	if err := forwardEcho(t, ca, portA); err != nil {
+		t.Errorf("alice's forward with the loopback rules: %v", err)
 	}
 }
 

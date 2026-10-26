@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/jobs"
+	"github.com/lubobill1990/longarm/internal/loopguard"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/supervisor"
 	"github.com/lubobill1990/longarm/internal/tenancy"
@@ -60,6 +61,9 @@ type Config struct {
 	// CgroupRoot (Linux, per-user): parent of the jobs' cgroups (default
 	// /sys/fs/cgroup/longarm; "off" = none).
 	CgroupRoot string
+	// Loopback (Linux, per-user): loopguard.Isolate (default), Require or
+	// Allow - whether the accounts may reach each other over loopback.
+	Loopback string
 	// Exe is longarmd's binary (user helpers, Windows conhost wrapper).
 	Exe string
 	Log *slog.Logger
@@ -115,6 +119,8 @@ type Spaces struct {
 	ctx    context.Context
 	log    *slog.Logger
 	cgroup bool // per-user jobs get cgroups
+	// loopback is the effective loopback mode ("" = not isolated).
+	loopback string
 
 	mu      sync.Mutex
 	shared  *Space
@@ -166,6 +172,9 @@ func Open(ctx context.Context, cfg Config) (*Spaces, error) {
 		if err := s.loadUsers(); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.initLoopback(); err != nil {
+		return nil, err
 	}
 	return s, nil
 }
@@ -295,6 +304,9 @@ func (s *Spaces) For(owner string) (*Space, error) {
 			}
 			sp.Account = acct
 			sp.holdProfile()
+			if err := s.loopbackLocked(); err != nil {
+				return nil, err
+			}
 		}
 		return sp, nil
 	}
@@ -303,6 +315,13 @@ func (s *Spaces) For(owner string) (*Space, error) {
 		return nil, err
 	}
 	s.users[owner] = sp
+	if err := s.loopbackLocked(); err != nil {
+		// loopback = "require": the account exists, but nothing runs as it
+		// before the rules cover it (the user's next call retries).
+		delete(s.users, owner)
+		sp.dropProfile()
+		return nil, err
+	}
 	s.start(sp)
 	s.notify()
 	return sp, nil
@@ -618,8 +637,76 @@ func (s *Spaces) Purge(ctx context.Context, owner string) error {
 	if err := platform.DeleteAccount(name); err != nil {
 		errs = append(errs, err)
 	}
+	s.mu.Lock()
+	if err := s.loopbackLocked(); err != nil {
+		s.log.Warn("loopback isolation: update after the purge", "err", err)
+	}
+	s.mu.Unlock()
 	s.log.Info("user purged", "user", owner, "account", name)
 	return errors.Join(errs...)
+}
+
+// initLoopback installs the loopback isolation between the accounts
+// (Linux, per-user; docs/security.md) or, when it is off, removes a table
+// left from before.
+func (s *Spaces) initLoopback() error {
+	mode := s.cfg.Loopback
+	if mode == "" {
+		mode = loopguard.Isolate
+		if !loopguard.Supported {
+			mode = loopguard.Allow
+		}
+	}
+	if !s.PerUser() {
+		// A shared-mode longarmd leaves the table alone: it may be another
+		// (per-user) longarmd's on this machine. It only concerns accounts.
+		return nil
+	}
+	if mode == loopguard.Allow {
+		if loopguard.Supported {
+			if err := loopguard.Remove(); err != nil {
+				s.log.Warn("loopback isolation: remove the old nftables table", "table", "inet "+loopguard.Table, "err", err)
+			}
+			s.log.Warn("per-user isolation with [isolation] loopback = \"allow\": the accounts can connect to each other's loopback ports - see docs/security.md")
+		}
+		return nil
+	}
+	if !loopguard.Supported {
+		if mode == loopguard.Require {
+			return fmt.Errorf("[isolation] loopback = %q: loopback isolation between users is implemented on Linux only", mode)
+		}
+		s.log.Warn("[isolation] loopback = \"isolate\" has no effect here: loopback isolation between users is implemented on Linux only")
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.loopback = mode
+	return s.loopbackLocked()
+}
+
+// loopbackLocked replaces the rules for the current accounts (s.mu held).
+// If that fails: an error with loopback = "require", else a warning.
+func (s *Spaces) loopbackLocked() error {
+	if s.loopback == "" {
+		return nil
+	}
+	var users []loopguard.User
+	for _, sp := range s.users {
+		if sp.Account != nil {
+			users = append(users, loopguard.User{Name: sp.Account.Name, UID: sp.Account.UID})
+		}
+	}
+	err := loopguard.Apply(users)
+	if err == nil {
+		s.log.Info("loopback isolation between the accounts", "table", "inet "+loopguard.Table, "accounts", len(users))
+		return nil
+	}
+	if s.loopback == loopguard.Require {
+		return fmt.Errorf("loopback isolation ([isolation] loopback = \"require\"): %w", err)
+	}
+	s.log.Warn("loopback isolation between the accounts is NOT active: their processes can connect to each other's loopback ports "+
+		"(install nftables, or set [isolation] loopback = \"allow\" to silence this) - see docs/security.md", "err", err)
+	return nil
 }
 
 // secureUserDirs gives the account its private dirs in the space.
