@@ -168,13 +168,26 @@ func Open(ctx context.Context, cfg Config) (*Spaces, error) {
 		return nil, err
 	}
 	s.shared = shared
+	// Nothing runs before the loopback rules cover the accounts: the
+	// supervisors start last, and an error leaves no goroutines or loaded
+	// profiles behind.
+	fail := func(err error) (*Spaces, error) {
+		for _, sp := range s.users {
+			sp.dropProfile()
+		}
+		return nil, err
+	}
 	if cfg.Mode == tenancy.PerUser {
 		if err := s.loadUsers(); err != nil {
-			return nil, err
+			return fail(err)
 		}
 	}
 	if err := s.initLoopback(); err != nil {
-		return nil, err
+		return fail(err)
+	}
+	s.start(s.shared)
+	for _, sp := range s.users {
+		s.start(sp)
 	}
 	return s, nil
 }
@@ -222,9 +235,7 @@ func (s *Spaces) openShared() (*Space, error) {
 	if err != nil {
 		return nil, err
 	}
-	sp := &Space{Root: s.cfg.DataDir, Jobs: jm, Sessions: sm, WS: ws, sp: s}
-	s.start(sp)
-	return sp, nil
+	return &Space{Root: s.cfg.DataDir, Jobs: jm, Sessions: sm, WS: ws, sp: s}, nil
 }
 
 // start runs the space's supervisors until the space is purged or ctx ends.
@@ -302,11 +313,14 @@ func (s *Spaces) For(owner string) (*Space, error) {
 			if err := secureUserDirs(sp.Root, acct); err != nil {
 				return nil, err
 			}
-			sp.Account = acct
-			sp.holdProfile()
-			if err := s.loopbackLocked(); err != nil {
+			// The rules cover the account before the space uses it: with
+			// loopback = "require" a failure leaves the space without it
+			// (the user's next call retries).
+			if err := s.loopbackLocked(acct); err != nil {
 				return nil, err
 			}
+			sp.Account = acct
+			sp.holdProfile()
 		}
 		return sp, nil
 	}
@@ -314,14 +328,13 @@ func (s *Spaces) For(owner string) (*Space, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.users[owner] = sp
-	if err := s.loopbackLocked(); err != nil {
+	if err := s.loopbackLocked(sp.Account); err != nil {
 		// loopback = "require": the account exists, but nothing runs as it
 		// before the rules cover it (the user's next call retries).
-		delete(s.users, owner)
 		sp.dropProfile()
 		return nil, err
 	}
+	s.users[owner] = sp
 	s.start(sp)
 	s.notify()
 	return sp, nil
@@ -403,8 +416,7 @@ func (s *Spaces) loadUsers() error {
 		if err != nil {
 			return fmt.Errorf("user space %s: %w", owner, err)
 		}
-		s.users[owner] = sp
-		s.start(sp)
+		s.users[owner] = sp // started by Open
 	}
 	return nil
 }
@@ -684,9 +696,10 @@ func (s *Spaces) initLoopback() error {
 	return s.loopbackLocked()
 }
 
-// loopbackLocked replaces the rules for the current accounts (s.mu held).
-// If that fails: an error with loopback = "require", else a warning.
-func (s *Spaces) loopbackLocked() error {
+// loopbackLocked replaces the rules for the current accounts and extra
+// (one about to be used; s.mu held). If that fails: an error with
+// loopback = "require", else a warning.
+func (s *Spaces) loopbackLocked(extra ...*platform.Account) error {
 	if s.loopback == "" {
 		return nil
 	}
@@ -696,7 +709,12 @@ func (s *Spaces) loopbackLocked() error {
 			users = append(users, loopguard.User{Name: sp.Account.Name, UID: sp.Account.UID})
 		}
 	}
-	err := loopguard.Apply(users)
+	for _, a := range extra {
+		if a != nil {
+			users = append(users, loopguard.User{Name: a.Name, UID: a.UID})
+		}
+	}
+	err := applyLoopback(users)
 	if err == nil {
 		s.log.Info("loopback isolation between the accounts", "table", "inet "+loopguard.Table, "accounts", len(users))
 		return nil
@@ -708,6 +726,9 @@ func (s *Spaces) loopbackLocked() error {
 		"(install nftables, or set [isolation] loopback = \"allow\" to silence this) - see docs/security.md", "err", err)
 	return nil
 }
+
+// applyLoopback installs the rules (a variable for tests).
+var applyLoopback = loopguard.Apply
 
 // secureUserDirs gives the account its private dirs in the space.
 func secureUserDirs(root string, acct *platform.Account) error {

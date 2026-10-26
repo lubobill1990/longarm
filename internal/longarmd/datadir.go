@@ -9,12 +9,12 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 
 	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/userspace"
 )
 
@@ -248,39 +248,35 @@ func samePath(a, b string) bool {
 	return a == b
 }
 
-// EnsureSystemDataDir creates the system data dir locked down (Windows: a
+// EnsureSystemDataDir creates the system data dir locked down, or checks
+// (and if need be locks down) an existing one, when dir is it; other dirs
+// are left to their callers. Windows: owner SYSTEM / Administrators and a
 // protected DACL for SYSTEM and Administrators - ProgramData would let every
-// local user read the node key; Unix: 0700) when dir is it and does not
-// exist yet. Other dirs are left to their callers.
+// local user pre-create the dir and read the node key later; Unix: 0700,
+// root's. A pre-created dir its owner (or everybody) could still change is
+// refused - see secureSystemDir.
 func EnsureSystemDataDir(dir string) error {
 	sys := SystemDataDir()
 	if sys == "" || !samePath(dir, sys) {
 		return nil
 	}
-	if _, err := os.Lstat(dir); err == nil {
-		return nil
-	}
-	// The ProgramData\Longarm parent: created locked down as well, so nobody
-	// pre-creates anything in it. (Per-user isolation grants the accounts
-	// traverse rights on it at start.)
-	if parent := filepath.Dir(dir); runtime.GOOS == "windows" {
-		if _, err := os.Lstat(parent); errors.Is(err, fs.ErrNotExist) {
-			if err := platform.SecureDir(parent, ""); err != nil {
-				return fmt.Errorf("secure %s: %w", parent, err)
-			}
-		}
-	}
-	if err := platform.SecureDir(dir, ""); err != nil {
-		return fmt.Errorf("secure %s: %w", dir, err)
-	}
-	return nil
+	return secureSystemDir(dir)
 }
+
+// migrateTmpPrefix names the staging dir of MigrateEnrollment in the
+// destination.
+const migrateTmpPrefix = ".migrate-"
 
 // MigrateEnrollment copies the enrollment (tls/, hub.toml, longarmd.toml,
 // the ssh host key, authorized_keys, tsnet* tailnet keys and state) from
-// src to dst, which must not hold one yet. Files keep their permission bits
-// (without group/other write); dirs become 0700; symlinks are skipped. The
-// source stays as it was: the caller tells the admin to remove it.
+// src to dst, which must not hold one yet. The source must be owned by
+// root / SYSTEM / Administrators (or this account) and not writable by
+// others, entry by entry; symlinks are skipped, and entries are opened
+// without leaving src and checked to be what was listed (no swaps). The
+// copies are private (files 0600, dirs 0700; on Windows they inherit dst's
+// ACL), staged in a temp dir in dst and renamed into place at the end, so
+// an error leaves no half enrollment behind. The source stays as it was:
+// the caller tells the admin to remove it.
 func MigrateEnrollment(src, dst string, out io.Writer) error {
 	if out == nil {
 		out = io.Discard
@@ -297,86 +293,159 @@ func MigrateEnrollment(src, dst string, out io.Writer) error {
 	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return err
 	}
+	sfi, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if sfi.Mode()&os.ModeSymlink != 0 || !sfi.IsDir() {
+		return fmt.Errorf("%s is not a plain directory", src)
+	}
+	r, err := os.OpenRoot(src)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	top, err := r.Open(".")
+	if err != nil {
+		return err
+	}
+	defer top.Close()
+	tfi, err := top.Stat()
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(sfi, tfi) {
+		return fmt.Errorf("%s changed while being opened", src)
+	}
+	if err := checkSourceTrusted(top, tfi); err != nil {
+		return err
+	}
 	names := append([]string(nil), enrollmentFiles...)
-	if m, _ := filepath.Glob(filepath.Join(src, hubclient.TSNetBase+"*")); len(m) > 0 {
-		for _, p := range m {
-			names = append(names, filepath.Base(p))
+	ents, err := top.ReadDir(-1)
+	if err != nil {
+		return err
+	}
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), hubclient.TSNetBase) {
+			names = append(names, e.Name())
 		}
 	}
-	copied := 0
+
+	// Leftovers of an interrupted migration go first.
+	if m, _ := filepath.Glob(filepath.Join(dst, migrateTmpPrefix+"*")); len(m) > 0 {
+		for _, p := range m {
+			os.RemoveAll(p)
+		}
+	}
+	tmp, err := os.MkdirTemp(dst, migrateTmpPrefix)
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	var copied []string
 	for _, n := range names {
-		s, d := filepath.Join(src, n), filepath.Join(dst, n)
-		fi, err := os.Lstat(s)
+		lfi, err := r.Lstat(n)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return err
 		}
-		if fi.Mode()&os.ModeSymlink != 0 {
-			fmt.Fprintf(out, "  skipped %s (a symlink)\n", s)
+		if lfi.Mode()&os.ModeSymlink != 0 {
+			fmt.Fprintf(out, "  skipped %s (a symlink)\n", filepath.Join(src, n))
 			continue
 		}
-		if _, err := os.Lstat(d); err == nil {
-			fmt.Fprintf(out, "  skipped %s (%s exists)\n", s, d)
+		if _, err := os.Lstat(filepath.Join(dst, n)); err == nil {
+			fmt.Fprintf(out, "  skipped %s (%s exists)\n", filepath.Join(src, n), filepath.Join(dst, n))
 			continue
 		}
-		if err := copyTree(s, d); err != nil {
-			return fmt.Errorf("copy %s to %s: %w", s, d, err)
+		if err := copyEntry(r, src, n, lfi, filepath.Join(tmp, n), out); err != nil {
+			return fmt.Errorf("copy %s to %s: %w", filepath.Join(src, n), dst, err)
 		}
-		fmt.Fprintf(out, "  copied %s -> %s\n", s, d)
-		copied++
+		copied = append(copied, n)
 	}
-	if copied == 0 {
+	if len(copied) == 0 {
 		return fmt.Errorf("%s: nothing to copy", src)
+	}
+	// Into place; what makes dst "in use" (DataDirInUse) last.
+	marker := func(n string) bool { return n == TLSDir || n == hubclient.File || n == ConfigFile }
+	sort.SliceStable(copied, func(i, j int) bool { return !marker(copied[i]) && marker(copied[j]) })
+	var placed []string
+	for _, n := range copied {
+		if err := os.Rename(filepath.Join(tmp, n), filepath.Join(dst, n)); err != nil {
+			for _, p := range placed {
+				os.RemoveAll(filepath.Join(dst, p))
+			}
+			return fmt.Errorf("move %s into %s: %w", n, dst, err)
+		}
+		placed = append(placed, n)
+	}
+	for _, n := range copied {
+		fmt.Fprintf(out, "  copied %s -> %s\n", filepath.Join(src, n), filepath.Join(dst, n))
 	}
 	return nil
 }
 
-// copyTree copies a file or a dir tree (regular files and dirs only).
-func copyTree(src, dst string) error {
-	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+// copyEntry copies rel (lfi its Lstat) of the source root r to target: a
+// file (0600) or a dir tree (0700; regular files and dirs only). Every entry
+// is opened within r, must still be what Lstat saw (not swapped for a
+// symlink) and must pass checkSourceTrusted.
+func copyEntry(r *os.Root, src, rel string, lfi fs.FileInfo, target string, out io.Writer) error {
+	switch {
+	case lfi.Mode()&os.ModeSymlink != 0:
+		fmt.Fprintf(out, "  skipped %s (a symlink)\n", filepath.Join(src, rel))
+		return nil
+	case !lfi.IsDir() && !lfi.Mode().IsRegular():
+		return nil // sockets, fifos, ...: not part of an enrollment
+	}
+	f, err := r.Open(rel)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(lfi, fi) {
+		return fmt.Errorf("%s changed while being copied", filepath.Join(src, rel))
+	}
+	if err := checkSourceTrusted(f, fi); err != nil {
+		return err
+	}
+	if fi.IsDir() {
+		if err := os.Mkdir(target, 0o700); err != nil {
+			return err
+		}
+		if err := os.Chmod(target, 0o700); err != nil {
+			return err
+		}
+		ents, err := f.ReadDir(-1)
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(src, p)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		switch {
-		case d.IsDir():
-			if err := os.Mkdir(target, 0o700); err != nil {
-				return err
-			}
-			return os.Chmod(target, 0o700)
-		case d.Type().IsRegular():
-			fi, err := d.Info()
+		for _, e := range ents {
+			child := filepath.Join(rel, e.Name())
+			cfi, err := r.Lstat(child)
 			if err != nil {
 				return err
 			}
-			return copyFile(p, target, fi.Mode().Perm()&^0o022)
+			if err := copyEntry(r, src, child, cfi, filepath.Join(target, e.Name()), out); err != nil {
+				return err
+			}
 		}
-		return nil // symlinks, sockets, ...: not part of an enrollment
-	})
-}
-
-func copyFile(src, dst string, perm fs.FileMode) error {
-	in, err := os.Open(src)
+		return nil
+	}
+	w, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
-	if err != nil {
+	if _, err := io.Copy(w, f); err != nil {
+		w.Close()
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+	if err := w.Close(); err != nil {
 		return err
 	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	return os.Chmod(dst, perm)
+	return os.Chmod(target, 0o600)
 }

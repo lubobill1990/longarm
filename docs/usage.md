@@ -72,7 +72,21 @@ So `sudo longarmd join ...` and `sudo longarmd service install ...` agree
 without flags. Existing installs keep working: as long as `/var/lib/longarmd`
 holds no enrollment (`tls/`, `hub.toml` or `longarmd.toml`) but root's
 `~/.longarm` does (enrolled by an older longarmd), root's default stays
-`~/.longarm` (the same for LocalSystem's profile on Windows).
+`~/.longarm` (the same for LocalSystem's profile on Windows). As root /
+LocalSystem, "`~`" is the account's own home from the passwd database /
+its profile, never `$HOME` / `%USERPROFILE%` (`sudo -E` keeps the invoking
+user's).
+
+The system dir is created locked down (Linux 0700 root; Windows owner
+Administrators, a protected DACL for SYSTEM and Administrators). An
+existing one is checked first - ProgramData lets every local user create
+directories, so `C:\ProgramData\Longarm\longarmd` may have been pre-created
+by somebody else: owned by another account (Linux: not root, or writable by
+group/others) it is refused with a message naming it - check and remove it,
+then retry. On Windows one that inherits its ACL or grants Everyone, Users
+and the like more than traverse rights is locked down again (its contents
+must be owned by SYSTEM, Administrators or the installing account, else it
+is refused too); the same goes for the `...\Longarm` parent.
 
 `longarmd service install` picks the service's dir like this (`--dry-run`
 prints it and changes nothing):
@@ -83,9 +97,13 @@ prints it and changes nothing):
   enrollment yet but the default dir or `~/.longarm` does (e.g. a `sudo
   longarmd join` by an older longarmd), the enrollment is **copied** over
   (tls/, hub.toml, longarmd.toml, ssh host key, authorized_keys, tailnet
-  keys/state; permissions kept, group/other write dropped) and the old dir is
-  named so you can remove it. An existing service of the same name must be
-  uninstalled first;
+  keys/state; files 0600, dirs 0700, on Windows with the system dir's ACL)
+  and the old dir is named so you can remove it. The source and everything
+  copied must be owned by root / SYSTEM / Administrators (or the installing
+  account) and not be writable by group or others, else nothing is copied;
+  symlinks are skipped. The copy is staged in the system dir and moved into
+  place at the end, so a failed one leaves nothing behind and can be
+  retried. An existing service of the same name must be uninstalled first;
 - `--user NAME` as root on Linux/macOS (shared mode): NAME's `~/.longarm` -
   enroll as that account (`sudo -u NAME longarmd join ...`); an enrollment
   only root's dir holds is refused (the account could not read it). Windows
