@@ -9,6 +9,7 @@
 //	longarmd status | drain [--reason R] | undrain | toolchain status|apply | events   (local control API)
 //	longarmd leave [--kill-jobs] [--purge]                deregister from the hub, remove credentials
 //	longarmd update status                            last self-update
+//	longarmd audit verify [--file PATH]                check the hash chain of audit.log
 //	longarmd version
 package main
 
@@ -59,7 +60,7 @@ func main() {
 	root.AddCommand(updateCmd(), updateWatchCmd(), installHelperCmd())
 	root.AddCommand(uiCmds()...)
 	root.AddCommand(userHelperCmd(), sftpServerCmd())
-	root.AddCommand(runCmd(), joinCmd(), shimCmd(), conhostCmd(), serviceCmd(), gcCmd(), &cobra.Command{
+	root.AddCommand(runCmd(), joinCmd(), shimCmd(), conhostCmd(), serviceCmd(), gcCmd(), auditCmd(), &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",
 		Run:   func(*cobra.Command, []string) { fmt.Println(version.Version) },

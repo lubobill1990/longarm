@@ -218,6 +218,12 @@ listen = ["tcp://100.64.0.11:2222"]   # optional direct sshd (authorized_keys)
 keep = "168h"                   # remove terminal jobs/sessions (+ worktrees) older than this
 min_free_percent = 10           # then oldest first while the disk is fuller than this
 interval = "1h"
+
+[audit]                         # copies of audit.log for the machine's owner (docs/security.md#audit-trail)
+# file = "/mnt/usb/longarm-audit.log"       # extra append-only copy (the same chained lines)
+# syslog = "udp://logs.example.com:514"     # or tcp://HOST:PORT (RFC 5424, octet counting); "local" (not Windows)
+# webhook = "https://audit.example.com/ingest"  # POST application/x-ndjson batches (http only to localhost)
+# webhook_token_file = "/etc/longarmd/audit-token"  # optional: Authorization: Bearer <file content>
 ```
 
 ### Operations
@@ -225,6 +231,7 @@ interval = "1h"
 ```sh
 longarm admin gc w1 [--keep 72h] [--dry-run]       # admin role; same as the hourly automatic run
 longarmd gc --data-dir D [--keep 0s] [--dry-run]   # offline (refuses while longarmd runs)
+longarmd audit verify [--file PATH]                # check audit.log's hash chain (or a sink's copy); exit 1 if broken
 ```
 
 longarmd reloads `<data>/tls` (ca.crt, node.crt, node.key) within ~5 s when the

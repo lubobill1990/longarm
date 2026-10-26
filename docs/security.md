@@ -422,6 +422,44 @@ containers. These remain:
 - **Side channels** (CPU caches, timing, `/proc/meminfo`-style aggregates,
   the hub's node metrics) are out of scope.
 
+## Audit trail
+
+Every worker writes one JSON line per security-relevant call to
+`<data>/audit.log` (who, what, where; denied calls too) and forwards the
+lines to the hub (`longarm admin audit`, the panel). For the machine's
+owner the hub's copy is not enough: the hub and its admins could change or
+drop it. Two things add accountability that doesn't depend on them:
+
+- **Hash chain.** Every record carries `"seq"` (1, 2, ...) and `"prev"`,
+  the hex SHA-256 of the previous line (`""` for the first line of the
+  file). `longarmd audit verify [--file PATH]` checks the chain and the
+  seq numbers and prints `ok: N records` or the first broken record (line,
+  seq, reason; exit code 1): an edited, deleted, inserted or reordered line
+  is found. A chain restarts (`"method": "audit/chain-start"`, with the
+  reason) when longarmd finds a log written before chaining, a line cut
+  off by a crash, or a file that changed behind its back; `verify` lists
+  those places.
+- **Sinks** (`[audit]` in longarmd.toml, [usage](usage.md)): a copy of
+  every record goes to places the owner controls - another file (a USB
+  disk, a mount), a syslog server (UDP or TCP, RFC 5424, facility auth), a
+  webhook (HTTPS POST of NDJSON batches, optional bearer token). Delivery
+  runs in the background: a slow or dead sink never delays a call. Each
+  sink queues up to 10 000 records (16 MiB); when that overflows the
+  oldest are dropped and a chained `"audit/dropped"` record with the sink
+  and count follows. Failing sinks are retried with backoff (up to 1 min)
+  and logged at most once a minute; at stop longarmd flushes for up to
+  2 s. Records may arrive twice after a retry (compare by `seq`/`prev`).
+  An invalid `[audit]` section keeps longarmd from starting.
+
+What this does **not** protect against: the chain is no signature.
+Someone who can write the worker's disk (an administrator / root of the
+machine) can rewrite audit.log with a recomputed chain, change its last
+line unnoticed by `verify`, or stop longarmd. The protection against them
+is the off-machine copy: compare audit.log with a sink's copy (the same
+lines and hashes; `verify --file` checks a copy, which may start
+mid-chain). Records written while longarmd was stopped don't exist, and
+what a sink lost to an overflow is only counted.
+
 ## Operations
 
 - **Turning it on for an existing fleet**: add the users on the hub

@@ -55,3 +55,18 @@ func TestLoadConfigAccess(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadConfigAudit(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ConfigFile), []byte("[audit]\nfile = \"copy.log\"\nwebhook = \"http://audit.example.com/\"\n"), 0o600)
+	cfg, err := LoadConfig(dir, nil) // longarmd leave must still start
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Audit.File != filepath.Join(dir, "copy.log") {
+		t.Fatalf("file %q", cfg.Audit.File)
+	}
+	if err := cfg.Audit.Validate(); err == nil || !strings.Contains(err.Error(), "https:// required") {
+		t.Fatalf("validate: %v", err)
+	}
+}

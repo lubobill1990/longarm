@@ -69,7 +69,9 @@ type FileConfig struct {
 	Toolchain   ToolchainConfig `toml:"toolchain"`
 	Update      UpdateConfig    `toml:"update"`
 	Isolation   IsolationConfig `toml:"isolation"`
-	Access      AccessConfig    `toml:"access"`
+	// Audit: copies of audit.log for the worker's owner (docs/security.md).
+	Audit  server.AuditSinks `toml:"audit"`
+	Access AccessConfig      `toml:"access"`
 }
 
 // AccessConfig is the [access] section: what the hub's admins and users may
@@ -203,6 +205,7 @@ type Config struct {
 	// HubJobDetails: send command lines etc. to the hub ([access]
 	// hub_job_details, default true).
 	HubJobDetails bool
+	Audit         server.AuditSinks // paths absolute
 	// How longarmd was started, for the restart after a self-update: "service"
 	// (the service manager restarts it) or "exec" (longarmd relaunches itself
 	// with Args).
@@ -269,6 +272,12 @@ func LoadConfig(dataDir string, listenOverride []string) (Config, error) {
 	if cfg.Isolation.UsersDir != "" && !filepath.IsAbs(cfg.Isolation.UsersDir) {
 		cfg.Isolation.UsersDir = filepath.Join(dataDir, cfg.Isolation.UsersDir)
 	}
+	cfg.Audit = fc.Audit
+	for _, p := range []*string{&cfg.Audit.File, &cfg.Audit.WebhookTokenFile} {
+		if *p != "" && !filepath.IsAbs(*p) {
+			*p = filepath.Join(dataDir, *p)
+		}
+	}
 	// Invalid labels (an older longarmd.toml: "eu,os=windows", values with
 	// spaces) are dropped with a warning instead of keeping longarmd (and longarmd
 	// leave, the uninstaller) from starting.
@@ -325,6 +334,13 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		return err
 	}
 	defer unlock()
+	// [audit] is checked here, not in LoadConfig: longarmd leave and the
+	// uninstaller must start with any longarmd.toml.
+	audit := server.NewAudit(filepath.Join(cfg.DataDir, AuditFile))
+	if err := audit.StartSinks(cfg.Audit, log.With("component", "audit")); err != nil {
+		return fmt.Errorf("%s: [audit] %w", ConfigFile, err)
+	}
+	defer audit.Close(2 * time.Second) // best effort: flush the sinks
 	// Work in the account's home: relative paths of the sshd's sftp subsystem
 	// resolve against the process directory (a service starts in System32).
 	if home, err := os.UserHomeDir(); err == nil {
@@ -376,7 +392,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	srv := &server.Server{
 		Name: bundle.Identity.Name, Version: version.Version, DataDir: cfg.DataDir, StartedAt: time.Now(),
 		Spaces: st.spaces, Policy: policy, LogMaxBytes: cfg.MaxLogBytes, Sampler: sampler,
-		Audit: server.NewAudit(filepath.Join(cfg.DataDir, AuditFile)), Log: log, Shutdown: cancel,
+		Audit: audit, Log: log, Shutdown: cancel,
 		Revoked: revoked, Conns: conntrack.New(), Access: cfg.Access,
 	}
 	exe, _ := os.Executable()
