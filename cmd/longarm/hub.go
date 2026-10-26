@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -351,7 +352,8 @@ func (s *session) refreshNodes(force bool) {
 }
 
 // maybeRenew renews this client's certificate through the hub when it
-// expires within the hub's renew window, and follows the hub's tailnet.
+// expires within the hub's renew window or a new endorsement waits for it
+// (longarm trust init|accept|import-key), and follows the hub's tailnet.
 func (s *session) maybeRenew(ctx context.Context, h *hubclient.Conn) {
 	b := s.dialer.Bundle()
 	cctx, cancel := context.WithTimeout(ctx, hubTimeout)
@@ -361,21 +363,39 @@ func (s *session) maybeRenew(ctx context.Context, h *hubclient.Conn) {
 		return
 	}
 	s.syncTailnet(ctx, h, who.Tailnet)
-	if !hubclient.NeedsRenewal(b.Leaf(), who.RenewBefore.AsDuration()) {
+	if !hubclient.NeedsRenewal(b.Leaf(), who.RenewBefore.AsDuration()) && !client.TrustStore(s.cfg.Dir).RenewalRequested() {
 		return
 	}
-	certPEM, keyPEM, caPEM, err := hubclient.Renew(cctx, h, b.Identity.Name, nil)
+	leaf, err := s.renewCert(cctx, h)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "longarm: certificate renewal failed: %s\n", oneLine(err))
 		return
 	}
+	fmt.Fprintf(os.Stderr, "longarm: certificate renewed (valid until %s)\n", leaf.NotAfter.Local().Format(time.RFC3339))
+}
+
+// renewCert renews this client's certificate through h now. The new
+// certificate carries the node key and its endorsement (end-to-end trust),
+// which also settles a pending renewal request.
+func (s *session) renewCert(ctx context.Context, h *hubclient.Conn) (*x509.Certificate, error) {
+	ts := client.TrustStore(s.cfg.Dir)
+	requested := ts.RenewalRequested() // before reading the endorsement: a newer one asks again
+	t, err := ts.CSRTrust()
+	if err != nil {
+		return nil, fmt.Errorf("end-to-end trust: %w", err)
+	}
+	certPEM, keyPEM, caPEM, err := hubclient.Renew(ctx, h, s.dialer.Bundle().Identity.Name, t)
+	if err != nil {
+		return nil, err
+	}
 	if err := pki.WriteBundleAtomic(filepath.Join(s.cfg.Dir, client.TLSDir), caPEM, certPEM, keyPEM); err != nil {
-		fmt.Fprintf(os.Stderr, "longarm: save renewed certificate: %v\n", err)
-		return
+		return nil, fmt.Errorf("save renewed certificate: %w", err)
 	}
 	s.dialer.Reload()
-	leaf, _ := pki.ParseCertPEM(certPEM)
-	fmt.Fprintf(os.Stderr, "longarm: certificate renewed (valid until %s)\n", leaf.NotAfter.Local().Format(time.RFC3339))
+	if requested {
+		ts.RenewalDone()
+	}
+	return pki.ParseCertPEM(certPEM)
 }
 
 // findJob locates the worker of a job: the hub's index, else every known

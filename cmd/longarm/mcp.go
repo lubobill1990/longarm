@@ -68,6 +68,7 @@ environment (secret_env); only names listed in LONGARM_MCP_SECRETS may be used:
 			defer s.close()
 			s.dialer.OneShot = false // long-lived
 			quietHub = true
+			go s.dialer.WatchTrust(cmd.Context(), nil)
 			// stdout belongs to the protocol: anything else printed by shared
 			// code goes to stderr.
 			out := os.Stdout
@@ -81,6 +82,18 @@ environment (secret_env); only names listed in LONGARM_MCP_SECRETS may be used:
 
 type mcpTools struct{ s *session }
 
+// addTool registers a tool whose errors name the fix when a worker was
+// refused by end-to-end trust (gRPC buries that in a connection error).
+func addTool[In, Out any](srv *mcp.Server, t *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
+	mcp.AddTool(srv, t, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+		res, out, err := h(ctx, req, in)
+		if msg, ok := client.TrustRefusal(err); ok {
+			err = errors.New(msg)
+		}
+		return res, out, err
+	})
+}
+
 func newMCPServer(s *session) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "longarm", Version: version.Version}, &mcp.ServerOptions{
 		Instructions: "Remote execution on the Longarm worker pool. Use fleet_status to see workers, fleet_exec for " +
@@ -88,16 +101,16 @@ func newMCPServer(s *session) *mcp.Server {
 			"sessions), fleet_read/fleet_write/fleet_sync for files and code, fleet_forward to reach a worker port.",
 	})
 	t := &mcpTools{s: s}
-	mcp.AddTool(srv, &mcp.Tool{Name: "fleet_status", Description: "Overview of the worker pool: who is online, load, free memory, running jobs, repo caches, labels."}, t.status)
-	mcp.AddTool(srv, &mcp.Tool{Name: "fleet_exec", Description: "Run a command on a worker (worker \"auto\" = scheduler's choice) and wait for it. Returns the exit code and the output, truncated to head+tail when large; the full output stays in the job log (see fleet_job_logs with the returned job handle)."}, t.exec)
-	mcp.AddTool(srv, &mcp.Tool{Name: "fleet_job_submit", Description: "Start a long-running job (build, test matrix, a whole `claude -p` / `copilot -p` session) on a worker and return its handle at once. With repo set, the job runs in a fresh git worktree of that local checkout (uncommitted changes included) or clone URL."}, t.submit)
-	mcp.AddTool(srv, &mcp.Tool{Name: "fleet_job_wait", Description: "Wait until a job ends (or timeout_seconds passes) and return its state and exit code."}, t.wait)
-	mcp.AddTool(srv, &mcp.Tool{Name: "fleet_job_logs", Description: "Read a job's output from a byte offset (negative = from the end). Returns the text and next_offset for paging."}, t.logs)
-	mcp.AddTool(srv, &mcp.Tool{Name: "fleet_job_kill", Description: "Kill a job's whole process tree."}, t.kill)
-	mcp.AddTool(srv, &mcp.Tool{Name: "fleet_read", Description: "Read a file on a worker (relative paths are relative to the worker account's home)."}, t.read)
-	mcp.AddTool(srv, &mcp.Tool{Name: "fleet_write", Description: "Write a file on a worker (atomically, sha256-verified)."}, t.write)
-	mcp.AddTool(srv, &mcp.Tool{Name: "fleet_sync", Description: "Mirror a local git checkout (commits, uncommitted and untracked files) into a worktree on a worker; only missing objects are sent."}, t.sync)
-	mcp.AddTool(srv, &mcp.Tool{Name: "fleet_forward", Description: "Forward a worker port to localhost (hosted by the longarm daemon, so it outlives this call) and return the local URL; action list/stop manages forwards."}, t.forward)
+	addTool(srv, &mcp.Tool{Name: "fleet_status", Description: "Overview of the worker pool: who is online, load, free memory, running jobs, repo caches, labels."}, t.status)
+	addTool(srv, &mcp.Tool{Name: "fleet_exec", Description: "Run a command on a worker (worker \"auto\" = scheduler's choice) and wait for it. Returns the exit code and the output, truncated to head+tail when large; the full output stays in the job log (see fleet_job_logs with the returned job handle)."}, t.exec)
+	addTool(srv, &mcp.Tool{Name: "fleet_job_submit", Description: "Start a long-running job (build, test matrix, a whole `claude -p` / `copilot -p` session) on a worker and return its handle at once. With repo set, the job runs in a fresh git worktree of that local checkout (uncommitted changes included) or clone URL."}, t.submit)
+	addTool(srv, &mcp.Tool{Name: "fleet_job_wait", Description: "Wait until a job ends (or timeout_seconds passes) and return its state and exit code."}, t.wait)
+	addTool(srv, &mcp.Tool{Name: "fleet_job_logs", Description: "Read a job's output from a byte offset (negative = from the end). Returns the text and next_offset for paging."}, t.logs)
+	addTool(srv, &mcp.Tool{Name: "fleet_job_kill", Description: "Kill a job's whole process tree."}, t.kill)
+	addTool(srv, &mcp.Tool{Name: "fleet_read", Description: "Read a file on a worker (relative paths are relative to the worker account's home)."}, t.read)
+	addTool(srv, &mcp.Tool{Name: "fleet_write", Description: "Write a file on a worker (atomically, sha256-verified)."}, t.write)
+	addTool(srv, &mcp.Tool{Name: "fleet_sync", Description: "Mirror a local git checkout (commits, uncommitted and untracked files) into a worktree on a worker; only missing objects are sent."}, t.sync)
+	addTool(srv, &mcp.Tool{Name: "fleet_forward", Description: "Forward a worker port to localhost (hosted by the longarm daemon, so it outlives this call) and return the local URL; action list/stop manages forwards."}, t.forward)
 	return srv
 }
 

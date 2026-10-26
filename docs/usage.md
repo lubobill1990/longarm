@@ -441,6 +441,45 @@ longarmd trust status                              # policy, node key, endorseme
 With trusted users the hub session's `[hub] remote_jobs` defaults to
 `"none"`.
 
+### End-to-end trust (client)
+
+The hub's CA can issue a certificate for any name. With end-to-end trust a
+certificate must also carry an endorsement by a **user key** that stays on
+the user's devices ([security.md](security.md)): workers can refuse devices
+that aren't endorsed by a user they trust, and a client can refuse workers.
+The hub only copies the endorsement into the certificate when it renews it.
+
+```sh
+longarm trust init                      # first device: user key for this certificate's user, endorses
+                                        # this device, renews the certificate through the hub; prints
+                                        # the user key line for the workers' owners:
+                                        #   longarmd trust add-user <line>     (on each worker)
+longarm trust show                      # user key, node key, endorsement, certificate, policy
+# a worker of yours: longarmd trust request (on the worker) ->
+longarm trust endorse <request>         # prints the endorsement -> longarmd trust accept <endorsement>
+# another device of yours:
+longarm trust request                   # on the new device -> longarm trust endorse <request> on the first
+longarm trust accept <endorsement>      # on the new device; renews the certificate
+longarm trust export-key > key.pem      # or copy the (secret) user key instead ...
+longarm trust import-key key.pem        # ... endorses this device with it and renews
+longarm trust require on|off            # only talk to workers endorsed by a trusted user key
+longarm trust add-user <user-key-line>  # also accept workers endorsed by this user (besides your own key)
+longarm trust remove-user bob
+longarm trust deny-node <node-key>      # refuse a node key (base64, trust show) even when endorsed
+```
+
+State lives in `<config dir>/trust` (`node.key`, `endorsement`, `user.key`,
+`trust.toml`). `longarm join` puts the node key into the first certificate;
+an endorsement reaches the certificate with the next renewal, which `init`,
+`accept` and `import-key` do at once (if the hub is unreachable, the next
+`longarm` command that reaches it, or `longarm daemon`, renews). With
+`require on`, every connection to a worker (all transports, `longarm daemon`,
+`longarm mcp`) checks the worker's endorsement in the TLS handshake; a
+refused worker fails with `worker <w> refused by end-to-end trust: ...` and
+the commands that fix it. `longarm daemon` and `longarm mcp` pick up changes
+to `trust.toml` without a restart; a broken `trust.toml` makes longarm refuse
+to connect at all.
+
 ### Local control API, longarm daemon
 
 `longarmd` and `longarm daemon` serve a local-only control API (named pipe with an

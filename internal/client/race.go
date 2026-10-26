@@ -351,7 +351,8 @@ func (d *Dialer) race(ctx context.Context, w Worker, explicit bool) (*tls.Conn, 
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	var errs []string
-	var guessed []int // legs SkipLeg skipped
+	var refused *TrustError // a leg reached a worker the trust policy refuses
+	var guessed []int       // legs SkipLeg skipped
 	lastResort := false
 	finish := func() {
 		// Close late winners; record nothing (the caller already returned).
@@ -382,6 +383,9 @@ func (d *Dialer) race(ctx context.Context, w Worker, explicit bool) (*tls.Conn, 
 				return r.tc, r.raw, r.pi, results, nil
 			}
 			results[r.i].Err = shortErr(r.err)
+			if te := trustRefusal(w, r.err); te != nil && refused == nil {
+				refused = te
+			}
 			if sk, skip := r.err.(errSkip); !skip {
 				errs = append(errs, legs[r.i].Key()+": "+r.err.Error())
 			} else {
@@ -406,6 +410,10 @@ func (d *Dialer) race(ctx context.Context, w Worker, explicit bool) (*tls.Conn, 
 			}
 			if running == 0 {
 				cancel()
+				if refused != nil {
+					// Not a connectivity problem: say what would fix it.
+					return nil, nil, transport.PathInfo{}, results, refused
+				}
 				return nil, nil, transport.PathInfo{}, results, fmt.Errorf("all %d transport legs failed after %s: %s",
 					len(legs), time.Since(t0).Round(time.Millisecond), strings.Join(errs, "; "))
 			}
@@ -475,7 +483,7 @@ func (d *Dialer) dialLeg(ctx context.Context, w Worker, e Endpoint, explicit boo
 		res.err, res.took = err, time.Since(start)
 		return res
 	}
-	cfg := d.bundle.ClientConfig(w.CertName).Clone()
+	cfg := d.tlsConfig(w)
 	cfg.NextProtos = []string{"h2"}
 	tc := tls.Client(raw, cfg)
 	if err := tc.HandshakeContext(ctx); err != nil {

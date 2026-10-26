@@ -37,7 +37,13 @@ func joinCmd() *cobra.Command {
 			addr := hubclient.NormalizeAddr(args[0])
 			ctx, cancel := context.WithTimeout(cmd.Context(), time.Minute)
 			defer cancel()
-			r, err := hubclient.Join(ctx, addr, args[1], hubclient.JoinOptions{Name: name, Fingerprint: fp})
+			// The certificate binds this device's node key from the start, so
+			// an endorsement later only needs a renewal (longarm trust).
+			tr, err := client.TrustStore(configDir).CSRTrust()
+			if err != nil {
+				return fmt.Errorf("end-to-end trust: %w", err)
+			}
+			r, err := hubclient.Join(ctx, addr, args[1], hubclient.JoinOptions{Name: name, Fingerprint: fp, Trust: tr})
 			if err != nil {
 				return err
 			}
@@ -61,6 +67,9 @@ func joinCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("joined %s as %s/%s (config %s)\n", addr, r.Resp.Role, r.Resp.Name, configDir)
+			if tr.Endorsement != nil && tr.Endorsement.Name != r.Resp.Name {
+				fmt.Fprintf(os.Stderr, "warning: this device's endorsement is for %q; get one for %s (longarm trust request / accept)\n", tr.Endorsement.Name, r.Resp.Name)
+			}
 			if t := r.Resp.Tailnet; t != nil {
 				fmt.Printf("tailnet %s: key for %s (%s) stored; the tailscale leg starts on first use\n", t.ControlUrl, t.Hostname, strings.Join(t.Tags, ","))
 			}
