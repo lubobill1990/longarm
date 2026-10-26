@@ -37,6 +37,8 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	Enroll_Join_FullMethodName       = "/longarm.v1.Enroll/Join"
 	Enroll_JoinStatus_FullMethodName = "/longarm.v1.Enroll/JoinStatus"
+	Enroll_AuthInfo_FullMethodName   = "/longarm.v1.Enroll/AuthInfo"
+	Enroll_EntraJoin_FullMethodName  = "/longarm.v1.Enroll/EntraJoin"
 )
 
 // EnrollClient is the client API for Enroll service.
@@ -50,6 +52,15 @@ type EnrollClient interface {
 	Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error)
 	// JoinStatus polls a pending enrollment with its poll token.
 	JoinStatus(ctx context.Context, in *JoinStatusRequest, opts ...grpc.CallOption) (*JoinResponse, error)
+	// AuthInfo tells a client how to sign in to this hub (Microsoft Entra ID
+	// settings; empty when the hub has none). No certificate needed.
+	AuthInfo(ctx context.Context, in *AuthInfoRequest, opts ...grpc.CallOption) (*AuthInfoResponse, error)
+	// EntraJoin enrolls a device of a user signed in with Microsoft Entra ID
+	// (`longarm login`): the access token (audience: the hub's app, scope
+	// AuthInfoResponse.scope) names the user - created on first sign-in - and
+	// replaces the join code; the device gets a client certificate of that
+	// user (admin certificate for the hub's Entra admins) right away.
+	EntraJoin(ctx context.Context, in *EntraJoinRequest, opts ...grpc.CallOption) (*JoinResponse, error)
 }
 
 type enrollClient struct {
@@ -80,6 +91,26 @@ func (c *enrollClient) JoinStatus(ctx context.Context, in *JoinStatusRequest, op
 	return out, nil
 }
 
+func (c *enrollClient) AuthInfo(ctx context.Context, in *AuthInfoRequest, opts ...grpc.CallOption) (*AuthInfoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AuthInfoResponse)
+	err := c.cc.Invoke(ctx, Enroll_AuthInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *enrollClient) EntraJoin(ctx context.Context, in *EntraJoinRequest, opts ...grpc.CallOption) (*JoinResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JoinResponse)
+	err := c.cc.Invoke(ctx, Enroll_EntraJoin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // EnrollServer is the server API for Enroll service.
 // All implementations must embed UnimplementedEnrollServer
 // for forward compatibility.
@@ -91,6 +122,15 @@ type EnrollServer interface {
 	Join(context.Context, *JoinRequest) (*JoinResponse, error)
 	// JoinStatus polls a pending enrollment with its poll token.
 	JoinStatus(context.Context, *JoinStatusRequest) (*JoinResponse, error)
+	// AuthInfo tells a client how to sign in to this hub (Microsoft Entra ID
+	// settings; empty when the hub has none). No certificate needed.
+	AuthInfo(context.Context, *AuthInfoRequest) (*AuthInfoResponse, error)
+	// EntraJoin enrolls a device of a user signed in with Microsoft Entra ID
+	// (`longarm login`): the access token (audience: the hub's app, scope
+	// AuthInfoResponse.scope) names the user - created on first sign-in - and
+	// replaces the join code; the device gets a client certificate of that
+	// user (admin certificate for the hub's Entra admins) right away.
+	EntraJoin(context.Context, *EntraJoinRequest) (*JoinResponse, error)
 	mustEmbedUnimplementedEnrollServer()
 }
 
@@ -106,6 +146,12 @@ func (UnimplementedEnrollServer) Join(context.Context, *JoinRequest) (*JoinRespo
 }
 func (UnimplementedEnrollServer) JoinStatus(context.Context, *JoinStatusRequest) (*JoinResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method JoinStatus not implemented")
+}
+func (UnimplementedEnrollServer) AuthInfo(context.Context, *AuthInfoRequest) (*AuthInfoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AuthInfo not implemented")
+}
+func (UnimplementedEnrollServer) EntraJoin(context.Context, *EntraJoinRequest) (*JoinResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method EntraJoin not implemented")
 }
 func (UnimplementedEnrollServer) mustEmbedUnimplementedEnrollServer() {}
 func (UnimplementedEnrollServer) testEmbeddedByValue()                {}
@@ -164,6 +210,42 @@ func _Enroll_JoinStatus_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Enroll_AuthInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AuthInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EnrollServer).AuthInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Enroll_AuthInfo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EnrollServer).AuthInfo(ctx, req.(*AuthInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Enroll_EntraJoin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EntraJoinRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EnrollServer).EntraJoin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Enroll_EntraJoin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EnrollServer).EntraJoin(ctx, req.(*EntraJoinRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Enroll_ServiceDesc is the grpc.ServiceDesc for Enroll service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -178,6 +260,14 @@ var Enroll_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "JoinStatus",
 			Handler:    _Enroll_JoinStatus_Handler,
+		},
+		{
+			MethodName: "AuthInfo",
+			Handler:    _Enroll_AuthInfo_Handler,
+		},
+		{
+			MethodName: "EntraJoin",
+			Handler:    _Enroll_EntraJoin_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -378,20 +468,23 @@ var HubNode_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Fleet_ListNodes_FullMethodName       = "/longarm.v1.Fleet/ListNodes"
-	Fleet_ListJobs_FullMethodName        = "/longarm.v1.Fleet/ListJobs"
-	Fleet_GetJob_FullMethodName          = "/longarm.v1.Fleet/GetJob"
-	Fleet_WaitJob_FullMethodName         = "/longarm.v1.Fleet/WaitJob"
-	Fleet_Events_FullMethodName          = "/longarm.v1.Fleet/Events"
-	Fleet_Place_FullMethodName           = "/longarm.v1.Fleet/Place"
-	Fleet_Audit_FullMethodName           = "/longarm.v1.Fleet/Audit"
-	Fleet_Whoami_FullMethodName          = "/longarm.v1.Fleet/Whoami"
-	Fleet_TailnetKey_FullMethodName      = "/longarm.v1.Fleet/TailnetKey"
-	Fleet_CheckUpdate_FullMethodName     = "/longarm.v1.Fleet/CheckUpdate"
-	Fleet_DownloadRelease_FullMethodName = "/longarm.v1.Fleet/DownloadRelease"
-	Fleet_ReportLinks_FullMethodName     = "/longarm.v1.Fleet/ReportLinks"
-	Fleet_Links_FullMethodName           = "/longarm.v1.Fleet/Links"
-	Fleet_History_FullMethodName         = "/longarm.v1.Fleet/History"
+	Fleet_ListNodes_FullMethodName        = "/longarm.v1.Fleet/ListNodes"
+	Fleet_ListJobs_FullMethodName         = "/longarm.v1.Fleet/ListJobs"
+	Fleet_GetJob_FullMethodName           = "/longarm.v1.Fleet/GetJob"
+	Fleet_WaitJob_FullMethodName          = "/longarm.v1.Fleet/WaitJob"
+	Fleet_Events_FullMethodName           = "/longarm.v1.Fleet/Events"
+	Fleet_Place_FullMethodName            = "/longarm.v1.Fleet/Place"
+	Fleet_Audit_FullMethodName            = "/longarm.v1.Fleet/Audit"
+	Fleet_Whoami_FullMethodName           = "/longarm.v1.Fleet/Whoami"
+	Fleet_TailnetKey_FullMethodName       = "/longarm.v1.Fleet/TailnetKey"
+	Fleet_CheckUpdate_FullMethodName      = "/longarm.v1.Fleet/CheckUpdate"
+	Fleet_DownloadRelease_FullMethodName  = "/longarm.v1.Fleet/DownloadRelease"
+	Fleet_ReportLinks_FullMethodName      = "/longarm.v1.Fleet/ReportLinks"
+	Fleet_Links_FullMethodName            = "/longarm.v1.Fleet/Links"
+	Fleet_History_FullMethodName          = "/longarm.v1.Fleet/History"
+	Fleet_CreateWorkerCode_FullMethodName = "/longarm.v1.Fleet/CreateWorkerCode"
+	Fleet_ShareWorker_FullMethodName      = "/longarm.v1.Fleet/ShareWorker"
+	Fleet_RemoveWorker_FullMethodName     = "/longarm.v1.Fleet/RemoveWorker"
 )
 
 // FleetClient is the client API for Fleet service.
@@ -434,6 +527,15 @@ type FleetClient interface {
 	// History returns the hub's recent metrics (CPU / memory, ~5 min at the
 	// heartbeat interval) per worker, for sparklines.
 	History(ctx context.Context, in *HistoryRequest, opts ...grpc.CallOption) (*HistoryResponse, error)
+	// CreateWorkerCode makes a worker join code owned by the caller's user
+	// (`longarm worker add`): the worker joins approved, usable by that user
+	// only until shared.
+	CreateWorkerCode(ctx context.Context, in *CreateWorkerCodeRequest, opts ...grpc.CallOption) (*JoinCode, error)
+	// ShareWorker changes who may use a worker: its owner, if an admin let
+	// the owner share (TenantUser.can_share), or an admin.
+	ShareWorker(ctx context.Context, in *ShareWorkerRequest, opts ...grpc.CallOption) (*NodeInfo, error)
+	// RemoveWorker revokes a worker of the caller's user (owner or admin).
+	RemoveWorker(ctx context.Context, in *NodeRequest, opts ...grpc.CallOption) (*NodeInfo, error)
 }
 
 type fleetClient struct {
@@ -620,6 +722,36 @@ func (c *fleetClient) History(ctx context.Context, in *HistoryRequest, opts ...g
 	return out, nil
 }
 
+func (c *fleetClient) CreateWorkerCode(ctx context.Context, in *CreateWorkerCodeRequest, opts ...grpc.CallOption) (*JoinCode, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JoinCode)
+	err := c.cc.Invoke(ctx, Fleet_CreateWorkerCode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *fleetClient) ShareWorker(ctx context.Context, in *ShareWorkerRequest, opts ...grpc.CallOption) (*NodeInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NodeInfo)
+	err := c.cc.Invoke(ctx, Fleet_ShareWorker_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *fleetClient) RemoveWorker(ctx context.Context, in *NodeRequest, opts ...grpc.CallOption) (*NodeInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NodeInfo)
+	err := c.cc.Invoke(ctx, Fleet_RemoveWorker_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FleetServer is the server API for Fleet service.
 // All implementations must embed UnimplementedFleetServer
 // for forward compatibility.
@@ -660,6 +792,15 @@ type FleetServer interface {
 	// History returns the hub's recent metrics (CPU / memory, ~5 min at the
 	// heartbeat interval) per worker, for sparklines.
 	History(context.Context, *HistoryRequest) (*HistoryResponse, error)
+	// CreateWorkerCode makes a worker join code owned by the caller's user
+	// (`longarm worker add`): the worker joins approved, usable by that user
+	// only until shared.
+	CreateWorkerCode(context.Context, *CreateWorkerCodeRequest) (*JoinCode, error)
+	// ShareWorker changes who may use a worker: its owner, if an admin let
+	// the owner share (TenantUser.can_share), or an admin.
+	ShareWorker(context.Context, *ShareWorkerRequest) (*NodeInfo, error)
+	// RemoveWorker revokes a worker of the caller's user (owner or admin).
+	RemoveWorker(context.Context, *NodeRequest) (*NodeInfo, error)
 	mustEmbedUnimplementedFleetServer()
 }
 
@@ -711,6 +852,15 @@ func (UnimplementedFleetServer) Links(context.Context, *LinksRequest) (*LinksRes
 }
 func (UnimplementedFleetServer) History(context.Context, *HistoryRequest) (*HistoryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method History not implemented")
+}
+func (UnimplementedFleetServer) CreateWorkerCode(context.Context, *CreateWorkerCodeRequest) (*JoinCode, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateWorkerCode not implemented")
+}
+func (UnimplementedFleetServer) ShareWorker(context.Context, *ShareWorkerRequest) (*NodeInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method ShareWorker not implemented")
+}
+func (UnimplementedFleetServer) RemoveWorker(context.Context, *NodeRequest) (*NodeInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveWorker not implemented")
 }
 func (UnimplementedFleetServer) mustEmbedUnimplementedFleetServer() {}
 func (UnimplementedFleetServer) testEmbeddedByValue()               {}
@@ -957,6 +1107,60 @@ func _Fleet_History_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Fleet_CreateWorkerCode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateWorkerCodeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).CreateWorkerCode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_CreateWorkerCode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).CreateWorkerCode(ctx, req.(*CreateWorkerCodeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Fleet_ShareWorker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ShareWorkerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).ShareWorker(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_ShareWorker_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).ShareWorker(ctx, req.(*ShareWorkerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Fleet_RemoveWorker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NodeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).RemoveWorker(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_RemoveWorker_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).RemoveWorker(ctx, req.(*NodeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Fleet_ServiceDesc is the grpc.ServiceDesc for Fleet service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1003,6 +1207,18 @@ var Fleet_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "History",
 			Handler:    _Fleet_History_Handler,
+		},
+		{
+			MethodName: "CreateWorkerCode",
+			Handler:    _Fleet_CreateWorkerCode_Handler,
+		},
+		{
+			MethodName: "ShareWorker",
+			Handler:    _Fleet_ShareWorker_Handler,
+		},
+		{
+			MethodName: "RemoveWorker",
+			Handler:    _Fleet_RemoveWorker_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

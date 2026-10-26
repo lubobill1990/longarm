@@ -12,6 +12,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/trust"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -61,6 +62,14 @@ func Join(ctx context.Context, dataDir, hubAddr, code string, o JoinOptions) err
 			return err
 		}
 		fmt.Fprintf(o.Out, "joined as worker %s\n", r.Resp.Name)
+		if ow := r.Resp.Owner; ow != "" {
+			// The rule comes from the hub; pinning the owner locally holds
+			// even against the hub's operators. Never written from hub data.
+			fmt.Fprintf(o.Out, "owned by %s: only %s (and whom %s shares it with) may use it\n", ow, ow, ow)
+			fmt.Fprintf(o.Out, "to hold that even against the hub's admins, pin it in longarmd.toml: [access] owners = [%q], users = [%q]\n"+
+				"(plus whom you share with), and use end-to-end trust (longarmd trust add-user <%s's key line from longarm trust show>; docs/security.md)\n",
+				ow, ow, ow)
+		}
 		return nil
 	}
 	// Pending: keep the key and the CA until an admin approves.
@@ -92,7 +101,13 @@ func installEnrollment(dataDir, hubAddr string, r *hubclient.JoinResult) error {
 		return err
 	}
 	os.Remove(filepath.Join(dataDir, TLSDir, hubclient.PendingKeyFile))
-	hc := hubclient.Config{Address: hubAddr}
+	// The owner the join named holds from the start - before the first hub
+	// session, also with the hub down (version 0: any push of the hub wins).
+	// Only ever a restriction, and a fresh enrollment's: overwrite.
+	if err := tenancy.WriteWorkerAccess(filepath.Join(dataDir, tenancy.WorkerAccessFile), &pb.WorkerAccess{Owner: r.Resp.Owner}); err != nil {
+		return err
+	}
+	hc := hubclient.Config{Address: hubAddr, Owner: r.Resp.Owner}
 	// The hub's Headscale minted a tailnet key: longarmd's embedded tailscale
 	// node joins with it (an extra transport leg, DESIGN §4.4).
 	if err := hubclient.SaveTailnet(dataDir, &hc, r.Resp.Tailnet); err != nil {

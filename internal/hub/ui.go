@@ -55,11 +55,19 @@ func recordMetricsLocked(n *node, m *pb.MetricsSnapshot) {
 
 // History returns the metrics history of one or all workers.
 func (h *Hub) History(node string) *pb.HistoryResponse {
+	return h.HistoryFor(tenancy.Caller{Admin: true}, node)
+}
+
+// HistoryFor is History of the workers v may see.
+func (h *Hub) HistoryFor(v tenancy.Caller, node string) *pb.HistoryResponse {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	out := &pb.HistoryResponse{}
 	for name, n := range h.nodes {
 		if (node != "" && name != node) || n.rec.Role != string(pki.RoleWorker) {
+			continue
+		}
+		if !v.Admin && !tenancy.MayUseWorker(v.User, v.Teams, n.rec.Owner, sharesPB(n.rec.Shares)) {
 			continue
 		}
 		out.Nodes = append(out.Nodes, &pb.NodeHistory{Node: name, Points: append([]*pb.MetricsPoint(nil), n.history...)})
@@ -138,10 +146,13 @@ func (h *Hub) failPendingLocked(worker string, sessID uint64) {
 	}
 }
 
-// KillJob kills a job through its worker.
-func (h *Hub) KillJob(ctx context.Context, by, id, worker string) (*pb.FleetJob, error) {
+// KillJob kills a job through its worker (user: the caller's, see relayCheck).
+func (h *Hub) KillJob(ctx context.Context, by, user, id, worker string) (*pb.FleetJob, error) {
 	w, err := h.jobWorker(id, worker)
 	if err != nil {
+		return nil, err
+	}
+	if err := h.relayCheck(by, user, w, "kill jobs", id); err != nil {
 		return nil, err
 	}
 	r, err := h.request(ctx, w, func(rid string) *pb.HubCommand {
@@ -175,7 +186,7 @@ func (h *Hub) jobWorker(id, worker string) (string, error) {
 }
 
 // JobLogs reads a job's output through its worker, polling while follow.
-func (h *Hub) JobLogs(ctx context.Context, by string, req *pb.HubLogsRequest, send func(*pb.LogChunk) error) error {
+func (h *Hub) JobLogs(ctx context.Context, by, user string, req *pb.HubLogsRequest, send func(*pb.LogChunk) error) error {
 	w, err := h.jobWorker(req.Id, req.Worker)
 	if err != nil {
 		return err
@@ -183,6 +194,10 @@ func (h *Hub) JobLogs(ctx context.Context, by string, req *pb.HubLogsRequest, se
 	off := req.Offset
 	idle := 250 * time.Millisecond
 	for {
+		// every poll: a followed stream ends once the worker is unshared
+		if err := h.relayCheck(by, user, w, "read logs", req.Id); err != nil {
+			return err
+		}
 		r, err := h.request(ctx, w, func(rid string) *pb.HubCommand {
 			return &pb.HubCommand{Msg: &pb.HubCommand_LogRequest{LogRequest: &pb.HubLogRequest{RequestId: rid, Id: req.Id, Offset: off, MaxBytes: 256 << 10, By: by}}}
 		})
@@ -220,12 +235,13 @@ func (h *Hub) JobLogs(ctx context.Context, by string, req *pb.HubLogsRequest, se
 // SubmitJob places (worker "" / "auto") and submits a command job through
 // the worker's hub session.
 func (h *Hub) SubmitJob(ctx context.Context, by string, req *pb.HubSubmitRequest) (*pb.FleetJob, error) {
-	return h.SubmitJobAs(ctx, by, tenancy.OwnerFromBy(by), req)
+	return h.SubmitJobAs(ctx, by, tenancy.OwnerFromBy(by), true, req)
 }
 
 // SubmitJobAs is SubmitJob for a job of owner (it runs as owner on workers
-// with per-user isolation, within the owner's quota).
-func (h *Hub) SubmitJobAs(ctx context.Context, by, owner string, req *pb.HubSubmitRequest) (*pb.FleetJob, error) {
+// with per-user isolation, within the owner's quota); admin: the caller is
+// an admin (refusals on others' own workers say so instead of "not found").
+func (h *Hub) SubmitJobAs(ctx context.Context, by, owner string, admin bool, req *pb.HubSubmitRequest) (*pb.FleetJob, error) {
 	if len(req.Argv) == 0 || strings.TrimSpace(req.Argv[0]) == "" {
 		return nil, status.Error(codes.InvalidArgument, "missing command")
 	}
@@ -258,7 +274,17 @@ func (h *Hub) SubmitJobAs(ctx context.Context, by, owner string, req *pb.HubSubm
 	}
 	spec := &pb.JobSpec{Id: id, Name: req.Name, Argv: req.Argv, Cwd: req.Cwd, Env: req.Env, Labels: labels}
 	if req.Worker != "" && req.Worker != "auto" { // placed jobs passed the quota already
+		if err := h.relayCheck(by, owner, worker, "submit jobs", id); err != nil {
+			if !admin { // others' own workers don't exist for users (admins see them)
+				return nil, status.Errorf(codes.NotFound, "no worker %q", worker)
+			}
+			return nil, err
+		}
 		h.mu.Lock()
+		if h.nodes[worker] == nil {
+			h.mu.Unlock()
+			return nil, status.Errorf(codes.NotFound, "no worker %q", worker)
+		}
 		why := h.overQuotaLocked(owner, mem)
 		h.mu.Unlock()
 		if why != "" {
@@ -349,15 +375,15 @@ func (h *Hub) Links() *pb.LinksResponse {
 // ---------------------------------------------------------------- gRPC
 
 func (s *hubAdminServer) KillJob(ctx context.Context, req *pb.FleetJobRequest) (*pb.FleetJob, error) {
-	return s.h.KillJob(ctx, by(ctx), req.Id, req.Worker)
+	return s.h.KillJob(ctx, by(ctx), callerFrom(ctx).id.Owner(), req.Id, req.Worker)
 }
 
 func (s *hubAdminServer) JobLogs(req *pb.HubLogsRequest, st pb.HubAdmin_JobLogsServer) error {
-	return s.h.JobLogs(st.Context(), by(st.Context()), req, st.Send)
+	return s.h.JobLogs(st.Context(), by(st.Context()), callerFrom(st.Context()).id.Owner(), req, st.Send)
 }
 
 func (s *hubAdminServer) SubmitJob(ctx context.Context, req *pb.HubSubmitRequest) (*pb.FleetJob, error) {
-	return s.h.SubmitJobAs(ctx, by(ctx), callerFrom(ctx).id.Owner(), req)
+	return s.h.SubmitJobAs(ctx, by(ctx), callerFrom(ctx).id.Owner(), true, req)
 }
 
 func (s *hubAdminServer) ToolchainApply(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
@@ -373,6 +399,6 @@ func (s *fleetServer) Links(context.Context, *pb.LinksRequest) (*pb.LinksRespons
 	return s.h.Links(), nil
 }
 
-func (s *fleetServer) History(_ context.Context, req *pb.HistoryRequest) (*pb.HistoryResponse, error) {
-	return s.h.History(req.Node), nil
+func (s *fleetServer) History(ctx context.Context, req *pb.HistoryRequest) (*pb.HistoryResponse, error) {
+	return s.h.HistoryFor(s.h.viewer(callerFrom(ctx)), req.Node), nil
 }

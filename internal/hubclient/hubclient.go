@@ -47,6 +47,10 @@ type Config struct {
 	PollToken string `toml:"poll_token,omitempty"`
 	// Disabled turns the hub off without forgetting it.
 	Disabled bool `toml:"disabled,omitempty"`
+	// Owner (workers): the user whose worker code enrolled it. Without its
+	// worker-access.json such a worker serves only the owner until the
+	// hub says more - never everybody.
+	Owner string `toml:"owner,omitempty"`
 	// Tailnet is the hub's tailnet this node is enrolled in (Tailscale or
 	// Headscale).
 	Tailnet TailnetConfig `toml:"tailnet,omitempty"`

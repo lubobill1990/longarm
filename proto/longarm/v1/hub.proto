@@ -33,6 +33,35 @@ service Enroll {
   rpc Join(JoinRequest) returns (JoinResponse);
   // JoinStatus polls a pending enrollment with its poll token.
   rpc JoinStatus(JoinStatusRequest) returns (JoinResponse);
+  // AuthInfo tells a client how to sign in to this hub (Microsoft Entra ID
+  // settings; empty when the hub has none). No certificate needed.
+  rpc AuthInfo(AuthInfoRequest) returns (AuthInfoResponse);
+  // EntraJoin enrolls a device of a user signed in with Microsoft Entra ID
+  // (`longarm login`): the access token (audience: the hub's app, scope
+  // AuthInfoResponse.scope) names the user - created on first sign-in - and
+  // replaces the join code; the device gets a client certificate of that
+  // user (admin certificate for the hub's Entra admins) right away.
+  rpc EntraJoin(EntraJoinRequest) returns (JoinResponse);
+}
+
+message AuthInfoRequest {}
+
+message AuthInfoResponse {
+  string entra_tenant_id = 1;
+  string entra_client_id = 2;
+  // Full scope to request, e.g. "api://<client id>/longarm.connect"
+  // (az account get-access-token --scope <scope>).
+  string entra_scope = 3;
+}
+
+message EntraJoinRequest {
+  string access_token = 1;
+  bytes csr_pem = 2;
+  string name = 3; // requested device name (default <user>-<hostname>)
+  string hostname = 4;
+  string os = 5;
+  string arch = 6;
+  string version = 7;
 }
 
 message JoinRequest {
@@ -58,6 +87,9 @@ message JoinResponse {
   // configured and the node is approved: a pre-auth key for the embedded
   // tsnet node.
   TailnetAuth tailnet = 9;
+  // worker codes with an owner (Fleet.CreateWorkerCode): the user who owns
+  // the worker - it joined approved, usable by that user only until shared
+  string owner = 10;
 }
 
 message JoinStatusRequest {
@@ -190,7 +222,26 @@ message HubCommand {
     // Users, teams, quotas and removals (multi-tenancy); sent at connect
     // when the worker's version differs and on every change.
     TenancyPolicy tenancy = 12;
+    // Who may use this worker (its owner and shares); sent at connect and
+    // on every change. The worker applies it only as an extra restriction
+    // after its own [access] and end-to-end trust: it never widens them.
+    WorkerAccess worker_access = 13;
   }
+}
+
+// WorkerAccess: a user-owned worker is usable by its owner and whoever it
+// is shared with; a worker without owner (registered by an admin) by
+// everyone the hub admits (unchanged).
+message WorkerAccess {
+  int64 version = 1;
+  string owner = 2; // "" = no owner
+  WorkerShares shares = 3;
+}
+
+message WorkerShares {
+  repeated string users = 1;
+  repeated string teams = 2;
+  bool everyone = 3; // every user of the hub
 }
 
 message HubJobKill {
@@ -307,6 +358,15 @@ service Fleet {
   // History returns the hub's recent metrics (CPU / memory, ~5 min at the
   // heartbeat interval) per worker, for sparklines.
   rpc History(HistoryRequest) returns (HistoryResponse);
+  // CreateWorkerCode makes a worker join code owned by the caller's user
+  // (`longarm worker add`): the worker joins approved, usable by that user
+  // only until shared.
+  rpc CreateWorkerCode(CreateWorkerCodeRequest) returns (JoinCode);
+  // ShareWorker changes who may use a worker: its owner, if an admin let
+  // the owner share (TenantUser.can_share), or an admin.
+  rpc ShareWorker(ShareWorkerRequest) returns (NodeInfo);
+  // RemoveWorker revokes a worker of the caller's user (owner or admin).
+  rpc RemoveWorker(NodeRequest) returns (NodeInfo);
 }
 
 // LinkSample is one RTT probe.
@@ -403,6 +463,8 @@ message NodeInfo {
   TailnetState tailnet = 26; // workers: as reported; clients: none
   string isolation = 27; // workers: "shared" | "per-user"
   string user = 28; // clients/admins: the user the node's certificates belong to
+  string owner = 29; // workers: the user who registered it ("" = shared fleet worker)
+  WorkerShares shares = 30; // workers with an owner: who else may use it
 }
 
 message ListNodesRequest {
@@ -489,6 +551,22 @@ message AuditResponse {
 
 message WhoamiRequest {}
 
+message CreateWorkerCodeRequest {
+  string name = 1; // the worker's name (default: its hostname)
+  google.protobuf.Duration ttl = 2; // default 24h
+  map<string, string> labels = 3;
+}
+
+message ShareWorkerRequest {
+  string worker = 1;
+  repeated string add_users = 2;
+  repeated string remove_users = 3;
+  repeated string add_teams = 4;
+  repeated string remove_teams = 5;
+  bool set_everyone = 6;
+  bool everyone = 7;
+}
+
 message WhoamiResponse {
   string name = 1;
   string role = 2;
@@ -502,6 +580,8 @@ message WhoamiResponse {
   Quota quota = 10; // effective quota (defaults applied); unset = unlimited
   QuotaUsage usage = 11; // fleet-wide, as the hub sees it
   bool tenancy = 12; // the hub separates users (multi-tenancy is on)
+  bool can_share = 13; // may share own workers (ShareWorker)
+  string upn = 14; // Entra users: the sign-in name
 }
 
 // ---------------------------------------------------------------- tenancy
@@ -537,6 +617,8 @@ message TenantUser {
   repeated string devices = 7; // output: nodes with certificates of this user
   QuotaUsage usage = 8; // output
   bool panel = 9; // output: has a web panel login
+  string upn = 10; // users created by Entra sign-in: their sign-in name
+  bool can_share = 11; // may share own workers (set by an admin)
 }
 
 // TenancyPolicy is what workers need to know about users.
@@ -570,6 +652,8 @@ message PutUserRequest {
   // panel: create (or reset) a web panel login for the user (role user):
   // the response carries a generated password and TOTP secret, once.
   bool panel = 13;
+  bool set_can_share = 14;
+  bool can_share = 15;
 }
 
 message PutUserResponse {
@@ -693,6 +777,9 @@ message CreateJoinCodeRequest {
   // client/admin codes: the user the certificate belongs to (multi-tenancy;
   // several devices of one user share it). Default: the node name.
   string user = 6;
+  // worker codes: the user who will own the worker (admins; users get
+  // their own through Fleet.CreateWorkerCode)
+  string owner = 7;
 }
 
 message JoinCode {
@@ -707,6 +794,7 @@ message JoinCode {
   string id = 9; // short id (hash prefix), for listing
   string name = 10;
   string user = 11;
+  string owner = 12; // worker codes: the worker's owner
 }
 
 message ListJoinCodesRequest {}

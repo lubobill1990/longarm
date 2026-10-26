@@ -119,11 +119,12 @@ func (h *Hub) httpHandler() http.Handler {
 			Profile string            `json:"profile"`
 			Name    string            `json:"name"`
 			User    string            `json:"user"`
+			Owner   string            `json:"owner"` // worker codes: the user who will own the worker
 		}
 		if !readJSON(w, r, &body) {
 			return
 		}
-		req := &pb.CreateJoinCodeRequest{Role: body.Role, Labels: body.Labels, Profile: body.Profile, Name: body.Name, User: body.User}
+		req := &pb.CreateJoinCodeRequest{Role: body.Role, Labels: body.Labels, Profile: body.Profile, Name: body.Name, User: body.User, Owner: body.Owner}
 		if body.TTL != "" {
 			d, err := time.ParseDuration(body.TTL)
 			if err != nil {
@@ -172,6 +173,7 @@ func (h *Hub) httpHandler() http.Handler {
 	api("GET /api/events", h.sse)
 	h.panelRoutes(mux, api, admin)
 	h.tenancyRoutes(api, admin)
+	h.workerRoutes(api)
 	return securityHeaders(mux)
 }
 

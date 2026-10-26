@@ -238,6 +238,19 @@ type Node struct {
 	// ("" = its name); Isolation the worker's [isolation] mode.
 	User      string `json:"user,omitempty"`
 	Isolation string `json:"isolation,omitempty"`
+	// Owner is the user who registered a worker (a worker code;
+	// "" = a shared fleet worker), Shares who else may use it, and
+	// AccessVersion counts their changes (HubCommand.worker_access).
+	Owner         string        `json:"owner,omitempty"`
+	Shares        *WorkerShares `json:"shares,omitempty"`
+	AccessVersion int64         `json:"access_version,omitempty"`
+}
+
+// WorkerShares: who besides its owner may use a worker.
+type WorkerShares struct {
+	Users    []string `json:"users,omitempty"`
+	Teams    []string `json:"teams,omitempty"`
+	Everyone bool     `json:"everyone,omitempty"`
 }
 
 // PutNode inserts or replaces a node.
@@ -351,7 +364,8 @@ type JoinCode struct {
 	ID        string            `json:"id"`
 	Role      string            `json:"role"`
 	Name      string            `json:"name,omitempty"`
-	User      string            `json:"user,omitempty"` // client/admin: the Longarm user of the certificate
+	User      string            `json:"user,omitempty"`  // client/admin: the Longarm user of the certificate
+	Owner     string            `json:"owner,omitempty"` // worker: the user who will own it
 	Labels    map[string]string `json:"labels,omitempty"`
 	Profile   string            `json:"profile,omitempty"`
 	CreatedBy string            `json:"created_by"`
@@ -394,6 +408,37 @@ func (s *Store) UseJoinCode(hash, node string, now time.Time) (*JoinCode, error)
 		return nil, err
 	}
 	return c, tx.Commit()
+}
+
+// DeleteOwnedJoinCodes deletes the unused worker codes owned by owner and
+// returns their ids.
+func (s *Store) DeleteOwnedJoinCodes(owner string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT id, data FROM join_codes WHERE used_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id, d string
+		if err := rows.Scan(&id, &d); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		c := &JoinCode{}
+		if json.Unmarshal([]byte(d), c) == nil && c.Owner == owner && c.UsedAt.IsZero() {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		if _, err := s.db.Exec(`DELETE FROM join_codes WHERE id = ?`, id); err != nil {
+			return nil, err
+		}
+	}
+	return ids, nil
 }
 
 // JoinCodes lists codes (newest first), dropping ones expired for a day.

@@ -165,7 +165,7 @@ func hubAdminCmds() []*cobra.Command {
 	nodes.Flags().BoolVar(&all, "all", false, "include clients, admins and revoked nodes")
 	nodes.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 
-	var role, profile, codeName, codeUser string
+	var role, profile, codeName, codeUser, codeOwner string
 	var ttl time.Duration
 	var labels []string
 	joinCode := &cobra.Command{
@@ -179,22 +179,21 @@ func hubAdminCmds() []*cobra.Command {
 			}
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
 				jc, err := h.Admin().CreateJoinCode(ctx, &pb.CreateJoinCodeRequest{Role: role, Ttl: durationpb.New(ttl), Labels: lm,
-					Profile: profile, Name: codeName, User: codeUser})
+					Profile: profile, Name: codeName, User: codeUser, Owner: codeOwner})
 				if err != nil {
 					return err
 				}
 				fmt.Println(jc.Code)
-				fp := "<longarm-hub ca show>"
-				if ca, err := os.ReadFile(filepath.Join(s.cfg.Dir, client.TLSDir, pki.CACertFile)); err == nil {
-					if c, err := pki.ParseCertPEM(ca); err == nil {
-						fp = pki.Fingerprint(c)
-					}
-				}
+				fp := caFingerprint(s)
 				join := "longarmd join"
 				if jc.Role != "worker" {
 					join = "longarm join"
 				}
-				fmt.Fprintf(os.Stderr, "role %s, expires %s\non the new machine: %s %s %s --ca-fingerprint %s\n", jc.Role,
+				owned := ""
+				if jc.Owner != "" {
+					owned = ", owned by " + jc.Owner
+				}
+				fmt.Fprintf(os.Stderr, "role %s%s, expires %s\non the new machine: %s %s %s --ca-fingerprint %s\n", jc.Role, owned,
 					jc.ExpiresAt.AsTime().Local().Format("15:04:05"), join, h.Addr, jc.Code, fp)
 				return nil
 			})
@@ -206,6 +205,7 @@ func hubAdminCmds() []*cobra.Command {
 	joinCode.Flags().StringVar(&profile, "profile", "", "toolchain profile for a worker")
 	joinCode.Flags().StringVar(&codeName, "name", "", "fixed node name")
 	joinCode.Flags().StringVar(&codeUser, "user", "", "client/admin: the Longarm user the certificate belongs to (see longarm admin user)")
+	joinCode.Flags().StringVar(&codeOwner, "owner", "", "worker: the user who owns it (it joins approved, usable by that user only; see longarm worker)")
 
 	codes := &cobra.Command{
 		Use: "join-codes", Short: "List recent join codes (not the codes themselves)", Args: cobra.NoArgs,

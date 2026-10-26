@@ -30,7 +30,8 @@ import (
 // enforce reports whether ownership checks apply because users are
 // separated (isolation or the hub's policy; quotas come with it).
 func (s *Server) enforce() bool {
-	return s.perUser() || (s.Policy != nil && s.Policy.Enabled())
+	// a user-owned worker shared with others separates them, too
+	return s.perUser() || (s.Policy != nil && s.Policy.Enabled()) || s.WorkerAccess.Owner() != ""
 }
 
 // enforceFor reports whether ownership checks apply to the caller: always
@@ -62,6 +63,9 @@ func (s *Server) callerOf(ctx context.Context) tenancy.Caller {
 	}
 	c := tenancy.CallerOf(id, teams)
 	c.Admin = c.Admin && s.Access.AdminRights(id)
+	if o := s.WorkerAccess.Owner(); o != "" && o != c.User {
+		c.Admin = false // sharing a worker shares it, not the owner's jobs and sessions
+	}
 	if !s.enforceFor(ctx) {
 		c.Admin = true // single-user fleet: no separation
 	}
