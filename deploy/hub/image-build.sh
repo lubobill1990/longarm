@@ -12,6 +12,12 @@ arch=${TARGETARCH:-$(go env GOARCH)}
 CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
 	-ldflags "-s -w -X github.com/lubobill1990/longarm/internal/version.Version=${VERSION:-dev}" \
 	-o "$out/bin/longarm-hub" ./cmd/longarm-hub
+# https = ":443" (hub.toml, LONGARM_HUB_HTTPS) as user nonroot: only the
+# right to bind ports below 1024 (deploy/azure without Caddy)
+apt-get update -qq
+apt-get install -y -qq --no-install-recommends libcap2-bin >/dev/null
+setcap cap_net_bind_service=+ep "$out/bin/longarm-hub"
+getcap "$out/bin/longarm-hub"
 # argument-free names for az container exec (cmd/longarm-hub/container.go execAliases)
 for a in longarm-hub-admin-code longarm-hub-user-add longarm-hub-users; do
 	ln -s longarm-hub "$out/bin/$a"

@@ -8,6 +8,7 @@
 #   ./deploy.sh --name myhub --admin-code                                # a new admin join code
 #   ./deploy.sh --name myhub --teardown                                  # delete everything
 #   ./deploy.sh --name myhub --location eastasia --build-in-acr          # image built from this checkout in your ACR
+#   ./deploy.sh --name myhub --location eastasia --storage-auth identity # no storage account keys
 #
 # Re-running is an upgrade: the template is applied again with the running
 # hub's settings (image, size, panel, ...) unless an option changes them,
@@ -17,13 +18,14 @@ set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # the Azure CLI; tests put a fake here (e2e/azure_deploy_test.go)
 AZ=${LONGARM_DEPLOY_AZ:-az}
-az() { if [[ $AZ == az ]]; then command az "$@"; else "$AZ" "$@"; fi; }
+# command: "$AZ" is often "az", which would call this function again
+az() { command "$AZ" "$@"; }
 template=$here/azuredeploy.json
 
 # empty = not given (a re-run keeps the running hub's value)
 name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=false yes=false
 recreate=false admin_code=false subscription='' acme_email='' registry_user='' tailscale_secret_file=''
-build_in_acr=false stun_servers='' timeout=1200 stuck_timeout=600
+build_in_acr=false stun_servers='' storage_auth='' acr='' timeout=1200 stuck_timeout=600
 # seconds between status polls (tests make it short)
 poll=${LONGARM_DEPLOY_POLL_SECONDS:-10}
 
@@ -45,6 +47,9 @@ usage: deploy.sh --name NAME [--location REGION] [options]
   --stun-servers LIST      external STUN servers the hub advertises (host:port,...; "none" = only the
                            hub's own; default: the template's public ones, see README "Direct connections")
   --log-analytics          send container logs to a Log Analytics workspace
+  --storage-auth key|identity  key (default): storage account keys; identity: a managed
+                           identity, shared key access off (subscriptions whose policy denies keys)
+  --acr NAME               with identity: pull the image from this registry in the resource group
   --subscription ID        Azure subscription (default: az account show)
   --recreate               delete the container group first (needed to change --size or the panel)
   --admin-code             print a new one-time admin join code (az container exec)
@@ -75,6 +80,8 @@ while [[ $# -gt 0 ]]; do
 	--tailscale-secret-file) tailscale_secret_file=${2:?}; shift ;;
 	--acme-email) acme_email=${2:?}; shift ;;
 	--log-analytics) log_analytics=true ;;
+	--storage-auth) storage_auth=${2:?}; shift ;;
+	--acr) acr=${2:?}; shift ;;
 	--subscription) subscription=${2:?}; shift ;;
 	--recreate) recreate=true ;;
 	--admin-code) admin_code=true ;;
@@ -106,6 +113,7 @@ if [[ -n $stun_servers && $stun_servers != none ]]; then
 		[[ $s =~ $stun_re ]] || die "--stun-servers: $s is not host:port or [v6]:port (none goes alone)"
 	done
 fi
+[[ -z $storage_auth || $storage_auth == key || $storage_auth == identity ]] || die "--storage-auth: key or identity"
 [[ -z $tailscale_secret_file || -r $tailscale_secret_file ]] || die "--tailscale-secret-file: can't read $tailscale_secret_file"
 rg=${rg:-$name-rg}
 
@@ -117,9 +125,9 @@ az account show -o none 2>/dev/null || die "not logged in: run az login"
 
 # tcp_open HOST PORT: a TCP connect within 5 s (bash /dev/tcp; macOS has no coreutils timeout)
 tcp_open() {
-	(exec 3<>"/dev/tcp/$1/$2") 2>/dev/null &
+	(trap - EXIT; exec 3<>"/dev/tcp/$1/$2") 2>/dev/null &
 	local pid=$! rc=0
-	(sleep 5 && kill "$pid") >/dev/null 2>&1 &
+	(trap - EXIT; sleep 5 && kill "$pid") >/dev/null 2>&1 &
 	local killer=$!
 	wait "$pid" || rc=$?
 	kill "$killer" 2>/dev/null || true
@@ -129,7 +137,11 @@ tcp_open() {
 rg_exists() { [[ $(az group exists -n "$rg" -o tsv) == true ]]; }
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+# only the script itself cleans up: a background subshell that is killed
+# (tcp_open) runs an inherited EXIT trap too, and took $tmp with it. bash
+# 3.2 (macOS) has no BASHPID: there tcp_open's trap - EXIT does it alone
+main_pid=${BASHPID:-$$}
+trap '[[ ${BASHPID:-$$} != "$main_pid" ]] || rm -rf "$tmp"' EXIT
 chmod 700 "$tmp"
 
 # fetch_bootstrap ACCOUNT KEY: bootstrap.env from the state share into
@@ -151,7 +163,24 @@ fetch_bootstrap() {
 	[[ -n $bootstrap ]]
 }
 
-# bootstrap_value KEY: a value of the last fetched bootstrap.env
+# fetch_bootstrap_log: the last LONGARM_BOOTSTRAP line of the hub's log
+# into $bootstrap (storage-auth identity: no share; the line has no join code)
+fetch_bootstrap_log() {
+	bootstrap=$(az container logs -g "$rg" -n "$name" --container-name hub 2>/dev/null | tr -d '\r' |
+		grep '^LONGARM_BOOTSTRAP ' | tail -n 1 | tr ' ' '\n' | grep '=') || true
+	[[ -n $bootstrap ]]
+}
+
+# read_bootstrap: this hub's bootstrap values into $bootstrap
+read_bootstrap() {
+	if [[ $storage_auth == identity ]]; then
+		fetch_bootstrap_log
+	else
+		fetch_bootstrap "$account" "$key"
+	fi
+}
+
+# bootstrap_value KEY: a value of the last fetched bootstrap values
 bootstrap_value() { printf '%s\n' "$bootstrap" | awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }'; }
 
 # ensure_providers NAMESPACE...: register the resource providers the
@@ -267,7 +296,7 @@ ensure_providers Microsoft.ContainerInstance Microsoft.Storage
 # A re-run keeps the running hub's settings. Secrets can't be read back
 # from ACI: a hub that has them needs them again.
 cur=$(az container show -g "$rg" -n "$name" -o tsv --query "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId, containers[0].environmentVariables[?name=='LONGARM_HUB_RELAY_STUN_ADVERTISE'].value | [0]]" 2>/dev/null || true)
-cur_image='' cur_registry='' prev_boot='' account='' key=''
+cur_image='' cur_registry='' prev_boot='' account='' key='' build_acr=''
 if [[ -n $cur ]]; then
 	# one field per line; null fields are empty lines
 	{
@@ -282,7 +311,15 @@ if [[ -n $cur ]]; then
 	cur_size=small
 	[[ ${cur_cpu%%.*} -lt 2 ]] || cur_size=medium
 	cur_panel=false
-	[[ $cur_c1 != caddy ]] || cur_panel=true
+	# the panel: Caddy (storage-auth key) or the hub on 443 (identity)
+	[[ $cur_c1 != caddy && ,$cur_env, != *,LONGARM_HUB_HTTPS,* ]] || cur_panel=true
+	cur_auth=key
+	[[ ,$cur_env, != *,LONGARM_HUB_CA_IN_DB,* ]] || cur_auth=identity
+	[[ -z $storage_auth || $storage_auth == "$cur_auth" ]] ||
+		die "the hub uses --storage-auth $cur_auth; switching needs a new deployment (another --name or --resource-group)"
+	storage_auth=$cur_auth
+	# the registry pulled with the identity (identity mode)
+	[[ -n $acr || $cur_auth != identity || $cur_registry != *.azurecr.io ]] || acr=${cur_registry%%.*}
 	if ! $recreate; then
 		[[ -z $size || $size == "$cur_size" ]] ||
 			die "the hub is $cur_size; ACI can't resize a running container group: add --recreate (data is kept)"
@@ -303,14 +340,22 @@ if [[ -n $cur ]]; then
 	[[ ,$cur_env, != *,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,* || -n $tailscale_secret_file ]] ||
 		die "the hub has a Tailscale OAuth secret, which can't be read back: pass --tailscale-secret-file again"
 	# this start's bootstrap.env must differ from the running one's (boot_id)
-	account=$(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv | tr -d '\r' | head -n 1)
-	if [[ -n $account ]]; then
-		key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv | tr -d '\r')
-		if fetch_bootstrap "$account" "$key"; then
+	if [[ $storage_auth == identity ]]; then
+		if fetch_bootstrap_log; then
 			prev_boot=$(bootstrap_value boot_id)
+		fi
+	else
+		account=$(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv | tr -d '\r' | head -n 1)
+		if [[ -n $account ]]; then
+			key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv | tr -d '\r')
+			if fetch_bootstrap "$account" "$key"; then
+				prev_boot=$(bootstrap_value boot_id)
+			fi
 		fi
 	fi
 fi
+storage_auth=${storage_auth:-key}
+[[ -z $acr || $storage_auth == identity ]] || die "--acr needs --storage-auth identity"
 size=${size:-small}
 panel=${panel:-true}
 log_analytics=${log_analytics:-false}
@@ -322,30 +367,37 @@ if $build_in_acr; then
 	ensure_providers Microsoft.ContainerRegistry
 	root=$(cd "$here/../.." && pwd)
 	[[ -f $root/deploy/hub/Dockerfile && -f $root/go.mod ]] || die "--build-in-acr: run from a checkout of the repository"
-	acr=$(az acr list -g "$rg" --query "[?tags.\"longarm-hub\"=='$name'].name | [0]" -o tsv | tr -d '\r')
-	if [[ -z $acr ]]; then
-		acr=lahub$(od -An -tx1 -N6 /dev/urandom | tr -d ' \n')
-		echo "creating the container registry $acr in $rg (Basic, about 5 USD/month)"
-		az acr create -g "$rg" -n "$acr" -l "$location" --sku Basic --admin-enabled true --tags "longarm-hub=$name" -o none
+	build_acr=$(az acr list -g "$rg" --query "[?tags.\"longarm-hub\"=='$name'].name | [0]" -o tsv | tr -d '\r')
+	if [[ -z $build_acr ]]; then
+		build_acr=lahub$(od -An -tx1 -N6 /dev/urandom | tr -d ' \n')
+		echo "creating the container registry $build_acr in $rg (Basic, about 5 USD/month)"
+		# key: the hub pulls with the admin login; identity: with its managed identity (AcrPull)
+		az acr create -g "$rg" -n "$build_acr" -l "$location" --sku Basic --admin-enabled "$([[ $storage_auth == key ]] && echo true || echo false)" \
+			--tags "longarm-hub=$name" -o none
 	fi
-	login_server=$(az acr show -g "$rg" -n "$acr" --query loginServer -o tsv | tr -d '\r')
+	login_server=$(az acr show -g "$rg" -n "$build_acr" --query loginServer -o tsv | tr -d '\r')
 	version=$(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo dev)
 	tag=build-$(date -u +%Y%m%d%H%M%S)
 	echo "building $login_server/longarm-hub:$tag from $root (az acr build, a few minutes)"
 	# --target acr: ACR Tasks can't parse the BuildKit stages (deploy/hub/Dockerfile)
-	az acr build -g "$rg" -r "$acr" -t "longarm-hub:$tag" --target acr --platform linux/amd64 \
+	az acr build -g "$rg" -r "$build_acr" -t "longarm-hub:$tag" --target acr --platform linux/amd64 \
 		--build-arg "VERSION=$version" -f deploy/hub/Dockerfile "$root" ||
 		die "az acr build failed (the build log is above)"
 	image=$login_server/longarm-hub:$tag
 fi
-# an image in an Azure Container Registry of this resource group: its
-# admin login (no --registry-user needed, also on re-runs)
+# an image in an Azure Container Registry of this resource group: key: its
+# admin login, identity: the managed identity pulls it (--acr); no
+# --registry-user needed, also on re-runs
 reg_host=$(registry_host "$image")
 if [[ -z $registry_user && $reg_host == *.azurecr.io ]]; then
-	acr=${acr:-$(az acr list -g "$rg" --query "[?loginServer=='$reg_host'].name | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)}
-	[[ -z $acr ]] || acr_login "$acr"
+	reg_acr=${build_acr:-$(az acr list -g "$rg" --query "[?loginServer=='$reg_host'].name | [0]" -o tsv 2>/dev/null | tr -d '\r' || true)}
+	if [[ $storage_auth == identity ]]; then
+		acr=${acr:-$reg_acr}
+	elif [[ -n $reg_acr ]]; then
+		acr_login "$reg_acr"
+	fi
 fi
-[[ -z $cur_registry || -n $registry_user ]] ||
+[[ -z $cur_registry || -n $registry_user || -n $acr ]] ||
 	die "the hub pulls its image with a login for $cur_registry, which can't be read back: pass --registry-user again (password in LONGARM_REGISTRY_PASSWORD)"
 
 if $recreate && [[ -n $cur_image ]]; then
@@ -369,6 +421,8 @@ json_str() {
 	printf ',"size":{"value":%s}' "$(json_str "$size")"
 	printf ',"enablePanel":{"value":%s}' "$panel"
 	printf ',"enableLogAnalytics":{"value":%s}' "$log_analytics"
+	printf ',"storageAuth":{"value":%s}' "$(json_str "$storage_auth")"
+	[[ -z $acr ]] || printf ',"acrName":{"value":%s}' "$(json_str "$acr")"
 	[[ -z $image ]] || printf ',"image":{"value":%s}' "$(json_str "$image")"
 	[[ -z $acme_email ]] || printf ',"acmeEmail":{"value":%s}' "$(json_str "$acme_email")"
 	if [[ -n $registry_user ]]; then
@@ -387,7 +441,7 @@ json_str() {
 	printf '}}\n'
 } >"$tmp/params.json"
 
-echo "deploying $name to $rg ($location, $size, panel $panel${image:+, $image}); this takes a few minutes"
+echo "deploying $name to $rg ($location, $size, panel $panel, storage auth $storage_auth${image:+, $image}); this takes a few minutes"
 deadline=$((SECONDS + timeout))
 logs_hint="az container logs -g $rg -n $name --container-name hub"
 # --no-wait + polling: a container group stuck in Creating would block
@@ -425,7 +479,9 @@ relay_port=${relay_port:-7443}
 # the relay's TLS fallback is on the hub's TCP port (ACI: UDP 7445, TCP 7443)
 relay_tcp=''
 [[ $relay_port == "${hub_addr##*:}" ]] || relay_tcp="tcp=$fqdn:${hub_addr##*:}&"
-key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv | tr -d '\r')
+if [[ $storage_auth == key ]]; then
+	key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv | tr -d '\r')
+fi
 
 new_image=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].image" -o tsv | tr -d '\r')
 if ! $recreate && [[ -n $cur_image && $cur_image == "$new_image" && $new_image =~ :(latest|edge)$ ]]; then
@@ -446,8 +502,8 @@ done
 # bootstrap.env of this start (a new boot_id; restart once if the update
 # didn't restart the hub)
 restarted=false
-until fetch_bootstrap "$account" "$key" && [[ $(bootstrap_value boot_id) != "$prev_boot" ]]; do
-	((SECONDS < deadline)) || die "no bootstrap.env from this start on the share: $logs_hint"
+until read_bootstrap && [[ $(bootstrap_value boot_id) != "$prev_boot" ]]; do
+	((SECONDS < deadline)) || die "no bootstrap values from this start: $logs_hint"
 	if [[ -n $prev_boot ]] && ! $restarted && ((SECONDS > waited_from + 240)); then
 		echo "the hub did not restart: az container restart"
 		az container restart -g "$rg" -n "$name" -o none
@@ -462,6 +518,7 @@ done
 fp=$(bootstrap_value ca_fingerprint)
 code=$(bootstrap_value admin_join_code)
 expires=$(bootstrap_value admin_join_code_expires)
+admin_joined=$(bootstrap_value admin_joined)
 
 if [[ -n $panel_url ]]; then
 	ok=false
@@ -472,15 +529,15 @@ if [[ -n $panel_url ]]; then
 		fi
 		sleep 10
 	done
-	$ok || echo "note: $panel_url/healthz does not answer yet (Let's Encrypt can take a few minutes): az container logs -g $rg -n $name --container-name caddy" >&2
+	$ok || echo "note: $panel_url/healthz does not answer yet (Let's Encrypt can take a few minutes): az container logs -g $rg -n $name --container-name $([[ $storage_auth == identity ]] && echo hub || echo caddy)" >&2
 fi
 
 # Rough monthly cost (Linux ACI pay-as-you-go, about 0.0405 USD per vCPU-hour
 # and 0.0045 USD per GB-hour in US regions; other regions differ by up to ~20 %).
 cost() {
-	awk -v s="$size" -v p="$panel" 'BEGIN {
+	awk -v s="$size" -v p="$panel" -v a="$storage_auth" 'BEGIN {
 		cpu = (s == "medium") ? 2 : 1; mem = (s == "medium") ? 3 : 1.5
-		if (p == "true") { cpu += 0.25; mem += 0.25 }
+		if (p == "true" && a == "key") { cpu += 0.25; mem += 0.3 } # Caddy
 		printf "%.0f", 730 * (cpu * 0.0405 + mem * 0.0045) + 1
 	}'
 }
@@ -491,7 +548,7 @@ longarm-hub is up.
   hub address     $hub_addr
   CA fingerprint  $fp
   panel           ${panel_url:-off (--no-panel)}
-  resource group  $rg (storage account $account)
+  resource group  $rg (storage account $account, storage auth $storage_auth)
   cost            about $(cost) USD/month (compute; plus egress over 100 GB/month, relay traffic counts)
 
 EOF
@@ -500,6 +557,13 @@ if [[ -n $code ]]; then
 1. Your laptop (admin): install longarm (https://github.com/lubobill1990/longarm/releases), then
      longarm join $hub_addr $code --ca-fingerprint $fp
    The code is one-time and valid until $expires (a new one: ./deploy.sh --name $name --admin-code).
+EOF
+elif [[ $admin_joined == false ]]; then
+	# storage-auth identity: the code is only in the container's bootstrap.env
+	cat <<EOF
+1. Your laptop (admin): install longarm (https://github.com/lubobill1990/longarm/releases), then
+     ./deploy.sh --name $name --resource-group $rg --admin-code      # a one-time admin join code (24 h)
+     longarm join $hub_addr <code> --ca-fingerprint $fp
 EOF
 else
 	cat <<EOF

@@ -60,6 +60,8 @@ restarts the hub) prints everything too.
 | `--tailscale-secret-file F` | `-TailscaleSecretFile` | Tailscale OAuth secret ([tailnet] provider, [deploy/hub](../hub/README.md#tailnet-provider-tailscale-default-or-headscale)) |
 | `--acme-email E` | `-AcmeEmail` | Let's Encrypt contact |
 | `--log-analytics` | `-LogAnalytics` | container logs to a Log Analytics workspace |
+| `--storage-auth key\|identity` | | `identity`: no storage account keys, panel served by the hub ([below](#without-storage-account-keys)); deploy.sh only for now |
+| `--acr NAME` | | with `identity`: pull the image from this Azure Container Registry (same resource group) |
 | `--panel` | `-Panel` | turn the panel back on (with `--recreate`) |
 | `--recreate` | `-Recreate` | delete the container group first (to change size or panel; data stays) |
 | `--admin-code` | `-AdminCode` | print a new one-time admin join code |
@@ -153,6 +155,44 @@ locally redundant by default (`storageSku` parameter: ZRS/GRS). The hub is
 never on the data path: while it restarts, workers keep running jobs and
 clients keep talking to workers they already know.
 
+## Without storage account keys
+
+Some subscriptions deny storage accounts with shared key access (Azure
+Policy "Storage accounts should prevent shared key access"). There the
+template can't work as described above: ACI mounts Azure Files only with the
+account key, and the Litestream SAS is signed with it. `--storage-auth
+identity` (template parameter `storageAuth=identity`) deploys without keys:
+
+```sh
+./deploy.sh --name myhub --location eastasia --storage-auth identity
+```
+
+- The storage account has `allowSharedKeyAccess: false` and only the blob
+  container `litestream`; no file shares.
+- A user-assigned managed identity `<name>-id` gets **Storage Blob Data
+  Contributor** on that container; Litestream finds it through
+  `AZURE_CLIENT_ID` (Azure SDK DefaultAzureCredential). The role
+  assignment needs Owner or User Access Administrator on the resource group.
+- The data dir `/data` is the container's own disk: it is gone after a
+  restart. What matters in it is the CA, so the hub keeps a copy of
+  `ca.crt` + `ca.key` in the database (`LONGARM_HUB_CA_IN_DB=1`, hub.toml
+  `ca_in_db`) and bootstrap writes it back on every start. Everything else
+  is recreated (hub/relay certificates from the CA, hub.toml from the
+  environment, bootstrap.env). The database replica now holds the fleet's
+  root key: whoever can read the `litestream` container can read the CA.
+- No Caddy: the hub serves the panel on 443 itself (`LONGARM_HUB_HTTPS`,
+  hub.toml `https`) with a Let's Encrypt certificate (TLS-ALPN-01), and
+  redirects 80 to it. Certificate and ACME account are in the database
+  too, so restarts and upgrades don't ask Let's Encrypt again (its limit is
+  5 certificates per week for one name). The image's `longarm-hub` has the
+  file capability `cap_net_bind_service` for that (it runs as nonroot).
+- Not kept across restarts: the release store (`longarm admin release
+  publish` again) and edits to hub.toml (use the environment or redeploy).
+- The admin join code is not in the log; get it with `--admin-code`.
+- `--acr NAME` pulls the image from an Azure Container Registry in the
+  resource group with the same identity (AcrPull), for registries without
+  admin users.
+
 ## Backup and restore
 
 - Database: the replica *is* the backup. Point-in-time copy:
@@ -190,9 +230,10 @@ Linux ACI is billed per vCPU-second and GB-second (pay-as-you-go, about
 regions are up to ~20 % more; check the
 [pricing page](https://azure.microsoft.com/pricing/details/container-instances/)):
 
-| size | hub | + panel (0.25 vCPU / 0.25 GB) | monthly (approx.) |
+| size | hub | + panel (0.25 vCPU / 0.3 GB) | monthly (approx.) |
 |---|---|---|---|
 | small | 1 vCPU / 1.5 GB | yes | ~44 USD |
+| small, `--storage-auth identity` | 1 vCPU / 1.5 GB | yes (in the hub) | ~36 USD |
 | small | 1 vCPU / 1.5 GB | no | ~36 USD |
 | medium | 2 vCPU / 3 GB | yes | ~78 USD |
 
@@ -232,7 +273,7 @@ traffic relayed by the longnet relay leaves Azure and counts. Direct
 - **Azure public cloud only**: the template builds the name
   `<name>.<region>.azurecontainer.io`, the public cloud's ACI DNS zone.
 - **UDP 7445 and 7446, not 7443**: ACI refuses one port number for TCP and
-  UDP in a container (`DuplicateContainerPorts`), so the relay's UDP port is
+  UDP (`DuplicateContainerPorts` / `DuplicateIpAddressPorts`), so the relay's UDP port is
   `relayUdpPort` (default 7445, at least 7444; STUN's second port is the next
   one) and its TLS fallback stays on 7443/tcp. Workers listen on
   `longnet://<fqdn>:7445?tcp=<fqdn>:7443&name=<worker>` (the scripts print
@@ -256,7 +297,8 @@ The script creates an Azure Container Registry (Basic, about 5 USD/month)
 in the hub's resource group on the first use, runs `az acr build --target
 acr` on this checkout (ACR Tasks, a few minutes), and deploys
 `<registry>.azurecr.io/longarm-hub:build-<UTC time>` with the registry's
-admin login. Re-runs without `--build-in-acr` keep that image and find the
+admin login (`--storage-auth identity`: no admin login, the hub's managed
+identity pulls it, as with `--acr`). Re-runs without `--build-in-acr` keep that image and find the
 login by themselves; `--build-in-acr` again builds and deploys a new one.
 By hand:
 

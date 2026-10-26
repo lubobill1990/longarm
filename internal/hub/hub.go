@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -398,24 +399,64 @@ func (h *Hub) Serve(ctx context.Context) error {
 	run("mux", mux.Serve)
 	run("grpc", func() error { return g.Serve(grpcLn) })
 
-	var httpSrv *http.Server
-	if h.cfg.HTTP != "off" {
-		hl, err := net.Listen("tcp", h.cfg.HTTP)
+	// the panel/API: plain http (behind a proxy), and/or https with a Let's
+	// Encrypt certificate (acme.go) plus its http->https redirect
+	var httpSrvs []*http.Server
+	stopHTTP := func() {
+		for _, s := range httpSrvs {
+			sctx, scancel := context.WithTimeout(context.Background(), 2*time.Second)
+			s.Shutdown(sctx)
+			scancel()
+			s.Close()
+		}
+	}
+	serveHTTP := func(key, addr string, srv *http.Server) error {
+		l, err := net.Listen("tcp", addr)
 		if err != nil {
 			mux.Close()
 			if h.relay != nil {
 				h.relay.Close()
 			}
+			stopHTTP()
 			return err
 		}
-		h.setAddr("http", hl.Addr().String())
-		httpSrv = &http.Server{Handler: h.httpHandler(), ReadHeaderTimeout: 10 * time.Second}
-		run("http", func() error {
-			if err := httpSrv.Serve(hl); !errors.Is(err, http.ErrServerClosed) {
+		h.setAddr(key, l.Addr().String())
+		httpSrvs = append(httpSrvs, srv)
+		run(key, func() error {
+			var err error
+			if srv.TLSConfig != nil {
+				err = srv.ServeTLS(l, "", "")
+			} else {
+				err = srv.Serve(l)
+			}
+			if !errors.Is(err, http.ErrServerClosed) {
 				return err
 			}
 			return nil
 		})
+		return nil
+	}
+	var handler http.Handler
+	if h.cfg.HTTP != "off" || h.cfg.HTTPS != "" {
+		handler = h.httpHandler()
+	}
+	if h.cfg.HTTP != "off" {
+		if err := serveHTTP("http", h.cfg.HTTP, &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}); err != nil {
+			return err
+		}
+	}
+	if h.cfg.HTTPS != "" {
+		m := h.acmeManager()
+		tc := m.TLSConfig()
+		tc.MinVersion = tls.VersionTLS12
+		if err := serveHTTP("https", h.cfg.HTTPS, &http.Server{Handler: handler, TLSConfig: tc, ReadHeaderTimeout: 10 * time.Second}); err != nil {
+			return err
+		}
+		if h.cfg.HTTPSRedirect != "" {
+			if err := serveHTTP("https_redirect", h.cfg.HTTPSRedirect, &http.Server{Handler: m.HTTPHandler(nil), ReadHeaderTimeout: 10 * time.Second}); err != nil {
+				return err
+			}
+		}
 	}
 
 	wg.Add(1)
@@ -423,7 +464,7 @@ func (h *Hub) Serve(ctx context.Context) error {
 
 	ep := filepath.Join(h.cfg.DataDir, EndpointsFile)
 	var lines []string
-	for _, k := range []string{"grpc", "http", "udp"} {
+	for _, k := range []string{"grpc", "http", "https", "udp"} {
 		if a := h.Addr(k); a != "" {
 			lines = append(lines, k+"="+a)
 		}
@@ -431,7 +472,7 @@ func (h *Hub) Serve(ctx context.Context) error {
 	os.WriteFile(ep, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
 	defer os.Remove(ep)
 	h.log.Info("longarm-hub started", "version", version.Version, "grpc", h.Addr("grpc"), "relay_udp", h.Addr("udp"), "stun2", h.Addr("stun2"),
-		"http", h.Addr("http"), "data", h.cfg.DataDir, "ca", pki.Fingerprint(h.ca.Cert))
+		"http", h.Addr("http"), "https", h.Addr("https"), "data", h.cfg.DataDir, "ca", pki.Fingerprint(h.ca.Cert))
 
 	var runErr error
 	select {
@@ -445,12 +486,7 @@ func (h *Hub) Serve(ctx context.Context) error {
 	if h.relay != nil {
 		h.relay.Close()
 	}
-	if httpSrv != nil {
-		sctx, scancel := context.WithTimeout(context.Background(), 2*time.Second)
-		httpSrv.Shutdown(sctx)
-		scancel()
-		httpSrv.Close()
-	}
+	stopHTTP()
 	stopped := make(chan struct{})
 	go func() { g.GracefulStop(); close(stopped) }()
 	select {

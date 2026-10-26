@@ -186,6 +186,12 @@ func (s *Store) SetMeta(k, v string) error {
 	return err
 }
 
+// DeleteMeta removes a meta value.
+func (s *Store) DeleteMeta(k string) error {
+	_, err := s.db.Exec(`DELETE FROM meta WHERE k=?`, k)
+	return err
+}
+
 // ---------------------------------------------------------------- nodes
 
 // Node is a registered node (worker, client or admin).

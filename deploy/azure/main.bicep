@@ -31,7 +31,7 @@ param image string = 'ghcr.io/lubobill1990/longarm-hub:latest'
 ])
 param size string = 'small'
 
-@description('Serve the web panel and install scripts over HTTPS (Caddy sidecar on 80/443 with a Let\'s Encrypt certificate for the azurecontainer.io name).')
+@description('Serve the web panel and install scripts over HTTPS on 80/443 with a Let\'s Encrypt certificate for the azurecontainer.io name: a Caddy sidecar (storageAuth key), or the hub itself with the certificate in its replicated database (storageAuth identity).')
 param enablePanel bool = true
 
 @description('E-mail for Let\'s Encrypt expiry notices (optional).')
@@ -56,7 +56,7 @@ param storageSku string = 'Standard_LRS'
 @maxValue(168)
 param adminCodeTtlHours int = 24
 
-@description('UDP port of the longnet relay (QUIC + STUN); the second STUN port is this + 1. Not 7443: ACI refuses one port number for TCP and UDP (DuplicateContainerPorts). Workers listen on longnet://<fqdn>:<port>?tcp=<fqdn>:7443 (the relay TLS fallback uses the hub TCP port).')
+@description('UDP port of the longnet relay (QUIC + STUN); the second STUN port is this + 1. Not 7443: ACI refuses one port number for TCP and UDP (DuplicateContainerPorts / DuplicateIpAddressPorts). Workers listen on longnet://<fqdn>:<port>?tcp=<fqdn>:7443 (the relay TLS fallback uses the hub TCP port).')
 @minValue(7444)
 @maxValue(65534)
 param relayUdpPort int = 7445
@@ -66,6 +66,16 @@ param stunServers string = 'stun.cloudflare.com:3478,stun.l.google.com:19302'
 
 @description('Expiry of the Litestream SAS (blob container scoped); every deployment (deploy.sh re-run) renews it.')
 param sasExpiry string = dateTimeAdd(utcNow('u'), 'P10Y', 'yyyy-MM-ddTHH:mm:ssZ')
+
+@description('How the hub reaches its storage account. key: the account key (Azure Files share for the data dir, a SAS for Litestream). identity: a user-assigned managed identity with Storage Blob Data Contributor on the replica container and shared key access off, for subscriptions whose policy denies it: no file shares, the data dir is the container\'s own disk and the CA is kept in the replicated database (LONGARM_HUB_CA_IN_DB), and the hub serves the panel over https itself (no Caddy; its certificate in the database too). Needs Owner or User Access Administrator on the resource group (role assignments).')
+@allowed([
+  'key'
+  'identity'
+])
+param storageAuth string = 'key'
+
+@description('storageAuth identity: pull the image from this Azure Container Registry (in this resource group) with the managed identity (AcrPull). Empty: registryUsername or anonymous.')
+param acrName string = ''
 
 @description('Registry login for a private image (empty = anonymous pull).')
 param registryServer string = 'ghcr.io'
@@ -91,6 +101,11 @@ var sizes = {
 var fqdn = '${name}.${toLower(replace(location, ' ', ''))}.azurecontainer.io'
 var hubAddress = '${fqdn}:7443'
 var storageName = take('lahub${uniqueString(resourceGroup().id, name)}', 24)
+var useKey = storageAuth == 'key'
+var useAcr = !useKey && !empty(acrName)
+// identity: the hub serves the panel over https itself (LONGARM_HUB_HTTPS):
+// its certificate lives in the database, Caddy's would die with the container
+var hubTls = !useKey && enablePanel
 var tags = {
   'longarm-hub': name
 }
@@ -118,8 +133,10 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   properties: {
     accessTier: 'Hot'
     allowBlobPublicAccess: false
-    // ACI mounts Azure Files with the account key, Litestream uses it too
-    allowSharedKeyAccess: true
+    // key: ACI mounts Azure Files with the account key, Litestream uses a
+    // SAS signed with it. identity: Entra ID only
+    allowSharedKeyAccess: useKey
+    defaultToOAuthAuthentication: !useKey
     minimumTlsVersion: 'TLS1_2'
     supportsHttpsTrafficOnly: true
   }
@@ -148,7 +165,7 @@ resource replicaContainer 'Microsoft.Storage/storageAccounts/blobServices/contai
   }
 }
 
-resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = {
+resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = if (useKey) {
   parent: storage
   name: 'default'
   properties: {
@@ -159,7 +176,7 @@ resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01'
   }
 }
 
-resource stateShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
+resource stateShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = if (useKey) {
   parent: fileService
   name: 'state'
   properties: {
@@ -167,7 +184,7 @@ resource stateShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-
   }
 }
 
-resource caddyShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = if (enablePanel) {
+resource caddyShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = if (useKey && enablePanel) {
   parent: fileService
   name: 'caddy'
   properties: {
@@ -187,14 +204,50 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (enable
   }
 }
 
-var storageKey = storage.listKeys().keys[0].value
-var replicaSas = storage.listServiceSas('2023-05-01', {
-  canonicalizedResource: '/blob/${storage.name}/litestream'
-  signedResource: 'c'
-  signedPermission: 'racwdl'
-  signedProtocol: 'https'
-  signedExpiry: sasExpiry
-}).serviceSasToken
+// storageAuth identity: Litestream (DefaultAzureCredential, AZURE_CLIENT_ID)
+// writes the replica as this identity; it pulls the image from acrName too
+resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (!useKey) {
+  name: '${name}-id'
+  location: location
+  tags: tags
+}
+
+// Storage Blob Data Contributor, on the replica container only
+resource replicaRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!useKey) {
+  name: guid(replicaContainer.id, '${name}-id', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+  scope: replicaContainer
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+    principalId: identity!.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = if (useAcr) {
+  name: acrName
+}
+
+// AcrPull
+resource acrRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (useAcr) {
+  name: guid(resourceId('Microsoft.ContainerRegistry/registries', acrName), '${name}-id', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+  scope: acr
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+    principalId: identity!.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+var storageKey = useKey ? storage.listKeys().keys[0].value : ''
+var replicaSas = useKey
+  ? storage.listServiceSas('2023-05-01', {
+      canonicalizedResource: '/blob/${storage.name}/litestream'
+      signedResource: 'c'
+      signedPermission: 'racwdl'
+      signedProtocol: 'https'
+      signedExpiry: sasExpiry
+    }).serviceSasToken
+  : ''
 var probe = {
   exec: {
     command: [
@@ -220,11 +273,27 @@ var hubEnv = concat(
     { name: 'LONGARM_HUB_BLOB_CONTAINER', value: replicaContainer.name }
     // this cloud's blob endpoint (public, China, Government)
     { name: 'LONGARM_HUB_BLOB_ENDPOINT', value: storage.properties.primaryEndpoints.blob }
-    // a SAS for the replica container only: the hub process (Litestream's
-    // child) never sees the account key, which opens the share with the CA
-    { name: 'LITESTREAM_AZURE_SAS_TOKEN', secureValue: replicaSas }
   ],
+  // key: a SAS for the replica container only: the hub process (Litestream's
+  // child) never sees the account key, which opens the share with the CA.
+  // identity: the managed identity, and the CA in the database (the only
+  // thing that outlives the container)
+  useKey
+    ? [{ name: 'LITESTREAM_AZURE_SAS_TOKEN', secureValue: replicaSas }]
+    : [
+        { name: 'AZURE_CLIENT_ID', value: identity!.properties.clientId }
+        { name: 'LONGARM_HUB_CA_IN_DB', value: '1' }
+      ],
   enablePanel ? [{ name: 'LONGARM_HUB_PUBLIC_URL', value: 'https://${fqdn}' }] : [],
+  hubTls
+    ? concat(
+        [
+          { name: 'LONGARM_HUB_HTTPS', value: ':443' }
+          { name: 'LONGARM_HUB_HTTPS_REDIRECT', value: ':80' }
+        ],
+        empty(acmeEmail) ? [] : [{ name: 'LONGARM_HUB_ACME_EMAIL', value: acmeEmail }]
+      )
+    : [],
   empty(tailscaleOAuthSecret) ? [] : [{ name: 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', secureValue: tailscaleOAuthSecret }],
   // self = the hub's own STUN ports; it drops them once it sees that ACI
   // source-NATs them (internal/relay snatVerdict). Always set: deploy.sh
@@ -245,11 +314,10 @@ var hubContainer = {
     resources: {
       requests: sizes[size]
     }
-    ports: hubPorts
+    ports: hubTls ? concat(hubPorts, panelPorts) : hubPorts
     environmentVariables: hubEnv
-    volumeMounts: [
-      { name: 'state', mountPath: '/data' }
-    ]
+    // identity: /data is the image's own directory (owned by nonroot)
+    volumeMounts: useKey ? [{ name: 'state', mountPath: '/data' }] : []
     // restore + bootstrap run before the hub listens
     livenessProbe: union(probe, { initialDelaySeconds: 180, periodSeconds: 30, timeoutSeconds: 10, failureThreshold: 4 })
     readinessProbe: union(probe, { initialDelaySeconds: 5, periodSeconds: 10, timeoutSeconds: 10, failureThreshold: 3 })
@@ -271,7 +339,7 @@ var caddyContainer = {
     resources: {
       requests: {
         cpu: json('0.25')
-        memoryInGB: json('0.3')
+        memoryInGB: json('0.3') // ACI: steps of 0.1 GB
       }
     }
     ports: [
@@ -285,7 +353,7 @@ var caddyContainer = {
   }
 }
 
-var baseVolumes = [
+var baseVolumes = !useKey ? [] : [
   {
     name: 'state'
     azureFile: {
@@ -321,15 +389,29 @@ resource group 'Microsoft.ContainerInstance/containerGroups@2025-09-01' = {
   name: name
   location: location
   tags: tags
+  identity: useKey ? null : {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${identity.id}': {}
+    }
+  }
+  // identity: the roles before the first start (the restore runs right away)
   dependsOn: [
     caddyShare
+    replicaRole
+    acrRole
   ]
   properties: {
     osType: 'Linux'
     sku: 'Standard'
     restartPolicy: 'Always'
-    containers: enablePanel ? [hubContainer, caddyContainer] : [hubContainer]
-    imageRegistryCredentials: empty(registryUsername) ? [] : [
+    containers: enablePanel && useKey ? [hubContainer, caddyContainer] : [hubContainer]
+    imageRegistryCredentials: useAcr ? [
+      {
+        server: acr!.properties.loginServer
+        identity: identity.id
+      }
+    ] : empty(registryUsername) ? [] : [
       {
         server: registryServer
         username: registryUsername
@@ -341,7 +423,7 @@ resource group 'Microsoft.ContainerInstance/containerGroups@2025-09-01' = {
       dnsNameLabel: name
       ports: enablePanel ? concat(hubPorts, panelPorts) : hubPorts
     }
-    volumes: enablePanel ? concat(baseVolumes, panelVolumes) : baseVolumes
+    volumes: enablePanel && useKey ? concat(baseVolumes, panelVolumes) : baseVolumes
     diagnostics: enableLogAnalytics ? {
       logAnalytics: {
         workspaceId: logs!.properties.customerId
@@ -361,3 +443,5 @@ output storageAccount string = storage.name
 @description('UDP port of the longnet relay (workers: --listen longnet://<fqdn>:<port>).')
 output relayUdpPort int = relayUdpPort
 output containerGroup string = group.name
+@description('storageAuth identity: the managed identity\'s principal ID (empty with key).')
+output identityPrincipalId string = useKey ? '' : identity!.properties.principalId
