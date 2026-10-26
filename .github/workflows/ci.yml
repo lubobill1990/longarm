@@ -90,7 +90,7 @@ jobs:
             b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6 shellcheck-v0.11.0/shellcheck)
           "$sc/shellcheck" deploy/hub/longarm-hub-deploy .github/scripts/*.sh scripts/*.sh \
             packaging/build.sh packaging/linux/*.sh packaging/macos/*.sh packaging/macos/scripts/* \
-            deploy/azure/*.sh deploy/azure/test/*.sh
+            deploy/azure/*.sh deploy/azure/test/*.sh deploy/hub/image-build.sh
       - name: actionlint
         # shellcheck (on PATH from the step above) also checks the run: scripts
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -color
