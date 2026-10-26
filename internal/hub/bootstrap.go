@@ -43,16 +43,92 @@ type BootstrapResult struct {
 
 // countNodes is the number of nodes in the database at path (0 when new).
 func countNodes(path string) (int, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return 0, err
-	}
-	st, err := store.Open(path)
+	st, err := openStoreAt(path)
 	if err != nil {
 		return 0, err
 	}
 	defer st.Close()
 	nodes, err := st.Nodes()
 	return len(nodes), err
+}
+
+// Meta keys of the CA copy in the database (Config.CAInDB).
+const (
+	metaCACert = "ca_cert_pem"
+	metaCAKey  = "ca_key_pem"
+)
+
+// restoreCAFromDB writes the database's copy of the CA into caDir (false:
+// the database has none).
+func restoreCAFromDB(cfg *Config, caDir string) (bool, error) {
+	st, err := openStoreAt(cfg.DatabasePath())
+	if err != nil {
+		return false, err
+	}
+	defer st.Close()
+	crt, err := st.Meta(metaCACert)
+	if err != nil {
+		return false, err
+	}
+	key, err := st.Meta(metaCAKey)
+	if err != nil || crt == "" || key == "" {
+		return false, err
+	}
+	if err := os.MkdirAll(caDir, 0o700); err != nil {
+		return false, err
+	}
+	if err := writeFileAtomic(filepath.Join(caDir, pki.CACertFile), []byte(crt), 0o644); err != nil {
+		return false, err
+	}
+	if err := writeFileAtomic(filepath.Join(caDir, pki.CAKeyFile), []byte(key), 0o600); err != nil {
+		return false, err
+	}
+	if _, err := pki.LoadCA(caDir); err != nil {
+		return false, fmt.Errorf("the CA restored from the database: %w", err)
+	}
+	return true, nil
+}
+
+// saveCAToDB stores the CA in caDir in the database, unless it has it
+// already. The files win: a CA imported (longarm-hub ca import) replaces
+// the copy on the next bootstrap.
+func saveCAToDB(cfg *Config, caDir string) error {
+	crt, err := os.ReadFile(filepath.Join(caDir, pki.CACertFile))
+	if err != nil {
+		return err
+	}
+	key, err := os.ReadFile(filepath.Join(caDir, pki.CAKeyFile))
+	if err != nil {
+		return err
+	}
+	st, err := openStoreAt(cfg.DatabasePath())
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	oldCrt, err := st.Meta(metaCACert)
+	if err != nil {
+		return err
+	}
+	oldKey, err := st.Meta(metaCAKey)
+	if err != nil {
+		return err
+	}
+	if oldCrt == string(crt) && oldKey == string(key) {
+		return nil
+	}
+	if err := st.SetMeta(metaCACert, string(crt)); err != nil {
+		return err
+	}
+	return st.SetMeta(metaCAKey, string(key))
+}
+
+// openStoreAt opens the database at path, creating its directory.
+func openStoreAt(path string) (*store.Store, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	return store.Open(path)
 }
 
 // Bootstrap prepares a hub for its first (or any) start without operator
@@ -74,6 +150,16 @@ func Bootstrap(cfg *Config, codeTTL time.Duration, log *slog.Logger) (*Bootstrap
 	for _, err := range []error{crtErr, keyErr} {
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, err
+		}
+	}
+	if cfg.CAInDB && (crtErr != nil || keyErr != nil) {
+		restored, err := restoreCAFromDB(cfg, caDir)
+		if err != nil {
+			return nil, err
+		}
+		if restored {
+			crtErr, keyErr = nil, nil
+			log.Info("bootstrap: restored the CA from the database", "dir", caDir)
 		}
 	}
 	if crtErr != nil || keyErr != nil {
@@ -101,6 +187,11 @@ func Bootstrap(cfg *Config, codeTTL time.Duration, log *slog.Logger) (*Bootstrap
 		}
 		res.NewCA = true
 		log.Info("bootstrap: created a new CA", "dir", caDir)
+	}
+	if cfg.CAInDB {
+		if err := saveCAToDB(cfg, caDir); err != nil {
+			return nil, err
+		}
 	}
 
 	h, err := Open(cfg, log)

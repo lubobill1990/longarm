@@ -3,6 +3,7 @@ package hub
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -159,5 +160,81 @@ func TestBootstrap(t *testing.T) {
 	}
 	if m, _ := filepath.Glob(filepath.Join(fresh, CADir+".incomplete-*")); len(m) != 1 {
 		t.Fatalf("incomplete CA not kept aside: %v", m)
+	}
+}
+
+// ca_in_db: a data dir that is not persistent (deploy/azure without storage
+// keys) gets the CA back from the database, the only thing replicated.
+func TestBootstrapCAInDB(t *testing.T) {
+	root := t.TempDir()
+	share := filepath.Join(root, "data")
+	t.Setenv(EnvDB, filepath.Join(root, "local", "hub.db"))
+	t.Setenv(EnvAdvertise, "hub.example.com")
+	t.Setenv(EnvCAInDB, "1")
+	t.Setenv("LONGARM_HUB_DATA_DIR", share)
+	cfgPath := filepath.Join(root, "hub.toml")
+	if _, err := WriteConfigTemplate(cfgPath); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil || !cfg.CAInDB {
+		t.Fatalf("config: %+v %v", cfg, err)
+	}
+
+	r1, err := Bootstrap(cfg, time.Hour, nil)
+	if err != nil || !r1.NewCA {
+		t.Fatalf("first: %+v %v", r1, err)
+	}
+	st, err := store.Open(cfg.DatabasePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutNode(&store.Node{Name: "laptop", Role: string(pki.RoleAdmin), State: stateApproved, JoinedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	// a new container: empty data dir, the database restored by Litestream
+	if err := os.RemoveAll(share); err != nil {
+		t.Fatal(err)
+	}
+	r2, err := Bootstrap(cfg, time.Hour, nil)
+	if err != nil || r2.NewCA || r2.Fingerprint != r1.Fingerprint || !r2.AdminJoined {
+		t.Fatalf("restored: %+v %v", r2, err)
+	}
+	if fi, err := os.Stat(filepath.Join(share, CADir, pki.CAKeyFile)); err != nil || (runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600) {
+		t.Fatalf("ca.key: %v %v", fi, err)
+	}
+
+	// an imported CA (files) replaces the copy in the database
+	other := filepath.Join(root, "other-ca")
+	ca2, err := pki.InitCA(other, "Other CA", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportCA(share, other, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Bootstrap(cfg, time.Hour, nil); err != nil {
+		t.Fatal(err)
+	}
+	os.RemoveAll(share)
+	r3, err := Bootstrap(cfg, time.Hour, nil)
+	if err != nil || r3.Fingerprint != pki.Fingerprint(ca2.Cert) {
+		t.Fatalf("imported: %+v %v", r3, err)
+	}
+
+	// without ca_in_db the guard stays: no CA, nodes in the database
+	t.Setenv(EnvCAInDB, "false")
+	if cfg, err = LoadConfig(cfgPath); err != nil || cfg.CAInDB {
+		t.Fatalf("config off: %+v %v", cfg, err)
+	}
+	os.RemoveAll(share)
+	if _, err := Bootstrap(cfg, time.Hour, nil); err == nil || !strings.Contains(err.Error(), "ca import") {
+		t.Fatalf("no CA with nodes, ca_in_db off: %v", err)
+	}
+	t.Setenv(EnvCAInDB, "maybe")
+	if _, err := LoadConfig(cfgPath); err == nil {
+		t.Fatal("bad LONGARM_HUB_CA_IN_DB accepted")
 	}
 }

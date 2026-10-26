@@ -7,6 +7,7 @@
 #   ./deploy.sh --name myhub --image ghcr.io/<owner>/longarm-hub:1.2.3   # upgrade (data kept)
 #   ./deploy.sh --name myhub --admin-code                                # a new admin join code
 #   ./deploy.sh --name myhub --teardown                                  # delete everything
+#   ./deploy.sh --name myhub --location eastasia --storage-auth identity # no storage account keys
 #
 # Re-running is an upgrade: the template is applied again with the running
 # hub's settings (image, size, panel, ...) unless an option changes them,
@@ -16,12 +17,14 @@ set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # the Azure CLI; tests put a fake here (e2e/azure_deploy_test.go)
 AZ=${LONGARM_DEPLOY_AZ:-az}
-az() { "$AZ" "$@"; }
+# command: "$AZ" is often "az", which would call this function again
+az() { command "$AZ" "$@"; }
 template=$here/azuredeploy.json
 
 # empty = not given (a re-run keeps the running hub's value)
 name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=false yes=false
 recreate=false admin_code=false subscription='' acme_email='' registry_user='' tailscale_secret_file=''
+storage_auth='' acr=''
 timeout=900
 
 usage() {
@@ -38,6 +41,9 @@ usage: deploy.sh --name NAME [--location REGION] [options]
   --tailscale-secret-file F  Tailscale OAuth client secret for the hub's tailnet provider
   --acme-email EMAIL       Let's Encrypt contact for the panel certificate
   --log-analytics          send container logs to a Log Analytics workspace
+  --storage-auth key|identity  key (default): storage account keys; identity: a managed
+                           identity, shared key access off (subscriptions whose policy denies keys)
+  --acr NAME               with identity: pull the image from this registry in the resource group
   --subscription ID        Azure subscription (default: az account show)
   --recreate               delete the container group first (needed to change --size or the panel)
   --admin-code             print a new one-time admin join code (az container exec)
@@ -65,6 +71,8 @@ while [[ $# -gt 0 ]]; do
 	--tailscale-secret-file) tailscale_secret_file=${2:?}; shift ;;
 	--acme-email) acme_email=${2:?}; shift ;;
 	--log-analytics) log_analytics=true ;;
+	--storage-auth) storage_auth=${2:?}; shift ;;
+	--acr) acr=${2:?}; shift ;;
 	--subscription) subscription=${2:?}; shift ;;
 	--recreate) recreate=true ;;
 	--admin-code) admin_code=true ;;
@@ -82,6 +90,7 @@ done
 	die "--name: 3-40 lowercase letters, digits and hyphens, starting with a letter"
 [[ -z $size || $size == small || $size == medium ]] || die "--size: small or medium"
 [[ $timeout =~ ^[0-9]+$ ]] || die "--timeout: seconds"
+[[ -z $storage_auth || $storage_auth == key || $storage_auth == identity ]] || die "--storage-auth: key or identity"
 [[ -z $tailscale_secret_file || -r $tailscale_secret_file ]] || die "--tailscale-secret-file: can't read $tailscale_secret_file"
 rg=${rg:-$name-rg}
 
@@ -115,6 +124,24 @@ fetch_bootstrap() {
 	AZURE_STORAGE_KEY=$2 az storage file download --account-name "$1" --share-name state \
 		--path bootstrap.env --dest "$tmp/bootstrap.env" --no-progress -o none >/dev/null 2>&1 &&
 		[[ -s $tmp/bootstrap.env ]]
+}
+
+# fetch_bootstrap_log: the last LONGARM_BOOTSTRAP line of the hub's log as
+# $tmp/bootstrap.env (storage-auth identity: no share; the line has no join code)
+fetch_bootstrap_log() {
+	rm -f "$tmp/bootstrap.env"
+	az container logs -g "$rg" -n "$name" --container-name hub 2>/dev/null | tr -d '\r' |
+		grep '^LONGARM_BOOTSTRAP ' | tail -n 1 | tr ' ' '\n' | grep '=' >"$tmp/bootstrap.env" || true
+	[[ -s $tmp/bootstrap.env ]]
+}
+
+# read_bootstrap: this hub's bootstrap values into $tmp/bootstrap.env
+read_bootstrap() {
+	if [[ $storage_auth == identity ]]; then
+		fetch_bootstrap_log
+	else
+		fetch_bootstrap "$account" "$key"
+	fi
 }
 
 # bootstrap_value KEY: a value of $tmp/bootstrap.env
@@ -171,6 +198,13 @@ if [[ -n $cur ]]; then
 	[[ ${cur_cpu%%.*} -lt 2 ]] || cur_size=medium
 	cur_panel=false
 	[[ $cur_c1 != caddy ]] || cur_panel=true
+	cur_auth=key
+	[[ ,$cur_env, != *,LONGARM_HUB_CA_IN_DB,* ]] || cur_auth=identity
+	[[ -z $storage_auth || $storage_auth == "$cur_auth" ]] ||
+		die "the hub uses --storage-auth $cur_auth; switching needs a new deployment (another --name or --resource-group)"
+	storage_auth=$cur_auth
+	# the registry pulled with the identity (identity mode)
+	[[ -n $acr || $cur_auth != identity || $cur_registry != *.azurecr.io ]] || acr=${cur_registry%%.*}
 	if ! $recreate; then
 		[[ -z $size || $size == "$cur_size" ]] ||
 			die "the hub is $cur_size; ACI can't resize a running container group: add --recreate (data is kept)"
@@ -181,19 +215,27 @@ if [[ -n $cur ]]; then
 	size=${size:-$cur_size}
 	panel=${panel:-$cur_panel}
 	[[ -n $log_analytics || -z $cur_logs ]] || log_analytics=true
-	[[ -z $cur_registry || -n $registry_user ]] ||
+	[[ -z $cur_registry || -n $registry_user || -n $acr ]] ||
 		die "the hub pulls its image with a login for $cur_registry, which can't be read back: pass --registry-user again (password in LONGARM_REGISTRY_PASSWORD)"
 	[[ ,$cur_env, != *,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,* || -n $tailscale_secret_file ]] ||
 		die "the hub has a Tailscale OAuth secret, which can't be read back: pass --tailscale-secret-file again"
 	# this start's bootstrap.env must differ from the running one's (boot_id)
-	account=$(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv | tr -d '\r' | head -n 1)
-	if [[ -n $account ]]; then
-		key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv | tr -d '\r')
-		if fetch_bootstrap "$account" "$key"; then
+	if [[ $storage_auth == identity ]]; then
+		if fetch_bootstrap_log; then
 			prev_boot=$(bootstrap_value boot_id)
+		fi
+	else
+		account=$(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv | tr -d '\r' | head -n 1)
+		if [[ -n $account ]]; then
+			key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv | tr -d '\r')
+			if fetch_bootstrap "$account" "$key"; then
+				prev_boot=$(bootstrap_value boot_id)
+			fi
 		fi
 	fi
 fi
+storage_auth=${storage_auth:-key}
+[[ -z $acr || $storage_auth == identity ]] || die "--acr needs --storage-auth identity"
 size=${size:-small}
 panel=${panel:-true}
 log_analytics=${log_analytics:-false}
@@ -219,6 +261,8 @@ json_str() {
 	printf ',"size":{"value":%s}' "$(json_str "$size")"
 	printf ',"enablePanel":{"value":%s}' "$panel"
 	printf ',"enableLogAnalytics":{"value":%s}' "$log_analytics"
+	printf ',"storageAuth":{"value":%s}' "$(json_str "$storage_auth")"
+	[[ -z $acr ]] || printf ',"acrName":{"value":%s}' "$(json_str "$acr")"
 	[[ -z $image ]] || printf ',"image":{"value":%s}' "$(json_str "$image")"
 	[[ -z $acme_email ]] || printf ',"acmeEmail":{"value":%s}' "$(json_str "$acme_email")"
 	if [[ -n $registry_user ]]; then
@@ -232,7 +276,7 @@ json_str() {
 	printf '}}\n'
 } >"$tmp/params.json"
 
-echo "deploying $name to $rg ($location, $size, panel $panel${image:+, $image}); this takes a few minutes"
+echo "deploying $name to $rg ($location, $size, panel $panel, storage auth $storage_auth${image:+, $image}); this takes a few minutes"
 outputs=$(az deployment group create -g "$rg" -n longarm-hub --template-file "$template" \
 	--parameters "@$tmp/params.json" -o tsv \
 	--query "[properties.outputs.hubAddress.value, properties.outputs.fqdn.value, properties.outputs.storageAccount.value, properties.outputs.relayUdpPort.value, properties.outputs.panelUrl.value]")
@@ -246,7 +290,9 @@ outputs=$(printf '%s\n' "$outputs" | tr -d '\r' | tr '\t' '\n')
 	read -r panel_url || true
 } <<<"$outputs"
 [[ -n $hub_addr && -n $fqdn && -n $account ]] || die "deployment returned no outputs: $outputs"
-key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv | tr -d '\r')
+if [[ $storage_auth == key ]]; then
+	key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv | tr -d '\r')
+fi
 
 new_image=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].image" -o tsv | tr -d '\r')
 if ! $recreate && [[ -n $cur_image && $cur_image == "$new_image" && $new_image =~ :(latest|edge)$ ]]; then
@@ -266,8 +312,8 @@ done
 # bootstrap.env of this start (a new boot_id; restart once if the update
 # didn't restart the hub)
 restarted=false
-until fetch_bootstrap "$account" "$key" && [[ $(bootstrap_value boot_id) != "$prev_boot" ]]; do
-	((SECONDS < deadline)) || die "no bootstrap.env from this start on the share: $logs_hint"
+until read_bootstrap && [[ $(bootstrap_value boot_id) != "$prev_boot" ]]; do
+	((SECONDS < deadline)) || die "no bootstrap values from this start: $logs_hint"
 	if [[ -n $prev_boot ]] && ! $restarted && ((SECONDS > deadline - timeout + 240)); then
 		echo "the hub did not restart: az container restart"
 		az container restart -g "$rg" -n "$name" -o none
@@ -282,6 +328,7 @@ done
 fp=$(bootstrap_value ca_fingerprint)
 code=$(bootstrap_value admin_join_code)
 expires=$(bootstrap_value admin_join_code_expires)
+admin_joined=$(bootstrap_value admin_joined)
 
 if [[ -n $panel_url ]]; then
 	ok=false
@@ -300,7 +347,7 @@ fi
 cost() {
 	awk -v s="$size" -v p="$panel" 'BEGIN {
 		cpu = (s == "medium") ? 2 : 1; mem = (s == "medium") ? 3 : 1.5
-		if (p == "true") { cpu += 0.25; mem += 0.25 }
+		if (p == "true") { cpu += 0.25; mem += 0.3 }
 		printf "%.0f", 730 * (cpu * 0.0405 + mem * 0.0045) + 1
 	}'
 }
@@ -311,7 +358,7 @@ longarm-hub is up.
   hub address     $hub_addr
   CA fingerprint  $fp
   panel           ${panel_url:-off (--no-panel)}
-  resource group  $rg (storage account $account)
+  resource group  $rg (storage account $account, storage auth $storage_auth)
   cost            about $(cost) USD/month (compute; plus egress over 100 GB/month, relay traffic counts)
 
 EOF
@@ -320,6 +367,13 @@ if [[ -n $code ]]; then
 1. Your laptop (admin): install longarm (https://github.com/lubobill1990/longarm/releases), then
      longarm join $hub_addr $code --ca-fingerprint $fp
    The code is one-time and valid until $expires (a new one: ./deploy.sh --name $name --admin-code).
+EOF
+elif [[ $admin_joined == false ]]; then
+	# storage-auth identity: the code is only in the container's bootstrap.env
+	cat <<EOF
+1. Your laptop (admin): install longarm (https://github.com/lubobill1990/longarm/releases), then
+     ./deploy.sh --name $name --resource-group $rg --admin-code      # a one-time admin join code (24 h)
+     longarm join $hub_addr <code> --ca-fingerprint $fp
 EOF
 else
 	cat <<EOF
@@ -333,7 +387,7 @@ cat <<EOF
      longarmd join $hub_addr <worker-code> --ca-fingerprint $fp --name worker-1
      longarm admin approve worker-1                 # on the laptop
      sudo longarmd service install --user "\$USER" && sudo longarmd service start
-   Through the hub's relay (workers behind NAT): longarmd run --listen "longnet://$fqdn:${relay_port:-7443}?name=worker-1"
+   Through the hub's relay (workers behind NAT): longarmd run --listen "longnet://$fqdn:${relay_port:-7445}?tcp=$fqdn:7443&name=worker-1"
 EOF
 if [[ -n $panel_url ]]; then
 	cat <<EOF

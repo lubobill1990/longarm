@@ -19,6 +19,7 @@ const (
 	EnvPublicURL = "LONGARM_HUB_PUBLIC_URL"  // public_url
 	EnvRelayUDP  = "LONGARM_HUB_RELAY_UDP"   // relay_udp
 	EnvSTUN2     = "LONGARM_HUB_RELAY_STUN2" // relay_stun2
+	EnvCAInDB    = "LONGARM_HUB_CA_IN_DB"    // ca_in_db (true/false, 1/0)
 	// EnvAdvertise is the host (or host:port) nodes dial, e.g. the FQDN of a
 	// cloud container: public_addr = host:<listen port>, and host joins the
 	// certificate's SANs (hosts).
@@ -34,6 +35,13 @@ func (c *Config) applyEnv() error {
 		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
 			*kv.dst = v
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvCAInDB)); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("%s=%q: want true or false", EnvCAInDB, v)
+		}
+		c.CAInDB = b
 	}
 	adv := strings.TrimSpace(os.Getenv(EnvAdvertise))
 	if adv == "" {

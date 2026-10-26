@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.48.1.52935",
-      "templateHash": "16144112127198559954"
+      "templateHash": "12711758433448490501"
     }
   },
   "parameters": {
@@ -93,11 +93,11 @@
     },
     "relayUdpPort": {
       "type": "int",
-      "defaultValue": 7443,
+      "defaultValue": 7445,
       "minValue": 1024,
       "maxValue": 65534,
       "metadata": {
-        "description": "UDP port of the longnet relay (QUIC + STUN); the second STUN port is this + 1. Keep 7443 unless the region refuses the same port for TCP and UDP (workers then listen on longnet://<fqdn>:<port>?tcp=<fqdn>:7443)."
+        "description": "UDP port of the longnet relay (QUIC + STUN); the second STUN port is this + 1. Not 7443: ACI refuses one port number for TCP and UDP (DuplicateIpAddressPorts); workers listen on longnet://<fqdn>:<port>?tcp=<fqdn>:7443."
       }
     },
     "sasExpiry": {
@@ -105,6 +105,24 @@
       "defaultValue": "[dateTimeAdd(utcNow('u'), 'P10Y', 'yyyy-MM-ddTHH:mm:ssZ')]",
       "metadata": {
         "description": "Expiry of the Litestream SAS (blob container scoped); every deployment (deploy.sh re-run) renews it."
+      }
+    },
+    "storageAuth": {
+      "type": "string",
+      "defaultValue": "key",
+      "allowedValues": [
+        "key",
+        "identity"
+      ],
+      "metadata": {
+        "description": "How the hub reaches its storage account. key: the account key (Azure Files share for the data dir, a SAS for Litestream). identity: a user-assigned managed identity with Storage Blob Data Contributor on the replica container and shared key access off, for subscriptions whose policy denies it: no file shares, the data dir is the container's own disk and the CA is kept in the replicated database (LONGARM_HUB_CA_IN_DB). Needs Owner or User Access Administrator on the resource group (role assignments)."
+      }
+    },
+    "acrName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "storageAuth identity: pull the image from this Azure Container Registry (in this resource group) with the managed identity (AcrPull). Empty: registryUsername or anonymous."
       }
     },
     "registryServer": {
@@ -144,6 +162,8 @@
     "fqdn": "[format('{0}.{1}.azurecontainer.io', parameters('name'), toLower(replace(parameters('location'), ' ', '')))]",
     "hubAddress": "[format('{0}:7443', variables('fqdn'))]",
     "storageName": "[take(format('lahub{0}', uniqueString(resourceGroup().id, parameters('name'))), 24)]",
+    "useKey": "[equals(parameters('storageAuth'), 'key')]",
+    "useAcr": "[and(not(variables('useKey')), not(empty(parameters('acrName'))))]",
     "tags": {
       "longarm-hub": "[parameters('name')]"
     },
@@ -186,7 +206,7 @@
         "resources": {
           "requests": {
             "cpu": "[json('0.25')]",
-            "memoryInGB": "[json('0.25')]"
+            "memoryInGB": "[json('0.3')]"
           }
         },
         "ports": [
@@ -199,17 +219,7 @@
             "protocol": "TCP"
           }
         ],
-        "volumeMounts": [
-          {
-            "name": "caddyfile",
-            "mountPath": "/etc/caddy",
-            "readOnly": true
-          },
-          {
-            "name": "caddy",
-            "mountPath": "/data"
-          }
-        ]
+        "volumeMounts": "[concat(createArray(createObject('name', 'caddyfile', 'mountPath', '/etc/caddy', 'readOnly', true())), if(variables('useKey'), createArray(createObject('name', 'caddy', 'mountPath', '/data')), createArray()))]"
       }
     },
     "panelPorts": [
@@ -237,7 +247,8 @@
       "properties": {
         "accessTier": "Hot",
         "allowBlobPublicAccess": false,
-        "allowSharedKeyAccess": true,
+        "allowSharedKeyAccess": "[variables('useKey')]",
+        "defaultToOAuthAuthentication": "[not(variables('useKey'))]",
         "minimumTlsVersion": "TLS1_2",
         "supportsHttpsTrafficOnly": true
       }
@@ -272,6 +283,7 @@
       ]
     },
     {
+      "condition": "[variables('useKey')]",
       "type": "Microsoft.Storage/storageAccounts/fileServices",
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
@@ -286,6 +298,7 @@
       ]
     },
     {
+      "condition": "[variables('useKey')]",
       "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'state')]",
@@ -297,7 +310,7 @@
       ]
     },
     {
-      "condition": "[parameters('enablePanel')]",
+      "condition": "[and(variables('useKey'), parameters('enablePanel'))]",
       "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'caddy')]",
@@ -323,29 +336,72 @@
       }
     },
     {
+      "condition": "[not(variables('useKey'))]",
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[format('{0}-id', parameters('name'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]"
+    },
+    {
+      "condition": "[not(variables('useKey'))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'litestream')]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'litestream'), format('{0}-id', parameters('name')), 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('name'))), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('name')))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'litestream')]"
+      ]
+    },
+    {
+      "condition": "[variables('useAcr')]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName'))]",
+      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), format('{0}-id', parameters('name')), '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('name'))), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('name')))]"
+      ]
+    },
+    {
       "type": "Microsoft.ContainerInstance/containerGroups",
       "apiVersion": "2025-09-01",
       "name": "[parameters('name')]",
       "location": "[parameters('location')]",
       "tags": "[variables('tags')]",
+      "identity": "[if(variables('useKey'), null(), createObject('type', 'UserAssigned', 'userAssignedIdentities', createObject(format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('name')))), createObject())))]",
       "properties": {
         "osType": "Linux",
         "sku": "Standard",
         "restartPolicy": "Always",
-        "containers": "[if(parameters('enablePanel'), createArray(createObject('name', 'hub', 'properties', createObject('image', parameters('image'), 'resources', createObject('requests', variables('sizes')[parameters('size')]), 'ports', variables('hubPorts'), 'environmentVariables', concat(createArray(createObject('name', 'LONGARM_HUB_DATA_DIR', 'value', '/data'), createObject('name', 'LONGARM_HUB_CONFIG', 'value', '/data/hub.toml'), createObject('name', 'LONGARM_HUB_DB', 'value', '/var/lib/longarm-hub/hub.db'), createObject('name', 'LONGARM_HUB_ADVERTISE', 'value', variables('fqdn')), createObject('name', 'LONGARM_HUB_HTTP', 'value', '127.0.0.1:7480'), createObject('name', 'LONGARM_HUB_BOOTSTRAP', 'value', '1'), createObject('name', 'LONGARM_HUB_BOOTSTRAP_TTL', 'value', format('{0}h', parameters('adminCodeTtlHours'))), createObject('name', 'LONGARM_HUB_RELAY_UDP', 'value', format(':{0}', parameters('relayUdpPort'))), createObject('name', 'LONGARM_HUB_RELAY_STUN2', 'value', format(':{0}', add(parameters('relayUdpPort'), 1))), createObject('name', 'LONGARM_HUB_LITESTREAM_CONFIG', 'value', '/etc/longarm-hub/litestream-abs.yml'), createObject('name', 'LONGARM_HUB_BLOB_ACCOUNT', 'value', variables('storageName')), createObject('name', 'LONGARM_HUB_BLOB_CONTAINER', 'value', 'litestream'), createObject('name', 'LONGARM_HUB_BLOB_ENDPOINT', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'LITESTREAM_AZURE_SAS_TOKEN', 'secureValue', listServiceSas(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01', createObject('canonicalizedResource', format('/blob/{0}/litestream', variables('storageName')), 'signedResource', 'c', 'signedPermission', 'racwdl', 'signedProtocol', 'https', 'signedExpiry', parameters('sasExpiry'))).serviceSasToken)), if(parameters('enablePanel'), createArray(createObject('name', 'LONGARM_HUB_PUBLIC_URL', 'value', format('https://{0}', variables('fqdn')))), createArray()), if(empty(parameters('tailscaleOAuthSecret')), createArray(), createArray(createObject('name', 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', 'secureValue', parameters('tailscaleOAuthSecret'))))), 'volumeMounts', createArray(createObject('name', 'state', 'mountPath', '/data')), 'livenessProbe', union(variables('probe'), createObject('initialDelaySeconds', 180, 'periodSeconds', 30, 'timeoutSeconds', 10, 'failureThreshold', 4)), 'readinessProbe', union(variables('probe'), createObject('initialDelaySeconds', 5, 'periodSeconds', 10, 'timeoutSeconds', 10, 'failureThreshold', 3)))), variables('caddyContainer')), createArray(createObject('name', 'hub', 'properties', createObject('image', parameters('image'), 'resources', createObject('requests', variables('sizes')[parameters('size')]), 'ports', variables('hubPorts'), 'environmentVariables', concat(createArray(createObject('name', 'LONGARM_HUB_DATA_DIR', 'value', '/data'), createObject('name', 'LONGARM_HUB_CONFIG', 'value', '/data/hub.toml'), createObject('name', 'LONGARM_HUB_DB', 'value', '/var/lib/longarm-hub/hub.db'), createObject('name', 'LONGARM_HUB_ADVERTISE', 'value', variables('fqdn')), createObject('name', 'LONGARM_HUB_HTTP', 'value', '127.0.0.1:7480'), createObject('name', 'LONGARM_HUB_BOOTSTRAP', 'value', '1'), createObject('name', 'LONGARM_HUB_BOOTSTRAP_TTL', 'value', format('{0}h', parameters('adminCodeTtlHours'))), createObject('name', 'LONGARM_HUB_RELAY_UDP', 'value', format(':{0}', parameters('relayUdpPort'))), createObject('name', 'LONGARM_HUB_RELAY_STUN2', 'value', format(':{0}', add(parameters('relayUdpPort'), 1))), createObject('name', 'LONGARM_HUB_LITESTREAM_CONFIG', 'value', '/etc/longarm-hub/litestream-abs.yml'), createObject('name', 'LONGARM_HUB_BLOB_ACCOUNT', 'value', variables('storageName')), createObject('name', 'LONGARM_HUB_BLOB_CONTAINER', 'value', 'litestream'), createObject('name', 'LONGARM_HUB_BLOB_ENDPOINT', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob), createObject('name', 'LITESTREAM_AZURE_SAS_TOKEN', 'secureValue', listServiceSas(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01', createObject('canonicalizedResource', format('/blob/{0}/litestream', variables('storageName')), 'signedResource', 'c', 'signedPermission', 'racwdl', 'signedProtocol', 'https', 'signedExpiry', parameters('sasExpiry'))).serviceSasToken)), if(parameters('enablePanel'), createArray(createObject('name', 'LONGARM_HUB_PUBLIC_URL', 'value', format('https://{0}', variables('fqdn')))), createArray()), if(empty(parameters('tailscaleOAuthSecret')), createArray(), createArray(createObject('name', 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', 'secureValue', parameters('tailscaleOAuthSecret'))))), 'volumeMounts', createArray(createObject('name', 'state', 'mountPath', '/data')), 'livenessProbe', union(variables('probe'), createObject('initialDelaySeconds', 180, 'periodSeconds', 30, 'timeoutSeconds', 10, 'failureThreshold', 4)), 'readinessProbe', union(variables('probe'), createObject('initialDelaySeconds', 5, 'periodSeconds', 10, 'timeoutSeconds', 10, 'failureThreshold', 3))))))]",
-        "imageRegistryCredentials": "[if(empty(parameters('registryUsername')), createArray(), createArray(createObject('server', parameters('registryServer'), 'username', parameters('registryUsername'), 'password', parameters('registryPassword'))))]",
+        "containers": "[if(parameters('enablePanel'), createArray(createObject('name', 'hub', 'properties', createObject('image', parameters('image'), 'resources', createObject('requests', variables('sizes')[parameters('size')]), 'ports', variables('hubPorts'), 'environmentVariables', concat(createArray(createObject('name', 'LONGARM_HUB_DATA_DIR', 'value', '/data'), createObject('name', 'LONGARM_HUB_CONFIG', 'value', '/data/hub.toml'), createObject('name', 'LONGARM_HUB_DB', 'value', '/var/lib/longarm-hub/hub.db'), createObject('name', 'LONGARM_HUB_ADVERTISE', 'value', variables('fqdn')), createObject('name', 'LONGARM_HUB_HTTP', 'value', '127.0.0.1:7480'), createObject('name', 'LONGARM_HUB_BOOTSTRAP', 'value', '1'), createObject('name', 'LONGARM_HUB_BOOTSTRAP_TTL', 'value', format('{0}h', parameters('adminCodeTtlHours'))), createObject('name', 'LONGARM_HUB_RELAY_UDP', 'value', format(':{0}', parameters('relayUdpPort'))), createObject('name', 'LONGARM_HUB_RELAY_STUN2', 'value', format(':{0}', add(parameters('relayUdpPort'), 1))), createObject('name', 'LONGARM_HUB_LITESTREAM_CONFIG', 'value', '/etc/longarm-hub/litestream-abs.yml'), createObject('name', 'LONGARM_HUB_BLOB_ACCOUNT', 'value', variables('storageName')), createObject('name', 'LONGARM_HUB_BLOB_CONTAINER', 'value', 'litestream'), createObject('name', 'LONGARM_HUB_BLOB_ENDPOINT', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob)), if(variables('useKey'), createArray(createObject('name', 'LITESTREAM_AZURE_SAS_TOKEN', 'secureValue', if(variables('useKey'), listServiceSas(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01', createObject('canonicalizedResource', format('/blob/{0}/litestream', variables('storageName')), 'signedResource', 'c', 'signedPermission', 'racwdl', 'signedProtocol', 'https', 'signedExpiry', parameters('sasExpiry'))).serviceSasToken, ''))), createArray(createObject('name', 'AZURE_CLIENT_ID', 'value', reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('name'))), '2023-01-31').clientId), createObject('name', 'LONGARM_HUB_CA_IN_DB', 'value', '1'))), if(parameters('enablePanel'), createArray(createObject('name', 'LONGARM_HUB_PUBLIC_URL', 'value', format('https://{0}', variables('fqdn')))), createArray()), if(empty(parameters('tailscaleOAuthSecret')), createArray(), createArray(createObject('name', 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', 'secureValue', parameters('tailscaleOAuthSecret'))))), 'volumeMounts', if(variables('useKey'), createArray(createObject('name', 'state', 'mountPath', '/data')), createArray()), 'livenessProbe', union(variables('probe'), createObject('initialDelaySeconds', 180, 'periodSeconds', 30, 'timeoutSeconds', 10, 'failureThreshold', 4)), 'readinessProbe', union(variables('probe'), createObject('initialDelaySeconds', 5, 'periodSeconds', 10, 'timeoutSeconds', 10, 'failureThreshold', 3)))), variables('caddyContainer')), createArray(createObject('name', 'hub', 'properties', createObject('image', parameters('image'), 'resources', createObject('requests', variables('sizes')[parameters('size')]), 'ports', variables('hubPorts'), 'environmentVariables', concat(createArray(createObject('name', 'LONGARM_HUB_DATA_DIR', 'value', '/data'), createObject('name', 'LONGARM_HUB_CONFIG', 'value', '/data/hub.toml'), createObject('name', 'LONGARM_HUB_DB', 'value', '/var/lib/longarm-hub/hub.db'), createObject('name', 'LONGARM_HUB_ADVERTISE', 'value', variables('fqdn')), createObject('name', 'LONGARM_HUB_HTTP', 'value', '127.0.0.1:7480'), createObject('name', 'LONGARM_HUB_BOOTSTRAP', 'value', '1'), createObject('name', 'LONGARM_HUB_BOOTSTRAP_TTL', 'value', format('{0}h', parameters('adminCodeTtlHours'))), createObject('name', 'LONGARM_HUB_RELAY_UDP', 'value', format(':{0}', parameters('relayUdpPort'))), createObject('name', 'LONGARM_HUB_RELAY_STUN2', 'value', format(':{0}', add(parameters('relayUdpPort'), 1))), createObject('name', 'LONGARM_HUB_LITESTREAM_CONFIG', 'value', '/etc/longarm-hub/litestream-abs.yml'), createObject('name', 'LONGARM_HUB_BLOB_ACCOUNT', 'value', variables('storageName')), createObject('name', 'LONGARM_HUB_BLOB_CONTAINER', 'value', 'litestream'), createObject('name', 'LONGARM_HUB_BLOB_ENDPOINT', 'value', reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob)), if(variables('useKey'), createArray(createObject('name', 'LITESTREAM_AZURE_SAS_TOKEN', 'secureValue', if(variables('useKey'), listServiceSas(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01', createObject('canonicalizedResource', format('/blob/{0}/litestream', variables('storageName')), 'signedResource', 'c', 'signedPermission', 'racwdl', 'signedProtocol', 'https', 'signedExpiry', parameters('sasExpiry'))).serviceSasToken, ''))), createArray(createObject('name', 'AZURE_CLIENT_ID', 'value', reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('name'))), '2023-01-31').clientId), createObject('name', 'LONGARM_HUB_CA_IN_DB', 'value', '1'))), if(parameters('enablePanel'), createArray(createObject('name', 'LONGARM_HUB_PUBLIC_URL', 'value', format('https://{0}', variables('fqdn')))), createArray()), if(empty(parameters('tailscaleOAuthSecret')), createArray(), createArray(createObject('name', 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', 'secureValue', parameters('tailscaleOAuthSecret'))))), 'volumeMounts', if(variables('useKey'), createArray(createObject('name', 'state', 'mountPath', '/data')), createArray()), 'livenessProbe', union(variables('probe'), createObject('initialDelaySeconds', 180, 'periodSeconds', 30, 'timeoutSeconds', 10, 'failureThreshold', 4)), 'readinessProbe', union(variables('probe'), createObject('initialDelaySeconds', 5, 'periodSeconds', 10, 'timeoutSeconds', 10, 'failureThreshold', 3))))))]",
+        "imageRegistryCredentials": "[if(variables('useAcr'), createArray(createObject('server', reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), '2023-07-01').loginServer, 'identity', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('name'))))), if(empty(parameters('registryUsername')), createArray(), createArray(createObject('server', parameters('registryServer'), 'username', parameters('registryUsername'), 'password', parameters('registryPassword')))))]",
         "ipAddress": {
           "type": "Public",
           "dnsNameLabel": "[parameters('name')]",
           "ports": "[if(parameters('enablePanel'), concat(variables('hubPorts'), variables('panelPorts')), variables('hubPorts'))]"
         },
-        "volumes": "[if(parameters('enablePanel'), concat(createArray(createObject('name', 'state', 'azureFile', createObject('shareName', 'state', 'storageAccountName', variables('storageName'), 'storageAccountKey', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').keys[0].value))), createArray(createObject('name', 'caddy', 'azureFile', createObject('shareName', 'caddy', 'storageAccountName', variables('storageName'), 'storageAccountKey', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').keys[0].value)), createObject('name', 'caddyfile', 'secret', createObject('Caddyfile', base64(variables('caddyfileText')))))), createArray(createObject('name', 'state', 'azureFile', createObject('shareName', 'state', 'storageAccountName', variables('storageName'), 'storageAccountKey', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').keys[0].value))))]",
+        "volumes": "[if(parameters('enablePanel'), concat(if(not(variables('useKey')), createArray(), createArray(createObject('name', 'state', 'azureFile', createObject('shareName', 'state', 'storageAccountName', variables('storageName'), 'storageAccountKey', if(variables('useKey'), listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').keys[0].value, ''))))), concat(if(not(variables('useKey')), createArray(), createArray(createObject('name', 'caddy', 'azureFile', createObject('shareName', 'caddy', 'storageAccountName', variables('storageName'), 'storageAccountKey', if(variables('useKey'), listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').keys[0].value, ''))))), createArray(createObject('name', 'caddyfile', 'secret', createObject('Caddyfile', base64(variables('caddyfileText'))))))), if(not(variables('useKey')), createArray(), createArray(createObject('name', 'state', 'azureFile', createObject('shareName', 'state', 'storageAccountName', variables('storageName'), 'storageAccountKey', if(variables('useKey'), listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').keys[0].value, ''))))))]",
         "diagnostics": "[if(parameters('enableLogAnalytics'), createObject('logAnalytics', createObject('workspaceId', reference(resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('name'))), '2023-09-01').customerId, 'workspaceKey', listKeys(resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('name'))), '2023-09-01').primarySharedKey)), null())]"
       },
       "dependsOn": [
+        "[extensionResourceId(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), format('{0}-id', parameters('name')), '7f951dda-4ed3-4680-a7ca-43fe172d538d'))]",
         "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageName'), 'default', 'caddy')]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('name')))]",
         "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('name')))]",
         "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'litestream')]",
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'litestream'), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'litestream'), format('{0}-id', parameters('name')), 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'))]",
         "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageName'), 'default', 'state')]",
         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
       ]
@@ -388,6 +444,13 @@
     "containerGroup": {
       "type": "string",
       "value": "[parameters('name')]"
+    },
+    "identityPrincipalId": {
+      "type": "string",
+      "metadata": {
+        "description": "storageAuth identity: the managed identity's principal ID (empty with key)."
+      },
+      "value": "[if(variables('useKey'), '', reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('name'))), '2023-01-31').principalId)]"
     }
   }
 }

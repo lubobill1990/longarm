@@ -45,6 +45,13 @@ type Config struct {
 	// LONGARM_HUB_DB). Containers keep it on local disk, replicated by
 	// Litestream, while data_dir is a network share (deploy/azure).
 	DBPath string `toml:"db_path"`
+	// CAInDB keeps a copy of the CA (ca.crt + ca.key) in the database (env
+	// LONGARM_HUB_CA_IN_DB=1): bootstrap restores a missing ca/ from it, so
+	// a container whose data_dir is not persistent needs nothing but the
+	// Litestream replica (deploy/azure, no storage account keys). The
+	// database then holds the fleet's root key: protect it and its replica
+	// like ca.key.
+	CAInDB bool `toml:"ca_in_db"`
 	// Name is the DNS name in the hub's certificate (clients don't check it
 	// unless configured; the role and the CA are always checked).
 	Name string `toml:"name"`
