@@ -53,7 +53,7 @@ restarts the hub) prints everything too.
 | `--tailscale-secret-file F` | `-TailscaleSecretFile` | Tailscale OAuth secret ([tailnet] provider, [deploy/hub](../hub/README.md#tailnet-provider-tailscale-default-or-headscale)) |
 | `--acme-email E` | `-AcmeEmail` | Let's Encrypt contact |
 | `--log-analytics` | `-LogAnalytics` | container logs to a Log Analytics workspace |
-| `--storage-auth key\|identity` | | `identity`: no storage account keys ([below](#without-storage-account-keys)); deploy.sh only for now |
+| `--storage-auth key\|identity` | | `identity`: no storage account keys, panel served by the hub ([below](#without-storage-account-keys)); deploy.sh only for now |
 | `--acr NAME` | | with `identity`: pull the image from this Azure Container Registry (same resource group) |
 | `--panel` | `-Panel` | turn the panel back on (with `--recreate`) |
 | `--recreate` | `-Recreate` | delete the container group first (to change size or panel; data stays) |
@@ -162,10 +162,14 @@ identity` (template parameter `storageAuth=identity`) deploys without keys:
   is recreated (hub/relay certificates from the CA, hub.toml from the
   environment, bootstrap.env). The database replica now holds the fleet's
   root key: whoever can read the `litestream` container can read the CA.
-- Not kept across restarts: Caddy's certificate (each restart asks Let's
-  Encrypt again; 5 per week for one name), the release store
-  (`longarm admin release publish` again) and edits to hub.toml (use the
-  environment or redeploy).
+- No Caddy: the hub serves the panel on 443 itself (`LONGARM_HUB_HTTPS`,
+  hub.toml `https`) with a Let's Encrypt certificate (TLS-ALPN-01), and
+  redirects 80 to it. Certificate and ACME account are in the database
+  too, so restarts and upgrades don't ask Let's Encrypt again (its limit is
+  5 certificates per week for one name). The image's `longarm-hub` has the
+  file capability `cap_net_bind_service` for that (it runs as nonroot).
+- Not kept across restarts: the release store (`longarm admin release
+  publish` again) and edits to hub.toml (use the environment or redeploy).
 - The admin join code is not in the log; get it with `--admin-code`.
 - `--acr NAME` pulls the image from an Azure Container Registry in the
   resource group with the same identity (AcrPull), for registries without
@@ -211,6 +215,7 @@ regions are up to ~20 % more; check the
 | size | hub | + panel (0.25 vCPU / 0.3 GB) | monthly (approx.) |
 |---|---|---|---|
 | small | 1 vCPU / 1.5 GB | yes | ~44 USD |
+| small, `--storage-auth identity` | 1 vCPU / 1.5 GB | yes (in the hub) | ~36 USD |
 | small | 1 vCPU / 1.5 GB | no | ~36 USD |
 | medium | 2 vCPU / 3 GB | yes | ~78 USD |
 

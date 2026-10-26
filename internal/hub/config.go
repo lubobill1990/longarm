@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -79,6 +80,21 @@ type Config struct {
 	// PublicURL is the external base URL of the HTTP listener (install
 	// scripts, links), e.g. https://hub.example.com.
 	PublicURL string `toml:"public_url"`
+	// HTTPS serves the panel/API itself over TLS, e.g. ":443", with a Let's
+	// Encrypt certificate for the host of public_url (ACME TLS-ALPN-01 on
+	// this port: no port 80 needed). Certificate and ACME account live in
+	// the database, so a container that loses its disk (replicated by
+	// Litestream) doesn't ask Let's Encrypt again. Default off: a reverse
+	// proxy in front of http.
+	HTTPS string `toml:"https"`
+	// HTTPSRedirect redirects plain HTTP to https, e.g. ":80" (and answers
+	// ACME HTTP-01). Needs https.
+	HTTPSRedirect string `toml:"https_redirect"`
+	// ACMEEmail is the contact for Let's Encrypt expiry notices (optional).
+	ACMEEmail string `toml:"acme_email"`
+	// ACMEDirectory is the ACME server (default Let's Encrypt; its staging
+	// directory for tests).
+	ACMEDirectory string `toml:"acme_directory"`
 	// PublicAddr is the gRPC address nodes dial ("203.0.113.10:7443"); it goes
 	// into install scripts and the hub certificate's SANs.
 	PublicAddr string `toml:"public_addr"`
@@ -344,7 +360,38 @@ func (c *Config) applyDefaults() error {
 	if c.PublicURL != "" && !strings.HasPrefix(c.PublicURL, "http://") && !strings.HasPrefix(c.PublicURL, "https://") {
 		return errors.New("public_url must start with http:// or https://")
 	}
+	if c.HTTPS == "off" {
+		c.HTTPS = ""
+	}
+	if c.HTTPSRedirect == "off" {
+		c.HTTPSRedirect = ""
+	}
+	if c.HTTPS != "" {
+		if _, _, err := net.SplitHostPort(c.HTTPS); err != nil {
+			return fmt.Errorf("https %q: want host:port or :port: %w", c.HTTPS, err)
+		}
+		if c.ACMEHost() == "" {
+			return errors.New("https needs public_url https://<name> (the certificate's name)")
+		}
+	} else if c.HTTPSRedirect != "" {
+		return errors.New("https_redirect needs https")
+	}
+	if c.HTTPSRedirect != "" {
+		if _, _, err := net.SplitHostPort(c.HTTPSRedirect); err != nil {
+			return fmt.Errorf("https_redirect %q: want host:port or :port: %w", c.HTTPSRedirect, err)
+		}
+	}
 	return nil
+}
+
+// ACMEHost is the name of the https listener's certificate: the host of an
+// https public_url ("" otherwise).
+func (c *Config) ACMEHost() string {
+	u, err := url.Parse(c.PublicURL)
+	if err != nil || u.Scheme != "https" || u.Port() != "" && u.Port() != "443" {
+		return ""
+	}
+	return u.Hostname()
 }
 
 // DatabasePath is db_path, or hub.db in the data dir.

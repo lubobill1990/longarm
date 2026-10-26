@@ -32,7 +32,7 @@ cleanup() {
 			fi
 		done
 	fi
-	docker rm -f "$p-hub" "$p-hub2" "$p-hub3" "$p-azurite" >/dev/null 2>&1 || true
+	docker rm -f "$p-hub" "$p-hub2" "$p-hub3" "$p-https" "$p-azurite" >/dev/null 2>&1 || true
 	docker volume rm "$p-share" >/dev/null 2>&1 || true
 	docker network rm "$p" >/dev/null 2>&1 || true
 	rm -rf "$work"
@@ -170,6 +170,15 @@ grep -qx alice <<<"$users" || fail "alice lost: $users"
 grep -qx bob <<<"$users" || fail "bob (written just before the stop) lost: $users"
 la admin join-code --role worker >/dev/null || fail "admin certificate after the replacement"
 docker rm -f "$p-hub2" >/dev/null
+
+step "https on :443 as nonroot (file capability)"
+docker run -d --name "$p-https" -e LONGARM_HUB_BOOTSTRAP=1 -e LONGARM_HUB_CONFIG=/data/hub.toml 	-e LONGARM_HUB_RELAY_UDP=off -e LONGARM_HUB_PUBLIC_URL=https://hub.example.com 	-e LONGARM_HUB_HTTPS=:443 -e LONGARM_HUB_HTTPS_REDIRECT=:80 "$image" >/dev/null
+for _ in $(seq 1 30); do
+	logs_have "$p-https" "longarm-hub started" && break
+	sleep 1
+done
+logs_have "$p-https" 'https=[::]:443' || fail "https did not listen on :443: $(docker logs "$p-https" 2>&1 | tail -n 5)"
+docker rm -f "$p-https" >/dev/null
 
 step "unreadable replica: no start"
 hub_sas="sv=2021-08-06&sr=c&sp=racwdl&se=2030-01-01T00:00Z&sig=bm90LWEtc2lnbmF0dXJl"
