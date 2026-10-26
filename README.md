@@ -117,7 +117,8 @@ or build from source with Go ≥ 1.27.3: `go build -o bin/ ./cmd/...`.
 [deploy/azure](deploy/azure/README.md)), which prints the join command for step 2:
 
 ```sh
-az login && cd deploy/azure && ./deploy.sh --name myhub --location eastasia   # or deploy.ps1, or:
+az login && cd deploy/azure && ./deploy.sh --name myhub --location eastasia   # or deploy.ps1
+# --build-in-acr: the image built from your checkout in Azure (no docker); or the button:
 ```
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Flubobill1990%2Flongarm%2Fmain%2Fdeploy%2Fazure%2Fazuredeploy.json)

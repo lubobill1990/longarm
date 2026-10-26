@@ -111,7 +111,8 @@ Hub 只负责协调。命令、输出、文件和终端都在客户端与 worker
 [deploy/azure](deploy/azure/README.md)），完成后会打印第 2 步要用的加入命令：
 
 ```sh
-az login && cd deploy/azure && ./deploy.sh --name myhub --location eastasia   # 或 deploy.ps1，或：
+az login && cd deploy/azure && ./deploy.sh --name myhub --location eastasia   # 或 deploy.ps1
+# --build-in-acr：在 Azure 中从你的代码构建镜像（无需 docker）；或者用按钮：
 ```
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Flubobill1990%2Flongarm%2Fmain%2Fdeploy%2Fazure%2Fazuredeploy.json)
