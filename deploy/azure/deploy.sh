@@ -102,9 +102,11 @@ az account show -o none 2>/dev/null || die "not logged in: run az login"
 
 # tcp_open HOST PORT: a TCP connect within 5 s (bash /dev/tcp; macOS has no coreutils timeout)
 tcp_open() {
-	(exec 3<>"/dev/tcp/$1/$2") 2>/dev/null &
+	# trap - EXIT: a killed subshell would run the script's EXIT trap
+	# (rm -rf "$tmp") on the way out
+	(trap - EXIT; exec 3<>"/dev/tcp/$1/$2") 2>/dev/null &
 	local pid=$! rc=0
-	(sleep 5 && kill "$pid") >/dev/null 2>&1 &
+	(trap - EXIT; sleep 5 && kill "$pid") >/dev/null 2>&1 &
 	local killer=$!
 	wait "$pid" || rc=$?
 	kill "$killer" 2>/dev/null || true
