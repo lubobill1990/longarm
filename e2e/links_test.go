@@ -116,6 +116,11 @@ func TestPortLinks(t *testing.T) {
 	lport := strconv.Itoa(freePort(t))
 	id := linkCreate(t, h, alice, "wb:"+port, "--on", "wa", "--port", lport)
 	envVar := "LONGARM_LINK_WB_" + port
+	// expires while the hub is down (hub_restart_and_down; a minute is the
+	// shortest TTL, so it is created this early)
+	ttlExpires := time.Now().Add(time.Minute)
+	ttlPort := strconv.Itoa(freePort(t))
+	linkCreate(t, h, alice, "wb:"+strconv.Itoa(freePort(t)), "--on", "wa", "--port", ttlPort, "--ttl", "1m") // another target: no clash with envVar
 
 	t.Run("reach_through_link", func(t *testing.T) {
 		var r result
@@ -124,7 +129,8 @@ func TestPortLinks(t *testing.T) {
 			return r.code == 0 && strings.Contains(r.stdout, "status 200: hello /x from")
 		})
 		r = h.longarm(alice, "exec", "wa", "--", bins.helper, "env", "LONGARM_LINKS")
-		if want := fmt.Sprintf("LONGARM_LINKS=wb:%s=127.0.0.1:%s", port, lport); !strings.Contains(r.stdout, want) {
+		// (with the 1m link's entry: LONGARM_LINKS lists all, by target)
+		if want := fmt.Sprintf("wb:%s=127.0.0.1:%s", port, lport); !strings.HasPrefix(r.stdout, "LONGARM_LINKS=") || !strings.Contains(r.stdout, want) {
 			t.Fatalf("env: %q, want %q", r.stdout, want)
 		}
 		// a job (not only exec) gets the variables too
@@ -188,11 +194,34 @@ func TestPortLinks(t *testing.T) {
 	})
 
 	t.Run("hub_restart_and_down", func(t *testing.T) {
+		// a link bound to a job that ends while the hub is down
+		job := strings.TrimSpace(h.mustLongarm(alice, "run", "wa", "--", bins.helper, "sleep", "300"))
+		waitFor(t, "the job in the hub index", 20*time.Second, func() bool {
+			return strings.Contains(h.longarm(alice, "jobs", "--state", "running").stdout, job)
+		})
+		jobPort := strconv.Itoa(freePort(t))
+		linkCreate(t, h, alice, "wb:"+port, "--on", "wa", "--port", jobPort, "--job", job)
+		waitFor(t, "the job's link", 30*time.Second, func() bool {
+			return strings.Contains(linkGet(h, alice, "wa", bins.helper, "127.0.0.1:"+jobPort, "/job").stdout, "hello /job")
+		})
+		// closed: wa's helper ran and nothing listens on the port any more
+		closed := func(lp string) bool {
+			r := linkGet(h, alice, "wa", bins.helper, "127.0.0.1:"+lp, "/gone")
+			return strings.Contains(r.stdout, "error:") && strings.Contains(strings.ToLower(r.stdout), "refused")
+		}
 		h.killHub()
 		// the data plane needs no hub
 		if r := linkGet(h, alice, "wa", bins.helper, "127.0.0.1:"+lport, "/hubdown"); !strings.Contains(r.stdout, "hello /hubdown") {
 			r2 := h.longarm(alice, "exec", "wa", "--", bins.helper, "env", envVar)
 			t.Fatalf("with the hub down: %+v (%s)", r, r2.stdout)
+		}
+		// without the hub, wa ends the job's link when the job ends ...
+		h.mustLongarm(alice, "kill", job)
+		waitFor(t, "the job's link to close with the hub down", 30*time.Second, func() bool { return closed(jobPort) })
+		// ... and both workers end a link at its TTL
+		waitFor(t, "the 1m link to expire with the hub down", time.Until(ttlExpires)+30*time.Second, func() bool { return closed(ttlPort) })
+		if time.Now().Before(ttlExpires) {
+			t.Fatal("the 1m link closed before its TTL")
 		}
 		h.startHub(t)
 		h.waitNode(t, "wa", "online again", func(n map[string]any) bool { return isTrue(n["online"]) })
