@@ -150,7 +150,7 @@ func TestAzureDeployScripts(t *testing.T) {
 				t.Fatalf("no join command for %v in:\n%s", b, res.stdout)
 			}
 			for _, want := range []string{"longarmd join " + b["hub_address"] + " <worker-code> --ca-fingerprint " + b["ca_fingerprint"],
-				"claude mcp add longarm -- longarm mcp", "USD/month", "panel           off", "longnet://127.0.0.1:7443?name=worker-1"} {
+				"claude mcp add longarm -- longarm mcp", "USD/month", "panel           off", "longnet://127.0.0.1:7443?tcp=127.0.0.1:7443&name=worker-1"} {
 				if !strings.Contains(res.stdout, want) {
 					t.Errorf("output lacks %q:\n%s", want, res.stdout)
 				}

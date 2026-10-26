@@ -53,6 +53,8 @@ restarts the hub) prints everything too.
 | `--tailscale-secret-file F` | `-TailscaleSecretFile` | Tailscale OAuth secret ([tailnet] provider, [deploy/hub](../hub/README.md#tailnet-provider-tailscale-default-or-headscale)) |
 | `--acme-email E` | `-AcmeEmail` | Let's Encrypt contact |
 | `--log-analytics` | `-LogAnalytics` | container logs to a Log Analytics workspace |
+| `--storage-auth key\|identity` | | `identity`: no storage account keys ([below](#without-storage-account-keys)); deploy.sh only for now |
+| `--acr NAME` | | with `identity`: pull the image from this Azure Container Registry (same resource group) |
 | `--panel` | `-Panel` | turn the panel back on (with `--recreate`) |
 | `--recreate` | `-Recreate` | delete the container group first (to change size or panel; data stays) |
 | `--admin-code` | `-AdminCode` | print a new one-time admin join code |
@@ -69,8 +71,8 @@ temporary parameters file, never on a command line.
   │  hub  ghcr.io/.../longarm-hub (non-root)            caddy (optional)                   │
   │   PID 1 litestream replicate -exec "longarm-hub serve"   :443/:80 Let's Encrypt         │
   │     :7443/tcp gRPC API + relay TLS fallback (mTLS)       reverse_proxy 127.0.0.1:7480   │
-  │     :7443/udp longnet relay (QUIC) + STUN                                                │
-  │     :7444/udp second STUN port                                                           │
+  │     :7445/udp longnet relay (QUIC) + STUN                                                │
+  │     :7446/udp second STUN port                                                           │
   │     127.0.0.1:7480 panel / API / install scripts / healthz                               │
   │   /var/lib/longarm-hub/hub.db  (container disk)    /data  (state share)  /data (caddy)  │
   └──────────────┬──────────────────────────────────────────┬──────────────────┬──────────┘
@@ -135,6 +137,40 @@ locally redundant by default (`storageSku` parameter: ZRS/GRS). The hub is
 never on the data path: while it restarts, workers keep running jobs and
 clients keep talking to workers they already know.
 
+## Without storage account keys
+
+Some subscriptions deny storage accounts with shared key access (Azure
+Policy "Storage accounts should prevent shared key access"). There the
+template can't work as described above: ACI mounts Azure Files only with the
+account key, and the Litestream SAS is signed with it. `--storage-auth
+identity` (template parameter `storageAuth=identity`) deploys without keys:
+
+```sh
+./deploy.sh --name myhub --location eastasia --storage-auth identity
+```
+
+- The storage account has `allowSharedKeyAccess: false` and only the blob
+  container `litestream`; no file shares.
+- A user-assigned managed identity `<name>-id` gets **Storage Blob Data
+  Contributor** on that container; Litestream finds it through
+  `AZURE_CLIENT_ID` (Azure SDK DefaultAzureCredential). The role
+  assignment needs Owner or User Access Administrator on the resource group.
+- The data dir `/data` is the container's own disk: it is gone after a
+  restart. What matters in it is the CA, so the hub keeps a copy of
+  `ca.crt` + `ca.key` in the database (`LONGARM_HUB_CA_IN_DB=1`, hub.toml
+  `ca_in_db`) and bootstrap writes it back on every start. Everything else
+  is recreated (hub/relay certificates from the CA, hub.toml from the
+  environment, bootstrap.env). The database replica now holds the fleet's
+  root key: whoever can read the `litestream` container can read the CA.
+- Not kept across restarts: Caddy's certificate (each restart asks Let's
+  Encrypt again; 5 per week for one name), the release store
+  (`longarm admin release publish` again) and edits to hub.toml (use the
+  environment or redeploy).
+- The admin join code is not in the log; get it with `--admin-code`.
+- `--acr NAME` pulls the image from an Azure Container Registry in the
+  resource group with the same identity (AcrPull), for registries without
+  admin users.
+
 ## Backup and restore
 
 - Database: the replica *is* the backup. Point-in-time copy:
@@ -172,7 +208,7 @@ Linux ACI is billed per vCPU-second and GB-second (pay-as-you-go, about
 regions are up to ~20 % more; check the
 [pricing page](https://azure.microsoft.com/pricing/details/container-instances/)):
 
-| size | hub | + panel (0.25 vCPU / 0.25 GB) | monthly (approx.) |
+| size | hub | + panel (0.25 vCPU / 0.3 GB) | monthly (approx.) |
 |---|---|---|---|
 | small | 1 vCPU / 1.5 GB | yes | ~44 USD |
 | small | 1 vCPU / 1.5 GB | no | ~36 USD |
@@ -213,9 +249,10 @@ traffic relayed by the longnet relay leaves Azure and counts. Direct
   (from Git Bash on Windows prefix `MSYS_NO_PATHCONV=1`).
 - **Azure public cloud only**: the template builds the name
   `<name>.<region>.azurecontainer.io`, the public cloud's ACI DNS zone.
-- **UDP 7443 next to TCP 7443**: the template opens 7443 for both protocols.
-  Should a region refuse that, deploy with the template parameter
-  `relayUdpPort=7445` (STUN then on 7446); workers then listen on
+- **The relay's UDP port is 7445, not 7443**: ACI refuses one port number
+  for TCP and UDP (`DuplicateIpAddressPorts`), so the longnet relay listens
+  on 7445/udp (template parameter `relayUdpPort`; STUN on 7446/udp) and its
+  TLS fallback stays on 7443/tcp. Workers listen on
   `longnet://<fqdn>:7445?tcp=<fqdn>:7443&name=<worker>`.
 
 ## Files

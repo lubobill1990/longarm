@@ -297,7 +297,7 @@ try {
 # and 0.0045 USD per GB-hour in US regions; other regions differ by up to ~20 %).
 $cpu = 1.0; $mem = 1.5
 if ($Size -eq 'medium') { $cpu = 2.0; $mem = 3.0 }
-if ($panelOn) { $cpu += 0.25; $mem += 0.25 }
+if ($panelOn) { $cpu += 0.25; $mem += 0.3 }
 $cost = [math]::Round(730 * ($cpu * 0.0405 + $mem * 0.0045) + 1)
 
 $panelText = if ($panelUrl) { $panelUrl } else { 'off (-NoPanel)' }
@@ -327,7 +327,7 @@ Write-Host @"
      longarmd join $hubAddr <worker-code> --ca-fingerprint $fp --name worker-1
      longarm admin approve worker-1                 # on the laptop
      longarmd service install --user .\<you>; longarmd service start   # elevated (Linux/macOS: sudo ... --user `$USER)
-   Through the hub's relay (workers behind NAT): longarmd run --listen "longnet://${fqdn}:${relayPort}?name=worker-1"
+   Through the hub's relay (workers behind NAT): longarmd run --listen "longnet://${fqdn}:${relayPort}?tcp=${fqdn}:7443&name=worker-1"
 "@
 if ($panelUrl) {
     Write-Host @"
