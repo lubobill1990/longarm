@@ -1,6 +1,7 @@
 # CI on GitHub-hosted runners (docs/ci-cd.md).
 #   lint:    privacy check, gofmt, go vet, cross-compile 6 targets, shellcheck, actionlint
-#   azure:   deploy/azure: bicep build (azuredeploy.json up to date) + lint, PSScriptAnalyzer
+#   azure:   deploy/azure: bicep build (azuredeploy.json up to date) + lint, ACI rules
+#            (deploy/azure/test/acirules), PSScriptAnalyzer
 #   (the hub image and its docker smoke test: image.yml)
 #   test:    full go test on ubuntu-latest, windows-latest and macos-latest
 # Pull requests from forks run with a read-only token and no secrets (the
@@ -95,7 +96,7 @@ jobs:
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -color
 
   azure:
-    name: azure template (bicep, PSScriptAnalyzer)
+    name: azure template (bicep, ACI rules, PSScriptAnalyzer)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -121,6 +122,9 @@ jobs:
             echo "::error::bicep reported warnings"
             exit 1
           fi
+      - uses: ./.github/actions/go-setup
+      - name: ACI rules (ports, memory/CPU steps, env, volumes) for every parameter combination
+        run: go run ./deploy/azure/test/acirules deploy/azure/azuredeploy.json
       - name: PSScriptAnalyzer (deploy/azure/deploy.ps1)
         shell: pwsh
         run: |

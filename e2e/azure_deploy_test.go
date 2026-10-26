@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,9 @@ type deployRunner struct {
 	argv func(args ...string) []string
 	flag func(sh, ps string) string // the script's spelling of an option
 }
+
+// azOnPath in run's extra environment: az is found on PATH (no LONGARM_DEPLOY_AZ)
+const azOnPath = "test:az-on-path"
 
 func deployRunners(t *testing.T) []deployRunner {
 	script, _ := filepath.Abs("../deploy/azure")
@@ -58,7 +62,12 @@ func deployRunners(t *testing.T) []deployRunner {
 // deployment points at a real hub started like the image starts it. The
 // printed `longarm join` command must work as printed; re-runs upgrade,
 // secrets never reach az's command line, teardown only deletes what the
-// script created.
+// script created. Like on a real laptop: az found on PATH (no
+// LONGARM_DEPLOY_AZ: deploy.sh's az() once called itself forever), a new
+// subscription (providers not registered), a global
+// AZURE_STORAGE_CONNECTION_STRING / SAS for another account; images from
+// ACR (the login must be for that registry), --build-in-acr, a container
+// group stuck in Creating, a failed deployment.
 func TestAzureDeployScripts(t *testing.T) {
 	t.Parallel()
 	hubBin := buildHub(t)
@@ -83,13 +92,34 @@ func TestAzureDeployScripts(t *testing.T) {
 				defer cancel()
 				argv := r.argv(args...)
 				cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-				cmd.Env = append(append(os.Environ(),
-					"LONGARM_DEPLOY_AZ="+azPath,
+				var base []string
+				for _, kv := range os.Environ() {
+					if k, _, _ := strings.Cut(kv, "="); !strings.EqualFold(k, "LONGARM_DEPLOY_AZ") && !strings.HasPrefix(strings.ToUpper(k), "AZURE_STORAGE_") {
+						base = append(base, kv)
+					}
+				}
+				if slices.Contains(extraEnv, azOnPath) {
+					// az as the user has it: found on PATH
+					for i, kv := range base {
+						if k, v, _ := strings.Cut(kv, "="); strings.EqualFold(k, "PATH") {
+							base[i] = k + "=" + dir + string(os.PathListSeparator) + v
+						}
+					}
+				} else {
+					base = append(base, "LONGARM_DEPLOY_AZ="+azPath)
+				}
+				cmd.Env = append(append(base,
 					"HELPER_AZ_DIR="+dir,
 					"HELPER_AZ_HUB="+b["hub_address"],
 					"HELPER_AZ_BOOTSTRAP="+filepath.Join(c.share, "bootstrap.env"),
 					"LONGARM_REGISTRY_PASSWORD=",
-				), extraEnv...)
+					"LONGARM_DEPLOY_POLL_SECONDS=1",
+					// the caller's storage settings for another account: the
+					// scripts must use the hub's key (fake az: ShareNotFound)
+					"AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=other;AccountKey=b3RoZXI=",
+					"AZURE_STORAGE_SAS_TOKEN=sv=2024-01-01&sig=other",
+					"AZURE_STORAGE_ACCOUNT=other",
+				), slices.DeleteFunc(slices.Clone(extraEnv), func(kv string) bool { return kv == azOnPath })...)
 				var so, se bytes.Buffer
 				cmd.Stdout, cmd.Stderr = &so, &se
 				err := cmd.Run()
@@ -142,15 +172,25 @@ func TestAzureDeployScripts(t *testing.T) {
 			}
 			restarts := func() int { return strings.Count(calls(), "container restart") }
 
-			res := run(pw, name, "myhub", loc, "East Asia", noPanel, regUser, "bot", r.flag("--timeout", "-TimeoutSeconds"), "60")
+			// the first run: az on PATH, a new subscription
+			res := run(append([]string{azOnPath, "HELPER_AZ_UNREGISTERED=Microsoft.ContainerInstance,Microsoft.Storage"}, pw...),
+				name, "myhub", loc, "East Asia", noPanel, regUser, "bot", r.flag("--timeout", "-TimeoutSeconds"), "60")
 			ok(res, "deploy")
+			for _, ns := range []string{"Microsoft.ContainerInstance", "Microsoft.Storage"} {
+				if !strings.Contains(calls(), "provider register -n "+ns) || !strings.Contains(res.stdout, "registering the resource provider "+ns) {
+					t.Fatalf("%s not registered:\n%s\ncalls:\n%s", ns, res.stdout, calls())
+				}
+			}
+			if strings.Contains(calls(), "Microsoft.OperationalInsights") || strings.Contains(calls(), "Microsoft.ContainerRegistry") {
+				t.Fatalf("providers that this deployment doesn't need:\n%s", calls())
+			}
 			joinRE := regexp.MustCompile(`longarm join (\S+) (\S+) --ca-fingerprint (\S+)`)
 			m := joinRE.FindStringSubmatch(res.stdout)
 			if m == nil || m[1] != b["hub_address"] || m[3] != b["ca_fingerprint"] {
 				t.Fatalf("no join command for %v in:\n%s", b, res.stdout)
 			}
 			for _, want := range []string{"longarmd join " + b["hub_address"] + " <worker-code> --ca-fingerprint " + b["ca_fingerprint"],
-				"claude mcp add longarm -- longarm mcp", "USD/month", "panel           off", "longnet://127.0.0.1:7443?name=worker-1"} {
+				"claude mcp add longarm -- longarm mcp", "USD/month", "panel           off", "longnet://127.0.0.1:7445?tcp=127.0.0.1:" + b["hub_address"][strings.LastIndex(b["hub_address"], ":")+1:] + "&name=worker-1"} {
 				if !strings.Contains(res.stdout, want) {
 					t.Errorf("output lacks %q:\n%s", want, res.stdout)
 				}
@@ -166,7 +206,8 @@ func TestAzureDeployScripts(t *testing.T) {
 			// the location is the resource group's, not a template parameter
 			// ("East Asia" would make a broken DNS name)
 			p := params()
-			if _, has := p["location"]; has || p["name"] != "myhub" || p["size"] != "small" || p["enablePanel"] != false || p["registryPassword"] != "s3cret-pw" {
+			// the template's image (ghcr.io): the template's registryServer
+			if _, has := p["location"]; has || p["name"] != "myhub" || p["size"] != "small" || p["enablePanel"] != false || p["registryPassword"] != "s3cret-pw" || p["registryServer"] != nil {
 				t.Fatalf("parameters %+v", p)
 			}
 			cl := calls()
@@ -208,6 +249,57 @@ func TestAzureDeployScripts(t *testing.T) {
 			if restarts() != n+1 || params()["image"] != "ghcr.io/example/longarm-hub:1.2.3" {
 				t.Fatalf("pinned re-run: %d restarts, %+v", restarts(), params())
 			}
+
+			// an image from another registry: the login is for that registry,
+			// and needed again on a re-run
+			const acrImage = "example.azurecr.io/longarm-hub:1.2.3"
+			ok(run(pw, name, "myhub", regUser, "bot", image, acrImage), "ACR image")
+			if p := params(); p["image"] != acrImage || p["registryServer"] != "example.azurecr.io" || p["registryUsername"] != "bot" {
+				t.Fatalf("ACR image: %+v", p)
+			}
+			refused(run(nil, name, "myhub"), "re-run without the ACR login", "example.azurecr.io")
+			if res := run(pw, name, "myhub", r.flag("--build-in-acr", "-BuildInAcr"), image, acrImage); res.code == 0 {
+				t.Fatalf("--build-in-acr with --image: %+v", res)
+			}
+
+			// --build-in-acr: a registry in the resource group, az acr build of
+			// the ACR stage from this checkout, deployed with its admin login
+			res = run(nil, name, "myhub", r.flag("--build-in-acr", "-BuildInAcr"))
+			ok(res, "build in ACR")
+			acr := strings.TrimSpace(string(must(os.ReadFile(filepath.Join(dir, "acr")))))
+			p = params()
+			if img, _ := p["image"].(string); !strings.HasPrefix(img, acr+".azurecr.io/longarm-hub:build-") ||
+				p["registryServer"] != acr+".azurecr.io" || p["registryUsername"] != "acruser" || p["registryPassword"] != "acr-s3cret-pw" {
+				t.Fatalf("build in ACR: %+v\n%s", p, res.stdout)
+			}
+			if b := string(must(os.ReadFile(filepath.Join(dir, "acr-build")))); !strings.Contains(b, "--target acr") || !strings.Contains(b, "--platform linux/amd64") {
+				t.Fatalf("acr build: %s", b)
+			}
+			if cl := calls(); strings.Contains(cl, "acr-s3cret-pw") || !strings.Contains(cl, "provider show -n Microsoft.ContainerRegistry") {
+				t.Fatalf("calls:\n%s", cl)
+			}
+			builtImage := p["image"]
+			// a re-run finds the registry's login by itself, a second build
+			// reuses the registry
+			ok(run(nil, name, "myhub"), "re-run on the ACR build")
+			if p := params(); p["image"] != builtImage || p["registryUsername"] != "acruser" {
+				t.Fatalf("re-run on the ACR build: %+v", p)
+			}
+			ok(run(nil, name, "myhub", r.flag("--build-in-acr", "-BuildInAcr")), "second build in ACR")
+			if n := strings.Count(calls(), "acr create"); n != 1 {
+				t.Fatalf("%d registries created", n)
+			}
+
+			// a container group stuck in Creating without events: an
+			// actionable message instead of a long timeout
+			stuckTimeout := r.flag("--stuck-timeout", "-StuckTimeoutSeconds")
+			res = run([]string{"HELPER_AZ_STUCK=1"}, name, "myhub", stuckTimeout, "2", r.flag("--timeout", "-TimeoutSeconds"), "60")
+			refused(res, "stuck group", "recreate")
+			if !strings.Contains(res.stderr+res.stdout, "no events") {
+				t.Fatalf("stuck group: %+v", res)
+			}
+			// a failed deployment shows the failed operations
+			refused(run([]string{"HELPER_AZ_DEPLOY_FAIL=1"}, name, "myhub"), "failed deployment", "inaccessibleimage")
 
 			// a new admin code: az container exec of the argument-free alias
 			if res := run(nil, name, "myhub", r.flag("--admin-code", "-AdminCode")); res.code != 0 || !strings.Contains(res.stdout, "ABC-DEF") {

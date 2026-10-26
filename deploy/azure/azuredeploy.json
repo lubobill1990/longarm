@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.48.1.52935",
-      "templateHash": "13260630792919484539"
+      "templateHash": "9543655813519851836"
     }
   },
   "parameters": {
@@ -94,10 +94,10 @@
     "relayUdpPort": {
       "type": "int",
       "defaultValue": 7445,
-      "minValue": 1024,
+      "minValue": 7444,
       "maxValue": 65534,
       "metadata": {
-        "description": "UDP port of the longnet relay (QUIC + STUN); the second STUN port is this + 1. Keep 7443 unless the region refuses the same port for TCP and UDP (workers then listen on longnet://<fqdn>:<port>?tcp=<fqdn>:7443)."
+        "description": "UDP port of the longnet relay (QUIC + STUN); the second STUN port is this + 1. Not 7443: ACI refuses one port number for TCP and UDP (DuplicateContainerPorts). Workers listen on longnet://<fqdn>:<port>?tcp=<fqdn>:7443 (the relay TLS fallback uses the hub TCP port)."
       }
     },
     "sasExpiry": {

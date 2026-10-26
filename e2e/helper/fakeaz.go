@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -79,14 +80,42 @@ func fakeAz(args []string) {
 		for _, f := range []string{"rg", "cg"} {
 			os.Remove(filepath.Join(dir, f))
 		}
+	case "provider show":
+		// HELPER_AZ_UNREGISTERED: namespaces of a new subscription
+		ns := flag("-n")
+		st := read("provider-" + ns)
+		if st == "" {
+			st = "Registered"
+			if slices.Contains(strings.Split(os.Getenv("HELPER_AZ_UNREGISTERED"), ","), ns) {
+				st = "NotRegistered"
+			}
+		}
+		if st == "Registering" {
+			write("provider-"+ns, "Registered") // the next look
+		}
+		fmt.Println(st)
+	case "provider register":
+		write("provider-"+flag("-n"), "Registering")
 	case "container show":
 		if !exists("cg") {
 			fail("ResourceNotFound")
 		}
 		g := group()
+		stuck := os.Getenv("HELPER_AZ_STUCK") == "1"
 		switch {
+		case strings.HasPrefix(q, "[provisioningState"):
+			// state, hub container state, container events, group events
+			if stuck {
+				tsv("Creating", "Waiting", "0", "0")
+			} else {
+				tsv("Succeeded", "Running", "4", "0")
+			}
 		case strings.Contains(q, "currentState"):
-			fmt.Println("Running")
+			if stuck {
+				fmt.Println("Waiting")
+			} else {
+				fmt.Println("Running")
+			}
 		case strings.HasPrefix(q, "[containers[0].image"):
 			// image, cpu, second container, registry, env names, log workspace
 			cpu, caddy, reg, logs := "1.0", "", "", ""
@@ -98,6 +127,9 @@ func fakeAz(args []string) {
 			}
 			if g["registryUsername"] != nil {
 				reg = "ghcr.io"
+				if s, ok := g["registryServer"].(string); ok {
+					reg = s
+				}
 			}
 			if g["enableLogAnalytics"] == true {
 				logs = "00000000-0000-0000-0000-000000000000"
@@ -125,6 +157,37 @@ func fakeAz(args []string) {
 		if !exists("rg") {
 			fail("ResourceGroupNotFound")
 		}
+		host := os.Getenv("HELPER_AZ_HUB")
+		panel := ""
+		if args[2] == "show" {
+			// --no-wait deployments: state and outputs by name
+			if read("deployment") != flag("-n") {
+				fail("DeploymentNotFound")
+			}
+			switch {
+			case strings.Contains(q, "provisioningState"):
+				switch {
+				case os.Getenv("HELPER_AZ_DEPLOY_FAIL") == "1":
+					fmt.Println("Failed")
+				case os.Getenv("HELPER_AZ_STUCK") == "1":
+					fmt.Println("Running")
+				default:
+					fmt.Println("Succeeded")
+				}
+			case strings.Contains(q, "outputs"):
+				if g := group(); g["enablePanel"] == true {
+					panel = os.Getenv("HELPER_AZ_PANEL")
+				}
+				tsv(host, host[:strings.LastIndex(host, ":")], "lahubtest", "7445", panel)
+			default:
+				fail("fake az: deployment group show --query " + q)
+			}
+			return
+		}
+		if !slices.Contains(args, "--no-wait") {
+			fail("fake az: the scripts deploy with --no-wait")
+		}
+		write("deployment", flag("-n"))
 		b, err := os.ReadFile(strings.TrimPrefix(flag("--parameters"), "@"))
 		if err != nil {
 			fail(err.Error())
@@ -141,12 +204,39 @@ func fakeAz(args []string) {
 		write("params.json", string(b))
 		write("cg", string(b))
 		restart() // a changed group restarts (the SAS expiry changes every time)
-		panel := ""
-		if v, ok := doc.Parameters["enablePanel"]; !ok || v.Value == true {
-			panel = os.Getenv("HELPER_AZ_PANEL")
+	case "deployment operation":
+		fmt.Println(`[{"resource": "myhub", "error": {"code": "InaccessibleImage", "message": "fake failure"}}]`)
+	case "acr list":
+		// one registry at most; queries by tag or by login server
+		if n := read("acr"); n != "" && (strings.Contains(q, "tags") || strings.Contains(q, n+".azurecr.io")) {
+			fmt.Println(n)
 		}
-		host := os.Getenv("HELPER_AZ_HUB")
-		tsv(host, host[:strings.LastIndex(host, ":")], "lahubtest", "7443", panel)
+	case "acr create":
+		if flag("--sku") == "" || flag("--admin-enabled") != "true" {
+			fail("fake az: acr create without --sku / --admin-enabled")
+		}
+		write("acr", flag("-n"))
+	case "acr show":
+		if read("acr") != flag("-n") {
+			fail("ResourceNotFound")
+		}
+		fmt.Println(flag("-n") + ".azurecr.io")
+	case "acr credential":
+		if read("acr") != flag("-n") {
+			fail("ResourceNotFound")
+		}
+		tsv("acruser", "acr-s3cret-pw")
+	case "acr build":
+		// what ACR Tasks needs: the stage it can parse, the Dockerfile in the source
+		src := args[len(args)-1]
+		if flag("--target") != "acr" || flag("-f") != "deploy/hub/Dockerfile" || read("acr") != flag("-r") {
+			fail("fake az: acr build " + strings.Join(args[2:], " "))
+		}
+		if _, err := os.Stat(filepath.Join(src, "deploy", "hub", "Dockerfile")); err != nil {
+			fail("no Dockerfile in the source: " + err.Error())
+		}
+		write("acr-build", strings.Join(args, " "))
+		fmt.Println("Run ID: ca1 was successful after 2m3s")
 	case "storage account":
 		if args[2] == "list" {
 			fmt.Println("lahubtest")
@@ -156,6 +246,10 @@ func fakeAz(args []string) {
 	case "storage file":
 		if os.Getenv("AZURE_STORAGE_KEY") != "dGVzdGtleQ==" {
 			fail("no storage key in AZURE_STORAGE_KEY")
+		}
+		// the real az prefers these over the key (another account: ShareNotFound)
+		if os.Getenv("AZURE_STORAGE_CONNECTION_STRING") != "" || os.Getenv("AZURE_STORAGE_SAS_TOKEN") != "" || os.Getenv("AZURE_STORAGE_ACCOUNT") != "" {
+			fail("ShareNotFound (a connection string / SAS / account from the environment won over the key)")
 		}
 		b, err := os.ReadFile(os.Getenv("HELPER_AZ_BOOTSTRAP"))
 		if err != nil {

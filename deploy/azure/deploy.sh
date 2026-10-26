@@ -7,6 +7,7 @@
 #   ./deploy.sh --name myhub --image ghcr.io/<owner>/longarm-hub:1.2.3   # upgrade (data kept)
 #   ./deploy.sh --name myhub --admin-code                                # a new admin join code
 #   ./deploy.sh --name myhub --teardown                                  # delete everything
+#   ./deploy.sh --name myhub --location eastasia --build-in-acr          # image built from this checkout in your ACR
 #
 # Re-running is an upgrade: the template is applied again with the running
 # hub's settings (image, size, panel, ...) unless an option changes them,
@@ -22,7 +23,9 @@ template=$here/azuredeploy.json
 # empty = not given (a re-run keeps the running hub's value)
 name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=false yes=false
 recreate=false admin_code=false subscription='' acme_email='' registry_user='' tailscale_secret_file=''
-timeout=900
+build_in_acr=false stun_servers='' timeout=1200 stuck_timeout=600
+# seconds between status polls (tests make it short)
+poll=${LONGARM_DEPLOY_POLL_SECONDS:-10}
 
 usage() {
 	cat <<'EOF'
@@ -35,15 +38,20 @@ usage: deploy.sh --name NAME [--location REGION] [options]
   --resource-group RG      default: NAME-rg
   --image IMAGE            longarm-hub image (first run: the template's :latest; re-run: the running one)
   --registry-user USER     private image: registry login, password in $LONGARM_REGISTRY_PASSWORD
+  --build-in-acr           build the image from this checkout with az acr build in an Azure Container
+                           Registry in the resource group (created once; no docker needed) and deploy it
   --tailscale-secret-file F  Tailscale OAuth client secret for the hub's tailnet provider
   --acme-email EMAIL       Let's Encrypt contact for the panel certificate
+  --stun-servers LIST      external STUN servers the hub advertises (host:port,...; "none" = only the
+                           hub's own; default: the template's public ones, see README "Direct connections")
   --log-analytics          send container logs to a Log Analytics workspace
   --subscription ID        Azure subscription (default: az account show)
   --recreate               delete the container group first (needed to change --size or the panel)
   --admin-code             print a new one-time admin join code (az container exec)
   --teardown               delete the resource group (asks for the name unless --yes)
   --yes                    don't ask
-  --timeout SECONDS        how long to wait for the hub (default 900)
+  --timeout SECONDS        how long to wait for the hub (default 1200)
+  --stuck-timeout SECONDS  give up on a container group stuck in Creating without events (default 600)
 EOF
 }
 
@@ -62,6 +70,8 @@ while [[ $# -gt 0 ]]; do
 	--resource-group) rg=${2:?}; shift ;;
 	--image) image=${2:?}; shift ;;
 	--registry-user) registry_user=${2:?}; shift ;;
+	--build-in-acr) build_in_acr=true ;;
+	--stun-servers) stun_servers=${2:?}; shift ;;
 	--tailscale-secret-file) tailscale_secret_file=${2:?}; shift ;;
 	--acme-email) acme_email=${2:?}; shift ;;
 	--log-analytics) log_analytics=true ;;
@@ -71,6 +81,7 @@ while [[ $# -gt 0 ]]; do
 	--teardown) teardown=true ;;
 	--yes | -y) yes=true ;;
 	--timeout) timeout=${2:?}; shift ;;
+	--stuck-timeout) stuck_timeout=${2:?}; shift ;;
 	-h | --help) usage; exit 0 ;;
 	*) usage >&2; die "unknown argument: $1" ;;
 	esac
@@ -82,6 +93,10 @@ done
 	die "--name: 3-40 lowercase letters, digits and hyphens, starting with a letter"
 [[ -z $size || $size == small || $size == medium ]] || die "--size: small or medium"
 [[ $timeout =~ ^[0-9]+$ ]] || die "--timeout: seconds"
+[[ $stuck_timeout =~ ^[0-9]+$ ]] || die "--stuck-timeout: seconds"
+[[ $poll =~ ^[0-9]+$ ]] || die "LONGARM_DEPLOY_POLL_SECONDS: seconds"
+! $build_in_acr || [[ -z $image ]] || die "--build-in-acr builds the image: drop --image"
+[[ -z $stun_servers || $stun_servers =~ ^[A-Za-z0-9.:,\[\]-]+$ ]] || die "--stun-servers: host:port,host:port or none"
 [[ -z $tailscale_secret_file || -r $tailscale_secret_file ]] || die "--tailscale-secret-file: can't read $tailscale_secret_file"
 rg=${rg:-$name-rg}
 
@@ -124,6 +139,82 @@ fetch_bootstrap() {
 # bootstrap_value KEY: a value of $tmp/bootstrap.env
 bootstrap_value() { sed -n "s/^$1=//p" "$tmp/bootstrap.env" | tr -d '\r' | head -n 1; }
 
+# ensure_providers NAMESPACE...: register the resource providers the
+# deployment needs (a new subscription has e.g. Microsoft.ContainerInstance
+# NotRegistered: the deployment would fail with MissingSubscriptionRegistration)
+ensure_providers() {
+	local ns state waited
+	for ns in "$@"; do
+		state=$(az provider show -n "$ns" --query registrationState -o tsv 2>/dev/null | tr -d '\r' || true)
+		[[ $state != Registered ]] || continue
+		echo "registering the resource provider $ns (${state:-unknown}; once per subscription, a minute or two)"
+		az provider register -n "$ns" -o none || die "az provider register -n $ns failed (needs Contributor on the subscription; or ask its owner to register it)"
+		waited=0
+		until [[ $state == Registered ]]; do
+			((waited < 600)) || die "$ns is still $state after 10 min: az provider show -n $ns"
+			sleep "$poll"
+			waited=$((waited + poll + 1))
+			state=$(az provider show -n "$ns" --query registrationState -o tsv 2>/dev/null | tr -d '\r' || true)
+		done
+	done
+}
+
+# registry_host IMAGE: the registry of an image reference ('' = Docker Hub)
+registry_host() {
+	local h=${1%%/*}
+	if [[ $1 == */* && ($h == *.* || $h == *:* || $h == localhost) ]]; then
+		printf '%s' "$h"
+	fi
+}
+
+# acr_login NAME: registry_user / LONGARM_REGISTRY_PASSWORD from the admin
+# credentials of the Azure Container Registry NAME (stdout of az, not argv)
+acr_login() {
+	local creds
+	creds=$(az acr credential show -n "$1" -g "$rg" --query "[username, passwords[0].value]" -o tsv | tr -d '\r' | tr '\t' '\n')
+	{
+		read -r registry_user
+		read -r LONGARM_REGISTRY_PASSWORD || true
+	} <<<"$creds"
+	[[ -n $registry_user && -n $LONGARM_REGISTRY_PASSWORD ]] || die "no admin credentials for the registry $1 (az acr update -n $1 --admin-enabled true)"
+	export LONGARM_REGISTRY_PASSWORD
+}
+
+# check_stuck: dies when the container group has sat in Creating with
+# waiting containers and no events at all for --stuck-timeout seconds.
+# Seen once on a real run (both containers "Waiting", no events, 30+ min,
+# while the same deployment with --recreate came up in 3.5 min).
+stuck_since=''
+check_stuck() {
+	local info pstate hub events ev2
+	info=$(az container show -g "$rg" -n "$name" -o tsv \
+		--query "[provisioningState, containers[?name=='hub'].instanceView.currentState.state | [0], length(containers[].instanceView.events[] || \`[]\`), length(instanceView.events || \`[]\`)]" \
+		2>/dev/null | tr -d '\r' | tr '\t' '\n') || return 0
+	{
+		read -r pstate
+		read -r hub
+		read -r events
+		read -r ev2 || true
+	} <<<"$info"
+	events=$((${events:-0} + ${ev2:-0}))
+	if [[ ($pstate == Creating || $pstate == Pending) && ($hub == '' || $hub == Waiting) && $events -eq 0 ]]; then
+		stuck_since=${stuck_since:-$SECONDS}
+		if ((SECONDS - stuck_since >= stuck_timeout)); then
+			cat >&2 <<EOM
+deploy.sh: the container group $name has been $pstate for $((SECONDS - stuck_since)) s with its
+containers waiting and no events at all. That is an Azure Container Instances hiccup, not
+the template (seen once: the same deployment came up in 3.5 min after a recreate).
+  retry:            ./deploy.sh --name $name --recreate            (storage and data are kept)
+  without the panel: ./deploy.sh --name $name --no-panel --recreate
+  look:             az container show -g $rg -n $name -o table
+EOM
+			exit 1
+		fi
+	else
+		stuck_since=''
+	fi
+}
+
 if $teardown; then
 	rg_exists || die "resource group $rg does not exist"
 	tag=$(az group show -n "$rg" --query "tags.\"longarm-hub\"" -o tsv)
@@ -156,11 +247,12 @@ else
 	echo "creating resource group $rg in $location"
 	az group create -n "$rg" -l "$location" --tags "longarm-hub=$name" -o none
 fi
+ensure_providers Microsoft.ContainerInstance Microsoft.Storage
 
 # A re-run keeps the running hub's settings. Secrets can't be read back
 # from ACI: a hub that has them needs them again.
 cur=$(az container show -g "$rg" -n "$name" -o tsv --query "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId]" 2>/dev/null || true)
-cur_image='' prev_boot='' account='' key=''
+cur_image='' cur_registry='' prev_boot='' account='' key=''
 if [[ -n $cur ]]; then
 	# one field per line; null fields are empty lines
 	{
@@ -185,8 +277,6 @@ if [[ -n $cur ]]; then
 	size=${size:-$cur_size}
 	panel=${panel:-$cur_panel}
 	[[ -n $log_analytics || -z $cur_logs ]] || log_analytics=true
-	[[ -z $cur_registry || -n $registry_user ]] ||
-		die "the hub pulls its image with a login for $cur_registry, which can't be read back: pass --registry-user again (password in LONGARM_REGISTRY_PASSWORD)"
 	[[ ,$cur_env, != *,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,* || -n $tailscale_secret_file ]] ||
 		die "the hub has a Tailscale OAuth secret, which can't be read back: pass --tailscale-secret-file again"
 	# this start's bootstrap.env must differ from the running one's (boot_id)
@@ -201,6 +291,40 @@ fi
 size=${size:-small}
 panel=${panel:-true}
 log_analytics=${log_analytics:-false}
+! $log_analytics || ensure_providers Microsoft.OperationalInsights
+
+if $build_in_acr; then
+	# the image from this checkout, built by ACR Tasks (no docker here); a
+	# registry in the hub's resource group, created on the first use
+	ensure_providers Microsoft.ContainerRegistry
+	root=$(cd "$here/../.." && pwd)
+	[[ -f $root/deploy/hub/Dockerfile && -f $root/go.mod ]] || die "--build-in-acr: run from a checkout of the repository"
+	acr=$(az acr list -g "$rg" --query "[?tags.\"longarm-hub\"=='$name'].name | [0]" -o tsv | tr -d '')
+	if [[ -z $acr ]]; then
+		acr=lahub$(od -An -tx1 -N6 /dev/urandom | tr -d ' 
+')
+		echo "creating the container registry $acr in $rg (Basic, about 5 USD/month)"
+		az acr create -g "$rg" -n "$acr" -l "$location" --sku Basic --admin-enabled true --tags "longarm-hub=$name" -o none
+	fi
+	login_server=$(az acr show -g "$rg" -n "$acr" --query loginServer -o tsv | tr -d '')
+	version=$(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo dev)
+	tag=build-$(date -u +%Y%m%d%H%M%S)
+	echo "building $login_server/longarm-hub:$tag from $root (az acr build, a few minutes)"
+	# --target acr: ACR Tasks can't parse the BuildKit stages (deploy/hub/Dockerfile)
+	az acr build -g "$rg" -r "$acr" -t "longarm-hub:$tag" --target acr --platform linux/amd64 
+		--build-arg "VERSION=$version" -f deploy/hub/Dockerfile "$root" ||
+		die "az acr build failed (the build log is above)"
+	image=$login_server/longarm-hub:$tag
+fi
+# an image in an Azure Container Registry of this resource group: its
+# admin login (no --registry-user needed, also on re-runs)
+reg_host=$(registry_host "$image")
+if [[ -z $registry_user && $reg_host == *.azurecr.io ]]; then
+	acr=${acr:-$(az acr list -g "$rg" --query "[?loginServer=='$reg_host'].name | [0]" -o tsv 2>/dev/null | tr -d '' || true)}
+	[[ -z $acr ]] || acr_login "$acr"
+fi
+[[ -z $cur_registry || -n $registry_user ]] ||
+	die "the hub pulls its image with a login for $cur_registry, which can't be read back: pass --registry-user again (password in LONGARM_REGISTRY_PASSWORD)"
 
 if $recreate && [[ -n $cur_image ]]; then
 	echo "deleting container group $name (storage and data stay)"
@@ -228,13 +352,13 @@ json_str() {
 	if [[ -n $registry_user ]]; then
 		[[ -n ${LONGARM_REGISTRY_PASSWORD:-} ]] || die "--registry-user needs LONGARM_REGISTRY_PASSWORD"
 		# the login is for the registry the image comes from (the template defaults to ghcr.io)
-		reg_host=${image%%/*}
-		if [[ $image == */* && ( $reg_host == *.* || $reg_host == *:* || $reg_host == localhost ) ]]; then
+		if [[ -n $reg_host ]]; then
 			printf ',"registryServer":{"value":%s}' "$(json_str "$reg_host")"
 		fi
 		printf ',"registryUsername":{"value":%s}' "$(json_str "$registry_user")"
 		printf ',"registryPassword":{"value":%s}' "$(json_str "$LONGARM_REGISTRY_PASSWORD")"
 	fi
+	[[ -z $stun_servers ]] || printf ',"stunServers":{"value":%s}' "$(json_str "$([[ $stun_servers == none ]] || printf %s "$stun_servers")")"
 	if [[ -n $tailscale_secret_file ]]; then
 		printf ',"tailscaleOAuthSecret":{"value":%s}' "$(json_str "$(tr -d '\r\n' <"$tailscale_secret_file")")"
 	fi
@@ -242,8 +366,28 @@ json_str() {
 } >"$tmp/params.json"
 
 echo "deploying $name to $rg ($location, $size, panel $panel${image:+, $image}); this takes a few minutes"
-outputs=$(az deployment group create -g "$rg" -n longarm-hub --template-file "$template" \
-	--parameters "@$tmp/params.json" -o tsv \
+deadline=$((SECONDS + timeout))
+logs_hint="az container logs -g $rg -n $name --container-name hub"
+# --no-wait + polling: a container group stuck in Creating would block
+# "az deployment group create" for an hour (check_stuck)
+deployment=longarm-hub-$(date -u +%Y%m%d%H%M%S)
+az deployment group create -g "$rg" -n "$deployment" --template-file "$template" \
+	--parameters "@$tmp/params.json" --no-wait -o none
+dstate=''
+until [[ $dstate == Succeeded ]]; do
+	sleep "$poll"
+	dstate=$(az deployment group show -g "$rg" -n "$deployment" --query properties.provisioningState -o tsv 2>/dev/null | tr -d '\r' || true)
+	case $dstate in
+	Failed | Canceled)
+		az deployment operation group list -g "$rg" -n "$deployment" \
+			--query "[?properties.provisioningState=='Failed'].{resource: properties.targetResource.resourceName, error: properties.statusMessage.error}" -o json >&2 || true
+		die "deployment $deployment: $dstate (errors above; az deployment group show -g $rg -n $deployment)"
+		;;
+	esac
+	check_stuck
+	((SECONDS < deadline)) || die "deployment $deployment is still ${dstate:-not started} after ${timeout}s: az deployment group show -g $rg -n $deployment"
+done
+outputs=$(az deployment group show -g "$rg" -n "$deployment" -o tsv \
 	--query "[properties.outputs.hubAddress.value, properties.outputs.fqdn.value, properties.outputs.storageAccount.value, properties.outputs.relayUdpPort.value, properties.outputs.panelUrl.value]")
 # one value per line (az prints a list as tab-separated fields; panelUrl last: empty without the panel)
 outputs=$(printf '%s\n' "$outputs" | tr -d '\r' | tr '\t' '\n')
@@ -255,6 +399,10 @@ outputs=$(printf '%s\n' "$outputs" | tr -d '\r' | tr '\t' '\n')
 	read -r panel_url || true
 } <<<"$outputs"
 [[ -n $hub_addr && -n $fqdn && -n $account ]] || die "deployment returned no outputs: $outputs"
+relay_port=${relay_port:-7443}
+# the relay's TLS fallback is on the hub's TCP port (ACI: UDP 7445, TCP 7443)
+relay_tcp=''
+[[ $relay_port == "${hub_addr##*:}" ]] || relay_tcp="tcp=$fqdn:${hub_addr##*:}&"
 key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv | tr -d '\r')
 
 new_image=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].image" -o tsv | tr -d '\r')
@@ -264,20 +412,21 @@ if ! $recreate && [[ -n $cur_image && $cur_image == "$new_image" && $new_image =
 fi
 
 echo "waiting for the hub at $hub_addr"
-logs_hint="az container logs -g $rg -n $name --container-name hub"
-deadline=$((SECONDS + timeout))
+waited_from=$SECONDS
 state=''
 until [[ $state == Running ]]; do
 	state=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv 2>/dev/null | tr -d '\r' || true)
+	[[ $state != Running ]] || break
+	check_stuck
 	((SECONDS < deadline)) || die "the hub container is not running ($state): $logs_hint"
-	[[ $state == Running ]] || sleep 10
+	sleep "$poll"
 done
 # bootstrap.env of this start (a new boot_id; restart once if the update
 # didn't restart the hub)
 restarted=false
 until fetch_bootstrap "$account" "$key" && [[ $(bootstrap_value boot_id) != "$prev_boot" ]]; do
 	((SECONDS < deadline)) || die "no bootstrap.env from this start on the share: $logs_hint"
-	if [[ -n $prev_boot ]] && ! $restarted && ((SECONDS > deadline - timeout + 240)); then
+	if [[ -n $prev_boot ]] && ! $restarted && ((SECONDS > waited_from + 240)); then
 		echo "the hub did not restart: az container restart"
 		az container restart -g "$rg" -n "$name" -o none
 		restarted=true
@@ -342,7 +491,7 @@ cat <<EOF
      longarmd join $hub_addr <worker-code> --ca-fingerprint $fp --name worker-1
      longarm admin approve worker-1                 # on the laptop
      sudo longarmd service install --user "\$USER" && sudo longarmd service start
-   Through the hub's relay (workers behind NAT): longarmd run --listen "longnet://$fqdn:${relay_port:-7443}?name=worker-1"
+   Through the hub's relay (workers behind NAT): longarmd run --listen "longnet://$fqdn:$relay_port?${relay_tcp}name=worker-1"
 EOF
 if [[ -n $panel_url ]]; then
 	cat <<EOF

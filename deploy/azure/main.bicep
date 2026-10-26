@@ -55,8 +55,8 @@ param storageSku string = 'Standard_LRS'
 @maxValue(168)
 param adminCodeTtlHours int = 24
 
-@description('UDP port of the longnet relay (QUIC + STUN); the second STUN port is this + 1. Keep 7443 unless the region refuses the same port for TCP and UDP (workers then listen on longnet://<fqdn>:<port>?tcp=<fqdn>:7443).')
-@minValue(1024)
+@description('UDP port of the longnet relay (QUIC + STUN); the second STUN port is this + 1. Not 7443: ACI refuses one port number for TCP and UDP (DuplicateContainerPorts). Workers listen on longnet://<fqdn>:<port>?tcp=<fqdn>:7443 (the relay TLS fallback uses the hub TCP port).')
+@minValue(7444)
 @maxValue(65534)
 param relayUdpPort int = 7445
 
