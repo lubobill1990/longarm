@@ -276,6 +276,21 @@ func TestAzureDeployScripts(t *testing.T) {
 			}
 			refused(run(pw, name, "myhub", regUser, "bot", stun, "a b"), "bad STUN servers", "stun")
 
+			// the scheduler gate and the release signing key: template
+			// parameters a re-run keeps (from the hub's environment)
+			gate, relKey := r.flag("--gate-free-gb", "-GateFreeGb"), r.flag("--release-public-key", "-ReleasePublicKey")
+			const pub = "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"
+			refused(run(pw, name, "myhub", regUser, "bot", gate, "lots"), "bad gate", "number of gb")
+			refused(run(pw, name, "myhub", regUser, "bot", relKey, "untrusted comment: minisign public key 5A3A..."), "bad release key", "minisign public key line")
+			ok(run(pw, name, "myhub", regUser, "bot", gate, "1.5", relKey, pub), "gate and release key")
+			if p := params(); p["schedulerGateFreeGb"] != "1.5" || p["releasePublicKey"] != pub {
+				t.Fatalf("gate and release key: %+v", p)
+			}
+			ok(run(pw, name, "myhub", regUser, "bot"), "re-run keeps the gate and the release key")
+			if p := params(); p["schedulerGateFreeGb"] != "1.5" || p["releasePublicKey"] != pub {
+				t.Fatalf("re-run lost the gate / release key: %+v", p)
+			}
+
 			// telemetry and Entra sign-in: template parameters a re-run keeps
 			// (from the hub's environment); diagnostics and --acr need the
 			// managed identity

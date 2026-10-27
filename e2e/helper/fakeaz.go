@@ -207,6 +207,14 @@ func fakeAz(args []string) {
 					tsv("LONGARM_HUB_ENTRA_APPS", a)
 				}
 			}
+		case strings.Contains(q, "LONGARM_HUB_SCHED_GATE_FREE_GB"), strings.Contains(q, "LONGARM_HUB_RELEASES_PUBLIC_KEY"):
+			// one plain variable (main.bicep sets it only when non-empty)
+			p := "schedulerGateFreeGb"
+			if strings.Contains(q, "LONGARM_HUB_RELEASES_PUBLIC_KEY") {
+				p = "releasePublicKey"
+			}
+			v, _ := g[p].(string)
+			fmt.Println(orNone(v))
 		case strings.Contains(q, "image"):
 			fmt.Println(g["image"])
 		default:

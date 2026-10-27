@@ -117,6 +117,9 @@ param entraApps string = ''
 @description('Scheduler memory gate: free GB a worker needs for scheduled jobs (empty = the hub\'s default, 20). Lower it for small workers (containers, laptops).')
 param schedulerGateFreeGb string = ''
 
+@description('Minisign public key line (RW...) releases are signed with: the hub refuses uploaded releases whose signature does not verify (empty = no check).')
+param releasePublicKey string = ''
+
 @description('Entra sign-in for the web panel: spa (no credential; SPA redirect URI https://<fqdn>/auth/spa-callback), confidential (storageAuth identity: the managed identity as a federated credential; Web redirect URI https://<fqdn>/auth/callback) or off.')
 @allowed([
   'spa'
@@ -444,7 +447,8 @@ var hubEnv = concat(
   // source-NATs them (internal/relay snatVerdict). Always set: deploy.sh
   // reads it back on a re-run.
   [{ name: 'LONGARM_HUB_RELAY_STUN_ADVERTISE', value: empty(stunServers) ? 'self' : 'self,${stunServers}' }],
-  empty(schedulerGateFreeGb) ? [] : [{ name: 'LONGARM_HUB_SCHED_GATE_FREE_GB', value: schedulerGateFreeGb }]
+  empty(schedulerGateFreeGb) ? [] : [{ name: 'LONGARM_HUB_SCHED_GATE_FREE_GB', value: schedulerGateFreeGb }],
+  empty(releasePublicKey) ? [] : [{ name: 'LONGARM_HUB_RELEASES_PUBLIC_KEY', value: releasePublicKey }]
 )
 
 var hubPorts = [

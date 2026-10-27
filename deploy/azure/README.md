@@ -62,7 +62,8 @@ restarts the hub) prints everything too.
 | `--entra-tenant ID --entra-client ID` | `-EntraTenant -EntraClient` | Sign in with Microsoft Entra ID (`longarm login`, panel); a re-run keeps them ([usage](../../docs/usage.md)) |
 | `--entra-admins LIST` | `-EntraAdmins` | Entra admins: UPNs, `*@domain` or object IDs, comma-separated |
 | `--entra-web spa\|confidential\|off` | `-EntraWeb` | panel sign-in mode (default spa) |
-| `--gate-free-gb N` | | scheduler memory gate: free GB a worker needs for scheduled jobs (default 20); lower it for small workers (containers, laptops); a re-run keeps it |
+| `--gate-free-gb N` | `-GateFreeGb` | scheduler memory gate: free GB a worker needs for scheduled jobs (default 20); lower it for small workers (containers, laptops); a re-run keeps it |
+| `--release-public-key KEY` | `-ReleasePublicKey` | the minisign public key line (`RW…`) releases are signed with, e.g. `"$(tail -1 longarm-release.pub)"` ([CI/CD 2.1](../../docs/ci-cd.md#21-release-key-and-update-public-key)): the hub refuses uploaded releases whose signature doesn't verify, so its install scripts only hand out signed files; a re-run keeps it |
 | `--entra-apps LIST` | `-EntraApps` | app-only sign-in (CI): `<app id>=<user>`, comma-separated |
 | `--log-analytics` | `-LogAnalytics` | container logs to a Log Analytics workspace |
 | `--storage-auth key\|identity` | `-StorageAuth` | `identity`: no storage account keys, panel served by the hub ([below](#without-storage-account-keys)); a re-run keeps the mode (switching needs a new deployment) |
@@ -125,9 +126,10 @@ temporary parameters file, never on a command line.
   wins over `hub.toml`: `LONGARM_HUB_ADVERTISE` (the FQDN: `public_addr` +
   certificate name), `LONGARM_HUB_PUBLIC_URL`, `LONGARM_HUB_HTTP`,
   `LONGARM_HUB_DB`, `LONGARM_HUB_DATA_DIR`, `LONGARM_HUB_CONFIG`. Your own
-  settings (auto_approve, certificate TTLs, scheduler, tailnet, release
-  public key) go into `hub.toml` on the share; restart the container group
-  afterwards (`az container restart -g <rg> -n <name>`). Sign-in with
+  settings (auto_approve, certificate TTLs, scheduler, tailnet) go into
+  `hub.toml` on the share (the release public key: `--release-public-key`);
+  restart the container group afterwards
+  (`az container restart -g <rg> -n <name>`). Sign-in with
   Microsoft Entra ID: the template parameters `entraTenantId`,
   `entraClientId`, `entraAdmins` and `entraWeb` set the `LONGARM_HUB_ENTRA_*`
   variables (docs/usage.md "Sign in with Microsoft Entra ID"; `entraWeb =

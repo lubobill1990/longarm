@@ -25,7 +25,7 @@ template=$here/azuredeploy.json
 # empty = not given (a re-run keeps the running hub's value)
 name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=false yes=false
 recreate=false admin_code=false subscription='' acme_email='' registry_user='' tailscale_secret_file=''
-entra_tenant='' entra_client='' entra_admins='' entra_web='' entra_apps='' gate_free_gb=''
+entra_tenant='' entra_client='' entra_admins='' entra_web='' entra_apps='' gate_free_gb='' release_public_key=''
 build_in_acr=false stun_servers='' storage_auth='' acr='' timeout=1200 stuck_timeout=600
 telemetry='' diagnostics=''
 # seconds between status polls (tests make it short)
@@ -53,6 +53,8 @@ usage: deploy.sh --name NAME [--location REGION] [options]
   --entra-apps LIST        app-only sign-in (CI): "<app id>=<user>", comma-separated
   --gate-free-gb N         scheduler memory gate: free GB a worker needs for scheduled jobs
                            (default 20; lower it for small workers such as containers or laptops)
+  --release-public-key KEY the minisign public key line (RW...) releases are signed with: the hub
+                           refuses uploads whose signature doesn't verify (tail -1 longarm-release.pub)
   --stun-servers LIST      external STUN servers the hub advertises (host:port,...; "none" = only the
                            hub's own; default: the template's public ones, see README "Direct connections")
   --log-analytics          send container logs to a Log Analytics workspace
@@ -96,6 +98,7 @@ while [[ $# -gt 0 ]]; do
 	--entra-web) entra_web=${2:?}; shift ;;
 	--entra-apps) entra_apps=${2:?}; shift ;;
 	--gate-free-gb) gate_free_gb=${2:?}; shift ;;
+	--release-public-key) release_public_key=${2:?}; shift ;;
 	--log-analytics) log_analytics=true ;;
 	--storage-auth) storage_auth=${2:?}; shift ;;
 	--acr) acr=${2:?}; shift ;;
@@ -133,6 +136,9 @@ if [[ -n $stun_servers && $stun_servers != none ]]; then
 	done
 fi
 [[ -z $storage_auth || $storage_auth == key || $storage_auth == identity ]] || die "--storage-auth: key or identity"
+# the key line of a minisign .pub file, not the file or its comment line
+[[ -z $release_public_key || $release_public_key =~ ^RW[A-Za-z0-9+/=]{40,}$ ]] ||
+	die "--release-public-key: the minisign public key line (RW...), e.g. \"\$(tail -1 longarm-release.pub)\""
 [[ -z $tailscale_secret_file || -r $tailscale_secret_file ]] || die "--tailscale-secret-file: can't read $tailscale_secret_file"
 rg=${rg:-$name-rg}
 
@@ -388,6 +394,12 @@ if [[ -n $cur_image && -z $gate_free_gb ]]; then
 	[[ $gate_free_gb != None ]] || gate_free_gb=''
 fi
 [[ -z $gate_free_gb || $gate_free_gb =~ ^[0-9]+([.][0-9]+)?$ ]] || die "--gate-free-gb: a number of GB"
+# and the release signing key (likewise)
+if [[ -n $cur_image && -z $release_public_key ]]; then
+	release_public_key=$(az container show -g "$rg" -n "$name" -o tsv \
+		--query "containers[0].environmentVariables[?name=='LONGARM_HUB_RELEASES_PUBLIC_KEY'].value | [0]" 2>/dev/null | tr -d '\r' || true)
+	[[ $release_public_key != None ]] || release_public_key=''
+fi
 if [[ -n $cur_image && -z $entra_tenant ]]; then
 	while IFS=$'\t' read -r k v; do
 		case $k in
@@ -474,6 +486,7 @@ json_str() {
 	printf ',"enablePanel":{"value":%s}' "$panel"
 	printf ',"enableLogAnalytics":{"value":%s}' "$log_analytics"
 	[[ -z $gate_free_gb ]] || printf ',"schedulerGateFreeGb":{"value":%s}' "$(json_str "$gate_free_gb")"
+	[[ -z $release_public_key ]] || printf ',"releasePublicKey":{"value":%s}' "$(json_str "$release_public_key")"
 	printf ',"storageAuth":{"value":%s}' "$(json_str "$storage_auth")"
 	printf ',"enableTelemetry":{"value":%s},"enableDiagnostics":{"value":%s}' "$telemetry" "$diagnostics"
 	[[ -z $acr ]] || printf ',"acrName":{"value":%s}' "$(json_str "$acr")"

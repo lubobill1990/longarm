@@ -38,6 +38,10 @@ const (
 	// (containers, laptops) needs a lower memory gate than the default 20 GB
 	EnvGateFreeGB = "LONGARM_HUB_SCHED_GATE_FREE_GB"
 	EnvGateCPU    = "LONGARM_HUB_SCHED_GATE_CPU"
+	// EnvReleasePublicKey is [releases] public_key, the minisign public key
+	// line (RW...): with it the hub refuses uploaded releases whose
+	// signature doesn't verify.
+	EnvReleasePublicKey = "LONGARM_HUB_RELEASES_PUBLIC_KEY"
 	// [auth.entra]; the lists are comma-separated.
 	EnvEntraTenant          = "LONGARM_HUB_ENTRA_TENANT_ID"
 	EnvEntraClient          = "LONGARM_HUB_ENTRA_CLIENT_ID"
@@ -71,7 +75,8 @@ func (c *Config) applyEnv() error {
 		{EnvACMEEmail, &c.ACMEEmail}, {EnvACMEDir, &c.ACMEDirectory},
 		{EnvEntraTenant, &c.Auth.Entra.TenantID}, {EnvEntraClient, &c.Auth.Entra.ClientID}, {EnvEntraScope, &c.Auth.Entra.Scope},
 		{EnvEntraClientAssertion, &c.Auth.Entra.ClientAssertion}, {EnvEntraSecretFile, &c.Auth.Entra.ClientSecretFile},
-		{EnvEntraWeb, &c.Auth.Entra.Web}, {EnvAppInsights, &c.Telemetry.ConnectionString}} {
+		{EnvEntraWeb, &c.Auth.Entra.Web}, {EnvAppInsights, &c.Telemetry.ConnectionString},
+		{EnvReleasePublicKey, &c.Releases.PublicKey}} {
 		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
 			*kv.dst = v
 		}
