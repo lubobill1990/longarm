@@ -192,4 +192,4 @@ Integration with what main added:
 | user-owned workers (#11) | hub: the owner must be allowed to use both workers at creation (admins too), and links go when that ends (unshare, team change); workers: the owner/shares rule applies to the link's owner, unshare cuts open connections |
 | telemetry (#14) | `link.dial`, `link.conn`, `link.bytes` (workers), `link.created`, `link.removed`, `links.active` (hub) - no ids, names, ports or addresses; link names are added to the worker's scrubber; the noisy link log lines are INFO (WARN records go to telemetry) |
 | migrations | main still had 3: port links stay migration 4 |
-| web (#19) | panel page builds and tests with TypeScript 7 / Vite 8 / Vitest 5; `internal/webui/dist` rebuilt |
+| web (#19) | the panel page's sources merge cleanly with TypeScript 7 / Vite 8 / Vitest 5; `internal/webui/dist` is **not** rebuilt (the local npm feed lacks #19's majors and the public registry is not to be used): the embedded panel has no "Port links" page until someone rebuilds it with `node web/build.mjs` where the feed has the packages |
