@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/sched"
@@ -57,7 +58,7 @@ with Copilot CLI (~/.copilot/mcp-config.json):
 
 Tools: fleet_status, fleet_exec, fleet_job_submit, fleet_job_wait,
 fleet_job_logs, fleet_job_kill, fleet_read, fleet_write, fleet_sync,
-fleet_forward. Secrets for jobs are taken by name from this process's
+fleet_forward, fleet_link. Secrets for jobs are taken by name from this process's
 environment (secret_env); only names listed in LONGARM_MCP_SECRETS may be used:
   claude mcp add longarm -e LONGARM_MCP_SECRETS=GH_TOKEN -- longarm mcp`,
 		Args: cobra.NoArgs,
@@ -114,7 +115,7 @@ func newMCPServer(s *session) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "longarm", Version: version.Version}, &mcp.ServerOptions{
 		Instructions: "Remote execution on the Longarm worker pool. Use fleet_status to see workers, fleet_exec for " +
 			"commands (worker \"auto\" picks one), fleet_job_submit/wait/logs/kill for long jobs (e.g. whole claude " +
-			"sessions), fleet_read/fleet_write/fleet_sync for files and code, fleet_forward to reach a worker port.",
+			"sessions), fleet_read/fleet_write/fleet_sync for files and code, fleet_forward to reach a worker port, fleet_link to let one worker reach another's port.",
 	})
 	t := &mcpTools{s: s}
 	addTool(srv, &mcp.Tool{Name: "fleet_status", Description: "Overview of the worker pool: who is online, load, free memory, running jobs, repo caches, labels, owner (user-owned workers)."}, t.status)
@@ -127,6 +128,7 @@ func newMCPServer(s *session) *mcp.Server {
 	addTool(srv, &mcp.Tool{Name: "fleet_write", Description: "Write a file on a worker (atomically, sha256-verified)."}, t.write)
 	addTool(srv, &mcp.Tool{Name: "fleet_sync", Description: "Mirror a local git checkout (commits, uncommitted and untracked files) into a worktree on a worker; only missing objects are sent."}, t.sync)
 	addTool(srv, &mcp.Tool{Name: "fleet_forward", Description: "Forward a worker port to localhost (hosted by the longarm daemon, so it outlives this call) and return the local URL; action list/stop manages forwards."}, t.forward)
+	addTool(srv, &mcp.Tool{Name: "fleet_link", Description: "Port links between workers (joint debugging: frontend + tests on worker A, backend on worker B): create makes target <worker>:<port> reachable as 127.0.0.1:<listen_port> on worker 'on' for your processes there - traffic goes worker to worker, not through this machine; jobs you start there get LONGARM_LINKS and LONGARM_LINK_<WORKER>_<PORT>. list shows your links with state and bytes; remove ends one."}, t.link)
 	return srv
 }
 
@@ -865,4 +867,95 @@ func mcpSecretEnv(names []string) (map[string]string, error) {
 		}
 	}
 	return secretEnv(names)
+}
+
+// ---------------------------------------------------------------- links
+
+type linkIn struct {
+	Action     string `json:"action,omitempty" jsonschema:"create (default), list or remove"`
+	On         string `json:"on,omitempty" jsonschema:"create: the worker whose processes use the link (it listens on 127.0.0.1 there)"`
+	Target     string `json:"target,omitempty" jsonschema:"create: <worker>:<port> to reach, e.g. backend-box:8080"`
+	ListenPort int    `json:"listen_port,omitempty" jsonschema:"create: port on the 'on' worker (default: the target port)"`
+	TTLSeconds int    `json:"ttl_seconds,omitempty" jsonschema:"create: lifetime (default: the hub's, 8h)"`
+	JobID      string `json:"job_id,omitempty" jsonschema:"create: remove the link when this job on the 'on' worker ends"`
+	ID         string `json:"id,omitempty" jsonschema:"remove: the link id"`
+}
+
+type linkInfo struct {
+	ID         string `json:"id"`
+	Owner      string `json:"owner"`
+	On         string `json:"on"`
+	Address    string `json:"address"` // on the 'on' worker
+	Target     string `json:"target"`
+	EnvVar     string `json:"env_var"`
+	State      string `json:"state"`
+	Error      string `json:"error,omitempty"`
+	Path       string `json:"path,omitempty"`
+	Conns      int64  `json:"connections"`
+	BytesSent  int64  `json:"bytes_sent"`
+	BytesRecvd int64  `json:"bytes_received"`
+	ExpiresAt  string `json:"expires_at"`
+	JobID      string `json:"job_id,omitempty"`
+}
+
+type linkOut struct {
+	Links []linkInfo `json:"links"`
+}
+
+func toLinkInfo(l *pb.PortLink) linkInfo {
+	s := l.Status
+	return linkInfo{ID: l.Id, Owner: l.Owner, On: l.From, Address: fmt.Sprintf("127.0.0.1:%d", l.ListenPort),
+		Target: fmt.Sprintf("%s:%d", l.To, l.Port), EnvVar: linkEnvName(l), State: s.GetState(), Error: s.GetError(), Path: s.GetPath(),
+		Conns: s.GetConnections(), BytesSent: s.GetBytesSent(), BytesRecvd: s.GetBytesReceived(),
+		ExpiresAt: l.ExpiresAt.AsTime().UTC().Format(time.RFC3339), JobID: l.JobId}
+}
+
+func (t *mcpTools) link(ctx context.Context, _ *mcp.CallToolRequest, in linkIn) (*mcp.CallToolResult, linkOut, error) {
+	h := t.s.hub()
+	if h == nil {
+		return nil, linkOut{}, errors.New("port links need a hub (longarm join)")
+	}
+	out := linkOut{Links: []linkInfo{}}
+	switch in.Action {
+	case "", "create":
+		to, port, err := parseLinkTarget(in.Target)
+		if err != nil {
+			return nil, out, err
+		}
+		if in.ListenPort < 0 || in.ListenPort > 65535 {
+			return nil, out, fmt.Errorf("listen_port %d: want 1-65535", in.ListenPort)
+		}
+		if in.On == "" {
+			return nil, out, errors.New("create needs on (the worker to listen on) and target (<worker>:<port>)")
+		}
+		req := &pb.CreatePortLinkRequest{From: in.On, To: to, Port: port, ListenPort: int32(in.ListenPort), JobId: in.JobID}
+		if in.TTLSeconds > 0 {
+			req.Ttl = durationpb.New(time.Duration(in.TTLSeconds) * time.Second)
+		}
+		l, err := h.Fleet().CreatePortLink(ctx, req)
+		if err != nil {
+			return nil, out, err
+		}
+		out.Links = append(out.Links, toLinkInfo(l))
+	case "list":
+		r, err := h.Fleet().ListPortLinks(ctx, &pb.ListPortLinksRequest{})
+		if err != nil {
+			return nil, out, err
+		}
+		for _, l := range r.Links {
+			out.Links = append(out.Links, toLinkInfo(l))
+		}
+	case "remove":
+		if in.ID == "" {
+			return nil, out, errors.New("remove needs id")
+		}
+		l, err := h.Fleet().RemovePortLink(ctx, &pb.RemovePortLinkRequest{Id: in.ID})
+		if err != nil {
+			return nil, out, err
+		}
+		out.Links = append(out.Links, toLinkInfo(l))
+	default:
+		return nil, out, fmt.Errorf("unknown action %q", in.Action)
+	}
+	return nil, out, nil
 }

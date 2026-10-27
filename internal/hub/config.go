@@ -118,8 +118,9 @@ type Config struct {
 	Tenancy   TenancyConfig   `toml:"tenancy"`
 	Telemetry TelemetryConfig `toml:"telemetry"`
 	// Diagnostics: where uploaded diagnostic bundles are stored (diag.go).
-	Diagnostics DiagConfig `toml:"diagnostics"`
-	Auth        AuthConfig `toml:"auth"` // entra.go
+	Diagnostics DiagConfig  `toml:"diagnostics"`
+	Auth        AuthConfig  `toml:"auth"` // entra.go
+	Links       LinksConfig `toml:"links"`
 	// Headscale is P2's [headscale] section; still accepted (it means
 	// [tailnet] provider = "headscale" with these settings).
 	Headscale HeadscaleConfig `toml:"headscale"`
@@ -244,6 +245,19 @@ func (q QuotaConfig) PB() *pb.Quota {
 		MaxJobMemGb: q.MaxJobMemGB, JobCpus: q.JobCPUs, MaxJobCpus: q.MaxJobCPUs}
 }
 
+// LinksConfig is [links]: port links between workers (docs/usage.md "Port
+// links").
+type LinksConfig struct {
+	// MaxPerUser: active links per user (default 20; admins too).
+	MaxPerUser int `toml:"max_per_user"`
+	// DefaultTTL of a link created without --ttl (default 8h).
+	DefaultTTL Duration `toml:"default_ttl"`
+	// MaxTTL caps --ttl (default 7 days).
+	MaxTTL Duration `toml:"max_ttl"`
+	// Disabled refuses new links (existing ones keep running until removed).
+	Disabled bool `toml:"disabled"`
+}
+
 // CertConfig is [certs].
 type CertConfig struct {
 	WorkerTTL Duration `toml:"worker_ttl"` // default 90 days
@@ -353,6 +367,23 @@ func (c *Config) applyDefaults() error {
 	}
 	if c.Heartbeat.Offline.Duration <= 0 {
 		c.Heartbeat.Offline.Duration = 5 * c.Heartbeat.Interval.Duration
+	}
+	if c.Links.MaxPerUser <= 0 {
+		c.Links.MaxPerUser = 20
+	}
+	if c.Links.DefaultTTL.Duration <= 0 {
+		c.Links.DefaultTTL.Duration = 8 * time.Hour
+	}
+	if c.Links.MaxTTL.Duration <= 0 {
+		c.Links.MaxTTL.Duration = 7 * 24 * time.Hour
+	}
+	if c.Links.MaxTTL.Duration > 30*24*time.Hour {
+		// grants are signed with the hub certificate, renewed 30 days before
+		// it expires: a longer link could outlive its grant's certificate
+		return fmt.Errorf("links.max_ttl (%s) is longer than 720h", c.Links.MaxTTL.Duration)
+	}
+	if c.Links.DefaultTTL.Duration > c.Links.MaxTTL.Duration {
+		return fmt.Errorf("links.default_ttl (%s) exceeds links.max_ttl (%s)", c.Links.DefaultTTL.Duration, c.Links.MaxTTL.Duration)
 	}
 	if c.Scheduler.ReservationTTL.Duration <= 0 {
 		c.Scheduler.ReservationTTL.Duration = 2 * time.Minute

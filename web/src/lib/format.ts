@@ -158,3 +158,10 @@ export function jobOwner(spec: JobSpec): string {
   const i = by.indexOf('/')
   return i >= 0 ? by.slice(i + 1) : by
 }
+
+/** Seconds until an RFC 3339 time (negative once past, 0 if missing). */
+export function until(t?: string, now = Date.now()): number {
+  if (!t) return 0
+  const v = Date.parse(t)
+  return Number.isNaN(v) ? 0 : (v - now) / 1000
+}

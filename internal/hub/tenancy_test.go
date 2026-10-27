@@ -42,6 +42,8 @@ func TestTenancyRoleTable(t *testing.T) {
 		pb.Telemetry_Push_FullMethodName, // the node's own, scrubbed telemetry
 		pb.Diagnostics_Upload_FullMethodName,
 		pb.Fleet_CreateWorkerCode_FullMethodName, pb.Fleet_ShareWorker_FullMethodName, pb.Fleet_RemoveWorker_FullMethodName,
+		// port links: ownership checked per link (TestPortLinks)
+		pb.Fleet_CreatePortLink_FullMethodName, pb.Fleet_ListPortLinks_FullMethodName, pb.Fleet_RemovePortLink_FullMethodName,
 	}
 	sort.Strings(clientMay)
 	var got []string

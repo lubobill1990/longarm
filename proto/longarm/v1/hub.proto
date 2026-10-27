@@ -13,6 +13,7 @@
 //   Fleet            client, admin (ListNodes also worker)
 //   HubAdmin         admin
 //   Fleet.ReportLinks / Links / History  client, admin
+//   Fleet.*PortLink*  client, admin (ownership checked per link)
 syntax = "proto3";
 
 package longarm.v1;
@@ -161,6 +162,8 @@ message NodeReport {
     // Answer to a hub request (kill, logs, submit, toolchain apply) by
     // request_id.
     HubReply reply = 8;
+    // Port links this worker listens for (as "from"): state and counters.
+    PortLinkReport port_links = 9;
   }
 }
 
@@ -261,6 +264,10 @@ message HubCommand {
     // on every change. The worker applies it only as an extra restriction
     // after its own [access] and end-to-end trust: it never widens them.
     WorkerAccess worker_access = 13;
+    // Every port link naming this worker (as "from" or "to"), sent at
+    // connect and on every change; the list is authoritative (a link missing
+    // from it is revoked).
+    PortLinks port_links = 14;
   }
 }
 
@@ -402,6 +409,12 @@ service Fleet {
   rpc ShareWorker(ShareWorkerRequest) returns (NodeInfo);
   // RemoveWorker revokes a worker of the caller's user (owner or admin).
   rpc RemoveWorker(NodeRequest) returns (NodeInfo);
+  // Port links (worker-to-worker, docs/usage.md "Port links"): the caller
+  // owns what it creates; users see and remove their own links (others'
+  // are NotFound), admins every link.
+  rpc CreatePortLink(CreatePortLinkRequest) returns (PortLink);
+  rpc ListPortLinks(ListPortLinksRequest) returns (ListPortLinksResponse);
+  rpc RemovePortLink(RemovePortLinkRequest) returns (PortLink);
 }
 
 // LinkSample is one RTT probe.
@@ -1062,4 +1075,75 @@ message LeaveRequest {
 message LeaveResponse {
   string name = 1;
   string message = 2;
+}
+
+// ---------------------------------------------------------------- Port links
+
+// PortLink: processes of the owner on worker `from` reach 127.0.0.1:<port>
+// on worker `to` at 127.0.0.1:<listen_port> on `from` (joint debugging:
+// frontend + tests on A, backend on B). No traffic through the client.
+message PortLink {
+  string id = 1;
+  string owner = 2; // the user who created it
+  string from = 3; // worker A (listens)
+  string to = 4; // worker B (target)
+  int32 port = 5; // target port on B
+  int32 listen_port = 6; // on A, 127.0.0.1
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp expires_at = 8;
+  string job_id = 9; // "" or a job on `from`: the link goes when it ends
+  string created_by = 10; // certificate identity ("client/alice-laptop")
+  PortLinkStatus status = 11; // as `from` last reported it (hub views)
+}
+
+message PortLinkStatus {
+  string id = 1;
+  string state = 2; // "pending" (not reported yet) | "listening" | "error"
+  string error = 3; // last listen / dial error
+  int64 connections = 4; // accepted so far
+  int32 active = 5; // open now
+  int64 bytes_sent = 6; // from -> to
+  int64 bytes_received = 7; // to -> from
+  string path = 8; // last transport path to `to` ("tcp/direct 1ms")
+  google.protobuf.Timestamp updated_at = 9;
+  int64 refused = 10; // local connections refused (not the owner's)
+}
+
+message PortLinkReport {
+  repeated PortLinkStatus links = 1;
+}
+
+// PortLinks is the hub's list of the links naming a worker.
+message PortLinks {
+  int64 version = 1;
+  repeated PortLinkAssignment links = 2;
+}
+
+message PortLinkAssignment {
+  PortLink link = 1;
+  // For the `from` worker: the signed grant it presents to `to`, and how
+  // to reach `to` (its advertised endpoints and certificate name).
+  SignedPortLinkGrant grant = 2;
+  repeated string target_endpoints = 3;
+}
+
+message CreatePortLinkRequest {
+  string from = 1; // worker A (listens)
+  string to = 2; // worker B
+  int32 port = 3; // target port on B
+  int32 listen_port = 4; // on A (default: port)
+  google.protobuf.Duration ttl = 5; // default [links] default_ttl (8h)
+  string job_id = 6; // bind the link's lifetime to this job on `from`
+}
+
+message ListPortLinksRequest {
+  bool all = 1; // admins: every user's links (default: the caller's)
+}
+
+message ListPortLinksResponse {
+  repeated PortLink links = 1;
+}
+
+message RemovePortLinkRequest {
+  string id = 1;
 }

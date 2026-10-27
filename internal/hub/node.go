@@ -59,6 +59,7 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
+	revs := h.revocationsMsg() // (takes h.mu itself)
 	h.mu.Lock()
 	n := h.nodes[c.id.Name]
 	if n == nil || n.rec.State != stateApproved {
@@ -83,7 +84,6 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	if err := h.store.PutNode(n.rec); err != nil {
 		h.log.Warn("save node", "err", err)
 	}
-	h.checkTenancyFlipLocked()
 	var policy *pb.TenancyPolicy
 	if hello.TenancyVersion != h.tenancyVersion {
 		policy = h.policyLocked()
@@ -95,28 +95,30 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 		HubDraining:     n.rec.AdminDrain,
 		Tailnet:         h.tailnetInfo(n),
 	}
-	revVersion := h.revVersion
-	desired := h.desiredToolchainLocked(n)
-	// Welcome and the worker's access go out under h.mu: a share change
-	// (sendLocked, also under h.mu) can only queue after this snapshot, never
-	// before it. Access always: small, and it corrects what the worker kept.
-	sess.out <- &pb.HubCommand{Msg: &pb.HubCommand_Welcome{Welcome: welcome}} // fresh channel: cannot block
-	sess.out <- workerAccessCmd(workerAccessLocked(n))
+	// The session's first messages are queued before h.mu is released: from
+	// then on other goroutines may push to it too (port links, share changes,
+	// updates), and the worker expects the welcome first and the initial
+	// state before any change. The worker's access always goes out: small,
+	// and it corrects what the worker kept.
+	send := func(cmd *pb.HubCommand) { sess.out <- cmd } // fresh channel: cannot block yet
+	send(&pb.HubCommand{Msg: &pb.HubCommand_Welcome{Welcome: welcome}})
+	send(workerAccessCmd(workerAccessLocked(n)))
+	if hello.RevocationVersion != revs.GetRevocations().GetVersion() {
+		send(revs)
+	}
+	send(&pb.HubCommand{Msg: &pb.HubCommand_Toolchain{Toolchain: h.desiredToolchainLocked(n)}})
+	if policy != nil {
+		send(&pb.HubCommand{Msg: &pb.HubCommand_Tenancy{Tenancy: policy}})
+	}
+	send(h.portLinksMsgLocked(n.rec.Name))    // always: the list is authoritative (empty = none)
+	h.portLinkTargetChangedLocked(n.rec.Name) // its endpoints may have changed
+	h.checkTenancyFlipLocked()                // may push a new policy (after the welcome)
 	h.log.Info("node online", "node", n.rec.Name, "version", hello.Version, "endpoints", hello.Endpoints)
 	h.tel().Count("node.connected", map[string]string{"node_version": hello.Version, "os": hello.Os, "isolation": hello.Isolation}, 1)
 	h.publishNodeLocked(n, "online")
 	h.advanceReleaseLocked()
 	h.mu.Unlock()
 	h.kickQueue()
-
-	send := func(cmd *pb.HubCommand) { sess.out <- cmd } // cannot block yet
-	if hello.RevocationVersion != revVersion {
-		send(h.revocationsMsg())
-	}
-	send(&pb.HubCommand{Msg: &pb.HubCommand_Toolchain{Toolchain: desired}})
-	if policy != nil {
-		send(&pb.HubCommand{Msg: &pb.HubCommand_Tenancy{Tenancy: policy}})
-	}
 
 	go func() {
 		for {
@@ -232,10 +234,13 @@ func (h *Hub) handleReport(n *node, sess *nodeSession, m *pb.NodeReport) {
 		h.event(context.Background(), "node.update", map[string]string{"state": x.Update.State, "from": x.Update.From, "to": x.Update.To, "error": x.Update.Error})
 		h.publishNodeLocked(n, "update "+x.Update.State+" "+x.Update.To)
 		h.advanceReleaseLocked()
+	case *pb.NodeReport_PortLinks:
+		h.applyPortLinkReportLocked(n, x.PortLinks)
 	case *pb.NodeReport_Reply:
 		h.deliverReplyLocked(n, sess, x.Reply)
 	case *pb.NodeReport_Hello:
 		h.applyHelloLocked(n, x.Hello)
+		h.portLinkTargetChangedLocked(n.rec.Name)
 		h.store.PutNode(n.rec)
 		h.publishNodeLocked(n, "hello")
 		h.checkTenancyFlipLocked()
@@ -299,6 +304,7 @@ func (h *Hub) applyJobsLocked(n *node, rep *pb.JobsReport) {
 			h.log.Warn("save jobs", "err", err)
 		}
 	}
+	h.portLinkJobsLocked(worker)
 	if changed {
 		h.kickQueue()
 	}

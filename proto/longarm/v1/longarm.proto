@@ -408,6 +408,7 @@ message ForwardFrame {
   string target = 1;
   bytes data = 2;
   bool eof = 3;
+  SignedPortLinkGrant grant = 4; // LinkTunnel.Dial: first frame
 }
 
 // ---------------------------------------------------------------- Files
@@ -580,3 +581,49 @@ message PrepareJobOutput {
 message PruneRequest {}
 
 message PruneResponse {}
+
+// ---------------------------------------------------------------- Port links
+
+// LinkTunnel is the data path of a port link (docs/usage.md "Port links"):
+// processes on worker A reach a loopback port of worker B at
+// 127.0.0.1:<listen_port> on A. A's longarmd dials B with its worker
+// certificate and calls Dial once per accepted connection.
+//
+// Worker certificates may call nothing else on a worker, and Dial only
+// with a grant the hub signed for this exact link (from = the caller's
+// certificate name, to = this worker), unexpired and still in the list of
+// active links the hub pushed to this worker. The target is always
+// 127.0.0.1:<grant.port> and passes the same checks as Forward.Open for
+// the link's owner (per-user isolation: a process of the owner's account
+// listens on it).
+service LinkTunnel {
+  // Dial: the first frame carries the grant; the worker answers with an
+  // empty frame once it accepted the link and connected to the target (an
+  // error otherwise: FailedPrecondition = the link is not in its list
+  // (yet), the caller may retry briefly); then bytes flow both ways like
+  // Forward.Open.
+  rpc Dial(stream ForwardFrame) returns (stream ForwardFrame);
+}
+
+// PortLinkGrant is what the hub signs for a port link (SignedPortLinkGrant).
+message PortLinkGrant {
+  string id = 1;
+  string owner = 2; // the user who created the link
+  string from = 3; // worker A: its certificate name (listens, dials B)
+  string to = 4; // worker B: its certificate name (the target)
+  int32 port = 5; // target port on B (127.0.0.1)
+  int32 listen_port = 6; // 127.0.0.1:<listen_port> on A
+  int64 expires_unix = 7; // seconds
+  int64 issued_unix = 8;
+}
+
+// SignedPortLinkGrant: the hub's signature over a serialized PortLinkGrant
+// with the key of its hub certificate (role hub, issued by the fleet CA,
+// which every worker trusts already).
+message SignedPortLinkGrant {
+  bytes grant = 1; // serialized PortLinkGrant
+  // ECDSA (ASN.1) / Ed25519 signature over
+  // SHA-256("longarm port-link grant v1\x00" || grant)
+  bytes signature = 2;
+  repeated bytes chain = 3; // DER: the hub certificate first, then intermediates
+}

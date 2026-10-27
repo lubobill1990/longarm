@@ -55,3 +55,16 @@ func TestRedactAuditLine(t *testing.T) {
 		}
 	}
 }
+
+// TestRedactLinkReport: port link states keep state, path kind and
+// counters; error texts and the path's endpoint go.
+func TestRedactLinkReport(t *testing.T) {
+	r := redactLinkReport(&pb.PortLinkReport{Links: []*pb.PortLinkStatus{
+		{Id: "a", State: "error", Error: "listen 127.0.0.1:18080: address in use", Path: "tcp/direct 1ms (10.1.2.3:7701)", Connections: 3},
+		{Id: "b", State: "listening", Path: "longnet/relay 4ms"},
+	}})
+	a, b := r.Links[0], r.Links[1]
+	if a.Error != "(redacted)" || a.Path != "tcp/direct 1ms" || a.Connections != 3 || a.State != "error" || b.Error != "" || b.Path != "longnet/relay 4ms" {
+		t.Fatalf("redacted %v", r)
+	}
+}

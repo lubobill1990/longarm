@@ -505,6 +505,15 @@ func (d *Dialer) legTransport(w Worker, e Endpoint, explicit, noSkip bool) (tran
 			return nil, "", errSkip{why: why, guess: true}
 		}
 	}
+	if d.LegTransport != nil {
+		if tr := d.LegTransport(e); tr != nil {
+			node := transport.NodeID(e.Address)
+			if e.Transport == "longnet" {
+				node = transport.NodeID(w.CertName)
+			}
+			return tr, node, nil
+		}
+	}
 	switch e.Transport {
 	case "tcp":
 		return &transport.TCP{}, transport.NodeID(e.Address), nil

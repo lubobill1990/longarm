@@ -176,6 +176,7 @@ func (h *Hub) httpHandler() http.Handler {
 	h.workerRoutes(api)
 	h.entraRoutes(mux)
 	h.linkRoutes(mux)
+	h.portLinkRoutes(api)
 	return securityHeaders(mux)
 }
 

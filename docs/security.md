@@ -94,7 +94,8 @@ but the worker's owners - its `[access]` policy restricts anybody
 | job ids | | | taken ids are refused (`AlreadyExists`, no details) | |
 | sessions: list, attach, kill, logs | yes | no | not found / denied | yes (`--owner`) |
 | files, workspace sync, exec, sshd/sftp | as the user's OS account (per-user) | - | - | as the admin's own account |
-| port forwards (per-user) | to loopback ports the user's own processes listen on | - | refused | any |
+| port forwards (per-user) | to loopback ports the user's own processes listen on | - | refused | any loopback port (`[forward] targets = "any"`: any address) |
+| port links (`longarm link`, `fleet_link`): create, list, remove, use | own (as the user's account on both workers, per-user), between workers the user may use; both workers' own policies apply ([below](#port-links)) | - | not found; can't use the listener (per-user) | everybody's (own links: only between workers the admin's user may use) |
 | worker metrics | aggregate (no process lists) | - | - | with process lists |
 | hub job index, events, `longarm jobs`, MCP tools | own + team-shared | | hidden | everything |
 | hub node list | workers without process lists and others' mirrors; own devices | | others' devices hidden | everything |
@@ -345,7 +346,11 @@ hub_job_details = false     # default true
   sizing of claude / copilot jobs), so scheduling, quotas and the panel's
   job list keep working. Repository names in the worker's mirror list (the
   scheduler's cache affinity) are still reported. The local `audit.log`
-  keeps the full records.
+  keeps the full records. Port links: the link states the worker reports
+  (`longarm link ls`) keep state, path kind and counters but no error
+  texts (they quote addresses) and no endpoint; their audit lines keep the
+  link id and owner - the hub created the link and knows its ends and
+  port, so nothing about a link's target is new to it.
 - longarmd refuses to start with an unknown `admins` value or an invalid
   user name, and logs the effective policy once at start
   (`access policy policy="users=... owners=... admins=..." remote_jobs=... hub_job_details=...`).
@@ -436,6 +441,132 @@ in. With trust on, **sharing needs the worker's owner too**: a worker shared
 with bob on the hub still refuses bob's devices until bob's user key is in
 that worker's `trust.toml` (`longarmd trust add-user <bob's key>`), and bob
 in `[access] users` if alice pinned it.
+## Port links
+
+Port links (`longarm link`, [usage](usage.md#port-links-worker-to-worker))
+let a user's processes on worker A reach a loopback port of worker B. They
+are the only way one worker talks to another; workers get **no control
+rights** on each other.
+
+**How a link is authorized.**
+
+1. A user (or admin) creates it on the hub; the owner is the caller. The
+   hub checks that both are approved workers, the `--job` (if any) is the
+   caller's and running, the quota (`[links] max_per_user`) and that the
+   listen port is free on A; it stores the link and audits it.
+2. The hub signs a **grant** - link id, owner, A, B, target port, listen
+   port, expiry - with the private key of its hub certificate and attaches
+   that certificate. The hub certificate is issued by the fleet CA, which
+   every worker already trusts, so workers verify grants without any new
+   key distribution.
+3. The hub pushes every worker the **full list** of links naming it on the
+   worker's own hub session (no new RPC for workers on the hub). The list
+   is authoritative: a link that is not in it is revoked.
+4. For each accepted local connection A calls `LinkTunnel.Dial` on B with
+   its worker certificate and the grant. This is the **only** RPC a worker
+   certificate may call on a worker. B accepts it only if the grant's
+   signature chains to the fleet CA with the `hub` role, the grant names
+   the calling worker (mTLS identity) as A and B itself as the target, it
+   has not expired, and the link is still in B's list with the same owner,
+   source and port. B then applies `Forward.Open`'s checks for the owner -
+   `[forward] targets`, and with per-user isolation: a process of the
+   owner's account (and nobody else's) listens on the port - and connects
+   to `127.0.0.1:<port>`. Every acceptance and refusal is in B's audit log
+   (forwarded to the hub).
+5. On A, with per-user isolation, longarmd accepts a connection to the
+   listener only from a process of the owner's account (Linux: the uid of
+   the client socket in `/proc/net/tcp{,6}`; Windows: the owning process of
+   the client socket (`GetExtendedTcpTable`) and its token's user). macOS
+   workers have no per-user isolation; in shared isolation any local
+   process may use the listener. The listener binds both 127.0.0.1 and ::1, and
+   jobs only get the link's variables while it is bound, so another
+   account can't catch the owner's traffic on a free twin port. With
+   users separated, only admins may link a shared-isolation source to a
+   per-user target; the hub re-checks this whenever separation or a
+   worker's isolation changes (and at start) and removes links no longer
+   allowed.
+
+**Revocation.** Removing a link (or its TTL, its job ending, its owner being
+removed, either worker being revoked) pushes new lists to both workers;
+both close the listener and cut every open connection through it, and the
+hub stops relaying between the two workers when no link remains. Workers
+also expire links themselves, so a link ends at its TTL even when the hub
+is unreachable, and the source worker ends a link bound to a job when the
+job ends there (the job always runs on the source). Workers keep the last
+list across restarts (`<data>/port-links.json`) so links work while the
+hub is down; a link removed during a hub outage ends when the hub is back
+or at its TTL (default 8h, `[links] max_ttl`). Disabling the owner cuts
+the open connections on both workers (the target refuses new ones). Each
+worker caps a link's open connections (`[links] max_conns` in
+longarmd.toml, default 64).
+
+**What a compromised worker can do** (it holds its worker key and can run
+anything as longarmd):
+
+- As **A**: reach exactly the target ports of links that name it as their
+  source, as their owners could anyway (B checks the owner's port there),
+  until the links end. It cannot forge or alter grants (the hub's key), use
+  another worker's grants (B checks the mTLS identity), reach other ports
+  of B, or call anything else on B.
+- As **B**: see the traffic of links that target it (it is the endpoint)
+  and learn the ids and owners of those links.
+- It **cannot**: create, list or remove links (client and admin
+  certificates only), use links between other workers, or make the hub's
+  relay carry its traffic to workers it has no link with.
+
+**The workers' own policies win.** A grant is the hub's permission, and
+like everything the hub sends it can only narrow what a worker allows,
+never widen it (as for the [worker-side access
+policy](#worker-side-access-policy), [user-owned
+workers](#user-owned-workers) and [end-to-end
+trust](#end-to-end-trust-the-hub-is-not-trusted-with-access)). Both
+workers apply their local policy to the **link's owner**, on every
+connection:
+
+| Local policy (on A and on B) | A link of owner *u* works only if |
+|---|---|
+| tenancy policy | *u* is not disabled (disabling cuts open connections) |
+| `[access] users` / `owners` | *u* is a user of the worker (`admins` does not apply: a link is a user's forward, like `Forward.Open` with a client certificate) |
+| user-owned worker (owner, shares) | *u* is its owner or it is shared with *u* (by name, team, everyone); an unshare cuts open connections, and the hub removes the link |
+| end-to-end trust (`trust.toml` with users) | *u*'s user key is pinned on the worker, **and the other worker of the link is endorsed by *u*'s key** |
+
+- A worker certificate is not a user: on B it passes the role table only
+  for `LinkTunnel.Dial`, and `[access]` and the owner/shares rule are then
+  applied to the grant's owner instead of the calling worker. With
+  end-to-end trust the TLS handshake already refuses a calling worker that
+  no trusted user endorsed (`pki.TrustPolicy.Check` for a worker
+  certificate: endorsed as a worker, under its name, by a pinned key).
+  Links demand more - the endorsing user must be the link's owner - so a
+  hub can't pair alice's port on B with a worker that alice didn't
+  endorse (bob's machine, or a worker it minted), even if B trusts bob.
+- A refuses the same way: no listener while its policy refuses the owner
+  (`link ls` shows the link as `error`, "refused by this worker's policy"),
+  local connections refused (and audited, `link/refused`) once it does,
+  and, with end-to-end trust, no grant and no byte to a target that the
+  owner's key did not endorse.
+- The hub applies the owner/shares rule too: a link's owner must be
+  allowed to use both workers when it is created (otherwise "no worker",
+  for admins as well), and the hub removes links whose owner loses one of
+  them (unshare, team change).
+- With end-to-end trust, link both ends to workers the owner endorsed
+  (`longarm trust endorse` of each worker's request). A worker endorsed by
+  somebody else (a fleet worker endorsed by its machine's owner) can't be
+  an end of the owner's links while trust is on there.
+
+**What stays with the hub**: without end-to-end trust a compromised hub
+or admin is trusted (as before) - a grant from a hub certificate of the
+fleet CA is accepted by every worker of that CA, within the workers'
+`[access]` and owner rules. With trust, the hub can still create a link
+**between two workers its owner endorsed** without the owner asking for
+it: it exposes the owner's port on B to the owner's processes on A (with
+per-user isolation on A; in shared isolation on A to every local
+process). It can't involve a machine the owner didn't endorse.
+
+**Network policy.** Tailnets need worker → worker on tcp:7701 for direct
+paths ([deploy/hub/README.md](../deploy/hub/README.md)); without it links
+use the hub's longnet relay. The relay forwards worker ↔ worker packets
+only for pairs with an active link (`longarm-relay` run standalone never
+does).
 
 ## What is not isolated (known gaps)
 
@@ -466,9 +597,12 @@ containers. These remain:
 - **Shared isolation mode.** Without `mode = "per-user"` (and on macOS)
   every workload runs as the same service account: the API hides other
   users' jobs, sessions and process lists, but any job can read the service
-  account's files - including other users' worktrees and logs - and port
-  forwards reach any address the worker can reach. Use it only for people
-  who trust each other.
+  account's files - including other users' worktrees and logs - and every
+  local process can use every port link listening on that worker. (Port
+  forwards reach only the worker's loopback ports unless `[forward] targets
+  = "any"`; before that setting existed they reached any address the worker
+  could reach - see "Upgrading: forward targets" under Operations.) Use it
+  only for people who trust each other.
 - **Fleet-wide quotas** are enforced by the hub's scheduler. A client that
   submits to a worker directly (`longarm run --on w1`) is bound only by the
   per-worker quotas there.
@@ -516,6 +650,13 @@ drop it. Two things add accountability that doesn't depend on them:
   and logged at most once a minute; at stop longarmd flushes for up to
   2 s. Records may arrive twice after a retry (compare by `seq`/`prev`).
   An invalid `[audit]` section keeps longarmd from starting.
+
+Port links are in the same chained log on both workers: `link/added`
+(each link the hub's list brings, with owner, ends, port and expiry;
+`"saved": true` when restored from `port-links.json` at start) and
+`link/ended` (with the reason) on both; every `LinkTunnel/Dial` on the
+target (accepted with the target, or denied with why); `link/refused` on
+the source for local connections its policy or per-user check refused.
 
 What this does **not** protect against: the chain is no signature.
 Someone who can write the worker's disk (an administrator / root of the
@@ -788,6 +929,15 @@ uploader pseudonym) and downloads (report id, admin), never the content.
   that are offline purge when they reconnect (the purge list is part of the
   policy). `longarmd leave --purge` and uninstalling a per-user worker
   delete all `la-*` accounts it created.
+- **Upgrading: forward targets (breaking).** Since `[forward] targets`
+  exists (the release with port links), forwards - `longarm forward`, ssh
+  `-L`/`-D` through the built-in sshd, port links - reach only the worker's
+  own loopback ports by default, for every caller including admins. Shared
+  workers used to forward to any host:port they could reach; a deployment
+  relying on that (forwards to LAN hosts) needs `[forward] targets = "any"`
+  in longarmd.toml after the upgrade. longarmd logs a warning naming that
+  setting the first time it refuses a non-loopback target. See
+  [CHANGELOG.md](../CHANGELOG.md#upgrading).
 
 ## Telemetry
 

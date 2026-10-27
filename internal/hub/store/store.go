@@ -102,6 +102,12 @@ var migrations = []string{
 		name TEXT PRIMARY KEY,
 		data TEXT NOT NULL
 	);`,
+	// 4: port links between workers (protojson PortLink without status)
+	`CREATE TABLE port_links (
+		id TEXT PRIMARY KEY,
+		owner TEXT NOT NULL,
+		data TEXT NOT NULL
+	);`,
 }
 
 // Open opens (creating if needed) the database at path and migrates it.
@@ -821,6 +827,45 @@ func (s *Store) Tenants() ([]Tenant, error) {
 		}
 		t.Data = []byte(d)
 		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// PortLinkRow is a stored port link.
+type PortLinkRow struct {
+	ID, Owner string
+	Data      []byte // protojson PortLink
+}
+
+// PutPortLink inserts or replaces a port link.
+func (s *Store) PutPortLink(r PortLinkRow) error {
+	_, err := s.db.Exec(`INSERT INTO port_links(id,owner,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner, data=excluded.data`,
+		r.ID, r.Owner, string(r.Data))
+	return err
+}
+
+// DeletePortLink removes a port link.
+func (s *Store) DeletePortLink(id string) error {
+	_, err := s.db.Exec(`DELETE FROM port_links WHERE id=?`, id)
+	return err
+}
+
+// PortLinks returns every port link.
+func (s *Store) PortLinks() ([]PortLinkRow, error) {
+	rows, err := s.db.Query(`SELECT id,owner,data FROM port_links ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PortLinkRow
+	for rows.Next() {
+		var r PortLinkRow
+		var d string
+		if err := rows.Scan(&r.ID, &r.Owner, &d); err != nil {
+			return nil, err
+		}
+		r.Data = []byte(d)
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }

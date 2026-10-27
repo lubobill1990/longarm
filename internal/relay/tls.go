@@ -83,9 +83,47 @@ func peerIdentity(cs tls.ConnectionState) (pki.Identity, error) {
 	return id, nil
 }
 
-// allowed is the forwarding policy: packets and rendezvous only between a
-// worker and a non-worker (client/admin). Workers don't talk to workers and
-// clients don't talk to clients.
-func allowed(a, b pki.Role) bool {
+// rolesAllowed is the base forwarding policy: packets and rendezvous between
+// a worker and a non-worker (client/admin). Clients don't talk to clients;
+// workers talk to workers only as a port link allows (Server.SetWorkerPairs).
+func rolesAllowed(a, b pki.Role) bool {
 	return (a == pki.RoleWorker) != (b == pki.RoleWorker)
+}
+
+// pairKey is an unordered pair of worker names.
+type pairKey struct{ a, b string }
+
+func newPairKey(a, b string) pairKey {
+	if b < a {
+		a, b = b, a
+	}
+	return pairKey{a, b}
+}
+
+// SetWorkerPairs replaces the worker pairs that may talk to each other
+// through the relay (both directions): the hub passes the pairs of its
+// active port links and updates them on every change. Default: none - a
+// standalone longarm-relay never relays between workers.
+func (s *Server) SetWorkerPairs(pairs [][2]string) {
+	m := make(map[pairKey]struct{}, len(pairs))
+	for _, p := range pairs {
+		m[newPairKey(p[0], p[1])] = struct{}{}
+	}
+	s.workerPairs.Store(&m)
+}
+
+// allowed is the forwarding policy between two authenticated nodes.
+func (s *Server) allowed(a, b pki.Identity) bool {
+	if rolesAllowed(a.Role, b.Role) {
+		return true
+	}
+	if a.Role != pki.RoleWorker || b.Role != pki.RoleWorker || a.Name == b.Name {
+		return false
+	}
+	m := s.workerPairs.Load()
+	if m == nil {
+		return false
+	}
+	_, ok := (*m)[newPairKey(a.Name, b.Name)]
+	return ok
 }
