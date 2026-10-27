@@ -14,7 +14,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/testutil/gitserver"
 )
 
-const testToken = "tok-FORWARDED-0123456789abcdef"
+const testToken = "forwarded-credential-for-tests"
 
 func bearer(tok string) *jobs.GitAuth {
 	return &jobs.GitAuth{Scheme: jobs.GitAuthBearer, Secret: []byte(tok)}
