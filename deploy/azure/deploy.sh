@@ -25,7 +25,7 @@ template=$here/azuredeploy.json
 # empty = not given (a re-run keeps the running hub's value)
 name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=false yes=false
 recreate=false admin_code=false subscription='' acme_email='' registry_user='' tailscale_secret_file=''
-entra_tenant='' entra_client='' entra_admins='' entra_web=''
+entra_tenant='' entra_client='' entra_admins='' entra_web='' entra_apps=''
 build_in_acr=false stun_servers='' storage_auth='' acr='' timeout=1200 stuck_timeout=600
 telemetry='' diagnostics=''
 # seconds between status polls (tests make it short)
@@ -50,6 +50,7 @@ usage: deploy.sh --name NAME [--location REGION] [options]
                            panel): the app registration (docs/usage.md)
   --entra-admins LIST      Entra admins: UPNs, *@domain or object IDs, comma-separated
   --entra-web MODE         panel sign-in: spa (default) | confidential | off
+  --entra-apps LIST        app-only sign-in (CI): "<app id>=<user>", comma-separated
   --stun-servers LIST      external STUN servers the hub advertises (host:port,...; "none" = only the
                            hub's own; default: the template's public ones, see README "Direct connections")
   --log-analytics          send container logs to a Log Analytics workspace
@@ -91,6 +92,7 @@ while [[ $# -gt 0 ]]; do
 	--entra-client) entra_client=${2:?}; shift ;;
 	--entra-admins) entra_admins=${2:?}; shift ;;
 	--entra-web) entra_web=${2:?}; shift ;;
+	--entra-apps) entra_apps=${2:?}; shift ;;
 	--log-analytics) log_analytics=true ;;
 	--storage-auth) storage_auth=${2:?}; shift ;;
 	--acr) acr=${2:?}; shift ;;
@@ -382,6 +384,7 @@ if [[ -n $cur_image && -z $entra_tenant ]]; then
 		LONGARM_HUB_ENTRA_CLIENT_ID) entra_client=${entra_client:-$v} ;;
 		LONGARM_HUB_ENTRA_ADMINS) entra_admins=${entra_admins:-$v} ;;
 		LONGARM_HUB_ENTRA_WEB) entra_web=${entra_web:-$v} ;;
+		LONGARM_HUB_ENTRA_APPS) entra_apps=${entra_apps:-$v} ;;
 		esac
 	done < <(az container show -g "$rg" -n "$name" -o tsv \
 		--query "containers[0].environmentVariables[?starts_with(name, 'LONGARM_HUB_ENTRA_')].[name, value]" 2>/dev/null | tr -d '\r' || true)
@@ -466,6 +469,7 @@ json_str() {
 		printf ',"entraTenantId":{"value":%s}' "$(json_str "$entra_tenant")"
 		printf ',"entraClientId":{"value":%s}' "$(json_str "$entra_client")"
 		[[ -z $entra_admins ]] || printf ',"entraAdmins":{"value":%s}' "$(json_str "$entra_admins")"
+		[[ -z $entra_apps ]] || printf ',"entraApps":{"value":%s}' "$(json_str "$entra_apps")"
 		[[ -z $entra_web ]] || printf ',"entraWeb":{"value":%s}' "$(json_str "$entra_web")"
 	fi
 	if [[ -n $registry_user ]]; then

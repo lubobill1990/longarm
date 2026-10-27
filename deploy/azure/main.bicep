@@ -111,6 +111,9 @@ param entraClientId string = ''
 @description('Entra sign-in: admins, comma-separated (user@example.com, *@example.com or object IDs).')
 param entraAdmins string = ''
 
+@description('Entra sign-in: applications whose app-only tokens may sign in as a Longarm user (CI through GitHub OIDC), comma-separated "<app id>=<user>". Never admins, never the panel.')
+param entraApps string = ''
+
 @description('Entra sign-in for the web panel: spa (no credential; SPA redirect URI https://<fqdn>/auth/spa-callback), confidential (storageAuth identity: the managed identity as a federated credential; Web redirect URI https://<fqdn>/auth/callback) or off.')
 @allowed([
   'spa'
@@ -428,6 +431,7 @@ var hubEnv = concat(
           { name: 'LONGARM_HUB_ENTRA_WEB', value: entraWeb }
         ],
         empty(entraAdmins) ? [] : [{ name: 'LONGARM_HUB_ENTRA_ADMINS', value: entraAdmins }],
+        empty(entraApps) ? [] : [{ name: 'LONGARM_HUB_ENTRA_APPS', value: entraApps }],
         // the managed identity (AZURE_CLIENT_ID) redeems the panel's codes
         entraWeb == 'confidential' && !useKey
           ? [{ name: 'LONGARM_HUB_ENTRA_CLIENT_ASSERTION', value: 'managed-identity' }]
