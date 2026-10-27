@@ -372,14 +372,17 @@ func TestUIDaemonPool(t *testing.T) {
 	}
 	// Hub down: metrics come straight from the workers; the view keeps working.
 	s.killHub()
-	waitFor(t, "direct metrics with the hub down", 60*time.Second, func() bool {
+	// Both are eventually consistent and independent: direct metrics take
+	// over as soon as the hub's are stale (which also happens with the hub
+	// up but slow), the link goes down when the daemon sees its event
+	// stream fail.
+	waitFor(t, "direct metrics and the hub link down", 60*time.Second, func() bool {
 		v = pool()
 		wa, wb := worker(v, "wa"), worker(v, "wb")
-		return v["source"] == "direct" && wa != nil && wb != nil && wa["state"] == "online" && wa["source"] == "direct" && wb["source"] == "direct"
+		hub, _ := v["hub"].(map[string]any)
+		return v["source"] == "direct" && wa != nil && wb != nil && wa["state"] == "online" && wa["source"] == "direct" && wb["source"] == "direct" &&
+			hub != nil && !isTrue(hub["connected"])
 	})
-	if hub, _ := v["hub"].(map[string]any); isTrue(hub["connected"]) {
-		t.Fatalf("hub link still connected: %v", hub)
-	}
 	// A worker going away is offline from this client's view.
 	s.wb.kill()
 	waitFor(t, "wb offline", 30*time.Second, func() bool {
