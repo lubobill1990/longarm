@@ -409,8 +409,15 @@ func TestE2E(t *testing.T) {
 		}
 		// Compat files of the job dir layout.
 		d := jobs.Dir(filepath.Join(e.dataDir, "jobs", id))
+		// (written after the state the API reports: wait for them)
 		for name, want := range map[string]string{"state": "failed", "exit": "3"} {
-			if b, _ := os.ReadFile(d.Path(name)); string(b) != want {
+			var b []byte
+			for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+				if b, _ = os.ReadFile(d.Path(name)); string(b) == want || time.Now().After(deadline) {
+					break
+				}
+			}
+			if string(b) != want {
 				t.Errorf("%s = %q, want %q", name, b, want)
 			}
 		}
