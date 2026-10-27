@@ -173,3 +173,23 @@ the branch found no authorization bypass; its findings and what was done:
 3. Tailnets in use: add the worker → worker tcp:7701 rule (Headscale policy
    in `deploy/headscale/config/policy.hujson`; Tailscale grants in
    `deploy/hub/README.md`), or let links use the relay.
+
+## Ported onto main (branch `worker-links-v2`)
+
+The PR's final diff (`ddec6a9..worker-links`) was re-applied onto main
+(after #8-#20) as one change; the PR's behavior and tests are kept. Main's
+`internal/hub/link.go` (#20) is device *pairing* (`longarm login --link`,
+the hub's `/link` page), unrelated to port links despite the name.
+
+Integration with what main added:
+
+| Main feature | Port links now |
+|---|---|
+| `[access]` (#8) | both workers require the link's owner to be in `users` / `owners`; a worker certificate skips the per-user checks in `authorize` (it is no user) and `LinkTunnel.Dial` applies them to the grant's owner; `admins` does not apply (a link is a user's forward) |
+| `hub_job_details = false` (#8) | link states sent to the hub lose error texts and the path's endpoint; the audit key `link` (the hub's id) is kept |
+| chained audit (#9) | `link/added`, `link/ended` on both workers, `LinkTunnel/Dial` on the target, `link/refused` on the source |
+| end-to-end trust (#10) | with trust on a worker, the link's owner must have a pinned key there and the other worker must be endorsed by that key (B checks A's client certificate, A checks B's server certificate before sending the grant) |
+| user-owned workers (#11) | hub: the owner must be allowed to use both workers at creation (admins too), and links go when that ends (unshare, team change); workers: the owner/shares rule applies to the link's owner, unshare cuts open connections |
+| telemetry (#14) | `link.dial`, `link.conn`, `link.bytes` (workers), `link.created`, `link.removed`, `links.active` (hub) - no ids, names, ports or addresses; link names are added to the worker's scrubber; the noisy link log lines are INFO (WARN records go to telemetry) |
+| migrations | main still had 3: port links stay migration 4 |
+| web (#19) | panel page builds and tests with TypeScript 7 / Vite 8 / Vitest 5; `internal/webui/dist` rebuilt |
