@@ -34,6 +34,11 @@ finish() {
 	exit "$rc"
 }
 
+# the runner image (azure-cli on Azure Linux) is minimal: deploy.sh and the
+# tests need these too
+tdnf install -y gawk sed grep findutils procps-ng diffutils coreutils >/dev/null 2>&1 ||
+	echo "ci-job: tdnf could not install the base tools"
+
 echo "ci-job: $REPO@$commit"
 status pending "running on Azure"
 
