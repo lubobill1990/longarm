@@ -76,10 +76,12 @@ done_step
 
 step "run on the chosen worker, and through the scheduler"
 # shellcheck disable=SC2016 # $(hostname) is for the worker's shell
-out=$(retry 3 10 longarm exec "$wname" -- sh -c 'echo "hello from $(hostname)"') || fail "exec on $wname"
+out=$(retry 3 10 timeout 300 "$BIN/longarm" --config-dir "$client" exec "$wname" -- sh -c 'echo "hello from $(uname -n)"') || fail "exec on $wname"
 echo "$out"
 grep -q "hello from" <<<"$out" || fail "exec output: $out"
-out=$(longarm run -f -- sh -c 'echo placed-by-scheduler' 2>&1) || fail "longarm run: $out"
+# the scheduler places by the workers' metrics: show what the hub has
+longarm ls || true
+out=$(timeout 300 "$BIN/longarm" --config-dir "$client" run -f -- sh -c 'echo placed-by-scheduler' 2>&1) || fail "longarm run (5 min): $out"
 echo "$out"
 grep -q "placed on $wname" <<<"$out" || fail "the scheduler did not place the job on the only usable worker"
 grep -q "placed-by-scheduler" <<<"$out" || fail "job output missing"

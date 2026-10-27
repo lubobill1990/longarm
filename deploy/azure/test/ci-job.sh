@@ -69,6 +69,8 @@ done
 
 name=lae2e$(date -u +%m%d%H%M)
 "$src/deploy/azure/test/azure-e2e-cleanup.sh" "$RG" --older 6h
+# a stopped execution (az containerapp job stop, replica timeout) still cleans up
+trap '"$src/deploy/azure/test/azure-e2e-cleanup.sh" "$RG" "$name"; finish 1 "azure-e2e stopped ($name)"' TERM
 NAME=$name IMAGE=$image BIN=$bin CI_APP_ID=$AZURE_CLIENT_ID "$src/deploy/azure/test/azure-e2e.sh"
 rc=$?
 "$src/deploy/azure/test/azure-e2e-cleanup.sh" "$RG" "$name"
