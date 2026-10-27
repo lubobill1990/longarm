@@ -446,3 +446,21 @@ func TestLinkSourceConsent(t *testing.T) {
 		t.Fatal("listening for the hub-made link, or not for the signed one")
 	}
 }
+
+// The source sends only its own link's grant: a hub handing listener X the
+// grant of another link Y (same owner and workers, both consented) would
+// carry X's connections to Y's port (review finding).
+func TestGrantMismatch(t *testing.T) {
+	p := newLinkPair(t)
+	x := p.link(t, "", time.Now().Add(time.Hour), time.Now().Add(time.Hour)).Links[0]
+	y := p.link(t, "", time.Now().Add(time.Hour), time.Now().Add(time.Hour)).Links[0]
+	if why := grantMismatch(p.a.Roots(), x.Grant, x.Link); why != "" {
+		t.Fatalf("own grant refused: %s", why)
+	}
+	if why := grantMismatch(p.a.Roots(), y.Grant, x.Link); !strings.Contains(why, "another link") {
+		t.Fatalf("another link's grant: %q", why)
+	}
+	if why := grantMismatch(p.a.Roots(), nil, x.Link); why == "" {
+		t.Fatal("no grant accepted")
+	}
+}

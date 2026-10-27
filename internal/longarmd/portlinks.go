@@ -696,6 +696,13 @@ func (m *linkManager) open(ctx context.Context, ls *linkState) (pb.LinkTunnel_Di
 				m.release(t)
 				return nil, nil, status.Error(codes.PermissionDenied, why)
 			}
+			// The grant must be this listener's link: B picks the link (and
+			// checks its consent) by the grant, so a hub handing listener X
+			// the grant of link Y would carry X's connections to Y's port.
+			if why := grantMismatch(m.Roots(), a.Grant, ls.link); why != "" {
+				m.release(t)
+				return nil, nil, status.Error(codes.PermissionDenied, why)
+			}
 			if err = st.Send(&pb.ForwardFrame{Grant: a.Grant}); err == nil {
 				_, err = st.Recv() // the target's answer: an empty frame, or why not
 			}
@@ -765,4 +772,18 @@ func writeFileAtomic(path string, b []byte) error {
 		return err
 	}
 	return nil
+}
+
+// grantMismatch reports why grant is not a valid grant of link l (""
+// when it is): signed by the hub and naming exactly l's id, owner,
+// workers and ports.
+func grantMismatch(roots *x509.CertPool, grant *pb.SignedPortLinkGrant, l *pb.PortLink) string {
+	g, err := portlink.Verify(roots, grant, time.Now())
+	if err != nil {
+		return err.Error()
+	}
+	if g.Id != l.Id || g.Owner != l.Owner || g.From != l.From || g.To != l.To || g.Port != l.Port || g.ListenPort != l.ListenPort {
+		return fmt.Sprintf("link %s: the hub's grant is for another link (%s)", l.Id, g.Id)
+	}
+	return ""
 }
