@@ -4,6 +4,8 @@
 #
 #   azure-e2e-cleanup.sh RG NAME          one hub (everything tagged longarm-hub=NAME)
 #   azure-e2e-cleanup.sh RG --older 6h    every e2e hub (lae2e*) older than that (leftovers)
+# Git Bash on Windows (local runs): keep resource IDs as they are, not as paths
+export MSYS_NO_PATHCONV=1
 set -uo pipefail
 
 rg=${1:?resource group}
@@ -21,7 +23,8 @@ delete_hub() {
 			while read -r id; do az role assignment delete --ids "$id" 2>/dev/null || true; done
 	fi
 	az container delete -g "$rg" -n "$name" --yes -o none 2>/dev/null || true
-	az resource list -g "$rg" --tag "longarm-hub=$name" --query "[].id" -o tsv 2>/dev/null | tr -d '\r' |
+	# (az resource list can't combine -g with --tag: filter in the query)
+	az resource list -g "$rg" --query "[?tags.\"longarm-hub\" == '$name'].id" -o tsv 2>/dev/null | tr -d '\r' |
 		while read -r id; do az resource delete --ids "$id" -o none 2>/dev/null || echo "cleanup: could not delete $id"; done
 }
 

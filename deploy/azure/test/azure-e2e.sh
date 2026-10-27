@@ -11,6 +11,8 @@
 #
 #   NAME=lae2e123 IMAGE=ghcr.io/<owner>/longarm-hub:sha-<12> BIN=<dir with longarm, longarmd> \
 #   RG=longarm-ci ENTRA_TENANT=<tenant> ENTRA_CLIENT=<app id> [EXPECT_USER=ci] deploy/azure/test/azure-e2e.sh
+# Git Bash on Windows (local runs): keep resource IDs as they are, not as paths
+export MSYS_NO_PATHCONV=1
 set -euo pipefail
 
 : "${NAME:?}" "${IMAGE:?}" "${BIN:?}" "${RG:?}" "${ENTRA_TENANT:?}" "${ENTRA_CLIENT:?}"
