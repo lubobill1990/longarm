@@ -44,21 +44,6 @@ import (
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
-// Exit codes of longarm itself. Job exit codes are mirrored by run --wait / wait.
-const (
-	exitLongarmError = 255 // longarm / connection / usage error
-	exitKilled       = 137 // job was killed
-	exitLost         = 254 // job was lost (supervisor vanished)
-)
-
-// exitError carries a specific process exit code.
-type exitError struct {
-	code int
-	msg  string
-}
-
-func (e *exitError) Error() string { return e.msg }
-
 var configDir, transportPolicy string
 
 func main() {
@@ -75,7 +60,7 @@ func main() {
 		"transport policy: race (default: all legs at once, first mTLS handshake wins) | tcp | tailscale | longnet (prefer); env LONGARM_TRANSPORT; persistent: longarm transport <policy>")
 	root.PersistentFlags().BoolVar(&noHub, "no-hub", os.Getenv("LONGARM_NO_HUB") == "1", "ignore the hub; talk to workers directly (env LONGARM_NO_HUB=1)")
 	root.AddCommand(poolCmd(), transportCmd(), firewallCmd())
-	root.AddCommand(whoamiCmd(), linkCmd())
+	root.AddCommand(whoamiCmd(), linkCmd(), versionCmd())
 	root.AddCommand(lsCmd(), infoCmd(), execCmd(), runCmd(), logsCmd(), waitCmd(), killCmd(), jobsCmd(), adminCmd(),
 		attachCmd(), sessionsCmd(), forwardCmd(), putCmd(), getCmd(), syncCmd(), proxyCmd(), sshConfigCmd(),
 		joinCmd(), loginCmd(), leaveCmd(), daemonCmd(), mcpCmd(), trustCmd(), workerCmd(), telemetryCmd(), diagCmd())
@@ -86,16 +71,12 @@ func main() {
 	root.SetContext(telemetry.WithSpan(context.Background(), cli.span))
 	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) { startTelemetry(cmd) }
 	defer telemetry.Guard()
+	var validated bool
+	markUsageErrors(root, &validated)
 	err := root.Execute()
-	code := 0
+	code := exitCodeFor(err, validated)
 	var ee *exitError
-	switch {
-	case err == nil:
-	case errors.As(err, &ee):
-		code = ee.code
-	default:
-		code = exitLongarmError
-	}
+	errors.As(err, &ee)
 	finishTelemetry(code, err)
 	switch {
 	case err == nil:
@@ -113,7 +94,7 @@ func main() {
 	} else {
 		fmt.Fprintln(os.Stderr, "longarm:", err.Error()+traceNote())
 	}
-	os.Exit(exitLongarmError)
+	os.Exit(code)
 }
 
 // session bundles the loaded config, a dialer and (lazily) the hub.
@@ -190,7 +171,7 @@ func parseEnv(kvs []string) (map[string]string, error) {
 	for _, kv := range kvs {
 		k, v, ok := strings.Cut(kv, "=")
 		if !ok || k == "" {
-			return nil, fmt.Errorf("--env %q: want KEY=VALUE", kv)
+			return nil, usagef("--env %q: want KEY=VALUE", kv)
 		}
 		m[k] = v
 	}
@@ -211,7 +192,7 @@ func secretEnv(names []string) (map[string]string, error) {
 		}
 		val, set := os.LookupEnv(n)
 		if !set {
-			return nil, fmt.Errorf("--secret-env %s: not set in the local environment", n)
+			return nil, usagef("--secret-env %s: not set in the local environment", n)
 		}
 		m[k] = val
 	}
@@ -229,7 +210,7 @@ func commandArgs(cmd *cobra.Command, args []string) (worker string, argv []strin
 	case dash < 0 && len(args) >= 2:
 		return args[0], args[1:], nil
 	}
-	return "", nil, errors.New("usage: [<worker>] -- command [args...]")
+	return "", nil, usagef("usage: [<worker>] -- command [args...]")
 }
 
 func humanBytes(b uint64) string {

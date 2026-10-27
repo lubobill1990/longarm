@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +25,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
+	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/workspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -115,7 +118,7 @@ func execCmd() *cobra.Command {
 
 func runCmd() *cobra.Command {
 	var env, secrets, labels, require, share []string
-	var cwd, name, id, repo, ref, lfs, on, typ string
+	var cwd, name, id, repo, ref, lfs, on, typ, stdinFile string
 	var wait, follow, noQueue bool
 	var memLimit string
 	var memGB, cpus float64
@@ -144,7 +147,7 @@ reachable hub longarm picks among the known workers itself.`,
 			}
 			reqM, err := sched.ParseLabels(require, false)
 			if err != nil {
-				return err
+				return usageErr(err)
 			}
 			sec, err := secretEnv(secrets)
 			if err != nil {
@@ -153,6 +156,12 @@ reachable hub longarm picks among the known workers itself.`,
 			mem, err := parseSize(memLimit)
 			if err != nil {
 				return err
+			}
+			var stdin []byte
+			if stdinFile != "" {
+				if stdin, err = readStdinFile(stdinFile); err != nil {
+					return err
+				}
 			}
 			if id == "" {
 				id = ulid.Make().String() // client-generated => Submit is idempotent
@@ -188,6 +197,12 @@ reachable hub longarm picks among the known workers itself.`,
 				return err
 			}
 			defer conn.Close()
+			if stdin != nil {
+				// an older worker would drop the field and run the job without it
+				if err := needFeature(cmd.Context(), conn, jobs.FeatureStdin, "--stdin-file"); err != nil {
+					return err
+				}
+			}
 			ws, err := jobWorkspace(cmd.Context(), conn, repo, ref, lfs)
 			if err != nil {
 				return err
@@ -195,8 +210,9 @@ reachable hub longarm picks among the known workers itself.`,
 			req := &pb.SubmitRequest{
 				Spec: &pb.JobSpec{Id: id, Name: name, Argv: argv, Cwd: cwd, Env: envM, MemLimitBytes: mem, Labels: labelM,
 					Workspace: ws, CpuLimit: cpus},
-				// secrets are sent once, memory-only on the worker
+				// secrets and stdin are sent once, memory-only on the worker
 				SecretEnv: sec,
+				Stdin:     stdin,
 				Share:     share,
 			}
 			ctx := cmd.Context()
@@ -209,6 +225,7 @@ reachable hub longarm picks among the known workers itself.`,
 				job, err = conn.Jobs().Submit(c, req)
 				return err
 			})
+			clear(stdin) // sent (or given up): no copy of the payload stays here
 			if err != nil {
 				return err
 			}
@@ -247,7 +264,47 @@ reachable hub longarm picks among the known workers itself.`,
 	c.Flags().BoolVar(&noQueue, "no-queue", false, "fail instead of queueing when no worker passes the gate")
 	c.Flags().StringArrayVar(&share, "share", nil, "let team members read the job (state, logs): team = all your teams, team:<name> = one")
 	c.Flags().Float64Var(&cpus, "cpus", 0, "CPU limit of the job's process tree in cores (Windows; Linux with per-user isolation)")
+	c.Flags().StringVar(&stdinFile, "stdin-file", "", "send this local file (- = longarm's stdin; at most 1 MiB) as the job's stdin: memory-only on the worker, never in job metadata, the hub or logs")
 	return c
+}
+
+// readStdinFile reads run --stdin-file: a local file or ("-") longarm's own
+// stdin, at most jobs.MaxStdinBytes.
+func readStdinFile(name string) ([]byte, error) {
+	var r io.Reader = os.Stdin
+	if name != "-" {
+		f, err := os.Open(name)
+		if err != nil {
+			return nil, usagef("--stdin-file: %v", err)
+		}
+		defer f.Close()
+		r = f
+	}
+	b, err := io.ReadAll(io.LimitReader(r, jobs.MaxStdinBytes+1))
+	if err != nil {
+		return nil, usagef("--stdin-file: %v", err)
+	}
+	if len(b) > jobs.MaxStdinBytes {
+		return nil, usagef("--stdin-file: larger than %d bytes", jobs.MaxStdinBytes)
+	}
+	if b == nil {
+		b = []byte{} // empty, but given: the job's stdin is empty either way
+	}
+	return b, nil
+}
+
+// needFeature fails (exit 2) when the worker does not announce feature.
+func needFeature(ctx context.Context, conn *client.Conn, feature, flag string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	info, err := conn.Node().Info(ctx, &pb.InfoRequest{})
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(info.Features, feature) {
+		return usagef("%s: worker %s (longarmd %s) does not support it; update longarmd", flag, conn.Worker.Name, info.Version)
+	}
+	return nil
 }
 
 func parseSize(s string) (int64, error) {
@@ -266,7 +323,7 @@ func parseSize(s string) (int64, error) {
 	}
 	var n int64
 	if _, err := fmt.Sscanf(u, "%d", &n); err != nil || n <= 0 {
-		return 0, fmt.Errorf("bad size %q", s)
+		return 0, usagef("bad size %q", s)
 	}
 	return n * mult, nil
 }
@@ -563,17 +620,27 @@ func stateName(s pb.JobState) string {
 func jobsCmd() *cobra.Command {
 	var states []string
 	var limit int
-	var asJSON bool
+	var asJSON, hubOnly bool
+	var jobID string
 	c := &cobra.Command{
 		Use:   "jobs [<worker>]",
 		Short: "List jobs (newest first): fleet-wide from the hub's index, else from the workers directly",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `List jobs (newest first): fleet-wide from the hub's index; when the hub is
+unreachable, from the known workers directly (a note on stderr says so).
+
+--json prints {"jobs": [...], "source": "hub" | "workers"} (and, from the
+workers, "unreachable": [workers that did not answer]). Only "source": "hub"
+makes a missing job authoritative. --hub-only never falls back: no hub
+configured or no answer exits 69. --id <job> lists that job alone and exits
+3 when it is not known (to the hub; with the fallback: to the workers that
+answered). See docs/usage.md#jobs---json.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var want []pb.JobState
 			for _, s := range states {
 				v, ok := pb.JobState_value["JOB_STATE_"+strings.ToUpper(s)]
 				if !ok {
-					return fmt.Errorf("unknown state %q", s)
+					return usagef("unknown state %q", s)
 				}
 				want = append(want, pb.JobState(v))
 			}
@@ -586,79 +653,52 @@ func jobsCmd() *cobra.Command {
 				return err
 			}
 			defer s.close()
+			ctx := cmd.Context()
 			var rows []*pb.FleetJob
-			fromHub := false
-			if h := s.optionalHub(cmd.Context()); h != nil {
-				ctx, cancel := context.WithTimeout(cmd.Context(), hubTimeout)
-				resp, err := h.Fleet().ListJobs(ctx, &pb.FleetJobsRequest{Worker: worker, States: want, Limit: int32(limit)})
-				cancel()
+			var unreachable []string
+			source := ""
+			var h *hubclient.Conn
+			if hubOnly {
+				if h, err = s.requireHub(ctx); err != nil {
+					return err
+				}
+			} else {
+				h = s.optionalHub(ctx)
+			}
+			if h != nil {
+				rows, err = hubJobs(ctx, h, worker, jobID, want, limit)
 				switch {
 				case err == nil:
-					rows, fromHub = resp.Jobs, true
+					source = "hub"
+				case hubUnavailable(err) && hubOnly:
+					return &exitError{code: exitHubUnavailable, msg: fmt.Sprintf("hub %s did not answer: %s", s.cfg.Hub.Address, oneLine(err))}
 				case hubUnavailable(err):
 					s.hubDown(err)
 				default:
 					return err
 				}
 			}
-			if !fromHub {
-				var targets []string
-				if worker != "" {
-					targets = []string{worker}
-				} else {
-					for _, w := range s.knownWorkers(cmd.Context()) {
-						targets = append(targets, w.Name)
-					}
-				}
-				if len(targets) == 0 {
-					return errors.New("no workers known (configure workers.toml or a hub)")
-				}
-				var mu sync.Mutex
-				var wg sync.WaitGroup
-				var firstErr error
-				for _, t := range targets {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
-						conn, err := s.conn(t)
-						if err == nil {
-							defer conn.Close()
-							ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
-							defer cancel()
-							var resp *pb.ListJobsResponse
-							if resp, err = conn.Jobs().List(ctx, &pb.ListJobsRequest{States: want, Limit: int32(limit)}); err == nil {
-								mu.Lock()
-								for _, j := range resp.Jobs {
-									rows = append(rows, &pb.FleetJob{Worker: t, Job: j, WorkerOnline: true})
-								}
-								mu.Unlock()
-								return
-							}
-						}
-						mu.Lock()
-						if firstErr == nil || len(targets) == 1 {
-							firstErr = err
-						}
-						mu.Unlock()
-						if len(targets) > 1 {
-							fmt.Fprintf(os.Stderr, "longarm: %s: %s\n", t, oneLine(err))
-						}
-					}()
-				}
-				wg.Wait()
-				if len(targets) == 1 && firstErr != nil {
-					return firstErr
-				}
-				sort.Slice(rows, func(i, j int) bool {
-					return rows[i].Job.GetCreatedAt().AsTime().After(rows[j].Job.GetCreatedAt().AsTime())
-				})
-				if limit > 0 && len(rows) > limit {
-					rows = rows[:limit]
+			if source == "" {
+				source = "workers"
+				if rows, unreachable, err = workerJobs(ctx, s, worker, jobID, want, limit); err != nil {
+					return err
 				}
 			}
+			// --id: whether the job exists, then whether it passes --state
+			// (a job that exists but doesn't match is an empty list, exit 0)
+			if jobID != "" && len(rows) > 0 && len(want) > 0 {
+				rows = slices.DeleteFunc(rows, func(fj *pb.FleetJob) bool { return !slices.Contains(want, fj.Job.GetState()) })
+			} else if jobID != "" && len(rows) == 0 {
+				if asJSON {
+					printJobsJSON(nil, source, unreachable)
+				}
+				if source == "hub" {
+					return notFoundf("job %s not known to the hub", jobID)
+				}
+				return notFoundf("job %s not found on the workers that answered", jobID)
+			}
 			if asJSON {
-				b, _ := protojson.MarshalOptions{Multiline: true, Indent: "  "}.Marshal(&pb.FleetJobsResponse{Jobs: rows})
-				fmt.Println(string(b))
+				printJobsJSON(rows, source, unreachable)
 				return nil
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -696,15 +736,139 @@ func jobsCmd() *cobra.Command {
 	}
 	c.Flags().StringSliceVar(&states, "state", nil, "filter by state (running, done, failed, killed, lost, ...)")
 	c.Flags().IntVar(&limit, "limit", 0, "max jobs (0 = all)")
-	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
+	c.Flags().BoolVar(&asJSON, "json", false, `JSON output: {"jobs": [...], "source": "hub"|"workers"}`)
+	c.Flags().BoolVar(&hubOnly, "hub-only", false, "ask only the hub: exit 69 when there is none or it does not answer (no fallback to the workers)")
+	c.Flags().StringVar(&jobID, "id", "", "only this job; exit 3 when it is not known")
 	return c
+}
+
+// hubJobs lists jobs from the hub's index (id: that job only, whatever
+// its state; a NotFound answer is an empty list).
+func hubJobs(ctx context.Context, h *hubclient.Conn, worker, id string, want []pb.JobState, limit int) ([]*pb.FleetJob, error) {
+	ctx, cancel := context.WithTimeout(ctx, hubTimeout)
+	defer cancel()
+	if id != "" {
+		fj, err := h.Fleet().GetJob(ctx, &pb.FleetJobRequest{Id: id, Worker: worker})
+		if status.Code(err) == codes.NotFound {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return []*pb.FleetJob{fj}, nil
+	}
+	resp, err := h.Fleet().ListJobs(ctx, &pb.FleetJobsRequest{Worker: worker, States: want, Limit: int32(limit)})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Jobs, nil
+}
+
+// workerJobs lists jobs from the workers directly (worker "" = every known
+// worker); unreachable names the workers that did not answer. With one
+// worker its failure is the error.
+func workerJobs(ctx context.Context, s *session, worker, id string, want []pb.JobState, limit int) (rows []*pb.FleetJob, unreachable []string, err error) {
+	var targets []string
+	if worker != "" {
+		targets = []string{worker}
+	} else {
+		for _, w := range s.knownWorkers(ctx) {
+			targets = append(targets, w.Name)
+		}
+	}
+	if len(targets) == 0 {
+		return nil, nil, errors.New("no workers known (configure workers.toml or a hub)")
+	}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var firstErr error
+	for _, t := range targets {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := s.conn(t)
+			if err == nil {
+				defer conn.Close()
+				ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+				defer cancel()
+				var js []*pb.Job
+				if id != "" {
+					var j *pb.Job
+					if j, err = conn.Jobs().Get(ctx, &pb.GetJobRequest{Id: id}); err == nil {
+						js = append(js, j)
+					} else if status.Code(err) == codes.NotFound {
+						err = nil
+					}
+				} else {
+					var resp *pb.ListJobsResponse
+					if resp, err = conn.Jobs().List(ctx, &pb.ListJobsRequest{States: want, Limit: int32(limit)}); err == nil {
+						js = resp.Jobs
+					}
+				}
+				if err == nil {
+					mu.Lock()
+					for _, j := range js {
+						rows = append(rows, &pb.FleetJob{Worker: t, Job: j, WorkerOnline: true})
+					}
+					mu.Unlock()
+					return
+				}
+			}
+			mu.Lock()
+			if firstErr == nil || len(targets) == 1 {
+				firstErr = err
+			}
+			unreachable = append(unreachable, t)
+			mu.Unlock()
+			if len(targets) > 1 {
+				fmt.Fprintf(os.Stderr, "longarm: %s: %s\n", t, oneLine(err))
+			}
+		}()
+	}
+	wg.Wait()
+	if len(targets) == 1 && firstErr != nil {
+		return nil, nil, firstErr
+	}
+	sort.Strings(unreachable)
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].Job.GetCreatedAt().AsTime().After(rows[j].Job.GetCreatedAt().AsTime())
+	})
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows, unreachable, nil
+}
+
+// jobsJSON is the output of jobs --json (docs/usage.md#jobs---json): the
+// fields of FleetJobsResponse plus where the list came from.
+type jobsJSON struct {
+	Jobs        []json.RawMessage `json:"jobs"`
+	Source      string            `json:"source"`                // "hub" | "workers"
+	Unreachable []string          `json:"unreachable,omitempty"` // source "workers": workers that did not answer
+}
+
+func jobsJSONBytes(rows []*pb.FleetJob, source string, unreachable []string) []byte {
+	out := jobsJSON{Jobs: []json.RawMessage{}, Source: source, Unreachable: unreachable}
+	for _, fj := range rows {
+		b, err := protojson.Marshal(fj)
+		if err != nil {
+			continue
+		}
+		out.Jobs = append(out.Jobs, b)
+	}
+	b, _ := json.MarshalIndent(out, "", "  ")
+	return b
+}
+
+func printJobsJSON(rows []*pb.FleetJob, source string, unreachable []string) {
+	fmt.Println(string(jobsJSONBytes(rows, source, unreachable)))
 }
 
 // pickWorker resolves the target of exec/run: the positional worker, --on,
 // or automatic placement (po == nil: a short command, no reservation).
 func pickWorker(ctx context.Context, s *session, worker, on string, po *placeOpts) (string, error) {
 	if worker != "" && on != "" && worker != on {
-		return "", errors.New("give the worker either as an argument or with --on, not both")
+		return "", usagef("give the worker either as an argument or with --on, not both")
 	}
 	if worker == "" {
 		worker = on

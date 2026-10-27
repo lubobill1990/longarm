@@ -142,15 +142,165 @@ longarm ls                                         # CPU / memory / jobs / claud
 longarm exec w1 -- git status                      # short synchronous command, exit code mirrored
 longarm run w1 --name build --cwd C:/src/app --env CI=1 --secret-env GH_TOKEN -- pnpm test
 longarm logs w1 <id> -f --from 0                   # follow from a byte offset; reconnects automatically
-longarm wait w1 <id>                               # exit code = job's (killed 137, lost 254, longarm error 255)
+longarm wait w1 <id>                               # exit code = job's (killed 137, lost 254; see "Exit codes")
 longarm kill w1 <id>                               # kills the whole process tree
-longarm jobs w1 [--state running]
+longarm jobs w1 [--state running] [--json] [--id <id>] [--hub-only]
+longarm run w1 --stdin-file prompt.txt -- claude -p # the file is the job's stdin, never stored
+longarm version --json                             # version + features (see "Capabilities")
 longarm admin shutdown w1                          # admin role only; jobs keep running
 ```
 
 Secrets (`--secret-env NAME` or `NAME=LOCALVAR`) are read from longarm's own
 environment, sent over mTLS, kept only in the job's memory/env, and redacted
 from the job log.
+
+### Exit codes
+
+Programs driving longarm can rely on these exit codes:
+
+| code | meaning | what a client does |
+|---|---|---|
+| 0 | success | |
+| 2 | usage error or a request that can't succeed as given, so nothing was submitted: unknown flag or command, wrong arguments, local validation (`--env` without `=`, a missing or too large `--stdin-file`, `--ref` a short commit id / a ref that isn't HEAD, a branch, a tag or a full commit id / a commit not in the checkout, `--lfs` other than skip/ship), and the hub's / worker's `InvalidArgument`, `FailedPrecondition`, `AlreadyExists` (a job id in use with another spec), `OutOfRange`, `Unimplemented`, a worker too old for a flag | fix the request; retrying it unchanged fails again |
+| 3 | not found: the hub or the worker answered that the job / file does not exist, an unknown worker name, a job no known worker has, `jobs --id` of an unknown job | |
+| 69 | `jobs --hub-only`: no hub configured, or it did not answer | retry later, or ask the workers (without `--hub-only`) |
+| 75 | refused for capacity, quota or rate (`ResourceExhausted`): no worker passes the gate with `--no-queue`, a quota, too many attempts | retry later |
+| 77 | not allowed: `PermissionDenied`, `Unauthenticated`, a refusal of end-to-end trust | fix the credentials or the rights |
+| 137 | `wait` / `run --wait`: the job was killed | |
+| 254 | `wait` / `run --wait`: the job was lost (its supervisor vanished; outcome unknown) | |
+| 255 | anything else: worker or hub unreachable, timeouts, `Aborted`, internal errors | the outcome may be unknown: look the job up (`jobs --id`) or retry with the same `--id` |
+
+`FailedPrecondition` is 2 because the hub and the worker use it only for
+conditions that hold until someone changes the setup (a path that is a
+directory, a feature the hub has off, a node that isn't approved); nothing
+on the `run` path returns it once a job was accepted. Passing failures -
+the worker importing or checking out an uploaded `--repo` (a git lock, a
+full disk), a `put` resuming against a partial file another upload changed -
+are `Aborted` (255). Problems after a job was accepted (workspace
+preparation, a program that doesn't start) are the job's: `run` exits 0 and
+the job ends `failed` with a reason (exit code 126 / 127).
+
+Commands that mirror a job - `exec`, `run --wait` / `--follow`, `wait` - exit
+with the job's own exit code once it ran, so there 2, 3, 69, 75 and 77 can
+also be the job's. To tell them apart, don't mirror: `run` without `--wait`
+exits with longarm's own code only. It prints the job id on stdout exactly
+when the job was submitted (exit 0); a non-zero exit with nothing on stdout
+means this call submitted nothing, and only 255 leaves it open whether the
+request reached the worker. Then look the job up with `jobs --id`, or run
+it again with the same `--id`: the same id and spec return the existing job
+(also when the hub placed it already). With a local `--repo` every `run`
+uploads the working tree anew, which makes another spec: a retry of a job
+that exists fails with `AlreadyExists` (exit 2), so use `jobs --id` there.
+The job's own outcome comes from `jobs --json` (`state`, `exitCode`,
+`reason`) or `wait`.
+
+### Capabilities: `longarm version --json`
+
+```json
+{"version": "v1.8.0", "features": ["exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label"]}
+```
+
+(indented in the real output). A program checks `features` instead of
+comparing versions; names are lowercase-hyphenated and keep their meaning.
+A longarm without the `version` command (older releases: "unknown command",
+exit 255) has none of these features.
+
+| feature | what it means |
+|---|---|
+| `exit-codes` | the exit codes above |
+| `jobs-source` | `jobs --json` has `source` (and `unreachable`) |
+| `jobs-hub-only` | `jobs --hub-only` and `jobs --id` |
+| `stdin-file` | `run --stdin-file` (the worker must also support it, see below) |
+| `lfs` | `run` / `sync --lfs skip\|ship` |
+| `ref-sha` | `run --repo <path> --ref <full commit id>` |
+| `worker-label` | `longarm worker label` for owners |
+
+### `jobs --json`
+
+`longarm jobs --json` prints one object:
+
+```json
+{
+  "jobs": [ { "worker": "w1", "job": { "spec": { "id": "...", ... }, "state": "JOB_STATE_RUNNING", ... }, "workerOnline": true } ],
+  "source": "hub",
+  "unreachable": ["w2"]
+}
+```
+
+`jobs` is `FleetJobsResponse.jobs` as before (protojson field names; 64-bit
+numbers are strings; fields at their zero value are left out); it is `[]`
+when empty (the key used to be left out). `source` says who answered:
+`"hub"` (its fleet-wide job index) or `"workers"` (the hub was unreachable
+or none is configured: longarm asked the known workers directly, with a
+note on stderr). `unreachable` (only with `"source": "workers"`, left out
+when empty) lists the workers that did not answer. Only with `"source":
+"hub"` is a missing job authoritative; from the workers it means "none of
+the workers that answered has it".
+
+- `--id <job>`: only that job. Not known: exit 3, with the (empty) list on
+  stdout for `--json`. Known but not in `--state`: exit 0 with an empty
+  list - exit 3 always means the job does not exist.
+- `--hub-only`: ask the hub only, never the workers: exit 69 when no hub is
+  configured or it does not answer (it is asked even if an earlier longarm
+  found it down).
+
+So `longarm jobs --hub-only --json --id <job>` answers "unknown job" (exit 3)
+and "hub unreachable" (exit 69) apart. Workers report their jobs to the hub
+as they change; a job submitted a moment ago can be missing from the index
+for that moment (the `run` that printed its id is the confirmation).
+
+### Job stdin payload (`--stdin-file`)
+
+`longarm run --stdin-file <file>` (`-` = longarm's own stdin) sends the
+file's content as the job's standard input: the job reads it, then end of
+file. Unlike the command line (`argv`) and `--env`, which are stored in the
+job's `job.json`, the hub's job index, the worker's audit log and its logs,
+the payload is never written anywhere by longarm:
+
+- longarm sends it only in the worker-direct submit, inside the mTLS
+  connection to the worker (a longnet relay forwards only TLS records). The
+  hub never gets it: placement - also when the hub queues the job - only
+  picks the worker. A queued `run` waits for its placement and holds the
+  payload in its own memory meanwhile; if it ends before (Ctrl-C, killed),
+  nothing was submitted.
+- longarmd keeps it in memory until the job's shim starts (with `--repo`,
+  while the workspace is prepared) and writes it to the shim; the shim
+  writes it into the job's stdin pipe. Each copy is zeroed once handed on:
+  longarm's after the submit, longarmd's once the shim has it, the shim's
+  once the job's pipe took it (best effort: the Go runtime and gRPC may hold
+  transient buffers until they are reused).
+- Job records (`job.json`, the API, `jobs --json`), the hub's index and the
+  audit log carry only its size (`stdinBytes` / `stdin_bytes`); telemetry
+  only whether there was one. It is never in a log, a diagnostic bundle or a
+  crash report (those hold stacks, not data). What the job does with it
+  (prints it, writes it to a file) is the job's business: the job's output
+  is in its log and in `longarm diag` bundles.
+
+Limits: at most 1 MiB (larger: exit 2, nothing sent). Pipe jobs only (not
+sessions). The worker must announce the `job-stdin` feature
+(`Node.Info`): an older longarmd is refused with exit 2 before anything is
+submitted.
+
+Failure and retries (same `--id`):
+
+- **Payload lost before the hand-off** (longarmd restarted or the shim
+  failed to start after the submit was accepted, e.g. while the workspace
+  was prepared, or the shim got fewer bytes than were submitted): the job
+  never runs - not with an empty or partial stdin. It ends `failed`, exit
+  code 127, reason `stdin payload lost before start; resubmit`.
+- **Resubmitting the same `--id` with `--stdin-file`** (same command, same
+  payload size):
+  - the job exists and has started, or is still preparing / running: `run`
+    prints its id (exit 0); the new payload is dropped, the job keeps the
+    one it got;
+  - the job took a payload and ended without starting (the case above, or
+    its program didn't start): the new submit replaces it - a new attempt
+    with the new payload, same id;
+  - another command, or a payload of another size: `AlreadyExists`, exit 2.
+- Resubmitting without `--stdin-file` a job that had one: another spec,
+  exit 2.
+
+Detached jobs work as usual: `run` returns once the job was submitted.
 
 ### Interactive sessions (tmux-like)
 
@@ -511,10 +661,10 @@ With a hub, workers are discovered (no workers.toml needed) and:
 
 ```sh
 longarm ls                               # from the hub (STATE online/offline/draining/pending); --direct probes workers
-longarm jobs [w1] [--state running]      # fleet-wide job index
+longarm jobs [w1] [--state running]      # fleet-wide job index (--json: "source": "hub"; --hub-only: no fallback)
 longarm run -- pnpm test                 # placed by the scheduler (= --on auto)
 longarm run --type build --mem-gb 8 --require os=linux --repo . -- make   # reservation, labels, repo cache affinity
-longarm run --no-queue -- ...            # fail instead of queueing when no worker passes the gate
+longarm run --no-queue -- ...            # fail (exit 75) instead of queueing when no worker passes the gate
 longarm exec -- hostname                 # short command on the least loaded worker
 longarm wait <id>; longarm logs <id> -f; longarm kill <id>   # worker optional: found through the hub
 longarm admin nodes | approve | revoke | drain | undrain | label <node> k=v | join-codes | audit
@@ -1042,6 +1192,7 @@ job finished/failed.
 longarm-tray                         # tray + popup (starts longarm daemon if needed)
 longarm-tray --browser               # no webview: open the popup page in the browser
 longarm-tray --serve 127.0.0.1:7490  # serve only (development: cd web && LONGARM_TRAY_URL=... pnpm dev)
+longarm-tray --serve 127.0.0.1:0     # any free port; the first stdout line is the popup's URL with a one-time code (for apps embedding it)
 longarm-tray --headless-smoke --out DIR   # check the local APIs, render icon + popup PNGs, exit
                                      # (popup via headless Edge/Chrome; LONGARM_TRAY_BROWSER=<path> or =none)
 ```

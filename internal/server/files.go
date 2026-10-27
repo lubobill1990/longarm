@@ -245,7 +245,8 @@ func (f *filesServer) write(st pb.Files_WriteServer, h *pb.FileWriteHeader, abs 
 		return nil, fileErr(err)
 	}
 	if fi.Size() < h.Offset {
-		return nil, status.Errorf(codes.FailedPrecondition, "partial upload has %d bytes, cannot resume at %d", fi.Size(), h.Offset)
+		// a concurrent or older upload of the same file: retry from its state
+		return nil, status.Errorf(codes.Aborted, "partial upload has %d bytes, cannot resume at %d", fi.Size(), h.Offset)
 	}
 	if err := fh.Truncate(h.Offset); err != nil {
 		return nil, fileErr(err)

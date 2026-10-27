@@ -127,8 +127,8 @@ func TestHubScheduler(t *testing.T) {
 		h.waitNode(t, onB, "undrained", func(n map[string]any) bool { return !isTrue(n["draining"]) })
 		// Label constraints: nobody has pool=gpu -> --no-queue fails, else queue.
 		r = run("--mem-gb", small, "--require", "pool=gpu", "--no-queue", "--", bins.helper, "print", "1", "0", "0")
-		if r.code == 0 || !strings.Contains(r.stderr, "pool") {
-			t.Fatalf("unsatisfiable constraint: %+v", r)
+		if r.code != 75 || !strings.Contains(r.stderr, "pool") || !strings.Contains(r.stderr, "ResourceExhausted") {
+			t.Fatalf("unsatisfiable constraint: %+v (want exit 75: refused for capacity)", r)
 		}
 		bg := h.longarmBG(t, h.client, "run", "--mem-gb", small, "--require", "pool=gpu", "--wait", "--", bins.helper, "print", "1", "0", "0")
 		waitOutput(t, bg.stderr.String, "queued", 20*time.Second)

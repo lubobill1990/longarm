@@ -57,6 +57,25 @@
   / `InstallService` for its service step.
 - MSI `LOGIN=1`: no join code; the hub (and fingerprint) are recorded and
   the service waits for the sign-in the tray or `longarmd login` does.
+- `longarm run --stdin-file <file|->`: up to 1 MiB for the job's stdin that
+  is never stored - not in `job.json`, the hub's job index, the audit log or
+  any log (memory only: longarm -> worker over mTLS -> shim -> the job's
+  pipe; records carry its size, `stdin_bytes`; each copy is zeroed once
+  handed on). A job whose payload was lost before the hand-off (longarmd
+  restarted, the shim didn't start) never runs: it fails with "stdin payload
+  lost before start; resubmit", and resubmitting the id with the payload
+  replaces it. Needs a worker announcing the new `job-stdin` feature
+  (`Node.Info` `features`)
+  ([docs/usage.md](docs/usage.md#job-stdin-payload---stdin-file)).
+- `longarm jobs --json` says who answered: `"source": "hub" | "workers"`
+  (and `"unreachable"` workers with the fallback); `--hub-only` never falls
+  back to the workers (exit 69 without an answering hub); `--id <job>` lists
+  one job and exits 3 when it is not known
+  ([docs/usage.md](docs/usage.md#jobs---json)).
+- `longarm version [--json]`: `{"version": ..., "features": [...]}` for
+  programs that check what this longarm supports (`exit-codes`,
+  `jobs-source`, `jobs-hub-only`, `stdin-file`, `lfs`, `ref-sha`,
+  `worker-label`) ([docs/usage.md](docs/usage.md#capabilities-longarm-version---json)).
 
 ### Changed
 
@@ -75,6 +94,23 @@
 - `longarm login` / `longarmd login` no longer trust a hub CA on first use:
   without `--ca-fingerprint` they bootstrap it over HTTPS or fail
   (`longarm join` / `longarmd join` are unchanged).
+- longarm's exit codes are a documented contract
+  ([docs/usage.md](docs/usage.md#exit-codes)): 2 usage error / request that
+  can't succeed as given (was 255), 3 not found, 69 hub unavailable
+  (`--hub-only`), 75 refused for capacity, quota or rate - e.g. `run
+  --no-queue` when no worker passes the gate (was 255), 77 not allowed; 255
+  stays for transport and other errors. Job exit codes are mirrored as
+  before.
+- `longarm jobs --json` prints `"jobs": []` instead of leaving the key out
+  when there are none.
+- The worker answers a failed import / checkout of an uploaded `--repo`
+  (`Workspace.Sync`) and a `put` that can't resume a partial file with
+  `Aborted` instead of `FailedPrecondition`: they can pass, so longarm
+  exits 255 (retry), not 2.
+- `--ref` / `--lfs` / `--repo` validation errors of `run` and `sync` exit 2.
+- `longarm run --id <id>` again for a job the hub already placed and the
+  worker reports returns the job (exit 0) instead of failing with
+  "already runs on"; another spec under the id still fails (exit 2).
 
 ### Breaking changes
 

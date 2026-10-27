@@ -531,7 +531,7 @@ func (s *Spaces) FindJob(id string) (*Space, supervisor.Job, error) {
 }
 
 // SubmitJob submits spec in sp; job ids are unique across all spaces.
-func (s *Spaces) SubmitJob(ctx context.Context, sp *Space, spec jobs.Spec, secrets map[string]string) (supervisor.Job, error) {
+func (s *Spaces) SubmitJob(ctx context.Context, sp *Space, spec jobs.Spec, secrets map[string]string, stdin []byte) (supervisor.Job, error) {
 	s.submit.Lock()
 	for _, o := range s.All() {
 		if o != sp {
@@ -543,7 +543,7 @@ func (s *Spaces) SubmitJob(ctx context.Context, sp *Space, spec jobs.Spec, secre
 	}
 	s.submit.Unlock() // the space's manager serializes its own submits
 	spec.RunAs = sp.RunAs(JobsDir, spec.ID)
-	return sp.Jobs.Submit(ctx, spec, secrets)
+	return sp.Jobs.SubmitStdin(ctx, spec, secrets, stdin)
 }
 
 // SubmitSession submits a session spec in sp.

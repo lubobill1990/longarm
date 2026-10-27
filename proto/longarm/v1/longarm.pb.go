@@ -264,10 +264,14 @@ type InfoResponse struct {
 	Listeners  []string               `protobuf:"bytes,11,rep,name=listeners,proto3" json:"listeners,omitempty"` // e.g. "tcp://100.64.0.11:7701"
 	// Public host key of the built-in sshd in authorized_keys format; clients
 	// learn it over mTLS (longarm ssh-config writes it to a known_hosts file).
-	SshHostKey    string `protobuf:"bytes,12,opt,name=ssh_host_key,json=sshHostKey,proto3" json:"ssh_host_key,omitempty"`
-	Isolation     string `protobuf:"bytes,13,opt,name=isolation,proto3" json:"isolation,omitempty"`                     // "shared" | "per-user" (longarmd.toml [isolation] mode)
-	CallerUser    string `protobuf:"bytes,14,opt,name=caller_user,json=callerUser,proto3" json:"caller_user,omitempty"` // the user the caller acts as (owner of what it creates)
-	Account       string `protobuf:"bytes,15,opt,name=account,proto3" json:"account,omitempty"`                         // per-user isolation: the caller's OS account on this worker
+	SshHostKey string `protobuf:"bytes,12,opt,name=ssh_host_key,json=sshHostKey,proto3" json:"ssh_host_key,omitempty"`
+	Isolation  string `protobuf:"bytes,13,opt,name=isolation,proto3" json:"isolation,omitempty"`                     // "shared" | "per-user" (longarmd.toml [isolation] mode)
+	CallerUser string `protobuf:"bytes,14,opt,name=caller_user,json=callerUser,proto3" json:"caller_user,omitempty"` // the user the caller acts as (owner of what it creates)
+	Account    string `protobuf:"bytes,15,opt,name=account,proto3" json:"account,omitempty"`                         // per-user isolation: the caller's OS account on this worker
+	// Optional features this worker supports, e.g. "job-stdin"
+	// (SubmitRequest.stdin). Clients check before relying on a field an older
+	// worker would silently ignore.
+	Features      []string `protobuf:"bytes,16,rep,name=features,proto3" json:"features,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -405,6 +409,13 @@ func (x *InfoResponse) GetAccount() string {
 		return x.Account
 	}
 	return ""
+}
+
+func (x *InfoResponse) GetFeatures() []string {
+	if x != nil {
+		return x.Features
+	}
+	return nil
 }
 
 type ExecRequest struct {
@@ -634,7 +645,10 @@ type JobSpec struct {
 	// CPU limit of the job's process tree in cores (0 = none, or the owner's
 	// default from the hub's tenancy policy). Windows: Job Object CPU rate
 	// cap; Linux: cgroup cpu.max (per-user isolation only).
-	CpuLimit      float64 `protobuf:"fixed64,19,opt,name=cpu_limit,json=cpuLimit,proto3" json:"cpu_limit,omitempty"`
+	CpuLimit float64 `protobuf:"fixed64,19,opt,name=cpu_limit,json=cpuLimit,proto3" json:"cpu_limit,omitempty"`
+	// Output only: the size of SubmitRequest.stdin, if any. The content
+	// itself is never persisted.
+	StdinBytes    int64 `protobuf:"varint,20,opt,name=stdin_bytes,json=stdinBytes,proto3" json:"stdin_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -760,6 +774,13 @@ func (x *JobSpec) GetCpuLimit() float64 {
 	return 0
 }
 
+func (x *JobSpec) GetStdinBytes() int64 {
+	if x != nil {
+		return x.StdinBytes
+	}
+	return 0
+}
+
 type JobWorkspace struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Mirror key on the worker (<data>/mirrors/<repo>.git), [0-9A-Za-z._-].
@@ -848,7 +869,12 @@ type SubmitRequest struct {
 	SecretEnv map[string]string      `protobuf:"bytes,2,rep,name=secret_env,json=secretEnv,proto3" json:"secret_env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // memory-only on the worker
 	// Share the job read-only (state, logs) with teams of the owner: "team" =
 	// every team of the owner, "team:<name>" = that team. Default private.
-	Share         []string `protobuf:"bytes,3,rep,name=share,proto3" json:"share,omitempty"`
+	Share []string `protobuf:"bytes,3,rep,name=share,proto3" json:"share,omitempty"`
+	// Bytes for the job's standard input (pipe jobs only; at most 1 MiB).
+	// Like secret_env memory-only on the worker: never written to job.json,
+	// the job index, the audit log or longarmd's logs; the job reads it once
+	// and then sees end of file.
+	Stdin         []byte `protobuf:"bytes,4,opt,name=stdin,proto3" json:"stdin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -900,6 +926,13 @@ func (x *SubmitRequest) GetSecretEnv() map[string]string {
 func (x *SubmitRequest) GetShare() []string {
 	if x != nil {
 		return x.Share
+	}
+	return nil
+}
+
+func (x *SubmitRequest) GetStdin() []byte {
+	if x != nil {
+		return x.Stdin
 	}
 	return nil
 }
@@ -4134,7 +4167,7 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\n" +
 	"\x18longarm/v1/longarm.proto\x12\n" +
 	"longarm.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\r\n" +
-	"\vInfoRequest\"\xc6\x03\n" +
+	"\vInfoRequest\"\xe2\x03\n" +
 	"\fInfoResponse\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x0e\n" +
@@ -4156,7 +4189,8 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\tisolation\x18\r \x01(\tR\tisolation\x12\x1f\n" +
 	"\vcaller_user\x18\x0e \x01(\tR\n" +
 	"callerUser\x12\x18\n" +
-	"\aaccount\x18\x0f \x01(\tR\aaccount\"\xc9\x03\n" +
+	"\aaccount\x18\x0f \x01(\tR\aaccount\x12\x1a\n" +
+	"\bfeatures\x18\x10 \x03(\tR\bfeatures\"\xc9\x03\n" +
 	"\vExecRequest\x12\x12\n" +
 	"\x04argv\x18\x01 \x03(\tR\x04argv\x12\x10\n" +
 	"\x03cwd\x18\x02 \x01(\tR\x03cwd\x122\n" +
@@ -4181,7 +4215,7 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\ttimed_out\x18\x05 \x01(\bR\btimedOut\x12\x1c\n" +
 	"\ttruncated\x18\x06 \x01(\bR\ttruncated\x125\n" +
 	"\bduration\x18\a \x01(\v2\x19.google.protobuf.DurationR\bduration\x12\x14\n" +
-	"\x05error\x18\b \x01(\tR\x05error\"\xb6\x04\n" +
+	"\x05error\x18\b \x01(\tR\x05error\"\xd7\x04\n" +
 	"\aJobSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
@@ -4196,7 +4230,9 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x05owner\x18\x11 \x01(\tR\x05owner\x12\x1f\n" +
 	"\vshare_teams\x18\x12 \x03(\tR\n" +
 	"shareTeams\x12\x1b\n" +
-	"\tcpu_limit\x18\x13 \x01(\x01R\bcpuLimit\x1a6\n" +
+	"\tcpu_limit\x18\x13 \x01(\x01R\bcpuLimit\x12\x1f\n" +
+	"\vstdin_bytes\x18\x14 \x01(\x03R\n" +
+	"stdinBytes\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a9\n" +
@@ -4210,12 +4246,13 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x03ref\x18\x03 \x01(\tR\x03ref\x12\x16\n" +
 	"\x06commit\x18\x04 \x01(\tR\x06commit\x12\x1d\n" +
 	"\n" +
-	"staging_id\x18\x05 \x01(\tR\tstagingId\"\xd5\x01\n" +
+	"staging_id\x18\x05 \x01(\tR\tstagingId\"\xeb\x01\n" +
 	"\rSubmitRequest\x12'\n" +
 	"\x04spec\x18\x01 \x01(\v2\x13.longarm.v1.JobSpecR\x04spec\x12G\n" +
 	"\n" +
 	"secret_env\x18\x02 \x03(\v2(.longarm.v1.SubmitRequest.SecretEnvEntryR\tsecretEnv\x12\x14\n" +
-	"\x05share\x18\x03 \x03(\tR\x05share\x1a<\n" +
+	"\x05share\x18\x03 \x03(\tR\x05share\x12\x14\n" +
+	"\x05stdin\x18\x04 \x01(\fR\x05stdin\x1a<\n" +
 	"\x0eSecretEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xde\x03\n" +

@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -35,6 +37,12 @@ func TestMain(m *testing.M) {
 		time.Sleep(2 * time.Minute)
 		os.Exit(0)
 	}
+	if os.Getenv("LONGARM_TEST_STDIN_SHA") != "" { // a job: size and hash of its stdin
+		b, _ := io.ReadAll(os.Stdin)
+		fmt.Printf("%d %x\n", len(b), sha256.Sum256(b))
+		os.Exit(0)
+	}
+	// (jobs inherit LONGARM_TEST_SHIM: the shim checks come last)
 	if dir := os.Getenv("LONGARM_TEST_SHIM"); dir != "" {
 		os.Exit(shim.Main(dir, os.Stdin))
 	}

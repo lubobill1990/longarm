@@ -126,7 +126,23 @@ type Spec struct {
 	// workload as this account. Written by longarmd only; job directories
 	// are not writable by the account.
 	RunAs *RunAs `json:"run_as,omitempty"`
+	// StdinBytes is the size of the job's stdin payload (its content is
+	// memory-only: longarmd -> shim -> the job, never on disk).
+	StdinBytes int64 `json:"stdin_bytes,omitempty"`
 }
+
+// MaxStdinBytes caps a job's stdin payload (longarm run --stdin-file).
+const MaxStdinBytes = 1 << 20
+
+// StdinLostReason is the reason of a job that took a stdin payload and
+// ended before it was handed to the job (longarmd restarted, the shim did
+// not start): it never ran. Resubmitting the same id with the payload
+// replaces it.
+const StdinLostReason = "stdin payload lost before start; resubmit"
+
+// FeatureStdin is the InfoResponse.features entry of workers that accept
+// SubmitRequest.stdin.
+const FeatureStdin = "job-stdin"
 
 // OwnerName is the job's owner; jobs from before multi-tenancy: the name in
 // SubmittedBy ("client/alice").

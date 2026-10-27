@@ -50,6 +50,10 @@ message InfoResponse {
   string isolation = 13; // "shared" | "per-user" (longarmd.toml [isolation] mode)
   string caller_user = 14; // the user the caller acts as (owner of what it creates)
   string account = 15; // per-user isolation: the caller's OS account on this worker
+  // Optional features this worker supports, e.g. "job-stdin"
+  // (SubmitRequest.stdin). Clients check before relying on a field an older
+  // worker would silently ignore.
+  repeated string features = 16;
 }
 
 // ---------------------------------------------------------------- Exec
@@ -149,6 +153,9 @@ message JobSpec {
   // default from the hub's tenancy policy). Windows: Job Object CPU rate
   // cap; Linux: cgroup cpu.max (per-user isolation only).
   double cpu_limit = 19;
+  // Output only: the size of SubmitRequest.stdin, if any. The content
+  // itself is never persisted.
+  int64 stdin_bytes = 20;
 }
 
 message JobWorkspace {
@@ -171,6 +178,11 @@ message SubmitRequest {
   // Share the job read-only (state, logs) with teams of the owner: "team" =
   // every team of the owner, "team:<name>" = that team. Default private.
   repeated string share = 3;
+  // Bytes for the job's standard input (pipe jobs only; at most 1 MiB).
+  // Like secret_env memory-only on the worker: never written to job.json,
+  // the job index, the audit log or longarmd's logs; the job reads it once
+  // and then sees end of file.
+  bytes stdin = 4;
 }
 
 message Job {

@@ -2,6 +2,7 @@
 //
 //	helper print N INTERVAL_MS EXIT    print "line i" N times, then exit
 //	helper env NAME                    print "NAME=<value>"
+//	helper stdin-sha                   print the size and sha256 of stdin
 //	helper sleep SECONDS
 //	helper cat FILE
 //	helper repl                        interactive: echo lines, "size", "env X", "exit N"
@@ -32,6 +33,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net"
@@ -81,6 +83,13 @@ func main() {
 		os.Stdout.Write(b)
 	case "env":
 		fmt.Printf("%s=%s\n", os.Args[2], os.Getenv(os.Args[2]))
+	case "stdin-sha": // size and sha256 of stdin, never its content
+		b, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("%d %x\n", len(b), sha256.Sum256(b))
 	case "sleep":
 		s, _ := strconv.Atoi(os.Args[2])
 		time.Sleep(time.Duration(s) * time.Second)

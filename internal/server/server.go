@@ -173,7 +173,7 @@ func (n *nodeServer) Info(ctx context.Context, _ *pb.InfoRequest) (*pb.InfoRespo
 		Hostname: host, NumCpu: int32(runtime.NumCPU()), DataDir: n.s.DataDir,
 		StartedAt: timestamppb.New(n.s.StartedAt), CallerName: id.Name, CallerRole: string(id.Role),
 		Listeners: n.s.ListenerNames(), SshHostKey: n.s.SSHHostKey,
-		Isolation: n.s.Spaces.Mode(), CallerUser: id.Owner(),
+		Isolation: n.s.Spaces.Mode(), CallerUser: id.Owner(), Features: []string{jobs.FeatureStdin},
 	}
 	if n.s.perUser() {
 		out.Account = n.s.Spaces.AccountName(id.Owner())
@@ -314,7 +314,7 @@ func JobToPB(j supervisor.Job) *pb.Job {
 			Id: j.Spec.ID, Name: j.Spec.Name, Argv: j.Spec.Argv, Cwd: j.Spec.Cwd, Env: j.Spec.Env,
 			SecretEnvNames: j.Spec.SecretEnvNames, MemLimitBytes: j.Spec.MemLimitBytes, Labels: j.Spec.Labels,
 			SubmittedBy: j.Spec.SubmittedBy, Owner: j.Spec.OwnerName(), ShareTeams: j.Spec.ShareTeams,
-			CpuLimit: j.Spec.CPULimit,
+			CpuLimit: j.Spec.CPULimit, StdinBytes: j.Spec.StdinBytes,
 		},
 		State: stateToPB[j.Status.State], Pid: int32(j.Status.PID), ShimPid: int32(j.Status.ShimPID),
 		CreatedAt: ts(j.Status.CreatedAt), StartedAt: ts(j.Status.StartedAt), EndedAt: ts(j.Status.EndedAt),
@@ -363,10 +363,11 @@ func (j *jobsServer) Submit(ctx context.Context, req *pb.SubmitRequest) (*pb.Job
 		spec.Workspace = &jobs.Workspace{Repo: w.Repo, URL: w.Url, Ref: w.Ref, Commit: w.Commit, StagingID: w.StagingId}
 	}
 	telemetry.Remember(ctx, "job/"+spec.ID) // before it starts: it may end at once
-	job, err := j.submit(ctx, owner, spec, req.SecretEnv, req.Share)
+	job, err := j.submit(ctx, owner, spec, req.SecretEnv, req.Stdin, req.Share)
+	// the stdin payload is like a secret: its size only, never its bytes
 	j.s.Audit.Log(id, pb.Jobs_Submit_FullMethodName, map[string]any{
 		"job": spec.ID, "argv": spec.Argv, "cwd": spec.Cwd, "env_keys": keys(spec.Env),
-		"secret_keys": keys(req.SecretEnv), "share": req.Share, "error": errString(err),
+		"secret_keys": keys(req.SecretEnv), "stdin_bytes": len(req.Stdin), "share": req.Share, "error": errString(err),
 	})
 	if err != nil {
 		if _, ok := status.FromError(err); ok {
@@ -377,7 +378,7 @@ func (j *jobsServer) Submit(ctx context.Context, req *pb.SubmitRequest) (*pb.Job
 	// telemetry: what kind of job, never its command line
 	telemetry.Event(ctx, "job.submitted", map[string]string{"workspace": strconv.FormatBool(spec.Workspace != nil),
 		"shared": strconv.FormatBool(len(req.Share) > 0), "secrets": strconv.FormatBool(len(req.SecretEnv) > 0),
-		"caller_role": string(id.Role), "isolation": j.s.Spaces.Mode()},
+		"stdin": strconv.FormatBool(len(req.Stdin) > 0), "caller_role": string(id.Role), "isolation": j.s.Spaces.Mode()},
 		map[string]float64{"mem_limit_gb": float64(job.Spec.MemLimitBytes) / (1 << 30), "cpu_limit": job.Spec.CPULimit})
 	return JobToPB(job), nil
 }
@@ -392,12 +393,12 @@ func (s *Server) SubmitAs(ctx context.Context, owner string, spec jobs.Spec, sec
 		return supervisor.Job{}, status.Errorf(codes.PermissionDenied, "user %s may not use this worker (%s)", owner, why)
 	}
 	spec.Owner = owner
-	return (&jobsServer{s: s}).submit(ctx, owner, spec, secrets, nil)
+	return (&jobsServer{s: s}).submit(ctx, owner, spec, secrets, nil, nil)
 }
 
 // submit places a job in owner's space with the owner's sharing, limits and
 // per-worker quota.
-func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, secrets map[string]string, share []string) (supervisor.Job, error) {
+func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, secrets map[string]string, stdin []byte, share []string) (supervisor.Job, error) {
 	var teams []string
 	if j.s.Policy != nil {
 		teams = j.s.Policy.Teams(owner)
@@ -432,7 +433,7 @@ func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, s
 			}
 		}
 	}
-	return j.s.Spaces.SubmitJob(ctx, sp, spec, secrets)
+	return j.s.Spaces.SubmitJob(ctx, sp, spec, secrets, stdin)
 }
 
 func errString(err error) string {

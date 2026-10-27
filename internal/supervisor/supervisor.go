@@ -5,7 +5,6 @@
 package supervisor
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -138,6 +137,10 @@ func New(opts Options) (*Manager, error) {
 			// never started. Record that instead of leaving the id blocked.
 			st = &jobs.Status{State: jobs.Lost, CreatedAt: spec.CreatedAt, EndedAt: time.Now().UTC(),
 				Reason: "longarmd stopped before the job was started"}
+			if spec.StdinBytes > 0 {
+				code := jobs.ExitNotFound
+				st.State, st.ExitCode, st.Reason = jobs.Failed, &code, jobs.StdinLostReason
+			}
 			if err := d.WriteStatus(st); err != nil {
 				m.log.Warn("skipping job dir", "dir", d, "err", err)
 				continue
@@ -296,6 +299,13 @@ func (m *Manager) reconcile(e *entry) {
 		// Background processes of the job may outlive its leader (Unix: only
 		// the direct child gets the parent-death signal).
 		platform.KillProcessGroup(st.PID)
+		if st.State == jobs.Preparing && e.spec.StdinBytes > 0 {
+			// it never started, and its payload is gone with longarmd's or
+			// the shim's memory: it can't run as submitted
+			code := jobs.ExitNotFound
+			m.longarmdWrite(e, st, jobs.Failed, &code, jobs.StdinLostReason)
+			return
+		}
 		m.longarmdWrite(e, st, jobs.Lost, nil, "supervisor (shim) exited unexpectedly")
 	}
 }
@@ -388,11 +398,26 @@ func sameSpec(a, b *jobs.Spec) bool {
 		maps.Equal(a.Env, b.Env) && slices.Equal(a.SecretEnvNames, b.SecretEnvNames) &&
 		a.MemLimitBytes == b.MemLimitBytes && maps.Equal(a.Labels, b.Labels) &&
 		a.Pty == b.Pty && reflect.DeepEqual(a.Workspace, b.Workspace) && a.Owner == b.Owner &&
-		slices.Equal(a.ShareTeams, b.ShareTeams) && a.CPULimit == b.CPULimit
+		slices.Equal(a.ShareTeams, b.ShareTeams) && a.CPULimit == b.CPULimit && a.StdinBytes == b.StdinBytes
 }
 
 // Submit creates and starts a job. It is idempotent on spec.ID.
 func (m *Manager) Submit(ctx context.Context, spec jobs.Spec, secrets map[string]string) (Job, error) {
+	return m.SubmitStdin(ctx, spec, secrets, nil)
+}
+
+// SubmitStdin is Submit with bytes for the job's stdin. Like the secrets
+// they only live in memory - here until the shim has them, then in the
+// shim until the job read them; spec records only their size. A retried
+// submit (same id and spec) does not deliver them again.
+func (m *Manager) SubmitStdin(ctx context.Context, spec jobs.Spec, secrets map[string]string, stdin []byte) (Job, error) {
+	if len(stdin) > jobs.MaxStdinBytes {
+		return Job{}, fmt.Errorf("%w: stdin of %d bytes exceeds %d", ErrInvalid, len(stdin), jobs.MaxStdinBytes)
+	}
+	if len(stdin) > 0 && spec.Pty {
+		return Job{}, fmt.Errorf("%w: stdin is for pipe jobs, not sessions", ErrInvalid)
+	}
+	spec.StdinBytes = int64(len(stdin))
 	if !jobs.ValidID(spec.ID) {
 		return Job{}, fmt.Errorf("%w: bad id %q", ErrInvalid, spec.ID)
 	}
@@ -419,7 +444,17 @@ func (m *Manager) Submit(ctx context.Context, spec jobs.Spec, secrets map[string
 		if !sameSpec(&existing.spec, &spec) {
 			return Job{}, ErrAlreadyExists
 		}
-		return m.snapshot(existing), nil
+		j := m.snapshot(existing)
+		if len(stdin) == 0 || !j.Status.State.Terminal() || !j.Status.StartedAt.IsZero() {
+			return j, nil // the existing job; a payload sent again is dropped
+		}
+		// It took a payload and ended without starting (the payload was
+		// lost before the hand-off, or the program did not start): the
+		// retry replaces it.
+		m.log.Info("job resubmitted with its stdin payload; replacing the one that never started", "job", spec.ID)
+		if err := m.removeLocked(spec.ID); err != nil {
+			return Job{}, err
+		}
 	}
 
 	dir := jobs.Dir(filepath.Join(m.opts.JobsDir, spec.ID))
@@ -454,12 +489,12 @@ func (m *Manager) Submit(ctx context.Context, spec jobs.Spec, secrets map[string
 		m.log.Info("job submitted; preparing workspace", "job", spec.ID, "repo", spec.Workspace.Repo, "by", spec.SubmittedBy)
 		go func() {
 			defer cancel()
-			m.prepareAndStart(pctx, e, secrets)
+			m.prepareAndStart(pctx, e, secrets, stdin)
 		}()
 		return m.snapshot(e), nil
 	}
-	if err := m.spawnShim(e, secrets); err != nil {
-		m.failBeforeShim(e, jobs.ExitNotFound, "spawn shim: "+err.Error())
+	if err := m.spawnShim(e, secrets, stdin); err != nil {
+		m.failBeforeShim(e, jobs.ExitNotFound, stdinLost(&spec, "spawn shim: "+err.Error()))
 		return m.snapshot(e), nil
 	}
 	m.log.InfoContext(ctx, "job submitted", "job", spec.ID, "argv", spec.Argv, "by", spec.SubmittedBy) // ctx: trace=<operation>
@@ -484,18 +519,22 @@ func (m *Manager) Submit(ctx context.Context, spec jobs.Spec, secrets map[string
 	}
 }
 
-func (m *Manager) spawnShim(e *entry, secrets map[string]string) error {
+// spawnShim starts the job's shim. Its stdin carries the secrets (one JSON
+// object), then the bytes for the job's stdin.
+func (m *Manager) spawnShim(e *entry, secrets map[string]string, stdin []byte) error {
 	payload, err := json.Marshal(secrets)
 	if err != nil {
 		return err
 	}
+	payload = append(payload, stdin...)
+	clear(stdin) // the copy in payload is the only one now
 	shimLog, err := os.OpenFile(e.dir.Path(jobs.ShimLog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
 	cmd, err := platform.StartDetached(func() *exec.Cmd {
 		c := m.opts.ShimCommand(string(e.dir))
-		c.Stdin = bytes.NewReader(payload) // memory only, never on disk
+		c.Stdin = &zeroingReader{b: payload} // memory only, never on disk
 		c.Stdout, c.Stderr = shimLog, shimLog
 		return c
 	})
@@ -506,10 +545,37 @@ func (m *Manager) spawnShim(e *entry, secrets map[string]string) error {
 	done := e.shimDone
 	go func() {
 		_ = cmd.Wait()
+		clear(payload) // written already unless the shim failed early
 		close(done)
 		m.reconcile(e)
 	}()
 	return nil
+}
+
+// zeroingReader is the shim's stdin: it writes b straight into the pipe
+// (WriterTo: no copy in an intermediate buffer) and zeroes b once it was
+// written completely.
+type zeroingReader struct {
+	b   []byte
+	off int
+}
+
+func (z *zeroingReader) Read(p []byte) (int, error) {
+	if z.off >= len(z.b) {
+		return 0, io.EOF
+	}
+	n := copy(p, z.b[z.off:])
+	z.off += n
+	return n, nil
+}
+
+func (z *zeroingReader) WriteTo(w io.Writer) (int64, error) {
+	n, err := w.Write(z.b[z.off:])
+	z.off += n
+	if err == nil {
+		clear(z.b)
+	}
+	return int64(n), err
 }
 
 // Kill asks the shim to kill the job's tree and waits for a terminal state;
@@ -593,11 +659,20 @@ func (m *Manager) failBeforeShim(e *entry, code int, reason string) {
 	m.longarmdWrite(e, &st, state, &code, reason)
 }
 
+// stdinLost prefixes reason with jobs.StdinLostReason for a job whose
+// stdin payload went with a failed start.
+func stdinLost(spec *jobs.Spec, reason string) string {
+	if spec.StdinBytes > 0 {
+		return jobs.StdinLostReason + " (" + reason + ")"
+	}
+	return reason
+}
+
 // ExitPrepareFailed is the exit code of a job whose workspace could not be
 // prepared.
 const ExitPrepareFailed = 126
 
-func (m *Manager) prepareAndStart(ctx context.Context, e *entry, secrets map[string]string) {
+func (m *Manager) prepareAndStart(ctx context.Context, e *entry, secrets map[string]string, stdin []byte) {
 	workdir, err := m.prepare(ctx, e, secrets)
 	if err == nil && e.dir.KillRequested() {
 		err = context.Canceled
@@ -616,8 +691,8 @@ func (m *Manager) prepareAndStart(ctx context.Context, e *entry, secrets map[str
 		return
 	}
 	m.setStatus(e, &st)
-	if err := m.spawnShim(e, secrets); err != nil {
-		m.failBeforeShim(e, jobs.ExitNotFound, "spawn shim: "+err.Error())
+	if err := m.spawnShim(e, secrets, stdin); err != nil {
+		m.failBeforeShim(e, jobs.ExitNotFound, stdinLost(&e.spec, "spawn shim: "+err.Error()))
 		return
 	}
 	m.log.Info("workspace ready; job started", "job", e.spec.ID, "workdir", workdir)
@@ -647,6 +722,11 @@ func (m *Manager) prepare(ctx context.Context, e *entry, secrets map[string]stri
 func (m *Manager) Remove(id string) error {
 	m.submit.Lock()
 	defer m.submit.Unlock()
+	return m.removeLocked(id)
+}
+
+// removeLocked is Remove with m.submit held.
+func (m *Manager) removeLocked(id string) error {
 	m.mu.Lock()
 	e, ok := m.jobs[id]
 	if !ok {
