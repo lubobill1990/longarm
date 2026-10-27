@@ -70,15 +70,15 @@ func TestFetchAuthEnv(t *testing.T) {
 		}
 	}
 	for req, ok := range map[string]bool{
-		"protocol=https\nhost=dev.azure.com\npath=org/p/_git/r\n":                  true,
-		"protocol=https\nhost=dev.azure.com\npath=org/p/_git/r.git/info/lfs\n":     true,
-		"protocol=https\nhost=DEV.azure.com\npath=org/p/_git/r/info/refs\n":        true,
-		"protocol=http\nhost=dev.azure.com\npath=org/p/_git/r\n":                   false,
-		"protocol=https\nhost=evil.example\npath=org/p/_git/r\n":                   false,
-		"protocol=https\nhost=dev.azure.com\npath=org/p/_git/other\n":              false,
-		"protocol=https\nhost=dev.azure.com\npath=org/p/_git/r2\n":                 false,
-		"protocol=https\nhost=dev.azure.com\n":                                     false,
-		"protocol=https\nhost=dev.azure.com:8443\npath=org/p/_git/r\n":             false,
+		"protocol=https\nhost=dev.azure.com\npath=org/p/_git/r\n":              true,
+		"protocol=https\nhost=dev.azure.com\npath=org/p/_git/r.git/info/lfs\n": true,
+		"protocol=https\nhost=DEV.azure.com\npath=org/p/_git/r/info/refs\n":    true,
+		"protocol=http\nhost=dev.azure.com\npath=org/p/_git/r\n":               false,
+		"protocol=https\nhost=evil.example\npath=org/p/_git/r\n":               false,
+		"protocol=https\nhost=dev.azure.com\npath=org/p/_git/other\n":          false,
+		"protocol=https\nhost=dev.azure.com\npath=org/p/_git/r2\n":             false,
+		"protocol=https\nhost=dev.azure.com\n":                                 false,
+		"protocol=https\nhost=dev.azure.com:8443\npath=org/p/_git/r\n":         false,
 	} {
 		out := askHelper(t, env, req)
 		if ok != (out == "username=x-access-token\npassword="+testToken+"\n") || (!ok && out != "") {
