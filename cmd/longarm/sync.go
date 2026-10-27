@@ -421,11 +421,12 @@ var (
 func fullSHA(s string) bool  { return fullSHARE.MatchString(s) }
 func shortSHA(s string) bool { return !fullSHA(s) && shortSHARE.MatchString(s) }
 
-// usesLFS reports (cheaply, without git-lfs) whether commit's root
-// .gitattributes routes files through the LFS filter.
+// usesLFS reports (cheaply, without git-lfs) whether any .gitattributes
+// of commit (the root's or a nested one) routes files through the LFS
+// filter.
 func (lr *localRepo) usesLFS(commit string) bool {
-	b, err := gitOut(lr.top, nil, "cat-file", "blob", commit+":.gitattributes")
-	return err == nil && bytes.Contains(b, []byte("filter=lfs"))
+	out, _ := gitOut(lr.top, nil, "grep", "-l", "-I", "-F", "-e", "filter=lfs", commit, "--", ":(glob)**/.gitattributes")
+	return len(bytes.TrimSpace(out)) > 0
 }
 
 // lfsObjects lists the LFS objects (oids) of commit and the local LFS

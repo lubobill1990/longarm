@@ -105,6 +105,16 @@ func TestLFSObjects(t *testing.T) {
 	if p, err := lfsObjectsTar(filepath.Join(t.TempDir(), "x.tar"), store, oids, oids); err != nil || p != "" {
 		t.Fatalf("all present: %q %v", p, err)
 	}
+	// LFS attributes in a nested .gitattributes only
+	nested := t.TempDir()
+	gitT(t, nested, "init", "-q")
+	os.MkdirAll(filepath.Join(nested, "assets"), 0o755)
+	os.WriteFile(filepath.Join(nested, "assets", ".gitattributes"), []byte("*.bin filter=lfs diff=lfs merge=lfs -text\n"), 0o644)
+	gitT(t, nested, "add", ".")
+	gitT(t, nested, "commit", "-qm", "c")
+	if lr, _ := openLocalRepo(nested, ""); !lr.usesLFS(gitT(t, nested, "rev-parse", "HEAD")) {
+		t.Fatal("usesLFS misses a nested .gitattributes")
+	}
 	// a repository without LFS
 	plain := t.TempDir()
 	gitT(t, plain, "init", "-q")

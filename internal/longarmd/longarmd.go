@@ -72,6 +72,7 @@ type FileConfig struct {
 	// rotates to out.log.1 (so at most ~2x on disk). Default 1 GiB, 0 = off.
 	MaxLogBytes *int64          `toml:"max_log_bytes"`
 	GC          GCConfig        `toml:"gc"`
+	Workspace   WorkspaceConfig `toml:"workspace"`
 	SSH         SSHConfig       `toml:"ssh"`
 	Hub         HubConfig       `toml:"hub"`
 	Toolchain   ToolchainConfig `toml:"toolchain"`
@@ -174,6 +175,16 @@ type ToolchainConfig struct {
 	Disabled  bool     `toml:"disabled"`
 }
 
+// WorkspaceConfig is the [workspace] section: limits of Git LFS uploads
+// (longarm run / sync --lfs ship) per upload; 0 = the default
+// (workspace.DefaultLFSLimits: 4 GiB per object, 16 GiB and 50000 objects
+// per upload). Per-user isolation's helpers use the defaults.
+type WorkspaceConfig struct {
+	LFSMaxObjectBytes int64 `toml:"lfs_max_object_bytes"`
+	LFSMaxTotalBytes  int64 `toml:"lfs_max_total_bytes"`
+	LFSMaxObjects     int   `toml:"lfs_max_objects"`
+}
+
 // GCConfig is the [gc] section: automatic cleanup of job/session dirs,
 // their worktrees and staging data, and unused mirrors.
 type GCConfig struct {
@@ -224,6 +235,7 @@ type Config struct {
 	LogFile      string // "" = stderr only
 	MaxLogBytes  int64
 	GC           GCConfig // with defaults applied
+	Workspace    WorkspaceConfig
 	SSH          SSHConfig
 	Hub          HubConfig // address from hub.toml if unset there
 	HubPollToken string    // pending enrollment (longarmd join --no-wait)
@@ -273,6 +285,7 @@ func LoadConfig(dataDir string, listenOverride []string) (Config, error) {
 		cfg.MaxLogBytes = *fc.MaxLogBytes
 	}
 	cfg.GC = fc.GC
+	cfg.Workspace = fc.Workspace
 	if cfg.GC.Keep.Duration <= 0 {
 		cfg.GC.Keep.Duration = DefaultGCKeep
 	}
@@ -868,7 +881,8 @@ type state struct {
 }
 
 func openState(ctx context.Context, cfg Config, log *slog.Logger) (*state, error) {
-	shared := &workspace.Store{Root: cfg.DataDir}
+	shared := &workspace.Store{Root: cfg.DataDir, LFSLimits: workspace.LFSLimits{MaxObjectBytes: cfg.Workspace.LFSMaxObjectBytes,
+		MaxTotalBytes: cfg.Workspace.LFSMaxTotalBytes, MaxObjects: cfg.Workspace.LFSMaxObjects}}
 	sp, err := userspace.Open(ctx, userspace.Config{
 		Mode: cfg.Isolation.Mode, DataDir: cfg.DataDir, UsersDir: cfg.Isolation.UsersDir,
 		Prefix: cfg.Isolation.AccountPrefix, CgroupRoot: cfg.Isolation.CgroupRoot, Loopback: cfg.Isolation.Loopback, Log: log, Prepare: shared.PrepareJob,

@@ -14,16 +14,25 @@ import (
 // staged), checks it out as <data>/worktrees/<job-id> and applies staged
 // uncommitted changes. Progress goes to log (the job's out.log).
 func (s *Store) PrepareJob(ctx context.Context, d jobs.Dir, spec jobs.Spec, secrets map[string]string, log io.Writer) (string, error) {
+	dir, err := s.prepareJob(ctx, spec, secrets, log)
+	if err != nil {
+		// The reason is persisted (status.json) and logged: no URL credentials.
+		return "", errors.New(RedactURLs(err.Error()))
+	}
+	return dir, nil
+}
+
+func (s *Store) prepareJob(ctx context.Context, spec jobs.Spec, secrets map[string]string, log io.Writer) (string, error) {
 	w := spec.Workspace
 	if w == nil {
 		return "", errors.New("no workspace")
 	}
 	commit := w.Commit
 	if w.URL != "" {
-		fmt.Fprintf(log, "longarmd: fetching %s %s into mirror %s\n", w.URL, w.Ref, w.Repo)
+		fmt.Fprintf(log, "longarmd: fetching %s %s into mirror %s\n", RedactURLs(w.URL), w.Ref, w.Repo)
 		c, err := s.FetchURL(ctx, w.Repo, w.URL, w.Ref, secrets["GH_TOKEN"], log)
 		if err != nil {
-			fmt.Fprintf(log, "longarmd: %v\n", err)
+			fmt.Fprintf(log, "longarmd: %s\n", RedactURLs(err.Error()))
 			return "", err
 		}
 		if commit != "" && commit != c {

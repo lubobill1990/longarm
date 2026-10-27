@@ -209,15 +209,32 @@ job's `out.log` says so). `--lfs ship` (needs git-lfs on both sides) also
 sends the commit's LFS objects the worker lacks from the local LFS store
 (`git lfs ls-files` of the commit; objects not fetched locally are reported
 and stay pointers) into the mirror's LFS store, and `git lfs checkout` fills
-in the files. The mirror's LFS filter is set to skip the smudge for the
+in the files. LFS attributes count in any `.gitattributes`, nested ones
+included. The mirror's LFS filter is set to skip the smudge for the
 job's own git too (a later checkout doesn't fail on missing content);
 `git status` stays clean. With `--repo <url>` LFS files are pointer files.
+The worker accepts plain files named by their sha256 only (no sparse or
+other special tar entries), verifies every object's hash and bounds each
+upload: by default 4 GiB per object, 16 GiB and 50000 objects in total -
+in longarmd.toml:
+
+```toml
+[workspace]
+lfs_max_object_bytes = 4294967296
+lfs_max_total_bytes = 17179869184
+lfs_max_objects = 50000
+```
+
+(per-user isolation's helpers use the defaults).
 
 **Clone URLs** are fetched by the worker as its own account, without any
 prompt (`GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`): a remote that
 needs an interactive sign-in - e.g. Azure DevOps through Git Credential
 Manager - fails fast with "the worker could not authenticate (... 401/403
-...)". Ship the commits from your machine instead (`--repo .`, a local
+...)". Credentials in a clone URL (`https://user:pass@`, `https://TOKEN@`)
+are masked in the job's log and failure reason; prefer a credential on the
+worker or `GH_TOKEN` over a URL with credentials, which is stored with the
+job's spec. Ship the commits from your machine instead (`--repo .`, a local
 checkout), or give the worker account a credential that works without a
 prompt (a PAT in its credential store, an ssh key; GitHub: the job's
 `GH_TOKEN` secret).

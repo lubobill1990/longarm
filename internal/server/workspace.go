@@ -70,6 +70,7 @@ func (w *workspaceServer) Sync(st pb.Workspace_SyncServer) error {
 		pb.SyncPart_SYNC_PART_BUNDLE: "bundle", pb.SyncPart_SYNC_PART_PATCH: "patch",
 		pb.SyncPart_SYNC_PART_UNTRACKED_TAR: "untracked.tar", pb.SyncPart_SYNC_PART_LFS_TAR: "lfs.tar",
 	}
+	lfsMax := w.s.ws().MaxLFSUploadBytes()
 	files := map[pb.SyncPart]*os.File{}
 	sizes := map[pb.SyncPart]int64{}
 	closeAll := func() {
@@ -103,6 +104,10 @@ func (w *workspaceServer) Sync(st pb.Workspace_SyncServer) error {
 				return status.Error(codes.Internal, err.Error())
 			}
 			files[d.Part] = f
+		}
+		if d.Part == pb.SyncPart_SYNC_PART_LFS_TAR && sizes[d.Part]+int64(len(d.Data)) > lfsMax {
+			closeAll()
+			return status.Errorf(codes.ResourceExhausted, "lfs objects: more than the worker's limit of %d bytes per upload", lfsMax)
 		}
 		if _, err := f.Write(d.Data); err != nil {
 			closeAll()

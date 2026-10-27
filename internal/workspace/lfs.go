@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"archive/tar"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // Git LFS (docs/usage.md "Git LFS"). A shipped repository's LFS content is
@@ -57,65 +57,164 @@ func (s *Store) LFSPresent(repo string, oids []string) []string {
 	return have
 }
 
-// ImportLFS stores the objects of a tar (entries named by their oid) in
-// the mirror's LFS store; every object's content must hash to its name.
-// It returns how many objects were added.
+// LFSLimits bound what one ImportLFS accepts (zero fields: the defaults).
+// Every object's size is known from its tar header before anything is
+// written, so oversized uploads fail before they cost disk or CPU.
+type LFSLimits struct {
+	MaxObjectBytes int64 // one object
+	MaxTotalBytes  int64 // all objects of one upload
+	MaxObjects     int   // objects of one upload
+}
+
+// DefaultLFSLimits: 4 GiB per object, 16 GiB and 50000 objects per upload.
+var DefaultLFSLimits = LFSLimits{MaxObjectBytes: 4 << 30, MaxTotalBytes: 16 << 30, MaxObjects: 50000}
+
+func (s *Store) lfsLimits() LFSLimits {
+	l := s.LFSLimits
+	if l.MaxObjectBytes <= 0 {
+		l.MaxObjectBytes = DefaultLFSLimits.MaxObjectBytes
+	}
+	if l.MaxTotalBytes <= 0 {
+		l.MaxTotalBytes = DefaultLFSLimits.MaxTotalBytes
+	}
+	if l.MaxObjects <= 0 {
+		l.MaxObjects = DefaultLFSLimits.MaxObjects
+	}
+	return l
+}
+
+// MaxLFSUploadBytes caps the uploaded LFS tar (Workspace.Sync): the
+// objects' limit plus room for tar headers and padding.
+func (s *Store) MaxLFSUploadBytes() int64 {
+	l := s.lfsLimits()
+	return l.MaxTotalBytes + int64(l.MaxObjects)*4096 + 1<<20
+}
+
+// ctxReader stops reading once ctx ends.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
+// ImportLFS stores the objects of a tar (regular entries named by their
+// oid) in the mirror's LFS store; every object's content must hash to its
+// name. Sparse and other non-regular entries are refused, sizes and counts
+// are bounded (LFSLimits), ctx cancels. Objects are verified in a staging
+// dir without the mirror's lock, which is held only to move them in. It
+// returns how many objects were added.
 func (s *Store) ImportLFS(ctx context.Context, repo, tarPath string) (int, error) {
 	m, err := s.ensureMirror(ctx, repo)
 	if err != nil {
 		return 0, err
 	}
-	unlock := s.lock(repo)
-	defer unlock()
+	lim := s.lfsLimits()
 	f, err := os.Open(tarPath)
 	if err != nil {
 		return 0, err
 	}
 	defer f.Close()
-	tmpDir := filepath.Join(m, "lfs", "tmp")
-	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(m, "lfs", "tmp"), 0o755); err != nil {
 		return 0, err
 	}
-	n := 0
+	stage, err := os.MkdirTemp(filepath.Join(m, "lfs", "tmp"), "import-")
+	if err != nil {
+		return 0, err
+	}
+	defer removeAll(stage)
+	var verified []string
+	var total int64
+	count := 0
 	tr := tar.NewReader(f)
 	for {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return n, nil
+			break
 		}
 		if err != nil {
-			return n, err
+			return 0, fmt.Errorf("lfs tar: %w", err)
 		}
-		if h.Typeflag != tar.TypeReg || !ValidLFSOid(h.Name) {
-			return n, fmt.Errorf("lfs tar: unexpected entry %q", h.Name)
+		if err := checkLFSEntry(h); err != nil {
+			return 0, err
 		}
-		dst := s.lfsObject(repo, h.Name)
+		if count++; count > lim.MaxObjects {
+			return 0, fmt.Errorf("lfs tar: more than %d objects (the worker's limit)", lim.MaxObjects)
+		}
+		if h.Size > lim.MaxObjectBytes {
+			return 0, fmt.Errorf("lfs object %s: %d bytes, more than the worker's limit of %d", h.Name, h.Size, lim.MaxObjectBytes)
+		}
+		if total += h.Size; total > lim.MaxTotalBytes {
+			return 0, fmt.Errorf("lfs objects: more than the worker's limit of %d bytes per upload", lim.MaxTotalBytes)
+		}
+		if _, err := os.Stat(s.lfsObject(repo, h.Name)); err == nil {
+			continue
+		}
+		if err := copyLFSObject(ctx, filepath.Join(stage, h.Name), h, tr); err != nil {
+			return 0, err
+		}
+		verified = append(verified, h.Name)
+	}
+	unlock := s.lock(repo)
+	defer unlock()
+	n := 0
+	for _, oid := range verified {
+		dst := s.lfsObject(repo, oid)
 		if _, err := os.Stat(dst); err == nil {
 			continue
 		}
-		tmp, err := os.CreateTemp(tmpDir, "obj-")
-		if err != nil {
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return n, err
 		}
-		hash := sha256.New()
-		_, err = io.Copy(io.MultiWriter(tmp, hash), tr)
-		if cerr := tmp.Close(); err == nil {
-			err = cerr
-		}
-		if err == nil && hex.EncodeToString(hash.Sum(nil)) != h.Name {
-			err = fmt.Errorf("lfs object %s: content does not match its oid", h.Name)
-		}
-		if err == nil {
-			if err = os.MkdirAll(filepath.Dir(dst), 0o755); err == nil {
-				err = os.Rename(tmp.Name(), dst)
-			}
-		}
-		if err != nil {
-			os.Remove(tmp.Name())
+		if err := os.Rename(filepath.Join(stage, oid), dst); err != nil {
 			return n, err
 		}
 		n++
 	}
+	return n, nil
+}
+
+// checkLFSEntry accepts plain regular files named by an oid only: no
+// sparse files (a small upload expanding to a huge object), links, dirs.
+func checkLFSEntry(h *tar.Header) error {
+	if h.Typeflag != tar.TypeReg || !ValidLFSOid(h.Name) || h.Size < 0 {
+		return fmt.Errorf("lfs tar: unexpected entry %q (type %q)", h.Name, h.Typeflag)
+	}
+	for k := range h.PAXRecords {
+		if strings.HasPrefix(k, "GNU.sparse.") {
+			return fmt.Errorf("lfs tar: sparse entry %q refused", h.Name)
+		}
+	}
+	return nil
+}
+
+// copyLFSObject writes exactly h.Size bytes of r to dst and checks that
+// they hash to h.Name.
+func copyLFSObject(ctx context.Context, dst string, h *tar.Header, r io.Reader) error {
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	hash := sha256.New()
+	n, err := io.Copy(io.MultiWriter(out, hash), ctxReader{ctx, io.LimitReader(r, h.Size)})
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil && n != h.Size {
+		err = fmt.Errorf("lfs object %s: truncated", h.Name)
+	}
+	if err == nil && hex.EncodeToString(hash.Sum(nil)) != h.Name {
+		err = fmt.Errorf("lfs object %s: content does not match its oid", h.Name)
+	}
+	return err
 }
 
 // lfsInstalled reports whether git-lfs is installed here.
@@ -126,12 +225,15 @@ func (s *Store) lfsInstalled(ctx context.Context) bool {
 	return s.lfsOK
 }
 
-// usesLFS reports whether the worktree's root .gitattributes routes files
-// through the LFS filter.
-func usesLFS(dir string) bool {
-	b, err := os.ReadFile(filepath.Join(dir, ".gitattributes"))
-	return err == nil && bytes.Contains(b, []byte("filter=lfs"))
+// usesLFS reports whether any tracked .gitattributes of the worktree (the
+// root's or a nested one) routes files through the LFS filter.
+func (s *Store) usesLFS(ctx context.Context, dir string) bool {
+	out, _ := s.run(ctx, dir, nil, nil, "grep", "-l", "-I", "-F", "-e", "filter=lfs", "--", lfsAttrPathspec)
+	return strings.TrimSpace(out) != ""
 }
+
+// lfsAttrPathspec matches every .gitattributes, the root's included.
+const lfsAttrPathspec = ":(glob)**/.gitattributes"
 
 // hasLFSStore reports whether the mirror holds any LFS objects (git-lfs
 // may have made empty directories there).
@@ -162,7 +264,8 @@ var lfsFilterConfig = [][2]string{
 // fills in the LFS files whose content the mirror holds; it notes on log
 // what stays a pointer file.
 func (s *Store) checkoutLFS(ctx context.Context, repo, mirror, dst string, log io.Writer) error {
-	if !usesLFS(dst) {
+	shipped := s.hasLFSStore(repo)
+	if !shipped && !s.usesLFS(ctx, dst) {
 		return nil
 	}
 	note := func(format string, a ...any) {
@@ -181,7 +284,7 @@ func (s *Store) checkoutLFS(ctx context.Context, repo, mirror, dst string, log i
 			}
 		}
 	}
-	if !s.hasLFSStore(repo) {
+	if !shipped {
 		note("this repository uses Git LFS: LFS files are pointer files (their content was not shipped; longarm run --lfs ship sends it)")
 		return nil
 	}

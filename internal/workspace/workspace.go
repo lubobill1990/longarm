@@ -83,6 +83,8 @@ func RepoKey(s string) string {
 type Store struct {
 	Root string // longarmd data dir
 	Git  string // git executable (default "git")
+	// LFSLimits bound LFS uploads (zero: DefaultLFSLimits).
+	LFSLimits LFSLimits
 	// Prune replaces PruneAll's git runs (per-user isolation: the user's
 	// mirrors are pruned as the user).
 	Prune func(ctx context.Context)
@@ -140,23 +142,68 @@ func (s *Store) run(ctx context.Context, dir string, env []string, log io.Writer
 	// Never wait for a prompt nobody sees: git's own, an askpass helper's,
 	// or Git Credential Manager's sign-in window.
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "GCM_INTERACTIVE=never", "LC_ALL=C"), env...)
+	// One writer for both streams: exec then never calls it concurrently.
+	// What goes to log (a job's out.log) has URL credentials masked.
 	var out bytes.Buffer
+	var rlog *redactWriter
+	var w io.Writer = &out
 	if log != nil {
-		cmd.Stdout = io.MultiWriter(&out, log)
-		cmd.Stderr = io.MultiWriter(&out, log)
-	} else {
-		cmd.Stdout, cmd.Stderr = &out, &out
+		rlog = &redactWriter{w: log}
+		w = io.MultiWriter(&out, rlog)
 	}
+	cmd.Stdout, cmd.Stderr = w, w
 	cmd.WaitDelay = 5 * time.Second
 	err := cmd.Run()
+	if rlog != nil {
+		rlog.flush()
+	}
 	if err != nil {
 		msg := strings.TrimSpace(out.String())
 		if len(msg) > 2000 {
 			msg = msg[len(msg)-2000:]
 		}
-		return out.String(), fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, msg)
+		return out.String(), fmt.Errorf("git %s: %v: %s", RedactURLs(strings.Join(args, " ")), err, RedactURLs(msg))
 	}
 	return out.String(), nil
+}
+
+// urlUserinfo matches the userinfo of a URL ("https://user:pass@",
+// "https://token@").
+var urlUserinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#@'"]+@`)
+
+// RedactURLs masks the userinfo (user and password: a PAT is often the
+// user) of every URL in s.
+func RedactURLs(s string) string {
+	return urlUserinfo.ReplaceAllString(s, "${1}xxxxx@")
+}
+
+// redactWriter passes lines through RedactURLs.
+type redactWriter struct {
+	w   io.Writer
+	buf []byte
+}
+
+func (r *redactWriter) Write(p []byte) (int, error) {
+	r.buf = append(r.buf, p...)
+	for {
+		i := bytes.IndexAny(r.buf, "\r\n")
+		if i < 0 {
+			break
+		}
+		r.w.Write([]byte(RedactURLs(string(r.buf[:i+1]))))
+		r.buf = r.buf[i+1:]
+	}
+	if len(r.buf) > 64<<10 { // no line end in sight
+		r.flush()
+	}
+	return len(p), nil
+}
+
+func (r *redactWriter) flush() {
+	if len(r.buf) > 0 {
+		r.w.Write([]byte(RedactURLs(string(r.buf))))
+		r.buf = nil
+	}
 }
 
 func (s *Store) ensureMirror(ctx context.Context, repo string) (string, error) {
@@ -327,13 +374,14 @@ var authFailure = regexp.MustCompile(`(?i)(returned error: 40[13]|HTTP 40[13]|\b
 // non-interactively - a credential helper that needs a sign-in (Git
 // Credential Manager for Azure DevOps) can't ask anyone.
 func fetchError(u string, withToken bool, err error) error {
+	u = RedactURLs(u)
 	m := authFailure.FindString(err.Error())
 	if m == "" {
-		return err
+		return errors.New(RedactURLs(err.Error()))
 	}
 	host := u
 	if pu, perr := url.Parse(u); perr == nil && pu.Host != "" {
-		host, u = pu.Host, pu.Redacted()
+		host = pu.Host
 	}
 	how := "a credential that works without a prompt for " + host + " in the worker account's git config " +
 		"(a PAT in its credential store, an ssh key; GitHub: the job's GH_TOKEN secret, --secret-env GH_TOKEN)"
@@ -342,7 +390,7 @@ func fetchError(u string, withToken bool, err error) error {
 	}
 	return fmt.Errorf("fetching %s: the worker could not authenticate (%s): it fetches as its own account and "+
 		"can't prompt for a sign-in (e.g. Git Credential Manager). Ship the commits from your machine instead - "+
-		"longarm run --repo <local checkout> (e.g. --repo .) - or give the worker %s: %w", u, m, how, err)
+		"longarm run --repo <local checkout> (e.g. --repo .) - or give the worker %s: %s", u, m, how, RedactURLs(err.Error()))
 }
 
 // Checkout makes path a worktree of repo's mirror at commit (detached;

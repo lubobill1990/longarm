@@ -9,8 +9,11 @@
   server: "batch request: missing protocol"). Default `skip`: LFS files are
   pointer files on the worker (noted by longarm and in the job's log);
   `ship` also sends the commit's LFS objects the worker's mirror lacks, and
-  the worktree gets their content (`git lfs checkout`). `longarm sync
-  --lfs` alike ([docs/usage.md](docs/usage.md#port-forwarding-files-code-sync)).
+  the worktree gets their content (`git lfs checkout`); LFS attributes in
+  nested `.gitattributes` count too. The worker refuses sparse and other
+  non-regular tar entries and bounds each upload (default 4 GiB per object,
+  16 GiB / 50000 objects in total; `[workspace] lfs_max_*` in
+  longarmd.toml). `longarm sync --lfs` alike ([docs/usage.md](docs/usage.md#port-forwarding-files-code-sync)).
 - `--ref <full commit id>` for local checkouts (`longarm run --repo`,
   `longarm sync`): the commit is shipped (also one on no branch) and checked
   out detached. Short ids are refused with the full id in the message.
@@ -62,7 +65,9 @@
   Credential Manager on the worker) fails with an error naming the cause
   and the ways out (`--repo .` to ship from the client, or a non-interactive
   credential on the worker); worker-side git never waits for Git Credential
-  Manager's sign-in (`GCM_INTERACTIVE=never`).
+  Manager's sign-in (`GCM_INTERACTIVE=never`). URL credentials (user and
+  password, or a token as the user) are masked in workspace git errors,
+  the job's log and its failure reason.
 - `longarmd join` / `longarmd login` (and longarmd's start) warn when the
   data dir is under a `.claude` directory: Claude Code denies writes there,
   so its jobs could not edit their worktrees.
