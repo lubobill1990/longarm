@@ -8,7 +8,7 @@
   `longarm session start [<worker>|auto] -s NAME [--repo ... --ref ... --lfs ...] [--json] -- cmd`
   creates a session without attaching (idempotent by name: same spec =
   `"created": false`, another = exit 2; placed by the hub like `run`
-  without a worker; `--repo` gives it a worktree `worktrees/s.<name>` that
+  without a worker; `--repo` gives it a worktree `worktrees/s.<name>.<generation>` that
   lives as long as the session's data). `longarm session send` types input
   (`--text`, `--stdin-file`, `--key esc|enter|ctrl-c|...`, `--raw`) as one
   contiguous terminal write that never interleaves with an attached user's

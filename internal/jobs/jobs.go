@@ -22,6 +22,7 @@ package jobs
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -158,14 +159,38 @@ const (
 	FeatureFileTail          = "file-tail"            // Files.Tail
 )
 
-// SessionWorktreeKey names the worktree of session name under
-// <data>/worktrees: the "." keeps it apart from job ids (ValidID).
-func SessionWorktreeKey(name string) string { return "s." + name }
+// SessionWorktreeKey names the worktree of one generation of session name
+// (created: its spec's CreatedAt) under <data>/worktrees: "s.<name>.<gen>".
+// The dots keep it apart from job ids (ValidID); the generation keeps a
+// session that replaced an ended one of the name off the old one's
+// worktree, which is removed concurrently.
+func SessionWorktreeKey(name string, created time.Time) string {
+	return "s." + name + "." + strconv.FormatInt(created.UnixNano(), 36)
+}
+
+// ParseSessionWorktreeKey splits a SessionWorktreeKey.
+func ParseSessionWorktreeKey(k string) (name, gen string, ok bool) {
+	rest, ok := strings.CutPrefix(k, "s.")
+	if !ok {
+		return "", "", false
+	}
+	i := strings.LastIndexByte(rest, '.')
+	if i < 0 {
+		return "", "", false
+	}
+	name, gen = rest[:i], rest[i+1:]
+	if !ValidID(name) || !genRE.MatchString(gen) {
+		return "", "", false
+	}
+	return name, gen, true
+}
+
+var genRE = regexp.MustCompile(`^-?[0-9a-z]{1,16}$`)
 
 // ValidWorktreeKey reports whether k is a job id or a SessionWorktreeKey.
 func ValidWorktreeKey(k string) bool {
-	if name, ok := strings.CutPrefix(k, "s."); ok {
-		return ValidID(name)
+	if _, _, ok := ParseSessionWorktreeKey(k); ok {
+		return true
 	}
 	return ValidID(k)
 }

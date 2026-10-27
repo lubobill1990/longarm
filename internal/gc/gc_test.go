@@ -123,12 +123,16 @@ func TestCollectSessionWorktrees(t *testing.T) {
 	old := now.Add(-48 * time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	wt := func(name string) string {
-		p := filepath.Join(root, workspace.WorktreesDir, jobs.SessionWorktreeKey(name))
+		p := filepath.Join(root, workspace.WorktreesDir, jobs.SessionWorktreeKey(name, now))
 		os.MkdirAll(p, 0o755)
 		os.Chtimes(p, old, old)
 		return p
 	}
 	live, kept, ended, gone := wt("live"), wt("kept"), wt("ended"), wt("gone")
+	// an older generation of "live" (the session that ended and was replaced)
+	oldGen := filepath.Join(root, workspace.WorktreesDir, jobs.SessionWorktreeKey("live", now.Add(-time.Hour)))
+	os.MkdirAll(oldGen, 0o755)
+	os.Chtimes(oldGen, old, old)
 	// A job id equal to a session name must not protect or remove it.
 	mkJob(t, root, "jobs", "gone", jobs.Running, time.Time{}, "")
 	mkJob(t, root, "sessions", "live", jobs.Running, time.Time{}, live)
@@ -153,7 +157,7 @@ func TestCollectSessionWorktrees(t *testing.T) {
 			t.Errorf("%s removed: %+v", p, res)
 		}
 	}
-	for _, p := range []string{ended, gone} {
+	for _, p := range []string{ended, gone, oldGen} {
 		if _, err := os.Stat(p); err == nil {
 			t.Errorf("%s survived: %+v", p, res)
 		}

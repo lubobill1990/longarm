@@ -96,7 +96,8 @@ func (c *Collector) Run(ctx context.Context, o Options) Result {
 		}
 		name := cd.kind + "/" + cd.job.Spec.ID
 		if !o.DryRun {
-			if err := cd.mgr.Remove(cd.job.Spec.ID); err != nil {
+			// this generation only: a session that replaced it keeps its data
+			if err := cd.mgr.RemoveGen(cd.job.Spec.ID, cd.job.Spec.CreatedAt); err != nil {
 				log.Warn("gc: remove", "what", name, "err", err)
 				return
 			}
@@ -173,7 +174,7 @@ func (c *Collector) collectStaging(o Options, res *Result) {
 }
 
 // collectOrphanWorktrees removes worktrees/<id> whose job no longer exists
-// and worktrees/s.<name> whose session no longer exists (e.g. preparation
+// and worktrees/s.<name>.<gen> whose session generation no longer exists (e.g. preparation
 // failed and the job dir was collected, or longarmd died).
 func (c *Collector) collectOrphanWorktrees(ctx context.Context, o Options, res *Result) {
 	if c.Jobs == nil || c.WS == nil {
@@ -185,12 +186,14 @@ func (c *Collector) collectOrphanWorktrees(ctx context.Context, o Options, res *
 		if !e.IsDir() || !jobs.ValidWorktreeKey(e.Name()) {
 			continue
 		}
-		if name, ok := strings.CutPrefix(e.Name(), "s."); ok {
+		if name, _, ok := jobs.ParseSessionWorktreeKey(e.Name()); ok {
 			if c.Sessions == nil {
 				continue
 			}
-			if _, err := c.Sessions.Get(name); err == nil {
-				continue // live, or ended and kept: removed with it
+			// live, or ended and kept: removed with it - if it is this
+			// generation's worktree (a replaced session's is an orphan)
+			if j, err := c.Sessions.Get(name); err == nil && filepath.Base(j.Status.Workdir) == e.Name() {
+				continue
 			}
 		} else if _, err := c.Jobs.Get(e.Name()); err == nil {
 			continue

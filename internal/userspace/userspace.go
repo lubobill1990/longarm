@@ -226,14 +226,14 @@ func (s *Spaces) newManager(dir, kind string, prepare func(context.Context, jobs
 }
 
 // sessionPrepare is the Prepare hook of sessions started with a workspace:
-// the job hook with the session's worktree name (worktrees/s.<name>, never
-// a job's).
+// the job hook with the session's worktree name (worktrees/s.<name>.<gen>:
+// never a job's, nor another generation's of the name).
 func sessionPrepare(prepare func(context.Context, jobs.Dir, jobs.Spec, map[string]string, *jobs.GitAuth, io.Writer) (string, error)) func(context.Context, jobs.Dir, jobs.Spec, map[string]string, *jobs.GitAuth, io.Writer) (string, error) {
 	if prepare == nil {
 		return nil
 	}
 	return func(ctx context.Context, d jobs.Dir, spec jobs.Spec, secrets map[string]string, auth *jobs.GitAuth, log io.Writer) (string, error) {
-		spec.ID = jobs.SessionWorktreeKey(spec.ID)
+		spec.ID = jobs.SessionWorktreeKey(spec.ID, spec.CreatedAt)
 		return prepare(ctx, d, spec, secrets, auth, log)
 	}
 }
@@ -560,10 +560,11 @@ func (s *Spaces) SubmitJob(ctx context.Context, sp *Space, spec jobs.Spec, secre
 	return sp.Jobs.SubmitWith(ctx, spec, secrets, in)
 }
 
-// SubmitSession submits a session spec in sp.
-func (s *Spaces) SubmitSession(ctx context.Context, sp *Space, spec jobs.Spec, secrets map[string]string) (supervisor.Job, error) {
+// SubmitSession submits a session spec in sp; created is false when an
+// identical session existed (decided under the manager's submit lock).
+func (s *Spaces) SubmitSession(ctx context.Context, sp *Space, spec jobs.Spec, secrets map[string]string) (supervisor.Job, bool, error) {
 	spec.RunAs = sp.RunAs(SessionsDir, spec.ID)
-	return sp.Sessions.Submit(ctx, spec, secrets)
+	return sp.Sessions.SubmitCreated(ctx, spec, secrets, supervisor.Input{})
 }
 
 // RunningJobs counts active jobs of every space.

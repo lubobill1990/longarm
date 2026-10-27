@@ -63,6 +63,9 @@ type InfoState struct {
 	// Send answers: whether the bytes were written (false: input arrived
 	// within the idle window).
 	Sent bool `json:"sent,omitempty"`
+	// Error: the terminal write failed or was short (Sent is false; some
+	// bytes may have been written).
+	Error string `json:"error,omitempty"`
 }
 
 // SendPayload encodes a Send frame: [ifIdleMs uint32][source len byte][source][data].

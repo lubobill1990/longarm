@@ -2,6 +2,8 @@ package shim
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -61,5 +63,25 @@ func TestHubInputContiguousAndIdle(t *testing.T) {
 	h.output([]byte("o"))
 	if h.info().LastOutput.IsZero() {
 		t.Fatal("no last output")
+	}
+}
+
+type failWriter struct{ n int }
+
+func (w failWriter) Write(p []byte) (int, error) {
+	if w.n >= 0 {
+		return min(w.n, len(p)), nil // short, without an error
+	}
+	return 0, io.ErrClosedPipe
+}
+
+// A write that fails or is short is never reported as sent.
+func TestHubInputWriteErrors(t *testing.T) {
+	h := &hub{clients: map[*client]struct{}{}}
+	if sent, err := h.input(failWriter{n: -1}, []byte("abc"), attach.SourceSend, 0); sent || err == nil || h.info().InputSeq != 0 {
+		t.Fatalf("failed write: sent=%v err=%v seq=%d", sent, err, h.info().InputSeq)
+	}
+	if sent, err := h.input(failWriter{n: 1}, []byte("abc"), attach.SourceSend, 0); sent || !errors.Is(err, io.ErrShortWrite) || h.info().InputSeq != 1 {
+		t.Fatalf("short write: sent=%v err=%v seq=%d", sent, err, h.info().InputSeq)
 	}
 }

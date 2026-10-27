@@ -383,10 +383,12 @@ longarm session stop w1 -s agent1 --grace 10s                    # Ctrl-C, then 
   index does not track sessions.
 - `--repo` prepares a git worktree like `run --repo` (a local checkout is
   synced; a URL is fetched by the worker, with the `GH_TOKEN` secret if
-  given) at `<data>/worktrees/s.<name>` (in the user's space with per-user
-  isolation). It lives as long as the session's data: never removed while
-  the session runs; removed when the ended session is collected (`[gc]
-  keep`, `longarm admin gc`) or replaced by a new session of the name.
+  given) at `<data>/worktrees/s.<name>.<generation>` (in the user's space
+  with per-user isolation; the generation keeps a session that replaces an
+  ended one of the name off the old worktree, which is removed meanwhile).
+  It lives as long as the session's data: never removed while the session
+  runs; removed when the ended session is collected (`[gc] keep`, `longarm
+  admin gc`) or replaced by a new session of the name.
 - start returns when the session runs. If it ended before - workspace
   preparation failed (126), the program did not start (127) or it exited
   at once (its code) - start exits with that code (killed 137, lost 254)
@@ -421,8 +423,14 @@ longarm session stop w1 -s agent1 --grace 10s                    # Ctrl-C, then 
   longarmd's logs. The terminal transcript (`logs --session`) holds what the
   terminal shows - which includes input the program echoes, as TUIs and
   shells do.
-- Exit codes: 0 written; 2 the session has ended (or usage, or a worker
-  without `session-send`); 3 no such session; 75 `--if-idle-ms` refused.
+- Exit codes: 0 written (all of it); 2 the session has ended (or usage,
+  or a worker without `session-send`); 3 no such session; 75
+  `--if-idle-ms` refused. A terminal write that fails or is short (the
+  program is exiting) is never reported as written: exit 2 when the
+  session has ended meanwhile, else 255 (some bytes may have arrived).
+- In shared isolation with users separated, session names are one
+  namespace: a name another user holds is `AlreadyExists` (start) or not
+  found (send, stop, sessions), never that user's session.
 
 **`longarm session stop [<worker>] -s NAME [--grace 10s] [--json]`**
 
@@ -435,7 +443,11 @@ for the program to exit, then kills the whole process tree like `attach
 worker carries this out even if longarm goes away meanwhile (grace at most
 10 minutes). Prints `<session> <state>` (`--json`: the session as in
 `sessions --json`); an ended session is reported as it is (exit 0); exit 3:
-no such session. `attach --kill` stays (no grace).
+no such session. Every step is bound to the session found first: if it
+ends and a new session takes the name meanwhile (a concurrent `start`), the
+new one is never sent Ctrl-C or killed, and stop reports the original as
+`lost` ("ended and was replaced ... before stop saw its outcome").
+`attach --kill` stays (no grace).
 
 **`longarm sessions [<worker>] [--all] [-s NAME] [--json]`**
 
@@ -499,8 +511,14 @@ the user's account); one audit record per `tail`. `--json` prints one
 object per line of the file: `{"offset": 0, "next": 8, "line": "{\"e\":1}"}`
 (`next` is where `--from-offset` resumes after it); a truncation gives
 `{"offset": 0, "next": 0, "line": "", "truncated": true}`; without `-f` an
-unterminated last line comes with `"partial": true`. Exit 3: no such file
-(without `-f`).
+unterminated last line comes with `"partial": true`. A line longer than
+1 MiB comes as `"partial": true` fragments of at most 1 MiB (cut between
+characters, offsets contiguous), then its last part; longarm's memory stays
+bounded whatever the file holds. Exit 3: no such file (without `-f`; with
+`-f` when it has not appeared for an hour). Exit 75: too many tails are
+open on the worker - at most 8 per user and 64 in total by default (with
+per-user isolation each holds a helper process), `[files] max_tails_per_user`
+/ `max_tails` in longarmd.toml (-1 = no cap).
 
 **Terminals and attaching.** `longarm attach` works with its stdin/stdout
 on a pseudo terminal - also a ConPTY on Windows, as when a desktop app runs

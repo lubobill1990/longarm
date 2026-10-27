@@ -157,7 +157,8 @@ type hub struct {
 }
 
 // input writes p to the terminal as one write and records it. With
-// ifIdle > 0 it writes only if no input arrived within ifIdle.
+// ifIdle > 0 it writes only if no input arrived within ifIdle (false, nil).
+// A failed or short write is (false, err): never reported as sent.
 func (h *hub) input(w io.Writer, p []byte, source string, ifIdle time.Duration) (bool, error) {
 	h.in.Lock()
 	defer h.in.Unlock()
@@ -167,10 +168,15 @@ func (h *hub) input(w io.Writer, p []byte, source string, ifIdle time.Duration) 
 	if len(p) == 0 {
 		return true, nil
 	}
-	_, err := w.Write(p)
-	h.inSeq++
-	h.lastIn, h.lastFrom = time.Now().UTC(), source
-	return true, err
+	n, err := w.Write(p)
+	if err == nil && n < len(p) {
+		err = io.ErrShortWrite
+	}
+	if n > 0 { // the terminal got (some of) it
+		h.inSeq++
+		h.lastIn, h.lastFrom = time.Now().UTC(), source
+	}
+	return err == nil, err
 }
 
 // info is the terminal's activity.
@@ -336,11 +342,12 @@ func (h *hub) control(conn *attach.Conn, p platform.PTY, j *job) {
 				return
 			}
 			sent, err := h.input(p, data, source, time.Duration(ifIdle)*time.Millisecond)
-			if err != nil {
-				j.log.Warn("terminal input", "err", err)
-			}
 			st := h.info()
 			st.Sent = sent
+			if err != nil {
+				j.log.Warn("terminal input", "err", err)
+				st.Error = err.Error()
+			}
 			if conn.WriteFrame(attach.Info, attach.EncodeInfo(st)) != nil {
 				return
 			}

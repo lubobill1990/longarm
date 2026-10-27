@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -18,10 +19,70 @@ import (
 // tailPoll is how often Files.Tail looks for appended bytes.
 var tailPoll = 250 * time.Millisecond
 
+// tailAbsentTimeout ends a follow of a file that does not exist with
+// NOT_FOUND after this long (it would hold a user helper forever).
+var tailAbsentTimeout = time.Hour
+
+// Defaults of Server.MaxTails / MaxTailsPerUser ([files] in longarmd.toml).
+const (
+	DefaultMaxTails        = 64
+	DefaultMaxTailsPerUser = 8
+)
+
+// tailCounter counts open tails, per user and in total.
+type tailCounter struct {
+	mu    sync.Mutex
+	total int
+	users map[string]int
+}
+
+func limitOf(v, def int) int {
+	if v == 0 {
+		return def
+	}
+	return v
+}
+
+// acquire takes a tail slot for user (RESOURCE_EXHAUSTED when none is
+// left); release gives it back.
+func (s *Server) acquireTail(user string) (release func(), err error) {
+	c := &s.tails
+	maxAll, maxUser := limitOf(s.MaxTails, DefaultMaxTails), limitOf(s.MaxTailsPerUser, DefaultMaxTailsPerUser)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.users == nil {
+		c.users = map[string]int{}
+	}
+	switch {
+	case maxUser > 0 && c.users[user] >= maxUser:
+		return nil, status.Errorf(codes.ResourceExhausted, "%d tails of %s are open on this worker (max_tails_per_user); retry later", c.users[user], user)
+	case maxAll > 0 && c.total >= maxAll:
+		return nil, status.Errorf(codes.ResourceExhausted, "%d tails are open on this worker (max_tails); retry later", c.total)
+	}
+	c.users[user]++
+	c.total++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.total--
+			if c.users[user]--; c.users[user] <= 0 {
+				delete(c.users, user)
+			}
+		})
+	}, nil
+}
+
 // Tail streams a file like Read and, with follow, what is appended to it
 // (longarm tail). Same paths and access as Read: with per-user isolation
 // the user's helper reads as the user's account.
 func (f *filesServer) Tail(req *pb.FileTailRequest, st pb.Files_TailServer) error {
+	release, err := f.s.acquireTail(IdentityFrom(st.Context()).Owner())
+	if err != nil {
+		return err
+	}
+	defer release()
 	if f.s.perUser() {
 		return f.proxyTail(req, st)
 	}
@@ -93,6 +154,7 @@ func tailFile(ctx context.Context, path string, off int64, follow bool, send fun
 			return true
 		}
 	}
+	absentSince := time.Now()
 	for {
 		err := open()
 		if err == nil {
@@ -103,6 +165,9 @@ func tailFile(ctx context.Context, path string, off int64, follow bool, send fun
 				return err
 			}
 			return fileErr(err)
+		}
+		if time.Since(absentSince) > tailAbsentTimeout {
+			return status.Errorf(codes.NotFound, "%s did not appear within %s", path, tailAbsentTimeout)
 		}
 		if !sleep() {
 			return nil
@@ -148,7 +213,11 @@ func tailFile(ctx context.Context, path string, off int64, follow bool, send fun
 				if !errors.Is(err, fs.ErrNotExist) {
 					return fileErr(err)
 				}
+				gone := time.Now()
 				for fh == nil { // replaced, then removed again: wait for it
+					if time.Since(gone) > tailAbsentTimeout {
+						return status.Errorf(codes.NotFound, "%s did not appear again within %s", path, tailAbsentTimeout)
+					}
 					if !sleep() {
 						return nil
 					}

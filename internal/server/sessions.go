@@ -186,10 +186,28 @@ func running(sp *userspace.Space, j supervisor.Job, r sessionReq, name string) (
 	return j, false, nil
 }
 
-// ensure returns the running session, creating it if needed.
+// foreign reports whether session j is another user's where that matters:
+// shared isolation (one namespace of names) with ownership enforced.
+func (ss *sessionsServer) foreign(ctx context.Context, j supervisor.Job, owner string) bool {
+	return !ss.s.perUser() && ss.s.enforceFor(ctx) && j.Spec.OwnerName() != owner
+}
+
+func errNameInUse(name string) error {
+	return status.Errorf(codes.AlreadyExists, "session name %q is in use by another user (shared isolation has one namespace of names)", name)
+}
+
+// ensure returns the running session, creating it if needed. Every session
+// it finds under the name is checked for its owner (sessionSpace checked
+// before; another user may have created the name since).
 func (ss *sessionsServer) ensure(ctx context.Context, sp *userspace.Space, r sessionReq, name, owner, by string) (supervisor.Job, bool, error) {
 	mgr := sp.Sessions
 	j, err := mgr.Get(name)
+	if err == nil && ss.foreign(ctx, j, owner) {
+		if r.noCreate {
+			return supervisor.Job{}, false, status.Errorf(codes.NotFound, "no session %q", name)
+		}
+		return supervisor.Job{}, false, errNameInUse(name)
+	}
 	if err == nil && !j.Status.State.Terminal() {
 		return running(sp, j, r, name)
 	}
@@ -199,11 +217,15 @@ func (ss *sessionsServer) ensure(ctx context.Context, sp *userspace.Space, r ses
 		}
 		return j, false, status.Errorf(codes.NotFound, "no session %q", name)
 	}
-	if err == nil { // ended: a new session takes the name
-		if err := mgr.Remove(name); err != nil && !errors.Is(err, supervisor.ErrNotFound) {
+	if err == nil { // ended: a new session takes the name (this one only, with its worktree)
+		switch err := mgr.RemoveGen(name, j.Spec.CreatedAt); {
+		case err == nil:
+			ss.removeWorktree(ctx, sp, j.Status.Workdir) // its generation's: never a newer session's
+		case errors.Is(err, supervisor.ErrNotFound), errors.Is(err, supervisor.ErrReplaced), errors.Is(err, supervisor.ErrActive):
+			// somebody replaced it meanwhile: the submit below finds theirs
+		default:
 			return j, false, MgrErr(err)
 		}
-		ss.removeWorktree(ctx, sp, j.Status.Workdir)
 	}
 	if ss.s.enforce() {
 		if err := ss.s.checkSessionQuota(sp, owner); err != nil {
@@ -214,16 +236,25 @@ func (ss *sessionsServer) ensure(ctx context.Context, sp *userspace.Space, r ses
 		ID: name, Name: name, Argv: argvFor(sp, r.argv), Cwd: r.cwd, Env: ss.s.linkEnv(owner, r.env), Pty: true, SubmittedBy: by, Owner: owner,
 		Cols: uint16(r.size.GetCols()), Rows: uint16(r.size.GetRows()), LogMaxBytes: ss.s.LogMaxBytes, Workspace: r.ws,
 	}
-	j, err = ss.s.Spaces.SubmitSession(ctx, sp, spec, r.secrets)
+	j, created, err := ss.s.Spaces.SubmitSession(ctx, sp, spec, r.secrets)
 	if errors.Is(err, supervisor.ErrAlreadyExists) { // created concurrently by someone else
-		if j, err = mgr.Get(name); err == nil && !j.Status.State.Terminal() {
-			return running(sp, j, r, name)
+		if j, err = mgr.Get(name); err == nil {
+			if ss.foreign(ctx, j, owner) {
+				return supervisor.Job{}, false, errNameInUse(name)
+			}
+			if !j.Status.State.Terminal() {
+				return running(sp, j, r, name)
+			}
+			err = supervisor.ErrAlreadyExists
 		}
 	}
 	if err != nil {
-		return j, false, MgrErr(err)
+		return supervisor.Job{}, false, MgrErr(err)
 	}
-	return j, true, nil
+	if !created && ss.foreign(ctx, j, owner) { // identical spec: same owner; checked anyway
+		return supervisor.Job{}, false, errNameInUse(name)
+	}
+	return j, created, nil
 }
 
 // removeWorktree removes the worktree of a session that is being replaced
@@ -241,15 +272,31 @@ func (ss *sessionsServer) removeWorktree(ctx context.Context, sp *userspace.Spac
 	}
 }
 
-// waitAttachable waits until the session's shim published its channel (or
-// the session ended), at most d.
-func (ss *sessionsServer) waitAttachable(ctx context.Context, sp *userspace.Space, name string, d time.Duration) (supervisor.Job, error) {
+// errReplaced: the session generation an operation was bound to is gone
+// (it ended and a new session took the name).
+var errReplaced = status.Error(codes.FailedPrecondition, "the session ended and was replaced by a new one of the same name")
+
+// getGen returns session name if it is generation gen (zero: any).
+func getGen(sp *userspace.Space, name string, gen time.Time) (supervisor.Job, error) {
+	j, err := sp.Sessions.Get(name)
+	if err != nil {
+		return j, MgrErr(err)
+	}
+	if !gen.IsZero() && !j.Spec.CreatedAt.Equal(gen) {
+		return j, errReplaced
+	}
+	return j, nil
+}
+
+// waitAttachable waits until generation gen of the session published its
+// channel (or ended), at most d.
+func (ss *sessionsServer) waitAttachable(ctx context.Context, sp *userspace.Space, name string, gen time.Time, d time.Duration) (supervisor.Job, error) {
 	deadline := time.After(d)
 	for {
 		ch := sp.Sessions.Changed()
-		j, err := sp.Sessions.Get(name)
+		j, err := getGen(sp, name, gen)
 		if err != nil {
-			return j, MgrErr(err)
+			return j, err
 		}
 		if j.Status.State.Terminal() || (j.Status.State == jobs.Running && j.Status.AttachAddr != "") {
 			return j, nil
@@ -301,7 +348,7 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 	if err != nil {
 		return err
 	}
-	if j, err = ss.waitAttachable(ctx, sp, name, 15*time.Second); err != nil {
+	if j, err = ss.waitAttachable(ctx, sp, name, j.Spec.CreatedAt, 15*time.Second); err != nil {
 		return err
 	}
 	if j.Status.State.Terminal() { // e.g. the command failed to start
@@ -386,7 +433,7 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 			case attach.Exit:
 				// Let the supervisor see the final state first, so a client
 				// that lists sessions right after the exit sees it ended.
-				ss.waitTerminal(ctx, sp, name, 2*time.Second)
+				ss.waitTerminalGen(ctx, sp, name, j.Spec.CreatedAt, 2*time.Second)
 				err = st.Send(&pb.AttachOutput{Msg: &pb.AttachOutput_ExitCode{ExitCode: int32(attach.ParseExit(p))}})
 				ended <- errSessionExited
 				return
@@ -409,7 +456,7 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 		}
 		// The channel broke without an exit frame: the shim died or the
 		// session ended right now. Report the final state if we can.
-		if j, werr := ss.waitTerminal(ctx, sp, name, 3*time.Second); werr == nil {
+		if j, werr := ss.waitTerminalGen(ctx, sp, name, j.Spec.CreatedAt, 3*time.Second); werr == nil {
 			return ss.sendExit(st, j)
 		}
 		return status.Errorf(codes.Unavailable, "session %q: attach channel closed: %v", name, err)
@@ -419,10 +466,16 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 var errSessionExited = errors.New("session exited")
 
 func (ss *sessionsServer) waitTerminal(ctx context.Context, sp *userspace.Space, name string, d time.Duration) (supervisor.Job, error) {
+	return ss.waitTerminalGen(ctx, sp, name, time.Time{}, d)
+}
+
+// waitTerminalGen waits for generation gen (zero: any) to end; errReplaced
+// if a new session took the name (which means it had ended).
+func (ss *sessionsServer) waitTerminalGen(ctx context.Context, sp *userspace.Space, name string, gen time.Time, d time.Duration) (supervisor.Job, error) {
 	deadline := time.After(d)
 	for {
 		ch := sp.Sessions.Changed()
-		j, err := sp.Sessions.Get(name)
+		j, err := getGen(sp, name, gen)
 		if err != nil {
 			return j, err
 		}

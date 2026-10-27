@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
@@ -22,7 +23,7 @@ type tailLine struct {
 	Offset    int64  `json:"offset"`
 	Next      int64  `json:"next"`
 	Line      string `json:"line"`
-	Partial   bool   `json:"partial,omitempty"`   // the file's last line had no newline yet (without -f)
+	Partial   bool   `json:"partial,omitempty"`   // not a whole line: the unterminated last line (without -f) or a fragment of a line over 1 MiB
 	Truncated bool   `json:"truncated,omitempty"` // the file shrank or was replaced: reading again from offset
 }
 
@@ -33,7 +34,12 @@ type tailWriter struct {
 	next    int64 // offset after the last byte received
 	pending []byte
 	pendAt  int64
+	scanned int // bytes of pending known to hold no newline
 }
+
+// maxTailRecord caps the text of one tail --json record: a longer line
+// comes as "partial" fragments of at most this many bytes, then its end.
+var maxTailRecord = 1 << 20
 
 func (t *tailWriter) emit(l tailLine) error {
 	b, _ := json.Marshal(l)
@@ -43,7 +49,7 @@ func (t *tailWriter) emit(l tailLine) error {
 
 func (t *tailWriter) chunk(c *pb.FileChunk) error {
 	if c.Offset < t.next { // truncated or replaced
-		t.pending = nil
+		t.pending, t.scanned = nil, 0
 		if t.asJSON {
 			if err := t.emit(tailLine{Offset: c.Offset, Next: c.Offset, Truncated: true}); err != nil {
 				return err
@@ -61,18 +67,36 @@ func (t *tailWriter) chunk(c *pb.FileChunk) error {
 		t.pendAt = c.Offset
 	}
 	t.pending = append(t.pending, c.Data...)
+	start := 0 // pending[start:] is what is left
 	for {
-		i := bytes.IndexByte(t.pending, '\n')
+		i := bytes.IndexByte(t.pending[start+t.scanned:], '\n') // only bytes not scanned before
 		if i < 0 {
-			return nil
+			t.scanned = len(t.pending) - start
+			break
 		}
-		line := bytes.TrimSuffix(t.pending[:i], []byte{'\r'})
-		if err := t.emit(tailLine{Offset: t.pendAt, Next: t.pendAt + int64(i) + 1, Line: string(line)}); err != nil {
+		i += start + t.scanned
+		line := bytes.TrimSuffix(t.pending[start:i], []byte{'\r'})
+		if err := t.emit(tailLine{Offset: t.pendAt, Next: t.pendAt + int64(i-start) + 1, Line: string(line)}); err != nil {
 			return err
 		}
-		t.pendAt += int64(i) + 1
-		t.pending = t.pending[i+1:]
+		t.pendAt += int64(i-start) + 1
+		start, t.scanned = i+1, 0
 	}
+	for len(t.pending)-start >= maxTailRecord { // a line too long for one record
+		n := maxTailRecord
+		for n > maxTailRecord-utf8.UTFMax && !utf8.RuneStart(t.pending[start+n]) {
+			n-- // do not split a character
+		}
+		if err := t.emit(tailLine{Offset: t.pendAt, Next: t.pendAt + int64(n), Line: string(t.pending[start : start+n]), Partial: true}); err != nil {
+			return err
+		}
+		t.pendAt += int64(n)
+		start += n
+		t.scanned -= n
+	}
+	// keep only the rest (bounded by maxTailRecord), in a buffer of its own
+	t.pending = append(t.pending[:0:0], t.pending[start:]...)
+	return nil
 }
 
 // flush prints an unterminated last line (without -f).
@@ -99,7 +123,10 @@ longarm reconnects after network errors, resuming at the last byte.
 {"offset": N, "next": M, "line": "..."}; "next" is where --from-offset
 resumes after that line. A file that shrank or was replaced gives
 {"truncated": true, "offset": 0, ...}; without -f an unterminated last line
-comes with "partial": true. Exit 3: no such file (without -f).`,
+comes with "partial": true, and so do the fragments (1 MiB each) of a
+line longer than 1 MiB, before its last part. Exit 3: no such file
+(without -f; with -f once it has not appeared for an hour); exit 75: too
+many tails open on the worker (max_tails, max_tails_per_user).`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := openSession()

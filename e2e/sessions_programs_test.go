@@ -197,8 +197,9 @@ func TestSessionsForPrograms(t *testing.T) {
 		git(t, repo, "add", ".")
 		git(t, repo, "commit", "-qm", "c1")
 		out, r := e.sessionStart(t, "w1", "-s", "wt1", "--repo", repo, "--", bins.helper, "repl")
-		wantDir := filepath.Join(e.dataDir, "worktrees", "s.wt1")
-		if r.code != 0 || !out.Created || filepath.Clean(out.Cwd) != wantDir {
+		// worktrees/s.<name>.<generation>
+		wantDir := filepath.Clean(out.Cwd)
+		if r.code != 0 || !out.Created || filepath.Dir(wantDir) != filepath.Join(e.dataDir, "worktrees") || !strings.HasPrefix(filepath.Base(wantDir), "s.wt1.") {
 			t.Fatalf("start --repo: %+v %+v", out, r)
 		}
 		if b, err := os.ReadFile(filepath.Join(wantDir, "tracked.txt")); err != nil || !strings.Contains(string(b), "in-the-worktree") {

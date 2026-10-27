@@ -281,6 +281,9 @@ func attachOnce(ctx context.Context, conn *client.Conn, open *pb.AttachOpen, in 
 
 	var detached bool
 	vt := &win32InputFilter{}
+	// whatever the stream ends with (exit, detach, EOF, an error) gets out,
+	// also a held-back prefix that turned out not to be the sequence
+	defer func() { os.Stdout.Write(vt.flush()) }()
 	var dmu sync.Mutex
 	go func() { // the only sender
 		last := open.Size
@@ -387,6 +390,13 @@ var (
 	win32InputOn  = []byte("\x1b[?9001h")
 	win32InputOff = []byte("\x1b[?9001l")
 )
+
+// flush returns the bytes held back at the end of the stream.
+func (f *win32InputFilter) flush() []byte {
+	b := f.carry
+	f.carry = nil
+	return b
+}
 
 func (f *win32InputFilter) filter(p []byte) []byte {
 	b := p

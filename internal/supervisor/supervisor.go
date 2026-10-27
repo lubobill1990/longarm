@@ -444,6 +444,13 @@ type Input struct {
 
 // SubmitWith is Submit with in.
 func (m *Manager) SubmitWith(ctx context.Context, spec jobs.Spec, secrets map[string]string, in Input) (Job, error) {
+	j, _, err := m.SubmitCreated(ctx, spec, secrets, in)
+	return j, err
+}
+
+// SubmitCreated is SubmitWith that also reports whether this call created
+// the job (false: an identical one existed), decided under the submit lock.
+func (m *Manager) SubmitCreated(ctx context.Context, spec jobs.Spec, secrets map[string]string, in Input) (Job, bool, error) {
 	stdin, auth := in.Stdin, in.GitAuth
 	handedOff := false
 	defer func() {
@@ -452,23 +459,23 @@ func (m *Manager) SubmitWith(ctx context.Context, spec jobs.Spec, secrets map[st
 		}
 	}()
 	if auth != nil && (spec.Workspace == nil || spec.Workspace.URL == "") {
-		return Job{}, fmt.Errorf("%w: a fetch credential needs a workspace url", ErrInvalid)
+		return Job{}, false, fmt.Errorf("%w: a fetch credential needs a workspace url", ErrInvalid)
 	}
 	if spec.Workspace != nil {
 		spec.Workspace.GitAuth = auth.Valid()
 	}
 	if len(stdin) > jobs.MaxStdinBytes {
-		return Job{}, fmt.Errorf("%w: stdin of %d bytes exceeds %d", ErrInvalid, len(stdin), jobs.MaxStdinBytes)
+		return Job{}, false, fmt.Errorf("%w: stdin of %d bytes exceeds %d", ErrInvalid, len(stdin), jobs.MaxStdinBytes)
 	}
 	if len(stdin) > 0 && spec.Pty {
-		return Job{}, fmt.Errorf("%w: stdin is for pipe jobs, not sessions", ErrInvalid)
+		return Job{}, false, fmt.Errorf("%w: stdin is for pipe jobs, not sessions", ErrInvalid)
 	}
 	spec.StdinBytes = int64(len(stdin))
 	if !jobs.ValidID(spec.ID) {
-		return Job{}, fmt.Errorf("%w: bad id %q", ErrInvalid, spec.ID)
+		return Job{}, false, fmt.Errorf("%w: bad id %q", ErrInvalid, spec.ID)
 	}
 	if len(spec.Argv) == 0 || spec.Argv[0] == "" {
-		return Job{}, fmt.Errorf("%w: empty argv", ErrInvalid)
+		return Job{}, false, fmt.Errorf("%w: empty argv", ErrInvalid)
 	}
 	spec.SecretEnvNames = slices.Sorted(maps.Keys(secrets))
 	if len(spec.Env) == 0 {
@@ -488,18 +495,18 @@ func (m *Manager) SubmitWith(ctx context.Context, spec jobs.Spec, secrets map[st
 	m.mu.Unlock()
 	if ok {
 		if !sameSpec(&existing.spec, &spec) {
-			return Job{}, ErrAlreadyExists
+			return Job{}, false, ErrAlreadyExists
 		}
 		j := m.snapshot(existing)
 		if len(stdin) == 0 || !j.Status.State.Terminal() || !j.Status.StartedAt.IsZero() {
-			return j, nil // the existing job; a payload sent again is dropped
+			return j, false, nil // the existing job; a payload sent again is dropped
 		}
 		// It took a payload and ended without starting (the payload was
 		// lost before the hand-off, or the program did not start): the
 		// retry replaces it.
 		m.log.Info("job resubmitted with its stdin payload; replacing the one that never started", "job", spec.ID)
-		if err := m.removeLocked(spec.ID); err != nil {
-			return Job{}, err
+		if err := m.removeLocked(spec.ID, time.Time{}); err != nil {
+			return Job{}, false, err
 		}
 	}
 
@@ -509,15 +516,15 @@ func (m *Manager) SubmitWith(ctx context.Context, spec jobs.Spec, secrets map[st
 		mode = 0o755
 	}
 	if err := os.Mkdir(string(dir), mode); err != nil {
-		return Job{}, err
+		return Job{}, false, err
 	}
 	spec.CreatedAt = time.Now().UTC()
 	st := jobs.Status{State: jobs.Preparing, CreatedAt: spec.CreatedAt}
 	if err := dir.WriteSpec(&spec); err != nil {
-		return Job{}, err
+		return Job{}, false, err
 	}
 	if err := dir.WriteStatus(&st); err != nil {
-		return Job{}, err
+		return Job{}, false, err
 	}
 	e := &entry{dir: dir, spec: spec, st: st, loadedAt: time.Now(), shimDone: make(chan struct{})}
 	m.mu.Lock()
@@ -538,11 +545,11 @@ func (m *Manager) SubmitWith(ctx context.Context, spec jobs.Spec, secrets map[st
 			defer cancel()
 			m.prepareAndStart(pctx, e, secrets, stdin, auth)
 		}()
-		return m.snapshot(e), nil
+		return m.snapshot(e), true, nil
 	}
 	if err := m.spawnShim(e, secrets, stdin); err != nil {
 		m.failBeforeShim(e, jobs.ExitNotFound, stdinLost(&spec, "spawn shim: "+err.Error()))
-		return m.snapshot(e), nil
+		return m.snapshot(e), true, nil
 	}
 	m.log.InfoContext(ctx, "job submitted", "job", spec.ID, "argv", spec.Argv, "by", spec.SubmittedBy) // ctx: trace=<operation>
 
@@ -553,15 +560,15 @@ func (m *Manager) SubmitWith(ctx context.Context, spec jobs.Spec, secrets map[st
 		m.reconcile(e)
 		j := m.snapshot(e)
 		if j.Status.State != jobs.Preparing {
-			return j, nil
+			return j, true, nil
 		}
 		select {
 		case <-ch:
 		case <-time.After(50 * time.Millisecond):
 		case <-deadline:
-			return j, nil
+			return j, true, nil
 		case <-ctx.Done():
-			return j, nil
+			return j, true, nil
 		}
 	}
 }
@@ -630,8 +637,22 @@ func (z *zeroingReader) WriteTo(w io.Writer) (int64, error) {
 // Windows that closes the Job Object, killing the tree; on Unix the process
 // group is SIGKILLed too).
 func (m *Manager) Kill(ctx context.Context, id string) (Job, error) {
+	return m.KillGen(ctx, id, time.Time{})
+}
+
+// ErrReplaced: KillGen / RemoveGen found another job (a newer generation)
+// under the id.
+var ErrReplaced = errors.New("replaced by a newer job of the same id")
+
+// KillGen is Kill bound to one generation of id (its spec's CreatedAt;
+// zero = whichever there is): a job that replaced it is never touched.
+func (m *Manager) KillGen(ctx context.Context, id string, created time.Time) (Job, error) {
 	m.mu.Lock()
 	e, ok := m.jobs[id]
+	if ok && !created.IsZero() && !e.spec.CreatedAt.Equal(created) {
+		m.mu.Unlock()
+		return Job{}, ErrReplaced
+	}
 	m.mu.Unlock()
 	if !ok {
 		return Job{}, ErrNotFound
@@ -771,18 +792,28 @@ func (m *Manager) prepare(ctx context.Context, e *entry, secrets map[string]stri
 // Remove deletes a terminal job (directory and all) - used by GC and to
 // re-create a named session that has ended.
 func (m *Manager) Remove(id string) error {
-	m.submit.Lock()
-	defer m.submit.Unlock()
-	return m.removeLocked(id)
+	return m.RemoveGen(id, time.Time{})
 }
 
-// removeLocked is Remove with m.submit held.
-func (m *Manager) removeLocked(id string) error {
+// RemoveGen is Remove bound to one generation of id (its spec's CreatedAt;
+// zero = whichever there is): ErrReplaced if another job has the id now.
+func (m *Manager) RemoveGen(id string, created time.Time) error {
+	m.submit.Lock()
+	defer m.submit.Unlock()
+	return m.removeLocked(id, created)
+}
+
+// removeLocked is RemoveGen with m.submit held.
+func (m *Manager) removeLocked(id string, created time.Time) error {
 	m.mu.Lock()
 	e, ok := m.jobs[id]
 	if !ok {
 		m.mu.Unlock()
 		return ErrNotFound
+	}
+	if !created.IsZero() && !e.spec.CreatedAt.Equal(created) {
+		m.mu.Unlock()
+		return ErrReplaced
 	}
 	if !e.st.State.Terminal() {
 		m.mu.Unlock()

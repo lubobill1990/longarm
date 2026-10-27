@@ -83,8 +83,18 @@ type FileConfig struct {
 	// Audit: copies of audit.log for the worker's owner (docs/security.md).
 	Audit  server.AuditSinks `toml:"audit"`
 	Access AccessConfig      `toml:"access"`
+	Files  FilesConfig       `toml:"files"`
 	// Telemetry: the owner's opt-out (docs/telemetry.md).
 	Telemetry TelemetryConfig `toml:"telemetry"`
+}
+
+// FilesConfig is the [files] section.
+type FilesConfig struct {
+	// MaxTails caps the open `longarm tail` streams of the worker,
+	// MaxTailsPerUser those of one user (with per-user isolation each holds
+	// a helper process). Defaults 64 and 8; -1 = no cap.
+	MaxTails        int `toml:"max_tails"`
+	MaxTailsPerUser int `toml:"max_tails_per_user"`
 }
 
 // AccessConfig is the [access] section: what the hub's admins and users may
@@ -268,6 +278,7 @@ type Config struct {
 	Args        []string
 	// Telemetry is [telemetry] (the owner's opt-out).
 	Telemetry TelemetryConfig
+	Files     FilesConfig // 0 = server defaults
 }
 
 // LoadConfig reads longarmd.toml (if present); flags given in override win.
@@ -289,6 +300,7 @@ func LoadConfig(dataDir string, listenOverride []string) (Config, error) {
 		cfg.MaxLogBytes = *fc.MaxLogBytes
 	}
 	cfg.GC = fc.GC
+	cfg.Files = fc.Files
 	cfg.Workspace = fc.Workspace
 	if cfg.GC.Keep.Duration <= 0 {
 		cfg.GC.Keep.Duration = DefaultGCKeep
@@ -522,6 +534,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		Audit: audit, Log: log, Shutdown: cancel,
 		Revoked: revoked, Conns: conntrack.New(), Access: cfg.Access, WorkerAccess: workerAccess,
 		ForwardTargets: cfg.Forward.Targets, Trust: trustSrc,
+		MaxTails: cfg.Files.MaxTails, MaxTailsPerUser: cfg.Files.MaxTailsPerUser,
 	}
 	srv.UnaryInterceptors, srv.StreamInterceptors = wtel.interceptors()
 	trustSrc.Denied = func(err error) {

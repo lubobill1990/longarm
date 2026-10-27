@@ -9,6 +9,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"sync"
@@ -79,11 +80,11 @@ func (ss *sessionsServer) Start(ctx context.Context, req *pb.StartSessionRequest
 		wait = time.Until(dl) - 2*time.Second
 	}
 	if wait > 0 {
-		if j2, err := ss.waitAttachable(ctx, sp, name, wait); err == nil {
+		if j2, err := ss.waitAttachable(ctx, sp, name, j.Spec.CreatedAt, wait); err == nil {
 			j = j2
 		}
 	}
-	if latest, err := sp.Sessions.Get(name); err == nil {
+	if latest, err := getGen(sp, name, j.Spec.CreatedAt); err == nil {
 		j = latest
 	}
 	return &pb.AttachStarted{Session: ss.toPB(sp, j), Created: created}, nil
@@ -110,7 +111,7 @@ func (ss *sessionsServer) Send(ctx context.Context, req *pb.SendSessionRequest) 
 	sp, err := ss.lookup(ctx, req.Owner, req.Name)
 	var seq uint64
 	if err == nil {
-		seq, err = ss.send(ctx, sp, req.Name, req.Data, req.IfIdleMs, attach.SourceSend)
+		seq, err = ss.send(ctx, sp, req.Name, time.Time{}, req.Data, req.IfIdleMs, attach.SourceSend)
 	}
 	// the input is like a payload: its size only, never its bytes
 	ss.s.Audit.Log(IdentityFrom(ctx), pb.Sessions_Send_FullMethodName, map[string]any{
@@ -122,26 +123,32 @@ func (ss *sessionsServer) Send(ctx context.Context, req *pb.SendSessionRequest) 
 	return &pb.SendSessionResponse{InputSeq: seq}, nil
 }
 
-// send writes data to the session's terminal in one write.
-func (ss *sessionsServer) send(ctx context.Context, sp *userspace.Space, name string, data []byte, ifIdleMs uint32, source string) (uint64, error) {
-	j, err := sp.Sessions.Get(name)
+// send writes data to the session's terminal in one write; gen binds it
+// to one generation of the name (zero: the current one).
+func (ss *sessionsServer) send(ctx context.Context, sp *userspace.Space, name string, gen time.Time, data []byte, ifIdleMs uint32, source string) (uint64, error) {
+	j, err := getGen(sp, name, gen)
 	if err != nil {
-		return 0, MgrErr(err)
+		return 0, err
 	}
 	if !j.Status.State.Terminal() && j.Status.AttachAddr == "" { // preparing / starting
-		if j, err = ss.waitAttachable(ctx, sp, name, 15*time.Second); err != nil {
+		if j, err = ss.waitAttachable(ctx, sp, name, j.Spec.CreatedAt, 15*time.Second); err != nil {
 			return 0, err
 		}
 	}
 	if j.Status.State.Terminal() {
 		return 0, status.Errorf(codes.FailedPrecondition, "session %q has ended (%s)", name, j.Status.State)
 	}
+	// ended is the error of a failed write: FailedPrecondition (exit 2) if
+	// the session has ended meanwhile, else Unavailable (255)
+	ended := func(err error) error {
+		if e, gerr := getGen(sp, name, j.Spec.CreatedAt); gerr != nil || e.Status.State.Terminal() {
+			return status.Errorf(codes.FailedPrecondition, "session %q has ended; nothing (or not all) was written", name)
+		}
+		return status.Errorf(codes.Unavailable, "session %q: %v", name, err)
+	}
 	c, info, err := ss.control(ctx, j)
 	if err != nil {
-		if ended, gerr := sp.Sessions.Get(name); gerr == nil && ended.Status.State.Terminal() {
-			return 0, status.Errorf(codes.FailedPrecondition, "session %q has ended (%s)", name, ended.Status.State)
-		}
-		return 0, status.Errorf(codes.Unavailable, "session %q: %v", name, err)
+		return 0, ended(err)
 	}
 	defer c.Close()
 	if info == nil { // a shim from before control connections
@@ -150,16 +157,19 @@ func (ss *sessionsServer) send(ctx context.Context, sp *userspace.Space, name st
 				"session %q runs in a shim from an older longarmd without if_idle_ms; start the session again to use it", name)
 		}
 		if err := c.WriteFrame(attach.Input, data); err != nil {
-			return 0, status.Errorf(codes.Unavailable, "session %q: %v", name, err)
+			return 0, ended(err)
 		}
 		return 0, nil
 	}
 	if err := c.WriteFrame(attach.Send, attach.SendPayload(ifIdleMs, source, data)); err != nil {
-		return 0, status.Errorf(codes.Unavailable, "session %q: %v", name, err)
+		return 0, ended(err)
 	}
 	st, err := c.info(30 * time.Second)
 	if err != nil {
-		return 0, status.Errorf(codes.Unavailable, "session %q: no answer from its shim: %v", name, err)
+		return 0, ended(fmt.Errorf("no answer from its shim: %w", err))
+	}
+	if st.Error != "" { // the terminal write failed or was short
+		return st.InputSeq, ended(errors.New("terminal write: " + st.Error))
 	}
 	if !st.Sent {
 		ago := time.Since(st.LastInput).Round(time.Millisecond)
@@ -186,7 +196,10 @@ func (ss *sessionsServer) Stop(ctx context.Context, req *pb.StopSessionRequest) 
 
 // stop sends Ctrl-C (twice: TUIs such as Claude Code exit on the second),
 // waits up to grace for the session to end, then kills its process tree.
-// The caller going away does not cut it short (grace is bounded).
+// Every step is bound to the generation found first: if it ends and a new
+// session takes the name meanwhile, that one is never touched and the
+// stop reports the original as ended (replacedEnd). The caller going away
+// does not cut it short (grace is bounded).
 func (ss *sessionsServer) stop(ctx context.Context, sp *userspace.Space, name string, grace time.Duration) (supervisor.Job, error) {
 	ctx = context.WithoutCancel(ctx)
 	j, err := sp.Sessions.Get(name)
@@ -196,26 +209,49 @@ func (ss *sessionsServer) stop(ctx context.Context, sp *userspace.Space, name st
 	if j.Status.State.Terminal() {
 		return j, nil
 	}
+	gen := j.Spec.CreatedAt
+	// done: the generation ended (or was replaced, which means it ended)
+	done := func(cur supervisor.Job, err error) (supervisor.Job, bool) {
+		switch {
+		case err == nil:
+			return cur, true
+		case errors.Is(err, errReplaced), status.Code(err) == codes.NotFound:
+			return replacedEnd(j), true
+		}
+		return j, false
+	}
 	if grace > 0 {
 		deadline := time.Now().Add(grace)
 		for i := 0; i < 2; i++ {
-			if _, err := ss.send(ctx, sp, name, []byte{0x03}, 0, attach.SourceStop); err != nil {
+			if _, err := ss.send(ctx, sp, name, gen, []byte{0x03}, 0, attach.SourceStop); err != nil {
 				break
 			}
 			wait := min(time.Second, time.Until(deadline))
 			if i == 1 {
 				wait = time.Until(deadline)
 			}
-			if j, err := ss.waitTerminal(ctx, sp, name, max(wait, 0)); err == nil {
-				return j, nil
+			if j2, ok := done(ss.waitTerminalGen(ctx, sp, name, gen, max(wait, 0))); ok {
+				return j2, nil
 			}
 		}
-		if j, err := ss.waitTerminal(ctx, sp, name, max(time.Until(deadline), 0)); err == nil {
-			return j, nil
+		if j2, ok := done(ss.waitTerminalGen(ctx, sp, name, gen, max(time.Until(deadline), 0))); ok {
+			return j2, nil
 		}
 	}
-	j, err = sp.Sessions.Kill(ctx, name)
-	return j, MgrErr(err)
+	j2, err := sp.Sessions.KillGen(ctx, name, gen)
+	if errors.Is(err, supervisor.ErrReplaced) || errors.Is(err, supervisor.ErrNotFound) {
+		return replacedEnd(j), nil
+	}
+	return j2, MgrErr(err)
+}
+
+// replacedEnd is the last state of a session generation that ended and was
+// replaced (or collected) before stop saw how: lost, outcome unknown.
+func replacedEnd(j supervisor.Job) supervisor.Job {
+	j.Status.State = jobs.Lost
+	j.Status.PID = 0
+	j.Status.Reason = "ended and was replaced by a new session of the same name before stop saw its outcome"
+	return j
 }
 
 // ctlConn is a control connection to a session's shim.

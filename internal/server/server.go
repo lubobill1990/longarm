@@ -98,6 +98,11 @@ type Server struct {
 	Shutdown func()
 	// LogMaxBytes caps out.log of new jobs and sessions (0 = unlimited).
 	LogMaxBytes int64
+	// MaxTails / MaxTailsPerUser cap the open Files.Tail streams of the
+	// worker / of one user (each holds a user helper process with per-user
+	// isolation): 0 = DefaultMaxTails / DefaultMaxTailsPerUser, < 0 = none.
+	MaxTails, MaxTailsPerUser int
+	tails                     tailCounter
 	// Links are longarmd's port links (LinkTunnel.Dial, job environment);
 	// nil = none.
 	Links LinkRegistry
