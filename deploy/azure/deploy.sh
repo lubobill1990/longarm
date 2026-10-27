@@ -376,15 +376,15 @@ storage_auth=${storage_auth:-key}
 [[ ${diagnostics:-false} != true || $storage_auth == identity ]] || die "--diagnostics needs --storage-auth identity (the hub writes bundles with its managed identity)"
 # a re-run keeps the hub's Entra settings (plain environment values)
 if [[ -n $cur_image && -z $entra_tenant ]]; then
-	while IFS=$'	' read -r k v; do
+	while IFS=$'\t' read -r k v; do
 		case $k in
 		LONGARM_HUB_ENTRA_TENANT_ID) entra_tenant=$v ;;
 		LONGARM_HUB_ENTRA_CLIENT_ID) entra_client=${entra_client:-$v} ;;
 		LONGARM_HUB_ENTRA_ADMINS) entra_admins=${entra_admins:-$v} ;;
 		LONGARM_HUB_ENTRA_WEB) entra_web=${entra_web:-$v} ;;
 		esac
-	done < <(az container show -g "$rg" -n "$name" -o tsv 		--query "containers[0].environmentVariables[?starts_with(name, 'LONGARM_HUB_ENTRA_')].[name, value]" 2>/dev/null | tr -d '
-' || true)
+	done < <(az container show -g "$rg" -n "$name" -o tsv \
+		--query "containers[0].environmentVariables[?starts_with(name, 'LONGARM_HUB_ENTRA_')].[name, value]" 2>/dev/null | tr -d '\r' || true)
 fi
 [[ -z $entra_tenant && -z $entra_client ]] || [[ -n $entra_tenant && -n $entra_client ]] ||
 	die "--entra-tenant and --entra-client go together"
