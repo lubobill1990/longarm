@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/hubclient"
@@ -102,7 +104,10 @@ func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
 		}
 	}
 	cjo := hubclient.JoinOptions{Name: o.DeviceName, Fingerprint: tg.Fingerprint, Trust: ctr}
-	wjo := hubclient.JoinOptions{Name: o.WorkerName, Fingerprint: tg.Fingerprint, Trust: wtr}
+	if o.Worker != nil && o.WorkerLabels == nil {
+		o.WorkerLabels = InstalledLabels()
+	}
+	wjo := hubclient.JoinOptions{Name: o.WorkerName, Fingerprint: tg.Fingerprint, Trust: wtr, Labels: o.WorkerLabels}
 
 	var cr, wr *hubclient.JoinResult
 	method := o.Method
@@ -139,6 +144,10 @@ func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
 		}
 		res.Worker = enrolled(wr, dir)
 		res.User = wr.Resp.Owner
+		if len(o.WorkerLabels) > 0 && len(wr.Resp.Labels) == 0 {
+			note(fmt.Sprintf("this hub did not record the worker's labels (it is older); set them with: longarm worker label %s %s",
+				wr.Resp.Name, labelArgs(o.WorkerLabels)))
+		}
 	}
 	if cr != nil {
 		dir, err := o.Client.Install(tg.Address, cr, note)
@@ -204,7 +213,12 @@ type Options struct {
 	// DeviceName (default <user>-<hostname>) and WorkerName (default: the
 	// hostname) as requested from the hub.
 	DeviceName, WorkerName string
-	Method                 Method
+	// WorkerLabels: labels for the worker (scheduler constraints, as
+	// `longarm worker add --label`), recorded by the hub at enrollment;
+	// nil: the ones an installer recorded (InstalledLabels: the MSI's
+	// LABELS). Change them later with `longarm worker label`.
+	WorkerLabels map[string]string
+	Method       Method
 	// Scope overrides the az token's scope (MethodAz / MethodAuto).
 	Scope string
 	// OpenBrowser: open the /link page here (when there is a desktop).
@@ -280,10 +294,12 @@ type Enrolled struct {
 	Message    string // the hub's message
 	// Tailnet: the hub's tailnet hostname the node joins ("": none)
 	Tailnet string
+	// Labels the hub recorded for a worker
+	Labels map[string]string
 }
 
 func enrolled(r *hubclient.JoinResult, dir string) *Enrolled {
-	e := &Enrolled{Name: r.Resp.Name, Role: r.Resp.Role, Owner: r.Resp.Owner, Dir: dir, Message: r.Resp.Message}
+	e := &Enrolled{Name: r.Resp.Name, Role: r.Resp.Role, Owner: r.Resp.Owner, Dir: dir, Message: r.Resp.Message, Labels: r.Resp.Labels}
 	if t := r.Resp.Tailnet; t != nil {
 		e.Tailnet = t.Hostname
 	}
@@ -406,4 +422,14 @@ func checkWorker(r *hubclient.JoinResult) error {
 func hostname() string {
 	h, _ := os.Hostname()
 	return h
+}
+
+// labelArgs renders labels as KEY=VALUE arguments, sorted.
+func labelArgs(m map[string]string) string {
+	var out []string
+	for k, v := range m {
+		out = append(out, k+"="+v)
+	}
+	sort.Strings(out)
+	return strings.Join(out, " ")
 }

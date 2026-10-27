@@ -283,6 +283,11 @@ type JoinOptions struct {
 	// Trust (optional): the node key whose binding the certificate carries
 	// (end-to-end trust, pki/trust.go).
 	Trust *pki.CSRTrust
+	// Labels: an owned worker's sign-in (Login kind worker, Link kind
+	// worker / both: the Worker options') asks the hub to record these
+	// labels for it, as a worker code's (JoinResponse.labels says what was
+	// recorded; an older hub records none).
+	Labels map[string]string
 }
 
 // JoinResult is what Join and Poll return.
@@ -394,7 +399,7 @@ func Login(ctx context.Context, addr string, o LoginOptions) (*JoinResult, error
 	}
 	host, _ := os.Hostname()
 	resp, err := c.Enroll().EntraJoin(ctx, &pb.EntraJoinRequest{AccessToken: tok, CsrPem: csrPEM, Name: o.Name, Hostname: host,
-		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version, Kind: o.Kind})
+		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version, Kind: o.Kind, Labels: o.Labels})
 	if err != nil {
 		return nil, err
 	}
@@ -492,8 +497,13 @@ func Link(ctx context.Context, addr string, o LinkOptions) (*JoinResult, error) 
 	}
 	defer c.Close()
 	host, _ := os.Hostname()
+	wlabels := o.Worker.Labels
+	if o.Kind == "worker" {
+		wlabels = o.Labels
+	}
 	st, err := c.Enroll().StartLink(ctx, &pb.StartLinkRequest{Kind: o.Kind, CsrPem: csrPEM, Name: o.Name, Hostname: host,
-		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version, WorkerCsrPem: wcsrPEM, WorkerName: o.Worker.Name})
+		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version, WorkerCsrPem: wcsrPEM, WorkerName: o.Worker.Name,
+		WorkerLabels: wlabels})
 	if o.Kind == "both" && status.Code(err) == codes.InvalidArgument && strings.Contains(status.Convert(err).Message(), "want client or worker") {
 		return nil, ErrNoBothLink
 	}

@@ -118,6 +118,28 @@ func TestOwnedWorkers(t *testing.T) {
 		t.Fatalf("alice's worker ls:\n%s", out)
 	}
 
+	// Labels: alice sets them on her worker (longarm worker label) and
+	// placement honors them; bob can't, an admin can; the hub audits it.
+	if out := h.mustLongarm(alice, "worker", "label", "aw", "pool=devbox", "kind-"); !strings.Contains(out, "pool=devbox") ||
+		strings.Contains(out, "kind=mine") {
+		t.Fatalf("alice labels aw: %s", out)
+	}
+	if r := h.longarm(alice, append([]string{"run", "--require", "pool=devbox", "--no-queue"}, print1...)...); r.code != 0 ||
+		!strings.Contains(r.stderr, "placed on aw") {
+		t.Fatalf("alice's run --require pool=devbox: %+v", r)
+	}
+	if r := h.longarm(bob, "worker", "label", "aw", "pool=bob"); r.code == 0 || !strings.Contains(r.stderr, "NotFound") {
+		t.Fatalf("bob labels alice's worker: %+v", r)
+	}
+	if r := h.longarm(alice, "worker", "label", "wf", "pool=x"); r.code == 0 || !strings.Contains(r.stderr, "PermissionDenied") {
+		t.Fatalf("alice labels the fleet worker: %+v", r)
+	}
+	if out := h.mustLongarm(root, "worker", "label", "aw", "zone=a"); !strings.Contains(out, "zone=a") {
+		t.Fatalf("admin labels aw: %s", out)
+	}
+	if out := h.mustLongarm(root, "admin", "audit", "--node", "hub", "--limit", "200"); !strings.Contains(out, "workers/label") {
+		t.Fatalf("no workers/label in the hub's audit:\n%s", out)
+	}
 	bobLocked := func(when string) {
 		t.Helper()
 		if out := h.longarm(bob, "ls").stdout; lineStarts(out, "aw ") {

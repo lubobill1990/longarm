@@ -449,3 +449,23 @@ func copyEntry(r *os.Root, src, rel string, lfi fs.FileInfo, target string, out 
 	}
 	return os.Chmod(target, 0o600)
 }
+
+// ProtectedDataDirWarning warns about a data dir inside a ".claude"
+// directory (e.g. a project's .claude/worktrees/...): Claude Code treats
+// every path under .claude as protected and denies writes there, so
+// Claude Code jobs could not edit the files of their worktrees
+// (<data>/worktrees/<job>). "" when the dir is fine.
+func ProtectedDataDirWarning(dataDir string) string {
+	abs, err := filepath.Abs(dataDir)
+	if err != nil {
+		abs = dataDir
+	}
+	for _, part := range strings.FieldsFunc(filepath.ToSlash(abs), func(r rune) bool { return r == '/' }) {
+		if strings.EqualFold(part, ".claude") {
+			return fmt.Sprintf("the data dir %s is inside a .claude directory: Claude Code treats paths under .claude as "+
+				"protected and denies writes there, so Claude Code jobs could not edit their worktrees (<data>/worktrees); "+
+				"use a data dir outside .claude (--data-dir, LONGARM_DATA_DIR)", abs)
+		}
+	}
+	return ""
+}

@@ -14,6 +14,8 @@
           [SERVICE_NAME=longarmd] [DATADIR=C:\ProgramData\Longarm\longarmd]   (the default; also longarmd's
                                   own default as LocalSystem and for service install isolation per-user)
           [LISTEN=tcp://100.64.0.11:7701,longnet://hub:7443?name=w1]   (longarmd.toml when the data dir has none)
+          [LABELS=pool=devbox,os.flavor=ltsc]   (LOGIN=1: worker labels the sign-in asks the hub to record,
+                                  like the label option of longarmd login; kept in HKLM\Software\Longarm like HUB)
           [CLIENT_JOIN_CODE=...]   (ROLES=both: JOIN_CODE is the worker's code, CLIENT_JOIN_CODE the client's)
           [ISOLATION=per-user]   (a worker shared by several people, docs/security.md: the service runs
                                   as LocalSystem and runs every Longarm user's work as a local account of
@@ -75,6 +77,12 @@
     <Property Id="SAVED_LOGIN" Secure="yes">
       <RegistrySearch Id="RegLogin" Root="HKLM" Key="Software\Longarm" Name="Login" Type="raw" />
     </Property>
+    <!-- LABELS: worker labels for the sign-in (LOGIN=1), read by longarmd login and the tray
+         (signin.InstalledLabels); remembered like HUB. -->
+    <Property Id="LABELS" Secure="yes" />
+    <Property Id="SAVED_LABELS" Secure="yes">
+      <RegistrySearch Id="RegLabels" Root="HKLM" Key="Software\Longarm" Name="Labels" Type="raw" />
+    </Property>
     <Property Id="NODE_NAME" Secure="yes" />
     <Property Id="LISTEN" Value="tcp://127.0.0.1:7701" Secure="yes" />
     <Property Id="SERVICE_USER" Secure="yes" />
@@ -104,6 +112,8 @@
                  Condition="NOT CA_FINGERPRINT AND SAVED_CA_FINGERPRINT" />
     <SetProperty Id="LOGIN" Action="SetLoginSaved" Value="[SAVED_LOGIN]" Before="CostFinalize" Sequence="both"
                  Condition="NOT LOGIN AND SAVED_LOGIN AND NOT JOIN_CODE AND NOT CLIENT_JOIN_CODE" />
+    <SetProperty Id="LABELS" Action="SetLabelsSaved" Value="[SAVED_LABELS]" Before="CostFinalize" Sequence="both"
+                 Condition="NOT LABELS AND SAVED_LABELS" />
     <SetProperty Id="IsWorker" Value="1" Before="CostFinalize" Sequence="both" Condition='ROLES="worker" OR ROLES="both"' />
     <SetProperty Id="IsClient" Value="1" Before="CostFinalize" Sequence="both" Condition='ROLES="client" OR ROLES="both"' />
     <!-- Interactive default for the service account: the installing user. -->
@@ -186,6 +196,7 @@
         <!-- read by longarm login / longarmd login without a hub and by the tray (signin.InstalledHub) -->
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="CaFingerprint" Type="string" Value="[CA_FINGERPRINT]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Login" Type="string" Value="[LOGIN]" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Labels" Type="string" Value="[LABELS]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="ServiceName" Type="string" Value="[SERVICE_NAME]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="DataDir" Type="string" Value="[DATADIR]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="ServiceAccount" Type="string" Value="[SERVICE_ACCOUNT]" />

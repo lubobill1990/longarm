@@ -333,6 +333,66 @@ func TestSync(t *testing.T) {
 	if out.code != 126 {
 		t.Fatalf("bad ref: %+v", out)
 	}
+
+	// --ref <full commit id> of a local checkout: a commit on no branch is
+	// shipped (through a temporary ref, gone afterwards) and checked out
+	// detached; a short id is refused.
+	side := filepath.Join(e.root, "side")
+	git(t, repo, "worktree", "add", "-q", "-b", "side", side)
+	os.WriteFile(filepath.Join(side, "side.txt"), []byte("side commit\n"), 0o644)
+	git(t, side, "add", "side.txt")
+	git(t, side, "commit", "-qm", "side")
+	sideCommit := git(t, side, "rev-parse", "HEAD")
+	git(t, repo, "worktree", "remove", "--force", side)
+	git(t, repo, "branch", "-D", "side")
+	out = e.longarm(e.client, "run", "w1", "--repo", repo, "--ref", sideCommit, "-f", "--", bins.helper, "cat", "side.txt")
+	if out.code != 0 || !strings.Contains(out.stdout, "side commit") {
+		t.Fatalf("run --ref <commit id>: %+v", out)
+	}
+	if refs := git(t, repo, "for-each-ref", "refs/longarm/"); refs != "" {
+		t.Fatalf("temporary refs left behind: %s", refs)
+	}
+	out = e.longarm(e.client, "run", "w1", "--repo", repo, "--ref", sideCommit[:8], "--", bins.helper, "cat", "side.txt")
+	if out.code == 0 || !strings.Contains(out.stderr, "short commit id") || !strings.Contains(out.stderr, sideCommit) {
+		t.Fatalf("run --ref <short id>: %+v", out)
+	}
+}
+
+// TestSyncLFS: longarm run --repo <checkout with Git LFS files>: by default
+// the job's worktree has the pointer files (and the client says so); with
+// --lfs ship the commit's LFS objects travel and the files have their
+// content.
+func TestSyncLFS(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	if err := exec.Command("git", "lfs", "version").Run(); err != nil {
+		t.Skip("git-lfs not installed")
+	}
+	e := newEnv(t)
+	e.startLongarmd()
+	repo := filepath.Join(e.root, "lfsrepo")
+	os.MkdirAll(repo, 0o755)
+	git(t, repo, "init", "-q", "-b", "main")
+	git(t, repo, "lfs", "install", "--local")
+	git(t, repo, "lfs", "track", "*.bin")
+	os.WriteFile(filepath.Join(repo, "big.bin"), []byte("lfs content\n"), 0o644)
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-qm", "c1")
+
+	out := e.longarm(e.client, "run", "w1", "--repo", repo, "-f", "--", bins.helper, "cat", "big.bin")
+	if out.code != 0 || !strings.Contains(out.stdout, "version https://git-lfs") || !strings.Contains(out.stderr, "--lfs ship") {
+		t.Fatalf("run --repo (lfs skip): %+v", out)
+	}
+	out = e.longarm(e.client, "run", "w1", "--repo", repo, "--lfs", "ship", "-f", "--", bins.helper, "cat", "big.bin")
+	if out.code != 0 || !strings.Contains(out.stdout, "lfs content") {
+		t.Fatalf("run --repo --lfs ship: %+v", out)
+	}
+	// A url is fetched by the worker: nothing to ship.
+	if out := e.longarm(e.client, "run", "w1", "--repo", "https://example.com/r.git", "--lfs", "ship", "--", bins.helper, "cat", "x"); out.code == 0 ||
+		!strings.Contains(out.stderr, "local checkout") {
+		t.Fatalf("--lfs ship with a url: %+v", out)
+	}
 }
 
 // TestGitHubFetch fetches this repository from GitHub with GH_TOKEN as a

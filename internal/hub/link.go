@@ -12,6 +12,7 @@ import (
 	"html/template"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -101,6 +102,7 @@ type pairLink struct {
 	workerCSR               []byte
 	workerName, workerKeyID string
 	workerSerial            string
+	workerLabels            map[string]string // kind worker / both
 }
 
 // drop forgets the CSRs (decided or expired).
@@ -111,6 +113,9 @@ func (l *pairLink) fields() map[string]any {
 		"os": l.os, "arch": l.arch, "node_key": l.keyID}
 	if l.kind == linkBoth {
 		f["worker_name"], f["worker_node_key"] = l.workerName, l.workerKeyID
+	}
+	if len(l.workerLabels) > 0 {
+		f["worker_labels"] = l.workerLabels
 	}
 	return f
 }
@@ -264,6 +269,9 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 	if err := checkDevice(req.Hostname, req.Os, req.Arch, req.Version); err != nil {
 		return nil, err
 	}
+	if err := checkWorkerLabels(req.Kind != linkClient, req.WorkerLabels); err != nil {
+		return nil, err
+	}
 	csr, keyID, err := linkCSR(req.CsrPem, req.Name, "")
 	if err != nil {
 		return nil, err
@@ -288,7 +296,7 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 	l := &pairLink{id: randomB64(12), pollHash: tokenHash(tok), kind: req.Kind, name: req.Name, csr: csr,
 		hostname: req.Hostname, os: req.Os, arch: req.Arch, version: req.Version,
 		ip: ipOnly(c.addr), keyID: keyID, started: now, expires: now.Add(pairingTTL), state: linkPending,
-		workerCSR: wcsr, workerName: req.WorkerName, workerKeyID: wkeyID}
+		workerCSR: wcsr, workerName: req.WorkerName, workerKeyID: wkeyID, workerLabels: req.WorkerLabels}
 	p := h.pair
 	p.mu.Lock()
 	expired := p.sweepLocked(now)
@@ -559,12 +567,13 @@ func (h *Hub) approveLink(a *linkApprover, l *pairLink) (*pb.JoinResponse, error
 	dev := deviceRequest{csr: l.csr, name: l.name, hostname: l.hostname, os: l.os, arch: l.arch, version: l.version}
 	switch l.kind {
 	case linkWorker:
+		dev.labels = l.workerLabels
 		return h.enrollOwnedWorker(who, user, dev) // never an admin
 	case linkBoth:
 		// The worker first: its name may be taken (the device's never is,
 		// a device of the same user takes its name over).
 		wdev := dev
-		wdev.csr, wdev.name = l.workerCSR, l.workerName
+		wdev.csr, wdev.name, wdev.labels = l.workerCSR, l.workerName, l.workerLabels
 		w, err := h.enrollOwnedWorker(who, user, wdev)
 		if err != nil {
 			return nil, err
@@ -598,6 +607,7 @@ type linkDetails struct {
 	// Both: a client device and a worker; Name / KeyID are the device's
 	Both                    bool
 	WorkerName, WorkerKeyID string
+	WorkerLabels            string // "k=v, k2=v2"
 }
 
 func (h *Hub) renderLink(w http.ResponseWriter, code int, v linkView) {
@@ -679,7 +689,8 @@ func (h *Hub) linkLookup(w http.ResponseWriter, r *http.Request) {
 		d = &linkDetails{ID: l.id, Kind: l.kind, Name: l.name, Hostname: l.hostname, OSArch: l.os + "/" + l.arch,
 			Version: l.version, IP: l.ip, KeyID: l.keyID, Ago: now.Sub(l.started).Round(time.Second).String(),
 			Left: l.expires.Sub(now).Round(time.Second).String(), Worker: l.kind == linkWorker,
-			Both: l.kind == linkBoth, WorkerName: l.workerName, WorkerKeyID: l.workerKeyID}
+			Both: l.kind == linkBoth, WorkerName: l.workerName, WorkerKeyID: l.workerKeyID,
+			WorkerLabels: labelList(l.workerLabels)}
 	}
 	p.mu.Unlock()
 	h.auditExpired(expired)
@@ -819,6 +830,7 @@ input[name=code]{font-size:1.4em;letter-spacing:.1em;width:9em;text-transform:up
 <table><tr><th>kind</th><td>{{if .Both}}client device (acts as you) + worker (runs jobs){{else if .Worker}}worker (runs jobs){{else}}client device (acts as you){{end}}</td></tr>
 <tr><th>{{if .Both}}device name{{else}}name{{end}}</th><td><code>{{.Name}}</code></td></tr>
 {{if .Both}}<tr><th>worker name</th><td><code>{{.WorkerName}}</code></td></tr>{{end}}
+{{if .WorkerLabels}}<tr><th>worker labels</th><td><code>{{.WorkerLabels}}</code></td></tr>{{end}}
 <tr><th>host name</th><td><code>{{.Hostname}}</code></td></tr>
 <tr><th>system</th><td>{{.OSArch}}, version {{.Version}}</td></tr>
 <tr><th>address</th><td><code>{{.IP}}</code> (as the hub saw it)</td></tr>
@@ -836,3 +848,13 @@ input[name=code]{font-size:1.4em;letter-spacing:.1em;width:9em;text-transform:up
 <button>Continue</button></p></form>
 <p>Only enter a code from a device you are setting up yourself - never one someone sent you.</p>{{end}}
 </body></html>`))
+
+// labelList renders labels for the /link page: "k=v, k2=v2", sorted.
+func labelList(m map[string]string) string {
+	var out []string
+	for k, v := range m {
+		out = append(out, k+"="+v)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
+}

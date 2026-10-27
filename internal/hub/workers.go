@@ -176,7 +176,7 @@ func (h *Hub) ShareWorker(by, user string, admin bool, req *pb.ShareWorkerReques
 	return info, nil
 }
 
-// ownedWorkerLocked finds a worker the caller may manage (share, remove):
+// ownedWorkerLocked finds a worker the caller may manage (share, label, remove):
 // its owner's or, for admins, any. Workers the caller may not even see are
 // "not found", like on ListNodes.
 func (h *Hub) ownedWorkerLocked(name, user string, admin bool) (*node, error) {
@@ -223,6 +223,30 @@ func (h *Hub) RemoveWorker(by, user string, admin bool, name string) (*pb.NodeIn
 	return info, err
 }
 
+// SetWorkerLabels merges labels into a worker's labels ("" deletes), as
+// SetLabels: for its owner, or an admin (any worker). Audited.
+func (h *Hub) SetWorkerLabels(by, user string, admin bool, req *pb.SetLabelsRequest) (*pb.NodeInfo, error) {
+	h.mu.Lock()
+	n, err := h.ownedWorkerLocked(req.Name, user, admin)
+	var owner string
+	if err == nil {
+		owner = n.rec.Owner
+	}
+	h.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if len(req.Labels) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "no labels (KEY=VALUE sets, KEY- deletes)")
+	}
+	info, err := h.SetLabels(by, req.Name, req.Labels)
+	h.auditHub(by, "workers/label", map[string]any{"worker": req.Name, "owner": owner, "labels": req.Labels, "error": errString(err)})
+	if err == nil {
+		h.log.Info("worker labels changed", "worker", req.Name, "by", by, "labels", req.Labels)
+	}
+	return info, err
+}
+
 func errString(err error) string {
 	if err == nil {
 		return ""
@@ -245,6 +269,11 @@ func (s *fleetServer) ShareWorker(ctx context.Context, req *pb.ShareWorkerReques
 func (s *fleetServer) RemoveWorker(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
 	c := callerFrom(ctx)
 	return s.h.RemoveWorker(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req.Name)
+}
+
+func (s *fleetServer) SetWorkerLabels(ctx context.Context, req *pb.SetLabelsRequest) (*pb.NodeInfo, error) {
+	c := callerFrom(ctx)
+	return s.h.SetWorkerLabels(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req)
 }
 
 // ---------------------------------------------------------------- panel

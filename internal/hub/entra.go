@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
 	"regexp"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -459,7 +461,11 @@ func (s *enrollServer) EntraJoin(ctx context.Context, req *pb.EntraJoinRequest) 
 	}
 	id := claims.identity()
 	who := "entra/" + id.upn
-	dev := deviceRequest{csr: req.CsrPem, name: req.Name, hostname: req.Hostname, os: req.Os, arch: req.Arch, version: req.Version}
+	dev := deviceRequest{csr: req.CsrPem, name: req.Name, hostname: req.Hostname, os: req.Os, arch: req.Arch, version: req.Version,
+		labels: req.Labels}
+	if err := checkWorkerLabels(req.Kind == linkWorker, req.Labels); err != nil {
+		return nil, err
+	}
 	if req.Kind == linkWorker {
 		// A worker runs other people's jobs once shared: a person registers
 		// it, never a CI app acting as a user.
@@ -506,6 +512,22 @@ func (s *enrollServer) EntraJoin(ctx context.Context, req *pb.EntraJoinRequest) 
 type deviceRequest struct {
 	csr                               []byte
 	name, hostname, os, arch, version string
+	labels                            map[string]string // owned workers: as a worker code's (longarmd login --label)
+}
+
+// checkWorkerLabels validates the labels a sign-in asks for: workers only,
+// the rules of every label.
+func checkWorkerLabels(worker bool, labels map[string]string) error {
+	if len(labels) == 0 {
+		return nil
+	}
+	if !worker {
+		return status.Error(codes.InvalidArgument, "labels go with a worker's sign-in only")
+	}
+	if err := sched.ValidateLabels(labels, false); err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	return nil
 }
 
 // enrollDevice issues a client certificate (admin: an admin certificate)
@@ -610,7 +632,7 @@ func (h *Hub) enrollOwnedWorker(who, owner string, d deviceRequest) (*pb.JoinRes
 	h.mu.Unlock()
 	now := time.Now().UTC()
 	rec := &store.Node{Name: name, Role: string(pki.RoleWorker), Hostname: d.hostname, OS: d.os, Arch: d.arch,
-		Version: d.version, JoinedAt: now, Owner: owner, AccessVersion: 1}
+		Version: d.version, JoinedAt: now, Owner: owner, AccessVersion: 1, Labels: maps.Clone(d.labels)}
 	cert, err := h.issue(rec, d.csr)
 	if err != nil {
 		return nil, err
@@ -631,7 +653,7 @@ func (h *Hub) enrollOwnedWorker(who, owner string, d deviceRequest) (*pb.JoinRes
 	h.publishNodeLocked(n, "joined (owned by "+owner+", sign-in of "+who+")")
 	h.checkTenancyFlipLocked() // an owned worker separates users
 	h.mu.Unlock()
-	h.auditHub("node/"+name, "workers/join", map[string]any{"worker": name, "owner": owner, "via": who})
+	h.auditHub("node/"+name, "workers/join", map[string]any{"worker": name, "owner": owner, "via": who, "labels": d.labels})
 	return &pb.JoinResponse{State: stateApproved, Name: name, Role: rec.Role, CaPem: h.ca.CertPEM, CertPem: cert,
-		HubName: h.cfg.Name, Owner: owner, Message: "registered as a worker of " + owner}, nil
+		HubName: h.cfg.Name, Owner: owner, Message: "registered as a worker of " + owner, Labels: maps.Clone(d.labels)}, nil
 }

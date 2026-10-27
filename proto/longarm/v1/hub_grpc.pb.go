@@ -580,6 +580,7 @@ const (
 	Fleet_CreateWorkerCode_FullMethodName = "/longarm.v1.Fleet/CreateWorkerCode"
 	Fleet_ShareWorker_FullMethodName      = "/longarm.v1.Fleet/ShareWorker"
 	Fleet_RemoveWorker_FullMethodName     = "/longarm.v1.Fleet/RemoveWorker"
+	Fleet_SetWorkerLabels_FullMethodName  = "/longarm.v1.Fleet/SetWorkerLabels"
 	Fleet_CreatePortLink_FullMethodName   = "/longarm.v1.Fleet/CreatePortLink"
 	Fleet_ListPortLinks_FullMethodName    = "/longarm.v1.Fleet/ListPortLinks"
 	Fleet_RemovePortLink_FullMethodName   = "/longarm.v1.Fleet/RemovePortLink"
@@ -634,6 +635,9 @@ type FleetClient interface {
 	ShareWorker(ctx context.Context, in *ShareWorkerRequest, opts ...grpc.CallOption) (*NodeInfo, error)
 	// RemoveWorker revokes a worker of the caller's user (owner or admin).
 	RemoveWorker(ctx context.Context, in *NodeRequest, opts ...grpc.CallOption) (*NodeInfo, error)
+	// SetWorkerLabels merges labels into a worker's labels ("" deletes), as
+	// HubAdmin.SetLabels: the worker's owner, or an admin (any worker).
+	SetWorkerLabels(ctx context.Context, in *SetLabelsRequest, opts ...grpc.CallOption) (*NodeInfo, error)
 	// Port links (worker-to-worker, docs/usage.md "Port links"): the caller
 	// owns what it creates; users see and remove their own links (others'
 	// are NotFound), admins every link.
@@ -856,6 +860,16 @@ func (c *fleetClient) RemoveWorker(ctx context.Context, in *NodeRequest, opts ..
 	return out, nil
 }
 
+func (c *fleetClient) SetWorkerLabels(ctx context.Context, in *SetLabelsRequest, opts ...grpc.CallOption) (*NodeInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NodeInfo)
+	err := c.cc.Invoke(ctx, Fleet_SetWorkerLabels_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *fleetClient) CreatePortLink(ctx context.Context, in *CreatePortLinkRequest, opts ...grpc.CallOption) (*PortLink, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PortLink)
@@ -935,6 +949,9 @@ type FleetServer interface {
 	ShareWorker(context.Context, *ShareWorkerRequest) (*NodeInfo, error)
 	// RemoveWorker revokes a worker of the caller's user (owner or admin).
 	RemoveWorker(context.Context, *NodeRequest) (*NodeInfo, error)
+	// SetWorkerLabels merges labels into a worker's labels ("" deletes), as
+	// HubAdmin.SetLabels: the worker's owner, or an admin (any worker).
+	SetWorkerLabels(context.Context, *SetLabelsRequest) (*NodeInfo, error)
 	// Port links (worker-to-worker, docs/usage.md "Port links"): the caller
 	// owns what it creates; users see and remove their own links (others'
 	// are NotFound), admins every link.
@@ -1001,6 +1018,9 @@ func (UnimplementedFleetServer) ShareWorker(context.Context, *ShareWorkerRequest
 }
 func (UnimplementedFleetServer) RemoveWorker(context.Context, *NodeRequest) (*NodeInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemoveWorker not implemented")
+}
+func (UnimplementedFleetServer) SetWorkerLabels(context.Context, *SetLabelsRequest) (*NodeInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetWorkerLabels not implemented")
 }
 func (UnimplementedFleetServer) CreatePortLink(context.Context, *CreatePortLinkRequest) (*PortLink, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreatePortLink not implemented")
@@ -1310,6 +1330,24 @@ func _Fleet_RemoveWorker_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Fleet_SetWorkerLabels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetLabelsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).SetWorkerLabels(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_SetWorkerLabels_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).SetWorkerLabels(ctx, req.(*SetLabelsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Fleet_CreatePortLink_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CreatePortLinkRequest)
 	if err := dec(in); err != nil {
@@ -1422,6 +1460,10 @@ var Fleet_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveWorker",
 			Handler:    _Fleet_RemoveWorker_Handler,
+		},
+		{
+			MethodName: "SetWorkerLabels",
+			Handler:    _Fleet_SetWorkerLabels_Handler,
 		},
 		{
 			MethodName: "CreatePortLink",

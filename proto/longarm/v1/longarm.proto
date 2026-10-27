@@ -508,11 +508,17 @@ service Workspace {
 
 message RefsRequest {
   string repo = 1;
+  // Git LFS objects (sha256 oids) the client could send (longarm run / sync
+  // --lfs ship); the worker answers which of them its mirror already has.
+  repeated string lfs_oids = 2;
 }
 
 message RefsResponse {
   bool exists = 1;
   repeated string commits = 2;
+  // of RefsRequest.lfs_oids, those in the mirror's LFS store (an older
+  // worker answers none)
+  repeated string lfs_present = 3;
 }
 
 message SyncChunk {
@@ -535,6 +541,9 @@ enum SyncPart {
   SYNC_PART_BUNDLE = 1;
   SYNC_PART_PATCH = 2;
   SYNC_PART_UNTRACKED_TAR = 3;
+  // Git LFS objects for the mirror's LFS store: a tar of files named by
+  // their sha256 oid (--lfs ship)
+  SYNC_PART_LFS_TAR = 4;
 }
 
 message SyncData {
@@ -549,6 +558,7 @@ message SyncResult {
   int64 bundle_bytes = 4;
   int64 patch_bytes = 5;
   int64 untracked_bytes = 6;
+  int64 lfs_bytes = 7;
 }
 
 // ---------------------------------------------------------------- UserHelper

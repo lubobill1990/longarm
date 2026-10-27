@@ -31,7 +31,7 @@ func (w *workspaceServer) Refs(ctx context.Context, req *pb.RefsRequest) (*pb.Re
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	return &pb.RefsResponse{Exists: exists, Commits: commits}, nil
+	return &pb.RefsResponse{Exists: exists, Commits: commits, LfsPresent: w.s.ws().LFSPresent(req.Repo, req.LfsOids)}, nil
 }
 
 func (w *workspaceServer) Sync(st pb.Workspace_SyncServer) error {
@@ -68,8 +68,9 @@ func (w *workspaceServer) Sync(st pb.Workspace_SyncServer) error {
 
 	names := map[pb.SyncPart]string{
 		pb.SyncPart_SYNC_PART_BUNDLE: "bundle", pb.SyncPart_SYNC_PART_PATCH: "patch",
-		pb.SyncPart_SYNC_PART_UNTRACKED_TAR: "untracked.tar",
+		pb.SyncPart_SYNC_PART_UNTRACKED_TAR: "untracked.tar", pb.SyncPart_SYNC_PART_LFS_TAR: "lfs.tar",
 	}
+	lfsMax := w.s.ws().MaxLFSUploadBytes()
 	files := map[pb.SyncPart]*os.File{}
 	sizes := map[pb.SyncPart]int64{}
 	closeAll := func() {
@@ -104,6 +105,10 @@ func (w *workspaceServer) Sync(st pb.Workspace_SyncServer) error {
 			}
 			files[d.Part] = f
 		}
+		if d.Part == pb.SyncPart_SYNC_PART_LFS_TAR && sizes[d.Part]+int64(len(d.Data)) > lfsMax {
+			closeAll()
+			return status.Errorf(codes.ResourceExhausted, "lfs objects: more than the worker's limit of %d bytes per upload", lfsMax)
+		}
 		if _, err := f.Write(d.Data); err != nil {
 			closeAll()
 			return status.Error(codes.Internal, err.Error())
@@ -120,8 +125,12 @@ func (w *workspaceServer) Sync(st pb.Workspace_SyncServer) error {
 	res := &pb.SyncResult{
 		Commit: h.Commit, BundleBytes: sizes[pb.SyncPart_SYNC_PART_BUNDLE],
 		PatchBytes: sizes[pb.SyncPart_SYNC_PART_PATCH], UntrackedBytes: sizes[pb.SyncPart_SYNC_PART_UNTRACKED_TAR],
+		LfsBytes: sizes[pb.SyncPart_SYNC_PART_LFS_TAR],
 	}
 	err = w.s.ws().ImportBundle(ctx, h.Repo, path(pb.SyncPart_SYNC_PART_BUNDLE), h.Branch, h.Commit)
+	if err == nil && res.LfsBytes > 0 {
+		_, err = w.s.ws().ImportLFS(ctx, h.Repo, path(pb.SyncPart_SYNC_PART_LFS_TAR))
+	}
 	if err == nil {
 		if h.StageOnly {
 			res.StagingId = ulid.Make().String()
@@ -135,7 +144,7 @@ func (w *workspaceServer) Sync(st pb.Workspace_SyncServer) error {
 	w.s.Audit.Log(IdentityFrom(ctx), pb.Workspace_Sync_FullMethodName, map[string]any{
 		"repo": h.Repo, "commit": h.Commit, "path": dst, "stage_only": h.StageOnly,
 		"bundle_bytes": res.BundleBytes, "patch_bytes": res.PatchBytes, "untracked_bytes": res.UntrackedBytes,
-		"error": errString(err),
+		"lfs_bytes": res.LfsBytes, "error": errString(err),
 	})
 	if err != nil {
 		return status.Error(codes.FailedPrecondition, err.Error())

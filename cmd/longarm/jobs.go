@@ -115,7 +115,7 @@ func execCmd() *cobra.Command {
 
 func runCmd() *cobra.Command {
 	var env, secrets, labels, require, share []string
-	var cwd, name, id, repo, ref, on, typ string
+	var cwd, name, id, repo, ref, lfs, on, typ string
 	var wait, follow, noQueue bool
 	var memLimit string
 	var memGB, cpus float64
@@ -188,7 +188,7 @@ reachable hub longarm picks among the known workers itself.`,
 				return err
 			}
 			defer conn.Close()
-			ws, err := jobWorkspace(cmd.Context(), conn, repo, ref)
+			ws, err := jobWorkspace(cmd.Context(), conn, repo, ref, lfs)
 			if err != nil {
 				return err
 			}
@@ -238,7 +238,8 @@ reachable hub longarm picks among the known workers itself.`,
 	c.Flags().BoolVar(&wait, "wait", false, "wait for the job and exit with its exit code")
 	c.Flags().BoolVarP(&follow, "follow", "f", false, "stream the log, then exit with the job's exit code")
 	c.Flags().StringVar(&repo, "repo", "", "run in a fresh git worktree of this repo: a local checkout (its commits, uncommitted and untracked files are synced) or a clone URL fetched by the worker (with the GH_TOKEN secret, if given)")
-	c.Flags().StringVar(&ref, "ref", "HEAD", "with --repo: the commit/branch to check out")
+	c.Flags().StringVar(&ref, "ref", "HEAD", "with --repo: what to check out - HEAD, a branch, a tag or a full commit id")
+	c.Flags().StringVar(&lfs, "lfs", lfsSkip, "with --repo <local checkout>: "+lfsFlagHelp)
 	c.Flags().StringVar(&on, "on", "", "worker name or \"auto\" (default when no worker is given)")
 	c.Flags().StringVar(&typ, "type", "", "job type for the memory reservation: claude, copilot, build, test (default: from the command)")
 	c.Flags().Float64Var(&memGB, "mem-gb", 0, "memory to reserve on the worker in GB (default: by --type)")

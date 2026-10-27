@@ -163,6 +163,9 @@ const (
 	SyncPart_SYNC_PART_BUNDLE        SyncPart = 1
 	SyncPart_SYNC_PART_PATCH         SyncPart = 2
 	SyncPart_SYNC_PART_UNTRACKED_TAR SyncPart = 3
+	// Git LFS objects for the mirror's LFS store: a tar of files named by
+	// their sha256 oid (--lfs ship)
+	SyncPart_SYNC_PART_LFS_TAR SyncPart = 4
 )
 
 // Enum value maps for SyncPart.
@@ -172,12 +175,14 @@ var (
 		1: "SYNC_PART_BUNDLE",
 		2: "SYNC_PART_PATCH",
 		3: "SYNC_PART_UNTRACKED_TAR",
+		4: "SYNC_PART_LFS_TAR",
 	}
 	SyncPart_value = map[string]int32{
 		"SYNC_PART_UNSPECIFIED":   0,
 		"SYNC_PART_BUNDLE":        1,
 		"SYNC_PART_PATCH":         2,
 		"SYNC_PART_UNTRACKED_TAR": 3,
+		"SYNC_PART_LFS_TAR":       4,
 	}
 )
 
@@ -3356,8 +3361,11 @@ func (x *MkdirRequest) GetMode() uint32 {
 }
 
 type RefsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Repo          string                 `protobuf:"bytes,1,opt,name=repo,proto3" json:"repo,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Repo  string                 `protobuf:"bytes,1,opt,name=repo,proto3" json:"repo,omitempty"`
+	// Git LFS objects (sha256 oids) the client could send (longarm run / sync
+	// --lfs ship); the worker answers which of them its mirror already has.
+	LfsOids       []string `protobuf:"bytes,2,rep,name=lfs_oids,json=lfsOids,proto3" json:"lfs_oids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3399,10 +3407,20 @@ func (x *RefsRequest) GetRepo() string {
 	return ""
 }
 
+func (x *RefsRequest) GetLfsOids() []string {
+	if x != nil {
+		return x.LfsOids
+	}
+	return nil
+}
+
 type RefsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Exists        bool                   `protobuf:"varint,1,opt,name=exists,proto3" json:"exists,omitempty"`
-	Commits       []string               `protobuf:"bytes,2,rep,name=commits,proto3" json:"commits,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Exists  bool                   `protobuf:"varint,1,opt,name=exists,proto3" json:"exists,omitempty"`
+	Commits []string               `protobuf:"bytes,2,rep,name=commits,proto3" json:"commits,omitempty"`
+	// of RefsRequest.lfs_oids, those in the mirror's LFS store (an older
+	// worker answers none)
+	LfsPresent    []string `protobuf:"bytes,3,rep,name=lfs_present,json=lfsPresent,proto3" json:"lfs_present,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3447,6 +3465,13 @@ func (x *RefsResponse) GetExists() bool {
 func (x *RefsResponse) GetCommits() []string {
 	if x != nil {
 		return x.Commits
+	}
+	return nil
+}
+
+func (x *RefsResponse) GetLfsPresent() []string {
+	if x != nil {
+		return x.LfsPresent
 	}
 	return nil
 }
@@ -3669,6 +3694,7 @@ type SyncResult struct {
 	BundleBytes    int64                  `protobuf:"varint,4,opt,name=bundle_bytes,json=bundleBytes,proto3" json:"bundle_bytes,omitempty"`
 	PatchBytes     int64                  `protobuf:"varint,5,opt,name=patch_bytes,json=patchBytes,proto3" json:"patch_bytes,omitempty"`
 	UntrackedBytes int64                  `protobuf:"varint,6,opt,name=untracked_bytes,json=untrackedBytes,proto3" json:"untracked_bytes,omitempty"`
+	LfsBytes       int64                  `protobuf:"varint,7,opt,name=lfs_bytes,json=lfsBytes,proto3" json:"lfs_bytes,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -3741,6 +3767,13 @@ func (x *SyncResult) GetPatchBytes() int64 {
 func (x *SyncResult) GetUntrackedBytes() int64 {
 	if x != nil {
 		return x.UntrackedBytes
+	}
+	return 0
+}
+
+func (x *SyncResult) GetLfsBytes() int64 {
+	if x != nil {
+		return x.LfsBytes
 	}
 	return 0
 }
@@ -4374,12 +4407,15 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x04size\x18\x02 \x01(\x03R\x04size\"6\n" +
 	"\fMkdirRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
-	"\x04mode\x18\x02 \x01(\rR\x04mode\"!\n" +
+	"\x04mode\x18\x02 \x01(\rR\x04mode\"<\n" +
 	"\vRefsRequest\x12\x12\n" +
-	"\x04repo\x18\x01 \x01(\tR\x04repo\"@\n" +
+	"\x04repo\x18\x01 \x01(\tR\x04repo\x12\x19\n" +
+	"\blfs_oids\x18\x02 \x03(\tR\alfsOids\"a\n" +
 	"\fRefsResponse\x12\x16\n" +
 	"\x06exists\x18\x01 \x01(\bR\x06exists\x12\x18\n" +
-	"\acommits\x18\x02 \x03(\tR\acommits\"p\n" +
+	"\acommits\x18\x02 \x03(\tR\acommits\x12\x1f\n" +
+	"\vlfs_present\x18\x03 \x03(\tR\n" +
+	"lfsPresent\"p\n" +
 	"\tSyncChunk\x120\n" +
 	"\x06header\x18\x01 \x01(\v2\x16.longarm.v1.SyncHeaderH\x00R\x06header\x12*\n" +
 	"\x04data\x18\x02 \x01(\v2\x14.longarm.v1.SyncDataH\x00R\x04dataB\x05\n" +
@@ -4394,7 +4430,7 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"stage_only\x18\x05 \x01(\bR\tstageOnly\"H\n" +
 	"\bSyncData\x12(\n" +
 	"\x04part\x18\x01 \x01(\x0e2\x14.longarm.v1.SyncPartR\x04part\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data\"\xc4\x01\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"\xe1\x01\n" +
 	"\n" +
 	"SyncResult\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x16\n" +
@@ -4404,7 +4440,8 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\fbundle_bytes\x18\x04 \x01(\x03R\vbundleBytes\x12\x1f\n" +
 	"\vpatch_bytes\x18\x05 \x01(\x03R\n" +
 	"patchBytes\x12'\n" +
-	"\x0funtracked_bytes\x18\x06 \x01(\x03R\x0euntrackedBytes\"\xed\x01\n" +
+	"\x0funtracked_bytes\x18\x06 \x01(\x03R\x0euntrackedBytes\x12\x1b\n" +
+	"\tlfs_bytes\x18\a \x01(\x03R\blfsBytes\"\xed\x01\n" +
 	"\x11PrepareJobRequest\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x126\n" +
 	"\tworkspace\x18\x02 \x01(\v2\x18.longarm.v1.JobWorkspaceR\tworkspace\x12K\n" +
@@ -4447,12 +4484,13 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x0eJOB_STATE_DONE\x10\x05\x12\x14\n" +
 	"\x10JOB_STATE_FAILED\x10\x06\x12\x14\n" +
 	"\x10JOB_STATE_KILLED\x10\a\x12\x12\n" +
-	"\x0eJOB_STATE_LOST\x10\b*m\n" +
+	"\x0eJOB_STATE_LOST\x10\b*\x84\x01\n" +
 	"\bSyncPart\x12\x19\n" +
 	"\x15SYNC_PART_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10SYNC_PART_BUNDLE\x10\x01\x12\x13\n" +
 	"\x0fSYNC_PART_PATCH\x10\x02\x12\x1b\n" +
-	"\x17SYNC_PART_UNTRACKED_TAR\x10\x032A\n" +
+	"\x17SYNC_PART_UNTRACKED_TAR\x10\x03\x12\x15\n" +
+	"\x11SYNC_PART_LFS_TAR\x10\x042A\n" +
 	"\x04Node\x129\n" +
 	"\x04Info\x12\x17.longarm.v1.InfoRequest\x1a\x18.longarm.v1.InfoResponse2@\n" +
 	"\x04Exec\x128\n" +

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -231,7 +232,10 @@ type LoginOptions struct {
 	Client     bool
 	ConfigDir  string
 	DeviceName string
-	Out        io.Writer
+	// Labels for the worker, recorded by the hub (nil: an installer's,
+	// signin.InstalledLabels).
+	Labels map[string]string
+	Out    io.Writer
 }
 
 // Login enrolls this worker as its user's own worker with the user's
@@ -241,7 +245,7 @@ type LoginOptions struct {
 // the same approval also makes this machine the user's client device.
 func Login(ctx context.Context, dataDir, hub string, o LoginOptions) error {
 	so := signin.Options{Hub: hub, Fingerprint: o.Fingerprint, WorkerName: o.Name, DeviceName: o.DeviceName,
-		Worker: WorkerTarget{DataDir: dataDir, Force: o.Force}, Scope: o.Scope, OpenBrowser: o.Browser}
+		Worker: WorkerTarget{DataDir: dataDir, Force: o.Force}, Scope: o.Scope, OpenBrowser: o.Browser, WorkerLabels: o.Labels}
 	if o.Client {
 		so.Client = client.DeviceTarget{ConfigDir: o.ConfigDir, Force: o.Force}
 	}
@@ -254,6 +258,9 @@ func Login(ctx context.Context, dataDir, hub string, o LoginOptions) error {
 	}
 	fmt.Fprintf(o.Out, "hub CA verified (%s)\n", r.CAFingerprint)
 	fmt.Fprintf(o.Out, "joined as worker %s\n", r.Worker.Name)
+	if len(r.Worker.Labels) > 0 {
+		fmt.Fprintf(o.Out, "worker labels: %s (change them: longarm worker label %s KEY=VALUE KEY-)\n", labelString(r.Worker.Labels), r.Worker.Name)
+	}
 	if r.Device != nil {
 		fmt.Fprintf(o.Out, "signed in to %s as %s/%s (config %s)\n", r.Hub, r.Device.Role, r.Device.Name, r.Device.Dir)
 	}
@@ -356,4 +363,13 @@ func (c *Config) reloadHubFile() error {
 	}
 	c.applyHubFile(hf)
 	return nil
+}
+
+func labelString(m map[string]string) string {
+	out := make([]string, 0, len(m))
+	for k, v := range m {
+		out = append(out, k+"="+v)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ",")
 }

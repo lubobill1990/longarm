@@ -17,6 +17,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/localapi"
 	"github.com/lubobill1990/longarm/internal/longarmd"
+	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -38,6 +39,9 @@ finishes the enrollment once approved.`,
 				return err
 			}
 			fmt.Printf("data dir %s\n", dataDir)
+			if w := longarmd.ProtectedDataDirWarning(dataDir); w != "" {
+				fmt.Fprintln(os.Stderr, "warning: "+w)
+			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			return longarmd.Join(ctx, dataDir, args[0], args[1], longarmd.JoinOptions{Name: name, Fingerprint: fp, NoWait: noWait, Force: force, Out: os.Stdout})
@@ -53,6 +57,7 @@ finishes the enrollment once approved.`,
 
 func loginCmd() *cobra.Command {
 	var dataDir, name, fp, scope, role, configDir, deviceName string
+	var labels []string
 	var az, force, noBrowser bool
 	c := &cobra.Command{
 		Use:   "login [hub]",
@@ -81,7 +86,11 @@ config dir, --config-dir) with the same code and the same approval: the
 page lists both. Run it as the user who uses longarm here.
 
 --az uses the Azure CLI's sign-in on this machine instead (az login): no
-browser, no code.`,
+browser, no code.
+
+--label pool=devbox (repeatable) has the hub record labels for the worker,
+like longarm worker add --label; its owner changes them later with
+longarm worker label <worker> KEY=VALUE KEY-.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dataDir, err := filepath.Abs(dataDir)
@@ -91,6 +100,10 @@ browser, no code.`,
 			if role != "worker" && role != "both" {
 				return fmt.Errorf("--role %q: want worker or both (a client only: longarm login)", role)
 			}
+			lm, err := sched.ParseLabels(labels, false)
+			if err != nil {
+				return err
+			}
 			hub := ""
 			if len(args) > 0 {
 				hub = args[0]
@@ -98,10 +111,13 @@ browser, no code.`,
 				return err
 			}
 			fmt.Printf("data dir %s\n", dataDir)
+			if w := longarmd.ProtectedDataDirWarning(dataDir); w != "" {
+				fmt.Fprintln(os.Stderr, "warning: "+w)
+			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			return longarmd.Login(ctx, dataDir, hub, longarmd.LoginOptions{Name: name, Fingerprint: fp, Force: force,
-				Az: az, Scope: scope, Browser: !noBrowser, Out: os.Stdout,
+				Az: az, Scope: scope, Browser: !noBrowser, Out: os.Stdout, Labels: lm,
 				Client: role == "both", ConfigDir: configDir, DeviceName: deviceName})
 		},
 	}
@@ -109,6 +125,7 @@ browser, no code.`,
 	c.Flags().StringVar(&name, "name", "", "worker name (default: hostname)")
 	c.Flags().StringVar(&fp, "ca-fingerprint", "", "expected sha256 fingerprint of the hub CA (longarm-hub ca show); default: fetched from https://<hub>/ca.crt")
 	c.Flags().StringVar(&role, "role", "worker", "worker, or both: also this user's client device, with the same approval")
+	c.Flags().StringArrayVar(&labels, "label", nil, "label for the worker, recorded by the hub: KEY=VALUE[,KEY=VALUE...] (repeatable; later: longarm worker label)")
 	c.Flags().StringVar(&configDir, "config-dir", client.DefaultConfigDir(), "--role both: longarm's config dir; env LONGARM_CONFIG_DIR")
 	c.Flags().StringVar(&deviceName, "device-name", "", "--role both: the device's name (default: <user>-<hostname>)")
 	c.Flags().BoolVar(&az, "az", false, "sign in with the Azure CLI on this machine (az login) instead of a code")

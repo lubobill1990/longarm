@@ -83,12 +83,17 @@ func RepoKey(s string) string {
 type Store struct {
 	Root string // longarmd data dir
 	Git  string // git executable (default "git")
+	// LFSLimits bound LFS uploads (zero: DefaultLFSLimits).
+	LFSLimits LFSLimits
 	// Prune replaces PruneAll's git runs (per-user isolation: the user's
 	// mirrors are pruned as the user).
 	Prune func(ctx context.Context)
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
+
+	lfsOnce sync.Once // lfsInstalled
+	lfsOK   bool
 }
 
 func (s *Store) git() string {
@@ -134,24 +139,71 @@ func (s *Store) run(ctx context.Context, dir string, env []string, log io.Writer
 	args = append([]string{"-c", "core.autocrlf=false"}, args...)
 	cmd := exec.CommandContext(ctx, s.git(), args...)
 	cmd.Dir = dir
-	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "LC_ALL=C"), env...)
+	// Never wait for a prompt nobody sees: git's own, an askpass helper's,
+	// or Git Credential Manager's sign-in window.
+	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "GCM_INTERACTIVE=never", "LC_ALL=C"), env...)
+	// One writer for both streams: exec then never calls it concurrently.
+	// What goes to log (a job's out.log) has URL credentials masked.
 	var out bytes.Buffer
+	var rlog *redactWriter
+	var w io.Writer = &out
 	if log != nil {
-		cmd.Stdout = io.MultiWriter(&out, log)
-		cmd.Stderr = io.MultiWriter(&out, log)
-	} else {
-		cmd.Stdout, cmd.Stderr = &out, &out
+		rlog = &redactWriter{w: log}
+		w = io.MultiWriter(&out, rlog)
 	}
+	cmd.Stdout, cmd.Stderr = w, w
 	cmd.WaitDelay = 5 * time.Second
 	err := cmd.Run()
+	if rlog != nil {
+		rlog.flush()
+	}
 	if err != nil {
 		msg := strings.TrimSpace(out.String())
 		if len(msg) > 2000 {
 			msg = msg[len(msg)-2000:]
 		}
-		return out.String(), fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, msg)
+		return out.String(), fmt.Errorf("git %s: %v: %s", RedactURLs(strings.Join(args, " ")), err, RedactURLs(msg))
 	}
 	return out.String(), nil
+}
+
+// urlUserinfo matches the userinfo of a URL ("https://user:pass@",
+// "https://token@").
+var urlUserinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#@'"]+@`)
+
+// RedactURLs masks the userinfo (user and password: a PAT is often the
+// user) of every URL in s.
+func RedactURLs(s string) string {
+	return urlUserinfo.ReplaceAllString(s, "${1}xxxxx@")
+}
+
+// redactWriter passes lines through RedactURLs.
+type redactWriter struct {
+	w   io.Writer
+	buf []byte
+}
+
+func (r *redactWriter) Write(p []byte) (int, error) {
+	r.buf = append(r.buf, p...)
+	for {
+		i := bytes.IndexAny(r.buf, "\r\n")
+		if i < 0 {
+			break
+		}
+		r.w.Write([]byte(RedactURLs(string(r.buf[:i+1]))))
+		r.buf = r.buf[i+1:]
+	}
+	if len(r.buf) > 64<<10 { // no line end in sight
+		r.flush()
+	}
+	return len(p), nil
+}
+
+func (r *redactWriter) flush() {
+	if len(r.buf) > 0 {
+		r.w.Write([]byte(RedactURLs(string(r.buf))))
+		r.buf = nil
+	}
 }
 
 func (s *Store) ensureMirror(ctx context.Context, repo string) (string, error) {
@@ -302,7 +354,7 @@ func (s *Store) FetchURL(ctx context.Context, repo, u, ref, token string, log io
 	defer unlock()
 	dst := "refs/longarm/remote/" + refSuffix(ref)
 	if _, err := s.run(ctx, m, env, log, "fetch", "--no-tags", "--force", "--", u, "+"+ref+":"+dst); err != nil {
-		return "", err
+		return "", fetchError(u, token != "", err)
 	}
 	out, err := s.run(ctx, m, nil, nil, "rev-parse", "--verify", dst+"^{commit}")
 	if err != nil {
@@ -311,7 +363,38 @@ func (s *Store) FetchURL(ctx context.Context, repo, u, ref, token string, log io
 	return strings.TrimSpace(out), nil
 }
 
-// Checkout makes path a worktree of repo's mirror at commit (detached),
+// authFailure matches git's (and its credential helpers') ways of saying
+// the remote refused or never got credentials.
+var authFailure = regexp.MustCompile(`(?i)(returned error: 40[13]|HTTP 40[13]|\b40[13] (Forbidden|Unauthorized)|Authentication failed|` +
+	`could not read (Username|Password)|terminal prompts disabled|Permission denied \(publickey|` +
+	`Repository not found|cannot prompt|interactivity is disabled)`)
+
+// fetchError explains a failed fetch of u that looks like an
+// authentication problem: the worker fetches as its own account,
+// non-interactively - a credential helper that needs a sign-in (Git
+// Credential Manager for Azure DevOps) can't ask anyone.
+func fetchError(u string, withToken bool, err error) error {
+	u = RedactURLs(u)
+	m := authFailure.FindString(err.Error())
+	if m == "" {
+		return errors.New(RedactURLs(err.Error()))
+	}
+	host := u
+	if pu, perr := url.Parse(u); perr == nil && pu.Host != "" {
+		host = pu.Host
+	}
+	how := "a credential that works without a prompt for " + host + " in the worker account's git config " +
+		"(a PAT in its credential store, an ssh key; GitHub: the job's GH_TOKEN secret, --secret-env GH_TOKEN)"
+	if withToken {
+		how = "a GH_TOKEN with access to the repository (the job's secret was refused)"
+	}
+	return fmt.Errorf("fetching %s: the worker could not authenticate (%s): it fetches as its own account and "+
+		"can't prompt for a sign-in (e.g. Git Credential Manager). Ship the commits from your machine instead - "+
+		"longarm run --repo <local checkout> (e.g. --repo .) - or give the worker %s: %s", u, m, how, RedactURLs(err.Error()))
+}
+
+// Checkout makes path a worktree of repo's mirror at commit (detached;
+// Git LFS files as pointers unless their content was shipped, lfs.go),
 // then applies patch (git diff --binary) and extracts untracked (a tar),
 // either of which may be "". An existing worktree of the same mirror is
 // reset (tracked changes and untracked files are discarded; ignored files
@@ -336,7 +419,7 @@ func (s *Store) Checkout(ctx context.Context, repo, commit, dst, patch, untracke
 			return err
 		}
 		s.run(ctx, m, nil, nil, "worktree", "prune")
-		if _, err := s.run(ctx, m, nil, log, "worktree", "add", "-q", "--force", "--detach", dst, commit); err != nil {
+		if _, err := s.run(ctx, m, skipSmudge, log, "worktree", "add", "-q", "--force", "--detach", dst, commit); err != nil {
 			return err
 		}
 	} else {
@@ -344,12 +427,15 @@ func (s *Store) Checkout(ctx context.Context, repo, commit, dst, patch, untracke
 		if err != nil || !samePath(strings.TrimSpace(common), m) {
 			return fmt.Errorf("%s exists and is not a worktree of mirror %s", dst, repo)
 		}
-		if _, err := s.run(ctx, dst, nil, log, "checkout", "-q", "-f", "--detach", commit); err != nil {
+		if _, err := s.run(ctx, dst, skipSmudge, log, "checkout", "-q", "-f", "--detach", commit); err != nil {
 			return err
 		}
 		if _, err := s.run(ctx, dst, nil, log, "clean", "-q", "-fd"); err != nil {
 			return err
 		}
+	}
+	if err := s.checkoutLFS(ctx, repo, m, dst, log); err != nil {
+		return err
 	}
 	if patch != "" {
 		if fi, err := os.Stat(patch); err == nil && fi.Size() > 0 {

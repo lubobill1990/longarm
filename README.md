@@ -47,7 +47,8 @@ Longarm lets the agent (or you) say *"run this over there"*:
   authorized by grants the hub signs per link.
 - **Code sync** - `longarm sync .` mirrors your checkout (commits, uncommitted
   changes, untracked files) into a git worktree on the worker; `longarm run
-  --repo .` gives a job a fresh worktree.
+  --repo .` gives a job a fresh worktree (`--ref` a branch, tag or full
+  commit id; Git LFS files as pointers, or their content with `--lfs ship`).
 - **Built-in sshd** - `ssh`, `scp`, `sftp` and VS Code Remote-SSH work through
   the same mTLS channel, no SSH keys to manage.
 - **MCP server** - `longarm mcp` gives Claude Code and Copilot CLI tools such as
@@ -164,6 +165,10 @@ shows the code afterwards and needs no other input.)
 **4. The machine is your worker and your client.** It runs your jobs (only
 yours until you share it: `longarm worker share`) and its `longarm` acts as
 you; the hub's Entra admins get admin certificates. `longarm ls` lists it.
+Label it for placement at sign-in (`--login --label pool=devbox`,
+`longarmd login --label pool=devbox`, MSI `LABELS=pool=devbox`) or later -
+`longarm worker label <worker> pool=devbox` - and `longarm run --require
+pool=devbox` goes there.
 
 Without Microsoft sign-in on the hub, use join codes instead:
 `longarm join hub.example.com:7443 <admin-code> --ca-fingerprint <fp>` on your

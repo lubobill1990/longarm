@@ -68,6 +68,12 @@ and `LONGARM_DATA_DIR` always win; otherwise:
 | LocalSystem on Windows | `C:\ProgramData\Longarm\longarmd` (also the MSI's `DATADIR`, which sets `LONGARM_DATA_DIR` system-wide) |
 | an elevated administrator on Windows | `~\.longarm`, unless only `C:\ProgramData\Longarm\longarmd` holds an enrollment |
 
+Don't put the data dir under a `.claude` directory (e.g. a project's
+`.claude/worktrees/...`): Claude Code treats every path under `.claude` as
+protected and denies writes there, so Claude Code jobs could not edit their
+worktrees (`<data>/worktrees`). `longarmd join`, `longarmd login` and
+longarmd's start warn about it.
+
 So `sudo longarmd join ...` and `sudo longarmd service install ...` agree
 without flags. Existing installs keep working: as long as `/var/lib/longarmd`
 holds no enrollment (`tls/`, `hub.toml` or `longarmd.toml`) but root's
@@ -178,6 +184,8 @@ longarm get w1:logs/app.log .                      # relative worker paths = wor
 longarm sync . w1:C:/work/proj                     # commits (bundle of what the worker lacks) +
                                               # uncommitted diff + untracked files -> git worktree
 longarm run w1 --repo . -f -- pnpm test            # job in a fresh worktree of the local checkout
+longarm run w1 --repo . --ref 3f2a...c9 -- make    # a full commit id (40/64 hex) of the checkout, detached
+longarm run w1 --repo . --lfs ship -- make         # also the commit's Git LFS objects (default: skip)
 longarm run w1 --repo https://github.com/o/r --ref main --secret-env GH_TOKEN -- pnpm test
 ```
 
@@ -186,6 +194,50 @@ and a worktree per sync target or job (`<data>/worktrees/<job-id>`); a job
 with `--repo` stays `preparing` until its worktree is ready. Syncing into an
 existing worktree resets it: tracked changes and untracked files there are
 discarded, ignored files (node_modules, build output) are kept.
+
+`--ref` (run and sync) takes `HEAD`, a branch, a tag or a **full** commit id
+of the local checkout - a commit on no branch is shipped too (through a
+temporary ref, removed afterwards) and checked out detached; a short commit
+id is refused with the full one in the message. Uncommitted changes travel
+with `HEAD` only.
+
+**Git LFS.** A shipped checkout's LFS content is not in its git objects, and
+the worker's mirror has no LFS server to fetch it from, so worktrees are
+checked out with the LFS smudge skipped: LFS files are **pointer files** by
+default (`--lfs skip`; longarm notes it when the commit uses LFS, and the
+job's `out.log` says so). `--lfs ship` (needs git-lfs on both sides) also
+sends the commit's LFS objects the worker lacks from the local LFS store
+(`git lfs ls-files` of the commit; objects not fetched locally are reported
+and stay pointers) into the mirror's LFS store, and `git lfs checkout` fills
+in the files. LFS attributes count in any `.gitattributes`, nested ones
+included. The mirror's LFS filter is set to skip the smudge for the
+job's own git too (a later checkout doesn't fail on missing content);
+`git status` stays clean. With `--repo <url>` LFS files are pointer files.
+The worker accepts plain files named by their sha256 only (no sparse or
+other special tar entries), verifies every object's hash and bounds each
+upload: by default 4 GiB per object, 16 GiB and 50000 objects in total -
+in longarmd.toml:
+
+```toml
+[workspace]
+lfs_max_object_bytes = 4294967296
+lfs_max_total_bytes = 17179869184
+lfs_max_objects = 50000
+```
+
+(per-user isolation's helpers use the defaults).
+
+**Clone URLs** are fetched by the worker as its own account, without any
+prompt (`GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`): a remote that
+needs an interactive sign-in - e.g. Azure DevOps through Git Credential
+Manager - fails fast with "the worker could not authenticate (... 401/403
+...)". Credentials in a clone URL (`https://user:pass@`, `https://TOKEN@`)
+are masked in the job's log and failure reason; prefer a credential on the
+worker or `GH_TOKEN` over a URL with credentials, which is stored with the
+job's spec. Ship the commits from your machine instead (`--repo .`, a local
+checkout), or give the worker account a credential that works without a
+prompt (a PAT in its credential store, an ssh key; GitHub: the job's
+`GH_TOKEN` secret).
 
 ### Port links: worker to worker
 
@@ -618,16 +670,28 @@ longarm worker add [<name>] [--ttl 24h] [--label k=v]...   # prints a join code 
 #   longarmd join <hub> <code> --ca-fingerprint <fp> --name <name>   # on the new worker, then
 #   longarmd service install ...                                     # (see "Install a worker")
 #   the worker joins approved (no admin needed) and owned by you; at most 10 unused codes per user
-longarmd login <hub> [--name <name>]      # on the new worker, no code to copy: sign in with your Microsoft
-                                          # account (a code to approve in any browser; see "Sign in with
-                                          # Microsoft Entra ID")
+longarmd login <hub> [--name <name>] [--label k=v]...   # on the new worker, no code to copy: sign in with
+                                          # your Microsoft account (a code to approve in any browser; see
+                                          # "Sign in with Microsoft Entra ID"); --label as worker add's
 longarm worker ls [--json]                # your workers, workers shared with you, the fleet (owner, shares, load)
+longarm worker label <worker> pool=devbox [gpu-]...   # set (KEY=VALUE) / delete (KEY- or KEY=) labels
+                                          # of your worker (admins: any worker); audited by the hub
 longarm worker share <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker unshare <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker remove <worker>            # revoke it (owner or admin)
 longarm ls                                # an OWNER column appears once a worker has an owner
                                           # ("-" = fleet, "+shared" = shared by its owner)
 ```
+
+**Labels** (scheduler constraints: `longarm run --require pool=devbox`) of
+your own worker are yours to set: at registration (`longarm worker add
+--label`, `longarmd login --label`, the install scripts' `--login --label
+k=v` / `-Label 'k=v,k2=v2'` / `LONGARM_LABELS`, the MSI's `LABELS` with
+`LOGIN=1`) and later with `longarm worker label` - the same rules as
+`longarm admin label`, which stays the admins' tool for any node. Labels the
+worker reports itself (`longarmd.toml` `[hub] labels`) are changed there;
+the hub's win on a conflict. An older hub ignores sign-in labels
+(`longarmd login` then prints the `longarm worker label` command to run).
 
 **Sharing is off by default**: an admin lets a user share their workers,
 and admins share and unshare any user's worker (`longarm worker share` with
@@ -687,8 +751,12 @@ $env:LONGARM_LOGIN=1; irm https://hub.example.com/install.ps1 | iex
 # a client device only
 curl -fsSL https://hub.example.com/install.sh | sh -s -- --login --role client
 $env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='client'; irm https://hub.example.com/install.ps1 | iex
+# worker labels with the sign-in (as longarm worker add --label)
+curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --label pool=devbox
+$env:LONGARM_LOGIN=1; $env:LONGARM_LABELS='pool=devbox,os.flavor=ltsc'; irm https://hub.example.com/install.ps1 | iex
 # Windows MSI, no code at install time: the tray (or longarmd login) signs in afterwards
 msiexec /i longarm-windows-amd64.msi ROLES=both HUB=hub.example.com LOGIN=1 SERVICE_USER=.\me SERVICE_PASSWORD=...
+#   [LABELS=pool=devbox] worker labels for that sign-in
 # with longarm / longarmd installed already: the hub's domain is enough
 longarmd login hub.example.com --role both     # worker + client, one approval (as the user who uses longarm)
 longarmd login hub.example.com [--name w3] [--data-dir D]   # a worker only

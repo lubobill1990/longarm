@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/client"
@@ -27,10 +29,11 @@ import (
 //	longarm worker ls [--json]                                 your workers, shared with you, the fleet
 //	longarm worker share <worker> [--user u]... [--team t]... [--everyone]
 //	longarm worker unshare <worker> [--user u]... [--team t]... [--everyone]
+//	longarm worker label <worker> KEY=VALUE... [KEY-]...       set / delete labels of your worker
 //	longarm worker remove <worker>                             revoke it
 
 func workerCmd() *cobra.Command {
-	c := &cobra.Command{Use: "worker", Short: "Your own workers: register a machine only you may use, list, share, remove"}
+	c := &cobra.Command{Use: "worker", Short: "Your own workers: register a machine only you may use, list, share, label, remove"}
 
 	var ttl time.Duration
 	var labels []string
@@ -116,6 +119,38 @@ placed for them) until you share it - which needs an admin's permission
 	ls.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 
 	c.AddCommand(add, ls, shareCmd(true), shareCmd(false))
+	c.AddCommand(&cobra.Command{
+		Use:   "label <worker> KEY=VALUE[,KEY=VALUE...]... [KEY-]...",
+		Short: "Set labels of a worker of yours (KEY- or KEY= deletes; admins: any worker)",
+		Long: `Set or delete labels of your own worker - scheduler constraints, e.g.
+longarm run --require pool=devbox - like longarm worker add --label at
+registration. KEY- (or KEY=) deletes a label. The hub checks that the
+worker is yours (admins: any worker) and audits the change. Labels the
+worker reports itself (longarmd.toml [hub] labels) are changed there.`,
+		Args: cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			m, err := parseLabelEdits(args[1:])
+			if err != nil {
+				return err
+			}
+			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
+				n, err := h.Fleet().SetWorkerLabels(ctx, &pb.SetLabelsRequest{Name: args[0], Labels: m})
+				if status.Code(err) == codes.Unimplemented {
+					return errors.New("this hub is too old for longarm worker label (update it; admins: longarm admin label)")
+				}
+				if err != nil {
+					return err
+				}
+				fmt.Printf("%s: %s\n", n.Name, labelString(n.Labels))
+				for k, v := range m {
+					if got, ok := n.Labels[k]; v == "" && ok {
+						fmt.Fprintf(os.Stderr, "longarm: %s=%s stays: the worker reports it itself (longarmd.toml [hub] labels)\n", k, got)
+					}
+				}
+				return nil
+			})
+		},
+	})
 	c.AddCommand(&cobra.Command{
 		Use: "remove <worker>", Short: "Remove a worker of yours: revoke its certificates (admins: any worker)", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -213,4 +248,20 @@ func caFingerprint(s *session) string {
 		}
 	}
 	return "<longarm-hub ca show>"
+}
+
+// parseLabelEdits parses `worker label` arguments: KEY=VALUE sets, KEY-
+// and KEY= delete (an empty value in the result); comma lists allowed.
+func parseLabelEdits(args []string) (map[string]string, error) {
+	var norm []string
+	for _, a := range args {
+		items := strings.Split(a, ",")
+		for i, it := range items {
+			if k, ok := strings.CutSuffix(strings.TrimSpace(it), "-"); ok && !strings.Contains(it, "=") {
+				items[i] = k + "="
+			}
+		}
+		norm = append(norm, strings.Join(items, ","))
+	}
+	return sched.ParseLabels(norm, true)
 }

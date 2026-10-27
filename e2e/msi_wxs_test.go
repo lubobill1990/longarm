@@ -11,7 +11,7 @@ import (
 // on the msiexec command line must win over the value an earlier install
 // remembered in the registry - an upgrade may change the hub, replace the
 // CA pin or switch between join code and LOGIN. AppSearch overwrites the
-// property it searches into, so HUB, CA_FINGERPRINT and LOGIN must not
+// property it searches into, so HUB, CA_FINGERPRINT, LOGIN and LABELS must not
 // carry a RegistrySearch themselves; their SAVED_* twin does, and a
 // SetProperty applies it only when the property is empty.
 func TestMSIPropertiesOverridable(t *testing.T) {
@@ -44,7 +44,7 @@ func TestMSIPropertiesOverridable(t *testing.T) {
 	for _, p := range doc.Package.Properties {
 		props[p.ID] = p
 	}
-	for _, name := range []string{"HUB", "CA_FINGERPRINT", "LOGIN"} {
+	for _, name := range []string{"HUB", "CA_FINGERPRINT", "LOGIN", "LABELS"} {
 		p, ok := props[name]
 		if !ok {
 			t.Errorf("no property %s", name)
