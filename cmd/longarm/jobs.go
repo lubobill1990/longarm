@@ -87,6 +87,12 @@ func execCmd() *cobra.Command {
 			if resp.Error != "" {
 				fmt.Fprintln(os.Stderr, "longarm:", resp.Error+traceNote())
 			}
+			if resp.ExitCode == 127 && resp.Error == "" {
+				// on Windows longarmd starts programs through its conhost
+				// wrapper, which reports "failed to start" in the program's
+				// stderr and exits 127: name the trace for the bug report
+				fmt.Fprintln(os.Stderr, "longarm: exit status 127: the program was not found or could not start"+traceNote())
+			}
 			if resp.ExitCode != 0 {
 				code := int(resp.ExitCode)
 				if code < 0 || code > 255 {
@@ -208,7 +214,7 @@ reachable hub longarm picks among the known workers itself.`,
 			}
 			fmt.Println(job.Spec.Id)
 			if job.State == pb.JobState_JOB_STATE_FAILED && !wait && !follow {
-				fmt.Fprintf(os.Stderr, "longarm: job failed to start: %s\n", job.Reason)
+				fmt.Fprintf(os.Stderr, "longarm: job failed to start: %s%s\n", job.Reason, traceNote())
 			}
 			if follow {
 				if err := followLogs(ctx, conn, id, 0, os.Stdout); err != nil {

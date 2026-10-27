@@ -180,6 +180,9 @@ func fakeAz(args []string) {
 				if g["entraAdmins"] != nil {
 					env += ",LONGARM_HUB_ENTRA_ADMINS"
 				}
+				if g["entraApps"] != nil {
+					env += ",LONGARM_HUB_ENTRA_APPS"
+				}
 			}
 			// LONGARM_HUB_RELAY_STUN_ADVERTISE as the template sets it
 			stun := "self,stun.cloudflare.com:3478,stun.l.google.com:19302"
@@ -199,6 +202,9 @@ func fakeAz(args []string) {
 				tsv("LONGARM_HUB_ENTRA_WEB", fmt.Sprint(g["entraWeb"]))
 				if a, _ := g["entraAdmins"].(string); a != "" {
 					tsv("LONGARM_HUB_ENTRA_ADMINS", a)
+				}
+				if a, _ := g["entraApps"].(string); a != "" {
+					tsv("LONGARM_HUB_ENTRA_APPS", a)
 				}
 			}
 		case strings.Contains(q, "image"):

@@ -95,7 +95,7 @@ func TestTelemetry(t *testing.T) {
 	if r.code == 0 {
 		t.Fatalf("exec of a missing program: %+v", r)
 	}
-	if r.code == 255 && !strings.Contains(r.stderr, "(trace ") {
+	if (r.code == 255 || r.code == 127) && !strings.Contains(r.stderr, "(trace ") {
 		t.Fatalf("no trace id in the error: %q", r.stderr)
 	}
 

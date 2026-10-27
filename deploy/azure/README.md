@@ -62,6 +62,7 @@ restarts the hub) prints everything too.
 | `--entra-tenant ID --entra-client ID` | `-EntraTenant -EntraClient` | Sign in with Microsoft Entra ID (`longarm login`, panel); a re-run keeps them ([usage](../../docs/usage.md)) |
 | `--entra-admins LIST` | `-EntraAdmins` | Entra admins: UPNs, `*@domain` or object IDs, comma-separated |
 | `--entra-web spa\|confidential\|off` | `-EntraWeb` | panel sign-in mode (default spa) |
+| `--entra-apps LIST` | `-EntraApps` | app-only sign-in (CI): `<app id>=<user>`, comma-separated |
 | `--log-analytics` | `-LogAnalytics` | container logs to a Log Analytics workspace |
 | `--storage-auth key\|identity` | `-StorageAuth` | `identity`: no storage account keys, panel served by the hub ([below](#without-storage-account-keys)); a re-run keeps the mode (switching needs a new deployment) |
 | `--acr NAME` | `-Acr` | with `identity`: pull the image from this Azure Container Registry (same resource group) |

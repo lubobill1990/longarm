@@ -282,20 +282,24 @@ func TestAzureDeployScripts(t *testing.T) {
 			telemetry, diagnostics := r.flag("--telemetry", "-Telemetry"), r.flag("--diagnostics", "-Diagnostics")
 			entraTenant, entraClient := r.flag("--entra-tenant", "-EntraTenant"), r.flag("--entra-client", "-EntraClient")
 			entraAdmins, entraWeb := r.flag("--entra-admins", "-EntraAdmins"), r.flag("--entra-web", "-EntraWeb")
+			entraApps := r.flag("--entra-apps", "-EntraApps")
 			acrFlag := r.flag("--acr", "-Acr")
 			refused(run(pw, name, "myhub", regUser, "bot", diagnostics), "diagnostics with storage keys", "diagnostics needs")
 			refused(run(pw, name, "myhub", regUser, "bot", acrFlag, "myacr"), "--acr with storage keys", "acr needs")
 			refused(run(pw, name, "myhub", regUser, "bot", entraTenant, "tid"), "Entra tenant without client", "go together")
 			refused(run(pw, name, "myhub", regUser, "bot", entraTenant, "tid", entraClient, "cid", entraWeb, "bogus"), "bad Entra web mode", "spa, confidential or off")
-			ok(run(pw, name, "myhub", regUser, "bot", telemetry, entraTenant, "tid", entraClient, "cid", entraAdmins, "alice@example.com,*@example.org"), "telemetry and Entra")
+			ok(run(pw, name, "myhub", regUser, "bot", telemetry, entraTenant, "tid", entraClient, "cid", entraAdmins, "alice@example.com,*@example.org",
+				entraApps, "11111111-2222-3333-4444-555555555555=ci-bot"), "telemetry and Entra")
 			if p := params(); p["enableTelemetry"] != true || p["enableDiagnostics"] != false || p["storageAuth"] != "key" ||
-				p["entraTenantId"] != "tid" || p["entraClientId"] != "cid" || p["entraAdmins"] != "alice@example.com,*@example.org" || p["entraWeb"] != nil {
+				p["entraTenantId"] != "tid" || p["entraClientId"] != "cid" || p["entraAdmins"] != "alice@example.com,*@example.org" || p["entraWeb"] != nil ||
+				p["entraApps"] != "11111111-2222-3333-4444-555555555555=ci-bot" {
 				t.Fatalf("telemetry and Entra: %+v", p)
 			}
 			ok(run(pw, name, "myhub", regUser, "bot", entraWeb, "off"), "Entra web mode")
 			ok(run(pw, name, "myhub", regUser, "bot"), "re-run keeps telemetry and Entra")
 			if p := params(); p["enableTelemetry"] != true || p["entraTenantId"] != "tid" || p["entraClientId"] != "cid" ||
-				p["entraAdmins"] != "alice@example.com,*@example.org" || p["entraWeb"] != "off" {
+				p["entraAdmins"] != "alice@example.com,*@example.org" || p["entraWeb"] != "off" ||
+				p["entraApps"] != "11111111-2222-3333-4444-555555555555=ci-bot" {
 				t.Fatalf("re-run lost telemetry / Entra: %+v", p)
 			}
 			ok(run(pw, name, "myhub", regUser, "bot", entraAdmins, "bob@example.com"), "other Entra admins")
@@ -399,7 +403,10 @@ func TestAzureDeployScripts(t *testing.T) {
 				p["entraTenantId"] != "tid" || p["entraAdmins"] != "alice@example.com" || p["entraWeb"] != "confidential" || p["enableLogAnalytics"] != false {
 				t.Fatalf("identity re-run: %+v", p)
 			}
-			if cl := calls()[from:]; strings.Contains(cl, "storage ") || strings.Contains(cl, "Microsoft.OperationalInsights") {
+			// telemetry looks at its providers (already registered); Log
+			// Analytics stays off (enableLogAnalytics above)
+			if cl := calls()[from:]; strings.Contains(cl, "storage ") || strings.Contains(cl, "provider register") ||
+				!strings.Contains(cl, "provider show -n Microsoft.Insights") {
 				t.Fatalf("identity re-run:\n%s", cl)
 			}
 			refused(run(nil, name, "idhub", sa, "key"), "switching the storage auth", "switching needs")
