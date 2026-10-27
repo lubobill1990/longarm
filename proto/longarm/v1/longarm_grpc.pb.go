@@ -859,6 +859,10 @@ const (
 	Sessions_List_FullMethodName   = "/longarm.v1.Sessions/List"
 	Sessions_Kill_FullMethodName   = "/longarm.v1.Sessions/Kill"
 	Sessions_Logs_FullMethodName   = "/longarm.v1.Sessions/Logs"
+	Sessions_Start_FullMethodName  = "/longarm.v1.Sessions/Start"
+	Sessions_Get_FullMethodName    = "/longarm.v1.Sessions/Get"
+	Sessions_Send_FullMethodName   = "/longarm.v1.Sessions/Send"
+	Sessions_Stop_FullMethodName   = "/longarm.v1.Sessions/Stop"
 )
 
 // SessionsClient is the client API for Sessions service.
@@ -881,6 +885,24 @@ type SessionsClient interface {
 	// Logs streams the session transcript (raw terminal output, secrets
 	// redacted) like Jobs.Logs; id = session name.
 	Logs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogChunk], error)
+	// Start creates a session without attaching (InfoResponse feature
+	// "session-start"). Idempotent by name: a running session with the same
+	// spec is returned with created = false; another spec fails with
+	// ALREADY_EXISTS. An ended session of that name is replaced. Returns once
+	// the session runs (or ended, e.g. its program did not start), or, with a
+	// workspace still being prepared, when the caller's deadline expires.
+	Start(ctx context.Context, in *StartSessionRequest, opts ...grpc.CallOption) (*AttachStarted, error)
+	// Get returns one session (any state); NOT_FOUND if there is none.
+	Get(ctx context.Context, in *GetSessionRequest, opts ...grpc.CallOption) (*Session, error)
+	// Send writes bytes to a running session's terminal as one contiguous
+	// write (InfoResponse feature "session-send"). The bytes are never
+	// persisted (audit: their count only). NOT_FOUND: no such session;
+	// FAILED_PRECONDITION: it has ended; RESOURCE_EXHAUSTED: if_idle_ms was
+	// set and input arrived within that window (nothing was written).
+	Send(ctx context.Context, in *SendSessionRequest, opts ...grpc.CallOption) (*SendSessionResponse, error)
+	// Stop ends a session gracefully: Ctrl-C keystrokes to its terminal, then,
+	// if it still runs after grace, Kill (InfoResponse feature "session-stop").
+	Stop(ctx context.Context, in *StopSessionRequest, opts ...grpc.CallOption) (*Session, error)
 }
 
 type sessionsClient struct {
@@ -943,6 +965,46 @@ func (c *sessionsClient) Logs(ctx context.Context, in *LogsRequest, opts ...grpc
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Sessions_LogsClient = grpc.ServerStreamingClient[LogChunk]
 
+func (c *sessionsClient) Start(ctx context.Context, in *StartSessionRequest, opts ...grpc.CallOption) (*AttachStarted, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttachStarted)
+	err := c.cc.Invoke(ctx, Sessions_Start_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionsClient) Get(ctx context.Context, in *GetSessionRequest, opts ...grpc.CallOption) (*Session, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Session)
+	err := c.cc.Invoke(ctx, Sessions_Get_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionsClient) Send(ctx context.Context, in *SendSessionRequest, opts ...grpc.CallOption) (*SendSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SendSessionResponse)
+	err := c.cc.Invoke(ctx, Sessions_Send_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionsClient) Stop(ctx context.Context, in *StopSessionRequest, opts ...grpc.CallOption) (*Session, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Session)
+	err := c.cc.Invoke(ctx, Sessions_Stop_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SessionsServer is the server API for Sessions service.
 // All implementations must embed UnimplementedSessionsServer
 // for forward compatibility.
@@ -963,6 +1025,24 @@ type SessionsServer interface {
 	// Logs streams the session transcript (raw terminal output, secrets
 	// redacted) like Jobs.Logs; id = session name.
 	Logs(*LogsRequest, grpc.ServerStreamingServer[LogChunk]) error
+	// Start creates a session without attaching (InfoResponse feature
+	// "session-start"). Idempotent by name: a running session with the same
+	// spec is returned with created = false; another spec fails with
+	// ALREADY_EXISTS. An ended session of that name is replaced. Returns once
+	// the session runs (or ended, e.g. its program did not start), or, with a
+	// workspace still being prepared, when the caller's deadline expires.
+	Start(context.Context, *StartSessionRequest) (*AttachStarted, error)
+	// Get returns one session (any state); NOT_FOUND if there is none.
+	Get(context.Context, *GetSessionRequest) (*Session, error)
+	// Send writes bytes to a running session's terminal as one contiguous
+	// write (InfoResponse feature "session-send"). The bytes are never
+	// persisted (audit: their count only). NOT_FOUND: no such session;
+	// FAILED_PRECONDITION: it has ended; RESOURCE_EXHAUSTED: if_idle_ms was
+	// set and input arrived within that window (nothing was written).
+	Send(context.Context, *SendSessionRequest) (*SendSessionResponse, error)
+	// Stop ends a session gracefully: Ctrl-C keystrokes to its terminal, then,
+	// if it still runs after grace, Kill (InfoResponse feature "session-stop").
+	Stop(context.Context, *StopSessionRequest) (*Session, error)
 	mustEmbedUnimplementedSessionsServer()
 }
 
@@ -984,6 +1064,18 @@ func (UnimplementedSessionsServer) Kill(context.Context, *KillSessionRequest) (*
 }
 func (UnimplementedSessionsServer) Logs(*LogsRequest, grpc.ServerStreamingServer[LogChunk]) error {
 	return status.Error(codes.Unimplemented, "method Logs not implemented")
+}
+func (UnimplementedSessionsServer) Start(context.Context, *StartSessionRequest) (*AttachStarted, error) {
+	return nil, status.Error(codes.Unimplemented, "method Start not implemented")
+}
+func (UnimplementedSessionsServer) Get(context.Context, *GetSessionRequest) (*Session, error) {
+	return nil, status.Error(codes.Unimplemented, "method Get not implemented")
+}
+func (UnimplementedSessionsServer) Send(context.Context, *SendSessionRequest) (*SendSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Send not implemented")
+}
+func (UnimplementedSessionsServer) Stop(context.Context, *StopSessionRequest) (*Session, error) {
+	return nil, status.Error(codes.Unimplemented, "method Stop not implemented")
 }
 func (UnimplementedSessionsServer) mustEmbedUnimplementedSessionsServer() {}
 func (UnimplementedSessionsServer) testEmbeddedByValue()                  {}
@@ -1060,6 +1152,78 @@ func _Sessions_Logs_Handler(srv interface{}, stream grpc.ServerStream) error {
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Sessions_LogsServer = grpc.ServerStreamingServer[LogChunk]
 
+func _Sessions_Start_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionsServer).Start(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Sessions_Start_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionsServer).Start(ctx, req.(*StartSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Sessions_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionsServer).Get(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Sessions_Get_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionsServer).Get(ctx, req.(*GetSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Sessions_Send_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionsServer).Send(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Sessions_Send_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionsServer).Send(ctx, req.(*SendSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Sessions_Stop_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StopSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionsServer).Stop(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Sessions_Stop_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionsServer).Stop(ctx, req.(*StopSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Sessions_ServiceDesc is the grpc.ServiceDesc for Sessions service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1074,6 +1238,22 @@ var Sessions_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Kill",
 			Handler:    _Sessions_Kill_Handler,
+		},
+		{
+			MethodName: "Start",
+			Handler:    _Sessions_Start_Handler,
+		},
+		{
+			MethodName: "Get",
+			Handler:    _Sessions_Get_Handler,
+		},
+		{
+			MethodName: "Send",
+			Handler:    _Sessions_Send_Handler,
+		},
+		{
+			MethodName: "Stop",
+			Handler:    _Sessions_Stop_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
@@ -1242,6 +1422,7 @@ const (
 	Files_Read_FullMethodName  = "/longarm.v1.Files/Read"
 	Files_Write_FullMethodName = "/longarm.v1.Files/Write"
 	Files_Mkdir_FullMethodName = "/longarm.v1.Files/Mkdir"
+	Files_Tail_FullMethodName  = "/longarm.v1.Files/Tail"
 )
 
 // FilesClient is the client API for Files service.
@@ -1261,6 +1442,11 @@ type FilesClient interface {
 	// atomically at path only after its sha256 matched header.sha256.
 	Write(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[FileWriteRequest, FileWriteResult], error)
 	Mkdir(ctx context.Context, in *MkdirRequest, opts ...grpc.CallOption) (*FileInfo, error)
+	// Tail streams a file from offset like Read; with follow it then streams
+	// what is appended until the client cancels (a missing file is waited
+	// for; a file that shrank is read again from 0, signalled by a chunk
+	// whose offset is below the previous end). Same access as Read.
+	Tail(ctx context.Context, in *FileTailRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FileChunk], error)
 }
 
 type filesClient struct {
@@ -1333,6 +1519,25 @@ func (c *filesClient) Mkdir(ctx context.Context, in *MkdirRequest, opts ...grpc.
 	return out, nil
 }
 
+func (c *filesClient) Tail(ctx context.Context, in *FileTailRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FileChunk], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Files_ServiceDesc.Streams[2], Files_Tail_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[FileTailRequest, FileChunk]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Files_TailClient = grpc.ServerStreamingClient[FileChunk]
+
 // FilesServer is the server API for Files service.
 // All implementations must embed UnimplementedFilesServer
 // for forward compatibility.
@@ -1350,6 +1555,11 @@ type FilesServer interface {
 	// atomically at path only after its sha256 matched header.sha256.
 	Write(grpc.ClientStreamingServer[FileWriteRequest, FileWriteResult]) error
 	Mkdir(context.Context, *MkdirRequest) (*FileInfo, error)
+	// Tail streams a file from offset like Read; with follow it then streams
+	// what is appended until the client cancels (a missing file is waited
+	// for; a file that shrank is read again from 0, signalled by a chunk
+	// whose offset is below the previous end). Same access as Read.
+	Tail(*FileTailRequest, grpc.ServerStreamingServer[FileChunk]) error
 	mustEmbedUnimplementedFilesServer()
 }
 
@@ -1374,6 +1584,9 @@ func (UnimplementedFilesServer) Write(grpc.ClientStreamingServer[FileWriteReques
 }
 func (UnimplementedFilesServer) Mkdir(context.Context, *MkdirRequest) (*FileInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method Mkdir not implemented")
+}
+func (UnimplementedFilesServer) Tail(*FileTailRequest, grpc.ServerStreamingServer[FileChunk]) error {
+	return status.Error(codes.Unimplemented, "method Tail not implemented")
 }
 func (UnimplementedFilesServer) mustEmbedUnimplementedFilesServer() {}
 func (UnimplementedFilesServer) testEmbeddedByValue()               {}
@@ -1468,6 +1681,17 @@ func _Files_Mkdir_Handler(srv interface{}, ctx context.Context, dec func(interfa
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Files_Tail_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(FileTailRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(FilesServer).Tail(m, &grpc.GenericServerStream[FileTailRequest, FileChunk]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Files_TailServer = grpc.ServerStreamingServer[FileChunk]
+
 // Files_ServiceDesc is the grpc.ServiceDesc for Files service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1498,6 +1722,11 @@ var Files_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "Write",
 			Handler:       _Files_Write_Handler,
 			ClientStreams: true,
+		},
+		{
+			StreamName:    "Tail",
+			Handler:       _Files_Tail_Handler,
+			ServerStreams: true,
 		},
 	},
 	Metadata: "longarm/v1/longarm.proto",

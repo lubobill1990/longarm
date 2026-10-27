@@ -340,6 +340,29 @@ func TestAuthzTable(t *testing.T) {
 		pb.Sessions_Logs_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
 			return recvErr(sess(c).Logs(ctx, &pb.LogsRequest{Id: "dev", Owner: "alice"}))
 		}, [4]codes.Code{ok, pd, pd, ok}},
+		pb.Sessions_Start_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			// the same spec: alice's running session; a name of somebody else's: in use
+			r, err := sess(c).Start(ctx, &pb.StartSessionRequest{Name: "dev", Argv: []string{exe}, Env: map[string]string{"LONGARM_TEST_SLEEP": "1"}})
+			if err == nil && r.Created {
+				return status.Error(codes.FailedPrecondition, "re-created")
+			}
+			return err
+		}, [4]codes.Code{ok, codes.AlreadyExists, codes.AlreadyExists, codes.AlreadyExists}},
+		pb.Sessions_Get_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := sess(c).Get(ctx, &pb.GetSessionRequest{Name: "dev", Owner: "alice"})
+			return err
+		}, [4]codes.Code{ok, pd, pd, ok}},
+		pb.Sessions_Send_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := sess(c).Send(ctx, &pb.SendSessionRequest{Name: "dev", Owner: "alice"})
+			return err
+		}, [4]codes.Code{ok, pd, pd, ok}},
+		pb.Sessions_Stop_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := sess(c).Stop(ctx, &pb.StopSessionRequest{Name: "nosuch"})
+			return err
+		}, [4]codes.Code{nf, nf, nf, nf}},
+		pb.Files_Tail_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			return recvErr(files(c).Tail(ctx, &pb.FileTailRequest{Path: filepath.Join(e.srv.DataDir, "missing")}))
+		}, [4]codes.Code{nf, nf, nf, nf}},
 		pb.Forward_Open_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
 			st, err := pb.NewForwardClient(c).Open(ctx)
 			if err != nil {

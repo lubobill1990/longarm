@@ -225,7 +225,7 @@ func (w *streamWriter) Write(p []byte) (int, error) {
 
 func (u *userHelperServer) PrepareJob(req *pb.PrepareJobRequest, st pb.UserHelper_PrepareJobServer) error {
 	w := req.GetWorkspace()
-	if w == nil || !jobs.ValidID(req.JobId) || !workspace.ValidRepo(w.Repo) {
+	if w == nil || !jobs.ValidWorktreeKey(req.JobId) || !workspace.ValidRepo(w.Repo) {
 		return status.Error(codes.InvalidArgument, "bad prepare request")
 	}
 	spec := jobs.Spec{ID: req.JobId, Workspace: &jobs.Workspace{Repo: w.Repo, URL: w.Url, Ref: w.Ref, Commit: w.Commit,

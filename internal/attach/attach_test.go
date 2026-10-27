@@ -38,3 +38,21 @@ func TestFrames(t *testing.T) {
 		t.Fatal("oversized frame accepted")
 	}
 }
+
+func TestSendPayloadAndInfo(t *testing.T) {
+	p := SendPayload(1500, SourceSend, []byte("hi\r"))
+	idle, src, data, err := ParseSend(p)
+	if err != nil || idle != 1500 || src != SourceSend || string(data) != "hi\r" {
+		t.Fatal(idle, src, data, err)
+	}
+	if _, _, _, err := ParseSend([]byte{0, 0, 0, 1, 9, 'x'}); err == nil {
+		t.Fatal("short source accepted")
+	}
+	if _, _, _, err := ParseSend(nil); err == nil {
+		t.Fatal("empty frame accepted")
+	}
+	st, err := DecodeInfo(EncodeInfo(InfoState{InputSeq: 7, LastInputSource: SourceAttach, Sent: true}))
+	if err != nil || st.InputSeq != 7 || st.LastInputSource != SourceAttach || !st.Sent || !st.LastInput.IsZero() {
+		t.Fatal(st, err)
+	}
+}

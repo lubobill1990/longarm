@@ -225,13 +225,26 @@ func (s *Spaces) newManager(dir, kind string, prepare func(context.Context, jobs
 	return supervisor.New(o)
 }
 
+// sessionPrepare is the Prepare hook of sessions started with a workspace:
+// the job hook with the session's worktree name (worktrees/s.<name>.<gen>:
+// never a job's, nor another generation's of the name).
+func sessionPrepare(prepare func(context.Context, jobs.Dir, jobs.Spec, map[string]string, *jobs.GitAuth, io.Writer) (string, error)) func(context.Context, jobs.Dir, jobs.Spec, map[string]string, *jobs.GitAuth, io.Writer) (string, error) {
+	if prepare == nil {
+		return nil
+	}
+	return func(ctx context.Context, d jobs.Dir, spec jobs.Spec, secrets map[string]string, auth *jobs.GitAuth, log io.Writer) (string, error) {
+		spec.ID = jobs.SessionWorktreeKey(spec.ID, spec.CreatedAt)
+		return prepare(ctx, d, spec, secrets, auth, log)
+	}
+}
+
 func (s *Spaces) openShared() (*Space, error) {
 	ws := &workspace.Store{Root: s.cfg.DataDir}
 	jm, err := s.newManager(filepath.Join(s.cfg.DataDir, JobsDir), JobsDir, s.cfg.Prepare, 0)
 	if err != nil {
 		return nil, err
 	}
-	sm, err := s.newManager(filepath.Join(s.cfg.DataDir, SessionsDir), SessionsDir, nil, 0)
+	sm, err := s.newManager(filepath.Join(s.cfg.DataDir, SessionsDir), SessionsDir, sessionPrepare(s.cfg.Prepare), 0)
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +394,7 @@ func (s *Spaces) openUser(owner, root string, acct *platform.Account) (*Space, e
 	if sp.Jobs, err = s.newManager(filepath.Join(root, JobsDir), JobsDir, sp.prepare, 0o700); err != nil {
 		return nil, err
 	}
-	if sp.Sessions, err = s.newManager(filepath.Join(root, SessionsDir), SessionsDir, nil, 0o700); err != nil {
+	if sp.Sessions, err = s.newManager(filepath.Join(root, SessionsDir), SessionsDir, sessionPrepare(sp.prepare), 0o700); err != nil {
 		return nil, err
 	}
 	return sp, nil
@@ -547,10 +560,11 @@ func (s *Spaces) SubmitJob(ctx context.Context, sp *Space, spec jobs.Spec, secre
 	return sp.Jobs.SubmitWith(ctx, spec, secrets, in)
 }
 
-// SubmitSession submits a session spec in sp.
-func (s *Spaces) SubmitSession(ctx context.Context, sp *Space, spec jobs.Spec, secrets map[string]string) (supervisor.Job, error) {
+// SubmitSession submits a session spec in sp; created is false when an
+// identical session existed (decided under the manager's submit lock).
+func (s *Spaces) SubmitSession(ctx context.Context, sp *Space, spec jobs.Spec, secrets map[string]string, auth *jobs.GitAuth) (supervisor.Job, bool, error) {
 	spec.RunAs = sp.RunAs(SessionsDir, spec.ID)
-	return sp.Sessions.Submit(ctx, spec, secrets)
+	return sp.Sessions.SubmitCreated(ctx, spec, secrets, supervisor.Input{GitAuth: auth})
 }
 
 // RunningJobs counts active jobs of every space.

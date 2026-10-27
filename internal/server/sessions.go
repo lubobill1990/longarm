@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +22,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/supervisor"
 	"github.com/lubobill1990/longarm/internal/userspace"
+	"github.com/lubobill1990/longarm/internal/workspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -73,11 +77,27 @@ func (ss *sessionsServer) toPB(sp *userspace.Space, j supervisor.Job) *pb.Sessio
 		Name: j.Spec.ID, State: stateToPB[j.Status.State], Argv: j.Spec.Argv, Cwd: j.Spec.Cwd,
 		Pid: int32(j.Status.PID), CreatedAt: ts(j.Status.CreatedAt), EndedAt: ts(j.Status.EndedAt),
 		Attached: int32(n), LogSize: j.LogSize, CreatedBy: j.Spec.SubmittedBy, Owner: j.Spec.OwnerName(),
+		Workdir: j.Status.Workdir, Dir: sessionDir(j), StartedAt: ts(j.Status.StartedAt), Reason: j.Status.Reason,
 	}
 	if j.Status.ExitCode != nil {
 		out.HasExitCode, out.ExitCode = true, int32(*j.Status.ExitCode)
 	}
+	if w := j.Spec.Workspace; w != nil {
+		out.Workspace = &pb.JobWorkspace{Repo: w.Repo, Url: w.URL, Ref: w.Ref, Commit: w.Commit, LfsFetch: w.LFSFetch, GitAuth: w.GitAuth}
+	}
 	return out
+}
+
+// sessionDir is the session's working directory as its shim resolves it
+// ("" = the home directory).
+func sessionDir(j supervisor.Job) string {
+	if wd := j.Status.Workdir; wd != "" {
+		if filepath.IsAbs(j.Spec.Cwd) {
+			return j.Spec.Cwd
+		}
+		return filepath.Join(wd, filepath.FromSlash(j.Spec.Cwd))
+	}
+	return j.Spec.Cwd
 }
 
 // sessionSpace finds owner's space holding session name. Shared isolation
@@ -103,21 +123,110 @@ func (ss *sessionsServer) sessionSpace(ctx context.Context, owner, name string, 
 	return sp, nil
 }
 
-// ensure returns the running session, creating it if needed.
-func (ss *sessionsServer) ensure(ctx context.Context, sp *userspace.Space, o *pb.AttachOpen, name, owner, by string) (supervisor.Job, bool, error) {
+// sessionReq is what a new session is made of (Attach's open, Start).
+type sessionReq struct {
+	argv     []string
+	cwd      string
+	env      map[string]string
+	secrets  map[string]string
+	size     *pb.TermSize
+	ws       *jobs.Workspace
+	noCreate bool
+	// strict (Start): a running session of the name must have this spec.
+	strict bool
+	// auth: a credential for the workspace fetch (Start --git-auth forward);
+	// handed to the preparation of a new session, else the caller clears it.
+	auth *jobs.GitAuth
+}
+
+// argvFor is the command of a new session: argv, else the user's shell.
+func argvFor(sp *userspace.Space, argv []string) []string {
+	if len(argv) > 0 {
+		return argv
+	}
+	argv = DefaultShell()
+	if sp.Account != nil && runtime.GOOS != "windows" {
+		if env, err := sp.Env(); err == nil {
+			for _, kv := range env {
+				if sh, ok := strings.CutPrefix(kv, "SHELL="); ok && sh != "" {
+					argv = []string{sh}
+				}
+			}
+		}
+	}
+	return argv
+}
+
+// sessionSpecDiff names what differs between a running session and a
+// Start of the same name ("" = the same session). A workspace's staging id
+// is not compared: every Start with a local checkout uploads anew.
+func sessionSpecDiff(have jobs.Spec, argv []string, r sessionReq) string {
+	switch {
+	case !slices.Equal(have.Argv, argv):
+		return "command"
+	case have.Cwd != r.cwd:
+		return "cwd"
+	case !maps.Equal(have.Env, retryLinkEnv(r.env, have.Env)):
+		return "env"
+	case !slices.Equal(have.SecretEnvNames, slices.Sorted(maps.Keys(r.secrets))):
+		return "secret env names"
+	}
+	a, b := have.Workspace, r.ws
+	if (a == nil) != (b == nil) || (a != nil && (a.Repo != b.Repo || a.URL != b.URL || a.Ref != b.Ref || a.Commit != b.Commit)) {
+		return "workspace"
+	}
+	return ""
+}
+
+// running returns the running session j as ensure's result (strict: if it
+// has r's spec).
+func running(sp *userspace.Space, j supervisor.Job, r sessionReq, name string) (supervisor.Job, bool, error) {
+	if r.strict {
+		if why := sessionSpecDiff(j.Spec, argvFor(sp, r.argv), r); why != "" {
+			return j, false, status.Errorf(codes.AlreadyExists, "session %q is running with another spec (%s differs)", name, why)
+		}
+	}
+	return j, false, nil
+}
+
+// foreign reports whether session j is another user's where that matters:
+// shared isolation (one namespace of names) with ownership enforced.
+func (ss *sessionsServer) foreign(ctx context.Context, j supervisor.Job, owner string) bool {
+	return !ss.s.perUser() && ss.s.enforceFor(ctx) && j.Spec.OwnerName() != owner
+}
+
+func errNameInUse(name string) error {
+	return status.Errorf(codes.AlreadyExists, "session name %q is in use by another user (shared isolation has one namespace of names)", name)
+}
+
+// ensure returns the running session, creating it if needed. Every session
+// it finds under the name is checked for its owner (sessionSpace checked
+// before; another user may have created the name since).
+func (ss *sessionsServer) ensure(ctx context.Context, sp *userspace.Space, r sessionReq, name, owner, by string) (supervisor.Job, bool, error) {
 	mgr := sp.Sessions
 	j, err := mgr.Get(name)
-	if err == nil && !j.Status.State.Terminal() {
-		return j, false, nil
+	if err == nil && ss.foreign(ctx, j, owner) {
+		if r.noCreate {
+			return supervisor.Job{}, false, status.Errorf(codes.NotFound, "no session %q", name)
+		}
+		return supervisor.Job{}, false, errNameInUse(name)
 	}
-	if o.NoCreate {
+	if err == nil && !j.Status.State.Terminal() {
+		return running(sp, j, r, name)
+	}
+	if r.noCreate {
 		if err == nil {
 			return j, false, status.Errorf(codes.FailedPrecondition, "session %q has ended (%s)", name, j.Status.State)
 		}
 		return j, false, status.Errorf(codes.NotFound, "no session %q", name)
 	}
-	if err == nil { // ended: a new session takes the name
-		if err := mgr.Remove(name); err != nil && !errors.Is(err, supervisor.ErrNotFound) {
+	if err == nil { // ended: a new session takes the name (this one only, with its worktree)
+		switch err := mgr.RemoveGen(name, j.Spec.CreatedAt); {
+		case err == nil:
+			ss.removeWorktree(ctx, sp, j.Status.Workdir) // its generation's: never a newer session's
+		case errors.Is(err, supervisor.ErrNotFound), errors.Is(err, supervisor.ErrReplaced), errors.Is(err, supervisor.ErrActive):
+			// somebody replaced it meanwhile: the submit below finds theirs
+		default:
 			return j, false, MgrErr(err)
 		}
 	}
@@ -126,44 +235,71 @@ func (ss *sessionsServer) ensure(ctx context.Context, sp *userspace.Space, o *pb
 			return j, false, err
 		}
 	}
-	argv := o.Argv
-	if len(argv) == 0 {
-		argv = DefaultShell()
-		if sp.Account != nil && runtime.GOOS != "windows" {
-			if env, err := sp.Env(); err == nil {
-				for _, kv := range env {
-					if sh, ok := strings.CutPrefix(kv, "SHELL="); ok && sh != "" {
-						argv = []string{sh}
-					}
-				}
-			}
-		}
-	}
 	spec := jobs.Spec{
-		ID: name, Name: name, Argv: argv, Cwd: o.Cwd, Env: ss.s.linkEnv(owner, o.Env), Pty: true, SubmittedBy: by, Owner: owner,
-		Cols: uint16(o.GetSize().GetCols()), Rows: uint16(o.GetSize().GetRows()), LogMaxBytes: ss.s.LogMaxBytes,
+		ID: name, Name: name, Argv: argvFor(sp, r.argv), Cwd: r.cwd, Env: ss.s.linkEnv(owner, r.env), Pty: true, SubmittedBy: by, Owner: owner,
+		Cols: uint16(r.size.GetCols()), Rows: uint16(r.size.GetRows()), LogMaxBytes: ss.s.LogMaxBytes, Workspace: r.ws,
 	}
-	j, err = ss.s.Spaces.SubmitSession(ctx, sp, spec, o.SecretEnv)
+	j, created, err := ss.s.Spaces.SubmitSession(ctx, sp, spec, r.secrets, r.auth)
 	if errors.Is(err, supervisor.ErrAlreadyExists) { // created concurrently by someone else
-		if j, err = mgr.Get(name); err == nil && !j.Status.State.Terminal() {
-			return j, false, nil
+		if j, err = mgr.Get(name); err == nil {
+			if ss.foreign(ctx, j, owner) {
+				return supervisor.Job{}, false, errNameInUse(name)
+			}
+			if !j.Status.State.Terminal() {
+				return running(sp, j, r, name)
+			}
+			err = supervisor.ErrAlreadyExists
 		}
 	}
 	if err != nil {
-		return j, false, MgrErr(err)
+		return supervisor.Job{}, false, MgrErr(err)
 	}
-	return j, true, nil
+	if !created && ss.foreign(ctx, j, owner) { // identical spec: same owner; checked anyway
+		return supervisor.Job{}, false, errNameInUse(name)
+	}
+	return j, created, nil
 }
 
-// waitAttachable waits until the session's shim published its channel (or
-// the session ended).
-func (ss *sessionsServer) waitAttachable(ctx context.Context, sp *userspace.Space, name string) (supervisor.Job, error) {
-	deadline := time.After(15 * time.Second)
+// removeWorktree removes the worktree of a session that is being replaced
+// (gc removes those of the sessions it collects).
+func (ss *sessionsServer) removeWorktree(ctx context.Context, sp *userspace.Space, wt string) {
+	if wt == "" || sp.WS == nil {
+		return
+	}
+	rel, err := filepath.Rel(filepath.Join(sp.Root, workspace.WorktreesDir), wt)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return
+	}
+	if err := sp.WS.RemoveWorktree(ctx, wt); err != nil {
+		ss.s.Log.Warn("remove session worktree", "dir", wt, "err", err)
+	}
+}
+
+// errReplaced: the session generation an operation was bound to is gone
+// (it ended and a new session took the name).
+var errReplaced = status.Error(codes.FailedPrecondition, "the session ended and was replaced by a new one of the same name")
+
+// getGen returns session name if it is generation gen (zero: any).
+func getGen(sp *userspace.Space, name string, gen time.Time) (supervisor.Job, error) {
+	j, err := sp.Sessions.Get(name)
+	if err != nil {
+		return j, MgrErr(err)
+	}
+	if !gen.IsZero() && !j.Spec.CreatedAt.Equal(gen) {
+		return j, errReplaced
+	}
+	return j, nil
+}
+
+// waitAttachable waits until generation gen of the session published its
+// channel (or ended), at most d.
+func (ss *sessionsServer) waitAttachable(ctx context.Context, sp *userspace.Space, name string, gen time.Time, d time.Duration) (supervisor.Job, error) {
+	deadline := time.After(d)
 	for {
 		ch := sp.Sessions.Changed()
-		j, err := sp.Sessions.Get(name)
+		j, err := getGen(sp, name, gen)
 		if err != nil {
-			return j, MgrErr(err)
+			return j, err
 		}
 		if j.Status.State.Terminal() || (j.Status.State == jobs.Running && j.Status.AttachAddr != "") {
 			return j, nil
@@ -205,7 +341,8 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 	var created bool
 	sp, err := ss.sessionSpace(ctx, owner, name, !o.NoCreate)
 	if err == nil {
-		j, created, err = ss.ensure(ctx, sp, o, name, owner, id.String())
+		r := sessionReq{argv: o.Argv, cwd: o.Cwd, env: o.Env, secrets: o.SecretEnv, size: o.Size, noCreate: o.NoCreate}
+		j, created, err = ss.ensure(ctx, sp, r, name, owner, id.String())
 	}
 	ss.s.Audit.Log(id, pb.Sessions_Attach_FullMethodName, map[string]any{
 		"session": name, "owner": owner, "created": created, "argv": j.Spec.Argv, "env_keys": keys(o.Env),
@@ -214,7 +351,7 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 	if err != nil {
 		return err
 	}
-	if j, err = ss.waitAttachable(ctx, sp, name); err != nil {
+	if j, err = ss.waitAttachable(ctx, sp, name, j.Spec.CreatedAt, 15*time.Second); err != nil {
 		return err
 	}
 	if j.Status.State.Terminal() { // e.g. the command failed to start
@@ -299,7 +436,7 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 			case attach.Exit:
 				// Let the supervisor see the final state first, so a client
 				// that lists sessions right after the exit sees it ended.
-				ss.waitTerminal(ctx, sp, name, 2*time.Second)
+				ss.waitTerminalGen(ctx, sp, name, j.Spec.CreatedAt, 2*time.Second)
 				err = st.Send(&pb.AttachOutput{Msg: &pb.AttachOutput_ExitCode{ExitCode: int32(attach.ParseExit(p))}})
 				ended <- errSessionExited
 				return
@@ -322,7 +459,7 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 		}
 		// The channel broke without an exit frame: the shim died or the
 		// session ended right now. Report the final state if we can.
-		if j, werr := ss.waitTerminal(ctx, sp, name, 3*time.Second); werr == nil {
+		if j, werr := ss.waitTerminalGen(ctx, sp, name, j.Spec.CreatedAt, 3*time.Second); werr == nil {
 			return ss.sendExit(st, j)
 		}
 		return status.Errorf(codes.Unavailable, "session %q: attach channel closed: %v", name, err)
@@ -332,10 +469,16 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 var errSessionExited = errors.New("session exited")
 
 func (ss *sessionsServer) waitTerminal(ctx context.Context, sp *userspace.Space, name string, d time.Duration) (supervisor.Job, error) {
+	return ss.waitTerminalGen(ctx, sp, name, time.Time{}, d)
+}
+
+// waitTerminalGen waits for generation gen (zero: any) to end; errReplaced
+// if a new session took the name (which means it had ended).
+func (ss *sessionsServer) waitTerminalGen(ctx context.Context, sp *userspace.Space, name string, gen time.Time, d time.Duration) (supervisor.Job, error) {
 	deadline := time.After(d)
 	for {
 		ch := sp.Sessions.Changed()
-		j, err := sp.Sessions.Get(name)
+		j, err := getGen(sp, name, gen)
 		if err != nil {
 			return j, err
 		}
@@ -369,6 +512,7 @@ func (ss *sessionsServer) List(ctx context.Context, req *pb.ListSessionsRequest)
 	c := ss.s.callerOf(ctx)
 	own := IdentityFrom(ctx).Owner()
 	out := &pb.ListSessionsResponse{}
+	var found []listed
 	for _, sp := range ss.s.Spaces.All() {
 		for _, j := range sp.Sessions.List(states, 0) {
 			owner := j.Spec.OwnerName()
@@ -381,8 +525,10 @@ func (ss *sessionsServer) List(ctx context.Context, req *pb.ListSessionsRequest)
 				continue
 			}
 			out.Sessions = append(out.Sessions, ss.toPB(sp, j))
+			found = append(found, listed{sp, j})
 		}
 	}
+	ss.addActivity(ctx, found, out.Sessions)
 	return out, nil
 }
 

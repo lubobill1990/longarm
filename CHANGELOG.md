@@ -4,6 +4,28 @@
 
 ### Added
 
+- Sessions for programs ([docs/usage.md](docs/usage.md#sessions-for-programs)):
+  `longarm session start [<worker>|auto] -s NAME [--repo ... --ref ... --lfs ... --git-auth forward] [--json] -- cmd`
+  creates a session without attaching (idempotent by name: same spec =
+  `"created": false`, another = exit 2; placed by the hub like `run`
+  without a worker; `--repo` gives it a worktree `worktrees/s.<name>.<generation>` that
+  lives as long as the session's data). `longarm session send` types input
+  (`--text`, `--stdin-file`, `--key esc|enter|ctrl-c|...`, `--raw`) as one
+  contiguous terminal write that never interleaves with an attached user's
+  keystrokes; `--if-idle-ms N` writes only if nobody typed for N ms (else
+  exit 75). Input is never stored (audit: its size). `longarm session stop
+  --grace 10s`: Ctrl-C to the program, then kill. `longarm sessions` without
+  a worker lists all your workers; `--json` has `source`, `worker`, every
+  field, the worktree, and terminal activity (`lastOutput`, `lastInput`,
+  `lastInputSource` attach|send, `inputSeq`, `lastActivity`); `-s NAME`
+  (exit 3 when unknown). `run` / `exec --session NAME` run in the session's
+  directory. `longarm tail <worker> <path> [-f] [--json]` streams a growing
+  file with `get`'s access. New `version --json` features `session-start`,
+  `session-send`, `session-send-if-idle`, `session-stop`,
+  `sessions-json-v2`, `tail`, `run-session`; workers announce
+  `session-start`, `session-send`, `session-send-if-idle`, `session-stop`,
+  `session-info`, `file-tail` (API: `Sessions.Start/Get/Send/Stop`,
+  `Files.Tail`, new `Session` fields).
 - `longarm run --repo <https url> --git-auth forward`: the worker fetches
   the repository from its host with a short-lived credential of yours,
   forwarded with the job: Azure DevOps - an Entra token for Azure DevOps
@@ -145,6 +167,11 @@
 - The job's `GH_TOKEN` secret no longer passes through git's environment
   (`http.extraheader`) either: the same credential helper, scoped to the
   exact URL, redirects refused.
+- `longarm attach` running inside a ConPTY on Windows (a desktop app's
+  portable-pty / xterm.js, a nested session) attached to a Windows worker
+  lost all typed input: the worker's pseudo console asks its terminal for
+  win32-input-mode (`ESC[?9001h`), and the outer ConPTY then swallowed
+  plain keystrokes. longarm no longer passes that request on.
 
 ### Changed
 

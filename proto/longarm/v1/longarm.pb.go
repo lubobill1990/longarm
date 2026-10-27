@@ -2489,22 +2489,40 @@ func (x *AttachStarted) GetCreated() bool {
 }
 
 type Session struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	State         JobState               `protobuf:"varint,2,opt,name=state,proto3,enum=longarm.v1.JobState" json:"state,omitempty"` // running, done, failed, killed, lost
-	Argv          []string               `protobuf:"bytes,3,rep,name=argv,proto3" json:"argv,omitempty"`
-	Cwd           string                 `protobuf:"bytes,4,opt,name=cwd,proto3" json:"cwd,omitempty"`
-	Pid           int32                  `protobuf:"varint,5,opt,name=pid,proto3" json:"pid,omitempty"`
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	EndedAt       *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=ended_at,json=endedAt,proto3" json:"ended_at,omitempty"`
-	HasExitCode   bool                   `protobuf:"varint,8,opt,name=has_exit_code,json=hasExitCode,proto3" json:"has_exit_code,omitempty"`
-	ExitCode      int32                  `protobuf:"varint,9,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
-	Attached      int32                  `protobuf:"varint,10,opt,name=attached,proto3" json:"attached,omitempty"` // clients currently attached
-	LogSize       int64                  `protobuf:"varint,11,opt,name=log_size,json=logSize,proto3" json:"log_size,omitempty"`
-	CreatedBy     string                 `protobuf:"bytes,12,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
-	Owner         string                 `protobuf:"bytes,13,opt,name=owner,proto3" json:"owner,omitempty"` // the user owning the session
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Name        string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	State       JobState               `protobuf:"varint,2,opt,name=state,proto3,enum=longarm.v1.JobState" json:"state,omitempty"` // running, done, failed, killed, lost
+	Argv        []string               `protobuf:"bytes,3,rep,name=argv,proto3" json:"argv,omitempty"`
+	Cwd         string                 `protobuf:"bytes,4,opt,name=cwd,proto3" json:"cwd,omitempty"`
+	Pid         int32                  `protobuf:"varint,5,opt,name=pid,proto3" json:"pid,omitempty"`
+	CreatedAt   *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	EndedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=ended_at,json=endedAt,proto3" json:"ended_at,omitempty"`
+	HasExitCode bool                   `protobuf:"varint,8,opt,name=has_exit_code,json=hasExitCode,proto3" json:"has_exit_code,omitempty"`
+	ExitCode    int32                  `protobuf:"varint,9,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	Attached    int32                  `protobuf:"varint,10,opt,name=attached,proto3" json:"attached,omitempty"` // clients currently attached
+	LogSize     int64                  `protobuf:"varint,11,opt,name=log_size,json=logSize,proto3" json:"log_size,omitempty"`
+	CreatedBy   string                 `protobuf:"bytes,12,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
+	Owner       string                 `protobuf:"bytes,13,opt,name=owner,proto3" json:"owner,omitempty"` // the user owning the session
+	// The worktree prepared for a session started with a workspace
+	// (StartSessionRequest.workspace); removed with the session.
+	Workdir   string        `protobuf:"bytes,14,opt,name=workdir,proto3" json:"workdir,omitempty"`
+	Workspace *JobWorkspace `protobuf:"bytes,15,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	// The session's working directory as the worker resolved it: cwd inside
+	// workdir, cwd, or "" (the home directory).
+	Dir       string                 `protobuf:"bytes,16,opt,name=dir,proto3" json:"dir,omitempty"`
+	StartedAt *timestamppb.Timestamp `protobuf:"bytes,17,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	Reason    string                 `protobuf:"bytes,18,opt,name=reason,proto3" json:"reason,omitempty"` // why it failed / was killed / was lost
+	// Terminal activity (InfoResponse feature "session-info"; unset for
+	// sessions whose shim predates it). input_seq counts the writes to the
+	// terminal (an attached client's keystrokes and Sessions.Send); it only
+	// grows during the session's life.
+	LastOutput      *timestamppb.Timestamp `protobuf:"bytes,19,opt,name=last_output,json=lastOutput,proto3" json:"last_output,omitempty"`
+	LastInput       *timestamppb.Timestamp `protobuf:"bytes,20,opt,name=last_input,json=lastInput,proto3" json:"last_input,omitempty"`
+	InputSeq        uint64                 `protobuf:"varint,21,opt,name=input_seq,json=inputSeq,proto3" json:"input_seq,omitempty"`
+	LastInputSource string                 `protobuf:"bytes,22,opt,name=last_input_source,json=lastInputSource,proto3" json:"last_input_source,omitempty"` // "attach" | "send" | "stop"
+	LastActivity    *timestamppb.Timestamp `protobuf:"bytes,23,opt,name=last_activity,json=lastActivity,proto3" json:"last_activity,omitempty"`            // max(last_output, last_input)
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Session) Reset() {
@@ -2628,6 +2646,411 @@ func (x *Session) GetOwner() string {
 	return ""
 }
 
+func (x *Session) GetWorkdir() string {
+	if x != nil {
+		return x.Workdir
+	}
+	return ""
+}
+
+func (x *Session) GetWorkspace() *JobWorkspace {
+	if x != nil {
+		return x.Workspace
+	}
+	return nil
+}
+
+func (x *Session) GetDir() string {
+	if x != nil {
+		return x.Dir
+	}
+	return ""
+}
+
+func (x *Session) GetStartedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.StartedAt
+	}
+	return nil
+}
+
+func (x *Session) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *Session) GetLastOutput() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastOutput
+	}
+	return nil
+}
+
+func (x *Session) GetLastInput() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastInput
+	}
+	return nil
+}
+
+func (x *Session) GetInputSeq() uint64 {
+	if x != nil {
+		return x.InputSeq
+	}
+	return 0
+}
+
+func (x *Session) GetLastInputSource() string {
+	if x != nil {
+		return x.LastInputSource
+	}
+	return ""
+}
+
+func (x *Session) GetLastActivity() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastActivity
+	}
+	return nil
+}
+
+type StartSessionRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // [0-9A-Za-z_-]{1,64}
+	Argv  []string               `protobuf:"bytes,2,rep,name=argv,proto3" json:"argv,omitempty"` // default: the user's shell
+	Cwd   string                 `protobuf:"bytes,3,opt,name=cwd,proto3" json:"cwd,omitempty"`   // with workspace: relative to the worktree
+	Env   map[string]string      `protobuf:"bytes,4,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Memory-only on the worker, redacted from the transcript; GH_TOKEN also
+	// authenticates a workspace fetch, as for jobs.
+	SecretEnv map[string]string `protobuf:"bytes,5,rep,name=secret_env,json=secretEnv,proto3" json:"secret_env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Size      *TermSize         `protobuf:"bytes,6,opt,name=size,proto3" json:"size,omitempty"`
+	// Prepare a git worktree for the session (like JobSpec.workspace); it
+	// lives as long as the session's data ([gc] keep after it ended).
+	Workspace *JobWorkspace `protobuf:"bytes,7,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	// A credential for the fetch of workspace.url only, as
+	// SubmitRequest.git_auth (InfoResponse feature "git-auth-forward"):
+	// memory-only, never seen by the session's program.
+	GitAuth       *GitAuth `protobuf:"bytes,8,opt,name=git_auth,json=gitAuth,proto3" json:"git_auth,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartSessionRequest) Reset() {
+	*x = StartSessionRequest{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartSessionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartSessionRequest) ProtoMessage() {}
+
+func (x *StartSessionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartSessionRequest.ProtoReflect.Descriptor instead.
+func (*StartSessionRequest) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *StartSessionRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *StartSessionRequest) GetArgv() []string {
+	if x != nil {
+		return x.Argv
+	}
+	return nil
+}
+
+func (x *StartSessionRequest) GetCwd() string {
+	if x != nil {
+		return x.Cwd
+	}
+	return ""
+}
+
+func (x *StartSessionRequest) GetEnv() map[string]string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+func (x *StartSessionRequest) GetSecretEnv() map[string]string {
+	if x != nil {
+		return x.SecretEnv
+	}
+	return nil
+}
+
+func (x *StartSessionRequest) GetSize() *TermSize {
+	if x != nil {
+		return x.Size
+	}
+	return nil
+}
+
+func (x *StartSessionRequest) GetWorkspace() *JobWorkspace {
+	if x != nil {
+		return x.Workspace
+	}
+	return nil
+}
+
+func (x *StartSessionRequest) GetGitAuth() *GitAuth {
+	if x != nil {
+		return x.GitAuth
+	}
+	return nil
+}
+
+type GetSessionRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Owner         string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"` // admins only: another user's session
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSessionRequest) Reset() {
+	*x = GetSessionRequest{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSessionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSessionRequest) ProtoMessage() {}
+
+func (x *GetSessionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSessionRequest.ProtoReflect.Descriptor instead.
+func (*GetSessionRequest) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *GetSessionRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *GetSessionRequest) GetOwner() string {
+	if x != nil {
+		return x.Owner
+	}
+	return ""
+}
+
+type SendSessionRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Data  []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"` // at most 256 KiB, written as is
+	// Write only if no input reached the terminal within this many
+	// milliseconds (0 = always write).
+	IfIdleMs      uint32 `protobuf:"varint,3,opt,name=if_idle_ms,json=ifIdleMs,proto3" json:"if_idle_ms,omitempty"`
+	Owner         string `protobuf:"bytes,4,opt,name=owner,proto3" json:"owner,omitempty"` // admins only: another user's session
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendSessionRequest) Reset() {
+	*x = SendSessionRequest{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendSessionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendSessionRequest) ProtoMessage() {}
+
+func (x *SendSessionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendSessionRequest.ProtoReflect.Descriptor instead.
+func (*SendSessionRequest) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *SendSessionRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SendSessionRequest) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *SendSessionRequest) GetIfIdleMs() uint32 {
+	if x != nil {
+		return x.IfIdleMs
+	}
+	return 0
+}
+
+func (x *SendSessionRequest) GetOwner() string {
+	if x != nil {
+		return x.Owner
+	}
+	return ""
+}
+
+type SendSessionResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InputSeq      uint64                 `protobuf:"varint,1,opt,name=input_seq,json=inputSeq,proto3" json:"input_seq,omitempty"` // after this write (0: the session's shim predates it)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendSessionResponse) Reset() {
+	*x = SendSessionResponse{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendSessionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendSessionResponse) ProtoMessage() {}
+
+func (x *SendSessionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendSessionResponse.ProtoReflect.Descriptor instead.
+func (*SendSessionResponse) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *SendSessionResponse) GetInputSeq() uint64 {
+	if x != nil {
+		return x.InputSeq
+	}
+	return 0
+}
+
+type StopSessionRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// How long to wait after the Ctrl-C keystrokes before killing the
+	// process tree (0 = kill at once).
+	Grace         *durationpb.Duration `protobuf:"bytes,2,opt,name=grace,proto3" json:"grace,omitempty"`
+	Owner         string               `protobuf:"bytes,3,opt,name=owner,proto3" json:"owner,omitempty"` // admins only: another user's session
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StopSessionRequest) Reset() {
+	*x = StopSessionRequest{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StopSessionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StopSessionRequest) ProtoMessage() {}
+
+func (x *StopSessionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StopSessionRequest.ProtoReflect.Descriptor instead.
+func (*StopSessionRequest) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *StopSessionRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *StopSessionRequest) GetGrace() *durationpb.Duration {
+	if x != nil {
+		return x.Grace
+	}
+	return nil
+}
+
+func (x *StopSessionRequest) GetOwner() string {
+	if x != nil {
+		return x.Owner
+	}
+	return ""
+}
+
 type ListSessionsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	All   bool                   `protobuf:"varint,1,opt,name=all,proto3" json:"all,omitempty"` // include ended sessions
@@ -2639,7 +3062,7 @@ type ListSessionsRequest struct {
 
 func (x *ListSessionsRequest) Reset() {
 	*x = ListSessionsRequest{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[31]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2651,7 +3074,7 @@ func (x *ListSessionsRequest) String() string {
 func (*ListSessionsRequest) ProtoMessage() {}
 
 func (x *ListSessionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[31]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2664,7 +3087,7 @@ func (x *ListSessionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSessionsRequest.ProtoReflect.Descriptor instead.
 func (*ListSessionsRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{31}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ListSessionsRequest) GetAll() bool {
@@ -2690,7 +3113,7 @@ type ListSessionsResponse struct {
 
 func (x *ListSessionsResponse) Reset() {
 	*x = ListSessionsResponse{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[32]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2702,7 +3125,7 @@ func (x *ListSessionsResponse) String() string {
 func (*ListSessionsResponse) ProtoMessage() {}
 
 func (x *ListSessionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[32]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2715,7 +3138,7 @@ func (x *ListSessionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSessionsResponse.ProtoReflect.Descriptor instead.
 func (*ListSessionsResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{32}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ListSessionsResponse) GetSessions() []*Session {
@@ -2735,7 +3158,7 @@ type KillSessionRequest struct {
 
 func (x *KillSessionRequest) Reset() {
 	*x = KillSessionRequest{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[33]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2747,7 +3170,7 @@ func (x *KillSessionRequest) String() string {
 func (*KillSessionRequest) ProtoMessage() {}
 
 func (x *KillSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[33]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2760,7 +3183,7 @@ func (x *KillSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KillSessionRequest.ProtoReflect.Descriptor instead.
 func (*KillSessionRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{33}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *KillSessionRequest) GetName() string {
@@ -2789,7 +3212,7 @@ type ForwardFrame struct {
 
 func (x *ForwardFrame) Reset() {
 	*x = ForwardFrame{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[34]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2801,7 +3224,7 @@ func (x *ForwardFrame) String() string {
 func (*ForwardFrame) ProtoMessage() {}
 
 func (x *ForwardFrame) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[34]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2814,7 +3237,7 @@ func (x *ForwardFrame) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForwardFrame.ProtoReflect.Descriptor instead.
 func (*ForwardFrame) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{34}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *ForwardFrame) GetTarget() string {
@@ -2845,6 +3268,66 @@ func (x *ForwardFrame) GetGrant() *SignedPortLinkGrant {
 	return nil
 }
 
+type FileTailRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Offset        int64                  `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"` // negative: that many bytes before the current end
+	Follow        bool                   `protobuf:"varint,3,opt,name=follow,proto3" json:"follow,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileTailRequest) Reset() {
+	*x = FileTailRequest{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileTailRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileTailRequest) ProtoMessage() {}
+
+func (x *FileTailRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileTailRequest.ProtoReflect.Descriptor instead.
+func (*FileTailRequest) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *FileTailRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *FileTailRequest) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *FileTailRequest) GetFollow() bool {
+	if x != nil {
+		return x.Follow
+	}
+	return false
+}
+
 type FileStatRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
@@ -2857,7 +3340,7 @@ type FileStatRequest struct {
 
 func (x *FileStatRequest) Reset() {
 	*x = FileStatRequest{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[35]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2869,7 +3352,7 @@ func (x *FileStatRequest) String() string {
 func (*FileStatRequest) ProtoMessage() {}
 
 func (x *FileStatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[35]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2882,7 +3365,7 @@ func (x *FileStatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileStatRequest.ProtoReflect.Descriptor instead.
 func (*FileStatRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{35}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *FileStatRequest) GetPath() string {
@@ -2930,7 +3413,7 @@ type FileInfo struct {
 
 func (x *FileInfo) Reset() {
 	*x = FileInfo{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[36]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2942,7 +3425,7 @@ func (x *FileInfo) String() string {
 func (*FileInfo) ProtoMessage() {}
 
 func (x *FileInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[36]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2955,7 +3438,7 @@ func (x *FileInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileInfo.ProtoReflect.Descriptor instead.
 func (*FileInfo) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{36}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *FileInfo) GetPath() string {
@@ -3030,7 +3513,7 @@ type FileListRequest struct {
 
 func (x *FileListRequest) Reset() {
 	*x = FileListRequest{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[37]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3042,7 +3525,7 @@ func (x *FileListRequest) String() string {
 func (*FileListRequest) ProtoMessage() {}
 
 func (x *FileListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[37]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3055,7 +3538,7 @@ func (x *FileListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileListRequest.ProtoReflect.Descriptor instead.
 func (*FileListRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{37}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *FileListRequest) GetPath() string {
@@ -3075,7 +3558,7 @@ type FileListResponse struct {
 
 func (x *FileListResponse) Reset() {
 	*x = FileListResponse{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[38]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3087,7 +3570,7 @@ func (x *FileListResponse) String() string {
 func (*FileListResponse) ProtoMessage() {}
 
 func (x *FileListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[38]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3100,7 +3583,7 @@ func (x *FileListResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileListResponse.ProtoReflect.Descriptor instead.
 func (*FileListResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{38}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *FileListResponse) GetAbsPath() string {
@@ -3127,7 +3610,7 @@ type FileReadRequest struct {
 
 func (x *FileReadRequest) Reset() {
 	*x = FileReadRequest{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[39]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3139,7 +3622,7 @@ func (x *FileReadRequest) String() string {
 func (*FileReadRequest) ProtoMessage() {}
 
 func (x *FileReadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[39]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3152,7 +3635,7 @@ func (x *FileReadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileReadRequest.ProtoReflect.Descriptor instead.
 func (*FileReadRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{39}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *FileReadRequest) GetPath() string {
@@ -3179,7 +3662,7 @@ type FileChunk struct {
 
 func (x *FileChunk) Reset() {
 	*x = FileChunk{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[40]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3191,7 +3674,7 @@ func (x *FileChunk) String() string {
 func (*FileChunk) ProtoMessage() {}
 
 func (x *FileChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[40]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3204,7 +3687,7 @@ func (x *FileChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileChunk.ProtoReflect.Descriptor instead.
 func (*FileChunk) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{40}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *FileChunk) GetOffset() int64 {
@@ -3234,7 +3717,7 @@ type FileWriteRequest struct {
 
 func (x *FileWriteRequest) Reset() {
 	*x = FileWriteRequest{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[41]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3246,7 +3729,7 @@ func (x *FileWriteRequest) String() string {
 func (*FileWriteRequest) ProtoMessage() {}
 
 func (x *FileWriteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[41]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3259,7 +3742,7 @@ func (x *FileWriteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileWriteRequest.ProtoReflect.Descriptor instead.
 func (*FileWriteRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{41}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *FileWriteRequest) GetMsg() isFileWriteRequest_Msg {
@@ -3317,7 +3800,7 @@ type FileWriteHeader struct {
 
 func (x *FileWriteHeader) Reset() {
 	*x = FileWriteHeader{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[42]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3329,7 +3812,7 @@ func (x *FileWriteHeader) String() string {
 func (*FileWriteHeader) ProtoMessage() {}
 
 func (x *FileWriteHeader) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[42]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3342,7 +3825,7 @@ func (x *FileWriteHeader) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileWriteHeader.ProtoReflect.Descriptor instead.
 func (*FileWriteHeader) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{42}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *FileWriteHeader) GetPath() string {
@@ -3397,7 +3880,7 @@ type FileWriteResult struct {
 
 func (x *FileWriteResult) Reset() {
 	*x = FileWriteResult{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[43]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3409,7 +3892,7 @@ func (x *FileWriteResult) String() string {
 func (*FileWriteResult) ProtoMessage() {}
 
 func (x *FileWriteResult) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[43]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3422,7 +3905,7 @@ func (x *FileWriteResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileWriteResult.ProtoReflect.Descriptor instead.
 func (*FileWriteResult) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{43}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *FileWriteResult) GetAbsPath() string {
@@ -3449,7 +3932,7 @@ type MkdirRequest struct {
 
 func (x *MkdirRequest) Reset() {
 	*x = MkdirRequest{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[44]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3461,7 +3944,7 @@ func (x *MkdirRequest) String() string {
 func (*MkdirRequest) ProtoMessage() {}
 
 func (x *MkdirRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[44]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3474,7 +3957,7 @@ func (x *MkdirRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MkdirRequest.ProtoReflect.Descriptor instead.
 func (*MkdirRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{44}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *MkdirRequest) GetPath() string {
@@ -3505,7 +3988,7 @@ type FetchRequest struct {
 
 func (x *FetchRequest) Reset() {
 	*x = FetchRequest{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[45]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3517,7 +4000,7 @@ func (x *FetchRequest) String() string {
 func (*FetchRequest) ProtoMessage() {}
 
 func (x *FetchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[45]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3530,7 +4013,7 @@ func (x *FetchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchRequest.ProtoReflect.Descriptor instead.
 func (*FetchRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{45}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *FetchRequest) GetRepo() string {
@@ -3572,7 +4055,7 @@ type FetchResponse struct {
 
 func (x *FetchResponse) Reset() {
 	*x = FetchResponse{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[46]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3584,7 +4067,7 @@ func (x *FetchResponse) String() string {
 func (*FetchResponse) ProtoMessage() {}
 
 func (x *FetchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[46]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3597,7 +4080,7 @@ func (x *FetchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchResponse.ProtoReflect.Descriptor instead.
 func (*FetchResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{46}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *FetchResponse) GetPresent() []string {
@@ -3626,7 +4109,7 @@ type RefsRequest struct {
 
 func (x *RefsRequest) Reset() {
 	*x = RefsRequest{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[47]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3638,7 +4121,7 @@ func (x *RefsRequest) String() string {
 func (*RefsRequest) ProtoMessage() {}
 
 func (x *RefsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[47]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3651,7 +4134,7 @@ func (x *RefsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefsRequest.ProtoReflect.Descriptor instead.
 func (*RefsRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{47}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *RefsRequest) GetRepo() string {
@@ -3681,7 +4164,7 @@ type RefsResponse struct {
 
 func (x *RefsResponse) Reset() {
 	*x = RefsResponse{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[48]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3693,7 +4176,7 @@ func (x *RefsResponse) String() string {
 func (*RefsResponse) ProtoMessage() {}
 
 func (x *RefsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[48]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3706,7 +4189,7 @@ func (x *RefsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefsResponse.ProtoReflect.Descriptor instead.
 func (*RefsResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{48}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *RefsResponse) GetExists() bool {
@@ -3743,7 +4226,7 @@ type SyncChunk struct {
 
 func (x *SyncChunk) Reset() {
 	*x = SyncChunk{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[49]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3755,7 +4238,7 @@ func (x *SyncChunk) String() string {
 func (*SyncChunk) ProtoMessage() {}
 
 func (x *SyncChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[49]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3768,7 +4251,7 @@ func (x *SyncChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SyncChunk.ProtoReflect.Descriptor instead.
 func (*SyncChunk) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{49}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *SyncChunk) GetMsg() isSyncChunk_Msg {
@@ -3825,7 +4308,7 @@ type SyncHeader struct {
 
 func (x *SyncHeader) Reset() {
 	*x = SyncHeader{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[50]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3837,7 +4320,7 @@ func (x *SyncHeader) String() string {
 func (*SyncHeader) ProtoMessage() {}
 
 func (x *SyncHeader) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[50]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3850,7 +4333,7 @@ func (x *SyncHeader) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SyncHeader.ProtoReflect.Descriptor instead.
 func (*SyncHeader) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{50}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *SyncHeader) GetRepo() string {
@@ -3898,7 +4381,7 @@ type SyncData struct {
 
 func (x *SyncData) Reset() {
 	*x = SyncData{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[51]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3910,7 +4393,7 @@ func (x *SyncData) String() string {
 func (*SyncData) ProtoMessage() {}
 
 func (x *SyncData) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[51]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3923,7 +4406,7 @@ func (x *SyncData) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SyncData.ProtoReflect.Descriptor instead.
 func (*SyncData) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{51}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *SyncData) GetPart() SyncPart {
@@ -3955,7 +4438,7 @@ type SyncResult struct {
 
 func (x *SyncResult) Reset() {
 	*x = SyncResult{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[52]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3967,7 +4450,7 @@ func (x *SyncResult) String() string {
 func (*SyncResult) ProtoMessage() {}
 
 func (x *SyncResult) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[52]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3980,7 +4463,7 @@ func (x *SyncResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SyncResult.ProtoReflect.Descriptor instead.
 func (*SyncResult) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{52}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *SyncResult) GetPath() string {
@@ -4044,7 +4527,7 @@ type PrepareJobRequest struct {
 
 func (x *PrepareJobRequest) Reset() {
 	*x = PrepareJobRequest{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[53]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4056,7 +4539,7 @@ func (x *PrepareJobRequest) String() string {
 func (*PrepareJobRequest) ProtoMessage() {}
 
 func (x *PrepareJobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[53]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4069,7 +4552,7 @@ func (x *PrepareJobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrepareJobRequest.ProtoReflect.Descriptor instead.
 func (*PrepareJobRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{53}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *PrepareJobRequest) GetJobId() string {
@@ -4110,7 +4593,7 @@ type PrepareJobOutput struct {
 
 func (x *PrepareJobOutput) Reset() {
 	*x = PrepareJobOutput{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[54]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4122,7 +4605,7 @@ func (x *PrepareJobOutput) String() string {
 func (*PrepareJobOutput) ProtoMessage() {}
 
 func (x *PrepareJobOutput) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[54]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4135,7 +4618,7 @@ func (x *PrepareJobOutput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrepareJobOutput.ProtoReflect.Descriptor instead.
 func (*PrepareJobOutput) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{54}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *PrepareJobOutput) GetLog() []byte {
@@ -4160,7 +4643,7 @@ type PruneRequest struct {
 
 func (x *PruneRequest) Reset() {
 	*x = PruneRequest{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[55]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4172,7 +4655,7 @@ func (x *PruneRequest) String() string {
 func (*PruneRequest) ProtoMessage() {}
 
 func (x *PruneRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[55]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4185,7 +4668,7 @@ func (x *PruneRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PruneRequest.ProtoReflect.Descriptor instead.
 func (*PruneRequest) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{55}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{61}
 }
 
 type PruneResponse struct {
@@ -4196,7 +4679,7 @@ type PruneResponse struct {
 
 func (x *PruneResponse) Reset() {
 	*x = PruneResponse{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[56]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4208,7 +4691,7 @@ func (x *PruneResponse) String() string {
 func (*PruneResponse) ProtoMessage() {}
 
 func (x *PruneResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[56]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4221,7 +4704,7 @@ func (x *PruneResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PruneResponse.ProtoReflect.Descriptor instead.
 func (*PruneResponse) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{56}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{62}
 }
 
 // PortLinkGrant is what the hub signs for a port link (SignedPortLinkGrant).
@@ -4241,7 +4724,7 @@ type PortLinkGrant struct {
 
 func (x *PortLinkGrant) Reset() {
 	*x = PortLinkGrant{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[57]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4253,7 +4736,7 @@ func (x *PortLinkGrant) String() string {
 func (*PortLinkGrant) ProtoMessage() {}
 
 func (x *PortLinkGrant) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[57]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4266,7 +4749,7 @@ func (x *PortLinkGrant) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PortLinkGrant.ProtoReflect.Descriptor instead.
 func (*PortLinkGrant) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{57}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *PortLinkGrant) GetId() string {
@@ -4341,7 +4824,7 @@ type SignedPortLinkGrant struct {
 
 func (x *SignedPortLinkGrant) Reset() {
 	*x = SignedPortLinkGrant{}
-	mi := &file_longarm_v1_longarm_proto_msgTypes[58]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4353,7 +4836,7 @@ func (x *SignedPortLinkGrant) String() string {
 func (*SignedPortLinkGrant) ProtoMessage() {}
 
 func (x *SignedPortLinkGrant) ProtoReflect() protoreflect.Message {
-	mi := &file_longarm_v1_longarm_proto_msgTypes[58]
+	mi := &file_longarm_v1_longarm_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4366,7 +4849,7 @@ func (x *SignedPortLinkGrant) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignedPortLinkGrant.ProtoReflect.Descriptor instead.
 func (*SignedPortLinkGrant) Descriptor() ([]byte, []int) {
-	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{58}
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *SignedPortLinkGrant) GetGrant() []byte {
@@ -4605,7 +5088,7 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x03msg\"X\n" +
 	"\rAttachStarted\x12-\n" +
 	"\asession\x18\x01 \x01(\v2\x13.longarm.v1.SessionR\asession\x12\x18\n" +
-	"\acreated\x18\x02 \x01(\bR\acreated\"\xa0\x03\n" +
+	"\acreated\x18\x02 \x01(\bR\acreated\"\xd9\x06\n" +
 	"\aSession\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12*\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x14.longarm.v1.JobStateR\x05state\x12\x12\n" +
@@ -4622,7 +5105,51 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\blog_size\x18\v \x01(\x03R\alogSize\x12\x1d\n" +
 	"\n" +
 	"created_by\x18\f \x01(\tR\tcreatedBy\x12\x14\n" +
-	"\x05owner\x18\r \x01(\tR\x05owner\"=\n" +
+	"\x05owner\x18\r \x01(\tR\x05owner\x12\x18\n" +
+	"\aworkdir\x18\x0e \x01(\tR\aworkdir\x126\n" +
+	"\tworkspace\x18\x0f \x01(\v2\x18.longarm.v1.JobWorkspaceR\tworkspace\x12\x10\n" +
+	"\x03dir\x18\x10 \x01(\tR\x03dir\x129\n" +
+	"\n" +
+	"started_at\x18\x11 \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12\x16\n" +
+	"\x06reason\x18\x12 \x01(\tR\x06reason\x12;\n" +
+	"\vlast_output\x18\x13 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"lastOutput\x129\n" +
+	"\n" +
+	"last_input\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\tlastInput\x12\x1b\n" +
+	"\tinput_seq\x18\x15 \x01(\x04R\binputSeq\x12*\n" +
+	"\x11last_input_source\x18\x16 \x01(\tR\x0flastInputSource\x12?\n" +
+	"\rlast_activity\x18\x17 \x01(\v2\x1a.google.protobuf.TimestampR\flastActivity\"\xe2\x03\n" +
+	"\x13StartSessionRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
+	"\x04argv\x18\x02 \x03(\tR\x04argv\x12\x10\n" +
+	"\x03cwd\x18\x03 \x01(\tR\x03cwd\x12:\n" +
+	"\x03env\x18\x04 \x03(\v2(.longarm.v1.StartSessionRequest.EnvEntryR\x03env\x12M\n" +
+	"\n" +
+	"secret_env\x18\x05 \x03(\v2..longarm.v1.StartSessionRequest.SecretEnvEntryR\tsecretEnv\x12(\n" +
+	"\x04size\x18\x06 \x01(\v2\x14.longarm.v1.TermSizeR\x04size\x126\n" +
+	"\tworkspace\x18\a \x01(\v2\x18.longarm.v1.JobWorkspaceR\tworkspace\x12.\n" +
+	"\bgit_auth\x18\b \x01(\v2\x13.longarm.v1.GitAuthR\agitAuth\x1a6\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a<\n" +
+	"\x0eSecretEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"=\n" +
+	"\x11GetSessionRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05owner\x18\x02 \x01(\tR\x05owner\"p\n" +
+	"\x12SendSessionRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\x12\x1c\n" +
+	"\n" +
+	"if_idle_ms\x18\x03 \x01(\rR\bifIdleMs\x12\x14\n" +
+	"\x05owner\x18\x04 \x01(\tR\x05owner\"2\n" +
+	"\x13SendSessionResponse\x12\x1b\n" +
+	"\tinput_seq\x18\x01 \x01(\x04R\binputSeq\"o\n" +
+	"\x12StopSessionRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12/\n" +
+	"\x05grace\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x05grace\x12\x14\n" +
+	"\x05owner\x18\x03 \x01(\tR\x05owner\"=\n" +
 	"\x13ListSessionsRequest\x12\x10\n" +
 	"\x03all\x18\x01 \x01(\bR\x03all\x12\x14\n" +
 	"\x05owner\x18\x02 \x01(\tR\x05owner\"G\n" +
@@ -4635,7 +5162,11 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x12\n" +
 	"\x04data\x18\x02 \x01(\fR\x04data\x12\x10\n" +
 	"\x03eof\x18\x03 \x01(\bR\x03eof\x125\n" +
-	"\x05grant\x18\x04 \x01(\v2\x1f.longarm.v1.SignedPortLinkGrantR\x05grant\"r\n" +
+	"\x05grant\x18\x04 \x01(\v2\x1f.longarm.v1.SignedPortLinkGrantR\x05grant\"U\n" +
+	"\x0fFileTailRequest\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x16\n" +
+	"\x06offset\x18\x02 \x01(\x03R\x06offset\x12\x16\n" +
+	"\x06follow\x18\x03 \x01(\bR\x06follow\"r\n" +
 	"\x0fFileStatRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\apartial\x18\x02 \x01(\bR\apartial\x12\x12\n" +
@@ -4790,21 +5321,26 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x06Stream\x12 .longarm.v1.MetricsStreamRequest\x1a\x1b.longarm.v1.MetricsSnapshot0\x012\x83\x01\n" +
 	"\x05Admin\x12E\n" +
 	"\bShutdown\x12\x1b.longarm.v1.ShutdownRequest\x1a\x1c.longarm.v1.ShutdownResponse\x123\n" +
-	"\x02Gc\x12\x15.longarm.v1.GcRequest\x1a\x16.longarm.v1.GcResponse2\x8c\x02\n" +
+	"\x02Gc\x12\x15.longarm.v1.GcRequest\x1a\x16.longarm.v1.GcResponse2\x92\x04\n" +
 	"\bSessions\x12?\n" +
 	"\x06Attach\x12\x17.longarm.v1.AttachInput\x1a\x18.longarm.v1.AttachOutput(\x010\x01\x12I\n" +
 	"\x04List\x12\x1f.longarm.v1.ListSessionsRequest\x1a .longarm.v1.ListSessionsResponse\x12;\n" +
 	"\x04Kill\x12\x1e.longarm.v1.KillSessionRequest\x1a\x13.longarm.v1.Session\x127\n" +
-	"\x04Logs\x12\x17.longarm.v1.LogsRequest\x1a\x14.longarm.v1.LogChunk0\x012\x88\x01\n" +
+	"\x04Logs\x12\x17.longarm.v1.LogsRequest\x1a\x14.longarm.v1.LogChunk0\x01\x12C\n" +
+	"\x05Start\x12\x1f.longarm.v1.StartSessionRequest\x1a\x19.longarm.v1.AttachStarted\x129\n" +
+	"\x03Get\x12\x1d.longarm.v1.GetSessionRequest\x1a\x13.longarm.v1.Session\x12G\n" +
+	"\x04Send\x12\x1e.longarm.v1.SendSessionRequest\x1a\x1f.longarm.v1.SendSessionResponse\x12;\n" +
+	"\x04Stop\x12\x1e.longarm.v1.StopSessionRequest\x1a\x13.longarm.v1.Session2\x88\x01\n" +
 	"\aForward\x12>\n" +
 	"\x04Open\x12\x18.longarm.v1.ForwardFrame\x1a\x18.longarm.v1.ForwardFrame(\x010\x01\x12=\n" +
-	"\x03Ssh\x12\x18.longarm.v1.ForwardFrame\x1a\x18.longarm.v1.ForwardFrame(\x010\x012\xc2\x02\n" +
+	"\x03Ssh\x12\x18.longarm.v1.ForwardFrame\x1a\x18.longarm.v1.ForwardFrame(\x010\x012\x80\x03\n" +
 	"\x05Files\x129\n" +
 	"\x04Stat\x12\x1b.longarm.v1.FileStatRequest\x1a\x14.longarm.v1.FileInfo\x12A\n" +
 	"\x04List\x12\x1b.longarm.v1.FileListRequest\x1a\x1c.longarm.v1.FileListResponse\x12<\n" +
 	"\x04Read\x12\x1b.longarm.v1.FileReadRequest\x1a\x15.longarm.v1.FileChunk0\x01\x12D\n" +
 	"\x05Write\x12\x1c.longarm.v1.FileWriteRequest\x1a\x1b.longarm.v1.FileWriteResult(\x01\x127\n" +
-	"\x05Mkdir\x12\x18.longarm.v1.MkdirRequest\x1a\x14.longarm.v1.FileInfo2\xbd\x01\n" +
+	"\x05Mkdir\x12\x18.longarm.v1.MkdirRequest\x1a\x14.longarm.v1.FileInfo\x12<\n" +
+	"\x04Tail\x12\x1b.longarm.v1.FileTailRequest\x1a\x15.longarm.v1.FileChunk0\x012\xbd\x01\n" +
 	"\tWorkspace\x129\n" +
 	"\x04Refs\x12\x17.longarm.v1.RefsRequest\x1a\x18.longarm.v1.RefsResponse\x127\n" +
 	"\x04Sync\x12\x15.longarm.v1.SyncChunk\x1a\x16.longarm.v1.SyncResult(\x01\x12<\n" +
@@ -4831,7 +5367,7 @@ func file_longarm_v1_longarm_proto_rawDescGZIP() []byte {
 }
 
 var file_longarm_v1_longarm_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_longarm_v1_longarm_proto_msgTypes = make([]protoimpl.MessageInfo, 68)
+var file_longarm_v1_longarm_proto_msgTypes = make([]protoimpl.MessageInfo, 76)
 var file_longarm_v1_longarm_proto_goTypes = []any{
 	(OutputMode)(0),               // 0: longarm.v1.OutputMode
 	(JobState)(0),                 // 1: longarm.v1.JobState
@@ -4867,159 +5403,188 @@ var file_longarm_v1_longarm_proto_goTypes = []any{
 	(*AttachOutput)(nil),          // 31: longarm.v1.AttachOutput
 	(*AttachStarted)(nil),         // 32: longarm.v1.AttachStarted
 	(*Session)(nil),               // 33: longarm.v1.Session
-	(*ListSessionsRequest)(nil),   // 34: longarm.v1.ListSessionsRequest
-	(*ListSessionsResponse)(nil),  // 35: longarm.v1.ListSessionsResponse
-	(*KillSessionRequest)(nil),    // 36: longarm.v1.KillSessionRequest
-	(*ForwardFrame)(nil),          // 37: longarm.v1.ForwardFrame
-	(*FileStatRequest)(nil),       // 38: longarm.v1.FileStatRequest
-	(*FileInfo)(nil),              // 39: longarm.v1.FileInfo
-	(*FileListRequest)(nil),       // 40: longarm.v1.FileListRequest
-	(*FileListResponse)(nil),      // 41: longarm.v1.FileListResponse
-	(*FileReadRequest)(nil),       // 42: longarm.v1.FileReadRequest
-	(*FileChunk)(nil),             // 43: longarm.v1.FileChunk
-	(*FileWriteRequest)(nil),      // 44: longarm.v1.FileWriteRequest
-	(*FileWriteHeader)(nil),       // 45: longarm.v1.FileWriteHeader
-	(*FileWriteResult)(nil),       // 46: longarm.v1.FileWriteResult
-	(*MkdirRequest)(nil),          // 47: longarm.v1.MkdirRequest
-	(*FetchRequest)(nil),          // 48: longarm.v1.FetchRequest
-	(*FetchResponse)(nil),         // 49: longarm.v1.FetchResponse
-	(*RefsRequest)(nil),           // 50: longarm.v1.RefsRequest
-	(*RefsResponse)(nil),          // 51: longarm.v1.RefsResponse
-	(*SyncChunk)(nil),             // 52: longarm.v1.SyncChunk
-	(*SyncHeader)(nil),            // 53: longarm.v1.SyncHeader
-	(*SyncData)(nil),              // 54: longarm.v1.SyncData
-	(*SyncResult)(nil),            // 55: longarm.v1.SyncResult
-	(*PrepareJobRequest)(nil),     // 56: longarm.v1.PrepareJobRequest
-	(*PrepareJobOutput)(nil),      // 57: longarm.v1.PrepareJobOutput
-	(*PruneRequest)(nil),          // 58: longarm.v1.PruneRequest
-	(*PruneResponse)(nil),         // 59: longarm.v1.PruneResponse
-	(*PortLinkGrant)(nil),         // 60: longarm.v1.PortLinkGrant
-	(*SignedPortLinkGrant)(nil),   // 61: longarm.v1.SignedPortLinkGrant
-	nil,                           // 62: longarm.v1.ExecRequest.EnvEntry
-	nil,                           // 63: longarm.v1.ExecRequest.SecretEnvEntry
-	nil,                           // 64: longarm.v1.JobSpec.EnvEntry
-	nil,                           // 65: longarm.v1.JobSpec.LabelsEntry
-	nil,                           // 66: longarm.v1.SubmitRequest.SecretEnvEntry
-	nil,                           // 67: longarm.v1.MetricsSnapshot.AgentsEntry
-	nil,                           // 68: longarm.v1.AttachOpen.EnvEntry
-	nil,                           // 69: longarm.v1.AttachOpen.SecretEnvEntry
-	nil,                           // 70: longarm.v1.PrepareJobRequest.SecretEnvEntry
-	(*timestamppb.Timestamp)(nil), // 71: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),   // 72: google.protobuf.Duration
+	(*StartSessionRequest)(nil),   // 34: longarm.v1.StartSessionRequest
+	(*GetSessionRequest)(nil),     // 35: longarm.v1.GetSessionRequest
+	(*SendSessionRequest)(nil),    // 36: longarm.v1.SendSessionRequest
+	(*SendSessionResponse)(nil),   // 37: longarm.v1.SendSessionResponse
+	(*StopSessionRequest)(nil),    // 38: longarm.v1.StopSessionRequest
+	(*ListSessionsRequest)(nil),   // 39: longarm.v1.ListSessionsRequest
+	(*ListSessionsResponse)(nil),  // 40: longarm.v1.ListSessionsResponse
+	(*KillSessionRequest)(nil),    // 41: longarm.v1.KillSessionRequest
+	(*ForwardFrame)(nil),          // 42: longarm.v1.ForwardFrame
+	(*FileTailRequest)(nil),       // 43: longarm.v1.FileTailRequest
+	(*FileStatRequest)(nil),       // 44: longarm.v1.FileStatRequest
+	(*FileInfo)(nil),              // 45: longarm.v1.FileInfo
+	(*FileListRequest)(nil),       // 46: longarm.v1.FileListRequest
+	(*FileListResponse)(nil),      // 47: longarm.v1.FileListResponse
+	(*FileReadRequest)(nil),       // 48: longarm.v1.FileReadRequest
+	(*FileChunk)(nil),             // 49: longarm.v1.FileChunk
+	(*FileWriteRequest)(nil),      // 50: longarm.v1.FileWriteRequest
+	(*FileWriteHeader)(nil),       // 51: longarm.v1.FileWriteHeader
+	(*FileWriteResult)(nil),       // 52: longarm.v1.FileWriteResult
+	(*MkdirRequest)(nil),          // 53: longarm.v1.MkdirRequest
+	(*FetchRequest)(nil),          // 54: longarm.v1.FetchRequest
+	(*FetchResponse)(nil),         // 55: longarm.v1.FetchResponse
+	(*RefsRequest)(nil),           // 56: longarm.v1.RefsRequest
+	(*RefsResponse)(nil),          // 57: longarm.v1.RefsResponse
+	(*SyncChunk)(nil),             // 58: longarm.v1.SyncChunk
+	(*SyncHeader)(nil),            // 59: longarm.v1.SyncHeader
+	(*SyncData)(nil),              // 60: longarm.v1.SyncData
+	(*SyncResult)(nil),            // 61: longarm.v1.SyncResult
+	(*PrepareJobRequest)(nil),     // 62: longarm.v1.PrepareJobRequest
+	(*PrepareJobOutput)(nil),      // 63: longarm.v1.PrepareJobOutput
+	(*PruneRequest)(nil),          // 64: longarm.v1.PruneRequest
+	(*PruneResponse)(nil),         // 65: longarm.v1.PruneResponse
+	(*PortLinkGrant)(nil),         // 66: longarm.v1.PortLinkGrant
+	(*SignedPortLinkGrant)(nil),   // 67: longarm.v1.SignedPortLinkGrant
+	nil,                           // 68: longarm.v1.ExecRequest.EnvEntry
+	nil,                           // 69: longarm.v1.ExecRequest.SecretEnvEntry
+	nil,                           // 70: longarm.v1.JobSpec.EnvEntry
+	nil,                           // 71: longarm.v1.JobSpec.LabelsEntry
+	nil,                           // 72: longarm.v1.SubmitRequest.SecretEnvEntry
+	nil,                           // 73: longarm.v1.MetricsSnapshot.AgentsEntry
+	nil,                           // 74: longarm.v1.AttachOpen.EnvEntry
+	nil,                           // 75: longarm.v1.AttachOpen.SecretEnvEntry
+	nil,                           // 76: longarm.v1.StartSessionRequest.EnvEntry
+	nil,                           // 77: longarm.v1.StartSessionRequest.SecretEnvEntry
+	nil,                           // 78: longarm.v1.PrepareJobRequest.SecretEnvEntry
+	(*timestamppb.Timestamp)(nil), // 79: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),   // 80: google.protobuf.Duration
 }
 var file_longarm_v1_longarm_proto_depIdxs = []int32{
-	71, // 0: longarm.v1.InfoResponse.started_at:type_name -> google.protobuf.Timestamp
-	62, // 1: longarm.v1.ExecRequest.env:type_name -> longarm.v1.ExecRequest.EnvEntry
-	63, // 2: longarm.v1.ExecRequest.secret_env:type_name -> longarm.v1.ExecRequest.SecretEnvEntry
-	72, // 3: longarm.v1.ExecRequest.timeout:type_name -> google.protobuf.Duration
+	79, // 0: longarm.v1.InfoResponse.started_at:type_name -> google.protobuf.Timestamp
+	68, // 1: longarm.v1.ExecRequest.env:type_name -> longarm.v1.ExecRequest.EnvEntry
+	69, // 2: longarm.v1.ExecRequest.secret_env:type_name -> longarm.v1.ExecRequest.SecretEnvEntry
+	80, // 3: longarm.v1.ExecRequest.timeout:type_name -> google.protobuf.Duration
 	0,  // 4: longarm.v1.ExecRequest.output:type_name -> longarm.v1.OutputMode
-	72, // 5: longarm.v1.ExecResponse.duration:type_name -> google.protobuf.Duration
-	64, // 6: longarm.v1.JobSpec.env:type_name -> longarm.v1.JobSpec.EnvEntry
-	65, // 7: longarm.v1.JobSpec.labels:type_name -> longarm.v1.JobSpec.LabelsEntry
+	80, // 5: longarm.v1.ExecResponse.duration:type_name -> google.protobuf.Duration
+	70, // 6: longarm.v1.JobSpec.env:type_name -> longarm.v1.JobSpec.EnvEntry
+	71, // 7: longarm.v1.JobSpec.labels:type_name -> longarm.v1.JobSpec.LabelsEntry
 	8,  // 8: longarm.v1.JobSpec.workspace:type_name -> longarm.v1.JobWorkspace
 	7,  // 9: longarm.v1.SubmitRequest.spec:type_name -> longarm.v1.JobSpec
-	66, // 10: longarm.v1.SubmitRequest.secret_env:type_name -> longarm.v1.SubmitRequest.SecretEnvEntry
+	72, // 10: longarm.v1.SubmitRequest.secret_env:type_name -> longarm.v1.SubmitRequest.SecretEnvEntry
 	9,  // 11: longarm.v1.SubmitRequest.git_auth:type_name -> longarm.v1.GitAuth
 	7,  // 12: longarm.v1.Job.spec:type_name -> longarm.v1.JobSpec
 	1,  // 13: longarm.v1.Job.state:type_name -> longarm.v1.JobState
-	71, // 14: longarm.v1.Job.created_at:type_name -> google.protobuf.Timestamp
-	71, // 15: longarm.v1.Job.started_at:type_name -> google.protobuf.Timestamp
-	71, // 16: longarm.v1.Job.ended_at:type_name -> google.protobuf.Timestamp
+	79, // 14: longarm.v1.Job.created_at:type_name -> google.protobuf.Timestamp
+	79, // 15: longarm.v1.Job.started_at:type_name -> google.protobuf.Timestamp
+	79, // 16: longarm.v1.Job.ended_at:type_name -> google.protobuf.Timestamp
 	1,  // 17: longarm.v1.ListJobsRequest.states:type_name -> longarm.v1.JobState
 	11, // 18: longarm.v1.ListJobsResponse.jobs:type_name -> longarm.v1.Job
-	72, // 19: longarm.v1.MetricsStreamRequest.interval:type_name -> google.protobuf.Duration
-	71, // 20: longarm.v1.MetricsSnapshot.time:type_name -> google.protobuf.Timestamp
-	67, // 21: longarm.v1.MetricsSnapshot.agents:type_name -> longarm.v1.MetricsSnapshot.AgentsEntry
+	80, // 19: longarm.v1.MetricsStreamRequest.interval:type_name -> google.protobuf.Duration
+	79, // 20: longarm.v1.MetricsSnapshot.time:type_name -> google.protobuf.Timestamp
+	73, // 21: longarm.v1.MetricsSnapshot.agents:type_name -> longarm.v1.MetricsSnapshot.AgentsEntry
 	21, // 22: longarm.v1.MetricsSnapshot.top_cpu:type_name -> longarm.v1.ProcGroup
 	21, // 23: longarm.v1.MetricsSnapshot.top_mem:type_name -> longarm.v1.ProcGroup
-	72, // 24: longarm.v1.GcRequest.keep:type_name -> google.protobuf.Duration
+	80, // 24: longarm.v1.GcRequest.keep:type_name -> google.protobuf.Duration
 	29, // 25: longarm.v1.AttachInput.open:type_name -> longarm.v1.AttachOpen
 	30, // 26: longarm.v1.AttachInput.resize:type_name -> longarm.v1.TermSize
-	68, // 27: longarm.v1.AttachOpen.env:type_name -> longarm.v1.AttachOpen.EnvEntry
-	69, // 28: longarm.v1.AttachOpen.secret_env:type_name -> longarm.v1.AttachOpen.SecretEnvEntry
+	74, // 27: longarm.v1.AttachOpen.env:type_name -> longarm.v1.AttachOpen.EnvEntry
+	75, // 28: longarm.v1.AttachOpen.secret_env:type_name -> longarm.v1.AttachOpen.SecretEnvEntry
 	30, // 29: longarm.v1.AttachOpen.size:type_name -> longarm.v1.TermSize
 	32, // 30: longarm.v1.AttachOutput.started:type_name -> longarm.v1.AttachStarted
 	33, // 31: longarm.v1.AttachStarted.session:type_name -> longarm.v1.Session
 	1,  // 32: longarm.v1.Session.state:type_name -> longarm.v1.JobState
-	71, // 33: longarm.v1.Session.created_at:type_name -> google.protobuf.Timestamp
-	71, // 34: longarm.v1.Session.ended_at:type_name -> google.protobuf.Timestamp
-	33, // 35: longarm.v1.ListSessionsResponse.sessions:type_name -> longarm.v1.Session
-	61, // 36: longarm.v1.ForwardFrame.grant:type_name -> longarm.v1.SignedPortLinkGrant
-	71, // 37: longarm.v1.FileInfo.mtime:type_name -> google.protobuf.Timestamp
-	39, // 38: longarm.v1.FileListResponse.entries:type_name -> longarm.v1.FileInfo
-	45, // 39: longarm.v1.FileWriteRequest.header:type_name -> longarm.v1.FileWriteHeader
-	71, // 40: longarm.v1.FileWriteHeader.mtime:type_name -> google.protobuf.Timestamp
-	9,  // 41: longarm.v1.FetchRequest.git_auth:type_name -> longarm.v1.GitAuth
-	53, // 42: longarm.v1.SyncChunk.header:type_name -> longarm.v1.SyncHeader
-	54, // 43: longarm.v1.SyncChunk.data:type_name -> longarm.v1.SyncData
-	2,  // 44: longarm.v1.SyncData.part:type_name -> longarm.v1.SyncPart
-	8,  // 45: longarm.v1.PrepareJobRequest.workspace:type_name -> longarm.v1.JobWorkspace
-	70, // 46: longarm.v1.PrepareJobRequest.secret_env:type_name -> longarm.v1.PrepareJobRequest.SecretEnvEntry
-	9,  // 47: longarm.v1.PrepareJobRequest.git_auth:type_name -> longarm.v1.GitAuth
-	22, // 48: longarm.v1.MetricsSnapshot.AgentsEntry.value:type_name -> longarm.v1.AgentStat
-	3,  // 49: longarm.v1.Node.Info:input_type -> longarm.v1.InfoRequest
-	5,  // 50: longarm.v1.Exec.Run:input_type -> longarm.v1.ExecRequest
-	10, // 51: longarm.v1.Jobs.Submit:input_type -> longarm.v1.SubmitRequest
-	12, // 52: longarm.v1.Jobs.Get:input_type -> longarm.v1.GetJobRequest
-	13, // 53: longarm.v1.Jobs.List:input_type -> longarm.v1.ListJobsRequest
-	15, // 54: longarm.v1.Jobs.Logs:input_type -> longarm.v1.LogsRequest
-	17, // 55: longarm.v1.Jobs.Wait:input_type -> longarm.v1.WaitRequest
-	18, // 56: longarm.v1.Jobs.Kill:input_type -> longarm.v1.KillRequest
-	19, // 57: longarm.v1.Metrics.Snapshot:input_type -> longarm.v1.MetricsRequest
-	20, // 58: longarm.v1.Metrics.Stream:input_type -> longarm.v1.MetricsStreamRequest
-	24, // 59: longarm.v1.Admin.Shutdown:input_type -> longarm.v1.ShutdownRequest
-	26, // 60: longarm.v1.Admin.Gc:input_type -> longarm.v1.GcRequest
-	28, // 61: longarm.v1.Sessions.Attach:input_type -> longarm.v1.AttachInput
-	34, // 62: longarm.v1.Sessions.List:input_type -> longarm.v1.ListSessionsRequest
-	36, // 63: longarm.v1.Sessions.Kill:input_type -> longarm.v1.KillSessionRequest
-	15, // 64: longarm.v1.Sessions.Logs:input_type -> longarm.v1.LogsRequest
-	37, // 65: longarm.v1.Forward.Open:input_type -> longarm.v1.ForwardFrame
-	37, // 66: longarm.v1.Forward.Ssh:input_type -> longarm.v1.ForwardFrame
-	38, // 67: longarm.v1.Files.Stat:input_type -> longarm.v1.FileStatRequest
-	40, // 68: longarm.v1.Files.List:input_type -> longarm.v1.FileListRequest
-	42, // 69: longarm.v1.Files.Read:input_type -> longarm.v1.FileReadRequest
-	44, // 70: longarm.v1.Files.Write:input_type -> longarm.v1.FileWriteRequest
-	47, // 71: longarm.v1.Files.Mkdir:input_type -> longarm.v1.MkdirRequest
-	50, // 72: longarm.v1.Workspace.Refs:input_type -> longarm.v1.RefsRequest
-	52, // 73: longarm.v1.Workspace.Sync:input_type -> longarm.v1.SyncChunk
-	48, // 74: longarm.v1.Workspace.Fetch:input_type -> longarm.v1.FetchRequest
-	56, // 75: longarm.v1.UserHelper.PrepareJob:input_type -> longarm.v1.PrepareJobRequest
-	58, // 76: longarm.v1.UserHelper.Prune:input_type -> longarm.v1.PruneRequest
-	37, // 77: longarm.v1.LinkTunnel.Dial:input_type -> longarm.v1.ForwardFrame
-	4,  // 78: longarm.v1.Node.Info:output_type -> longarm.v1.InfoResponse
-	6,  // 79: longarm.v1.Exec.Run:output_type -> longarm.v1.ExecResponse
-	11, // 80: longarm.v1.Jobs.Submit:output_type -> longarm.v1.Job
-	11, // 81: longarm.v1.Jobs.Get:output_type -> longarm.v1.Job
-	14, // 82: longarm.v1.Jobs.List:output_type -> longarm.v1.ListJobsResponse
-	16, // 83: longarm.v1.Jobs.Logs:output_type -> longarm.v1.LogChunk
-	11, // 84: longarm.v1.Jobs.Wait:output_type -> longarm.v1.Job
-	11, // 85: longarm.v1.Jobs.Kill:output_type -> longarm.v1.Job
-	23, // 86: longarm.v1.Metrics.Snapshot:output_type -> longarm.v1.MetricsSnapshot
-	23, // 87: longarm.v1.Metrics.Stream:output_type -> longarm.v1.MetricsSnapshot
-	25, // 88: longarm.v1.Admin.Shutdown:output_type -> longarm.v1.ShutdownResponse
-	27, // 89: longarm.v1.Admin.Gc:output_type -> longarm.v1.GcResponse
-	31, // 90: longarm.v1.Sessions.Attach:output_type -> longarm.v1.AttachOutput
-	35, // 91: longarm.v1.Sessions.List:output_type -> longarm.v1.ListSessionsResponse
-	33, // 92: longarm.v1.Sessions.Kill:output_type -> longarm.v1.Session
-	16, // 93: longarm.v1.Sessions.Logs:output_type -> longarm.v1.LogChunk
-	37, // 94: longarm.v1.Forward.Open:output_type -> longarm.v1.ForwardFrame
-	37, // 95: longarm.v1.Forward.Ssh:output_type -> longarm.v1.ForwardFrame
-	39, // 96: longarm.v1.Files.Stat:output_type -> longarm.v1.FileInfo
-	41, // 97: longarm.v1.Files.List:output_type -> longarm.v1.FileListResponse
-	43, // 98: longarm.v1.Files.Read:output_type -> longarm.v1.FileChunk
-	46, // 99: longarm.v1.Files.Write:output_type -> longarm.v1.FileWriteResult
-	39, // 100: longarm.v1.Files.Mkdir:output_type -> longarm.v1.FileInfo
-	51, // 101: longarm.v1.Workspace.Refs:output_type -> longarm.v1.RefsResponse
-	55, // 102: longarm.v1.Workspace.Sync:output_type -> longarm.v1.SyncResult
-	49, // 103: longarm.v1.Workspace.Fetch:output_type -> longarm.v1.FetchResponse
-	57, // 104: longarm.v1.UserHelper.PrepareJob:output_type -> longarm.v1.PrepareJobOutput
-	59, // 105: longarm.v1.UserHelper.Prune:output_type -> longarm.v1.PruneResponse
-	37, // 106: longarm.v1.LinkTunnel.Dial:output_type -> longarm.v1.ForwardFrame
-	78, // [78:107] is the sub-list for method output_type
-	49, // [49:78] is the sub-list for method input_type
-	49, // [49:49] is the sub-list for extension type_name
-	49, // [49:49] is the sub-list for extension extendee
-	0,  // [0:49] is the sub-list for field type_name
+	79, // 33: longarm.v1.Session.created_at:type_name -> google.protobuf.Timestamp
+	79, // 34: longarm.v1.Session.ended_at:type_name -> google.protobuf.Timestamp
+	8,  // 35: longarm.v1.Session.workspace:type_name -> longarm.v1.JobWorkspace
+	79, // 36: longarm.v1.Session.started_at:type_name -> google.protobuf.Timestamp
+	79, // 37: longarm.v1.Session.last_output:type_name -> google.protobuf.Timestamp
+	79, // 38: longarm.v1.Session.last_input:type_name -> google.protobuf.Timestamp
+	79, // 39: longarm.v1.Session.last_activity:type_name -> google.protobuf.Timestamp
+	76, // 40: longarm.v1.StartSessionRequest.env:type_name -> longarm.v1.StartSessionRequest.EnvEntry
+	77, // 41: longarm.v1.StartSessionRequest.secret_env:type_name -> longarm.v1.StartSessionRequest.SecretEnvEntry
+	30, // 42: longarm.v1.StartSessionRequest.size:type_name -> longarm.v1.TermSize
+	8,  // 43: longarm.v1.StartSessionRequest.workspace:type_name -> longarm.v1.JobWorkspace
+	9,  // 44: longarm.v1.StartSessionRequest.git_auth:type_name -> longarm.v1.GitAuth
+	80, // 45: longarm.v1.StopSessionRequest.grace:type_name -> google.protobuf.Duration
+	33, // 46: longarm.v1.ListSessionsResponse.sessions:type_name -> longarm.v1.Session
+	67, // 47: longarm.v1.ForwardFrame.grant:type_name -> longarm.v1.SignedPortLinkGrant
+	79, // 48: longarm.v1.FileInfo.mtime:type_name -> google.protobuf.Timestamp
+	45, // 49: longarm.v1.FileListResponse.entries:type_name -> longarm.v1.FileInfo
+	51, // 50: longarm.v1.FileWriteRequest.header:type_name -> longarm.v1.FileWriteHeader
+	79, // 51: longarm.v1.FileWriteHeader.mtime:type_name -> google.protobuf.Timestamp
+	9,  // 52: longarm.v1.FetchRequest.git_auth:type_name -> longarm.v1.GitAuth
+	59, // 53: longarm.v1.SyncChunk.header:type_name -> longarm.v1.SyncHeader
+	60, // 54: longarm.v1.SyncChunk.data:type_name -> longarm.v1.SyncData
+	2,  // 55: longarm.v1.SyncData.part:type_name -> longarm.v1.SyncPart
+	8,  // 56: longarm.v1.PrepareJobRequest.workspace:type_name -> longarm.v1.JobWorkspace
+	78, // 57: longarm.v1.PrepareJobRequest.secret_env:type_name -> longarm.v1.PrepareJobRequest.SecretEnvEntry
+	9,  // 58: longarm.v1.PrepareJobRequest.git_auth:type_name -> longarm.v1.GitAuth
+	22, // 59: longarm.v1.MetricsSnapshot.AgentsEntry.value:type_name -> longarm.v1.AgentStat
+	3,  // 60: longarm.v1.Node.Info:input_type -> longarm.v1.InfoRequest
+	5,  // 61: longarm.v1.Exec.Run:input_type -> longarm.v1.ExecRequest
+	10, // 62: longarm.v1.Jobs.Submit:input_type -> longarm.v1.SubmitRequest
+	12, // 63: longarm.v1.Jobs.Get:input_type -> longarm.v1.GetJobRequest
+	13, // 64: longarm.v1.Jobs.List:input_type -> longarm.v1.ListJobsRequest
+	15, // 65: longarm.v1.Jobs.Logs:input_type -> longarm.v1.LogsRequest
+	17, // 66: longarm.v1.Jobs.Wait:input_type -> longarm.v1.WaitRequest
+	18, // 67: longarm.v1.Jobs.Kill:input_type -> longarm.v1.KillRequest
+	19, // 68: longarm.v1.Metrics.Snapshot:input_type -> longarm.v1.MetricsRequest
+	20, // 69: longarm.v1.Metrics.Stream:input_type -> longarm.v1.MetricsStreamRequest
+	24, // 70: longarm.v1.Admin.Shutdown:input_type -> longarm.v1.ShutdownRequest
+	26, // 71: longarm.v1.Admin.Gc:input_type -> longarm.v1.GcRequest
+	28, // 72: longarm.v1.Sessions.Attach:input_type -> longarm.v1.AttachInput
+	39, // 73: longarm.v1.Sessions.List:input_type -> longarm.v1.ListSessionsRequest
+	41, // 74: longarm.v1.Sessions.Kill:input_type -> longarm.v1.KillSessionRequest
+	15, // 75: longarm.v1.Sessions.Logs:input_type -> longarm.v1.LogsRequest
+	34, // 76: longarm.v1.Sessions.Start:input_type -> longarm.v1.StartSessionRequest
+	35, // 77: longarm.v1.Sessions.Get:input_type -> longarm.v1.GetSessionRequest
+	36, // 78: longarm.v1.Sessions.Send:input_type -> longarm.v1.SendSessionRequest
+	38, // 79: longarm.v1.Sessions.Stop:input_type -> longarm.v1.StopSessionRequest
+	42, // 80: longarm.v1.Forward.Open:input_type -> longarm.v1.ForwardFrame
+	42, // 81: longarm.v1.Forward.Ssh:input_type -> longarm.v1.ForwardFrame
+	44, // 82: longarm.v1.Files.Stat:input_type -> longarm.v1.FileStatRequest
+	46, // 83: longarm.v1.Files.List:input_type -> longarm.v1.FileListRequest
+	48, // 84: longarm.v1.Files.Read:input_type -> longarm.v1.FileReadRequest
+	50, // 85: longarm.v1.Files.Write:input_type -> longarm.v1.FileWriteRequest
+	53, // 86: longarm.v1.Files.Mkdir:input_type -> longarm.v1.MkdirRequest
+	43, // 87: longarm.v1.Files.Tail:input_type -> longarm.v1.FileTailRequest
+	56, // 88: longarm.v1.Workspace.Refs:input_type -> longarm.v1.RefsRequest
+	58, // 89: longarm.v1.Workspace.Sync:input_type -> longarm.v1.SyncChunk
+	54, // 90: longarm.v1.Workspace.Fetch:input_type -> longarm.v1.FetchRequest
+	62, // 91: longarm.v1.UserHelper.PrepareJob:input_type -> longarm.v1.PrepareJobRequest
+	64, // 92: longarm.v1.UserHelper.Prune:input_type -> longarm.v1.PruneRequest
+	42, // 93: longarm.v1.LinkTunnel.Dial:input_type -> longarm.v1.ForwardFrame
+	4,  // 94: longarm.v1.Node.Info:output_type -> longarm.v1.InfoResponse
+	6,  // 95: longarm.v1.Exec.Run:output_type -> longarm.v1.ExecResponse
+	11, // 96: longarm.v1.Jobs.Submit:output_type -> longarm.v1.Job
+	11, // 97: longarm.v1.Jobs.Get:output_type -> longarm.v1.Job
+	14, // 98: longarm.v1.Jobs.List:output_type -> longarm.v1.ListJobsResponse
+	16, // 99: longarm.v1.Jobs.Logs:output_type -> longarm.v1.LogChunk
+	11, // 100: longarm.v1.Jobs.Wait:output_type -> longarm.v1.Job
+	11, // 101: longarm.v1.Jobs.Kill:output_type -> longarm.v1.Job
+	23, // 102: longarm.v1.Metrics.Snapshot:output_type -> longarm.v1.MetricsSnapshot
+	23, // 103: longarm.v1.Metrics.Stream:output_type -> longarm.v1.MetricsSnapshot
+	25, // 104: longarm.v1.Admin.Shutdown:output_type -> longarm.v1.ShutdownResponse
+	27, // 105: longarm.v1.Admin.Gc:output_type -> longarm.v1.GcResponse
+	31, // 106: longarm.v1.Sessions.Attach:output_type -> longarm.v1.AttachOutput
+	40, // 107: longarm.v1.Sessions.List:output_type -> longarm.v1.ListSessionsResponse
+	33, // 108: longarm.v1.Sessions.Kill:output_type -> longarm.v1.Session
+	16, // 109: longarm.v1.Sessions.Logs:output_type -> longarm.v1.LogChunk
+	32, // 110: longarm.v1.Sessions.Start:output_type -> longarm.v1.AttachStarted
+	33, // 111: longarm.v1.Sessions.Get:output_type -> longarm.v1.Session
+	37, // 112: longarm.v1.Sessions.Send:output_type -> longarm.v1.SendSessionResponse
+	33, // 113: longarm.v1.Sessions.Stop:output_type -> longarm.v1.Session
+	42, // 114: longarm.v1.Forward.Open:output_type -> longarm.v1.ForwardFrame
+	42, // 115: longarm.v1.Forward.Ssh:output_type -> longarm.v1.ForwardFrame
+	45, // 116: longarm.v1.Files.Stat:output_type -> longarm.v1.FileInfo
+	47, // 117: longarm.v1.Files.List:output_type -> longarm.v1.FileListResponse
+	49, // 118: longarm.v1.Files.Read:output_type -> longarm.v1.FileChunk
+	52, // 119: longarm.v1.Files.Write:output_type -> longarm.v1.FileWriteResult
+	45, // 120: longarm.v1.Files.Mkdir:output_type -> longarm.v1.FileInfo
+	49, // 121: longarm.v1.Files.Tail:output_type -> longarm.v1.FileChunk
+	57, // 122: longarm.v1.Workspace.Refs:output_type -> longarm.v1.RefsResponse
+	61, // 123: longarm.v1.Workspace.Sync:output_type -> longarm.v1.SyncResult
+	55, // 124: longarm.v1.Workspace.Fetch:output_type -> longarm.v1.FetchResponse
+	63, // 125: longarm.v1.UserHelper.PrepareJob:output_type -> longarm.v1.PrepareJobOutput
+	65, // 126: longarm.v1.UserHelper.Prune:output_type -> longarm.v1.PruneResponse
+	42, // 127: longarm.v1.LinkTunnel.Dial:output_type -> longarm.v1.ForwardFrame
+	94, // [94:128] is the sub-list for method output_type
+	60, // [60:94] is the sub-list for method input_type
+	60, // [60:60] is the sub-list for extension type_name
+	60, // [60:60] is the sub-list for extension extendee
+	0,  // [0:60] is the sub-list for field type_name
 }
 
 func init() { file_longarm_v1_longarm_proto_init() }
@@ -5038,11 +5603,11 @@ func file_longarm_v1_longarm_proto_init() {
 		(*AttachOutput_Data)(nil),
 		(*AttachOutput_ExitCode)(nil),
 	}
-	file_longarm_v1_longarm_proto_msgTypes[41].OneofWrappers = []any{
+	file_longarm_v1_longarm_proto_msgTypes[47].OneofWrappers = []any{
 		(*FileWriteRequest_Header)(nil),
 		(*FileWriteRequest_Data)(nil),
 	}
-	file_longarm_v1_longarm_proto_msgTypes[49].OneofWrappers = []any{
+	file_longarm_v1_longarm_proto_msgTypes[55].OneofWrappers = []any{
 		(*SyncChunk_Header)(nil),
 		(*SyncChunk_Data)(nil),
 	}
@@ -5052,7 +5617,7 @@ func file_longarm_v1_longarm_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_longarm_v1_longarm_proto_rawDesc), len(file_longarm_v1_longarm_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   68,
+			NumMessages:   76,
 			NumExtensions: 0,
 			NumServices:   11,
 		},

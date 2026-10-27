@@ -147,6 +147,8 @@ longarm kill w1 <id>                               # kills the whole process tre
 longarm jobs w1 [--state running] [--json] [--id <id>] [--hub-only]
 longarm run w1 --stdin-file prompt.txt -- claude -p # the file is the job's stdin, never stored
 longarm version --json                             # version + features (see "Capabilities")
+longarm session start w1 -s a1 --json -- claude    # detached session for programs (see "Sessions for programs")
+longarm tail w1 path/to/events.jsonl -f --json     # stream a growing file
 longarm admin shutdown w1                          # admin role only; jobs keep running
 ```
 
@@ -161,13 +163,13 @@ Programs driving longarm can rely on these exit codes:
 | code | meaning | what a client does |
 |---|---|---|
 | 0 | success | |
-| 2 | usage error or a request that can't succeed as given, so nothing was submitted: unknown flag or command, wrong arguments, local validation (`--env` without `=`, a missing or too large `--stdin-file`, `--ref` a short commit id / a ref that isn't HEAD, a branch, a tag or a full commit id / a commit not in the checkout, `--lfs` other than skip/ship/fetch, `--lfs fetch` with a local checkout, `--git-auth` other than forward/none, `--git-auth forward` without `--repo` or with a URL that isn't https), and the hub's / worker's `InvalidArgument`, `FailedPrecondition`, `AlreadyExists` (a job id in use with another spec), `OutOfRange`, `Unimplemented`, a worker too old for a flag | fix the request; retrying it unchanged fails again |
-| 3 | not found: the hub or the worker answered that the job / file does not exist, an unknown worker name, a job that every known worker answered it doesn't have (when some did not answer: 255), `jobs --id` of an unknown job | |
+| 2 | usage error or a request that can't succeed as given, so nothing was submitted: unknown flag or command, wrong arguments, local validation (`--env` without `=`, a missing or too large `--stdin-file`, `--ref` a short commit id / a ref that isn't HEAD, a branch, a tag or a full commit id / a commit not in the checkout, `--lfs` other than skip/ship/fetch, `--lfs fetch` with a local checkout, `--git-auth` other than forward/none, `--git-auth forward` without `--repo` or with a URL that isn't https), and the hub's / worker's `InvalidArgument`, `FailedPrecondition`, `AlreadyExists` (a job id in use with another spec), `OutOfRange`, `Unimplemented`, a worker too old for a flag or command; `session send` to a session that has ended | fix the request; retrying it unchanged fails again |
+| 3 | not found: the hub or the worker answered that the job / file / session does not exist, an unknown worker name, a job that every known worker answered it doesn't have (when some did not answer: 255), `jobs --id` of an unknown job, `sessions -s` / `session send` / `session stop` of an unknown session, `tail` of a missing file (without `-f`) | |
 | 69 | `jobs --hub-only`: no hub configured, or it did not answer | retry later, or ask the workers (without `--hub-only`) |
-| 75 | refused for capacity, quota or rate (`ResourceExhausted`): no worker passes the gate with `--no-queue`, a quota, too many attempts | retry later |
-| 77 | not allowed: `PermissionDenied`, `Unauthenticated`, a refusal of end-to-end trust; `--git-auth forward` with `--repo <url>`: no credential for the URL could be obtained on this machine (nothing was submitted) | fix the credentials or the rights |
-| 137 | `wait` / `run --wait`: the job was killed | |
-| 254 | `wait` / `run --wait`: the job was lost (its supervisor vanished; outcome unknown) | |
+| 75 | refused for capacity, quota or rate (`ResourceExhausted`): no worker passes the gate with `--no-queue`, a quota, too many attempts; `session send --if-idle-ms`: input arrived within the window (nothing sent); too many `tail`s open on the worker | retry later |
+| 77 | not allowed: `PermissionDenied`, `Unauthenticated`, a refusal of end-to-end trust; `--git-auth forward` with `--repo <url>` (`run`, `session start`): no credential for the URL could be obtained on this machine (nothing was submitted) | fix the credentials or the rights |
+| 137 | `wait` / `run --wait`: the job was killed; `session start`: the session was killed before it ran | |
+| 254 | `wait` / `run --wait`: the job was lost (its supervisor vanished; outcome unknown); `session start` likewise | |
 | 255 | anything else: worker or hub unreachable, timeouts, `Aborted`, internal errors | the outcome may be unknown: look the job up (`jobs --id`) or retry with the same `--id` |
 
 `FailedPrecondition` is 2 because the hub and the worker use it only for
@@ -203,7 +205,8 @@ The job's own outcome comes from `jobs --json` (`state`, `exitCode`,
 ### Capabilities: `longarm version --json`
 
 ```json
-{"version": "v1.8.0", "features": ["exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label", "git-auth-forward"]}
+{"version": "v1.8.0", "features": ["exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label", "git-auth-forward",
+  "session-start", "session-send", "session-send-if-idle", "session-stop", "sessions-json-v2", "tail", "run-session"]}
 ```
 
 (indented in the real output). A program checks `features` instead of
@@ -221,6 +224,17 @@ exit 255) has none of these features.
 | `ref-sha` | `run --repo <path> --ref <full commit id>` |
 | `worker-label` | `longarm worker label` for owners |
 | `git-auth-forward` | `run` / `sync --git-auth forward`, `run --repo <url> --lfs fetch`; the worker must also support it (`git-auth-forward` in its `Node.Info` features), see [Fetching with your credential](#fetching-with-your-credential---git-auth-forward) |
+| `session-start` | `longarm session start` (detached, idempotent by name, `--repo` worktree, auto placement) |
+| `session-send` | `longarm session send` (`--text`, `--stdin-file`, `--key`, `--raw`) |
+| `session-send-if-idle` | `session send --if-idle-ms` (exit 75) |
+| `session-stop` | `longarm session stop --grace` |
+| `sessions-json-v2` | fleet-wide `longarm sessions`, `sessions -s`, `sessions --json` with `source`, `worker`, every field and the activity fields |
+| `tail` | `longarm tail` |
+| `run-session` | `run` / `exec --session` |
+
+The session and tail features also need the worker's (`session-start`,
+`session-send`, `session-send-if-idle`, `session-stop`, `session-info`,
+`file-tail` in `Node.Info` features; see "Sessions for programs").
 
 ### `jobs --json`
 
@@ -326,7 +340,223 @@ Sessions live in their own shim process on the worker: they survive client
 disconnects and longarmd restarts/updates. Several clients can attach to one
 session at once; the window size follows the most recent resize. `longarm attach`
 exits with the session's exit code when its process ends. Piped (non-tty)
-input is sent with newlines as Enter (CR).
+input is sent with newlines as Enter (CR). Programs drive sessions with
+`longarm session start|send|stop` (next section).
+
+### Sessions for programs
+
+A program (an IDE, a desktop app) can run an interactive program - Claude
+Code, Copilot CLI, a shell - in a session, drive it without a terminal, and
+let a human attach to the same session at any time (`longarm attach`).
+
+```sh
+longarm session start w1 -s agent1 --repo . --json -- claude      # detached; prints {"worker","session","cwd","created","state"}
+longarm session start -s agent1 --require os=windows -- claude    # no worker / auto: placed like run (or the running one is found)
+longarm session send w1 -s agent1 --text "fix the tests" --key enter
+longarm session send w1 -s agent1 --key esc                      # keys: enter tab shift-tab esc backspace space up down left right home end pageup pagedown delete ctrl-<letter>
+longarm session send w1 -s agent1 --text "y" --if-idle-ms 2000   # only if nobody typed in the last 2 s (else exit 75)
+longarm sessions --json                                           # all your workers; sessions w1 -s agent1 --json: one session
+longarm run --session agent1 -f -- git status                    # one-shot command in the session's worktree
+longarm tail w1 agent1-worktree/.tmia/agent-events.jsonl -f --json  # (any path get may read)
+longarm logs w1 agent1 --session -f                               # the transcript
+longarm session stop w1 -s agent1 --grace 10s                    # Ctrl-C, then kill after 10 s
+```
+
+**`longarm session start [<worker>|auto] -s NAME [--cwd DIR | --repo PATH|URL [--ref REF] [--lfs skip|ship|fetch] [--git-auth forward]] [--env K=V] [--secret-env NAME] [--require K=V] [--no-queue] [--type T] [--cols N --rows N] [--json] [-- command...]`**
+
+- Creates the session without attaching (default command: the user's
+  shell) and prints `<session> <worker>`; `--json` prints
+  `{"worker": "w1", "session": "agent1", "cwd": "<dir on the worker>", "created": true, "state": "running"}`
+  (`cwd`: the session's working directory as the worker resolved it - the
+  worktree with `--repo`; `""` = the home directory).
+- Idempotent by name: when a session of that name runs with the same
+  command, `--cwd`, `--env`, `--secret-env` names and workspace (repo, url,
+  ref, commit), start reports it with `"created": false`, exit 0. Another
+  spec: `AlreadyExists`, exit 2. An ended session of that name is replaced
+  (`"created": true`). With a local `--repo` the checkout's commit is part
+  of the spec (uncommitted changes are not compared).
+- No worker or `auto`: if a session of that name runs on one of your
+  workers that answer, start uses it; otherwise the hub places the session
+  like `run` (labels with `--require`, the gate, `--no-queue`: exit 75 when
+  no worker passes). The memory reservation of the placement (`--type`,
+  from the command) holds for the hub's reservation TTL only: the hub's job
+  index does not track sessions.
+- `--repo` prepares a git worktree like `run --repo` (a local checkout is
+  synced; a URL is fetched by the worker, with the `GH_TOKEN` secret if
+  given) at `<data>/worktrees/s.<name>.<generation>` (in the user's space
+  with per-user isolation; the generation keeps a session that replaces an
+  ended one of the name off the old worktree, which is removed meanwhile).
+  It lives as long as the session's data: never removed while the session
+  runs; removed when the ended session is collected (`[gc] keep`, `longarm
+  admin gc`) or replaced by a new session of the name.
+- `--git-auth forward` and `--lfs fetch` work as for `run` (see [Fetching
+  with your credential](#fetching-with-your-credential---git-auth-forward)):
+  with `--repo <https url>` the worker fetches with a short-lived credential
+  of yours, forwarded worker-direct with the start, memory-only, used for
+  that fetch only and never seen by the session's program (`sessions
+  --json` shows `"gitAuth": true` only); with a local checkout the remote's
+  commits are fetched by the worker and only the unpushed delta is shipped.
+  No credential here: exit 77; a worker without `git-auth-forward`: exit 2.
+- start returns when the session runs. If it ended before - workspace
+  preparation failed (126), the program did not start (127) or it exited
+  at once (its code) - start exits with that code (killed 137, lost 254)
+  and the reason on stderr; `--json` still prints the object.
+- `--secret-env` values are memory-only on the worker and redacted from the
+  transcript (as for `attach`); `--env` is stored in the session's metadata.
+  Sessions take no stdin payload: input goes through `session send`.
+
+**`longarm session send [<worker>] -s NAME (--text TEXT | --stdin-file FILE|-) [--key KEY]... [--raw] [--if-idle-ms N] [--json]`**
+
+- Types the bytes into the session's terminal: `--text` / `--stdin-file`
+  first, then the `--key`s in order. A newline (LF or CRLF) becomes Enter
+  (CR), like piped `attach` input; `--raw` sends the bytes unchanged. At
+  most 256 KiB. Without a worker, the one worker with a running session of
+  that name.
+- Atomic and ordered: each send is one contiguous write to the terminal.
+  The session's shim serializes every write - an attached client's
+  keystrokes (each read from its terminal), other sends, `session stop`'s
+  Ctrl-C - so a send never interleaves with a human typing; writes reach the
+  terminal in the order the shim receives them. Note that a TUI may treat
+  one large write as a paste (bracketed paste): send the Enter as a separate
+  `--key enter` send if the program should submit.
+- `--if-idle-ms N`: written only if no input (from any attached client or
+  any send) reached the terminal in the last N ms - checked and written
+  atomically by the shim; otherwise nothing is written and longarm exits
+  **75** (retry later). Sessions started by a longarmd before this feature
+  (its shim lives on across updates) refuse `--if-idle-ms` with exit 2.
+- `--json` prints `{"worker", "session", "inputSeq"}` (the session's input
+  sequence number after this write).
+- The input is never stored by longarm: not in the session's metadata
+  (`job.json`, `status.json`), not in the audit log (its size only), not in
+  longarmd's logs. The terminal transcript (`logs --session`) holds what the
+  terminal shows - which includes input the program echoes, as TUIs and
+  shells do.
+- Exit codes: 0 written (all of it); 2 the session has ended (or usage,
+  or a worker without `session-send`); 3 no such session; 75
+  `--if-idle-ms` refused. A terminal write that fails or is short (the
+  program is exiting) is never reported as written: exit 2 when the
+  session has ended meanwhile, else 255 (some bytes may have arrived).
+- In shared isolation with users separated, session names are one
+  namespace: a name another user holds is `AlreadyExists` (start) or not
+  found (send, stop, sessions), never that user's session.
+
+**`longarm session stop [<worker>] -s NAME [--grace 10s] [--json]`**
+
+longarmd types Ctrl-C into the terminal - twice, a second apart (Claude
+Code and similar TUIs exit on the second; a Unix terminal in cooked mode
+turns it into SIGINT for the foreground process group; on Windows ConPTY
+delivers it as a Ctrl-C event to console programs) - waits up to `--grace`
+for the program to exit, then kills the whole process tree like `attach
+--kill` (state `killed`, exit code 137). `--grace 0` kills at once. The
+worker carries this out even if longarm goes away meanwhile (grace at most
+10 minutes). Prints `<session> <state>` (`--json`: the session as in
+`sessions --json`); an ended session is reported as it is (exit 0); exit 3:
+no such session. Every step is bound to the session found first: if it
+ends and a new session takes the name meanwhile (a concurrent `start`), the
+new one is never sent Ctrl-C or killed, and stop reports the original as
+`lost` ("ended and was replaced ... before stop saw its outcome").
+`attach --kill` stays (no grace).
+
+**`longarm sessions [<worker>] [--all] [-s NAME] [--json]`**
+
+Without a worker: every known worker (workers.toml and the hub's list),
+asked in parallel. <a id="sessions---json"></a>`--json` prints:
+
+```json
+{
+  "sessions": [
+    {"worker": "w1", "name": "agent1", "state": "JOB_STATE_RUNNING", "argv": ["claude"], "cwd": "", "dir": "C:\\longarm\\worktrees\\s.agent1",
+     "workdir": "C:\\longarm\\worktrees\\s.agent1", "workspace": {"repo": "app", "url": "", "ref": "HEAD", "commit": "4f3c...", "stagingId": ""},
+     "pid": 4242, "attached": 1, "hasExitCode": false, "exitCode": 0, "reason": "",
+     "createdAt": "...", "startedAt": "...", "endedAt": null, "logSize": "18231",
+     "lastOutput": "...", "lastInput": "...", "inputSeq": "57", "lastInputSource": "attach", "lastActivity": "...",
+     "createdBy": "client/alice", "owner": "alice"}
+  ],
+  "source": "workers",
+  "unreachable": ["w2"]
+}
+```
+
+Every field of the session is present, also at its zero value (protojson
+names; 64-bit numbers - `logSize`, `inputSeq` - are strings; times RFC 3339
+or `null`), plus `worker`. `exitCode` counts only with `hasExitCode`.
+`dir` is the working directory (the worktree with `--repo`), `workdir` /
+`workspace` the worktree and what it was made from. Activity:
+`lastOutput` (the terminal's last output), `lastInput` and
+`lastInputSource` (`"attach"`: a human's keystrokes, `"send"`: `session
+send`, `"stop"`), `inputSeq` (writes to the terminal so far; it only grows
+while the session lives, so a controller that remembers it sees whether a
+human typed since), `lastActivity` = the later of the two. Ended sessions
+and sessions whose shim predates this have `lastOutput` from the
+transcript's modification time and no input fields. `-s NAME`: that session
+only (running; with `--all` in any state); none: exit 3 with the empty list.
+
+The hub does not index sessions - each worker is the authority for its own
+(`"source": "workers"`, always). With a `<worker>` argument its answer is
+authoritative (`-s NAME` exit 3 = the worker has no such session); fleet-wide
+a missing session means none of the workers that answered has it; those
+that did not are in `unreachable` (and on stderr). There is no
+`--hub-only`. (A hub index would need workers to report sessions like jobs:
+more traffic for state - activity - that is stale the moment it is
+indexed, while the worker-direct answer is current.)
+
+**`longarm run|exec [<worker>] --session NAME [--cwd REL] -- command`**
+
+Runs a one-shot job (or `exec` command) on the session's worker in the
+session's working directory (`--cwd` relative to it; not with `--repo`).
+The same as `run <worker> --cwd <dir>` with the `cwd` that `session start
+--json` printed. Ended sessions keep their worktree until collected.
+
+**`longarm tail <worker> <path> [-f] [--from-offset N] [--json]`**
+
+Prints a worker file from a byte offset (negative: before the end) and,
+with `-f`, what is appended until interrupted: a file that does not exist
+yet is waited for, one that was truncated or replaced is read again from 0
+(a notice on stderr), and longarm reconnects after network errors resuming
+at the last byte. Paths and access are those of `longarm get` (relative to
+the home directory of longarmd's account; with per-user isolation read as
+the user's account); one audit record per `tail`. `--json` prints one
+object per line of the file: `{"offset": 0, "next": 8, "line": "{\"e\":1}"}`
+(`next` is where `--from-offset` resumes after it); a truncation gives
+`{"offset": 0, "next": 0, "line": "", "truncated": true}`; without `-f` an
+unterminated last line comes with `"partial": true`. A line longer than
+1 MiB comes as `"partial": true` fragments of at most 1 MiB (cut between
+characters, offsets contiguous), then its last part; longarm's memory stays
+bounded whatever the file holds. Exit 3: no such file (without `-f`; with
+`-f` when it has not appeared for an hour). Exit 75: too many tails are
+open on the worker - at most 8 per user and 64 in total by default (with
+per-user isolation each holds a helper process), `[files] max_tails_per_user`
+/ `max_tails` in longarmd.toml (-1 = no cap).
+
+**Terminals and attaching.** `longarm attach` works with its stdin/stdout
+on a pseudo terminal - also a ConPTY on Windows, as when a desktop app runs
+it in portable-pty / xterm.js: it switches the terminal to raw mode (VT
+input), creates the session with the terminal's size and sends resizes
+(SIGWINCH on Unix; on Windows it polls the size every 300 ms). Several
+clients can attach at once (the window size follows the most recent
+resize); `session send` input arriving meanwhile is serialized with theirs
+as described above. longarm drops the win32-input-mode request
+(`ESC[?9001h`) a Windows worker's pseudo console sends: forwarded to a
+terminal that is itself a ConPTY, it made that console swallow plain
+keystrokes (input stopped); plain VT input works with every terminal.
+
+**Transcript retention.** The transcript (`longarm logs <worker> NAME
+--session`, raw terminal output, secrets redacted) is `out.log` in the
+session's directory, capped at longarmd's `max_log_bytes` (it rotates to
+`out.log.1`; `logs` notes bytes rotated away). An ended session's
+directory, transcript and worktree are kept for `[gc] keep` (then removed
+by the periodic gc or `longarm admin gc`, oldest first under disk
+pressure) or until a new session takes the name; a running session is never
+collected.
+
+Capabilities (`longarm version --json`): `session-start`, `session-send`,
+`session-send-if-idle`, `session-stop`, `sessions-json-v2`, `tail`,
+`run-session`. Workers announce theirs in `Node.Info` (`longarm info
+<worker>`): `session-start`, `session-send`, `session-send-if-idle`,
+`session-stop`, `session-info` (the activity and worktree fields),
+`file-tail`. Against a longarmd without them `session start|send|stop` and
+`tail` exit 2 ("does not support it; update longarmd") before doing
+anything; `sessions` lists such a worker's sessions without the new fields.
 
 ### Port forwarding, files, code sync
 

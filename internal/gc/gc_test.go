@@ -113,3 +113,53 @@ func TestCollect(t *testing.T) {
 		t.Fatal("running job removed")
 	}
 }
+
+// Session worktrees (worktrees/s.<name>) live as long as the session: never
+// collected while it runs or while its ended data is kept, removed with
+// it, and collected as orphans once the session is gone.
+func TestCollectSessionWorktrees(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	old := now.Add(-48 * time.Hour)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	wt := func(name string) string {
+		p := filepath.Join(root, workspace.WorktreesDir, jobs.SessionWorktreeKey(name, now))
+		os.MkdirAll(p, 0o755)
+		os.Chtimes(p, old, old)
+		return p
+	}
+	live, kept, ended, gone := wt("live"), wt("kept"), wt("ended"), wt("gone")
+	// an older generation of "live" (the session that ended and was replaced)
+	oldGen := filepath.Join(root, workspace.WorktreesDir, jobs.SessionWorktreeKey("live", now.Add(-time.Hour)))
+	os.MkdirAll(oldGen, 0o755)
+	os.Chtimes(oldGen, old, old)
+	// A job id equal to a session name must not protect or remove it.
+	mkJob(t, root, "jobs", "gone", jobs.Running, time.Time{}, "")
+	mkJob(t, root, "sessions", "live", jobs.Running, time.Time{}, live)
+	mkJob(t, root, "sessions", "kept", jobs.Done, now.Add(-time.Hour), kept)
+	mkJob(t, root, "sessions", "ended", jobs.Done, now.Add(-10*24*time.Hour), ended)
+	opts := supervisor.Options{Logger: log, ShimCommand: func(string) *exec.Cmd { return exec.Command("true") }}
+	o1, o2 := opts, opts
+	o1.JobsDir, o2.JobsDir = filepath.Join(root, "jobs"), filepath.Join(root, "sessions")
+	jm, err := supervisor.New(o1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm, err := supervisor.New(o2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Collector{DataDir: root, Jobs: jm, Sessions: sm, WS: &workspace.Store{Root: root}, Log: log,
+		DiskUsage: func(string) (uint64, uint64, error) { return 50, 100, nil }}
+	res := c.Run(context.Background(), Options{Keep: 7 * 24 * time.Hour})
+	for _, p := range []string{live, kept} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s removed: %+v", p, res)
+		}
+	}
+	for _, p := range []string{ended, gone, oldGen} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s survived: %+v", p, res)
+		}
+	}
+}

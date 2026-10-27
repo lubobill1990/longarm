@@ -22,6 +22,7 @@ package jobs
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -147,6 +148,52 @@ const FeatureStdin = "job-stdin"
 // FeatureGitAuth is the InfoResponse.features entry of workers that accept
 // a forwarded fetch credential (SubmitRequest.git_auth, Workspace.Fetch).
 const FeatureGitAuth = "git-auth-forward"
+
+// InfoResponse.features of workers with the programmable sessions API.
+const (
+	FeatureSessionStart      = "session-start"        // Sessions.Start (with a workspace), Sessions.Get
+	FeatureSessionSend       = "session-send"         // Sessions.Send
+	FeatureSessionSendIfIdle = "session-send-if-idle" // SendSessionRequest.if_idle_ms
+	FeatureSessionStop       = "session-stop"         // Sessions.Stop
+	FeatureSessionInfo       = "session-info"         // Session workdir, dir, reason and activity fields
+	FeatureFileTail          = "file-tail"            // Files.Tail
+)
+
+// SessionWorktreeKey names the worktree of one generation of session name
+// (created: its spec's CreatedAt) under <data>/worktrees: "s.<name>.<gen>".
+// The dots keep it apart from job ids (ValidID); the generation keeps a
+// session that replaced an ended one of the name off the old one's
+// worktree, which is removed concurrently.
+func SessionWorktreeKey(name string, created time.Time) string {
+	return "s." + name + "." + strconv.FormatInt(created.UnixNano(), 36)
+}
+
+// ParseSessionWorktreeKey splits a SessionWorktreeKey.
+func ParseSessionWorktreeKey(k string) (name, gen string, ok bool) {
+	rest, ok := strings.CutPrefix(k, "s.")
+	if !ok {
+		return "", "", false
+	}
+	i := strings.LastIndexByte(rest, '.')
+	if i < 0 {
+		return "", "", false
+	}
+	name, gen = rest[:i], rest[i+1:]
+	if !ValidID(name) || !genRE.MatchString(gen) {
+		return "", "", false
+	}
+	return name, gen, true
+}
+
+var genRE = regexp.MustCompile(`^-?[0-9a-z]{1,16}$`)
+
+// ValidWorktreeKey reports whether k is a job id or a SessionWorktreeKey.
+func ValidWorktreeKey(k string) bool {
+	if _, _, ok := ParseSessionWorktreeKey(k); ok {
+		return true
+	}
+	return ValidID(k)
+}
 
 // OwnerName is the job's owner; jobs from before multi-tenancy: the name in
 // SubmittedBy ("client/alice").

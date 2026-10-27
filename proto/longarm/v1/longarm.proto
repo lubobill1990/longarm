@@ -349,6 +349,24 @@ service Sessions {
   // Logs streams the session transcript (raw terminal output, secrets
   // redacted) like Jobs.Logs; id = session name.
   rpc Logs(LogsRequest) returns (stream LogChunk);
+  // Start creates a session without attaching (InfoResponse feature
+  // "session-start"). Idempotent by name: a running session with the same
+  // spec is returned with created = false; another spec fails with
+  // ALREADY_EXISTS. An ended session of that name is replaced. Returns once
+  // the session runs (or ended, e.g. its program did not start), or, with a
+  // workspace still being prepared, when the caller's deadline expires.
+  rpc Start(StartSessionRequest) returns (AttachStarted);
+  // Get returns one session (any state); NOT_FOUND if there is none.
+  rpc Get(GetSessionRequest) returns (Session);
+  // Send writes bytes to a running session's terminal as one contiguous
+  // write (InfoResponse feature "session-send"). The bytes are never
+  // persisted (audit: their count only). NOT_FOUND: no such session;
+  // FAILED_PRECONDITION: it has ended; RESOURCE_EXHAUSTED: if_idle_ms was
+  // set and input arrived within that window (nothing was written).
+  rpc Send(SendSessionRequest) returns (SendSessionResponse);
+  // Stop ends a session gracefully: Ctrl-C keystrokes to its terminal, then,
+  // if it still runs after grace, Kill (InfoResponse feature "session-stop").
+  rpc Stop(StopSessionRequest) returns (Session);
 }
 
 message AttachInput {
@@ -407,6 +425,68 @@ message Session {
   int64 log_size = 11;
   string created_by = 12;
   string owner = 13; // the user owning the session
+  // The worktree prepared for a session started with a workspace
+  // (StartSessionRequest.workspace); removed with the session.
+  string workdir = 14;
+  JobWorkspace workspace = 15;
+  // The session's working directory as the worker resolved it: cwd inside
+  // workdir, cwd, or "" (the home directory).
+  string dir = 16;
+  google.protobuf.Timestamp started_at = 17;
+  string reason = 18; // why it failed / was killed / was lost
+  // Terminal activity (InfoResponse feature "session-info"; unset for
+  // sessions whose shim predates it). input_seq counts the writes to the
+  // terminal (an attached client's keystrokes and Sessions.Send); it only
+  // grows during the session's life.
+  google.protobuf.Timestamp last_output = 19;
+  google.protobuf.Timestamp last_input = 20;
+  uint64 input_seq = 21;
+  string last_input_source = 22; // "attach" | "send" | "stop"
+  google.protobuf.Timestamp last_activity = 23; // max(last_output, last_input)
+}
+
+message StartSessionRequest {
+  string name = 1; // [0-9A-Za-z_-]{1,64}
+  repeated string argv = 2; // default: the user's shell
+  string cwd = 3; // with workspace: relative to the worktree
+  map<string, string> env = 4;
+  // Memory-only on the worker, redacted from the transcript; GH_TOKEN also
+  // authenticates a workspace fetch, as for jobs.
+  map<string, string> secret_env = 5;
+  TermSize size = 6;
+  // Prepare a git worktree for the session (like JobSpec.workspace); it
+  // lives as long as the session's data ([gc] keep after it ended).
+  JobWorkspace workspace = 7;
+  // A credential for the fetch of workspace.url only, as
+  // SubmitRequest.git_auth (InfoResponse feature "git-auth-forward"):
+  // memory-only, never seen by the session's program.
+  GitAuth git_auth = 8;
+}
+
+message GetSessionRequest {
+  string name = 1;
+  string owner = 2; // admins only: another user's session
+}
+
+message SendSessionRequest {
+  string name = 1;
+  bytes data = 2; // at most 256 KiB, written as is
+  // Write only if no input reached the terminal within this many
+  // milliseconds (0 = always write).
+  uint32 if_idle_ms = 3;
+  string owner = 4; // admins only: another user's session
+}
+
+message SendSessionResponse {
+  uint64 input_seq = 1; // after this write (0: the session's shim predates it)
+}
+
+message StopSessionRequest {
+  string name = 1;
+  // How long to wait after the Ctrl-C keystrokes before killing the
+  // process tree (0 = kill at once).
+  google.protobuf.Duration grace = 2;
+  string owner = 3; // admins only: another user's session
 }
 
 message ListSessionsRequest {
@@ -461,6 +541,17 @@ service Files {
   // atomically at path only after its sha256 matched header.sha256.
   rpc Write(stream FileWriteRequest) returns (FileWriteResult);
   rpc Mkdir(MkdirRequest) returns (FileInfo);
+  // Tail streams a file from offset like Read; with follow it then streams
+  // what is appended until the client cancels (a missing file is waited
+  // for; a file that shrank is read again from 0, signalled by a chunk
+  // whose offset is below the previous end). Same access as Read.
+  rpc Tail(FileTailRequest) returns (stream FileChunk);
+}
+
+message FileTailRequest {
+  string path = 1;
+  int64 offset = 2; // negative: that many bytes before the current end
+  bool follow = 3;
 }
 
 message FileStatRequest {

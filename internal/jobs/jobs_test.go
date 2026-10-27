@@ -135,3 +135,22 @@ func TestKillMarker(t *testing.T) {
 		t.Fatal("marker expected")
 	}
 }
+
+func TestSessionWorktreeKey(t *testing.T) {
+	t1 := time.Date(2026, 10, 28, 1, 2, 3, 4, time.UTC)
+	k := SessionWorktreeKey("dev", t1)
+	if name, _, ok := ParseSessionWorktreeKey(k); !ok || name != "dev" || !ValidWorktreeKey(k) || ValidID(k) {
+		t.Fatalf("%s: %q %v", k, name, ok)
+	}
+	if k == SessionWorktreeKey("dev", t1.Add(time.Nanosecond)) {
+		t.Fatal("generations share a key")
+	}
+	for _, bad := range []string{"s.dev", "s..x", "s.a/b.x", "s.dev.X!", "dev.x"} {
+		if ValidWorktreeKey(bad) {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	if !ValidWorktreeKey("01JOBID") {
+		t.Error("job id refused")
+	}
+}
