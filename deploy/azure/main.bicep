@@ -114,6 +114,9 @@ param entraAdmins string = ''
 @description('Entra sign-in: applications whose app-only tokens may sign in as a Longarm user (CI through GitHub OIDC), comma-separated "<app id>=<user>". Never admins, never the panel.')
 param entraApps string = ''
 
+@description('Scheduler memory gate: free GB a worker needs for scheduled jobs (empty = the hub\'s default, 20). Lower it for small workers (containers, laptops).')
+param schedulerGateFreeGb string = ''
+
 @description('Entra sign-in for the web panel: spa (no credential; SPA redirect URI https://<fqdn>/auth/spa-callback), confidential (storageAuth identity: the managed identity as a federated credential; Web redirect URI https://<fqdn>/auth/callback) or off.')
 @allowed([
   'spa'
@@ -440,7 +443,8 @@ var hubEnv = concat(
   // self = the hub's own STUN ports; it drops them once it sees that ACI
   // source-NATs them (internal/relay snatVerdict). Always set: deploy.sh
   // reads it back on a re-run.
-  [{ name: 'LONGARM_HUB_RELAY_STUN_ADVERTISE', value: empty(stunServers) ? 'self' : 'self,${stunServers}' }]
+  [{ name: 'LONGARM_HUB_RELAY_STUN_ADVERTISE', value: empty(stunServers) ? 'self' : 'self,${stunServers}' }],
+  empty(schedulerGateFreeGb) ? [] : [{ name: 'LONGARM_HUB_SCHED_GATE_FREE_GB', value: schedulerGateFreeGb }]
 )
 
 var hubPorts = [

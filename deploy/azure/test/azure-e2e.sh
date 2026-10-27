@@ -45,7 +45,7 @@ retry() {
 step "deploy hub $NAME ($IMAGE)"
 "$here/../deploy.sh" --name "$NAME" --resource-group "$RG" --storage-auth identity --no-panel \
 	--image "$IMAGE" --entra-tenant "$ENTRA_TENANT" --entra-client "$ENTRA_CLIENT" --entra-web off \
-	--entra-apps "${CI_APP_ID:-$ENTRA_CLIENT}=ci" --timeout 1200 | tee "$work/deploy.out"
+	--entra-apps "${CI_APP_ID:-$ENTRA_CLIENT}=ci" --gate-free-gb 1 --timeout 1200 | tee "$work/deploy.out"
 hub=$(sed -n 's/^  hub address *//p' "$work/deploy.out")
 fp=$(sed -n 's/^  CA fingerprint *//p' "$work/deploy.out")
 fqdn=${hub%:*}

@@ -84,3 +84,22 @@ func TestACMECache(t *testing.T) {
 		t.Fatalf("deleted: %v", err)
 	}
 }
+
+// The scheduler gate from the environment (containers have no hub.toml to edit).
+func TestConfigGateEnv(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "hub.toml")
+	os.WriteFile(p, nil, 0o600)
+	t.Setenv(EnvGateFreeGB, "1.5")
+	t.Setenv(EnvGateCPU, "90")
+	c, err := LoadConfig(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sp := c.SchedParams(); sp.GateFreeGB != 1.5 || sp.GateCPU != 90 {
+		t.Fatalf("gate %+v", sp)
+	}
+	t.Setenv(EnvGateFreeGB, "lots")
+	if _, err := LoadConfig(p); err == nil {
+		t.Fatal("bad LONGARM_HUB_SCHED_GATE_FREE_GB accepted")
+	}
+}
