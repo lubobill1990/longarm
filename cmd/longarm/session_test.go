@@ -101,4 +101,3 @@ func TestWin32InputFilter(t *testing.T) {
 		t.Fatalf("a different sequence: %q", got)
 	}
 }
-
