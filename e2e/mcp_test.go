@@ -52,7 +52,7 @@ func TestMCP(t *testing.T) {
 		names = append(names, tl.Name)
 	}
 	sort.Strings(names)
-	want := "fleet_exec fleet_forward fleet_job_kill fleet_job_logs fleet_job_submit fleet_job_wait fleet_read fleet_status fleet_sync fleet_write"
+	want := "fleet_exec fleet_forward fleet_job_kill fleet_job_logs fleet_job_submit fleet_job_wait fleet_link fleet_read fleet_status fleet_sync fleet_write"
 	if strings.Join(names, " ") != want {
 		t.Fatalf("tools: %v", names)
 	}
@@ -189,4 +189,13 @@ func TestMCP(t *testing.T) {
 		t.Fatalf("stop %v", s)
 	}
 	h.mustLongarm(h.client, "kill", echo)
+
+	// Port links: list (none yet); a link needs two workers - refused for one.
+	if l := call("fleet_link", map[string]any{"action": "list"}); len(l["links"].([]any)) != 0 {
+		t.Fatalf("links %v", l)
+	}
+	res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "fleet_link", Arguments: map[string]any{"on": "wa", "target": "wa:8080"}})
+	if err != nil || !res.IsError || !strings.Contains(fmt.Sprint(res.Content[0]), "same worker") {
+		t.Fatalf("fleet_link to itself: %v %+v", err, res)
+	}
 }

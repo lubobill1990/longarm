@@ -46,6 +46,10 @@ func TestMain(m *testing.M) {
 type authzEnv struct {
 	srv                     *Server
 	alice, bob, carol, root *grpc.ClientConn
+	// dial connects with a new certificate of the test CA
+	dial func(o pki.IssueOptions) *grpc.ClientConn
+	ca   *pki.CA
+	addr string // the server's
 }
 
 func issue(t *testing.T, ca *pki.CA, dir string, o pki.IssueOptions) *pki.Bundle {
@@ -124,7 +128,7 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 		t.Cleanup(func() { conn.Close() })
 		return conn
 	}
-	return &authzEnv{srv: s,
+	return &authzEnv{srv: s, dial: dial, ca: ca, addr: ln.Addr().String(),
 		alice: dial(pki.IssueOptions{Role: pki.RoleClient, Name: "alice"}),
 		bob:   dial(pki.IssueOptions{Role: pki.RoleClient, Name: "bob-laptop", User: "bob"}),
 		carol: dial(pki.IssueOptions{Role: pki.RoleClient, Name: "carol"}),
@@ -355,6 +359,14 @@ func TestAuthzTable(t *testing.T) {
 			_, err := pb.NewWorkspaceClient(c).Refs(ctx, &pb.RefsRequest{Repo: "none"})
 			return err
 		}, [4]codes.Code{ok, ok, ok, ok}},
+		pb.LinkTunnel_Dial_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			st, err := pb.NewLinkTunnelClient(c).Dial(ctx) // workers only (TestLinkTunnel)
+			if err != nil {
+				return err
+			}
+			_, err = st.Recv()
+			return err
+		}, [4]codes.Code{pd, pd, pd, pd}},
 		pb.Workspace_Sync_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
 			st, err := pb.NewWorkspaceClient(c).Sync(ctx)
 			if err != nil {

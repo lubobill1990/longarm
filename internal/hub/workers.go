@@ -165,6 +165,7 @@ func (h *Hub) ShareWorker(by, user string, admin bool, req *pb.ShareWorkerReques
 	n.rec = &rec
 	h.sendLocked(n, workerAccessCmd(workerAccessLocked(n)))
 	h.publishNodeLocked(n, "shares changed by "+by)
+	h.recheckPortLinksLocked() // links of users it is no longer shared with end
 	info := h.nodeInfoLocked(n)
 	h.mu.Unlock()
 	h.auditHub(by, "workers/share", map[string]any{"worker": req.Worker, "owner": rec.Owner,

@@ -4,6 +4,7 @@ package platform
 
 import (
 	"errors"
+	"net"
 
 	win "github.com/lubobill1990/longarm/internal/platform/windows"
 )
@@ -58,3 +59,18 @@ func PortOwners(port int, a *Account) (mine, others bool, err error) {
 // LoadProfile keeps a's profile loaded (Windows: HKCU of all its
 // processes) until release; no-op elsewhere.
 func LoadProfile(a *Account) (release func(), err error) { return win.LoadProfile(a) }
+
+// PeerIsAccount reports whether the process at the other end of c - a TCP
+// connection longarmd accepted on loopback - runs as account a.
+func PeerIsAccount(c net.Conn, a *Account) (bool, error) {
+	local, remote, ok := tcpEnds(c.LocalAddr().String(), c.RemoteAddr().String())
+	if !ok || a == nil {
+		return false, errors.New("not a TCP connection")
+	}
+	pid, err := win.ConnPID(remote, local)
+	if err != nil {
+		return false, err
+	}
+	sid := win.ProcessUserSID(pid)
+	return sid != "" && sid == a.SID, nil
+}

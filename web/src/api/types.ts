@@ -388,3 +388,34 @@ export interface PanelLogin {
   role?: string // "admin" | "user"
   tenant?: string // role user: the Longarm user it acts as
 }
+
+// ---------------------------------------------------------------- port links
+
+/** As the listening worker last reported it (normalized from either JSON spelling). */
+export interface PortLinkStatus {
+  id?: string
+  state?: string // "pending" (not reported yet) | "listening" | "error"
+  error?: string // last listen / dial error
+  connections?: Int64 // accepted so far
+  active?: number // open now
+  bytes_sent?: Int64 // from -> to
+  bytes_received?: Int64 // to -> from
+  path?: string // last transport path to `to` ("tcp/direct 1ms")
+  updated_at?: string
+  refused?: Int64 // local connections refused (not the owner's)
+}
+
+/** 127.0.0.1:<listen_port> on worker `from` -> 127.0.0.1:<port> on worker `to` (longarm link). */
+export interface PortLink {
+  id: string
+  owner?: string
+  from?: string
+  to?: string
+  port?: number
+  listen_port?: number
+  created_at?: string
+  expires_at?: string
+  job_id?: string // the link goes when this job on `from` ends
+  created_by?: string // certificate identity ("client/alice-laptop")
+  status?: PortLinkStatus
+}

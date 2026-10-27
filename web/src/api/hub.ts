@@ -12,6 +12,8 @@ import type {
   MetricsPoint,
   NodeInfo,
   PanelLogin,
+  PortLink,
+  PortLinkStatus,
   Profile,
   PutUserRequest,
   PutUserResponse,
@@ -72,6 +74,33 @@ function normTenant(u: TenantUser): TenantUser {
   return { ...u, quota: normQuota(u.quota), usage: normUsage(u.usage) }
 }
 
+// Port links: protojson with proto names (writePB) or lowerCamelCase (plain
+// protojson); both are accepted and kept under the proto (snake_case) names.
+function pick(o: Record<string, unknown>, snake: string): unknown {
+  return o[snake] ?? o[snake.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())]
+}
+
+function normFields<T>(raw: unknown, fields: string[]): T {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const r: Record<string, unknown> = {}
+  for (const k of fields) {
+    const v = pick(o, k)
+    if (v !== undefined && v !== null) r[k] = v
+  }
+  return r as T
+}
+
+const STATUS_FIELDS = ['id', 'state', 'error', 'connections', 'active', 'bytes_sent', 'bytes_received', 'path', 'updated_at', 'refused']
+const LINK_FIELDS = ['id', 'owner', 'from', 'to', 'port', 'listen_port', 'created_at', 'expires_at', 'job_id', 'created_by']
+
+/** A PortLink in either JSON spelling -> snake_case. */
+export function normPortLink(raw: unknown): PortLink {
+  const l = normFields<PortLink>(raw, LINK_FIELDS)
+  const st = raw && typeof raw === 'object' ? (raw as Record<string, unknown>).status : undefined
+  if (st) l.status = normFields<PortLinkStatus>(st, STATUS_FIELDS)
+  return { ...l, id: l.id ?? '' }
+}
+
 /** Panel logins with role "user" see their own jobs only (no fleet administration). */
 export const isAdmin = (me: Me) => me.role !== 'user'
 
@@ -111,6 +140,9 @@ export const hubApi = {
   },
   history: () => get<{ nodes?: { node: string; points?: MetricsPoint[] }[] }>('/api/history').then((r) => r.nodes ?? []),
   links: () => get<{ reports?: LinkReport[] }>('/api/links').then((r) => r.reports ?? []),
+  // port links (longarm link): the login's own, administrators see everybody's
+  portLinks: () => get<{ links?: unknown[] }>('/api/port-links').then((r) => (r.links ?? []).map(normPortLink)),
+  removePortLink: (id: string) => del<unknown>(`/api/port-links/${enc(id)}`).then(normPortLink),
   joinCodes: () => get<{ codes?: JoinCode[] }>('/api/joincodes').then((r) => r.codes ?? []),
   createJoinCode: (body: { role: string; ttl?: string; labels?: Record<string, string>; profile?: string; name?: string }) =>
     post<JoinCode>('/api/joincodes', body),

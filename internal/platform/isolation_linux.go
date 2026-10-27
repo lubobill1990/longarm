@@ -3,6 +3,8 @@
 package platform
 
 import (
+	"errors"
+	"net"
 	"os"
 
 	impl "github.com/lubobill1990/longarm/internal/platform/linux"
@@ -73,3 +75,23 @@ func PortOwners(port int, a *Account) (mine, others bool, err error) {
 // LoadProfile keeps a's profile loaded (Windows: HKCU of all its
 // processes) until release; no-op elsewhere.
 func LoadProfile(*Account) (release func(), err error) { return func() {}, nil }
+
+// PeerIsAccount reports whether the process at the other end of c - a TCP
+// connection longarmd accepted on loopback - runs as account a (the uid of
+// the client's socket in /proc/net/tcp{,6}).
+func PeerIsAccount(c net.Conn, a *Account) (bool, error) {
+	local, remote, ok := tcpEnds(c.LocalAddr().String(), c.RemoteAddr().String())
+	if !ok || a == nil {
+		return false, errors.New("not a TCP connection")
+	}
+	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		if uid, ok := procNetSocketUID(string(b), remote, local); ok {
+			return uid == a.UID, nil
+		}
+	}
+	return false, errors.New("the peer's socket is not in /proc/net/tcp")
+}

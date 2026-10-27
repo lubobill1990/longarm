@@ -167,6 +167,24 @@ With `--stun-servers none` (a re-run) everything stays on the relay - that
 is expected on ACI. Tailscale leg: only if the hub has a tailnet provider
 (`--tailscale-secret-file`); then also `longarm --transport tailscale exec e2e-w1 -- hostname`.
 
+## 4b. A port link between two workers (optional, needs a second worker)
+
+Join a second worker `e2e-w2` like in step 3 (ideally on another network),
+then on the laptop:
+
+```sh
+longarm run e2e-w2 -- python3 -m http.server 8080 --bind 127.0.0.1    # or any server on 127.0.0.1:8080
+longarm link create e2e-w2:8080 --on e2e-w1 --port 18080
+longarm exec e2e-w1 -- curl -s http://127.0.0.1:18080/                 # Windows: curl.exe; also $LONGARM_LINK_E2E_W2_8080
+longarm link ls                                                        # record the path: tcp/direct, longnet/direct or longnet/relay
+longarm link rm <id>                                                   # then the curl above fails at once
+```
+
+The traffic goes e2e-w1 → e2e-w2 directly or through the hub's relay (the
+relay allows worker ↔ worker only while the link exists), never through the
+laptop. **record** `longarm link ls` and `longarm admin audit --node e2e-w2 --limit 5`
+(a `LinkTunnel/Dial` line naming the link).
+
 ## 5. Restart the container group: data survives
 
 ```sh

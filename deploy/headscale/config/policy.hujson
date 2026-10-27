@@ -2,9 +2,12 @@
 //
 // Nodes join with one-time pre-auth keys minted by longarm-hub, tagged
 //   tag:longarm-worker  (longarmd)  /  tag:longarm-client  (longarm, longarm daemon, longarm mcp)
-// The only traffic the fleet needs is client -> worker on longarmd's port
-// (7701; ssh, port forwards and file transfers all go through it, inside
-// Longarm's own mTLS). Deny everything else.
+// The fleet needs client -> worker on longarmd's port (7701; ssh, port
+// forwards and file transfers all go through it, inside Longarm's own mTLS)
+// and, for port links (docs/usage.md "Port links"), worker -> worker on the
+// same port. A worker can't do anything on another worker with that: it may
+// call one RPC there, and only with a grant the hub signed for a link
+// between the two. Deny everything else.
 {
   "tagOwners": {
     // Keys are minted by the hub with an API key, so no user needs to own
@@ -14,5 +17,6 @@
   },
   "acls": [
     {"action": "accept", "src": ["tag:longarm-client"], "dst": ["tag:longarm-worker:7701"]},
+    {"action": "accept", "src": ["tag:longarm-worker"], "dst": ["tag:longarm-worker:7701"]}, // port links
   ],
 }

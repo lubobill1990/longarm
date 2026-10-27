@@ -187,6 +187,83 @@ with `--repo` stays `preparing` until its worktree is ready. Syncing into an
 existing worktree resets it: tracked changes and untracked files there are
 discarded, ignored files (node_modules, build output) are kept.
 
+### Port links: worker to worker
+
+For joint debugging across workers - frontend and tests on worker A, backend
+on worker B - a port link makes a port of B reachable on A. Traffic goes A
+to B directly (or through the hub's relay), never through your machine:
+
+```sh
+longarm link create wb:8080 --on wa --port 18080      # wa's 127.0.0.1:18080 -> wb's 127.0.0.1:8080
+#   [--ttl 8h] (default: the hub's [links] default_ttl, at most max_ttl)
+#   [--job <id>]  the link goes when this job on wa ends
+longarm link ls [--all] [--json]                      # state (listening | error | offline), path, connections, bytes
+longarm link rm lk-0123456789ab                       # cuts open connections at once
+```
+
+- **Who can use it.** You own the links you create; other users neither see
+  nor remove them (NotFound) nor use them. On a worker with per-user
+  isolation, only processes of your account (`la-<you>`) may connect to the
+  listener on A (longarmd checks the connecting socket's owner: Linux via
+  `/proc/net/tcp`, Windows via the owning process); on B the port must be
+  listened on by a process of your account, like `longarm forward`. On a
+  worker in shared isolation every local process can connect to the
+  listener (it is a loopback port like any other). So when users are
+  separated, only admins may link from a shared-isolation worker to a
+  per-user one (it would expose the owner's private port there).
+- **Workers decide too.** Both ends must be workers you may use
+  (user-owned workers: yours or shared with you - admins included), and
+  each worker applies its own policy to you on every connection: its
+  `[access] users`, its owner and shares, disabled users and, with
+  end-to-end trust, your pinned user key **and an endorsement of the other
+  worker by your key** - link workers you endorsed yourself. A link a
+  worker refuses shows `error` ("refused by this worker's policy") on A, or
+  its connections fail with `PermissionDenied` from B
+  ([security](security.md#port-links)).
+- **Signed links (end-to-end trust).** On a device endorsed by your user
+  key (`longarm trust init` / `endorse`), `longarm link create` signs the
+  link with the device's key; workers that pin your key accept only links
+  you signed this way ("no owner's consent" otherwise). A signed link's
+  `--ttl` defaults to 8h and must be within the hub's `max_ttl`.
+- **Discovery.** Your jobs, sessions and `longarm exec` on A get
+  `LONGARM_LINKS=wb:8080=127.0.0.1:18080,...` and
+  `LONGARM_LINK_WB_8080=127.0.0.1:18080` (worker name upper-cased, other
+  characters `_`) - variables you set yourself win. Jobs keep what they got
+  at start.
+- **Lifetime.** A link ends after its TTL, when its `--job` ends, with
+  `longarm link rm`, when its owner is removed or a worker is revoked;
+  both workers then close the listener and every open connection. The hub
+  keeps links across restarts; workers keep their last list, so links work
+  while the hub is down: A ends a link at its TTL and when its `--job` ends
+  by itself, B at its TTL (a link removed meanwhile only ends when the hub
+  is back or its TTL runs out).
+- **Paths.** A dials B like a client does: the transport race over B's
+  advertised endpoints (tcp, tailscale, longnet), with A's own longnet and
+  tailscale nodes. Tailnets need a rule for worker -> worker tcp:7701
+  ([deploy/hub/README.md](../deploy/hub/README.md)); the hub's relay carries
+  worker <-> worker traffic only for pairs with an active link (a
+  standalone `longarm-relay` never does).
+- **Limits.** `[links]` in hub.toml: `max_per_user` (20), `default_ttl`
+  (8h), `max_ttl` (168h), `disabled`. Listen ports are 1024-65535 and
+  unique per worker. TCP only; the listener binds 127.0.0.1 and ::1 (so that `localhost` can't
+  reach another process holding the port on one of them); while the port is
+  taken by another process the link shows `error` and is left out of the
+  job variables. `max_ttl` is at most 720h.
+  In longarmd.toml, `[links] max_conns` (64, -1 = no cap) caps each
+  link's open connections on both workers; more are refused.
+- **Panel.** "Port links" lists your links (admins: everybody's) with a
+  Remove button. MCP: `fleet_link` (create / list / remove).
+
+How it is authorized: the hub signs a grant per link (link id, owner, A, B,
+ports, expiry) with the key of its hub certificate, which the fleet CA issued,
+and pushes every worker the full list of links naming it. A presents the
+grant to B in `LinkTunnel.Dial` - the one RPC a worker certificate may call
+on another worker; B accepts only a grant for its own name from the worker
+it names, unexpired, for a link still in B's list, and checks the target port
+for the owner like `Forward.Open`. Creation, removal (with the reason) and
+every connection B accepts or refuses are audited (`longarm admin audit
+--node hub|wb`). See [security.md](security.md#port-links).
+
 ### SSH / scp / VS Code Remote-SSH
 
 ```sh
@@ -200,7 +277,10 @@ longarmd embeds an sshd that, by default, is reachable only through
 `longarm proxy <worker>` (the generated `ProxyCommand`), i.e. through the
 mTLS-authenticated gRPC channel; such connections need no ssh keys. It
 supports exec/shell with or without a pty, the sftp subsystem (scp uses it),
-and `-L`/`-D` forwarding (VS Code Remote-SSH). Optionally longarmd also listens
+and `-L`/`-D` forwarding (VS Code Remote-SSH). Forwards (`longarm forward`, ssh
+`-L`/`-D`, port links) reach the worker's own loopback ports only, unless
+`[forward] targets = "any"` (a breaking change for forwards to other hosts:
+see [CHANGELOG.md](../CHANGELOG.md#upgrading)). Optionally longarmd also listens
 directly, accepting the public keys in `<data>/authorized_keys`:
 
 ```toml
@@ -212,6 +292,14 @@ max_log_bytes = 1073741824      # out.log cap per job/session; rotates to out.lo
 # disabled = true
 listen = ["tcp://100.64.0.11:2222"]   # optional direct sshd (authorized_keys)
 # shell = ["pwsh", "-NoProfile", "-Command"]   # exec shell (default cmd.exe /c | $SHELL -c)
+
+[forward]
+# targets = "loopback"          # what forwards (longarm forward, ssh -L/-D, port links) may reach:
+#                               # loopback (default) = this worker's 127.0.0.1/::1 ports only;
+#                               # "any" = any host:port the worker reaches (LAN, other machines)
+
+[links]
+# max_conns = 64                # open connections per port link through this worker (-1 = no cap)
 
 [gc]
 # disabled = true
@@ -445,6 +533,12 @@ job_mem_gb = 8                       # default memory limit of a job (Job Object
 max_job_mem_gb = 32
 job_cpus = 4                         # default CPU limit (cores)
 max_job_cpus = 16
+
+[links]                              # port links between workers (longarm link)
+# max_per_user = 20                  # active links per user
+# default_ttl = "8h"
+# max_ttl = "168h"
+# disabled = true                    # refuse new links
 ```
 
 Workers that several people use run with **per-user isolation**: longarmd as
@@ -866,7 +960,8 @@ Tools: `fleet_status`, `fleet_exec` (command on a chosen or `auto` worker;
 large output comes back as head + tail with a job handle), `fleet_job_submit`,
 `fleet_job_wait`, `fleet_job_logs`, `fleet_job_kill`, `fleet_read`,
 `fleet_write`, `fleet_sync` (local checkout → worktree on a worker),
-`fleet_forward` (via longarm daemon, returns the local URL). Secrets are passed by
+`fleet_forward` (via longarm daemon, returns the local URL), `fleet_link`
+(port links between workers: create / list / remove). Secrets are passed by
 name (`secret_env`) from the environment of `longarm mcp`, never through the model,
 and only names the operator allows: `claude mcp add longarm -e LONGARM_MCP_SECRETS=GH_TOKEN -- longarm mcp`.
 

@@ -69,11 +69,17 @@ func (w *puWorker) account(user string) string { return tenancy.AccountName(w.pr
 // longarmd's helpers and the test helper), a worker data dir with w1's
 // certificate and longarmd.toml, and starts longarmd privileged.
 func newPerUserWorker(t *testing.T, h *hubEnv, extraToml string) *puWorker {
+	return newPerUserWorkerNamed(t, h, "w1", extraToml)
+}
+
+// newPerUserWorkerNamed is newPerUserWorker for worker name (other names
+// than w1 get a certificate of their own; accounts get their own prefix).
+func newPerUserWorkerNamed(t *testing.T, h *hubEnv, name, extraToml string) *puWorker {
 	t.Helper()
 	w := &puWorker{prefix: "lt" + puRand(2) + "-", port: freePort(t)}
 	w.base = perUserBase(t)
 	w.binDir = filepath.Join(w.base, "bin")
-	w.dataDir = filepath.Join(w.base, "w1")
+	w.dataDir = filepath.Join(w.base, name)
 	if err := os.MkdirAll(w.binDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -84,8 +90,12 @@ func newPerUserWorker(t *testing.T, h *hubEnv, extraToml string) *puWorker {
 	if err := os.MkdirAll(filepath.Join(w.dataDir, "tls"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{"ca.crt", "node.crt", "node.key"} {
-		copyExe(t, filepath.Join(h.dataDir, "tls", f), filepath.Join(w.dataDir, "tls", f))
+	if name == "w1" {
+		for _, f := range []string{"ca.crt", "node.crt", "node.key"} {
+			copyExe(t, filepath.Join(h.dataDir, "tls", f), filepath.Join(w.dataDir, "tls", f))
+		}
+	} else {
+		h.mustLongarm(h.client, "admin", "issue", "--role", "worker", "--name", name, "--out", filepath.Join(w.dataDir, "tls"))
 	}
 	cfg := fmt.Sprintf(`listen = ["tcp://127.0.0.1:%d"]
 [hub]

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -83,6 +84,10 @@ type Server struct {
 	// workers); nil = none. Only ever an extra restriction after Access
 	// and end-to-end trust (auth.go).
 	WorkerAccess *tenancy.WorkerAccess
+	// Trust is the end-to-end trust policy the TLS layer applies (nil =
+	// none); port links check their other worker against it too
+	// (linktunnel.go).
+	Trust *pki.TrustSource
 
 	Sampler *metrics.Sampler
 	Audit   *Audit
@@ -93,6 +98,14 @@ type Server struct {
 	Shutdown func()
 	// LogMaxBytes caps out.log of new jobs and sessions (0 = unlimited).
 	LogMaxBytes int64
+	// Links are longarmd's port links (LinkTunnel.Dial, job environment);
+	// nil = none.
+	Links LinkRegistry
+	// ForwardTargets is [forward] targets: ForwardLoopback ("" too) or
+	// ForwardAny.
+	ForwardTargets string
+	// forwardWarned: the refusal of a non-loopback target was logged.
+	forwardWarned atomic.Bool
 
 	lmu  sync.Mutex
 	late []string
@@ -141,6 +154,7 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 	pb.RegisterForwardServer(g, &forwardServer{s: s})
 	pb.RegisterFilesServer(g, &filesServer{s: s})
 	pb.RegisterWorkspaceServer(g, &workspaceServer{s: s})
+	pb.RegisterLinkTunnelServer(g, &linkTunnelServer{s: s})
 	return g
 }
 
@@ -403,14 +417,19 @@ func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, s
 		if esp != sp || existing.Spec.OwnerName() != owner {
 			return supervisor.Job{}, supervisor.ErrAlreadyExists // somebody else's id
 		}
-		// a retried submit: the supervisor compares the specs
-	} else if j.s.enforce() {
-		q := j.s.quota(owner)
-		if spec.MemLimitBytes, spec.CPULimit, err = tenancy.JobLimits(q, spec.MemLimitBytes, spec.CPULimit); err != nil {
-			return supervisor.Job{}, status.Error(codes.InvalidArgument, err.Error())
-		}
-		if err := j.s.checkJobQuota(sp, owner, q, spec.MemLimitBytes, spec.Labels[sched.LabelMemGB]); err != nil {
-			return supervisor.Job{}, err
+		// a retried submit: the supervisor compares the specs (with the
+		// link variables the first submit got)
+		spec.Env = retryLinkEnv(spec.Env, existing.Spec.Env)
+	} else {
+		spec.Env = j.s.linkEnv(owner, spec.Env) // a new job: the owner's port links
+		if j.s.enforce() {
+			q := j.s.quota(owner)
+			if spec.MemLimitBytes, spec.CPULimit, err = tenancy.JobLimits(q, spec.MemLimitBytes, spec.CPULimit); err != nil {
+				return supervisor.Job{}, status.Error(codes.InvalidArgument, err.Error())
+			}
+			if err := j.s.checkJobQuota(sp, owner, q, spec.MemLimitBytes, spec.Labels[sched.LabelMemGB]); err != nil {
+				return supervisor.Job{}, err
+			}
 		}
 	}
 	return j.s.Spaces.SubmitJob(ctx, sp, spec, secrets)

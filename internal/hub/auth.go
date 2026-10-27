@@ -46,6 +46,9 @@ var hubMethodRoles = map[string][]pki.Role{
 	pb.Fleet_ReportLinks_FullMethodName:       users,
 	pb.Fleet_Links_FullMethodName:             adminOnly, // other clients' paths
 	pb.Fleet_History_FullMethodName:           users,
+	pb.Fleet_CreatePortLink_FullMethodName:    users,
+	pb.Fleet_ListPortLinks_FullMethodName:     users,
+	pb.Fleet_RemovePortLink_FullMethodName:    users,
 	pb.HubAdmin_KillJob_FullMethodName:        adminOnly,
 	pb.HubAdmin_JobLogs_FullMethodName:        adminOnly,
 	pb.HubAdmin_SubmitJob_FullMethodName:      adminOnly,

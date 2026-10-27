@@ -2,6 +2,7 @@ package longarmd
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -47,6 +48,7 @@ var hubAuditKeys = map[string]bool{
 	"time": true, "who": true, "method": true, "user": true, "job": true, "session": true, "owner": true,
 	"denied": true, "peer": true, "exit": true, "timed_out": true, "pty": true, "dry_run": true, "removed": true,
 	"freed": true, "size": true, "truncated": true, "skipped_bytes": true, "error": true,
+	"link": true, // port links: the hub's own id (it knows the link)
 }
 
 // redactAuditLine reduces one audit.log line to hubAuditKeys. Error texts
@@ -71,4 +73,20 @@ func redactAuditLine(line string) string {
 	}
 	b, _ := json.Marshal(rec)
 	return string(b)
+}
+
+// redactLinkReport strips what the port link states sent to the hub could
+// reveal beyond the links themselves (which the hub created): error texts
+// (they quote addresses, endpoints and local errors) and the path's detail
+// (the endpoint used). State, path kind and counters stay.
+func redactLinkReport(r *pb.PortLinkReport) *pb.PortLinkReport {
+	for _, s := range r.GetLinks() {
+		if s.Error != "" {
+			s.Error = "(redacted)"
+		}
+		if i := strings.Index(s.Path, " ("); i >= 0 {
+			s.Path = s.Path[:i]
+		}
+	}
+	return r
 }

@@ -96,6 +96,7 @@ dimensions):
 | event | `update.status` | self-update phases: applying, restarting, ok, rolled_back, failed, error (versions, scrubbed error) |
 | event | `toolchain.reconcile` | profile state and scrubbed error |
 | metric | `trust.denied`, `audit.sink_dropped` | refused TLS peers (end-to-end trust), audit records a sink dropped |
+| metric | `link.dial`, `link.conn`, `link.bytes` | port links: streams the target accepted / refused / couldn't connect (with the gRPC code); local connections on the source by outcome (`ok`, `refused`, `dial_failed`), transport and path kind; bytes each way - **no link id, owner, worker names, ports or addresses** (the names a link brings are added to the scrubber) |
 | trace | WARN / ERROR log records | the message template, attributes as properties (scrubbed), at most 10 per message per 10 minutes |
 | exception | `panic`, `fatal error` | crash (next start) |
 
@@ -111,7 +112,8 @@ dimensions):
 | event | `scheduler.placement` | outcome (`placed`, `queued`, `placed_from_queue`, `no_fit`, `over_quota`), job type, memory, queue position, wait |
 | event | `node.update` | self-update reports of workers |
 | metric | `relay.sessions`, `relay.sessions_new`, `relay.bytes`, `relay.drops`, `relay.handshake_fails` | per minute |
-| metric | `nodes.online`, `scheduler.queue`, `telemetry.forward_failed`, `telemetry.hub_dropped` | per minute |
+| metric | `nodes.online`, `scheduler.queue`, `links.active`, `telemetry.forward_failed`, `telemetry.hub_dropped` | per minute |
+| event | `link.created`, `link.removed` | port links: the creator's role, bound to a job (yes/no), TTL; the removal reason class (`removed`, `expired`, `job_ended`, `user_removed`, `node_revoked`, `not_allowed`) and age - no ids, names or ports |
 | trace | WARN / ERROR log records | as longarmd |
 | event | `process.start` / `process.stop` | relay / https / tailnet on; uptime |
 

@@ -10,16 +10,19 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/conntrack"
 	"github.com/lubobill1990/longarm/internal/gc"
 	"github.com/lubobill1990/longarm/internal/hubclient"
@@ -36,7 +39,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/toolchain"
 	"github.com/lubobill1990/longarm/internal/transport"
-	_ "github.com/lubobill1990/longarm/internal/transport/longnet" // registers longnet://
+	"github.com/lubobill1990/longarm/internal/transport/longnet" // also registers longnet://
 	"github.com/lubobill1990/longarm/internal/trust"
 	"github.com/lubobill1990/longarm/internal/update"
 	"github.com/lubobill1990/longarm/internal/userspace"
@@ -74,6 +77,8 @@ type FileConfig struct {
 	Toolchain   ToolchainConfig `toml:"toolchain"`
 	Update      UpdateConfig    `toml:"update"`
 	Isolation   IsolationConfig `toml:"isolation"`
+	Forward     ForwardConfig   `toml:"forward"`
+	Links       LinksConfig     `toml:"links"`
 	// Audit: copies of audit.log for the worker's owner (docs/security.md).
 	Audit  server.AuditSinks `toml:"audit"`
 	Access AccessConfig      `toml:"access"`
@@ -123,6 +128,26 @@ type IsolationConfig struct {
 	// "allow".
 	Loopback string `toml:"loopback"`
 }
+
+// ForwardConfig is the [forward] section: what port forwards may reach
+// (Forward.Open from longarm forward / fleet_forward, the built-in sshd's
+// direct-tcpip and incoming port links).
+type ForwardConfig struct {
+	// Targets: "loopback" (default: this worker's own 127.0.0.1 / ::1 ports)
+	// or "any" (any host:port the worker can reach - its LAN, other workers;
+	// before this setting existed that was the behaviour in shared isolation).
+	Targets string `toml:"targets"`
+}
+
+// LinksConfig is the [links] section (port links through this worker).
+type LinksConfig struct {
+	// MaxConns caps the open connections of each link, as its source and as
+	// its target (default DefaultLinkMaxConns; -1 = no cap).
+	MaxConns int `toml:"max_conns"`
+}
+
+// DefaultLinkMaxConns is [links] max_conns by default.
+const DefaultLinkMaxConns = 64
 
 // HubConfig is the [hub] section. The address usually comes from hub.toml,
 // written by `longarmd join`.
@@ -213,6 +238,8 @@ type Config struct {
 	// hub_job_details, default true).
 	HubJobDetails bool
 	Audit         server.AuditSinks // paths absolute
+	Forward       ForwardConfig     // Targets normalized
+	Links         LinksConfig       // MaxConns: 0 = no cap
 	// How longarmd was started, for the restart after a self-update: "service"
 	// (the service manager restarts it) or "exec" (longarmd relaunches itself
 	// with Args).
@@ -277,6 +304,19 @@ func LoadConfig(dataDir string, listenOverride []string) (Config, error) {
 	// (panel kill / logs, longarm admin run): off unless the file says so.
 	if cfg.Hub.RemoteJobs == "" && (len(acc.Users) > 0 || acc.Admins != "" && acc.Admins != server.AdminsFull) {
 		cfg.Hub.RemoteJobs = "none"
+	}
+	targets, err := server.ParseForwardTargets(fc.Forward.Targets)
+	if err != nil {
+		return cfg, fmt.Errorf("%s: %w", ConfigFile, err)
+	}
+	cfg.Forward.Targets = targets
+	switch cfg.Links = fc.Links; {
+	case cfg.Links.MaxConns == 0:
+		cfg.Links.MaxConns = DefaultLinkMaxConns
+	case cfg.Links.MaxConns == -1:
+		cfg.Links.MaxConns = 0
+	case cfg.Links.MaxConns < 0:
+		return cfg, fmt.Errorf("%s: [links] max_conns %d: want a positive number or -1 (no cap)", ConfigFile, fc.Links.MaxConns)
 	}
 	if cfg.Isolation.UsersDir != "" && !filepath.IsAbs(cfg.Isolation.UsersDir) {
 		cfg.Isolation.UsersDir = filepath.Join(dataDir, cfg.Isolation.UsersDir)
@@ -446,6 +486,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		Spaces: st.spaces, Policy: policy, LogMaxBytes: cfg.MaxLogBytes, Sampler: sampler,
 		Audit: audit, Log: log, Shutdown: cancel,
 		Revoked: revoked, Conns: conntrack.New(), Access: cfg.Access, WorkerAccess: workerAccess,
+		ForwardTargets: cfg.Forward.Targets, Trust: trustSrc,
 	}
 	srv.UnaryInterceptors, srv.StreamInterceptors = wtel.interceptors()
 	trustSrc.Denied = func(err error) {
@@ -484,6 +525,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		if runtime.GOOS == "windows" && exe != "" {
 			sc.ConsoleHost = []string{exe, "conhost"}
 		}
+		sc.Forward = srv.ForwardTargetCheck
 		if perUser {
 			sc.Session = sshSession(srv, exe)
 		}
@@ -498,6 +540,33 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	var listeners, sshListeners []net.Listener
 	var closers []closer
 	var closersMu sync.Mutex
+	longnets := map[string]*longnet.Transport{} // by relay address (closersMu): port links dial with them
+	var tsLegs atomic.Pointer[tailnetLegs]      // set below; port links dial with its node
+	linkDialer := client.NewDialerFor(&client.Config{Dir: filepath.Join(cfg.DataDir, linkDialDir)}, reloader.LiveBundle())
+	linkDialer.LegTransport = func(e client.Endpoint) transport.Transport {
+		switch e.Transport {
+		case "longnet":
+			closersMu.Lock()
+			defer closersMu.Unlock()
+			if lt := longnets[e.Address]; lt != nil {
+				return lt
+			}
+		case "tailscale":
+			if tr := tsLegs.Load().dialer(); tr != nil {
+				return tr
+			}
+		}
+		return nil // tcp; a relay or tailnet this worker doesn't use itself: a node of the dialer's own
+	}
+	defer linkDialer.Close()
+	links := newLinkManager(ctx, cfg.DataDir, srv.Name, reloader.LiveBundle(), st.spaces, srv.Audit, log.With("component", "links"), linkDialer,
+		func(m *linkManager) {
+			m.maxConns = cfg.Links.MaxConns
+			m.ownerDeny = srv.LinkOwnerDeny // this worker's policy wins over the hub's list
+			m.trust = trustSrc
+			m.learn = wtel.learn // names stay out of telemetry
+		})
+	srv.Links = links
 	defer func() {
 		closersMu.Lock()
 		defer closersMu.Unlock()
@@ -514,6 +583,13 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 			closersMu.Lock()
 			closers = append(closers, c)
 			closersMu.Unlock()
+		}
+		if lt, ok := tr.(*longnet.Transport); ok {
+			if pu, err := url.Parse(u); err == nil {
+				closersMu.Lock()
+				longnets[pu.Host] = lt
+				closersMu.Unlock()
+			}
 		}
 		ln, err := tr.Listen(ctx)
 		if err != nil {
@@ -626,6 +702,16 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		legs.env.TailnetKey = legs.hubKey
 	}
 	agent.tailnet = legs
+	tsLegs.Store(legs)
+	agent.links = links
+	links.report = func(r *pb.PortLinkReport) {
+		if agent.hideJobDetails {
+			r = redactLinkReport(r)
+		}
+		agent.send(&pb.NodeReport{Msg: &pb.NodeReport_PortLinks{PortLinks: r}}, false)
+	}
+	wg.Add(1)
+	go func() { defer wg.Done(); links.run(ctx) }()
 	agent.channel = cfg.Update.Channel
 	if agent.channel == "" {
 		agent.channel = "stable"

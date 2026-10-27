@@ -38,6 +38,10 @@ Longarm 让智能体（或者你）可以说一句 *“去那边跑”*：
   连接，用 `Ctrl-] d` 脱离，重新连接时回放历史输出。
 - **端口转发**——`longarm forward worker-1 3000` 把 worker 上的开发服务器
   映射到你的 `localhost`。
+- **worker 之间的端口链接**——`longarm link create backend:8080 --on frontend`
+  让你在一个 worker 上的作业以 `127.0.0.1:8080` 访问另一个 worker 的端口，流量在
+  worker 之间传输（直连或经 hub 中继，不经过你的电脑；前端和测试在这里，后端在那里），
+  每个链接都由 hub 签发授权。
 - **代码同步**——`longarm sync .` 把你的工作副本（提交、未提交的修改、未跟踪
   的文件）镜像到 worker 上的一个 git worktree；`longarm run --repo .` 则为
   任务创建一个全新的 worktree。
@@ -159,6 +163,7 @@ longarm exec worker-1 -- git --version         # 短命令，退出码原样回�
 longarm run --repo . -f -- pnpm test           # 在全新 worktree 中调度任务，并跟踪其输出
 longarm attach worker-1 -s agent -- claude     # 可随时脱离的交互式智能体会话
 longarm forward worker-1 3000                  # worker 的开发服务器映射到 localhost:3000
+longarm link create worker-2:8080 --on worker-1   # worker-1 上你的作业通过 127.0.0.1:8080 访问 worker-2 的 :8080
 ```
 
 **5. 交给你的智能体：**

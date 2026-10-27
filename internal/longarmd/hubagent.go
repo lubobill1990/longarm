@@ -59,6 +59,7 @@ type hubAgent struct {
 	tc        *toolchain.Reconciler
 	upd       *updater // nil when self-update is off
 	tailnet   *tailnetLegs
+	links     *linkManager // port links (nil in tests)
 	channel   string
 	connected atomic.Bool // a session reached the welcome at least once
 	log       *slog.Logger
@@ -411,6 +412,9 @@ func (a *hubAgent) session(ctx context.Context) error {
 	if a.tc != nil {
 		a.send(&pb.NodeReport{Msg: &pb.NodeReport_Toolchain{Toolchain: a.tc.Status()}}, false)
 	}
+	if a.links != nil {
+		a.links.sendReport(true)
+	}
 	if m, err := a.sampler.Latest(sctx); err == nil {
 		a.send(&pb.NodeReport{Msg: &pb.NodeReport_Metrics{Metrics: a.metricsForHub(m)}}, true)
 	}
@@ -586,6 +590,10 @@ func (a *hubAgent) handle(cmd *pb.HubCommand) {
 		a.applyWorkerAccess(x.WorkerAccess)
 	case *pb.HubCommand_Tenancy:
 		a.applyTenancy(x.Tenancy)
+	case *pb.HubCommand_PortLinks:
+		if a.links != nil {
+			a.links.apply(x.PortLinks, true)
+		}
 	case *pb.HubCommand_AuditAck:
 	case *pb.HubCommand_KillJob, *pb.HubCommand_LogRequest, *pb.HubCommand_SubmitJob, *pb.HubCommand_ToolchainApply:
 		go a.hubRequest(cmd) // may take a while (kill waits for the tree); never block the session
@@ -705,6 +713,7 @@ func (a *hubAgent) applyTenancy(p *pb.TenancyPolicy) {
 	}
 	a.closeDisallowed() // left a team this worker is shared with
 
+	a.cutLinks() // their port links' connections too (the links stay)
 	if p.Version == old || len(p.Purge) == 0 {
 		return
 	}
@@ -756,7 +765,20 @@ func (a *hubAgent) applyWorkerAccess(wa *pb.WorkerAccess) {
 	a.audit.LogAs("hub", "worker/access", map[string]any{"version": wa.Version, "owner": wa.Owner,
 		"users": wa.GetShares().GetUsers(), "teams": wa.GetShares().GetTeams(), "everyone": wa.GetShares().GetEveryone()})
 	a.closeDisallowed()
+	a.cutLinks()
 	a.notify(&pb.LocalEvent{Kind: "hub", Message: "worker access updated (owner " + nonEmpty(wa.Owner, "none") + ")"})
+}
+
+// cutLinks closes the open port link connections of owners this worker's
+// policy refuses now (disabled, no longer shared with, not a user
+// here); the links stay and are refused until that changes.
+func (a *hubAgent) cutLinks() {
+	if a.links == nil {
+		return
+	}
+	if n := a.links.cutConns(func(owner string) bool { return a.srv.LinkOwnerDeny(owner) != "" }); n > 0 {
+		a.log.Info("cut port link connections of users this worker refuses", "links", n)
+	}
 }
 
 // closeDisallowed closes the connections (and with them their sessions,

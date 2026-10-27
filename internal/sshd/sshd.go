@@ -62,6 +62,9 @@ type Config struct {
 	// Session (per-user isolation) says how a caller's ssh processes run;
 	// nil = everything as longarmd's account.
 	Session func(id pki.Identity) (*Session, error)
+	// Forward approves every direct-tcpip target first (longarmd: [forward]
+	// targets), for proxied and direct connections; nil = anything.
+	Forward func(host string, port int) error
 }
 
 // Session is how one caller's shells, commands, sftp and forwards run
@@ -138,6 +141,12 @@ func (s *Server) newServer(keyAuth bool) *ssh.Server {
 		SubsystemHandlers: map[string]ssh.SubsystemHandler{"sftp": s.handleSFTP},
 		LocalPortForwardingCallback: func(ctx ssh.Context, host string, port uint32) bool {
 			target := net.JoinHostPort(host, fmt.Sprint(port))
+			if s.cfg.Forward != nil {
+				if err := s.cfg.Forward(host, int(port)); err != nil {
+					s.cfg.Audit(who(ctx), "ssh direct-tcpip", map[string]any{"target": target, "denied": err.Error()})
+					return false
+				}
+			}
 			if us := sessionOf(ctx); us != nil && us.Forward != nil {
 				if err := us.Forward(host, int(port)); err != nil {
 					s.cfg.Audit(who(ctx), "ssh direct-tcpip", map[string]any{"target": target, "denied": err.Error()})

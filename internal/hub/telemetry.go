@@ -226,7 +226,7 @@ func (h *Hub) telemetryLoop(ctx context.Context) {
 			last = st
 		}
 		h.mu.Lock()
-		online, queued := 0, len(h.queue)
+		online, queued, links := 0, len(h.queue), len(h.portLinks)
 		for _, n := range h.nodes {
 			if n.sess != nil {
 				online++
@@ -235,6 +235,7 @@ func (h *Hub) telemetryLoop(ctx context.Context) {
 		h.mu.Unlock()
 		tel.Metric("nodes.online", float64(online), nil)
 		tel.Metric("scheduler.queue", float64(queued), nil)
+		tel.Metric("links.active", float64(links), nil)
 		fs := h.telem.fwd.Stats()
 		if fs.Dropped > 0 || fs.Failed > 0 {
 			tel.Metric("telemetry.forward_failed", float64(fs.Failed+fs.Dropped), nil)

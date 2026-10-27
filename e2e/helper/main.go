@@ -22,6 +22,12 @@
 //	helper serve SECONDS               TCP echo server on 127.0.0.1:0; prints
 //	                                   "port N", serves for SECONDS
 //	helper connect PORT                connect to 127.0.0.1:PORT, send "hi", print the answer
+//	helper http-serve SECONDS          HTTP server on 127.0.0.1:0; prints "port N"; answers
+//	                                   "hello <path> from <account>"
+//	helper http-get ADDR [PATH]        GET http://ADDR/PATH, print "status N: <body>" (ADDR
+//	                                   "$VAR" = the value of environment variable VAR)
+//	helper hold ADDR                   connect to ADDR (or $VAR), send a ping every 200 ms and
+//	                                   read it back: print "up" once, "cut: <why>" when it breaks
 package main
 
 import (
@@ -208,6 +214,16 @@ func main() {
 			go serve(ln6)
 		}
 		time.Sleep(time.Duration(secs) * time.Second)
+	case "http-serve":
+		httpServe(os.Args[2])
+	case "http-get":
+		path := ""
+		if len(os.Args) > 3 {
+			path = os.Args[3]
+		}
+		httpGet(addrArg(os.Args[2]), path)
+	case "hold":
+		hold(addrArg(os.Args[2]))
 	case "connect":
 		// connect PORT [HOST]: HOST defaults to 127.0.0.1
 		host := "127.0.0.1"

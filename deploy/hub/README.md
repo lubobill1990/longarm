@@ -106,8 +106,12 @@ control plane: `tailscale` (the official service), `headscale`
 
 1. Tailnet policy (admin console → Access controls). The hub's credential gets
    a tag of its own, `tag:longarm-hub`, which **owns** the two node tags.
-   Add a grant/ACL that lets `tag:longarm-client` reach `tag:longarm-worker:7701`
-   (the same rule is in `deploy/headscale/config/policy.hujson`):
+   Add a grant/ACL that lets `tag:longarm-client` reach `tag:longarm-worker:7701`,
+   and - for [port links](../../docs/usage.md#port-links-worker-to-worker) between
+   workers - `tag:longarm-worker` too (a worker still needs a hub-signed grant
+   for a link to do anything on another worker; leave the second rule out if
+   you don't use port links or let them take the hub's relay)
+   (the same rules are in `deploy/headscale/config/policy.hujson`):
    ```jsonc
    "tagOwners": {
      "tag:longarm-hub": ["autogroup:admin"],
@@ -116,6 +120,7 @@ control plane: `tailscale` (the official service), `headscale`
    },
    "grants": [
      {"src": ["tag:longarm-client"], "dst": ["tag:longarm-worker"], "ip": ["tcp:7701"]},
+     {"src": ["tag:longarm-worker"], "dst": ["tag:longarm-worker"], "ip": ["tcp:7701"]}, // port links
    ],
    ```
 2. Trust credential / OAuth client (Settings → Trust credentials, formerly

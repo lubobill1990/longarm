@@ -21,7 +21,8 @@ var (
 
 // MethodRoles is the authorization table: which certificate roles may call
 // each RPC. Methods missing from the table are denied (default deny).
-// Worker certificates are for serving; they get no client rights in P0a.
+// Worker certificates are for serving; they get no client rights - only
+// LinkTunnel.Dial, which needs a grant from the hub for a port link.
 var MethodRoles = map[string][]pki.Role{
 	pb.Node_Info_FullMethodName:        anyUser,
 	pb.Exec_Run_FullMethodName:         anyUser,
@@ -48,6 +49,9 @@ var MethodRoles = map[string][]pki.Role{
 	pb.Files_Mkdir_FullMethodName:      anyUser,
 	pb.Workspace_Refs_FullMethodName:   anyUser,
 	pb.Workspace_Sync_FullMethodName:   anyUser,
+	// The one RPC of worker certificates: port link data, with a hub-signed
+	// grant naming the caller (linktunnel.go).
+	pb.LinkTunnel_Dial_FullMethodName: {pki.RoleWorker},
 }
 
 type idKey struct{}
@@ -82,6 +86,13 @@ func (s *Server) authorize(ctx context.Context, method string) (context.Context,
 	if s.Policy != nil && s.Policy.Disabled(id.Owner()) {
 		s.Audit.Log(id, method, map[string]any{"denied": "user disabled", "peer": p.Addr.String()})
 		return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled", id.Owner())
+	}
+	if id.Role == pki.RoleWorker {
+		// Worker certificates reach LinkTunnel.Dial only (the table above).
+		// The caller is a machine, not a user: [access], the owner/shares
+		// rule and end-to-end trust are applied there to the link's owner
+		// and to the calling worker's endorsement (linktunnel.go).
+		return context.WithValue(ctx, idKey{}, id), nil
 	}
 	if why := s.Access.Deny(id, method); why != "" {
 		s.Audit.Log(id, method, map[string]any{"denied": why, "peer": p.Addr.String()})

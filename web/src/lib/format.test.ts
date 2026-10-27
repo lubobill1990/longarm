@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decodeB64, fmtAgo, fmtBytes, fmtRTT, fmtUptime, isActive, isRelayed, levelColor, logDecoder, memPct, num, stateName, stripAnsi } from './format'
+import { decodeB64, fmtAgo, fmtBytes, fmtRTT, fmtUptime, isActive, isRelayed, levelColor, logDecoder, memPct, num, stateName, stripAnsi, until } from './format'
 import { niceMax } from '../components/charts'
 import { formatTools, parseTools } from '../panel/ProfilesPage'
 
@@ -17,6 +17,12 @@ describe('format', () => {
     expect(fmtAgo(45)).toBe('45s')
     expect(fmtAgo(600)).toBe('10m')
     expect(fmtAgo(7200)).toBe('2h')
+  })
+  it('until: seconds to an RFC 3339 time, negative once past', () => {
+    const now = Date.parse('2026-01-01T00:00:00Z')
+    expect(until('2026-01-01T01:00:00Z', now)).toBe(3600)
+    expect(until('2025-12-31T23:59:00Z', now)).toBe(-60)
+    expect(until(undefined, now)).toBe(0)
   })
   it('64-bit numbers arrive as strings', () => {
     expect(num('17179869184')).toBe(17179869184)
