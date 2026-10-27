@@ -17,7 +17,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +30,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lubobill1990/longarm/internal/jobs"
 )
 
 // Layout under the data dir.
@@ -136,19 +137,26 @@ func (s *Store) JobWorktree(jobID string) string {
 // which turned every synced file into CRLF. .gitattributes eol rules still
 // apply.
 func (s *Store) run(ctx context.Context, dir string, env []string, log io.Writer, args ...string) (string, error) {
+	return s.runAuth(ctx, dir, env, nil, log, args...)
+}
+
+// runAuth is run with the environment of fa (an authenticated fetch) and
+// its credential masked in everything it returns or logs.
+func (s *Store) runAuth(ctx context.Context, dir string, env []string, fa *fetchAuth, log io.Writer, args ...string) (string, error) {
 	args = append([]string{"-c", "core.autocrlf=false"}, args...)
 	cmd := exec.CommandContext(ctx, s.git(), args...)
 	cmd.Dir = dir
 	// Never wait for a prompt nobody sees: git's own, an askpass helper's,
 	// or Git Credential Manager's sign-in window.
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "GCM_INTERACTIVE=never", "LC_ALL=C"), env...)
+	cmd.Env = append(cmd.Env, fa.env(cmd.Env)...)
 	// One writer for both streams: exec then never calls it concurrently.
 	// What goes to log (a job's out.log) has URL credentials masked.
 	var out bytes.Buffer
 	var rlog *redactWriter
 	var w io.Writer = &out
 	if log != nil {
-		rlog = &redactWriter{w: log}
+		rlog = &redactWriter{w: log, fa: fa}
 		w = io.MultiWriter(&out, rlog)
 	}
 	cmd.Stdout, cmd.Stderr = w, w
@@ -162,9 +170,9 @@ func (s *Store) run(ctx context.Context, dir string, env []string, log io.Writer
 		if len(msg) > 2000 {
 			msg = msg[len(msg)-2000:]
 		}
-		return out.String(), fmt.Errorf("git %s: %v: %s", RedactURLs(strings.Join(args, " ")), err, RedactURLs(msg))
+		return fa.redact(out.String()), fmt.Errorf("git %s: %v: %s", RedactURLs(strings.Join(args, " ")), err, RedactURLs(fa.redact(msg)))
 	}
-	return out.String(), nil
+	return fa.redact(out.String()), nil
 }
 
 // urlUserinfo matches the userinfo of a URL ("https://user:pass@",
@@ -172,14 +180,16 @@ func (s *Store) run(ctx context.Context, dir string, env []string, log io.Writer
 var urlUserinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#@'"]+@`)
 
 // RedactURLs masks the userinfo (user and password: a PAT is often the
-// user) of every URL in s.
+// user) of every URL in s, and the value of every Authorization header.
 func RedactURLs(s string) string {
-	return urlUserinfo.ReplaceAllString(s, "${1}xxxxx@")
+	return authHeader.ReplaceAllString(urlUserinfo.ReplaceAllString(s, "${1}xxxxx@"), "${1}xxxxx")
 }
 
-// redactWriter passes lines through RedactURLs.
+// redactWriter passes lines through RedactURLs (and masks the credential
+// of fa, if any).
 type redactWriter struct {
 	w   io.Writer
+	fa  *fetchAuth
 	buf []byte
 }
 
@@ -190,7 +200,7 @@ func (r *redactWriter) Write(p []byte) (int, error) {
 		if i < 0 {
 			break
 		}
-		r.w.Write([]byte(RedactURLs(string(r.buf[:i+1]))))
+		r.w.Write([]byte(RedactURLs(r.fa.redact(string(r.buf[:i+1])))))
 		r.buf = r.buf[i+1:]
 	}
 	if len(r.buf) > 64<<10 { // no line end in sight
@@ -201,7 +211,7 @@ func (r *redactWriter) Write(p []byte) (int, error) {
 
 func (r *redactWriter) flush() {
 	if len(r.buf) > 0 {
-		r.w.Write([]byte(RedactURLs(string(r.buf))))
+		r.w.Write([]byte(RedactURLs(r.fa.redact(string(r.buf)))))
 		r.buf = nil
 	}
 }
@@ -323,10 +333,18 @@ func (s *Store) ImportBundle(ctx context.Context, repo, bundle, name, commit str
 }
 
 // FetchURL fetches ref (default HEAD) from u into the mirror and returns the
-// commit. For http(s) URLs a non-empty token is sent as basic auth
-// ("x-access-token", GitHub style) to that host only, via GIT_CONFIG_*
-// environment variables.
+// commit. For http(s) URLs a non-empty token (the job's GH_TOKEN secret) is
+// sent as basic auth ("x-access-token", GitHub style) to that host only,
+// via GIT_CONFIG_* environment variables.
 func (s *Store) FetchURL(ctx context.Context, repo, u, ref, token string, log io.Writer) (string, error) {
+	return s.FetchURLAuth(ctx, repo, u, ref, nil, token, log)
+}
+
+// FetchURLAuth is FetchURL with a forwarded credential (preferred over
+// token; https only, sent to u only - gitauth.go). A full commit id as ref
+// is not fetched when the mirror has it already; otherwise it is fetched
+// by id (fetchCommits).
+func (s *Store) FetchURLAuth(ctx context.Context, repo, u, ref string, auth *jobs.GitAuth, token string, log io.Writer) (string, error) {
 	m, err := s.ensureMirror(ctx, repo)
 	if err != nil {
 		return "", err
@@ -337,30 +355,147 @@ func (s *Store) FetchURL(ctx context.Context, repo, u, ref, token string, log io
 	if strings.HasPrefix(ref, "-") || strings.ContainsAny(ref, " \t\n:") {
 		return "", fmt.Errorf("bad ref %q", ref)
 	}
-	var env []string
-	if token != "" {
-		pu, err := url.Parse(u)
-		if err != nil || (pu.Scheme != "https" && pu.Scheme != "http") || pu.Host == "" {
-			return "", fmt.Errorf("GH_TOKEN given but %q is not an http(s) url", u)
-		}
-		cred := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
-		env = []string{
-			"GIT_CONFIG_COUNT=1",
-			"GIT_CONFIG_KEY_0=http." + pu.Scheme + "://" + pu.Host + "/.extraheader",
-			"GIT_CONFIG_VALUE_0=AUTHORIZATION: basic " + cred,
-		}
+	fa, err := newFetchAuth(u, auth, token)
+	if err != nil {
+		return "", err
 	}
 	unlock := s.lock(repo)
 	defer unlock()
+	if shaRE.MatchString(ref) {
+		if _, err := s.run(ctx, m, nil, nil, "cat-file", "-e", ref+"^{commit}"); err == nil {
+			logf(log, "commit %s is in the mirror already: not fetching", ref)
+			return ref, nil
+		}
+		if err := s.fetchCommits(ctx, m, u, []string{ref}, fa, log); err != nil {
+			return "", fetchError(u, fa.kind, err)
+		}
+		return ref, nil
+	}
 	dst := "refs/longarm/remote/" + refSuffix(ref)
-	if _, err := s.run(ctx, m, env, log, "fetch", "--no-tags", "--force", "--", u, "+"+ref+":"+dst); err != nil {
-		return "", fetchError(u, token != "", err)
+	if _, err := s.runAuth(ctx, m, nil, fa, log, "fetch", "--no-tags", "--force", "--", u, "+"+ref+":"+dst); err != nil {
+		return "", fetchError(u, fa.kind, err)
 	}
 	out, err := s.run(ctx, m, nil, nil, "rev-parse", "--verify", dst+"^{commit}")
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// maxFetchCommits caps the commits of one FetchCommits.
+const maxFetchCommits = 64
+
+// FetchCommits fetches those of commits (full ids) the mirror lacks from u
+// with a forwarded credential and returns the ones the mirror has
+// afterwards (also on error, which is then about the fetch).
+func (s *Store) FetchCommits(ctx context.Context, repo, u string, commits []string, auth *jobs.GitAuth, log io.Writer) ([]string, error) {
+	if len(commits) == 0 || len(commits) > maxFetchCommits {
+		return nil, fmt.Errorf("want 1 to %d commits, got %d", maxFetchCommits, len(commits))
+	}
+	for _, c := range commits {
+		if !shaRE.MatchString(c) {
+			return nil, fmt.Errorf("bad commit %q", c)
+		}
+	}
+	m, err := s.ensureMirror(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	fa, err := newFetchAuth(u, auth, "")
+	if err != nil {
+		return nil, err
+	}
+	unlock := s.lock(repo)
+	defer unlock()
+	have := func() (present, missing []string) {
+		for _, c := range commits {
+			if _, err := s.run(ctx, m, nil, nil, "cat-file", "-e", c+"^{commit}"); err == nil {
+				present = append(present, c)
+			} else {
+				missing = append(missing, c)
+			}
+		}
+		return present, missing
+	}
+	present, missing := have()
+	if len(missing) == 0 {
+		return present, nil
+	}
+	ferr := s.fetchCommits(ctx, m, u, missing, fa, log)
+	present, _ = have()
+	if ferr != nil {
+		return present, fetchError(u, fa.kind, ferr)
+	}
+	return present, nil
+}
+
+// fetchCommits fetches commits by id into refs/longarm/remote/<id> (with
+// protocol v2 GitHub, Azure DevOps and git http-backend serve any commit
+// reachable from their refs). When the server refuses that for another
+// reason than authentication, it fetches the remote's branches instead,
+// which must contain the commits. Called with the mirror lock held.
+func (s *Store) fetchCommits(ctx context.Context, m, u string, commits []string, fa *fetchAuth, log io.Writer) error {
+	args := []string{"fetch", "--no-tags", "--force", "--", u}
+	for _, c := range commits {
+		args = append(args, "+"+c+":refs/longarm/remote/"+c)
+	}
+	_, err := s.runAuth(ctx, m, nil, fa, log, args...)
+	if err == nil {
+		return nil
+	}
+	if authFailure.MatchString(err.Error()) {
+		return err
+	}
+	logf(log, "fetching by commit id failed (%v); fetching the remote's branches", firstLine(err.Error()))
+	if _, err := s.runAuth(ctx, m, nil, fa, log, "fetch", "--no-tags", "--force", "--", u,
+		"+refs/heads/*:refs/longarm/remote/heads/*"); err != nil {
+		return err
+	}
+	for _, c := range commits {
+		if _, err := s.run(ctx, m, nil, nil, "cat-file", "-e", c+"^{commit}"); err != nil {
+			return fmt.Errorf("commit %s is not on %s (not reachable from its branches)", c, RedactURLs(u))
+		}
+		s.run(ctx, m, nil, nil, "update-ref", "refs/longarm/remote/"+c, c)
+	}
+	return nil
+}
+
+// FetchLFS fetches the Git LFS objects of commit from u (git lfs fetch,
+// authenticated like FetchURLAuth) into the mirror's LFS store, from where
+// Checkout fills them in.
+func (s *Store) FetchLFS(ctx context.Context, repo, u, commit string, auth *jobs.GitAuth, token string, log io.Writer) error {
+	if !shaRE.MatchString(commit) {
+		return fmt.Errorf("bad commit %q", commit)
+	}
+	if !s.lfsInstalled(ctx) {
+		logf(log, "--lfs fetch: git-lfs is not installed on this worker: LFS files are pointer files")
+		return nil
+	}
+	m, err := s.ensureMirror(ctx, repo)
+	if err != nil {
+		return err
+	}
+	fa, err := newFetchAuth(u, auth, token)
+	if err != nil {
+		return err
+	}
+	unlock := s.lock(repo)
+	defer unlock()
+	if _, err := s.runAuth(ctx, m, nil, fa, log, "lfs", "fetch", u, commit); err != nil {
+		return fetchError(u, fa.kind, fmt.Errorf("git lfs fetch: %w", err))
+	}
+	return nil
+}
+
+func logf(log io.Writer, format string, a ...any) {
+	if log != nil {
+		fmt.Fprintf(log, "longarmd: "+format+"\n", a...)
+	}
+}
+
+func firstLine(s string) string {
+	s, _, _ = strings.Cut(strings.TrimSpace(s), "\n")
+	return s
 }
 
 // authFailure matches git's (and its credential helpers') ways of saying
@@ -373,7 +508,7 @@ var authFailure = regexp.MustCompile(`(?i)(returned error: 40[13]|HTTP 40[13]|\b
 // authentication problem: the worker fetches as its own account,
 // non-interactively - a credential helper that needs a sign-in (Git
 // Credential Manager for Azure DevOps) can't ask anyone.
-func fetchError(u string, withToken bool, err error) error {
+func fetchError(u string, kind authKind, err error) error {
 	u = RedactURLs(u)
 	m := authFailure.FindString(err.Error())
 	if m == "" {
@@ -385,12 +520,19 @@ func fetchError(u string, withToken bool, err error) error {
 	}
 	how := "a credential that works without a prompt for " + host + " in the worker account's git config " +
 		"(a PAT in its credential store, an ssh key; GitHub: the job's GH_TOKEN secret, --secret-env GH_TOKEN)"
-	if withToken {
+	switch kind {
+	case authGHToken:
 		how = "a GH_TOKEN with access to the repository (the job's secret was refused)"
+	case authForwarded:
+		return fmt.Errorf("fetching %s: the forwarded credential was refused (%s): it may have expired or lack access "+
+			"to the repository (Azure DevOps: a token of the organization's tenant; longarm gets one with az, else git "+
+			"credential fill). Ship the commits from your machine instead - longarm run --repo <local checkout> - or "+
+			"check the credential with git ls-remote %s: %s", u, m, u, RedactURLs(err.Error()))
 	}
 	return fmt.Errorf("fetching %s: the worker could not authenticate (%s): it fetches as its own account and "+
-		"can't prompt for a sign-in (e.g. Git Credential Manager). Ship the commits from your machine instead - "+
-		"longarm run --repo <local checkout> (e.g. --repo .) - or give the worker %s: %s", u, m, how, RedactURLs(err.Error()))
+		"can't prompt for a sign-in (e.g. Git Credential Manager). Forward your credential for this fetch - "+
+		"longarm run --git-auth forward - or ship the commits from your machine - longarm run --repo <local checkout> "+
+		"(e.g. --repo .) - or give the worker %s: %s", u, m, how, RedactURLs(err.Error()))
 }
 
 // Checkout makes path a worktree of repo's mirror at commit (detached;

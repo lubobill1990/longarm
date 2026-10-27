@@ -177,7 +177,7 @@ func TestMirrorBundleWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := jobs.Spec{ID: "job1", Workspace: &Workspace{Repo: "proj", Commit: c1, StagingID: "01STAGE"}}
-	dir, err := s.PrepareJob(ctx, jobs.Dir(filepath.Join(root, "jobdir")), spec, nil, &log)
+	dir, err := s.PrepareJob(ctx, jobs.Dir(filepath.Join(root, "jobdir")), spec, nil, nil, &log)
 	if err != nil || dir != s.JobWorktree("job1") {
 		t.Fatalf("PrepareJob = %s %v\n%s", dir, err, log.String())
 	}

@@ -170,6 +170,24 @@ message JobWorkspace {
   string commit = 4;
   // Uncommitted changes uploaded by Workspace.Sync (stage_only) to apply.
   string staging_id = 5;
+  // With url: also fetch the commit's Git LFS content from url (longarm
+  // run --lfs fetch), with the forwarded credential if any.
+  bool lfs_fetch = 6;
+  // Output only: the fetch of url was authenticated with a credential
+  // forwarded in SubmitRequest.git_auth (the credential is never stored).
+  bool git_auth = 7;
+}
+
+// GitAuth is a short-lived credential the client forwards for one fetch
+// from a hosted remote (longarm run / sync --git-auth forward). The worker
+// keeps it in memory, sends it only to the url being fetched (git's
+// http.<url>.extraHeader, passed in the environment of git and git-lfs),
+// never to the job, and zeroes it after the fetch.
+message GitAuth {
+  // "bearer" (secret is the token) or "basic" (username:secret)
+  string scheme = 1;
+  string username = 2;
+  bytes secret = 3;
 }
 
 message SubmitRequest {
@@ -183,6 +201,11 @@ message SubmitRequest {
   // the job index, the audit log or longarmd's logs; the job reads it once
   // and then sees end of file.
   bytes stdin = 4;
+  // Credential for fetching spec.workspace.url (InfoResponse.features
+  // "git-auth-forward"). Memory-only like stdin: used for the workspace
+  // fetch (git and git-lfs) and zeroed; never in job.json, the index, the
+  // audit log, logs or the job's environment.
+  GitAuth git_auth = 5;
 }
 
 message Job {
@@ -516,6 +539,26 @@ service Workspace {
   // changes and a tar of untracked files, in that order, then either applies
   // them onto a worktree at header.path or stages them for a job.
   rpc Sync(stream SyncChunk) returns (SyncResult);
+  // Fetch gets commits into the mirror from a hosted remote, with a
+  // forwarded credential: before shipping a local checkout the client has
+  // the worker fetch what the remote already has, then sends only the
+  // delta ("git-auth-forward").
+  rpc Fetch(FetchRequest) returns (FetchResponse);
+}
+
+message FetchRequest {
+  string repo = 1;
+  string url = 2; // https url of the remote
+  // Full commit ids to fetch (by id; the worker falls back to fetching the
+  // remote's branches when the server refuses that).
+  repeated string commits = 3;
+  GitAuth git_auth = 4;
+}
+
+message FetchResponse {
+  // of FetchRequest.commits, those the mirror has now
+  repeated string present = 1;
+  int64 fetched_ms = 2;
 }
 
 message RefsRequest {
@@ -593,6 +636,7 @@ message PrepareJobRequest {
   string job_id = 1;
   JobWorkspace workspace = 2;
   map<string, string> secret_env = 3; // GH_TOKEN authenticates https fetches
+  GitAuth git_auth = 4; // forwarded credential for workspace.url
 }
 
 message PrepareJobOutput {

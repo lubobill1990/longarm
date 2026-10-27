@@ -121,6 +121,15 @@ func (w *workspaceServer) proxyRefs(ctx context.Context, req *pb.RefsRequest) (*
 	return pb.NewWorkspaceClient(h.Conn).Refs(ctx, req)
 }
 
+func (w *workspaceServer) proxyFetch(ctx context.Context, req *pb.FetchRequest) (*pb.FetchResponse, error) {
+	h, err := w.s.helper(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer h.Close()
+	return pb.NewWorkspaceClient(h.Conn).Fetch(ctx, req)
+}
+
 func (w *workspaceServer) proxySync(st pb.Workspace_SyncServer, first *pb.SyncChunk) error {
 	ctx := st.Context()
 	h, err := w.s.helper(ctx)
@@ -219,8 +228,11 @@ func (u *userHelperServer) PrepareJob(req *pb.PrepareJobRequest, st pb.UserHelpe
 	if w == nil || !jobs.ValidID(req.JobId) || !workspace.ValidRepo(w.Repo) {
 		return status.Error(codes.InvalidArgument, "bad prepare request")
 	}
-	spec := jobs.Spec{ID: req.JobId, Workspace: &jobs.Workspace{Repo: w.Repo, URL: w.Url, Ref: w.Ref, Commit: w.Commit, StagingID: w.StagingId}}
-	dir, err := u.ws.PrepareJob(st.Context(), "", spec, req.SecretEnv, &streamWriter{st: st})
+	spec := jobs.Spec{ID: req.JobId, Workspace: &jobs.Workspace{Repo: w.Repo, URL: w.Url, Ref: w.Ref, Commit: w.Commit,
+		StagingID: w.StagingId, LFSFetch: w.LfsFetch}}
+	auth := GitAuthFromPB(req.GitAuth)
+	defer auth.Clear()
+	dir, err := u.ws.PrepareJob(st.Context(), "", spec, req.SecretEnv, auth, &streamWriter{st: st})
 	if err != nil {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	}

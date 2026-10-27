@@ -305,7 +305,7 @@ func (t *mcpTools) submitJob(ctx context.Context, spec cmdSpec, name, repo, ref,
 		conn.Close()
 		return "", nil, nil, err
 	}
-	ws, err := jobWorkspace(ctx, conn, repo, ref, "")
+	ws, err := jobWorkspace(ctx, conn, repo, ref, "", nil)
 	if err != nil {
 		conn.Close()
 		return "", nil, nil, err
@@ -770,7 +770,7 @@ func (t *mcpTools) sync(ctx context.Context, _ *mcp.CallToolRequest, in syncIn) 
 	if dst == "" {
 		dst = "longarm-sync/" + lr.key
 	}
-	res, err := lr.upload(ctx, conn, ref, "", !in.CommittedOnly, &pb.SyncHeader{Path: dst})
+	res, err := lr.upload(ctx, conn, ref, "", !in.CommittedOnly, &pb.SyncHeader{Path: dst}, nil)
 	if err != nil {
 		return nil, syncOut{}, err
 	}

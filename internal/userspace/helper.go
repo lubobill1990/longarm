@@ -184,7 +184,7 @@ func (c *rwConn) SetWriteDeadline(time.Time) error { return nil }
 
 // prepare is the per-user Prepare hook: the helper fetches and checks out as
 // the user.
-func (sp *Space) prepare(ctx context.Context, _ jobs.Dir, spec jobs.Spec, secrets map[string]string, log io.Writer) (string, error) {
+func (sp *Space) prepare(ctx context.Context, _ jobs.Dir, spec jobs.Spec, secrets map[string]string, auth *jobs.GitAuth, log io.Writer) (string, error) {
 	h, err := sp.StartHelper(ctx)
 	if err != nil {
 		return "", err
@@ -192,9 +192,13 @@ func (sp *Space) prepare(ctx context.Context, _ jobs.Dir, spec jobs.Spec, secret
 	defer h.Close()
 	w := spec.Workspace
 	req := &pb.PrepareJobRequest{JobId: spec.ID, SecretEnv: map[string]string{},
-		Workspace: &pb.JobWorkspace{Repo: w.Repo, Url: w.URL, Ref: w.Ref, Commit: w.Commit, StagingId: w.StagingID}}
+		Workspace: &pb.JobWorkspace{Repo: w.Repo, Url: w.URL, Ref: w.Ref, Commit: w.Commit, StagingId: w.StagingID, LfsFetch: w.LFSFetch}}
 	if t, ok := secrets["GH_TOKEN"]; ok {
 		req.SecretEnv["GH_TOKEN"] = t
+	}
+	if auth.Valid() {
+		// to the helper over its stdin pipe; it zeroes its copy after the fetch
+		req.GitAuth = &pb.GitAuth{Scheme: auth.Scheme, Username: auth.Username, Secret: auth.Secret}
 	}
 	st, err := pb.NewUserHelperClient(h.Conn).PrepareJob(ctx, req)
 	if err != nil {

@@ -162,7 +162,7 @@ func writeLFSTar(t *testing.T, p string, files map[string][]byte) string {
 func TestFetchError(t *testing.T) {
 	ado := errors.New("git fetch --no-tags --force -- https://user:secret@dev.azure.com/org/p/_git/r +main:refs/longarm/remote/main: exit status 128: " +
 		"fatal: unable to access 'https://dev.azure.com/org/p/_git/r/': The requested URL returned error: 403")
-	err := fetchError("https://user:secret@dev.azure.com/org/p/_git/r", false, ado)
+	err := fetchError("https://user:secret@dev.azure.com/org/p/_git/r", authNone, ado)
 	msg := err.Error()
 	for _, want := range []string{"could not authenticate", "returned error: 403", "--repo .", "dev.azure.com", "Git Credential Manager",
 		"https://xxxxx@dev.azure.com/org/p/_git/r"} {
@@ -174,16 +174,16 @@ func TestFetchError(t *testing.T) {
 		t.Errorf("credentials or the raw error in %q", msg)
 	}
 	pat := errors.New("git fetch -- https://PATTOKEN123@dev.azure.com/o/p/_git/r +main:x: exit status 128: fatal: Authentication failed for 'https://PATTOKEN123@dev.azure.com/o/p/_git/r/'")
-	if msg := fetchError("https://PATTOKEN123@dev.azure.com/o/p/_git/r", false, pat).Error(); strings.Contains(msg, "PATTOKEN123") ||
+	if msg := fetchError("https://PATTOKEN123@dev.azure.com/o/p/_git/r", authNone, pat).Error(); strings.Contains(msg, "PATTOKEN123") ||
 		!strings.Contains(msg, "could not authenticate") {
 		t.Errorf("username-only token: %s", msg)
 	}
 	prompt := errors.New("fatal: could not read Username for 'https://github.com': terminal prompts disabled")
-	if msg := fetchError("https://github.com/o/r", true, prompt).Error(); !strings.Contains(msg, "GH_TOKEN") || !strings.Contains(msg, "could not authenticate") {
+	if msg := fetchError("https://github.com/o/r", authGHToken, prompt).Error(); !strings.Contains(msg, "GH_TOKEN") || !strings.Contains(msg, "could not authenticate") {
 		t.Errorf("with a token: %s", msg)
 	}
 	other := errors.New("fatal: couldn't find remote ref no-such-branch in https://tok@example.com/r")
-	if got := fetchError("https://github.com/o/r", false, other).Error(); got != "fatal: couldn't find remote ref no-such-branch in https://xxxxx@example.com/r" {
+	if got := fetchError("https://github.com/o/r", authNone, other).Error(); got != "fatal: couldn't find remote ref no-such-branch in https://xxxxx@example.com/r" {
 		t.Errorf("unrelated failure: %v", got)
 	}
 }
@@ -226,7 +226,7 @@ func TestFetchURLRedacts(t *testing.T) {
 		t.Fatal("fetch succeeded")
 	}
 	spec := jobs.Spec{ID: "j1", Workspace: &Workspace{Repo: "r", URL: u, Ref: "main"}}
-	_, perr := s.PrepareJob(context.Background(), jobs.Dir(t.TempDir()), spec, nil, &log)
+	_, perr := s.PrepareJob(context.Background(), jobs.Dir(t.TempDir()), spec, nil, nil, &log)
 	if perr == nil {
 		t.Fatal("PrepareJob succeeded")
 	}

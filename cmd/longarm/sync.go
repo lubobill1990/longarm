@@ -24,7 +24,7 @@ import (
 )
 
 func syncCmd() *cobra.Command {
-	var repoName, ref, lfs string
+	var repoName, ref, lfs, gitAuth string
 	var noLocal bool
 	c := &cobra.Command{
 		Use:   "sync <dir> <worker>:<path>",
@@ -49,6 +49,14 @@ are discarded, ignored files (node_modules, build output) are kept.
 			if !ok {
 				return usagef("second argument must be <worker>:<path>")
 			}
+			if err := checkGitAuthFlag(gitAuth, args[0]); err != nil {
+				return err
+			}
+			g, err := prepareGitForward(cmd.Context(), gitAuth, args[0], ref)
+			if err != nil {
+				return err
+			}
+			defer g.clear()
 			conn, err := s.conn(worker)
 			if err != nil {
 				return err
@@ -62,7 +70,7 @@ are discarded, ignored files (node_modules, build output) are kept.
 				dst = "longarm-sync/" + lr.key
 			}
 			start := time.Now()
-			res, err := lr.upload(cmd.Context(), conn, ref, lfs, !noLocal, &pb.SyncHeader{Path: dst})
+			res, err := lr.upload(cmd.Context(), conn, ref, lfs, !noLocal, &pb.SyncHeader{Path: dst}, g)
 			if err != nil {
 				return err
 			}
@@ -80,6 +88,7 @@ are discarded, ignored files (node_modules, build output) are kept.
 	c.Flags().StringVar(&ref, "ref", "HEAD", "commit to sync: HEAD, a branch, a tag or a full commit id (uncommitted changes are only included for HEAD)")
 	c.Flags().StringVar(&lfs, "lfs", lfsSkip, lfsFlagHelp)
 	c.Flags().BoolVar(&noLocal, "committed-only", false, "do not include uncommitted changes and untracked files")
+	c.Flags().StringVar(&gitAuth, "git-auth", gitAuthNone, gitAuthFlagHelp)
 	return c
 }
 
@@ -127,8 +136,9 @@ func openLocalRepo(dir, name string) (*localRepo, error) {
 // upload sends what the worker lacks for ref (plus, for HEAD and
 // withLocal, uncommitted and untracked files; with lfs "ship" the Git LFS
 // objects of the commit) with Workspace.Sync; h carries the target (path
-// or stage_only). ref is HEAD, a branch, a tag or a full commit id.
-func (lr *localRepo) upload(ctx context.Context, conn *client.Conn, ref, lfs string, withLocal bool, h *pb.SyncHeader) (*pb.SyncResult, error) {
+// or stage_only). ref is HEAD, a branch, a tag or a full commit id. With g
+// (--git-auth forward) the worker first fetches what the remote has.
+func (lr *localRepo) upload(ctx context.Context, conn *client.Conn, ref, lfs string, withLocal bool, h *pb.SyncHeader, g *gitForward) (*pb.SyncResult, error) {
 	if ref == "" {
 		ref = "HEAD"
 	}
@@ -179,8 +189,13 @@ func (lr *localRepo) upload(ctx context.Context, conn *client.Conn, ref, lfs str
 		if lfsOids, lfsDir, err = lr.lfsObjects(commit); err != nil {
 			return nil, err
 		}
+	case lfsFetch:
+		return nil, usagef("--lfs fetch goes with --repo <url>; a local checkout ships its LFS objects (--lfs ship)")
 	default:
-		return nil, usagef("--lfs %q: want skip or ship", lfs)
+		return nil, usagef("--lfs %q: want skip, ship or fetch", lfs)
+	}
+	if g != nil {
+		lr.fetchRemoteFirst(ctx, conn, g, commit)
 	}
 
 	rctx, cancel := context.WithTimeout(ctx, time.Minute)
@@ -381,21 +396,25 @@ func (lr *localRepo) untrackedTar(dst string) (string, error) {
 // jobWorkspace turns `longarm run --repo X --ref R [--lfs L]` into a JobWorkspace: a URL is
 // fetched by the worker itself; a local checkout is uploaded first (staged
 // on the worker until the job's worktree is prepared).
-func jobWorkspace(ctx context.Context, conn *client.Conn, repo, ref, lfs string) (*pb.JobWorkspace, error) {
+func jobWorkspace(ctx context.Context, conn *client.Conn, repo, ref, lfs string, g *gitForward) (*pb.JobWorkspace, error) {
 	if repo == "" {
 		return nil, nil
 	}
 	if isURL(repo) {
-		if lfs == lfsShip {
-			return nil, usagef("--lfs ship goes with a local checkout (--repo <path>); a url is fetched by the worker")
+		switch lfs {
+		case "", lfsSkip, lfsFetch:
+		case lfsShip:
+			return nil, usagef("--lfs ship goes with a local checkout (--repo <path>); for a url the worker fetches the LFS objects (--lfs fetch)")
+		default:
+			return nil, usagef("--lfs %q: want skip, ship or fetch", lfs)
 		}
-		return &pb.JobWorkspace{Repo: workspace.RepoKey(repo), Url: repo, Ref: ref}, nil
+		return &pb.JobWorkspace{Repo: workspace.RepoKey(repo), Url: repo, Ref: ref, LfsFetch: lfs == lfsFetch}, nil
 	}
 	lr, err := openLocalRepo(repo, "")
 	if err != nil {
 		return nil, err
 	}
-	res, err := lr.upload(ctx, conn, ref, lfs, true, &pb.SyncHeader{StageOnly: true})
+	res, err := lr.upload(ctx, conn, ref, lfs, true, &pb.SyncHeader{StageOnly: true}, g)
 	if err != nil {
 		return nil, err
 	}
@@ -408,9 +427,10 @@ func isURL(s string) bool {
 
 // --lfs: what happens to the Git LFS content of a shipped checkout.
 const (
-	lfsSkip     = "skip" // LFS files are pointer files on the worker
-	lfsShip     = "ship" // the commit's LFS objects travel too
-	lfsFlagHelp = "Git LFS files of a local checkout: skip (pointer files on the worker) or ship (send the commit's LFS objects the worker lacks; git-lfs on both sides)"
+	lfsSkip     = "skip"  // LFS files are pointer files on the worker
+	lfsShip     = "ship"  // the commit's LFS objects travel too
+	lfsFetch    = "fetch" // a url: the worker fetches them from the remote
+	lfsFlagHelp = "Git LFS files: skip (pointer files on the worker), ship (a local checkout: send the commit's LFS objects the worker lacks; git-lfs on both sides) or fetch (a url: the worker fetches them from the remote; git-lfs on the worker)"
 )
 
 var (

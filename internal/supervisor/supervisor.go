@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"sort"
 	"sync"
@@ -54,8 +53,10 @@ type Options struct {
 	// Prepare readies the working directory of a job with a workspace spec
 	// (git worktree, DESIGN §5.3) while the job is "preparing"; it returns
 	// the directory. log is the job's out.log (secrets redacted). Runs on a
-	// goroutine; ctx is cancelled when the job is killed meanwhile.
-	Prepare func(ctx context.Context, dir jobs.Dir, spec jobs.Spec, secrets map[string]string, log io.Writer) (string, error)
+	// goroutine; ctx is cancelled when the job is killed meanwhile. auth is
+	// the fetch credential forwarded with the submit (nil: none); the
+	// manager zeroes it when Prepare returns.
+	Prepare func(ctx context.Context, dir jobs.Dir, spec jobs.Spec, secrets map[string]string, auth *jobs.GitAuth, log io.Writer) (string, error)
 	// OnChange is called (with the manager's lock held: it must not block
 	// or call back) whenever a job changed.
 	OnChange func()
@@ -397,8 +398,22 @@ func sameSpec(a, b *jobs.Spec) bool {
 	return a.Name == b.Name && slices.Equal(a.Argv, b.Argv) && a.Cwd == b.Cwd &&
 		maps.Equal(a.Env, b.Env) && slices.Equal(a.SecretEnvNames, b.SecretEnvNames) &&
 		a.MemLimitBytes == b.MemLimitBytes && maps.Equal(a.Labels, b.Labels) &&
-		a.Pty == b.Pty && reflect.DeepEqual(a.Workspace, b.Workspace) && a.Owner == b.Owner &&
+		a.Pty == b.Pty && sameWorkspace(a.Workspace, b.Workspace) && a.Owner == b.Owner &&
 		slices.Equal(a.ShareTeams, b.ShareTeams) && a.CPULimit == b.CPULimit && a.StdinBytes == b.StdinBytes
+}
+
+// sameWorkspace compares what a workspace resolves to - repository, url,
+// ref, commit, LFS mode - not the per-attempt parts of a submit: every
+// `longarm run --repo <local checkout>` uploads (and stages) the checkout
+// anew, under a new staging id, and whether a fetch credential came along
+// is no property of the job. A retried submit of the same job (e.g. after
+// "stdin payload lost before start; resubmit") must match. A staged upload
+// a retry does not use is left to GC (staging/ entries expire).
+func sameWorkspace(a, b *jobs.Workspace) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Repo == b.Repo && a.URL == b.URL && a.Ref == b.Ref && a.Commit == b.Commit && a.LFSFetch == b.LFSFetch
 }
 
 // Submit creates and starts a job. It is idempotent on spec.ID.
@@ -411,6 +426,35 @@ func (m *Manager) Submit(ctx context.Context, spec jobs.Spec, secrets map[string
 // shim until the job read them; spec records only their size. A retried
 // submit (same id and spec) does not deliver them again.
 func (m *Manager) SubmitStdin(ctx context.Context, spec jobs.Spec, secrets map[string]string, stdin []byte) (Job, error) {
+	return m.SubmitWith(ctx, spec, secrets, Input{Stdin: stdin})
+}
+
+// Input is what a submit hands to the job besides its spec and secrets,
+// memory-only.
+type Input struct {
+	// Stdin: bytes for the job's stdin (SubmitStdin).
+	Stdin []byte
+	// GitAuth: a credential for the workspace fetch only (Options.Prepare);
+	// the job never sees it. Zeroed once the workspace is prepared, or
+	// when the submit does not use it (a retry of an existing job).
+	GitAuth *jobs.GitAuth
+}
+
+// SubmitWith is Submit with in.
+func (m *Manager) SubmitWith(ctx context.Context, spec jobs.Spec, secrets map[string]string, in Input) (Job, error) {
+	stdin, auth := in.Stdin, in.GitAuth
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			auth.Clear()
+		}
+	}()
+	if auth != nil && (spec.Workspace == nil || spec.Workspace.URL == "") {
+		return Job{}, fmt.Errorf("%w: a fetch credential needs a workspace url", ErrInvalid)
+	}
+	if spec.Workspace != nil {
+		spec.Workspace.GitAuth = auth.Valid()
+	}
 	if len(stdin) > jobs.MaxStdinBytes {
 		return Job{}, fmt.Errorf("%w: stdin of %d bytes exceeds %d", ErrInvalid, len(stdin), jobs.MaxStdinBytes)
 	}
@@ -487,9 +531,10 @@ func (m *Manager) SubmitStdin(ctx context.Context, spec jobs.Spec, secrets map[s
 		e.cancelPrep = cancel
 		m.mu.Unlock()
 		m.log.Info("job submitted; preparing workspace", "job", spec.ID, "repo", spec.Workspace.Repo, "by", spec.SubmittedBy)
+		handedOff = true
 		go func() {
 			defer cancel()
-			m.prepareAndStart(pctx, e, secrets, stdin)
+			m.prepareAndStart(pctx, e, secrets, stdin, auth)
 		}()
 		return m.snapshot(e), nil
 	}
@@ -672,8 +717,9 @@ func stdinLost(spec *jobs.Spec, reason string) string {
 // prepared.
 const ExitPrepareFailed = 126
 
-func (m *Manager) prepareAndStart(ctx context.Context, e *entry, secrets map[string]string, stdin []byte) {
-	workdir, err := m.prepare(ctx, e, secrets)
+func (m *Manager) prepareAndStart(ctx context.Context, e *entry, secrets map[string]string, stdin []byte, auth *jobs.GitAuth) {
+	workdir, err := m.prepare(ctx, e, secrets, auth)
+	auth.Clear() // used for the fetch only
 	if err == nil && e.dir.KillRequested() {
 		err = context.Canceled
 	}
@@ -699,7 +745,7 @@ func (m *Manager) prepareAndStart(ctx context.Context, e *entry, secrets map[str
 }
 
 // prepare runs the Prepare hook with out.log (redacted) as its log.
-func (m *Manager) prepare(ctx context.Context, e *entry, secrets map[string]string) (string, error) {
+func (m *Manager) prepare(ctx context.Context, e *entry, secrets map[string]string, auth *jobs.GitAuth) (string, error) {
 	if m.opts.Prepare == nil {
 		return "", errors.New("workspaces are not supported by this longarmd")
 	}
@@ -712,9 +758,12 @@ func (m *Manager) prepare(ctx context.Context, e *entry, secrets map[string]stri
 	for _, v := range secrets {
 		values = append(values, v)
 	}
+	if auth.Valid() {
+		values = append(values, string(auth.Secret))
+	}
 	out := redact.NewWriter(lw, redact.New(values))
 	defer out.Flush()
-	return m.opts.Prepare(ctx, e.dir, e.spec, secrets, out)
+	return m.opts.Prepare(ctx, e.dir, e.spec, secrets, auth, out)
 }
 
 // Remove deletes a terminal job (directory and all) - used by GC and to

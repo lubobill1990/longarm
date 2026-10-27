@@ -118,7 +118,7 @@ func execCmd() *cobra.Command {
 
 func runCmd() *cobra.Command {
 	var env, secrets, labels, require, share []string
-	var cwd, name, id, repo, ref, lfs, on, typ, stdinFile string
+	var cwd, name, id, repo, ref, lfs, on, typ, stdinFile, gitAuth string
 	var wait, follow, noQueue bool
 	var memLimit string
 	var memGB, cpus float64
@@ -157,12 +157,21 @@ reachable hub longarm picks among the known workers itself.`,
 			if err != nil {
 				return err
 			}
+			if err := checkGitAuthFlag(gitAuth, repo); err != nil {
+				return err
+			}
 			var stdin []byte
 			if stdinFile != "" {
 				if stdin, err = readStdinFile(stdinFile); err != nil {
 					return err
 				}
 			}
+			// held here (like stdin) until it was sent worker-direct
+			g, err := prepareGitForward(cmd.Context(), gitAuth, repo, ref)
+			if err != nil {
+				return err
+			}
+			defer g.clear()
 			if id == "" {
 				id = ulid.Make().String() // client-generated => Submit is idempotent
 			}
@@ -203,7 +212,15 @@ reachable hub longarm picks among the known workers itself.`,
 					return err
 				}
 			}
-			ws, err := jobWorkspace(cmd.Context(), conn, repo, ref, lfs)
+			var gitAuthPB *pb.GitAuth
+			if g != nil && isURL(repo) {
+				// an older worker would drop the field and fetch without it
+				if err := needFeature(cmd.Context(), conn, jobs.FeatureGitAuth, "--git-auth forward"); err != nil {
+					return err
+				}
+				gitAuthPB = g.pb()
+			}
+			ws, err := jobWorkspace(cmd.Context(), conn, repo, ref, lfs, g)
 			if err != nil {
 				return err
 			}
@@ -213,6 +230,7 @@ reachable hub longarm picks among the known workers itself.`,
 				// secrets and stdin are sent once, memory-only on the worker
 				SecretEnv: sec,
 				Stdin:     stdin,
+				GitAuth:   gitAuthPB, // for the workspace fetch only
 				Share:     share,
 			}
 			ctx := cmd.Context()
@@ -226,6 +244,7 @@ reachable hub longarm picks among the known workers itself.`,
 				return err
 			})
 			clear(stdin) // sent (or given up): no copy of the payload stays here
+			g.clear()
 			if err != nil {
 				return err
 			}
@@ -254,9 +273,10 @@ reachable hub longarm picks among the known workers itself.`,
 	c.Flags().StringVar(&memLimit, "mem-limit", "", "memory limit for the job's process tree, e.g. 8G (Windows only in P0a)")
 	c.Flags().BoolVar(&wait, "wait", false, "wait for the job and exit with its exit code")
 	c.Flags().BoolVarP(&follow, "follow", "f", false, "stream the log, then exit with the job's exit code")
-	c.Flags().StringVar(&repo, "repo", "", "run in a fresh git worktree of this repo: a local checkout (its commits, uncommitted and untracked files are synced) or a clone URL fetched by the worker (with the GH_TOKEN secret, if given)")
+	c.Flags().StringVar(&repo, "repo", "", "run in a fresh git worktree of this repo: a local checkout (its commits, uncommitted and untracked files are synced) or a clone URL fetched by the worker (with --git-auth forward, or the GH_TOKEN secret, if given)")
 	c.Flags().StringVar(&ref, "ref", "HEAD", "with --repo: what to check out - HEAD, a branch, a tag or a full commit id")
-	c.Flags().StringVar(&lfs, "lfs", lfsSkip, "with --repo <local checkout>: "+lfsFlagHelp)
+	c.Flags().StringVar(&lfs, "lfs", lfsSkip, "with --repo: "+lfsFlagHelp)
+	c.Flags().StringVar(&gitAuth, "git-auth", gitAuthNone, "with --repo: "+gitAuthFlagHelp)
 	c.Flags().StringVar(&on, "on", "", "worker name or \"auto\" (default when no worker is given)")
 	c.Flags().StringVar(&typ, "type", "", "job type for the memory reservation: claude, copilot, build, test (default: from the command)")
 	c.Flags().Float64Var(&memGB, "mem-gb", 0, "memory to reserve on the worker in GB (default: by --type)")

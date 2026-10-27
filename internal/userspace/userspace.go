@@ -68,7 +68,7 @@ type Config struct {
 	Exe string
 	Log *slog.Logger
 	// Prepare readies the worktree of a workspace job in the shared space.
-	Prepare func(ctx context.Context, dir jobs.Dir, spec jobs.Spec, secrets map[string]string, log io.Writer) (string, error)
+	Prepare func(ctx context.Context, dir jobs.Dir, spec jobs.Spec, secrets map[string]string, auth *jobs.GitAuth, log io.Writer) (string, error)
 	// ShimCommand overrides the shim (tests); default `<longarmd> shim <dir>`.
 	ShimCommand func(dir string) *exec.Cmd
 }
@@ -216,7 +216,7 @@ func (s *Spaces) Changed() <-chan struct{} {
 	return s.changed
 }
 
-func (s *Spaces) newManager(dir, kind string, prepare func(context.Context, jobs.Dir, jobs.Spec, map[string]string, io.Writer) (string, error), mode os.FileMode) (*supervisor.Manager, error) {
+func (s *Spaces) newManager(dir, kind string, prepare func(context.Context, jobs.Dir, jobs.Spec, map[string]string, *jobs.GitAuth, io.Writer) (string, error), mode os.FileMode) (*supervisor.Manager, error) {
 	o := supervisor.Options{JobsDir: dir, Logger: s.log, Prepare: prepare, OnChange: s.notify, DirMode: mode,
 		ShimCommand: s.cfg.ShimCommand}
 	if kind == SessionsDir {
@@ -531,19 +531,20 @@ func (s *Spaces) FindJob(id string) (*Space, supervisor.Job, error) {
 }
 
 // SubmitJob submits spec in sp; job ids are unique across all spaces.
-func (s *Spaces) SubmitJob(ctx context.Context, sp *Space, spec jobs.Spec, secrets map[string]string, stdin []byte) (supervisor.Job, error) {
+func (s *Spaces) SubmitJob(ctx context.Context, sp *Space, spec jobs.Spec, secrets map[string]string, in supervisor.Input) (supervisor.Job, error) {
 	s.submit.Lock()
 	for _, o := range s.All() {
 		if o != sp {
 			if _, err := o.Jobs.Get(spec.ID); err == nil {
 				s.submit.Unlock()
+				in.GitAuth.Clear()
 				return supervisor.Job{}, supervisor.ErrAlreadyExists
 			}
 		}
 	}
 	s.submit.Unlock() // the space's manager serializes its own submits
 	spec.RunAs = sp.RunAs(JobsDir, spec.ID)
-	return sp.Jobs.SubmitStdin(ctx, spec, secrets, stdin)
+	return sp.Jobs.SubmitWith(ctx, spec, secrets, in)
 }
 
 // SubmitSession submits a session spec in sp.

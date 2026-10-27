@@ -6,11 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/workspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -32,6 +34,51 @@ func (w *workspaceServer) Refs(ctx context.Context, req *pb.RefsRequest) (*pb.Re
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &pb.RefsResponse{Exists: exists, Commits: commits, LfsPresent: w.s.ws().LFSPresent(req.Repo, req.LfsOids)}, nil
+}
+
+// GitAuthFromPB is the forwarded credential of a request (nil: none). Its
+// secret aliases the request's bytes: Clear zeroes those.
+func GitAuthFromPB(a *pb.GitAuth) *jobs.GitAuth {
+	if a == nil {
+		return nil
+	}
+	return &jobs.GitAuth{Scheme: a.Scheme, Username: a.Username, Secret: a.Secret}
+}
+
+// Fetch fetches commits from a hosted remote into the mirror with a
+// forwarded credential (remote-first shipping of a local checkout). The
+// credential is used for this fetch only and zeroed; the audit log records
+// the url and commits, never the credential.
+func (w *workspaceServer) Fetch(ctx context.Context, req *pb.FetchRequest) (*pb.FetchResponse, error) {
+	auth := GitAuthFromPB(req.GitAuth)
+	defer auth.Clear()
+	if !workspace.ValidRepo(req.Repo) {
+		return nil, status.Errorf(codes.InvalidArgument, "bad repo %q", req.Repo)
+	}
+	if !auth.Valid() {
+		return nil, status.Error(codes.InvalidArgument, "fetch needs a forwarded credential (git_auth)")
+	}
+	var res *pb.FetchResponse
+	var err error
+	start := time.Now()
+	if w.s.perUser() {
+		res, err = w.proxyFetch(ctx, req)
+	} else {
+		var present []string
+		present, err = w.s.ws().FetchCommits(ctx, req.Repo, req.Url, req.Commits, auth, nil)
+		res = &pb.FetchResponse{Present: present, FetchedMs: time.Since(start).Milliseconds()}
+		if err != nil {
+			err = status.Error(codes.FailedPrecondition, workspace.RedactURLs(err.Error()))
+		}
+	}
+	w.s.Audit.Log(IdentityFrom(ctx), pb.Workspace_Fetch_FullMethodName, map[string]any{
+		"repo": req.Repo, "url": workspace.RedactURLs(req.Url), "commits": req.Commits, "present": len(res.GetPresent()),
+		"git_auth": true, "error": errString(err),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 func (w *workspaceServer) Sync(st pb.Workspace_SyncServer) error {

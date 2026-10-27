@@ -2,12 +2,14 @@ package supervisor
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,5 +129,104 @@ func waitState(t *testing.T, m *Manager, id string, want jobs.State) {
 			t.Fatalf("%s: state %s, want %s", id, j.Status.State, want)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// TestResubmitWorkspaceStdin: a job with a staged workspace (longarm run
+// --repo <local checkout> uploads anew - a new staging id - on every
+// attempt) whose stdin payload was lost before the start is replaced by a
+// resubmit of the same id; per-attempt parts (staging id, whether a fetch
+// credential came along) are no part of the idempotency comparison, what
+// the workspace resolves to is. The forwarded credential reaches Prepare
+// only and is zeroed afterwards.
+func TestResubmitWorkspaceStdin(t *testing.T) {
+	root, tmp := t.TempDir(), t.TempDir()
+	got := filepath.Join(tmp, "shim-stdin")
+	type prep struct {
+		staging string
+		auth    string
+	}
+	preps := make(chan prep, 10)
+	var authSeen *jobs.GitAuth
+	m, err := New(Options{JobsDir: root, Logger: quiet(), ShimCommand: func(string) *exec.Cmd {
+		c := exec.Command(os.Args[0], "-test.run=^$")
+		c.Env = append(os.Environ(), "LONGARM_TEST_SUP_STDIN_OUT="+got)
+		return c
+	}, Prepare: func(_ context.Context, _ jobs.Dir, spec jobs.Spec, _ map[string]string, auth *jobs.GitAuth, _ io.Writer) (string, error) {
+		p := prep{staging: spec.Workspace.StagingID}
+		if auth != nil {
+			p.auth = string(auth.Secret)
+			authSeen = auth
+		}
+		preps <- p
+		return tmp, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	payload := []byte("the request\n")
+	commit := strings.Repeat("a", 40)
+	spec := func(staging string) jobs.Spec {
+		return jobs.Spec{ID: "w1", Argv: []string{"agent"}, Workspace: &jobs.Workspace{Repo: "r", Commit: commit, StagingID: staging}}
+	}
+	if _, err := m.SubmitStdin(ctx, spec("STAGE1"), nil, bytes.Clone(payload)); err != nil {
+		t.Fatal(err)
+	}
+	if p := <-preps; p.staging != "STAGE1" {
+		t.Fatalf("prepared %+v", p)
+	}
+	// the fake shim takes the payload and exits: the payload is lost
+	waitState(t, m, "w1", jobs.Failed)
+	j, _ := m.Get("w1")
+	if j.Status.Reason != jobs.StdinLostReason {
+		t.Fatalf("reason %q", j.Status.Reason)
+	}
+	// the retry uploads again (STAGE2): a new attempt, with the new upload
+	j2, err := m.SubmitStdin(ctx, spec("STAGE2"), nil, bytes.Clone(payload))
+	if err != nil || !j2.Spec.CreatedAt.After(j.Spec.CreatedAt) {
+		t.Fatalf("resubmit after the loss: %+v %v", j2, err)
+	}
+	if p := <-preps; p.staging != "STAGE2" {
+		t.Fatalf("the new attempt prepared %+v", p)
+	}
+	waitState(t, m, "w1", jobs.Failed)
+	// another commit is another job
+	other := spec("STAGE4")
+	other.Workspace.Commit = strings.Repeat("b", 40)
+	if _, err := m.SubmitStdin(ctx, other, nil, bytes.Clone(payload)); !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("another commit: %v", err)
+	}
+
+	// a forwarded credential: to Prepare only, zeroed after it, recorded as
+	// a flag; it needs a workspace url
+	secret := []byte("forwarded-SECRET-0001")
+	auth := &jobs.GitAuth{Scheme: jobs.GitAuthBearer, Secret: secret}
+	us := jobs.Spec{ID: "u1", Argv: []string{"agent"}, Workspace: &jobs.Workspace{Repo: "r", URL: "https://example.com/r", Ref: commit}}
+	ju, err := m.SubmitWith(ctx, us, nil, Input{GitAuth: auth})
+	if err != nil || !ju.Spec.Workspace.GitAuth {
+		t.Fatalf("submit with a credential: %+v %v", ju.Spec.Workspace, err)
+	}
+	if p := <-preps; p.auth != "forwarded-SECRET-0001" {
+		t.Fatalf("Prepare got %+v", p)
+	}
+	waitState(t, m, "u1", jobs.Lost) // (the fake shim exits)
+	if !bytes.Equal(secret, make([]byte, len(secret))) || authSeen.Secret != nil {
+		t.Fatalf("credential not zeroed after the fetch: %q", secret)
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "u1", jobs.SpecFile)); bytes.Contains(b, []byte("SECRET")) {
+		t.Fatal("credential in job.json")
+	}
+	// a retry (same job, credential again) is the same job; its credential
+	// is zeroed unused
+	again := []byte("forwarded-SECRET-0002")
+	if _, err := m.SubmitWith(ctx, us, nil, Input{GitAuth: &jobs.GitAuth{Scheme: jobs.GitAuthBearer, Secret: again}}); err != nil ||
+		!bytes.Equal(again, make([]byte, len(again))) {
+		t.Fatalf("retry with a credential: %v %q", err, again)
+	}
+	noURL := []byte("forwarded-SECRET-0003")
+	if _, err := m.SubmitWith(ctx, jobs.Spec{ID: "u2", Argv: []string{"x"}}, nil, Input{GitAuth: &jobs.GitAuth{Scheme: jobs.GitAuthBearer, Secret: noURL}}); !errors.Is(err, ErrInvalid) ||
+		!bytes.Equal(noURL, make([]byte, len(noURL))) {
+		t.Fatalf("credential without a url: %v %q", err, noURL)
 	}
 }

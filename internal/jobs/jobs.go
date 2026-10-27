@@ -144,6 +144,10 @@ const StdinLostReason = "stdin payload lost before start; resubmit"
 // SubmitRequest.stdin.
 const FeatureStdin = "job-stdin"
 
+// FeatureGitAuth is the InfoResponse.features entry of workers that accept
+// a forwarded fetch credential (SubmitRequest.git_auth, Workspace.Fetch).
+const FeatureGitAuth = "git-auth-forward"
+
 // OwnerName is the job's owner; jobs from before multi-tenancy: the name in
 // SubmittedBy ("client/alice").
 func (s *Spec) OwnerName() string {
@@ -175,6 +179,39 @@ type Workspace struct {
 	Ref       string `json:"ref,omitempty"`
 	Commit    string `json:"commit,omitempty"`
 	StagingID string `json:"staging_id,omitempty"`
+	// LFSFetch: also fetch the commit's Git LFS content from URL.
+	LFSFetch bool `json:"lfs_fetch,omitempty"`
+	// GitAuth: the fetch of URL used a credential forwarded with the
+	// submit (never stored; this only records that there was one).
+	GitAuth bool `json:"git_auth,omitempty"`
+}
+
+// GitAuth is a credential forwarded for a workspace fetch (longarm run
+// --git-auth forward). It lives in memory only: the fetch sends it to the
+// fetched url only and Clear zeroes it afterwards.
+type GitAuth struct {
+	Scheme   string // GitAuthBearer or GitAuthBasic
+	Username string // basic
+	Secret   []byte
+}
+
+// GitAuth schemes.
+const (
+	GitAuthBearer = "bearer"
+	GitAuthBasic  = "basic"
+)
+
+// Clear zeroes the secret (a nil *GitAuth is fine).
+func (a *GitAuth) Clear() {
+	if a != nil {
+		clear(a.Secret)
+		a.Secret = nil
+	}
+}
+
+// Valid reports whether a has a known scheme and a secret.
+func (a *GitAuth) Valid() bool {
+	return a != nil && len(a.Secret) > 0 && (a.Scheme == GitAuthBearer || a.Scheme == GitAuthBasic)
 }
 
 // Status is status.json.

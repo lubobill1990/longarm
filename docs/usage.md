@@ -161,11 +161,11 @@ Programs driving longarm can rely on these exit codes:
 | code | meaning | what a client does |
 |---|---|---|
 | 0 | success | |
-| 2 | usage error or a request that can't succeed as given, so nothing was submitted: unknown flag or command, wrong arguments, local validation (`--env` without `=`, a missing or too large `--stdin-file`, `--ref` a short commit id / a ref that isn't HEAD, a branch, a tag or a full commit id / a commit not in the checkout, `--lfs` other than skip/ship), and the hub's / worker's `InvalidArgument`, `FailedPrecondition`, `AlreadyExists` (a job id in use with another spec), `OutOfRange`, `Unimplemented`, a worker too old for a flag | fix the request; retrying it unchanged fails again |
+| 2 | usage error or a request that can't succeed as given, so nothing was submitted: unknown flag or command, wrong arguments, local validation (`--env` without `=`, a missing or too large `--stdin-file`, `--ref` a short commit id / a ref that isn't HEAD, a branch, a tag or a full commit id / a commit not in the checkout, `--lfs` other than skip/ship/fetch, `--lfs fetch` with a local checkout, `--git-auth` other than forward/none, `--git-auth forward` without `--repo` or with a URL that isn't https), and the hub's / worker's `InvalidArgument`, `FailedPrecondition`, `AlreadyExists` (a job id in use with another spec), `OutOfRange`, `Unimplemented`, a worker too old for a flag | fix the request; retrying it unchanged fails again |
 | 3 | not found: the hub or the worker answered that the job / file does not exist, an unknown worker name, a job no known worker has, `jobs --id` of an unknown job | |
 | 69 | `jobs --hub-only`: no hub configured, or it did not answer | retry later, or ask the workers (without `--hub-only`) |
 | 75 | refused for capacity, quota or rate (`ResourceExhausted`): no worker passes the gate with `--no-queue`, a quota, too many attempts | retry later |
-| 77 | not allowed: `PermissionDenied`, `Unauthenticated`, a refusal of end-to-end trust | fix the credentials or the rights |
+| 77 | not allowed: `PermissionDenied`, `Unauthenticated`, a refusal of end-to-end trust; `--git-auth forward` with `--repo <url>`: no credential for the URL could be obtained on this machine (nothing was submitted) | fix the credentials or the rights |
 | 137 | `wait` / `run --wait`: the job was killed | |
 | 254 | `wait` / `run --wait`: the job was lost (its supervisor vanished; outcome unknown) | |
 | 255 | anything else: worker or hub unreachable, timeouts, `Aborted`, internal errors | the outcome may be unknown: look the job up (`jobs --id`) or retry with the same `--id` |
@@ -189,15 +189,19 @@ means this call submitted nothing, and only 255 leaves it open whether the
 request reached the worker. Then look the job up with `jobs --id`, or run
 it again with the same `--id`: the same id and spec return the existing job
 (also when the hub placed it already). With a local `--repo` every `run`
-uploads the working tree anew, which makes another spec: a retry of a job
-that exists fails with `AlreadyExists` (exit 2), so use `jobs --id` there.
+uploads the working tree anew; the upload is no part of the comparison -
+what the workspace resolves to is (repository, URL, `--ref`, the commit,
+`--lfs fetch`) - so a retry of the same commit returns the existing job (its
+own upload stays; the new one is discarded by the worker's GC), and replaces
+a job whose stdin payload was lost before it started. Whether a credential
+was forwarded (`--git-auth`) is no part of it either.
 The job's own outcome comes from `jobs --json` (`state`, `exitCode`,
 `reason`) or `wait`.
 
 ### Capabilities: `longarm version --json`
 
 ```json
-{"version": "v1.8.0", "features": ["exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label"]}
+{"version": "v1.8.0", "features": ["exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label", "git-auth-forward"]}
 ```
 
 (indented in the real output). A program checks `features` instead of
@@ -214,6 +218,7 @@ exit 255) has none of these features.
 | `lfs` | `run` / `sync --lfs skip\|ship` |
 | `ref-sha` | `run --repo <path> --ref <full commit id>` |
 | `worker-label` | `longarm worker label` for owners |
+| `git-auth-forward` | `run` / `sync --git-auth forward`, `run --repo <url> --lfs fetch`; the worker must also support it (`git-auth-forward` in its `Node.Info` features), see [Fetching with your credential](#fetching-with-your-credential---git-auth-forward) |
 
 ### `jobs --json`
 
@@ -337,6 +342,9 @@ longarm run w1 --repo . -f -- pnpm test            # job in a fresh worktree of 
 longarm run w1 --repo . --ref 3f2a...c9 -- make    # a full commit id (40/64 hex) of the checkout, detached
 longarm run w1 --repo . --lfs ship -- make         # also the commit's Git LFS objects (default: skip)
 longarm run w1 --repo https://github.com/o/r --ref main --secret-env GH_TOKEN -- pnpm test
+longarm run --repo https://dev.azure.com/org/p/_git/r --ref <full sha> --git-auth forward -- make
+                                              # the worker fetches with your credential (below)
+longarm run w1 --repo . --git-auth forward -- make  # remote first: only the unpushed delta is shipped
 ```
 
 The worker keeps one bare mirror per repository (`<data>/mirrors/<repo>.git`)
@@ -362,7 +370,10 @@ and stay pointers) into the mirror's LFS store, and `git lfs checkout` fills
 in the files. LFS attributes count in any `.gitattributes`, nested ones
 included. The mirror's LFS filter is set to skip the smudge for the
 job's own git too (a later checkout doesn't fail on missing content);
-`git status` stays clean. With `--repo <url>` LFS files are pointer files.
+`git status` stays clean. With `--repo <url>` LFS files are pointer files
+unless `--lfs fetch`: the worker fetches the commit's LFS objects from the
+remote (`git lfs fetch`, with the forwarded credential if any; git-lfs on the
+worker) and checks them out.
 The worker accepts plain files named by their sha256 only (no sparse or
 other special tar entries), verifies every object's hash and bounds each
 upload: by default 4 GiB per object, 16 GiB and 50000 objects in total -
@@ -385,9 +396,84 @@ Manager - fails fast with "the worker could not authenticate (... 401/403
 are masked in the job's log and failure reason; prefer a credential on the
 worker or `GH_TOKEN` over a URL with credentials, which is stored with the
 job's spec. Ship the commits from your machine instead (`--repo .`, a local
-checkout), or give the worker account a credential that works without a
+checkout), forward your own credential for the fetch (`--git-auth forward`,
+below), or give the worker account a credential that works without a
 prompt (a PAT in its credential store, an ssh key; GitHub: the job's
 `GH_TOKEN` secret).
+
+#### Fetching with your credential (`--git-auth forward`)
+
+```sh
+longarm run --id <ulid> --repo https://dev.azure.com/org/p/_git/r --ref <full sha> \
+  --git-auth forward --require pool=devbox --no-queue --stdin-file request.json -- <cmd>
+longarm run w1 --repo . --git-auth forward -- make     # local checkout: remote first, then the delta
+longarm sync . w1:C:/work/proj --git-auth forward      # the same for sync
+```
+
+The worker fetches the repository straight from its host (Azure DevOps,
+GitHub, any https git server) with a short-lived credential **of yours**
+that longarm gets on your machine and sends with this one job:
+
+| host | credential | how longarm gets it |
+|---|---|---|
+| Azure DevOps (`dev.azure.com`, `*.visualstudio.com`) | Entra access token for Azure DevOps (resource / audience `499b84ac-1321-427f-aa17-267ca6975798`), sent as `Authorization: Bearer`; valid about an hour | the organization's tenant from the `X-VSS-ResourceTenant` header of an unauthenticated request to the organization URL (`https://dev.azure.com/<org>`, `https://<org>.visualstudio.com`), then `az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --tenant <that tenant>` - not az's default tenant, which may be another one. Without az, or when az has no token for that tenant (longarm notes `az login --tenant <t>`): `git credential fill` (Git Credential Manager gives an Azure DevOps token) |
+| GitHub (`github.com`) | `gh auth token`, sent as basic auth (`x-access-token`). **Long-lived**: gh's OAuth token (or a PAT) stays valid after the job, unlike an Azure DevOps token | `gh auth token`, else `git credential fill` |
+| any other https host | what your credential helper has, sent as basic auth | `git credential fill` |
+
+Terminal prompts are off for `git credential fill`; a helper's own sign-in
+window (Git Credential Manager) may appear. longarm notes on stderr which
+source it used (`forwarding a credential for <host> from az (tenant ...)`),
+never the credential.
+
+- **`--repo <https url>`**: the credential goes in the worker-direct submit,
+  like `--stdin-file`: inside the mTLS connection to the worker; the hub
+  never sees it; a `run` that waits in the hub's queue holds it in memory
+  until placement (an Azure DevOps token lives about an hour: a job queued
+  longer fails its fetch). longarmd keeps it in memory, uses it for the
+  workspace's fetch only - git and, with `--lfs fetch`, git-lfs - and zeroes
+  it afterwards. The job never gets it. `--ref` may be a full commit id
+  that is no branch tip: it is fetched by id (protocol v2, which GitHub,
+  Azure DevOps and git's http-backend serve for any commit reachable from
+  their refs; when a server refuses, the worker fetches the remote's
+  branches and looks for the commit there). A commit the worker's mirror
+  has already is not fetched again. No credential to be had on this
+  machine: exit 77, nothing submitted. Refused by the remote (expired, no
+  access, wrong tenant): the job fails (exit code 126) with `the forwarded
+  credential was refused (...)`.
+- **`--repo <local checkout>`** (and `sync`): remote first. The worker
+  fetches, with the credential, the commits of the remote that your commit
+  builds on - the boundary of what is not on the remote's tracking
+  branches (`git rev-list --boundary <commit> --not --remotes=<remote>`;
+  the commit itself when it is pushed) - from the remote of the branch's
+  upstream (else `origin`); ssh remotes of GitHub and Azure DevOps are
+  rewritten to their https URL. The bundle that follows carries only what
+  the worker still lacks: the unpushed delta (`longarm: the worker fetched
+  1 of 1 base commit(s) from <host> ...; shipping the delta`). When the
+  checkout has no such remote, no credential can be had, the worker is too
+  old, or its fetch fails (remote unreachable from the worker, credential
+  refused), longarm notes it and ships everything the worker lacks, as
+  without `--git-auth`. The credential is sent in `Workspace.Fetch`,
+  worker-direct, and zeroed after that fetch.
+- Remote-first is **not** the default: a credential leaves your machine
+  only when you ask for it with `--git-auth forward`.
+
+How the worker uses it: git and git-lfs get it as
+`http.<remote url>.extraHeader=Authorization: ...` through
+`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` in their
+environment - never on a command line, in a config file (the mirror's or
+the worktree's) or in a remote URL. The header is scoped to the remote's
+URL (and its `.git` twin, git-lfs's endpoint): requests elsewhere - a
+redirect to another host, an LFS download from a storage host - don't
+carry it. Credential helpers are off for that fetch, so a refused
+credential neither falls back to the worker's own nor gets stored. It is
+masked in the job's log, the failure reason and errors (Authorization
+header values are masked in any git output). Job records (`job.json`,
+`jobs --json`: `workspace.gitAuth: true`) and the worker's audit log
+(`git_auth: true`) only say that there was one. The worker must announce
+`git-auth-forward` (`Node.Info` features); against an older one `run --repo
+<url> --git-auth forward` exits 2 before submitting, a local checkout is
+shipped in full (with a note). Security:
+[docs/security.md](security.md#forwarded-git-credentials).
 
 ### Port links: worker to worker
 
