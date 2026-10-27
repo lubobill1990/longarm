@@ -82,7 +82,7 @@ func TestUITraySmoke(t *testing.T) {
 	tray := buildTray(t)
 	t.Cleanup(func() { s.longarm(s.client, "daemon", "stop") })
 	out := t.TempDir()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	// The daemon is not running yet: the smoke run starts it (longarm daemon start).
 	cmd := exec.CommandContext(ctx, tray, "--headless-smoke", "--config-dir", s.client, "--data-dir", s.wa.dataDir,

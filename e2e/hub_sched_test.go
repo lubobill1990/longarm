@@ -101,7 +101,10 @@ func TestHubScheduler(t *testing.T) {
 	})
 
 	t.Run("drain_and_labels", func(t *testing.T) {
-		// onB still holds B's reservation; drain onA: small jobs go to onB.
+		// B's reservation is done with (the queue test): release it, or a
+		// small job may not fit next to it once this shared machine's free
+		// memory shrinks. Drain onA: small jobs go to onB.
+		h.mustLongarm(h.client, "kill", idB)
 		h.mustLongarm(h.admin, "admin", "drain", onA)
 		r := run("--mem-gb", small, "--no-queue", "--wait", "--", bins.helper, "print", "1", "0", "0")
 		if r.code != 0 || placedOn(t, r.stderr) != onB {
@@ -151,7 +154,6 @@ func TestHubScheduler(t *testing.T) {
 	})
 
 	t.Run("client_side_fallback", func(t *testing.T) {
-		h.mustLongarm(h.client, "kill", idB)
 		h.killHub()
 		r := run("--wait", "--", bins.helper, "print", "1", "0", "5")
 		if r.code != 5 || !strings.Contains(r.stderr, "client-side") {
