@@ -528,8 +528,24 @@ connection:
 | tenancy policy | *u* is not disabled (disabling cuts open connections) |
 | `[access] users` / `owners` | *u* is a user of the worker (`admins` does not apply: a link is a user's forward, like `Forward.Open` with a client certificate) |
 | user-owned worker (owner, shares) | *u* is its owner or it is shared with *u* (by name, team, everyone); an unshare cuts open connections, and the hub removes the link |
-| end-to-end trust (`trust.toml` with users) | *u*'s user key is pinned on the worker, **and the other worker of the link is endorsed by *u*'s key** |
+| end-to-end trust (`trust.toml` with users) | *u*'s user key is pinned on the worker, **the link carries *u*'s signed consent** (below), and the other worker of the link is endorsed by *u*'s key |
 
+- **The owner's consent (end-to-end trust).** A grant is the hub's word,
+  and with end-to-end trust the hub must not be able to grant access. So
+  `longarm link create` (and MCP `fleet_link`) on a device endorsed as a
+  device of *u* signs the link's spec - link id, owner, A, B, port, listen
+  port, expiry, job - with the device's node key and attaches the device's
+  endorsement. The hub stores it with the link (it takes id and expiry
+  from it, and checks it is well-formed and the caller's) and pushes it
+  with the link to both workers. A worker that trusts users accepts the
+  link only if the consent's endorsement is by the key it pins for *u*
+  (not a denied node), the device's signature over the spec is valid, and
+  the link matches the spec exactly (it may end earlier, never later) - B
+  checks it on every `LinkTunnel.Dial`, A before it listens and on every
+  local connection. A link without consent (created on a device that is
+  not endorsed, or made up by the hub) is refused there: `link ls` shows
+  "no owner's consent". Workers without trust keep accepting the hub's
+  grant alone - there the hub is trusted by design.
 - A worker certificate is not a user: on B it passes the role table only
   for `LinkTunnel.Dial`, and `[access]` and the owner/shares rule are then
   applied to the grant's owner instead of the calling worker. With
@@ -556,11 +572,30 @@ connection:
 **What stays with the hub**: without end-to-end trust a compromised hub
 or admin is trusted (as before) - a grant from a hub certificate of the
 fleet CA is accepted by every worker of that CA, within the workers'
-`[access]` and owner rules. With trust, the hub can still create a link
-**between two workers its owner endorsed** without the owner asking for
-it: it exposes the owner's port on B to the owner's processes on A (with
-per-user isolation on A; in shared isolation on A to every local
-process). It can't involve a machine the owner didn't endorse.
+`[access]` and owner rules. With trust the hub can't create a link: it can
+withhold or remove one, and replay a consent the owner gave - re-create
+the same link (same id, ends, ports) until the consent's expiry, after the
+owner removed it. Keep `--ttl` short for links you don't need long.
+
+**Shared-isolation sources.** In shared isolation every local process
+can connect to A's listener, so a link from a shared worker that other
+users also run jobs on exposes the target port to them. A doesn't refuse
+such links on its own: what it knows locally can't prove that nobody
+else uses the machine (with `[access] users` unset everyone the hub
+admits may; the users it has seen so far say nothing about tomorrow), and
+under end-to-end trust the link exists only because its owner signed
+it from her device, naming A. When users are separated, the hub refuses
+non-admins a link from a shared-isolation worker to a per-user one; with
+trust, that check is the hub's word and the owner's consent is what
+counts. Link only from workers where you are the only user (per-user
+isolation, or `[access] users` listing just you), or accept that the
+others on A can reach the port.
+
+**Unverified streams.** A worker certificate reaches `LinkTunnel.Dial`
+before its grant is checked; B gives each such stream 10 s for its first
+frame (the grant) and allows 16 of them per calling worker at a time
+(`ResourceExhausted` beyond). The grant's hub certificate is checked
+against B's certificate revocation list too.
 
 **Network policy.** Tailnets need worker → worker on tcp:7701 for direct
 paths ([deploy/hub/README.md](../deploy/hub/README.md)); without it links

@@ -932,6 +932,9 @@ func (t *mcpTools) link(ctx context.Context, _ *mcp.CallToolRequest, in linkIn) 
 		if in.TTLSeconds > 0 {
 			req.Ttl = durationpb.New(time.Duration(in.TTLSeconds) * time.Second)
 		}
+		if err := signLink(t.s.cfg.Dir, req); err != nil {
+			return nil, out, err
+		}
 		l, err := h.Fleet().CreatePortLink(ctx, req)
 		if err != nil {
 			return nil, out, err

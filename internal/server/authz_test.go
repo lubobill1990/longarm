@@ -49,6 +49,7 @@ type authzEnv struct {
 	// dial connects with a new certificate of the test CA
 	dial func(o pki.IssueOptions) *grpc.ClientConn
 	ca   *pki.CA
+	addr string // the server's
 }
 
 func issue(t *testing.T, ca *pki.CA, dir string, o pki.IssueOptions) *pki.Bundle {
@@ -127,7 +128,7 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 		t.Cleanup(func() { conn.Close() })
 		return conn
 	}
-	return &authzEnv{srv: s, dial: dial, ca: ca,
+	return &authzEnv{srv: s, dial: dial, ca: ca, addr: ln.Addr().String(),
 		alice: dial(pki.IssueOptions{Role: pki.RoleClient, Name: "alice"}),
 		bob:   dial(pki.IssueOptions{Role: pki.RoleClient, Name: "bob-laptop", User: "bob"}),
 		carol: dial(pki.IssueOptions{Role: pki.RoleClient, Name: "carol"}),

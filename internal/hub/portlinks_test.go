@@ -1,6 +1,8 @@
 package hub
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/x509"
 	"errors"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
@@ -383,5 +386,60 @@ func TestPortLinksOwnedWorkers(t *testing.T) {
 	h.mu.Unlock()
 	if bobs || !alices {
 		t.Fatalf("after the unshare: bob's link kept %v, alice's kept %v", bobs, alices)
+	}
+}
+
+// TestPortLinksConsent: a link created with its owner's signed consent
+// takes id and expiry from it and keeps it (pushed to the workers); a
+// consent for another user, another link or too long a time is refused.
+func TestPortLinksConsent(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	out1 := linkNode(h, "w1", "tcp://10.0.0.1:7701")
+	linkNode(h, "w2", "tcp://10.0.0.2:7701")
+	_, uk, _ := ed25519.GenerateKey(rand.Reader)
+	sign := func(user string, spec *pb.PortLinkSpec) *pb.PortLinkConsent {
+		_, nk, _ := ed25519.GenerateKey(rand.Reader)
+		e, err := pki.Endorse(uk, user, pki.KindDevice, user+"-laptop", nk.Public().(ed25519.PublicKey))
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := portlink.SignConsent(nk, e, spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	exp := time.Now().Add(2 * time.Hour).Unix()
+	spec := &pb.PortLinkSpec{Id: portlink.NewID(), From: "w1", To: "w2", Port: 8080, ListenPort: 18080, ExpiresUnix: exp}
+	req := func(c *pb.PortLinkConsent, port int32) *pb.CreatePortLinkRequest {
+		return &pb.CreatePortLinkRequest{From: "w1", To: "w2", Port: port, ListenPort: 18080, Consent: c}
+	}
+	fleet := pb.NewFleetClient(th.alice)
+	if _, err := fleet.CreatePortLink(tctx(t), req(sign("bob", spec), 8080)); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("bob's consent: %v", err)
+	}
+	if _, err := fleet.CreatePortLink(tctx(t), req(sign("alice", spec), 8081)); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("consent for another port: %v", err)
+	}
+	long := proto.Clone(spec).(*pb.PortLinkSpec)
+	long.ExpiresUnix = time.Now().Add(1000 * time.Hour).Unix()
+	if _, err := fleet.CreatePortLink(tctx(t), req(sign("alice", long), 8080)); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("consent beyond max_ttl: %v", err)
+	}
+	c := sign("alice", spec)
+	l, err := fleet.CreatePortLink(tctx(t), req(c, 8080))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Id != spec.Id || l.ExpiresAt.AsTime().Unix() != exp || !proto.Equal(l.Consent, c) {
+		t.Fatalf("link %v", l)
+	}
+	if p := lastLinks(t, out1); len(p.Links) != 1 || !proto.Equal(p.Links[0].Link.Consent, c) {
+		t.Fatalf("pushed %v", p)
+	}
+	if _, err := fleet.CreatePortLink(tctx(t), &pb.CreatePortLinkRequest{From: "w1", To: "w2", Port: 8080, ListenPort: 18090,
+		Consent: sign("alice", &pb.PortLinkSpec{Id: spec.Id, From: "w1", To: "w2", Port: 8080, ListenPort: 18090, ExpiresUnix: exp})}); status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("a second link with the same id: %v", err)
 	}
 }

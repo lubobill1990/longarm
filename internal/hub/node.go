@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -59,7 +60,9 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
-	revs := h.revocationsMsg() // (takes h.mu itself)
+	if hook := testHookConnect.Load(); hook != nil {
+		(*hook)()
+	}
 	h.mu.Lock()
 	n := h.nodes[c.id.Name]
 	if n == nil || n.rec.State != stateApproved {
@@ -73,6 +76,10 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	h.sessionSeq++
 	sess := &nodeSession{id: h.sessionSeq, out: make(chan *pb.HubCommand, 128), cancel: cancel}
 	n.sess = sess
+	// The revocation list as of now, taken after registering the session: a
+	// Revoke from here on broadcasts to it, one before is in this snapshot
+	// (both under h.mu) - none falls in between.
+	revs := h.revocationsMsgLocked()
 	now := time.Now()
 	n.lastReport = now
 	h.applyHelloLocked(n, hello)
@@ -507,3 +514,7 @@ func (s *hubNodeServer) Leave(ctx context.Context, req *pb.LeaveRequest) (*pb.Le
 	})
 	return &pb.LeaveResponse{Name: c.id.Name, Message: "node " + c.id.Name + " left " + s.h.cfg.Name + "; its certificates are revoked"}, nil
 }
+
+// testHookConnect runs in Connect after the hello, before the session is
+// registered (tests: a revocation racing a reconnect).
+var testHookConnect atomic.Pointer[func()]

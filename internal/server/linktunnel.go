@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -43,6 +44,63 @@ var ErrLinkInactive = errors.New("link not active")
 type linkTunnelServer struct {
 	pb.UnimplementedLinkTunnelServer
 	s *Server
+
+	mu      sync.Mutex
+	pending map[string]int // unverified streams per peer
+}
+
+// Limits on streams whose grant is not verified yet (a worker certificate
+// gets this far without a grant): how long the first frame may take, and
+// how many such streams one peer may have open (variables for tests).
+var (
+	linkFirstFrameTimeout = 10 * time.Second
+	linkMaxPendingPerPeer = 16
+)
+
+// pendingSlot counts one more unverified stream of peer (free it with the
+// returned func); false when the peer already has linkMaxPendingPerPeer.
+func (t *linkTunnelServer) pendingSlot(peer string) (func(), bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.pending == nil {
+		t.pending = map[string]int{}
+	}
+	if t.pending[peer] >= linkMaxPendingPerPeer {
+		return nil, false
+	}
+	t.pending[peer]++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			t.mu.Lock()
+			defer t.mu.Unlock()
+			if t.pending[peer]--; t.pending[peer] <= 0 {
+				delete(t.pending, peer)
+			}
+		})
+	}, true
+}
+
+// firstFrame receives the stream's first frame within linkFirstFrameTimeout.
+// On timeout the handler returns, which ends the stream and the Recv.
+func firstFrame(st pb.LinkTunnel_DialServer) (*pb.ForwardFrame, error) {
+	type res struct {
+		f   *pb.ForwardFrame
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		f, err := st.Recv()
+		ch <- res{f, err}
+	}()
+	t := time.NewTimer(linkFirstFrameTimeout)
+	defer t.Stop()
+	select {
+	case r := <-ch:
+		return r.f, r.err
+	case <-t.C:
+		return nil, status.Errorf(codes.DeadlineExceeded, "no link grant within %s", linkFirstFrameTimeout)
+	}
 }
 
 // Dial is the target side of a port link: the caller is the link's "from"
@@ -50,10 +108,6 @@ type linkTunnelServer struct {
 func (t *linkTunnelServer) Dial(st pb.LinkTunnel_DialServer) error {
 	s := t.s
 	id := IdentityFrom(st.Context())
-	first, err := st.Recv()
-	if err != nil {
-		return err
-	}
 	deny := func(code codes.Code, fields map[string]any, format string, a ...any) error {
 		err := status.Errorf(code, format, a...)
 		fields["denied"] = status.Convert(err).Message()
@@ -62,13 +116,32 @@ func (t *linkTunnelServer) Dial(st pb.LinkTunnel_DialServer) error {
 		telemetry.Count("link.dial", map[string]string{"outcome": "denied", "grpc_code": code.String()}, 1)
 		return err
 	}
+	// Before anything is verified: a bounded number of streams per peer,
+	// each with a deadline for its grant.
+	done, ok := t.pendingSlot(id.String())
+	if !ok {
+		return deny(codes.ResourceExhausted, map[string]any{}, "too many link streams of %s waiting for their grant (max %d)", id, linkMaxPendingPerPeer)
+	}
+	defer done()
+	first, err := firstFrame(st)
+	if err != nil {
+		if status.Code(err) == codes.DeadlineExceeded {
+			return deny(codes.DeadlineExceeded, map[string]any{}, "%s", status.Convert(err).Message())
+		}
+		return err
+	}
 	if s.Links == nil {
 		return deny(codes.FailedPrecondition, map[string]any{}, "this worker has no port links")
 	}
-	g, err := portlink.Verify(s.Links.Roots(), first.Grant, time.Now())
+	var revoked func(*x509.Certificate) bool
+	if s.Revoked != nil {
+		revoked = s.Revoked.Revoked
+	}
+	g, err := portlink.VerifyRevocable(s.Links.Roots(), first.Grant, time.Now(), revoked)
 	if err != nil {
 		return deny(codes.PermissionDenied, map[string]any{}, "%v", err)
 	}
+	done() // verified: the link's own connection cap applies from here
 	fields := map[string]any{"link": g.Id, "owner": g.Owner, "from": g.From, "port": g.Port}
 	switch {
 	case g.From != id.Name:
@@ -99,6 +172,13 @@ func (t *linkTunnelServer) Dial(st pb.LinkTunnel_DialServer) error {
 	}
 	if why := LinkPeerTrustDeny(s.Trust.Load(), peerCert(st.Context()), g.Owner); why != "" {
 		return deny(codes.PermissionDenied, fields, "link %s: %s", g.Id, why)
+	}
+	// With end-to-end trust the hub's grant is not enough: the owner must
+	// have signed this very link (a device endorsed by the pinned key).
+	if p := s.Trust.Load(); p.Active() {
+		if err := portlink.VerifyConsent(p, l); err != nil {
+			return deny(codes.PermissionDenied, fields, "end-to-end trust: %v", err)
+		}
 	}
 	// The same checks as Forward.Open for the link's owner.
 	host := "127.0.0.1"

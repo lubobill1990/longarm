@@ -220,6 +220,11 @@ longarm link rm lk-0123456789ab                       # cuts open connections at
   worker refuses shows `error` ("refused by this worker's policy") on A, or
   its connections fail with `PermissionDenied` from B
   ([security](security.md#port-links)).
+- **Signed links (end-to-end trust).** On a device endorsed by your user
+  key (`longarm trust init` / `endorse`), `longarm link create` signs the
+  link with the device's key; workers that pin your key accept only links
+  you signed this way ("no owner's consent" otherwise). A signed link's
+  `--ttl` defaults to 8h and must be within the hub's `max_ttl`.
 - **Discovery.** Your jobs, sessions and `longarm exec` on A get
   `LONGARM_LINKS=wb:8080=127.0.0.1:18080,...` and
   `LONGARM_LINK_WB_8080=127.0.0.1:18080` (worker name upper-cased, other

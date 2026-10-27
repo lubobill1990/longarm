@@ -280,21 +280,23 @@ func (h *Hub) rebuildRevocations() error {
 }
 
 func (h *Hub) revocationsMsg() *pb.HubCommand {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.revocationsMsgLocked()
+}
+
+// revocationsMsgLocked is the revocation list and its version as one
+// snapshot (Revoke changes both under h.mu).
+func (h *Hub) revocationsMsgLocked() *pb.HubCommand {
 	certs, err := h.store.RevokedCerts(time.Now())
 	if err != nil {
 		h.log.Warn("revocations", "err", err)
 	}
-	r := &pb.Revocations{Version: h.revocationVersion()}
+	r := &pb.Revocations{Version: h.revVersion}
 	for _, c := range certs {
 		r.Certs = append(r.Certs, &pb.RevokedCert{Serial: c.Serial, NotAfter: tspb(c.NotAfter), Node: c.Node})
 	}
 	return &pb.HubCommand{Msg: &pb.HubCommand_Revocations{Revocations: r}}
-}
-
-func (h *Hub) revocationVersion() int64 {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.revVersion
 }
 
 // Addr returns a bound listener address ("grpc", "http", "udp").

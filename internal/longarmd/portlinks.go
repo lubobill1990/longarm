@@ -454,7 +454,7 @@ func (m *linkManager) listen(ls *linkState) {
 		addrs = append(addrs, net.JoinHostPort("::1", port))
 	}
 	for ls.ctx.Err() == nil {
-		if why := m.denied(l.Owner); why != "" {
+		if why := m.refused(l); why != "" {
 			// Not while this worker's policy refuses the owner (checked again
 			// later: shares and trust change).
 			ls.set("error", "refused by this worker's policy: "+why)
@@ -529,7 +529,7 @@ func (m *linkManager) serveConn(ls *linkState, c net.Conn) {
 	defer c.Close()
 	l := ls.link
 	var err error
-	if why := m.denied(l.Owner); why != "" {
+	if why := m.refused(l); why != "" {
 		err = errors.New("refused by this worker's policy: " + why)
 	} else {
 		err = m.checkPeer(l, c)
@@ -635,6 +635,21 @@ func (m *linkManager) checkPeer(l *pb.PortLink, c net.Conn) error {
 		return fmt.Errorf("not a process of %s", sp.Account.Name)
 	}
 	return nil
+}
+
+// refused says why this worker refuses link l now ("" = it doesn't): its
+// policy refuses the owner, or - with end-to-end trust - the owner did not
+// sign this link (portlink.VerifyConsent): the hub alone can't create one.
+func (m *linkManager) refused(l *pb.PortLink) string {
+	if why := m.denied(l.Owner); why != "" {
+		return why
+	}
+	if p := m.trust.Load(); p.Active() {
+		if err := portlink.VerifyConsent(p, l); err != nil {
+			return "end-to-end trust: " + err.Error()
+		}
+	}
+	return ""
 }
 
 // denied says why this worker's policy refuses links of owner ("" = none).

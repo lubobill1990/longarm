@@ -2,6 +2,8 @@ package longarmd
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"io"
 	"log/slog"
@@ -389,5 +391,58 @@ func TestLinkSourcePolicy(t *testing.T) {
 	waitCut(t, c, 5*time.Second)
 	if st := p.a.statusReport().GetLinks(); len(st) != 1 || st[0].Refused == 0 {
 		t.Fatalf("refused not counted: %v", st)
+	}
+}
+
+// TestLinkSourceConsent: with end-to-end trust the source listens only for
+// links its owner signed: not for one the hub made alone, nor for one
+// changed after signing.
+func TestLinkSourceConsent(t *testing.T) {
+	old := linkListenRetry
+	linkListenRetry = 100 * time.Millisecond
+	t.Cleanup(func() { linkListenRetry = old })
+	p := newLinkPair(t)
+	_, alice, _ := ed25519.GenerateKey(rand.Reader)
+	p.a.trust = &pki.TrustSource{}
+	p.a.trust.Store(&pki.TrustPolicy{Users: map[string]ed25519.PublicKey{"alice": alice.Public().(ed25519.PublicKey)}})
+	_, nk, _ := ed25519.GenerateKey(rand.Reader)
+	e, err := pki.Endorse(alice, "alice", pki.KindDevice, "alice-laptop", nk.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sign := func(l *pb.PortLink) {
+		c, err := portlink.SignConsent(nk, e, &pb.PortLinkSpec{Id: l.Id, From: l.From, To: l.To, Port: l.Port, ListenPort: l.ListenPort,
+			ExpiresUnix: l.ExpiresAt.AsTime().Unix()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Consent = c
+	}
+	exp := time.Now().Add(time.Hour).Truncate(time.Second)
+	forged := p.link(t, "", exp, exp).Links[0]
+	signed := p.link(t, "", exp, exp).Links[0]
+	sign(signed.Link)
+	changed := p.link(t, "", exp, exp).Links[0]
+	sign(changed.Link)
+	changed.Link.ListenPort = forged.Link.ListenPort + 1 // after signing
+	p.a.apply(&pb.PortLinks{Version: 1, Links: []*pb.PortLinkAssignment{forged, signed, changed}}, false)
+	state := func(id string) string {
+		for _, s := range p.a.statusReport().GetLinks() {
+			if s.Id == id {
+				return s.State + " " + s.Error
+			}
+		}
+		return ""
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(state(forged.Link.Id), "no owner's consent") || !strings.Contains(state(changed.Link.Id), "not what its owner signed") ||
+		!strings.HasPrefix(state(signed.Link.Id), "listening") {
+		if time.Now().After(deadline) {
+			t.Fatalf("states: forged %q, changed %q, signed %q", state(forged.Link.Id), state(changed.Link.Id), state(signed.Link.Id))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if listening(forged.Link) || !listening(signed.Link) {
+		t.Fatal("listening for the hub-made link, or not for the signed one")
 	}
 }

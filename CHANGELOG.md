@@ -9,9 +9,11 @@
   ([docs/usage.md](docs/usage.md#port-links-worker-to-worker)).
   Both workers apply their own policy to the link's owner - `[access]`
   users, the owner and shares of a user-owned worker, disabled users, and
-  with end-to-end trust the owner's pinned key and an endorsement of the
-  other worker by that key - so the hub can narrow, never widen, what a
-  worker allows ([docs/security.md](docs/security.md#port-links)). Link
+  with end-to-end trust the owner's pinned key, the owner's signed consent
+  (`longarm link create` signs the link on an endorsed device) and an
+  endorsement of the other worker by that key - so the hub can narrow,
+  never widen, what a worker allows, and can't create a link there
+  ([docs/security.md](docs/security.md#port-links)). Link
   connections are in the chained audit log; telemetry counts them without
   names, ports or addresses.
 - `[forward] targets` in longarmd.toml: what port forwards may reach.

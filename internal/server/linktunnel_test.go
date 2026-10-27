@@ -18,7 +18,9 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/lubobill1990/longarm/internal/pki"
@@ -352,5 +354,183 @@ func TestLinkPeerTrust(t *testing.T) {
 	}
 	if why := s.LinkOwnerDeny("bob"); why != "" {
 		t.Fatalf("owner with a pinned key: %q", why)
+	}
+}
+
+// linkTestEnv is newAuthzEnv with a hub, port links and an echo server.
+func linkTestEnv(t *testing.T) (*authzEnv, *fakeLinks, *pki.Bundle, int) {
+	t.Helper()
+	e := newAuthzEnv(t)
+	hubDir := filepath.Join(t.TempDir(), "hub")
+	hc, hk, err := e.ca.Issue(pki.IssueOptions{Role: pki.RoleHub, Name: "hub"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pki.WriteBundle(hubDir, e.ca.CertPEM, hc, hk); err != nil {
+		t.Fatal(err)
+	}
+	hub, err := pki.LoadBundle(hubDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	links := &fakeLinks{roots: hub.Pool, links: map[string]*pb.PortLink{}, ctxs: map[string]context.CancelFunc{},
+		cctx: map[string]context.Context{}, env: map[string]map[string]string{}}
+	e.srv.Links = links
+	return e, links, hub, echoServer(t)
+}
+
+func linkGrant(t *testing.T, hub *pki.Bundle, l *pb.PortLink) *pb.SignedPortLinkGrant {
+	t.Helper()
+	g, err := portlink.Sign(hub.Certificate(), &pb.PortLinkGrant{Id: l.Id, Owner: l.Owner, From: l.From, To: l.To,
+		Port: l.Port, ListenPort: l.ListenPort, ExpiresUnix: l.ExpiresAt.AsTime().Unix(), IssuedUnix: time.Now().Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
+}
+
+// linkOpen starts a LinkTunnel.Dial stream with g and waits for the answer.
+func linkOpen(t *testing.T, c *grpc.ClientConn, g *pb.SignedPortLinkGrant) error {
+	t.Helper()
+	st, err := pb.NewLinkTunnelClient(c).Dial(cctx(t))
+	if err == nil {
+		if err = st.Send(&pb.ForwardFrame{Grant: g}); err == nil {
+			_, err = st.Recv()
+		}
+	}
+	if err == nil {
+		st.CloseSend()
+	}
+	return err
+}
+
+// TestLinkTunnelConsent: with end-to-end trust the target accepts a link
+// only with its owner's consent - one the hub made alone, or whose consent
+// does not match, is refused even with a valid grant from an endorsed
+// worker of the owner.
+func TestLinkTunnelConsent(t *testing.T) {
+	e, links, hub, port := linkTestEnv(t)
+	_, alice, _ := ed25519.GenerateKey(rand.Reader)
+	e.srv.Trust = &pki.TrustSource{}
+	e.srv.Trust.Store(&pki.TrustPolicy{Users: map[string]ed25519.PublicKey{"alice": alice.Public().(ed25519.PublicKey)}})
+	// wa: a worker alice endorsed (the target checks that too)
+	_, wnk, _ := ed25519.GenerateKey(rand.Reader)
+	we, err := pki.Endorse(alice, "alice", pki.KindWorker, "wa", wnk.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, csr, err := pki.NewKeyAndCSR("wa", &pki.CSRTrust{NodeKey: wnk, Endorsement: we})
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, err := e.ca.SignCSR(csr, pki.IssueOptions{Role: pki.RoleWorker, Name: "wa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "wa")
+	if err := pki.WriteBundle(dir, e.ca.CertPEM, certPEM, keyPEM); err != nil {
+		t.Fatal(err)
+	}
+	wb, err := pki.LoadBundle(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wa, err := grpc.NewClient(e.addr, grpc.WithTransportCredentials(credentials.NewTLS(wb.ClientConfig("w1"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wa.Close()
+
+	_, dnk, _ := ed25519.GenerateKey(rand.Reader)
+	de, err := pki.Endorse(alice, "alice", pki.KindDevice, "alice-laptop", dnk.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exp := time.Now().Add(time.Hour).Truncate(time.Second)
+	newLink := func(signed bool) *pb.PortLink {
+		l := &pb.PortLink{Id: portlink.NewID(), Owner: "alice", From: "wa", To: "w1", Port: int32(port), ListenPort: 18080,
+			ExpiresAt: timestamppb.New(exp)}
+		if signed {
+			c, err := portlink.SignConsent(dnk, de, &pb.PortLinkSpec{Id: l.Id, From: l.From, To: l.To, Port: l.Port,
+				ListenPort: l.ListenPort, ExpiresUnix: exp.Unix()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			l.Consent = c
+		}
+		links.add(l)
+		return l
+	}
+	want := func(name string, err error, text string) {
+		t.Helper()
+		if status.Code(err) != codes.PermissionDenied || !strings.Contains(err.Error(), text) {
+			t.Fatalf("%s: %v, want PermissionDenied %q", name, err, text)
+		}
+	}
+
+	forged := newLink(false)
+	want("hub-made link", linkOpen(t, wa, linkGrant(t, hub, forged)), "no owner's consent")
+	signed := newLink(true)
+	if err := linkOpen(t, wa, linkGrant(t, hub, signed)); err != nil {
+		t.Fatalf("owner-signed link: %v", err)
+	}
+	// the hub changes the port after alice signed (grant and list agree)
+	changed := newLink(true)
+	changed.Port = 22
+	want("changed after signing", linkOpen(t, wa, linkGrant(t, hub, changed)), "not what its owner signed")
+	// a spec tampered after signing
+	tampered := newLink(true)
+	s := &pb.PortLinkSpec{}
+	proto.Unmarshal(tampered.Consent.Spec, s)
+	s.ExpiresUnix += 3600
+	tampered.Consent.Spec, _ = proto.Marshal(s)
+	want("tampered spec", linkOpen(t, wa, linkGrant(t, hub, tampered)), "bad signature")
+
+	// a grant from a revoked hub certificate
+	leaf, _ := x509.ParseCertificate(hub.Certificate().Certificate[0])
+	if err := e.srv.Revoked.Replace(1, map[string]time.Time{pki.Serial(leaf): leaf.NotAfter}); err != nil {
+		t.Fatal(err)
+	}
+	want("revoked hub certificate", linkOpen(t, wa, linkGrant(t, hub, signed)), "revoked")
+}
+
+// TestLinkTunnelPending: streams that send no grant are bounded per peer
+// and cut after the first-frame deadline.
+func TestLinkTunnelPending(t *testing.T) {
+	oldT, oldN := linkFirstFrameTimeout, linkMaxPendingPerPeer
+	linkFirstFrameTimeout, linkMaxPendingPerPeer = 3*time.Second, 2
+	t.Cleanup(func() { linkFirstFrameTimeout, linkMaxPendingPerPeer = oldT, oldN })
+	e, _, _, _ := linkTestEnv(t)
+	wa := e.dial(pki.IssueOptions{Role: pki.RoleWorker, Name: "wa"})
+	var idle []pb.LinkTunnel_DialClient
+	for range 2 {
+		st, err := pb.NewLinkTunnelClient(wa).Dial(cctx(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		idle = append(idle, st)
+	}
+	// once the server has both, a third is refused at once
+	time.Sleep(300 * time.Millisecond)
+	st3, err := pb.NewLinkTunnelClient(wa).Dial(cctx(t))
+	if err == nil {
+		_, err = st3.Recv()
+	}
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("third idle stream: %v, want ResourceExhausted", err)
+	}
+	for _, st := range idle {
+		if _, err := st.Recv(); status.Code(err) != codes.DeadlineExceeded {
+			t.Fatalf("idle stream: %v, want DeadlineExceeded", err)
+		}
+	}
+	// slots are free again
+	st, err := pb.NewLinkTunnelClient(wa).Dial(cctx(t))
+	if err == nil {
+		st.Send(&pb.ForwardFrame{})
+		_, err = st.Recv()
+	}
+	if status.Code(err) != codes.PermissionDenied || !strings.Contains(err.Error(), "no link grant") {
+		t.Fatalf("after the idle streams: %v", err)
 	}
 }

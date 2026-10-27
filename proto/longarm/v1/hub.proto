@@ -1094,6 +1094,9 @@ message PortLink {
   string job_id = 9; // "" or a job on `from`: the link goes when it ends
   string created_by = 10; // certificate identity ("client/alice-laptop")
   PortLinkStatus status = 11; // as `from` last reported it (hub views)
+  // The owner's consent (end-to-end trust): workers that trust users
+  // accept the link only with it (docs/security.md "Port links").
+  PortLinkConsent consent = 12;
 }
 
 message PortLinkStatus {
@@ -1134,6 +1137,9 @@ message CreatePortLinkRequest {
   int32 listen_port = 4; // on A (default: port)
   google.protobuf.Duration ttl = 5; // default [links] default_ttl (8h)
   string job_id = 6; // bind the link's lifetime to this job on `from`
+  // Signed by a device of the caller's user (longarm link create does when
+  // the device is endorsed): the link gets its id and expiry from it.
+  PortLinkConsent consent = 7;
 }
 
 message ListPortLinksRequest {
@@ -1146,4 +1152,30 @@ message ListPortLinksResponse {
 
 message RemovePortLinkRequest {
   string id = 1;
+}
+
+// PortLinkConsent is a link's owner saying "I want this link" in a form
+// the hub can't forge: a device of the owner signs the link's spec with its
+// node key and attaches its endorsement by the owner's user key. Workers
+// with end-to-end trust check it against the user keys they pinned.
+message PortLinkConsent {
+  bytes spec = 1; // PortLinkSpec, as signed
+  // Ed25519 signature of the endorsed device's node key over
+  // "longarm port-link consent v1\0" + spec.
+  bytes signature = 2;
+  string endorsement = 3; // the device's endorsement (text form; kind device, user = owner)
+}
+
+// PortLinkSpec is what the owner consents to.
+message PortLinkSpec {
+  string id = 1; // chosen by the client
+  string owner = 2;
+  string from = 3;
+  string to = 4;
+  int32 port = 5;
+  int32 listen_port = 6;
+  int64 expires_unix = 7; // the link may end earlier, never later
+  string job_id = 8;
+  string device = 9; // the signing device (the endorsement's name)
+  int64 issued_unix = 10;
 }

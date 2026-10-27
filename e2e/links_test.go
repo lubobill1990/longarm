@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +18,8 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/client"
+	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/trust"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -487,5 +491,98 @@ func TestPortLinksWorkerPolicy(t *testing.T) {
 	sid := linkCreate(t, h, alice, "wa:"+aport, "--on", "wb", "--port", strconv.Itoa(freePort(t)))
 	waitFor(t, "wb refusing to listen for alice's link", 30*time.Second, func() bool {
 		return strings.Contains(linkStatus(t, h, alice, sid), "refused by this worker's policy")
+	})
+}
+
+// TestPortLinksTrust: two workers with end-to-end trust (alice's key pinned,
+// both endorsed by her). A link created on alice's endorsed device carries
+// her signed consent and works; a link for alice the hub accepts from a
+// device she never endorsed (as an insider hub could make up) is refused by
+// the workers.
+func TestPortLinksTrust(t *testing.T) {
+	t.Parallel()
+	h := newHubEnv(t, "")
+	alice := h.client
+	os.Remove(filepath.Join(alice, "workers.toml")) // workers come from the hub
+	ca, err := pki.LoadCA(filepath.Join(h.client, "ca"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	alicePub, aliceKey, _ := ed25519.GenerateKey(rand.Reader)
+	ws := map[string]*hubWorker{"wa": h.newWorkerDir(t, "wa", ""), "wb": h.newWorkerDir(t, "wb", "")}
+	for name, w := range ws {
+		h.joinWorker(t, w, true)
+		w.start(t, true)
+		h.waitNode(t, name, "online", func(n map[string]any) bool { return isTrue(n["online"]) })
+		if r := longarmdCmd(t, "trust", "add-user", pki.UserKeyLine{User: "alice", Key: alicePub}.String(), "--data-dir", w.dataDir); r.code != 0 {
+			t.Fatalf("trust add-user: %+v", r)
+		}
+		r := longarmdCmd(t, "trust", "request", "--data-dir", w.dataDir)
+		req, err := pki.ParseEndorseRequest(strings.SplitN(r.stdout, "\n", 2)[0])
+		if err != nil {
+			t.Fatalf("trust request: %+v %v", r, err)
+		}
+		we, err := pki.Endorse(aliceKey, "alice", pki.KindWorker, req.Name, req.NodeKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r := longarmdCmd(t, "trust", "accept", we.String(), "--data-dir", w.dataDir); r.code != 0 {
+			t.Fatalf("trust accept: %+v", r)
+		}
+	}
+	for name, w := range ws {
+		waitFor(t, name+"'s renewed, endorsed certificate", 60*time.Second, func() bool {
+			b, _ := os.ReadFile(filepath.Join(w.dataDir, "tls", "node.crt"))
+			c, err := pki.ParseCertPEM(b)
+			if err != nil {
+				return false
+			}
+			tx, _ := pki.TrustOf(c)
+			return tx != nil && tx.Endorsement != nil
+		})
+	}
+	// alice's device: endorsed by her key (certificate and trust store, as
+	// longarm trust init leaves them)
+	st := trust.Store{Dir: filepath.Join(alice, "trust")}
+	nk, err := st.NodeKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := pki.Endorse(aliceKey, "alice", pki.KindDevice, "alice", nk.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetEndorsement(e, pki.KindDevice, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, csrPEM, err := pki.NewKeyAndCSR("alice", &pki.CSRTrust{NodeKey: nk, Endorsement: e})
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, err := ca.SignCSR(csrPEM, pki.IssueOptions{Role: pki.RoleClient, Name: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pki.WriteBundleAtomic(filepath.Join(alice, "tls"), ca.CertPEM, certPEM, keyPEM); err != nil {
+		t.Fatal(err)
+	}
+
+	port, _ := jobPort(t, h, alice, "wb", bins.helper, "http-serve", "600")
+	signed := strconv.Itoa(freePort(t))
+	sid := linkCreate(t, h, alice, "wb:"+port, "--on", "wa", "--port", signed)
+	waitFor(t, "alice's signed link", 30*time.Second, func() bool {
+		r := linkGet(h, alice, "wa", bins.helper, "127.0.0.1:"+signed, "/s")
+		return r.code == 0 && strings.Contains(r.stdout, "status 200: hello /s from")
+	})
+	if l := linkStatus(t, h, alice, sid); !strings.Contains(l, "listening") {
+		t.Fatalf("signed link: %s", l)
+	}
+
+	// a device of "alice" the hub enrolled on its own (not endorsed): the
+	// hub accepts its link, the workers don't
+	other := linkUser(t, h, "alice-2", "alice")
+	fid := linkCreate(t, h, other, "wb:"+port, "--on", "wa", "--port", strconv.Itoa(freePort(t)))
+	waitFor(t, "wa refusing the unsigned link", 30*time.Second, func() bool {
+		return strings.Contains(linkStatus(t, h, alice, fid), "no owner's consent")
 	})
 }

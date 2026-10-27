@@ -87,10 +87,16 @@ func Sign(cert *tls.Certificate, g *pb.PortLinkGrant) (*pb.SignedPortLinkGrant, 
 	return &pb.SignedPortLinkGrant{Grant: b, Signature: sig, Chain: append([][]byte(nil), cert.Certificate...)}, nil
 }
 
-// Verify checks a signed grant: the chain leads to a hub certificate of the
-// fleet CA (roots), the signature is the hub's, and the grant has not
-// expired at now. It returns the grant; the caller checks what it names.
+// Verify checks a signed grant (VerifyRevocable without a revocation list).
 func Verify(roots *x509.CertPool, s *pb.SignedPortLinkGrant, now time.Time) (*pb.PortLinkGrant, error) {
+	return VerifyRevocable(roots, s, now, nil)
+}
+
+// VerifyRevocable checks a signed grant: the chain leads to a hub certificate of the
+// fleet CA (roots), the signature is the hub's, and the grant has not
+// expired at now, and - with revoked - the hub certificate that signed it
+// is not revoked. It returns the grant; the caller checks what it names.
+func VerifyRevocable(roots *x509.CertPool, s *pb.SignedPortLinkGrant, now time.Time, revoked func(*x509.Certificate) bool) (*pb.PortLinkGrant, error) {
 	if s == nil || len(s.Grant) == 0 || len(s.Signature) == 0 || len(s.Chain) == 0 {
 		return nil, errors.New("no link grant")
 	}
@@ -119,6 +125,9 @@ func Verify(roots *x509.CertPool, s *pb.SignedPortLinkGrant, now time.Time) (*pb
 	}
 	if id.Role != pki.RoleHub {
 		return nil, fmt.Errorf("link grant signed by %s, not by the hub", id)
+	}
+	if revoked != nil && revoked(leaf) {
+		return nil, fmt.Errorf("link grant signed by a revoked certificate (%s)", id)
 	}
 	d := digest(s.Grant)
 	switch pub := leaf.PublicKey.(type) {

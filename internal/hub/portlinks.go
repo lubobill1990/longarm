@@ -98,11 +98,34 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 	if req.Ttl != nil {
 		ttl = req.Ttl.AsDuration()
 	}
-	if ttl < minLinkTTL || ttl > h.cfg.Links.MaxTTL.Duration {
-		return nil, status.Errorf(codes.InvalidArgument, "ttl %s: between %s and %s ([links] max_ttl)", ttl, minLinkTTL, h.cfg.Links.MaxTTL.Duration)
-	}
 	owner := c.id.Owner()
 	now := time.Now()
+	expires := now.Add(ttl)
+	id := ""
+	if req.Consent != nil {
+		// The owner's signed consent (end-to-end trust): the link takes id
+		// and expiry from it and must match it exactly - workers that trust
+		// users check it against the owner's key; the hub can only check
+		// that it is well-formed and the caller's.
+		s, _, err := portlink.ParseConsent(req.Consent)
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+		if s.Owner != owner {
+			return nil, status.Errorf(codes.PermissionDenied, "the link's consent is signed for %s, not for %s", s.Owner, owner)
+		}
+		if s.From != req.From || s.To != req.To || s.Port != req.Port || s.ListenPort != listen || s.JobId != req.JobId {
+			return nil, status.Error(codes.InvalidArgument, "the link's consent does not match the request")
+		}
+		expires = time.Unix(s.ExpiresUnix, 0)
+		if d := expires.Sub(now); d <= 0 || d > h.cfg.Links.MaxTTL.Duration+portlink.ClockSkew {
+			return nil, status.Errorf(codes.InvalidArgument, "the link's consent expires at %s: at most %s from now ([links] max_ttl)",
+				expires.UTC().Format(time.RFC3339), h.cfg.Links.MaxTTL.Duration)
+		}
+		id, ttl = s.Id, expires.Sub(now)
+	} else if ttl < minLinkTTL || ttl > h.cfg.Links.MaxTTL.Duration {
+		return nil, status.Errorf(codes.InvalidArgument, "ttl %s: between %s and %s ([links] max_ttl)", ttl, minLinkTTL, h.cfg.Links.MaxTTL.Duration)
+	}
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -148,12 +171,17 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 	if mine >= h.cfg.Links.MaxPerUser {
 		return nil, status.Errorf(codes.ResourceExhausted, "quota: %d port links (max %d, [links] max_per_user)", mine, h.cfg.Links.MaxPerUser)
 	}
-	id := portlink.NewID()
-	for h.portLinks[id] != nil {
+	if id == "" {
 		id = portlink.NewID()
+		for h.portLinks[id] != nil {
+			id = portlink.NewID()
+		}
+	} else if h.portLinks[id] != nil {
+		return nil, status.Errorf(codes.AlreadyExists, "link %s exists", id)
 	}
 	l := &pb.PortLink{Id: id, Owner: owner, From: req.From, To: req.To, Port: req.Port, ListenPort: listen,
-		CreatedAt: timestamppb.New(now), ExpiresAt: timestamppb.New(now.Add(ttl)), JobId: req.JobId, CreatedBy: c.id.String()}
+		CreatedAt: timestamppb.New(now), ExpiresAt: timestamppb.New(expires), JobId: req.JobId, CreatedBy: c.id.String(),
+		Consent: req.Consent}
 	if err := h.savePortLinkLocked(l); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

@@ -12,7 +12,9 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
+	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/portlink"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -76,7 +78,10 @@ or with longarm link rm.`,
 			if ttl > 0 {
 				req.Ttl = durationpb.New(ttl)
 			}
-			return withHub(cmd, func(ctx context.Context, _ *session, h *hubclient.Conn) error {
+			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
+				if err := signLink(s.cfg.Dir, req); err != nil {
+					return err
+				}
 				l, err := h.Fleet().CreatePortLink(ctx, req)
 				if err != nil {
 					return err
@@ -170,4 +175,42 @@ func linkRemoveCmd() *cobra.Command {
 			})
 		},
 	}
+}
+
+// defaultSignedLinkTTL is a signed link's lifetime without --ttl (the
+// consent fixes the expiry; the hub's own default is 8h too).
+const defaultSignedLinkTTL = 8 * time.Hour
+
+// signLink adds this device's consent to req when the device is endorsed
+// (end-to-end trust, docs/security.md "Port links"): workers that pin its
+// user's key accept a link only with it, so the hub alone can't create one.
+// Without an endorsement the request goes unsigned (workers without trust
+// don't need it).
+func signLink(cfgDir string, req *pb.CreatePortLinkRequest) error {
+	st := client.TrustStore(cfgDir)
+	e, err := st.Endorsement()
+	if err != nil {
+		return fmt.Errorf("end-to-end trust: %w", err)
+	}
+	if e == nil || e.Kind != pki.KindDevice {
+		return nil
+	}
+	key, err := st.NodeKey()
+	if err != nil {
+		return fmt.Errorf("end-to-end trust: %w", err)
+	}
+	if req.ListenPort == 0 {
+		req.ListenPort = req.Port
+	}
+	ttl := defaultSignedLinkTTL
+	if req.Ttl != nil {
+		ttl = req.Ttl.AsDuration()
+	}
+	c, err := portlink.SignConsent(key, e, &pb.PortLinkSpec{Id: portlink.NewID(), From: req.From, To: req.To, Port: req.Port,
+		ListenPort: req.ListenPort, ExpiresUnix: time.Now().Add(ttl).Unix(), JobId: req.JobId})
+	if err != nil {
+		return err
+	}
+	req.Consent = c
+	return nil
 }
