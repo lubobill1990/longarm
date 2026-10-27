@@ -1,6 +1,7 @@
 package pki
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/tls"
@@ -61,11 +62,22 @@ func NewKeyAndCSR(name string, t *CSRTrust) (keyPEM, csrPEM []byte, err error) {
 	return keyPEM, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}), nil
 }
 
-// ParseCSR decodes and checks the self-signature of a PEM CSR.
+// MaxCSR bounds a PEM CSR: the largest legitimate one, an Ed25519 / ECDSA
+// key with a full trust extension (maxTrustExt), is about 6 KiB.
+const MaxCSR = 8 << 10
+
+// ParseCSR decodes and checks the self-signature of a PEM CSR: one
+// block, at most MaxCSR bytes, nothing but whitespace around it.
 func ParseCSR(csrPEM []byte) (*x509.CertificateRequest, error) {
-	blk, _ := pem.Decode(csrPEM)
+	if len(csrPEM) > MaxCSR {
+		return nil, fmt.Errorf("certificate request larger than %d bytes", MaxCSR)
+	}
+	blk, rest := pem.Decode(csrPEM)
 	if blk == nil || blk.Type != "CERTIFICATE REQUEST" {
 		return nil, errors.New("no PEM certificate request")
+	}
+	if len(bytes.TrimSpace(rest)) > 0 {
+		return nil, errors.New("data after the PEM certificate request")
 	}
 	csr, err := x509.ParseCertificateRequest(blk.Bytes)
 	if err != nil {

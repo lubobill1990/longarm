@@ -570,6 +570,73 @@ What it changes:
   refuse it until the user's key endorsed it (`longarm trust ...`). Entra
   sign-in replaces the join code, not the user keys - the hub (and now the
   Entra tenant) still can't mint access to such workers.
+- `longarmd login --az` (EntraJoin with kind `worker`) enrolls a worker
+  owned by the token's user: approved at once, a worker certificate, never
+  admin. App-only tokens (`apps`) may not: a CI app acting as a user must
+  not be able to add machines that user's jobs get placed on.
+
+### Pairing (`/link`)
+
+`longarm login` without az and `longarmd login` enroll by pairing, a device
+authorization flow run by the hub (Microsoft's device code flow is often
+blocked by tenant policy): the machine sends its CSR (Enroll.StartLink,
+no certificate needed) and shows the hub's `/link` address and a user code;
+a person signed in to the panel types the code there and approves; the
+machine collects its certificate (Enroll.PollLink with a poll token only it
+has). **Approving is signing in: the approver becomes the owner** - a
+client is the approver's device (admin certificate only for `admins`,
+rules re-checked at approval: `allowed`, disabled users), a worker the
+approver's own worker, never admin.
+
+The danger is phishing: an attacker starts a pairing on *their* machine
+and gets a victim to approve it - then the attacker's machine holds the
+victim's client certificate, or (worse, and quieter) the victim's jobs get
+placed on the attacker's "worker". Hence:
+
+- **The code is typed, never in a link.** `/link` ignores codes in the URL
+  and the device opens `/link` without one, so "click here to finish
+  signing in" can't carry an attacker's code; the page says to enter only
+  codes from a device you are setting up yourself.
+- **The confirmation shows what asks**: worker or client, the requested
+  name, host name, OS/arch, version, the address the hub saw the request
+  from, the node key ID of its end-to-end trust binding (compare with
+  `longarm trust show` / `longarmd trust status` on the device), and how long
+  ago it started; for workers: "Only confirm if this is your machine: jobs
+  you run may be placed on it."
+- **Short-lived and single use**: codes are 8 characters of a 20-letter
+  alphabet (consonants: no words, no look-alikes; 20^8 = 2.6e10), live
+  10 minutes, are spent by the first approve or deny (a failed approval
+  tells the device why), and pairings live in the hub's memory only (a
+  restart forgets them), each a minute past its expiry at the latest. An
+  approved certificate is handed out once, before that, and only while the
+  node is still approved (revoked meanwhile: "denied", no tailnet key).
+  What a pairing keeps is bounded: the CSR (at most 8 KiB, one PEM block -
+  the limit of every enrollment - re-encoded; dropped once decided or
+  expired) and short, printable device fields. StartLink is rate limited per address like joins;
+  at most 5 pending pairings per address and 200 in all; polls faster than
+  the 5 s interval are refused (the client slows down); code lookups on
+  `/link` are rate limited per address and per user (10, then one per 10 s):
+  guessing a code would enroll someone else's machine as one's own. The
+  device prints whose it became ("owned by ...", "signed in as ...").
+- **Only real sign-ins approve**: with `[auth.entra]`, a panel session that
+  a Microsoft sign-in opened (marked by an HMAC cookie bound to that
+  session); password logins - perhaps a shared admin account - can't. Only
+  hubs without Entra accept any panel login of a Longarm user.
+- **CSRF**: the forms are POST only, need an `Origin` of the hub and (when
+  the browser sends it) `Sec-Fetch-Site: same-origin`, and carry a token
+  HMAC-bound to the session, the step and the pairing (10 minutes); the
+  page has a strict CSP and can't be framed.
+- Audited on the hub: `link/start`, `link/approve` (with the node or the
+  error), `link/deny`, `link/expire` - who, kind, name, host, address.
+
+The poll token, the code and the CSR are not secrets an observer can turn
+into a certificate: the certificate is useless without the machine's
+private key, which never leaves it. Pin the hub's CA (`--ca-fingerprint`,
+built into the install scripts): pairing runs over the same TLS as join.
+**End-to-end trust is still recommended**: a pairing approved by mistake
+(or an Entra account takeover) yields at most a certificate the hub signed;
+workers and clients that require endorsements still refuse the device until
+your user key endorses it.
 
 ## End-to-end trust (the hub is not trusted with access)
 

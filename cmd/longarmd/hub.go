@@ -50,6 +50,46 @@ finishes the enrollment once approved.`,
 	return c
 }
 
+func loginCmd() *cobra.Command {
+	var dataDir, name, fp, scope string
+	var az, force, noBrowser bool
+	c := &cobra.Command{
+		Use:   "login <hub[:port]>",
+		Short: "Enroll this worker as yours, signing in with your Microsoft account",
+		Long: `Enroll this worker with longarm-hub as your own worker: usable by you only
+until you share it (longarm worker share), approved right away.
+
+By default longarmd login prints the hub's /link address and a code: open
+the page in any browser (your laptop or phone will do - this machine needs
+none), sign in with Microsoft, type the code, check the details and
+approve. The page is opened here when this machine has a desktop
+(--no-browser: never).
+
+--az uses the Azure CLI's sign-in on this machine instead (az login): no
+browser, no code.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dataDir, err := filepath.Abs(dataDir)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("data dir %s\n", dataDir)
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			return longarmd.Login(ctx, dataDir, args[0], longarmd.LoginOptions{Name: name, Fingerprint: fp, Force: force,
+				Az: az, Scope: scope, Browser: !noBrowser, Out: os.Stdout})
+		},
+	}
+	c.Flags().StringVar(&dataDir, "data-dir", longarmd.DefaultDataDir(), "data directory (root: /var/lib/longarmd, LocalSystem: C:\\ProgramData\\Longarm\\longarmd, else ~/.longarm); env LONGARM_DATA_DIR")
+	c.Flags().StringVar(&name, "name", "", "worker name (default: hostname)")
+	c.Flags().StringVar(&fp, "ca-fingerprint", "", "expected sha256 fingerprint of the hub CA (printed by longarm-hub ca show)")
+	c.Flags().BoolVar(&az, "az", false, "sign in with the Azure CLI on this machine (az login) instead of a code")
+	c.Flags().StringVar(&scope, "scope", "", "--az: token scope to request (default: the hub's)")
+	c.Flags().BoolVar(&noBrowser, "no-browser", false, "only print the /link address and the code; don't open a browser here")
+	c.Flags().BoolVar(&force, "force", false, "enroll again although a certificate exists")
+	return c
+}
+
 // localClient connects to the running longarmd's local control API.
 func localClient(dataDir string) (pb.LocalWorkerClient, func(), error) {
 	cc, err := localapi.DialFile(filepath.Join(dataDir, longarmd.LocalAddrFile), "longarmd")
