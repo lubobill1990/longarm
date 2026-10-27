@@ -531,6 +531,10 @@ func TestPortLinksTrust(t *testing.T) {
 		}
 	}
 	for name, w := range ws {
+		waitFor(t, name+"'s trust policy reload", 20*time.Second, func() bool {
+			b, _ := os.ReadFile(w.logPath)
+			return strings.Contains(string(b), "trust policy reloaded")
+		})
 		waitFor(t, name+"'s renewed, endorsed certificate", 60*time.Second, func() bool {
 			b, _ := os.ReadFile(filepath.Join(w.dataDir, "tls", "node.crt"))
 			c, err := pki.ParseCertPEM(b)
