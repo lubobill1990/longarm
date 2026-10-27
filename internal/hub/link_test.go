@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -735,5 +736,21 @@ func TestLinkBounds(t *testing.T) {
 	expire(2 * time.Minute)
 	if _, err := ec.PollLink(tctx(t), &pb.PollLinkRequest{PollToken: d.st.PollToken}); status.Code(err) != codes.NotFound {
 		t.Fatalf("poll past the expiry: %v", err)
+	}
+}
+
+// Browsers send "Origin: null" with form posts from a page whose referrer
+// policy is no-referrer: the hub's forms would then fail sameSitePost.
+func TestReferrerPolicyKeepsOrigin(t *testing.T) {
+	rec := httptest.NewRecorder()
+	securityHeaders(http.NotFoundHandler()).ServeHTTP(rec, httptest.NewRequest("GET", "/link", nil))
+	if p := rec.Header().Get("Referrer-Policy"); p == "no-referrer" || p == "" {
+		t.Fatalf("Referrer-Policy %q: form posts would carry Origin: null", p)
+	}
+	h := &Hub{}
+	r := httptest.NewRequest("POST", "https://hub.example.com/link", nil)
+	r.Header.Set("Origin", "null")
+	if h.sameSitePost(r) {
+		t.Fatal("Origin: null accepted")
 	}
 }

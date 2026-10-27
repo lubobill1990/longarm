@@ -183,7 +183,11 @@ func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "no-referrer")
+		// same-origin, not no-referrer: under no-referrer a browser sends
+		// "Origin: null" with form posts, and the hub's own forms (/link,
+		// /status login) would fail their same-origin check; other sites
+		// still get no referrer
+		w.Header().Set("Referrer-Policy", "same-origin")
 		next.ServeHTTP(w, r)
 	})
 }
