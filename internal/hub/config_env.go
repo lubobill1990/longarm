@@ -34,6 +34,10 @@ const (
 	// cloud container: public_addr = host:<listen port>, and host joins the
 	// certificate's SANs (hosts).
 	EnvAdvertise = "LONGARM_HUB_ADVERTISE"
+	// [scheduler] gate_free_gb / gate_cpu: a hub whose workers are small
+	// (containers, laptops) needs a lower memory gate than the default 20 GB
+	EnvGateFreeGB = "LONGARM_HUB_SCHED_GATE_FREE_GB"
+	EnvGateCPU    = "LONGARM_HUB_SCHED_GATE_CPU"
 	// [auth.entra]; the lists are comma-separated.
 	EnvEntraTenant          = "LONGARM_HUB_ENTRA_TENANT_ID"
 	EnvEntraClient          = "LONGARM_HUB_ENTRA_CLIENT_ID"
@@ -47,6 +51,18 @@ const (
 )
 
 func (c *Config) applyEnv() error {
+	for _, kv := range []struct {
+		env string
+		dst **float64
+	}{{EnvGateFreeGB, &c.Scheduler.GateFreeGB}, {EnvGateCPU, &c.Scheduler.GateCPU}} {
+		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil || f < 0 {
+				return fmt.Errorf("%s=%q: want a number >= 0", kv.env, v)
+			}
+			*kv.dst = &f
+		}
+	}
 	for _, kv := range []struct {
 		env string
 		dst *string

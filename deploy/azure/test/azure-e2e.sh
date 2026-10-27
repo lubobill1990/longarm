@@ -3,14 +3,14 @@
 #
 # A fresh hub (deploy.sh, storage-auth identity, Entra sign-in for the
 # test tenant's app) in a shared resource group; this machine signs in with
-# the Azure CLI's current identity (in CI: the app itself through GitHub
-# OIDC, mapped to the Longarm user "ci" by --entra-apps), registers itself
+# the Azure CLI's current identity (in CI: the job's managed identity,
+# CI_APP_ID, mapped to the Longarm user "ci" by --entra-apps), registers itself
 # as an owned worker through the hub's relay (a CI runner is behind NAT),
 # and runs work there - on that worker and through the scheduler.
 # Cleanup is azure-e2e-cleanup.sh (the workflow runs it always).
 #
 #   NAME=lae2e123 IMAGE=ghcr.io/<owner>/longarm-hub:sha-<12> BIN=<dir with longarm, longarmd> \
-#   RG=longarm-ci ENTRA_TENANT=<tenant> ENTRA_CLIENT=<app id> [EXPECT_USER=ci] deploy/azure/test/azure-e2e.sh
+#   RG=longarm-ci ENTRA_TENANT=<tenant> ENTRA_CLIENT=<app id> [CI_APP_ID=<identity client id>] #   [EXPECT_USER=ci] deploy/azure/test/azure-e2e.sh
 # Git Bash on Windows (local runs): keep resource IDs as they are, not as paths
 export MSYS_NO_PATHCONV=1
 set -euo pipefail
@@ -45,7 +45,7 @@ retry() {
 step "deploy hub $NAME ($IMAGE)"
 "$here/../deploy.sh" --name "$NAME" --resource-group "$RG" --storage-auth identity --no-panel \
 	--image "$IMAGE" --entra-tenant "$ENTRA_TENANT" --entra-client "$ENTRA_CLIENT" --entra-web off \
-	--entra-apps "$ENTRA_CLIENT=ci" --timeout 1200 | tee "$work/deploy.out"
+	--entra-apps "${CI_APP_ID:-$ENTRA_CLIENT}=ci" --gate-free-gb 1 --timeout 1200 | tee "$work/deploy.out"
 hub=$(sed -n 's/^  hub address *//p' "$work/deploy.out")
 fp=$(sed -n 's/^  CA fingerprint *//p' "$work/deploy.out")
 fqdn=${hub%:*}
@@ -76,10 +76,12 @@ done_step
 
 step "run on the chosen worker, and through the scheduler"
 # shellcheck disable=SC2016 # $(hostname) is for the worker's shell
-out=$(retry 3 10 longarm exec "$wname" -- sh -c 'echo "hello from $(hostname)"') || fail "exec on $wname"
+out=$(retry 3 10 timeout 300 "$BIN/longarm" --config-dir "$client" exec "$wname" -- sh -c 'echo "hello from $(uname -n)"') || fail "exec on $wname"
 echo "$out"
 grep -q "hello from" <<<"$out" || fail "exec output: $out"
-out=$(longarm run -f -- sh -c 'echo placed-by-scheduler' 2>&1) || fail "longarm run: $out"
+# the scheduler places by the workers' metrics: show what the hub has
+longarm ls || true
+out=$(timeout 300 "$BIN/longarm" --config-dir "$client" run -f -- sh -c 'echo placed-by-scheduler' 2>&1) || fail "longarm run (5 min): $out"
 echo "$out"
 grep -q "placed on $wname" <<<"$out" || fail "the scheduler did not place the job on the only usable worker"
 grep -q "placed-by-scheduler" <<<"$out" || fail "job output missing"

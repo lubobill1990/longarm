@@ -25,7 +25,7 @@ template=$here/azuredeploy.json
 # empty = not given (a re-run keeps the running hub's value)
 name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=false yes=false
 recreate=false admin_code=false subscription='' acme_email='' registry_user='' tailscale_secret_file=''
-entra_tenant='' entra_client='' entra_admins='' entra_web='' entra_apps=''
+entra_tenant='' entra_client='' entra_admins='' entra_web='' entra_apps='' gate_free_gb=''
 build_in_acr=false stun_servers='' storage_auth='' acr='' timeout=1200 stuck_timeout=600
 telemetry='' diagnostics=''
 # seconds between status polls (tests make it short)
@@ -51,6 +51,8 @@ usage: deploy.sh --name NAME [--location REGION] [options]
   --entra-admins LIST      Entra admins: UPNs, *@domain or object IDs, comma-separated
   --entra-web MODE         panel sign-in: spa (default) | confidential | off
   --entra-apps LIST        app-only sign-in (CI): "<app id>=<user>", comma-separated
+  --gate-free-gb N         scheduler memory gate: free GB a worker needs for scheduled jobs
+                           (default 20; lower it for small workers such as containers or laptops)
   --stun-servers LIST      external STUN servers the hub advertises (host:port,...; "none" = only the
                            hub's own; default: the template's public ones, see README "Direct connections")
   --log-analytics          send container logs to a Log Analytics workspace
@@ -93,6 +95,7 @@ while [[ $# -gt 0 ]]; do
 	--entra-admins) entra_admins=${2:?}; shift ;;
 	--entra-web) entra_web=${2:?}; shift ;;
 	--entra-apps) entra_apps=${2:?}; shift ;;
+	--gate-free-gb) gate_free_gb=${2:?}; shift ;;
 	--log-analytics) log_analytics=true ;;
 	--storage-auth) storage_auth=${2:?}; shift ;;
 	--acr) acr=${2:?}; shift ;;
@@ -377,6 +380,13 @@ fi
 storage_auth=${storage_auth:-key}
 [[ ${diagnostics:-false} != true || $storage_auth == identity ]] || die "--diagnostics needs --storage-auth identity (the hub writes bundles with its managed identity)"
 # a re-run keeps the hub's Entra settings (plain environment values)
+# a re-run keeps the hub's scheduler gate (a plain environment value)
+if [[ -n $cur_image && -z $gate_free_gb ]]; then
+	gate_free_gb=$(az container show -g "$rg" -n "$name" -o tsv \
+		--query "containers[0].environmentVariables[?name=='LONGARM_HUB_SCHED_GATE_FREE_GB'].value | [0]" 2>/dev/null | tr -d '\r' || true)
+	[[ $gate_free_gb != None ]] || gate_free_gb=''
+fi
+[[ -z $gate_free_gb || $gate_free_gb =~ ^[0-9]+([.][0-9]+)?$ ]] || die "--gate-free-gb: a number of GB"
 if [[ -n $cur_image && -z $entra_tenant ]]; then
 	while IFS=$'\t' read -r k v; do
 		case $k in
@@ -462,6 +472,7 @@ json_str() {
 	printf ',"size":{"value":%s}' "$(json_str "$size")"
 	printf ',"enablePanel":{"value":%s}' "$panel"
 	printf ',"enableLogAnalytics":{"value":%s}' "$log_analytics"
+	[[ -z $gate_free_gb ]] || printf ',"schedulerGateFreeGb":{"value":%s}' "$(json_str "$gate_free_gb")"
 	printf ',"storageAuth":{"value":%s}' "$(json_str "$storage_auth")"
 	printf ',"enableTelemetry":{"value":%s},"enableDiagnostics":{"value":%s}' "$telemetry" "$diagnostics"
 	[[ -z $acr ]] || printf ',"acrName":{"value":%s}' "$(json_str "$acr")"
