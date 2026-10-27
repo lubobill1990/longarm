@@ -2,7 +2,8 @@
 // (with reservations) and longarm's client-side fallback when the hub is
 // unreachable (without them):
 //
-//	gate:  free memory >= GateFreeGB and CPU < GateCPU, the job's
+//	gate:  free memory >= min(GateFreeGB, GateFreeFraction * total memory)
+//	       and CPU < GateCPU, the job's
 //	       reservation fits (free - reserved >= mem_gb), labels match, the
 //	       node is online, approved and not draining
 //	score: free - reserved - 6*running + 10*has_mirror(repo) + 5*warm_deps
@@ -20,14 +21,19 @@ import (
 
 // Params are the gate thresholds and per-type memory reservations.
 type Params struct {
-	GateFreeGB float64            // default 20
-	GateCPU    float64            // percent, default 70
-	MemGB      map[string]float64 // by job type; "default" fallback
+	GateFreeGB float64 // default 20
+	// GateFreeFraction scales the memory gate down for small workers: a
+	// worker needs min(GateFreeGB, GateFreeFraction * its total memory)
+	// free, so a 16 GB laptop (4 GB) takes jobs while a 64 GB box keeps its
+	// margin (16 GB). Default 0.25; 0 = the fixed GateFreeGB only.
+	GateFreeFraction float64
+	GateCPU          float64            // percent, default 70
+	MemGB            map[string]float64 // by job type; "default" fallback
 }
 
 // Defaults: claude/copilot sessions 2 GB, builds 8 GB (DESIGN §5.1).
 func Defaults() Params {
-	return Params{GateFreeGB: 20, GateCPU: 70, MemGB: map[string]float64{
+	return Params{GateFreeGB: 20, GateFreeFraction: 0.25, GateCPU: 70, MemGB: map[string]float64{
 		"claude": 2, "copilot": 2, "build": 8, "test": 4, "default": 2,
 	}}
 }
@@ -68,6 +74,7 @@ type Candidate struct {
 	Name       string
 	Labels     map[string]string // includes os=, arch=
 	FreeGB     float64           // memory not in use
+	TotalGB    float64           // physical memory (0 = unknown: the fixed gate)
 	CPU        float64           // percent
 	Running    int               // running jobs
 	ReservedGB float64           // reservations of placed/active jobs
@@ -155,8 +162,8 @@ func reject(p Params, c Candidate, req Request) string {
 			return fmt.Sprintf("label %s=%q, want %q", k, c.Labels[k], v)
 		}
 	}
-	if c.FreeGB < p.GateFreeGB {
-		return fmt.Sprintf("free %.1f GB < %.0f GB", c.FreeGB, p.GateFreeGB)
+	if gate := p.memGate(c); c.FreeGB < gate {
+		return fmt.Sprintf("free %.1f GB < %.1f GB", c.FreeGB, gate)
 	}
 	if c.CPU >= p.GateCPU {
 		return fmt.Sprintf("cpu %.0f%% >= %.0f%%", c.CPU, p.GateCPU)
@@ -165,6 +172,14 @@ func reject(p Params, c Candidate, req Request) string {
 		return fmt.Sprintf("free %.1f GB - reserved %.1f GB < %.1f GB needed", c.FreeGB, c.ReservedGB, req.MemGB)
 	}
 	return ""
+}
+
+// memGate is the free memory c needs to take jobs (Params.GateFreeFraction).
+func (p Params) memGate(c Candidate) float64 {
+	if p.GateFreeFraction > 0 && c.TotalGB > 0 {
+		return min(p.GateFreeGB, p.GateFreeFraction*c.TotalGB)
+	}
+	return p.GateFreeGB
 }
 
 // Label keys longarm puts on jobs so the hub can account reservations.
