@@ -399,6 +399,8 @@ log_analytics=${log_analytics:-false}
 telemetry=${telemetry:-false}
 diagnostics=${diagnostics:-false}
 ! $log_analytics || ensure_providers Microsoft.OperationalInsights
+# Application Insights on its Log Analytics workspace
+! $telemetry || ensure_providers Microsoft.OperationalInsights Microsoft.Insights
 
 if $build_in_acr; then
 	# the image from this checkout, built by ACR Tasks (no docker here); a

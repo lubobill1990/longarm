@@ -51,6 +51,8 @@ param(
     [string]$EntraAdmins = '',
     # panel sign-in: spa (default) | confidential | off
     [string]$EntraWeb = '',
+    # app-only sign-in (CI): "<app id>=<user>", comma-separated
+    [string]$EntraApps = '',
     [switch]$LogAnalytics,
     # key (default): storage account keys; identity: a managed identity, shared key access off
     [ValidateSet('', 'key', 'identity')][string]$StorageAuth = '',
@@ -376,6 +378,7 @@ try {
                 'LONGARM_HUB_ENTRA_CLIENT_ID' { if (-not $EntraClient) { $EntraClient = $kv[1] } }
                 'LONGARM_HUB_ENTRA_ADMINS' { if (-not $EntraAdmins) { $EntraAdmins = $kv[1] } }
                 'LONGARM_HUB_ENTRA_WEB' { if (-not $EntraWeb) { $EntraWeb = $kv[1] } }
+                'LONGARM_HUB_ENTRA_APPS' { if (-not $EntraApps) { $EntraApps = $kv[1] } }
             }
         }
     }
@@ -385,6 +388,8 @@ try {
     if (-not $Size) { $Size = 'small' }
     if ($null -eq $panelOn) { $panelOn = $true }
     if ($logsOn) { Register-Provider 'Microsoft.OperationalInsights' }
+    # Application Insights on its Log Analytics workspace
+    if ($telemetryOn) { Register-Provider 'Microsoft.OperationalInsights', 'Microsoft.Insights' }
 
     $buildAcr = ''
     $registryPassword = $env:LONGARM_REGISTRY_PASSWORD
@@ -460,6 +465,7 @@ try {
         $p.entraClientId = @{ value = $EntraClient }
         if ($EntraAdmins) { $p.entraAdmins = @{ value = $EntraAdmins } }
         if ($EntraWeb) { $p.entraWeb = @{ value = $EntraWeb } }
+        if ($EntraApps) { $p.entraApps = @{ value = $EntraApps } }
     }
     if ($RegistryUser) {
         if (-not $registryPassword) { throw '-RegistryUser needs $env:LONGARM_REGISTRY_PASSWORD' }
