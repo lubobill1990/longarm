@@ -436,7 +436,9 @@ never the credential.
   Azure DevOps and git's http-backend serve for any commit reachable from
   their refs; when a server refuses, the worker fetches the remote's
   branches and looks for the commit there). A commit the worker's mirror
-  has already is not fetched again. No credential to be had on this
+  has already is not fetched again; on a shared-isolation worker the job
+  still proves its own access first (one `git ls-remote`, no objects:
+  [security](security.md#forwarded-git-credentials)). No credential to be had on this
   machine: exit 77, nothing submitted. Refused by the remote (expired, no
   access, wrong tenant): the job fails (exit code 126) with `the forwarded
   credential was refused (...)`.

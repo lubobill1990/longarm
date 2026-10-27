@@ -159,6 +159,35 @@ func TestSubmitGitAuth(t *testing.T) {
 		}
 	}
 
+	// Shared isolation: alice's fetch put c1 into the mirror bob's jobs use
+	// too. bob proves his own access before his job checks it out.
+	bc := pb.NewJobsClient(e.bob)
+	bobSubmit := func(id string, auth *pb.GitAuth) (*pb.Job, string) {
+		t.Helper()
+		_, err := bc.Submit(cctx(t), &pb.SubmitRequest{GitAuth: auth, Spec: &pb.JobSpec{Id: id, Argv: []string{exe},
+			Env: map[string]string{"LONGARM_TEST_ENV_DUMP": "1"}, Workspace: &pb.JobWorkspace{Repo: "proj", Url: u, Ref: c1}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return waitJobLog(t, bc, id)
+	}
+	j, log = bobSubmit("GB1", &pb.GitAuth{Scheme: jobs.GitAuthBearer, Secret: []byte("bob-has-no-access-1")})
+	if j.State != pb.JobState_JOB_STATE_FAILED || j.ExitCode != 126 || !strings.Contains(j.Reason, "forwarded credential was refused") {
+		t.Fatalf("bob without access: %s %d %q\n%s", j.State, j.ExitCode, j.Reason, log)
+	}
+	j, log = bobSubmit("GB0", nil)
+	if j.State != pb.JobState_JOB_STATE_FAILED || !strings.Contains(j.Reason, "could not authenticate") {
+		t.Fatalf("bob without a credential: %s %q\n%s", j.State, j.Reason, log)
+	}
+	before := srv.Stats()
+	j, log = bobSubmit("GB2", &pb.GitAuth{Scheme: jobs.GitAuthBearer, Secret: []byte(token)})
+	if j.State != pb.JobState_JOB_STATE_DONE || !strings.Contains(log, "in the mirror already: not fetching") {
+		t.Fatalf("bob with access: %s %q\n%s", j.State, j.Reason, log)
+	}
+	if after := srv.Stats(); after.UploadPackBytes-before.UploadPackBytes > 2048 {
+		t.Fatalf("bob's job fetched objects again: %+v -> %+v", before, after)
+	}
+
 	// Workspace.Fetch
 	wc := pb.NewWorkspaceClient(e.alice)
 	res, err := wc.Fetch(cctx(t), &pb.FetchRequest{Repo: "proj2", Url: u, Commits: []string{c1},
@@ -183,7 +212,7 @@ func TestSubmitGitAuth(t *testing.T) {
 	root := filepath.Dir(e.srv.Audit.path)
 	filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
 		if err == nil && !fi.IsDir() {
-			if b, _ := os.ReadFile(p); bytes.Contains(b, []byte(token)) || bytes.Contains(b, []byte("wrong-secret")) {
+			if b, _ := os.ReadFile(p); bytes.Contains(b, []byte(token)) || bytes.Contains(b, []byte("wrong-secret")) || bytes.Contains(b, []byte("bob-has-no-access")) {
 				t.Errorf("credential on disk in %s", p)
 			}
 		}

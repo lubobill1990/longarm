@@ -19,7 +19,10 @@
   masked in logs and errors; the job never sees it; job records and the
   audit log say `git_auth: true` only. `--ref <full commit id>` fetches a
   commit that is no branch tip by id (falling back to the remote's
-  branches); a commit the mirror has is not fetched again. `--lfs fetch`:
+  branches); a commit the mirror has is not fetched again, but on a
+  shared-isolation worker the job proves its own access to the remote first
+  (`git ls-remote`, no objects), so another user's fetch never lets a job
+  skip the remote's authorization. `--lfs fetch`:
   the worker also fetches the commit's Git LFS objects (git-lfs, same
   credential). No credential here: exit 77; an older worker: exit 2
   (workers announce `git-auth-forward` in `Node.Info` features)

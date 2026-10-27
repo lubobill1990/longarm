@@ -189,7 +189,7 @@ func relayClientStream[Req, Res any](ctx context.Context, first *Req, recv func(
 // user's OS account and serves Files, Workspace and UserHelper for longarmd
 // on one connection over in/out (its stdin/stdout), then exits.
 func ServeUserHelper(root string, in io.Reader, out io.WriteCloser) error {
-	srv := &Server{DataDir: root, helperWS: &workspace.Store{Root: root}}
+	srv := &Server{DataDir: root, helperWS: &workspace.Store{Root: root, PrivateMirrors: true}}
 	g := grpc.NewServer(grpc.MaxRecvMsgSize(64<<20), grpc.MaxSendMsgSize(64<<20))
 	pb.RegisterFilesServer(g, &filesServer{s: srv})
 	pb.RegisterWorkspaceServer(g, &workspaceServer{s: srv})

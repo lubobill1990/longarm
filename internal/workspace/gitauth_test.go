@@ -136,10 +136,32 @@ func TestFetchForwarded(t *testing.T) {
 	if err != nil || got != c1 {
 		t.Fatalf("fetch %s = %s %v\n%s", c1, got, err, log.String())
 	}
-	// in the mirror already: no request at all
+	// In the mirror already, but the mirror is shared between users: the
+	// caller proves its own access (one ls-remote, no objects) - without a
+	// credential, or with a wrong one, it is refused.
+	if _, err := s.FetchURLAuth(ctx, "proj", u, c1, nil, "", &log); err == nil || !strings.Contains(err.Error(), "could not authenticate") {
+		t.Fatalf("cached commit, no credential: %v", err)
+	}
+	if _, err := s.FetchURLAuth(ctx, "proj", u, c1, bearer("other-users-wrong-cred"), "", &log); err == nil ||
+		!strings.Contains(err.Error(), "forwarded credential was refused") {
+		t.Fatalf("cached commit, wrong credential: %v", err)
+	}
 	before := srv.Stats()
-	if got, err := s.FetchURLAuth(ctx, "proj", u, c1, nil, "", &log); err != nil || got != c1 || srv.Stats() != before {
-		t.Fatalf("cached commit: %s %v %+v", got, err, srv.Stats())
+	if got, err := s.FetchURLAuth(ctx, "proj", u, c1, bearer(testToken), "", &log); err != nil || got != c1 {
+		t.Fatalf("cached commit: %s %v", got, err)
+	}
+	if after := srv.Stats(); after.Authorized > before.Authorized+2 || after.UploadPackBytes-before.UploadPackBytes > 2048 {
+		t.Fatalf("cached commit: more than an ls-remote: %+v -> %+v", before, after)
+	}
+	// per-user mirrors: no request at all
+	private := &Store{Root: root, PrivateMirrors: true}
+	before = srv.Stats()
+	if got, err := private.FetchURLAuth(ctx, "proj", u, c1, nil, "", &log); err != nil || got != c1 || srv.Stats() != before {
+		t.Fatalf("cached commit, private mirror: %s %v %+v", got, err, srv.Stats())
+	}
+	// FetchCommits of present commits proves access the same way
+	if _, err := s.FetchCommits(ctx, "proj", u, []string{c1}, bearer("other-users-wrong-cred"), &log); err == nil {
+		t.Fatal("FetchCommits of a present commit with a wrong credential worked")
 	}
 	// a branch, basic auth (git credential fill's kind)
 	basic := &jobs.GitAuth{Scheme: jobs.GitAuthBasic, Username: "u", Secret: []byte(testToken)}

@@ -375,7 +375,7 @@ func (s *Spaces) openUser(owner, root string, acct *platform.Account) (*Space, e
 		}
 	}
 	sp := &Space{Owner: owner, Root: root, Account: acct, Tmp: filepath.Join(root, TmpDir), sp: s}
-	sp.WS = &workspace.Store{Root: root, Prune: sp.prune}
+	sp.WS = &workspace.Store{Root: root, Prune: sp.prune, PrivateMirrors: true}
 	sp.holdProfile()
 	var err error
 	if sp.Jobs, err = s.newManager(filepath.Join(root, JobsDir), JobsDir, sp.prepare, 0o700); err != nil {

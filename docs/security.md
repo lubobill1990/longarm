@@ -680,10 +680,22 @@ credential fails the fetch instead of falling back to the worker account's
 own credentials, and no helper stores the forwarded one.
 
 **Shared mirrors.** In shared isolation the workspace mirror is shared by
-the worker's users, as before: a commit a job fetched with a forwarded
-credential is in the mirror for later jobs of other users of that worker
-(a later fetch of a commit the mirror has is skipped). Per-user isolation
-keeps mirrors per user.
+the worker's users: a commit a job fetched with user A's forwarded
+credential stays in the mirror. A later job that names such a commit
+(`--repo <url> --ref <sha>`) does not fetch it again, but it is not checked
+out on A's authority either: the job first proves its **own** access to the
+remote - one `git ls-remote <url> HEAD` (protocol v2 lists that ref only; no
+objects) with the job's forwarded credential, else its `GH_TOKEN` secret,
+else the worker account's own credentials, exactly what a fetch would have
+used. Refused: the job fails (exit code 126) like a refused fetch (`the
+forwarded credential was refused` / `the worker could not authenticate`).
+`Workspace.Fetch` (remote-first shipping) checks the same way when every
+requested base commit is present already; refused, the client ships what
+the worker lacks itself (it has those objects anyway). Jobs without
+forwarding keep using the worker's own credentials, as before this
+feature: a remote the worker account can read is readable for every user
+of a shared worker. Per-user isolation keeps mirrors per user and skips the
+check (a user's mirror only ever holds what that user fetched or shipped).
 
 ## What is not isolated (known gaps)
 

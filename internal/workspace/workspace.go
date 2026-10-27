@@ -89,6 +89,11 @@ type Store struct {
 	// Prune replaces PruneAll's git runs (per-user isolation: the user's
 	// mirrors are pruned as the user).
 	Prune func(ctx context.Context)
+	// PrivateMirrors: the mirrors belong to one user (per-user isolation).
+	// Otherwise (shared isolation) a commit fetched for one user's job is
+	// there for every user's: a job that would use such a commit without
+	// fetching first proves its own access to the remote (proveAccess).
+	PrivateMirrors bool
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
@@ -363,6 +368,9 @@ func (s *Store) FetchURLAuth(ctx context.Context, repo, u, ref string, auth *job
 	defer unlock()
 	if shaRE.MatchString(ref) {
 		if _, err := s.run(ctx, m, nil, nil, "cat-file", "-e", ref+"^{commit}"); err == nil {
+			if err := s.proveAccess(ctx, m, u, fa, log); err != nil {
+				return "", fetchError(u, fa.kind, err)
+			}
 			logf(log, "commit %s is in the mirror already: not fetching", ref)
 			return ref, nil
 		}
@@ -380,6 +388,23 @@ func (s *Store) FetchURLAuth(ctx context.Context, repo, u, ref string, auth *job
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// proveAccess checks, when the mirror is shared between users, that the
+// caller's credential (forwarded, GH_TOKEN, or else the worker's own, as a
+// fetch would use) reads the remote u: a commit in the mirror may have come
+// with another user's credential, and using it unchecked would skip the
+// remote's authorization. One ls-remote of HEAD (protocol v2: the server
+// lists that ref only), no objects. Called with the mirror lock held.
+func (s *Store) proveAccess(ctx context.Context, m, u string, fa *fetchAuth, log io.Writer) error {
+	if s.PrivateMirrors {
+		return nil
+	}
+	if strings.HasPrefix(u, "-") {
+		return fmt.Errorf("bad url %q", RedactURLs(u))
+	}
+	_, err := s.runAuth(ctx, m, nil, fa, log, "ls-remote", u, "HEAD")
+	return err
 }
 
 // maxFetchCommits caps the commits of one FetchCommits.
@@ -419,6 +444,9 @@ func (s *Store) FetchCommits(ctx context.Context, repo, u string, commits []stri
 	}
 	present, missing := have()
 	if len(missing) == 0 {
+		if err := s.proveAccess(ctx, m, u, fa, log); err != nil {
+			return nil, fetchError(u, fa.kind, err)
+		}
 		return present, nil
 	}
 	ferr := s.fetchCommits(ctx, m, u, missing, fa, log)
