@@ -65,10 +65,20 @@ func installEnrollment(addr string, r *hubclient.JoinResult, tr *pki.CSRTrust, v
 	if !r.Pinned {
 		fmt.Fprintf(os.Stderr, "warning: hub CA not pinned; trusting %s on first use (pass --ca-fingerprint to verify)\n", r.CAFingerprint)
 	}
-	if err := client.InstallEnrollment(configDir, addr, r, tr, func(s string) { fmt.Fprintln(os.Stderr, s) }); err != nil {
+	var notes []string
+	if err := client.InstallEnrollment(configDir, addr, r, tr, func(s string) { notes = append(notes, s) }); err != nil {
 		return err
 	}
 	fmt.Printf("%s %s as %s/%s (config %s)\n", verb, addr, r.Resp.Role, r.Resp.Name, configDir)
+	// after the result line, as before: warnings to stderr, the rest (the
+	// tailnet key) to stdout
+	for _, n := range notes {
+		if strings.HasPrefix(n, "warning:") {
+			fmt.Fprintln(os.Stderr, n)
+		} else {
+			fmt.Println(n)
+		}
+	}
 	return nil
 }
 
