@@ -133,13 +133,14 @@ func markUsageErrors(root *cobra.Command, validated *bool) {
 // programs driving it (longarm version --json; docs/usage.md#capabilities).
 // Names are lowercase-hyphenated and never reused for something else.
 var cliFeatures = []string{
-	"exit-codes",    // the exit-code contract
-	"jobs-source",   // jobs --json "source" / "unreachable"
-	"jobs-hub-only", // jobs --hub-only, jobs --id
-	"stdin-file",    // run --stdin-file
-	"lfs",           // run / sync --lfs skip|ship
-	"ref-sha",       // run --repo <path> --ref <full commit id>
-	"worker-label",  // longarm worker label
+	"exit-codes",       // the exit-code contract
+	"jobs-source",      // jobs --json "source" / "unreachable"
+	"jobs-hub-only",    // jobs --hub-only, jobs --id
+	"stdin-file",       // run --stdin-file
+	"lfs",              // run / sync --lfs skip|ship
+	"ref-sha",          // run --repo <path> --ref <full commit id>
+	"worker-label",     // longarm worker label
+	"git-auth-forward", // run / sync --git-auth forward, run --lfs fetch
 }
 
 func versionCmd() *cobra.Command {

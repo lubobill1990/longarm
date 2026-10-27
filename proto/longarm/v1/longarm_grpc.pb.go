@@ -1504,8 +1504,9 @@ var Files_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Workspace_Refs_FullMethodName = "/longarm.v1.Workspace/Refs"
-	Workspace_Sync_FullMethodName = "/longarm.v1.Workspace/Sync"
+	Workspace_Refs_FullMethodName  = "/longarm.v1.Workspace/Refs"
+	Workspace_Sync_FullMethodName  = "/longarm.v1.Workspace/Sync"
+	Workspace_Fetch_FullMethodName = "/longarm.v1.Workspace/Fetch"
 )
 
 // WorkspaceClient is the client API for Workspace service.
@@ -1522,6 +1523,11 @@ type WorkspaceClient interface {
 	// changes and a tar of untracked files, in that order, then either applies
 	// them onto a worktree at header.path or stages them for a job.
 	Sync(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[SyncChunk, SyncResult], error)
+	// Fetch gets commits into the mirror from a hosted remote, with a
+	// forwarded credential: before shipping a local checkout the client has
+	// the worker fetch what the remote already has, then sends only the
+	// delta ("git-auth-forward").
+	Fetch(ctx context.Context, in *FetchRequest, opts ...grpc.CallOption) (*FetchResponse, error)
 }
 
 type workspaceClient struct {
@@ -1555,6 +1561,16 @@ func (c *workspaceClient) Sync(ctx context.Context, opts ...grpc.CallOption) (gr
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Workspace_SyncClient = grpc.ClientStreamingClient[SyncChunk, SyncResult]
 
+func (c *workspaceClient) Fetch(ctx context.Context, in *FetchRequest, opts ...grpc.CallOption) (*FetchResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FetchResponse)
+	err := c.cc.Invoke(ctx, Workspace_Fetch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkspaceServer is the server API for Workspace service.
 // All implementations must embed UnimplementedWorkspaceServer
 // for forward compatibility.
@@ -1569,6 +1585,11 @@ type WorkspaceServer interface {
 	// changes and a tar of untracked files, in that order, then either applies
 	// them onto a worktree at header.path or stages them for a job.
 	Sync(grpc.ClientStreamingServer[SyncChunk, SyncResult]) error
+	// Fetch gets commits into the mirror from a hosted remote, with a
+	// forwarded credential: before shipping a local checkout the client has
+	// the worker fetch what the remote already has, then sends only the
+	// delta ("git-auth-forward").
+	Fetch(context.Context, *FetchRequest) (*FetchResponse, error)
 	mustEmbedUnimplementedWorkspaceServer()
 }
 
@@ -1584,6 +1605,9 @@ func (UnimplementedWorkspaceServer) Refs(context.Context, *RefsRequest) (*RefsRe
 }
 func (UnimplementedWorkspaceServer) Sync(grpc.ClientStreamingServer[SyncChunk, SyncResult]) error {
 	return status.Error(codes.Unimplemented, "method Sync not implemented")
+}
+func (UnimplementedWorkspaceServer) Fetch(context.Context, *FetchRequest) (*FetchResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Fetch not implemented")
 }
 func (UnimplementedWorkspaceServer) mustEmbedUnimplementedWorkspaceServer() {}
 func (UnimplementedWorkspaceServer) testEmbeddedByValue()                   {}
@@ -1631,6 +1655,24 @@ func _Workspace_Sync_Handler(srv interface{}, stream grpc.ServerStream) error {
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Workspace_SyncServer = grpc.ClientStreamingServer[SyncChunk, SyncResult]
 
+func _Workspace_Fetch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FetchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceServer).Fetch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Workspace_Fetch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceServer).Fetch(ctx, req.(*FetchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Workspace_ServiceDesc is the grpc.ServiceDesc for Workspace service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1641,6 +1683,10 @@ var Workspace_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Refs",
 			Handler:    _Workspace_Refs_Handler,
+		},
+		{
+			MethodName: "Fetch",
+			Handler:    _Workspace_Fetch_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

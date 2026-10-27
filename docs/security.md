@@ -167,7 +167,10 @@ takes the same path - the submit's mTLS connection to the worker (the hub
 never sees it; a longnet relay forwards only TLS records), longarmd's and
 then the shim's memory, a pipe into the job - and is stored nowhere; job
 records and the audit log carry its size only.
-Unlike secrets it is not redacted from the job's output.
+Unlike secrets it is not redacted from the job's output. A **forwarded git
+credential** (`--git-auth forward`) takes that path too but stops at
+longarmd: it never reaches the shim or the job
+([forwarded git credentials](#forwarded-git-credentials)).
 
 **Port forwards** (`longarm forward`, `fleet_forward`, ssh `-L`): only to
 loopback ports on which a process of the caller's own account listens
@@ -607,6 +610,111 @@ paths ([deploy/hub/README.md](../deploy/hub/README.md)); without it links
 use the hub's longnet relay. The relay forwards worker ↔ worker packets
 only for pairs with an active link (`longarm-relay` run standalone never
 does).
+
+## Forwarded git credentials
+
+`longarm run / sync --git-auth forward` lets a worker fetch a repository
+from its host (Azure DevOps, GitHub, any https git server) with the user's
+own credential, instead of a credential stored on the worker or shipping
+the history from the client ([docs/usage.md](usage.md#fetching-with-your-credential---git-auth-forward)).
+
+**What is forwarded, and for how long it is good.**
+
+- Azure DevOps: an Entra access token whose audience is Azure DevOps only
+  (`499b84ac-1321-427f-aa17-267ca6975798`), from `az account
+  get-access-token` in the organization's tenant (discovered from the
+  `X-VSS-ResourceTenant` header of an unauthenticated request to the
+  organization URL - no credential is sent there), or what Git Credential
+  Manager hands to `git credential fill`. It is valid for about an hour and
+  carries the user's Azure DevOps rights (every organization of that
+  tenant the user can reach), not only the one repository.
+- GitHub: `gh auth token` - gh's OAuth token or a PAT, **long-lived** (valid
+  until revoked) and with the scopes the user gave gh. Forwarding it trusts
+  the worker with it beyond the job; prefer a fine-grained, read-only PAT
+  for gh on machines whose workers you don't control, or use `--repo .`
+  without `--git-auth`.
+- Other hosts: whatever the user's credential helper returns (often a
+  long-lived password or PAT).
+
+**Who sees it.**
+
+- The client: gets it from az / gh / git (through pipes; never in argv, a
+  file or longarm's output) and keeps it in memory until it was sent. A
+  queued `run` holds it while it waits for placement.
+- The hub: **never**. It is only in the worker-direct requests
+  (`SubmitRequest.git_auth`, `Workspace.Fetch`), inside the end-to-end mTLS
+  connection to the worker (a longnet relay forwards only TLS records).
+  The hub's index and its audit trail get the job spec, which says
+  `git_auth: true` and nothing else. With [end-to-end trust](#end-to-end-trust-the-hub-is-not-trusted-with-access)
+  the client also verifies that the worker is one the user endorsed before
+  sending it.
+- The worker: longarmd (and, with per-user isolation, the user's helper
+  process, over its stdin pipe) holds it in memory during the fetch. git
+  and git-lfs get it from a credential helper (`longarmd
+  git-credential-helper`) that asks longarmd over a loopback connection
+  with a random one-time key (in the helper's environment; worthless once
+  the fetch is over: the listener closes), for the exact protocol, host
+  and repository path only - it is never in git's or git-lfs's
+  environment, command line or config, which git-lfs copies into
+  `lfs/logs` on a fatal error. longarmd then zeroes its copy (best effort:
+  the Go runtime, gRPC and the helper's output pipe may hold transient
+  copies until the memory is reused). It is never written to disk: not job.json, the status, the
+  mirror's or worktree's git config, `FETCH_HEAD`, remote URLs, the audit
+  log (`git_auth: true` only), longarmd's log or the job's out.log
+  (Authorization header values and the credential are masked in git's
+  output and in failure reasons).
+- The job: **never** - not in its environment, its stdin, its worktree's
+  git config or remotes. A job that wants to fetch more needs its own
+  credential (e.g. `--secret-env`).
+- The worker's local administrators (and root / SYSTEM) can read
+  longarmd's memory and its children's environment while the fetch runs:
+  forward a credential only to workers whose administrators you trust with
+  it - for an Azure DevOps token for up to an hour, for a GitHub token
+  until it is revoked.
+
+**Scope on the wire.** The credential is answered only for the fetched
+URL: protocol (https), host with port and repository path (and its `.git`
+twin, git-lfs's endpoint) must match exactly (`credential.useHttpPath`;
+longarmd checks, not only git's config matching). So:
+
+- **Redirects** are refused for the whole fetch (`http.followRedirects=false`
+  for git; git-lfs asks the helper per URL, and another host or http gets
+  nothing): the fetch fails with "the remote redirected ... use the final
+  URL". (A URL-scoped `http.extraHeader`, the first design, was replayed by
+  git to a redirect target - another host, or http - on the requests after
+  the redirected discovery.)
+- **The LFS endpoint** is pinned to the fetched URL's (`lfs.url` in the
+  fetch's config, which wins over a repository's `.lfsconfig` `lfs.url` /
+  `remote.*.lfsurl`); LFS downloads on a storage host get their own
+  short-lived URLs from the LFS API, not the credential.
+- **Submodules** are never fetched (`--no-recurse-submodules`; nothing
+  recurses into them).
+- **Traces** (`GIT_TRACE*`, `GIT_CURL_VERBOSE`, trace2) are forced off for
+  these git runs, and `<mirror>/lfs/logs` is removed after an LFS fetch.
+- Only https URLs get it (the client refuses http, the worker too; a job's
+  `GH_TOKEN` keeps working over http as before, also scoped to the exact
+  URL now).
+- The worker's credential helpers are switched off for that fetch: a
+  refused credential fails the fetch instead of falling back to the worker
+  account's own credentials, and no helper stores the forwarded one.
+
+**Shared mirrors.** In shared isolation the workspace mirror is shared by
+the worker's users: a commit a job fetched with user A's forwarded
+credential stays in the mirror. A later job that names such a commit
+(`--repo <url> --ref <sha>`) does not fetch it again, but it is not checked
+out on A's authority either: the job first proves its **own** access to the
+remote - one `git ls-remote <url> HEAD` (protocol v2 lists that ref only; no
+objects) with the job's forwarded credential, else its `GH_TOKEN` secret,
+else the worker account's own credentials, exactly what a fetch would have
+used. Refused: the job fails (exit code 126) like a refused fetch (`the
+forwarded credential was refused` / `the worker could not authenticate`).
+`Workspace.Fetch` (remote-first shipping) checks the same way when every
+requested base commit is present already; refused, the client ships what
+the worker lacks itself (it has those objects anyway). Jobs without
+forwarding keep using the worker's own credentials, as before this
+feature: a remote the worker account can read is readable for every user
+of a shared worker. Per-user isolation keeps mirrors per user and skips the
+check (a user's mirror only ever holds what that user fetched or shipped).
 
 ## What is not isolated (known gaps)
 

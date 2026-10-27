@@ -121,6 +121,15 @@ func (w *workspaceServer) proxyRefs(ctx context.Context, req *pb.RefsRequest) (*
 	return pb.NewWorkspaceClient(h.Conn).Refs(ctx, req)
 }
 
+func (w *workspaceServer) proxyFetch(ctx context.Context, req *pb.FetchRequest) (*pb.FetchResponse, error) {
+	h, err := w.s.helper(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer h.Close()
+	return pb.NewWorkspaceClient(h.Conn).Fetch(ctx, req)
+}
+
 func (w *workspaceServer) proxySync(st pb.Workspace_SyncServer, first *pb.SyncChunk) error {
 	ctx := st.Context()
 	h, err := w.s.helper(ctx)
@@ -180,7 +189,7 @@ func relayClientStream[Req, Res any](ctx context.Context, first *Req, recv func(
 // user's OS account and serves Files, Workspace and UserHelper for longarmd
 // on one connection over in/out (its stdin/stdout), then exits.
 func ServeUserHelper(root string, in io.Reader, out io.WriteCloser) error {
-	srv := &Server{DataDir: root, helperWS: &workspace.Store{Root: root}}
+	srv := &Server{DataDir: root, helperWS: &workspace.Store{Root: root, PrivateMirrors: true}}
 	g := grpc.NewServer(grpc.MaxRecvMsgSize(64<<20), grpc.MaxSendMsgSize(64<<20))
 	pb.RegisterFilesServer(g, &filesServer{s: srv})
 	pb.RegisterWorkspaceServer(g, &workspaceServer{s: srv})
@@ -219,8 +228,11 @@ func (u *userHelperServer) PrepareJob(req *pb.PrepareJobRequest, st pb.UserHelpe
 	if w == nil || !jobs.ValidID(req.JobId) || !workspace.ValidRepo(w.Repo) {
 		return status.Error(codes.InvalidArgument, "bad prepare request")
 	}
-	spec := jobs.Spec{ID: req.JobId, Workspace: &jobs.Workspace{Repo: w.Repo, URL: w.Url, Ref: w.Ref, Commit: w.Commit, StagingID: w.StagingId}}
-	dir, err := u.ws.PrepareJob(st.Context(), "", spec, req.SecretEnv, &streamWriter{st: st})
+	spec := jobs.Spec{ID: req.JobId, Workspace: &jobs.Workspace{Repo: w.Repo, URL: w.Url, Ref: w.Ref, Commit: w.Commit,
+		StagingID: w.StagingId, LFSFetch: w.LfsFetch}}
+	auth := GitAuthFromPB(req.GitAuth)
+	defer auth.Clear()
+	dir, err := u.ws.PrepareJob(st.Context(), "", spec, req.SecretEnv, auth, &streamWriter{st: st})
 	if err != nil {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	}

@@ -173,7 +173,7 @@ func (n *nodeServer) Info(ctx context.Context, _ *pb.InfoRequest) (*pb.InfoRespo
 		Hostname: host, NumCpu: int32(runtime.NumCPU()), DataDir: n.s.DataDir,
 		StartedAt: timestamppb.New(n.s.StartedAt), CallerName: id.Name, CallerRole: string(id.Role),
 		Listeners: n.s.ListenerNames(), SshHostKey: n.s.SSHHostKey,
-		Isolation: n.s.Spaces.Mode(), CallerUser: id.Owner(), Features: []string{jobs.FeatureStdin},
+		Isolation: n.s.Spaces.Mode(), CallerUser: id.Owner(), Features: []string{jobs.FeatureStdin, jobs.FeatureGitAuth},
 	}
 	if n.s.perUser() {
 		out.Account = n.s.Spaces.AccountName(id.Owner())
@@ -321,7 +321,8 @@ func JobToPB(j supervisor.Job) *pb.Job {
 		LogSize: j.LogSize, Reason: j.Status.Reason, Orphaned: j.Status.Orphaned, Workdir: j.Status.Workdir,
 	}
 	if w := j.Spec.Workspace; w != nil {
-		out.Spec.Workspace = &pb.JobWorkspace{Repo: w.Repo, Url: w.URL, Ref: w.Ref, Commit: w.Commit, StagingId: w.StagingID}
+		out.Spec.Workspace = &pb.JobWorkspace{Repo: w.Repo, Url: w.URL, Ref: w.Ref, Commit: w.Commit, StagingId: w.StagingID,
+			LfsFetch: w.LFSFetch, GitAuth: w.GitAuth}
 	}
 	if j.Status.ExitCode != nil {
 		out.HasExitCode, out.ExitCode = true, int32(*j.Status.ExitCode)
@@ -360,14 +361,29 @@ func (j *jobsServer) Submit(ctx context.Context, req *pb.SubmitRequest) (*pb.Job
 		if !workspace.ValidRepo(w.Repo) {
 			return nil, status.Errorf(codes.InvalidArgument, "bad workspace repo %q", w.Repo)
 		}
-		spec.Workspace = &jobs.Workspace{Repo: w.Repo, URL: w.Url, Ref: w.Ref, Commit: w.Commit, StagingID: w.StagingId}
+		spec.Workspace = &jobs.Workspace{Repo: w.Repo, URL: w.Url, Ref: w.Ref, Commit: w.Commit, StagingID: w.StagingId,
+			LFSFetch: w.LfsFetch}
+	}
+	auth := GitAuthFromPB(req.GitAuth)
+	if req.GitAuth != nil && !auth.Valid() {
+		auth.Clear()
+		return nil, status.Error(codes.InvalidArgument, "git_auth: want scheme bearer or basic and a secret")
+	}
+	if auth != nil && (spec.Workspace == nil || spec.Workspace.URL == "") {
+		auth.Clear()
+		return nil, status.Error(codes.InvalidArgument, "git_auth goes with a workspace url")
 	}
 	telemetry.Remember(ctx, "job/"+spec.ID) // before it starts: it may end at once
-	job, err := j.submit(ctx, owner, spec, req.SecretEnv, req.Stdin, req.Share)
-	// the stdin payload is like a secret: its size only, never its bytes
+	job, err := j.submit(ctx, owner, spec, req.SecretEnv, supervisor.Input{Stdin: req.Stdin, GitAuth: auth}, req.Share)
+	if err != nil {
+		auth.Clear() // not handed to a workspace preparation
+	}
+	// the stdin payload and the fetch credential are like secrets: never
+	// their bytes
 	j.s.Audit.Log(id, pb.Jobs_Submit_FullMethodName, map[string]any{
 		"job": spec.ID, "argv": spec.Argv, "cwd": spec.Cwd, "env_keys": keys(spec.Env),
-		"secret_keys": keys(req.SecretEnv), "stdin_bytes": len(req.Stdin), "share": req.Share, "error": errString(err),
+		"secret_keys": keys(req.SecretEnv), "stdin_bytes": len(req.Stdin), "git_auth": auth != nil, "share": req.Share,
+		"error": errString(err),
 	})
 	if err != nil {
 		if _, ok := status.FromError(err); ok {
@@ -378,7 +394,7 @@ func (j *jobsServer) Submit(ctx context.Context, req *pb.SubmitRequest) (*pb.Job
 	// telemetry: what kind of job, never its command line
 	telemetry.Event(ctx, "job.submitted", map[string]string{"workspace": strconv.FormatBool(spec.Workspace != nil),
 		"shared": strconv.FormatBool(len(req.Share) > 0), "secrets": strconv.FormatBool(len(req.SecretEnv) > 0),
-		"stdin": strconv.FormatBool(len(req.Stdin) > 0), "caller_role": string(id.Role), "isolation": j.s.Spaces.Mode()},
+		"stdin": strconv.FormatBool(len(req.Stdin) > 0), "git_auth": strconv.FormatBool(auth != nil), "caller_role": string(id.Role), "isolation": j.s.Spaces.Mode()},
 		map[string]float64{"mem_limit_gb": float64(job.Spec.MemLimitBytes) / (1 << 30), "cpu_limit": job.Spec.CPULimit})
 	return JobToPB(job), nil
 }
@@ -393,12 +409,12 @@ func (s *Server) SubmitAs(ctx context.Context, owner string, spec jobs.Spec, sec
 		return supervisor.Job{}, status.Errorf(codes.PermissionDenied, "user %s may not use this worker (%s)", owner, why)
 	}
 	spec.Owner = owner
-	return (&jobsServer{s: s}).submit(ctx, owner, spec, secrets, nil, nil)
+	return (&jobsServer{s: s}).submit(ctx, owner, spec, secrets, supervisor.Input{}, nil)
 }
 
 // submit places a job in owner's space with the owner's sharing, limits and
 // per-worker quota.
-func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, secrets map[string]string, stdin []byte, share []string) (supervisor.Job, error) {
+func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, secrets map[string]string, in supervisor.Input, share []string) (supervisor.Job, error) {
 	var teams []string
 	if j.s.Policy != nil {
 		teams = j.s.Policy.Teams(owner)
@@ -413,6 +429,10 @@ func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, s
 	sp, err := j.s.spaceFor(owner)
 	if err != nil {
 		return supervisor.Job{}, err
+	}
+	if w := spec.Workspace; w != nil && w.StagingID != "" && sp.WS != nil {
+		// what was uploaded, not under which id: a retry uploads anew
+		w.Overlay = sp.WS.StagingDigest(w.StagingID)
 	}
 	if esp, existing, err := j.s.Spaces.FindJob(spec.ID); err == nil {
 		if esp != sp || existing.Spec.OwnerName() != owner {
@@ -433,7 +453,7 @@ func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, s
 			}
 		}
 	}
-	return j.s.Spaces.SubmitJob(ctx, sp, spec, secrets, stdin)
+	return j.s.Spaces.SubmitJob(ctx, sp, spec, secrets, in)
 }
 
 func errString(err error) string {

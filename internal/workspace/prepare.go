@@ -12,9 +12,11 @@ import (
 // PrepareJob is the supervisor's Prepare hook: it gets the job's commit into
 // the mirror (fetching spec.Workspace.URL, or using what Workspace.Sync
 // staged), checks it out as <data>/worktrees/<job-id> and applies staged
-// uncommitted changes. Progress goes to log (the job's out.log).
-func (s *Store) PrepareJob(ctx context.Context, d jobs.Dir, spec jobs.Spec, secrets map[string]string, log io.Writer) (string, error) {
-	dir, err := s.prepareJob(ctx, spec, secrets, log)
+// uncommitted changes. Progress goes to log (the job's out.log). auth, a
+// credential forwarded with the submit, authenticates the fetch of the url
+// (git and git-lfs); the caller zeroes it afterwards.
+func (s *Store) PrepareJob(ctx context.Context, d jobs.Dir, spec jobs.Spec, secrets map[string]string, auth *jobs.GitAuth, log io.Writer) (string, error) {
+	dir, err := s.prepareJob(ctx, spec, secrets, auth, log)
 	if err != nil {
 		// The reason is persisted (status.json) and logged: no URL credentials.
 		return "", errors.New(RedactURLs(err.Error()))
@@ -22,15 +24,19 @@ func (s *Store) PrepareJob(ctx context.Context, d jobs.Dir, spec jobs.Spec, secr
 	return dir, nil
 }
 
-func (s *Store) prepareJob(ctx context.Context, spec jobs.Spec, secrets map[string]string, log io.Writer) (string, error) {
+func (s *Store) prepareJob(ctx context.Context, spec jobs.Spec, secrets map[string]string, auth *jobs.GitAuth, log io.Writer) (string, error) {
 	w := spec.Workspace
 	if w == nil {
 		return "", errors.New("no workspace")
 	}
 	commit := w.Commit
 	if w.URL != "" {
-		fmt.Fprintf(log, "longarmd: fetching %s %s into mirror %s\n", RedactURLs(w.URL), w.Ref, w.Repo)
-		c, err := s.FetchURL(ctx, w.Repo, w.URL, w.Ref, secrets["GH_TOKEN"], log)
+		how := ""
+		if auth.Valid() {
+			how = " with the forwarded credential"
+		}
+		fmt.Fprintf(log, "longarmd: fetching %s %s into mirror %s%s\n", RedactURLs(w.URL), w.Ref, w.Repo, how)
+		c, err := s.FetchURLAuth(ctx, w.Repo, w.URL, w.Ref, auth, secrets["GH_TOKEN"], log)
 		if err != nil {
 			fmt.Fprintf(log, "longarmd: %s\n", RedactURLs(err.Error()))
 			return "", err
@@ -49,6 +55,13 @@ func (s *Store) prepareJob(ctx context.Context, spec jobs.Spec, secrets map[stri
 	if err := s.ImportBundle(ctx, w.Repo, "", "", commit); err != nil { // verify + pin
 		fmt.Fprintf(log, "longarmd: %v\n", err)
 		return "", err
+	}
+	if w.URL != "" && w.LFSFetch {
+		fmt.Fprintf(log, "longarmd: fetching the Git LFS objects of %s\n", commit)
+		if err := s.FetchLFS(ctx, w.Repo, w.URL, commit, auth, secrets["GH_TOKEN"], log); err != nil {
+			fmt.Fprintf(log, "longarmd: %s\n", RedactURLs(err.Error()))
+			return "", err
+		}
 	}
 	var patch, untracked string
 	if w.StagingID != "" {

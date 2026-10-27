@@ -83,6 +83,10 @@ func main() {
 		os.Stdout.Write(b)
 	case "env":
 		fmt.Printf("%s=%s\n", os.Args[2], os.Getenv(os.Args[2]))
+	case "environ": // the whole environment
+		for _, kv := range os.Environ() {
+			fmt.Println(kv)
+		}
 	case "stdin-sha": // size and sha256 of stdin, never its content
 		b, err := io.ReadAll(os.Stdin)
 		if err != nil {

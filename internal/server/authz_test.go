@@ -28,11 +28,15 @@ import (
 	"github.com/lubobill1990/longarm/internal/shim"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/userspace"
+	"github.com/lubobill1990/longarm/internal/workspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
 // The test binary doubles as the job shim and as a sleeping job.
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == workspace.CredHelperArg { // git's credential helper
+		os.Exit(workspace.CredentialHelperMain(os.Args[2:], os.Stdin, os.Stdout))
+	}
 	if os.Getenv("LONGARM_TEST_SLEEP") != "" {
 		time.Sleep(2 * time.Minute)
 		os.Exit(0)
@@ -40,6 +44,10 @@ func TestMain(m *testing.M) {
 	if os.Getenv("LONGARM_TEST_STDIN_SHA") != "" { // a job: size and hash of its stdin
 		b, _ := io.ReadAll(os.Stdin)
 		fmt.Printf("%d %x\n", len(b), sha256.Sum256(b))
+		os.Exit(0)
+	}
+	if os.Getenv("LONGARM_TEST_ENV_DUMP") != "" { // a job: its environment
+		fmt.Println(strings.Join(os.Environ(), "\n"))
 		os.Exit(0)
 	}
 	// (jobs inherit LONGARM_TEST_SHIM: the shim checks come last)
@@ -78,6 +86,13 @@ func issue(t *testing.T, ca *pki.CA, dir string, o pki.IssueOptions) *pki.Bundle
 
 func newAuthzEnv(t *testing.T) *authzEnv {
 	t.Helper()
+	return newAuthzEnvWith(t, nil)
+}
+
+// newAuthzEnvWith is newAuthzEnv with cfg adjusting the spaces' config
+// (data dir already set).
+func newAuthzEnvWith(t *testing.T, cfg func(*userspace.Config)) *authzEnv {
+	t.Helper()
 	root := t.TempDir()
 	ca, err := pki.InitCA(filepath.Join(root, "ca"), "test", time.Hour)
 	if err != nil {
@@ -87,12 +102,16 @@ func newAuthzEnv(t *testing.T) *authzEnv {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	exe, _ := os.Executable()
-	spaces, err := userspace.Open(ctx, userspace.Config{Mode: tenancy.Shared, DataDir: filepath.Join(root, "data"),
+	sc := userspace.Config{Mode: tenancy.Shared, DataDir: filepath.Join(root, "data"),
 		ShimCommand: func(dir string) *exec.Cmd {
 			c := exec.Command(exe)
 			c.Env = append(os.Environ(), "LONGARM_TEST_SHIM="+dir)
 			return c
-		}})
+		}}
+	if cfg != nil {
+		cfg(&sc)
+	}
+	spaces, err := userspace.Open(ctx, sc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,6 +394,10 @@ func TestAuthzTable(t *testing.T) {
 			_, err = st.Recv()
 			return err
 		}, [4]codes.Code{pd, pd, pd, pd}},
+		pb.Workspace_Fetch_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := pb.NewWorkspaceClient(c).Fetch(ctx, &pb.FetchRequest{Repo: "../x"})
+			return err
+		}, [4]codes.Code{codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument}},
 		pb.Workspace_Sync_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
 			st, err := pb.NewWorkspaceClient(c).Sync(ctx)
 			if err != nil {

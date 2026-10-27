@@ -4,6 +4,42 @@
 
 ### Added
 
+- `longarm run --repo <https url> --git-auth forward`: the worker fetches
+  the repository from its host with a short-lived credential of yours,
+  forwarded with the job: Azure DevOps - an Entra token for Azure DevOps
+  (`499b84ac-1321-427f-aa17-267ca6975798`) from `az account
+  get-access-token` in the organization's tenant (from the
+  `X-VSS-ResourceTenant` header of the organization URL, not az's default
+  tenant), else `git credential fill`; GitHub - `gh auth token` (long-lived),
+  else `git credential fill`; other hosts - `git credential fill`. Like the
+  `--stdin-file` payload it goes only in the worker-direct submit (never
+  the hub), stays in longarmd's memory, reaches git and git-lfs through a
+  credential helper (longarmd, over loopback with a one-time key) only for
+  the exact protocol, host and repository path of the fetched URL - never
+  in their environment or config; redirects refused, the LFS endpoint
+  pinned against `.lfsconfig`, no submodules, traces off - is zeroed
+  afterwards and masked in logs and errors; the job never sees it; job records and the
+  audit log say `git_auth: true` only. `--ref <full commit id>` fetches a
+  commit that is no branch tip by id (falling back to the remote's
+  branches); a commit the mirror has is not fetched again, but on a
+  shared-isolation worker the job proves its own access to the remote first
+  (`git ls-remote`, no objects), so another user's fetch never lets a job
+  skip the remote's authorization. `--lfs fetch`:
+  the worker also fetches the commit's Git LFS objects (git-lfs, same
+  credential). No credential here: exit 77; an older worker: exit 2
+  (workers announce `git-auth-forward` in `Node.Info` features)
+  ([docs/usage.md](docs/usage.md#fetching-with-your-credential---git-auth-forward),
+  [docs/security.md](docs/security.md#forwarded-git-credentials)).
+- `--git-auth forward` with a local checkout (`longarm run --repo <path>`,
+  `longarm sync`): remote first - the worker fetches the commits of the
+  checkout's remote (the branch's upstream, else origin; GitHub / Azure
+  DevOps ssh remotes as https) that the commit builds on
+  (`Workspace.Fetch`), and only the unpushed delta is shipped. Falls back to
+  shipping everything, with a note, when that is not possible (no https
+  remote, no credential, an older worker, the remote unreachable from the
+  worker or refusing the credential).
+- `longarm version --json`: feature `git-auth-forward`.
+
 - `longarm run --repo <local checkout> --lfs skip|ship`: Git LFS files of a
   shipped checkout no longer fail the worktree (the smudge filter had no LFS
   server: "batch request: missing protocol"). Default `skip`: LFS files are
@@ -76,6 +112,21 @@
   programs that check what this longarm supports (`exit-codes`,
   `jobs-source`, `jobs-hub-only`, `stdin-file`, `lfs`, `ref-sha`,
   `worker-label`) ([docs/usage.md](docs/usage.md#capabilities-longarm-version---json)).
+
+### Fixed
+
+- `longarm run --id <id> --repo <local checkout>` again after "stdin payload
+  lost before start; resubmit" was refused with `AlreadyExists` (exit 2):
+  every run uploads the checkout anew under a new staging id, which was part
+  of the compared spec. The job's identity is now what the workspace
+  resolves to (repository, URL, ref, commit, a digest of the uploaded
+  uncommitted and untracked files, `--lfs fetch`), not the upload's id or
+  whether a credential was forwarded: an identical retry replaces the job
+  that never started or returns the existing one; other uncommitted or
+  untracked content is another job (`AlreadyExists`), never the old result.
+- The job's `GH_TOKEN` secret no longer passes through git's environment
+  (`http.extraheader`) either: the same credential helper, scoped to the
+  exact URL, redirects refused.
 
 ### Changed
 
