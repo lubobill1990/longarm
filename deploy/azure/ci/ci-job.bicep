@@ -16,8 +16,10 @@
 @description('Region (default: the resource group\'s).')
 param location string = resourceGroup().location
 
-@description('GitHub repository (owner/name) whose default branch is tested.')
-param repo string = 'lubobill1990/longarm'
+@description('GitHub repository whose branch is tested.')
+param repoUrl string = 'https://github.com/lubobill1990/longarm'
+
+var repo = replace(replace(repoUrl, 'https://github.com/', ''), '.git', '')
 
 @description('Branch to test.')
 param branch string = 'main'
