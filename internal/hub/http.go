@@ -19,13 +19,15 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/version"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
 // The HTTP listener (127.0.0.1:7480 behind Caddy) serves:
-//   - public: /healthz, /install.ps1, /install.sh, /releases/..., /ca.crt
+//   - public: /healthz, /install.ps1, /install.sh, /releases/..., /ca.crt,
+//     /.well-known/longarm-hub (gRPC address + CA fingerprint, domain-only sign-in)
 //   - the JSON/SSE API under /api/ (mirrors the gRPC admin surface), for a
 //     logged-in panel user (cookie session after password + TOTP)
 //   - the web panel (internal/webui) at /, see panel.go; a minimal
@@ -45,6 +47,12 @@ func (h *Hub) httpHandler() http.Handler {
 	mux.HandleFunc("GET /ca.crt", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/x-pem-file")
 		w.Write(h.ca.CertPEM)
+	})
+	// Domain-only sign-in (hubclient.ResolveHub): where nodes dial, and
+	// the CA /ca.crt serves - read over the panel's WebPKI HTTPS.
+	mux.HandleFunc("GET "+hubclient.WellKnownPath, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, hubclient.WellKnown{Address: h.hubAddr(r), CAFingerprint: pki.Fingerprint(h.ca.Cert), Name: h.cfg.Name})
 	})
 	mux.HandleFunc("GET /install.sh", h.installScript("sh"))
 	mux.HandleFunc("GET /install.ps1", h.installScript("ps1"))

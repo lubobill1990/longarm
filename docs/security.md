@@ -802,17 +802,61 @@ placed on the attacker's "worker". Hence:
   the browser sends it) `Sec-Fetch-Site: same-origin`, and carry a token
   HMAC-bound to the session, the step and the pairing (10 minutes); the
   page has a strict CSP and can't be framed.
+- **Both roles, one approval, said so**: a pairing of kind `both` (one
+  machine as the approver's client device and own worker: `longarmd login
+  --role both`, the install scripts' `--role both`, the tray) carries two
+  CSRs, longarm's key and longarmd's, each with its own node key. The
+  confirmation says in bold that approving does two things - a device
+  that acts as you, and a worker your jobs may be placed on - and lists
+  both names and both node key IDs; both warnings apply. The approval
+  enrolls the worker first, then the device; if the device fails the
+  worker is revoked again, so the machine never collects one half. The
+  result (both certificates) is handed out once, and only while both
+  nodes are still approved.
 - Audited on the hub: `link/start`, `link/approve` (with the node or the
-  error), `link/deny`, `link/expire` - who, kind, name, host, address.
+  error; kind both: the worker too), `link/deny`, `link/expire` - who,
+  kind, name, host, address.
 
 The poll token, the code and the CSR are not secrets an observer can turn
 into a certificate: the certificate is useless without the machine's
-private key, which never leaves it. Pin the hub's CA (`--ca-fingerprint`,
-built into the install scripts): pairing runs over the same TLS as join.
+private key, which never leaves it. The hub's CA is pinned (`--ca-fingerprint`,
+built into the install scripts, or bootstrapped over HTTPS: "First contact"
+below): pairing runs over the same TLS as join.
 **End-to-end trust is still recommended**: a pairing approved by mistake
 (or an Entra account takeover) yields at most a certificate the hub signed;
 workers and clients that require endorsements still refuse the device until
 your user key endorses it.
+
+### First contact (domain-only sign-in)
+
+The hub's gRPC port presents a certificate of the hub's own CA, which no
+system trusts; a node must pin that CA before it sends a CSR or a token.
+`--ca-fingerprint` (and the install scripts, which carry it) pins it
+explicitly. `longarm login <domain>` / `longarmd login <domain>` without it
+**bootstrap the pin over the web PKI**: they fetch
+`https://<domain>/ca.crt` (and the gRPC address from
+`https://<domain>/.well-known/longarm-hub`), verifying the panel's HTTPS
+certificate (Let's Encrypt, `[https]` or the reverse proxy's) with the
+system's normal roots, and pin the CA's SHA-256 fingerprint exactly as
+`--ca-fingerprint` would; the gRPC connection then refuses any other CA.
+The fingerprint is printed.
+
+**Trust model**: for this first contact the machine trusts DNS and the web
+PKI for the domain the user typed - the same trust as opening the panel in
+a browser to approve the sign-in, which every Microsoft sign-in needs
+anyway. Whoever can obtain a publicly trusted certificate for that domain
+(or controls the TLS front of the panel) can hand out another CA, exactly as
+they could serve a fake panel. Guarded against: plain HTTP (an `http://`
+hub or a panel answering HTTP on the https URL is refused), redirects
+leaving https or the host, answers that are not one PEM CA certificate,
+and a well-known document naming another CA than `/ca.crt` serves. After
+the first contact nothing depends on the web PKI: the pinned CA is stored
+with the certificate (`tls/ca.crt`), renewals and later sign-ins to the
+same hub use it. Use `--ca-fingerprint` (from `longarm-hub ca show`, over a
+channel you trust) where DNS or the web PKI is not trusted, and for hubs
+without a public HTTPS panel, which fail with a message asking for it.
+`longarm join` / `longarmd join` with join codes keep their behavior
+(`--ca-fingerprint`, else trust on first use with a warning).
 
 ## End-to-end trust (the hub is not trusted with access)
 

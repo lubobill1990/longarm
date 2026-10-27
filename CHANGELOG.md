@@ -19,6 +19,27 @@
 - `[forward] targets` in longarmd.toml: what port forwards may reach.
 - `[links] max_conns` in longarmd.toml: open connections per port link
   (default 64).
+- Domain-only sign-in: `longarm login longarm.example.com` and
+  `longarmd login longarm.example.com` need no port and no
+  `--ca-fingerprint` - the hub's CA is fetched from
+  `https://<host>/ca.crt` over the system's HTTPS roots and pinned (the
+  gRPC address from the hub's new `/.well-known/longarm-hub`); hubs
+  without a public HTTPS panel ask for `--ca-fingerprint`
+  ([docs/security.md](docs/security.md#first-contact-domain-only-sign-in)).
+- One approval for both roles: `longarmd login --role both` (and the
+  install scripts' `--login --role both`) makes a machine the user's client
+  device and own worker with one code; the `/link` page lists both.
+- `signin.SignIn`: the sign-in flow as a Go API with progress / code
+  callbacks and cancellation, for the tray; `longarmd.EnsureWorkerService`
+  / `InstallService` for its service step.
+- MSI `LOGIN=1`: no join code; the hub (and fingerprint) are recorded and
+  the service waits for the sign-in the tray or `longarmd login` does.
+
+### Changed
+
+- `longarm login` / `longarmd login` no longer trust a hub CA on first use:
+  without `--ca-fingerprint` they bootstrap it over HTTPS or fail
+  (`longarm join` / `longarmd join` are unchanged).
 
 ### Breaking changes
 

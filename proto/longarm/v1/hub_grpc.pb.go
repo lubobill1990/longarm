@@ -68,10 +68,12 @@ type EnrollClient interface {
 	// a usable az sign-in): the device sends its CSR and gets a user code,
 	// which its user types into the panel's /link page (signed in with
 	// Microsoft) to approve - enrolling the device as theirs. No certificate
-	// needed.
+	// needed. Kind "both" asks for a client certificate and an owned worker
+	// of the same machine with one code and one approval.
 	StartLink(ctx context.Context, in *StartLinkRequest, opts ...grpc.CallOption) (*StartLinkResponse, error)
 	// PollLink asks about a pairing with its poll token: state "pending",
-	// "approved" (with the certificate), "denied" or "expired".
+	// "approved" (with the certificate), "denied" or "expired". Kind "both":
+	// the client's enrollment, the worker's in JoinResponse.worker.
 	PollLink(ctx context.Context, in *PollLinkRequest, opts ...grpc.CallOption) (*JoinResponse, error)
 }
 
@@ -167,10 +169,12 @@ type EnrollServer interface {
 	// a usable az sign-in): the device sends its CSR and gets a user code,
 	// which its user types into the panel's /link page (signed in with
 	// Microsoft) to approve - enrolling the device as theirs. No certificate
-	// needed.
+	// needed. Kind "both" asks for a client certificate and an owned worker
+	// of the same machine with one code and one approval.
 	StartLink(context.Context, *StartLinkRequest) (*StartLinkResponse, error)
 	// PollLink asks about a pairing with its poll token: state "pending",
-	// "approved" (with the certificate), "denied" or "expired".
+	// "approved" (with the certificate), "denied" or "expired". Kind "both":
+	// the client's enrollment, the worker's in JoinResponse.worker.
 	PollLink(context.Context, *PollLinkRequest) (*JoinResponse, error)
 	mustEmbedUnimplementedEnrollServer()
 }

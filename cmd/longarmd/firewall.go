@@ -7,32 +7,14 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/lubobill1990/longarm/internal/longarmd"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/transport/longnet"
 )
 
-// serviceFirewall adds (or removes) the inbound allow rules for the
-// service's longarmd.exe on Windows when elevated: without them Windows Firewall
-// drops unsolicited inbound UDP, and hole punching / tailscale direct paths
-// fail. The MSI manages its own rules for longarm, longarmd and longarm-tray.
+// serviceFirewall: longarmd.ServiceFirewall on the console.
 func serviceFirewall(service, exe string, add bool) {
-	if runtime.GOOS != "windows" {
-		return
-	}
-	name := "Longarm longarmd service " + service
-	if !add {
-		platform.RemoveFirewallRules(name, exe)
-		return
-	}
-	if !platform.Elevated() {
-		fmt.Fprintf(os.Stderr, "note: not elevated, no firewall rule added; direct (punched) connections need an inbound allow rule for %s\n", exe)
-		return
-	}
-	if err := platform.AddFirewallRules(name, exe); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: firewall rule: %v\n", err)
-		return
-	}
-	fmt.Printf("firewall: inbound UDP+TCP allowed for %s (rules %q)\n", exe, platform.FirewallRuleNames(name))
+	longarmd.ServiceFirewall(service, exe, add, os.Stdout, os.Stderr)
 }
 
 var punchHintOnce sync.Once

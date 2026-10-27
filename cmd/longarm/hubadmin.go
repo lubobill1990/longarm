@@ -65,27 +65,10 @@ func installEnrollment(addr string, r *hubclient.JoinResult, tr *pki.CSRTrust, v
 	if !r.Pinned {
 		fmt.Fprintf(os.Stderr, "warning: hub CA not pinned; trusting %s on first use (pass --ca-fingerprint to verify)\n", r.CAFingerprint)
 	}
-	if r.Resp.State != "approved" {
-		return fmt.Errorf("enrollment is %s: %s", r.Resp.State, r.Resp.Message)
-	}
-	tlsDir := filepath.Join(configDir, client.TLSDir)
-	if err := pki.WriteBundleAtomic(tlsDir, r.Resp.CaPem, r.Resp.CertPem, r.KeyPEM); err != nil {
-		return err
-	}
-	hc := hubclient.Config{Address: addr}
-	if err := hubclient.SaveTailnet(configDir, &hc, r.Resp.Tailnet); err != nil {
-		return err
-	}
-	if err := hubclient.SaveFile(configDir, hc); err != nil {
+	if err := client.InstallEnrollment(configDir, addr, r, tr, func(s string) { fmt.Fprintln(os.Stderr, s) }); err != nil {
 		return err
 	}
 	fmt.Printf("%s %s as %s/%s (config %s)\n", verb, addr, r.Resp.Role, r.Resp.Name, configDir)
-	if tr.Endorsement != nil && tr.Endorsement.Name != r.Resp.Name {
-		fmt.Fprintf(os.Stderr, "warning: this device's endorsement is for %q; get one for %s (longarm trust request / accept)\n", tr.Endorsement.Name, r.Resp.Name)
-	}
-	if t := r.Resp.Tailnet; t != nil {
-		fmt.Printf("tailnet %s: key for %s (%s) stored; the tailscale leg starts on first use\n", t.ControlUrl, t.Hostname, strings.Join(t.Tags, ","))
-	}
 	return nil
 }
 

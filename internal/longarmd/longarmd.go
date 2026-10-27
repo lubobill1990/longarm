@@ -408,6 +408,15 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	}
 
 	tlsDir := filepath.Join(cfg.DataDir, TLSDir)
+	// An installer's sign-in to come (MSI LOGIN=1): wait for the
+	// certificate the sign-in installs instead of failing.
+	from, to, err := waitSignIn(ctx, cfg.DataDir, log)
+	if err != nil {
+		return err
+	}
+	if from != "" && cfg.Hub.Address == from { // from hub.toml, not longarmd.toml: the sign-in's address
+		cfg.Hub.Address = to
+	}
 	if cfg.HubPollToken != "" {
 		// `longarmd join --no-wait`: finish the enrollment before serving.
 		if err := completeEnrollment(ctx, cfg, log); err != nil {

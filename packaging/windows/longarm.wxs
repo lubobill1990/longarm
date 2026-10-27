@@ -4,6 +4,12 @@
 
   Build:  pwsh packaging/windows/build-msi.ps1 -BinDir <dir with longarm.exe longarmd.exe [longarm-tray.exe]> -Version 1.2.3 -Arch x64
   Silent: msiexec /i longarm.msi /qn ROLES=worker HUB=hub.example.com JOIN_CODE=K7P-Q2M [CA_FINGERPRINT=...]
+          or, without a join code, signing in with Microsoft afterwards:
+          msiexec /i longarm.msi /qn ROLES=both HUB=longarm.example.com LOGIN=1 [CA_FINGERPRINT=...] SERVICE_USER=... SERVICE_PASSWORD=...
+            (records HUB / CA_FINGERPRINT in HKLM\Software\Longarm and the data dir's hub.toml; the service
+             starts and waits for the sign-in, which the tray or longarmd login (role both) does
+             without further input: one code, one approval; HUB may be the bare domain: the CA is then
+             fetched from https://HUB/ca.crt at sign-in)
           SERVICE_USER=.\alice SERVICE_PASSWORD=...   (required for workers; or SERVICE_ACCOUNT=LocalSystem)
           [SERVICE_NAME=longarmd] [DATADIR=C:\ProgramData\Longarm\longarmd]   (the default; also longarmd's
                                   own default as LocalSystem and for service install isolation per-user)
@@ -54,7 +60,14 @@
     </Property>
     <Property Id="JOIN_CODE" Secure="yes" Hidden="yes" />
     <Property Id="CLIENT_JOIN_CODE" Secure="yes" Hidden="yes" />
-    <Property Id="CA_FINGERPRINT" Secure="yes" />
+    <Property Id="CA_FINGERPRINT" Secure="yes">
+      <RegistrySearch Id="RegCaFp" Root="HKLM" Key="Software\Longarm" Name="CaFingerprint" Type="raw" />
+    </Property>
+    <!-- LOGIN=1: no join code; the machine signs in with Microsoft after the install (the tray, or
+         longarmd login - HUB and CA_FINGERPRINT are recorded, so neither asks for them). -->
+    <Property Id="LOGIN" Secure="yes">
+      <RegistrySearch Id="RegLogin" Root="HKLM" Key="Software\Longarm" Name="Login" Type="raw" />
+    </Property>
     <Property Id="NODE_NAME" Secure="yes" />
     <Property Id="LISTEN" Value="tcp://127.0.0.1:7701" Secure="yes" />
     <Property Id="SERVICE_USER" Secure="yes" />
@@ -142,8 +155,9 @@
           <fw:FirewallException Id="FwLongarmdPTcp" Name="Longarm longarmd (TCP)" Protocol="tcp" Scope="any" Profile="all" Description="Longarm worker: listeners" />
         </File>
       </Component>
-      <!-- Start the service only when it can enroll (a join code was given). -->
-      <Component Id="LongarmdStart" Condition="IsWorker AND JOIN_CODE AND HUB" Guid="5380e22b-7c1c-4756-8c00-1616ee2b4647">
+      <!-- Start the service only when it can enroll: a join code was given, or LOGIN=1 (it waits for
+           the sign-in: hub.toml sign_in, written by install-helper setup login). -->
+      <Component Id="LongarmdStart" Condition='IsWorker AND HUB AND (JOIN_CODE OR LOGIN="1")' Guid="5380e22b-7c1c-4756-8c00-1616ee2b4647">
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="ServiceStartedByInstaller" Type="integer" Value="1" KeyPath="yes" />
         <!-- Wait: a wrong account password fails the install (service logon error) instead of
              leaving a service that never starts. longarmd reports "running" at once (even while its
@@ -154,6 +168,9 @@
       <Component Id="Settings" Guid="165786a7-faa0-43e1-9643-f87e8ab45911">
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Roles" Type="string" Value="[ROLES]" KeyPath="yes" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Hub" Type="string" Value="[HUB]" />
+        <!-- read by longarm login / longarmd login without a hub and by the tray (signin.InstalledHub) -->
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="CaFingerprint" Type="string" Value="[CA_FINGERPRINT]" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Login" Type="string" Value="[LOGIN]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="ServiceName" Type="string" Value="[SERVICE_NAME]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="DataDir" Type="string" Value="[DATADIR]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="ServiceAccount" Type="string" Value="[SERVICE_ACCOUNT]" />
@@ -183,7 +200,7 @@
 
     <!-- Worker setup: protected data dir, logon right, enrollment (as SYSTEM). -->
     <CustomAction Id="LongarmdSetup" FileRef="longarmd.exe" Execute="deferred" Impersonate="no" Return="check" HideTarget="yes"
-                  ExeCommand='install-helper setup --data-dir "[DATADIR]" --user "[SERVICE_ACCOUNT]" --hub "[HUB]" --code "[JOIN_CODE]" --ca-fingerprint "[CA_FINGERPRINT]" --listen "[LISTEN]" --name "[NODE_NAME]" --isolation "[ISOLATION]" --log "[TempFolder]longarm-install.log"' />
+                  ExeCommand='install-helper setup --data-dir "[DATADIR]" --user "[SERVICE_ACCOUNT]" --hub "[HUB]" --code "[JOIN_CODE]" --ca-fingerprint "[CA_FINGERPRINT]" --listen "[LISTEN]" --name "[NODE_NAME]" --isolation "[ISOLATION]" --login-mode "[LOGIN]" --log "[TempFolder]longarm-install.log"' />
     <!-- An install that fails after LongarmdSetup (e.g. the service can't log on: wrong password)
          takes back the enrollment LongarmdSetup made (a marker file says so); an existing
          enrollment (earlier install, KEEP_DATA) is never touched. -->

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -18,6 +19,7 @@ func installHelperCmd() *cobra.Command {
 	var dataDir, user, hub, code, fp, logFile, nodeName, isolation string
 	var listen []string
 	var keep bool
+	var loginMode string
 	out := func() (io.Writer, func()) {
 		if logFile == "" {
 			return os.Stdout, func() {}
@@ -36,7 +38,7 @@ func installHelperCmd() *cobra.Command {
 			fmt.Fprintf(w, "%s longarmd install-helper setup --data-dir %s\n", time.Now().Format(time.RFC3339), dataDir)
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
 			defer cancel()
-			err := longarmd.InstallSetup(ctx, dataDir, longarmd.SetupOptions{ServiceUser: user, Hub: hub, Code: code, Fingerprint: fp, Listen: listen, Name: nodeName, Out: w, Isolation: isolation})
+			err := longarmd.InstallSetup(ctx, dataDir, longarmd.SetupOptions{ServiceUser: user, Hub: hub, Code: code, Fingerprint: fp, Listen: listen, Name: nodeName, Out: w, Isolation: isolation, Login: loginMode == "1" || strings.EqualFold(loginMode, "true")})
 			if err != nil {
 				fmt.Fprintln(w, "error:", err)
 			}
@@ -52,6 +54,7 @@ func installHelperCmd() *cobra.Command {
 	setup.Flags().StringVar(&logFile, "log", "", "append output here")
 	setup.Flags().StringSliceVar(&listen, "listen", nil, "listen URLs for a new longarmd.toml (comma-separated)")
 	setup.Flags().StringVar(&isolation, "isolation", "", "per-user: isolate users (the service runs as LocalSystem; docs/security.md)")
+	setup.Flags().StringVar(&loginMode, "login-mode", "", "1: no join code; record --hub (and --ca-fingerprint) for a sign-in to come (the service waits for it; the MSI's LOGIN)")
 	setup.MarkFlagRequired("data-dir")
 	rollback := &cobra.Command{
 		Use: "rollback", Args: cobra.NoArgs,
