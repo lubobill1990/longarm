@@ -943,7 +943,9 @@ func TestEntraLoginBothRollback(t *testing.T) {
 	h.joinLimit = newIPLimiter(100, 100)
 	fp := pki.Fingerprint(h.ca.Cert)
 	tok := func(oid, upn string) func(context.Context, *pb.AuthInfoResponse) (string, error) {
-		return func(context.Context, *pb.AuthInfoResponse) (string, error) { return f.sign(f.accessClaims(oid, upn)), nil }
+		return func(context.Context, *pb.AuthInfoResponse) (string, error) {
+			return f.sign(f.accessClaims(oid, upn)), nil
+		}
 	}
 	alice := tok("a11ce000-0000-4000-8000-000000000401", "alice@example.com")
 	both := func(device, worker string) (*hubclient.JoinResult, *hubclient.JoinResult, error) {
