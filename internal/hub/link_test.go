@@ -932,3 +932,53 @@ func TestLinkBothClient(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestEntraLoginBothRollback: az sign-in of both roles is all or nothing
+// - a device that fails (its name taken) takes the worker just enrolled
+// back (revoked through its own certificate), so a retry may use the
+// worker's name again.
+func TestEntraLoginBothRollback(t *testing.T) {
+	f := newFakeEntra(t)
+	h := newEntraHub(t, f, nil)
+	h.joinLimit = newIPLimiter(100, 100)
+	fp := pki.Fingerprint(h.ca.Cert)
+	tok := func(oid, upn string) func(context.Context, *pb.AuthInfoResponse) (string, error) {
+		return func(context.Context, *pb.AuthInfoResponse) (string, error) { return f.sign(f.accessClaims(oid, upn)), nil }
+	}
+	alice := tok("a11ce000-0000-4000-8000-000000000401", "alice@example.com")
+	both := func(device, worker string) (*hubclient.JoinResult, *hubclient.JoinResult, error) {
+		return hubclient.LoginBoth(tctx(t), h.Addr("grpc"),
+			hubclient.LoginOptions{JoinOptions: hubclient.JoinOptions{Name: device, Fingerprint: fp}, Token: alice},
+			hubclient.LoginOptions{JoinOptions: hubclient.JoinOptions{Name: worker, Fingerprint: fp}, Token: alice})
+	}
+	// bob's worker holds the name alice's device asks for
+	if _, err := hubclient.Login(tctx(t), h.Addr("grpc"), hubclient.LoginOptions{Kind: linkWorker,
+		JoinOptions: hubclient.JoinOptions{Name: "taken", Fingerprint: fp},
+		Token:       tok("b0b00000-0000-4000-8000-000000000402", "bob@example.com")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := both("taken", "aw"); status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("device name taken: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		h.mu.Lock()
+		n := h.nodes["aw"]
+		revoked := n != nil && n.rec.State == stateRevoked
+		h.mu.Unlock()
+		if revoked {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the worker of a failed sign-in was not taken back: %+v", n)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	cr, wr, err := both("alice-dev", "aw")
+	if err != nil {
+		t.Fatalf("retry with the same worker name: %v", err)
+	}
+	if cr.Resp.Name != "alice-dev" || wr.Resp.Name != "aw" || wr.Resp.Owner != "alice" {
+		t.Fatalf("retry: %v %v", cr.Resp, wr.Resp)
+	}
+}

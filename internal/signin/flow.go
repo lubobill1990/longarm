@@ -311,23 +311,29 @@ func azJoin(ctx context.Context, addr string, o Options, cjo, wjo hubclient.Join
 	}
 	actx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	if o.Worker != nil && o.Client != nil {
+		// all or nothing: a device that fails takes the worker back
+		// (hubclient.LoginBoth explains why revoking beats reusing)
+		cr, wr, err = hubclient.LoginBoth(actx, addr, hubclient.LoginOptions{JoinOptions: cjo, Token: tok},
+			hubclient.LoginOptions{JoinOptions: wjo, Token: tok})
+		if err != nil {
+			return nil, nil, err
+		}
+		return cr, wr, checkWorker(wr)
+	}
 	if o.Worker != nil {
 		if wr, err = hubclient.Login(actx, addr, hubclient.LoginOptions{JoinOptions: wjo, Kind: "worker", Token: tok}); err != nil {
 			return nil, nil, err
 		}
-		if err := checkWorker(wr); err != nil {
-			return nil, nil, err
-		}
+		return nil, wr, checkWorker(wr)
 	}
-	if o.Client != nil {
-		if cr, err = hubclient.Login(actx, addr, hubclient.LoginOptions{JoinOptions: cjo, Token: tok}); err != nil {
-			return nil, nil, err
-		}
-		if cr.Resp.State != "approved" {
-			return nil, nil, fmt.Errorf("enrollment is %s: %s", cr.Resp.State, cr.Resp.Message)
-		}
+	if cr, err = hubclient.Login(actx, addr, hubclient.LoginOptions{JoinOptions: cjo, Token: tok}); err != nil {
+		return nil, nil, err
 	}
-	return cr, wr, nil
+	if cr.Resp.State != "approved" {
+		return nil, nil, fmt.Errorf("enrollment is %s: %s", cr.Resp.State, cr.Resp.Message)
+	}
+	return cr, nil, nil
 }
 
 // pair enrolls the requested parts through the hub's /link pairing: one
@@ -359,6 +365,10 @@ func pair(ctx context.Context, addr string, o Options, ev Events, cjo, wjo hubcl
 				return nil, nil, err
 			}
 			if cr, err = link("client", cjo, hubclient.JoinOptions{}); err != nil {
+				// all or nothing, as LoginBoth: take the worker back
+				if aerr := hubclient.Abandon(ctx, addr, wr, "sign-in failed"); aerr != nil {
+					return nil, nil, fmt.Errorf("%w (and worker %s could not be taken back: %v; remove it: longarm worker remove %s)", err, wr.Resp.Name, aerr, wr.Resp.Name)
+				}
 				return nil, nil, err
 			}
 			return cr, wr, nil

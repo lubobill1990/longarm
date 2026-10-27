@@ -305,36 +305,55 @@ func SetUpSignIn(dataDir, hub, fp string) error {
 }
 
 // waitSignIn holds longarmd's start while a sign-in is to come (hub.toml
-// sign_in, no certificate yet): it returns once the enrollment is
-// installed (longarmd login / the tray: the certificate, then a hub.toml
-// without sign_in) or ctx ends. from and to are the hub addresses in
-// hub.toml before and after ("" when there was nothing to wait for).
-func waitSignIn(ctx context.Context, dataDir string, log *slog.Logger) (from, to string, err error) {
+// sign_in): it returns once the enrollment is installed - the certificate
+// there and hub.toml rewritten without sign_in (longarmd login / the tray
+// write the certificate first, hub.toml last) - or ctx ends. The caller
+// re-reads hub.toml afterwards (Config.reloadHubFile).
+func waitSignIn(ctx context.Context, dataDir string, log *slog.Logger) error {
 	cert := filepath.Join(dataDir, TLSDir, pki.NodeCertFile)
-	if _, err := os.Stat(cert); err == nil {
-		return "", "", nil
-	}
-	hf, _ := hubclient.LoadFile(dataDir)
-	if !hf.SignIn || hf.Address == "" {
-		return "", "", nil
-	}
 	var last time.Time
 	for {
-		if _, err := os.Stat(cert); err == nil {
-			if now, err := hubclient.LoadFile(dataDir); err == nil && !now.SignIn && now.Address != "" {
-				log.Info("signed in; starting", "hub", now.Address)
-				return hf.Address, now.Address, nil
+		hf, _ := hubclient.LoadFile(dataDir)
+		if !hf.SignIn || hf.Address == "" {
+			if !last.IsZero() {
+				log.Info("signed in; starting", "hub", hf.Address)
 			}
+			return nil
 		}
-		if time.Since(last) > 10*time.Minute {
+		if _, err := os.Stat(cert); err != nil && time.Since(last) > 10*time.Minute {
 			log.Info("waiting for this worker's sign-in", "hub", hf.Address,
 				"sign_in_with", "the Longarm tray, or: longarmd login --role both (as the service's account, or elevated)")
 			last = time.Now()
 		}
 		select {
 		case <-ctx.Done():
-			return "", "", ctx.Err()
+			return ctx.Err()
 		case <-time.After(3 * time.Second):
 		}
 	}
+}
+
+// applyHubFile merges hub.toml into the config: its address when
+// longarmd.toml names none (hubFromFile), and the pending poll token.
+func (c *Config) applyHubFile(hf hubclient.Config) {
+	if c.hubFromFile {
+		c.Hub.Address = hf.Address
+		c.Hub.Disabled = c.Hub.Disabled || hf.Disabled
+	}
+	c.HubPollToken = hf.PollToken
+}
+
+// reloadHubFile re-reads hub.toml (applyHubFile): an enrollment written
+// after LoadConfig - a sign-in the service waited for, or one that
+// finished just before - may have changed the hub address.
+func (c *Config) reloadHubFile() error {
+	if !c.hubLoaded { // a Config built in code (tests, join): nothing came from hub.toml
+		return nil
+	}
+	hf, err := hubclient.LoadFile(c.DataDir)
+	if err != nil {
+		return err
+	}
+	c.applyHubFile(hf)
+	return nil
 }

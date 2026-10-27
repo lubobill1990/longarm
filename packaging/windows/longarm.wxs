@@ -49,7 +49,12 @@
     <Property Id="ROLES" Value="client" Secure="yes">
       <RegistrySearch Id="RegRoles" Root="HKLM" Key="Software\Longarm" Name="Roles" Type="raw" />
     </Property>
-    <Property Id="HUB" Secure="yes">
+    <!-- HUB, CA_FINGERPRINT and LOGIN: AppSearch would overwrite a value given on the msiexec command
+         line with the registry's (an upgrade could not change the hub, replace the CA pin or switch
+         mode), so the remembered values go into SAVED_* and apply only when the property is empty
+         (SetProperty below). -->
+    <Property Id="HUB" Secure="yes" />
+    <Property Id="SAVED_HUB" Secure="yes">
       <RegistrySearch Id="RegHub" Root="HKLM" Key="Software\Longarm" Name="Hub" Type="raw" />
     </Property>
     <Property Id="SERVICE_NAME" Value="longarmd" Secure="yes">
@@ -60,12 +65,14 @@
     </Property>
     <Property Id="JOIN_CODE" Secure="yes" Hidden="yes" />
     <Property Id="CLIENT_JOIN_CODE" Secure="yes" Hidden="yes" />
-    <Property Id="CA_FINGERPRINT" Secure="yes">
+    <Property Id="CA_FINGERPRINT" Secure="yes" />
+    <Property Id="SAVED_CA_FINGERPRINT" Secure="yes">
       <RegistrySearch Id="RegCaFp" Root="HKLM" Key="Software\Longarm" Name="CaFingerprint" Type="raw" />
     </Property>
     <!-- LOGIN=1: no join code; the machine signs in with Microsoft after the install (the tray, or
          longarmd login - HUB and CA_FINGERPRINT are recorded, so neither asks for them). -->
-    <Property Id="LOGIN" Secure="yes">
+    <Property Id="LOGIN" Secure="yes" />
+    <Property Id="SAVED_LOGIN" Secure="yes">
       <RegistrySearch Id="RegLogin" Root="HKLM" Key="Software\Longarm" Name="Login" Type="raw" />
     </Property>
     <Property Id="NODE_NAME" Secure="yes" />
@@ -89,6 +96,14 @@
     <!-- The same dir longarmd defaults to as LocalSystem and for service install isolation per-user
          (internal/longarmd/datadir.go); LONGARM_DATA_DIR (set below) points every elevated longarmd command at it. -->
     <SetProperty Id="DATADIR" Value="[CommonAppDataFolder]Longarm\longarmd" Before="CostFinalize" Sequence="both" Condition="NOT DATADIR" />
+    <!-- Remembered HUB / CA_FINGERPRINT / LOGIN only where the command line (or the dialog) gave none;
+         an explicit JOIN_CODE is not a LOGIN install. Before SetIsWorker etc., which read them. -->
+    <SetProperty Id="HUB" Action="SetHubSaved" Value="[SAVED_HUB]" Before="CostFinalize" Sequence="both"
+                 Condition="NOT HUB AND SAVED_HUB" />
+    <SetProperty Id="CA_FINGERPRINT" Action="SetCaFpSaved" Value="[SAVED_CA_FINGERPRINT]" Before="CostFinalize" Sequence="both"
+                 Condition="NOT CA_FINGERPRINT AND SAVED_CA_FINGERPRINT" />
+    <SetProperty Id="LOGIN" Action="SetLoginSaved" Value="[SAVED_LOGIN]" Before="CostFinalize" Sequence="both"
+                 Condition="NOT LOGIN AND SAVED_LOGIN AND NOT JOIN_CODE AND NOT CLIENT_JOIN_CODE" />
     <SetProperty Id="IsWorker" Value="1" Before="CostFinalize" Sequence="both" Condition='ROLES="worker" OR ROLES="both"' />
     <SetProperty Id="IsClient" Value="1" Before="CostFinalize" Sequence="both" Condition='ROLES="client" OR ROLES="both"' />
     <!-- Interactive default for the service account: the installing user. -->
