@@ -78,6 +78,9 @@ message EntraJoinRequest {
   // user (approved right away, never admin; user tokens only, not app-only
   // ones)
   string kind = 8;
+  // kind worker: labels for the worker (longarmd login --label), like a
+  // worker code's
+  map<string, string> labels = 9;
 }
 
 message StartLinkRequest {
@@ -92,6 +95,9 @@ message StartLinkRequest {
   // name (default: the hostname)
   bytes worker_csr_pem = 8;
   string worker_name = 9;
+  // kind worker or both: labels for the worker (longarmd login --label),
+  // like a worker code's; shown on the /link page
+  map<string, string> worker_labels = 10;
 }
 
 message StartLinkResponse {
@@ -135,6 +141,9 @@ message JoinResponse {
   // PollLink of a kind "both" pairing, approved: the worker's enrollment
   // (this message itself is the client's)
   JoinResponse worker = 11;
+  // workers: the labels the hub recorded for the node at enrollment
+  // (join code / sign-in labels)
+  map<string, string> labels = 12;
 }
 
 message JoinStatusRequest {
@@ -418,6 +427,9 @@ service Fleet {
   rpc ShareWorker(ShareWorkerRequest) returns (NodeInfo);
   // RemoveWorker revokes a worker of the caller's user (owner or admin).
   rpc RemoveWorker(NodeRequest) returns (NodeInfo);
+  // SetWorkerLabels merges labels into a worker's labels ("" deletes), as
+  // HubAdmin.SetLabels: the worker's owner, or an admin (any worker).
+  rpc SetWorkerLabels(SetLabelsRequest) returns (NodeInfo);
   // Port links (worker-to-worker, docs/usage.md "Port links"): the caller
   // owns what it creates; users see and remove their own links (others'
   // are NotFound), admins every link.

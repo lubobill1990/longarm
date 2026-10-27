@@ -309,3 +309,25 @@ func TestDataDirInUse(t *testing.T) {
 		}
 	}
 }
+
+// TestProtectedDataDirWarning: a data dir under a .claude directory (any
+// level, any case) is warned about - Claude Code denies writes there.
+func TestProtectedDataDirWarning(t *testing.T) {
+	base := t.TempDir()
+	for dir, warn := range map[string]bool{
+		filepath.Join(base, ".claude", "worktrees", "x", "longarmd"): true,
+		filepath.Join(base, "repo", ".CLAUDE", "data"):               true,
+		filepath.Join(base, ".claude"):                               true,
+		filepath.Join(base, ".longarm"):                              false,
+		filepath.Join(base, "claude", "data"):                        false,
+		filepath.Join(base, ".claude-data"):                          false,
+	} {
+		w := ProtectedDataDirWarning(dir)
+		if (w != "") != warn {
+			t.Errorf("%s: warning %q", dir, w)
+		}
+		if warn && !strings.Contains(w, "Claude Code") {
+			t.Errorf("%s: %q", dir, w)
+		}
+	}
+}

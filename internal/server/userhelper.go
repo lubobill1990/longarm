@@ -136,7 +136,7 @@ func (w *workspaceServer) proxySync(st pb.Workspace_SyncServer, first *pb.SyncCh
 	w.s.Audit.Log(IdentityFrom(ctx), pb.Workspace_Sync_FullMethodName, map[string]any{
 		"repo": hdr.GetRepo(), "commit": hdr.GetCommit(), "path": hdr.GetPath(), "stage_only": hdr.GetStageOnly(),
 		"bundle_bytes": res.GetBundleBytes(), "patch_bytes": res.GetPatchBytes(), "untracked_bytes": res.GetUntrackedBytes(),
-		"error": errString(err),
+		"lfs_bytes": res.GetLfsBytes(), "error": errString(err),
 	})
 	if err != nil {
 		return err

@@ -44,7 +44,8 @@ Longarm 让智能体（或者你）可以说一句 *“去那边跑”*：
   每个链接都由 hub 签发授权。
 - **代码同步**——`longarm sync .` 把你的工作副本（提交、未提交的修改、未跟踪
   的文件）镜像到 worker 上的一个 git worktree；`longarm run --repo .` 则为
-  任务创建一个全新的 worktree。
+  任务创建一个全新的 worktree（`--ref` 可以是分支、标签或完整的提交 id；Git LFS
+  文件默认是指针文件，`--lfs ship` 则一并发送其内容）。
 - **内置 sshd**——`ssh`、`scp`、`sftp` 和 VS Code Remote-SSH 都走同一条 mTLS
   通道，无需管理 SSH 密钥。
 - **MCP 服务器**——`longarm mcp` 为 Claude Code 和 Copilot CLI 提供

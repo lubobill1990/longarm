@@ -340,6 +340,9 @@ func LoadConfig(dataDir string, listenOverride []string) (Config, error) {
 			pii.RegisterSecret(string(b))
 		}
 	}
+	if w := ProtectedDataDirWarning(dataDir); w != "" {
+		cfg.Warnings = append(cfg.Warnings, w)
+	}
 	// Invalid labels (an older longarmd.toml: "eu,os=windows", values with
 	// spaces) are dropped with a warning instead of keeping longarmd (and longarmd
 	// leave, the uninstaller) from starting.

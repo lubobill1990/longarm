@@ -4,6 +4,26 @@
 
 ### Added
 
+- `longarm run --repo <local checkout> --lfs skip|ship`: Git LFS files of a
+  shipped checkout no longer fail the worktree (the smudge filter had no LFS
+  server: "batch request: missing protocol"). Default `skip`: LFS files are
+  pointer files on the worker (noted by longarm and in the job's log);
+  `ship` also sends the commit's LFS objects the worker's mirror lacks, and
+  the worktree gets their content (`git lfs checkout`). `longarm sync
+  --lfs` alike ([docs/usage.md](docs/usage.md#port-forwarding-files-code-sync)).
+- `--ref <full commit id>` for local checkouts (`longarm run --repo`,
+  `longarm sync`): the commit is shipped (also one on no branch) and checked
+  out detached. Short ids are refused with the full id in the message.
+- `longarm worker label <worker> KEY=VALUE KEY-`: owners set and delete
+  their own workers' labels (admins: any worker), checked and audited by the
+  hub (`Fleet.SetWorkerLabels`, `workers/label`).
+- `longarmd login --label KEY=VALUE` (repeatable): the hub records the
+  worker's labels at the sign-in (az and the `/link` pairing, where the
+  approver sees them), as `longarm worker add --label` does for codes;
+  install.sh `--login --label k=v`, install.ps1 `-Label 'k=v,k2=v2'` /
+  `LONGARM_LABELS`, the MSI's `LABELS` (with `LOGIN=1`; recorded in
+  `HKLM\Software\Longarm` like `HUB`, used by the tray and `longarmd login`).
+
 - Port links (`longarm link`): a user's processes on one worker reach a
   loopback port of another worker as `127.0.0.1:<port>`
   ([docs/usage.md](docs/usage.md#port-links-worker-to-worker)).
@@ -36,6 +56,16 @@
   the service waits for the sign-in the tray or `longarmd login` does.
 
 ### Changed
+
+- `longarm run --repo <url>`: a fetch the remote refuses for lack of
+  credentials (401/403, no prompt possible - e.g. Azure DevOps through Git
+  Credential Manager on the worker) fails with an error naming the cause
+  and the ways out (`--repo .` to ship from the client, or a non-interactive
+  credential on the worker); worker-side git never waits for Git Credential
+  Manager's sign-in (`GCM_INTERACTIVE=never`).
+- `longarmd join` / `longarmd login` (and longarmd's start) warn when the
+  data dir is under a `.claude` directory: Claude Code denies writes there,
+  so its jobs could not edit their worktrees.
 
 - `longarm login` / `longarmd login` no longer trust a hub CA on first use:
   without `--ca-fingerprint` they bootstrap it over HTTPS or fail
