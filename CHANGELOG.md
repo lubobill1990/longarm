@@ -115,6 +115,24 @@
 
 ### Fixed
 
+- Workspace fetches with `--git-auth forward` wrote 300+ lines of curl
+  trace (the remote's response headers, `WWW-Authenticate`, `X-VSS-*`,
+  FedAuth redirect URLs) into the job's log: longarmd set
+  `GIT_CURL_VERBOSE=0` to turn tracing off, and git turns it on when the
+  variable is set at all. Now every git / git-lfs run of the worker gets
+  an environment without `GIT_TRACE*`, `GIT_CURL_VERBOSE`,
+  `GIT_TRANSFER_TRACE` (removed ignoring case; trace2 `=0`,
+  `GIT_TRACE_REDACT=1`), forwarded output drops lines with
+  Authorization / Cookie headers and masks bearer / basic tokens.
+  `[workspace] git_trace = true` re-enables inherited traces for debugging.
+- `longarm logs <id>` (and `wait`, `kill`, ... without a worker) right
+  after a run could say `job ... not found on any known worker` (exit 3)
+  for a job the hub knows: when an earlier longarm had found the hub slow
+  and remembered it as down, longarm asked only the workers it knew without
+  the hub (none with an empty node cache) and gave up after 8 s per worker.
+  Now the hub is asked again before giving up, workers get 15 s like `jobs`,
+  and workers that did not answer make it exit 255 (outcome unknown)
+  instead of "not found".
 - `longarm run --id <id> --repo <local checkout>` again after "stdin payload
   lost before start; resubmit" was refused with `AlreadyExists` (exit 2):
   every run uploads the checkout anew under a new staging id, which was part

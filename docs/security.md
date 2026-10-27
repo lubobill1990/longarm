@@ -689,8 +689,19 @@ longarmd checks, not only git's config matching). So:
   short-lived URLs from the LFS API, not the credential.
 - **Submodules** are never fetched (`--no-recurse-submodules`; nothing
   recurses into them).
-- **Traces** (`GIT_TRACE*`, `GIT_CURL_VERBOSE`, trace2) are forced off for
-  these git runs, and `<mirror>/lfs/logs` is removed after an LFS fetch.
+- **Traces** are off for every git and git-lfs run of the worker (fetch,
+  ls-remote, worktree, checkout, LFS): `GIT_TRACE*`, `GIT_CURL_VERBOSE` and
+  `GIT_TRANSFER_TRACE` from longarmd's environment are removed (by name,
+  ignoring case), never set to `0` - git turns curl tracing on when
+  `GIT_CURL_VERBOSE` is set at all, which put the remote's response
+  headers into job logs in the first release of this feature; trace2 is
+  forced off (`GIT_TRACE2*=0`, its targets can come from git config);
+  `GIT_TRACE_REDACT=1`. Lines with `Authorization`, `Proxy-Authorization`,
+  `Cookie` or `Set-Cookie` headers are dropped from everything forwarded
+  (the job's log, errors, failure reasons), and bearer / basic tokens are
+  masked anywhere. `[workspace] git_trace = true` in longarmd.toml keeps
+  the inherited trace variables for debugging (the redaction and the line
+  filter stay). `<mirror>/lfs/logs` is removed after an LFS fetch.
 - Only https URLs get it (the client refuses http, the worker too; a job's
   `GH_TOKEN` keeps working over http as before, also scoped to the exact
   URL now).

@@ -183,6 +183,10 @@ type WorkspaceConfig struct {
 	LFSMaxObjectBytes int64 `toml:"lfs_max_object_bytes"`
 	LFSMaxTotalBytes  int64 `toml:"lfs_max_total_bytes"`
 	LFSMaxObjects     int   `toml:"lfs_max_objects"`
+	// GitTrace (debugging): the worker's git runs keep GIT_TRACE* /
+	// GIT_CURL_VERBOSE from longarmd's environment (default: removed).
+	// GIT_TRACE_REDACT=1 and the filtering of credential header lines stay.
+	GitTrace bool `toml:"git_trace"`
 }
 
 // GCConfig is the [gc] section: automatic cleanup of job/session dirs,
@@ -881,6 +885,10 @@ type state struct {
 }
 
 func openState(ctx context.Context, cfg Config, log *slog.Logger) (*state, error) {
+	workspace.GitTrace = cfg.Workspace.GitTrace
+	if cfg.Workspace.GitTrace {
+		log.Warn("[workspace] git_trace = true: git traces of workspace fetches go into job logs (credential header lines dropped)")
+	}
 	shared := &workspace.Store{Root: cfg.DataDir, LFSLimits: workspace.LFSLimits{MaxObjectBytes: cfg.Workspace.LFSMaxObjectBytes,
 		MaxTotalBytes: cfg.Workspace.LFSMaxTotalBytes, MaxObjects: cfg.Workspace.LFSMaxObjects}}
 	sp, err := userspace.Open(ctx, userspace.Config{

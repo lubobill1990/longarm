@@ -158,13 +158,7 @@ func (f *fetchAuth) close() {
 	}
 }
 
-// traceOff: git's and git-lfs's traces and verbose curl output off,
-// whatever the worker's environment says.
-var traceOff = []string{"GIT_TRACE=0", "GIT_TRACE_CURL=0", "GIT_TRACE_PACKET=0", "GIT_TRACE_PERFORMANCE=0",
-	"GIT_TRACE_SETUP=0", "GIT_TRACE2=0", "GIT_TRACE2_EVENT=0", "GIT_TRACE2_PERF=0", "GIT_CURL_VERBOSE=0",
-	"GIT_TRACE_REDACT=1", "GIT_TRANSFER_TRACE=0"}
-
-// env is what the fetch adds to base: traces off, its config entries after
+// env is what the fetch adds to base: its config entries after
 // any the worker's own environment passes (GIT_CONFIG_COUNT in base), and
 // the credential helper's address and key.
 func (f *fetchAuth) env(base []string) []string {
@@ -179,8 +173,7 @@ func (f *fetchAuth) env(base []string) []string {
 			}
 		}
 	}
-	env := append([]string(nil), traceOff...)
-	env = append(env, "GIT_CONFIG_COUNT="+strconv.Itoa(first+len(f.kv)))
+	env := []string{"GIT_CONFIG_COUNT=" + strconv.Itoa(first+len(f.kv))}
 	for i, e := range f.kv {
 		n := strconv.Itoa(first + i)
 		env = append(env, "GIT_CONFIG_KEY_"+n+"="+e[0], "GIT_CONFIG_VALUE_"+n+"="+e[1])
@@ -199,6 +192,70 @@ func (f *fetchAuth) redact(s string) string {
 // authHeader matches Authorization header values in git / curl / git-lfs
 // output (GIT_TRACE_CURL, error messages) whatever the credential.
 var authHeader = regexp.MustCompile(`(?i)(authorization:\s*(?:bearer|basic|token)\s+)[^\s"']+`)
+
+// schemeToken matches a bearer / basic credential anywhere ("Bearer
+// eyJ0eXAi...", "basic dXNlcjpwYXNz") - not "Basic realm=...".
+var schemeToken = regexp.MustCompile(`(?i)\b(bearer|basic)(\s+)[A-Za-z0-9\-._~+/]{12,}=*`)
+
+// sensitiveLine matches output lines that carry a credential header (a
+// curl trace, a verbose error): dropped from everything forwarded.
+var sensitiveLine = regexp.MustCompile(`(?i)\b(proxy-authorization|authorization|cookie|set-cookie)\s*:`)
+
+// GitTrace ([workspace] git_trace = true in longarmd.toml, a debugging
+// switch) lets the git and git-lfs runs inherit GIT_TRACE* /
+// GIT_CURL_VERBOSE from longarmd's environment. Off (the default) they
+// are removed: tracing (GIT_CURL_VERBOSE turns curl tracing on whatever
+// its value, "0" included) put response headers of the remote into job
+// logs. Either way GIT_TRACE_REDACT=1, and lines with credential headers
+// are dropped from what is forwarded.
+var GitTrace bool
+
+// traceVar reports whether an environment entry ("NAME=value") turns on a
+// git / git-lfs trace: GIT_TRACE* (GIT_TRACE, _CURL, _PACKET, _SETUP,
+// _SHALLOW, _PACKFILE, _PERFORMANCE, _CURL_NO_DATA, _REDACT, GIT_TRACE2*),
+// GIT_CURL_VERBOSE and git-lfs's GIT_TRANSFER_TRACE - matched without
+// regard to case (Windows environment names are case-insensitive).
+func traceVar(kv string) bool {
+	name, _, _ := strings.Cut(kv, "=")
+	name = strings.ToUpper(name)
+	return strings.HasPrefix(name, "GIT_TRACE") || name == "GIT_CURL_VERBOSE" || name == "GIT_TRANSFER_TRACE"
+}
+
+// gitEnv is the environment of every git / git-lfs run: base without the
+// trace variables (unless GitTrace), trace2 forced off (its targets can
+// also come from git config; "0" is false there), GIT_TRACE_REDACT=1.
+// Variables that switch a trace on by being set at all are only ever
+// removed, never set to "0".
+func gitEnv(base []string) []string {
+	out := make([]string, 0, len(base)+4)
+	for _, kv := range base {
+		if traceVar(kv) && (!GitTrace || strings.HasPrefix(strings.ToUpper(kv), "GIT_TRACE_REDACT=")) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	if !GitTrace {
+		out = append(out, "GIT_TRACE2=0", "GIT_TRACE2_EVENT=0", "GIT_TRACE2_PERF=0")
+	}
+	return append(out, "GIT_TRACE_REDACT=1")
+}
+
+// scrubOutput drops lines with credential headers and masks URL
+// credentials, Authorization values, bearer / basic tokens and fa's
+// credential.
+func scrubOutput(s string, fa *fetchAuth) string {
+	if sensitiveLine.MatchString(s) {
+		lines := strings.SplitAfter(s, "\n")
+		kept := lines[:0]
+		for _, l := range lines {
+			if !sensitiveLine.MatchString(l) {
+				kept = append(kept, l)
+			}
+		}
+		s = strings.Join(kept, "")
+	}
+	return RedactURLs(fa.redact(s))
+}
 
 // redirected matches git's refusal of a redirect (http.followRedirects=false).
 var redirected = regexp.MustCompile(`(?i)(returned error: 30[1-8]\b|redirect)`)

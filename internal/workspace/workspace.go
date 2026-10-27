@@ -155,7 +155,7 @@ func (s *Store) runAuth(ctx context.Context, dir string, env []string, fa *fetch
 	cmd.Dir = dir
 	// Never wait for a prompt nobody sees: git's own, an askpass helper's,
 	// or Git Credential Manager's sign-in window.
-	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "GCM_INTERACTIVE=never", "LC_ALL=C"), env...)
+	cmd.Env = append(append(gitEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "GCM_INTERACTIVE=never", "LC_ALL=C"), env...)
 	cmd.Env = append(cmd.Env, fa.env(cmd.Env)...)
 	// One writer for both streams: exec then never calls it concurrently.
 	// What goes to log (a job's out.log) has URL credentials masked.
@@ -177,9 +177,9 @@ func (s *Store) runAuth(ctx context.Context, dir string, env []string, fa *fetch
 		if len(msg) > 2000 {
 			msg = msg[len(msg)-2000:]
 		}
-		return fa.redact(out.String()), fmt.Errorf("git %s: %v: %s", RedactURLs(strings.Join(args, " ")), err, RedactURLs(fa.redact(msg)))
+		return scrubOutput(out.String(), fa), fmt.Errorf("git %s: %v: %s", RedactURLs(strings.Join(args, " ")), err, scrubOutput(msg, fa))
 	}
-	return fa.redact(out.String()), nil
+	return scrubOutput(out.String(), fa), nil
 }
 
 // urlUserinfo matches the userinfo of a URL ("https://user:pass@",
@@ -187,9 +187,11 @@ func (s *Store) runAuth(ctx context.Context, dir string, env []string, fa *fetch
 var urlUserinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^\s/?#@'"]+@`)
 
 // RedactURLs masks the userinfo (user and password: a PAT is often the
-// user) of every URL in s, and the value of every Authorization header.
+// user) of every URL in s, the value of every Authorization header and any
+// bearer / basic token.
 func RedactURLs(s string) string {
-	return authHeader.ReplaceAllString(urlUserinfo.ReplaceAllString(s, "${1}xxxxx@"), "${1}xxxxx")
+	s = authHeader.ReplaceAllString(urlUserinfo.ReplaceAllString(s, "${1}xxxxx@"), "${1}xxxxx")
+	return schemeToken.ReplaceAllString(s, "${1}${2}xxxxx")
 }
 
 // redactWriter passes lines through RedactURLs (and masks the credential
@@ -207,7 +209,9 @@ func (r *redactWriter) Write(p []byte) (int, error) {
 		if i < 0 {
 			break
 		}
-		r.w.Write([]byte(RedactURLs(r.fa.redact(string(r.buf[:i+1])))))
+		if line := string(r.buf[:i+1]); !sensitiveLine.MatchString(line) {
+			r.w.Write([]byte(RedactURLs(r.fa.redact(line))))
+		}
 		r.buf = r.buf[i+1:]
 	}
 	if len(r.buf) > 64<<10 { // no line end in sight
@@ -218,7 +222,9 @@ func (r *redactWriter) Write(p []byte) (int, error) {
 
 func (r *redactWriter) flush() {
 	if len(r.buf) > 0 {
-		r.w.Write([]byte(RedactURLs(r.fa.redact(string(r.buf)))))
+		if line := string(r.buf); !sensitiveLine.MatchString(line) {
+			r.w.Write([]byte(RedactURLs(r.fa.redact(line))))
+		}
 		r.buf = nil
 	}
 }

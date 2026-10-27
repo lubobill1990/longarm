@@ -64,7 +64,7 @@ func TestFetchAuthEnv(t *testing.T) {
 		"GIT_CONFIG_KEY_4=credential.https://dev.azure.com.helper\nGIT_CONFIG_VALUE_4=!\"",
 		"GIT_CONFIG_KEY_5=http.followRedirects\nGIT_CONFIG_VALUE_5=false",
 		"GIT_CONFIG_KEY_6=lfs.url\nGIT_CONFIG_VALUE_6=https://dev.azure.com/org/p/_git/r.git/info/lfs",
-		"GIT_TRACE=0", "GIT_TRACE_CURL=0", "GIT_TRACE2_EVENT=0", "LONGARM_GITCRED_KEY="} {
+		"LONGARM_GITCRED_KEY="} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("env lacks %q:\n%s", want, joined)
 		}
