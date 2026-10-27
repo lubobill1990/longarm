@@ -53,6 +53,11 @@ param(
     [string]$EntraWeb = '',
     # app-only sign-in (CI): "<app id>=<user>", comma-separated
     [string]$EntraApps = '',
+    # scheduler memory gate: free GB a worker needs for scheduled jobs (default 20; lower it for small workers)
+    [string]$GateFreeGb = '',
+    # the minisign public key line (RW...) releases are signed with: the hub refuses uploads whose
+    # signature doesn't verify, e.g. -ReleasePublicKey (Get-Content longarm-release.pub)[-1]
+    [string]$ReleasePublicKey = '',
     [switch]$LogAnalytics,
     # key (default): storage account keys; identity: a managed identity, shared key access off
     [ValidateSet('', 'key', 'identity')][string]$StorageAuth = '',
@@ -253,6 +258,9 @@ if ($StunServers -and $StunServers -ne 'none') {
         if ($s -notmatch '^([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\]):[0-9]{1,5}$') { throw "-StunServers: '$s' is not host:port or [v6]:port (none goes alone)" }
     }
 }
+if ($GateFreeGb -and $GateFreeGb -notmatch '^[0-9]+([.][0-9]+)?$') { throw '-GateFreeGb: a number of GB' }
+# the key line of a minisign .pub file, not the file or its comment line
+if ($ReleasePublicKey -and $ReleasePublicKey -cnotmatch '^RW[A-Za-z0-9+/=]{40,}$') { throw '-ReleasePublicKey: the minisign public key line (RW...), e.g. (Get-Content longarm-release.pub)[-1]' }
 $StorageAuth = $StorageAuth.ToLowerInvariant()
 $rg = $ResourceGroup
 $template = Join-Path $PSScriptRoot 'azuredeploy.json'
@@ -382,6 +390,15 @@ try {
             }
         }
     }
+    # and its scheduler gate and release signing key (likewise)
+    if ($curImage -and -not $GateFreeGb) {
+        $GateFreeGb = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query "containers[0].environmentVariables[?name=='LONGARM_HUB_SCHED_GATE_FREE_GB'].value | [0]") -join ''
+        if ($GateFreeGb -ceq 'None') { $GateFreeGb = '' }
+    }
+    if ($curImage -and -not $ReleasePublicKey) {
+        $ReleasePublicKey = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query "containers[0].environmentVariables[?name=='LONGARM_HUB_RELEASES_PUBLIC_KEY'].value | [0]") -join ''
+        if ($ReleasePublicKey -ceq 'None') { $ReleasePublicKey = '' }
+    }
     if ([bool]$EntraTenant -ne [bool]$EntraClient) { throw '-EntraTenant and -EntraClient go together' }
     if ($EntraWeb -and $EntraWeb -cnotmatch '^(spa|confidential|off)$') { throw '-EntraWeb: spa, confidential or off' }
     if ($Acr -and $StorageAuth -ne 'identity') { throw '-Acr needs -StorageAuth identity' }
@@ -460,6 +477,8 @@ try {
     if ($Acr) { $p.acrName = @{ value = $Acr } }
     if ($Image) { $p.image = @{ value = $Image } }
     if ($AcmeEmail) { $p.acmeEmail = @{ value = $AcmeEmail } }
+    if ($GateFreeGb) { $p.schedulerGateFreeGb = @{ value = $GateFreeGb } }
+    if ($ReleasePublicKey) { $p.releasePublicKey = @{ value = $ReleasePublicKey } }
     if ($EntraTenant) {
         $p.entraTenantId = @{ value = $EntraTenant }
         $p.entraClientId = @{ value = $EntraClient }

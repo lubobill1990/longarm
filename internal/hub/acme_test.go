@@ -103,3 +103,18 @@ func TestConfigGateEnv(t *testing.T) {
 		t.Fatal("bad LONGARM_HUB_SCHED_GATE_FREE_GB accepted")
 	}
 }
+
+// The release signing key from the environment (an ACI hub's hub.toml is
+// generated), winning over hub.toml.
+func TestConfigReleasePublicKeyEnv(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "hub.toml")
+	os.WriteFile(p, []byte("[releases]\npublic_key = \"RWfromtoml\"\n"), 0o600)
+	c, err := LoadConfig(p)
+	if err != nil || c.Releases.PublicKey != "RWfromtoml" {
+		t.Fatalf("toml: %q %v", c.Releases.PublicKey, err)
+	}
+	t.Setenv(EnvReleasePublicKey, " RWfromenv ")
+	if c, err = LoadConfig(p); err != nil || c.Releases.PublicKey != "RWfromenv" {
+		t.Fatalf("env: %q %v", c.Releases.PublicKey, err)
+	}
+}

@@ -63,6 +63,14 @@ longarm-hub release keygen            # ~/.config/longarm/release/longarm-releas
                                       # LONGARM_RELEASE_KEY_PASSWORD=... encrypts the key
 ```
 
+The hub verifies uploads against the public key: put its last line into
+hub.toml (`[releases] public_key = "RW…"`), or, for a hub on Azure Container
+Instances (deploy/azure, whose hub.toml is generated), deploy it with
+`./deploy.sh --name <hub> --release-public-key "$(tail -1 longarm-release.pub)"`
+(`deploy.ps1 -ReleasePublicKey`; a re-run keeps it). Without it the hub stores
+unsigned or wrongly signed files, and its install.sh / install.ps1 hand them
+to new users.
+
 ### 2.2 The CI's hub credential: a `release` role certificate
 
 The role `release` may call exactly: `HubAdmin.PublishRelease`,
@@ -145,7 +153,10 @@ visudo -cf /etc/sudoers.d/longarm-hub-deploy
   `AuthenticationMethods publickey`, `PermitTTY no`, `AllowTcpForwarding no`,
   `X11Forwarding no`.
 - hub.toml must have `[releases] public_key = "RW…"` (the key of 2.1): the
-  script refuses to install anything without it.
+  script refuses to install anything without it. (A hub on Azure Container
+  Instances has no deploy user - a `deploy.sh --image` re-run upgrades it -
+  and gets the key with `deploy.sh --release-public-key "$(tail -1
+  longarm-release.pub)"`, see 2.1.)
 - Needs `curl` (health check, HTTP fallback).
 
 What the forced command accepts (`SSH_ORIGINAL_COMMAND`; only `0-9 A-Z a-z . -`
@@ -210,6 +221,8 @@ What limits the blast radius of a leaked secret:
 - the hub deploy key is a forced command (2.3): it can only install a
   longarm-hub that the hub itself verifies against `[releases] public_key`,
   with health check and rollback;
+- the hub refuses uploads that the release key didn't sign (`[releases]
+  public_key`; an ACI hub: `deploy.sh --release-public-key`, 2.1);
 - workers only install releases signed by the release key, canary first,
   with automatic rollback.
 
