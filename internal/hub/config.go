@@ -119,7 +119,7 @@ type Config struct {
 	Telemetry TelemetryConfig `toml:"telemetry"`
 	// Diagnostics: where uploaded diagnostic bundles are stored (diag.go).
 	Diagnostics DiagConfig `toml:"diagnostics"`
-	Auth      AuthConfig      `toml:"auth"` // entra.go
+	Auth        AuthConfig `toml:"auth"` // entra.go
 	// Headscale is P2's [headscale] section; still accepted (it means
 	// [tailnet] provider = "headscale" with these settings).
 	Headscale HeadscaleConfig `toml:"headscale"`
