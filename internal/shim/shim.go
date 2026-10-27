@@ -11,7 +11,8 @@
 // start time.
 //
 // Two modes:
-//   - pipe (jobs): stdout+stderr through one pipe, no stdin.
+//   - pipe (jobs): stdout+stderr through one pipe; stdin is the job's stdin
+//     payload, if any (then end of file), else empty.
 //   - pty (interactive sessions, spec.Pty): the command runs on a pseudo
 //     terminal (ConPTY / pty) and the shim serves an attach channel (named
 //     pipe / unix socket, address in status.json) that longarmd connects to for
@@ -20,10 +21,12 @@
 // Control: longarmd -> shim kill requests are file based - a "kill" marker in the
 // job dir, polled every 200 ms. Secrets
 // arrive once on stdin (JSON map) and live only in this process's memory and
-// the child's env.
+// the child's env; the bytes after that JSON value are the job's stdin
+// payload (memory only, handed to the child through a pipe).
 package shim
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,6 +77,7 @@ type job struct {
 	st      *jobs.Status
 	log     *slog.Logger
 	secrets map[string]string
+	stdin   []byte // the job's stdin payload
 	logf    *logfile.Writer
 	out     *redact.Writer // redacting writer into logf
 	env     []string       // the workload's environment
@@ -195,17 +199,9 @@ func run(d jobs.Dir, stdin io.Reader, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	secrets := map[string]string{}
-	if stdin != nil {
-		b, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
-		if err != nil {
-			return fmt.Errorf("read secrets: %w", err)
-		}
-		if len(b) > 0 {
-			if err := json.Unmarshal(b, &secrets); err != nil {
-				return fmt.Errorf("decode secrets: %w", err)
-			}
-		}
+	secrets, input, err := readInput(stdin)
+	if err != nil {
+		return err
 	}
 	st, err := d.ReadStatus()
 	if err != nil {
@@ -223,7 +219,7 @@ func run(d jobs.Dir, stdin io.Reader, log *slog.Logger) error {
 	if err := d.WriteStatus(st); err != nil {
 		return err
 	}
-	j := &job{d: d, spec: spec, st: st, log: log, secrets: secrets}
+	j := &job{d: d, spec: spec, st: st, log: log, secrets: secrets, stdin: input}
 
 	if d.KillRequested() {
 		return j.finish(jobs.Killed, platform.KilledExitCode, "killed before start")
@@ -303,6 +299,61 @@ func run(d jobs.Dir, stdin io.Reader, log *slog.Logger) error {
 	return j.runPipe(ctr)
 }
 
+// readInput reads what longarmd sends on the shim's stdin: the secrets (a
+// JSON object, possibly absent) followed by the job's stdin payload.
+func readInput(r io.Reader) (map[string]string, []byte, error) {
+	secrets := map[string]string{}
+	if r == nil {
+		return secrets, nil, nil
+	}
+	b, err := io.ReadAll(io.LimitReader(r, 1<<20+jobs.MaxStdinBytes+1))
+	if err != nil {
+		return nil, nil, fmt.Errorf("read secrets: %w", err)
+	}
+	if len(bytes.TrimSpace(b)) == 0 {
+		return secrets, nil, nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	if err := dec.Decode(&secrets); err != nil {
+		return nil, nil, fmt.Errorf("decode secrets: %w", err)
+	}
+	rest := b[dec.InputOffset():]
+	if len(rest) > jobs.MaxStdinBytes {
+		return nil, nil, fmt.Errorf("stdin payload larger than %d bytes", jobs.MaxStdinBytes)
+	}
+	if len(rest) == 0 {
+		rest = nil
+	}
+	return secrets, rest, nil
+}
+
+// feedStdin gives the job its stdin payload through a pipe the shim
+// writes from memory; with no payload the job's stdin is empty. The
+// returned stop closes the shim's end (a job that never reads its stdin
+// can't block the shim).
+func (j *job) feedStdin(cmd *exec.Cmd) (start, stop func(), err error) {
+	if len(j.stdin) == 0 {
+		return func() {}, func() {}, nil
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd.Stdin = r
+	var once sync.Once
+	stop = func() { once.Do(func() { w.Close() }) }
+	start = func() {
+		r.Close() // the child has its copy
+		data := j.stdin
+		j.stdin = nil
+		go func() {
+			_, _ = w.Write(data) // fails once the job closed its end
+			stop()
+		}()
+	}
+	return start, stop, nil
+}
+
 // runPipe runs a batch job: output through one pipe into out.log.
 func (j *job) runPipe(ctr platform.Container) error {
 	pr, pw, err := os.Pipe()
@@ -317,12 +368,23 @@ func (j *job) runPipe(ctr platform.Container) error {
 	cmd.Dir = j.workdir()
 	cmd.Env = j.env
 	cmd.Stdout, cmd.Stderr = pw, pw // one pipe: interleaving preserved
+	startIn, stopIn, err := j.feedStdin(cmd)
+	if err != nil {
+		pw.Close()
+		pr.Close()
+		return j.failStart("cannot create the stdin pipe", err)
+	}
+	defer stopIn()
 	startErr := ctr.Start(cmd)
 	pw.Close()
 	if startErr != nil {
 		pr.Close()
+		if r, ok := cmd.Stdin.(*os.File); ok {
+			r.Close()
+		}
 		return j.failStart(fmt.Sprintf("failed to start %q", j.spec.Argv[0]), startErr)
 	}
+	startIn()
 
 	j.st.State = jobs.Running
 	j.st.PID = cmd.Process.Pid
@@ -345,6 +407,7 @@ func (j *job) runPipe(ctr platform.Container) error {
 	go j.watchKill(ctr, &killed, stopWatch)
 
 	waitErr := cmd.Wait()
+	stopIn()
 	close(stopWatch)
 	// The main process is gone: the job is over. Kill leftovers so they
 	// release the output pipe and do not outlive their job.

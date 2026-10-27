@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -179,6 +180,28 @@ func (s *session) optionalHub(ctx context.Context) *hubclient.Conn {
 	return h
 }
 
+// requireHub is the hub connection for callers that need its answer
+// (jobs --hub-only): exit 69 when no hub is configured or it doesn't connect
+// within hubConnectTimeout. An earlier failure (hub-state.json) is not
+// trusted: the hub is asked again.
+func (s *session) requireHub(ctx context.Context) (*hubclient.Conn, error) {
+	h := s.hub()
+	if h == nil {
+		why := "no hub configured"
+		if noHub {
+			why = "--no-hub / LONGARM_NO_HUB=1"
+		} else if s.cfg.Hub.Enabled() {
+			why = fmt.Sprintf("hub %s: %v", s.cfg.Hub.Address, s.hubErr)
+		}
+		return nil, &exitError{code: exitHubUnavailable, msg: why}
+	}
+	if err := h.WaitReady(ctx, hubConnectTimeout); err != nil {
+		return nil, &exitError{code: exitHubUnavailable, msg: fmt.Sprintf("hub %s unreachable: %s", s.cfg.Hub.Address, oneLine(err))}
+	}
+	s.hubUp()
+	return h, nil
+}
+
 // hubRetryAfter: how long a failed hub is skipped, by long-lived processes
 // (longarm daemon, longarm mcp) and across longarm invocations (hub-state.json);
 // LONGARM_HUB_RETRY_AFTER overrides.
@@ -333,7 +356,11 @@ func (s *session) worker(name string) (client.Worker, error) {
 			}
 		}
 	}
-	return s.cfg.Worker(name)
+	w, err := s.cfg.Worker(name)
+	if err != nil {
+		return w, &codedError{code: exitNotFound, err: err}
+	}
+	return w, nil
 }
 
 // refreshNodes (re)loads the hub's worker list for name lookups: at most
@@ -438,7 +465,7 @@ func (s *session) findJob(ctx context.Context, id string) (string, error) {
 	if w, ok := <-found; ok {
 		return w, nil
 	}
-	return "", fmt.Errorf("job %s not found on any known worker", id)
+	return "", notFoundf("job %s not found on any known worker", id)
 }
 
 // ---------------------------------------------------------------- placement
@@ -476,6 +503,12 @@ func (s *session) placeViaHub(ctx context.Context, h *hubclient.Conn, o placeOpt
 	}
 	for {
 		u, err := st.Recv()
+		if w, ok := runsAlready(err, o.jobID); ok {
+			// A retried run --id: the job exists. Submit to its worker,
+			// which returns it (same spec) or refuses (another spec).
+			fmt.Fprintf(os.Stderr, "longarm: job %s exists on %s\n", o.jobID, w)
+			return w, nil
+		}
 		if err != nil {
 			return "", err
 		}
@@ -490,6 +523,17 @@ func (s *session) placeViaHub(ctx context.Context, h *hubclient.Conn, o placeOpt
 			return u.Worker, nil
 		}
 	}
+}
+
+// runsAlready recognizes the hub's answer to placing a job id the caller
+// already has on a worker ("job <id> already runs on <worker>").
+func runsAlready(err error, id string) (string, bool) {
+	s, ok := status.FromError(err)
+	if !ok || s.Code() != codes.AlreadyExists {
+		return "", false
+	}
+	w, ok := strings.CutPrefix(s.Message(), "job "+id+" already runs on ")
+	return w, ok && w != "" && !strings.ContainsAny(w, " \t")
 }
 
 // candidates probes the known workers' metrics in parallel.
@@ -555,7 +599,7 @@ func (s *session) placeLocally(ctx context.Context, o placeOpts) (string, error)
 			return res.Worker, nil
 		}
 		if o.noQueue {
-			return "", fmt.Errorf("no worker passes the gate: %s", res.Summary())
+			return "", status.Errorf(codes.ResourceExhausted, "no worker passes the gate: %s", res.Summary())
 		}
 		fmt.Fprintf(os.Stderr, "longarm: no worker passes the gate (%s); retrying in %s\n", res.Summary(), localQueueInterval)
 		select {
@@ -586,7 +630,7 @@ func (s *session) pickNow(ctx context.Context, require map[string]string) (strin
 	}
 	res := sched.Pick(p, cands, sched.Request{MemGB: 0, Require: require})
 	if res.Worker == "" {
-		return "", fmt.Errorf("no worker passes the gate: %s", res.Summary())
+		return "", status.Errorf(codes.ResourceExhausted, "no worker passes the gate: %s", res.Summary())
 	}
 	return res.Worker, nil
 }

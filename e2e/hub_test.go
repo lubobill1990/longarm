@@ -111,6 +111,15 @@ func TestHub(t *testing.T) {
 		if !strings.Contains(out, "wa") {
 			t.Fatalf("longarm jobs via hub:\n%s", out)
 		}
+		// The hub answers: "source": "hub"; an unknown id is authoritative (3).
+		if r := h.longarm(h.client, "jobs", "--hub-only", "--json", "--id", id); r.code != 0 ||
+			!strings.Contains(r.stdout, `"source": "hub"`) || !strings.Contains(r.stdout, id) {
+			t.Fatalf("jobs --hub-only --id: %+v", r)
+		}
+		if r := h.longarm(h.client, "jobs", "--hub-only", "--json", "--id", "01NOSUCHJOB0000000000000000"); r.code != 3 ||
+			!strings.Contains(r.stdout, `"source": "hub"`) || !strings.Contains(r.stderr, "not known to the hub") {
+			t.Fatalf("jobs --hub-only --id <unknown>: %+v", r)
+		}
 		// longarm wait <id> (no worker): through the hub; the hub dies meanwhile.
 		bgw := h.longarmBG(t, h.client, "wait", id)
 		time.Sleep(1500 * time.Millisecond)
@@ -124,6 +133,14 @@ func TestHub(t *testing.T) {
 		// Without the hub: ls/jobs/wait still work from the cache.
 		if r := h.longarm(h.client, "wait", id); r.code != 3 {
 			t.Fatalf("wait without hub: %+v", r)
+		}
+		// ... but not as the hub's answer: --hub-only exits 69, the
+		// fallback says where its list came from.
+		if r := h.longarm(h.client, "jobs", "--hub-only", "--json"); r.code != 69 || r.stdout != "" {
+			t.Fatalf("jobs --hub-only without hub: %+v", r)
+		}
+		if r := h.longarm(h.client, "jobs", "--json", "--id", id); r.code != 0 || !strings.Contains(r.stdout, `"source": "workers"`) {
+			t.Fatalf("jobs --json without hub: %+v", r)
 		}
 		if r := h.longarm(h.client, "jobs"); r.code != 0 || !strings.Contains(r.stdout, id) {
 			t.Fatalf("jobs without hub: %+v", r)

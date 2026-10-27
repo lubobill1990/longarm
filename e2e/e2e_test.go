@@ -5,6 +5,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	mrand "math/rand/v2"
@@ -461,6 +462,99 @@ func TestE2E(t *testing.T) {
 		r := e.longarm(e.client, "exec", "w1", "--secret-env", "E2E_TOKEN", "--", bins.helper, "env", "E2E_TOKEN")
 		if r.stdout != "E2E_TOKEN=***\n" {
 			t.Fatalf("exec secret: %+v", r)
+		}
+	})
+
+	t.Run("stdin_payload_never_on_disk", func(t *testing.T) {
+		const marker = "PAYLOAD-Marker-0xFEEDFACE"
+		payload := []byte("prompt with a secret: " + marker + "\nsecond line\n")
+		file := filepath.Join(e.root, "payload.txt")
+		os.WriteFile(file, payload, 0o600)
+		want := fmt.Sprintf("%d %x\n", len(payload), sha256.Sum256(payload))
+		r := e.longarm(e.client, "run", "w1", "--stdin-file", file, "--wait", "--", bins.helper, "stdin-sha")
+		if r.code != 0 {
+			t.Fatalf("run --stdin-file: %+v", r)
+		}
+		id := strings.TrimSpace(r.stdout)
+		if got := e.mustLongarm(e.client, "logs", "w1", id); got != want {
+			t.Fatalf("the job read %q, want %q", got, want)
+		}
+		// longarm's own stdin ("-"), detached (no --wait)
+		cmd := exec.Command(bins.longarm, "run", "w1", "--stdin-file", "-", "--", bins.helper, "stdin-sha")
+		cmd.Env = append(os.Environ(), "LONGARM_CONFIG_DIR="+e.client)
+		cmd.Stdin = bytes.NewReader(payload)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("run --stdin-file -: %v", err)
+		}
+		id2 := strings.TrimSpace(string(out))
+		e.mustLongarm(e.client, "wait", "w1", id2)
+		if got := e.mustLongarm(e.client, "logs", "w1", id2); got != want {
+			t.Fatalf("stdin -: the job read %q, want %q", got, want)
+		}
+		// Neither the job record (job.json, the API, jobs --json), the audit
+		// log, longarmd's log nor anything else on the worker has it.
+		spec, _ := jobs.Dir(filepath.Join(e.dataDir, "jobs", id)).ReadSpec()
+		if spec.StdinBytes != int64(len(payload)) {
+			t.Fatalf("spec.StdinBytes = %d", spec.StdinBytes)
+		}
+		if jl := e.mustLongarm(e.client, "jobs", "w1", "--json", "--id", id); strings.Contains(jl, marker) ||
+			!strings.Contains(jl, fmt.Sprintf(`"stdinBytes": "%d"`, len(payload))) {
+			t.Fatalf("jobs --json: %s", jl)
+		}
+		filepath.Walk(e.dataDir, func(p string, fi os.FileInfo, err error) error {
+			if err != nil || fi.IsDir() || strings.HasSuffix(p, ".lock") {
+				return nil
+			}
+			if b, err := os.ReadFile(p); err == nil && bytes.Contains(b, []byte(marker)) {
+				t.Errorf("payload found on disk in %s", p)
+			}
+			return nil
+		})
+		if b, _ := os.ReadFile(filepath.Join(e.root, "longarmd.out")); bytes.Contains(b, []byte(marker)) {
+			t.Error("payload in longarmd's log")
+		}
+		// at most 1 MiB, checked before anything is sent
+		big := filepath.Join(e.root, "big.txt")
+		os.WriteFile(big, bytes.Repeat([]byte("x"), jobs.MaxStdinBytes+1), 0o600)
+		if r := e.longarm(e.client, "run", "w1", "--stdin-file", big, "--", bins.helper, "stdin-sha"); r.code != 2 || r.stdout != "" {
+			t.Fatalf("oversized --stdin-file: %+v", r)
+		}
+	})
+
+	t.Run("exit_codes_and_jobs_json", func(t *testing.T) {
+		for _, c := range []struct {
+			args []string
+			code int
+		}{
+			{[]string{"run", "w1", "--no-such-flag", "--", "x"}, 2}, // cobra flag error
+			{[]string{"wait"}, 2},                                      // argument count
+			{[]string{"no-such-command"}, 2},                           // unknown command
+			{[]string{"run", "w1", "--env", "NOEQUALS", "--", "x"}, 2}, // local validation
+			{[]string{"run", "w1", "--stdin-file", filepath.Join(e.root, "missing"), "--", "x"}, 2},
+			{[]string{"run", "w1", "--id", "bad/id", "--", "x"}, 2},    // InvalidArgument from the worker
+			{[]string{"wait", "w1", "01NOSUCHJOB0000000000000000"}, 3}, // NotFound from the worker
+			{[]string{"run", "no-such-worker", "--", "x"}, 3},          // unknown worker
+			{[]string{"jobs", "--hub-only"}, 69},                       // no hub configured
+			{[]string{"admin", "shutdown", "w1"}, 77},                  // a client may not
+		} {
+			if r := e.longarm(e.client, c.args...); r.code != c.code || r.stdout != "" {
+				t.Errorf("longarm %v: exit %d, want %d (%s)", c.args, r.code, c.code, strings.TrimSpace(r.stderr))
+			}
+		}
+		// jobs --json says where the list came from; --id of an unknown job
+		// prints the (empty) list and exits 3
+		var got struct {
+			Jobs   []map[string]any `json:"jobs"`
+			Source string           `json:"source"`
+		}
+		if err := json.Unmarshal([]byte(e.mustLongarm(e.client, "jobs", "w1", "--json", "--limit", "1")), &got); err != nil ||
+			got.Source != "workers" || len(got.Jobs) != 1 {
+			t.Fatalf("jobs --json: %+v %v", got, err)
+		}
+		r := e.longarm(e.client, "jobs", "w1", "--json", "--id", "01NOSUCHJOB0000000000000000")
+		if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || r.code != 3 || got.Source != "workers" || len(got.Jobs) != 0 {
+			t.Fatalf("jobs --id <unknown>: %+v", r)
 		}
 	})
 

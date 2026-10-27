@@ -162,7 +162,12 @@ read. The scheduler's cache affinity is per user too (workers report
 process) and the job's environment (the user's processes). Other accounts
 cannot read either (Windows: no `PROCESS_VM_READ` on other users' processes;
 Linux: `/proc/<pid>/environ` needs ptrace access). On disk they exist
-nowhere; logs are redacted.
+nowhere; logs are redacted. A job's **stdin payload** (`run --stdin-file`)
+takes the same path - the submit's mTLS connection to the worker (the hub
+never sees it; a longnet relay forwards only TLS records), longarmd's and
+then the shim's memory, a pipe into the job - and is stored nowhere; job
+records and the audit log carry its size only.
+Unlike secrets it is not redacted from the job's output.
 
 **Port forwards** (`longarm forward`, `fleet_forward`, ssh `-L`): only to
 loopback ports on which a process of the caller's own account listens

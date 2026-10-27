@@ -92,7 +92,7 @@ match are skipped; an interrupted upload resumes from the verified prefix of
 			defer s.close()
 			worker, dst, ok := splitRemote(s.cfg, args[len(args)-1])
 			if !ok {
-				return errors.New("last argument must be <worker>:<path>")
+				return usagef("last argument must be <worker>:<path>")
 			}
 			conn, err := s.conn(worker)
 			if err != nil {
@@ -107,7 +107,7 @@ match are skipped; an interrupted upload resumes from the verified prefix of
 			}
 			intoDir := dstInfo.IsDir || strings.HasSuffix(dst, "/") || strings.HasSuffix(dst, `\`)
 			if len(srcs) > 1 && !intoDir {
-				return fmt.Errorf("%s:%s is not a directory", worker, dst)
+				return usagef("%s:%s is not a directory", worker, dst)
 			}
 			var st transferStats
 			start := time.Now()
@@ -157,7 +157,7 @@ prefix of <local>.lapart.`,
 			defer s.close()
 			worker, src, ok := splitRemote(s.cfg, args[0])
 			if !ok {
-				return errors.New("first argument must be <worker>:<path>")
+				return usagef("first argument must be <worker>:<path>")
 			}
 			conn, err := s.conn(worker)
 			if err != nil {
@@ -170,7 +170,7 @@ prefix of <local>.lapart.`,
 				return err
 			}
 			if !info.Exists {
-				return fmt.Errorf("%s:%s does not exist", worker, src)
+				return notFoundf("%s:%s does not exist", worker, src)
 			}
 			dst := args[1]
 			if fi, err := os.Stat(dst); err == nil && fi.IsDir() {
