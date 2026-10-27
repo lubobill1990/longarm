@@ -171,7 +171,18 @@ func FindBrowser() string {
 
 // Screenshot renders url into a PNG with a headless browser. The virtual
 // time budget lets the page fetch its data before the frame is taken.
+// Headless Chromium now and then never finishes (virtual time stalls while
+// a fetch is pending, e.g. on a loaded CI runner): a run that times out is
+// retried once with a fresh profile.
 func Screenshot(ctx context.Context, browser, url, out string, w, h int) error {
+	err := screenshot(ctx, browser, url, out, w, h)
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		err = screenshot(ctx, browser, url, out, w, h)
+	}
+	return err
+}
+
+func screenshot(ctx context.Context, browser, url, out string, w, h int) error {
 	prof, err := os.MkdirTemp("", "longarm-tray-shot-")
 	if err != nil {
 		return err
@@ -179,7 +190,7 @@ func Screenshot(ctx context.Context, browser, url, out string, w, h int) error {
 	defer os.RemoveAll(prof)
 	os.Remove(out)
 	abs, _ := filepath.Abs(out)
-	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	cctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	args := []string{"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
 		"--disable-extensions", "--hide-scrollbars", "--user-data-dir=" + prof, fmt.Sprintf("--window-size=%d,%d", w, h),
@@ -195,8 +206,10 @@ func Screenshot(ctx context.Context, browser, url, out string, w, h int) error {
 	if fi, serr := os.Stat(abs); serr == nil && fi.Size() > 0 {
 		return nil
 	}
-	if err == nil {
+	if cctx.Err() != nil {
+		err = fmt.Errorf("%w (%v)", cctx.Err(), err)
+	} else if err == nil {
 		err = errors.New("no screenshot written")
 	}
-	return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(b)))
+	return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(b)))
 }
