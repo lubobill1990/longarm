@@ -34,18 +34,23 @@ func NewContainer(opts ptypes.ContainerOptions) (*unix.Container, error) {
 	return c, nil
 }
 
-// sZomb is SZOMB from <sys/proc.h>.
-const sZomb = 5
+// sZomb is SZOMB and pWExit P_WEXIT from <sys/proc.h>.
+const (
+	sZomb  = 5
+	pWExit = 0x2000
+)
 
-// groupLive reports whether process group pgid has a non-zombie member
-// (kern.proc.pgrp); when unsure, true.
+// groupLive reports whether process group pgid has a member that is neither
+// a zombie nor exiting (kern.proc.pgrp); when unsure, true. A process killed
+// a moment ago is still SRUN while it exits, but kill(-pgid) already skips it
+// and answers EPERM (Container.Kill right after killing the session).
 func groupLive(pgid int) bool {
 	kps, err := xunix.SysctlKinfoProcSlice("kern.proc.pgrp", pgid)
 	if err != nil {
 		return true
 	}
 	for _, kp := range kps {
-		if kp.Proc.P_stat != sZomb {
+		if kp.Proc.P_stat != sZomb && kp.Proc.P_flag&pWExit == 0 {
 			return true
 		}
 	}

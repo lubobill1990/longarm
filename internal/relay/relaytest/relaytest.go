@@ -5,6 +5,7 @@ package relaytest
 import (
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"os"
 	"path/filepath"
@@ -89,16 +90,22 @@ func StartRelayWith(t testing.TB, s *relay.Server, addr string) *Relay {
 	var pc net.PacketConn
 	var ln net.Listener
 	for i := 0; ; i++ {
-		pc, err = net.ListenPacket("udp", addr)
-		if err != nil {
-			t.Fatal(err)
+		// First the port the OS picks for UDP, then random ones below the
+		// ephemeral ranges: Windows hands out UDP ports sequentially, so
+		// once one is taken for TCP (or in a TCP excluded port range of
+		// Hyper-V/WinNAT) the next few dozen usually are too.
+		a := addr
+		if addr == "127.0.0.1:0" && i > 0 {
+			a = fmt.Sprintf("127.0.0.1:%d", 20000+rand.IntN(12000))
 		}
-		ln, err = net.Listen("tcp", pc.LocalAddr().String())
+		pc, err = net.ListenPacket("udp", a)
 		if err == nil {
-			break
+			if ln, err = net.Listen("tcp", pc.LocalAddr().String()); err == nil {
+				break
+			}
+			pc.Close()
 		}
-		pc.Close()
-		if addr != "127.0.0.1:0" || i > 20 {
+		if addr != "127.0.0.1:0" || i > 50 {
 			t.Fatal(err)
 		}
 	}
