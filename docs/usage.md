@@ -162,7 +162,7 @@ Programs driving longarm can rely on these exit codes:
 |---|---|---|
 | 0 | success | |
 | 2 | usage error or a request that can't succeed as given, so nothing was submitted: unknown flag or command, wrong arguments, local validation (`--env` without `=`, a missing or too large `--stdin-file`, `--ref` a short commit id / a ref that isn't HEAD, a branch, a tag or a full commit id / a commit not in the checkout, `--lfs` other than skip/ship/fetch, `--lfs fetch` with a local checkout, `--git-auth` other than forward/none, `--git-auth forward` without `--repo` or with a URL that isn't https), and the hub's / worker's `InvalidArgument`, `FailedPrecondition`, `AlreadyExists` (a job id in use with another spec), `OutOfRange`, `Unimplemented`, a worker too old for a flag | fix the request; retrying it unchanged fails again |
-| 3 | not found: the hub or the worker answered that the job / file does not exist, an unknown worker name, a job no known worker has, `jobs --id` of an unknown job | |
+| 3 | not found: the hub or the worker answered that the job / file does not exist, an unknown worker name, a job that every known worker answered it doesn't have (when some did not answer: 255), `jobs --id` of an unknown job | |
 | 69 | `jobs --hub-only`: no hub configured, or it did not answer | retry later, or ask the workers (without `--hub-only`) |
 | 75 | refused for capacity, quota or rate (`ResourceExhausted`): no worker passes the gate with `--no-queue`, a quota, too many attempts | retry later |
 | 77 | not allowed: `PermissionDenied`, `Unauthenticated`, a refusal of end-to-end trust; `--git-auth forward` with `--repo <url>`: no credential for the URL could be obtained on this machine (nothing was submitted) | fix the credentials or the rights |
@@ -386,6 +386,9 @@ in longarmd.toml:
 lfs_max_object_bytes = 4294967296
 lfs_max_total_bytes = 17179869184
 lfs_max_objects = 50000
+# git_trace = true   # debugging: keep GIT_TRACE* / GIT_CURL_VERBOSE from longarmd's
+#                    # environment for its git runs (default: removed; credential
+#                    # header lines are dropped from job logs either way)
 ```
 
 (per-user isolation's helpers use the defaults).

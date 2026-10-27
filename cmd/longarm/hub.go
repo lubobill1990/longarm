@@ -429,21 +429,35 @@ func (s *session) renewCert(ctx context.Context, h *hubclient.Conn) (*x509.Certi
 }
 
 // findJob locates the worker of a job: the hub's index, else every known
-// worker in parallel.
+// worker in parallel. "Not found" (exit 3) only when every worker that may
+// have it answered so; a hub that an earlier longarm found down is asked
+// again before that, and workers that did not answer make it a longarm
+// error (exit 255: the outcome is unknown), never "not found".
 func (s *session) findJob(ctx context.Context, id string) (string, error) {
-	if h := s.optionalHub(ctx); h != nil {
+	askHub := func(h *hubclient.Conn) (string, bool) {
 		cctx, cancel := context.WithTimeout(ctx, hubTimeout)
 		fj, err := h.Fleet().GetJob(cctx, &pb.FleetJobRequest{Id: id})
 		cancel()
 		if err == nil {
-			return fj.Worker, nil
+			return fj.Worker, true
 		}
 		if hubUnavailable(err) {
 			s.hubDown(err)
 		}
+		return "", false
+	}
+	hubSkipped := s.hub() != nil && s.hubFailed()
+	if h := s.optionalHub(ctx); h != nil {
+		if w, ok := askHub(h); ok {
+			return w, nil
+		}
 	}
 	ws := s.knownWorkers(ctx)
-	found := make(chan string, len(ws))
+	type answer struct {
+		name  string
+		found bool
+	}
+	answers := make(chan answer, len(ws))
 	var wg sync.WaitGroup
 	for _, w := range ws {
 		wg.Add(1)
@@ -451,19 +465,48 @@ func (s *session) findJob(ctx context.Context, id string) (string, error) {
 			defer wg.Done()
 			conn, err := s.dialer.Dial(w)
 			if err != nil {
+				answers <- answer{name: w.Name}
 				return
 			}
 			defer conn.Close()
-			cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			// as long as `longarm jobs` gives a worker: a first connection
+			// through a relay can take a while
+			cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
-			if _, err := conn.Jobs().Get(cctx, &pb.GetJobRequest{Id: id}); err == nil {
-				found <- w.Name
+			_, err = conn.Jobs().Get(cctx, &pb.GetJobRequest{Id: id})
+			switch {
+			case err == nil:
+				answers <- answer{name: w.Name, found: true}
+			case status.Code(err) == codes.NotFound:
+				answers <- answer{found: false} // answered: not there
+			default:
+				answers <- answer{name: w.Name} // no answer
 			}
 		}()
 	}
-	go func() { wg.Wait(); close(found) }()
-	if w, ok := <-found; ok {
-		return w, nil
+	go func() { wg.Wait(); close(answers) }()
+	var silent []string
+	for a := range answers {
+		if a.found {
+			return a.name, nil
+		}
+		if a.name != "" {
+			silent = append(silent, a.name)
+		}
+	}
+	if hubSkipped {
+		// the remembered failure may be over: ask the hub itself once more
+		if h := s.hub(); h != nil && h.WaitReady(ctx, hubTimeout) == nil {
+			s.hubUp()
+			if w, ok := askHub(h); ok {
+				return w, nil
+			}
+		}
+	}
+	if len(silent) > 0 {
+		sort.Strings(silent)
+		return "", fmt.Errorf("job %s: not on the workers that answered; %s did not answer (give the worker: longarm <command> <worker> %s)",
+			id, strings.Join(silent, ", "), id)
 	}
 	return "", notFoundf("job %s not found on any known worker", id)
 }

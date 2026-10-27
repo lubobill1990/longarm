@@ -319,6 +319,19 @@ func TestGitAuthForwardHub(t *testing.T) {
 	if logs := h.mustLongarm(h.client, "logs", id); !strings.Contains(logs, fmt.Sprintf("%d %x", len(payload), sha256.Sum256(payload))) {
 		t.Fatalf("logs: %s", logs)
 	}
+	// `longarm logs <id>` right after: an earlier longarm remembered the
+	// hub as down (a slow first connection) and no node list is cached,
+	// so no worker is known - the hub is asked again before "not found"
+	os.Remove(filepath.Join(h.client, "hub-cache.json"))
+	state := fmt.Sprintf(`{"address": %q, "down": %q, "error": "context deadline exceeded"}`,
+		h.addr(), time.Now().UTC().Format(time.RFC3339Nano))
+	os.WriteFile(filepath.Join(h.client, "hub-state.json"), []byte(state), 0o600)
+	if r := h.longarm(h.client, "logs", id); r.code != 0 || !strings.Contains(r.stdout, fmt.Sprintf("%d %x", len(payload), sha256.Sum256(payload))) {
+		t.Fatalf("logs with the hub remembered down: %+v", r)
+	}
+	if r := h.longarm(h.client, "logs", "01NOSUCHJOB0000000000000000"); r.code != 3 {
+		t.Fatalf("logs of an unknown job: %+v", r)
+	}
 	h.stopAll() // flush the hub's database
 	noToken(t, token, h.hubDir, wa.dataDir, h.root)
 }
