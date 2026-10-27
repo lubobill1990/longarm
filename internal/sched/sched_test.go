@@ -65,3 +65,35 @@ func TestMemAndType(t *testing.T) {
 		t.Fatal("TypeOf")
 	}
 }
+
+// The memory gate scales down for small workers: min(GateFreeGB, 25% of
+// total). Unknown total memory keeps the fixed gate.
+func TestMemGateScales(t *testing.T) {
+	p := Defaults()
+	w := func(name string, total, free float64) Candidate {
+		return Candidate{Name: name, TotalGB: total, FreeGB: free, CPU: 10, Online: true, Eligible: true}
+	}
+	cases := []struct {
+		c    Candidate
+		ok   bool
+		want string
+	}{
+		{w("laptop16", 16, 5), true, ""},                      // gate 4 GB
+		{w("laptop16-busy", 16, 3), false, "< 4.0 GB"},        // gate 4 GB
+		{w("container6", 6, 4.6), true, ""},                   // gate 1.5 GB (the e2e runner)
+		{w("box64", 64, 15), false, "free 15.0 GB < 16.0 GB"}, // gate 16 GB
+		{w("box128", 128, 21), true, ""},                      // capped at 20 GB
+		{w("box128-low", 128, 19), false, "< 20.0 GB"},
+		{w("unknown", 0, 19), false, "< 20.0 GB"}, // no total: fixed gate
+	}
+	for _, tc := range cases {
+		r := Pick(p, []Candidate{tc.c}, Request{MemGB: 1})
+		if got := r.Worker == tc.c.Name; got != tc.ok || !strings.Contains(r.Summary(), tc.want) {
+			t.Errorf("%s: placed=%v summary %q, want placed=%v containing %q", tc.c.Name, got, r.Summary(), tc.ok, tc.want)
+		}
+	}
+	p.GateFreeFraction = 0 // fixed gate only
+	if r := Pick(p, []Candidate{w("laptop16", 16, 5)}, Request{MemGB: 1}); r.Worker != "" {
+		t.Fatalf("fixed gate placed on a small worker: %+v", r)
+	}
+}

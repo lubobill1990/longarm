@@ -255,9 +255,12 @@ type CertConfig struct {
 
 // SchedConfig is [scheduler].
 type SchedConfig struct {
-	GateFreeGB *float64           `toml:"gate_free_gb"`
-	GateCPU    *float64           `toml:"gate_cpu"`
-	MemGB      map[string]float64 `toml:"mem_gb"` // per job type
+	GateFreeGB *float64 `toml:"gate_free_gb"`
+	// GateFreeFraction: small workers need only this share of their memory
+	// free when it is below gate_free_gb (default 0.25; 0 = fixed gate)
+	GateFreeFraction *float64           `toml:"gate_free_fraction"`
+	GateCPU          *float64           `toml:"gate_cpu"`
+	MemGB            map[string]float64 `toml:"mem_gb"` // per job type
 	// ReservationTTL: a placement nobody submitted is released after this.
 	ReservationTTL Duration `toml:"reservation_ttl"`
 }
@@ -428,6 +431,9 @@ func (c *Config) SchedParams() sched.Params {
 	}
 	if c.Scheduler.GateCPU != nil {
 		p.GateCPU = *c.Scheduler.GateCPU
+	}
+	if c.Scheduler.GateFreeFraction != nil {
+		p.GateFreeFraction = *c.Scheduler.GateFreeFraction
 	}
 	for k, v := range c.Scheduler.MemGB {
 		p.MemGB[k] = v

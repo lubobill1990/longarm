@@ -531,6 +531,7 @@ func (s *session) candidates(ctx context.Context, repo string) []sched.Candidate
 			}
 			c.Online = true
 			c.FreeGB = float64(m.MemTotalBytes-min(m.MemUsedBytes, m.MemTotalBytes)) / (1 << 30)
+			c.TotalGB = float64(m.MemTotalBytes) / (1 << 30)
 			c.CPU, c.Running = m.CpuPercent, int(m.JobsRunning)
 			out[i] = c
 		}()
@@ -575,6 +576,7 @@ func (s *session) pickNow(ctx context.Context, require map[string]string) (strin
 				Eligible: n.State == "approved" && !n.Draining, Why: n.DrainReason, ReservedGB: n.ReservedGb, Running: int(n.JobsActive)}
 			if m := n.Metrics; m != nil {
 				c.FreeGB = float64(m.MemTotalBytes-min(m.MemUsedBytes, m.MemTotalBytes)) / (1 << 30)
+				c.TotalGB = float64(m.MemTotalBytes) / (1 << 30)
 				c.CPU = m.CpuPercent
 			}
 			cands = append(cands, c)
