@@ -66,6 +66,9 @@ type hubAgent struct {
 	audit     *server.Audit
 	// remoteJobs: what hub requests may do (see HubConfig.RemoteJobs).
 	remoteJobs string
+	// metricsErrAt / metricsSent: sendMetrics' logging
+	metricsErrAt time.Time
+	metricsSent  bool
 	// hideJobDetails: [access] hub_job_details = false (hubredact.go).
 	hideJobDetails bool
 	// trust: the end-to-end trust policy (its default for remoteJobs is
@@ -415,9 +418,7 @@ func (a *hubAgent) session(ctx context.Context) error {
 	if a.links != nil {
 		a.links.sendReport(true)
 	}
-	if m, err := a.sampler.Latest(sctx); err == nil {
-		a.send(&pb.NodeReport{Msg: &pb.NodeReport_Metrics{Metrics: a.metricsForHub(m)}}, true)
-	}
+	a.sendMetrics(sctx)
 
 	auditOff := w.AuditOffset
 	metricsT := time.NewTicker(interval)
@@ -435,9 +436,7 @@ func (a *hubAgent) session(ctx context.Context) error {
 		case <-changed:
 			a.reportJobs(sent, false)
 		case <-metricsT.C:
-			if m, err := a.sampler.Latest(sctx); err == nil {
-				a.send(&pb.NodeReport{Msg: &pb.NodeReport_Metrics{Metrics: a.metricsForHub(m)}}, true)
-			}
+			a.sendMetrics(sctx)
 		case <-slowT.C:
 			a.reportJobs(sent, true)
 			auditOff = a.forwardAudit(auditOff)
@@ -796,5 +795,24 @@ func (a *hubAgent) closeDisallowed() {
 			!wa.Allows(id.Owner(), a.policy.Teams(id.Owner()))
 	}); n > 0 {
 		a.log.Info("closed connections of users this worker no longer serves", "count", n)
+	}
+}
+
+// sendMetrics reports a metrics snapshot to the hub. The scheduler only
+// places work on workers whose metrics it has: a sampling error must be
+// visible (logged at most once a minute), not a silently "offline" worker.
+func (a *hubAgent) sendMetrics(ctx context.Context) {
+	m, err := a.sampler.Latest(ctx)
+	if err != nil {
+		if time.Since(a.metricsErrAt) > time.Minute {
+			a.metricsErrAt = time.Now()
+			a.log.Warn("hub: metrics unavailable; the hub's scheduler won't place work here", "err", err)
+		}
+		return
+	}
+	a.send(&pb.NodeReport{Msg: &pb.NodeReport_Metrics{Metrics: a.metricsForHub(m)}}, true)
+	if !a.metricsSent {
+		a.metricsSent = true
+		a.log.Info("hub: metrics reported", "cpu", m.CPUPercent, "mem_used", m.MemUsed, "mem_total", m.MemTotal)
 	}
 }
