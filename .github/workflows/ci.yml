@@ -2,6 +2,7 @@
 #   lint:    privacy check, gofmt, go vet, cross-compile 6 targets, shellcheck, actionlint
 #   azure:   deploy/azure: bicep build (azuredeploy.json up to date) + lint, ACI rules
 #            (deploy/azure/test/acirules), PSScriptAnalyzer
+#   web:     web/ (the hub panel / tray UI): pnpm typecheck, unit tests, build
 #   (the hub image and its docker smoke test: image.yml)
 #   test:    full go test on ubuntu-latest, windows-latest and macos-latest
 # Pull requests from forks run with a read-only token and no secrets (the
@@ -136,6 +137,34 @@ jobs:
           $r = Invoke-ScriptAnalyzer -Path deploy/azure/deploy.ps1 -Settings deploy/azure/PSScriptAnalyzerSettings.psd1
           $r | Format-Table RuleName, Severity, Line, Message -AutoSize -Wrap
           if ($r) { throw "PSScriptAnalyzer: $(@($r).Count) findings" }
+
+  web:
+    name: web (typecheck, unit tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: pnpm (corepack)
+        run: corepack enable && corepack prepare pnpm@10.32.1 --activate
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+      - name: typecheck
+        run: pnpm typecheck
+      - name: unit tests
+        run: pnpm test
+      # internal/webui/dist (the embedded panel) is built by `node web/build.mjs`
+      # and checked in; this only proves the toolchain still builds it
+      - name: build
+        run: pnpm build
 
   test:
     name: test (${{ matrix.os }})
