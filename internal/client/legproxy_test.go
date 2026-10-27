@@ -144,6 +144,15 @@ func TestOneShotCloseDoesNotWait(t *testing.T) {
 	e.d.cfg.Tailscale.Hostname = "longarm-client-test"
 	ts := e.d.tsnetTransport().(*transport.TSNet)
 	ts.Warm()
+	// Close doesn't wait for the node, so it may still write its state
+	// under the config dir: let it finish before t.TempDir removes the dir
+	// (cleanups run last-registered first).
+	t.Cleanup(func() {
+		deadline := time.Now().Add(10 * time.Second)
+		for os.RemoveAll(e.d.cfg.Dir) != nil && time.Now().Before(deadline) {
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
 	start := time.Now()
 	e.d.Close()
 	if took := time.Since(start); took > time.Second {
