@@ -403,7 +403,8 @@ func sameSpec(a, b *jobs.Spec) bool {
 }
 
 // sameWorkspace compares what a workspace resolves to - repository, url,
-// ref, commit, LFS mode - not the per-attempt parts of a submit: every
+// ref, commit, the staged overlay's digest, LFS mode - not the per-attempt
+// parts of a submit: every
 // `longarm run --repo <local checkout>` uploads (and stages) the checkout
 // anew, under a new staging id, and whether a fetch credential came along
 // is no property of the job. A retried submit of the same job (e.g. after
@@ -413,7 +414,8 @@ func sameWorkspace(a, b *jobs.Workspace) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return a.Repo == b.Repo && a.URL == b.URL && a.Ref == b.Ref && a.Commit == b.Commit && a.LFSFetch == b.LFSFetch
+	return a.Repo == b.Repo && a.URL == b.URL && a.Ref == b.Ref && a.Commit == b.Commit && a.Overlay == b.Overlay &&
+		a.LFSFetch == b.LFSFetch
 }
 
 // Submit creates and starts a job. It is idempotent on spec.ID.

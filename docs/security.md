@@ -649,12 +649,16 @@ the history from the client ([docs/usage.md](usage.md#fetching-with-your-credent
   the client also verifies that the worker is one the user endorsed before
   sending it.
 - The worker: longarmd (and, with per-user isolation, the user's helper
-  process, over its stdin pipe) holds it in memory during the fetch, git
-  and git-lfs get it in their environment (`GIT_CONFIG_*` →
-  `http.<remote url>.extraHeader`) for that fetch, then longarmd zeroes its
-  copy (best effort: the Go runtime, gRPC and the child processes'
-  environment blocks may hold transient copies until the memory is
-  reused). It is never written to disk: not job.json, the status, the
+  process, over its stdin pipe) holds it in memory during the fetch. git
+  and git-lfs get it from a credential helper (`longarmd
+  git-credential-helper`) that asks longarmd over a loopback connection
+  with a random one-time key (in the helper's environment; worthless once
+  the fetch is over: the listener closes), for the exact protocol, host
+  and repository path only - it is never in git's or git-lfs's
+  environment, command line or config, which git-lfs copies into
+  `lfs/logs` on a fatal error. longarmd then zeroes its copy (best effort:
+  the Go runtime, gRPC and the helper's output pipe may hold transient
+  copies until the memory is reused). It is never written to disk: not job.json, the status, the
   mirror's or worktree's git config, `FETCH_HEAD`, remote URLs, the audit
   log (`git_auth: true` only), longarmd's log or the job's out.log
   (Authorization header values and the credential are masked in git's
@@ -668,16 +672,31 @@ the history from the client ([docs/usage.md](usage.md#fetching-with-your-credent
   it - for an Azure DevOps token for up to an hour, for a GitHub token
   until it is revoked.
 
-**Scope on the wire.** The header is configured for the remote's URL
-prefix (and its `.git` twin, which git-lfs uses) only: git and git-lfs send
-it to that URL, not to other hosts - a redirect to another host does not
-carry it (git follows redirects only on the first request; curl and Go's
-HTTP client drop `Authorization` on a cross-host redirect), and LFS
-downloads from a storage host get their own short-lived URLs from the LFS
-API, not the header. Only https URLs get it (the client refuses http, the
-worker too). Credential helpers are switched off for that fetch: a refused
-credential fails the fetch instead of falling back to the worker account's
-own credentials, and no helper stores the forwarded one.
+**Scope on the wire.** The credential is answered only for the fetched
+URL: protocol (https), host with port and repository path (and its `.git`
+twin, git-lfs's endpoint) must match exactly (`credential.useHttpPath`;
+longarmd checks, not only git's config matching). So:
+
+- **Redirects** are refused for the whole fetch (`http.followRedirects=false`
+  for git; git-lfs asks the helper per URL, and another host or http gets
+  nothing): the fetch fails with "the remote redirected ... use the final
+  URL". (A URL-scoped `http.extraHeader`, the first design, was replayed by
+  git to a redirect target - another host, or http - on the requests after
+  the redirected discovery.)
+- **The LFS endpoint** is pinned to the fetched URL's (`lfs.url` in the
+  fetch's config, which wins over a repository's `.lfsconfig` `lfs.url` /
+  `remote.*.lfsurl`); LFS downloads on a storage host get their own
+  short-lived URLs from the LFS API, not the credential.
+- **Submodules** are never fetched (`--no-recurse-submodules`; nothing
+  recurses into them).
+- **Traces** (`GIT_TRACE*`, `GIT_CURL_VERBOSE`, trace2) are forced off for
+  these git runs, and `<mirror>/lfs/logs` is removed after an LFS fetch.
+- Only https URLs get it (the client refuses http, the worker too; a job's
+  `GH_TOKEN` keeps working over http as before, also scoped to the exact
+  URL now).
+- The worker's credential helpers are switched off for that fetch: a
+  refused credential fails the fetch instead of falling back to the worker
+  account's own credentials, and no helper stores the forwarded one.
 
 **Shared mirrors.** In shared isolation the workspace mirror is shared by
 the worker's users: a commit a job fetched with user A's forwarded

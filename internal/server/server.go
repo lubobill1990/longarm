@@ -430,6 +430,10 @@ func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, s
 	if err != nil {
 		return supervisor.Job{}, err
 	}
+	if w := spec.Workspace; w != nil && w.StagingID != "" && sp.WS != nil {
+		// what was uploaded, not under which id: a retry uploads anew
+		w.Overlay = sp.WS.StagingDigest(w.StagingID)
+	}
 	if esp, existing, err := j.s.Spaces.FindJob(spec.ID); err == nil {
 		if esp != sp || existing.Spec.OwnerName() != owner {
 			return supervisor.Job{}, supervisor.ErrAlreadyExists // somebody else's id

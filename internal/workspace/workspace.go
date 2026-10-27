@@ -17,6 +17,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -364,6 +366,7 @@ func (s *Store) FetchURLAuth(ctx context.Context, repo, u, ref string, auth *job
 	if err != nil {
 		return "", err
 	}
+	defer fa.close()
 	unlock := s.lock(repo)
 	defer unlock()
 	if shaRE.MatchString(ref) {
@@ -380,7 +383,7 @@ func (s *Store) FetchURLAuth(ctx context.Context, repo, u, ref string, auth *job
 		return ref, nil
 	}
 	dst := "refs/longarm/remote/" + refSuffix(ref)
-	if _, err := s.runAuth(ctx, m, nil, fa, log, "fetch", "--no-tags", "--force", "--", u, "+"+ref+":"+dst); err != nil {
+	if _, err := s.runAuth(ctx, m, nil, fa, log, "fetch", "--no-tags", "--no-recurse-submodules", "--force", "--", u, "+"+ref+":"+dst); err != nil {
 		return "", fetchError(u, fa.kind, err)
 	}
 	out, err := s.run(ctx, m, nil, nil, "rev-parse", "--verify", dst+"^{commit}")
@@ -430,6 +433,7 @@ func (s *Store) FetchCommits(ctx context.Context, repo, u string, commits []stri
 	if err != nil {
 		return nil, err
 	}
+	defer fa.close()
 	unlock := s.lock(repo)
 	defer unlock()
 	have := func() (present, missing []string) {
@@ -463,7 +467,7 @@ func (s *Store) FetchCommits(ctx context.Context, repo, u string, commits []stri
 // reason than authentication, it fetches the remote's branches instead,
 // which must contain the commits. Called with the mirror lock held.
 func (s *Store) fetchCommits(ctx context.Context, m, u string, commits []string, fa *fetchAuth, log io.Writer) error {
-	args := []string{"fetch", "--no-tags", "--force", "--", u}
+	args := []string{"fetch", "--no-tags", "--no-recurse-submodules", "--force", "--", u}
 	for _, c := range commits {
 		args = append(args, "+"+c+":refs/longarm/remote/"+c)
 	}
@@ -475,7 +479,7 @@ func (s *Store) fetchCommits(ctx context.Context, m, u string, commits []string,
 		return err
 	}
 	logf(log, "fetching by commit id failed (%v); fetching the remote's branches", firstLine(err.Error()))
-	if _, err := s.runAuth(ctx, m, nil, fa, log, "fetch", "--no-tags", "--force", "--", u,
+	if _, err := s.runAuth(ctx, m, nil, fa, log, "fetch", "--no-tags", "--no-recurse-submodules", "--force", "--", u,
 		"+refs/heads/*:refs/longarm/remote/heads/*"); err != nil {
 		return err
 	}
@@ -507,9 +511,15 @@ func (s *Store) FetchLFS(ctx context.Context, repo, u, commit string, auth *jobs
 	if err != nil {
 		return err
 	}
+	defer fa.close()
 	unlock := s.lock(repo)
 	defer unlock()
-	if _, err := s.runAuth(ctx, m, nil, fa, log, "lfs", "fetch", u, commit); err != nil {
+	_, err = s.runAuth(ctx, m, nil, fa, log, "lfs", "fetch", u, commit)
+	// git-lfs writes its environment and config into lfs/logs on a fatal
+	// error: never the credential (gitauth.go), but nothing of a fetch's
+	// stays where later jobs read
+	removeAll(filepath.Join(m, "lfs", "logs"))
+	if err != nil {
 		return fetchError(u, fa.kind, fmt.Errorf("git lfs fetch: %w", err))
 	}
 	return nil
@@ -538,6 +548,10 @@ var authFailure = regexp.MustCompile(`(?i)(returned error: 40[13]|HTTP 40[13]|\b
 // Credential Manager for Azure DevOps) can't ask anyone.
 func fetchError(u string, kind authKind, err error) error {
 	u = RedactURLs(u)
+	if kind != authNone && redirected.MatchString(err.Error()) {
+		return fmt.Errorf("fetching %s: the remote redirected; with a credential longarm refuses redirects (the "+
+			"credential would follow to another place): use the final URL: %s", u, RedactURLs(err.Error()))
+	}
 	m := authFailure.FindString(err.Error())
 	if m == "" {
 		return errors.New(RedactURLs(err.Error()))
@@ -734,6 +748,30 @@ func (s *Store) Stage(id, patch, untracked string) error {
 		}
 	}
 	return nil
+}
+
+// StagingDigest identifies the content staged under id - the patch of
+// uncommitted changes and the tar of untracked files - so that two uploads
+// of the same content compare equal whatever their staging ids: "sha256:"
+// and the hash of both parts, each with its length. A missing staging dir
+// hashes like empty parts; a bad id is "".
+func (s *Store) StagingDigest(id string) string {
+	if !jobs.ValidID(id) {
+		return ""
+	}
+	h := sha256.New()
+	patch, untracked := s.StagedFiles(id)
+	for _, p := range []string{patch, untracked} {
+		var n int64
+		if p != "" {
+			if f, err := os.Open(p); err == nil {
+				n, _ = io.Copy(h, f)
+				f.Close()
+			}
+		}
+		fmt.Fprintf(h, "\x00%d\x00", n)
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
 // RemoveStaging deletes staging/<id>.

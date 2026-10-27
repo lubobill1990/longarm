@@ -13,10 +13,12 @@
   tenant), else `git credential fill`; GitHub - `gh auth token` (long-lived),
   else `git credential fill`; other hosts - `git credential fill`. Like the
   `--stdin-file` payload it goes only in the worker-direct submit (never
-  the hub), stays in longarmd's memory, reaches git and git-lfs as an
-  `http.<url>.extraHeader` in their environment for the fetch only (scoped
-  to the remote's URL; credential helpers off), is zeroed afterwards and
-  masked in logs and errors; the job never sees it; job records and the
+  the hub), stays in longarmd's memory, reaches git and git-lfs through a
+  credential helper (longarmd, over loopback with a one-time key) only for
+  the exact protocol, host and repository path of the fetched URL - never
+  in their environment or config; redirects refused, the LFS endpoint
+  pinned against `.lfsconfig`, no submodules, traces off - is zeroed
+  afterwards and masked in logs and errors; the job never sees it; job records and the
   audit log say `git_auth: true` only. `--ref <full commit id>` fetches a
   commit that is no branch tip by id (falling back to the remote's
   branches); a commit the mirror has is not fetched again, but on a
@@ -117,11 +119,14 @@
   lost before start; resubmit" was refused with `AlreadyExists` (exit 2):
   every run uploads the checkout anew under a new staging id, which was part
   of the compared spec. The job's identity is now what the workspace
-  resolves to (repository, URL, ref, commit, `--lfs fetch`), not the upload
-  or whether a credential was forwarded: such a retry replaces the job that
-  never started, and a retry of a job that exists returns it.
-- A worker's own `GIT_CONFIG_COUNT` entries are kept when a fetch adds its
-  credential (`GH_TOKEN`) through the environment.
+  resolves to (repository, URL, ref, commit, a digest of the uploaded
+  uncommitted and untracked files, `--lfs fetch`), not the upload's id or
+  whether a credential was forwarded: an identical retry replaces the job
+  that never started or returns the existing one; other uncommitted or
+  untracked content is another job (`AlreadyExists`), never the old result.
+- The job's `GH_TOKEN` secret no longer passes through git's environment
+  (`http.extraheader`) either: the same credential helper, scoped to the
+  exact URL, redirects refused.
 
 ### Changed
 

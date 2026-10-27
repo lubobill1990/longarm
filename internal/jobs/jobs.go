@@ -179,6 +179,11 @@ type Workspace struct {
 	Ref       string `json:"ref,omitempty"`
 	Commit    string `json:"commit,omitempty"`
 	StagingID string `json:"staging_id,omitempty"`
+	// Overlay identifies the staged uncommitted changes and untracked
+	// files (Store.StagingDigest; "" without staging). Unlike StagingID,
+	// which every upload gets anew, it is part of what makes a resubmit
+	// the same job.
+	Overlay string `json:"overlay,omitempty"`
 	// LFSFetch: also fetch the commit's Git LFS content from URL.
 	LFSFetch bool `json:"lfs_fetch,omitempty"`
 	// GitAuth: the fetch of URL used a credential forwarded with the

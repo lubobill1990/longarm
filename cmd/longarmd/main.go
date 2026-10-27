@@ -36,6 +36,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/update"
 	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/version"
+	"github.com/lubobill1990/longarm/internal/workspace"
 )
 
 const defaultServiceName = longarmd.DefaultServiceName
@@ -50,6 +51,11 @@ const exitRestart = 75
 var startExe, _ = os.Executable()
 
 func main() {
+	// git's credential helper for a fetch with a forwarded credential: run
+	// before anything else (git waits for it)
+	if len(os.Args) > 1 && os.Args[1] == workspace.CredHelperArg {
+		os.Exit(workspace.CredentialHelperMain(os.Args[2:], os.Stdin, os.Stdout))
+	}
 	root := &cobra.Command{
 		Use:           "longarmd",
 		Short:         "Longarm worker daemon",

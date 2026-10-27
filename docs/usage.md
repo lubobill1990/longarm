@@ -190,10 +190,12 @@ request reached the worker. Then look the job up with `jobs --id`, or run
 it again with the same `--id`: the same id and spec return the existing job
 (also when the hub placed it already). With a local `--repo` every `run`
 uploads the working tree anew; the upload is no part of the comparison -
-what the workspace resolves to is (repository, URL, `--ref`, the commit,
-`--lfs fetch`) - so a retry of the same commit returns the existing job (its
-own upload stays; the new one is discarded by the worker's GC), and replaces
-a job whose stdin payload was lost before it started. Whether a credential
+what the workspace resolves to is (repository, URL, `--ref`, the commit, a
+digest of the uploaded uncommitted and untracked files, `--lfs fetch`) - so
+a retry with the same content returns the existing job (the new upload is
+discarded by the worker's GC) and replaces a job whose stdin payload was
+lost before it started, while other uncommitted or untracked content is
+another job (`AlreadyExists`, exit 2), never the old job's result. Whether a credential
 was forwarded (`--git-auth`) is no part of it either.
 The job's own outcome comes from `jobs --json` (`state`, `exitCode`,
 `reason`) or `wait`.
@@ -459,17 +461,23 @@ never the credential.
 - Remote-first is **not** the default: a credential leaves your machine
   only when you ask for it with `--git-auth forward`.
 
-How the worker uses it: git and git-lfs get it as
-`http.<remote url>.extraHeader=Authorization: ...` through
-`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` in their
-environment - never on a command line, in a config file (the mirror's or
-the worktree's) or in a remote URL. The header is scoped to the remote's
-URL (and its `.git` twin, git-lfs's endpoint): requests elsewhere - a
-redirect to another host, an LFS download from a storage host - don't
-carry it. Credential helpers are off for that fetch, so a refused
-credential neither falls back to the worker's own nor gets stored. It is
-masked in the job's log, the failure reason and errors (Authorization
-header values are masked in any git output). Job records (`job.json`,
+How the worker uses it: git and git-lfs ask for it through a credential
+helper - longarmd itself, which hands it out over a loopback connection
+with a one-time key, for this fetch only and only for the exact protocol,
+host and repository path of the fetched URL (`credential.useHttpPath`). It
+is never on a command line, in git's or git-lfs's environment (git-lfs
+writes that into `lfs/logs` on a fatal error), in a config file (the
+mirror's or the worktree's) or in a remote URL. Sent as basic auth (an
+Azure DevOps token as the password, as Git Credential Manager does).
+Redirects are refused (`http.followRedirects=false`: "the remote
+redirected ... use the final URL"), the LFS endpoint is the fetched URL's
+(`lfs.url`; a repository's `.lfsconfig` can't send it elsewhere),
+submodules are not fetched, git's traces are off and `lfs/logs` is
+removed after an LFS fetch. The worker's own credential helpers are off
+for that fetch, so a refused credential neither falls back to the
+worker's own nor gets stored. It is masked in the job's log, the failure
+reason and errors (Authorization header values are masked in any git
+output). Job records (`job.json`,
 `jobs --json`: `workspace.gitAuth: true`) and the worker's audit log
 (`git_auth: true`) only say that there was one. The worker must announce
 `git-auth-forward` (`Node.Info` features); against an older one `run --repo

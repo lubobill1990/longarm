@@ -168,7 +168,7 @@ func TestResubmitWorkspaceStdin(t *testing.T) {
 	payload := []byte("the request\n")
 	commit := strings.Repeat("a", 40)
 	spec := func(staging string) jobs.Spec {
-		return jobs.Spec{ID: "w1", Argv: []string{"agent"}, Workspace: &jobs.Workspace{Repo: "r", Commit: commit, StagingID: staging}}
+		return jobs.Spec{ID: "w1", Argv: []string{"agent"}, Workspace: &jobs.Workspace{Repo: "r", Commit: commit, StagingID: staging, Overlay: "sha256:same"}}
 	}
 	if _, err := m.SubmitStdin(ctx, spec("STAGE1"), nil, bytes.Clone(payload)); err != nil {
 		t.Fatal(err)
@@ -191,6 +191,13 @@ func TestResubmitWorkspaceStdin(t *testing.T) {
 		t.Fatalf("the new attempt prepared %+v", p)
 	}
 	waitState(t, m, "w1", jobs.Failed)
+	// other uncommitted / untracked content (another overlay digest) is
+	// another job: never the old result for new content
+	dirty := spec("STAGE5")
+	dirty.Workspace.Overlay = "sha256:other"
+	if _, err := m.SubmitStdin(ctx, dirty, nil, bytes.Clone(payload)); !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("other overlay: %v", err)
+	}
 	// another commit is another job
 	other := spec("STAGE4")
 	other.Workspace.Commit = strings.Repeat("b", 40)

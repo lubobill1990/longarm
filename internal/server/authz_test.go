@@ -28,11 +28,15 @@ import (
 	"github.com/lubobill1990/longarm/internal/shim"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/userspace"
+	"github.com/lubobill1990/longarm/internal/workspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
 // The test binary doubles as the job shim and as a sleeping job.
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == workspace.CredHelperArg { // git's credential helper
+		os.Exit(workspace.CredentialHelperMain(os.Args[2:], os.Stdin, os.Stdout))
+	}
 	if os.Getenv("LONGARM_TEST_SLEEP") != "" {
 		time.Sleep(2 * time.Minute)
 		os.Exit(0)

@@ -3,16 +3,26 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/testutil/gitserver"
 )
+
+// The test binary is git's credential helper too (longarmd's role).
+func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == CredHelperArg {
+		os.Exit(CredentialHelperMain(os.Args[2:], os.Stdin, os.Stdout))
+	}
+	os.Exit(m.Run())
+}
 
 const testToken = "forwarded-credential-for-tests"
 
@@ -20,37 +30,72 @@ func bearer(tok string) *jobs.GitAuth {
 	return &jobs.GitAuth{Scheme: jobs.GitAuthBearer, Secret: []byte(tok)}
 }
 
-// TestFetchAuthEnv: the credential goes into git's environment as
-// http.<url>.extraHeader for the remote (and its .git twin, git-lfs's
-// endpoint) only, credential helpers off, appended after the worker's own
-// GIT_CONFIG_* entries; https only.
+// askHelper runs the credential helper as git would.
+func askHelper(t *testing.T, env []string, req string) string {
+	t.Helper()
+	cmd := exec.Command(HelperExe(), CredHelperArg, "get")
+	cmd.Env = append(os.Environ(), env...)
+	cmd.Stdin = strings.NewReader(req)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("helper: %v", err)
+	}
+	return string(out)
+}
+
+// TestFetchAuthEnv: the credential is not in git's environment at all;
+// the environment names a credential helper (credential helpers of the
+// worker off, the URL's path counts), refuses redirects, pins the LFS
+// endpoint, turns traces off, and the helper answers only for the exact
+// protocol, host and repository path. https only.
 func TestFetchAuthEnv(t *testing.T) {
 	fa, err := newFetchAuth("https://org@dev.azure.com/org/p/_git/r?x=1", bearer(testToken), "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer fa.close()
 	env := fa.env([]string{"PATH=x", "GIT_CONFIG_COUNT=2"})
-	want := []string{
-		"GIT_CONFIG_COUNT=5",
-		"GIT_CONFIG_KEY_2=credential.helper", "GIT_CONFIG_VALUE_2=",
-		"GIT_CONFIG_KEY_3=http.https://dev.azure.com/org/p/_git/r.extraHeader", "GIT_CONFIG_VALUE_3=Authorization: Bearer " + testToken,
-		"GIT_CONFIG_KEY_4=http.https://dev.azure.com/org/p/_git/r.git.extraHeader", "GIT_CONFIG_VALUE_4=Authorization: Bearer " + testToken,
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, testToken) {
+		t.Fatalf("credential in the environment:\n%s", joined)
 	}
-	if strings.Join(env, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("env:\n%s\nwant:\n%s", strings.Join(env, "\n"), strings.Join(want, "\n"))
+	for _, want := range []string{"GIT_CONFIG_COUNT=7", "GIT_CONFIG_KEY_2=credential.helper\nGIT_CONFIG_VALUE_2=\n",
+		"GIT_CONFIG_KEY_3=credential.useHttpPath\nGIT_CONFIG_VALUE_3=true",
+		"GIT_CONFIG_KEY_4=credential.https://dev.azure.com.helper\nGIT_CONFIG_VALUE_4=!\"",
+		"GIT_CONFIG_KEY_5=http.followRedirects\nGIT_CONFIG_VALUE_5=false",
+		"GIT_CONFIG_KEY_6=lfs.url\nGIT_CONFIG_VALUE_6=https://dev.azure.com/org/p/_git/r.git/info/lfs",
+		"GIT_TRACE=0", "GIT_TRACE_CURL=0", "GIT_TRACE2_EVENT=0", "LONGARM_GITCRED_KEY="} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("env lacks %q:\n%s", want, joined)
+		}
 	}
-	basic := &jobs.GitAuth{Scheme: jobs.GitAuthBasic, Username: "me", Secret: []byte(testToken)}
-	fa, err = newFetchAuth("https://example.com/r.git/", basic, "")
-	if err != nil {
-		t.Fatal(err)
+	for req, ok := range map[string]bool{
+		"protocol=https\nhost=dev.azure.com\npath=org/p/_git/r\n":                  true,
+		"protocol=https\nhost=dev.azure.com\npath=org/p/_git/r.git/info/lfs\n":     true,
+		"protocol=https\nhost=DEV.azure.com\npath=org/p/_git/r/info/refs\n":        true,
+		"protocol=http\nhost=dev.azure.com\npath=org/p/_git/r\n":                   false,
+		"protocol=https\nhost=evil.example\npath=org/p/_git/r\n":                   false,
+		"protocol=https\nhost=dev.azure.com\npath=org/p/_git/other\n":              false,
+		"protocol=https\nhost=dev.azure.com\npath=org/p/_git/r2\n":                 false,
+		"protocol=https\nhost=dev.azure.com\n":                                     false,
+		"protocol=https\nhost=dev.azure.com:8443\npath=org/p/_git/r\n":             false,
+	} {
+		out := askHelper(t, env, req)
+		if ok != (out == "username=x-access-token\npassword="+testToken+"\n") || (!ok && out != "") {
+			t.Errorf("helper for %q: %q", req, out)
+		}
 	}
-	enc := base64.StdEncoding.EncodeToString([]byte("me:" + testToken))
-	env = fa.env(nil)
-	if len(env) != 5 || env[3] != "GIT_CONFIG_KEY_1=http.https://example.com/r.git.extraHeader" ||
-		env[4] != "GIT_CONFIG_VALUE_1=Authorization: Basic "+enc {
-		t.Fatalf("basic env: %q", env)
+	// a wrong key gets nothing
+	bad := append(append([]string(nil), env...), credKeyEnv+"=00")
+	if out := askHelper(t, bad, "protocol=https\nhost=dev.azure.com\npath=org/p/_git/r\n"); out != "" {
+		t.Errorf("wrong key: %q", out)
 	}
-	if got := fa.redact("x " + testToken + " y " + enc + " z"); got != "x *** y *** z" {
+	// closed: nothing
+	fa.close()
+	if out := askHelper(t, env, "protocol=https\nhost=dev.azure.com\npath=org/p/_git/r\n"); out != "" {
+		t.Errorf("after the fetch: %q", out)
+	}
+	if got := fa.redact("x " + testToken + " z"); got != "x *** z" {
 		t.Fatalf("redact: %q", got)
 	}
 	for _, u := range []string{"http://example.com/r", "git@github.com:o/r", "file:///tmp/r"} {
@@ -60,6 +105,65 @@ func TestFetchAuthEnv(t *testing.T) {
 	}
 	if fa, err := newFetchAuth("https://example.com/r", nil, ""); err != nil || fa.env(nil) != nil {
 		t.Fatalf("no credential: %v %v", fa, err)
+	}
+}
+
+// recorder is a server that records the Authorization headers it gets.
+type recorder struct {
+	mu    sync.Mutex
+	auths []string
+	hits  int
+}
+
+func (r *recorder) handler(w http.ResponseWriter, req *http.Request) {
+	r.mu.Lock()
+	r.hits++
+	if a := req.Header.Get("Authorization"); a != "" {
+		r.auths = append(r.auths, a)
+	}
+	r.mu.Unlock()
+	w.Header().Set("WWW-Authenticate", `Basic realm="x"`)
+	http.Error(w, "nope", http.StatusUnauthorized)
+}
+
+// TestFetchRedirectRefused: a remote that redirects - to another host, or
+// from https to plain http - never gets the forwarded credential replayed
+// to the target; the fetch fails saying why.
+func TestFetchRedirectRefused(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	t.Setenv("GIT_SSL_NO_VERIFY", "true")
+	srv := gitserver.New(t, t.TempDir(), testToken)
+	c1, _, _ := gitRemote(t, srv)
+	for name, mk := range map[string]func(h http.Handler) *httptest.Server{
+		"cross-host":    httptest.NewTLSServer,
+		"https-to-http": httptest.NewServer,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &recorder{}
+			target := mk(http.HandlerFunc(rec.handler))
+			defer target.Close()
+			// the remote: redirects everything (also authenticated requests)
+			redir := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, target.URL+r.URL.RequestURI(), http.StatusFound)
+			}))
+			defer redir.Close()
+			s := &Store{Root: t.TempDir()}
+			var log bytes.Buffer
+			_, err := s.FetchURLAuth(context.Background(), "proj", redir.URL+"/proj.git", c1, bearer(testToken), "", &log)
+			if err == nil || !strings.Contains(err.Error(), "redirect") {
+				t.Fatalf("fetch through a redirect: %v\n%s", err, log.String())
+			}
+			rec.mu.Lock()
+			defer rec.mu.Unlock()
+			for _, a := range rec.auths {
+				t.Errorf("the redirect target got Authorization %q", a)
+			}
+			if strings.Contains(err.Error()+log.String(), testToken) {
+				t.Fatal("credential in the error or log")
+			}
+		})
 	}
 }
 
@@ -198,8 +302,7 @@ func TestFetchForwarded(t *testing.T) {
 	}
 
 	// the token is nowhere on disk, in the log or the worktree's git config
-	enc := base64.StdEncoding.EncodeToString([]byte("u:" + testToken))
-	for _, needle := range []string{testToken, enc} {
+	for _, needle := range []string{testToken} {
 		if strings.Contains(log.String(), needle) {
 			t.Fatalf("credential in the log:\n%s", log.String())
 		}
