@@ -59,14 +59,14 @@ restarts the hub) prints everything too.
 | `--stun-servers LIST` | `-StunServers` | external STUN servers the hub advertises (default Cloudflare + Google, `none` = only the hub's own; [Direct connections](#direct-connections-longnet-on-aci)) |
 | `--tailscale-secret-file F` | `-TailscaleSecretFile` | Tailscale OAuth secret ([tailnet] provider, [deploy/hub](../hub/README.md#tailnet-provider-tailscale-default-or-headscale)) |
 | `--acme-email E` | `-AcmeEmail` | Let's Encrypt contact |
-| `--entra-tenant ID --entra-client ID` | | Sign in with Microsoft Entra ID (`longarm login`, panel); a re-run keeps them ([usage](../../docs/usage.md)) |
-| `--entra-admins LIST` | | Entra admins: UPNs, `*@domain` or object IDs, comma-separated |
-| `--entra-web spa\|confidential\|off` | | panel sign-in mode (default spa) |
+| `--entra-tenant ID --entra-client ID` | `-EntraTenant -EntraClient` | Sign in with Microsoft Entra ID (`longarm login`, panel); a re-run keeps them ([usage](../../docs/usage.md)) |
+| `--entra-admins LIST` | `-EntraAdmins` | Entra admins: UPNs, `*@domain` or object IDs, comma-separated |
+| `--entra-web spa\|confidential\|off` | `-EntraWeb` | panel sign-in mode (default spa) |
 | `--log-analytics` | `-LogAnalytics` | container logs to a Log Analytics workspace |
-| `--storage-auth key\|identity` | | `identity`: no storage account keys, panel served by the hub ([below](#without-storage-account-keys)); deploy.sh only for now |
-| `--acr NAME` | | with `identity`: pull the image from this Azure Container Registry (same resource group) |
-| `--telemetry` | | Application Insights + Log Analytics for the fleet's scrubbed telemetry ([below](#telemetry-and-diagnostic-bundles)) |
-| `--diagnostics` | | with `identity`: a blob container for uploaded diagnostic bundles, deleted after 30 days |
+| `--storage-auth key\|identity` | `-StorageAuth` | `identity`: no storage account keys, panel served by the hub ([below](#without-storage-account-keys)); a re-run keeps the mode (switching needs a new deployment) |
+| `--acr NAME` | `-Acr` | with `identity`: pull the image from this Azure Container Registry (same resource group) |
+| `--telemetry` | `-Telemetry` | Application Insights + Log Analytics for the fleet's scrubbed telemetry ([below](#telemetry-and-diagnostic-bundles)) |
+| `--diagnostics` | `-Diagnostics` | with `identity`: a blob container for uploaded diagnostic bundles, deleted after 30 days |
 | `--panel` | `-Panel` | turn the panel back on (with `--recreate`) |
 | `--recreate` | `-Recreate` | delete the container group first (to change size or panel; data stays) |
 | `--admin-code` | `-AdminCode` | print a new one-time admin join code |
@@ -174,7 +174,7 @@ account key, and the Litestream SAS is signed with it. `--storage-auth
 identity` (template parameter `storageAuth=identity`) deploys without keys:
 
 ```sh
-./deploy.sh --name myhub --location eastasia --storage-auth identity
+./deploy.sh --name myhub --location eastasia --storage-auth identity   # PowerShell: -StorageAuth identity
 ```
 
 - The storage account has `allowSharedKeyAccess: false` and only blob
@@ -225,7 +225,8 @@ identity` (template parameter `storageAuth=identity`) deploys without keys:
 ```
 
 Re-running the script is an upgrade: the template is applied again with the
-running hub's settings (image, size, panel, Log Analytics) unless an option
+running hub's settings (image, size, panel, Log Analytics, storage auth,
+telemetry, diagnostics, Entra sign-in, STUN servers) unless an option
 changes them - same storage, same data - and the hub restarts (the script
 waits for the new start). With a moving tag (`:latest`, `:edge`) and no new
 image it restarts the group so the newest image is pulled. Secrets can't be
@@ -239,7 +240,7 @@ workers and clients reconnect by themselves.
 ## Telemetry and diagnostic bundles
 
 ```sh
-./deploy.sh --name myhub --storage-auth identity --telemetry --diagnostics
+./deploy.sh --name myhub --storage-auth identity --telemetry --diagnostics   # PowerShell: -StorageAuth identity -Telemetry -Diagnostics
 ```
 
 - `--telemetry` creates a Log Analytics workspace `<name>-telemetry` and a

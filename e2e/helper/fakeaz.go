@@ -43,13 +43,29 @@ func fakeAz(args []string) {
 			Parameters map[string]struct{ Value any } `json:"parameters"`
 		}
 		json.Unmarshal([]byte(read("cg")), &doc)
-		m := map[string]any{"image": "ghcr.io/example/longarm-hub:latest", "size": "small", "enablePanel": true}
+		m := map[string]any{"image": "ghcr.io/example/longarm-hub:latest", "size": "small", "enablePanel": true, "storageAuth": "key", "entraWeb": "spa"}
 		for k, v := range doc.Parameters {
 			m[k] = v.Value
 		}
 		return m
 	}
 	tsv := func(vals ...string) { fmt.Println(strings.Join(vals, "\t")) }
+	// the real az prints None for a null field of a tsv list
+	orNone := func(s string) string {
+		if s == "" {
+			return "None"
+		}
+		return s
+	}
+	// the hub's bootstrap values on the share (boot_id = the restart counter)
+	bootstrap := func() []byte {
+		b, err := os.ReadFile(os.Getenv("HELPER_AZ_BOOTSTRAP"))
+		if err != nil {
+			fail("ShareNotFound")
+		}
+		return regexp.MustCompile(`(?m)^boot_id=.*$`).ReplaceAll(b, []byte("boot_id=fake-"+read("boots")))
+	}
+	identity := func() bool { return group()["storageAuth"] == "identity" }
 	cmd := strings.Join(args[:min(len(args), 2)], " ")
 	q := flag("--query")
 	switch cmd {
@@ -77,7 +93,7 @@ func fakeAz(args []string) {
 			fmt.Println(lines[1]) // tags."longarm-hub"
 		}
 	case "group delete":
-		for _, f := range []string{"rg", "cg"} {
+		for _, f := range []string{"rg", "cg", "acr", "acr-admin"} {
 			os.Remove(filepath.Join(dir, f))
 		}
 	case "provider show":
@@ -117,15 +133,19 @@ func fakeAz(args []string) {
 				fmt.Println("Running")
 			}
 		case strings.HasPrefix(q, "[containers[0].image"):
-			// image, cpu, second container, registry, env names, log workspace
+			// image, cpu, second container, registry, env names, log
+			// workspace, STUN servers (as the template sets them: main.bicep)
 			cpu, caddy, reg, logs := "1.0", "", "", ""
+			id := g["storageAuth"] == "identity"
 			if g["size"] == "medium" {
 				cpu = "2.0"
 			}
-			if g["enablePanel"] == true {
+			if g["enablePanel"] == true && !id {
 				caddy = "caddy"
 			}
-			if g["registryUsername"] != nil {
+			if acr, _ := g["acrName"].(string); id && acr != "" {
+				reg = acr + ".azurecr.io" // pulled with the managed identity
+			} else if g["registryUsername"] != nil {
 				reg = "ghcr.io"
 				if s, ok := g["registryServer"].(string); ok {
 					reg = s
@@ -134,9 +154,32 @@ func fakeAz(args []string) {
 			if g["enableLogAnalytics"] == true {
 				logs = "00000000-0000-0000-0000-000000000000"
 			}
-			env := "LONGARM_HUB_DATA_DIR,LITESTREAM_AZURE_SAS_TOKEN"
+			env := "LONGARM_HUB_DATA_DIR,LONGARM_HUB_BLOB_ENDPOINT"
+			if id {
+				env += ",AZURE_CLIENT_ID,LONGARM_HUB_CA_IN_DB"
+			} else {
+				env += ",LITESTREAM_AZURE_SAS_TOKEN"
+			}
+			if g["enablePanel"] == true {
+				env += ",LONGARM_HUB_PUBLIC_URL"
+			}
+			if g["enableTelemetry"] == true {
+				env += ",LONGARM_HUB_APPINSIGHTS_CONNECTION_STRING"
+			}
+			if g["enableDiagnostics"] == true && id {
+				env += ",LONGARM_HUB_DIAG_BLOB_URL"
+			}
+			if g["enablePanel"] == true && id {
+				env += ",LONGARM_HUB_HTTPS,LONGARM_HUB_HTTPS_REDIRECT"
+			}
 			if g["tailscaleOAuthSecret"] != nil {
 				env += ",LONGARM_HUB_TAILSCALE_OAUTH_SECRET"
+			}
+			if g["entraTenantId"] != nil {
+				env += ",LONGARM_HUB_ENTRA_TENANT_ID,LONGARM_HUB_ENTRA_CLIENT_ID,LONGARM_HUB_ENTRA_WEB"
+				if g["entraAdmins"] != nil {
+					env += ",LONGARM_HUB_ENTRA_ADMINS"
+				}
 			}
 			// LONGARM_HUB_RELAY_STUN_ADVERTISE as the template sets it
 			stun := "self,stun.cloudflare.com:3478,stun.l.google.com:19302"
@@ -146,12 +189,42 @@ func fakeAz(args []string) {
 					stun += "," + s
 				}
 			}
-			tsv(fmt.Sprint(g["image"]), cpu, caddy, reg, env, logs, stun)
+			env += ",LONGARM_HUB_RELAY_STUN_ADVERTISE"
+			tsv(fmt.Sprint(g["image"]), cpu, orNone(caddy), orNone(reg), env, orNone(logs), stun)
+		case strings.Contains(q, "LONGARM_HUB_ENTRA_"):
+			// [name, value] of the Entra variables, one per line
+			if t, _ := g["entraTenantId"].(string); t != "" {
+				tsv("LONGARM_HUB_ENTRA_TENANT_ID", t)
+				tsv("LONGARM_HUB_ENTRA_CLIENT_ID", fmt.Sprint(g["entraClientId"]))
+				tsv("LONGARM_HUB_ENTRA_WEB", fmt.Sprint(g["entraWeb"]))
+				if a, _ := g["entraAdmins"].(string); a != "" {
+					tsv("LONGARM_HUB_ENTRA_ADMINS", a)
+				}
+			}
 		case strings.Contains(q, "image"):
 			fmt.Println(g["image"])
 		default:
 			fail("fake az: container show --query " + q)
 		}
+	case "container logs":
+		// the hub's log: its LONGARM_BOOTSTRAP line has the bootstrap values
+		// without the join code; a stale line first (an earlier start)
+		if !exists("cg") {
+			fail("ResourceNotFound")
+		}
+		if flag("--container-name") != "hub" {
+			fail("fake az: container logs of " + flag("--container-name"))
+		}
+		line := []string{"LONGARM_BOOTSTRAP"}
+		for _, l := range strings.Split(strings.ReplaceAll(string(bootstrap()), "\r", ""), "\n") {
+			if k, _, ok := strings.Cut(l, "="); ok && !strings.HasPrefix(k, "#") && !strings.HasPrefix(k, "admin_join_code") {
+				line = append(line, l)
+			}
+		}
+		fmt.Println("litestream: restoring hub.db")
+		fmt.Println("LONGARM_BOOTSTRAP boot_id=stale ca_fingerprint=stale hub_address=stale admin_joined=true")
+		fmt.Println(strings.Join(line, " "))
+		fmt.Println("hub: serving")
 	case "container delete":
 		os.Remove(filepath.Join(dir, "cg"))
 	case "container restart":
@@ -230,10 +303,11 @@ func fakeAz(args []string) {
 			fmt.Println(n)
 		}
 	case "acr create":
-		if flag("--sku") == "" || flag("--admin-enabled") != "true" {
+		if a := flag("--admin-enabled"); flag("--sku") == "" || (a != "true" && a != "false") {
 			fail("fake az: acr create without --sku / --admin-enabled")
 		}
 		write("acr", flag("-n"))
+		write("acr-admin", flag("--admin-enabled"))
 	case "acr show":
 		if read("acr") != flag("-n") {
 			fail("ResourceNotFound")
@@ -242,6 +316,9 @@ func fakeAz(args []string) {
 	case "acr credential":
 		if read("acr") != flag("-n") {
 			fail("ResourceNotFound")
+		}
+		if read("acr-admin") != "true" {
+			fail("Run 'az acr update -n " + flag("-n") + " --admin-enabled true' to enable admin first.")
 		}
 		tsv("acruser", "acr-s3cret-pw")
 	case "acr build":
@@ -256,6 +333,9 @@ func fakeAz(args []string) {
 		write("acr-build", strings.Join(args, " "))
 		fmt.Println("Run ID: ca1 was successful after 2m3s")
 	case "storage account":
+		if args[2] == "keys" && identity() {
+			fail("KeyBasedAuthenticationNotPermitted") // allowSharedKeyAccess: false
+		}
 		if args[2] == "list" {
 			fmt.Println("lahubtest")
 		} else {
@@ -269,12 +349,10 @@ func fakeAz(args []string) {
 		if os.Getenv("AZURE_STORAGE_CONNECTION_STRING") != "" || os.Getenv("AZURE_STORAGE_SAS_TOKEN") != "" || os.Getenv("AZURE_STORAGE_ACCOUNT") != "" {
 			fail("ShareNotFound (a connection string / SAS / account from the environment won over the key)")
 		}
-		b, err := os.ReadFile(os.Getenv("HELPER_AZ_BOOTSTRAP"))
-		if err != nil {
-			fail("ShareNotFound")
+		if identity() {
+			fail("ShareNotFound") // identity: no file shares
 		}
-		b = regexp.MustCompile(`(?m)^boot_id=.*$`).ReplaceAll(b, []byte("boot_id=fake-"+read("boots")))
-		os.WriteFile(flag("--dest"), b, 0o644)
+		os.WriteFile(flag("--dest"), bootstrap(), 0o644)
 	default:
 		fail("fake az: unhandled: " + strings.Join(args, " "))
 	}

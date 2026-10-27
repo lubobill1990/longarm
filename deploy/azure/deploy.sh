@@ -247,7 +247,7 @@ check_stuck() {
 	local info pstate hub events ev2
 	info=$(az container show -g "$rg" -n "$name" -o tsv \
 		--query "[provisioningState, containers[?name=='hub'].instanceView.currentState.state | [0], length(containers[].instanceView.events[] || \`[]\`), length(instanceView.events || \`[]\`)]" \
-		2>/dev/null | tr -d '\r' | tr '\t' '\n') || return 0
+		2>/dev/null | tr -d '\r' | tr '\t' '\n' | sed 's/^None$//') || return 0
 	{
 		read -r pstate
 		read -r hub
