@@ -42,6 +42,15 @@ service Enroll {
   // replaces the join code; the device gets a client certificate of that
   // user (admin certificate for the hub's Entra admins) right away.
   rpc EntraJoin(EntraJoinRequest) returns (JoinResponse);
+  // StartLink begins a pairing (`longarm login` / `longarmd login` without
+  // a usable az sign-in): the device sends its CSR and gets a user code,
+  // which its user types into the panel's /link page (signed in with
+  // Microsoft) to approve - enrolling the device as theirs. No certificate
+  // needed.
+  rpc StartLink(StartLinkRequest) returns (StartLinkResponse);
+  // PollLink asks about a pairing with its poll token: state "pending",
+  // "approved" (with the certificate), "denied" or "expired".
+  rpc PollLink(PollLinkRequest) returns (JoinResponse);
 }
 
 message AuthInfoRequest {}
@@ -62,6 +71,32 @@ message EntraJoinRequest {
   string os = 5;
   string arch = 6;
   string version = 7;
+  // "" or "client": a device of the user; "worker": a worker owned by the
+  // user (approved right away, never admin; user tokens only, not app-only
+  // ones)
+  string kind = 8;
+}
+
+message StartLinkRequest {
+  string kind = 1; // "client" | "worker"
+  bytes csr_pem = 2;
+  string name = 3; // requested name (default: as EntraJoin / the hostname)
+  string hostname = 4;
+  string os = 5;
+  string arch = 6;
+  string version = 7;
+}
+
+message StartLinkResponse {
+  string user_code = 1; // "BCDF-GHJK", typed by the user at verification_url
+  string poll_token = 2;
+  string verification_url = 3; // <hub panel>/link (never with the code in it)
+  google.protobuf.Timestamp expires_at = 4;
+  google.protobuf.Duration interval = 5; // poll no faster than this
+}
+
+message PollLinkRequest {
+  string poll_token = 1;
 }
 
 message JoinRequest {
@@ -75,7 +110,7 @@ message JoinRequest {
 }
 
 message JoinResponse {
-  string state = 1; // "approved" | "pending" | "rejected"
+  string state = 1; // "approved" | "pending" | "rejected"; PollLink also "denied" | "expired"
   string name = 2;
   string role = 3;
   bytes ca_pem = 4;

@@ -355,6 +355,8 @@ longarm admin approve w3                 # (hub.toml auto_approve = true skips t
 # or the one-liners (download from the hub's release store, verify sha256, join, install the service):
 #   $env:LONGARM_JOIN='K7P-Q2M'; irm https://hub.example.com/install.ps1 | iex
 #   curl -fsSL https://hub.example.com/install.sh | sh -s -- --join K7P-Q2M
+#   ... --login instead of a code: a worker of your own via your Microsoft account ("Sign in with
+#   Microsoft Entra ID" below)
 longarm-hub release add ./dist --version 0.2.0   # files longarm-<os>-<arch>[.exe], longarmd-..., packages; see "Self-update" below
 ```
 
@@ -521,6 +523,9 @@ longarm worker add [<name>] [--ttl 24h] [--label k=v]...   # prints a join code 
 #   longarmd join <hub> <code> --ca-fingerprint <fp> --name <name>   # on the new worker, then
 #   longarmd service install ...                                     # (see "Install a worker")
 #   the worker joins approved (no admin needed) and owned by you; at most 10 unused codes per user
+longarmd login <hub> [--name <name>]      # on the new worker, no code to copy: sign in with your Microsoft
+                                          # account (a code to approve in any browser; see "Sign in with
+                                          # Microsoft Entra ID")
 longarm worker ls [--json]                # your workers, workers shared with you, the fleet (owner, shares, load)
 longarm worker share <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker unshare <worker> [--user bob]... [--team web]... [--everyone]
@@ -565,28 +570,81 @@ narrows what `[access]` and trust allow on the worker.
 ### Sign in with Microsoft Entra ID
 
 Instead of join codes and panel passwords, people can sign in with their
-Microsoft Entra ID (Azure AD) account: `longarm login` uses the token of
-their Azure CLI sign-in (`az login`), the web panel has a "Sign in with
-Microsoft" link. The hub verifies Microsoft's token and maps the Entra user
+Microsoft Entra ID (Azure AD) account - clients (`longarm login`) and workers
+(`longarmd login`) alike - and the web panel has a "Sign in with Microsoft"
+link. The hub verifies Microsoft's token and maps the Entra user
 (its object ID) to a Longarm user, which it **creates on first sign-in**
 (named after the UPN's local part: `alice@example.com` -> `alice`; taken
 names get a digit, `alice2`; the UPN is kept, see `longarm admin user ls`).
 Like `longarm admin user add`, the first user turns multi-tenancy on.
+
+**Onboarding in one line** (the install scripts need a release in the hub's
+store, see "Self-update"; `--ca-fingerprint` is built into them):
+
+```sh
+# a worker of your own (Linux / macOS; Windows: elevated PowerShell)
+curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login
+$env:LONGARM_LOGIN=1; irm https://hub.example.com/install.ps1 | iex
+# a client device (or --role both: this machine as worker and client)
+curl -fsSL https://hub.example.com/install.sh | sh -s -- --login --role client
+$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='client'; irm https://hub.example.com/install.ps1 | iex
+# with longarm / longarmd installed already
+longarm login hub.example.com:7443 --ca-fingerprint <fp>
+longarmd login hub.example.com:7443 --ca-fingerprint <fp> [--name w3] [--data-dir D]
+```
+
+Each prints the hub's `/link` address and a code:
+
+```
+To link this worker as yours, sign in with your Microsoft account (or the hub's panel login) in a browser:
+
+  Open https://hub.example.com/link and enter code BCDF-GHJK
+```
+
+Open the page in **any** browser - the machine itself needs none: a headless
+Linux box over SSH is fine, approve on your laptop or phone. Sign in with
+Microsoft, type the code, check what the page shows (worker or client, name,
+host name, OS, the address the hub saw, the node key, when it started) and
+approve. The device is enrolled as **yours**: a client gets a certificate
+of your user (an admin certificate for the hub's Entra admins), a worker
+joins approved and owned by you - usable by you only until you share it,
+never with admin rights (as with `longarm worker add`). The page opens by
+itself when the machine has a desktop (not over SSH; `--no-browser` or
+`LONGARM_NO_BROWSER=1`: never); it never carries the code - you always type
+it. Codes last 10 minutes and work once; Ctrl-C gives up. On a hub without
+`[auth.entra]` the same works with a panel login of a Longarm user
+(`longarm admin user add <name> --panel`); with `[auth.entra]` only a
+Microsoft sign-in may approve (and its `web` must not be `off`).
+
+`longarm login` asks the Azure CLI first: with `az login` done, it uses its
+token and asks nothing else. It falls back to the code when az is not
+installed or has no token for the hub (or with `--link`); `--az` uses az
+only (fails instead). `longarmd login` uses the code by default; `--az`
+uses the worker's own az sign-in instead (a user's - app-only tokens may
+not enroll workers):
 
 ```sh
 longarm login hub.example.com:7443 --ca-fingerprint <fp>   # client cert of your user (admin cert for
                                                            # the hub's Entra admins), hub.toml, like join
 #   device name <user>-<hostname> (--name to choose); signing in again on the same
 #   machine (expired certificate) replaces the device's certificate, no --force needed
-#   if az has no token for the hub: it prints the exact command, e.g.
+#   --az: if az has no token for the hub it prints the exact command, e.g.
 #     az login --tenant <tenant> --scope api://<client id>/longarm.connect
+longarm login hub.example.com:7443 --link           # the code even with az signed in
 longarm login hub.example.com:7443 --scope api://<client id>/.default   # another scope (rarely needed)
+longarmd login hub.example.com:7443 --az            # worker: az's token, no browser, no code
 ```
+
+`longarmd login` writes what `longarmd join` writes (certificate, `hub.toml`,
+`worker-access.json` with you as the owner) and prints the same hint for
+pinning the owner locally; install the service afterwards as usual (the
+install scripts do).
 
 `longarm login` finds `az` on PATH (Windows: also under `Program Files\Microsoft
 SDKs\Azure\CLI2\wbin`), or at `$LONGARM_AZ`. The token goes only to the hub,
 over the TLS connection that `--ca-fingerprint` pins (without it: trust on
 first use, with a warning, as `longarm join`); it is never printed or stored.
+The pairing runs over that connection too, so pin it there as well.
 
 `hub.toml` (every key also as an environment variable, for containers):
 

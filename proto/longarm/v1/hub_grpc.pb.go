@@ -39,6 +39,8 @@ const (
 	Enroll_JoinStatus_FullMethodName = "/longarm.v1.Enroll/JoinStatus"
 	Enroll_AuthInfo_FullMethodName   = "/longarm.v1.Enroll/AuthInfo"
 	Enroll_EntraJoin_FullMethodName  = "/longarm.v1.Enroll/EntraJoin"
+	Enroll_StartLink_FullMethodName  = "/longarm.v1.Enroll/StartLink"
+	Enroll_PollLink_FullMethodName   = "/longarm.v1.Enroll/PollLink"
 )
 
 // EnrollClient is the client API for Enroll service.
@@ -61,6 +63,15 @@ type EnrollClient interface {
 	// replaces the join code; the device gets a client certificate of that
 	// user (admin certificate for the hub's Entra admins) right away.
 	EntraJoin(ctx context.Context, in *EntraJoinRequest, opts ...grpc.CallOption) (*JoinResponse, error)
+	// StartLink begins a pairing (`longarm login` / `longarmd login` without
+	// a usable az sign-in): the device sends its CSR and gets a user code,
+	// which its user types into the panel's /link page (signed in with
+	// Microsoft) to approve - enrolling the device as theirs. No certificate
+	// needed.
+	StartLink(ctx context.Context, in *StartLinkRequest, opts ...grpc.CallOption) (*StartLinkResponse, error)
+	// PollLink asks about a pairing with its poll token: state "pending",
+	// "approved" (with the certificate), "denied" or "expired".
+	PollLink(ctx context.Context, in *PollLinkRequest, opts ...grpc.CallOption) (*JoinResponse, error)
 }
 
 type enrollClient struct {
@@ -111,6 +122,26 @@ func (c *enrollClient) EntraJoin(ctx context.Context, in *EntraJoinRequest, opts
 	return out, nil
 }
 
+func (c *enrollClient) StartLink(ctx context.Context, in *StartLinkRequest, opts ...grpc.CallOption) (*StartLinkResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StartLinkResponse)
+	err := c.cc.Invoke(ctx, Enroll_StartLink_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *enrollClient) PollLink(ctx context.Context, in *PollLinkRequest, opts ...grpc.CallOption) (*JoinResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JoinResponse)
+	err := c.cc.Invoke(ctx, Enroll_PollLink_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // EnrollServer is the server API for Enroll service.
 // All implementations must embed UnimplementedEnrollServer
 // for forward compatibility.
@@ -131,6 +162,15 @@ type EnrollServer interface {
 	// replaces the join code; the device gets a client certificate of that
 	// user (admin certificate for the hub's Entra admins) right away.
 	EntraJoin(context.Context, *EntraJoinRequest) (*JoinResponse, error)
+	// StartLink begins a pairing (`longarm login` / `longarmd login` without
+	// a usable az sign-in): the device sends its CSR and gets a user code,
+	// which its user types into the panel's /link page (signed in with
+	// Microsoft) to approve - enrolling the device as theirs. No certificate
+	// needed.
+	StartLink(context.Context, *StartLinkRequest) (*StartLinkResponse, error)
+	// PollLink asks about a pairing with its poll token: state "pending",
+	// "approved" (with the certificate), "denied" or "expired".
+	PollLink(context.Context, *PollLinkRequest) (*JoinResponse, error)
 	mustEmbedUnimplementedEnrollServer()
 }
 
@@ -152,6 +192,12 @@ func (UnimplementedEnrollServer) AuthInfo(context.Context, *AuthInfoRequest) (*A
 }
 func (UnimplementedEnrollServer) EntraJoin(context.Context, *EntraJoinRequest) (*JoinResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method EntraJoin not implemented")
+}
+func (UnimplementedEnrollServer) StartLink(context.Context, *StartLinkRequest) (*StartLinkResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartLink not implemented")
+}
+func (UnimplementedEnrollServer) PollLink(context.Context, *PollLinkRequest) (*JoinResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PollLink not implemented")
 }
 func (UnimplementedEnrollServer) mustEmbedUnimplementedEnrollServer() {}
 func (UnimplementedEnrollServer) testEmbeddedByValue()                {}
@@ -246,6 +292,42 @@ func _Enroll_EntraJoin_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Enroll_StartLink_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartLinkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EnrollServer).StartLink(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Enroll_StartLink_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EnrollServer).StartLink(ctx, req.(*StartLinkRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Enroll_PollLink_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PollLinkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EnrollServer).PollLink(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Enroll_PollLink_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EnrollServer).PollLink(ctx, req.(*PollLinkRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Enroll_ServiceDesc is the grpc.ServiceDesc for Enroll service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -268,6 +350,14 @@ var Enroll_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EntraJoin",
 			Handler:    _Enroll_EntraJoin_Handler,
+		},
+		{
+			MethodName: "StartLink",
+			Handler:    _Enroll_StartLink_Handler,
+		},
+		{
+			MethodName: "PollLink",
+			Handler:    _Enroll_PollLink_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

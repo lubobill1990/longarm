@@ -1,69 +1,27 @@
 package e2e
 
 import (
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"math/big"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 )
 
 // TestHubEntraLogin: `longarm login` with a fake Azure CLI against a hub
 // whose Entra authority is a fake (JWKS): a user's first sign-in creates
 // the user and enrolls the device; a service principal (CI) signs in as
-// its configured user; a missing az login tells the user what to run.
+// its configured user; with --az, a missing az login tells the user what
+// to run.
 func TestHubEntraLogin(t *testing.T) {
 	const (
-		tenant = "11111111-2222-3333-4444-555555555555"
-		client = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-		ciApp  = "c1c1c1c1-0000-4000-8000-000000000001"
+		tenant, client = entraTenant, entraClient
+		ciApp          = "c1c1c1c1-0000-4000-8000-000000000001"
 	)
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b64 := base64.RawURLEncoding
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /"+tenant+"/discovery/v2.0/keys", func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{"kty": "RSA", "use": "sig", "kid": "k1",
-			"n": b64.EncodeToString(key.N.Bytes()), "e": b64.EncodeToString(big.NewInt(int64(key.E)).Bytes())}}})
-	})
-	entra := httptest.NewServer(mux)
-	defer entra.Close()
-	sign := func(claims map[string]any) string {
-		now := time.Now().Unix()
-		for k, v := range map[string]any{"aud": client, "iss": entra.URL + "/" + tenant + "/v2.0", "tid": tenant, "iat": now, "nbf": now, "exp": now + 3600} {
-			claims[k] = v
-		}
-		h, _ := json.Marshal(map[string]any{"alg": "RS256", "typ": "JWT", "kid": "k1"})
-		c, _ := json.Marshal(claims)
-		in := b64.EncodeToString(h) + "." + b64.EncodeToString(c)
-		sum := sha256.Sum256([]byte(in))
-		sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, sum[:])
-		if err != nil {
-			t.Fatal(err)
-		}
-		return in + "." + b64.EncodeToString(sig)
-	}
-
-	h := newHubEnv(t, fmt.Sprintf(`[auth.entra]
-tenant_id = %q
-client_id = %q
-authority = %q
-admins = ["boss@example.com"]
-apps = ["%s=ci"]
-`, tenant, client, entra.URL, ciApp))
+	a := newFakeAuthority(t)
+	sign := a.sign
+	h := newHubEnv(t, a.hubConfig(fmt.Sprintf("admins = [\"boss@example.com\"]\napps = [\"%s=ci\"]", ciApp)))
 
 	// the fake az: account show prints type.txt, get-access-token token.txt
 	// (or fail.txt to stderr, exit 1)
@@ -116,10 +74,10 @@ apps = ["%s=ci"]
 		t.Fatalf("ci whoami: %+v", r)
 	}
 
-	// not signed in to az
+	// not signed in to az, with --az (without, login falls back to pairing: TestHubPairing)
 	set("type.txt", "user")
 	set("fail.txt", "ERROR: AADSTS70043: The refresh token has expired. Please run 'az login' to setup account.")
-	r = h.longarmWith(azEnv, filepath.Join(h.root, "frank"), "login", h.addr(), "--ca-fingerprint", h.fp)
+	r = h.longarmWith(azEnv, filepath.Join(h.root, "frank"), "login", h.addr(), "--ca-fingerprint", h.fp, "--az")
 	if want := "az login --tenant " + tenant + " --scope api://" + client + "/longarm.connect"; r.code == 0 || !strings.Contains(r.stderr, want) {
 		t.Fatalf("not signed in: %+v, want %q", r, want)
 	}

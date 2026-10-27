@@ -431,7 +431,9 @@ func (s *enrollServer) AuthInfo(context.Context, *pb.AuthInfoRequest) (*pb.AuthI
 // EntraJoin enrolls a device of an Entra user (`longarm login`): the access
 // token replaces the join code, the certificate is issued right away. A
 // device name the same user already has (signing in again on the same
-// machine) is taken over: the old device's certificates are revoked.
+// machine) is taken over: the old device's certificates are revoked. With
+// kind "worker" (`longarmd login --az`) the machine becomes a worker owned
+// by the token's user instead, like one joining with the user's worker code.
 func (s *enrollServer) EntraJoin(ctx context.Context, req *pb.EntraJoinRequest) (*pb.JoinResponse, error) {
 	h := s.h
 	c := callerFrom(ctx)
@@ -440,6 +442,9 @@ func (s *enrollServer) EntraJoin(ctx context.Context, req *pb.EntraJoinRequest) 
 	}
 	if h.entra == nil {
 		return nil, status.Error(codes.FailedPrecondition, "this hub has no Microsoft Entra sign-in ([auth.entra] in hub.toml)")
+	}
+	if req.Kind != "" && req.Kind != linkClient && req.Kind != linkWorker {
+		return nil, status.Errorf(codes.InvalidArgument, "kind %q: want client or worker", req.Kind)
 	}
 	if _, err := pki.ParseCSR(req.CsrPem); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "csr: %v", err)
@@ -451,6 +456,27 @@ func (s *enrollServer) EntraJoin(ctx context.Context, req *pb.EntraJoinRequest) 
 	}
 	id := claims.identity()
 	who := "entra/" + id.upn
+	dev := deviceRequest{csr: req.CsrPem, name: req.Name, hostname: req.Hostname, os: req.Os, arch: req.Arch, version: req.Version}
+	if req.Kind == linkWorker {
+		// A worker runs other people's jobs once shared: a person registers
+		// it, never a CI app acting as a user.
+		if claims.App != "" {
+			h.log.Warn("entra join: app-only token for a worker refused", "app", claims.App, "remote", c.addr)
+			return nil, status.Error(codes.PermissionDenied, "app-only tokens may not enroll workers (sign in as a user)")
+		}
+		user, _, err := h.entraSignIn(id, "longarmd login")
+		if err != nil {
+			return nil, err
+		}
+		resp, err := h.enrollOwnedWorker(who, user, dev)
+		if err != nil {
+			return nil, err
+		}
+		h.log.Info("worker joined by entra sign-in", "node", resp.Name, "owner", user, "oid", id.oid, "remote", c.addr)
+		h.auditHub(who, "entra/worker", map[string]any{"user": user, "upn": id.upn, "oid": id.oid, "worker": resp.Name, "remote": c.addr})
+		h.attachTailnet(ctx, resp)
+		return resp, nil
+	}
 	var user string
 	admin := false
 	if claims.App != "" { // CI: an app acts as its configured user, never as an admin
@@ -462,15 +488,38 @@ func (s *enrollServer) EntraJoin(ctx context.Context, req *pb.EntraJoinRequest) 
 	if err != nil {
 		return nil, err
 	}
+	resp, replaced, err := h.enrollDevice(who, user, admin, dev)
+	if err != nil {
+		return nil, err
+	}
+	h.log.Info("node joined by entra sign-in", "node", resp.Name, "role", resp.Role, "user", user, "who", who, "oid", id.oid, "remote", c.addr)
+	h.auditHub(who, "entra/login", map[string]any{"user": user, "upn": id.upn, "oid": id.oid, "app": claims.App,
+		"device": resp.Name, "role": resp.Role, "replaced": replaced, "remote": c.addr})
+	h.attachTailnet(ctx, resp)
+	return resp, nil
+}
+
+// deviceRequest is what a machine says about itself when it enrolls.
+type deviceRequest struct {
+	csr                               []byte
+	name, hostname, os, arch, version string
+}
+
+// enrollDevice issues a client certificate (admin: an admin certificate)
+// for a device of user, approved right away (who: the sign-in, for the
+// node's history). Without a requested name the device is <user>-<short
+// host>; a name the same user's device already has is taken over (signing
+// in again on the same machine): that device's certificates are revoked.
+func (h *Hub) enrollDevice(who, user string, admin bool, d deviceRequest) (resp *pb.JoinResponse, replaced bool, err error) {
 	role := pki.RoleClient
 	if admin {
 		role = pki.RoleAdmin
 	}
-	name, explicit := req.Name, req.Name != ""
+	name, explicit := d.name, d.name != ""
 	if !explicit {
 		name = user
 		// the short host name: CI runners and cloud VMs have long FQDNs
-		host, _, _ := strings.Cut(req.Hostname, ".")
+		host, _, _ := strings.Cut(d.hostname, ".")
 		if host := sanitizeName(host); host != "" {
 			name = user + "-" + host
 		}
@@ -480,39 +529,86 @@ func (s *enrollServer) EntraJoin(ctx context.Context, req *pb.EntraJoinRequest) 
 		}
 	}
 	if !pki.ValidName(name) {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid device name %q (use --name)", name)
+		return nil, false, status.Errorf(codes.InvalidArgument, "invalid device name %q (use --name)", name)
 	}
 	mine := func(n *node) bool { return n.rec.Role != string(pki.RoleWorker) && nodeUser(n.rec) == user }
 	h.mu.Lock()
-	replace := false
 	for i, base := 2, name; ; i++ {
 		n := h.nodes[name]
 		if n == nil || n.rec.State == stateRevoked {
 			break
 		}
 		if mine(n) {
-			replace = true
+			replaced = true
 			break
 		}
 		if explicit {
 			h.mu.Unlock()
-			return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name)", name)
+			return nil, false, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name)", name)
 		}
 		name = fmt.Sprintf("%s-%d", base, i)
 	}
 	h.mu.Unlock()
 	if !pki.ValidName(name) {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid device name %q (use --name)", name)
+		return nil, false, status.Errorf(codes.InvalidArgument, "invalid device name %q (use --name)", name)
 	}
-	if replace {
+	if replaced {
 		if _, err := h.Revoke(who+" (signed in again)", name); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 	now := time.Now().UTC()
-	rec := &store.Node{Name: name, Role: string(role), Hostname: req.Hostname, OS: req.Os, Arch: req.Arch,
-		Version: req.Version, JoinedAt: now, User: user}
-	cert, err := h.issue(rec, req.CsrPem)
+	rec := &store.Node{Name: name, Role: string(role), Hostname: d.hostname, OS: d.os, Arch: d.arch,
+		Version: d.version, JoinedAt: now, User: user}
+	cert, err := h.issue(rec, d.csr)
+	if err != nil {
+		return nil, false, err
+	}
+	rec.State, rec.ApprovedAt = stateApproved, now
+	h.mu.Lock()
+	if n := h.nodes[name]; n != nil && n.rec.State != stateRevoked { // raced with another join
+		h.mu.Unlock()
+		return nil, false, status.Errorf(codes.AlreadyExists, "node name %q is taken", name)
+	}
+	if err := h.store.PutNode(rec); err != nil {
+		h.mu.Unlock()
+		return nil, false, status.Error(codes.Internal, err.Error())
+	}
+	n := &node{rec: rec}
+	h.nodes[name] = n
+	h.publishNodeLocked(n, "joined (sign-in of "+who+")")
+	h.mu.Unlock()
+	return &pb.JoinResponse{State: stateApproved, Name: name, Role: string(role), CaPem: h.ca.CertPEM, CertPem: cert,
+		HubName: h.cfg.Name, Message: "signed in as " + user}, replaced, nil
+}
+
+// enrollOwnedWorker issues a worker certificate for a machine its owner
+// registers (`longarmd login`): like a worker joining with the owner's
+// worker code - approved right away, usable by the owner only until
+// shared, never more than a worker. The name is the requested one or the
+// host name; a taken name is refused, as for worker codes.
+func (h *Hub) enrollOwnedWorker(who, owner string, d deviceRequest) (*pb.JoinResponse, error) {
+	name := d.name
+	if name == "" {
+		name = sanitizeName(d.hostname)
+	}
+	if !pki.ValidName(name) {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid worker name %q (use --name)", name)
+	}
+	h.mu.Lock()
+	if h.tenants[owner] == nil || h.userDisabledLocked(owner) {
+		h.mu.Unlock()
+		return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled or unknown", owner)
+	}
+	if n := h.nodes[name]; n != nil && n.rec.State != stateRevoked {
+		h.mu.Unlock()
+		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name, or remove the old worker)", name)
+	}
+	h.mu.Unlock()
+	now := time.Now().UTC()
+	rec := &store.Node{Name: name, Role: string(pki.RoleWorker), Hostname: d.hostname, OS: d.os, Arch: d.arch,
+		Version: d.version, JoinedAt: now, Owner: owner, AccessVersion: 1}
+	cert, err := h.issue(rec, d.csr)
 	if err != nil {
 		return nil, err
 	}
@@ -528,13 +624,11 @@ func (s *enrollServer) EntraJoin(ctx context.Context, req *pb.EntraJoinRequest) 
 	}
 	n := &node{rec: rec}
 	h.nodes[name] = n
-	h.publishNodeLocked(n, "joined (sign-in of "+who+")")
+	h.event(context.Background(), "node.joined", map[string]string{"role": rec.Role, "state": rec.State, "os": d.os, "arch": d.arch, "node_version": d.version})
+	h.publishNodeLocked(n, "joined (owned by "+owner+", sign-in of "+who+")")
+	h.checkTenancyFlipLocked() // an owned worker separates users
 	h.mu.Unlock()
-	h.log.Info("node joined by entra sign-in", "node", name, "role", role, "user", user, "who", who, "oid", id.oid, "remote", c.addr)
-	h.auditHub(who, "entra/login", map[string]any{"user": user, "upn": id.upn, "oid": id.oid, "app": claims.App,
-		"device": name, "role": string(role), "replaced": replace, "remote": c.addr})
-	resp := &pb.JoinResponse{State: stateApproved, Name: name, Role: string(role), CaPem: h.ca.CertPEM, CertPem: cert,
-		HubName: h.cfg.Name, Message: "signed in as " + user}
-	h.attachTailnet(ctx, resp)
-	return resp, nil
+	h.auditHub("node/"+name, "workers/join", map[string]any{"worker": name, "owner": owner, "via": who})
+	return &pb.JoinResponse{State: stateApproved, Name: name, Role: rec.Role, CaPem: h.ca.CertPEM, CertPem: cert,
+		HubName: h.cfg.Name, Owner: owner, Message: "registered as a worker of " + owner}, nil
 }

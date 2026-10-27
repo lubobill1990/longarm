@@ -27,12 +27,15 @@ var (
 )
 
 // openMethods need no client certificate: the join code / poll token (or
-// for EntraJoin the Microsoft access token) is the credential.
+// for EntraJoin the Microsoft access token, for pairings the approval of
+// a signed-in user) is the credential.
 var openMethods = map[string]bool{
 	pb.Enroll_Join_FullMethodName:       true,
 	pb.Enroll_JoinStatus_FullMethodName: true,
 	pb.Enroll_AuthInfo_FullMethodName:   true,
 	pb.Enroll_EntraJoin_FullMethodName:  true,
+	pb.Enroll_StartLink_FullMethodName:  true,
+	pb.Enroll_PollLink_FullMethodName:   true,
 }
 
 // hubMethodRoles is the hub's authorization table (default deny).

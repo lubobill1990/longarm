@@ -175,6 +175,7 @@ func (h *Hub) httpHandler() http.Handler {
 	h.tenancyRoutes(api, admin)
 	h.workerRoutes(api)
 	h.entraRoutes(mux)
+	h.linkRoutes(mux)
 	return securityHeaders(mux)
 }
 
@@ -351,6 +352,9 @@ func (h *Hub) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
 		Secure: !h.cfg.Web.InsecureCookie, SameSite: http.SameSiteStrictMode})
+	if h.entra != nil {
+		h.setEntraMark(w, "", -1)
+	}
 }
 
 func (h *Hub) sessionUser(r *http.Request) string {

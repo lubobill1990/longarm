@@ -204,6 +204,16 @@ func csrTrustExt(csr *x509.CertificateRequest) (*pkix.Extension, error) {
 	return ext, nil
 }
 
+// TrustOfCSR returns the CSR's verified trust extension (nil, nil: none),
+// e.g. to show its node key before approving an enrollment.
+func TrustOfCSR(csr *x509.CertificateRequest) (*TrustExt, error) {
+	ext := findTrustExt(csr.Extensions)
+	if ext == nil {
+		return nil, nil
+	}
+	return parseTrustExt(*ext, csr.PublicKey)
+}
+
 // TrustPolicy is the set of user keys a node accepts endorsements from.
 type TrustPolicy struct {
 	// Users maps a Longarm user to the public key whose endorsements count

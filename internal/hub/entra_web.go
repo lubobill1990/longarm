@@ -231,7 +231,7 @@ func (h *Hub) entraSPASession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Only the hub's own page may post here.
-	if site := r.Header.Get("Sec-Fetch-Site"); r.Header.Get("Origin") == "" || !h.sameOrigin(r) || site != "" && site != "same-origin" {
+	if !h.sameSitePost(r) {
 		httpError(w, http.StatusForbidden, "cross-origin request refused")
 		return
 	}
@@ -289,6 +289,7 @@ func (h *Hub) entraSession(ctx context.Context, w http.ResponseWriter, ip, idTok
 		return "", http.StatusInternalServerError, err
 	}
 	h.setSession(w, tok)
+	h.setEntraMark(w, sessionHash(tok), int(h.cfg.Web.SessionTTL.Seconds()))
 	role := map[bool]string{true: "admin", false: "user"}[admin]
 	h.log.Info("panel login (entra)", "user", user, "upn", id.upn, "role", role, "mode", e.Web, "remote", ip)
 	h.auditHub("entra/"+id.upn, "entra/panel-login", map[string]any{"user": user, "upn": id.upn, "oid": id.oid,

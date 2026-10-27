@@ -350,6 +350,8 @@ type LoginOptions struct {
 	// Token returns an access token for the hub's Entra settings (the
 	// tenant and the scope to request).
 	Token func(ctx context.Context, info *pb.AuthInfoResponse) (string, error)
+	// Kind: "" (a device of the user) or "worker" (a worker the user owns).
+	Kind string
 }
 
 // Login enrolls with a Microsoft Entra access token instead of a join
@@ -382,11 +384,90 @@ func Login(ctx context.Context, addr string, o LoginOptions) (*JoinResult, error
 	}
 	host, _ := os.Hostname()
 	resp, err := c.Enroll().EntraJoin(ctx, &pb.EntraJoinRequest{AccessToken: tok, CsrPem: csrPEM, Name: o.Name, Hostname: host,
-		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version})
+		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version, Kind: o.Kind})
 	if err != nil {
 		return nil, err
 	}
 	return checkResult(resp, ca, keyPEM, o.Fingerprint)
+}
+
+// LinkOptions for Link: like JoinOptions, plus what to enroll as and where
+// the code goes.
+type LinkOptions struct {
+	JoinOptions
+	Kind string // "client" or "worker"
+	// Show is called once with the code and the URL to enter it at.
+	Show func(*pb.StartLinkResponse)
+}
+
+var (
+	ErrLinkDenied  = errors.New("the pairing was denied")
+	ErrLinkExpired = errors.New("the code expired before it was approved; run login again")
+)
+
+// Link enrolls through the hub's pairing flow (Enroll.StartLink): the
+// user approves the code Show displays in the hub's /link page; Link
+// polls until then, a denial or the code's expiry.
+func Link(ctx context.Context, addr string, o LinkOptions) (*JoinResult, error) {
+	keyPEM, csrPEM, err := pki.NewKeyAndCSR(o.Name, o.Trust)
+	if err != nil {
+		return nil, err
+	}
+	var ca *x509.Certificate
+	c, err := dial(NormalizeAddr(addr), enrollTLS(o.Fingerprint, &ca))
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	host, _ := os.Hostname()
+	st, err := c.Enroll().StartLink(ctx, &pb.StartLinkRequest{Kind: o.Kind, CsrPem: csrPEM, Name: o.Name, Hostname: host,
+		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version})
+	if status.Code(err) == codes.Unimplemented {
+		return nil, errors.New("this hub is too old for signing in through the browser (update it, or use a join code)")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if o.Show != nil {
+		o.Show(st)
+	}
+	interval := max(st.Interval.AsDuration(), time.Second)
+	pctx, cancel := context.WithDeadline(ctx, st.ExpiresAt.AsTime().Add(30*time.Second))
+	defer cancel()
+	for {
+		select {
+		case <-pctx.Done():
+			if ctx.Err() == nil {
+				return nil, ErrLinkExpired
+			}
+			return nil, ctx.Err()
+		case <-time.After(interval):
+		}
+		resp, err := c.Enroll().PollLink(pctx, &pb.PollLinkRequest{PollToken: st.PollToken})
+		switch status.Code(err) {
+		case codes.OK:
+		case codes.ResourceExhausted: // slow down
+			interval += 5 * time.Second
+			continue
+		case codes.NotFound: // forgotten: long expired, or the hub restarted
+			return nil, ErrLinkExpired
+		case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
+			continue // the hub is back soon, or pctx ends the loop
+		default:
+			return nil, err
+		}
+		switch resp.State {
+		case "approved":
+			return checkResult(resp, ca, keyPEM, o.Fingerprint)
+		case "denied":
+			if resp.Message != "" && resp.Message != ErrLinkDenied.Error() {
+				return nil, fmt.Errorf("%w: %s", ErrLinkDenied, resp.Message)
+			}
+			return nil, ErrLinkDenied
+		case "expired":
+			return nil, ErrLinkExpired
+		}
+	}
 }
 
 func checkResult(resp *pb.JoinResponse, ca *x509.Certificate, keyPEM []byte, fp string) (*JoinResult, error) {
