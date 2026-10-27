@@ -574,9 +574,9 @@ func TestPortLinksTrust(t *testing.T) {
 		r := linkGet(h, alice, "wa", bins.helper, "127.0.0.1:"+signed, "/s")
 		return r.code == 0 && strings.Contains(r.stdout, "status 200: hello /s from")
 	})
-	if l := linkStatus(t, h, alice, sid); !strings.Contains(l, "listening") {
-		t.Fatalf("signed link: %s", l)
-	}
+	waitFor(t, "the signed link listening on the hub's list", 20*time.Second, func() bool {
+		return strings.Contains(linkStatus(t, h, alice, sid), "listening")
+	})
 
 	// a device of "alice" the hub enrolled on its own (not endorsed): the
 	// hub accepts its link, the workers don't
