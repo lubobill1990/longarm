@@ -629,3 +629,111 @@ func TestInstallScriptsLogin(t *testing.T) {
 		}
 	}
 }
+
+// TestLinkBounds: what StartLink keeps is bounded (CSR size, no trailing
+// data, device fields), finished pairings stop counting against the limits
+// and are forgotten soon after their expiry; an approved result is
+// delivered once, before the expiry, and only while the node is approved.
+func TestLinkBounds(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	h.joinLimit = newIPLimiter(100, 100)
+	ec := enrollClient(t, h)
+	_, csr, err := pki.NewKeyAndCSR("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := func(csr []byte, hostname, version string) error {
+		_, err := ec.StartLink(tctx(t), &pb.StartLinkRequest{Kind: linkWorker, CsrPem: csr, Hostname: hostname, Os: "linux", Arch: "amd64", Version: version})
+		return err
+	}
+	for what, err := range map[string]error{
+		"padded CSR":         start(append(append([]byte{}, csr...), make([]byte, pki.MaxCSR)...), "box", "1"),
+		"trailing data":      start(append(append([]byte{}, csr...), "junk"...), "box", "1"),
+		"second PEM block":   start(append(append([]byte{}, csr...), csr...), "box", "1"),
+		"long hostname":      start(csr, strings.Repeat("h", 256), "1"),
+		"control characters": start(csr, "box\x1b[2J", "1"),
+		"long version":       start(csr, "box", strings.Repeat("1", 65)),
+	} {
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("%s: %v", what, err)
+		}
+	}
+	if err := start(append(append([]byte{}, csr...), "\n\n"...), "box", "1"); err != nil {
+		t.Fatalf("CSR with trailing newlines: %v", err)
+	}
+	h.pair.mu.Lock()
+	for _, l := range h.pair.byPoll {
+		if string(l.csr) != string(csr) {
+			t.Errorf("kept CSR %q, want the re-encoded %q", l.csr, csr)
+		}
+	}
+	h.pair.mu.Unlock()
+
+	// Expired pairings drop their CSR (and stop counting) at once, and are
+	// forgotten a minute later.
+	for range maxLinksPerIP - 1 {
+		if err := start(csr, "box", "1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := start(csr, "box", "1"); status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("over the limit: %v", err)
+	}
+	expire := func(by time.Duration) {
+		h.pair.mu.Lock()
+		for _, l := range h.pair.byPoll {
+			l.expires = time.Now().Add(-by)
+		}
+		h.pair.mu.Unlock()
+	}
+	expire(time.Second)
+	if err := start(csr, "box", "1"); err != nil {
+		t.Fatalf("expired pairings still count: %v", err)
+	}
+	expire(2 * time.Minute)
+	h.pair.mu.Lock()
+	h.pair.sweepLocked(time.Now())
+	n := len(h.pair.byPoll)
+	h.pair.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("%d pairings kept after expiry and grace", n)
+	}
+
+	alice := newWeb(t, h)
+	alice.passwordSignIn(h, "alice-web", "user", "alice")
+	approved := func(name string) *device {
+		t.Helper()
+		d, err := startLink(t, ec, linkWorker, name, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, confirm := alice.lookup(d.st.UserCode)
+		if c, body := alice.decide(confirm, "approve"); c != 200 {
+			t.Fatalf("approve %s: %d %s", name, c, body)
+		}
+		return d
+	}
+	// once
+	d := approved("once")
+	if r := poll(t, h, ec, d); r.State != linkApproved || len(r.CertPem) == 0 {
+		t.Fatalf("first poll: %v", r)
+	}
+	if _, err := ec.PollLink(tctx(t), &pb.PollLinkRequest{PollToken: d.st.PollToken}); status.Code(err) != codes.NotFound {
+		t.Fatalf("second poll of a delivered result: %v", err)
+	}
+	// revoked before the device collected it: no certificate (nor tailnet key)
+	d = approved("gone")
+	if _, err := h.Revoke("test", "gone"); err != nil {
+		t.Fatal(err)
+	}
+	if r := poll(t, h, ec, d); r.State != linkDenied || len(r.CertPem) != 0 || r.Tailnet != nil {
+		t.Fatalf("revoked before delivery: %v", r)
+	}
+	// past the expiry and its grace: forgotten
+	d = approved("late")
+	expire(2 * time.Minute)
+	if _, err := ec.PollLink(tctx(t), &pb.PollLinkRequest{PollToken: d.st.PollToken}); status.Code(err) != codes.NotFound {
+		t.Fatalf("poll past the expiry: %v", err)
+	}
+}

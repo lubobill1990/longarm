@@ -105,3 +105,22 @@ func TestRevocationList(t *testing.T) {
 		t.Fatalf("persisted list: %v", err)
 	}
 }
+
+func TestParseCSRBounds(t *testing.T) {
+	_, csr, err := NewKeyAndCSR("n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseCSR(append(append([]byte{}, csr...), "\r\n"...)); err != nil {
+		t.Fatalf("trailing whitespace: %v", err)
+	}
+	for what, in := range map[string][]byte{
+		"trailing data": append(append([]byte{}, csr...), 'x'),
+		"two blocks":    append(append([]byte{}, csr...), csr...),
+		"too large":     append(append([]byte{}, csr...), make([]byte, MaxCSR)...),
+	} {
+		if _, err := ParseCSR(in); err == nil {
+			t.Errorf("%s accepted", what)
+		}
+	}
+}

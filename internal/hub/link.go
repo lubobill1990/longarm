@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"html/template"
 	"net"
@@ -19,7 +20,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/pki"
@@ -61,6 +61,9 @@ const (
 	entraMarkCookie = "longarm_hub_entra"
 	linkKeyMeta     = "link_form_key"
 	linkFormTTL     = 10 * time.Minute
+	// pairingGrace: how long past its expiry a pairing's result waits for
+	// the device (then it is forgotten: NotFound reads as expired)
+	pairingGrace = time.Minute
 )
 
 // Pairing states (PollLink's JoinResponse.state); "approving" is internal.
@@ -86,7 +89,8 @@ type pairLink struct {
 	lastPoll                          time.Time
 	state                             string
 	message                           string
-	resp                              *pb.JoinResponse // approved
+	resp                              *pb.JoinResponse // approved, until delivered
+	serial                            string           // of resp's certificate
 }
 
 func (l *pairLink) fields() map[string]any {
@@ -114,11 +118,11 @@ func (p *pairing) sweepLocked(now time.Time) []*pairLink {
 	var out []*pairLink
 	for th, l := range p.byPoll {
 		if l.state == linkPending && now.After(l.expires) {
-			l.state, l.message = linkExpired, "the code expired before it was approved"
+			l.state, l.message, l.csr = linkExpired, "the code expired before it was approved", nil
 			delete(p.byCode, l.code)
 			out = append(out, l)
 		}
-		if now.After(l.expires.Add(pairingTTL)) {
+		if now.After(l.expires.Add(pairingGrace)) { // results too: the device polls every few seconds
 			delete(p.byPoll, th)
 			if p.byCode[l.code] == l {
 				delete(p.byCode, l.code)
@@ -174,13 +178,6 @@ func ipOnly(addr string) string {
 	return addr
 }
 
-func clip(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
-	}
-	return s
-}
-
 // linkUnavailable: pairing needs a panel the user can sign in to - with
 // Microsoft when the hub has Entra sign-in.
 func (h *Hub) linkUnavailable() error {
@@ -223,7 +220,10 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 	if err := h.linkUnavailable(); err != nil {
 		return nil, err
 	}
-	csr, err := pki.ParseCSR(req.CsrPem)
+	if err := checkDevice(req.Hostname, req.Os, req.Arch, req.Version); err != nil {
+		return nil, err
+	}
+	csr, err := pki.ParseCSR(req.CsrPem) // bounded: pki.MaxCSR
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "csr: %v", err)
 	}
@@ -242,23 +242,29 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 	}
 	now := time.Now()
 	tok := randomToken()
-	// What the user is shown, bounded (it comes from anyone).
-	l := &pairLink{id: randomB64(12), pollHash: tokenHash(tok), kind: req.Kind, csr: req.CsrPem, name: req.Name,
-		hostname: clip(req.Hostname, 100), os: clip(req.Os, 20), arch: clip(req.Arch, 20), version: clip(req.Version, 40),
+	// Kept: the CSR as parsed (re-encoded, nothing else of what was sent).
+	l := &pairLink{id: randomB64(12), pollHash: tokenHash(tok), kind: req.Kind, name: req.Name,
+		csr:      pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr.Raw}),
+		hostname: req.Hostname, os: req.Os, arch: req.Arch, version: req.Version,
 		ip: ipOnly(c.addr), keyID: keyID, started: now, expires: now.Add(pairingTTL), state: linkPending}
 	p := h.pair
 	p.mu.Lock()
 	expired := p.sweepLocked(now)
-	perIP := 0
-	for _, x := range p.byCode {
+	// Counted: every pairing still holding a CSR (pending or being approved).
+	live, perIP := 0, 0
+	for _, x := range p.byPoll {
+		if x.csr == nil {
+			continue
+		}
+		live++
 		if x.ip == l.ip {
 			perIP++
 		}
 	}
-	if len(p.byCode) >= maxLinks || perIP >= maxLinksPerIP {
+	if live >= maxLinks || perIP >= maxLinksPerIP {
 		p.mu.Unlock()
 		h.auditExpired(expired)
-		h.log.Warn("pairing refused: too many pending", "remote", l.ip, "pending", len(p.byCode), "from_ip", perIP)
+		h.log.Warn("pairing refused: too many pending", "remote", l.ip, "pending", live, "from_ip", perIP)
 		return nil, status.Error(codes.ResourceExhausted, "too many pending pairings; finish or wait for the others (10 minutes)")
 	}
 	for l.code == "" || p.byCode[l.code] != nil {
@@ -283,8 +289,10 @@ func (s *enrollServer) PollLink(ctx context.Context, req *pb.PollLinkRequest) (*
 	p := h.pair
 	p.mu.Lock()
 	expired := p.sweepLocked(now)
-	l := p.byPoll[tokenHash(req.PollToken)]
+	th := tokenHash(req.PollToken)
+	l := p.byPoll[th]
 	var resp *pb.JoinResponse
+	var serial string
 	var err error
 	switch {
 	case l == nil:
@@ -292,7 +300,9 @@ func (s *enrollServer) PollLink(ctx context.Context, req *pb.PollLinkRequest) (*
 	case (l.state == linkPending || l.state == linkApproving) && now.Sub(l.lastPoll) < linkInterval-time.Second:
 		err = status.Errorf(codes.ResourceExhausted, "slow down: poll every %s", linkInterval)
 	case l.state == linkApproved:
-		resp = proto.Clone(l.resp).(*pb.JoinResponse)
+		// Delivered once: the poll token is spent with it.
+		resp, serial = l.resp, l.serial
+		delete(p.byPoll, th)
 	case l.state == linkDenied || l.state == linkExpired:
 		resp = &pb.JoinResponse{State: l.state, Message: l.message}
 	default:
@@ -306,10 +316,22 @@ func (s *enrollServer) PollLink(ctx context.Context, req *pb.PollLinkRequest) (*
 	if err != nil {
 		return nil, err
 	}
+	if serial != "" {
+		// Revoked (or replaced) since the approval: no certificate, and no
+		// tailnet key for it.
+		h.mu.Lock()
+		n := h.nodes[resp.Name]
+		live := n != nil && n.rec.State == stateApproved && n.rec.CertSerial == serial
+		h.mu.Unlock()
+		if !live {
+			h.log.Warn("pairing result withheld: the node changed since the approval", "node", resp.Name, "remote", c.addr)
+			resp = &pb.JoinResponse{State: linkDenied, Message: "the device was removed after the approval"}
+		}
+	}
 	if resp.CaPem == nil {
 		resp.CaPem, resp.HubName = h.ca.CertPEM, h.cfg.Name
 	}
-	h.attachTailnet(ctx, resp)
+	h.attachTailnet(ctx, resp) // approved and live only
 	return resp, nil
 }
 
@@ -627,7 +649,7 @@ func (h *Hub) linkDecide(w http.ResponseWriter, r *http.Request) {
 	p.mu.Lock()
 	expired := p.sweepLocked(time.Now())
 	var l *pairLink
-	for _, x := range p.byCode {
+	for _, x := range p.byPoll {
 		if x.id == id {
 			l = x
 		}
@@ -641,7 +663,7 @@ func (h *Hub) linkDecide(w http.ResponseWriter, r *http.Request) {
 	}
 	delete(p.byCode, l.code) // single use, whatever the outcome
 	if decision == "deny" {
-		l.state, l.message = linkDenied, "the pairing was denied"
+		l.state, l.message, l.csr = linkDenied, "the pairing was denied", nil
 	} else {
 		l.state = linkApproving
 	}
@@ -665,8 +687,12 @@ func (h *Hub) linkDecide(w http.ResponseWriter, r *http.Request) {
 	p.mu.Lock()
 	if err != nil {
 		l.state, l.message = linkDenied, "the approval failed: "+errMessage(err)
+		l.csr = nil
 	} else {
-		l.state, l.resp = linkApproved, resp
+		l.state, l.resp, l.csr = linkApproved, resp, nil
+		if c, err := pki.ParseCertPEM(resp.CertPem); err == nil {
+			l.serial = pki.Serial(c)
+		}
 	}
 	p.mu.Unlock()
 	fields["error"] = errString(err)

@@ -607,7 +607,12 @@ placed on the attacker's "worker". Hence:
   alphabet (consonants: no words, no look-alikes; 20^8 = 2.6e10), live
   10 minutes, are spent by the first approve or deny (a failed approval
   tells the device why), and pairings live in the hub's memory only (a
-  restart forgets them). StartLink is rate limited per address like joins;
+  restart forgets them), each a minute past its expiry at the latest. An
+  approved certificate is handed out once, before that, and only while the
+  node is still approved (revoked meanwhile: "denied", no tailnet key).
+  What a pairing keeps is bounded: the CSR (at most 8 KiB, one PEM block -
+  the limit of every enrollment - re-encoded; dropped once decided or
+  expired) and short, printable device fields. StartLink is rate limited per address like joins;
   at most 5 pending pairings per address and 200 in all; polls faster than
   the 5 s interval are refused (the client slows down); code lookups on
   `/link` are rate limited per address and per user (10, then one per 10 s):

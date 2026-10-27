@@ -446,6 +446,9 @@ func (s *enrollServer) EntraJoin(ctx context.Context, req *pb.EntraJoinRequest) 
 	if req.Kind != "" && req.Kind != linkClient && req.Kind != linkWorker {
 		return nil, status.Errorf(codes.InvalidArgument, "kind %q: want client or worker", req.Kind)
 	}
+	if err := checkDevice(req.Hostname, req.Os, req.Arch, req.Version); err != nil {
+		return nil, err
+	}
 	if _, err := pki.ParseCSR(req.CsrPem); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "csr: %v", err)
 	}

@@ -9,6 +9,8 @@ import (
 	"maps"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -155,6 +157,9 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 	code := normalizeCode(req.Code)
 	if len(code) != 6 {
 		return nil, errBadCode
+	}
+	if err := checkDevice(req.Hostname, req.Os, req.Arch, req.Version); err != nil {
+		return nil, err
 	}
 	if _, err := pki.ParseCSR(req.CsrPem); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "csr: %v", err)
@@ -430,3 +435,17 @@ func sanitizeName(host string) string {
 }
 
 func renewBeforePB(d time.Duration) *durationpb.Duration { return durationpb.New(d) }
+
+// checkDevice bounds what an enrolling machine says about itself - anyone
+// may send it; it is stored, shown in the panel and on /link.
+func checkDevice(hostname, os, arch, version string) error {
+	for _, f := range []struct {
+		name, v string
+		max     int
+	}{{"hostname", hostname, 255}, {"os", os, 32}, {"arch", arch, 32}, {"version", version, 64}} {
+		if len(f.v) > f.max || !utf8.ValidString(f.v) || strings.ContainsFunc(f.v, unicode.IsControl) {
+			return status.Errorf(codes.InvalidArgument, "invalid %s (at most %d printable characters)", f.name, f.max)
+		}
+	}
+	return nil
+}
