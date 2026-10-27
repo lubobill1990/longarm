@@ -83,7 +83,7 @@ func (ss *sessionsServer) toPB(sp *userspace.Space, j supervisor.Job) *pb.Sessio
 		out.HasExitCode, out.ExitCode = true, int32(*j.Status.ExitCode)
 	}
 	if w := j.Spec.Workspace; w != nil {
-		out.Workspace = &pb.JobWorkspace{Repo: w.Repo, Url: w.URL, Ref: w.Ref, Commit: w.Commit}
+		out.Workspace = &pb.JobWorkspace{Repo: w.Repo, Url: w.URL, Ref: w.Ref, Commit: w.Commit, LfsFetch: w.LFSFetch, GitAuth: w.GitAuth}
 	}
 	return out
 }
@@ -134,6 +134,9 @@ type sessionReq struct {
 	noCreate bool
 	// strict (Start): a running session of the name must have this spec.
 	strict bool
+	// auth: a credential for the workspace fetch (Start --git-auth forward);
+	// handed to the preparation of a new session, else the caller clears it.
+	auth *jobs.GitAuth
 }
 
 // argvFor is the command of a new session: argv, else the user's shell.
@@ -236,7 +239,7 @@ func (ss *sessionsServer) ensure(ctx context.Context, sp *userspace.Space, r ses
 		ID: name, Name: name, Argv: argvFor(sp, r.argv), Cwd: r.cwd, Env: ss.s.linkEnv(owner, r.env), Pty: true, SubmittedBy: by, Owner: owner,
 		Cols: uint16(r.size.GetCols()), Rows: uint16(r.size.GetRows()), LogMaxBytes: ss.s.LogMaxBytes, Workspace: r.ws,
 	}
-	j, created, err := ss.s.Spaces.SubmitSession(ctx, sp, spec, r.secrets)
+	j, created, err := ss.s.Spaces.SubmitSession(ctx, sp, spec, r.secrets, r.auth)
 	if errors.Is(err, supervisor.ErrAlreadyExists) { // created concurrently by someone else
 		if j, err = mgr.Get(name); err == nil {
 			if ss.foreign(ctx, j, owner) {

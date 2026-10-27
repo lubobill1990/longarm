@@ -457,6 +457,10 @@ message StartSessionRequest {
   // Prepare a git worktree for the session (like JobSpec.workspace); it
   // lives as long as the session's data ([gc] keep after it ended).
   JobWorkspace workspace = 7;
+  // A credential for the fetch of workspace.url only, as
+  // SubmitRequest.git_auth (InfoResponse feature "git-auth-forward"):
+  // memory-only, never seen by the session's program.
+  GitAuth git_auth = 8;
 }
 
 message GetSessionRequest {

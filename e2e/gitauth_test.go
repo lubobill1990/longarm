@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -174,6 +175,32 @@ func TestGitAuthForward(t *testing.T) {
 		if jl := e.mustLongarm(e.client, "jobs", "w1", "--json", "--id", id); strings.Contains(jl, token) || !strings.Contains(jl, `"gitAuth": true`) {
 			t.Fatalf("jobs --json: %s", jl)
 		}
+	})
+
+	t.Run("session", func(t *testing.T) {
+		// session start --repo <url> --git-auth forward: the same workspace path
+		r := cl(token, "session", "start", "w1", "-s", "ga", "--repo", u, "--ref", base, "--git-auth", "forward", "--json", "--", bins.helper, "repl")
+		var out struct {
+			Cwd     string `json:"cwd"`
+			Created bool   `json:"created"`
+		}
+		if r.code != 0 || json.Unmarshal([]byte(r.stdout), &out) != nil || !out.Created || strings.Contains(r.stdout+r.stderr, token) {
+			t.Fatalf("session start: %+v", r)
+		}
+		if got := git(t, out.Cwd, "rev-parse", "HEAD"); got != base {
+			t.Fatalf("session worktree at %s, want %s", got, base)
+		}
+		if cfg := git(t, out.Cwd, "config", "--list"); strings.Contains(cfg, token) {
+			t.Fatalf("worktree git config:\n%s", cfg)
+		}
+		logs := e.mustLongarm(e.client, "logs", "w1", "ga", "--session")
+		if !strings.Contains(logs, "with the forwarded credential") || strings.Contains(logs, token) {
+			t.Fatalf("session transcript: %s", logs)
+		}
+		if sl := e.mustLongarm(e.client, "sessions", "w1", "-s", "ga", "--json"); strings.Contains(sl, token) || !strings.Contains(sl, `"gitAuth": true`) {
+			t.Fatalf("sessions --json: %s", sl)
+		}
+		e.mustLongarm(e.client, "session", "stop", "w1", "-s", "ga", "--grace", "0")
 	})
 
 	t.Run("url_without_credential", func(t *testing.T) {

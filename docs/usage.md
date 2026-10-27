@@ -362,7 +362,7 @@ longarm logs w1 agent1 --session -f                               # the transcri
 longarm session stop w1 -s agent1 --grace 10s                    # Ctrl-C, then kill after 10 s
 ```
 
-**`longarm session start [<worker>|auto] -s NAME [--cwd DIR | --repo PATH|URL [--ref REF] [--lfs skip|ship]] [--env K=V] [--secret-env NAME] [--require K=V] [--no-queue] [--type T] [--cols N --rows N] [--json] [-- command...]`**
+**`longarm session start [<worker>|auto] -s NAME [--cwd DIR | --repo PATH|URL [--ref REF] [--lfs skip|ship|fetch] [--git-auth forward]] [--env K=V] [--secret-env NAME] [--require K=V] [--no-queue] [--type T] [--cols N --rows N] [--json] [-- command...]`**
 
 - Creates the session without attaching (default command: the user's
   shell) and prints `<session> <worker>`; `--json` prints
@@ -389,6 +389,14 @@ longarm session stop w1 -s agent1 --grace 10s                    # Ctrl-C, then 
   It lives as long as the session's data: never removed while the session
   runs; removed when the ended session is collected (`[gc] keep`, `longarm
   admin gc`) or replaced by a new session of the name.
+- `--git-auth forward` and `--lfs fetch` work as for `run` (see [Fetching
+  with your credential](#fetching-with-your-credential---git-auth-forward)):
+  with `--repo <https url>` the worker fetches with a short-lived credential
+  of yours, forwarded worker-direct with the start, memory-only, used for
+  that fetch only and never seen by the session's program (`sessions
+  --json` shows `"gitAuth": true` only); with a local checkout the remote's
+  commits are fetched by the worker and only the unpushed delta is shipped.
+  No credential here: exit 77; a worker without `git-auth-forward`: exit 2.
 - start returns when the session runs. If it ended before - workspace
   preparation failed (126), the program did not start (127) or it exited
   at once (its code) - start exits with that code (killed 137, lost 254)

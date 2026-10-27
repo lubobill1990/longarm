@@ -562,9 +562,9 @@ func (s *Spaces) SubmitJob(ctx context.Context, sp *Space, spec jobs.Spec, secre
 
 // SubmitSession submits a session spec in sp; created is false when an
 // identical session existed (decided under the manager's submit lock).
-func (s *Spaces) SubmitSession(ctx context.Context, sp *Space, spec jobs.Spec, secrets map[string]string) (supervisor.Job, bool, error) {
+func (s *Spaces) SubmitSession(ctx context.Context, sp *Space, spec jobs.Spec, secrets map[string]string, auth *jobs.GitAuth) (supervisor.Job, bool, error) {
 	spec.RunAs = sp.RunAs(SessionsDir, spec.ID)
-	return sp.Sessions.SubmitCreated(ctx, spec, secrets, supervisor.Input{})
+	return sp.Sessions.SubmitCreated(ctx, spec, secrets, supervisor.Input{GitAuth: auth})
 }
 
 // RunningJobs counts active jobs of every space.

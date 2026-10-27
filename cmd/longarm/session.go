@@ -79,12 +79,12 @@ type startJSON struct {
 }
 
 func sessionStartCmd() *cobra.Command {
-	var name, cwd, repo, ref, lfs, typ string
+	var name, cwd, repo, ref, lfs, typ, gitAuth string
 	var env, secrets, require []string
 	var noQueue, asJSON bool
 	var cols, rows uint32
 	c := &cobra.Command{
-		Use:   "start [<worker>|auto] -s NAME [--cwd DIR | --repo PATH|URL [--ref REF] [--lfs skip|ship]] [-- command [args...]]",
+		Use:   "start [<worker>|auto] -s NAME [--cwd DIR | --repo PATH|URL [--ref REF] [--lfs skip|ship|fetch] [--git-auth forward]] [-- command [args...]]",
 		Short: "Create a session without attaching (idempotent by name); prints the session and its worker",
 		Long: `Create an interactive session without attaching to it and print
 "<session> <worker>" (--json: {"worker","session","cwd","created","state"}).
@@ -125,6 +125,15 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 			if repo == "" && (cmd.Flags().Changed("ref") || cmd.Flags().Changed("lfs")) {
 				return usagef("--ref and --lfs go with --repo")
 			}
+			if err := checkGitAuthFlag(gitAuth, repo); err != nil {
+				return err
+			}
+			// held here until it was sent worker-direct, as for run
+			g, err := prepareGitForward(cmd.Context(), gitAuth, repo, ref)
+			if err != nil {
+				return err
+			}
+			defer g.clear()
 			s, err := openSession()
 			if err != nil {
 				return err
@@ -157,14 +166,25 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 			if err := needFeature(ctx, conn, jobs.FeatureSessionStart, "session start"); err != nil {
 				return err
 			}
-			ws, err := jobWorkspace(ctx, conn, repo, ref, lfs, nil)
+			var gitAuthPB *pb.GitAuth
+			if g != nil && isURL(repo) {
+				// an older worker would drop the field and fetch without it
+				if err := needFeature(ctx, conn, jobs.FeatureGitAuth, "--git-auth forward"); err != nil {
+					return err
+				}
+				gitAuthPB = g.pb()
+			}
+			// the same workspace path as run (a local checkout: remote first
+			// with --git-auth forward, then the unpushed delta)
+			ws, err := jobWorkspace(ctx, conn, repo, ref, lfs, g)
 			if err != nil {
 				return err
 			}
 			if ws != nil && ws.Ref == "" {
 				ws.Ref = ref // shown in sessions --json; a checkout's commit is what it runs
 			}
-			req := &pb.StartSessionRequest{Name: name, Argv: argv, Cwd: cwd, Env: envM, SecretEnv: sec, Workspace: ws}
+			req := &pb.StartSessionRequest{Name: name, Argv: argv, Cwd: cwd, Env: envM, SecretEnv: sec, Workspace: ws,
+				GitAuth: gitAuthPB} // for the workspace fetch only
 			if cols > 0 && rows > 0 {
 				req.Size = &pb.TermSize{Cols: cols, Rows: rows}
 			}
@@ -177,6 +197,10 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 				return err
 			})
 			clear(sec)
+			g.clear()
+			if gitAuthPB != nil {
+				clear(gitAuthPB.Secret)
+			}
 			if err != nil {
 				return tooOld(err, conn, "session start")
 			}
@@ -216,7 +240,8 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 	c.Flags().StringArrayVar(&secrets, "secret-env", nil, "NAME or NAME=LOCALVAR: local env var injected into the session (memory-only on the worker, redacted from the transcript)")
 	c.Flags().StringVar(&repo, "repo", "", "prepare a git worktree for the session: a local checkout (synced like run --repo) or a clone URL fetched by the worker")
 	c.Flags().StringVar(&ref, "ref", "HEAD", "with --repo: HEAD, a branch, a tag or a full commit id")
-	c.Flags().StringVar(&lfs, "lfs", lfsSkip, "with --repo <local checkout>: "+lfsFlagHelp)
+	c.Flags().StringVar(&lfs, "lfs", lfsSkip, "with --repo: "+lfsFlagHelp)
+	c.Flags().StringVar(&gitAuth, "git-auth", gitAuthNone, "with --repo: "+gitAuthFlagHelp)
 	c.Flags().StringArrayVar(&require, "require", nil, "auto placement: KEY=VALUE[,KEY=VALUE...] labels the worker must have (repeatable)")
 	c.Flags().BoolVar(&noQueue, "no-queue", false, "auto placement: fail (exit 75) instead of queueing when no worker passes the gate")
 	c.Flags().StringVar(&typ, "type", "", "auto placement: type for the memory reservation (default: from the command)")

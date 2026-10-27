@@ -5,7 +5,7 @@
 ### Added
 
 - Sessions for programs ([docs/usage.md](docs/usage.md#sessions-for-programs)):
-  `longarm session start [<worker>|auto] -s NAME [--repo ... --ref ... --lfs ...] [--json] -- cmd`
+  `longarm session start [<worker>|auto] -s NAME [--repo ... --ref ... --lfs ... --git-auth forward] [--json] -- cmd`
   creates a session without attaching (idempotent by name: same spec =
   `"created": false`, another = exit 2; placed by the hub like `run`
   without a worker; `--repo` gives it a worktree `worktrees/s.<name>.<generation>` that

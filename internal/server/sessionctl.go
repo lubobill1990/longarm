@@ -55,7 +55,16 @@ func (ss *sessionsServer) Start(ctx context.Context, req *pb.StartSessionRequest
 		if w.StagingId != "" && !jobs.ValidID(w.StagingId) {
 			return nil, status.Errorf(codes.InvalidArgument, "bad staging id %q", w.StagingId)
 		}
-		r.ws = &jobs.Workspace{Repo: w.Repo, URL: w.Url, Ref: w.Ref, Commit: w.Commit, StagingID: w.StagingId}
+		r.ws = &jobs.Workspace{Repo: w.Repo, URL: w.Url, Ref: w.Ref, Commit: w.Commit, StagingID: w.StagingId, LFSFetch: w.LfsFetch}
+	}
+	r.auth = GitAuthFromPB(req.GitAuth)
+	if req.GitAuth != nil && !r.auth.Valid() {
+		r.auth.Clear()
+		return nil, status.Error(codes.InvalidArgument, "git_auth: want scheme bearer or basic and a secret")
+	}
+	if r.auth != nil && (r.ws == nil || r.ws.URL == "") {
+		r.auth.Clear()
+		return nil, status.Error(codes.InvalidArgument, "git_auth goes with a workspace url")
 	}
 	var j supervisor.Job
 	var created bool
@@ -65,8 +74,13 @@ func (ss *sessionsServer) Start(ctx context.Context, req *pb.StartSessionRequest
 	}
 	ss.s.Audit.Log(id, pb.Sessions_Start_FullMethodName, map[string]any{
 		"session": name, "owner": owner, "created": created, "argv": j.Spec.Argv, "cwd": req.Cwd, "env_keys": keys(req.Env),
-		"secret_keys": keys(req.SecretEnv), "workspace": r.ws != nil, "error": errString(err),
+		"secret_keys": keys(req.SecretEnv), "workspace": r.ws != nil, "git_auth": r.auth != nil, "error": errString(err),
 	})
+	if err != nil || !created {
+		// not handed to a new session's workspace preparation (which
+		// zeroes it when done)
+		r.auth.Clear()
+	}
 	if err != nil {
 		return nil, err
 	}

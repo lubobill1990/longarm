@@ -2728,7 +2728,11 @@ type StartSessionRequest struct {
 	Size      *TermSize         `protobuf:"bytes,6,opt,name=size,proto3" json:"size,omitempty"`
 	// Prepare a git worktree for the session (like JobSpec.workspace); it
 	// lives as long as the session's data ([gc] keep after it ended).
-	Workspace     *JobWorkspace `protobuf:"bytes,7,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	Workspace *JobWorkspace `protobuf:"bytes,7,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	// A credential for the fetch of workspace.url only, as
+	// SubmitRequest.git_auth (InfoResponse feature "git-auth-forward"):
+	// memory-only, never seen by the session's program.
+	GitAuth       *GitAuth `protobuf:"bytes,8,opt,name=git_auth,json=gitAuth,proto3" json:"git_auth,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2808,6 +2812,13 @@ func (x *StartSessionRequest) GetSize() *TermSize {
 func (x *StartSessionRequest) GetWorkspace() *JobWorkspace {
 	if x != nil {
 		return x.Workspace
+	}
+	return nil
+}
+
+func (x *StartSessionRequest) GetGitAuth() *GitAuth {
+	if x != nil {
+		return x.GitAuth
 	}
 	return nil
 }
@@ -5107,7 +5118,7 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"last_input\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\tlastInput\x12\x1b\n" +
 	"\tinput_seq\x18\x15 \x01(\x04R\binputSeq\x12*\n" +
 	"\x11last_input_source\x18\x16 \x01(\tR\x0flastInputSource\x12?\n" +
-	"\rlast_activity\x18\x17 \x01(\v2\x1a.google.protobuf.TimestampR\flastActivity\"\xb2\x03\n" +
+	"\rlast_activity\x18\x17 \x01(\v2\x1a.google.protobuf.TimestampR\flastActivity\"\xe2\x03\n" +
 	"\x13StartSessionRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04argv\x18\x02 \x03(\tR\x04argv\x12\x10\n" +
@@ -5116,7 +5127,8 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\n" +
 	"secret_env\x18\x05 \x03(\v2..longarm.v1.StartSessionRequest.SecretEnvEntryR\tsecretEnv\x12(\n" +
 	"\x04size\x18\x06 \x01(\v2\x14.longarm.v1.TermSizeR\x04size\x126\n" +
-	"\tworkspace\x18\a \x01(\v2\x18.longarm.v1.JobWorkspaceR\tworkspace\x1a6\n" +
+	"\tworkspace\x18\a \x01(\v2\x18.longarm.v1.JobWorkspaceR\tworkspace\x12.\n" +
+	"\bgit_auth\x18\b \x01(\v2\x13.longarm.v1.GitAuthR\agitAuth\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a<\n" +
@@ -5484,94 +5496,95 @@ var file_longarm_v1_longarm_proto_depIdxs = []int32{
 	77, // 41: longarm.v1.StartSessionRequest.secret_env:type_name -> longarm.v1.StartSessionRequest.SecretEnvEntry
 	30, // 42: longarm.v1.StartSessionRequest.size:type_name -> longarm.v1.TermSize
 	8,  // 43: longarm.v1.StartSessionRequest.workspace:type_name -> longarm.v1.JobWorkspace
-	80, // 44: longarm.v1.StopSessionRequest.grace:type_name -> google.protobuf.Duration
-	33, // 45: longarm.v1.ListSessionsResponse.sessions:type_name -> longarm.v1.Session
-	67, // 46: longarm.v1.ForwardFrame.grant:type_name -> longarm.v1.SignedPortLinkGrant
-	79, // 47: longarm.v1.FileInfo.mtime:type_name -> google.protobuf.Timestamp
-	45, // 48: longarm.v1.FileListResponse.entries:type_name -> longarm.v1.FileInfo
-	51, // 49: longarm.v1.FileWriteRequest.header:type_name -> longarm.v1.FileWriteHeader
-	79, // 50: longarm.v1.FileWriteHeader.mtime:type_name -> google.protobuf.Timestamp
-	9,  // 51: longarm.v1.FetchRequest.git_auth:type_name -> longarm.v1.GitAuth
-	59, // 52: longarm.v1.SyncChunk.header:type_name -> longarm.v1.SyncHeader
-	60, // 53: longarm.v1.SyncChunk.data:type_name -> longarm.v1.SyncData
-	2,  // 54: longarm.v1.SyncData.part:type_name -> longarm.v1.SyncPart
-	8,  // 55: longarm.v1.PrepareJobRequest.workspace:type_name -> longarm.v1.JobWorkspace
-	78, // 56: longarm.v1.PrepareJobRequest.secret_env:type_name -> longarm.v1.PrepareJobRequest.SecretEnvEntry
-	9,  // 57: longarm.v1.PrepareJobRequest.git_auth:type_name -> longarm.v1.GitAuth
-	22, // 58: longarm.v1.MetricsSnapshot.AgentsEntry.value:type_name -> longarm.v1.AgentStat
-	3,  // 59: longarm.v1.Node.Info:input_type -> longarm.v1.InfoRequest
-	5,  // 60: longarm.v1.Exec.Run:input_type -> longarm.v1.ExecRequest
-	10, // 61: longarm.v1.Jobs.Submit:input_type -> longarm.v1.SubmitRequest
-	12, // 62: longarm.v1.Jobs.Get:input_type -> longarm.v1.GetJobRequest
-	13, // 63: longarm.v1.Jobs.List:input_type -> longarm.v1.ListJobsRequest
-	15, // 64: longarm.v1.Jobs.Logs:input_type -> longarm.v1.LogsRequest
-	17, // 65: longarm.v1.Jobs.Wait:input_type -> longarm.v1.WaitRequest
-	18, // 66: longarm.v1.Jobs.Kill:input_type -> longarm.v1.KillRequest
-	19, // 67: longarm.v1.Metrics.Snapshot:input_type -> longarm.v1.MetricsRequest
-	20, // 68: longarm.v1.Metrics.Stream:input_type -> longarm.v1.MetricsStreamRequest
-	24, // 69: longarm.v1.Admin.Shutdown:input_type -> longarm.v1.ShutdownRequest
-	26, // 70: longarm.v1.Admin.Gc:input_type -> longarm.v1.GcRequest
-	28, // 71: longarm.v1.Sessions.Attach:input_type -> longarm.v1.AttachInput
-	39, // 72: longarm.v1.Sessions.List:input_type -> longarm.v1.ListSessionsRequest
-	41, // 73: longarm.v1.Sessions.Kill:input_type -> longarm.v1.KillSessionRequest
-	15, // 74: longarm.v1.Sessions.Logs:input_type -> longarm.v1.LogsRequest
-	34, // 75: longarm.v1.Sessions.Start:input_type -> longarm.v1.StartSessionRequest
-	35, // 76: longarm.v1.Sessions.Get:input_type -> longarm.v1.GetSessionRequest
-	36, // 77: longarm.v1.Sessions.Send:input_type -> longarm.v1.SendSessionRequest
-	38, // 78: longarm.v1.Sessions.Stop:input_type -> longarm.v1.StopSessionRequest
-	42, // 79: longarm.v1.Forward.Open:input_type -> longarm.v1.ForwardFrame
-	42, // 80: longarm.v1.Forward.Ssh:input_type -> longarm.v1.ForwardFrame
-	44, // 81: longarm.v1.Files.Stat:input_type -> longarm.v1.FileStatRequest
-	46, // 82: longarm.v1.Files.List:input_type -> longarm.v1.FileListRequest
-	48, // 83: longarm.v1.Files.Read:input_type -> longarm.v1.FileReadRequest
-	50, // 84: longarm.v1.Files.Write:input_type -> longarm.v1.FileWriteRequest
-	53, // 85: longarm.v1.Files.Mkdir:input_type -> longarm.v1.MkdirRequest
-	43, // 86: longarm.v1.Files.Tail:input_type -> longarm.v1.FileTailRequest
-	56, // 87: longarm.v1.Workspace.Refs:input_type -> longarm.v1.RefsRequest
-	58, // 88: longarm.v1.Workspace.Sync:input_type -> longarm.v1.SyncChunk
-	54, // 89: longarm.v1.Workspace.Fetch:input_type -> longarm.v1.FetchRequest
-	62, // 90: longarm.v1.UserHelper.PrepareJob:input_type -> longarm.v1.PrepareJobRequest
-	64, // 91: longarm.v1.UserHelper.Prune:input_type -> longarm.v1.PruneRequest
-	42, // 92: longarm.v1.LinkTunnel.Dial:input_type -> longarm.v1.ForwardFrame
-	4,  // 93: longarm.v1.Node.Info:output_type -> longarm.v1.InfoResponse
-	6,  // 94: longarm.v1.Exec.Run:output_type -> longarm.v1.ExecResponse
-	11, // 95: longarm.v1.Jobs.Submit:output_type -> longarm.v1.Job
-	11, // 96: longarm.v1.Jobs.Get:output_type -> longarm.v1.Job
-	14, // 97: longarm.v1.Jobs.List:output_type -> longarm.v1.ListJobsResponse
-	16, // 98: longarm.v1.Jobs.Logs:output_type -> longarm.v1.LogChunk
-	11, // 99: longarm.v1.Jobs.Wait:output_type -> longarm.v1.Job
-	11, // 100: longarm.v1.Jobs.Kill:output_type -> longarm.v1.Job
-	23, // 101: longarm.v1.Metrics.Snapshot:output_type -> longarm.v1.MetricsSnapshot
-	23, // 102: longarm.v1.Metrics.Stream:output_type -> longarm.v1.MetricsSnapshot
-	25, // 103: longarm.v1.Admin.Shutdown:output_type -> longarm.v1.ShutdownResponse
-	27, // 104: longarm.v1.Admin.Gc:output_type -> longarm.v1.GcResponse
-	31, // 105: longarm.v1.Sessions.Attach:output_type -> longarm.v1.AttachOutput
-	40, // 106: longarm.v1.Sessions.List:output_type -> longarm.v1.ListSessionsResponse
-	33, // 107: longarm.v1.Sessions.Kill:output_type -> longarm.v1.Session
-	16, // 108: longarm.v1.Sessions.Logs:output_type -> longarm.v1.LogChunk
-	32, // 109: longarm.v1.Sessions.Start:output_type -> longarm.v1.AttachStarted
-	33, // 110: longarm.v1.Sessions.Get:output_type -> longarm.v1.Session
-	37, // 111: longarm.v1.Sessions.Send:output_type -> longarm.v1.SendSessionResponse
-	33, // 112: longarm.v1.Sessions.Stop:output_type -> longarm.v1.Session
-	42, // 113: longarm.v1.Forward.Open:output_type -> longarm.v1.ForwardFrame
-	42, // 114: longarm.v1.Forward.Ssh:output_type -> longarm.v1.ForwardFrame
-	45, // 115: longarm.v1.Files.Stat:output_type -> longarm.v1.FileInfo
-	47, // 116: longarm.v1.Files.List:output_type -> longarm.v1.FileListResponse
-	49, // 117: longarm.v1.Files.Read:output_type -> longarm.v1.FileChunk
-	52, // 118: longarm.v1.Files.Write:output_type -> longarm.v1.FileWriteResult
-	45, // 119: longarm.v1.Files.Mkdir:output_type -> longarm.v1.FileInfo
-	49, // 120: longarm.v1.Files.Tail:output_type -> longarm.v1.FileChunk
-	57, // 121: longarm.v1.Workspace.Refs:output_type -> longarm.v1.RefsResponse
-	61, // 122: longarm.v1.Workspace.Sync:output_type -> longarm.v1.SyncResult
-	55, // 123: longarm.v1.Workspace.Fetch:output_type -> longarm.v1.FetchResponse
-	63, // 124: longarm.v1.UserHelper.PrepareJob:output_type -> longarm.v1.PrepareJobOutput
-	65, // 125: longarm.v1.UserHelper.Prune:output_type -> longarm.v1.PruneResponse
-	42, // 126: longarm.v1.LinkTunnel.Dial:output_type -> longarm.v1.ForwardFrame
-	93, // [93:127] is the sub-list for method output_type
-	59, // [59:93] is the sub-list for method input_type
-	59, // [59:59] is the sub-list for extension type_name
-	59, // [59:59] is the sub-list for extension extendee
-	0,  // [0:59] is the sub-list for field type_name
+	9,  // 44: longarm.v1.StartSessionRequest.git_auth:type_name -> longarm.v1.GitAuth
+	80, // 45: longarm.v1.StopSessionRequest.grace:type_name -> google.protobuf.Duration
+	33, // 46: longarm.v1.ListSessionsResponse.sessions:type_name -> longarm.v1.Session
+	67, // 47: longarm.v1.ForwardFrame.grant:type_name -> longarm.v1.SignedPortLinkGrant
+	79, // 48: longarm.v1.FileInfo.mtime:type_name -> google.protobuf.Timestamp
+	45, // 49: longarm.v1.FileListResponse.entries:type_name -> longarm.v1.FileInfo
+	51, // 50: longarm.v1.FileWriteRequest.header:type_name -> longarm.v1.FileWriteHeader
+	79, // 51: longarm.v1.FileWriteHeader.mtime:type_name -> google.protobuf.Timestamp
+	9,  // 52: longarm.v1.FetchRequest.git_auth:type_name -> longarm.v1.GitAuth
+	59, // 53: longarm.v1.SyncChunk.header:type_name -> longarm.v1.SyncHeader
+	60, // 54: longarm.v1.SyncChunk.data:type_name -> longarm.v1.SyncData
+	2,  // 55: longarm.v1.SyncData.part:type_name -> longarm.v1.SyncPart
+	8,  // 56: longarm.v1.PrepareJobRequest.workspace:type_name -> longarm.v1.JobWorkspace
+	78, // 57: longarm.v1.PrepareJobRequest.secret_env:type_name -> longarm.v1.PrepareJobRequest.SecretEnvEntry
+	9,  // 58: longarm.v1.PrepareJobRequest.git_auth:type_name -> longarm.v1.GitAuth
+	22, // 59: longarm.v1.MetricsSnapshot.AgentsEntry.value:type_name -> longarm.v1.AgentStat
+	3,  // 60: longarm.v1.Node.Info:input_type -> longarm.v1.InfoRequest
+	5,  // 61: longarm.v1.Exec.Run:input_type -> longarm.v1.ExecRequest
+	10, // 62: longarm.v1.Jobs.Submit:input_type -> longarm.v1.SubmitRequest
+	12, // 63: longarm.v1.Jobs.Get:input_type -> longarm.v1.GetJobRequest
+	13, // 64: longarm.v1.Jobs.List:input_type -> longarm.v1.ListJobsRequest
+	15, // 65: longarm.v1.Jobs.Logs:input_type -> longarm.v1.LogsRequest
+	17, // 66: longarm.v1.Jobs.Wait:input_type -> longarm.v1.WaitRequest
+	18, // 67: longarm.v1.Jobs.Kill:input_type -> longarm.v1.KillRequest
+	19, // 68: longarm.v1.Metrics.Snapshot:input_type -> longarm.v1.MetricsRequest
+	20, // 69: longarm.v1.Metrics.Stream:input_type -> longarm.v1.MetricsStreamRequest
+	24, // 70: longarm.v1.Admin.Shutdown:input_type -> longarm.v1.ShutdownRequest
+	26, // 71: longarm.v1.Admin.Gc:input_type -> longarm.v1.GcRequest
+	28, // 72: longarm.v1.Sessions.Attach:input_type -> longarm.v1.AttachInput
+	39, // 73: longarm.v1.Sessions.List:input_type -> longarm.v1.ListSessionsRequest
+	41, // 74: longarm.v1.Sessions.Kill:input_type -> longarm.v1.KillSessionRequest
+	15, // 75: longarm.v1.Sessions.Logs:input_type -> longarm.v1.LogsRequest
+	34, // 76: longarm.v1.Sessions.Start:input_type -> longarm.v1.StartSessionRequest
+	35, // 77: longarm.v1.Sessions.Get:input_type -> longarm.v1.GetSessionRequest
+	36, // 78: longarm.v1.Sessions.Send:input_type -> longarm.v1.SendSessionRequest
+	38, // 79: longarm.v1.Sessions.Stop:input_type -> longarm.v1.StopSessionRequest
+	42, // 80: longarm.v1.Forward.Open:input_type -> longarm.v1.ForwardFrame
+	42, // 81: longarm.v1.Forward.Ssh:input_type -> longarm.v1.ForwardFrame
+	44, // 82: longarm.v1.Files.Stat:input_type -> longarm.v1.FileStatRequest
+	46, // 83: longarm.v1.Files.List:input_type -> longarm.v1.FileListRequest
+	48, // 84: longarm.v1.Files.Read:input_type -> longarm.v1.FileReadRequest
+	50, // 85: longarm.v1.Files.Write:input_type -> longarm.v1.FileWriteRequest
+	53, // 86: longarm.v1.Files.Mkdir:input_type -> longarm.v1.MkdirRequest
+	43, // 87: longarm.v1.Files.Tail:input_type -> longarm.v1.FileTailRequest
+	56, // 88: longarm.v1.Workspace.Refs:input_type -> longarm.v1.RefsRequest
+	58, // 89: longarm.v1.Workspace.Sync:input_type -> longarm.v1.SyncChunk
+	54, // 90: longarm.v1.Workspace.Fetch:input_type -> longarm.v1.FetchRequest
+	62, // 91: longarm.v1.UserHelper.PrepareJob:input_type -> longarm.v1.PrepareJobRequest
+	64, // 92: longarm.v1.UserHelper.Prune:input_type -> longarm.v1.PruneRequest
+	42, // 93: longarm.v1.LinkTunnel.Dial:input_type -> longarm.v1.ForwardFrame
+	4,  // 94: longarm.v1.Node.Info:output_type -> longarm.v1.InfoResponse
+	6,  // 95: longarm.v1.Exec.Run:output_type -> longarm.v1.ExecResponse
+	11, // 96: longarm.v1.Jobs.Submit:output_type -> longarm.v1.Job
+	11, // 97: longarm.v1.Jobs.Get:output_type -> longarm.v1.Job
+	14, // 98: longarm.v1.Jobs.List:output_type -> longarm.v1.ListJobsResponse
+	16, // 99: longarm.v1.Jobs.Logs:output_type -> longarm.v1.LogChunk
+	11, // 100: longarm.v1.Jobs.Wait:output_type -> longarm.v1.Job
+	11, // 101: longarm.v1.Jobs.Kill:output_type -> longarm.v1.Job
+	23, // 102: longarm.v1.Metrics.Snapshot:output_type -> longarm.v1.MetricsSnapshot
+	23, // 103: longarm.v1.Metrics.Stream:output_type -> longarm.v1.MetricsSnapshot
+	25, // 104: longarm.v1.Admin.Shutdown:output_type -> longarm.v1.ShutdownResponse
+	27, // 105: longarm.v1.Admin.Gc:output_type -> longarm.v1.GcResponse
+	31, // 106: longarm.v1.Sessions.Attach:output_type -> longarm.v1.AttachOutput
+	40, // 107: longarm.v1.Sessions.List:output_type -> longarm.v1.ListSessionsResponse
+	33, // 108: longarm.v1.Sessions.Kill:output_type -> longarm.v1.Session
+	16, // 109: longarm.v1.Sessions.Logs:output_type -> longarm.v1.LogChunk
+	32, // 110: longarm.v1.Sessions.Start:output_type -> longarm.v1.AttachStarted
+	33, // 111: longarm.v1.Sessions.Get:output_type -> longarm.v1.Session
+	37, // 112: longarm.v1.Sessions.Send:output_type -> longarm.v1.SendSessionResponse
+	33, // 113: longarm.v1.Sessions.Stop:output_type -> longarm.v1.Session
+	42, // 114: longarm.v1.Forward.Open:output_type -> longarm.v1.ForwardFrame
+	42, // 115: longarm.v1.Forward.Ssh:output_type -> longarm.v1.ForwardFrame
+	45, // 116: longarm.v1.Files.Stat:output_type -> longarm.v1.FileInfo
+	47, // 117: longarm.v1.Files.List:output_type -> longarm.v1.FileListResponse
+	49, // 118: longarm.v1.Files.Read:output_type -> longarm.v1.FileChunk
+	52, // 119: longarm.v1.Files.Write:output_type -> longarm.v1.FileWriteResult
+	45, // 120: longarm.v1.Files.Mkdir:output_type -> longarm.v1.FileInfo
+	49, // 121: longarm.v1.Files.Tail:output_type -> longarm.v1.FileChunk
+	57, // 122: longarm.v1.Workspace.Refs:output_type -> longarm.v1.RefsResponse
+	61, // 123: longarm.v1.Workspace.Sync:output_type -> longarm.v1.SyncResult
+	55, // 124: longarm.v1.Workspace.Fetch:output_type -> longarm.v1.FetchResponse
+	63, // 125: longarm.v1.UserHelper.PrepareJob:output_type -> longarm.v1.PrepareJobOutput
+	65, // 126: longarm.v1.UserHelper.Prune:output_type -> longarm.v1.PruneResponse
+	42, // 127: longarm.v1.LinkTunnel.Dial:output_type -> longarm.v1.ForwardFrame
+	94, // [94:128] is the sub-list for method output_type
+	60, // [60:94] is the sub-list for method input_type
+	60, // [60:60] is the sub-list for extension type_name
+	60, // [60:60] is the sub-list for extension extendee
+	0,  // [0:60] is the sub-list for field type_name
 }
 
 func init() { file_longarm_v1_longarm_proto_init() }
