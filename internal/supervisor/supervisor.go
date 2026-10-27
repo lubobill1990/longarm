@@ -462,7 +462,7 @@ func (m *Manager) Submit(ctx context.Context, spec jobs.Spec, secrets map[string
 		m.failBeforeShim(e, jobs.ExitNotFound, "spawn shim: "+err.Error())
 		return m.snapshot(e), nil
 	}
-	m.log.Info("job submitted", "job", spec.ID, "argv", spec.Argv, "by", spec.SubmittedBy)
+	m.log.InfoContext(ctx, "job submitted", "job", spec.ID, "argv", spec.Argv, "by", spec.SubmittedBy) // ctx: trace=<operation>
 
 	// Give the shim a moment to start the process so the caller gets a pid.
 	deadline := time.After(5 * time.Second)

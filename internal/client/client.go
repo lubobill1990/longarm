@@ -23,6 +23,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/telemetry/tgrpc"
 	"github.com/lubobill1990/longarm/internal/transport"
 	"github.com/lubobill1990/longarm/internal/transport/longnet"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -483,7 +484,9 @@ func (d *Dialer) Dial(w Worker) (*Conn, error) {
 	conn := &Conn{Worker: w}
 	explicit := w.Transport == "tailscale" && len(w.Alt) == 0 && d.isConfigured(w.Name)
 	dial := func(ctx context.Context, _ string) (net.Conn, error) {
+		start := time.Now()
 		tc, raw, pi, legs, err := d.race(ctx, w, explicit)
+		recordDial(ctx, time.Since(start), pi, legs, err)
 		conn.mu.Lock()
 		conn.legs = legs
 		if err == nil {
@@ -503,6 +506,8 @@ func (d *Dialer) Dial(w Worker) (*Conn, error) {
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bo, MinConnectTimeout: connectTimeout()}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 30 * time.Second, Timeout: 20 * time.Second, PermitWithoutStream: false}),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(256<<20)),
+		grpc.WithChainUnaryInterceptor(tgrpc.UnaryClient("worker")),
+		grpc.WithChainStreamInterceptor(tgrpc.StreamClient("worker")),
 	)
 	if err != nil {
 		return nil, err

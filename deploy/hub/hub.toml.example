@@ -69,3 +69,21 @@ oauth_secret_file = "/etc/longarm-hub/tailscale-oauth.secret"   # root:longarm-h
 # api_url = "http://127.0.0.1:8080"      # where the hub reaches the REST API (default: url)
 # api_key_file = "/etc/longarm-hub/headscale-api.key"   # or env LONGARM_HUB_HEADSCALE_API_KEY
 # user = ""                              # Headscale < 0.28: keys need a user
+
+# Telemetry (docs/telemetry.md): scrubbed errors, crashes, request counts and
+# durations of the hub and its nodes, forwarded to Azure Application Insights.
+# No connection string = off fleet-wide (nodes then collect nothing). With a
+# managed identity (AZURE_CLIENT_ID) the hub sends Entra ID tokens; grant it
+# "Monitoring Metrics Publisher" on the resource. Env override:
+# LONGARM_HUB_APPINSIGHTS_CONNECTION_STRING.
+# [telemetry]
+# connection_string = "InstrumentationKey=...;IngestionEndpoint=https://<region>.in.applicationinsights.azure.com/"
+# enabled = true
+
+# Diagnostic bundles (`longarm diag --upload`, `longarmd diag --upload`; docs/usage.md
+# "Bug reports / diagnostics"). Without blob_url the hub refuses uploads (users attach
+# the local zip by hand). Readable by admins (`longarm admin diag ls|get`).
+# [diagnostics]
+# blob_url = "https://<account>.blob.core.windows.net/diagnostics"   # Entra ID (managed identity, Storage Blob Data Contributor); no keys / SAS. Or file:///var/lib/longarm-hub/diagnostics. Env LONGARM_HUB_DIAG_BLOB_URL
+# max_mb = 50                      # largest bundle
+# per_node_per_hour = 10           # uploads per node and hour

@@ -30,6 +30,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/longarmd"
+	"github.com/lubobill1990/longarm/internal/telemetry"
 	"github.com/lubobill1990/longarm/internal/tray"
 	"github.com/lubobill1990/longarm/internal/version"
 )
@@ -54,7 +55,16 @@ func main() {
 	}
 	o.Version = version.Version
 	o.LongarmExe, o.LongarmdExe = sibling("longarm"), sibling("longarmd")
-	o.Log = slog.New(slog.NewTextHandler(os.Stderr, nil))
+	o.Log = slog.New(telemetry.NewHandler(slog.NewTextHandler(os.Stderr, nil)))
+	// Telemetry goes to longarm's queue; longarm daemon sends it.
+	tcfg, _ := client.TelemetryConfig(o.LongarmConfigDir, "longarm-tray")
+	tel := telemetry.Start(tcfg)
+	defer tel.WatchCrashes()()
+	tel.Event(context.Background(), "process.start", nil, nil)
+	defer func() {
+		tel.Event(context.Background(), "process.stop", nil, map[string]float64{"uptime_s": tel.Uptime().Seconds()})
+		tel.Close()
+	}()
 	startDaemon := func() error {
 		cmd := exec.Command(o.LongarmExe, "--config-dir", o.LongarmConfigDir, "daemon", "start")
 		b, err := cmd.CombinedOutput()
@@ -65,6 +75,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go tel.Run(ctx)
 
 	switch {
 	case smoke:

@@ -666,6 +666,28 @@ isolation if other users share the machine.
 - A hub too old to copy the extension issues certificates without it: peers
   that require trust refuse them (fail closed).
 
+## Diagnostic bundles
+
+`longarmd diag` / `longarm diag` (docs/usage.md "Bug reports /
+diagnostics") collect logs and state with names replaced by fleet-wide
+pseudonyms and secrets removed; private keys, token files, the audit log
+and job command lines / output are left out unless the user adds the last
+two explicitly. The zip is written locally first; nothing leaves the
+machine without `--upload` (and a confirmation, or `--yes`).
+
+An uploaded bundle can be read by **the hub's admins** (`longarm admin diag
+ls|get`; admin role only - clients and workers may upload but not list or
+download, not even their own) and by **whoever has read access to the blob
+container** (Storage Blob Data Reader/Contributor, the account's owners).
+Like everything else on the hub, admins are insiders here: a worker's
+`[access]` policy limits what they may *do* on the worker, not what a user
+chooses to send them. Pseudonyms are keyed with the fleet's CA, so anyone
+holding the CA certificate (every node) can test a guessed name against
+them. Retention is the storage account's lifecycle policy: deploy/azure
+deletes bundles 30 days after the upload; a `file://` store keeps them
+until the operator deletes them. The hub logs uploads (report id, size,
+uploader pseudonym) and downloads (report id, admin), never the content.
+
 ## Operations
 
 - **Turning it on for an existing fleet**: add the users on the hub
@@ -699,6 +721,20 @@ isolation if other users share the machine.
   that are offline purge when they reconnect (the purge list is part of the
   policy). `longarmd leave --purge` and uninstalling a per-user worker
   delete all `la-*` accounts it created.
+
+## Telemetry
+
+A hub with an Application Insights connection string collects telemetry
+from itself and its nodes ([docs/telemetry.md](docs/telemetry.md)). In the
+terms of this threat model: the data leaves the fleet (to whoever can read
+the Application Insights resource), so it is scrubbed on the node before it
+is queued and again on the hub - no command lines, environment, job output,
+addresses or names in clear (names become keyed hashes salted with the
+fleet's CA). The hub is an insider: it can turn telemetry on for the fleet,
+but not for a machine whose owner turned it off (`[telemetry] enabled =
+false` in longarmd.toml, `longarm telemetry off`, `LONGARM_TELEMETRY=0`) -
+the worker's local policy wins, like `[access]`. Telemetry items of a user
+never reach other users: they go node → hub → Application Insights only.
 
 ## Level 3 outlook
 

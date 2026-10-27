@@ -55,7 +55,7 @@ func (c *Config) applyEnv() error {
 		{EnvACMEEmail, &c.ACMEEmail}, {EnvACMEDir, &c.ACMEDirectory},
 		{EnvEntraTenant, &c.Auth.Entra.TenantID}, {EnvEntraClient, &c.Auth.Entra.ClientID}, {EnvEntraScope, &c.Auth.Entra.Scope},
 		{EnvEntraClientAssertion, &c.Auth.Entra.ClientAssertion}, {EnvEntraSecretFile, &c.Auth.Entra.ClientSecretFile},
-		{EnvEntraWeb, &c.Auth.Entra.Web}} {
+		{EnvEntraWeb, &c.Auth.Entra.Web}, {EnvAppInsights, &c.Telemetry.ConnectionString}} {
 		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
 			*kv.dst = v
 		}

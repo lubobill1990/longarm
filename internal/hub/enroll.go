@@ -164,6 +164,7 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 	jc, err := h.store.PeekJoinCode(hash, now)
 	if errors.Is(err, store.ErrNotFound) {
 		h.log.Warn("join with a bad code", "remote", c.addr)
+		h.tel().Count("enroll.bad_code", nil, 1)
 		return nil, errBadCode
 	}
 	if err != nil {
@@ -225,6 +226,7 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 	n := &node{rec: rec}
 	h.nodes[name] = n
 	h.log.Info("node joined", "node", name, "role", rec.Role, "state", rec.State, "owner", rec.Owner, "code", jc.ID, "remote", c.addr)
+	h.event(ctx, "node.joined", map[string]string{"role": rec.Role, "state": rec.State, "os": req.Os, "arch": req.Arch, "node_version": req.Version})
 	h.publishNodeLocked(n, "joined ("+rec.State+")")
 	if rec.Owner != "" {
 		h.checkTenancyFlipLocked() // an owned worker separates users
@@ -328,6 +330,7 @@ func (h *Hub) Approve(by, name string) (*pb.NodeInfo, error) {
 	}
 	n.rec = &rec
 	h.log.Info("node approved", "node", name, "by", by)
+	h.event(context.Background(), "node.approved", map[string]string{"role": rec.Role})
 	h.publishNodeLocked(n, "approved by "+by)
 	return h.nodeInfoLocked(n), nil
 }
@@ -365,6 +368,7 @@ func (h *Hub) Revoke(by, name string) (*pb.NodeInfo, error) {
 	}
 	role := n.rec.Role
 	h.log.Info("node revoked", "node", name, "by", by, "revocation_version", h.revVersion)
+	h.event(context.Background(), "node.revoked", map[string]string{"role": role})
 	h.publishNodeLocked(n, "revoked by "+by)
 	info := h.nodeInfoLocked(n)
 	h.mu.Unlock()
@@ -406,6 +410,7 @@ func (h *Hub) renew(c caller, csr []byte) (*pb.RenewResponse, error) {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	h.log.Info("certificate renewed", "node", c.id.String(), "serial", rec.CertSerial, "not_after", rec.CertNotAfter)
+	h.event(context.Background(), "cert.renewed", map[string]string{"role": string(c.id.Role)})
 	return &pb.RenewResponse{CertPem: cert, CaPem: h.ca.CertPEM}, nil
 }
 

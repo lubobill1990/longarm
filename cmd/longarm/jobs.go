@@ -85,7 +85,7 @@ func execCmd() *cobra.Command {
 				fmt.Fprintln(os.Stderr, "longarm: output truncated (raise --max-output or use longarm run)")
 			}
 			if resp.Error != "" {
-				fmt.Fprintln(os.Stderr, "longarm:", resp.Error)
+				fmt.Fprintln(os.Stderr, "longarm:", resp.Error+traceNote())
 			}
 			if resp.ExitCode != 0 {
 				code := int(resp.ExitCode)

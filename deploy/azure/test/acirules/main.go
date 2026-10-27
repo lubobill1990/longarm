@@ -79,6 +79,18 @@ type template struct {
 	Resources []map[string]any `json:"resources"`
 }
 
+// notShaping are parameters that only add environment variables, role
+// assignments or other resources: checked with one value (nil = the
+// default). On adds the most environment variables, so a duplicate would
+// still show.
+var notShaping = map[string]any{
+	"enableTelemetry":          true,
+	"enableDiagnostics":        true,
+	"telemetryRetentionDays":   nil,
+	"diagnosticsRetentionDays": nil,
+	"adminCodeTtlHours":        nil,
+}
+
 // Check evaluates the container group(s) of the template for every
 // combination of the parameters that shape them (bools, allowed values,
 // relayUdpPort-like ints at their bounds, secrets empty or set) and returns
@@ -106,6 +118,16 @@ func Check(raw []byte, overrides map[string]any) (int, []string, error) {
 	for n, p := range t.Parameters {
 		if v, ok := overrides[n]; ok {
 			base[n] = v
+			continue
+		}
+		if v, ok := notShaping[n]; ok {
+			// no effect on ports, sizes or volumes: one value keeps the
+			// combinations (and CI's time) from multiplying
+			if v != nil {
+				base[n] = v
+			} else if p.DefaultValue != nil {
+				base[n] = p.DefaultValue
+			}
 			continue
 		}
 		switch {

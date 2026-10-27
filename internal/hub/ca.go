@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -154,6 +155,7 @@ func (h *Hub) renewServerCerts() {
 		if pki.Serial(nb.Cert.Leaf) != pki.Serial(c.b.Leaf()) {
 			if err := c.b.Update(nb); err == nil {
 				h.log.Info("server certificate renewed", "role", c.role, "not_after", nb.NotAfter)
+				h.event(context.Background(), "hub.cert_renewed", map[string]string{"role": string(c.role)})
 			}
 		}
 	}

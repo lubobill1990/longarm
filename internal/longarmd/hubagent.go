@@ -12,11 +12,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -71,6 +73,7 @@ type hubAgent struct {
 	trustStore  trust.Store
 	stop        context.CancelFunc // stops longarmd (after longarmd leave)
 	logMaxBytes int64
+	tel         *workerTelemetry // nil = off
 
 	mu          sync.Mutex
 	link        *pb.HubLink
@@ -616,6 +619,7 @@ func (a *hubAgent) maybeRenew(ctx context.Context, conn *hubclient.Conn) {
 	certPEM, keyPEM, caPEM, err := hubclient.Renew(rctx, conn, a.live.Identity.Name, tr)
 	if err != nil {
 		a.log.Warn("hub: certificate renewal failed", "err", err, "not_after", leaf.NotAfter)
+		a.tel.event("cert.renewal", map[string]string{"ok": "false", "grpc_code": status.Code(err).String()})
 		return
 	}
 	if err := pki.WriteBundleAtomic(filepath.Join(a.dataDir, TLSDir), caPEM, certPEM, keyPEM); err != nil {
@@ -630,6 +634,7 @@ func (a *hubAgent) maybeRenew(ctx context.Context, conn *hubclient.Conn) {
 		a.trustStore.RenewalDone()
 	}
 	a.log.Info("hub: certificate renewed", "not_after", a.live.Leaf().NotAfter, "endorsed", endorsedBy(a.live.Leaf()))
+	a.tel.event("cert.renewal", map[string]string{"ok": "true", "trust": strconv.FormatBool(asked)})
 	a.notify(&pb.LocalEvent{Kind: "hub", Message: "certificate renewed"})
 }
 
@@ -666,6 +671,7 @@ func (a *hubAgent) watchJobs(ctx context.Context) {
 	for {
 		changed := a.spaces.Changed()
 		for _, j := range a.spaces.ListJobs(nil, 200) {
+			a.tel.jobChanged(j, first)
 			p := server.JobToPB(j)
 			if old, ok := last[p.Spec.Id]; !first && (!ok || old != p.State) {
 				a.notify(&pb.LocalEvent{Kind: "job", Job: p})
