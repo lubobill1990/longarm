@@ -190,7 +190,7 @@ func screenshot(ctx context.Context, browser, url, out string, w, h int) error {
 	defer os.RemoveAll(prof)
 	os.Remove(out)
 	abs, _ := filepath.Abs(out)
-	cctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	args := []string{"--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
 		"--disable-extensions", "--hide-scrollbars", "--user-data-dir=" + prof, fmt.Sprintf("--window-size=%d,%d", w, h),
