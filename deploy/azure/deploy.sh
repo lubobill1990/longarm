@@ -307,7 +307,8 @@ ensure_providers Microsoft.ContainerInstance Microsoft.Storage
 cur=$(az container show -g "$rg" -n "$name" -o tsv --query "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId, containers[0].environmentVariables[?name=='LONGARM_HUB_RELAY_STUN_ADVERTISE'].value | [0]]" 2>/dev/null || true)
 cur_image='' cur_registry='' prev_boot='' account='' key='' build_acr=''
 if [[ -n $cur ]]; then
-	# one field per line; null fields are empty lines
+	# one field per line; az prints a null field of a list as "None" (older
+	# versions: an empty field): both mean "not set"
 	{
 		read -r cur_image
 		read -r cur_cpu
@@ -316,7 +317,7 @@ if [[ -n $cur ]]; then
 		read -r cur_env
 		read -r cur_logs || true
 		read -r cur_stun || true
-	} <<<"$(printf '%s\n' "$cur" | tr -d '\r' | tr '\t' '\n')"
+	} <<<"$(printf '%s\n' "$cur" | tr -d '\r' | tr '\t' '\n' | sed 's/^None$//')"
 	cur_size=small
 	[[ ${cur_cpu%%.*} -lt 2 ]] || cur_size=medium
 	cur_panel=false
