@@ -47,10 +47,12 @@ service Enroll {
   // a usable az sign-in): the device sends its CSR and gets a user code,
   // which its user types into the panel's /link page (signed in with
   // Microsoft) to approve - enrolling the device as theirs. No certificate
-  // needed.
+  // needed. Kind "both" asks for a client certificate and an owned worker
+  // of the same machine with one code and one approval.
   rpc StartLink(StartLinkRequest) returns (StartLinkResponse);
   // PollLink asks about a pairing with its poll token: state "pending",
-  // "approved" (with the certificate), "denied" or "expired".
+  // "approved" (with the certificate), "denied" or "expired". Kind "both":
+  // the client's enrollment, the worker's in JoinResponse.worker.
   rpc PollLink(PollLinkRequest) returns (JoinResponse);
 }
 
@@ -79,13 +81,17 @@ message EntraJoinRequest {
 }
 
 message StartLinkRequest {
-  string kind = 1; // "client" | "worker"
-  bytes csr_pem = 2;
-  string name = 3; // requested name (default: as EntraJoin / the hostname)
+  string kind = 1; // "client" | "worker" | "both"
+  bytes csr_pem = 2; // kind both: the client's
+  string name = 3; // requested name (default: as EntraJoin / the hostname); kind both: the client's
   string hostname = 4;
   string os = 5;
   string arch = 6;
   string version = 7;
+  // kind both: the worker's CSR (another key: longarmd's) and requested
+  // name (default: the hostname)
+  bytes worker_csr_pem = 8;
+  string worker_name = 9;
 }
 
 message StartLinkResponse {
@@ -126,6 +132,9 @@ message JoinResponse {
   // worker codes with an owner (Fleet.CreateWorkerCode): the user who owns
   // the worker - it joined approved, usable by that user only until shared
   string owner = 10;
+  // PollLink of a kind "both" pairing, approved: the worker's enrollment
+  // (this message itself is the client's)
+  JoinResponse worker = 11;
 }
 
 message JoinStatusRequest {

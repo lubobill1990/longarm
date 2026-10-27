@@ -140,30 +140,32 @@ func Fallback(err error) bool {
 	return errors.Is(err, ErrNoAz) || errors.Is(err, ErrAzNoToken) || errors.Is(err, hubclient.ErrNoEntra)
 }
 
-// Pair enrolls through the hub's pairing flow (kind "client" or
-// "worker"): it shows the /link URL and the code on w, opens the URL
-// (never with the code) in the browser if asked and a desktop is there,
-// and waits until the user approves or denies it there, or it expires.
-func Pair(ctx context.Context, addr, kind string, o hubclient.JoinOptions, w io.Writer, browser bool) (*hubclient.JoinResult, error) {
-	return hubclient.Link(ctx, addr, hubclient.LinkOptions{JoinOptions: o, Kind: kind, Show: func(st *pb.StartLinkResponse) {
-		what := "this device"
-		if kind == "worker" {
-			what = "this worker as yours"
-		}
-		fmt.Fprintf(w, "To link %s, sign in with your Microsoft account (or the hub's panel login) in a browser:\n\n", what)
-		fmt.Fprintf(w, "  Open %s and enter code %s\n\n", st.VerificationUrl, st.UserCode)
-		mins := int(time.Until(st.ExpiresAt.AsTime()).Round(time.Minute).Minutes())
-		fmt.Fprintf(w, "Check that the page shows this machine (%s) before you approve. The code expires in %d minutes.\n", hostname(), mins)
-		if browser && OpenBrowser(st.VerificationUrl) == nil {
-			fmt.Fprintln(w, "(opened the page in your browser)")
-		}
-		fmt.Fprintln(w, "waiting for approval ...")
-	}})
-}
-
-func hostname() string {
-	h, _ := os.Hostname()
-	return h
+// Console is SignIn's events for a terminal: the code and the steps worth
+// reading go to w (the CLIs' stderr), the rest is left out.
+func Console(w io.Writer) Events {
+	return Events{
+		Code: func(c Code) {
+			what := "this device"
+			switch c.Kind {
+			case "worker":
+				what = "this worker as yours"
+			case "both":
+				what = "this machine as your device and your worker (one approval for both)"
+			}
+			fmt.Fprintf(w, "To link %s, sign in with your Microsoft account (or the hub's panel login) in a browser:\n\n", what)
+			fmt.Fprintf(w, "  Open %s and enter code %s\n\n", c.URL, c.Code)
+			mins := int(time.Until(c.Expires).Round(time.Minute).Minutes())
+			fmt.Fprintf(w, "Check that the page shows this machine (%s) before you approve. The code expires in %d minutes.\n", c.Host, mins)
+		},
+		Progress: func(p Progress) {
+			switch p.Step {
+			case StepCA, StepFallback, StepNote, StepWaiting:
+				fmt.Fprintln(w, p.Message)
+			case StepBrowser:
+				fmt.Fprintln(w, "("+p.Message+")")
+			}
+		},
+	}
 }
 
 // Desktop reports whether a browser can be opened here: not over SSH nor

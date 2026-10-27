@@ -22,7 +22,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"syscall"
 	"time"
 
@@ -39,7 +38,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/version"
 )
 
-const defaultServiceName = "longarmd"
+const defaultServiceName = longarmd.DefaultServiceName
 
 // exitRestart: longarmd exits with this code to be restarted (self-update).
 const exitRestart = 75
@@ -239,80 +238,10 @@ Per-user isolation refuses a data dir whose users dir the accounts cannot reach
 			if err != nil {
 				return err
 			}
-			dataDir, err := filepath.Abs(dataDir)
-			if err != nil {
-				return err
-			}
-			perUser := isolation == "per-user"
-			switch {
-			case perUser && user != "":
-				return errors.New("--isolation per-user runs the service as LocalSystem / root: drop --user")
-			case perUser:
-				if err := platform.CanIsolate(); err != nil && runtime.GOOS == "darwin" {
-					return err
-				}
-			case isolation != "" && isolation != "shared":
-				return fmt.Errorf("--isolation %q: want shared or per-user", isolation)
-			}
-			sd, err := longarmd.ResolveServiceDataDir(longarmd.ServiceDirRequest{
-				DataDir:  dataDir,
-				Explicit: cmd.Flags().Changed("data-dir") || os.Getenv(longarmd.DataDirEnv) != "",
-				PerUser:  perUser, User: user,
-			})
-			if err != nil {
-				return err
-			}
-			dataDir = sd.Dir
-			args := []string{"run", "--data-dir", dataDir, "--service-name", name}
-			for _, l := range listen {
-				args = append(args, "--listen", l)
-			}
-			cfg := platform.ServiceConfig{
-				Name: name, DisplayName: "Longarm worker (" + name + ")",
-				Description: "Longarm worker daemon: runs remote jobs for longarm clients",
-				Exe:         exe, Args: args, User: user, Password: os.Getenv(passwordEnv),
-			}
-			if dryRun {
-				fmt.Printf("data dir %s\n", dataDir)
-				if sd.MigrateFrom != "" {
-					fmt.Printf("would copy the enrollment from %s to %s\n", sd.MigrateFrom, dataDir)
-				}
-				if perUser {
-					fmt.Printf("users dir %s\nwould set [isolation] mode = \"per-user\" in %s\n", sd.UsersDir, filepath.Join(dataDir, longarmd.ConfigFile))
-				}
-				fmt.Printf("would install service %q (%s %v, user %q)\n", name, exe, args, user)
-				return nil
-			}
-			if sd.MigrateFrom != "" {
-				// Check first: an old service (e.g. root's shared one on
-				// the old dir) must go before its enrollment is copied.
-				if st, err := platform.QueryService(name); err == nil && st != platform.ServiceNotInstalled {
-					return fmt.Errorf("service %q is already installed (%s): longarmd service uninstall --name %s first", name, st, name)
-				}
-				fmt.Printf("copying the enrollment from %s to %s:\n", sd.MigrateFrom, dataDir)
-				if err := longarmd.MigrateEnrollment(sd.MigrateFrom, dataDir, os.Stdout); err != nil {
-					return err
-				}
-				fmt.Printf("%s is no longer used by this service; remove it once the service runs (it holds a copy of the node key)\n", sd.MigrateFrom)
-			}
-			switch {
-			case perUser:
-				if err := longarmd.EnsureSystemDataDir(dataDir); err != nil {
-					return err
-				}
-				if err := longarmd.SetIsolation(dataDir, isolation); err != nil {
-					return err
-				}
-				fmt.Fprintf(os.Stderr, "per-user isolation: the service runs as LocalSystem / root (data dir %s) and runs every user's work as an OS account of its own\n", dataDir)
-			case user == "":
-				fmt.Fprintln(os.Stderr, "warning: no --user given; the service runs as LocalSystem/root, which DESIGN §3.1 advises against")
-			}
-			if err := platform.InstallService(cfg); err != nil {
-				return err
-			}
-			fmt.Printf("installed service %q (%s %v)\n", name, exe, args)
-			serviceFirewall(name, exe, true)
-			return nil
+			return longarmd.InstallService(longarmd.ServiceInstallOptions{Name: name, Exe: exe, DataDir: dataDir,
+				DataDirExplicit: cmd.Flags().Changed("data-dir") || os.Getenv(longarmd.DataDirEnv) != "",
+				User:            user, Password: os.Getenv(passwordEnv), Isolation: isolation, Listen: listen, DryRun: dryRun,
+				Out: os.Stdout, Warn: os.Stderr})
 		},
 	}
 	install.Flags().StringVar(&dataDir, "data-dir", longarmd.DefaultDataDir(), "data directory for the service (default: see above); env LONGARM_DATA_DIR")

@@ -224,10 +224,10 @@ func TestLoginAzFallback(t *testing.T) {
 tenant_id = "11111111-2222-3333-4444-555555555555"
 client_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 authority = "http://127.0.0.1:9"`)
-	addr := h.Addr("grpc")
+	addr, fp := h.Addr("grpc"), pki.Fingerprint(h.CA().Cert)
 	pairs := func(what string, args ...string) {
 		t.Helper()
-		r := runLogin(t, append([]string{addr}, args...)...)
+		r := runLogin(t, append([]string{addr, "--ca-fingerprint", fp}, args...)...)
 		_, code, err := r.code(t)
 		if code == "" {
 			t.Fatalf("%s: no pairing: %v\n%s", what, err, r.stderr.String())
@@ -239,12 +239,12 @@ authority = "http://127.0.0.1:9"`)
 	}
 	t.Setenv(signin.EnvAz, filepath.Join(t.TempDir(), "missing"))
 	pairs("no az")
-	if r := runLogin(t, addr, "--az"); !strings.Contains(fmt.Sprint(<-r.done), "was not found") || strings.Contains(r.stderr.String(), "enter code") {
+	if r := runLogin(t, addr, "--ca-fingerprint", fp, "--az"); !strings.Contains(fmt.Sprint(<-r.done), "was not found") || strings.Contains(r.stderr.String(), "enter code") {
 		t.Fatalf("--az without az: %s", r.stderr.String())
 	}
 	dir := fakeAz(t, "ERROR: AADSTS70043: The refresh token has expired. Please run 'az login' to setup account.")
 	pairs("az without a token")
-	r := runLogin(t, addr, "--az")
+	r := runLogin(t, addr, "--ca-fingerprint", fp, "--az")
 	if err := <-r.done; err == nil || !strings.Contains(err.Error(), "az login --tenant 11111111-2222-3333-4444-555555555555") ||
 		strings.Contains(r.stderr.String(), "enter code") {
 		t.Fatalf("--az, az without a token: %v\n%s", err, r.stderr.String())
@@ -254,7 +254,7 @@ authority = "http://127.0.0.1:9"`)
 	if _, err := os.Stat(filepath.Join(dir, "args.txt")); err == nil {
 		t.Fatal("--link ran az")
 	}
-	if err := <-runLogin(t, addr, "--az", "--link").done; err == nil {
+	if err := <-runLogin(t, addr, "--ca-fingerprint", fp, "--az", "--link").done; err == nil {
 		t.Fatal("--az --link accepted")
 	}
 }

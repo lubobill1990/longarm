@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/localapi"
 	"github.com/lubobill1990/longarm/internal/longarmd"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -51,13 +52,23 @@ finishes the enrollment once approved.`,
 }
 
 func loginCmd() *cobra.Command {
-	var dataDir, name, fp, scope string
+	var dataDir, name, fp, scope, role, configDir, deviceName string
 	var az, force, noBrowser bool
 	c := &cobra.Command{
-		Use:   "login <hub[:port]>",
+		Use:   "login [hub]",
 		Short: "Enroll this worker as yours, signing in with your Microsoft account",
 		Long: `Enroll this worker with longarm-hub as your own worker: usable by you only
 until you share it (longarm worker share), approved right away.
+
+The hub is its domain - longarmd login longarm.example.com - or
+https://longarm.example.com, or host:port (the gRPC port, default 7443).
+Without --ca-fingerprint the hub's CA is fetched from
+https://<host>/ca.crt, checked with this system's HTTPS roots like a
+browser opening the hub's panel, and pinned (docs/security.md "First
+contact"); a hub without a public HTTPS panel needs --ca-fingerprint.
+Without a hub: the one the data dir's hub.toml names (an installer's
+sign-in to come, e.g. the MSI with LOGIN=1), else the one the MSI
+recorded.
 
 By default longarmd login prints the hub's /link address and a code: open
 the page in any browser (your laptop or phone will do - this machine needs
@@ -65,24 +76,41 @@ none), sign in with Microsoft, type the code, check the details and
 approve. The page is opened here when this machine has a desktop
 (--no-browser: never).
 
+--role both also signs this machine in as your client device (longarm's
+config dir, --config-dir) with the same code and the same approval: the
+page lists both. Run it as the user who uses longarm here.
+
 --az uses the Azure CLI's sign-in on this machine instead (az login): no
 browser, no code.`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dataDir, err := filepath.Abs(dataDir)
 			if err != nil {
 				return err
 			}
+			if role != "worker" && role != "both" {
+				return fmt.Errorf("--role %q: want worker or both (a client only: longarm login)", role)
+			}
+			hub := ""
+			if len(args) > 0 {
+				hub = args[0]
+			} else if hub, fp, err = longarmd.PendingHub(dataDir, fp); err != nil {
+				return err
+			}
 			fmt.Printf("data dir %s\n", dataDir)
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return longarmd.Login(ctx, dataDir, args[0], longarmd.LoginOptions{Name: name, Fingerprint: fp, Force: force,
-				Az: az, Scope: scope, Browser: !noBrowser, Out: os.Stdout})
+			return longarmd.Login(ctx, dataDir, hub, longarmd.LoginOptions{Name: name, Fingerprint: fp, Force: force,
+				Az: az, Scope: scope, Browser: !noBrowser, Out: os.Stdout,
+				Client: role == "both", ConfigDir: configDir, DeviceName: deviceName})
 		},
 	}
 	c.Flags().StringVar(&dataDir, "data-dir", longarmd.DefaultDataDir(), "data directory (root: /var/lib/longarmd, LocalSystem: C:\\ProgramData\\Longarm\\longarmd, else ~/.longarm); env LONGARM_DATA_DIR")
 	c.Flags().StringVar(&name, "name", "", "worker name (default: hostname)")
-	c.Flags().StringVar(&fp, "ca-fingerprint", "", "expected sha256 fingerprint of the hub CA (printed by longarm-hub ca show)")
+	c.Flags().StringVar(&fp, "ca-fingerprint", "", "expected sha256 fingerprint of the hub CA (longarm-hub ca show); default: fetched from https://<hub>/ca.crt")
+	c.Flags().StringVar(&role, "role", "worker", "worker, or both: also this user's client device, with the same approval")
+	c.Flags().StringVar(&configDir, "config-dir", client.DefaultConfigDir(), "--role both: longarm's config dir; env LONGARM_CONFIG_DIR")
+	c.Flags().StringVar(&deviceName, "device-name", "", "--role both: the device's name (default: <user>-<hostname>)")
 	c.Flags().BoolVar(&az, "az", false, "sign in with the Azure CLI on this machine (az login) instead of a code")
 	c.Flags().StringVar(&scope, "scope", "", "--az: token scope to request (default: the hub's)")
 	c.Flags().BoolVar(&noBrowser, "no-browser", false, "only print the /link address and the code; don't open a browser here")

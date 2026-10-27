@@ -137,21 +137,41 @@ longarm-hub --data-dir /var/lib/longarm-hub ca show        # CA fingerprint
 longarm-hub --data-dir /var/lib/longarm-hub join-code --role admin
 ```
 
-**2. Your laptop** (client + admin):
+**2. Install** on each machine you want to use - one line, or the MSI on Windows:
 
 ```sh
-longarm join hub.example.com:7443 <admin-code> --ca-fingerprint <fp>
-longarm admin join-code --role worker          # a one-time code for each worker
+curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --role both          # Linux / macOS
+$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex   # Windows (elevated)
+msiexec /i longarm-windows-amd64.msi ROLES=both HUB=hub.example.com LOGIN=1 SERVICE_USER=.\me SERVICE_PASSWORD=...
 ```
 
-**3. A worker** - enroll, approve, run as a service:
+Already installed? `longarmd login hub.example.com --role both` - the hub's
+domain is enough: its CA is fetched from `https://hub.example.com/ca.crt`
+over HTTPS and pinned ([docs/security.md](docs/security.md#first-contact-domain-only-sign-in)).
 
-```sh
-longarmd join hub.example.com:7443 <worker-code> --ca-fingerprint <fp> --name worker-1   # as alice
-longarm admin approve worker-1                 # on the laptop (or auto_approve on the hub)
-sudo longarmd service install --user alice      # Windows (elevated): longarmd service install --user .\alice
-longarmd service start
+**3. Sign in with Microsoft - one code.** The install prints:
+
 ```
+To link this machine as your device and your worker (one approval for both), sign in with your Microsoft account ...
+  Open https://hub.example.com/link and enter code BCDF-GHJK
+```
+
+Open the page in any browser (your phone will do), sign in with Microsoft,
+type the code, check the machine's name and approve - once, for both roles.
+(The MSI runs no console login: the tray, or `longarmd login --role both`,
+shows the code afterwards and needs no other input.)
+
+**4. The machine is your worker and your client.** It runs your jobs (only
+yours until you share it: `longarm worker share`) and its `longarm` acts as
+you; the hub's Entra admins get admin certificates. `longarm ls` lists it.
+
+Without Microsoft sign-in on the hub, use join codes instead:
+`longarm join hub.example.com:7443 <admin-code> --ca-fingerprint <fp>` on your
+laptop, `longarm admin join-code --role worker` for each worker, there
+`longarmd join hub.example.com:7443 <code> --ca-fingerprint <fp> --name worker-1`,
+`longarm admin approve worker-1` and `sudo longarmd service install --user alice`
+(Windows, elevated: `--user .\alice`) + `longarmd service start` - or the
+one-liners with `--join <code>` instead of `--login`.
 
 longarmd's data dir (certificate, hub address, jobs) is `~/.longarm` of the
 account it runs as; `sudo longarmd service install --user alice` uses
@@ -159,11 +179,7 @@ alice's. As root on Linux the default is `/var/lib/longarmd`, as LocalSystem
 on Windows `C:\ProgramData\Longarm\longarmd` (also the MSI's);
 `--data-dir` / `LONGARM_DATA_DIR` override it ([docs/usage.md](docs/usage.md#data-directory)).
 
-Or use the hub's one-liners: `curl -fsSL https://hub.example.com/install.sh | sh -s -- --join <code>`
-(Linux/macOS), `$env:LONGARM_JOIN='<code>'; irm https://hub.example.com/install.ps1 | iex`
-(Windows).
-
-**4. Use it:**
+**5. Use it:**
 
 ```sh
 longarm ls                                     # workers, load, agent sessions
@@ -174,7 +190,7 @@ longarm forward worker-1 3000                  # worker's dev server on localhos
 longarm link create worker-2:8080 --on worker-1   # worker-2's :8080 as 127.0.0.1:8080 for your jobs on worker-1
 ```
 
-**5. Hand it to your agent:**
+**6. Hand it to your agent:**
 
 ```sh
 claude mcp add longarm -- longarm mcp

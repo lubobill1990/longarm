@@ -227,10 +227,14 @@ type Config struct {
 	SSH          SSHConfig
 	Hub          HubConfig // address from hub.toml if unset there
 	HubPollToken string    // pending enrollment (longarmd join --no-wait)
-	Warnings     []string  // config problems longarmd logs at start (and keeps running)
-	Toolchain    ToolchainConfig
-	Update       UpdateConfig
-	Isolation    IsolationConfig
+	// hubFromFile: Hub.Address came from hub.toml (longarmd.toml names
+	// none), so an enrollment written later (a sign-in) may change it.
+	hubFromFile bool
+	hubLoaded   bool     // LoadConfig read hub.toml (reloadHubFile may again)
+	Warnings    []string // config problems longarmd logs at start (and keeps running)
+	Toolchain   ToolchainConfig
+	Update      UpdateConfig
+	Isolation   IsolationConfig
 	// Access is the [access] policy (validated; nil when the section sets
 	// nothing).
 	Access *server.Access
@@ -350,10 +354,10 @@ func LoadConfig(dataDir string, listenOverride []string) (Config, error) {
 		return cfg, err
 	}
 	if cfg.Hub.Address == "" {
-		cfg.Hub.Address = hf.Address
-		cfg.Hub.Disabled = cfg.Hub.Disabled || hf.Disabled
+		cfg.hubFromFile = true
 	}
-	cfg.HubPollToken = hf.PollToken
+	cfg.hubLoaded = true
+	cfg.applyHubFile(hf)
 	return cfg, nil
 }
 
@@ -408,6 +412,17 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	}
 
 	tlsDir := filepath.Join(cfg.DataDir, TLSDir)
+	// An installer's sign-in to come (MSI LOGIN=1): wait for the
+	// certificate the sign-in installs instead of failing.
+	if err := waitSignIn(ctx, cfg.DataDir, log); err != nil {
+		return err
+	}
+	// hub.toml as it is now, not as LoadConfig read it: an enrollment
+	// (a sign-in, longarmd login) may have rewritten it since - while
+	// waitSignIn waited, or before it even started.
+	if err := cfg.reloadHubFile(); err != nil {
+		return err
+	}
 	if cfg.HubPollToken != "" {
 		// `longarmd join --no-wait`: finish the enrollment before serving.
 		if err := completeEnrollment(ctx, cfg, log); err != nil {

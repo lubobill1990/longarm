@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/tls"
@@ -598,9 +599,10 @@ func TestInstallScriptsLogin(t *testing.T) {
 		want []string
 	}{
 		{"/install.sh", &sh, []string{`--login) LOGIN=1`, `LOGIN="${LONGARM_LOGIN:-0}"`, `"$PREFIX/longarmd" login "$HUB_ADDR" --ca-fingerprint "$CA_FP"`,
-			`"$PREFIX/longarm" login "$HUB_ADDR"`, `$AS longarmd login "$HUB_ADDR"`, `"$PREFIX/longarmd" join "$HUB_ADDR" "$JOIN"`}},
+			`"$PREFIX/longarm" login "$HUB_ADDR"`, `$AS longarmd login "$HUB_ADDR"`, `"$PREFIX/longarmd" join "$HUB_ADDR" "$JOIN"`,
+			`--ca-fingerprint "$CA_FP" --role "$R"`, `--role "$ROLE" $NAMEARG`}},
 		{"/install.ps1", &ps1, []string{`[switch]$Login = ($env:LONGARM_LOGIN -eq '1')`, `'longarmd.exe') login $HubAddr --ca-fingerprint $CaFp`,
-			`'longarm.exe') login $HubAddr`, `-not $Login)`, `'longarmd.exe') join $HubAddr $Join`}},
+			`'longarm.exe') login $HubAddr`, `-not $Login)`, `'longarmd.exe') join $HubAddr $Join`, `--ca-fingerprint $CaFp --role $Role`}},
 	} {
 		code, body := plainGet(t, base+s.path)
 		if code != 200 {
@@ -752,5 +754,233 @@ func TestReferrerPolicyKeepsOrigin(t *testing.T) {
 	r.Header.Set("Origin", "null")
 	if h.sameSitePost(r) {
 		t.Fatal("Origin: null accepted")
+	}
+}
+
+// startBoth starts a kind "both" pairing: the client's key (with node key
+// nk) and the worker's (with node key wk).
+func startBoth(t *testing.T, ec pb.EnrollClient, name, workerName string, nk, wk ed25519.PrivateKey) (*device, []byte, error) {
+	t.Helper()
+	keyPEM, csrPEM, err := pki.NewKeyAndCSR(name, &pki.CSRTrust{NodeKey: nk})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wkeyPEM, wcsrPEM, err := pki.NewKeyAndCSR(workerName, &pki.CSRTrust{NodeKey: wk})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := ec.StartLink(tctx(t), &pb.StartLinkRequest{Kind: linkBoth, CsrPem: csrPEM, Name: name, Hostname: "dual.corp.example",
+		Os: "windows", Arch: "amd64", Version: "1.2.3", WorkerCsrPem: wcsrPEM, WorkerName: workerName})
+	if err != nil {
+		return nil, nil, err
+	}
+	return &device{st: st, keyPEM: keyPEM}, wkeyPEM, nil
+}
+
+// TestLinkBoth: one code, one approval enrolls a machine as the
+// approver's client device and own worker; the page says both; a failed
+// half takes the other back; old kinds and bad requests.
+func TestLinkBoth(t *testing.T) {
+	f := newFakeEntra(t)
+	h := newEntraHub(t, f, nil)
+	h.loginLimit, h.joinLimit = newIPLimiter(100, 100), newIPLimiter(100, 100)
+	ec := enrollClient(t, h)
+	nk := ed25519.NewKeyFromSeed(make([]byte, 32))
+	seed := make([]byte, 32)
+	seed[0] = 1
+	wk := ed25519.NewKeyFromSeed(seed)
+
+	// requests that don't fit together
+	_, csrPEM, _ := pki.NewKeyAndCSR("", nil)
+	for what, req := range map[string]*pb.StartLinkRequest{
+		"both without a worker CSR": {Kind: linkBoth, CsrPem: csrPEM},
+		"client with a worker CSR":  {Kind: linkClient, CsrPem: csrPEM, WorkerCsrPem: csrPEM},
+		"worker CSR not a CSR":      {Kind: linkBoth, CsrPem: csrPEM, WorkerCsrPem: []byte("nope")},
+		"bad worker name":           {Kind: linkBoth, CsrPem: csrPEM, WorkerCsrPem: csrPEM, WorkerName: "no/slash"},
+		"one name for both":         {Kind: linkBoth, CsrPem: csrPEM, WorkerCsrPem: csrPEM, Name: "same", WorkerName: "same"},
+	} {
+		req.Hostname, req.Os, req.Arch, req.Version = "h", "linux", "amd64", "1"
+		if _, err := ec.StartLink(tctx(t), req); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("%s: %v", what, err)
+		}
+	}
+
+	d, wkeyPEM, err := startBoth(t, ec, "", "", nk, wk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := newWeb(t, h)
+	alice.entraSignIn(f, "a11ce000-0000-4000-8000-000000000301", "alice@example.com")
+	code, confirm := alice.lookup(d.st.UserCode)
+	for _, want := range []string{"Approving does <b>two</b> things", "client device (acts as you) + worker (runs jobs)",
+		"device name", "worker name", "(default: the host name)", "dual.corp.example", "windows/amd64",
+		pki.KeyID(nk.Public().(ed25519.PublicKey)), pki.KeyID(wk.Public().(ed25519.PublicKey)),
+		"it gets a certificate that acts as you", "jobs you run may be placed on it"} {
+		if !strings.Contains(confirm, want) {
+			t.Errorf("confirmation without %q", want)
+		}
+	}
+	if code != 200 || t.Failed() {
+		t.Fatalf("confirmation: %d %s", code, confirm)
+	}
+	if c, body := alice.decide(confirm, "approve"); c != 200 ||
+		!strings.Contains(body, "Approved: device alice-dual is signed in as alice (client), and worker dual is yours") {
+		t.Fatalf("approve: %d %s", c, body)
+	}
+	r := poll(t, h, ec, d)
+	id, te := identityOf(t, r)
+	if r.State != linkApproved || id.Role != pki.RoleClient || id.User != "alice" || id.Name != "alice-dual" || te == nil ||
+		!bytes.Equal(te.NodeKey, nk.Public().(ed25519.PublicKey)) {
+		t.Fatalf("client half: %v %v %v", r, id, te)
+	}
+	if r.Worker == nil {
+		t.Fatalf("no worker half: %v", r)
+	}
+	wid, wte := identityOf(t, r.Worker)
+	if r.Worker.State != linkApproved || wid.Role != pki.RoleWorker || wid.Name != "dual" || r.Worker.Owner != "alice" ||
+		wte == nil || !bytes.Equal(wte.NodeKey, wk.Public().(ed25519.PublicKey)) {
+		t.Fatalf("worker half: %v %v %v", r.Worker, wid, wte)
+	}
+	if _, err := tls.X509KeyPair(r.CertPem, d.keyPEM); err != nil {
+		t.Fatal(err)
+	}
+	if wa := connectWorker(t, h, r.Worker, wkeyPEM); wa.Owner != "alice" {
+		t.Fatalf("worker access: %v", wa)
+	}
+	if _, err := ec.PollLink(tctx(t), &pb.PollLinkRequest{PollToken: d.st.PollToken}); status.Code(err) != codes.NotFound {
+		t.Fatalf("result delivered twice: %v", err)
+	}
+
+	// The worker name is taken: nothing is enrolled.
+	d, _, err = startBoth(t, ec, "", "dual", nk, wk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, confirm = alice.lookup(d.st.UserCode)
+	if c, body := alice.decide(confirm, "approve"); c != http.StatusConflict || !strings.Contains(body, "is taken") {
+		t.Fatalf("taken worker name: %d %s", c, body)
+	}
+	if r := poll(t, h, ec, d); r.State != linkDenied || r.CertPem != nil || r.Worker != nil {
+		t.Fatalf("failed approval delivered: %v", r)
+	}
+	// The device's name is taken (by the worker): the new worker is taken back.
+	d, _, err = startBoth(t, ec, "dual", "dual2", nk, wk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, confirm = alice.lookup(d.st.UserCode)
+	if c, _ := alice.decide(confirm, "approve"); c != http.StatusConflict {
+		t.Fatalf("taken device name: %d", c)
+	}
+	h.mu.Lock()
+	n := h.nodes["dual2"]
+	h.mu.Unlock()
+	if n == nil || n.rec.State != stateRevoked {
+		t.Fatalf("worker of a failed pairing: %+v", n)
+	}
+}
+
+// TestLinkBothClient: hubclient.Link with kind both, end to end - one
+// code, both certificates, each on its own key.
+func TestLinkBothClient(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	alice := newWeb(t, h)
+	alice.passwordSignIn(h, "alice-web", "user", "alice")
+	codeCh := make(chan string, 1)
+	done := make(chan error, 1)
+	var res *hubclient.JoinResult
+	go func() {
+		var err error
+		res, err = hubclient.Link(context.Background(), h.Addr("grpc"), hubclient.LinkOptions{Kind: linkBoth,
+			JoinOptions: hubclient.JoinOptions{Name: "laptop", Fingerprint: pki.Fingerprint(th.ca.Cert)},
+			Worker:      hubclient.JoinOptions{Name: "laptop-w"},
+			Show:        func(st *pb.StartLinkResponse) { codeCh <- st.UserCode }})
+		done <- err
+	}()
+	var code string
+	select {
+	case code = <-codeCh:
+	case err := <-done:
+		t.Fatal(err)
+	}
+	_, confirm := alice.lookup(code)
+	if !strings.Contains(confirm, "<code>laptop-w</code>") {
+		t.Fatalf("confirmation: %s", confirm)
+	}
+	if c, body := alice.decide(confirm, "approve"); c != 200 || !strings.Contains(body, "worker laptop-w is yours") {
+		t.Fatalf("approve: %d %s", c, body)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Link did not finish")
+	}
+	id, _ := identityOf(t, res.Resp)
+	if res.Worker == nil {
+		t.Fatalf("no worker: %+v", res)
+	}
+	wid, _ := identityOf(t, res.Worker.Resp)
+	if id.Name != "laptop" || id.Role != pki.RoleClient || wid.Name != "laptop-w" || wid.Role != pki.RoleWorker ||
+		res.Worker.Resp.Owner != "alice" || !res.Pinned || !res.Worker.Pinned || string(res.KeyPEM) == string(res.Worker.KeyPEM) {
+		t.Fatalf("linked: %v %v %+v", id, wid, res)
+	}
+	if _, err := tls.X509KeyPair(res.Worker.Resp.CertPem, res.Worker.KeyPEM); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestEntraLoginBothRollback: az sign-in of both roles is all or nothing
+// - a device that fails (its name taken) takes the worker just enrolled
+// back (revoked through its own certificate), so a retry may use the
+// worker's name again.
+func TestEntraLoginBothRollback(t *testing.T) {
+	f := newFakeEntra(t)
+	h := newEntraHub(t, f, nil)
+	h.joinLimit = newIPLimiter(100, 100)
+	fp := pki.Fingerprint(h.ca.Cert)
+	tok := func(oid, upn string) func(context.Context, *pb.AuthInfoResponse) (string, error) {
+		return func(context.Context, *pb.AuthInfoResponse) (string, error) {
+			return f.sign(f.accessClaims(oid, upn)), nil
+		}
+	}
+	alice := tok("a11ce000-0000-4000-8000-000000000401", "alice@example.com")
+	both := func(device, worker string) (*hubclient.JoinResult, *hubclient.JoinResult, error) {
+		return hubclient.LoginBoth(tctx(t), h.Addr("grpc"),
+			hubclient.LoginOptions{JoinOptions: hubclient.JoinOptions{Name: device, Fingerprint: fp}, Token: alice},
+			hubclient.LoginOptions{JoinOptions: hubclient.JoinOptions{Name: worker, Fingerprint: fp}, Token: alice})
+	}
+	// bob's worker holds the name alice's device asks for
+	if _, err := hubclient.Login(tctx(t), h.Addr("grpc"), hubclient.LoginOptions{Kind: linkWorker,
+		JoinOptions: hubclient.JoinOptions{Name: "taken", Fingerprint: fp},
+		Token:       tok("b0b00000-0000-4000-8000-000000000402", "bob@example.com")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := both("taken", "aw"); status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("device name taken: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		h.mu.Lock()
+		n := h.nodes["aw"]
+		revoked := n != nil && n.rec.State == stateRevoked
+		h.mu.Unlock()
+		if revoked {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the worker of a failed sign-in was not taken back: %+v", n)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	cr, wr, err := both("alice-dev", "aw")
+	if err != nil {
+		t.Fatalf("retry with the same worker name: %v", err)
+	}
+	if cr.Resp.Name != "alice-dev" || wr.Resp.Name != "aw" || wr.Resp.Owner != "alice" {
+		t.Fatalf("retry: %v %v", cr.Resp, wr.Resp)
 	}
 }

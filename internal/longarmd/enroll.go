@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/signin"
@@ -155,55 +157,203 @@ func finishEnroll(out io.Writer, dataDir, hubAddr string, r *hubclient.JoinResul
 		return err
 	}
 	fmt.Fprintf(out, "joined as worker %s\n", r.Resp.Name)
-	if ow := r.Resp.Owner; ow != "" {
-		// The rule comes from the hub; pinning the owner locally holds
-		// even against the hub's operators. Never written from hub data.
-		fmt.Fprintf(out, "owned by %s: only %s (and whom %s shares it with) may use it\n", ow, ow, ow)
-		fmt.Fprintf(out, "to hold that even against the hub's admins, pin it in longarmd.toml: [access] owners = [%q], users = [%q]\n"+
-			"(plus whom you share with), and use end-to-end trust (longarmd trust add-user <%s's key line from longarm trust show>; docs/security.md)\n",
-			ow, ow, ow)
+	for _, s := range ownerNotes(r.Resp.Owner) {
+		fmt.Fprintln(out, s)
 	}
 	return nil
 }
 
+// ownerNotes tell the user of a worker owned by ow what that means and
+// how to hold it against the hub too.
+func ownerNotes(ow string) []string {
+	if ow == "" {
+		return nil
+	}
+	// The rule comes from the hub; pinning the owner locally holds even
+	// against the hub's operators. Never written from hub data.
+	return []string{
+		fmt.Sprintf("owned by %s: only %s (and whom %s shares it with) may use it", ow, ow, ow),
+		fmt.Sprintf("to hold that even against the hub's admins, pin it in longarmd.toml: [access] owners = [%q], users = [%q]\n"+
+			"(plus whom you share with), and use end-to-end trust (longarmd trust add-user <%s's key line from longarm trust show>; docs/security.md)",
+			ow, ow, ow),
+	}
+}
+
+// WorkerTarget is this machine's longarmd as a sign-in target
+// (signin.Target): an owned worker's enrollment in DataDir
+// (DefaultDataDir(): LONGARM_DATA_DIR, the MSI's C:\ProgramData\Longarm\longarmd,
+// /var/lib/longarmd as root, else ~/.longarm). Whoever installs it must
+// be able to write DataDir (the service account, or an administrator).
+type WorkerTarget struct {
+	DataDir string
+	// Force replaces an existing certificate.
+	Force bool
+}
+
+// Prepare refuses an enrolled data dir without Force, makes the data dir
+// and returns the worker's end-to-end trust binding.
+func (w WorkerTarget) Prepare(string) (*pki.CSRTrust, error) {
+	return prepareEnroll(w.DataDir, w.Force)
+}
+
+// Install writes an approved owned-worker enrollment. A longarmd service
+// waiting for its sign-in (hub.toml sign_in) picks it up by itself.
+func (w WorkerTarget) Install(hub string, r *hubclient.JoinResult, note func(string)) (string, error) {
+	if r.Resp.State != "approved" || r.Resp.Role != string(pki.RoleWorker) || r.Resp.Owner == "" {
+		return "", fmt.Errorf("the hub answered %s %s (owner %q), not an owned worker", r.Resp.State, r.Resp.Role, r.Resp.Owner)
+	}
+	if err := installEnrollment(w.DataDir, hub, r); err != nil {
+		return "", err
+	}
+	if note != nil {
+		for _, s := range ownerNotes(r.Resp.Owner) {
+			note(s)
+		}
+	}
+	return w.DataDir, nil
+}
+
 // LoginOptions for Login.
 type LoginOptions struct {
-	Name        string
-	Fingerprint string // pin the hub CA (sha256 hex); empty = trust on first use
-	Force       bool   // replace an existing certificate
+	Name string // worker name (default: the hostname)
+	// Fingerprint pins the hub CA (sha256 hex); empty: fetched from
+	// https://<hub>/ca.crt (signin.SignIn).
+	Fingerprint string
+	Force       bool // replace an existing certificate
 	// Az: sign in with the Azure CLI's token (EntraJoin) instead of
 	// pairing; Scope overrides the token's scope.
 	Az      bool
 	Scope   string
 	Browser bool // pairing: open the /link page here if there is a desktop
-	Out     io.Writer
+	// Client: also sign in the user's client device (role both) - one
+	// code, one approval for both - into ConfigDir (longarm's config dir)
+	// as DeviceName (default <user>-<hostname>).
+	Client     bool
+	ConfigDir  string
+	DeviceName string
+	Out        io.Writer
 }
 
 // Login enrolls this worker as its user's own worker with the user's
 // Microsoft account (`longarmd login`): by pairing - the user approves a
 // code at the hub's /link page, in any browser - or with az's token (Az).
-// The worker is approved right away and owned by that user.
-func Login(ctx context.Context, dataDir, hubAddr string, o LoginOptions) error {
-	tr, err := prepareEnroll(dataDir, o.Force)
-	if err != nil {
-		return err
+// The worker is approved right away and owned by that user. With Client
+// the same approval also makes this machine the user's client device.
+func Login(ctx context.Context, dataDir, hub string, o LoginOptions) error {
+	so := signin.Options{Hub: hub, Fingerprint: o.Fingerprint, WorkerName: o.Name, DeviceName: o.DeviceName,
+		Worker: WorkerTarget{DataDir: dataDir, Force: o.Force}, Scope: o.Scope, OpenBrowser: o.Browser}
+	if o.Client {
+		so.Client = client.DeviceTarget{ConfigDir: o.ConfigDir, Force: o.Force}
 	}
-	hubAddr = hubclient.NormalizeAddr(hubAddr)
-	jo := hubclient.JoinOptions{Name: o.Name, Fingerprint: o.Fingerprint, Trust: tr}
-	var r *hubclient.JoinResult
 	if o.Az {
-		r, err = hubclient.Login(ctx, hubAddr, hubclient.LoginOptions{JoinOptions: jo, Kind: "worker",
-			Token: func(ctx context.Context, info *pb.AuthInfoResponse) (string, error) {
-				return signin.AzToken(ctx, info, o.Scope)
-			}})
-	} else {
-		r, err = signin.Pair(ctx, hubAddr, "worker", jo, o.Out, o.Browser)
+		so.Method = signin.MethodAz
 	}
+	r, err := signin.SignIn(ctx, so, signin.Console(o.Out))
 	if err != nil {
 		return err
 	}
-	if r.Resp.State != "approved" || r.Resp.Role != "worker" || r.Resp.Owner == "" {
-		return fmt.Errorf("the hub answered %s %s (owner %q), not an owned worker", r.Resp.State, r.Resp.Role, r.Resp.Owner)
+	fmt.Fprintf(o.Out, "hub CA verified (%s)\n", r.CAFingerprint)
+	fmt.Fprintf(o.Out, "joined as worker %s\n", r.Worker.Name)
+	if r.Device != nil {
+		fmt.Fprintf(o.Out, "signed in to %s as %s/%s (config %s)\n", r.Hub, r.Device.Role, r.Device.Name, r.Device.Dir)
 	}
-	return finishEnroll(o.Out, dataDir, hubAddr, r)
+	return nil
+}
+
+// PendingHub is the hub `longarmd login` signs in to when none is given:
+// the data dir's hub.toml (an installer's sign-in to come, or the hub this
+// worker is enrolled with, its CA pinned), else the hub the MSI recorded.
+// fp, when given, wins.
+func PendingHub(dataDir, fp string) (string, string, error) {
+	hf, err := hubclient.LoadFile(dataDir)
+	if err != nil {
+		return "", "", err
+	}
+	if hf.Address != "" {
+		if fp == "" {
+			fp = hf.CAFingerprint
+		}
+		if fp == "" {
+			if b, err := os.ReadFile(filepath.Join(dataDir, TLSDir, pki.CACertFile)); err == nil {
+				if ca, err := pki.ParseCertPEM(b); err == nil {
+					fp = pki.Fingerprint(ca)
+				}
+			}
+		}
+		return hf.Address, fp, nil
+	}
+	if hub, ifp := signin.InstalledHub(); hub != "" {
+		if fp == "" {
+			fp = ifp
+		}
+		return hub, fp, nil
+	}
+	return "", "", fmt.Errorf("which hub? longarmd login <hub>, e.g. longarmd login longarm.example.com (no hub in %s)", filepath.Join(dataDir, hubclient.File))
+}
+
+// SetUpSignIn records a hub for a sign-in to come (the MSI with LOGIN=1,
+// install-helper setup --login): hub.toml with the address, the CA
+// fingerprint if known and sign_in, so that longarmd waits for its
+// certificate and `longarmd login` / the tray need no input. An existing
+// enrollment is left alone.
+func SetUpSignIn(dataDir, hub, fp string) error {
+	if _, err := os.Stat(filepath.Join(dataDir, TLSDir, pki.NodeCertFile)); err == nil {
+		return nil
+	}
+	return hubclient.SaveFile(dataDir, hubclient.Config{Address: strings.TrimSpace(hub), SignIn: true,
+		CAFingerprint: pki.NormalizeFingerprint(fp)})
+}
+
+// waitSignIn holds longarmd's start while a sign-in is to come (hub.toml
+// sign_in): it returns once the enrollment is installed - the certificate
+// there and hub.toml rewritten without sign_in (longarmd login / the tray
+// write the certificate first, hub.toml last) - or ctx ends. The caller
+// re-reads hub.toml afterwards (Config.reloadHubFile).
+func waitSignIn(ctx context.Context, dataDir string, log *slog.Logger) error {
+	cert := filepath.Join(dataDir, TLSDir, pki.NodeCertFile)
+	var last time.Time
+	for {
+		hf, _ := hubclient.LoadFile(dataDir)
+		if !hf.SignIn || hf.Address == "" {
+			if !last.IsZero() {
+				log.Info("signed in; starting", "hub", hf.Address)
+			}
+			return nil
+		}
+		if _, err := os.Stat(cert); err != nil && time.Since(last) > 10*time.Minute {
+			log.Info("waiting for this worker's sign-in", "hub", hf.Address,
+				"sign_in_with", "the Longarm tray, or: longarmd login --role both (as the service's account, or elevated)")
+			last = time.Now()
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+// applyHubFile merges hub.toml into the config: its address when
+// longarmd.toml names none (hubFromFile), and the pending poll token.
+func (c *Config) applyHubFile(hf hubclient.Config) {
+	if c.hubFromFile {
+		c.Hub.Address = hf.Address
+		c.Hub.Disabled = c.Hub.Disabled || hf.Disabled
+	}
+	c.HubPollToken = hf.PollToken
+}
+
+// reloadHubFile re-reads hub.toml (applyHubFile): an enrollment written
+// after LoadConfig - a sign-in the service waited for, or one that
+// finished just before - may have changed the hub address.
+func (c *Config) reloadHubFile() error {
+	if !c.hubLoaded { // a Config built in code (tests, join): nothing came from hub.toml
+		return nil
+	}
+	hf, err := hubclient.LoadFile(c.DataDir)
+	if err != nil {
+		return err
+	}
+	c.applyHubFile(hf)
+	return nil
 }

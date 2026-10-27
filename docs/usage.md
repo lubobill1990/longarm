@@ -427,7 +427,8 @@ longarm-hub --data-dir ./hub serve                             # :7443 gRPC+rela
 longarm-hub --data-dir ./hub ca show                           # CA fingerprint for --ca-fingerprint
 longarm-hub --data-dir ./hub join-code --role admin            # bootstrap the first admin (or longarm-hub issue)
 longarm join hub.example.com:7443 K7P-Q2M --ca-fingerprint <fp>  # this longarm: client/admin cert + hub.toml
-longarm login hub.example.com:7443 --ca-fingerprint <fp>      # or: sign in with Microsoft Entra ID (see below)
+longarm login hub.example.com                                  # or: sign in with Microsoft Entra ID (see below;
+                                                               # a hub with an HTTPS panel needs no port, no fingerprint)
 ```
 
 Adding machines:
@@ -444,7 +445,7 @@ longarm admin approve w3                 # (hub.toml auto_approve = true skips t
 #   $env:LONGARM_JOIN='K7P-Q2M'; irm https://hub.example.com/install.ps1 | iex
 #   curl -fsSL https://hub.example.com/install.sh | sh -s -- --join K7P-Q2M
 #   ... --login instead of a code: a worker of your own via your Microsoft account ("Sign in with
-#   Microsoft Entra ID" below)
+#   Microsoft Entra ID" below); --login --role both: also your client device, one approval for both
 longarm-hub release add ./dist --version 0.2.0   # files longarm-<os>-<arch>[.exe], longarmd-..., packages; see "Self-update" below
 ```
 
@@ -673,27 +674,62 @@ names get a digit, `alice2`; the UPN is kept, see `longarm admin user ls`).
 Like `longarm admin user add`, the first user turns multi-tenancy on.
 
 **Onboarding in one line** (the install scripts need a release in the hub's
-store, see "Self-update"; `--ca-fingerprint` is built into them):
+store, see "Self-update"; the hub's address and `--ca-fingerprint` are built
+into them):
 
 ```sh
-# a worker of your own (Linux / macOS; Windows: elevated PowerShell)
+# this machine as your worker AND your client device: one code, one approval
+curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --role both
+$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex   # elevated
+# a worker of your own only (Linux / macOS; Windows: elevated PowerShell)
 curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login
 $env:LONGARM_LOGIN=1; irm https://hub.example.com/install.ps1 | iex
-# a client device (or --role both: this machine as worker and client)
+# a client device only
 curl -fsSL https://hub.example.com/install.sh | sh -s -- --login --role client
 $env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='client'; irm https://hub.example.com/install.ps1 | iex
-# with longarm / longarmd installed already
-longarm login hub.example.com:7443 --ca-fingerprint <fp>
-longarmd login hub.example.com:7443 --ca-fingerprint <fp> [--name w3] [--data-dir D]
+# Windows MSI, no code at install time: the tray (or longarmd login) signs in afterwards
+msiexec /i longarm-windows-amd64.msi ROLES=both HUB=hub.example.com LOGIN=1 SERVICE_USER=.\me SERVICE_PASSWORD=...
+# with longarm / longarmd installed already: the hub's domain is enough
+longarmd login hub.example.com --role both     # worker + client, one approval (as the user who uses longarm)
+longarmd login hub.example.com [--name w3] [--data-dir D]   # a worker only
+longarm login hub.example.com                  # a client only
 ```
 
 Each prints the hub's `/link` address and a code:
 
 ```
-To link this worker as yours, sign in with your Microsoft account (or the hub's panel login) in a browser:
+hub hub.example.com:7443: CA 3f9a...c1 pinned (from https://hub.example.com/ca.crt, checked with this system's HTTPS roots)
+To link this machine as your device and your worker (one approval for both), sign in with your Microsoft account (or the hub's panel login) in a browser:
 
   Open https://hub.example.com/link and enter code BCDF-GHJK
 ```
+
+**The hub's domain is enough.** `longarm login` / `longarmd login` take
+`hub.example.com`, `https://hub.example.com` or `host:port` (the gRPC port;
+default 7443). Without `--ca-fingerprint` they fetch the hub's CA from
+`https://<host>/ca.crt` - the panel's Let's Encrypt certificate checked
+with the system's HTTPS roots, like a browser opening the panel - and pin
+its fingerprint (printed) exactly as `--ca-fingerprint` would; the gRPC
+address comes from `https://<host>/.well-known/longarm-hub` (the hub's
+`public_addr`). A hub without a public HTTPS panel (a private or LAN hub)
+fails with a message asking for `--ca-fingerprint <fp>` (`longarm-hub ca
+show`); a given fingerprint always wins and is still checked against the
+hub. Trust model: [security.md](security.md#first-contact-domain-only-sign-in).
+Without any hub, `longarm login` signs in to the hub its config dir already
+names (pinning its CA), `longarmd login` to the one the data dir's
+`hub.toml` names (e.g. written by the MSI with `LOGIN=1`), else to the hub
+the MSI recorded in `HKLM\Software\Longarm`.
+
+**One approval for both roles.** `longarmd login --role both` (what
+`--role both` of the install scripts runs, and what the tray does) sends two
+key requests - longarm's for the client device (`--config-dir`, default
+longarm's; `--device-name`, default `<user>-<hostname>`) and longarmd's for
+the worker (`--name`, default the host name) - with **one** code. The
+`/link` page says that approving makes the machine both your client device
+(acts as you) and your own worker (runs your jobs), and shows both names and
+node keys. One approval enrolls both; if either half fails (a taken worker
+name) neither is installed. Against a hub too old for this, login falls
+back to two codes, one after the other.
 
 Open the page in **any** browser - the machine itself needs none: a headless
 Linux box over SSH is fine, approve on your laptop or phone. Sign in with
@@ -732,13 +768,15 @@ longarmd login hub.example.com:7443 --az            # worker: az's token, no bro
 `longarmd login` writes what `longarmd join` writes (certificate, `hub.toml`,
 `worker-access.json` with you as the owner) and prints the same hint for
 pinning the owner locally; install the service afterwards as usual (the
-install scripts do).
+install scripts do; a service installed by the MSI with `LOGIN=1` waits for
+the sign-in and starts serving by itself).
 
 `longarm login` finds `az` on PATH (Windows: also under `Program Files\Microsoft
 SDKs\Azure\CLI2\wbin`), or at `$LONGARM_AZ`. The token goes only to the hub,
-over the TLS connection that `--ca-fingerprint` pins (without it: trust on
-first use, with a warning, as `longarm join`); it is never printed or stored.
-The pairing runs over that connection too, so pin it there as well.
+over the TLS connection pinned to the hub's CA (`--ca-fingerprint`, or the
+fingerprint fetched over HTTPS as above; login never trusts a CA on first
+use); it is never printed or stored. The pairing runs over that connection
+too.
 
 `hub.toml` (every key also as an environment variable, for containers):
 
@@ -982,7 +1020,13 @@ SYSTEM/Administrators/the service account only) or `both` (JOIN_CODE = the worke
 client's). The MSI adds inbound UDP+TCP firewall rules for longarm, longarmd and
 longarm-tray, puts them on PATH, starts the tray at logon, and on uninstall stops
 the service, makes the worker leave its hub (`longarmd leave`) and removes
-everything (`KEEP_DATA=1` keeps jobs and mirrors). The hub's
+everything (`KEEP_DATA=1` keeps jobs and mirrors). `LOGIN=1` instead of join codes
+(`msiexec /i longarm.msi /qn ROLES=both HUB=longarm.example.com LOGIN=1 SERVICE_USER=.. SERVICE_PASSWORD=..`):
+the MSI records `HUB` (the bare domain will do) and `CA_FINGERPRINT` (optional) in
+`HKLM\Software\Longarm` and the data dir's `hub.toml`, starts the service, which waits
+for its sign-in, and runs no console login itself; afterwards the tray - or
+`longarmd login --role both` as the service's account (or elevated) - signs the machine
+in with one Microsoft approval and no further input. The hub's
 `install.ps1` / `install.sh` use the MSI / deb / rpm when the release has them
 (elevated / root), else they install the bare binaries as before
 (`-NoMsi`, `--no-package`).

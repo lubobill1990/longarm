@@ -129,7 +129,8 @@ var shTmpl = template.Must(template.New("sh").Parse(`#!/bin/sh
 # joins the fleet (pinning the hub CA {{.Fingerprint}})
 # and, for workers, installs and starts the longarmd service.
 # --login instead of a join code: sign in with your Microsoft account - longarmd login (workers,
-# yours) / longarm login (clients) print a code to approve at {{.BaseURL}}/link in any browser.
+# yours) / longarm login (clients) print a code to approve at {{.BaseURL}}/link in any browser;
+# --role both: one code and one approval make this machine your worker and your client.
 set -eu
 HUB_URL='{{.BaseURL}}'
 HUB_ADDR='{{.HubAddr}}'
@@ -199,13 +200,14 @@ if [ -n "$PKG" ]; then
     # The package's postinst had no code: sign in as the sudo user, then start its service.
     AS=''; [ -n "$U" ] && AS="sudo -H -u $U"
     NAMEARG=''; [ -n "$NAME" ] && NAMEARG="--name $NAME"
+    # both: one code, one approval for the worker and this user's longarm
     if [ "$ROLE" != client ]; then
-      $AS longarmd login "$HUB_ADDR" --ca-fingerprint "$CA_FP" $NAMEARG
+      $AS longarmd login "$HUB_ADDR" --ca-fingerprint "$CA_FP" --role "$ROLE" $NAMEARG
       systemctl enable --now "longarmd@$U"
       echo "longarmd@$U started"
-      NAMEARG=''
+    else
+      $AS longarm login "$HUB_ADDR" --ca-fingerprint "$CA_FP" $NAMEARG
     fi
-    [ "$ROLE" = worker ] || $AS longarm login "$HUB_ADDR" --ca-fingerprint "$CA_FP" $NAMEARG
   fi
   exit 0
 fi
@@ -235,9 +237,11 @@ if [ "$LOGIN" = 1 ]; then
   case "$ROLE" in
     client) $CAS "$PREFIX/longarm" login "$HUB_ADDR" --ca-fingerprint "$CA_FP" $NAMEARG ;;
     worker|both)
-      $AS "$PREFIX/longarmd" login "$HUB_ADDR" --ca-fingerprint "$CA_FP" $NAMEARG $DD
+      # both, longarmd and longarm as the same account: one code, one approval
+      R="$ROLE"; [ "$AS" = "$CAS" ] || R=worker
+      $AS "$PREFIX/longarmd" login "$HUB_ADDR" --ca-fingerprint "$CA_FP" --role "$R" $NAMEARG $DD
       start_service ""
-      [ "$ROLE" = worker ] || $CAS "$PREFIX/longarm" login "$HUB_ADDR" --ca-fingerprint "$CA_FP" ;;
+      [ "$ROLE" = "$R" ] || $CAS "$PREFIX/longarm" login "$HUB_ADDR" --ca-fingerprint "$CA_FP" ;;
     *) echo "install.sh: unknown role $ROLE" >&2; exit 2;;
   esac
   exit 0
@@ -267,7 +271,7 @@ var ps1Tmpl = template.Must(template.New("ps1").Parse(`# Longarm installer (Wind
 # and, for workers, installs the longarmd service.
 # -Login ($env:LONGARM_LOGIN=1) instead of a join code: sign in with your Microsoft account -
 # longarmd login (workers, yours) / longarm login (clients) print a code to approve at
-# {{.BaseURL}}/link in any browser.
+# {{.BaseURL}}/link in any browser; -Role both: one code and one approval for both.
 param(
   [string]$Join = $env:LONGARM_JOIN,
   [switch]$Login = ($env:LONGARM_LOGIN -eq '1'),
@@ -389,12 +393,11 @@ function Install-WorkerService([string]$note) {
 if ($Login) {
   if ($Role -notin 'worker', 'client', 'both') { throw "unknown role $Role" }
   if ($Role -ne 'client') {
-    & (Join-Path $Prefix 'longarmd.exe') login $HubAddr --ca-fingerprint $CaFp @nameArgs @ddArgs
+    # both: one code, one approval for the worker and your longarm
+    & (Join-Path $Prefix 'longarmd.exe') login $HubAddr --ca-fingerprint $CaFp --role $Role @nameArgs @ddArgs
     if ($LASTEXITCODE) { throw "longarmd login failed ($LASTEXITCODE)" }
     Install-WorkerService ''
-    $nameArgs = @()
-  }
-  if ($Role -ne 'worker') {
+  } else {
     & (Join-Path $Prefix 'longarm.exe') login $HubAddr --ca-fingerprint $CaFp @nameArgs
     if ($LASTEXITCODE) { throw "longarm login failed ($LASTEXITCODE)" }
   }

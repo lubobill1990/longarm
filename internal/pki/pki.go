@@ -396,6 +396,23 @@ func LoadBundle(dir string) (*Bundle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load TLS bundle: %w", err)
 	}
+	return newBundle(pool, cert)
+}
+
+// ParseBundle is LoadBundle from memory (an enrollment not installed).
+func ParseBundle(caPEM, certPEM, keyPEM []byte) (*Bundle, error) {
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, errors.New("no CA certificate")
+	}
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("TLS bundle: %w", err)
+	}
+	return newBundle(pool, cert)
+}
+
+func newBundle(pool *x509.CertPool, cert tls.Certificate) (*Bundle, error) {
 	leaf, err := x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
 		return nil, err

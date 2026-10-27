@@ -227,8 +227,9 @@ func (p *proc) wait(t *testing.T) int {
 // login and longarm login (no az: falls back) print a code; the user,
 // signed in to the panel with Microsoft, approves it at /link; the worker
 // joins as theirs and serves them, the client acts as them. A denied
-// pairing and one the hub forgot (restart) fail cleanly; the install
-// script's --login does the same.
+// pairing and one the hub forgot (restart) fail cleanly; longarmd login
+// --role both enrolls the worker and the client with one code and one
+// approval; the install script's --login --role both does the same.
 func TestHubPairing(t *testing.T) {
 	t.Parallel()
 	a := newFakeAuthority(t)
@@ -288,6 +289,28 @@ func TestHubPairing(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(w2.dataDir, "tls", "node.crt")); err == nil {
 		t.Fatal("a denied worker got a certificate")
 	}
+
+	// both roles, one code, one approval: longarmd login --role both makes
+	// this machine erin's worker and her client device
+	w3 := h.newWorkerDir(t, "pboth", "")
+	erin2 := filepath.Join(h.root, "erin2")
+	p = startProc(t, exec.Command(bins.longarmd, "login", h.addr(), "--data-dir", w3.dataDir, "--ca-fingerprint", h.fp,
+		"--name", "pboth", "--role", "both", "--config-dir", erin2, "--device-name", "erin-pboth"))
+	_, code = p.code(t)
+	if out := erinWeb.decide(code, "approve", "Approving does <b>two</b> things", "client device (acts as you) + worker (runs jobs)",
+		"<code>pboth</code>", "<code>erin-pboth</code>", "jobs you run may be placed on it"); !strings.Contains(out,
+		"device erin-pboth is signed in as erin (client), and worker pboth is yours") {
+		t.Fatalf("approve both: %s", out)
+	}
+	if c := p.wait(t); c != 0 || strings.Count(p.out.String(), "enter code") != 1 || !strings.Contains(p.out.String(), "joined as worker pboth") ||
+		!strings.Contains(p.out.String(), "owned by erin") || !strings.Contains(p.out.String(), "client/erin-pboth") {
+		t.Fatalf("longarmd login --role both: %d\n%s", c, p.out.String())
+	}
+	w3.start(t, true)
+	h.waitNode(t, "pboth", "online, erin's", func(n map[string]any) bool { return isTrue(n["online"]) && n["owner"] == "erin" })
+	if r := h.longarm(erin2, "exec", "pboth", "--", bins.helper, "print", "1", "0", "0"); r.code != 0 || !strings.Contains(r.stdout, "line 1") {
+		t.Fatalf("erin's device on her worker, one approval: %+v", r)
+	}
 	// forgotten by the hub (restarted): the code is dead, and login says so
 	cmd = exec.Command(bins.longarm, "login", h.addr(), "--ca-fingerprint", h.fp, "--link")
 	cmd.Env = append(os.Environ(), "LONGARM_CONFIG_DIR="+filepath.Join(h.root, "frank"))
@@ -310,7 +333,8 @@ func TestHubPairing(t *testing.T) {
 		copyBin(t, src, filepath.Join(rel, fmt.Sprintf("%s-%s-%s%s", tool, runtime.GOOS, runtime.GOARCH, suffix)))
 	}
 	h.hubCmd(t, "release", "add", rel, "--version", "1.2.3")
-	prefix, dd := filepath.Join(h.root, "inst-bin"), filepath.Join(h.root, "inst-data")
+	// --role both: one code for the worker and the client
+	prefix, dd, cfg := filepath.Join(h.root, "inst-bin"), filepath.Join(h.root, "inst-data"), filepath.Join(h.root, "inst-cfg")
 	if runtime.GOOS == "windows" {
 		pwsh, err := exec.LookPath("pwsh")
 		if err != nil {
@@ -318,20 +342,24 @@ func TestHubPairing(t *testing.T) {
 		}
 		cmd = exec.Command(pwsh, "-NoProfile", "-NonInteractive", "-Command", fmt.Sprintf("irm %s/install.ps1 | iex", h.httpURL()))
 		cmd.Env = append(os.Environ(), "LONGARM_LOGIN=1", "LONGARM_NO_SERVICE=1", "LONGARM_NO_PATH=1", "LONGARM_NO_FIREWALL=1",
-			"LONGARM_PREFIX="+prefix, "LONGARM_DATA_DIR="+dd, "LONGARM_NAME=inst")
+			"LONGARM_PREFIX="+prefix, "LONGARM_DATA_DIR="+dd, "LONGARM_NAME=inst", "LONGARM_ROLE=both", "LONGARM_CONFIG_DIR="+cfg)
 	} else {
 		if _, err := exec.LookPath("curl"); err != nil {
 			t.Skip("curl not installed")
 		}
-		cmd = exec.Command("sh", "-c", fmt.Sprintf("curl -fsSL %s/install.sh | sh -s -- --login --no-service --prefix %s --data-dir %s --name inst",
+		cmd = exec.Command("sh", "-c", fmt.Sprintf("curl -fsSL %s/install.sh | sh -s -- --login --role both --no-service --prefix %s --data-dir %s --name inst",
 			h.httpURL(), prefix, dd))
-		cmd.Env = append(os.Environ(), "HOME="+h.root)
+		cmd.Env = append(os.Environ(), "HOME="+h.root, "LONGARM_CONFIG_DIR="+cfg)
 	}
 	p = startProc(t, cmd)
 	_, code = p.code(t)
-	erinWeb.decide(code, "approve", "<code>inst</code>")
-	if c := p.wait(t); c != 0 || !strings.Contains(p.out.String(), "joined as worker inst") || !strings.Contains(p.out.String(), "owned by erin") {
-		t.Fatalf("install --login: %d\n%s", c, p.out.String())
+	erinWeb.decide(code, "approve", "<code>inst</code>", "Approving does <b>two</b> things")
+	if c := p.wait(t); c != 0 || strings.Count(p.out.String(), "enter code") != 1 || !strings.Contains(p.out.String(), "joined as worker inst") ||
+		!strings.Contains(p.out.String(), "owned by erin") || !strings.Contains(p.out.String(), "client/erin-") {
+		t.Fatalf("install --login --role both: %d\n%s", c, p.out.String())
+	}
+	if _, err := os.Stat(filepath.Join(cfg, "tls", "node.crt")); err != nil {
+		t.Fatalf("install --login --role both: no client certificate: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(prefix, "longarmd"+suffix)); err != nil {
 		t.Fatalf("longarmd not installed: %v", err)

@@ -10,6 +10,9 @@
   BinDir holds longarm.exe and longarmd.exe (and longarm-tray.exe, which is included when present).
   The MSI's worker data dir defaults to C:\ProgramData\Longarm\longarmd (DATADIR), the same dir
   longarmd itself uses as LocalSystem and for `service install --isolation per-user`.
+  Install modes (longarm.wxs): JOIN_CODE=... enrolls during the install; LOGIN=1 (with HUB, the bare
+  domain will do) installs without a code and records the hub, so the tray or `longarmd login`
+  signs the machine in afterwards with one Microsoft approval and no further input.
 #>
 param(
   [Parameter(Mandatory)] [string] $BinDir,

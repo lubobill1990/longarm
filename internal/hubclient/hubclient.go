@@ -54,6 +54,13 @@ type Config struct {
 	// worker-access.json such a worker serves only the owner until the
 	// hub says more - never everybody.
 	Owner string `toml:"owner,omitempty"`
+	// SignIn (workers): an installer set this hub up for a sign-in to come
+	// (the MSI with LOGIN=1): longarmd waits for its certificate instead of
+	// failing, and `longarmd login` without a hub signs in to Address.
+	SignIn bool `toml:"sign_in,omitempty"`
+	// CAFingerprint the installer was given for that sign-in ("": fetched
+	// over HTTPS then).
+	CAFingerprint string `toml:"ca_fingerprint,omitempty"`
 	// Tailnet is the hub's tailnet this node is enrolled in (Tailscale or
 	// Headscale).
 	Tailnet TailnetConfig `toml:"tailnet,omitempty"`
@@ -284,6 +291,9 @@ type JoinResult struct {
 	KeyPEM        []byte
 	CAFingerprint string
 	Pinned        bool // the CA matched the given fingerprint
+	// Worker: a kind "both" pairing's worker enrollment (Resp, KeyPEM
+	// above are the client's)
+	Worker *JoinResult
 }
 
 // enrollTLS verifies the hub without a CA yet: the hub sends its CA in the
@@ -391,16 +401,72 @@ func Login(ctx context.Context, addr string, o LoginOptions) (*JoinResult, error
 	return checkResult(resp, ca, keyPEM, o.Fingerprint)
 }
 
+// LoginBoth enrolls a client device and an owned worker of the same user
+// with one token source (Login twice), all or nothing, like a kind
+// "both" pairing: the worker first (its name may be taken: then nothing
+// was enrolled), then the device. If the device fails, the worker
+// enrollment just made is taken back with its own certificate
+// (HubNode.Leave: the hub revokes exactly that node, proven by the key
+// only this process holds) - neither installed nor left behind, so a
+// retry may use the same worker name. Reusing it on a retry instead would
+// need the orphaned key kept on disk; revoking needs nothing kept. If even
+// the Leave fails (the hub went away), the error names the worker to
+// remove (longarm worker remove).
+func LoginBoth(ctx context.Context, addr string, client, worker LoginOptions) (cr, wr *JoinResult, err error) {
+	worker.Kind, client.Kind = "worker", ""
+	if wr, err = Login(ctx, addr, worker); err != nil {
+		return nil, nil, err
+	}
+	if cr, err = Login(ctx, addr, client); err == nil && cr.Resp.State != "approved" {
+		err = fmt.Errorf("enrollment is %s: %s", cr.Resp.State, cr.Resp.Message)
+	}
+	if err != nil {
+		if lerr := Abandon(ctx, addr, wr, "sign-in failed: "+err.Error()); lerr != nil {
+			return nil, nil, fmt.Errorf("%w (and the worker %s enrolled with it could not be taken back: %v; remove it: longarm worker remove %s)",
+				err, wr.Resp.Name, lerr, wr.Resp.Name)
+		}
+		return nil, nil, err
+	}
+	return cr, wr, nil
+}
+
+// Abandon revokes an enrollment that won't be installed (HubNode.Leave
+// with its own, never installed certificate).
+func Abandon(ctx context.Context, addr string, r *JoinResult, reason string) error {
+	if r == nil || r.Resp.State != "approved" {
+		return nil
+	}
+	b, err := pki.ParseBundle(r.Resp.CaPem, r.Resp.CertPem, r.KeyPEM)
+	if err != nil {
+		return err
+	}
+	conn, err := Dial(addr, b)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second) // also after a cancel
+	defer cancel()
+	_, err = conn.Node().Leave(lctx, &pb.LeaveRequest{Reason: reason})
+	return err
+}
+
 // LinkOptions for Link: like JoinOptions, plus what to enroll as and where
 // the code goes.
 type LinkOptions struct {
-	JoinOptions
-	Kind string // "client" or "worker"
+	JoinOptions        // kind both: the client's (Fingerprint pins both)
+	Kind        string // "client", "worker" or "both"
+	// Worker: kind both, the worker's name and trust binding (its own key;
+	// Fingerprint unused).
+	Worker JoinOptions
 	// Show is called once with the code and the URL to enter it at.
 	Show func(*pb.StartLinkResponse)
 }
 
 var (
+	// ErrNoBothLink: the hub predates kind "both" pairings (one code for a
+	// client and a worker); pair the two separately.
+	ErrNoBothLink  = errors.New("this hub can't pair a client and a worker with one code (update it); sign in the two separately")
 	ErrLinkDenied  = errors.New("the pairing was denied")
 	ErrLinkExpired = errors.New("the code expired before it was approved; run login again")
 )
@@ -413,6 +479,12 @@ func Link(ctx context.Context, addr string, o LinkOptions) (*JoinResult, error) 
 	if err != nil {
 		return nil, err
 	}
+	var wkeyPEM, wcsrPEM []byte
+	if o.Kind == "both" {
+		if wkeyPEM, wcsrPEM, err = pki.NewKeyAndCSR(o.Worker.Name, o.Worker.Trust); err != nil {
+			return nil, err
+		}
+	}
 	var ca *x509.Certificate
 	c, err := dial(NormalizeAddr(addr), enrollTLS(o.Fingerprint, &ca))
 	if err != nil {
@@ -421,7 +493,10 @@ func Link(ctx context.Context, addr string, o LinkOptions) (*JoinResult, error) 
 	defer c.Close()
 	host, _ := os.Hostname()
 	st, err := c.Enroll().StartLink(ctx, &pb.StartLinkRequest{Kind: o.Kind, CsrPem: csrPEM, Name: o.Name, Hostname: host,
-		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version})
+		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version, WorkerCsrPem: wcsrPEM, WorkerName: o.Worker.Name})
+	if o.Kind == "both" && status.Code(err) == codes.InvalidArgument && strings.Contains(status.Convert(err).Message(), "want client or worker") {
+		return nil, ErrNoBothLink
+	}
 	if status.Code(err) == codes.Unimplemented {
 		return nil, errors.New("this hub is too old for signing in through the browser (update it, or use a join code)")
 	}
@@ -458,7 +533,20 @@ func Link(ctx context.Context, addr string, o LinkOptions) (*JoinResult, error) 
 		}
 		switch resp.State {
 		case "approved":
-			return checkResult(resp, ca, keyPEM, o.Fingerprint)
+			r, err := checkResult(resp, ca, keyPEM, o.Fingerprint)
+			if err != nil || o.Kind != "both" {
+				return r, err
+			}
+			if resp.Worker == nil || resp.Worker.State != "approved" {
+				return nil, errors.New("the hub approved the device but sent no worker enrollment")
+			}
+			if len(resp.Worker.CaPem) == 0 {
+				resp.Worker.CaPem = resp.CaPem
+			}
+			if r.Worker, err = checkResult(resp.Worker, ca, wkeyPEM, o.Fingerprint); err != nil {
+				return nil, err
+			}
+			return r, nil
 		case "denied":
 			if resp.Message != "" && resp.Message != ErrLinkDenied.Error() {
 				return nil, fmt.Errorf("%w: %s", ErrLinkDenied, resp.Message)

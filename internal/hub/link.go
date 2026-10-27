@@ -34,7 +34,10 @@ import (
 // the panel with Microsoft, types the code, checks what asks (kind, name,
 // host, address, node key) and approves; the machine collects its
 // certificate (Enroll.PollLink). Approving is signing in: a client becomes
-// the approver's device, a worker the approver's own worker.
+// the approver's device, a worker the approver's own worker. Kind "both"
+// (a machine that is both: `longarmd login --role both`, the installers'
+// --role both, the tray) carries two CSRs - the client's key and
+// longarmd's - and one approval enrolls both; the page lists both.
 //
 // The code is only ever typed, never part of a link: a link that pre-fills
 // a code is what a phisher would send. Codes are 8 characters (20^8), live
@@ -49,6 +52,9 @@ import (
 const (
 	linkClient = "client"
 	linkWorker = "worker"
+	// linkBoth: a client device and an owned worker of the same machine
+	// (two CSRs: longarm's key and longarmd's), one code, one approval
+	linkBoth = "both"
 
 	pairingTTL    = 10 * time.Minute
 	linkInterval  = 5 * time.Second
@@ -91,11 +97,22 @@ type pairLink struct {
 	message                           string
 	resp                              *pb.JoinResponse // approved, until delivered
 	serial                            string           // of resp's certificate
+	// kind both: the worker's part (the fields above are the client's)
+	workerCSR               []byte
+	workerName, workerKeyID string
+	workerSerial            string
 }
 
+// drop forgets the CSRs (decided or expired).
+func (l *pairLink) drop() { l.csr, l.workerCSR = nil, nil }
+
 func (l *pairLink) fields() map[string]any {
-	return map[string]any{"id": l.id, "kind": l.kind, "name": l.name, "hostname": l.hostname, "ip": l.ip,
+	f := map[string]any{"id": l.id, "kind": l.kind, "name": l.name, "hostname": l.hostname, "ip": l.ip,
 		"os": l.os, "arch": l.arch, "node_key": l.keyID}
+	if l.kind == linkBoth {
+		f["worker_name"], f["worker_node_key"] = l.workerName, l.workerKeyID
+	}
+	return f
 }
 
 type pairing struct {
@@ -118,7 +135,8 @@ func (p *pairing) sweepLocked(now time.Time) []*pairLink {
 	var out []*pairLink
 	for th, l := range p.byPoll {
 		if l.state == linkPending && now.After(l.expires) {
-			l.state, l.message, l.csr = linkExpired, "the code expired before it was approved", nil
+			l.state, l.message = linkExpired, "the code expired before it was approved"
+			l.drop()
 			delete(p.byCode, l.code)
 			out = append(out, l)
 		}
@@ -208,14 +226,37 @@ func (h *Hub) linkURL(ctx context.Context) string {
 
 // ---------------------------------------------------------------- gRPC
 
+// linkCSR checks a pairing's CSR and requested name; it returns the CSR
+// as parsed (re-encoded: nothing else of what was sent is kept) and the
+// end-to-end trust node key it binds, if any. what prefixes errors.
+func linkCSR(csrPEM []byte, name, what string) ([]byte, string, error) {
+	csr, err := pki.ParseCSR(csrPEM) // bounded: pki.MaxCSR
+	if err != nil {
+		return nil, "", status.Errorf(codes.InvalidArgument, "%scsr: %v", what, err)
+	}
+	keyID := ""
+	if t, err := pki.TrustOfCSR(csr); err != nil {
+		return nil, "", status.Errorf(codes.InvalidArgument, "%scsr: %v", what, err)
+	} else if t != nil {
+		keyID = pki.KeyID(t.NodeKey)
+	}
+	if name != "" && !pki.ValidName(name) {
+		return nil, "", status.Errorf(codes.InvalidArgument, "invalid %sname %q", what, name)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr.Raw}), keyID, nil
+}
+
 func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) (*pb.StartLinkResponse, error) {
 	h := s.h
 	c := callerFrom(ctx)
 	if !h.joinLimit.allow(c.addr) {
 		return nil, status.Error(codes.ResourceExhausted, "too many join attempts; wait a minute")
 	}
-	if req.Kind != linkClient && req.Kind != linkWorker {
-		return nil, status.Errorf(codes.InvalidArgument, "kind %q: want client or worker", req.Kind)
+	if req.Kind != linkClient && req.Kind != linkWorker && req.Kind != linkBoth {
+		return nil, status.Errorf(codes.InvalidArgument, "kind %q: want client, worker or both", req.Kind)
+	}
+	if (req.Kind == linkBoth) != (len(req.WorkerCsrPem) > 0) {
+		return nil, status.Error(codes.InvalidArgument, "worker_csr_pem goes with kind both (and only with it)")
 	}
 	if err := h.linkUnavailable(); err != nil {
 		return nil, err
@@ -223,18 +264,19 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 	if err := checkDevice(req.Hostname, req.Os, req.Arch, req.Version); err != nil {
 		return nil, err
 	}
-	csr, err := pki.ParseCSR(req.CsrPem) // bounded: pki.MaxCSR
+	csr, keyID, err := linkCSR(req.CsrPem, req.Name, "")
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "csr: %v", err)
+		return nil, err
 	}
-	keyID := ""
-	if t, err := pki.TrustOfCSR(csr); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "csr: %v", err)
-	} else if t != nil {
-		keyID = pki.KeyID(t.NodeKey)
-	}
-	if req.Name != "" && !pki.ValidName(req.Name) {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid name %q", req.Name)
+	var wcsr []byte
+	var wkeyID string
+	if req.Kind == linkBoth {
+		if wcsr, wkeyID, err = linkCSR(req.WorkerCsrPem, req.WorkerName, "worker "); err != nil {
+			return nil, err
+		}
+		if req.WorkerName != "" && req.WorkerName == req.Name {
+			return nil, status.Errorf(codes.InvalidArgument, "the device and the worker can't both be named %q", req.Name)
+		}
 	}
 	u := h.linkURL(ctx)
 	if u == "" {
@@ -243,10 +285,10 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 	now := time.Now()
 	tok := randomToken()
 	// Kept: the CSR as parsed (re-encoded, nothing else of what was sent).
-	l := &pairLink{id: randomB64(12), pollHash: tokenHash(tok), kind: req.Kind, name: req.Name,
-		csr:      pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csr.Raw}),
+	l := &pairLink{id: randomB64(12), pollHash: tokenHash(tok), kind: req.Kind, name: req.Name, csr: csr,
 		hostname: req.Hostname, os: req.Os, arch: req.Arch, version: req.Version,
-		ip: ipOnly(c.addr), keyID: keyID, started: now, expires: now.Add(pairingTTL), state: linkPending}
+		ip: ipOnly(c.addr), keyID: keyID, started: now, expires: now.Add(pairingTTL), state: linkPending,
+		workerCSR: wcsr, workerName: req.WorkerName, workerKeyID: wkeyID}
 	p := h.pair
 	p.mu.Lock()
 	expired := p.sweepLocked(now)
@@ -292,7 +334,7 @@ func (s *enrollServer) PollLink(ctx context.Context, req *pb.PollLinkRequest) (*
 	th := tokenHash(req.PollToken)
 	l := p.byPoll[th]
 	var resp *pb.JoinResponse
-	var serial string
+	var serial, wserial string
 	var err error
 	switch {
 	case l == nil:
@@ -301,7 +343,7 @@ func (s *enrollServer) PollLink(ctx context.Context, req *pb.PollLinkRequest) (*
 		err = status.Errorf(codes.ResourceExhausted, "slow down: poll every %s", linkInterval)
 	case l.state == linkApproved:
 		// Delivered once: the poll token is spent with it.
-		resp, serial = l.resp, l.serial
+		resp, serial, wserial = l.resp, l.serial, l.workerSerial
 		delete(p.byPoll, th)
 	case l.state == linkDenied || l.state == linkExpired:
 		resp = &pb.JoinResponse{State: l.state, Message: l.message}
@@ -320,8 +362,11 @@ func (s *enrollServer) PollLink(ctx context.Context, req *pb.PollLinkRequest) (*
 		// Revoked (or replaced) since the approval: no certificate, and no
 		// tailnet key for it.
 		h.mu.Lock()
-		n := h.nodes[resp.Name]
-		live := n != nil && n.rec.State == stateApproved && n.rec.CertSerial == serial
+		liveNode := func(name, serial string) bool {
+			n := h.nodes[name]
+			return n != nil && n.rec.State == stateApproved && n.rec.CertSerial == serial
+		}
+		live := liveNode(resp.Name, serial) && (resp.Worker == nil || liveNode(resp.Worker.Name, wserial))
 		h.mu.Unlock()
 		if !live {
 			h.log.Warn("pairing result withheld: the node changed since the approval", "node", resp.Name, "remote", c.addr)
@@ -332,6 +377,9 @@ func (s *enrollServer) PollLink(ctx context.Context, req *pb.PollLinkRequest) (*
 		resp.CaPem, resp.HubName = h.ca.CertPEM, h.cfg.Name
 	}
 	h.attachTailnet(ctx, resp) // approved and live only
+	if resp.Worker != nil {
+		h.attachTailnet(ctx, resp.Worker)
+	}
 	return resp, nil
 }
 
@@ -509,8 +557,28 @@ func (h *Hub) approveLink(a *linkApprover, l *pairLink) (*pb.JoinResponse, error
 		return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled or unknown", user)
 	}
 	dev := deviceRequest{csr: l.csr, name: l.name, hostname: l.hostname, os: l.os, arch: l.arch, version: l.version}
-	if l.kind == linkWorker {
+	switch l.kind {
+	case linkWorker:
 		return h.enrollOwnedWorker(who, user, dev) // never an admin
+	case linkBoth:
+		// The worker first: its name may be taken (the device's never is,
+		// a device of the same user takes its name over).
+		wdev := dev
+		wdev.csr, wdev.name = l.workerCSR, l.workerName
+		w, err := h.enrollOwnedWorker(who, user, wdev)
+		if err != nil {
+			return nil, err
+		}
+		resp, _, err := h.enrollDevice(who, user, admin, dev)
+		if err != nil {
+			// all or nothing: the machine never collects the worker alone
+			if _, rerr := h.Revoke(who+" (pairing failed)", w.Name); rerr != nil {
+				h.log.Warn("pairing: revoking the worker of a failed approval", "node", w.Name, "err", rerr)
+			}
+			return nil, err
+		}
+		resp.Worker = w
+		return resp, nil
 	}
 	resp, _, err := h.enrollDevice(who, user, admin, dev)
 	return resp, err
@@ -527,6 +595,9 @@ type linkView struct {
 type linkDetails struct {
 	ID, Kind, Name, Hostname, OSArch, Version, IP, KeyID, Ago, Left string
 	Worker, Admin                                                   bool
+	// Both: a client device and a worker; Name / KeyID are the device's
+	Both                    bool
+	WorkerName, WorkerKeyID string
 }
 
 func (h *Hub) renderLink(w http.ResponseWriter, code int, v linkView) {
@@ -607,7 +678,8 @@ func (h *Hub) linkLookup(w http.ResponseWriter, r *http.Request) {
 	if valid && l != nil && l.state == linkPending {
 		d = &linkDetails{ID: l.id, Kind: l.kind, Name: l.name, Hostname: l.hostname, OSArch: l.os + "/" + l.arch,
 			Version: l.version, IP: l.ip, KeyID: l.keyID, Ago: now.Sub(l.started).Round(time.Second).String(),
-			Left: l.expires.Sub(now).Round(time.Second).String(), Worker: l.kind == linkWorker}
+			Left: l.expires.Sub(now).Round(time.Second).String(), Worker: l.kind == linkWorker,
+			Both: l.kind == linkBoth, WorkerName: l.workerName, WorkerKeyID: l.workerKeyID}
 	}
 	p.mu.Unlock()
 	h.auditExpired(expired)
@@ -619,6 +691,9 @@ func (h *Hub) linkLookup(w http.ResponseWriter, r *http.Request) {
 	}
 	if d.Name == "" {
 		d.Name = "(default, from the host name)"
+	}
+	if d.Both && d.WorkerName == "" {
+		d.WorkerName = "(default: the host name)"
 	}
 	d.Admin = !d.Worker && h.linkAdmin(a)
 	v.L, v.Token = d, h.linkFormToken(a.sessHash, "decide", d.ID)
@@ -663,7 +738,8 @@ func (h *Hub) linkDecide(w http.ResponseWriter, r *http.Request) {
 	}
 	delete(p.byCode, l.code) // single use, whatever the outcome
 	if decision == "deny" {
-		l.state, l.message, l.csr = linkDenied, "the pairing was denied", nil
+		l.state, l.message = linkDenied, "the pairing was denied"
+		l.drop()
 	} else {
 		l.state = linkApproving
 	}
@@ -687,17 +763,26 @@ func (h *Hub) linkDecide(w http.ResponseWriter, r *http.Request) {
 	p.mu.Lock()
 	if err != nil {
 		l.state, l.message = linkDenied, "the approval failed: "+errMessage(err)
-		l.csr = nil
+		l.drop()
 	} else {
-		l.state, l.resp, l.csr = linkApproved, resp, nil
+		l.state, l.resp = linkApproved, resp
+		l.drop()
 		if c, err := pki.ParseCertPEM(resp.CertPem); err == nil {
 			l.serial = pki.Serial(c)
+		}
+		if resp.Worker != nil {
+			if c, err := pki.ParseCertPEM(resp.Worker.CertPem); err == nil {
+				l.workerSerial = pki.Serial(c)
+			}
 		}
 	}
 	p.mu.Unlock()
 	fields["error"] = errString(err)
 	if resp != nil {
 		fields["node"], fields["role"] = resp.Name, resp.Role
+		if resp.Worker != nil {
+			fields["worker"] = resp.Worker.Name
+		}
 	}
 	h.auditHub(who, "link/approve", fields)
 	if err != nil {
@@ -707,9 +792,13 @@ func (h *Hub) linkDecide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log.Info("pairing approved", "id", l.id, "kind", l.kind, "node", resp.Name, "role", resp.Role, "by", a.user, "remote", l.ip)
-	if l.kind == linkWorker {
+	switch l.kind {
+	case linkWorker:
 		v.Done = "Approved: worker " + resp.Name + " is yours. Only you can use it until you share it."
-	} else {
+	case linkBoth:
+		v.Done = "Approved: device " + resp.Name + " is signed in as " + a.user + " (" + resp.Role + "), and worker " +
+			resp.Worker.Name + " is yours. Only you can use the worker until you share it."
+	default:
 		v.Done = "Approved: device " + resp.Name + " is signed in as " + a.user + " (" + resp.Role + ")."
 	}
 	h.renderLink(w, http.StatusOK, v)
@@ -726,14 +815,18 @@ input[name=code]{font-size:1.4em;letter-spacing:.1em;width:9em;text-transform:up
 {{if .SignIn}}<p><a href="{{.SignIn}}">Sign in</a></p>{{end}}
 {{if .Done}}<p><b>{{.Done}}</b></p><p>You can close this page.</p>
 {{else if .L}}{{with .L}}<p>A device asks to be linked to your account. Check that it is the one in front of you:</p>
-<table><tr><th>kind</th><td>{{if .Worker}}worker (runs jobs){{else}}client device (acts as you){{end}}</td></tr>
-<tr><th>name</th><td><code>{{.Name}}</code></td></tr>
+{{if .Both}}<p>Approving does <b>two</b> things for this machine: it becomes your <b>client device</b> (acts as you) <b>and</b> your own <b>worker</b> (runs your jobs).</p>{{end}}
+<table><tr><th>kind</th><td>{{if .Both}}client device (acts as you) + worker (runs jobs){{else if .Worker}}worker (runs jobs){{else}}client device (acts as you){{end}}</td></tr>
+<tr><th>{{if .Both}}device name{{else}}name{{end}}</th><td><code>{{.Name}}</code></td></tr>
+{{if .Both}}<tr><th>worker name</th><td><code>{{.WorkerName}}</code></td></tr>{{end}}
 <tr><th>host name</th><td><code>{{.Hostname}}</code></td></tr>
 <tr><th>system</th><td>{{.OSArch}}, version {{.Version}}</td></tr>
 <tr><th>address</th><td><code>{{.IP}}</code> (as the hub saw it)</td></tr>
-<tr><th>node key</th><td>{{if .KeyID}}<code>{{.KeyID}}</code> (compare: longarm trust show / longarmd trust status){{else}}none{{end}}</td></tr>
+<tr><th>{{if .Both}}device node key{{else}}node key{{end}}</th><td>{{if .KeyID}}<code>{{.KeyID}}</code> (compare: longarm trust show{{if not .Both}} / longarmd trust status{{end}}){{else}}none{{end}}</td></tr>
+{{if .Both}}<tr><th>worker node key</th><td>{{if .WorkerKeyID}}<code>{{.WorkerKeyID}}</code> (compare: longarmd trust status){{else}}none{{end}}</td></tr>{{end}}
 <tr><th>started</th><td>{{.Ago}} ago (expires in {{.Left}})</td></tr></table>
-{{if .Worker}}<p class="warn">Only confirm if this is your machine: jobs you run may be placed on it.</p>
+{{if .Both}}<p class="warn">Only confirm if this is your device: it gets a certificate that acts as you{{if .Admin}} - an <b>administrator</b> certificate{{end}}, and it becomes your worker: jobs you run may be placed on it.</p>
+{{else if .Worker}}<p class="warn">Only confirm if this is your machine: jobs you run may be placed on it.</p>
 {{else}}<p class="warn">Only confirm if this is your device: it gets a certificate that acts as you{{if .Admin}} - an <b>administrator</b> certificate{{end}}.</p>{{end}}
 {{end}}<form method="post" action="/link/decide"><input type="hidden" name="token" value="{{.Token}}"><input type="hidden" name="id" value="{{.L.ID}}">
 <p><button name="decision" value="approve">Approve</button><button name="decision" value="deny">Deny</button></p></form>

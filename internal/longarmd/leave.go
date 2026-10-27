@@ -182,6 +182,10 @@ type SetupOptions struct {
 	// Isolation "per-user": longarmd (LocalSystem) runs each user's work as
 	// an OS account of its own (docs/security.md).
 	Isolation string
+	// Login (the MSI's LOGIN=1, no join code): record Hub (and
+	// Fingerprint) for a sign-in to come - the service waits for it, the
+	// tray or `longarmd login --role both` does it (SetUpSignIn).
+	Login bool
 }
 
 // InstallSetup prepares a machine-wide data dir for the longarmd service: the
@@ -231,6 +235,13 @@ func InstallSetup(ctx context.Context, dataDir string, o SetupOptions) error {
 	} else {
 		fmt.Fprintln(o.Out, "WARNING: the longarmd service runs as LocalSystem (SERVICE_ACCOUNT=LocalSystem): jobs run as SYSTEM "+
 			"with the system profile, not as a user with git / npm / claude settings (DESIGN §3.1 recommends a user account)")
+	}
+	if o.Login && o.Code == "" && o.Hub != "" {
+		if err := SetUpSignIn(dataDir, o.Hub, o.Fingerprint); err != nil {
+			return err
+		}
+		fmt.Fprintln(o.Out, "sign-in to come: the service waits until the Longarm tray or `longarmd login --role both` signs this machine in to "+o.Hub)
+		return nil
 	}
 	if o.Code == "" || o.Hub == "" {
 		fmt.Fprintln(o.Out, "no join code: join later with `longarmd join <hub> <code> --data-dir "+dataDir+"`")
