@@ -160,6 +160,11 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 
 // ---------------------------------------------------------------- Node
 
+// WorkerFeatures are the optional features of this longarmd
+// (InfoResponse.features).
+var WorkerFeatures = []string{jobs.FeatureStdin, jobs.FeatureGitAuth, jobs.FeatureSessionStart, jobs.FeatureSessionSend,
+	jobs.FeatureSessionSendIfIdle, jobs.FeatureSessionStop, jobs.FeatureSessionInfo, jobs.FeatureFileTail}
+
 type nodeServer struct {
 	pb.UnimplementedNodeServer
 	s *Server
@@ -173,7 +178,7 @@ func (n *nodeServer) Info(ctx context.Context, _ *pb.InfoRequest) (*pb.InfoRespo
 		Hostname: host, NumCpu: int32(runtime.NumCPU()), DataDir: n.s.DataDir,
 		StartedAt: timestamppb.New(n.s.StartedAt), CallerName: id.Name, CallerRole: string(id.Role),
 		Listeners: n.s.ListenerNames(), SshHostKey: n.s.SSHHostKey,
-		Isolation: n.s.Spaces.Mode(), CallerUser: id.Owner(), Features: []string{jobs.FeatureStdin, jobs.FeatureGitAuth},
+		Isolation: n.s.Spaces.Mode(), CallerUser: id.Owner(), Features: WorkerFeatures,
 	}
 	if n.s.perUser() {
 		out.Account = n.s.Spaces.AccountName(id.Owner())

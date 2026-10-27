@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"runtime"
@@ -145,11 +146,48 @@ type hub struct {
 	clients map[*client]struct{}
 	done    bool
 	code    int
+	lastOut time.Time
+
+	// in serializes writes to the terminal: each Input / Send frame is one
+	// contiguous write, never interleaved with another client's.
+	in       sync.Mutex
+	inSeq    uint64
+	lastIn   time.Time
+	lastFrom string
+}
+
+// input writes p to the terminal as one write and records it. With
+// ifIdle > 0 it writes only if no input arrived within ifIdle.
+func (h *hub) input(w io.Writer, p []byte, source string, ifIdle time.Duration) (bool, error) {
+	h.in.Lock()
+	defer h.in.Unlock()
+	if ifIdle > 0 && !h.lastIn.IsZero() && time.Since(h.lastIn) < ifIdle {
+		return false, nil
+	}
+	if len(p) == 0 {
+		return true, nil
+	}
+	_, err := w.Write(p)
+	h.inSeq++
+	h.lastIn, h.lastFrom = time.Now().UTC(), source
+	return true, err
+}
+
+// info is the terminal's activity.
+func (h *hub) info() attach.InfoState {
+	h.in.Lock()
+	st := attach.InfoState{InputSeq: h.inSeq, LastInput: h.lastIn, LastInputSource: h.lastFrom}
+	h.in.Unlock()
+	h.mu.Lock()
+	st.LastOutput = h.lastOut
+	h.mu.Unlock()
+	return st
 }
 
 func (h *hub) output(p []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.lastOut = time.Now().UTC()
 	if over := len(h.ring) + len(p) - Scrollback; over > 0 {
 		if over >= len(h.ring) {
 			h.ring = h.ring[:0]
@@ -233,6 +271,10 @@ func (h *hub) handle(nc net.Conn, p platform.PTY, j *job) {
 		return
 	}
 	nc.SetReadDeadline(time.Time{})
+	if payload[0]&attach.FlagControl != 0 {
+		h.control(conn, p, j)
+		return
+	}
 	c := &client{conn: conn, out: make(chan frame, clientQueue)}
 	writerDone := make(chan struct{})
 	go func() {
@@ -258,7 +300,7 @@ func (h *hub) handle(nc net.Conn, p platform.PTY, j *job) {
 		}
 		switch typ {
 		case attach.Input:
-			if _, err := p.Write(payload); err != nil {
+			if _, err := h.input(p, payload, attach.SourceAttach, 0); err != nil {
 				j.log.Warn("terminal input", "err", err)
 			}
 		case attach.Resize:
@@ -271,4 +313,43 @@ func (h *hub) handle(nc net.Conn, p platform.PTY, j *job) {
 	}
 	h.remove(c)
 	<-writerDone
+}
+
+// control serves a control connection (longarmd's Sessions.Send / Stop and
+// the activity of Sessions.List): Info at once, then Info per Query / Send.
+// It never gets output and does not count as attached.
+func (h *hub) control(conn *attach.Conn, p platform.PTY, j *job) {
+	defer conn.Close()
+	if conn.WriteFrame(attach.Info, attach.EncodeInfo(h.info())) != nil {
+		return
+	}
+	for {
+		typ, payload, err := conn.ReadFrame()
+		if err != nil {
+			return
+		}
+		switch typ {
+		case attach.Query:
+		case attach.Send:
+			ifIdle, source, data, err := attach.ParseSend(payload)
+			if err != nil {
+				return
+			}
+			sent, err := h.input(p, data, source, time.Duration(ifIdle)*time.Millisecond)
+			if err != nil {
+				j.log.Warn("terminal input", "err", err)
+			}
+			st := h.info()
+			st.Sent = sent
+			if conn.WriteFrame(attach.Info, attach.EncodeInfo(st)) != nil {
+				return
+			}
+			continue
+		default:
+			continue
+		}
+		if conn.WriteFrame(attach.Info, attach.EncodeInfo(h.info())) != nil {
+			return
+		}
+	}
 }

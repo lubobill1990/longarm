@@ -141,6 +141,14 @@ var cliFeatures = []string{
 	"ref-sha",          // run --repo <path> --ref <full commit id>
 	"worker-label",     // longarm worker label
 	"git-auth-forward", // run / sync --git-auth forward, run --lfs fetch
+	// sessions for programs (docs/usage.md#sessions-for-programs)
+	"session-start",        // session start
+	"session-send",         // session send (--text, --stdin-file, --key, --raw)
+	"session-send-if-idle", // session send --if-idle-ms (exit 75)
+	"session-stop",         // session stop --grace
+	"sessions-json-v2",     // fleet-wide sessions, sessions --json source/worker/activity fields, sessions -s
+	"tail",                 // tail <worker> <path> [-f] [--json]
+	"run-session",          // run / exec --session
 }
 
 func versionCmd() *cobra.Command {

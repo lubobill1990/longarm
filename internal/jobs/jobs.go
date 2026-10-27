@@ -148,6 +148,28 @@ const FeatureStdin = "job-stdin"
 // a forwarded fetch credential (SubmitRequest.git_auth, Workspace.Fetch).
 const FeatureGitAuth = "git-auth-forward"
 
+// InfoResponse.features of workers with the programmable sessions API.
+const (
+	FeatureSessionStart      = "session-start"        // Sessions.Start (with a workspace), Sessions.Get
+	FeatureSessionSend       = "session-send"         // Sessions.Send
+	FeatureSessionSendIfIdle = "session-send-if-idle" // SendSessionRequest.if_idle_ms
+	FeatureSessionStop       = "session-stop"         // Sessions.Stop
+	FeatureSessionInfo       = "session-info"         // Session workdir, dir, reason and activity fields
+	FeatureFileTail          = "file-tail"            // Files.Tail
+)
+
+// SessionWorktreeKey names the worktree of session name under
+// <data>/worktrees: the "." keeps it apart from job ids (ValidID).
+func SessionWorktreeKey(name string) string { return "s." + name }
+
+// ValidWorktreeKey reports whether k is a job id or a SessionWorktreeKey.
+func ValidWorktreeKey(k string) bool {
+	if name, ok := strings.CutPrefix(k, "s."); ok {
+		return ValidID(name)
+	}
+	return ValidID(k)
+}
+
 // OwnerName is the job's owner; jobs from before multi-tenancy: the name in
 // SubmittedBy ("client/alice").
 func (s *Spec) OwnerName() string {

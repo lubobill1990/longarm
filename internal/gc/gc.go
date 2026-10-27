@@ -173,7 +173,8 @@ func (c *Collector) collectStaging(o Options, res *Result) {
 }
 
 // collectOrphanWorktrees removes worktrees/<id> whose job no longer exists
-// (e.g. preparation failed and the job dir was collected, or longarmd died).
+// and worktrees/s.<name> whose session no longer exists (e.g. preparation
+// failed and the job dir was collected, or longarmd died).
 func (c *Collector) collectOrphanWorktrees(ctx context.Context, o Options, res *Result) {
 	if c.Jobs == nil || c.WS == nil {
 		return
@@ -181,10 +182,17 @@ func (c *Collector) collectOrphanWorktrees(ctx context.Context, o Options, res *
 	root := filepath.Join(c.DataDir, workspace.WorktreesDir)
 	ents, _ := os.ReadDir(root)
 	for _, e := range ents {
-		if !e.IsDir() || !jobs.ValidID(e.Name()) {
+		if !e.IsDir() || !jobs.ValidWorktreeKey(e.Name()) {
 			continue
 		}
-		if _, err := c.Jobs.Get(e.Name()); err == nil {
+		if name, ok := strings.CutPrefix(e.Name(), "s."); ok {
+			if c.Sessions == nil {
+				continue
+			}
+			if _, err := c.Sessions.Get(name); err == nil {
+				continue // live, or ended and kept: removed with it
+			}
+		} else if _, err := c.Jobs.Get(e.Name()); err == nil {
 			continue
 		}
 		fi, err := e.Info()

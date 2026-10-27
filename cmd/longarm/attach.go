@@ -1,22 +1,19 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
-	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/platform"
@@ -283,6 +280,7 @@ func attachOnce(ctx context.Context, conn *client.Conn, open *pb.AttachOpen, in 
 	onStart(started)
 
 	var detached bool
+	vt := &win32InputFilter{}
 	var dmu sync.Mutex
 	go func() { // the only sender
 		last := open.Size
@@ -341,7 +339,7 @@ func attachOnce(ctx context.Context, conn *client.Conn, open *pb.AttachOpen, in 
 		progress()
 		switch x := m.Msg.(type) {
 		case *pb.AttachOutput_Data:
-			os.Stdout.Write(x.Data)
+			os.Stdout.Write(vt.filter(x.Data))
 		case *pb.AttachOutput_ExitCode:
 			return attachEnd{exited: true, code: int(x.ExitCode)}, nil
 		}
@@ -356,65 +354,6 @@ func recvErr(st pb.Sessions_AttachClient, err error) error {
 		}
 	}
 	return err
-}
-
-func sessionsCmd() *cobra.Command {
-	var all, asJSON bool
-	var owner string
-	c := &cobra.Command{
-		Use:   "sessions <worker>",
-		Short: "List interactive sessions on a worker",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, err := openSession()
-			if err != nil {
-				return err
-			}
-			defer s.close()
-			conn, err := s.conn(args[0])
-			if err != nil {
-				return err
-			}
-			defer conn.Close()
-			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
-			defer cancel()
-			resp, err := conn.Sessions().List(ctx, &pb.ListSessionsRequest{All: all, Owner: owner})
-			if err != nil {
-				return err
-			}
-			if asJSON {
-				b, _ := protojson.Marshal(resp)
-				var v any
-				json.Unmarshal(b, &v)
-				out, _ := json.MarshalIndent(v, "", "  ")
-				fmt.Println(string(out))
-				return nil
-			}
-			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "NAME\tOWNER\tSTATE\tEXIT\tPID\tATTACHED\tCREATED\tBY\tCOMMAND")
-			for _, ss := range resp.Sessions {
-				exit := "-"
-				if ss.HasExitCode {
-					exit = fmt.Sprint(ss.ExitCode)
-				}
-				created := "-"
-				if ss.CreatedAt != nil {
-					created = ss.CreatedAt.AsTime().Local().Format("01-02 15:04:05")
-				}
-				cmdline := strings.Join(ss.Argv, " ")
-				if len(cmdline) > 50 {
-					cmdline = cmdline[:47] + "..."
-				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\n", ss.Name, ss.Owner, stateName(ss.State), exit, ss.Pid,
-					ss.Attached, created, ss.CreatedBy, cmdline)
-			}
-			return tw.Flush()
-		},
-	}
-	c.Flags().BoolVar(&all, "all", false, "include ended sessions")
-	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
-	c.Flags().StringVar(&owner, "owner", "", "only this user's sessions (admins see everybody's)")
-	return c
 }
 
 // crReader turns LF (and CRLF) into CR.
@@ -433,4 +372,46 @@ func (c crReader) Read(p []byte) (int, error) {
 		}
 	}
 	return len(out), err
+}
+
+// win32InputFilter drops the win32-input-mode switch (ESC[?9001h / l) from
+// the session's output. A Windows worker's pseudo console sends it to ask
+// its terminal for win32 key events; passed on to a terminal that is itself
+// a pseudo console (longarm attach inside ConPTY - portable-pty, xterm.js
+// in a desktop app - or a nested session), that console then waits for
+// such events and drops the plain keystrokes its host writes: input stops.
+// Plain VT input works everywhere, so longarm never asks for the mode.
+type win32InputFilter struct{ carry []byte }
+
+var (
+	win32InputOn  = []byte("\x1b[?9001h")
+	win32InputOff = []byte("\x1b[?9001l")
+)
+
+func (f *win32InputFilter) filter(p []byte) []byte {
+	b := p
+	if len(f.carry) > 0 {
+		b = append(f.carry, p...)
+		f.carry = nil
+	}
+	if bytes.IndexByte(b, 0x1b) < 0 {
+		return b
+	}
+	out := make([]byte, 0, len(b))
+	for i := 0; i < len(b); {
+		if b[i] == 0x1b {
+			rest := b[i:]
+			if bytes.HasPrefix(rest, win32InputOn) || bytes.HasPrefix(rest, win32InputOff) {
+				i += len(win32InputOn)
+				continue
+			}
+			if len(rest) < len(win32InputOn) && (bytes.HasPrefix(win32InputOn, rest) || bytes.HasPrefix(win32InputOff, rest)) {
+				f.carry = append([]byte(nil), rest...) // maybe split across chunks
+				break
+			}
+		}
+		out = append(out, b[i])
+		i++
+	}
+	return out
 }

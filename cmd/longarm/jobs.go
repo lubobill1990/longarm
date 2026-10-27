@@ -37,7 +37,7 @@ func execCmd() *cobra.Command {
 	var timeout time.Duration
 	var combined bool
 	var maxOut int64
-	var on string
+	var on, inSession string
 	c := &cobra.Command{
 		Use:   "exec [<worker>] -- command [args...]",
 		Short: "Run a short command synchronously (no job); exit code is mirrored. Without a worker (or --on auto) the least loaded passing worker is used",
@@ -60,7 +60,11 @@ func execCmd() *cobra.Command {
 				return err
 			}
 			defer s.close()
-			if worker, err = pickWorker(cmd.Context(), s, worker, on, nil); err != nil {
+			if inSession != "" {
+				if worker, cwd, err = sessionTarget(cmd.Context(), s, worker, on, inSession, cwd); err != nil {
+					return err
+				}
+			} else if worker, err = pickWorker(cmd.Context(), s, worker, on, nil); err != nil {
 				return err
 			}
 			conn, err := s.conn(worker)
@@ -113,12 +117,27 @@ func execCmd() *cobra.Command {
 	c.Flags().BoolVar(&combined, "combined", false, "interleave stderr into stdout")
 	c.Flags().Int64Var(&maxOut, "max-output", 0, "max bytes captured per stream (default 1 MiB)")
 	c.Flags().StringVar(&on, "on", "", "worker name or \"auto\" (default when no worker is given)")
+	c.Flags().StringVar(&inSession, "session", "", "run on the worker of this session, in its working directory (--cwd: relative to it)")
 	return c
+}
+
+// sessionTarget resolves --session of run / exec: the session's worker
+// (which a given worker must be) and its directory.
+func sessionTarget(ctx context.Context, s *session, worker, on, name, cwd string) (string, string, error) {
+	if worker == "" {
+		worker = on
+	} else if on != "" && on != worker {
+		return "", "", usagef("give the worker either as an argument or with --on, not both")
+	}
+	if worker == "auto" {
+		worker = ""
+	}
+	return sessionDirFor(ctx, s, worker, name, cwd)
 }
 
 func runCmd() *cobra.Command {
 	var env, secrets, labels, require, share []string
-	var cwd, name, id, repo, ref, lfs, on, typ, stdinFile, gitAuth string
+	var cwd, name, id, repo, ref, lfs, on, typ, stdinFile, gitAuth, inSession string
 	var wait, follow, noQueue bool
 	var memLimit string
 	var memGB, cpus float64
@@ -187,7 +206,14 @@ reachable hub longarm picks among the known workers itself.`,
 			if repo != "" {
 				po.repo = repoKeyFor(repo)
 			}
-			if worker, err = pickWorker(cmd.Context(), s, worker, on, po); err != nil {
+			if inSession != "" {
+				if repo != "" {
+					return usagef("--session runs in the session's directory: not with --repo")
+				}
+				if worker, cwd, err = sessionTarget(cmd.Context(), s, worker, on, inSession, cwd); err != nil {
+					return err
+				}
+			} else if worker, err = pickWorker(cmd.Context(), s, worker, on, po); err != nil {
 				return err
 			}
 			if labelM == nil {
@@ -284,6 +310,7 @@ reachable hub longarm picks among the known workers itself.`,
 	c.Flags().BoolVar(&noQueue, "no-queue", false, "fail instead of queueing when no worker passes the gate")
 	c.Flags().StringArrayVar(&share, "share", nil, "let team members read the job (state, logs): team = all your teams, team:<name> = one")
 	c.Flags().Float64Var(&cpus, "cpus", 0, "CPU limit of the job's process tree in cores (Windows; Linux with per-user isolation)")
+	c.Flags().StringVar(&inSession, "session", "", "run on the worker of this session, in its working directory (e.g. its --repo worktree; --cwd: relative to it)")
 	c.Flags().StringVar(&stdinFile, "stdin-file", "", "send this local file (- = longarm's stdin; at most 1 MiB) as the job's stdin: memory-only on the worker, never in job metadata, the hub or logs")
 	return c
 }

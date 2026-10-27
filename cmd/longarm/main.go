@@ -62,7 +62,7 @@ func main() {
 	root.AddCommand(poolCmd(), transportCmd(), firewallCmd())
 	root.AddCommand(whoamiCmd(), linkCmd(), versionCmd())
 	root.AddCommand(lsCmd(), infoCmd(), execCmd(), runCmd(), logsCmd(), waitCmd(), killCmd(), jobsCmd(), adminCmd(),
-		attachCmd(), sessionsCmd(), forwardCmd(), putCmd(), getCmd(), syncCmd(), proxyCmd(), sshConfigCmd(),
+		attachCmd(), sessionsCmd(), sessionCmd(), tailCmd(), forwardCmd(), putCmd(), getCmd(), syncCmd(), proxyCmd(), sshConfigCmd(),
 		joinCmd(), loginCmd(), leaveCmd(), daemonCmd(), mcpCmd(), trustCmd(), workerCmd(), telemetryCmd(), diagCmd())
 	// One operation per run (telemetry.go): its trace context goes with
 	// every call to workers and the hub.

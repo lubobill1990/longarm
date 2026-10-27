@@ -6,14 +6,22 @@
 // Hello first, then Input / Resize frames; the shim sends Output frames (the
 // scrollback replay first, if requested) and finally Exit when the session's
 // process has ended. Closing the connection detaches.
+//
+// A control connection (Hello with FlagControl) gets no output: the shim
+// answers it with an Info frame at once, then one Info frame per Query or
+// Send. Shims that predate control connections treat it as an ordinary
+// client and never send Info, which is how longarmd tells them apart.
 package attach
 
 import (
 	"bufio"
 	"encoding/binary"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
+	"time"
 )
 
 // Frame types.
@@ -23,10 +31,69 @@ const (
 	Resize byte = 'r' // client: [cols uint16][rows uint16]
 	Output byte = 'o' // shim: terminal bytes
 	Exit   byte = 'x' // shim: [code int32]; the shim closes the connection after it
+
+	// Control connections only.
+	Query byte = 'q' // client: empty; the shim answers with Info
+	Send  byte = 's' // client: SendPayload; the shim answers with Info (Sent)
+	Info  byte = 'n' // shim: JSON InfoState
 )
 
-// FlagReplay asks the shim to send its scrollback ring before live output.
-const FlagReplay byte = 1
+// Hello flags.
+const (
+	FlagReplay  byte = 1 // send the scrollback ring before live output
+	FlagControl byte = 2 // a control connection: no output, Info / Query / Send
+)
+
+// Input sources (InfoState.LastInputSource).
+const (
+	SourceAttach = "attach" // an attached client's keystrokes (Input frames)
+	SourceSend   = "send"   // Sessions.Send
+	SourceStop   = "stop"   // Sessions.Stop's Ctrl-C
+)
+
+// MaxSend bounds the bytes of one Send.
+const MaxSend = 256 << 10
+
+// InfoState is the shim's view of the terminal's activity.
+type InfoState struct {
+	InputSeq        uint64    `json:"inputSeq"` // writes to the terminal so far
+	LastInput       time.Time `json:"lastInput,omitzero"`
+	LastInputSource string    `json:"lastInputSource,omitempty"`
+	LastOutput      time.Time `json:"lastOutput,omitzero"`
+	// Send answers: whether the bytes were written (false: input arrived
+	// within the idle window).
+	Sent bool `json:"sent,omitempty"`
+}
+
+// SendPayload encodes a Send frame: [ifIdleMs uint32][source len byte][source][data].
+func SendPayload(ifIdleMs uint32, source string, data []byte) []byte {
+	b := make([]byte, 5, 5+len(source)+len(data))
+	binary.BigEndian.PutUint32(b, ifIdleMs)
+	b[4] = byte(len(source))
+	b = append(b, source...)
+	return append(b, data...)
+}
+
+// ParseSend decodes a Send frame.
+func ParseSend(p []byte) (ifIdleMs uint32, source string, data []byte, err error) {
+	if len(p) < 5 || len(p) < 5+int(p[4]) {
+		return 0, "", nil, errors.New("attach: short send frame")
+	}
+	n := int(p[4])
+	return binary.BigEndian.Uint32(p), string(p[5 : 5+n]), p[5+n:], nil
+}
+
+// EncodeInfo / DecodeInfo convert Info frames.
+func EncodeInfo(st InfoState) []byte {
+	b, _ := json.Marshal(st)
+	return b
+}
+
+func DecodeInfo(p []byte) (InfoState, error) {
+	var st InfoState
+	err := json.Unmarshal(p, &st)
+	return st, err
+}
 
 // MaxFrame bounds a frame payload.
 const MaxFrame = 1 << 20
