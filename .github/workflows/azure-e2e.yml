@@ -1,0 +1,80 @@
+# End-to-end test on real Azure (deploy/azure/test/azure-e2e.sh): a fresh hub
+# on Azure Container Instances (storage-auth identity, Entra sign-in), this
+# runner signs in with Microsoft Entra ID and registers itself as an owned
+# worker through the hub's relay, then runs work there; everything is
+# deleted afterwards.
+#
+# Azure access is GitHub OIDC only (no secrets): the environment azure-e2e
+# (deployments from main only) federates with the test tenant's app
+# registration, which is Owner of one resource group (vars.AZURE_RESOURCE_GROUP)
+# and whose app-only token the hub maps to the Longarm user "ci".
+name: azure-e2e
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 19 * * *" # nightly
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-e2e
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    name: hub on ACI, Entra sign-in, owned worker
+    runs-on: ubuntu-latest
+    environment: azure-e2e
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC -> Azure
+    defaults:
+      run:
+        shell: bash
+    env:
+      RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+      ENTRA_TENANT: ${{ vars.AZURE_TENANT_ID }}
+      ENTRA_CLIENT: ${{ vars.AZURE_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/go-setup
+      - name: build longarm and longarmd
+        run: go build -trimpath -o "$RUNNER_TEMP/bin/" ./cmd/longarm ./cmd/longarmd
+      - name: hub name and image
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          {
+            echo "NAME=lae2e${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}"
+            echo "IMAGE=ghcr.io/${OWNER,,}/longarm-hub:sha-${GITHUB_SHA::12}"
+            echo "BIN=$RUNNER_TEMP/bin"
+          } >>"$GITHUB_ENV"
+      - name: wait for the image of this commit (image.yml publishes it on main)
+        run: |
+          repo=${IMAGE#ghcr.io/}; repo=${repo%%:*}; tag=${IMAGE##*:}
+          for _ in $(seq 1 60); do
+            tok=$(curl -fsS "https://ghcr.io/token?scope=repository:$repo:pull" | jq -r .token)
+            if curl -fsS -o /dev/null -H "Authorization: Bearer $tok" "https://ghcr.io/v2/$repo/manifests/$tag" \
+                 -H "Accept: application/vnd.oci.image.index.v1+json"; then
+              echo "found $IMAGE"; exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::$IMAGE was not published within 30 minutes"; exit 1
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: remove leftovers of earlier runs (older than 6 h)
+        run: deploy/azure/test/azure-e2e-cleanup.sh "$RG" --older 6h
+      - name: e2e
+        run: deploy/azure/test/azure-e2e.sh
+      - name: cleanup
+        if: always()
+        run: deploy/azure/test/azure-e2e-cleanup.sh "$RG" "$NAME"
