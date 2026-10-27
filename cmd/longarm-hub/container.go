@@ -178,6 +178,9 @@ var execAliases = map[string][]string{
 	"longarm-hub-admin-code": {"join-code", "--role", "admin", "--ttl", "24h"},
 	"longarm-hub-user-add":   {"user", "add"}, // + the name, asked for
 	"longarm-hub-users":      {"user", "ls"},
+	// the release certificate of CI (docs/ci-cd.md), as the
+	// LONGARM_RELEASE_TLS secret wants it: valid 180 days, name ci-<date>
+	"longarm-hub-release-cert": {"issue", "--role", "release", "--days", "180", "--b64"},
 }
 
 // aliasArgs maps argv[0] to subcommand arguments (nil: not an alias).
