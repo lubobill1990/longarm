@@ -7,8 +7,9 @@
   azuredeploy.json (storage, Litestream replica container, state share,
   the container group), waits for the hub and prints what to run on the
   admin's laptop and on workers. Re-running is an upgrade: the running
-  hub's settings (image, size, panel, ...) are kept unless a parameter
-  changes them, the data stays, the hub restarts.
+  hub's settings (image, size, panel, storage auth, telemetry, Entra
+  sign-in, ...) are kept unless a parameter changes them, the data stays,
+  the hub restarts.
   Needs the Azure CLI (az login); works in Azure Cloud Shell (pwsh) and in
   Windows PowerShell 5.1.
 
@@ -20,10 +21,13 @@
   ./deploy.ps1 -Name myhub -Teardown
 .EXAMPLE
   ./deploy.ps1 -Name myhub -Location eastasia -BuildInAcr   # image built from this checkout in your ACR
+.EXAMPLE
+  ./deploy.ps1 -Name myhub -Location eastasia -StorageAuth identity -Telemetry -Diagnostics   # no storage account keys
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidatePattern('^[a-z][a-z0-9-]{1,38}[a-z0-9]$')][string]$Name,
+    # hub name = DNS label: NAME.REGION.azurecontainer.io (lowercase: Options None = case-sensitive)
+    [Parameter(Mandatory = $true)][ValidatePattern('^[a-z][a-z0-9-]{1,38}[a-z0-9]$', Options = 'None')][string]$Name,
     [string]$Location = '',
     # small = 1 vCPU / 1.5 GB (first run default), medium = 2 vCPU / 3 GB
     [ValidateSet('', 'small', 'medium')][string]$Size = '',
@@ -40,7 +44,22 @@ param(
     [string]$StunServers = '',
     [string]$TailscaleSecretFile = '',
     [string]$AcmeEmail = '',
+    # Sign in with Microsoft Entra ID (longarm login, panel): the app registration (docs/usage.md)
+    [string]$EntraTenant = '',
+    [string]$EntraClient = '',
+    # Entra admins: UPNs, *@domain or object IDs, comma-separated
+    [string]$EntraAdmins = '',
+    # panel sign-in: spa (default) | confidential | off
+    [string]$EntraWeb = '',
     [switch]$LogAnalytics,
+    # key (default): storage account keys; identity: a managed identity, shared key access off
+    [ValidateSet('', 'key', 'identity')][string]$StorageAuth = '',
+    # with identity: pull the image from this registry in the resource group
+    [string]$Acr = '',
+    # Application Insights + Log Analytics for the fleet's telemetry (docs/telemetry.md)
+    [switch]$Telemetry,
+    # a blob container for uploaded diagnostic bundles (identity only; 30 days)
+    [switch]$Diagnostics,
     [string]$Subscription = '',
     # delete the container group first (to change -Size or the panel)
     [switch]$Recreate,
@@ -82,6 +101,15 @@ function Test-Az {
     # az for a yes/no question: $true on exit 0, output discarded
     Invoke-AzQuiet @args | Out-Null
     $LASTEXITCODE -eq 0
+}
+
+function Split-Tsv([string]$Line, [int]$Count) {
+    # the fields of one az -o tsv line, at least $Count of them; the real az
+    # prints None for a null field in a list (a hub without registry
+    # credentials): that is an empty field
+    $f = @($Line.Trim("`r", "`n") -split "`t" | ForEach-Object { if ($_ -ceq 'None') { '' } else { $_ } })
+    while ($f.Count -lt $Count) { $f += '' }
+    , $f
 }
 
 function Test-TcpPort([string]$HostName, [int]$Port) {
@@ -127,6 +155,31 @@ function Get-Bootstrap([string]$Account, [string]$Key, [string]$Dest) {
     $kv
 }
 
+function Get-BootstrapLog {
+    # the last LONGARM_BOOTSTRAP line of the hub's log as a hashtable ($null
+    # if none; storage-auth identity: no share; the line has no join code)
+    $out = Invoke-AzQuiet container logs -g $rg -n $Name --container-name hub
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $last = $null
+    foreach ($l in (($out -join "`n") -split "`r?`n")) {
+        if ($l.StartsWith('LONGARM_BOOTSTRAP ')) { $last = $l }
+    }
+    if (-not $last) { return $null }
+    $kv = @{}
+    foreach ($w in $last.Split(' ')) {
+        $i = $w.IndexOf('=')
+        if ($i -gt 0) { $kv[$w.Substring(0, $i)] = $w.Substring($i + 1) }
+    }
+    if ($kv.Count -eq 0) { return $null }
+    $kv
+}
+
+function Read-Bootstrap([string]$Account, [string]$Key, [string]$Dest) {
+    # this hub's bootstrap values: the share (key) or the log (identity)
+    if ($StorageAuth -eq 'identity') { return Get-BootstrapLog }
+    Get-Bootstrap $Account $Key $Dest
+}
+
 function Get-Value($Map, [string]$Key) {
     if ($Map -and $Map.ContainsKey($Key)) { return $Map[$Key] }
     ''
@@ -138,7 +191,8 @@ function Register-Provider([string[]]$Namespaces) {
     foreach ($ns in $Namespaces) {
         $state = (Invoke-AzQuiet provider show -n $ns --query registrationState -o tsv) -join ''
         if ($state -eq 'Registered') { continue }
-        Write-Host "registering the resource provider $ns ($state; once per subscription, a minute or two)"
+        $shown = if ($state) { $state } else { 'unknown' }
+        Write-Host "registering the resource provider $ns ($shown; once per subscription, a minute or two)"
         Invoke-AzQuiet provider register -n $ns -o none | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "az provider register -n $ns failed (needs Contributor on the subscription; or ask its owner to register it)" }
         $until = (Get-Date).AddMinutes(10)
@@ -167,7 +221,7 @@ function Test-Stuck {
     $q = "[provisioningState, containers[?name=='hub'].instanceView.currentState.state | [0], length(containers[].instanceView.events[] || ``[]``), length(instanceView.events || ``[]``)]"
     $line = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $q) -join ''
     if ($LASTEXITCODE -ne 0 -or -not $line) { return }
-    $f = @($line.Trim("`r", "`n") -split "`t") + @('', '', '', '')
+    $f = Split-Tsv $line 4
     $events = 0
     foreach ($x in $f[2], $f[3]) { if ($x -match '^\d+$') { $events += [int]$x } }
     if (($f[0] -eq 'Creating' -or $f[0] -eq 'Pending') -and ($f[1] -eq '' -or $f[1] -eq 'Waiting') -and $events -eq 0) {
@@ -197,6 +251,7 @@ if ($StunServers -and $StunServers -ne 'none') {
         if ($s -notmatch '^([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\]):[0-9]{1,5}$') { throw "-StunServers: '$s' is not host:port or [v6]:port (none goes alone)" }
     }
 }
+$StorageAuth = $StorageAuth.ToLowerInvariant()
 $rg = $ResourceGroup
 $template = Join-Path $PSScriptRoot 'azuredeploy.json'
 
@@ -252,6 +307,8 @@ try {
     if ($NoPanel) { $panelOn = $false }
     if ($Panel) { $panelOn = $true }
     $logsOn = [bool]$LogAnalytics
+    $telemetryOn = [bool]$Telemetry
+    $diagnosticsOn = [bool]$Diagnostics
 
     # A re-run keeps the running hub's settings. Secrets can't be read back
     # from ACI: a hub that has them needs them again.
@@ -260,15 +317,30 @@ try {
     $curImage = ''
     $curRegistry = ''
     $prevBoot = ''
+    $account = ''
+    $key = ''
     if ($LASTEXITCODE -eq 0 -and $curLine) {
-        $f = @($curLine.Trim("`r", "`n") -split "`t") + @('', '', '', '', '', '', '')
+        $f = Split-Tsv $curLine 7
         $curImage = $f[0]
         $curSize = 'small'
         if ([double]$f[1] -ge 2) { $curSize = 'medium' }
-        $curPanel = ($f[2] -eq 'caddy')
+        $curRegistry = $f[3]
+        $curEnv = ",$($f[4]),"
+        # the panel: Caddy (storage-auth key) or the hub on 443 (identity)
+        $curPanel = ($f[2] -eq 'caddy') -or ($curEnv -like '*,LONGARM_HUB_HTTPS,*')
+        $curAuth = 'key'
+        if ($curEnv -like '*,LONGARM_HUB_CA_IN_DB,*') { $curAuth = 'identity' }
+        # a re-run keeps telemetry / diagnostics on
+        if ($curEnv -like '*,LONGARM_HUB_APPINSIGHTS_CONNECTION_STRING,*') { $telemetryOn = $true }
+        if ($curEnv -like '*,LONGARM_HUB_DIAG_BLOB_URL,*') { $diagnosticsOn = $true }
+        if ($StorageAuth -and $StorageAuth -ne $curAuth) { throw "the hub uses -StorageAuth $curAuth; switching needs a new deployment (another -Name or -ResourceGroup)" }
+        $StorageAuth = $curAuth
+        # the registry pulled with the identity (identity mode)
+        if (-not $Acr -and $curAuth -eq 'identity' -and $curRegistry -like '*.azurecr.io') { $Acr = $curRegistry.Substring(0, $curRegistry.IndexOf('.')) }
         if (-not $Recreate) {
             if ($Size -and $Size -ne $curSize) { throw "the hub is $curSize; ACI can't resize a running container group: add -Recreate (data is kept)" }
-            if ($null -ne $panelOn -and $panelOn -ne $curPanel) { throw "ACI can't change the ports of a running group (panel on/off): add -Recreate (data is kept)" }
+            $curPanelText = if ($curPanel) { 'on' } else { 'off' }
+            if ($null -ne $panelOn -and $panelOn -ne $curPanel) { throw "the panel is $curPanelText; ACI can't change the ports of a running group: add -Recreate (data is kept)" }
         }
         if (-not $Image) { $Image = $curImage }
         if (-not $Size) { $Size = $curSize }
@@ -279,20 +351,42 @@ try {
             if ($f[6] -eq 'self') { $StunServers = 'none' }
             elseif ($f[6] -like 'self,*') { $StunServers = $f[6].Substring(5) }
         }
-        $curRegistry = $f[3]
-        if ((",$($f[4]),") -like '*,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,*' -and -not $TailscaleSecretFile) { throw "the hub has a Tailscale OAuth secret, which can't be read back: pass -TailscaleSecretFile again" }
-        # this start's bootstrap.env must differ from the running one's (boot_id)
-        $acct = @(Invoke-Az storage account list -g $rg --query "[?starts_with(name, 'lahub')].name" -o tsv) | Select-Object -First 1
-        if ($acct) {
-            $k = Invoke-Az storage account keys list -g $rg -n $acct --query '[0].value' -o tsv
-            $prevBoot = Get-Value (Get-Bootstrap $acct $k $bootFile) 'boot_id'
+        if ($curEnv -like '*,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,*' -and -not $TailscaleSecretFile) { throw "the hub has a Tailscale OAuth secret, which can't be read back: pass -TailscaleSecretFile again" }
+        # this start's bootstrap values must differ from the running one's (boot_id)
+        if ($StorageAuth -eq 'identity') {
+            $prevBoot = Get-Value (Get-BootstrapLog) 'boot_id'
+        } else {
+            $account = @(Invoke-Az storage account list -g $rg --query "[?starts_with(name, 'lahub')].name" -o tsv) | Select-Object -First 1
+            if ($account) {
+                $key = (Invoke-Az storage account keys list -g $rg -n $account --query '[0].value' -o tsv) -join ''
+                $prevBoot = Get-Value (Get-Bootstrap $account $key $bootFile) 'boot_id'
+            }
         }
     }
+    if (-not $StorageAuth) { $StorageAuth = 'key' }
+    if ($diagnosticsOn -and $StorageAuth -ne 'identity') { throw '-Diagnostics needs -StorageAuth identity (the hub writes bundles with its managed identity)' }
+    # a re-run keeps the hub's Entra settings (plain environment values)
+    if ($curImage -and -not $EntraTenant) {
+        $entraQuery = "containers[0].environmentVariables[?starts_with(name, 'LONGARM_HUB_ENTRA_')].[name, value]"
+        foreach ($l in @(Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $entraQuery)) {
+            $kv = "$l".TrimEnd("`r", "`n") -split "`t", 2
+            if ($kv.Count -lt 2) { continue }
+            switch -CaseSensitive ($kv[0]) {
+                'LONGARM_HUB_ENTRA_TENANT_ID' { $EntraTenant = $kv[1] }
+                'LONGARM_HUB_ENTRA_CLIENT_ID' { if (-not $EntraClient) { $EntraClient = $kv[1] } }
+                'LONGARM_HUB_ENTRA_ADMINS' { if (-not $EntraAdmins) { $EntraAdmins = $kv[1] } }
+                'LONGARM_HUB_ENTRA_WEB' { if (-not $EntraWeb) { $EntraWeb = $kv[1] } }
+            }
+        }
+    }
+    if ([bool]$EntraTenant -ne [bool]$EntraClient) { throw '-EntraTenant and -EntraClient go together' }
+    if ($EntraWeb -and $EntraWeb -cnotmatch '^(spa|confidential|off)$') { throw '-EntraWeb: spa, confidential or off' }
+    if ($Acr -and $StorageAuth -ne 'identity') { throw '-Acr needs -StorageAuth identity' }
     if (-not $Size) { $Size = 'small' }
     if ($null -eq $panelOn) { $panelOn = $true }
     if ($logsOn) { Register-Provider 'Microsoft.OperationalInsights' }
 
-    $acr = ''
+    $buildAcr = ''
     $registryPassword = $env:LONGARM_REGISTRY_PASSWORD
     if ($BuildInAcr) {
         # the image from this checkout, built by ACR Tasks (no docker here); a
@@ -301,17 +395,18 @@ try {
         $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
         if (-not (Test-Path (Join-Path $root 'deploy/hub/Dockerfile')) -or -not (Test-Path (Join-Path $root 'go.mod'))) { throw '-BuildInAcr: run from a checkout of the repository' }
         # filtered here: an embedded " in --query breaks with pwsh 7.3+ native argument passing
-        $acr = ''
         $regs = ((Invoke-Az acr list -g $rg -o json) -join "`n") | ConvertFrom-Json
         foreach ($r in @($regs)) {
-            if ($null -ne $r -and $r.PSObject.Properties['tags'] -and $r.tags -and $r.tags.PSObject.Properties['longarm-hub'] -and $r.tags.'longarm-hub' -eq $Name) { $acr = $r.name; break }
+            if ($null -ne $r -and $r.PSObject.Properties['tags'] -and $r.tags -and $r.tags.PSObject.Properties['longarm-hub'] -and $r.tags.'longarm-hub' -eq $Name) { $buildAcr = $r.name; break }
         }
-        if (-not $acr) {
-            $acr = 'lahub' + [guid]::NewGuid().ToString('N').Substring(0, 12)
-            Write-Host "creating the container registry $acr in $rg (Basic, about 5 USD/month)"
-            Invoke-Az acr create -g $rg -n $acr -l $Location --sku Basic --admin-enabled true --tags "longarm-hub=$Name" -o none | Out-Null
+        if (-not $buildAcr) {
+            $buildAcr = 'lahub' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+            Write-Host "creating the container registry $buildAcr in $rg (Basic, about 5 USD/month)"
+            # key: the hub pulls with the admin login; identity: with its managed identity (AcrPull)
+            $adminEnabled = if ($StorageAuth -eq 'key') { 'true' } else { 'false' }
+            Invoke-Az acr create -g $rg -n $buildAcr -l $Location --sku Basic --admin-enabled $adminEnabled --tags "longarm-hub=$Name" -o none | Out-Null
         }
-        $loginServer = (Invoke-Az acr show -g $rg -n $acr --query loginServer -o tsv) -join ''
+        $loginServer = (Invoke-Az acr show -g $rg -n $buildAcr --query loginServer -o tsv) -join ''
         $version = 'dev'
         if (Get-Command git -ErrorAction SilentlyContinue) {
             $v = (& { $ErrorActionPreference = 'Continue'; git -C $root describe --tags --always --dirty 2>$null }) -join ''
@@ -320,22 +415,26 @@ try {
         $tag = 'build-' + (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
         Write-Host "building $loginServer/longarm-hub:$tag from $root (az acr build, a few minutes)"
         # --target acr: ACR Tasks can't parse the BuildKit stages (deploy/hub/Dockerfile)
-        & $script:AzCli acr build -g $rg -r $acr -t "longarm-hub:$tag" --target acr --platform linux/amd64 --build-arg "VERSION=$version" -f deploy/hub/Dockerfile $root
+        & $script:AzCli acr build -g $rg -r $buildAcr -t "longarm-hub:$tag" --target acr --platform linux/amd64 --build-arg "VERSION=$version" -f deploy/hub/Dockerfile $root
         if ($LASTEXITCODE -ne 0) { throw 'az acr build failed (the build log is above)' }
         $Image = "$loginServer/longarm-hub:$tag"
     }
-    # an image in an Azure Container Registry of this resource group: its
-    # admin login (no -RegistryUser needed, also on re-runs)
+    # an image in an Azure Container Registry of this resource group: key: its
+    # admin login, identity: the managed identity pulls it (-Acr); no
+    # -RegistryUser needed, also on re-runs
     $regHost = Get-RegistryHost $Image
     if (-not $RegistryUser -and $regHost -like '*.azurecr.io') {
-        if (-not $acr) { $acr = (Invoke-AzQuiet acr list -g $rg --query "[?loginServer=='$regHost'].name | [0]" -o tsv) -join '' }
-        if ($acr) {
-            $cred = @(((Invoke-Az acr credential show -n $acr -g $rg --query '[username, passwords[0].value]' -o tsv) -join '').Trim("`r", "`n") -split "`t") + @('', '')
-            if (-not $cred[0] -or -not $cred[1]) { throw "no admin credentials for the registry $acr (az acr update -n $acr --admin-enabled true)" }
+        $regAcr = $buildAcr
+        if (-not $regAcr) { $regAcr = (Invoke-AzQuiet acr list -g $rg --query "[?loginServer=='$regHost'].name | [0]" -o tsv) -join '' }
+        if ($StorageAuth -eq 'identity') {
+            if (-not $Acr) { $Acr = $regAcr }
+        } elseif ($regAcr) {
+            $cred = Split-Tsv ((Invoke-Az acr credential show -n $regAcr -g $rg --query '[username, passwords[0].value]' -o tsv) -join '') 2
+            if (-not $cred[0] -or -not $cred[1]) { throw "no admin credentials for the registry $regAcr (az acr update -n $regAcr --admin-enabled true)" }
             $RegistryUser, $registryPassword = $cred[0], $cred[1]
         }
     }
-    if ($curRegistry -and -not $RegistryUser) { throw "the hub pulls its image with a login for $curRegistry, which can't be read back: pass -RegistryUser again (password in `$env:LONGARM_REGISTRY_PASSWORD)" }
+    if ($curRegistry -and -not $RegistryUser -and -not $Acr) { throw "the hub pulls its image with a login for $curRegistry, which can't be read back: pass -RegistryUser again (password in `$env:LONGARM_REGISTRY_PASSWORD)" }
 
     if ($Recreate -and $curImage) {
         Write-Host "deleting container group $Name (storage and data stay)"
@@ -347,11 +446,21 @@ try {
     $p = [ordered]@{
         name               = @{ value = $Name }
         size               = @{ value = $Size }
-        enablePanel        = @{ value = $panelOn }
-        enableLogAnalytics = @{ value = $logsOn }
+        enablePanel        = @{ value = [bool]$panelOn }
+        enableLogAnalytics = @{ value = [bool]$logsOn }
+        storageAuth        = @{ value = $StorageAuth }
+        enableTelemetry    = @{ value = [bool]$telemetryOn }
+        enableDiagnostics  = @{ value = [bool]$diagnosticsOn }
     }
+    if ($Acr) { $p.acrName = @{ value = $Acr } }
     if ($Image) { $p.image = @{ value = $Image } }
     if ($AcmeEmail) { $p.acmeEmail = @{ value = $AcmeEmail } }
+    if ($EntraTenant) {
+        $p.entraTenantId = @{ value = $EntraTenant }
+        $p.entraClientId = @{ value = $EntraClient }
+        if ($EntraAdmins) { $p.entraAdmins = @{ value = $EntraAdmins } }
+        if ($EntraWeb) { $p.entraWeb = @{ value = $EntraWeb } }
+    }
     if ($RegistryUser) {
         if (-not $registryPassword) { throw '-RegistryUser needs $env:LONGARM_REGISTRY_PASSWORD' }
         # the login is for the registry the image comes from (the template defaults to ghcr.io)
@@ -371,7 +480,8 @@ try {
     $doc = @{ contentVersion = '1.0.0.0'; parameters = $p }
     [System.IO.File]::WriteAllText($paramsFile, ($doc | ConvertTo-Json -Depth 5))
 
-    Write-Host "deploying $Name to $rg ($Location, $Size, panel $panelOn, $Image); this takes a few minutes"
+    $imageText = if ($Image) { ", $Image" } else { '' }
+    Write-Host "deploying $Name to $rg ($Location, $Size, panel $(([bool]$panelOn).ToString().ToLower()), storage auth $StorageAuth$imageText); this takes a few minutes"
     $query = '[properties.outputs.hubAddress.value, properties.outputs.fqdn.value, properties.outputs.storageAccount.value, properties.outputs.relayUdpPort.value, properties.outputs.panelUrl.value]'
     # one tab-separated line; panelUrl last (empty without the panel)
     $start = Get-Date
@@ -394,7 +504,7 @@ try {
         if ((Get-Date) -gt $deadline) { throw "deployment $deployment is still $dstate after $TimeoutSeconds s: az deployment group show -g $rg -n $deployment" }
     }
     $outLine = (Invoke-Az deployment group show -g $rg -n $deployment --query $query -o tsv) -join ''
-    $outs = @($outLine.Trim("`r", "`n") -split "`t") + @('', '', '', '', '')
+    $outs = Split-Tsv $outLine 5
     $hubAddr, $fqdn, $account, $relayPort, $panelUrl = $outs[0], $outs[1], $outs[2], $outs[3], $outs[4]
     if (-not $hubAddr -or -not $fqdn -or -not $account) { throw "deployment returned no outputs: $outLine" }
     if (-not $relayPort) { $relayPort = '7443' }
@@ -402,10 +512,12 @@ try {
     $hubPort = $hubAddr.Substring($hubAddr.LastIndexOf(':') + 1)
     $relayTcp = ''
     if ($relayPort -ne $hubPort) { $relayTcp = "tcp=${fqdn}:$hubPort&" }
-    $key = Invoke-Az storage account keys list -g $rg -n $account --query '[0].value' -o tsv
+    if ($StorageAuth -eq 'key') {
+        $key = (Invoke-Az storage account keys list -g $rg -n $account --query '[0].value' -o tsv) -join ''
+    }
 
     $hubImageQuery = "containers[?name=='hub'].image"
-    $newImage = Invoke-Az container show -g $rg -n $Name --query $hubImageQuery -o tsv
+    $newImage = (Invoke-Az container show -g $rg -n $Name --query $hubImageQuery -o tsv) -join ''
     if (-not $Recreate -and $curImage -and $curImage -eq $newImage -and $newImage -match ':(latest|edge)$') {
         Write-Host "pulling $newImage again (az container restart)"
         Invoke-Az container restart -g $rg -n $Name -o none | Out-Null
@@ -414,19 +526,19 @@ try {
     Write-Host "waiting for the hub at $hubAddr"
     $start = Get-Date
     while ($true) {
-        $state = Invoke-AzQuiet container show -g $rg -n $Name --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv
+        $state = (Invoke-AzQuiet container show -g $rg -n $Name --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv) -join ''
         if ($state -eq 'Running') { break }
         Test-Stuck
         if ((Get-Date) -gt $deadline) { throw "the hub container is not running ($state): $logsHint" }
         Start-Sleep -Seconds $script:Poll
     }
-    # bootstrap.env of this start (a new boot_id; restart once if the update
-    # didn't restart the hub)
+    # the bootstrap values of this start (a new boot_id; restart once if the
+    # update didn't restart the hub)
     $restarted = $false
     while ($true) {
-        $boot = Get-Bootstrap $account $key $bootFile
+        $boot = Read-Bootstrap $account $key $bootFile
         if ($boot -and (Get-Value $boot 'boot_id') -ne $prevBoot) { break }
-        if ((Get-Date) -gt $deadline) { throw "no bootstrap.env from this start on the share: $logsHint" }
+        if ((Get-Date) -gt $deadline) { throw "no bootstrap values from this start: $logsHint" }
         if ($prevBoot -and -not $restarted -and ((Get-Date) - $start).TotalSeconds -gt 240) {
             Write-Host 'the hub did not restart: az container restart'
             Invoke-Az container restart -g $rg -n $Name -o none | Out-Null
@@ -434,7 +546,7 @@ try {
         }
         Start-Sleep -Seconds 5
     }
-    $port = [int]($hubAddr.Substring($hubAddr.LastIndexOf(':') + 1))
+    $port = [int]$hubPort
     while (-not (Test-TcpPort $fqdn $port)) {
         if ((Get-Date) -gt $deadline) { throw "$hubAddr does not answer: $logsHint" }
         Start-Sleep -Seconds 5
@@ -442,6 +554,7 @@ try {
     $fp = Get-Value $boot 'ca_fingerprint'
     $code = Get-Value $boot 'admin_join_code'
     $expires = Get-Value $boot 'admin_join_code_expires'
+    $adminJoined = Get-Value $boot 'admin_joined'
 
     if ($panelUrl) {
         $ok = $false
@@ -453,7 +566,8 @@ try {
                 Start-Sleep -Seconds 10
             }
         }
-        if (-not $ok) { Write-Warning "$panelUrl/healthz does not answer yet (Let's Encrypt can take a few minutes): az container logs -g $rg -n $Name --container-name caddy" }
+        $panelContainer = if ($StorageAuth -eq 'identity') { 'hub' } else { 'caddy' }
+        if (-not $ok) { Write-Warning "$panelUrl/healthz does not answer yet (Let's Encrypt can take a few minutes): az container logs -g $rg -n $Name --container-name $panelContainer" }
     }
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
@@ -463,7 +577,8 @@ try {
 # and 0.0045 USD per GB-hour in US regions; other regions differ by up to ~20 %).
 $cpu = 1.0; $mem = 1.5
 if ($Size -eq 'medium') { $cpu = 2.0; $mem = 3.0 }
-if ($panelOn) { $cpu += 0.25; $mem += 0.3 }
+# Caddy (storage-auth identity: the hub serves the panel itself)
+if ($panelOn -and $StorageAuth -eq 'key') { $cpu += 0.25; $mem += 0.3 }
 $cost = [math]::Round(730 * ($cpu * 0.0405 + $mem * 0.0045) + 1)
 
 $panelText = if ($panelUrl) { $panelUrl } else { 'off (-NoPanel)' }
@@ -473,7 +588,7 @@ longarm-hub is up.
   hub address     $hubAddr
   CA fingerprint  $fp
   panel           $panelText
-  resource group  $rg (storage account $account)
+  resource group  $rg (storage account $account, storage auth $StorageAuth)
   cost            about $cost USD/month (compute; plus egress over 100 GB/month, relay traffic counts)
 
 "@
@@ -482,6 +597,13 @@ if ($code) {
 1. Your laptop (admin): install longarm (https://github.com/lubobill1990/longarm/releases), then
      longarm join $hubAddr $code --ca-fingerprint $fp
    The code is one-time and valid until $expires (a new one: ./deploy.ps1 -Name $Name -AdminCode).
+"@
+} elseif ($adminJoined -eq 'false') {
+    # storage-auth identity: the code is only in the container's bootstrap.env
+    Write-Host @"
+1. Your laptop (admin): install longarm (https://github.com/lubobill1990/longarm/releases), then
+     ./deploy.ps1 -Name $Name -ResourceGroup $rg -AdminCode      # a one-time admin join code (24 h)
+     longarm join $hubAddr <code> --ca-fingerprint $fp
 "@
 } else {
     Write-Host "1. An admin has joined already. Another admin: ./deploy.ps1 -Name $Name -AdminCode"

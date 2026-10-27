@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -208,7 +209,8 @@ func TestAzureDeployScripts(t *testing.T) {
 			// ("East Asia" would make a broken DNS name)
 			p := params()
 			// the template's image (ghcr.io): the template's registryServer
-			if _, has := p["location"]; has || p["name"] != "myhub" || p["size"] != "small" || p["enablePanel"] != false || p["registryPassword"] != "s3cret-pw" || p["registryServer"] != nil {
+			if _, has := p["location"]; has || p["name"] != "myhub" || p["size"] != "small" || p["enablePanel"] != false || p["registryPassword"] != "s3cret-pw" || p["registryServer"] != nil ||
+				p["storageAuth"] != "key" || p["enableTelemetry"] != false || p["enableDiagnostics"] != false || p["acrName"] != nil || p["entraTenantId"] != nil {
 				t.Fatalf("parameters %+v", p)
 			}
 			cl := calls()
@@ -223,8 +225,14 @@ func TestAzureDeployScripts(t *testing.T) {
 			// back (the registry password) must be given again
 			refused(run(nil, name, "myhub"), "re-run without the registry login", "registry")
 			ok(run(pw, name, "myhub", regUser, "bot"), "re-run")
-			if p := params(); p["enablePanel"] != false || p["size"] != "small" || p["image"] != "ghcr.io/example/longarm-hub:latest" {
+			// the fake prints None for null fields like the real az (no Log
+			// Analytics workspace): not a workspace
+			if p := params(); p["enablePanel"] != false || p["size"] != "small" || p["image"] != "ghcr.io/example/longarm-hub:latest" ||
+				p["enableLogAnalytics"] != false || p["storageAuth"] != "key" || p["enableTelemetry"] != false {
 				t.Fatalf("re-run lost settings: %+v", p)
+			}
+			if strings.Contains(calls(), "Microsoft.OperationalInsights") {
+				t.Fatalf("None taken for a Log Analytics workspace:\n%s", calls())
 			}
 			n := restarts() // same mutable tag: pulled again
 			if n != 1 {
@@ -267,6 +275,33 @@ func TestAzureDeployScripts(t *testing.T) {
 				t.Fatalf("re-run lost --stun-servers none: %+v", p)
 			}
 			refused(run(pw, name, "myhub", regUser, "bot", stun, "a b"), "bad STUN servers", "stun")
+
+			// telemetry and Entra sign-in: template parameters a re-run keeps
+			// (from the hub's environment); diagnostics and --acr need the
+			// managed identity
+			telemetry, diagnostics := r.flag("--telemetry", "-Telemetry"), r.flag("--diagnostics", "-Diagnostics")
+			entraTenant, entraClient := r.flag("--entra-tenant", "-EntraTenant"), r.flag("--entra-client", "-EntraClient")
+			entraAdmins, entraWeb := r.flag("--entra-admins", "-EntraAdmins"), r.flag("--entra-web", "-EntraWeb")
+			acrFlag := r.flag("--acr", "-Acr")
+			refused(run(pw, name, "myhub", regUser, "bot", diagnostics), "diagnostics with storage keys", "diagnostics needs")
+			refused(run(pw, name, "myhub", regUser, "bot", acrFlag, "myacr"), "--acr with storage keys", "acr needs")
+			refused(run(pw, name, "myhub", regUser, "bot", entraTenant, "tid"), "Entra tenant without client", "go together")
+			refused(run(pw, name, "myhub", regUser, "bot", entraTenant, "tid", entraClient, "cid", entraWeb, "bogus"), "bad Entra web mode", "spa, confidential or off")
+			ok(run(pw, name, "myhub", regUser, "bot", telemetry, entraTenant, "tid", entraClient, "cid", entraAdmins, "alice@example.com,*@example.org"), "telemetry and Entra")
+			if p := params(); p["enableTelemetry"] != true || p["enableDiagnostics"] != false || p["storageAuth"] != "key" ||
+				p["entraTenantId"] != "tid" || p["entraClientId"] != "cid" || p["entraAdmins"] != "alice@example.com,*@example.org" || p["entraWeb"] != nil {
+				t.Fatalf("telemetry and Entra: %+v", p)
+			}
+			ok(run(pw, name, "myhub", regUser, "bot", entraWeb, "off"), "Entra web mode")
+			ok(run(pw, name, "myhub", regUser, "bot"), "re-run keeps telemetry and Entra")
+			if p := params(); p["enableTelemetry"] != true || p["entraTenantId"] != "tid" || p["entraClientId"] != "cid" ||
+				p["entraAdmins"] != "alice@example.com,*@example.org" || p["entraWeb"] != "off" {
+				t.Fatalf("re-run lost telemetry / Entra: %+v", p)
+			}
+			ok(run(pw, name, "myhub", regUser, "bot", entraAdmins, "bob@example.com"), "other Entra admins")
+			if p := params(); p["entraTenantId"] != "tid" || p["entraClientId"] != "cid" || p["entraAdmins"] != "bob@example.com" || p["entraWeb"] != "off" {
+				t.Fatalf("other Entra admins: %+v", p)
+			}
 
 			// an image from another registry: the login is for that registry,
 			// and needed again on a re-run
@@ -332,6 +367,63 @@ func TestAzureDeployScripts(t *testing.T) {
 			}
 			if res := run(nil, name, "myhub", r.flag("--teardown", "-Teardown"), yes); res.code != 0 || !strings.Contains(calls(), "group delete -n myhub-rg --yes") {
 				t.Fatalf("teardown: %+v\n%s", res, calls())
+			}
+
+			// --storage-auth identity: no storage keys; the bootstrap values
+			// come from the hub's log (its last LONGARM_BOOTSTRAP line), the
+			// admin code from --admin-code, the panel from the hub (no Caddy)
+			sa := r.flag("--storage-auth", "-StorageAuth")
+			from := len(calls())
+			res = run(nil, name, "idhub", loc, "eastasia", sa, "identity", telemetry, diagnostics,
+				entraTenant, "tid", entraClient, "cid", entraAdmins, "alice@example.com", entraWeb, "confidential")
+			ok(res, "identity")
+			if p := params(); p["storageAuth"] != "identity" || p["enablePanel"] != true || p["enableTelemetry"] != true || p["enableDiagnostics"] != true ||
+				p["entraTenantId"] != "tid" || p["entraClientId"] != "cid" || p["entraAdmins"] != "alice@example.com" || p["entraWeb"] != "confidential" ||
+				p["acrName"] != nil || p["registryUsername"] != nil || p["enableLogAnalytics"] != false {
+				t.Fatalf("identity: %+v", p)
+			}
+			if cl := calls()[from:]; strings.Contains(cl, "storage file") || strings.Contains(cl, "keys list") || !strings.Contains(cl, "container logs -g idhub-rg -n idhub --container-name hub") {
+				t.Fatalf("identity: storage keys or no log:\n%s", cl)
+			}
+			for _, want := range []string{r.flag("--admin-code", "-AdminCode") + "      # a one-time admin join code",
+				"longarm join " + b["hub_address"] + " <code> --ca-fingerprint " + b["ca_fingerprint"],
+				"storage auth identity", "about 35 USD/month"} {
+				if !strings.Contains(res.stdout, want) {
+					t.Errorf("identity: output lacks %q:\n%s", want, res.stdout)
+				}
+			}
+			// a re-run finds the mode and keeps everything; it can't switch
+			from = len(calls())
+			ok(run(nil, name, "idhub"), "identity re-run")
+			if p := params(); p["storageAuth"] != "identity" || p["enablePanel"] != true || p["enableTelemetry"] != true || p["enableDiagnostics"] != true ||
+				p["entraTenantId"] != "tid" || p["entraAdmins"] != "alice@example.com" || p["entraWeb"] != "confidential" || p["enableLogAnalytics"] != false {
+				t.Fatalf("identity re-run: %+v", p)
+			}
+			if cl := calls()[from:]; strings.Contains(cl, "storage ") || strings.Contains(cl, "Microsoft.OperationalInsights") {
+				t.Fatalf("identity re-run:\n%s", cl)
+			}
+			refused(run(nil, name, "idhub", sa, "key"), "switching the storage auth", "switching needs")
+			// the image built in ACR: pulled with the identity (acrName, no
+			// admin user); a re-run finds the registry from the group's
+			res = run(nil, name, "idhub", r.flag("--build-in-acr", "-BuildInAcr"))
+			ok(res, "identity: build in ACR")
+			acr = strings.TrimSpace(string(must(os.ReadFile(filepath.Join(dir, "acr")))))
+			if p := params(); p["acrName"] != acr || p["registryUsername"] != nil || !strings.HasPrefix(fmt.Sprint(p["image"]), acr+".azurecr.io/longarm-hub:build-") {
+				t.Fatalf("identity: build in ACR: %+v", p)
+			}
+			if !strings.Contains(calls(), "acr create -g idhub-rg -n "+acr+" -l eastasia --sku Basic --admin-enabled false") {
+				t.Fatalf("identity: ACR with an admin user:\n%s", calls())
+			}
+			ok(run(nil, name, "idhub", image, "ghcr.io/example/longarm-hub:1.2.3"), "identity re-run after the ACR build")
+			if p := params(); p["acrName"] != acr || p["registryUsername"] != nil {
+				t.Fatalf("identity re-run lost the registry: %+v", p)
+			}
+			ok(run(nil, name, "idhub", acrFlag, "other"), "identity with --acr")
+			if p := params(); p["acrName"] != "other" {
+				t.Fatalf("identity --acr: %+v", p)
+			}
+			if res := run(nil, name, "idhub", r.flag("--teardown", "-Teardown"), yes); res.code != 0 || !strings.Contains(calls(), "group delete -n idhub-rg --yes") {
+				t.Fatalf("identity teardown: %+v", res)
 			}
 		})
 	}
