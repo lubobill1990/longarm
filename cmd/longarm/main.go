@@ -102,7 +102,7 @@ func main() {
 		return
 	case ee != nil:
 		if ee.msg != "" {
-			fmt.Fprintln(os.Stderr, "longarm:", ee.msg)
+			fmt.Fprintln(os.Stderr, "longarm:", ee.msg+traceNote())
 		}
 		os.Exit(ee.code)
 	}
