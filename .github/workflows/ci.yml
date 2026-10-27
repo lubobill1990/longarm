@@ -165,6 +165,13 @@ jobs:
       # and checked in; this only proves the toolchain still builds it
       - name: build
         run: pnpm build
+      # the built panel, for updating internal/webui/dist where npm's
+      # registry isn't reachable (gh run download -n webui-dist)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: webui-dist
+          path: web/dist
+          retention-days: 7
 
   test:
     name: test (${{ matrix.os }})
