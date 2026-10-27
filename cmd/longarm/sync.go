@@ -47,7 +47,7 @@ are discarded, ignored files (node_modules, build output) are kept.
 			defer s.close()
 			worker, dst, ok := splitRemote(s.cfg, args[1])
 			if !ok {
-				return errors.New("second argument must be <worker>:<path>")
+				return usagef("second argument must be <worker>:<path>")
 			}
 			conn, err := s.conn(worker)
 			if err != nil {
@@ -105,13 +105,13 @@ func gitOut(dir string, stdin io.Reader, args ...string) ([]byte, error) {
 func openLocalRepo(dir, name string) (*localRepo, error) {
 	out, err := gitOut(dir, nil, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return nil, fmt.Errorf("%s is not inside a git checkout: %w", dir, err)
+		return nil, usagef("%s is not inside a git checkout: %w", dir, err)
 	}
 	lr := &localRepo{top: strings.TrimSpace(string(out))}
 	switch {
 	case name != "":
 		if !workspace.ValidRepo(name) {
-			return nil, fmt.Errorf("bad --repo-name %q", name)
+			return nil, usagef("bad --repo-name %q", name)
 		}
 		lr.key = name
 	default:
@@ -135,7 +135,7 @@ func (lr *localRepo) upload(ctx context.Context, conn *client.Conn, ref, lfs str
 	out, err := gitOut(lr.top, nil, "rev-parse", "--verify", ref+"^{commit}")
 	if err != nil {
 		if fullSHA(ref) {
-			return nil, fmt.Errorf("--ref %s: no such commit in %s (fetch it first)", ref, lr.top)
+			return nil, usagef("--ref %s: no such commit in %s (fetch it first)", ref, lr.top)
 		}
 		return nil, err
 	}
@@ -155,9 +155,9 @@ func (lr *localRepo) upload(ctx context.Context, conn *client.Conn, ref, lfs str
 			bundleRef = strings.TrimSpace(string(full))
 			if err != nil || !strings.HasPrefix(bundleRef, "refs/") {
 				if shortSHA(ref) {
-					return nil, fmt.Errorf("--ref %q: a short commit id; give the full one (%s), a branch or a tag", ref, commit)
+					return nil, usagef("--ref %q: a short commit id; give the full one (%s), a branch or a tag", ref, commit)
 				}
-				return nil, fmt.Errorf("--ref %q: use HEAD, a branch, a tag or a full commit id", ref)
+				return nil, usagef("--ref %q: use HEAD, a branch, a tag or a full commit id", ref)
 			}
 		}
 		withLocal = false
@@ -180,7 +180,7 @@ func (lr *localRepo) upload(ctx context.Context, conn *client.Conn, ref, lfs str
 			return nil, err
 		}
 	default:
-		return nil, fmt.Errorf("--lfs %q: want skip or ship", lfs)
+		return nil, usagef("--lfs %q: want skip or ship", lfs)
 	}
 
 	rctx, cancel := context.WithTimeout(ctx, time.Minute)
@@ -258,7 +258,7 @@ func (lr *localRepo) upload(ctx context.Context, conn *client.Conn, ref, lfs str
 	}
 	res, err := st.CloseAndRecv()
 	if err != nil && lfsTar != "" && strings.Contains(err.Error(), "unknown part") {
-		return nil, fmt.Errorf("the worker's longarmd is too old for --lfs ship (update it): %w", err)
+		return nil, usagef("the worker's longarmd is too old for --lfs ship (update it): %w", err)
 	}
 	return res, err
 }
@@ -387,7 +387,7 @@ func jobWorkspace(ctx context.Context, conn *client.Conn, repo, ref, lfs string)
 	}
 	if isURL(repo) {
 		if lfs == lfsShip {
-			return nil, errors.New("--lfs ship goes with a local checkout (--repo <path>); a url is fetched by the worker")
+			return nil, usagef("--lfs ship goes with a local checkout (--repo <path>); a url is fetched by the worker")
 		}
 		return &pb.JobWorkspace{Repo: workspace.RepoKey(repo), Url: repo, Ref: ref}, nil
 	}

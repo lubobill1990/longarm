@@ -134,6 +134,12 @@ type Spec struct {
 // MaxStdinBytes caps a job's stdin payload (longarm run --stdin-file).
 const MaxStdinBytes = 1 << 20
 
+// StdinLostReason is the reason of a job that took a stdin payload and
+// ended before it was handed to the job (longarmd restarted, the shim did
+// not start): it never ran. Resubmitting the same id with the payload
+// replaces it.
+const StdinLostReason = "stdin payload lost before start; resubmit"
+
 // FeatureStdin is the InfoResponse.features entry of workers that accept
 // SubmitRequest.stdin.
 const FeatureStdin = "job-stdin"

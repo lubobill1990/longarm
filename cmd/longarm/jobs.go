@@ -225,6 +225,7 @@ reachable hub longarm picks among the known workers itself.`,
 				job, err = conn.Jobs().Submit(c, req)
 				return err
 			})
+			clear(stdin) // sent (or given up): no copy of the payload stays here
 			if err != nil {
 				return err
 			}
@@ -683,7 +684,11 @@ answered). See docs/usage.md#jobs---json.`,
 					return err
 				}
 			}
-			if jobID != "" && len(rows) == 0 {
+			// --id: whether the job exists, then whether it passes --state
+			// (a job that exists but doesn't match is an empty list, exit 0)
+			if jobID != "" && len(rows) > 0 && len(want) > 0 {
+				rows = slices.DeleteFunc(rows, func(fj *pb.FleetJob) bool { return !slices.Contains(want, fj.Job.GetState()) })
+			} else if jobID != "" && len(rows) == 0 {
 				if asJSON {
 					printJobsJSON(nil, source, unreachable)
 				}
@@ -737,8 +742,8 @@ answered). See docs/usage.md#jobs---json.`,
 	return c
 }
 
-// hubJobs lists jobs from the hub's index (id: that job only; a NotFound
-// answer is an empty list).
+// hubJobs lists jobs from the hub's index (id: that job only, whatever
+// its state; a NotFound answer is an empty list).
 func hubJobs(ctx context.Context, h *hubclient.Conn, worker, id string, want []pb.JobState, limit int) ([]*pb.FleetJob, error) {
 	ctx, cancel := context.WithTimeout(ctx, hubTimeout)
 	defer cancel()
@@ -749,9 +754,6 @@ func hubJobs(ctx context.Context, h *hubclient.Conn, worker, id string, want []p
 		}
 		if err != nil {
 			return nil, err
-		}
-		if len(want) > 0 && !slices.Contains(want, fj.Job.GetState()) {
-			return nil, nil
 		}
 		return []*pb.FleetJob{fj}, nil
 	}
@@ -793,9 +795,7 @@ func workerJobs(ctx context.Context, s *session, worker, id string, want []pb.Jo
 				if id != "" {
 					var j *pb.Job
 					if j, err = conn.Jobs().Get(ctx, &pb.GetJobRequest{Id: id}); err == nil {
-						if len(want) == 0 || slices.Contains(want, j.State) {
-							js = append(js, j)
-						}
+						js = append(js, j)
 					} else if status.Code(err) == codes.NotFound {
 						err = nil
 					}

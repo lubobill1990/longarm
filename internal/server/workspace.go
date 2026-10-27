@@ -147,7 +147,9 @@ func (w *workspaceServer) Sync(st pb.Workspace_SyncServer) error {
 		"lfs_bytes": res.LfsBytes, "error": errString(err),
 	})
 	if err != nil {
-		return status.Error(codes.FailedPrecondition, err.Error())
+		// Aborted, not FailedPrecondition: importing / checking out can fail
+		// for passing reasons (a git lock, a full disk); clients retry
+		return status.Error(codes.Aborted, err.Error())
 	}
 	return st.SendAndClose(res)
 }

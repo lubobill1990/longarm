@@ -39,9 +39,13 @@ func TestSubmitStdin(t *testing.T) {
 	const marker = "payload-MARKER-0x5EC2E7"
 	payload := []byte("a prompt with " + marker + "\n")
 	spec := jobs.Spec{ID: "s1", Argv: []string{"agent"}}
-	j, err := m.SubmitStdin(ctx, spec, map[string]string{"TOKEN": "tok"}, payload)
+	sent := bytes.Clone(payload)
+	j, err := m.SubmitStdin(ctx, spec, map[string]string{"TOKEN": "tok"}, sent)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !bytes.Equal(sent, make([]byte, len(payload))) {
+		t.Error("longarmd's copy of the payload not zeroed after the hand-off")
 	}
 	if j.Spec.StdinBytes != int64(len(payload)) {
 		t.Fatalf("StdinBytes = %d", j.Spec.StdinBytes)
@@ -56,18 +60,39 @@ func TestSubmitStdin(t *testing.T) {
 	if err := dec.Decode(&secrets); err != nil || secrets["TOKEN"] != "tok" {
 		t.Fatalf("shim stdin %q: %v", b, err)
 	}
-	if rest := b[dec.InputOffset():]; !bytes.Equal(rest, payload) {
+	if rest := b[dec.InputOffset():]; !bytes.Equal(rest, payload) { // (the fake shim's own copy)
 		t.Fatalf("payload after the secrets = %q", rest)
 	}
-	// A retry (same spec and payload size) returns the job; nothing in the
-	// job directory has the payload.
-	if _, err := m.SubmitStdin(ctx, spec, map[string]string{"TOKEN": "tok"}, payload); err != nil {
+	// A retry while the job is active returns it (the payload sent again is
+	// dropped); without the payload it is another spec.
+	if _, err := m.SubmitStdin(ctx, spec, map[string]string{"TOKEN": "tok"}, bytes.Clone(payload)); err != nil {
 		t.Fatalf("idempotent resubmit: %v", err)
 	}
 	if _, err := m.Submit(ctx, spec, map[string]string{"TOKEN": "tok"}); !errors.Is(err, ErrAlreadyExists) {
 		t.Fatalf("resubmit without the payload: %v", err)
 	}
-	waitState(t, m, "s1", jobs.Lost)
+	// The fake shim took the payload and exited without starting the job:
+	// failed with the explicit reason, never "ran with an empty stdin".
+	waitState(t, m, "s1", jobs.Failed)
+	if j, _ := m.Get("s1"); j.Status.Reason != jobs.StdinLostReason || !j.Status.StartedAt.IsZero() {
+		t.Fatalf("lost payload: %+v", j.Status)
+	}
+	// Resubmitting it with the payload replaces it: a new attempt that gets
+	// the payload again.
+	os.Remove(got)
+	j2, err := m.SubmitStdin(ctx, spec, map[string]string{"TOKEN": "tok"}, bytes.Clone(payload))
+	if err != nil || !j2.Spec.CreatedAt.After(j.Spec.CreatedAt) {
+		t.Fatalf("resubmit after the loss: %+v %v", j2, err)
+	}
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if b, _ = os.ReadFile(got); bytes.HasSuffix(b, payload) {
+			break
+		}
+	}
+	if !bytes.HasSuffix(b, payload) {
+		t.Fatalf("the new attempt's shim got %q", b)
+	}
+	waitState(t, m, "s1", jobs.Failed)
 	filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
 		if err == nil && !fi.IsDir() {
 			if c, _ := os.ReadFile(p); bytes.Contains(c, []byte(marker)) {

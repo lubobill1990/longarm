@@ -220,6 +220,11 @@ func run(d jobs.Dir, stdin io.Reader, log *slog.Logger) error {
 		return err
 	}
 	j := &job{d: d, spec: spec, st: st, log: log, secrets: secrets, stdin: input}
+	if n := int64(len(input)); n != spec.StdinBytes {
+		// never run a job with a missing or partial payload
+		clear(input)
+		return j.finish(jobs.Failed, jobs.ExitNotFound, fmt.Sprintf("%s (got %d of %d bytes)", jobs.StdinLostReason, n, spec.StdinBytes))
+	}
 
 	if d.KillRequested() {
 		return j.finish(jobs.Killed, platform.KilledExitCode, "killed before start")
@@ -314,17 +319,19 @@ func readInput(r io.Reader) (map[string]string, []byte, error) {
 		return secrets, nil, nil
 	}
 	dec := json.NewDecoder(bytes.NewReader(b))
+	defer clear(b)
 	if err := dec.Decode(&secrets); err != nil {
-		return nil, nil, fmt.Errorf("decode secrets: %w", err)
+		return nil, nil, errors.New("decode secrets: malformed input") // (the error would quote it)
 	}
 	rest := b[dec.InputOffset():]
 	if len(rest) > jobs.MaxStdinBytes {
 		return nil, nil, fmt.Errorf("stdin payload larger than %d bytes", jobs.MaxStdinBytes)
 	}
-	if len(rest) == 0 {
-		rest = nil
+	var in []byte
+	if len(rest) > 0 {
+		in = bytes.Clone(rest) // b is zeroed; in is, once written to the job
 	}
-	return secrets, rest, nil
+	return secrets, in, nil
 }
 
 // feedStdin gives the job its stdin payload through a pipe the shim
@@ -348,6 +355,7 @@ func (j *job) feedStdin(cmd *exec.Cmd) (start, stop func(), err error) {
 		j.stdin = nil
 		go func() {
 			_, _ = w.Write(data) // fails once the job closed its end
+			clear(data)
 			stop()
 		}()
 	}

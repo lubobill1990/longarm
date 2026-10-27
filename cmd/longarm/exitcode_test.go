@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -125,5 +126,21 @@ func TestJobsJSON(t *testing.T) {
 	if err := json.Unmarshal(b, &raw); err != nil || fmt.Sprint(raw["jobs"]) != "[]" || raw["source"] != "workers" ||
 		fmt.Sprint(raw["unreachable"]) != "[w2]" {
 		t.Fatalf("workers: %s", b)
+	}
+}
+
+func TestCLIFeatures(t *testing.T) {
+	name := regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+	seen := map[string]bool{}
+	for _, f := range cliFeatures {
+		if !name.MatchString(f) || seen[f] {
+			t.Errorf("feature %q: lowercase-hyphenated, once", f)
+		}
+		seen[f] = true
+	}
+	for _, f := range []string{"exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label"} {
+		if !seen[f] {
+			t.Errorf("missing feature %s", f)
+		}
 	}
 }

@@ -116,6 +116,11 @@ func TestHub(t *testing.T) {
 			!strings.Contains(r.stdout, `"source": "hub"`) || !strings.Contains(r.stdout, id) {
 			t.Fatalf("jobs --hub-only --id: %+v", r)
 		}
+		// it exists but doesn't pass --state: an empty list, not "not found"
+		if r := h.longarm(h.client, "jobs", "--hub-only", "--json", "--id", id, "--state", "killed"); r.code != 0 ||
+			!strings.Contains(r.stdout, `"jobs": []`) || !strings.Contains(r.stdout, `"source": "hub"`) {
+			t.Fatalf("jobs --hub-only --id --state <other>: %+v", r)
+		}
 		if r := h.longarm(h.client, "jobs", "--hub-only", "--json", "--id", "01NOSUCHJOB0000000000000000"); r.code != 3 ||
 			!strings.Contains(r.stdout, `"source": "hub"`) || !strings.Contains(r.stderr, "not known to the hub") {
 			t.Fatalf("jobs --hub-only --id <unknown>: %+v", r)

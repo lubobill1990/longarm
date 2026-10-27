@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -9,6 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lubobill1990/longarm/internal/client"
+	"github.com/lubobill1990/longarm/internal/version"
 )
 
 // Exit codes of longarm itself (docs/usage.md#exit-codes). Commands that
@@ -125,4 +127,40 @@ func markUsageErrors(root *cobra.Command, validated *bool) {
 		}
 	}
 	walk(root)
+}
+
+// cliFeatures are what this longarm supports beyond the base CLI, for
+// programs driving it (longarm version --json; docs/usage.md#capabilities).
+// Names are lowercase-hyphenated and never reused for something else.
+var cliFeatures = []string{
+	"exit-codes",    // the exit-code contract
+	"jobs-source",   // jobs --json "source" / "unreachable"
+	"jobs-hub-only", // jobs --hub-only, jobs --id
+	"stdin-file",    // run --stdin-file
+	"lfs",           // run / sync --lfs skip|ship
+	"ref-sha",       // run --repo <path> --ref <full commit id>
+	"worker-label",  // longarm worker label
+}
+
+func versionCmd() *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "version",
+		Short: "Print longarm's version (--json: and its features, for programs driving longarm)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !asJSON {
+				fmt.Println("longarm", version.Version)
+				return nil
+			}
+			b, _ := json.MarshalIndent(struct {
+				Version  string   `json:"version"`
+				Features []string `json:"features"`
+			}{version.Version, cliFeatures}, "", "  ")
+			fmt.Println(string(b))
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&asJSON, "json", false, `{"version": "...", "features": [...]}`)
+	return c
 }

@@ -552,9 +552,18 @@ func TestE2E(t *testing.T) {
 			got.Source != "workers" || len(got.Jobs) != 1 {
 			t.Fatalf("jobs --json: %+v %v", got, err)
 		}
+		known := got.Jobs[0]["job"].(map[string]any)["spec"].(map[string]any)["id"].(string)
 		r := e.longarm(e.client, "jobs", "w1", "--json", "--id", "01NOSUCHJOB0000000000000000")
 		if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || r.code != 3 || got.Source != "workers" || len(got.Jobs) != 0 {
 			t.Fatalf("jobs --id <unknown>: %+v", r)
+		}
+		// a job that exists but doesn't pass --state: an empty list, exit 0
+		r = e.longarm(e.client, "jobs", "w1", "--json", "--id", known, "--state", "queued")
+		if err := json.Unmarshal([]byte(r.stdout), &got); err != nil || r.code != 0 || len(got.Jobs) != 0 {
+			t.Fatalf("jobs --id <known> --state <other>: %+v", r)
+		}
+		if r = e.longarm(e.client, "jobs", "w1", "--json", "--id", known); r.code != 0 || !strings.Contains(r.stdout, known) {
+			t.Fatalf("jobs --id <known>: %+v", r)
 		}
 	})
 

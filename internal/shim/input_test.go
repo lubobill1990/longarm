@@ -2,6 +2,8 @@ package shim
 
 import (
 	"bytes"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -34,5 +36,25 @@ func TestReadInput(t *testing.T) {
 	}
 	if _, in, err := readInput(bytes.NewReader(big[:len(big)-1])); err != nil || len(in) != jobs.MaxStdinBytes {
 		t.Errorf("stdin of exactly the limit: %d %v", len(in), err)
+	}
+}
+
+// A payload that arrived short (longarmd died while handing it over) fails
+// the job before anything starts.
+func TestPartialPayloadNeverRuns(t *testing.T) {
+	d := jobs.Dir(t.TempDir())
+	if err := d.WriteSpec(&jobs.Spec{ID: "j", Argv: []string{"never-started"}, StdinBytes: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.WriteStatus(&jobs.Status{State: jobs.Preparing}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(d, strings.NewReader(`{}abc`), slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		t.Fatal(err)
+	}
+	st, err := d.ReadStatus()
+	if err != nil || st.State != jobs.Failed || st.PID != 0 || !strings.HasPrefix(st.Reason, jobs.StdinLostReason) ||
+		!strings.Contains(st.Reason, "got 3 of 10 bytes") {
+		t.Fatalf("status %+v %v", st, err)
 	}
 }
