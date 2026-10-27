@@ -194,7 +194,10 @@ func TestGitAuthForward(t *testing.T) {
 			t.Fatalf("worktree git config:\n%s", cfg)
 		}
 		logs := e.mustLongarm(e.client, "logs", "w1", "ga", "--session")
-		if !strings.Contains(logs, "with the forwarded credential") || strings.Contains(logs, token) {
+		// the session's preparation runs git like a job's (#36): no traces,
+		// no credential headers
+		if !strings.Contains(logs, "with the forwarded credential") || strings.Contains(logs, token) ||
+			strings.Contains(logs, "Recv header") || strings.Contains(logs, "Authorization") {
 			t.Fatalf("session transcript: %s", logs)
 		}
 		if sl := e.mustLongarm(e.client, "sessions", "w1", "-s", "ga", "--json"); strings.Contains(sl, token) || !strings.Contains(sl, `"gitAuth": true`) {
