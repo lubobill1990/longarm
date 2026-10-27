@@ -7,7 +7,7 @@
 # "azure-e2e" status on GitHub.
 #
 # Environment (set by the job): REPO, BRANCH, AZURE_CLIENT_ID (the managed
-# identity), RG, ENTRA_TENANT, ENTRA_CLIENT [, GITHUB_STATUS_TOKEN].
+# identity), RG, ENTRA_TENANT, ENTRA_CLIENT [, GITHUB_STATUS_TOKEN, HUB_IMAGE].
 set -uo pipefail
 
 : "${REPO:?}" "${AZURE_CLIENT_ID:?}" "${RG:?}" "${ENTRA_TENANT:?}" "${ENTRA_CLIENT:?}"
@@ -51,11 +51,12 @@ az login --identity --client-id "$AZURE_CLIENT_ID" -o none || finish 1 "az login
 # the hub image of this commit (image.yml publishes it after a push to main)
 owner=${REPO%%/*}
 repo_path=${owner,,}/longarm-hub
-image=ghcr.io/$repo_path:sha-${commit::12}
+image=${HUB_IMAGE:-ghcr.io/$repo_path:sha-${commit::12}}
+tag=${image##*:}
 for _ in $(seq 1 60); do
 	tok=$(curl -fsS "https://ghcr.io/token?scope=repository:$repo_path:pull" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
 	if curl -fsS -o /dev/null -H "Authorization: Bearer $tok" -H "Accept: application/vnd.oci.image.index.v1+json" \
-		"https://ghcr.io/v2/$repo_path/manifests/sha-${commit::12}"; then
+		"https://ghcr.io/v2/$repo_path/manifests/$tag"; then
 		break
 	fi
 	sleep 30

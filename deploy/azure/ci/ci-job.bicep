@@ -31,6 +31,9 @@ param entraTenantId string
 @description('App registration (client ID) of the hub sign-in under test.')
 param entraClientId string
 
+@description('Hub image to test (default: ghcr.io/<owner>/longarm-hub:sha-<the tested commit>, published by image.yml for main).')
+param hubImage string = ''
+
 @description('Container image with bash, git (tdnf) and the Azure CLI.')
 param runnerImage string = 'mcr.microsoft.com/azure-cli:latest'
 
@@ -142,7 +145,8 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
               { name: 'ENTRA_TENANT', value: entraTenantId }
               { name: 'ENTRA_CLIENT', value: entraClientId }
             ],
-            hasToken ? [{ name: 'GITHUB_STATUS_TOKEN', secretRef: 'github-status-token' }] : []
+            hasToken ? [{ name: 'GITHUB_STATUS_TOKEN', secretRef: 'github-status-token' }] : [],
+            empty(hubImage) ? [] : [{ name: 'HUB_IMAGE', value: hubImage }]
           )
         }
       ]
