@@ -18,9 +18,13 @@
 package main
 
 import (
+	"archive/tar"
 	"bufio"
+	"bytes"
 	"cmp"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -501,6 +505,7 @@ it installs a new one.`,
 func issueCmd() *cobra.Command {
 	var role, name, out string
 	var days int
+	var b64 bool
 	c := &cobra.Command{
 		Use:   "issue",
 		Short: "Issue a certificate bundle from the hub's CA locally (e.g. the first admin)",
@@ -518,9 +523,29 @@ func issueCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if name == "" && r == pki.RoleRelease {
+				name = "ci-" + time.Now().UTC().Format("20060102")
+			}
+			if name == "" {
+				return errors.New("--name is required")
+			}
+			if out == "" && !b64 {
+				return errors.New("--out DIR or --b64")
+			}
 			certPEM, keyPEM, err := ca.Issue(pki.IssueOptions{Role: r, Name: name, Validity: time.Duration(days) * 24 * time.Hour})
 			if err != nil {
 				return err
+			}
+			if b64 {
+				// the LONGARM_RELEASE_TLS secret's format (docs/ci-cd.md):
+				// base64 of a tar.gz with ca.crt, node.crt, node.key
+				s, err := bundleTarB64(ca.CertPEM, certPEM, keyPEM)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(os.Stderr, "%s/%s bundle (base64 tar.gz of ca.crt node.crt node.key; it holds a private key):\n", r, name)
+				fmt.Println(s)
+				return nil
 			}
 			if err := pki.WriteBundle(out, ca.CertPEM, certPEM, keyPEM); err != nil {
 				return err
@@ -530,12 +555,37 @@ func issueCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&role, "role", "admin", "admin | client | worker | release (the CI credential, docs/ci-cd.md)")
-	c.Flags().StringVar(&name, "name", "", "node name")
+	c.Flags().StringVar(&name, "name", "", "node name (release: default ci-<date>)")
 	c.Flags().StringVar(&out, "out", "", "output dir (ca.crt, node.crt, node.key)")
+	c.Flags().BoolVar(&b64, "b64", false, "print the bundle as base64 of a tar.gz instead of writing files (CI secrets; az container exec)")
 	c.Flags().IntVar(&days, "days", 0, "validity in days (default by role)")
-	c.MarkFlagRequired("name")
-	c.MarkFlagRequired("out")
 	return c
+}
+
+// bundleTarB64 is base64 of a tar.gz with ca.crt, node.crt and node.key.
+func bundleTarB64(caPEM, certPEM, keyPEM []byte) (string, error) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, f := range []struct {
+		name string
+		mode int64
+		data []byte
+	}{{pki.CACertFile, 0o644, caPEM}, {pki.NodeCertFile, 0o644, certPEM}, {pki.NodeKeyFile, 0o600, keyPEM}} {
+		if err := tw.WriteHeader(&tar.Header{Name: f.name, Mode: f.mode, Size: int64(len(f.data)), ModTime: time.Now()}); err != nil {
+			return "", err
+		}
+		if _, err := tw.Write(f.data); err != nil {
+			return "", err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return "", err
+	}
+	if err := gz.Close(); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
 func healthcheckCmd() *cobra.Command {

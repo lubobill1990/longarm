@@ -19,7 +19,7 @@ apt-get install -y -qq --no-install-recommends libcap2-bin >/dev/null
 setcap cap_net_bind_service=+ep "$out/bin/longarm-hub"
 getcap "$out/bin/longarm-hub"
 # argument-free names for az container exec (cmd/longarm-hub/container.go execAliases)
-for a in longarm-hub-admin-code longarm-hub-user-add longarm-hub-users; do
+for a in longarm-hub-admin-code longarm-hub-user-add longarm-hub-users longarm-hub-release-cert; do
 	ln -s longarm-hub "$out/bin/$a"
 done
 mkdir -p "$out/data" "$out/var/lib/longarm-hub"

@@ -199,8 +199,9 @@ read_bootstrap() {
 	fi
 }
 
-# bootstrap_value KEY: a value of the last fetched bootstrap values
-bootstrap_value() { printf '%s\n' "$bootstrap" | awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }'; }
+# bootstrap_value KEY: a value of the last fetched bootstrap values (awk reads
+# to the end: an early exit can SIGPIPE printf, and pipefail + set -e end the script)
+bootstrap_value() { printf '%s\n' "$bootstrap" | awk -v k="$1" '!found && index($0, k "=") == 1 { print substr($0, length(k) + 2); found = 1 }'; }
 
 # ensure_providers NAMESPACE...: register the resource providers the
 # deployment needs (a new subscription has e.g. Microsoft.ContainerInstance
@@ -368,7 +369,7 @@ if [[ -n $cur ]]; then
 			prev_boot=$(bootstrap_value boot_id)
 		fi
 	else
-		account=$(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv | tr -d '\r' | head -n 1)
+		account=$(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv | tr -d '\r' | sed -n 1p)
 		if [[ -n $account ]]; then
 			key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv | tr -d '\r')
 			if fetch_bootstrap "$account" "$key"; then

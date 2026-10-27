@@ -147,6 +147,8 @@ docker exec -i "$p-hub" /usr/local/bin/longarm-hub user add alice --password-std
 # the argument-free aliases for az container exec
 [[ $(docker exec "$p-hub" /usr/local/bin/longarm-hub-admin-code 2>/dev/null) =~ ^[0-9A-Z]{3}-[0-9A-Z]{3}$ ]] || fail "longarm-hub-admin-code"
 [[ $(docker exec "$p-hub" /usr/local/bin/longarm-hub-users) == *alice* ]] || fail "longarm-hub-users"
+[[ $(docker exec "$p-hub" /usr/local/bin/longarm-hub-release-cert 2>/dev/null | base64 -d | tar -tz | sort | tr '\n' ' ') == "ca.crt node.crt node.key " ]] ||
+	fail "longarm-hub-release-cert"
 docker exec -i "$p-hub" /usr/local/bin/longarm-hub user add bob --password-stdin <<<'another passphrase' >/dev/null
 
 step "replace the container (SIGTERM, rm)"

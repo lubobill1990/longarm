@@ -85,7 +85,14 @@ because a revoked name stays revoked):
 sudo -u longarm-hub longarm-hub --config /etc/longarm-hub/hub.toml issue --role release --name ci-2026h2 --out /tmp/ci-tls
 # or on the admin machine that holds the CA:
 longarm admin issue --role release --name ci-2026h2 --out ./ci-tls [--ca-dir <CA dir>] [--days 180]
+# a hub on Azure Container Instances (deploy/azure; exec takes no arguments):
+# the secret's value directly, name ci-<date>, 180 days
+MSYS_NO_PATHCONV=1 az container exec -g <rg> -n <hub> --container-name hub \
+  --exec-command /usr/local/bin/longarm-hub-release-cert > ci-tls.b64   # (prints a private key)
 ```
+
+(`longarm-hub issue --role release --b64` prints the same, the base64 of the
+tar.gz below, instead of writing files.)
 
 Turn the bundle into the secret (then delete the files):
 
