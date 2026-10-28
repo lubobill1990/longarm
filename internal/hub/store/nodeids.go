@@ -13,6 +13,10 @@ import (
 	"github.com/lubobill1990/longarm/internal/pki"
 )
 
+// LegacyNameTombstoneTTL is the shortest life of a legacy name revocation
+// (the hub extends them to its CA's NotAfter when that is later).
+const LegacyNameTombstoneTTL = 2 * 365 * 24 * time.Hour
+
 // migrateNodeIDs is migration 5's Go step (docs/security.md "Node
 // identity", "Migration"): every node gets an ID; names that break the
 // naming rules (one that looks like an ID; a name two non-revoked nodes
@@ -181,6 +185,32 @@ func migrateNodeIDs(tx *sql.Tx, notes *[]string) error {
 				return err
 			}
 		}
+	}
+	// Legacy name tombstones: every node revoked before the upgrade, and
+	// every node the migration revokes, had certificates without a node ID
+	// under its (original) name - a copy the hub never saw must stop
+	// working on workers too. The hub extends them to its CA's lifetime at
+	// start (Store.ExtendRevokedNames).
+	tombstones := 0
+	for _, r := range all {
+		if r.state != "revoked" {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO revoked_names(role,name,not_after) VALUES(?,?,?)
+			ON CONFLICT(role,name) DO UPDATE SET not_after=max(not_after, excluded.not_after)`,
+			r.role, r.name, now.Add(LegacyNameTombstoneTTL).Unix()); err != nil {
+			return err
+		}
+		tombstones++
+	}
+	if tombstones > 0 {
+		// the effective revocations changed: workers that synced the list
+		// before must fetch it again (their version is behind)
+		if _, err := tx.Exec(`INSERT INTO meta(k,v) VALUES('revocation_version','1')
+			ON CONFLICT(k) DO UPDATE SET v=CAST(CAST(v AS INTEGER)+1 AS TEXT)`); err != nil {
+			return err
+		}
+		*notes = append(*notes, fmt.Sprintf("%d legacy name revocations for revoked nodes; revocation list version bumped", tombstones))
 	}
 	// Cached jobs: keyed by the worker's ID now.
 	for old, r := range byName {

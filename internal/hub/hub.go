@@ -269,8 +269,18 @@ func (h *Hub) load() error {
 		h.tenancyChangedLocked()
 	}
 	h.recheckPortLinksLocked() // isolation or hub.toml may have changed since
+	return h.loadRevocations()
+}
+
+// loadRevocations loads the revocation version and list (at start).
+func (h *Hub) loadRevocations() error {
 	v, _ := h.store.Meta("revocation_version")
 	h.revVersion, _ = strconv.ParseInt(v, 10, 64)
+	// legacy name revocations (also the migration's tombstones) last at
+	// least as long as the CA
+	if err := h.store.ExtendRevokedNames(h.ca.Cert.NotAfter); err != nil {
+		return err
+	}
 	h.revoked, _ = pki.LoadRevocationList("")
 	return h.rebuildRevocations()
 }
@@ -321,7 +331,7 @@ func (h *Hub) revokedNamesLocked() []*pb.RevokedName {
 
 // legacyNameRevocationTTL: how long a legacy name revocation lasts - longer
 // than any certificate issued before node IDs can live.
-const legacyNameRevocationTTL = 2 * 365 * 24 * time.Hour
+const legacyNameRevocationTTL = store.LegacyNameTombstoneTTL
 
 // revokeLegacyNamesLocked adds legacy name revocations for the names of
 // node n's certificates without a node ID (a revoked node, or a renamed
@@ -336,6 +346,9 @@ func (h *Hub) revokeLegacyNamesLocked(n *node) {
 		names = []string{n.rec.DialName()}
 	}
 	until := time.Now().Add(legacyNameRevocationTTL)
+	if ca := h.ca.Cert.NotAfter; ca.After(until) {
+		until = ca // as long as the CA could have issued such a certificate
+	}
 	for _, name := range names {
 		if err := h.store.AddRevokedName(store.RevokedName{Role: n.rec.Role, Name: name, NotAfter: until}); err != nil {
 			h.log.Warn("legacy name revocation", "name", name, "err", err)

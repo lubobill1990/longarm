@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
+	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -301,5 +302,37 @@ func TestLegacyNameRevocation(t *testing.T) {
 	}
 	if !wl.Revoked(unseen) || wl.Revoked(withID) {
 		t.Fatal("worker list")
+	}
+}
+
+// TestTombstonesAtStart: legacy name revocations in the database at the
+// hub's start (the migration's, for nodes revoked before the upgrade) last
+// at least as long as the CA, and reach the workers' list.
+func TestTombstonesAtStart(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	if err := h.store.AddRevokedName(store.RevokedName{Role: "worker", Name: "gone", NotAfter: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	err := h.loadRevocations()
+	msg := h.revocationsMsgLocked().GetRevocations()
+	h.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var until time.Time
+	for _, n := range msg.Names {
+		if n.Role == "worker" && n.Name == "gone" {
+			until = n.NotAfter.AsTime()
+		}
+	}
+	if until.Before(h.ca.Cert.NotAfter.Add(-time.Second)) {
+		t.Fatalf("tombstone until %s, the CA until %s", until, h.ca.Cert.NotAfter)
+	}
+	legacyPEM, _, _ := th.ca.Issue(pki.IssueOptions{Role: pki.RoleWorker, Name: "gone"})
+	legacy, _ := pki.ParseCertPEM(legacyPEM)
+	if !h.revoked.Revoked(legacy) {
+		t.Fatal("an ID-less certificate of a tombstoned name accepted")
 	}
 }

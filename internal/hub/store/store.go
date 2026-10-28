@@ -447,6 +447,14 @@ func (s *Store) AddRevokedName(r RevokedName) error {
 	return err
 }
 
+// ExtendRevokedNames makes every legacy name revocation last at least
+// until t (the issuing CA's NotAfter: a certificate without an ID of a
+// listed name can't outlive the CA).
+func (s *Store) ExtendRevokedNames(t time.Time) error {
+	_, err := s.db.Exec(`UPDATE revoked_names SET not_after=? WHERE not_after < ?`, t.Unix(), t.Unix())
+	return err
+}
+
 // RevokedNames are the legacy name revocations in force at now.
 func (s *Store) RevokedNames(now time.Time) ([]RevokedName, error) {
 	rows, err := s.db.Query(`SELECT role,name,not_after FROM revoked_names WHERE not_after > ? ORDER BY role,name`, now.Unix())

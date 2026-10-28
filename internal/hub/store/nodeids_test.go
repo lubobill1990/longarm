@@ -31,6 +31,7 @@ func schema4(t *testing.T, path string) {
 		exec(m)
 	}
 	exec(`INSERT INTO meta(k,v) VALUES('schema_version','4')`)
+	exec(`INSERT INTO meta(k,v) VALUES('revocation_version','7')`) // workers synced version 7
 	now := time.Now()
 	node := func(name, role, state string, extra map[string]any) {
 		d := map[string]any{"name": name, "role": role, "state": state, "joined_at": now.UTC()}
@@ -139,7 +140,7 @@ func TestMigrateNodeIDs(t *testing.T) {
 	if revokedWCafe == nil || cafe.State != "approved" {
 		t.Fatal("the revoked w-cafe")
 	}
-	if len(s.MigrationNotes) != 4 || !strings.Contains(strings.Join(s.MigrationNotes, "\n"), `"cafe"`) ||
+	if len(s.MigrationNotes) != 5 || !strings.Contains(strings.Join(s.MigrationNotes, "\n"), `"cafe"`) ||
 		!strings.Contains(strings.Join(s.MigrationNotes, "\n"), "revoked: its user") {
 		t.Fatalf("notes %q", s.MigrationNotes)
 	}
@@ -169,6 +170,34 @@ func TestMigrateNodeIDs(t *testing.T) {
 	rc, _ := s.RevokedCerts(time.Now())
 	if len(rc) != 2 || rc[0].NodeID != by["old-box"].ID || rc[1].NodeID != d1234.ID {
 		t.Fatalf("revoked %+v", rc)
+	}
+	// legacy name tombstones for every node revoked before the upgrade and
+	// by it (their original names, for certificates without an ID), and a
+	// new revocation list version, so synced workers fetch the list again
+	tomb, _ := s.RevokedNames(time.Now())
+	got := map[string]bool{}
+	for _, r := range tomb {
+		got[r.Role+"/"+r.Name] = true
+		if r.NotAfter.Before(time.Now().Add(LegacyNameTombstoneTTL - time.Hour)) {
+			t.Fatalf("tombstone %+v too short", r)
+		}
+	}
+	if len(tomb) != 3 || !got["worker/old-box"] || !got["worker/w-cafe"] || !got["client/1234"] {
+		t.Fatalf("tombstones %v", got)
+	}
+	if v, _ := s.Meta("revocation_version"); v != "8" {
+		t.Fatalf("revocation version %q, want 8", v)
+	}
+	// extended to the CA's lifetime when that is longer
+	ca := time.Now().Add(10 * 365 * 24 * time.Hour).Truncate(time.Second)
+	if err := s.ExtendRevokedNames(ca); err != nil {
+		t.Fatal(err)
+	}
+	tomb, _ = s.RevokedNames(time.Now())
+	for _, r := range tomb {
+		if !r.NotAfter.Equal(ca) {
+			t.Fatalf("tombstone %+v not extended to %s", r, ca)
+		}
 	}
 	// audit, jobs, port links
 	if a, _ := s.Audit(by["alice-pc"].ID, "", time.Time{}, 10); len(a) != 1 || a[0].Node != "alice-pc" {
