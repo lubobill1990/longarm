@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -120,7 +121,7 @@ func TestRolesHelper(t *testing.T) {
 	if strings.Join(sched.calls, ",") != "register "+task+",end "+task+",run "+task {
 		t.Errorf("tasks %v", sched.calls)
 	}
-	if len(calls) != 1 || calls[0].what != "admin-setup" || calls[0].arg != admin+` longarm.example.com C:\Program Files\Longarm\longarmd.exe` {
+	if len(calls) != 1 || calls[0].what != "admin-setup" || calls[0].arg != admin+" longarm.example.com "+filepath.Join(`C:\Program Files\Longarm`, "longarmd.exe") {
 		t.Errorf("calls %v", calls)
 	}
 	if reg["Roles"] != "both" || reg["AdminWorker"] != "1" || reg["SessionUserSID"] != admin {
