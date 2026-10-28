@@ -319,3 +319,54 @@ func TestFetchForwarded(t *testing.T) {
 		t.Fatalf("worktree git config:\n%s", cfg)
 	}
 }
+
+// TestPushHandoffExact: a handoff push writes exactly its branch - not the
+// unpublished annotated tags that follow the commit with push.followTags
+// on - and deletes it again; other namespaces and forced updates are
+// refused.
+func TestPushHandoffExact(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	t.Setenv("GIT_SSL_NO_VERIFY", "true") // the test server's certificate
+	srv := gitserver.New(t, t.TempDir(), testToken)
+	c1, _, _ := gitRemote(t, srv)
+	bare := filepath.Join(srv.Root, "proj.git")
+	run(t, bare, "config", "http.receivepack", "true")
+	src := filepath.Join(t.TempDir(), "work")
+	noLFS := []string{"-c", "filter.lfs.process=", "-c", "filter.lfs.smudge=cat", "-c", "filter.lfs.clean=cat", "-c", "filter.lfs.required=false"}
+	run(t, filepath.Dir(src), append(noLFS, "clone", "-q", bare, src)...)
+	for i := 0; i < len(noLFS); i += 2 {
+		k, v, _ := strings.Cut(noLFS[i+1], "=")
+		run(t, src, "config", k, v)
+	}
+	run(t, src, "config", "push.followTags", "true")
+	run(t, src, "tag", "-a", "-m", "unpublished", "v9-unpublished", c1)
+	os.WriteFile(filepath.Join(src, "new.txt"), []byte("snapshot\n"), 0o644)
+	run(t, src, "add", ".")
+	run(t, src, "commit", "-qm", "snapshot")
+	snap := run(t, src, "rev-parse", "HEAD")
+	s := &Store{Root: t.TempDir()}
+	ctx := context.Background()
+	u := srv.RepoURL("proj")
+	branch := "longarm/handoff/alice/abc12345-202610290000"
+	if err := s.PushHandoff(ctx, src, u, snap, branch, bearer(testToken)); err != nil {
+		t.Fatal(err)
+	}
+	refs := run(t, bare, "for-each-ref", "--format=%(refname)")
+	if strings.Contains(refs, "refs/tags/") || !strings.Contains(refs, "refs/heads/"+branch) {
+		t.Fatalf("the remote's refs after the push:\n%s", refs)
+	}
+	if err := s.PushHandoff(ctx, src, u, snap, "main", bearer(testToken)); err == nil {
+		t.Error("a push outside longarm/handoff/ was accepted")
+	}
+	if err := s.PushHandoff(ctx, src, u, c1, branch, bearer(testToken)); err == nil {
+		t.Error("a non-fast-forward update of the branch was accepted")
+	}
+	if err := s.PushHandoff(ctx, src, u, "", branch, bearer(testToken)); err != nil {
+		t.Fatal(err)
+	}
+	if refs := run(t, bare, "for-each-ref", "--format=%(refname)"); strings.Contains(refs, "longarm/") || strings.Contains(refs, "refs/tags/") {
+		t.Fatalf("after the delete:\n%s", refs)
+	}
+}

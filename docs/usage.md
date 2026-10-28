@@ -904,7 +904,10 @@ would carry, after the remote-first fetch with `--git-auth forward`) decides
   worker source pushes with the forwarded credential (worker feature
   `handoff-push`): **with `--git-auth forward` the credential then also
   grants write access, for that one push of that exact URL** - handed out
-  by the worker's loopback credential helper as for a fetch, with the
+  by the worker's loopback credential helper as for a fetch, pushing exactly
+  that one ref (`--no-follow-tags`, `push.followTags`, push options and
+  submodule recursion off, to the URL rather than a remote name, no forced
+  update; the same for a local push and every delete), with the
   repository's hooks off, only to `longarm/handoff/` branches, never stored
   in a config file. Workers need `--git-auth forward` for this path
   (without it, relay). The branch is deleted once the target has the code

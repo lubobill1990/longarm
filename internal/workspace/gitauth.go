@@ -424,7 +424,13 @@ func (s *Store) PushHandoff(ctx context.Context, dir, u, commit, branch string, 
 	if commit == "" {
 		ref = ":refs/heads/" + branch
 	}
-	_, err = s.runAuth(ctx, dir, nil, fa, nil, "-c", "core.hooksPath="+filepath.ToSlash(hooks), "push", "--no-verify", "--porcelain", "--", u, ref)
+	// exactly this ref: no tags that follow the commit (push.followTags in
+	// any git config), no push options, no submodules; to a URL, so no
+	// remote's push / mirror / tagOpt settings apply; no "+": a
+	// non-fast-forward is refused
+	_, err = s.runAuth(ctx, dir, nil, fa, nil, "-c", "core.hooksPath="+filepath.ToSlash(hooks), "-c", "push.followTags=false",
+		"-c", "push.pushOption=", "-c", "push.recurseSubmodules=no",
+		"push", "--no-verify", "--no-follow-tags", "--no-recurse-submodules", "--porcelain", "--", u, ref)
 	if err != nil {
 		return fmt.Errorf("pushing to %s: %s", RedactURLs(u), RedactURLs(err.Error()))
 	}

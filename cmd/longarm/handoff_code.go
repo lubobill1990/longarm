@@ -262,11 +262,7 @@ func (tb *tempBranch) cleanup(ctx context.Context) {
 	var err error
 	switch {
 	case tb.local != nil:
-		target := tb.local.remote
-		if target == "" {
-			target = tb.url
-		}
-		_, err = tb.local.git(ctx, nil, nil, "push", "--porcelain", "--", target, ":refs/heads/"+tb.branch)
+		_, err = tb.local.pushExact(ctx, tb.url, ":refs/heads/"+tb.branch)
 	case tb.g != nil:
 		_, err = tb.src.conn.Workspace().PushHandoff(ctx, &pb.PushHandoffRequest{Dir: tb.dir, Url: tb.url, Branch: tb.branch, GitAuth: tb.g.pb()})
 	default:
@@ -336,8 +332,7 @@ func (c *coder) remote(ctx context.Context) (res *codeResult, why string, err er
 	tb := &tempBranch{url: u, branch: branch, keep: c.o.keepBranch}
 	// push
 	if c.src.local() {
-		target := c.srcRepo.remote
-		if _, err := c.srcRepo.git(ctx, nil, nil, "push", "--porcelain", "--", target, c.snap+":refs/heads/"+branch); err != nil {
+		if _, err := c.srcRepo.pushExact(ctx, u, c.snap+":refs/heads/"+branch); err != nil {
 			return nil, "the remote refused the push: " + oneLine(err), nil
 		}
 		tb.local = c.srcRepo
@@ -410,6 +405,31 @@ func (c *coder) remote(ctx context.Context) (res *codeResult, why string, err er
 	}
 	r.top = sres.Path
 	return r, "", nil
+}
+
+// pushArgs are the arguments of every handoff push: exactly refspec to
+// target and nothing else - no tags that follow the commit
+// (push.followTags), no push options, no remote's push / mirror / tagOpt
+// settings (target is a URL, not a remote name), no forced update (a
+// refspec without "+": a non-fast-forward is refused).
+func pushArgs(target, refspec string) []string {
+	return []string{"-c", "push.followTags=false", "-c", "push.pushOption=", "-c", "push.recurseSubmodules=no",
+		"push", "--no-follow-tags", "--no-recurse-submodules", "--porcelain", "--", target, refspec}
+}
+
+// pushExact pushes refspec (one ref) to the push URL of the checkout's
+// remote with the user's own git (fallback: url).
+func (r *hoRepo) pushExact(ctx context.Context, url, refspec string) (string, error) {
+	target := url
+	if r.remote != "" {
+		if pu, err := r.git(ctx, nil, nil, "remote", "get-url", "--push", r.remote); err == nil && pu != "" {
+			target = pu
+		}
+	}
+	if target == "" {
+		return "", fmt.Errorf("no remote to push to")
+	}
+	return r.git(ctx, nil, nil, pushArgs(target, refspec)...)
 }
 
 func firstN(s []string, n int) []string {
@@ -665,7 +685,7 @@ func runHandoffCleanup(ctx context.Context, o handoffOpts) error {
 				continue
 			}
 		}
-		if _, err := r.git(ctx, nil, nil, "push", "--porcelain", "--", r.remote, ":"+f[1]); err != nil {
+		if _, err := r.pushExact(ctx, "", ":"+f[1]); err != nil {
 			b.Error = oneLine(err)
 		} else {
 			b.Deleted = true

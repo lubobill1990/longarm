@@ -20,7 +20,9 @@ import (
 // is left on disk or in a git config.
 func TestAgentHandoffRemote(t *testing.T) {
 	const token = "e2e-HANDOFF-remote-token-91c2"
-	h := newHandoffEnv(t, "GIT_SSL_NO_VERIFY=true") // the test server's certificate
+	// the test server's certificate; push.followTags on the workers: their
+	// pushes must still carry the handoff branch only
+	h := newHandoffEnv(t, "GIT_SSL_NO_VERIFY=true", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=push.followTags", "GIT_CONFIG_VALUE_0=true")
 	srv := gitserver.New(t, t.TempDir(), token)
 	// GIT_CONFIG_NOSYSTEM: no system credential helper (Git Credential Manager) before the test's
 	h.extra = append(credEnv(token), "GIT_SSL_NO_VERIFY=true", "GIT_CONFIG_NOSYSTEM=1")
@@ -40,6 +42,10 @@ func TestAgentHandoffRemote(t *testing.T) {
 	git(t, repo, "remote", "add", "origin", u)
 	git(t, repo, "update-ref", "refs/remotes/origin/main", "HEAD") // as if fetched
 	git(t, repo, "config", "branch.main.remote", "origin")
+	// an unpublished annotated tag in the snapshot's history, and a user
+	// who pushes the tags that follow a commit: never with a handoff
+	git(t, repo, "config", "push.followTags", "true")
+	git(t, repo, "tag", "-a", "-m", "not for the remote", "v9.9.9-unpublished")
 	mustWrite(t, filepath.Join(repo, "tracked.txt"), "v2 uncommitted\n")
 	mustWrite(t, filepath.Join(repo, "notes", "untracked.txt"), "untracked\n")
 
@@ -47,6 +53,18 @@ func TestAgentHandoffRemote(t *testing.T) {
 	mustWrite(t, filepath.Join(h.chome, ".claude", "projects", claudeDir(repo), id+".jsonl"),
 		fmt.Sprintf(`{"type":"user","cwd":%s,"sessionId":%q,"version":"1.0.0","message":{"role":"user","content":"go"}}`+"\n", jsonQ(repo), id))
 	tempBranches := func() string { return git(t, bare, "for-each-ref", "--format=%(refname)", "refs/heads/longarm") }
+	onlyBranches := func() {
+		t.Helper()
+		if tags := git(t, bare, "for-each-ref", "--format=%(refname)", "refs/tags"); tags != "" {
+			t.Errorf("a handoff pushed tags to the remote: %s", tags)
+		}
+		for _, r := range strings.Fields(git(t, bare, "for-each-ref", "--format=%(refname)")) {
+			if r != "refs/heads/main" && !strings.HasPrefix(r, "refs/heads/longarm/handoff/") {
+				t.Errorf("a handoff pushed %s to the remote", r)
+			}
+		}
+	}
+	t.Cleanup(onlyBranches)
 	assertCode := func(dir string) {
 		t.Helper()
 		if got := readText(t, filepath.Join(dir, "tracked.txt")); got != "v2 uncommitted\n" {
@@ -77,9 +95,13 @@ func TestAgentHandoffRemote(t *testing.T) {
 	})
 
 	t.Run("worker_pushes_w1_to_w2", func(t *testing.T) {
+		onlyBranches()
+		// an annotated tag in the worker's history too (its push.followTags is on)
+		git(t, w1.Worktree, "tag", "-a", "-m", "not for the remote", "w1-unpublished")
 		var r result
 		w2, r = h.handoff(repo, "--from", "w1", "--to", "w2", "--session", id, "--no-attach", "--idle", "1s", "--grace", "5s",
 			"--git-auth", "forward", "--via", "remote")
+		onlyBranches()
 		if w2.Transfer != "remote" || w2.Relayed != 0 || tempBranches() != "" {
 			t.Fatalf("handoff: %+v branches %q\n%s", w2, tempBranches(), r.stderr)
 		}
