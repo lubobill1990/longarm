@@ -64,7 +64,8 @@ foreach ($d in 'ModeDlg', 'RolesDlg', 'ServiceAccountDlg') {
 }
 # every install-helper custom action passes its values as data after the marker (parsed strictly by the
 # helper), never as options, and names no program or path of its own (security.md "Installer")
-$targets = Query $default "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Target`` LIKE '%install-helper%'"
+# (MSI SQL has no LIKE: filter here)
+$targets = @(Query $default 'SELECT `Target` FROM `CustomAction`' | Where-Object { $_ -like '*install-helper*' })
 if ($targets.Count -lt 10) { throw "only $($targets.Count) install-helper custom actions" }
 foreach ($t in $targets) {
   if ($t -notmatch 'install-helper msi [a-z-]+ #LONGARM-MSI#') { throw "install-helper action without structured data: $t" }
