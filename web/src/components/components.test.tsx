@@ -81,6 +81,22 @@ describe('WorkerCard', () => {
     expect(document.querySelector('.leg.down')?.textContent).toContain('tcp')
   })
 
+  it('says where the metrics come from and grays them out when stale', () => {
+    render(<WorkerCard w={onlineWorker({ metrics: { ...onlineWorker().metrics, time: ago(3) } })} now={now} />)
+    expect(screen.getByTestId('metrics-source').textContent).toBe('metrics via hub · updated 3s ago')
+    expect(document.querySelector('[data-stale]')).toBeNull()
+    cleanup()
+    render(<WorkerCard w={onlineWorker({ source: 'none', metrics: { ...onlineWorker().metrics, time: ago(120) } })} now={now} />)
+    expect(screen.getByTestId('metrics-source').textContent).toBe('last known metrics · updated 2m ago')
+    expect(document.querySelector('[data-stale="true"]')).not.toBeNull()
+  })
+
+  it('a worker on its loopback only: unreachable from here, not a bare "down"', () => {
+    render(<WorkerCard w={onlineWorker({ link: undefined, node: { name: 'w1', endpoints: ['tcp://127.0.0.1:7701'] } })} now={now} />)
+    expect(screen.getByTestId('link-path').textContent).toBe('tcp (loopback only): unreachable from here')
+    expect(screen.queryByText('down')).toBeNull()
+  })
+
   it('offline: red status line with the error instead of metrics', () => {
     render(<WorkerCard w={onlineWorker({ state: 'offline', source: 'none', since: ago(120), error: 'connection refused', link: undefined })} now={now} />)
     expect(screen.getByText('offline 2m, reconnecting')).toBeTruthy()

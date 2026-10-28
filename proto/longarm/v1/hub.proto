@@ -354,6 +354,12 @@ message HubWelcome {
   // The hub's tailnet: a node whose embedded tailscale node uses another
   // control server switches (new key, own state dir per control URL).
   TailnetInfo tailnet = 6;
+  // The hub's longnet relay, "host:port" (UDP; its TLS fallback is the hub's
+  // own TCP port). An empty host is the host the node dials the hub on;
+  // "" = the hub runs no relay. Workers that listen on loopback only (the
+  // default of sign-in installs) listen on it too, so other machines reach
+  // them (longarmd.toml [hub] relay).
+  string relay = 7;
 }
 
 message Revocations {

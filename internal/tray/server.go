@@ -465,7 +465,9 @@ func (s *Server) attach(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// ssh opens a terminal running `ssh longarm-<worker>` (longarm ssh-config entries).
+// ssh opens a terminal running `longarm ssh <worker>`: OpenSSH with longarm
+// proxy as its ProxyCommand, built on the fly - no ~/.ssh/config entries
+// (longarm ssh-config) needed.
 func (s *Server) ssh(w http.ResponseWriter, r *http.Request) {
 	var body struct{ Worker string }
 	if !readBody(w, r, &body) {
@@ -475,7 +477,7 @@ func (s *Server) ssh(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "bad worker name")
 		return
 	}
-	if err := s.term([]string{"ssh", "longarm-" + body.Worker}); err != nil {
+	if err := s.term(s.longarmArgs("ssh", body.Worker)); err != nil {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

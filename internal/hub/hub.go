@@ -311,6 +311,18 @@ func (h *Hub) Addr(name string) string {
 	return h.addrs[name]
 }
 
+// relayAdvert is the relay address of the welcome (HubWelcome.relay):
+// ":port" of the relay's UDP socket - nodes use the host they dial the hub
+// on, which reaches the relay's TLS fallback on the hub's port too; "" when
+// the hub runs no relay.
+func (h *Hub) relayAdvert() string {
+	_, port, err := net.SplitHostPort(h.Addr("udp"))
+	if err != nil || port == "" || port == "0" {
+		return ""
+	}
+	return ":" + port
+}
+
 func (h *Hub) setAddr(name, a string) {
 	h.addrMu.Lock()
 	h.addrs[name] = a

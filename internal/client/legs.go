@@ -86,6 +86,47 @@ func SaveSettings(dir string, s Settings) error {
 	return nil
 }
 
+// localOnly: a loopback or unspecified address, usable only on the
+// worker's own machine.
+func localOnly(e Endpoint) bool {
+	host, _, err := net.SplitHostPort(e.Address)
+	if err != nil {
+		host = e.Address
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return host == "localhost" || ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
+}
+
+// thisHost is this machine's hostname (a var for tests).
+var thisHost = func() string { h, _ := os.Hostname(); return h }
+
+// sameHost compares hostnames case-insensitively, also by their first label
+// (a domain suffix on one side only).
+func sameHost(a, b string) bool {
+	a, b = strings.ToLower(a), strings.ToLower(b)
+	short := func(s string) string { s, _, _ = strings.Cut(s, "."); return s }
+	return a == b || short(a) == short(b)
+}
+
+// ReachableEndpoints drops the endpoints only usable on the worker's own
+// machine (loopback) when the worker - hostname, as the hub reports it -
+// runs on another machine: dialing them would reach this machine's own
+// longarmd, or nothing ("tcp://127.0.0.1:7701: refused"). An unknown
+// hostname keeps everything.
+func ReachableEndpoints(endpoints []string, hostname string) []string {
+	if hostname == "" || sameHost(hostname, thisHost()) {
+		return endpoints
+	}
+	var out []string
+	for _, ep := range endpoints {
+		if e, err := ParseEndpoint(ep); err == nil && localOnly(e) {
+			continue
+		}
+		out = append(out, ep)
+	}
+	return out
+}
+
 // NodeLegs turns a worker's advertised endpoint URLs into single-leg
 // Workers, best first: tcp, longnet, tailscale; loopback/unspecified
 // addresses (only usable on the worker's own machine) last. The pool
@@ -104,11 +145,7 @@ func NodeLegs(name string, endpoints []string) []Worker {
 		}
 		seen[e.Key()] = true
 		r := map[string]int{"tcp": 0, "longnet": 1, "tailscale": 2}[e.Transport]
-		host, _, err := net.SplitHostPort(e.Address)
-		if err != nil {
-			host = e.Address
-		}
-		if ip := net.ParseIP(strings.Trim(host, "[]")); host == "localhost" || ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		if localOnly(e) {
 			r += 10
 		}
 		rs = append(rs, ranked{Worker{Name: name, CertName: name, Transport: e.Transport, Address: e.Address}, r})

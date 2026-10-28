@@ -127,11 +127,6 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
             draining
           </span>
         )}
-        {p.source && p.source !== 'none' && (
-          <span className="pill" title="where these metrics come from">
-            {p.source}
-          </span>
-        )}
         <span className="actions">
           {session && actions?.attach && <button onClick={() => actions.attach!(session.name)}>attach</button>}
           {session && actions?.ssh && <button onClick={() => actions.ssh!(session.name)}>ssh ↗</button>}
@@ -187,7 +182,7 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
           {(p.error || (state === 'connecting' ? 'waiting for the first sample…' : 'unreachable')).slice(0, 120)}
         </div>
       ) : (
-        <Metrics m={metrics} w={p} />
+        <Metrics m={metrics} w={p} now={now} />
       )}
     </div>
   )
@@ -223,9 +218,34 @@ export function OfflineRow({ m, actions }: { m: PoolMachine; actions?: CardActio
   )
 }
 
+/** Loopback / unspecified endpoints: only usable on the worker's own machine. */
+export function isLocalOnly(endpoint?: string): boolean {
+  const m = /^[a-z]+:\/\/(\[[^\]]*\]|[^:/?]*)/.exec(endpoint ?? '')
+  const h = (m?.[1] ?? '').replace(/^\[|\]$/g, '')
+  return h === 'localhost' || h.startsWith('127.') || h === '::1' || h === '0.0.0.0' || h === '::'
+}
+
 function LinkRows({ w, now }: { w: PoolWorker; now: number }) {
   const legs = w.link?.legs ?? []
-  if (!legs.length) return null
+  if (!legs.length) {
+    // The worker advertises only endpoints of its own machine (loopback):
+    // nothing this client can dial - say so instead of a bare "down".
+    const eps = w.node?.endpoints ?? []
+    if (!eps.length || !eps.every(isLocalOnly)) return null
+    return (
+      <div data-testid="link">
+        <div className="linkrow">
+          <span className="muted small" style={{ width: 36, fontWeight: 700 }}>
+            LINK
+          </span>
+          <span className="path" style={{ color: RED }} data-testid="link-path" title={eps.join(' ')}>
+            tcp (loopback only): unreachable from here
+          </span>
+        </div>
+        <div className="small muted">the worker listens on its own machine only; a current longarmd also listens on the hub's relay</div>
+      </div>
+    )
+  }
   const active = legs.find((l) => l.active) ?? legs[0]
   const hist = (active.history ?? []).map((s) => (s.rtt_ms !== undefined && s.rtt_ms >= 0 ? s.rtt_ms : null))
   const fails = (active.history ?? [])
@@ -269,13 +289,31 @@ function Legs({ legs }: { legs: LegStatus[] }) {
   )
 }
 
-function Metrics({ m, w }: { m: MetricsSnapshot; w: PoolWorker }) {
+/** Metrics older than this are stale: 2 × the 5 s the hub's and the direct samples arrive within. */
+export const METRICS_STALE_S = 10
+
+/** Where the metrics come from and how old they are; stale ones are grayed out. */
+export function metricsSource(w: PoolWorker, m: MetricsSnapshot, now: number): { text: string; stale: boolean } {
+  const age = m.time ? since(m.time, now) : undefined
+  const fresh = w.source === 'hub' || w.source === 'direct'
+  const via = w.source === 'hub' ? 'metrics via hub' : w.source === 'direct' ? 'metrics direct' : 'last known metrics'
+  return {
+    text: age === undefined ? via : `${via} · updated ${fmtAgo(age)} ago`,
+    stale: !fresh || (age !== undefined && age > METRICS_STALE_S),
+  }
+}
+
+function Metrics({ m, w, now }: { m: MetricsSnapshot; w: PoolWorker; now: number }) {
   const cpu = m.cpu_percent ?? 0
   const mp = memPct(m)
   const hist = w.history ?? []
   const diskFree = gb(m.disk_free_bytes)
+  const src = metricsSource(w, m, now)
   return (
-    <div style={{ marginTop: 6 }}>
+    <div style={{ marginTop: 6, opacity: src.stale ? 0.45 : undefined }} data-stale={src.stale ? 'true' : undefined}>
+      <div className="small muted" data-testid="metrics-source" title="where these metrics come from">
+        {src.text}
+      </div>
       <Bar label="CPU" pct={cpu} value={`${cpu.toFixed(0)}%`} />
       <Bar label="MEM" pct={mp} value={`${gb(m.mem_used_bytes).toFixed(1)} / ${gb(m.mem_total_bytes).toFixed(0)} GB`} />
       <div style={{ marginTop: 4 }}>

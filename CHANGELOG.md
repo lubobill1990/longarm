@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixed
+
+- Workers signed in by any path (longarmd login, the tray, the MSI's
+  session and admin workers) listened on loopback only and were unreachable
+  from other machines. A worker whose listeners are all loopback now also
+  listens on the hub's longnet relay (announced in each hub session:
+  existing installs pick it up when longarmd restarts or updates), with
+  hole punching for a direct path; `[hub] relay = "off"` opts out.
+- Clients skip a remote worker's loopback endpoints (and say why when
+  that's all it has); the relay's TLS fallback uses the hub's TCP port.
+- The tray's ssh buttons run `longarm ssh <worker>` (new): OpenSSH with
+  longarm's ProxyCommand built on the fly, no ~/.ssh/config entries.
+- Tray worker cards say where CPU/MEM come from and how old they are
+  (grayed out when stale), and "loopback only: unreachable from here"
+  instead of a bare "down".
+
 ### Security
 
 - MSI custom actions take their values as strictly parsed data

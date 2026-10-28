@@ -834,6 +834,8 @@ every connection B accepts or refuses are audited (`longarm admin audit
 ### SSH / scp / VS Code Remote-SSH
 
 ```sh
+longarm ssh w1                                     # ssh without any ssh config (what the tray's ssh buttons run)
+longarm ssh w1 -- git status                       # a command
 longarm ssh-config >> ~/.ssh/config                # Host longarm-<worker> entries + known_hosts from mTLS
 ssh longarm-w1                                     # interactive shell
 ssh longarm-w1 git -C C:/work/proj status          # exec (cmd.exe /c on Windows workers, like OpenSSH)
@@ -1652,6 +1654,11 @@ longarm forward --list; longarm forward --stop 3000|all
 address = "hub.example.com:7443"     # usually written to hub.toml by longarmd join
 labels = { region = "eu" }           # scheduler constraints (longarm run --require region=eu)
 # advertise = ["tcp://100.64.0.11:7701"]   # endpoints clients get (default: the listeners)
+# relay = "auto"                   # auto (default): when every listen URL is loopback (sign-in
+#                                  # installs: longarmd login, the tray, the MSI's session and admin
+#                                  # workers), also listen on the hub's longnet relay - the address
+#                                  # comes with each hub session, so nothing to configure, also after
+#                                  # an upgrade - with hole punching for a direct path; "off": never
 # remote_jobs = "control"          # what the hub (web panel, longarm admin kill|logs|run) may do here:
 #                                  # control = kill, logs, toolchain apply (default); all = also
 #                                  # run commands submitted through the hub; none (the default

@@ -297,7 +297,7 @@ func cachedNodesIn(dir string) []*pb.NodeInfo {
 // workerFromNode turns a hub-known worker into a client.Worker whose legs
 // are all its advertised endpoints (raced by the dialer).
 func workerFromNode(n *pb.NodeInfo) (client.Worker, bool) {
-	return client.WorkerFromEndpoints(n.Name, n.Endpoints)
+	return client.WorkerFromEndpoints(n.Name, client.ReachableEndpoints(n.Endpoints, n.Hostname))
 }
 
 // knownWorkers are workers.toml's entries plus hub-known workers (live list
@@ -316,7 +316,11 @@ func (s *session) knownWorkers(ctx context.Context) []client.Worker {
 		if seen[n.Name] || n.State == "revoked" || n.State == "pending" {
 			continue
 		}
-		if w, ok := workerFromNode(n); ok {
+		w, ok := workerFromNode(n)
+		if !ok { // listed all the same (ls, completion); dialing says why it fails
+			w, ok = client.WorkerFromEndpoints(n.Name, n.Endpoints)
+		}
+		if ok {
 			out = append(out, w)
 			seen[n.Name] = true
 		}
@@ -356,6 +360,10 @@ func (s *session) worker(name string) (client.Worker, error) {
 						return client.Worker{}, offlineError(n, now)
 					}
 					w, ok := workerFromNode(n)
+					if !ok && len(n.Endpoints) > 0 {
+						return client.Worker{}, fmt.Errorf("worker %s listens only on its own machine (%s): unreachable from here; "+
+							"an updated longarmd there also listens on the hub's relay", name, strings.Join(n.Endpoints, ", "))
+					}
 					if !ok {
 						return client.Worker{}, fmt.Errorf("worker %s has no usable endpoint (%v)", name, n.Endpoints)
 					}

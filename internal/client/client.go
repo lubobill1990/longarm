@@ -315,6 +315,9 @@ func (d *Dialer) longnetTransport(relayAddr string) (transport.Transport, error)
 	if relayAddr == r.Relay { // relay_tcp belongs to the default relay only
 		relayTCP = r.RelayTCP
 	}
+	if relayTCP == "" {
+		relayTCP = hubRelayTCP(relayAddr, d.cfg.Hub.Address)
+	}
 	o, err := longnet.ClientOptions(relayAddr, relayTCP, r.Mode, r.DisableDirect, d.bundle, nil)
 	if err != nil {
 		return nil, err
@@ -325,6 +328,18 @@ func (d *Dialer) longnetTransport(relayAddr string) (transport.Transport, error)
 	t := longnet.New(o)
 	d.longnet[relayAddr] = t
 	return t, nil
+}
+
+// hubRelayTCP is the TLS/TCP fallback of the hub's own relay: the relay
+// built into the hub shares the hub's TCP port, while its UDP port may be
+// another (Azure: UDP 7445, TCP 7443). "" for other relays.
+func hubRelayTCP(relayAddr, hubAddr string) string {
+	rh, rp, err1 := net.SplitHostPort(relayAddr)
+	hh, hp, err2 := net.SplitHostPort(hubAddr)
+	if err1 != nil || err2 != nil || rh != hh || rp == hp {
+		return ""
+	}
+	return hubAddr
 }
 
 // TSNetDirFor is the base of the embedded tailscale node's state dirs of a

@@ -510,7 +510,7 @@ func (m *Monitor) HubNode(n *pb.NodeInfo) {
 	w.node.Metrics = nil
 	if len(w.legs) == 0 && len(n.Endpoints) > 0 && m.cfg.Dial != nil && n.State == "approved" {
 		// a worker that appeared since the last refresh: probe it now
-		for _, tl := range client.NodeLegs(n.Name, n.Endpoints) {
+		for _, tl := range client.NodeLegs(n.Name, client.ReachableEndpoints(n.Endpoints, n.Hostname)) {
 			w.legs = append(w.legs, m.newLeg(tl))
 		}
 	}
