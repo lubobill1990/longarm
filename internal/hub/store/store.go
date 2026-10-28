@@ -129,7 +129,13 @@ var migrations = []string{
 	);
 	ALTER TABLE certs ADD COLUMN node_id TEXT NOT NULL DEFAULT '';
 	ALTER TABLE certs ADD COLUMN has_id INTEGER NOT NULL DEFAULT 0;
-	ALTER TABLE audit ADD COLUMN node_id TEXT NOT NULL DEFAULT '';`,
+	ALTER TABLE audit ADD COLUMN node_id TEXT NOT NULL DEFAULT '';
+	CREATE TABLE revoked_names (
+		role TEXT NOT NULL,
+		name TEXT NOT NULL,
+		not_after INTEGER NOT NULL,
+		PRIMARY KEY (role, name)
+	);`,
 }
 
 // goMigrations are Go steps of migrations (index: migration number - 1).
@@ -306,9 +312,10 @@ type Node struct {
 	NodeKey string `json:"node_key,omitempty"`
 	// Capabilities the worker reported in its hello (NodeHello).
 	Capabilities []string `json:"capabilities,omitempty"`
-	// Supersede: the serial of the certificate issued with a new name; once
-	// the node uses it, its older certificates are revoked.
-	Supersede string `json:"supersede,omitempty"`
+	// RetirePending: the node was renamed and got (or will get) a
+	// certificate with its new name; once it presents one, every other
+	// certificate of it is revoked. Renewals keep it set.
+	RetirePending bool `json:"retire_pending,omitempty"`
 }
 
 // DialName is the name in the node's current certificate.
@@ -406,6 +413,58 @@ func (s *Store) NameHasCerts(name string) (bool, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM certs WHERE node=?`, name).Scan(&n)
 	return n > 0, err
+}
+
+// LegacyCertNames are the names of the certificates without a node ID
+// recorded for the node (any state).
+func (s *Store) LegacyCertNames(nodeID string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT node FROM certs WHERE node_id=? AND has_id=0 ORDER BY node`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// RevokedName is a legacy name revocation (certificates without a node ID).
+type RevokedName struct {
+	Role, Name string
+	NotAfter   time.Time
+}
+
+// AddRevokedName records (or extends) a legacy name revocation.
+func (s *Store) AddRevokedName(r RevokedName) error {
+	_, err := s.db.Exec(`INSERT INTO revoked_names(role,name,not_after) VALUES(?,?,?)
+		ON CONFLICT(role,name) DO UPDATE SET not_after=max(not_after, excluded.not_after)`, r.Role, r.Name, r.NotAfter.Unix())
+	return err
+}
+
+// RevokedNames are the legacy name revocations in force at now.
+func (s *Store) RevokedNames(now time.Time) ([]RevokedName, error) {
+	rows, err := s.db.Query(`SELECT role,name,not_after FROM revoked_names WHERE not_after > ? ORDER BY role,name`, now.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RevokedName
+	for rows.Next() {
+		var r RevokedName
+		var na int64
+		if err := rows.Scan(&r.Role, &r.Name, &na); err != nil {
+			return nil, err
+		}
+		r.NotAfter = time.Unix(na, 0)
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // LegacyCerts maps node IDs to the serials of their valid (unrevoked,

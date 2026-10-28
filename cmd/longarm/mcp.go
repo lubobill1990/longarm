@@ -310,7 +310,7 @@ func (t *mcpTools) submitJob(ctx context.Context, spec cmdSpec, name, repo, ref,
 			return "", nil, nil, err
 		}
 	}
-	conn, err := t.s.conn(worker)
+	conn, err := t.s.connFor(worker, po)
 	if err != nil {
 		return "", nil, nil, err
 	}

@@ -157,6 +157,14 @@ refused, until the node's last certificate would have expired). Names are
 never revoked: right after `longarm admin revoke box`, a new node may join
 as `box` - with a new ID, which the old revocation doesn't touch - and
 an unseen certificate of the old `box` is never mapped to it (see above).
+For certificates **without** a node ID the list also carries **legacy name
+revocations** (role and name): when a node whose history has ID-less
+certificates is revoked, or renamed and adopts its new certificate, the
+names of those certificates are listed, and any ID-less certificate with a
+listed role and name is refused - by the hub and by every worker, in the TLS
+handshake and on every call - so a copy the hub never saw stops working
+too. Certificates with a node ID ignore that list: the name stays free for
+new nodes.
 
 **Renaming** (`longarm worker rename <worker> <new>` for owners, `longarm
 admin rename <node> <new>` for admins, the panel's Rename) keeps the ID, so
@@ -166,7 +174,8 @@ audited (`nodes/rename`). A worker that follows renames (longarmd with the
 new name, and restarts itself when a listener depends on the name (longnet);
 older workers keep the old certificate name (clients reach them by it)
 until they are updated. Once the node uses the certificate with its new
-name, its older certificates are revoked. A device acts as a **pinned
+name, its older certificates are revoked (renewals before that, even with
+an old certificate, keep this pending). A device acts as a **pinned
 user**: one whose certificates named no user acts as the user of its name,
 and that user is recorded at its registration (join, migration, first
 use) and kept through renames - a renewal under a new name never makes it
@@ -204,15 +213,19 @@ maps names to nodes, and end-to-end trust doesn't take its word for it: a
 renamed worker needs a new endorsement, or a target by ID); one targeted by
 ID or prefix must have an endorsement carrying a matching ID; an expected ID
 must be the endorsed one. Only automatic placement, fleet-wide listings and
-monitoring accept any worker the user's keys endorsed - explicitly; a
-target without a name or ID is refused otherwise. A device holding the user
+monitoring accept any worker the user's keys endorsed - explicitly, and a
+placement only for the operation it was made for (by its job id): a later
+request naming the placed worker is held to that name; a target without a
+name or ID is refused otherwise. A device holding the user
 key that endorsed it re-endorses itself under its ID after its first
 renewal with an ID.
 
 **Port links** bind their ends' IDs: the owner's signed consent names the
 ends' node IDs (`PortLinkSpec.from_id` / `to_id`, resolved by the client
 and - with `require_workers` - verified by dialing each end as the user
-named it before signing), the hub's grant carries them too, and each worker
+named it: what is signed is the identity that handshake authenticated,
+and a hub listing another node for the end is refused), the hub's grant
+carries them too, and each worker
 holds both ends to them: the target accepts only a caller whose certificate
 is the grant's `from_id` and only a grant whose `to_id` is its own; with
 end-to-end trust each end's endorsement must be the owner's and for that ID.

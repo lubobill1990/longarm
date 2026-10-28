@@ -141,6 +141,7 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 			}
 			defer s.close()
 			ctx := cmd.Context()
+			var po *placeOpts // an automatic placement (connFor)
 			if worker == "" || worker == "auto" {
 				if rows, _, _ := listSessions(ctx, s, nil, name, false, ""); len(rows) > 0 {
 					worker = rows[0].worker
@@ -149,7 +150,7 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 					if typ == "" {
 						typ = sched.TypeOf(argv)
 					}
-					po := &placeOpts{jobID: ulid.Make().String(), typ: typ, require: reqM, noQueue: noQueue}
+					po = &placeOpts{jobID: ulid.Make().String(), typ: typ, require: reqM, noQueue: noQueue}
 					if repo != "" {
 						po.repo = repoKeyFor(repo)
 					}
@@ -158,7 +159,7 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 					}
 				}
 			}
-			conn, err := s.conn(worker)
+			conn, err := s.connFor(worker, po)
 			if err != nil {
 				return err
 			}

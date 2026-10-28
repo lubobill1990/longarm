@@ -331,15 +331,15 @@ func (h *Hub) issue(rec *store.Node, csr []byte) ([]byte, error) {
 	h.knownSerials[pki.Serial(leaf)] = rec.ID
 	h.mu.Unlock()
 	rec.CertSerial, rec.CertNotAfter = pki.Serial(leaf), leaf.NotAfter
-	rec.Supersede = ""
 	rec.CertName, rec.CertHasID, rec.NodeKey = "", true, nk
 	if name != rec.Name {
 		rec.CertName = name
 	}
 	if prevName != name {
-		// renamed: the older certificates (the old name) go once this one
-		// is in use (supersedeIfDue)
-		rec.Supersede = rec.CertSerial
+		// renamed: the older certificates (the old name) go once one with
+		// the new name is in use (supersedeIfDue); later renewals - even
+		// with an old certificate - keep that pending
+		rec.RetirePending = true
 	}
 	return cert, nil
 }
@@ -416,6 +416,7 @@ func (h *Hub) Revoke(by, target string) (*pb.NodeInfo, error) {
 	name, id := n.rec.Name, n.rec.ID
 	rec := *n.rec
 	rec.State, rec.CSR, rec.IssuedCert = stateRevoked, "", "" // the poll token stays: JoinStatus says "rejected"
+	h.revokeLegacyNamesLocked(n)
 	if _, err := h.store.RevokeNodeCerts(id, time.Now()); err != nil {
 		h.mu.Unlock()
 		return nil, status.Error(codes.Internal, err.Error())
@@ -481,7 +482,8 @@ func (h *Hub) renew(c caller, csr []byte) (*pb.RenewResponse, error) {
 	h.mu.Lock()
 	oldDial := n.rec.DialName()
 	n.rec.CertSerial, n.rec.CertNotAfter = rec.CertSerial, rec.CertNotAfter
-	n.rec.CertName, n.rec.CertHasID, n.rec.NodeKey, n.rec.Supersede, n.rec.User = rec.CertName, rec.CertHasID, rec.NodeKey, rec.Supersede, rec.User
+	n.rec.CertName, n.rec.CertHasID, n.rec.NodeKey, n.rec.User = rec.CertName, rec.CertHasID, rec.NodeKey, rec.User
+	n.rec.RetirePending = n.rec.RetirePending || rec.RetirePending
 	if oldDial != n.rec.DialName() {
 		h.dialNameChangedLocked(n) // port links name workers by their certificate names
 	}

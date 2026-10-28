@@ -195,13 +195,20 @@ func (h *Hub) reloadLegacyLocked() {
 }
 
 // supersedeIfDue revokes a renamed node's older certificates once the
-// node presents the certificate issued with its new name (store.Node.
-// Supersede): no certificate with the old name - which another node may
-// get now - remains valid.
+// node presents a certificate with its new name and its node ID
+// (store.Node.RetirePending): no other certificate - the old name, which
+// another node may get now - remains valid, and the names of its
+// certificates without an ID get a legacy name revocation.
 func (h *Hub) supersedeIfDue(nodeID string, cert *x509.Certificate) {
+	adopted := func(n *node) bool {
+		if n == nil || !n.rec.RetirePending {
+			return false
+		}
+		id, err := pki.IdentityFromCert(cert)
+		return err == nil && id.ID == n.rec.ID && id.Name == n.rec.Name
+	}
 	h.mu.Lock()
-	n := h.nodes[nodeID]
-	due := n != nil && n.rec.Supersede != "" && n.rec.Supersede == pki.Serial(cert)
+	due := adopted(h.nodes[nodeID])
 	h.mu.Unlock()
 	if !due {
 		return
@@ -209,18 +216,21 @@ func (h *Hub) supersedeIfDue(nodeID string, cert *x509.Certificate) {
 	h.certMu.Lock()
 	defer h.certMu.Unlock()
 	h.mu.Lock()
-	if n.rec.Supersede != pki.Serial(cert) {
+	n := h.nodes[nodeID]
+	if !adopted(n) {
 		h.mu.Unlock()
 		return
 	}
-	k, err := h.store.RevokeCertsExcept(nodeID, n.rec.Supersede, time.Now())
+	h.revokeLegacyNamesLocked(n)
+	k, err := h.store.RevokeCertsExcept(nodeID, pki.Serial(cert), time.Now())
 	if err != nil {
 		h.mu.Unlock()
 		h.log.Warn("revoke superseded certificates", "id", nodeID, "err", err)
 		return
 	}
-	n.rec.Supersede = ""
+	n.rec.RetirePending = false
 	h.store.PutNode(n.rec)
+	k++ // the legacy name revocations change the list too
 	if k > 0 {
 		h.revVersion++
 		h.store.SetMeta("revocation_version", itoa(h.revVersion))

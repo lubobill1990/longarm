@@ -2,6 +2,7 @@ package hub
 
 import (
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -206,5 +207,99 @@ func TestRenameSupersedesOldCertificates(t *testing.T) {
 		if n.Name == "alice" && len(n.LegacySerials) != 0 {
 			t.Fatalf("a revoked node's legacy serials %v", n.LegacySerials)
 		}
+	}
+}
+
+// TestRetirePendingSurvivesRenewals: after a rename, renewals with the
+// original certificate keep the pending retirement; once a certificate with
+// the new name is presented, every other certificate is revoked.
+func TestRetirePendingSurvivesRenewals(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	jc, err := h.CreateJoinCode("test", &pb.CreateJoinCodeRequest{Role: "client", Name: "dev1", User: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := hubclient.Join(tctx(t), h.Addr("grpc"), jc.Code, hubclient.JoinOptions{Fingerprint: pki.Fingerprint(th.ca.Cert)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := writeTestBundle(t, h, r)
+	if _, err := h.RenameNode("admin/root", "root", true, "dev1", "dev2"); err != nil {
+		t.Fatal(err)
+	}
+	hc, err := hubclient.Dial(h.Addr("grpc"), old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hc.Close()
+	var renewed []*pki.Bundle
+	for range 2 { // two renewals, both with the original certificate
+		certPEM, keyPEM, caPEM, err := hubclient.Renew(tctx(t), hc, "dev2", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		nb, err := pki.ParseBundle(caPEM, certPEM, keyPEM)
+		if err != nil {
+			t.Fatal(err)
+		}
+		renewed = append(renewed, nb)
+	}
+	h.mu.Lock()
+	pending := h.nodes[r.Resp.Id].rec.RetirePending
+	h.mu.Unlock()
+	if !pending || h.revoked.Revoked(old.Leaf()) {
+		t.Fatalf("after two renewals with the old certificate: pending %v, old revoked %v", pending, h.revoked.Revoked(old.Leaf()))
+	}
+	if _, err := pb.NewFleetClient(bundleConn(t, h, renewed[1])).Whoami(tctx(t), &pb.WhoamiRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if !h.revoked.Revoked(old.Leaf()) || !h.revoked.Revoked(renewed[0].Leaf()) || h.revoked.Revoked(renewed[1].Leaf()) {
+		t.Fatal("the adopted certificate must be the only one left")
+	}
+}
+
+// TestLegacyNameRevocation: revoking a node whose history has certificates
+// without a node ID revokes its (role, name) for ID-less certificates -
+// on workers too (the revocation list) - so a copy the hub never saw stops
+// working; certificates with an ID of that name are not affected.
+func TestLegacyNameRevocation(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	if _, err := pb.NewFleetClient(th.alice).Whoami(tctx(t), &pb.WhoamiRequest{}); err != nil { // registered, ID-less
+		t.Fatal(err)
+	}
+	unseenPEM, _, _ := th.ca.Issue(pki.IssueOptions{Role: pki.RoleClient, Name: "alice"})
+	unseen, _ := pki.ParseCertPEM(unseenPEM)
+	withIDPEM, _, _ := th.ca.Issue(pki.IssueOptions{Role: pki.RoleClient, Name: "alice", ID: "3f2a9c1e-4b5d-4c3e-8f00-1234567890ab"})
+	withID, _ := pki.ParseCertPEM(withIDPEM)
+	if h.revoked.Revoked(unseen) {
+		t.Fatal("revoked before the revocation")
+	}
+	if _, err := h.Revoke("test", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if !h.revoked.Revoked(unseen) || h.revoked.Revoked(withID) {
+		t.Fatalf("unseen legacy copy revoked %v, an ID certificate of the name %v", h.revoked.Revoked(unseen), h.revoked.Revoked(withID))
+	}
+	// what workers get
+	var found bool
+	for _, n := range h.revocationsMsg().GetRevocations().Names {
+		found = found || (n.Role == "client" && n.Name == "alice")
+	}
+	if !found {
+		t.Fatal("the legacy name revocation is not in the workers' list")
+	}
+	// a worker's list (from the message) refuses the copy the same way
+	wl, _ := pki.LoadRevocationList("")
+	names := map[string]time.Time{}
+	for _, n := range h.revocationsMsg().GetRevocations().Names {
+		names[pki.RevokedNameKey(pki.Role(n.Role), n.Name)] = n.NotAfter.AsTime()
+	}
+	if err := wl.ReplaceAllNames(1, nil, nil, names); err != nil {
+		t.Fatal(err)
+	}
+	if !wl.Revoked(unseen) || wl.Revoked(withID) {
+		t.Fatal("worker list")
 	}
 }

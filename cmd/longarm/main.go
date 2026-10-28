@@ -76,8 +76,12 @@ type session struct {
 	nodesAt   time.Time
 	nodes     []*pb.NodeInfo // hub workers (or the cache), for name lookups
 	nodesLive bool           // nodes is the hub's answer (not the cache)
-	placed    *pb.NodeInfo   // the worker the hub just assigned
-	renewOnce sync.Once
+	// placements: the worker the hub assigned to each automatic placement,
+	// by its job id; consumed once by connFor for that very operation
+	// (never by a name lookup: an explicit target is always held to what
+	// was asked for)
+	placements map[string]*pb.NodeInfo
+	renewOnce  sync.Once
 
 	hubStateOnce sync.Once
 	hubStateSeen bool   // hub-state.json existed

@@ -369,8 +369,20 @@ message Revocations {
   int64 version = 1;
   repeated RevokedCert certs = 2; // full list
   // Revoked nodes (full list): any certificate carrying one of these node
-  // IDs is refused, whatever its serial. Names are never revoked.
+  // IDs is refused, whatever its serial.
   repeated RevokedNode nodes = 3;
+  // Legacy name revocations (full list): a certificate WITHOUT a node ID
+  // whose role and name are listed is refused - copies of a revoked (or
+  // renamed) node's certificates from before node IDs that the hub never
+  // saw. Certificates with a node ID ignore it: the name stays free for
+  // new nodes.
+  repeated RevokedName names = 4;
+}
+
+message RevokedName {
+  string role = 1;
+  string name = 2;
+  google.protobuf.Timestamp not_after = 3; // the entry can go then
 }
 
 message RevokedNode {

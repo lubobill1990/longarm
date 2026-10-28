@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/client"
@@ -216,33 +219,64 @@ func resolveLinkEnds(ctx context.Context, s *session, req *pb.CreatePortLinkRequ
 			if err != nil {
 				continue
 			}
+			name, id := cmp.Or(n.CertName, n.Name), n.Id
 			// With end-to-end trust the hub's mapping of the
 			// target to a node is not taken on trust before the
 			// owner signs it: the worker must answer as the
-			// endorsed target (its name / id, pki.CheckTarget).
+			// endorsed target (its name / id, pki.CheckTarget), and
+			// what is signed is the identity that handshake
+			// authenticated - not another lookup's answer.
 			if p := s.dialer.Bundle().Trust.Load(); p.Active() {
-				if err := verifyEnd(ctx, s, target); err != nil {
+				authed, err := verifyEnd(ctx, s, target)
+				if err != nil {
+					return fmt.Errorf("%s: %w", target, err)
+				}
+				if name, id, err = signedEnd(n, authed); err != nil {
 					return fmt.Errorf("%s: %w", target, err)
 				}
 			}
-			*end.name, *end.id = cmp.Or(n.CertName, n.Name), n.Id
+			*end.name, *end.id = name, id
 		}
 	}
 	return nil
 }
 
+// signedEnd is the link end to sign: the identity the verification
+// handshake authenticated (its certificate's name and node ID), which must
+// be the node the hub's listing named - a hub that answers the two lookups
+// differently is refused.
+func signedEnd(listed *pb.NodeInfo, authed pki.Identity) (name, id string, err error) {
+	if authed.ID != "" && !strings.EqualFold(authed.ID, listed.Id) {
+		return "", "", fmt.Errorf("the worker that answered is node %s (%s), the hub lists node %s (%s): not signing", authed.ID, authed.Name, listed.Id, listed.Name)
+	}
+	if authed.Name != cmp.Or(listed.CertName, listed.Name) {
+		return "", "", fmt.Errorf("the worker that answered is %s, the hub lists %s: not signing", authed.Name, cmp.Or(listed.CertName, listed.Name))
+	}
+	// a certificate without an ID: sign the name only (the end is held to
+	// its endorsed name, portlink.CheckEnd)
+	return authed.Name, authed.ID, nil
+}
+
 // verifyEnd dials a link end the way the user named it: the handshake
-// holds the worker's endorsement to that name or ID (end-to-end trust).
-func verifyEnd(ctx context.Context, s *session, target string) error {
+// holds the worker's endorsement to that name or ID (end-to-end trust). It
+// returns the identity of the certificate that answered.
+func verifyEnd(ctx context.Context, s *session, target string) (pki.Identity, error) {
 	conn, err := s.conn(target)
 	if err != nil {
-		return err
+		return pki.Identity{}, err
 	}
 	defer conn.Close()
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	_, err = conn.Node().Info(ctx, &pb.InfoRequest{})
-	return err
+	var p peer.Peer
+	if _, err = conn.Node().Info(ctx, &pb.InfoRequest{}, grpc.Peer(&p)); err != nil {
+		return pki.Identity{}, err
+	}
+	ti, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok || len(ti.State.PeerCertificates) == 0 {
+		return pki.Identity{}, errors.New("no worker certificate in the handshake")
+	}
+	return pki.IdentityFromCert(ti.State.PeerCertificates[0])
 }
 
 func signLink(cfgDir string, req *pb.CreatePortLinkRequest) error {

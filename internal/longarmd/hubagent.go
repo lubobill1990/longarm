@@ -608,7 +608,11 @@ func (a *hubAgent) handle(cmd *pb.HubCommand) {
 		for _, n := range x.Revocations.Nodes {
 			ids[n.Id] = n.NotAfter.AsTime()
 		}
-		if err := a.revoked.ReplaceAll(x.Revocations.Version, m, ids); err != nil {
+		names := map[string]time.Time{}
+		for _, n := range x.Revocations.Names {
+			names[pki.RevokedNameKey(pki.Role(n.Role), n.Name)] = n.NotAfter.AsTime()
+		}
+		if err := a.revoked.ReplaceAllNames(x.Revocations.Version, m, ids, names); err != nil {
 			a.log.Warn("hub: save revocation list", "err", err)
 		}
 		a.log.Info("hub: revocation list updated", "version", x.Revocations.Version, "revoked", a.revoked.Len())

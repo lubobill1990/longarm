@@ -344,15 +344,6 @@ func (s *session) worker(target string) (client.Worker, error) {
 				return w, nil
 			}
 		}
-		s.hubMu.Lock()
-		p := s.placed
-		s.hubMu.Unlock()
-		if p != nil && p.Name == t.Value { // the hub's choice: no target to hold it to
-			if w, ok := workerFromNode(p); ok {
-				w.TrustAny = true // explicitly unconstrained: the hub placed the job
-				return w, nil
-			}
-		}
 	}
 	if terr == nil && s.cfg.Hub.Enabled() {
 		for attempt := 0; attempt < 2; attempt++ {
@@ -618,6 +609,35 @@ type placeOpts struct {
 	exclude []string
 }
 
+// connFor connects to the worker of an operation: the worker the hub
+// assigned to the automatic placement po (its job id) - consumed here, for
+// this operation only, the one case where the worker's endorsement needn't
+// match a name or ID the user gave (TrustAny) - else the target as asked
+// for (s.conn).
+func (s *session) connFor(target string, po *placeOpts) (*client.Conn, error) {
+	if po != nil {
+		if w, ok := s.takePlaced(po.jobID, target); ok {
+			return s.dialer.Dial(w)
+		}
+	}
+	return s.conn(target)
+}
+
+// takePlaced consumes the placement of job jobID if it put the job on
+// target: the worker, explicitly unconstrained (TrustAny).
+func (s *session) takePlaced(jobID, target string) (client.Worker, bool) {
+	s.hubMu.Lock()
+	n := s.placements[jobID]
+	delete(s.placements, jobID)
+	s.hubMu.Unlock()
+	if n == nil || n.Name != target {
+		return client.Worker{}, false
+	}
+	w, ok := workerFromNode(n)
+	w.TrustAny = true // the hub placed this job: no name or ID the user gave
+	return w, ok
+}
+
 // place picks a worker: through the hub (with reservation and queueing),
 // else client-side over the known workers (same algorithm, live metrics,
 // no reservations; it waits and retries when nobody passes).
@@ -653,9 +673,14 @@ func (s *session) placeViaHub(ctx context.Context, h *hubclient.Conn, o placeOpt
 		case "queued":
 			fmt.Fprintf(os.Stderr, "longarm: queued at position %d (%s)\n", u.Position, u.Reason)
 		case "assigned":
-			s.hubMu.Lock()
-			s.placed = u.Node
-			s.hubMu.Unlock()
+			if u.Node != nil {
+				s.hubMu.Lock()
+				if s.placements == nil {
+					s.placements = map[string]*pb.NodeInfo{}
+				}
+				s.placements[o.jobID] = u.Node
+				s.hubMu.Unlock()
+			}
 			fmt.Fprintf(os.Stderr, "longarm: placed on %s (score %.1f, %.0f GB reserved)\n", u.Worker, u.Score, u.MemGb)
 			return u.Worker, nil
 		}

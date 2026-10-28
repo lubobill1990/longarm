@@ -237,7 +237,7 @@ Without --repo or --cwd the job runs in the worker's home directory;
 			if po.repo != "" {
 				labelM[sched.LabelRepo] = po.repo
 			}
-			conn, err := s.conn(worker)
+			conn, err := s.connFor(worker, po) // the hub's placement: for this run only
 			if err != nil {
 				return err
 			}

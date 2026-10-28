@@ -299,7 +299,48 @@ func (h *Hub) rebuildRevocations() error {
 	for _, n := range h.revokedNodesLocked(certs) {
 		ids[n.Id] = n.NotAfter.AsTime()
 	}
-	return h.revoked.ReplaceAll(h.revVersion, m, ids)
+	names := map[string]time.Time{}
+	for _, n := range h.revokedNamesLocked() {
+		names[pki.RevokedNameKey(pki.Role(n.Role), n.Name)] = n.NotAfter.AsTime()
+	}
+	return h.revoked.ReplaceAllNames(h.revVersion, m, ids, names)
+}
+
+// revokedNamesLocked are the legacy name revocations in force.
+func (h *Hub) revokedNamesLocked() []*pb.RevokedName {
+	rs, err := h.store.RevokedNames(time.Now())
+	if err != nil {
+		h.log.Warn("revoked names", "err", err)
+	}
+	out := make([]*pb.RevokedName, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, &pb.RevokedName{Role: r.Role, Name: r.Name, NotAfter: tspb(r.NotAfter)})
+	}
+	return out
+}
+
+// legacyNameRevocationTTL: how long a legacy name revocation lasts - longer
+// than any certificate issued before node IDs can live.
+const legacyNameRevocationTTL = 2 * 365 * 24 * time.Hour
+
+// revokeLegacyNamesLocked adds legacy name revocations for the names of
+// node n's certificates without a node ID (a revoked node, or a renamed
+// one that adopted its new certificate): copies of them the hub never saw
+// stop working on workers too.
+func (h *Hub) revokeLegacyNamesLocked(n *node) {
+	names, err := h.store.LegacyCertNames(n.rec.ID)
+	if err != nil {
+		h.log.Warn("legacy certificate names", "id", n.rec.ID, "err", err)
+	}
+	if !n.rec.CertHasID && len(names) == 0 && n.rec.CertSerial != "" {
+		names = []string{n.rec.DialName()}
+	}
+	until := time.Now().Add(legacyNameRevocationTTL)
+	for _, name := range names {
+		if err := h.store.AddRevokedName(store.RevokedName{Role: n.rec.Role, Name: name, NotAfter: until}); err != nil {
+			h.log.Warn("legacy name revocation", "name", name, "err", err)
+		}
+	}
 }
 
 // revokedNodesLocked are the revoked nodes whose certificates may not have
@@ -343,7 +384,7 @@ func (h *Hub) revocationsMsgLocked() *pb.HubCommand {
 	if err != nil {
 		h.log.Warn("revocations", "err", err)
 	}
-	r := &pb.Revocations{Version: h.revVersion, Nodes: h.revokedNodesLocked(certs)}
+	r := &pb.Revocations{Version: h.revVersion, Nodes: h.revokedNodesLocked(certs), Names: h.revokedNamesLocked()}
 	for _, c := range certs {
 		r.Certs = append(r.Certs, &pb.RevokedCert{Serial: c.Serial, NotAfter: tspb(c.NotAfter), Node: c.Node})
 	}

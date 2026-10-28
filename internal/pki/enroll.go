@@ -173,19 +173,21 @@ type RevocationList struct {
 	mu      sync.RWMutex
 	serials map[string]time.Time // serial -> not_after
 	ids     map[string]time.Time // node ID -> not_after of its last certificate
+	names   map[string]time.Time // "role/name" -> until: certificates WITHOUT a node ID only
 	version int64
 	changed chan struct{} // closed (and replaced) by Replace
 }
 
 type revocationFile struct {
 	Version int64            `json:"version"`
-	Serials map[string]int64 `json:"serials"`       // serial -> not_after (unix)
-	IDs     map[string]int64 `json:"ids,omitempty"` // node ID -> not_after (unix)
+	Serials map[string]int64 `json:"serials"`         // serial -> not_after (unix)
+	IDs     map[string]int64 `json:"ids,omitempty"`   // node ID -> not_after (unix)
+	Names   map[string]int64 `json:"names,omitempty"` // role/name -> until (unix): ID-less certificates
 }
 
 // LoadRevocationList loads path (missing = empty); Replace persists there.
 func LoadRevocationList(path string) (*RevocationList, error) {
-	r := &RevocationList{path: path, serials: map[string]time.Time{}, ids: map[string]time.Time{}}
+	r := &RevocationList{path: path, serials: map[string]time.Time{}, ids: map[string]time.Time{}, names: map[string]time.Time{}}
 	if path == "" {
 		return r, nil
 	}
@@ -206,6 +208,9 @@ func LoadRevocationList(path string) (*RevocationList, error) {
 	for id, na := range f.IDs {
 		r.ids[id] = time.Unix(na, 0)
 	}
+	for n, na := range f.Names {
+		r.names[n] = time.Unix(na, 0)
+	}
 	r.version = f.Version
 	return r, nil
 }
@@ -221,14 +226,27 @@ func (r *RevocationList) Revoked(c *x509.Certificate) bool {
 	if _, ok := r.serials[Serial(c)]; ok {
 		return true
 	}
-	if len(r.ids) > 0 {
-		if id, err := nodeIDFromCert(c); err == nil && id != "" {
-			_, ok := r.ids[id]
+	id, err := nodeIDFromCert(c)
+	if err != nil {
+		return true // a malformed node id: never accepted
+	}
+	if id != "" {
+		_, ok := r.ids[id]
+		return ok
+	}
+	// a certificate without a node ID: its (role, name) may be revoked
+	// (a copy of a revoked or renamed node's legacy certificate)
+	if len(r.names) > 0 {
+		if ident, err := IdentityFromCert(c); err == nil {
+			_, ok := r.names[RevokedNameKey(ident.Role, ident.Name)]
 			return ok
 		}
 	}
 	return false
 }
+
+// RevokedNameKey is the key of a legacy name revocation.
+func RevokedNameKey(role Role, name string) string { return string(role) + "/" + name }
 
 // RevokedID reports whether the node ID is on the list.
 func (r *RevocationList) RevokedID(id string) bool {
@@ -263,6 +281,12 @@ func (r *RevocationList) Replace(version int64, serials map[string]time.Time) er
 
 // ReplaceAll is Replace with revoked node IDs.
 func (r *RevocationList) ReplaceAll(version int64, serials, ids map[string]time.Time) error {
+	return r.ReplaceAllNames(version, serials, ids, nil)
+}
+
+// ReplaceAllNames is ReplaceAll with legacy name revocations ("role/name"
+// -> until; certificates without a node ID only).
+func (r *RevocationList) ReplaceAllNames(version int64, serials, ids, names map[string]time.Time) error {
 	m := make(map[string]time.Time, len(serials))
 	mi := make(map[string]time.Time, len(ids))
 	f := revocationFile{Version: version, Serials: map[string]int64{}}
@@ -285,8 +309,19 @@ func (r *RevocationList) ReplaceAll(version int64, serials, ids map[string]time.
 		}
 		f.IDs[id] = na.Unix()
 	}
+	mn := make(map[string]time.Time, len(names))
+	for n, na := range names {
+		if na.Before(now) {
+			continue
+		}
+		mn[n] = na
+		if f.Names == nil {
+			f.Names = map[string]int64{}
+		}
+		f.Names[n] = na.Unix()
+	}
 	r.mu.Lock()
-	r.serials, r.ids, r.version = m, mi, version
+	r.serials, r.ids, r.names, r.version = m, mi, mn, version
 	if r.changed != nil {
 		close(r.changed)
 	}
