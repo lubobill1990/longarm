@@ -1,0 +1,45 @@
+name: go-build-cache
+description: >-
+  Restore the Go build cache that ci.yml's release-cache job saves on pushes
+  to main (docs/ci-cd.md "Caches"): keys go-build-main-<os>-<arch>-<go>-<go.sum>-<commit>.
+  Restore only - release jobs never save a cache. Only main's entries can match
+  here: caches of pull requests live under refs/pull/N/merge, which tag runs
+  can't read. Go modules are not part of it (downloaded fresh, checked against
+  go.sum and the checksum database). Run after .github/actions/go-setup.
+outputs:
+  key:
+    description: the key for this commit (ci.yml saves under it)
+    value: ${{ steps.key.outputs.key }}
+  path:
+    description: GOCACHE
+    value: ${{ steps.key.outputs.path }}
+  matched-key:
+    description: the key that was restored (empty on a miss)
+    value: ${{ steps.restore.outputs.cache-matched-key }}
+runs:
+  using: composite
+  steps:
+    - name: cache key
+      id: key
+      shell: bash
+      env:
+        GO_SUM: ${{ hashFiles('go.sum') }}
+      run: |
+        prefix="go-build-main-${RUNNER_OS}-${RUNNER_ARCH}-$(go env GOVERSION)-"
+        {
+          echo "path=$(go env GOCACHE)"
+          echo "prefix=$prefix"
+          echo "gosum=$prefix$GO_SUM-"
+          echo "key=$prefix$GO_SUM-$GITHUB_SHA"
+        } >>"$GITHUB_OUTPUT"
+    - name: restore (main's cache)
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.key.outputs.path }}
+        key: ${{ steps.key.outputs.key }}
+        # newest of the same go.sum first, else of the same Go version (the
+        # cache is content-addressed: stale entries are never used)
+        restore-keys: |
+          ${{ steps.key.outputs.gosum }}
+          ${{ steps.key.outputs.prefix }}

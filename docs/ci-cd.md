@@ -5,9 +5,9 @@ release is cut and rolled back. Everything runs on GitHub-hosted runners.
 
 | Workflow | Trigger | Jobs |
 |---|---|---|
-| [`ci.yml`](../.github/workflows/ci.yml) | pull request, push to `main`, manual | **lint** (ubuntu): `scripts/privacy-check.sh`, gitleaks, gofmt, `go vet`, cross-compile (vet + build + e2e test binary) for windows/linux/darwin × amd64/arm64, shellcheck, actionlint · **test** (ubuntu-latest, windows-latest, macos-latest), four parallel jobs per OS: *unit* (`go build`, `go test` of every package but `./e2e`, the per-user isolation tests) and *e2e-1..3* (`./e2e`'s top-level tests dealt out by `.github/scripts/test-shard.sh`) · **tests**: passes when every test job did - the required check of `main`'s ruleset, so `gh pr merge --auto --squash` merges once CI is green · **azure** (ubuntu): `bicep build` of deploy/azure/main.bicep must equal the committed `azuredeploy.json`, `bicep lint` without warnings, PSScriptAnalyzer on deploy.ps1 |
+| [`ci.yml`](../.github/workflows/ci.yml) | pull request, push to `main`, manual | **lint** (ubuntu): `scripts/privacy-check.sh`, gitleaks, gofmt, `go vet`, cross-compile (vet + build + e2e test binary) for windows/linux/darwin × amd64/arm64, shellcheck, actionlint · **test** (ubuntu-latest, windows-latest, macos-latest), four parallel jobs per OS: *unit* (`go build`, `go test` of every package but `./e2e`, the per-user isolation tests) and *e2e-1..3* (`./e2e`'s top-level tests dealt out by `.github/scripts/test-shard.sh`) · **tests**: passes when every test job did - the required check of `main`'s ruleset, so `gh pr merge --auto --squash` merges once CI is green · **azure** (ubuntu): `bicep build` of deploy/azure/main.bicep must equal the committed `azuredeploy.json`, `bicep lint` without warnings, PSScriptAnalyzer on deploy.ps1 · **release-cache** (push to `main` only, ubuntu + windows): the Go build cache release.yml restores, see "Caches" below |
 | [`image.yml`](../.github/workflows/image.yml) | pull request, push to `main`, called by release.yml | **smoke** (ubuntu): build the hub image (deploy/hub/Dockerfile), `deploy/azure/test/container-smoke.sh` with Azurite (bootstrap, admin join, restore after the container is replaced, health) · **publish** (push to main, releases): `ghcr.io/<owner>/longarm-hub` for linux/amd64+arm64 with SBOM and provenance: `:edge` + `:sha-<commit>` from main, `:X.Y.Z` (+ `:latest` for stable releases) from a tag |
-| [`release.yml`](../.github/workflows/release.yml) | tag `v*` | **build** (windows-latest) → **publish** → **image** (image.yml) and **hub** → **rollout**; hub and rollout only run when a deployment is configured |
+| [`release.yml`](../.github/workflows/release.yml) | tag `v*` | **meta** (tag check) → **build-unix** (ubuntu) and **build-windows** (windows-latest, MSIs) in parallel → **publish** (merges and checks them, signs) → **hub** → **rollout**; **image** (image.yml) runs next to the builds, **image-latest** after publish; hub and rollout only run when a deployment is configured. A manual run is a dry run (builds, gather, image smoke test; nothing signed, published or pushed) |
 | [`deploy.yml`](../.github/workflows/deploy.yml) | manual | hub deploy / rollback / status, fleet push of a version already on the hub |
 
 Nothing is assumed on the runners beyond what GitHub's images ship: Go comes
@@ -30,12 +30,40 @@ reads the gitignored file `.privacy-patterns`. Pushes fail without the
 deny-list; fork pull requests, which don't get secrets, run only the generic
 checks. The script never prints the patterns, only the matching lines.
 
-Caches: **CI jobs** use the actions cache for Go modules and the build cache.
-**Release jobs** (`release.yml`, `deploy.yml`) never do: they start from fresh
-caches, install GoReleaser and WiX fresh (pinned; Go modules are checked
-against `go.sum` and the checksum database), and build the `longarm` that
-handles the signing key and the release certificate from the tag's source in
-the job itself - nothing a pull-request job saved can end up in a release.
+Caches: **CI jobs** use the actions cache (setup-go) for Go modules and the
+build cache. **Release jobs** (`release.yml`, `deploy.yml`) never *save* a
+cache, and restore exactly one kind: the Go build cache that ci.yml's
+**release-cache** job saves on pushes to `main` (keys
+`go-build-main-<os>-<arch>-<go version>-<go.sum hash>-<commit>`,
+[`.github/actions/go-build-cache`](../.github/actions/go-build-cache/action.yml),
+`actions/cache/restore`). Why that is safe, and the only cache they take:
+
+- GitHub scopes caches by ref. A run can restore caches of its own ref and of
+  the default branch, nothing else: a pull request's caches (saved under
+  `refs/pull/N/merge`) are invisible to tag runs, whatever key they use.
+  Only runs on `main` - merged code - can write the cache a tag run restores;
+  the release-cache job only runs there (push, or a manual run on `main`).
+- setup-go's cache is not used: it would save a cache from the release job,
+  and it restores the module cache, which Go doesn't re-verify. Go modules
+  are downloaded fresh in every release job and checked against `go.sum` and
+  the checksum database, as before; only compiler output is reused.
+- The Go build cache is content-addressed: an entry's key is the hash of
+  everything that went into it (sources, flags, Go version, GOOS/GOARCH,
+  dependencies' keys), so a stale entry is never used, only missed. The
+  job compiles what the release compiles - `.github/scripts/release-go-cache.sh`:
+  the five commands of `.goreleaser.yaml` (+ the tray with `-tags production`)
+  for the build jobs' targets with `CGO_ENABLED=0 -trimpath`, plus
+  `packaging/hubrelease` - and saves only the entries it used (about 750 MB
+  for Linux and 400 MB for Windows, compressed, per push to `main`; GitHub
+  evicts the least recently used caches beyond the repository's 10 GB, and
+  release jobs restore the newest). The build jobs print the hit rate (`release-go-cache.sh stats`) in their summary.
+- The release's outputs don't change: the binaries are reproducible
+  (`-trimpath`, no cgo), whether a package came from the cache or not.
+
+Everything else starts fresh: GoReleaser and WiX are installed per job
+(pinned, checksum-verified, no cache), and the `longarm` that handles the
+signing key and the release certificate is built from the tag's source in
+the job itself (never taken from the build artifact).
 
 ## 1. Releases without a deployment
 
@@ -249,7 +277,10 @@ repositories on paid plans):
    `release.yml` and the `hub` and `fleet` jobs of `deploy.yml`.
 
 The run then waits for an approval before anything is signed or deployed;
-`build` (no secrets) runs right away.
+`meta`, the builds and the image (no secrets) run right away; the
+versioned image `:X.Y.Z` is pushed before the approval (only `:latest`
+waits for publish) - to hold it back too, add `publish` to the `needs` of
+release.yml's `image` job (it then starts after the approval).
 
 ### 2.6 Ordering: hub first, then the fleet
 
@@ -278,19 +309,29 @@ git tag -a v1.4.0 -m "Longarm 1.4.0"
 git push origin v1.4.0
 ```
 
-1. **build** (windows-latest, no secrets): validates the tag
-   (`vMAJOR.MINOR.PATCH[-pre]`; stable tags must be on `main`), installs
-   GoReleaser and WiX, GoReleaser `release --skip=publish,docker` for every
-   target with `LONGARM_UPDATE_PUBKEY` built in, the two MSIs (WiX 5),
-   `packaging/hubrelease` → unsigned `hub-release/` (canonical names).
-   Artifact `release` (hub-release, longarm-hub debs, checksums.txt), kept 14
-   days (re-run publish within that time).
-   **image** (after publish, next to hub): image.yml builds and smoke-tests the
-   hub image, then pushes `ghcr.io/<owner>/longarm-hub:<v>` (and `:latest`
-   for a stable tag) with the job's `GITHUB_TOKEN` (packages: write). The
-   first push creates a private package: make it public once so
-   [deploy/azure](../deploy/azure/README.md) can pull it anonymously.
-2. **publish**: builds `longarm` from the tag, signs every file
+1. **meta** (no secrets): validates the tag (`vMAJOR.MINOR.PATCH[-pre]`;
+   stable tags must be on `main`). Then, in parallel and without secrets:
+   **build-unix** (ubuntu-latest): GoReleaser `release --skip=publish,docker`
+   with `LONGARM_BUILD_SIDE=unix` - linux and darwin binaries, archives,
+   deb/rpm - and `packaging/hubrelease`; **build-windows** (windows-latest):
+   `packaging/build.ps1 -Side windows` - the Windows binaries and archives,
+   the two MSIs (WiX 5) - and `packaging/hubrelease`. Both build with the
+   same flags and `LONGARM_UPDATE_PUBKEY` / `LONGARM_DEFAULT_HUB` built in
+   (`.goreleaser.yaml` has one build entry per side and binary): the
+   artifacts `release-unix` and `release-windows` (unsigned `hub-release/`
+   files with canonical names, the longarm-hub debs, each side's
+   `checksums.txt`), kept 14 days (re-run publish within that time).
+   **image** (next to the builds; it builds from the tag's source, not from
+   their output): image.yml builds and smoke-tests the hub image, then pushes
+   `ghcr.io/<owner>/longarm-hub:<v>` with the job's `GITHUB_TOKEN` (packages:
+   write); **image-latest** moves `:latest` to it once publish succeeded
+   (stable tags). The first push creates a private package: make it public
+   once so [deploy/azure](../deploy/azure/README.md) can pull it anonymously.
+2. **publish**: merges the two artifacts into one release directory with one
+   `checksums.txt`; `.github/scripts/release-files.sh` stops the release
+   unless the file names are exactly those of the releases so far and
+   `checksums.txt` matches the published copies (a dry run does this in its
+   **gather** job). Builds `longarm` from the tag, signs every file
    (`<file>.minisig`, trusted comment = file name + version) and - with
    `LONGARM_HUB` - uploads them with the release certificate; the hub
    verifies each signature against its public key. Then the GitHub Release
@@ -351,5 +392,6 @@ go test ./...                                         # what the test jobs run
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12        # + shellcheck on PATH
 shellcheck deploy/hub/longarm-hub-deploy .github/scripts/*.sh scripts/*.sh packaging/build.sh packaging/linux/*.sh
 go test -run 'TestHubDeployScript|TestHubReleaseVerify|TestReleaseRole|TestCIScripts' -v ./e2e/
-pwsh packaging/build.ps1 -SkipPublish -Snapshot       # the release build job
+pwsh packaging/build.ps1 -SkipPublish -Snapshot       # the release build jobs (both sides; -Side windows|unix for one)
+gh workflow run release.yml --ref <branch>             # the release as a dry run (CI; nothing published)
 ```
