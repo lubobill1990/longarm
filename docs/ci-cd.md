@@ -53,8 +53,10 @@ cache, and restore exactly one kind: the Go build cache that ci.yml's
   job compiles what the release compiles - `.github/scripts/release-go-cache.sh`:
   the five commands of `.goreleaser.yaml` (+ the tray with `-tags production`)
   for the build jobs' targets with `CGO_ENABLED=0 -trimpath`, plus
-  `packaging/hubrelease` - and saves only the entries it used. The build jobs
-  print the hit rate (`release-go-cache.sh stats`) in their summary.
+  `packaging/hubrelease` - and saves only the entries it used (about 750 MB
+  for Linux and 400 MB for Windows, compressed, per push to `main`; GitHub
+  evicts the least recently used caches beyond the repository's 10 GB, and
+  release jobs restore the newest). The build jobs print the hit rate (`release-go-cache.sh stats`) in their summary.
 - The release's outputs don't change: the binaries are reproducible
   (`-trimpath`, no cgo), whether a package came from the cache or not.
 
