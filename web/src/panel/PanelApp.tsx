@@ -5,10 +5,12 @@ import type { Me } from '../api/types'
 import { Toasts } from '../components/common'
 import { Link, navigate, usePath } from '../lib/router'
 import { AuditPage } from './AuditPage'
+import { GetPage } from './GetPage'
 import { JobsPage } from './JobsPage'
 import { JoinCodesPage } from './JoinCodesPage'
 import { LinksPage } from './LinksPage'
 import { LoginPage } from './LoginPage'
+import { MachinesPage } from './MachinesPage'
 import { MePage } from './MePage'
 import { NodesPage } from './NodesPage'
 import { PortLinksPage } from './PortLinksPage'
@@ -28,12 +30,15 @@ const ADMIN_NAV: [string, string][] = [
   ['/users', 'Panel logins'],
 ]
 
-// panel logins with role "user": their own (and team-shared) jobs, the
-// workers (read-only), their port links and their quota
+// panel logins with role "user": their own (and team-shared) jobs, their
+// machines, the workers (read-only), their port links, the installers and
+// their quota
 const USER_NAV: [string, string][] = [
   ['/jobs', 'My jobs'],
+  ['/machines', 'My machines'],
   ['/nodes', 'Nodes'],
   ['/port-links', 'Port links'],
+  ['/get', 'Get Longarm'],
   ['/me', 'Me'],
 ]
 
@@ -67,7 +72,7 @@ export function PanelApp() {
   const admin = isAdmin(me)
   const nav = admin ? ADMIN_NAV : USER_NAV
   const page = path === '/' || path === '/login' ? home(me) : '/' + path.split('/')[1]
-  const allowed = page === '/me' || nav.some(([to]) => to === page)
+  const allowed = page === '/me' || page === '/get' || nav.some(([to]) => to === page)
   return (
     <Toasts>
       <div className="shell">
@@ -103,6 +108,8 @@ export function PanelApp() {
           {page === '/jobs' && <JobsPage path={path} me={me} />}
           {page === '/port-links' && <PortLinksPage admin={admin} />}
           {page === '/me' && <MePage me={me} />}
+          {page === '/get' && <GetPage me={me} />}
+          {!admin && page === '/machines' && <MachinesPage me={me} />}
           {admin && page === '/joincodes' && <JoinCodesPage me={me} />}
           {admin && page === '/tenants' && <TenantsPage me={me} />}
           {admin && page === '/profiles' && <ProfilesPage />}

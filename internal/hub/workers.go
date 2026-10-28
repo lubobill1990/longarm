@@ -299,6 +299,7 @@ func (s *fleetServer) SetWorkerLabels(ctx context.Context, req *pb.SetLabelsRequ
 //	POST /api/workercodes             {name, ttl, labels}: a worker code of the login's user (user logins)
 //	POST /api/nodes/{name}/share      ShareWorkerRequest (protojson; worker = the path)
 //	POST /api/nodes/{name}/remove     revoke a worker of the login's user (admins: any)
+//	POST /api/nodes/{name}/worker-labels  {"k": "v", "gone": ""}: SetWorkerLabels (owner or admin)
 //
 // A user login acts as its Longarm user; admin logins as admins.
 func (h *Hub) workerRoutes(api func(string, func(http.ResponseWriter, *http.Request, string))) {
@@ -353,6 +354,15 @@ func (h *Hub) workerRoutes(api func(string, func(http.ResponseWriter, *http.Requ
 	api("POST /api/nodes/{name}/remove", func(w http.ResponseWriter, r *http.Request, login string) {
 		user, admin := who(login)
 		info, err := h.RemoveWorker("web/"+login, user, admin, r.PathValue("name"))
+		writeResult(w, info, err)
+	})
+	api("POST /api/nodes/{name}/worker-labels", func(w http.ResponseWriter, r *http.Request, login string) {
+		var labels map[string]string
+		if !readJSON(w, r, &labels) {
+			return
+		}
+		user, admin := who(login)
+		info, err := h.SetWorkerLabels("web/"+login, user, admin, &pb.SetLabelsRequest{Name: r.PathValue("name"), Labels: labels})
 		writeResult(w, info, err)
 	})
 }

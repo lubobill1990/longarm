@@ -223,11 +223,13 @@ func (s *fleetServer) Audit(_ context.Context, req *pb.AuditRequest) (*pb.AuditR
 	return s.h.Audit(req)
 }
 
-func (s *fleetServer) Whoami(ctx context.Context, _ *pb.WhoamiRequest) (*pb.WhoamiResponse, error) {
+func (s *fleetServer) Whoami(ctx context.Context, req *pb.WhoamiRequest) (*pb.WhoamiResponse, error) {
 	c := callerFrom(ctx)
 	resp := &pb.WhoamiResponse{Name: c.id.Name, Role: string(c.id.Role), HubName: s.h.cfg.Name, HubVersion: version.Version,
 		CertNotAfter: tspb(c.cert.NotAfter), RenewBefore: durationpb.New(s.h.cfg.RenewBefore(string(c.id.Role))),
-		Tailnet: s.h.callerTailnet(c.id.Name), User: c.id.Owner()}
+		Tailnet: s.h.callerTailnet(c.id.Name), User: c.id.Owner(), PublicUrl: s.h.cfg.PublicURL}
+	latest, files := s.h.latestNotice()
+	resp.LatestVersion, resp.LatestPath = latest, latestPath(latest, files, req.GetOs(), req.GetArch())
 	s.h.mu.Lock()
 	if resp.Tenancy = s.h.tenancyOnLocked(); resp.Tenancy && c.id.Role != pki.RoleWorker {
 		if t := s.h.tenants[c.id.Owner()]; t != nil {

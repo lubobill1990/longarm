@@ -1,9 +1,86 @@
 # Troubleshooting: from a bug report to a fix
 
-How maintainers find out what went wrong on someone's machine, and how to
-fix it. What is collected and how personal data is removed:
+Users: [common problems](#for-users-common-problems) first. The rest is how
+maintainers find out what went wrong on someone's machine, and how to fix
+it. What is collected and how personal data is removed:
 [telemetry.md](telemetry.md). Setting up the Azure side:
 [deploy/azure](../deploy/azure/README.md#telemetry-and-diagnostic-bundles).
+
+## For users: common problems
+
+Start with `longarm doctor` if your version has it; otherwise the steps
+below. Still stuck: file a bug report ([below](#what-a-good-bug-report-contains)).
+
+### My worker is offline
+
+`longarm ls` shows it `offline`. The Windows default (MSI Default,
+`install.ps1`) is the **user-session worker**: longarmd runs as you, started
+by a scheduled task at your logon, no service and no password. It keeps
+running while a remote desktop is disconnected, but **stops at logoff or
+reboot until you log on again** - log on (an RDP connection will do), or
+start it now:
+
+```powershell
+longarmd session-mode status     # the task LongarmWorker-<SID>, the host, longarmd
+longarmd session-mode start      # start it now ("not registered": longarmd session-mode install)
+longarmd status                  # the running longarmd: hub link, jobs
+```
+
+Logs: `~\.longarm\longarmd-session.log` (the host: starts, exits,
+restarts) and `~\.longarm\longarmd.log` (longarmd). A worker that must run
+with nobody logged on: reinstall with `RUN=service` (Custom > Advanced; it
+needs the account's password) - or use the [admin
+worker](usage.md#admin-worker-windows), a LocalSystem service, for
+administrator tasks.
+
+Other installs: `longarmd service status` (elevated / `sudo`). Logs:
+Windows service `<data>\longarmd.log` (MSI: `C:\ProgramData\Longarm\longarmd\longarmd.log`;
+admin worker `C:\ProgramData\Longarm\longarmd-admin\longarmd.log`); Linux
+`journalctl -u longarmd@<user>` (deb / rpm) or `journalctl -u longarmd`
+(`install.sh`); macOS `sudo launchctl print system/com.longarm.longarmd`.
+Data dirs: [usage.md](usage.md#data-directory).
+
+### Sign-in expired
+
+Certificates renew by themselves while the machine is online; one that was
+offline past its certificate's expiry fails with `x509: certificate has
+expired`. Sign in again - the same code and approval as the first time:
+
+```sh
+longarmd login --force --role both   # worker (+ this machine's longarm); --force: replace the old certificate
+longarm login                        # a client only: replaces an expired certificate, no --force needed
+```
+
+Without a hub argument both use the hub they are enrolled with (or the one
+the installer recorded). On Windows the tray's "Sign in with Microsoft" does
+the same. Not `longarmd join --force` - that needs a new join code and is
+only for fleets enrolled with join codes (self-hosted without Microsoft
+sign-in).
+
+### "A newer version is available"
+
+The hub tells every machine about its newest release:
+
+- **Workers that can update themselves** (a service or a binary install in
+  a directory longarmd can write) follow the hub's rollout (`longarm admin
+  release push`): canary first, health check, rollback.
+- **Workers that can't** - typically MSI installs: the binaries are under
+  `C:\Program Files\Longarm`, which the worker's account can't write
+  (`longarmd update status` says whether this build can update) - report
+  that a newer version exists but stay on theirs.
+- **`longarm`** prints a notice on stderr, only on a terminal and never
+  with `--json`, at most once a day (off: `LONGARM_NO_UPDATE_NOTICE=1`).
+- **The tray** shows an "Update to X" banner: it downloads the MSI from the
+  hub, verifies its sha256 (the hub's release record) and its minisign
+  signature (the release key built into the tray) and runs
+  `msiexec /i <file> /qb` - the remembered MSI properties carry over. A
+  download that fails either check is reported and never runs.
+- **The panel's** Nodes page marks outdated versions.
+
+Update by installing the new MSI (the banner, the hub's "Get Longarm" page
+`https://<hub>/get`, or `https://<hub>/releases/<version>/longarm-windows-amd64.msi`)
+or by running the install script again (`install.ps1` / `install.sh`, as in
+the [README](../README.md#join-a-hub)).
 
 ## What a good bug report contains
 
@@ -138,7 +215,11 @@ longarm admin diag get LAR-20261027-7F3K9Q       # downloads the zip
    (docs/telemetry.md lists them; scrubbing applies automatically).
 5. Ship: PR (squash), CI, `edge` image; the hub upgrade
    (`./deploy.sh --name <hub> --image ghcr.io/lubobill1990/longarm-hub:sha-<commit>`);
-   workers and clients update from the hub's release channel.
+   once the release is in the hub's store, workers that can self-update
+   follow the hub's rollout (`longarm admin release push`); MSI installs and clients
+   get a notice (CLI, tray banner, the panel's Nodes page) and update by
+   installing the new MSI or re-running the install script
+   ([update notices](#a-newer-version-is-available)).
 6. Check the fix in telemetry: the `problemId` / failing request stops
    appearing for the new `application_Version`.
 
@@ -147,7 +228,7 @@ longarm admin diag get LAR-20261027-7F3K9Q       # downloads the zip
 | Symptom | Look at | Usual cause |
 |---|---|---|
 | `worker w1 refused by end-to-end trust` | client error text, `longarm trust show` | worker not endorsed, or the hub dropped the extension (old hub) |
-| `x509: certificate has expired` | `state/certificate.json` | node offline past renewal; `longarmd join --force` |
+| `x509: certificate has expired` | `state/certificate.json` | node offline past renewal; `longarmd login --force` / `longarm login` ([Sign-in expired](#sign-in-expired)); join-code fleets: `longarmd join --force` with a new code |
 | exec hangs, then `relay` errors | `dependencies` of type `dial`, `dial.leg` metric | UDP blocked; TCP fallback on 7443 |
 | job queued forever | hub `customEvents` `scheduler.placement` (outcome `no_fit`, `queued`) | no worker fits (memory gate), all drained |
 | worker crashes in a loop | `exceptions` crash, bundle `telemetry/crash-*.txt` | panic - fix with a test |

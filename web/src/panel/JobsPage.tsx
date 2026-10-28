@@ -29,6 +29,14 @@ function useLiveJobs(limit: number) {
   return { jobs, error }
 }
 
+/** The kill confirmation: which job, where, whose. */
+export function confirmKill(spec: JobSpec, worker: string): boolean {
+  const name = spec.name ? `${spec.name} (${spec.id})` : spec.id
+  return confirm(`Kill job ${name} on worker ${worker}, owned by ${jobOwner(spec) || 'nobody'}?
+
+Its processes are stopped; this can't be undone.`)
+}
+
 /** Administrators control every job; a user-role login only its own (shared jobs are read-only). */
 const mayControl = (me: Me, spec: JobSpec) => isAdmin(me) || jobOwner(spec) === (me.tenant || me.user)
 
@@ -118,8 +126,13 @@ function JobList({ me }: { me: Me }) {
           ))}
           {list.length === 0 && (
             <tr>
-              <td colSpan={9} className="notice">
+              <td colSpan={9} className="notice" data-testid="jobs-empty">
                 no jobs
+                {!isAdmin(me) && Object.keys(jobs).length === 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    Nothing here yet: <Link to="/get">get Longarm</Link> on your machines, then see them under <Link to="/machines">My machines</Link>.
+                  </div>
+                )}
               </td>
             </tr>
           )}
@@ -152,7 +165,7 @@ function JobRow({ j, me }: { j: FleetJob; me: Me }) {
       </td>
       <td>
         {isActive(j.job.state) && mayControl(me, s) && (
-          <button className="danger" disabled={busy || !j.worker_online} onClick={() => run(() => hubApi.kill(s.id, j.worker), 'killed')}>
+          <button className="danger" disabled={busy || !j.worker_online} onClick={() => confirmKill(s, j.worker) && run(() => hubApi.kill(s.id, j.worker), 'killed')}>
             Kill
           </button>
         )}
@@ -220,7 +233,11 @@ function JobDetail({ id, me }: { id: string; me: Me }) {
         {j?.job.has_exit_code && <span className="mono">exit {j.job.exit_code ?? 0}</span>}
         <span className="spacer" />
         {j && isActive(j.job.state) && mayControl(me, j.job.spec) && (
-          <button className="danger" disabled={busy} onClick={() => run(() => hubApi.kill(id, j.worker), 'killed').then(() => job.reload())}>
+          <button
+            className="danger"
+            disabled={busy}
+            onClick={() => confirmKill(j.job.spec, j.worker) && run(() => hubApi.kill(id, j.worker), 'killed').then(() => job.reload())}
+          >
             Kill
           </button>
         )}

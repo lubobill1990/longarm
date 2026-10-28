@@ -114,6 +114,8 @@ builds:
       - -X github.com/lubobill1990/longarm/internal/version.Version={{ .Version }}
       - -X github.com/lubobill1990/longarm/internal/version.DefaultHub={{ envOrDefault "LONGARM_DEFAULT_HUB" "" }}
       - -X github.com/lubobill1990/longarm/internal/version.DefaultHubCA={{ envOrDefault "LONGARM_DEFAULT_HUB_CA" "" }}
+      # the tray's "Update to X" verifies the MSI's signature with it
+      - -X github.com/lubobill1990/longarm/internal/update.PublicKey={{ envOrDefault "LONGARM_UPDATE_PUBKEY" "" }}
 
 archives:
   # Client + worker bundle: longarm, longarmd (+ longarm-tray).

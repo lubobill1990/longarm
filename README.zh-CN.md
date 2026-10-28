@@ -6,7 +6,8 @@ worker 池，Claude Code、Copilot CLI 或者你自己都可以在上面运行�
 测试套件乃至完整的智能体会话——从任何一台笔记本出发，穿透任何 NAT。
 
 [English](README.md) · [使用参考](docs/usage.md) ·
-[设计文档](docs/design.md) · [CI/CD](docs/ci-cd.md)
+[设计文档](docs/design.md) · [CI/CD](docs/ci-cd.md) · [安全](docs/security.md) ·
+[遥测](docs/telemetry.md)
 
 ## 为什么需要它
 
@@ -35,7 +36,8 @@ Longarm 让智能体（或者你）可以说一句 *“去那边跑”*：
   崩溃或更新都不会杀掉它们。日志可以从任意字节偏移处开始流式读取，退出码会被
   原样回传。
 - **交互式 PTY 会话**——类似 tmux 的 `longarm attach`：命名会话、多客户端同时
-  连接，用 `Ctrl-] d` 脱离，重新连接时回放历史输出。
+  连接，用 `Ctrl-] d` 脱离，重新连接时回放历史输出。程序（IDE、桌面应用）
+  无需终端也能驱动同一个会话：`longarm session start|send|stop`。
 - **端口转发**——`longarm forward worker-1 3000` 把 worker 上的开发服务器
   映射到你的 `localhost`。
 - **worker 之间的端口链接**——`longarm link create backend:8080 --on frontend`
@@ -50,7 +52,7 @@ Longarm 让智能体（或者你）可以说一句 *“去那边跑”*：
   通道，无需管理 SSH 密钥。
 - **MCP 服务器**——`longarm mcp` 为 Claude Code 和 Copilot CLI 提供
   `fleet_status`、`fleet_exec`、`fleet_job_submit`、`fleet_job_wait`、
-  `fleet_sync`、`fleet_forward` 等工具。密钥按名称传递，从不经过模型。
+  `fleet_sync`、`fleet_forward`、`fleet_link` 等工具。密钥按名称传递，从不经过模型。
 - **带内存门槛的调度器**——`longarm run -- make` 会挑选负载最低、且有足够空闲
   内存和 CPU 余量的 worker，按任务类型预留内存，优先选择已有你仓库的 worker，
   没有合适的机器时则排队等待。
@@ -69,7 +71,7 @@ Longarm 让智能体（或者你）可以说一句 *“去那边跑”*：
   你到每个 worker 的链路（直连或中继、RTT）、你的任务和端口转发；hub 的 Web
   面板（TOTP 登录）用于管理节点、任务、加入码和用户。
 - **签名自更新**——发布版本使用 minisign 签名；worker 按金丝雀方式先行更新，
-  对新版本做健康检查，失败时自行回滚。
+  对新版本做健康检查，失败时自行回滚；MSI 安装和客户端则会收到更新提示。
 - **安装包**——MSI（Windows）、deb/rpm（Linux）、pkg 和 Homebrew cask
   （macOS），hub 另有 Docker 镜像和 deb 包，并由 hub 提供一行命令安装脚本。
 
@@ -107,13 +109,85 @@ Hub 只负责协调。命令、输出、文件和终端都在客户端与 worker
 
 ## 快速上手
 
+### 加入一个 hub
+
+已经有人在运行 hub（团队的 hub，或发布版本内置的那个）？安装、用 Microsoft
+账户登录，就这么简单——不用填 hub 地址，不用加入码，不用核对指纹，也不用输密码。
+
+**1. 安装**：在每台想用的机器上安装。
+
+**Windows：下载 MSI，点两次“下一步”，在浏览器里批准。**
+`longarm-windows-amd64.msi` 可以从 hub 的 “Get Longarm” 页面
+（`https://hub.example.com/get`）下载，也可以直接从 hub 的发布仓库下载
+（`https://hub.example.com/releases/<version>/longarm-windows-amd64.msi`），
+或者去 [releases 页面](https://github.com/lubobill1990/longarm/releases)。
+运行安装程序，点“下一步”，保持 **Default (recommended)**，选择
+“This is my everyday computer: send jobs to workers”（只当客户端用）或
+“This machine runs jobs (Dev Box, build machine)”（同时当 worker；在 Dev Box /
+Cloud PC 上默认选中），再点“下一步”、“安装”。装完后 Longarm 托盘会自动开始登录
+并显示一个验证码：在浏览器里批准即可（第 2 步）。之后想改角色，可以在托盘的
+Account 页里改。worker 以你本人的身份运行，只要你处于
+登录状态就一直在线（远程桌面断开也不受影响——Dev Box 会保留会话），所以即使
+这台机器只能用 Windows Hello 或安全密钥登录、根本没有密码，也照样能用。勾选
+“Allow remote administrator commands” 会额外装一个
+[管理员 worker](docs/usage.md#admin-worker-windows)，用来跑需要 SYSTEM 权限的
+任务。“Custom” 用于连接其他 hub、使用加入码，或把 worker 装成 Windows 服务。
+静默安装：`msiexec /i longarm-windows-amd64.msi /qn ROLES=both`（所有属性见
+[packaging/windows/longarm.wxs](packaging/windows/longarm.wxs) 开头的注释）。
+“Default” 用的 hub 是在构建发布版本时写进去的（仓库变量
+`LONGARM_DEFAULT_HUB`，见 [docs/ci-cd.md](docs/ci-cd.md#24-secrets-and-variables)）。
+
+也可以用一行命令安装——hub 提供的脚本里已经写好了它的地址并固定了 CA：
+
+```sh
+curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --role both          # Linux / macOS
+$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex   # Windows（以管理员身份运行时使用 MSI）
+msiexec /i longarm-windows-amd64.msi /qn MODE=custom ROLES=both HUB=hub.example.com LOGIN=1   # MSI，连接其他 hub
+```
+
+已经装好了？运行 `longarmd login hub.example.com --role both` 即可——只需要
+hub 的域名：它的 CA 会通过 HTTPS 从 `https://hub.example.com/ca.crt` 获取并固定
+（见 [docs/security.md](docs/security.md#first-contact-domain-only-sign-in)）。
+
+**2. 用 Microsoft 账户登录——只需一个验证码。** 安装过程会输出：
+
+```
+To link this machine as your device and your worker (one approval for both), sign in with your Microsoft account ...
+  Open https://hub.example.com/link and enter code BCDF-GHJK
+```
+
+在任意浏览器里打开这个页面（手机也行），用 Microsoft 账户登录，输入验证码，
+确认机器名后点批准——客户端和 worker 两个角色一次批准就够了。（MSI 不在控制台
+里登录：由它打开的托盘（“Sign in with Microsoft”）或 `longarmd login --role both`
+在安装后显示验证码，不需要再输入别的；批准后托盘会显示 “Signed in as ...”、
+worker 的状态，以及 Sign out 和 Open panel。）
+
+**3. 这台机器既是你的 worker，也是你的客户端。** 它运行你的任务（在你用
+`longarm worker share` 共享之前只有你能用），它上面的 `longarm` 以你的身份操作；
+hub 的 Entra 管理员会拿到管理员证书。`longarm ls` 能看到它。可以在登录时给它
+打上标签以便调度（`--login --label pool=devbox`、`longarmd login --label pool=devbox`、
+MSI 的 `LABELS=pool=devbox`），也可以事后用 `longarm worker label <worker> pool=devbox`
+补上，之后 `longarm run --require pool=devbox` 就会把任务派到那里。
+
+longarmd 的数据目录（证书、hub 地址、任务）是其运行账户的 `~/.longarm`——
+MSI 默认的用户会话 worker 用的就是你自己的 `~\.longarm`。服务则使用服务账户的
+目录（`sudo longarmd service install --user alice` 用 alice 的）；Linux 上以 root
+运行时默认为 `/var/lib/longarmd`，Windows 上以 LocalSystem 运行时为
+`C:\ProgramData\Longarm\longarmd`（MSI 安装的服务也是这个）；`--data-dir` /
+`LONGARM_DATA_DIR` 可覆盖（见 [docs/usage.md](docs/usage.md#data-directory)）。
+worker 离线、登录过期、更新提示等问题见
+[docs/troubleshooting.md](docs/troubleshooting.md#for-users-common-problems)；
+卸载见[卸载](docs/usage.md#uninstall)。
+
+### 自建 hub
+
 你需要一个处处可达的 hub（一台有公网 IP 的小型虚拟机，开放端口 7443/tcp+udp
-和 7444/udp）、一台或多台 worker，以及一个客户端。各平台的二进制文件见
+和 7444/udp）。各平台的二进制文件见
 [releases 页面](https://github.com/lubobill1990/longarm/releases)；
 也可以用 Go ≥ 1.27.3 从源码构建：`go build -o bin/ ./cmd/...`。
 
-**1. Hub**——一条命令部署到 Azure（容器实例，约 44 美元/月；详见
-[deploy/azure](deploy/azure/README.md)），完成后会打印第 2 步要用的加入命令：
+一条命令部署到 Azure（容器实例，约 44 美元/月；详见
+[deploy/azure](deploy/azure/README.md)），完成后会打印加入命令：
 
 ```sh
 az login && cd deploy/azure && ./deploy.sh --name myhub --location eastasia   # 或 deploy.ps1
@@ -131,32 +205,19 @@ longarm-hub --data-dir /var/lib/longarm-hub ca show        # CA 指纹
 longarm-hub --data-dir /var/lib/longarm-hub join-code --role admin
 ```
 
-**2. 你的笔记本**（客户端 + 管理员）：
+然后按上面的步骤加入（`longarmd login hub.example.com --role both`，或者用一行
+命令）。Microsoft 登录需要 hub 配置 `[auth.entra]`（见
+[docs/usage.md](docs/usage.md#sign-in-with-microsoft-entra-id)；没有配置时，用面板
+账户登录也可以批准验证码）。也可以改用加入码：在你的笔记本上运行
+`longarm join hub.example.com:7443 <admin-code> --ca-fingerprint <fp>`，再用
+`longarm admin join-code --role worker` 为每台 worker 生成一个加入码；在 worker 上运行
+`longarmd join hub.example.com:7443 <code> --ca-fingerprint <fp> --name worker-1`，
+然后 `longarm admin approve worker-1`，再 `sudo longarmd service install --user alice`
+（Windows 上以管理员身份：`--user .\alice`）+ `longarmd service start`——或者把一行
+命令里的 `--login` 换成 `--join <code>`。完全不用 hub：见
+[CA 与 `admin issue`](docs/usage.md#advanced-self-hosted-without-sign-in-ca-and-admin-issue)。
 
-```sh
-longarm join hub.example.com:7443 <admin-code> --ca-fingerprint <fp>
-longarm admin join-code --role worker          # 为每台 worker 生成一个一次性加入码
-```
-
-**3. 一台 worker**——注册、审批、以服务形式运行：
-
-```sh
-longarmd join hub.example.com:7443 <worker-code> --ca-fingerprint <fp> --name worker-1   # 以 alice 身份
-longarm admin approve worker-1                 # 在笔记本上执行（或在 hub 上开启 auto_approve）
-sudo longarmd service install --user alice      # Windows（管理员权限）：longarmd service install --user .\alice
-longarmd service start
-```
-
-longarmd 的数据目录（证书、hub 地址、作业）是其运行账户的 `~/.longarm`；
-`sudo longarmd service install --user alice` 使用 alice 的。Linux 上以 root 运行时默认为
-`/var/lib/longarmd`，Windows 上以 LocalSystem 运行时为 `C:\ProgramData\Longarm\longarmd`
-（与 MSI 相同）；`--data-dir` / `LONGARM_DATA_DIR` 可覆盖（见 [docs/usage.md](docs/usage.md#data-directory)）。
-
-也可以使用 hub 提供的一行命令：`curl -fsSL https://hub.example.com/install.sh | sh -s -- --join <code>`
-（Linux/macOS），`$env:LONGARM_JOIN='<code>'; irm https://hub.example.com/install.ps1 | iex`
-（Windows）。
-
-**4. 开始使用：**
+### 开始使用
 
 ```sh
 longarm ls                                     # worker、负载、智能体会话
@@ -167,7 +228,7 @@ longarm forward worker-1 3000                  # worker 的开发服务器映射
 longarm link create worker-2:8080 --on worker-1   # worker-1 上你的作业通过 127.0.0.1:8080 访问 worker-2 的 :8080
 ```
 
-**5. 交给你的智能体：**
+交给你的智能体：
 
 ```sh
 claude mcp add longarm -- longarm mcp
@@ -179,7 +240,10 @@ claude mcp add longarm -- longarm mcp
 *“在不同的 worker 上启动三个子智能体，每个失败的包分配一个”*。
 
 其他内容——不依赖 hub 的 worker、Tailscale/Headscale、中继、托盘应用、自更新、
-安装包、防火墙——都在[使用参考](docs/usage.md)中。
+安装包、防火墙——都在[使用参考](docs/usage.md)中。hub 可以把脱敏后的遥测数据
+（错误、崩溃、耗时；不含命令行和名称）发送到 Azure Application Insights；只有在
+hub 配置了连接字符串时才会开启，而且每台机器都可以选择退出（`longarm telemetry off`，
+见 [docs/telemetry.md](docs/telemetry.md)）。
 
 ## 与团队共享一个 hub
 
@@ -192,6 +256,7 @@ longarm admin user add alice --team web --max-jobs 8 --max-mem-gb-per-worker 64 
 longarm admin user add bob   --team web
 #   -> 每个用户一个加入码；在他们的笔记本上：longarm join hub.example.com:7443 <code> ...
 longarm admin user code alice --device alice-desktop   # alice 的另一台设备
+longarm admin team ls ; longarm admin user ls          # 设备、用量、配额
 
 # 多人共用的 worker：按用户隔离操作系统账户（以 LocalSystem / root 运行）
 sudo longarmd join hub.example.com:7443 <worker-code>   # 数据：/var/lib/longarmd（C:\ProgramData\Longarm\longarmd）
@@ -200,8 +265,8 @@ sudo longarmd service install --isolation per-user      # 或 MSI ISOLATION=per-
 ```
 
 - 每个作业、会话、文件、端口转发和镜像都属于创建它的证书所对应的用户。用户只
-  能看到自己的作业和会话，管理员能看到全部；`longarm run --share team -- ...`
-  让团队成员可以读取作业输出。
+  能看到自己的作业和会话（`longarm jobs`、面板的 “My jobs”、MCP 工具），管理员
+  能看到全部；`longarm run --share team -- ...` 让团队成员可以读取作业输出。
 - 在 `[isolation] mode = "per-user"` 的 worker 上，每个用户的作业、会话、shell、
   `exec`、文件传输和 git 都以该用户专属的本地账户（`la-alice`）运行：即使在自己的
   作业里也读不到别人的文件、代码、日志、密钥和进程内存，端口转发也只能到达自己
@@ -221,9 +286,15 @@ sudo longarmd service install --isolation per-user      # 或 MSI ISOLATION=per-
   下发到每台 worker。
 - **Hub 永远看不到你的数据。** 它负责协调，但不在数据路径上；中继转发的是不透明
   的、端到端加密的数据包。
+- **Worker 之间互无权限。** 端口链接只允许一个 worker 连接另一个 worker 的某一个
+  端口，凭的是 hub 为该链接签发的授权，除此之外别无其他
+  （见 [security.md](docs/security.md#port-links)）。端口转发只能到达 worker 自己的
+  回环端口，除非设置了 `[forward] targets = "any"`。
 - **任务以 worker 的服务账户身份运行**，而不是 SYSTEM/root（除非你明确这样
-  选择）。请把每个拥有 `client` 角色的客户端都视为能在其可达的 worker 上执行
-  任意代码——这正是这个工具的用途。不同的信任域请使用不同的集群（CA）。
+  选择）；多人共用的 worker 上则以每个用户各自的本地账户运行
+  （见[多租户](docs/security.md)）。请把每个拥有 `client` 角色的客户端都视为能在
+  其可达的 worker 上执行任意代码——这正是这个工具的用途。彼此完全不信任的用户
+  请使用不同的集群（CA）或虚拟机。
 - **密钥**（`--secret-env`）通过 mTLS 传输，只存在于任务的内存和环境变量中，
   并会在日志中被脱敏。MCP 服务器只转发运维人员加入白名单的密钥
   （`LONGARM_MCP_SECRETS`）。
@@ -241,8 +312,9 @@ Longarm 还很年轻。它已在一个小型混合集群（Windows、Linux、mac
 
 - 集群面向一个团队或一个人设计：几十台 worker，而不是几千台。只有一个 hub，
   没有高可用（它不在数据路径上，所以 hub 宕机只会暂停调度和注册）。
-- Worker 是受信任的机器：除服务账户外没有额外的沙箱隔离。不受信任的代码请自行
-  放在虚拟机或容器中运行。
+- Worker 是受信任的机器：除操作系统账户（服务账户，或开启按用户隔离时每人一个
+  账户；它能隔离什么、不能隔离什么见 [docs/security.md](docs/security.md)）外没有
+  额外的沙箱。不受信任的代码请自行放在虚拟机或容器中运行。
 - Linux 上的托盘应用需要 GTK 4 + WebKitGTK 6（或使用构建标签切换到 GTK 3）；
   macOS 安装包必须在 Mac 上签名和公证。
 - 打洞无法穿透所有 NAT；两端都处于对称型 NAT 之后时，连接会保持走中继。

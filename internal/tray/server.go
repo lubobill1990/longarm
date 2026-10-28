@@ -86,6 +86,7 @@ type Server struct {
 	// OnSignInCode (the shell): a sign-in shows its code - keep the popup
 	// up, copy the code, notify.
 	OnSignInCode func(SignInCode)
+	upd              trayUpdate // the update banner (update.go)
 
 	mu       sync.Mutex
 	headless bool
@@ -233,6 +234,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /trayapi/roles", s.rolesChange)
 	mux.HandleFunc("GET /trayapi/roles/state", s.rolesState)
 	s.settingsRoutes(mux) // prefs.go
+	mux.HandleFunc("GET /trayapi/update", s.updateState)
+	mux.HandleFunc("POST /trayapi/update/install", s.updateInstall)
 	mux.Handle("/", webui.Handler("/local/", "/trayapi/"))
 	return s.guard(mux)
 }

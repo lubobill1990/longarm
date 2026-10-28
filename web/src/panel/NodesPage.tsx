@@ -3,6 +3,7 @@ import { hubApi } from '../api/hub'
 import type { LinkReport, MetricsPoint, NodeInfo, Profile } from '../api/types'
 import { MiniBar, Sparkline } from '../components/charts'
 import { ErrorBox, StatePill, useAction, usePoll } from '../components/common'
+import { VersionTag } from '../components/VersionTag'
 import { AMBER, CPU_C, fmtAgo, fmtRTT, gb, GREEN, isRelayed, MEM_C, memPct, RED, since } from '../lib/format'
 import { nodeMachines } from '../lib/machines'
 
@@ -48,6 +49,8 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
   const { nodes, hist, error, reload } = useLiveNodes()
   const links = usePoll(() => (admin ? hubApi.links() : Promise.resolve([])), admin ? 10000 : 0, [admin])
   const profiles = usePoll(() => (admin ? hubApi.profiles() : Promise.resolve([])), admin ? 30000 : 0, [admin])
+  // the newest complete release: outdated versions are marked
+  const latest = usePoll(() => hubApi.latestRelease().catch(() => undefined), 600000)
   const list = useMemo(() => Object.values(nodes).sort((a, b) => a.name.localeCompare(b.name)), [nodes])
   const pending = list.filter((n) => n.state === 'pending')
   const workers = list.filter((n) => n.role === 'worker' && n.state !== 'pending')
@@ -96,10 +99,10 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
           {machines.flatMap((g) => {
             const main = g.session ?? g.admin!
             const rows = [
-              <NodeRow key={main.name} n={main} adminWorker={g.session ? g.admin : undefined} hist={hist[main.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} />,
+              <NodeRow key={main.name} n={main} adminWorker={g.session ? g.admin : undefined} hist={hist[main.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} latest={latest.data?.version} />,
             ]
             if (g.session && g.admin)
-              rows.push(<NodeRow key={g.admin.name} n={g.admin} sub hist={hist[g.admin.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} />)
+              rows.push(<NodeRow key={g.admin.name} n={g.admin} sub hist={hist[g.admin.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} latest={latest.data?.version} />)
             return rows
           })}
           {workers.length === 0 && (
@@ -119,7 +122,7 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
           <table className="grid">
             <tbody>
               {others.map((n) => (
-                <OtherRow key={n.name} n={n} admin={admin} />
+                <OtherRow key={n.name} n={n} admin={admin} latest={latest.data?.version} />
               ))}
             </tbody>
           </table>
@@ -160,6 +163,7 @@ function NodeRow({
   admin,
   adminWorker,
   sub,
+  latest,
 }: {
   n: NodeInfo
   hist: MetricsPoint[]
@@ -170,6 +174,7 @@ function NodeRow({
   adminWorker?: NodeInfo
   /** this is the admin worker of the row above (same machine) */
   sub?: boolean
+  latest?: string
 }) {
   const { run, busy } = useAction()
   const m = n.online ? n.metrics : undefined
@@ -219,7 +224,8 @@ function NodeRow({
           {revoked && <StatePill state="revoked" />}
         </div>
         <div className="muted small">
-          {n.online ? 'online' : `offline ${fmtAgo(since(n.last_seen))}`} · {n.os}/{n.arch} · {n.version}
+          {n.online ? 'online' : `offline ${fmtAgo(since(n.last_seen))}`} · {n.os}/{n.arch} ·{' '}
+          <VersionTag version={n.version} latest={latest} ua={n.update_available} testId={`outdated-${n.name}`} />
           {n.isolation === 'per-user' && <span title="jobs run under per-user OS accounts"> · per-user</span>}
         </div>
       </td>
@@ -324,13 +330,19 @@ function NodeRow({
   )
 }
 
-function OtherRow({ n, admin }: { n: NodeInfo; admin: boolean }) {
+function OtherRow({ n, admin, latest }: { n: NodeInfo; admin: boolean; latest?: string }) {
   const { run, busy } = useAction()
   return (
     <tr>
       <td>
         <b>{n.name}</b> <span className="muted">{n.role}</span>
         {n.user && n.user !== n.name && <span className="muted small"> · user {n.user}</span>}
+        {n.version && (
+          <span className="muted small">
+            {' '}
+            · <VersionTag version={n.version} latest={latest} testId={`outdated-${n.name}`} />
+          </span>
+        )}
       </td>
       <td>
         <StatePill state={n.state} />

@@ -1,8 +1,42 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { hubApi } from '../api/hub'
 import { ErrorBox } from '../components/common'
 
+/**
+ * The panel's sign-in: "Sign in with Microsoft" first when the hub has
+ * Entra sign-in (GET /auth/info), the panel account (user, password, TOTP)
+ * folded under it; without Entra the panel account form only.
+ */
 export function LoginPage({ onLogin }: { onLogin: () => void }) {
+  const [entra, setEntra] = useState<boolean>()
+  useEffect(() => {
+    let alive = true
+    hubApi
+      .authInfo()
+      .then((i) => alive && setEntra(!!i.entra))
+      .catch(() => alive && setEntra(false))
+    return () => {
+      alive = false
+    }
+  }, [])
+  if (entra === undefined) return <div className="notice">loading…</div>
+  if (!entra) return <PasswordForm onLogin={onLogin} autoFocus />
+  const next = location.pathname === '/login' ? '/' : location.pathname + location.search
+  return (
+    <div className="login card" data-testid="login-entra">
+      <h1>longarm-hub</h1>
+      <a className="button primary" href={`/auth/login?next=${encodeURIComponent(next)}`} data-testid="signin-microsoft">
+        Sign in with Microsoft
+      </a>
+      <details style={{ marginTop: 16 }}>
+        <summary className="muted">Panel account</summary>
+        <PasswordForm onLogin={onLogin} nested />
+      </details>
+    </div>
+  )
+}
+
+function PasswordForm({ onLogin, autoFocus, nested }: { onLogin: () => void; autoFocus?: boolean; nested?: boolean }) {
   const [user, setUser] = useState('')
   const [password, setPassword] = useState('')
   const [totp, setTotp] = useState('')
@@ -10,7 +44,8 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
   const [busy, setBusy] = useState(false)
   return (
     <form
-      className="login card"
+      className={nested ? 'login-form' : 'login card'}
+      style={nested ? { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 } : undefined}
       onSubmit={async (e) => {
         e.preventDefault()
         setBusy(true)
@@ -26,8 +61,8 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
         }
       }}
     >
-      <h1>longarm-hub</h1>
-      <input aria-label="user" placeholder="user" autoComplete="username" value={user} onChange={(e) => setUser(e.target.value)} autoFocus />
+      {!nested && <h1>longarm-hub</h1>}
+      <input aria-label="user" placeholder="user" autoComplete="username" value={user} onChange={(e) => setUser(e.target.value)} autoFocus={autoFocus} />
       <input
         aria-label="password"
         type="password"

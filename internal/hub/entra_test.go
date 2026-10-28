@@ -567,8 +567,8 @@ func TestEntraNoConfig(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("/auth/login: %d", resp.StatusCode)
 	}
-	if _, body := plainGet(t, "http://"+th.h.Addr("http")+"/"); strings.Contains(body, "la-entra") {
-		t.Fatal("Microsoft link without Entra")
+	if _, body := plainGet(t, "http://"+th.h.Addr("http")+"/auth/info"); !strings.Contains(body, `"entra": false`) {
+		t.Fatalf("/auth/info without Entra: %s", body)
 	}
 }
 
@@ -617,8 +617,8 @@ func TestEntraWebSignIn(t *testing.T) {
 	if _, body := plainGet(t, base+"/status"); !strings.Contains(body, `href="/auth/login?next=/status"`) {
 		t.Fatalf("login page without the Microsoft link: %s", body)
 	}
-	if _, body := plainGet(t, base+"/"); !strings.Contains(body, `<a id="la-entra" href="/auth/login">`) || !strings.Contains(body, "body:has(form.login)") {
-		t.Fatalf("panel page without the Microsoft link: %s", body)
+	if _, body := plainGet(t, base+"/"); strings.Contains(body, "la-entra") {
+		t.Fatalf("panel page with the injected Microsoft link (the login page asks /auth/info): %s", body)
 	}
 
 	newBrowser := func() *http.Client {

@@ -591,12 +591,16 @@ func (s *fleetServer) CheckUpdate(ctx context.Context, req *pb.UpdateCheckReques
 		n.rec.Version = req.Version
 	}
 	target := h.targetLocked(n)
+	stable := channelOf(n) == "stable"
 	state := ""
 	if h.rollout != nil {
 		state = h.rollout.Version + " " + h.rollout.State
 	}
 	h.mu.Unlock()
 	resp := &pb.UpdateCheckResponse{Rollout: state}
+	if latest, _ := h.latestNotice(); latest != "" && stable {
+		resp.LatestVersion = latest
+	}
 	if target == "" || target == req.Version {
 		return resp, nil
 	}

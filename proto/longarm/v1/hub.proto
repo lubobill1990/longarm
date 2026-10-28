@@ -236,6 +236,15 @@ message NodeState {
   // reserved_mem_gb of memory free for the desktop user.
   int32 max_jobs = 3;
   double reserved_mem_gb = 4;
+  // a newer release this worker can't install itself (an MSI install under
+  // Program Files, a user-session worker, no update key): a notice only
+  UpdateAvailable update_available = 5;
+}
+
+// UpdateAvailable: the hub has a newer complete release than the node runs.
+message UpdateAvailable {
+  string version = 1;
+  string reason = 2; // why the node can't update itself
 }
 
 message JobsReport {
@@ -562,6 +571,8 @@ message NodeInfo {
   // worker, an admin worker's session worker), recorded at enrollment or
   // matched by <worker>-admin, owner and host name; "" = none.
   string companion = 33;
+  // workers: a newer release they can't install themselves (NodeState)
+  UpdateAvailable update_available = 34;
 }
 
 message ListNodesRequest {
@@ -646,7 +657,11 @@ message AuditResponse {
   repeated AuditRecord records = 1;
 }
 
-message WhoamiRequest {}
+message WhoamiRequest {
+  // the caller's platform (optional): picks WhoamiResponse.latest_path
+  string os = 1;
+  string arch = 2;
+}
 
 message CreateWorkerCodeRequest {
   string name = 1; // the worker's name (default: its hostname)
@@ -679,6 +694,13 @@ message WhoamiResponse {
   bool tenancy = 12; // the hub separates users (multi-tenancy is on)
   bool can_share = 13; // may share own workers (ShareWorker)
   string upn = 14; // Entra users: the sign-in name
+  // The newest stable release whose files the hub has (update notices for
+  // clients; "" = none), and where to get it: the MSI for os/arch of the
+  // request when the release has one ("/releases/<v>/longarm-windows-amd64.msi"),
+  // else the install script ("/install.sh", "/install.ps1").
+  string latest_version = 15;
+  string latest_path = 16;
+  string public_url = 17; // the hub's [http] public_url ("" = not configured)
 }
 
 // ---------------------------------------------------------------- tenancy
@@ -1032,6 +1054,9 @@ message UpdateCheckResponse {
   string version = 1; // target version; "" or == running = stay
   repeated ReleaseFile files = 2; // files of the target for the node's os/arch
   string rollout = 3; // human-readable rollout state
+  // the newest stable release whose files the hub has (a notice for nodes
+  // that can't update themselves; "" = none)
+  string latest_version = 4;
 }
 
 message ReleaseFile {

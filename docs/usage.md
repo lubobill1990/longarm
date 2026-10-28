@@ -38,21 +38,38 @@ CGO_ENABLED=1 go build -tags traynative -o bin/ ./cmd/longarm-tray    # Linux (o
 # the e2e tests build longarm-tray without cgo outside Windows (headless); LONGARM_TRAY_CGO=1 builds the native one
 ```
 
-## Quick start (one admin machine, one worker)
+## Quick start (join a hub, sign in with Microsoft)
+
+Install, sign in, run something. The hub is `hub.example.com` (or the one
+built into the release: [Built-in default hub](#built-in-default-hub));
+running one yourself: [Fleet with longarm-hub](#fleet-with-longarm-hub);
+no hub at all: [Advanced: self-hosted without sign-in](#advanced-self-hosted-without-sign-in-ca-and-admin-issue).
 
 ```sh
-# on the admin/client machine
-longarm admin ca init                                     # ~/.config/longarm/ca
-longarm admin issue --role admin --name me --install      # client cert for this longarm (admin role)
-longarm admin issue --role worker --name w1 --out ./w1-tls
-# copy ./w1-tls to the worker as <longarmd data dir>/tls  (default data dir: ~/.longarm; root: see "Data directory")
+# 1. install - Windows: longarm-windows-amd64.msi from the hub's "Get Longarm" page
+#    (https://hub.example.com/get) or https://hub.example.com/releases/<version>/longarm-windows-amd64.msi,
+#    Default (recommended), "This machine runs jobs"; the tray starts the sign-in and shows the code.
+#    Or one line (worker + client; the scripts carry the hub's address and CA):
+curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --role both           # Linux / macOS
+$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex   # Windows (elevated: the MSI)
 
-# on the worker
-longarmd run --listen tcp://$(tailscale ip -4):7701       # foreground
-# or as a service running as a normal user account (Windows, elevated prompt):
-#   $env:LONGARM_SERVICE_PASSWORD = '...'; longarmd service install --user .\me --listen tcp://100.x.y.z:7701
-#   longarmd service start
+# 2. sign in - the one-liners and the tray do it; already installed:
+longarmd login hub.example.com --role both     # worker + client: one code, one approval
+longarm login hub.example.com                  # a client only
+#   Open https://hub.example.com/link and enter code BCDF-GHJK  - in any browser: sign in with
+#   Microsoft, type the code, approve
+
+# 3. run something
+longarm ls                                     # your workers (this machine too)
+longarm run --repo . -f -- pnpm test           # placed by the scheduler, in a fresh worktree
 ```
+
+On Windows the worker runs as you, started at your logon, no service and no
+password ([the user-session worker](#the-user-session-worker-runsession-the-default));
+on Linux / macOS `install.sh` installs the longarmd service as the `sudo`
+user. Everything about the sign-in: [Sign in with Microsoft Entra ID](#sign-in-with-microsoft-entra-id);
+installers and their options: [Install](#install); removing it:
+[Uninstall](#uninstall).
 
 ### Data directory
 
@@ -120,20 +137,6 @@ Per-user isolation also needs every parent of the users dir (`<data>/users`
 or `[isolation] users_dir`) traversable by the accounts (Unix `o+x`), which a
 home like `/root` (0700) is not: `service install` refuses such a dir with a
 message naming the blocking directory, and longarmd refuses to start on it.
-
-`~/.config/longarm/workers.toml` on the client:
-
-```toml
-[[worker]]
-name = "w1"                     # must match the worker certificate name (or set cert_name)
-address = "100.64.0.11:7701"
-transport = "tcp"               # or "tailscale" (embedded tsnet node; address = tailnet name)
-
-# [tailscale]                   # only for transport = "tailscale"
-# hostname = "longarm-client-mybox"  # auth key from $TS_AUTHKEY on first use
-# control_url = ""              # Tailscale SaaS by default; Headscale URL possible
-#                               # (longarm join with a hub that has a [tailnet] provider sets this up)
-```
 
 ## Usage
 
@@ -1735,13 +1738,49 @@ large output comes back as head + tail with a job handle), `fleet_job_submit`,
 name (`secret_env`) from the environment of `longarm mcp`, never through the model,
 and only names the operator allows: `claude mcp add longarm -e LONGARM_MCP_SECRETS=GH_TOKEN -- longarm mcp`.
 
+## Advanced: self-hosted without sign-in (CA and `admin issue`)
+
+No hub and no Microsoft sign-in: one admin machine holds the fleet's CA and
+issues certificates by hand; the client finds workers in `workers.toml`.
+
+```sh
+# on the admin/client machine
+longarm admin ca init                                     # ~/.config/longarm/ca
+longarm admin issue --role admin --name me --install      # client cert for this longarm (admin role)
+longarm admin issue --role worker --name w1 --out ./w1-tls
+# copy ./w1-tls to the worker as <longarmd data dir>/tls  (default data dir: ~/.longarm; root: see "Data directory")
+
+# on the worker
+longarmd run --listen tcp://$(tailscale ip -4):7701       # foreground
+# or as a service running as a normal user account (Windows, elevated prompt):
+#   $env:LONGARM_SERVICE_PASSWORD = '...'; longarmd service install --user .\me --listen tcp://100.x.y.z:7701
+#   longarmd service start
+```
+
+`~/.config/longarm/workers.toml` on the client:
+
+```toml
+[[worker]]
+name = "w1"                     # must match the worker certificate name (or set cert_name)
+address = "100.64.0.11:7701"
+transport = "tcp"               # or "tailscale" (embedded tsnet node; address = tailnet name)
+
+# [tailscale]                   # only for transport = "tailscale"
+# hostname = "longarm-client-mybox"  # auth key from $TS_AUTHKEY on first use
+# control_url = ""              # Tailscale SaaS by default; Headscale URL possible
+#                               # (longarm join with a hub that has a [tailnet] provider sets this up)
+```
+
+A hub can be added later: `longarm-hub --data-dir <dir> ca import ~/.config/longarm/ca` keeps
+the certificates issued so far ([Fleet with longarm-hub](#fleet-with-longarm-hub)).
+
 ## Installers, transport racing, self-update
 
 ### Install
 
 | Platform | Package | Unattended |
 |---|---|---|
-| Windows | `longarm-windows-<arch>.msi` (longarm, longarmd, longarm-tray if built; role dialog) | `msiexec /i longarm.msi /qn ROLES=worker HUB=hub:7443 JOIN_CODE=K7P-Q2M [CA_FINGERPRINT=..] [LISTEN=tcp://100.x.y.z:7701] [NODE_NAME=w3] SERVICE_USER=.\me SERVICE_PASSWORD=..` (or `SERVICE_ACCOUNT=LocalSystem`) |
+| Windows | `longarm-windows-<arch>.msi` (longarm, longarmd, longarm-tray if built; Default / Custom dialog) | `msiexec /i longarm-windows-amd64.msi /qn MODE=default ROLES=both LOGIN=1 [LABELS=pool=devbox] [ADMIN_WORKER=1]` (the built-in hub, user-session worker, no password; sign in with the tray or `longarmd login --role both`); another hub: `MODE=custom HUB=hub.example.com LOGIN=1`; join codes and services: the table below |
 | Linux | `longarm_<v>_<arch>.deb/.rpm` (longarm, longarmd, `longarmd@.service`) | `sudo env LONGARM_ROLES=worker LONGARM_HUB=hub:7443 LONGARM_JOIN_CODE=K7P-Q2M LONGARM_USER=$USER apt install ./longarm_*.deb` (or `/etc/longarm/join.env`) |
 | macOS | `longarm-<v>.pkg` (packaging/macos, signed + notarized on a Mac); Homebrew cask | `defaults write /Library/Preferences/com.longarm ...` then `installer -pkg` |
 | hub | `ghcr.io/<owner>/longarm-hub` image, `longarm-hub_<v>_<arch>.deb` | `docker compose up -d` (deploy/hub) |
@@ -2002,6 +2041,82 @@ Building a release (packaging/): `pwsh packaging/build.ps1 [-Snapshot] [-Key lon
 (Windows: GoReleaser for all 6 targets, the MSIs, the flat signed directory
 `dist/hub-release`), `sh packaging/build.sh` elsewhere; winget manifests:
 `packaging/winget/render.ps1`.
+
+### Uninstall
+
+No uninstaller removes the **client** enrollment (`~/.config/longarm`,
+`%USERPROFILE%\.config\longarm` on Windows): run `longarm leave` first (the
+hub revokes the client's certificate, its credentials are removed), then
+delete the directory if you want `workers.toml` and the caches gone too.
+Workers are handled below. A worker that left while the hub was unreachable
+(`--force`) is still listed there: `longarm worker remove <name>` (yours) or
+`longarm admin revoke <name>`.
+
+**MSI** (also what `install.ps1` installs when elevated). Settings > Apps >
+Installed apps > **Longarm** > Uninstall, or:
+
+```powershell
+msiexec /x longarm-windows-amd64.msi /qn [KEEP_DATA=1]     # the installed version's MSI file
+# without the file: by product code (the product is "Longarm", UpgradeCode {0d623137-abc8-4dc1-8e7d-32fc483c9e93})
+$pc = (Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | Where-Object DisplayName -eq 'Longarm').PSChildName
+msiexec /x $pc /qn
+```
+
+No `longarmd leave` needed: the uninstall runs it (forced, `--kill-jobs`)
+for every worker it installed - the user-session worker (the installing
+user's `~\.longarm`), the service (`DATADIR`, default
+`C:\ProgramData\Longarm\longarmd`) and the admin worker
+(`C:\ProgramData\Longarm\longarmd-admin`) - so their certificates are
+revoked, running jobs end and the data dirs go (`KEEP_DATA=1` keeps jobs and
+mirrors; the enrollment goes either way). It also removes the scheduled task
+`LongarmWorker-<SID>`, the services `longarmd` / `longarmd-admin`, the
+firewall rules, the PATH entry, the tray's autostart, the settings in
+`HKLM\Software\Longarm` and `C:\Program Files\Longarm`.
+
+**`install.ps1` without the MSI** (not elevated, `-NoMsi`, `-Prefix`, or a
+release without an MSI). What it installed: `longarm.exe`, `longarmd.exe`
+(and `longarm-tray.exe`, the logon task's host) in `-Prefix` - default
+`%LOCALAPPDATA%\Programs\Longarm`, elevated `C:\Program Files\Longarm`; the
+prefix on the user's `Path` (machine `Path` when elevated; not with
+`-NoPath`); elevated, a firewall rule for `longarm.exe` (`longarm firewall
+allow`); for a worker the scheduled task `LongarmWorker-<SID>` (`-Run
+session`, the default) or the service `longarmd` (`-Run service`); the data
+dir `~\.longarm` (or `-DataDir`). Remove in this order:
+
+```powershell
+longarmd session-mode uninstall            # the logon task; stops the worker (else the host restarts it)
+#   -Run service, elevated: longarmd service uninstall
+longarmd leave --kill-jobs --purge         # hub revokes the worker; --purge deletes the data dir (-DataDir: --data-dir D)
+longarm leave                              # the client
+longarm firewall remove                    # elevated, if the rule was added
+Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\Longarm", "$HOME\.config\longarm"
+# and the prefix from Path: System > About > Advanced system settings > Environment Variables (user or system)
+```
+
+**Linux / macOS.**
+
+- **deb / rpm** (also `install.sh` as root on Linux when the release has a
+  package): `sudo apt remove longarm` / `sudo dnf remove longarm`. Its prerm
+  stops and disables every `longarmd@<user>` unit and runs `longarmd leave
+  --kill-jobs` as that user; the data dirs (`~<user>/.longarm`) stay - delete
+  them by hand. `longarmd-peruser` (per-user isolation) is not left by the
+  prerm: `sudo systemctl disable --now longarmd-peruser; sudo longarmd leave
+  --kill-jobs --purge` (data dir `/var/lib/longarmd`) first.
+- **`install.sh` binaries** (`--no-package`, `--prefix`, not root, macOS):
+  `longarm` and `longarmd` in `/usr/local/bin` (root) or `~/.local/bin`
+  (`--prefix`); a worker gets the service `longarmd` (`longarmd service
+  install --user <sudo user>`): systemd `/etc/systemd/system/longarmd.service`,
+  launchd `/Library/LaunchDaemons/com.longarm.longarmd.plist`; data dir
+  `~/.longarm` of that user (`--data-dir`). Remove:
+
+  ```sh
+  sudo longarmd service uninstall           # stop + remove the unit / LaunchDaemon
+  longarmd leave --kill-jobs --purge        # as the service's user: revoke, delete ~/.longarm
+  longarm leave && rm -rf ~/.config/longarm
+  sudo rm /usr/local/bin/longarm /usr/local/bin/longarmd   # or ~/.local/bin/...
+  ```
+- **macOS pkg**: the same, then `sudo pkgutil --forget com.longarm.pkg`
+  ([packaging/macos](../packaging/macos/README.md)).
 
 ### Transport legs and racing
 

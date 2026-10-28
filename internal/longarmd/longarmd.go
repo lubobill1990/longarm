@@ -778,8 +778,13 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	if agent.channel == "" {
 		agent.channel = "stable"
 	}
-	if hubOn && !cfg.Update.Disabled && !adminWorker { // the admin worker updates with the MSI only
+	if hubOn && !cfg.Update.Disabled {
 		agent.upd = newUpdater(cfg, agent, exe, log, func() { cancelCause(update.ErrRestart) })
+		if adminWorker {
+			// the admin worker updates with the MSI only: it checks for
+			// the notice, never applies
+			agent.upd.canApply = errors.New("an admin worker updates with the MSI only")
+		}
 		agent.upd.startup(ctx, hubOn)
 		wg.Add(1)
 		go func() { defer wg.Done(); agent.upd.Run(ctx) }()

@@ -77,6 +77,28 @@ export interface NodeInfo {
   machine?: string
   /** workers: the other worker on the same machine (session <-> admin worker), if any */
   companion?: string
+  /** workers with an owner: who else may use it */
+  shares?: WorkerShares
+  /** workers: a newer release they can't install themselves (MSI installs, user-session workers) */
+  update_available?: UpdateAvailable
+}
+
+export interface WorkerShares {
+  users?: string[]
+  teams?: string[]
+  everyone?: boolean
+}
+
+export interface UpdateAvailable {
+  version?: string
+  /** why the node can't update itself */
+  reason?: string
+}
+
+/** GET /releases/latest.json: the hub's newest complete stable release ("" = none). */
+export interface LatestRelease {
+  version: string
+  files?: { name: string; sha256: string; size: number; os?: string; arch?: string; kind?: string; signed?: boolean }[]
 }
 
 export type JobState =

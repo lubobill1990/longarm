@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -572,43 +571,3 @@ var spaPageTmpl = template.Must(template.New("spa").Parse(`<!doctype html><html>
   }
 })();
 </script></body></html>`))
-
-// entraLinkHead / entraLinkBody add "Sign in with Microsoft" to the
-// panel's page, visible only while its login form is (CSS :has, no
-// script, so the panel's CSP holds) - the built frontend (internal/webui)
-// has no such button yet.
-const (
-	entraLinkHead = `<style>#la-entra{display:none}body:has(form.login) #la-entra{display:block;position:fixed;left:50%;bottom:12vh;` +
-		`transform:translateX(-50%);padding:8px 18px;border:1px solid #8888;border-radius:6px;color:inherit;text-decoration:none;font:14px system-ui,sans-serif}</style>`
-	entraLinkBody = `<a id="la-entra" href="/auth/login">Sign in with Microsoft</a>`
-)
-
-// withEntraLink serves the panel with the Entra sign-in link when the hub
-// has one.
-func (h *Hub) withEntraLink(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if h.entraWeb() == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		bw := &bufferedWriter{ResponseWriter: w, code: http.StatusOK}
-		next.ServeHTTP(bw, r)
-		b := bw.buf.Bytes()
-		if strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
-			s := strings.Replace(string(b), "</head>", entraLinkHead+"</head>", 1)
-			b = []byte(strings.Replace(s, "</body>", entraLinkBody+"</body>", 1))
-			w.Header().Del("Content-Length")
-		}
-		w.WriteHeader(bw.code)
-		w.Write(b)
-	})
-}
-
-type bufferedWriter struct {
-	http.ResponseWriter
-	buf  bytes.Buffer
-	code int
-}
-
-func (b *bufferedWriter) WriteHeader(code int)        { b.code = code }
-func (b *bufferedWriter) Write(p []byte) (int, error) { return b.buf.Write(p) }
