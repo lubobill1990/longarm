@@ -404,4 +404,6 @@ Upgrades: after installation, `longarmd` self-update (§7.2) takes over and the 
 
 Workers and clients use **the same tray program**, which shows tabs for whichever roles are installed locally; when both are present they are merged.
 
+**The tray's look** follows our desktop apps (TMIA Desktop): calm warm neutrals, one deep-teal accent, the system font, an 8 px grid, status as small dots and pills. Its design tokens are `web/src/tray/tokens.css` (light and dark), its components `web/src/tray/tray.css`; the hub panel keeps its own dark palette. The theme follows Windows' app mode (`prefers-color-scheme`) unless Settings > Appearance picks Light or Dark (kept in the tray's `tray.json`). In the ~460 px popup the tabs are a segmented bar under the title; a window resized to 760 px or more gets a left navigation rail and the machine cards in columns. `pnpm shots` (web/shots, with demo data; CI's `tray-screenshots` artifact) renders every tab in both themes and sizes.
+
 **Technology choice**: the tray shell defaults to **Wails v3** (native Go, uses the system WebView — WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux — small package size, tray APIs on all three platforms). It is in alpha/beta, so it was validated with a short spike first; the fallback is `fyne-io/systray` (a mature tray-only library) + opening a local page in the default browser.

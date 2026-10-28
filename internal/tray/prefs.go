@@ -25,6 +25,20 @@ type Prefs struct {
 	MuteWorkers bool `json:"mute_workers,omitempty"`
 	// MuteJobs: no notifications about your jobs ending.
 	MuteJobs bool `json:"mute_jobs,omitempty"`
+	// Theme: the popup's colours, "light" or "dark"; "" follows the
+	// system's (Windows: Settings > Personalization > Colors).
+	Theme string `json:"theme,omitempty"`
+}
+
+// validTheme: the themes Settings offers ("system" is stored as "").
+func validTheme(t string) (string, bool) {
+	switch t {
+	case "", "system":
+		return "", true
+	case "light", "dark":
+		return t, true
+	}
+	return "", false
 }
 
 var prefsCache struct {
@@ -119,20 +133,33 @@ func (s *Server) getSettings(w http.ResponseWriter, _ *http.Request) {
 // setSettings changes the given settings only.
 func (s *Server) setSettings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		MuteWorkers       *bool `json:"mute_workers"`
-		MuteJobs          *bool `json:"mute_jobs"`
-		TelemetryDisabled *bool `json:"telemetry_disabled"`
+		MuteWorkers       *bool   `json:"mute_workers"`
+		MuteJobs          *bool   `json:"mute_jobs"`
+		Theme             *string `json:"theme"`
+		TelemetryDisabled *bool   `json:"telemetry_disabled"`
 	}
 	if !readBody(w, r, &body) {
 		return
 	}
-	if body.MuteWorkers != nil || body.MuteJobs != nil {
+	theme := ""
+	if body.Theme != nil {
+		t, ok := validTheme(*body.Theme)
+		if !ok {
+			httpError(w, http.StatusBadRequest, "theme: system, light or dark")
+			return
+		}
+		theme = t
+	}
+	if body.MuteWorkers != nil || body.MuteJobs != nil || body.Theme != nil {
 		p := LoadPrefs(s.opts.LongarmConfigDir)
 		if body.MuteWorkers != nil {
 			p.MuteWorkers = *body.MuteWorkers
 		}
 		if body.MuteJobs != nil {
 			p.MuteJobs = *body.MuteJobs
+		}
+		if body.Theme != nil {
+			p.Theme = theme
 		}
 		if err := SavePrefs(s.opts.LongarmConfigDir, p); err != nil {
 			httpError(w, http.StatusInternalServerError, err.Error())

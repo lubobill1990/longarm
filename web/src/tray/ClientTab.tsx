@@ -2,7 +2,10 @@ import { useCallback, useState } from 'react'
 import { longarmApi, trayApi, traySettingsApi } from '../api/local'
 import type { FleetJob, Job, PoolView } from '../api/types'
 import { ErrorBox, LogView, StatePill, useAction, usePoll } from '../components/common'
+import { IconForward, IconTerminal } from '../components/icons'
 import { fmtTime, isActive } from '../lib/format'
+import type { ThemePref } from './theme'
+import { EmptyState, Section, Skeleton } from './ui'
 
 /** My jobs (submitted by this client), with logs and kill. */
 export function ClientJobs() {
@@ -12,50 +15,71 @@ export function ClientJobs() {
   const { run, busy } = useAction()
   return (
     <div>
-      <div className="row" style={{ marginBottom: 6 }}>
-        <label className="row small">
-          <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> everyone's jobs
+      <div className="toolbar">
+        <label className="switch-row inline small">
+          <input type="checkbox" className="switch" checked={all} onChange={(e) => setAll(e.target.checked)} /> everyone&apos;s jobs
         </label>
         <span className="spacer" />
-        <span className="muted small">longarm jobs · longarm logs · longarm kill</span>
+        <span className="muted small mono">longarm jobs · logs · kill</span>
       </div>
       <ErrorBox error={jobs.error} />
-      <table className="grid small" data-testid="my-jobs">
+      <table className="grid list small" data-testid="my-jobs">
         <tbody>
-          {(jobs.data ?? []).map((j) => (
-            <tr key={`${j.worker}/${j.job.spec.id}`} onClick={() => setOpen(j)} style={{ cursor: 'pointer' }}>
-              <td className="mono">{j.job.spec.name || j.job.spec.id.slice(-8)}</td>
-              <td>{j.worker}</td>
-              <td>
-                <StatePill state={j.job.state} />
-                {j.job.has_exit_code ? ` ${j.job.exit_code ?? 0}` : ''}
-              </td>
-              <td className="muted nowrap">{fmtTime(j.job.created_at)}</td>
-              <td>
-                {isActive(j.job.state) && (
-                  <button
-                    className="danger"
-                    disabled={busy}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (!confirm(killQuestion(j.job, j.worker))) return
-                      run(() => longarmApi.kill(j.job.spec.id, j.worker), 'killed').then(jobs.reload)
-                    }}
-                  >
-                    kill
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
+          {(jobs.data ?? []).map((j) => {
+            const name = j.job.spec.name || j.job.spec.id.slice(-8)
+            return (
+              <tr
+                key={`${j.worker}/${j.job.spec.id}`}
+                className={`clickable ${open?.job.spec.id === j.job.spec.id ? 'selected' : ''}`}
+                tabIndex={0}
+                aria-label={`${name} on ${j.worker}: show its output`}
+                onClick={() => setOpen(j)}
+                onKeyDown={(e) => {
+                  if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
+                    e.preventDefault()
+                    setOpen(j)
+                  }
+                }}
+              >
+                <td className="mono strong">{name}</td>
+                <td className="muted">{j.worker}</td>
+                <td className="nowrap">
+                  <StatePill state={j.job.state} />
+                  {j.job.has_exit_code ? <span className="mono muted"> {j.job.exit_code ?? 0}</span> : ''}
+                </td>
+                <td className="muted nowrap hide-narrow">{fmtTime(j.job.created_at)}</td>
+                <td className="actions-cell">
+                  {isActive(j.job.state) && (
+                    <button
+                      className="danger sm"
+                      disabled={busy}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (!confirm(killQuestion(j.job, j.worker))) return
+                        run(() => longarmApi.kill(j.job.spec.id, j.worker), 'killed').then(jobs.reload)
+                      }}
+                    >
+                      kill
+                    </button>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
           {jobs.data === undefined && !jobs.error && (
-            <tr>
-              <td className="notice">loading jobs…</td>
+            <tr className="placeholder">
+              <td colSpan={5}>
+                <Skeleton lines={3} label="loading jobs…" />
+              </td>
             </tr>
           )}
           {jobs.data !== undefined && jobs.data.length === 0 && (
-            <tr>
-              <td className="notice">{all ? 'no jobs' : 'no jobs of yours yet: longarm run <worker> -- <command>'}</td>
+            <tr className="placeholder">
+              <td colSpan={5}>
+                <EmptyState compact icon={<IconTerminal size={20} />} title={all ? 'No jobs' : 'No jobs of yours yet'}>
+                  {all ? 'Nobody has run a job yet.' : <span className="mono">longarm run &lt;worker&gt; -- &lt;command&gt;</span>}
+                </EmptyState>
+              </td>
             </tr>
           )}
         </tbody>
@@ -78,12 +102,16 @@ function JobLogs({ j }: { j: FleetJob }) {
     [j.job.spec.id, j.worker],
   )
   return (
-    <section>
-      <h3>
-        {j.worker} · <span className="mono">{(j.job.spec.argv ?? []).join(' ').slice(0, 80)}</span>
-      </h3>
+    <Section
+      className="logs"
+      title={
+        <>
+          {j.worker} · <span className="mono">{(j.job.spec.argv ?? []).join(' ').slice(0, 80)}</span>
+        </>
+      }
+    >
       <LogView open={openStream} />
-    </section>
+    </Section>
   )
 }
 
@@ -96,7 +124,7 @@ export function Forwards({ workers }: { workers: string[] }) {
   return (
     <div>
       <form
-        className="row wrap"
+        className="forward-form"
         onSubmit={async (e) => {
           e.preventDefault()
           const r = await run(() => longarmApi.startForward(worker || workers[0], target), (f) => `forwarding ${f.local_addr}`)
@@ -111,36 +139,58 @@ export function Forwards({ workers }: { workers: string[] }) {
             <option key={w}>{w}</option>
           ))}
         </select>
-        <input aria-label="target port" placeholder="port or host:port on the worker" value={target} onChange={(e) => setTarget(e.target.value)} style={{ flex: 1 }} />
+        <input aria-label="target port" placeholder="port or host:port on the worker" value={target} onChange={(e) => setTarget(e.target.value)} />
         <button className="primary" disabled={busy || !target || !workers.length}>
           Forward
         </button>
       </form>
       <ErrorBox error={fw.error} />
-      <table className="grid small" style={{ marginTop: 8 }} data-testid="forwards">
+      <table className="grid list small" data-testid="forwards">
         <tbody>
           {(fw.data ?? []).map((f) => (
             <tr key={f.local_addr}>
-              <td>
-                <button className="link" onClick={() => trayApi.open(f.url ?? '')}>
-                  {f.local_addr}
-                </button>
+              <td className="dot-cell">
+                <span className="dot" style={{ background: f.error ? 'var(--red)' : 'var(--green)' }} />
               </td>
               <td>
-                → {f.worker}:{f.target}
+                <div className="fw-addr">
+                  <button className="link mono" title="open in the browser" onClick={() => trayApi.open(f.url ?? '')}>
+                    {f.local_addr}
+                  </button>
+                  <span className="fw-target">
+                    → {f.worker}:{f.target}
+                  </span>
+                </div>
               </td>
-              <td className="muted">{f.connections ?? 0} conns</td>
-              <td className="red small">{f.error}</td>
+              <td className="muted nowrap">{f.connections ?? 0} conns</td>
               <td>
-                <button disabled={busy} onClick={() => run(() => longarmApi.stopForward(f.local_addr ?? ''), 'stopped').then(fw.reload)}>
+                {f.error && (
+                  <span className="pill bad" title={f.error}>
+                    {f.error}
+                  </span>
+                )}
+              </td>
+              <td className="actions-cell">
+                <button className="sm" disabled={busy} onClick={() => run(() => longarmApi.stopForward(f.local_addr ?? ''), 'stopped').then(fw.reload)}>
                   stop
                 </button>
               </td>
             </tr>
           ))}
-          {(fw.data ?? []).length === 0 && (
-            <tr>
-              <td className="notice">no forwards</td>
+          {fw.data === undefined && !fw.error && (
+            <tr className="placeholder">
+              <td colSpan={5}>
+                <Skeleton lines={2} label="loading forwards…" />
+              </td>
+            </tr>
+          )}
+          {fw.data !== undefined && fw.data.length === 0 && (
+            <tr className="placeholder">
+              <td colSpan={5}>
+                <EmptyState compact icon={<IconForward size={20} />} title="No forwards">
+                  A worker&apos;s port on this computer: pick a worker and a port above, or <span className="mono">longarm forward</span>.
+                </EmptyState>
+              </td>
             </tr>
           )}
         </tbody>
@@ -156,13 +206,55 @@ const POLICIES: [string, string][] = [
   ['tcp', 'prefer plain tcp'],
 ]
 
-/** Settings: transport policy (longarm transport), notifications, this client (version, logs, telemetry, diagnostics). */
-export function Settings({ pool, clientUp = true }: { pool?: PoolView; clientUp?: boolean }) {
+/** Settings: appearance, transport policy (longarm transport), notifications, this client (version, logs, telemetry, diagnostics). */
+export function Settings({
+  pool,
+  clientUp = true,
+  theme,
+  onTheme,
+}: {
+  pool?: PoolView
+  clientUp?: boolean
+  theme?: ThemePref
+  onTheme?: (t: ThemePref) => Promise<void>
+}) {
   return (
-    <div>
+    <div className="settings">
+      {theme && onTheme && <Appearance theme={theme} onTheme={onTheme} />}
       {clientUp && <TransportPolicy />}
       <TraySettingsView pool={pool} clientUp={clientUp} />
     </div>
+  )
+}
+
+const THEMES: [ThemePref, string][] = [
+  ['system', 'System'],
+  ['light', 'Light'],
+  ['dark', 'Dark'],
+]
+
+/** System / Light / Dark: a segmented choice (radio buttons: the arrow keys move it). */
+function Appearance({ theme, onTheme }: { theme: ThemePref; onTheme: (t: ThemePref) => Promise<void> }) {
+  const { run } = useAction()
+  return (
+    <Section title="Appearance" testId="appearance">
+      <div className="field-inline">
+        <div>
+          <div className="field-label" id="theme-label">
+            Theme
+          </div>
+          <div className="field-help">System follows Windows&apos; light or dark app mode.</div>
+        </div>
+        <div className="segmented" role="radiogroup" aria-labelledby="theme-label">
+          {THEMES.map(([t, label]) => (
+            <label key={t} className={theme === t ? 'is-active' : ''}>
+              <input type="radio" name="theme" className="sr-only" value={t} checked={theme === t} onChange={() => run(() => onTheme(t))} />
+              {label}
+            </label>
+          ))}
+        </div>
+      </div>
+    </Section>
   )
 }
 
@@ -172,26 +264,27 @@ function TransportPolicy() {
   const [choice, setChoice] = useState<string>()
   const current = choice ?? s.data?.transport ?? 'race'
   return (
-    <section>
-      <h3>Transport policy</h3>
-      {POLICIES.map(([b, label]) => (
-        <label key={b} className="row" style={{ margin: '4px 0' }}>
-          <input
-            type="radio"
-            name="transport"
-            value={b}
-            checked={current === b}
-            disabled={busy}
-            onChange={() => {
-              setChoice(b) // optimistic; the daemon's answer follows
-              run(() => longarmApi.setTransport(b), `transport ${b}`).then((r) => setChoice(r?.transport ?? s.data?.transport))
-            }}
-          />
-          {label}
-        </label>
-      ))}
-      <p className="muted small">CLI: longarm transport {current}</p>
-    </section>
+    <Section title="Transport policy">
+      <div className="radio-list">
+        {POLICIES.map(([b, label]) => (
+          <label key={b} className={`radio-row ${current === b ? 'is-checked' : ''}`}>
+            <input
+              type="radio"
+              name="transport"
+              value={b}
+              checked={current === b}
+              disabled={busy}
+              onChange={() => {
+                setChoice(b) // optimistic; the daemon's answer follows
+                run(() => longarmApi.setTransport(b), `transport ${b}`).then((r) => setChoice(r?.transport ?? s.data?.transport))
+              }}
+            />
+            <span className="radio-label">{label}</span>
+          </label>
+        ))}
+      </div>
+      <p className="muted small mono">CLI: longarm transport {current}</p>
+    </Section>
   )
 }
 
@@ -203,54 +296,77 @@ function TraySettingsView({ pool, clientUp }: { pool?: PoolView; clientUp: boole
   const set = (v: Parameters<typeof traySettingsApi.set>[0], ok: string) => run(() => traySettingsApi.set(v), ok).then((r) => r && st.setData(r))
   return (
     <>
-      <section>
-        <h3>Notifications</h3>
+      <Section title="Notifications">
         <ErrorBox error={st.error} />
-        <label className="row" style={{ margin: '4px 0' }}>
+        <label className="switch-row">
           <input
             type="checkbox"
+            className="switch"
             aria-label="notify about my workers"
             checked={!!s && !s.mute_workers}
             disabled={!s || busy}
             onChange={(e) => set({ mute_workers: !e.target.checked }, e.target.checked ? 'worker notifications on' : 'worker notifications off')}
           />
-          my workers: offline / back online, memory low, link relayed
+          <span>
+            <span className="field-label">My workers</span>
+            <span className="field-help">offline / back online, memory low, link relayed</span>
+          </span>
         </label>
-        <label className="row" style={{ margin: '4px 0' }}>
+        <label className="switch-row">
           <input
             type="checkbox"
+            className="switch"
             aria-label="notify about my jobs"
             checked={!!s && !s.mute_jobs}
             disabled={!s || busy}
             onChange={(e) => set({ mute_jobs: !e.target.checked }, e.target.checked ? 'job notifications on' : 'job notifications off')}
           />
-          my jobs: done, failed, killed, lost
+          <span>
+            <span className="field-label">My jobs</span>
+            <span className="field-help">done, failed, killed, lost</span>
+          </span>
         </label>
         <p className="muted small">Only your own workers and the jobs you started notify; other people&apos;s machines never do.</p>
-      </section>
-      <section>
-        <h3>This client</h3>
-        <div className="small" data-testid="client-info">
-          <div>
-            longarm-tray {s?.version ?? '…'}
+      </Section>
+      <Section title="This client">
+        <dl className="facts small" data-testid="client-info">
+          <dt>longarm-tray</dt>
+          <dd className="mono">
+            {s?.version ?? '…'}
             {daemon.data?.version ? ` · longarm daemon ${daemon.data.version}` : ''}
-          </div>
-          <div>identity {pool?.identity ?? daemon.data?.identity ?? '—'}</div>
-          <div>
-            hub {pool?.hub?.address || '—'} {pool?.hub?.address ? (pool.hub.connected ? '(connected)' : `(down: ${pool.hub.error ?? ''})`) : ''}
-          </div>
-        </div>
-        <label className="row" style={{ margin: '8px 0 4px' }}>
+          </dd>
+          <dt>identity</dt>
+          <dd className="mono">{pool?.identity ?? daemon.data?.identity ?? '—'}</dd>
+          <dt>hub</dt>
+          <dd>
+            <span className="mono">{pool?.hub?.address || '—'}</span>{' '}
+            {pool?.hub?.address &&
+              (pool.hub.connected ? (
+                <span className="pill ok">connected</span>
+              ) : (
+                <span className="pill bad" title={pool.hub.error}>
+                  down{pool.hub.error ? `: ${pool.hub.error}` : ''}
+                </span>
+              ))}
+          </dd>
+        </dl>
+        <label className="switch-row">
           <input
             type="checkbox"
+            className="switch"
             aria-label="telemetry"
             checked={!!s && !s.telemetry_disabled && !s.telemetry_env_off}
             disabled={!s || busy || !!s?.telemetry_env_off}
             onChange={(e) => set({ telemetry_disabled: !e.target.checked }, e.target.checked ? 'telemetry on' : 'telemetry off (queue dropped)')}
           />
-          send anonymous telemetry (errors, timings; no names, commands or output){s?.telemetry_env_off ? ' - off: LONGARM_TELEMETRY=0' : ''}
+          <span>
+            <span className="field-label">Send anonymous telemetry</span>
+            <span className="field-help">
+              errors, timings; no names, commands or output{s?.telemetry_env_off ? ' - off: LONGARM_TELEMETRY=0' : ''}
+            </span>
+          </span>
         </label>
-        <div className="row wrap" style={{ marginTop: 6 }}>
+        <div className="button-row">
           {s?.client_logs && (
             <button disabled={busy} onClick={() => run(() => traySettingsApi.openFolder('client-logs'))}>
               Open logs folder
@@ -264,7 +380,7 @@ function TraySettingsView({ pool, clientUp }: { pool?: PoolView; clientUp: boole
             {busy ? 'Working…' : 'Collect diagnostics'}
           </button>
         </div>
-      </section>
+      </Section>
     </>
   )
 }
