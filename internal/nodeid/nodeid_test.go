@@ -24,7 +24,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestCheckName(t *testing.T) {
-	ok := []string{"bolu-pair", "bolu-pc", "e2e-worker", "tmia-spike", "cpc-bolu1-nyg7h-admin", "bolu1-cpc-bolu1-nyg7h",
+	ok := []string{"alice-pair", "alice-pc", "e2e-worker", "spike-1", "cpc-bob-x7k2h-admin", "bob-cpc-bob-x7k2h",
 		"abc", "w-1234", "cafe-x", "a", "dead_beef", "g000", "1234.5"}
 	for _, n := range ok {
 		if err := CheckName(n, validName); err != nil {

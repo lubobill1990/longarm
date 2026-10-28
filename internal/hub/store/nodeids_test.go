@@ -40,29 +40,29 @@ func schema4(t *testing.T, path string) {
 		b, _ := json.Marshal(d)
 		exec(`INSERT INTO nodes(name,role,state,data) VALUES(?,?,?,?)`, name, role, state, string(b))
 	}
-	// the live hub's workers ...
-	node("bolu-pair", "worker", "approved", map[string]any{"owner": "bolu", "hostname": "pair"})
-	node("bolu-pc", "worker", "approved", map[string]any{"hostname": "bolu-pc"})
+	// workers shaped like a live hub's ...
+	node("alice-pair", "worker", "approved", map[string]any{"owner": "alice", "hostname": "pair"})
+	node("alice-pc", "worker", "approved", map[string]any{"hostname": "alice-pc"})
 	node("e2e-worker", "worker", "approved", nil)
-	node("tmia-spike", "worker", "approved", nil)
-	node("bolu1-cpc-bolu1-nyg7h", "worker", "approved", map[string]any{"owner": "bolu1", "hostname": "CPC-bolu1-NYG7H"})
-	node("cpc-bolu1-nyg7h-admin", "worker", "approved", map[string]any{"owner": "bolu1", "hostname": "cpc-bolu1-nyg7h", "admin_worker": true})
+	node("spike-1", "worker", "approved", nil)
+	node("bob-cpc-bob-x7k2h", "worker", "approved", map[string]any{"owner": "bob", "hostname": "CPC-bob-X7K2H"})
+	node("cpc-bob-x7k2h-admin", "worker", "approved", map[string]any{"owner": "bob", "hostname": "cpc-bob-x7k2h", "admin_worker": true})
 	// ... admins and clients ...
 	node("root", "admin", "approved", nil)
-	node("bolu-laptop", "client", "approved", map[string]any{"user": "bolu"})
+	node("alice-laptop", "client", "approved", map[string]any{"user": "alice"})
 	// ... a revoked one, and names that break the new rules
 	node("old-box", "worker", "revoked", nil)
 	node("cafe", "worker", "approved", nil)
 	node("1234", "client", "approved", nil)
 	node("w-cafe", "worker", "revoked", nil) // the name "cafe" will want
-	for _, c := range []struct{ serial, node string }{{"a1", "bolu-pc"}, {"a2", "old-box"}, {"a3", "cafe"}} {
+	for _, c := range []struct{ serial, node string }{{"a1", "alice-pc"}, {"a2", "old-box"}, {"a3", "cafe"}} {
 		exec(`INSERT INTO certs(serial,node,not_after,issued_at) VALUES(?,?,?,?)`, c.serial, c.node, now.Add(time.Hour).Unix(), now.Unix())
 	}
 	exec(`UPDATE certs SET revoked_at=? WHERE node='old-box'`, now.Unix())
-	exec(`INSERT INTO audit(node,time,who,method,line) VALUES('bolu-pc',?,'client/root','/x','{}')`, now.UnixMilli())
+	exec(`INSERT INTO audit(node,time,who,method,line) VALUES('alice-pc',?,'client/root','/x','{}')`, now.UnixMilli())
 	exec(`INSERT INTO audit(node,time,who,method,line) VALUES('hub',?,'web/root','users/add','{}')`, now.UnixMilli())
-	exec(`INSERT INTO jobs(worker,id,state,updated_at,data) VALUES('bolu-pc','J1',2,?,x'00')`, now.UnixMilli())
-	exec(`INSERT INTO port_links(id,owner,data) VALUES('L1','bolu','{"id":"L1","owner":"bolu","from":"bolu-pc","to":"cafe","port":80}')`)
+	exec(`INSERT INTO jobs(worker,id,state,updated_at,data) VALUES('alice-pc','J1',2,?,x'00')`, now.UnixMilli())
+	exec(`INSERT INTO port_links(id,owner,data) VALUES('L1','alice','{"id":"L1","owner":"alice","from":"alice-pc","to":"cafe","port":80}')`)
 }
 
 // TestMigrateNodeIDs: schema 4 -> 5 keeps every node and its data, gives
@@ -101,12 +101,12 @@ func TestMigrateNodeIDs(t *testing.T) {
 	if len(nodes) != 12 {
 		t.Fatalf("%d nodes", len(nodes))
 	}
-	for _, name := range []string{"bolu-pair", "bolu-pc", "e2e-worker", "tmia-spike", "cpc-bolu1-nyg7h-admin", "bolu1-cpc-bolu1-nyg7h", "root", "bolu-laptop", "old-box"} {
+	for _, name := range []string{"alice-pair", "alice-pc", "e2e-worker", "spike-1", "cpc-bob-x7k2h-admin", "bob-cpc-bob-x7k2h", "root", "alice-laptop", "old-box"} {
 		if by[name] == nil || by[name].CertName != "" {
 			t.Fatalf("%s: %+v (the live hub's names stay)", name, by[name])
 		}
 	}
-	if by["bolu-pair"].Owner != "bolu" || by["bolu-laptop"].User != "bolu" || by["old-box"].State != "revoked" {
+	if by["alice-pair"].Owner != "alice" || by["alice-laptop"].User != "alice" || by["old-box"].State != "revoked" {
 		t.Fatal("node data lost")
 	}
 	// rule 2: renamed, the certificate keeps the old name until renewed;
@@ -132,16 +132,16 @@ func TestMigrateNodeIDs(t *testing.T) {
 		t.Fatalf("%d rename audit records", renames)
 	}
 	// companion link: the admin worker and the worker on its host
-	aw, w := by["cpc-bolu1-nyg7h-admin"], by["bolu1-cpc-bolu1-nyg7h"]
+	aw, w := by["cpc-bob-x7k2h-admin"], by["bob-cpc-bob-x7k2h"]
 	if aw.Companion != w.ID || w.Companion != aw.ID {
 		t.Fatalf("companions %q %q", aw.Companion, w.Companion)
 	}
-	if by["bolu-pc"].Companion != "" {
+	if by["alice-pc"].Companion != "" {
 		t.Fatal("a worker without an admin worker got a companion")
 	}
 	// certificates: by node id; the revoked node's stay revoked
 	cn, _ := s.CertNodes(time.Now())
-	if cn["a1"] != by["bolu-pc"].ID || cn["a2"] != by["old-box"].ID || cn["a3"] != cafe.ID {
+	if cn["a1"] != by["alice-pc"].ID || cn["a2"] != by["old-box"].ID || cn["a3"] != cafe.ID {
 		t.Fatalf("cert nodes %v", cn)
 	}
 	rc, _ := s.RevokedCerts(time.Now())
@@ -149,21 +149,21 @@ func TestMigrateNodeIDs(t *testing.T) {
 		t.Fatalf("revoked %+v", rc)
 	}
 	// audit, jobs, port links
-	if a, _ := s.Audit(by["bolu-pc"].ID, "", time.Time{}, 10); len(a) != 1 || a[0].Node != "bolu-pc" {
+	if a, _ := s.Audit(by["alice-pc"].ID, "", time.Time{}, 10); len(a) != 1 || a[0].Node != "alice-pc" {
 		t.Fatalf("audit by id %+v", a)
 	}
 	jobs, _ := s.Jobs()
-	if len(jobs) != 1 || jobs[0].Worker != by["bolu-pc"].ID {
+	if len(jobs) != 1 || jobs[0].Worker != by["alice-pc"].ID {
 		t.Fatalf("jobs %+v", jobs)
 	}
 	links, _ := s.PortLinks()
 	var l map[string]any
 	json.Unmarshal(links[0].Data, &l)
-	if l["fromId"] != by["bolu-pc"].ID || l["toId"] != cafe.ID || l["to"] != "cafe" {
+	if l["fromId"] != by["alice-pc"].ID || l["toId"] != cafe.ID || l["to"] != "cafe" {
 		t.Fatalf("link %v", l)
 	}
 	// rule 1 in the database: no second active node of a name ...
-	if err := s.PutNode(&Node{ID: nodeid.New(), Name: "bolu-pc", Role: "worker", State: "approved"}); err == nil || !strings.Contains(err.Error(), ErrNameTaken.Error()) {
+	if err := s.PutNode(&Node{ID: nodeid.New(), Name: "alice-pc", Role: "worker", State: "approved"}); err == nil || !strings.Contains(err.Error(), ErrNameTaken.Error()) {
 		t.Fatalf("duplicate active name: %v", err)
 	}
 	// ... but a revoked node's name is free

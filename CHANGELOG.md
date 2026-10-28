@@ -4,6 +4,18 @@
 
 ### Security
 
+- Node identity (docs/security.md "Node identity"): every node has an
+  immutable ID (UUID) the hub assigns; certificates carry it as URI SAN
+  `urn:longarm:node:<uuid>`; the hub authorizes and revokes by ID (the
+  revocation list now holds revoked node IDs too), so a revoked node's name
+  is free for a new node at once. Endorsements bind the ID (a second
+  signature next to the name-bound one older peers check); name-bound
+  endorsements stay valid while the node keeps that name. With
+  `require_workers`, a worker targeted by name must be endorsed under that
+  name, one targeted by ID with that ID. Names never look like IDs (hex and
+  dashes only, 4+ characters, are refused) and are unique among non-revoked
+  nodes (database index).
+
 - MSI custom actions take their values as strictly parsed data
   (`install-helper msi <step> #LONGARM-MSI#k=v|...`), never as options; run
   only the installed, administrator-only binaries; refuse a
@@ -46,6 +58,18 @@
   links open in the system browser.
 - `install.ps1 --login` starts the tray right away (in your session, not
   elevated) instead of at the next logon.
+- Node IDs: targets everywhere (run, exec, sessions, files, forward, links,
+  admin and worker commands, panel, MCP) accept a name, a node ID, a unique
+  ID prefix (git-style, 4+ hex digits), `id:<prefix>` or `name:<name>`; an
+  ambiguous prefix is an error listing the candidates. `longarm worker
+  rename` (owners) and `longarm admin rename` (admins) rename a node, which
+  keeps its ID (audited; the panel's Rename too). Listings show the short ID
+  next to names (`ls`, `worker ls`, `admin nodes`, `jobs`, `sessions`, the
+  panel, the tray); JSON gains `id` / `workerId` / `worker_id` fields. A
+  worker and its admin worker are linked by ID (`companion_id`). The hub
+  database migrates to schema 5 (IDs for existing nodes; names that look
+  like IDs get a `w-`/`d-` prefix, audited); certificates without an ID keep
+  working (mapped by serial) and get one at their next renewal.
 
 - Windows installer for password-less machines (Entra-only sign-in with
   Windows Hello or a security key, e.g. Microsoft Dev Box): the MSI's first

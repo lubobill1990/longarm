@@ -188,9 +188,9 @@ with this version; one transaction):
 - a name that breaks rule 2 is changed (`w-`/`d-` prefix, then `-2`,
   `-3`... if taken), with an audit record (`hub/migration`, `nodes/rename`)
   and a warning in the hub's log; duplicate non-revoked names (impossible
-  before: the name was the key) would get a suffix the same way. The live
-  hub's names (bolu-pair, bolu-pc, e2e-worker, tmia-spike,
-  cpc-bolu1-nyg7h-admin, bolu1-cpc-bolu1-nyg7h, ...) pass unchanged;
+  before: the name was the key) would get a suffix the same way. Names
+  with a letter beyond a-f (`alice-pc`, `e2e-worker`, `pc-x7k2-admin`) pass
+  unchanged;
 - certificates and audit records get their node's ID (by the old name, the
   old key); the job cache is re-keyed by worker ID; port links get
   `from_id` / `to_id`; admin worker pairs get their companion link;
