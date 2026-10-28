@@ -64,7 +64,7 @@ export function AccountTab({ info, onChange }: { info: TrayInfo; onChange?: () =
           {acct.needed ? <SignInCard acct={acct} onStarted={setSt} /> : <AccountCard acct={acct} info={info} onChange={onChange} />}
         </>
       )}
-      {acct.roles && <RolesCard acct={acct} busy={running} onChange={onChange} />}
+      {acct.roles && <RolesCard acct={acct} cur={acct.roles} busy={running} onChange={onChange} />}
       {acct.admin && <AdminCard admin={acct.admin} onChange={onChange} />}
     </div>
   )
@@ -289,8 +289,7 @@ export function rolesChangeText(cur: AccountRoles, want: AccountRoles) {
  * so uninstall and upgrades keep up), then one approval signs the added
  * roles in.
  */
-function RolesCard({ acct, busy, onChange }: { acct: Account; busy: boolean; onChange?: () => void }) {
-  const cur = acct.roles
+function RolesCard({ acct, cur, busy, onChange }: { acct: Account; cur: AccountRoles; busy: boolean; onChange?: () => void }) {
   const [want, setWant] = useState<AccountRoles>(cur)
   const [st, setSt] = useState<RolesState>()
   const { run, busy: posting } = useAction()
