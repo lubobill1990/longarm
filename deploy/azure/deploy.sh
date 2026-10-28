@@ -639,7 +639,7 @@ if [[ $headscale == true ]]; then
 	hs=''
 	for _ in $(seq 1 18); do
 		health=$(curl -fsS -m 10 "$panel_url/healthz" 2>/dev/null || true)
-		hs=$(printf '%s' "$health" | sed -n 's/.*"headscale":"\([a-z]*\)".*/\1/p')
+		hs=$(printf '%s' "$health" | sed -n 's/.*"headscale": *"\([a-z]*\)".*/\1/p')
 		[[ $hs != ok ]] || break
 		sleep "$poll"
 	done

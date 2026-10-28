@@ -266,7 +266,8 @@ hs_ok() {
 	local h=''
 	for _ in $(seq 1 90); do
 		h=$(curl -fsS -m 5 http://127.0.0.1:7480/healthz 2>/dev/null || true)
-		[[ $h != *'"headscale":"ok"'* ]] || return 0
+		# /healthz is indented JSON
+		[[ $(tr -d ' \n' <<<"$h") != *'"headscale":"ok"'* ]] || return 0
 		sleep 1
 	done
 	fail "headscale not ok via the hub: $h"
