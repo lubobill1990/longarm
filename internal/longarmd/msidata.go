@@ -45,6 +45,9 @@ var MSISteps = map[string][]string{
 	// the sign-in defaults in HKLM (ApplyMSISettings)
 	"settings":        {"hub", "ca", "login", "labels", "mode", "usersid"},
 	"settings-remove": {},
+	// after an upgrade: what internal/msiupgrade stopped, started again
+	// (sid: the user whose tray LongarmTrayLaunch starts when launch isn't 0)
+	"restart": {"sid", "launch", "usersid"},
 }
 
 // MSIDataMarker starts the data on an install-helper msi command line.
@@ -69,6 +72,7 @@ var msiValue = map[string]*regexp.Regexp{
 	"login":     regexp.MustCompile(`^1?$`),
 	"mode":      regexp.MustCompile(`^(default|custom)?$`),
 	"keep":      regexp.MustCompile(`^1?$`),
+	"launch":    regexp.MustCompile(`^[01]?$`),
 	"leave":     regexp.MustCompile(`^(1|keep)?$`),
 	// a service account: DOMAIN\name, .\name, name@domain, LocalSystem
 	"user": regexp.MustCompile(`^[A-Za-z0-9._@\\ -]{0,104}$`),

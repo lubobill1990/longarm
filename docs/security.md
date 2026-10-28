@@ -574,6 +574,29 @@ their choosing. So the installer treats every property as untrusted input:
   AdminWorker) together, so uninstall still removes all of it; its result
   goes to `HKLM\Software\Longarm\RolesResult` (readable by the tray, not
   writable by users).
+- **The upgrade helper** (`longarm-msihelper`, internal/msiupgrade: stops
+  Longarm's processes before an upgrade or uninstall replaces their files,
+  docs/usage.md "Upgrading with Longarm running") is the one elevated
+  action not run from the install dir: it must run before the installed
+  files are replaced, and an older installed longarmd doesn't know it, so it
+  comes from the MSI's Binary table (extracted by Windows Installer into its
+  own protected location; part of the signed MSI). Its only value is
+  `UserSID` (`#LONGARM-MSI#usersid=[UserSID]`, parsed as strictly); the
+  install dir is the one recorded in `HKLM\Software\Longarm\InstallDir`
+  and must pass the same administrators-only check. It stops services by
+  their fixed names (`longarmd-admin`, the recorded `ServiceName`), asks
+  processes to stop through per-process events only their user, SYSTEM and
+  Administrators may set (a pre-created, squatted name is refused by the
+  process, which is then ended instead of asked), and ends by process id
+  only processes whose image is directly in the install dir, re-checked
+  against their start time and image path on the handle it terminates.
+  For a non-administrator (an elevated repair) it stops only that user's own
+  processes and nothing else. What it stopped goes to
+  `%ProgramData%\Longarm\msi-upgrade.json` (that dir secured; SIDs and
+  service names validated when read back; moved-aside binaries only between
+  `<install dir>\<binary>` and `<install dir>\old`); the restart step
+  (`install-helper msi restart`, the new installed longarmd) starts the
+  recorded tasks and trays only for that user unless an administrator asked.
 - **Task definitions** are XML built with `encoding/xml` from a SID checked
   against its pattern and the account database; the program is the
   installed tray / longarmd.

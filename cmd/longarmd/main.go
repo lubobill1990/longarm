@@ -36,6 +36,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/server"
 	"github.com/lubobill1990/longarm/internal/shim"
+	"github.com/lubobill1990/longarm/internal/stopsignal"
 	"github.com/lubobill1990/longarm/internal/update"
 	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/version"
@@ -130,6 +131,10 @@ func runCmd() *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			// the installer asks it to stop before an upgrade (Windows:
+			// internal/stopsignal); jobs and sessions keep running in their shims
+			ctx, stopEv := stopsignal.NotifyContext(ctx)
+			defer stopEv()
 			err = run(ctx)
 			if errors.Is(err, update.ErrRestart) {
 				if cfg.UpdateMode == "service" || cfg.UpdateMode == "supervised" {

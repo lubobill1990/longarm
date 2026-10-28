@@ -74,6 +74,19 @@
   Migrating a service install to RUN=session: uninstall, then install with RUN=session (an upgrade keeps
   the service).
 
+  Upgrades with Longarm running (the tray, the user-session worker, the admin worker) show no "files in
+  use" dialog and need no reboot (internal/msiupgrade, docs/usage.md "Upgrading"): Restart Manager is off
+  (MSIRESTARTMANAGERCONTROL=Disable: it can't close windowless processes and would ask); instead the
+  upgrade helper (longarm-msihelper, carried in the Binary table: it must run before the installed
+  version's files go, and an older installed longarmd knows nothing of it) asks Longarm's processes to
+  stop - their stop events - and ends them by pid only when they can't (an older version) or don't in
+  time: the installing user's tray before InstallValidate (the only one with a window), then, elevated and
+  before RemoveExistingProducts, the worker services and every user's tray, worker host and longarmd run.
+  Running jobs and sessions keep running: their shims are longarmd.exe processes too, so binaries still in
+  use move to <install dir>\old (a running image may be renamed) and the new ones go in beside them. At the
+  end the restart step starts again what ran: the services, the users' worker tasks, the trays (unelevated,
+  in their users' sessions). A failed upgrade's rollback puts the old binaries back and starts them.
+
   The data dir of the service is protected (SYSTEM, Administrators and the service account only).
   Upgrades with a newer MSI keep the service account (remembered) but need SERVICE_PASSWORD again for
   a user account. Inbound UDP+TCP allow rules for longarm.exe, longarmd.exe and longarm-tray.exe (all
@@ -190,6 +203,10 @@
     <Property Id="DEFAULT_ADMIN" Secure="yes" />
     <Property Id="RUN_AS_SERVICE" Secure="yes" />
     <Property Id="ARPNOMODIFY" Value="1" />
+    <!-- No Restart Manager: Longarm's own processes are stopped and started again by the upgrade
+         helper (below); Restart Manager can't close the windowless ones and would show its "unable to
+         close" dialog. -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
     <!-- Repair would re-create the service and needs the account password again (msiexec /fa ... SERVICE_PASSWORD=...). -->
     <Property Id="ARPNOREPAIR" Value="1" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/lubobill1990/longarm" />
@@ -371,6 +388,8 @@
         <!-- the admin worker's service (created by install-helper admin-setup) stops before its files
              are replaced or removed; a machine without it is skipped -->
         <ServiceControl Id="AdminSvcStop" Name="longarmd-admin" Stop="both" Wait="yes" />
+        <!-- (started again by LongarmdAdminSetup, and on an upgrade by LongarmdUpgradeRestart when it
+             ran: a Start here would fail on a machine without it) -->
       </Component>
 
       <?if $(var.HasTray) = 1 ?>
@@ -445,6 +464,27 @@
     <CustomAction Id="LongarmTrayLaunch" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
                   ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi launch-tray #LONGARM-MSI#sid=[SESSION_SID]|usersid=[UserSID]' />
     <?endif?>
+    <!-- Upgrades with Longarm running (docs/usage.md "Upgrading"): longarm-msihelper from the Binary
+         table (not installed; it runs before the installed files are replaced). The same data rules:
+         its only value is UserSID; the install dir is the one recorded in HKLM, checked to be writable
+         by administrators only; it ends processes by pid only, and only Longarm's (image in that dir,
+         same start time). Return="ignore": what it can't do the installer still does (a reboot at worst). -->
+    <Binary Id="LongarmMsiHelper" SourceFile="$(var.BinDir)\longarm-msihelper.exe" />
+    <!-- as the installing user, before InstallValidate looks for files in use: their tray -->
+    <CustomAction Id="LongarmStopTray" BinaryRef="LongarmMsiHelper" Execute="immediate" Return="ignore"
+                  ExeCommand='stop-tray #LONGARM-MSI#usersid=[UserSID]' />
+    <!-- elevated, before the old version goes: services, every user's tray / worker host / longarmd run,
+         binaries still in use (job shims) moved aside; what ran is recorded -->
+    <CustomAction Id="LongarmUpgradeStop" BinaryRef="LongarmMsiHelper" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand='stop #LONGARM-MSI#usersid=[UserSID]' />
+    <CustomAction Id="LongarmUpgradeStopRollback" BinaryRef="LongarmMsiHelper" Execute="rollback" Impersonate="no" Return="ignore"
+                  ExeCommand='rollback #LONGARM-MSI#usersid=[UserSID]' />
+    <CustomAction Id="LongarmRemoveStop" BinaryRef="LongarmMsiHelper" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand='stop-remove #LONGARM-MSI#usersid=[UserSID]' />
+    <!-- at the end, the new longarmd: what was stopped starts again (the tray of SESSION_SID is
+         LongarmTrayLaunch's when LAUNCH_TRAY isn't 0) -->
+    <CustomAction Id="LongarmdUpgradeRestart" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi restart #LONGARM-MSI#sid=[SESSION_SID]|launch=[LAUNCH_TRAY]|usersid=[UserSID]' />
     <!-- Uninstall: leave the hub, stop jobs, remove the data dir (KEEP_DATA=1 keeps jobs/mirrors). -->
     <CustomAction Id="LongarmdRemove" FileRef="longarmd.exe" Execute="deferred" Impersonate="no" Return="ignore"
                   ExeCommand='install-helper msi remove #LONGARM-MSI#datadir=[DATADIR]|keep=' />
@@ -473,6 +513,14 @@
       <!-- not by the public REMOVE property: REMOVE=ALL REINSTALL=ALL reinstalls everything. Only a
            real uninstall (the Settings component going away, action state 2) skips it. -->
       <Custom Action="LongarmdCheck" After="InstallInitialize" Condition='Installed AND $Settings&lt;&gt;2' />
+      <!-- upgrades and uninstalls with Longarm running (never as the old product of a later upgrade:
+           UPGRADINGPRODUCTCODE - the new MSI did it) -->
+      <Custom Action="LongarmStopTray" Before="InstallValidate"
+              Condition='(WIX_UPGRADE_DETECTED OR REMOVE="ALL") AND NOT UPGRADINGPRODUCTCODE AND UserSID=SESSION_SID' />
+      <Custom Action="LongarmUpgradeStopRollback" Before="LongarmUpgradeStop" Condition='WIX_UPGRADE_DETECTED AND NOT UPGRADINGPRODUCTCODE AND NOT REMOVE="ALL"' />
+      <Custom Action="LongarmUpgradeStop" Before="RemoveExistingProducts" Condition='WIX_UPGRADE_DETECTED AND NOT UPGRADINGPRODUCTCODE AND NOT REMOVE="ALL"' />
+      <Custom Action="LongarmRemoveStop" Before="StopServices" Condition='REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE' />
+      <Custom Action="LongarmdUpgradeRestart" Before="InstallFinalize" Condition='WIX_UPGRADE_DETECTED AND NOT UPGRADINGPRODUCTCODE AND NOT REMOVE="ALL"' />
       <Custom Action="LongarmdSettings" After="InstallServices" Condition='$Settings=3' />
       <Custom Action="LongarmdSettingsRemove" After="StopServices" Condition='$Settings=2 AND NOT UPGRADINGPRODUCTCODE' />
       <Custom Action="SetClientCodeJoin" Before="SetClientCodeClient" Condition='ROLES="client" AND JOIN_CODE' />

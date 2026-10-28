@@ -1914,6 +1914,56 @@ or `-ServiceAccount LocalSystem` / `$env:LONGARM_SERVICE_ACCOUNT`. By default
 (`-Run session`) it installs the user-session worker, and `-Login` runs the
 MSI with `LOGIN=1 RUN=session`, then signs in in the console.
 
+#### Upgrading with Longarm running
+
+Install the newer MSI over the old one (double-click, `msiexec /i`, or the
+tray's update banner) while the tray, the user-session worker and the admin
+worker run: there is no "files in use" / "unable to automatically close
+all requested applications" dialog and no reboot, and running jobs and
+sessions keep running. What happens (`internal/msiupgrade`;
+`packaging/windows/longarm.wxs`):
+
+1. **Before the in-use check** (as you, before `InstallValidate`): your
+   tray is asked to exit - its stop event, a named kernel event
+   `Global\LongarmStop-<pid>` that only its user, SYSTEM and Administrators
+   may set - and ended by its process id after 10 s, or at once when it
+   has none (an older version). The tray is Longarm's only process with a
+   window, the only one Windows Installer's in-use check would list.
+   Restart Manager is off (`MSIRESTARTMANAGERCONTROL=Disable`): it can't
+   close windowless processes, which is what showed the dialog.
+2. **Before the old version is removed** (elevated, before
+   `RemoveExistingProducts`): the worker services that run (`longarmd-admin`,
+   a `RUN=service` `longarmd`) are stopped and waited for, then every user's
+   tray, worker host (`longarm-tray --worker-host`, `longarmd session-mode
+   run`) and `longarmd run` whose image is in the install dir - asked
+   through their stop events, ended by process id (checked: same start
+   time, image still in the install dir) after 20 s or when they have none.
+   No other program is touched. Job shims (`longarmd shim`, `longarmd
+   conhost`), `longarm` clients in terminals and the client daemon keep
+   running: the binaries they hold are moved to `<install dir>\old`
+   (Windows lets a running program be renamed), and the new ones go in
+   beside them. What ran is recorded in `C:\ProgramData\Longarm\msi-upgrade.json`.
+3. **After the install** (`longarmd install-helper msi restart`, at the end):
+   the recorded services start again (the admin worker's is also re-created
+   by its setup step), each recorded user's worker task runs
+   (`LongarmWorker-<SID>`; the installing user's is restarted anyway), and
+   the trays start again in their users' sessions, not elevated (the
+   on-demand task `LongarmTray-<SID>`; the installing user's by the usual
+   start at the end of the install, unless `LAUNCH_TRAY=0`). Only what was
+   running is started. Moved-aside binaries nothing holds any more are
+   deleted (the others at the next upgrade).
+4. **A failed upgrade** rolls back: the old binaries are moved back and what
+   was stopped starts again.
+
+An uninstall stops the trays, worker hosts and `longarmd run` the same way
+before removing the files. The tray also answers Windows' end-of-session
+messages and Restart Manager (another installer that needs a file it holds,
+e.g. a WebView2 update): it quits at once and is registered to be restarted
+afterwards (`RegisterApplicationRestart`). An update started from the tray
+(its banner runs `msiexec`) needs nothing from the tray: the MSI asks it to
+exit and starts it again. The helper's log is
+`C:\ProgramData\Longarm\install-helper.log`.
+
 #### Built-in default hub
 
 A release carries a default hub: `version.DefaultHub` (and optionally

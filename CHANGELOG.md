@@ -278,6 +278,26 @@
 
 ### Fixed
 
+- **Upgrading the MSI with Longarm running showed "The setup was unable to
+  automatically close all requested applications"** (and could need a
+  reboot): Restart Manager can't close the tray's WebView2 window, the
+  windowless worker host and `longarmd run`. Restart Manager is now off
+  for the MSI (`MSIRESTARTMANAGERCONTROL=Disable`) and an upgrade helper in
+  the MSI stops Longarm's own processes instead: the installing user's tray
+  before the in-use check, then (elevated, before the old version goes) the
+  worker services (`longarmd-admin`, a `RUN=service` `longarmd`) and every
+  user's tray, worker host and `longarmd run` - asked to stop through a
+  per-process stop event (`Global\LongarmStop-<pid>`), ended by process id
+  only when they have none (older versions) or after 20 s, and only
+  processes whose image is in the install dir. Running jobs and sessions
+  survive: binaries their shims (and `longarm` clients) still hold are
+  moved to `<install dir>\old` instead of being replaced in place. After
+  the install, what ran starts again: services, the users' worker tasks,
+  the trays in their users' sessions (unelevated); a failed upgrade puts
+  the old binaries back and restarts them. The tray quits on Windows'
+  end-of-session / Restart Manager messages and registers for restart
+  (docs/usage.md "Upgrading with Longarm running").
+
 - **Release files of a hub on Azure Container Instances with
   `--storage-auth identity` were lost on every restart**: its data dir is
   the container's own disk, so `/releases/<v>/<file>` answered 404 while

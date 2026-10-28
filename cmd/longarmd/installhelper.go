@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/lubobill1990/longarm/internal/longarmd"
+	"github.com/lubobill1990/longarm/internal/msiupgrade"
 	"github.com/lubobill1990/longarm/internal/platform"
 )
 
@@ -53,6 +54,7 @@ type msiEnv struct {
 	ownDir      func() (string, error)
 	programData func() string
 	sched       longarmd.TaskScheduler
+	services    msiupgrade.Services
 	settings    longarmd.SettingsStore
 	out         io.Writer
 }
@@ -78,6 +80,9 @@ func (e msiEnv) fill() msiEnv {
 	}
 	if e.sched == nil {
 		e.sched = longarmd.Schtasks{}
+	}
+	if e.services == nil {
+		e.services = platformServices{}
 	}
 	if e.settings == nil {
 		e.settings = longarmd.MachineSettings()
@@ -155,7 +160,7 @@ func runMSIStep(ctx context.Context, step, raw string, env msiEnv) error {
 		fmt.Fprintf(out, "%s install-helper %s: ok\n", time.Now().Format(time.RFC3339), step)
 	}
 	switch step {
-	case "rollback", "remove", "session-remove", "admin-remove", "admin-drop", "settings-remove":
+	case "rollback", "remove", "session-remove", "admin-remove", "admin-drop", "settings-remove", "restart":
 		return nil // never block a rollback or an uninstall
 	}
 	return err
@@ -335,6 +340,9 @@ func msiStep(ctx context.Context, step, raw string, keys []string, env msiEnv, o
 		longarmd.RemoveMSISettings(env.settings)
 		return nil
 
+	case "restart":
+		return msiRestart(d, req, base, env, checkUser, out)
+
 	case "admin-remove":
 		return adminRemove(ctx, out, base, d["keep"] == "1")
 
@@ -346,6 +354,57 @@ func msiStep(ctx context.Context, step, raw string, keys []string, env msiEnv, o
 	}
 	return fmt.Errorf("unknown step %q", step)
 }
+
+// msiRestart: after an upgrade, what the MSI's upgrade helper stopped
+// (internal/msiupgrade: its record in ProgramData\Longarm) starts again -
+// the worker services, the users' worker tasks, the trays (in their users'
+// sessions, not elevated: LaunchInSession) - and old binaries nothing holds
+// any more are removed. A non-administrator gets their own worker and tray
+// only. Never fails the install.
+func msiRestart(d map[string]string, req longarmd.MSIRequester, base string, env msiEnv, checkUser func(string) error, out io.Writer) error {
+	own, err := env.ownDir()
+	if err != nil {
+		return err
+	}
+	defer msiupgrade.CleanAside(own, out)
+	rec, err := msiupgrade.LoadRecord(base, time.Now())
+	if err != nil {
+		msiupgrade.RemoveRecord(base)
+		return err
+	}
+	if rec == nil {
+		return nil
+	}
+	defer msiupgrade.RemoveRecord(base)
+	o := msiupgrade.RestartOptions{Services: env.services, Tasks: env.sched, Log: out}
+	if d["launch"] != "0" {
+		o.SkipTray = d["sid"] // LongarmTrayLaunch starts that one
+	}
+	if req.RequireAdmin("restarting other users' workers") != nil {
+		o.OnlySID = req.SID
+	}
+	tray := filepath.Join(own, "longarm-tray.exe")
+	o.LaunchTray = func(sid string) error {
+		if !fileExists(tray) {
+			return nil
+		}
+		if err := checkUser(sid); err != nil {
+			return err
+		}
+		return longarmd.LaunchInSession(env.sched, sid, tray, nil)
+	}
+	return msiupgrade.Restart(rec, o)
+}
+
+// platformServices: the service manager for msiupgrade.
+type platformServices struct{}
+
+func (platformServices) Running(name string) (bool, error) {
+	st, err := platform.QueryService(name)
+	return err == nil && (st == platform.ServiceRunning || st == platform.ServicePending), err
+}
+func (platformServices) Stop(name string) error  { return platform.StopService(name) }
+func (platformServices) Start(name string) error { return platform.StartService(name) }
 
 func splitList(s string) []string {
 	var out []string

@@ -9,7 +9,8 @@
   One-time setup (no admin needed):
     dotnet tool install --global wix --version 5.0.2
     wix extension add -g WixToolset.UI.wixext/5.0.2 WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2
-  BinDir holds longarm.exe and longarmd.exe (and longarm-tray.exe, which is included when present).
+  BinDir holds longarm.exe and longarmd.exe (and longarm-tray.exe, which is included when present;
+  longarm-msihelper.exe, the upgrade helper, is built into BinDir with Go when it isn't there).
   The MSI's worker data dir defaults to C:\ProgramData\Longarm\longarmd (DATADIR), the same dir
   longarmd itself uses as LocalSystem and for `service install --isolation per-user`.
   Install modes (longarm.wxs): MODE=default (the built-in hub, -DefaultHub) signs in with Microsoft
@@ -43,6 +44,21 @@ if ($DefaultHub -and $DefaultHub -notmatch '^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-
 $DefaultHubCA = ("$DefaultHubCA".Trim() -replace '[: ]', '').ToLower()
 if ($DefaultHubCA -and $DefaultHubCA -notmatch '^[0-9a-f]{64}$') { throw '-DefaultHubCA is not a sha256 fingerprint (64 hex digits)' }
 if ($DefaultHubCA -and -not $DefaultHub) { throw '-DefaultHubCA without -DefaultHub' }
+# The upgrade helper (internal/msiupgrade; the MSI's Binary table, not installed): taken from BinDir,
+# else built here (small, stdlib + x/sys; needs Go).
+$helper = Join-Path (Resolve-Path $BinDir).Path 'longarm-msihelper.exe'
+if (-not (Test-Path $helper)) {
+  $goArch = @{ x64 = 'amd64'; arm64 = 'arm64' }[$Arch]
+  $env:GOOS, $env:GOARCH, $env:CGO_ENABLED = 'windows', $goArch, '0'
+  Push-Location (Join-Path $PSScriptRoot '..\..')
+  try {
+    & go build -trimpath -ldflags '-s -w -H windowsgui' -o $helper ./cmd/longarm-msihelper
+    if ($LASTEXITCODE -ne 0) { throw "go build longarm-msihelper failed ($LASTEXITCODE)" }
+  } finally {
+    Pop-Location
+    Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue
+  }
+}
 $hasTray = if (Test-Path (Join-Path $BinDir 'longarm-tray.exe')) { 1 } else { 0 }
 $wix = Get-Command wix -ErrorAction SilentlyContinue
 if (-not $wix) {
