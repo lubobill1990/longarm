@@ -147,7 +147,13 @@
   (an Azure Blob Storage container or `file:///<dir>`) keeps published
   files there as `<version>/<file>` (+ `.minisig`), with the data dir as
   a cache refilled from the container and checked against the recorded
-  sha256 (the HTTP route and worker self-update). At start the hub
+  sha256 (the HTTP route and worker self-update). Cache writes go through
+  a temp file of their own, checked (size, sha256) before the rename, and
+  publishes of a version are serialized; downloads from the container run
+  two at a time with a 10 minute limit, refuse a blob of the wrong size
+  before reading it (and never read more than the recorded size), and a
+  failed one backs off (1 minute, doubling to 30) until the file is
+  published again. At start the hub
   lists the container, uploads files only its data dir has, and logs
   every file found nowhere (`RELEASE FILES MISSING`); install scripts
   then hand out the newest complete stable version (or "no release

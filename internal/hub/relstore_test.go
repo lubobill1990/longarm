@@ -26,6 +26,12 @@ type memBlob struct {
 	blobs map[string][]byte
 	gets  int
 	fail  error // List and Get fail with it
+	// advertise: the size Get reports (-1 = unknown), instead of the real one
+	advertise map[string]int64
+	// hold: Get waits for it (nil = no wait)
+	hold                  chan struct{}
+	inflight, maxInflight int
+	read                  int64 // bytes read from Get bodies
 }
 
 func newMemBlob() *memBlob { return &memBlob{blobs: map[string][]byte{}} }
@@ -44,7 +50,24 @@ func (m *memBlob) Put(_ context.Context, name string, r io.Reader, size int64, _
 	return nil
 }
 
-func (m *memBlob) Get(_ context.Context, name string) (io.ReadCloser, diag.BlobInfo, error) {
+func (m *memBlob) Get(ctx context.Context, name string) (io.ReadCloser, diag.BlobInfo, error) {
+	m.mu.Lock()
+	m.inflight++
+	m.maxInflight = max(m.maxInflight, m.inflight)
+	hold := m.hold
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.inflight--
+		m.mu.Unlock()
+	}()
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-ctx.Done():
+			return nil, diag.BlobInfo{}, ctx.Err()
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.fail != nil {
@@ -55,7 +78,30 @@ func (m *memBlob) Get(_ context.Context, name string) (io.ReadCloser, diag.BlobI
 	if !ok {
 		return nil, diag.BlobInfo{}, diag.ErrNotFound
 	}
-	return io.NopCloser(bytes.NewReader(b)), diag.BlobInfo{Name: name, Size: int64(len(b))}, nil
+	size := int64(len(b))
+	if a, ok := m.advertise[name]; ok {
+		size = a
+	}
+	return io.NopCloser(&countReader{r: bytes.NewReader(b), m: m}), diag.BlobInfo{Name: name, Size: size}, nil
+}
+
+type countReader struct {
+	r io.Reader
+	m *memBlob
+}
+
+func (c *countReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.m.mu.Lock()
+	c.m.read += int64(n)
+	c.m.mu.Unlock()
+	return n, err
+}
+
+func (m *memBlob) getCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.gets
 }
 
 func (m *memBlob) List(_ context.Context, prefix string) ([]diag.BlobInfo, error) {
@@ -185,7 +231,7 @@ func TestReleaseStoreBlob(t *testing.T) {
 	}
 
 	// a blob that doesn't match the index is refused
-	blob.blobs["1.0.0/longarmd-linux-amd64"] = []byte("tampered")
+	blob.blobs["1.0.0/longarmd-linux-amd64"] = []byte("LONGARMD 1.0.0") // same size
 	if _, err := rs2.file(ctx, longarmd, false); err == nil || !strings.Contains(err.Error(), "sha256") {
 		t.Fatalf("tampered blob: %v", err)
 	}

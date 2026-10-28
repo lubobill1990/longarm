@@ -17,6 +17,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/update"
 )
 
@@ -41,12 +42,27 @@ func (h *Hub) releaseFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		h.log.Warn("release download", "path", r.URL.Path, "err", err)
+		if !errors.Is(err, errFetchBackoff) && r.Context().Err() == nil { // logged when the download failed
+			h.log.Warn("release download", "path", r.URL.Path, "err", err)
+		}
+		w.Header().Set("Retry-After", "60")
 		httpError(w, http.StatusServiceUnavailable, "release store unavailable, try again later")
 		return
 	}
+	// shared open: a publish may replace the file while it is served
+	f, err := platform.OpenShared(p)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
-	http.ServeFile(w, r, p)
+	http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
 }
 
 // releasePath is a local path with version's file name (a release file of

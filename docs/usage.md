@@ -1789,7 +1789,12 @@ Storage container written with the hub's managed identity, or `file:///<dir>`)
 in that container as `<version>/<file>` too; the data dir is then a cache that
 the hub fills from the container (checked against the sha256 it recorded) when
 it lost a file - deploy/azure with `--storage-auth identity`, whose data dir
-dies with the container. A file that is in neither place is logged at every
+dies with the container. Such downloads are bounded: two at a time, 10 minutes
+each (one that the requester abandons goes on for others waiting for the same
+file), a blob whose size isn't the recorded one is refused before it is read,
+and after a failed download (missing, corrupt, storage error) requests for
+that file fail fast (404 / 503) for a minute, doubling up to 30 minutes,
+until it is published again. A file that is in neither place is logged at every
 start; install scripts then hand out the newest *complete* stable version (or
 none), `release push` refuses that version and `release ls` marks the file
 `(missing)`. Publishing the same files again (same names and sha256; no

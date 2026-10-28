@@ -22,6 +22,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/update"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -84,6 +85,9 @@ func addRelease(ctx context.Context, rs *releaseStore, st *store.Store, dir, ver
 	if !channelRE.MatchString(channel) {
 		return nil, fmt.Errorf("invalid channel %q", channel)
 	}
+	// one writer per version: concurrent publishes (or a publish and a
+	// restore) of a version must not interleave their files
+	defer rs.lockVersion(version)()
 	items, err := readRelease(dir, version, channel)
 	if err != nil {
 		return nil, err
@@ -122,7 +126,7 @@ func addRelease(ctx context.Context, rs *releaseStore, st *store.Store, dir, ver
 		if old, ok := existing[r.File]; ok {
 			r = old // the signature the workers were told about
 		}
-		if err := rs.put(ctx, version, r.File, it.src, r.Sig); err != nil {
+		if err := rs.put(ctx, r, it.src, r.Sig); err != nil {
 			return nil, err
 		}
 		added = append(added, r)
@@ -617,7 +621,7 @@ func (s *fleetServer) DownloadRelease(req *pb.ReleaseFileRequest, stream pb.Flee
 	if err != nil {
 		return status.Errorf(codes.Unavailable, "%s/%s: release store: %v", req.Version, req.Name, err)
 	}
-	f, err := os.Open(p)
+	f, err := platform.OpenShared(p) // a publish may replace it meanwhile
 	if err != nil {
 		return status.Errorf(codes.NotFound, "%s/%s: not found", req.Version, req.Name)
 	}
