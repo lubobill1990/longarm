@@ -47,7 +47,9 @@ compromised admins, hubs or workers; level 3 (untrusted code).
 ## Identities
 
 - Every certificate carries an identity URI `longarm://<role>/<name>` and,
-  for devices of a user, `?user=<user>` (`longarm://client/alice-laptop?user=alice`).
+  for devices of a user, `?user=<user>` (`longarm://client/alice-laptop?user=alice`),
+  plus the node's immutable ID (`urn:longarm:node:<uuid>`, see "Node
+  identity").
   The **user** (the owner of everything a device creates) is the `user`
   parameter, or - certificates without one, e.g. from before
   multi-tenancy - the certificate's name.
@@ -67,6 +69,134 @@ compromised admins, hubs or workers; level 3 (untrusted code).
   `longarm admin user remove alice` revokes the certificates of all of
   alice's devices; with `--purge` every worker also kills alice's jobs and
   sessions and deletes alice's data and OS account.
+
+## Node identity
+
+Every node - worker, admin worker, client device, admin device, the holder
+of a release certificate - has a unique, **immutable ID**: a random UUID
+the hub assigns at enrollment (`internal/nodeid`). Its **name** is a
+display name: it can change (`longarm worker rename`, `longarm admin
+rename`, the panel) and, once the node is revoked, be used by a new node.
+Authorization, revocation and the hub's records go by the ID.
+
+**Certificates.** The identity URI SAN `longarm://<role>/<name>[?user=]`
+stays (older binaries read it) and a second URI SAN carries the ID:
+`urn:longarm:node:<uuid>`. CN and OU mirror name and role for humans;
+workers keep the DNS SAN `<name>`. The name in a certificate is the
+node's name when it was issued; the hub records it (`NodeInfo.cert_name`)
+and clients dial a worker by it (TLS server name, longnet relay address)
+while checking that the certificate carries the ID the hub reported - a
+renamed node's old certificate keeps working under its old name, and no
+other node can answer for it. Certificates issued before node IDs carry no
+ID; the hub maps them to their node by **serial** (every certificate it
+issued or saw is recorded with its node's ID), else - a hand-issued one it
+never saw - by name among non-revoked nodes. They get the ID at their next
+renewal, including workers' automatic renewal.
+
+**Names never collide with IDs.** Two rules make every target string mean
+one thing:
+
+1. Names are **unique among non-revoked nodes** - enforced by the hub's
+   database (a unique index over the names of non-revoked nodes) and
+   checked at enrollment, sign-in, pairing and rename. A renamed node's old
+   name stays reserved while its certificate still has it. Revoked nodes
+   keep their names as history; they don't block reuse.
+2. A name never **looks like an ID**: names made only of hex digits and
+   dashes, 4 characters or more (`^[0-9a-fA-F-]{4,}$`), anything that parses
+   as a UUID, and the reserved `id:` / `name:` forms are refused. A name
+   derived from a host name that would break the rule gets a prefix: `w-`
+   for workers (`1234` -> `w-1234`), `d-` for devices (a user `cafe`'s
+   device: `d-cafe`).
+
+**Targets.** Wherever a node is named - `longarm run|exec|session start|
+attach|get|put|tail|forward|...`, `longarm worker share|label|remove|
+rename`, `longarm admin approve|revoke|drain|label|rename|profile assign`,
+port links, the panel's actions, MCP tools - the target is resolved to an ID:
+
+| Target | Means |
+|---|---|
+| `id:<prefix>` | the node whose ID starts with the prefix (dashes and case ignored) |
+| `name:<name>` | the node with that exact name |
+| a full UUID | that node |
+| hex digits and dashes, 4+ characters | an ID prefix (git-style; never a name, rule 2) |
+| anything else | a name |
+
+Among the nodes visible to the caller (others' own workers don't exist for
+a user). A name means the non-revoked node of that name; with none, the one
+revoked node of that name (dispatching to it fails: revoked). A prefix
+needs at least 4 hex digits and must be unique: a prefix (or a name of
+several revoked nodes) matching more than one node is an **error that
+lists the candidates** - short ID, name, owner, state - and nothing is
+ever guessed. With rules 1 and 2 a bare target is a name match or an
+ID/prefix match, never both. On the client, `workers.toml` entries win for
+names (as before), then the hub's list (or its cache).
+
+**Output.** IDs appear next to names in their short form - the shortest
+prefix that is unambiguous among the listed nodes, at least 8 characters
+(`longarm ls`, `longarm worker ls`, `longarm admin nodes`, `longarm jobs`,
+`longarm sessions`, the panel, the tray). JSON gains ID fields, additively:
+`NodeInfo.id` / `cert_name` / `companion_id`, `FleetJob.worker_id`
+(`jobs --json`), `workerId` (`sessions --json`), `PlaceUpdate.worker_id`,
+`FleetEvent.node_id`, `PortLink.from_id` / `to_id`, `Whoami.id`,
+`JoinResponse.id`, MCP `id` / `worker_id`.
+
+**Revocation is by ID.** The revocation list workers get holds the revoked
+certificates' serials (which covers certificates without an ID until they
+expire) and the revoked nodes' IDs (any certificate carrying one is
+refused, until the node's last certificate would have expired). Names are
+never revoked: right after `longarm admin revoke box`, a new node may join
+as `box` - with a new ID, which the old revocation doesn't touch.
+
+**Renaming** (`longarm worker rename <worker> <new>` for owners, `longarm
+admin rename <node> <new>` for admins, the panel's Rename) keeps the ID, so
+jobs, shares, labels, port links and history stay with the node. It is
+audited (`nodes/rename`). A worker that follows renames (longarmd with the
+`node-id` capability) is asked at once to renew its certificate with the
+new name, and restarts itself when a listener depends on the name (longnet);
+older workers keep the old certificate name (clients reach them by it)
+until they are updated. A device whose certificate named no user keeps
+acting as the user of its old name.
+
+**Admin worker pairing.** A worker and the admin worker enrolled with it by
+one pairing are linked by ID (`NodeInfo.companion_id`), not by the
+`-admin` name suffix; the migration links existing pairs (an admin worker
+and the one worker of the same owner on the same host).
+
+**End-to-end trust.** Endorsements bind the ID (see "End-to-end trust"):
+an endorsement made for a node's request that carries its ID signs the ID
+too (`sig2`, next to the old signature that peers before node IDs check),
+and peers that know IDs hold it to the certificate's ID - it stays valid
+through renames and can't be moved to another node. An endorsement made
+before node IDs still binds the **name**: it stays valid for its node while
+the node's certificate has that name, i.e. until a rename. Either way the
+endorsed thing is the node key, and the certificate's TLS key is bound to
+it: a new node that gets an old node's name (after a revocation) has
+another node key, so the old node's endorsement doesn't verify for it -
+there is no window where it inherits trust. With `require_workers`, a
+worker the user targets **by name** must have been endorsed under that
+name (the hub maps names to nodes, and end-to-end trust doesn't take its
+word for it: a renamed worker needs a new endorsement, or a target by ID);
+one targeted by ID or prefix must have an endorsement carrying a matching
+ID. A device holding the user key that endorsed it re-endorses itself
+under its ID after its first renewal with an ID.
+
+**Migration** (hub database schema 4 -> 5, at the first start of a hub
+with this version; one transaction):
+
+- every node gets an ID; names stay as display names; the nodes table is
+  keyed by ID with the unique index over non-revoked names;
+- a name that breaks rule 2 is changed (`w-`/`d-` prefix, then `-2`,
+  `-3`... if taken), with an audit record (`hub/migration`, `nodes/rename`)
+  and a warning in the hub's log; duplicate non-revoked names (impossible
+  before: the name was the key) would get a suffix the same way. The live
+  hub's names (bolu-pair, bolu-pc, e2e-worker, tmia-spike,
+  cpc-bolu1-nyg7h-admin, bolu1-cpc-bolu1-nyg7h, ...) pass unchanged;
+- certificates and audit records get their node's ID (by the old name, the
+  old key); the job cache is re-keyed by worker ID; port links get
+  `from_id` / `to_id`; admin worker pairs get their companion link;
+- existing certificates keep working: the hub maps them by serial, and they
+  get the ID at their next renewal. Old clients and workers keep working:
+  they send names, which the hub resolves; they ignore the new SAN.
 
 ## When users are separated
 
@@ -1164,13 +1294,14 @@ the proof and can't produce one.
   the certificate's TLS key (**binding** - the extension can't be moved to
   another certificate) and, once a user endorsed it, the **endorsement**:
   the user key's signature over the node key, the node's kind (`worker` or
-  `device`), its name and the user. Nodes put it into their CSRs; the hub
+  `device`), its name, the user and - for requests that carry it - the
+  node's ID ("Node identity"). Nodes put it into their CSRs; the hub
   checks the binding and copies it unchanged into the certificate (join and
   every renewal).
 - A worker with trusted users in `<data>/trust/trust.toml` checks every
   client certificate in the TLS handshake: endorsed by the pinned key of the
-  certificate's user, as a device, under the certificate's name, not a
-  denied node key. A client with `require_workers = true` checks workers the
+  certificate's user, as a device, under the certificate's node ID (an
+  endorsement from before node IDs: under its name), not a denied node key. A client with `require_workers = true` checks workers the
   same way (its own user key and the users it added). Refusals are audited
   (`trust/denied`).
 - With trusted users, the hub session's default `[hub] remote_jobs` is

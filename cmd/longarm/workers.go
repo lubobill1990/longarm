@@ -16,6 +16,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/fwcheck"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -259,8 +260,17 @@ func lsCmd() *cobra.Command {
 				}
 				return "\t" + o
 			}
+			// ID: the node ID, shortest unambiguous prefix (8+ characters;
+			// docs/security.md "Node identity"); "-" for workers.toml
+			// entries the hub doesn't know
+			var ids []string
+			for _, r := range rows {
+				ids = append(ids, r.node.GetId())
+			}
+			short := nodeid.ShortIDs(ids)
+			idCol := func(r row) string { return dash(short[r.node.GetId()]) }
 			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			head := "WORKER\tSTATE\tCPU%\tMEM GB\tJOBS\tCLAUDE\tCOPILOT\tDISK FREE\tUPTIME\tTOP CPU\tPATH"
+			head := "WORKER\tID\tSTATE\tCPU%\tMEM GB\tJOBS\tCLAUDE\tCOPILOT\tDISK FREE\tUPTIME\tTOP CPU\tPATH"
 			if owners {
 				head += "\tOWNER"
 			}
@@ -269,12 +279,12 @@ func lsCmd() *cobra.Command {
 			for _, r := range rows {
 				if r.err != nil {
 					failed++
-					fmt.Fprintf(tw, "%s\terror\tERROR: %s\n", r.name, oneLine(r.err))
+					fmt.Fprintf(tw, "%s\t%s\terror\tERROR: %s\n", r.name, idCol(r), oneLine(r.err))
 					continue
 				}
 				m := r.snap
 				if m == nil {
-					fmt.Fprintf(tw, "%s\t%s\t-\t-\t-\t-\t-\t-\t-\t-\t%s%s\n", r.name, r.state, r.path, ownerCol(r))
+					fmt.Fprintf(tw, "%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t-\t-\t%s%s\n", r.name, idCol(r), r.state, r.path, ownerCol(r))
 					continue
 				}
 				agent := func(k string) string {
@@ -295,7 +305,7 @@ func lsCmd() *cobra.Command {
 				if r.node != nil && r.node.ReservedGb > 0 {
 					jobsCol = fmt.Sprintf("%d (%.0fG res)", r.node.JobsActive, r.node.ReservedGb)
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%.1f\t%s/%s\t%s\t%s\t%s\t%s G\t%s\t%s\t%s%s\n", r.name, r.state, m.CpuPercent,
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%.1f\t%s/%s\t%s\t%s\t%s\t%s G\t%s\t%s\t%s%s\n", r.name, idCol(r), r.state, m.CpuPercent,
 					humanBytes(m.MemUsedBytes), humanBytes(m.MemTotalBytes), jobsCol, agent("claude"),
 					agent("copilot"), humanBytes(m.DiskFreeBytes), humanDuration(time.Duration(m.UptimeSeconds)*time.Second),
 					strings.Join(top, ", "), r.path, ownerCol(r))

@@ -61,6 +61,10 @@ type Worker struct {
 	Transport string `toml:"transport"`
 	// CertName is the name in the worker's certificate (default: Name).
 	CertName string `toml:"cert_name"`
+	// ID is the worker's node ID (docs/security.md "Node identity"): a
+	// certificate that carries another ID is refused. Hub-known workers
+	// get it from the hub; "" = not checked.
+	ID string `toml:"id"`
 	// Endpoints are more legs to race against the primary one, as URLs:
 	// "tcp://100.64.0.11:7701", "longnet://relay:7443", "tailscale://longarm-w1".
 	Endpoints []string `toml:"endpoints"`
@@ -72,6 +76,22 @@ type Worker struct {
 	// Note, if set, leads the error when no leg connects (longarm: "worker
 	// X is offline (the hub last saw it 2h ago)").
 	Note string `toml:"-"`
+
+	// TrustName / TrustIDPrefix: what the user typed to target the worker
+	// (a name, or an ID / ID prefix); with end-to-end trust its
+	// endorsement must vouch for it (pki.CheckTarget). Empty: chosen by
+	// the hub (placement) or a workers.toml entry.
+	TrustName     string `toml:"-"`
+	TrustIDPrefix string `toml:"-"`
+}
+
+// DialTarget is what the worker's certificate (and endorsement) must show.
+func (w Worker) DialTarget() pki.DialTarget {
+	cn := w.CertName
+	if cn == "" {
+		cn = w.Name
+	}
+	return pki.DialTarget{CertName: cn, ID: w.ID, Name: w.TrustName, IDPrefix: w.TrustIDPrefix}
 }
 
 // TailscaleConfig is the [tailscale] section for the embedded client node.

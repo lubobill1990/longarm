@@ -13,6 +13,33 @@ export const CPU_C = '#58a6ff'
 export const MEM_C = '#bc8cff'
 export const RTT_C = '#39c5cf'
 
+/** The key of a node: its ID (names can be reused once a node is revoked), else its name (an older hub). */
+export function nodeKey(n: { id?: string; name: string }): string {
+  return n.id || n.name
+}
+
+/**
+ * Shortest unambiguous prefix of each ID among ids, at least 8 characters
+ * (git-style; internal/nodeid.ShortIDs). Empty IDs are left out.
+ */
+export function shortIds(ids: (string | undefined)[]): Record<string, string> {
+  const sorted = [...new Set(ids.filter((x): x is string => !!x).map((x) => x.toLowerCase()))].sort()
+  const common = (a: string, b: string) => {
+    let n = 0
+    while (n < a.length && n < b.length && a[n] === b[n]) n++
+    return n
+  }
+  const out: Record<string, string> = {}
+  sorted.forEach((id, i) => {
+    let n = 8
+    if (i > 0) n = Math.max(n, common(id, sorted[i - 1]) + 1)
+    if (i + 1 < sorted.length) n = Math.max(n, common(id, sorted[i + 1]) + 1)
+    if (n < id.length && id[n - 1] === '-') n++
+    out[id] = id.slice(0, Math.min(n, id.length))
+  })
+  return out
+}
+
 /** green < 60 % <= amber < 85 % <= red (levels.json). */
 export function levelColor(pct: number): string {
   for (const l of LEVELS) {

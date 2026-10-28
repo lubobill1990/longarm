@@ -11,6 +11,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/transport"
+	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
 // The transport policy (DESIGN §4.1 "prefer=tailscale|longnet, race") is the
@@ -119,6 +120,33 @@ func NodeLegs(name string, endpoints []string) []Worker {
 		out[i] = r.w
 	}
 	return out
+}
+
+// WorkerFromNode is WorkerFromEndpoints for a node the hub reported: it is
+// dialed by the name in its certificate (NodeInfo.cert_name: after a
+// rename, until the worker renewed) and must present its node ID.
+func WorkerFromNode(n *pb.NodeInfo) (Worker, bool) {
+	w, ok := WorkerFromEndpoints(n.Name, n.Endpoints)
+	if !ok {
+		return w, false
+	}
+	if n.CertName != "" {
+		w.CertName = n.CertName
+	}
+	w.ID = n.Id
+	return w, true
+}
+
+// NodeLegsOf is NodeLegs for a node the hub reported (WorkerFromNode).
+func NodeLegsOf(n *pb.NodeInfo) []Worker {
+	legs := NodeLegs(n.Name, n.Endpoints)
+	for i := range legs {
+		if n.CertName != "" {
+			legs[i].CertName = n.CertName
+		}
+		legs[i].ID = n.Id
+	}
+	return legs
 }
 
 // WorkerFromEndpoints is a hub-known worker whose legs are all its

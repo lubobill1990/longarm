@@ -262,6 +262,7 @@ exit 255) has none of these features.
 | `job-id-short` | `logs` / `wait` / `kill` / `jobs --id` take a unique prefix or suffix of a job id, or `last` |
 | `jobs-mine` | `jobs --mine` / `--all` (the table's defaults: 20 rows, admins their own jobs) |
 | `doctor-json` | `longarm doctor --json` / `longarmd doctor --json` (see [`doctor --json`](#doctor---json)) |
+| `node-ids` | node IDs: a worker target may be a name, a node ID, a unique ID prefix, `id:<prefix>` or `name:<name>`; `longarm worker rename`, `longarm admin rename`; IDs in listings and JSON (`workerId`, `id`) - see [Node IDs](#node-ids-and-targets) |
 
 The session and tail features also need the worker's (`session-start`,
 `session-send`, `session-send-if-idle`, `session-stop`, `session-info`,
@@ -273,7 +274,7 @@ The session and tail features also need the worker's (`session-start`,
 
 ```json
 {
-  "jobs": [ { "worker": "w1", "job": { "spec": { "id": "...", ... }, "state": "JOB_STATE_RUNNING", ... }, "workerOnline": true } ],
+  "jobs": [ { "worker": "w1", "workerId": "3f2a9c1e-...", "job": { "spec": { "id": "...", ... }, "state": "JOB_STATE_RUNNING", ... }, "workerOnline": true } ],
   "source": "hub",
   "unreachable": ["w2"]
 }
@@ -281,7 +282,8 @@ The session and tail features also need the worker's (`session-start`,
 
 `jobs` is `FleetJobsResponse.jobs` as before (protojson field names; 64-bit
 numbers are strings; fields at their zero value are left out); it is `[]`
-when empty (the key used to be left out). `source` says who answered:
+when empty (the key used to be left out). `workerId` is the worker's node
+ID (left out for a worker the hub doesn't know); `worker` its name. `source` says who answered:
 `"hub"` (its fleet-wide job index) or `"workers"` (the hub was unreachable
 or none is configured: longarm asked the known workers directly, with a
 note on stderr). `unreachable` (only with `"source": "workers"`, left out
@@ -1264,6 +1266,27 @@ owners, who keep acting on everything as before; with `users` set or
 refuses to start with an unknown `admins` value or an invalid user name and
 logs the effective policy at start (`access policy ...`).
 
+### Node IDs and targets
+
+Every node has an immutable ID (a UUID) next to its name, which can change
+(`longarm worker rename`, `longarm admin rename`) and, once the node is
+revoked, be taken by a new node. Listings show the shortest unambiguous ID
+prefix (8+ characters) next to names (`longarm ls`, `worker ls`, `admin
+nodes`, `jobs` and `sessions`: NODE). Wherever a worker or node is named, the
+target may be:
+
+```sh
+longarm exec box -- hostname                # a name
+longarm exec 3f2a9c1e -- hostname           # a unique ID prefix (4+ hex digits), or the full ID
+longarm exec id:3f2a -- hostname            # explicitly an ID prefix
+longarm exec name:box -- hostname           # explicitly a name
+```
+
+A string of hex digits and dashes (4+ characters) is always an ID: names
+never look like that. A prefix that matches several nodes is an error listing
+them (ID, name, owner, state); nothing is guessed. See docs/security.md
+"Node identity" for the rules, revocation by ID and the migration.
+
 ### Your own workers
 
 Any user can register their **own** machines as workers and use them from
@@ -1292,6 +1315,7 @@ longarm worker label <worker> pool=devbox [gpu-]...   # set (KEY=VALUE) / delete
 longarm worker share <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker unshare <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker remove <worker>            # revoke it (owner or admin); also: worker rm
+longarm worker rename <worker> <new-name> # rename it (owner or admin; it keeps its ID; audited)
 longarm ls                                # an OWNER column appears once a worker has an owner
                                           # ("-" = fleet, "+shared" = shared by its owner)
 ```

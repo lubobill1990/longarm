@@ -1,7 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { decodeB64, fmtAgo, fmtBytes, fmtRTT, fmtUptime, isActive, isRelayed, levelColor, logDecoder, memPct, num, stateName, stripAnsi, until } from './format'
+import { decodeB64, fmtAgo, fmtBytes, fmtRTT, fmtUptime, isActive, isRelayed, levelColor, logDecoder, memPct, nodeKey, num, shortIds, stateName, stripAnsi, until } from './format'
 import { niceMax } from '../components/charts'
 import { formatTools, parseTools } from '../panel/ProfilesPage'
+
+describe('node ids', () => {
+  it('shortIds: shortest unambiguous prefix, at least 8 characters (internal/nodeid.ShortIDs)', () => {
+    const a = '3f2a9c1e-4b5d-4c3e-8f00-1234567890ab'
+    const b = '3f2a9c1e-4b6d-4c3e-8f00-1234567890ab'
+    const c = '77aa0000-0000-4000-8000-000000000001'
+    const s = shortIds([a, b, c, undefined, ''])
+    expect(s[c]).toBe('77aa0000')
+    expect(s[a]).toBe('3f2a9c1e-4b5')
+    expect(s[b]).toBe('3f2a9c1e-4b6')
+    expect(Object.keys(s)).toHaveLength(3)
+  })
+  it('nodeKey: the id, else the name (an older hub)', () => {
+    expect(nodeKey({ id: 'x', name: 'box' })).toBe('x')
+    expect(nodeKey({ name: 'box' })).toBe('box')
+  })
+})
 
 describe('format', () => {
   it('levelColor thresholds 60/85 (internal/tray/levels.json)', () => {

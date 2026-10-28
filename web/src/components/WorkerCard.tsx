@@ -51,6 +51,11 @@ export function WorkerCard({ w, actions, now = Date.now() }: { w: PoolWorker; ac
       <div className="head">
         <span className="dot" style={{ background: dot }} />
         <span className="name">{w.name}</span>
+        {w.node?.id && (
+          <span className="mono faint small" title={`node ID ${w.node.id}`} data-testid={`id-${w.name}`}>
+            {w.node.id.slice(0, 8)}
+          </span>
+        )}
         <span className="sub">{sub}</span>
         {draining && (
           <span className="pill warn" title={w.node?.drain_reason}>

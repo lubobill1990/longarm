@@ -95,7 +95,8 @@ you are logged on; no password), elsewhere longarmd service install.`,
 					return printJSON(resp)
 				}
 				tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(tw, "WORKER\tKIND\tOWNER\tSHARED WITH\tSTATE\tJOBS\tCPU%\tMEM GB")
+				short := shortIDsOf(resp.Nodes)
+				fmt.Fprintln(tw, "WORKER\tID\tKIND\tOWNER\tSHARED WITH\tSTATE\tJOBS\tCPU%\tMEM GB")
 				for _, kind := range []string{"mine", "shared", "fleet"} {
 					for _, n := range resp.Nodes {
 						if workerKind(n, me.User) != kind {
@@ -114,7 +115,7 @@ you are logged on; no password), elsewhere longarmd service install.`,
 						if n.AdminWorker {
 							k += " (admin)" // runs commands as SYSTEM; owner-only, never placed
 						}
-						fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", n.Name, k, dash(n.Owner), sharesString(n.Shares), st,
+						fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", n.Name, dash(short[n.Id]), k, dash(n.Owner), sharesString(n.Shares), st,
 							n.JobsActive, cpu, mem)
 					}
 				}
@@ -153,6 +154,32 @@ worker reports itself (longarmd.toml [hub] labels) are changed there.`,
 						fmt.Fprintf(os.Stderr, "longarm: %s=%s stays: the worker reports it itself (longarmd.toml [hub] labels)\n", k, got)
 					}
 				}
+				return nil
+			})
+		},
+	})
+	c.AddCommand(&cobra.Command{
+		Use:   "rename <worker> <new-name>",
+		Short: "Rename a worker of yours (admins: any worker); it keeps its ID",
+		Long: `Rename a worker of yours (admins: any worker). It keeps its ID, so jobs,
+links and shares stay with it; <worker> is a name, an ID, a unique ID prefix,
+id:<prefix> or name:<name>. The new name must not be in use by another node
+that isn't revoked and must not look like an ID. Audited.
+
+With end-to-end trust, an endorsement made before node IDs is bound to the
+old name: endorse the worker again (longarmd trust request / longarm trust
+endorse), or target it by ID.`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
+				n, err := h.Fleet().RenameWorker(ctx, &pb.RenameNodeRequest{Target: args[0], NewName: args[1]})
+				if status.Code(err) == codes.Unimplemented {
+					return errors.New("this hub is too old to rename workers (update it)")
+				}
+				if err != nil {
+					return err
+				}
+				printRenamed(n)
 				return nil
 			})
 		},

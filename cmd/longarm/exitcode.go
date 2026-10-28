@@ -152,6 +152,10 @@ var cliFeatures = []string{
 	"job-id-short",         // logs / wait / kill / jobs --id: a unique prefix or suffix of a job id, or "last"
 	"jobs-mine",            // jobs --mine / --all
 	"doctor-json",          // longarm doctor --json (docs/usage.md#doctor---json)
+	// node identity (docs/security.md#node-identity): targets by name, id,
+	// id prefix, id:/name:; worker rename / admin rename; ids in listings
+	// and JSON (worker_id / workerId / id)
+	"node-ids",
 }
 
 func versionCmd() *cobra.Command {

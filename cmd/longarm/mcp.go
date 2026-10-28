@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -23,6 +24,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/client"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/telemetry"
 	"github.com/lubobill1990/longarm/internal/version"
@@ -135,11 +137,12 @@ func newMCPServer(s *session) *mcp.Server {
 // ---------------------------------------------------------------- status
 
 type statusIn struct {
-	Worker string `json:"worker,omitempty" jsonschema:"only this worker"`
+	Worker string `json:"worker,omitempty" jsonschema:"only this worker (name, node id, or unique id prefix)"`
 }
 
 type workerStatus struct {
 	Name       string            `json:"name"`
+	ID         string            `json:"id,omitempty"` // the node ID (targets accept it, or a unique prefix)
 	State      string            `json:"state"`
 	CPUPercent float64           `json:"cpu_percent"`
 	FreeGB     float64           `json:"free_gb"`
@@ -180,11 +183,21 @@ func (t *mcpTools) status(ctx context.Context, _ *mcp.CallToolRequest, in status
 	out := statusOut{Workers: []workerStatus{}}
 	if nodes, ok := t.s.hubNodes(ctx, false); ok {
 		out.Source = "hub"
+		var only *pb.NodeInfo
+		if in.Worker != "" {
+			t, err := nodeid.ParseTarget(in.Worker)
+			if err != nil {
+				return nil, out, err
+			}
+			if only, err = resolveNode(t, nodes, "worker"); err != nil {
+				return nil, out, err
+			}
+		}
 		for _, n := range nodes {
-			if in.Worker != "" && n.Name != in.Worker {
+			if only != nil && n != only {
 				continue
 			}
-			w := workerStatus{Name: n.Name, State: "online", Labels: n.Labels, Mirrors: n.Mirrors, ReservedGB: n.ReservedGb, Owner: n.Owner}
+			w := workerStatus{Name: n.Name, ID: n.Id, State: "online", Labels: n.Labels, Mirrors: n.Mirrors, ReservedGB: n.ReservedGb, Owner: n.Owner}
 			switch {
 			case n.State != "approved":
 				w.State = n.State
@@ -218,7 +231,7 @@ func (t *mcpTools) status(ctx context.Context, _ *mcp.CallToolRequest, in status
 // ---------------------------------------------------------------- jobs
 
 type cmdSpec struct {
-	Worker    string            `json:"worker,omitempty" jsonschema:"worker name, or \"auto\" (default) to let the scheduler pick"`
+	Worker    string            `json:"worker,omitempty" jsonschema:"worker name, node id or unique id prefix, or \"auto\" (default) to let the scheduler pick"`
 	Command   string            `json:"command,omitempty" jsonschema:"shell command line (pwsh on Windows workers, sh elsewhere); or use argv"`
 	Argv      []string          `json:"argv,omitempty" jsonschema:"program and arguments, run without a shell"`
 	Cwd       string            `json:"cwd,omitempty" jsonschema:"working directory on the worker (default: home; with repo: relative to the worktree)"`
@@ -235,6 +248,7 @@ type execIn struct {
 
 type jobOut struct {
 	Worker    string `json:"worker"`
+	WorkerID  string `json:"worker_id,omitempty"` // the worker's node ID
 	JobID     string `json:"job_id"`
 	State     string `json:"state"`
 	ExitCode  *int32 `json:"exit_code,omitempty"`
@@ -456,7 +470,8 @@ func (t *mcpTools) exec(ctx context.Context, _ *mcp.CallToolRequest, in execIn) 
 	if j, err := waitUpTo(ctx, conn, job.Spec.Id, timeout); err == nil && j != nil {
 		job = j
 	}
-	out := toJobOut(worker, job)
+	out := toJobOut(cmp.Or(conn.Worker.Name, worker), job)
+	out.WorkerID = conn.Worker.ID
 	if !terminalState(job.State) {
 		out.Hint = "still running: use fleet_job_wait / fleet_job_logs with this job_id"
 	}
@@ -483,7 +498,8 @@ func (t *mcpTools) submit(ctx context.Context, _ *mcp.CallToolRequest, in submit
 		return nil, jobOut{}, err
 	}
 	conn.Close()
-	out := toJobOut(worker, job)
+	out := toJobOut(cmp.Or(conn.Worker.Name, worker), job)
+	out.WorkerID = conn.Worker.ID
 	out.Hint = "use fleet_job_wait to block until it ends, fleet_job_logs to read output"
 	return nil, out, nil
 }
@@ -603,7 +619,7 @@ func (t *mcpTools) kill(ctx context.Context, _ *mcp.CallToolRequest, in jobRef) 
 // ---------------------------------------------------------------- files
 
 type readIn struct {
-	Worker   string `json:"worker" jsonschema:"worker name"`
+	Worker   string `json:"worker" jsonschema:"worker: name, node id or unique id prefix"`
 	Path     string `json:"path" jsonschema:"file path on the worker"`
 	Offset   int64  `json:"offset,omitempty" jsonschema:"byte offset"`
 	MaxBytes int    `json:"max_bytes,omitempty" jsonschema:"bytes to read (default 65536, max 1048576)"`
@@ -667,7 +683,7 @@ func (t *mcpTools) read(ctx context.Context, _ *mcp.CallToolRequest, in readIn) 
 }
 
 type writeIn struct {
-	Worker   string `json:"worker" jsonschema:"worker name"`
+	Worker   string `json:"worker" jsonschema:"worker: name, node id or unique id prefix"`
 	Path     string `json:"path" jsonschema:"file path on the worker (parent directories are created)"`
 	Content  string `json:"content" jsonschema:"file content"`
 	Encoding string `json:"encoding,omitempty" jsonschema:"text (default) or base64"`
@@ -732,7 +748,7 @@ func parentDir(p string) string {
 
 type syncIn struct {
 	Dir           string `json:"dir,omitempty" jsonschema:"local git checkout (default: the current directory)"`
-	Worker        string `json:"worker" jsonschema:"worker name"`
+	Worker        string `json:"worker" jsonschema:"worker: name, node id or unique id prefix"`
 	Path          string `json:"path,omitempty" jsonschema:"worktree path on the worker (default <home>/longarm-sync/<repo>)"`
 	Ref           string `json:"ref,omitempty" jsonschema:"commit to sync (default HEAD; uncommitted changes only with HEAD)"`
 	CommittedOnly bool   `json:"committed_only,omitempty" jsonschema:"leave out uncommitted changes and untracked files"`

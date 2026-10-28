@@ -91,7 +91,7 @@ function normFields<T>(raw: unknown, fields: string[]): T {
 }
 
 const STATUS_FIELDS = ['id', 'state', 'error', 'connections', 'active', 'bytes_sent', 'bytes_received', 'path', 'updated_at', 'refused']
-const LINK_FIELDS = ['id', 'owner', 'from', 'to', 'port', 'listen_port', 'created_at', 'expires_at', 'job_id', 'created_by']
+const LINK_FIELDS = ['id', 'owner', 'from', 'to', 'port', 'listen_port', 'created_at', 'expires_at', 'job_id', 'created_by', 'from_id', 'to_id']
 
 /** A PortLink in either JSON spelling -> snake_case. */
 export function normPortLink(raw: unknown): PortLink {
@@ -115,6 +115,8 @@ export const hubApi = {
   setLabels: (name: string, labels: Record<string, string>) => put<NodeInfo>(`/api/nodes/${enc(name)}/labels`, labels),
   assignProfile: (name: string, profile: string) => put<NodeInfo>(`/api/nodes/${enc(name)}/profile`, { profile }),
   toolchainApply: (name: string) => post<NodeInfo>(`/api/nodes/${enc(name)}/toolchain/apply`),
+  /** rename a node (admins: any; users: their own workers); it keeps its ID */
+  rename: (target: string, name: string) => post<NodeInfo>(`/api/nodes/${enc(target)}/rename`, { name }),
   jobs: (q: { worker?: string; states?: string[]; limit?: number } = {}) => {
     const p = new URLSearchParams()
     if (q.worker) p.set('worker', q.worker)
@@ -138,7 +140,7 @@ export const hubApi = {
     for (const k of kinds) h[k] = (d) => onEvent(d as FleetEvent)
     return sse(`/api/events?kinds=${kinds.join(',')}`, h)
   },
-  history: () => get<{ nodes?: { node: string; points?: MetricsPoint[] }[] }>('/api/history').then((r) => r.nodes ?? []),
+  history: () => get<{ nodes?: { node: string; node_id?: string; points?: MetricsPoint[] }[] }>('/api/history').then((r) => r.nodes ?? []),
   links: () => get<{ reports?: LinkReport[] }>('/api/links').then((r) => r.reports ?? []),
   // port links (longarm link): the login's own, administrators see everybody's
   portLinks: () => get<{ links?: unknown[] }>('/api/port-links').then((r) => (r.links ?? []).map(normPortLink)),

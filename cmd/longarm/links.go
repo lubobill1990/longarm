@@ -1,7 +1,9 @@
 package main
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/portlink"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -79,6 +82,24 @@ or with longarm link rm.`,
 				req.Ttl = durationpb.New(ttl)
 			}
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
+				// targets (names, IDs, prefixes) -> the names the workers'
+				// certificates have, which the signed consent and the
+				// workers go by
+				if nodes, ok := s.hubNodes(ctx, false); ok {
+					for _, p := range []*string{&req.From, &req.To} {
+						t, err := nodeid.ParseTarget(*p)
+						if err != nil {
+							return usagef("%s", err.Error())
+						}
+						n, err := resolveNode(t, nodes, "worker")
+						if errors.Is(err, nodeid.ErrAmbiguous) {
+							return usagef("%s", err.Error())
+						}
+						if err == nil {
+							*p = cmp.Or(n.CertName, n.Name)
+						}
+					}
+				}
 				if err := signLink(s.cfg.Dir, req); err != nil {
 					return err
 				}
