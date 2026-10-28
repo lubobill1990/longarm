@@ -102,7 +102,7 @@ $adminDisable = Query $default "SELECT ``Condition`` FROM ``ControlCondition`` W
 if ($adminDisable[0] -notlike '*DEFAULT_ROLES="client"*') { throw "default.msi: ModeDlg's admin checkbox is enabled for a client ('$($adminDisable[0])')" }
 $adminDisable = Query $default "SELECT ``Condition`` FROM ``ControlCondition`` WHERE ``Dialog_`` = 'RolesDlg' AND ``Control_`` = 'Admin' AND ``Action`` = 'Disable'"
 if ($adminDisable[0] -notlike '*ROLES="client"*') { throw "default.msi: RolesDlg's admin checkbox is enabled for a client ('$($adminDisable[0])')" }
-$texts = Query $default "SELECT ``Text`` FROM ``Control`` WHERE ``Dialog_`` = 'ModeDlg'"
+$texts = Query $default "SELECT ``Text`` FROM ``RadioButton`` WHERE ``Property`` = 'DEFAULT_ROLES'"
 foreach ($t in 'This is my &everyday computer: send jobs to workers', 'This &machine runs jobs (Dev Box, build machine)') {
   if ($texts -notcontains $t) { throw "default.msi: ModeDlg has no '$t'" }
 }
