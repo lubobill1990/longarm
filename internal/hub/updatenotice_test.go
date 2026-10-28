@@ -9,7 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
@@ -113,5 +117,47 @@ func TestUpdateNotice(t *testing.T) {
 	resp, err = fs.CheckUpdate(wctx, &pb.UpdateCheckRequest{Os: "windows", Arch: "amd64", Version: "1.0.0", Channel: "beta"})
 	if err != nil || resp.LatestVersion != "" {
 		t.Fatalf("CheckUpdate on beta: %v %v", resp, err)
+	}
+}
+
+// TestPushReleaseAllowNone: no worker can self-update - with allow_none
+// the push answers state "none" listing them (nothing started), without
+// it FailedPrecondition as before.
+func TestPushReleaseAllowNone(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	if _, err := InitCA(dir); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{DataDir: dir, Listen: "127.0.0.1:0", RelayUDP: "off", HTTP: "off"}
+	if err := cfg.applyDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Open(cfg, slog.New(slog.NewTextHandler(&syncWriter{w: &bytes.Buffer{}}, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	files := map[string]string{"longarmd-windows-amd64.exe": "d", "longarmd-windows-amd64.exe.minisig": "sig"}
+	if _, err := addRelease(ctx, h.rel, h.store, releaseDir(t, files), "1.2.0", "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	for _, name := range []string{"msi-b", "msi-a"} {
+		h.nodes[name] = &node{rec: &store.Node{Name: name, Role: "worker", State: stateApproved, Version: "1.1.0"}}
+	}
+	h.mu.Unlock()
+	if _, err := h.pushRelease(&pb.PushReleaseRequest{Version: "1.2.0"}, "test"); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("without allow_none: %v", err)
+	}
+	r, err := h.pushRelease(&pb.PushReleaseRequest{Version: "1.2.0", AllowNone: true}, "test")
+	if err != nil || r.State != rolloutNone || strings.Join(r.NotCapable, ",") != "msi-a,msi-b" {
+		t.Fatalf("allow_none: %v %v", r, err)
+	}
+	h.mu.Lock()
+	started := h.rollout != nil
+	h.mu.Unlock()
+	if started {
+		t.Fatal("a rollout was started")
 	}
 }

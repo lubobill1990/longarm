@@ -22,6 +22,7 @@ const (
 	exitHubUnavailable = 69  // --hub-only: no hub configured or it did not answer
 	exitTempFail       = 75  // refused for capacity, quota or rate: retry later
 	exitNoPerm         = 77  // not allowed (permission, authentication, trust)
+	exitNoneCapable    = 79  // release push --allow-none: no worker can self-update, nothing rolled out
 	exitKilled         = 137 // job was killed
 	exitLost           = 254 // job was lost (supervisor vanished)
 	exitLongarmError   = 255 // transport, hub or worker failure; anything else

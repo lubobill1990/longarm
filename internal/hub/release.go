@@ -249,6 +249,9 @@ const (
 	rolloutDone    = "done"
 	rolloutHalted  = "halted"
 	rolloutAborted = "aborted"
+	// rolloutNone: PushRelease with allow_none found no worker that can
+	// self-update; only an answer, never stored
+	rolloutNone = "none"
 )
 
 func (h *Hub) loadRollout() {
@@ -384,6 +387,13 @@ func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, e
 		cands = append(cands, n)
 	}
 	sort.Strings(cantUpdate)
+	if len(cands) == 0 && req.AllowNone {
+		// nothing to roll out; the workers that can't self-update get the
+		// version as a notice (CheckUpdate.latest_version: the tray's
+		// MSI banner, longarmd status) - the current rollout stays as is
+		return &pb.Rollout{Version: req.Version, Channel: channel, State: rolloutNone, NotCapable: cantUpdate,
+			Message: fmt.Sprintf("no worker of channel %s can self-update; %d update with the MSI (the tray's banner) or the install script", channel, len(cantUpdate))}, nil
+	}
 	if len(cands) == 0 {
 		return nil, status.Errorf(codes.FailedPrecondition, "no approved worker of channel %s can self-update (not capable: %v)", channel, cantUpdate)
 	}

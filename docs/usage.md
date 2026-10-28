@@ -199,6 +199,7 @@ Programs driving longarm can rely on these exit codes:
 | 69 | `jobs --hub-only`: no hub configured, or it did not answer | retry later, or ask the workers (without `--hub-only`) |
 | 75 | refused for capacity, quota or rate (`ResourceExhausted`): no worker passes the gate with `--no-queue`, a quota, too many attempts; `session send --if-idle-ms`: input arrived within the window (nothing sent); too many `tail`s open on the worker | retry later |
 | 77 | not allowed: `PermissionDenied`, `Unauthenticated`, a refusal of end-to-end trust, an expired sign-in (`your sign-in expired on <date>: run longarm login`); `--git-auth forward` with `--repo <url>` (`run`, `session start`): no credential for the URL could be obtained on this machine (nothing was submitted) | fix the credentials or the rights |
+| 79 | `admin release push --allow-none`: no worker of the channel can update itself (MSI installs, user-session workers), nothing was rolled out; the message lists them | nothing to do: they update with the MSI (the tray's banner) or the install script |
 | 137 | `wait` / `run --wait`: the job was killed; `session start`: the session was killed before it ran | |
 | 254 | `wait` / `run --wait`: the job was lost (its supervisor vanished; outcome unknown); `session start` likewise | |
 | 255 | anything else: worker or hub unreachable (also a worker the hub reports offline), timeouts, `Aborted`, internal errors | the outcome may be unknown: look the job up (`jobs --id`) or retry with the same `--id` |

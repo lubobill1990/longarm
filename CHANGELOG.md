@@ -117,6 +117,11 @@
   shows "Update to X", downloads the MSI, checks the hub's sha256 and the
   release signature, and runs it. The hub serves `GET /releases/latest.json`
   and fills `WhoamiResponse.latest_version` / `latest_path`.
+- `longarm admin release push --allow-none`: when no worker of the channel
+  can self-update (MSI installs, user-session workers) it lists them and
+  exits 79 instead of failing; release.yml's rollout job turns that into a
+  warning (they update through the tray's MSI banner), while a halted or
+  rolled-back rollout still fails the job.
 - Panel: "Sign in with Microsoft" is the login page's first button (the
   password + TOTP form folds under "Panel account"; no injected link any
   more), users get "My machines" (their workers and devices, one row per

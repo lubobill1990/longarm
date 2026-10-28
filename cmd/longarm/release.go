@@ -74,7 +74,7 @@ func releaseCmd() *cobra.Command {
 
 	var canary, batch int32
 	var wait, batchWait time.Duration
-	var downgrade, follow bool
+	var downgrade, follow, allowNone bool
 	var nodes []string
 	push := &cobra.Command{
 		Use:   "push <version>",
@@ -86,17 +86,28 @@ follow in batches of --batch (0 = all at once) with --batch-wait between
 batches. A worker whose new version fails its 60 s health check rolls back
 by itself and halts the rollout. Example:
 
-  longarm admin release push 1.4.0 --canary 1 --wait 30m`,
+  longarm admin release push 1.4.0 --canary 1 --wait 30m
+
+Workers that can't update themselves (MSI installs under Program Files,
+user-session workers) are skipped: they get the version as a notice and
+update with the MSI (the tray's "Update to" banner) or the install script.
+When no worker of the channel can self-update, push fails - with
+--allow-none it lists them and exits 79 instead (CI: a warning, not a
+failure).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
 				r, err := h.Admin().PushRelease(ctx, &pb.PushReleaseRequest{Version: args[0], Canary: canary,
 					Wait: durationpb.New(wait), Batch: batch, BatchWait: durationpb.New(batchWait),
-					AllowDowngrade: downgrade, Nodes: nodes})
+					AllowDowngrade: downgrade, Nodes: nodes, AllowNone: allowNone})
 				if err != nil {
 					return err
 				}
 				printRollout(r)
+				if r.State == "none" {
+					return &exitError{code: exitNoneCapable, msg: fmt.Sprintf("nothing rolled out: no worker can self-update %s (not capable: %s); they update with the MSI (the tray's banner) or the install script",
+						r.Version, strings.Join(r.NotCapable, ", "))}
+				}
 				if follow {
 					return followRollout(cmd, h)
 				}
@@ -111,6 +122,7 @@ by itself and halts the rollout. Example:
 	push.Flags().BoolVar(&downgrade, "allow-downgrade", false, "also move workers that run a newer version")
 	push.Flags().StringSliceVar(&nodes, "nodes", nil, "only these workers")
 	push.Flags().BoolVarP(&follow, "follow", "f", false, "follow the rollout until it ends")
+	push.Flags().BoolVar(&allowNone, "allow-none", false, "no worker can self-update: list them and exit 79 instead of failing")
 
 	status := &cobra.Command{
 		Use: "status", Short: "Show the current rollout", Args: cobra.NoArgs,

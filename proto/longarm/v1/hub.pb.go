@@ -8159,8 +8159,12 @@ type PushReleaseRequest struct {
 	BatchWait      *durationpb.Duration   `protobuf:"bytes,5,opt,name=batch_wait,json=batchWait,proto3" json:"batch_wait,omitempty"` // between batches (default 5m)
 	AllowDowngrade bool                   `protobuf:"varint,6,opt,name=allow_downgrade,json=allowDowngrade,proto3" json:"allow_downgrade,omitempty"`
 	Nodes          []string               `protobuf:"bytes,7,rep,name=nodes,proto3" json:"nodes,omitempty"` // limit to these workers (default: all of the channel)
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// no worker of the channel can self-update (MSI installs, user-session
+	// workers: they update through the tray's MSI banner): answer a Rollout
+	// in state "none" listing them instead of FailedPrecondition
+	AllowNone     bool `protobuf:"varint,8,opt,name=allow_none,json=allowNone,proto3" json:"allow_none,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PushReleaseRequest) Reset() {
@@ -8242,6 +8246,13 @@ func (x *PushReleaseRequest) GetNodes() []string {
 	return nil
 }
 
+func (x *PushReleaseRequest) GetAllowNone() bool {
+	if x != nil {
+		return x.AllowNone
+	}
+	return false
+}
+
 type GetRolloutRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -8282,7 +8293,7 @@ type Rollout struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Version        string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
 	Channel        string                 `protobuf:"bytes,2,opt,name=channel,proto3" json:"channel,omitempty"`
-	State          string                 `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"` // canary | rolling | done | halted | aborted
+	State          string                 `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"` // canary | rolling | done | halted | aborted | none (allow_none)
 	Canary         []string               `protobuf:"bytes,4,rep,name=canary,proto3" json:"canary,omitempty"`
 	Targeted       []string               `protobuf:"bytes,5,rep,name=targeted,proto3" json:"targeted,omitempty"` // nodes told to run version
 	Updated        []string               `protobuf:"bytes,6,rep,name=updated,proto3" json:"updated,omitempty"`   // nodes that report version and are healthy
@@ -8296,8 +8307,11 @@ type Rollout struct {
 	BatchWait      *durationpb.Duration   `protobuf:"bytes,14,opt,name=batch_wait,json=batchWait,proto3" json:"batch_wait,omitempty"`
 	Previous       string                 `protobuf:"bytes,15,opt,name=previous,proto3" json:"previous,omitempty"` // version most nodes ran before
 	AllowDowngrade bool                   `protobuf:"varint,16,opt,name=allow_downgrade,json=allowDowngrade,proto3" json:"allow_downgrade,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// state "none" (PushReleaseRequest.allow_none): the workers of the
+	// channel that can't self-update; nothing was started
+	NotCapable    []string `protobuf:"bytes,17,rep,name=not_capable,json=notCapable,proto3" json:"not_capable,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Rollout) Reset() {
@@ -8440,6 +8454,13 @@ func (x *Rollout) GetAllowDowngrade() bool {
 		return x.AllowDowngrade
 	}
 	return false
+}
+
+func (x *Rollout) GetNotCapable() []string {
+	if x != nil {
+		return x.NotCapable
+	}
+	return nil
 }
 
 type LeaveRequest struct {
@@ -10077,7 +10098,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x12include_incomplete\x18\x01 \x01(\bR\x11includeIncomplete\"}\n" +
 	"\x14ListReleasesResponse\x126\n" +
 	"\breleases\x18\x01 \x03(\v2\x1a.longarm.v1.ReleaseVersionR\breleases\x12-\n" +
-	"\arollout\x18\x02 \x01(\v2\x13.longarm.v1.RolloutR\arollout\"\x84\x02\n" +
+	"\arollout\x18\x02 \x01(\v2\x13.longarm.v1.RolloutR\arollout\"\xa3\x02\n" +
 	"\x12PushReleaseRequest\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x16\n" +
 	"\x06canary\x18\x02 \x01(\x05R\x06canary\x12-\n" +
@@ -10086,8 +10107,10 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\n" +
 	"batch_wait\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\tbatchWait\x12'\n" +
 	"\x0fallow_downgrade\x18\x06 \x01(\bR\x0eallowDowngrade\x12\x14\n" +
-	"\x05nodes\x18\a \x03(\tR\x05nodes\"\x13\n" +
-	"\x11GetRolloutRequest\"\xa9\x04\n" +
+	"\x05nodes\x18\a \x03(\tR\x05nodes\x12\x1d\n" +
+	"\n" +
+	"allow_none\x18\b \x01(\bR\tallowNone\"\x13\n" +
+	"\x11GetRolloutRequest\"\xca\x04\n" +
 	"\aRollout\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x18\n" +
 	"\achannel\x18\x02 \x01(\tR\achannel\x12\x14\n" +
@@ -10108,7 +10131,9 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\n" +
 	"batch_wait\x18\x0e \x01(\v2\x19.google.protobuf.DurationR\tbatchWait\x12\x1a\n" +
 	"\bprevious\x18\x0f \x01(\tR\bprevious\x12'\n" +
-	"\x0fallow_downgrade\x18\x10 \x01(\bR\x0eallowDowngrade\"<\n" +
+	"\x0fallow_downgrade\x18\x10 \x01(\bR\x0eallowDowngrade\x12\x1f\n" +
+	"\vnot_capable\x18\x11 \x03(\tR\n" +
+	"notCapable\"<\n" +
 	"\fLeaveRequest\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\x12\x14\n" +
 	"\x05force\x18\x02 \x01(\bR\x05force\"=\n" +

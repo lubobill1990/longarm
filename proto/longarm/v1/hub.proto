@@ -1133,6 +1133,10 @@ message PushReleaseRequest {
   google.protobuf.Duration batch_wait = 5; // between batches (default 5m)
   bool allow_downgrade = 6;
   repeated string nodes = 7; // limit to these workers (default: all of the channel)
+  // no worker of the channel can self-update (MSI installs, user-session
+  // workers: they update through the tray's MSI banner): answer a Rollout
+  // in state "none" listing them instead of FailedPrecondition
+  bool allow_none = 8;
 }
 
 message GetRolloutRequest {}
@@ -1140,7 +1144,7 @@ message GetRolloutRequest {}
 message Rollout {
   string version = 1;
   string channel = 2;
-  string state = 3; // canary | rolling | done | halted | aborted
+  string state = 3; // canary | rolling | done | halted | aborted | none (allow_none)
   repeated string canary = 4;
   repeated string targeted = 5; // nodes told to run version
   repeated string updated = 6; // nodes that report version and are healthy
@@ -1154,6 +1158,9 @@ message Rollout {
   google.protobuf.Duration batch_wait = 14;
   string previous = 15; // version most nodes ran before
   bool allow_downgrade = 16;
+  // state "none" (PushReleaseRequest.allow_none): the workers of the
+  // channel that can't self-update; nothing was started
+  repeated string not_capable = 17;
 }
 
 message LeaveRequest {

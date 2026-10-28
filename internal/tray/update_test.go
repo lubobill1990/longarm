@@ -82,7 +82,7 @@ func TestTrayUpdateVerify(t *testing.T) {
 		{"tampered file and record", []byte("evil MSI"), []byte("evil MSI"), sign(good, name, "1.2.0"), pub, "invalid signature"},
 		{"other key", good, good, signOther(good, name, "1.2.0"), pub, "invalid signature"},
 		{"replayed old version", good, good, sign(good, name, "1.1.0"), pub, "refusing"},
-		{"another file's signature", good, good, sign(good, "longarm-windows-arm64.msi", "1.2.0"), pub, "refusing"},
+		{"another file's signature", good, good, sign(good, "longarm-linux-amd64.deb", "1.2.0"), pub, "refusing"},
 		{"garbage signature", good, good, []byte("not a signature"), pub, "refusing"},
 		{"no key in this build", good, good, sign(good, name, "1.2.0"), "", "no update key"},
 	}
