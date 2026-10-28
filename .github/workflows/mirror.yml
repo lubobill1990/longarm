@@ -1,0 +1,94 @@
+# Mirrors the third-party images of deploy/azure (deploy/azure/mirror-images.txt)
+# into ghcr.io/<owner>/longarm-hub:mirror-<name>, by digest: deployments pull
+# them from GHCR, never from Docker Hub.
+#
+#   every run      verify: every pinned digest resolves at its source and the
+#                  registry's manifest hashes to it
+#   push to main, manual, pull requests from this repository (not forks: no
+#                  packages:write)   copy (crane, pinned and checksum-verified)
+#                  and verify, anonymously like ACI, that the mirror tag
+#                  resolves to the same digest
+name: mirror
+
+on:
+  pull_request:
+    paths:
+      - deploy/azure/mirror-images.txt
+      - .github/workflows/mirror.yml
+  push:
+    branches: [main]
+    paths:
+      - deploy/azure/mirror-images.txt
+      - .github/workflows/mirror.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: mirror deploy/azure images to GHCR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: crane (pinned, sha256-verified)
+        run: |
+          mkdir -p "$RUNNER_TEMP/tools"
+          LONGARM_TOOLS=$RUNNER_TEMP/tools .github/scripts/fetch-tool.sh crane v0.22.1 \
+            https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz \
+            0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0 crane
+      - name: verify the pinned source digests
+        run: |
+          while read -r src tag; do
+            [[ -z $src || $src == \#* ]] && continue
+            [[ $src == *@sha256:* && -n $tag ]] || { echo "::error::bad line: $src $tag"; exit 1; }
+            want=${src##*@}
+            # by digest: the registry serves the manifest whose sha256 is that digest
+            got=$(crane digest "${src%%@*}@$want")
+            [[ $got == "$want" ]] || { echo "::error::$src: the source resolves to $got"; exit 1; }
+            # the tag may have moved since it was pinned: worth knowing, not an error
+            now=$(crane digest "${src%%@*}" 2>/dev/null || true)
+            [[ $now == "$want" ]] || echo "::notice::${src%%@*} now points to ${now:-nothing}; the pinned $want is mirrored"
+            echo "ok $src"
+          done <deploy/azure/mirror-images.txt
+      - name: copy to ghcr.io and verify
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin <<<"$GH_TOKEN"
+          dst_repo=ghcr.io/${OWNER,,}/longarm-hub
+          while read -r src tag; do
+            [[ -z $src || $src == \#* ]] && continue
+            want=${src##*@}
+            dst=$dst_repo:$tag
+            if [[ $(crane digest "$dst" 2>/dev/null || true) == "$want" ]]; then
+              echo "up to date: $dst"
+              continue
+            fi
+            crane copy "${src%%@*}@$want" "$dst"
+            got=$(crane digest "$dst")
+            [[ $got == "$want" ]] || { echo "::error::$dst resolves to $got, want $want"; exit 1; }
+            echo "mirrored $src -> $dst"
+          done <deploy/azure/mirror-images.txt
+          # anonymously, as Azure Container Instances pulls them (the package must be public)
+          crane auth logout ghcr.io
+          while read -r src tag; do
+            [[ -z $src || $src == \#* ]] && continue
+            got=$(crane digest "$dst_repo:$tag") || { echo "::error::$dst_repo:$tag can't be pulled anonymously: make the package public"; exit 1; }
+            [[ $got == "${src##*@}" ]] || { echo "::error::$dst_repo:$tag resolves to $got"; exit 1; }
+          done <deploy/azure/mirror-images.txt

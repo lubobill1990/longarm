@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -56,5 +57,53 @@ func TestTemplate(t *testing.T) {
 				t.Fatalf("want %q, got:\n%s", tc.problem, strings.Join(problems, "\n"))
 			}
 		})
+	}
+}
+
+// TestMirroredImages: the template pulls nothing from Docker Hub; its
+// third-party images are the GHCR mirrors of deploy/azure/mirror-images.txt
+// (.github/workflows/mirror.yml), with the digests pinned there.
+func TestMirroredImages(t *testing.T) {
+	raw, err := os.ReadFile("../../azuredeploy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// docker.io may only appear in descriptions (where a mirror comes from)
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(line, "docker.io/") && !strings.Contains(line, "\"description\"") {
+			t.Errorf("a Docker Hub image in the template: %s", strings.TrimSpace(line))
+		}
+	}
+	list, err := os.ReadFile("../../mirror-images.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mirrors := map[string]string{} // mirror tag -> digest
+	for _, line := range strings.Split(strings.ReplaceAll(string(list), "\r", ""), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 || strings.HasPrefix(f[0], "#") {
+			continue
+		}
+		src, digest, ok := strings.Cut(f[0], "@")
+		if len(f) != 2 || !ok || !strings.HasPrefix(digest, "sha256:") || len(digest) != 71 || !strings.Contains(src, ":") {
+			t.Fatalf("mirror-images.txt: want <source tag>@sha256:<digest> <mirror tag>: %q", line)
+		}
+		mirrors[f[1]] = digest
+	}
+	var tpl struct {
+		Parameters map[string]struct {
+			DefaultValue any `json:"defaultValue"`
+		} `json:"parameters"`
+	}
+	if err := json.Unmarshal(raw, &tpl); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"caddyImage", "headscaleImage"} {
+		v, _ := tpl.Parameters[p].DefaultValue.(string)
+		ref, digest, _ := strings.Cut(v, "@")
+		tag, ok := strings.CutPrefix(ref, "ghcr.io/lubobill1990/longarm-hub:")
+		if !ok || mirrors[tag] == "" || mirrors[tag] != digest {
+			t.Errorf("%s = %q: want ghcr.io/lubobill1990/longarm-hub:<mirror tag>@<digest> of mirror-images.txt", p, v)
+		}
 	}
 }

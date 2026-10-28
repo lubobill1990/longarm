@@ -234,6 +234,9 @@ hub_sas=$sas
 step "headscale sidecar"
 # the template's image and start script (variables.headscaleScript)
 hs_image=$(jq -r '.parameters.headscaleImage.defaultValue' "$template")
+# the template pulls the GHCR mirror (deploy/azure/mirror-images.txt, mirror.yml);
+# here the same digest from its source, as the mirror may not exist yet on a PR
+hs_image=$(awk -v d="${hs_image##*@}" '$1 !~ /^#/ && index($1, "@" d) { print $1 }' "$(dirname "$template")/mirror-images.txt")
 hs_script=$(jq -r '.variables.headscaleScript' "$template")
 [[ $hs_image == *@sha256:* && $hs_script == *ready* ]] || fail "headscale image / script not in $template"
 az storage container create -n litestream-hs --connection-string "$conn" -o none
