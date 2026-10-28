@@ -139,6 +139,9 @@ type Server struct {
 
 	// helperWS: this Server is a user helper's (ServeUserHelper).
 	helperWS *workspace.Store
+	// PeerDial connects to another worker over the port-link legs
+	// (Handoff.Pull); nil: this worker does not dial other workers.
+	PeerDial PeerDialer
 }
 
 // GRPC builds the gRPC server with mTLS and the authorization interceptors.
@@ -167,6 +170,7 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 	pb.RegisterWorkspaceServer(g, &workspaceServer{s: s})
 	pb.RegisterLinkTunnelServer(g, &linkTunnelServer{s: s})
 	pb.RegisterMachineUpdateServer(g, &machineUpdateServer{s: s})
+	pb.RegisterHandoffServer(g, &handoffServer{s: s})
 	return g
 }
 
@@ -176,7 +180,7 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 // (InfoResponse.features).
 var WorkerFeatures = []string{jobs.FeatureStdin, jobs.FeatureGitAuth, jobs.FeatureSessionStart, jobs.FeatureSessionSend,
 	jobs.FeatureSessionSendIfIdle, jobs.FeatureSessionStop, jobs.FeatureSessionInfo, jobs.FeatureFileTail, jobs.FeatureAgentAuth,
-	jobs.FeatureSessionEnv, jobs.FeatureFileLstat}
+	jobs.FeatureSessionEnv, jobs.FeatureFileLstat, jobs.FeatureHandoffDirect, jobs.FeatureHandoffPush}
 
 type nodeServer struct {
 	pb.UnimplementedNodeServer

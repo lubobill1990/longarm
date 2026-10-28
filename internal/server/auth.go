@@ -55,6 +55,7 @@ var MethodRoles = map[string][]pki.Role{
 	pb.Workspace_Refs_FullMethodName:   anyUser,
 	pb.Workspace_Sync_FullMethodName:   anyUser,
 	pb.Workspace_Fetch_FullMethodName:  anyUser,
+	pb.Workspace_PushHandoff_FullMethodName: anyUser,
 	// owners only (machineupdate.go checks): a client or admin certificate
 	// of the worker's owner, end to end - the hub has no command for it
 	pb.MachineUpdate_Start_FullMethodName:   anyUser,
@@ -63,6 +64,11 @@ var MethodRoles = map[string][]pki.Role{
 	// The one RPC of worker certificates: port link data, with a hub-signed
 	// grant naming the caller (linktunnel.go).
 	pb.LinkTunnel_Dial_FullMethodName: {pki.RoleWorker},
+	// Direct handoff transfers: the owner offers and pulls; the peer worker
+	// fetches with the one-time token of the offer (handoff.go).
+	pb.Handoff_Offer_FullMethodName: anyUser,
+	pb.Handoff_Pull_FullMethodName:  anyUser,
+	pb.Handoff_Fetch_FullMethodName: {pki.RoleWorker},
 }
 
 type idKey struct{}

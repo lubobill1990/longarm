@@ -792,7 +792,8 @@ Capabilities (`longarm version --json`): `session-start`, `session-send`,
 `run-session`. Workers announce theirs in `Node.Info` (`longarm info
 <worker>`): `session-start`, `session-send`, `session-send-if-idle`,
 `session-stop`, `session-info` (the activity and worktree fields),
-`file-tail`, `session-env` (sessions get `LONGARM_WORKER` and `LONGARM_SESSION`).
+`file-tail`, `session-env` (sessions get `LONGARM_WORKER` and `LONGARM_SESSION`);
+for `longarm handoff`: `file-lstat`, `handoff-direct`, `handoff-push`.
 Against a longarmd without them `session start|send|stop` and
 `tail` exit 2 ("does not support it; update longarmd") before doing
 anything; `sessions` lists such a worker's sessions without the new fields.
@@ -814,7 +815,7 @@ longarm handoff --from w1 --to w2 --session <id> --no-attach
 longarm handoff --from w2 --to local --session <id>   # a new worktree next to your checkout; the agent runs here
 ```
 
-**`longarm handoff --to <worker|local> [--from <worker|local>] [--agent claude|copilot] (--session ID | --latest) [--name NAME] [--no-attach] [--json]`**
+**`longarm handoff --to <worker|local> [--from <worker|local>] [--agent claude|copilot] (--session ID | --latest) [--name NAME] [--via relay|remote|auto] [--via-threshold 20M] [--git-auth forward] [--allow-secrets] [--keep-branch] [--no-attach] [--json]`**, `longarm handoff --cleanup`
 
 1. **Locate.** `--session ID` (an id `agent-sessions` lists), or `--latest`:
    the most recently modified session whose project directory is in the
@@ -855,8 +856,8 @@ longarm handoff --from w2 --to local --session <id>   # a new worktree next to y
      when done;
    - worker -> worker: the source makes a bundle of the snapshot minus what
      the target has (after the target's remote-first fetch with
-     `--git-auth forward`) and longarm relays it - keep this machine online
-     until the handoff finishes; there is no worker-to-worker connection;
+     `--git-auth forward`) and the target fetches it from the source
+     directly (below), else longarm relays it;
    - local: `git worktree add` of your checkout (`--local-repo`, default
      the current directory's; it must be a checkout of the same repository)
      at `<checkout>-handoff-<id8>` next to it, or under `--worktree-dir` /
@@ -864,6 +865,67 @@ longarm handoff --from w2 --to local --session <id>   # a new worktree next to y
 
    Git LFS: a local source ships the snapshot's LFS objects (as `--lfs
    ship`); from a worker, LFS files arrive as pointer files.
+
+**How the code travels (`--via relay|remote|auto`).** The default is
+`auto` (`[handoff] via` / `via_threshold` in workers.toml change it): the
+size of the objects the target lacks (git's on-disk size of what a bundle
+would carry, after the remote-first fetch with `--git-auth forward`) decides
+- below `--via-threshold` (default 20M) **relay**, from it on **remote**.
+
+- **relay** keeps the commits on longarm's own end-to-end channels. Local
+  -> worker: as `sync`. Worker -> local: a bundle via this machine. Worker
+  -> worker: **directly** between the workers (worker feature
+  `handoff-direct`): this machine registers a one-time offer on the source
+  worker - that one bundle, for the target worker's certificate only, for
+  whoever presents a random 32-byte token, for 10 minutes, once - and asks
+  the target to pull it; the target dials the source with its worker
+  certificate over the port-link legs (tcp, tailnet, longnet relay - the hub
+  relay only forwards ciphertext), and both apply the port-link rules for
+  the owner (a user of the worker, owner / shares, disabled users; with
+  end-to-end trust the pinned key, and the other worker must be endorsed by
+  the owner). The offer is given by the owner's own device over its mTLS
+  connections to the workers, never through the hub, so the hub can't forge
+  or widen it. The source copies the bundle into its staging area and
+  deletes it after the one fetch or at expiry; the target checks the size
+  and sha256 against what the source reported before importing it (its
+  prerequisites must be in the mirror). When that fails - a worker without
+  the feature, no leg connects, a policy refuses - longarm relays the
+  bundle through this machine instead, with a note (keep it online until
+  the handoff is done). `--json` reports `"transfer"` (`upload`, `direct`,
+  `relay`, `bundle`, `remote`) and `"relayedBytes"` (what this machine
+  relayed between workers).
+- **remote** pushes the snapshot commit to a temporary branch
+  `longarm/handoff/<user>/<id8>-<yyyymmddhhmm>` of the repository's https
+  remote (Azure DevOps, GitHub, ...) - `git push <remote>
+  <snapshot>:refs/heads/<branch>`: your branch, index and upstream are not
+  touched - and the target fetches it from there (a worker with the
+  forwarded credential, as `--repo <url> --git-auth forward`; locally with
+  your own git). A local source pushes with your own git credentials; a
+  worker source pushes with the forwarded credential (worker feature
+  `handoff-push`): **with `--git-auth forward` the credential then also
+  grants write access, for that one push of that exact URL** - handed out
+  by the worker's loopback credential helper as for a fetch, with the
+  repository's hooks off, only to `longarm/handoff/` branches, never stored
+  in a config file. Workers need `--git-auth forward` for this path
+  (without it, relay). The branch is deleted once the target has the code
+  (by this machine with your git when it has a checkout of the repository,
+  else by the source worker with the forwarded credential); if that fails
+  longarm prints the `git push <url> --delete <branch>` that does it.
+  `--keep-branch` keeps it; `longarm handoff --cleanup [--json]` (in your
+  checkout) lists your `longarm/handoff/<user>/*` branches and deletes
+  those older than an hour.
+
+  Before pushing, a **secret check** scans the changed and untracked files
+  (built-in rules: private keys, AWS / GitHub / GitLab / Slack / Google /
+  OpenAI / Anthropic tokens, Azure storage keys, credentials in URLs, JWTs,
+  `.env`-style `SECRET=` / `TOKEN=` / `PASSWORD=` assignments, key and
+  credential files by name; placeholders don't count). A hit keeps the
+  snapshot off the remote - a pushed branch can be read by everybody with
+  access to the repository and lingers in caches after it is deleted - and
+  longarm relays instead, naming file and rule (never the value);
+  `--allow-secrets` pushes anyway. A changed file over 50 MB, no https
+  remote, no credential, a worker too old, or a push the remote refuses
+  (branch policies, permissions) also fall back to relay, with a note.
 4. **Move the session.** The transcript and its state are copied to where
    the agent looks for them on the target (below), with absolute paths
    rewritten from the source worktree to the target's, per JSON string

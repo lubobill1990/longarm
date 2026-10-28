@@ -461,6 +461,20 @@
   dots on Windows targets), no symlink / junction on the destination path
   (`Files.Stat` `no_follow`, worker feature `file-lstat`), exclusive
   creation, file count and per-file size bounded.
+  How the code travels: `--via relay|remote|auto` (default auto: relay
+  below `--via-threshold`, 20M of objects the target lacks, else remote;
+  `[handoff]` in workers.toml). Relay worker -> worker goes directly
+  between the workers (Handoff service, worker feature `handoff-direct`: a
+  one-time, single-peer, token-bound, 10-minute offer registered by the
+  owner's client, the target dials the source over the port-link legs under
+  the port-link owner and trust rules; falls back to the client relay).
+  Remote pushes the snapshot to `longarm/handoff/<user>/<id>-<time>` of the
+  https remote (a worker source with the forwarded credential,
+  `Workspace.PushHandoff`, worker feature `handoff-push`: write access for
+  that push only, hooks off, only that namespace), the target fetches it,
+  and the branch is deleted afterwards (`--keep-branch`; `handoff
+  --cleanup`). A built-in secret check of changed and untracked files, files
+  over 50 MB and refused pushes fall back to relay (`--allow-secrets`).
 - `longarm agent-sessions [<worker>|local] [--repo-path DIR] [--json]`: the
   resumable agent sessions of a machine (agent, id, project directory, last
   modified, title or first prompt, size, handed-off state).

@@ -37,6 +37,7 @@ const localMachine = "local"
 // hoEndpoint is one machine: local (conn nil) or a worker.
 type hoEndpoint struct {
 	name       string
+	cert       string // the worker's certificate name (Node.Info)
 	conn       *client.Conn
 	goos       string // "windows", "linux", "darwin"
 	home       string // absolute home directory (of the worker's account the files and sessions use)
@@ -47,6 +48,8 @@ type hoEndpoint struct {
 }
 
 func (e *hoEndpoint) local() bool { return e.conn == nil }
+
+func goosLocal() string { return runtime.GOOS }
 
 func (e *hoEndpoint) windows() bool { return e.goos == "windows" }
 
@@ -145,7 +148,7 @@ func openEndpoint(ctx context.Context, s *session, name string) (*hoEndpoint, er
 		conn.Close()
 		return nil, err
 	}
-	return &hoEndpoint{name: name, conn: conn, goos: info.Os, home: home.AbsPath, callerUser: info.CallerUser,
+	return &hoEndpoint{name: name, cert: info.Name, conn: conn, goos: info.Os, home: home.AbsPath, callerUser: info.CallerUser,
 		isolation: info.Isolation, version: info.Version, features: info.Features}, nil
 }
 

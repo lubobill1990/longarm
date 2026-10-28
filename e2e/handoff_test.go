@@ -29,6 +29,9 @@ type handoffOut struct {
 	Base      string   `json:"base"`
 	Files     int      `json:"files"`
 	Resume    []string `json:"resume"`
+	Transfer  string   `json:"transfer"`
+	Relayed   int64    `json:"relayedBytes"`
+	Temp      string   `json:"tempBranch"`
 }
 
 // claudeDir is Claude Code's project directory name of a path.
@@ -108,7 +111,18 @@ func agentRecord(t *testing.T, home, id string) map[string]any {
 // the agent's path for the new worktree with its paths rewritten, the code
 // with its uncommitted and untracked changes, the source is marked handed
 // off and the agent is resumed there (docs/usage.md#hand-off-an-agent-session).
-func TestAgentHandoff(t *testing.T) {
+// handoffEnv is two workers (w1, w2) and a client, each with its own home
+// and the fake agents on PATH.
+type handoffEnv struct {
+	t                     *testing.T
+	e, e2                 *env
+	root, path, fakebin   string
+	w1home, w2home, chome string
+	extra                 []string // more client environment
+}
+
+func newHandoffEnv(t *testing.T, workerEnv ...string) *handoffEnv {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -116,57 +130,75 @@ func TestAgentHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := newEnvAt(t, root)
-	fakebin := filepath.Join(root, "fakebin")
-	os.MkdirAll(fakebin, 0o755)
-	copyExe(t, bins.helper, filepath.Join(fakebin, exeName("claude")))
-	copyExe(t, bins.helper, filepath.Join(fakebin, exeName("copilot")))
-	path := fakebin + string(os.PathListSeparator) + os.Getenv("PATH")
-	w1home, w2home, chome := filepath.Join(root, "w1home"), filepath.Join(root, "w2home"), filepath.Join(root, "chome")
-	for _, d := range []string{w1home, w2home, chome} {
+	h := &handoffEnv{t: t, root: root, e: newEnvAt(t, root)}
+	h.fakebin = filepath.Join(root, "fakebin")
+	os.MkdirAll(h.fakebin, 0o755)
+	copyExe(t, bins.helper, filepath.Join(h.fakebin, exeName("claude")))
+	copyExe(t, bins.helper, filepath.Join(h.fakebin, exeName("copilot")))
+	h.path = h.fakebin + string(os.PathListSeparator) + os.Getenv("PATH")
+	h.w1home, h.w2home, h.chome = filepath.Join(root, "w1home"), filepath.Join(root, "w2home"), filepath.Join(root, "chome")
+	for _, d := range []string{h.w1home, h.w2home, h.chome} {
 		os.MkdirAll(d, 0o755)
 	}
-	e.longarmdEnv = homeEnv(w1home, path)
-	e.startLongarmd()
+	h.e.longarmdEnv = append(homeEnv(h.w1home, h.path), workerEnv...)
+	h.e.startLongarmd()
 	// w2: a second longarmd of the same CA with its own home
-	e2 := &env{t: t, root: filepath.Join(root, "w2root"), dataDir: filepath.Join(root, "w2data"), port: freePort(t), longarmdEnv: homeEnv(w2home, path)}
-	os.MkdirAll(e2.root, 0o755)
-	e.mustLongarm(e.client, "admin", "issue", "--role", "worker", "--name", "w2", "--out", filepath.Join(e2.dataDir, "tls"))
-	t.Cleanup(e2.cleanup)
-	e2.startLongarmd()
-	workers := fmt.Sprintf("[[worker]]\nname = \"w1\"\naddress = \"127.0.0.1:%d\"\ntransport = \"tcp\"\n\n[[worker]]\nname = \"w2\"\naddress = \"127.0.0.1:%d\"\ntransport = \"tcp\"\n", e.port, e2.port)
-	if err := os.WriteFile(filepath.Join(e.client, "workers.toml"), []byte(workers), 0o644); err != nil {
+	h.e2 = &env{t: t, root: filepath.Join(root, "w2root"), dataDir: filepath.Join(root, "w2data"), port: freePort(t),
+		longarmdEnv: append(homeEnv(h.w2home, h.path), workerEnv...)}
+	os.MkdirAll(h.e2.root, 0o755)
+	h.e.mustLongarm(h.e.client, "admin", "issue", "--role", "worker", "--name", "w2", "--out", filepath.Join(h.e2.dataDir, "tls"))
+	t.Cleanup(h.e2.cleanup)
+	h.e2.startLongarmd()
+	workers := fmt.Sprintf("[[worker]]\nname = \"w1\"\naddress = \"127.0.0.1:%d\"\ntransport = \"tcp\"\n\n[[worker]]\nname = \"w2\"\naddress = \"127.0.0.1:%d\"\ntransport = \"tcp\"\n",
+		h.e.port, h.e2.port)
+	if err := os.WriteFile(filepath.Join(h.e.client, "workers.toml"), []byte(workers), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// the client: its own home, the fake agents on PATH, run in dir
-	client := func(dir string, args ...string) result {
-		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, bins.longarm, args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), append(homeEnv(chome, path), "LONGARM_CONFIG_DIR="+e.client, "LONGARM_WORKER=", "LONGARM_SESSION=")...)
-		var out, errb bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &out, &errb
-		err := cmd.Run()
-		code := 0
-		if ee, ok := err.(*exec.ExitError); ok {
-			code = ee.ExitCode()
-		} else if err != nil {
-			t.Fatalf("longarm %v: %v", args, err)
-		}
-		return result{out.String(), errb.String(), code}
+	return h
+}
+
+// client runs longarm as the client in dir (its home, the fake agents on PATH).
+func (h *handoffEnv) client(dir string, args ...string) result {
+	h.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bins.longarm, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), append(homeEnv(h.chome, h.path), "LONGARM_CONFIG_DIR="+h.e.client, "LONGARM_WORKER=", "LONGARM_SESSION=")...)
+	cmd.Env = append(cmd.Env, h.extra...)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	code := 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		code = ee.ExitCode()
+	} else if err != nil {
+		h.t.Fatalf("longarm %v: %v", args, err)
 	}
+	return result{out.String(), errb.String(), code}
+}
+
+// handoff runs handoff --json and decodes it (exit 0 required).
+func (h *handoffEnv) handoff(dir string, args ...string) (handoffOut, result) {
+	h.t.Helper()
+	r := h.client(dir, append([]string{"handoff", "--json"}, args...)...)
+	if r.code != 0 {
+		h.t.Fatalf("handoff %v: exit %d\n%s\n%s", args, r.code, r.stdout, r.stderr)
+	}
+	var out handoffOut
+	if err := json.Unmarshal([]byte(r.stdout), &out); err != nil {
+		h.t.Fatalf("handoff --json: %v\n%s", err, r.stdout)
+	}
+	return out, r
+}
+
+func TestAgentHandoff(t *testing.T) {
+	h := newHandoffEnv(t)
+	e, e2, root, w1home, w2home, chome := h.e, h.e2, h.root, h.w1home, h.w2home, h.chome
+	client := h.client
 	handoff := func(dir string, args ...string) handoffOut {
 		t.Helper()
-		r := client(dir, append([]string{"handoff", "--json"}, args...)...)
-		if r.code != 0 {
-			t.Fatalf("handoff %v: exit %d\n%s\n%s", args, r.code, r.stdout, r.stderr)
-		}
-		var out handoffOut
-		if err := json.Unmarshal([]byte(r.stdout), &out); err != nil {
-			t.Fatalf("handoff --json: %v\n%s", err, r.stdout)
-		}
+		out, _ := h.handoff(dir, args...)
 		return out
 	}
 
@@ -272,6 +304,10 @@ func TestAgentHandoff(t *testing.T) {
 		if h2.Worktree != wantTop || h2.Session != "handoff-"+short {
 			t.Fatalf("handoff: %+v", h2)
 		}
+		// worker -> worker directly: this client relayed no commit bytes
+		if h2.Transfer != "direct" || h2.Relayed != 0 {
+			t.Errorf("transfer %q, %d bytes relayed by the client (want direct, 0)", h2.Transfer, h2.Relayed)
+		}
 		// the source session was stopped and its copy marked
 		rows, _ := e.sessionJSON(t, "w1", "-s", "handoff-"+short, "--all")
 		if len(rows) != 1 || rows[0]["state"] == "JOB_STATE_RUNNING" {
@@ -370,7 +406,17 @@ func TestAgentHandoff(t *testing.T) {
 		if rec := agentRecord(t, w1home, cid); rec["cwd"] != wantTop || rec["recordedCwd"] != wantTop || rec["session"] != "cop1" {
 			t.Errorf("the agent on w1: %v", rec)
 		}
-		e.mustLongarm(e.client, "session", "stop", "w1", "-s", "cop1", "--grace", "0")
+		// w1 -> w2 when w2 can't reach w1: relayed through the client
+		h.extra = []string{"LONGARM_TEST_HANDOFF_ENDPOINTS=tcp://127.0.0.1:1"}
+		out2, r := h.handoff(repo, "--from", "w1", "--to", "w2", "--session", cid, "--no-attach", "--idle", "1s", "--grace", "5s", "--name", "cop2")
+		h.extra = nil
+		if out2.Transfer != "relay" || out2.Relayed <= 0 || !strings.Contains(r.stderr, "no direct transfer w1 -> w2") {
+			t.Errorf("fallback to the client relay: %+v\n%s", out2, r.stderr)
+		}
+		if ws := readText(t, filepath.Join(w2home, ".copilot", "session-state", cid, "workspace.yaml")); !strings.Contains(ws, "cwd: "+jsonQ(out2.Worktree)) {
+			t.Errorf("workspace.yaml on w2:\n%s", ws)
+		}
+		e.mustLongarm(e.client, "session", "stop", "w2", "-s", "cop2", "--grace", "0")
 	})
 
 	t.Run("refusals", func(t *testing.T) {

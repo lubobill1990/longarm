@@ -48,24 +48,30 @@ const defaultHandoffMax = "64M"
 
 // handoffJSON is the output of handoff --json.
 type handoffJSON struct {
-	Agent       string   `json:"agent"`
-	SessionID   string   `json:"sessionId"`
-	From        string   `json:"from"`
-	To          string   `json:"to"`
-	SourceDir   string   `json:"sourceProjectDir"`
-	SourceTop   string   `json:"sourceWorktree"`
-	Worktree    string   `json:"worktree"`
-	Cwd         string   `json:"cwd"`
-	Branch      string   `json:"branch"`
-	Session     string   `json:"session,omitempty"` // the longarm session on a worker target
-	Snapshot    string   `json:"snapshot"`
-	SnapshotRef string   `json:"snapshotRef"`
-	Base        string   `json:"base"`
-	Files       int      `json:"files"`
-	Bytes       int64    `json:"bytes"`
-	RemoteFirst bool     `json:"remoteFirst"`
-	Resume      []string `json:"resume"`
-	Warnings    []string `json:"warnings"`
+	Agent       string `json:"agent"`
+	SessionID   string `json:"sessionId"`
+	From        string `json:"from"`
+	To          string `json:"to"`
+	SourceDir   string `json:"sourceProjectDir"`
+	SourceTop   string `json:"sourceWorktree"`
+	Worktree    string `json:"worktree"`
+	Cwd         string `json:"cwd"`
+	Branch      string `json:"branch"`
+	Session     string `json:"session,omitempty"` // the longarm session on a worker target
+	Snapshot    string `json:"snapshot"`
+	SnapshotRef string `json:"snapshotRef"`
+	Base        string `json:"base"`
+	Files       int    `json:"files"`
+	Bytes       int64  `json:"bytes"`
+	RemoteFirst bool   `json:"remoteFirst"`
+	// how the code went: upload (local -> worker), direct (worker -> worker),
+	// relay (worker -> worker through this client), bundle (worker -> local),
+	// remote (a temporary branch of the remote)
+	Transfer     string   `json:"transfer"`
+	RelayedBytes int64    `json:"relayedBytes"` // commit bytes this client relayed between workers
+	TempBranch   string   `json:"tempBranch,omitempty"`
+	Resume       []string `json:"resume"`
+	Warnings     []string `json:"warnings"`
 }
 
 type handoffOpts struct {
@@ -73,11 +79,14 @@ type handoffOpts struct {
 	latest, noAttach, asJSON, force, fromImplicit                                       bool
 	idle, idleTimeout, grace                                                            time.Duration
 	maxBytes                                                                            int64
+	via                                                                                 string // remote | relay | auto
+	viaThreshold                                                                        int64
+	allowSecrets, keepBranch, cleanup                                                   bool
 }
 
 func handoffCmd() *cobra.Command {
 	var o handoffOpts
-	var maxSize string
+	var maxSize, viaThreshold string
 	c := &cobra.Command{
 		Use:   "handoff --to <worker|local> [--from <worker|local>] [--agent claude|copilot] (--session ID | --latest) [--name NAME] [--no-attach] [--json]",
 		Short: "Move a Claude Code / Copilot CLI conversation and its code (uncommitted and untracked too) to another machine and resume it there",
@@ -118,6 +127,12 @@ carried over: the agent starts them anew on the target.`,
 				return usagef("--max-size %q: want a size such as 64M or 1G", maxSize)
 			}
 			o.maxBytes = n
+			if o.cleanup {
+				return runHandoffCleanup(cmd.Context(), o)
+			}
+			if err := resolveVia(&o, cmd.Flags().Changed("via"), viaThreshold, cmd.Flags().Changed("via-threshold")); err != nil {
+				return err
+			}
 			return runHandoff(cmd.Context(), o)
 		},
 	}
@@ -140,6 +155,11 @@ carried over: the agent starts them anew on the target.`,
 	f.DurationVar(&o.grace, "grace", 10*time.Second, "session stop --grace for the source session")
 	f.StringVar(&maxSize, "max-size", defaultHandoffMax, "refuse sessions whose transcript and state are larger")
 	f.BoolVar(&o.force, "force", false, "hand off even if the target's agent is older than the source's")
+	f.StringVar(&o.via, "via", defaultHandoffVia, "how the code travels: relay (longarm's channels; worker -> worker directly), remote (a temporary branch of the repository's remote) or auto (relay below --via-threshold, else remote); [handoff] via in workers.toml")
+	f.StringVar(&viaThreshold, "via-threshold", defaultViaThreshold, "--via auto: objects the target lacks from this size on go through the remote; [handoff] via_threshold")
+	f.BoolVar(&o.allowSecrets, "allow-secrets", false, "--via remote: push even when the secret check finds credentials in changed or untracked files")
+	f.BoolVar(&o.keepBranch, "keep-branch", false, "--via remote: keep the temporary branch on the remote")
+	f.BoolVar(&o.cleanup, "cleanup", false, "list and delete your stale temporary branches (longarm/handoff/<you>/*) of the current checkout's remote")
 	return c
 }
 
@@ -314,11 +334,16 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 	notef("snapshot %s of %s (%s) on %s", snap[:12], srcRepo.top, ref, src.name)
 	out := handoffJSON{Agent: ad.name(), SessionID: sess.ID, From: src.name, To: dst.name, SourceDir: sess.ProjectDir,
 		SourceTop: srcRepo.top, Snapshot: snap, SnapshotRef: ref, Base: base}
-	dstTop, branch, remoteFirst, err := moveCode(ctx, o, src, dst, srcRepo, ref, hid, short, snap, base)
+	code, err := moveCode(ctx, s, o, src, dst, srcRepo, ref, hid, short, snap, base)
 	if err != nil {
 		return err
 	}
-	out.Worktree, out.Branch, out.RemoteFirst = dstTop, branch, remoteFirst
+	defer code.temp.cleanup(context.WithoutCancel(ctx)) // also when a later step fails
+	dstTop, branch := code.top, code.branch
+	out.Worktree, out.Branch, out.RemoteFirst, out.Transfer, out.RelayedBytes = dstTop, branch, code.remoteFirst, code.transfer, code.relayed
+	if code.temp != nil {
+		out.TempBranch = code.temp.branch
+	}
 	dstCwd := dstTop
 	if p := strings.TrimSuffix(srcRepo.prefix, "/"); p != "" {
 		dstCwd = dst.join(dstTop, p)
@@ -354,6 +379,7 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 		if o.noAttach {
 			return printHandoff(o, out, fmt.Sprintf("cd %s && %s", quoteArg(dstCwd), strings.Join(argv, " ")))
 		}
+		code.temp.cleanup(ctx) // the target has the code
 		printHandoff(o, out, "")
 		c := exec.CommandContext(ctx, argv[0], argv[1:]...)
 		c.Dir, c.Stdin, c.Stdout, c.Stderr = dstCwd, os.Stdin, os.Stdout, os.Stderr
@@ -380,6 +406,7 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 	if ss := resp.Session; terminalState(ss.State) {
 		return sessionEnded(ss)
 	}
+	code.temp.cleanup(ctx) // resumed there
 	attachCmd := fmt.Sprintf("longarm attach %s -s %s", dst.name, o.name)
 	if o.noAttach {
 		return printHandoff(o, out, attachCmd)
@@ -666,132 +693,6 @@ func preflight(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint, dstCf
 		return usagef("handoff: worker %s (longarmd %s) does not support session start; update longarmd", dst.name, dst.version)
 	}
 	return nil
-}
-
-// moveCode makes the target worktree from the snapshot.
-func moveCode(ctx context.Context, o handoffOpts, src, dst *hoEndpoint, srcRepo *hoRepo, ref, hid, short, snap, base string) (top, branch string, remoteFirst bool, err error) {
-	tmp, err := os.MkdirTemp("", "longarm-handoff-")
-	if err != nil {
-		return "", "", false, err
-	}
-	defer os.RemoveAll(tmp)
-	switch {
-	case dst.local():
-		lr := srcRepo
-		if !src.local() {
-			dir := o.localRepo
-			if dir == "" {
-				dir, _ = os.Getwd()
-			}
-			if lr, err = openHoRepo(ctx, dst, dir); err != nil {
-				return "", "", false, usagef("--to local needs your local checkout of %s (run handoff in it or give --local-repo): %v", srcRepo.key, err)
-			}
-			if lr.key != srcRepo.key {
-				return "", "", false, usagef("%s is a checkout of %s, the session's code is %s: run handoff in your checkout of it or give --local-repo", lr.top, lr.key, srcRepo.key)
-			}
-			// the base from the remote with your own git, when it is there (best effort)
-			if len(lr.existing(ctx, []string{base})) == 0 && lr.remote != "" {
-				lr.git(ctx, nil, nil, "fetch", "-q", "--no-tags", lr.remote, base)
-			}
-			b, err := srcRepo.bundle(ctx, ref, hid, append(lr.tips(ctx), lr.existing(ctx, []string{base})...))
-			if err != nil {
-				return "", "", false, err
-			}
-			if b != "" {
-				local := filepath.Join(tmp, "handoff.bundle")
-				_, err := src.download(ctx, b, local, maxRelayBundle)
-				src.removeFile(context.WithoutCancel(ctx), b)
-				if err != nil {
-					return "", "", false, err
-				}
-				if err := lr.fetchBundle(ctx, local, ref); err != nil {
-					return "", "", false, err
-				}
-			}
-		}
-		dir := localWorktreeDir(lr.top, o.worktreeDir, short)
-		branch = lr.freeBranch(ctx, short)
-		if err := lr.addLocalWorktree(ctx, dir, branch, snap, base); err != nil {
-			return "", "", false, err
-		}
-		return dir, branch, false, nil
-	case src.local():
-		lr := &localRepo{top: srcRepo.top, key: srcRepo.key}
-		g, err := prepareGitForward(ctx, o.gitAuth, srcRepo.top, "HEAD")
-		if err != nil {
-			return "", "", false, err
-		}
-		defer g.clear()
-		lfs := lfsSkip
-		if lr.usesLFS(snap) {
-			lfs = lfsShip
-		}
-		dstPath, err := freeWorkerDir(ctx, dst, srcRepo.key, short)
-		if err != nil {
-			return "", "", false, err
-		}
-		res, err := lr.upload(ctx, dst.conn, snap, lfs, false, &pb.SyncHeader{Path: dstPath}, g)
-		if err != nil {
-			return "", "", false, err
-		}
-		top, remoteFirst = res.Path, g != nil
-	default: // worker -> worker, relayed through here
-		if o.gitAuth == gitAuthForward {
-			url := srcRepo.url
-			if url == "" {
-				if cwd, err := os.Getwd(); err == nil {
-					if lr, err := openLocalRepo(cwd, ""); err == nil && lr.key == srcRepo.key {
-						_, url = lr.remoteFor("HEAD")
-					}
-				}
-			}
-			if url == "" {
-				notef("note: --git-auth forward: the source checkout has no remote; shipping all commits the target lacks")
-			} else if g := forwardFor(ctx, url); g != nil {
-				if needFeature(ctx, dst.conn, jobs.FeatureGitAuth, "--git-auth forward") == nil {
-					remoteFirst = fetchFirst(ctx, dst.conn, g, srcRepo.key, srcRepo.remoteBases(ctx, snap, base))
-				}
-				g.clear()
-			}
-		}
-		rctx, cancel := context.WithTimeout(ctx, time.Minute)
-		refs, err := dst.conn.Workspace().Refs(rctx, &pb.RefsRequest{Repo: srcRepo.key})
-		cancel()
-		if err != nil {
-			return "", "", false, err
-		}
-		b, err := srcRepo.bundle(ctx, ref, hid, refs.Commits)
-		if err != nil {
-			return "", "", false, err
-		}
-		local := ""
-		if b != "" {
-			local = filepath.Join(tmp, "handoff.bundle")
-			_, err := src.download(ctx, b, local, maxRelayBundle)
-			src.removeFile(context.WithoutCancel(ctx), b)
-			if err != nil {
-				return "", "", false, err
-			}
-			if fi, err := os.Stat(local); err == nil {
-				notef("relaying %s of commits from %s to %s", humanSize(fi.Size()), src.name, dst.name)
-			}
-		}
-		dstPath, err := freeWorkerDir(ctx, dst, srcRepo.key, short)
-		if err != nil {
-			return "", "", false, err
-		}
-		res, err := sendBundle(ctx, dst.conn, srcRepo.key, snap, "handoff-"+hid, dstPath, local)
-		if err != nil {
-			return "", "", false, err
-		}
-		top = res.Path
-	}
-	wt := &hoRepo{ep: dst, top: dst.native(top)}
-	branch = wt.freeBranch(ctx, short)
-	if err := wt.restoreUncommitted(ctx, branch, base); err != nil {
-		return "", "", false, err
-	}
-	return wt.top, branch, remoteFirst, nil
 }
 
 // freeWorkerDir picks longarm-handoff/<repo>-<short> (or -N) under the
