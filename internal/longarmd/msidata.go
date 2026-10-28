@@ -65,6 +65,7 @@ var msiValue = map[string]*regexp.Regexp{
 	"listen":    regexp.MustCompile(`^[A-Za-z0-9._:/?=&,\[\]%@-]{0,1000}$`),
 	"isolation": regexp.MustCompile(`^(per-user)?$`),
 	"login":     regexp.MustCompile(`^1?$`),
+	"mode":      regexp.MustCompile(`^(default|custom)?$`),
 	"keep":      regexp.MustCompile(`^1?$`),
 	"leave":     regexp.MustCompile(`^(1|keep)?$`),
 	// a service account: DOMAIN\name, .\name, name@domain, LocalSystem

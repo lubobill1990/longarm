@@ -238,6 +238,32 @@ func TestAdminIgnoresHub(t *testing.T) {
 // install records them; changing recorded values - a non-administrator's
 // repair with HUB / CA_FINGERPRINT of their choosing (also as REMOVE=ALL
 // REINSTALL=ALL) - needs an administrator and writes nothing otherwise.
+// TestMSIStepKeysHavePatterns: every key a step expects has a value
+// pattern - a missing one failed every install in MSIData ("internal: no
+// pattern for "mode""), and the settings step's own tests passed a map, not
+// a command line. The command line is the one v0.1.2 ran on a Dev Box.
+func TestMSIStepKeysHavePatterns(t *testing.T) {
+	for step, keys := range MSISteps {
+		for _, k := range keys {
+			if msiValue[k] == nil {
+				t.Errorf("step %s: no pattern for %q", step, k)
+			}
+		}
+	}
+	raw := `"C:\Program Files\Longarm\longarmd.exe" install-helper msi settings ` + MSIDataMarker +
+		`hub=longarm.southeastasia.azurecontainer.io|ca=|login=1|labels=|mode=default|usersid=S-1-12-1-2854910761-1075605851-3754951082-3037235755`
+	d, err := MSIData(raw, MSISteps["settings"]...)
+	if err != nil {
+		t.Fatalf("settings: %v", err)
+	}
+	if d["mode"] != "default" || d["hub"] != "longarm.southeastasia.azurecontainer.io" {
+		t.Fatalf("settings: %v", d)
+	}
+	if _, err := MSIData(strings.Replace(raw, "mode=default", "mode=evil", 1), MSISteps["settings"]...); err == nil {
+		t.Fatal("mode=evil accepted")
+	}
+}
+
 func TestApplyMSISettings(t *testing.T) {
 	isAdmin := func(sid string) (bool, error) { return sid == "S-1-5-21-1-2-3-500", nil }
 	user := MSIRequester{SID: "S-1-5-21-1-2-3-1001", IsAdmin: isAdmin}
