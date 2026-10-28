@@ -183,9 +183,17 @@ another user; a device whose user can't be written into a certificate under
 another name (not a valid user name) is not renamed (enroll it again).
 
 **Admin worker pairing.** A worker and the admin worker enrolled with it by
-one pairing are linked by ID (`NodeInfo.companion_id`), not by the
-`-admin` name suffix; the migration links existing pairs (an admin worker
-and the one worker of the same owner on the same host).
+one pairing are linked by ID (`store.Node.Companion`, both ways; shown as
+`NodeInfo.companion_id`, with `companion` / `machine` - the names - filled
+from it), never by the `-admin` name suffix (names are reused); an admin
+worker enrolled alone is linked to the owner's one worker on its host
+without a companion (none or several: no link). The migration carries
+pairs a hub recorded by name over by ID (both sides linking each other)
+and links the remaining ones (an admin worker and the one worker of the
+same owner on the same host). `longarm ls`, the tray and the panel pair by
+the name suffix only for nodes from an older hub (no IDs). Others than the
+owner never see the admin worker of a shared worker (`companion`,
+`companion_id` cleared; events naming it redacted).
 
 **End-to-end trust.** Endorsements bind the ID (see "End-to-end trust"):
 an endorsement made for a node's request that carries its ID (v2) is one

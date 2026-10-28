@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -119,6 +120,10 @@ func nodeView(v tenancy.Caller, n *pb.NodeInfo) *pb.NodeInfo {
 	}
 	if n.Owner != v.User { // whom else a worker is shared with is its owner's business
 		n.Shares = nil
+		// so is its admin worker (owner-only): the machine is the worker's
+		if n.Companion != "" && !n.AdminWorker {
+			n.Companion, n.CompanionId, n.Machine = "", "", n.Name
+		}
 	}
 	own := func(repos []string) []string {
 		var out []string
@@ -628,6 +633,10 @@ func eventFilter(v tenancy.Caller) func(*pb.FleetEvent, string) *pb.FleetEvent {
 			}
 			c := proto.Clone(ev).(*pb.FleetEvent)
 			c.NodeInfo = nodeView(v, c.NodeInfo)
+			// a message naming the owner-only admin worker is the owner's
+			if a := ev.NodeInfo.Companion; a != "" && c.NodeInfo.Companion == "" && strings.Contains(c.Message, a) {
+				c.Message = "updated"
+			}
 			return c
 		default:
 			return nil

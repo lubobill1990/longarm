@@ -81,7 +81,7 @@ func TestHub(t *testing.T) {
 			t.Fatalf("join code labels missing: %v", n2["labels"])
 		}
 		waitFor(t, "metrics in longarm ls", 20*time.Second, func() bool {
-			out := h.longarm(h.client, "ls").stdout
+			out := h.longarm(h.client, "ls", "-o", "wide").stdout
 			return strings.Contains(out, "wa ") && strings.Contains(out, "w1 ") && strings.Count(out, "online") == 2 && !strings.Contains(out, "online  -")
 		})
 		r := h.longarm(h.client, "exec", "wa", "--", bins.helper, "print", "2", "0", "4")
@@ -169,7 +169,7 @@ func TestHub(t *testing.T) {
 		h.waitNode(t, "wa", "online", func(n map[string]any) bool { return isTrue(n["online"]) })
 		wa.kill()
 		h.waitNode(t, "wa", "offline", func(n map[string]any) bool { return !isTrue(n["online"]) })
-		if out := h.longarm(h.client, "ls").stdout; !strings.Contains(out, "offline") {
+		if out := h.longarm(h.client, "ls", "-o", "wide").stdout; !strings.Contains(out, "offline") {
 			t.Fatalf("ls: %s", out)
 		}
 		wa.start(t, true)

@@ -12,9 +12,45 @@ import (
 	"image/png"
 	"math"
 	"strings"
+	"time"
 
+	"github.com/lubobill1990/longarm/internal/machine"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
+
+// LongOffline: a worker offline (by the hub's last_seen) for longer is an
+// old registration: left out of the icon and the tooltip, as the popup
+// collapses it into its "Offline" section.
+var LongOffline = time.Hour
+
+// machineWorkers are v's workers as machines: an admin worker that pairs
+// with a listed session worker (package machine) is left out - its machine
+// is the session worker's. longOffline also leaves out workers offline for
+// more than LongOffline.
+func machineWorkers(v *pb.PoolView, longOffline bool) []*pb.PoolWorker {
+	var nodes []*pb.NodeInfo
+	for _, w := range v.GetWorkers() {
+		if w.GetNode() != nil {
+			nodes = append(nodes, w.GetNode())
+		}
+	}
+	pairs := machine.Pairs(nodes)
+	now := time.Now()
+	if t := v.GetTime(); t != nil {
+		now = t.AsTime()
+	}
+	var out []*pb.PoolWorker
+	for _, w := range v.GetWorkers() {
+		if _, ok := pairs[w.Name]; ok {
+			continue
+		}
+		if seen := w.GetNode().GetLastSeen(); longOffline && w.State == "offline" && seen != nil && now.Sub(seen.AsTime()) > LongOffline {
+			continue
+		}
+		out = append(out, w)
+	}
+	return out
+}
 
 // Palette.
 var (
@@ -38,7 +74,7 @@ type IconWorker struct {
 // IconWorkers maps a pool view to icon columns (in the view's order).
 func IconWorkers(v *pb.PoolView) []IconWorker {
 	var out []IconWorker
-	for _, w := range v.GetWorkers() {
+	for _, w := range machineWorkers(v, true) {
 		iw := IconWorker{State: w.State}
 		if m := w.Metrics; m != nil && (w.State == "online" || w.Source == "hub") {
 			iw.Valid, iw.CPU = true, m.CpuPercent
@@ -105,7 +141,7 @@ func IconPNG(ws []IconWorker) []byte {
 // cut to 127 characters (the Windows limit).
 func Tooltip(v *pb.PoolView) string {
 	var parts []string
-	for _, w := range v.GetWorkers() {
+	for _, w := range machineWorkers(v, true) {
 		if w.State != "online" {
 			st := "offline"
 			if w.State == "connecting" {

@@ -210,6 +210,7 @@ func (d *daemon) Pool(_ context.Context, req *pb.PoolRequest) (*pb.PoolView, err
 	v.Hub = proto.Clone(d.link).(*pb.HubLink)
 	d.mu.Unlock()
 	v.Identity = d.identity()
+	v.User = d.s.dialer.Identity().Owner()
 	v.Firewall = d.fw.Get()
 	return v, nil
 }
@@ -389,6 +390,7 @@ func (d *daemon) SetSettings(ctx context.Context, req *pb.ClientSettings) (*pb.C
 //	POST /v1/jobs/{id}/kill?worker=
 //	GET  /v1/settings ; POST /v1/settings {"transport": "race"}
 //	POST /v1/workers/{name}/drain {"draining": true}   (longarm admin drain; admin role)
+//	POST /v1/workers/{name}/remove                     (longarm worker remove: the owner, or an admin)
 func (d *daemon) poolGateway(mux *http.ServeMux) {
 	flag := func(r *http.Request, k string) bool { v := r.URL.Query().Get(k); return v == "1" || v == "true" }
 	mux.HandleFunc("GET /v1/pool", func(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +430,10 @@ func (d *daemon) poolGateway(mux *http.ServeMux) {
 		}
 		req.Name = r.PathValue("name")
 		n, err := d.DrainWorker(r.Context(), req)
+		localapi.WriteProto(w, n, err)
+	})
+	mux.HandleFunc("POST /v1/workers/{name}/remove", func(w http.ResponseWriter, r *http.Request) {
+		n, err := d.RemoveWorker(r.Context(), &pb.NodeRequest{Name: r.PathValue("name")})
 		localapi.WriteProto(w, n, err)
 	})
 	mux.HandleFunc("GET /v1/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -614,4 +620,23 @@ func (d *daemon) DrainWorker(ctx context.Context, req *pb.SetDrainRequest) (*pb.
 	cctx, cancel := context.WithTimeout(ctx, hubTimeout)
 	defer cancel()
 	return h.Admin().SetDrain(cctx, req)
+}
+
+// RemoveWorker removes a worker through the hub (longarm worker remove):
+// the hub revokes it when it is this user's own worker, or for an admin.
+func (d *daemon) RemoveWorker(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
+	if req.GetName() == "" {
+		return nil, status.Error(codes.InvalidArgument, "no worker named")
+	}
+	h := d.s.hub()
+	if h == nil {
+		return nil, status.Error(codes.FailedPrecondition, "no hub configured")
+	}
+	cctx, cancel := context.WithTimeout(ctx, hubTimeout)
+	defer cancel()
+	n, err := h.Fleet().RemoveWorker(cctx, req)
+	if err == nil {
+		d.mon.HubNode(n) // revoked: gone from the pool view at once
+	}
+	return n, err
 }

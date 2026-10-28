@@ -77,6 +77,28 @@
   database migrates to schema 5 (IDs for existing nodes; names that look
   like IDs get a `w-`/`d-` prefix, audited); certificates without an ID keep
   working (mapped by serial) and get one at their next renewal.
+- One machine, one entry: a user-session worker and its admin worker (runs
+  as SYSTEM, `<worker>-admin`) show together - one tray card with an
+  "admin commands: on" badge, the per-capability state ("worker online ·
+  admin offline 2h") and the labels as chips; `longarm ls` folds the admin
+  worker into its worker's row (ADMIN column); the panel lists it right
+  under its worker. attach / ssh go to the session worker; "run as admin"
+  (the card's ⋯ menu) names the admin worker. The hub records the pair by node ID
+  (`NodeInfo.companion_id`; `NodeInfo.companion`, `NodeInfo.machine` - additive
+  JSON fields - come from it); the hub's migration pairs older registrations
+  (owner and host name).
+- Tray: workers offline for over an hour move to a collapsed "Offline (n)"
+  section, one line each with "last seen", the error behind "details";
+  online machines first. "Remove" (with a confirmation) revokes your own
+  worker on the hub (`longarm worker remove`; admins: any worker), through
+  the daemon's new `POST /v1/workers/{name}/remove` (LocalClient.RemoveWorker).
+- Tray Settings: notifications for your workers / your jobs can be turned
+  off; the client's version, "Open logs folder", the telemetry switch
+  (`longarm telemetry off|on`) and "Collect diagnostics" (`longarm diag`,
+  nothing uploaded). "This worker": "Start worker" (the session task or the
+  service) and "Open log folder" when it isn't running; a machine installed
+  for a hub points at the Account tab instead of the join-code form (still
+  there under "Use a join code").
 
 - Windows installer for password-less machines (Entra-only sign-in with
   Windows Hello or a security key, e.g. Microsoft Dev Box): the MSI's first
@@ -339,6 +361,18 @@
   plain keystrokes. longarm no longer passes that request on.
 
 ### Changed
+
+- `longarm ls` prints a compact table by default: WORKER STATE OS CPU% MEM
+  GB JOBS LABELS (ADMIN, OWNER); offline workers say when they were last
+  seen ("offline 3d"). `-o wide` is the previous table (sessions, disk,
+  uptime, top processes, PATH). `longarm worker ls` lists an admin worker
+  right after its worker and says "offline 3d" too.
+- Tray: the title, tabs and source line stay put; only the list scrolls.
+  The drain button shows for admins only (it needs an admin certificate).
+  Kills ask first (job, owner, worker) - in My jobs and on This worker.
+  Notifications cover your own workers and your own jobs only, not other
+  people's machines. The icon and tooltip count machines and leave out
+  workers offline for over an hour.
 
 - `longarm run --repo <url>`: a fetch the remote refuses for lack of
   credentials (401/403, no prompt possible - e.g. Azure DevOps through Git

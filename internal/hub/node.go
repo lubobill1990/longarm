@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/machine"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -416,12 +417,19 @@ func (h *Hub) nodeInfoLocked(n *node) *pb.NodeInfo {
 		Metrics: n.metrics, LastSeen: tspb(r.LastSeen), JoinedAt: tspb(r.JoinedAt), CertNotAfter: tspb(r.CertNotAfter),
 		Mirrors: r.Mirrors, WarmRepos: r.WarmRepos, Profile: r.Profile, Toolchain: n.toolchain, AdminWorker: r.Admin,
 		MaxJobs: n.maxJobs, ReservedMemGb: n.reservedGB, Tailnet: n.tailnet, Isolation: r.Isolation,
-		Id: r.ID, CertName: r.DialName(), CompanionId: r.Companion, LegacySerials: h.legacySerials[r.ID],
+		Id: r.ID, CertName: r.DialName(), LegacySerials: h.legacySerials[r.ID],
 	}
 	if r.Role != string(pki.RoleWorker) {
 		info.User = nodeUser(r)
 	} else {
 		info.Owner, info.Shares = r.Owner, sharesPB(r.Shares)
+		info.Machine = r.Name
+		if c := h.companionLocked(n); c != nil {
+			info.Companion, info.CompanionId = c.rec.Name, c.rec.ID
+			if r.Admin {
+				info.Machine = c.rec.Name // the session worker names the machine
+			}
+		}
 	}
 	switch {
 	case r.AdminDrain:
@@ -434,6 +442,30 @@ func (h *Hub) nodeInfoLocked(n *node) *pb.NodeInfo {
 	}
 	info.JobsActive, info.ReservedGb = h.loadLocked(r.ID)
 	return info
+}
+
+// companionLocked is the other worker on n's machine: the companion its
+// record links by node ID (both ways), while the two still fit (package
+// machine: live workers, one an admin worker, the same owner and host);
+// nil = none. No name matching: the link is the node ID.
+func (h *Hub) companionLocked(n *node) *node {
+	c := h.nodes[n.rec.Companion]
+	if c == nil || c == n || c.rec.Companion != n.rec.ID {
+		return nil
+	}
+	session, admin := n, c
+	if n.rec.Admin {
+		session, admin = c, n
+	}
+	if !machine.Match(machineWorker(session.rec), machineWorker(admin.rec)) {
+		return nil
+	}
+	return c
+}
+
+func machineWorker(r *store.Node) machine.Worker {
+	return machine.Worker{Name: r.Name, Owner: r.Owner, Hostname: r.Hostname, Admin: r.Admin, Companion: r.Companion,
+		Revoked: r.State == stateRevoked, Worker: r.Role == string(pki.RoleWorker)}
 }
 
 // loadLocked returns the active jobs and reserved memory of a worker (ID).

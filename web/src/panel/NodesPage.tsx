@@ -4,6 +4,7 @@ import type { LinkReport, MetricsPoint, NodeInfo, Profile } from '../api/types'
 import { MiniBar, Sparkline } from '../components/charts'
 import { ErrorBox, StatePill, useAction, usePoll } from '../components/common'
 import { AMBER, CPU_C, fmtAgo, fmtRTT, gb, GREEN, isRelayed, MEM_C, memPct, nodeKey, RED, shortIds, since } from '../lib/format'
+import { nodeMachines } from '../lib/machines'
 
 const HIST = 150
 
@@ -57,6 +58,8 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
   const short = useMemo(() => shortIds(list.map((n) => n.id)), [list])
   const pending = list.filter((n) => n.state === 'pending')
   const workers = list.filter((n) => n.role === 'worker' && n.state !== 'pending')
+  // one machine together: a session worker, then its admin worker; online machines first
+  const machines = nodeMachines(workers)
   const others = list.filter((n) => n.role !== 'worker' && n.state !== 'pending')
   const online = workers.filter((n) => n.online && n.state === 'approved').length
   return (
@@ -97,9 +100,15 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
           </tr>
         </thead>
         <tbody>
-          {workers.map((n) => (
-            <NodeRow key={nodeKey(n)} n={n} short={short} hist={hist[nodeKey(n)] ?? hist[n.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} />
-          ))}
+          {machines.flatMap((g) => {
+            const main = g.session ?? g.admin!
+            const rows = [
+              <NodeRow key={nodeKey(main)} n={main} short={short} adminWorker={g.session ? g.admin : undefined} hist={hist[nodeKey(main)] ?? hist[main.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} />,
+            ]
+            if (g.session && g.admin)
+              rows.push(<NodeRow key={nodeKey(g.admin)} n={g.admin} short={short} sub hist={hist[nodeKey(g.admin)] ?? hist[g.admin.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} />)
+            return rows
+          })}
           {workers.length === 0 && (
             <tr>
               <td colSpan={admin ? 9 : 7} className="notice">
@@ -175,6 +184,8 @@ function NodeRow({
   links,
   profiles,
   admin,
+  adminWorker,
+  sub,
 }: {
   n: NodeInfo
   short: Record<string, string>
@@ -182,6 +193,10 @@ function NodeRow({
   links: LinkReport[]
   profiles: Profile[]
   admin: boolean
+  /** the machine's admin worker (shown as a capability of this row) */
+  adminWorker?: NodeInfo
+  /** this is the admin worker of the row above (same machine) */
+  sub?: boolean
 }) {
   const { run, busy } = useAction()
   const m = n.online ? n.metrics : undefined
@@ -204,12 +219,22 @@ function NodeRow({
     run(() => hubApi.setLabels(target, next), 'labels saved')
   }
   return (
-    <tr data-testid={`node-${n.name}`} style={revoked ? { opacity: 0.5 } : undefined}>
+    <tr data-testid={`node-${n.name}`} className={sub ? 'subrow' : undefined} style={revoked ? { opacity: 0.5 } : undefined}>
       <td className="nowrap">
-        <div className="row">
+        <div className="row" style={sub ? { paddingLeft: 14 } : undefined}>
+          {sub && <span className="faint" title="the admin worker of the machine above">↳</span>}
           <span className="dot" style={{ background: revoked ? RED : n.online ? GREEN : RED }} />
           <b>{n.name}</b>
           <NodeId n={n} short={short} />
+          {adminWorker && (
+            <span
+              className="pill info"
+              data-testid={`admin-cap-${n.name}`}
+              title={`this machine also runs an admin worker, ${adminWorker.name}: commands as SYSTEM, its owner only, named explicitly`}
+            >
+              admin commands: {adminWorker.state === 'revoked' ? 'revoked' : adminWorker.online ? 'online' : 'offline'}
+            </span>
+          )}
           {n.admin_worker && (
             <span className="pill warn" data-testid={`admin-${n.name}`} title={`admin worker: runs commands as SYSTEM on its machine; only ${n.owner ?? 'its owner'} can use it, never shared or placed automatically`}>
               admin

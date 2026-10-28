@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { LegStatus, MetricsSnapshot, PoolWorker, ProcGroup } from '../api/types'
 import {
   AMBER,
@@ -16,6 +17,7 @@ import {
   RTT_C,
   since,
 } from '../lib/format'
+import { ADMIN_LABEL, fmtLastSeen, isAdminNode, offlineSeconds, type PoolMachine } from '../lib/machines'
 import { Bar, Sparkline } from './charts'
 
 const AGENTS: [string, string, string][] = [
@@ -27,65 +29,201 @@ export interface CardActions {
   attach?: (w: string) => void
   ssh?: (w: string) => void
   panel?: (w: string) => void
+  /** longarm admin drain / undrain: admins only (leave it unset for others) */
   drain?: (w: string, on: boolean) => void
+  /** remove (revoke) workers on the hub; the caller confirms */
+  remove?: (names: string[]) => void
+  /** whether this user may remove the worker (its owner, or an admin) */
+  canRemove?: (w: PoolWorker) => boolean
+}
+
+const adminTip = (name: string) =>
+  `Admin commands run as SYSTEM (a local administrator) on this machine. Only the owner can use them; ` +
+  `never shared, never picked automatically: name the admin worker explicitly (${name}).`
+
+/** A shield: the admin-commands capability. */
+export function ShieldIcon({ size = 11 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" style={{ verticalAlign: '-1px' }}>
+      <path d="M8 1 2.5 3v4.2c0 3.4 2.3 6.4 5.5 7.8 3.2-1.4 5.5-4.4 5.5-7.8V3L8 1z" fill="currentColor" />
+    </svg>
+  )
+}
+
+/** "admin commands: on": the machine has an admin worker. */
+export function AdminBadge({ admin, compact }: { admin: PoolWorker; compact?: boolean }) {
+  return (
+    <span className="pill admin" data-testid="admin-badge" title={adminTip(admin.name)}>
+      <ShieldIcon /> {compact ? 'admin' : 'admin commands: on'}
+    </span>
+  )
+}
+
+function stateOf(w?: PoolWorker): string {
+  return w ? (w.state ?? 'connecting') : 'offline'
+}
+
+function statusText(w: PoolWorker, now: number): string {
+  const st = stateOf(w)
+  const s = since(w.since, now)
+  if (st === 'online') return `online ${fmtAgo(s)}`
+  if (st === 'offline') return `offline ${fmtAgo(s)}, reconnecting`
+  return 'connecting…'
+}
+
+function capText(label: string, w: PoolWorker, now: number): string {
+  const st = stateOf(w)
+  if (st === 'offline') return `${label} offline ${fmtLastSeen(offlineSeconds(w, now))}`
+  return `${label} ${st === 'online' ? 'online' : 'connecting'}`
+}
+
+/** A machine of one pool worker (no companion known). */
+export function machineOf(w: PoolWorker): PoolMachine {
+  const admin = isAdminNode(w.node)
+  return {
+    key: w.name,
+    session: admin ? undefined : w,
+    admin: admin ? w : undefined,
+    primary: w,
+    state: stateOf(w),
+    offlineFor: 0,
+    longOffline: false,
+    labels: Object.entries(w.node?.labels ?? {}).filter(([k]) => k !== 'os' && k !== 'arch' && k !== ADMIN_LABEL),
+  }
 }
 
 /**
- * One worker in a dark card layout: status line, then this
- * client's link (active leg, path, NAT, RTT + 5-min RTT sparkline), CPU and
- * memory bars with the 5-min sparkline, Claude / Copilot sessions, info
- * line and the top processes by CPU and memory.
+ * One machine in a dark card layout: its session worker (and, if it has
+ * one, its admin worker as the "admin commands" capability), status line,
+ * labels, then this client's link (active leg, path, NAT, RTT + 5-min RTT
+ * sparkline), CPU and memory bars with the 5-min sparkline, Claude /
+ * Copilot sessions, info line and the top processes by CPU and memory.
+ * attach / ssh go to the session worker; admin actions name the admin
+ * worker explicitly (the ⋯ menu). Pass a machine (m) or a lone worker (w).
  */
-export function WorkerCard({ w, actions, now = Date.now() }: { w: PoolWorker; actions?: CardActions; now?: number }) {
-  const state = w.state ?? 'connecting'
+export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker; m?: PoolMachine; actions?: CardActions; now?: number }) {
+  const [menu, setMenu] = useState(false)
+  const mm = m ?? machineOf(w!)
+  const session = mm.session
+  const admin = mm.admin
+  const p = mm.primary
+  const state = mm.state
   const dot = state === 'online' ? GREEN : state === 'offline' ? RED : AMBER
-  const m = w.state === 'online' || w.source === 'hub' ? w.metrics : undefined
-  const sinceS = since(w.since, now)
-  let sub: string
-  if (state === 'online') sub = `online ${fmtAgo(sinceS)}`
-  else if (state === 'offline') sub = `offline ${fmtAgo(sinceS)}, reconnecting`
-  else sub = 'connecting…'
-  const draining = w.node?.draining
+  const metrics = p.state === 'online' || p.source === 'hub' ? p.metrics : undefined
+  const draining = session?.node?.draining
+  const canRemove = (x?: PoolWorker) => !!x && !!actions?.remove && (actions.canRemove?.(x) ?? false)
+  const menuItems: [string, () => void][] = []
+  if (admin && actions?.attach) menuItems.push([`run as admin (attach ${admin.name})`, () => actions.attach!(admin.name)])
+  if (admin && actions?.ssh) menuItems.push([`ssh as admin (${admin.name})`, () => actions.ssh!(admin.name)])
+  for (const x of [session, admin]) if (x && canRemove(x)) menuItems.push([`remove ${x.name}…`, () => actions!.remove!([x.name])])
   return (
-    <div className="wcard" data-testid={`worker-${w.name}`} data-state={state}>
+    <div className="wcard" data-testid={`worker-${mm.key}`} data-state={state}>
       <div className="head">
         <span className="dot" style={{ background: dot }} />
-        <span className="name">{w.name}</span>
-        {w.node?.id && (
-          <span className="mono faint small" title={`node ID ${w.node.id}`} data-testid={`id-${w.name}`}>
-            {w.node.id.slice(0, 8)}
+        <span className="name">{mm.key}</span>
+        {p.node?.id && (
+          <span className="mono faint small" title={`node ID ${p.node.id}`} data-testid={`id-${mm.key}`}>
+            {p.node.id.slice(0, 8)}
           </span>
         )}
-        <span className="sub">{sub}</span>
+        <span className="sub">{statusText(session ?? admin ?? p, now)}</span>
         {draining && (
-          <span className="pill warn" title={w.node?.drain_reason}>
+          <span className="pill warn" title={session?.node?.drain_reason}>
             draining
           </span>
         )}
-        {w.source && w.source !== 'none' && (
+        {p.source && p.source !== 'none' && (
           <span className="pill" title="where these metrics come from">
-            {w.source}
+            {p.source}
           </span>
         )}
         <span className="actions">
-          {actions?.attach && <button onClick={() => actions.attach!(w.name)}>attach</button>}
-          {actions?.ssh && <button onClick={() => actions.ssh!(w.name)}>ssh ↗</button>}
-          {actions?.panel && <button onClick={() => actions.panel!(w.name)}>hub ↗</button>}
-          {actions?.drain && (
-            <button title="longarm admin drain / undrain (admin certificate)" onClick={() => actions.drain!(w.name, !w.node?.admin_drain)}>
-              {w.node?.admin_drain ? 'resume' : 'drain'}
+          {session && actions?.attach && <button onClick={() => actions.attach!(session.name)}>attach</button>}
+          {session && actions?.ssh && <button onClick={() => actions.ssh!(session.name)}>ssh ↗</button>}
+          {actions?.panel && <button onClick={() => actions.panel!(mm.key)}>hub ↗</button>}
+          {session && actions?.drain && (
+            <button title="longarm admin drain / undrain (admin certificate)" onClick={() => actions.drain!(session.name, !session.node?.admin_drain)}>
+              {session.node?.admin_drain ? 'resume' : 'drain'}
             </button>
+          )}
+          {menuItems.length > 0 && (
+            <span className="menuwrap">
+              <button aria-label="more actions" aria-expanded={menu} onClick={() => setMenu((v) => !v)}>
+                ⋯
+              </button>
+              {menu && (
+                <span className="menu" role="menu">
+                  {menuItems.map(([label, fn]) => (
+                    <button
+                      key={label}
+                      role="menuitem"
+                      onClick={() => {
+                        setMenu(false)
+                        fn()
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </span>
+              )}
+            </span>
           )}
         </span>
       </div>
-      <LinkRows w={w} now={now} />
-      {!m ? (
+      {(admin || mm.labels.length > 0) && (
+        <div className="caps" data-testid="caps">
+          {admin && <AdminBadge admin={admin} />}
+          {admin && (
+            <span className="small muted" data-testid="cap-state">
+              {session ? `${capText('worker', session, now)} · ${capText('admin', admin, now)}` : `admin only · ${capText('admin', admin, now)}`}
+            </span>
+          )}
+          {mm.labels.map(([k, v]) => (
+            <span key={k} className="pill chip" data-testid="label-chip">
+              {k}={v}
+            </span>
+          ))}
+        </div>
+      )}
+      <LinkRows w={p} now={now} />
+      {!metrics ? (
         <div className={`msg ${state === 'offline' ? 'red' : 'muted'}`}>
-          {(w.error || (state === 'connecting' ? 'waiting for the first sample…' : 'unreachable')).slice(0, 120)}
+          {(p.error || (state === 'connecting' ? 'waiting for the first sample…' : 'unreachable')).slice(0, 120)}
         </div>
       ) : (
-        <Metrics m={m} w={w} />
+        <Metrics m={metrics} w={p} />
       )}
+    </div>
+  )
+}
+
+/** A long-offline machine: one compact line, "last seen", the error behind "details". */
+export function OfflineRow({ m, actions }: { m: PoolMachine; actions?: CardActions }) {
+  const [open, setOpen] = useState(false)
+  const members = [m.session, m.admin].filter((x): x is PoolWorker => !!x)
+  const removable = members.filter((x) => !!actions?.remove && (actions.canRemove?.(x) ?? false)).map((x) => x.name)
+  const errors = members.filter((x) => x.error).map((x) => `${x.name}: ${x.error}`)
+  return (
+    <div className="orow" data-testid={`offline-${m.key}`}>
+      <div className="row">
+        <span className="dot" style={{ width: 8, height: 8, background: 'var(--faint)' }} />
+        <span className="oname">{m.key}</span>
+        {m.admin && <AdminBadge admin={m.admin} compact />}
+        <span className="muted small">last seen {fmtLastSeen(m.offlineFor)} ago</span>
+        <span className="spacer" />
+        {errors.length > 0 && (
+          <button className="link small" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+            {open ? 'hide details' : 'details'}
+          </button>
+        )}
+        {removable.length > 0 && (
+          <button className="link small danger" onClick={() => actions!.remove!(removable)}>
+            remove
+          </button>
+        )}
+      </div>
+      {open && <div className="small muted mono odetail">{errors.join('\n')}</div>}
     </div>
   )
 }

@@ -298,8 +298,11 @@ type Node struct {
 	// at enrollment only; it shows as the label longarm.io/admin=true and
 	// makes the worker owner-only (never shared) and never placed.
 	Admin bool `json:"admin_worker,omitempty"`
-	// Companion links a worker and its admin worker on the same machine
-	// (enrolled by one pairing): the other one's ID.
+	// Companion links a worker and its admin worker on the same machine:
+	// the other one's node ID, recorded on both when a pairing enrolls them
+	// together, an admin worker joins next to the owner's worker on its host,
+	// or the migration pairs them. Shown as NodeInfo.companion_id /
+	// companion / machine; package machine checks it still fits.
 	Companion string `json:"companion,omitempty"`
 	// CertName is the name in the node's current certificate (what
 	// clients dial; "" = Name) and CertHasID whether that certificate

@@ -1,30 +1,65 @@
 import { useCallback, useEffect, useState } from 'react'
-import { longarmdApi, trayApi, type TrayInfo } from '../api/local'
+import { longarmdApi, trayApi, traySettingsApi, type TrayInfo } from '../api/local'
 import type { Job } from '../api/types'
 import { Bar } from '../components/charts'
 import { ErrorBox, FirewallWarning, LogView, StatePill, useAction, usePoll } from '../components/common'
 import { fmtAgo, fmtTime, gb, isActive, memPct, since } from '../lib/format'
+import { killQuestion } from './ClientTab'
 
 /** longarm-tray's worker tab: this machine's longarmd through its local API. */
-export function WorkerTab({ info }: { info: TrayInfo }) {
-  if (!info.worker.enrolled) return <JoinForm />
-  if (!info.worker.running)
-    return (
-      <div className="error-box">
-        longarmd is not running{info.worker.error ? `: ${info.worker.error}` : ''}.{' '}
-        {info.account?.run_mode === 'session' ? (
-          <>
-            It starts at your logon; start it now: <span className="mono">longarmd session-mode start</span>
-            {info.account.needed ? ' (it waits for your sign-in: Account tab)' : ''}.
-          </>
-        ) : (
-          <>
-            Start the service (Windows: <span className="mono">longarmd service start</span>).
-          </>
-        )}
-      </div>
-    )
+export function WorkerTab({ info, onNavigate }: { info: TrayInfo; onNavigate?: (tab: string) => void }) {
+  if (!info.worker.enrolled) {
+    // installed for a hub (the MSI's Default): signing in enrolls the worker; join codes are the exception
+    if (info.account?.hub_from)
+      return (
+        <div data-testid="worker-signin">
+          <div className="notice">
+            This worker isn&apos;t signed in yet: sign in on the Account tab and it joins {info.account.hub || 'the hub'} as yours.{' '}
+            {onNavigate && (
+              <button className="primary" onClick={() => onNavigate('account')}>
+                Account tab
+              </button>
+            )}
+          </div>
+          <details>
+            <summary className="muted small">Use a join code</summary>
+            <JoinForm />
+          </details>
+        </div>
+      )
+    return <JoinForm />
+  }
+  if (!info.worker.running) return <WorkerDown info={info} />
   return <WorkerStatusView />
+}
+
+/** The local worker isn't running: start it the way it runs, or look at its log. */
+function WorkerDown({ info }: { info: TrayInfo }) {
+  const { run, busy } = useAction()
+  const session = info.account?.run_mode === 'session'
+  return (
+    <div className="error-box" data-testid="worker-down">
+      longarmd is not running{info.worker.error ? `: ${info.worker.error}` : ''}.{' '}
+      {session ? (
+        <>
+          It starts at your logon (<span className="mono">longarmd session-mode start</span>)
+          {info.account?.needed ? '; it waits for your sign-in (Account tab)' : ''}.
+        </>
+      ) : (
+        <>
+          It runs as a service (<span className="mono">longarmd service start</span>; starting it may ask for an administrator).
+        </>
+      )}
+      <div className="row" style={{ marginTop: 6 }}>
+        <button className="primary" disabled={busy} onClick={() => run(() => traySettingsApi.startWorker(), session ? 'starting the worker' : 'starting the worker service')}>
+          Start worker
+        </button>
+        <button disabled={busy} onClick={() => run(() => traySettingsApi.openFolder('worker-logs'))}>
+          Open log folder
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function WorkerStatusView() {
@@ -136,7 +171,7 @@ function WorkerStatusView() {
                 <td>
                   <StatePill state={j.state} />
                 </td>
-                <td className="muted">{j.spec.submitted_by}</td>
+                <td className="muted">{j.spec.owner || j.spec.submitted_by}</td>
                 <td className="muted nowrap">{fmtTime(j.created_at)}</td>
                 <td>
                   {isActive(j.state) && (
@@ -145,6 +180,7 @@ function WorkerStatusView() {
                       disabled={busy}
                       onClick={(e) => {
                         e.stopPropagation()
+                        if (!confirm(killQuestion(j, s.name))) return
                         run(() => longarmdApi.kill(j.spec.id), 'killed').then(jobs.reload)
                       }}
                     >
@@ -154,6 +190,16 @@ function WorkerStatusView() {
                 </td>
               </tr>
             ))}
+            {jobs.data === undefined && !jobs.error && (
+              <tr>
+                <td className="notice">loading jobs…</td>
+              </tr>
+            )}
+            {jobs.data !== undefined && jobs.data.length === 0 && (
+              <tr>
+                <td className="notice">no jobs on this worker yet</td>
+              </tr>
+            )}
           </tbody>
         </table>
         {open && <WorkerJobLogs key={open.spec.id} id={open.spec.id} />}

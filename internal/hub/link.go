@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	"github.com/lubobill1990/longarm/internal/machine"
 	"github.com/lubobill1990/longarm/internal/pki"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -608,7 +609,11 @@ func (h *Hub) approveLink(a *linkApprover, l *pairLink) (*pb.JoinResponse, error
 			dev.name = adminWorkerName(l, nil)
 		}
 		dev.admin = true
-		return h.enrollOwnedWorker(who, user, dev)
+		aw, err := h.enrollOwnedWorker(who, user, dev)
+		if err == nil {
+			h.pairAdminWorker(aw.Id, "")
+		}
+		return aw, err
 	}
 	resp, err := h.approveLinkParts(who, user, admin, l, dev)
 	if err != nil || !l.admin {
@@ -640,7 +645,62 @@ func (h *Hub) approveLink(a *linkApprover, l *pairLink) (*pb.JoinResponse, error
 		return nil, status.Errorf(status.Code(err), "the admin worker: %s", errMessage(err))
 	}
 	resp.AdminWorker = aw
+	h.pairAdminWorker(aw.Id, adev.companion)
 	return resp, nil
+}
+
+// pairAdminWorker records the admin worker admin and the session worker of
+// its machine as companions (store.Node.Companion: the other one's node ID,
+// both ways): worker, the one enrolled with it, else the owner's one live
+// worker on the same host without a companion. Never by name (names are
+// reused): nothing is recorded when none or several fit. admin and worker
+// are node IDs.
+func (h *Hub) pairAdminWorker(admin, worker string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	a := h.nodes[admin]
+	if a == nil || !a.rec.Admin {
+		return
+	}
+	if c := h.nodes[a.rec.Companion]; c != nil && c.rec.Companion == a.rec.ID {
+		return // linked at enrollment (pairLocked)
+	}
+	aw := machineWorker(a.rec)
+	fits := func(n *node) bool {
+		return n != nil && n.rec.Companion == "" && machine.Match(machineWorker(n.rec), aw) && a.rec.Hostname != "" &&
+			strings.EqualFold(n.rec.Hostname, a.rec.Hostname)
+	}
+	var s *node
+	switch {
+	case worker != "":
+		if s = h.nodes[worker]; s == nil || !machine.Match(machineWorker(s.rec), aw) {
+			return
+		}
+	default:
+		var ids []string
+		for id, n := range h.nodes {
+			if fits(n) {
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) != 1 { // none, or several: ambiguous
+			return
+		}
+		s = h.nodes[ids[0]]
+	}
+	for _, p := range [][2]*node{{a, s}, {s, a}} {
+		rec := *p[0].rec
+		rec.Companion = p[1].rec.ID
+		if err := h.store.PutNode(&rec); err != nil {
+			h.log.Warn("pairing: recording the companion worker", "node", rec.Name, "err", err)
+			return
+		}
+		p[0].rec = &rec
+	}
+	// no names: the session worker's event reaches whoever may use it
+	// (eventFilter); its admin worker is its owner's business
+	h.publishNodeLocked(s, "paired with its machine's admin worker")
+	h.publishNodeLocked(a, "paired with its machine's worker")
 }
 
 // adminWorkerName is an admin worker's default name: <the machine's

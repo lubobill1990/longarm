@@ -33,10 +33,16 @@ func NewRules() *Rules {
 	return &Rules{status: map[string]string{}, memHigh: map[string]bool{}, relayed: map[string]bool{}, jobs: map[string]pb.JobState{}}
 }
 
-// Pool compares a pool view with the previous one.
+// Pool compares a pool view with the previous one. Only the user's own
+// workers notify (owner = the view's user; every worker with a daemon too
+// old to say who the user is): other people's machines going offline or
+// filling up are theirs to watch.
 func (r *Rules) Pool(v *pb.PoolView, now time.Time) []Notification {
 	var out []Notification
-	for _, w := range v.GetWorkers() {
+	for _, w := range machineWorkers(v, false) { // a session worker speaks for its admin worker
+		if u := v.GetUser(); u != "" && w.GetNode().GetOwner() != u {
+			continue
+		}
 		prev, seen := r.status[w.Name]
 		switch {
 		case w.State == "offline" && seen && (prev == "online" || prev == "connecting"):

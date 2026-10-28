@@ -472,6 +472,7 @@ const (
 	LocalClient_GetSettings_FullMethodName  = "/longarm.v1.LocalClient/GetSettings"
 	LocalClient_SetSettings_FullMethodName  = "/longarm.v1.LocalClient/SetSettings"
 	LocalClient_DrainWorker_FullMethodName  = "/longarm.v1.LocalClient/DrainWorker"
+	LocalClient_RemoveWorker_FullMethodName = "/longarm.v1.LocalClient/RemoveWorker"
 	LocalClient_Shutdown_FullMethodName     = "/longarm.v1.LocalClient/Shutdown"
 )
 
@@ -505,6 +506,9 @@ type LocalClientClient interface {
 	// DrainWorker drains / resumes a worker through the hub (longarm admin drain /
 	// undrain; needs this client's certificate to have the admin role).
 	DrainWorker(ctx context.Context, in *SetDrainRequest, opts ...grpc.CallOption) (*NodeInfo, error)
+	// RemoveWorker removes (revokes) a worker through the hub, as longarm
+	// worker remove: the owner's own worker, or any worker for an admin.
+	RemoveWorker(ctx context.Context, in *NodeRequest, opts ...grpc.CallOption) (*NodeInfo, error)
 	Shutdown(ctx context.Context, in *ShutdownRequest, opts ...grpc.CallOption) (*ShutdownResponse, error)
 }
 
@@ -673,6 +677,16 @@ func (c *localClientClient) DrainWorker(ctx context.Context, in *SetDrainRequest
 	return out, nil
 }
 
+func (c *localClientClient) RemoveWorker(ctx context.Context, in *NodeRequest, opts ...grpc.CallOption) (*NodeInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NodeInfo)
+	err := c.cc.Invoke(ctx, LocalClient_RemoveWorker_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *localClientClient) Shutdown(ctx context.Context, in *ShutdownRequest, opts ...grpc.CallOption) (*ShutdownResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ShutdownResponse)
@@ -713,6 +727,9 @@ type LocalClientServer interface {
 	// DrainWorker drains / resumes a worker through the hub (longarm admin drain /
 	// undrain; needs this client's certificate to have the admin role).
 	DrainWorker(context.Context, *SetDrainRequest) (*NodeInfo, error)
+	// RemoveWorker removes (revokes) a worker through the hub, as longarm
+	// worker remove: the owner's own worker, or any worker for an admin.
+	RemoveWorker(context.Context, *NodeRequest) (*NodeInfo, error)
 	Shutdown(context.Context, *ShutdownRequest) (*ShutdownResponse, error)
 	mustEmbedUnimplementedLocalClientServer()
 }
@@ -762,6 +779,9 @@ func (UnimplementedLocalClientServer) SetSettings(context.Context, *ClientSettin
 }
 func (UnimplementedLocalClientServer) DrainWorker(context.Context, *SetDrainRequest) (*NodeInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method DrainWorker not implemented")
+}
+func (UnimplementedLocalClientServer) RemoveWorker(context.Context, *NodeRequest) (*NodeInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveWorker not implemented")
 }
 func (UnimplementedLocalClientServer) Shutdown(context.Context, *ShutdownRequest) (*ShutdownResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Shutdown not implemented")
@@ -1000,6 +1020,24 @@ func _LocalClient_DrainWorker_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LocalClient_RemoveWorker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NodeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LocalClientServer).RemoveWorker(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LocalClient_RemoveWorker_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LocalClientServer).RemoveWorker(ctx, req.(*NodeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _LocalClient_Shutdown_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ShutdownRequest)
 	if err := dec(in); err != nil {
@@ -1064,6 +1102,10 @@ var LocalClient_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DrainWorker",
 			Handler:    _LocalClient_DrainWorker_Handler,
+		},
+		{
+			MethodName: "RemoveWorker",
+			Handler:    _LocalClient_RemoveWorker_Handler,
 		},
 		{
 			MethodName: "Shutdown",

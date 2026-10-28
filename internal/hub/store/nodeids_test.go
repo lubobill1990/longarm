@@ -49,6 +49,10 @@ func schema4(t *testing.T, path string) {
 	node("bob-cpc-bob-x7k2h", "worker", "approved", map[string]any{"owner": "bob", "hostname": "CPC-bob-X7K2H"})
 	node("cpc-bob-x7k2h-admin", "worker", "approved", map[string]any{"owner": "bob", "hostname": "cpc-bob-x7k2h", "admin_worker": true})
 	// ... admins and clients ...
+	// a pair a hub with machine grouping (by name) recorded; a stale link
+	node("carol-box", "worker", "approved", map[string]any{"owner": "carol", "companion": "carol-sys"})
+	node("carol-sys", "worker", "approved", map[string]any{"owner": "carol", "admin_worker": true, "companion": "carol-box"})
+	node("dan-box", "worker", "approved", map[string]any{"owner": "dan", "companion": "ghost"})
 	node("root", "admin", "approved", nil)
 	node("alice-laptop", "client", "approved", map[string]any{"user": "alice"})
 	// ... a revoked one, and names that break the new rules
@@ -102,7 +106,7 @@ func TestMigrateNodeIDs(t *testing.T) {
 		}
 		by[n.Name] = n
 	}
-	if len(nodes) != 15 {
+	if len(nodes) != 18 {
 		t.Fatalf("%d nodes", len(nodes))
 	}
 	for _, name := range []string{"alice-pair", "alice-pc", "e2e-worker", "spike-1", "cpc-bob-x7k2h-admin", "bob-cpc-bob-x7k2h", "root", "alice-laptop", "old-box"} {
@@ -158,6 +162,12 @@ func TestMigrateNodeIDs(t *testing.T) {
 	aw, w := by["cpc-bob-x7k2h-admin"], by["bob-cpc-bob-x7k2h"]
 	if aw.Companion != w.ID || w.Companion != aw.ID {
 		t.Fatalf("companions %q %q", aw.Companion, w.Companion)
+	}
+	if cb, cs := by["carol-box"], by["carol-sys"]; cb.Companion != cs.ID || cs.Companion != cb.ID {
+		t.Fatalf("recorded pair (by name) not carried over by ID: %q %q", cb.Companion, cs.Companion)
+	}
+	if by["dan-box"].Companion != "" {
+		t.Fatalf("stale companion kept: %q", by["dan-box"].Companion)
 	}
 	if by["alice-pc"].Companion != "" {
 		t.Fatal("a worker without an admin worker got a companion")
@@ -232,7 +242,7 @@ func TestMigrateNodeIDs(t *testing.T) {
 		t.Fatalf("migrated again: %v", s2.MigrationNotes)
 	}
 	again, _ := s2.Nodes()
-	if len(again) != 16 {
+	if len(again) != 19 {
 		t.Fatalf("%d nodes after reopening", len(again))
 	}
 }

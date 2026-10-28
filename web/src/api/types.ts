@@ -79,6 +79,10 @@ export interface NodeInfo {
   cert_name?: string
   /** a worker and its admin worker on the same machine: the other one's ID */
   companion_id?: string
+  /** workers: the machine it runs on (a session worker and its admin worker share the session worker's name) */
+  machine?: string
+  /** workers: the other worker on the same machine (session <-> admin worker), if any: the name of companion_id */
+  companion?: string
 }
 
 export type JobState =
@@ -245,6 +249,7 @@ export interface PoolView {
   transport?: string // transport policy (longarm transport)
   identity?: string
   firewall?: FirewallStatus // the daemon's longarm.exe (Windows only)
+  user?: string // the Longarm user this client acts as (newer daemons)
 }
 
 /** Windows Firewall verdict for longarm.exe / longarmd.exe (unset outside Windows). */

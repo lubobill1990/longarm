@@ -3570,20 +3570,28 @@ type NodeInfo struct {
 	// an admin worker (runs commands as an administrator of its machine;
 	// label longarm.io/admin=true): owner-only, never shared, never placed
 	AdminWorker bool `protobuf:"varint,31,opt,name=admin_worker,json=adminWorker,proto3" json:"admin_worker,omitempty"`
+	// Workers: the machine the worker runs on, for grouping. A user-session
+	// worker and its admin worker (its companion) share one machine: the
+	// session worker's name. Otherwise the worker's own name.
+	Machine string `protobuf:"bytes,32,opt,name=machine,proto3" json:"machine,omitempty"`
+	// Workers: the other worker on the same machine (a session worker's admin
+	// worker, an admin worker's session worker), recorded at enrollment or
+	// matched by <worker>-admin, owner and host name; "" = none.
+	Companion string `protobuf:"bytes,33,opt,name=companion,proto3" json:"companion,omitempty"`
 	// Node identity (docs/security.md "Node identity"): the immutable ID
 	// (name = the display name, which can change); targets resolve to it.
-	Id string `protobuf:"bytes,32,opt,name=id,proto3" json:"id,omitempty"`
+	Id string `protobuf:"bytes,34,opt,name=id,proto3" json:"id,omitempty"`
 	// The name in the node's current certificate: what clients dial (TLS
 	// server name, longnet relay address). It equals name except after a
 	// rename until the node renewed its certificate. "" = name.
-	CertName string `protobuf:"bytes,33,opt,name=cert_name,json=certName,proto3" json:"cert_name,omitempty"`
+	CertName string `protobuf:"bytes,35,opt,name=cert_name,json=certName,proto3" json:"cert_name,omitempty"`
 	// A worker and its admin worker on the same machine (paired together):
-	// the other one's ID.
-	CompanionId string `protobuf:"bytes,34,opt,name=companion_id,json=companionId,proto3" json:"companion_id,omitempty"`
+	// the other one's ID (the link companion / machine come from).
+	CompanionId string `protobuf:"bytes,36,opt,name=companion_id,json=companionId,proto3" json:"companion_id,omitempty"`
 	// Serials of the node's valid certificates without a node ID (issued
 	// before IDs, not yet renewed): the only ID-less certificates clients
 	// accept for this node.
-	LegacySerials []string `protobuf:"bytes,35,rep,name=legacy_serials,json=legacySerials,proto3" json:"legacy_serials,omitempty"`
+	LegacySerials []string `protobuf:"bytes,37,rep,name=legacy_serials,json=legacySerials,proto3" json:"legacy_serials,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3833,6 +3841,20 @@ func (x *NodeInfo) GetAdminWorker() bool {
 		return x.AdminWorker
 	}
 	return false
+}
+
+func (x *NodeInfo) GetMachine() string {
+	if x != nil {
+		return x.Machine
+	}
+	return ""
+}
+
+func (x *NodeInfo) GetCompanion() string {
+	if x != nil {
+		return x.Companion
+	}
+	return ""
 }
 
 func (x *NodeInfo) GetId() string {
@@ -9880,7 +9902,8 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x06points\x18\x02 \x03(\v2\x18.longarm.v1.MetricsPointR\x06points\x12\x17\n" +
 	"\anode_id\x18\x03 \x01(\tR\x06nodeId\"@\n" +
 	"\x0fHistoryResponse\x12-\n" +
-	"\x05nodes\x18\x01 \x03(\v2\x17.longarm.v1.NodeHistoryR\x05nodes\"\xf3\t\n" +
+	"\x05nodes\x18\x01 \x03(\v2\x17.longarm.v1.NodeHistoryR\x05nodes\"\xab\n" +
+	"\n" +
 	"\bNodeInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12\x14\n" +
@@ -9917,11 +9940,13 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x04user\x18\x1c \x01(\tR\x04user\x12\x14\n" +
 	"\x05owner\x18\x1d \x01(\tR\x05owner\x120\n" +
 	"\x06shares\x18\x1e \x01(\v2\x18.longarm.v1.WorkerSharesR\x06shares\x12!\n" +
-	"\fadmin_worker\x18\x1f \x01(\bR\vadminWorker\x12\x0e\n" +
-	"\x02id\x18  \x01(\tR\x02id\x12\x1b\n" +
-	"\tcert_name\x18! \x01(\tR\bcertName\x12!\n" +
-	"\fcompanion_id\x18\" \x01(\tR\vcompanionId\x12%\n" +
-	"\x0elegacy_serials\x18# \x03(\tR\rlegacySerials\x1a9\n" +
+	"\fadmin_worker\x18\x1f \x01(\bR\vadminWorker\x12\x18\n" +
+	"\amachine\x18  \x01(\tR\amachine\x12\x1c\n" +
+	"\tcompanion\x18! \x01(\tR\tcompanion\x12\x0e\n" +
+	"\x02id\x18\" \x01(\tR\x02id\x12\x1b\n" +
+	"\tcert_name\x18# \x01(\tR\bcertName\x12!\n" +
+	"\fcompanion_id\x18$ \x01(\tR\vcompanionId\x12%\n" +
+	"\x0elegacy_serials\x18% \x03(\tR\rlegacySerials\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"$\n" +

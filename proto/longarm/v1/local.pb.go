@@ -808,6 +808,7 @@ type PoolView struct {
 	Transport     string          `protobuf:"bytes,5,opt,name=transport,proto3" json:"transport,omitempty"` // transport policy
 	Identity      string          `protobuf:"bytes,6,opt,name=identity,proto3" json:"identity,omitempty"`
 	Firewall      *FirewallStatus `protobuf:"bytes,7,opt,name=firewall,proto3" json:"firewall,omitempty"` // the daemon's longarm.exe (Windows only)
+	User          string          `protobuf:"bytes,8,opt,name=user,proto3" json:"user,omitempty"`         // the Longarm user this client acts as (its certificate's owner)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -889,6 +890,13 @@ func (x *PoolView) GetFirewall() *FirewallStatus {
 		return x.Firewall
 	}
 	return nil
+}
+
+func (x *PoolView) GetUser() string {
+	if x != nil {
+		return x.User
+	}
+	return ""
 }
 
 type PoolWorker struct {
@@ -1577,7 +1585,7 @@ const file_longarm_v1_local_proto_rawDesc = "" +
 	"\ttransport\x18\b \x01(\tR\ttransport\x126\n" +
 	"\bfirewall\x18\t \x01(\v2\x1a.longarm.v1.FirewallStatusR\bfirewall\"'\n" +
 	"\vPoolRequest\x12\x18\n" +
-	"\ahistory\x18\x01 \x01(\bR\ahistory\"\x9d\x02\n" +
+	"\ahistory\x18\x01 \x01(\bR\ahistory\"\xb1\x02\n" +
 	"\bPoolView\x12.\n" +
 	"\x04time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x04time\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12%\n" +
@@ -1585,7 +1593,8 @@ const file_longarm_v1_local_proto_rawDesc = "" +
 	"\aworkers\x18\x04 \x03(\v2\x16.longarm.v1.PoolWorkerR\aworkers\x12\x1c\n" +
 	"\ttransport\x18\x05 \x01(\tR\ttransport\x12\x1a\n" +
 	"\bidentity\x18\x06 \x01(\tR\bidentity\x126\n" +
-	"\bfirewall\x18\a \x01(\v2\x1a.longarm.v1.FirewallStatusR\bfirewall\"\xf0\x02\n" +
+	"\bfirewall\x18\a \x01(\v2\x1a.longarm.v1.FirewallStatusR\bfirewall\x12\x12\n" +
+	"\x04user\x18\b \x01(\tR\x04user\"\xf0\x02\n" +
 	"\n" +
 	"PoolWorker\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
@@ -1643,7 +1652,7 @@ const file_longarm_v1_local_proto_rawDesc = "" +
 	"\aJobLogs\x12\x17.longarm.v1.LogsRequest\x1a\x14.longarm.v1.LogChunk0\x01\x123\n" +
 	"\aKillJob\x12\x17.longarm.v1.KillRequest\x1a\x0f.longarm.v1.Job\x12>\n" +
 	"\tSetLimits\x12\x17.longarm.v1.LocalLimits\x1a\x18.longarm.v1.WorkerStatus\x12<\n" +
-	"\x05Leave\x12\x18.longarm.v1.LeaveRequest\x1a\x19.longarm.v1.LeaveResponse2\xd3\a\n" +
+	"\x05Leave\x12\x18.longarm.v1.LeaveRequest\x1a\x19.longarm.v1.LeaveResponse2\x92\b\n" +
 	"\vLocalClient\x12B\n" +
 	"\x06Status\x12\x1e.longarm.v1.LocalStatusRequest\x1a\x18.longarm.v1.ClientStatus\x12H\n" +
 	"\fStartForward\x12\x1f.longarm.v1.StartForwardRequest\x1a\x17.longarm.v1.ForwardInfo\x12Q\n" +
@@ -1657,7 +1666,8 @@ const file_longarm_v1_local_proto_rawDesc = "" +
 	"\aKillJob\x12\x1b.longarm.v1.FleetJobRequest\x1a\x0f.longarm.v1.Job\x12I\n" +
 	"\vGetSettings\x12\x1e.longarm.v1.GetSettingsRequest\x1a\x1a.longarm.v1.ClientSettings\x12E\n" +
 	"\vSetSettings\x12\x1a.longarm.v1.ClientSettings\x1a\x1a.longarm.v1.ClientSettings\x12@\n" +
-	"\vDrainWorker\x12\x1b.longarm.v1.SetDrainRequest\x1a\x14.longarm.v1.NodeInfo\x12E\n" +
+	"\vDrainWorker\x12\x1b.longarm.v1.SetDrainRequest\x1a\x14.longarm.v1.NodeInfo\x12=\n" +
+	"\fRemoveWorker\x12\x17.longarm.v1.NodeRequest\x1a\x14.longarm.v1.NodeInfo\x12E\n" +
 	"\bShutdown\x12\x1b.longarm.v1.ShutdownRequest\x1a\x1c.longarm.v1.ShutdownResponseB<Z:github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1b\x06proto3"
 
 var (
@@ -1711,13 +1721,14 @@ var file_longarm_v1_local_proto_goTypes = []any{
 	(*EventsRequest)(nil),         // 34: longarm.v1.EventsRequest
 	(*FleetJobRequest)(nil),       // 35: longarm.v1.FleetJobRequest
 	(*SetDrainRequest)(nil),       // 36: longarm.v1.SetDrainRequest
-	(*ShutdownRequest)(nil),       // 37: longarm.v1.ShutdownRequest
-	(*ListJobsResponse)(nil),      // 38: longarm.v1.ListJobsResponse
-	(*LogChunk)(nil),              // 39: longarm.v1.LogChunk
-	(*LeaveResponse)(nil),         // 40: longarm.v1.LeaveResponse
-	(*FleetEvent)(nil),            // 41: longarm.v1.FleetEvent
-	(*FleetJobsResponse)(nil),     // 42: longarm.v1.FleetJobsResponse
-	(*ShutdownResponse)(nil),      // 43: longarm.v1.ShutdownResponse
+	(*NodeRequest)(nil),           // 37: longarm.v1.NodeRequest
+	(*ShutdownRequest)(nil),       // 38: longarm.v1.ShutdownRequest
+	(*ListJobsResponse)(nil),      // 39: longarm.v1.ListJobsResponse
+	(*LogChunk)(nil),              // 40: longarm.v1.LogChunk
+	(*LeaveResponse)(nil),         // 41: longarm.v1.LeaveResponse
+	(*FleetEvent)(nil),            // 42: longarm.v1.FleetEvent
+	(*FleetJobsResponse)(nil),     // 43: longarm.v1.FleetJobsResponse
+	(*ShutdownResponse)(nil),      // 44: longarm.v1.ShutdownResponse
 }
 var file_longarm_v1_local_proto_depIdxs = []int32{
 	22, // 0: longarm.v1.HubLink.since:type_name -> google.protobuf.Timestamp
@@ -1766,32 +1777,34 @@ var file_longarm_v1_local_proto_depIdxs = []int32{
 	15, // 43: longarm.v1.LocalClient.GetSettings:input_type -> longarm.v1.GetSettingsRequest
 	16, // 44: longarm.v1.LocalClient.SetSettings:input_type -> longarm.v1.ClientSettings
 	36, // 45: longarm.v1.LocalClient.DrainWorker:input_type -> longarm.v1.SetDrainRequest
-	37, // 46: longarm.v1.LocalClient.Shutdown:input_type -> longarm.v1.ShutdownRequest
-	3,  // 47: longarm.v1.LocalWorker.Status:output_type -> longarm.v1.WorkerStatus
-	3,  // 48: longarm.v1.LocalWorker.SetDrain:output_type -> longarm.v1.WorkerStatus
-	24, // 49: longarm.v1.LocalWorker.ToolchainApply:output_type -> longarm.v1.ToolchainReport
-	8,  // 50: longarm.v1.LocalWorker.Events:output_type -> longarm.v1.LocalEvent
-	38, // 51: longarm.v1.LocalWorker.ListJobs:output_type -> longarm.v1.ListJobsResponse
-	39, // 52: longarm.v1.LocalWorker.JobLogs:output_type -> longarm.v1.LogChunk
-	26, // 53: longarm.v1.LocalWorker.KillJob:output_type -> longarm.v1.Job
-	3,  // 54: longarm.v1.LocalWorker.SetLimits:output_type -> longarm.v1.WorkerStatus
-	40, // 55: longarm.v1.LocalWorker.Leave:output_type -> longarm.v1.LeaveResponse
-	9,  // 56: longarm.v1.LocalClient.Status:output_type -> longarm.v1.ClientStatus
-	18, // 57: longarm.v1.LocalClient.StartForward:output_type -> longarm.v1.ForwardInfo
-	20, // 58: longarm.v1.LocalClient.ListForwards:output_type -> longarm.v1.ListForwardsResponse
-	20, // 59: longarm.v1.LocalClient.StopForward:output_type -> longarm.v1.ListForwardsResponse
-	41, // 60: longarm.v1.LocalClient.Events:output_type -> longarm.v1.FleetEvent
-	11, // 61: longarm.v1.LocalClient.Pool:output_type -> longarm.v1.PoolView
-	11, // 62: longarm.v1.LocalClient.WatchPool:output_type -> longarm.v1.PoolView
-	42, // 63: longarm.v1.LocalClient.ListJobs:output_type -> longarm.v1.FleetJobsResponse
-	39, // 64: longarm.v1.LocalClient.JobLogs:output_type -> longarm.v1.LogChunk
-	26, // 65: longarm.v1.LocalClient.KillJob:output_type -> longarm.v1.Job
-	16, // 66: longarm.v1.LocalClient.GetSettings:output_type -> longarm.v1.ClientSettings
-	16, // 67: longarm.v1.LocalClient.SetSettings:output_type -> longarm.v1.ClientSettings
-	29, // 68: longarm.v1.LocalClient.DrainWorker:output_type -> longarm.v1.NodeInfo
-	43, // 69: longarm.v1.LocalClient.Shutdown:output_type -> longarm.v1.ShutdownResponse
-	47, // [47:70] is the sub-list for method output_type
-	24, // [24:47] is the sub-list for method input_type
+	37, // 46: longarm.v1.LocalClient.RemoveWorker:input_type -> longarm.v1.NodeRequest
+	38, // 47: longarm.v1.LocalClient.Shutdown:input_type -> longarm.v1.ShutdownRequest
+	3,  // 48: longarm.v1.LocalWorker.Status:output_type -> longarm.v1.WorkerStatus
+	3,  // 49: longarm.v1.LocalWorker.SetDrain:output_type -> longarm.v1.WorkerStatus
+	24, // 50: longarm.v1.LocalWorker.ToolchainApply:output_type -> longarm.v1.ToolchainReport
+	8,  // 51: longarm.v1.LocalWorker.Events:output_type -> longarm.v1.LocalEvent
+	39, // 52: longarm.v1.LocalWorker.ListJobs:output_type -> longarm.v1.ListJobsResponse
+	40, // 53: longarm.v1.LocalWorker.JobLogs:output_type -> longarm.v1.LogChunk
+	26, // 54: longarm.v1.LocalWorker.KillJob:output_type -> longarm.v1.Job
+	3,  // 55: longarm.v1.LocalWorker.SetLimits:output_type -> longarm.v1.WorkerStatus
+	41, // 56: longarm.v1.LocalWorker.Leave:output_type -> longarm.v1.LeaveResponse
+	9,  // 57: longarm.v1.LocalClient.Status:output_type -> longarm.v1.ClientStatus
+	18, // 58: longarm.v1.LocalClient.StartForward:output_type -> longarm.v1.ForwardInfo
+	20, // 59: longarm.v1.LocalClient.ListForwards:output_type -> longarm.v1.ListForwardsResponse
+	20, // 60: longarm.v1.LocalClient.StopForward:output_type -> longarm.v1.ListForwardsResponse
+	42, // 61: longarm.v1.LocalClient.Events:output_type -> longarm.v1.FleetEvent
+	11, // 62: longarm.v1.LocalClient.Pool:output_type -> longarm.v1.PoolView
+	11, // 63: longarm.v1.LocalClient.WatchPool:output_type -> longarm.v1.PoolView
+	43, // 64: longarm.v1.LocalClient.ListJobs:output_type -> longarm.v1.FleetJobsResponse
+	40, // 65: longarm.v1.LocalClient.JobLogs:output_type -> longarm.v1.LogChunk
+	26, // 66: longarm.v1.LocalClient.KillJob:output_type -> longarm.v1.Job
+	16, // 67: longarm.v1.LocalClient.GetSettings:output_type -> longarm.v1.ClientSettings
+	16, // 68: longarm.v1.LocalClient.SetSettings:output_type -> longarm.v1.ClientSettings
+	29, // 69: longarm.v1.LocalClient.DrainWorker:output_type -> longarm.v1.NodeInfo
+	29, // 70: longarm.v1.LocalClient.RemoveWorker:output_type -> longarm.v1.NodeInfo
+	44, // 71: longarm.v1.LocalClient.Shutdown:output_type -> longarm.v1.ShutdownResponse
+	48, // [48:72] is the sub-list for method output_type
+	24, // [24:48] is the sub-list for method input_type
 	24, // [24:24] is the sub-list for extension type_name
 	24, // [24:24] is the sub-list for extension extendee
 	0,  // [0:24] is the sub-list for field type_name

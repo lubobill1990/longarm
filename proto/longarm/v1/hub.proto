@@ -583,20 +583,28 @@ message NodeInfo {
   // an admin worker (runs commands as an administrator of its machine;
   // label longarm.io/admin=true): owner-only, never shared, never placed
   bool admin_worker = 31;
+  // Workers: the machine the worker runs on, for grouping. A user-session
+  // worker and its admin worker (its companion) share one machine: the
+  // session worker's name. Otherwise the worker's own name.
+  string machine = 32;
+  // Workers: the other worker on the same machine (a session worker's admin
+  // worker, an admin worker's session worker), recorded at enrollment or
+  // matched by <worker>-admin, owner and host name; "" = none.
+  string companion = 33;
   // Node identity (docs/security.md "Node identity"): the immutable ID
   // (name = the display name, which can change); targets resolve to it.
-  string id = 32;
+  string id = 34;
   // The name in the node's current certificate: what clients dial (TLS
   // server name, longnet relay address). It equals name except after a
   // rename until the node renewed its certificate. "" = name.
-  string cert_name = 33;
+  string cert_name = 35;
   // A worker and its admin worker on the same machine (paired together):
-  // the other one's ID.
-  string companion_id = 34;
+  // the other one's ID (the link companion / machine come from).
+  string companion_id = 36;
   // Serials of the node's valid certificates without a node ID (issued
   // before IDs, not yet renewed): the only ID-less certificates clients
   // accept for this node.
-  repeated string legacy_serials = 35;
+  repeated string legacy_serials = 37;
 }
 
 message ListNodesRequest {

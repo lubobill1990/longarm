@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,7 +15,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/fwcheck"
-	"github.com/lubobill1990/longarm/internal/nodeid"
+	"github.com/lubobill1990/longarm/internal/machine"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -26,24 +25,28 @@ var lsHubGrace = 250 * time.Millisecond
 
 func lsCmd() *cobra.Command {
 	var asJSON, direct bool
+	var output string
 	var timeout time.Duration
 	c := &cobra.Command{
 		Use:   "ls [worker...]",
 		Short: "Show the workers: from the hub if reachable, else by querying workers directly (in parallel)",
+		Long: `Show the workers: from the hub if reachable, else by querying workers
+directly (in parallel). One row per machine: a worker's admin worker (runs
+commands as SYSTEM, <worker>-admin) shows in its ADMIN column, an admin
+worker alone keeps its own row. Offline workers say when they were last
+seen.
+
+The default table is WORKER STATE OS CPU% MEM JOBS LABELS (ADMIN, OWNER when
+any worker has one); -o wide adds Claude Code / Copilot CLI sessions, free
+disk, uptime, the top processes and the path this client reaches each
+worker by. --json prints every worker's hub record (or metrics) by name.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := openSession()
 			if err != nil {
 				return err
 			}
 			defer s.close()
-			type row struct {
-				name  string
-				state string
-				snap  *pb.MetricsSnapshot
-				path  string
-				err   error
-				node  *pb.NodeInfo
-			}
+			type row = lsRow
 			var rows []row
 			fromHub := map[string]bool{}
 
@@ -222,6 +225,9 @@ func lsCmd() *cobra.Command {
 				<-p.done
 				rows = append(rows, p.r)
 			}
+			if output != "" && output != "wide" {
+				return usagef("-o %s: the only other format is -o wide (or --json)", output)
+			}
 			if asJSON {
 				out := map[string]any{}
 				for _, r := range rows {
@@ -243,78 +249,7 @@ func lsCmd() *cobra.Command {
 				enc.SetIndent("", "  ")
 				return enc.Encode(out)
 			}
-			// OWNER (last, only when some worker has one: existing parsers
-			// of the table keep working): "-" = a fleet worker, else its
-			// owner, "+shared" when the owner shares it (owners and admins see that),
-			// "+admin" for an admin worker (runs commands as SYSTEM; owner-only).
-			owners := false
-			for _, r := range rows {
-				owners = owners || r.node.GetOwner() != ""
-			}
-			ownerCol := func(r row) string {
-				if !owners {
-					return ""
-				}
-				o := dash(r.node.GetOwner())
-				if sharesString(r.node.GetShares()) != "-" {
-					o += " +shared"
-				}
-				if r.node.GetAdminWorker() {
-					o += " +admin"
-				}
-				return "\t" + o
-			}
-			// ID: the node ID, shortest unambiguous prefix (8+ characters;
-			// docs/security.md "Node identity"); "-" for workers.toml
-			// entries the hub doesn't know
-			var ids []string
-			for _, r := range rows {
-				ids = append(ids, r.node.GetId())
-			}
-			short := nodeid.ShortIDs(ids)
-			idCol := func(r row) string { return dash(short[r.node.GetId()]) }
-			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			head := "WORKER\tID\tSTATE\tCPU%\tMEM GB\tJOBS\tCLAUDE\tCOPILOT\tDISK FREE\tUPTIME\tTOP CPU\tPATH"
-			if owners {
-				head += "\tOWNER"
-			}
-			fmt.Fprintln(tw, head)
-			failed := 0
-			for _, r := range rows {
-				if r.err != nil {
-					failed++
-					fmt.Fprintf(tw, "%s\t%s\terror\tERROR: %s\n", r.name, idCol(r), oneLine(r.err))
-					continue
-				}
-				m := r.snap
-				if m == nil {
-					fmt.Fprintf(tw, "%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t-\t-\t%s%s\n", r.name, idCol(r), r.state, r.path, ownerCol(r))
-					continue
-				}
-				agent := func(k string) string {
-					a := m.Agents[k]
-					if a == nil || a.Processes == 0 {
-						return "0"
-					}
-					return fmt.Sprintf("%d (%sG)", a.Sessions, humanBytes(a.MemBytes))
-				}
-				var top []string
-				for _, g := range m.TopCpu {
-					if len(top) == 3 {
-						break
-					}
-					top = append(top, fmt.Sprintf("%s %.0f%%", g.Name, g.CpuPercent))
-				}
-				jobsCol := fmt.Sprint(m.JobsRunning)
-				if r.node != nil && r.node.ReservedGb > 0 {
-					jobsCol = fmt.Sprintf("%d (%.0fG res)", r.node.JobsActive, r.node.ReservedGb)
-				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%.1f\t%s/%s\t%s\t%s\t%s\t%s G\t%s\t%s\t%s%s\n", r.name, idCol(r), r.state, m.CpuPercent,
-					humanBytes(m.MemUsedBytes), humanBytes(m.MemTotalBytes), jobsCol, agent("claude"),
-					agent("copilot"), humanBytes(m.DiskFreeBytes), humanDuration(time.Duration(m.UptimeSeconds)*time.Second),
-					strings.Join(top, ", "), r.path, ownerCol(r))
-			}
-			tw.Flush()
+			failed := writeLsTable(os.Stdout, rows, output == "wide", time.Now())
 			var relayed []string
 			for _, r := range rows {
 				if m := relayedPathRE.FindStringSubmatch(r.path); m != nil && r.err == nil {
@@ -333,9 +268,33 @@ func lsCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
+	c.Flags().StringVarP(&output, "output", "o", "", "table format: wide (sessions, disk, uptime, top processes, path)")
 	c.Flags().BoolVar(&direct, "direct", false, "query the workers directly even if the hub is reachable")
 	c.Flags().DurationVar(&timeout, "timeout", 8*time.Second, "per-worker timeout")
 	return c
+}
+
+// foldMachines is longarm ls' one row per machine: names without the
+// admin workers that pair with a listed session worker (package machine),
+// and adminOf: session worker -> its admin worker.
+func foldMachines(names []string, nodes map[string]*pb.NodeInfo) (shown []string, adminOf map[string]string) {
+	var list []*pb.NodeInfo
+	for _, n := range names {
+		if nodes[n] != nil {
+			list = append(list, nodes[n])
+		}
+	}
+	pairs := machine.Pairs(list) // admin -> session
+	adminOf = map[string]string{}
+	for a, s := range pairs {
+		adminOf[s] = a
+	}
+	for _, n := range names {
+		if _, ok := pairs[n]; !ok {
+			shown = append(shown, n)
+		}
+	}
+	return shown, adminOf
 }
 
 func oneLine(err error) string {

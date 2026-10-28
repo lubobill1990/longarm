@@ -123,11 +123,24 @@ func migrateNodeIDs(tx *sql.Tx, notes *[]string) error {
 			*notes = append(*notes, fmt.Sprintf("node %q (%s, %s) renamed to %q: %s", r.name, r.role, r.state, r.newName, reason))
 		}
 	}
-	// Companion links: an admin worker and the one plain worker of the
-	// same owner on the same host (both non-revoked).
+	// Companion links. A hub that recorded pairs (by name) keeps them,
+	// now by ID, when both sides still link each other; others are
+	// dropped. Then an admin worker without one gets the one plain worker
+	// of the same owner on the same host (both non-revoked).
 	str := func(r *row, k string) string { s, _ := r.data[k].(string); return s }
+	for _, r := range all {
+		c := byName[str(r, "companion")]
+		if c == nil || c == r || str(c, "companion") != r.name || r.state == "revoked" || c.state == "revoked" {
+			delete(r.data, "companion")
+		}
+	}
+	for _, r := range all {
+		if c := byName[str(r, "companion")]; c != nil {
+			r.data["companion"] = c.id
+		}
+	}
 	for _, a := range all {
-		if a.role != "worker" || a.state == "revoked" || a.data["admin_worker"] != true || str(a, "hostname") == "" {
+		if a.role != "worker" || a.state == "revoked" || a.data["admin_worker"] != true || str(a, "hostname") == "" || str(a, "companion") != "" {
 			continue
 		}
 		var match []*row
