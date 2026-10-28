@@ -1104,6 +1104,9 @@
     margin: 2px 0 6px;
     min-width: 0;
   }
+  & .linkrow > * {
+    white-space: nowrap;
+  }
   & .linkrow .linklabel {
     width: 36px;
     flex: none;
@@ -1717,6 +1720,14 @@
     & [data-testid='account-tab'] {
       max-width: 760px;
     }
+  }
+}
+
+/* the popup with wider fonts (macOS, Linux): tighter tabs */
+@media (max-width: 500px) {
+  :root[data-app='tray'] .tabs .tab {
+    padding: 0 6px;
+    font-size: 12px;
   }
 }
 

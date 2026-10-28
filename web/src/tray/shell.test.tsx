@@ -94,7 +94,7 @@ describe('TrayApp', () => {
     render(<TrayApp />)
     await waitFor(() => expect(screen.getByRole('tab', { name: 'This worker' })).toBeTruthy())
     expect(screen.getByTestId('tray-head').textContent).toContain('Remote Workers')
-    expect(screen.getByLabelText('pin').getAttribute('aria-pressed')).toBe('true')
+    await waitFor(() => expect(screen.getByLabelText('pin').getAttribute('aria-pressed')).toBe('true'))
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent)
     expect(tabs).toEqual(['Workers', 'My jobs', 'Forwards', 'This worker', 'Settings'])
     const workers = screen.getByRole('tab', { name: 'Workers' })

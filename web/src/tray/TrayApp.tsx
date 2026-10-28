@@ -105,6 +105,10 @@ export function TrayApp() {
     document.getElementById(`tab-${t}`)?.focus()
   }
   const curLabel = tabs.find(([t]) => t === cur)?.[1]
+  // the tab bar scrolls sideways if the labels don't fit (wide fonts): keep the current tab in view
+  useEffect(() => {
+    document.getElementById(`tab-${cur}`)?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [cur])
   return (
     <Toasts>
       <ContextMenu />
