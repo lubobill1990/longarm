@@ -165,6 +165,9 @@ func (s *Server) setSettings(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		if l, ok := s.desk.(ThemeListener); ok && body.Theme != nil {
+			l.ThemeChanged() // the window's background
+		}
 	}
 	if body.TelemetryDisabled != nil {
 		// as `longarm telemetry off|on`: off also drops the queue
