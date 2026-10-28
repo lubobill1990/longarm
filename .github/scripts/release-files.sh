@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # release-files.sh <dir> <version>
-# release.yml's gather job: the release directory merged from the two build
-# jobs (hub/ = packaging/hubrelease's flat directory + the MSIs, extra/ = the
-# longarm-hub debs + checksums.txt) must hold exactly the files of the
+# release.yml (publish, before signing; gather in a dry run): the release
+# directory merged from the two build jobs (hub/ = packaging/hubrelease's flat
+# directory + the MSIs, extra/ = the longarm-hub debs, checksums/<side>.txt =
+# each side's GoReleaser checksums.txt). Merges the checksums into
+# extra/checksums.txt (GoReleaser's format: sorted by file name, byte order);
+# then the directory must hold exactly the files of the
 # releases so far (the list below is v0.1.6's, before signing: publish adds a
 # <file>.minisig per hub/ file and SHA256SUMS), and checksums.txt must list
 # exactly GoReleaser's 18 archives/packages, with the sums of the copies that
 # are published under the hub's names.
 set -euo pipefail
 dir=${1:?usage: release-files.sh <dir> <version>} v=${2:?usage: release-files.sh <dir> <version>}
+if [[ -d $dir/checksums ]]; then
+	LC_ALL=C sort -k2,2 "$dir"/checksums/*.txt >"$dir/extra/checksums.txt"
+	rm -r "$dir/checksums"
+fi
 fail=0
 err() {
 	echo "::error::$*"

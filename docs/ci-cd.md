@@ -7,7 +7,7 @@ release is cut and rolled back. Everything runs on GitHub-hosted runners.
 |---|---|---|
 | [`ci.yml`](../.github/workflows/ci.yml) | pull request, push to `main`, manual | **lint** (ubuntu): `scripts/privacy-check.sh`, gitleaks, gofmt, `go vet`, cross-compile (vet + build + e2e test binary) for windows/linux/darwin × amd64/arm64, shellcheck, actionlint · **test** (ubuntu-latest, windows-latest, macos-latest), four parallel jobs per OS: *unit* (`go build`, `go test` of every package but `./e2e`, the per-user isolation tests) and *e2e-1..3* (`./e2e`'s top-level tests dealt out by `.github/scripts/test-shard.sh`) · **tests**: passes when every test job did - the required check of `main`'s ruleset, so `gh pr merge --auto --squash` merges once CI is green · **azure** (ubuntu): `bicep build` of deploy/azure/main.bicep must equal the committed `azuredeploy.json`, `bicep lint` without warnings, PSScriptAnalyzer on deploy.ps1 · **release-cache** (push to `main` only, ubuntu + windows): the Go build cache release.yml restores, see "Caches" below |
 | [`image.yml`](../.github/workflows/image.yml) | pull request, push to `main`, called by release.yml | **smoke** (ubuntu): build the hub image (deploy/hub/Dockerfile), `deploy/azure/test/container-smoke.sh` with Azurite (bootstrap, admin join, restore after the container is replaced, health) · **publish** (push to main, releases): `ghcr.io/<owner>/longarm-hub` for linux/amd64+arm64 with SBOM and provenance: `:edge` + `:sha-<commit>` from main, `:X.Y.Z` (+ `:latest` for stable releases) from a tag |
-| [`release.yml`](../.github/workflows/release.yml) | tag `v*` | **meta** (tag check) → **build-unix** (ubuntu) and **build-windows** (windows-latest, MSIs) in parallel → **gather** → **publish** → **hub** → **rollout**; **image** (image.yml) runs next to the builds, **image-latest** after publish; hub and rollout only run when a deployment is configured. A manual run is a dry run (builds, gather, image smoke test; nothing signed, published or pushed) |
+| [`release.yml`](../.github/workflows/release.yml) | tag `v*` | **meta** (tag check) → **build-unix** (ubuntu) and **build-windows** (windows-latest, MSIs) in parallel → **publish** (merges and checks them, signs) → **hub** → **rollout**; **image** (image.yml) runs next to the builds, **image-latest** after publish; hub and rollout only run when a deployment is configured. A manual run is a dry run (builds, gather, image smoke test; nothing signed, published or pushed) |
 | [`deploy.yml`](../.github/workflows/deploy.yml) | manual | hub deploy / rollback / status, fleet push of a version already on the hub |
 
 Nothing is assumed on the runners beyond what GitHub's images ship: Go comes
@@ -275,7 +275,7 @@ repositories on paid plans):
    `release.yml` and the `hub` and `fleet` jobs of `deploy.yml`.
 
 The run then waits for an approval before anything is signed or deployed;
-`meta`, the builds, gather and the image (no secrets) run right away; the
+`meta`, the builds and the image (no secrets) run right away; the
 versioned image `:X.Y.Z` is pushed before the approval (only `:latest`
 waits for publish) - to hold it back too, add the environment to the image
 job's caller or push the image only after publish.
@@ -315,19 +315,21 @@ git push origin v1.4.0
    `packaging/build.ps1 -Side windows` - the Windows binaries and archives,
    the two MSIs (WiX 5) - and `packaging/hubrelease`. Both build with the
    same flags and `LONGARM_UPDATE_PUBKEY` / `LONGARM_DEFAULT_HUB` built in
-   (`.goreleaser.yaml` has one build entry per side and binary). **gather**
-   merges them: the unsigned `hub-release/` (canonical names), the
-   longarm-hub debs and one `checksums.txt`; `.github/scripts/release-files.sh`
-   fails the run unless the file names are exactly those of the releases so
-   far and `checksums.txt` matches the published copies. Artifact `release`,
-   kept 14 days (re-run publish within that time).
+   (`.goreleaser.yaml` has one build entry per side and binary): the
+   artifacts `release-unix` and `release-windows` (unsigned `hub-release/`
+   files with canonical names, the longarm-hub debs, each side's
+   `checksums.txt`), kept 14 days (re-run publish within that time).
    **image** (next to the builds; it builds from the tag's source, not from
    their output): image.yml builds and smoke-tests the hub image, then pushes
    `ghcr.io/<owner>/longarm-hub:<v>` with the job's `GITHUB_TOKEN` (packages:
    write); **image-latest** moves `:latest` to it once publish succeeded
    (stable tags). The first push creates a private package: make it public
    once so [deploy/azure](../deploy/azure/README.md) can pull it anonymously.
-2. **publish**: builds `longarm` from the tag, signs every file
+2. **publish**: merges the two artifacts into one release directory with one
+   `checksums.txt`; `.github/scripts/release-files.sh` stops the release
+   unless the file names are exactly those of the releases so far and
+   `checksums.txt` matches the published copies (a dry run does this in its
+   **gather** job). Builds `longarm` from the tag, signs every file
    (`<file>.minisig`, trusted comment = file name + version) and - with
    `LONGARM_HUB` - uploads them with the release certificate; the hub
    verifies each signature against its public key. Then the GitHub Release
