@@ -99,10 +99,9 @@ describe('PoolTab', () => {
             ],
     })
     render(
-      <>
+      <Toasts>
         <PoolTab pool={pool} />
-        <Toasts />
-      </>,
+      </Toasts>,
     )
     const card = screen.getByTestId('worker-cpc-alice-x7k2q')
     expect(within(card).getByTestId('version').textContent).toBe('v0.1.8 · admin v0.1.7 ↑')
