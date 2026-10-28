@@ -147,7 +147,7 @@ foreach ($o in $order) {
 foreach ($id in 'AdminSvcStop', 'LongarmdSvcCtl') {
   $ev = Query $default "SELECT ``Event`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = '$id'"
   $wait = Query $default "SELECT ``Wait`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = '$id'"
-  if (-not $ev.Count -or ([int]$ev[0] -band 0x11) -ne 0x11 -or $wait[0] -ne '1') { throw "default.msi: ServiceControl $id must stop on install and uninstall and wait (Event $($ev[0]), Wait $($wait[0]))" }
+  if (-not $ev.Count -or ([int]$ev[0] -band 0x22) -ne 0x22 -or $wait[0] -ne '1') { throw "default.msi: ServiceControl $id must stop on install and uninstall and wait (Event $($ev[0]), Wait $($wait[0]))" }
 }
 
 Write-Host '== administrative install (extract only)'
