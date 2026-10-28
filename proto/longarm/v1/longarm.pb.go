@@ -4873,6 +4873,340 @@ func (x *SignedPortLinkGrant) GetChain() [][]byte {
 	return nil
 }
 
+type MachineUpdateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"` // a version the hub has; "" with latest
+	Latest        bool                   `protobuf:"varint,2,opt,name=latest,proto3" json:"latest,omitempty"`  // the hub's latest stable release
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MachineUpdateRequest) Reset() {
+	*x = MachineUpdateRequest{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[65]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MachineUpdateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MachineUpdateRequest) ProtoMessage() {}
+
+func (x *MachineUpdateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[65]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MachineUpdateRequest.ProtoReflect.Descriptor instead.
+func (*MachineUpdateRequest) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{65}
+}
+
+func (x *MachineUpdateRequest) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *MachineUpdateRequest) GetLatest() bool {
+	if x != nil {
+		return x.Latest
+	}
+	return false
+}
+
+type MachineUpdateStatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MachineUpdateStatusRequest) Reset() {
+	*x = MachineUpdateStatusRequest{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[66]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MachineUpdateStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MachineUpdateStatusRequest) ProtoMessage() {}
+
+func (x *MachineUpdateStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[66]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MachineUpdateStatusRequest.ProtoReflect.Descriptor instead.
+func (*MachineUpdateStatusRequest) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{66}
+}
+
+type MachineUpdateAutoRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	IntervalHours int32                  `protobuf:"varint,2,opt,name=interval_hours,json=intervalHours,proto3" json:"interval_hours,omitempty"` // 0 = the default (6)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MachineUpdateAutoRequest) Reset() {
+	*x = MachineUpdateAutoRequest{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[67]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MachineUpdateAutoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MachineUpdateAutoRequest) ProtoMessage() {}
+
+func (x *MachineUpdateAutoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[67]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MachineUpdateAutoRequest.ProtoReflect.Descriptor instead.
+func (*MachineUpdateAutoRequest) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{67}
+}
+
+func (x *MachineUpdateAutoRequest) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *MachineUpdateAutoRequest) GetIntervalHours() int32 {
+	if x != nil {
+		return x.IntervalHours
+	}
+	return 0
+}
+
+type MachineUpdateEvent struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// checking | downloading | verifying | installing | restarting | done |
+	// up_to_date | failed | status
+	Phase   string `protobuf:"bytes,1,opt,name=phase,proto3" json:"phase,omitempty"`
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	From    string `protobuf:"bytes,3,opt,name=from,proto3" json:"from,omitempty"`
+	To      string `protobuf:"bytes,4,opt,name=to,proto3" json:"to,omitempty"`
+	Method  string `protobuf:"bytes,5,opt,name=method,proto3" json:"method,omitempty"` // msi (the LongarmUpdate service) | self (longarmd's self-update)
+	// what ran when the update started (the caller counts what kept running)
+	RunningJobs     []string `protobuf:"bytes,6,rep,name=running_jobs,json=runningJobs,proto3" json:"running_jobs,omitempty"`
+	RunningSessions []string `protobuf:"bytes,7,rep,name=running_sessions,json=runningSessions,proto3" json:"running_sessions,omitempty"`
+	Error           string   `protobuf:"bytes,8,opt,name=error,proto3" json:"error,omitempty"`
+	// why it failed: denied | refused (downgrade, not for this machine) |
+	// not_found | busy | rate_limited | unavailable | unsupported | invalid
+	Code              string                 `protobuf:"bytes,9,opt,name=code,proto3" json:"code,omitempty"`
+	Auto              bool                   `protobuf:"varint,10,opt,name=auto,proto3" json:"auto,omitempty"`
+	AutoIntervalHours int32                  `protobuf:"varint,11,opt,name=auto_interval_hours,json=autoIntervalHours,proto3" json:"auto_interval_hours,omitempty"`
+	Installed         string                 `protobuf:"bytes,12,opt,name=installed,proto3" json:"installed,omitempty"`
+	Available         string                 `protobuf:"bytes,13,opt,name=available,proto3" json:"available,omitempty"` // the hub's latest stable ("" = unknown)
+	At                *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=at,proto3" json:"at,omitempty"`
+	// the last finished update on this machine
+	LastFrom      string                 `protobuf:"bytes,15,opt,name=last_from,json=lastFrom,proto3" json:"last_from,omitempty"`
+	LastTo        string                 `protobuf:"bytes,16,opt,name=last_to,json=lastTo,proto3" json:"last_to,omitempty"`
+	LastOk        bool                   `protobuf:"varint,17,opt,name=last_ok,json=lastOk,proto3" json:"last_ok,omitempty"`
+	LastError     string                 `protobuf:"bytes,18,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`
+	LastAt        *timestamppb.Timestamp `protobuf:"bytes,19,opt,name=last_at,json=lastAt,proto3" json:"last_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MachineUpdateEvent) Reset() {
+	*x = MachineUpdateEvent{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[68]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MachineUpdateEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MachineUpdateEvent) ProtoMessage() {}
+
+func (x *MachineUpdateEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[68]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MachineUpdateEvent.ProtoReflect.Descriptor instead.
+func (*MachineUpdateEvent) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{68}
+}
+
+func (x *MachineUpdateEvent) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *MachineUpdateEvent) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *MachineUpdateEvent) GetFrom() string {
+	if x != nil {
+		return x.From
+	}
+	return ""
+}
+
+func (x *MachineUpdateEvent) GetTo() string {
+	if x != nil {
+		return x.To
+	}
+	return ""
+}
+
+func (x *MachineUpdateEvent) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *MachineUpdateEvent) GetRunningJobs() []string {
+	if x != nil {
+		return x.RunningJobs
+	}
+	return nil
+}
+
+func (x *MachineUpdateEvent) GetRunningSessions() []string {
+	if x != nil {
+		return x.RunningSessions
+	}
+	return nil
+}
+
+func (x *MachineUpdateEvent) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *MachineUpdateEvent) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *MachineUpdateEvent) GetAuto() bool {
+	if x != nil {
+		return x.Auto
+	}
+	return false
+}
+
+func (x *MachineUpdateEvent) GetAutoIntervalHours() int32 {
+	if x != nil {
+		return x.AutoIntervalHours
+	}
+	return 0
+}
+
+func (x *MachineUpdateEvent) GetInstalled() string {
+	if x != nil {
+		return x.Installed
+	}
+	return ""
+}
+
+func (x *MachineUpdateEvent) GetAvailable() string {
+	if x != nil {
+		return x.Available
+	}
+	return ""
+}
+
+func (x *MachineUpdateEvent) GetAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.At
+	}
+	return nil
+}
+
+func (x *MachineUpdateEvent) GetLastFrom() string {
+	if x != nil {
+		return x.LastFrom
+	}
+	return ""
+}
+
+func (x *MachineUpdateEvent) GetLastTo() string {
+	if x != nil {
+		return x.LastTo
+	}
+	return ""
+}
+
+func (x *MachineUpdateEvent) GetLastOk() bool {
+	if x != nil {
+		return x.LastOk
+	}
+	return false
+}
+
+func (x *MachineUpdateEvent) GetLastError() string {
+	if x != nil {
+		return x.LastError
+	}
+	return ""
+}
+
+func (x *MachineUpdateEvent) GetLastAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastAt
+	}
+	return nil
+}
+
 var File_longarm_v1_longarm_proto protoreflect.FileDescriptor
 
 const file_longarm_v1_longarm_proto_rawDesc = "" +
@@ -5283,7 +5617,36 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x13SignedPortLinkGrant\x12\x14\n" +
 	"\x05grant\x18\x01 \x01(\fR\x05grant\x12\x1c\n" +
 	"\tsignature\x18\x02 \x01(\fR\tsignature\x12\x14\n" +
-	"\x05chain\x18\x03 \x03(\fR\x05chain*]\n" +
+	"\x05chain\x18\x03 \x03(\fR\x05chain\"H\n" +
+	"\x14MachineUpdateRequest\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\tR\aversion\x12\x16\n" +
+	"\x06latest\x18\x02 \x01(\bR\x06latest\"\x1c\n" +
+	"\x1aMachineUpdateStatusRequest\"[\n" +
+	"\x18MachineUpdateAutoRequest\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\x12%\n" +
+	"\x0einterval_hours\x18\x02 \x01(\x05R\rintervalHours\"\xc7\x04\n" +
+	"\x12MachineUpdateEvent\x12\x14\n" +
+	"\x05phase\x18\x01 \x01(\tR\x05phase\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\x12\n" +
+	"\x04from\x18\x03 \x01(\tR\x04from\x12\x0e\n" +
+	"\x02to\x18\x04 \x01(\tR\x02to\x12\x16\n" +
+	"\x06method\x18\x05 \x01(\tR\x06method\x12!\n" +
+	"\frunning_jobs\x18\x06 \x03(\tR\vrunningJobs\x12)\n" +
+	"\x10running_sessions\x18\a \x03(\tR\x0frunningSessions\x12\x14\n" +
+	"\x05error\x18\b \x01(\tR\x05error\x12\x12\n" +
+	"\x04code\x18\t \x01(\tR\x04code\x12\x12\n" +
+	"\x04auto\x18\n" +
+	" \x01(\bR\x04auto\x12.\n" +
+	"\x13auto_interval_hours\x18\v \x01(\x05R\x11autoIntervalHours\x12\x1c\n" +
+	"\tinstalled\x18\f \x01(\tR\tinstalled\x12\x1c\n" +
+	"\tavailable\x18\r \x01(\tR\tavailable\x12*\n" +
+	"\x02at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x1b\n" +
+	"\tlast_from\x18\x0f \x01(\tR\blastFrom\x12\x17\n" +
+	"\alast_to\x18\x10 \x01(\tR\x06lastTo\x12\x17\n" +
+	"\alast_ok\x18\x11 \x01(\bR\x06lastOk\x12\x1d\n" +
+	"\n" +
+	"last_error\x18\x12 \x01(\tR\tlastError\x123\n" +
+	"\alast_at\x18\x13 \x01(\v2\x1a.google.protobuf.TimestampR\x06lastAt*]\n" +
 	"\n" +
 	"OutputMode\x12\x1b\n" +
 	"\x17OUTPUT_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
@@ -5352,7 +5715,11 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x05Prune\x12\x18.longarm.v1.PruneRequest\x1a\x19.longarm.v1.PruneResponse2L\n" +
 	"\n" +
 	"LinkTunnel\x12>\n" +
-	"\x04Dial\x12\x18.longarm.v1.ForwardFrame\x1a\x18.longarm.v1.ForwardFrame(\x010\x01B<Z:github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1b\x06proto3"
+	"\x04Dial\x12\x18.longarm.v1.ForwardFrame\x1a\x18.longarm.v1.ForwardFrame(\x010\x012\xff\x01\n" +
+	"\rMachineUpdate\x12K\n" +
+	"\x05Start\x12 .longarm.v1.MachineUpdateRequest\x1a\x1e.longarm.v1.MachineUpdateEvent0\x01\x12P\n" +
+	"\x06Status\x12&.longarm.v1.MachineUpdateStatusRequest\x1a\x1e.longarm.v1.MachineUpdateEvent\x12O\n" +
+	"\aSetAuto\x12$.longarm.v1.MachineUpdateAutoRequest\x1a\x1e.longarm.v1.MachineUpdateEventB<Z:github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1b\x06proto3"
 
 var (
 	file_longarm_v1_longarm_proto_rawDescOnce sync.Once
@@ -5367,224 +5734,236 @@ func file_longarm_v1_longarm_proto_rawDescGZIP() []byte {
 }
 
 var file_longarm_v1_longarm_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_longarm_v1_longarm_proto_msgTypes = make([]protoimpl.MessageInfo, 76)
+var file_longarm_v1_longarm_proto_msgTypes = make([]protoimpl.MessageInfo, 80)
 var file_longarm_v1_longarm_proto_goTypes = []any{
-	(OutputMode)(0),               // 0: longarm.v1.OutputMode
-	(JobState)(0),                 // 1: longarm.v1.JobState
-	(SyncPart)(0),                 // 2: longarm.v1.SyncPart
-	(*InfoRequest)(nil),           // 3: longarm.v1.InfoRequest
-	(*InfoResponse)(nil),          // 4: longarm.v1.InfoResponse
-	(*ExecRequest)(nil),           // 5: longarm.v1.ExecRequest
-	(*ExecResponse)(nil),          // 6: longarm.v1.ExecResponse
-	(*JobSpec)(nil),               // 7: longarm.v1.JobSpec
-	(*JobWorkspace)(nil),          // 8: longarm.v1.JobWorkspace
-	(*GitAuth)(nil),               // 9: longarm.v1.GitAuth
-	(*SubmitRequest)(nil),         // 10: longarm.v1.SubmitRequest
-	(*Job)(nil),                   // 11: longarm.v1.Job
-	(*GetJobRequest)(nil),         // 12: longarm.v1.GetJobRequest
-	(*ListJobsRequest)(nil),       // 13: longarm.v1.ListJobsRequest
-	(*ListJobsResponse)(nil),      // 14: longarm.v1.ListJobsResponse
-	(*LogsRequest)(nil),           // 15: longarm.v1.LogsRequest
-	(*LogChunk)(nil),              // 16: longarm.v1.LogChunk
-	(*WaitRequest)(nil),           // 17: longarm.v1.WaitRequest
-	(*KillRequest)(nil),           // 18: longarm.v1.KillRequest
-	(*MetricsRequest)(nil),        // 19: longarm.v1.MetricsRequest
-	(*MetricsStreamRequest)(nil),  // 20: longarm.v1.MetricsStreamRequest
-	(*ProcGroup)(nil),             // 21: longarm.v1.ProcGroup
-	(*AgentStat)(nil),             // 22: longarm.v1.AgentStat
-	(*MetricsSnapshot)(nil),       // 23: longarm.v1.MetricsSnapshot
-	(*ShutdownRequest)(nil),       // 24: longarm.v1.ShutdownRequest
-	(*ShutdownResponse)(nil),      // 25: longarm.v1.ShutdownResponse
-	(*GcRequest)(nil),             // 26: longarm.v1.GcRequest
-	(*GcResponse)(nil),            // 27: longarm.v1.GcResponse
-	(*AttachInput)(nil),           // 28: longarm.v1.AttachInput
-	(*AttachOpen)(nil),            // 29: longarm.v1.AttachOpen
-	(*TermSize)(nil),              // 30: longarm.v1.TermSize
-	(*AttachOutput)(nil),          // 31: longarm.v1.AttachOutput
-	(*AttachStarted)(nil),         // 32: longarm.v1.AttachStarted
-	(*Session)(nil),               // 33: longarm.v1.Session
-	(*StartSessionRequest)(nil),   // 34: longarm.v1.StartSessionRequest
-	(*GetSessionRequest)(nil),     // 35: longarm.v1.GetSessionRequest
-	(*SendSessionRequest)(nil),    // 36: longarm.v1.SendSessionRequest
-	(*SendSessionResponse)(nil),   // 37: longarm.v1.SendSessionResponse
-	(*StopSessionRequest)(nil),    // 38: longarm.v1.StopSessionRequest
-	(*ListSessionsRequest)(nil),   // 39: longarm.v1.ListSessionsRequest
-	(*ListSessionsResponse)(nil),  // 40: longarm.v1.ListSessionsResponse
-	(*KillSessionRequest)(nil),    // 41: longarm.v1.KillSessionRequest
-	(*ForwardFrame)(nil),          // 42: longarm.v1.ForwardFrame
-	(*FileTailRequest)(nil),       // 43: longarm.v1.FileTailRequest
-	(*FileStatRequest)(nil),       // 44: longarm.v1.FileStatRequest
-	(*FileInfo)(nil),              // 45: longarm.v1.FileInfo
-	(*FileListRequest)(nil),       // 46: longarm.v1.FileListRequest
-	(*FileListResponse)(nil),      // 47: longarm.v1.FileListResponse
-	(*FileReadRequest)(nil),       // 48: longarm.v1.FileReadRequest
-	(*FileChunk)(nil),             // 49: longarm.v1.FileChunk
-	(*FileWriteRequest)(nil),      // 50: longarm.v1.FileWriteRequest
-	(*FileWriteHeader)(nil),       // 51: longarm.v1.FileWriteHeader
-	(*FileWriteResult)(nil),       // 52: longarm.v1.FileWriteResult
-	(*MkdirRequest)(nil),          // 53: longarm.v1.MkdirRequest
-	(*FetchRequest)(nil),          // 54: longarm.v1.FetchRequest
-	(*FetchResponse)(nil),         // 55: longarm.v1.FetchResponse
-	(*RefsRequest)(nil),           // 56: longarm.v1.RefsRequest
-	(*RefsResponse)(nil),          // 57: longarm.v1.RefsResponse
-	(*SyncChunk)(nil),             // 58: longarm.v1.SyncChunk
-	(*SyncHeader)(nil),            // 59: longarm.v1.SyncHeader
-	(*SyncData)(nil),              // 60: longarm.v1.SyncData
-	(*SyncResult)(nil),            // 61: longarm.v1.SyncResult
-	(*PrepareJobRequest)(nil),     // 62: longarm.v1.PrepareJobRequest
-	(*PrepareJobOutput)(nil),      // 63: longarm.v1.PrepareJobOutput
-	(*PruneRequest)(nil),          // 64: longarm.v1.PruneRequest
-	(*PruneResponse)(nil),         // 65: longarm.v1.PruneResponse
-	(*PortLinkGrant)(nil),         // 66: longarm.v1.PortLinkGrant
-	(*SignedPortLinkGrant)(nil),   // 67: longarm.v1.SignedPortLinkGrant
-	nil,                           // 68: longarm.v1.ExecRequest.EnvEntry
-	nil,                           // 69: longarm.v1.ExecRequest.SecretEnvEntry
-	nil,                           // 70: longarm.v1.JobSpec.EnvEntry
-	nil,                           // 71: longarm.v1.JobSpec.LabelsEntry
-	nil,                           // 72: longarm.v1.SubmitRequest.SecretEnvEntry
-	nil,                           // 73: longarm.v1.MetricsSnapshot.AgentsEntry
-	nil,                           // 74: longarm.v1.AttachOpen.EnvEntry
-	nil,                           // 75: longarm.v1.AttachOpen.SecretEnvEntry
-	nil,                           // 76: longarm.v1.StartSessionRequest.EnvEntry
-	nil,                           // 77: longarm.v1.StartSessionRequest.SecretEnvEntry
-	nil,                           // 78: longarm.v1.PrepareJobRequest.SecretEnvEntry
-	(*timestamppb.Timestamp)(nil), // 79: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),   // 80: google.protobuf.Duration
+	(OutputMode)(0),                    // 0: longarm.v1.OutputMode
+	(JobState)(0),                      // 1: longarm.v1.JobState
+	(SyncPart)(0),                      // 2: longarm.v1.SyncPart
+	(*InfoRequest)(nil),                // 3: longarm.v1.InfoRequest
+	(*InfoResponse)(nil),               // 4: longarm.v1.InfoResponse
+	(*ExecRequest)(nil),                // 5: longarm.v1.ExecRequest
+	(*ExecResponse)(nil),               // 6: longarm.v1.ExecResponse
+	(*JobSpec)(nil),                    // 7: longarm.v1.JobSpec
+	(*JobWorkspace)(nil),               // 8: longarm.v1.JobWorkspace
+	(*GitAuth)(nil),                    // 9: longarm.v1.GitAuth
+	(*SubmitRequest)(nil),              // 10: longarm.v1.SubmitRequest
+	(*Job)(nil),                        // 11: longarm.v1.Job
+	(*GetJobRequest)(nil),              // 12: longarm.v1.GetJobRequest
+	(*ListJobsRequest)(nil),            // 13: longarm.v1.ListJobsRequest
+	(*ListJobsResponse)(nil),           // 14: longarm.v1.ListJobsResponse
+	(*LogsRequest)(nil),                // 15: longarm.v1.LogsRequest
+	(*LogChunk)(nil),                   // 16: longarm.v1.LogChunk
+	(*WaitRequest)(nil),                // 17: longarm.v1.WaitRequest
+	(*KillRequest)(nil),                // 18: longarm.v1.KillRequest
+	(*MetricsRequest)(nil),             // 19: longarm.v1.MetricsRequest
+	(*MetricsStreamRequest)(nil),       // 20: longarm.v1.MetricsStreamRequest
+	(*ProcGroup)(nil),                  // 21: longarm.v1.ProcGroup
+	(*AgentStat)(nil),                  // 22: longarm.v1.AgentStat
+	(*MetricsSnapshot)(nil),            // 23: longarm.v1.MetricsSnapshot
+	(*ShutdownRequest)(nil),            // 24: longarm.v1.ShutdownRequest
+	(*ShutdownResponse)(nil),           // 25: longarm.v1.ShutdownResponse
+	(*GcRequest)(nil),                  // 26: longarm.v1.GcRequest
+	(*GcResponse)(nil),                 // 27: longarm.v1.GcResponse
+	(*AttachInput)(nil),                // 28: longarm.v1.AttachInput
+	(*AttachOpen)(nil),                 // 29: longarm.v1.AttachOpen
+	(*TermSize)(nil),                   // 30: longarm.v1.TermSize
+	(*AttachOutput)(nil),               // 31: longarm.v1.AttachOutput
+	(*AttachStarted)(nil),              // 32: longarm.v1.AttachStarted
+	(*Session)(nil),                    // 33: longarm.v1.Session
+	(*StartSessionRequest)(nil),        // 34: longarm.v1.StartSessionRequest
+	(*GetSessionRequest)(nil),          // 35: longarm.v1.GetSessionRequest
+	(*SendSessionRequest)(nil),         // 36: longarm.v1.SendSessionRequest
+	(*SendSessionResponse)(nil),        // 37: longarm.v1.SendSessionResponse
+	(*StopSessionRequest)(nil),         // 38: longarm.v1.StopSessionRequest
+	(*ListSessionsRequest)(nil),        // 39: longarm.v1.ListSessionsRequest
+	(*ListSessionsResponse)(nil),       // 40: longarm.v1.ListSessionsResponse
+	(*KillSessionRequest)(nil),         // 41: longarm.v1.KillSessionRequest
+	(*ForwardFrame)(nil),               // 42: longarm.v1.ForwardFrame
+	(*FileTailRequest)(nil),            // 43: longarm.v1.FileTailRequest
+	(*FileStatRequest)(nil),            // 44: longarm.v1.FileStatRequest
+	(*FileInfo)(nil),                   // 45: longarm.v1.FileInfo
+	(*FileListRequest)(nil),            // 46: longarm.v1.FileListRequest
+	(*FileListResponse)(nil),           // 47: longarm.v1.FileListResponse
+	(*FileReadRequest)(nil),            // 48: longarm.v1.FileReadRequest
+	(*FileChunk)(nil),                  // 49: longarm.v1.FileChunk
+	(*FileWriteRequest)(nil),           // 50: longarm.v1.FileWriteRequest
+	(*FileWriteHeader)(nil),            // 51: longarm.v1.FileWriteHeader
+	(*FileWriteResult)(nil),            // 52: longarm.v1.FileWriteResult
+	(*MkdirRequest)(nil),               // 53: longarm.v1.MkdirRequest
+	(*FetchRequest)(nil),               // 54: longarm.v1.FetchRequest
+	(*FetchResponse)(nil),              // 55: longarm.v1.FetchResponse
+	(*RefsRequest)(nil),                // 56: longarm.v1.RefsRequest
+	(*RefsResponse)(nil),               // 57: longarm.v1.RefsResponse
+	(*SyncChunk)(nil),                  // 58: longarm.v1.SyncChunk
+	(*SyncHeader)(nil),                 // 59: longarm.v1.SyncHeader
+	(*SyncData)(nil),                   // 60: longarm.v1.SyncData
+	(*SyncResult)(nil),                 // 61: longarm.v1.SyncResult
+	(*PrepareJobRequest)(nil),          // 62: longarm.v1.PrepareJobRequest
+	(*PrepareJobOutput)(nil),           // 63: longarm.v1.PrepareJobOutput
+	(*PruneRequest)(nil),               // 64: longarm.v1.PruneRequest
+	(*PruneResponse)(nil),              // 65: longarm.v1.PruneResponse
+	(*PortLinkGrant)(nil),              // 66: longarm.v1.PortLinkGrant
+	(*SignedPortLinkGrant)(nil),        // 67: longarm.v1.SignedPortLinkGrant
+	(*MachineUpdateRequest)(nil),       // 68: longarm.v1.MachineUpdateRequest
+	(*MachineUpdateStatusRequest)(nil), // 69: longarm.v1.MachineUpdateStatusRequest
+	(*MachineUpdateAutoRequest)(nil),   // 70: longarm.v1.MachineUpdateAutoRequest
+	(*MachineUpdateEvent)(nil),         // 71: longarm.v1.MachineUpdateEvent
+	nil,                                // 72: longarm.v1.ExecRequest.EnvEntry
+	nil,                                // 73: longarm.v1.ExecRequest.SecretEnvEntry
+	nil,                                // 74: longarm.v1.JobSpec.EnvEntry
+	nil,                                // 75: longarm.v1.JobSpec.LabelsEntry
+	nil,                                // 76: longarm.v1.SubmitRequest.SecretEnvEntry
+	nil,                                // 77: longarm.v1.MetricsSnapshot.AgentsEntry
+	nil,                                // 78: longarm.v1.AttachOpen.EnvEntry
+	nil,                                // 79: longarm.v1.AttachOpen.SecretEnvEntry
+	nil,                                // 80: longarm.v1.StartSessionRequest.EnvEntry
+	nil,                                // 81: longarm.v1.StartSessionRequest.SecretEnvEntry
+	nil,                                // 82: longarm.v1.PrepareJobRequest.SecretEnvEntry
+	(*timestamppb.Timestamp)(nil),      // 83: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),        // 84: google.protobuf.Duration
 }
 var file_longarm_v1_longarm_proto_depIdxs = []int32{
-	79, // 0: longarm.v1.InfoResponse.started_at:type_name -> google.protobuf.Timestamp
-	68, // 1: longarm.v1.ExecRequest.env:type_name -> longarm.v1.ExecRequest.EnvEntry
-	69, // 2: longarm.v1.ExecRequest.secret_env:type_name -> longarm.v1.ExecRequest.SecretEnvEntry
-	80, // 3: longarm.v1.ExecRequest.timeout:type_name -> google.protobuf.Duration
+	83, // 0: longarm.v1.InfoResponse.started_at:type_name -> google.protobuf.Timestamp
+	72, // 1: longarm.v1.ExecRequest.env:type_name -> longarm.v1.ExecRequest.EnvEntry
+	73, // 2: longarm.v1.ExecRequest.secret_env:type_name -> longarm.v1.ExecRequest.SecretEnvEntry
+	84, // 3: longarm.v1.ExecRequest.timeout:type_name -> google.protobuf.Duration
 	0,  // 4: longarm.v1.ExecRequest.output:type_name -> longarm.v1.OutputMode
-	80, // 5: longarm.v1.ExecResponse.duration:type_name -> google.protobuf.Duration
-	70, // 6: longarm.v1.JobSpec.env:type_name -> longarm.v1.JobSpec.EnvEntry
-	71, // 7: longarm.v1.JobSpec.labels:type_name -> longarm.v1.JobSpec.LabelsEntry
+	84, // 5: longarm.v1.ExecResponse.duration:type_name -> google.protobuf.Duration
+	74, // 6: longarm.v1.JobSpec.env:type_name -> longarm.v1.JobSpec.EnvEntry
+	75, // 7: longarm.v1.JobSpec.labels:type_name -> longarm.v1.JobSpec.LabelsEntry
 	8,  // 8: longarm.v1.JobSpec.workspace:type_name -> longarm.v1.JobWorkspace
 	7,  // 9: longarm.v1.SubmitRequest.spec:type_name -> longarm.v1.JobSpec
-	72, // 10: longarm.v1.SubmitRequest.secret_env:type_name -> longarm.v1.SubmitRequest.SecretEnvEntry
+	76, // 10: longarm.v1.SubmitRequest.secret_env:type_name -> longarm.v1.SubmitRequest.SecretEnvEntry
 	9,  // 11: longarm.v1.SubmitRequest.git_auth:type_name -> longarm.v1.GitAuth
 	7,  // 12: longarm.v1.Job.spec:type_name -> longarm.v1.JobSpec
 	1,  // 13: longarm.v1.Job.state:type_name -> longarm.v1.JobState
-	79, // 14: longarm.v1.Job.created_at:type_name -> google.protobuf.Timestamp
-	79, // 15: longarm.v1.Job.started_at:type_name -> google.protobuf.Timestamp
-	79, // 16: longarm.v1.Job.ended_at:type_name -> google.protobuf.Timestamp
+	83, // 14: longarm.v1.Job.created_at:type_name -> google.protobuf.Timestamp
+	83, // 15: longarm.v1.Job.started_at:type_name -> google.protobuf.Timestamp
+	83, // 16: longarm.v1.Job.ended_at:type_name -> google.protobuf.Timestamp
 	1,  // 17: longarm.v1.ListJobsRequest.states:type_name -> longarm.v1.JobState
 	11, // 18: longarm.v1.ListJobsResponse.jobs:type_name -> longarm.v1.Job
-	80, // 19: longarm.v1.MetricsStreamRequest.interval:type_name -> google.protobuf.Duration
-	79, // 20: longarm.v1.MetricsSnapshot.time:type_name -> google.protobuf.Timestamp
-	73, // 21: longarm.v1.MetricsSnapshot.agents:type_name -> longarm.v1.MetricsSnapshot.AgentsEntry
+	84, // 19: longarm.v1.MetricsStreamRequest.interval:type_name -> google.protobuf.Duration
+	83, // 20: longarm.v1.MetricsSnapshot.time:type_name -> google.protobuf.Timestamp
+	77, // 21: longarm.v1.MetricsSnapshot.agents:type_name -> longarm.v1.MetricsSnapshot.AgentsEntry
 	21, // 22: longarm.v1.MetricsSnapshot.top_cpu:type_name -> longarm.v1.ProcGroup
 	21, // 23: longarm.v1.MetricsSnapshot.top_mem:type_name -> longarm.v1.ProcGroup
-	80, // 24: longarm.v1.GcRequest.keep:type_name -> google.protobuf.Duration
+	84, // 24: longarm.v1.GcRequest.keep:type_name -> google.protobuf.Duration
 	29, // 25: longarm.v1.AttachInput.open:type_name -> longarm.v1.AttachOpen
 	30, // 26: longarm.v1.AttachInput.resize:type_name -> longarm.v1.TermSize
-	74, // 27: longarm.v1.AttachOpen.env:type_name -> longarm.v1.AttachOpen.EnvEntry
-	75, // 28: longarm.v1.AttachOpen.secret_env:type_name -> longarm.v1.AttachOpen.SecretEnvEntry
+	78, // 27: longarm.v1.AttachOpen.env:type_name -> longarm.v1.AttachOpen.EnvEntry
+	79, // 28: longarm.v1.AttachOpen.secret_env:type_name -> longarm.v1.AttachOpen.SecretEnvEntry
 	30, // 29: longarm.v1.AttachOpen.size:type_name -> longarm.v1.TermSize
 	32, // 30: longarm.v1.AttachOutput.started:type_name -> longarm.v1.AttachStarted
 	33, // 31: longarm.v1.AttachStarted.session:type_name -> longarm.v1.Session
 	1,  // 32: longarm.v1.Session.state:type_name -> longarm.v1.JobState
-	79, // 33: longarm.v1.Session.created_at:type_name -> google.protobuf.Timestamp
-	79, // 34: longarm.v1.Session.ended_at:type_name -> google.protobuf.Timestamp
+	83, // 33: longarm.v1.Session.created_at:type_name -> google.protobuf.Timestamp
+	83, // 34: longarm.v1.Session.ended_at:type_name -> google.protobuf.Timestamp
 	8,  // 35: longarm.v1.Session.workspace:type_name -> longarm.v1.JobWorkspace
-	79, // 36: longarm.v1.Session.started_at:type_name -> google.protobuf.Timestamp
-	79, // 37: longarm.v1.Session.last_output:type_name -> google.protobuf.Timestamp
-	79, // 38: longarm.v1.Session.last_input:type_name -> google.protobuf.Timestamp
-	79, // 39: longarm.v1.Session.last_activity:type_name -> google.protobuf.Timestamp
-	76, // 40: longarm.v1.StartSessionRequest.env:type_name -> longarm.v1.StartSessionRequest.EnvEntry
-	77, // 41: longarm.v1.StartSessionRequest.secret_env:type_name -> longarm.v1.StartSessionRequest.SecretEnvEntry
+	83, // 36: longarm.v1.Session.started_at:type_name -> google.protobuf.Timestamp
+	83, // 37: longarm.v1.Session.last_output:type_name -> google.protobuf.Timestamp
+	83, // 38: longarm.v1.Session.last_input:type_name -> google.protobuf.Timestamp
+	83, // 39: longarm.v1.Session.last_activity:type_name -> google.protobuf.Timestamp
+	80, // 40: longarm.v1.StartSessionRequest.env:type_name -> longarm.v1.StartSessionRequest.EnvEntry
+	81, // 41: longarm.v1.StartSessionRequest.secret_env:type_name -> longarm.v1.StartSessionRequest.SecretEnvEntry
 	30, // 42: longarm.v1.StartSessionRequest.size:type_name -> longarm.v1.TermSize
 	8,  // 43: longarm.v1.StartSessionRequest.workspace:type_name -> longarm.v1.JobWorkspace
 	9,  // 44: longarm.v1.StartSessionRequest.git_auth:type_name -> longarm.v1.GitAuth
-	80, // 45: longarm.v1.StopSessionRequest.grace:type_name -> google.protobuf.Duration
+	84, // 45: longarm.v1.StopSessionRequest.grace:type_name -> google.protobuf.Duration
 	33, // 46: longarm.v1.ListSessionsResponse.sessions:type_name -> longarm.v1.Session
 	67, // 47: longarm.v1.ForwardFrame.grant:type_name -> longarm.v1.SignedPortLinkGrant
-	79, // 48: longarm.v1.FileInfo.mtime:type_name -> google.protobuf.Timestamp
+	83, // 48: longarm.v1.FileInfo.mtime:type_name -> google.protobuf.Timestamp
 	45, // 49: longarm.v1.FileListResponse.entries:type_name -> longarm.v1.FileInfo
 	51, // 50: longarm.v1.FileWriteRequest.header:type_name -> longarm.v1.FileWriteHeader
-	79, // 51: longarm.v1.FileWriteHeader.mtime:type_name -> google.protobuf.Timestamp
+	83, // 51: longarm.v1.FileWriteHeader.mtime:type_name -> google.protobuf.Timestamp
 	9,  // 52: longarm.v1.FetchRequest.git_auth:type_name -> longarm.v1.GitAuth
 	59, // 53: longarm.v1.SyncChunk.header:type_name -> longarm.v1.SyncHeader
 	60, // 54: longarm.v1.SyncChunk.data:type_name -> longarm.v1.SyncData
 	2,  // 55: longarm.v1.SyncData.part:type_name -> longarm.v1.SyncPart
 	8,  // 56: longarm.v1.PrepareJobRequest.workspace:type_name -> longarm.v1.JobWorkspace
-	78, // 57: longarm.v1.PrepareJobRequest.secret_env:type_name -> longarm.v1.PrepareJobRequest.SecretEnvEntry
+	82, // 57: longarm.v1.PrepareJobRequest.secret_env:type_name -> longarm.v1.PrepareJobRequest.SecretEnvEntry
 	9,  // 58: longarm.v1.PrepareJobRequest.git_auth:type_name -> longarm.v1.GitAuth
-	22, // 59: longarm.v1.MetricsSnapshot.AgentsEntry.value:type_name -> longarm.v1.AgentStat
-	3,  // 60: longarm.v1.Node.Info:input_type -> longarm.v1.InfoRequest
-	5,  // 61: longarm.v1.Exec.Run:input_type -> longarm.v1.ExecRequest
-	10, // 62: longarm.v1.Jobs.Submit:input_type -> longarm.v1.SubmitRequest
-	12, // 63: longarm.v1.Jobs.Get:input_type -> longarm.v1.GetJobRequest
-	13, // 64: longarm.v1.Jobs.List:input_type -> longarm.v1.ListJobsRequest
-	15, // 65: longarm.v1.Jobs.Logs:input_type -> longarm.v1.LogsRequest
-	17, // 66: longarm.v1.Jobs.Wait:input_type -> longarm.v1.WaitRequest
-	18, // 67: longarm.v1.Jobs.Kill:input_type -> longarm.v1.KillRequest
-	19, // 68: longarm.v1.Metrics.Snapshot:input_type -> longarm.v1.MetricsRequest
-	20, // 69: longarm.v1.Metrics.Stream:input_type -> longarm.v1.MetricsStreamRequest
-	24, // 70: longarm.v1.Admin.Shutdown:input_type -> longarm.v1.ShutdownRequest
-	26, // 71: longarm.v1.Admin.Gc:input_type -> longarm.v1.GcRequest
-	28, // 72: longarm.v1.Sessions.Attach:input_type -> longarm.v1.AttachInput
-	39, // 73: longarm.v1.Sessions.List:input_type -> longarm.v1.ListSessionsRequest
-	41, // 74: longarm.v1.Sessions.Kill:input_type -> longarm.v1.KillSessionRequest
-	15, // 75: longarm.v1.Sessions.Logs:input_type -> longarm.v1.LogsRequest
-	34, // 76: longarm.v1.Sessions.Start:input_type -> longarm.v1.StartSessionRequest
-	35, // 77: longarm.v1.Sessions.Get:input_type -> longarm.v1.GetSessionRequest
-	36, // 78: longarm.v1.Sessions.Send:input_type -> longarm.v1.SendSessionRequest
-	38, // 79: longarm.v1.Sessions.Stop:input_type -> longarm.v1.StopSessionRequest
-	42, // 80: longarm.v1.Forward.Open:input_type -> longarm.v1.ForwardFrame
-	42, // 81: longarm.v1.Forward.Ssh:input_type -> longarm.v1.ForwardFrame
-	44, // 82: longarm.v1.Files.Stat:input_type -> longarm.v1.FileStatRequest
-	46, // 83: longarm.v1.Files.List:input_type -> longarm.v1.FileListRequest
-	48, // 84: longarm.v1.Files.Read:input_type -> longarm.v1.FileReadRequest
-	50, // 85: longarm.v1.Files.Write:input_type -> longarm.v1.FileWriteRequest
-	53, // 86: longarm.v1.Files.Mkdir:input_type -> longarm.v1.MkdirRequest
-	43, // 87: longarm.v1.Files.Tail:input_type -> longarm.v1.FileTailRequest
-	56, // 88: longarm.v1.Workspace.Refs:input_type -> longarm.v1.RefsRequest
-	58, // 89: longarm.v1.Workspace.Sync:input_type -> longarm.v1.SyncChunk
-	54, // 90: longarm.v1.Workspace.Fetch:input_type -> longarm.v1.FetchRequest
-	62, // 91: longarm.v1.UserHelper.PrepareJob:input_type -> longarm.v1.PrepareJobRequest
-	64, // 92: longarm.v1.UserHelper.Prune:input_type -> longarm.v1.PruneRequest
-	42, // 93: longarm.v1.LinkTunnel.Dial:input_type -> longarm.v1.ForwardFrame
-	4,  // 94: longarm.v1.Node.Info:output_type -> longarm.v1.InfoResponse
-	6,  // 95: longarm.v1.Exec.Run:output_type -> longarm.v1.ExecResponse
-	11, // 96: longarm.v1.Jobs.Submit:output_type -> longarm.v1.Job
-	11, // 97: longarm.v1.Jobs.Get:output_type -> longarm.v1.Job
-	14, // 98: longarm.v1.Jobs.List:output_type -> longarm.v1.ListJobsResponse
-	16, // 99: longarm.v1.Jobs.Logs:output_type -> longarm.v1.LogChunk
-	11, // 100: longarm.v1.Jobs.Wait:output_type -> longarm.v1.Job
-	11, // 101: longarm.v1.Jobs.Kill:output_type -> longarm.v1.Job
-	23, // 102: longarm.v1.Metrics.Snapshot:output_type -> longarm.v1.MetricsSnapshot
-	23, // 103: longarm.v1.Metrics.Stream:output_type -> longarm.v1.MetricsSnapshot
-	25, // 104: longarm.v1.Admin.Shutdown:output_type -> longarm.v1.ShutdownResponse
-	27, // 105: longarm.v1.Admin.Gc:output_type -> longarm.v1.GcResponse
-	31, // 106: longarm.v1.Sessions.Attach:output_type -> longarm.v1.AttachOutput
-	40, // 107: longarm.v1.Sessions.List:output_type -> longarm.v1.ListSessionsResponse
-	33, // 108: longarm.v1.Sessions.Kill:output_type -> longarm.v1.Session
-	16, // 109: longarm.v1.Sessions.Logs:output_type -> longarm.v1.LogChunk
-	32, // 110: longarm.v1.Sessions.Start:output_type -> longarm.v1.AttachStarted
-	33, // 111: longarm.v1.Sessions.Get:output_type -> longarm.v1.Session
-	37, // 112: longarm.v1.Sessions.Send:output_type -> longarm.v1.SendSessionResponse
-	33, // 113: longarm.v1.Sessions.Stop:output_type -> longarm.v1.Session
-	42, // 114: longarm.v1.Forward.Open:output_type -> longarm.v1.ForwardFrame
-	42, // 115: longarm.v1.Forward.Ssh:output_type -> longarm.v1.ForwardFrame
-	45, // 116: longarm.v1.Files.Stat:output_type -> longarm.v1.FileInfo
-	47, // 117: longarm.v1.Files.List:output_type -> longarm.v1.FileListResponse
-	49, // 118: longarm.v1.Files.Read:output_type -> longarm.v1.FileChunk
-	52, // 119: longarm.v1.Files.Write:output_type -> longarm.v1.FileWriteResult
-	45, // 120: longarm.v1.Files.Mkdir:output_type -> longarm.v1.FileInfo
-	49, // 121: longarm.v1.Files.Tail:output_type -> longarm.v1.FileChunk
-	57, // 122: longarm.v1.Workspace.Refs:output_type -> longarm.v1.RefsResponse
-	61, // 123: longarm.v1.Workspace.Sync:output_type -> longarm.v1.SyncResult
-	55, // 124: longarm.v1.Workspace.Fetch:output_type -> longarm.v1.FetchResponse
-	63, // 125: longarm.v1.UserHelper.PrepareJob:output_type -> longarm.v1.PrepareJobOutput
-	65, // 126: longarm.v1.UserHelper.Prune:output_type -> longarm.v1.PruneResponse
-	42, // 127: longarm.v1.LinkTunnel.Dial:output_type -> longarm.v1.ForwardFrame
-	94, // [94:128] is the sub-list for method output_type
-	60, // [60:94] is the sub-list for method input_type
-	60, // [60:60] is the sub-list for extension type_name
-	60, // [60:60] is the sub-list for extension extendee
-	0,  // [0:60] is the sub-list for field type_name
+	83, // 59: longarm.v1.MachineUpdateEvent.at:type_name -> google.protobuf.Timestamp
+	83, // 60: longarm.v1.MachineUpdateEvent.last_at:type_name -> google.protobuf.Timestamp
+	22, // 61: longarm.v1.MetricsSnapshot.AgentsEntry.value:type_name -> longarm.v1.AgentStat
+	3,  // 62: longarm.v1.Node.Info:input_type -> longarm.v1.InfoRequest
+	5,  // 63: longarm.v1.Exec.Run:input_type -> longarm.v1.ExecRequest
+	10, // 64: longarm.v1.Jobs.Submit:input_type -> longarm.v1.SubmitRequest
+	12, // 65: longarm.v1.Jobs.Get:input_type -> longarm.v1.GetJobRequest
+	13, // 66: longarm.v1.Jobs.List:input_type -> longarm.v1.ListJobsRequest
+	15, // 67: longarm.v1.Jobs.Logs:input_type -> longarm.v1.LogsRequest
+	17, // 68: longarm.v1.Jobs.Wait:input_type -> longarm.v1.WaitRequest
+	18, // 69: longarm.v1.Jobs.Kill:input_type -> longarm.v1.KillRequest
+	19, // 70: longarm.v1.Metrics.Snapshot:input_type -> longarm.v1.MetricsRequest
+	20, // 71: longarm.v1.Metrics.Stream:input_type -> longarm.v1.MetricsStreamRequest
+	24, // 72: longarm.v1.Admin.Shutdown:input_type -> longarm.v1.ShutdownRequest
+	26, // 73: longarm.v1.Admin.Gc:input_type -> longarm.v1.GcRequest
+	28, // 74: longarm.v1.Sessions.Attach:input_type -> longarm.v1.AttachInput
+	39, // 75: longarm.v1.Sessions.List:input_type -> longarm.v1.ListSessionsRequest
+	41, // 76: longarm.v1.Sessions.Kill:input_type -> longarm.v1.KillSessionRequest
+	15, // 77: longarm.v1.Sessions.Logs:input_type -> longarm.v1.LogsRequest
+	34, // 78: longarm.v1.Sessions.Start:input_type -> longarm.v1.StartSessionRequest
+	35, // 79: longarm.v1.Sessions.Get:input_type -> longarm.v1.GetSessionRequest
+	36, // 80: longarm.v1.Sessions.Send:input_type -> longarm.v1.SendSessionRequest
+	38, // 81: longarm.v1.Sessions.Stop:input_type -> longarm.v1.StopSessionRequest
+	42, // 82: longarm.v1.Forward.Open:input_type -> longarm.v1.ForwardFrame
+	42, // 83: longarm.v1.Forward.Ssh:input_type -> longarm.v1.ForwardFrame
+	44, // 84: longarm.v1.Files.Stat:input_type -> longarm.v1.FileStatRequest
+	46, // 85: longarm.v1.Files.List:input_type -> longarm.v1.FileListRequest
+	48, // 86: longarm.v1.Files.Read:input_type -> longarm.v1.FileReadRequest
+	50, // 87: longarm.v1.Files.Write:input_type -> longarm.v1.FileWriteRequest
+	53, // 88: longarm.v1.Files.Mkdir:input_type -> longarm.v1.MkdirRequest
+	43, // 89: longarm.v1.Files.Tail:input_type -> longarm.v1.FileTailRequest
+	56, // 90: longarm.v1.Workspace.Refs:input_type -> longarm.v1.RefsRequest
+	58, // 91: longarm.v1.Workspace.Sync:input_type -> longarm.v1.SyncChunk
+	54, // 92: longarm.v1.Workspace.Fetch:input_type -> longarm.v1.FetchRequest
+	62, // 93: longarm.v1.UserHelper.PrepareJob:input_type -> longarm.v1.PrepareJobRequest
+	64, // 94: longarm.v1.UserHelper.Prune:input_type -> longarm.v1.PruneRequest
+	42, // 95: longarm.v1.LinkTunnel.Dial:input_type -> longarm.v1.ForwardFrame
+	68, // 96: longarm.v1.MachineUpdate.Start:input_type -> longarm.v1.MachineUpdateRequest
+	69, // 97: longarm.v1.MachineUpdate.Status:input_type -> longarm.v1.MachineUpdateStatusRequest
+	70, // 98: longarm.v1.MachineUpdate.SetAuto:input_type -> longarm.v1.MachineUpdateAutoRequest
+	4,  // 99: longarm.v1.Node.Info:output_type -> longarm.v1.InfoResponse
+	6,  // 100: longarm.v1.Exec.Run:output_type -> longarm.v1.ExecResponse
+	11, // 101: longarm.v1.Jobs.Submit:output_type -> longarm.v1.Job
+	11, // 102: longarm.v1.Jobs.Get:output_type -> longarm.v1.Job
+	14, // 103: longarm.v1.Jobs.List:output_type -> longarm.v1.ListJobsResponse
+	16, // 104: longarm.v1.Jobs.Logs:output_type -> longarm.v1.LogChunk
+	11, // 105: longarm.v1.Jobs.Wait:output_type -> longarm.v1.Job
+	11, // 106: longarm.v1.Jobs.Kill:output_type -> longarm.v1.Job
+	23, // 107: longarm.v1.Metrics.Snapshot:output_type -> longarm.v1.MetricsSnapshot
+	23, // 108: longarm.v1.Metrics.Stream:output_type -> longarm.v1.MetricsSnapshot
+	25, // 109: longarm.v1.Admin.Shutdown:output_type -> longarm.v1.ShutdownResponse
+	27, // 110: longarm.v1.Admin.Gc:output_type -> longarm.v1.GcResponse
+	31, // 111: longarm.v1.Sessions.Attach:output_type -> longarm.v1.AttachOutput
+	40, // 112: longarm.v1.Sessions.List:output_type -> longarm.v1.ListSessionsResponse
+	33, // 113: longarm.v1.Sessions.Kill:output_type -> longarm.v1.Session
+	16, // 114: longarm.v1.Sessions.Logs:output_type -> longarm.v1.LogChunk
+	32, // 115: longarm.v1.Sessions.Start:output_type -> longarm.v1.AttachStarted
+	33, // 116: longarm.v1.Sessions.Get:output_type -> longarm.v1.Session
+	37, // 117: longarm.v1.Sessions.Send:output_type -> longarm.v1.SendSessionResponse
+	33, // 118: longarm.v1.Sessions.Stop:output_type -> longarm.v1.Session
+	42, // 119: longarm.v1.Forward.Open:output_type -> longarm.v1.ForwardFrame
+	42, // 120: longarm.v1.Forward.Ssh:output_type -> longarm.v1.ForwardFrame
+	45, // 121: longarm.v1.Files.Stat:output_type -> longarm.v1.FileInfo
+	47, // 122: longarm.v1.Files.List:output_type -> longarm.v1.FileListResponse
+	49, // 123: longarm.v1.Files.Read:output_type -> longarm.v1.FileChunk
+	52, // 124: longarm.v1.Files.Write:output_type -> longarm.v1.FileWriteResult
+	45, // 125: longarm.v1.Files.Mkdir:output_type -> longarm.v1.FileInfo
+	49, // 126: longarm.v1.Files.Tail:output_type -> longarm.v1.FileChunk
+	57, // 127: longarm.v1.Workspace.Refs:output_type -> longarm.v1.RefsResponse
+	61, // 128: longarm.v1.Workspace.Sync:output_type -> longarm.v1.SyncResult
+	55, // 129: longarm.v1.Workspace.Fetch:output_type -> longarm.v1.FetchResponse
+	63, // 130: longarm.v1.UserHelper.PrepareJob:output_type -> longarm.v1.PrepareJobOutput
+	65, // 131: longarm.v1.UserHelper.Prune:output_type -> longarm.v1.PruneResponse
+	42, // 132: longarm.v1.LinkTunnel.Dial:output_type -> longarm.v1.ForwardFrame
+	71, // 133: longarm.v1.MachineUpdate.Start:output_type -> longarm.v1.MachineUpdateEvent
+	71, // 134: longarm.v1.MachineUpdate.Status:output_type -> longarm.v1.MachineUpdateEvent
+	71, // 135: longarm.v1.MachineUpdate.SetAuto:output_type -> longarm.v1.MachineUpdateEvent
+	99, // [99:136] is the sub-list for method output_type
+	62, // [62:99] is the sub-list for method input_type
+	62, // [62:62] is the sub-list for extension type_name
+	62, // [62:62] is the sub-list for extension extendee
+	0,  // [0:62] is the sub-list for field type_name
 }
 
 func init() { file_longarm_v1_longarm_proto_init() }
@@ -5617,9 +5996,9 @@ func file_longarm_v1_longarm_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_longarm_v1_longarm_proto_rawDesc), len(file_longarm_v1_longarm_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   76,
+			NumMessages:   80,
 			NumExtensions: 0,
-			NumServices:   11,
+			NumServices:   12,
 		},
 		GoTypes:           file_longarm_v1_longarm_proto_goTypes,
 		DependencyIndexes: file_longarm_v1_longarm_proto_depIdxs,

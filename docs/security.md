@@ -512,6 +512,88 @@ block or report it; check with whoever manages the device before turning
 it on, and expect the commands it runs to be attributed to SYSTEM in their
 logs.
 
+## Update service (Windows)
+
+Every MSI install has **Longarm Update** (`LongarmUpdate`,
+`longarm-update.exe`; `internal/updatesvc`): a LocalSystem service run from
+the protected install dir. A SYSTEM process that installs software is a
+target, so its only capability is installing a **Longarm MSI that is**
+
+| Check | How |
+|---|---|
+| **from the recorded hub** | the hub in `HKLM\Software\Longarm` (`Hub`, written by the elevated installer helper: administrators only). No request names a hub, URL, file or key: the pipe protocol has no such field and refuses unknown fields. Downloads are HTTPS (system roots, same-host redirects only) from `GET /releases/latest.json`, `/releases/<v>/release.json` and `/releases/<v>/<file>` |
+| **signed** | minisign signature verified against the release key **built into** `longarm-update.exe` (`-X .../update.PublicKey`; a build without one installs nothing), the trusted comment naming exactly `longarm-windows-<arch>.msi` and that version: an older release's signature can't be replayed, another file's (another architecture's MSI) can't be swapped in |
+| **matching the hub's record** | size and sha256 of the release record, before the signature (`update.VerifyPackage`; the tray's own update banner checks the same, `verifyMSI`) |
+| **strictly newer** | `update.CheckNewer`: a downgrade is refused, the installed version again is "up to date" - a reinstall only for an elevated local administrator (`--reinstall`), never over the network |
+| **for this machine** | the MSI of the service binary's architecture only |
+
+**Installing.** Downloads go to `C:\ProgramData\Longarm\updates\<version>\`:
+`ProgramData\Longarm` must be owned and writable by SYSTEM /
+Administrators only (`TrustedSystemPath`), `updates` gets a protected
+SYSTEM-only DACL (whatever else is there - a junction, a file, a directory
+with other ACEs - is removed, a reparse point itself and never its target,
+and made anew), the package file is created exclusively, then opened with
+read sharing only (no one can write, rename or delete it; a reparse point
+or a hard-linked file is refused) and verified through that handle, which
+stays open while the installer reads it. `msiexec /i <msi> /qn /norestart
+/l*v <log>` runs from a one-shot scheduled task as SYSTEM
+(`LongarmUpdate-Install`, created by the service, run on demand only), so
+it is no child of the service: the MSI stops LongarmUpdate (`ServiceControl`,
+and the upgrade helper records and restarts it), replaces its binary and
+starts the new one, which reads the outcome from the installer's log and
+the version it runs. A second action of the task starts the service again
+in case an install failed before it could. One install at a time; the
+directory is removed afterwards. Its log is
+`C:\ProgramData\Longarm\updates\longarm-update.log` (SYSTEM only).
+
+**The local API** is the named pipe `\\.\pipe\LongarmUpdate`: created as
+the pipe's first instance (go-winio's `FILE_CREATE`, the NT form of
+`FILE_FLAG_FIRST_PIPE_INSTANCE`: if another program holds the name, the
+service fails to start rather than share it), remote clients rejected,
+network logons denied, authenticated local users may read and write but
+not add a server instance (`0x12019b`: no `FILE_CREATE_PIPE_INSTANCE`).
+Clients connect at identification level and **verify the server** before
+sending anything: `GetNamedPipeServerProcessId`, its image must be
+`longarm-update.exe` in the install dir the MSI recorded (checked to be
+writable by administrators only) and its token SYSTEM - a squatter gets
+`ErrImpostor` (tested). The service identifies each client from its token
+(`ImpersonateNamedPipeClient`, on a locked thread, reverted at once).
+
+| Request | Who |
+|---|---|
+| status (installed, available, in progress, last result, auto) | any local user |
+| install version X / the latest stable | any local user - harmless: only newer, signed releases from the recorded hub install. Rate limited (per caller, and installs for everybody together) and serialized ("busy") |
+| reinstall the installed version | an elevated administrator |
+| automatic updates on / off | the machine's owner (`SessionUserSID`, the user the MSI was installed for) or an administrator (SYSTEM too: the admin worker, itself owner-only) |
+| "a job runs" (auto-update waits for a quiet moment) | any local user; it can only delay automatic updates, by a day at most |
+
+**Remote updates** (`longarm worker update`, the tray's "Update to X") go
+end to end to the worker - `MachineUpdate` on its gRPC port, mutual TLS
+with end-to-end trust like every call - and only a certificate of the
+**worker's owner** passes (the owner of a user-owned worker, an owner
+pinned in `[access] owners`): other users, fleet admins' certificates
+(owner-only means owner-only), worker certificates and fleet workers (no
+owner) are refused. The worker passes the request to the service as the
+user it runs as. **The hub can't trigger it**: none of its commands
+(`HubCommand`) carries a machine update or an auto-update setting - a test
+lists them, a new one must be reviewed - nothing in the hub package talks
+to the service, and only `internal/longarmd/machineupdate.go`, behind that
+owner check, sends it install or set-auto requests (tested). Rollouts
+(`longarm admin release push`) still update self-updating workers, never
+the admin worker, and can't make the service install anything. Automatic
+updates are off by default and the hub has no way to turn them on: the
+setting is in `HKLM\Software\Longarm\Update`, written by the service for
+the owner or an administrator only.
+
+What it does not protect against: an administrator of the machine (who
+can replace the service anyway), a compromised release key (the key is
+the trust anchor; rotate it with a new build), and a hub that withholds
+releases (updates are then simply not offered). Like any owned worker,
+the owner check rests on the names the hub's CA vouches for: pin the
+owner's keys with end-to-end trust (below) so that a hub admin can't
+enroll a device under the owner's name. Even then such a request could
+only install a newer, signed Longarm release.
+
 ## Installer (Windows MSI)
 
 The MSI is per-machine: its custom actions run elevated, as SYSTEM, with

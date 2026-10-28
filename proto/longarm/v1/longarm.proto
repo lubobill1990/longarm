@@ -784,3 +784,66 @@ message SignedPortLinkGrant {
   bytes signature = 2;
   repeated bytes chain = 3; // DER: the hub certificate first, then intermediates
 }
+
+// ---------------------------------------------------------------- MachineUpdate
+
+// MachineUpdate updates the machine a worker runs on to a newer signed
+// release (`longarm worker update`, the tray's "Update to X";
+// docs/usage.md "Updating"). Only the worker's owner (a client or admin
+// certificate of an owner) may call it, end to end: the hub has no command
+// that reaches it. An MSI install forwards the request to the LongarmUpdate
+// service (Windows; it installs the hub's newer, signed MSI and nothing
+// else), other installs run longarmd's own self-update for that version.
+service MachineUpdate {
+  // Start installs request's version (or the hub's latest stable) and
+  // streams the progress. With an MSI the worker itself restarts while the
+  // installer runs: the stream then ends with phase "installing" and the
+  // caller reconnects (Status, Node.Info's version) for the result.
+  rpc Start(MachineUpdateRequest) returns (stream MachineUpdateEvent);
+  // Status: installed / available versions, an update in progress, the
+  // last result and the auto-update setting.
+  rpc Status(MachineUpdateStatusRequest) returns (MachineUpdateEvent);
+  // SetAuto turns automatic updates on or off (MSI installs only; the
+  // owner or a local administrator, never the hub).
+  rpc SetAuto(MachineUpdateAutoRequest) returns (MachineUpdateEvent);
+}
+
+message MachineUpdateRequest {
+  string version = 1; // a version the hub has; "" with latest
+  bool latest = 2; // the hub's latest stable release
+}
+
+message MachineUpdateStatusRequest {}
+
+message MachineUpdateAutoRequest {
+  bool enabled = 1;
+  int32 interval_hours = 2; // 0 = the default (6)
+}
+
+message MachineUpdateEvent {
+  // checking | downloading | verifying | installing | restarting | done |
+  // up_to_date | failed | status
+  string phase = 1;
+  string message = 2;
+  string from = 3;
+  string to = 4;
+  string method = 5; // msi (the LongarmUpdate service) | self (longarmd's self-update)
+  // what ran when the update started (the caller counts what kept running)
+  repeated string running_jobs = 6;
+  repeated string running_sessions = 7;
+  string error = 8;
+  // why it failed: denied | refused (downgrade, not for this machine) |
+  // not_found | busy | rate_limited | unavailable | unsupported | invalid
+  string code = 9;
+  bool auto = 10;
+  int32 auto_interval_hours = 11;
+  string installed = 12;
+  string available = 13; // the hub's latest stable ("" = unknown)
+  google.protobuf.Timestamp at = 14;
+  // the last finished update on this machine
+  string last_from = 15;
+  string last_to = 16;
+  bool last_ok = 17;
+  string last_error = 18;
+  google.protobuf.Timestamp last_at = 19;
+}

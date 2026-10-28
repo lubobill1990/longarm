@@ -168,7 +168,12 @@ func (s *Server) updateInstall(w http.ResponseWriter, r *http.Request) {
 	u.mu.Unlock()
 	base := strings.TrimRight(s.hubURL(), "/")
 	go func() {
-		err := s.installUpdate(context.Background(), base, version, rec)
+		// the Longarm Update service when the machine has it (no UAC
+		// prompt; updatesvc.go), else download, verify and run msiexec here
+		handled, err := installViaService(context.Background(), version)
+		if !handled {
+			err = s.installUpdate(context.Background(), base, version, rec)
+		}
 		u.mu.Lock()
 		defer u.mu.Unlock()
 		if err != nil {

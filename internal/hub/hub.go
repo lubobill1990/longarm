@@ -97,6 +97,7 @@ type Hub struct {
 
 	addrMu sync.Mutex
 	addrs  map[string]string // "grpc", "http", "udp" -> bound address
+
 }
 
 // node is the in-memory state of a registered node.

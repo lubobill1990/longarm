@@ -2223,3 +2223,217 @@ var LinkTunnel_ServiceDesc = grpc.ServiceDesc{
 	},
 	Metadata: "longarm/v1/longarm.proto",
 }
+
+const (
+	MachineUpdate_Start_FullMethodName   = "/longarm.v1.MachineUpdate/Start"
+	MachineUpdate_Status_FullMethodName  = "/longarm.v1.MachineUpdate/Status"
+	MachineUpdate_SetAuto_FullMethodName = "/longarm.v1.MachineUpdate/SetAuto"
+)
+
+// MachineUpdateClient is the client API for MachineUpdate service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// MachineUpdate updates the machine a worker runs on to a newer signed
+// release (`longarm worker update`, the tray's "Update to X";
+// docs/usage.md "Updating"). Only the worker's owner (a client or admin
+// certificate of an owner) may call it, end to end: the hub has no command
+// that reaches it. An MSI install forwards the request to the LongarmUpdate
+// service (Windows; it installs the hub's newer, signed MSI and nothing
+// else), other installs run longarmd's own self-update for that version.
+type MachineUpdateClient interface {
+	// Start installs request's version (or the hub's latest stable) and
+	// streams the progress. With an MSI the worker itself restarts while the
+	// installer runs: the stream then ends with phase "installing" and the
+	// caller reconnects (Status, Node.Info's version) for the result.
+	Start(ctx context.Context, in *MachineUpdateRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[MachineUpdateEvent], error)
+	// Status: installed / available versions, an update in progress, the
+	// last result and the auto-update setting.
+	Status(ctx context.Context, in *MachineUpdateStatusRequest, opts ...grpc.CallOption) (*MachineUpdateEvent, error)
+	// SetAuto turns automatic updates on or off (MSI installs only; the
+	// owner or a local administrator, never the hub).
+	SetAuto(ctx context.Context, in *MachineUpdateAutoRequest, opts ...grpc.CallOption) (*MachineUpdateEvent, error)
+}
+
+type machineUpdateClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewMachineUpdateClient(cc grpc.ClientConnInterface) MachineUpdateClient {
+	return &machineUpdateClient{cc}
+}
+
+func (c *machineUpdateClient) Start(ctx context.Context, in *MachineUpdateRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[MachineUpdateEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &MachineUpdate_ServiceDesc.Streams[0], MachineUpdate_Start_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[MachineUpdateRequest, MachineUpdateEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type MachineUpdate_StartClient = grpc.ServerStreamingClient[MachineUpdateEvent]
+
+func (c *machineUpdateClient) Status(ctx context.Context, in *MachineUpdateStatusRequest, opts ...grpc.CallOption) (*MachineUpdateEvent, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MachineUpdateEvent)
+	err := c.cc.Invoke(ctx, MachineUpdate_Status_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *machineUpdateClient) SetAuto(ctx context.Context, in *MachineUpdateAutoRequest, opts ...grpc.CallOption) (*MachineUpdateEvent, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MachineUpdateEvent)
+	err := c.cc.Invoke(ctx, MachineUpdate_SetAuto_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// MachineUpdateServer is the server API for MachineUpdate service.
+// All implementations must embed UnimplementedMachineUpdateServer
+// for forward compatibility.
+//
+// MachineUpdate updates the machine a worker runs on to a newer signed
+// release (`longarm worker update`, the tray's "Update to X";
+// docs/usage.md "Updating"). Only the worker's owner (a client or admin
+// certificate of an owner) may call it, end to end: the hub has no command
+// that reaches it. An MSI install forwards the request to the LongarmUpdate
+// service (Windows; it installs the hub's newer, signed MSI and nothing
+// else), other installs run longarmd's own self-update for that version.
+type MachineUpdateServer interface {
+	// Start installs request's version (or the hub's latest stable) and
+	// streams the progress. With an MSI the worker itself restarts while the
+	// installer runs: the stream then ends with phase "installing" and the
+	// caller reconnects (Status, Node.Info's version) for the result.
+	Start(*MachineUpdateRequest, grpc.ServerStreamingServer[MachineUpdateEvent]) error
+	// Status: installed / available versions, an update in progress, the
+	// last result and the auto-update setting.
+	Status(context.Context, *MachineUpdateStatusRequest) (*MachineUpdateEvent, error)
+	// SetAuto turns automatic updates on or off (MSI installs only; the
+	// owner or a local administrator, never the hub).
+	SetAuto(context.Context, *MachineUpdateAutoRequest) (*MachineUpdateEvent, error)
+	mustEmbedUnimplementedMachineUpdateServer()
+}
+
+// UnimplementedMachineUpdateServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedMachineUpdateServer struct{}
+
+func (UnimplementedMachineUpdateServer) Start(*MachineUpdateRequest, grpc.ServerStreamingServer[MachineUpdateEvent]) error {
+	return status.Error(codes.Unimplemented, "method Start not implemented")
+}
+func (UnimplementedMachineUpdateServer) Status(context.Context, *MachineUpdateStatusRequest) (*MachineUpdateEvent, error) {
+	return nil, status.Error(codes.Unimplemented, "method Status not implemented")
+}
+func (UnimplementedMachineUpdateServer) SetAuto(context.Context, *MachineUpdateAutoRequest) (*MachineUpdateEvent, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetAuto not implemented")
+}
+func (UnimplementedMachineUpdateServer) mustEmbedUnimplementedMachineUpdateServer() {}
+func (UnimplementedMachineUpdateServer) testEmbeddedByValue()                       {}
+
+// UnsafeMachineUpdateServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to MachineUpdateServer will
+// result in compilation errors.
+type UnsafeMachineUpdateServer interface {
+	mustEmbedUnimplementedMachineUpdateServer()
+}
+
+func RegisterMachineUpdateServer(s grpc.ServiceRegistrar, srv MachineUpdateServer) {
+	// If the following call panics, it indicates UnimplementedMachineUpdateServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&MachineUpdate_ServiceDesc, srv)
+}
+
+func _MachineUpdate_Start_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(MachineUpdateRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(MachineUpdateServer).Start(m, &grpc.GenericServerStream[MachineUpdateRequest, MachineUpdateEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type MachineUpdate_StartServer = grpc.ServerStreamingServer[MachineUpdateEvent]
+
+func _MachineUpdate_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MachineUpdateStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MachineUpdateServer).Status(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MachineUpdate_Status_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MachineUpdateServer).Status(ctx, req.(*MachineUpdateStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MachineUpdate_SetAuto_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MachineUpdateAutoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MachineUpdateServer).SetAuto(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MachineUpdate_SetAuto_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MachineUpdateServer).SetAuto(ctx, req.(*MachineUpdateAutoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// MachineUpdate_ServiceDesc is the grpc.ServiceDesc for MachineUpdate service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var MachineUpdate_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "longarm.v1.MachineUpdate",
+	HandlerType: (*MachineUpdateServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Status",
+			Handler:    _MachineUpdate_Status_Handler,
+		},
+		{
+			MethodName: "SetAuto",
+			Handler:    _MachineUpdate_SetAuto_Handler,
+		},
+	},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Start",
+			Handler:       _MachineUpdate_Start_Handler,
+			ServerStreams: true,
+		},
+	},
+	Metadata: "longarm/v1/longarm.proto",
+}

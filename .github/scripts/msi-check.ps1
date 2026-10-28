@@ -150,12 +150,35 @@ foreach ($id in 'AdminSvcStop', 'LongarmdSvcCtl') {
   if (-not $ev.Count -or ([int]$ev[0] -band 0x22) -ne 0x22 -or $wait[0] -ne '1') { throw "default.msi: ServiceControl $id must stop on install and uninstall and wait (Event $($ev[0]), Wait $($wait[0]))" }
 }
 
+# the Longarm Update service (internal/updatesvc): every install, LocalSystem, auto start (delayed),
+# "run"; stopped and waited for before its file changes, removed on uninstall; started without waiting
+$svc = Query $default "SELECT ``Name`` FROM ``ServiceInstall`` WHERE ``ServiceInstall`` = 'UpdateSvc'"
+if ($svc[0] -ne 'LongarmUpdate') { throw "default.msi: no ServiceInstall LongarmUpdate ($svc)" }
+$acct = Query $default "SELECT ``StartName`` FROM ``ServiceInstall`` WHERE ``ServiceInstall`` = 'UpdateSvc'"
+$args_ = Query $default "SELECT ``Arguments`` FROM ``ServiceInstall`` WHERE ``ServiceInstall`` = 'UpdateSvc'"
+$start = Query $default "SELECT ``StartType`` FROM ``ServiceInstall`` WHERE ``ServiceInstall`` = 'UpdateSvc'"
+$comp = Query $default "SELECT ``Component_`` FROM ``ServiceInstall`` WHERE ``ServiceInstall`` = 'UpdateSvc'"
+if ($acct[0] -ne 'LocalSystem' -or $args_[0] -ne 'run' -or [int]$start[0] -ne 2 -or $comp[0] -ne 'UpdateService') {
+  throw "default.msi: LongarmUpdate account '$($acct[0])', arguments '$($args_[0])', start $($start[0]), component $($comp[0])"
+}
+$cond = Query $default "SELECT ``Condition`` FROM ``Component`` WHERE ``Component`` = 'UpdateService'"
+if ($cond.Count -and $cond[0]) { throw "default.msi: the update service is conditional ($($cond[0])): every install has it" }
+$ev = Query $default "SELECT ``Event`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = 'UpdateSvcStop'"
+$wait = Query $default "SELECT ``Wait`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = 'UpdateSvcStop'"
+if (-not $ev.Count -or ([int]$ev[0] -band 0xA2) -ne 0xA2 -or $wait[0] -ne '1') { throw "default.msi: UpdateSvcStop must stop on install and uninstall, remove on uninstall and wait (Event $($ev[0]), Wait $($wait[0]))" }
+$ev = Query $default "SELECT ``Event`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = 'UpdateSvcStart'"
+$wait = Query $default "SELECT ``Wait`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = 'UpdateSvcStart'"
+if (-not $ev.Count -or ([int]$ev[0] -band 0x1) -ne 0x1 -or $wait[0] -eq '1') { throw "default.msi: UpdateSvcStart must start on install without waiting (Event $($ev[0]), Wait $($wait[0]))" }
+$files = Query $default 'SELECT `FileName` FROM `File`'
+if (-not ($files | Where-Object { $_ -like '*longarm-update.exe' })) { throw 'default.msi: no longarm-update.exe in the File table' }
+Write-Host "LongarmUpdate: LocalSystem, auto start, run"
+
 Write-Host '== administrative install (extract only)'
 $target = Join-Path $env:RUNNER_TEMP 'msi-admin'
 $log = Join-Path $Dir 'admin.log'
 $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/a `"$default`" /qn TARGETDIR=`"$target`" /l*v `"$log`""
 if ($p.ExitCode -ne 0) { throw "msiexec /a failed ($($p.ExitCode)); log: $log" }
-foreach ($f in 'longarm.exe', 'longarmd.exe', 'longarm-tray.exe') {
+foreach ($f in 'longarm.exe', 'longarmd.exe', 'longarm-tray.exe', 'longarm-update.exe') {
   $hit = Get-ChildItem -Recurse -File -Path $target -Filter $f | Select-Object -First 1
   if (-not $hit) { throw "$f not extracted" }
   Write-Host "extracted $($hit.FullName) ($($hit.Length) bytes)"

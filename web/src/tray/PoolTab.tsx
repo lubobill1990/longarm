@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { longarmApi, trayApi, type TrayInfo } from '../api/local'
+import { useEffect, useRef, useState } from 'react'
+import { longarmApi, trayApi, type TrayInfo, type WorkerUpdateJob } from '../api/local'
 import type { PoolView, PoolWorker } from '../api/types'
 import { ErrorBox, useAction } from '../components/common'
 import { OfflineRow, WorkerCard, type CardActions } from '../components/WorkerCard'
@@ -51,9 +51,35 @@ export function useNow(): number {
  * worker together), online first, live every 2 s; machines offline for
  * more than an hour in a collapsed "Offline (n)" section, one line each.
  */
+/**
+ * Updates of machines the tray started (longarm worker update through the
+ * daemon), polled every 2 s while they run.
+ */
+export function useWorkerUpdates(): [Record<string, WorkerUpdateJob>, (name: string, version: string) => Promise<void>] {
+  const [jobs, setJobs] = useState<Record<string, WorkerUpdateJob>>({})
+  const timers = useRef<Record<string, ReturnType<typeof setInterval>>>({})
+  useEffect(() => () => Object.values(timers.current).forEach(clearInterval), [])
+  const start = async (name: string, version: string) => {
+    const j = await longarmApi.updateWorker(name, version)
+    setJobs((m) => ({ ...m, [name]: j }))
+    clearInterval(timers.current[name])
+    timers.current[name] = setInterval(async () => {
+      try {
+        const s = await longarmApi.workerUpdate(name)
+        setJobs((m) => ({ ...m, [name]: s }))
+        if (s.state !== 'running') clearInterval(timers.current[name])
+      } catch {
+        /* the daemon restarts too when this machine updates: keep polling */
+      }
+    }, 2000)
+  }
+  return [jobs, start]
+}
+
 export function PoolTab({ pool, error, info, onNavigate }: { pool?: PoolView; error?: string; info?: TrayInfo; onNavigate?: (tab: string) => void }) {
   const { run } = useAction()
   const now = useNow()
+  const [updates, startUpdate] = useWorkerUpdates()
   if (!pool)
     return error ? (
       <ErrorBox error={error} />
@@ -85,6 +111,10 @@ export function PoolTab({ pool, error, info, onNavigate }: { pool?: PoolView; er
         }
       : undefined,
     canRemove: (w: PoolWorker) => admin || (!!me && !!w.node?.owner && w.node.owner === me),
+    // the owner only (an admin certificate is no exception): longarm worker update
+    update: hubUp ? (name, version) => run(() => startUpdate(name, version), `updating ${name} to ${version}`) : undefined,
+    canUpdate: (w: PoolWorker) => !!me && !!w.node?.owner && w.node.owner === me,
+    updates,
   }
   const empty = (pool.workers ?? []).length === 0
   return (

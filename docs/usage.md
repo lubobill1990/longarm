@@ -239,7 +239,7 @@ The job's own outcome comes from `jobs --json` (`state`, `exitCode`,
 ```json
 {"version": "v1.8.0", "features": ["exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label", "git-auth-forward",
   "session-start", "session-send", "session-send-if-idle", "session-stop", "sessions-json-v2", "tail", "run-session",
-  "job-id-short", "jobs-mine", "doctor-json"]}
+  "job-id-short", "jobs-mine", "doctor-json", "worker-update", "ls-version"]}
 ```
 
 (indented in the real output). A program checks `features` instead of
@@ -267,6 +267,8 @@ exit 255) has none of these features.
 | `job-id-short` | `logs` / `wait` / `kill` / `jobs --id` take a unique prefix or suffix of a job id, or `last` |
 | `jobs-mine` | `jobs --mine` / `--all` (the table's defaults: 20 rows, admins their own jobs) |
 | `doctor-json` | `longarm doctor --json` / `longarmd doctor --json` (see [`doctor --json`](#doctor---json)) |
+| `worker-update` | `longarm worker update <worker> [--latest\|--version X] [--wait] [--json] [--auto on\|off]` (the worker must also support it: `machine-update` in its `Node.Info` features), see [Updating](#updating-longarm-worker-update-and-the-longarm-update-service) |
+| `ls-version` | `longarm ls` has the VERSION column; `ls --json` carries `version` and `updateAvailable` (`{"version", "reason"}`) |
 
 The session and tail features also need the worker's (`session-start`,
 `session-send`, `session-send-if-idle`, `session-stop`, `session-info`,
@@ -1972,7 +1974,7 @@ sessions keep running. What happens (`internal/msiupgrade`;
    Restart Manager is off (`MSIRESTARTMANAGERCONTROL=Disable`): it can't
    close windowless processes, which is what showed the dialog.
 2. **Before the old version is removed** (elevated, before
-   `RemoveExistingProducts`): the worker services that run (`longarmd-admin`,
+   `RemoveExistingProducts`): the services that run (`longarmd-admin`, `LongarmUpdate`,
    a `RUN=service` `longarmd`) are stopped and waited for, then every user's
    tray, worker host (`longarm-tray --worker-host`, `longarmd session-mode
    run`) and `longarmd run` whose image is in the install dir - asked
@@ -2003,6 +2005,93 @@ afterwards (`RegisterApplicationRestart`). An update started from the tray
 (its banner runs `msiexec`) needs nothing from the tray: the MSI asks it to
 exit and starts it again. The helper's log is
 `C:\ProgramData\Longarm\install-helper.log`.
+
+#### Updating: `longarm worker update` and the Longarm Update service
+
+Every MSI install (each role, client-only machines too) has a small
+Windows service, **Longarm Update** (`LongarmUpdate`,
+`longarm-update.exe`, LocalSystem, delayed auto start). It can do one
+thing: install a newer Longarm MSI - downloaded from the hub this machine
+recorded at install (`HKLM\Software\Longarm` `Hub`; never a hub named in a
+request), signed with the release key built into `longarm-update.exe`
+(the minisign trusted comment must name exactly that file and version),
+matching the hub's release record (sha256, size), strictly newer than the
+installed version, and for this machine's architecture
+(`longarm-windows-<arch>.msi`). It runs `msiexec /i <msi> /qn /norestart`
+as a one-shot SYSTEM scheduled task (`LongarmUpdate-Install`), so the
+upgrade above - which stops and replaces LongarmUpdate too - completes;
+the installed product's remembered properties (hub, roles, run mode, admin
+worker) carry over. Running jobs and sessions keep running.
+
+From your client, for a worker you own:
+
+```sh
+longarm worker update cpc-alice-1                    # the hub's latest stable release
+longarm worker update cpc-alice-1 --version 0.1.9 --wait
+# cpc-alice-1: checking: updating cpc-alice-1 to 0.1.9
+# cpc-alice-1: downloading: downloading longarm-windows-amd64.msi (31 MB)
+# cpc-alice-1: verifying: verifying longarm-windows-amd64.msi
+# cpc-alice-1: installing: installing Longarm 0.1.9 (from 0.1.8); ...
+# cpc-alice-1: 0.1.8 → 0.1.9; 2 jobs and 1 session kept running; its admin worker cpc-alice-1-admin restarted too
+longarm worker update cpc-alice-1 --json             # {"worker", "from", "to", "phase", "summary", "kept_jobs", ...}
+longarm worker update cpc-alice-1 --auto on [--hours 6]   # automatic updates (MSI installs)
+```
+
+- **Who:** the worker's owner only (a client or admin certificate of the
+  owner; the admin worker's owner pinned in its `longarmd.toml`). The
+  request goes end to end to the worker (`MachineUpdate.Start`), which
+  hands it to the service over its local pipe; the hub has no command for
+  it and can't relay one - fleet admins update fleet workers with
+  rollouts. A worker without an owner (a fleet worker) refuses.
+- **Which worker:** the user-session worker (or the admin worker when it
+  is alone): the machine updates once and both workers restart.
+- **Other installs** (`install.ps1` per user, Linux, macOS) take the same
+  command and output: longarmd fetches that version through the hub
+  (`CheckUpdate` with `want`), verifies the signatures with the key built
+  into it and updates itself (Self-update below), only to a newer version.
+- **Too old:** a worker without the `machine-update` feature (its
+  `Node.Info`) is refused with exit 2 and how to update it once by hand.
+- **Exit codes:** 0 updated, up to date or requested (without `--wait`);
+  2 refused (a downgrade, a package that isn't for this machine, a worker
+  too old); 3 no such worker or version; 75 an update in progress or rate
+  limited (retry); 77 not the owner; 255 the update failed.
+- **Versions:** `longarm ls` has a VERSION column; `0.1.8↑` and the line
+  `↑ 0.1.9 available for ...` mark workers that report a newer release
+  they can't install themselves (`NodeInfo.update_available`: MSI
+  installs). The tray's Workers tab shows each machine's versions (worker
+  and admin worker) and, for the owner, an **Update to X** button with the
+  progress and the result; the panel's My machines page shows
+  `longarm worker update <name>` next to an outdated version (the panel
+  itself can't start an update: the hub has no way to).
+
+**Automatic updates** are off by default. The machine's owner (the user
+the MSI was installed for) or a local administrator turns them on: the
+tray's Settings tab ("install new releases automatically"),
+`longarm worker update <worker> --auto on` (relayed by your own worker),
+or `longarm-update auto on` on the machine. The hub can't: the setting
+lives in `HKLM\Software\Longarm\Update`, written by the service only for
+those callers. When on, the service checks the hub's latest stable release
+every 6 hours (`--hours`) and installs it under the same rules - once no
+job has started for 5 minutes (the workers tell it when jobs run), at
+most a day later.
+
+**On the machine** (any local user may ask; only newer signed releases
+install):
+
+```powershell
+longarm-update status                      # installed, available, in progress, last result, auto
+longarm-update install --latest | --version 0.1.9
+longarm-update install --version 0.1.9 --reinstall   # the same version again: an elevated administrator only
+```
+
+The tray's own update banner installs through the service when the machine
+has it (no UAC prompt; the Settings tab shows the service's status) and
+otherwise downloads and checks the MSI itself and runs `msiexec` with a UAC
+prompt.
+The service's downloads, state and log are in
+`C:\ProgramData\Longarm\updates` (SYSTEM only; the installer's verbose log
+is `install-<version>.log` there, the service's `longarm-update.log`); an
+uninstall removes the service, the setting and that directory.
 
 #### Built-in default hub
 

@@ -83,10 +83,12 @@ func currentSID() (string, error) {
 	return u.User.Sid.String(), nil
 }
 
-// workerServices: longarmd-admin and the RUN=service longarmd (the
+// workerServices: longarmd-admin, LongarmUpdate and the RUN=service longarmd (the
 // recorded ServiceName, when RunMode is service).
 func workerServices() []string {
-	names := []string{"longarmd-admin"}
+	// LongarmUpdate too: an install it started stops it (the installer runs
+	// in its own scheduled task), and a rollback must start it again
+	names := []string{"longarmd-admin", "LongarmUpdate"}
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\Longarm`, registry.QUERY_VALUE|registry.WOW64_64KEY)
 	if err != nil {
 		return names

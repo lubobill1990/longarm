@@ -16,6 +16,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/longarmd"
 	"github.com/lubobill1990/longarm/internal/msiupgrade"
 	"github.com/lubobill1990/longarm/internal/platform"
+	"github.com/lubobill1990/longarm/internal/updatesvc"
 )
 
 // installHelperCmd is run by the MSI's custom actions:
@@ -338,6 +339,7 @@ func msiStep(ctx context.Context, step, raw string, keys []string, env msiEnv, o
 
 	case "settings-remove":
 		longarmd.RemoveMSISettings(env.settings)
+		removeUpdatesDir(base, out) // the Longarm Update service's downloads, state and logs
 		return nil
 
 	case "restart":
@@ -562,4 +564,26 @@ func queryService(name string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprint(st), nil
+}
+
+// removeUpdatesDir deletes the update service's dir below ProgramData's
+// Longarm dir (an uninstall: LongarmUpdate is stopped by then); a reparse
+// point is removed itself, never followed.
+func removeUpdatesDir(base string, out io.Writer) {
+	if base == "" {
+		return
+	}
+	p := filepath.Join(base, updatesvc.UpdatesDirName)
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return
+	}
+	if fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 || !fi.IsDir() {
+		err = os.Remove(p)
+	} else {
+		err = os.RemoveAll(p)
+	}
+	if err != nil {
+		fmt.Fprintf(out, "removing %s: %v\n", p, err)
+	}
 }

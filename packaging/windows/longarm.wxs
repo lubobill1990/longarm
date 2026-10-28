@@ -2,7 +2,7 @@
 <!--
   Longarm MSI (WiX v5): longarm, longarmd (+ longarm-tray when built), DESIGN §11.2.
 
-  Build:  pwsh packaging/windows/build-msi.ps1 -BinDir <dir with longarm.exe longarmd.exe [longarm-tray.exe]> -Version 1.2.3 -Arch x64
+  Build:  pwsh packaging/windows/build-msi.ps1 -BinDir <dir with longarm.exe longarmd.exe [longarm-tray.exe longarm-update.exe]> -Version 1.2.3 -Arch x64
                 [-DefaultHub longarm.example.com [-DefaultHubCA <sha256>]]   (the "Default" choice; release.yml passes
                 the repository variables LONGARM_DEFAULT_HUB / LONGARM_DEFAULT_HUB_CA; without: Custom only)
 
@@ -86,6 +86,14 @@
   use move to <install dir>\old (a running image may be renamed) and the new ones go in beside them. At the
   end the restart step starts again what ran: the services, the users' worker tasks, the trays (unelevated,
   in their users' sessions). A failed upgrade's rollback puts the old binaries back and starts them.
+
+  Every install has the Longarm Update service (LongarmUpdate, longarm-update.exe, LocalSystem): it
+  installs a newer MSI from the recorded hub when the owner asks (longarm worker update, the tray's
+  "Update to X", no UAC prompt) or, when the owner turned it on, automatically - only one signed with the
+  release key built into it, newer than the installed version, for this architecture. It runs msiexec
+  /i <msi> /qn /norestart through a one-shot SYSTEM scheduled task, so the upgrade above (which stops
+  LongarmUpdate too) completes; the remembered properties carry the install over (docs/usage.md
+  "Updating", docs/security.md "Update service").
 
   The data dir of the service is protected (SYSTEM, Administrators and the service account only).
   Upgrades with a newer MSI keep the service account (remembered) but need SERVICE_PASSWORD again for
@@ -334,6 +342,27 @@
           <fw:FirewallException Id="FwLongarmUdp" Name="Longarm longarm (UDP)" Protocol="udp" Scope="any" Profile="all" Description="Longarm: direct (hole-punched) connections" />
           <fw:FirewallException Id="FwLongarmTcp" Name="Longarm longarm (TCP)" Protocol="tcp" Scope="any" Profile="all" Description="Longarm: port forwards, direct connections" />
         </File>
+      </Component>
+
+      <!-- The Longarm Update service (internal/updatesvc; docs/security.md "Update service"): every
+           install, every role. LocalSystem, run from this protected dir; its only capability is installing
+           a newer Longarm MSI from the hub recorded in HKLM, signed with the release key built into
+           longarm-update.exe. Delayed auto start (a small idle process listening on its pipe). Started at
+           the install without waiting (an install never fails for it); stopped, and waited for, before its
+           file is replaced or removed; an uninstall removes it and its setting (HKLM\Software\Longarm\Update;
+           its dir below ProgramData goes with install-helper msi settings-remove). -->
+      <Component Id="UpdateService" Guid="24b9f1c6-dc48-4bbc-8624-db45f8e3cee6">
+        <File Id="longarm_update.exe" Name="longarm-update.exe" Source="$(var.BinDir)\longarm-update.exe" KeyPath="yes" />
+        <ServiceInstall Id="UpdateSvc" Name="LongarmUpdate" DisplayName="Longarm Update"
+                        Description="Installs newer Longarm releases from your Longarm hub, only when signed with the Longarm release key"
+                        Type="ownProcess" Start="auto" ErrorControl="normal" Vital="yes" Account="LocalSystem" Arguments="run">
+          <ServiceConfig DelayedAutoStart="yes" OnInstall="yes" OnReinstall="yes" />
+          <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
+                              RestartServiceDelayInSeconds="60" ResetPeriodInDays="1" />
+        </ServiceInstall>
+        <ServiceControl Id="UpdateSvcStop" Name="LongarmUpdate" Stop="both" Remove="uninstall" Wait="yes" />
+        <ServiceControl Id="UpdateSvcStart" Name="LongarmUpdate" Start="install" Wait="no" />
+        <RemoveRegistryKey Id="UpdateSettingsRemove" Root="HKLM" Key="Software\Longarm\Update" Action="removeOnUninstall" />
       </Component>
 
       <!-- longarmd: with the service for service workers, without it otherwise (exclusive conditions). -->

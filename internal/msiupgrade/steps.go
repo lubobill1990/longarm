@@ -16,7 +16,7 @@ type Env struct {
 	CurrentSID func() (string, error)
 	IsAdmin    func(sid string) (bool, error)
 	// ServiceNames: the worker services an upgrade stops and starts again
-	// (longarmd-admin, the RUN=service longarmd).
+	// (longarmd-admin, LongarmUpdate, the RUN=service longarmd).
 	ServiceNames func() []string
 	// StateDir: ProgramData\Longarm, secured (SYSTEM and Administrators).
 	StateDir func() (string, error)

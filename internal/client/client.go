@@ -535,6 +535,9 @@ func (c *Conn) Forward() pb.ForwardClient     { return pb.NewForwardClient(c.Cli
 func (c *Conn) Files() pb.FilesClient         { return pb.NewFilesClient(c.ClientConn) }
 func (c *Conn) Workspace() pb.WorkspaceClient { return pb.NewWorkspaceClient(c.ClientConn) }
 
+// MachineUpdate: the owner's update of the worker's machine.
+func (c *Conn) MachineUpdate() pb.MachineUpdateClient { return pb.NewMachineUpdateClient(c.ClientConn) }
+
 // Dial returns a lazily-connecting gRPC client for the worker. gRPC
 // reconnects by itself (backoff capped at 5 s); every new connection races
 // the worker's transport legs (see race.go) and completes app-level mTLS on

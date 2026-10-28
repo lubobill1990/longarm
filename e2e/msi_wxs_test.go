@@ -10,6 +10,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/longarmd"
 	"github.com/lubobill1990/longarm/internal/msiupgrade"
+	"github.com/lubobill1990/longarm/internal/updatesvc"
 )
 
 // TestMSIPropertiesOverridable (static, every platform): a property given
@@ -179,7 +180,8 @@ func TestMSIModeRun(t *testing.T) {
 		t.Errorf("SetHubDefault: %q", c)
 	}
 	for _, comp := range p.Components {
-		if len(comp.Services) > 0 || len(comp.Env) > 0 && comp.ID == "LongarmdService" {
+		// (the worker service; the update service is every install's: TestMSIUpdateService)
+		if comp.ID != "UpdateService" && (len(comp.Services) > 0 || len(comp.Env) > 0 && comp.ID == "LongarmdService") {
 			if !strings.Contains(comp.Condition, `RUN="service"`) || strings.Contains(comp.Condition, "NOT (") {
 				t.Errorf("component %s (service) condition %q", comp.ID, comp.Condition)
 			}
@@ -610,5 +612,92 @@ func TestMSIUpgradeRunning(t *testing.T) {
 	}
 	if !stops["AdminSvcStop"] || !stops["LongarmdSvcCtl"] {
 		t.Errorf("the admin worker's and the worker's service must stop on install and uninstall and be waited for: %+v", p.Controls)
+	}
+}
+
+// TestMSIUpdateService (static): every install has the Longarm Update
+// service - unconditional, LocalSystem, from the install dir, auto start -
+// stopped and waited for before its file changes, removed on uninstall,
+// started without waiting (an install never fails for it); the names match
+// what internal/updatesvc and its clients expect.
+func TestMSIUpdateService(t *testing.T) {
+	b, err := os.ReadFile("../packaging/windows/longarm.wxs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := regexp.MustCompile(`<\?[^>]*\?>`).ReplaceAll(b, nil)
+	src = append([]byte(`<?xml version="1.0" encoding="utf-8"?>`), src...)
+	type control struct {
+		ID     string `xml:"Id,attr"`
+		Name   string `xml:"Name,attr"`
+		Start  string `xml:"Start,attr"`
+		Stop   string `xml:"Stop,attr"`
+		Remove string `xml:"Remove,attr"`
+		Wait   string `xml:"Wait,attr"`
+	}
+	type component struct {
+		ID        string `xml:"Id,attr"`
+		Condition string `xml:"Condition,attr"`
+		File      []struct {
+			Name   string `xml:"Name,attr"`
+			Source string `xml:"Source,attr"`
+		} `xml:"File"`
+		Service []struct {
+			Name      string `xml:"Name,attr"`
+			Account   string `xml:"Account,attr"`
+			Arguments string `xml:"Arguments,attr"`
+			Start     string `xml:"Start,attr"`
+			Type      string `xml:"Type,attr"`
+		} `xml:"ServiceInstall"`
+		Controls []control `xml:"ServiceControl"`
+		RegKeys  []struct {
+			Key    string `xml:"Key,attr"`
+			Action string `xml:"Action,attr"`
+		} `xml:"RemoveRegistryKey"`
+	}
+	var doc struct {
+		Package struct {
+			Components []component `xml:"ComponentGroup>Component"`
+		} `xml:"Package"`
+	}
+	if err := xml.Unmarshal(src, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var c *component
+	for i := range doc.Package.Components {
+		if doc.Package.Components[i].ID == "UpdateService" {
+			c = &doc.Package.Components[i]
+		}
+	}
+	if c == nil {
+		t.Fatal("no UpdateService component")
+	}
+	if c.Condition != "" {
+		t.Errorf("the update service is conditional (%q): every install has it", c.Condition)
+	}
+	if len(c.File) != 1 || c.File[0].Name != updatesvc.BinaryName || !strings.HasSuffix(c.File[0].Source, `\`+updatesvc.BinaryName) {
+		t.Errorf("file %+v", c.File)
+	}
+	if len(c.Service) != 1 || c.Service[0].Name != updatesvc.ServiceName || c.Service[0].Account != "LocalSystem" ||
+		c.Service[0].Arguments != "run" || c.Service[0].Start != "auto" || c.Service[0].Type != "ownProcess" {
+		t.Errorf("service %+v", c.Service)
+	}
+	var stop, start bool
+	for _, sc := range c.Controls {
+		if sc.Name != updatesvc.ServiceName {
+			t.Errorf("control %+v names another service", sc)
+		}
+		if sc.Stop == "both" && sc.Remove == "uninstall" && sc.Wait == "yes" {
+			stop = true
+		}
+		if sc.Start == "install" && sc.Wait == "no" {
+			start = true
+		}
+	}
+	if !stop || !start {
+		t.Errorf("controls %+v: stop (both, waited, removed on uninstall) and start (install, not waited) wanted", c.Controls)
+	}
+	if len(c.RegKeys) != 1 || c.RegKeys[0].Key != `Software\Longarm\Update` || c.RegKeys[0].Action != "removeOnUninstall" {
+		t.Errorf("the auto-update setting is not removed on uninstall: %+v", c.RegKeys)
 	}
 }

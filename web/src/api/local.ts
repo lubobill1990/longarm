@@ -162,6 +162,37 @@ export const longarmApi = {
   drainWorker: (name: string, draining: boolean) => post(`/local/longarm/v1/workers/${enc(name)}/drain`, { draining }),
   /** longarm worker remove through the daemon: the hub revokes the worker (its owner, or an admin). */
   removeWorker: (name: string) => post<NodeInfo>(`/local/longarm/v1/workers/${enc(name)}/remove`),
+  /** longarm worker update <name> --wait through the daemon (the worker's owner): starts it */
+  updateWorker: (name: string, version = '') =>
+    post<WorkerUpdateJob>(`/local/longarm/v1/workers/${enc(name)}/update`, version ? { version } : { latest: true }),
+  /** the state of that update */
+  workerUpdate: (name: string) => get<WorkerUpdateJob>(`/local/longarm/v1/workers/${enc(name)}/update`),
+}
+
+/** longarm worker update's outcome (--json). */
+export interface WorkerUpdateOutcome {
+  worker: string
+  method?: 'msi' | 'self'
+  from?: string
+  to?: string
+  phase: 'up_to_date' | 'requested' | 'done' | 'failed'
+  summary: string
+  jobs: number
+  kept_jobs: number
+  sessions: number
+  kept_sessions: number
+  companion?: string
+  code?: string
+  error?: string
+}
+
+/** An update the daemon runs for the tray (GET /v1/workers/{name}/update). */
+export interface WorkerUpdateJob {
+  state: 'idle' | 'running' | 'done' | 'failed'
+  progress?: string[]
+  outcome?: WorkerUpdateOutcome
+  error?: string
+  exit_code?: number
 }
 
 export const longarmdApi = {
@@ -189,6 +220,29 @@ export interface TraySettings {
   telemetry_env_off?: boolean
   client_logs?: string
   worker_logs?: string
+}
+
+/** This machine's Longarm Update service (Windows MSI installs), through the tray. */
+export interface LocalUpdateStatus {
+  /** the service is installed (else: no automatic updates, the tray's banner uses UAC) */
+  service: boolean
+  installed?: string
+  available?: string
+  state?: string
+  target?: string
+  message?: string
+  auto?: boolean
+  auto_interval_hours?: number
+  last?: { from: string; to: string; ok: boolean; error?: string; at: string }
+  /** the tray's user may change automatic updates (the machine's owner, or an administrator) */
+  can_set_auto?: boolean
+  error?: string
+}
+
+export const localUpdateApi = {
+  /** the service's status (the update banner installs through it when present: trayApi.installUpdate) */
+  status: () => get<LocalUpdateStatus>('/trayapi/update/service'),
+  setAuto: (auto: boolean, hours = 0) => post<LocalUpdateStatus>('/trayapi/update/auto', { auto, hours }),
 }
 
 export const traySettingsApi = {
