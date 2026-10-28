@@ -2,9 +2,10 @@ name: go-setup
 description: >-
   Go from go.mod (actions/setup-go) plus a tool dir ($LONGARM_TOOLS) for the
   pinned tools of .github/scripts/fetch-tool.sh. CI jobs use the actions
-  cache; release jobs pass cache: "false" so they build from fresh module
-  and build caches (nothing a pull request job saved can end up in a
-  release or next to its secrets).
+  cache; release jobs pass cache: "false" (setup-go would save caches
+  and restore Go modules without re-verifying them) and restore at most main's release build cache
+  (.github/actions/go-build-cache): nothing a pull request job saved can end
+  up in a release or next to its secrets.
 inputs:
   cache:
     description: Use the actions cache for Go modules and the build cache

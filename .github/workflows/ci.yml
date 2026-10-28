@@ -10,6 +10,7 @@
 #            a built-in hub, ICE-validated, extracted with an administrative install (nothing is
 #            installed) and its tables checked
 #   tests:   one check for branch protection / auto-merge: every test job passed
+#   release-cache: push to main only: the Go build cache release.yml restores (read-only)
 # Pull requests from forks run with a read-only token and no secrets (the
 # privacy check then skips its private deny-list).
 name: ci
@@ -312,6 +313,52 @@ jobs:
           path: ${{ runner.temp }}/msi
           if-no-files-found: ignore
           retention-days: 7
+
+  # The Go build cache release.yml restores (read-only; docs/ci-cd.md
+  # "Caches"): the release's compile units (.github/scripts/release-go-cache.sh,
+  # the flags of .goreleaser.yaml), split like release.yml's build jobs.
+  # Saved ONLY from main (push, or a manual run on main): tag runs can read
+  # main's caches but never a pull request's, so nothing a pull request
+  # compiled can end up in a release. Starts from main's previous one of these
+  # caches (never setup-go's, which pull requests also feed) and saves only
+  # the entries this run used.
+  release-cache:
+    name: release build cache (${{ matrix.side }})
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - side: unix
+            os: ubuntu-latest
+            targets: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
+          - side: windows
+            os: windows-latest
+            targets: windows/amd64 windows/arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/go-setup
+        with:
+          cache: "false"
+      - id: cache
+        uses: ./.github/actions/go-build-cache
+      - name: compile the release's packages
+        env:
+          TARGETS: ${{ matrix.targets }}
+        run: |
+          # shellcheck disable=SC2086 # TARGETS: space-separated goos/goarch
+          .github/scripts/release-go-cache.sh warm $TARGETS
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.cache.outputs.path }}
+          key: ${{ steps.cache.outputs.key }}
 
   # The required check (ruleset of main): the matrix's job names change with
   # its parts, this one doesn't.

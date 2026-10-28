@@ -2188,7 +2188,8 @@ detail: [ci-cd.md](ci-cd.md).
 - `ci.yml` (pull requests, `main`): privacy check, gitleaks, gofmt, vet,
   cross-compile 6 targets, shellcheck, actionlint; `go test ./...` on Linux,
   Windows and macOS.
-- `release.yml` (tag `v*`): build on Windows (GoReleaser + MSIs) →
+- `release.yml` (tag `v*`): build on Linux (linux, macOS, deb/rpm) and on
+  Windows (Windows, MSIs) in parallel, the hub image next to them →
   **publish** (sign with the release key, upload with the `release`
   certificate, GitHub Release) → **hub** (SSH forced command
   [`deploy/hub/longarm-hub-deploy`](../deploy/hub/longarm-hub-deploy): verify, install,

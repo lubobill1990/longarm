@@ -1,20 +1,33 @@
 # Release on a v* tag (docs/ci-cd.md "Cutting a release").
 #
-#   build    windows-latest: goreleaser (all targets, --skip=publish,docker) +
-#            MSIs + packaging/hubrelease -> hub-release/; the repository
-#            variable LONGARM_UPDATE_PUBKEY (if set) is built into longarmd
-#            (without it the binaries have self-update turned off), and
-#            LONGARM_DEFAULT_HUB (+ _CA) into the binaries and the MSI's
-#            "Default" choice (without it: Custom only)
-#   publish  ubuntu-latest: sign with the secret LONGARM_RELEASE_KEY (if set),
-#            upload to the hub with the release-role certificate (only when
-#            the variable LONGARM_HUB is set), then the GitHub Release
-#   image    ubuntu-latest (image.yml), after publish: smoke test, then
-#            ghcr.io/<owner>/longarm-hub:X.Y.Z (+ :latest for stable releases)
-#   hub      longarm-hub update over SSH (forced command longarm-hub-deploy:
-#            verify, install, health check, roll back); needs LONGARM_HUB + HUB_SSH
-#   rollout  longarm admin release push <v> --canary 1 --wait 15m; fails when
-#            the rollout halts; needs LONGARM_HUB
+#   meta           ubuntu-latest: validates the tag (stable tags only from main)
+#   build-unix     ubuntu-latest: goreleaser (LONGARM_BUILD_SIDE=unix: linux +
+#                  darwin binaries, archives, deb/rpm) + packaging/hubrelease
+#   build-windows  windows-latest: packaging/build.ps1 -Side windows (the Windows
+#                  binaries + archives, the MSIs) + packaging/hubrelease
+#                  Both: the repository variable LONGARM_UPDATE_PUBKEY (if set)
+#                  is built into longarmd (without it the binaries have
+#                  self-update turned off), and LONGARM_DEFAULT_HUB (+ _CA) into
+#                  the binaries and the MSI's "Default" choice (without it:
+#                  Custom only). No secrets, no caches saved.
+#   gather         ubuntu-latest: merges the two into the artifact "release"
+#                  (one checksums.txt) and checks its file names
+#                  (.github/scripts/release-files.sh)
+#   publish        ubuntu-latest: sign with the secret LONGARM_RELEASE_KEY (if set),
+#                  upload to the hub with the release-role certificate (only when
+#                  the variable LONGARM_HUB is set), then the GitHub Release
+#   image          ubuntu-latest (image.yml), next to the builds (it doesn't use
+#                  their output): smoke test, then ghcr.io/<owner>/longarm-hub:X.Y.Z
+#   image-latest   after publish and image, stable releases: :latest -> :X.Y.Z
+#   hub            longarm-hub update over SSH (forced command longarm-hub-deploy:
+#                  verify, install, health check, roll back); needs LONGARM_HUB + HUB_SSH
+#   rollout        longarm admin release push <v> --canary 1 --wait 15m; fails when
+#                  the rollout halts; needs LONGARM_HUB
+#
+# Dry run (Actions -> release -> Run workflow, any branch): meta, both builds,
+# gather and the image smoke test, with the version <last tag>-dryrun.<run>
+# (a local tag, never pushed); nothing is signed, published, pushed or
+# deployed, and it doesn't queue behind (or block) a real release.
 #
 # Without a deployment (forks, or the repository without the variables) the
 # workflow still builds and publishes a GitHub Release; hub and rollout are
@@ -31,70 +44,193 @@
 # Prerelease tags (v1.2.3-rc1, any "-" suffix): channel beta, GitHub
 # prerelease; no hub deploy, no fleet rollout (push it by hand to beta workers).
 #
-# Isolation: every job starts from fresh Go caches (no actions cache), and the
-# longarm that handles the signing key and the release certificate is built
-# from the tag's source in the job itself, never taken from the build
-# artifact. To require a manual approval before anything is signed or
-# deployed, see docs/ci-cd.md "Approval gate".
+# Isolation: no job saves a cache; the Go jobs start from fresh module caches
+# and restore only the build cache that ci.yml saves on pushes to main
+# (.github/actions/go-build-cache; never a pull request's). The longarm that
+# handles the signing key and the release certificate is built from the tag's
+# source in the job itself, never taken from the build artifact. To require a
+# manual approval before anything is signed or deployed, see docs/ci-cd.md
+# "Approval gate".
 name: release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >-
+          Dry run: build everything and gather the artifacts; no signing,
+          publishing, hub, rollout or image push (a manual run is always one)
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
-# One release (or deploy.yml) at a time; never cancel a running one.
+# One release (or deploy.yml) at a time; never cancel a running one. Dry runs
+# queue per branch, apart from releases.
 concurrency:
-  group: longarm-release
+  group: ${{ github.event_name == 'workflow_dispatch' && format('longarm-release-dry-run-{0}', github.ref) || 'longarm-release' }}
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: build (Windows)
-    runs-on: windows-latest
-    timeout-minutes: 90
+  meta:
+    name: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
-        shell: pwsh
+        shell: bash
     outputs:
+      tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
       channel: ${{ steps.meta.outputs.channel }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
+      dry_run: ${{ steps.meta.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the last tag, main
+          persist-credentials: false
+      - name: version, channel
+        id: meta
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.ref_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PUBKEY: ${{ vars.LONGARM_UPDATE_PUBKEY }}
+          DEFAULT_HUB: ${{ vars.LONGARM_DEFAULT_HUB }}
+        run: |
+          dry=false
+          if [ "$EVENT" = workflow_dispatch ]; then
+            if [ "$DRY_RUN" != true ]; then
+              echo "::error::a manual run is a dry run only: releases come from v* tags"
+              exit 1
+            fi
+            dry=true
+            last=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || echo v0.0.0)
+            TAG="${last%%-*}-dryrun.$GITHUB_RUN_NUMBER"
+            echo "dry run as $TAG (a local tag of the build jobs, never pushed)"
+          fi
+          re='^v([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z][0-9A-Za-z.]{0,31})?$'
+          if ! [[ $TAG =~ $re ]]; then
+            echo "::error::tag '$TAG' is not vMAJOR.MINOR.PATCH[-prerelease]"
+            exit 1
+          fi
+          pre=false
+          if [ -n "${BASH_REMATCH[2]}" ]; then pre=true; fi
+          # stable releases only from main
+          if [ "$pre" = false ] && ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::$TAG is not on main"
+            exit 1
+          fi
+          if [ -z "$PUBKEY" ]; then
+            echo '::warning::repository variable LONGARM_UPDATE_PUBKEY is not set: the binaries are built with self-update turned off (docs/ci-cd.md)'
+          fi
+          if [ -z "$DEFAULT_HUB" ]; then
+            echo '::warning::repository variable LONGARM_DEFAULT_HUB is not set: no built-in hub - the MSI offers Custom only and login needs a hub argument (docs/ci-cd.md)'
+          fi
+          channel=stable
+          if [ "$pre" = true ]; then channel=beta; fi
+          {
+            echo "tag=$TAG"
+            echo "version=${TAG#v}"
+            echo "prerelease=$pre"
+            echo "channel=$channel"
+            echo "dry_run=$dry"
+          } >>"$GITHUB_OUTPUT"
+
+  build-unix:
+    name: build (Linux, macOS)
+    needs: meta
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ needs.meta.outputs.tag }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      GORELEASER_CURRENT_TAG: ${{ needs.meta.outputs.tag }}
+      LONGARM_BUILD_SIDE: unix
+      CGO_ENABLED: "0" # as .goreleaser.yaml; also hubrelease (main's build cache)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # goreleaser: changelog, previous tag
           persist-credentials: false
-      - name: version, channel
-        id: meta
-        env:
-          TAG: ${{ github.ref_name }}
-          PUBKEY: ${{ vars.LONGARM_UPDATE_PUBKEY }}
-          DEFAULT_HUB: ${{ vars.LONGARM_DEFAULT_HUB }}
-        run: |
-          if ($env:TAG -cnotmatch '^v(\d+\.\d+\.\d+)(-[0-9A-Za-z][0-9A-Za-z.]{0,31})?$') {
-            throw "tag '$env:TAG' is not vMAJOR.MINOR.PATCH[-prerelease]"
-          }
-          $pre = [bool]$Matches[2]
-          if (-not $pre) {
-            # stable releases only from main
-            git merge-base --is-ancestor HEAD origin/main
-            if ($LASTEXITCODE) { throw "$env:TAG is not on main" }
-          }
-          if (-not $env:PUBKEY) {
-            Write-Output '::warning::repository variable LONGARM_UPDATE_PUBKEY is not set: the binaries are built with self-update turned off (docs/ci-cd.md)'
-          }
-          if (-not $env:DEFAULT_HUB) {
-            Write-Output '::warning::repository variable LONGARM_DEFAULT_HUB is not set: no built-in hub - the MSI offers Custom only and login needs a hub argument (docs/ci-cd.md)'
-          }
-          "version=$($env:TAG.Substring(1))" >> $env:GITHUB_OUTPUT
-          "prerelease=$($pre.ToString().ToLower())" >> $env:GITHUB_OUTPUT
-          "channel=$(if ($pre) { 'beta' } else { 'stable' })" >> $env:GITHUB_OUTPUT
+      - name: local tag (dry run)
+        if: needs.meta.outputs.dry_run == 'true'
+        run: git tag "$TAG"
       - uses: ./.github/actions/go-setup
         with:
           cache: "false"
+      - uses: ./.github/actions/go-build-cache
+      - name: build cache hit rate
+        run: .github/scripts/release-go-cache.sh stats linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
+      - name: goreleaser (pinned)
+        run: |
+          # the official prebuilt GoReleaser, pinned by SHA256 (from its v2.19.0 checksums.txt)
+          .github/scripts/fetch-tool.sh goreleaser v2.19.0 \
+            https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz \
+            ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b goreleaser
+      - name: build (goreleaser + hub-release)
+        env:
+          LONGARM_UPDATE_PUBKEY: ${{ vars.LONGARM_UPDATE_PUBKEY }}
+          # the built-in hub; empty: none
+          LONGARM_DEFAULT_HUB: ${{ vars.LONGARM_DEFAULT_HUB }}
+          LONGARM_DEFAULT_HUB_CA: ${{ vars.LONGARM_DEFAULT_HUB_CA }}
+        run: |
+          goreleaser release --clean --skip=publish,docker
+          go run -trimpath ./packaging/hubrelease --dist dist --out dist/hub-release
+      - name: stage the artifact
+        run: |
+          v=$(jq -r .version dist/metadata.json)
+          if [ "$v" != "$VERSION" ]; then
+            echo "::error::goreleaser built $v, tag says $VERSION"
+            exit 1
+          fi
+          mkdir -p upload/hub upload/extra upload/checksums
+          cp dist/hub-release/* upload/hub/
+          cp dist/longarm-hub_*.deb upload/extra/
+          cp dist/checksums.txt upload/checksums/unix.txt
+          find upload -type f -printf '%10s  %p\n' | sort -k2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-unix
+          path: upload
+          if-no-files-found: error
+          retention-days: 3 # gather merges it into "release"
+
+  build-windows:
+    name: build (Windows, MSIs)
+    needs: meta
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      TAG: ${{ needs.meta.outputs.tag }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      GORELEASER_CURRENT_TAG: ${{ needs.meta.outputs.tag }}
+      CGO_ENABLED: "0" # as .goreleaser.yaml; also hubrelease (main's build cache)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # goreleaser: changelog, previous tag
+          persist-credentials: false
+      - name: local tag (dry run)
+        if: needs.meta.outputs.dry_run == 'true'
+        run: git tag $env:TAG
+      - uses: ./.github/actions/go-setup
+        with:
+          cache: "false"
+      - uses: ./.github/actions/go-build-cache
+      - name: build cache hit rate
+        shell: bash
+        run: .github/scripts/release-go-cache.sh stats windows/amd64 windows/arm64
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 8.0.x
@@ -123,40 +259,103 @@ jobs:
           # the built-in hub (binaries + the MSI's "Default"); empty: none
           LONGARM_DEFAULT_HUB: ${{ vars.LONGARM_DEFAULT_HUB }}
           LONGARM_DEFAULT_HUB_CA: ${{ vars.LONGARM_DEFAULT_HUB_CA }}
-        run: ./packaging/build.ps1 -SkipPublish
+        run: ./packaging/build.ps1 -SkipPublish -Side windows
       - name: stage the artifact
-        env:
-          VERSION: ${{ steps.meta.outputs.version }}
         run: |
           $v = (Get-Content dist/metadata.json | ConvertFrom-Json).version
           if ($v -ne $env:VERSION) { throw "goreleaser built $v, tag says $env:VERSION" }
-          New-Item -ItemType Directory upload/hub, upload/extra | Out-Null
+          New-Item -ItemType Directory upload/hub, upload/checksums | Out-Null
           Copy-Item dist/hub-release/* upload/hub/
-          Copy-Item dist/longarm-hub_*.deb, dist/checksums.txt upload/extra/
+          Copy-Item dist/checksums.txt upload/checksums/windows.txt
           Get-ChildItem upload -Recurse -File | Format-Table FullName, Length -AutoSize
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release
+          name: release-windows
           path: upload
+          if-no-files-found: error
+          retention-days: 3 # gather merges it into "release"
+
+  gather:
+    name: gather (checksums, file names)
+    needs: [meta, build-unix, build-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/release
+      - name: one checksums.txt, check the file names
+        run: |
+          r=$RUNNER_TEMP/release
+          # GoReleaser's format: sorted by file name (byte order)
+          LC_ALL=C sort -k2,2 "$r"/checksums/*.txt >"$r/extra/checksums.txt"
+          rm -r "$r/checksums"
+          .github/scripts/release-files.sh "$r" "$VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
           if-no-files-found: error
           retention-days: 14 # lets a failed publish be re-run
 
   image:
     name: image (ghcr.io)
-    # after publish: :X.Y.Z / :latest only for a release that was signed and
-    # published (and approved, with the approval gate of docs/ci-cd.md 2.5)
-    needs: [build, publish]
+    # next to the builds (the image is built from the tag's source by its
+    # Dockerfile); :X.Y.Z is pushed even if the build jobs fail, :latest only
+    # after publish (image-latest). A dry run only runs the smoke test.
+    needs: meta
     permissions:
       contents: read
       packages: write
     uses: ./.github/workflows/image.yml
     with:
-      version: ${{ needs.build.outputs.version }}
-      prerelease: ${{ needs.build.outputs.prerelease }}
+      version: ${{ needs.meta.outputs.version }}
+      push: ${{ needs.meta.outputs.dry_run == 'false' }}
+
+  image-latest:
+    name: image :latest
+    # for a release that was signed and published (and approved, with the
+    # approval gate of docs/ci-cd.md 2.5)
+    needs: [meta, publish, image]
+    if: needs.meta.outputs.prerelease == 'false' && needs.meta.outputs.dry_run == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: ":latest -> :X.Y.Z (the same index: platforms, SBOM, provenance)"
+        env:
+          OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          img="ghcr.io/${OWNER,,}/longarm-hub"
+          docker buildx imagetools create --tag "$img:latest" "$img:$VERSION"
+          docker buildx imagetools inspect "$img:latest"
 
   publish:
     name: publish (sign, hub, GitHub Release)
-    needs: build
+    needs: [meta, gather]
+    if: needs.meta.outputs.dry_run == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -165,9 +364,9 @@ jobs:
       run:
         shell: bash
     env:
-      VERSION: ${{ needs.build.outputs.version }}
-      CHANNEL: ${{ needs.build.outputs.channel }}
-      PRERELEASE: ${{ needs.build.outputs.prerelease }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      CHANNEL: ${{ needs.meta.outputs.channel }}
+      PRERELEASE: ${{ needs.meta.outputs.prerelease }}
       TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -176,7 +375,10 @@ jobs:
       - uses: ./.github/actions/go-setup
         with:
           cache: "false"
+      - uses: ./.github/actions/go-build-cache
       - name: build longarm from the tag
+        env:
+          CGO_ENABLED: "0" # as the release binaries (and main's build cache)
         run: go build -trimpath -o "$RUNNER_TEMP/longarm" ./cmd/longarm
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -216,15 +418,15 @@ jobs:
 
   hub:
     name: hub (longarm-hub over SSH forced command)
-    needs: [build, publish]
-    if: needs.build.outputs.prerelease == 'false' && vars.LONGARM_HUB != '' && vars.HUB_SSH != ''
+    needs: [meta, publish]
+    if: needs.meta.outputs.prerelease == 'false' && needs.meta.outputs.dry_run == 'false' && vars.LONGARM_HUB != '' && vars.HUB_SSH != ''
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
       run:
         shell: bash
     env:
-      VERSION: ${{ needs.build.outputs.version }}
+      VERSION: ${{ needs.meta.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -243,16 +445,16 @@ jobs:
 
   rollout:
     name: rollout (canary, then the fleet)
-    needs: [build, publish, hub]
+    needs: [meta, publish, hub]
     # after the hub deploy (or without one when HUB_SSH isn't set)
-    if: ${{ !cancelled() && needs.build.outputs.prerelease == 'false' && vars.LONGARM_HUB != '' && needs.publish.result == 'success' && (needs.hub.result == 'success' || needs.hub.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.meta.outputs.prerelease == 'false' && needs.meta.outputs.dry_run == 'false' && vars.LONGARM_HUB != '' && needs.publish.result == 'success' && (needs.hub.result == 'success' || needs.hub.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     defaults:
       run:
         shell: bash
     env:
-      VERSION: ${{ needs.build.outputs.version }}
+      VERSION: ${{ needs.meta.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -260,7 +462,10 @@ jobs:
       - uses: ./.github/actions/go-setup
         with:
           cache: "false"
+      - uses: ./.github/actions/go-build-cache
       - name: build longarm from the tag
+        env:
+          CGO_ENABLED: "0" # as the release binaries (and main's build cache)
         run: go build -trimpath -o "$RUNNER_TEMP/longarm" ./cmd/longarm
       - name: longarm admin release push --canary 1 --wait 15m
         env:

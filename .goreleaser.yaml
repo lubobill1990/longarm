@@ -10,6 +10,7 @@
 #                           the MSI's "Default"), a domain; empty = none
 #   LONGARM_DEFAULT_HUB_CA  optional sha256 pin of that hub's CA
 #   LONGARM_TRAY=1          also build cmd/longarm-tray (set by the wrappers when it exists)
+#   LONGARM_BUILD_SIDE      unix / windows: only that side's targets (release.yml; see builds); empty = all
 #   (the native Linux tray + its deb: packaging/linux/goreleaser-tray.yaml, run by build.sh)
 version: 2
 project_name: longarm
@@ -21,11 +22,18 @@ before:
 env:
   - CGO_ENABLED=0
 
+# LONGARM_BUILD_SIDE splits the build across two runners (release.yml):
+# "unix" builds linux + darwin (and the deb/rpm packages), "windows" the
+# Windows binaries (packaging/build.ps1 -Side windows adds the MSIs); unset
+# (the local wrappers) builds everything. Every binary has one entry per
+# side with the same flags and ldflags; the release names don't depend on
+# the entry's id (packaging/hubrelease uses the binary name).
 builds:
   - id: longarm
     main: ./cmd/longarm
     binary: longarm
-    goos: [windows, linux, darwin]
+    skip: &unix-only '{{ eq (envOrDefault "LONGARM_BUILD_SIDE" "") "windows" }}'
+    goos: [linux, darwin]
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags: &ldflags
@@ -34,24 +42,59 @@ builds:
       - -X github.com/lubobill1990/longarm/internal/update.PublicKey={{ envOrDefault "LONGARM_UPDATE_PUBKEY" "" }}
       - -X github.com/lubobill1990/longarm/internal/version.DefaultHub={{ envOrDefault "LONGARM_DEFAULT_HUB" "" }}
       - -X github.com/lubobill1990/longarm/internal/version.DefaultHubCA={{ envOrDefault "LONGARM_DEFAULT_HUB_CA" "" }}
+  - id: longarm-windows
+    main: ./cmd/longarm
+    binary: longarm
+    skip: &windows-only '{{ eq (envOrDefault "LONGARM_BUILD_SIDE" "") "unix" }}'
+    goos: [windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: *ldflags
   - id: longarmd
     main: ./cmd/longarmd
     binary: longarmd
-    goos: [windows, linux, darwin]
+    skip: *unix-only
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: *ldflags
+  - id: longarmd-windows
+    main: ./cmd/longarmd
+    binary: longarmd
+    skip: *windows-only
+    goos: [windows]
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags: *ldflags
   - id: longarm-hub
     main: ./cmd/longarm-hub
     binary: longarm-hub
-    goos: [linux, windows, darwin]
+    skip: *unix-only
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: *ldflags
+  - id: longarm-hub-windows
+    main: ./cmd/longarm-hub
+    binary: longarm-hub
+    skip: *windows-only
+    goos: [windows]
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags: *ldflags
   - id: longarm-relay
     main: ./cmd/longarm-relay
     binary: longarm-relay
-    goos: [linux, windows, darwin]
+    skip: *unix-only
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: *ldflags
+  - id: longarm-relay-windows
+    main: ./cmd/longarm-relay
+    binary: longarm-relay
+    skip: *windows-only
+    goos: [windows]
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags: *ldflags
@@ -60,7 +103,7 @@ builds:
   - id: longarm-tray
     main: ./cmd/longarm-tray
     binary: longarm-tray
-    skip: '{{ not (isEnvSet "LONGARM_TRAY") }}'
+    skip: '{{ or (not (isEnvSet "LONGARM_TRAY")) (eq (envOrDefault "LONGARM_BUILD_SIDE" "") "unix") }}'
     goos: [windows]
     goarch: [amd64, arm64]
     flags: [-trimpath]
@@ -75,7 +118,7 @@ builds:
 archives:
   # Client + worker bundle: longarm, longarmd (+ longarm-tray).
   - id: longarm
-    ids: [longarm, longarmd, longarm-tray]
+    ids: [longarm, longarm-windows, longarmd, longarmd-windows, longarm-tray]
     # longarm-tray is built for Windows only here.
     allow_different_binary_count: true
     name_template: "longarm_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
@@ -87,7 +130,7 @@ archives:
       - README.md
       - LICENSE*
   - id: longarm-hub
-    ids: [longarm-hub, longarm-relay]
+    ids: [longarm-hub, longarm-hub-windows, longarm-relay, longarm-relay-windows]
     name_template: "longarm-hub_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
     format_overrides:

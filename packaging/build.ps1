@@ -18,6 +18,9 @@ param(
   [string] $Key = $env:LONGARM_RELEASE_KEY,
   [switch] $NoMsi,
   [switch] $SkipPublish,                 # goreleaser --skip=publish,docker: no GitHub release, no token
+  # release.yml: "windows" builds only the Windows targets (+ MSIs, no deb/rpm), "unix" only
+  # linux + darwin (no MSIs); see LONGARM_BUILD_SIDE in .goreleaser.yaml. Default: everything.
+  [ValidateSet('', 'windows', 'unix')] [string] $Side = '',
   [string] $Goreleaser = $env:GORELEASER # goreleaser binary (default: PATH, then GOPATH\bin)
 )
 $ErrorActionPreference = 'Stop'
@@ -25,6 +28,8 @@ $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
   if (Test-Path 'cmd/longarm-tray') { $env:LONGARM_TRAY = '1' } else { Remove-Item Env:LONGARM_TRAY -ErrorAction SilentlyContinue }
+  if ($Side) { $env:LONGARM_BUILD_SIDE = $Side } else { Remove-Item Env:LONGARM_BUILD_SIDE -ErrorAction SilentlyContinue }
+  if ($Side -eq 'unix') { $NoMsi = $true }
   $gr = $Goreleaser
   if (-not $gr) { $gr = (Get-Command goreleaser -ErrorAction SilentlyContinue).Source }
   if (-not $gr) { $gr = Join-Path (go env GOPATH) 'bin\goreleaser.exe' }
@@ -33,6 +38,8 @@ try {
   $skip = @()
   if ($SkipPublish) { $skip += 'publish' }
   if ($SkipPublish -or -not (Get-Command docker -ErrorAction SilentlyContinue)) { $skip += 'docker' }
+  # the Windows side has no linux binaries (nfpm) and no darwin archives (homebrew cask)
+  if ($Side -eq 'windows') { $skip += 'nfpm', 'homebrew' }
   if ($skip) { $grArgs += "--skip=$($skip -join ',')" }
   # small CI runners: GoReleaser builds one target per CPU by default and each go build is memory-hungry
   if ($env:LONGARM_GORELEASER_PARALLELISM) { $grArgs += "--parallelism=$($env:LONGARM_GORELEASER_PARALLELISM)" }
@@ -40,7 +47,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "goreleaser failed ($LASTEXITCODE)" }
   $version = (Get-Content dist/metadata.json | ConvertFrom-Json).version
   $out = 'dist/hub-release'
-  go run ./packaging/hubrelease --dist dist --out $out
+  go run -trimpath ./packaging/hubrelease --dist dist --out $out
   if ($LASTEXITCODE -ne 0) { throw 'hubrelease failed' }
   if (-not $NoMsi) {
     foreach ($a in @(@{go = 'amd64'; wix = 'x64' }, @{go = 'arm64'; wix = 'arm64' })) {
@@ -58,7 +65,7 @@ try {
   }
   if ($Key) {
     # Sign everything (MSIs included) for the hub; the trusted comment binds name + version.
-    go run ./packaging/hubrelease --dist dist --out $out --key $Key
+    go run -trimpath ./packaging/hubrelease --dist dist --out $out --key $Key
     if ($LASTEXITCODE -ne 0) { throw 'signing failed' }
   }
   Write-Host "`nrelease $version"

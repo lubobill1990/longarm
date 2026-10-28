@@ -5,8 +5,9 @@
 #            (Azurite as Blob Storage: first-start bootstrap, an admin joins,
 #            restore after the container is replaced, health)
 #   publish  push to main: linux/amd64+arm64 as :edge and :sha-<commit>;
-#            from release.yml (v* tag): :X.Y.Z, plus :latest for stable
-#            releases. SBOM + provenance attestations (buildx).
+#            from release.yml (v* tag): :X.Y.Z (release.yml moves :latest
+#            itself once the release is published; push: false = its dry
+#            run, smoke test only). SBOM + provenance attestations (buildx).
 #
 # GITHUB_TOKEN with packages:write publishes; a new package starts private:
 # make it public once (package settings) so Azure can pull it anonymously
@@ -24,10 +25,11 @@ on:
         description: release version without the v (X.Y.Z[-pre])
         required: true
         type: string
-      prerelease:
-        description: '"true" for a prerelease (no :latest)'
-        required: true
-        type: string
+      push:
+        description: "push :X.Y.Z (false: smoke test only, release.yml's dry run)"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -44,10 +46,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # release.yml: no setup-go cache, only main's release build cache
+      # (read-only, docs/ci-cd.md "Caches"), whose units need CGO_ENABLED=0
       - uses: ./.github/actions/go-setup
         with:
           cache: ${{ inputs.version == '' && 'true' || 'false' }}
+      - if: inputs.version != ''
+        uses: ./.github/actions/go-build-cache
       - name: build longarm (the admin's CLI in the test)
+        env:
+          CGO_ENABLED: ${{ inputs.version != '' && '0' || '' }}
         run: go build -trimpath -o "$RUNNER_TEMP/longarm" ./cmd/longarm
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: build the image (linux/amd64)
@@ -83,7 +91,7 @@ jobs:
   publish:
     name: publish (ghcr.io, amd64 + arm64)
     needs: smoke
-    if: inputs.version != '' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: (inputs.version != '' && inputs.push) || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -105,12 +113,10 @@ jobs:
         env:
           OWNER: ${{ github.repository_owner }}
           VERSION: ${{ inputs.version }}
-          PRERELEASE: ${{ inputs.prerelease }}
         run: |
           img="ghcr.io/${OWNER,,}/longarm-hub"
           if [ -n "$VERSION" ]; then
-            tags="$img:$VERSION"
-            if [ "$PRERELEASE" = false ]; then tags="$tags,$img:latest"; fi
+            tags="$img:$VERSION" # :latest: release.yml, after publish
             version=$VERSION
           else
             tags="$img:edge,$img:sha-${GITHUB_SHA::12}"
