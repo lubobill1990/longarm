@@ -122,7 +122,8 @@ describe('charts', () => {
     render(<Bar label="CPU" pct={140} value="140%" />)
     const m = screen.getByLabelText('CPU')
     expect(m.getAttribute('aria-valuenow')).toBe('100')
-    expect((m.querySelector('.fill') as HTMLElement).style.background).toBe('rgb(248, 81, 73)')
+    // red (levels.json), themed where the page has the tokens (cssColor)
+    expect((m.querySelector('.fill') as HTMLElement).getAttribute('style')).toContain('#f85149')
   })
   it('Sparkline breaks lines at failed samples', () => {
     const { container } = render(<Sparkline series={[{ values: [1, 2, null, 3, 4], color: '#fff' }]} slots={5} max="auto" legend />)

@@ -167,6 +167,8 @@ export interface TraySettings {
   version: string
   mute_workers?: boolean
   mute_jobs?: boolean
+  /** Settings > Appearance: light / dark; absent = follow the system */
+  theme?: 'light' | 'dark'
   telemetry_disabled: boolean
   /** LONGARM_TELEMETRY=0 in the environment: off whatever the switch says */
   telemetry_env_off?: boolean
@@ -176,7 +178,7 @@ export interface TraySettings {
 
 export const traySettingsApi = {
   get: () => get<TraySettings>('/trayapi/settings'),
-  set: (s: { mute_workers?: boolean; mute_jobs?: boolean; telemetry_disabled?: boolean }) => post<TraySettings>('/trayapi/settings', s),
+  set: (s: { mute_workers?: boolean; mute_jobs?: boolean; theme?: 'system' | 'light' | 'dark'; telemetry_disabled?: boolean }) => post<TraySettings>('/trayapi/settings', s),
   /** opens a known folder (never a path from the page) in the file manager */
   openFolder: (which: 'client-logs' | 'worker-logs' | 'diag') => post<{ folder: string }>('/trayapi/folder', { which }),
   /** starts this machine's worker the way it runs: the session task or the service */

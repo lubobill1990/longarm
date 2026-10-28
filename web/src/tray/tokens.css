@@ -1,0 +1,167 @@
+/*
+ * The tray popup's design tokens: the look of our desktop apps (TMIA Desktop:
+ * calm warm neutrals, one deep-teal accent, system type, 8 px rhythm), light
+ * and dark. <html data-app="tray"> enables them (the hub panel keeps its own
+ * dark palette in styles.css); data-theme="light" | "dark" is set by theme.ts
+ * from Settings > Appearance, or from the system (prefers-color-scheme).
+ *
+ * Text colours are tuned to WCAG AA (4.5:1) on --bg and --surface.
+ */
+:root[data-app='tray'] {
+  --font: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  --font-display: 'Segoe UI Variable Display', 'Segoe UI Variable', 'Segoe UI', -apple-system, 'SF Pro Display', system-ui, sans-serif;
+  --mono: 'Cascadia Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+
+  /* type scale */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 17px;
+  --fw-medium: 550;
+  --fw-semibold: 600;
+  --fw-bold: 650;
+
+  /* spacing: an 8 px grid with half steps */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+
+  /* radii */
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+  --r-xl: 12px;
+  --r-pill: 999px;
+
+  /* sizes */
+  --ctl-h: 30px;
+  --ctl-h-sm: 26px;
+  --head-h: 48px;
+  --rail-w: 200px;
+
+  /* motion */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur-fast: 0.12s;
+  --dur: 0.16s;
+
+  /* light (the default) */
+  --bg: #fbfaf8;
+  --bg-sidebar: #f3f1ed;
+  --surface: #ffffff;
+  --surface-2: #f5f3ef;
+  --hover: rgba(40, 32, 20, 0.055);
+  --active: rgba(40, 32, 20, 0.09);
+  --text: #1d1c1a;
+  --text-2: #57534c;
+  --text-3: #6e695f;
+  --border: #e7e3dc;
+  --border-strong: #d5d0c6;
+  --accent: #0d6b62;
+  --accent-hover: #0a5952;
+  --accent-text: #ffffff;
+  --accent-soft: rgba(13, 107, 98, 0.1);
+  --accent-ink: #0b5e56;
+  --amber: #b7791f;
+  --amber-ink: #8a5a12;
+  --amber-soft: rgba(183, 121, 31, 0.12);
+  --red: #b3412f;
+  --red-ink: #a63a29;
+  --red-soft: rgba(179, 65, 47, 0.1);
+  --green: #2f8a4c;
+  --green-ink: #276f3e;
+  --green-soft: rgba(47, 138, 76, 0.11);
+  --blue: #2f6db3;
+  --blue-soft: rgba(47, 109, 179, 0.1);
+  --purple: #7357b5;
+  --gray-dot: #b5afa5;
+  --focus: 0 0 0 2px var(--bg), 0 0 0 4px rgba(13, 107, 98, 0.55);
+  --shadow-1: 0 1px 2px rgba(30, 24, 14, 0.05), 0 1px 1px rgba(30, 24, 14, 0.03);
+  --shadow-2: 0 1px 2px rgba(30, 24, 14, 0.06), 0 6px 24px -6px rgba(30, 24, 14, 0.12);
+  --shadow-3: 0 2px 6px rgba(20, 16, 10, 0.08), 0 24px 64px -12px rgba(20, 16, 10, 0.28);
+  --log-bg: #f4f2ee;
+  --log-text: #34312c;
+  --chart-grid: #e7e3dc;
+  --chart-bg: #faf9f6;
+  --claude: #b0532f;
+  --copilot: #17717c;
+
+  /* the load levels and chart series (lib/format cssColor) */
+  --c-green: #2f8a4c;
+  --c-amber: #c08321;
+  --c-red: #c4452f;
+  --c-cpu: #2f6db3;
+  --c-mem: #7357b5;
+  --c-rtt: #1f8a96;
+
+  color-scheme: light;
+}
+
+:root[data-app='tray'][data-theme='dark'] {
+  --bg: #1c1b1a;
+  --bg-sidebar: #161514;
+  --surface: #252422;
+  --surface-2: #2a2927;
+  --hover: rgba(255, 250, 240, 0.06);
+  --active: rgba(255, 250, 240, 0.1);
+  --text: #edebe7;
+  --text-2: #b6b1a8;
+  --text-3: #959087;
+  --border: #33312e;
+  --border-strong: #45423e;
+  --accent: #4fc2b3;
+  --accent-hover: #6fd0c3;
+  --accent-text: #0d1f1d;
+  --accent-soft: rgba(79, 194, 179, 0.14);
+  --accent-ink: #7fd6ca;
+  --amber: #e0a648;
+  --amber-ink: #e7b15c;
+  --amber-soft: rgba(224, 166, 72, 0.14);
+  --red: #ee7a66;
+  --red-ink: #f08a78;
+  --red-soft: rgba(238, 122, 102, 0.13);
+  --green: #6cc287;
+  --green-ink: #7dcb96;
+  --green-soft: rgba(108, 194, 135, 0.14);
+  --blue: #7fb0ea;
+  --blue-soft: rgba(127, 176, 234, 0.14);
+  --purple: #b9a3f0;
+  --gray-dot: #6b665f;
+  --focus: 0 0 0 2px var(--bg), 0 0 0 4px rgba(79, 194, 179, 0.6);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 28px -8px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 2px 8px rgba(0, 0, 0, 0.4), 0 28px 72px -12px rgba(0, 0, 0, 0.65);
+  --log-bg: #151413;
+  --log-text: #d9d5ce;
+  --chart-grid: #33312e;
+  --chart-bg: #201f1d;
+  --claude: #e08a68;
+  --copilot: #4fc2b3;
+
+  --c-green: #6cc287;
+  --c-amber: #e0a648;
+  --c-red: #ee7a66;
+  --c-cpu: #7fb0ea;
+  --c-mem: #b9a3f0;
+  --c-rtt: #4fc2b3;
+
+  color-scheme: dark;
+}
+
+/*
+ * The shared components (WorkerCard, charts, common) style themselves with
+ * the panel's names: map them onto the tokens.
+ */
+:root[data-app='tray'] {
+  --card: var(--surface);
+  --fg: var(--text);
+  --muted: var(--text-3);
+  --faint: var(--text-3);
+  --track: var(--surface-2);
+  --cpu: var(--accent-ink);
+  --mem: var(--c-mem);
+  --rtt: var(--c-rtt);
+}

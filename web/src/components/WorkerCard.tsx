@@ -3,6 +3,7 @@ import type { LegStatus, MetricsSnapshot, PoolWorker, ProcGroup } from '../api/t
 import {
   AMBER,
   CPU_C,
+  cssColor,
   fmtAgo,
   fmtBytes,
   fmtRTT,
@@ -19,6 +20,7 @@ import {
 } from '../lib/format'
 import { ADMIN_LABEL, fmtLastSeen, isAdminNode, offlineSeconds, type PoolMachine } from '../lib/machines'
 import { Bar, Sparkline } from './charts'
+import { IconExternal, IconMore } from './icons'
 
 const AGENTS: [string, string, string][] = [
   ['claude', 'Claude Code', 'var(--claude)'],
@@ -108,7 +110,7 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
   const admin = mm.admin
   const p = mm.primary
   const state = mm.state
-  const dot = state === 'online' ? GREEN : state === 'offline' ? RED : AMBER
+  const dot = cssColor(state === 'online' ? GREEN : state === 'offline' ? RED : AMBER)
   const metrics = p.state === 'online' || p.source === 'hub' ? p.metrics : undefined
   const draining = session?.node?.draining
   const canRemove = (x?: PoolWorker) => !!x && !!actions?.remove && (actions.canRemove?.(x) ?? false)
@@ -119,7 +121,7 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
   return (
     <div className="wcard" data-testid={`worker-${mm.key}`} data-state={state}>
       <div className="head">
-        <span className="dot" style={{ background: dot }} />
+        <span className={`dot is-${state}`} style={{ background: dot }} />
         <span className="name">{mm.key}</span>
         <span className="sub">{statusText(session ?? admin ?? p, now)}</span>
         {draining && (
@@ -128,21 +130,40 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
           </span>
         )}
         <span className="actions">
-          {session && actions?.attach && <button onClick={() => actions.attach!(session.name)}>attach</button>}
-          {session && actions?.ssh && <button onClick={() => actions.ssh!(session.name)}>ssh ↗</button>}
-          {actions?.panel && <button onClick={() => actions.panel!(mm.key)}>hub ↗</button>}
+          {session && actions?.attach && (
+            <button className="act" title={`open a terminal: longarm attach ${session.name}`} onClick={() => actions.attach!(session.name)}>
+              attach
+            </button>
+          )}
+          {session && actions?.ssh && (
+            <button className="act" title={`longarm ssh ${session.name} (a new window)`} onClick={() => actions.ssh!(session.name)}>
+              ssh <IconExternal aria-hidden="true" />
+            </button>
+          )}
+          {actions?.panel && (
+            <button className="act" title="open this machine in the hub panel" onClick={() => actions.panel!(mm.key)}>
+              hub <IconExternal aria-hidden="true" />
+            </button>
+          )}
           {session && actions?.drain && (
-            <button title="longarm admin drain / undrain (admin certificate)" onClick={() => actions.drain!(session.name, !session.node?.admin_drain)}>
+            <button className="act" title="longarm admin drain / undrain (admin certificate)" onClick={() => actions.drain!(session.name, !session.node?.admin_drain)}>
               {session.node?.admin_drain ? 'resume' : 'drain'}
             </button>
           )}
           {menuItems.length > 0 && (
             <span className="menuwrap">
-              <button aria-label="more actions" aria-expanded={menu} onClick={() => setMenu((v) => !v)}>
-                ⋯
+              <button
+                className="act icon"
+                aria-label="more actions"
+                aria-haspopup="menu"
+                aria-expanded={menu}
+                onClick={() => setMenu((v) => !v)}
+                onKeyDown={(e) => e.key === 'Escape' && setMenu(false)}
+              >
+                <IconMore />
               </button>
               {menu && (
-                <span className="menu" role="menu">
+                <span className="menu" role="menu" onKeyDown={(e) => e.key === 'Escape' && setMenu(false)}>
                   {menuItems.map(([label, fn]) => (
                     <button
                       key={label}
@@ -197,7 +218,7 @@ export function OfflineRow({ m, actions }: { m: PoolMachine; actions?: CardActio
   return (
     <div className="orow" data-testid={`offline-${m.key}`}>
       <div className="row">
-        <span className="dot" style={{ width: 8, height: 8, background: 'var(--faint)' }} />
+        <span className="dot is-gone" style={{ width: 8, height: 8, background: 'var(--faint)' }} />
         <span className="oname">{m.key}</span>
         {m.admin && <AdminBadge admin={m.admin} compact />}
         <span className="muted small">last seen {fmtLastSeen(m.offlineFor)} ago</span>
@@ -235,10 +256,10 @@ function LinkRows({ w, now }: { w: PoolWorker; now: number }) {
     return (
       <div data-testid="link">
         <div className="linkrow">
-          <span className="muted small" style={{ width: 36, fontWeight: 700 }}>
+          <span className="muted small linklabel">
             LINK
           </span>
-          <span className="path" style={{ color: RED }} data-testid="link-path" title={eps.join(' ')}>
+          <span className="path is-down" style={{ color: cssColor(RED) }} data-testid="link-path" title={eps.join(' ')}>
             tcp (loopback only): unreachable from here
           </span>
         </div>
@@ -257,10 +278,10 @@ function LinkRows({ w, now }: { w: PoolWorker; now: number }) {
   return (
     <div data-testid="link">
       <div className="linkrow">
-        <span className="muted small" style={{ width: 36, fontWeight: 700 }}>
+        <span className="muted small linklabel">
           LINK
         </span>
-        <span className="path" style={{ color: !active.up ? RED : relayed ? AMBER : GREEN }} data-testid="link-path">
+        <span className={`path ${!active.up ? 'is-down' : relayed ? 'is-relayed' : 'is-up'}`} style={{ color: cssColor(!active.up ? RED : relayed ? AMBER : GREEN) }} data-testid="link-path">
           {active.label || active.transport}
         </span>
         {active.nat && <span className="pill">nat {active.nat}</span>}

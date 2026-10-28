@@ -1,4 +1,4 @@
-import { levelColor } from '../lib/format'
+import { cssColor, levelColor } from '../lib/format'
 
 /** Labelled bar: label, track coloured by level, value text. */
 export function Bar({ label, pct, value }: { label: string; pct: number; value: string }) {
@@ -7,7 +7,7 @@ export function Bar({ label, pct, value }: { label: string; pct: number; value: 
     <div className="bar" role="meter" aria-label={label} aria-valuenow={Math.round(p)} aria-valuemin={0} aria-valuemax={100}>
       <span className="label">{label}</span>
       <span className="track">
-        <span className="fill" style={{ display: 'block', width: `${p}%`, background: levelColor(p) }} />
+        <span className="fill" style={{ display: 'block', width: `${p}%`, background: cssColor(levelColor(p)) }} />
       </span>
       <span className="value">{value}</span>
     </div>
@@ -19,7 +19,7 @@ export function MiniBar({ pct }: { pct: number }) {
   const p = Math.min(Math.max(pct || 0, 0), 100)
   return (
     <span className="minibar" title={`${Math.round(p)}%`}>
-      <span style={{ width: `${p}%`, background: levelColor(p) }} />
+      <span style={{ width: `${p}%`, background: cssColor(levelColor(p)) }} />
     </span>
   )
 }
@@ -80,13 +80,13 @@ export function Sparkline({
     <div>
       <svg className="spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" height={H} role="img" aria-label="sparkline">
         {[25, 50, 75].map((g) => (
-          <line key={g} x1={1} x2={W - 1} y1={H - (H * g) / 100} y2={H - (H * g) / 100} stroke="#21262d" strokeDasharray="2 4" />
+          <line key={g} x1={1} x2={W - 1} y1={H - (H * g) / 100} y2={H - (H * g) / 100} style={{ stroke: 'var(--chart-grid, #21262d)' }} strokeDasharray="2 4" />
         ))}
         {(marks ?? []).map((m, i) => (
-          <line key={`m${i}`} x1={(slots - 1 - m.at) * step} x2={(slots - 1 - m.at) * step} y1={0} y2={H} stroke={m.color} strokeOpacity={0.5} />
+          <line key={`m${i}`} x1={(slots - 1 - m.at) * step} x2={(slots - 1 - m.at) * step} y1={0} y2={H} style={{ stroke: cssColor(m.color) }} strokeOpacity={0.5} />
         ))}
         {paths.map((p, i) => (
-          <path key={i} d={p.d} fill="none" stroke={p.color} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+          <path key={i} d={p.d} fill="none" style={{ stroke: cssColor(p.color) }} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
         ))}
       </svg>
       {(legend || right) && (
@@ -94,7 +94,7 @@ export function Sparkline({
           {legend &&
             series.map((s, i) =>
               s.label ? (
-                <span key={i} style={{ color: s.color }}>
+                <span key={i} className="spark-key" style={{ color: cssColor(s.color) }}>
                   ● {s.label}
                 </span>
               ) : null,

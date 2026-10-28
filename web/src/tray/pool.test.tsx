@@ -143,7 +143,7 @@ describe('PoolTab', () => {
         info={{ version: 'x', roles: { client: true, worker: false }, client: { running: true }, worker: { running: false, enrolled: false }, pinned: false, account: { signed_in: false, needed: true, targets: { client: true, worker: false, admin_worker: false } } }}
       />,
     )
-    expect(screen.getByTestId('empty-pool').textContent).toContain('sign in on the Account tab')
+    expect(screen.getByTestId('empty-pool').textContent).toContain('Sign in on the Account tab')
     fireEvent.click(screen.getByText('Account tab'))
     expect(nav).toHaveBeenCalledWith('account')
   })
