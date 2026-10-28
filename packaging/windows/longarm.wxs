@@ -48,7 +48,7 @@
     [LABELS=pool=devbox,os.flavor=ltsc]   worker labels the sign-in asks the hub to record (the tray, longarmd login); remembered
     [NODE_NAME=w1]        a join code's node name
     [ADMIN_WORKER=1]      the admin worker (off by default): a second longarmd, a LocalSystem service
-                          (ADMIN_SERVICE_NAME, default longarmd-admin; data dir ADMIN_DATADIR, SYSTEM and
+                          (longarmd-admin; data dir ProgramData\Longarm\longarmd-admin, SYSTEM and
                           Administrators only) running while nobody is logged on; what its owner runs on
                           it runs as SYSTEM. It is enrolled with the tray's sign-in (same code, same
                           approval) as <worker>-admin, marked longarm.io/admin=true by the hub: owner only,
@@ -119,9 +119,6 @@
     <Property Id="SAVED_ADMIN_WORKER" Secure="yes">
       <RegistrySearch Id="RegAdminWorker" Root="HKLM" Key="Software\Longarm" Name="AdminWorker" Type="raw" />
     </Property>
-    <Property Id="ADMIN_SERVICE_NAME" Value="longarmd-admin" Secure="yes" />
-    <Property Id="ADMIN_DATADIR" Secure="yes" />
-    <Property Id="ADMIN_HANDOFF" Secure="yes" />
     <Property Id="LAUNCH_TRAY" Value="1" Secure="yes" />
     <Property Id="SERVICE_NAME" Value="longarmd" Secure="yes">
       <RegistrySearch Id="RegSvc" Root="HKLM" Key="Software\Longarm" Name="ServiceName" Type="raw" />
@@ -177,8 +174,6 @@
     <!-- The same dir longarmd defaults to as LocalSystem and for service install isolation per-user
          (internal/longarmd/datadir.go); LONGARM_DATA_DIR (set below) points every elevated longarmd command at it. -->
     <SetProperty Id="DATADIR" Value="[CommonAppDataFolder]Longarm\longarmd" Before="CostFinalize" Sequence="both" Condition="NOT DATADIR" />
-    <SetProperty Id="ADMIN_DATADIR" Value="[CommonAppDataFolder]Longarm\longarmd-admin" Before="CostFinalize" Sequence="both" Condition="NOT ADMIN_DATADIR" />
-    <SetProperty Id="ADMIN_HANDOFF" Value="[CommonAppDataFolder]Longarm\admin-signin" Before="CostFinalize" Sequence="both" Condition="NOT ADMIN_HANDOFF" />
     <!-- Remembered HUB / CA_FINGERPRINT / LOGIN only where the command line (or the dialog) gave none;
          an explicit JOIN_CODE is not a LOGIN install. Before SetIsWorker etc., which read them. -->
     <SetProperty Id="HUB" Action="SetHubSaved" Value="[SAVED_HUB]" Before="SetModeSaved" Sequence="both"
@@ -325,13 +320,13 @@
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
         <!-- the admin worker (read by the tray and longarmd admin-worker: longarmd.InstalledWorker) -->
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="AdminWorker" Type="string" Value="[ADMIN_WORKER]" />
-        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="AdminServiceName" Type="string" Value="[ADMIN_SERVICE_NAME]" />
-        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="AdminDataDir" Type="string" Value="[ADMIN_DATADIR]" />
-        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="AdminHandoff" Type="string" Value="[ADMIN_HANDOFF]" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="AdminServiceName" Type="string" Value="longarmd-admin" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="AdminDataDir" Type="string" Value="[CommonAppDataFolder]Longarm\longarmd-admin" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="AdminHandoff" Type="string" Value="[CommonAppDataFolder]Longarm\admin-signin" />
         <Environment Id="EnvPath" Name="PATH" Value="[INSTALLFOLDER]" Part="last" System="yes" Action="set" Permanent="no" />
         <!-- the admin worker's service (created by install-helper admin-setup) stops before its files
              are replaced or removed; a machine without it is skipped -->
-        <ServiceControl Id="AdminSvcStop" Name="[ADMIN_SERVICE_NAME]" Stop="both" Wait="yes" />
+        <ServiceControl Id="AdminSvcStop" Name="longarmd-admin" Stop="both" Wait="yes" />
       </Component>
 
       <?if $(var.HasTray) = 1 ?>
@@ -354,55 +349,61 @@
       <ComponentGroupRef Id="Product" />
     </Feature>
 
-    <!-- The user-session worker's host: longarm-tray.exe with its worker-host option (no console window at logon),
-         else longarmd.exe session-mode run. -->
-    <?if $(var.HasTray) = 1 ?>
-    <?define SessionHost = "[INSTALLFOLDER]longarm-tray.exe" ?>
-    <?else?>
-    <?define SessionHost = "[INSTALLFOLDER]longarmd.exe" ?>
-    <?endif?>
-
+    <!-- Elevated custom actions (docs/security.md "Installer"): every one runs longarmd.exe
+         install-helper msi STEP #LONGARM-MSI#key=value|... - the values are data after the
+         marker, parsed strictly by the helper (each key exactly once, each value matching its
+         pattern), never options: Windows Installer puts properties into command lines unquoted.
+         No property names a program or a path the helper runs: binaries are the ones next to
+         longarmd.exe, checked to be writable by administrators only; data dirs are below
+         ProgramData\Longarm. UserSID (who asked; not settable from the command line) lets the
+         helper refuse a non-administrator's repair or change, a service, the admin worker, and
+         a task for another user. -->
+    <CustomAction Id="LongarmdCheck" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi check #LONGARM-MSI#installed=[Installed]|usersid=[UserSID]' />
     <!-- Service worker setup: protected data dir, logon right, enrollment (as SYSTEM). -->
     <CustomAction Id="LongarmdSetup" FileRef="longarmd.exe" Execute="deferred" Impersonate="no" Return="check" HideTarget="yes"
-                  ExeCommand='install-helper setup --data-dir "[DATADIR]" --user "[SERVICE_ACCOUNT]" --hub "[HUB]" --code "[JOIN_CODE]" --ca-fingerprint "[CA_FINGERPRINT]" --listen "[LISTEN]" --name "[NODE_NAME]" --isolation "[ISOLATION]" --login-mode "[LOGIN]" --log "[TempFolder]longarm-install.log"' />
+                  ExeCommand='install-helper msi setup #LONGARM-MSI#datadir=[DATADIR]|user=[SERVICE_ACCOUNT]|hub=[HUB]|code=[JOIN_CODE]|ca=[CA_FINGERPRINT]|listen=[LISTEN]|name=[NODE_NAME]|isolation=[ISOLATION]|login=[LOGIN]|usersid=[UserSID]' />
     <!-- An install that fails after LongarmdSetup (e.g. the service can't log on: wrong password)
          takes back the enrollment LongarmdSetup made (a marker file says so); an existing
          enrollment (earlier install, KEEP_DATA) is never touched. -->
     <CustomAction Id="LongarmdSetupRollback" FileRef="longarmd.exe" Execute="rollback" Impersonate="no" Return="ignore"
-                  ExeCommand='install-helper rollback --data-dir "[DATADIR]" --log "[TempFolder]longarm-install.log"' />
-    <!-- User-session worker: a join code's enrollment as the installing user (writes ~\.longarm), then
-         the logon task, (re)started now (as SYSTEM: it registers the task for SESSION_SID). -->
+                  ExeCommand='install-helper msi rollback #LONGARM-MSI#datadir=[DATADIR]' />
+    <!-- User-session worker: a join code's enrollment as the installing user (impersonated: writes
+         ~\.longarm), then the logon task, (re)started now (as SYSTEM, for SESSION_SID = the
+         installing user; another user only for an administrator). -->
     <CustomAction Id="LongarmdSessionJoin" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="yes" Return="check" HideTarget="yes"
-                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper session-join --hub "[HUB]" --code "[JOIN_CODE]" --ca-fingerprint "[CA_FINGERPRINT]" --name "[NODE_NAME]"' />
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi session-join #LONGARM-MSI#hub=[HUB]|code=[JOIN_CODE]|ca=[CA_FINGERPRINT]|name=[NODE_NAME]' />
     <CustomAction Id="LongarmdSessionTask" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
-                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper session --user-sid "[SESSION_SID]" --host "$(var.SessionHost)" --log "[TempFolder]longarm-install.log"' />
-    <!-- The admin worker: a LocalSystem longarmd service of its own, waiting for its sign-in. -->
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi session #LONGARM-MSI#sid=[SESSION_SID]|usersid=[UserSID]' />
+    <!-- The admin worker: a LocalSystem longarmd service of its own, waiting for its sign-in
+         (an administrator only; fixed service name and dirs). -->
     <CustomAction Id="LongarmdAdminSetup" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
-                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper admin-setup --data-dir "[ADMIN_DATADIR]" --handoff "[ADMIN_HANDOFF]" --user-sid "[SESSION_SID]" --service-name "[ADMIN_SERVICE_NAME]" --exe "[INSTALLFOLDER]longarmd.exe" --hub "[HUB]" --ca-fingerprint "[CA_FINGERPRINT]" --log "[TempFolder]longarm-install.log"' />
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi admin-setup #LONGARM-MSI#hub=[HUB]|ca=[CA_FINGERPRINT]|sid=[SESSION_SID]|usersid=[UserSID]' />
     <CustomAction Id="LongarmdAdminRemove" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
-                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper admin-remove --data-dir "[ADMIN_DATADIR]" --handoff "[ADMIN_HANDOFF]" --service-name "[ADMIN_SERVICE_NAME]" --log "[TempFolder]longarm-uninstall.log"' />
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi admin-remove #LONGARM-MSI#keep=' />
     <CustomAction Id="LongarmdAdminDrop" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
-                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper admin-remove --data-dir "[ADMIN_DATADIR]" --handoff "[ADMIN_HANDOFF]" --service-name "[ADMIN_SERVICE_NAME]" --log "[TempFolder]longarm-install.log"' />
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi admin-drop #LONGARM-MSI#usersid=[UserSID]' />
     <CustomAction Id="LongarmdAdminRemoveKeep" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
-                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper admin-remove --keep-data --data-dir "[ADMIN_DATADIR]" --handoff "[ADMIN_HANDOFF]" --service-name "[ADMIN_SERVICE_NAME]" --log "[TempFolder]longarm-uninstall.log"' />
-    <!-- Client enrollment, as the installing user (writes ~\.config\longarm). -->
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi admin-remove #LONGARM-MSI#keep=1' />
+    <!-- Client enrollment, as the installing user (impersonated, writes ~\.config\longarm): runs
+         with the user's own rights only. -->
     <CustomAction Id="LongarmJoin" FileRef="longarm.exe" Execute="deferred" Impersonate="yes" Return="ignore" HideTarget="yes"
                   ExeCommand='join "[HUB]" "[CLIENT_CODE]" --ca-fingerprint "[CA_FINGERPRINT]" --name "[NODE_NAME]"' />
     <?if $(var.HasTray) = 1 ?>
     <!-- The tray, started in the installing user's session (not elevated: through a task), shows
          "Sign in with Microsoft". -->
     <CustomAction Id="LongarmTrayLaunch" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
-                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper launch-tray --user-sid "[SESSION_SID]" --exe "[INSTALLFOLDER]longarm-tray.exe" --log "[TempFolder]longarm-install.log"' />
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi launch-tray #LONGARM-MSI#sid=[SESSION_SID]|usersid=[UserSID]' />
     <?endif?>
     <!-- Uninstall: leave the hub, stop jobs, remove the data dir (KEEP_DATA=1 keeps jobs/mirrors). -->
     <CustomAction Id="LongarmdRemove" FileRef="longarmd.exe" Execute="deferred" Impersonate="no" Return="ignore"
-                  ExeCommand='install-helper remove --data-dir "[DATADIR]" --log "[TempFolder]longarm-uninstall.log"' />
+                  ExeCommand='install-helper msi remove #LONGARM-MSI#datadir=[DATADIR]|keep=' />
     <CustomAction Id="LongarmdRemoveKeep" FileRef="longarmd.exe" Execute="deferred" Impersonate="no" Return="ignore"
-                  ExeCommand='install-helper remove --keep-data --data-dir "[DATADIR]" --log "[TempFolder]longarm-uninstall.log"' />
+                  ExeCommand='install-helper msi remove #LONGARM-MSI#datadir=[DATADIR]|keep=1' />
     <!-- Uninstall of the user-session worker (and the tray's task): its tasks, its processes, and
-         (SessionLeave) its enrollment (as the service's). -->
+         (SessionLeave) its enrollment. -->
     <CustomAction Id="LongarmdSessionRemove" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
-                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper session-remove --user-sid "[SAVED_SESSION_SID]" --leave "[SessionLeave]" --log "[TempFolder]longarm-uninstall.log"' />
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi session-remove #LONGARM-MSI#sid=[SAVED_SESSION_SID]|leave=[SessionLeave]' />
     <SetProperty Id="SessionLeave" Value="1" Before="CostFinalize" Sequence="execute" Condition='IsWorker AND SAVED_RUN="session" AND NOT KEEP_DATA' />
     <SetProperty Id="SessionLeave" Action="SetSessionLeaveKeep" Value="keep" Before="CostFinalize" Sequence="execute" Condition='IsWorker AND SAVED_RUN="session" AND KEEP_DATA' />
 
@@ -415,6 +416,9 @@
       <Custom Action="CheckAdminWorker" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND ADMIN_WORKER="1" AND (NOT HUB OR NOT SESSION_SID OR SESSION_SID="S-1-5-18")' />
       <Custom Action="CheckServiceAccount" Before="InstallInitialize"
               Condition='IsWorker AND RUN="service" AND NOT REMOVE="ALL" AND (NOT Installed OR REINSTALL) AND (NOT SERVICE_ACCOUNT OR (SERVICE_ACCOUNT~&lt;&gt;"LocalSystem" AND NOT SERVICE_PASSWORD))' />
+      <!-- a repair or change (which Windows runs elevated for a non-administrator of a per-machine
+           product): only an administrator, checked by the helper before anything else runs -->
+      <Custom Action="LongarmdCheck" After="InstallInitialize" Condition='Installed AND NOT REMOVE="ALL"' />
       <Custom Action="SetClientCodeJoin" Before="SetClientCodeClient" Condition='ROLES="client" AND JOIN_CODE' />
       <Custom Action="SetClientCodeClient" Before="InstallInitialize" Condition='CLIENT_JOIN_CODE' />
       <Custom Action="LongarmdSetupRollback" Before="LongarmdSetup" Condition='IsWorker AND RUN="service" AND JOIN_CODE AND HUB AND NOT REMOVE="ALL"' />

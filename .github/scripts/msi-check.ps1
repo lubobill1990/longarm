@@ -41,7 +41,7 @@ Write-Host '== tables'
 if ((Prop $default 'DEFAULT_HUB') -ne 'longarm.example.com') { throw "default.msi: DEFAULT_HUB is '$(Prop $default 'DEFAULT_HUB')'" }
 if ((Prop $default 'DEFAULT_HUB_CA') -ne ('ab' * 32)) { throw 'default.msi: DEFAULT_HUB_CA missing' }
 if ($null -ne (Prop $custom 'DEFAULT_HUB')) { throw 'custom.msi has a DEFAULT_HUB' }
-foreach ($p in @{ ROLES = 'client'; LAUNCH_TRAY = '1'; ADMIN_SERVICE_NAME = 'longarmd-admin' }.GetEnumerator()) {
+foreach ($p in @{ ROLES = 'client'; LAUNCH_TRAY = '1' }.GetEnumerator()) {
   $v = Prop $default $p.Key
   if ($v -ne $p.Value) { throw "default.msi: $($p.Key) is '$v', want '$($p.Value)'" }
 }
@@ -54,7 +54,7 @@ foreach ($p in 'MODE', 'RUN', 'ADMIN_WORKER', 'SESSION_SID', 'HUB', 'LOGIN', 'LA
   if ($secure -notcontains $p) { throw "default.msi: $p is not a secure property (it would not reach the elevated install)" }
 }
 $actions = Query $default 'SELECT `Action` FROM `CustomAction`'
-foreach ($a in 'LongarmdSetup', 'LongarmdSessionTask', 'LongarmdSessionJoin', 'LongarmdSessionRemove', 'LongarmdAdminSetup',
+foreach ($a in 'LongarmdCheck', 'LongarmdSetup', 'LongarmdSessionTask', 'LongarmdSessionJoin', 'LongarmdSessionRemove', 'LongarmdAdminSetup',
   'LongarmdAdminRemove', 'LongarmTrayLaunch', 'CheckSessionUser', 'CheckServiceAccount', 'SetModeDefault', 'SetRunDefault') {
   if ($actions -notcontains $a) { throw "default.msi: no custom action $a" }
 }
@@ -62,9 +62,18 @@ $dialogs = Query $default 'SELECT `Dialog` FROM `Dialog`'
 foreach ($d in 'ModeDlg', 'RolesDlg', 'ServiceAccountDlg') {
   if ($dialogs -notcontains $d) { throw "default.msi: no dialog $d" }
 }
-# the session task's host: the windowless tray
-$cmd = Query $default "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action`` = 'LongarmdSessionTask'"
-if ($cmd[0] -notmatch 'longarm-tray\.exe') { throw "LongarmdSessionTask does not run the tray host: $($cmd[0])" }
+# every install-helper custom action passes its values as data after the marker (parsed strictly by the
+# helper), never as options, and names no program or path of its own (security.md "Installer")
+$targets = Query $default "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Target`` LIKE '%install-helper%'"
+if ($targets.Count -lt 10) { throw "only $($targets.Count) install-helper custom actions" }
+foreach ($t in $targets) {
+  if ($t -notmatch 'install-helper msi [a-z-]+ #LONGARM-MSI#') { throw "install-helper action without structured data: $t" }
+  $data = $t.Substring($t.IndexOf('#LONGARM-MSI#'))
+  if ($data -match ' --|--exe|--host|--data-dir|TempFolder|\[INSTALLFOLDER\]') { throw "install-helper data names an option or a path: $t" }
+}
+foreach ($p in 'ADMIN_SERVICE_NAME', 'ADMIN_DATADIR', 'ADMIN_HANDOFF') {
+  if ($secure -contains $p) { throw "$p must not be a (secure) property any more" }
+}
 
 Write-Host '== administrative install (extract only)'
 $target = Join-Path $env:RUNNER_TEMP 'msi-admin'

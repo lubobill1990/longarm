@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Security
+
+- MSI custom actions take their values as strictly parsed data
+  (`install-helper msi <step> #LONGARM-MSI#k=v|...`), never as options; run
+  only the installed, administrator-only binaries; refuse a
+  non-administrator's repair or change, a service or admin worker set up
+  for a non-administrator, and tasks for other users (docs/security.md
+  "Installer"). `DATADIR` must be below `%ProgramData%\Longarm`; the admin
+  worker's service name and dirs are fixed (no `ADMIN_*` properties).
+- Data dirs planted in ProgramData before the install are moved aside and
+  recreated; the admin worker pins the hub CA itself, records it in
+  `HKLM\Software\Longarm\Provenance` and refuses to serve with another.
+- The admin worker ignores hub-initiated toolchains, updates, port links,
+  relayed job requests and purges; the hub refuses toolchain profiles and
+  rollouts for it.
+
 ### Added
 
 - Windows installer for password-less machines (Entra-only sign-in with

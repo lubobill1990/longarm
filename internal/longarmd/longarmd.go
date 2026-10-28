@@ -455,6 +455,15 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	if err := cfg.reloadHubFile(); err != nil {
 		return err
 	}
+	// The admin worker (LocalSystem): serves only with the credentials its
+	// own sign-in recorded, and acts on nothing the hub starts by itself.
+	adminWorker := IsAdminWorker(cfg)
+	if adminWorker {
+		if err := verifyAdminProvenance(cfg.DataDir); err != nil {
+			return err
+		}
+		log.Info("admin worker: hub-initiated actions (toolchains, updates, port links, relayed job requests, purges) are ignored")
+	}
 	if cfg.HubPollToken != "" {
 		// `longarmd join --no-wait`: finish the enrollment before serving.
 		if err := completeEnrollment(ctx, cfg, log); err != nil {
@@ -713,6 +722,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	agent := newHubAgent(cfg.Hub.Address, &hubAgent{
 		dataDir: cfg.DataDir, reloader: reloader, live: reloader.LiveBundle(), spaces: st.spaces, srv: srv, policy: policy,
 		sampler: sampler, revoked: revoked, labels: cfg.Hub.Labels, log: log.With("component", "hub"),
+		admin: adminWorker,
 		audit: srv.Audit, remoteJobs: cfg.Hub.RemoteJobs, hideJobDetails: !cfg.HubJobDetails, trust: trustSrc, trustStore: trustStore,
 		stop: cancel, logMaxBytes: cfg.MaxLogBytes, tel: wtel,
 		endpoints: func() []string {
@@ -764,7 +774,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	if agent.channel == "" {
 		agent.channel = "stable"
 	}
-	if hubOn && !cfg.Update.Disabled {
+	if hubOn && !cfg.Update.Disabled && !adminWorker { // the admin worker updates with the MSI only
 		agent.upd = newUpdater(cfg, agent, exe, log, func() { cancelCause(update.ErrRestart) })
 		agent.upd.startup(ctx, hubOn)
 		wg.Add(1)
@@ -773,7 +783,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	legs.start(cfg.Listen, hubFile.Tailnet)
 	wg.Add(1)
 	go func() { defer wg.Done(); <-ctx.Done(); legs.wait() }()
-	if hubOn && !cfg.Toolchain.Disabled {
+	if hubOn && !cfg.Toolchain.Disabled && !adminWorker { // no package operations as SYSTEM on the hub's say
 		backend, err := toolchain.New(cfg.Toolchain.Backend, cfg.Toolchain.FakeState)
 		if sys, ok := backend.(*toolchain.System); ok {
 			sys.MachineWide = perUser

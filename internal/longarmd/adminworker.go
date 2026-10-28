@@ -2,6 +2,7 @@ package longarmd
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/tls"
 	"crypto/x509"
@@ -64,6 +65,16 @@ const (
 
 	adminKeyFile = "admin-signin.key"
 )
+
+// resolveHubCA fetches and checks a hub's CA (hubclient.ResolveHub);
+// tests replace it.
+var resolveHubCA = func(ctx context.Context, hub string) (string, error) {
+	tg, err := hubclient.ResolveHub(ctx, hub, hubclient.ResolveOptions{})
+	if err != nil {
+		return "", err
+	}
+	return tg.Fingerprint, nil
+}
 
 // AdminDataDirIn and AdminHandoffDirIn are the admin worker's data dir and
 // hand-off dir below the Longarm dir in ProgramData.
@@ -146,6 +157,24 @@ func adminHandoffStep(dataDir string, log *slog.Logger) {
 		req.Hub == hf.Address && fileExists(filepath.Join(dataDir, TLSDir, adminKeyFile)) {
 		return // waiting for the tray
 	}
+	if hf.CAFingerprint == "" {
+		// The hub's CA, fetched by the service itself (https://<hub>/ca.crt,
+		// checked with the system's roots) and pinned: the enrollment the
+		// user's tray hands back must chain to it, not to a CA of the
+		// tray's choosing.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		fp, err := resolveHubCA(ctx, hf.Address)
+		cancel()
+		if err != nil {
+			log.Error("admin worker: fetching the hub's CA", "hub", hf.Address, "err", err)
+			return
+		}
+		if err := SetUpSignIn(dataDir, hf.Address, fp); err != nil {
+			log.Error("admin worker: pinning the hub's CA", "err", err)
+			return
+		}
+		hf.CAFingerprint = pki.NormalizeFingerprint(fp)
+	}
 	if err := writeAdminRequest(dataDir, dir, hf.Address); err != nil {
 		log.Error("admin worker: preparing the sign-in request", "err", err)
 	}
@@ -188,6 +217,9 @@ func installAdminResponse(dataDir string, hf hubclient.Config, b []byte) error {
 	if err != nil {
 		return fmt.Errorf("no pending key: %w", err)
 	}
+	if hf.CAFingerprint == "" {
+		return errors.New("no pinned hub CA to check the enrollment against")
+	}
 	if err := checkAdminEnrollment(&resp, keyPEM, hf.CAFingerprint); err != nil {
 		return err
 	}
@@ -197,6 +229,9 @@ func installAdminResponse(dataDir string, hf hubclient.Config, b []byte) error {
 		return err
 	}
 	os.Remove(filepath.Join(dataDir, TLSDir, adminKeyFile))
+	if err := provenance.Set(ProvAdminCA, pki.Fingerprint(ca)); err != nil {
+		return fmt.Errorf("recording the hub CA: %w", err)
+	}
 	return pinAdminAccess(dataDir, resp.Owner)
 }
 

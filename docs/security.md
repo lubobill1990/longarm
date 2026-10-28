@@ -512,6 +512,86 @@ block or report it; check with whoever manages the device before turning
 it on, and expect the commands it runs to be attributed to SYSTEM in their
 logs.
 
+## Installer (Windows MSI)
+
+The MSI is per-machine: its custom actions run elevated, as SYSTEM, with
+values from MSI properties - and Windows lets a non-administrator run a
+**repair** of a per-machine product elevated, with public properties of
+their choosing. So the installer treats every property as untrusted input:
+
+- **Values are data, never options.** Windows Installer formats properties
+  into a custom action's command line unquoted. Every `longarmd
+  install-helper` action passes `install-helper msi <step>
+  #LONGARM-MSI#key=[PROPERTY]|key=[PROPERTY]...`; the helper takes the text
+  after the first marker verbatim from the raw command line and parses it
+  strictly (`longarmd.MSIData`): exactly the step's keys, each once (the
+  template has them all, so an injected `|key=...` is a duplicate), each
+  value against its own pattern - HUB is a host name with an optional
+  port, SESSION_SID a SID of an existing user account, LABELS / LISTEN /
+  JOIN_CODE / CA_FINGERPRINT / NODE_NAME their formats, no quotes, spaces
+  or separators. `HUB='x" --exe "C:\...\evil.exe" --hub "x'` is refused,
+  not parsed. CI (`TestMSICustomActionData`, `msi-check.ps1`) checks that
+  every action passes exactly the keys its step expects.
+- **No property names a program.** The helper runs, and registers as
+  services and scheduled tasks, only the binaries next to itself, and
+  first checks that their directory (and the files) can be changed by
+  SYSTEM, Administrators and TrustedInstaller only (Program Files); an
+  install directory a user can write is refused. The admin worker's service
+  name and directories are fixed; a service data dir (`DATADIR`) must be
+  below `%ProgramData%\Longarm`. The helper's log is
+  `%ProgramData%\Longarm\install-helper.log` (that dir secured first, an
+  old log replaced, never followed), not a user's temp dir.
+- **Who asked.** The actions get `UserSID` - the account that started the
+  install, a private property the command line can't set - and check its
+  membership in the local Administrators group (directly, as Entra
+  accounts on a Dev Box, or through domain groups; LocalSystem for
+  deployment tools): a **repair or change** of the installed product is
+  refused for non-administrators before anything else runs (the
+  `LongarmdCheck` action right after `InstallInitialize`, so nothing is
+  written); the service worker and the admin worker need an administrator
+  (and the admin worker's sign-in hand-off goes to that administrator
+  only); the user-session task and the tray's start are for the requesting
+  user - another user's only for an administrator. (`AdminUser` /
+  `Privileged` aren't used: under UAC they don't tell an administrator from
+  a user an elevated repair runs for.)
+- **Task definitions** are XML built with `encoding/xml` from a SID checked
+  against its pattern and the account database; the program is the
+  installed tray / longarmd.
+- **Planted data dirs.** Any user may create directories in ProgramData. A
+  machine-wide data dir that exists before the install is kept only when
+  the installer recorded creating it (`HKLM\Software\Longarm\Provenance`,
+  written by the helper as SYSTEM - not one of the MSI's own values, which
+  a repair rewrites from properties) and nobody but SYSTEM /
+  Administrators (and the service's own account) can write it; otherwise
+  it is moved aside and removed (reparse points removed, never followed)
+  and created fresh with a protected ACL before anything is written. Older
+  installs' service data dirs pass when they are protected. The admin
+  worker's dir needs the record; its sign-in hand-off dir starts empty at
+  every setup.
+- **The admin worker serves only what its sign-in made.** It pins the hub's
+  CA itself (`https://<hub>/ca.crt`, checked with the system's roots, or
+  the given fingerprint) before it hands out its CSR; it installs only a
+  certificate for its own key, from that CA, marked `longarm.io/admin=true`;
+  it records that CA in the provenance key; at every start it refuses to
+  serve when `tls/ca.crt` isn't the recorded CA (planted credentials have no
+  record).
+- **The hub can't make it act.** The admin worker ignores what the hub
+  starts by itself - desired toolchains (package operations), update pushes
+  (it updates with the MSI only: its self-updater is off), port links,
+  relayed job requests (submit, kill, logs, toolchain apply) and data
+  purges - and the hub refuses toolchain profiles for it, skips it in
+  profile and release rollouts and never offers it a version. Revocations,
+  its access list and drains (which only narrow) and the tailnet transport
+  still apply.
+- **Local surface.** Its listener (127.0.0.1:7702) is TLS 1.3 with a
+  client certificate required and verified against the recorded hub CA;
+  owner-only `[access]` on top. Its local control API is a named pipe whose
+  ACL is SYSTEM only (the service's account); its data dir is SYSTEM and
+  Administrators only; the hand-off dir is SYSTEM, Administrators and the
+  installing administrator. It has no other endpoint (no health or metrics
+  port). A user who creates the pipe's name first can only keep the local
+  API from starting (a denial of service, logged).
+
 ## Port links
 
 Port links (`longarm link`, [usage](usage.md#port-links-worker-to-worker))

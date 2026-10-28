@@ -235,3 +235,43 @@ func TestLinkAdminKind(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestAdminWorkerNoHubActions: the hub starts nothing on an admin worker by
+// itself - no toolchain profile (package operations as SYSTEM) can be
+// assigned to it, a profile's rollout skips it, and a release rollout
+// neither picks it nor offers it a version.
+func TestAdminWorkerNoHubActions(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	if _, err := h.PutProfile("admin", &pb.Profile{Name: "base", Tools: []*pb.ToolSpec{{Name: "git", Version: "2.45.0"}}}); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	h.nodes["box-admin"] = &node{rec: &store.Node{Name: "box-admin", Role: "worker", State: stateApproved, Owner: "alice", Admin: true, UpdateEnabled: true}}
+	h.nodes["box"] = &node{rec: &store.Node{Name: "box", Role: "worker", State: stateApproved, Owner: "alice", UpdateEnabled: true}}
+	h.mu.Unlock()
+	if _, err := h.AssignProfile("admin", "box-admin", "base"); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("profile on the admin worker: %v", err)
+	}
+	if _, err := h.AssignProfile("admin", "box-admin", ""); err != nil {
+		t.Fatalf("clearing a profile: %v", err)
+	}
+	if _, err := h.AssignProfile("admin", "box", "base"); err != nil {
+		t.Fatalf("profile on a plain worker: %v", err)
+	}
+	h.mu.Lock()
+	// even a profile already on its record (an older hub) yields nothing
+	h.nodes["box-admin"].rec.Profile = "base"
+	if d := h.desiredToolchainLocked(h.nodes["box-admin"]); d.Profile != "" || len(d.Tools) != 0 {
+		t.Errorf("desired toolchain of the admin worker: %v", d)
+	}
+	h.rollout = &pb.Rollout{Version: "9.9.9", Channel: "stable", State: rolloutDone}
+	if v := h.targetLocked(h.nodes["box-admin"]); v != "" {
+		t.Errorf("rollout target of the admin worker: %q", v)
+	}
+	if v := h.targetLocked(h.nodes["box"]); v != "9.9.9" {
+		t.Errorf("rollout target of a plain worker: %q", v)
+	}
+	h.rollout = nil
+	h.mu.Unlock()
+}

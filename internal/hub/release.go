@@ -235,7 +235,7 @@ func updateFailedLocked(n *node, version string) (bool, string) {
 // targetLocked is the version n should run ("" = stay).
 func (h *Hub) targetLocked(n *node) string {
 	r := h.rollout
-	if r == nil || n.rec.Role != "worker" || channelOf(n) != r.Channel {
+	if r == nil || n.rec.Role != "worker" || n.rec.Admin || channelOf(n) != r.Channel {
 		return ""
 	}
 	name := n.rec.Name
@@ -303,6 +303,9 @@ func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, e
 		}
 		if len(req.Nodes) > 0 && !slices.Contains(req.Nodes, n.rec.Name) {
 			continue
+		}
+		if n.rec.Admin {
+			continue // admin workers update with their MSI only, never by a rollout
 		}
 		if !n.rec.UpdateEnabled {
 			// No update key in its build, or a package-managed install:

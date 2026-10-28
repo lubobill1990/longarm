@@ -149,6 +149,26 @@ func TestMTLS(t *testing.T) {
 	if err != nil || id.Role != RoleAdmin {
 		t.Fatalf("admin handshake: %v %v", id, err)
 	}
+	// No client certificate at all (any local process dialing a worker's
+	// listener, e.g. the admin worker's 127.0.0.1:7702): refused.
+	if srv.ClientAuth != tls.RequireAndVerifyClientCert {
+		t.Fatalf("worker listeners must require client certificates: %v", srv.ClientAuth)
+	}
+	anon := client.ClientConfig("w1")
+	anon.Certificates, anon.GetClientCertificate = nil, nil
+	{
+		a, b := net.Pipe()
+		serr := make(chan error, 1)
+		go func() { serr <- tls.Server(a, srv).Handshake(); a.Close() }()
+		c := tls.Client(b, anon)
+		if err := c.Handshake(); err == nil {
+			c.Read(make([]byte, 1)) // TLS 1.3: the server's refusal arrives after the client's finish
+		}
+		b.Close()
+		if err := <-serr; err == nil {
+			t.Fatal("a connection without a client certificate was accepted")
+		}
+	}
 	// Different CA as client: the server rejects it.
 	if _, err := handshake(t, srv, stranger.ClientConfig("w1")); err == nil {
 		t.Fatal("cert from a different CA was accepted")

@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/url"
@@ -66,6 +67,9 @@ type hubAgent struct {
 	audit     *server.Audit
 	// remoteJobs: what hub requests may do (see HubConfig.RemoteJobs).
 	remoteJobs string
+	// admin: the admin worker (LocalSystem) - it ignores whatever the hub
+	// starts on its own (adminIgnores).
+	admin bool
 	// metricsErrAt / metricsSent: sendMetrics' logging
 	metricsErrAt time.Time
 	metricsSent  bool
@@ -557,7 +561,33 @@ func (a *hubAgent) forwardAudit(off int64) int64 {
 	return next
 }
 
+// adminIgnores reports whether the admin worker ignores a hub command:
+// everything that would make it act (as SYSTEM) on the hub's say -
+// desired toolchains (package operations), update pushes, port links,
+// relayed job requests (submit, kill, logs, toolchain apply) and data
+// purges. What only narrows (revocations, the access list, drain) and the
+// transport (tailnet) still apply.
+func adminIgnores(cmd *pb.HubCommand) bool {
+	switch x := cmd.Msg.(type) {
+	case *pb.HubCommand_Toolchain, *pb.HubCommand_Update, *pb.HubCommand_PortLinks:
+		return true
+	case *pb.HubCommand_Tenancy:
+		return len(x.Tenancy.Purge) > 0
+	}
+	return false
+}
+
 func (a *hubAgent) handle(cmd *pb.HubCommand) {
+	if a.admin && adminIgnores(cmd) {
+		if t, ok := cmd.Msg.(*pb.HubCommand_Tenancy); ok {
+			// the policy, without the purge
+			p := proto.Clone(t.Tenancy).(*pb.TenancyPolicy)
+			p.Purge = nil
+			a.applyTenancy(p)
+		}
+		a.log.Warn("admin worker: ignoring a hub-initiated action", "command", fmt.Sprintf("%T", cmd.Msg))
+		return
+	}
 	switch x := cmd.Msg.(type) {
 	case *pb.HubCommand_Revocations:
 		m := map[string]time.Time{}

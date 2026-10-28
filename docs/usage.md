@@ -1625,11 +1625,15 @@ offers Custom only. Silent properties (all in the comment at the top of
 | `ROLES` | `client`, `both`, `worker` (Custom) |
 | `RUN` | `session` (default) or `service`; remembered - an install from before `RUN` that has a service keeps it |
 | `HUB`, `LOGIN=1`, `JOIN_CODE`, `CA_FINGERPRINT`, `LABELS`, `NODE_NAME` | as before (`MODE=custom`) |
-| `SERVICE_USER`, `SERVICE_PASSWORD`, `SERVICE_ACCOUNT`, `SERVICE_NAME`, `DATADIR`, `LISTEN`, `ISOLATION` | `RUN=service` only (`ISOLATION=per-user` implies it) |
+| `SERVICE_USER`, `SERVICE_PASSWORD`, `SERVICE_ACCOUNT`, `SERVICE_NAME`, `DATADIR`, `LISTEN`, `ISOLATION` | `RUN=service` only (`ISOLATION=per-user` implies it; `DATADIR` below `%ProgramData%\Longarm`) |
 | `ADMIN_WORKER=1` | the admin worker (off by default; remembered, `ADMIN_WORKER=0` on an upgrade removes it) |
 | `SESSION_SID` | the user of the user-session worker (default: the installing user, `UserSID`) |
 | `LAUNCH_TRAY=0` | don't start the tray at the end |
 | `KEEP_DATA=1` | uninstall: keep jobs and mirrors |
+
+Repairing or changing the installed product needs an administrator, and
+every value is checked before it reaches an elevated step ([security:
+Installer](security.md#installer-windows-msi)).
 
 ```powershell
 msiexec /i longarm-windows-amd64.msi /qn ROLES=both                                    # Default

@@ -146,6 +146,10 @@ func (h *Hub) AssignProfile(by, nodeName, profile string) (*pb.NodeInfo, error) 
 		if n.rec.Role != string(pki.RoleWorker) {
 			return status.Errorf(codes.FailedPrecondition, "%s is not a worker", nodeName)
 		}
+		if n.rec.Admin && profile != "" {
+			// a toolchain profile is package operations as SYSTEM, started by the hub
+			return status.Errorf(codes.PermissionDenied, "%s is an admin worker: it takes no toolchain profile (its owner installs software on it with explicit commands)", nodeName)
+		}
 		n.rec.Profile = profile
 		h.sendLocked(n, &pb.HubCommand{Msg: &pb.HubCommand_Toolchain{Toolchain: h.desiredToolchainLocked(n)}})
 		h.advanceRolloutsLocked()
@@ -157,6 +161,9 @@ func (h *Hub) AssignProfile(by, nodeName, profile string) (*pb.NodeInfo, error) 
 // when it is the canary or the rollout passed the canary, else the stable
 // revision (or nothing yet).
 func (h *Hub) desiredToolchainLocked(n *node) *pb.ToolchainDesired {
+	if n.rec.Admin {
+		return &pb.ToolchainDesired{} // never: see AssignProfile
+	}
 	name := n.rec.Profile
 	p := h.profiles[name]
 	if name == "" || p == nil {
@@ -184,7 +191,7 @@ func (h *Hub) advanceRolloutsLocked() {
 	for _, p := range h.profiles {
 		var assigned []*node
 		for _, n := range h.nodes {
-			if n.rec.Profile == p.Name && n.rec.Role == string(pki.RoleWorker) && n.rec.State == stateApproved {
+			if n.rec.Profile == p.Name && n.rec.Role == string(pki.RoleWorker) && n.rec.State == stateApproved && !n.rec.Admin {
 				assigned = append(assigned, n)
 			}
 		}

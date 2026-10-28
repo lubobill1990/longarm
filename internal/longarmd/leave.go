@@ -212,8 +212,24 @@ func InstallSetup(ctx context.Context, dataDir string, o SetupOptions) error {
 			return fmt.Errorf("secure %s: %w", parent, err)
 		}
 	}
+	// A data dir that was there before (ProgramData: any user may create
+	// it, with planted credentials) is kept only when this installer made
+	// it - the admin worker's - or, for older installs, when nobody but
+	// administrators (and the service account) could write it.
+	var also []string
+	if a := strings.TrimSpace(o.ServiceUser); a != "" && !strings.EqualFold(a, "LocalSystem") {
+		if sid, err := platform.AccountSID(a); err == nil {
+			also = append(also, sid)
+		}
+	}
+	if err := FreshSystemDir(dataDir, o.Admin, o.Out, also...); err != nil {
+		return err
+	}
 	if err := platform.SecureDir(dataDir, o.ServiceUser); err != nil {
 		return fmt.Errorf("secure %s: %w", dataDir, err)
+	}
+	if err := RecordSystemDir(dataDir); err != nil {
+		return fmt.Errorf("record %s: %w", dataDir, err)
 	}
 	if err := SetIsolation(dataDir, o.Isolation); err != nil {
 		return err

@@ -4,8 +4,11 @@ import (
 	"encoding/xml"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
+
+	"github.com/lubobill1990/longarm/internal/longarmd"
 )
 
 // TestMSIPropertiesOverridable (static, every platform): a property given
@@ -206,6 +209,7 @@ func TestMSIModeRun(t *testing.T) {
 		"LongarmdAdminDrop":     {`SAVED_ADMIN_WORKER="1"`, `ADMIN_WORKER&lt;&gt;"1"`},
 		"LongarmdSessionRemove": {`REMOVE="ALL"`, "NOT UPGRADINGPRODUCTCODE"},
 		"LongarmTrayLaunch":     {"LAUNCH_TRAY", "S-1-5-18"},
+		"LongarmdCheck":         {"Installed", `NOT REMOVE="ALL"`},
 	} {
 		c, ok := seq[action]
 		if !ok {
@@ -218,5 +222,70 @@ func TestMSIModeRun(t *testing.T) {
 				t.Errorf("%s: condition %q without %s", action, c, m)
 			}
 		}
+	}
+}
+
+// TestMSICustomActionData (static): every install-helper custom action of
+// longarm.wxs passes its values as structured data after the marker -
+// exactly the keys its step expects (longarmd.MSISteps), each "key=[PROP]"
+// - and names no option, program or path of its own: Windows Installer
+// formats properties into command lines unquoted, so a property must never
+// be able to become an option (the HUB='x" --exe ...' repair).
+func TestMSICustomActionData(t *testing.T) {
+	b, err := os.ReadFile("../packaging/windows/longarm.wxs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`ExeCommand='([^']*)'`)
+	step := regexp.MustCompile(`install-helper msi ([a-z-]+) ` + regexp.QuoteMeta(longarmd.MSIDataMarker) + `(.*)$`)
+	field := regexp.MustCompile(`^([a-z]+)=(\[[A-Za-z_]+\]|1)?$`)
+	n := 0
+	for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+		cmd := m[1]
+		if !strings.Contains(cmd, "install-helper") {
+			continue
+		}
+		n++
+		s := step.FindStringSubmatch(cmd)
+		if s == nil {
+			t.Errorf("install-helper action without structured data: %s", cmd)
+			continue
+		}
+		want, ok := longarmd.MSISteps[s[1]]
+		if !ok {
+			t.Errorf("unknown step %s", s[1])
+			continue
+		}
+		var got []string
+		for _, f := range strings.Split(s[2], "|") {
+			fm := field.FindStringSubmatch(f)
+			if fm == nil {
+				t.Errorf("%s: field %q is not key=[PROPERTY]", s[1], f)
+				continue
+			}
+			got = append(got, fm[1])
+		}
+		sort.Strings(got)
+		w := append([]string(nil), want...)
+		sort.Strings(w)
+		if strings.Join(got, ",") != strings.Join(w, ",") {
+			t.Errorf("%s: fields %v, the helper expects %v", s[1], got, w)
+		}
+		if before := cmd[:strings.Index(cmd, longarmd.MSIDataMarker)]; strings.Contains(before, "--") || strings.Count(before, "[") > 1 {
+			t.Errorf("%s: options or properties before the data: %s", s[1], before)
+		}
+	}
+	if n < 12 {
+		t.Errorf("only %d install-helper actions found", n)
+	}
+	// who asked comes from UserSID (private, not settable from the command
+	// line), never from a public property
+	for _, s := range []string{"check", "setup", "session", "launch-tray", "admin-setup", "admin-drop"} {
+		if !strings.Contains(string(b), "install-helper msi "+s+" ") {
+			t.Errorf("no %s action", s)
+		}
+	}
+	if strings.Contains(string(b), "usersid=[SESSION_SID]") || !strings.Contains(string(b), "usersid=[UserSID]") {
+		t.Error("the requester must be [UserSID]")
 	}
 }

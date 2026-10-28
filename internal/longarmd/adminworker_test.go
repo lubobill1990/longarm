@@ -25,9 +25,10 @@ func TestAdminWorkerHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	pinned := pki.Fingerprint(ca.Cert)
 	setup := func() (dataDir, handoff string, target AdminWorkerTarget) {
 		dataDir, handoff = t.TempDir(), filepath.Join(t.TempDir(), "admin-signin")
-		if err := SetUpSignIn(dataDir, "longarm.example.com", ""); err != nil {
+		if err := SetUpSignIn(dataDir, "longarm.example.com", pinned); err != nil {
 			t.Fatal(err)
 		}
 		if err := WriteAdminMarker(dataDir, handoff); err != nil {
@@ -95,10 +96,20 @@ func TestAdminWorkerHandoff(t *testing.T) {
 	if len(notes) == 0 || !strings.Contains(notes[0], "SYSTEM") {
 		t.Errorf("notes %v", notes)
 	}
+	// the hub CA it signed in with is recorded: it serves with that one only
+	if provenance.Get(ProvAdminCA) != pinned || verifyAdminProvenance(dataDir) != nil {
+		t.Errorf("recorded CA %q", provenance.Get(ProvAdminCA))
+	}
 
 	// refused: not marked as the admin worker (an old hub), or for another key
 	for name, mk := range map[string]func(csr []byte) *hubclient.JoinResult{
 		"no admin label": func(csr []byte) *hubclient.JoinResult { return respFor(csr, nil) },
+		"another CA": func(csr []byte) *hubclient.JoinResult {
+			other, _ := pki.InitCA(t.TempDir(), "attacker", time.Hour)
+			cert, _ := other.SignCSR(csr, pki.IssueOptions{Role: pki.RoleWorker, Name: "w1-admin"})
+			return &hubclient.JoinResult{Resp: &pb.JoinResponse{State: "approved", Role: "worker", Name: "w1-admin", Owner: "mallory",
+				CaPem: other.CertPEM, CertPem: cert, Labels: map[string]string{AdminLabel: "true"}}}
+		},
 		"another key": func([]byte) *hubclient.JoinResult {
 			_, other, _ := pki.NewKeyAndCSR("", nil)
 			return respFor(other, map[string]string{AdminLabel: "true"})
