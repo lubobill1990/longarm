@@ -1,0 +1,34 @@
+# Litestream for the longarm-hub image with a Headscale sidecar
+# (/etc/longarm-hub/litestream-abs-headscale.yml; deploy/azure
+# enableHeadscale): litestream-abs.yml's hub database plus Headscale's, which
+# lives in the directory the hub shares with the sidecar. Configured only by
+# the environment (Litestream expands ${VAR}):
+#   LONGARM_HUB_DB, LONGARM_HUB_BLOB_ACCOUNT, LONGARM_HUB_BLOB_CONTAINER,
+#   LONGARM_HUB_BLOB_ENDPOINT, LITESTREAM_AZURE_SAS_TOKEN   as litestream-abs.yml
+#   LONGARM_HUB_HEADSCALE_DB              set by `longarm-hub container` from
+#                                         LONGARM_HUB_HEADSCALE_DIR (<dir>/db.sqlite)
+#   LONGARM_HUB_HEADSCALE_BLOB_CONTAINER  blob container of Headscale's replica
+#   LONGARM_HUB_HEADSCALE_SAS_TOKEN       storage-auth key: a SAS for that container
+#                                         (empty: LITESTREAM_AZURE_SAS_TOKEN, else the
+#                                         managed identity)
+# The hub restores Headscale's database before it lets the sidecar start
+# (cmd/longarm-hub container.go).
+dbs:
+  - path: ${LONGARM_HUB_DB}
+    replica:
+      type: abs
+      account-name: ${LONGARM_HUB_BLOB_ACCOUNT}
+      bucket: ${LONGARM_HUB_BLOB_CONTAINER}
+      endpoint: ${LONGARM_HUB_BLOB_ENDPOINT}
+      path: hub.db
+      sync-interval: 1s
+  - path: ${LONGARM_HUB_HEADSCALE_DB}
+    replica:
+      type: abs
+      account-name: ${LONGARM_HUB_BLOB_ACCOUNT}
+      bucket: ${LONGARM_HUB_HEADSCALE_BLOB_CONTAINER}
+      endpoint: ${LONGARM_HUB_BLOB_ENDPOINT}
+      sas-token: ${LONGARM_HUB_HEADSCALE_SAS_TOKEN}
+      path: headscale.db
+      sync-interval: 1s
+shutdown-sync-timeout: 20s

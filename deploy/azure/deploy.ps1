@@ -23,6 +23,8 @@
   ./deploy.ps1 -Name myhub -Location eastasia -BuildInAcr   # image built from this checkout in your ACR
 .EXAMPLE
   ./deploy.ps1 -Name myhub -Location eastasia -StorageAuth identity -Telemetry -Diagnostics   # no storage account keys
+.EXAMPLE
+  ./deploy.ps1 -Name myhub -Headscale -Recreate   # + a Headscale sidecar (self-hosted tailnet)
 #>
 [CmdletBinding()]
 param(
@@ -43,6 +45,12 @@ param(
     # external STUN servers the hub advertises (host:port,...; 'none' = only the hub's own)
     [string]$StunServers = '',
     [string]$TailscaleSecretFile = '',
+    # a self-hosted Tailscale control plane (Headscale) as a sidecar, served by the hub on
+    # https://<fqdn>; the hub's tailnet provider (needs the panel; switching needs -Recreate)
+    [switch]$Headscale,
+    [switch]$NoHeadscale,
+    # also hand nodes Tailscale's public DERP relays: on | off (default off)
+    [string]$HeadscalePublicDerp = '',
     [string]$AcmeEmail = '',
     # Sign in with Microsoft Entra ID (longarm login, panel): the app registration (docs/usage.md)
     [string]$EntraTenant = '',
@@ -249,6 +257,8 @@ That is an Azure Container Instances hiccup, not the template (seen once: the sa
 }
 
 if ($NoPanel -and $Panel) { throw '-NoPanel and -Panel exclude each other' }
+if ($NoHeadscale -and $Headscale) { throw '-NoHeadscale and -Headscale exclude each other' }
+if ($HeadscalePublicDerp -and $HeadscalePublicDerp -cnotmatch '^(on|off)$') { throw '-HeadscalePublicDerp: on or off' }
 if ($TailscaleSecretFile -and -not (Test-Path $TailscaleSecretFile)) { throw "-TailscaleSecretFile: can't read $TailscaleSecretFile" }
 if (-not $ResourceGroup) { $ResourceGroup = "$Name-rg" }
 if ($BuildInAcr -and $Image) { throw '-BuildInAcr builds the image: drop -Image' }
@@ -319,6 +329,11 @@ try {
     $logsOn = [bool]$LogAnalytics
     $telemetryOn = [bool]$Telemetry
     $diagnosticsOn = [bool]$Diagnostics
+    $headscaleOn = $null
+    if ($NoHeadscale) { $headscaleOn = $false }
+    if ($Headscale) { $headscaleOn = $true }
+    $publicDerpOn = $null
+    if ($HeadscalePublicDerp) { $publicDerpOn = ($HeadscalePublicDerp -eq 'on') }
 
     # A re-run keeps the running hub's settings. Secrets can't be read back
     # from ACI: a hub that has them needs them again.
@@ -343,6 +358,9 @@ try {
         # a re-run keeps telemetry / diagnostics on
         if ($curEnv -like '*,LONGARM_HUB_APPINSIGHTS_CONNECTION_STRING,*') { $telemetryOn = $true }
         if ($curEnv -like '*,LONGARM_HUB_DIAG_BLOB_URL,*') { $diagnosticsOn = $true }
+        # and the Headscale sidecar with its DERP choice
+        $curHeadscale = $curEnv -like '*,LONGARM_HUB_HEADSCALE_DIR,*'
+        if ($null -eq $publicDerpOn -and $curEnv -like '*,LONGARM_HUB_HEADSCALE_PUBLIC_DERP,*') { $publicDerpOn = $true }
         if ($StorageAuth -and $StorageAuth -ne $curAuth) { throw "the hub uses -StorageAuth $curAuth; switching needs a new deployment (another -Name or -ResourceGroup)" }
         $StorageAuth = $curAuth
         # the registry pulled with the identity (identity mode)
@@ -351,17 +369,20 @@ try {
             if ($Size -and $Size -ne $curSize) { throw "the hub is $curSize; ACI can't resize a running container group: add -Recreate (data is kept)" }
             $curPanelText = if ($curPanel) { 'on' } else { 'off' }
             if ($null -ne $panelOn -and $panelOn -ne $curPanel) { throw "the panel is $curPanelText; ACI can't change the ports of a running group: add -Recreate (data is kept)" }
+            $curHeadscaleText = if ($curHeadscale) { 'on' } else { 'off' }
+            if ($null -ne $headscaleOn -and $headscaleOn -ne $curHeadscale) { throw "the Headscale sidecar is $curHeadscaleText; ACI can't add or remove containers of a running group: add -Recreate (data is kept)" }
         }
         if (-not $Image) { $Image = $curImage }
         if (-not $Size) { $Size = $curSize }
         if ($null -eq $panelOn) { $panelOn = $curPanel }
+        if ($null -eq $headscaleOn) { $headscaleOn = $curHeadscale }
         if ($f[5]) { $logsOn = $true }
         # the template sets self[,<stunServers>]; absent = a hub from before (template default)
         if (-not $StunServers) {
             if ($f[6] -eq 'self') { $StunServers = 'none' }
             elseif ($f[6] -like 'self,*') { $StunServers = $f[6].Substring(5) }
         }
-        if ($curEnv -like '*,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,*' -and -not $TailscaleSecretFile) { throw "the hub has a Tailscale OAuth secret, which can't be read back: pass -TailscaleSecretFile again" }
+        if ($curEnv -like '*,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,*' -and -not $TailscaleSecretFile -and -not $headscaleOn) { throw "the hub has a Tailscale OAuth secret, which can't be read back: pass -TailscaleSecretFile again" }
         # this start's bootstrap values must differ from the running one's (boot_id)
         if ($StorageAuth -eq 'identity') {
             $prevBoot = Get-Value (Get-BootstrapLog) 'boot_id'
@@ -404,6 +425,10 @@ try {
     if ($Acr -and $StorageAuth -ne 'identity') { throw '-Acr needs -StorageAuth identity' }
     if (-not $Size) { $Size = 'small' }
     if ($null -eq $panelOn) { $panelOn = $true }
+    $headscaleOn = [bool]$headscaleOn
+    $publicDerpOn = [bool]$publicDerpOn
+    if ($headscaleOn -and -not $panelOn) { throw '-Headscale needs the panel (Headscale is served on https://<fqdn>): drop -NoPanel' }
+    if ($headscaleOn -and $TailscaleSecretFile) { throw '-Headscale and -TailscaleSecretFile: one tailnet provider (the sidecar is the provider)' }
     if ($logsOn) { Register-Provider 'Microsoft.OperationalInsights' }
     # Application Insights on its Log Analytics workspace
     if ($telemetryOn) { Register-Provider 'Microsoft.OperationalInsights', 'Microsoft.Insights' }
@@ -473,6 +498,8 @@ try {
         storageAuth        = @{ value = $StorageAuth }
         enableTelemetry    = @{ value = [bool]$telemetryOn }
         enableDiagnostics  = @{ value = [bool]$diagnosticsOn }
+        enableHeadscale    = @{ value = $headscaleOn }
+        headscalePublicDerp = @{ value = $publicDerpOn }
     }
     if ($Acr) { $p.acrName = @{ value = $Acr } }
     if ($Image) { $p.image = @{ value = $Image } }
@@ -506,7 +533,8 @@ try {
     [System.IO.File]::WriteAllText($paramsFile, ($doc | ConvertTo-Json -Depth 5))
 
     $imageText = if ($Image) { ", $Image" } else { '' }
-    Write-Host "deploying $Name to $rg ($Location, $Size, panel $(([bool]$panelOn).ToString().ToLower()), storage auth $StorageAuth$imageText); this takes a few minutes"
+    $headscaleText = if ($headscaleOn) { ', headscale' } else { '' }
+    Write-Host "deploying $Name to $rg ($Location, $Size, panel $(([bool]$panelOn).ToString().ToLower()), storage auth $StorageAuth$headscaleText$imageText); this takes a few minutes"
     $query = '[properties.outputs.hubAddress.value, properties.outputs.fqdn.value, properties.outputs.storageAccount.value, properties.outputs.relayUdpPort.value, properties.outputs.panelUrl.value]'
     # one tab-separated line; panelUrl last (empty without the panel)
     $start = Get-Date
@@ -594,6 +622,27 @@ try {
         $panelContainer = if ($StorageAuth -eq 'identity') { 'hub' } else { 'caddy' }
         if (-not $ok) { Write-Warning "$panelUrl/healthz does not answer yet (Let's Encrypt can take a few minutes): az container logs -g $rg -n $Name --container-name $panelContainer" }
     }
+
+    # the tailnet: the hub's view of its Headscale sidecar (/healthz "headscale":
+    # ok | starting | down; the detail: longarm admin tailnet status)
+    $tailnetText = 'none (-Headscale for a self-hosted one, or -TailscaleSecretFile)'
+    if ($headscaleOn) {
+        $hs = ''
+        for ($i = 0; $i -lt 18 -and $hs -ne 'ok'; $i++) {
+            try {
+                $health = Invoke-RestMethod -UseBasicParsing -TimeoutSec 10 -Uri "$panelUrl/healthz"
+                if ($health.PSObject.Properties.Name -contains 'headscale') { $hs = [string]$health.headscale }
+            } catch {
+                $hs = ''
+            }
+            if ($hs -ne 'ok') { Start-Sleep -Seconds $script:Poll }
+        }
+        $hsText = if ($hs) { $hs } else { 'unknown' }
+        $tailnetText = "headscale ${panelUrl}: $hsText"
+        if ($hs -ne 'ok') { Write-Warning "Headscale is $hsText after 3 min: az container logs -g $rg -n $Name --container-name headscale (and --container-name hub); longarm admin tailnet status" }
+    } elseif ($TailscaleSecretFile) {
+        $tailnetText = 'tailscale (OAuth client)'
+    }
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
@@ -604,6 +653,8 @@ $cpu = 1.0; $mem = 1.5
 if ($Size -eq 'medium') { $cpu = 2.0; $mem = 3.0 }
 # Caddy (storage-auth identity: the hub serves the panel itself)
 if ($panelOn -and $StorageAuth -eq 'key') { $cpu += 0.25; $mem += 0.3 }
+# the Headscale sidecar
+if ($headscaleOn) { $cpu += 0.25; $mem += 0.3 }
 $cost = [math]::Round(730 * ($cpu * 0.0405 + $mem * 0.0045) + 1)
 
 $panelText = if ($panelUrl) { $panelUrl } else { 'off (-NoPanel)' }
@@ -613,6 +664,7 @@ longarm-hub is up.
   hub address     $hubAddr
   CA fingerprint  $fp
   panel           $panelText
+  tailnet         $tailnetText
   resource group  $rg (storage account $account, storage auth $StorageAuth)
   cost            about $cost USD/month (compute; plus egress over 100 GB/month, relay traffic counts)
 

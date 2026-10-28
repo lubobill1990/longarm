@@ -168,6 +168,13 @@ func (s *fleetServer) TailnetKey(ctx context.Context, req *pb.TailnetKeyRequest)
 	// Workers are never ephemeral: every key can become a device that stays
 	// until an admin deletes it, so their budget is tight. Clients' nodes
 	// are ephemeral by default and re-key whenever theirs was removed.
+	// a provider that can't mint yet (a Headscale sidecar still starting)
+	// costs the node no rate limit: it retries
+	if r, ok := s.h.tailnet.(interface{ Ready() error }); ok {
+		if err := r.Ready(); err != nil {
+			return nil, status.Errorf(codes.Unavailable, "%s", err)
+		}
+	}
 	lim := s.h.tailnetClientLimit
 	if c.id.Role == pki.RoleWorker {
 		lim = s.h.tailnetWorkerLimit
@@ -247,6 +254,12 @@ func (a *hubAdminServer) TailnetStatus(ctx context.Context, _ *pb.TailnetStatusR
 	}
 	if t.Provider == ProviderTailscale {
 		resp.Tailnet = t.Tailscale.Tailnet
+	}
+	if st, detail := h.headscaleHealth(); st != "" {
+		resp.ControlHealth = st
+		if detail != "" {
+			resp.ControlHealth += ": " + detail
+		}
 	}
 	h.tailnetMu.Lock()
 	var last mintFailure // the most recent of the roles' failures

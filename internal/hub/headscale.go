@@ -25,8 +25,10 @@ import (
 type headscaleClient struct {
 	cfg  HeadscaleConfig
 	base string
-	key  string
 	http *http.Client
+
+	keyMu sync.Mutex
+	key   string // "" = none yet (sidecar: the hub creates it once Headscale runs)
 
 	mu     sync.Mutex
 	userID string
@@ -37,14 +39,19 @@ func newHeadscale(cfg HeadscaleConfig) (*headscaleClient, error) {
 		return nil, nil
 	}
 	key := strings.TrimSpace(os.Getenv("LONGARM_HUB_HEADSCALE_API_KEY"))
-	if key == "" && cfg.APIKeyFile != "" {
+	if key == "" && cfg.APIKeyFile != "" && cfg.SidecarDir == "" {
 		b, err := os.ReadFile(cfg.APIKeyFile)
 		if err != nil {
 			return nil, fmt.Errorf("[tailnet.headscale] api_key_file: %w", err)
 		}
 		key = strings.TrimSpace(string(b))
 	}
-	if key == "" {
+	if cfg.SidecarDir != "" {
+		// the hub's own key from its database, checked against Headscale
+		// first (headscale_sidecar.go): a file from an earlier start may be
+		// stale
+		key = ""
+	} else if key == "" {
 		return nil, errors.New("[tailnet.headscale] needs an API key (api_key_file or LONGARM_HUB_HEADSCALE_API_KEY)")
 	}
 	base := strings.TrimSuffix(cmp.Or(cfg.APIURL, cfg.URL), "/")
@@ -56,14 +63,66 @@ func newHeadscale(cfg HeadscaleConfig) (*headscaleClient, error) {
 
 func (c *headscaleClient) Name() string { return ProviderHeadscale }
 
+func (c *headscaleClient) apiKey() string {
+	c.keyMu.Lock()
+	defer c.keyMu.Unlock()
+	return c.key
+}
+
+func (c *headscaleClient) setKey(k string) {
+	c.keyMu.Lock()
+	c.key = k
+	c.keyMu.Unlock()
+}
+
+// errHeadscaleNoKey: a sidecar hub before its API key works.
+var errHeadscaleNoKey = errors.New("headscale is starting (the hub has no working API key for it yet)")
+
+// Ready reports whether keys can be minted (TailnetKey checks it before it
+// charges a node's rate limit).
+func (c *headscaleClient) Ready() error {
+	if c.apiKey() == "" {
+		return errHeadscaleNoKey
+	}
+	return nil
+}
+
 func (c *headscaleClient) redact(s string) string {
-	if len(c.key) >= 8 {
-		s = strings.ReplaceAll(s, c.key, "[redacted]")
+	if k := c.apiKey(); len(k) >= 8 {
+		s = strings.ReplaceAll(s, k, "[redacted]")
 	}
 	return RedactKeys(s)
 }
 
+// health asks Headscale's unauthenticated /health (its database answers).
+func (c *headscaleClient) health(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/health", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("headscale: %s", c.redact(err.Error()))
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("headscale /health: %s", resp.Status)
+	}
+	return nil
+}
+
 func (c *headscaleClient) do(ctx context.Context, method, path string, body, out any) error {
+	return c.doKey(ctx, c.apiKey(), method, path, body, out)
+}
+
+// errHeadscaleUnauthorized: Headscale refused the API key (401).
+var errHeadscaleUnauthorized = errors.New("headscale refused the API key")
+
+func (c *headscaleClient) doKey(ctx context.Context, key, method, path string, body, out any) error {
+	if key == "" {
+		return errHeadscaleNoKey
+	}
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -76,14 +135,14 @@ func (c *headscaleClient) do(ctx context.Context, method, path string, body, out
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.key)
+	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("headscale: %s", c.redact(err.Error()))
+		return fmt.Errorf("headscale: %s", c.redact(strings.ReplaceAll(err.Error(), key, "[redacted]")))
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -92,7 +151,10 @@ func (c *headscaleClient) do(ctx context.Context, method, path string, body, out
 		if len(msg) > 300 {
 			msg = msg[:300]
 		}
-		return fmt.Errorf("headscale %s %s: %s: %s", method, path, resp.Status, c.redact(msg))
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("headscale %s %s: %s: %w", method, path, resp.Status, errHeadscaleUnauthorized)
+		}
+		return fmt.Errorf("headscale %s %s: %s: %s", method, path, resp.Status, c.redact(strings.ReplaceAll(msg, key, "[redacted]")))
 	}
 	if out != nil {
 		if err := json.Unmarshal(b, out); err != nil {

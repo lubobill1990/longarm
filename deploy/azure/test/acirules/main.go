@@ -8,6 +8,8 @@
 //   - a port number at most once per container and per group, whatever the
 //     protocol (DuplicateContainerPorts: 7443/tcp + 7443/udp was refused)
 //   - every port of the group's IP address is a port of some container
+//   - at most 5 ports per IP address (an ACI hard limit; the hub with its
+//     panel uses all 5, which is why the Headscale sidecar has no STUN port)
 //   - memoryInGB in steps of 0.1 GB (the 0.25 GB sidecar was refused), CPU in
 //     steps of 0.01, both > 0; the group at most 4 vCPU / 16 GB
 //   - environment variable names unique, each with value or secureValue
@@ -89,6 +91,7 @@ var notShaping = map[string]any{
 	"telemetryRetentionDays":   nil,
 	"diagnosticsRetentionDays": nil,
 	"adminCodeTtlHours":        nil,
+	"headscalePublicDerp":      true,
 }
 
 // Check evaluates the container group(s) of the template for every
@@ -312,6 +315,9 @@ func checkGroup(props any) []string {
 		if cp, ok := exposed[n]; !ok || cp != proto {
 			bad("ipAddress: port %v/%s is not a port of any container", n, proto)
 		}
+	}
+	if len(gports) > 5 {
+		bad("ipAddress: %d ports: ACI allows at most 5 ports per IP address", len(gports))
 	}
 	return out
 }

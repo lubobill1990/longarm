@@ -3,7 +3,8 @@
 #
 #   smoke    every run: build linux/amd64, run deploy/azure/test/container-smoke.sh
 #            (Azurite as Blob Storage: first-start bootstrap, an admin joins,
-#            restore after the container is replaced, health)
+#            restore after the container is replaced, health, the Headscale
+#            sidecar with a tailnet node registering through the hub)
 #   publish  push to main: linux/amd64+arm64 as :edge and :sha-<commit>;
 #            from release.yml (v* tag): :X.Y.Z (release.yml moves :latest
 #            itself once the release is published; push: false = its dry
@@ -53,10 +54,12 @@ jobs:
           cache: ${{ inputs.version == '' && 'true' || 'false' }}
       - if: inputs.version != ''
         uses: ./.github/actions/go-build-cache
-      - name: build longarm (the admin's CLI in the test)
+      - name: build longarm (the admin's CLI in the test) and tsprobe (a tailnet node)
         env:
           CGO_ENABLED: ${{ inputs.version != '' && '0' || '' }}
-        run: go build -trimpath -o "$RUNNER_TEMP/longarm" ./cmd/longarm
+        run: |
+          go build -trimpath -o "$RUNNER_TEMP/longarm" ./cmd/longarm
+          go build -trimpath -o "$RUNNER_TEMP/tsprobe" ./deploy/azure/test/tsprobe
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: build the image (linux/amd64)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -69,7 +72,7 @@ jobs:
           tags: longarm-hub:smoke
           build-args: VERSION=${{ inputs.version || format('0.0.0-ci+{0}', github.sha) }}
       - name: container smoke test
-        run: deploy/azure/test/container-smoke.sh longarm-hub:smoke "$RUNNER_TEMP/longarm"
+        run: deploy/azure/test/container-smoke.sh longarm-hub:smoke "$RUNNER_TEMP/longarm" "$RUNNER_TEMP/tsprobe"
       # what az acr build --target acr builds (deploy.sh --build-in-acr): ACR Tasks
       # can't parse the BuildKit stages, so the image has a native stage of its own
       - name: build the ACR Tasks stage (linux/amd64, --target acr)

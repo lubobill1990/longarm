@@ -7105,8 +7105,12 @@ type TailnetStatusResponse struct {
 	LastMintError     string                 `protobuf:"bytes,9,opt,name=last_mint_error,json=lastMintError,proto3" json:"last_mint_error,omitempty"`
 	LastMintErrorAt   *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=last_mint_error_at,json=lastMintErrorAt,proto3" json:"last_mint_error_at,omitempty"`
 	LastMintErrorNode string                 `protobuf:"bytes,11,opt,name=last_mint_error_node,json=lastMintErrorNode,proto3" json:"last_mint_error_node,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Headscale (provider headscale): "ok", "starting: <detail>" (a sidecar
+	// coming up) or "down: <detail>", as the hub's health check of its API
+	// sees it. Empty for other providers.
+	ControlHealth string `protobuf:"bytes,12,opt,name=control_health,json=controlHealth,proto3" json:"control_health,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TailnetStatusResponse) Reset() {
@@ -7212,6 +7216,13 @@ func (x *TailnetStatusResponse) GetLastMintErrorAt() *timestamppb.Timestamp {
 func (x *TailnetStatusResponse) GetLastMintErrorNode() string {
 	if x != nil {
 		return x.LastMintErrorNode
+	}
+	return ""
+}
+
+func (x *TailnetStatusResponse) GetControlHealth() string {
+	if x != nil {
+		return x.ControlHealth
 	}
 	return ""
 }
@@ -9855,7 +9866,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x0fkey_control_url\x18\x06 \x01(\tR\rkeyControlUrl\x12\x1d\n" +
 	"\n" +
 	"key_reason\x18\a \x01(\tR\tkeyReason\x12#\n" +
-	"\rrekey_pending\x18\b \x01(\bR\frekeyPending\"\xe8\x03\n" +
+	"\rrekey_pending\x18\b \x01(\bR\frekeyPending\"\x8f\x04\n" +
 	"\x15TailnetStatusResponse\x12\x1a\n" +
 	"\bprovider\x18\x01 \x01(\tR\bprovider\x12\x1f\n" +
 	"\vcontrol_url\x18\x02 \x01(\tR\n" +
@@ -9871,7 +9882,8 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x0flast_mint_error\x18\t \x01(\tR\rlastMintError\x12G\n" +
 	"\x12last_mint_error_at\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\x0flastMintErrorAt\x12/\n" +
-	"\x14last_mint_error_node\x18\v \x01(\tR\x11lastMintErrorNode\"\x8a\x01\n" +
+	"\x14last_mint_error_node\x18\v \x01(\tR\x11lastMintErrorNode\x12%\n" +
+	"\x0econtrol_health\x18\f \x01(\tR\rcontrolHealth\"\x8a\x01\n" +
 	"\fUpdateStatus\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12\x12\n" +
 	"\x04from\x18\x02 \x01(\tR\x04from\x12\x0e\n" +

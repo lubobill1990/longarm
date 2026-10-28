@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -74,6 +75,7 @@ type Hub struct {
 	tailnetMu                              sync.Mutex
 	tailnetIssued                          map[string]issuedKey   // enrollment -> minted key (JoinStatus polls)
 	tailnetMintErr                         map[string]mintFailure // last failed mint per role (tailnetMu)
+	hsHealth, hsHealthDetail               string                 // Headscale's state (tailnetMu; headscale_sidecar.go)
 	pending                                map[string]*pendingReq // requests relayed to workers, by request id
 	links                                  map[string]*linkEntry  // latest link report per client
 	// multi-tenancy: users, the policy version workers have to have, users
@@ -478,9 +480,22 @@ func (h *Hub) Serve(ctx context.Context) error {
 		})
 		return nil
 	}
-	var handler http.Handler
+	var handler, hsProxy http.Handler
 	if h.cfg.HTTP != "off" || h.cfg.HTTPS != "" {
 		handler = h.httpHandler()
+		if hc := h.cfg.Tailnet.Headscale; h.cfg.Tailnet.Provider == ProviderHeadscale && hc.Proxy {
+			target, err := url.Parse(hc.APIURL)
+			if err != nil {
+				mux.Close()
+				return fmt.Errorf("[tailnet.headscale] api_url: %w", err)
+			}
+			hsProxy = headscaleProxy(target, h.log.With("component", "headscale-proxy"))
+			handler = withHeadscale(handler, hsProxy)
+		}
+	}
+	if hs, ok := h.tailnet.(*headscaleClient); ok {
+		wg.Add(1)
+		go func() { defer wg.Done(); h.runHeadscale(ctx, hs) }()
 	}
 	if h.cfg.HTTP != "off" {
 		if err := serveHTTP("http", h.cfg.HTTP, &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}); err != nil {
@@ -504,7 +519,11 @@ func (h *Hub) Serve(ctx context.Context) error {
 			return err
 		}
 		if h.cfg.HTTPSRedirect != "" {
-			if err := serveHTTP("https_redirect", h.cfg.HTTPSRedirect, &http.Server{Handler: m.HTTPHandler(nil), ReadHeaderTimeout: 10 * time.Second}); err != nil {
+			var redirect http.Handler = m.HTTPHandler(nil)
+			if hsProxy != nil {
+				redirect = withHeadscaleNoise(redirect, hsProxy)
+			}
+			if err := serveHTTP("https_redirect", h.cfg.HTTPSRedirect, &http.Server{Handler: redirect, ReadHeaderTimeout: 10 * time.Second}); err != nil {
 				return err
 			}
 		}

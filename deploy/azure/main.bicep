@@ -7,8 +7,9 @@
 // end, relay TLS fallback), 7445/udp (longnet relay, QUIC) and 7446/udp (second
 // STUN port), and
 // optionally Caddy on 80/443 (Let's Encrypt) in front of the panel on
-// 127.0.0.1:7480. The SQLite database stays on the container's local disk and
-// Litestream streams it to a blob container (restored on start); CA, hub.toml,
+// 127.0.0.1:7480, and optionally a Headscale sidecar (enableHeadscale) that
+// the hub proxies on its https port (no port of its own). The SQLite
+// database stays on the container's local disk and Litestream streams it to a blob container (restored on start); CA, hub.toml,
 // server certificates, release store and bootstrap.env live on an Azure Files
 // share (storageAuth key), or the CA in the database and the release files in
 // the blob container "releases" (storageAuth identity). azuredeploy.json is
@@ -100,6 +101,15 @@ param registryUsername string = ''
 @secure()
 param registryPassword string = ''
 
+@description('Self-hosted Tailscale control plane: a Headscale sidecar in the container group (README "Headscale"). The hub serves its endpoints on https://<fqdn> (same certificate), keeps its database in the blob container "headscale" (Litestream), its private keys and API key in the hub\'s database, and mints the nodes\' tailnet keys with it ([tailnet] provider headscale). Needs enablePanel; about 9 USD/month more.')
+param enableHeadscale bool = false
+
+@description('Headscale image of the sidecar, pinned by digest: the -debug variant (its busybox shell runs the start script that waits for the hub).')
+param headscaleImage string = 'docker.io/headscale/headscale:v0.29.5-debug@sha256:162cf7e150072f677d70120fd9abaa78d55a37f6ab3944c040fb57626fefd12a'
+
+@description('Headscale: also give nodes Tailscale Inc.\'s public DERP map (relay fallback through their servers). Off: only the hub\'s embedded DERP relay, so relayed traffic stays on the hub.')
+param headscalePublicDerp bool = false
+
 @description('Optional Tailscale OAuth client secret for the hub\'s [tailnet] provider (deploy/hub/README.md "Tailnet provider").')
 @secure()
 param tailscaleOAuthSecret string = ''
@@ -150,6 +160,8 @@ var useAcr = !useKey && !empty(acrName)
 // its certificate lives in the database, Caddy's would die with the container
 var hubTls = !useKey && enablePanel
 var useDiag = enableDiagnostics && !useKey
+// Headscale lives behind the hub's (or Caddy's) https on 443
+var useHeadscale = enableHeadscale && enablePanel
 var tags = {
   'longarm-hub': name
 }
@@ -212,6 +224,15 @@ resource replicaContainer 'Microsoft.Storage/storageAccounts/blobServices/contai
 resource diagContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (useDiag) {
   parent: blobService
   name: 'diagnostics'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+// Headscale's database (Litestream, like the hub's)
+resource headscaleContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (useHeadscale) {
+  parent: blobService
+  name: 'headscale'
   properties: {
     publicAccess: 'None'
   }
@@ -326,6 +347,17 @@ resource diagRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (use
   }
 }
 
+// Storage Blob Data Contributor on the Headscale container only
+resource headscaleRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (useHeadscale && !useKey) {
+  name: guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', storage.name, 'default', 'headscale'), '${name}-id', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+  scope: headscaleContainer
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+    principalId: identity!.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // Storage Blob Data Contributor on the releases container only
 resource releasesRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!useKey) {
   name: guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', storage.name, 'default', 'releases'), '${name}-id', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
@@ -400,6 +432,16 @@ var replicaSas = useKey
       signedExpiry: sasExpiry
     }).serviceSasToken
   : ''
+// key: Headscale's replica container gets its own SAS
+var headscaleSas = useKey && useHeadscale
+  ? storage.listServiceSas('2023-05-01', {
+      canonicalizedResource: '/blob/${storage.name}/headscale'
+      signedResource: 'c'
+      signedPermission: 'racwdl'
+      signedProtocol: 'https'
+      signedExpiry: sasExpiry
+    }).serviceSasToken
+  : ''
 var probe = {
   exec: {
     command: [
@@ -420,7 +462,10 @@ var hubEnv = concat(
     { name: 'LONGARM_HUB_BOOTSTRAP_TTL', value: '${adminCodeTtlHours}h' }
     { name: 'LONGARM_HUB_RELAY_UDP', value: ':${relayUdpPort}' }
     { name: 'LONGARM_HUB_RELAY_STUN2', value: ':${relayUdpPort + 1}' }
-    { name: 'LONGARM_HUB_LITESTREAM_CONFIG', value: '/etc/longarm-hub/litestream-abs.yml' }
+    {
+      name: 'LONGARM_HUB_LITESTREAM_CONFIG'
+      value: useHeadscale ? '/etc/longarm-hub/litestream-abs-headscale.yml' : '/etc/longarm-hub/litestream-abs.yml'
+    }
     { name: 'LONGARM_HUB_BLOB_ACCOUNT', value: storage.name }
     { name: 'LONGARM_HUB_BLOB_CONTAINER', value: replicaContainer.name }
     // this cloud's blob endpoint (public, China, Government)
@@ -453,6 +498,22 @@ var hubEnv = concat(
       )
     : [],
   empty(tailscaleOAuthSecret) ? [] : [{ name: 'LONGARM_HUB_TAILSCALE_OAUTH_SECRET', secureValue: tailscaleOAuthSecret }],
+  // the sidecar: [tailnet] provider headscale; the hub proxies it on https
+  // and sets it up in the shared directory (internal/hub/headscale_sidecar.go)
+  useHeadscale
+    ? concat(
+        [
+          { name: 'LONGARM_HUB_TAILNET_PROVIDER', value: 'headscale' }
+          { name: 'LONGARM_HUB_HEADSCALE_URL', value: 'https://${fqdn}' }
+          { name: 'LONGARM_HUB_HEADSCALE_API_URL', value: 'http://127.0.0.1:8080' }
+          { name: 'LONGARM_HUB_HEADSCALE_API_KEY_FILE', value: '/var/lib/longarm-hub/headscale-api.key' }
+          { name: 'LONGARM_HUB_HEADSCALE_DIR', value: '/headscale' }
+          { name: 'LONGARM_HUB_HEADSCALE_BLOB_CONTAINER', value: 'headscale' }
+        ],
+        headscalePublicDerp ? [{ name: 'LONGARM_HUB_HEADSCALE_PUBLIC_DERP', value: '1' }] : [],
+        useKey ? [{ name: 'LONGARM_HUB_HEADSCALE_SAS_TOKEN', secureValue: headscaleSas }] : []
+      )
+    : [],
   empty(entraTenantId)
     ? []
     : concat(
@@ -492,7 +553,10 @@ var hubContainer = {
     ports: hubTls ? concat(hubPorts, panelPorts) : hubPorts
     environmentVariables: hubEnv
     // identity: /data is the image's own directory (owned by nonroot)
-    volumeMounts: useKey ? [{ name: 'state', mountPath: '/data' }] : []
+    volumeMounts: concat(
+      useKey ? [{ name: 'state', mountPath: '/data' }] : [],
+      useHeadscale ? [{ name: 'headscale', mountPath: '/headscale' }] : []
+    )
     // restore + bootstrap run before the hub listens
     livenessProbe: union(probe, { initialDelaySeconds: 180, periodSeconds: 30, timeoutSeconds: 10, failureThreshold: 4 })
     readinessProbe: union(probe, { initialDelaySeconds: 5, periodSeconds: 10, timeoutSeconds: 10, failureThreshold: 3 })
@@ -527,6 +591,46 @@ var caddyContainer = {
     ]
   }
 }
+
+// Headscale (the -debug image: busybox) hands the shared directory to the
+// hub's user, waits until the hub has restored its database and written its
+// config and keys there, then serves on 127.0.0.1:8080 only
+var headscaleScript = '''
+set -e
+d=/headscale
+chown 65532:65532 "$d"
+chmod 0750 "$d"
+echo "headscale: waiting for longarm-hub to prepare $d"
+until [ -f "$d/ready" ]; do sleep 1; done
+exec /ko-app/headscale serve --config "$d/config.yaml"
+'''
+var headscaleSidecar = {
+  name: 'headscale'
+  properties: {
+    image: headscaleImage
+    command: [
+      '/busybox/sh'
+      '-c'
+      headscaleScript
+    ]
+    resources: {
+      requests: {
+        cpu: json('0.25')
+        memoryInGB: json('0.3')
+      }
+    }
+    // no ports: the hub proxies it (127.0.0.1:8080) on 443
+    volumeMounts: [
+      { name: 'headscale', mountPath: '/headscale' }
+    ]
+  }
+}
+var headscaleVolumes = [
+  {
+    name: 'headscale'
+    emptyDir: {}
+  }
+]
 
 var baseVolumes = !useKey ? [] : [
   {
@@ -574,6 +678,7 @@ resource group 'Microsoft.ContainerInstance/containerGroups@2025-09-01' = {
   dependsOn: [
     caddyShare
     replicaRole
+    headscaleRole
     acrRole
     diagRole
     releasesRole
@@ -583,7 +688,7 @@ resource group 'Microsoft.ContainerInstance/containerGroups@2025-09-01' = {
     osType: 'Linux'
     sku: 'Standard'
     restartPolicy: 'Always'
-    containers: enablePanel && useKey ? [hubContainer, caddyContainer] : [hubContainer]
+    containers: concat([hubContainer], enablePanel && useKey ? [caddyContainer] : [], useHeadscale ? [headscaleSidecar] : [])
     imageRegistryCredentials: useAcr ? [
       {
         server: acr!.properties.loginServer
@@ -601,7 +706,7 @@ resource group 'Microsoft.ContainerInstance/containerGroups@2025-09-01' = {
       dnsNameLabel: name
       ports: enablePanel ? concat(hubPorts, panelPorts) : hubPorts
     }
-    volumes: enablePanel && useKey ? concat(baseVolumes, panelVolumes) : baseVolumes
+    volumes: concat(baseVolumes, enablePanel && useKey ? panelVolumes : [], useHeadscale ? headscaleVolumes : [])
     diagnostics: enableLogAnalytics ? {
       logAnalytics: {
         workspaceId: logs!.properties.customerId
@@ -627,5 +732,7 @@ output identityPrincipalId string = useKey ? '' : identity!.properties.principal
 output appInsights string = enableTelemetry ? appInsights.name : ''
 @description('storageAuth identity: blob URL of the release files container (empty with key: they are on the state share).')
 output releasesUrl string = useKey ? '' : '${storage.properties.primaryEndpoints.blob}releases'
+@description('Headscale control URL (tsnet ControlURL) the nodes get from the hub (empty without the sidecar).')
+output headscaleUrl string = useHeadscale ? 'https://${fqdn}' : ''
 @description('Blob URL of the diagnostics container (empty without it).')
 output diagnosticsUrl string = useDiag ? '${storage.properties.primaryEndpoints.blob}diagnostics' : ''

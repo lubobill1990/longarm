@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# container-smoke.sh <image> <longarm binary>
+# container-smoke.sh <image> <longarm binary> [<tsprobe binary>]
 # The longarm-hub image as deploy/azure runs it, with Azurite standing in for
 # Blob Storage and a docker volume for the Azure Files share (CI:
 # .github/workflows/image.yml; needs docker and the Azure CLI):
@@ -12,11 +12,19 @@
 #      a published release is still served after the container is replaced
 #      (the files in [releases] blob_url - a docker volume as file:// here,
 #      as Azurite has no Entra tokens - and the CA in the database)
-#   4. a replica that can't be read stops the start
+#   4. the Headscale sidecar (main.bicep enableHeadscale: its image and start
+#      script from azuredeploy.json): the hub restores its database, writes
+#      its config and keys, creates its API key over the socket, proxies
+#      /key and /ts2021; a tsnet node (tsprobe) registers through the hub
+#      with a key the hub minted; after both containers and the shared
+#      volume are replaced, Headscale's nodes, Noise key and API key survive
+#   5. a replica that can't be read stops the start
 set -euo pipefail
 
-image=${1:?usage: container-smoke.sh <image> <longarm binary>}
-longarm=${2:?usage: container-smoke.sh <image> <longarm binary>}
+image=${1:?usage: container-smoke.sh <image> <longarm binary> [<tsprobe binary>]}
+longarm=${2:?usage: container-smoke.sh <image> <longarm binary> [<tsprobe binary>]}
+tsprobe=${3:-}
+template=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/azuredeploy.json
 azurite_image=mcr.microsoft.com/azure-storage/azurite:3.37.0@sha256:830430c1da1a2d537e08f3e6764dd1f5ae00cf0346bcaf625b968ec3f0971fd5
 p=lasmoke$$
 # Azurite's well-known development account (public, documented by Microsoft)
@@ -28,7 +36,7 @@ work=$(mktemp -d)
 cleanup() {
 	rc=$?
 	if [[ $rc -ne 0 ]]; then
-		for c in "$p-hub" "$p-hub2" "$p-hub3" "$p-id" "$p-id2"; do
+		for c in "$p-hub" "$p-hub2" "$p-hub3" "$p-id" "$p-id2" "$p-hsh" "$p-hs" "$p-hsh2" "$p-hs2"; do
 			if docker inspect "$c" >/dev/null 2>&1; then
 				echo "::group::docker logs $c"
 				docker logs "$c" 2>&1 | tail -n 200
@@ -36,8 +44,8 @@ cleanup() {
 			fi
 		done
 	fi
-	docker rm -f "$p-hub" "$p-hub2" "$p-hub3" "$p-id" "$p-id2" "$p-https" "$p-azurite" >/dev/null 2>&1 || true
-	docker volume rm "$p-share" "$p-rel" >/dev/null 2>&1 || true
+	docker rm -f "$p-hub" "$p-hub2" "$p-hub3" "$p-id" "$p-id2" "$p-https" "$p-hs" "$p-hs2" "$p-hsh" "$p-hsh2" "$p-azurite" >/dev/null 2>&1 || true
+	docker volume rm "$p-share" "$p-rel" "$p-hsshare" "$p-hsvol" "$p-hsvol2" >/dev/null 2>&1 || true
 	docker network rm "$p" >/dev/null 2>&1 || true
 	rm -rf "$work"
 	exit "$rc"
@@ -219,6 +227,115 @@ script=$(curl -fsS http://127.0.0.1:7480/install.sh) || fail "install.sh"
 grep -qF "VERSION='0.0.1'" <<<"$script" || fail "install.sh doesn't hand out 0.0.1"
 logs_have "$p-id2" "RELEASE FILES MISSING" && fail "the replaced hub reports missing release files"
 docker rm -f "$p-id2" >/dev/null
+hub_mount=(-v "$p-share:/data")
+hub_replica=litestream
+hub_sas=$sas
+
+step "headscale sidecar"
+# the template's image and start script (variables.headscaleScript)
+hs_image=$(jq -r '.parameters.headscaleImage.defaultValue' "$template")
+hs_script=$(jq -r '.variables.headscaleScript' "$template")
+[[ $hs_image == *@sha256:* && $hs_script == *ready* ]] || fail "headscale image / script not in $template"
+az storage container create -n litestream-hs --connection-string "$conn" -o none
+az storage container create -n headscale --connection-string "$conn" -o none
+sas_for() {
+	az storage container generate-sas -n "$1" --connection-string "$conn" --permissions racwdl \
+		--expiry "$(date -u -d '+1 day' +%Y-%m-%dT%H:%MZ)" -o tsv
+}
+hub_sas=$(sas_for litestream-hs)
+hs_sas=$(sas_for headscale)
+docker volume create "$p-hsshare" >/dev/null
+hub_mount=(-v "$p-hsshare:/data")
+hub_replica=litestream-hs
+# hs_run HUB SIDECAR VOLUME: the hub (with the panel on 7480, the template's
+# environment) and the sidecar in its network namespace, sharing VOLUME
+hs_run() {
+	hub_run "$1" -p 127.0.0.1:7480:7480 -e LONGARM_HUB_HTTP=:7480 -v "$3:/headscale" \
+		-e LONGARM_HUB_LITESTREAM_CONFIG=/etc/longarm-hub/litestream-abs-headscale.yml \
+		-e LONGARM_HUB_TAILNET_PROVIDER=headscale \
+		-e LONGARM_HUB_HEADSCALE_URL=http://127.0.0.1:7480 \
+		-e LONGARM_HUB_HEADSCALE_API_URL=http://127.0.0.1:8080 \
+		-e LONGARM_HUB_HEADSCALE_API_KEY_FILE=/var/lib/longarm-hub/headscale-api.key \
+		-e LONGARM_HUB_HEADSCALE_DIR=/headscale \
+		-e LONGARM_HUB_HEADSCALE_BLOB_CONTAINER=headscale \
+		-e LONGARM_HUB_HEADSCALE_SAS_TOKEN="$hs_sas"
+	docker run -d --name "$2" --network "container:$1" -v "$3:/headscale" \
+		--entrypoint /busybox/sh "$hs_image" -c "$hs_script" >/dev/null
+}
+hs_ok() {
+	local h=''
+	for _ in $(seq 1 90); do
+		h=$(curl -fsS -m 5 http://127.0.0.1:7480/healthz 2>/dev/null || true)
+		# /healthz is indented JSON
+		[[ $(tr -d ' \n' <<<"$h") != *'"headscale":"ok"'* ]] || return 0
+		sleep 1
+	done
+	fail "headscale not ok via the hub: $h"
+}
+hs() { docker exec "$1" /ko-app/headscale --config /headscale/config.yaml "${@:2}"; }
+docker volume create "$p-hsvol" >/dev/null
+hs_run "$p-hsh" "$p-hs" "$p-hsvol"
+wait_healthy "$p-hsh"
+hs_ok
+logs_have "$p-hsh" "headscale: new API key" || fail "the hub created no API key"
+# no secret in the logs or the environment
+hskey=$(docker cp "$p-hsh:/var/lib/longarm-hub/headscale-api.key" - | tar -xO)
+[[ $hskey == hskey-api-* ]] || fail "api key file"
+logs_have "$p-hsh" "$hskey" && fail "the API key is in the hub's log"
+logs_have "$p-hs" "$hskey" && fail "the API key is in headscale's log"
+[[ $(hs "$p-hs" apikeys list -o json | jq length) == 1 ]] || fail "not one API key: $(hs "$p-hs" apikeys list)"
+# the proxy: Headscale's /key through the hub, its API not
+key1=$(curl -fsS 'http://127.0.0.1:7480/key?v=130')
+[[ $key1 == *'"publicKey":"mkey:'* ]] || fail "/key through the hub: $key1"
+code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $hskey" http://127.0.0.1:7480/api/v1/apikey)
+[[ $code != 200 && $code != 401 ]] || fail "Headscale's API is reachable through the hub ($code)"
+derp=$(curl -s -o /dev/null -w '%{http_code}' --http1.1 -m 5 -H 'Connection: Upgrade' -H 'Upgrade: DERP' http://127.0.0.1:7480/derp || true)
+[[ $derp == 101 ]] || fail "DERP upgrade through the hub: $derp"
+fph=$(bootstrap "$p-hsh" ca_fingerprint)
+hcode=$(bootfile "$p-hsh" admin_join_code)
+lah() { LONGARM_CONFIG_DIR=$work/laptop-hs "$longarm" "$@"; }
+lah join 127.0.0.1:7443 "$hcode" --ca-fingerprint "$fph" --name ci-admin
+st=$(lah admin tailnet status)
+[[ $st == *"provider  headscale"* && $st == *"health    ok"* ]] || fail "tailnet status: $st"
+if [[ -n $tsprobe ]]; then
+	# a node registers through the hub's proxy (/key, /ts2021) with a key the
+	# hub minted. It stays up (an ephemeral client node is deleted when it
+	# logs out) and is killed, which leaves it registered for the restore check
+	"$tsprobe" -config-dir "$work/laptop-hs" -hub 127.0.0.1:7443 -hold 10m >"$work/tsprobe.log" 2>&1 &
+	probe=$!
+	for _ in $(seq 1 90); do
+		grep -q '^tsprobe: up' "$work/tsprobe.log" && break
+		kill -0 "$probe" 2>/dev/null || fail "tsprobe: $(cat "$work/tsprobe.log")"
+		sleep 1
+	done
+	grep -q '^tsprobe: up' "$work/tsprobe.log" || fail "tsprobe not up: $(tail -n 20 "$work/tsprobe.log")"
+	nodes=$(hs "$p-hs" nodes list -o json)
+	[[ $(jq length <<<"$nodes") -ge 1 && $nodes == *tag:longarm-client* ]] || fail "headscale nodes: $nodes"
+	kill "$probe"
+	wait "$probe" || true
+	sleep 3 # Litestream ships Headscale's WAL every second
+fi
+
+step "headscale sidecar: both containers and the shared volume replaced"
+docker stop -t 60 "$p-hsh" >/dev/null
+docker rm -f "$p-hs" >/dev/null
+docker rm "$p-hsh" >/dev/null
+[[ $(az storage blob list -c headscale --connection-string "$conn" --query "length(@)" -o tsv) -gt 0 ]] ||
+	fail "no Headscale replica in blob storage"
+docker volume create "$p-hsvol2" >/dev/null
+hs_run "$p-hsh2" "$p-hs2" "$p-hsvol2"
+wait_healthy "$p-hsh2"
+hs_ok
+logs_have "$p-hsh2" "headscale: new API key" && fail "a new API key after the replacement"
+logs_have "$p-hsh2" "headscale: new private key" && fail "new private keys after the replacement"
+[[ $(curl -fsS 'http://127.0.0.1:7480/key?v=130') == "$key1" ]] || fail "Headscale's Noise key changed"
+[[ $(hs "$p-hs2" apikeys list -o json | jq length) == 1 ]] || fail "API keys after the replacement: $(hs "$p-hs2" apikeys list)"
+if [[ -n $tsprobe ]]; then
+	nodes2=$(hs "$p-hs2" nodes list -o json)
+	[[ $nodes2 == *tag:longarm-client* ]] || fail "Headscale lost its nodes: $nodes2"
+	"$tsprobe" -config-dir "$work/laptop-hs" -hub 127.0.0.1:7443 || fail "tsprobe after the replacement"
+fi
+docker rm -f "$p-hsh2" "$p-hs2" >/dev/null
 hub_mount=(-v "$p-share:/data")
 hub_replica=litestream
 hub_sas=$sas

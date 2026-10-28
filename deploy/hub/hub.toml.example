@@ -72,6 +72,9 @@ oauth_secret_file = "/etc/longarm-hub/tailscale-oauth.secret"   # root:longarm-h
 # api_url = "http://127.0.0.1:8080"      # where the hub reaches the REST API (default: url)
 # api_key_file = "/etc/longarm-hub/headscale-api.key"   # or env LONGARM_HUB_HEADSCALE_API_KEY
 # user = ""                              # Headscale < 0.28: keys need a user
+# proxy = false                          # serve Headscale's node endpoints (/ts2021, /key, /derp...) on the hub's https
+# sidecar_dir = ""                       # a Headscale container sharing this dir: the hub sets it up (deploy/azure --headscale)
+# public_derp = false                    # sidecar: also Tailscale's public DERP map
 
 # Telemetry (docs/telemetry.md): scrubbed errors, crashes, request counts and
 # durations of the hub and its nodes, forwarded to Azure Application Insights.
