@@ -75,12 +75,12 @@ advertise = ["longnet://%s?name=wa"]
 	}
 
 	// longarm ls (direct probes): the relayed path gets the note on stderr.
-	r = h.longarmWith(env, h.client, "ls", "--direct")
+	r = h.longarmWith(env, h.client, "ls", "--direct", "-o", "wide")
 	if r.code != 0 || !strings.Contains(r.stdout, "longnet/relay") || !strings.Contains(r.stderr, "warning: relayed to wa") || !strings.Contains(r.stderr, fix) {
 		t.Fatalf("longarm ls --direct: %+v", r)
 	}
 	// Without a firewall to check (not Windows, no fake rules): no note.
-	r = h.longarm(h.client, "ls", "--direct")
+	r = h.longarm(h.client, "ls", "--direct", "-o", "wide")
 	if strings.Contains(r.stderr, "warning: relayed") && runtime.GOOS != "windows" {
 		t.Fatalf("longarm ls without a firewall problem: %+v", r)
 	}

@@ -52,7 +52,7 @@ func TestHubDownFast(t *testing.T) {
 		}
 		return result{out.String(), errb.String(), code}, took
 	}
-	if r, _ := longarm(nil, "ls"); r.code != 0 || !strings.Contains(r.stdout, "wa ") || !strings.Contains(r.stdout, "hub") {
+	if r, _ := longarm(nil, "ls", "-o", "wide"); r.code != 0 || !strings.Contains(r.stdout, "wa ") || !strings.Contains(r.stdout, "hub") {
 		t.Fatalf("longarm ls with the hub: %+v", r)
 	}
 	// Prefer the longnet leg so a hanging relay would hold every dial up.
@@ -126,7 +126,7 @@ func TestHubDownFast(t *testing.T) {
 	took := attempts(within(lsBase, 3*time.Second), func() time.Duration {
 		os.Remove(filepath.Join(h.client, "hub-state.json")) // a first contact each time
 		var d time.Duration
-		r, d = longarm(nil, "ls")
+		r, d = longarm(nil, "ls", "-o", "wide")
 		t.Logf("longarm ls, hub black-holed: %s", d)
 		if r.code != 0 || !strings.Contains(r.stdout, "wa ") || !strings.Contains(r.stdout, "tcp/") || !strings.Contains(r.stderr, "unreachable") {
 			t.Fatalf("longarm ls with the hub down: %+v", r)
@@ -176,7 +176,7 @@ func TestHubDownFast(t *testing.T) {
 	h.startHub(t) // (clears hub-state.json for the other tests: put it back)
 	os.WriteFile(filepath.Join(h.client, "hub-state.json"), state, 0o600)
 	h.waitNode(t, "wa", "online again", func(n map[string]any) bool { return isTrue(n["online"]) })
-	r, _ = longarm([]string{"LONGARM_HUB_RETRY_AFTER=0s"}, "ls")
+	r, _ = longarm([]string{"LONGARM_HUB_RETRY_AFTER=0s"}, "ls", "-o", "wide")
 	if r.code != 0 || !strings.Contains(r.stdout, "hub") || strings.Contains(r.stderr, "unreachable") {
 		t.Fatalf("longarm ls with the hub back: %+v", r)
 	}

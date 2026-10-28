@@ -17,6 +17,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
+	"github.com/lubobill1990/longarm/internal/machine"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -96,8 +97,9 @@ you are logged on; no password), elsewhere longarmd service install.`,
 				}
 				tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 				fmt.Fprintln(tw, "WORKER\tKIND\tOWNER\tSHARED WITH\tSTATE\tJOBS\tCPU%\tMEM GB")
+				now := time.Now()
 				for _, kind := range []string{"mine", "shared", "fleet"} {
-					for _, n := range resp.Nodes {
+					for _, n := range machineOrder(resp.Nodes) {
 						if workerKind(n, me.User) != kind {
 							continue
 						}
@@ -105,6 +107,7 @@ you are logged on; no password), elsewhere longarmd service install.`,
 						if st == "approved" {
 							st = map[bool]string{true: "online", false: "offline"}[n.Online]
 						}
+						st = lsState(lsRow{state: st, node: n}, now) // as longarm ls: "offline 3d"
 						cpu, mem := "-", "-"
 						if m := n.Metrics; m != nil && n.Online {
 							cpu = fmt.Sprintf("%.1f", m.CpuPercent)
@@ -257,6 +260,29 @@ func sharesString(s *pb.WorkerShares) string {
 		return "-"
 	}
 	return strings.Join(parts, ",")
+}
+
+// machineOrder puts each admin worker right after its session worker (the
+// same machine, package machine); the rest keeps its order.
+func machineOrder(nodes []*pb.NodeInfo) []*pb.NodeInfo {
+	pairs := machine.Pairs(nodes) // admin -> session
+	adminOf := map[string]*pb.NodeInfo{}
+	for _, n := range nodes {
+		if s, ok := pairs[n.Name]; ok {
+			adminOf[s] = n
+		}
+	}
+	out := make([]*pb.NodeInfo, 0, len(nodes))
+	for _, n := range nodes {
+		if _, ok := pairs[n.Name]; ok {
+			continue
+		}
+		out = append(out, n)
+		if a := adminOf[n.Name]; a != nil {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 func dash(s string) string {

@@ -101,6 +101,9 @@ func (c *Controller) Apply(v *pb.PoolView, now time.Time) {
 	c.mu.Unlock()
 	c.shell.SetIcon(IconPNG(IconWorkers(v)))
 	c.shell.SetTooltip(Tooltip(v))
+	if LoadPrefs(c.opts.LongarmConfigDir).MuteWorkers { // Settings: the state is still followed
+		return
+	}
 	for _, n := range notes {
 		c.shell.Notify(n.Title, n.Body)
 	}
@@ -119,6 +122,9 @@ func (c *Controller) jobsLoop(ctx context.Context, addrFile string) {
 				c.mu.Lock()
 				notes := c.rules.Jobs(r.Jobs)
 				c.mu.Unlock()
+				if LoadPrefs(c.opts.LongarmConfigDir).MuteJobs {
+					notes = nil
+				}
 				for _, n := range notes {
 					c.shell.Notify(n.Title, n.Body)
 				}

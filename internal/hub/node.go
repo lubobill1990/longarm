@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/machine"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -418,6 +419,13 @@ func (h *Hub) nodeInfoLocked(n *node) *pb.NodeInfo {
 		info.User = nodeUser(r)
 	} else {
 		info.Owner, info.Shares = r.Owner, sharesPB(r.Shares)
+		info.Machine = r.Name
+		if c := h.companionLocked(n); c != nil {
+			info.Companion = c.rec.Name
+			if r.Admin {
+				info.Machine = c.rec.Name // the session worker names the machine
+			}
+		}
 	}
 	switch {
 	case r.AdminDrain:
@@ -430,6 +438,35 @@ func (h *Hub) nodeInfoLocked(n *node) *pb.NodeInfo {
 	}
 	info.JobsActive, info.ReservedGb = h.loadLocked(r.Name)
 	return info
+}
+
+// companionLocked is the other worker on n's machine (package machine):
+// the recorded companion, else <name>-admin / <name without -admin> with
+// the same owner and host name; nil = none.
+func (h *Hub) companionLocked(n *node) *node {
+	w := machineWorker(n.rec)
+	c := h.nodes[machine.Candidate(w)]
+	if c == nil || c == n {
+		return nil
+	}
+	cw := machineWorker(c.rec)
+	if w.Admin {
+		if !machine.Match(cw, w) {
+			return nil
+		}
+	} else if !machine.Match(w, cw) {
+		return nil
+	}
+	// a stale record on the other side (it names someone else) doesn't pair
+	if cw.Companion != "" && cw.Companion != w.Name {
+		return nil
+	}
+	return c
+}
+
+func machineWorker(r *store.Node) machine.Worker {
+	return machine.Worker{Name: r.Name, Owner: r.Owner, Hostname: r.Hostname, Admin: r.Admin, Companion: r.Companion,
+		Revoked: r.State == stateRevoked, Worker: r.Role == string(pki.RoleWorker)}
 }
 
 // loadLocked returns the active jobs and reserved memory of a worker.

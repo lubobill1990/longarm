@@ -73,6 +73,10 @@ export interface NodeInfo {
   owner?: string // workers: the user who registered it ("" = shared fleet worker)
   /** an admin worker: runs commands as SYSTEM on its machine; owner-only, never shared, never placed */
   admin_worker?: boolean
+  /** workers: the machine it runs on (a session worker and its admin worker share the session worker's name) */
+  machine?: string
+  /** workers: the other worker on the same machine (session <-> admin worker), if any */
+  companion?: string
 }
 
 export type JobState =
@@ -237,6 +241,7 @@ export interface PoolView {
   transport?: string // transport policy (longarm transport)
   identity?: string
   firewall?: FirewallStatus // the daemon's longarm.exe (Windows only)
+  user?: string // the Longarm user this client acts as (newer daemons)
 }
 
 /** Windows Firewall verdict for longarm.exe / longarmd.exe (unset outside Windows). */

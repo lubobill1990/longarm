@@ -255,6 +255,11 @@ type Node struct {
 	// at enrollment only; it shows as the label longarm.io/admin=true and
 	// makes the worker owner-only (never shared) and never placed.
 	Admin bool `json:"admin_worker,omitempty"`
+	// Companion: the other worker on the same machine, recorded on both when
+	// a sign-in enrolls a session worker and its admin worker together (or
+	// an admin worker next to the owner's worker on the same host). Shown
+	// as NodeInfo.companion / machine; package machine checks it still fits.
+	Companion string `json:"companion,omitempty"`
 }
 
 // WorkerShares: who besides its owner may use a worker.

@@ -3,7 +3,8 @@ import { longarmApi, trayApi, type TrayInfo } from '../api/local'
 import type { PoolView } from '../api/types'
 import { ErrorBox, FirewallWarning, Toasts, useAction } from '../components/common'
 import { ClientJobs, Forwards, Settings } from './ClientTab'
-import { PoolTab } from './PoolTab'
+import { PoolTab, SourceBar, useNow } from './PoolTab'
+import { poolMachines } from '../lib/machines'
 import { WorkerTab } from './WorkerTab'
 import { AccountTab } from './AccountTab'
 import { wailsMessage } from '../lib/wails'
@@ -74,18 +75,25 @@ export function TrayApp() {
   const asked = new URLSearchParams(location.search).has('tab')
   const want = needSignIn && !asked && tab === 'pool' ? 'account' : tab
   const cur = tabs.some(([t]) => t === want) ? want : (tabs[0]?.[0] ?? 'pool')
-  const online = (pool?.workers ?? []).filter((w) => w.state === 'online').length
+  const now = useNow()
+  // machines, not workers: a session worker and its admin worker count once
+  const machines = poolMachines(pool?.workers ?? [], now)
+  const online = machines.active.filter((m) => m.state === 'online').length
   return (
     <Toasts>
       <ContextMenu />
       <div className="tray">
-        <TitleBar info={info} online={online} total={pool?.workers?.length ?? 0} />
-        <div className="tabs" role="tablist">
-          {tabs.map(([t, label]) => (
-            <button key={t} role="tab" aria-selected={cur === t} className={cur === t ? 'active' : ''} onClick={() => setTab(t)}>
-              {label}
-            </button>
-          ))}
+        {/* fixed: title, tabs and the pool's source line; only .body scrolls */}
+        <div className="tray-head" data-testid="tray-head">
+          <TitleBar info={info} online={online} total={machines.active.length + machines.offline.length} />
+          <div className="tabs" role="tablist">
+            {tabs.map(([t, label]) => (
+              <button key={t} role="tab" aria-selected={cur === t} className={cur === t ? 'active' : ''} onClick={() => setTab(t)}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {cur === 'pool' && pool && <SourceBar pool={pool} now={now} />}
         </div>
         <div className="body">
           <ErrorBox error={infoErr} />
@@ -99,11 +107,11 @@ export function TrayApp() {
           )}
           {info && info.roles.client && !info.client.running && cur !== 'worker' && cur !== 'account' && !needSignIn && <DaemonDown info={info} />}
           {cur !== 'worker' && <ClientFirewall pool={pool} />}
-          {cur === 'pool' && <PoolTab pool={pool} error={poolErr} info={info} />}
+          {cur === 'pool' && <PoolTab pool={pool} error={poolErr} info={info} onNavigate={(t) => setTab(t as Tab)} />}
           {cur === 'jobs' && clientUp && <ClientJobs />}
           {cur === 'forwards' && clientUp && <Forwards workers={(pool?.workers ?? []).map((w) => w.name)} />}
-          {cur === 'settings' && clientUp && <Settings pool={pool} />}
-          {cur === 'worker' && info && <WorkerTab info={info} />}
+          {cur === 'settings' && <Settings pool={pool} clientUp={clientUp} />}
+          {cur === 'worker' && info && <WorkerTab info={info} onNavigate={(t) => setTab(t as Tab)} />}
           {cur === 'account' && info && <AccountTab info={info} onChange={() => setReload((n) => n + 1)} />}
         </div>
       </div>

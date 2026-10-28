@@ -122,10 +122,10 @@ advertise = ["tcp://%s", "longnet://%s?name=wa"]
 		t.Fatalf("transport-cache.json: %s", cache)
 	}
 	// longarm ls via the hub shows the last winning leg; --direct races again.
-	if ls := h.mustLongarm(h.client, "ls"); !strings.Contains(ls, "last longnet/") {
+	if ls := h.mustLongarm(h.client, "ls", "-o", "wide"); !strings.Contains(ls, "last longnet/") {
 		t.Fatalf("longarm ls:\n%s", ls)
 	}
-	if ls := h.mustLongarm(h.client, "ls", "--direct"); !strings.Contains(ls, "longnet/") || !strings.Contains(ls, "won") {
+	if ls := h.mustLongarm(h.client, "ls", "--direct", "-o", "wide"); !strings.Contains(ls, "longnet/") || !strings.Contains(ls, "won") {
 		t.Fatalf("longarm ls --direct:\n%s", ls)
 	}
 	// The hub's relay answers STUN on a second port (relay_stun2 = auto,
