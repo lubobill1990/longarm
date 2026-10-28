@@ -115,6 +115,11 @@ func (h *Hub) SetLabels(by, name string, labels map[string]string) (*pb.NodeInfo
 		if err := sched.ValidateLabels(labels, true); err != nil {
 			return status.Error(codes.InvalidArgument, err.Error())
 		}
+		// longarm.io/... (the admin worker mark) is the hub's: nobody sets
+		// or removes it, admins included
+		if err := sched.CheckUserLabels(labels); err != nil {
+			return status.Error(codes.PermissionDenied, err.Error())
+		}
 		for k, v := range labels {
 			if v == "" {
 				delete(m, k)

@@ -39,6 +39,11 @@ import (
 // (a machine that is both: `longarmd login --role both`, the installers'
 // --role both, the tray) carries two CSRs - the client's key and
 // longarmd's - and one approval enrolls both; the page lists both.
+// Any kind may carry an admin worker's CSR as well (admin_worker_csr_pem:
+// Windows' ADMIN_WORKER, a longarmd running as LocalSystem): the same
+// approval enrolls it as the approver's admin worker (store.Node.Admin,
+// label longarm.io/admin=true: owner-only, never shared, never placed),
+// and the page says in so many words that it runs commands as SYSTEM.
 //
 // The code is only ever typed, never part of a link: a link that pre-fills
 // a code is what a phisher would send. Codes are 8 characters (20^8), live
@@ -56,6 +61,8 @@ const (
 	// linkBoth: a client device and an owned worker of the same machine
 	// (two CSRs: longarm's key and longarmd's), one code, one approval
 	linkBoth = "both"
+	// linkAdmin: an admin worker alone (csr_pem is its CSR)
+	linkAdmin = "admin"
 
 	pairingTTL    = 10 * time.Minute
 	linkInterval  = 5 * time.Second
@@ -103,10 +110,15 @@ type pairLink struct {
 	workerName, workerKeyID string
 	workerSerial            string
 	workerLabels            map[string]string // kind worker / both
+	// admin worker (any kind): its CSR, requested name and node key
+	admin                 bool
+	adminCSR              []byte
+	adminName, adminKeyID string
+	adminSerial           string
 }
 
 // drop forgets the CSRs (decided or expired).
-func (l *pairLink) drop() { l.csr, l.workerCSR = nil, nil }
+func (l *pairLink) drop() { l.csr, l.workerCSR, l.adminCSR = nil, nil, nil }
 
 func (l *pairLink) fields() map[string]any {
 	f := map[string]any{"id": l.id, "kind": l.kind, "name": l.name, "hostname": l.hostname, "ip": l.ip,
@@ -116,6 +128,9 @@ func (l *pairLink) fields() map[string]any {
 	}
 	if len(l.workerLabels) > 0 {
 		f["worker_labels"] = l.workerLabels
+	}
+	if l.admin {
+		f["admin_worker"], f["admin_worker_name"], f["admin_worker_node_key"] = true, l.adminName, l.adminKeyID
 	}
 	return f
 }
@@ -257,8 +272,11 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 	if !h.joinLimit.allow(c.addr) {
 		return nil, status.Error(codes.ResourceExhausted, "too many join attempts; wait a minute")
 	}
-	if req.Kind != linkClient && req.Kind != linkWorker && req.Kind != linkBoth {
-		return nil, status.Errorf(codes.InvalidArgument, "kind %q: want client, worker or both", req.Kind)
+	if req.Kind != linkClient && req.Kind != linkWorker && req.Kind != linkBoth && req.Kind != linkAdmin {
+		return nil, status.Errorf(codes.InvalidArgument, "kind %q: want client, worker, both or admin", req.Kind)
+	}
+	if req.Kind == linkAdmin && (len(req.AdminWorkerCsrPem) > 0 || req.AdminWorkerName != "" || len(req.WorkerLabels) > 0) {
+		return nil, status.Error(codes.InvalidArgument, "kind admin: csr_pem and name are the admin worker's (no admin_worker_* fields, no labels)")
 	}
 	if (req.Kind == linkBoth) != (len(req.WorkerCsrPem) > 0) {
 		return nil, status.Error(codes.InvalidArgument, "worker_csr_pem goes with kind both (and only with it)")
@@ -269,7 +287,7 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 	if err := checkDevice(req.Hostname, req.Os, req.Arch, req.Version); err != nil {
 		return nil, err
 	}
-	if err := checkWorkerLabels(req.Kind != linkClient, req.WorkerLabels); err != nil {
+	if err := checkWorkerLabels(req.Kind == linkWorker || req.Kind == linkBoth, req.WorkerLabels); err != nil {
 		return nil, err
 	}
 	csr, keyID, err := linkCSR(req.CsrPem, req.Name, "")
@@ -286,6 +304,18 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 			return nil, status.Errorf(codes.InvalidArgument, "the device and the worker can't both be named %q", req.Name)
 		}
 	}
+	var acsr []byte
+	var akeyID string
+	if len(req.AdminWorkerCsrPem) > 0 {
+		if acsr, akeyID, err = linkCSR(req.AdminWorkerCsrPem, req.AdminWorkerName, "admin worker "); err != nil {
+			return nil, err
+		}
+		if n := req.AdminWorkerName; n != "" && (n == req.Name || n == req.WorkerName) {
+			return nil, status.Errorf(codes.InvalidArgument, "the admin worker can't share the name %q with the device or the worker", n)
+		}
+	} else if req.AdminWorkerName != "" {
+		return nil, status.Error(codes.InvalidArgument, "admin_worker_name goes with admin_worker_csr_pem")
+	}
 	u := h.linkURL(ctx)
 	if u == "" {
 		return nil, status.Error(codes.FailedPrecondition, "this hub has no web panel (http) to approve pairings at")
@@ -296,7 +326,11 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 	l := &pairLink{id: randomB64(12), pollHash: tokenHash(tok), kind: req.Kind, name: req.Name, csr: csr,
 		hostname: req.Hostname, os: req.Os, arch: req.Arch, version: req.Version,
 		ip: ipOnly(c.addr), keyID: keyID, started: now, expires: now.Add(pairingTTL), state: linkPending,
-		workerCSR: wcsr, workerName: req.WorkerName, workerKeyID: wkeyID, workerLabels: req.WorkerLabels}
+		workerCSR: wcsr, workerName: req.WorkerName, workerKeyID: wkeyID, workerLabels: req.WorkerLabels,
+		admin: acsr != nil, adminCSR: acsr, adminName: req.AdminWorkerName, adminKeyID: akeyID}
+	if l.kind == linkAdmin {
+		l.admin, l.adminName, l.adminKeyID = true, l.name, l.keyID
+	}
 	p := h.pair
 	p.mu.Lock()
 	expired := p.sweepLocked(now)
@@ -323,7 +357,7 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 	p.byCode[l.code], p.byPoll[l.pollHash] = l, l
 	p.mu.Unlock()
 	h.auditExpired(expired)
-	h.log.Info("pairing started", "id", l.id, "kind", l.kind, "name", l.name, "hostname", l.hostname, "remote", l.ip)
+	h.log.Info("pairing started", "id", l.id, "kind", l.kind, "name", l.name, "hostname", l.hostname, "admin_worker", l.admin, "remote", l.ip)
 	h.auditHub("link/"+l.ip, "link/start", l.fields())
 	return &pb.StartLinkResponse{UserCode: formatLinkCode(l.code), PollToken: tok, VerificationUrl: u,
 		ExpiresAt: tspb(l.expires), Interval: durationpb.New(linkInterval)}, nil
@@ -342,7 +376,7 @@ func (s *enrollServer) PollLink(ctx context.Context, req *pb.PollLinkRequest) (*
 	th := tokenHash(req.PollToken)
 	l := p.byPoll[th]
 	var resp *pb.JoinResponse
-	var serial, wserial string
+	var serial, wserial, aserial string
 	var err error
 	switch {
 	case l == nil:
@@ -351,7 +385,7 @@ func (s *enrollServer) PollLink(ctx context.Context, req *pb.PollLinkRequest) (*
 		err = status.Errorf(codes.ResourceExhausted, "slow down: poll every %s", linkInterval)
 	case l.state == linkApproved:
 		// Delivered once: the poll token is spent with it.
-		resp, serial, wserial = l.resp, l.serial, l.workerSerial
+		resp, serial, wserial, aserial = l.resp, l.serial, l.workerSerial, l.adminSerial
 		delete(p.byPoll, th)
 	case l.state == linkDenied || l.state == linkExpired:
 		resp = &pb.JoinResponse{State: l.state, Message: l.message}
@@ -374,7 +408,8 @@ func (s *enrollServer) PollLink(ctx context.Context, req *pb.PollLinkRequest) (*
 			n := h.nodes[name]
 			return n != nil && n.rec.State == stateApproved && n.rec.CertSerial == serial
 		}
-		live := liveNode(resp.Name, serial) && (resp.Worker == nil || liveNode(resp.Worker.Name, wserial))
+		live := liveNode(resp.Name, serial) && (resp.Worker == nil || liveNode(resp.Worker.Name, wserial)) &&
+			(resp.AdminWorker == nil || liveNode(resp.AdminWorker.Name, aserial))
 		h.mu.Unlock()
 		if !live {
 			h.log.Warn("pairing result withheld: the node changed since the approval", "node", resp.Name, "remote", c.addr)
@@ -387,6 +422,9 @@ func (s *enrollServer) PollLink(ctx context.Context, req *pb.PollLinkRequest) (*
 	h.attachTailnet(ctx, resp) // approved and live only
 	if resp.Worker != nil {
 		h.attachTailnet(ctx, resp.Worker)
+	}
+	if resp.AdminWorker != nil {
+		h.attachTailnet(ctx, resp.AdminWorker)
 	}
 	return resp, nil
 }
@@ -565,6 +603,61 @@ func (h *Hub) approveLink(a *linkApprover, l *pairLink) (*pb.JoinResponse, error
 		return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled or unknown", user)
 	}
 	dev := deviceRequest{csr: l.csr, name: l.name, hostname: l.hostname, os: l.os, arch: l.arch, version: l.version}
+	if l.kind == linkAdmin {
+		if dev.name == "" {
+			dev.name = adminWorkerName(l, nil)
+		}
+		dev.admin = true
+		return h.enrollOwnedWorker(who, user, dev)
+	}
+	resp, err := h.approveLinkParts(who, user, admin, l, dev)
+	if err != nil || !l.admin {
+		return resp, err
+	}
+	// The admin worker last, all or nothing: a failure takes the others back.
+	aname := l.adminName
+	if aname == "" {
+		aname = adminWorkerName(l, resp)
+	}
+	adev := dev
+	adev.csr, adev.name, adev.labels, adev.admin = l.adminCSR, aname, nil, true
+	aw, err := h.enrollOwnedWorker(who, user, adev)
+	if err != nil {
+		for _, r := range []*pb.JoinResponse{resp.Worker, resp} {
+			if r == nil {
+				continue
+			}
+			if _, rerr := h.Revoke(who+" (pairing failed)", r.Name); rerr != nil {
+				h.log.Warn("pairing: revoking a node of a failed approval", "node", r.Name, "err", rerr)
+			}
+		}
+		return nil, status.Errorf(status.Code(err), "the admin worker: %s", errMessage(err))
+	}
+	resp.AdminWorker = aw
+	return resp, nil
+}
+
+// adminWorkerName is an admin worker's default name: <the machine's
+// worker name, else its host name>-admin.
+func adminWorkerName(l *pairLink, resp *pb.JoinResponse) string {
+	base := ""
+	switch {
+	case resp != nil && resp.Worker != nil:
+		base = resp.Worker.Name
+	case resp != nil && l.kind == linkWorker:
+		base = resp.Name
+	default:
+		base = sanitizeName(l.hostname)
+	}
+	const suffix = "-admin"
+	if len(base)+len(suffix) > 63 {
+		base = strings.TrimRight(base[:63-len(suffix)], "-._")
+	}
+	return base + suffix
+}
+
+// approveLinkParts enrolls the device and / or worker of l.
+func (h *Hub) approveLinkParts(who, user string, admin bool, l *pairLink, dev deviceRequest) (*pb.JoinResponse, error) {
 	switch l.kind {
 	case linkWorker:
 		dev.labels = l.workerLabels
@@ -608,6 +701,9 @@ type linkDetails struct {
 	Both                    bool
 	WorkerName, WorkerKeyID string
 	WorkerLabels            string // "k=v, k2=v2"
+	// AdminWorker: the pairing includes an admin worker (runs as SYSTEM)
+	AdminWorker                 bool
+	AdminWorkerName, AdminKeyID string
 }
 
 func (h *Hub) renderLink(w http.ResponseWriter, code int, v linkView) {
@@ -690,7 +786,7 @@ func (h *Hub) linkLookup(w http.ResponseWriter, r *http.Request) {
 			Version: l.version, IP: l.ip, KeyID: l.keyID, Ago: now.Sub(l.started).Round(time.Second).String(),
 			Left: l.expires.Sub(now).Round(time.Second).String(), Worker: l.kind == linkWorker,
 			Both: l.kind == linkBoth, WorkerName: l.workerName, WorkerKeyID: l.workerKeyID,
-			WorkerLabels: labelList(l.workerLabels)}
+			WorkerLabels: labelList(l.workerLabels), AdminWorker: l.admin, AdminWorkerName: l.adminName, AdminKeyID: l.adminKeyID}
 	}
 	p.mu.Unlock()
 	h.auditExpired(expired)
@@ -706,7 +802,17 @@ func (h *Hub) linkLookup(w http.ResponseWriter, r *http.Request) {
 	if d.Both && d.WorkerName == "" {
 		d.WorkerName = "(default: the host name)"
 	}
-	d.Admin = !d.Worker && h.linkAdmin(a)
+	if d.AdminWorker && d.AdminWorkerName == "" {
+		d.AdminWorkerName = "(default: <worker name>-admin)"
+		if d.Kind == linkAdmin {
+			d.AdminWorkerName = "(default: <host name>-admin)"
+		}
+	}
+	if d.Kind == linkAdmin {
+		d.Name = d.AdminWorkerName
+	}
+	// an admin certificate goes to client devices only
+	d.Admin = !d.Worker && d.Kind != linkAdmin && h.linkAdmin(a)
 	v.L, v.Token = d, h.linkFormToken(a.sessHash, "decide", d.ID)
 	h.renderLink(w, http.StatusOK, v)
 }
@@ -786,6 +892,11 @@ func (h *Hub) linkDecide(w http.ResponseWriter, r *http.Request) {
 				l.workerSerial = pki.Serial(c)
 			}
 		}
+		if resp.AdminWorker != nil {
+			if c, err := pki.ParseCertPEM(resp.AdminWorker.CertPem); err == nil {
+				l.adminSerial = pki.Serial(c)
+			}
+		}
 	}
 	p.mu.Unlock()
 	fields["error"] = errString(err)
@@ -793,6 +904,11 @@ func (h *Hub) linkDecide(w http.ResponseWriter, r *http.Request) {
 		fields["node"], fields["role"] = resp.Name, resp.Role
 		if resp.Worker != nil {
 			fields["worker"] = resp.Worker.Name
+		}
+		if resp.AdminWorker != nil {
+			fields["admin_worker"] = resp.AdminWorker.Name
+		} else if l.kind == linkAdmin {
+			fields["admin_worker"] = resp.Name
 		}
 	}
 	h.auditHub(who, "link/approve", fields)
@@ -806,11 +922,21 @@ func (h *Hub) linkDecide(w http.ResponseWriter, r *http.Request) {
 	switch l.kind {
 	case linkWorker:
 		v.Done = "Approved: worker " + resp.Name + " is yours. Only you can use it until you share it."
+	case linkAdmin:
+		v.Done = "Approved:"
 	case linkBoth:
 		v.Done = "Approved: device " + resp.Name + " is signed in as " + a.user + " (" + resp.Role + "), and worker " +
 			resp.Worker.Name + " is yours. Only you can use the worker until you share it."
 	default:
 		v.Done = "Approved: device " + resp.Name + " is signed in as " + a.user + " (" + resp.Role + ")."
+	}
+	aw := resp.AdminWorker
+	if l.kind == linkAdmin {
+		aw = resp
+	}
+	if aw != nil {
+		v.Done += " Admin worker " + aw.Name + " is yours alone: it runs your commands as SYSTEM (an administrator of " +
+			l.hostname + "), only you can use it, it can't be shared and jobs are never placed on it automatically."
 	}
 	h.renderLink(w, http.StatusOK, v)
 }
@@ -826,20 +952,25 @@ input[name=code]{font-size:1.4em;letter-spacing:.1em;width:9em;text-transform:up
 {{if .SignIn}}<p><a href="{{.SignIn}}">Sign in</a></p>{{end}}
 {{if .Done}}<p><b>{{.Done}}</b></p><p>You can close this page.</p>
 {{else if .L}}{{with .L}}<p>A device asks to be linked to your account. Check that it is the one in front of you:</p>
+{{if .AdminWorker}}<p class="warn"><b>This includes an ADMINISTRATOR worker</b>, <code>{{.AdminWorkerName}}</code>: it runs commands as <b>SYSTEM</b> (a local administrator) on <code>{{.Hostname}}</code> - it can install software and change anything on that machine. Only you will be able to use it; it can't be shared and jobs are never placed on it automatically.</p>{{end}}
 {{if .Both}}<p>Approving does <b>two</b> things for this machine: it becomes your <b>client device</b> (acts as you) <b>and</b> your own <b>worker</b> (runs your jobs).</p>{{end}}
-<table><tr><th>kind</th><td>{{if .Both}}client device (acts as you) + worker (runs jobs){{else if .Worker}}worker (runs jobs){{else}}client device (acts as you){{end}}</td></tr>
+<table><tr><th>kind</th><td>{{if eq .Kind "admin"}}<b>admin worker</b> (runs commands as SYSTEM){{else if .Both}}client device (acts as you) + worker (runs jobs){{else if .Worker}}worker (runs jobs){{else}}client device (acts as you){{end}}{{if and .AdminWorker (ne .Kind "admin")}} + <b>admin worker</b> (runs commands as SYSTEM){{end}}</td></tr>
 <tr><th>{{if .Both}}device name{{else}}name{{end}}</th><td><code>{{.Name}}</code></td></tr>
 {{if .Both}}<tr><th>worker name</th><td><code>{{.WorkerName}}</code></td></tr>{{end}}
+{{if .AdminWorker}}<tr><th>admin worker (SYSTEM)</th><td><code>{{.AdminWorkerName}}</code></td></tr>{{end}}
 {{if .WorkerLabels}}<tr><th>worker labels</th><td><code>{{.WorkerLabels}}</code></td></tr>{{end}}
 <tr><th>host name</th><td><code>{{.Hostname}}</code></td></tr>
 <tr><th>system</th><td>{{.OSArch}}, version {{.Version}}</td></tr>
 <tr><th>address</th><td><code>{{.IP}}</code> (as the hub saw it)</td></tr>
 <tr><th>{{if .Both}}device node key{{else}}node key{{end}}</th><td>{{if .KeyID}}<code>{{.KeyID}}</code> (compare: longarm trust show{{if not .Both}} / longarmd trust status{{end}}){{else}}none{{end}}</td></tr>
 {{if .Both}}<tr><th>worker node key</th><td>{{if .WorkerKeyID}}<code>{{.WorkerKeyID}}</code> (compare: longarmd trust status){{else}}none{{end}}</td></tr>{{end}}
+{{if .AdminWorker}}<tr><th>admin worker node key</th><td>{{if .AdminKeyID}}<code>{{.AdminKeyID}}</code>{{else}}none{{end}}</td></tr>{{end}}
 <tr><th>started</th><td>{{.Ago}} ago (expires in {{.Left}})</td></tr></table>
 {{if .Both}}<p class="warn">Only confirm if this is your device: it gets a certificate that acts as you{{if .Admin}} - an <b>administrator</b> certificate{{end}}, and it becomes your worker: jobs you run may be placed on it.</p>
 {{else if .Worker}}<p class="warn">Only confirm if this is your machine: jobs you run may be placed on it.</p>
+{{else if eq .Kind "admin"}}
 {{else}}<p class="warn">Only confirm if this is your device: it gets a certificate that acts as you{{if .Admin}} - an <b>administrator</b> certificate{{end}}.</p>{{end}}
+{{if .AdminWorker}}<p class="warn">Approve only if you set this machine up yourself and want to run <b>administrator</b> commands on it remotely.</p>{{end}}
 {{end}}<form method="post" action="/link/decide"><input type="hidden" name="token" value="{{.Token}}"><input type="hidden" name="id" value="{{.L.ID}}">
 <p><button name="decision" value="approve">Approve</button><button name="decision" value="deny">Deny</button></p></form>
 {{else if .Token}}<p>Enter the code that <code>longarm login</code> or <code>longarmd login</code> shows on the device.</p>

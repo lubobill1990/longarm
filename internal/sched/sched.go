@@ -147,6 +147,9 @@ func Pick(p Params, cands []Candidate, req Request) Result {
 
 func reject(p Params, c Candidate, req Request) string {
 	switch {
+	case IsAdminWorker(c.Labels):
+		// never placed: an admin worker is used by its name only
+		return "admin worker (by name only)"
 	case slices.Contains(req.Exclude, c.Name):
 		return "excluded"
 	case !c.Online:

@@ -513,6 +513,9 @@ type deviceRequest struct {
 	csr                               []byte
 	name, hostname, os, arch, version string
 	labels                            map[string]string // owned workers: as a worker code's (longarmd login --label)
+	// admin: an admin worker (a pairing's admin_worker_csr_pem): marked
+	// (store.Node.Admin, label longarm.io/admin=true), owner-only, never placed
+	admin bool
 }
 
 // checkWorkerLabels validates the labels a sign-in asks for: workers only,
@@ -526,6 +529,9 @@ func checkWorkerLabels(worker bool, labels map[string]string) error {
 	}
 	if err := sched.ValidateLabels(labels, false); err != nil {
 		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	if err := sched.CheckUserLabels(labels); err != nil {
+		return status.Error(codes.PermissionDenied, err.Error())
 	}
 	return nil
 }
@@ -632,7 +638,7 @@ func (h *Hub) enrollOwnedWorker(who, owner string, d deviceRequest) (*pb.JoinRes
 	h.mu.Unlock()
 	now := time.Now().UTC()
 	rec := &store.Node{Name: name, Role: string(pki.RoleWorker), Hostname: d.hostname, OS: d.os, Arch: d.arch,
-		Version: d.version, JoinedAt: now, Owner: owner, AccessVersion: 1, Labels: maps.Clone(d.labels)}
+		Version: d.version, JoinedAt: now, Owner: owner, AccessVersion: 1, Labels: maps.Clone(d.labels), Admin: d.admin}
 	cert, err := h.issue(rec, d.csr)
 	if err != nil {
 		return nil, err
@@ -653,7 +659,15 @@ func (h *Hub) enrollOwnedWorker(who, owner string, d deviceRequest) (*pb.JoinRes
 	h.publishNodeLocked(n, "joined (owned by "+owner+", sign-in of "+who+")")
 	h.checkTenancyFlipLocked() // an owned worker separates users
 	h.mu.Unlock()
-	h.auditHub("node/"+name, "workers/join", map[string]any{"worker": name, "owner": owner, "via": who, "labels": d.labels})
+	h.auditHub("node/"+name, "workers/join", map[string]any{"worker": name, "owner": owner, "via": who, "labels": d.labels, "admin_worker": d.admin})
+	labels, msg := maps.Clone(d.labels), "registered as a worker of "+owner
+	if d.admin {
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels[sched.AdminLabel] = "true"
+		msg = "registered as the admin worker of " + owner + " (owner-only, never shared, never placed automatically)"
+	}
 	return &pb.JoinResponse{State: stateApproved, Name: name, Role: rec.Role, CaPem: h.ca.CertPEM, CertPem: cert,
-		HubName: h.cfg.Name, Owner: owner, Message: "registered as a worker of " + owner, Labels: maps.Clone(d.labels)}, nil
+		HubName: h.cfg.Name, Owner: owner, Message: msg, Labels: labels}, nil
 }

@@ -540,8 +540,8 @@ func TestLinkPassword(t *testing.T) {
 	if status.Code(err) != codes.ResourceExhausted || !strings.Contains(err.Error(), "too many join attempts") {
 		t.Fatalf("StartLink rate: %v", err)
 	}
-	if _, err := startLink(t, ec, "admin", "", nil); err == nil {
-		t.Fatal("kind admin accepted")
+	if _, err := startLink(t, ec, "root", "", nil); err == nil {
+		t.Fatal("kind root accepted")
 	}
 	var c int
 	for range 12 {

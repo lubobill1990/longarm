@@ -240,7 +240,8 @@ func lsCmd() *cobra.Command {
 			}
 			// OWNER (last, only when some worker has one: existing parsers
 			// of the table keep working): "-" = a fleet worker, else its
-			// owner, "+shared" when the owner shares it (owners and admins see that).
+			// owner, "+shared" when the owner shares it (owners and admins see that),
+			// "+admin" for an admin worker (runs commands as SYSTEM; owner-only).
 			owners := false
 			for _, r := range rows {
 				owners = owners || r.node.GetOwner() != ""
@@ -252,6 +253,9 @@ func lsCmd() *cobra.Command {
 				o := dash(r.node.GetOwner())
 				if sharesString(r.node.GetShares()) != "-" {
 					o += " +shared"
+				}
+				if r.node.GetAdminWorker() {
+					o += " +admin"
 				}
 				return "\t" + o
 			}

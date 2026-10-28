@@ -14,6 +14,35 @@ var (
 	labelValueRe = regexp.MustCompile(`^[A-Za-z0-9._:/@+-]{0,128}$`)
 )
 
+// AdminLabel marks an admin worker (AdminLabel=true): a worker that runs
+// commands with administrator rights on its machine (Windows: a longarmd
+// running as LocalSystem, the MSI's ADMIN_WORKER). Only the hub sets it,
+// when it enrolls an admin worker; nobody can set, change or remove it
+// (ReservedLabel). Such a worker is never chosen by placement (Pick): it is
+// reachable by its name only (docs/security.md "Admin worker (Windows)").
+const AdminLabel = "longarm.io/admin"
+
+// reservedLabelPrefix: label keys only the hub sets.
+const reservedLabelPrefix = "longarm.io/"
+
+// ReservedLabel reports whether k is a hub-set label key (longarm.io/...)
+// that users, admins, join codes and sign-ins may not set or remove.
+func ReservedLabel(k string) bool { return strings.HasPrefix(strings.ToLower(k), reservedLabelPrefix) }
+
+// IsAdminWorker reports whether labels mark an admin worker.
+func IsAdminWorker(labels map[string]string) bool { return labels[AdminLabel] == "true" }
+
+// CheckUserLabels refuses reserved label keys (ReservedLabel) in labels a
+// user, an admin, a join code or a sign-in asks for.
+func CheckUserLabels(m map[string]string) error {
+	for k := range m {
+		if ReservedLabel(k) {
+			return fmt.Errorf("label %s is reserved: only the hub sets %s* labels", k, reservedLabelPrefix)
+		}
+	}
+	return nil
+}
+
 // ValidLabel checks one label; an empty value is allowed only with
 // allowEmpty (SetLabels: "key=" deletes the label).
 func ValidLabel(k, v string, allowEmpty bool) error {

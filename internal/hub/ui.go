@@ -67,7 +67,7 @@ func (h *Hub) HistoryFor(v tenancy.Caller, node string) *pb.HistoryResponse {
 		if (node != "" && name != node) || n.rec.Role != string(pki.RoleWorker) {
 			continue
 		}
-		if !v.Admin && !tenancy.MayUseWorker(v.User, v.Teams, n.rec.Owner, sharesPB(n.rec.Shares)) {
+		if !v.Admin && !h.mayUseLocked(v.User, n) {
 			continue
 		}
 		out.Nodes = append(out.Nodes, &pb.NodeHistory{Node: name, Points: append([]*pb.MetricsPoint(nil), n.history...)})
