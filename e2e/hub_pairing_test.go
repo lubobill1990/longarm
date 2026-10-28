@@ -333,7 +333,7 @@ func TestHubPairing(t *testing.T) {
 		copyBin(t, src, filepath.Join(rel, fmt.Sprintf("%s-%s-%s%s", tool, runtime.GOOS, runtime.GOARCH, suffix)))
 	}
 	h.hubCmd(t, "release", "add", rel, "--version", "1.2.3")
-	// --role both: one code for the worker and the client
+	// --login without a role: both - one code for the worker and the client
 	prefix, dd, cfg := filepath.Join(h.root, "inst-bin"), filepath.Join(h.root, "inst-data"), filepath.Join(h.root, "inst-cfg")
 	if runtime.GOOS == "windows" {
 		pwsh, err := exec.LookPath("pwsh")
@@ -342,12 +342,12 @@ func TestHubPairing(t *testing.T) {
 		}
 		cmd = exec.Command(pwsh, "-NoProfile", "-NonInteractive", "-Command", fmt.Sprintf("irm %s/install.ps1 | iex", h.httpURL()))
 		cmd.Env = append(os.Environ(), "LONGARM_LOGIN=1", "LONGARM_NO_SERVICE=1", "LONGARM_NO_PATH=1", "LONGARM_NO_FIREWALL=1",
-			"LONGARM_PREFIX="+prefix, "LONGARM_DATA_DIR="+dd, "LONGARM_NAME=inst", "LONGARM_ROLE=both", "LONGARM_CONFIG_DIR="+cfg)
+			"LONGARM_PREFIX="+prefix, "LONGARM_DATA_DIR="+dd, "LONGARM_NAME=inst", "LONGARM_CONFIG_DIR="+cfg)
 	} else {
 		if _, err := exec.LookPath("curl"); err != nil {
 			t.Skip("curl not installed")
 		}
-		cmd = exec.Command("sh", "-c", fmt.Sprintf("curl -fsSL %s/install.sh | sh -s -- --login --role both --no-service --prefix %s --data-dir %s --name inst",
+		cmd = exec.Command("sh", "-c", fmt.Sprintf("curl -fsSL %s/install.sh | sh -s -- --login --no-service --prefix %s --data-dir %s --name inst",
 			h.httpURL(), prefix, dd))
 		cmd.Env = append(os.Environ(), "HOME="+h.root, "LONGARM_CONFIG_DIR="+cfg)
 	}

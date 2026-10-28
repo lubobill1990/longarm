@@ -12,6 +12,7 @@
 //	longarmd leave [--kill-jobs] [--purge]                deregister from the hub, remove credentials
 //	longarmd update status                            last self-update
 //	longarmd audit verify [--file PATH]                check the hash chain of audit.log
+//	longarmd doctor [--json]                          checklist: enrolled, running, hub link, run mode, logs; says what to run next
 //	longarmd diag [--upload] [--since 24h] [--include-audit] [--include-job ID]   diagnostic bundle for a bug report
 //	longarmd version
 package main
@@ -67,7 +68,7 @@ func main() {
 	root.AddCommand(localCmds()...)
 	root.AddCommand(updateCmd(), updateWatchCmd(), installHelperCmd())
 	root.AddCommand(uiCmds()...)
-	root.AddCommand(userHelperCmd(), sftpServerCmd(), trustCmd(), diagCmd())
+	root.AddCommand(userHelperCmd(), sftpServerCmd(), trustCmd(), diagCmd(), doctorCmd())
 	root.AddCommand(runCmd(), joinCmd(), loginCmd(), shimCmd(), conhostCmd(), serviceCmd(), sessionModeCmd(), adminWorkerCmd(), gcCmd(), auditCmd(), &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",

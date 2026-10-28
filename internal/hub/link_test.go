@@ -601,10 +601,12 @@ func TestInstallScriptsLogin(t *testing.T) {
 		{"/install.sh", &sh, []string{`--login) LOGIN=1`, `LOGIN="${LONGARM_LOGIN:-0}"`, `"$PREFIX/longarmd" login "$HUB_ADDR" --ca-fingerprint "$CA_FP"`,
 			`"$PREFIX/longarm" login "$HUB_ADDR"`, `$AS longarmd login "$HUB_ADDR"`, `"$PREFIX/longarmd" join "$HUB_ADDR" "$JOIN"`,
 			`--ca-fingerprint "$CA_FP" --role "$R"`, `--role "$ROLE" $NAMEARG`,
-			`LABELARGS="$LABELARGS --label $2"`, `--role "$R" $NAMEARG $DD $LABELARGS`, `--role "$ROLE" $NAMEARG $LABELARGS`}},
+			`LABELARGS="$LABELARGS --label $2"`, `--role "$R" $NAMEARG $DD $LABELARGS`, `--role "$ROLE" $NAMEARG $LABELARGS`,
+			`if [ "$LOGIN" = 1 ]; then ROLE=both; else ROLE=worker; fi`}},
 		{"/install.ps1", &ps1, []string{`[switch]$Login = ($env:LONGARM_LOGIN -eq '1')`, `'longarmd.exe') login $HubAddr --ca-fingerprint $CaFp`,
 			`'longarm.exe') login $HubAddr`, `-not $Login)`, `'longarmd.exe') join $HubAddr $Join`, `--ca-fingerprint $CaFp --role $Role`,
-			`[string]$Label = $env:LONGARM_LABELS`, `"LABELS=$Label"`, `@nameArgs @ddArgs @labelArgs`}},
+			`[string]$Label = $env:LONGARM_LABELS`, `"LABELS=$Label"`, `@nameArgs @ddArgs @labelArgs`,
+			`if (-not $Role) { $Role = if ($Login) { 'both' } else { 'worker' } }`}},
 	} {
 		code, body := plainGet(t, base+s.path)
 		if code != 200 {

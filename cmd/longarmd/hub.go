@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -138,6 +140,10 @@ longarm worker label <worker> KEY=VALUE KEY-.`,
 // localClient connects to the running longarmd's local control API.
 func localClient(dataDir string) (pb.LocalWorkerClient, func(), error) {
 	cc, err := localapi.DialFile(filepath.Join(dataDir, longarmd.LocalAddrFile), "longarmd")
+	if errors.Is(err, os.ErrNotExist) {
+		mode, _, _ := detectRunMode()
+		return nil, nil, notRunningHelp(err, mode, workerLogs(dataDir), runtime.GOOS)
+	}
 	if err != nil {
 		return nil, nil, err
 	}

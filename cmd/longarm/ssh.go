@@ -127,7 +127,7 @@ Each worker's sshd host key is fetched over mTLS (Node.Info) and written to
 				}
 			}
 			if len(names) == 0 {
-				return fmt.Errorf("no workers configured in %s", s.cfg.Dir)
+				return noWorkersError(s)
 			}
 			exe, err := os.Executable()
 			if err != nil {

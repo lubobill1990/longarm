@@ -103,12 +103,22 @@ func Dial(addr string) (*grpc.ClientConn, error) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 }
 
+// NotRunningError: no address file, so the process isn't running;
+// errors.Is(err, os.ErrNotExist) holds (callers add how to start it).
+type NotRunningError struct{ What, AddrFile string }
+
+func (e *NotRunningError) Error() string {
+	return fmt.Sprintf("%s is not running (no %s)", e.What, e.AddrFile)
+}
+
+func (e *NotRunningError) Is(target error) bool { return target == os.ErrNotExist }
+
 // DialFile dials the address recorded in addrFile.
 func DialFile(addrFile, what string) (*grpc.ClientConn, error) {
 	a, err := ReadAddr(addrFile)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%s is not running (no %s)", what, addrFile)
+			return nil, &NotRunningError{What: what, AddrFile: addrFile}
 		}
 		return nil, err
 	}

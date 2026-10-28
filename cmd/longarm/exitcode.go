@@ -149,6 +149,9 @@ var cliFeatures = []string{
 	"sessions-json-v2",     // fleet-wide sessions, sessions --json source/worker/activity fields, sessions -s
 	"tail",                 // tail <worker> <path> [-f] [--json]
 	"run-session",          // run / exec --session
+	"job-id-short",         // logs / wait / kill / jobs --id: a unique prefix or suffix of a job id, or "last"
+	"jobs-mine",            // jobs --mine / --all
+	"doctor-json",          // longarm doctor --json (docs/usage.md#doctor---json)
 }
 
 func versionCmd() *cobra.Command {

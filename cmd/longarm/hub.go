@@ -272,8 +272,11 @@ func (s *session) saveCache(nodes []*pb.NodeInfo) {
 	}
 }
 
-func (s *session) cachedNodes() []*pb.NodeInfo {
-	b, err := os.ReadFile(filepath.Join(s.cfg.Dir, hubCacheFile))
+func (s *session) cachedNodes() []*pb.NodeInfo { return cachedNodesIn(s.cfg.Dir) }
+
+// cachedNodesIn reads the hub's cached worker list of a config dir.
+func cachedNodesIn(dir string) []*pb.NodeInfo {
+	b, err := os.ReadFile(filepath.Join(dir, hubCacheFile))
 	if err != nil {
 		return nil
 	}
@@ -344,21 +347,29 @@ func (s *session) worker(name string) (client.Worker, error) {
 		for attempt := 0; attempt < 2; attempt++ {
 			s.refreshNodes(attempt > 0)
 			s.hubMu.Lock()
-			nodes := s.nodes
+			nodes, live := s.nodes, s.nodesLive
 			s.hubMu.Unlock()
 			for _, n := range nodes {
 				if n.Name == name {
-					if w, ok := workerFromNode(n); ok {
-						return w, nil
+					now := time.Now()
+					if live && !forceDial && workerOffline(n, now) {
+						return client.Worker{}, offlineError(n, now)
 					}
-					return client.Worker{}, fmt.Errorf("worker %s has no usable endpoint (%v)", name, n.Endpoints)
+					w, ok := workerFromNode(n)
+					if !ok {
+						return client.Worker{}, fmt.Errorf("worker %s has no usable endpoint (%v)", name, n.Endpoints)
+					}
+					if live && !n.Online && n.State == "approved" {
+						w.Note = offlineNote(n, now) // said when no leg connects
+					}
+					return w, nil
 				}
 			}
 		}
 	}
 	w, err := s.cfg.Worker(name)
 	if err != nil {
-		return w, &codedError{code: exitNotFound, err: err}
+		return w, &codedError{code: exitNotFound, err: unknownWorkerError(name, s.cfg.Dir, s.knownNames())}
 	}
 	return w, nil
 }
@@ -377,7 +388,7 @@ func (s *session) refreshNodes(force bool) {
 		nodes = s.cachedNodes()
 	}
 	s.hubMu.Lock()
-	s.nodes, s.nodesAt = nodes, time.Now()
+	s.nodes, s.nodesAt, s.nodesLive = nodes, time.Now(), ok
 	s.hubMu.Unlock()
 }
 
@@ -398,7 +409,7 @@ func (s *session) maybeRenew(ctx context.Context, h *hubclient.Conn) {
 	}
 	leaf, err := s.renewCert(cctx, h)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "longarm: certificate renewal failed: %s\n", oneLine(err))
+		fmt.Fprintln(os.Stderr, renewFailedNote(b.Leaf().NotAfter, time.Now(), oneLine(err)))
 		return
 	}
 	fmt.Fprintf(os.Stderr, "longarm: certificate renewed (valid until %s)\n", leaf.NotAfter.Local().Format(time.RFC3339))

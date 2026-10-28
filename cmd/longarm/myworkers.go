@@ -39,11 +39,20 @@ func workerCmd() *cobra.Command {
 	var labels []string
 	add := &cobra.Command{
 		Use:   "add [<name>]",
-		Short: "Print a join code for a new worker of yours and the longarmd join command to run on it",
-		Long: `Create a worker join code owned by you. The machine that joins with it is
-approved at once and usable by you only (hidden from other users, never
-placed for them) until you share it - which needs an admin's permission
-(longarm admin user set <you> --can-share).`,
+		Short: "Make a machine your worker: install Longarm there and sign in (or use a join code this prints)",
+		Long: `Make a machine your own worker: usable by you only (hidden from other
+users, never placed for them) until you share it - which needs an admin's
+permission (longarm admin user set <you> --can-share).
+
+The easy way, on that machine - it signs in with your Microsoft account:
+  Windows: install the Longarm MSI and choose "This machine runs jobs"
+           (the tray signs it in), or run: longarmd login <hub>
+  Linux / macOS: longarmd login <hub>, as the account the worker runs as
+
+Where nobody can sign in with a browser (a headless box), use the join
+code this command prints, with the longarmd join command it shows. Then
+start the worker: on Windows longarmd session-mode install (runs while
+you are logged on; no password), elsewhere longarmd service install.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			lm, err := sched.ParseLabels(labels, false)
@@ -60,15 +69,8 @@ placed for them) until you share it - which needs an admin's permission
 					return err
 				}
 				fmt.Println(jc.Code)
-				join := fmt.Sprintf("longarmd join %s %s --ca-fingerprint %s", h.Addr, jc.Code, caFingerprint(s))
-				what := "a worker"
-				if jc.Name != "" {
-					join += " --name " + jc.Name
-					what = "worker " + jc.Name
-				}
-				fmt.Fprintf(os.Stderr, "code for %s owned by %s, expires %s\non the new worker (as the account the service runs as):\n  %s\n"+
-					"then run it as a service: longarmd service install (docs/usage.md); it joins approved, usable by you only\n",
-					what, jc.Owner, jc.ExpiresAt.AsTime().Local().Format("01-02 15:04"), join)
+				fmt.Fprint(os.Stderr, workerAddHelp(h.Addr, jc.Code, caFingerprint(s), jc.Name, jc.Owner,
+					jc.ExpiresAt.AsTime().Local().Format("01-02 15:04")))
 				return nil
 			})
 		},
@@ -156,7 +158,7 @@ worker reports itself (longarmd.toml [hub] labels) are changed there.`,
 		},
 	})
 	c.AddCommand(&cobra.Command{
-		Use: "remove <worker>", Short: "Remove a worker of yours: revoke its certificates (admins: any worker)", Args: cobra.ExactArgs(1),
+		Use: "remove <worker>", Aliases: []string{"rm"}, Short: "Remove a worker of yours: revoke its certificates (admins: any worker)", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
 				n, err := h.Fleet().RemoveWorker(ctx, &pb.NodeRequest{Name: args[0]})
@@ -207,6 +209,26 @@ func shareCmd(share bool) *cobra.Command {
 	c.Flags().StringArrayVar(&teams, "team", nil, "a team (repeatable)")
 	c.Flags().BoolVar(&everyone, "everyone", false, "every user of the hub")
 	return c
+}
+
+// workerAddHelp is what worker add prints on stderr: the sign-in way
+// first, then the join code's.
+func workerAddHelp(hub, code, fp, name, owner, expires string) string {
+	join := fmt.Sprintf("longarmd join %s %s --ca-fingerprint %s", hub, code, fp)
+	what := "a worker"
+	if name != "" {
+		join += " --name " + name
+		what = "worker " + name
+	}
+	return fmt.Sprintf(`The easy way, on the new machine (signs in with your Microsoft account):
+  Windows: install the Longarm MSI and choose "This machine runs jobs", or run: longarmd login %s
+  Linux / macOS: longarmd login %s
+Or with the code above (for %s, owned by %s, expires %s), on the new machine:
+  %s
+  then start it - Windows: longarmd session-mode install (runs while you are logged on)
+                  Linux / macOS: sudo longarmd service install --user <account>
+It joins approved, usable by you only.
+`, hub, hub, what, owner, expires, join)
 }
 
 // workerKind: mine, shared (with me) or fleet (no owner).

@@ -179,6 +179,7 @@ many tails open on the worker (max_tails, max_tails_per_user).`,
 	}
 	c.Flags().BoolVarP(&follow, "follow", "f", false, "keep streaming appended bytes (reconnects automatically)")
 	c.Flags().Int64Var(&from, "from-offset", 0, "start at this byte offset (negative: that many bytes before the end)")
+	c.Flags().Int64Var(&from, "from", 0, "same as --from-offset (like logs --from)")
 	c.Flags().BoolVar(&asJSON, "json", false, `one {"offset","next","line"} object per line`)
 	return c
 }
