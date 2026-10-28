@@ -224,6 +224,9 @@ func lsCmd() *cobra.Command {
 			if asJSON {
 				out := map[string]any{}
 				for _, r := range rows {
+					if _, dup := out[r.name]; dup && r.node.GetState() == "revoked" {
+						continue // a revoked node whose name a new node has (names are reused)
+					}
 					switch {
 					case r.node != nil:
 						b, _ := protojson.Marshal(r.node)
