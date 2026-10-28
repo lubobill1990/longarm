@@ -27,6 +27,8 @@ type BlobStore struct {
 	Container string
 	Tokens    azauth.TokenSource
 	Client    *http.Client
+	// ContentType of the blobs Put writes (default application/zip).
+	ContentType string
 }
 
 // BlobError is a failed Blob Storage call.
@@ -124,7 +126,11 @@ func (s *BlobStore) do(ctx context.Context, op, method, u string, body io.Reader
 func (s *BlobStore) Put(ctx context.Context, name string, r io.Reader, size int64, meta map[string]string) error {
 	h := http.Header{}
 	h.Set("x-ms-blob-type", "BlockBlob")
-	h.Set("Content-Type", "application/zip")
+	ct := s.ContentType
+	if ct == "" {
+		ct = "application/zip"
+	}
+	h.Set("Content-Type", ct)
 	for k, v := range meta {
 		h.Set("x-ms-meta-"+k, v)
 	}

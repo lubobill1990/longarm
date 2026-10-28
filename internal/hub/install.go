@@ -2,18 +2,23 @@ package hub
 
 import (
 	"bytes"
+	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
+	"strings"
 	"text/template"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/platform"
+	"github.com/lubobill1990/longarm/internal/update"
 )
 
 func hashFile(p string) (string, int64, error) {
@@ -31,30 +36,93 @@ func hashFile(p string) (string, int64, error) {
 }
 
 func (h *Hub) releaseFile(w http.ResponseWriter, r *http.Request) {
-	v, f := r.PathValue("version"), r.PathValue("file")
-	if !versionRE.MatchString(v) || !servableFile(f) {
+	p, err := h.releasePath(r.Context(), r.PathValue("version"), r.PathValue("file"))
+	if errors.Is(err, errReleaseMissing) {
 		http.NotFound(w, r)
 		return
 	}
+	if err != nil {
+		if !errors.Is(err, errFetchBackoff) && r.Context().Err() == nil { // logged when the download failed
+			h.log.Warn("release download", "path", r.URL.Path, "err", err)
+		}
+		w.Header().Set("Retry-After", "60")
+		httpError(w, http.StatusServiceUnavailable, "release store unavailable, try again later")
+		return
+	}
+	// shared open: a publish may replace the file while it is served
+	f, err := platform.OpenShared(p)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
-	http.ServeFile(w, r, filepath.Join(h.cfg.DataDir, ReleasesDir, v, f))
+	http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
 }
 
-// latestRelease returns the latest version and its files by name.
+// releasePath is a local path with version's file name (a release file of
+// the index or its .minisig), fetched from the blob container if needed.
+// errReleaseMissing: no such file, or no copy of it.
+func (h *Hub) releasePath(ctx context.Context, version, name string) (string, error) {
+	if !versionRE.MatchString(version) || !servableFile(name) {
+		return "", errReleaseMissing
+	}
+	base := strings.TrimSuffix(name, update.SigExt)
+	files, err := h.releaseFiles(version)
+	if err != nil {
+		return "", err
+	}
+	for _, r := range files {
+		if r.File == base {
+			return h.rel.file(ctx, r, base != name)
+		}
+	}
+	return "", errReleaseMissing
+}
+
+// latestRelease returns the version install scripts hand out and its files
+// by name: latest_release, unless the hub lost some of its files (then the
+// newest stable version it has all files of; "" = none).
 func (h *Hub) latestRelease() (string, map[string]store.Release, error) {
-	v, err := h.store.Meta("latest_release")
-	if err != nil || v == "" {
+	latest, err := h.store.Meta("latest_release")
+	if err != nil || latest == "" {
 		return "", nil, err
 	}
 	rels, err := h.store.Releases()
 	if err != nil {
 		return "", nil, err
 	}
-	files := map[string]store.Release{}
+	byVersion := map[string][]store.Release{}
 	for _, r := range rels {
-		if r.Version == v {
-			files[r.File] = r
+		byVersion[r.Version] = append(byVersion[r.Version], r)
+	}
+	complete := func(v string) bool {
+		return len(byVersion[v]) > 0 && len(h.rel.missingFiles(byVersion[v])) == 0
+	}
+	v := latest
+	if !complete(v) {
+		v = ""
+		var cands []string
+		for c, files := range byVersion {
+			if files[0].Channel == "stable" && complete(c) {
+				cands = append(cands, c)
+			}
 		}
+		sort.Slice(cands, func(i, j int) bool { return update.Compare(cands[i], cands[j]) > 0 })
+		if len(cands) > 0 {
+			v = cands[0]
+		}
+		h.log.Warn("install scripts: the latest release has missing files; publish it again", "latest", latest,
+			"missing", h.rel.missingFiles(byVersion[latest]), "instead", cmp.Or(v, "(no release)"))
+	}
+	files := map[string]store.Release{}
+	for _, r := range byVersion[v] {
+		files[r.File] = r
 	}
 	return v, files, nil
 }

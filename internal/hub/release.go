@@ -22,6 +22,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/update"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -58,10 +59,25 @@ func servableFile(name string) bool {
 	return binaryFileRE.MatchString(base) || packageFileRE.MatchString(base)
 }
 
-// AddRelease imports the release files in dir as version on channel. With
-// publicKey set, every signature present must verify and update binaries
-// (longarmd, longarm, longarm-tray) must be signed.
-func AddRelease(dataDir string, st *store.Store, dir, version, channel, publicKey string) ([]store.Release, error) {
+// AddRelease imports the release files in dir as version on channel (the
+// CLI's `longarm-hub release add`): into the data dir and, with [releases]
+// blob_url, the blob container. With [releases] public_key set, every
+// signature present must verify and update binaries (longarmd, longarm,
+// longarm-tray) must be signed.
+func AddRelease(ctx context.Context, cfg *Config, st *store.Store, dir, version, channel string) ([]store.Release, error) {
+	rs, err := openReleaseStore(cfg, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return addRelease(ctx, rs, st, dir, version, channel, cfg.Releases.PublicKey, false)
+}
+
+// addRelease checks the files in dir, stores them in rs and records them.
+// restore: the database has version; unless dir has exactly its files
+// (names and sha256) and channel this fails with errReleaseDiffers, else
+// the files are stored again (lost copies come back) and the index (and
+// latest_release) stays as it is.
+func addRelease(ctx context.Context, rs *releaseStore, st *store.Store, dir, version, channel, publicKey string, restore bool) ([]store.Release, error) {
 	if !versionRE.MatchString(version) {
 		return nil, fmt.Errorf("invalid version %q", version)
 	}
@@ -69,17 +85,81 @@ func AddRelease(dataDir string, st *store.Store, dir, version, channel, publicKe
 	if !channelRE.MatchString(channel) {
 		return nil, fmt.Errorf("invalid channel %q", channel)
 	}
+	// one writer per version: concurrent publishes (or a publish and a
+	// restore) of a version must not interleave their files
+	defer rs.lockVersion(version)()
+	items, err := readRelease(dir, version, channel)
+	if err != nil {
+		return nil, err
+	}
+	var existing map[string]store.Release
+	if restore {
+		rels, err := st.Releases()
+		if err != nil {
+			return nil, err
+		}
+		existing = map[string]store.Release{}
+		for _, r := range rels {
+			if r.Version == version {
+				existing[r.File] = r
+			}
+		}
+		if len(existing) != len(items) {
+			return nil, errReleaseDiffers
+		}
+		for _, it := range items {
+			if old, ok := existing[it.r.File]; !ok || old.SHA256 != it.r.SHA256 || old.Channel != channel {
+				return nil, errReleaseDiffers
+			}
+		}
+	}
+	// Check every file before anything is stored, so a refused file can't
+	// leave a half-imported version behind.
+	if err := verifyRelease(items, version, publicKey); err != nil {
+		return nil, err
+	}
+	// Store all of them, then record them: a failed upload leaves the
+	// index as it was.
+	var added []store.Release
+	for _, it := range items {
+		r := it.r
+		if old, ok := existing[r.File]; ok {
+			r = old // the signature the workers were told about
+		}
+		if err := rs.put(ctx, r, it.src, r.Sig); err != nil {
+			return nil, err
+		}
+		added = append(added, r)
+	}
+	if restore {
+		return added, nil
+	}
+	for _, r := range added {
+		if err := st.AddRelease(r); err != nil {
+			return nil, err
+		}
+	}
+	if channel == "stable" {
+		return added, st.SetMeta("latest_release", version)
+	}
+	return added, nil
+}
+
+// errReleaseDiffers: a re-publish of a known version with other files.
+var errReleaseDiffers = errors.New("different files")
+
+type releaseItem struct {
+	r   store.Release
+	src string
+}
+
+// readRelease reads the release files in dir (sha256, size, signature).
+func readRelease(dir, version, channel string) ([]releaseItem, error) {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	// 1. Check every file before anything is stored, so a refused file
-	// can't leave a half-imported version behind.
-	type item struct {
-		r   store.Release
-		src string
-	}
-	var items []item
+	var items []releaseItem
 	for _, e := range ents {
 		name := e.Name()
 		r := store.Release{Version: version, File: name, Channel: channel, AddedAt: time.Now()}
@@ -100,51 +180,36 @@ func AddRelease(dataDir string, st *store.Store, dir, version, channel, publicKe
 		if sig, err := os.ReadFile(src + update.SigExt); err == nil {
 			r.Sig = sig
 		}
-		updatable := r.Kind == "binary" && isUpdateBinary(name)
-		if publicKey != "" {
-			switch {
-			case r.Sig != nil:
-				data, err := os.ReadFile(src)
-				if err != nil {
-					return nil, err
-				}
-				if err := update.Verify(publicKey, data, r.Sig, name, version); err != nil {
-					return nil, fmt.Errorf("refusing %s: %w", name, err)
-				}
-			case updatable:
-				return nil, fmt.Errorf("refusing %s: no %s signature (sign with `longarm admin release sign` or `longarm-hub release sign`)", name, update.SigExt)
-			}
-		}
-		items = append(items, item{r, src})
+		items = append(items, releaseItem{r, src})
 	}
 	if len(items) == 0 {
 		return nil, fmt.Errorf("no release files in %s (want names like longarmd-linux-amd64, longarm-windows-amd64.exe, longarm-windows-amd64.msi)", dir)
 	}
-	// 2. Store them.
-	dst := filepath.Join(dataDir, ReleasesDir, version)
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return nil, err
+	return items, nil
+}
+
+// verifyRelease checks the signatures against publicKey ("" = no checks):
+// every signature present must verify, and update binaries must be signed.
+func verifyRelease(items []releaseItem, version, publicKey string) error {
+	if publicKey == "" {
+		return nil
 	}
-	var added []store.Release
 	for _, it := range items {
 		r, name := it.r, it.r.File
-		if err := copyFile(it.src, filepath.Join(dst, name), 0o755); err != nil {
-			return nil, err
-		}
-		if r.Sig != nil {
-			if err := os.WriteFile(filepath.Join(dst, name+update.SigExt), r.Sig, 0o644); err != nil {
-				return nil, err
+		switch {
+		case r.Sig != nil:
+			data, err := os.ReadFile(it.src)
+			if err != nil {
+				return err
 			}
+			if err := update.Verify(publicKey, data, r.Sig, name, version); err != nil {
+				return fmt.Errorf("refusing %s: %w", name, err)
+			}
+		case r.Kind == "binary" && isUpdateBinary(name):
+			return fmt.Errorf("refusing %s: no %s signature (sign with `longarm admin release sign` or `longarm-hub release sign`)", name, update.SigExt)
 		}
-		if err := st.AddRelease(r); err != nil {
-			return nil, err
-		}
-		added = append(added, r)
 	}
-	if channel == "stable" {
-		return added, st.SetMeta("latest_release", version)
-	}
-	return added, nil
+	return nil
 }
 
 func isUpdateBinary(name string) bool { return update.IsUpdateBinary(name) }
@@ -291,6 +356,9 @@ func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, e
 	}
 	if !signed {
 		return nil, status.Errorf(codes.FailedPrecondition, "release %s has no signed longarmd binary; workers would refuse it", req.Version)
+	}
+	if miss := h.rel.missingFiles(files); len(miss) > 0 {
+		return nil, status.Errorf(codes.FailedPrecondition, "the hub lost files of release %s (%s); publish the same files again first", req.Version, strings.Join(miss, ", "))
 	}
 	channel := files[0].Channel
 	h.mu.Lock()
@@ -546,7 +614,14 @@ func (s *fleetServer) DownloadRelease(req *pb.ReleaseFileRequest, stream pb.Flee
 	if !versionRE.MatchString(req.Version) || !servableFile(req.Name) {
 		return status.Error(codes.InvalidArgument, "bad release file")
 	}
-	f, err := os.Open(filepath.Join(s.h.cfg.DataDir, ReleasesDir, req.Version, req.Name))
+	p, err := s.h.releasePath(stream.Context(), req.Version, req.Name)
+	if errors.Is(err, errReleaseMissing) {
+		return status.Errorf(codes.NotFound, "%s/%s: not found", req.Version, req.Name)
+	}
+	if err != nil {
+		return status.Errorf(codes.Unavailable, "%s/%s: release store: %v", req.Version, req.Name, err)
+	}
+	f, err := platform.OpenShared(p) // a publish may replace it meanwhile
 	if err != nil {
 		return status.Errorf(codes.NotFound, "%s/%s: not found", req.Version, req.Name)
 	}
@@ -575,11 +650,12 @@ func (s *fleetServer) DownloadRelease(req *pb.ReleaseFileRequest, stream pb.Flee
 	}
 }
 
-func (s *hubAdminServer) ListReleases(context.Context, *pb.ListReleasesRequest) (*pb.ListReleasesResponse, error) {
+func (s *hubAdminServer) ListReleases(_ context.Context, req *pb.ListReleasesRequest) (*pb.ListReleasesResponse, error) {
 	rels, err := s.h.store.Releases()
 	if err != nil {
 		return nil, err
 	}
+	incomplete := map[string]bool{}
 	byVersion := map[string]*pb.ReleaseVersion{}
 	var order []string
 	for _, r := range rels {
@@ -591,10 +667,19 @@ func (s *hubAdminServer) ListReleases(context.Context, *pb.ListReleasesRequest) 
 		}
 		f := releaseFilePB(r)
 		f.Signature = nil
+		if !s.h.rel.has(r) {
+			f.Missing = true
+			incomplete[r.Version] = true
+		}
 		v.Files = append(v.Files, f)
 		if isUpdateBinary(r.File) && r.Sig == nil {
 			v.Signed = false
 		}
+	}
+	if !req.IncludeIncomplete {
+		// clients that skip known versions (publish --skip-identical)
+		// upload these again
+		order = slices.DeleteFunc(order, func(v string) bool { return incomplete[v] })
 	}
 	sort.SliceStable(order, func(i, j int) bool { return update.Compare(order[i], order[j]) > 0 })
 	resp := &pb.ListReleasesResponse{}
@@ -668,16 +753,17 @@ func (s *hubAdminServer) PublishRelease(st pb.HubAdmin_PublishReleaseServer) err
 	if hdr.Replace && callerFrom(st.Context()).id.Role == pki.RoleRelease {
 		return status.Error(codes.PermissionDenied, "the release role may not replace a published version (admin only)")
 	}
+	// A known version without replace: only the same files again, which
+	// stores them again (a data dir that lost them, a blob that is gone).
+	restore := false
 	if !hdr.Replace {
 		existing, err := s.h.releaseFiles(hdr.Version)
 		if err != nil {
 			return status.Error(codes.Internal, err.Error())
 		}
-		if len(existing) > 0 {
-			return status.Errorf(codes.AlreadyExists, "version %s exists on the hub (--replace overwrites it; workers may be downloading it)", hdr.Version)
-		}
+		restore = len(existing) > 0
 	}
-	root := filepath.Join(s.h.cfg.DataDir, ReleasesDir)
+	root := s.h.rel.dir
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return status.Error(codes.Internal, err.Error())
 	}
@@ -756,7 +842,10 @@ func (s *hubAdminServer) PublishRelease(st pb.HubAdmin_PublishReleaseServer) err
 		return status.Error(codes.InvalidArgument, "no files")
 	}
 	who := by(st.Context())
-	rels, err := AddRelease(s.h.cfg.DataDir, s.h.store, stage, hdr.Version, hdr.Channel, s.h.cfg.Releases.PublicKey)
+	rels, err := addRelease(st.Context(), s.h.rel, s.h.store, stage, hdr.Version, hdr.Channel, s.h.cfg.Releases.PublicKey, restore)
+	if errors.Is(err, errReleaseDiffers) {
+		return status.Errorf(codes.AlreadyExists, "version %s exists on the hub with other files (--replace overwrites it; workers may be downloading it)", hdr.Version)
+	}
 	if err != nil {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	}
@@ -771,7 +860,11 @@ func (s *hubAdminServer) PublishRelease(st pb.HubAdmin_PublishReleaseServer) err
 			v.Signed = false
 		}
 	}
-	s.h.log.Info("release published", "version", hdr.Version, "channel", v.Channel, "files", len(rels), "signed", v.Signed, "by", who)
-	s.h.auditHub(who, "HubAdmin.PublishRelease", map[string]any{"version": hdr.Version, "channel": v.Channel, "files": names, "signed": v.Signed})
+	if restore {
+		v.Channel = rels[0].Channel
+		v.AddedAt = timestamppb.New(rels[0].AddedAt)
+	}
+	s.h.log.Info("release published", "version", hdr.Version, "channel", v.Channel, "files", len(rels), "signed", v.Signed, "restored", restore, "by", who)
+	s.h.auditHub(who, "HubAdmin.PublishRelease", map[string]any{"version": hdr.Version, "channel": v.Channel, "files": names, "signed": v.Signed, "restored": restore})
 	return st.SendAndClose(v)
 }

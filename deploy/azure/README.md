@@ -147,6 +147,7 @@ temporary parameters file, never on a command line.
 |---|---|---|
 | `hub.db` (SQLite, WAL): nodes, join codes, users, jobs index, audit, releases index | container disk, streamed by **Litestream** to the blob container `litestream` | SQLite must not run on Azure Files: SMB byte-range locks and WAL's shared memory are not reliable there (corruption risk). Local disk + Litestream is the supported pattern. |
 | CA (`ca/`), hub/relay certificates (`tls/`), `hub.toml`, release store (`releases/`), `bootstrap.env` | Azure Files share `state`, mounted at `/data` | small files written rarely (release files once per release); readable and editable with any SMB/Storage tool; no app code needed to sync them. Blob would need a sync loop in the image for the same result. |
+| `--storage-auth identity`: release files | blob container `releases` (`<version>/<file>` + `.minisig`), written by the hub with its managed identity; `/data/releases` is a cache | there is no file share; see [below](#without-storage-account-keys). |
 | Caddy's ACME account and certificates | Azure Files share `caddy` | a container restart must not request a new Let's Encrypt certificate (rate limits). |
 
 Credentials: ACI mounts Azure Files only with the storage account key, so the
@@ -182,12 +183,13 @@ identity` (template parameter `storageAuth=identity`) deploys without keys:
 ```
 
 - The storage account has `allowSharedKeyAccess: false` and only blob
-  containers: `litestream` (and `diagnostics` with `--diagnostics`, see
-  [below](#telemetry-and-diagnostic-bundles)); no file shares. With
+  containers: `litestream`, `releases` (and `diagnostics` with
+  `--diagnostics`, see [below](#telemetry-and-diagnostic-bundles)); no file
+  shares. With
   `storageAuth=key` the hub has no managed identity and doesn't collect
   diagnostic bundles (users attach the zip by hand).
 - A user-assigned managed identity `<name>-id` gets **Storage Blob Data
-  Contributor** on that container; Litestream finds it through
+  Contributor** on each of these containers (not the account); Litestream finds it through
   `AZURE_CLIENT_ID` (Azure SDK DefaultAzureCredential). The role
   assignment needs Owner or User Access Administrator on the resource group.
 - The data dir `/data` is the container's own disk: it is gone after a
@@ -197,14 +199,33 @@ identity` (template parameter `storageAuth=identity`) deploys without keys:
   is recreated (hub/relay certificates from the CA, hub.toml from the
   environment, bootstrap.env). The database replica now holds the fleet's
   root key: whoever can read the `litestream` container can read the CA.
+- Release files (`longarm admin release publish`) go to the blob container
+  `releases` (`LONGARM_HUB_RELEASES_BLOB_URL`, hub.toml `[releases]
+  blob_url`) as well as `/data/releases`; after a restart the hub downloads
+  a file from there on its first request (`/releases/<v>/<file>`, worker
+  self-update), checks it against the sha256 in the database and keeps it in
+  `/data/releases`. At start it lists the container: files the database
+  lists that are nowhere are logged (`RELEASE FILES MISSING`), and
+  `/install.sh` / `/install.ps1` hand out the newest stable version that is
+  complete (or "no release yet"). Publishing the same files again restores
+  such a version - for a hub deployed before the container existed: re-run
+  the release's publish job (or publish the next version). Right after the
+  first deployment with the container the role assignment may take a few
+  minutes to apply; a publish refused with 403 then works on a retry.
 - No Caddy: the hub serves the panel on 443 itself (`LONGARM_HUB_HTTPS`,
   hub.toml `https`) with a Let's Encrypt certificate (TLS-ALPN-01), and
   redirects 80 to it. Certificate and ACME account are in the database
   too, so restarts and upgrades don't ask Let's Encrypt again (its limit is
   5 certificates per week for one name). The image's `longarm-hub` has the
   file capability `cap_net_bind_service` for that (it runs as nonroot).
-- Not kept across restarts: the release store (`longarm admin release
-  publish` again) and edits to hub.toml (use the environment or redeploy).
+- Not kept across restarts, by design: edits to hub.toml (it is written
+  from the template; the settings are environment variables - redeploy),
+  bootstrap.env (rewritten on every start from the database: while no
+  admin has joined, a lost file means a new one-time admin code; the old one
+  stays valid until it expires), the hub/relay server certificates (issued
+  again from the CA; nodes pin the CA), staged uploads (temporary), and
+  crash reports of the hub process waiting to be sent to telemetry (the
+  panic is in the container log too).
 - The admin join code is not in the log; get it with `--admin-code`.
 - `--acr NAME` pulls the image from an Azure Container Registry in the
   resource group with the same identity (AcrPull), for registries without

@@ -1783,6 +1783,24 @@ For automation there is a narrower credential than admin:
 nothing on workers. `longarm admin release publish --skip-identical` makes a
 re-run a no-op.
 
+The hub keeps the files in `<data_dir>/releases/<version>/`, and with
+`[releases] blob_url` (env `LONGARM_HUB_RELEASES_BLOB_URL`; an Azure Blob
+Storage container written with the hub's managed identity, or `file:///<dir>`)
+in that container as `<version>/<file>` too; the data dir is then a cache that
+the hub fills from the container (checked against the sha256 it recorded) when
+it lost a file - deploy/azure with `--storage-auth identity`, whose data dir
+dies with the container. Such downloads are bounded: two at a time, 10 minutes
+each (one that the requester abandons goes on for others waiting for the same
+file), a blob whose size isn't the recorded one is refused before it is read,
+and after a failed download (missing, corrupt, storage error) requests for
+that file fail fast (404 / 503) for a minute, doubling up to 30 minutes,
+until it is published again. A file that is in neither place is logged at every
+start; install scripts then hand out the newest *complete* stable version (or
+none), `release push` refuses that version and `release ls` marks the file
+`(missing)`. Publishing the same files again (same names and sha256; no
+`--replace` needed, and `--skip-identical` doesn't skip an incomplete version)
+stores them again and leaves the version as it was.
+
 The worker downloads through the hub's gRPC port, verifies sha256 and
 signature, renames its binaries to `*.old` (running shims keep using them)
 and puts the new ones in place, then exits; the service manager (or, in the

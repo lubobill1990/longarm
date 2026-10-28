@@ -190,6 +190,14 @@ type ReleaseConfig struct {
 	// set, `release add` refuses binaries whose signature doesn't verify
 	// (workers always verify against the key built into them).
 	PublicKey string `toml:"public_key"`
+	// BlobURL keeps the release files in an Azure Blob Storage container
+	// too, https://<account>.blob.core.windows.net/<container> (the hub's
+	// managed identity needs Storage Blob Data Contributor on it), or
+	// file:///<dir>: for hubs whose data dir doesn't outlive a restart
+	// (deploy/azure with storageAuth identity). The data dir's releases/
+	// is then a cache. Empty: the data dir only. Env
+	// LONGARM_HUB_RELEASES_BLOB_URL.
+	BlobURL string `toml:"blob_url"`
 }
 
 // HeadscaleConfig is [headscale]: the self-hosted Tailscale control plane
@@ -403,6 +411,9 @@ func (c *Config) applyDefaults() error {
 		return err
 	}
 	if err := c.diagEnvDefaults(); err != nil {
+		return err
+	}
+	if err := c.releasesEnvDefaults(); err != nil {
 		return err
 	}
 	if err := c.Auth.Entra.applyDefaults(); err != nil {

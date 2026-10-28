@@ -352,7 +352,7 @@ to workers is 'longarm admin release push'.`,
 				return err
 			}
 			defer st.Close()
-			rels, err := hub.AddRelease(cfg.DataDir, st, args[0], ver, channel, cfg.Releases.PublicKey)
+			rels, err := hub.AddRelease(cmd.Context(), cfg, st, args[0], ver, channel)
 			if err != nil {
 				return err
 			}

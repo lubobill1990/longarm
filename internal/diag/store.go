@@ -89,7 +89,7 @@ type Store interface {
 func OpenStore(rawURL string, ts azauth.TokenSource) (Store, error) {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
-		return nil, fmt.Errorf("diagnostics blob_url: %w", err)
+		return nil, fmt.Errorf("blob_url: %w", err)
 	}
 	switch u.Scheme {
 	case "file":
@@ -101,27 +101,27 @@ func OpenStore(rawURL string, ts azauth.TokenSource) (Store, error) {
 			p = p[1:] // file:///C:/x
 		}
 		if p == "" {
-			return nil, errors.New("diagnostics blob_url: file:// needs a directory")
+			return nil, errors.New("blob_url: file:// needs a directory")
 		}
 		return &DirStore{Dir: filepath.FromSlash(p)}, nil
 	case "https", "http":
 		if u.RawQuery != "" || u.User != nil {
-			return nil, errors.New("diagnostics blob_url: no SAS token or credentials in the URL; the hub authenticates with its managed identity")
+			return nil, errors.New("blob_url: no SAS token or credentials in the URL; the hub authenticates with its managed identity")
 		}
 		if u.Scheme == "http" && !loopbackHost(u.Hostname()) {
-			return nil, errors.New("diagnostics blob_url: http:// only to the loopback (a storage emulator); bearer tokens need https")
+			return nil, errors.New("blob_url: http:// only to the loopback (a storage emulator); bearer tokens need https")
 		}
 		// emulators (http, loopback) have the account in the path
 		c := strings.Trim(u.Path, "/")
 		if c == "" || strings.Contains(c, "/") && u.Scheme == "https" {
-			return nil, fmt.Errorf("diagnostics blob_url %q: want https://<account>.blob.core.windows.net/<container>", rawURL)
+			return nil, fmt.Errorf("blob_url %q: want https://<account>.blob.core.windows.net/<container>", rawURL)
 		}
 		if ts == nil {
 			ts = &azauth.ManagedIdentity{}
 		}
 		return &BlobStore{Container: strings.TrimRight(u.String(), "/"), Tokens: ts}, nil
 	}
-	return nil, fmt.Errorf("diagnostics blob_url %q: want https://<account>.blob.core.windows.net/<container> or file:///<dir>", rawURL)
+	return nil, fmt.Errorf("blob_url %q: want https://<account>.blob.core.windows.net/<container> or file:///<dir>", rawURL)
 }
 
 func loopbackHost(h string) bool {

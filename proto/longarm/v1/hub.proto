@@ -1009,6 +1009,10 @@ message ReleaseFile {
   bytes signature = 4; // the .minisig file
   string os = 5;
   string arch = 6;
+  // missing: the hub has no copy of the file (neither in its data dir nor
+  // in its [releases] blob_url container); ListReleases with
+  // include_incomplete only. Publishing the same files again restores it.
+  bool missing = 7;
 }
 
 message ReleaseFileRequest {
@@ -1038,7 +1042,11 @@ message ReleaseUpload {
 message ReleaseUploadHeader {
   string version = 1;
   string channel = 2; // default stable
-  bool replace = 3; // overwrite an existing version (else refused)
+  // overwrite an existing version. Without it a version the hub has is
+  // refused unless the upload has exactly its files (names and sha256):
+  // then the hub stores the files again (restoring lost copies) and keeps
+  // the version as it is.
+  bool replace = 3;
 }
 
 message ReleaseUploadChunk {
@@ -1048,7 +1056,12 @@ message ReleaseUploadChunk {
   bytes signature = 4; // <name>.minisig (with last)
 }
 
-message ListReleasesRequest {}
+message ListReleasesRequest {
+  // include_incomplete: also versions with files the hub can't serve
+  // (ReleaseFile.missing). Without it they are left out, so a client that
+  // skips identical versions (publish --skip-identical) uploads them again.
+  bool include_incomplete = 1;
+}
 
 message ListReleasesResponse {
   repeated ReleaseVersion releases = 1;
