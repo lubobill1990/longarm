@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -251,7 +252,11 @@ func (s *session) hubNodes(ctx context.Context, all bool) ([]*pb.NodeInfo, bool)
 	if !all {
 		s.saveCache(resp.Nodes)
 	}
-	s.renewOnce.Do(func() { s.maybeRenew(ctx, h) })
+	s.renewOnce.Do(func() {
+		if who := s.maybeRenew(ctx, h); who != nil && noticeOK {
+			maybeUpdateNotice(os.Stderr, s.cfg.Dir, who, s.cfg.Hub.Address, time.Now())
+		}
+	})
 	return resp.Nodes, true
 }
 
@@ -403,24 +408,25 @@ func (s *session) refreshNodes(force bool) {
 // maybeRenew renews this client's certificate through the hub when it
 // expires within the hub's renew window or a new endorsement waits for it
 // (longarm trust init|accept|import-key), and follows the hub's tailnet.
-func (s *session) maybeRenew(ctx context.Context, h *hubclient.Conn) {
+func (s *session) maybeRenew(ctx context.Context, h *hubclient.Conn) *pb.WhoamiResponse {
 	b := s.dialer.Bundle()
 	cctx, cancel := context.WithTimeout(ctx, hubTimeout)
 	defer cancel()
-	who, err := h.Fleet().Whoami(cctx, &pb.WhoamiRequest{})
+	who, err := h.Fleet().Whoami(cctx, &pb.WhoamiRequest{Os: runtime.GOOS, Arch: runtime.GOARCH})
 	if err != nil {
-		return
+		return nil
 	}
 	s.syncTailnet(ctx, h, who.Tailnet)
 	if !hubclient.NeedsRenewal(b.Leaf(), who.RenewBefore.AsDuration()) && !client.TrustStore(s.cfg.Dir).RenewalRequested() {
-		return
+		return who
 	}
 	leaf, err := s.renewCert(cctx, h)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, renewFailedNote(b.Leaf().NotAfter, time.Now(), oneLine(err)))
-		return
+		return who
 	}
 	fmt.Fprintf(os.Stderr, "longarm: certificate renewed (valid until %s)\n", leaf.NotAfter.Local().Format(time.RFC3339))
+	return who
 }
 
 // renewCert renews this client's certificate through h now. The new

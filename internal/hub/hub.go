@@ -68,6 +68,7 @@ type Hub struct {
 	kick         chan struct{}   // re-run the queue
 	rollout      *pb.Rollout     // the current / last release rollout
 	rel          *releaseStore   // release files (relstore.go)
+	latest       latestCache     // the newest complete release, for update notices (updatenotice.go)
 	tailnet      tailnetProvider // nil = no tailnet enrollment
 	// TailnetKey calls per node: workers 5, then one per hour; clients
 	// 10, then one per 10 minutes.
@@ -107,10 +108,11 @@ type node struct {
 	localDrain  bool
 	localReason string
 	toolchain   *pb.ToolchainReport
-	tailnet     *pb.TailnetState   // as last reported (workers)
-	savedSeen   time.Time          // last time LastSeen was persisted
-	history     []*pb.MetricsPoint // recent metrics (sparklines)
-	maxJobs     int32              // local limits (NodeState)
+	tailnet     *pb.TailnetState    // as last reported (workers)
+	savedSeen   time.Time           // last time LastSeen was persisted
+	history     []*pb.MetricsPoint  // recent metrics (sparklines)
+	maxJobs     int32               // local limits (NodeState)
+	updateAvail *pb.UpdateAvailable // a release the worker can't install itself (NodeState)
 	reservedGB  float64
 }
 

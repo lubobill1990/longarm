@@ -5,6 +5,7 @@ import type {
   FleetEvent,
   FleetJob,
   JoinCode,
+  LatestRelease,
   LinkReport,
   ListUsersResponse,
   LogChunk,
@@ -115,6 +116,14 @@ export const hubApi = {
   setLabels: (name: string, labels: Record<string, string>) => put<NodeInfo>(`/api/nodes/${enc(name)}/labels`, labels),
   assignProfile: (name: string, profile: string) => put<NodeInfo>(`/api/nodes/${enc(name)}/profile`, { profile }),
   toolchainApply: (name: string) => post<NodeInfo>(`/api/nodes/${enc(name)}/toolchain/apply`),
+  // a user's own workers (owner or admin): labels, sharing, removal
+  setWorkerLabels: (name: string, labels: Record<string, string>) => post<NodeInfo>(`/api/nodes/${enc(name)}/worker-labels`, labels),
+  shareWorker: (name: string, req: { add_users?: string[]; remove_users?: string[]; add_teams?: string[]; remove_teams?: string[]; set_everyone?: boolean; everyone?: boolean }) =>
+    post<NodeInfo>(`/api/nodes/${enc(name)}/share`, req),
+  removeWorker: (name: string) => post<NodeInfo>(`/api/nodes/${enc(name)}/remove`),
+  // public: the login page's "Sign in with Microsoft", the newest release
+  authInfo: () => get<{ entra?: boolean; mode?: string }>('/auth/info'),
+  latestRelease: () => get<LatestRelease>('/releases/latest.json'),
   jobs: (q: { worker?: string; states?: string[]; limit?: number } = {}) => {
     const p = new URLSearchParams()
     if (q.worker) p.set('worker', q.worker)

@@ -41,10 +41,10 @@ import (
 const panelCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
 func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.ResponseWriter, *http.Request, string))) {
-	spa := h.withEntraLink(webui.Handler("/api/", "/releases/"))
+	spa := webui.Handler("/api/", "/releases/")
 	mux.Handle("GET /{$}", withCSP(spa))
 	mux.Handle("GET /assets/", withCSP(spa))
-	for _, p := range []string{"nodes", "jobs", "joincodes", "profiles", "audit", "users", "links", "login", "tray", "tenants", "me"} {
+	for _, p := range []string{"nodes", "jobs", "joincodes", "profiles", "audit", "users", "links", "login", "tray", "tenants", "me", "machines", "get", "port-links"} {
 		mux.Handle("GET /"+p, withCSP(spa))
 		mux.Handle("GET /"+p+"/", withCSP(spa))
 	}

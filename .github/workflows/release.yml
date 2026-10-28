@@ -21,7 +21,9 @@
 #   hub            longarm-hub update over SSH (forced command longarm-hub-deploy:
 #                  verify, install, health check, roll back); needs LONGARM_HUB + HUB_SSH
 #   rollout        longarm admin release push <v> --canary 1 --wait 15m; fails when
-#                  the rollout halts; needs LONGARM_HUB
+#                  the rollout halts; a warning (not a failure) when no worker
+#                  can self-update (--allow-none, exit 79: MSI workers update
+#                  through the tray's banner); needs LONGARM_HUB
 #
 # Dry run (Actions -> release -> Run workflow, any branch): meta, both builds,
 # gather (publish's merge and check, no secrets) and the image smoke test,

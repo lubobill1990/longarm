@@ -114,6 +114,21 @@ export const trayApi = {
   adminDisable: () => post<{ output: string }>('/trayapi/admin/disable'),
   rolesChange: (want: AccountRoles) => post<RolesState>('/trayapi/roles', want),
   rolesState: () => get<RolesState>('/trayapi/roles/state'),
+  // the update banner: the hub's newest release; install = download, verify (sha256 + signature), run the MSI
+  update: (refresh = false) => get<TrayUpdate>(`/trayapi/update${refresh ? '?refresh=1' : ''}`),
+  installUpdate: (version: string) => post<{ state: string }>('/trayapi/update/install', { version }),
+}
+
+/** GET /trayapi/update */
+export interface TrayUpdate {
+  current: string
+  latest?: string
+  /** a newer release with an MSI for this machine */
+  available: boolean
+  msi?: string
+  /** "" | downloading | installing | failed */
+  state?: string
+  error?: string
 }
 
 export const longarmApi = {

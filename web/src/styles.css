@@ -106,6 +106,14 @@ table.grid tr:hover td { background: #11161d; }
 
 .login { max-width: 320px; margin: 12vh auto; display: flex; flex-direction: column; gap: 10px; }
 .login h1 { font-size: 20px; margin: 0 0 8px; }
+a.button {
+  display: inline-block; text-align: center; border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px;
+  background: var(--track); color: var(--fg);
+}
+a.button.primary { background: #238636; border-color: #2ea043; color: #fff; }
+a.button:hover { text-decoration: none; border-color: var(--muted); }
+.steps { padding-left: 20px; }
+.steps li { margin-bottom: 12px; }
 
 .form-grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 12px; align-items: center; }
 .codebox {

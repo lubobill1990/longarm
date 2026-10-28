@@ -1,11 +1,13 @@
 package longarmd
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"regexp"
 	"runtime"
 	"sync"
 	"time"
@@ -98,9 +100,6 @@ func (u *updater) Run(ctx context.Context) {
 }
 
 func (u *updater) check(ctx context.Context) error {
-	if !u.enabled() {
-		return nil
-	}
 	u.mu.Lock()
 	if u.busy {
 		u.missed = true
@@ -119,6 +118,13 @@ func (u *updater) check(ctx context.Context) error {
 	cancel()
 	if err != nil {
 		return err
+	}
+	if !u.enabled() {
+		// It can't install the update itself (an MSI install under
+		// Program Files, a user-session worker): it says so (status, the
+		// hub's node list, the tray); the MSI or install script updates it.
+		u.agent.setUpdateAvailable(availableUpdate(version.Version, cmp.Or(resp.Version, resp.LatestVersion), u.canApply))
+		return nil
 	}
 	target := resp.Version
 	if target == "" || target == version.Version {
@@ -174,6 +180,23 @@ func (u *updater) check(ctx context.Context) error {
 	time.Sleep(500 * time.Millisecond) // let the report reach the hub
 	u.restart()
 	return nil
+}
+
+// releaseVersion: a released version (development builds: "dev").
+var releaseVersion = regexp.MustCompile(`^v?[0-9]+\.[0-9]+`)
+
+// availableUpdate is the notice for a worker running running that can't
+// update itself (why) when the hub has target: nil unless target is newer.
+func availableUpdate(running, target string, why error) *pb.UpdateAvailable {
+	if !releaseVersion.MatchString(target) || !update.ValidVersion(target) || !releaseVersion.MatchString(running) ||
+		update.Compare(target, running) <= 0 {
+		return nil
+	}
+	reason := "this installation can't update itself"
+	if why != nil {
+		reason = why.Error()
+	}
+	return &pb.UpdateAvailable{Version: target, Reason: reason}
 }
 
 // startup handles a finished or in-progress update when longarmd starts: the

@@ -192,6 +192,7 @@ func (h *Hub) applyHelloLocked(n *node, hello *pb.NodeHello) {
 	if st := hello.State; st != nil {
 		n.localDrain, n.localReason = st.Draining, st.Reason
 		n.maxJobs, n.reservedGB = st.MaxJobs, st.ReservedMemGb
+		n.updateAvail = st.UpdateAvailable
 	}
 	r.Channel, r.UpdateEnabled = hello.Channel, hello.UpdateEnabled
 	h.applyTailnetLocked(n, hello.Tailnet)
@@ -235,6 +236,7 @@ func (h *Hub) handleReport(n *node, sess *nodeSession, m *pb.NodeReport) {
 	case *pb.NodeReport_State:
 		n.localDrain, n.localReason = x.State.Draining, x.State.Reason
 		n.maxJobs, n.reservedGB = x.State.MaxJobs, x.State.ReservedMemGb
+		n.updateAvail = x.State.UpdateAvailable
 		h.publishNodeLocked(n, "state changed")
 		h.kickQueue()
 	case *pb.NodeReport_Update:
@@ -415,6 +417,7 @@ func (h *Hub) nodeInfoLocked(n *node) *pb.NodeInfo {
 		Metrics: n.metrics, LastSeen: tspb(r.LastSeen), JoinedAt: tspb(r.JoinedAt), CertNotAfter: tspb(r.CertNotAfter),
 		Mirrors: r.Mirrors, WarmRepos: r.WarmRepos, Profile: r.Profile, Toolchain: n.toolchain, AdminWorker: r.Admin,
 		MaxJobs: n.maxJobs, ReservedMemGb: n.reservedGB, Tailnet: n.tailnet, Isolation: r.Isolation,
+		UpdateAvailable: n.updateAvail,
 	}
 	if r.Role != string(pki.RoleWorker) {
 		info.User = nodeUser(r)

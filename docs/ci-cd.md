@@ -342,8 +342,16 @@ git push origin v1.4.0
    (online, least busy) updates; once it ran `<v>` and stayed connected for
    15 min, the other workers follow; the job fails when the rollout halts (a
    worker failed its health check and rolled itself back) or is aborted.
-   Workers that can't self-update (no key in their build, package-managed)
-   are skipped and named; with no updatable worker at all the push fails.
+   Workers that can't self-update (no key in their build, package-managed,
+   MSI installs under Program Files, user-session workers) are skipped and
+   named. With no updatable worker at all there is nothing to roll out: the
+   job runs the push with `--allow-none`, which lists those workers and
+   exits 79; the job turns that into a **warning** and passes. Those workers
+   get the version as a notice and update through the tray's "Update to
+   <v>" banner (MSI, checked against the hub's sha256 and the release
+   signature) or the install script; `longarmd status` and the panel's
+   Nodes page show them as outdated. A real rollout failure - a canary
+   that halts, a worker that rolls back, an abort - still fails the job.
 
 **Prereleases** (`v1.5.0-rc1`, any `-` suffix): channel `beta`, GitHub
 prerelease, and no hub deploy or fleet rollout. Beta workers

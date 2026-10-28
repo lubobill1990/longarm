@@ -7,6 +7,7 @@ import { PoolTab, SourceBar, useNow } from './PoolTab'
 import { poolMachines } from '../lib/machines'
 import { WorkerTab } from './WorkerTab'
 import { AccountTab } from './AccountTab'
+import { UpdateBanner } from './UpdateBanner'
 import { wailsMessage } from '../lib/wails'
 import { ContextMenu, installAppBehaviour } from './appShell'
 import { IconChip, IconClose, IconForward, IconPin, IconServers, IconSettings, IconTerminal, IconUser } from '../components/icons'
@@ -147,6 +148,7 @@ export function TrayApp() {
               <h1 className="page-title">{curLabel}</h1>
               <div className="banners">
                 <ErrorBox error={infoErr} />
+                <UpdateBanner />
                 {needSignIn && cur !== 'account' && (
                   <Banner
                     tone="warn"

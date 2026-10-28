@@ -92,6 +92,7 @@ type hubAgent struct {
 	limitsMu    sync.Mutex          // serializes SetLimits (file + memory)
 	toolDrain   drainState          // toolchain update
 	adminDrain  bool
+	updAvail    *pb.UpdateAvailable // a release this worker can't install itself
 	renewBefore time.Duration
 	watchers    map[chan *pb.LocalEvent]struct{}
 }
@@ -164,7 +165,28 @@ func (a *hubAgent) stateLocked() *pb.NodeState {
 	if a.limits != nil {
 		st.MaxJobs, st.ReservedMemGb = a.limits.MaxJobs, a.limits.ReservedMemGb
 	}
+	if a.updAvail != nil {
+		st.UpdateAvailable = proto.Clone(a.updAvail).(*pb.UpdateAvailable)
+	}
 	return st
+}
+
+// setUpdateAvailable records a release this worker can't install itself
+// (nil = none) and tells the hub and the local API's listeners on a change.
+func (a *hubAgent) setUpdateAvailable(ua *pb.UpdateAvailable) {
+	a.mu.Lock()
+	if proto.Equal(a.updAvail, ua) {
+		a.mu.Unlock()
+		return
+	}
+	a.updAvail = ua
+	st := a.stateLocked()
+	a.mu.Unlock()
+	a.send(&pb.NodeReport{Msg: &pb.NodeReport_State{State: st}}, false)
+	if ua != nil {
+		a.log.Info("update available", "version", ua.Version, "why_not_automatic", ua.Reason)
+		a.notify(&pb.LocalEvent{Kind: "update", Message: "Longarm " + ua.Version + " is available (" + ua.Reason + ")"})
+	}
 }
 
 func nonEmpty(s, d string) string {

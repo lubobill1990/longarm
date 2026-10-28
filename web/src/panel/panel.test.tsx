@@ -38,13 +38,14 @@ describe('LoginPage', () => {
         <LoginPage onLogin={onLogin} />
       </Toasts>,
     )
-    fireEvent.change(screen.getByLabelText('user'), { target: { value: 'ops' } })
+    fireEvent.change(await screen.findByLabelText('user'), { target: { value: 'ops' } })
     fireEvent.change(screen.getByLabelText('password'), { target: { value: 'secret secret' } })
     fireEvent.change(screen.getByLabelText('TOTP code'), { target: { value: '123 456' } })
     fireEvent.click(screen.getByText('Log in'))
     await screen.findByText('wrong user, password or code')
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ user: 'ops', password: 'secret secret', totp: '123456' })
-    expect((calls[0].init?.headers as Record<string, string>)['Content-Type']).toBe('application/json')
+    const login = calls.find((c) => c.url === '/api/login')!
+    expect(JSON.parse(String(login.init?.body))).toEqual({ user: 'ops', password: 'secret secret', totp: '123456' })
+    expect((login.init?.headers as Record<string, string>)['Content-Type']).toBe('application/json')
     ok = true
     fireEvent.change(screen.getByLabelText('TOTP code'), { target: { value: '654321' } })
     fireEvent.click(screen.getByText('Log in'))
@@ -106,7 +107,7 @@ describe('multi-tenancy', () => {
     job: { spec: { id, argv: ['make', 'test'], owner, submitted_by: `client/${owner}`, share_teams: share }, state: 'JOB_STATE_RUNNING', created_at: '2026-01-01T00:00:00Z' },
   })
 
-  it('shows user-role logins only My jobs, Nodes, Port links and Me (with quota and usage)', async () => {
+  it('shows user-role logins only My jobs, My machines, Nodes, Port links, Get Longarm and Me (with quota and usage)', async () => {
     vi.stubGlobal('EventSource', FakeEventSource)
     history.pushState(null, '', '/')
     const calls = mockFetch({
@@ -118,7 +119,7 @@ describe('multi-tenancy', () => {
     render(<PanelApp />)
     expect(await screen.findByRole('heading', { name: 'My jobs' })).toBeTruthy()
     const nav = screen.getByRole('navigation')
-    expect(Array.from(nav.querySelectorAll('a')).map((a) => a.textContent)).toEqual(['My jobs', 'Nodes', 'Port links', 'Me'])
+    expect(Array.from(nav.querySelectorAll('a')).map((a) => a.textContent)).toEqual(['My jobs', 'My machines', 'Nodes', 'Port links', 'Get Longarm', 'Me'])
     fireEvent.click(screen.getByText('Nodes'))
     expect(await screen.findByTestId('node-wa')).toBeTruthy()
     expect(screen.queryByText('Drain')).toBeNull()
@@ -340,5 +341,155 @@ describe('PortLinksPage', () => {
     await waitFor(() => expect(calls.some((c) => c.url === '/api/port-links/pl-1' && c.init?.method === 'DELETE')).toBe(true))
     expect(await screen.findByTestId('port-links-empty')).toBeTruthy()
     expect(screen.queryByTestId('port-link-pl-1')).toBeNull()
+  })
+})
+
+describe('sign-in, machines, updates', () => {
+  const userMe = { user: 'alice', hub: 'hub1', version: '0.1.3', role: 'user', tenant: 'alice', base_url: 'https://hub.example.com' }
+  const latest = { version: '0.1.3', files: [{ name: 'longarm-windows-amd64.msi', sha256: 'ab', size: 10, signed: true }] }
+
+  it('LoginPage: "Sign in with Microsoft" first when the hub has Entra, the panel account folded', async () => {
+    mockFetch({ '/auth/info': () => [200, { entra: true, mode: 'spa' }] })
+    history.pushState(null, '', '/jobs')
+    render(
+      <Toasts>
+        <LoginPage onLogin={() => {}} />
+      </Toasts>,
+    )
+    const ms = await screen.findByTestId('signin-microsoft')
+    expect(ms.getAttribute('href')).toBe('/auth/login?next=%2Fjobs')
+    expect(ms.className).toContain('primary')
+    const details = screen.getByText('Panel account').closest('details')
+    expect(details?.open).toBe(false)
+    expect(details?.querySelector('input[aria-label="TOTP code"]')).toBeTruthy()
+  })
+
+  it('LoginPage: the password form alone without Entra', async () => {
+    mockFetch({ '/auth/info': () => [200, { entra: false }] })
+    render(
+      <Toasts>
+        <LoginPage onLogin={() => {}} />
+      </Toasts>,
+    )
+    expect(await screen.findByLabelText('TOTP code')).toBeTruthy()
+    expect(screen.queryByTestId('signin-microsoft')).toBeNull()
+  })
+
+  it('Nodes marks outdated versions with the reason a worker cannot update itself', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    history.pushState(null, '', '/nodes')
+    mockFetch({
+      '/api/me': () => [200, { user: 'ops', hub: 'hub1', version: '0.1.3', role: 'admin' }],
+      '/releases/latest.json': () => [200, latest],
+      '/api/nodes': () => [
+        200,
+        {
+          nodes: [
+            { name: 'old', role: 'worker', state: 'approved', online: true, version: '0.1.2', update_available: { version: '0.1.3', reason: 'MSI install' } },
+            { name: 'new', role: 'worker', state: 'approved', online: true, version: '0.1.3' },
+            { name: 'dev', role: 'worker', state: 'approved', online: true, version: 'dev' },
+          ],
+        },
+      ],
+      '/api/history': () => [200, { nodes: [] }],
+      '/api/links': () => [200, { reports: [] }],
+      '/api/profiles': () => [200, { profiles: [] }],
+    })
+    render(<PanelApp />)
+    const tag = await screen.findByTestId('outdated-old')
+    expect(tag.textContent).toContain('0.1.3')
+    expect(tag.getAttribute('title')).toContain('MSI install')
+    expect(screen.queryByTestId('outdated-new')).toBeNull()
+    expect(screen.queryByTestId('outdated-dev')).toBeNull()
+  })
+
+  it('confirms a kill with the job name, worker and owner', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    history.pushState(null, '', '/jobs')
+    const ask = vi.fn((_msg?: string) => false)
+    vi.stubGlobal('confirm', ask)
+    const calls = mockFetch({
+      '/api/me': () => [200, userMe],
+      '/api/jobs': () => [
+        200,
+        { jobs: [{ worker: 'wa', worker_online: true, job: { spec: { id: 'j-1', name: 'tests', argv: ['make'], owner: 'alice' }, state: 'JOB_STATE_RUNNING' } }] },
+      ],
+      '/api/nodes': () => [200, { nodes: [] }],
+    })
+    render(<PanelApp />)
+    const row = await screen.findByTestId('job-j-1')
+    fireEvent.click(row.querySelector('button.danger')!)
+    expect(ask).toHaveBeenCalledTimes(1)
+    const text = String(ask.mock.calls[0][0])
+    expect(text).toContain('tests')
+    expect(text).toContain('worker wa')
+    expect(text).toContain('alice')
+    expect(calls.some((c) => c.url.includes('/kill'))).toBe(false) // refused: nothing killed
+  })
+
+  it('empty My jobs links to Get Longarm and My machines', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    history.pushState(null, '', '/jobs')
+    mockFetch({ '/api/me': () => [200, userMe], '/api/jobs': () => [200, { jobs: [] }], '/api/nodes': () => [200, { nodes: [] }] })
+    render(<PanelApp />)
+    const empty = await screen.findByTestId('jobs-empty')
+    const hrefs = Array.from(empty.querySelectorAll('a')).map((a) => a.getAttribute('href'))
+    expect(hrefs).toEqual(['/get', '/machines'])
+  })
+
+  it('My machines: worker and admin worker as one machine; share, labels and remove', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    history.pushState(null, '', '/machines')
+    vi.stubGlobal(
+      'prompt',
+      vi.fn(() => 'bob team:dev'),
+    )
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    )
+    const calls = mockFetch({
+      '/api/me': () => [200, userMe],
+      '/releases/latest.json': () => [200, latest],
+      '/api/nodes/devbox/share': () => [200, { name: 'devbox' }],
+      '/api/nodes/devbox/remove': () => [200, { name: 'devbox' }],
+      '/api/nodes': () => [
+        200,
+        {
+          nodes: [
+            { name: 'devbox', role: 'worker', state: 'approved', hostname: 'devbox', owner: 'alice', online: true, version: '0.1.2', shares: { users: ['carol'] } },
+            { name: 'devbox-admin', role: 'worker', state: 'approved', hostname: 'devbox', owner: 'alice', admin_worker: true, version: '0.1.3' },
+            { name: 'shared-w', role: 'worker', state: 'approved', hostname: 'other', owner: '', version: '0.1.3' },
+            { name: 'bobs', role: 'worker', state: 'approved', hostname: 'bobs', owner: 'bob', version: '0.1.3' },
+          ],
+        },
+      ],
+    })
+    render(<PanelApp />)
+    const m = await screen.findByTestId('machine-devbox')
+    expect(m.textContent).toContain('devbox-admin')
+    expect(screen.queryByTestId('machine-other')).toBeNull() // not hers
+    expect(screen.queryByTestId('machine-bobs')).toBeNull()
+    expect(await screen.findByTestId('outdated-devbox')).toBeTruthy()
+    expect(screen.getByTestId('shares-devbox').textContent).toContain('carol')
+    expect(screen.getByTestId('shares-devbox-admin').textContent).toContain('only you')
+    fireEvent.click(screen.getByText('share'))
+    await waitFor(() => expect(calls.some((c) => c.url === '/api/nodes/devbox/share')).toBe(true))
+    const share = calls.find((c) => c.url === '/api/nodes/devbox/share')!
+    expect(JSON.parse(String(share.init?.body))).toEqual({ add_users: ['bob'], add_teams: ['dev'] })
+    fireEvent.click(screen.getByTestId('worker-devbox').querySelector('button.danger')!)
+    await waitFor(() => expect(calls.some((c) => c.url === '/api/nodes/devbox/remove' && c.init?.method === 'POST')).toBe(true))
+  })
+
+  it('Get Longarm: the MSI of the newest release and the one-liners for this hub', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    history.pushState(null, '', '/get')
+    mockFetch({ '/api/me': () => [200, userMe], '/releases/latest.json': () => [200, latest] })
+    render(<PanelApp />)
+    const msi = await screen.findByTestId('get-msi')
+    expect(msi.getAttribute('href')).toBe('/releases/0.1.3/longarm-windows-amd64.msi')
+    expect(screen.getByTestId('get-ps1').textContent).toBe("$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex")
+    expect(screen.getByTestId('get-sh').textContent).toBe('curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --role both')
+    expect(screen.getByTestId('get-steps').querySelectorAll('li').length).toBe(3)
   })
 })

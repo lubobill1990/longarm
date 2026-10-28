@@ -109,6 +109,25 @@
   for a hub points at the Account tab instead of the join-code form (still
   there under "Use a join code").
 
+- Update notices for installs that can't update themselves: workers (MSI
+  installs, user-session workers, the admin worker) ask the hub anyway and
+  report `update_available` (version, why not automatic) in `longarmd
+  status`, the hub's node list and the panel; `longarm` prints a notice on a
+  terminal once a day (`LONGARM_NO_UPDATE_NOTICE=1` turns it off); the tray
+  shows "Update to X", downloads the MSI, checks the hub's sha256 and the
+  release signature, and runs it. The hub serves `GET /releases/latest.json`
+  and fills `WhoamiResponse.latest_version` / `latest_path`.
+- `longarm admin release push --allow-none`: when no worker of the channel
+  can self-update (MSI installs, user-session workers) it lists them and
+  exits 79 instead of failing; release.yml's rollout job turns that into a
+  warning (they update through the tray's MSI banner), while a halted or
+  rolled-back rollout still fails the job.
+- Panel: "Sign in with Microsoft" is the login page's first button (the
+  password + TOTP form folds under "Panel account"; no injected link any
+  more), users get "My machines" (their workers and devices, one row per
+  machine: labels, sharing, removal) and "Get Longarm" (the newest MSI, the
+  one-liners, three steps), outdated versions are marked on Nodes, and a
+  kill asks first (job, worker, owner).
 - Windows installer for password-less machines (Entra-only sign-in with
   Windows Hello or a security key, e.g. Microsoft Dev Box): the MSI's first
   page is **Default (recommended)** - the hub built into the release, a
