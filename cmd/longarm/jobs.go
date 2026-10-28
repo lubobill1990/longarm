@@ -26,6 +26,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/jobs"
+	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/workspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -117,7 +118,7 @@ func execCmd() *cobra.Command {
 	c.Flags().BoolVar(&combined, "combined", false, "interleave stderr into stdout")
 	c.Flags().Int64Var(&maxOut, "max-output", 0, "max bytes captured per stream (default 1 MiB)")
 	c.Flags().StringVar(&on, "on", "", "worker name or \"auto\" (default when no worker is given)")
-	c.Flags().StringVar(&inSession, "session", "", "run on the worker of this session, in its working directory (--cwd: relative to it)")
+	c.Flags().StringVarP(&inSession, "session", "s", "", "run on the worker of this session, in its working directory (--cwd: relative to it)")
 	return c
 }
 
@@ -144,12 +145,19 @@ func runCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "run [<worker>] -- command [args...]",
 		Short: "Submit a job; prints the job id (with --wait/--follow, exits with the job's code). Without a worker (or --on auto) the scheduler places it",
-		Long: `Submit a job. Without a worker (or with --on auto) the hub places the job
-(DESIGN §5.2: free memory >= 20 GB and CPU < 70 %, best score
-free - reserved - 6*running + 10*has_mirror + 5*warm_deps) and reserves
---mem-gb (default by --type: claude/copilot 2, build 8, test 4, else 2).
-When no worker passes, the job waits in the hub's queue. Without a
-reachable hub longarm picks among the known workers itself.`,
+		Long: `Submit a job; longarm prints its id (follow it: longarm logs <id> -f).
+
+Without a worker (or with --on auto) the hub places the job on a worker
+that passes the gate - free memory at least min(20 GB, 25 % of its RAM)
+and CPU below 70 % - with the best score (free memory minus reserved,
+fewer running jobs, a mirror of --repo and warm dependencies count), and
+reserves --mem-gb there (default by --type: claude/copilot 2, build 8,
+test 4, else 2). When no worker passes, the job waits in the hub's queue
+(--no-queue: fail instead). Without a reachable hub longarm picks among
+the known workers itself.
+
+Without --repo or --cwd the job runs in the worker's home directory;
+--repo . runs it in a fresh copy of the local checkout instead.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			worker, argv, err := commandArgs(cmd, args)
@@ -275,8 +283,16 @@ reachable hub longarm picks among the known workers itself.`,
 				return err
 			}
 			fmt.Println(job.Spec.Id)
+			hints := stderrIsTerminal()
+			if hints && repo == "" && cwd == "" && inSession == "" {
+				if wd, err := os.Getwd(); err == nil && insideGitCheckout(wd) {
+					fmt.Fprintln(os.Stderr, gitCheckoutHint(worker))
+				}
+			}
 			if job.State == pb.JobState_JOB_STATE_FAILED && !wait && !follow {
 				fmt.Fprintf(os.Stderr, "longarm: job failed to start: %s%s\n", job.Reason, traceNote())
+			} else if hints && !wait && !follow {
+				fmt.Fprintln(os.Stderr, followHint(job.Spec.Id))
 			}
 			if follow {
 				if err := followLogs(ctx, conn, id, 0, os.Stdout); err != nil {
@@ -296,7 +312,7 @@ reachable hub longarm picks among the known workers itself.`,
 	c.Flags().StringVar(&cwd, "cwd", "", "working directory on the worker (default: home; with --repo: relative to the worktree)")
 	c.Flags().StringVar(&name, "name", "", "human-readable job name")
 	c.Flags().StringVar(&id, "id", "", "job id (default: new ULID)")
-	c.Flags().StringVar(&memLimit, "mem-limit", "", "memory limit for the job's process tree, e.g. 8G (Windows only in P0a)")
+	c.Flags().StringVar(&memLimit, "mem-limit", "", "memory limit of the job's process tree, e.g. 8G (Windows; Linux with per-user isolation; ignored on macOS)")
 	c.Flags().BoolVar(&wait, "wait", false, "wait for the job and exit with its exit code")
 	c.Flags().BoolVarP(&follow, "follow", "f", false, "stream the log, then exit with the job's exit code")
 	c.Flags().StringVar(&repo, "repo", "", "run in a fresh git worktree of this repo: a local checkout (its commits, uncommitted and untracked files are synced) or a clone URL fetched by the worker (with --git-auth forward, or the GH_TOKEN secret, if given)")
@@ -310,7 +326,7 @@ reachable hub longarm picks among the known workers itself.`,
 	c.Flags().BoolVar(&noQueue, "no-queue", false, "fail instead of queueing when no worker passes the gate")
 	c.Flags().StringArrayVar(&share, "share", nil, "let team members read the job (state, logs): team = all your teams, team:<name> = one")
 	c.Flags().Float64Var(&cpus, "cpus", 0, "CPU limit of the job's process tree in cores (Windows; Linux with per-user isolation)")
-	c.Flags().StringVar(&inSession, "session", "", "run on the worker of this session, in its working directory (e.g. its --repo worktree; --cwd: relative to it)")
+	c.Flags().StringVarP(&inSession, "session", "s", "", "run on the worker of this session, in its working directory (e.g. its --repo worktree; --cwd: relative to it)")
 	c.Flags().StringVar(&stdinFile, "stdin-file", "", "send this local file (- = longarm's stdin; at most 1 MiB) as the job's stdin: memory-only on the worker, never in job metadata, the hub or logs")
 	return c
 }
@@ -476,34 +492,52 @@ func jobExit(j *pb.Job, quiet bool) error {
 	return &exitError{code: exitLongarmError, msg: fmt.Sprintf("job %s ended in unexpected state %s", j.Spec.Id, j.State)}
 }
 
-// jobTarget splits "[<worker>] <id>" and finds the worker when omitted.
+// jobTarget splits "[<worker>] <id>", resolves a short id or "last"
+// (jobids.go) and finds the worker when omitted.
 func jobTarget(ctx context.Context, s *session, args []string) (worker, id string, err error) {
+	id = args[len(args)-1]
 	if len(args) == 2 {
-		return args[0], args[1], nil
+		worker = args[0]
 	}
-	w, err := s.findJob(ctx, args[0])
-	return w, args[0], err
+	if worker, id, err = s.resolveJobArg(ctx, worker, id); err != nil || worker != "" {
+		return worker, id, err
+	}
+	worker, err = s.findJob(ctx, id)
+	return worker, id, err
 }
 
 func logsCmd() *cobra.Command {
-	var follow, session bool
+	var follow bool
 	var from int64
-	var owner string
+	var owner, sessionFlag string
 	c := &cobra.Command{
-		Use:   "logs [<worker>] <job-id | session-name>",
-		Short: "Print a job's (or with --session, a session's) output from a byte offset; -f follows until it ends",
-		Args:  cobra.RangeArgs(1, 2),
+		Use:   "logs [<worker>] <job-id> | logs [<worker>] -s <session>",
+		Short: "Print a job's (or with -s, a session's) output from a byte offset; -f follows until it ends",
+		Long: `Print a job's output from a byte offset; -f follows it until the job ends.
+The job is its id, a unique prefix or suffix of it, or "last" (your most
+recent job); without a worker longarm finds it.
+
+-s NAME (--session NAME) prints an interactive session's transcript instead
+(raw terminal output); without a worker, the worker running a session of
+that name. The older form "logs <worker> <session> --session" still works.`,
+		Args: cobra.RangeArgs(0, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if session && len(args) != 2 {
-				return errors.New("usage: longarm logs <worker> <session> --session")
+			session, name, args, err := logsSessionArgs(sessionFlag, args)
+			if err != nil {
+				return err
 			}
 			s, err := openSession()
 			if err != nil {
 				return err
 			}
 			defer s.close()
-			worker, id, err := jobTarget(cmd.Context(), s, args)
-			if err != nil {
+			var worker, id string
+			if session {
+				id = name
+				if worker, err = sessionWorker(cmd.Context(), s, args, name); err != nil {
+					return err
+				}
+			} else if worker, id, err = jobTarget(cmd.Context(), s, args); err != nil {
 				return err
 			}
 			conn, err := s.conn(worker)
@@ -540,7 +574,8 @@ func logsCmd() *cobra.Command {
 			}
 		},
 	}
-	c.Flags().BoolVar(&session, "session", false, "show an interactive session's transcript (raw terminal output)")
+	c.Flags().StringVarP(&sessionFlag, "session", "s", "", "show this interactive session's transcript (raw terminal output); a bare --session takes the name from the arguments")
+	c.Flags().Lookup("session").NoOptDefVal = sessionFromArgs
 	c.Flags().StringVar(&owner, "owner", "", "with --session, admins: another user's session")
 	c.Flags().BoolVarP(&follow, "follow", "f", false, "keep streaming until the job ends (reconnects automatically)")
 	c.Flags().Int64Var(&from, "from", 0, "start at this byte offset (negative: that many bytes before the end)")
@@ -553,7 +588,8 @@ func waitCmd() *cobra.Command {
 		Short: "Wait for a job to end; exit code mirrors the job's (killed=137, lost=254, longarm error=255)",
 		Long: `Wait for a job to end. With a hub, longarm subscribes to the hub's job events
 (the worker is found by the job id); if the hub is or becomes unreachable it
-waits on the worker directly. The exit code mirrors the job's.`,
+waits on the worker directly. The exit code mirrors the job's. The job is its
+id, a unique prefix or suffix of it, or "last" (your most recent job).`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := openSession()
@@ -565,6 +601,9 @@ waits on the worker directly. The exit code mirrors the job's.`,
 			worker, id := "", args[len(args)-1]
 			if len(args) == 2 {
 				worker = args[0]
+			}
+			if worker, id, err = s.resolveJobArg(ctx, worker, id); err != nil {
+				return err
 			}
 			if h := s.optionalHub(ctx); h != nil {
 				last, err := waitViaHub(ctx, h, worker, id)
@@ -631,7 +670,7 @@ func terminalState(s pb.JobState) bool {
 func killCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "kill [<worker>] <job-id>",
-		Short: "Kill a job's whole process tree",
+		Short: "Kill a job's whole process tree (job: its id, a unique prefix or suffix, or \"last\")",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := openSession()
@@ -667,7 +706,7 @@ func stateName(s pb.JobState) string {
 func jobsCmd() *cobra.Command {
 	var states []string
 	var limit int
-	var asJSON, hubOnly bool
+	var asJSON, hubOnly, mine, all bool
 	var jobID string
 	c := &cobra.Command{
 		Use:   "jobs [<worker>]",
@@ -680,9 +719,18 @@ workers, "unreachable": [workers that did not answer]). Only "source": "hub"
 makes a missing job authoritative. --hub-only never falls back: no hub
 configured or no answer exits 69. --id <job> lists that job alone and exits
 3 when it is not known (to the hub; with the fallback: to the workers that
-answered). See docs/usage.md#jobs---json.`,
+answered). See docs/usage.md#jobs---json.
+
+The table shows the newest 20 jobs (--limit N; 0 = all). Admins see
+everybody's jobs, so for an admin certificate it shows only yours unless
+--all; --mine shows only yours for anyone (without it you also see jobs
+shared with your teams). --json lists every job you may see unless
+--limit, --mine or --all are given (as before).`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if mine && all {
+				return usagef("--mine and --all exclude each other")
+			}
 			var want []pb.JobState
 			for _, s := range states {
 				v, ok := pb.JobState_value["JOB_STATE_"+strings.ToUpper(s)]
@@ -701,6 +749,13 @@ answered). See docs/usage.md#jobs---json.`,
 			}
 			defer s.close()
 			ctx := cmd.Context()
+			if jobID != "" && !hubOnly {
+				if _, jobID, err = s.resolveJobArg(ctx, worker, jobID); err != nil {
+					return err
+				}
+			}
+			v := planJobsView(jobsViewOpts{limit: limit, limitSet: cmd.Flags().Changed("limit"), json: asJSON, id: jobID != "",
+				mine: mine, all: all, admin: s.dialer.Identity().Role == pki.RoleAdmin})
 			var rows []*pb.FleetJob
 			var unreachable []string
 			source := ""
@@ -713,7 +768,7 @@ answered). See docs/usage.md#jobs---json.`,
 				h = s.optionalHub(ctx)
 			}
 			if h != nil {
-				rows, err = hubJobs(ctx, h, worker, jobID, want, limit)
+				rows, err = hubJobs(ctx, h, worker, jobID, want, v.fetch)
 				switch {
 				case err == nil:
 					source = "hub"
@@ -727,7 +782,7 @@ answered). See docs/usage.md#jobs---json.`,
 			}
 			if source == "" {
 				source = "workers"
-				if rows, unreachable, err = workerJobs(ctx, s, worker, jobID, want, limit); err != nil {
+				if rows, unreachable, err = workerJobs(ctx, s, worker, jobID, want, v.fetch); err != nil {
 					return err
 				}
 			}
@@ -744,12 +799,13 @@ answered). See docs/usage.md#jobs---json.`,
 				}
 				return notFoundf("job %s not found on the workers that answered", jobID)
 			}
+			rows, more := v.apply(rows, s.dialer.Identity().Owner())
 			if asJSON {
 				printJobsJSON(rows, source, unreachable)
 				return nil
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "WORKER\tID\tSTATE\tEXIT\tSTARTED\tDURATION\tLOG\tNAME\tCOMMAND")
+			fmt.Fprintln(tw, "WORKER\tID\tSTATE\tEXIT\tSTARTED\tDURATION\tLOG\tOWNER\tNAME\tCOMMAND")
 			for _, fj := range rows {
 				j := fj.Job
 				exit := "-"
@@ -776,13 +832,22 @@ answered). See docs/usage.md#jobs---json.`,
 				if len(cmdline) > 60 {
 					cmdline = cmdline[:57] + "..."
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", fj.Worker, j.Spec.Id, st, exit, started, dur, j.LogSize, j.Spec.Name, cmdline)
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", fj.Worker, j.Spec.Id, st, exit, started, dur,
+					j.LogSize, dash(j.Spec.Owner), j.Spec.Name, cmdline)
 			}
-			return tw.Flush()
+			if err := tw.Flush(); err != nil {
+				return err
+			}
+			if note := v.note(more); note != "" {
+				fmt.Fprintln(os.Stderr, note)
+			}
+			return nil
 		},
 	}
 	c.Flags().StringSliceVar(&states, "state", nil, "filter by state (running, done, failed, killed, lost, ...)")
-	c.Flags().IntVar(&limit, "limit", 0, "max jobs (0 = all)")
+	c.Flags().IntVar(&limit, "limit", defaultJobsLimit, "max jobs (0 = all; --json without --limit: all)")
+	c.Flags().BoolVar(&mine, "mine", false, "only your own jobs (the default for admin certificates)")
+	c.Flags().BoolVar(&all, "all", false, "every job you may see (admins: everybody's)")
 	c.Flags().BoolVar(&asJSON, "json", false, `JSON output: {"jobs": [...], "source": "hub"|"workers"}`)
 	c.Flags().BoolVar(&hubOnly, "hub-only", false, "ask only the hub: exit 69 when there is none or it does not answer (no fallback to the workers)")
 	c.Flags().StringVar(&jobID, "id", "", "only this job; exit 3 when it is not known")
@@ -824,7 +889,7 @@ func workerJobs(ctx context.Context, s *session, worker, id string, want []pb.Jo
 		}
 	}
 	if len(targets) == 0 {
-		return nil, nil, errors.New("no workers known (configure workers.toml or a hub)")
+		return nil, nil, noWorkersError(s)
 	}
 	var mu sync.Mutex
 	var wg sync.WaitGroup

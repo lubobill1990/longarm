@@ -17,10 +17,15 @@ import (
 func leaveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "leave",
-		Short: "Deregister this client from the hub (revokes its certificate) and remove its credentials",
-		Args:  cobra.NoArgs,
+		Short: "Sign this machine out: revoke its sign-in (certificate) at the hub and remove its credentials",
+		Long: `Sign this machine out of the hub for good: the hub revokes this machine's
+certificate, and longarm deletes it (and the hub settings) here. To use
+Longarm on this machine again, sign in anew: longarm login.
+
+A worker on this machine is not affected: longarmd leave removes that.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := openSession()
+			s, err := openSessionWith(true) // an expired sign-in can still be removed
 			if err != nil {
 				return err
 			}

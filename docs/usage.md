@@ -150,7 +150,34 @@ longarm version --json                             # version + features (see "Ca
 longarm session start w1 -s a1 --json -- claude    # detached session for programs (see "Sessions for programs")
 longarm tail w1 path/to/events.jsonl -f --json     # stream a growing file
 longarm admin shutdown w1                          # admin role only; jobs keep running
+longarm logs last -f                               # your most recent job; a job is also a unique prefix or
+longarm kill 7K3M9Q2A                              #   suffix of its id (the tray shows the last 8 characters)
+longarm logs -s a1 [-f]                            # a session's transcript (also: logs w1 a1 --session)
+longarm jobs [--mine | --all] [--limit N]          # the newest 20 (0 = all); admins see their own unless --all
+longarm doctor [--json]                            # checklist: sign-in, hub, daemon, firewall, your workers
 ```
+
+A job id on the command line (`logs`, `wait`, `kill`, `jobs --id`) is the
+full id, a unique prefix or suffix of it (case-insensitive), or `last` - your
+most recent job. A short id that matches several jobs is an error listing
+them (exit 2); one that matches none is used as given (so an unknown id is
+still exit 3). A full ULID (what `run` prints) is used as is, without a
+lookup.
+
+`run` on a terminal says how to follow the job (`longarm logs <id> -f`) and,
+when started inside a git checkout without `--repo` or `--cwd`, that the job
+runs in the worker's home directory (`--repo .` runs it in a copy of the
+checkout). These hints go to stderr, and only on a terminal.
+
+A worker the hub reports offline for more than two minutes fails at once
+(exit 255): `worker pc1 is offline (the hub last saw it 2h ago)`, plus, for a
+Windows worker of one's own, that a user-session worker runs only while its
+owner is logged on. `--force-dial` (or `LONGARM_FORCE_DIAL=1`) dials it
+anyway; a worker that went away just now is still dialed, and when no leg
+connects the error starts with the same note.
+
+`tail --from N` is `tail --from-offset N` (like `logs --from`); `worker rm`
+is `worker remove`; `exec` / `run --session` also take `-s`.
 
 Secrets (`--secret-env NAME` or `NAME=LOCALVAR`) are read from longarm's own
 environment, sent over mTLS, kept only in the job's memory/env, and redacted
@@ -163,14 +190,14 @@ Programs driving longarm can rely on these exit codes:
 | code | meaning | what a client does |
 |---|---|---|
 | 0 | success | |
-| 2 | usage error or a request that can't succeed as given, so nothing was submitted: unknown flag or command, wrong arguments, local validation (`--env` without `=`, a missing or too large `--stdin-file`, `--ref` a short commit id / a ref that isn't HEAD, a branch, a tag or a full commit id / a commit not in the checkout, `--lfs` other than skip/ship/fetch, `--lfs fetch` with a local checkout, `--git-auth` other than forward/none, `--git-auth forward` without `--repo` or with a URL that isn't https), and the hub's / worker's `InvalidArgument`, `FailedPrecondition`, `AlreadyExists` (a job id in use with another spec), `OutOfRange`, `Unimplemented`, a worker too old for a flag or command; `session send` to a session that has ended | fix the request; retrying it unchanged fails again |
-| 3 | not found: the hub or the worker answered that the job / file / session does not exist, an unknown worker name, a job that every known worker answered it doesn't have (when some did not answer: 255), `jobs --id` of an unknown job, `sessions -s` / `session send` / `session stop` of an unknown session, `tail` of a missing file (without `-f`) | |
+| 2 | usage error or a request that can't succeed as given, so nothing was submitted: unknown flag or command, wrong arguments, a short job id that matches several jobs, local validation (`--env` without `=`, a missing or too large `--stdin-file`, `--ref` a short commit id / a ref that isn't HEAD, a branch, a tag or a full commit id / a commit not in the checkout, `--lfs` other than skip/ship/fetch, `--lfs fetch` with a local checkout, `--git-auth` other than forward/none, `--git-auth forward` without `--repo` or with a URL that isn't https), and the hub's / worker's `InvalidArgument`, `FailedPrecondition`, `AlreadyExists` (a job id in use with another spec), `OutOfRange`, `Unimplemented`, a worker too old for a flag or command; `session send` to a session that has ended | fix the request; retrying it unchanged fails again |
+| 3 | not found: the hub or the worker answered that the job / file / session does not exist, an unknown worker name, a job that every known worker answered it doesn't have (when some did not answer: 255), `jobs --id` of an unknown job, `sessions -s` / `session send` / `session stop` of an unknown session, `tail` of a missing file (without `-f`), `last` when you have no jobs | |
 | 69 | `jobs --hub-only`: no hub configured, or it did not answer | retry later, or ask the workers (without `--hub-only`) |
 | 75 | refused for capacity, quota or rate (`ResourceExhausted`): no worker passes the gate with `--no-queue`, a quota, too many attempts; `session send --if-idle-ms`: input arrived within the window (nothing sent); too many `tail`s open on the worker | retry later |
-| 77 | not allowed: `PermissionDenied`, `Unauthenticated`, a refusal of end-to-end trust; `--git-auth forward` with `--repo <url>` (`run`, `session start`): no credential for the URL could be obtained on this machine (nothing was submitted) | fix the credentials or the rights |
+| 77 | not allowed: `PermissionDenied`, `Unauthenticated`, a refusal of end-to-end trust, an expired sign-in (`your sign-in expired on <date>: run longarm login`); `--git-auth forward` with `--repo <url>` (`run`, `session start`): no credential for the URL could be obtained on this machine (nothing was submitted) | fix the credentials or the rights |
 | 137 | `wait` / `run --wait`: the job was killed; `session start`: the session was killed before it ran | |
 | 254 | `wait` / `run --wait`: the job was lost (its supervisor vanished; outcome unknown); `session start` likewise | |
-| 255 | anything else: worker or hub unreachable, timeouts, `Aborted`, internal errors | the outcome may be unknown: look the job up (`jobs --id`) or retry with the same `--id` |
+| 255 | anything else: worker or hub unreachable (also a worker the hub reports offline), timeouts, `Aborted`, internal errors | the outcome may be unknown: look the job up (`jobs --id`) or retry with the same `--id` |
 
 `FailedPrecondition` is 2 because the hub and the worker use it only for
 conditions that hold until someone changes the setup (a path that is a
@@ -206,7 +233,8 @@ The job's own outcome comes from `jobs --json` (`state`, `exitCode`,
 
 ```json
 {"version": "v1.8.0", "features": ["exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label", "git-auth-forward",
-  "session-start", "session-send", "session-send-if-idle", "session-stop", "sessions-json-v2", "tail", "run-session"]}
+  "session-start", "session-send", "session-send-if-idle", "session-stop", "sessions-json-v2", "tail", "run-session",
+  "job-id-short", "jobs-mine", "doctor-json"]}
 ```
 
 (indented in the real output). A program checks `features` instead of
@@ -231,6 +259,9 @@ exit 255) has none of these features.
 | `sessions-json-v2` | fleet-wide `longarm sessions`, `sessions -s`, `sessions --json` with `source`, `worker`, every field and the activity fields |
 | `tail` | `longarm tail` |
 | `run-session` | `run` / `exec --session` |
+| `job-id-short` | `logs` / `wait` / `kill` / `jobs --id` take a unique prefix or suffix of a job id, or `last` |
+| `jobs-mine` | `jobs --mine` / `--all` (the table's defaults: 20 rows, admins their own jobs) |
+| `doctor-json` | `longarm doctor --json` / `longarmd doctor --json` (see [`doctor --json`](#doctor---json)) |
 
 The session and tail features also need the worker's (`session-start`,
 `session-send`, `session-send-if-idle`, `session-stop`, `session-info`,
@@ -261,6 +292,10 @@ the workers that answered has it".
 - `--id <job>`: only that job. Not known: exit 3, with the (empty) list on
   stdout for `--json`. Known but not in `--state`: exit 0 with an empty
   list - exit 3 always means the job does not exist.
+- `--mine` / `--all`, `--limit N`: only your own jobs / everything you may
+  see, at most N. Without them `--json` lists every job you may see, as
+  before; the table (without `--json`) shows the newest 20, and for an admin
+  certificate only the admin's own jobs.
 - `--hub-only`: ask the hub only, never the workers: exit 69 when no hub is
   configured or it does not answer (it is asked even if an earlier longarm
   found it down).
@@ -866,6 +901,100 @@ longarm telemetry off | on                # this machine (also LONGARM_TELEMETRY
 ```
 
 
+### Doctor: `longarm doctor`, `longarmd doctor`
+
+A checklist of this machine's setup; every line that isn't ok ends with the
+exact command to run next:
+
+```text
+$ longarm doctor
+longarm doctor (v0.1.3)
+  ok    signed in      as alice (device alice-pc, client certificate)
+  ok    certificate    valid until 2026-11-27 09:30 (29d left)
+  ok    hub            longarm.example.com:7443 reachable, version v0.1.3
+  warn  client daemon  not running (background port forwards, faster connections); next: longarm daemon start
+  ok    firewall       inbound allow rule for C:\Program Files\Longarm\longarm.exe
+  ok    worker devbox  online, via longnet/direct 3.1ms [longnet: won, tcp: refused]
+  FAIL  worker pc2     is offline (the hub last saw it 2h ago); a user-session worker runs only while its owner (alice) is logged on; next: on pc2: log on, or run longarmd session-mode start (a service: longarmd service start)
+1 problem: run the command after "next:" on the FAIL line
+```
+
+`longarm doctor` checks: signed in (and as whom), the certificate's
+validity, the hub (reachable, its version), the client daemon, the Windows
+Firewall rule for hole punching, and for each of your own workers whether
+the hub sees it online (or when it last did) and which transport legs
+connect from here (the probe of `longarm diag`).
+
+`longarmd doctor [--data-dir D]` checks the worker on this machine: enrolled
+and the certificate's validity, longarmd running (local control API) and
+its hub link, how it starts (the user-session scheduled task or the
+service, and whether that is registered), its log files, and ERROR lines of
+the last 24 hours in longarmd.log.
+
+Both exit 0 without failures (warnings allowed), 1 with failures. When
+longarmd is not running, `longarmd status` (and the other local commands)
+say how to start it in its run mode and where its logs are.
+
+### `doctor --json`
+
+`longarm doctor --json` and `longarmd doctor --json` print one object (for
+the tray and other programs):
+
+```json
+{
+  "schema": 1,
+  "tool": "longarm",
+  "version": "v0.1.3",
+  "time": "2026-10-28T12:00:00Z",
+  "ok": false,
+  "checks": [
+    {"id": "signed-in", "title": "signed in", "status": "ok", "detail": "as alice (device alice-pc, client certificate)",
+     "data": {"user": "alice", "device": "alice-pc", "role": "client"}},
+    {"id": "worker:pc2", "title": "worker pc2", "status": "fail", "detail": "is offline (the hub last saw it 2h ago)",
+     "fix": "on pc2: log on, or run longarmd session-mode start (a service: longarmd service start)",
+     "data": {"online": false, "last_seen": "2026-10-28T10:00:00Z"}}
+  ]
+}
+```
+
+- `status`: `ok`, `warn` (works, but something should be done), `fail`
+  (broken), `skip` (not applicable or not checkable here; `detail` says
+  why), `info` (facts such as log paths). `ok` is false exactly when some
+  check is `fail`.
+- `fix`: the next command for `warn` and `fail` (left out when there is
+  nothing to run). It is meant for people: show it, don't run it - some
+  name another machine ("on pc2: ..."), some need elevation (noted in the
+  text).
+- `id` is stable: `signed-in`, `certificate`, `hub`, `daemon`, `firewall`,
+  `workers` (you have none of your own), `worker:<name>` (longarm);
+  `signed-in`, `certificate`, `running`, `hub`, `run-mode`, `logs`,
+  `errors` (longarmd). `data` holds optional machine-readable facts
+  (`not_after`, `last_seen`, `legs`, `address`, `version`, `mode`,
+  `files`, `lines`, ...).
+- Checks and fields may be added within `schema` 1; a change of meaning
+  bumps it.
+
+### Shell completion
+
+`longarm completion bash|zsh|fish|powershell` prints a completion script
+(`longarm completion <shell> --help` says where to put it), for example:
+
+```sh
+longarm completion bash > ~/.local/share/bash-completion/completions/longarm
+longarm completion powershell | Out-String | Invoke-Expression   # in $PROFILE
+```
+
+Worker names complete from workers.toml and the hub's cached list (no
+network); job ids (and `last`) from the hub's recent jobs, and session names
+(`-s`) from the worker - each within 3 seconds.
+
+### Signing out
+
+`longarm leave` signs this machine out: the hub revokes its certificate and
+longarm deletes it here (an expired one too). To use Longarm again: `longarm
+login`. `longarm logout` only points at `leave`, because signing out
+revokes this machine's sign-in.
+
 ### Bug reports / diagnostics
 
 One command collects what a maintainer needs - logs, versions,
@@ -976,7 +1105,8 @@ longarm admin approve w3                 # (hub.toml auto_approve = true skips t
 #   $env:LONGARM_JOIN='K7P-Q2M'; irm https://hub.example.com/install.ps1 | iex
 #   curl -fsSL https://hub.example.com/install.sh | sh -s -- --join K7P-Q2M
 #   ... --login instead of a code: a worker of your own via your Microsoft account ("Sign in with
-#   Microsoft Entra ID" below); --login --role both: also your client device, one approval for both
+#   Microsoft Entra ID" below); with --login the role defaults to both: also your client device, one
+#   approval for both (--role worker: the worker only; a join code defaults to worker)
 longarm-hub release add ./dist --version 0.2.0   # files longarm-<os>-<arch>[.exe], longarmd-..., packages; see "Self-update" below
 ```
 
@@ -1145,19 +1275,23 @@ the scheduler never places their jobs on it. Workers registered by admins
 (join codes without owner) stay the shared fleet, as before.
 
 ```sh
-longarm worker add [<name>] [--ttl 24h] [--label k=v]...   # prints a join code (stdout) and the command:
-#   longarmd join <hub> <code> --ca-fingerprint <fp> --name <name>   # on the new worker, then
-#   longarmd service install ...                                     # (see "Install a worker")
-#   the worker joins approved (no admin needed) and owned by you; at most 10 unused codes per user
+# the easy way, on the new machine: install the MSI and choose "This machine runs jobs" (the tray
+# signs it in), or:
 longarmd login <hub> [--name <name>] [--label k=v]...   # on the new worker, no code to copy: sign in with
                                           # your Microsoft account (a code to approve in any browser; see
                                           # "Sign in with Microsoft Entra ID"); --label as worker add's
+# where nobody can sign in with a browser (a headless box): a join code
+longarm worker add [<name>] [--ttl 24h] [--label k=v]...   # prints a join code (stdout) and the commands:
+#   longarmd join <hub> <code> --ca-fingerprint <fp> --name <name>   # on the new worker, then
+#   longarmd session-mode install    (Windows: runs while you are logged on, no password)
+#   or longarmd service install ...  (runs with nobody logged on; see "Install a worker")
+#   the worker joins approved (no admin needed) and owned by you; at most 10 unused codes per user
 longarm worker ls [--json]                # your workers, workers shared with you, the fleet (owner, shares, load)
 longarm worker label <worker> pool=devbox [gpu-]...   # set (KEY=VALUE) / delete (KEY- or KEY=) labels
                                           # of your worker (admins: any worker); audited by the hub
 longarm worker share <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker unshare <worker> [--user bob]... [--team web]... [--everyone]
-longarm worker remove <worker>            # revoke it (owner or admin)
+longarm worker remove <worker>            # revoke it (owner or admin); also: worker rm
 longarm ls                                # an OWNER column appears once a worker has an owner
                                           # ("-" = fleet, "+shared" = shared by its owner)
 ```

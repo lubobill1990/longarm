@@ -1,27 +1,11 @@
-// Command longarm is the Longarm client CLI (runs on the interactive machines).
+// Command longarm is the Longarm client CLI: it runs commands, jobs and
+// interactive sessions on remote workers, copies files and forwards ports.
 //
-//	longarm ls                                    metrics of all configured workers
-//	longarm info <w>
-//	longarm exec <w> [flags] -- cmd...            short synchronous command
-//	longarm run  <w> [flags] -- cmd...            submit a job (prints its id)
-//	longarm logs <w> <id> [-f] [--from N]
-//	longarm wait <w> <id>                         exit code mirrors the job's
-//	longarm kill <w> <id>
-//	longarm jobs <w>
-//	longarm attach <w> [--session S] [-- cmd...]  interactive PTY session (detach: Ctrl-] d)
-//	longarm sessions <w>; longarm logs <w> <S> --session; longarm attach <w> -s S --kill
-//	longarm forward <w> <port> [localPort]        port forward (--list, --stop)
-//	longarm put <local>... <w>:<path>; longarm get <w>:<path> <local>   resumable copies
-//	longarm sync <dir> <w>:<path>                 git checkout -> worktree on the worker
-//	longarm run <w> --repo . [--ref R] -- cmd...  job in a fresh worktree
-//	longarm proxy <w>; longarm ssh-config              built-in sshd for ssh/scp/sftp/VS Code
-//	longarm admin ca init | issue | shutdown <w> | gc <w>
-//	longarm trust init | show | request | endorse | accept | require on|off ...   end-to-end trust
-//	longarm telemetry status | show | flush | on | off   scrubbed telemetry to the hub (docs/telemetry.md)
-//	longarm diag [--upload] [--since 24h]          diagnostic bundle for a bug report; longarm admin diag ls|get
-//	longarm worker add | ls | share | unshare | remove           your own workers
-//
-// <w> is a worker name from workers.toml, or an ad-hoc "certname@host:port".
+// `longarm --help` groups the commands (Start here, Jobs, Sessions, Files &
+// ports, Your workers, Account, Admin & troubleshooting); docs/usage.md is
+// the reference. A worker is named by its name (workers.toml or the hub's
+// list: `longarm ls`) or, ad hoc, "certname@host:port"; a job by its id, a
+// unique prefix or suffix of it, or "last".
 package main
 
 import (
@@ -40,30 +24,13 @@ import (
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/telemetry"
-	"github.com/lubobill1990/longarm/internal/version"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
 var configDir, transportPolicy string
 
 func main() {
-	root := &cobra.Command{
-		Use:           "longarm",
-		Short:         "Longarm client: run commands and jobs on remote workers",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		Version:       version.Version,
-	}
-	root.PersistentFlags().StringVar(&configDir, "config-dir", client.DefaultConfigDir(),
-		"client config dir (workers.toml, tls/, ca/); env LONGARM_CONFIG_DIR")
-	root.PersistentFlags().StringVar(&transportPolicy, "transport", "",
-		"transport policy: race (default: all legs at once, first mTLS handshake wins) | tcp | tailscale | longnet (prefer); env LONGARM_TRANSPORT; persistent: longarm transport <policy>")
-	root.PersistentFlags().BoolVar(&noHub, "no-hub", os.Getenv("LONGARM_NO_HUB") == "1", "ignore the hub; talk to workers directly (env LONGARM_NO_HUB=1)")
-	root.AddCommand(poolCmd(), transportCmd(), firewallCmd())
-	root.AddCommand(whoamiCmd(), linkCmd(), versionCmd())
-	root.AddCommand(lsCmd(), infoCmd(), execCmd(), runCmd(), logsCmd(), waitCmd(), killCmd(), jobsCmd(), adminCmd(),
-		attachCmd(), sessionsCmd(), sessionCmd(), tailCmd(), forwardCmd(), putCmd(), getCmd(), syncCmd(), proxyCmd(), sshConfigCmd(),
-		joinCmd(), loginCmd(), leaveCmd(), daemonCmd(), mcpCmd(), trustCmd(), workerCmd(), telemetryCmd(), diagCmd())
+	root := newRootCmd()
 	// One operation per run (telemetry.go): its trace context goes with
 	// every call to workers and the hub.
 	cli.start, cli.span = time.Now(), telemetry.NewSpan()
@@ -90,7 +57,7 @@ func main() {
 	if msg, ok := client.TrustRefusal(err); ok {
 		fmt.Fprintln(os.Stderr, "longarm:", msg+traceNote())
 	} else if s, ok := status.FromError(err); ok {
-		fmt.Fprintf(os.Stderr, "longarm: %s: %s%s\n", s.Code(), s.Message(), traceNote())
+		fmt.Fprintf(os.Stderr, "longarm: %s: %s%s\n", s.Code(), dialErrorMessage(s.Message()), traceNote())
 	} else {
 		fmt.Fprintln(os.Stderr, "longarm:", err.Error()+traceNote())
 	}
@@ -108,6 +75,7 @@ type session struct {
 	hubErrAt  time.Time
 	nodesAt   time.Time
 	nodes     []*pb.NodeInfo // hub workers (or the cache), for name lookups
+	nodesLive bool           // nodes is the hub's answer (not the cache)
 	placed    *pb.NodeInfo   // the worker the hub just assigned
 	renewOnce sync.Once
 
@@ -121,7 +89,11 @@ type session struct {
 // "hub unreachable" note.
 var noHub, quietHub bool
 
-func openSession() (*session, error) {
+func openSession() (*session, error) { return openSessionWith(false) }
+
+// openSessionWith opens a session; allowExpired keeps going with an expired
+// certificate (leave, doctor), which otherwise fails at once.
+func openSessionWith(allowExpired bool) (*session, error) {
 	cfg, err := client.LoadConfig(configDir)
 	if err != nil {
 		return nil, err
@@ -129,6 +101,10 @@ func openSession() (*session, error) {
 	d, err := client.NewDialer(cfg)
 	if err != nil {
 		return nil, err
+	}
+	if leaf := d.Bundle().Leaf(); !allowExpired && leaf != nil && time.Now().After(leaf.NotAfter) {
+		d.Close()
+		return nil, signInExpiredError(leaf.NotAfter)
 	}
 	if transportPolicy != "" {
 		if err := d.SetPolicy(transportPolicy); err != nil {

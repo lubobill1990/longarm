@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +68,10 @@ type Worker struct {
 	// Alt is Endpoints parsed (for hub-known workers: the advertised
 	// endpoints beyond the primary one).
 	Alt []Endpoint `toml:"-"`
+
+	// Note, if set, leads the error when no leg connects (longarm: "worker
+	// X is offline (the hub last saw it 2h ago)").
+	Note string `toml:"-"`
 }
 
 // TailscaleConfig is the [tailscale] section for the embedded client node.
@@ -177,8 +182,29 @@ func (c *Config) Worker(name string) (Worker, error) {
 		}
 		return Worker{Name: name, Address: addr, Transport: "tcp", CertName: certName}, nil
 	}
-	return Worker{}, fmt.Errorf("unknown worker %q (not in %s)", name, filepath.Join(c.Dir, WorkersFile))
+	return Worker{}, UnknownWorkerError(name, c.Dir)
 }
+
+// UnknownWorkerError is the error for a worker name nobody knows; it
+// mentions workers.toml only when there is one.
+func UnknownWorkerError(name, dir string) error {
+	if _, err := os.Stat(filepath.Join(dir, WorkersFile)); err == nil {
+		return fmt.Errorf("no worker named %s (not in %s either): `longarm ls` lists them", name, filepath.Join(dir, WorkersFile))
+	}
+	return fmt.Errorf("no worker named %s: `longarm ls` lists them", name)
+}
+
+// NotSignedInHint is what to do on a machine without a client certificate
+// (goos: runtime.GOOS; Windows has the Start menu's Longarm app).
+func NotSignedInHint(goos string) string {
+	if goos == "windows" {
+		return "This machine isn't signed in: run `longarm login` (or open Longarm from the Start menu → Account → Sign in)"
+	}
+	return "This machine isn't signed in: run `longarm login`"
+}
+
+// ErrNotSignedIn: the config dir has no client certificate (tls/).
+var ErrNotSignedIn = errors.New(NotSignedInHint(runtime.GOOS))
 
 // Dialer creates connections to workers; it owns the (lazily started)
 // tailscale client node.
@@ -220,11 +246,14 @@ type Dialer struct {
 // NewDialer loads the client TLS bundle from <dir>/tls.
 func NewDialer(cfg *Config) (*Dialer, error) {
 	b, err := pki.LoadBundle(filepath.Join(cfg.Dir, TLSDir))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotSignedIn
+	}
 	if err != nil {
-		return nil, fmt.Errorf("%w (issue one with `longarm admin issue --role client --name <you> --install`)", err)
+		return nil, fmt.Errorf("%w: sign in again with `longarm login`", err)
 	}
 	if b.Identity.Role == pki.RoleWorker {
-		return nil, fmt.Errorf("%s holds a worker certificate; longarm needs a client or admin one", filepath.Join(cfg.Dir, TLSDir))
+		return nil, WorkerOnlyError(filepath.Join(cfg.Dir, TLSDir))
 	}
 	// A broken trust.toml fails here rather than silently trusting every
 	// worker (fail closed).
@@ -243,6 +272,11 @@ func NewDialer(cfg *Config) (*Dialer, error) {
 		return nil, err
 	}
 	return d, nil
+}
+
+// WorkerOnlyError: tlsDir holds a worker certificate, not one of a user.
+func WorkerOnlyError(tlsDir string) error {
+	return fmt.Errorf("this machine is signed in as a worker only (%s holds a worker certificate): run `longarm login` to sign in as you", tlsDir)
 }
 
 // NewDialerFor is a dialer with an already loaded bundle of any role (the

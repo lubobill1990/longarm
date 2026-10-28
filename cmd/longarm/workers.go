@@ -214,7 +214,7 @@ func lsCmd() *cobra.Command {
 				}
 			}
 			if len(rows) == 0 && len(kept) == 0 {
-				return fmt.Errorf("no workers configured in %s and no hub", s.cfg.Dir)
+				return noWorkersError(s)
 			}
 			for _, p := range kept {
 				<-p.done

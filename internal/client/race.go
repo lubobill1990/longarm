@@ -414,8 +414,12 @@ func (d *Dialer) race(ctx context.Context, w Worker, explicit bool) (*tls.Conn, 
 					// Not a connectivity problem: say what would fix it.
 					return nil, nil, transport.PathInfo{}, results, refused
 				}
-				return nil, nil, transport.PathInfo{}, results, fmt.Errorf("all %d transport legs failed after %s: %s",
+				err := fmt.Errorf("all %d transport legs failed after %s: %s",
 					len(legs), time.Since(t0).Round(time.Millisecond), strings.Join(errs, "; "))
+				if w.Note != "" {
+					err = fmt.Errorf("%s: %w", w.Note, err)
+				}
+				return nil, nil, transport.PathInfo{}, results, err
 			}
 		case <-timer.C:
 			if !tier1 {
@@ -425,6 +429,9 @@ func (d *Dialer) race(ctx context.Context, w Worker, explicit bool) (*tls.Conn, 
 		case <-ctx.Done():
 			cancel()
 			finish()
+			if w.Note != "" {
+				return nil, nil, transport.PathInfo{}, results, fmt.Errorf("%s: %w", w.Note, ctx.Err())
+			}
 			return nil, nil, transport.PathInfo{}, results, ctx.Err()
 		}
 	}
