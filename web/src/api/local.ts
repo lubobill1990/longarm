@@ -56,6 +56,33 @@ export interface Account {
   /** the worker: session (runs as you, at logon) or service */
   run_mode?: string
   admin?: AdminStatus
+  /** when the sign-in (certificate) ends; expired: it has */
+  expires?: string
+  expired?: boolean
+  /** what this computer does (older trays: absent) */
+  roles?: AccountRoles
+  /** the roles can be changed here (Windows, installed with the MSI) */
+  roles_editable?: boolean
+  roles_note?: string
+  /** why this looks like a Cloud PC / Dev Box (suggests "run jobs") */
+  cloud_pc?: string
+}
+
+/** Send jobs (client), run jobs (worker), admin commands (admin worker). */
+export interface AccountRoles {
+  client: boolean
+  worker: boolean
+  admin_worker: boolean
+}
+
+/** A role change (/trayapi/roles/state). */
+export interface RolesState {
+  state: 'idle' | 'applying' | 'done' | 'error'
+  want: AccountRoles
+  message?: string
+  error?: string
+  /** a sign-in of the added roles started */
+  signin?: boolean
 }
 
 export interface SignInState {
@@ -84,6 +111,8 @@ export const trayApi = {
   signinCancel: () => post('/trayapi/signin/cancel'),
   signout: () => post<{ output: string }>('/trayapi/signout'),
   adminDisable: () => post<{ output: string }>('/trayapi/admin/disable'),
+  rolesChange: (want: AccountRoles) => post<RolesState>('/trayapi/roles', want),
+  rolesState: () => get<RolesState>('/trayapi/roles/state'),
 }
 
 export const longarmApi = {

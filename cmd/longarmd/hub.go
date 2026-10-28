@@ -120,7 +120,7 @@ longarm worker label <worker> KEY=VALUE KEY-.`,
 			defer stop()
 			return longarmd.Login(ctx, dataDir, hub, longarmd.LoginOptions{Name: name, Fingerprint: fp, Force: force,
 				Az: az, Scope: scope, Browser: !noBrowser, Out: os.Stdout, Labels: lm,
-				Client: role == "both", ConfigDir: configDir, DeviceName: deviceName})
+				Client: role == "both", ConfigDir: configDir, DeviceName: deviceName, WorkerKind: longarmd.WorkerKind(dataDir)})
 		},
 	}
 	c.Flags().StringVar(&dataDir, "data-dir", longarmd.DefaultDataDir(), "data directory (root: /var/lib/longarmd, LocalSystem: C:\\ProgramData\\Longarm\\longarmd, else ~/.longarm); env LONGARM_DATA_DIR")

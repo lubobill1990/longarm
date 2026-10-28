@@ -456,7 +456,15 @@ if ($admin -and $Hashes[$msi] -and -not $NoMsi -and -not $Prefix) {
       & (Join-Path $bin 'longarm.exe') login $HubAddr --ca-fingerprint $CaFp @nameArgs
       if ($LASTEXITCODE) { throw "longarm login failed ($LASTEXITCODE)" }
     }
-    Write-Host 'signed in; the Longarm tray starts at your next logon (or from the Start menu)'
+    $trayExe = Join-Path $bin 'longarm-tray.exe'
+    if (Test-Path $trayExe) {
+      # now, in your session and not elevated (this console is): Explorer starts it as you, as the
+      # MSI's task does when it signs in itself
+      Start-Process explorer.exe -ArgumentList ('"' + $trayExe + '"')
+      Write-Host 'signed in; the Longarm tray is starting (on Windows 11 its icon may be under the ^ arrow next to the clock)'
+    } else {
+      Write-Host 'signed in'
+    }
   }
   if ($Join -and $Role -ne 'client') { Write-Host 'the worker finishes enrolling once an admin runs: longarm admin approve <name>' }
   return

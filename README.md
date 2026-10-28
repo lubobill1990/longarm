@@ -142,9 +142,11 @@ longarm-hub --data-dir /var/lib/longarm-hub join-code --role admin
 
 **Windows: download the MSI, click Next twice, approve in the browser.**
 Run `longarm-windows-amd64.msi`, click Next, keep **Default (recommended)**
-- pick "Use this computer" or "Also run jobs on this computer" - and click
-Next, Install. The Longarm tray then opens with a code: approve it in your
-browser (step 3). No hub address, no join code, no fingerprint, and no
+- pick "This is my everyday computer: send jobs to workers" or "This
+machine runs jobs (Dev Box, build machine)" (preselected on a Dev Box /
+Cloud PC) - and click Next, Install. The Longarm tray then starts the
+sign-in by itself and shows a code: approve it in your browser (step 3).
+Roles can be changed later in the tray's Account tab. No hub address, no join code, no fingerprint, and no
 password: the worker runs as you while you are signed in (also with the
 remote desktop disconnected - a Dev Box keeps the session), so it works on
 machines you sign in to with Windows Hello or a security key only. "Custom"

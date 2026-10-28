@@ -81,6 +81,7 @@ in its [auth.entra] apps. Such a sign-in never falls back to the browser.`,
 				fmt.Fprintln(cmd.ErrOrStderr(), r.Device.Message)
 			}
 			fmt.Printf("signed in to %s as %s/%s (config %s)\n", r.Hub, r.Device.Role, r.Device.Name, configDir)
+			fmt.Fprintln(cmd.ErrOrStderr(), r.Summary())
 			return nil
 		},
 	}

@@ -235,7 +235,9 @@ type LoginOptions struct {
 	// Labels for the worker, recorded by the hub (nil: an installer's,
 	// signin.InstalledLabels).
 	Labels map[string]string
-	Out    io.Writer
+	// WorkerKind for the summary ("user session", "service"; "": unsaid).
+	WorkerKind string
+	Out        io.Writer
 }
 
 // Login enrolls this worker as its user's own worker with the user's
@@ -245,7 +247,8 @@ type LoginOptions struct {
 // the same approval also makes this machine the user's client device.
 func Login(ctx context.Context, dataDir, hub string, o LoginOptions) error {
 	so := signin.Options{Hub: hub, Fingerprint: o.Fingerprint, WorkerName: o.Name, DeviceName: o.DeviceName,
-		Worker: WorkerTarget{DataDir: dataDir, Force: o.Force}, Scope: o.Scope, OpenBrowser: o.Browser, WorkerLabels: o.Labels}
+		Worker: WorkerTarget{DataDir: dataDir, Force: o.Force}, Scope: o.Scope, OpenBrowser: o.Browser, WorkerLabels: o.Labels,
+		WorkerKind: o.WorkerKind}
 	if o.Client {
 		so.Client = client.DeviceTarget{ConfigDir: o.ConfigDir, Force: o.Force}
 	}

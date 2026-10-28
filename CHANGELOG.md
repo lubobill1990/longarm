@@ -20,6 +20,33 @@
 
 ### Added
 
+- Clearer Windows installer roles: the Default page says what each choice
+  installs - "This is my everyday computer: send jobs to workers" (client)
+  or "This machine runs jobs (Dev Box, build machine)" (client + your
+  user-session worker) - and preselects "runs jobs" on Cloud PCs / Dev
+  Boxes (`CPC-` names, the Dev Box agent service). The admin worker comes
+  only with a worker role (`ROLES=client ADMIN_WORKER=1` is refused). The
+  Finish page lists what was installed.
+- The tray's Account tab changes this computer's roles after the install
+  (send jobs / run jobs / admin commands): one administrator prompt
+  (`longarmd install-helper roles`, recorded where the MSI's upgrade, repair
+  and uninstall find it), then one approval signs in what was added.
+- The tray starts the sign-in by itself after an install (and on the first
+  start of a new version) and keeps its popup open while it runs: the code
+  large, copied to the clipboard, a notification with it; the result names
+  exactly what the machine became ("Signed in as X: client device ...,
+  worker ... (user session), admin worker ..."), as `longarm login` /
+  `longarmd login` now print. The popup stays open until closed by default
+  (auto-hide is the pin button's choice, remembered). An expired sign-in
+  shows "Your sign-in expired on <date>: Sign in again", with a
+  notification three days before when renewal fails.
+- The tray popup behaves as an app: no WebView2 context menu (its own Copy /
+  Paste for text), no browser keys, zoom, status bar or file drops; devtools
+  only in development builds (release builds use the `production` tag);
+  links open in the system browser.
+- `install.ps1 --login` starts the tray right away (in your session, not
+  elevated) instead of at the next logon.
+
 - Windows installer for password-less machines (Entra-only sign-in with
   Windows Hello or a security key, e.g. Microsoft Dev Box): the MSI's first
   page is **Default (recommended)** - the hub built into the release, a

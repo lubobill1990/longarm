@@ -58,6 +58,8 @@ var msiValue = map[string]*regexp.Regexp{
 	"sid":       regexp.MustCompile(`^(S-1-[0-9]+(-[0-9]+){1,14})?$`),
 	"usersid":   regexp.MustCompile(`^(S-1-[0-9]+(-[0-9]+){1,14})?$`),
 	"admin":     regexp.MustCompile(`^1?$`),
+	"client":    regexp.MustCompile(`^1?$`),
+	"worker":    regexp.MustCompile(`^1?$`),
 	"installed": regexp.MustCompile(`^[^|"\\]{0,64}$`),
 	"code":      regexp.MustCompile(`^[A-Za-z0-9-]{0,32}$`),
 	"name":      regexp.MustCompile(`^[A-Za-z0-9._-]{0,63}$`),

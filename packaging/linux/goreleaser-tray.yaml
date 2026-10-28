@@ -15,7 +15,7 @@ builds:
     goos: [linux]
     goarch: [amd64]
     env: [CGO_ENABLED=1]
-    flags: [-trimpath, -tags=traynative]
+    flags: [-trimpath, "-tags=traynative,production"]
     ldflags:
       - -s -w
       - -X github.com/lubobill1990/longarm/internal/version.Version={{ .Version }}

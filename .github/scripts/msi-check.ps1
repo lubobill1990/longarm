@@ -78,6 +78,34 @@ $regNames = Query $default 'SELECT `Name` FROM `Registry`'
 foreach ($n in 'Hub', 'CaFingerprint', 'Login', 'Labels', 'Mode') {
   if ($regNames -contains $n) { throw "the Registry table writes $n from a property" }
 }
+# role choices: the admin worker only with a worker role, the Cloud PC / Dev Box preselection
+# (AppSearch, UI sequence only), the Finish text
+foreach ($a in 'CheckAdminRole', 'SetCLOUD_PC', 'SetDefaultRolesCloud', 'SetRolesCloud', 'SetFinishText', 'SetFinishAdmin') {
+  if ($actions -notcontains $a) { throw "default.msi: no custom action $a" }
+}
+$ui = Query $default 'SELECT `Action` FROM `InstallUISequence`'
+$exec = Query $default 'SELECT `Action` FROM `InstallExecuteSequence`'
+foreach ($a in 'SetCLOUD_PC', 'SetDefaultRolesCloud', 'SetRolesCloud', 'SetFinishText') {
+  if ($ui -notcontains $a) { throw "default.msi: $a is not in the UI sequence" }
+  if ($exec -contains $a) { throw "default.msi: $a runs in the execute sequence (a silent install must keep ROLES)" }
+}
+if ($exec -notcontains 'CheckAdminRole') { throw 'default.msi: CheckAdminRole is not scheduled' }
+$searches = Query $default 'SELECT `Property` FROM `AppSearch`'
+foreach ($p in 'DEVBOX_AGENT', 'DEVBOX_AGENT_SVC', 'ROLES_RECORDED') {
+  if ($searches -notcontains $p) { throw "default.msi: no AppSearch for $p" }
+}
+$cloud = Query $default "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action`` = 'SetCLOUD_PC'"
+if (-not $cloud.Count) { throw 'default.msi: SetCLOUD_PC has no value' }
+$cloudCond = Query $default "SELECT ``Condition`` FROM ``InstallUISequence`` WHERE ``Action`` = 'SetCLOUD_PC'"
+if ($cloudCond[0] -notlike '*ComputerName ~<< "CPC-"*' -or $cloudCond[0] -notlike '*DEVBOX_AGENT*') { throw "default.msi: SetCLOUD_PC condition '$($cloudCond[0])'" }
+$adminDisable = Query $default "SELECT ``Condition`` FROM ``ControlCondition`` WHERE ``Dialog_`` = 'ModeDlg' AND ``Control_`` = 'Admin' AND ``Action`` = 'Disable'"
+if ($adminDisable[0] -notlike '*DEFAULT_ROLES="client"*') { throw "default.msi: ModeDlg's admin checkbox is enabled for a client ('$($adminDisable[0])')" }
+$adminDisable = Query $default "SELECT ``Condition`` FROM ``ControlCondition`` WHERE ``Dialog_`` = 'RolesDlg' AND ``Control_`` = 'Admin' AND ``Action`` = 'Disable'"
+if ($adminDisable[0] -notlike '*ROLES="client"*') { throw "default.msi: RolesDlg's admin checkbox is enabled for a client ('$($adminDisable[0])')" }
+$texts = Query $default "SELECT ``Text`` FROM ``RadioButton`` WHERE ``Property`` = 'DEFAULT_ROLES'"
+foreach ($t in 'This is my &everyday computer: send jobs to workers', 'This &machine runs jobs (Dev Box, build machine)') {
+  if ($texts -notcontains $t) { throw "default.msi: ModeDlg has no '$t'" }
+}
 foreach ($p in 'ADMIN_SERVICE_NAME', 'ADMIN_DATADIR', 'ADMIN_HANDOFF') {
   if ($secure -contains $p) { throw "$p must not be a (secure) property any more" }
 }

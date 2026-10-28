@@ -1740,13 +1740,51 @@ and only names the operator allows: `claude mcp add longarm -e LONGARM_MCP_SECRE
 
 **Default or Custom.** The MSI's first page offers **Default
 (recommended)**: the hub built into the release, a sign-in with Microsoft
-after the install, and only the role to pick - "Use this computer"
-(`ROLES=client`) or "Also run jobs on this computer" (`ROLES=both`) - plus
-"Allow remote administrator commands" ([admin worker](#admin-worker-windows)).
-Next, Install: the Longarm tray opens in your session (not elevated: the MSI
-starts it through a one-off scheduled task) and shows "Sign in with
-Microsoft" - one code, one approval for the device, the worker and the admin
-worker. **Custom** asks for a hub, either "Sign in with Microsoft after the
+after the install, and only the role to pick, each with what it installs:
+
+- **"This is my everyday computer: send jobs to workers"** (`ROLES=client`):
+  the client - longarm and the tray. Nothing runs jobs here.
+- **"This machine runs jobs (Dev Box, build machine)"** (`ROLES=both`): it
+  becomes your worker, and you can also send jobs from it - the client and
+  the [user-session worker](#the-user-session-worker-runsession-the-default)
+  (runs as you, starts at your logon, no password).
+- **"Also allow remote administrator commands"** ([admin
+  worker](#admin-worker-windows)): only with "runs jobs" (disabled for the
+  client; a silent `ROLES=client ADMIN_WORKER=1` is refused).
+
+On a machine that looks like a Windows 365 Cloud PC or a Microsoft Dev Box -
+the computer name starts with `CPC-`, or the Dev Box agent service
+(`Microsoft.DevCenter.DevBoxAgent` / `DevBoxAgent`) exists - "runs jobs" is
+preselected (interactive installs only; silent installs keep `ROLES=client`
+unless given, upgrades keep the recorded roles). Next, Install: the Finish
+page lists what was installed (and that the Windows 11 tray icon may be
+under the ^ arrow next to the clock; a new terminal finds `longarm` on
+PATH). The Longarm tray opens in your session (not elevated: the MSI starts
+it through a one-off scheduled task) and **starts the sign-in by itself**:
+the code shows large in the popup (and is copied to the clipboard, with a
+notification), the browser opens the /link page - one code, one approval for
+the device, the worker and the admin worker. The popup stays open until the
+sign-in ends and then says exactly what the machine became: "Signed in as
+alice@contoso.com: client device alice-box, worker box (user session), admin
+worker box-admin (runs as SYSTEM, yours only)" (`longarm login` and
+`longarmd login` print the same line).
+
+**Changing roles later.** The tray's Account tab has "This computer: [x]
+send jobs (client) [x] run jobs (worker) [ ] admin commands (admin
+worker)". Apply asks once for an administrator (UAC) and runs the installed
+`longarmd install-helper roles` elevated, which changes the machine and what
+the installer recorded (`HKLM\Software\Longarm`: Roles, SessionUserSID,
+AdminWorker) together - so a later upgrade, repair or uninstall acts on the
+new roles; then one approval in the browser signs in only what was added.
+Removing a role takes that node off the hub (a hub that can't be reached:
+removed here, and the tray says to revoke it there with `longarm admin
+revoke <name>`) and removes its task / service. The user-session worker is
+the user's who adds it, one per computer: another user can add it only while
+the installing user has neither a worker nor an admin worker here, and only
+its own user removes it; the admin worker is for an administrator, with the
+worker role. A worker installed as a Windows service (`RUN=service`) is
+changed with the MSI. The MSI itself offers no "Change" in Apps: without the
+tray, uninstall and install again with the new `ROLES` / `ADMIN_WORKER`. **Custom** asks for a hub, either "Sign in with Microsoft after the
 install" (`LOGIN=1`) or a join code, an optional CA fingerprint, the roles
 client / worker / both, and under Advanced the worker as a Windows service.
 An MSI built without a default hub ([Built-in default hub](#built-in-default-hub))
@@ -1760,7 +1798,7 @@ offers Custom only. Silent properties (all in the comment at the top of
 | `RUN` | `session` (default) or `service`; remembered - an install from before `RUN` that has a service keeps it |
 | `HUB`, `LOGIN=1`, `JOIN_CODE`, `CA_FINGERPRINT`, `LABELS`, `NODE_NAME` | as before (`MODE=custom`) |
 | `SERVICE_USER`, `SERVICE_PASSWORD`, `SERVICE_ACCOUNT`, `SERVICE_NAME`, `DATADIR`, `LISTEN`, `ISOLATION` | `RUN=service` only (`ISOLATION=per-user` implies it; `DATADIR` below `%ProgramData%\Longarm`) |
-| `ADMIN_WORKER=1` | the admin worker (off by default; remembered, `ADMIN_WORKER=0` on an upgrade removes it) |
+| `ADMIN_WORKER=1` | the admin worker (off by default; needs `ROLES=both` or `worker`; remembered, `ADMIN_WORKER=0` on an upgrade removes it) |
 | `SESSION_SID` | the user of the user-session worker (default: the installing user, `UserSID`) |
 | `LAUNCH_TRAY=0` | don't start the tray at the end |
 | `KEEP_DATA=1` | uninstall: keep jobs and mirrors |

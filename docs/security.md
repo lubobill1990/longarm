@@ -561,6 +561,19 @@ their choosing. So the installer treats every property as untrusted input:
   they pin) are written by the helper, not the MSI's Registry table: values
   validated, and a change of recorded ones only for an administrator
   (`ApplyMSISettings`) - a second layer behind `LongarmdCheck`.
+- **Role changes from the tray** (`longarmd install-helper roles
+  #LONGARM-MSI#client=1|worker=1|admin=|sid=S-...`, started elevated by the
+  tray's Account tab through UAC) follow the same rules: the data is parsed
+  by `MSIData` (each key once, `1` or empty, a SID); who asks is the
+  process's own token, which must be an elevated administrator; the
+  user-session task is the given (existing) user's, binaries only from the
+  helper's protected directory; the admin worker needs the worker role, an
+  administrator to sign it in, and takes its hub and CA pin from what the
+  installer recorded in HKLM (never from the command line). It changes the
+  task / service and the installer's record (Roles, SessionUserSID,
+  AdminWorker) together, so uninstall still removes all of it; its result
+  goes to `HKLM\Software\Longarm\RolesResult` (readable by the tray, not
+  writable by users).
 - **Task definitions** are XML built with `encoding/xml` from a SID checked
   against its pattern and the account database; the program is the
   installed tray / longarmd.

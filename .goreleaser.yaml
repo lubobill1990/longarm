@@ -64,6 +64,8 @@ builds:
     goos: [windows]
     goarch: [amd64, arm64]
     flags: [-trimpath]
+    # production: Wails without devtools and the WebView2 debug context menu
+    tags: [production]
     ldflags:
       - -s -w -H windowsgui
       - -X github.com/lubobill1990/longarm/internal/version.Version={{ .Version }}

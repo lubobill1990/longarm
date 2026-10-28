@@ -99,7 +99,7 @@ func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	res := &Result{Hub: tg.Address, PanelURL: tg.PanelURL, CAFingerprint: tg.Fingerprint, CAFromHTTPS: tg.FromHTTPS}
+	res := &Result{Hub: tg.Address, PanelURL: tg.PanelURL, CAFingerprint: tg.Fingerprint, CAFromHTTPS: tg.FromHTTPS, WorkerKind: o.WorkerKind}
 	if tg.FromHTTPS {
 		ev.progress(StepCA, fmt.Sprintf("hub %s: CA %s pinned (from %s/ca.crt, checked with this system's HTTPS roots)", tg.Address, tg.Fingerprint, tg.PanelURL))
 	} else {
@@ -277,7 +277,10 @@ type Options struct {
 	// nil: the ones an installer recorded (InstalledLabels: the MSI's
 	// LABELS). Change them later with `longarm worker label`.
 	WorkerLabels map[string]string
-	Method       Method
+	// WorkerKind says how the worker runs, for the summary: "user session"
+	// (started at the user's logon), "service" ("": not said).
+	WorkerKind string
+	Method     Method
 	// Scope overrides the az token's scope (MethodAz / MethodAuto).
 	Scope string
 	// OpenBrowser: open the /link page here (when there is a desktop).
@@ -347,6 +350,8 @@ type Result struct {
 	Device        *Enrolled
 	Worker        *Enrolled
 	AdminWorker   *Enrolled // Options.AdminWorker's
+	// WorkerKind: Options.WorkerKind (how the worker runs, for Summary).
+	WorkerKind string
 }
 
 // Enrolled is one installed enrollment.
@@ -370,20 +375,28 @@ func enrolled(r *hubclient.JoinResult, dir string) *Enrolled {
 }
 
 func (r *Result) summary() string {
-	s := "signed in to " + r.Hub
+	var parts []string
+	if r.Device != nil {
+		parts = append(parts, "client device "+r.Device.Name)
+	}
+	if r.Worker != nil {
+		w := "worker " + r.Worker.Name
+		if r.WorkerKind != "" {
+			w += " (" + r.WorkerKind + ")"
+		}
+		parts = append(parts, w)
+	}
+	if r.AdminWorker != nil {
+		parts = append(parts, "admin worker "+r.AdminWorker.Name+" (runs as SYSTEM, yours only)")
+	}
+	s := "Signed in"
 	if r.User != "" {
 		s += " as " + r.User
 	}
-	if r.Device != nil {
-		s += "; device " + r.Device.Name + " (" + r.Device.Role + ")"
+	if len(parts) == 0 {
+		return s + " at " + r.Hub
 	}
-	if r.Worker != nil {
-		s += "; worker " + r.Worker.Name
-	}
-	if r.AdminWorker != nil {
-		s += "; admin worker " + r.AdminWorker.Name + " (runs as SYSTEM, yours only)"
-	}
-	return s
+	return s + ": " + strings.Join(parts, ", ")
 }
 
 // azJoin enrolls the requested parts with az's token (no approval).
