@@ -91,5 +91,6 @@ func installHelperCmd() *cobra.Command {
 	remove.Flags().StringVar(&logFile, "log", "", "append output here")
 	remove.MarkFlagRequired("data-dir")
 	c.AddCommand(setup, rollback, remove)
+	c.AddCommand(sessionHelperCmds()...)
 	return c
 }

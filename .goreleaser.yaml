@@ -6,6 +6,9 @@
 #
 # Env:
 #   LONGARM_UPDATE_PUBKEY   minisign public key built into longarmd (self-update); empty = updates off
+#   LONGARM_DEFAULT_HUB     the hub built into longarm / longarmd / longarm-tray (login without a hub,
+#                           the MSI's "Default"), a domain; empty = none
+#   LONGARM_DEFAULT_HUB_CA  optional sha256 pin of that hub's CA
 #   LONGARM_TRAY=1          also build cmd/longarm-tray (set by the wrappers when it exists)
 #   (the native Linux tray + its deb: packaging/linux/goreleaser-tray.yaml, run by build.sh)
 version: 2
@@ -29,6 +32,8 @@ builds:
       - -s -w
       - -X github.com/lubobill1990/longarm/internal/version.Version={{ .Version }}
       - -X github.com/lubobill1990/longarm/internal/update.PublicKey={{ envOrDefault "LONGARM_UPDATE_PUBKEY" "" }}
+      - -X github.com/lubobill1990/longarm/internal/version.DefaultHub={{ envOrDefault "LONGARM_DEFAULT_HUB" "" }}
+      - -X github.com/lubobill1990/longarm/internal/version.DefaultHubCA={{ envOrDefault "LONGARM_DEFAULT_HUB_CA" "" }}
   - id: longarmd
     main: ./cmd/longarmd
     binary: longarmd
@@ -62,6 +67,8 @@ builds:
     ldflags:
       - -s -w -H windowsgui
       - -X github.com/lubobill1990/longarm/internal/version.Version={{ .Version }}
+      - -X github.com/lubobill1990/longarm/internal/version.DefaultHub={{ envOrDefault "LONGARM_DEFAULT_HUB" "" }}
+      - -X github.com/lubobill1990/longarm/internal/version.DefaultHubCA={{ envOrDefault "LONGARM_DEFAULT_HUB_CA" "" }}
 
 archives:
   # Client + worker bundle: longarm, longarmd (+ longarm-tray).

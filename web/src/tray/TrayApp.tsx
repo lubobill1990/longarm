@@ -5,9 +5,10 @@ import { ErrorBox, FirewallWarning, Toasts, useAction } from '../components/comm
 import { ClientJobs, Forwards, Settings } from './ClientTab'
 import { PoolTab } from './PoolTab'
 import { WorkerTab } from './WorkerTab'
+import { AccountTab } from './AccountTab'
 import { wailsMessage } from '../lib/wails'
 
-type Tab = 'pool' | 'jobs' | 'forwards' | 'worker' | 'settings'
+type Tab = 'pool' | 'jobs' | 'forwards' | 'worker' | 'settings' | 'account'
 
 /**
  * longarm-tray's popup: tabs by installed
@@ -19,6 +20,7 @@ export function TrayApp() {
   const [tab, setTab] = useState<Tab>(() => (new URLSearchParams(location.search).get('tab') as Tab) || 'pool')
   const [pool, setPool] = useState<PoolView>()
   const [poolErr, setPoolErr] = useState<string>()
+  const [reload, setReload] = useState(0)
   useEffect(() => {
     const load = () =>
       trayApi
@@ -31,7 +33,7 @@ export function TrayApp() {
     load()
     const t = setInterval(load, 5000)
     return () => clearInterval(t)
-  }, [])
+  }, [reload])
   const clientUp = !!info?.client.running
   const polling = new URLSearchParams(location.search).has('poll')
   useEffect(() => {
@@ -63,7 +65,12 @@ export function TrayApp() {
   if (!info || info.roles.client) tabs.push(['pool', 'Workers'], ['jobs', 'My jobs'], ['forwards', 'Forwards'])
   if (info?.roles.worker) tabs.push(['worker', 'This worker'])
   if (!info || info.roles.client) tabs.push(['settings', 'Settings'])
-  const cur = tabs.some(([t]) => t === tab) ? tab : (tabs[0]?.[0] ?? 'pool')
+  if (info?.account) tabs.push(['account', 'Account'])
+  // not signed in yet: the account tab (Sign in with Microsoft) first
+  const needSignIn = !!info?.account?.needed
+  const asked = new URLSearchParams(location.search).has('tab')
+  const want = needSignIn && !asked && tab === 'pool' ? 'account' : tab
+  const cur = tabs.some(([t]) => t === want) ? want : (tabs[0]?.[0] ?? 'pool')
   const online = (pool?.workers ?? []).filter((w) => w.state === 'online').length
   return (
     <Toasts>
@@ -78,13 +85,22 @@ export function TrayApp() {
         </div>
         <div className="body">
           <ErrorBox error={infoErr} />
-          {info && info.roles.client && !info.client.running && cur !== 'worker' && <DaemonDown info={info} />}
+          {needSignIn && cur !== 'account' && (
+            <div className="warn-box" data-testid="signin-banner">
+              Not signed in yet.{' '}
+              <button className="primary" onClick={() => setTab('account')}>
+                Sign in with Microsoft
+              </button>
+            </div>
+          )}
+          {info && info.roles.client && !info.client.running && cur !== 'worker' && cur !== 'account' && !needSignIn && <DaemonDown info={info} />}
           {cur !== 'worker' && <ClientFirewall pool={pool} />}
           {cur === 'pool' && <PoolTab pool={pool} error={poolErr} info={info} />}
           {cur === 'jobs' && clientUp && <ClientJobs />}
           {cur === 'forwards' && clientUp && <Forwards workers={(pool?.workers ?? []).map((w) => w.name)} />}
           {cur === 'settings' && clientUp && <Settings pool={pool} />}
           {cur === 'worker' && info && <WorkerTab info={info} />}
+          {cur === 'account' && info && <AccountTab info={info} onChange={() => setReload((n) => n + 1)} />}
         </div>
       </div>
     </Toasts>

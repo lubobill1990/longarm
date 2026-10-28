@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strings"
 	"syscall"
+
+	"golang.org/x/sys/windows"
 )
 
 const createNoWindow = 0x08000000
@@ -36,4 +39,24 @@ func OpenTerminal(argv []string) error {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000010} // CREATE_NEW_CONSOLE
 	return cmd.Start()
+}
+
+// RunElevated starts exe elevated (the UAC prompt; "runas"), without
+// waiting for it.
+func RunElevated(exe string, args ...string) error {
+	q := make([]string, len(args))
+	for i, a := range args {
+		q[i] = syscall.EscapeArg(a)
+	}
+	verb, _ := windows.UTF16PtrFromString("runas")
+	file, err := windows.UTF16PtrFromString(exe)
+	if err != nil {
+		return err
+	}
+	params, err := windows.UTF16PtrFromString(strings.Join(q, " "))
+	if err != nil {
+		return err
+	}
+	const swHide = 0
+	return windows.ShellExecute(0, verb, file, params, nil, swHide)
 }

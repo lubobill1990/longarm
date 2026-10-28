@@ -27,3 +27,8 @@ func OpenTerminal(argv []string) error {
 	}
 	return errors.New("no terminal emulator found (x-terminal-emulator, gnome-terminal, konsole, xterm)")
 }
+
+// RunElevated: Windows only (the admin worker).
+func RunElevated(string, ...string) error {
+	return errors.New("elevated actions are Windows-only")
+}

@@ -186,6 +186,9 @@ type SetupOptions struct {
 	// Fingerprint) for a sign-in to come - the service waits for it, the
 	// tray or `longarmd login --role both` does it (SetUpSignIn).
 	Login bool
+	// Admin: the admin worker (LocalSystem on purpose): no warning about
+	// jobs running as SYSTEM.
+	Admin bool
 }
 
 // InstallSetup prepares a machine-wide data dir for the longarmd service: the
@@ -230,6 +233,8 @@ func InstallSetup(ctx context.Context, dataDir string, o SetupOptions) error {
 		if err := platform.GrantServiceLogon(o.ServiceUser); err != nil {
 			return err
 		}
+	} else if o.Admin {
+		fmt.Fprintln(o.Out, "admin worker: the longarmd service runs as LocalSystem; what its owner runs on it runs as SYSTEM")
 	} else if perUser {
 		fmt.Fprintln(o.Out, "per-user isolation: longarmd runs as LocalSystem and runs every Longarm user's work as an account of its own (la-<user>)")
 	} else {

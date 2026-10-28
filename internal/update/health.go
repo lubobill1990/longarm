@@ -278,6 +278,12 @@ func rollback(dataDir string, st *State, why string, log *slog.Logger) error {
 // restartOld starts the restored longarmd: through the service manager, or as a
 // detached process in exec mode.
 func restartOld(st *State, log *slog.Logger) error {
+	if st.Mode == "supervised" {
+		// the user-session worker's host restarts longarmd (now the
+		// restored binary) by itself once the new one is gone
+		log.Info("update watchdog: the worker host restarts the previous version")
+		return nil
+	}
 	if st.Mode == "service" {
 		// A killed or crash-looping service is restarted by the service
 		// manager's recovery; start it explicitly if it stays stopped.

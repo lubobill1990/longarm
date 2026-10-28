@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/localapi"
+	"github.com/lubobill1990/longarm/internal/longarmd"
 	"github.com/lubobill1990/longarm/internal/platform"
+	"github.com/lubobill1990/longarm/internal/signin"
 	"github.com/lubobill1990/longarm/internal/webui"
 )
 
@@ -42,6 +44,9 @@ type Options struct {
 	Roles            string // "client,worker" override ("" = detect)
 	Version          string
 	Log              *slog.Logger
+	// ShowSignIn (--signin, after an install): open the popup at once when
+	// a sign-in is needed.
+	ShowSignIn bool
 }
 
 // Server is longarm-tray's loopback HTTP server: the web UI, the local APIs of
@@ -62,6 +67,13 @@ type Server struct {
 	runCmd  func(name string, args ...string) ([]byte, error) // for tests
 	openURL func(string) error
 	term    func(argv []string) error
+	// sign-in (signin.go); hooks for tests
+	signin           signinRun
+	signIn           func(context.Context, signin.Options, signin.Events) (*signin.Result, error)
+	installedRolesFn func() string
+	installedWorker  func() (string, longarmd.AdminInstall)
+	runElevated      func(exe string, args ...string) error
+	afterSignIn      func()
 
 	mu       sync.Mutex
 	headless bool
@@ -105,7 +117,13 @@ func NewServer(opts Options, desk Desktop, addr string) (*Server, error) {
 			cmd := hiddenCommand(ctx, name, args...)
 			return cmd.CombinedOutput()
 		},
-		openURL: OpenURL, term: OpenTerminal}
+		openURL: OpenURL, term: OpenTerminal,
+		installedRolesFn: signin.InstalledRoles, installedWorker: longarmd.InstalledWorker, runElevated: RunElevated}
+	s.afterSignIn = func() {
+		// the daemon loads the new certificate when it starts
+		s.runCmd(s.opts.LongarmExe, s.longarmArgs("daemon", "stop")[1:]...)
+		s.runCmd(s.opts.LongarmExe, s.longarmArgs("daemon", "start")[1:]...)
+	}
 	s.srv = &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	return s, nil
 }
@@ -183,6 +201,11 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("POST /trayapi/daemon/start", s.startDaemon)
 	mux.HandleFunc("POST /trayapi/join", s.join)
+	mux.HandleFunc("GET /trayapi/signin/state", s.signinState)
+	mux.HandleFunc("POST /trayapi/signin/start", s.signinStart)
+	mux.HandleFunc("POST /trayapi/signin/cancel", s.signinCancel)
+	mux.HandleFunc("POST /trayapi/signout", s.signout)
+	mux.HandleFunc("POST /trayapi/admin/disable", s.adminDisable)
 	mux.Handle("/", webui.Handler("/local/", "/trayapi/"))
 	return s.guard(mux)
 }
@@ -329,10 +352,14 @@ func (s *Server) info(w http.ResponseWriter, _ *http.Request) {
 		"client":  map[string]any{"running": cerr == nil, "error": errText(cerr), "config_dir": s.opts.LongarmConfigDir},
 		"worker":  map[string]any{"running": werr == nil, "enrolled": terr == nil || herr == nil, "error": errText(werr), "data_dir": s.opts.LongarmdDataDir},
 		"hub_url": s.hubURL(), "pinned": pinned, "headless": headless,
+		"account": s.account(),
 	})
 }
 
 func (s *Server) hubURL() string { return HubURL(s.opts) }
+
+// NeedsSignIn reports whether a sign-in would enroll something here.
+func (s *Server) NeedsSignIn() bool { return s.account().Needed }
 
 // HubURL is the web panel: --hub-url, else https://<hub host>/ from hub.toml.
 func HubURL(o Options) string {

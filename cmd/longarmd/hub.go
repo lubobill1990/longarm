@@ -73,7 +73,7 @@ browser opening the hub's panel, and pinned (docs/security.md "First
 contact"); a hub without a public HTTPS panel needs --ca-fingerprint.
 Without a hub: the one the data dir's hub.toml names (an installer's
 sign-in to come, e.g. the MSI with LOGIN=1), else the one the MSI
-recorded.
+recorded, else the one built into this release (if any: longarm version --json).
 
 By default longarmd login prints the hub's /link address and a code: open
 the page in any browser (your laptop or phone will do - this machine needs

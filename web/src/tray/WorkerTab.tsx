@@ -11,7 +11,17 @@ export function WorkerTab({ info }: { info: TrayInfo }) {
   if (!info.worker.running)
     return (
       <div className="error-box">
-        longarmd is not running{info.worker.error ? `: ${info.worker.error}` : ''}. Start the service (Windows: <span className="mono">longarmd service start</span>).
+        longarmd is not running{info.worker.error ? `: ${info.worker.error}` : ''}.{' '}
+        {info.account?.run_mode === 'session' ? (
+          <>
+            It starts at your logon; start it now: <span className="mono">longarmd session-mode start</span>
+            {info.account.needed ? ' (it waits for your sign-in: Account tab)' : ''}.
+          </>
+        ) : (
+          <>
+            Start the service (Windows: <span className="mono">longarmd service start</span>).
+          </>
+        )}
       </div>
     )
   return <WorkerStatusView />

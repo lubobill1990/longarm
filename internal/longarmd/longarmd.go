@@ -271,8 +271,8 @@ type Config struct {
 	Forward       ForwardConfig     // Targets normalized
 	Links         LinksConfig       // MaxConns: 0 = no cap
 	// How longarmd was started, for the restart after a self-update: "service"
-	// (the service manager restarts it) or "exec" (longarmd relaunches itself
-	// with Args).
+	// (the service manager restarts it), "exec" (longarmd relaunches itself
+	// with Args) or "supervised" (the user-session worker's host restarts it).
 	UpdateMode  string
 	ServiceName string
 	Args        []string

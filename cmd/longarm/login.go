@@ -31,7 +31,8 @@ https://<host>/ca.crt, checked with this system's HTTPS roots like a
 browser opening the hub's panel, and pinned (docs/security.md "First
 contact"); a hub without a public HTTPS panel needs --ca-fingerprint.
 Without a hub: the one this machine is signed in to already, else the
-one the installer recorded.
+one the installer recorded, else the one built into this release (if any:
+longarm version --json).
 
 With the Azure CLI signed in (az login), its access token is used and
 nothing else is asked. Without az, or when az has no token (and without
@@ -95,7 +96,8 @@ in its [auth.entra] apps. Such a sign-in never falls back to the browser.`,
 }
 
 // defaultHub is the hub to sign in to when none is given: the one this
-// config dir is enrolled with (its CA pinned), else the installer's.
+// config dir is enrolled with (its CA pinned), else the installer's, else
+// the one built into this release (signin.FallbackHub).
 func defaultHub(fp string) (string, string, error) {
 	if hc, _ := hubclient.LoadFile(configDir); hc.Address != "" {
 		if fp == "" {
@@ -108,7 +110,7 @@ func defaultHub(fp string) (string, string, error) {
 		}
 		return hc.Address, fp, nil
 	}
-	if hub, ifp := signin.InstalledHub(); hub != "" {
+	if hub, ifp, _ := signin.FallbackHub(); hub != "" {
 		if fp == "" {
 			fp = ifp
 		}

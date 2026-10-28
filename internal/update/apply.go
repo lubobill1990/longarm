@@ -74,7 +74,7 @@ type State struct {
 	HealthWindow  Duration  `json:"health_window"`
 	StartGrace    Duration  `json:"start_grace"`
 	Swaps         []Swap    `json:"swaps"`
-	Mode          string    `json:"mode"` // service | exec
+	Mode          string    `json:"mode"` // service | exec | supervised
 	ServiceName   string    `json:"service_name,omitempty"`
 	Exe           string    `json:"exe"`
 	Args          []string  `json:"args,omitempty"` // exec mode relaunch
@@ -134,10 +134,13 @@ type Config struct {
 	PublicKey    string // default: the embedded PublicKey
 	HealthWindow time.Duration
 	StartGrace   time.Duration
-	Mode         string // service | exec
-	ServiceName  string
-	Args         []string // exec mode: longarmd's arguments
-	Log          *slog.Logger
+	// service (the service manager restarts longarmd), exec (it
+	// relaunches itself) or supervised (the user-session worker's host
+	// restarts it)
+	Mode        string
+	ServiceName string
+	Args        []string // exec mode: longarmd's arguments
+	Log         *slog.Logger
 }
 
 func (c *Config) defaults() {
