@@ -145,7 +145,7 @@ func clientChecks(ctx context.Context, env clientEnv, now time.Time) []doctor.Ch
 		out = append(out, doctor.Check{ID: "firewall", Title: "firewall", Status: doctor.OK, Detail: "inbound allow rule for " + fw.Program})
 	default:
 		out = append(out, doctor.Check{ID: "firewall", Title: "firewall", Status: doctor.Warn,
-			Detail: fw.Problem + " (connections stay on relays)", Fix: fw.Fix + "  (elevated)"})
+			Detail: fw.Problem, Fix: fw.Fix + "  (elevated)"})
 	}
 
 	if !signedIn {
