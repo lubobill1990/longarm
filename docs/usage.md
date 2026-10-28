@@ -138,7 +138,8 @@ transport = "tcp"               # or "tailscale" (embedded tsnet node; address =
 ## Usage
 
 ```sh
-longarm ls                                         # CPU / memory / jobs / claude+copilot sessions of all workers
+longarm ls                                         # CPU / memory / jobs / labels of all workers, one row per machine
+longarm ls -o wide                                 # + claude/copilot sessions, disk, uptime, top processes, path
 longarm exec w1 -- git status                      # short synchronous command, exit code mirrored
 longarm run w1 --name build --cwd C:/src/app --env CI=1 --secret-env GH_TOKEN -- pnpm test
 longarm logs w1 <id> -f --from 0                   # follow from a byte offset; reconnects automatically
@@ -1119,7 +1120,7 @@ when they first connect (add `[hub] address = "hub:7443"` to longarmd.toml).
 With a hub, workers are discovered (no workers.toml needed) and:
 
 ```sh
-longarm ls                               # from the hub (STATE online/offline/draining/pending); --direct probes workers
+longarm ls                               # from the hub (STATE online/offline 3d/draining/pending); --direct probes workers
 longarm jobs [w1] [--state running]      # fleet-wide job index (--json: "source": "hub"; --hub-only: no fallback)
 longarm run -- pnpm test                 # placed by the scheduler (= --on auto)
 longarm run --type build --mem-gb 8 --require os=linux --repo . -- make   # reservation, labels, repo cache affinity
@@ -1292,7 +1293,7 @@ longarm worker label <worker> pool=devbox [gpu-]...   # set (KEY=VALUE) / delete
 longarm worker share <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker unshare <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker remove <worker>            # revoke it (owner or admin); also: worker rm
-longarm ls                                # an OWNER column appears once a worker has an owner
+longarm ls                                # an OWNER column appears once a worker has an owner; ADMIN: the machine's admin worker
                                           # ("-" = fleet, "+shared" = shared by its owner)
 ```
 
@@ -1970,8 +1971,8 @@ leg longarm would use (the sticky winner while it is up and not clearly beaten,
 else the best leg).
 
 ```sh
-longarm ls --direct     # PATH column: winning leg + the race, e.g. "longnet/relay 3ms [tcp: cancelled, longnet 41ms won]"
-longarm ls              # via the hub: "hub; last longnet/relay ..." (the cached winner)
+longarm ls --direct -o wide  # PATH column: winning leg + the race, e.g. "longnet/relay 3ms [tcp: cancelled, longnet 41ms won]"
+longarm ls -o wide           # via the hub: "hub; last longnet/relay ..." (the cached winner)
 longarm info w1         # path, policy, legs
 longarm transport longnet                             # save the policy (race | tcp | tailscale | longnet)
 longarm --transport tcp ...                         # this command only; env LONGARM_TRANSPORT
@@ -2244,7 +2245,7 @@ name = "w1"
 transport = "longnet"                # address defaults to [longnet] relay
 ```
 
-`longarm ls` shows the live path, e.g. `longnet/direct 80ms (203.0.113.78:27225, nat easy/hard)` or
+`longarm ls -o wide` shows the live path, e.g. `longnet/direct 80ms (203.0.113.78:27225, nat easy/hard)` or
 `longnet/relay 31ms (udp 203.0.113.5:7800, nat hard/hard)`; "nat ours/peer's" is the NAT type
 each side detected by STUN (open, easy = same public port for every destination,
 hard = symmetric, ? = unknown). Every NAT pair goes direct except hard × hard,

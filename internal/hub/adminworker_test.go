@@ -15,6 +15,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -95,6 +96,11 @@ func TestLinkAdminWorker(t *testing.T) {
 	h.mu.Unlock()
 	if !n.rec.Admin || !info.AdminWorker || info.Labels[sched.AdminLabel] != "true" || plain.AdminWorker {
 		t.Fatalf("hub record: %+v %+v", n.rec, info)
+	}
+	// one machine: the pairing records the two as companions
+	if n.rec.Companion != "devbox-w" || info.Companion != "devbox-w" || info.Machine != "devbox-w" ||
+		plain.Companion != aw || plain.Machine != "devbox-w" {
+		t.Fatalf("companions: admin %q/%q/%q, worker %q/%q", n.rec.Companion, info.Companion, info.Machine, plain.Companion, plain.Machine)
 	}
 
 	// The reserved label: nobody sets or removes it - owner, admin, join
@@ -274,4 +280,114 @@ func TestAdminWorkerNoHubActions(t *testing.T) {
 	}
 	h.rollout = nil
 	h.mu.Unlock()
+}
+
+// TestMachineCompanion: workers enrolled without a recorded companion pair
+// by <worker>-admin, owner and host name; others' views of a shared
+// session worker leave the (owner-only) admin worker out; an admin worker
+// enrolled alone later pairs with the owner's worker on its host.
+func TestMachineCompanion(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	put := func(r *store.Node) {
+		r.Role, r.State = string(pki.RoleWorker), stateApproved
+		h.mu.Lock()
+		h.nodes[r.Name] = &node{rec: r}
+		h.mu.Unlock()
+		if err := h.store.PutNode(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(&store.Node{Name: "box", Owner: "alice", Hostname: "BOX.corp", Shares: &store.WorkerShares{Everyone: true}})
+	put(&store.Node{Name: "box-admin", Owner: "alice", Hostname: "box", Admin: true})
+	put(&store.Node{Name: "dev", Owner: "alice", Hostname: "dev"})
+	put(&store.Node{Name: "dev-admin", Owner: "bob", Hostname: "dev", Admin: true}) // another owner
+	put(&store.Node{Name: "pc", Owner: "alice", Hostname: "pc", Shares: &store.WorkerShares{Everyone: true}})
+	info := func(name string) *pb.NodeInfo {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.nodeInfoLocked(h.nodes[name])
+	}
+	for name, want := range map[string][2]string{
+		"box": {"box", "box-admin"}, "box-admin": {"box", "box"}, "dev": {"dev", ""}, "dev-admin": {"dev-admin", ""}, "pc": {"pc", ""},
+	} {
+		if i := info(name); i.Machine != want[0] || i.Companion != want[1] {
+			t.Errorf("%s: machine %q companion %q, want %v", name, i.Machine, i.Companion, want)
+		}
+	}
+	// bob sees alice's shared worker, not her admin worker
+	if v := nodeView(tenancy.Caller{User: "bob"}, info("box")); v.Companion != "" || v.Machine != "box" {
+		t.Errorf("bob's view: machine %q companion %q", v.Machine, v.Companion)
+	}
+	if v := nodeView(tenancy.Caller{User: "alice"}, info("box")); v.Companion != "box-admin" {
+		t.Errorf("alice's view: companion %q", v.Companion)
+	}
+	// an admin worker named otherwise, enrolled alone: paired by host name.
+	// Its name reaches its owner only: bob, who may use the shared pc,
+	// gets pc's event without it (NodeInfo, message).
+	bobSub := h.bus.subscribeFiltered([]string{"node"}, "", eventFilter(tenancy.Caller{User: "bob"}))
+	defer h.bus.unsubscribe(bobSub)
+	aliceSub := h.bus.subscribeFiltered([]string{"node"}, "", eventFilter(tenancy.Caller{User: "alice"}))
+	defer h.bus.unsubscribe(aliceSub)
+	put(&store.Node{Name: "pc-sys", Owner: "alice", Hostname: "pc", Admin: true})
+	h.pairAdminWorker("pc-sys", "")
+	drain := func(s *sub) (out []*pb.FleetEvent) {
+		for {
+			select {
+			case ev := <-s.ch:
+				out = append(out, ev)
+			case <-time.After(300 * time.Millisecond):
+				return out
+			}
+		}
+	}
+	bobEvs := drain(bobSub)
+	if len(bobEvs) == 0 {
+		t.Fatal("bob got no event of the shared pc")
+	}
+	for _, ev := range bobEvs {
+		if ev.NodeInfo.GetName() != "pc" || ev.NodeInfo.GetCompanion() != "" || ev.NodeInfo.GetMachine() != "pc" ||
+			strings.Contains(ev.Message, "pc-sys") || strings.Contains(ev.String(), "pc-sys") {
+			t.Errorf("bob's event names the admin worker: %v", ev)
+		}
+	}
+	sawCompanion := false
+	for _, ev := range drain(aliceSub) {
+		sawCompanion = sawCompanion || ev.NodeInfo.GetCompanion() == "pc-sys"
+	}
+	if !sawCompanion {
+		t.Error("alice's events lack the companion")
+	}
+	// placement answers show the worker as the placing user sees it
+	h.mu.Lock()
+	bobPlace := h.assignedLocked(&reservation{jobID: "j", worker: "pc", owner: "bob"}, 0)
+	alicePlace := h.assignedLocked(&reservation{jobID: "j", worker: "pc", owner: "alice"}, 0)
+	h.mu.Unlock()
+	if bobPlace.Node.GetCompanion() != "" || alicePlace.Node.GetCompanion() != "pc-sys" {
+		t.Errorf("placement: bob %q, alice %q", bobPlace.Node.GetCompanion(), alicePlace.Node.GetCompanion())
+	}
+	// an event message naming it (any message) is redacted for others too
+	f := eventFilter(tenancy.Caller{User: "bob"})
+	if ev := f(&pb.FleetEvent{Kind: "node", Node: "pc", Message: "x pc-sys y", NodeInfo: info("pc")}, ""); ev == nil || strings.Contains(ev.Message, "pc-sys") {
+		t.Errorf("filtered message: %v", ev)
+	}
+	if a, s := info("pc-sys"), info("pc"); a.Companion != "pc" || a.Machine != "pc" || s.Companion != "pc-sys" {
+		t.Errorf("pc-sys: %q/%q, pc: %q", a.Companion, a.Machine, s.Companion)
+	}
+	stored, err := h.store.Nodes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range stored {
+		if r.Name == "pc" && r.Companion != "pc-sys" {
+			t.Errorf("stored: %+v", r)
+		}
+	}
+	// revoked: no longer a machine's companion
+	if _, err := h.Revoke("test", "box-admin"); err != nil {
+		t.Fatal(err)
+	}
+	if i := info("box"); i.Companion != "" || i.Machine != "box" {
+		t.Errorf("after revoke: %q/%q", i.Machine, i.Companion)
+	}
 }

@@ -3387,7 +3387,15 @@ type NodeInfo struct {
 	Shares        *WorkerShares          `protobuf:"bytes,30,opt,name=shares,proto3" json:"shares,omitempty"`       // workers with an owner: who else may use it
 	// an admin worker (runs commands as an administrator of its machine;
 	// label longarm.io/admin=true): owner-only, never shared, never placed
-	AdminWorker   bool `protobuf:"varint,31,opt,name=admin_worker,json=adminWorker,proto3" json:"admin_worker,omitempty"`
+	AdminWorker bool `protobuf:"varint,31,opt,name=admin_worker,json=adminWorker,proto3" json:"admin_worker,omitempty"`
+	// Workers: the machine the worker runs on, for grouping. A user-session
+	// worker and its admin worker (its companion) share one machine: the
+	// session worker's name. Otherwise the worker's own name.
+	Machine string `protobuf:"bytes,32,opt,name=machine,proto3" json:"machine,omitempty"`
+	// Workers: the other worker on the same machine (a session worker's admin
+	// worker, an admin worker's session worker), recorded at enrollment or
+	// matched by <worker>-admin, owner and host name; "" = none.
+	Companion     string `protobuf:"bytes,33,opt,name=companion,proto3" json:"companion,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3637,6 +3645,20 @@ func (x *NodeInfo) GetAdminWorker() bool {
 		return x.AdminWorker
 	}
 	return false
+}
+
+func (x *NodeInfo) GetMachine() string {
+	if x != nil {
+		return x.Machine
+	}
+	return ""
+}
+
+func (x *NodeInfo) GetCompanion() string {
+	if x != nil {
+		return x.Companion
+	}
+	return ""
 }
 
 type ListNodesRequest struct {
@@ -9482,7 +9504,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x120\n" +
 	"\x06points\x18\x02 \x03(\v2\x18.longarm.v1.MetricsPointR\x06points\"@\n" +
 	"\x0fHistoryResponse\x12-\n" +
-	"\x05nodes\x18\x01 \x03(\v2\x17.longarm.v1.NodeHistoryR\x05nodes\"\xfc\b\n" +
+	"\x05nodes\x18\x01 \x03(\v2\x17.longarm.v1.NodeHistoryR\x05nodes\"\xb4\t\n" +
 	"\bNodeInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12\x14\n" +
@@ -9519,7 +9541,9 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x04user\x18\x1c \x01(\tR\x04user\x12\x14\n" +
 	"\x05owner\x18\x1d \x01(\tR\x05owner\x120\n" +
 	"\x06shares\x18\x1e \x01(\v2\x18.longarm.v1.WorkerSharesR\x06shares\x12!\n" +
-	"\fadmin_worker\x18\x1f \x01(\bR\vadminWorker\x1a9\n" +
+	"\fadmin_worker\x18\x1f \x01(\bR\vadminWorker\x12\x18\n" +
+	"\amachine\x18  \x01(\tR\amachine\x12\x1c\n" +
+	"\tcompanion\x18! \x01(\tR\tcompanion\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"$\n" +

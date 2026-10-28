@@ -147,6 +147,24 @@ table.grid tr:hover td { background: #11161d; }
 .wcard .sub { color: var(--muted); font-size: 11px; }
 .wcard .actions { margin-left: auto; display: flex; gap: 2px; }
 .wcard .actions button { background: none; border: none; color: var(--cpu); padding: 0 4px; font-size: 12px; }
+.wcard .menuwrap { position: relative; }
+.wcard .menu {
+  position: absolute; right: 0; top: 18px; z-index: 5; display: flex; flex-direction: column; min-width: 220px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 4px 0; box-shadow: 0 6px 18px #0008;
+}
+.wcard .actions .menu button { text-align: left; padding: 4px 10px; color: var(--fg); white-space: nowrap; }
+.wcard .actions .menu button:hover { background: var(--track); }
+.wcard .caps { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: -2px 0 6px; }
+.pill.admin { color: var(--amber); border-color: #9e6a03; }
+.pill.chip { color: var(--fg); background: var(--track); border-color: var(--track); }
+
+/* long-offline machines: collapsed, one line each */
+.offline-section { margin-top: 10px; border: 1px solid var(--track); border-radius: 6px; padding: 4px 10px; }
+.offline-section > summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 2px 0; }
+.orow { padding: 3px 0; border-top: 1px solid var(--track); font-size: 12px; }
+.orow .oname { font-weight: 600; }
+.orow .odetail { white-space: pre-wrap; word-break: break-all; padding: 2px 0 2px 16px; }
+table.grid tr.subrow td { border-top: none; }
 .wcard .msg { font-size: 12px; padding: 4px 0; }
 .wcard .info { color: var(--muted); font-size: 11px; margin: 6px 0; }
 
@@ -170,7 +188,10 @@ table.grid tr:hover td { background: #11161d; }
 
 /* ---------------------------------------------------------------- tray popup */
 
-.tray { background: var(--bg); min-height: 100%; display: flex; flex-direction: column; border: 1px solid var(--border); }
+/* The popup is exactly the window: the head (title, tabs, source line) stays, only .body scrolls. */
+.tray { background: var(--bg); height: 100%; display: flex; flex-direction: column; border: 1px solid var(--border); overflow: hidden; }
+.tray .tray-head { flex: none; background: var(--bg); border-bottom: 1px solid var(--border); }
+.tray .tray-head .srcbar { padding: 6px 12px; }
 .tray .titlebar {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px; height: 40px;
   --wails-draggable: drag; user-select: none; cursor: default;
@@ -179,10 +200,11 @@ table.grid tr:hover td { background: #11161d; }
 .tray .titlebar .title { font-weight: 700; font-size: 14px; }
 .tray .titlebar .tbtn { background: none; border: none; color: var(--muted); padding: 0 4px; font-size: 14px; }
 .tray .titlebar .tbtn.on { color: var(--cpu); }
-.tray .tabs { display: flex; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--border); }
+.tray .tabs { display: flex; gap: 2px; padding: 0 8px; }
+.tray .tray-head .srcbar { border-top: 1px solid var(--track); }
 .tray .tabs button { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; color: var(--muted); padding: 4px 10px; }
 .tray .tabs button.active { color: var(--fg); border-bottom-color: var(--cpu); }
-.tray .body { padding: 8px; overflow: auto; flex: 1; }
+.tray .body { padding: 8px; overflow: auto; flex: 1; min-height: 0; }
 .tray .srcbar { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--muted); padding: 0 4px 6px; }
 .tray section + section { margin-top: 12px; }
 .tray h3 { font-size: 12px; color: var(--muted); margin: 8px 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }

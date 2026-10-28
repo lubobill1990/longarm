@@ -9,6 +9,7 @@ import type {
   Job,
   LocalLimits,
   LogChunk,
+  NodeInfo,
   PoolView,
   WorkerStatus,
 } from './types'
@@ -144,6 +145,8 @@ export const longarmApi = {
   setTransport: (transport: string) => post<{ transport?: string }>('/local/longarm/v1/settings', { transport }),
   /** longarm admin drain / undrain through the daemon (admin certificates only). */
   drainWorker: (name: string, draining: boolean) => post(`/local/longarm/v1/workers/${enc(name)}/drain`, { draining }),
+  /** longarm worker remove through the daemon: the hub revokes the worker (its owner, or an admin). */
+  removeWorker: (name: string) => post<NodeInfo>(`/local/longarm/v1/workers/${enc(name)}/remove`),
 }
 
 export const longarmdApi = {
@@ -158,3 +161,26 @@ export const longarmdApi = {
   leave: (reason: string) => post<{ message?: string }>('/local/longarmd/v1/leave', { reason }),
 }
 
+
+/** The tray's Settings tab (/trayapi/settings): notifications, telemetry, logs. */
+export interface TraySettings {
+  version: string
+  mute_workers?: boolean
+  mute_jobs?: boolean
+  telemetry_disabled: boolean
+  /** LONGARM_TELEMETRY=0 in the environment: off whatever the switch says */
+  telemetry_env_off?: boolean
+  client_logs?: string
+  worker_logs?: string
+}
+
+export const traySettingsApi = {
+  get: () => get<TraySettings>('/trayapi/settings'),
+  set: (s: { mute_workers?: boolean; mute_jobs?: boolean; telemetry_disabled?: boolean }) => post<TraySettings>('/trayapi/settings', s),
+  /** opens a known folder (never a path from the page) in the file manager */
+  openFolder: (which: 'client-logs' | 'worker-logs' | 'diag') => post<{ folder: string }>('/trayapi/folder', { which }),
+  /** starts this machine's worker the way it runs: the session task or the service */
+  startWorker: () => post<{ output: string; mode: string }>('/trayapi/worker/start'),
+  /** longarm diag into the diag folder (nothing uploaded), then opens it */
+  collectDiag: () => post<{ zip: string; output: string }>('/trayapi/diag'),
+}

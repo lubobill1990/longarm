@@ -130,6 +130,9 @@ service LocalClient {
   // DrainWorker drains / resumes a worker through the hub (longarm admin drain /
   // undrain; needs this client's certificate to have the admin role).
   rpc DrainWorker(SetDrainRequest) returns (NodeInfo);
+  // RemoveWorker removes (revokes) a worker through the hub, as longarm
+  // worker remove: the owner's own worker, or any worker for an admin.
+  rpc RemoveWorker(NodeRequest) returns (NodeInfo);
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
 }
 
@@ -159,6 +162,7 @@ message PoolView {
   string transport = 5; // transport policy
   string identity = 6;
   FirewallStatus firewall = 7; // the daemon's longarm.exe (Windows only)
+  string user = 8; // the Longarm user this client acts as (its certificate's owner)
 }
 
 message PoolWorker {

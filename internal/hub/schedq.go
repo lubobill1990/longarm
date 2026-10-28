@@ -201,7 +201,8 @@ func (h *Hub) reserveLocked(jobID, worker string, mem float64, owner string) *re
 func (h *Hub) assignedLocked(r *reservation, score float64) *pb.PlaceUpdate {
 	u := &pb.PlaceUpdate{State: "assigned", Worker: r.worker, Score: score, MemGb: r.memGB}
 	if n := h.nodes[r.worker]; n != nil {
-		u.Node = h.nodeInfoLocked(n)
+		// as the placing user may see it (a shared worker: not its owner's details)
+		u.Node = nodeView(h.viewerLocked(r.owner, false), h.nodeInfoLocked(n))
 	}
 	return u
 }

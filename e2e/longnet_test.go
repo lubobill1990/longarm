@@ -258,8 +258,8 @@ func TestLongNetE2E(t *testing.T) {
 				return r.stdout
 			}
 
-			// ls: both paths to the same worker, longnet's PATH column.
-			out := must("ls")
+			// ls -o wide: both paths to the same worker, longnet's PATH column.
+			out := must("ls", "-o", "wide")
 			if strings.Contains(out, "ERROR") || !regexp.MustCompile(`(?m)^w1-net .*`+m.pathRE).MatchString(out) ||
 				!regexp.MustCompile(`(?m)^w1 .*tcp/direct`).MatchString(out) {
 				t.Fatalf("ls:\n%s", out)

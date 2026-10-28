@@ -232,6 +232,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /trayapi/admin/disable", s.adminDisable)
 	mux.HandleFunc("POST /trayapi/roles", s.rolesChange)
 	mux.HandleFunc("GET /trayapi/roles/state", s.rolesState)
+	s.settingsRoutes(mux) // prefs.go
 	mux.Handle("/", webui.Handler("/local/", "/trayapi/"))
 	return s.guard(mux)
 }
