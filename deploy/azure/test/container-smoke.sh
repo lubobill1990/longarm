@@ -298,10 +298,22 @@ lah join 127.0.0.1:7443 "$hcode" --ca-fingerprint "$fph" --name ci-admin
 st=$(lah admin tailnet status)
 [[ $st == *"provider  headscale"* && $st == *"health    ok"* ]] || fail "tailnet status: $st"
 if [[ -n $tsprobe ]]; then
-	# a node registers through the hub's proxy (/key, /ts2021) with a key the hub minted
-	"$tsprobe" -config-dir "$work/laptop-hs" -hub 127.0.0.1:7443 || fail "tsprobe"
+	# a node registers through the hub's proxy (/key, /ts2021) with a key the
+	# hub minted. It stays up (an ephemeral client node is deleted when it
+	# logs out) and is killed, which leaves it registered for the restore check
+	"$tsprobe" -config-dir "$work/laptop-hs" -hub 127.0.0.1:7443 -hold 10m >"$work/tsprobe.log" 2>&1 &
+	probe=$!
+	for _ in $(seq 1 90); do
+		grep -q '^tsprobe: up' "$work/tsprobe.log" && break
+		kill -0 "$probe" 2>/dev/null || fail "tsprobe: $(cat "$work/tsprobe.log")"
+		sleep 1
+	done
+	grep -q '^tsprobe: up' "$work/tsprobe.log" || fail "tsprobe not up: $(tail -n 20 "$work/tsprobe.log")"
 	nodes=$(hs "$p-hs" nodes list -o json)
 	[[ $(jq length <<<"$nodes") -ge 1 && $nodes == *tag:longarm-client* ]] || fail "headscale nodes: $nodes"
+	kill "$probe"
+	wait "$probe" || true
+	sleep 3 # Litestream ships Headscale's WAL every second
 fi
 
 step "headscale sidecar: both containers and the shared volume replaced"

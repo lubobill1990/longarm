@@ -4,10 +4,12 @@
 // control URL the hub names (container-smoke.sh: a Headscale sidecar behind
 // the hub's proxy, so /key and the /ts2021 Noise upgrade go through it).
 //
-//	tsprobe -config-dir <longarm config dir> -hub <host:port> [-timeout 90s]
+//	tsprobe -config-dir <longarm config dir> -hub <host:port> [-timeout 90s] [-hold 2m]
 //
-// Prints "tsprobe: up <control url> <tailnet IPs>" and exits 0 once the node
-// is Running.
+// Prints "tsprobe: up <control url> <tailnet IPs>" once the node is Running
+// and exits 0 (closing the node: an ephemeral node is then logged out and
+// deleted), or with -hold stays up that long (killed meanwhile, it leaves
+// the node registered).
 package main
 
 import (
@@ -30,18 +32,19 @@ func main() {
 	hub := flag.String("hub", "", "hub address host:port")
 	timeout := flag.Duration("timeout", 90*time.Second, "give up after")
 	verbose := flag.Bool("v", false, "tsnet's logs")
+	hold := flag.Duration("hold", 0, "stay up this long after the node is Running")
 	flag.Parse()
 	if *dir == "" || *hub == "" {
 		flag.Usage()
 		os.Exit(2)
 	}
-	if err := run(*dir, *hub, *timeout, *verbose); err != nil {
+	if err := run(*dir, *hub, *timeout, *hold, *verbose); err != nil {
 		fmt.Fprintln(os.Stderr, "tsprobe:", err)
 		os.Exit(1)
 	}
 }
 
-func run(dir, hub string, timeout time.Duration, verbose bool) error {
+func run(dir, hub string, timeout, hold time.Duration, verbose bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	b, err := pki.LoadBundle(filepath.Join(dir, client.TLSDir))
@@ -68,5 +71,6 @@ func run(dir, hub string, timeout time.Duration, verbose bool) error {
 		return fmt.Errorf("tsnet up on %s: %w", t.ControlUrl, err)
 	}
 	fmt.Printf("tsprobe: up %s %v\n", t.ControlUrl, st.TailscaleIPs)
+	time.Sleep(hold)
 	return nil
 }
