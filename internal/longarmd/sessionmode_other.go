@@ -45,3 +45,6 @@ func CurrentUserSID() (string, error) { return "", errSessionWindowsOnly }
 
 // ProfileDirOfSID is Windows-only.
 func ProfileDirOfSID(string) (string, error) { return "", errSessionWindowsOnly }
+
+// TokenProfileDir is the user's home elsewhere.
+func TokenProfileDir() (string, error) { return os.UserHomeDir() }

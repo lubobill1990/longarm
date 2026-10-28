@@ -6,6 +6,9 @@
 #   (the hub image and its docker smoke test: image.yml)
 #   test:    full go test on ubuntu-latest, windows-latest and macos-latest, each
 #            split into parallel jobs (unit, e2e-1..3)
+#   msi:     windows-latest: the MSI built with WiX 5 (pinned, as release.yml), with and without
+#            a built-in hub, ICE-validated, extracted with an administrative install (nothing is
+#            installed) and its tables checked
 #   tests:   one check for branch protection / auto-merge: every test job passed
 # Pull requests from forks run with a read-only token and no secrets (the
 # privacy check then skips its private deny-list).
@@ -252,18 +255,77 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # The MSI as release.yml builds it (WiX 5, pinned), never installed: built
+  # with and without a built-in hub (-DefaultHub), ICE-validated, extracted
+  # with an administrative install (no custom action runs), its Property and
+  # CustomAction tables checked.
+  msi:
+    name: msi (WiX 5 build, validate, extract)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/go-setup
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 8.0.x
+      - name: WiX 5 (pinned)
+        run: |
+          $wix = Join-Path $env:LONGARM_TOOLS 'wix'
+          dotnet tool install wix --version 5.0.2 --tool-path $wix
+          if ($LASTEXITCODE) { throw 'dotnet tool install wix failed' }
+          $wix >> $env:GITHUB_PATH
+          & "$wix\wix.exe" extension add WixToolset.UI.wixext/5.0.2 WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2
+          if ($LASTEXITCODE) { throw 'wix extension add failed' }
+      - name: binaries
+        run: |
+          $bin = Join-Path $env:RUNNER_TEMP 'msi-bin'
+          New-Item -ItemType Directory -Force $bin | Out-Null
+          $env:CGO_ENABLED = '0'
+          $hub = '-X github.com/lubobill1990/longarm/internal/version.DefaultHub=longarm.example.com'
+          go build -trimpath -ldflags $hub -o "$bin\longarm.exe" ./cmd/longarm
+          if ($LASTEXITCODE) { throw 'go build longarm' }
+          go build -trimpath -ldflags $hub -o "$bin\longarmd.exe" ./cmd/longarmd
+          if ($LASTEXITCODE) { throw 'go build longarmd' }
+          go build -trimpath -ldflags "-H windowsgui $hub" -o "$bin\longarm-tray.exe" ./cmd/longarm-tray
+          if ($LASTEXITCODE) { throw 'go build longarm-tray' }
+          & "$bin\longarm.exe" version --json
+      - name: build the MSIs (default hub / custom only)
+        run: |
+          $bin = Join-Path $env:RUNNER_TEMP 'msi-bin'
+          $out = Join-Path $env:RUNNER_TEMP 'msi'
+          ./packaging/windows/build-msi.ps1 -BinDir $bin -Version 0.0.1 -Arch x64 -Out "$out\default.msi" `
+            -DefaultHub longarm.example.com -DefaultHubCA ('ab' * 32)
+          ./packaging/windows/build-msi.ps1 -BinDir $bin -Version 0.0.1 -Arch x64 -Out "$out\custom.msi" -DefaultHub ''
+      - name: validate (ICE), extract (administrative install), check the tables
+        run: ./.github/scripts/msi-check.ps1 -Dir (Join-Path $env:RUNNER_TEMP 'msi')
+      - name: upload the MSIs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: msi
+          path: ${{ runner.temp }}/msi
+          if-no-files-found: ignore
+          retention-days: 7
+
   # The required check (ruleset of main): the matrix's job names change with
   # its parts, this one doesn't.
   tests:
     name: tests
     if: always()
-    needs: [test]
+    needs: [test, msi]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: every test job passed
         env:
           RESULT: ${{ needs.test.result }}
+          MSI: ${{ needs.msi.result }}
         run: |
-          echo "test matrix: $RESULT"
-          [ "$RESULT" = success ]
+          echo "test matrix: $RESULT, msi: $MSI"
+          [ "$RESULT" = success ] && [ "$MSI" = success ]

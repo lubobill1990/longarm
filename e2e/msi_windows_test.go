@@ -89,7 +89,7 @@ func TestMSI(t *testing.T) {
 		exec.Command("sc.exe", "delete", svc).Run() // in case the MSI left it
 	})
 	args := []string{"/i", msi, "/qn", "/norestart", "/l*v", msiLog,
-		"ROLES=worker", "HUB=" + h.addr(), "JOIN_CODE=" + code, "CA_FINGERPRINT=" + h.fp,
+		"MODE=custom", "RUN=service", "ROLES=worker", "HUB=" + h.addr(), "JOIN_CODE=" + code, "CA_FINGERPRINT=" + h.fp,
 		"SERVICE_NAME=" + svc, "INSTALLFOLDER=" + installDir + `\`, "DATADIR=" + dataDir,
 		fmt.Sprintf("LISTEN=tcp://127.0.0.1:%d", port)}
 	msiexec := func(extra ...string) error {

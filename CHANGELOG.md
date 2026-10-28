@@ -4,6 +4,51 @@
 
 ### Added
 
+- Windows installer for password-less machines (Entra-only sign-in with
+  Windows Hello or a security key, e.g. Microsoft Dev Box): the MSI's first
+  page is **Default (recommended)** - the hub built into the release, a
+  sign-in with Microsoft afterwards, only "Use this computer" / "Also run
+  jobs on this computer" to pick - or **Custom** (hub, join code or "Sign in
+  with Microsoft", CA fingerprint, the worker as a service under Advanced).
+  Silent: `MODE=default|custom`, `RUN=session|service`, `ADMIN_WORKER=1`,
+  `SESSION_SID`, `LAUNCH_TRAY=0` (all remembered where it matters; the
+  comment at the top of `packaging/windows/longarm.wxs`).
+- User-session worker (`RUN=session`, the default; [docs/usage.md](docs/usage.md#the-user-session-worker-runsession-the-default)):
+  longarmd runs as the signed-in user, started at logon by a per-user
+  scheduled task (`LongarmWorker-<SID>`, interactive token: no password) whose
+  host (`longarm-tray --worker-host`, windowless, or `longarmd session-mode
+  run`) restarts it when it exits; one host per user; data dir `~\.longarm`.
+  Keeps running while a remote desktop is disconnected, stops at logoff /
+  reboot. `longarmd session-mode install|uninstall|start|stop|status|run`;
+  self-update mode `supervised` (exit 75, the host restarts; the watchdog
+  leaves the restart to it). Service installs keep their service on upgrade.
+- The tray signs in: "Sign in with Microsoft" (`/trayapi/signin/*`,
+  `signin.SignIn` with the device, the user-session worker and the admin
+  worker as targets - one code, one approval), with the code, progress,
+  cancel and errors; then "Signed in as ...", the worker's state, Sign out,
+  Open panel. The MSI starts the tray at the end of the install in the
+  installing user's session (not elevated, through a one-off task:
+  `longarm-tray --signin`). `--serve` is unchanged.
+- Built-in default hub: `version.DefaultHub` / `version.DefaultHubCA`
+  (ldflags from the repository variables `LONGARM_DEFAULT_HUB` /
+  `LONGARM_DEFAULT_HUB_CA`; `build-msi.ps1 -DefaultHub -DefaultHubCA`);
+  `longarm login`, `longarmd login` and the tray fall back to it after the
+  installer-recorded hub (`signin.FallbackHub`); `longarm version --json`
+  shows `default_hub`.
+- Admin worker, Windows side: the MSI checkbox / `ADMIN_WORKER=1` installs
+  the LocalSystem service `longarmd-admin` (own data dir and listener) that
+  hands its CSR to the tray's sign-in through an ACL'd hand-off dir, checks
+  the returned certificate (its key, the hub's CA, `longarm.io/admin=true`)
+  and pins `[access]` to its owner (`admins = "none"`). "Disable admin
+  worker" in the tray / `longarmd admin-worker disable|status`.
+- `install.ps1`: `-Run session|service` (default session: `longarmd
+  session-mode install`, no password); with the MSI, `-Login` installs with
+  `MODE=custom LOGIN=1 RUN=session` and signs in in the console; the binary
+  install also fetches `longarm-tray.exe` (the logon task's host).
+- CI: a `msi` job builds the MSI with WiX 5 (pinned) with and without a
+  built-in hub, ICE-validates it, extracts it with an administrative install
+  and checks its tables (never installs it); part of the required `tests`.
+
 - Admin worker (Windows; [docs/usage.md](docs/usage.md#admin-worker-windows),
   [docs/security.md](docs/security.md#admin-worker-windows)): a pairing may
   carry an admin worker's CSR (`StartLinkRequest.admin_worker_csr_pem` /

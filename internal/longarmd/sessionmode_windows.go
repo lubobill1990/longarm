@@ -110,3 +110,10 @@ func ProfileDirOfSID(sid string) (string, error) {
 	}
 	return p, nil
 }
+
+// TokenProfileDir is the profile dir of this process's user (its token's,
+// not %USERPROFILE%: the MSI's impersonated custom actions may not have the
+// user's environment).
+func TokenProfileDir() (string, error) {
+	return windows.GetCurrentProcessToken().GetUserProfileDirectory()
+}

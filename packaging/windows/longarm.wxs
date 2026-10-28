@@ -3,36 +3,69 @@
   Longarm MSI (WiX v5): longarm, longarmd (+ longarm-tray when built), DESIGN §11.2.
 
   Build:  pwsh packaging/windows/build-msi.ps1 -BinDir <dir with longarm.exe longarmd.exe [longarm-tray.exe]> -Version 1.2.3 -Arch x64
-  Silent: msiexec /i longarm.msi /qn ROLES=worker HUB=hub.example.com JOIN_CODE=K7P-Q2M [CA_FINGERPRINT=...]
-          or, without a join code, signing in with Microsoft afterwards:
-          msiexec /i longarm.msi /qn ROLES=both HUB=longarm.example.com LOGIN=1 [CA_FINGERPRINT=...] SERVICE_USER=... SERVICE_PASSWORD=...
-            (records HUB / CA_FINGERPRINT in HKLM\Software\Longarm and the data dir's hub.toml; the service
-             starts and waits for the sign-in, which the tray or longarmd login (role both) does
-             without further input: one code, one approval; HUB may be the bare domain: the CA is then
-             fetched from https://HUB/ca.crt at sign-in)
-          SERVICE_USER=.\alice SERVICE_PASSWORD=...   (required for workers; or SERVICE_ACCOUNT=LocalSystem)
-          [SERVICE_NAME=longarmd] [DATADIR=C:\ProgramData\Longarm\longarmd]   (the default; also longarmd's
-                                  own default as LocalSystem and for service install isolation per-user)
-          [LISTEN=tcp://100.64.0.11:7701,longnet://hub:7443?name=w1]   (longarmd.toml when the data dir has none)
-          [LABELS=pool=devbox,os.flavor=ltsc]   (LOGIN=1: worker labels the sign-in asks the hub to record,
-                                  like the label option of longarmd login; kept in HKLM\Software\Longarm like HUB)
-          [CLIENT_JOIN_CODE=...]   (ROLES=both: JOIN_CODE is the worker's code, CLIENT_JOIN_CODE the client's)
-          [ISOLATION=per-user]   (a worker shared by several people, docs/security.md: the service runs
-                                  as LocalSystem and runs every Longarm user's work as a local account of
-                                  its own; implies SERVICE_ACCOUNT=LocalSystem, no SERVICE_USER needed)
-  Remove: msiexec /x longarm.msi /qn [KEEP_DATA=1]   (the worker leaves its hub first)
+                [-DefaultHub longarm.example.com [-DefaultHubCA <sha256>]]   (the "Default" choice; release.yml passes
+                the repository variables LONGARM_DEFAULT_HUB / LONGARM_DEFAULT_HUB_CA; without: Custom only)
 
-  Roles: client = longarm (+ tray); worker = + the longarmd service (auto start, restart on failure);
-  both = the two. The service runs as a normal user account (DESIGN §3.1: jobs then find
-  that user's git / npm / claude settings): interactively the worker role asks for it
-  (default: the installing user) and its password; silently SERVICE_USER + SERVICE_PASSWORD
-  are required, unless SERVICE_ACCOUNT=LocalSystem is given explicitly (jobs then run as
-  SYSTEM; the install log and longarmd.log warn). The account gets "Log on as a service". The
-  data dir is protected (SYSTEM, Administrators and the service account only). Upgrades with
-  a newer MSI keep the account (remembered) but need SERVICE_PASSWORD again for a user account.
-  Inbound UDP+TCP allow rules for longarm.exe, longarmd.exe and longarm-tray.exe (all profiles) are added
-  and removed with the product: Windows Firewall otherwise drops unsolicited inbound UDP,
-  which breaks hole punching (longnet) and Tailscale's direct paths.
+  Interactive: Welcome -> "Default (recommended)" or "Custom" -> Install. Default signs in to the
+  built-in hub with a Microsoft account: pick "Use this computer" (client) or "Also run jobs on this
+  computer" (both), click Install; the tray opens and shows a code: approve it in the browser. Custom
+  asks for a hub, a join code or "Sign in with Microsoft", an optional CA fingerprint, and offers the
+  worker as a Windows service (Advanced). Both offer "Allow remote administrator commands" (the admin
+  worker, below).
+
+  Silent:
+    msiexec /i longarm.msi /qn                                   MODE=default (when built in), ROLES=client
+    msiexec /i longarm.msi /qn ROLES=both                        + your worker, user-session mode
+    msiexec /i longarm.msi /qn MODE=custom ROLES=both HUB=longarm.example.com LOGIN=1 [CA_FINGERPRINT=...]
+    msiexec /i longarm.msi /qn MODE=custom ROLES=worker HUB=hub.example.com JOIN_CODE=K7P-Q2M [CA_FINGERPRINT=...]
+    msiexec /i longarm.msi /qn MODE=custom ROLES=worker RUN=service HUB=... JOIN_CODE=... SERVICE_USER=.\alice SERVICE_PASSWORD=...
+  Properties:
+    MODE=default|custom   default: the built-in hub (DEFAULT_HUB) and Microsoft sign-in (LOGIN=1; JOIN_CODE is
+                          refused); custom: HUB, JOIN_CODE or LOGIN=1, CA_FINGERPRINT. Default: custom when HUB
+                          or JOIN_CODE is given or there is no built-in hub, else default. Remembered.
+    ROLES=client|both|worker   client = longarm (+ tray); worker = + longarmd running jobs; both = the two
+    RUN=session|service   how the worker runs (default session; remembered - an install from before RUN with a
+                          service keeps the service):
+                          session: as the user who installs (SESSION_SID, default the MSI's UserSID), started
+                            at that user's logon by a scheduled task (LongarmWorker-<SID>), restarted when it
+                            stops; no service, no password - works with Windows Hello / security-key-only
+                            sign-in. Data dir: the user's ~\.longarm. Jobs keep running while a remote
+                            desktop is disconnected and stop at logoff or reboot until the user logs on again.
+                            The install must run as that user (elevated), not as SYSTEM (or pass SESSION_SID).
+                          service: the longarmd service (auto start, restart on failure), as before:
+                            SERVICE_USER=.\alice SERVICE_PASSWORD=... (it gets "Log on as a service"), or
+                            SERVICE_ACCOUNT=LocalSystem (jobs run as SYSTEM; warned), or ISOLATION=per-user
+                            (implies RUN=service and LocalSystem; docs/security.md). [SERVICE_NAME=longarmd]
+                            [DATADIR=C:\ProgramData\Longarm\longarmd]
+                            [LISTEN=tcp://100.64.0.11:7701,longnet://hub:7443?name=w1] (longarmd.toml when
+                            the data dir has none)
+    HUB, LOGIN=1, JOIN_CODE, CA_FINGERPRINT   the hub (the bare domain will do: the CA then comes from
+                          https://HUB/ca.crt at sign-in), a sign-in with Microsoft after the install (the tray,
+                          or longarmd / longarm login - HUB and CA_FINGERPRINT are recorded in
+                          HKLM\Software\Longarm, so neither asks), or a join code. HUB / CA_FINGERPRINT / LOGIN
+                          are remembered.
+    [CLIENT_JOIN_CODE=...]   (ROLES=both: JOIN_CODE is the worker's code, CLIENT_JOIN_CODE the client's)
+    [LABELS=pool=devbox,os.flavor=ltsc]   worker labels the sign-in asks the hub to record (the tray, longarmd login); remembered
+    [NODE_NAME=w1]        a join code's node name
+    [ADMIN_WORKER=1]      the admin worker (off by default): a second longarmd, a LocalSystem service
+                          (ADMIN_SERVICE_NAME, default longarmd-admin; data dir ADMIN_DATADIR, SYSTEM and
+                          Administrators only) running while nobody is logged on; what its owner runs on
+                          it runs as SYSTEM. It is enrolled with the tray's sign-in (same code, same
+                          approval) as <worker>-admin, marked longarm.io/admin=true by the hub: owner only,
+                          never shared, never placed automatically (docs/security.md). Needs a hub and
+                          an installing user (SESSION_SID). ADMIN_WORKER=0 on an upgrade removes it;
+                          remembered.
+    [LAUNCH_TRAY=0]       don't start the tray at the end (it starts in the installing user's session,
+                          not elevated, through a scheduled task, and shows "Sign in with Microsoft")
+  Remove: msiexec /x longarm.msi /qn [KEEP_DATA=1]   (the workers leave the hub first)
+  Migrating a service install to RUN=session: uninstall, then install with RUN=session (an upgrade keeps
+  the service).
+
+  The data dir of the service is protected (SYSTEM, Administrators and the service account only).
+  Upgrades with a newer MSI keep the service account (remembered) but need SERVICE_PASSWORD again for
+  a user account. Inbound UDP+TCP allow rules for longarm.exe, longarmd.exe and longarm-tray.exe (all
+  profiles) are added and removed with the product: Windows Firewall otherwise drops unsolicited
+  inbound UDP, which breaks hole punching (longnet) and Tailscale's direct paths.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
@@ -40,6 +73,8 @@
      xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
 
   <?ifndef HasTray ?><?define HasTray = 0 ?><?endif?>
+  <?ifndef DefaultHub ?><?define DefaultHub = "" ?><?endif?>
+  <?ifndef DefaultHubCA ?><?define DefaultHubCA = "" ?><?endif?>
 
   <Package Name="Longarm" Manufacturer="Longarm contributors" Version="$(var.Version)" Language="1033"
            UpgradeCode="0d623137-abc8-4dc1-8e7d-32fc483c9e93" Scope="perMachine" Compressed="yes" InstallerVersion="500">
@@ -47,18 +82,47 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of Longarm is already installed." Schedule="afterInstallInitialize" />
     <MediaTemplate EmbedCab="yes" />
 
+    <!-- The built-in hub of this build (-DefaultHub): the "Default" choice. -->
+    <?if "$(var.DefaultHub)" != "" ?>
+    <Property Id="DEFAULT_HUB" Value="$(var.DefaultHub)" />
+    <?endif?>
+    <?if "$(var.DefaultHubCA)" != "" ?>
+    <Property Id="DEFAULT_HUB_CA" Value="$(var.DefaultHubCA)" />
+    <?endif?>
+
     <!-- Public properties (silent install), remembered for upgrades/uninstall. -->
     <Property Id="ROLES" Value="client" Secure="yes">
       <RegistrySearch Id="RegRoles" Root="HKLM" Key="Software\Longarm" Name="Roles" Type="raw" />
     </Property>
-    <!-- HUB, CA_FINGERPRINT and LOGIN: AppSearch would overwrite a value given on the msiexec command
-         line with the registry's (an upgrade could not change the hub, replace the CA pin or switch
-         mode), so the remembered values go into SAVED_* and apply only when the property is empty
-         (SetProperty below). -->
+    <!-- HUB, CA_FINGERPRINT, LOGIN, LABELS, MODE, RUN, ADMIN_WORKER, SESSION_SID: AppSearch would
+         overwrite a value given on the msiexec command line with the registry's (an upgrade could not
+         change the hub, replace the CA pin or switch mode), so the remembered values go into SAVED_*
+         and apply only when the property is empty (SetProperty below). -->
     <Property Id="HUB" Secure="yes" />
     <Property Id="SAVED_HUB" Secure="yes">
       <RegistrySearch Id="RegHub" Root="HKLM" Key="Software\Longarm" Name="Hub" Type="raw" />
     </Property>
+    <Property Id="MODE" Secure="yes" />
+    <Property Id="SAVED_MODE" Secure="yes">
+      <RegistrySearch Id="RegMode" Root="HKLM" Key="Software\Longarm" Name="Mode" Type="raw" />
+    </Property>
+    <Property Id="RUN" Secure="yes" />
+    <Property Id="SAVED_RUN" Secure="yes">
+      <RegistrySearch Id="RegRun" Root="HKLM" Key="Software\Longarm" Name="RunMode" Type="raw" />
+    </Property>
+    <!-- The user whose logon starts the user-session worker (and who signs the admin worker in). -->
+    <Property Id="SESSION_SID" Secure="yes" />
+    <Property Id="SAVED_SESSION_SID" Secure="yes">
+      <RegistrySearch Id="RegSessionSid" Root="HKLM" Key="Software\Longarm" Name="SessionUserSID" Type="raw" />
+    </Property>
+    <Property Id="ADMIN_WORKER" Secure="yes" />
+    <Property Id="SAVED_ADMIN_WORKER" Secure="yes">
+      <RegistrySearch Id="RegAdminWorker" Root="HKLM" Key="Software\Longarm" Name="AdminWorker" Type="raw" />
+    </Property>
+    <Property Id="ADMIN_SERVICE_NAME" Value="longarmd-admin" Secure="yes" />
+    <Property Id="ADMIN_DATADIR" Secure="yes" />
+    <Property Id="ADMIN_HANDOFF" Secure="yes" />
+    <Property Id="LAUNCH_TRAY" Value="1" Secure="yes" />
     <Property Id="SERVICE_NAME" Value="longarmd" Secure="yes">
       <RegistrySearch Id="RegSvc" Root="HKLM" Key="Software\Longarm" Name="ServiceName" Type="raw" />
     </Property>
@@ -95,25 +159,64 @@
     <Property Id="KEEP_DATA" Secure="yes" />
     <!-- per-user = multi-tenancy with OS isolation (LocalSystem service); "" = shared -->
     <Property Id="ISOLATION" Secure="yes" />
+    <!-- dialog state: Custom's sign-in choice and "run as a Windows service" -->
+    <Property Id="CUSTOM_AUTH" Value="login" />
+    <Property Id="RUN_AS_SERVICE" Secure="yes" />
     <Property Id="ARPNOMODIFY" Value="1" />
     <!-- Repair would re-create the service and needs the account password again (msiexec /fa ... SERVICE_PASSWORD=...). -->
     <Property Id="ARPNOREPAIR" Value="1" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/lubobill1990/longarm" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="The Longarm tray opens next to the clock. If it asks you to sign in, click &quot;Sign in with Microsoft&quot; and approve the code in your browser." />
 
     <!-- Derived (private) properties, computed before costing in both sequences. -->
     <!-- The same dir longarmd defaults to as LocalSystem and for service install isolation per-user
          (internal/longarmd/datadir.go); LONGARM_DATA_DIR (set below) points every elevated longarmd command at it. -->
     <SetProperty Id="DATADIR" Value="[CommonAppDataFolder]Longarm\longarmd" Before="CostFinalize" Sequence="both" Condition="NOT DATADIR" />
+    <SetProperty Id="ADMIN_DATADIR" Value="[CommonAppDataFolder]Longarm\longarmd-admin" Before="CostFinalize" Sequence="both" Condition="NOT ADMIN_DATADIR" />
+    <SetProperty Id="ADMIN_HANDOFF" Value="[CommonAppDataFolder]Longarm\admin-signin" Before="CostFinalize" Sequence="both" Condition="NOT ADMIN_HANDOFF" />
     <!-- Remembered HUB / CA_FINGERPRINT / LOGIN only where the command line (or the dialog) gave none;
          an explicit JOIN_CODE is not a LOGIN install. Before SetIsWorker etc., which read them. -->
-    <SetProperty Id="HUB" Action="SetHubSaved" Value="[SAVED_HUB]" Before="CostFinalize" Sequence="both"
+    <SetProperty Id="HUB" Action="SetHubSaved" Value="[SAVED_HUB]" Before="SetModeSaved" Sequence="both"
                  Condition="NOT HUB AND SAVED_HUB" />
-    <SetProperty Id="CA_FINGERPRINT" Action="SetCaFpSaved" Value="[SAVED_CA_FINGERPRINT]" Before="CostFinalize" Sequence="both"
+    <SetProperty Id="CA_FINGERPRINT" Action="SetCaFpSaved" Value="[SAVED_CA_FINGERPRINT]" Before="SetModeSaved" Sequence="both"
                  Condition="NOT CA_FINGERPRINT AND SAVED_CA_FINGERPRINT" />
-    <SetProperty Id="LOGIN" Action="SetLoginSaved" Value="[SAVED_LOGIN]" Before="CostFinalize" Sequence="both"
+    <SetProperty Id="LOGIN" Action="SetLoginSaved" Value="[SAVED_LOGIN]" Before="SetModeSaved" Sequence="both"
                  Condition="NOT LOGIN AND SAVED_LOGIN AND NOT JOIN_CODE AND NOT CLIENT_JOIN_CODE" />
-    <SetProperty Id="LABELS" Action="SetLabelsSaved" Value="[SAVED_LABELS]" Before="CostFinalize" Sequence="both"
+    <SetProperty Id="LABELS" Action="SetLabelsSaved" Value="[SAVED_LABELS]" Before="SetModeSaved" Sequence="both"
                  Condition="NOT LABELS AND SAVED_LABELS" />
+    <SetProperty Id="ADMIN_WORKER" Action="SetAdminSaved" Value="[SAVED_ADMIN_WORKER]" Before="SetModeSaved" Sequence="both"
+                 Condition="NOT ADMIN_WORKER AND SAVED_ADMIN_WORKER" />
+    <SetProperty Id="SESSION_SID" Action="SetSessionSidSaved" Value="[SAVED_SESSION_SID]" Before="SetSessionSidUser" Sequence="both"
+                 Condition="NOT SESSION_SID AND SAVED_SESSION_SID" />
+    <SetProperty Id="SESSION_SID" Action="SetSessionSidUser" Value="[UserSID]" Before="SetModeSaved" Sequence="both"
+                 Condition="NOT SESSION_SID AND UserSID" />
+    <!-- MODE: remembered, else custom when a hub or a code is given (or there is no built-in hub),
+         else default. -->
+    <SetProperty Id="MODE" Action="SetModeSaved" Value="[SAVED_MODE]" Before="SetModeCustom" Sequence="both"
+                 Condition="NOT MODE AND SAVED_MODE" />
+    <SetProperty Id="MODE" Action="SetModeCustom" Value="custom" Before="SetModeDefault" Sequence="both"
+                 Condition="NOT MODE AND (HUB OR JOIN_CODE OR CLIENT_JOIN_CODE OR NOT DEFAULT_HUB)" />
+    <SetProperty Id="MODE" Action="SetModeDefault" Value="default" Before="SetHubDefault" Sequence="both"
+                 Condition="NOT MODE" />
+    <!-- Default: the built-in hub, its pin, a sign-in with Microsoft. -->
+    <SetProperty Id="HUB" Action="SetHubDefault" Value="[DEFAULT_HUB]" Before="SetCaFpDefault" Sequence="both"
+                 Condition='MODE="default" AND DEFAULT_HUB' />
+    <SetProperty Id="CA_FINGERPRINT" Action="SetCaFpDefault" Value="[DEFAULT_HUB_CA]" Before="SetLoginDefault" Sequence="both"
+                 Condition='MODE="default" AND DEFAULT_HUB_CA' />
+    <SetProperty Id="LOGIN" Action="SetLoginDefault" Value="1" Before="SetRunSaved" Sequence="both"
+                 Condition='MODE="default"' />
+    <!-- RUN: remembered; an install from before RUN with a service keeps it; per-user isolation is a
+         service; else session. -->
+    <SetProperty Id="RUN" Action="SetRunSaved" Value="[SAVED_RUN]" Before="SetRunLegacy" Sequence="both"
+                 Condition="NOT RUN AND SAVED_RUN" />
+    <SetProperty Id="RUN" Action="SetRunLegacy" Value="service" Before="SetRunDefault" Sequence="both"
+                 Condition='NOT RUN AND (SAVED_SERVICE_ACCOUNT OR ISOLATION="per-user")' />
+    <SetProperty Id="RUN" Action="SetRunDefault" Value="session" Before="SetRunAsServiceUI" Sequence="both"
+                 Condition="NOT RUN" />
+    <SetProperty Id="RUN_AS_SERVICE" Action="SetRunAsServiceUI" Value="1" Before="SetIsWorker" Sequence="both"
+                 Condition='RUN="service"' />
+    <SetProperty Id="CUSTOM_AUTH" Action="SetCustomAuthCode" Value="code" Before="SetIsWorker" Sequence="ui"
+                 Condition="JOIN_CODE" />
     <SetProperty Id="IsWorker" Value="1" Before="CostFinalize" Sequence="both" Condition='ROLES="worker" OR ROLES="both"' />
     <SetProperty Id="IsClient" Value="1" Before="CostFinalize" Sequence="both" Condition='ROLES="client" OR ROLES="both"' />
     <!-- Interactive default for the service account: the installing user. -->
@@ -133,7 +236,13 @@
     <SetProperty Id="SERVICE_ACCOUNT" Action="SetServiceAccountSaved" Value="[SAVED_SERVICE_ACCOUNT]" Before="CheckServiceAccount" Sequence="execute"
                  Condition='NOT SERVICE_ACCOUNT AND SAVED_SERVICE_ACCOUNT' />
     <!-- Workers never fall back to LocalSystem silently (jobs would run as SYSTEM). -->
-    <CustomAction Id="CheckServiceAccount" Error="A worker install needs the account the longarmd service runs jobs as: SERVICE_USER=.\you SERVICE_PASSWORD=... (it gets 'Log on as a service'). To run it as LocalSystem instead (jobs run as SYSTEM, not recommended) pass SERVICE_ACCOUNT=LocalSystem." />
+    <CustomAction Id="CheckServiceAccount" Error="A worker running as a Windows service (RUN=service) needs the account the longarmd service runs jobs as: SERVICE_USER=.\you SERVICE_PASSWORD=... (it gets 'Log on as a service'). To run it as LocalSystem instead (jobs run as SYSTEM, not recommended) pass SERVICE_ACCOUNT=LocalSystem. Without a password: RUN=session (the default; the worker runs as you while you are logged on)." />
+    <CustomAction Id="CheckMode" Error="MODE must be default or custom." />
+    <CustomAction Id="CheckDefaultHub" Error="This MSI has no built-in hub (it was built without -DefaultHub): use MODE=custom HUB=your.hub.example.com." />
+    <CustomAction Id="CheckDefaultCode" Error="MODE=default signs in with a Microsoft account: drop JOIN_CODE / CLIENT_JOIN_CODE, or use MODE=custom HUB=... JOIN_CODE=..." />
+    <CustomAction Id="CheckRun" Error="RUN must be session or service (ISOLATION=per-user needs RUN=service)." />
+    <CustomAction Id="CheckSessionUser" Error="RUN=session runs the worker as the user who logs on, but this install runs as SYSTEM (UserSID S-1-5-18): install as that user (elevated), pass SESSION_SID=&lt;the user's SID&gt;, or use RUN=service." />
+    <CustomAction Id="CheckAdminWorker" Error="ADMIN_WORKER=1 signs the admin worker in with Microsoft at the hub, as the user who installs it: it needs a hub (MODE=default or HUB=...) and an installing user (not SYSTEM, or SESSION_SID=...)." />
     <!-- Secrets (JOIN_CODE, CLIENT_JOIN_CODE, CLIENT_CODE, SERVICE_PASSWORD) stay out of verbose
          logs (msiexec /l*v): the properties are Hidden (masked in property dumps and changes), and
          every custom action whose target contains one has HideTarget="yes". Hidden alone does not
@@ -157,8 +266,8 @@
         </File>
       </Component>
 
-      <!-- longarmd: with the service for workers, without it otherwise (exclusive conditions). -->
-      <Component Id="LongarmdService" Condition="IsWorker" Guid="3e96d676-1a38-455f-a841-7b7642e651c8">
+      <!-- longarmd: with the service for service workers, without it otherwise (exclusive conditions). -->
+      <Component Id="LongarmdService" Condition='IsWorker AND RUN="service"' Guid="3e96d676-1a38-455f-a841-7b7642e651c8">
         <File Id="longarmd.exe" Source="$(var.BinDir)\longarmd.exe" KeyPath="yes">
           <fw:FirewallException Id="FwLongarmdUdp" Name="Longarm longarmd (UDP)" Protocol="udp" Scope="any" Profile="all" Description="Longarm worker: direct connections (longnet, tailscale)" />
           <fw:FirewallException Id="FwLongarmdTcp" Name="Longarm longarmd (TCP)" Protocol="tcp" Scope="any" Profile="all" Description="Longarm worker: listeners" />
@@ -174,7 +283,7 @@
         <ServiceControl Id="LongarmdSvcCtl" Name="[SERVICE_NAME]" Stop="both" Remove="uninstall" Wait="yes" />
         <Environment Id="EnvLongarmdData" Name="LONGARM_DATA_DIR" Value="[DATADIR]" System="yes" Action="set" Permanent="no" />
       </Component>
-      <Component Id="LongarmdPlain" Condition="NOT IsWorker" Guid="0afe2b69-cb68-4395-a6fb-5a51b76aef5b">
+      <Component Id="LongarmdPlain" Condition='NOT (IsWorker AND RUN="service")' Guid="0afe2b69-cb68-4395-a6fb-5a51b76aef5b">
         <File Id="longarmd.plain.exe" Name="longarmd.exe" Source="$(var.BinDir)\longarmd.exe" KeyPath="yes">
           <fw:FirewallException Id="FwLongarmdPUdp" Name="Longarm longarmd (UDP)" Protocol="udp" Scope="any" Profile="all" Description="Longarm worker: direct connections (longnet, tailscale)" />
           <fw:FirewallException Id="FwLongarmdPTcp" Name="Longarm longarmd (TCP)" Protocol="tcp" Scope="any" Profile="all" Description="Longarm worker: listeners" />
@@ -182,7 +291,7 @@
       </Component>
       <!-- Start the service only when it can enroll: a join code was given, or LOGIN=1 (it waits for
            the sign-in: hub.toml sign_in, written by install-helper setup login). -->
-      <Component Id="LongarmdStart" Condition='IsWorker AND HUB AND (JOIN_CODE OR LOGIN="1")' Guid="5380e22b-7c1c-4756-8c00-1616ee2b4647">
+      <Component Id="LongarmdStart" Condition='IsWorker AND RUN="service" AND HUB AND (JOIN_CODE OR LOGIN="1")' Guid="5380e22b-7c1c-4756-8c00-1616ee2b4647">
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="ServiceStartedByInstaller" Type="integer" Value="1" KeyPath="yes" />
         <!-- Wait: a wrong account password fails the install (service logon error) instead of
              leaving a service that never starts. longarmd reports "running" at once (even while its
@@ -197,11 +306,22 @@
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="CaFingerprint" Type="string" Value="[CA_FINGERPRINT]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Login" Type="string" Value="[LOGIN]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Labels" Type="string" Value="[LABELS]" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Mode" Type="string" Value="[MODE]" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="RunMode" Type="string" Value="[RUN]" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="SessionUserSID" Type="string" Value="[SESSION_SID]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="ServiceName" Type="string" Value="[SERVICE_NAME]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="DataDir" Type="string" Value="[DATADIR]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="ServiceAccount" Type="string" Value="[SERVICE_ACCOUNT]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
+        <!-- the admin worker (read by the tray and longarmd admin-worker: longarmd.InstalledWorker) -->
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="AdminWorker" Type="string" Value="[ADMIN_WORKER]" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="AdminServiceName" Type="string" Value="[ADMIN_SERVICE_NAME]" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="AdminDataDir" Type="string" Value="[ADMIN_DATADIR]" />
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="AdminHandoff" Type="string" Value="[ADMIN_HANDOFF]" />
         <Environment Id="EnvPath" Name="PATH" Value="[INSTALLFOLDER]" Part="last" System="yes" Action="set" Permanent="no" />
+        <!-- the admin worker's service (created by install-helper admin-setup) stops before its files
+             are replaced or removed; a machine without it is skipped -->
+        <ServiceControl Id="AdminSvcStop" Name="[ADMIN_SERVICE_NAME]" Stop="both" Wait="yes" />
       </Component>
 
       <?if $(var.HasTray) = 1 ?>
@@ -224,7 +344,15 @@
       <ComponentGroupRef Id="Product" />
     </Feature>
 
-    <!-- Worker setup: protected data dir, logon right, enrollment (as SYSTEM). -->
+    <!-- The user-session worker's host: longarm-tray.exe with its worker-host option (no console window at logon),
+         else longarmd.exe session-mode run. -->
+    <?if $(var.HasTray) = 1 ?>
+    <?define SessionHost = "[INSTALLFOLDER]longarm-tray.exe" ?>
+    <?else?>
+    <?define SessionHost = "[INSTALLFOLDER]longarmd.exe" ?>
+    <?endif?>
+
+    <!-- Service worker setup: protected data dir, logon right, enrollment (as SYSTEM). -->
     <CustomAction Id="LongarmdSetup" FileRef="longarmd.exe" Execute="deferred" Impersonate="no" Return="check" HideTarget="yes"
                   ExeCommand='install-helper setup --data-dir "[DATADIR]" --user "[SERVICE_ACCOUNT]" --hub "[HUB]" --code "[JOIN_CODE]" --ca-fingerprint "[CA_FINGERPRINT]" --listen "[LISTEN]" --name "[NODE_NAME]" --isolation "[ISOLATION]" --login-mode "[LOGIN]" --log "[TempFolder]longarm-install.log"' />
     <!-- An install that fails after LongarmdSetup (e.g. the service can't log on: wrong password)
@@ -232,31 +360,75 @@
          enrollment (earlier install, KEEP_DATA) is never touched. -->
     <CustomAction Id="LongarmdSetupRollback" FileRef="longarmd.exe" Execute="rollback" Impersonate="no" Return="ignore"
                   ExeCommand='install-helper rollback --data-dir "[DATADIR]" --log "[TempFolder]longarm-install.log"' />
+    <!-- User-session worker: a join code's enrollment as the installing user (writes ~\.longarm), then
+         the logon task, (re)started now (as SYSTEM: it registers the task for SESSION_SID). -->
+    <CustomAction Id="LongarmdSessionJoin" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="yes" Return="check" HideTarget="yes"
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper session-join --hub "[HUB]" --code "[JOIN_CODE]" --ca-fingerprint "[CA_FINGERPRINT]" --name "[NODE_NAME]"' />
+    <CustomAction Id="LongarmdSessionTask" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper session --user-sid "[SESSION_SID]" --host "$(var.SessionHost)" --log "[TempFolder]longarm-install.log"' />
+    <!-- The admin worker: a LocalSystem longarmd service of its own, waiting for its sign-in. -->
+    <CustomAction Id="LongarmdAdminSetup" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper admin-setup --data-dir "[ADMIN_DATADIR]" --handoff "[ADMIN_HANDOFF]" --user-sid "[SESSION_SID]" --service-name "[ADMIN_SERVICE_NAME]" --exe "[INSTALLFOLDER]longarmd.exe" --hub "[HUB]" --ca-fingerprint "[CA_FINGERPRINT]" --log "[TempFolder]longarm-install.log"' />
+    <CustomAction Id="LongarmdAdminRemove" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper admin-remove --data-dir "[ADMIN_DATADIR]" --handoff "[ADMIN_HANDOFF]" --service-name "[ADMIN_SERVICE_NAME]" --log "[TempFolder]longarm-uninstall.log"' />
+    <CustomAction Id="LongarmdAdminDrop" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper admin-remove --data-dir "[ADMIN_DATADIR]" --handoff "[ADMIN_HANDOFF]" --service-name "[ADMIN_SERVICE_NAME]" --log "[TempFolder]longarm-install.log"' />
+    <CustomAction Id="LongarmdAdminRemoveKeep" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper admin-remove --keep-data --data-dir "[ADMIN_DATADIR]" --handoff "[ADMIN_HANDOFF]" --service-name "[ADMIN_SERVICE_NAME]" --log "[TempFolder]longarm-uninstall.log"' />
     <!-- Client enrollment, as the installing user (writes ~\.config\longarm). -->
     <CustomAction Id="LongarmJoin" FileRef="longarm.exe" Execute="deferred" Impersonate="yes" Return="ignore" HideTarget="yes"
                   ExeCommand='join "[HUB]" "[CLIENT_CODE]" --ca-fingerprint "[CA_FINGERPRINT]" --name "[NODE_NAME]"' />
+    <?if $(var.HasTray) = 1 ?>
+    <!-- The tray, started in the installing user's session (not elevated: through a task), shows
+         "Sign in with Microsoft". -->
+    <CustomAction Id="LongarmTrayLaunch" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper launch-tray --user-sid "[SESSION_SID]" --exe "[INSTALLFOLDER]longarm-tray.exe" --log "[TempFolder]longarm-install.log"' />
+    <?endif?>
     <!-- Uninstall: leave the hub, stop jobs, remove the data dir (KEEP_DATA=1 keeps jobs/mirrors). -->
     <CustomAction Id="LongarmdRemove" FileRef="longarmd.exe" Execute="deferred" Impersonate="no" Return="ignore"
                   ExeCommand='install-helper remove --data-dir "[DATADIR]" --log "[TempFolder]longarm-uninstall.log"' />
     <CustomAction Id="LongarmdRemoveKeep" FileRef="longarmd.exe" Execute="deferred" Impersonate="no" Return="ignore"
                   ExeCommand='install-helper remove --keep-data --data-dir "[DATADIR]" --log "[TempFolder]longarm-uninstall.log"' />
+    <!-- Uninstall of the user-session worker (and the tray's task): its tasks, its processes, and
+         (SessionLeave) its enrollment (as the service's). -->
+    <CustomAction Id="LongarmdSessionRemove" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper session-remove --user-sid "[SAVED_SESSION_SID]" --leave "[SessionLeave]" --log "[TempFolder]longarm-uninstall.log"' />
+    <SetProperty Id="SessionLeave" Value="1" Before="CostFinalize" Sequence="execute" Condition='IsWorker AND SAVED_RUN="session" AND NOT KEEP_DATA' />
+    <SetProperty Id="SessionLeave" Action="SetSessionLeaveKeep" Value="keep" Before="CostFinalize" Sequence="execute" Condition='IsWorker AND SAVED_RUN="session" AND KEEP_DATA' />
 
     <InstallExecuteSequence>
+      <Custom Action="CheckMode" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND MODE&lt;&gt;"default" AND MODE&lt;&gt;"custom"' />
+      <Custom Action="CheckDefaultHub" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND MODE="default" AND NOT DEFAULT_HUB' />
+      <Custom Action="CheckDefaultCode" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND MODE="default" AND (JOIN_CODE OR CLIENT_JOIN_CODE)' />
+      <Custom Action="CheckRun" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND ((RUN&lt;&gt;"session" AND RUN&lt;&gt;"service") OR (ISOLATION="per-user" AND RUN&lt;&gt;"service"))' />
+      <Custom Action="CheckSessionUser" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND IsWorker AND RUN="session" AND (NOT SESSION_SID OR SESSION_SID="S-1-5-18")' />
+      <Custom Action="CheckAdminWorker" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND ADMIN_WORKER="1" AND (NOT HUB OR NOT SESSION_SID OR SESSION_SID="S-1-5-18")' />
       <Custom Action="CheckServiceAccount" Before="InstallInitialize"
-              Condition='IsWorker AND NOT REMOVE="ALL" AND (NOT Installed OR REINSTALL) AND (NOT SERVICE_ACCOUNT OR (SERVICE_ACCOUNT~&lt;&gt;"LocalSystem" AND NOT SERVICE_PASSWORD))' />
+              Condition='IsWorker AND RUN="service" AND NOT REMOVE="ALL" AND (NOT Installed OR REINSTALL) AND (NOT SERVICE_ACCOUNT OR (SERVICE_ACCOUNT~&lt;&gt;"LocalSystem" AND NOT SERVICE_PASSWORD))' />
       <Custom Action="SetClientCodeJoin" Before="SetClientCodeClient" Condition='ROLES="client" AND JOIN_CODE' />
       <Custom Action="SetClientCodeClient" Before="InstallInitialize" Condition='CLIENT_JOIN_CODE' />
-      <Custom Action="LongarmdSetupRollback" Before="LongarmdSetup" Condition='IsWorker AND JOIN_CODE AND HUB AND NOT REMOVE="ALL"' />
-      <Custom Action="LongarmdSetup" After="InstallServices" Condition='IsWorker AND NOT REMOVE="ALL"' />
-      <Custom Action="LongarmJoin" After="LongarmdSetup" Condition='IsClient AND CLIENT_CODE AND HUB AND NOT REMOVE="ALL"' />
-      <Custom Action="LongarmdRemove" After="StopServices" Condition='IsWorker AND REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND NOT KEEP_DATA' />
-      <Custom Action="LongarmdRemoveKeep" After="StopServices" Condition='IsWorker AND REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND KEEP_DATA' />
+      <Custom Action="LongarmdSetupRollback" Before="LongarmdSetup" Condition='IsWorker AND RUN="service" AND JOIN_CODE AND HUB AND NOT REMOVE="ALL"' />
+      <Custom Action="LongarmdSetup" After="InstallServices" Condition='IsWorker AND RUN="service" AND NOT REMOVE="ALL"' />
+      <Custom Action="LongarmdSessionJoin" After="LongarmdSetup" Condition='IsWorker AND RUN="session" AND JOIN_CODE AND HUB AND NOT REMOVE="ALL"' />
+      <Custom Action="LongarmdSessionTask" After="LongarmdSessionJoin" Condition='IsWorker AND RUN="session" AND NOT REMOVE="ALL"' />
+      <Custom Action="LongarmJoin" After="LongarmdSessionTask" Condition='IsClient AND CLIENT_CODE AND HUB AND NOT REMOVE="ALL"' />
+      <Custom Action="LongarmdAdminSetup" After="LongarmJoin" Condition='ADMIN_WORKER="1" AND NOT REMOVE="ALL"' />
+      <Custom Action="LongarmdAdminRemove" After="StopServices" Condition='SAVED_ADMIN_WORKER="1" AND REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND NOT KEEP_DATA' />
+      <!-- an upgrade without the admin worker (ADMIN_WORKER=0, or unchecked): once the new files are there -->
+      <Custom Action="LongarmdAdminDrop" After="LongarmdAdminSetup" Condition='SAVED_ADMIN_WORKER="1" AND NOT REMOVE="ALL" AND ADMIN_WORKER&lt;&gt;"1"' />
+      <Custom Action="LongarmdAdminRemoveKeep" After="StopServices" Condition='SAVED_ADMIN_WORKER="1" AND REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND KEEP_DATA' />
+      <?if $(var.HasTray) = 1 ?>
+      <Custom Action="LongarmTrayLaunch" After="LongarmdAdminSetup" Condition='NOT REMOVE="ALL" AND LAUNCH_TRAY&lt;&gt;"0" AND SESSION_SID AND SESSION_SID&lt;&gt;"S-1-5-18"' />
+      <?endif?>
+      <Custom Action="LongarmdRemove" After="StopServices" Condition='IsWorker AND SAVED_RUN&lt;&gt;"session" AND REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND NOT KEEP_DATA' />
+      <Custom Action="LongarmdRemoveKeep" After="StopServices" Condition='IsWorker AND SAVED_RUN&lt;&gt;"session" AND REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND KEEP_DATA' />
+      <Custom Action="LongarmdSessionRemove" After="StopServices" Condition='SAVED_SESSION_SID AND REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE' />
     </InstallExecuteSequence>
 
     <UIRef Id="LongarmUI" />
   </Package>
 
-  <!-- UI: Welcome -> Roles (client / worker / both, hub, join code) -> Ready. -->
+  <!-- UI: Welcome -> Mode (Default: roles, admin worker | Custom) -> [Custom] -> [Service account] -> Ready. -->
   <Fragment>
     <UI Id="LongarmUI">
       <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
@@ -277,29 +449,80 @@
       <DialogRef Id="MaintenanceWelcomeDlg" />
       <DialogRef Id="MaintenanceTypeDlg" />
 
-      <Dialog Id="RolesDlg" Width="370" Height="270" Title="[ProductName] Setup">
+      <!-- Default (recommended) or Custom; Default's choices are on this page: Next, Install. -->
+      <Dialog Id="ModeDlg" Width="370" Height="270" Title="[ProductName] Setup">
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
-        <Control Id="Title" Type="Text" X="15" Y="6" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Role of this machine" />
-        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Use it to run jobs remotely (client), offer it as a worker, or both." />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Set up Longarm" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Default signs you in with your Microsoft account after the install." />
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
-        <Control Id="Roles" Type="RadioButtonGroup" X="20" Y="54" Width="330" Height="54" Property="ROLES">
-          <RadioButtonGroup Property="ROLES">
-            <RadioButton Value="client" X="0" Y="0" Width="330" Height="16" Text="&amp;Client: longarm (and the tray) to use the fleet" />
-            <RadioButton Value="worker" X="0" Y="18" Width="330" Height="16" Text="&amp;Worker: install the longarmd service and accept jobs" />
-            <RadioButton Value="both" X="0" Y="36" Width="330" Height="16" Text="&amp;Both" />
+        <Control Id="Mode" Type="RadioButtonGroup" X="15" Y="50" Width="340" Height="34" Property="MODE">
+          <RadioButtonGroup Property="MODE">
+            <RadioButton Value="default" X="0" Y="0" Width="340" Height="16" Text="&amp;Default (recommended): sign in with Microsoft at [DEFAULT_HUB]" />
+            <RadioButton Value="custom" X="0" Y="18" Width="340" Height="16" Text="&amp;Custom: another hub, a join code, the worker as a Windows service" />
           </RadioButtonGroup>
         </Control>
-        <Control Id="HubLabel" Type="Text" X="20" Y="116" Width="330" Height="10" Text="Hub address (optional, e.g. hub.example.com):" />
-        <Control Id="HubEdit" Type="Edit" X="20" Y="128" Width="330" Height="17" Property="HUB" />
-        <Control Id="CodeLabel" Type="Text" X="20" Y="152" Width="330" Height="10" Text="Join code (optional; for Both, the worker's code - or enter it later in the tray):" />
-        <Control Id="CodeEdit" Type="Edit" X="20" Y="164" Width="120" Height="17" Property="JOIN_CODE" />
-        <Control Id="FpLabel" Type="Text" X="20" Y="188" Width="330" Height="10" Text="Hub CA fingerprint (optional, recommended):" />
-        <Control Id="FpEdit" Type="Edit" X="20" Y="200" Width="330" Height="17" Property="CA_FINGERPRINT" />
+        <Control Id="DefaultLine" Type="Line" X="15" Y="90" Width="340" Height="0" />
+        <Control Id="Roles" Type="RadioButtonGroup" X="30" Y="96" Width="320" Height="36" Property="ROLES" DisableCondition='MODE&lt;&gt;"default"' EnableCondition='MODE="default"'>
+          <RadioButtonGroup Property="ROLES">
+            <RadioButton Value="client" X="0" Y="0" Width="320" Height="16" Text="&amp;Use this computer: run jobs on your workers from here" />
+            <RadioButton Value="both" X="0" Y="18" Width="320" Height="16" Text="&amp;Also run jobs on this computer (as you, while you are signed in)" />
+          </RadioButtonGroup>
+        </Control>
+        <Control Id="Admin" Type="CheckBox" X="30" Y="138" Width="320" Height="28" Property="ADMIN_WORKER" CheckBoxValue="1"
+                 DisableCondition='MODE&lt;&gt;"default"' EnableCondition='MODE="default"'
+                 Text="Allow remote &amp;administrator commands on this computer (a second worker running as SYSTEM, only you can use it, never chosen automatically)" />
+        <Control Id="Note" Type="Text" X="30" Y="172" Width="320" Height="40" NoPrefix="yes" DisableCondition='MODE&lt;&gt;"default"' EnableCondition='MODE="default"'
+                 Text="After the install the Longarm tray shows a code: approve it in your browser. The worker runs as you while you are signed in, also with the remote desktop disconnected; it stops at sign-out or restart until you sign in again." />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
         <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
           <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <!-- Custom: roles, hub, a sign-in with Microsoft or a join code, CA pin, admin worker, service. -->
+      <Dialog Id="RolesDlg" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Custom setup" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Use the fleet from here (client), offer this machine as a worker, or both." />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="Roles" Type="RadioButtonGroup" X="15" Y="48" Width="340" Height="16" Property="ROLES">
+          <RadioButtonGroup Property="ROLES">
+            <RadioButton Value="client" X="0" Y="0" Width="70" Height="16" Text="&amp;Client" />
+            <RadioButton Value="worker" X="80" Y="0" Width="70" Height="16" Text="&amp;Worker" />
+            <RadioButton Value="both" X="160" Y="0" Width="70" Height="16" Text="&amp;Both" />
+          </RadioButtonGroup>
+        </Control>
+        <Control Id="HubLabel" Type="Text" X="15" Y="68" Width="340" Height="10" Text="Hub address (e.g. longarm.example.com):" />
+        <Control Id="HubEdit" Type="Edit" X="15" Y="79" Width="340" Height="15" Property="HUB" />
+        <Control Id="Auth" Type="RadioButtonGroup" X="15" Y="98" Width="200" Height="34" Property="CUSTOM_AUTH">
+          <RadioButtonGroup Property="CUSTOM_AUTH">
+            <RadioButton Value="login" X="0" Y="0" Width="200" Height="16" Text="&amp;Sign in with Microsoft after the install" />
+            <RadioButton Value="code" X="0" Y="17" Width="200" Height="16" Text="&amp;Join code (from the hub's admin):" />
+          </RadioButtonGroup>
+        </Control>
+        <Control Id="CodeEdit" Type="Edit" X="220" Y="115" Width="135" Height="15" Property="JOIN_CODE"
+                 DisableCondition='CUSTOM_AUTH&lt;&gt;"code"' EnableCondition='CUSTOM_AUTH="code"' />
+        <Control Id="FpLabel" Type="Text" X="15" Y="136" Width="340" Height="10" Text="Hub CA fingerprint (optional; default: fetched from https://&lt;hub&gt;/ca.crt):" />
+        <Control Id="FpEdit" Type="Edit" X="15" Y="147" Width="340" Height="15" Property="CA_FINGERPRINT" />
+        <Control Id="Admin" Type="CheckBox" X="15" Y="168" Width="340" Height="17" Property="ADMIN_WORKER" CheckBoxValue="1"
+                 Text="Allow remote &amp;administrator commands on this computer (an admin worker running as SYSTEM)" />
+        <Control Id="Service" Type="CheckBox" X="15" Y="188" Width="340" Height="28" Property="RUN_AS_SERVICE" CheckBoxValue="1"
+                 DisableCondition='ROLES="client"' EnableCondition='ROLES&lt;&gt;"client"'
+                 Text="Ad&amp;vanced: run the worker as a Windows service (runs without anyone signed in; needs an account password, or LocalSystem)" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+      <Dialog Id="NeedCodeDlg" Width="260" Height="85" Title="[ProductName] Setup" NoMinimize="yes">
+        <Control Id="Text" Type="Text" X="15" Y="12" Width="230" Height="40" NoPrefix="yes"
+                 Text="Enter the hub address and the join code, or choose to sign in with Microsoft." />
+        <Control Id="OK" Type="PushButton" X="102" Y="58" Width="56" Height="17" Default="yes" Cancel="yes" Text="!(loc.WixUIOK)">
+          <Publish Event="EndDialog" Value="Return" />
         </Control>
       </Dialog>
 
@@ -316,6 +539,8 @@
         <Control Id="PassEdit" Type="Edit" X="20" Y="138" Width="220" Height="17" Property="SERVICE_PASSWORD" Password="yes" />
         <Control Id="LocalSystem" Type="CheckBox" X="20" Y="168" Width="330" Height="17" Property="SVC_LOCALSYSTEM" CheckBoxValue="1"
                  Text="Run as LocalSystem instead (jobs run as SYSTEM; not recommended)" />
+        <Control Id="NoPassword" Type="Text" X="20" Y="190" Width="330" Height="30" NoPrefix="yes"
+                 Text="No password (Windows Hello, a security key)? Go back and clear the Windows service option: the worker then runs as you while you are signed in." />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
@@ -332,20 +557,49 @@
       </Dialog>
 
       <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
-      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="RolesDlg" Condition="NOT Installed" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="ModeDlg" Condition="NOT Installed AND DEFAULT_HUB" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="RolesDlg" Condition="NOT Installed AND NOT DEFAULT_HUB" />
       <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="Installed AND PATCH" />
-      <Publish Dialog="RolesDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
-      <Publish Dialog="RolesDlg" Control="Next" Event="NewDialog" Value="ServiceAccountDlg" Condition='ROLES="worker" OR ROLES="both"' />
-      <Publish Dialog="RolesDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition='ROLES="client"' />
-      <Publish Dialog="ServiceAccountDlg" Control="Back" Event="NewDialog" Value="RolesDlg" />
+
+      <!-- Mode: Default goes to Ready (its run mode: session, or a remembered service); Custom on. -->
+      <Publish Dialog="ModeDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
+      <Publish Dialog="ModeDlg" Control="Next" Property="ROLES" Value="client" Order="1" Condition='MODE="default" AND ROLES="worker"' />
+      <Publish Dialog="ModeDlg" Control="Next" Property="LOGIN" Value="1" Order="2" Condition='MODE="default"' />
+      <Publish Dialog="ModeDlg" Control="Next" Property="JOIN_CODE" Value="{}" Order="3" Condition='MODE="default"' />
+      <Publish Dialog="ModeDlg" Control="Next" Property="HUB" Value="[DEFAULT_HUB]" Order="4" Condition='MODE="default"' />
+      <Publish Dialog="ModeDlg" Control="Next" Event="NewDialog" Value="RolesDlg" Order="5" Condition='MODE="custom"' />
+      <Publish Dialog="ModeDlg" Control="Next" Event="NewDialog" Value="ServiceAccountDlg" Order="6" Condition='MODE="default" AND ROLES="both" AND RUN="service"' />
+      <Publish Dialog="ModeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="7" Condition='MODE="default" AND NOT (ROLES="both" AND RUN="service")' />
+
+      <!-- Custom: the run mode from the service option; a sign-in or a code. -->
+      <Publish Dialog="RolesDlg" Control="Back" Event="NewDialog" Value="ModeDlg" Condition="DEFAULT_HUB" />
+      <Publish Dialog="RolesDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Condition="NOT DEFAULT_HUB" />
+      <Publish Dialog="RolesDlg" Control="Next" Property="RUN" Value="service" Order="1" Condition='RUN_AS_SERVICE AND ROLES&lt;&gt;"client"' />
+      <Publish Dialog="RolesDlg" Control="Next" Property="RUN" Value="session" Order="2" Condition='NOT RUN_AS_SERVICE OR ROLES="client"' />
+      <Publish Dialog="RolesDlg" Control="Next" Property="LOGIN" Value="1" Order="3" Condition='CUSTOM_AUTH="login"' />
+      <Publish Dialog="RolesDlg" Control="Next" Property="JOIN_CODE" Value="{}" Order="4" Condition='CUSTOM_AUTH="login"' />
+      <Publish Dialog="RolesDlg" Control="Next" Property="LOGIN" Value="{}" Order="5" Condition='CUSTOM_AUTH="code"' />
+      <Publish Dialog="RolesDlg" Control="Next" Event="SpawnDialog" Value="NeedCodeDlg" Order="6" Condition='CUSTOM_AUTH="code" AND (NOT JOIN_CODE OR NOT HUB)' />
+      <Publish Dialog="RolesDlg" Control="Next" Event="NewDialog" Value="ServiceAccountDlg" Order="7"
+               Condition='RUN="service" AND ROLES&lt;&gt;"client" AND NOT (CUSTOM_AUTH="code" AND (NOT JOIN_CODE OR NOT HUB))' />
+      <Publish Dialog="RolesDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="8"
+               Condition='NOT (RUN="service" AND ROLES&lt;&gt;"client") AND NOT (CUSTOM_AUTH="code" AND (NOT JOIN_CODE OR NOT HUB))' />
+
+      <Publish Dialog="ServiceAccountDlg" Control="Back" Event="NewDialog" Value="RolesDlg" Condition='MODE="custom"' />
+      <Publish Dialog="ServiceAccountDlg" Control="Back" Event="NewDialog" Value="ModeDlg" Condition='MODE="default"' />
       <Publish Dialog="ServiceAccountDlg" Control="Next" Property="SERVICE_ACCOUNT" Value="LocalSystem" Order="1" Condition="SVC_LOCALSYSTEM" />
       <Publish Dialog="ServiceAccountDlg" Control="Next" Property="SERVICE_ACCOUNT" Value="{}" Order="2" Condition="NOT SVC_LOCALSYSTEM" />
       <Publish Dialog="ServiceAccountDlg" Control="Next" Event="SpawnDialog" Value="NeedPasswordDlg" Order="3"
                Condition="NOT SVC_LOCALSYSTEM AND (NOT SERVICE_USER OR NOT SERVICE_PASSWORD)" />
       <Publish Dialog="ServiceAccountDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4"
                Condition="SVC_LOCALSYSTEM OR (SERVICE_USER AND SERVICE_PASSWORD)" />
-      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ServiceAccountDlg" Order="1" Condition='NOT Installed AND (ROLES="worker" OR ROLES="both")' />
-      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="RolesDlg" Order="1" Condition='NOT Installed AND ROLES="client"' />
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ServiceAccountDlg" Order="1"
+               Condition='NOT Installed AND RUN="service" AND (ROLES="worker" OR ROLES="both")' />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="RolesDlg" Order="1"
+               Condition='NOT Installed AND MODE="custom" AND NOT (RUN="service" AND (ROLES="worker" OR ROLES="both"))' />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ModeDlg" Order="1"
+               Condition='NOT Installed AND MODE="default" AND NOT (RUN="service" AND (ROLES="worker" OR ROLES="both"))' />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3" Condition="Installed AND PATCH" />
       <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />

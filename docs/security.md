@@ -483,6 +483,28 @@ log as on any worker. The session worker of the same machine is an
 independent node: it has no way into the admin worker's local API (a
 LocalSystem-only channel) and gets no rights over it.
 
+**On the machine** (the MSI, `install-helper admin-setup`): the admin
+worker is the service `longarmd-admin` (LocalSystem; no password, so it
+works on Entra-only machines) with its own data dir
+`C:\ProgramData\Longarm\longarmd-admin` (SYSTEM and Administrators only)
+and its own listener (127.0.0.1:7702). While it waits for its sign-in it
+makes its key and CSR itself and leaves only the CSR in the hand-off dir
+`C:\ProgramData\Longarm\admin-signin`, whose ACL is SYSTEM, Administrators
+and the installing user (who is an administrator anyway: no other local
+user can pair it as theirs or hand it a certificate). The tray adds the CSR
+to the user's pairing and puts the approved enrollment back there; the
+service installs it only if the certificate is for its own key, chains to
+the hub's CA (the pinned one, when the hub was pinned) and carries
+`longarm.io/admin=true` (an older hub's plain worker certificate is
+refused), and then writes `[access] users = ["<owner>"]`, `owners =
+["<owner>"]`, `admins = "none"` into its `longarmd.toml` - owner only on
+the worker too, whatever the hub says later. It can be removed without
+reinstalling: the tray's "Disable admin worker" (or `longarmd admin-worker
+disable`, elevated) makes it leave the hub (its certificate is revoked),
+removes its service and data, and records `AdminWorker=0` so upgrades keep
+it off; uninstalling the MSI or upgrading with `ADMIN_WORKER=0` does the
+same.
+
 **Corporate-managed devices**: a LocalSystem service that runs remote
 commands is what endpoint protection watches for. Microsoft Defender for
 Endpoint, Intune compliance or attack-surface-reduction rules may flag,

@@ -79,6 +79,9 @@ longarmd login, no elevation needed.`,
 			if err != nil {
 				return err
 			}
+			if cmd.Flags().Changed("data-dir") {
+				args = append(args, "--data-dir", dir) // the host runs with the task's (default) environment
+			}
 			return longarmd.InstallSessionTask(longarmd.SessionInstallOptions{UserSID: sid, HostExe: exe, HostArgs: args,
 				Start: true, DataDir: dir, Sched: longarmd.Schtasks{}, Out: os.Stdout})
 		},

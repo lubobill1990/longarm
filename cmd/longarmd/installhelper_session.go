@@ -41,7 +41,7 @@ func hostCommand(host string) (string, []string) {
 // sessionHelperCmds are the MSI's custom actions (as SYSTEM) of the
 // user-session worker, the tray's first start and the admin worker.
 func sessionHelperCmds() []*cobra.Command {
-	var sid, host, logFile, exe string
+	var sid, host, logFile, exe, leave string
 	var keep bool
 	userDataDir := func() (string, error) {
 		profile, err := longarmd.ProfileDirOfSID(sid)
@@ -94,10 +94,10 @@ func sessionHelperCmds() []*cobra.Command {
 			if err := longarmd.RemoveSessionTask(longarmd.Schtasks{}, sid, dir, w); err != nil {
 				fmt.Fprintln(w, "warning:", err) // never block an uninstall
 			}
-			if dir != "" {
+			if dir != "" && (leave == "1" || leave == "keep") {
 				ctx, cancel := context.WithTimeout(cmd.Context(), time.Minute)
 				defer cancel()
-				if _, err := longarmd.Leave(ctx, dir, longarmd.LeaveOptions{Reason: "uninstall", Force: true, KillJobs: true, Purge: !keep, Out: w}); err != nil {
+				if _, err := longarmd.Leave(ctx, dir, longarmd.LeaveOptions{Reason: "uninstall", Force: true, KillJobs: true, Purge: leave != "keep", Out: w}); err != nil {
 					fmt.Fprintln(w, "warning:", err)
 				}
 			}
@@ -105,8 +105,30 @@ func sessionHelperCmds() []*cobra.Command {
 		},
 	}
 	remove.Flags().StringVar(&sid, "user-sid", "", "the user (SID)")
-	remove.Flags().BoolVar(&keep, "keep-data", false, "keep jobs and mirrors (credentials are removed)")
+	remove.Flags().StringVar(&leave, "leave", "", `the worker leaves the hub too: "1" (and its data is removed) or "keep" (jobs and mirrors kept); "": only the tasks and processes`)
 	remove.Flags().StringVar(&logFile, "log", "", "append output here")
+
+	var jhub, jcode, jfp, jname string
+	join := &cobra.Command{
+		Use: "session-join", Args: cobra.NoArgs,
+		Short: "Enroll the user-session worker with a join code (run as the installing user)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			// the data dir below this process's own profile (the MSI runs us
+			// impersonating the user, whose environment we may not have)
+			profile, err := longarmd.TokenProfileDir()
+			if err != nil {
+				return err
+			}
+			dir := longarmd.ProfileDataDir(profile)
+			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
+			defer cancel()
+			return longarmd.Join(ctx, dir, jhub, jcode, longarmd.JoinOptions{Name: jname, Fingerprint: jfp, NoWait: true, Out: os.Stdout})
+		},
+	}
+	join.Flags().StringVar(&jhub, "hub", "", "hub address")
+	join.Flags().StringVar(&jcode, "code", "", "join code")
+	join.Flags().StringVar(&jfp, "ca-fingerprint", "", "hub CA fingerprint")
+	join.Flags().StringVar(&jname, "name", "", "worker name (default: hostname)")
 
 	tray := &cobra.Command{
 		Use: "launch-tray", Args: cobra.NoArgs,
@@ -172,7 +194,7 @@ func sessionHelperCmds() []*cobra.Command {
 	adminRemove.Flags().BoolVar(&keep, "keep-data", false, "keep jobs (credentials are removed)")
 	adminRemove.Flags().StringVar(&logFile, "log", "", "append output here")
 	adminRemove.MarkFlagRequired("data-dir")
-	return []*cobra.Command{session, remove, tray, adminSetup, adminRemove}
+	return []*cobra.Command{session, remove, join, tray, adminSetup, adminRemove}
 }
 
 type adminSetupOptions struct {
