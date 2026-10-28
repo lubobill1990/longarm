@@ -163,6 +163,8 @@
     <Property Id="CUSTOM_AUTH" Value="login" />
     <!-- the Default page's role and admin choice (ROLES / ADMIN_WORKER back Custom's controls) -->
     <Property Id="DEFAULT_ROLES" Value="client" />
+    <!-- the Mode page's choice (a radio group needs a default; MODE itself has none: SetProperty decides) -->
+    <Property Id="MODE_UI" Value="default" />
     <Property Id="DEFAULT_ADMIN" Secure="yes" />
     <Property Id="RUN_AS_SERVICE" Secure="yes" />
     <Property Id="ARPNOMODIFY" Value="1" />
@@ -218,6 +220,7 @@
                  Condition="NOT RUN" />
     <SetProperty Id="RUN_AS_SERVICE" Action="SetRunAsServiceUI" Value="1" Before="SetIsWorker" Sequence="both"
                  Condition='RUN="service"' />
+    <SetProperty Id="MODE_UI" Action="SetModeUI" Value="[MODE]" Before="SetIsWorker" Sequence="ui" Condition="MODE" />
     <SetProperty Id="DEFAULT_ROLES" Action="SetDefaultRolesBoth" Value="both" Before="SetIsWorker" Sequence="ui"
                  Condition='ROLES="both" OR ROLES="worker"' />
     <SetProperty Id="DEFAULT_ADMIN" Action="SetDefaultAdmin" Value="1" Before="SetIsWorker" Sequence="ui"
@@ -462,23 +465,23 @@
         <Control Id="Title" Type="Text" X="15" Y="6" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Set up Longarm" />
         <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Default signs you in with your Microsoft account after the install." />
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
-        <Control Id="Mode" Type="RadioButtonGroup" X="15" Y="50" Width="340" Height="34" Property="MODE">
-          <RadioButtonGroup Property="MODE">
+        <Control Id="Mode" Type="RadioButtonGroup" X="15" Y="50" Width="340" Height="34" Property="MODE_UI">
+          <RadioButtonGroup Property="MODE_UI">
             <RadioButton Value="default" X="0" Y="0" Width="340" Height="16" Text="&amp;Default (recommended): sign in with Microsoft at [DEFAULT_HUB]" />
             <RadioButton Value="custom" X="0" Y="18" Width="340" Height="16" Text="&amp;Custom: another hub, a join code, the worker as a Windows service" />
           </RadioButtonGroup>
         </Control>
         <Control Id="DefaultLine" Type="Line" X="15" Y="90" Width="340" Height="0" />
-        <Control Id="Roles" Type="RadioButtonGroup" X="30" Y="96" Width="320" Height="36" Property="DEFAULT_ROLES" DisableCondition='MODE&lt;&gt;"default"' EnableCondition='MODE="default"'>
+        <Control Id="Roles" Type="RadioButtonGroup" X="30" Y="96" Width="320" Height="36" Property="DEFAULT_ROLES" DisableCondition='MODE_UI&lt;&gt;"default"' EnableCondition='MODE_UI="default"'>
           <RadioButtonGroup Property="DEFAULT_ROLES">
             <RadioButton Value="client" X="0" Y="0" Width="320" Height="16" Text="&amp;Use this computer: run jobs on your workers from here" />
             <RadioButton Value="both" X="0" Y="18" Width="320" Height="16" Text="&amp;Also run jobs on this computer (as you, while you are signed in)" />
           </RadioButtonGroup>
         </Control>
         <Control Id="Admin" Type="CheckBox" X="30" Y="138" Width="320" Height="28" Property="DEFAULT_ADMIN" CheckBoxValue="1"
-                 DisableCondition='MODE&lt;&gt;"default"' EnableCondition='MODE="default"'
+                 DisableCondition='MODE_UI&lt;&gt;"default"' EnableCondition='MODE_UI="default"'
                  Text="Allow remote &amp;administrator commands on this computer (a second worker running as SYSTEM, only you can use it, never chosen automatically)" />
-        <Control Id="Note" Type="Text" X="30" Y="172" Width="320" Height="40" NoPrefix="yes" DisableCondition='MODE&lt;&gt;"default"' EnableCondition='MODE="default"'
+        <Control Id="Note" Type="Text" X="30" Y="172" Width="320" Height="40" NoPrefix="yes" DisableCondition='MODE_UI&lt;&gt;"default"' EnableCondition='MODE_UI="default"'
                  Text="After the install the Longarm tray shows a code: approve it in your browser. The worker runs as you while you are signed in, also with the remote desktop disconnected; it stops at sign-out or restart until you sign in again." />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
@@ -570,15 +573,16 @@
 
       <!-- Mode: Default goes to Ready (its run mode: session, or a remembered service); Custom on. -->
       <Publish Dialog="ModeDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
-      <Publish Dialog="ModeDlg" Control="Next" Property="ROLES" Value="[DEFAULT_ROLES]" Order="1" Condition='MODE="default"' />
-      <Publish Dialog="ModeDlg" Control="Next" Property="ADMIN_WORKER" Value="1" Order="1" Condition='MODE="default" AND DEFAULT_ADMIN="1"' />
-      <Publish Dialog="ModeDlg" Control="Next" Property="ADMIN_WORKER" Value="{}" Order="1" Condition='MODE="default" AND NOT DEFAULT_ADMIN="1"' />
-      <Publish Dialog="ModeDlg" Control="Next" Property="LOGIN" Value="1" Order="2" Condition='MODE="default"' />
-      <Publish Dialog="ModeDlg" Control="Next" Property="JOIN_CODE" Value="{}" Order="3" Condition='MODE="default"' />
-      <Publish Dialog="ModeDlg" Control="Next" Property="HUB" Value="[DEFAULT_HUB]" Order="4" Condition='MODE="default"' />
-      <Publish Dialog="ModeDlg" Control="Next" Event="NewDialog" Value="RolesDlg" Order="5" Condition='MODE="custom"' />
-      <Publish Dialog="ModeDlg" Control="Next" Event="NewDialog" Value="ServiceAccountDlg" Order="6" Condition='MODE="default" AND ROLES="both" AND RUN="service"' />
-      <Publish Dialog="ModeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="7" Condition='MODE="default" AND NOT (ROLES="both" AND RUN="service")' />
+      <Publish Dialog="ModeDlg" Control="Next" Property="MODE" Value="[MODE_UI]" Order="1" />
+      <Publish Dialog="ModeDlg" Control="Next" Property="ROLES" Value="[DEFAULT_ROLES]" Order="2" Condition='MODE="default"' />
+      <Publish Dialog="ModeDlg" Control="Next" Property="ADMIN_WORKER" Value="1" Order="2" Condition='MODE="default" AND DEFAULT_ADMIN="1"' />
+      <Publish Dialog="ModeDlg" Control="Next" Property="ADMIN_WORKER" Value="{}" Order="2" Condition='MODE="default" AND NOT DEFAULT_ADMIN="1"' />
+      <Publish Dialog="ModeDlg" Control="Next" Property="LOGIN" Value="1" Order="3" Condition='MODE="default"' />
+      <Publish Dialog="ModeDlg" Control="Next" Property="JOIN_CODE" Value="{}" Order="4" Condition='MODE="default"' />
+      <Publish Dialog="ModeDlg" Control="Next" Property="HUB" Value="[DEFAULT_HUB]" Order="5" Condition='MODE="default"' />
+      <Publish Dialog="ModeDlg" Control="Next" Event="NewDialog" Value="RolesDlg" Order="6" Condition='MODE="custom"' />
+      <Publish Dialog="ModeDlg" Control="Next" Event="NewDialog" Value="ServiceAccountDlg" Order="7" Condition='MODE="default" AND ROLES="both" AND RUN="service"' />
+      <Publish Dialog="ModeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="8" Condition='MODE="default" AND NOT (ROLES="both" AND RUN="service")' />
 
       <!-- Custom: the run mode from the service option; a sign-in or a code. -->
       <Publish Dialog="RolesDlg" Control="Back" Event="NewDialog" Value="ModeDlg" Condition="DEFAULT_HUB" />
