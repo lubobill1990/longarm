@@ -218,6 +218,15 @@ func TestRevokeThenReuseName(t *testing.T) {
 	if len(ids) != 1 || ids[0] != first.Resp.Id {
 		t.Fatalf("revoked nodes %v", ids)
 	}
+	// clients before node IDs take the first node of a name: the live one
+	for _, n := range h.ListNodes(true) {
+		if n.Name == "reuse" {
+			if n.Id != second.Resp.Id {
+				t.Fatalf("ListNodes lists the revoked reuse first")
+			}
+			break
+		}
+	}
 	// "reuse" names the new node; the old one by its ID
 	h.mu.Lock()
 	byName, _ := h.resolveLocked("reuse", nil, "worker")

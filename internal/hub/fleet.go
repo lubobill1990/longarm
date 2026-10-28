@@ -42,7 +42,18 @@ func (h *Hub) ListNodesFor(v tenancy.Caller, all bool) []*pb.NodeInfo {
 		}
 		out = append(out, nodeView(v, info))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	// by name; a name's non-revoked node before its revoked ones (names are
+	// reused): clients before node IDs take the first node of a name
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		if ra, rb := a.State == stateRevoked, b.State == stateRevoked; ra != rb {
+			return rb
+		}
+		return a.Id < b.Id
+	})
 	return out
 }
 
