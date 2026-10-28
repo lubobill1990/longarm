@@ -26,8 +26,8 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/attach"
 	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/jobs"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
