@@ -420,7 +420,7 @@ func fakeAz(args []string) {
 		write("deployments", strings.Join(append(deps, dep), " "))
 		write("params.json", string(b))
 		write("cg", string(b)) // also a failed deployment leaves the group (in a failed state)
-		restart() // a changed group restarts (the SAS expiry changes every time)
+		restart()              // a changed group restarts (the SAS expiry changes every time)
 	case "deployment operation":
 		fmt.Println(`[{"resource": "myhub", "error": {"code": "InaccessibleImage", "message": "fake failure"}}]`)
 	case "acr list":
