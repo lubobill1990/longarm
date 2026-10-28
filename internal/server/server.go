@@ -175,7 +175,8 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 // WorkerFeatures are the optional features of this longarmd
 // (InfoResponse.features).
 var WorkerFeatures = []string{jobs.FeatureStdin, jobs.FeatureGitAuth, jobs.FeatureSessionStart, jobs.FeatureSessionSend,
-	jobs.FeatureSessionSendIfIdle, jobs.FeatureSessionStop, jobs.FeatureSessionInfo, jobs.FeatureFileTail, jobs.FeatureAgentAuth}
+	jobs.FeatureSessionSendIfIdle, jobs.FeatureSessionStop, jobs.FeatureSessionInfo, jobs.FeatureFileTail, jobs.FeatureAgentAuth,
+	jobs.FeatureSessionEnv}
 
 type nodeServer struct {
 	pb.UnimplementedNodeServer

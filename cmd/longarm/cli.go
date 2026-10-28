@@ -67,7 +67,7 @@ func newRootCmd() *cobra.Command {
 	}
 	group("start", loginCmd(), lsCmd(), execCmd(), runCmd(), doctorCmd())
 	group("jobs", jobsCmd(), logsCmd(), waitCmd(), killCmd())
-	group("sessions", attachCmd(), sessionCmd(), sessionsCmd())
+	group("sessions", attachCmd(), sessionCmd(), sessionsCmd(), handoffCmd(), agentSessionsCmd())
 	group("files", putCmd(), getCmd(), syncCmd(), tailCmd(), forwardCmd(), linkCmd(), sshCmd(), sshConfigCmd())
 	group("workers", workerCmd(), infoCmd())
 	group("account", whoamiCmd(), joinCmd(), leaveCmd(), logoutCmd(), versionCmd())

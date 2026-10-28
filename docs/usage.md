@@ -247,7 +247,8 @@ The job's own outcome comes from `jobs --json` (`state`, `exitCode`,
 ```json
 {"version": "v1.8.0", "features": ["exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label", "git-auth-forward",
   "session-start", "session-send", "session-send-if-idle", "session-stop", "sessions-json-v2", "tail", "run-session",
-  "job-id-short", "jobs-mine", "doctor-json", "worker-update", "ls-version", "agent-auth"]}
+  "job-id-short", "jobs-mine", "doctor-json", "worker-update", "ls-version", "agent-auth",
+  "agent-handoff", "agent-sessions"]}
 ```
 
 (indented in the real output). A program checks `features` instead of
@@ -278,6 +279,8 @@ exit 255) has none of these features.
 | `worker-update` | `longarm worker update <worker> [--latest\|--version X] [--wait] [--json] [--auto on\|off]` (the worker must also support it: `machine-update` in its `Node.Info` features), see [Updating](#updating-longarm-worker-update-and-the-longarm-update-service) |
 | `ls-version` | `longarm ls` has the VERSION column; `ls --json` carries `version` and `updateAvailable` (`{"version", "reason"}`) |
 | `agent-auth` | `run` / `exec` / `session start` / `attach --agent-auth`, `--agent-auth-shared-ok`, `--copilot-account`, MCP `agent_auth` (the worker must also support it: `agent-auth` in its `Node.Info` features), see [Agent credentials](#agent-credentials---agent-auth) |
+| `agent-handoff` | `longarm handoff` (see [Hand off an agent session](#hand-off-an-agent-session)) |
+| `agent-sessions` | `longarm agent-sessions` |
 
 The session and tail features also need the worker's (`session-start`,
 `session-send`, `session-send-if-idle`, `session-stop`, `session-info`,
@@ -789,9 +792,148 @@ Capabilities (`longarm version --json`): `session-start`, `session-send`,
 `run-session`. Workers announce theirs in `Node.Info` (`longarm info
 <worker>`): `session-start`, `session-send`, `session-send-if-idle`,
 `session-stop`, `session-info` (the activity and worktree fields),
-`file-tail`. Against a longarmd without them `session start|send|stop` and
+`file-tail`, `session-env` (sessions get `LONGARM_WORKER` and `LONGARM_SESSION`).
+Against a longarmd without them `session start|send|stop` and
 `tail` exit 2 ("does not support it; update longarmd") before doing
 anything; `sessions` lists such a worker's sessions without the new fields.
+
+### Hand off an agent session
+
+Move an in-progress Claude Code or Copilot CLI conversation - and the code
+it works on, uncommitted and untracked changes included - between this
+machine ("local") and workers, and resume it there: local -> worker,
+worker -> worker, worker -> local. The client orchestrates everything over
+the worker-direct channels (`Files`, `Exec`, `Workspace`, `Sessions`); the
+hub never sees a transcript.
+
+```sh
+longarm agent-sessions                        # resumable sessions here: AGENT ID MODIFIED SIZE PROJECT TITLE
+longarm agent-sessions w1 --repo-path ~/src/app --json
+longarm handoff --to w1 --latest              # the newest session of this checkout -> w1, then attach
+longarm handoff --from w1 --to w2 --session <id> --no-attach
+longarm handoff --from w2 --to local --session <id>   # a new worktree next to your checkout; the agent runs here
+```
+
+**`longarm handoff --to <worker|local> [--from <worker|local>] [--agent claude|copilot] (--session ID | --latest) [--name NAME] [--no-attach] [--json]`**
+
+1. **Locate.** `--session ID` (an id `agent-sessions` lists), or `--latest`:
+   the most recently modified session whose project directory is in the
+   current checkout (locally), in `--repo-path`, or anywhere on the machine
+   (a worker). `--agent` limits the search to one agent. `--from` defaults
+   to where longarm runs: the worker of the longarm session it runs in
+   (`LONGARM_WORKER`, which longarmd sets in every session together with
+   `LONGARM_SESSION`; worker feature `session-env`), else local. A copy
+   that was handed off already is refused (exit 2): hand it off from where
+   it went.
+2. **Quiesce the source.** On a worker, the longarm session running the
+   agent (its command names the session id, or it runs the agent in the
+   session's directory; `--source-session NAME` says which) is stopped
+   once it had no input or output for `--idle` (default 5s, observed from
+   the client, no clock comparison; at most `--idle-timeout`, default 10m,
+   else exit 75), with `session stop --grace`. Running handoff from inside
+   that very session is refused (exit 2). Locally, and on a worker outside
+   longarm sessions, a process that still has the session open is refused
+   (exit 75, with how to exit it): Claude Code's
+   `~/.claude/sessions/<pid>.json` naming the session with that pid alive;
+   Copilot CLI's `open-sessions-state.json` entry refreshed within 3
+   minutes (best effort).
+3. **Move the code.** A snapshot commit of the source worktree - HEAD plus
+   uncommitted and untracked files, `.gitignore` respected - is made with a
+   temporary index (`read-tree HEAD`, `add -A`, `write-tree`,
+   `commit-tree`) and kept on `refs/longarm/handoff/<id8>-<time>` in the
+   source checkout: the user's branch, index and files are not touched.
+   The target gets a new worktree of it on branch `handoff/<id8>` (`-2`,
+   ... when taken) with HEAD at the original commit and the changes
+   uncommitted again (untracked files untracked; the staged / unstaged
+   split is not kept):
+   - a worker: `<home>/longarm-handoff/<repo>-<id8>`, made like `sync`
+     (only commits the worker's mirror lacks travel; `--git-auth forward`
+     has the worker fetch the base commits from the remote first, see
+     [Fetching with your credential](#fetching-with-your-credential---git-auth-forward),
+     so only the snapshot's delta is shipped). It is not garbage-collected:
+     remove it with `longarm exec <w> -- git -C <dir> worktree remove --force .`
+     when done;
+   - worker -> worker: the source makes a bundle of the snapshot minus what
+     the target has (after the target's remote-first fetch with
+     `--git-auth forward`) and longarm relays it - keep this machine online
+     until the handoff finishes; there is no worker-to-worker connection;
+   - local: `git worktree add` of your checkout (`--local-repo`, default
+     the current directory's; it must be a checkout of the same repository)
+     at `<checkout>-handoff-<id8>` next to it, or under `--worktree-dir` /
+     `LONGARM_HANDOFF_DIR`. Your current checkout is never modified.
+
+   Git LFS: a local source ships the snapshot's LFS objects (as `--lfs
+   ship`); from a worker, LFS files arrive as pointer files.
+4. **Move the session.** The transcript and its state are copied to where
+   the agent looks for them on the target (below), with absolute paths
+   rewritten from the source worktree to the target's, per JSON string
+   value: in known path fields (`cwd`, `file_path`, `filePath`, `gitRoot`,
+   ...) a leading source path is replaced and the separators converted
+   (Windows <-> Unix); in other strings only exact occurrences of the source
+   path at a path boundary are replaced. Everything else stays byte for
+   byte, and the session id is kept. What the target already has under
+   that id (the session was there before) is moved to
+   `<agent dir>/longarm-handoff-backup/<id>-<time>/` first, never
+   overwritten. The source copy stays as it is, as a backup, with a marker
+   (`<id>.handoff.json` next to a Claude transcript, `longarm-handoff.json`
+   in a Copilot session directory: target, time, worktree, snapshot);
+   `agent-sessions` lists such copies only with `--all`.
+5. **Resume.** A worker: a longarm session (`--name`, default
+   `handoff-<id8>`) in the target worktree running `claude --resume <id>` /
+   `copilot --resume=<id>`, then `longarm attach` (`--no-attach` / `--json`:
+   printed instead). Local: the agent runs in this terminal (`--no-attach`:
+   the command is printed).
+
+Not carried over: running processes - tool calls in flight, background
+shells, MCP server processes, dev servers. The agent starts what it needs
+anew on the target. Claude Code may ask to trust the new directory.
+
+**Preflight** (before anything changes): the agent is installed on the
+target (else exit 2) and not older than the version that last wrote the
+session (else exit 2; `--force` makes it a warning); warnings when it does
+not look logged in there (`claude auth status`; Copilot's `config.json`)
+and for MCP servers configured on the source (user-level and
+project-level; Claude's `.mcp.json` travels with the code) that the target
+lacks - server names only, read in memory. The session's files may be at
+most `--max-size` (default 64M; else exit 2).
+
+**Safety.** Only your own sessions: on a worker, the longarm session
+running the agent must be yours (else exit 77); without one, the worker's
+agent state must be yours - per-user isolation, your own worker, or a
+setup without a hub - else exit 77 (a fleet or shared worker in shared
+isolation keeps every user's agent state in one account). A target in
+shared isolation that is not yours gets a warning: its users' jobs can read
+the transcript there. Admin workers are used only when named (`--from` /
+`--to`), never as the implicit `--from`. Transcripts travel only inside the
+mTLS connections to the workers; this machine keeps its copy in a private
+temporary directory that is removed afterwards. longarm never prints or
+logs transcript contents; the workers' audit logs record file paths and
+sizes (`Files`), the git commands (`Exec`) and the session's command, not
+contents. `agent-sessions` prints titles (the agent's title or the first
+prompt) only.
+
+**Exit codes:** 0 done; 2 usage, a handed-off copy, no agent or an older
+one on the target, too large, not a git checkout; 3 no such session; 75
+the session is open in a process, or the source session did not become
+idle in time; 77 not your session; 255 transport and worker failures (the
+source session may have been stopped by then: resume it there with the
+agent's resume command).
+
+**Storage** (what longarm reads and writes):
+
+| | Claude Code (verified with 2.1) | Copilot CLI (layout verified with 1.0; resuming a copied session is experimental) |
+|---|---|---|
+| state dir | `~/.claude` (`$CLAUDE_CONFIG_DIR`; on a worker as `claude auth status --json` reports it) | `~/.copilot` (`$COPILOT_HOME` locally) |
+| transcript | `projects/<dir>/<id>.jsonl`; `<dir>` = the project path with every character but `A-Za-z0-9` as `-` (`C:\src\app` -> `C--src-app`; over 200 characters: refused) | `session-state/<id>/events.jsonl` |
+| also moved | `projects/<dir>/<id>/` (subagents, tool results), `file-history/<id>/`, `tasks/<id>/`, `todos/<id>-*.json` | the rest of `session-state/<id>/` (`workspace.yaml` with `cwd` / `git_root`, checkpoints, files) |
+| open in a process | `sessions/<pid>.json` (`sessionId`, `pid`) | `open-sessions-state.json` (`refreshedAt`) |
+| resume | `claude --resume <id>` in the project directory | `copilot --resume=<id>` |
+
+**`longarm agent-sessions [<worker>|local] [--repo-path DIR] [--agent claude|copilot] [--all] [--json]`**
+
+Lists a machine's resumable sessions, newest first; `--json`:
+`{"machine": "w1", "sessions": [{"agent", "id", "projectDir", "modified",
+"title", "size", "version", "handedOff": {"handedOffTo", "at", ...}}]}`.
 
 ### Port forwarding, files, code sync
 

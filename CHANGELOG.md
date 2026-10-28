@@ -435,6 +435,32 @@
   machine: labels, sharing, removal) and "Get Longarm" (the newest MSI, the
   one-liners, three steps), outdated versions are marked on Nodes, and a
   kill asks first (job, worker, owner).
+- `longarm handoff --to <worker|local> [--from ...] (--session ID | --latest)`
+  ([docs/usage.md](docs/usage.md#hand-off-an-agent-session)): move an
+  in-progress Claude Code or Copilot CLI conversation local -> worker,
+  worker -> worker or worker -> local together with its code - a snapshot
+  commit of HEAD + uncommitted + untracked files made with a temporary index
+  (the user's branch and index untouched), a new worktree on the target on
+  branch `handoff/<id>` with the changes uncommitted again (workers: remote
+  first with `--git-auth forward`; worker -> worker: only the delta relayed
+  through the client; local: `git worktree add` next to the checkout) - and
+  resume it there (`claude --resume` / `copilot --resume=` in a longarm
+  session, then attach; locally in the terminal). The source longarm session
+  is stopped once idle; a local agent that still has the session open is
+  refused (exit 75). The transcript and its state are copied with the paths
+  rewritten structurally (known path fields, plus exact source-path prefixes
+  at path boundaries), the session id kept, the source copy kept and marked
+  handed off. Preflight: the agent on the target (missing or older: exit 2),
+  logged in, MCP servers the target lacks (warnings), `--max-size` (64M).
+  Only through the worker-direct channels: the hub never sees a transcript.
+  Running processes (tool calls, background shells, MCP servers) are not
+  carried over. Copilot CLI support is experimental.
+- `longarm agent-sessions [<worker>|local] [--repo-path DIR] [--json]`: the
+  resumable agent sessions of a machine (agent, id, project directory, last
+  modified, title or first prompt, size, handed-off state).
+- Sessions get `LONGARM_WORKER` and `LONGARM_SESSION` in their environment
+  (worker feature `session-env`); `handoff` uses them for its default
+  `--from`. Capabilities `agent-handoff`, `agent-sessions`.
 - Windows installer for password-less machines (Entra-only sign-in with
   Windows Hello or a security key, e.g. Microsoft Dev Box): the MSI's first
   page is **Default (recommended)** - the hub built into the release, a

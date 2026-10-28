@@ -90,6 +90,7 @@ type env struct {
 	stranger string // config dir with a client cert from another CA
 
 	longarmdSysProcAttr *syscall.SysProcAttr // optional, for startLongarmd
+	longarmdEnv         []string             // optional: added to longarmd's environment
 
 	mu       sync.Mutex
 	longarmd *exec.Cmd
@@ -209,6 +210,9 @@ func (e *env) startLongarmd() {
 	}
 	cmd := exec.Command(bins.longarmd, "run", "--data-dir", e.dataDir, "--listen", fmt.Sprintf("tcp://127.0.0.1:%d", e.port))
 	cmd.SysProcAttr = e.longarmdSysProcAttr
+	if e.longarmdEnv != nil {
+		cmd.Env = append(os.Environ(), e.longarmdEnv...)
+	}
 	cmd.Stdout, cmd.Stderr = logf, logf
 	if err := cmd.Start(); err != nil {
 		e.t.Fatal(err)

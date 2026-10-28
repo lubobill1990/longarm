@@ -301,12 +301,36 @@ func (s *Server) linkEnv(owner string, env map[string]string) map[string]string 
 	return out
 }
 
+// Variables every session gets (jobs.FeatureSessionEnv): where it runs,
+// for a longarm used inside it (handoff's default --from).
+const (
+	EnvSessionWorker = "LONGARM_WORKER"
+	EnvSessionName   = "LONGARM_SESSION"
+)
+
+func isSessionEnv(k string) bool { return k == EnvSessionWorker || k == EnvSessionName }
+
+// sessionEnv adds LONGARM_WORKER and LONGARM_SESSION to a new session's
+// env (what the caller set wins).
+func (s *Server) sessionEnv(name string, env map[string]string) map[string]string {
+	out := make(map[string]string, len(env)+2)
+	for k, v := range env {
+		out[k] = v
+	}
+	for k, v := range map[string]string{EnvSessionWorker: s.Name, EnvSessionName: name} {
+		if _, set := out[k]; !set && v != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // retryLinkEnv gives a retried submit the link variables of the first one
 // (links may have changed since; the specs must stay equal).
 func retryLinkEnv(env, first map[string]string) map[string]string {
 	var out map[string]string
 	for k, v := range first {
-		if _, set := env[k]; set || !portlink.IsEnv(k) {
+		if _, set := env[k]; set || !(portlink.IsEnv(k) || isSessionEnv(k)) {
 			continue
 		}
 		if out == nil {
