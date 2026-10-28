@@ -128,6 +128,7 @@ var migrations = []string{
 		data TEXT NOT NULL
 	);
 	ALTER TABLE certs ADD COLUMN node_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE certs ADD COLUMN has_id INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE audit ADD COLUMN node_id TEXT NOT NULL DEFAULT '';`,
 }
 
@@ -305,6 +306,9 @@ type Node struct {
 	NodeKey string `json:"node_key,omitempty"`
 	// Capabilities the worker reported in its hello (NodeHello).
 	Capabilities []string `json:"capabilities,omitempty"`
+	// Supersede: the serial of the certificate issued with a new name; once
+	// the node uses it, its older certificates are revoked.
+	Supersede string `json:"supersede,omitempty"`
 }
 
 // DialName is the name in the node's current certificate.
@@ -372,6 +376,7 @@ type Cert struct {
 	Serial    string
 	Node      string // the node's name when it was issued (as in the certificate)
 	NodeID    string // the node it belongs to
+	HasID     bool   // the certificate carries the node ID (issued since node IDs)
 	NotAfter  time.Time
 	IssuedAt  time.Time
 	RevokedAt time.Time // zero = valid
@@ -379,9 +384,58 @@ type Cert struct {
 
 // AddCert records an issued certificate.
 func (s *Store) AddCert(c Cert) error {
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO certs(serial,node,node_id,not_after,issued_at) VALUES(?,?,?,?,?)`,
-		c.Serial, c.Node, c.NodeID, c.NotAfter.Unix(), c.IssuedAt.Unix())
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO certs(serial,node,node_id,not_after,issued_at,has_id) VALUES(?,?,?,?,?,?)`,
+		c.Serial, c.Node, c.NodeID, c.NotAfter.Unix(), c.IssuedAt.Unix(), c.HasID)
 	return err
+}
+
+// CertNode is the node ID a recorded certificate belongs to ("" = the
+// serial is not recorded).
+func (s *Store) CertNode(serial string) (string, error) {
+	var id string
+	err := s.db.QueryRow(`SELECT node_id FROM certs WHERE serial=?`, serial).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+// NameHasCerts reports whether a certificate was ever recorded for the
+// name (as issued; any node, revoked or expired ones too).
+func (s *Store) NameHasCerts(name string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM certs WHERE node=?`, name).Scan(&n)
+	return n > 0, err
+}
+
+// LegacyCerts maps node IDs to the serials of their valid (unrevoked,
+// unexpired) certificates without a node ID.
+func (s *Store) LegacyCerts(now time.Time) (map[string][]string, error) {
+	rows, err := s.db.Query(`SELECT node_id, serial FROM certs WHERE has_id=0 AND revoked_at IS NULL AND not_after > ? AND node_id != '' ORDER BY serial`, now.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var id, serial string
+		if err := rows.Scan(&id, &serial); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], serial)
+	}
+	return out, rows.Err()
+}
+
+// RevokeCertsExcept revokes every unexpired certificate of the node with
+// ID nodeID but keep (superseded by keep: a renamed node's older ones).
+func (s *Store) RevokeCertsExcept(nodeID, keep string, at time.Time) (int64, error) {
+	r, err := s.db.Exec(`UPDATE certs SET revoked_at=? WHERE node_id=? AND serial != ? AND revoked_at IS NULL AND not_after > ?`,
+		at.Unix(), nodeID, keep, at.Unix())
+	if err != nil {
+		return 0, err
+	}
+	return r.RowsAffected()
 }
 
 // RevokeNodeCerts revokes every unexpired certificate of the node with

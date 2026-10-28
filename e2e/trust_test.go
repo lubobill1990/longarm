@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/trust"
 )
@@ -74,10 +75,6 @@ func TestEndToEndTrustWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := pki.Endorse(aliceKey, "alice", pki.KindDevice, "alice", nk.Public().(ed25519.PublicKey))
-	if err != nil {
-		t.Fatal(err)
-	}
 	mint := func(dir string, o pki.IssueOptions, tr *pki.CSRTrust) {
 		keyPEM, csrPEM, err := pki.NewKeyAndCSR(o.Name, tr)
 		if err != nil {
@@ -91,7 +88,22 @@ func TestEndToEndTrustWorker(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mint(h.client, pki.IssueOptions{Role: pki.RoleClient, Name: "alice"}, &pki.CSRTrust{NodeKey: nk, Endorsement: e})
+	// re-issued for alice's node (its ID): the hub never maps an unknown
+	// certificate of a known name by name (docs/security.md "Node identity")
+	aliceID := ""
+	for _, n := range h.nodes(t) {
+		if n["name"] == "alice" && n["role"] == "client" {
+			aliceID, _ = n["id"].(string)
+		}
+	}
+	if aliceID == "" {
+		t.Fatal("no node id for alice")
+	}
+	e, err := pki.EndorseID(aliceKey, "alice", pki.KindDevice, "alice", aliceID, nk.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mint(h.client, pki.IssueOptions{Role: pki.RoleClient, Name: "alice", ID: aliceID}, &pki.CSRTrust{NodeKey: nk, Endorsement: e})
 	if r := execOn(h.client); r.code != 0 || !strings.Contains(r.stdout, "line 1") {
 		t.Fatalf("endorsed alice: %+v", r)
 	}
@@ -126,10 +138,15 @@ func TestEndToEndTrustWorker(t *testing.T) {
 	// renewed certificate that carries it
 	r = longarmdCmd(t, "trust", "request", "--data-dir", wa.dataDir)
 	req, err := pki.ParseEndorseRequest(strings.SplitN(r.stdout, "\n", 2)[0])
-	if err != nil || req.Kind != pki.KindWorker || req.Name != "wa" {
+	if err != nil || req.Kind != pki.KindWorker || req.Name != "wa" || req.ID == "" {
 		t.Fatalf("trust request: %+v %v", r, err)
 	}
-	we, err := pki.Endorse(aliceKey, "alice", pki.KindWorker, req.Name, req.NodeKey)
+	// a name-only endorsement (made for a request without the id) is
+	// refused by a node that has an id
+	if v1, _ := pki.Endorse(aliceKey, "alice", pki.KindWorker, req.Name, req.NodeKey); longarmdCmd(t, "trust", "accept", v1.String(), "--data-dir", wa.dataDir).code == 0 {
+		t.Fatal("a name-only endorsement accepted by a node with an id")
+	}
+	we, err := pki.EndorseID(aliceKey, "alice", pki.KindWorker, req.Name, req.ID, req.NodeKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,8 +164,8 @@ func TestEndToEndTrustWorker(t *testing.T) {
 		t.Fatalf("alice after the worker's renewal: %+v", r)
 	}
 
-	// an endorsement for another worker is refused
-	other, _ := pki.Endorse(aliceKey, "alice", pki.KindWorker, "wb", req.NodeKey)
+	// an endorsement for another worker (node) is refused
+	other, _ := pki.EndorseID(aliceKey, "alice", pki.KindWorker, "wb", nodeid.New(), req.NodeKey)
 	if r := longarmdCmd(t, "trust", "accept", other.String(), "--data-dir", wa.dataDir); r.code == 0 {
 		t.Fatalf("accepted an endorsement for another name: %+v", r)
 	}

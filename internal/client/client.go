@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lubobill1990/longarm/internal/hubclient"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/telemetry/tgrpc"
 	"github.com/lubobill1990/longarm/internal/transport"
@@ -83,6 +84,15 @@ type Worker struct {
 	// the hub (placement) or a workers.toml entry.
 	TrustName     string `toml:"-"`
 	TrustIDPrefix string `toml:"-"`
+	// TrustAny: no name or ID to hold the endorsement to - any worker the
+	// user's trusted keys endorsed (automatic placement, fleet-wide
+	// listings, monitoring). Only set explicitly; with end-to-end trust a
+	// worker without a target is refused otherwise.
+	TrustAny bool `toml:"-"`
+	// LegacySerials: serials of the node's certificates without a node ID
+	// that the hub reports (issued before IDs, not yet renewed); with ID
+	// set, the only ID-less certificates accepted (pki.CheckNodeID).
+	LegacySerials []string `toml:"-"`
 }
 
 // DialTarget is what the worker's certificate (and endorsement) must show.
@@ -91,7 +101,8 @@ func (w Worker) DialTarget() pki.DialTarget {
 	if cn == "" {
 		cn = w.Name
 	}
-	return pki.DialTarget{CertName: cn, ID: w.ID, Name: w.TrustName, IDPrefix: w.TrustIDPrefix}
+	return pki.DialTarget{CertName: cn, ID: w.ID, Name: w.TrustName, IDPrefix: w.TrustIDPrefix, Any: w.TrustAny,
+		LegacySerials: w.LegacySerials}
 }
 
 // TailscaleConfig is the [tailscale] section for the embedded client node.
@@ -161,6 +172,16 @@ func LoadConfig(dir string) (*Config, error) {
 		if w.CertName == "" {
 			w.CertName = w.Name
 		}
+		if w.ID != "" {
+			if !nodeid.Valid(w.ID) {
+				return nil, fmt.Errorf("%s: worker %q: id %q is not a node id", WorkersFile, w.Name, w.ID)
+			}
+			w.ID = strings.ToLower(w.ID)
+		}
+		// a workers.toml entry is the user's own target: with end-to-end
+		// trust the worker must be endorsed under its certificate name (and
+		// its id, when the entry has one)
+		w.TrustName = w.CertName
 		for _, s := range w.Endpoints {
 			e, err := ParseEndpoint(s)
 			if err != nil {
@@ -200,7 +221,8 @@ func (c *Config) Worker(name string) (Worker, error) {
 		if certName == "" {
 			certName = host
 		}
-		return Worker{Name: name, Address: addr, Transport: "tcp", CertName: certName}, nil
+		// an ad-hoc target: the endorsement must name the certificate name asked for
+		return Worker{Name: name, Address: addr, Transport: "tcp", CertName: certName, TrustName: certName}, nil
 	}
 	return Worker{}, UnknownWorkerError(name, c.Dir)
 }

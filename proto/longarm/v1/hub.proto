@@ -581,6 +581,10 @@ message NodeInfo {
   // A worker and its admin worker on the same machine (paired together):
   // the other one's ID.
   string companion_id = 34;
+  // Serials of the node's valid certificates without a node ID (issued
+  // before IDs, not yet renewed): the only ID-less certificates clients
+  // accept for this node.
+  repeated string legacy_serials = 35;
 }
 
 message ListNodesRequest {
@@ -1227,6 +1231,9 @@ message PortLinkAssignment {
   // to reach `to` (its advertised endpoints and certificate name).
   SignedPortLinkGrant grant = 2;
   repeated string target_endpoints = 3;
+  // the target's certificates without a node ID it may still answer with
+  // (NodeInfo.legacy_serials)
+  repeated string target_legacy_serials = 4;
 }
 
 message CreatePortLinkRequest {
@@ -1239,6 +1246,10 @@ message CreatePortLinkRequest {
   // Signed by a device of the caller's user (longarm link create does when
   // the device is endorsed): the link gets its id and expiry from it.
   PortLinkConsent consent = 7;
+  // the node IDs the client resolved from / to to (and signed in the
+  // consent); the hub refuses a request whose workers have other IDs
+  string from_id = 8;
+  string to_id = 9;
 }
 
 message ListPortLinksRequest {
@@ -1277,4 +1288,10 @@ message PortLinkSpec {
   string job_id = 8;
   string device = 9; // the signing device (the endorsement's name)
   int64 issued_unix = 10;
+  // The workers' node IDs (docs/security.md "Node identity"): workers hold
+  // the link's ends to these (their certificates' and endorsements' IDs).
+  // A consent without them (an older longarm) is held to the names: the
+  // ends' endorsements must carry from / to as their names.
+  string from_id = 11;
+  string to_id = 12;
 }

@@ -8,6 +8,7 @@ package hub
 // ID prefix, id:<prefix> or name:<name> - and resolves it here.
 
 import (
+	"cmp"
 	"context"
 	"crypto/x509"
 	"encoding/base64"
@@ -148,18 +149,92 @@ func (h *Hub) resolveWorker(target string) (string, error) {
 func isWorker(n *node) bool { return n.rec.Role == string(pki.RoleWorker) }
 
 // nodeForCertLocked is the node a certificate belongs to: by the node ID
-// it carries; a certificate issued before node IDs by its recorded serial,
-// else (issued by hand, never seen) by its name among non-revoked nodes.
+// it carries; a certificate issued before node IDs by its recorded serial
+// (the certificates the hub issued or saw, mapped to their nodes by the
+// migration). Never by name: an unknown certificate is checkNode's
+// question (nil).
 func (h *Hub) nodeForCertLocked(id pki.Identity, cert *x509.Certificate) *node {
 	if id.ID != "" {
 		return h.nodes[id.ID]
 	}
-	if nid := h.knownSerials[pki.Serial(cert)]; nid != "" {
-		if n := h.nodes[nid]; n != nil {
-			return n
+	serial := pki.Serial(cert)
+	nid := h.knownSerials[serial]
+	if nid == "" { // recorded since the start (e.g. by another hub process)
+		if s, err := h.store.CertNode(serial); err == nil && s != "" {
+			nid = s
+			h.knownSerials[serial] = s
 		}
 	}
-	return h.activeByNameLocked(id.Name)
+	return h.nodes[nid]
+}
+
+// nameHistoryLocked says what history the name has ("" = none): a node
+// (any state) has or had it as its name or its certificates' name, or a
+// certificate was recorded for it.
+func (h *Hub) nameHistoryLocked(name string) string {
+	for _, n := range h.nodes {
+		if n.rec.Name == name || n.rec.DialName() == name {
+			return fmt.Sprintf("node %s, %s", nodeid.Short(n.rec.ID), n.rec.State)
+		}
+	}
+	if has, err := h.store.NameHasCerts(name); err != nil || has {
+		return "certificates were issued for it"
+	}
+	return ""
+}
+
+// reloadLegacyLocked reloads the serials of valid certificates without a
+// node ID per node (NodeInfo.legacy_serials).
+func (h *Hub) reloadLegacyLocked() {
+	m, err := h.store.LegacyCerts(time.Now())
+	if err != nil {
+		h.log.Warn("legacy certificates", "err", err)
+		return
+	}
+	h.legacySerials = m
+}
+
+// supersedeIfDue revokes a renamed node's older certificates once the
+// node presents the certificate issued with its new name (store.Node.
+// Supersede): no certificate with the old name - which another node may
+// get now - remains valid.
+func (h *Hub) supersedeIfDue(nodeID string, cert *x509.Certificate) {
+	h.mu.Lock()
+	n := h.nodes[nodeID]
+	due := n != nil && n.rec.Supersede != "" && n.rec.Supersede == pki.Serial(cert)
+	h.mu.Unlock()
+	if !due {
+		return
+	}
+	h.certMu.Lock()
+	defer h.certMu.Unlock()
+	h.mu.Lock()
+	if n.rec.Supersede != pki.Serial(cert) {
+		h.mu.Unlock()
+		return
+	}
+	k, err := h.store.RevokeCertsExcept(nodeID, n.rec.Supersede, time.Now())
+	if err != nil {
+		h.mu.Unlock()
+		h.log.Warn("revoke superseded certificates", "id", nodeID, "err", err)
+		return
+	}
+	n.rec.Supersede = ""
+	h.store.PutNode(n.rec)
+	if k > 0 {
+		h.revVersion++
+		h.store.SetMeta("revocation_version", itoa(h.revVersion))
+		if err := h.rebuildRevocations(); err != nil {
+			h.log.Warn("rebuild revocations", "err", err)
+		}
+	}
+	h.reloadLegacyLocked()
+	h.mu.Unlock()
+	if k > 0 {
+		h.log.Info("renamed node's older certificates revoked", "id", nodeID, "name", n.rec.Name, "revoked", k)
+		h.broadcast(h.revocationsMsg())
+		h.conns.CloseIf(h.revoked.Revoked)
+	}
 }
 
 // certName is the name to put in a new certificate of rec: its name, but
@@ -267,6 +342,15 @@ func (h *Hub) RenameNode(by, user string, admin bool, target, newName string) (*
 		return nil, err
 	}
 	old := n.rec.Name
+	if n.rec.Role != string(pki.RoleWorker) {
+		// the user the device acts as must survive the new name: pinned
+		// (a device whose user is its name and can't be written into a
+		// certificate under another name can't be renamed)
+		if u := cmp.Or(n.rec.User, old); !pki.ValidUser(u) {
+			h.mu.Unlock()
+			return nil, status.Errorf(codes.FailedPrecondition, "device %s acts as user %q, which can't be carried in a certificate under another name: enroll it again under the new name", old, u)
+		}
+	}
 	fail := func(err error) (*pb.NodeInfo, error) {
 		h.mu.Unlock()
 		h.auditHub(by, "nodes/rename", map[string]any{"id": n.rec.ID, "old_name": old, "new_name": newName, "error": errString(err)})

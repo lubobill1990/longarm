@@ -343,6 +343,9 @@ func (ca *CA) sign(pub any, o IssueOptions) ([]byte, error) {
 	if !ValidName(o.Name) {
 		return nil, fmt.Errorf("invalid name %q (letters, digits, . _ -)", o.Name)
 	}
+	if o.User == o.Name && (o.Role == RoleClient || o.Role == RoleAdmin) {
+		o.User = "" // a device whose user is its name (IdentityURI leaves it out)
+	}
 	if o.User != "" && (!ValidUser(o.User) || (o.Role != RoleClient && o.Role != RoleAdmin)) {
 		return nil, fmt.Errorf("invalid user %q (a-z 0-9 _ -, at most 17 characters; clients and admins only)", o.User)
 	}
@@ -514,26 +517,57 @@ func (b *Bundle) ServerConfig() (*tls.Config, error) {
 
 // DialTarget is the worker a client dials: CertName is the name in the
 // worker's current certificate (the TLS server name and the longnet relay
-// address), ID the node ID the hub reported for it ("" = unknown: a
-// workers.toml entry). Name / IDPrefix are what the user typed, if they
-// targeted the worker themselves: with end-to-end trust the worker's
-// endorsement must vouch for them (CheckTarget).
+// address), ID the node ID it must be ("" = unknown: a workers.toml entry
+// without one). Name / IDPrefix are the name or ID the worker was targeted
+// by: with end-to-end trust the worker's endorsement must vouch for them
+// (CheckTarget). Any: the worker may be any endorsed one (placement,
+// listings) - explicitly. LegacySerials: serials of certificates without
+// a node ID the hub reports for the node (issued before IDs, not yet
+// renewed), the only ID-less certificates accepted for an expected ID.
 type DialTarget struct {
-	CertName string
-	ID       string
-	Name     string
-	IDPrefix string
+	CertName      string
+	ID            string
+	Name          string
+	IDPrefix      string
+	Any           bool
+	LegacySerials []string
 }
 
 // ClientConfig is the longarm side: verifies the worker's certificate chain, that
-// it was issued for serverName, and that it carries the worker role.
+// it was issued for serverName, and that it carries the worker role. The
+// endorsement (end-to-end trust) is not held to a target: for the inner
+// handshake of a transport whose own (outer) handshake does that.
 func (b *Bundle) ClientConfig(serverName string) *tls.Config {
-	return b.ClientConfigFor(DialTarget{CertName: serverName})
+	return b.ClientConfigFor(DialTarget{CertName: serverName, Any: true})
 }
 
-// ClientConfigFor is ClientConfig for t: a certificate with a node ID must
-// carry t.ID (when known), and with end-to-end trust the endorsement must
-// fit t (CheckTarget).
+// CheckNodeID checks a worker certificate against an expected node ID: it
+// must carry that ID, or - a certificate from before node IDs - be one of
+// the serials the hub reported for the node. No expected ID: nothing to
+// check.
+func CheckNodeID(c *x509.Certificate, id Identity, t DialTarget) error {
+	if t.ID == "" {
+		return nil
+	}
+	if id.ID != "" {
+		if !strings.EqualFold(t.ID, id.ID) {
+			return fmt.Errorf("asked for node %s (%s), node %s (%s) answered", t.ID, t.CertName, id.ID, id.Name)
+		}
+		return nil
+	}
+	serial := Serial(c)
+	for _, s := range t.LegacySerials {
+		if strings.EqualFold(s, serial) {
+			return nil
+		}
+	}
+	return fmt.Errorf("asked for node %s (%s), a certificate without a node id answered (%s, serial %s, not one the hub reports for the node)",
+		t.ID, t.CertName, id.Name, serial)
+}
+
+// ClientConfigFor is ClientConfig for t: the certificate must be node t.ID
+// (CheckNodeID), and with end-to-end trust the endorsement must fit t
+// (CheckTarget).
 func (b *Bundle) ClientConfigFor(t DialTarget) *tls.Config {
 	serverName := t.CertName
 	return &tls.Config{
@@ -554,9 +588,10 @@ func (b *Bundle) ClientConfigFor(t DialTarget) *tls.Config {
 				return fmt.Errorf("server %s is not a worker", id)
 			}
 			// the CA's word: another node answering under this name (a
-			// renamed node's old certificate) is not the one asked for
-			if t.ID != "" && id.ID != "" && !strings.EqualFold(t.ID, id.ID) {
-				return fmt.Errorf("asked for node %s (%s), node %s (%s) answered", t.ID, serverName, id.ID, id.Name)
+			// renamed node's old certificate, a retained one without an
+			// ID) is not the one asked for
+			if err := CheckNodeID(cs.PeerCertificates[0], id, t); err != nil {
+				return err
 			}
 			if p := b.Trust.Load(); p.Active() {
 				// the name the user signed (Check: endorsement name ==

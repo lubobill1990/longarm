@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -65,7 +66,10 @@ func (s *Server) ListenerNames() []string {
 
 // Server holds everything the services need.
 type Server struct {
-	Name      string // worker name (from its certificate)
+	Name string // worker name (from its certificate)
+	// SelfCert is this worker's current certificate (node ID, endorsement:
+	// port link checks); nil = only Name is known.
+	SelfCert  func() *x509.Certificate
 	Version   string
 	DataDir   string
 	StartedAt time.Time

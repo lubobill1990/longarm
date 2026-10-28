@@ -4,9 +4,11 @@ import (
 	"crypto/ed25519"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lubobill1990/longarm/internal/nodeid"
 )
@@ -50,9 +52,10 @@ func TestNodeIDInCertificate(t *testing.T) {
 	}
 }
 
-// TestEndorsementBindsID: an endorsement with an ID verifies under the
-// old rules too (sig over the v1 message), binds the ID (sig2), survives a
-// rename, and can't be moved to another ID.
+// TestEndorsementBindsID: an endorsement with an ID signs a v2 message
+// (its own domain, covering the ID) and nothing else: stripping the ID
+// leaves no valid endorsement (no downgrade to a name-bound one), the ID
+// can't be changed; it survives a rename and can't be moved to another ID.
 func TestEndorsementBindsID(t *testing.T) {
 	f := newTrustFixture(t)
 	p := f.policy()
@@ -67,24 +70,40 @@ func TestEndorsementBindsID(t *testing.T) {
 	if err != nil || e2.ID != id {
 		t.Fatalf("parse: %+v %v", e2, err)
 	}
-	// a peer before node IDs ignores id and sig2 and checks sig: valid
-	v1 := *e
-	v1.ID, v1.Sig2 = "", nil
-	if err := v1.Verify(); err != nil {
-		t.Fatalf("the v1 signature of an id endorsement: %v", err)
+	// downgrade by stripping the ID: no name-only signature is left
+	stripped := *e
+	stripped.ID = ""
+	if stripped.Verify() == nil {
+		t.Fatal("an id endorsement with its id removed verifies as a name-bound one")
 	}
-	// the hub can't change the ID (sig2 covers it), nor drop sig2 alone
+	// ... also through the text form (fields removed from the JSON)
+	var m map[string]any
+	b, _ := json.Marshal(e)
+	json.Unmarshal(b, &m)
+	delete(m, "id")
+	b, _ = json.Marshal(m)
+	if _, err := ParseEndorsement(endorsementPrefix + base64.RawURLEncoding.EncodeToString(b)); err == nil {
+		t.Fatal("a stripped endorsement parses")
+	}
+	// the hub can't change the ID
 	moved := *e
 	moved.ID = nodeid.New()
 	if moved.Verify() == nil {
 		t.Fatal("endorsement moved to another id")
 	}
-	noSig2 := *e
-	noSig2.Sig2 = nil
-	if noSig2.Verify() == nil {
-		t.Fatal("id without sig2 accepted")
+	// nor make a v1 endorsement into a v2 one
+	v1, _ := Endorse(f.alice, "alice", KindWorker, "box", nk.Public().(ed25519.PublicKey))
+	up := *v1
+	up.ID = id
+	if up.Verify() == nil {
+		t.Fatal("a name-bound endorsement with an id added verifies")
 	}
 	tr := &CSRTrust{NodeKey: nk, Endorsement: e}
+	// the stripped endorsement in a certificate: refused by name-bound rules too
+	strippedCert, _ := f.issue(IssueOptions{Role: RoleWorker, Name: "box", ID: id}, &CSRTrust{NodeKey: nk, Endorsement: &stripped})
+	if _, err := p.Check(strippedCert); err == nil {
+		t.Fatal("a stripped endorsement passed the check")
+	}
 
 	good, _ := f.issue(IssueOptions{Role: RoleWorker, Name: "box", ID: id}, tr)
 	if _, err := p.Check(good); err != nil {
@@ -148,8 +167,64 @@ func TestLegacyEndorsementStaysNameBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := json.Marshal(e); !strings.Contains(string(b), `"sig2"`) {
+	if b, _ := json.Marshal(e); !strings.Contains(string(b), `"id"`) || strings.Contains(string(b), `"sig2"`) {
 		t.Fatalf("endorsement json: %s", b)
+	}
+}
+
+// TestLegacyEndorsementWindow: a name-bound endorsement on a certificate
+// with a node ID counts only if made before LegacyEndorsementCutoff; on a
+// certificate without an ID it stays name-bound.
+func TestLegacyEndorsementWindow(t *testing.T) {
+	f := newTrustFixture(t)
+	p := f.policy()
+	nk := newNodeKey()
+	at := func(issued time.Time) *CSRTrust {
+		e, err := Endorse(f.alice, "alice", KindWorker, "box", nk.Public().(ed25519.PublicKey))
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.Issued = issued.Unix()
+		e.Sig = ed25519.Sign(f.alice, e.signed())
+		return &CSRTrust{NodeKey: nk, Endorsement: e}
+	}
+	before, after := at(LegacyEndorsementCutoff.Add(-time.Hour)), at(LegacyEndorsementCutoff.Add(time.Hour))
+	withID := IssueOptions{Role: RoleWorker, Name: "box", ID: nodeid.New()}
+	if c, _ := f.issue(withID, before); func() error { _, err := p.Check(c); return err }() != nil {
+		t.Fatal("a name-bound endorsement from before the cutoff on an id certificate")
+	}
+	if c, _ := f.issue(withID, after); func() error { _, err := p.Check(c); return err }() == nil {
+		t.Fatal("a name-bound endorsement from after the cutoff counted on an id certificate")
+	}
+	if c, _ := f.issue(IssueOptions{Role: RoleWorker, Name: "box"}, after); func() error { _, err := p.Check(c); return err }() != nil {
+		t.Fatal("a certificate without an id: the name-bound endorsement")
+	}
+}
+
+// TestCheckNodeID: a certificate answering for an expected node ID must
+// carry it; one without an ID only if its serial is one the hub reports
+// for the node.
+func TestCheckNodeID(t *testing.T) {
+	f := newTrustFixture(t)
+	id := nodeid.New()
+	withID, _ := f.issue(IssueOptions{Role: RoleWorker, Name: "box", ID: id}, nil)
+	other, _ := f.issue(IssueOptions{Role: RoleWorker, Name: "box", ID: nodeid.New()}, nil)
+	legacy, _ := f.issue(IssueOptions{Role: RoleWorker, Name: "box"}, nil)
+	check := func(c *x509.Certificate, t2 DialTarget) error {
+		ident, _ := IdentityFromCert(c)
+		return CheckNodeID(c, ident, t2)
+	}
+	if check(withID, DialTarget{ID: id}) != nil || check(other, DialTarget{ID: id}) == nil {
+		t.Fatal("by id")
+	}
+	if check(legacy, DialTarget{ID: id}) == nil {
+		t.Fatal("a certificate without an id accepted for an expected id")
+	}
+	if check(legacy, DialTarget{ID: id, LegacySerials: []string{Serial(legacy)}}) != nil {
+		t.Fatal("the reported legacy serial refused")
+	}
+	if check(legacy, DialTarget{}) != nil {
+		t.Fatal("no expected id: nothing to check")
 	}
 }
 
@@ -185,7 +260,11 @@ func TestCheckTarget(t *testing.T) {
 		t  DialTarget
 		ok bool
 	}{
-		{withID, DialTarget{}, true},
+		{withID, DialTarget{}, false}, // no target: only explicitly unconstrained
+		{withID, DialTarget{Any: true}, true},
+		{withID, DialTarget{ID: id}, true},
+		{withID, DialTarget{ID: "77aa0000-0000-4000-8000-000000000001", Any: true}, false},
+		{legacy, DialTarget{ID: id}, true}, // name-bound: the certificate's ID is CheckNodeID's
 		{withID, DialTarget{Name: "box"}, true},
 		{withID, DialTarget{Name: "other"}, false},
 		{withID, DialTarget{IDPrefix: "3f2a9c1e"}, true},

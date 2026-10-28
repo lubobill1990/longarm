@@ -772,6 +772,11 @@ message PortLinkGrant {
   int32 listen_port = 6; // 127.0.0.1:<listen_port> on A
   int64 expires_unix = 7; // seconds
   int64 issued_unix = 8;
+  // the ends' node IDs: B accepts only a caller whose certificate is
+  // from_id, and only a grant whose to_id is its own (a worker-to-worker
+  // grant binds immutable IDs, not names)
+  string from_id = 9;
+  string to_id = 10;
 }
 
 // SignedPortLinkGrant: the hub's signature over a serialized PortLinkGrant

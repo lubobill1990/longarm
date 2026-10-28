@@ -53,9 +53,12 @@ func schema4(t *testing.T, path string) {
 	// ... a revoked one, and names that break the new rules
 	node("old-box", "worker", "revoked", nil)
 	node("cafe", "worker", "approved", nil)
-	node("1234", "client", "approved", nil)
+	node("1234", "client", "approved", nil) // its user, "1234", can't be carried under another name
+	node("beef", "client", "approved", nil) // user "beef" (its name): pinned before the rename
+	node("w-dead", "worker", "approved", nil)
+	node("dead", "worker", "approved", nil)  // wants w-dead, which an active node has
 	node("w-cafe", "worker", "revoked", nil) // the name "cafe" will want
-	for _, c := range []struct{ serial, node string }{{"a1", "alice-pc"}, {"a2", "old-box"}, {"a3", "cafe"}} {
+	for _, c := range []struct{ serial, node string }{{"a1", "alice-pc"}, {"a2", "old-box"}, {"a3", "cafe"}, {"a4", "1234"}} {
 		exec(`INSERT INTO certs(serial,node,not_after,issued_at) VALUES(?,?,?,?)`, c.serial, c.node, now.Add(time.Hour).Unix(), now.Unix())
 	}
 	exec(`UPDATE certs SET revoked_at=? WHERE node='old-box'`, now.Unix())
@@ -98,7 +101,7 @@ func TestMigrateNodeIDs(t *testing.T) {
 		}
 		by[n.Name] = n
 	}
-	if len(nodes) != 12 {
+	if len(nodes) != 15 {
 		t.Fatalf("%d nodes", len(nodes))
 	}
 	for _, name := range []string{"alice-pair", "alice-pc", "e2e-worker", "spike-1", "cpc-bob-x7k2h-admin", "bob-cpc-bob-x7k2h", "root", "alice-laptop", "old-box"} {
@@ -115,10 +118,29 @@ func TestMigrateNodeIDs(t *testing.T) {
 	if cafe == nil || cafe.CertName != "cafe" || cafe.Role != "worker" || d1234 == nil || d1234.CertName != "1234" {
 		t.Fatalf("renamed: %+v %+v (all: %v)", cafe, d1234, names(nodes))
 	}
+	// a device's implicit user (its name) is pinned before any rename: a
+	// renewal under the new name keeps acting as that user, never as a
+	// user named like the new name
+	if b := by["d-beef"]; b == nil || b.User != "beef" || b.State != "approved" {
+		t.Fatalf("d-beef: %+v", b)
+	}
+	if by["alice-laptop"].User != "alice" || by["root"].User != "root" {
+		t.Fatal("devices' users pinned")
+	}
+	// one whose user can't be carried under another name: revoked, with
+	// its certificates (enroll it again)
+	if d1234.State != "revoked" || d1234.User != "1234" {
+		t.Fatalf("d-1234: %+v", d1234)
+	}
+	// duplicates: dead wants w-dead, which an active node has: suffixed
+	if by["w-dead"] == nil || by["w-dead-2"] == nil || by["w-dead-2"].CertName != "dead" {
+		t.Fatalf("w-dead-2: %v", names(nodes))
+	}
 	if revokedWCafe == nil || cafe.State != "approved" {
 		t.Fatal("the revoked w-cafe")
 	}
-	if len(s.MigrationNotes) != 2 || !strings.Contains(strings.Join(s.MigrationNotes, "\n"), `"cafe"`) {
+	if len(s.MigrationNotes) != 4 || !strings.Contains(strings.Join(s.MigrationNotes, "\n"), `"cafe"`) ||
+		!strings.Contains(strings.Join(s.MigrationNotes, "\n"), "revoked: its user") {
 		t.Fatalf("notes %q", s.MigrationNotes)
 	}
 	rows, _ := s.Audit("", "hub", time.Time{}, 100)
@@ -128,7 +150,7 @@ func TestMigrateNodeIDs(t *testing.T) {
 			renames++
 		}
 	}
-	if renames != 2 {
+	if renames != 4 {
 		t.Fatalf("%d rename audit records", renames)
 	}
 	// companion link: the admin worker and the worker on its host
@@ -145,7 +167,7 @@ func TestMigrateNodeIDs(t *testing.T) {
 		t.Fatalf("cert nodes %v", cn)
 	}
 	rc, _ := s.RevokedCerts(time.Now())
-	if len(rc) != 1 || rc[0].NodeID != by["old-box"].ID {
+	if len(rc) != 2 || rc[0].NodeID != by["old-box"].ID || rc[1].NodeID != d1234.ID {
 		t.Fatalf("revoked %+v", rc)
 	}
 	// audit, jobs, port links
@@ -181,7 +203,7 @@ func TestMigrateNodeIDs(t *testing.T) {
 		t.Fatalf("migrated again: %v", s2.MigrationNotes)
 	}
 	again, _ := s2.Nodes()
-	if len(again) != 13 {
+	if len(again) != 16 {
 		t.Fatalf("%d nodes after reopening", len(again))
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/nodeid"
+	"github.com/lubobill1990/longarm/internal/pki"
 )
 
 // migrateNodeIDs is migration 5's Go step (docs/security.md "Node
@@ -24,6 +25,7 @@ func migrateNodeIDs(tx *sql.Tx, notes *[]string) error {
 		name, role, state string
 		data              map[string]any
 		id, newName       string
+		revoke            bool // revoked by the migration (see below)
 	}
 	rs, err := tx.Query(`SELECT name, role, state, data FROM nodes`)
 	if err != nil {
@@ -56,27 +58,47 @@ func migrateNodeIDs(tx *sql.Tx, notes *[]string) error {
 		return all[i].name < all[j].name
 	})
 	taken := map[string]bool{} // names of non-revoked nodes
+	for _, r := range all {    // the names that stay: never taken by a renamed one
+		if r.state != "revoked" && nodeid.CheckName(r.name, nil) == nil {
+			taken[r.name] = true
+		}
+	}
 	byName := map[string]*row{}
 	now := time.Now().UTC()
 	for _, r := range all {
 		r.id = nodeid.New()
 		r.newName = r.name
 		reason := ""
+		device := r.role != "worker"
+		if device {
+			// A device whose certificates named no user acts as the user of
+			// its name (pki.Identity.Owner). Pin that user before anything
+			// can change the name: a renewal under another name must not
+			// make the device act as another user.
+			if u, _ := r.data["user"].(string); u == "" {
+				r.data["user"] = r.name
+			}
+		}
 		if nodeid.CheckName(r.name, nil) != nil {
 			prefix := "d-"
 			if r.role == "worker" {
 				prefix = "w-"
 			}
 			r.newName, reason = prefix+r.name, "the name looks like a node id"
+			if u, _ := r.data["user"].(string); device && r.state != "revoked" && u == r.name && !pki.ValidUser(u) {
+				// its user (its old name) can't be written into a
+				// certificate under another name: no guessing - revoked,
+				// to enroll again
+				r.state, r.revoke = "revoked", true
+				r.data["state"] = "revoked"
+				reason += "; revoked: its user " + strconv.Quote(u) + " can't be carried under another name (enroll the device again)"
+			}
 		}
-		if r.state != "revoked" {
+		if r.state != "revoked" && r.newName != r.name {
 			base := r.newName
 			for i := 2; taken[r.newName]; i++ {
 				suffix := "-" + strconv.Itoa(i)
 				r.newName = base[:min(len(base), 63-len(suffix))] + suffix
-				if reason == "" {
-					reason = "another active node has the name"
-				}
 			}
 			taken[r.newName] = true
 		}
@@ -151,6 +173,11 @@ func migrateNodeIDs(tx *sql.Tx, notes *[]string) error {
 	for old, r := range byName {
 		for _, q := range []string{`UPDATE certs SET node_id=? WHERE node=?`, `UPDATE audit SET node_id=? WHERE node=? AND node != 'hub'`} {
 			if _, err := tx.Exec(q, r.id, old); err != nil {
+				return err
+			}
+		}
+		if r.revoke {
+			if _, err := tx.Exec(`UPDATE certs SET revoked_at=? WHERE node_id=? AND revoked_at IS NULL`, now.Unix(), r.id); err != nil {
 				return err
 			}
 		}

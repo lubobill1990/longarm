@@ -4709,15 +4709,20 @@ func (*PruneResponse) Descriptor() ([]byte, []int) {
 
 // PortLinkGrant is what the hub signs for a port link (SignedPortLinkGrant).
 type PortLinkGrant struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Owner         string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`                                 // the user who created the link
-	From          string                 `protobuf:"bytes,3,opt,name=from,proto3" json:"from,omitempty"`                                   // worker A: its certificate name (listens, dials B)
-	To            string                 `protobuf:"bytes,4,opt,name=to,proto3" json:"to,omitempty"`                                       // worker B: its certificate name (the target)
-	Port          int32                  `protobuf:"varint,5,opt,name=port,proto3" json:"port,omitempty"`                                  // target port on B (127.0.0.1)
-	ListenPort    int32                  `protobuf:"varint,6,opt,name=listen_port,json=listenPort,proto3" json:"listen_port,omitempty"`    // 127.0.0.1:<listen_port> on A
-	ExpiresUnix   int64                  `protobuf:"varint,7,opt,name=expires_unix,json=expiresUnix,proto3" json:"expires_unix,omitempty"` // seconds
-	IssuedUnix    int64                  `protobuf:"varint,8,opt,name=issued_unix,json=issuedUnix,proto3" json:"issued_unix,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Id          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Owner       string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`                                 // the user who created the link
+	From        string                 `protobuf:"bytes,3,opt,name=from,proto3" json:"from,omitempty"`                                   // worker A: its certificate name (listens, dials B)
+	To          string                 `protobuf:"bytes,4,opt,name=to,proto3" json:"to,omitempty"`                                       // worker B: its certificate name (the target)
+	Port        int32                  `protobuf:"varint,5,opt,name=port,proto3" json:"port,omitempty"`                                  // target port on B (127.0.0.1)
+	ListenPort  int32                  `protobuf:"varint,6,opt,name=listen_port,json=listenPort,proto3" json:"listen_port,omitempty"`    // 127.0.0.1:<listen_port> on A
+	ExpiresUnix int64                  `protobuf:"varint,7,opt,name=expires_unix,json=expiresUnix,proto3" json:"expires_unix,omitempty"` // seconds
+	IssuedUnix  int64                  `protobuf:"varint,8,opt,name=issued_unix,json=issuedUnix,proto3" json:"issued_unix,omitempty"`
+	// the ends' node IDs: B accepts only a caller whose certificate is
+	// from_id, and only a grant whose to_id is its own (a worker-to-worker
+	// grant binds immutable IDs, not names)
+	FromId        string `protobuf:"bytes,9,opt,name=from_id,json=fromId,proto3" json:"from_id,omitempty"`
+	ToId          string `protobuf:"bytes,10,opt,name=to_id,json=toId,proto3" json:"to_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4806,6 +4811,20 @@ func (x *PortLinkGrant) GetIssuedUnix() int64 {
 		return x.IssuedUnix
 	}
 	return 0
+}
+
+func (x *PortLinkGrant) GetFromId() string {
+	if x != nil {
+		return x.FromId
+	}
+	return ""
+}
+
+func (x *PortLinkGrant) GetToId() string {
+	if x != nil {
+		return x.ToId
+	}
+	return ""
 }
 
 // SignedPortLinkGrant: the hub's signature over a serialized PortLinkGrant
@@ -5268,7 +5287,7 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x03log\x18\x01 \x01(\fR\x03log\x12\x18\n" +
 	"\aworkdir\x18\x02 \x01(\tR\aworkdir\"\x0e\n" +
 	"\fPruneRequest\"\x0f\n" +
-	"\rPruneResponse\"\xd2\x01\n" +
+	"\rPruneResponse\"\x80\x02\n" +
 	"\rPortLinkGrant\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05owner\x18\x02 \x01(\tR\x05owner\x12\x12\n" +
@@ -5279,7 +5298,10 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"listenPort\x12!\n" +
 	"\fexpires_unix\x18\a \x01(\x03R\vexpiresUnix\x12\x1f\n" +
 	"\vissued_unix\x18\b \x01(\x03R\n" +
-	"issuedUnix\"_\n" +
+	"issuedUnix\x12\x17\n" +
+	"\afrom_id\x18\t \x01(\tR\x06fromId\x12\x13\n" +
+	"\x05to_id\x18\n" +
+	" \x01(\tR\x04toId\"_\n" +
 	"\x13SignedPortLinkGrant\x12\x14\n" +
 	"\x05grant\x18\x01 \x01(\fR\x05grant\x12\x1c\n" +
 	"\tsignature\x18\x02 \x01(\fR\tsignature\x12\x14\n" +

@@ -234,6 +234,10 @@ func (s Store) SetEndorsementFor(e *pki.Endorsement, kind string, id pki.Identit
 		return fmt.Errorf("the endorsement is for node %s, but this node's certificate carries no node id yet (it renews with one when it next talks to the hub)", e.ID)
 	case e.ID == "" && e.Name != id.Name:
 		return fmt.Errorf("the endorsement is for %s %q, this is %s %q", e.Kind, e.Name, kind, id.Name)
+	case e.ID == "" && id.ID != "":
+		// a node with an ID takes only endorsements bound to it: a
+		// name-only one (made for a request without the ID) is refused
+		return fmt.Errorf("the endorsement is bound to the name %q only, but this node has node id %s: endorse its current request (longarm trust request / longarmd trust request), which carries the id", e.Name, id.ID)
 	}
 	if err := e.Verify(); err != nil {
 		return err

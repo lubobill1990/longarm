@@ -35,16 +35,20 @@ import (
 //   - bind: the node key's signature over the certificate's public key, so
 //     the extension can't be moved to a certificate for another key;
 //   - endorsement: a user key's signature over the node key, the node's
-//     kind (worker or device), its name and the user - and, since node IDs
-//     (docs/security.md "Node identity"), a second signature (sig2) that
-//     also covers the node's immutable ID. Peers that know IDs hold an
-//     endorsement carrying an ID to the certificate's ID (the name is only
-//     what the user called the node then: renaming keeps it valid); an
-//     endorsement without an ID (made before IDs) still binds the name, so
-//     it is valid only while the certificate has that name. Either way the
-//     endorsed thing is the node key: a new node that gets an old node's
-//     name (after a revocation) has another node key and none of the old
-//     node's trust.
+//     kind (worker or device), its name and the user. Since node IDs
+//     (docs/security.md "Node identity") an endorsement made for a node
+//     with an ID (v2) signs a different message, in its own domain
+//     ("longarm-endorsement-v2"), that also covers the ID - and nothing
+//     else: there is no name-only signature beside it, so removing the ID
+//     leaves no valid endorsement (no downgrade). Peers hold a v2
+//     endorsement to the certificate's ID (the name is only what the user
+//     called the node then: a rename keeps it valid). A v1 endorsement
+//     (made before node IDs) binds the name: valid only while the
+//     certificate has that name, and - on a certificate that carries an ID
+//     - only if it was made before LegacyEndorsementCutoff (the transition
+//     window). Either way the endorsed thing is the node key: a new node
+//     that gets an old node's name (after a revocation) has another node
+//     key and none of the old node's trust.
 //
 // A hub that strips or alters the extension only makes the node unusable
 // for peers that require it (fail closed); it can't make one up.
@@ -73,12 +77,22 @@ type Endorsement struct {
 	NodeKey []byte `json:"node_key"`
 	UserKey []byte `json:"user_key"`
 	Issued  int64  `json:"issued"`
-	Sig     []byte `json:"sig"` // over message(): no ID (what peers before node IDs check)
-	// ID is the endorsed node's ID; Sig2 signs message2(), which covers
-	// it. Both or neither.
-	ID   string `json:"id,omitempty"`
-	Sig2 []byte `json:"sig2,omitempty"`
+	// Sig signs message() (v1: no ID) or, when ID is set, message2() (v2:
+	// another signing domain, covering the ID). Peers before node IDs
+	// can't verify a v2 endorsement (they refuse it: fail closed).
+	Sig []byte `json:"sig"`
+	ID  string `json:"id,omitempty"`
 }
+
+// LegacyEndorsementCutoff ends the transition window for v1 (name-bound)
+// endorsements on certificates that carry a node ID: such an endorsement
+// counts only if it was made before this time. Certificates without an ID
+// (not renewed since node IDs) are name-bound anyway. Endorse a node again
+// (its request carries its ID) to get a v2 endorsement.
+var LegacyEndorsementCutoff = time.Date(2027, 1, 31, 0, 0, 0, 0, time.UTC)
+
+// V2 reports whether e is bound to a node ID.
+func (e *Endorsement) V2() bool { return e.ID != "" }
 
 func (e *Endorsement) message() []byte {
 	b64 := base64.StdEncoding.EncodeToString
@@ -118,11 +132,16 @@ func EndorseID(userKey ed25519.PrivateKey, user, kind, name, id string, nodeKey 
 	}
 	e := &Endorsement{Kind: kind, User: user, Name: name, NodeKey: bytes.Clone(nodeKey),
 		UserKey: userKey.Public().(ed25519.PublicKey), Issued: time.Now().Unix(), ID: strings.ToLower(id)}
-	e.Sig = ed25519.Sign(userKey, e.message())
-	if e.ID != "" {
-		e.Sig2 = ed25519.Sign(userKey, e.message2())
-	}
+	e.Sig = ed25519.Sign(userKey, e.signed())
 	return e, nil
+}
+
+// signed is the message Sig covers: v2 (with the ID) or v1.
+func (e *Endorsement) signed() []byte {
+	if e.ID != "" {
+		return e.message2()
+	}
+	return e.message()
 }
 
 // Verify checks the signatures by the key the endorsement names (whether
@@ -132,16 +151,11 @@ func (e *Endorsement) Verify() error {
 	if len(e.UserKey) != ed25519.PublicKeySize || len(e.NodeKey) != ed25519.PublicKeySize {
 		return errors.New("endorsement: bad key size")
 	}
-	if !ed25519.Verify(e.UserKey, e.message(), e.Sig) {
-		return errors.New("endorsement: bad signature")
+	if e.ID != "" && (!nodeid.Valid(e.ID) || e.ID != strings.ToLower(e.ID)) {
+		return errors.New("endorsement: bad node id")
 	}
-	if e.ID != "" || len(e.Sig2) > 0 {
-		if !nodeid.Valid(e.ID) || e.ID != strings.ToLower(e.ID) {
-			return errors.New("endorsement: bad node id")
-		}
-		if !ed25519.Verify(e.UserKey, e.message2(), e.Sig2) {
-			return errors.New("endorsement: bad signature over the node id")
-		}
+	if !ed25519.Verify(e.UserKey, e.signed(), e.Sig) {
+		return errors.New("endorsement: bad signature")
 	}
 	return nil
 }
@@ -325,6 +339,11 @@ func (p *TrustPolicy) CheckEndorsement(c *x509.Certificate) (*Endorsement, error
 		return nil, fmt.Errorf("%s: endorsed as node %s, the certificate is node %s", id, e.ID, id.ID)
 	case e.ID == "" && e.Name != id.Name:
 		return nil, fmt.Errorf("%s: endorsed as %q", id, e.Name)
+	case e.ID == "" && id.ID != "" && !time.Unix(e.Issued, 0).Before(LegacyEndorsementCutoff):
+		// the transition window for name-bound endorsements is over (or a
+		// name-bound endorsement was made after it began to close)
+		return nil, fmt.Errorf("%s: endorsed by name only (an endorsement from before node IDs, made %s): endorse it again (its request carries its node id)",
+			id, time.Unix(e.Issued, 0).UTC().Format(time.DateOnly))
 	}
 	switch id.Role {
 	case RoleWorker:
@@ -345,13 +364,22 @@ func (p *TrustPolicy) CheckEndorsement(c *x509.Certificate) (*Endorsement, error
 }
 
 // CheckTarget applies what the user asked for to a worker's verified
-// endorsement e: a worker targeted by name must have been endorsed under
-// that name (the hub maps names to nodes, and end-to-end trust doesn't
-// take the hub's word: a renamed worker needs a new endorsement, or a
-// target by ID); one targeted by ID or ID prefix must have been endorsed
-// with an ID that has it. An empty target (a worker the hub placed the
-// job on) adds nothing.
+// endorsement e: a worker targeted by name (typed, or a workers.toml /
+// ad-hoc entry) must have been endorsed under that name (the hub maps
+// names to nodes, and end-to-end trust doesn't take the hub's word: a
+// renamed worker needs a new endorsement, or a target by ID); one targeted
+// by ID or ID prefix must have been endorsed with an ID that has it; an
+// expected ID (t.ID) must be the endorsed one when the endorsement has an
+// ID. A target without any of these is refused unless it says it may be
+// any endorsed worker (t.Any: automatic placement, fleet-wide listings,
+// the inner handshake of a transport whose outer handshake checks).
 func CheckTarget(e *Endorsement, t DialTarget) error {
+	if t.Name == "" && t.IDPrefix == "" && t.ID == "" && !t.Any {
+		return errors.New("no target to hold the worker to (name or id)")
+	}
+	if t.ID != "" && e.ID != "" && !strings.EqualFold(e.ID, t.ID) {
+		return fmt.Errorf("expected worker node %s, the worker answering was endorsed as node %s", t.ID, e.ID)
+	}
 	if t.Name != "" && e.Name != t.Name {
 		return fmt.Errorf("asked for worker %q, the worker answering was endorsed as %q (renamed? target it by id, or endorse it again)", t.Name, e.Name)
 	}

@@ -206,6 +206,9 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 	}
 	rec := &store.Node{ID: nodeid.New(), Name: name, Role: jc.Role, Labels: maps.Clone(jc.Labels), Profile: jc.Profile,
 		Hostname: req.Hostname, OS: req.Os, Arch: req.Arch, Version: req.Version, JoinedAt: now, User: jc.User}
+	if rec.Role != string(pki.RoleWorker) && rec.User == "" {
+		rec.User = name // pinned: whom the device acts as never follows a later name
+	}
 	resp := &pb.JoinResponse{Name: name, Role: jc.Role, CaPem: h.ca.CertPEM, HubName: h.cfg.Name, Labels: maps.Clone(jc.Labels), Id: rec.ID}
 	if jc.Role == string(pki.RoleWorker) && jc.Owner != "" {
 		// A user's own machine: nobody else may use it (until shared), so
@@ -297,6 +300,12 @@ func (h *Hub) issue(rec *store.Node, csr []byte) ([]byte, error) {
 	o := h.nodeKeyTakenLocked(nk, rec.ID)
 	name := certName(h.nodes[rec.ID], rec)
 	h.mu.Unlock()
+	if rec.Role != string(pki.RoleWorker) && rec.User == "" {
+		// a device from before users were pinned: its certificates' name
+		// is its user
+		rec.User = rec.DialName()
+	}
+	prevName := rec.DialName()
 	if o != nil {
 		// one machine's trust directory enrolled twice (a worker joined
 		// again without leaving): harmless for end-to-end trust - an
@@ -315,16 +324,22 @@ func (h *Hub) issue(rec *store.Node, csr []byte) ([]byte, error) {
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	if err := h.store.AddCert(store.Cert{Serial: pki.Serial(leaf), Node: name, NodeID: rec.ID, NotAfter: leaf.NotAfter, IssuedAt: time.Now()}); err != nil {
+	if err := h.store.AddCert(store.Cert{Serial: pki.Serial(leaf), Node: name, NodeID: rec.ID, NotAfter: leaf.NotAfter, IssuedAt: time.Now(), HasID: true}); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	h.mu.Lock()
 	h.knownSerials[pki.Serial(leaf)] = rec.ID
 	h.mu.Unlock()
 	rec.CertSerial, rec.CertNotAfter = pki.Serial(leaf), leaf.NotAfter
+	rec.Supersede = ""
 	rec.CertName, rec.CertHasID, rec.NodeKey = "", true, nk
 	if name != rec.Name {
 		rec.CertName = name
+	}
+	if prevName != name {
+		// renamed: the older certificates (the old name) go once this one
+		// is in use (supersedeIfDue)
+		rec.Supersede = rec.CertSerial
 	}
 	return cert, nil
 }
@@ -415,6 +430,7 @@ func (h *Hub) Revoke(by, target string) (*pb.NodeInfo, error) {
 	if err := h.rebuildRevocations(); err != nil {
 		h.log.Warn("rebuild revocations", "err", err)
 	}
+	h.reloadLegacyLocked()
 	if n.sess != nil {
 		n.sess.cancel()
 		h.setOfflineLocked(n, n.sess.id)
@@ -465,7 +481,7 @@ func (h *Hub) renew(c caller, csr []byte) (*pb.RenewResponse, error) {
 	h.mu.Lock()
 	oldDial := n.rec.DialName()
 	n.rec.CertSerial, n.rec.CertNotAfter = rec.CertSerial, rec.CertNotAfter
-	n.rec.CertName, n.rec.CertHasID, n.rec.NodeKey = rec.CertName, rec.CertHasID, rec.NodeKey
+	n.rec.CertName, n.rec.CertHasID, n.rec.NodeKey, n.rec.Supersede, n.rec.User = rec.CertName, rec.CertHasID, rec.NodeKey, rec.Supersede, rec.User
 	if oldDial != n.rec.DialName() {
 		h.dialNameChangedLocked(n) // port links name workers by their certificate names
 	}

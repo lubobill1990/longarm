@@ -323,6 +323,7 @@ func (s *session) knownWorkers(ctx context.Context) []client.Worker {
 			continue
 		}
 		if w, ok := workerFromNode(n); ok {
+			w.TrustAny = true // every known worker (listings): no target to hold it to
 			out = append(out, w)
 			seen[n.Name] = true
 		}
@@ -348,6 +349,7 @@ func (s *session) worker(target string) (client.Worker, error) {
 		s.hubMu.Unlock()
 		if p != nil && p.Name == t.Value { // the hub's choice: no target to hold it to
 			if w, ok := workerFromNode(p); ok {
+				w.TrustAny = true // explicitly unconstrained: the hub placed the job
 				return w, nil
 			}
 		}

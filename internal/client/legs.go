@@ -133,18 +133,20 @@ func WorkerFromNode(n *pb.NodeInfo) (Worker, bool) {
 	if n.CertName != "" {
 		w.CertName = n.CertName
 	}
-	w.ID = n.Id
+	w.ID, w.LegacySerials = n.Id, n.LegacySerials
 	return w, true
 }
 
-// NodeLegsOf is NodeLegs for a node the hub reported (WorkerFromNode).
+// NodeLegsOf is NodeLegs for a node the hub reported (WorkerFromNode),
+// for monitoring: any worker the user's keys endorsed (TrustAny), held to
+// the node's ID.
 func NodeLegsOf(n *pb.NodeInfo) []Worker {
 	legs := NodeLegs(n.Name, n.Endpoints)
 	for i := range legs {
 		if n.CertName != "" {
 			legs[i].CertName = n.CertName
 		}
-		legs[i].ID = n.Id
+		legs[i].ID, legs[i].LegacySerials, legs[i].TrustAny = n.Id, n.LegacySerials, true
 	}
 	return legs
 }

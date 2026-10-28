@@ -118,6 +118,7 @@ func lsCmd() *cobra.Command {
 						continue
 					}
 					if w, ok := workerFromNode(n); ok {
+						w.TrustAny = true // listing every worker: no target to hold it to
 						known[n.Name] = w
 					}
 				}

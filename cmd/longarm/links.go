@@ -82,23 +82,8 @@ or with longarm link rm.`,
 				req.Ttl = durationpb.New(ttl)
 			}
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
-				// targets (names, IDs, prefixes) -> the names the workers'
-				// certificates have, which the signed consent and the
-				// workers go by
-				if nodes, ok := s.hubNodes(ctx, false); ok {
-					for _, p := range []*string{&req.From, &req.To} {
-						t, err := nodeid.ParseTarget(*p)
-						if err != nil {
-							return usagef("%s", err.Error())
-						}
-						n, err := resolveNode(t, nodes, "worker")
-						if errors.Is(err, nodeid.ErrAmbiguous) {
-							return usagef("%s", err.Error())
-						}
-						if err == nil {
-							*p = cmp.Or(n.CertName, n.Name)
-						}
-					}
+				if err := resolveLinkEnds(ctx, s, req); err != nil {
+					return err
 				}
 				if err := signLink(s.cfg.Dir, req); err != nil {
 					return err
@@ -207,6 +192,59 @@ const defaultSignedLinkTTL = 8 * time.Hour
 // user's key accept a link only with it, so the hub alone can't create one.
 // Without an endorsement the request goes unsigned (workers without trust
 // don't need it).
+// resolveLinkEnds turns the link's targets (names, IDs, prefixes) into the
+// names the workers' certificates have, which the signed consent and the
+// workers go by, and their node IDs (which bind the consent).
+func resolveLinkEnds(ctx context.Context, s *session, req *pb.CreatePortLinkRequest) error {
+	// targets (names, IDs, prefixes) -> the names the workers'
+	// certificates have, which the signed consent and the
+	// workers go by
+	if nodes, ok := s.hubNodes(ctx, false); ok {
+		ends := []struct {
+			name, id *string
+		}{{&req.From, &req.FromId}, {&req.To, &req.ToId}}
+		for _, end := range ends {
+			target := *end.name
+			t, err := nodeid.ParseTarget(target)
+			if err != nil {
+				return usagef("%s", err.Error())
+			}
+			n, err := resolveNode(t, nodes, "worker")
+			if errors.Is(err, nodeid.ErrAmbiguous) {
+				return usagef("%s", err.Error())
+			}
+			if err != nil {
+				continue
+			}
+			// With end-to-end trust the hub's mapping of the
+			// target to a node is not taken on trust before the
+			// owner signs it: the worker must answer as the
+			// endorsed target (its name / id, pki.CheckTarget).
+			if p := s.dialer.Bundle().Trust.Load(); p.Active() {
+				if err := verifyEnd(ctx, s, target); err != nil {
+					return fmt.Errorf("%s: %w", target, err)
+				}
+			}
+			*end.name, *end.id = cmp.Or(n.CertName, n.Name), n.Id
+		}
+	}
+	return nil
+}
+
+// verifyEnd dials a link end the way the user named it: the handshake
+// holds the worker's endorsement to that name or ID (end-to-end trust).
+func verifyEnd(ctx context.Context, s *session, target string) error {
+	conn, err := s.conn(target)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	_, err = conn.Node().Info(ctx, &pb.InfoRequest{})
+	return err
+}
+
 func signLink(cfgDir string, req *pb.CreatePortLinkRequest) error {
 	st := client.TrustStore(cfgDir)
 	e, err := st.Endorsement()
@@ -227,8 +265,9 @@ func signLink(cfgDir string, req *pb.CreatePortLinkRequest) error {
 	if req.Ttl != nil {
 		ttl = req.Ttl.AsDuration()
 	}
+	// the ends' node IDs bind the consent (workers hold their ends to them)
 	c, err := portlink.SignConsent(key, e, &pb.PortLinkSpec{Id: portlink.NewID(), From: req.From, To: req.To, Port: req.Port,
-		ListenPort: req.ListenPort, ExpiresUnix: time.Now().Add(ttl).Unix(), JobId: req.JobId})
+		ListenPort: req.ListenPort, ExpiresUnix: time.Now().Add(ttl).Unix(), JobId: req.JobId, FromId: req.FromId, ToId: req.ToId})
 	if err != nil {
 		return err
 	}

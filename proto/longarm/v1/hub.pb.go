@@ -3506,7 +3506,11 @@ type NodeInfo struct {
 	CertName string `protobuf:"bytes,33,opt,name=cert_name,json=certName,proto3" json:"cert_name,omitempty"`
 	// A worker and its admin worker on the same machine (paired together):
 	// the other one's ID.
-	CompanionId   string `protobuf:"bytes,34,opt,name=companion_id,json=companionId,proto3" json:"companion_id,omitempty"`
+	CompanionId string `protobuf:"bytes,34,opt,name=companion_id,json=companionId,proto3" json:"companion_id,omitempty"`
+	// Serials of the node's valid certificates without a node ID (issued
+	// before IDs, not yet renewed): the only ID-less certificates clients
+	// accept for this node.
+	LegacySerials []string `protobuf:"bytes,35,rep,name=legacy_serials,json=legacySerials,proto3" json:"legacy_serials,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3777,6 +3781,13 @@ func (x *NodeInfo) GetCompanionId() string {
 		return x.CompanionId
 	}
 	return ""
+}
+
+func (x *NodeInfo) GetLegacySerials() []string {
+	if x != nil {
+		return x.LegacySerials
+	}
+	return nil
 }
 
 type ListNodesRequest struct {
@@ -8984,8 +8995,11 @@ type PortLinkAssignment struct {
 	// to reach `to` (its advertised endpoints and certificate name).
 	Grant           *SignedPortLinkGrant `protobuf:"bytes,2,opt,name=grant,proto3" json:"grant,omitempty"`
 	TargetEndpoints []string             `protobuf:"bytes,3,rep,name=target_endpoints,json=targetEndpoints,proto3" json:"target_endpoints,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// the target's certificates without a node ID it may still answer with
+	// (NodeInfo.legacy_serials)
+	TargetLegacySerials []string `protobuf:"bytes,4,rep,name=target_legacy_serials,json=targetLegacySerials,proto3" json:"target_legacy_serials,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *PortLinkAssignment) Reset() {
@@ -9039,6 +9053,13 @@ func (x *PortLinkAssignment) GetTargetEndpoints() []string {
 	return nil
 }
 
+func (x *PortLinkAssignment) GetTargetLegacySerials() []string {
+	if x != nil {
+		return x.TargetLegacySerials
+	}
+	return nil
+}
+
 type CreatePortLinkRequest struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	From       string                 `protobuf:"bytes,1,opt,name=from,proto3" json:"from,omitempty"`                                // worker A (listens)
@@ -9049,7 +9070,11 @@ type CreatePortLinkRequest struct {
 	JobId      string                 `protobuf:"bytes,6,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`                 // bind the link's lifetime to this job on `from`
 	// Signed by a device of the caller's user (longarm link create does when
 	// the device is endorsed): the link gets its id and expiry from it.
-	Consent       *PortLinkConsent `protobuf:"bytes,7,opt,name=consent,proto3" json:"consent,omitempty"`
+	Consent *PortLinkConsent `protobuf:"bytes,7,opt,name=consent,proto3" json:"consent,omitempty"`
+	// the node IDs the client resolved from / to to (and signed in the
+	// consent); the hub refuses a request whose workers have other IDs
+	FromId        string `protobuf:"bytes,8,opt,name=from_id,json=fromId,proto3" json:"from_id,omitempty"`
+	ToId          string `protobuf:"bytes,9,opt,name=to_id,json=toId,proto3" json:"to_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -9131,6 +9156,20 @@ func (x *CreatePortLinkRequest) GetConsent() *PortLinkConsent {
 		return x.Consent
 	}
 	return nil
+}
+
+func (x *CreatePortLinkRequest) GetFromId() string {
+	if x != nil {
+		return x.FromId
+	}
+	return ""
+}
+
+func (x *CreatePortLinkRequest) GetToId() string {
+	if x != nil {
+		return x.ToId
+	}
+	return ""
 }
 
 type ListPortLinksRequest struct {
@@ -9333,17 +9372,23 @@ func (x *PortLinkConsent) GetEndorsement() string {
 
 // PortLinkSpec is what the owner consents to.
 type PortLinkSpec struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // chosen by the client
-	Owner         string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`
-	From          string                 `protobuf:"bytes,3,opt,name=from,proto3" json:"from,omitempty"`
-	To            string                 `protobuf:"bytes,4,opt,name=to,proto3" json:"to,omitempty"`
-	Port          int32                  `protobuf:"varint,5,opt,name=port,proto3" json:"port,omitempty"`
-	ListenPort    int32                  `protobuf:"varint,6,opt,name=listen_port,json=listenPort,proto3" json:"listen_port,omitempty"`
-	ExpiresUnix   int64                  `protobuf:"varint,7,opt,name=expires_unix,json=expiresUnix,proto3" json:"expires_unix,omitempty"` // the link may end earlier, never later
-	JobId         string                 `protobuf:"bytes,8,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
-	Device        string                 `protobuf:"bytes,9,opt,name=device,proto3" json:"device,omitempty"` // the signing device (the endorsement's name)
-	IssuedUnix    int64                  `protobuf:"varint,10,opt,name=issued_unix,json=issuedUnix,proto3" json:"issued_unix,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Id          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // chosen by the client
+	Owner       string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`
+	From        string                 `protobuf:"bytes,3,opt,name=from,proto3" json:"from,omitempty"`
+	To          string                 `protobuf:"bytes,4,opt,name=to,proto3" json:"to,omitempty"`
+	Port        int32                  `protobuf:"varint,5,opt,name=port,proto3" json:"port,omitempty"`
+	ListenPort  int32                  `protobuf:"varint,6,opt,name=listen_port,json=listenPort,proto3" json:"listen_port,omitempty"`
+	ExpiresUnix int64                  `protobuf:"varint,7,opt,name=expires_unix,json=expiresUnix,proto3" json:"expires_unix,omitempty"` // the link may end earlier, never later
+	JobId       string                 `protobuf:"bytes,8,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Device      string                 `protobuf:"bytes,9,opt,name=device,proto3" json:"device,omitempty"` // the signing device (the endorsement's name)
+	IssuedUnix  int64                  `protobuf:"varint,10,opt,name=issued_unix,json=issuedUnix,proto3" json:"issued_unix,omitempty"`
+	// The workers' node IDs (docs/security.md "Node identity"): workers hold
+	// the link's ends to these (their certificates' and endorsements' IDs).
+	// A consent without them (an older longarm) is held to the names: the
+	// ends' endorsements must carry from / to as their names.
+	FromId        string `protobuf:"bytes,11,opt,name=from_id,json=fromId,proto3" json:"from_id,omitempty"`
+	ToId          string `protobuf:"bytes,12,opt,name=to_id,json=toId,proto3" json:"to_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -9446,6 +9491,20 @@ func (x *PortLinkSpec) GetIssuedUnix() int64 {
 		return x.IssuedUnix
 	}
 	return 0
+}
+
+func (x *PortLinkSpec) GetFromId() string {
+	if x != nil {
+		return x.FromId
+	}
+	return ""
+}
+
+func (x *PortLinkSpec) GetToId() string {
+	if x != nil {
+		return x.ToId
+	}
+	return ""
 }
 
 var File_longarm_v1_hub_proto protoreflect.FileDescriptor
@@ -9743,7 +9802,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x06points\x18\x02 \x03(\v2\x18.longarm.v1.MetricsPointR\x06points\x12\x17\n" +
 	"\anode_id\x18\x03 \x01(\tR\x06nodeId\"@\n" +
 	"\x0fHistoryResponse\x12-\n" +
-	"\x05nodes\x18\x01 \x03(\v2\x17.longarm.v1.NodeHistoryR\x05nodes\"\xcc\t\n" +
+	"\x05nodes\x18\x01 \x03(\v2\x17.longarm.v1.NodeHistoryR\x05nodes\"\xf3\t\n" +
 	"\bNodeInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12\x14\n" +
@@ -9783,7 +9842,8 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\fadmin_worker\x18\x1f \x01(\bR\vadminWorker\x12\x0e\n" +
 	"\x02id\x18  \x01(\tR\x02id\x12\x1b\n" +
 	"\tcert_name\x18! \x01(\tR\bcertName\x12!\n" +
-	"\fcompanion_id\x18\" \x01(\tR\vcompanionId\x1a9\n" +
+	"\fcompanion_id\x18\" \x01(\tR\vcompanionId\x12%\n" +
+	"\x0elegacy_serials\x18# \x03(\tR\rlegacySerials\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"$\n" +
@@ -10235,11 +10295,12 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x05links\x18\x01 \x03(\v2\x1a.longarm.v1.PortLinkStatusR\x05links\"[\n" +
 	"\tPortLinks\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\x124\n" +
-	"\x05links\x18\x02 \x03(\v2\x1e.longarm.v1.PortLinkAssignmentR\x05links\"\xa0\x01\n" +
+	"\x05links\x18\x02 \x03(\v2\x1e.longarm.v1.PortLinkAssignmentR\x05links\"\xd4\x01\n" +
 	"\x12PortLinkAssignment\x12(\n" +
 	"\x04link\x18\x01 \x01(\v2\x14.longarm.v1.PortLinkR\x04link\x125\n" +
 	"\x05grant\x18\x02 \x01(\v2\x1f.longarm.v1.SignedPortLinkGrantR\x05grant\x12)\n" +
-	"\x10target_endpoints\x18\x03 \x03(\tR\x0ftargetEndpoints\"\xeb\x01\n" +
+	"\x10target_endpoints\x18\x03 \x03(\tR\x0ftargetEndpoints\x122\n" +
+	"\x15target_legacy_serials\x18\x04 \x03(\tR\x13targetLegacySerials\"\x99\x02\n" +
 	"\x15CreatePortLinkRequest\x12\x12\n" +
 	"\x04from\x18\x01 \x01(\tR\x04from\x12\x0e\n" +
 	"\x02to\x18\x02 \x01(\tR\x02to\x12\x12\n" +
@@ -10248,7 +10309,9 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"listenPort\x12+\n" +
 	"\x03ttl\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\x03ttl\x12\x15\n" +
 	"\x06job_id\x18\x06 \x01(\tR\x05jobId\x125\n" +
-	"\aconsent\x18\a \x01(\v2\x1b.longarm.v1.PortLinkConsentR\aconsent\"(\n" +
+	"\aconsent\x18\a \x01(\v2\x1b.longarm.v1.PortLinkConsentR\aconsent\x12\x17\n" +
+	"\afrom_id\x18\b \x01(\tR\x06fromId\x12\x13\n" +
+	"\x05to_id\x18\t \x01(\tR\x04toId\"(\n" +
 	"\x14ListPortLinksRequest\x12\x10\n" +
 	"\x03all\x18\x01 \x01(\bR\x03all\"C\n" +
 	"\x15ListPortLinksResponse\x12*\n" +
@@ -10258,7 +10321,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x0fPortLinkConsent\x12\x12\n" +
 	"\x04spec\x18\x01 \x01(\fR\x04spec\x12\x1c\n" +
 	"\tsignature\x18\x02 \x01(\fR\tsignature\x12 \n" +
-	"\vendorsement\x18\x03 \x01(\tR\vendorsement\"\x80\x02\n" +
+	"\vendorsement\x18\x03 \x01(\tR\vendorsement\"\xae\x02\n" +
 	"\fPortLinkSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05owner\x18\x02 \x01(\tR\x05owner\x12\x12\n" +
@@ -10272,7 +10335,9 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x06device\x18\t \x01(\tR\x06device\x12\x1f\n" +
 	"\vissued_unix\x18\n" +
 	" \x01(\x03R\n" +
-	"issuedUnix2\xa3\x03\n" +
+	"issuedUnix\x12\x17\n" +
+	"\afrom_id\x18\v \x01(\tR\x06fromId\x12\x13\n" +
+	"\x05to_id\x18\f \x01(\tR\x04toId2\xa3\x03\n" +
 	"\x06Enroll\x129\n" +
 	"\x04Join\x12\x17.longarm.v1.JoinRequest\x1a\x18.longarm.v1.JoinResponse\x12E\n" +
 	"\n" +

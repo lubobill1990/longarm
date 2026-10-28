@@ -416,7 +416,7 @@ func (h *Hub) nodeInfoLocked(n *node) *pb.NodeInfo {
 		Metrics: n.metrics, LastSeen: tspb(r.LastSeen), JoinedAt: tspb(r.JoinedAt), CertNotAfter: tspb(r.CertNotAfter),
 		Mirrors: r.Mirrors, WarmRepos: r.WarmRepos, Profile: r.Profile, Toolchain: n.toolchain, AdminWorker: r.Admin,
 		MaxJobs: n.maxJobs, ReservedMemGb: n.reservedGB, Tailnet: n.tailnet, Isolation: r.Isolation,
-		Id: r.ID, CertName: r.DialName(), CompanionId: r.Companion,
+		Id: r.ID, CertName: r.DialName(), CompanionId: r.Companion, LegacySerials: h.legacySerials[r.ID],
 	}
 	if r.Role != string(pki.RoleWorker) {
 		info.User = nodeUser(r)

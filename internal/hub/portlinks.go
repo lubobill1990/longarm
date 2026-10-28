@@ -158,6 +158,15 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 	if from == to {
 		return nil, status.Error(codes.InvalidArgument, "from and to are the same worker (use a local port there)")
 	}
+	if (req.FromId != "" && !strings.EqualFold(req.FromId, from.rec.ID)) || (req.ToId != "" && !strings.EqualFold(req.ToId, to.rec.ID)) {
+		return nil, status.Errorf(codes.FailedPrecondition, "the workers are not the nodes the request names (%s -> %s): resolve them again", req.FromId, req.ToId)
+	}
+	if req.Consent != nil {
+		if s, _, err := portlink.ParseConsent(req.Consent); err == nil &&
+			((s.FromId != "" && !strings.EqualFold(s.FromId, from.rec.ID)) || (s.ToId != "" && !strings.EqualFold(s.ToId, to.rec.ID))) {
+			return nil, status.Error(codes.InvalidArgument, "the link's consent names other worker nodes")
+		}
+	}
 	if req.Consent != nil && (req.From != from.rec.DialName() || req.To != to.rec.DialName()) {
 		// workers hold the signed spec to the names they know each other by
 		return nil, status.Errorf(codes.InvalidArgument, "a link with consent names its workers as their certificates do: %s, %s",
@@ -431,6 +440,7 @@ func (h *Hub) portLinksMsgLocked(worker string) *pb.HubCommand {
 			a.Grant = g
 			if n := h.nodes[l.ToId]; n != nil {
 				a.TargetEndpoints = append([]string(nil), n.rec.Endpoints...)
+				a.TargetLegacySerials = append([]string(nil), h.legacySerials[l.ToId]...)
 			}
 		}
 		msg.Links = append(msg.Links, a)
@@ -449,7 +459,8 @@ func (h *Hub) portLinkGrantLocked(e *portLinkEntry) (*pb.SignedPortLinkGrant, er
 	}
 	l := e.l
 	g, err := portlink.Sign(cert, &pb.PortLinkGrant{Id: l.Id, Owner: l.Owner, From: l.From, To: l.To, Port: l.Port,
-		ListenPort: l.ListenPort, ExpiresUnix: l.ExpiresAt.AsTime().Unix(), IssuedUnix: time.Now().Unix()})
+		ListenPort: l.ListenPort, ExpiresUnix: l.ExpiresAt.AsTime().Unix(), IssuedUnix: time.Now().Unix(),
+		FromId: l.FromId, ToId: l.ToId})
 	if err != nil {
 		return nil, err
 	}

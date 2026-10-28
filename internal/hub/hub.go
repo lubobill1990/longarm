@@ -62,13 +62,16 @@ type Hub struct {
 	profiles     map[string]*pb.Profile // latest revision
 	stable       map[string]*pb.Profile // last revision past its canary
 	knownSerials map[string]string      // recorded certificate serial -> node ID
-	revVersion   int64
-	sessionSeq   uint64
-	queueSeq     uint64
-	kick         chan struct{}   // re-run the queue
-	rollout      *pb.Rollout     // the current / last release rollout
-	rel          *releaseStore   // release files (relstore.go)
-	tailnet      tailnetProvider // nil = no tailnet enrollment
+	// legacySerials: node ID -> serials of its valid certificates without
+	// a node ID (NodeInfo.legacy_serials; reloadLegacyLocked)
+	legacySerials map[string][]string
+	revVersion    int64
+	sessionSeq    uint64
+	queueSeq      uint64
+	kick          chan struct{}   // re-run the queue
+	rollout       *pb.Rollout     // the current / last release rollout
+	rel           *releaseStore   // release files (relstore.go)
+	tailnet       tailnetProvider // nil = no tailnet enrollment
 	// TailnetKey calls per node: workers 5, then one per hour; clients
 	// 10, then one per 10 minutes.
 	tailnetWorkerLimit, tailnetClientLimit *ipLimiter
@@ -222,6 +225,9 @@ func (h *Hub) load() error {
 		h.nodes[r.ID] = n
 	}
 	if h.knownSerials, err = h.store.CertNodes(time.Now()); err != nil {
+		return err
+	}
+	if h.legacySerials, err = h.store.LegacyCerts(time.Now()); err != nil {
 		return err
 	}
 	rows, err := h.store.Jobs()

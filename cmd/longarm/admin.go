@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/client"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -43,7 +44,7 @@ func adminCmd() *cobra.Command {
 	caInit.Flags().IntVar(&caYears, "years", 10, "validity in years")
 	ca.AddCommand(caInit)
 
-	var role, name, out, issueUser string
+	var role, name, out, issueUser, issueID string
 	var hosts []string
 	var days int
 	var install bool
@@ -75,7 +76,16 @@ func adminCmd() *cobra.Command {
 			if days > 0 {
 				validity = time.Duration(days) * 24 * time.Hour
 			}
-			certPEM, keyPEM, err := ca.Issue(pki.IssueOptions{Role: r, Name: name, Hosts: hosts, Validity: validity, User: issueUser})
+			// the node ID: a new node's (fresh), or - re-issuing a node's
+			// certificate - its own (--id): a hub maps certificates to nodes
+			// by ID, never an unknown one by name
+			id := issueID
+			if id == "" {
+				id = nodeid.New()
+			} else if id = nodeid.Canonical(id); id == "" {
+				return fmt.Errorf("--id %q: not a node id (longarm admin nodes shows them)", issueID)
+			}
+			certPEM, keyPEM, err := ca.Issue(pki.IssueOptions{Role: r, Name: name, Hosts: hosts, Validity: validity, User: issueUser, ID: id})
 			if err != nil {
 				return err
 			}
@@ -94,7 +104,7 @@ func adminCmd() *cobra.Command {
 			if err := pki.WriteBundle(out, ca.CertPEM, certPEM, keyPEM); err != nil {
 				return err
 			}
-			fmt.Printf("issued %s/%s -> %s\n", r, name, out)
+			fmt.Printf("issued %s/%s (node id %s) -> %s\n", r, name, id, out)
 			return nil
 		},
 	}
@@ -106,6 +116,7 @@ func adminCmd() *cobra.Command {
 	issue.Flags().BoolVar(&install, "install", false, "install as this longarm's own bundle (<config-dir>/tls)")
 	issue.Flags().StringVar(&caDir, "ca-dir", "", "CA directory (default <config-dir>/ca)")
 	issue.Flags().StringVar(&issueUser, "user", "", "client/admin: the Longarm user the certificate belongs to (multi-tenancy; default: the name)")
+	issue.Flags().StringVar(&issueID, "id", "", "re-issue for an existing node: its node ID (default: a new node, a fresh ID); a hub refuses an unknown certificate of a name it knows")
 	issue.MarkFlagRequired("role")
 	issue.MarkFlagRequired("name")
 

@@ -139,6 +139,7 @@ func (h *Hub) authorize(ctx context.Context, method string) (context.Context, er
 	if err != nil {
 		return nil, err
 	}
+	h.supersedeIfDue(nodeID, cert)
 	if id.Role == pki.RoleClient || id.Role == pki.RoleAdmin {
 		h.mu.Lock()
 		disabled := h.userDisabledLocked(id.Owner())
@@ -156,7 +157,12 @@ func (h *Hub) authorize(ctx context.Context, method string) (context.Context, er
 // certificate of the hub's CA that the hub has not seen before (issued by
 // hand with `longarm admin issue`, e.g. a release certificate) registers
 // its node as approved - with the ID the certificate carries, else a new
-// one; its serial is recorded so a later revocation covers it.
+// one - but only for a name without history: no node ever had it (as its
+// name or its certificates'), no certificate was ever recorded for it. A
+// certificate of a name with history that the hub can't map by ID or
+// recorded serial is refused, never mapped by name (it could be a copy
+// of a revoked node's, or a renamed node's old one): re-issue it with the
+// node's ID (`longarm admin issue --id`) or enroll again.
 func (h *Hub) checkNode(id pki.Identity, cert *x509.Certificate) (string, error) {
 	serial := pki.Serial(cert)
 	h.mu.Lock()
@@ -164,13 +170,17 @@ func (h *Hub) checkNode(id pki.Identity, cert *x509.Certificate) (string, error)
 	n := h.nodeForCertLocked(id, cert)
 	switch {
 	case n == nil:
-		if o := h.nameTakenLocked(id.Name, ""); o != nil {
-			// a certificate of a node the hub doesn't know, named like a
-			// live node: never mistaken for it
-			return "", status.Errorf(codes.PermissionDenied, "the name %s belongs to another node (%s)", id.Name, nodeid.Short(o.rec.ID))
+		if o := h.nameHistoryLocked(id.Name); o != "" {
+			h.log.Warn("unknown certificate of a name with history refused", "identity", id.String(), "id", id.ID, "serial", serial, "history", o)
+			return "", status.Errorf(codes.PermissionDenied,
+				"certificate %s of %s is not known to the hub, and the name %s has history (%s): it is never mapped by name - re-issue it for the node (longarm admin issue --id <node id>) or enroll again",
+				serial, id, id.Name, o)
 		}
 		rec := &store.Node{ID: id.ID, Name: id.Name, Role: string(id.Role), State: stateApproved, JoinedAt: time.Now().UTC(),
 			ApprovedAt: time.Now().UTC(), CertSerial: serial, CertNotAfter: cert.NotAfter, User: id.User, CertHasID: id.ID != ""}
+		if rec.Role != string(pki.RoleWorker) {
+			rec.User = id.Owner() // pinned: a later name must not change whom it acts as
+		}
 		if rec.ID == "" {
 			rec.ID = nodeid.New()
 		}
@@ -190,10 +200,14 @@ func (h *Hub) checkNode(id pki.Identity, cert *x509.Certificate) (string, error)
 		// an older enrollment or issued by hand: let it through as approved.
 	}
 	if _, ok := h.knownSerials[serial]; !ok {
-		if err := h.store.AddCert(store.Cert{Serial: serial, Node: id.Name, NodeID: n.rec.ID, NotAfter: cert.NotAfter, IssuedAt: cert.NotBefore}); err != nil {
+		if err := h.store.AddCert(store.Cert{Serial: serial, Node: id.Name, NodeID: n.rec.ID, NotAfter: cert.NotAfter, IssuedAt: cert.NotBefore,
+			HasID: id.ID != ""}); err != nil {
 			h.log.Warn("record certificate", "err", err) // retried on the next call
 		} else {
 			h.knownSerials[serial] = n.rec.ID
+			if id.ID == "" {
+				h.reloadLegacyLocked()
+			}
 		}
 	}
 	return n.rec.ID, nil

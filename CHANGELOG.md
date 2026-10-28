@@ -8,9 +8,16 @@
   immutable ID (UUID) the hub assigns; certificates carry it as URI SAN
   `urn:longarm:node:<uuid>`; the hub authorizes and revokes by ID (the
   revocation list now holds revoked node IDs too), so a revoked node's name
-  is free for a new node at once. Endorsements bind the ID (a second
-  signature next to the name-bound one older peers check); name-bound
-  endorsements stay valid while the node keeps that name. With
+  is free for a new node at once; a certificate the hub never saw is never
+  mapped to a node by name (refused for a name with history: re-issue it
+  with `longarm admin issue --id`), and a renamed node's older
+  certificates are revoked once it uses the new one. Endorsements bind the
+  ID in their own signing domain (no name-only signature beside it: no
+  downgrade by stripping the ID; peers before node IDs refuse them);
+  name-bound endorsements stay valid while the node keeps that name, on
+  certificates with an ID only if made before 2027-01-31. Port-link consents
+  and grants bind the ends' node IDs. Devices' users are pinned, so a new
+  name never makes a device another user. With
   `require_workers`, a worker targeted by name must be endorsed under that
   name, one targeted by ID with that ID. Names never look like IDs (hex and
   dashes only, 4+ characters, are refused) and are unique among non-revoked
