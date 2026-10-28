@@ -205,10 +205,14 @@ func (f *fakeSched) Register(n string, d []byte) error {
 	f.calls = append(f.calls, "register "+n)
 	return nil
 }
-func (f *fakeSched) Delete(n string) error { delete(f.tasks, n); f.calls = append(f.calls, "delete "+n); return nil }
-func (f *fakeSched) Run(n string) error    { f.calls = append(f.calls, "run "+n); return nil }
-func (f *fakeSched) End(n string) error    { f.calls = append(f.calls, "end "+n); return nil }
-func (f *fakeSched) Exists(n string) bool  { _, ok := f.tasks[n]; return ok }
+func (f *fakeSched) Delete(n string) error {
+	delete(f.tasks, n)
+	f.calls = append(f.calls, "delete "+n)
+	return nil
+}
+func (f *fakeSched) Run(n string) error   { f.calls = append(f.calls, "run "+n); return nil }
+func (f *fakeSched) End(n string) error   { f.calls = append(f.calls, "end "+n); return nil }
+func (f *fakeSched) Exists(n string) bool { _, ok := f.tasks[n]; return ok }
 
 // TestSessionTaskInstall: install registers the user's task and restarts
 // it (end, then run); the tray's first start is an on-demand task of its

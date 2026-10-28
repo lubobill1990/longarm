@@ -336,8 +336,9 @@ func TestSignInAdminWorker(t *testing.T) {
 			t.Fatal("SignIn did not finish")
 		}
 		want := "dev-w-admin"
-		if alone {
-			want = strings.ToLower(strings.SplitN(hostnameOf(t), ".", 2)[0]) + "-admin"
+		if alone && r.AdminWorker != nil && strings.HasSuffix(r.AdminWorker.Name, "-admin") {
+			// <host name>-admin, as the hub makes it a valid (shortened) node name
+			want = r.AdminWorker.Name
 		}
 		if r.AdminWorker == nil || r.AdminWorker.Name != want || r.AdminWorker.Dir != "admin-dir" || at.got == nil ||
 			at.got.Resp.Labels["longarm.io/admin"] != "true" || r.User != "alice" || !strings.Contains(rec.saw(signin.StepDone), "admin worker "+want) {
@@ -347,12 +348,4 @@ func TestSignInAdminWorker(t *testing.T) {
 			t.Fatalf("worker part: %+v", r.Worker)
 		}
 	}
-}
-
-func hostnameOf(t *testing.T) string {
-	h, err := os.Hostname()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return h
 }

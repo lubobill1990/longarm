@@ -161,6 +161,9 @@
     <Property Id="ISOLATION" Secure="yes" />
     <!-- dialog state: Custom's sign-in choice and "run as a Windows service" -->
     <Property Id="CUSTOM_AUTH" Value="login" />
+    <!-- the Default page's role and admin choice (ROLES / ADMIN_WORKER back Custom's controls) -->
+    <Property Id="DEFAULT_ROLES" Value="client" />
+    <Property Id="DEFAULT_ADMIN" Secure="yes" />
     <Property Id="RUN_AS_SERVICE" Secure="yes" />
     <Property Id="ARPNOMODIFY" Value="1" />
     <!-- Repair would re-create the service and needs the account password again (msiexec /fa ... SERVICE_PASSWORD=...). -->
@@ -215,6 +218,10 @@
                  Condition="NOT RUN" />
     <SetProperty Id="RUN_AS_SERVICE" Action="SetRunAsServiceUI" Value="1" Before="SetIsWorker" Sequence="both"
                  Condition='RUN="service"' />
+    <SetProperty Id="DEFAULT_ROLES" Action="SetDefaultRolesBoth" Value="both" Before="SetIsWorker" Sequence="ui"
+                 Condition='ROLES="both" OR ROLES="worker"' />
+    <SetProperty Id="DEFAULT_ADMIN" Action="SetDefaultAdmin" Value="1" Before="SetIsWorker" Sequence="ui"
+                 Condition='ADMIN_WORKER="1"' />
     <SetProperty Id="CUSTOM_AUTH" Action="SetCustomAuthCode" Value="code" Before="SetIsWorker" Sequence="ui"
                  Condition="JOIN_CODE" />
     <SetProperty Id="IsWorker" Value="1" Before="CostFinalize" Sequence="both" Condition='ROLES="worker" OR ROLES="both"' />
@@ -462,13 +469,13 @@
           </RadioButtonGroup>
         </Control>
         <Control Id="DefaultLine" Type="Line" X="15" Y="90" Width="340" Height="0" />
-        <Control Id="Roles" Type="RadioButtonGroup" X="30" Y="96" Width="320" Height="36" Property="ROLES" DisableCondition='MODE&lt;&gt;"default"' EnableCondition='MODE="default"'>
-          <RadioButtonGroup Property="ROLES">
+        <Control Id="Roles" Type="RadioButtonGroup" X="30" Y="96" Width="320" Height="36" Property="DEFAULT_ROLES" DisableCondition='MODE&lt;&gt;"default"' EnableCondition='MODE="default"'>
+          <RadioButtonGroup Property="DEFAULT_ROLES">
             <RadioButton Value="client" X="0" Y="0" Width="320" Height="16" Text="&amp;Use this computer: run jobs on your workers from here" />
             <RadioButton Value="both" X="0" Y="18" Width="320" Height="16" Text="&amp;Also run jobs on this computer (as you, while you are signed in)" />
           </RadioButtonGroup>
         </Control>
-        <Control Id="Admin" Type="CheckBox" X="30" Y="138" Width="320" Height="28" Property="ADMIN_WORKER" CheckBoxValue="1"
+        <Control Id="Admin" Type="CheckBox" X="30" Y="138" Width="320" Height="28" Property="DEFAULT_ADMIN" CheckBoxValue="1"
                  DisableCondition='MODE&lt;&gt;"default"' EnableCondition='MODE="default"'
                  Text="Allow remote &amp;administrator commands on this computer (a second worker running as SYSTEM, only you can use it, never chosen automatically)" />
         <Control Id="Note" Type="Text" X="30" Y="172" Width="320" Height="40" NoPrefix="yes" DisableCondition='MODE&lt;&gt;"default"' EnableCondition='MODE="default"'
@@ -563,7 +570,9 @@
 
       <!-- Mode: Default goes to Ready (its run mode: session, or a remembered service); Custom on. -->
       <Publish Dialog="ModeDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
-      <Publish Dialog="ModeDlg" Control="Next" Property="ROLES" Value="client" Order="1" Condition='MODE="default" AND ROLES="worker"' />
+      <Publish Dialog="ModeDlg" Control="Next" Property="ROLES" Value="[DEFAULT_ROLES]" Order="1" Condition='MODE="default"' />
+      <Publish Dialog="ModeDlg" Control="Next" Property="ADMIN_WORKER" Value="1" Order="1" Condition='MODE="default" AND DEFAULT_ADMIN="1"' />
+      <Publish Dialog="ModeDlg" Control="Next" Property="ADMIN_WORKER" Value="{}" Order="1" Condition='MODE="default" AND NOT DEFAULT_ADMIN="1"' />
       <Publish Dialog="ModeDlg" Control="Next" Property="LOGIN" Value="1" Order="2" Condition='MODE="default"' />
       <Publish Dialog="ModeDlg" Control="Next" Property="JOIN_CODE" Value="{}" Order="3" Condition='MODE="default"' />
       <Publish Dialog="ModeDlg" Control="Next" Property="HUB" Value="[DEFAULT_HUB]" Order="4" Condition='MODE="default"' />
