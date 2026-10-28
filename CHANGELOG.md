@@ -4,6 +4,22 @@
 
 ### Added
 
+- Admin worker (Windows; [docs/usage.md](docs/usage.md#admin-worker-windows),
+  [docs/security.md](docs/security.md#admin-worker-windows)): a pairing may
+  carry an admin worker's CSR (`StartLinkRequest.admin_worker_csr_pem` /
+  `admin_worker_name`, or kind `admin` alone; `JoinResponse.admin_worker`):
+  one approval enrolls it as the approver's worker `<worker>-admin`, marked
+  by the hub (`longarm.io/admin=true`, `NodeInfo.admin_worker`). The hub
+  enforces: owner-only (never shared; admin certificates and `--owner`
+  refused), never placed automatically (`sched.Pick`), no hub-relayed
+  commands, and `longarm.io/...` labels are reserved (`worker label`,
+  `admin label`, join codes, sign-in labels and worker hellos can't set or
+  remove them). The `/link` page warns that it runs commands as SYSTEM.
+  `hubclient`: `JoinOptions.CSR` (a pre-made CSR, no key),
+  `LinkOptions.AdminWorker`, `JoinResult.AdminWorker`, `ErrNoAdminLink`
+  (an older hub: nothing installed); `signin`: `Options.AdminWorker`,
+  `CSRSource`, `Code.AdminWorker`, `Result.AdminWorker`. `longarm ls` /
+  `worker ls` / the panel mark admin workers.
 - Sessions for programs ([docs/usage.md](docs/usage.md#sessions-for-programs)):
   `longarm session start [<worker>|auto] -s NAME [--repo ... --ref ... --lfs ... --git-auth forward] [--json] -- cmd`
   creates a session without attaching (idempotent by name: same spec =

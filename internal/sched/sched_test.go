@@ -97,3 +97,23 @@ func TestMemGateScales(t *testing.T) {
 		t.Fatalf("fixed gate placed on a small worker: %+v", r)
 	}
 }
+
+// TestPickNeverAdminWorker: an admin worker (AdminLabel) is never placed,
+// however good it looks, with or without a matching --require.
+func TestPickNeverAdminWorker(t *testing.T) {
+	adm := Candidate{Name: "a-admin", Labels: map[string]string{AdminLabel: "true", "os": "windows"}, FreeGB: 500, TotalGB: 512,
+		Online: true, Eligible: true}
+	plain := Candidate{Name: "w", Labels: map[string]string{"os": "windows"}, FreeGB: 30, TotalGB: 64, Online: true, Eligible: true}
+	for _, req := range []Request{{}, {Require: map[string]string{AdminLabel: "true"}}, {Require: map[string]string{"os": "windows"}}} {
+		r := Pick(Defaults(), []Candidate{adm, plain}, req)
+		if r.Worker == "a-admin" || !strings.Contains(r.Reasons["a-admin"], "admin worker") {
+			t.Fatalf("%+v: %+v", req, r)
+		}
+	}
+	if err := CheckUserLabels(map[string]string{"Longarm.IO/admin": "false"}); err == nil {
+		t.Fatal("reserved label accepted")
+	}
+	if err := CheckUserLabels(map[string]string{"pool": "a"}); err != nil {
+		t.Fatal(err)
+	}
+}

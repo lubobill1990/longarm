@@ -260,3 +260,99 @@ func TestSignInCancel(t *testing.T) {
 		t.Fatal("no targets accepted")
 	}
 }
+
+// adminTarget is an admin worker's target as the tray holds it: a CSR
+// made elsewhere (its key stays with the LocalSystem longarmd), the
+// certificate handed back.
+type adminTarget struct {
+	keyPEM, csrPEM []byte
+	got            *hubclient.JoinResult
+}
+
+func newAdminTarget(t *testing.T) *adminTarget {
+	k, c, err := pki.NewKeyAndCSR("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &adminTarget{keyPEM: k, csrPEM: c}
+}
+
+func (a *adminTarget) Prepare(string) (*pki.CSRTrust, error) { return nil, nil }
+func (a *adminTarget) CSR(string) ([]byte, error)            { return a.csrPEM, nil }
+func (a *adminTarget) Install(_ string, r *hubclient.JoinResult, _ func(string)) (string, error) {
+	if r.KeyPEM != nil {
+		return "", errors.New("a key for a pre-made CSR")
+	}
+	a.got = r
+	return "admin-dir", nil
+}
+
+// TestSignInAdminWorker: the admin worker rides along on the one code
+// (Code.AdminWorker says so), comes back with KeyPEM nil for its own key,
+// and is marked; az can't sign one in; alone it is a kind "admin" pairing.
+func TestSignInAdminWorker(t *testing.T) {
+	h := testHub(t)
+	fp := pki.Fingerprint(h.CA().Cert)
+	if _, err := signin.SignIn(context.Background(), signin.Options{Hub: h.Addr("grpc"), Fingerprint: fp, Method: signin.MethodAz,
+		Worker: longarmd.WorkerTarget{DataDir: t.TempDir()}, AdminWorker: newAdminTarget(t)}, signin.Events{}); err == nil ||
+		!strings.Contains(err.Error(), "browser only") {
+		t.Fatalf("az with an admin worker: %v", err)
+	}
+	for _, alone := range []bool{false, true} {
+		h := testHub(t) // a fresh panel login each time
+		fp := pki.Fingerprint(h.CA().Cert)
+		at := newAdminTarget(t)
+		o := signin.Options{Hub: h.Addr("grpc"), Fingerprint: fp, AdminWorker: at, Method: signin.MethodAuto}
+		if !alone {
+			o.Worker, o.WorkerName = longarmd.WorkerTarget{DataDir: t.TempDir()}, "dev-w"
+		}
+		rec := &recorder{codes: make(chan signin.Code, 1)}
+		done := make(chan error, 1)
+		var r *signin.Result
+		go func() {
+			var err error
+			r, err = signin.SignIn(context.Background(), o, rec.events())
+			done <- err
+		}()
+		var c signin.Code
+		select {
+		case c = <-rec.codes:
+		case err := <-done:
+			t.Fatalf("no code: %v", err)
+		}
+		if !c.AdminWorker || (alone && c.Kind != "admin") || (!alone && c.Kind != "worker") {
+			t.Fatalf("code: %+v", c)
+		}
+		page := approve(t, h, c.URL, c.Code)
+		if !strings.Contains(page, "ADMINISTRATOR worker") {
+			t.Fatalf("confirmation: %s", page)
+		}
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(60 * time.Second):
+			t.Fatal("SignIn did not finish")
+		}
+		want := "dev-w-admin"
+		if alone {
+			want = strings.ToLower(strings.SplitN(hostnameOf(t), ".", 2)[0]) + "-admin"
+		}
+		if r.AdminWorker == nil || r.AdminWorker.Name != want || r.AdminWorker.Dir != "admin-dir" || at.got == nil ||
+			at.got.Resp.Labels["longarm.io/admin"] != "true" || r.User != "alice" || !strings.Contains(rec.saw(signin.StepDone), "admin worker "+want) {
+			t.Fatalf("alone %v: %+v %+v", alone, r, r.AdminWorker)
+		}
+		if alone == (r.Worker != nil) {
+			t.Fatalf("worker part: %+v", r.Worker)
+		}
+	}
+}
+
+func hostnameOf(t *testing.T) string {
+	h, err := os.Hostname()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}

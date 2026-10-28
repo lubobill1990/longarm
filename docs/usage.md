@@ -1205,6 +1205,34 @@ locally too - `longarmd join` prints the hint: `[access] users = ["alice"]`,
 ([security.md](security.md#user-owned-workers)). The hub's rule only ever
 narrows what `[access]` and trust allow on the worker.
 
+### Admin worker (Windows)
+
+Jobs on your own worker run as you, without elevation - nobody is there to
+click a UAC prompt - and a worker in your signed-in session is offline
+after a reboot until you sign in again. For administrator tasks (install
+software, change system settings) a Windows machine can also run an
+**admin worker**: a second `longarmd` running as LocalSystem, enrolled
+with the same sign-in as your worker (one code, one approval; the `/link`
+page says it runs commands as SYSTEM), named `<worker>-admin`:
+
+```bash
+longarm run devbox-admin -- winget install --id Git.Git -e --silent
+longarm exec devbox-admin -- powershell -c "Get-Service | ? Status -eq Stopped"
+```
+
+The hub keeps it yours alone: it can't be shared (`longarm worker share`
+is refused), admin certificates of anybody else are refused (also with
+`--owner`), the hub relays no commands to it (panel, `longarm admin run`),
+and it is **never placed automatically** - `auto`, `--require`, the queue
+and `session start auto` skip it; name it explicitly. Its label
+`longarm.io/admin=true` is set by the hub and can't be changed. `longarm
+ls` marks it `+admin` in the OWNER column, `longarm worker ls` as
+`mine (admin)`, their `--json` has `adminWorker` / `admin_worker`, and the panel shows an
+`admin` badge. Remove it like any of your workers (`longarm worker remove
+<name>`). Being a LocalSystem service that runs remote commands, it is a
+corporate-managed-device consideration: Defender / Intune may report or
+block it (see [security](security.md#admin-worker-windows)).
+
 ### Sign in with Microsoft Entra ID
 
 Instead of join codes and panel passwords, people can sign in with their

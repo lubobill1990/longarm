@@ -98,6 +98,14 @@ message StartLinkRequest {
   // kind worker or both: labels for the worker (longarmd login --label),
   // like a worker code's; shown on the /link page
   map<string, string> worker_labels = 10;
+  // any kind: an admin worker of the same machine (Windows: a second
+  // longarmd running as LocalSystem) - its CSR (a key the requester does
+  // not hold: longarmd's admin instance made it) and requested name
+  // (default: <worker name or hostname>-admin). The hub enrolls it as the
+  // approver's own worker with the reserved label longarm.io/admin=true:
+  // owner-only, never shared, never placed automatically.
+  bytes admin_worker_csr_pem = 11;
+  string admin_worker_name = 12;
 }
 
 message StartLinkResponse {
@@ -144,6 +152,9 @@ message JoinResponse {
   // workers: the labels the hub recorded for the node at enrollment
   // (join code / sign-in labels)
   map<string, string> labels = 12;
+  // PollLink of a pairing that carried an admin worker CSR, approved: the
+  // admin worker's enrollment (its labels include longarm.io/admin=true)
+  JoinResponse admin_worker = 13;
 }
 
 message JoinStatusRequest {
@@ -534,6 +545,9 @@ message NodeInfo {
   string user = 28; // clients/admins: the user the node's certificates belong to
   string owner = 29; // workers: the user who registered it ("" = shared fleet worker)
   WorkerShares shares = 30; // workers with an owner: who else may use it
+  // an admin worker (runs commands as an administrator of its machine;
+  // label longarm.io/admin=true): owner-only, never shared, never placed
+  bool admin_worker = 31;
 }
 
 message ListNodesRequest {

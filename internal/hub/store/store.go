@@ -250,6 +250,11 @@ type Node struct {
 	Owner         string        `json:"owner,omitempty"`
 	Shares        *WorkerShares `json:"shares,omitempty"`
 	AccessVersion int64         `json:"access_version,omitempty"`
+	// Admin: an admin worker (runs commands with administrator rights on
+	// its machine), enrolled through a pairing's admin_worker_csr_pem. Set
+	// at enrollment only; it shows as the label longarm.io/admin=true and
+	// makes the worker owner-only (never shared) and never placed.
+	Admin bool `json:"admin_worker,omitempty"`
 }
 
 // WorkerShares: who besides its owner may use a worker.

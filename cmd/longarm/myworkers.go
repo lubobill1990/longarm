@@ -108,7 +108,11 @@ placed for them) until you share it - which needs an admin's permission
 							cpu = fmt.Sprintf("%.1f", m.CpuPercent)
 							mem = humanBytes(m.MemUsedBytes) + "/" + humanBytes(m.MemTotalBytes)
 						}
-						fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", n.Name, kind, dash(n.Owner), sharesString(n.Shares), st,
+						k := kind
+						if n.AdminWorker {
+							k += " (admin)" // runs commands as SYSTEM; owner-only, never placed
+						}
+						fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", n.Name, k, dash(n.Owner), sharesString(n.Shares), st,
 							n.JobsActive, cpu, mem)
 					}
 				}

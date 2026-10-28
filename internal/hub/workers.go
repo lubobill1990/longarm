@@ -15,6 +15,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -48,7 +49,11 @@ func (h *Hub) teamsLocked(user string) []string {
 
 // mayUseLocked reports whether user may use worker n (run, exec, place
 // jobs on it). Admins are no exception: an owned worker is its owner's.
+// An admin worker is its owner's only, whatever shares it may carry.
 func (h *Hub) mayUseLocked(user string, n *node) bool {
+	if n.rec.Admin {
+		return user != "" && user == n.rec.Owner
+	}
 	return tenancy.MayUseWorker(user, h.teamsLocked(user), n.rec.Owner, sharesPB(n.rec.Shares))
 }
 
@@ -58,6 +63,9 @@ func canSeeNode(v tenancy.Caller, n *pb.NodeInfo) bool {
 	if v.Admin {
 		return true
 	}
+	if sched.IsAdminWorker(n.Labels) && n.Role == string(pki.RoleWorker) {
+		return n.Owner != "" && n.Owner == v.User
+	}
 	if n.Role != string(pki.RoleWorker) {
 		return nodeUserOf(n) == v.User
 	}
@@ -65,6 +73,9 @@ func canSeeNode(v tenancy.Caller, n *pb.NodeInfo) bool {
 }
 
 func workerAccessLocked(n *node) *pb.WorkerAccess {
+	if n.rec.Admin { // owner-only: never shares (ShareWorker refuses them too)
+		return &pb.WorkerAccess{Version: n.rec.AccessVersion, Owner: n.rec.Owner}
+	}
 	return &pb.WorkerAccess{Version: n.rec.AccessVersion, Owner: n.rec.Owner, Shares: sharesPB(n.rec.Shares)}
 }
 
@@ -130,6 +141,11 @@ func (h *Hub) ShareWorker(by, user string, admin bool, req *pb.ShareWorkerReques
 	if n.rec.Owner == "" {
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.FailedPrecondition, "worker %s has no owner: every user may use it", req.Worker)
+	}
+	if n.rec.Admin {
+		h.mu.Unlock()
+		h.auditHub(by, "workers/share", map[string]any{"worker": req.Worker, "owner": n.rec.Owner, "error": "admin worker"})
+		return nil, status.Errorf(codes.PermissionDenied, "worker %s is an admin worker (it runs commands as an administrator of its machine): only its owner %s may use it, it can't be shared", req.Worker, n.rec.Owner)
 	}
 	if !admin {
 		if t := h.tenants[user]; t == nil || !t.u.CanShare {
@@ -349,7 +365,14 @@ func (h *Hub) relayCheck(by, user, worker, action, job string) error {
 	h.mu.Lock()
 	n := h.nodes[worker]
 	ok := n == nil || n.rec.Owner == "" || h.mayUseLocked(user, n)
+	admin := n != nil && n.rec.Admin
 	h.mu.Unlock()
+	if admin {
+		// the hub issues no commands to an admin worker, not even its
+		// owner's: they go to it directly, with the owner's certificate
+		h.auditHub(by, "workers/denied", map[string]any{"worker": worker, "action": action, "job": job, "user": user, "why": "admin worker"})
+		return status.Errorf(codes.PermissionDenied, "worker %s is an admin worker: the hub relays nothing to it; use it directly (longarm run %s -- ...)", worker, worker)
+	}
 	if ok {
 		return nil
 	}

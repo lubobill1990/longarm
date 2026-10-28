@@ -449,6 +449,47 @@ in. With trust on, **sharing needs the worker's owner too**: a worker shared
 with bob on the hub still refuses bob's devices until bob's user key is in
 that worker's `trust.toml` (`longarmd trust add-user <bob's key>`), and bob
 in `[access] users` if alice pinned it.
+## Admin worker (Windows)
+
+An **admin worker** is a second worker on the same machine that runs
+commands with administrator rights: on Windows a `longarmd` running as
+**LocalSystem** (the MSI's `ADMIN_WORKER=1`), so its owner can install
+software and administer the machine remotely, also while nobody is signed
+in. It is enrolled only through a pairing (`/link`) that carries its CSR
+(`StartLinkRequest.admin_worker_csr_pem`, or kind `admin` alone) - with the
+owner's Microsoft sign-in and approval; az sign-ins and join codes can't
+make one. Its private key never leaves the LocalSystem longarmd: the
+signed-in user's tray sends a CSR that longarmd made and hands the
+certificate back. The `/link` page says, in a warning box, that the
+pairing includes an **administrator** worker running commands as SYSTEM on
+that machine, with its name (default `<worker>-admin`).
+
+The hub marks it (`store.Node.Admin`, shown as the label
+`longarm.io/admin=true`, `NodeInfo.admin_worker`) and enforces, whatever
+the panel or the CLI does:
+
+| Rule | Where |
+|---|---|
+| **Owner only, never shared**: `worker share` is refused for it (owner, `can_share` or admin alike); shares that reached its record anyway are ignored (`mayUse`), and the worker gets an access rule with the owner alone | hub (`ShareWorker`, `mayUseLocked`, `worker_access`) and the worker (owner/shares rule) |
+| **Admin certificates get nothing**: a fleet admin who is not the owner is refused like any other user - hidden from users, `PermissionDenied` on the worker (owner-only means owner-only), and `--owner` (acting on another user's sessions) can't reach it either. Fleet admins still see it (with the `admin` marker), drain it and remove (revoke) it | worker (`ownerDeny`), hub (`relayCheck`) |
+| **No hub-relayed commands**: the hub relays no submit, kill or logs to it, not even its owner's (panel, `longarm admin run|kill|logs`): commands go to it directly with the owner's certificate (`workers/denied` in the hub's audit) | hub (`relayCheck`) |
+| **Never placed**: no `auto`, `--require` (even `--require longarm.io/admin=true`), scheduler queue, `session start auto`, MCP or client-side pick chooses it (`sched.Pick` rejects it as "admin worker (by name only)"): it is reachable by its name only | `sched.Pick` (hub and client) |
+| **Reserved label**: `longarm.io/...` keys are the hub's - `worker label`, `admin label`, join codes and sign-in labels can't set or remove them (`PermissionDenied`), and a worker's own `[hub] labels` with such keys are dropped | hub (`SetLabels`, `CreateJoinCode`, `StartLink`, hello) |
+
+End-to-end trust applies as for every owned worker (pin the owner on the
+machine: `[access] users/owners`, `longarmd trust add-user`), and every
+exec, run, session, file put/get and tail on it is in the worker's audit
+log as on any worker. The session worker of the same machine is an
+independent node: it has no way into the admin worker's local API (a
+LocalSystem-only channel) and gets no rights over it.
+
+**Corporate-managed devices**: a LocalSystem service that runs remote
+commands is what endpoint protection watches for. Microsoft Defender for
+Endpoint, Intune compliance or attack-surface-reduction rules may flag,
+block or report it; check with whoever manages the device before turning
+it on, and expect the commands it runs to be attributed to SYSTEM in their
+logs.
+
 ## Port links
 
 Port links (`longarm link`, [usage](usage.md#port-links-worker-to-worker))
