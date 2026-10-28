@@ -725,6 +725,8 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		admin: adminWorker,
 		audit: srv.Audit, remoteJobs: cfg.Hub.RemoteJobs, hideJobDetails: !cfg.HubJobDetails, trust: trustSrc, trustStore: trustStore,
 		stop: cancel, logMaxBytes: cfg.MaxLogBytes, tel: wtel,
+		restart:   func() { cancelCause(update.ErrRestart) },
+		nameBound: hasLongnetListener(cfg.Listen),
 		endpoints: func() []string {
 			if len(cfg.Hub.Advertise) > 0 {
 				return cfg.Hub.Advertise

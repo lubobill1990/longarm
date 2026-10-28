@@ -60,8 +60,16 @@ func (h *Hub) ListJobsFor(v tenancy.Caller, req *pb.FleetJobsRequest) []*pb.Flee
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var out []*pb.FleetJob
+	worker := ""
+	if req.Worker != "" {
+		n, err := h.resolveLocked(req.Worker, isWorker, "worker")
+		if err != nil {
+			return nil // an unknown worker has no jobs
+		}
+		worker = n.rec.ID
+	}
 	for w, jm := range h.jobs {
-		if req.Worker != "" && w != req.Worker {
+		if worker != "" && w != worker {
 			continue
 		}
 		for _, e := range jm {
@@ -96,10 +104,18 @@ func (h *Hub) GetJob(id, worker string) (*pb.FleetJob, error) {
 	return h.GetJobFor(tenancy.Caller{Admin: true}, id, worker)
 }
 
-// GetJobFor finds a job v may see (others' jobs are "not known").
+// GetJobFor finds a job v may see (others' jobs are "not known"); worker
+// is a target ("" = any).
 func (h *Hub) GetJobFor(v tenancy.Caller, id, worker string) (*pb.FleetJob, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if worker != "" {
+		n, err := h.resolveLocked(worker, isWorker, "worker")
+		if err != nil {
+			return nil, err
+		}
+		worker = n.rec.ID
+	}
 	w, e := h.findJobLocked(id, worker)
 	if e == nil || !canSeeJob(v, e.job) {
 		return nil, status.Errorf(codes.NotFound, "job %s not known to the hub", id)
@@ -121,6 +137,10 @@ func (h *Hub) WaitJob(ctx context.Context, req *pb.FleetJobRequest, send func(*p
 
 // WaitJobFor is WaitJob for a job v may see.
 func (h *Hub) WaitJobFor(ctx context.Context, v tenancy.Caller, req *pb.FleetJobRequest, send func(*pb.FleetJob) error) error {
+	workerID, err := h.resolveWorker(req.Worker)
+	if err != nil {
+		return err
+	}
 	sub := h.bus.subscribeFiltered([]string{"job"}, req.Id, eventFilter(v))
 	defer h.bus.unsubscribe(sub)
 	fj, err := h.GetJobFor(v, req.Id, req.Worker)
@@ -146,7 +166,7 @@ func (h *Hub) WaitJobFor(ctx context.Context, v tenancy.Caller, req *pb.FleetJob
 			if !ok {
 				return status.Error(codes.Unavailable, "hub event stream closed")
 			}
-			if req.Worker != "" && ev.Job.Worker != req.Worker {
+			if workerID != "" && ev.Job.WorkerId != workerID {
 				continue
 			}
 			appear = nil
@@ -202,19 +222,32 @@ func (s *fleetServer) Place(req *pb.PlaceRequest, st pb.Fleet_PlaceServer) error
 	return s.h.PlaceFor(st.Context(), c.id.String(), c.id.Owner(), req, st.Send)
 }
 
-// Audit returns forwarded audit records.
+// Audit returns forwarded audit records (req.node: a node target, or
+// "hub" for the hub's own records).
 func (h *Hub) Audit(req *pb.AuditRequest) (*pb.AuditResponse, error) {
 	var since time.Time
 	if req.Since != nil {
 		since = req.Since.AsTime()
 	}
-	rows, err := h.store.Audit(req.Node, since, int(req.Limit))
+	nodeID, nodeName := "", ""
+	switch req.Node {
+	case "":
+	case "hub":
+		nodeName = "hub"
+	default:
+		id, err := h.resolve(req.Node, nil, "node")
+		if err != nil {
+			return nil, err
+		}
+		nodeID = id
+	}
+	rows, err := h.store.Audit(nodeID, nodeName, since, int(req.Limit))
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	out := &pb.AuditResponse{}
 	for _, r := range rows {
-		out.Records = append(out.Records, &pb.AuditRecord{Node: r.Node, Time: tspb(r.Time), Who: r.Who, Method: r.Method, Json: r.Line})
+		out.Records = append(out.Records, &pb.AuditRecord{Node: r.Node, NodeId: r.NodeID, Time: tspb(r.Time), Who: r.Who, Method: r.Method, Json: r.Line})
 	}
 	return out, nil
 }
@@ -227,8 +260,14 @@ func (s *fleetServer) Whoami(ctx context.Context, _ *pb.WhoamiRequest) (*pb.Whoa
 	c := callerFrom(ctx)
 	resp := &pb.WhoamiResponse{Name: c.id.Name, Role: string(c.id.Role), HubName: s.h.cfg.Name, HubVersion: version.Version,
 		CertNotAfter: tspb(c.cert.NotAfter), RenewBefore: durationpb.New(s.h.cfg.RenewBefore(string(c.id.Role))),
-		Tailnet: s.h.callerTailnet(c.id.Name), User: c.id.Owner()}
+		Tailnet: s.h.callerTailnet(c.nodeID), User: c.id.Owner(), Id: c.nodeID}
 	s.h.mu.Lock()
+	if n := s.h.callerNodeLocked(c); n != nil {
+		if f := forcedRenewBefore(n, c.cert); f > resp.RenewBefore.AsDuration() {
+			// its certificate lacks the node ID or has an old name: renew now
+			resp.RenewBefore = durationpb.New(f)
+		}
+	}
 	if resp.Tenancy = s.h.tenancyOnLocked(); resp.Tenancy && c.id.Role != pki.RoleWorker {
 		if t := s.h.tenants[c.id.Owner()]; t != nil {
 			resp.Teams, resp.CanShare, resp.Upn = t.u.Teams, t.u.CanShare, t.u.Upn

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/lubobill1990/longarm/internal/nodeid"
 )
 
 // End-to-end trust (docs/security.md "End-to-end trust"): the hub's CA
@@ -33,7 +35,16 @@ import (
 //   - bind: the node key's signature over the certificate's public key, so
 //     the extension can't be moved to a certificate for another key;
 //   - endorsement: a user key's signature over the node key, the node's
-//     kind (worker or device), its name and the user.
+//     kind (worker or device), its name and the user - and, since node IDs
+//     (docs/security.md "Node identity"), a second signature (sig2) that
+//     also covers the node's immutable ID. Peers that know IDs hold an
+//     endorsement carrying an ID to the certificate's ID (the name is only
+//     what the user called the node then: renaming keeps it valid); an
+//     endorsement without an ID (made before IDs) still binds the name, so
+//     it is valid only while the certificate has that name. Either way the
+//     endorsed thing is the node key: a new node that gets an old node's
+//     name (after a revocation) has another node key and none of the old
+//     node's trust.
 //
 // A hub that strips or alters the extension only makes the node unusable
 // for peers that require it (fail closed); it can't make one up.
@@ -54,7 +65,7 @@ const (
 const maxTrustExt = 4096
 
 // Endorsement is a user key's statement "the node with NodeKey, called
-// Name, is my <Kind>".
+// Name (with ID), is my <Kind>".
 type Endorsement struct {
 	Kind    string `json:"kind"`
 	User    string `json:"user"`
@@ -62,7 +73,11 @@ type Endorsement struct {
 	NodeKey []byte `json:"node_key"`
 	UserKey []byte `json:"user_key"`
 	Issued  int64  `json:"issued"`
-	Sig     []byte `json:"sig"`
+	Sig     []byte `json:"sig"` // over message(): no ID (what peers before node IDs check)
+	// ID is the endorsed node's ID; Sig2 signs message2(), which covers
+	// it. Both or neither.
+	ID   string `json:"id,omitempty"`
+	Sig2 []byte `json:"sig2,omitempty"`
 }
 
 func (e *Endorsement) message() []byte {
@@ -71,8 +86,24 @@ func (e *Endorsement) message() []byte {
 		e.Kind, e.User, e.Name, b64(e.NodeKey), b64(e.UserKey), e.Issued)
 }
 
-// Endorse signs nodeKey as user's node of kind, called name.
+func (e *Endorsement) message2() []byte {
+	b64 := base64.StdEncoding.EncodeToString
+	return fmt.Appendf(nil, "longarm-endorsement-v2\n%s\n%s\n%s\n%s\n%s\n%s\n%d\n",
+		e.Kind, e.User, e.ID, e.Name, b64(e.NodeKey), b64(e.UserKey), e.Issued)
+}
+
+// Endorse signs nodeKey as user's node of kind, called name (no ID: an
+// endorsement bound to the name; EndorseID binds the ID).
 func Endorse(userKey ed25519.PrivateKey, user, kind, name string, nodeKey ed25519.PublicKey) (*Endorsement, error) {
+	return EndorseID(userKey, user, kind, name, "", nodeKey)
+}
+
+// EndorseID signs nodeKey as user's node of kind with ID id (called name
+// now). With id "" it is Endorse.
+func EndorseID(userKey ed25519.PrivateKey, user, kind, name, id string, nodeKey ed25519.PublicKey) (*Endorsement, error) {
+	if id != "" && !nodeid.Valid(id) {
+		return nil, fmt.Errorf("endorsement: invalid node id %q", id)
+	}
 	if kind != KindWorker && kind != KindDevice {
 		return nil, fmt.Errorf("endorsement kind %q: worker or device", kind)
 	}
@@ -86,19 +117,31 @@ func Endorse(userKey ed25519.PrivateKey, user, kind, name string, nodeKey ed2551
 		return nil, errors.New("endorsement: invalid node key")
 	}
 	e := &Endorsement{Kind: kind, User: user, Name: name, NodeKey: bytes.Clone(nodeKey),
-		UserKey: userKey.Public().(ed25519.PublicKey), Issued: time.Now().Unix()}
+		UserKey: userKey.Public().(ed25519.PublicKey), Issued: time.Now().Unix(), ID: strings.ToLower(id)}
 	e.Sig = ed25519.Sign(userKey, e.message())
+	if e.ID != "" {
+		e.Sig2 = ed25519.Sign(userKey, e.message2())
+	}
 	return e, nil
 }
 
-// Verify checks the signature by the key the endorsement names (whether
-// that key is trusted is the caller's question).
+// Verify checks the signatures by the key the endorsement names (whether
+// that key is trusted is the caller's question): sig, and sig2 when the
+// endorsement carries an ID.
 func (e *Endorsement) Verify() error {
 	if len(e.UserKey) != ed25519.PublicKeySize || len(e.NodeKey) != ed25519.PublicKeySize {
 		return errors.New("endorsement: bad key size")
 	}
 	if !ed25519.Verify(e.UserKey, e.message(), e.Sig) {
 		return errors.New("endorsement: bad signature")
+	}
+	if e.ID != "" || len(e.Sig2) > 0 {
+		if !nodeid.Valid(e.ID) || e.ID != strings.ToLower(e.ID) {
+			return errors.New("endorsement: bad node id")
+		}
+		if !ed25519.Verify(e.UserKey, e.message2(), e.Sig2) {
+			return errors.New("endorsement: bad signature over the node id")
+		}
 	}
 	return nil
 }
@@ -231,59 +274,96 @@ type TrustPolicy struct {
 func (p *TrustPolicy) Active() bool { return p != nil && (len(p.Users) > 0 || p.DenyAll) }
 
 // Check verifies that c's node is endorsed by a trusted user key as what c
-// claims to be: a worker endorsed as a worker under its name; a client or
-// admin endorsed as a device of the certificate's user under its name. It
-// returns the endorsing user.
+// claims to be: a worker endorsed as a worker, a client or admin endorsed
+// as a device of the certificate's user - under its ID when the
+// endorsement carries one (the certificate must carry the same ID), else
+// under its name. It returns the endorsing user.
 func (p *TrustPolicy) Check(c *x509.Certificate) (string, error) {
-	id, err := IdentityFromCert(c)
+	e, err := p.CheckEndorsement(c)
 	if err != nil {
 		return "", err
 	}
+	return e.User, nil
+}
+
+// CheckEndorsement is Check returning the verified endorsement.
+func (p *TrustPolicy) CheckEndorsement(c *x509.Certificate) (*Endorsement, error) {
+	id, err := IdentityFromCert(c)
+	if err != nil {
+		return nil, err
+	}
 	if len(p.Users) == 0 {
-		return "", fmt.Errorf("%s: no user key is trusted (require_workers without trusted users)", id)
+		return nil, fmt.Errorf("%s: no user key is trusted (require_workers without trusted users)", id)
 	}
 	t, err := TrustOf(c)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", id, err)
+		return nil, fmt.Errorf("%s: %w", id, err)
 	}
 	if t == nil {
-		return "", fmt.Errorf("%s has no end-to-end trust proof (not endorsed, or its hub dropped the extension)", id)
+		return nil, fmt.Errorf("%s has no end-to-end trust proof (not endorsed, or its hub dropped the extension)", id)
 	}
 	e := t.Endorsement
 	if e == nil {
-		return "", fmt.Errorf("%s is not endorsed by a user key (longarm trust endorse)", id)
+		return nil, fmt.Errorf("%s is not endorsed by a user key (longarm trust endorse)", id)
 	}
 	for _, d := range p.DenyNodes {
 		if bytes.Equal(d, t.NodeKey) {
-			return "", fmt.Errorf("%s: node key is denied", id)
+			return nil, fmt.Errorf("%s: node key is denied", id)
 		}
 	}
 	key, ok := p.Users[e.User]
 	if !ok || !bytes.Equal(key, e.UserKey) {
-		return "", fmt.Errorf("%s is endorsed by a key that is not trusted for user %q", id, e.User)
+		return nil, fmt.Errorf("%s is endorsed by a key that is not trusted for user %q", id, e.User)
 	}
 	if err := e.Verify(); err != nil {
-		return "", fmt.Errorf("%s: %w", id, err)
+		return nil, fmt.Errorf("%s: %w", id, err)
 	}
-	if e.Name != id.Name {
-		return "", fmt.Errorf("%s: endorsed as %q", id, e.Name)
+	switch {
+	case e.ID != "" && id.ID == "":
+		return nil, fmt.Errorf("%s: endorsed as node %s, but the certificate carries no node id", id, e.ID)
+	case e.ID != "" && e.ID != id.ID:
+		return nil, fmt.Errorf("%s: endorsed as node %s, the certificate is node %s", id, e.ID, id.ID)
+	case e.ID == "" && e.Name != id.Name:
+		return nil, fmt.Errorf("%s: endorsed as %q", id, e.Name)
 	}
 	switch id.Role {
 	case RoleWorker:
 		if e.Kind != KindWorker {
-			return "", fmt.Errorf("%s: endorsed as a %s, not a worker", id, e.Kind)
+			return nil, fmt.Errorf("%s: endorsed as a %s, not a worker", id, e.Kind)
 		}
 	case RoleClient, RoleAdmin:
 		if e.Kind != KindDevice {
-			return "", fmt.Errorf("%s: endorsed as a %s, not a device", id, e.Kind)
+			return nil, fmt.Errorf("%s: endorsed as a %s, not a device", id, e.Kind)
 		}
 		if e.User != id.Owner() {
-			return "", fmt.Errorf("%s: a device of %s, endorsed by %s", id, id.Owner(), e.User)
+			return nil, fmt.Errorf("%s: a device of %s, endorsed by %s", id, id.Owner(), e.User)
 		}
 	default:
-		return "", fmt.Errorf("%s: role %s can't be endorsed", id, id.Role)
+		return nil, fmt.Errorf("%s: role %s can't be endorsed", id, id.Role)
 	}
-	return e.User, nil
+	return e, nil
+}
+
+// CheckTarget applies what the user asked for to a worker's verified
+// endorsement e: a worker targeted by name must have been endorsed under
+// that name (the hub maps names to nodes, and end-to-end trust doesn't
+// take the hub's word: a renamed worker needs a new endorsement, or a
+// target by ID); one targeted by ID or ID prefix must have been endorsed
+// with an ID that has it. An empty target (a worker the hub placed the
+// job on) adds nothing.
+func CheckTarget(e *Endorsement, t DialTarget) error {
+	if t.Name != "" && e.Name != t.Name {
+		return fmt.Errorf("asked for worker %q, the worker answering was endorsed as %q (renamed? target it by id, or endorse it again)", t.Name, e.Name)
+	}
+	if t.IDPrefix != "" {
+		if e.ID == "" {
+			return fmt.Errorf("asked for worker id %s, the worker answering has an endorsement without an id (made before node ids): target it by its endorsed name %q, or endorse it again", t.IDPrefix, e.Name)
+		}
+		if !nodeid.HasPrefix(e.ID, t.IDPrefix) {
+			return fmt.Errorf("asked for worker id %s, the worker answering was endorsed as node %s", t.IDPrefix, e.ID)
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------- text forms
@@ -309,6 +389,7 @@ type EndorseRequest struct {
 	Name    string `json:"name"`
 	User    string `json:"user,omitempty"` // devices: the certificate's user
 	NodeKey []byte `json:"node_key"`
+	ID      string `json:"id,omitempty"` // the node's ID (its certificate's); "" = not known yet
 }
 
 func encodeLine(prefix string, v any) string {
@@ -354,6 +435,9 @@ func ParseEndorseRequest(s string) (EndorseRequest, error) {
 	}
 	if (r.Kind != KindWorker && r.Kind != KindDevice) || !ValidName(r.Name) || len(r.NodeKey) != ed25519.PublicKeySize {
 		return r, errors.New("endorsement request: invalid kind, name or node key")
+	}
+	if r.ID != "" && !nodeid.Valid(r.ID) {
+		return r, errors.New("endorsement request: invalid node id")
 	}
 	return r, nil
 }

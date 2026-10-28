@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -306,7 +307,7 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "user %s exists", req.Name)
 	}
-	if n := h.nodes[req.Name]; t == nil && n != nil && n.rec.Role == string(pki.RoleWorker) {
+	if n := h.activeByNameLocked(req.Name); t == nil && n != nil && n.rec.Role == string(pki.RoleWorker) {
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "%s is a worker's name", req.Name)
 	}
@@ -391,15 +392,13 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 func (h *Hub) freeDeviceName(user string) string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	taken := func(n string) bool {
-		x := h.nodes[n]
-		return x != nil && x.rec.State != stateRevoked
-	}
-	if !taken(user) {
-		return user
+	base := nodeid.SafeName(user, "d-") // a user called "cafe" gets device d-cafe
+	taken := func(n string) bool { return h.nameTakenLocked(n, "") != nil }
+	if !taken(base) {
+		return base
 	}
 	for i := 2; ; i++ {
-		if n := fmt.Sprintf("%s-%d", user, i); !taken(n) {
+		if n := fmt.Sprintf("%s-%d", base, i); !taken(n) {
 			return n
 		}
 	}
@@ -448,11 +447,16 @@ func (h *Hub) RemoveUser(by string, req *pb.RemoveUserRequest) (*pb.RemoveUserRe
 	}
 	h.mu.Lock()
 	_, known := h.tenants[req.Name]
-	devices := h.devicesLocked(req.Name)
-	// the user's own workers go too: nobody else could use them anyway
+	// the user's devices, and the user's own workers: nobody else could use them anyway
+	var devices, deviceIDs []string
 	for _, n := range h.nodes {
-		if n.rec.Owner == req.Name && n.rec.Role == string(pki.RoleWorker) && n.rec.State != stateRevoked {
-			devices = append(devices, n.rec.Name)
+		if n.rec.State == stateRevoked {
+			continue
+		}
+		mine := n.rec.Role == string(pki.RoleWorker) && n.rec.Owner == req.Name ||
+			n.rec.Role != string(pki.RoleWorker) && nodeUser(n.rec) == req.Name
+		if mine {
+			devices, deviceIDs = append(devices, n.rec.Name), append(deviceIDs, n.rec.ID)
 		}
 	}
 	h.mu.Unlock()
@@ -460,8 +464,8 @@ func (h *Hub) RemoveUser(by string, req *pb.RemoveUserRequest) (*pb.RemoveUserRe
 		return nil, status.Errorf(codes.NotFound, "no user %q", req.Name)
 	}
 	resp := &pb.RemoveUserResponse{Purge: req.Purge}
-	for _, d := range devices {
-		if _, err := h.Revoke(by+" (remove user "+req.Name+")", d); err != nil {
+	for i, d := range devices {
+		if _, err := h.Revoke(by+" (remove user "+req.Name+")", "id:"+deviceIDs[i]); err != nil {
 			return nil, err
 		}
 		resp.Revoked = append(resp.Revoked, d)

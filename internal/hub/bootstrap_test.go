@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 )
 
@@ -130,7 +131,7 @@ func TestBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutNode(&store.Node{Name: "laptop", Role: string(pki.RoleAdmin), State: stateApproved, JoinedAt: time.Now()}); err != nil {
+	if err := st.PutNode(&store.Node{ID: nodeid.New(), Name: "laptop", Role: string(pki.RoleAdmin), State: stateApproved, JoinedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	st.Close()
@@ -204,7 +205,7 @@ func TestBootstrapCAInDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutNode(&store.Node{Name: "laptop", Role: string(pki.RoleAdmin), State: stateApproved, JoinedAt: time.Now()}); err != nil {
+	if err := st.PutNode(&store.Node{ID: nodeid.New(), Name: "laptop", Role: string(pki.RoleAdmin), State: stateApproved, JoinedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	st.Close()

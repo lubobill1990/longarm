@@ -62,7 +62,7 @@ func (h *Hub) PlaceFor(ctx context.Context, by, owner string, req *pb.PlaceReque
 			if !h.viewerLocked(owner, false).CanRead(tenancy.OwnerOf(e.job.GetSpec()), nil) {
 				return status.Errorf(codes.AlreadyExists, "job id %s is in use", req.JobId)
 			}
-			return status.Errorf(codes.AlreadyExists, "job %s already runs on %s", req.JobId, w)
+			return status.Errorf(codes.AlreadyExists, "job %s already runs on %s", req.JobId, h.nodeNameLocked(w))
 		}
 	}
 	res := h.pickLocked(req, mem, owner)
@@ -71,7 +71,7 @@ func (h *Hub) PlaceFor(ctx context.Context, by, owner string, req *pb.PlaceReque
 		res = sched.Result{}
 	}
 	if res.Worker != "" {
-		r := h.reserveLocked(req.JobId, res.Worker, mem, owner)
+		r := h.reserveLocked(req.JobId, res.WorkerID, mem, owner)
 		u := h.assignedLocked(r, res.Score)
 		h.log.InfoContext(ctx, "placed", "job", req.JobId, "worker", res.Worker, "score", res.Score, "mem_gb", mem, "by", by)
 		h.tel().Event(ctx, "scheduler.placement", map[string]string{"outcome": "placed", "type": req.Type}, map[string]float64{"mem_gb": mem})
@@ -173,7 +173,7 @@ func (h *Hub) runQueue() {
 			kept = append(kept, q)
 			continue
 		}
-		r := h.reserveLocked(q.req.JobId, res.Worker, q.memGB, q.owner)
+		r := h.reserveLocked(q.req.JobId, res.WorkerID, q.memGB, q.owner)
 		h.log.Info("placed from queue", "job", q.req.JobId, "worker", res.Worker, "waited", time.Since(q.at).Round(time.Millisecond))
 		h.tel().Event(telemetry.WithSpan(context.Background(), q.span), "scheduler.placement", map[string]string{"outcome": "placed_from_queue", "type": q.req.Type},
 			map[string]float64{"mem_gb": q.memGB, "waited_s": time.Since(q.at).Seconds()})
@@ -184,7 +184,7 @@ func (h *Hub) runQueue() {
 			}
 		}
 		q.ch <- h.assignedLocked(r, res.Score) // the only "assigned" for q; only sent under h.mu
-		h.bus.publishOwned(&pb.FleetEvent{Kind: "queue", Node: res.Worker,
+		h.bus.publishOwned(&pb.FleetEvent{Kind: "queue", Node: res.Worker, NodeId: res.WorkerID,
 			Message: fmt.Sprintf("job %s assigned to %s after %s", q.req.JobId, res.Worker, time.Since(q.at).Round(time.Second))}, q.owner)
 	}
 	clear(h.queue[len(kept):])
@@ -192,6 +192,7 @@ func (h *Hub) runQueue() {
 	h.renumberLocked()
 }
 
+// reserveLocked reserves mem on worker (an ID) for a job.
 func (h *Hub) reserveLocked(jobID, worker string, mem float64, owner string) *reservation {
 	r := &reservation{jobID: jobID, worker: worker, memGB: mem, at: time.Now(), owner: owner}
 	h.reservations[jobID] = r
@@ -199,7 +200,7 @@ func (h *Hub) reserveLocked(jobID, worker string, mem float64, owner string) *re
 }
 
 func (h *Hub) assignedLocked(r *reservation, score float64) *pb.PlaceUpdate {
-	u := &pb.PlaceUpdate{State: "assigned", Worker: r.worker, Score: score, MemGb: r.memGB}
+	u := &pb.PlaceUpdate{State: "assigned", Worker: h.nodeNameLocked(r.worker), WorkerId: r.worker, Score: score, MemGb: r.memGB}
 	if n := h.nodes[r.worker]; n != nil {
 		u.Node = h.nodeInfoLocked(n)
 	}
@@ -217,7 +218,7 @@ func (h *Hub) candidatesLocked(repo, owner string) []sched.Candidate {
 		if !h.mayUseLocked(owner, n) { // other users' own workers: not even in the reasons
 			continue
 		}
-		c := sched.Candidate{Name: n.rec.Name, Labels: labelsOf(n), Online: n.sess != nil && n.metrics != nil, Eligible: true}
+		c := sched.Candidate{Name: n.rec.Name, ID: n.rec.ID, Labels: labelsOf(n), Online: n.sess != nil && n.metrics != nil, Eligible: true}
 		switch {
 		case n.rec.State != stateApproved:
 			c.Eligible, c.Why = false, n.rec.State
@@ -231,7 +232,7 @@ func (h *Hub) candidatesLocked(repo, owner string) []sched.Candidate {
 			c.TotalGB = float64(m.MemTotalBytes) / (1 << 30)
 			c.CPU = m.CpuPercent
 		}
-		active, reserved := h.loadLocked(n.rec.Name)
+		active, reserved := h.loadLocked(n.rec.ID)
 		c.Running, c.ReservedGB = int(active), reserved
 		// Local limits (longarmd limits): memory kept free for the desktop user,
 		// and a cap on active jobs.

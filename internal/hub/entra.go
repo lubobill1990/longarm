@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -516,6 +517,9 @@ type deviceRequest struct {
 	// admin: an admin worker (a pairing's admin_worker_csr_pem): marked
 	// (store.Node.Admin, label longarm.io/admin=true), owner-only, never placed
 	admin bool
+	// companion: the ID of the worker an admin worker is enrolled with (the
+	// same machine's, same pairing): the two get linked (store.Node.Companion)
+	companion string
 }
 
 // checkWorkerLabels validates the labels a sign-in asks for: workers only,
@@ -554,23 +558,25 @@ func (h *Hub) enrollDevice(who, user string, admin bool, d deviceRequest) (resp 
 		if host := sanitizeName(host); host != "" {
 			name = user + "-" + host
 		}
+		name = nodeid.SafeName(name, autoNamePrefix(string(role)))
 		// room for a collision suffix (-2, -3, ...) within pki.ValidName's 63
 		if len(name) > maxAutoDeviceName {
 			name = strings.TrimRight(name[:maxAutoDeviceName], "-._")
 		}
 	}
-	if !pki.ValidName(name) {
-		return nil, false, status.Errorf(codes.InvalidArgument, "invalid device name %q (use --name)", name)
+	if err := checkNewName(name); err != nil {
+		return nil, false, status.Errorf(codes.InvalidArgument, "%s (use --name)", status.Convert(err).Message())
 	}
 	mine := func(n *node) bool { return n.rec.Role != string(pki.RoleWorker) && nodeUser(n.rec) == user }
 	h.mu.Lock()
+	var old *node // the same user's device of that name: taken over
 	for i, base := 2, name; ; i++ {
-		n := h.nodes[name]
-		if n == nil || n.rec.State == stateRevoked {
+		n := h.nameTakenLocked(name, "")
+		if n == nil {
 			break
 		}
-		if mine(n) {
-			replaced = true
+		if mine(n) && n.rec.Name == name {
+			replaced, old = true, n
 			break
 		}
 		if explicit {
@@ -580,16 +586,16 @@ func (h *Hub) enrollDevice(who, user string, admin bool, d deviceRequest) (resp 
 		name = fmt.Sprintf("%s-%d", base, i)
 	}
 	h.mu.Unlock()
-	if !pki.ValidName(name) {
-		return nil, false, status.Errorf(codes.InvalidArgument, "invalid device name %q (use --name)", name)
+	if err := checkNewName(name); err != nil {
+		return nil, false, status.Errorf(codes.InvalidArgument, "%s (use --name)", status.Convert(err).Message())
 	}
 	if replaced {
-		if _, err := h.Revoke(who+" (signed in again)", name); err != nil {
+		if _, err := h.Revoke(who+" (signed in again)", "id:"+old.rec.ID); err != nil {
 			return nil, false, err
 		}
 	}
 	now := time.Now().UTC()
-	rec := &store.Node{Name: name, Role: string(role), Hostname: d.hostname, OS: d.os, Arch: d.arch,
+	rec := &store.Node{ID: nodeid.New(), Name: name, Role: string(role), Hostname: d.hostname, OS: d.os, Arch: d.arch,
 		Version: d.version, JoinedAt: now, User: user}
 	cert, err := h.issue(rec, d.csr)
 	if err != nil {
@@ -597,20 +603,20 @@ func (h *Hub) enrollDevice(who, user string, admin bool, d deviceRequest) (resp 
 	}
 	rec.State, rec.ApprovedAt = stateApproved, now
 	h.mu.Lock()
-	if n := h.nodes[name]; n != nil && n.rec.State != stateRevoked { // raced with another join
+	if n := h.nameTakenLocked(name, ""); n != nil { // raced with another join
 		h.mu.Unlock()
 		return nil, false, status.Errorf(codes.AlreadyExists, "node name %q is taken", name)
 	}
 	if err := h.store.PutNode(rec); err != nil {
 		h.mu.Unlock()
-		return nil, false, status.Error(codes.Internal, err.Error())
+		return nil, false, putNodeErr(err)
 	}
 	n := &node{rec: rec}
-	h.nodes[name] = n
+	h.nodes[rec.ID] = n
 	h.publishNodeLocked(n, "joined (sign-in of "+who+")")
 	h.mu.Unlock()
 	return &pb.JoinResponse{State: stateApproved, Name: name, Role: string(role), CaPem: h.ca.CertPEM, CertPem: cert,
-		HubName: h.cfg.Name, Message: "signed in as " + user}, replaced, nil
+		HubName: h.cfg.Name, Message: "signed in as " + user, Id: rec.ID}, replaced, nil
 }
 
 // enrollOwnedWorker issues a worker certificate for a machine its owner
@@ -621,45 +627,47 @@ func (h *Hub) enrollDevice(who, user string, admin bool, d deviceRequest) (resp 
 func (h *Hub) enrollOwnedWorker(who, owner string, d deviceRequest) (*pb.JoinResponse, error) {
 	name := d.name
 	if name == "" {
-		name = sanitizeName(d.hostname)
+		name = nodeid.SafeName(sanitizeName(d.hostname), "w-")
 	}
-	if !pki.ValidName(name) {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid worker name %q (use --name)", name)
+	if err := checkNewName(name); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%s (use --name)", status.Convert(err).Message())
 	}
 	h.mu.Lock()
 	if h.tenants[owner] == nil || h.userDisabledLocked(owner) {
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled or unknown", owner)
 	}
-	if n := h.nodes[name]; n != nil && n.rec.State != stateRevoked {
+	if n := h.nameTakenLocked(name, ""); n != nil {
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name, or remove the old worker)", name)
 	}
 	h.mu.Unlock()
 	now := time.Now().UTC()
-	rec := &store.Node{Name: name, Role: string(pki.RoleWorker), Hostname: d.hostname, OS: d.os, Arch: d.arch,
-		Version: d.version, JoinedAt: now, Owner: owner, AccessVersion: 1, Labels: maps.Clone(d.labels), Admin: d.admin}
+	rec := &store.Node{ID: nodeid.New(), Name: name, Role: string(pki.RoleWorker), Hostname: d.hostname, OS: d.os, Arch: d.arch,
+		Version: d.version, JoinedAt: now, Owner: owner, AccessVersion: 1, Labels: maps.Clone(d.labels), Admin: d.admin,
+		Companion: d.companion}
 	cert, err := h.issue(rec, d.csr)
 	if err != nil {
 		return nil, err
 	}
 	rec.State, rec.ApprovedAt = stateApproved, now
 	h.mu.Lock()
-	if n := h.nodes[name]; n != nil && n.rec.State != stateRevoked { // raced with another join
+	if n := h.nameTakenLocked(name, ""); n != nil { // raced with another join
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken", name)
 	}
 	if err := h.store.PutNode(rec); err != nil {
 		h.mu.Unlock()
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, putNodeErr(err)
 	}
 	n := &node{rec: rec}
-	h.nodes[name] = n
+	h.nodes[rec.ID] = n
+	h.pairLocked(n) // an admin worker enrolled with its machine's worker
 	h.event(context.Background(), "node.joined", map[string]string{"role": rec.Role, "state": rec.State, "os": d.os, "arch": d.arch, "node_version": d.version})
 	h.publishNodeLocked(n, "joined (owned by "+owner+", sign-in of "+who+")")
 	h.checkTenancyFlipLocked() // an owned worker separates users
 	h.mu.Unlock()
-	h.auditHub("node/"+name, "workers/join", map[string]any{"worker": name, "owner": owner, "via": who, "labels": d.labels, "admin_worker": d.admin})
+	h.auditHub("node/"+name, "workers/join", map[string]any{"worker": name, "id": rec.ID, "owner": owner, "via": who, "labels": d.labels, "admin_worker": d.admin, "companion": d.companion})
 	labels, msg := maps.Clone(d.labels), "registered as a worker of "+owner
 	if d.admin {
 		if labels == nil {
@@ -669,5 +677,5 @@ func (h *Hub) enrollOwnedWorker(who, owner string, d deviceRequest) (*pb.JoinRes
 		msg = "registered as the admin worker of " + owner + " (owner-only, never shared, never placed automatically)"
 	}
 	return &pb.JoinResponse{State: stateApproved, Name: name, Role: rec.Role, CaPem: h.ca.CertPEM, CertPem: cert,
-		HubName: h.cfg.Name, Owner: owner, Message: msg, Labels: labels}, nil
+		HubName: h.cfg.Name, Owner: owner, Message: msg, Labels: labels, Id: rec.ID}, nil
 }

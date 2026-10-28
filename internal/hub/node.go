@@ -64,7 +64,7 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 		(*hook)()
 	}
 	h.mu.Lock()
-	n := h.nodes[c.id.Name]
+	n := h.callerNodeLocked(c)
 	if n == nil || n.rec.State != stateApproved {
 		h.mu.Unlock()
 		return status.Errorf(codes.FailedPrecondition, "node %s is not approved", c.id.Name)
@@ -95,10 +95,15 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	if hello.TenancyVersion != h.tenancyVersion {
 		policy = h.policyLocked()
 	}
+	renewBefore := h.cfg.RenewBefore(n.rec.Role)
+	if f := forcedRenewBefore(n, c.cert); f > renewBefore {
+		// its certificate lacks the node ID or has an old name: renew now
+		renewBefore = f
+	}
 	welcome := &pb.HubWelcome{
 		NodeState: n.rec.State, AuditOffset: n.rec.AuditOffset,
 		MetricsInterval: durationpb.New(h.cfg.Heartbeat.Interval.Duration),
-		RenewBefore:     durationpb.New(h.cfg.RenewBefore(n.rec.Role)),
+		RenewBefore:     durationpb.New(renewBefore),
 		HubDraining:     n.rec.AdminDrain,
 		Tailnet:         h.tailnetInfo(n),
 	}
@@ -117,10 +122,10 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	if policy != nil {
 		send(&pb.HubCommand{Msg: &pb.HubCommand_Tenancy{Tenancy: policy}})
 	}
-	send(h.portLinksMsgLocked(n.rec.Name))    // always: the list is authoritative (empty = none)
-	h.portLinkTargetChangedLocked(n.rec.Name) // its endpoints may have changed
-	h.checkTenancyFlipLocked()                // may push a new policy (after the welcome)
-	h.log.Info("node online", "node", n.rec.Name, "version", hello.Version, "endpoints", hello.Endpoints)
+	send(h.portLinksMsgLocked(n.rec.ID))    // always: the list is authoritative (empty = none)
+	h.portLinkTargetChangedLocked(n.rec.ID) // its endpoints may have changed
+	h.checkTenancyFlipLocked()              // may push a new policy (after the welcome)
+	h.log.Info("node online", "node", n.rec.Name, "id", n.rec.ID, "version", hello.Version, "endpoints", hello.Endpoints)
 	h.tel().Count("node.connected", map[string]string{"node_version": hello.Version, "os": hello.Os, "isolation": hello.Isolation}, 1)
 	h.publishNodeLocked(n, "online")
 	h.advanceReleaseLocked()
@@ -192,6 +197,7 @@ func (h *Hub) applyHelloLocked(n *node, hello *pb.NodeHello) {
 		n.maxJobs, n.reservedGB = st.MaxJobs, st.ReservedMemGb
 	}
 	r.Channel, r.UpdateEnabled = hello.Channel, hello.UpdateEnabled
+	r.Capabilities = hello.Capabilities
 	h.applyTailnetLocked(n, hello.Tailnet)
 	if hello.Update != nil {
 		if b, err := protojson.Marshal(hello.Update); err == nil {
@@ -216,7 +222,7 @@ func (h *Hub) handleReport(n *node, sess *nodeSession, m *pb.NodeReport) {
 	case *pb.NodeReport_Metrics:
 		n.metrics = x.Metrics
 		recordMetricsLocked(n, x.Metrics)
-		h.bus.publish(&pb.FleetEvent{Kind: "metrics", Node: n.rec.Name, NodeInfo: h.nodeInfoLocked(n)})
+		h.bus.publish(&pb.FleetEvent{Kind: "metrics", Node: n.rec.Name, NodeId: n.rec.ID, NodeInfo: h.nodeInfoLocked(n)})
 		h.kickQueue()
 	case *pb.NodeReport_Jobs:
 		h.applyJobsLocked(n, x.Jobs)
@@ -250,7 +256,7 @@ func (h *Hub) handleReport(n *node, sess *nodeSession, m *pb.NodeReport) {
 		h.deliverReplyLocked(n, sess, x.Reply)
 	case *pb.NodeReport_Hello:
 		h.applyHelloLocked(n, x.Hello)
-		h.portLinkTargetChangedLocked(n.rec.Name)
+		h.portLinkTargetChangedLocked(n.rec.ID)
 		h.store.PutNode(n.rec)
 		h.publishNodeLocked(n, "hello")
 		h.checkTenancyFlipLocked()
@@ -260,7 +266,7 @@ func (h *Hub) handleReport(n *node, sess *nodeSession, m *pb.NodeReport) {
 // applyJobsLocked merges a jobs report into the index (worker = source of
 // truth) and publishes changes.
 func (h *Hub) applyJobsLocked(n *node, rep *pb.JobsReport) {
-	worker := n.rec.Name
+	worker := n.rec.ID
 	jm := h.jobMap(worker)
 	now := time.Now()
 	seen := map[string]bool{}
@@ -284,7 +290,7 @@ func (h *Hub) applyJobsLocked(n *node, rep *pb.JobsReport) {
 				h.store.PutJob(store.JobRow{Worker: worker, ID: id, State: int32(j.State), UpdatedAt: now, Data: b})
 			}
 		}
-		h.bus.publish(&pb.FleetEvent{Kind: "job", Node: worker, Job: h.fleetJobLocked(worker, jm[id])})
+		h.bus.publish(&pb.FleetEvent{Kind: "job", Node: n.rec.Name, NodeId: worker, Job: h.fleetJobLocked(worker, jm[id])})
 	}
 	removed := rep.Removed
 	if rep.Full {
@@ -333,7 +339,7 @@ func (h *Hub) storeAuditLocked(n *node, sess *nodeSession, b *pb.AuditBatch) {
 		if err != nil {
 			t = time.Now()
 		}
-		rows = append(rows, store.AuditRow{Node: n.rec.Name, Time: t, Who: rec.Who, Method: rec.Method, Line: l})
+		rows = append(rows, store.AuditRow{Node: n.rec.Name, NodeID: n.rec.ID, Time: t, Who: rec.Who, Method: rec.Method, Line: l})
 	}
 	if err := h.store.AddAudit(rows); err != nil {
 		h.log.Warn("store audit", "node", n.rec.Name, "err", err)
@@ -350,7 +356,7 @@ func (h *Hub) setOfflineLocked(n *node, id uint64) {
 		return
 	}
 	n.sess = nil
-	h.failPendingLocked(n.rec.Name, id)
+	h.failPendingLocked(n.rec.ID, id)
 	n.rec.LastSeen = time.Now().UTC()
 	h.store.PutNode(n.rec)
 	h.log.Info("node offline", "node", n.rec.Name)
@@ -381,7 +387,7 @@ func (h *Hub) broadcast(cmd *pb.HubCommand) {
 }
 
 func (h *Hub) publishNodeLocked(n *node, msg string) {
-	h.bus.publish(&pb.FleetEvent{Kind: "node", Node: n.rec.Name, NodeInfo: h.nodeInfoLocked(n), Message: msg})
+	h.bus.publish(&pb.FleetEvent{Kind: "node", Node: n.rec.Name, NodeId: n.rec.ID, NodeInfo: h.nodeInfoLocked(n), Message: msg})
 }
 
 // labelsLocked are the node's effective labels: longarmd.toml's, the admin's
@@ -413,6 +419,7 @@ func (h *Hub) nodeInfoLocked(n *node) *pb.NodeInfo {
 		Metrics: n.metrics, LastSeen: tspb(r.LastSeen), JoinedAt: tspb(r.JoinedAt), CertNotAfter: tspb(r.CertNotAfter),
 		Mirrors: r.Mirrors, WarmRepos: r.WarmRepos, Profile: r.Profile, Toolchain: n.toolchain, AdminWorker: r.Admin,
 		MaxJobs: n.maxJobs, ReservedMemGb: n.reservedGB, Tailnet: n.tailnet, Isolation: r.Isolation,
+		Id: r.ID, CertName: r.DialName(), CompanionId: r.Companion,
 	}
 	if r.Role != string(pki.RoleWorker) {
 		info.User = nodeUser(r)
@@ -428,11 +435,11 @@ func (h *Hub) nodeInfoLocked(n *node) *pb.NodeInfo {
 	if n.sess != nil {
 		info.LastSeen = tspb(n.lastReport)
 	}
-	info.JobsActive, info.ReservedGb = h.loadLocked(r.Name)
+	info.JobsActive, info.ReservedGb = h.loadLocked(r.ID)
 	return info
 }
 
-// loadLocked returns the active jobs and reserved memory of a worker.
+// loadLocked returns the active jobs and reserved memory of a worker (ID).
 func (h *Hub) loadLocked(worker string) (int32, float64) {
 	var active int32
 	var gb float64
@@ -471,12 +478,18 @@ func terminal(s pb.JobState) bool {
 	return false
 }
 
+// fleetJobLocked is a job of the worker with ID worker.
 func (h *Hub) fleetJobLocked(worker string, e *jobEntry) *pb.FleetJob {
 	n := h.nodes[worker]
-	return &pb.FleetJob{Worker: worker, Job: e.job, UpdatedAt: tspb(e.updated), WorkerOnline: n != nil && n.sess != nil}
+	name := worker
+	if n != nil {
+		name = n.rec.Name
+	}
+	return &pb.FleetJob{Worker: name, WorkerId: worker, Job: e.job, UpdatedAt: tspb(e.updated), WorkerOnline: n != nil && n.sess != nil}
 }
 
-// findJobLocked finds a job by id (on worker, or anywhere).
+// findJobLocked finds a job by id (on worker - an ID -, or anywhere); it
+// returns the worker's ID.
 func (h *Hub) findJobLocked(id, worker string) (string, *jobEntry) {
 	if worker != "" {
 		if e := h.jobs[worker][id]; e != nil {
@@ -514,7 +527,7 @@ func (s *hubNodeServer) Leave(ctx context.Context, req *pb.LeaveRequest) (*pb.Le
 	// Revoking closes the caller's connections, this one included: answer
 	// first, revoke right after.
 	time.AfterFunc(300*time.Millisecond, func() {
-		if _, err := s.h.Revoke(who, c.id.Name); err != nil {
+		if _, err := s.h.Revoke(who, "id:"+c.nodeID); err != nil {
 			s.h.log.Warn("leave", "node", c.id.Name, "err", err)
 			return
 		}

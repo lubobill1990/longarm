@@ -404,12 +404,12 @@ func (s *enrollServer) PollLink(ctx context.Context, req *pb.PollLinkRequest) (*
 		// Revoked (or replaced) since the approval: no certificate, and no
 		// tailnet key for it.
 		h.mu.Lock()
-		liveNode := func(name, serial string) bool {
-			n := h.nodes[name]
+		liveNode := func(id, serial string) bool {
+			n := h.nodes[id]
 			return n != nil && n.rec.State == stateApproved && n.rec.CertSerial == serial
 		}
-		live := liveNode(resp.Name, serial) && (resp.Worker == nil || liveNode(resp.Worker.Name, wserial)) &&
-			(resp.AdminWorker == nil || liveNode(resp.AdminWorker.Name, aserial))
+		live := liveNode(resp.Id, serial) && (resp.Worker == nil || liveNode(resp.Worker.Id, wserial)) &&
+			(resp.AdminWorker == nil || liveNode(resp.AdminWorker.Id, aserial))
 		h.mu.Unlock()
 		if !live {
 			h.log.Warn("pairing result withheld: the node changed since the approval", "node", resp.Name, "remote", c.addr)
@@ -621,13 +621,19 @@ func (h *Hub) approveLink(a *linkApprover, l *pairLink) (*pb.JoinResponse, error
 	}
 	adev := dev
 	adev.csr, adev.name, adev.labels, adev.admin = l.adminCSR, aname, nil, true
+	switch { // the machine's worker, if this pairing enrolled one: its companion
+	case resp.Worker != nil:
+		adev.companion = resp.Worker.Id
+	case l.kind == linkWorker:
+		adev.companion = resp.Id
+	}
 	aw, err := h.enrollOwnedWorker(who, user, adev)
 	if err != nil {
 		for _, r := range []*pb.JoinResponse{resp.Worker, resp} {
 			if r == nil {
 				continue
 			}
-			if _, rerr := h.Revoke(who+" (pairing failed)", r.Name); rerr != nil {
+			if _, rerr := h.Revoke(who+" (pairing failed)", "id:"+r.Id); rerr != nil {
 				h.log.Warn("pairing: revoking a node of a failed approval", "node", r.Name, "err", rerr)
 			}
 		}
@@ -674,7 +680,7 @@ func (h *Hub) approveLinkParts(who, user string, admin bool, l *pairLink, dev de
 		resp, _, err := h.enrollDevice(who, user, admin, dev)
 		if err != nil {
 			// all or nothing: the machine never collects the worker alone
-			if _, rerr := h.Revoke(who+" (pairing failed)", w.Name); rerr != nil {
+			if _, rerr := h.Revoke(who+" (pairing failed)", "id:"+w.Id); rerr != nil {
 				h.log.Warn("pairing: revoking the worker of a failed approval", "node", w.Name, "err", rerr)
 			}
 			return nil, err

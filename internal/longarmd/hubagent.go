@@ -77,9 +77,15 @@ type hubAgent struct {
 	hideJobDetails bool
 	// trust: the end-to-end trust policy (its default for remoteJobs is
 	// "none"); trustStore: the node key and endorsement for renewals.
-	trust       *pki.TrustSource
-	trustStore  trust.Store
-	stop        context.CancelFunc // stops longarmd (after longarmd leave)
+	trust      *pki.TrustSource
+	trustStore trust.Store
+	stop       context.CancelFunc // stops longarmd (after longarmd leave)
+	// restart ends longarmd to be started again (as for a self-update):
+	// after a renewal changed what the running listeners were set up with
+	// (node identity: a rename). nameBound: a listener keyed by the
+	// certificate name runs (longnet registers with the relay by it).
+	restart     func()
+	nameBound   bool
 	logMaxBytes int64
 	tel         *workerTelemetry // nil = off
 
@@ -289,6 +295,8 @@ func (a *hubAgent) hello() *pb.NodeHello {
 	h.Tailnet = a.tailnet.state()
 	h.Isolation = a.spaces.Mode()
 	h.TenancyVersion = a.policy.Version()
+	// node identity: this longarmd renews and restarts when the hub renames it
+	h.Capabilities = []string{"node-id"}
 	return h
 }
 
@@ -594,7 +602,11 @@ func (a *hubAgent) handle(cmd *pb.HubCommand) {
 		for _, c := range x.Revocations.Certs {
 			m[c.Serial] = c.NotAfter.AsTime()
 		}
-		if err := a.revoked.Replace(x.Revocations.Version, m); err != nil {
+		ids := map[string]time.Time{}
+		for _, n := range x.Revocations.Nodes {
+			ids[n.Id] = n.NotAfter.AsTime()
+		}
+		if err := a.revoked.ReplaceAll(x.Revocations.Version, m, ids); err != nil {
 			a.log.Warn("hub: save revocation list", "err", err)
 		}
 		a.log.Info("hub: revocation list updated", "version", x.Revocations.Version, "revoked", a.revoked.Len())
@@ -663,6 +675,7 @@ func (a *hubAgent) maybeRenew(ctx context.Context, conn *hubclient.Conn) {
 		a.log.Warn("hub: write renewed certificate", "err", err)
 		return
 	}
+	before := a.live.CurrentIdentity()
 	if _, err := a.reloader.Check(); err != nil {
 		a.log.Warn("hub: load renewed certificate", "err", err)
 		return
@@ -671,6 +684,20 @@ func (a *hubAgent) maybeRenew(ctx context.Context, conn *hubclient.Conn) {
 		a.trustStore.RenewalDone()
 	}
 	a.log.Info("hub: certificate renewed", "not_after", a.live.Leaf().NotAfter, "endorsed", endorsedBy(a.live.Leaf()))
+	if nl, err := pki.ParseCertPEM(certPEM); err == nil {
+		after, _ := pki.IdentityFromCert(nl)
+		// the live bundle took the new certificate only for the same node
+		// (pki.Identity.SameNode); longnet registered by the old name
+		stale := pki.Serial(a.live.Leaf()) != pki.Serial(nl)
+		renamed := after.Name != before.Name
+		if renamed {
+			a.log.Info("hub: this worker was renamed", "old", before.Name, "new", after.Name, "id", after.ID)
+		}
+		if (stale || (renamed && a.nameBound)) && a.restart != nil {
+			a.log.Info("hub: restarting to serve the renewed identity (jobs and sessions continue in their shims)", "stale_bundle", stale, "renamed", renamed)
+			a.restart()
+		}
+	}
 	a.tel.event("cert.renewal", map[string]string{"ok": "true", "trust": strconv.FormatBool(asked)})
 	a.notify(&pb.LocalEvent{Kind: "hub", Message: "certificate renewed"})
 }
@@ -845,4 +872,15 @@ func (a *hubAgent) sendMetrics(ctx context.Context) {
 		a.metricsSent = true
 		a.log.Info("hub: metrics reported", "cpu", m.CPUPercent, "mem_used", m.MemUsed, "mem_total", m.MemTotal)
 	}
+}
+
+// hasLongnetListener reports whether longarmd listens on longnet (its relay
+// registration is keyed by the certificate's name).
+func hasLongnetListener(listen []string) bool {
+	for _, l := range listen {
+		if strings.HasPrefix(l, "longnet://") {
+			return true
+		}
+	}
+	return false
 }

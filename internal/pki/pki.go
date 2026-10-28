@@ -3,7 +3,11 @@
 // Every node holds a bundle: ca.crt (trust root), node.crt, node.key. The
 // node identity is carried in the certificate as a URI SAN
 // "longarm://<role>/<name>" (also mirrored as OU=<role>, CN=<name> for
-// humans). Roles: worker (longarmd), client (longarm), admin (longarm with admin rights),
+// humans) and, since node IDs (internal/nodeid, docs/security.md "Node
+// identity"), a second URI SAN "urn:longarm:node:<uuid>" with the node's
+// immutable ID. The name is the node's display name when the certificate
+// was issued; authorization uses the ID (certificates without one, issued
+// before IDs, map to their node by serial or name until renewed). Roles: worker (longarmd), client (longarm), admin (longarm with admin rights),
 // relay (longarm-relay, the longnet relay/rendezvous server), release (CI: may only
 // publish releases and start/inspect/abort rollouts on the hub).
 // Worker certificates also carry DNS SAN <name> so clients can verify the
@@ -32,6 +36,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/lubobill1990/longarm/internal/nodeid"
 )
 
 // Role of a certificate holder.
@@ -95,9 +101,53 @@ type Identity struct {
 	// certificate and name). Carried as "?user=" on the identity URI; empty
 	// for older certificates, whose user is their name (see Owner).
 	User string
+	// ID is the node's immutable ID (URI SAN urn:longarm:node:<uuid>);
+	// "" for certificates issued before node IDs (and the hub's own).
+	ID string
 }
 
 func (i Identity) String() string { return string(i.Role) + "/" + i.Name }
+
+// SameNode reports whether a and b are the same node: the same ID when both
+// carry one (the name may have changed: a rename), else the same role,
+// name and user (a certificate without an ID and its renewal with one).
+func (i Identity) SameNode(o Identity) bool {
+	if i.ID != "" && o.ID != "" {
+		return i.ID == o.ID && i.Role == o.Role
+	}
+	return i.Role == o.Role && i.Name == o.Name && i.User == o.User
+}
+
+// NodeURNPrefix is the URI SAN prefix of a node ID.
+const NodeURNPrefix = "urn:longarm:node:"
+
+// NodeURN is the URI SAN carrying a node ID.
+func NodeURN(id string) *url.URL {
+	return &url.URL{Scheme: "urn", Opaque: strings.TrimPrefix(NodeURNPrefix, "urn:") + id}
+}
+
+// nodeIDFromCert returns the node ID URI SAN ("" if none; an error if
+// malformed or repeated).
+func nodeIDFromCert(c *x509.Certificate) (string, error) {
+	id := ""
+	for _, u := range c.URIs {
+		if u.Scheme != "urn" {
+			continue
+		}
+		v, ok := strings.CutPrefix(u.Opaque, strings.TrimPrefix(NodeURNPrefix, "urn:"))
+		if !ok {
+			continue
+		}
+		if !nodeid.Valid(v) {
+			return "", fmt.Errorf("bad node id %q in certificate", v)
+		}
+		if id != "" {
+			return "", errors.New("certificate has two node ids")
+		}
+		id = strings.ToLower(v)
+	}
+	return id, nil
+}
 
 // Owner is the user the identity acts as: its User, else its Name. Jobs,
 // sessions, files and forwards belong to an owner.
@@ -115,8 +165,13 @@ var userRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,16}$`)
 // worker OS account (la-<user>) stays within Windows' 20-character limit.
 func ValidUser(name string) bool { return userRE.MatchString(name) }
 
-// IdentityFromCert extracts the identity from the longarm:// URI SAN.
+// IdentityFromCert extracts the identity from the longarm:// URI SAN and
+// the node ID from the urn:longarm:node: one.
 func IdentityFromCert(c *x509.Certificate) (Identity, error) {
+	nid, err := nodeIDFromCert(c)
+	if err != nil {
+		return Identity{}, err
+	}
 	for _, u := range c.URIs {
 		if u.Scheme != URIScheme {
 			continue
@@ -129,7 +184,7 @@ func IdentityFromCert(c *x509.Certificate) (Identity, error) {
 		if !ValidName(name) {
 			return Identity{}, fmt.Errorf("bad name %q in identity URI", name)
 		}
-		id := Identity{Role: role, Name: name}
+		id := Identity{Role: role, Name: name, ID: nid}
 		if u := u.Query().Get("user"); u != "" {
 			if !ValidUser(u) {
 				return Identity{}, fmt.Errorf("bad user %q in identity URI", u)
@@ -255,6 +310,7 @@ type IssueOptions struct {
 	Role     Role
 	Name     string
 	User     string   // clients/admins: the Longarm user (multi-tenancy); "" = the name
+	ID       string   // the node ID (URI SAN urn:longarm:node:<id>); "" = none (hub, relay)
 	Hosts    []string // extra DNS names / IPs (workers, relays)
 	Validity time.Duration
 
@@ -290,6 +346,9 @@ func (ca *CA) sign(pub any, o IssueOptions) ([]byte, error) {
 	if o.User != "" && (!ValidUser(o.User) || (o.Role != RoleClient && o.Role != RoleAdmin)) {
 		return nil, fmt.Errorf("invalid user %q (a-z 0-9 _ -, at most 17 characters; clients and admins only)", o.User)
 	}
+	if o.ID != "" && !nodeid.Valid(o.ID) {
+		return nil, fmt.Errorf("invalid node id %q", o.ID)
+	}
 	if o.Validity == 0 {
 		o.Validity = DefaultValidity(o.Role)
 	}
@@ -311,6 +370,9 @@ func (ca *CA) sign(pub any, o IssueOptions) ([]byte, error) {
 		ExtKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		URIs:            []*url.URL{IdentityURI(Identity{Role: o.Role, Name: o.Name, User: o.User})},
 		ExtraExtensions: o.extra,
+	}
+	if o.ID != "" {
+		tmpl.URIs = append(tmpl.URIs, NodeURN(strings.ToLower(o.ID)))
 	}
 	if o.Role == RoleWorker || o.Role == RoleRelay || o.Role == RoleHub {
 		tmpl.ExtKeyUsage = append(tmpl.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
@@ -450,9 +512,30 @@ func (b *Bundle) ServerConfig() (*tls.Config, error) {
 	}, nil
 }
 
+// DialTarget is the worker a client dials: CertName is the name in the
+// worker's current certificate (the TLS server name and the longnet relay
+// address), ID the node ID the hub reported for it ("" = unknown: a
+// workers.toml entry). Name / IDPrefix are what the user typed, if they
+// targeted the worker themselves: with end-to-end trust the worker's
+// endorsement must vouch for them (CheckTarget).
+type DialTarget struct {
+	CertName string
+	ID       string
+	Name     string
+	IDPrefix string
+}
+
 // ClientConfig is the longarm side: verifies the worker's certificate chain, that
 // it was issued for serverName, and that it carries the worker role.
 func (b *Bundle) ClientConfig(serverName string) *tls.Config {
+	return b.ClientConfigFor(DialTarget{CertName: serverName})
+}
+
+// ClientConfigFor is ClientConfig for t: a certificate with a node ID must
+// carry t.ID (when known), and with end-to-end trust the endorsement must
+// fit t (CheckTarget).
+func (b *Bundle) ClientConfigFor(t DialTarget) *tls.Config {
+	serverName := t.CertName
 	return &tls.Config{
 		MinVersion:           tls.VersionTLS13,
 		GetClientCertificate: b.GetClientCertificate,
@@ -470,6 +553,11 @@ func (b *Bundle) ClientConfig(serverName string) *tls.Config {
 			if id.Role != RoleWorker {
 				return fmt.Errorf("server %s is not a worker", id)
 			}
+			// the CA's word: another node answering under this name (a
+			// renamed node's old certificate) is not the one asked for
+			if t.ID != "" && id.ID != "" && !strings.EqualFold(t.ID, id.ID) {
+				return fmt.Errorf("asked for node %s (%s), node %s (%s) answered", t.ID, serverName, id.ID, id.Name)
+			}
 			if p := b.Trust.Load(); p.Active() {
 				// the name the user signed (Check: endorsement name ==
 				// identity name) must be the worker we asked for; the DNS
@@ -477,7 +565,11 @@ func (b *Bundle) ClientConfig(serverName string) *tls.Config {
 				if id.Name != serverName {
 					return fmt.Errorf("end-to-end trust: asked for worker %q, %s answered", serverName, id)
 				}
-				if _, err := p.Check(cs.PeerCertificates[0]); err != nil {
+				e, err := p.CheckEndorsement(cs.PeerCertificates[0])
+				if err != nil {
+					return fmt.Errorf("end-to-end trust: %w", err)
+				}
+				if err := CheckTarget(e, t); err != nil {
 					return fmt.Errorf("end-to-end trust: %w", err)
 				}
 			}

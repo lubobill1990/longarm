@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -66,6 +67,8 @@ var hubMethodRoles = map[string][]pki.Role{
 	pb.Fleet_ShareWorker_FullMethodName:       users,
 	pb.Fleet_RemoveWorker_FullMethodName:      users,
 	pb.Fleet_SetWorkerLabels_FullMethodName:   users,
+	pb.Fleet_RenameWorker_FullMethodName:      users,
+	pb.HubAdmin_RenameNode_FullMethodName:     adminOnly,
 	pb.HubAdmin_CreateJoinCode_FullMethodName: adminOnly,
 	pb.HubAdmin_ListJoinCodes_FullMethodName:  adminOnly,
 	pb.HubAdmin_Approve_FullMethodName:        adminOnly,
@@ -97,9 +100,10 @@ type callerKey struct{}
 
 // caller is the authenticated identity of a gRPC call.
 type caller struct {
-	id   pki.Identity
-	cert *x509.Certificate
-	addr string
+	id     pki.Identity
+	cert   *x509.Certificate
+	addr   string
+	nodeID string // the caller's node (also for certificates without an ID)
 }
 
 func callerFrom(ctx context.Context) caller {
@@ -131,7 +135,8 @@ func (h *Hub) authorize(ctx context.Context, method string) (context.Context, er
 	if !slices.Contains(hubMethodRoles[method], id.Role) {
 		return nil, status.Errorf(codes.PermissionDenied, "%s may not call %s", id, method)
 	}
-	if err := h.checkNode(id, cert); err != nil {
+	nodeID, err := h.checkNode(id, cert)
+	if err != nil {
 		return nil, err
 	}
 	if id.Role == pki.RoleClient || id.Role == pki.RoleAdmin {
@@ -142,44 +147,65 @@ func (h *Hub) authorize(ctx context.Context, method string) (context.Context, er
 			return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled", id.Owner())
 		}
 	}
-	c.id, c.cert = id, cert
+	c.id, c.cert, c.nodeID = id, cert, nodeID
 	return context.WithValue(ctx, callerKey{}, c), nil
 }
 
-// checkNode refuses revoked nodes and identity/role mismatches. A valid
+// checkNode finds the caller's node (nodeForCertLocked) and refuses
+// revoked nodes and role mismatches; it returns the node's ID. A valid
 // certificate of the hub's CA that the hub has not seen before (issued by
-// hand with `longarm admin issue` before the hub existed) registers its node as
-// approved; its serial is recorded so a later revocation covers it.
-func (h *Hub) checkNode(id pki.Identity, cert *x509.Certificate) error {
+// hand with `longarm admin issue`, e.g. a release certificate) registers
+// its node as approved - with the ID the certificate carries, else a new
+// one; its serial is recorded so a later revocation covers it.
+func (h *Hub) checkNode(id pki.Identity, cert *x509.Certificate) (string, error) {
 	serial := pki.Serial(cert)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	n := h.nodes[id.Name]
+	n := h.nodeForCertLocked(id, cert)
 	switch {
 	case n == nil:
-		rec := &store.Node{Name: id.Name, Role: string(id.Role), State: stateApproved, JoinedAt: time.Now().UTC(),
-			ApprovedAt: time.Now().UTC(), CertSerial: serial, CertNotAfter: cert.NotAfter, User: id.User}
+		if o := h.nameTakenLocked(id.Name, ""); o != nil {
+			// a certificate of a node the hub doesn't know, named like a
+			// live node: never mistaken for it
+			return "", status.Errorf(codes.PermissionDenied, "the name %s belongs to another node (%s)", id.Name, nodeid.Short(o.rec.ID))
+		}
+		rec := &store.Node{ID: id.ID, Name: id.Name, Role: string(id.Role), State: stateApproved, JoinedAt: time.Now().UTC(),
+			ApprovedAt: time.Now().UTC(), CertSerial: serial, CertNotAfter: cert.NotAfter, User: id.User, CertHasID: id.ID != ""}
+		if rec.ID == "" {
+			rec.ID = nodeid.New()
+		}
 		if err := h.store.PutNode(rec); err != nil {
-			return status.Error(codes.Internal, err.Error())
+			return "", status.Error(codes.Internal, err.Error())
 		}
 		n = &node{rec: rec}
-		h.nodes[id.Name] = n
-		h.log.Info("node registered by certificate", "node", id.String(), "serial", serial)
+		h.nodes[rec.ID] = n
+		h.log.Info("node registered by certificate", "node", id.String(), "id", rec.ID, "serial", serial)
 		h.publishNodeLocked(n, "registered by certificate")
 	case n.rec.State == stateRevoked:
-		return status.Errorf(codes.Unauthenticated, "node %s is revoked", id.Name)
+		return "", status.Errorf(codes.Unauthenticated, "node %s (%s) is revoked", n.rec.Name, nodeid.Short(n.rec.ID))
 	case n.rec.Role != string(id.Role):
-		return status.Errorf(codes.PermissionDenied, "the name %s belongs to a %s, not a %s", id.Name, n.rec.Role, id.Role)
+		return "", status.Errorf(codes.PermissionDenied, "node %s is a %s, not a %s", n.rec.Name, n.rec.Role, id.Role)
 	case n.rec.State == statePending:
 		// A pending node has no certificate of the hub yet; this one is from
 		// an older enrollment or issued by hand: let it through as approved.
 	}
-	if !h.knownSerials[serial] {
-		if err := h.store.AddCert(store.Cert{Serial: serial, Node: id.Name, NotAfter: cert.NotAfter, IssuedAt: cert.NotBefore}); err != nil {
+	if _, ok := h.knownSerials[serial]; !ok {
+		if err := h.store.AddCert(store.Cert{Serial: serial, Node: id.Name, NodeID: n.rec.ID, NotAfter: cert.NotAfter, IssuedAt: cert.NotBefore}); err != nil {
 			h.log.Warn("record certificate", "err", err) // retried on the next call
 		} else {
-			h.knownSerials[serial] = true
+			h.knownSerials[serial] = n.rec.ID
 		}
+	}
+	return n.rec.ID, nil
+}
+
+// callerNodeLocked is the caller's node (nil: unknown).
+func (h *Hub) callerNodeLocked(c caller) *node {
+	if n := h.nodes[c.nodeID]; n != nil {
+		return n
+	}
+	if c.cert != nil {
+		return h.nodeForCertLocked(c.id, c.cert)
 	}
 	return nil
 }

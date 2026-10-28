@@ -303,8 +303,7 @@ func (h *Hub) targetLocked(n *node) string {
 	if r == nil || n.rec.Role != "worker" || n.rec.Admin || channelOf(n) != r.Channel {
 		return ""
 	}
-	name := n.rec.Name
-	if slices.Contains(r.Failed, name) {
+	if inRollout(r.Failed, n) {
 		return ""
 	}
 	if failed, _ := updateFailedLocked(n, r.Version); failed {
@@ -315,9 +314,9 @@ func (h *Hub) targetLocked(n *node) string {
 	case rolloutDone:
 		ok = true
 	case rolloutCanary, rolloutRolling:
-		ok = slices.Contains(r.Targeted, name)
+		ok = inRollout(r.Targeted, n)
 	case rolloutHalted, rolloutAborted:
-		ok = slices.Contains(r.Updated, name) // keep, don't flip back and forth
+		ok = inRollout(r.Updated, n) // keep, don't flip back and forth
 	}
 	if !ok {
 		return ""
@@ -363,13 +362,21 @@ func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, e
 	channel := files[0].Channel
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	only := map[string]bool{} // req.Nodes: targets (names, IDs, ID prefixes)
+	for _, t := range req.Nodes {
+		n, err := h.resolveLocked(t, isWorker, "worker")
+		if err != nil {
+			return nil, err
+		}
+		only[n.rec.ID] = true
+	}
 	var cands []*node
 	var cantUpdate []string
 	for _, n := range h.nodes {
 		if n.rec.Role != "worker" || n.rec.State != stateApproved || channelOf(n) != channel {
 			continue
 		}
-		if len(req.Nodes) > 0 && !slices.Contains(req.Nodes, n.rec.Name) {
+		if len(req.Nodes) > 0 && !only[n.rec.ID] {
 			continue
 		}
 		if n.rec.Admin {
@@ -396,8 +403,8 @@ func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, e
 		if a.rec.UpdateEnabled != b.rec.UpdateEnabled {
 			return a.rec.UpdateEnabled
 		}
-		ja, _ := h.loadLocked(a.rec.Name)
-		jb, _ := h.loadLocked(b.rec.Name)
+		ja, _ := h.loadLocked(a.rec.ID)
+		jb, _ := h.loadLocked(b.rec.ID)
 		if ja != jb {
 			return ja < jb
 		}
@@ -424,10 +431,11 @@ func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, e
 	canary := int(max(req.Canary, 0))
 	canary = min(canary, len(cands))
 	for i, n := range cands {
+		// the lists hold node IDs (rolloutPBLocked shows names)
 		if i < canary {
-			r.Canary = append(r.Canary, n.rec.Name)
+			r.Canary = append(r.Canary, n.rec.ID)
 		} else {
-			r.Waiting = append(r.Waiting, n.rec.Name)
+			r.Waiting = append(r.Waiting, n.rec.ID)
 		}
 	}
 	r.Targeted = slices.Clone(r.Canary)
@@ -447,8 +455,8 @@ func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, e
 	h.rollout = r
 	h.saveRolloutLocked()
 	h.log.Info("release rollout started", "version", r.Version, "channel", channel, "canary", r.Canary, "nodes", len(cands), "by", by)
-	for _, name := range r.Targeted {
-		if n := h.nodes[name]; n != nil {
+	for _, key := range r.Targeted {
+		if n := h.nodeLocked(key); n != nil {
 			h.hintLocked(n)
 		}
 	}
@@ -467,12 +475,12 @@ func (h *Hub) nextBatchLocked() {
 	r.Targeted = append(r.Targeted, batch...)
 	r.Waiting = slices.Clone(r.Waiting[n:])
 	r.PhaseSince = nil
-	for _, name := range batch {
-		if nd := h.nodes[name]; nd != nil {
+	for _, key := range batch {
+		if nd := h.nodeLocked(key); nd != nil {
 			h.hintLocked(nd)
 		}
 	}
-	h.log.Info("release rollout: next batch", "version", r.Version, "nodes", batch)
+	h.log.Info("release rollout: next batch", "version", r.Version, "nodes", h.rolloutNamesLocked(batch))
 }
 
 // advanceReleaseLocked drives the rollout (called every second and on
@@ -484,24 +492,24 @@ func (h *Hub) advanceReleaseLocked() {
 	}
 	changed := false
 	var updated []string
-	for _, name := range r.Targeted {
-		n := h.nodes[name]
+	for _, key := range r.Targeted {
+		n := h.nodeLocked(key)
 		if n == nil {
 			continue
 		}
-		if failed, why := updateFailedLocked(n, r.Version); failed && !slices.Contains(r.Failed, name) {
-			r.Failed = append(r.Failed, name)
-			r.State, r.Message = rolloutHalted, fmt.Sprintf("%s rolled back: %s", name, why)
+		if failed, why := updateFailedLocked(n, r.Version); failed && !slices.Contains(r.Failed, key) {
+			r.Failed = append(r.Failed, key)
+			r.State, r.Message = rolloutHalted, fmt.Sprintf("%s rolled back: %s", n.rec.Name, why)
 			changed = true
-			h.log.Warn("release rollout halted", "version", r.Version, "node", name, "err", why)
+			h.log.Warn("release rollout halted", "version", r.Version, "node", n.rec.Name, "id", n.rec.ID, "err", why)
 		}
 		if h.nodeUpdatedLocked(n, r.Version) {
-			updated = append(updated, name)
+			updated = append(updated, key)
 		}
 	}
-	for _, name := range r.Targeted {
-		if n := h.nodes[name]; n != nil && n.sess == nil && n.rec.Version == r.Version && !slices.Contains(updated, name) {
-			updated = append(updated, name) // updated earlier, offline right now
+	for _, key := range r.Targeted {
+		if n := h.nodeLocked(key); n != nil && n.sess == nil && n.rec.Version == r.Version && !slices.Contains(updated, key) {
+			updated = append(updated, key) // updated earlier, offline right now
 		}
 	}
 	sort.Strings(updated)
@@ -509,10 +517,10 @@ func (h *Hub) advanceReleaseLocked() {
 		r.Updated, changed = updated, true
 	}
 	now := time.Now()
-	allOnlineUpdated := func(names []string) bool {
-		for _, name := range names {
-			n := h.nodes[name]
-			if n == nil || slices.Contains(r.Failed, name) {
+	allOnlineUpdated := func(keys []string) bool {
+		for _, key := range keys {
+			n := h.nodeLocked(key)
+			if n == nil || slices.Contains(r.Failed, key) {
 				continue
 			}
 			if r.State == rolloutCanary && !h.nodeUpdatedLocked(n, r.Version) {
@@ -534,7 +542,7 @@ func (h *Hub) advanceReleaseLocked() {
 		}
 		if r.PhaseSince == nil {
 			r.PhaseSince, changed = timestamppb.New(now), true
-			r.Message = fmt.Sprintf("canary %s healthy; waiting %s", strings.Join(r.Canary, ","), r.Wait.AsDuration())
+			r.Message = fmt.Sprintf("canary %s healthy; waiting %s", strings.Join(h.rolloutNamesLocked(r.Canary), ","), r.Wait.AsDuration())
 		}
 		if now.Sub(r.PhaseSince.AsTime()) >= r.Wait.AsDuration() {
 			r.State, changed = rolloutRolling, true
@@ -566,11 +574,38 @@ func (h *Hub) advanceReleaseLocked() {
 	}
 }
 
+// rolloutPBLocked is the rollout for clients: its node lists (IDs; names
+// in rollouts of hubs before node IDs) as names.
 func (h *Hub) rolloutPBLocked() *pb.Rollout {
 	if h.rollout == nil {
 		return &pb.Rollout{}
 	}
-	return proto.Clone(h.rollout).(*pb.Rollout)
+	r := proto.Clone(h.rollout).(*pb.Rollout)
+	for _, l := range []*[]string{&r.Canary, &r.Waiting, &r.Targeted, &r.Updated, &r.Failed} {
+		*l = h.rolloutNamesLocked(*l)
+	}
+	return r
+}
+
+// rolloutNamesLocked maps rollout list entries (node IDs or names) to names.
+func (h *Hub) rolloutNamesLocked(keys []string) []string {
+	if keys == nil {
+		return nil
+	}
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = k
+		if n := h.nodeLocked(k); n != nil {
+			out[i] = n.rec.Name
+		}
+	}
+	return out
+}
+
+// inRollout reports whether a rollout list (node IDs; names in rollouts
+// made before node IDs) has n.
+func inRollout(list []string, n *node) bool {
+	return slices.Contains(list, n.rec.ID) || slices.Contains(list, n.rec.Name)
 }
 
 // ---------------------------------------------------------------- RPCs
@@ -579,7 +614,7 @@ func (s *fleetServer) CheckUpdate(ctx context.Context, req *pb.UpdateCheckReques
 	h := s.h
 	c := callerFrom(ctx)
 	h.mu.Lock()
-	n := h.nodes[c.id.Name]
+	n := h.callerNodeLocked(c)
 	if n == nil {
 		h.mu.Unlock()
 		return nil, status.Error(codes.NotFound, "unknown node")

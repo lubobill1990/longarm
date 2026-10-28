@@ -192,16 +192,17 @@ func (h *Hub) ShareWorker(by, user string, admin bool, req *pb.ShareWorkerReques
 	return info, nil
 }
 
-// ownedWorkerLocked finds a worker the caller may manage (share, label, remove):
-// its owner's or, for admins, any. Workers the caller may not even see are
-// "not found", like on ListNodes.
-func (h *Hub) ownedWorkerLocked(name, user string, admin bool) (*node, error) {
-	n := h.nodes[name]
-	if n == nil || n.rec.Role != string(pki.RoleWorker) || (!admin && !h.mayUseLocked(user, n)) {
-		return nil, status.Errorf(codes.NotFound, "no worker %q", name)
+// ownedWorkerLocked finds a worker the caller may manage (share, label,
+// remove, rename) by target (name, ID, ID prefix): its owner's or, for
+// admins, any. Workers the caller may not even see are "not found", like
+// on ListNodes.
+func (h *Hub) ownedWorkerLocked(target, user string, admin bool) (*node, error) {
+	n, err := h.resolveLocked(target, func(n *node) bool { return isWorker(n) && (admin || h.mayUseLocked(user, n)) }, "worker")
+	if err != nil {
+		return nil, err
 	}
 	if !admin && n.rec.Owner != user {
-		return nil, status.Errorf(codes.PermissionDenied, "worker %s belongs to %s", name, ownerName(n.rec.Owner))
+		return nil, status.Errorf(codes.PermissionDenied, "worker %s belongs to %s", n.rec.Name, ownerName(n.rec.Owner))
 	}
 	return n, nil
 }
@@ -223,20 +224,35 @@ func editList(list, add, remove []string) []string {
 }
 
 // RemoveWorker revokes a worker of user's (or, for admins, any worker).
-func (h *Hub) RemoveWorker(by, user string, admin bool, name string) (*pb.NodeInfo, error) {
+func (h *Hub) RemoveWorker(by, user string, admin bool, target string) (*pb.NodeInfo, error) {
 	h.mu.Lock()
-	n, err := h.ownedWorkerLocked(name, user, admin)
-	var owner string
+	n, err := h.ownedWorkerLocked(target, user, admin)
+	var owner, name, id string
 	if err == nil {
-		owner = n.rec.Owner
+		owner, name, id = n.rec.Owner, n.rec.Name, n.rec.ID
 	}
 	h.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
-	info, err := h.Revoke(by, name)
-	h.auditHub(by, "workers/remove", map[string]any{"worker": name, "owner": owner, "error": errString(err)})
+	info, err := h.Revoke(by, "id:"+id)
+	h.auditHub(by, "workers/remove", map[string]any{"worker": name, "id": id, "owner": owner, "error": errString(err)})
 	return info, err
+}
+
+// RenameWorker renames a worker of user's (admins: any worker).
+func (h *Hub) RenameWorker(by, user string, admin bool, target, newName string) (*pb.NodeInfo, error) {
+	h.mu.Lock()
+	n, err := h.ownedWorkerLocked(target, user, admin)
+	id := ""
+	if err == nil {
+		id = n.rec.ID
+	}
+	h.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return h.RenameNode(by, user, admin, "id:"+id, newName)
 }
 
 // SetWorkerLabels merges labels into a worker's labels ("" deletes), as
@@ -244,9 +260,9 @@ func (h *Hub) RemoveWorker(by, user string, admin bool, name string) (*pb.NodeIn
 func (h *Hub) SetWorkerLabels(by, user string, admin bool, req *pb.SetLabelsRequest) (*pb.NodeInfo, error) {
 	h.mu.Lock()
 	n, err := h.ownedWorkerLocked(req.Name, user, admin)
-	var owner string
+	var owner, id, name string
 	if err == nil {
-		owner = n.rec.Owner
+		owner, id, name = n.rec.Owner, n.rec.ID, n.rec.Name
 	}
 	h.mu.Unlock()
 	if err != nil {
@@ -255,8 +271,8 @@ func (h *Hub) SetWorkerLabels(by, user string, admin bool, req *pb.SetLabelsRequ
 	if len(req.Labels) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "no labels (KEY=VALUE sets, KEY- deletes)")
 	}
-	info, err := h.SetLabels(by, req.Name, req.Labels)
-	h.auditHub(by, "workers/label", map[string]any{"worker": req.Name, "owner": owner, "labels": req.Labels, "error": errString(err)})
+	info, err := h.SetLabels(by, "id:"+id, req.Labels)
+	h.auditHub(by, "workers/label", map[string]any{"worker": name, "id": id, "owner": owner, "labels": req.Labels, "error": errString(err)})
 	if err == nil {
 		h.log.Info("worker labels changed", "worker", req.Name, "by", by, "labels", req.Labels)
 	}
@@ -292,6 +308,11 @@ func (s *fleetServer) SetWorkerLabels(ctx context.Context, req *pb.SetLabelsRequ
 	return s.h.SetWorkerLabels(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req)
 }
 
+func (s *fleetServer) RenameWorker(ctx context.Context, req *pb.RenameNodeRequest) (*pb.NodeInfo, error) {
+	c := callerFrom(ctx)
+	return s.h.RenameWorker(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req.Target, req.NewName)
+}
+
 // ---------------------------------------------------------------- panel
 
 // workerRoutes are the panel's own-worker actions (mirroring longarm worker):
@@ -299,6 +320,9 @@ func (s *fleetServer) SetWorkerLabels(ctx context.Context, req *pb.SetLabelsRequ
 //	POST /api/workercodes             {name, ttl, labels}: a worker code of the login's user (user logins)
 //	POST /api/nodes/{name}/share      ShareWorkerRequest (protojson; worker = the path)
 //	POST /api/nodes/{name}/remove     revoke a worker of the login's user (admins: any)
+//	POST /api/nodes/{name}/rename     {name}: rename a worker of the login's user (admins: any node)
+//
+// {name} is a node target: a name, an ID or an ID prefix.
 //
 // A user login acts as its Longarm user; admin logins as admins.
 func (h *Hub) workerRoutes(api func(string, func(http.ResponseWriter, *http.Request, string))) {
@@ -355,6 +379,23 @@ func (h *Hub) workerRoutes(api func(string, func(http.ResponseWriter, *http.Requ
 		info, err := h.RemoveWorker("web/"+login, user, admin, r.PathValue("name"))
 		writeResult(w, info, err)
 	})
+	api("POST /api/nodes/{name}/rename", func(w http.ResponseWriter, r *http.Request, login string) {
+		var body struct {
+			Name string `json:"name"`
+		}
+		if !readJSON(w, r, &body) {
+			return
+		}
+		user, admin := who(login)
+		var info *pb.NodeInfo
+		var err error
+		if admin {
+			info, err = h.RenameNode("web/"+login, user, true, r.PathValue("name"), body.Name)
+		} else {
+			info, err = h.RenameWorker("web/"+login, user, false, r.PathValue("name"), body.Name)
+		}
+		writeResult(w, info, err)
+	})
 }
 
 // relayCheck guards what the hub relays to a worker's session for a caller
@@ -363,9 +404,12 @@ func (h *Hub) workerRoutes(api func(string, func(http.ResponseWriter, *http.Requ
 // session would be a way around "owner only". Refusals are audited.
 func (h *Hub) relayCheck(by, user, worker, action, job string) error {
 	h.mu.Lock()
-	n := h.nodes[worker]
+	n := h.nodeLocked(worker)
 	ok := n == nil || n.rec.Owner == "" || h.mayUseLocked(user, n)
 	admin := n != nil && n.rec.Admin
+	if n != nil {
+		worker = n.rec.Name // for the messages: worker may be an ID
+	}
 	h.mu.Unlock()
 	if admin {
 		// the hub issues no commands to an admin worker, not even its

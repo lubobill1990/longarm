@@ -155,6 +155,9 @@ message JoinResponse {
   // PollLink of a pairing that carried an admin worker CSR, approved: the
   // admin worker's enrollment (its labels include longarm.io/admin=true)
   JoinResponse admin_worker = 13;
+  // the node's immutable ID (docs/security.md "Node identity"); the
+  // certificate carries it as URI SAN urn:longarm:node:<id>
+  string id = 14;
 }
 
 message JoinStatusRequest {
@@ -226,6 +229,9 @@ message NodeHello {
   TailnetState tailnet = 15; // the embedded tailscale node (hub-managed tailnet)
   string isolation = 16; // longarmd.toml [isolation] mode: "shared" | "per-user"
   int64 tenancy_version = 17; // version of the tenancy policy the worker has
+  // what this longarmd supports: "node-id" = it follows a rename (renews
+  // its certificate and restarts when the hub asks)
+  repeated string capabilities = 18;
 }
 
 message NodeState {
@@ -359,12 +365,21 @@ message HubWelcome {
 message Revocations {
   int64 version = 1;
   repeated RevokedCert certs = 2; // full list
+  // Revoked nodes (full list): any certificate carrying one of these node
+  // IDs is refused, whatever its serial. Names are never revoked.
+  repeated RevokedNode nodes = 3;
+}
+
+message RevokedNode {
+  string id = 1;
+  // when the node's last certificate expires (the entry can go then)
+  google.protobuf.Timestamp not_after = 2;
 }
 
 message RevokedCert {
   string serial = 1; // hex
   google.protobuf.Timestamp not_after = 2;
-  string node = 3;
+  string node = 3; // the node's name when its certificate was issued
 }
 
 message ToolchainDesired {
@@ -441,6 +456,9 @@ service Fleet {
   // SetWorkerLabels merges labels into a worker's labels ("" deletes), as
   // HubAdmin.SetLabels: the worker's owner, or an admin (any worker).
   rpc SetWorkerLabels(SetLabelsRequest) returns (NodeInfo);
+  // RenameWorker changes the display name of a worker of the caller's user
+  // (owner or admin); the worker keeps its ID. Audited.
+  rpc RenameWorker(RenameNodeRequest) returns (NodeInfo);
   // Port links (worker-to-worker, docs/usage.md "Port links"): the caller
   // owns what it creates; users see and remove their own links (others'
   // are NotFound), admins every link.
@@ -485,6 +503,7 @@ message LinkReport {
   string client = 1; // set by the hub from the caller's certificate
   google.protobuf.Timestamp time = 2;
   repeated WorkerLink links = 3;
+  string client_id = 4; // set by the hub: the client's node ID
 }
 
 message ReportLinksResponse {}
@@ -508,6 +527,7 @@ message MetricsPoint {
 message NodeHistory {
   string node = 1;
   repeated MetricsPoint points = 2;
+  string node_id = 3;
 }
 
 message HistoryResponse {
@@ -548,6 +568,16 @@ message NodeInfo {
   // an admin worker (runs commands as an administrator of its machine;
   // label longarm.io/admin=true): owner-only, never shared, never placed
   bool admin_worker = 31;
+  // Node identity (docs/security.md "Node identity"): the immutable ID
+  // (name = the display name, which can change); targets resolve to it.
+  string id = 32;
+  // The name in the node's current certificate: what clients dial (TLS
+  // server name, longnet relay address). It equals name except after a
+  // rename until the node renewed its certificate. "" = name.
+  string cert_name = 33;
+  // A worker and its admin worker on the same machine (paired together):
+  // the other one's ID.
+  string companion_id = 34;
 }
 
 message ListNodesRequest {
@@ -559,14 +589,15 @@ message ListNodesResponse {
 }
 
 message FleetJob {
-  string worker = 1;
+  string worker = 1; // the worker's (display) name
   Job job = 2;
   google.protobuf.Timestamp updated_at = 3;
   bool worker_online = 4;
+  string worker_id = 5; // the worker's node ID
 }
 
 message FleetJobsRequest {
-  string worker = 1; // "" = all
+  string worker = 1; // "" = all; a target: name, ID, ID prefix, id:<prefix>, name:<name>
   repeated JobState states = 2;
   int32 limit = 3;
 }
@@ -577,7 +608,7 @@ message FleetJobsResponse {
 
 message FleetJobRequest {
   string id = 1;
-  string worker = 2; // optional
+  string worker = 2; // optional; a target (name, ID, ID prefix)
 }
 
 message EventsRequest {
@@ -592,6 +623,7 @@ message FleetEvent {
   FleetJob job = 4;
   NodeInfo node_info = 5;
   string message = 6;
+  string node_id = 7; // the node's ID (node = its name)
 }
 
 message PlaceRequest {
@@ -612,6 +644,7 @@ message PlaceUpdate {
   string reason = 5; // why nobody passed / the winning score
   double mem_gb = 6; // the reservation made
   NodeInfo node = 7;
+  string worker_id = 8;
 }
 
 message AuditRequest {
@@ -626,6 +659,7 @@ message AuditRecord {
   string who = 3;
   string method = 4;
   string json = 5; // the full record
+  string node_id = 6;
 }
 
 message AuditResponse {
@@ -665,6 +699,7 @@ message WhoamiResponse {
   bool tenancy = 12; // the hub separates users (multi-tenancy is on)
   bool can_share = 13; // may share own workers (ShareWorker)
   string upn = 14; // Entra users: the sign-in name
+  string id = 15; // the caller's node ID
 }
 
 // ---------------------------------------------------------------- tenancy
@@ -831,6 +866,8 @@ service HubAdmin {
   rpc RemoveUser(RemoveUserRequest) returns (RemoveUserResponse);
   rpc SetTeam(SetTeamRequest) returns (ListTeamsResponse);
   rpc ListTeams(ListTeamsRequest) returns (ListTeamsResponse);
+  // RenameNode changes any node's display name (it keeps its ID). Audited.
+  rpc RenameNode(RenameNodeRequest) returns (NodeInfo);
 }
 
 message HubLogsRequest {
@@ -886,8 +923,16 @@ message ListJoinCodesResponse {
   repeated JoinCode codes = 1;
 }
 
+// Node targets (name fields of NodeRequest, SetDrainRequest, ...) are a
+// name, an ID, a unique ID prefix (4+ hex digits), id:<prefix> or
+// name:<name> (docs/security.md "Node identity").
 message NodeRequest {
   string name = 1;
+}
+
+message RenameNodeRequest {
+  string target = 1; // the node: name, ID or ID prefix
+  string new_name = 2;
 }
 
 message SetDrainRequest {
@@ -1145,6 +1190,9 @@ message PortLink {
   // The owner's consent (end-to-end trust): workers that trust users
   // accept the link only with it (docs/security.md "Port links").
   PortLinkConsent consent = 12;
+  // the workers' node IDs (from / to are the names in their certificates)
+  string from_id = 13;
+  string to_id = 14;
 }
 
 message PortLinkStatus {

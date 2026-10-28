@@ -42,7 +42,7 @@ func ownedHub(t *testing.T) (*tenancyHub, chan *pb.HubCommand) {
 	h := th.h
 	out := make(chan *pb.HubCommand, 128)
 	h.mu.Lock()
-	n := h.nodes["aw"]
+	n := h.nodeLocked("aw")
 	n.sess = &nodeSession{id: 99, out: out, cancel: func() {}}
 	n.metrics = &pb.MetricsSnapshot{MemTotalBytes: 64 << 30, MemUsedBytes: 1 << 30, CpuPercent: 1}
 	h.mu.Unlock()
@@ -140,7 +140,7 @@ func TestOwnedWorkers(t *testing.T) {
 
 	// the hub session: admins can't kill, read or submit on alice's worker
 	h.mu.Lock()
-	h.applyJobsLocked(h.nodes["aw"], &pb.JobsReport{Jobs: []*pb.Job{{Spec: &pb.JobSpec{Id: "JAW", Owner: "alice"}, State: pb.JobState_JOB_STATE_RUNNING}}})
+	h.applyJobsLocked(h.nodeLocked("aw"), &pb.JobsReport{Jobs: []*pb.Job{{Spec: &pb.JobSpec{Id: "JAW", Owner: "alice"}, State: pb.JobState_JOB_STATE_RUNNING}}})
 	h.mu.Unlock()
 	if _, err := pb.NewHubAdminClient(th.root).KillJob(tctx(t), &pb.FleetJobRequest{Id: "JAW"}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("admin kills alice's job through the hub: %v", err)
@@ -234,14 +234,14 @@ func TestOwnedWorkers(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.mu.Lock()
-	shares := h.nodes["aw"].rec.Shares
+	shares := h.nodeLocked("aw").rec.Shares
 	h.mu.Unlock()
 	if shares != nil {
 		t.Fatalf("all unshared, shares %v", shares)
 	}
 
 	// the hub audits it
-	rows, _ := h.store.Audit("hub", time.Time{}, 100)
+	rows, _ := h.store.Audit("", "hub", time.Time{}, 100)
 	var methods []string
 	for _, r := range rows {
 		methods = append(methods, r.Method)
@@ -354,7 +354,7 @@ func TestFollowedLogsEndOnUnshare(t *testing.T) {
 				continue
 			}
 			h.mu.Lock()
-			if n := h.nodes["aw"]; n.sess != nil {
+			if n := h.nodeLocked("aw"); n.sess != nil {
 				h.deliverReplyLocked(n, n.sess, &pb.HubReply{RequestId: lr.RequestId,
 					Log: &pb.LogChunk{Offset: lr.Offset, Data: []byte("x")}, LogSize: lr.Offset + 1})
 			}

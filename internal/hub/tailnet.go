@@ -113,7 +113,7 @@ func (h *Hub) tailnetAuth(ctx context.Context, role, name, reason string) (*pb.T
 	delete(h.tailnetMintErr, role) // that role's keys work (again)
 	h.tailnetMu.Unlock()
 	h.mu.Lock()
-	if n := h.nodes[name]; n != nil {
+	if n := h.nodeLocked(name); n != nil {
 		n.rec.TailnetKeyAt, n.rec.TailnetKeyControl, n.rec.TailnetKeyReason = time.Now().UTC(), control, reason
 		n.rec.TailnetRekey = false
 		h.store.PutNode(n.rec)
@@ -172,12 +172,18 @@ func (s *fleetServer) TailnetKey(ctx context.Context, req *pb.TailnetKeyRequest)
 	if c.id.Role == pki.RoleWorker {
 		lim = s.h.tailnetWorkerLimit
 	}
-	if !lim.allow(c.id.Name) {
+	if !lim.allow(c.nodeID) { // by node ID: a rename doesn't reset the budget
 		s.h.log.Warn("tailnet key refused: rate limit", "node", c.id.Name, "role", c.id.Role)
 		return nil, status.Error(codes.ResourceExhausted, "too many tailnet keys for this node; try again later")
 	}
 	reason := cleanReason(req.Reason)
-	ta, err := s.h.tailnetAuth(ctx, string(c.id.Role), c.id.Name, reason)
+	name := c.id.Name
+	s.h.mu.Lock()
+	if n := s.h.callerNodeLocked(c); n != nil {
+		name = n.rec.Name // the display name (the certificate's may be older)
+	}
+	s.h.mu.Unlock()
+	ta, err := s.h.tailnetAuth(ctx, string(c.id.Role), name, reason)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "%s", RedactKeys(err.Error()))
 	}
@@ -285,8 +291,11 @@ func (a *hubAdminServer) TailnetRekey(ctx context.Context, req *pb.NodeRequest) 
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	n := h.nodes[req.Name]
-	if n == nil || n.rec.State != stateApproved {
+	n, err := h.resolveLocked(req.Name, nil, "node")
+	if err != nil {
+		return nil, err
+	}
+	if n.rec.State != stateApproved {
 		return nil, status.Errorf(codes.NotFound, "no approved node %q", req.Name)
 	}
 	n.rec.TailnetRekey = true
@@ -298,9 +307,9 @@ func (a *hubAdminServer) TailnetRekey(ctx context.Context, req *pb.NodeRequest) 
 	return h.tailnetNodeStatusLocked(n), nil
 }
 
-// callerTailnet is the hub's tailnet for a node (Whoami).
-func (h *Hub) callerTailnet(name string) *pb.TailnetInfo {
+// callerTailnet is the hub's tailnet for a node (by ID; Whoami).
+func (h *Hub) callerTailnet(id string) *pb.TailnetInfo {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.tailnetInfo(h.nodes[name])
+	return h.tailnetInfo(h.nodes[id])
 }

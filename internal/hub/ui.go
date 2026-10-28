@@ -58,26 +58,33 @@ func (h *Hub) History(node string) *pb.HistoryResponse {
 	return h.HistoryFor(tenancy.Caller{Admin: true}, node)
 }
 
-// HistoryFor is History of the workers v may see.
-func (h *Hub) HistoryFor(v tenancy.Caller, node string) *pb.HistoryResponse {
+// HistoryFor is History of the workers v may see (node: a target, "" =
+// all).
+func (h *Hub) HistoryFor(v tenancy.Caller, target string) *pb.HistoryResponse {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	out := &pb.HistoryResponse{}
-	for name, n := range h.nodes {
-		if (node != "" && name != node) || n.rec.Role != string(pki.RoleWorker) {
+	visible := func(n *node) bool { return isWorker(n) && (v.Admin || h.mayUseLocked(v.User, n)) }
+	only := ""
+	if target != "" {
+		n, err := h.resolveLocked(target, visible, "worker")
+		if err != nil {
+			return out
+		}
+		only = n.rec.ID
+	}
+	for id, n := range h.nodes {
+		if (only != "" && id != only) || !visible(n) {
 			continue
 		}
-		if !v.Admin && !h.mayUseLocked(v.User, n) {
-			continue
-		}
-		out.Nodes = append(out.Nodes, &pb.NodeHistory{Node: name, Points: append([]*pb.MetricsPoint(nil), n.history...)})
+		out.Nodes = append(out.Nodes, &pb.NodeHistory{Node: n.rec.Name, NodeId: id, Points: append([]*pb.MetricsPoint(nil), n.history...)})
 	}
 	sort.Slice(out.Nodes, func(i, j int) bool { return out.Nodes[i].Node < out.Nodes[j].Node })
 	return out
 }
 
-// request sends cmd (built with a fresh request id) to worker's session
-// and waits for the reply.
+// request sends cmd (built with a fresh request id) to the session of the
+// worker with ID worker and waits for the reply.
 func (h *Hub) request(ctx context.Context, worker string, build func(id string) *pb.HubCommand) (*pb.HubReply, error) {
 	id := newRequestID()
 	ch := make(chan *pb.HubReply, 1)
@@ -87,9 +94,10 @@ func (h *Hub) request(ctx context.Context, worker string, build func(id string) 
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.NotFound, "no worker %q", worker)
 	}
+	name := n.rec.Name
 	if n.sess == nil {
 		h.mu.Unlock()
-		return nil, status.Errorf(codes.Unavailable, "worker %s is offline", worker)
+		return nil, status.Errorf(codes.Unavailable, "worker %s is offline", name)
 	}
 	sess := n.sess
 	h.pending[id] = &pendingReq{ch: ch, worker: worker, sess: sess.id}
@@ -105,7 +113,7 @@ func (h *Hub) request(ctx context.Context, worker string, build func(id string) 
 	select {
 	case r := <-ch:
 		if r == nil {
-			return nil, status.Errorf(codes.Unavailable, "worker %s disconnected", worker)
+			return nil, status.Errorf(codes.Unavailable, "worker %s disconnected", name)
 		}
 		if r.Error != "" {
 			code := codes.Code(r.Code)
@@ -122,14 +130,14 @@ func (h *Hub) request(ctx context.Context, worker string, build func(id string) 
 
 type pendingReq struct {
 	ch     chan *pb.HubReply
-	worker string
+	worker string // node ID
 	sess   uint64
 }
 
 // deliverReplyLocked hands a worker's reply to the waiting request.
 func (h *Hub) deliverReplyLocked(n *node, sess *nodeSession, r *pb.HubReply) {
 	p := h.pending[r.RequestId]
-	if p == nil || p.worker != n.rec.Name || p.sess != sess.id {
+	if p == nil || p.worker != n.rec.ID || p.sess != sess.id {
 		return // unknown, or from another worker: ignore
 	}
 	delete(h.pending, r.RequestId)
@@ -161,17 +169,27 @@ func (h *Hub) KillJob(ctx context.Context, by, user, id, worker string) (*pb.Fle
 	if err != nil {
 		return nil, err
 	}
-	h.log.Info("job killed via hub", "job", id, "worker", w, "by", by)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.applyJobsLocked(h.nodes[w], &pb.JobsReport{Jobs: []*pb.Job{r.Job}})
-	return &pb.FleetJob{Worker: w, Job: r.Job, UpdatedAt: timestamppb.Now(), WorkerOnline: true}, nil
+	h.log.Info("job killed via hub", "job", id, "worker", h.nodeNameLocked(w), "worker_id", w, "by", by)
+	if n := h.nodes[w]; n != nil {
+		h.applyJobsLocked(n, &pb.JobsReport{Jobs: []*pb.Job{r.Job}})
+	}
+	return &pb.FleetJob{Worker: h.nodeNameLocked(w), WorkerId: w, Job: r.Job, UpdatedAt: timestamppb.Now(), WorkerOnline: true}, nil
 }
 
-// jobWorker finds the worker of a job (worker may be given).
+// jobWorker finds the worker (its ID) of a job; worker, a target, may be
+// given.
 func (h *Hub) jobWorker(id, worker string) (string, error) {
 	if id == "" {
 		return "", status.Error(codes.InvalidArgument, "missing job id")
+	}
+	if worker != "" {
+		w, err := h.resolveWorker(worker)
+		if err != nil {
+			return "", err
+		}
+		worker = w
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -260,7 +278,7 @@ func (h *Hub) SubmitJobAs(ctx context.Context, by, owner string, admin bool, req
 		err := h.PlaceFor(ctx, by, owner, &pb.PlaceRequest{JobId: id, MemGb: req.MemGb, Type: typ, Require: req.Require, NoQueue: true},
 			func(u *pb.PlaceUpdate) error {
 				if u.State == "assigned" {
-					assigned = u.Worker
+					assigned = u.WorkerId
 				}
 				return nil
 			})
@@ -274,16 +292,21 @@ func (h *Hub) SubmitJobAs(ctx context.Context, by, owner string, admin bool, req
 	}
 	spec := &pb.JobSpec{Id: id, Name: req.Name, Argv: req.Argv, Cwd: req.Cwd, Env: req.Env, Labels: labels}
 	if req.Worker != "" && req.Worker != "auto" { // placed jobs passed the quota already
+		w, err := h.resolve(req.Worker, func(n *node) bool { return isWorker(n) && (admin || n.rec.Owner == "" || h.mayUseLocked(owner, n)) }, "worker")
+		if err != nil {
+			return nil, err
+		}
+		worker = w
 		if err := h.relayCheck(by, owner, worker, "submit jobs", id); err != nil {
 			if !admin { // others' own workers don't exist for users (admins see them)
-				return nil, status.Errorf(codes.NotFound, "no worker %q", worker)
+				return nil, status.Errorf(codes.NotFound, "no worker %q", req.Worker)
 			}
 			return nil, err
 		}
 		h.mu.Lock()
 		if h.nodes[worker] == nil {
 			h.mu.Unlock()
-			return nil, status.Errorf(codes.NotFound, "no worker %q", worker)
+			return nil, status.Errorf(codes.NotFound, "no worker %q", req.Worker)
 		}
 		why := h.overQuotaLocked(owner, mem)
 		h.mu.Unlock()
@@ -300,17 +323,21 @@ func (h *Hub) SubmitJobAs(ctx context.Context, by, owner string, admin bool, req
 		h.mu.Unlock()
 		return nil, err
 	}
-	h.log.Info("job submitted via hub", "job", id, "worker", worker, "by", by, "argv", req.Argv)
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.log.Info("job submitted via hub", "job", id, "worker", h.nodeNameLocked(worker), "worker_id", worker, "by", by, "argv", req.Argv)
 	if n := h.nodes[worker]; n != nil {
 		h.applyJobsLocked(n, &pb.JobsReport{Jobs: []*pb.Job{r.Job}})
 	}
-	return &pb.FleetJob{Worker: worker, Job: r.Job, UpdatedAt: timestamppb.Now(), WorkerOnline: true}, nil
+	return &pb.FleetJob{Worker: h.nodeNameLocked(worker), WorkerId: worker, Job: r.Job, UpdatedAt: timestamppb.Now(), WorkerOnline: true}, nil
 }
 
-// ToolchainApply asks a worker to reconcile its profile now.
-func (h *Hub) ToolchainApply(ctx context.Context, by, worker string) (*pb.NodeInfo, error) {
+// ToolchainApply asks a worker (a target) to reconcile its profile now.
+func (h *Hub) ToolchainApply(ctx context.Context, by, target string) (*pb.NodeInfo, error) {
+	worker, err := h.resolve(target, isWorker, "worker")
+	if err != nil {
+		return nil, err
+	}
 	if _, err := h.request(ctx, worker, func(rid string) *pb.HubCommand {
 		return &pb.HubCommand{Msg: &pb.HubCommand_ToolchainApply{ToolchainApply: &pb.HubToolchainApply{RequestId: rid, By: by}}}
 	}); err != nil {
@@ -391,7 +418,9 @@ func (s *hubAdminServer) ToolchainApply(ctx context.Context, req *pb.NodeRequest
 }
 
 func (s *fleetServer) ReportLinks(ctx context.Context, req *pb.LinkReport) (*pb.ReportLinksResponse, error) {
-	s.h.ReportLinks(callerFrom(ctx).id.Name, req)
+	c := callerFrom(ctx)
+	req.ClientId = c.nodeID
+	s.h.ReportLinks(c.id.Name, req)
 	return &pb.ReportLinksResponse{}, nil
 }
 

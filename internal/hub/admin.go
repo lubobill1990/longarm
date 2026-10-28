@@ -55,6 +55,11 @@ func (s *hubAdminServer) AssignProfile(ctx context.Context, req *pb.AssignProfil
 	return s.h.AssignProfile(by(ctx), req.Node, req.Profile)
 }
 
+func (s *hubAdminServer) RenameNode(ctx context.Context, req *pb.RenameNodeRequest) (*pb.NodeInfo, error) {
+	c := callerFrom(ctx)
+	return s.h.RenameNode(c.id.String(), c.id.Owner(), true, req.Target, req.NewName)
+}
+
 // ListJoinCodes lists recent join codes (without the codes themselves).
 func (h *Hub) ListJoinCodes() (*pb.ListJoinCodesResponse, error) {
 	codes_, err := h.store.JoinCodes(time.Now())
@@ -68,13 +73,14 @@ func (h *Hub) ListJoinCodes() (*pb.ListJoinCodesResponse, error) {
 	return out, nil
 }
 
-// nodeOp loads a node, applies fn under the lock, saves and publishes it.
-func (h *Hub) nodeOp(name, what string, fn func(n *node) error) (*pb.NodeInfo, error) {
+// nodeOp resolves a node target (name, ID, ID prefix), applies fn under
+// the lock, saves and publishes it.
+func (h *Hub) nodeOp(target, what string, fn func(n *node) error) (*pb.NodeInfo, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	n := h.nodes[name]
-	if n == nil {
-		return nil, status.Errorf(codes.NotFound, "no node %q", name)
+	n, err := h.resolveLocked(target, nil, "node")
+	if err != nil {
+		return nil, err
 	}
 	if err := fn(n); err != nil {
 		return nil, err

@@ -89,9 +89,9 @@ func TestLinkAdminWorker(t *testing.T) {
 	}
 	const aw = "devbox-w-admin"
 	h.mu.Lock()
-	n := h.nodes[aw]
+	n := h.nodeLocked(aw)
 	info := h.nodeInfoLocked(n)
-	plain := h.nodeInfoLocked(h.nodes["devbox-w"])
+	plain := h.nodeInfoLocked(h.nodeLocked("devbox-w"))
 	h.mu.Unlock()
 	if !n.rec.Admin || !info.AdminWorker || info.Labels[sched.AdminLabel] != "true" || plain.AdminWorker {
 		t.Fatalf("hub record: %+v %+v", n.rec, info)
@@ -122,8 +122,8 @@ func TestLinkAdminWorker(t *testing.T) {
 		}
 	}
 	h.mu.Lock()
-	h.applyHelloLocked(h.nodes["devbox-w"], &pb.NodeHello{Labels: map[string]string{sched.AdminLabel: "true", "pool": "a"}})
-	got := labelsOf(h.nodes["devbox-w"])
+	h.applyHelloLocked(h.nodeLocked("devbox-w"), &pb.NodeHello{Labels: map[string]string{sched.AdminLabel: "true", "pool": "a"}})
+	got := labelsOf(h.nodeLocked("devbox-w"))
 	h.mu.Unlock()
 	if got[sched.AdminLabel] != "" || got["pool"] != "a" {
 		t.Errorf("a worker marked itself admin: %v", got)
@@ -247,8 +247,8 @@ func TestAdminWorkerNoHubActions(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.mu.Lock()
-	h.nodes["box-admin"] = &node{rec: &store.Node{Name: "box-admin", Role: "worker", State: stateApproved, Owner: "alice", Admin: true, UpdateEnabled: true}}
-	h.nodes["box"] = &node{rec: &store.Node{Name: "box", Role: "worker", State: stateApproved, Owner: "alice", UpdateEnabled: true}}
+	h.putTestNode(&node{rec: &store.Node{Name: "box-admin", Role: "worker", State: stateApproved, Owner: "alice", Admin: true, UpdateEnabled: true}})
+	h.putTestNode(&node{rec: &store.Node{Name: "box", Role: "worker", State: stateApproved, Owner: "alice", UpdateEnabled: true}})
 	h.mu.Unlock()
 	if _, err := h.AssignProfile("admin", "box-admin", "base"); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("profile on the admin worker: %v", err)
@@ -261,15 +261,15 @@ func TestAdminWorkerNoHubActions(t *testing.T) {
 	}
 	h.mu.Lock()
 	// even a profile already on its record (an older hub) yields nothing
-	h.nodes["box-admin"].rec.Profile = "base"
-	if d := h.desiredToolchainLocked(h.nodes["box-admin"]); d.Profile != "" || len(d.Tools) != 0 {
+	h.nodeLocked("box-admin").rec.Profile = "base"
+	if d := h.desiredToolchainLocked(h.nodeLocked("box-admin")); d.Profile != "" || len(d.Tools) != 0 {
 		t.Errorf("desired toolchain of the admin worker: %v", d)
 	}
 	h.rollout = &pb.Rollout{Version: "9.9.9", Channel: "stable", State: rolloutDone}
-	if v := h.targetLocked(h.nodes["box-admin"]); v != "" {
+	if v := h.targetLocked(h.nodeLocked("box-admin")); v != "" {
 		t.Errorf("rollout target of the admin worker: %q", v)
 	}
-	if v := h.targetLocked(h.nodes["box"]); v != "9.9.9" {
+	if v := h.targetLocked(h.nodeLocked("box")); v != "9.9.9" {
 		t.Errorf("rollout target of a plain worker: %q", v)
 	}
 	h.rollout = nil

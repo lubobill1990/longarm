@@ -190,16 +190,33 @@ func (s Store) Endorsement() (*pki.Endorsement, error) {
 
 // Request is the endorsement request of this node.
 func (s Store) Request(kind, name, user string) (pki.EndorseRequest, error) {
+	return s.RequestFor(kind, pki.Identity{Name: name, User: user})
+}
+
+// RequestFor is the endorsement request of the node with identity id (its
+// certificate's): with a node ID, the endorsement binds it.
+func (s Store) RequestFor(kind string, id pki.Identity) (pki.EndorseRequest, error) {
 	k, err := s.NodeKey()
 	if err != nil {
 		return pki.EndorseRequest{}, err
 	}
-	return pki.EndorseRequest{Kind: kind, Name: name, User: user, NodeKey: k.Public().(ed25519.PublicKey)}, nil
+	user := id.User
+	if kind == pki.KindDevice {
+		user = id.Owner()
+	}
+	return pki.EndorseRequest{Kind: kind, Name: id.Name, User: user, NodeKey: k.Public().(ed25519.PublicKey), ID: id.ID}, nil
 }
 
 // SetEndorsement stores e after checking it is for this node as kind and
 // name, and asks for a certificate renewal (the certificate must carry it).
 func (s Store) SetEndorsement(e *pki.Endorsement, kind, name string) error {
+	return s.SetEndorsementFor(e, kind, pki.Identity{Name: name})
+}
+
+// SetEndorsementFor is SetEndorsement for the node with identity id: an
+// endorsement with a node ID must carry id's (the name may differ: a
+// renamed node); one without (made before node IDs) id's name.
+func (s Store) SetEndorsementFor(e *pki.Endorsement, kind string, id pki.Identity) error {
 	k, err := s.NodeKey()
 	if err != nil {
 		return err
@@ -207,8 +224,16 @@ func (s Store) SetEndorsement(e *pki.Endorsement, kind, name string) error {
 	if !k.Public().(ed25519.PublicKey).Equal(ed25519.PublicKey(e.NodeKey)) {
 		return errors.New("the endorsement is for another node (endorse this node's request)")
 	}
-	if e.Kind != kind || e.Name != name {
-		return fmt.Errorf("the endorsement is for %s %q, this is %s %q", e.Kind, e.Name, kind, name)
+	if e.Kind != kind {
+		return fmt.Errorf("the endorsement is for a %s, this is a %s", e.Kind, kind)
+	}
+	switch {
+	case e.ID != "" && id.ID != "" && e.ID != id.ID:
+		return fmt.Errorf("the endorsement is for node %s, this is node %s (%s)", e.ID, id.ID, id.Name)
+	case e.ID != "" && id.ID == "":
+		return fmt.Errorf("the endorsement is for node %s, but this node's certificate carries no node id yet (it renews with one when it next talks to the hub)", e.ID)
+	case e.ID == "" && e.Name != id.Name:
+		return fmt.Errorf("the endorsement is for %s %q, this is %s %q", e.Kind, e.Name, kind, id.Name)
 	}
 	if err := e.Verify(); err != nil {
 		return err
