@@ -86,8 +86,20 @@ func (d *desktop) show() {
 	if !placed {
 		d.tray.PositionWindow(d.win, 8)
 	}
+	d.applyTheme() // the system's app mode may have changed meanwhile
 	d.win.Show().Focus()
 }
+
+// applyTheme sets the window's background (what shows before and around
+// the page) to the effective theme's: no dark flash for light themes.
+func (d *desktop) applyTheme() {
+	d.win.SetBackgroundColour(rgba(tray.CurrentPopupBackground(d.prefsDir)))
+}
+
+// ThemeChanged: Settings > Appearance changed (tray.ThemeListener).
+func (d *desktop) ThemeChanged() { d.applyTheme() }
+
+func rgba(c tray.RGB) application.RGBA { return application.NewRGB(c.R, c.G, c.B) }
 
 // toggle is the tray icon's left click. Clicking the icon while the popup
 // is open first takes the focus away (which hides it): treat a click right
@@ -124,12 +136,13 @@ func (s *wailsShell) Notify(title, body string) {
 }
 
 // popupOptions: the popup window (and its WebView2 settings: an app, not a
-// browser).
-func popupOptions(url string) application.WebviewWindowOptions {
+// browser) with its background (the effective theme's) set before the page
+// loads.
+func popupOptions(url string, bg tray.RGB) application.WebviewWindowOptions {
 	return application.WebviewWindowOptions{
 		Name: "popup", Title: "Remote Workers", Width: 460, Height: 780, MinWidth: 360, MinHeight: 300,
 		Frameless: true, AlwaysOnTop: true, Hidden: true, URL: url,
-		BackgroundColour: application.NewRGB(13, 17, 23),
+		BackgroundColour: rgba(bg),
 		Windows:          application.WindowsWindow{HiddenOnTaskbar: true},
 		// the page's own menu (Copy / Paste) only; no zoom, no file drops;
 		// devtools follow the build (on without the production tag)
@@ -164,7 +177,7 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 		Mac: application.MacOptions{ActivationPolicy: application.ActivationPolicyAccessory},
 	})
 	d.app = app
-	d.win = app.Window.NewWithOptions(popupOptions(srv.URL("/tray")))
+	d.win = app.Window.NewWithOptions(popupOptions(srv.URL("/tray"), tray.CurrentPopupBackground(o.LongarmConfigDir)))
 	d.win.OnWindowEvent(events.Common.WindowLostFocus, func(*application.WindowEvent) {
 		// a short delay: focus can bounce while the window is being shown
 		time.AfterFunc(150*time.Millisecond, func() {
