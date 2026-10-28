@@ -84,7 +84,14 @@ func SecureDir(dir, user string) error {
 	if user == "" && HasSDDL(dir, sddl) {
 		return nil // already: don't walk a big tree again
 	}
-	if a := normalizeAccount(user); a != "" {
+	if strings.HasPrefix(strings.ToUpper(user), "S-1-") {
+		// a SID (the MSI's UserSID: Entra accounts have no usable name)
+		sid, err := windows.StringToSid(user)
+		if err != nil {
+			return fmt.Errorf("account %q: %w", user, err)
+		}
+		sddl += "(A;OICI;FA;;;" + sid.String() + ")"
+	} else if a := normalizeAccount(user); a != "" {
 		sid, _, _, err := windows.LookupSID("", strings.TrimPrefix(a, `.\`))
 		if err != nil {
 			return fmt.Errorf("lookup account %q: %w", user, err)

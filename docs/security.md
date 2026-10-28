@@ -449,6 +449,156 @@ in. With trust on, **sharing needs the worker's owner too**: a worker shared
 with bob on the hub still refuses bob's devices until bob's user key is in
 that worker's `trust.toml` (`longarmd trust add-user <bob's key>`), and bob
 in `[access] users` if alice pinned it.
+## Admin worker (Windows)
+
+An **admin worker** is a second worker on the same machine that runs
+commands with administrator rights: on Windows a `longarmd` running as
+**LocalSystem** (the MSI's `ADMIN_WORKER=1`), so its owner can install
+software and administer the machine remotely, also while nobody is signed
+in. It is enrolled only through a pairing (`/link`) that carries its CSR
+(`StartLinkRequest.admin_worker_csr_pem`, or kind `admin` alone) - with the
+owner's Microsoft sign-in and approval; az sign-ins and join codes can't
+make one. Its private key never leaves the LocalSystem longarmd: the
+signed-in user's tray sends a CSR that longarmd made and hands the
+certificate back. The `/link` page says, in a warning box, that the
+pairing includes an **administrator** worker running commands as SYSTEM on
+that machine, with its name (default `<worker>-admin`).
+
+The hub marks it (`store.Node.Admin`, shown as the label
+`longarm.io/admin=true`, `NodeInfo.admin_worker`) and enforces, whatever
+the panel or the CLI does:
+
+| Rule | Where |
+|---|---|
+| **Owner only, never shared**: `worker share` is refused for it (owner, `can_share` or admin alike); shares that reached its record anyway are ignored (`mayUse`), and the worker gets an access rule with the owner alone | hub (`ShareWorker`, `mayUseLocked`, `worker_access`) and the worker (owner/shares rule) |
+| **Admin certificates get nothing**: a fleet admin who is not the owner is refused like any other user - hidden from users, `PermissionDenied` on the worker (owner-only means owner-only), and `--owner` (acting on another user's sessions) can't reach it either. Fleet admins still see it (with the `admin` marker), drain it and remove (revoke) it | worker (`ownerDeny`), hub (`relayCheck`) |
+| **No hub-relayed commands**: the hub relays no submit, kill or logs to it, not even its owner's (panel, `longarm admin run|kill|logs`): commands go to it directly with the owner's certificate (`workers/denied` in the hub's audit) | hub (`relayCheck`) |
+| **Never placed**: no `auto`, `--require` (even `--require longarm.io/admin=true`), scheduler queue, `session start auto`, MCP or client-side pick chooses it (`sched.Pick` rejects it as "admin worker (by name only)"): it is reachable by its name only | `sched.Pick` (hub and client) |
+| **Reserved label**: `longarm.io/...` keys are the hub's - `worker label`, `admin label`, join codes and sign-in labels can't set or remove them (`PermissionDenied`), and a worker's own `[hub] labels` with such keys are dropped | hub (`SetLabels`, `CreateJoinCode`, `StartLink`, hello) |
+
+End-to-end trust applies as for every owned worker (pin the owner on the
+machine: `[access] users/owners`, `longarmd trust add-user`), and every
+exec, run, session, file put/get and tail on it is in the worker's audit
+log as on any worker. The session worker of the same machine is an
+independent node: it has no way into the admin worker's local API (a
+LocalSystem-only channel) and gets no rights over it.
+
+**On the machine** (the MSI, `install-helper admin-setup`): the admin
+worker is the service `longarmd-admin` (LocalSystem; no password, so it
+works on Entra-only machines) with its own data dir
+`C:\ProgramData\Longarm\longarmd-admin` (SYSTEM and Administrators only)
+and its own listener (127.0.0.1:7702). While it waits for its sign-in it
+makes its key and CSR itself and leaves only the CSR in the hand-off dir
+`C:\ProgramData\Longarm\admin-signin`, whose ACL is SYSTEM, Administrators
+and the installing user (who is an administrator anyway: no other local
+user can pair it as theirs or hand it a certificate). The tray adds the CSR
+to the user's pairing and puts the approved enrollment back there; the
+service installs it only if the certificate is for its own key, chains to
+the hub's CA (the pinned one, when the hub was pinned) and carries
+`longarm.io/admin=true` (an older hub's plain worker certificate is
+refused), and then writes `[access] users = ["<owner>"]`, `owners =
+["<owner>"]`, `admins = "none"` into its `longarmd.toml` - owner only on
+the worker too, whatever the hub says later. It can be removed without
+reinstalling: the tray's "Disable admin worker" (or `longarmd admin-worker
+disable`, elevated) makes it leave the hub (its certificate is revoked),
+removes its service and data, and records `AdminWorker=0` so upgrades keep
+it off; uninstalling the MSI or upgrading with `ADMIN_WORKER=0` does the
+same.
+
+**Corporate-managed devices**: a LocalSystem service that runs remote
+commands is what endpoint protection watches for. Microsoft Defender for
+Endpoint, Intune compliance or attack-surface-reduction rules may flag,
+block or report it; check with whoever manages the device before turning
+it on, and expect the commands it runs to be attributed to SYSTEM in their
+logs.
+
+## Installer (Windows MSI)
+
+The MSI is per-machine: its custom actions run elevated, as SYSTEM, with
+values from MSI properties - and Windows lets a non-administrator run a
+**repair** of a per-machine product elevated, with public properties of
+their choosing. So the installer treats every property as untrusted input:
+
+- **Values are data, never options.** Windows Installer formats properties
+  into a custom action's command line unquoted. Every `longarmd
+  install-helper` action passes `install-helper msi <step>
+  #LONGARM-MSI#key=[PROPERTY]|key=[PROPERTY]...`; the helper takes the text
+  after the first marker verbatim from the raw command line and parses it
+  strictly (`longarmd.MSIData`): exactly the step's keys, each once (the
+  template has them all, so an injected `|key=...` is a duplicate), each
+  value against its own pattern - HUB is a host name with an optional
+  port, SESSION_SID a SID of an existing user account, LABELS / LISTEN /
+  JOIN_CODE / CA_FINGERPRINT / NODE_NAME their formats, no quotes, spaces
+  or separators. `HUB='x" --exe "C:\...\evil.exe" --hub "x'` is refused,
+  not parsed. CI (`TestMSICustomActionData`, `msi-check.ps1`) checks that
+  every action passes exactly the keys its step expects.
+- **No property names a program.** The helper runs, and registers as
+  services and scheduled tasks, only the binaries next to itself, and
+  first checks that their directory (and the files) can be changed by
+  SYSTEM, Administrators and TrustedInstaller only (Program Files); an
+  install directory a user can write is refused. The admin worker's service
+  name and directories are fixed; a service data dir (`DATADIR`) must be
+  below `%ProgramData%\Longarm`. The helper's log is
+  `%ProgramData%\Longarm\install-helper.log` (that dir secured first, an
+  old log replaced, never followed), not a user's temp dir.
+- **Who asked.** The actions get `UserSID` - the account that started the
+  install, a private property the command line can't set - and check its
+  membership in the local Administrators group (directly, as Entra
+  accounts on a Dev Box, or through domain groups; LocalSystem for
+  deployment tools): a **repair or change** of the installed product is
+  refused for non-administrators before anything else runs (the
+  `LongarmdCheck` action right after `InstallInitialize`, so nothing is
+  written - conditioned on the Settings component's action state, not on
+  the public REMOVE property, so `REMOVE=ALL REINSTALL=ALL` doesn't skip
+  it; only a real uninstall does); the service worker and the admin worker need an administrator
+  (and the admin worker's sign-in hand-off goes to that administrator
+  only); the user-session task and the tray's start are for the requesting
+  user - another user's only for an administrator. (`AdminUser` /
+  `Privileged` aren't used: under UAC they don't tell an administrator from
+  a user an elevated repair runs for.)
+- **The sign-in defaults** (Hub, CaFingerprint, Login, Labels, Mode in
+  `HKLM\Software\Longarm`: where sign-ins without a hub go and which CA
+  they pin) are written by the helper, not the MSI's Registry table: values
+  validated, and a change of recorded ones only for an administrator
+  (`ApplyMSISettings`) - a second layer behind `LongarmdCheck`.
+- **Task definitions** are XML built with `encoding/xml` from a SID checked
+  against its pattern and the account database; the program is the
+  installed tray / longarmd.
+- **Planted data dirs.** Any user may create directories in ProgramData. A
+  machine-wide data dir that exists before the install is kept only when
+  the installer recorded creating it (`HKLM\Software\Longarm\Provenance`,
+  written by the helper as SYSTEM - not one of the MSI's own values, which
+  a repair rewrites from properties) and nobody but SYSTEM /
+  Administrators (and the service's own account) can write it; otherwise
+  it is moved aside and removed (reparse points removed, never followed)
+  and created fresh with a protected ACL before anything is written. Older
+  installs' service data dirs pass when they are protected. The admin
+  worker's dir needs the record; its sign-in hand-off dir starts empty at
+  every setup.
+- **The admin worker serves only what its sign-in made.** It pins the hub's
+  CA itself (`https://<hub>/ca.crt`, checked with the system's roots, or
+  the given fingerprint) before it hands out its CSR; it installs only a
+  certificate for its own key, from that CA, marked `longarm.io/admin=true`;
+  it records that CA in the provenance key; at every start it refuses to
+  serve when `tls/ca.crt` isn't the recorded CA (planted credentials have no
+  record).
+- **The hub can't make it act.** The admin worker ignores what the hub
+  starts by itself - desired toolchains (package operations), update pushes
+  (it updates with the MSI only: its self-updater is off), port links,
+  relayed job requests (submit, kill, logs, toolchain apply) and data
+  purges - and the hub refuses toolchain profiles for it, skips it in
+  profile and release rollouts and never offers it a version. Revocations,
+  its access list and drains (which only narrow) and the tailnet transport
+  still apply.
+- **Local surface.** Its listener (127.0.0.1:7702) is TLS 1.3 with a
+  client certificate required and verified against the recorded hub CA;
+  owner-only `[access]` on top. Its local control API is a named pipe whose
+  ACL is SYSTEM only (the service's account); its data dir is SYSTEM and
+  Administrators only; the hand-off dir is SYSTEM, Administrators and the
+  installing administrator. It has no other endpoint (no health or metrics
+  port). A user who creates the pipe's name first can only keep the local
+  API from starting (a denial of service, logged).
+
 ## Port links
 
 Port links (`longarm link`, [usage](usage.md#port-links-worker-to-worker))

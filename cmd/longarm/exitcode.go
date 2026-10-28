@@ -165,11 +165,13 @@ func versionCmd() *cobra.Command {
 			b, _ := json.MarshalIndent(struct {
 				Version  string   `json:"version"`
 				Features []string `json:"features"`
-			}{version.Version, cliFeatures}, "", "  ")
+				// the hub built into this release (login without a hub)
+				DefaultHub string `json:"default_hub,omitempty"`
+			}{version.Version, cliFeatures, version.DefaultHub}, "", "  ")
 			fmt.Println(string(b))
 			return nil
 		},
 	}
-	c.Flags().BoolVar(&asJSON, "json", false, `{"version": "...", "features": [...]}`)
+	c.Flags().BoolVar(&asJSON, "json", false, `{"version": "...", "features": [...], "default_hub": "..."}`)
 	return c
 }

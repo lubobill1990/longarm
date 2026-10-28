@@ -138,12 +138,28 @@ longarm-hub --data-dir /var/lib/longarm-hub ca show        # CA fingerprint
 longarm-hub --data-dir /var/lib/longarm-hub join-code --role admin
 ```
 
-**2. Install** on each machine you want to use - one line, or the MSI on Windows:
+**2. Install** on each machine you want to use.
+
+**Windows: download the MSI, click Next twice, approve in the browser.**
+Run `longarm-windows-amd64.msi`, click Next, keep **Default (recommended)**
+- pick "Use this computer" or "Also run jobs on this computer" - and click
+Next, Install. The Longarm tray then opens with a code: approve it in your
+browser (step 3). No hub address, no join code, no fingerprint, and no
+password: the worker runs as you while you are signed in (also with the
+remote desktop disconnected - a Dev Box keeps the session), so it works on
+machines you sign in to with Windows Hello or a security key only. "Custom"
+takes another hub, a join code, or the worker as a Windows service.
+Silently: `msiexec /i longarm-windows-amd64.msi /qn ROLES=both` (properties:
+the comment at the top of [packaging/windows/longarm.wxs](packaging/windows/longarm.wxs)).
+The "Default" hub is built into the release (repository variable
+`LONGARM_DEFAULT_HUB`, [docs/ci-cd.md](docs/ci-cd.md#24-secrets-and-variables)).
+
+Or one line:
 
 ```sh
 curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --role both          # Linux / macOS
-$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex   # Windows (elevated)
-msiexec /i longarm-windows-amd64.msi ROLES=both HUB=hub.example.com LOGIN=1 SERVICE_USER=.\me SERVICE_PASSWORD=...
+$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex   # Windows (elevated: the MSI)
+msiexec /i longarm-windows-amd64.msi /qn MODE=custom ROLES=both HUB=hub.example.com LOGIN=1   # another hub
 ```
 
 Already installed? `longarmd login hub.example.com --role both` - the hub's
@@ -159,8 +175,10 @@ To link this machine as your device and your worker (one approval for both), sig
 
 Open the page in any browser (your phone will do), sign in with Microsoft,
 type the code, check the machine's name and approve - once, for both roles.
-(The MSI runs no console login: the tray, or `longarmd login --role both`,
-shows the code afterwards and needs no other input.)
+(The MSI runs no console login: the tray it opens - "Sign in with
+Microsoft" - or `longarmd login --role both` shows the code afterwards and
+needs no other input; after the approval the tray shows "Signed in as ...",
+the worker's state, Sign out and Open panel.)
 
 **4. The machine is your worker and your client.** It runs your jobs (only
 yours until you share it: `longarm worker share`) and its `longarm` acts as
@@ -181,7 +199,8 @@ one-liners with `--join <code>` instead of `--login`.
 longarmd's data dir (certificate, hub address, jobs) is `~/.longarm` of the
 account it runs as; `sudo longarmd service install --user alice` uses
 alice's. As root on Linux the default is `/var/lib/longarmd`, as LocalSystem
-on Windows `C:\ProgramData\Longarm\longarmd` (also the MSI's);
+on Windows `C:\ProgramData\Longarm\longarmd` (also the MSI's service's; the
+MSI's default user-session worker uses yours, `~\.longarm`);
 `--data-dir` / `LONGARM_DATA_DIR` override it ([docs/usage.md](docs/usage.md#data-directory)).
 
 **5. Use it:**

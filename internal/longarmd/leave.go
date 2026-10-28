@@ -186,6 +186,9 @@ type SetupOptions struct {
 	// Fingerprint) for a sign-in to come - the service waits for it, the
 	// tray or `longarmd login --role both` does it (SetUpSignIn).
 	Login bool
+	// Admin: the admin worker (LocalSystem on purpose): no warning about
+	// jobs running as SYSTEM.
+	Admin bool
 }
 
 // InstallSetup prepares a machine-wide data dir for the longarmd service: the
@@ -209,8 +212,24 @@ func InstallSetup(ctx context.Context, dataDir string, o SetupOptions) error {
 			return fmt.Errorf("secure %s: %w", parent, err)
 		}
 	}
+	// A data dir that was there before (ProgramData: any user may create
+	// it, with planted credentials) is kept only when this installer made
+	// it - the admin worker's - or, for older installs, when nobody but
+	// administrators (and the service account) could write it.
+	var also []string
+	if a := strings.TrimSpace(o.ServiceUser); a != "" && !strings.EqualFold(a, "LocalSystem") {
+		if sid, err := platform.AccountSID(a); err == nil {
+			also = append(also, sid)
+		}
+	}
+	if err := FreshSystemDir(dataDir, o.Admin, o.Out, also...); err != nil {
+		return err
+	}
 	if err := platform.SecureDir(dataDir, o.ServiceUser); err != nil {
 		return fmt.Errorf("secure %s: %w", dataDir, err)
+	}
+	if err := RecordSystemDir(dataDir); err != nil {
+		return fmt.Errorf("record %s: %w", dataDir, err)
 	}
 	if err := SetIsolation(dataDir, o.Isolation); err != nil {
 		return err
@@ -230,6 +249,8 @@ func InstallSetup(ctx context.Context, dataDir string, o SetupOptions) error {
 		if err := platform.GrantServiceLogon(o.ServiceUser); err != nil {
 			return err
 		}
+	} else if o.Admin {
+		fmt.Fprintln(o.Out, "admin worker: the longarmd service runs as LocalSystem; what its owner runs on it runs as SYSTEM")
 	} else if perUser {
 		fmt.Fprintln(o.Out, "per-user isolation: longarmd runs as LocalSystem and runs every Longarm user's work as an account of its own (la-<user>)")
 	} else {

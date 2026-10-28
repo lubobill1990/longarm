@@ -72,6 +72,9 @@ func (a *hubAgent) SetLimits(l *pb.LocalLimits) error {
 // allowRemote reports whether a hub request of kind ("control" or
 // "submit") is allowed by [hub] remote_jobs.
 func (a *hubAgent) allowRemote(kind string) bool {
+	if a.admin {
+		return false // the admin worker: only its owner's own connections
+	}
 	switch strings.ToLower(strings.TrimSpace(a.remoteJobs)) {
 	case "none", "off", "false":
 		return false

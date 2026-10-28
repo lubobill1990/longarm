@@ -152,6 +152,7 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 	t.OnClick(d.toggle)
 	menu := app.NewMenu()
 	menu.Add("Show panel").OnClick(func(*application.Context) { d.show() })
+	menu.Add("Sign in with Microsoft…").OnClick(func(*application.Context) { d.show() }) // the popup's account card
 	menu.Add("Open hub panel").OnClick(func(*application.Context) {
 		if u := tray.HubURL(o); u != "" {
 			tray.OpenURL(u)
@@ -176,5 +177,9 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 		<-ctx.Done()
 		app.Quit()
 	}()
+	if o.ShowSignIn && srv.NeedsSignIn() {
+		// launched by the installer: show "Sign in with Microsoft" right away
+		time.AfterFunc(1500*time.Millisecond, d.show)
+	}
 	return app.Run()
 }

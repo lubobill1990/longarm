@@ -6,6 +6,7 @@ package hubclient
 
 import (
 	"context"
+	"crypto"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -288,6 +289,12 @@ type JoinOptions struct {
 	// labels for it, as a worker code's (JoinResponse.labels says what was
 	// recorded; an older hub records none).
 	Labels map[string]string
+	// CSR (Link only): a CSR made elsewhere, whose key this process never
+	// sees - an admin worker's, made by its LocalSystem longarmd. No key is
+	// generated (JoinResult.KeyPEM stays nil; the issued certificate is
+	// checked against the CSR's public key); Name is still the requested
+	// name, Trust is whatever the CSR carries.
+	CSR []byte
 }
 
 // JoinResult is what Join and Poll return.
@@ -299,6 +306,9 @@ type JoinResult struct {
 	// Worker: a kind "both" pairing's worker enrollment (Resp, KeyPEM
 	// above are the client's)
 	Worker *JoinResult
+	// AdminWorker: a pairing's admin worker enrollment (LinkOptions.AdminWorker);
+	// KeyPEM nil when its CSR was pre-made
+	AdminWorker *JoinResult
 }
 
 // enrollTLS verifies the hub without a CA yet: the hub sends its CA in the
@@ -352,7 +362,7 @@ func Join(ctx context.Context, addr, code string, o JoinOptions) (*JoinResult, e
 	if err != nil {
 		return nil, err
 	}
-	return checkResult(resp, ca, keyPEM, o.Fingerprint)
+	return checkResult(resp, ca, keyPEM, csrPEM, o.Fingerprint)
 }
 
 // ErrNoEntra: the hub has no Microsoft Entra sign-in.
@@ -403,7 +413,7 @@ func Login(ctx context.Context, addr string, o LoginOptions) (*JoinResult, error
 	if err != nil {
 		return nil, err
 	}
-	return checkResult(resp, ca, keyPEM, o.Fingerprint)
+	return checkResult(resp, ca, keyPEM, csrPEM, o.Fingerprint)
 }
 
 // LoginBoth enrolls a client device and an owned worker of the same user
@@ -460,10 +470,15 @@ func Abandon(ctx context.Context, addr string, r *JoinResult, reason string) err
 // the code goes.
 type LinkOptions struct {
 	JoinOptions        // kind both: the client's (Fingerprint pins both)
-	Kind        string // "client", "worker" or "both"
+	Kind        string // "client", "worker", "both" or "admin" (an admin worker alone: JoinOptions are its)
 	// Worker: kind both, the worker's name and trust binding (its own key;
 	// Fingerprint unused).
 	Worker JoinOptions
+	// AdminWorker (any kind; nil = none): an admin worker of the same
+	// machine enrolled with the same approval (owner-only, never shared or
+	// placed; the hub marks it longarm.io/admin=true). Its CSR is normally
+	// pre-made (JoinOptions.CSR); Labels are not allowed.
+	AdminWorker *JoinOptions
 	// Show is called once with the code and the URL to enter it at.
 	Show func(*pb.StartLinkResponse)
 }
@@ -474,21 +489,47 @@ var (
 	ErrNoBothLink  = errors.New("this hub can't pair a client and a worker with one code (update it); sign in the two separately")
 	ErrLinkDenied  = errors.New("the pairing was denied")
 	ErrLinkExpired = errors.New("the code expired before it was approved; run login again")
+	// ErrNoAdminLink: the hub approved a pairing without the admin worker
+	// it carried (it predates admin workers); the other parts were taken
+	// back (Abandon), nothing is installed.
+	ErrNoAdminLink = errors.New("this hub can't enroll an admin worker (update it); nothing was signed in")
 )
+
+// keyAndCSR makes the key and CSR of o, or takes o.CSR (no key).
+func keyAndCSR(o JoinOptions) (keyPEM, csrPEM []byte, err error) {
+	if o.CSR != nil {
+		if _, err := pki.ParseCSR(o.CSR); err != nil {
+			return nil, nil, fmt.Errorf("pre-made CSR: %w", err)
+		}
+		return nil, o.CSR, nil
+	}
+	return pki.NewKeyAndCSR(o.Name, o.Trust)
+}
 
 // Link enrolls through the hub's pairing flow (Enroll.StartLink): the
 // user approves the code Show displays in the hub's /link page; Link
 // polls until then, a denial or the code's expiry.
 func Link(ctx context.Context, addr string, o LinkOptions) (*JoinResult, error) {
-	keyPEM, csrPEM, err := pki.NewKeyAndCSR(o.Name, o.Trust)
+	keyPEM, csrPEM, err := keyAndCSR(o.JoinOptions)
 	if err != nil {
 		return nil, err
 	}
 	var wkeyPEM, wcsrPEM []byte
 	if o.Kind == "both" {
-		if wkeyPEM, wcsrPEM, err = pki.NewKeyAndCSR(o.Worker.Name, o.Worker.Trust); err != nil {
+		if wkeyPEM, wcsrPEM, err = keyAndCSR(o.Worker); err != nil {
 			return nil, err
 		}
+	}
+	var akeyPEM, acsrPEM []byte
+	aname := ""
+	if o.AdminWorker != nil {
+		if len(o.AdminWorker.Labels) > 0 {
+			return nil, errors.New("an admin worker takes no labels (the hub sets its own)")
+		}
+		if akeyPEM, acsrPEM, err = keyAndCSR(*o.AdminWorker); err != nil {
+			return nil, err
+		}
+		aname = o.AdminWorker.Name
 	}
 	var ca *x509.Certificate
 	c, err := dial(NormalizeAddr(addr), enrollTLS(o.Fingerprint, &ca))
@@ -503,7 +544,7 @@ func Link(ctx context.Context, addr string, o LinkOptions) (*JoinResult, error) 
 	}
 	st, err := c.Enroll().StartLink(ctx, &pb.StartLinkRequest{Kind: o.Kind, CsrPem: csrPEM, Name: o.Name, Hostname: host,
 		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version, WorkerCsrPem: wcsrPEM, WorkerName: o.Worker.Name,
-		WorkerLabels: wlabels})
+		WorkerLabels: wlabels, AdminWorkerCsrPem: acsrPEM, AdminWorkerName: aname})
 	if o.Kind == "both" && status.Code(err) == codes.InvalidArgument && strings.Contains(status.Convert(err).Message(), "want client or worker") {
 		return nil, ErrNoBothLink
 	}
@@ -543,18 +584,37 @@ func Link(ctx context.Context, addr string, o LinkOptions) (*JoinResult, error) 
 		}
 		switch resp.State {
 		case "approved":
-			r, err := checkResult(resp, ca, keyPEM, o.Fingerprint)
-			if err != nil || o.Kind != "both" {
-				return r, err
-			}
-			if resp.Worker == nil || resp.Worker.State != "approved" {
-				return nil, errors.New("the hub approved the device but sent no worker enrollment")
-			}
-			if len(resp.Worker.CaPem) == 0 {
-				resp.Worker.CaPem = resp.CaPem
-			}
-			if r.Worker, err = checkResult(resp.Worker, ca, wkeyPEM, o.Fingerprint); err != nil {
+			r, err := checkResult(resp, ca, keyPEM, csrPEM, o.Fingerprint)
+			if err != nil {
 				return nil, err
+			}
+			if o.Kind == "both" {
+				if resp.Worker == nil || resp.Worker.State != "approved" {
+					return nil, errors.New("the hub approved the device but sent no worker enrollment")
+				}
+				if len(resp.Worker.CaPem) == 0 {
+					resp.Worker.CaPem = resp.CaPem
+				}
+				if r.Worker, err = checkResult(resp.Worker, ca, wkeyPEM, wcsrPEM, o.Fingerprint); err != nil {
+					return nil, err
+				}
+			}
+			if o.AdminWorker != nil {
+				if resp.AdminWorker == nil || resp.AdminWorker.State != "approved" {
+					// an older hub ignored the admin CSR: take the rest back
+					for _, x := range []*JoinResult{r.Worker, r} {
+						if x != nil && x.KeyPEM != nil {
+							Abandon(ctx, addr, x, "sign-in failed: no admin worker")
+						}
+					}
+					return nil, ErrNoAdminLink
+				}
+				if len(resp.AdminWorker.CaPem) == 0 {
+					resp.AdminWorker.CaPem = resp.CaPem
+				}
+				if r.AdminWorker, err = checkResult(resp.AdminWorker, ca, akeyPEM, acsrPEM, o.Fingerprint); err != nil {
+					return nil, err
+				}
 			}
 			return r, nil
 		case "denied":
@@ -568,16 +628,34 @@ func Link(ctx context.Context, addr string, o LinkOptions) (*JoinResult, error) 
 	}
 }
 
-func checkResult(resp *pb.JoinResponse, ca *x509.Certificate, keyPEM []byte, fp string) (*JoinResult, error) {
+// checkResult checks an enrollment: the CA, and that the certificate is
+// for our key (keyPEM; nil: a pre-made CSR's, csrPEM's public key).
+func checkResult(resp *pb.JoinResponse, ca *x509.Certificate, keyPEM, csrPEM []byte, fp string) (*JoinResult, error) {
 	got, err := pki.ParseCertPEM(resp.CaPem)
 	if err != nil || ca == nil || !got.Equal(ca) {
 		return nil, errors.New("the hub returned a CA that differs from the one it presented")
 	}
 	r := &JoinResult{Resp: resp, KeyPEM: keyPEM, CAFingerprint: pki.Fingerprint(ca), Pinned: fp != ""}
-	if resp.State == "approved" {
+	if resp.State != "approved" {
+		return r, nil
+	}
+	if keyPEM != nil {
 		if _, err := tls.X509KeyPair(resp.CertPem, keyPEM); err != nil {
 			return nil, fmt.Errorf("the issued certificate does not match our key: %w", err)
 		}
+		return r, nil
+	}
+	cert, err := pki.ParseCertPEM(resp.CertPem)
+	if err != nil {
+		return nil, fmt.Errorf("the issued certificate: %w", err)
+	}
+	csr, err := pki.ParseCSR(csrPEM)
+	if err != nil {
+		return nil, err
+	}
+	pub, ok := cert.PublicKey.(interface{ Equal(crypto.PublicKey) bool })
+	if !ok || !pub.Equal(csr.PublicKey) {
+		return nil, errors.New("the issued certificate does not match the CSR's key")
 	}
 	return r, nil
 }
@@ -598,7 +676,7 @@ func Poll(ctx context.Context, addr, token string, caPEM, keyPEM []byte) (*JoinR
 	if err != nil {
 		return nil, err
 	}
-	return checkResult(resp, seen, keyPEM, pki.Fingerprint(ca))
+	return checkResult(resp, seen, keyPEM, nil, pki.Fingerprint(ca))
 }
 
 // WaitApproved polls every interval until the enrollment is approved

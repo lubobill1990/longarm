@@ -70,6 +70,9 @@ export interface NodeInfo {
   reserved_mem_gb?: number
   isolation?: string // workers: "shared" | "per-user"
   user?: string // clients/admins: the user the node's certificates belong to
+  owner?: string // workers: the user who registered it ("" = shared fleet worker)
+  /** an admin worker: runs commands as SYSTEM on its machine; owner-only, never shared, never placed */
+  admin_worker?: boolean
 }
 
 export type JobState =

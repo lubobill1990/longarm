@@ -1205,6 +1205,45 @@ locally too - `longarmd join` prints the hint: `[access] users = ["alice"]`,
 ([security.md](security.md#user-owned-workers)). The hub's rule only ever
 narrows what `[access]` and trust allow on the worker.
 
+### Admin worker (Windows)
+
+Jobs on your own worker run as you, without elevation - nobody is there to
+click a UAC prompt - and a worker in your signed-in session is offline
+after a reboot until you sign in again. For administrator tasks (install
+software, change system settings) a Windows machine can also run an
+**admin worker**: a second `longarmd` running as LocalSystem, enrolled
+with the same sign-in as your worker (one code, one approval; the `/link`
+page says it runs commands as SYSTEM), named `<worker>-admin`:
+
+```bash
+longarm run devbox-admin -- winget install --id Git.Git -e --silent
+longarm exec devbox-admin -- powershell -c "Get-Service | ? Status -eq Stopped"
+```
+
+The hub keeps it yours alone: it can't be shared (`longarm worker share`
+is refused), admin certificates of anybody else are refused (also with
+`--owner`), the hub relays no commands to it (panel, `longarm admin run`),
+and it is **never placed automatically** - `auto`, `--require`, the queue
+and `session start auto` skip it; name it explicitly. Its label
+`longarm.io/admin=true` is set by the hub and can't be changed. `longarm
+ls` marks it `+admin` in the OWNER column, `longarm worker ls` as
+`mine (admin)`, their `--json` has `adminWorker` / `admin_worker`, and the panel shows an
+`admin` badge. Remove it like any of your workers (`longarm worker remove
+<name>`).
+
+Install it with the MSI's checkbox "Allow remote administrator commands on
+this computer" (Default and Custom) or `ADMIN_WORKER=1` - off by default.
+The MSI adds the service `longarmd-admin` (LocalSystem, no password; data
+dir `C:\ProgramData\Longarm\longarmd-admin`); the tray's sign-in enrolls it
+with the same code and approval as your worker. The tray's Account tab shows
+its state and offers **Disable admin worker** (an administrator prompt:
+`longarmd admin-worker disable`) - it leaves the hub, its service and data
+go, and upgrades keep it off; `longarmd admin-worker status` shows it. The
+MSI's uninstall (or an upgrade with `ADMIN_WORKER=0`) removes it too.
+Being a LocalSystem service that runs remote commands, it is a
+corporate-managed-device consideration: Defender / Intune may report or
+block it (see [security](security.md#admin-worker-windows)).
+
 ### Sign in with Microsoft Entra ID
 
 Instead of join codes and panel passwords, people can sign in with their
@@ -1233,8 +1272,9 @@ $env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='client'; irm https://hub.example.com/in
 # worker labels with the sign-in (as longarm worker add --label)
 curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --label pool=devbox
 $env:LONGARM_LOGIN=1; $env:LONGARM_LABELS='pool=devbox,os.flavor=ltsc'; irm https://hub.example.com/install.ps1 | iex
-# Windows MSI, no code at install time: the tray (or longarmd login) signs in afterwards
-msiexec /i longarm-windows-amd64.msi ROLES=both HUB=hub.example.com LOGIN=1 SERVICE_USER=.\me SERVICE_PASSWORD=...
+# Windows MSI, no code at install time: the tray it opens (or longarmd login) signs in afterwards
+msiexec /i longarm-windows-amd64.msi /qn ROLES=both                  # the built-in hub (MODE=default)
+msiexec /i longarm-windows-amd64.msi /qn MODE=custom ROLES=both HUB=hub.example.com LOGIN=1
 #   [LABELS=pool=devbox] worker labels for that sign-in
 # with longarm / longarmd installed already: the hub's domain is enough
 longarmd login hub.example.com --role both     # worker + client, one approval (as the user who uses longarm)
@@ -1265,7 +1305,9 @@ hub. Trust model: [security.md](security.md#first-contact-domain-only-sign-in).
 Without any hub, `longarm login` signs in to the hub its config dir already
 names (pinning its CA), `longarmd login` to the one the data dir's
 `hub.toml` names (e.g. written by the MSI with `LOGIN=1`), else to the hub
-the MSI recorded in `HKLM\Software\Longarm`.
+the MSI recorded in `HKLM\Software\Longarm`, else to the hub built into
+the release (`longarm version --json` shows it as `default_hub`; see
+[Built-in default hub](#built-in-default-hub)), and only then asks for one.
 
 **One approval for both roles.** `longarmd login --role both` (what
 `--role both` of the install scripts runs, and what the tray does) sends two
@@ -1562,34 +1604,154 @@ and only names the operator allows: `claude mcp add longarm -e LONGARM_MCP_SECRE
 | macOS | `longarm-<v>.pkg` (packaging/macos, signed + notarized on a Mac); Homebrew cask | `defaults write /Library/Preferences/com.longarm ...` then `installer -pkg` |
 | hub | `ghcr.io/<owner>/longarm-hub` image, `longarm-hub_<v>_<arch>.deb` | `docker compose up -d` (deploy/hub) |
 
-ROLES = `client` (longarm), `worker` (+ the longarmd service, auto-start, restart on
-failure; data dir `C:\ProgramData\Longarm\longarmd`, readable by
-SYSTEM/Administrators/the service account only) or `both` (JOIN_CODE = the worker's, CLIENT_JOIN_CODE = the
-client's). The MSI adds inbound UDP+TCP firewall rules for longarm, longarmd and
-longarm-tray, puts them on PATH, starts the tray at logon, and on uninstall stops
-the service, makes the worker leave its hub (`longarmd leave`) and removes
-everything (`KEEP_DATA=1` keeps jobs and mirrors). `LOGIN=1` instead of join codes
-(`msiexec /i longarm.msi /qn ROLES=both HUB=longarm.example.com LOGIN=1 SERVICE_USER=.. SERVICE_PASSWORD=..`):
-the MSI records `HUB` (the bare domain will do) and `CA_FINGERPRINT` (optional) in
-`HKLM\Software\Longarm` and the data dir's `hub.toml`, starts the service, which waits
-for its sign-in, and runs no console login itself; afterwards the tray - or
-`longarmd login --role both` as the service's account (or elevated) - signs the machine
-in with one Microsoft approval and no further input. The hub's
-`install.ps1` / `install.sh` use the MSI / deb / rpm when the release has them
-(elevated / root), else they install the bare binaries as before
-(`-NoMsi`, `--no-package`).
+**Default or Custom.** The MSI's first page offers **Default
+(recommended)**: the hub built into the release, a sign-in with Microsoft
+after the install, and only the role to pick - "Use this computer"
+(`ROLES=client`) or "Also run jobs on this computer" (`ROLES=both`) - plus
+"Allow remote administrator commands" ([admin worker](#admin-worker-windows)).
+Next, Install: the Longarm tray opens in your session (not elevated: the MSI
+starts it through a one-off scheduled task) and shows "Sign in with
+Microsoft" - one code, one approval for the device, the worker and the admin
+worker. **Custom** asks for a hub, either "Sign in with Microsoft after the
+install" (`LOGIN=1`) or a join code, an optional CA fingerprint, the roles
+client / worker / both, and under Advanced the worker as a Windows service.
+An MSI built without a default hub ([Built-in default hub](#built-in-default-hub))
+offers Custom only. Silent properties (all in the comment at the top of
+`packaging/windows/longarm.wxs`):
+
+| property | values |
+|---|---|
+| `MODE` | `default` (the built-in hub, `LOGIN=1`; `JOIN_CODE` refused) or `custom`; default: `custom` when `HUB` or a join code is given or there is no built-in hub, else `default`; remembered |
+| `ROLES` | `client`, `both`, `worker` (Custom) |
+| `RUN` | `session` (default) or `service`; remembered - an install from before `RUN` that has a service keeps it |
+| `HUB`, `LOGIN=1`, `JOIN_CODE`, `CA_FINGERPRINT`, `LABELS`, `NODE_NAME` | as before (`MODE=custom`) |
+| `SERVICE_USER`, `SERVICE_PASSWORD`, `SERVICE_ACCOUNT`, `SERVICE_NAME`, `DATADIR`, `LISTEN`, `ISOLATION` | `RUN=service` only (`ISOLATION=per-user` implies it; `DATADIR` below `%ProgramData%\Longarm`) |
+| `ADMIN_WORKER=1` | the admin worker (off by default; remembered, `ADMIN_WORKER=0` on an upgrade removes it) |
+| `SESSION_SID` | the user of the user-session worker (default: the installing user, `UserSID`) |
+| `LAUNCH_TRAY=0` | don't start the tray at the end |
+| `KEEP_DATA=1` | uninstall: keep jobs and mirrors |
+
+Repairing or changing the installed product needs an administrator, and
+every value is checked before it reaches an elevated step ([security:
+Installer](security.md#installer-windows-msi)).
+
+```powershell
+msiexec /i longarm-windows-amd64.msi /qn ROLES=both                                    # Default
+msiexec /i longarm-windows-amd64.msi /qn ROLES=both ADMIN_WORKER=1                     # + the admin worker
+msiexec /i longarm-windows-amd64.msi /qn MODE=custom ROLES=worker HUB=hub.example.com JOIN_CODE=K7P-Q2M
+msiexec /i longarm-windows-amd64.msi /qn MODE=custom ROLES=worker RUN=service HUB=hub.example.com LOGIN=1 SERVICE_USER=.\me SERVICE_PASSWORD=...
+```
+
+The MSI adds inbound UDP+TCP firewall rules for longarm, longarmd and
+longarm-tray, puts them on PATH, starts the tray at logon, records `HUB`
+(the bare domain will do), `CA_FINGERPRINT`, `LOGIN`, `LABELS`, `MODE` and
+`RUN` in `HKLM\Software\Longarm` (read by the tray, `longarm login` and
+`longarmd login`, so none of them asks), and on uninstall makes the workers
+leave the hub (`longarmd leave`) and removes everything (`KEEP_DATA=1` keeps
+jobs and mirrors). The hub's `install.ps1` / `install.sh` use the MSI /
+deb / rpm when the release has them (elevated / root), else they install the
+bare binaries as before (`-NoMsi`, `--no-package`).
+
+#### The user-session worker (`RUN=session`, the default)
+
+longarmd runs **as the signed-in user, started at that user's logon** - no
+Windows service and no account password, so it works on machines whose only
+sign-in is Entra with Windows Hello or a security key (Microsoft Dev Box).
+How:
+
+- a scheduled task `LongarmWorker-<user SID>` per user (`longarmd
+  session-mode install` registers it for you; the MSI for the installing
+  user), "at logon of <user>", run with the user's interactive token (only
+  while the user is logged on: no password stored), not elevated, no time
+  limit, not stopped on battery, repeated every 5 minutes with "don't start
+  a second instance" - a dead host comes back within minutes;
+- the task starts a **host** - `longarm-tray.exe --worker-host`, a windowless
+  binary (no console window pops up at logon), or `longarmd session-mode
+  run` without the tray - that runs `longarmd run` hidden and restarts it
+  when it exits: at once after a self-update's exit, else after 2 s, 4 s, ...
+  up to 2 minutes (back to 2 s after 5 minutes of running). One host per
+  user (a lock in the data dir); a longarmd already holding the data dir
+  (started by hand) is watched, not doubled;
+- the data dir is **yours**: `~\.longarm`, the default of `longarmd`,
+  `longarmd login` and the tray for you - signing in needs no elevation. The
+  host prepares it for a sign-in to the recorded (or built-in) hub; longarmd
+  waits for the certificate and starts serving by itself.
+
+Why a scheduled task and not `HKCU\...\Run` or the tray: the task survives
+the tray's exit, brings a dead host back by itself, needs no password (unlike
+a task that runs "whether the user is logged on or not"), and the MSI -
+elevated, as SYSTEM - can register and start it for the installing user.
+
+Limits: jobs and sessions run in your logon session. They **keep running
+while the remote desktop connection is disconnected** (a Dev Box keeps the
+session), but **stop at logoff or reboot** until you log on again (a
+worker that must run with nobody logged on: `RUN=service`; administrator
+tasks: the admin worker). Jobs run with your filtered (non-elevated) token.
+One user-session worker per machine listens on 127.0.0.1:7701 (a second
+user's needs `listen` in its `longarmd.toml`). Commands: `longarmd
+session-mode status|start|stop|install|uninstall`; the host's log is
+`~\.longarm\longarmd-session.log`, longarmd's `~\.longarm\longarmd.log`.
+
+**Updates.** longarmd's self-update replaces its own binary, which needs a
+binary dir the worker's account can write: under the MSI
+(`C:\Program Files\Longarm`) a user-session worker can't, and
+`longarmd update status` / its log say self-update is unavailable - update
+with a newer MSI (or `install.ps1`), which restarts the task with the new
+binaries. A user-session worker installed by `install.ps1` without the MSI
+(into `%LOCALAPPDATA%\Programs\Longarm`) updates itself: it exits with code
+75, the host starts the new binary at once, and the rollback watchdog, if the
+new version fails its health check, restores the old one and leaves the
+restart to the host (update mode `supervised`).
+
+**From a service to the user-session worker.** An upgrade keeps the run mode
+(a service stays a service). To switch: uninstall (`msiexec /x`, `KEEP_DATA=1`
+keeps jobs), install again with `RUN=session` (or Default) and sign in again;
+the service's data dir (`C:\ProgramData\Longarm\longarmd`) is not migrated
+to `~\.longarm`.
+
+#### The worker as a service (`RUN=service`, Custom > Advanced)
+
+ROLES `worker` / `both` with `RUN=service`: the longarmd service (auto-start,
+restart on failure; data dir `C:\ProgramData\Longarm\longarmd`, readable by
+SYSTEM/Administrators/the service account only; `JOIN_CODE` = the worker's,
+`CLIENT_JOIN_CODE` = the client's). It runs with nobody logged on. With
+`LOGIN=1` the MSI writes the data dir's `hub.toml` and starts the service,
+which waits for its sign-in: `longarmd login --role both` as the service's
+account (or elevated) signs it in (the tray signs in only data dirs it can
+write).
 
 **The worker service runs as a user account** (DESIGN §3.1: jobs then find
 that user's git / npm / claude settings), never silently as SYSTEM. The
-interactive MSI asks for the account (default: you) and its password in the
-worker step and grants it "Log on as a service". A silent worker install
+interactive MSI asks for the account (default: you) and its password and
+grants it "Log on as a service". A silent service install
 needs `SERVICE_USER` + `SERVICE_PASSWORD`; `SERVICE_ACCOUNT=LocalSystem`
 instead runs it as SYSTEM (warned about in the install log and in longarmd.log).
 A wrong password fails the install (the service can't start) and rolls it
 back. Upgrading with a newer MSI keeps the account but needs
-`SERVICE_PASSWORD` again. `install.ps1` does the same: `-ServiceUser`
-(default you) with `$env:LONGARM_SERVICE_PASSWORD` or a prompt, or
-`-ServiceAccount LocalSystem` / `$env:LONGARM_SERVICE_ACCOUNT`.
+`SERVICE_PASSWORD` again. `install.ps1` does the same with `-Run service`:
+`-ServiceUser` (default you) with `$env:LONGARM_SERVICE_PASSWORD` or a prompt,
+or `-ServiceAccount LocalSystem` / `$env:LONGARM_SERVICE_ACCOUNT`. By default
+(`-Run session`) it installs the user-session worker, and `-Login` runs the
+MSI with `LOGIN=1 RUN=session`, then signs in in the console.
+
+#### Built-in default hub
+
+A release carries a default hub: `version.DefaultHub` (and optionally
+`version.DefaultHubCA`, a CA pin), set at build time with `-ldflags -X`
+from the repository variables `LONGARM_DEFAULT_HUB` / `LONGARM_DEFAULT_HUB_CA`
+(release.yml passes them to GoReleaser and to `build-msi.ps1 -DefaultHub
+-DefaultHubCA`). It is the MSI's "Default" choice, and `longarm login`,
+`longarmd login` and the tray use it when no hub is given - after the hub a
+config / data dir names and the one the installer recorded. Its CA comes
+from `https://<hub>/ca.crt` at sign-in (checked with the system's HTTPS
+roots), and must match `LONGARM_DEFAULT_HUB_CA` when that is set. Without
+the variable (forks, local builds) there is no default: the MSI offers
+Custom only and `login` needs a hub. To change it - e.g. when moving to the
+company's internal GitHub - set the variables in the new repository and cut
+a release: `gh variable set LONGARM_DEFAULT_HUB --body longarm.example.com`
+(and `LONGARM_DEFAULT_HUB_CA` with `longarm-hub ca show`'s fingerprint for
+the pin). New installs use it; installed machines keep the hub they recorded
+or are signed in to.
 
 **Secrets stay out of MSI logs.** `JOIN_CODE`, `CLIENT_JOIN_CODE` and
 `SERVICE_PASSWORD` are hidden properties. The custom actions that get the

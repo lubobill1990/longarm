@@ -12,6 +12,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -58,6 +59,15 @@ import (
 //     (device and worker names, the user, the pinned CA fingerprint and
 //     where it came from). Notes for the user (e.g. how to pin the
 //     worker's owner) arrive as Progress events of StepNote.
+//   - AdminWorker (optional, with any of the above): an admin worker of
+//     the same machine (Windows: longarmd as LocalSystem, the MSI's
+//     ADMIN_WORKER) enrolled with the same code and approval; the hub
+//     marks it longarm.io/admin=true (owner-only, never shared, never
+//     placed automatically) and the /link page says it runs as SYSTEM.
+//     Its key is not ours: the target is a CSRSource (a pre-made CSR) and
+//     its Install gets the result with KeyPEM nil. Pairing only: MethodAz
+//     fails, MethodAuto pairs. An older hub: hubclient.ErrNoAdminLink,
+//     nothing installed.
 //   - After a worker sign-in the worker service must run: a service
 //     waiting for its sign-in (an MSI install with LOGIN=1, hub.toml
 //     sign_in) picks the certificate up by itself within seconds; else
@@ -75,8 +85,11 @@ import (
 //	})
 //	// r.Device.Name, r.Worker.Name, r.User, r.CAFingerprint
 func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
-	if o.Client == nil && o.Worker == nil {
+	if o.Client == nil && o.Worker == nil && o.AdminWorker == nil {
 		return nil, errors.New("sign in as what? (no client and no worker)")
+	}
+	if o.AdminWorker != nil && o.Method == MethodAz {
+		return nil, errors.New("an admin worker signs in through the browser only (not with az)")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -92,7 +105,7 @@ func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
 	} else {
 		ev.progress(StepCA, fmt.Sprintf("hub %s: CA %s pinned (given)", tg.Address, tg.Fingerprint))
 	}
-	var ctr, wtr *pki.CSRTrust
+	var ctr, wtr, atr *pki.CSRTrust
 	if o.Client != nil {
 		if ctr, err = o.Client.Prepare(tg.Address); err != nil {
 			return nil, err
@@ -103,14 +116,38 @@ func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
 			return nil, err
 		}
 	}
+	if o.AdminWorker != nil {
+		if atr, err = o.AdminWorker.Prepare(tg.Address); err != nil {
+			return nil, fmt.Errorf("the admin worker: %w", err)
+		}
+	}
 	cjo := hubclient.JoinOptions{Name: o.DeviceName, Fingerprint: tg.Fingerprint, Trust: ctr}
 	if o.Worker != nil && o.WorkerLabels == nil {
 		o.WorkerLabels = InstalledLabels()
 	}
 	wjo := hubclient.JoinOptions{Name: o.WorkerName, Fingerprint: tg.Fingerprint, Trust: wtr, Labels: o.WorkerLabels}
+	var ajo *hubclient.JoinOptions
+	if o.AdminWorker != nil {
+		ajo = &hubclient.JoinOptions{Name: o.AdminWorkerName, Fingerprint: tg.Fingerprint, Trust: atr}
+	}
+	// pre-made CSRs (keys held elsewhere: an admin worker's)
+	for _, x := range []struct {
+		t  Target
+		jo *hubclient.JoinOptions
+	}{{o.Client, &cjo}, {o.Worker, &wjo}, {o.AdminWorker, ajo}} {
+		if cs, ok := x.t.(CSRSource); ok && x.jo != nil {
+			if x.jo.CSR, err = cs.CSR(tg.Address); err != nil {
+				return nil, err
+			}
+		}
+	}
 
-	var cr, wr *hubclient.JoinResult
+	var cr, wr, ar *hubclient.JoinResult
 	method := o.Method
+	if method == MethodAuto && o.AdminWorker != nil {
+		ev.progress(StepNote, "the admin worker signs in through the browser: one code for everything")
+		method = MethodLink
+	}
 	if method == MethodAz || method == MethodAuto {
 		res.Method = MethodAz
 		ev.progress(StepAz, "signing in with the Azure CLI's account")
@@ -129,7 +166,7 @@ func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
 	}
 	if method != MethodAz && method != MethodAuto {
 		res.Method = MethodLink
-		if cr, wr, err = pair(ctx, tg.Address, o, ev, cjo, wjo); err != nil {
+		if cr, wr, ar, err = pair(ctx, tg.Address, o, ev, cjo, wjo, ajo); err != nil {
 			return nil, err
 		}
 	}
@@ -147,6 +184,16 @@ func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
 		if len(o.WorkerLabels) > 0 && len(wr.Resp.Labels) == 0 {
 			note(fmt.Sprintf("this hub did not record the worker's labels (it is older); set them with: longarm worker label %s %s",
 				wr.Resp.Name, labelArgs(o.WorkerLabels)))
+		}
+	}
+	if ar != nil {
+		dir, err := o.AdminWorker.Install(tg.Address, ar, note)
+		if err != nil {
+			return nil, fmt.Errorf("installing the admin worker's enrollment: %w", err)
+		}
+		res.AdminWorker = enrolled(ar, dir)
+		if res.User == "" {
+			res.User = ar.Resp.Owner
 		}
 	}
 	if cr != nil {
@@ -174,6 +221,13 @@ type Target interface {
 	// Install writes an approved enrollment; it returns the directory and
 	// passes notes for the user to note.
 	Install(hub string, r *hubclient.JoinResult, note func(string)) (string, error)
+}
+
+// CSRSource is a Target whose key SignIn never holds (an admin worker's,
+// made by its LocalSystem longarmd): SignIn sends CSR's request instead of
+// making a key, and Install gets a result with KeyPEM nil.
+type CSRSource interface {
+	CSR(hub string) ([]byte, error)
 }
 
 // Method is how SignIn gets the user's approval.
@@ -210,6 +264,11 @@ type Options struct {
 	Fingerprint string
 	// Client / Worker: what to enroll (nil: not that role).
 	Client, Worker Target
+	// AdminWorker: an admin worker of this machine to enroll with the same
+	// approval (nil: none), usually a CSRSource; AdminWorkerName is its
+	// requested name (default: <worker name or host name>-admin).
+	AdminWorker     Target
+	AdminWorkerName string
 	// DeviceName (default <user>-<hostname>) and WorkerName (default: the
 	// hostname) as requested from the hub.
 	DeviceName, WorkerName string
@@ -260,6 +319,9 @@ type Code struct {
 	Kind string
 	// Host: this machine's name, which the /link page shows to check.
 	Host string
+	// AdminWorker: the approval also enrolls an admin worker (it runs
+	// commands as SYSTEM): say so next to the code.
+	AdminWorker bool
 }
 
 // Events receives SignIn's progress (nil funcs: ignored).
@@ -284,6 +346,7 @@ type Result struct {
 	Method        Method // MethodAz or MethodLink: how it was approved
 	Device        *Enrolled
 	Worker        *Enrolled
+	AdminWorker   *Enrolled // Options.AdminWorker's
 }
 
 // Enrolled is one installed enrollment.
@@ -316,6 +379,9 @@ func (r *Result) summary() string {
 	}
 	if r.Worker != nil {
 		s += "; worker " + r.Worker.Name
+	}
+	if r.AdminWorker != nil {
+		s += "; admin worker " + r.AdminWorker.Name + " (runs as SYSTEM, yours only)"
 	}
 	return s
 }
@@ -354,11 +420,14 @@ func azJoin(ctx context.Context, addr string, o Options, cjo, wjo hubclient.Join
 
 // pair enrolls the requested parts through the hub's /link pairing: one
 // code for both when both are asked for.
-func pair(ctx context.Context, addr string, o Options, ev Events, cjo, wjo hubclient.JoinOptions) (cr, wr *hubclient.JoinResult, err error) {
-	link := func(kind string, jo hubclient.JoinOptions, w hubclient.JoinOptions) (*hubclient.JoinResult, error) {
-		return hubclient.Link(ctx, addr, hubclient.LinkOptions{JoinOptions: jo, Kind: kind, Worker: w,
+// An admin worker (ajo) goes with the one code (alone: kind "admin");
+// older hubs without "both" can't have one (hubclient.ErrNoAdminLink).
+func pair(ctx context.Context, addr string, o Options, ev Events, cjo, wjo hubclient.JoinOptions, ajo *hubclient.JoinOptions) (cr, wr, ar *hubclient.JoinResult, err error) {
+	link := func(kind string, jo hubclient.JoinOptions, w hubclient.JoinOptions, a *hubclient.JoinOptions) (*hubclient.JoinResult, error) {
+		return hubclient.Link(ctx, addr, hubclient.LinkOptions{JoinOptions: jo, Kind: kind, Worker: w, AdminWorker: a,
 			Show: func(st *pb.StartLinkResponse) {
-				c := Code{URL: st.VerificationUrl, Code: st.UserCode, Expires: st.ExpiresAt.AsTime(), Kind: kind, Host: hostname()}
+				c := Code{URL: st.VerificationUrl, Code: st.UserCode, Expires: st.ExpiresAt.AsTime(), Kind: kind, Host: hostname(),
+					AdminWorker: ajo != nil}
 				ev.progress(StepCode, fmt.Sprintf("open %s and enter code %s", c.URL, c.Code))
 				if ev.Code != nil {
 					ev.Code(c)
@@ -370,43 +439,72 @@ func pair(ctx context.Context, addr string, o Options, ev Events, cjo, wjo hubcl
 			}})
 	}
 	switch {
+	case o.Client == nil && o.Worker == nil: // the admin worker alone
+		if ar, err = link("admin", *ajo, hubclient.JoinOptions{}, nil); err != nil {
+			return nil, nil, nil, err
+		}
+		return nil, nil, ar, checkAdminWorker(ar)
 	case o.Client != nil && o.Worker != nil:
-		r, err := link("both", cjo, wjo)
+		r, err := link("both", cjo, wjo, ajo)
 		if errors.Is(err, hubclient.ErrNoBothLink) {
+			if ajo != nil {
+				return nil, nil, nil, hubclient.ErrNoAdminLink
+			}
 			ev.progress(StepNote, "this hub is older: one code for the worker, then one for the device")
-			if wr, err = link("worker", wjo, hubclient.JoinOptions{}); err != nil {
-				return nil, nil, err
+			if wr, err = link("worker", wjo, hubclient.JoinOptions{}, nil); err != nil {
+				return nil, nil, nil, err
 			}
 			if err := checkWorker(wr); err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
-			if cr, err = link("client", cjo, hubclient.JoinOptions{}); err != nil {
+			if cr, err = link("client", cjo, hubclient.JoinOptions{}, nil); err != nil {
 				// all or nothing, as LoginBoth: take the worker back
 				if aerr := hubclient.Abandon(ctx, addr, wr, "sign-in failed"); aerr != nil {
-					return nil, nil, fmt.Errorf("%w (and worker %s could not be taken back: %v; remove it: longarm worker remove %s)", err, wr.Resp.Name, aerr, wr.Resp.Name)
+					return nil, nil, nil, fmt.Errorf("%w (and worker %s could not be taken back: %v; remove it: longarm worker remove %s)", err, wr.Resp.Name, aerr, wr.Resp.Name)
 				}
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
-			return cr, wr, nil
+			return cr, wr, nil, nil
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if err := checkWorker(r.Worker); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		w := r.Worker
-		r.Worker = nil
-		return r, w, nil
+		w, a := r.Worker, r.AdminWorker
+		r.Worker, r.AdminWorker = nil, nil
+		return r, w, a, checkAdminWorker(a)
 	case o.Worker != nil:
-		if wr, err = link("worker", wjo, hubclient.JoinOptions{}); err != nil {
-			return nil, nil, err
+		if wr, err = link("worker", wjo, hubclient.JoinOptions{}, ajo); err != nil {
+			return nil, nil, nil, err
 		}
-		return nil, wr, checkWorker(wr)
+		ar, wr.AdminWorker = wr.AdminWorker, nil
+		if err := checkWorker(wr); err != nil {
+			return nil, nil, nil, err
+		}
+		return nil, wr, ar, checkAdminWorker(ar)
 	default:
-		cr, err = link("client", cjo, hubclient.JoinOptions{})
-		return cr, nil, err
+		if cr, err = link("client", cjo, hubclient.JoinOptions{}, ajo); err != nil {
+			return nil, nil, nil, err
+		}
+		ar, cr.AdminWorker = cr.AdminWorker, nil
+		return cr, nil, ar, checkAdminWorker(ar)
 	}
+}
+
+// checkAdminWorker checks an admin worker's enrollment, if there is one.
+func checkAdminWorker(r *hubclient.JoinResult) error {
+	if r == nil {
+		return nil
+	}
+	if err := checkWorker(r); err != nil {
+		return err
+	}
+	if r.Resp.Labels[sched.AdminLabel] != "true" {
+		return errors.New("the hub did not mark the admin worker as one")
+	}
+	return nil
 }
 
 func checkWorker(r *hubclient.JoinResult) error {

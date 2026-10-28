@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -279,5 +280,18 @@ func TestWatchdogSurvivesUnreadableState(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("watchdog did not finish after the state became readable")
+	}
+}
+
+// TestRestartOldSupervised: in the user-session worker (mode supervised)
+// the watchdog starts nothing after a rollback: the worker's host restarts
+// longarmd - now the restored binary - by itself.
+func TestRestartOldSupervised(t *testing.T) {
+	start := time.Now()
+	if err := restartOld(&State{Mode: "supervised", Exe: "/nonexistent/longarmd"}, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Error("waited for a service")
 	}
 }

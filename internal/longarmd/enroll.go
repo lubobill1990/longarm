@@ -269,7 +269,8 @@ func Login(ctx context.Context, dataDir, hub string, o LoginOptions) error {
 
 // PendingHub is the hub `longarmd login` signs in to when none is given:
 // the data dir's hub.toml (an installer's sign-in to come, or the hub this
-// worker is enrolled with, its CA pinned), else the hub the MSI recorded.
+// worker is enrolled with, its CA pinned), else the hub the MSI recorded,
+// else the one built into this release (signin.FallbackHub).
 // fp, when given, wins.
 func PendingHub(dataDir, fp string) (string, string, error) {
 	hf, err := hubclient.LoadFile(dataDir)
@@ -289,7 +290,7 @@ func PendingHub(dataDir, fp string) (string, string, error) {
 		}
 		return hf.Address, fp, nil
 	}
-	if hub, ifp := signin.InstalledHub(); hub != "" {
+	if hub, ifp, _ := signin.FallbackHub(); hub != "" {
 		if fp == "" {
 			fp = ifp
 		}
@@ -332,6 +333,8 @@ func waitSignIn(ctx context.Context, dataDir string, log *slog.Logger) error {
 				"sign_in_with", "the Longarm tray, or: longarmd login --role both (as the service's account, or elevated)")
 			last = time.Now()
 		}
+		// the admin worker: its CSR to the tray, the approved enrollment back
+		adminHandoffStep(dataDir, log)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

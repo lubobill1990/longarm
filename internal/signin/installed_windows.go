@@ -39,3 +39,15 @@ func InstalledLabels() map[string]string {
 	}
 	return m
 }
+
+// InstalledRoles is the MSI's ROLES (HKLM\Software\Longarm: Roles):
+// "client", "worker", "both", or "" when none was recorded.
+func InstalledRoles() string {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `Software\Longarm`, registry.QUERY_VALUE)
+	if err != nil {
+		return ""
+	}
+	defer k.Close()
+	r, _, _ := k.GetStringValue("Roles")
+	return r
+}

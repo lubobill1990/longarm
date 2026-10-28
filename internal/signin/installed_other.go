@@ -9,3 +9,6 @@ func InstalledHub() (hub, fingerprint string) { return "", "" }
 // InstalledLabels are the worker labels an installer recorded: only the
 // Windows MSI records any.
 func InstalledLabels() map[string]string { return nil }
+
+// InstalledRoles: only the Windows MSI records its roles.
+func InstalledRoles() string { return "" }

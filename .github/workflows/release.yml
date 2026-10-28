@@ -3,7 +3,9 @@
 #   build    windows-latest: goreleaser (all targets, --skip=publish,docker) +
 #            MSIs + packaging/hubrelease -> hub-release/; the repository
 #            variable LONGARM_UPDATE_PUBKEY (if set) is built into longarmd
-#            (without it the binaries have self-update turned off)
+#            (without it the binaries have self-update turned off), and
+#            LONGARM_DEFAULT_HUB (+ _CA) into the binaries and the MSI's
+#            "Default" choice (without it: Custom only)
 #   publish  ubuntu-latest: sign with the secret LONGARM_RELEASE_KEY (if set),
 #            upload to the hub with the release-role certificate (only when
 #            the variable LONGARM_HUB is set), then the GitHub Release
@@ -70,6 +72,7 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
           PUBKEY: ${{ vars.LONGARM_UPDATE_PUBKEY }}
+          DEFAULT_HUB: ${{ vars.LONGARM_DEFAULT_HUB }}
         run: |
           if ($env:TAG -cnotmatch '^v(\d+\.\d+\.\d+)(-[0-9A-Za-z][0-9A-Za-z.]{0,31})?$') {
             throw "tag '$env:TAG' is not vMAJOR.MINOR.PATCH[-prerelease]"
@@ -82,6 +85,9 @@ jobs:
           }
           if (-not $env:PUBKEY) {
             Write-Output '::warning::repository variable LONGARM_UPDATE_PUBKEY is not set: the binaries are built with self-update turned off (docs/ci-cd.md)'
+          }
+          if (-not $env:DEFAULT_HUB) {
+            Write-Output '::warning::repository variable LONGARM_DEFAULT_HUB is not set: no built-in hub - the MSI offers Custom only and login needs a hub argument (docs/ci-cd.md)'
           }
           "version=$($env:TAG.Substring(1))" >> $env:GITHUB_OUTPUT
           "prerelease=$($pre.ToString().ToLower())" >> $env:GITHUB_OUTPUT
@@ -114,6 +120,9 @@ jobs:
       - name: build (goreleaser + MSIs + hub-release)
         env:
           LONGARM_UPDATE_PUBKEY: ${{ vars.LONGARM_UPDATE_PUBKEY }}
+          # the built-in hub (binaries + the MSI's "Default"); empty: none
+          LONGARM_DEFAULT_HUB: ${{ vars.LONGARM_DEFAULT_HUB }}
+          LONGARM_DEFAULT_HUB_CA: ${{ vars.LONGARM_DEFAULT_HUB_CA }}
         run: ./packaging/build.ps1 -SkipPublish
       - name: stage the artifact
         env:

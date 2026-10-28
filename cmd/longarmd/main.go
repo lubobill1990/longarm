@@ -4,6 +4,8 @@
 //	longarmd shim <dir>                               per-job / per-session supervisor (spawned by longarmd)
 //	longarmd conhost [--pty] [--raw] -- cmd...         UTF-8 console helper (Windows, internal)
 //	longarmd service install|uninstall|start|stop|status
+//	longarmd session-mode install|uninstall|start|stop|status|run   the user-session worker (Windows; no service, no password)
+//	longarmd admin-worker status|disable                  the optional administrator worker (Windows, LocalSystem service)
 //	longarmd gc [--keep D] [--min-free P] [--dry-run]     offline cleanup (longarmd stopped)
 //	longarmd join <hub> <code> [--name N] [--ca-fingerprint FP] [--no-wait]   enroll with longarm-hub
 //	longarmd status | drain [--reason R] | undrain | toolchain status|apply | events   (local control API)
@@ -42,7 +44,7 @@ import (
 const defaultServiceName = longarmd.DefaultServiceName
 
 // exitRestart: longarmd exits with this code to be restarted (self-update).
-const exitRestart = 75
+const exitRestart = longarmd.ExitRestart
 
 // startExe is longarmd's own path, resolved before a self-update renames the
 // running binary to *.old: on Linux os.Executable reads /proc/self/exe,
@@ -66,7 +68,7 @@ func main() {
 	root.AddCommand(updateCmd(), updateWatchCmd(), installHelperCmd())
 	root.AddCommand(uiCmds()...)
 	root.AddCommand(userHelperCmd(), sftpServerCmd(), trustCmd(), diagCmd())
-	root.AddCommand(runCmd(), joinCmd(), loginCmd(), shimCmd(), conhostCmd(), serviceCmd(), gcCmd(), auditCmd(), &cobra.Command{
+	root.AddCommand(runCmd(), joinCmd(), loginCmd(), shimCmd(), conhostCmd(), serviceCmd(), sessionModeCmd(), adminWorkerCmd(), gcCmd(), auditCmd(), &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",
 		Run:   func(*cobra.Command, []string) { fmt.Println(version.Version) },
@@ -99,6 +101,13 @@ func runCmd() *cobra.Command {
 			if os.Getppid() == 1 && (os.Getenv("INVOCATION_ID") != "" || os.Getenv("XPC_SERVICE_NAME") != "") { // systemd / launchd
 				cfg.UpdateMode = "service"
 			}
+			if os.Getenv(longarmd.EnvSupervised) == "1" {
+				// the user-session worker's host (longarmd session-mode run,
+				// longarm-tray --worker-host) restarts us; our console is a
+				// hidden one of our own, which jobs inherit: UTF-8
+				cfg.UpdateMode = "supervised"
+				platform.UTF8Console()
+			}
 			run := func(ctx context.Context) error { return longarmd.Run(ctx, cfg) }
 			// Under the Windows SCM the service handler drives the lifetime.
 			svcCfg := cfg
@@ -122,8 +131,8 @@ func runCmd() *cobra.Command {
 			defer stop()
 			err = run(ctx)
 			if errors.Is(err, update.ErrRestart) {
-				if cfg.UpdateMode == "service" {
-					fmt.Fprintln(os.Stderr, "longarmd: exiting for a self-update; the service manager restarts it")
+				if cfg.UpdateMode == "service" || cfg.UpdateMode == "supervised" {
+					fmt.Fprintln(os.Stderr, "longarmd: exiting for a self-update; the service manager (or the worker host) restarts it")
 					os.Exit(exitRestart)
 				}
 				if err := update.Relaunch(startExe, os.Args[1:]); err != nil {

@@ -23,6 +23,49 @@ export interface TrayInfo {
   hub_url?: string
   pinned: boolean
   headless?: boolean
+  /** this machine's sign-in (older trays: absent) */
+  account?: Account
+}
+
+/** What a sign-in enrolls: the user's device, the worker, the admin worker. */
+export interface SignInTargets {
+  client: boolean
+  worker: boolean
+  admin_worker: boolean
+}
+
+/** The optional admin worker (a LocalSystem service only its owner uses). */
+export interface AdminStatus {
+  enabled: boolean
+  service?: string
+  state?: string
+  signed_in: boolean
+  pending: boolean
+  error?: string
+}
+
+export interface Account {
+  signed_in: boolean
+  user?: string
+  hub?: string
+  /** where the hub comes from: config, installer, built-in ("" = ask) */
+  hub_from?: string
+  /** a sign-in would enroll something */
+  needed: boolean
+  targets: SignInTargets
+  /** the worker: session (runs as you, at logon) or service */
+  run_mode?: string
+  admin?: AdminStatus
+}
+
+export interface SignInState {
+  state: 'idle' | 'running' | 'done' | 'error' | 'canceled'
+  hub?: string
+  code?: { url: string; code: string; expires: string; kind: string; host: string; admin_worker?: boolean }
+  steps?: string[]
+  result?: { user?: string; hub: string; device?: string; worker?: string; admin_worker?: string; summary: string }
+  error?: string
+  targets: SignInTargets
 }
 
 export const trayApi = {
@@ -36,6 +79,11 @@ export const trayApi = {
   startDaemon: () => post('/trayapi/daemon/start'),
   join: (hub: string, code: string, fingerprint: string, name: string) =>
     post<{ output: string }>('/trayapi/join', { hub, code, fingerprint, name }),
+  signinState: () => get<SignInState>('/trayapi/signin/state'),
+  signinStart: (hub = '', labels = '') => post<SignInState>('/trayapi/signin/start', { hub, labels }),
+  signinCancel: () => post('/trayapi/signin/cancel'),
+  signout: () => post<{ output: string }>('/trayapi/signout'),
+  adminDisable: () => post<{ output: string }>('/trayapi/admin/disable'),
 }
 
 export const longarmApi = {

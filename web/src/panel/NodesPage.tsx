@@ -169,6 +169,11 @@ function NodeRow({ n, hist, links, profiles, admin }: { n: NodeInfo; hist: Metri
         <div className="row">
           <span className="dot" style={{ background: revoked ? RED : n.online ? GREEN : RED }} />
           <b>{n.name}</b>
+          {n.admin_worker && (
+            <span className="pill warn" data-testid={`admin-${n.name}`} title={`admin worker: runs commands as SYSTEM on its machine; only ${n.owner ?? 'its owner'} can use it, never shared or placed automatically`}>
+              admin
+            </span>
+          )}
           {n.draining && (
             <span className="pill warn" title={n.drain_reason}>
               draining

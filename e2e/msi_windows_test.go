@@ -63,8 +63,12 @@ func TestMSI(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(base) }) // registered first => runs last
 	user, pass := tempServiceUser(t, "lamsi")
 	run(t, "icacls", base, "/grant", user+":(OI)(CI)RX", "/q")
-	installDir := filepath.Join(base, "pf", "longarm")
-	dataDir := filepath.Join(base, "data")
+	// The elevated custom actions run binaries only from a directory only
+	// administrators can write, and take data dirs below ProgramData\Longarm
+	// only (docs/security.md "Installer"): the default install dir, and a
+	// data dir of the test's own there.
+	installDir := filepath.Join(os.Getenv("ProgramFiles"), "Longarm")
+	dataDir := filepath.Join(os.Getenv("ProgramData"), "Longarm", "e2e-"+filepath.Base(base))
 	port := freePort(t)
 	msiLog := filepath.Join(root, "install.log")
 	uninstalled := false
@@ -81,7 +85,7 @@ func TestMSI(t *testing.T) {
 	t.Cleanup(func() {
 		uninstall()
 		if t.Failed() {
-			b, _ := os.ReadFile(filepath.Join(os.TempDir(), "longarm-install.log"))
+			b, _ := os.ReadFile(filepath.Join(os.Getenv("ProgramData"), "Longarm", "install-helper.log"))
 			t.Logf("install-helper log:\n%s", b)
 			b, _ = os.ReadFile(filepath.Join(dataDir, "longarmd.log"))
 			t.Logf("longarmd.log:\n%s", tail(string(b), 4000))
@@ -89,8 +93,8 @@ func TestMSI(t *testing.T) {
 		exec.Command("sc.exe", "delete", svc).Run() // in case the MSI left it
 	})
 	args := []string{"/i", msi, "/qn", "/norestart", "/l*v", msiLog,
-		"ROLES=worker", "HUB=" + h.addr(), "JOIN_CODE=" + code, "CA_FINGERPRINT=" + h.fp,
-		"SERVICE_NAME=" + svc, "INSTALLFOLDER=" + installDir + `\`, "DATADIR=" + dataDir,
+		"MODE=custom", "RUN=service", "ROLES=worker", "HUB=" + h.addr(), "JOIN_CODE=" + code, "CA_FINGERPRINT=" + h.fp,
+		"SERVICE_NAME=" + svc, "DATADIR=" + dataDir,
 		fmt.Sprintf("LISTEN=tcp://127.0.0.1:%d", port)}
 	msiexec := func(extra ...string) error {
 		ictx, icancel := context.WithTimeout(context.Background(), 5*time.Minute) // a bad command line opens a dialog
@@ -225,9 +229,9 @@ func TestMSI(t *testing.T) {
 	h.hubCmd(t, "release", "add", rel, "--version", "0.9.1")
 	code2 := strings.TrimSpace(h.mustLongarm(h.admin, "admin", "join-code", "--role", "worker"))
 	uninstalled = false
-	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'; $env:LONGARM_SERVICE_ACCOUNT = 'LocalSystem'; $env:LONGARM_MSI_PROPS = 'SERVICE_NAME=%s INSTALLFOLDER=%s DATADIR=%s'; `+
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'; $env:LONGARM_SERVICE_ACCOUNT = 'LocalSystem'; $env:LONGARM_MSI_PROPS = 'SERVICE_NAME=%s DATADIR=%s'; `+
 		`& ([scriptblock]::Create((Invoke-RestMethod %s/install.ps1))) -Join %s -Role worker -Name msiw2 -Listen tcp://127.0.0.1:%d`,
-		svc, installDir, dataDir, h.httpURL(), code2, freePort(t))
+		svc, dataDir, h.httpURL(), code2, freePort(t))
 	ictx2, icancel2 := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer icancel2()
 	if out, err := exec.CommandContext(ictx2, "pwsh", "-NoProfile", "-Command", script).CombinedOutput(); err != nil ||
@@ -242,7 +246,7 @@ func TestMSI(t *testing.T) {
 	if sc := run(t, "sc.exe", "qc", svc); !strings.Contains(sc, "LocalSystem") {
 		t.Fatalf("service account (explicit LocalSystem):\n%s", sc)
 	}
-	if b, _ := os.ReadFile(filepath.Join(os.TempDir(), "longarm-install.log")); !strings.Contains(string(b), "WARNING: the longarmd service runs as LocalSystem") {
+	if b, _ := os.ReadFile(filepath.Join(os.Getenv("ProgramData"), "Longarm", "install-helper.log")); !strings.Contains(string(b), "WARNING: the longarmd service runs as LocalSystem") {
 		t.Fatalf("install-helper log without the LocalSystem warning:\n%s", tail(string(b), 2000))
 	}
 	noSecretsInLog(t, filepath.Join(os.TempDir(), "longarm-msi.log"), code2)

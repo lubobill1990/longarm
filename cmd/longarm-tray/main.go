@@ -12,11 +12,16 @@
 //	longarm-tray --serve ADDR       serve only (development, tests): prints the URL
 //	longarm-tray --headless-smoke   start, connect to the local APIs, render the icon and one
 //	                           frame of the popup into PNGs (--out DIR), print a JSON report, exit
+//	longarm-tray --signin           (after an install) open the popup at once when this machine
+//	                           still needs a sign-in ("Sign in with Microsoft")
+//	longarm-tray --worker-host      no UI: host the user-session worker (Windows; the scheduled
+//	                           task's action): run longarmd, restart it when it exits
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -38,7 +43,7 @@ import (
 func main() {
 	var o tray.Options
 	var serve, out string
-	var smoke, browser, showVersion bool
+	var smoke, browser, showVersion, workerHost bool
 	flag.StringVar(&o.LongarmConfigDir, "config-dir", client.DefaultConfigDir(), "longarm's config dir (longarm daemon); env LONGARM_CONFIG_DIR")
 	flag.StringVar(&o.LongarmdDataDir, "data-dir", longarmd.DefaultDataDir(), "longarmd's data dir (worker tab); env LONGARM_DATA_DIR")
 	flag.StringVar(&o.HubURL, "hub-url", os.Getenv("LONGARM_HUB_URL"), "the hub's web panel URL (default: https://<hub host>/)")
@@ -48,10 +53,16 @@ func main() {
 	flag.StringVar(&out, "out", ".", "directory for --headless-smoke PNGs")
 	flag.BoolVar(&browser, "browser", false, "no webview: open the popup page in the default browser")
 	flag.BoolVar(&showVersion, "version", false, "print the version")
+	flag.BoolVar(&o.ShowSignIn, "signin", false, "open the popup at once when this machine still needs a sign-in")
+	flag.BoolVar(&workerHost, "worker-host", false, "no UI: host the user-session worker (run longarmd, restart it when it exits)")
 	flag.Parse()
 	if showVersion {
 		fmt.Println("longarm-tray", version.Version)
 		return
+	}
+	if workerHost {
+		// a GUI-subsystem binary: the logon task opens no console window
+		os.Exit(runWorkerHost(o.LongarmdDataDir))
 	}
 	o.Version = version.Version
 	o.LongarmExe, o.LongarmdExe = sibling("longarm"), sibling("longarmd")
@@ -99,6 +110,27 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+// runWorkerHost hosts the user-session worker of dataDir until the logon
+// session ends (longarmd.SessionHost).
+func runWorkerHost(dataDir string) int {
+	dir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return 1
+	}
+	h, done, err := longarmd.NewSessionHost(dir, sibling("longarmd"))
+	if err != nil {
+		return 1
+	}
+	defer done()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := h.Run(ctx); err != nil && !errors.Is(err, longarmd.ErrHostRunning) {
+		h.Log.Error("worker host", "err", err)
+		return 1
+	}
+	return 0
 }
 
 // sibling finds longarm / longarmd next to longarm-tray, else on PATH.

@@ -111,6 +111,9 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 	if err := sched.ValidateLabels(req.Labels, false); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	if err := sched.CheckUserLabels(req.Labels); err != nil {
+		return nil, status.Error(codes.PermissionDenied, err.Error())
+	}
 	if req.Profile != "" {
 		h.mu.Lock()
 		_, ok := h.profiles[req.Profile]

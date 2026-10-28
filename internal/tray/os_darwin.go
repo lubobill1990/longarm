@@ -28,3 +28,8 @@ func OpenTerminal(argv []string) error {
 		`tell application "Terminal" to activate`
 	return exec.Command("osascript", "-e", script).Start()
 }
+
+// RunElevated: Windows only (the admin worker).
+func RunElevated(string, ...string) error {
+	return errors.New("elevated actions are Windows-only")
+}

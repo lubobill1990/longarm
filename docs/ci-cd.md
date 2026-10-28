@@ -201,6 +201,8 @@ Try it from your machine: `ssh -i hub-deploy deploy@hub.example.com status`.
 | `LONGARM_UPDATE_PUBKEY` | the public key line (`RW…`, last line of `longarm-release.pub`), built into longarmd |
 | `LONGARM_HUB` | the hub's gRPC address, e.g. `hub.example.com:7443`; enables the upload and the `rollout` job |
 | `HUB_SSH` | `deploy@hub.example.com`; enables the `hub` job |
+| `LONGARM_DEFAULT_HUB` | the hub built into the release (a domain, e.g. `longarm.example.com`): `longarm login` / `longarmd login` / the tray without a hub, and the MSI's "Default" choice ([usage](usage.md#built-in-default-hub)); unset: no default (the release warns; the MSI offers Custom only) |
+| `LONGARM_DEFAULT_HUB_CA` | optional: that hub's CA fingerprint (`longarm-hub ca show`), pinned instead of trusting `https://<hub>/ca.crt` |
 
 ```sh
 R=your-org/longarm
@@ -211,6 +213,7 @@ gh secret set HUB_SSH_KNOWN_HOSTS   --repo $R < hub-known-hosts
 gh variable set LONGARM_HUB           --repo $R --body hub.example.com:7443
 gh variable set HUB_SSH               --repo $R --body deploy@hub.example.com
 gh variable set LONGARM_UPDATE_PUBKEY --repo $R --body "$(tail -1 ~/.config/longarm/release/longarm-release.pub)"
+gh variable set LONGARM_DEFAULT_HUB   --repo $R --body longarm.example.com   # moving the repository (e.g. to an internal GitHub): set it there
 ```
 
 What limits the blast radius of a leaked secret:

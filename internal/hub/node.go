@@ -182,7 +182,10 @@ func (h *Hub) applyHelloLocked(n *node, hello *pb.NodeHello) {
 	r := n.rec
 	r.Version, r.OS, r.Arch, r.Hostname = hello.Version, hello.Os, hello.Arch, hello.Hostname
 	r.Endpoints, r.Mirrors, r.WarmRepos = hello.Endpoints, hello.Mirrors, hello.WarmRepos
-	r.HelloLabels = hello.Labels
+	// a worker's own labels never carry the hub's (longarm.io/...: an
+	// admin worker is marked by the hub at its enrollment, not by itself)
+	r.HelloLabels = maps.Clone(hello.Labels)
+	maps.DeleteFunc(r.HelloLabels, func(k, _ string) bool { return sched.ReservedLabel(k) })
 	r.Isolation = hello.Isolation
 	if st := hello.State; st != nil {
 		n.localDrain, n.localReason = st.Draining, st.Reason
@@ -387,6 +390,11 @@ func labelsOf(n *node) map[string]string {
 	m := map[string]string{}
 	maps.Copy(m, n.rec.HelloLabels)
 	maps.Copy(m, n.rec.Labels)
+	// the admin mark comes from the enrollment record only (rec.Admin)
+	delete(m, sched.AdminLabel)
+	if n.rec.Admin {
+		m[sched.AdminLabel] = "true"
+	}
 	if n.rec.OS != "" {
 		m["os"] = n.rec.OS
 	}
@@ -403,7 +411,7 @@ func (h *Hub) nodeInfoLocked(n *node) *pb.NodeInfo {
 		Draining: r.AdminDrain || n.localDrain, AdminDrain: r.AdminDrain, Labels: labelsOf(n),
 		Os: r.OS, Arch: r.Arch, Version: r.Version, Hostname: r.Hostname, Endpoints: r.Endpoints,
 		Metrics: n.metrics, LastSeen: tspb(r.LastSeen), JoinedAt: tspb(r.JoinedAt), CertNotAfter: tspb(r.CertNotAfter),
-		Mirrors: r.Mirrors, WarmRepos: r.WarmRepos, Profile: r.Profile, Toolchain: n.toolchain,
+		Mirrors: r.Mirrors, WarmRepos: r.WarmRepos, Profile: r.Profile, Toolchain: n.toolchain, AdminWorker: r.Admin,
 		MaxJobs: n.maxJobs, ReservedMemGb: n.reservedGB, Tailnet: n.tailnet, Isolation: r.Isolation,
 	}
 	if r.Role != string(pki.RoleWorker) {
