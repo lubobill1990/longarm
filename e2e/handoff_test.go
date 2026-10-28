@@ -390,6 +390,31 @@ func TestAgentHandoff(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(sd, "longarm-handoff.json")); err == nil {
 			t.Error("a refused handoff marked the source")
 		}
+
+		// a symlink (or junction) in the worker's destination tree: refused, nothing written through it
+		evil := filepath.Join(root, "evil")
+		os.MkdirAll(evil, 0o755)
+		os.MkdirAll(filepath.Join(w2home, ".copilot"), 0o755)
+		link := filepath.Join(w2home, ".copilot", "session-state")
+		os.RemoveAll(link)
+		err := os.Symlink(evil, link)
+		if err != nil && runtime.GOOS == "windows" {
+			err = exec.Command("cmd", "/c", "mklink", "/J", link, evil).Run()
+		}
+		if err != nil {
+			t.Logf("no symlink or junction: %v", err)
+			return
+		}
+		defer os.Remove(link)
+		cid2 := "2cb916db-26aa-40f2-86b5-1ba81b225fd2"
+		sd2 := filepath.Join(chome, ".copilot", "session-state", cid2)
+		mustWrite(t, filepath.Join(sd2, "events.jsonl"), fmt.Sprintf(`{"type":"session.start","data":{"context":{"cwd":%s}},"id":"e1"}`+"\n", jsonQ(repo)))
+		if r := client(repo, "handoff", "--to", "w2", "--session", cid2, "--no-attach"); r.code != 2 || !strings.Contains(r.stderr, "symlink") {
+			t.Errorf("symlink in the worker's destination: %+v", r)
+		}
+		if ents, _ := os.ReadDir(evil); len(ents) != 0 {
+			t.Error("the handoff wrote through a symlink on the worker")
+		}
 	})
 	if runtime.GOOS == "windows" {
 		killShims(e2.dataDir)

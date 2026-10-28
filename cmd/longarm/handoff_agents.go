@@ -251,8 +251,8 @@ func (a claudeAdapter) list(ctx context.Context, ep *hoEndpoint, cfg, id string,
 			continue
 		}
 		sid := strings.TrimSuffix(parts[1], ".jsonl")
-		if !sessionIDRE.MatchString(sid) || (id != "" && sid != id) {
-			continue
+		if !sessionIDRE.MatchString(sid) || (id != "" && sid != id) || checkRel(parts[0], true) != nil {
+			continue // (a project directory name the marker could not safely be written next to)
 		}
 		k := parts[0] + "/" + sid
 		byKey[k] = &acc{dir: parts[0], s: &agentSession{Agent: a.name(), ID: sid, cfg: cfg, Modified: f.mtime, Size: f.size,

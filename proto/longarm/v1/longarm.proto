@@ -586,6 +586,9 @@ message FileStatRequest {
   bool partial = 2; // stat "<path>.lapart" instead
   bool hash = 3; // compute sha256
   int64 hash_limit = 4; // hash only the first N bytes (0 = whole file)
+  // Do not follow a symlink (or Windows reparse point) at path: report the
+  // link itself (is_symlink). Workers with the "file-lstat" feature.
+  bool no_follow = 5;
 }
 
 message FileInfo {

@@ -9,10 +9,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"os/exec"
 	"path"
@@ -291,23 +293,66 @@ func (e *hoEndpoint) readSmall(ctx context.Context, p string, max int64) ([]byte
 	return e.readRange(ctx, p, 0, max)
 }
 
-// download copies file p of the endpoint to the local file dst (0600).
-func (e *hoEndpoint) download(ctx context.Context, p, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		return err
-	}
+// download copies file p of the endpoint to the new local file dst
+// (0600, created exclusively) and returns its size: at most limit bytes,
+// and - from a worker - exactly the size and sha256 it reported, or an
+// error (a worker cannot make this machine store more than it allows).
+func (e *hoEndpoint) download(ctx context.Context, p, dst string, limit int64) (int64, error) {
 	if e.local() {
-		return copyLocalFile(p, dst, 0o600)
+		return copyLocalFile(p, dst, 0o600, limit)
 	}
-	info, err := e.conn.Files().Stat(ctx, &pb.FileStatRequest{Path: p})
+	c, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	info, err := e.conn.Files().Stat(c, &pb.FileStatRequest{Path: p, Hash: true})
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if !info.Exists {
-		return fmt.Errorf("%s:%s: %w", e.name, p, fs.ErrNotExist)
+	if !info.Exists || info.IsDir {
+		return 0, fmt.Errorf("%s:%s: %w", e.name, p, fs.ErrNotExist)
 	}
-	info.Mode = 0o600
-	return getFile(ctx, e.conn, p, dst, info, &transferStats{})
+	if info.Size < 0 || info.Size > limit {
+		return 0, errBudget(p, limit)
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return 0, err
+	}
+	n, err := func() (int64, error) {
+		defer out.Close()
+		st, err := e.conn.Files().Read(c, &pb.FileReadRequest{Path: p})
+		if err != nil {
+			return 0, err
+		}
+		h := sha256.New()
+		var n int64
+		for {
+			ch, err := st.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				return n, err
+			}
+			if ch.Offset != n {
+				return n, fmt.Errorf("%s:%s: unexpected offset %d (want %d)", e.name, p, ch.Offset, n)
+			}
+			if n+int64(len(ch.Data)) > info.Size {
+				return n, errBudget(p, info.Size)
+			}
+			out.Write(ch.Data)
+			h.Write(ch.Data)
+			n += int64(len(ch.Data))
+		}
+		if n != info.Size || !bytes.Equal(h.Sum(nil), info.Sha256) {
+			return n, fmt.Errorf("%s:%s changed while it was copied (size or sha256); retry", e.name, p)
+		}
+		return n, out.Sync()
+	}()
+	if err != nil {
+		os.Remove(dst)
+		return 0, err
+	}
+	return n, nil
 }
 
 // upload copies the local file src to p on the endpoint (parents created;
@@ -317,7 +362,8 @@ func (e *hoEndpoint) upload(ctx context.Context, src, p string) error {
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 			return err
 		}
-		return copyLocalFile(src, p, 0o600)
+		_, err := copyLocalFile(src, p, 0o600, math.MaxInt64)
+		return err
 	}
 	fi, err := os.Stat(src)
 	if err != nil {
@@ -462,28 +508,34 @@ func (e *hoEndpoint) run(ctx context.Context, dir string, env map[string]string,
 	return resp.Stdout, nil
 }
 
-func copyLocalFile(src, dst string, mode os.FileMode) error {
+// copyLocalFile copies src to the new file dst (created exclusively:
+// never through an existing file or symlink), at most limit bytes.
+func copyLocalFile(src, dst string, mode os.FileMode, limit int64) (int64, error) {
 	in, err := os.Open(src)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer in.Close()
-	tmp := dst + ".longarm-tmp"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		os.Remove(tmp)
-		return err
+	if limit < math.MaxInt64 {
+		limit++ // one byte more tells "over the limit"
 	}
-	if err := out.Close(); err != nil {
-		os.Remove(tmp)
-		return err
+	n, err := io.Copy(out, io.LimitReader(in, limit))
+	if err == nil && limit < math.MaxInt64 && n == limit {
+		err = errBudget(src, limit-1)
+	}
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(dst)
+		return 0, err
 	}
 	if fi, err := in.Stat(); err == nil {
-		os.Chtimes(tmp, time.Now(), fi.ModTime())
+		os.Chtimes(dst, time.Now(), fi.ModTime())
 	}
-	return os.Rename(tmp, dst)
+	return n, nil
 }

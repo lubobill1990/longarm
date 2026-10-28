@@ -176,6 +176,7 @@ const (
 	FeatureFileTail          = "file-tail"            // Files.Tail
 	FeatureMachineUpdate     = "machine-update"       // MachineUpdate (longarm worker update; the owner's)
 	FeatureSessionEnv        = "session-env"          // sessions get LONGARM_WORKER and LONGARM_SESSION
+	FeatureFileLstat         = "file-lstat"           // FileStatRequest.no_follow
 )
 
 // SessionWorktreeKey names the worktree of one generation of session name

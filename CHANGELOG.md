@@ -455,6 +455,12 @@
   Only through the worker-direct channels: the hub never sees a transcript.
   Running processes (tool calls, background shells, MCP servers) are not
   carried over. Copilot CLI support is experimental.
+  Session file names from the source are untrusted: validated as plain
+  relative paths inside the session's own files (no `..`, absolute, drive,
+  backslash, control characters; Windows device names, `:` and trailing
+  dots on Windows targets), no symlink / junction on the destination path
+  (`Files.Stat` `no_follow`, worker feature `file-lstat`), exclusive
+  creation, file count and per-file size bounded.
 - `longarm agent-sessions [<worker>|local] [--repo-path DIR] [--json]`: the
   resumable agent sessions of a machine (agent, id, project directory, last
   modified, title or first prompt, size, handed-off state).

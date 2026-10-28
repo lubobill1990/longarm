@@ -40,6 +40,9 @@ const (
 	envLongarmSession = "LONGARM_SESSION"
 )
 
+// maxRelayBundle caps a bundle of commits relayed from a worker.
+const maxRelayBundle = 16 << 30
+
 // defaultHandoffMax caps what a handoff moves of a session (transcript and state).
 const defaultHandoffMax = "64M"
 
@@ -274,6 +277,9 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 	if total := sessionBytes(sess); total > o.maxBytes {
 		return usagef("the session's transcript and state are %s, over --max-size %s", humanSize(total), humanSize(o.maxBytes))
 	}
+	if err := checkSessionNames(ad, dst, sess); err != nil {
+		return err
+	}
 	if !src.local() && !dst.local() {
 		notef("relaying worker -> worker through this machine: keep it online until the handoff is done")
 	}
@@ -292,6 +298,9 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 	}
 	if total := sessionBytes(sess); total > o.maxBytes {
 		return usagef("the session's transcript and state are %s, over --max-size %s", humanSize(total), humanSize(o.maxBytes))
+	}
+	if err := checkSessionNames(ad, dst, sess); err != nil {
+		return err
 	}
 
 	// 4. the code
@@ -318,7 +327,7 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 	notef("code at %s:%s (branch %s)", dst.name, dstTop, branch)
 
 	// 5. the session
-	nfiles, nbytes, err := moveSessionFiles(ctx, ad, src, dst, dstCfg, sess, srcRepo, dstTop, dstCwd)
+	nfiles, nbytes, err := moveSessionFiles(ctx, ad, src, dst, dstCfg, sess, srcRepo, dstTop, dstCwd, o.maxBytes)
 	if err != nil {
 		return err
 	}
@@ -690,7 +699,7 @@ func moveCode(ctx context.Context, o handoffOpts, src, dst *hoEndpoint, srcRepo 
 			}
 			if b != "" {
 				local := filepath.Join(tmp, "handoff.bundle")
-				err := src.download(ctx, b, local)
+				_, err := src.download(ctx, b, local, maxRelayBundle)
 				src.removeFile(context.WithoutCancel(ctx), b)
 				if err != nil {
 					return "", "", false, err
@@ -758,7 +767,7 @@ func moveCode(ctx context.Context, o handoffOpts, src, dst *hoEndpoint, srcRepo 
 		local := ""
 		if b != "" {
 			local = filepath.Join(tmp, "handoff.bundle")
-			err := src.download(ctx, b, local)
+			_, err := src.download(ctx, b, local, maxRelayBundle)
 			src.removeFile(context.WithoutCancel(ctx), b)
 			if err != nil {
 				return "", "", false, err
@@ -807,7 +816,7 @@ func freeWorkerDir(ctx context.Context, ep *hoEndpoint, key, short string) (stri
 // rewritten; what the target has of the session already is moved to
 // <config>/longarm-handoff-backup/ first, never overwritten.
 func moveSessionFiles(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint, dstCfg string, sess *agentSession, srcRepo *hoRepo,
-	dstTop, dstCwd string) (int, int64, error) {
+	dstTop, dstCwd string, limit int64) (int, int64, error) {
 	dstProject, err := ad.projectBase(dst, dstCfg, dstCwd)
 	if err != nil {
 		return 0, 0, err
@@ -833,6 +842,11 @@ func moveSessionFiles(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint
 		}
 		return dstCfg
 	}
+	// the names come from the source: refuse the session before anything
+	// is written if any could land outside its own files on the target
+	if err := checkSessionFiles(ad, dst, sess, baseDir); err != nil {
+		return 0, 0, err
+	}
 	// keep what the target has of this session id
 	stamp := time.Now().UTC().Format("20060102T150405Z")
 	for _, t := range ad.targetTops(sess.ID) {
@@ -850,21 +864,43 @@ func moveSessionFiles(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint
 			notef("kept the earlier %s on %s as %s", p, dst.name, bk)
 		}
 	}
+	for _, f := range sess.files { // single files outside those subtrees (Claude's todos)
+		if _, isTop := topOf(ad.targetTops(sess.ID), f); isTop || (f.base == "project" && dstProject == "") {
+			continue
+		}
+		p := dst.join(baseDir(f.base), f.rel)
+		if _, ok, err := dst.stat(ctx, p); err != nil {
+			return 0, 0, err
+		} else if ok {
+			bk := dst.join(dstCfg, "longarm-handoff-backup", sess.ID+"-"+stamp, f.base, f.rel)
+			if err := dst.rename(ctx, p, bk); err != nil {
+				return 0, 0, fmt.Errorf("back up %s on %s: %w", p, dst.name, err)
+			}
+		}
+	}
 	tmp, err := os.MkdirTemp("", "longarm-handoff-")
 	if err != nil {
 		return 0, 0, err
 	}
 	defer os.RemoveAll(tmp) // transcripts are sensitive: no copy stays here
-	var total int64
+	var total, got int64
 	rewritten := 0
+	links := newLinkChecker(dst, dstCfg)
 	for i, f := range sess.files {
 		if f.base == "project" && dstProject == "" {
 			continue
 		}
+		target := dst.join(baseDir(f.base), f.rel)
+		if err := links.check(ctx, target); err != nil {
+			return 0, 0, err
+		}
+		// named by index in the private directory: a source's names never reach a path here
 		local := filepath.Join(tmp, strconv.Itoa(i))
-		if err := src.download(ctx, f.src, local); err != nil {
+		n, err := src.download(ctx, f.src, local, min(f.size, limit-got))
+		if err != nil {
 			return 0, 0, fmt.Errorf("copy %s from %s: %w", f.src, src.name, err)
 		}
+		got += n
 		if f.rewrite != "" {
 			b, err := os.ReadFile(local)
 			if err != nil {
@@ -890,7 +926,6 @@ func moveSessionFiles(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint
 		if err != nil {
 			return 0, 0, err
 		}
-		target := dst.join(baseDir(f.base), f.rel)
 		if err := dst.upload(ctx, local, target); err != nil {
 			return 0, 0, fmt.Errorf("copy to %s on %s: %w", target, dst.name, err)
 		}

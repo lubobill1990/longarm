@@ -904,7 +904,18 @@ setup without a hub - else exit 77 (a fleet or shared worker in shared
 isolation keeps every user's agent state in one account). A target in
 shared isolation that is not yours gets a warning: its users' jobs can read
 the transcript there. Admin workers are used only when named (`--from` /
-`--to`), never as the implicit `--from`. Transcripts travel only inside the
+`--to`), never as the implicit `--from`. The file names of a session come
+from the source and are untrusted: each must be a plain relative path (no
+absolute paths, drive letters, `..` or empty components, backslashes or
+control characters; on Windows targets no `:`, device names such as `CON`,
+or trailing dots and spaces) inside the session's own files (its
+transcript, session directory, `file-history/<id>/` ...), at most 20000 of
+them; one bad name refuses the whole handoff (exit 2) before anything is
+written. No existing directory on the way may be a symlink or junction (the
+worker needs the `file-lstat` feature), files are created exclusively, and
+each file may be no larger than the source listed it (within
+`--max-size`). This machine names its temporary copies by number, never by
+a source's name. Transcripts travel only inside the
 mTLS connections to the workers; this machine keeps its copy in a private
 temporary directory that is removed afterwards. longarm never prints or
 logs transcript contents; the workers' audit logs record file paths and

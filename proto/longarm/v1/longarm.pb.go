@@ -3459,11 +3459,14 @@ func (x *FileTailRequest) GetFollow() bool {
 }
 
 type FileStatRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	Partial       bool                   `protobuf:"varint,2,opt,name=partial,proto3" json:"partial,omitempty"`                      // stat "<path>.lapart" instead
-	Hash          bool                   `protobuf:"varint,3,opt,name=hash,proto3" json:"hash,omitempty"`                            // compute sha256
-	HashLimit     int64                  `protobuf:"varint,4,opt,name=hash_limit,json=hashLimit,proto3" json:"hash_limit,omitempty"` // hash only the first N bytes (0 = whole file)
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Path      string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Partial   bool                   `protobuf:"varint,2,opt,name=partial,proto3" json:"partial,omitempty"`                      // stat "<path>.lapart" instead
+	Hash      bool                   `protobuf:"varint,3,opt,name=hash,proto3" json:"hash,omitempty"`                            // compute sha256
+	HashLimit int64                  `protobuf:"varint,4,opt,name=hash_limit,json=hashLimit,proto3" json:"hash_limit,omitempty"` // hash only the first N bytes (0 = whole file)
+	// Do not follow a symlink (or Windows reparse point) at path: report the
+	// link itself (is_symlink). Workers with the "file-lstat" feature.
+	NoFollow      bool `protobuf:"varint,5,opt,name=no_follow,json=noFollow,proto3" json:"no_follow,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3524,6 +3527,13 @@ func (x *FileStatRequest) GetHashLimit() int64 {
 		return x.HashLimit
 	}
 	return 0
+}
+
+func (x *FileStatRequest) GetNoFollow() bool {
+	if x != nil {
+		return x.NoFollow
+	}
+	return false
 }
 
 type FileInfo struct {
@@ -5648,13 +5658,14 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x0fFileTailRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x03R\x06offset\x12\x16\n" +
-	"\x06follow\x18\x03 \x01(\bR\x06follow\"r\n" +
+	"\x06follow\x18\x03 \x01(\bR\x06follow\"\x8f\x01\n" +
 	"\x0fFileStatRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\apartial\x18\x02 \x01(\bR\apartial\x12\x12\n" +
 	"\x04hash\x18\x03 \x01(\bR\x04hash\x12\x1d\n" +
 	"\n" +
-	"hash_limit\x18\x04 \x01(\x03R\thashLimit\"\xf9\x01\n" +
+	"hash_limit\x18\x04 \x01(\x03R\thashLimit\x12\x1b\n" +
+	"\tno_follow\x18\x05 \x01(\bR\bnoFollow\"\xf9\x01\n" +
 	"\bFileInfo\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x19\n" +
 	"\babs_path\x18\x02 \x01(\tR\aabsPath\x12\x16\n" +
