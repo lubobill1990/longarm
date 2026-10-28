@@ -9,6 +9,7 @@
 #   ./deploy.sh --name myhub --teardown                                  # delete everything
 #   ./deploy.sh --name myhub --location eastasia --build-in-acr          # image built from this checkout in your ACR
 #   ./deploy.sh --name myhub --location eastasia --storage-auth identity # no storage account keys
+#   ./deploy.sh --name myhub --headscale --recreate                      # + a Headscale sidecar (tailnet)
 #
 # Re-running is an upgrade: the template is applied again with the running
 # hub's settings (image, size, panel, ...) unless an option changes them,
@@ -27,7 +28,7 @@ name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=fa
 recreate=false admin_code=false subscription='' acme_email='' registry_user='' tailscale_secret_file=''
 entra_tenant='' entra_client='' entra_admins='' entra_web='' entra_apps='' gate_free_gb='' release_public_key=''
 build_in_acr=false stun_servers='' storage_auth='' acr='' timeout=1200 stuck_timeout=600
-telemetry='' diagnostics=''
+telemetry='' diagnostics='' headscale='' public_derp=''
 # seconds between status polls (tests make it short)
 poll=${LONGARM_DEPLOY_POLL_SECONDS:-10}
 
@@ -45,6 +46,10 @@ usage: deploy.sh --name NAME [--location REGION] [options]
   --build-in-acr           build the image from this checkout with az acr build in an Azure Container
                            Registry in the resource group (created once; no docker needed) and deploy it
   --tailscale-secret-file F  Tailscale OAuth client secret for the hub's tailnet provider
+  --headscale / --no-headscale  a self-hosted Tailscale control plane (Headscale) as a sidecar,
+                           served by the hub on https://<fqdn>; the hub's tailnet provider (needs
+                           the panel; switching it on or off needs --recreate; README "Headscale")
+  --headscale-public-derp on|off  also hand nodes Tailscale's public DERP relays (default off)
   --acme-email EMAIL       Let's Encrypt contact for the panel certificate
   --entra-tenant ID --entra-client ID   Sign in with Microsoft Entra ID (longarm login,
                            panel): the app registration (docs/usage.md)
@@ -91,6 +96,9 @@ while [[ $# -gt 0 ]]; do
 	--build-in-acr) build_in_acr=true ;;
 	--stun-servers) stun_servers=${2:?}; shift ;;
 	--tailscale-secret-file) tailscale_secret_file=${2:?}; shift ;;
+	--headscale) headscale=true ;;
+	--no-headscale) headscale=false ;;
+	--headscale-public-derp) public_derp=${2:?}; shift ;;
 	--acme-email) acme_email=${2:?}; shift ;;
 	--entra-tenant) entra_tenant=${2:?}; shift ;;
 	--entra-client) entra_client=${2:?}; shift ;;
@@ -140,6 +148,12 @@ fi
 [[ -z $release_public_key || $release_public_key =~ ^RW[A-Za-z0-9+/=]{40,}$ ]] ||
 	die "--release-public-key: the minisign public key line (RW...), e.g. \"\$(tail -1 longarm-release.pub)\""
 [[ -z $tailscale_secret_file || -r $tailscale_secret_file ]] || die "--tailscale-secret-file: can't read $tailscale_secret_file"
+case $public_derp in
+'') ;;
+on) public_derp=true ;;
+off) public_derp=false ;;
+*) die "--headscale-public-derp: on or off" ;;
+esac
 rg=${rg:-$name-rg}
 
 command -v "$AZ" >/dev/null 2>&1 || die "the Azure CLI (az) is missing: https://aka.ms/azure-cli (or use Azure Cloud Shell)"
@@ -345,6 +359,10 @@ if [[ -n $cur ]]; then
 	# a re-run keeps telemetry / diagnostics on
 	[[ -n $telemetry || ,$cur_env, != *,LONGARM_HUB_APPINSIGHTS_CONNECTION_STRING,* ]] || telemetry=true
 	[[ -n $diagnostics || ,$cur_env, != *,LONGARM_HUB_DIAG_BLOB_URL,* ]] || diagnostics=true
+	# and the Headscale sidecar with its DERP choice
+	cur_headscale=false
+	[[ ,$cur_env, != *,LONGARM_HUB_HEADSCALE_DIR,* ]] || cur_headscale=true
+	[[ -n $public_derp || ,$cur_env, != *,LONGARM_HUB_HEADSCALE_PUBLIC_DERP,* ]] || public_derp=true
 	[[ -z $storage_auth || $storage_auth == "$cur_auth" ]] ||
 		die "the hub uses --storage-auth $cur_auth; switching needs a new deployment (another --name or --resource-group)"
 	storage_auth=$cur_auth
@@ -355,10 +373,13 @@ if [[ -n $cur ]]; then
 			die "the hub is $cur_size; ACI can't resize a running container group: add --recreate (data is kept)"
 		[[ -z $panel || $panel == "$cur_panel" ]] ||
 			die "the panel is $([[ $cur_panel == true ]] && echo on || echo off); ACI can't change the ports of a running group: add --recreate (data is kept)"
+		[[ -z $headscale || $headscale == "$cur_headscale" ]] ||
+			die "the Headscale sidecar is $([[ $cur_headscale == true ]] && echo on || echo off); ACI can't add or remove containers of a running group: add --recreate (data is kept)"
 	fi
 	image=${image:-$cur_image}
 	size=${size:-$cur_size}
 	panel=${panel:-$cur_panel}
+	headscale=${headscale:-$cur_headscale}
 	[[ -n $log_analytics || -z $cur_logs ]] || log_analytics=true
 	# the template sets self[,<stunServers>]; absent = a hub from before (template default)
 	if [[ -z $stun_servers ]]; then
@@ -367,7 +388,7 @@ if [[ -n $cur ]]; then
 		self,*) stun_servers=${cur_stun#self,} ;;
 		esac
 	fi
-	[[ ,$cur_env, != *,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,* || -n $tailscale_secret_file ]] ||
+	[[ ,$cur_env, != *,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,* || -n $tailscale_secret_file || $headscale == true ]] ||
 		die "the hub has a Tailscale OAuth secret, which can't be read back: pass --tailscale-secret-file again"
 	# this start's bootstrap.env must differ from the running one's (boot_id)
 	if [[ $storage_auth == identity ]]; then
@@ -421,6 +442,10 @@ panel=${panel:-true}
 log_analytics=${log_analytics:-false}
 telemetry=${telemetry:-false}
 diagnostics=${diagnostics:-false}
+headscale=${headscale:-false}
+public_derp=${public_derp:-false}
+[[ $headscale == false || $panel == true ]] || die "--headscale needs the panel (Headscale is served on https://<fqdn>): drop --no-panel"
+[[ $headscale == false || -z $tailscale_secret_file ]] || die "--headscale and --tailscale-secret-file: one tailnet provider (the sidecar is the provider)"
 ! $log_analytics || ensure_providers Microsoft.OperationalInsights
 # Application Insights on its Log Analytics workspace
 ! $telemetry || ensure_providers Microsoft.OperationalInsights Microsoft.Insights
@@ -489,6 +514,7 @@ json_str() {
 	[[ -z $release_public_key ]] || printf ',"releasePublicKey":{"value":%s}' "$(json_str "$release_public_key")"
 	printf ',"storageAuth":{"value":%s}' "$(json_str "$storage_auth")"
 	printf ',"enableTelemetry":{"value":%s},"enableDiagnostics":{"value":%s}' "$telemetry" "$diagnostics"
+	printf ',"enableHeadscale":{"value":%s},"headscalePublicDerp":{"value":%s}' "$headscale" "$public_derp"
 	[[ -z $acr ]] || printf ',"acrName":{"value":%s}' "$(json_str "$acr")"
 	[[ -z $image ]] || printf ',"image":{"value":%s}' "$(json_str "$image")"
 	[[ -z $acme_email ]] || printf ',"acmeEmail":{"value":%s}' "$(json_str "$acme_email")"
@@ -515,7 +541,7 @@ json_str() {
 	printf '}}\n'
 } >"$tmp/params.json"
 
-echo "deploying $name to $rg ($location, $size, panel $panel, storage auth $storage_auth${image:+, $image}); this takes a few minutes"
+echo "deploying $name to $rg ($location, $size, panel $panel, storage auth $storage_auth$([[ $headscale == true ]] && echo ", headscale")${image:+, $image}); this takes a few minutes"
 deadline=$((SECONDS + timeout))
 logs_hint="az container logs -g $rg -n $name --container-name hub"
 # --no-wait + polling: a container group stuck in Creating would block
@@ -606,12 +632,30 @@ if [[ -n $panel_url ]]; then
 	$ok || echo "note: $panel_url/healthz does not answer yet (Let's Encrypt can take a few minutes): az container logs -g $rg -n $name --container-name $([[ $storage_auth == identity ]] && echo hub || echo caddy)" >&2
 fi
 
+# the tailnet: the hub's view of its Headscale sidecar (/healthz "headscale":
+# ok | starting | down; the detail: longarm admin tailnet status)
+tailnet_status='none (--headscale for a self-hosted one, or --tailscale-secret-file)'
+if [[ $headscale == true ]]; then
+	hs=''
+	for _ in $(seq 1 18); do
+		health=$(curl -fsS -m 10 "$panel_url/healthz" 2>/dev/null || true)
+		hs=$(printf '%s' "$health" | sed -n 's/.*"headscale":"\([a-z]*\)".*/\1/p')
+		[[ $hs != ok ]] || break
+		sleep "$poll"
+	done
+	tailnet_status="headscale $panel_url: ${hs:-unknown}"
+	[[ $hs == ok ]] || echo "note: Headscale is ${hs:-not reported} after 3 min: az container logs -g $rg -n $name --container-name headscale (and --container-name hub); longarm admin tailnet status" >&2
+elif [[ -n $tailscale_secret_file ]]; then
+	tailnet_status='tailscale (OAuth client)'
+fi
+
 # Rough monthly cost (Linux ACI pay-as-you-go, about 0.0405 USD per vCPU-hour
 # and 0.0045 USD per GB-hour in US regions; other regions differ by up to ~20 %).
 cost() {
-	awk -v s="$size" -v p="$panel" -v a="$storage_auth" 'BEGIN {
+	awk -v s="$size" -v p="$panel" -v a="$storage_auth" -v h="$headscale" 'BEGIN {
 		cpu = (s == "medium") ? 2 : 1; mem = (s == "medium") ? 3 : 1.5
 		if (p == "true" && a == "key") { cpu += 0.25; mem += 0.3 } # Caddy
+		if (h == "true") { cpu += 0.25; mem += 0.3 } # Headscale
 		printf "%.0f", 730 * (cpu * 0.0405 + mem * 0.0045) + 1
 	}'
 }
@@ -622,6 +666,7 @@ longarm-hub is up.
   hub address     $hub_addr
   CA fingerprint  $fp
   panel           ${panel_url:-off (--no-panel)}
+  tailnet         $tailnet_status
   resource group  $rg (storage account $account, storage auth $storage_auth)
   cost            about $(cost) USD/month (compute; plus egress over 100 GB/month, relay traffic counts)
 

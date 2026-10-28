@@ -444,6 +444,30 @@ func TestAzureDeployScripts(t *testing.T) {
 			if p := params(); p["acrName"] != "other" {
 				t.Fatalf("identity --acr: %+v", p)
 			}
+			// the Headscale sidecar: switching it needs --recreate (one
+			// container more), a re-run keeps it and its DERP choice, it
+			// needs the panel
+			hsOn, hsOff := r.flag("--headscale", "-Headscale"), r.flag("--no-headscale", "-NoHeadscale")
+			pubDERP := r.flag("--headscale-public-derp", "-HeadscalePublicDerp")
+			refused(run(nil, name, "idhub", hsOn), "headscale without --recreate", "recreate")
+			refused(run(nil, name, "idhub", hsOn, pubDERP, "maybe", recreate), "bad public DERP value", "on or off")
+			res = run(nil, name, "idhub", hsOn, pubDERP, "on", recreate)
+			ok(res, "headscale")
+			if p := params(); p["enableHeadscale"] != true || p["headscalePublicDerp"] != true || p["storageAuth"] != "identity" {
+				t.Fatalf("headscale: %+v", p)
+			}
+			if !strings.Contains(res.stdout, "tailnet         headscale ") || !strings.Contains(res.stdout, "about 44 USD/month") {
+				t.Errorf("headscale: output:\n%s", res.stdout)
+			}
+			ok(run(nil, name, "idhub"), "headscale re-run")
+			if p := params(); p["enableHeadscale"] != true || p["headscalePublicDerp"] != true {
+				t.Fatalf("headscale re-run: %+v", p)
+			}
+			refused(run(nil, name, "idhub", noPanel, recreate), "headscale without the panel", "needs the panel")
+			ok(run(nil, name, "idhub", hsOff, recreate), "headscale off")
+			if p := params(); p["enableHeadscale"] != false {
+				t.Fatalf("headscale off: %+v", p)
+			}
 			if res := run(nil, name, "idhub", r.flag("--teardown", "-Teardown"), yes); res.code != 0 || !strings.Contains(calls(), "group delete -n idhub-rg --yes") {
 				t.Fatalf("identity teardown: %+v", res)
 			}

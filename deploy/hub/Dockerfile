@@ -35,7 +35,7 @@ LABEL org.opencontainers.image.title="longarm-hub" \
       org.opencontainers.image.description="Longarm control plane (CA, registry, scheduler, relay, panel API) with Litestream" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version="${VERSION}"
-COPY deploy/hub/litestream-abs.yml /etc/longarm-hub/litestream-abs.yml
+COPY deploy/hub/litestream-abs.yml deploy/hub/litestream-abs-headscale.yml /etc/longarm-hub/
 ENV LONGARM_HUB_DATA_DIR=/data LONGARM_HUB_CONFIG=/etc/longarm-hub/hub.toml
 VOLUME /data
 # 7443/tcp gRPC API + relay TLS fallback, 7443/udp relay (QUIC), 7444/udp second STUN port, 7480 panel/API,

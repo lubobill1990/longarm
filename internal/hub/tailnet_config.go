@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -24,6 +25,28 @@ func (c *Config) tailnetDefaults() error {
 		}
 	}
 	h := &t.Headscale
+	if h.SidecarDir != "" {
+		// a Headscale container next to the hub (headscale_sidecar.go)
+		if !filepath.IsAbs(h.SidecarDir) {
+			return fmt.Errorf("[tailnet.headscale] sidecar_dir %q: want an absolute path", h.SidecarDir)
+		}
+		h.Proxy = true
+		if h.URL == "" {
+			h.URL = strings.TrimRight(c.PublicURL, "/")
+		}
+		if h.URL == "" {
+			return errors.New("[tailnet.headscale] sidecar_dir needs url (or public_url): Headscale's public https URL, served by the hub")
+		}
+		if h.APIURL == "" {
+			h.APIURL = "http://" + headscaleSidecarListen
+		}
+		if h.APIKeyFile == "" {
+			h.APIKeyFile = filepath.Join(c.DataDir, "headscale-api.key")
+		}
+	}
+	if h.Proxy && h.APIURL == "" {
+		return errors.New("[tailnet.headscale] proxy needs api_url (where the hub reaches Headscale, e.g. http://127.0.0.1:8080)")
+	}
 	if len(t.WorkerTags) == 0 {
 		t.WorkerTags = h.WorkerTags
 	}
@@ -118,7 +141,7 @@ func httpURL(s string) error {
 
 func headscaleEmpty(h HeadscaleConfig) bool {
 	return h.URL == "" && h.APIURL == "" && h.APIKeyFile == "" && h.User == "" && len(h.WorkerTags) == 0 &&
-		len(h.ClientTags) == 0 && !h.Ephemeral && h.KeyTTL.Duration == 0
+		len(h.ClientTags) == 0 && !h.Ephemeral && h.KeyTTL.Duration == 0 && !h.Proxy && h.SidecarDir == "" && !h.PublicDERP
 }
 
 // ControlURL is the control server nodes of this tailnet use ("" = none).

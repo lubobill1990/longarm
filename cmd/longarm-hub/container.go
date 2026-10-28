@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -120,6 +121,10 @@ func runContainer() error {
 	if err := os.MkdirAll(filepath.Dir(db), 0o700); err != nil {
 		return err
 	}
+	if dir := cfg.Tailnet.Headscale.SidecarDir; dir != "" {
+		// the Litestream config names it (both restores and replicate)
+		os.Setenv(envHeadscaleDB, hub.HeadscaleDB(dir))
+	}
 	lsConfig := os.Getenv(envLitestreamConfig)
 	var ls string
 	if lsConfig != "" {
@@ -132,6 +137,9 @@ func runContainer() error {
 		if err := rc.Run(); err != nil {
 			return fmt.Errorf("litestream restore: %w (not starting: the replica may hold the hub's data)", err)
 		}
+	}
+	if dir := cfg.Tailnet.Headscale.SidecarDir; dir != "" {
+		prepareHeadscaleDB(dir, ls, lsConfig)
 	}
 	if os.Getenv(envBootstrap) == "1" {
 		ttl := 24 * time.Hour
@@ -156,6 +164,60 @@ func runContainer() error {
 		return execve(self, serve)
 	}
 	return execve(ls, []string{ls, "replicate", "-config", lsConfig, "-exec", shellJoin(serve)})
+}
+
+// envHeadscaleDB is the sidecar's database in the Litestream config
+// (deploy/hub/litestream-abs-headscale.yml).
+const envHeadscaleDB = "LONGARM_HUB_HEADSCALE_DB"
+
+// prepareHeadscaleDB readies the database of a Headscale sidecar
+// ([tailnet.headscale] sidecar_dir) before Litestream replicates it and the
+// hub lets Headscale start (internal/hub/headscale_sidecar.go): restored
+// from its replica when the shared directory has none (a new container
+// group), else an empty file owned by the hub's user, so Litestream (this
+// user) can write the WAL files Headscale (root, in its own container)
+// creates - SQLite gives them the database file's owner. A failure keeps
+// Headscale stopped (hub.EnvHeadscaleRestore), not the hub.
+func prepareHeadscaleDB(dir, ls, lsConfig string) {
+	fail := func(f string, a ...any) {
+		msg := fmt.Sprintf(f, a...)
+		fmt.Fprintf(os.Stderr, "longarm-hub container: headscale: %s\n", msg)
+		os.Setenv(hub.EnvHeadscaleRestore, msg)
+	}
+	// the sidecar's start script hands the directory (an emptyDir volume,
+	// root's) to this user
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		f, err := os.CreateTemp(dir, ".probe-*")
+		if err == nil {
+			f.Close()
+			os.Remove(f.Name())
+			break
+		}
+		if time.Now().After(deadline) {
+			fail("%s is not writable (is the headscale container running?): %v", dir, err)
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	db := hub.HeadscaleDB(dir)
+	if lsConfig != "" {
+		fmt.Fprintf(os.Stderr, "longarm-hub container: restoring %s from the replica (if it has one)\n", db)
+		rc := exec.CommandContext(context.Background(), ls, "restore", "-config", lsConfig, "-if-db-not-exists", "-if-replica-exists", db)
+		rc.Stdout, rc.Stderr = os.Stderr, os.Stderr
+		if err := rc.Run(); err != nil {
+			fail("litestream restore of %s: %v (Headscale stays stopped: the replica may hold its nodes)", db, err)
+			return
+		}
+	}
+	if _, err := os.Stat(db); errors.Is(err, os.ErrNotExist) {
+		f, err := os.OpenFile(db, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			fail("create %s: %v", db, err)
+			return
+		}
+		f.Close()
+	}
 }
 
 // shellJoin quotes args for Litestream's -exec (parsed with shellwords).

@@ -17,6 +17,17 @@ tagged pre-auth key** for every node it enrolls (`tag:longarm-worker` for longar
 response. The node stores it next to its tsnet state, joins the tailnet on
 first use and deletes the key.
 
+## On Azure Container Instances: the sidecar
+
+`deploy/azure` runs Headscale as a **sidecar of the hub** instead
+(`./deploy.sh --name <hub> --headscale --recreate`; README "Headscale: a
+self-hosted tailnet"): same container group, no Caddy, no VM. The hub
+serves Headscale's node endpoints on its own `https://<fqdn>` (same Let's
+Encrypt certificate), writes Headscale's config, policy, DERP map and keys,
+creates its API key over Headscale's unix socket, and replicates Headscale's
+database to Blob Storage with Litestream. Nothing in this directory is
+needed there; the policy is the same.
+
 ## Files
 
 | File | |

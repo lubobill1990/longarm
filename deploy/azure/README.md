@@ -58,6 +58,8 @@ restarts the hub) prints everything too.
 | `--build-in-acr` | `-BuildInAcr` | build the image from this checkout in an Azure Container Registry ([below](#building-the-image-in-azure-no-docker)) |
 | `--stun-servers LIST` | `-StunServers` | external STUN servers the hub advertises (default Cloudflare + Google, `none` = only the hub's own; [Direct connections](#direct-connections-longnet-on-aci)) |
 | `--tailscale-secret-file F` | `-TailscaleSecretFile` | Tailscale OAuth secret ([tailnet] provider, [deploy/hub](../hub/README.md#tailnet-provider-tailscale-default-or-headscale)) |
+| `--headscale` / `--no-headscale` | `-Headscale` / `-NoHeadscale` | a Headscale sidecar as the hub's tailnet provider ([below](#headscale-a-self-hosted-tailnet)); needs the panel; switching it needs `--recreate`; a re-run keeps it |
+| `--headscale-public-derp on\|off` | `-HeadscalePublicDerp on\|off` | also hand nodes Tailscale's public DERP relays (default off: relayed traffic stays on the hub); a re-run keeps it |
 | `--acme-email E` | `-AcmeEmail` | Let's Encrypt contact |
 | `--entra-tenant ID --entra-client ID` | `-EntraTenant -EntraClient` | Sign in with Microsoft Entra ID (`longarm login`, panel); a re-run keeps them ([usage](../../docs/usage.md)) |
 | `--entra-admins LIST` | `-EntraAdmins` | Entra admins: UPNs, `*@domain` or object IDs, comma-separated |
@@ -298,6 +300,7 @@ regions are up to ~20 % more; check the
 | small | 1 vCPU / 1.5 GB | yes | ~44 USD |
 | small, `--storage-auth identity` | 1 vCPU / 1.5 GB | yes (in the hub) | ~36 USD |
 | small | 1 vCPU / 1.5 GB | no | ~36 USD |
+| small, identity, `--headscale` (+ 0.25 vCPU / 0.3 GB) | 1 vCPU / 1.5 GB | yes (in the hub) | ~44 USD |
 | medium | 2 vCPU / 3 GB | yes | ~78 USD |
 
 Plus storage (a few GB: under 1 USD), Log Analytics if enabled (per GB
@@ -375,6 +378,79 @@ default (last) stage uses `FROM --platform=$BUILDPLATFORM` for BuildKit's
 cross-compiling multi-arch build (CI), which ACR Tasks rejects with "failed
 to scan dependencies". The `acr` stage builds natively (`--platform
 linux/arm64` gives an arm64 image).
+
+## Headscale: a self-hosted tailnet
+
+```sh
+./deploy.sh --name myhub --headscale --recreate     # an existing hub (data kept); new ones: no --recreate
+```
+
+The tailscale leg (DESIGN §4.2) on a control plane you own, with no VM and
+no manual Headscale steps: a **Headscale v0.29.5 sidecar** (image
+`headscale/headscale:v0.29.5-debug`, pinned by digest: the template
+parameter `headscaleImage`) in the hub's container group becomes the hub's
+`[tailnet] provider`.
+
+```text
+  ┌──────────────────────────── ACI container group ─────────────────────────────┐
+  │  hub (longarm-hub)                                 headscale (sidecar)        │
+  │   :443 https (Let's Encrypt, the hub's)  ──proxy──▶ 127.0.0.1:8080             │
+  │     /ts2021 /key /derp /derp/probe /derp/latency-check                         │
+  │     /bootstrap-dns /machine/ping-response    (nothing else of Headscale)      │
+  │   :80 http: /ts2021 too (Noise is authenticated), else the https redirect      │
+  │   Litestream: hub.db ─▶ "litestream"   /headscale/db.sqlite ─▶ "headscale"     │
+  │                 /headscale (emptyDir: config, policy, DERP map, keys, socket) │
+  └──────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Ports**: none new. Headscale listens on the group's localhost only; the
+  hub serves exactly the endpoints nodes use on its own https port, with its
+  certificate, at `https://<fqdn>` (the nodes' control URL). Its REST and
+  gRPC API, metrics, swagger and the interactive `/register` / `/oidc`
+  pages are not reachable from outside (keys are pre-auth keys the hub
+  mints). The proxy passes the HTTP Upgrades of `/ts2021` (Noise) and
+  `/derp` through, never DERP's "fast start" (the TLS is the hub's).
+- **DERP and STUN**: Headscale's embedded DERP relay (region 900,
+  `longarm-hub`) runs over that https; Tailscale's public DERP map is off
+  (`--headscale-public-derp on` adds it), so relayed traffic stays on the
+  hub. STUN does **not** run on the hub: ACI allows **5 ports per IP** (the hub
+  with its panel uses all five: 7443/tcp, 7445-7446/udp, 80, 443) and
+  source-NATs inbound UDP (STUN answers from inside the group would show
+  every node a private address, see below). The region carries the external
+  STUN servers the hub advertises for longnet (`--stun-servers`, default
+  Cloudflare and Google) as STUN-only nodes instead; they only answer
+  binding requests. With `--stun-servers none` nodes have no STUN and go
+  through DERP unless they are on one network.
+- **Persistence**: Headscale's SQLite database is on the shared `emptyDir`
+  and Litestream (the hub's, the same storage account, the managed identity
+  with Storage Blob Data Contributor on the new blob container `headscale`,
+  or a SAS for it with storage keys) replicates it. The hub restores it
+  before it lets Headscale start (`longarm-hub container`); a failed restore
+  keeps Headscale stopped, not the hub. Headscale's **Noise and DERP
+  private keys** live in the hub's database (replicated, like the CA in
+  identity mode): every start writes them to the shared directory, so the
+  nodes never have to register again.
+- **API key**: once Headscale runs, the hub creates its API key over
+  Headscale's unix socket in the shared directory (the directory belongs to
+  the two containers only) and keeps it in its database; it is checked
+  every 10 minutes, renewed 30 days before it expires (1 year) and replaced
+  if Headscale no longer knows it (the old one is expired). It never
+  appears in the environment, the portal or a log.
+- **ACL policy** (written by the hub): `tag:longarm-client` → `tag:longarm-worker:7701`,
+  and `tag:longarm-worker` → `tag:longarm-worker:7701` (port links); nothing else.
+- **Existing nodes** need nothing: workers get the hub's new tailnet in their
+  next hub session, clients on their next hub contact, and fetch a key
+  (docs/usage.md "Switching providers"). While Headscale starts, the hub
+  answers their key requests "unavailable" without charging their rate limit.
+- **Health**: `/healthz` has `"headscale": "ok" | "starting" | "down"`,
+  `longarm admin tailnet status` the detail; deploy.sh prints it at the end.
+  Logs: `az container logs -g <rg> -n <name> --container-name headscale`.
+  Headscale commands: `az container exec -g <rg> -n <name> --container-name
+  headscale --exec-command "/ko-app/headscale --config /headscale/config.yaml nodes list"`
+  (stale worker devices: `nodes delete`).
+- **Cost**: the sidecar requests 0.25 vCPU / 0.3 GB, about 9 USD/month.
+- Key mode (storage account keys, Caddy in front): the same; Caddy forwards
+  everything to the hub, which proxies Headscale's endpoints.
 
 ## Direct connections (longnet) on ACI
 

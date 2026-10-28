@@ -1000,6 +1000,10 @@ message TailnetStatusResponse {
   string last_mint_error = 9;
   google.protobuf.Timestamp last_mint_error_at = 10;
   string last_mint_error_node = 11;
+  // Headscale (provider headscale): "ok", "starting: <detail>" (a sidecar
+  // coming up) or "down: <detail>", as the hub's health check of its API
+  // sees it. Empty for other providers.
+  string control_health = 12;
 }
 
 // -------------------------------------------------------- self-update (P2)

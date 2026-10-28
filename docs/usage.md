@@ -2117,6 +2117,27 @@ api_key_file = "/etc/longarm-hub/headscale-api.key"
   the REST API, embedded DERP + STUN behind Caddy, plus Tailscale's public DERP map by
   default so nodes behind networks that filter UDP to the hub still find a
   STUN server and go direct; `derp.urls: []` for a fully self-hosted setup).
+- **Headscale next to the hub** (Azure Container Instances: `deploy.sh
+  --headscale`, [deploy/azure](../deploy/azure/README.md#headscale-a-self-hosted-tailnet)):
+  `[tailnet.headscale] sidecar_dir` (env `LONGARM_HUB_HEADSCALE_DIR`) names a
+  directory the hub shares with a Headscale container. The hub then runs it
+  without anybody touching Headscale: it writes Headscale's config, ACL
+  policy, DERP map and private keys there (the keys live in the hub's
+  database), creates its own API key over Headscale's unix socket in that
+  directory (renewed before it expires, replaced when Headscale no longer
+  knows it), and serves Headscale's node endpoints on its own https listener
+  (`proxy = true`): `/ts2021`, `/key`, `/derp` (+ `/derp/probe`,
+  `/derp/latency-check`), `/bootstrap-dns` and `/machine/ping-response`, forwarded to
+  `api_url` (default `http://127.0.0.1:8080`). Headscale's REST/gRPC API,
+  metrics and interactive pages stay local. `url` defaults to `public_url`.
+  The environment of a container: `LONGARM_HUB_TAILNET_PROVIDER`,
+  `LONGARM_HUB_HEADSCALE_URL`, `LONGARM_HUB_HEADSCALE_API_URL`,
+  `LONGARM_HUB_HEADSCALE_API_KEY_FILE`, `LONGARM_HUB_HEADSCALE_DIR`,
+  `LONGARM_HUB_HEADSCALE_PROXY`, `LONGARM_HUB_HEADSCALE_PUBLIC_DERP` (Tailscale's
+  public DERP map too; default off). `longarm admin tailnet status` shows
+  `health ok | starting: ... | down: ...`, the hub's `/healthz` has
+  `"headscale": "ok"`. While the sidecar starts, `TailnetKey` answers
+  Unavailable without charging the node's key budget; nodes retry.
 - **Switching providers**: change `provider` and restart the hub. Workers
   follow on their next hub session; clients follow on their next hub contact
   (`longarm ls` and the like). The node records the new control server in hub.toml

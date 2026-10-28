@@ -36,6 +36,31 @@
 
 ### Added
 
+- A self-hosted Tailscale control plane next to the hub on Azure Container
+  Instances: `deploy.sh --headscale` / `deploy.ps1 -Headscale` (bicep
+  `enableHeadscale`, kept on re-runs; switching it needs `--recreate`) adds
+  a Headscale v0.29.5 sidecar (pinned image digest) and makes it the hub's
+  tailnet provider. The hub serves Headscale's node endpoints (`/ts2021`,
+  `/key`, `/derp`, ...) on its own https port with its certificate; nothing
+  else of Headscale is public and the group gets no new port. The hub
+  writes Headscale's config, ACL policy and DERP map, keeps its Noise and
+  DERP keys and its own API key in the hub's database (created over
+  Headscale's unix socket: no manual step, no secret in the environment or
+  the logs), and Litestream replicates Headscale's database to the blob
+  container `headscale` (managed identity or SAS). Relayed traffic stays on
+  the hub's embedded DERP (`--headscale-public-derp on` adds Tailscale's);
+  STUN comes from the external STUN servers the hub already advertises
+  (ACI source-NATs inbound UDP and allows 5 ports per IP). Existing nodes
+  join the tailnet on their next hub session. `/healthz` and `longarm admin
+  tailnet status` report Headscale's state; deploy.sh prints it.
+- hub.toml `[tailnet.headscale] proxy`, `sidecar_dir`, `public_derp` and the
+  environment overrides `LONGARM_HUB_TAILNET_PROVIDER`,
+  `LONGARM_HUB_HEADSCALE_URL`, `LONGARM_HUB_HEADSCALE_API_URL`,
+  `LONGARM_HUB_HEADSCALE_API_KEY_FILE`, `LONGARM_HUB_HEADSCALE_DIR`,
+  `LONGARM_HUB_HEADSCALE_PROXY`, `LONGARM_HUB_HEADSCALE_PUBLIC_DERP`.
+- `TailnetKey` refuses with Unavailable, without charging the node's rate
+  limit, while the provider can't mint yet (a starting sidecar).
+- deploy/azure/test/acirules checks ACI's limit of 5 ports per IP address.
 - Clearer Windows installer roles: the Default page says what each choice
   installs - "This is my everyday computer: send jobs to workers" (client)
   or "This machine runs jobs (Dev Box, build machine)" (client + your

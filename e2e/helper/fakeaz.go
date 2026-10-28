@@ -172,6 +172,12 @@ func fakeAz(args []string) {
 			if g["enablePanel"] == true && id {
 				env += ",LONGARM_HUB_HTTPS,LONGARM_HUB_HTTPS_REDIRECT"
 			}
+			if g["enableHeadscale"] == true && g["enablePanel"] == true {
+				env += ",LONGARM_HUB_TAILNET_PROVIDER,LONGARM_HUB_HEADSCALE_DIR"
+				if g["headscalePublicDerp"] == true {
+					env += ",LONGARM_HUB_HEADSCALE_PUBLIC_DERP"
+				}
+			}
 			if g["tailscaleOAuthSecret"] != nil {
 				env += ",LONGARM_HUB_TAILSCALE_OAUTH_SECRET"
 			}

@@ -37,6 +37,9 @@ func TestTemplate(t *testing.T) {
 		{name: "group port without a container port", edit: func(s string) string {
 			return strings.Replace(s, `"panelPorts": [`, `"panelPorts": [{"port": 8080, "protocol": "TCP"},`, 1)
 		}, problem: "not a port of any container"},
+		{name: "more than 5 ports per IP", edit: func(s string) string {
+			return strings.Replace(s, `"hubPorts": [`, `"hubPorts": [{"port": 3478, "protocol": "UDP"},`, 1)
+		}, problem: "at most 5 ports per IP"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := string(raw)
