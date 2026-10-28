@@ -7,11 +7,23 @@
                 the repository variables LONGARM_DEFAULT_HUB / LONGARM_DEFAULT_HUB_CA; without: Custom only)
 
   Interactive: Welcome -> "Default (recommended)" or "Custom" -> Install. Default signs in to the
-  built-in hub with a Microsoft account: pick "Use this computer" (client) or "Also run jobs on this
-  computer" (both), click Install; the tray opens and shows a code: approve it in the browser. Custom
-  asks for a hub, a join code or "Sign in with Microsoft", an optional CA fingerprint, and offers the
-  worker as a Windows service (Advanced). Both offer "Allow remote administrator commands" (the admin
-  worker, below).
+  built-in hub with a Microsoft account: pick "This is my everyday computer: send jobs to workers"
+  (ROLES=client: longarm + the tray) or "This machine runs jobs (Dev Box, build machine)" (ROLES=both:
+  the client + your user-session worker, which starts at your logon, no password), click Install;
+  the tray opens and starts the sign-in by itself: approve its code in the browser. A machine that
+  looks like a Windows 365 Cloud PC / Dev Box (computer name CPC-..., or the Dev Box agent service
+  Microsoft.DevCenter.DevBoxAgent / DevBoxAgent) gets "runs jobs" preselected (interactive installs
+  only, and not when roles are already recorded). Custom asks for the roles, a hub, a join code or
+  "Sign in with Microsoft", an optional CA fingerprint, and offers the worker as a Windows service
+  (Advanced). Both offer "Allow remote administrator commands" (the admin worker, below) with a worker
+  role only. The Finish page lists what was installed.
+
+  Changing roles later: the tray's Account tab ("This computer: send jobs / run jobs / admin
+  commands"; one administrator prompt, then one sign-in approval for what was added). It runs
+  `longarmd install-helper roles` elevated, which changes the user-session task / the admin worker
+  service and the record below (Roles, SessionUserSID, AdminWorker) together, so upgrades, repairs and
+  the uninstall act on the changed roles. The MSI's own maintenance offers no "Change" (ARPNOMODIFY):
+  without the tray, uninstall and install again with the new ROLES / ADMIN_WORKER.
 
   Silent:
     msiexec /i longarm.msi /qn                                   MODE=default (when built in), ROLES=client
@@ -47,7 +59,8 @@
     [CLIENT_JOIN_CODE=...]   (ROLES=both: JOIN_CODE is the worker's code, CLIENT_JOIN_CODE the client's)
     [LABELS=pool=devbox,os.flavor=ltsc]   worker labels the sign-in asks the hub to record (the tray, longarmd login); remembered
     [NODE_NAME=w1]        a join code's node name
-    [ADMIN_WORKER=1]      the admin worker (off by default): a second longarmd, a LocalSystem service
+    [ADMIN_WORKER=1]      the admin worker (off by default; needs ROLES=both or worker - with ROLES=client the
+                          install is refused): a second longarmd, a LocalSystem service
                           (longarmd-admin; data dir ProgramData\Longarm\longarmd-admin, SYSTEM and
                           Administrators only) running while nobody is logged on; what its owner runs on
                           it runs as SYSTEM. It is enrolled with the tray's sign-in (same code, same
@@ -120,6 +133,18 @@
       <RegistrySearch Id="RegAdminWorker" Root="HKLM" Key="Software\Longarm" Name="AdminWorker" Type="raw" />
     </Property>
     <Property Id="LAUNCH_TRAY" Value="1" Secure="yes" />
+    <!-- A Windows 365 Cloud PC / Microsoft Dev Box (read-only searches, no elevation: AppSearch):
+         the Default page preselects "This machine runs jobs" (CLOUD_PC, set below) unless roles are
+         recorded (an upgrade). The same names as longarmd.LooksLikeCloudPC (the tray's hint). -->
+    <Property Id="ROLES_RECORDED">
+      <RegistrySearch Id="RegRolesRecorded" Root="HKLM" Key="Software\Longarm" Name="Roles" Type="raw" />
+    </Property>
+    <Property Id="DEVBOX_AGENT">
+      <RegistrySearch Id="RegDevBoxAgent" Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\Microsoft.DevCenter.DevBoxAgent" Name="ImagePath" Type="raw" />
+    </Property>
+    <Property Id="DEVBOX_AGENT_SVC">
+      <RegistrySearch Id="RegDevBoxAgentSvc" Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\DevBoxAgent" Name="ImagePath" Type="raw" />
+    </Property>
     <Property Id="SERVICE_NAME" Value="longarmd" Secure="yes">
       <RegistrySearch Id="RegSvc" Root="HKLM" Key="Software\Longarm" Name="ServiceName" Type="raw" />
     </Property>
@@ -168,7 +193,6 @@
     <!-- Repair would re-create the service and needs the account password again (msiexec /fa ... SERVICE_PASSWORD=...). -->
     <Property Id="ARPNOREPAIR" Value="1" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/lubobill1990/longarm" />
-    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="The Longarm tray opens next to the clock. If it asks you to sign in, click &quot;Sign in with Microsoft&quot; and approve the code in your browser." />
 
     <!-- Derived (private) properties, computed before costing in both sequences. -->
     <!-- The same dir longarmd defaults to as LocalSystem and for service install isolation per-user
@@ -218,12 +242,35 @@
     <SetProperty Id="MODE_UI" Action="SetModeUI" Value="[MODE]" Before="SetIsWorker" Sequence="ui" Condition="MODE" />
     <SetProperty Id="DEFAULT_ROLES" Action="SetDefaultRolesBoth" Value="both" Before="SetIsWorker" Sequence="ui"
                  Condition='ROLES="both" OR ROLES="worker"' />
+    <SetProperty Id="CLOUD_PC" Value="1" Before="SetDefaultRolesCloud" Sequence="ui"
+                 Condition='ComputerName ~&lt;&lt; "CPC-" OR DEVBOX_AGENT OR DEVBOX_AGENT_SVC' />
+    <SetProperty Id="DEFAULT_ROLES" Action="SetDefaultRolesCloud" Value="both" Before="SetRolesCloud" Sequence="ui"
+                 Condition='CLOUD_PC AND NOT ROLES_RECORDED AND NOT Installed' />
+    <SetProperty Id="ROLES" Action="SetRolesCloud" Value="both" Before="SetIsWorker" Sequence="ui"
+                 Condition='CLOUD_PC AND NOT ROLES_RECORDED AND NOT Installed AND ROLES="client"' />
     <SetProperty Id="DEFAULT_ADMIN" Action="SetDefaultAdmin" Value="1" Before="SetIsWorker" Sequence="ui"
                  Condition='ADMIN_WORKER="1"' />
     <SetProperty Id="CUSTOM_AUTH" Action="SetCustomAuthCode" Value="code" Before="SetIsWorker" Sequence="ui"
                  Condition="JOIN_CODE" />
     <SetProperty Id="IsWorker" Value="1" Before="CostFinalize" Sequence="both" Condition='ROLES="worker" OR ROLES="both"' />
     <SetProperty Id="IsClient" Value="1" Before="CostFinalize" Sequence="both" Condition='ROLES="client" OR ROLES="both"' />
+    <!-- The Finish page: what this computer became (the sign-in names come in the tray). -->
+    <SetProperty Id="FINISH_ROLES" Action="SetFinishClient" Value="the client (sends jobs to your workers: longarm and the tray)" After="ExecuteAction" Sequence="ui"
+                 Condition='ROLES="client"' />
+    <SetProperty Id="FINISH_ROLES" Action="SetFinishBoth" Value="the client (sends jobs) and your worker (runs jobs as you, starts at your logon)" After="SetFinishClient" Sequence="ui"
+                 Condition='ROLES="both" AND RUN&lt;&gt;"service"' />
+    <SetProperty Id="FINISH_ROLES" Action="SetFinishWorker" Value="your worker (runs jobs as you, starts at your logon)" After="SetFinishBoth" Sequence="ui"
+                 Condition='ROLES="worker" AND RUN&lt;&gt;"service"' />
+    <SetProperty Id="FINISH_ROLES" Action="SetFinishBothSvc" Value="the client (sends jobs) and the worker as the Windows service [SERVICE_NAME]" After="SetFinishWorker" Sequence="ui"
+                 Condition='ROLES="both" AND RUN="service"' />
+    <SetProperty Id="FINISH_ROLES" Action="SetFinishWorkerSvc" Value="the worker as the Windows service [SERVICE_NAME]" After="SetFinishBothSvc" Sequence="ui"
+                 Condition='ROLES="worker" AND RUN="service"' />
+    <SetProperty Id="FINISH_ROLES" Action="SetFinishAdmin" Value="[FINISH_ROLES], and the admin worker (administrator commands as SYSTEM, only you)" After="SetFinishWorkerSvc" Sequence="ui"
+                 Condition='ADMIN_WORKER="1"' />
+    <SetProperty Id="FINISH_SIGNIN" Action="SetFinishSignIn" Value="Next: the Longarm tray opens with a sign-in code; approve it in your browser. " After="SetFinishAdmin" Sequence="ui"
+                 Condition='LOGIN="1"' />
+    <SetProperty Id="WIXUI_EXITDIALOGOPTIONALTEXT" Action="SetFinishText" After="SetFinishSignIn" Sequence="ui" Condition='NOT REMOVE="ALL" AND FINISH_ROLES'
+                 Value="Installed: [FINISH_ROLES]. [FINISH_SIGNIN]On Windows 11 the tray icon may be hidden under the ^ arrow next to the clock. Open a new terminal to use the longarm command." />
     <!-- Interactive default for the service account: the installing user. -->
     <SetProperty Id="SERVICE_USER" Action="SetServiceUserDefault" Value="[%USERDOMAIN]\[LogonUser]" Before="CostFinalize" Sequence="ui"
                  Condition='NOT SERVICE_USER AND NOT SAVED_SERVICE_ACCOUNT AND %USERDOMAIN~&lt;&gt;"AzureAD"' />
@@ -247,6 +294,7 @@
     <CustomAction Id="CheckDefaultCode" Error="MODE=default signs in with a Microsoft account: drop JOIN_CODE / CLIENT_JOIN_CODE, or use MODE=custom HUB=... JOIN_CODE=..." />
     <CustomAction Id="CheckRun" Error="RUN must be session or service (ISOLATION=per-user needs RUN=service)." />
     <CustomAction Id="CheckSessionUser" Error="RUN=session runs the worker as the user who logs on, but this install runs as SYSTEM (UserSID S-1-5-18): install as that user (elevated), pass SESSION_SID=&lt;the user's SID&gt;, or use RUN=service." />
+    <CustomAction Id="CheckAdminRole" Error="ADMIN_WORKER=1 adds the admin worker, which comes with the worker role: use ROLES=both (or ROLES=worker), or leave ADMIN_WORKER out." />
     <CustomAction Id="CheckAdminWorker" Error="ADMIN_WORKER=1 signs the admin worker in with Microsoft at the hub, as the user who installs it: it needs a hub (MODE=default or HUB=...) and an installing user (not SYSTEM, or SESSION_SID=...)." />
     <!-- Secrets (JOIN_CODE, CLIENT_JOIN_CODE, CLIENT_CODE, SERVICE_PASSWORD) stay out of verbose
          logs (msiexec /l*v): the properties are Hidden (masked in property dumps and changes), and
@@ -415,6 +463,8 @@
       <Custom Action="CheckDefaultCode" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND MODE="default" AND (JOIN_CODE OR CLIENT_JOIN_CODE)' />
       <Custom Action="CheckRun" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND ((RUN&lt;&gt;"session" AND RUN&lt;&gt;"service") OR (ISOLATION="per-user" AND RUN&lt;&gt;"service"))' />
       <Custom Action="CheckSessionUser" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND IsWorker AND RUN="session" AND (NOT SESSION_SID OR SESSION_SID="S-1-5-18")' />
+      <!-- an install from before this rule that has the admin worker without a worker keeps it -->
+      <Custom Action="CheckAdminRole" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND ADMIN_WORKER="1" AND NOT IsWorker AND SAVED_ADMIN_WORKER&lt;&gt;"1"' />
       <Custom Action="CheckAdminWorker" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND ADMIN_WORKER="1" AND (NOT HUB OR NOT SESSION_SID OR SESSION_SID="S-1-5-18")' />
       <Custom Action="CheckServiceAccount" Before="InstallInitialize"
               Condition='IsWorker AND RUN="service" AND NOT REMOVE="ALL" AND (NOT Installed OR REINSTALL) AND (NOT SERVICE_ACCOUNT OR (SERVICE_ACCOUNT~&lt;&gt;"LocalSystem" AND NOT SERVICE_PASSWORD))' />
@@ -473,7 +523,7 @@
       <Dialog Id="ModeDlg" Width="370" Height="270" Title="[ProductName] Setup">
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
         <Control Id="Title" Type="Text" X="15" Y="6" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Set up Longarm" />
-        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Default signs you in with your Microsoft account after the install." />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Choose what this computer does. Default signs you in with your Microsoft account." />
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
         <Control Id="Mode" Type="RadioButtonGroup" X="15" Y="50" Width="340" Height="34" Property="MODE_UI">
           <RadioButtonGroup Property="MODE_UI">
@@ -481,18 +531,30 @@
             <RadioButton Value="custom" X="0" Y="18" Width="340" Height="16" Text="&amp;Custom: another hub, a join code, the worker as a Windows service" />
           </RadioButtonGroup>
         </Control>
-        <Control Id="DefaultLine" Type="Line" X="15" Y="90" Width="340" Height="0" />
-        <Control Id="Roles" Type="RadioButtonGroup" X="30" Y="96" Width="320" Height="36" Property="DEFAULT_ROLES" DisableCondition='MODE_UI&lt;&gt;"default"' EnableCondition='MODE_UI="default"'>
+        <Control Id="DefaultLine" Type="Line" X="15" Y="88" Width="340" Height="0" />
+        <!-- each role with what it installs (the descriptions sit between the buttons, as WixUI's InstallScopeDlg) -->
+        <Control Id="Roles" Type="RadioButtonGroup" X="30" Y="92" Width="320" Height="72" Property="DEFAULT_ROLES" DisableCondition='MODE_UI&lt;&gt;"default"' EnableCondition='MODE_UI="default"'>
           <RadioButtonGroup Property="DEFAULT_ROLES">
-            <RadioButton Value="client" X="0" Y="0" Width="320" Height="16" Text="&amp;Use this computer: run jobs on your workers from here" />
-            <RadioButton Value="both" X="0" Y="18" Width="320" Height="16" Text="&amp;Also run jobs on this computer (as you, while you are signed in)" />
+            <RadioButton Value="client" X="0" Y="0" Width="320" Height="14" Text="This is my &amp;everyday computer: send jobs to workers" />
+            <RadioButton Value="both" X="0" Y="36" Width="320" Height="14" Text="This &amp;machine runs jobs (Dev Box, build machine)" />
           </RadioButtonGroup>
         </Control>
-        <Control Id="Admin" Type="CheckBox" X="30" Y="138" Width="320" Height="28" Property="DEFAULT_ADMIN" CheckBoxValue="1"
-                 DisableCondition='MODE_UI&lt;&gt;"default"' EnableCondition='MODE_UI="default"'
-                 Text="Allow remote &amp;administrator commands on this computer (a second worker running as SYSTEM, only you can use it, never chosen automatically)" />
-        <Control Id="Note" Type="Text" X="30" Y="172" Width="320" Height="40" NoPrefix="yes" DisableCondition='MODE_UI&lt;&gt;"default"' EnableCondition='MODE_UI="default"'
-                 Text="After the install the Longarm tray shows a code: approve it in your browser. The worker runs as you while you are signed in, also with the remote desktop disconnected; it stops at sign-out or restart until you sign in again." />
+        <Control Id="RoleClientText" Type="Text" X="44" Y="106" Width="306" Height="18" NoPrefix="yes" DisableCondition='MODE_UI&lt;&gt;"default"' EnableCondition='MODE_UI="default"'
+                 Text="Installs the client: longarm and the tray. Your jobs run on your workers, not here." />
+        <Control Id="RoleBothText" Type="Text" X="44" Y="142" Width="306" Height="22" NoPrefix="yes" DisableCondition='MODE_UI&lt;&gt;"default"' EnableCondition='MODE_UI="default"'
+                 Text="It becomes your worker, and you can also send jobs from it: the client and a worker that runs as you, starts at your logon, no password." />
+        <Control Id="Admin" Type="CheckBox" X="30" Y="168" Width="320" Height="14" Property="DEFAULT_ADMIN" CheckBoxValue="1"
+                 DisableCondition='MODE_UI&lt;&gt;"default" OR DEFAULT_ROLES="client"' EnableCondition='MODE_UI="default" AND DEFAULT_ROLES&lt;&gt;"client"'
+                 Text="Also allow remote &amp;administrator commands (admin worker)" />
+        <Control Id="AdminText" Type="Text" X="44" Y="182" Width="306" Height="20" NoPrefix="yes"
+                 DisableCondition='MODE_UI&lt;&gt;"default" OR DEFAULT_ROLES="client"' EnableCondition='MODE_UI="default" AND DEFAULT_ROLES&lt;&gt;"client"'
+                 Text="Also lets you run administrator commands remotely, even before anyone logs on (runs as SYSTEM, owner-only). Only with &quot;runs jobs&quot;." />
+        <Control Id="Note" Type="Text" X="30" Y="208" Width="320" Height="20" NoPrefix="yes" DisableCondition='MODE_UI&lt;&gt;"default"' EnableCondition='MODE_UI="default"'
+                 HideCondition="CLOUD_PC" ShowCondition="NOT CLOUD_PC"
+                 Text="After the install the Longarm tray starts the sign-in: approve its code in your browser." />
+        <Control Id="CloudNote" Type="Text" X="30" Y="208" Width="320" Height="20" NoPrefix="yes" DisableCondition='MODE_UI&lt;&gt;"default"' EnableCondition='MODE_UI="default"'
+                 HideCondition="NOT CLOUD_PC" ShowCondition="CLOUD_PC"
+                 Text="This looks like a Cloud PC or Dev Box, so &quot;runs jobs&quot; is preselected. After the install the tray starts the sign-in." />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
@@ -505,7 +567,7 @@
       <Dialog Id="RolesDlg" Width="370" Height="270" Title="[ProductName] Setup">
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
         <Control Id="Title" Type="Text" X="15" Y="6" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Custom setup" />
-        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Use the fleet from here (client), offer this machine as a worker, or both." />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Client: send jobs from here. Worker: this machine runs jobs. Both: the two." />
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
         <Control Id="Roles" Type="RadioButtonGroup" X="15" Y="48" Width="340" Height="16" Property="ROLES">
           <RadioButtonGroup Property="ROLES">
@@ -527,7 +589,8 @@
         <Control Id="FpLabel" Type="Text" X="15" Y="136" Width="340" Height="10" Text="Hub CA fingerprint (optional; default: fetched from https://&lt;hub&gt;/ca.crt):" />
         <Control Id="FpEdit" Type="Edit" X="15" Y="147" Width="340" Height="15" Property="CA_FINGERPRINT" />
         <Control Id="Admin" Type="CheckBox" X="15" Y="168" Width="340" Height="17" Property="ADMIN_WORKER" CheckBoxValue="1"
-                 Text="Allow remote &amp;administrator commands on this computer (an admin worker running as SYSTEM)" />
+                 DisableCondition='ROLES="client"' EnableCondition='ROLES&lt;&gt;"client"'
+                 Text="Allow remote &amp;administrator commands (an admin worker running as SYSTEM; with a worker role)" />
         <Control Id="Service" Type="CheckBox" X="15" Y="188" Width="340" Height="28" Property="RUN_AS_SERVICE" CheckBoxValue="1"
                  DisableCondition='ROLES="client"' EnableCondition='ROLES&lt;&gt;"client"'
                  Text="Ad&amp;vanced: run the worker as a Windows service (runs without anyone signed in; needs an account password, or LocalSystem)" />
@@ -585,8 +648,9 @@
       <Publish Dialog="ModeDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
       <Publish Dialog="ModeDlg" Control="Next" Property="MODE" Value="[MODE_UI]" Order="1" />
       <Publish Dialog="ModeDlg" Control="Next" Property="ROLES" Value="[DEFAULT_ROLES]" Order="2" Condition='MODE="default"' />
-      <Publish Dialog="ModeDlg" Control="Next" Property="ADMIN_WORKER" Value="1" Order="2" Condition='MODE="default" AND DEFAULT_ADMIN="1"' />
-      <Publish Dialog="ModeDlg" Control="Next" Property="ADMIN_WORKER" Value="{}" Order="2" Condition='MODE="default" AND NOT DEFAULT_ADMIN="1"' />
+      <!-- the admin worker comes with the worker role -->
+      <Publish Dialog="ModeDlg" Control="Next" Property="ADMIN_WORKER" Value="1" Order="2" Condition='MODE="default" AND DEFAULT_ADMIN="1" AND DEFAULT_ROLES&lt;&gt;"client"' />
+      <Publish Dialog="ModeDlg" Control="Next" Property="ADMIN_WORKER" Value="{}" Order="2" Condition='MODE="default" AND (NOT DEFAULT_ADMIN="1" OR DEFAULT_ROLES="client")' />
       <Publish Dialog="ModeDlg" Control="Next" Property="LOGIN" Value="1" Order="3" Condition='MODE="default"' />
       <Publish Dialog="ModeDlg" Control="Next" Property="JOIN_CODE" Value="{}" Order="4" Condition='MODE="default"' />
       <Publish Dialog="ModeDlg" Control="Next" Property="HUB" Value="[DEFAULT_HUB]" Order="5" Condition='MODE="default"' />
@@ -598,6 +662,7 @@
       <Publish Dialog="RolesDlg" Control="Back" Event="NewDialog" Value="ModeDlg" Condition="DEFAULT_HUB" />
       <Publish Dialog="RolesDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Condition="NOT DEFAULT_HUB" />
       <Publish Dialog="RolesDlg" Control="Next" Property="RUN" Value="service" Order="1" Condition='RUN_AS_SERVICE AND ROLES&lt;&gt;"client"' />
+      <Publish Dialog="RolesDlg" Control="Next" Property="ADMIN_WORKER" Value="{}" Order="1" Condition='ROLES="client" AND SAVED_ADMIN_WORKER&lt;&gt;"1"' />
       <Publish Dialog="RolesDlg" Control="Next" Property="RUN" Value="session" Order="2" Condition='NOT RUN_AS_SERVICE OR ROLES="client"' />
       <Publish Dialog="RolesDlg" Control="Next" Property="LOGIN" Value="1" Order="3" Condition='CUSTOM_AUTH="login"' />
       <Publish Dialog="RolesDlg" Control="Next" Property="JOIN_CODE" Value="{}" Order="4" Condition='CUSTOM_AUTH="login"' />

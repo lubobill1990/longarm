@@ -1,11 +1,21 @@
 import { useEffect, useState } from 'react'
-import { trayApi, type Account, type SignInState, type SignInTargets, type TrayInfo } from '../api/local'
+import {
+  trayApi,
+  type Account,
+  type AccountRoles,
+  type RolesState,
+  type SignInState,
+  type SignInTargets,
+  type TrayInfo,
+} from '../api/local'
 import { ErrorBox, useAction } from '../components/common'
 
 /**
  * longarm-tray's account tab: "Sign in with Microsoft" (one code, one
- * approval for this device, the worker and the admin worker), then who is
- * signed in, the worker's state, Sign out, Open panel.
+ * approval for this device, the worker and the admin worker; it starts by
+ * itself after an install), then who is signed in, the worker's state,
+ * what this computer does (send jobs / run jobs / admin commands, changed
+ * with one administrator prompt and one approval), Sign out, Open panel.
  */
 export function AccountTab({ info, onChange }: { info: TrayInfo; onChange?: () => void }) {
   const acct = info.account
@@ -27,7 +37,7 @@ export function AccountTab({ info, onChange }: { info: TrayInfo; onChange?: () =
         })
         .catch((e) => !stop && setErr(String(e.message ?? e)))
     load()
-    const t = setInterval(load, running ? 1000 : 4000)
+    const t = setInterval(load, running ? 1000 : 3000)
     return () => {
       stop = true
       clearInterval(t)
@@ -42,8 +52,8 @@ export function AccountTab({ info, onChange }: { info: TrayInfo; onChange?: () =
       ) : (
         <>
           {st?.state === 'done' && st.result && (
-            <div className="small green" data-testid="signin-done">
-              Signed in{st.result.user ? ` as ${st.result.user}` : ''}: {st.result.summary}
+            <div className="ok-box" data-testid="signin-done">
+              {st.result.summary}
             </div>
           )}
           {(st?.state === 'error' || st?.state === 'canceled') && (
@@ -54,6 +64,7 @@ export function AccountTab({ info, onChange }: { info: TrayInfo; onChange?: () =
           {acct.needed ? <SignInCard acct={acct} onStarted={setSt} /> : <AccountCard acct={acct} info={info} onChange={onChange} />}
         </>
       )}
+      {acct.roles && <RolesCard acct={acct} busy={running} onChange={onChange} />}
       {acct.admin && <AdminCard admin={acct.admin} onChange={onChange} />}
     </div>
   )
@@ -67,6 +78,13 @@ export function targetText(t: SignInTargets) {
   return parts.join(', ')
 }
 
+/** "Mon 2 Nov, 14:05" */
+export function when(iso?: string) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return d.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
 function SignInCard({ acct, onStarted }: { acct: Account; onStarted: (s: SignInState) => void }) {
   const { run, busy } = useAction()
   const [hub, setHub] = useState('')
@@ -75,7 +93,12 @@ function SignInCard({ acct, onStarted }: { acct: Account; onStarted: (s: SignInS
   const needHub = !acct.hub
   return (
     <section className="wcard" data-testid="signin-card">
-      <h3>Sign in with Microsoft</h3>
+      <h3>{acct.expired ? 'Sign in again' : 'Sign in with Microsoft'}</h3>
+      {acct.expired && (
+        <div className="warn-box" data-testid="signin-expired">
+          Your sign-in expired on {when(acct.expires)}: sign in again.
+        </div>
+      )}
       <p className="small">
         One code and one approval in your browser sign in {targetText(acct.targets)}
         {acct.hub ? (
@@ -126,8 +149,13 @@ function SignInCard({ acct, onStarted }: { acct: Account; onStarted: (s: SignInS
   )
 }
 
+/**
+ * The running sign-in: the code large (also on the clipboard: the tray
+ * copies it), Copy, the /link page. The popup stays open meanwhile.
+ */
 function SignInProgress({ st }: { st: SignInState }) {
   const { run, busy } = useAction()
+  const [copied, setCopied] = useState(false)
   const c = st.code
   return (
     <section className="wcard" data-testid="signin-progress">
@@ -135,7 +163,7 @@ function SignInProgress({ st }: { st: SignInState }) {
       {c ? (
         <>
           <p className="small">
-            Open{' '}
+            Your browser opened{' '}
             <a
               href={c.url}
               onClick={(e) => {
@@ -144,19 +172,31 @@ function SignInProgress({ st }: { st: SignInState }) {
               }}
             >
               {c.url}
-            </a>{' '}
-            (opened in your browser), sign in with Microsoft and enter:
+            </a>
+            . Sign in with Microsoft there and enter this code:
           </p>
-          <div className="mono" data-testid="signin-code" style={{ fontSize: 28, letterSpacing: 3, margin: '8px 0' }}>
+          <div className="signin-code mono" data-testid="signin-code">
             {c.code}
           </div>
-          <p className="muted small">
-            Check that the page names this machine ({c.host}) and what it signs in: {targetText(st.targets)}
-            {c.admin_worker ? '. The admin worker runs commands as SYSTEM' : ''}. The code expires at {new Date(c.expires).toLocaleTimeString()}.
-          </p>
           <p className="row">
+            <button
+              className="primary"
+              data-testid="signin-copy"
+              onClick={() =>
+                copyText(c.code).then(
+                  () => setCopied(true),
+                  () => setCopied(false),
+                )
+              }
+            >
+              {copied ? 'Copied' : 'Copy code'}
+            </button>
             <button onClick={() => trayApi.open(c.url)}>Open the page again</button>
-            <button onClick={() => navigator.clipboard?.writeText(c.code)}>Copy code</button>
+          </p>
+          <p className="muted small">
+            The code is also on your clipboard. Check that the page names this machine ({c.host}) and what it signs in: {targetText(st.targets)}
+            {c.admin_worker ? '. The admin worker runs commands as SYSTEM' : ''}. The code expires at {new Date(c.expires).toLocaleTimeString()}. This
+            window stays open until you are signed in.
           </p>
         </>
       ) : (
@@ -174,6 +214,22 @@ function SignInProgress({ st }: { st: SignInState }) {
   )
 }
 
+/** Copies text: the clipboard API, else a selected textarea (older WebViews). */
+export async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    return
+  } catch {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand('copy')
+    ta.remove()
+    if (!ok) throw new Error('copy failed')
+  }
+}
+
 function AccountCard({ acct, info, onChange }: { acct: Account; info: TrayInfo; onChange?: () => void }) {
   const { run, busy } = useAction()
   return (
@@ -183,6 +239,7 @@ function AccountCard({ acct, info, onChange }: { acct: Account; info: TrayInfo; 
         <span className="name">{acct.signed_in ? `Signed in${acct.user ? ` as ${acct.user}` : ''}` : 'Not signed in'}</span>
       </div>
       {acct.hub && <div className="small muted">hub {acct.hub}</div>}
+      {acct.signed_in && acct.expires && <div className="small muted">sign-in valid until {when(acct.expires)} (renews by itself)</div>}
       {info.roles.worker && (
         <div className="small" data-testid="worker-online">
           worker:{' '}
@@ -210,6 +267,112 @@ function AccountCard({ acct, info, onChange }: { acct: Account; info: TrayInfo; 
           </button>
         )}
       </p>
+    </section>
+  )
+}
+
+/** What the change does, in words (shown before the administrator prompt). */
+export function rolesChangeText(cur: AccountRoles, want: AccountRoles) {
+  const parts: string[] = []
+  if (want.client && !cur.client) parts.push('add the client (send jobs)')
+  if (!want.client && cur.client) parts.push('remove the client: this device leaves the hub')
+  if (want.worker && !cur.worker) parts.push('add your worker (runs jobs as you, starts at your logon)')
+  if (!want.worker && cur.worker) parts.push('remove the worker: it leaves the hub, running jobs end')
+  if (want.admin_worker && !cur.admin_worker) parts.push('add the admin worker (administrator commands as SYSTEM, only you)')
+  if (!want.admin_worker && cur.admin_worker) parts.push('remove the admin worker')
+  return parts
+}
+
+/**
+ * "This computer: [x] send jobs [x] run jobs [ ] admin commands": a change
+ * takes one administrator prompt (it changes what the installer recorded,
+ * so uninstall and upgrades keep up), then one approval signs the added
+ * roles in.
+ */
+function RolesCard({ acct, busy, onChange }: { acct: Account; busy: boolean; onChange?: () => void }) {
+  const cur = acct.roles
+  const [want, setWant] = useState<AccountRoles>(cur)
+  const [st, setSt] = useState<RolesState>()
+  const { run, busy: posting } = useAction()
+  const applying = st?.state === 'applying'
+  useEffect(() => {
+    if (!applying) setWant(cur)
+  }, [cur.client, cur.worker, cur.admin_worker]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!applying) return
+    const t = setInterval(
+      () =>
+        trayApi
+          .rolesState()
+          .then((s) => {
+            setSt(s)
+            if (s.state !== 'applying') onChange?.()
+          })
+          .catch(() => {}),
+      1000,
+    )
+    return () => clearInterval(t)
+  }, [applying]) // eslint-disable-line react-hooks/exhaustive-deps
+  const legacyAdmin = cur.admin_worker && !cur.worker // an install from before "admin worker only with a worker"
+  const changes = rolesChangeText(cur, want)
+  const editable = acct.roles_editable && !busy && !applying
+  const set = (k: keyof AccountRoles, v: boolean) => {
+    const n = { ...want, [k]: v }
+    if (k === 'worker' && !v && !legacyAdmin) n.admin_worker = false
+    setWant(n)
+  }
+  return (
+    <section className="wcard" data-testid="roles-card">
+      <h3>This computer</h3>
+      <label className="check">
+        <input type="checkbox" checked={want.client} disabled={!editable} onChange={(e) => set('client', e.target.checked)} />
+        <span>
+          <b>Send jobs</b> (client): run commands on your workers from here
+        </span>
+      </label>
+      <label className="check">
+        <input type="checkbox" data-testid="role-worker" checked={want.worker} disabled={!editable} onChange={(e) => set('worker', e.target.checked)} />
+        <span>
+          <b>Run jobs</b> (worker): this computer runs your jobs, as you, from your logon (no password)
+        </span>
+      </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={want.admin_worker}
+          disabled={!editable || (!want.worker && !legacyAdmin)}
+          onChange={(e) => set('admin_worker', e.target.checked)}
+        />
+        <span>
+          <b>Admin commands</b> (admin worker): run administrator commands remotely, even before anyone logs on (as SYSTEM, only you)
+          {!want.worker && !legacyAdmin ? <span className="muted"> · needs "run jobs"</span> : null}
+        </span>
+      </label>
+      {acct.cloud_pc && !cur.worker && (
+        <div className="small muted" data-testid="cloud-pc-hint">
+          This looks like a Cloud PC or Dev Box ({acct.cloud_pc}): such machines usually run jobs.
+        </div>
+      )}
+      {acct.roles_note && <div className="small muted">{acct.roles_note}</div>}
+      {st?.state === 'error' && <div className="error-box">{st.error}</div>}
+      {st?.state === 'done' && st.message && <div className="small green">{st.message}</div>}
+      {applying && <div className="small muted">Confirm the administrator prompt…</div>}
+      {changes.length > 0 && !applying && (
+        <>
+          <p className="small">This will {changes.join('; ')}. An administrator prompt follows; then one approval in your browser signs in what was added.</p>
+          <p className="row">
+            <button
+              className="primary"
+              data-testid="roles-apply"
+              disabled={!editable || posting || (!want.client && !want.worker)}
+              onClick={() => run(() => trayApi.rolesChange(want)).then((r) => r && setSt(r))}
+            >
+              Apply
+            </button>
+            <button onClick={() => setWant(cur)}>Undo</button>
+          </p>
+        </>
+      )}
     </section>
   )
 }

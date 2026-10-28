@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -74,6 +75,17 @@ type Server struct {
 	installedWorker  func() (string, longarmd.AdminInstall)
 	runElevated      func(exe string, args ...string) error
 	afterSignIn      func()
+	// role changes (roles.go); hooks for tests
+	roleRun         rolesRun
+	machineRoles    func() longarmd.MachineRoles
+	currentSID      func() (string, error)
+	runElevatedWait func(exe string, args ...string) error
+	rolesResult     func() string
+	cloudPC         func() string
+	nowFn           func() time.Time
+	// OnSignInCode (the shell): a sign-in shows its code - keep the popup
+	// up, copy the code, notify.
+	OnSignInCode func(SignInCode)
 
 	mu       sync.Mutex
 	headless bool
@@ -119,6 +131,18 @@ func NewServer(opts Options, desk Desktop, addr string) (*Server, error) {
 		},
 		openURL: OpenURL, term: OpenTerminal,
 		installedRolesFn: signin.InstalledRoles, installedWorker: longarmd.InstalledWorker, runElevated: RunElevated}
+	if runtime.GOOS == "windows" {
+		s.machineRoles = func() longarmd.MachineRoles { return longarmd.LoadMachineRoles(longarmd.MachineSettings()) }
+		s.currentSID = longarmd.CurrentUserSID
+		s.runElevatedWait = RunElevatedWait
+		s.rolesResult = func() string { v, _ := longarmd.MachineSettings().Get(longarmd.RegRolesResult); return v }
+		var once sync.Once
+		var why string
+		s.cloudPC = func() string {
+			once.Do(func() { _, why = longarmd.LooksLikeCloudPC(longarmd.SystemProbe{}) })
+			return why
+		}
+	}
 	s.afterSignIn = func() {
 		// the daemon loads the new certificate when it starts
 		s.runCmd(s.opts.LongarmExe, s.longarmArgs("daemon", "stop")[1:]...)
@@ -206,6 +230,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /trayapi/signin/cancel", s.signinCancel)
 	mux.HandleFunc("POST /trayapi/signout", s.signout)
 	mux.HandleFunc("POST /trayapi/admin/disable", s.adminDisable)
+	mux.HandleFunc("POST /trayapi/roles", s.rolesChange)
+	mux.HandleFunc("GET /trayapi/roles/state", s.rolesState)
 	mux.Handle("/", webui.Handler("/local/", "/trayapi/"))
 	return s.guard(mux)
 }

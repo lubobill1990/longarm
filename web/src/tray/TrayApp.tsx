@@ -7,6 +7,7 @@ import { PoolTab } from './PoolTab'
 import { WorkerTab } from './WorkerTab'
 import { AccountTab } from './AccountTab'
 import { wailsMessage } from '../lib/wails'
+import { ContextMenu, installAppBehaviour } from './appShell'
 
 type Tab = 'pool' | 'jobs' | 'forwards' | 'worker' | 'settings' | 'account'
 
@@ -21,6 +22,8 @@ export function TrayApp() {
   const [pool, setPool] = useState<PoolView>()
   const [poolErr, setPoolErr] = useState<string>()
   const [reload, setReload] = useState(0)
+  // an app, not a browser page: links to the system browser, no file drops
+  useEffect(() => installAppBehaviour(), [])
   useEffect(() => {
     const load = () =>
       trayApi
@@ -74,6 +77,7 @@ export function TrayApp() {
   const online = (pool?.workers ?? []).filter((w) => w.state === 'online').length
   return (
     <Toasts>
+      <ContextMenu />
       <div className="tray">
         <TitleBar info={info} online={online} total={pool?.workers?.length ?? 0} />
         <div className="tabs" role="tablist">
@@ -147,7 +151,7 @@ function TitleBar({ info, online, total }: { info?: TrayInfo; online: number; to
       <span className="spacer" />
       <button
         className={`tbtn ${pinned ? 'on' : ''}`}
-        title={pinned ? 'pinned: stays open' : 'pin: keep the panel open'}
+        title={pinned ? 'stays open until closed (click: hide when another window is clicked)' : 'hides when another window is clicked (click: keep it open)'}
         aria-label="pin"
         onClick={() => trayApi.pin(!pinned).then((r) => setPinned(r.pinned))}
       >

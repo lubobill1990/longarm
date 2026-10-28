@@ -292,7 +292,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'go build longarm' }
           go build -trimpath -ldflags $hub -o "$bin\longarmd.exe" ./cmd/longarmd
           if ($LASTEXITCODE) { throw 'go build longarmd' }
-          go build -trimpath -ldflags "-H windowsgui $hub" -o "$bin\longarm-tray.exe" ./cmd/longarm-tray
+          go build -trimpath -tags production -ldflags "-H windowsgui $hub" -o "$bin\longarm-tray.exe" ./cmd/longarm-tray
           if ($LASTEXITCODE) { throw 'go build longarm-tray' }
           & "$bin\longarm.exe" version --json
       - name: build the MSIs (default hub / custom only)

@@ -17,11 +17,21 @@ import (
 )
 
 // The Wails v3 shell: a system tray icon and a frameless, always-on-top
-// popup window next to it (a floating panel): left click
-// toggles it, it hides when it loses focus unless pinned, it is draggable
-// by its title bar, and it stays where it was dragged to. The window shows
-// the loopback server's /tray page (the server streams SSE, which Wails'
-// asset server cannot on Windows).
+// popup window next to it (a floating panel): left click toggles it, it is
+// draggable by its title bar, and it stays where it was dragged to. It
+// stays open until closed (pinned, the default); with auto-hide (the pin
+// button off, remembered in tray-window.json) it hides when it loses the
+// focus - but never while a sign-in or a role change runs (the browser
+// takes the focus to show the /link page; the code must stay visible). The
+// window shows the loopback server's /tray page (the server streams SSE,
+// which Wails' asset server cannot on Windows).
+//
+// It behaves as an app, not a browser: no default context menu (the page
+// has its own Copy / Paste menu for text), no browser accelerator keys
+// (reload, print, find, zoom, devtools - Wails turns them off; editing keys
+// stay), no zoom, no status bar, no file drops; devtools only in
+// development builds (release builds use the "production" tag); links
+// open in the system browser (the page sends them to /trayapi/open).
 
 type desktop struct {
 	app  *application.App
@@ -29,6 +39,8 @@ type desktop struct {
 	tray *application.SystemTray
 
 	mu        sync.Mutex
+	prefsDir  string
+	busy      func() bool // a sign-in or a role change runs: never hide
 	pinned    bool
 	placed    bool      // dragged by the user: keep the position
 	movedByUs time.Time // programmatic positioning (not a user drag)
@@ -44,7 +56,17 @@ func (d *desktop) Pinned() bool {
 func (d *desktop) SetPinned(p bool) {
 	d.mu.Lock()
 	d.pinned = p
+	dir := d.prefsDir
 	d.mu.Unlock()
+	if dir != "" {
+		tray.SaveWindowPrefs(dir, tray.WindowPrefs{AutoHide: !p})
+	}
+}
+
+// autoHide: the popup hides on losing the focus (the user's choice, and no
+// sign-in in progress).
+func (d *desktop) autoHide() bool {
+	return !d.Pinned() && (d.busy == nil || !d.busy())
 }
 
 func (d *desktop) Hide() {
@@ -101,12 +123,31 @@ func (s *wailsShell) Notify(title, body string) {
 	}
 }
 
+// popupOptions: the popup window (and its WebView2 settings: an app, not a
+// browser).
+func popupOptions(url string) application.WebviewWindowOptions {
+	return application.WebviewWindowOptions{
+		Name: "popup", Title: "Remote Workers", Width: 460, Height: 780, MinWidth: 360, MinHeight: 300,
+		Frameless: true, AlwaysOnTop: true, Hidden: true, URL: url,
+		BackgroundColour: application.NewRGB(13, 17, 23),
+		Windows:          application.WindowsWindow{HiddenOnTaskbar: true},
+		// the page's own menu (Copy / Paste) only; no zoom, no file drops;
+		// devtools follow the build (on without the production tag)
+		DefaultContextMenuDisabled: true,
+		ZoomControlEnabled:         false,
+		EnableFileDrop:             false,
+		DevToolsEnabled:            !releaseBuild,
+	}
+}
+
 func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error {
-	d := &desktop{}
+	prefs := tray.LoadWindowPrefs(o.LongarmConfigDir)
+	d := &desktop{prefsDir: o.LongarmConfigDir, pinned: !prefs.AutoHide}
 	srv, err := tray.NewServer(o, d, "")
 	if err != nil {
 		return err
 	}
+	d.busy = srv.Busy
 	go srv.Serve()
 	defer srv.Close()
 
@@ -123,16 +164,11 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 		Mac: application.MacOptions{ActivationPolicy: application.ActivationPolicyAccessory},
 	})
 	d.app = app
-	d.win = app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name: "popup", Title: "Remote Workers", Width: 460, Height: 780, MinWidth: 360, MinHeight: 300,
-		Frameless: true, AlwaysOnTop: true, Hidden: true, URL: srv.URL("/tray"),
-		BackgroundColour: application.NewRGB(13, 17, 23),
-		Windows:          application.WindowsWindow{HiddenOnTaskbar: true},
-	})
+	d.win = app.Window.NewWithOptions(popupOptions(srv.URL("/tray")))
 	d.win.OnWindowEvent(events.Common.WindowLostFocus, func(*application.WindowEvent) {
 		// a short delay: focus can bounce while the window is being shown
 		time.AfterFunc(150*time.Millisecond, func() {
-			if !d.Pinned() && d.win.IsVisible() && !d.win.IsFocused() {
+			if d.autoHide() && d.win.IsVisible() && !d.win.IsFocused() {
 				d.Hide()
 			}
 		})
@@ -152,7 +188,10 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 	t.OnClick(d.toggle)
 	menu := app.NewMenu()
 	menu.Add("Show panel").OnClick(func(*application.Context) { d.show() })
-	menu.Add("Sign in with Microsoft…").OnClick(func(*application.Context) { d.show() }) // the popup's account card
+	menu.Add("Sign in with Microsoft…").OnClick(func(*application.Context) {
+		srv.AutoSignIn() // when one is needed: the code at once
+		d.show()
+	})
 	menu.Add("Open hub panel").OnClick(func(*application.Context) {
 		if u := tray.HubURL(o); u != "" {
 			tray.OpenURL(u)
@@ -171,15 +210,35 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	ctrl := tray.NewController(o, &wailsShell{tray: t, notes: notes}, startDaemon)
+	shell := &wailsShell{tray: t, notes: notes}
+	ctrl := tray.NewController(o, shell, startDaemon)
 	go ctrl.Run(cctx)
+	go srv.WatchSignIn(cctx, shell.Notify)
+	// a sign-in's code: the popup up (it stays: Busy), the code on the
+	// clipboard, and a notification with it (when the popup is hidden
+	// behind something after all)
+	srv.OnSignInCode = func(c tray.SignInCode) {
+		d.show()
+		copied := app.Clipboard.SetText(c.Code)
+		body := "Enter it at " + c.URL + " (opened in your browser)."
+		if copied {
+			body = "Copied to the clipboard. " + body
+		}
+		shell.Notify("Longarm sign-in code: "+c.Code, body)
+	}
 	go func() {
 		<-ctx.Done()
 		app.Quit()
 	}()
-	if o.ShowSignIn && srv.NeedsSignIn() {
-		// launched by the installer: show "Sign in with Microsoft" right away
-		time.AfterFunc(1500*time.Millisecond, d.show)
+	// started by the installer (--signin), or the first start of this
+	// version: a sign-in that is needed starts by itself (the code shows at
+	// once); without a known hub the popup asks for one
+	first := tray.FirstStart(o.LongarmConfigDir, o.Version)
+	if (o.ShowSignIn || first) && srv.NeedsSignIn() {
+		time.AfterFunc(1500*time.Millisecond, func() {
+			srv.AutoSignIn()
+			d.show()
+		})
 	}
 	return app.Run()
 }

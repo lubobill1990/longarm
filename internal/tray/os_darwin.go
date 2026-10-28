@@ -33,3 +33,11 @@ func OpenTerminal(argv []string) error {
 func RunElevated(string, ...string) error {
 	return errors.New("elevated actions are Windows-only")
 }
+
+// ErrElevationCanceled: the user declined the administrator prompt.
+var ErrElevationCanceled = errors.New("canceled at the administrator prompt")
+
+// RunElevatedWait: Windows only (the roles change).
+func RunElevatedWait(string, ...string) error {
+	return errors.New("elevated actions are Windows-only")
+}

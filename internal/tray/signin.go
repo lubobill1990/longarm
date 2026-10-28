@@ -2,6 +2,7 @@ package tray
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"net/http"
 	"os"
@@ -157,32 +158,63 @@ type Account struct {
 	// RunMode of the worker: "session", "service" or "".
 	RunMode string                `json:"run_mode,omitempty"`
 	Admin   *longarmd.AdminStatus `json:"admin,omitempty"`
+	// Expires: when this machine's sign-in (the client device's
+	// certificate, else the worker's) ends; Expired: it has (SignedIn is
+	// then false and a sign-in is Needed).
+	Expires *time.Time `json:"expires,omitempty"`
+	Expired bool       `json:"expired,omitempty"`
+	// Roles: what this computer is (the installer's record, changed in the
+	// Account tab when RolesEditable); RolesNote says why a role can't
+	// change.
+	Roles         AccountRoles `json:"roles"`
+	RolesEditable bool         `json:"roles_editable"`
+	RolesNote     string       `json:"roles_note,omitempty"`
+	// CloudPC: why this machine looks like a Cloud PC / Dev Box (it
+	// usually runs jobs: the tab suggests the worker role).
+	CloudPC string `json:"cloud_pc,omitempty"`
+}
+
+// AccountRoles: send jobs (client), run jobs (worker), admin commands.
+type AccountRoles struct {
+	Client      bool `json:"client"`
+	Worker      bool `json:"worker"`
+	AdminWorker bool `json:"admin_worker"`
 }
 
 // account describes this machine's sign-in.
 func (s *Server) account() Account {
 	var a Account
 	cfgDir, dataDir := s.opts.LongarmConfigDir, s.opts.LongarmdDataDir
-	clientCert := filepath.Join(cfgDir, client.TLSDir, pki.NodeCertFile)
-	if b, err := os.ReadFile(clientCert); err == nil {
-		if c, err := pki.ParseCertPEM(b); err == nil {
-			if id, err := pki.IdentityFromCert(c); err == nil {
-				a.SignedIn, a.User = true, id.Owner()
+	now := s.now()
+	clientValid, workerValid := false, false
+	if c := readCert(filepath.Join(cfgDir, client.TLSDir, pki.NodeCertFile)); c != nil {
+		na := c.NotAfter
+		a.Expires = &na
+		clientValid = now.Before(na)
+		if id, err := pki.IdentityFromCert(c); err == nil && clientValid {
+			a.SignedIn, a.User = true, id.Owner()
+		}
+	}
+	if c := readCert(filepath.Join(dataDir, longarmd.TLSDir, pki.NodeCertFile)); c != nil {
+		if a.Expires == nil {
+			na := c.NotAfter
+			a.Expires = &na
+		}
+		workerValid = now.Before(c.NotAfter)
+		if hf, err := hubclient.LoadFile(dataDir); err == nil && workerValid {
+			a.SignedIn = true
+			if a.User == "" {
+				a.User = hf.Owner
 			}
 		}
 	}
-	workerCert := exists(dataDir, longarmd.TLSDir, pki.NodeCertFile)
-	if hf, err := hubclient.LoadFile(dataDir); err == nil && workerCert {
-		a.SignedIn = true
-		if a.User == "" {
-			a.User = hf.Owner
-		}
-	}
+	a.Expired = a.Expires != nil && !now.Before(*a.Expires)
 	a.Hub, _, a.HubFrom = s.signinHub()
 	wantClient, _ := s.installedRoles()
-	t := s.targets()
+	t := s.targets(nil)
 	a.Targets = t
-	a.Needed = (wantClient && t.Client && !exists(clientCert)) || (t.Worker && !workerCert) || t.AdminWorker
+	a.Needed = (wantClient && t.Client && !clientValid) || (t.Worker && !workerValid) || t.AdminWorker
+	s.accountRoles(&a)
 	if s.installedWorker != nil {
 		mode, adm := s.installedWorker()
 		a.RunMode = mode
@@ -202,8 +234,21 @@ func queryService(name string) (string, error) {
 	return string(st), nil
 }
 
-// targets is what a sign-in would enroll now.
-func (s *Server) targets() SignInTarget {
+func readCert(p string) *x509.Certificate {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil
+	}
+	c, err := pki.ParseCertPEM(b)
+	if err != nil {
+		return nil
+	}
+	return c
+}
+
+// targets is what a sign-in would enroll now; only (a role change: the
+// roles just added) narrows it.
+func (s *Server) targets(only *SignInTarget) SignInTarget {
 	c, _ := s.installedRoles()
 	t := SignInTarget{Client: c, Worker: s.workerSignIn()}
 	if !t.Client && !t.Worker {
@@ -213,6 +258,9 @@ func (s *Server) targets() SignInTarget {
 		if _, adm := s.installedWorker(); adm.Enabled && adm.Handoff != "" {
 			t.AdminWorker = exists(adm.Handoff, longarmd.AdminRequestFile)
 		}
+	}
+	if only != nil {
+		t = SignInTarget{Client: t.Client && only.Client, Worker: t.Worker && only.Worker, AdminWorker: t.AdminWorker && only.AdminWorker}
 	}
 	return t
 }
@@ -237,35 +285,51 @@ func (s *Server) signinStart(w http.ResponseWriter, r *http.Request) {
 	if !readBody(w, r, &body) {
 		return
 	}
-	body.Hub = strings.TrimSpace(body.Hub)
-	if len(body.Hub) > 256 || strings.ContainsAny(body.Hub, " \t\"'`;&|") {
-		httpError(w, http.StatusBadRequest, "bad hub address")
+	st, code, err := s.startSignIn(body.Hub, body.Labels, nil)
+	if err != nil {
+		httpError(w, code, err.Error())
 		return
 	}
+	writeJSON(w, st)
+}
+
+// startSignIn starts a sign-in to hubIn ("" = signinHub) of the targets
+// (only narrows them); a refusal comes with its HTTP status.
+func (s *Server) startSignIn(hubIn, labelsIn string, only *SignInTarget) (SignInState, int, error) {
+	hubIn = strings.TrimSpace(hubIn)
+	if len(hubIn) > 256 || strings.ContainsAny(hubIn, " \t\"'`;&|") {
+		return SignInState{}, http.StatusBadRequest, errors.New("bad hub address")
+	}
 	var labels map[string]string
-	if body.Labels != "" {
-		m, err := sched.ParseLabels([]string{body.Labels}, false)
+	if labelsIn != "" {
+		m, err := sched.ParseLabels([]string{labelsIn}, false)
 		if err != nil {
-			httpError(w, http.StatusBadRequest, err.Error())
-			return
+			return SignInState{}, http.StatusBadRequest, err
 		}
 		labels = m
 	}
 	hub, fp, _ := s.signinHub()
-	if body.Hub != "" {
-		hub, fp = body.Hub, ""
+	if hubIn != "" {
+		hub, fp = hubIn, ""
 	}
 	if hub == "" {
-		httpError(w, http.StatusBadRequest, "which hub? enter its address (e.g. longarm.example.com)")
-		return
+		return SignInState{}, http.StatusBadRequest, errors.New("which hub? enter its address (e.g. longarm.example.com)")
 	}
-	t := s.targets()
+	t := s.targets(only)
+	if !t.Client && !t.Worker && !t.AdminWorker {
+		return SignInState{}, http.StatusConflict, errors.New("nothing to sign in")
+	}
 	so := signin.Options{Hub: hub, Fingerprint: fp, OpenBrowser: true, WorkerLabels: labels}
 	if t.Client {
 		so.Client = client.DeviceTarget{ConfigDir: s.opts.LongarmConfigDir}
 	}
 	if t.Worker {
 		so.Worker = longarmd.WorkerTarget{DataDir: s.opts.LongarmdDataDir}
+		if s.installedWorker != nil {
+			if mode, _ := s.installedWorker(); mode == "session" {
+				so.WorkerKind = "user session"
+			}
+		}
 	}
 	if t.AdminWorker {
 		_, adm := s.installedWorker()
@@ -275,15 +339,33 @@ func (s *Server) signinStart(w http.ResponseWriter, r *http.Request) {
 	run.mu.Lock()
 	if run.st.State == "running" {
 		run.mu.Unlock()
-		httpError(w, http.StatusConflict, "a sign-in is already running")
-		return
+		return SignInState{}, http.StatusConflict, errors.New("a sign-in is already running")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	run.cancel = cancel
 	run.st = SignInState{State: "running", Hub: hub, Started: time.Now(), Targets: t}
 	run.mu.Unlock()
 	go s.runSignIn(ctx, so)
-	writeJSON(w, run.snapshot())
+	return run.snapshot(), http.StatusOK, nil
+}
+
+// Busy reports whether a sign-in or a role change runs: the popup then
+// stays open (it must not hide when the browser takes the focus).
+func (s *Server) Busy() bool {
+	return s.signin.snapshot().State == "running" || s.rolesBusy()
+}
+
+// AutoSignIn starts the sign-in by itself when this machine needs one and
+// the hub is known (the tray the installer starts, the first start after
+// an install): the code shows at once, no click on "Sign in". It reports
+// whether it started one.
+func (s *Server) AutoSignIn() bool {
+	a := s.account()
+	if !a.Needed || a.Hub == "" {
+		return false
+	}
+	_, _, err := s.startSignIn("", "", nil)
+	return err == nil
 }
 
 func (s *Server) runSignIn(ctx context.Context, so signin.Options) {
@@ -299,9 +381,11 @@ func (s *Server) runSignIn(ctx context.Context, so signin.Options) {
 			})
 		},
 		Code: func(c signin.Code) {
-			run.update(func(st *SignInState) {
-				st.Code = &SignInCode{URL: c.URL, Code: c.Code, Expires: c.Expires, Kind: c.Kind, Host: c.Host, AdminWorker: c.AdminWorker}
-			})
+			sc := &SignInCode{URL: c.URL, Code: c.Code, Expires: c.Expires, Kind: c.Kind, Host: c.Host, AdminWorker: c.AdminWorker}
+			run.update(func(st *SignInState) { st.Code = sc })
+			if s.OnSignInCode != nil {
+				go s.OnSignInCode(*sc) // the shell: keep the popup up, copy the code, a notification
+			}
 		},
 	}
 	signIn := s.signIn

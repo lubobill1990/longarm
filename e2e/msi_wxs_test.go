@@ -344,3 +344,133 @@ func TestMSIMaintenanceCheck(t *testing.T) {
 		t.Error("no LongarmdSettings action")
 	}
 }
+
+// TestMSIRoleChoices (static): the Default page says what each role
+// installs, the admin worker comes only with a worker role (both pages
+// disable the checkbox for a client, Next never sets ADMIN_WORKER for one,
+// a silent ROLES=client ADMIN_WORKER=1 is refused - except an install from
+// before that rule that already has it), and the Finish page lists what
+// was installed (with the tray icon's hiding place and the new terminal
+// PATH needs).
+func TestMSIRoleChoices(t *testing.T) {
+	b, err := os.ReadFile("../packaging/windows/longarm.wxs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := strings.NewReplacer("&lt;", "<", "&gt;", ">", "&amp;", "", "&quot;", `"`).Replace(string(b))
+	dialog := func(id string) string {
+		m := regexp.MustCompile(`(?s)<Dialog Id="` + id + `".*?</Dialog>`).FindString(src)
+		if m == "" {
+			t.Fatalf("no dialog %s", id)
+		}
+		return m
+	}
+	mode := dialog("ModeDlg")
+	for _, want := range []string{
+		"This is my everyday computer: send jobs to workers",
+		"Installs the client: longarm and the tray",
+		"This machine runs jobs (Dev Box, build machine)",
+		"It becomes your worker, and you can also send jobs from it",
+		"starts at your logon, no password",
+		"even before anyone logs on (runs as SYSTEM, owner-only)",
+	} {
+		if !strings.Contains(mode, want) {
+			t.Errorf("ModeDlg without %q", want)
+		}
+	}
+	control := func(dlg, id string) string {
+		m := regexp.MustCompile(`(?s)<Control Id="` + id + `".*?/>`).FindString(dlg)
+		if m == "" {
+			t.Fatalf("no control %s", id)
+		}
+		return m
+	}
+	if c := control(mode, "Admin"); !strings.Contains(c, `DisableCondition='MODE_UI<>"default" OR DEFAULT_ROLES="client"'`) {
+		t.Errorf("ModeDlg Admin: %s", c)
+	}
+	if c := control(dialog("RolesDlg"), "Admin"); !strings.Contains(c, `DisableCondition='ROLES="client"'`) {
+		t.Errorf("RolesDlg Admin: %s", c)
+	}
+	for _, m := range regexp.MustCompile(`<Publish Dialog="ModeDlg" Control="Next" Property="ADMIN_WORKER" Value="1"[^\n]*/>`).FindAllString(src, -1) {
+		if !strings.Contains(m, `DEFAULT_ROLES<>"client"`) {
+			t.Errorf("ModeDlg sets ADMIN_WORKER for a client: %s", m)
+		}
+	}
+	if !regexp.MustCompile(`<Publish Dialog="RolesDlg" Control="Next" Property="ADMIN_WORKER" Value="\{\}"[^>]*ROLES="client"`).MatchString(src) {
+		t.Error("RolesDlg keeps ADMIN_WORKER for a client")
+	}
+	m := regexp.MustCompile(`<Custom Action="CheckAdminRole"[^>]*Condition='([^']*)'`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal("CheckAdminRole not scheduled")
+	}
+	for _, want := range []string{`ADMIN_WORKER="1"`, "NOT IsWorker", `SAVED_ADMIN_WORKER<>"1"`, `NOT REMOVE="ALL"`} {
+		if !strings.Contains(m[1], want) {
+			t.Errorf("CheckAdminRole condition %q without %s", m[1], want)
+		}
+	}
+	// the condition, for the cases that matter
+	refused := func(admin string, worker bool, saved string) bool { return admin == "1" && !worker && saved != "1" }
+	if !refused("1", false, "") || refused("1", true, "") || refused("1", false, "1") || refused("", false, "") {
+		t.Error("CheckAdminRole logic")
+	}
+	// Finish
+	fin := regexp.MustCompile(`(?s)<SetProperty Id="WIXUI_EXITDIALOGOPTIONALTEXT"[^>]*/>`).FindString(src)
+	for _, want := range []string{"[FINISH_ROLES]", "[FINISH_SIGNIN]", "^ arrow", "new terminal", `NOT REMOVE="ALL"`} {
+		if !strings.Contains(fin, want) {
+			t.Errorf("Finish text without %q: %s", want, fin)
+		}
+	}
+	for _, id := range []string{"SetFinishClient", "SetFinishBoth", "SetFinishWorker", "SetFinishBothSvc", "SetFinishWorkerSvc", "SetFinishAdmin", "SetFinishSignIn"} {
+		if !strings.Contains(src, `Action="`+id+`"`) {
+			t.Errorf("no %s", id)
+		}
+	}
+}
+
+// TestMSICloudPCDetection (static): the Default page preselects "This
+// machine runs jobs" on a Cloud PC / Dev Box - by the same computer name
+// prefix and Dev Box agent services as longarmd.LooksLikeCloudPC (the
+// tray's hint), with read-only registry searches - in the UI sequence only
+// (a silent install keeps ROLES=client unless given) and never over
+// recorded roles.
+func TestMSICloudPCDetection(t *testing.T) {
+	b, err := os.ReadFile("../packaging/windows/longarm.wxs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := strings.NewReplacer("&lt;", "<", "&gt;", ">").Replace(string(b))
+	set := func(id string) string {
+		m := regexp.MustCompile(`(?s)<SetProperty Id="[A-Z_]+"( Action="`+id+`")?[^>]*/>`).FindAllString(src, -1)
+		for _, x := range m {
+			if strings.Contains(x, `Action="`+id+`"`) || !strings.Contains(x, "Action=") && strings.Contains(x, `Id="`+strings.TrimPrefix(id, "Set")+`"`) {
+				return x
+			}
+		}
+		t.Fatalf("no SetProperty %s", id)
+		return ""
+	}
+	cloud := set("SetCLOUD_PC")
+	if !strings.Contains(cloud, `ComputerName ~<< "`+longarmd.CloudPCNamePrefix+`"`) || !strings.Contains(cloud, `Sequence="ui"`) {
+		t.Errorf("CLOUD_PC: %s", cloud)
+	}
+	for _, svc := range longarmd.DevBoxAgentServices {
+		re := regexp.MustCompile(`<Property Id="([A-Z_]+)">\s*<RegistrySearch [^>]*Key="` + regexp.QuoteMeta(`SYSTEM\CurrentControlSet\Services\`+svc) + `" Name="ImagePath" Type="raw"`)
+		m := re.FindStringSubmatch(src)
+		if m == nil {
+			t.Errorf("no registry search for the service %s", svc)
+			continue
+		}
+		if !strings.Contains(cloud, m[1]) {
+			t.Errorf("CLOUD_PC does not use %s", m[1])
+		}
+	}
+	for _, id := range []string{"SetDefaultRolesCloud", "SetRolesCloud"} {
+		x := set(id)
+		if !strings.Contains(x, `Value="both"`) || !strings.Contains(x, `Sequence="ui"`) || !strings.Contains(x, "NOT ROLES_RECORDED") || !strings.Contains(x, "NOT Installed") {
+			t.Errorf("%s: %s", id, x)
+		}
+	}
+	if !regexp.MustCompile(`<Property Id="ROLES_RECORDED">\s*<RegistrySearch [^>]*Name="Roles"`).MatchString(src) {
+		t.Error("ROLES_RECORDED does not search the recorded roles")
+	}
+}

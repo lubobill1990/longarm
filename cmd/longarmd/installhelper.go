@@ -42,6 +42,7 @@ func installHelperCmd() *cobra.Command {
 			return runMSIStep(cmd.Context(), args[0], rawCommandLine(), msiEnv{})
 		},
 	})
+	c.AddCommand(rolesHelperCmd())
 	return c
 }
 

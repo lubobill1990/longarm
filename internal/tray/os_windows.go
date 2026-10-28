@@ -3,9 +3,11 @@ package tray
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -59,4 +61,71 @@ func RunElevated(exe string, args ...string) error {
 	}
 	const swHide = 0
 	return windows.ShellExecute(0, verb, file, params, nil, swHide)
+}
+
+// ErrElevationCanceled: the user declined the administrator prompt.
+var ErrElevationCanceled = errors.New("canceled at the administrator prompt")
+
+// shellExecuteInfo is SHELLEXECUTEINFOW.
+type shellExecuteInfo struct {
+	cbSize       uint32
+	fMask        uint32
+	hwnd         windows.Handle
+	verb         *uint16
+	file         *uint16
+	parameters   *uint16
+	directory    *uint16
+	show         int32
+	instApp      windows.Handle
+	idList       uintptr
+	class        *uint16
+	keyClass     windows.Handle
+	hotKey       uint32
+	iconOrMonitr windows.Handle
+	process      windows.Handle
+}
+
+var procShellExecuteExW = windows.NewLazySystemDLL("shell32.dll").NewProc("ShellExecuteExW")
+
+// RunElevatedWait runs exe elevated (the UAC prompt) and waits for it:
+// ErrElevationCanceled when the prompt was declined, an error naming the
+// exit code when it failed.
+func RunElevatedWait(exe string, args ...string) error {
+	q := make([]string, len(args))
+	for i, a := range args {
+		q[i] = syscall.EscapeArg(a)
+	}
+	verb, _ := windows.UTF16PtrFromString("runas")
+	file, err := windows.UTF16PtrFromString(exe)
+	if err != nil {
+		return err
+	}
+	params, err := windows.UTF16PtrFromString(strings.Join(q, " "))
+	if err != nil {
+		return err
+	}
+	const seeMaskNoCloseProcess, seeMaskNoAsync, swHide = 0x40, 0x100, 0
+	info := shellExecuteInfo{fMask: seeMaskNoCloseProcess | seeMaskNoAsync, verb: verb, file: file, parameters: params, show: swHide}
+	info.cbSize = uint32(unsafe.Sizeof(info))
+	if r, _, e := procShellExecuteExW.Call(uintptr(unsafe.Pointer(&info))); r == 0 {
+		if errors.Is(e, windows.ERROR_CANCELLED) {
+			return ErrElevationCanceled
+		}
+		return e
+	}
+	if info.process == 0 {
+		return errors.New("the elevated process did not start")
+	}
+	defer windows.CloseHandle(info.process)
+	if _, err := windows.WaitForSingleObject(info.process, windows.INFINITE); err != nil {
+		return err
+	}
+	var code uint32
+	if err := windows.GetExitCodeProcess(info.process, &code); err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("exit code %d", code)
+	}
+	return nil
 }
