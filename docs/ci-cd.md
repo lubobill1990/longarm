@@ -279,8 +279,8 @@ repositories on paid plans):
 The run then waits for an approval before anything is signed or deployed;
 `meta`, the builds and the image (no secrets) run right away; the
 versioned image `:X.Y.Z` is pushed before the approval (only `:latest`
-waits for publish) - to hold it back too, add the environment to the image
-job's caller or push the image only after publish.
+waits for publish) - to hold it back too, add `publish` to the `needs` of
+release.yml's `image` job (it then starts after the approval).
 
 ### 2.6 Ordering: hub first, then the fleet
 
