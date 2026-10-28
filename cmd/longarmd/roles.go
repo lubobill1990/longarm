@@ -44,7 +44,7 @@ func rolesHelperCmd() *cobra.Command {
 				msg += "; " + strings.Join(warn.lines, "; ")
 			}
 			if err != nil {
-				msg = "error: " + oneLineErr(err)
+				msg = "error: " + flatErr(err)
 				fmt.Fprintf(out, "%s install-helper roles: %s\n", time.Now().Format(time.RFC3339), msg)
 			} else {
 				fmt.Fprintf(out, "%s install-helper roles: ok\n", time.Now().Format(time.RFC3339))
@@ -71,7 +71,7 @@ func (w *warnings) Write(b []byte) (int, error) {
 	return w.w.Write(b)
 }
 
-func oneLineErr(err error) string {
+func flatErr(err error) string {
 	return strings.Join(strings.Fields(err.Error()), " ")
 }
 
