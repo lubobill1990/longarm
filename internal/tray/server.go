@@ -86,7 +86,7 @@ type Server struct {
 	// OnSignInCode (the shell): a sign-in shows its code - keep the popup
 	// up, copy the code, notify.
 	OnSignInCode func(SignInCode)
-	upd              trayUpdate // the update banner (update.go)
+	upd          trayUpdate // the update banner (update.go)
 
 	mu       sync.Mutex
 	headless bool
