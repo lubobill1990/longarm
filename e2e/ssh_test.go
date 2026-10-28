@@ -153,6 +153,15 @@ func TestSSH(t *testing.T) {
 		}
 	})
 
+	t.Run("longarm ssh", func(t *testing.T) {
+		// No ssh config at all (the tray's ssh buttons): longarm builds the
+		// ProxyCommand and fetches the host key itself.
+		r := runTool(t, "", bins.longarm, "--config-dir", e.client, "ssh", "w1", "--", bins.helper, "print", "2", "0", "5")
+		if r.code != 5 || !strings.Contains(r.out, "line 2") {
+			t.Fatalf("longarm ssh: %+v", r)
+		}
+	})
+
 	t.Run("pty", func(t *testing.T) {
 		// -tt with redirected input: input arrives as typed keys (Enter =
 		// CR), buffered by the terminal until the program reads it. (A file,

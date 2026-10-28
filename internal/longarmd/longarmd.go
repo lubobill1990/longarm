@@ -175,6 +175,10 @@ type HubConfig struct {
 	// read logs, apply the toolchain now), "all" (also submit command
 	// jobs, which makes the hub able to run commands here) or "none".
 	RemoteJobs string `toml:"remote_jobs"`
+	// Relay: "auto" (default) also listens on the hub's longnet relay when
+	// every listen URL is loopback (sign-in installs), so other machines
+	// reach this worker; "off" never does (relayleg.go).
+	Relay string `toml:"relay"`
 }
 
 // ToolchainConfig is the [toolchain] section.
@@ -783,6 +787,21 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	legs.start(cfg.Listen, hubFile.Tailnet)
 	wg.Add(1)
 	go func() { defer wg.Done(); <-ctx.Done(); legs.wait() }()
+	if hubOn && autoRelayLeg(cfg) {
+		agent.relay = &relayLeg{ctx: ctx, log: log, node: srv.Name, env: legs.env, srv: srv, serve: legs.serve,
+			track: func(relay string, lt *longnet.Transport) {
+				closersMu.Lock()
+				defer closersMu.Unlock()
+				if lt != nil {
+					longnets[relay] = lt
+				} else {
+					delete(longnets, relay)
+				}
+			},
+			changed: func() { writeEndpoints(); agent.rehello() }}
+		wg.Add(1)
+		go func() { defer wg.Done(); <-ctx.Done(); agent.relay.wait() }()
+	}
 	if hubOn && !cfg.Toolchain.Disabled && !adminWorker { // no package operations as SYSTEM on the hub's say
 		backend, err := toolchain.New(cfg.Toolchain.Backend, cfg.Toolchain.FakeState)
 		if sys, ok := backend.(*toolchain.System); ok {

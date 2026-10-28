@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -97,6 +98,108 @@ accepted as an alias of <name>.`,
 	}
 }
 
+// sshCmd runs OpenSSH to the worker's built-in sshd with longarm proxy as
+// its ProxyCommand, built on the fly: no ~/.ssh/config entries needed (the
+// tray's ssh buttons use it).
+func sshCmd() *cobra.Command {
+	var user string
+	c := &cobra.Command{
+		Use:   "ssh <worker> [-- ssh arguments...]",
+		Short: "Open ssh to a worker's built-in sshd through longarm (no ssh config needed)",
+		Long: `Run the OpenSSH client against the worker's built-in sshd through longarm's
+mTLS channel (ProxyCommand longarm proxy), with the worker's host key fetched
+over mTLS into <config-dir>/known_hosts - no ~/.ssh/config entries needed
+(longarm ssh-config writes those for plain ssh, scp and VS Code):
+
+  longarm ssh w1                    # interactive shell
+  longarm ssh w1 -- git status      # a command`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			sshExe, err := exec.LookPath("ssh")
+			if err != nil {
+				return fmt.Errorf("no OpenSSH client (ssh) on this machine: %w (longarm attach %s opens a shell without it)", err, name)
+			}
+			s, err := openSession()
+			if err != nil {
+				return err
+			}
+			cfgDir, _ := filepath.Abs(s.cfg.Dir)
+			keys, _ := fetchHostKeys(cmd.Context(), s, []string{name})
+			s.close()
+			khPath := filepath.Join(cfgDir, knownHostsFile)
+			if err := updateKnownHosts(khPath, keys); err != nil {
+				return err
+			}
+			exe, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			strict := "accept-new"
+			if _, ok := keys[name]; ok {
+				strict = "yes"
+			}
+			argv := []string{
+				"-o", fmt.Sprintf("ProxyCommand=%s --config-dir %s proxy %s", sshQuote(exe), sshQuote(cfgDir), name),
+				"-o", "HostKeyAlias=" + sshHostPrefix + name,
+				"-o", "UserKnownHostsFile=" + sshQuote(khPath),
+				"-o", "StrictHostKeyChecking=" + strict,
+				"-o", "ServerAliveInterval=30",
+				"-l", user, name,
+			}
+			sc := exec.Command(sshExe, append(argv, args[1:]...)...)
+			sc.Stdin, sc.Stdout, sc.Stderr = os.Stdin, os.Stdout, os.Stderr
+			if err := sc.Run(); err != nil {
+				var ee *exec.ExitError
+				if errors.As(err, &ee) {
+					return &exitError{code: ee.ExitCode()}
+				}
+				return err
+			}
+			return nil
+		},
+	}
+	c.Flags().StringVar(&user, "user", "longarm", "ssh user name (informational; sessions run as longarmd's account)")
+	return c
+}
+
+// fetchHostKeys fetches the workers' sshd host keys over mTLS (Node.Info);
+// workers that can't be reached or have no sshd are reported on stderr and
+// left out.
+func fetchHostKeys(ctx context.Context, s *session, names []string) (map[string]string, error) {
+	keys := map[string]string{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, n := range names {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := s.conn(n)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "longarm: %s: %v\n", n, err)
+				return
+			}
+			defer conn.Close()
+			ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			info, err := conn.Node().Info(ctx, &pb.InfoRequest{})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "longarm: %s: host key not fetched: %s\n", n, oneLine(err))
+				return
+			}
+			if info.SshHostKey == "" {
+				fmt.Fprintf(os.Stderr, "longarm: %s: built-in sshd is disabled\n", n)
+				return
+			}
+			mu.Lock()
+			keys[n] = info.SshHostKey
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return keys, nil
+}
+
 func sshConfigCmd() *cobra.Command {
 	var noFetch bool
 	var user string
@@ -137,35 +240,7 @@ Each worker's sshd host key is fetched over mTLS (Node.Info) and written to
 			khPath := filepath.Join(cfgDir, knownHostsFile)
 			keys := map[string]string{}
 			if !noFetch {
-				var mu sync.Mutex
-				var wg sync.WaitGroup
-				for _, n := range names {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
-						conn, err := s.conn(n)
-						if err != nil {
-							fmt.Fprintf(os.Stderr, "longarm: %s: %v\n", n, err)
-							return
-						}
-						defer conn.Close()
-						ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
-						defer cancel()
-						info, err := conn.Node().Info(ctx, &pb.InfoRequest{})
-						if err != nil {
-							fmt.Fprintf(os.Stderr, "longarm: %s: host key not fetched: %s\n", n, oneLine(err))
-							return
-						}
-						if info.SshHostKey == "" {
-							fmt.Fprintf(os.Stderr, "longarm: %s: built-in sshd is disabled\n", n)
-							return
-						}
-						mu.Lock()
-						keys[n] = info.SshHostKey
-						mu.Unlock()
-					}()
-				}
-				wg.Wait()
+				keys, _ = fetchHostKeys(cmd.Context(), s, names)
 				if err := updateKnownHosts(khPath, keys); err != nil {
 					return err
 				}

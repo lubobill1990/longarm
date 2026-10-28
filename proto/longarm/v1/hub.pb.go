@@ -2266,7 +2266,13 @@ type HubWelcome struct {
 	HubDraining     bool                   `protobuf:"varint,5,opt,name=hub_draining,json=hubDraining,proto3" json:"hub_draining,omitempty"` // drained by an admin
 	// The hub's tailnet: a node whose embedded tailscale node uses another
 	// control server switches (new key, own state dir per control URL).
-	Tailnet       *TailnetInfo `protobuf:"bytes,6,opt,name=tailnet,proto3" json:"tailnet,omitempty"`
+	Tailnet *TailnetInfo `protobuf:"bytes,6,opt,name=tailnet,proto3" json:"tailnet,omitempty"`
+	// The hub's longnet relay, "host:port" (UDP; its TLS fallback is the hub's
+	// own TCP port). An empty host is the host the node dials the hub on;
+	// "" = the hub runs no relay. Workers that listen on loopback only (the
+	// default of sign-in installs) listen on it too, so other machines reach
+	// them (longarmd.toml [hub] relay).
+	Relay         string `protobuf:"bytes,7,opt,name=relay,proto3" json:"relay,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2341,6 +2347,13 @@ func (x *HubWelcome) GetTailnet() *TailnetInfo {
 		return x.Tailnet
 	}
 	return nil
+}
+
+func (x *HubWelcome) GetRelay() string {
+	if x != nil {
+		return x.Relay
+	}
+	return ""
 }
 
 type Revocations struct {
@@ -9427,7 +9440,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x11HubToolchainApply\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x0e\n" +
-	"\x02by\x18\x02 \x01(\tR\x02by\"\xa8\x02\n" +
+	"\x02by\x18\x02 \x01(\tR\x02by\"\xbe\x02\n" +
 	"\n" +
 	"HubWelcome\x12\x1d\n" +
 	"\n" +
@@ -9436,7 +9449,8 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x10metrics_interval\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\x0fmetricsInterval\x12<\n" +
 	"\frenew_before\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\vrenewBefore\x12!\n" +
 	"\fhub_draining\x18\x05 \x01(\bR\vhubDraining\x121\n" +
-	"\atailnet\x18\x06 \x01(\v2\x17.longarm.v1.TailnetInfoR\atailnet\"V\n" +
+	"\atailnet\x18\x06 \x01(\v2\x17.longarm.v1.TailnetInfoR\atailnet\x12\x14\n" +
+	"\x05relay\x18\a \x01(\tR\x05relay\"V\n" +
 	"\vRevocations\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\x12-\n" +
 	"\x05certs\x18\x02 \x03(\v2\x17.longarm.v1.RevokedCertR\x05certs\"r\n" +

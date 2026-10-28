@@ -89,7 +89,7 @@ func (d *daemon) poolTargets(ctx context.Context) ([]pool.Target, bool) {
 			continue
 		}
 		seen[n.Name] = true
-		out = append(out, pool.Target{Name: n.Name, Legs: client.NodeLegs(n.Name, n.Endpoints)})
+		out = append(out, pool.Target{Name: n.Name, Legs: client.NodeLegs(n.Name, client.ReachableEndpoints(n.Endpoints, n.Hostname))})
 		if ok {
 			d.mon.HubNode(n)
 		}

@@ -60,6 +60,7 @@ type hubAgent struct {
 	tc        *toolchain.Reconciler
 	upd       *updater // nil when self-update is off
 	tailnet   *tailnetLegs
+	relay     *relayLeg    // nil: no hub relay leg (relayleg.go)
 	links     *linkManager // port links (nil in tests)
 	channel   string
 	connected atomic.Bool // a session reached the welcome at least once
@@ -375,6 +376,7 @@ func (a *hubAgent) session(ctx context.Context) error {
 	}
 	a.log.Info("hub: connected", "hub", a.addr, "state", w.NodeState)
 	a.tailnet.apply(w.Tailnet)
+	a.relay.apply(a.addr, w.Relay)
 
 	errc := make(chan error, 2)
 	go func() {
