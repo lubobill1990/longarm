@@ -121,8 +121,10 @@ func TestCIScripts(t *testing.T) {
 	if ls := h.mustLongarm(h.admin, "admin", "release", "ls"); !strings.Contains(ls, "1.7.0") {
 		t.Fatalf("release ls: %s", ls)
 	}
-	// rollout: reaches the hub's push (no self-updating worker here)
-	if r := run(secrets, "longarm-release.sh", "rollout", longarm, "1.7.0", "1s"); r.code == 0 || !strings.Contains(r.stderr, "can self-update") {
+	// rollout: reaches the hub's push; no self-updating worker here, which
+	// is a warning (push --allow-none exits 79), not a failure
+	if r := run(secrets, "longarm-release.sh", "rollout", longarm, "1.7.0", "1s"); r.code != 0 || !strings.Contains(r.stdout, "::warning title=no self-updating worker::") ||
+		!strings.Contains(r.stderr, "nothing rolled out") {
 		t.Fatalf("rollout: %+v", r)
 	}
 	// missing / broken secrets: clear errors, nothing left behind

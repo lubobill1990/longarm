@@ -391,8 +391,11 @@ func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, e
 		// nothing to roll out; the workers that can't self-update get the
 		// version as a notice (CheckUpdate.latest_version: the tray's
 		// MSI banner, longarmd status) - the current rollout stays as is
-		return &pb.Rollout{Version: req.Version, Channel: channel, State: rolloutNone, NotCapable: cantUpdate,
-			Message: fmt.Sprintf("no worker of channel %s can self-update; %d update with the MSI (the tray's banner) or the install script", channel, len(cantUpdate))}, nil
+		msg := fmt.Sprintf("no approved worker of channel %s", channel)
+		if len(cantUpdate) > 0 {
+			msg = fmt.Sprintf("no worker of channel %s can self-update; %d update with the MSI (the tray's banner) or the install script", channel, len(cantUpdate))
+		}
+		return &pb.Rollout{Version: req.Version, Channel: channel, State: rolloutNone, NotCapable: cantUpdate, Message: msg}, nil
 	}
 	if len(cands) == 0 {
 		return nil, status.Errorf(codes.FailedPrecondition, "no approved worker of channel %s can self-update (not capable: %v)", channel, cantUpdate)

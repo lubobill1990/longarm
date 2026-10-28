@@ -105,8 +105,12 @@ failure).`,
 				}
 				printRollout(r)
 				if r.State == "none" {
-					return &exitError{code: exitNoneCapable, msg: fmt.Sprintf("nothing rolled out: no worker can self-update %s (not capable: %s); they update with the MSI (the tray's banner) or the install script",
-						r.Version, strings.Join(r.NotCapable, ", "))}
+					msg := "nothing rolled out: no approved worker of channel " + r.Channel
+					if len(r.NotCapable) > 0 {
+						msg = fmt.Sprintf("nothing rolled out: no worker can self-update %s (not capable: %s); they update with the MSI (the tray's banner) or the install script",
+							r.Version, strings.Join(r.NotCapable, ", "))
+					}
+					return &exitError{code: exitNoneCapable, msg: msg}
 				}
 				if follow {
 					return followRollout(cmd, h)
