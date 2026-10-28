@@ -110,6 +110,46 @@ foreach ($p in 'ADMIN_SERVICE_NAME', 'ADMIN_DATADIR', 'ADMIN_HANDOFF') {
   if ($secure -contains $p) { throw "$p must not be a (secure) property any more" }
 }
 
+# upgrades with Longarm running (internal/msiupgrade, docs/usage.md "Upgrading"): no Restart Manager, the
+# upgrade helper from the Binary table, its steps in the right places, the services stopped and waited for
+function Seq([string] $action) {
+  $r = Query $default "SELECT ``Sequence`` FROM ``InstallExecuteSequence`` WHERE ``Action`` = '$action'"
+  if (-not $r.Count) { throw "default.msi: $action is not in InstallExecuteSequence" }
+  return [int]$r[0]
+}
+if ((Prop $default 'MSIRESTARTMANAGERCONTROL') -ne 'Disable') { throw 'default.msi: MSIRESTARTMANAGERCONTROL is not Disable' }
+$binaries = Query $default 'SELECT `Name` FROM `Binary`'
+if ($binaries -notcontains 'LongarmMsiHelper') { throw 'default.msi: no LongarmMsiHelper in the Binary table' }
+foreach ($a in @{ LongarmStopTray = 'stop-tray'; LongarmUpgradeStop = 'stop'; LongarmUpgradeStopRollback = 'rollback'; LongarmRemoveStop = 'stop-remove' }.GetEnumerator()) {
+  $src = Query $default "SELECT ``Source`` FROM ``CustomAction`` WHERE ``Action`` = '$($a.Key)'"
+  $tgt = Query $default "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action`` = '$($a.Key)'"
+  if ($src[0] -ne 'LongarmMsiHelper') { throw "default.msi: $($a.Key) does not run the upgrade helper ($($src[0]))" }
+  if ($tgt[0] -ne "$($a.Value) #LONGARM-MSI#usersid=[UserSID]") { throw "default.msi: $($a.Key) target '$($tgt[0])'" }
+}
+$order = @(
+  @('LongarmStopTray', 'InstallValidate'),
+  @('InstallInitialize', 'LongarmUpgradeStopRollback'),
+  @('LongarmUpgradeStopRollback', 'LongarmUpgradeStop'),
+  @('LongarmUpgradeStop', 'RemoveExistingProducts'),
+  @('RemoveExistingProducts', 'InstallFiles'),
+  @('LongarmRemoveStop', 'StopServices'),
+  @('InstallInitialize', 'LongarmRemoveStop'),
+  @('LongarmTrayLaunch', 'LongarmdUpgradeRestart'),
+  @('LongarmdAdminSetup', 'LongarmdUpgradeRestart'),
+  @('StartServices', 'LongarmdUpgradeRestart'),
+  @('LongarmdUpgradeRestart', 'InstallFinalize')
+)
+foreach ($o in $order) {
+  $a, $b = (Seq $o[0]), (Seq $o[1])
+  if ($a -ge $b) { throw "default.msi: $($o[0]) ($a) must run before $($o[1]) ($b)" }
+  Write-Host "$($o[0]) ($a) < $($o[1]) ($b)"
+}
+foreach ($id in 'AdminSvcStop', 'LongarmdSvcCtl') {
+  $ev = Query $default "SELECT ``Event`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = '$id'"
+  $wait = Query $default "SELECT ``Wait`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = '$id'"
+  if (-not $ev.Count -or ([int]$ev[0] -band 0x11) -ne 0x11 -or $wait[0] -ne '1') { throw "default.msi: ServiceControl $id must stop on install and uninstall and wait (Event $($ev[0]), Wait $($wait[0]))" }
+}
+
 Write-Host '== administrative install (extract only)'
 $target = Join-Path $env:RUNNER_TEMP 'msi-admin'
 $log = Join-Path $Dir 'admin.log'

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/lubobill1990/longarm/internal/longarmd"
+	"github.com/lubobill1990/longarm/internal/msiupgrade"
 )
 
 // TestMSIPropertiesOverridable (static, every platform): a property given
@@ -129,7 +130,8 @@ func TestMSIModeRun(t *testing.T) {
 			}
 		}
 	}
-	actions := map[string]bool{"CostFinalize": true, "InstallInitialize": true, "InstallServices": true, "StopServices": true}
+	actions := map[string]bool{"CostFinalize": true, "InstallInitialize": true, "InstallServices": true, "StopServices": true,
+		"InstallValidate": true, "RemoveExistingProducts": true, "InstallFinalize": true}
 	sets := map[string]attrs{}
 	for _, s := range p.Sets {
 		id := s.Action
@@ -472,5 +474,141 @@ func TestMSICloudPCDetection(t *testing.T) {
 	}
 	if !regexp.MustCompile(`<Property Id="ROLES_RECORDED">\s*<RegistrySearch [^>]*Name="Roles"`).MatchString(src) {
 		t.Error("ROLES_RECORDED does not search the recorded roles")
+	}
+}
+
+// TestMSIUpgradeRunning (static): an upgrade with Longarm running shows no
+// "files in use" dialog and needs no reboot (internal/msiupgrade). Restart
+// Manager is off; the upgrade helper comes from the Binary table (it must
+// run before the installed files are replaced) and gets UserSID only; it
+// stops the installing user's tray before InstallValidate (where the
+// in-use check runs), everything else elevated before
+// RemoveExistingProducts (with a rollback step before it), and on an
+// uninstall before StopServices; the new longarmd starts again what ran,
+// at the end. None runs as the old product of a later upgrade. The worker
+// services stop (and are waited for) on upgrades, repairs and uninstalls.
+func TestMSIUpgradeRunning(t *testing.T) {
+	b, err := os.ReadFile("../packaging/windows/longarm.wxs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := regexp.MustCompile(`<\?[^>]*\?>`).ReplaceAll(b, nil)
+	src = append([]byte(`<?xml version="1.0" encoding="utf-8"?>`), src...)
+	type attrs struct {
+		ID          string `xml:"Id,attr"`
+		Action      string `xml:"Action,attr"`
+		Value       string `xml:"Value,attr"`
+		Before      string `xml:"Before,attr"`
+		After       string `xml:"After,attr"`
+		Condition   string `xml:"Condition,attr"`
+		BinaryRef   string `xml:"BinaryRef,attr"`
+		Execute     string `xml:"Execute,attr"`
+		Impersonate string `xml:"Impersonate,attr"`
+		Return      string `xml:"Return,attr"`
+		ExeCommand  string `xml:"ExeCommand,attr"`
+		SourceFile  string `xml:"SourceFile,attr"`
+		Schedule    string `xml:"Schedule,attr"`
+		Name        string `xml:"Name,attr"`
+		Stop        string `xml:"Stop,attr"`
+		Wait        string `xml:"Wait,attr"`
+	}
+	var doc struct {
+		Package struct {
+			Upgrade    attrs   `xml:"MajorUpgrade"`
+			Properties []attrs `xml:"Property"`
+			Binaries   []attrs `xml:"Binary"`
+			Actions    []attrs `xml:"CustomAction"`
+			Controls   []attrs `xml:"ComponentGroup>Component>ServiceControl"`
+			Sequence   []attrs `xml:"InstallExecuteSequence>Custom"`
+		} `xml:"Package"`
+	}
+	if err := xml.Unmarshal(src, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p := doc.Package
+	if p.Upgrade.Schedule != "afterInstallInitialize" {
+		t.Errorf("MajorUpgrade Schedule %q: the stop step runs before RemoveExistingProducts inside the transaction", p.Upgrade.Schedule)
+	}
+	rm := false
+	for _, pr := range p.Properties {
+		if pr.ID == "MSIRESTARTMANAGERCONTROL" && pr.Value == "Disable" {
+			rm = true
+		}
+	}
+	if !rm {
+		t.Error("MSIRESTARTMANAGERCONTROL is not Disable")
+	}
+	if len(p.Binaries) != 1 || p.Binaries[0].ID != "LongarmMsiHelper" || !strings.HasSuffix(p.Binaries[0].SourceFile, `\longarm-msihelper.exe`) {
+		t.Errorf("Binary table: %+v", p.Binaries)
+	}
+	ca := map[string]attrs{}
+	for _, a := range p.Actions {
+		ca[a.ID] = a
+	}
+	seq := map[string]attrs{}
+	for _, c := range p.Sequence {
+		seq[c.Action] = c
+	}
+	for id, want := range map[string]struct{ step, execute, before string }{
+		"LongarmStopTray":            {"stop-tray", "immediate", "InstallValidate"},
+		"LongarmUpgradeStop":         {"stop", "deferred", "RemoveExistingProducts"},
+		"LongarmUpgradeStopRollback": {"rollback", "rollback", "LongarmUpgradeStop"},
+		"LongarmRemoveStop":          {"stop-remove", "deferred", "StopServices"},
+	} {
+		a, ok := ca[id]
+		if !ok {
+			t.Errorf("no custom action %s", id)
+			continue
+		}
+		if a.BinaryRef != "LongarmMsiHelper" || a.Execute != want.execute || a.Return != "ignore" {
+			t.Errorf("%s: %+v", id, a)
+		}
+		if want.execute != "immediate" && a.Impersonate != "no" {
+			t.Errorf("%s runs impersonated", id)
+		}
+		step, data, ok := strings.Cut(a.ExeCommand, " "+msiupgrade.DataMarker)
+		if !ok || step != want.step {
+			t.Errorf("%s: command %q", id, a.ExeCommand)
+			continue
+		}
+		var keys []string
+		for _, f := range strings.Split(data, "|") {
+			k, v, _ := strings.Cut(f, "=")
+			if v != "[UserSID]" {
+				t.Errorf("%s: field %q (the helper gets UserSID only)", id, f)
+			}
+			keys = append(keys, k)
+		}
+		if strings.Join(keys, ",") != strings.Join(msiupgrade.Steps[step], ",") {
+			t.Errorf("%s: fields %v, the helper expects %v", id, keys, msiupgrade.Steps[step])
+		}
+		s, ok := seq[id]
+		if !ok || s.Before != want.before {
+			t.Errorf("%s: scheduled %+v, want before %s", id, s, want.before)
+		}
+		if !strings.Contains(s.Condition, "NOT UPGRADINGPRODUCTCODE") {
+			t.Errorf("%s: condition %q runs as the old product of an upgrade", id, s.Condition)
+		}
+	}
+	if c := seq["LongarmStopTray"].Condition; !strings.Contains(c, "UserSID=SESSION_SID") || !strings.Contains(c, "WIX_UPGRADE_DETECTED") {
+		t.Errorf("LongarmStopTray condition %q", c)
+	}
+	for _, id := range []string{"LongarmUpgradeStop", "LongarmUpgradeStopRollback", "LongarmdUpgradeRestart"} {
+		if c := seq[id].Condition; !strings.Contains(c, "WIX_UPGRADE_DETECTED") || !strings.Contains(c, `NOT REMOVE="ALL"`) {
+			t.Errorf("%s condition %q", id, c)
+		}
+	}
+	if r := seq["LongarmdUpgradeRestart"]; r.Before != "InstallFinalize" || !strings.Contains(ca["LongarmdUpgradeRestart"].ExeCommand, "install-helper msi restart ") ||
+		ca["LongarmdUpgradeRestart"].Impersonate != "no" {
+		t.Errorf("LongarmdUpgradeRestart: %+v %+v", r, ca["LongarmdUpgradeRestart"])
+	}
+	stops := map[string]bool{}
+	for _, c := range p.Controls {
+		if c.Stop == "both" && c.Wait == "yes" {
+			stops[c.ID] = true
+		}
+	}
+	if !stops["AdminSvcStop"] || !stops["LongarmdSvcCtl"] {
+		t.Errorf("the admin worker's and the worker's service must stop on install and uninstall and be waited for: %+v", p.Controls)
 	}
 }

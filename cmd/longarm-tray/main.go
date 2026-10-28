@@ -35,6 +35,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/longarmd"
+	"github.com/lubobill1990/longarm/internal/stopsignal"
 	"github.com/lubobill1990/longarm/internal/telemetry"
 	"github.com/lubobill1990/longarm/internal/tray"
 	"github.com/lubobill1990/longarm/internal/version"
@@ -86,6 +87,11 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// the installer asks the tray to exit before an upgrade (its stop
+	// event), and so do Windows' end of session and Restart Manager
+	// (watchEndSession): the installer starts it again afterwards
+	ctx, stopEv := stopsignal.NotifyContext(ctx)
+	defer stopEv()
 	go tel.Run(ctx)
 
 	switch {
@@ -105,6 +111,7 @@ func main() {
 			os.Exit(1)
 		}
 	default:
+		defer watchEndSession(stopEv)()
 		if err := runGUI(ctx, o, startDaemon); err != nil {
 			fmt.Fprintln(os.Stderr, "longarm-tray:", err)
 			os.Exit(1)
@@ -126,6 +133,8 @@ func runWorkerHost(dataDir string) int {
 	defer done()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ctx, stopEv := stopsignal.NotifyContext(ctx) // the installer's stop (upgrade)
+	defer stopEv()
 	if err := h.Run(ctx); err != nil && !errors.Is(err, longarmd.ErrHostRunning) {
 		h.Log.Error("worker host", "err", err)
 		return 1
