@@ -548,12 +548,19 @@ their choosing. So the installer treats every property as untrusted input:
   deployment tools): a **repair or change** of the installed product is
   refused for non-administrators before anything else runs (the
   `LongarmdCheck` action right after `InstallInitialize`, so nothing is
-  written); the service worker and the admin worker need an administrator
+  written - conditioned on the Settings component's action state, not on
+  the public REMOVE property, so `REMOVE=ALL REINSTALL=ALL` doesn't skip
+  it; only a real uninstall does); the service worker and the admin worker need an administrator
   (and the admin worker's sign-in hand-off goes to that administrator
   only); the user-session task and the tray's start are for the requesting
   user - another user's only for an administrator. (`AdminUser` /
   `Privileged` aren't used: under UAC they don't tell an administrator from
   a user an elevated repair runs for.)
+- **The sign-in defaults** (Hub, CaFingerprint, Login, Labels, Mode in
+  `HKLM\Software\Longarm`: where sign-ins without a hub go and which CA
+  they pin) are written by the helper, not the MSI's Registry table: values
+  validated, and a change of recorded ones only for an administrator
+  (`ApplyMSISettings`) - a second layer behind `LongarmdCheck`.
 - **Task definitions** are XML built with `encoding/xml` from a SID checked
   against its pattern and the account database; the program is the
   installed tray / longarmd.

@@ -52,6 +52,7 @@ type msiEnv struct {
 	ownDir      func() (string, error)
 	programData func() string
 	sched       longarmd.TaskScheduler
+	settings    longarmd.SettingsStore
 	out         io.Writer
 }
 
@@ -76,6 +77,9 @@ func (e msiEnv) fill() msiEnv {
 	}
 	if e.sched == nil {
 		e.sched = longarmd.Schtasks{}
+	}
+	if e.settings == nil {
+		e.settings = longarmd.MachineSettings()
 	}
 	return e
 }
@@ -150,7 +154,7 @@ func runMSIStep(ctx context.Context, step, raw string, env msiEnv) error {
 		fmt.Fprintf(out, "%s install-helper %s: ok\n", time.Now().Format(time.RFC3339), step)
 	}
 	switch step {
-	case "rollback", "remove", "session-remove", "admin-remove", "admin-drop":
+	case "rollback", "remove", "session-remove", "admin-remove", "admin-drop", "settings-remove":
 		return nil // never block a rollback or an uninstall
 	}
 	return err
@@ -320,6 +324,15 @@ func msiStep(ctx context.Context, step, raw string, keys []string, env msiEnv, o
 			return err
 		}
 		return adminSetup(ctx, out, adminSetupOptions{base: base, sid: sid, exe: filepath.Join(own, "longarmd.exe"), hub: d["hub"], fp: d["ca"]})
+
+	case "settings":
+		// the sign-in defaults reach HKLM only validated, and changed only
+		// by an administrator
+		return longarmd.ApplyMSISettings(env.settings, d, req)
+
+	case "settings-remove":
+		longarmd.RemoveMSISettings(env.settings)
+		return nil
 
 	case "admin-remove":
 		return adminRemove(ctx, out, base, d["keep"] == "1")

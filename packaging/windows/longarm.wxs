@@ -306,12 +306,8 @@
 
       <Component Id="Settings" Guid="165786a7-faa0-43e1-9643-f87e8ab45911">
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Roles" Type="string" Value="[ROLES]" KeyPath="yes" />
-        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Hub" Type="string" Value="[HUB]" />
-        <!-- read by longarm login / longarmd login without a hub and by the tray (signin.InstalledHub) -->
-        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="CaFingerprint" Type="string" Value="[CA_FINGERPRINT]" />
-        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Login" Type="string" Value="[LOGIN]" />
-        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Labels" Type="string" Value="[LABELS]" />
-        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="Mode" Type="string" Value="[MODE]" />
+        <!-- Hub, CaFingerprint, Login, Labels, Mode (the sign-in defaults) are written by the helper
+             (LongarmdSettings: validated, changed by an administrator only), not by this table -->
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="RunMode" Type="string" Value="[RUN]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="SessionUserSID" Type="string" Value="[SESSION_SID]" />
         <RegistryValue Root="HKLM" Key="Software\Longarm" Name="ServiceName" Type="string" Value="[SERVICE_NAME]" />
@@ -358,6 +354,12 @@
          ProgramData\Longarm. UserSID (who asked; not settable from the command line) lets the
          helper refuse a non-administrator's repair or change, a service, the admin worker, and
          a task for another user. -->
+    <!-- The sign-in defaults in HKLM (Hub, CaFingerprint, Login, Labels, Mode): validated, and a change
+         of recorded values only for an administrator (longarmd.ApplyMSISettings). -->
+    <CustomAction Id="LongarmdSettings" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi settings #LONGARM-MSI#hub=[HUB]|ca=[CA_FINGERPRINT]|login=[LOGIN]|labels=[LABELS]|mode=[MODE]|usersid=[UserSID]' />
+    <CustomAction Id="LongarmdSettingsRemove" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi settings-remove #LONGARM-MSI#' />
     <CustomAction Id="LongarmdCheck" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
                   ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi check #LONGARM-MSI#installed=[Installed]|usersid=[UserSID]' />
     <!-- Service worker setup: protected data dir, logon right, enrollment (as SYSTEM). -->
@@ -418,11 +420,15 @@
               Condition='IsWorker AND RUN="service" AND NOT REMOVE="ALL" AND (NOT Installed OR REINSTALL) AND (NOT SERVICE_ACCOUNT OR (SERVICE_ACCOUNT~&lt;&gt;"LocalSystem" AND NOT SERVICE_PASSWORD))' />
       <!-- a repair or change (which Windows runs elevated for a non-administrator of a per-machine
            product): only an administrator, checked by the helper before anything else runs -->
-      <Custom Action="LongarmdCheck" After="InstallInitialize" Condition='Installed AND NOT REMOVE="ALL"' />
+      <!-- not by the public REMOVE property: REMOVE=ALL REINSTALL=ALL reinstalls everything. Only a
+           real uninstall (the Settings component going away, action state 2) skips it. -->
+      <Custom Action="LongarmdCheck" After="InstallInitialize" Condition='Installed AND $Settings&lt;&gt;2' />
+      <Custom Action="LongarmdSettings" After="InstallServices" Condition='$Settings=3' />
+      <Custom Action="LongarmdSettingsRemove" After="StopServices" Condition='$Settings=2 AND NOT UPGRADINGPRODUCTCODE' />
       <Custom Action="SetClientCodeJoin" Before="SetClientCodeClient" Condition='ROLES="client" AND JOIN_CODE' />
       <Custom Action="SetClientCodeClient" Before="InstallInitialize" Condition='CLIENT_JOIN_CODE' />
       <Custom Action="LongarmdSetupRollback" Before="LongarmdSetup" Condition='IsWorker AND RUN="service" AND JOIN_CODE AND HUB AND NOT REMOVE="ALL"' />
-      <Custom Action="LongarmdSetup" After="InstallServices" Condition='IsWorker AND RUN="service" AND NOT REMOVE="ALL"' />
+      <Custom Action="LongarmdSetup" After="LongarmdSettings" Condition='IsWorker AND RUN="service" AND NOT REMOVE="ALL"' />
       <Custom Action="LongarmdSessionJoin" After="LongarmdSetup" Condition='IsWorker AND RUN="session" AND JOIN_CODE AND HUB AND NOT REMOVE="ALL"' />
       <Custom Action="LongarmdSessionTask" After="LongarmdSessionJoin" Condition='IsWorker AND RUN="session" AND NOT REMOVE="ALL"' />
       <Custom Action="LongarmJoin" After="LongarmdSessionTask" Condition='IsClient AND CLIENT_CODE AND HUB AND NOT REMOVE="ALL"' />

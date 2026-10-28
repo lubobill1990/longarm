@@ -232,3 +232,42 @@ func TestAdminIgnoresHub(t *testing.T) {
 		t.Error("the admin worker allows relayed job requests")
 	}
 }
+
+// TestApplyMSISettings: the sign-in defaults (where sign-ins go without a
+// hub, which CA they pin) reach HKLM only through the helper: a first
+// install records them; changing recorded values - a non-administrator's
+// repair with HUB / CA_FINGERPRINT of their choosing (also as REMOVE=ALL
+// REINSTALL=ALL) - needs an administrator and writes nothing otherwise.
+func TestApplyMSISettings(t *testing.T) {
+	isAdmin := func(sid string) (bool, error) { return sid == "S-1-5-21-1-2-3-500", nil }
+	user := MSIRequester{SID: "S-1-5-21-1-2-3-1001", IsAdmin: isAdmin}
+	admin := MSIRequester{SID: "S-1-5-21-1-2-3-500", IsAdmin: isAdmin}
+	good := map[string]string{"hub": "longarm.example.com", "ca": "", "login": "1", "labels": "pool=devbox", "mode": "default"}
+	s := &memSettings{}
+	if err := ApplyMSISettings(s, good, user); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+	if v, _ := s.Get("Hub"); v != "longarm.example.com" {
+		t.Fatalf("Hub %q", v)
+	}
+	if err := ApplyMSISettings(s, good, user); err != nil {
+		t.Fatalf("a repair that changes nothing: %v", err)
+	}
+	evil := map[string]string{"hub": "evil.example.com", "ca": strings.Repeat("ee", 32), "login": "1", "labels": "pool=devbox", "mode": "custom"}
+	if err := ApplyMSISettings(s, evil, user); err == nil || !strings.Contains(err.Error(), "administrator") {
+		t.Fatalf("a non-admin's change: %v", err)
+	}
+	if v, _ := s.Get("Hub"); v != "longarm.example.com" {
+		t.Fatalf("Hub changed to %q", v)
+	}
+	if v, _ := s.Get("CaFingerprint"); v != "" {
+		t.Fatalf("CaFingerprint changed to %q", v)
+	}
+	if err := ApplyMSISettings(s, evil, admin); err != nil {
+		t.Fatalf("an administrator's change: %v", err)
+	}
+	RemoveMSISettings(s)
+	if _, ok := s.Get("Hub"); ok {
+		t.Fatal("not removed")
+	}
+}

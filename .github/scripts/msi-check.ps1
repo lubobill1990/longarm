@@ -54,7 +54,7 @@ foreach ($p in 'MODE', 'RUN', 'ADMIN_WORKER', 'SESSION_SID', 'HUB', 'LOGIN', 'LA
   if ($secure -notcontains $p) { throw "default.msi: $p is not a secure property (it would not reach the elevated install)" }
 }
 $actions = Query $default 'SELECT `Action` FROM `CustomAction`'
-foreach ($a in 'LongarmdCheck', 'LongarmdSetup', 'LongarmdSessionTask', 'LongarmdSessionJoin', 'LongarmdSessionRemove', 'LongarmdAdminSetup',
+foreach ($a in 'LongarmdCheck', 'LongarmdSettings', 'LongarmdSettingsRemove', 'LongarmdSetup', 'LongarmdSessionTask', 'LongarmdSessionJoin', 'LongarmdSessionRemove', 'LongarmdAdminSetup',
   'LongarmdAdminRemove', 'LongarmTrayLaunch', 'CheckSessionUser', 'CheckServiceAccount', 'SetModeDefault', 'SetRunDefault') {
   if ($actions -notcontains $a) { throw "default.msi: no custom action $a" }
 }
@@ -72,6 +72,11 @@ foreach ($t in $targets) {
   if ($t -notmatch 'install-helper msi [a-z-]+ #LONGARM-MSI#') { throw "install-helper action without structured data: $t" }
   $data = $t.Substring($t.IndexOf('#LONGARM-MSI#'))
   if ($data -match ' --|--exe|--host|--data-dir|TempFolder|\[INSTALLFOLDER\]') { throw "install-helper data names an option or a path: $t" }
+}
+# the sign-in defaults reach HKLM through the helper only (validated, admin-checked), not the Registry table
+$regNames = Query $default 'SELECT `Name` FROM `Registry`'
+foreach ($n in 'Hub', 'CaFingerprint', 'Login', 'Labels', 'Mode') {
+  if ($regNames -contains $n) { throw "the Registry table writes $n from a property" }
 }
 foreach ($p in 'ADMIN_SERVICE_NAME', 'ADMIN_DATADIR', 'ADMIN_HANDOFF') {
   if ($secure -contains $p) { throw "$p must not be a (secure) property any more" }

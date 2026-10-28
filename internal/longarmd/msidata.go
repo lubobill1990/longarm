@@ -42,6 +42,9 @@ var MSISteps = map[string][]string{
 	"admin-setup":    {"hub", "ca", "sid", "usersid"},
 	"admin-remove":   {"keep"},
 	"admin-drop":     {"usersid"},
+	// the sign-in defaults in HKLM (ApplyMSISettings)
+	"settings":        {"hub", "ca", "login", "labels", "mode", "usersid"},
+	"settings-remove": {},
 }
 
 // MSIDataMarker starts the data on an install-helper msi command line.

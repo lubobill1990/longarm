@@ -194,22 +194,24 @@ func TestMSIModeRun(t *testing.T) {
 		seq[c.Action] = c.Condition
 	}
 	for action, must := range map[string][]string{
-		"LongarmdSetup":         {`RUN="service"`},
-		"CheckServiceAccount":   {`RUN="service"`},
-		"LongarmdSessionTask":   {`RUN="session"`, "IsWorker"},
-		"LongarmdSessionJoin":   {`RUN="session"`, "JOIN_CODE"},
-		"CheckSessionUser":      {`RUN="session"`, "S-1-5-18"},
-		"CheckDefaultHub":       {`MODE="default"`, "NOT DEFAULT_HUB"},
-		"CheckDefaultCode":      {`MODE="default"`, "JOIN_CODE"},
-		"CheckMode":             {"MODE"},
-		"CheckRun":              {"RUN", "per-user"},
-		"CheckAdminWorker":      {`ADMIN_WORKER="1"`, "HUB"},
-		"LongarmdAdminSetup":    {`ADMIN_WORKER="1"`},
-		"LongarmdAdminRemove":   {`SAVED_ADMIN_WORKER="1"`, `REMOVE="ALL"`, "NOT UPGRADINGPRODUCTCODE"},
-		"LongarmdAdminDrop":     {`SAVED_ADMIN_WORKER="1"`, `ADMIN_WORKER&lt;&gt;"1"`},
-		"LongarmdSessionRemove": {`REMOVE="ALL"`, "NOT UPGRADINGPRODUCTCODE"},
-		"LongarmTrayLaunch":     {"LAUNCH_TRAY", "S-1-5-18"},
-		"LongarmdCheck":         {"Installed", `NOT REMOVE="ALL"`},
+		"LongarmdSetup":          {`RUN="service"`},
+		"CheckServiceAccount":    {`RUN="service"`},
+		"LongarmdSessionTask":    {`RUN="session"`, "IsWorker"},
+		"LongarmdSessionJoin":    {`RUN="session"`, "JOIN_CODE"},
+		"CheckSessionUser":       {`RUN="session"`, "S-1-5-18"},
+		"CheckDefaultHub":        {`MODE="default"`, "NOT DEFAULT_HUB"},
+		"CheckDefaultCode":       {`MODE="default"`, "JOIN_CODE"},
+		"CheckMode":              {"MODE"},
+		"CheckRun":               {"RUN", "per-user"},
+		"CheckAdminWorker":       {`ADMIN_WORKER="1"`, "HUB"},
+		"LongarmdAdminSetup":     {`ADMIN_WORKER="1"`},
+		"LongarmdAdminRemove":    {`SAVED_ADMIN_WORKER="1"`, `REMOVE="ALL"`, "NOT UPGRADINGPRODUCTCODE"},
+		"LongarmdAdminDrop":      {`SAVED_ADMIN_WORKER="1"`, `ADMIN_WORKER&lt;&gt;"1"`},
+		"LongarmdSessionRemove":  {`REMOVE="ALL"`, "NOT UPGRADINGPRODUCTCODE"},
+		"LongarmTrayLaunch":      {"LAUNCH_TRAY", "S-1-5-18"},
+		"LongarmdCheck":          {"Installed", "$Settings<>2"},
+		"LongarmdSettings":       {"$Settings=3"},
+		"LongarmdSettingsRemove": {"$Settings=2", "NOT UPGRADINGPRODUCTCODE"},
 	} {
 		c, ok := seq[action]
 		if !ok {
@@ -258,6 +260,9 @@ func TestMSICustomActionData(t *testing.T) {
 		}
 		var got []string
 		for _, f := range strings.Split(s[2], "|") {
+			if f == "" {
+				continue
+			}
 			fm := field.FindStringSubmatch(f)
 			if fm == nil {
 				t.Errorf("%s: field %q is not key=[PROPERTY]", s[1], f)
@@ -287,5 +292,55 @@ func TestMSICustomActionData(t *testing.T) {
 	}
 	if strings.Contains(string(b), "usersid=[SESSION_SID]") || !strings.Contains(string(b), "usersid=[UserSID]") {
 		t.Error("the requester must be [UserSID]")
+	}
+}
+
+// TestMSIMaintenanceCheck (static): the administrator check of a repair or
+// change does not depend on the public REMOVE property (REMOVE=ALL
+// REINSTALL=ALL reinstalls everything, and would skip a REMOVE-based
+// check) but on the Settings component's calculated action state: only a
+// real uninstall (2, absent) skips it. And no public sign-in default
+// reaches HKLM through the Registry table: Hub, CaFingerprint, Login,
+// Labels and Mode are written by the helper (validated, admin-checked).
+func TestMSIMaintenanceCheck(t *testing.T) {
+	b, err := os.ReadFile("../packaging/windows/longarm.wxs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	m := regexp.MustCompile(`<Custom Action="LongarmdCheck"[^>]*Condition='([^']*)'`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal("LongarmdCheck not scheduled")
+	}
+	cond := strings.NewReplacer("&lt;", "<", "&gt;", ">").Replace(m[1])
+	if strings.Contains(cond, "REMOVE") || strings.Contains(cond, "REINSTALL") || !strings.Contains(cond, "$Settings<>2") {
+		t.Errorf("LongarmdCheck condition %q: must use the component state, not REMOVE/REINSTALL", cond)
+	}
+	// the condition, evaluated for the cases that matter
+	run := func(installed bool, settingsState int) bool { return installed && settingsState != 2 }
+	for _, c := range []struct {
+		name      string
+		installed bool
+		state     int
+		want      bool
+	}{
+		{"first install", false, 3, false},
+		{"repair", true, 3, true},
+		{"REMOVE=ALL REINSTALL=ALL (reinstalled)", true, 3, true},
+		{"change without reinstall", true, -1, true},
+		{"real uninstall", true, 2, false},
+	} {
+		if got := run(c.installed, c.state); got != c.want {
+			t.Errorf("%s: check runs %v, want %v", c.name, got, c.want)
+		}
+	}
+	comp := regexp.MustCompile(`(?s)<Component Id="Settings".*?</Component>`).FindString(src)
+	for _, name := range []string{"Hub", "CaFingerprint", "Login", "Labels", "Mode"} {
+		if strings.Contains(comp, `Name="`+name+`"`) {
+			t.Errorf("the Settings component writes %s from a property (the helper must)", name)
+		}
+	}
+	if !strings.Contains(src, "install-helper msi settings #LONGARM-MSI#hub=[HUB]|ca=[CA_FINGERPRINT]") {
+		t.Error("no LongarmdSettings action")
 	}
 }
