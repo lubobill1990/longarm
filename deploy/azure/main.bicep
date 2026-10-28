@@ -10,8 +10,10 @@
 // 127.0.0.1:7480. The SQLite database stays on the container's local disk and
 // Litestream streams it to a blob container (restored on start); CA, hub.toml,
 // server certificates, release store and bootstrap.env live on an Azure Files
-// share. azuredeploy.json is this file compiled (bicep build) for the
-// "Deploy to Azure" button; CI checks that it is up to date.
+// share (storageAuth key), or the CA in the database and the release files in
+// the blob container "releases" (storageAuth identity). azuredeploy.json is
+// this file compiled (bicep build) for the "Deploy to Azure" button; CI checks
+// that it is up to date.
 
 @description('Hub name: the DNS label (<name>.<region>.azurecontainer.io) and the prefix of the resources. Lowercase letters, digits and hyphens, starting with a letter.')
 @minLength(3)
@@ -215,6 +217,16 @@ resource diagContainer 'Microsoft.Storage/storageAccounts/blobServices/container
   }
 }
 
+// storageAuth identity: the release files (the data dir is the container's
+// own disk); the hub writes them with its managed identity
+resource releasesContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (!useKey) {
+  parent: blobService
+  name: 'releases'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 // bundles carry (scrubbed) logs: they go away on their own
 resource lifecycle 'Microsoft.Storage/storageAccounts/managementPolicies@2023-05-01' = if (useDiag) {
   parent: storage
@@ -307,6 +319,17 @@ resource replicaRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (
 resource diagRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (useDiag) {
   name: guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', storage.name, 'default', 'diagnostics'), '${name}-id', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
   scope: diagContainer
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+    principalId: identity!.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Storage Blob Data Contributor on the releases container only
+resource releasesRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!useKey) {
+  name: guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', storage.name, 'default', 'releases'), '${name}-id', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+  scope: releasesContainer
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
     principalId: identity!.properties.principalId
@@ -412,6 +435,8 @@ var hubEnv = concat(
     : [
         { name: 'AZURE_CLIENT_ID', value: identity!.properties.clientId }
         { name: 'LONGARM_HUB_CA_IN_DB', value: '1' }
+        // release files outlive the container there, not in /data
+        { name: 'LONGARM_HUB_RELEASES_BLOB_URL', value: '${storage.properties.primaryEndpoints.blob}releases' }
       ],
   enablePanel ? [{ name: 'LONGARM_HUB_PUBLIC_URL', value: 'https://${fqdn}' }] : [],
   // the connection string names the resource; with identity it is useless
@@ -551,6 +576,7 @@ resource group 'Microsoft.ContainerInstance/containerGroups@2025-09-01' = {
     replicaRole
     acrRole
     diagRole
+    releasesRole
     telemetryRole
   ]
   properties: {
@@ -599,5 +625,7 @@ output containerGroup string = group.name
 output identityPrincipalId string = useKey ? '' : identity!.properties.principalId
 @description('Application Insights resource (empty without enableTelemetry).')
 output appInsights string = enableTelemetry ? appInsights.name : ''
+@description('storageAuth identity: blob URL of the release files container (empty with key: they are on the state share).')
+output releasesUrl string = useKey ? '' : '${storage.properties.primaryEndpoints.blob}releases'
 @description('Blob URL of the diagnostics container (empty without it).')
 output diagnosticsUrl string = useDiag ? '${storage.properties.primaryEndpoints.blob}diagnostics' : ''

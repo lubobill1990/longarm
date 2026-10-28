@@ -55,7 +55,7 @@ func (c *Config) diagEnvDefaults() error {
 	}
 	if c.Diagnostics.BlobURL != "" {
 		if _, err := diag.OpenStore(c.Diagnostics.BlobURL, nil); err != nil {
-			return err
+			return fmt.Errorf("[diagnostics] %w", err)
 		}
 	}
 	return nil

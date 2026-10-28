@@ -308,7 +308,11 @@ prerelease, and no hub deploy or fleet rollout. Beta workers
 deploy.yml).
 
 Use **Re-run failed jobs** after a failure: publish skips identical files (and
-fails if the hub has *different* files under that version), the hub deploy
+fails if the hub has *different* files under that version) - unless the hub
+lost some of them (a hub without `[releases] blob_url` whose data dir was
+replaced): then it uploads them again and the hub restores the version as it
+was (`longarm admin release ls` marks lost files `(missing)`; re-run the
+release's publish job, **Re-run all jobs** would rebuild different MSIs), the hub deploy
 does nothing for the installed healthy version, rollout follows a running
 rollout of the same version or accepts a finished one. Don't use "Re-run all
 jobs" once publish succeeded: it rebuilds, and the new MSIs differ (WiX gives

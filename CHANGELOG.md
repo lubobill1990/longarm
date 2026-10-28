@@ -137,6 +137,30 @@
 
 ### Fixed
 
+- **Release files of a hub on Azure Container Instances with
+  `--storage-auth identity` were lost on every restart**: its data dir is
+  the container's own disk, so `/releases/<v>/<file>` answered 404 while
+  `/install.sh` / `/install.ps1` still named the version, and workers
+  couldn't download updates. The template now creates a blob container
+  `releases` (Storage Blob Data Contributor for the hub's identity) and
+  sets `LONGARM_HUB_RELEASES_BLOB_URL`; hub.toml `[releases] blob_url`
+  (an Azure Blob Storage container or `file:///<dir>`) keeps published
+  files there as `<version>/<file>` (+ `.minisig`), with the data dir as
+  a cache refilled from the container and checked against the recorded
+  sha256 (the HTTP route and worker self-update). At start the hub
+  lists the container, uploads files only its data dir has, and logs
+  every file found nowhere (`RELEASE FILES MISSING`); install scripts
+  then hand out the newest complete stable version (or "no release
+  yet"), `release push` refuses an incomplete version, and `longarm admin
+  release ls` marks lost files `(missing)` (`ListReleases` leaves
+  incomplete versions out unless `include_incomplete`). Publishing a
+  known version again with exactly its files (no `--replace`, allowed to
+  the release role; `--skip-identical` doesn't skip an incomplete version)
+  stores them again without changing the version. A known version with
+  other files is still refused, now after the upload ("exists on the hub
+  with other files"). To heal a hub deployed before this: redeploy
+  (`deploy.sh` re-run), then re-run the publish job of its latest release
+  or publish a new version ([deploy/azure/README.md](deploy/azure/README.md#without-storage-account-keys)).
 - Workspace fetches with `--git-auth forward` wrote 300+ lines of curl
   trace (the remote's response headers, `WWW-Authenticate`, `X-VSS-*`,
   FedAuth redirect URLs) into the job's log: longarmd set

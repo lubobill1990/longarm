@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -32,7 +33,7 @@ func releaseCmd() *cobra.Command {
 		Use: "ls", Short: "List the hub's releases and the current rollout", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
-				resp, err := h.Admin().ListReleases(ctx, &pb.ListReleasesRequest{})
+				resp, err := h.Admin().ListReleases(ctx, &pb.ListReleasesRequest{IncludeIncomplete: true})
 				if err != nil {
 					return err
 				}
@@ -41,15 +42,26 @@ func releaseCmd() *cobra.Command {
 				}
 				tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 				fmt.Fprintln(tw, "VERSION\tCHANNEL\tSIGNED\tFILES\tADDED")
+				var lost []string
 				for _, r := range resp.Releases {
 					var names []string
 					for _, f := range r.Files {
+						if f.Missing {
+							names = append(names, f.Name+"(missing)")
+							if !slices.Contains(lost, r.Version) {
+								lost = append(lost, r.Version)
+							}
+							continue
+						}
 						names = append(names, f.Name)
 					}
 					fmt.Fprintf(tw, "%s\t%s\t%v\t%s\t%s\n", r.Version, r.Channel, r.Signed, strings.Join(names, " "),
 						r.AddedAt.AsTime().Local().Format("2006-01-02 15:04"))
 				}
 				tw.Flush()
+				if len(lost) > 0 {
+					fmt.Fprintf(os.Stderr, "the hub lost files of %s: install scripts and rollouts skip them until the same files are published again (longarm admin release publish <dir> --version V)\n", strings.Join(lost, ", "))
+				}
 				if r := resp.Rollout; r != nil && r.Version != "" {
 					fmt.Println()
 					printRollout(r)

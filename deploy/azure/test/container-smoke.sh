@@ -8,7 +8,11 @@
 #   2. container replaced (docker stop = SIGTERM, rm; the local database is
 #      gone): the new one restores it from the replica - writes made just
 #      before the stop are there, the CA and the admin's certificate still work
-#   3. a replica that can't be read stops the start
+#   3. storage-auth identity (no share; the data dir dies with the container):
+#      a published release is still served after the container is replaced
+#      (the files in [releases] blob_url - a docker volume as file:// here,
+#      as Azurite has no Entra tokens - and the CA in the database)
+#   4. a replica that can't be read stops the start
 set -euo pipefail
 
 image=${1:?usage: container-smoke.sh <image> <longarm binary>}
@@ -24,7 +28,7 @@ work=$(mktemp -d)
 cleanup() {
 	rc=$?
 	if [[ $rc -ne 0 ]]; then
-		for c in "$p-hub" "$p-hub2" "$p-hub3"; do
+		for c in "$p-hub" "$p-hub2" "$p-hub3" "$p-id" "$p-id2"; do
 			if docker inspect "$c" >/dev/null 2>&1; then
 				echo "::group::docker logs $c"
 				docker logs "$c" 2>&1 | tail -n 200
@@ -32,8 +36,8 @@ cleanup() {
 			fi
 		done
 	fi
-	docker rm -f "$p-hub" "$p-hub2" "$p-hub3" "$p-https" "$p-azurite" >/dev/null 2>&1 || true
-	docker volume rm "$p-share" >/dev/null 2>&1 || true
+	docker rm -f "$p-hub" "$p-hub2" "$p-hub3" "$p-id" "$p-id2" "$p-https" "$p-azurite" >/dev/null 2>&1 || true
+	docker volume rm "$p-share" "$p-rel" >/dev/null 2>&1 || true
 	docker network rm "$p" >/dev/null 2>&1 || true
 	rm -rf "$work"
 	exit "$rc"
@@ -60,6 +64,8 @@ sas=$(az storage container generate-sas -n litestream --connection-string "$conn
 	--expiry "$(date -u -d '+1 day' +%Y-%m-%dT%H:%MZ)" -o tsv)
 [[ -n $sas ]] || fail "no SAS"
 hub_sas=$sas
+hub_mount=(-v "$p-share:/data")
+hub_replica=litestream
 
 # hub_run NAME [extra docker args]: the environment of deploy/azure/main.bicep
 hub_run() {
@@ -67,7 +73,7 @@ hub_run() {
 	shift
 	docker run -d --name "$name" --network "$p" \
 		-p 127.0.0.1:7443:7443/tcp -p 127.0.0.1:7443:7443/udp -p 127.0.0.1:7444:7444/udp \
-		-v "$p-share:/data" \
+		"${hub_mount[@]}" \
 		-e LONGARM_HUB_DATA_DIR=/data \
 		-e LONGARM_HUB_CONFIG=/data/hub.toml \
 		-e LONGARM_HUB_DB=/var/lib/longarm-hub/hub.db \
@@ -79,7 +85,7 @@ hub_run() {
 		-e LONGARM_HUB_RELAY_STUN2=:7444 \
 		-e LONGARM_HUB_LITESTREAM_CONFIG=/etc/longarm-hub/litestream-abs.yml \
 		-e LONGARM_HUB_BLOB_ACCOUNT=$acct \
-		-e LONGARM_HUB_BLOB_CONTAINER=litestream \
+		-e LONGARM_HUB_BLOB_CONTAINER=$hub_replica \
 		-e LONGARM_HUB_BLOB_ENDPOINT=http://azurite:10000/$acct \
 		-e LITESTREAM_AZURE_SAS_TOKEN="$hub_sas" \
 		"$@" "$image" >/dev/null
@@ -172,6 +178,50 @@ grep -qx alice <<<"$users" || fail "alice lost: $users"
 grep -qx bob <<<"$users" || fail "bob (written just before the stop) lost: $users"
 la admin join-code --role worker >/dev/null || fail "admin certificate after the replacement"
 docker rm -f "$p-hub2" >/dev/null
+
+step "storage-auth identity: a release survives replacing the container"
+# its own replica (this hub keeps its CA in the database) and no share; the
+# release container is a volume owned by nonroot (Azurite's image has chown)
+az storage container create -n litestream-id --connection-string "$conn" -o none
+hub_sas=$(az storage container generate-sas -n litestream-id --connection-string "$conn" --permissions racwdl \
+	--expiry "$(date -u -d '+1 day' +%Y-%m-%dT%H:%MZ)" -o tsv)
+docker volume create "$p-rel" >/dev/null
+docker run --rm -v "$p-rel:/r" --entrypoint chown "$azurite_image" 65532:65532 /r
+hub_mount=(-v "$p-rel:/releases")
+hub_replica=litestream-id
+id_run() {
+	hub_run "$1" -p 127.0.0.1:7480:7480 -e LONGARM_HUB_HTTP=:7480 -e LONGARM_HUB_CA_IN_DB=1 \
+		-e LONGARM_HUB_RELEASES_BLOB_URL=file:///releases
+}
+id_run "$p-id"
+wait_healthy "$p-id"
+idfp=$(bootstrap "$p-id" ca_fingerprint)
+idcode=$(bootfile "$p-id" admin_join_code)
+[[ ${#idfp} -eq 64 && $idfp != "$fp" && -n $idcode ]] || fail "identity hub bootstrap: fp=$idfp"
+lai() { LONGARM_CONFIG_DIR=$work/laptop-id "$longarm" "$@"; }
+lai join 127.0.0.1:7443 "$idcode" --ca-fingerprint "$idfp" --name ci-admin
+mkdir -p "$work/rel"
+printf 'longarmd 0.0.1\n' >"$work/rel/longarmd-linux-amd64"
+head -c 300000 /dev/urandom >"$work/rel/longarm-windows-amd64.msi"
+lai admin release publish "$work/rel" --version 0.0.1 --no-sign >/dev/null
+curl -fsS -o "$work/got.msi" http://127.0.0.1:7480/releases/0.0.1/longarm-windows-amd64.msi || fail "download before the replacement"
+cmp -s "$work/got.msi" "$work/rel/longarm-windows-amd64.msi" || fail "downloaded msi differs"
+docker stop -t 60 "$p-id" >/dev/null
+docker rm "$p-id" >/dev/null
+id_run "$p-id2"
+wait_healthy "$p-id2"
+[[ $(bootstrap "$p-id2" ca_fingerprint) == "$idfp" ]] || fail "identity hub: CA changed"
+rm -f "$work/got.msi"
+curl -fsS -o "$work/got.msi" http://127.0.0.1:7480/releases/0.0.1/longarm-windows-amd64.msi ||
+	fail "the release file was lost with the container"
+cmp -s "$work/got.msi" "$work/rel/longarm-windows-amd64.msi" || fail "msi from the release container differs"
+script=$(curl -fsS http://127.0.0.1:7480/install.sh) || fail "install.sh"
+grep -qF "VERSION='0.0.1'" <<<"$script" || fail "install.sh doesn't hand out 0.0.1"
+logs_have "$p-id2" "RELEASE FILES MISSING" && fail "the replaced hub reports missing release files"
+docker rm -f "$p-id2" >/dev/null
+hub_mount=(-v "$p-share:/data")
+hub_replica=litestream
+hub_sas=$sas
 
 step "https on :443 as nonroot (file capability)"
 docker run -d --name "$p-https" -e LONGARM_HUB_BOOTSTRAP=1 -e LONGARM_HUB_CONFIG=/data/hub.toml 	-e LONGARM_HUB_RELAY_UDP=off -e LONGARM_HUB_PUBLIC_URL=https://hub.example.com 	-e LONGARM_HUB_HTTPS=:443 -e LONGARM_HUB_HTTPS_REDIRECT=:80 "$image" >/dev/null

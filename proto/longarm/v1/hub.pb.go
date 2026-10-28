@@ -7389,13 +7389,17 @@ func (x *UpdateCheckResponse) GetRollout() string {
 }
 
 type ReleaseFile struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`     // longarmd-windows-amd64.exe
-	Sha256        string                 `protobuf:"bytes,2,opt,name=sha256,proto3" json:"sha256,omitempty"` // hex
-	Size          int64                  `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
-	Signature     []byte                 `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"` // the .minisig file
-	Os            string                 `protobuf:"bytes,5,opt,name=os,proto3" json:"os,omitempty"`
-	Arch          string                 `protobuf:"bytes,6,opt,name=arch,proto3" json:"arch,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Name      string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`     // longarmd-windows-amd64.exe
+	Sha256    string                 `protobuf:"bytes,2,opt,name=sha256,proto3" json:"sha256,omitempty"` // hex
+	Size      int64                  `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
+	Signature []byte                 `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"` // the .minisig file
+	Os        string                 `protobuf:"bytes,5,opt,name=os,proto3" json:"os,omitempty"`
+	Arch      string                 `protobuf:"bytes,6,opt,name=arch,proto3" json:"arch,omitempty"`
+	// missing: the hub has no copy of the file (neither in its data dir nor
+	// in its [releases] blob_url container); ListReleases with
+	// include_incomplete only. Publishing the same files again restores it.
+	Missing       bool `protobuf:"varint,7,opt,name=missing,proto3" json:"missing,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7470,6 +7474,13 @@ func (x *ReleaseFile) GetArch() string {
 		return x.Arch
 	}
 	return ""
+}
+
+func (x *ReleaseFile) GetMissing() bool {
+	if x != nil {
+		return x.Missing
+	}
+	return false
 }
 
 type ReleaseFileRequest struct {
@@ -7694,10 +7705,14 @@ func (*ReleaseUpload_Header) isReleaseUpload_Msg() {}
 func (*ReleaseUpload_Chunk) isReleaseUpload_Msg() {}
 
 type ReleaseUploadHeader struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
-	Channel       string                 `protobuf:"bytes,2,opt,name=channel,proto3" json:"channel,omitempty"`  // default stable
-	Replace       bool                   `protobuf:"varint,3,opt,name=replace,proto3" json:"replace,omitempty"` // overwrite an existing version (else refused)
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Version string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
+	Channel string                 `protobuf:"bytes,2,opt,name=channel,proto3" json:"channel,omitempty"` // default stable
+	// overwrite an existing version. Without it a version the hub has is
+	// refused unless the upload has exactly its files (names and sha256):
+	// then the hub stores the files again (restoring lost copies) and keeps
+	// the version as it is.
+	Replace       bool `protobuf:"varint,3,opt,name=replace,proto3" json:"replace,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7822,9 +7837,13 @@ func (x *ReleaseUploadChunk) GetSignature() []byte {
 }
 
 type ListReleasesRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// include_incomplete: also versions with files the hub can't serve
+	// (ReleaseFile.missing). Without it they are left out, so a client that
+	// skips identical versions (publish --skip-identical) uploads them again.
+	IncludeIncomplete bool `protobuf:"varint,1,opt,name=include_incomplete,json=includeIncomplete,proto3" json:"include_incomplete,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ListReleasesRequest) Reset() {
@@ -7855,6 +7874,13 @@ func (x *ListReleasesRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ListReleasesRequest.ProtoReflect.Descriptor instead.
 func (*ListReleasesRequest) Descriptor() ([]byte, []int) {
 	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{105}
+}
+
+func (x *ListReleasesRequest) GetIncludeIncomplete() bool {
+	if x != nil {
+		return x.IncludeIncomplete
+	}
+	return false
 }
 
 type ListReleasesResponse struct {
@@ -9779,14 +9805,15 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x13UpdateCheckResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12-\n" +
 	"\x05files\x18\x02 \x03(\v2\x17.longarm.v1.ReleaseFileR\x05files\x12\x18\n" +
-	"\arollout\x18\x03 \x01(\tR\arollout\"\x8f\x01\n" +
+	"\arollout\x18\x03 \x01(\tR\arollout\"\xa9\x01\n" +
 	"\vReleaseFile\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
 	"\x06sha256\x18\x02 \x01(\tR\x06sha256\x12\x12\n" +
 	"\x04size\x18\x03 \x01(\x03R\x04size\x12\x1c\n" +
 	"\tsignature\x18\x04 \x01(\fR\tsignature\x12\x0e\n" +
 	"\x02os\x18\x05 \x01(\tR\x02os\x12\x12\n" +
-	"\x04arch\x18\x06 \x01(\tR\x04arch\"Z\n" +
+	"\x04arch\x18\x06 \x01(\tR\x04arch\x12\x18\n" +
+	"\amissing\x18\a \x01(\bR\amissing\"Z\n" +
 	"\x12ReleaseFileRequest\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -9809,8 +9836,9 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04data\x18\x02 \x01(\fR\x04data\x12\x12\n" +
 	"\x04last\x18\x03 \x01(\bR\x04last\x12\x1c\n" +
-	"\tsignature\x18\x04 \x01(\fR\tsignature\"\x15\n" +
-	"\x13ListReleasesRequest\"}\n" +
+	"\tsignature\x18\x04 \x01(\fR\tsignature\"D\n" +
+	"\x13ListReleasesRequest\x12-\n" +
+	"\x12include_incomplete\x18\x01 \x01(\bR\x11includeIncomplete\"}\n" +
 	"\x14ListReleasesResponse\x126\n" +
 	"\breleases\x18\x01 \x03(\v2\x1a.longarm.v1.ReleaseVersionR\breleases\x12-\n" +
 	"\arollout\x18\x02 \x01(\v2\x13.longarm.v1.RolloutR\arollout\"\x84\x02\n" +

@@ -44,6 +44,8 @@ offline = "10s"                    # no report for this long = offline
 
 [releases]                         # self-update (longarm admin release push)
 # public_key = "RWQ..."            # minisign key of `longarm-hub release keygen`: release add then refuses bad signatures
+# blob_url = "https://<account>.blob.core.windows.net/releases"  # also keep the files in Blob Storage (managed identity,
+#                                  # Storage Blob Data Contributor) or file:///<dir>; <data_dir>/releases is then a cache
 
 # The tailscale leg: the embedded tsnet node of longarmd / longarm (no tailscaled needed).
 # The hub mints one-time, pre-authorized, tagged keys (tag:longarm-worker / tag:longarm-client)
