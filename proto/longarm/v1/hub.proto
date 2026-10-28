@@ -360,6 +360,9 @@ message HubWelcome {
   // The hub's tailnet: a node whose embedded tailscale node uses another
   // control server switches (new key, own state dir per control URL).
   TailnetInfo tailnet = 6;
+  // Renew the certificate now, once (a renamed worker that follows renames:
+  // its certificate carries the old name). Older workers ignore it.
+  bool renew_now = 7;
 }
 
 message Revocations {

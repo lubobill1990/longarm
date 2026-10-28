@@ -95,17 +95,14 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	if hello.TenancyVersion != h.tenancyVersion {
 		policy = h.policyLocked()
 	}
-	renewBefore := h.cfg.RenewBefore(n.rec.Role)
-	if f := forcedRenewBefore(n, c.cert); f > renewBefore {
-		// its certificate lacks the node ID or has an old name: renew now
-		renewBefore = f
-	}
 	welcome := &pb.HubWelcome{
 		NodeState: n.rec.State, AuditOffset: n.rec.AuditOffset,
 		MetricsInterval: durationpb.New(h.cfg.Heartbeat.Interval.Duration),
-		RenewBefore:     durationpb.New(renewBefore),
-		HubDraining:     n.rec.AdminDrain,
-		Tailnet:         h.tailnetInfo(n),
+		RenewBefore:     durationpb.New(h.cfg.RenewBefore(n.rec.Role)),
+		// renamed: a worker that follows renames renews with the new name
+		RenewNow:    renameRenewal(n, c.cert),
+		HubDraining: n.rec.AdminDrain,
+		Tailnet:     h.tailnetInfo(n),
 	}
 	// The session's first messages are queued before h.mu is released: from
 	// then on other goroutines may push to it too (port links, share changes,

@@ -2286,7 +2286,10 @@ type HubWelcome struct {
 	HubDraining     bool                   `protobuf:"varint,5,opt,name=hub_draining,json=hubDraining,proto3" json:"hub_draining,omitempty"` // drained by an admin
 	// The hub's tailnet: a node whose embedded tailscale node uses another
 	// control server switches (new key, own state dir per control URL).
-	Tailnet       *TailnetInfo `protobuf:"bytes,6,opt,name=tailnet,proto3" json:"tailnet,omitempty"`
+	Tailnet *TailnetInfo `protobuf:"bytes,6,opt,name=tailnet,proto3" json:"tailnet,omitempty"`
+	// Renew the certificate now, once (a renamed worker that follows renames:
+	// its certificate carries the old name). Older workers ignore it.
+	RenewNow      bool `protobuf:"varint,7,opt,name=renew_now,json=renewNow,proto3" json:"renew_now,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2361,6 +2364,13 @@ func (x *HubWelcome) GetTailnet() *TailnetInfo {
 		return x.Tailnet
 	}
 	return nil
+}
+
+func (x *HubWelcome) GetRenewNow() bool {
+	if x != nil {
+		return x.RenewNow
+	}
+	return false
 }
 
 type Revocations struct {
@@ -9649,7 +9659,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x11HubToolchainApply\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x0e\n" +
-	"\x02by\x18\x02 \x01(\tR\x02by\"\xa8\x02\n" +
+	"\x02by\x18\x02 \x01(\tR\x02by\"\xc5\x02\n" +
 	"\n" +
 	"HubWelcome\x12\x1d\n" +
 	"\n" +
@@ -9658,7 +9668,8 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x10metrics_interval\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\x0fmetricsInterval\x12<\n" +
 	"\frenew_before\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\vrenewBefore\x12!\n" +
 	"\fhub_draining\x18\x05 \x01(\bR\vhubDraining\x121\n" +
-	"\atailnet\x18\x06 \x01(\v2\x17.longarm.v1.TailnetInfoR\atailnet\"\x85\x01\n" +
+	"\atailnet\x18\x06 \x01(\v2\x17.longarm.v1.TailnetInfoR\atailnet\x12\x1b\n" +
+	"\trenew_now\x18\a \x01(\bR\brenewNow\"\x85\x01\n" +
 	"\vRevocations\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\x12-\n" +
 	"\x05certs\x18\x02 \x03(\v2\x17.longarm.v1.RevokedCertR\x05certs\x12-\n" +

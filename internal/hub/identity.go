@@ -205,19 +205,24 @@ func (h *Hub) nodeKeyTakenLocked(k, except string) *node {
 	return nil
 }
 
-// forcedRenewBefore makes a renamed node renew its certificate at once
-// (one that follows renames: clients, and workers with the "node-id"
-// capability) when the certificate it connects with carries an old name: a
-// renew_before longer than the certificate's remaining life (and shorter
-// than a fresh certificate's, so the renewed node doesn't renew again).
-// 0 = no need. Certificates without a node ID are not forced: they get one
-// at their next regular renewal (until then the hub maps them by serial).
-func forcedRenewBefore(n *node, cert *x509.Certificate) time.Duration {
-	if cert == nil {
-		return 0
+// renameRenewal reports whether a renamed node that follows renames
+// (clients, and workers with the "node-id" capability) should renew now:
+// the certificate it connects with carries an old name. Certificates
+// without a node ID are not forced: they get one at their next regular
+// renewal (until then the hub maps them by serial).
+func renameRenewal(n *node, cert *x509.Certificate) bool {
+	if cert == nil || !n.followsRenames() {
+		return false
 	}
 	id, err := pki.IdentityFromCert(cert)
-	if err != nil || id.Name == n.rec.Name || !n.followsRenames() {
+	return err == nil && id.Name != n.rec.Name
+}
+
+// forcedRenewBefore is renameRenewal for a client's Whoami: a renew_before
+// longer than the certificate's remaining life (a client asks once per run,
+// and its renewed certificate has the new name: no loop). 0 = no need.
+func forcedRenewBefore(n *node, cert *x509.Certificate) time.Duration {
+	if !renameRenewal(n, cert) || n.rec.Role == string(pki.RoleWorker) {
 		return 0
 	}
 	left := time.Until(cert.NotAfter)

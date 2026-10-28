@@ -86,6 +86,7 @@ type hubAgent struct {
 	// certificate name runs (longnet registers with the relay by it).
 	restart     func()
 	nameBound   bool
+	renewNow    bool // the hub's welcome asked for a renewal (a.mu)
 	logMaxBytes int64
 	tel         *workerTelemetry // nil = off
 
@@ -366,6 +367,7 @@ func (a *hubAgent) session(ctx context.Context) error {
 	}
 	a.mu.Lock()
 	a.renewBefore, a.adminDrain = w.RenewBefore.AsDuration(), w.HubDraining
+	a.renewNow = w.RenewNow // renamed: renew with the new name
 	out := make(chan *pb.NodeReport, 256)
 	a.out = out
 	a.mu.Unlock()
@@ -653,7 +655,10 @@ func (a *hubAgent) maybeRenew(ctx context.Context, conn *hubclient.Conn) {
 	// a new endorsement (longarmd trust accept) needs a certificate that
 	// carries it: renew now
 	asked := a.trustStore.Dir != "" && a.trustStore.RenewalRequested()
-	if !asked && !hubclient.NeedsRenewal(leaf, rb) {
+	a.mu.Lock()
+	now := a.renewNow
+	a.mu.Unlock()
+	if !asked && !now && !hubclient.NeedsRenewal(leaf, rb) {
 		return
 	}
 	var tr *pki.CSRTrust
@@ -675,6 +680,9 @@ func (a *hubAgent) maybeRenew(ctx context.Context, conn *hubclient.Conn) {
 		a.log.Warn("hub: write renewed certificate", "err", err)
 		return
 	}
+	a.mu.Lock()
+	a.renewNow = false
+	a.mu.Unlock()
 	before := a.live.CurrentIdentity()
 	if _, err := a.reloader.Check(); err != nil {
 		a.log.Warn("hub: load renewed certificate", "err", err)
