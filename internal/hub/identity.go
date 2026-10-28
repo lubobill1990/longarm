@@ -172,11 +172,6 @@ func certName(n *node, rec *store.Node) string {
 	return rec.Name
 }
 
-// newNodeRecord is a fresh node record with a new ID.
-func newNodeRecord(name, role string) *store.Node {
-	return &store.Node{ID: nodeid.New(), Name: name, Role: role}
-}
-
 // trustNodeKey returns the end-to-end trust node key of a CSR (base64;
 // "" = none).
 func trustNodeKey(csrPEM []byte) string {
