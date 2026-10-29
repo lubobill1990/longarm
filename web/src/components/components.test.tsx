@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PoolWorker } from '../api/types'
 import { Bar, Sparkline } from './charts'
-import { FirewallWarning } from './common'
+import { FirewallWarning, psCommand, psQuote } from './common'
 import { WorkerCard } from './WorkerCard'
 
 afterEach(cleanup)
@@ -144,10 +144,68 @@ describe('FirewallWarning', () => {
     )
     expect(screen.getByTestId('firewall-warning').textContent).toContain('Block rule')
     expect(screen.getByTestId('firewall-warning').textContent).toContain('wa (longnet relay-udp)')
-    expect(screen.getByTestId('firewall-fix').textContent).toBe(fix)
+    // PowerShell: a quoted path needs the call operator (older builds send it without)
+    expect(screen.getByTestId('firewall-fix').textContent).toBe("& 'C:/Program Files/Longarm/longarm.exe' firewall allow")
+    expect(screen.getByTestId('firewall-warning').textContent).toContain('elevated PowerShell')
+    expect(screen.queryByTestId('firewall-allow')).toBeNull()
+    const current = "& 'C:/Program Files/Longarm/longarm.exe' firewall allow"
+    rerender(<FirewallWarning fw={{ ok: false, problem: 'p', fix: current }} />)
+    expect(screen.getByTestId('firewall-fix').textContent).toBe(current)
     rerender(<FirewallWarning fw={{ ok: true }} />)
     expect(screen.queryByTestId('firewall-warning')).toBeNull()
     rerender(<FirewallWarning />)
     expect(screen.queryByTestId('firewall-warning')).toBeNull()
+  })
+
+  it('allows the program with one click; says when it is a copy another app ships', async () => {
+    const program = 'C:\\Users\\me\\tmia-desktop-live\\longarm-1.2.3\\longarm.exe'
+    const onAllow = vi.fn().mockResolvedValue({ program, ok: true, message: 'Allowed: inbound connections pass.' })
+    render(
+      <FirewallWarning
+        fw={{ ok: false, program, problem: 'no inbound allow rule', fix: program + ' firewall allow' }}
+        installDir={'C:\\Program Files\\Longarm'}
+        onAllow={onAllow}
+      />,
+    )
+    expect(screen.getByTestId('firewall-copy').textContent).toContain('TMIA Desktop')
+    expect(screen.getByTestId('firewall-warning').textContent).toContain('Or in an elevated PowerShell')
+    fireEvent.click(screen.getByTestId('firewall-allow'))
+    expect(await screen.findByTestId('firewall-fixed')).toBeTruthy()
+    expect(onAllow).toHaveBeenCalledOnce()
+    expect(screen.queryByTestId('firewall-warning')).toBeNull()
+  })
+
+  it('no copy note for the installed longarm.exe', () => {
+    render(
+      <FirewallWarning
+        fw={{ ok: false, program: 'C:/Program Files/Longarm/longarm.exe', problem: 'p' }}
+        installDir={'c:\\program files\\longarm\\'}
+        onAllow={vi.fn()}
+      />,
+    )
+    expect(screen.queryByTestId('firewall-copy')).toBeNull()
+    expect(screen.getByTestId('firewall-allow')).toBeTruthy()
+  })
+})
+
+describe('psCommand', () => {
+  it('quotes the old double-quoted form again, so a path stays one argument', () => {
+    // PowerShell takes \u201c \u201d \u201e for " and \u2018 \u2019 \u201a \u201b for '
+    const evil = 'C:/x\u201d; calc; #/longarm.exe'
+    expect(psCommand(`"${evil}" firewall allow`)).toBe("& 'C:/x\u201d; calc; #/longarm.exe' firewall allow")
+    expect(psCommand('longarm firewall allow --program "C:/a\u2019; calc; #/longarm.exe"')).toBe(
+      "longarm firewall allow --program 'C:/a\u2019\u2019; calc; #/longarm.exe'",
+    )
+    expect(psCommand('"C:/a $x `b/longarm.exe" firewall allow')).toBe("& 'C:/a $x `b/longarm.exe' firewall allow")
+    expect(psCommand('"C:\\x\\longarm.exe" firewall allow')).toBe('C:\\x\\longarm.exe firewall allow')
+    expect(psQuote("it's \u2018\u2019\u201a\u201b")).toBe("'it''s \u2018\u2018\u2019\u2019\u201a\u201a\u201b\u201b'")
+  })
+  it('refuses what no paste-ready line can carry', () => {
+    expect(psCommand('"C:/a\nb/longarm.exe" firewall allow')).toBeUndefined()
+    expect(psCommand('& "C:/x/longarm.exe" firewall allow; calc')).toBeUndefined()
+    expect(psCommand('"-x" firewall allow')).toBeUndefined()
+    render(<FirewallWarning fw={{ ok: false, problem: 'p', fix: '"C:/a\u0007/longarm.exe" firewall allow' }} />)
+    expect(screen.queryByTestId('firewall-fix')).toBeNull()
+    expect(screen.getByTestId('firewall-fix-unsupported').textContent).toContain('unsupported characters')
   })
 })

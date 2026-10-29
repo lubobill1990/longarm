@@ -34,7 +34,7 @@ func init() {
 			}
 			if st, err := platform.CheckFirewall(exe); err == nil && !st.OK() {
 				fmt.Fprintf(os.Stderr, "longarm: hint: hole punching to %s got no answer (%d pings): %s.\n  Fix (elevated): %s\n",
-					peer, sent, st.Problem(), platform.FirewallFixCommand(exe, exe))
+					peer, sent, st.Problem(), platform.FirewallFixText(exe, exe))
 			}
 		})
 	}
@@ -123,7 +123,7 @@ tailscale) then fails and connections stay on relays.
 				if len(st.Blocking) > 0 {
 					what = "blocked"
 				}
-				fmt.Printf("%s: %s\nfix (elevated): %s\n", what, st.Problem(), platform.FirewallFixCommand(self, exe))
+				fmt.Printf("%s: %s\nfix (elevated): %s\n", what, st.Problem(), platform.FirewallFixText(self, exe))
 				return &exitError{code: exitLongarmError}
 			case "allow", "remove":
 				if !platform.Elevated() {

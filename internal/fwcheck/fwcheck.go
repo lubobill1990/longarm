@@ -26,7 +26,12 @@ func Status(program, longarmExe string) *pb.FirewallStatus {
 	}
 	fs := &pb.FirewallStatus{Program: st.Program, Ok: st.OK(), Allowed: st.Allowed, Blocking: st.Blocking, Problem: st.Problem()}
 	if !st.OK() {
-		fs.Fix = platform.FirewallFixCommand(longarmExe, st.Program)
+		if fix, err := platform.FirewallFixCommand(longarmExe, st.Program); err == nil {
+			fs.Fix = fix
+		} else {
+			// no command to paste: the tray's Allow still works
+			fs.Problem += " (no fix command: the " + err.Error() + ")"
+		}
 	}
 	return fs
 }
