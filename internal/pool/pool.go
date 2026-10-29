@@ -77,8 +77,8 @@ type Monitor struct {
 	workers  map[string]*worker
 	hubUp    bool
 	lastView time.Time // last Touch
-	myJobs  map[string]int32
-	changed chan struct{} // closed and replaced on every update
+	myJobs   map[string]int32
+	changed  chan struct{} // closed and replaced on every update
 }
 
 type worker struct {
@@ -88,7 +88,7 @@ type worker struct {
 	since    time.Time
 	node     *pb.NodeInfo
 	metrics  *pb.MetricsSnapshot
-	source   string // of metrics: hub | direct
+	source   string              // of metrics: hub | direct
 	hubSnap  *pb.MetricsSnapshot // the hub's latest (fills in when direct isn't fresh)
 	hubAt    time.Time
 	directAt time.Time
