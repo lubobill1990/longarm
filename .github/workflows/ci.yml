@@ -381,7 +381,7 @@ jobs:
   # uninstall; and upgrades from released versions - 0.1.6 and the latest
   # (with the admin worker; and as a LocalSystem service) - with the tray and
   # the user-session worker running: they must stop and start again, the
-  # client daemon (as job shims) keep running, the new files be in place, the
+  # job (longarmd conhost + its command) keep running, the new files be in place, the
   # verbose log be free of errors 2613 / 1722 / 1603 and failed custom actions.
   msi-install:
     name: msi install (${{ matrix.name }})
@@ -436,15 +436,21 @@ jobs:
         run: |
           $old = Join-Path $env:RUNNER_TEMP 'old-msi\longarm-windows-amd64.msi'
           ./.github/scripts/msi-install-test.ps1 -Scenario $env:SCENARIO -MsiDir (Join-Path $env:RUNNER_TEMP 'msi') -OldMsi $old -OldArgs "$env:OLD_ARGS"
+      - name: collect the helper's logs
+        if: always()
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP 'msi-logs'
+          New-Item -ItemType Directory -Force $d | Out-Null
+          foreach ($f in 'install-helper.log', 'msi-upgrade.json') {
+            $p = Join-Path $env:ProgramData "Longarm\$f"
+            if (Test-Path $p) { Copy-Item $p $d }
+          }
       - name: upload the logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: msi-install-logs-${{ strategy.job-index }}
-          path: |
-            ${{ runner.temp }}/msi-logs
-            C:/ProgramData/Longarm/install-helper.log
-            C:/ProgramData/Longarm/msi-upgrade.json
+          path: ${{ runner.temp }}/msi-logs
           if-no-files-found: ignore
           retention-days: 14
 

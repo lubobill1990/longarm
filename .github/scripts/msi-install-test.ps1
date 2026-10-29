@@ -14,7 +14,8 @@
   Every msiexec run is logged verbosely and the log is checked: no error 2613 / 1722 / 1603, no failed
   custom action, no file held in use (a reboot), exit code 0. An upgrade must stop every Longarm process
   that ran (tray, worker host, longarmd run, the services) and start each kind again (new processes), leave
-  the client daemon (a stand-in for job shims: a longarmd/longarm process the upgrade must not end) running,
+  a running job's console host (longarmd conhost -- ping ..., what the worker runs a job's command in) and
+  its command running (longarmd.exe moved aside),
   leave one Longarm product of the new version, the new files (sha256 as built), one firewall rule each.
 .PARAMETER MsiDir
   The msi job's artifact: default.msi (version 0.250.0), next.msi (0.250.1), hashes-default.txt, hashes-next.txt.
@@ -59,8 +60,8 @@ function Get-LongarmProcs {
   Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, 'OrdinalIgnoreCase') } | ForEach-Object {
     $name = $_.Name.ToLower()
     $cmd = "$($_.CommandLine)"
-    # (a client daemon whose longarm.exe was moved aside runs as old\longarm-<n>.exe)
-    $kind = if ($cmd -match '\sdaemon\s+(run|start)\b' -and $name -notmatch '^longarmd') { 'client-daemon' } else {
+    # (a job's console host whose longarmd.exe was moved aside runs as old\longarmd-<n>.exe)
+    $kind = if ($cmd -match '\sconhost\s' -and $name -match '^longarmd') { 'job' } else {
       switch -Regex ($name) {
         '^longarm-tray\.exe$' { if ($cmd -match '--?worker-host') { 'host' } else { 'tray' } }
         '^longarmd\.exe$' { if ($cmd -match '\ssession-mode\s+run\b') { 'host' } elseif ($cmd -match '\srun\b') { 'daemon' } else { 'longarmd-other' } }
@@ -87,7 +88,7 @@ function Wait-Until([scriptblock] $cond, [int] $seconds, [string] $what) {
   return $false
 }
 
-# the kinds an upgrade stops and starts again (the client daemon is left running)
+# the kinds an upgrade stops and starts again (a job's processes are left running)
 $restartKinds = 'tray', 'host', 'daemon'
 
 function Start-Running([bool] $wantTray, [bool] $wantHost) {
@@ -102,11 +103,11 @@ function Start-Running([bool] $wantTray, [bool] $wantHost) {
     Start-Process (Join-Path $installDir 'longarm-tray.exe')
     if (-not (Wait-Until { @(Get-LongarmProcs | Where-Object Kind -EQ 'tray').Count } 30 'the tray')) { Fail 'the tray does not run' }
   }
-  # the client daemon: a Longarm process the upgrade must leave running (as it leaves job shims), its binary
-  # moved aside
-  if (-not @(Get-LongarmProcs | Where-Object Kind -EQ 'client-daemon').Count) {
-    & (Join-Path $installDir 'longarm.exe') daemon start 2>&1 | Write-Host
-    $null = Wait-Until { @(Get-LongarmProcs | Where-Object Kind -EQ 'client-daemon').Count } 20 'the client daemon'
+  # a running job: its console host (longarmd conhost, as the worker starts a job's command in) and the
+  # command, which an upgrade must leave running, longarmd.exe moved aside
+  if (-not @(Get-LongarmProcs | Where-Object Kind -EQ 'job').Count) {
+    Start-Process -WindowStyle Hidden (Join-Path $installDir 'longarmd.exe') -ArgumentList 'conhost', '--', 'ping.exe', '-n', '1800', '127.0.0.1'
+    if (-not (Wait-Until { @(Get-LongarmProcs | Where-Object Kind -EQ 'job').Count } 20 'the job')) { Fail 'longarmd conhost does not run' }
   }
   Start-Sleep -Seconds 5 # let them settle (a host starts its longarmd)
   Get-LongarmProcs | Format-Table -AutoSize ProcessId, Kind, SessionId, CommandLine | Out-String -Width 300 | Write-Host
@@ -178,8 +179,10 @@ function Invoke-Upgrade([string] $what, [string] $msi, [string] $arguments, [str
   $before = @(Get-LongarmProcs)
   $svcBefore = Get-ServicePids
   $kinds = @($before | Where-Object { $restartKinds -contains $_.Kind } | ForEach-Object Kind | Sort-Object -Unique)
-  $daemon = @($before | Where-Object Kind -EQ 'client-daemon')
-  Write-Host "running before the upgrade: kinds $($kinds -join ', '); services $(($svcBefore.Keys | Sort-Object) -join ', '); client daemon $($daemon.ProcessId)"
+  $job = @($before | Where-Object Kind -EQ 'job' | ForEach-Object ProcessId)
+  $job += @(Get-CimInstance Win32_Process | Where-Object { $job -contains $_.ParentProcessId } | ForEach-Object ProcessId)
+  Write-Host "running before the upgrade: kinds $($kinds -join ', '); services $(($svcBefore.Keys | Sort-Object) -join ', '); a job's processes $($job -join ', ')"
+  if ($job.Count -lt 2) { Fail "the job (longarmd conhost and its command) does not run: $($job -join ', ')" }
   if (-not $kinds.Count) { Fail 'nothing runs before the upgrade: the test would prove nothing' }
   $text = Invoke-Msi $what "/i `"$msi`" $arguments"
   if ($text -notmatch 'Disallowing uninstallation of component') { Write-Host '::warning::no component was shared with the old product' }
@@ -199,12 +202,13 @@ function Invoke-Upgrade([string] $what, [string] $msi, [string] $arguments, [str
       Fail "service $s ran before the upgrade and does not run again as a new process"
     }
   }
-  # left running: the client daemon (as job shims), its binary moved aside
-  foreach ($d in $daemon) {
-    if (-not (Get-Process -Id $d.ProcessId -ErrorAction SilentlyContinue)) { Fail "the client daemon ($($d.ProcessId)) was ended by the upgrade" }
-    Write-Host "the client daemon $($d.ProcessId) still runs; $installDir\old: $((Get-ChildItem (Join-Path $installDir 'old') -ErrorAction SilentlyContinue).Name -join ', ')"
+  # left running: the job (its console host and command), longarmd.exe moved aside
+  foreach ($j in $job) {
+    if (-not (Get-Process -Id $j -ErrorAction SilentlyContinue)) { Fail "the job's process $j was ended by the upgrade" }
   }
-  if (-not $daemon.Count) { Write-Host '::notice::the client daemon did not start: the left-running check was skipped' }
+  $aside = @(Get-ChildItem (Join-Path $installDir 'old') -Filter 'longarmd-*.exe' -ErrorAction SilentlyContinue)
+  if (-not $aside.Count) { Fail "the job's longarmd.exe was not moved aside to $installDir\old" }
+  Write-Host "the job ($($job -join ', ')) still runs; $installDir\old: $($aside.Name -join ', ')"
   $rec = Join-Path $dataDir 'msi-upgrade.json'
   if (Test-Path $rec) { Write-Host "--- $rec"; Get-Content $rec | Write-Host }
   Write-Host "after the upgrade:"
@@ -213,8 +217,11 @@ function Invoke-Upgrade([string] $what, [string] $msi, [string] $arguments, [str
 }
 
 function Invoke-Uninstall {
-  # the client daemon is ours (a user's would keep longarm.exe until it exits): end it by its pid
-  foreach ($d in @(Get-LongarmProcs | Where-Object Kind -EQ 'client-daemon')) { Stop-Process -Id $d.ProcessId -Force }
+  # the job is ours (a real one keeps its moved-aside binary until it ends): end it and its command by pid
+  foreach ($j in @(Get-LongarmProcs | Where-Object Kind -EQ 'job')) {
+    Get-CimInstance Win32_Process | Where-Object ParentProcessId -EQ $j.ProcessId | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Stop-Process -Id $j.ProcessId -Force -ErrorAction SilentlyContinue
+  }
   $code = (Get-Products)[0].PSChildName
   # leaving the hub fails with the dummy hub (the uninstall goes on: Return="ignore")
   $null = Invoke-Msi 'uninstall' "/x $code" -allow @('returned actual error code')
