@@ -10,6 +10,7 @@ release is cut and rolled back. Everything runs on GitHub-hosted runners.
 | [`image.yml`](../.github/workflows/image.yml) | pull request, push to `main`, called by release.yml | **smoke** (ubuntu): build the hub image (deploy/hub/Dockerfile), `deploy/azure/test/container-smoke.sh` with Azurite (bootstrap, admin join, restore after the container is replaced, health) · **publish** (push to main, releases): `ghcr.io/<owner>/longarm-hub` for linux/amd64+arm64 with SBOM and provenance: `:edge` + `:sha-<commit>` from main, `:X.Y.Z` (+ `:latest` for stable releases) from a tag |
 | [`release.yml`](../.github/workflows/release.yml) | tag `v*` | **meta** (tag check) → **build-unix** (ubuntu) and **build-windows** (windows-latest, MSIs) in parallel → **publish** (merges and checks them, signs) → **hub** → **rollout**; **image** (image.yml) runs next to the builds, **image-latest** after publish; hub and rollout only run when a deployment is configured. A manual run is a dry run (builds, gather, image smoke test; nothing signed, published or pushed) |
 | [`deploy.yml`](../.github/workflows/deploy.yml) | manual | hub deploy / rollback / status, fleet push of a version already on the hub |
+| [`mirror-gim.yml`](../.github/workflows/mirror-gim.yml) | push to any branch, branch delete, same-repository pull request, every 15 min, manual | mirrors branches, `main` and pull requests into the internal copy gim-home/longarm (`.github/scripts/mirror-gim.sh`), see "6. Internal mirror (gim-home)" |
 
 Nothing is assumed on the runners beyond what GitHub's images ship: Go comes
 from `actions/setup-go` (version from `go.mod`), .NET 8 from
@@ -400,7 +401,87 @@ scripts/privacy-check.sh                              # the privacy gate
 go test ./...                                         # what the test jobs run
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12        # + shellcheck on PATH
 shellcheck deploy/hub/longarm-hub-deploy .github/scripts/*.sh scripts/*.sh packaging/build.sh packaging/linux/*.sh
-go test -run 'TestHubDeployScript|TestHubReleaseVerify|TestReleaseRole|TestCIScripts' -v ./e2e/
+go test -run 'TestHubDeployScript|TestHubReleaseVerify|TestReleaseRole|TestCIScripts|TestMirrorGimScript' -v ./e2e/
 pwsh packaging/build.ps1 -SkipPublish -Snapshot       # the release build jobs (both sides; -Side windows|unix for one)
 gh workflow run release.yml --ref <branch>             # the release as a dry run (CI; nothing published)
 ```
+
+## 6. Internal mirror (gim-home)
+
+[`mirror-gim.yml`](../.github/workflows/mirror-gim.yml) keeps the
+Microsoft-internal copy https://github.com/gim-home/longarm in step with this
+repository, without anyone's machine involved
+([`.github/scripts/mirror-gim.sh`](../.github/scripts/mirror-gim.sh)). It runs
+on every push to a branch, every branch delete, every pull request event of a
+same-repository pull request, every 15 minutes and by hand
+(`gh workflow run mirror-gim.yml`). Each run reconciles the whole state rather
+than one event, in one concurrency group (`mirror-gim`, never cancelled), so a
+missed, superseded or out-of-order run heals on the next.
+
+What is mirrored:
+
+| here | in gim-home |
+|---|---|
+| every branch but `main` | the same branch, force-pushed |
+| `main` | merged into gim-home's `main` (commit "Sync main from lubobill1990/longarm"), a fast-forward there, never forced. gim-home's `main` has commits of its own (Start Right governance: `.github/acl/access.yml`, `.github/compliance/inventory.yml`, `.github/policies/jit.yml`, `.github/ISSUE_TEMPLATE/JitAccess.yml`); a merge conflict fails the run and is resolved there by hand |
+| an open pull request #N | a pull request with the same head branch, base, title and body, plus the footer `Mirrored from lubobill1990/longarm#N`; title, body and base kept in sync; closed there when #N is closed or merged here (reopened with it). Nothing is merged in gim-home: the commits arrive through `main` |
+| an open pull request from a fork | its head (`refs/pull/N/head`) as branch `pr-N` and a pull request from it - by the schedule, as fork events get no secrets; git objects only, the fork's code is never checked out or run here. Not mirrored when it changes `.github/` (there it would be a same-repository branch whose workflows run with gim-home's token): it gets a notice, review it here |
+| a deleted branch | deleted there |
+| tags | **not mirrored**: gim-home never releases (and has no `LONGARM_HUB`) |
+
+gim-home's own things are never touched: pull requests without the footer
+(e.g. its own Dependabot's) are never edited or closed, and their head
+branches are never pushed to or deleted; a branch is only deleted there if
+its tip is a commit of this repository (one the mirror pushed), never
+`main` or `dependabot/*`. The workflow does not run in gim-home itself.
+
+Note that gim-home runs its own copy of ci.yml on the mirrored pull
+requests, as same-repository pull requests - including mirrored fork pull
+requests' code - so gim-home should hold no secrets that ci.yml would hand to
+pull request code.
+
+### 6.1 The token: `GIM_MIRROR_TOKEN`
+
+A fine-grained personal access token of the maintainer's **EMU account**
+(the `…_microsoft` account that is a member of gim-home), limited to the one
+repository. Without the secret the workflow prints a notice and passes; the
+schedule catches up once it is set.
+
+1. Sign in to github.com as the EMU account. Settings → Developer settings →
+   Personal access tokens → **Fine-grained tokens** → Generate new token.
+2. Token name `longarm mirror (lubobill1990 → gim-home)`; expiration: the
+   longest gim-home's policy allows (note the date: see rotation below).
+3. **Resource owner: `gim-home`**. Repository access: **Only select
+   repositories** → `gim-home/longarm`.
+4. Repository permissions:
+   - **Contents: Read and write** (push branches and `main`, delete branches)
+   - **Pull requests: Read and write** (open, edit, close the mirrored pull requests)
+   - **Workflows: Read and write** - fine-grained tokens have this
+     permission (it only comes as write); without it GitHub rejects any push
+     that adds or changes a file under `.github/workflows/`, i.e. most `main`
+     syncs
+   - Metadata: Read-only (added automatically)
+5. Generate, copy the token (`github_pat_…`). If gim-home requires approval
+   of fine-grained tokens, the token shows as *pending* until a gim-home
+   owner approves it (Organization settings → Personal access tokens →
+   Pending requests); until then pushes fail with 403.
+6. Store it in **this** repository (never in gim-home):
+
+   ```sh
+   gh secret set GIM_MIRROR_TOKEN --repo lubobill1990/longarm   # paste the token at the prompt
+   gh workflow run mirror-gim.yml --repo lubobill1990/longarm   # first run, then check its summary
+   ```
+
+The token's user needs push access to gim-home/longarm, and - if gim-home's
+`main` has a ruleset requiring pull requests - must be allowed to bypass it,
+as for the manual sync before. If gim-home's enterprise restricts tokens by
+IP allow list or conditional access, GitHub-hosted runners can't use the
+token at all (403 on every call): the workflow then needs a runner inside
+the allowed network.
+
+Rotation: create a new token as above (both are valid meanwhile), `gh secret
+set GIM_MIRROR_TOKEN` with the new one, run the workflow by hand and check
+it passes, then delete the old token (Settings → Developer settings →
+Fine-grained tokens). A token that expired or was revoked fails the runs
+with 401 - nothing is lost meanwhile: the next run after the new secret
+mirrors everything.
