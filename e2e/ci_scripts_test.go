@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/update"
+	"github.com/example-owner/longarm/internal/pki"
+	"github.com/example-owner/longarm/internal/update"
 )
 
 // bashPath turns a path into one bash and the tools it runs understand
@@ -292,12 +292,12 @@ func TestMirrorGimScript(t *testing.T) {
 	native := `{"number":1,"title":"Bump x","body":"Dependabot","state":"open","merged_at":null,"head":{"ref":"dependabot/go_modules/x","repo":{"full_name":"gim-home/longarm"}},"base":{"ref":"main"}},` +
 		`{"number":2,"title":"native","body":null,"state":"open","merged_at":null,"head":{"ref":"native-feature","repo":{"full_name":"gim-home/longarm"}},"base":{"ref":"main"}}`
 	writeJSON("dst-pulls.json", "["+native+"]")
-	writeJSON("src-pulls.json", "["+srcPR(1, "feat-1", "lubobill1990/longarm", "Feature one", "Body 1\r\n")+","+
+	writeJSON("src-pulls.json", "["+srcPR(1, "feat-1", "example-owner/longarm", "Feature one", "Body 1\r\n")+","+
 		srcPR(3, "patch-1", "someone/longarm", "Fork three", "")+","+srcPR(4, "main", "other/longarm", "Fork four", "x")+"]")
 	ghPath := filepath.Join(fake, "gh.sh")
 	os.WriteFile(ghPath, []byte(fakeGH), 0o755)
 	script, _ := filepath.Abs("../.github/scripts/mirror-gim.sh")
-	env := append(idEnv, "SRC_REPO=lubobill1990/longarm", "DST_REPO=gim-home/longarm", "SRC_URL="+slash(srcGit), "DST_URL="+slash(dstGit),
+	env := append(idEnv, "SRC_REPO=example-owner/longarm", "DST_REPO=gim-home/longarm", "SRC_URL="+slash(srcGit), "DST_URL="+slash(dstGit),
 		"MIRROR_GH="+bashPath(ghPath), "FAKE_GH_DIR="+slash(fake), "FAKE_SRC_GIT="+slash(srcGit),
 		"SRC_TOKEN=src-token", "GIM_MIRROR_TOKEN=dst-token", "GITHUB_STEP_SUMMARY=", "RUNNER_TEMP="+slash(root))
 	run := func(extra ...string) result {
@@ -375,20 +375,20 @@ func TestMirrorGimScript(t *testing.T) {
 		t.Fatalf("branches: %v", h)
 	}
 	m := h["main"]
-	if p := git(root, "--git-dir="+dstGit, "log", "-1", "--format=%P %s", m); p != dstMain0+" "+srcTip("main")+" Sync main from lubobill1990/longarm" {
+	if p := git(root, "--git-dir="+dstGit, "log", "-1", "--format=%P %s", m); p != dstMain0+" "+srcTip("main")+" Sync main from example-owner/longarm" {
 		t.Fatalf("main: %s", p)
 	}
 	git(root, "--git-dir="+dstGit, "cat-file", "-e", m+":.github/acl/access.yml")
 	git(root, "--git-dir="+dstGit, "cat-file", "-e", m+":README.md")
 	ps := dstPRs()
-	if p := ps[3]; p.Head.Ref != "feat-1" || p.Title != "Feature one" || p.Body == nil || *p.Body != "Body 1\n\nMirrored from lubobill1990/longarm#1" || p.State != "open" {
+	if p := ps[3]; p.Head.Ref != "feat-1" || p.Title != "Feature one" || p.Body == nil || *p.Body != "Body 1\n\nMirrored from example-owner/longarm#1" || p.State != "open" {
 		t.Fatalf("PR for #1: %+v", p)
 	}
-	if p := ps[4]; p.Head.Ref != "pr-3" || p.Body == nil || *p.Body != "Mirrored from lubobill1990/longarm#3" || len(ps) != 4 {
+	if p := ps[4]; p.Head.Ref != "pr-3" || p.Body == nil || *p.Body != "Mirrored from example-owner/longarm#3" || len(ps) != 4 {
 		t.Fatalf("PR for #3: %+v (%d)", p, len(ps))
 	}
 	checkNative(h)
-	if l := readLog(); !strings.Contains(l, "GET repos/lubobill1990/longarm/pulls?state=open&per_page=100 src-token") ||
+	if l := readLog(); !strings.Contains(l, "GET repos/example-owner/longarm/pulls?state=open&per_page=100 src-token") ||
 		!strings.Contains(l, "POST repos/gim-home/longarm/pulls dst-token") {
 		t.Fatalf("tokens:\n%s", l)
 	}
@@ -413,7 +413,7 @@ func TestMirrorGimScript(t *testing.T) {
 	commit("go.mod", "other\n", "src bump")
 	git(work, "push", "-q", "src", "srcdep:refs/heads/dependabot/go_modules/x")
 	git(work, "checkout", "-q", "main")
-	writeJSON("src-pulls.json", "["+srcPR(1, "feat-1", "lubobill1990/longarm", "Feature one, renamed", "Body 1\r\n")+"]")
+	writeJSON("src-pulls.json", "["+srcPR(1, "feat-1", "example-owner/longarm", "Feature one, renamed", "Body 1\r\n")+"]")
 	r = run()
 	if r.code != 0 || !strings.Contains(r.stdout, "not pushing dependabot/go_modules/x") {
 		t.Fatalf("run 3: %+v", r)
@@ -437,7 +437,7 @@ func TestMirrorGimScript(t *testing.T) {
 	checkNative(h)
 
 	// 4: #3 reopened here: pr-3 pushed again, its PR there reopened
-	writeJSON("src-pulls.json", "["+srcPR(1, "feat-1", "lubobill1990/longarm", "Feature one, renamed", "Body 1")+","+
+	writeJSON("src-pulls.json", "["+srcPR(1, "feat-1", "example-owner/longarm", "Feature one, renamed", "Body 1")+","+
 		srcPR(3, "patch-1", "someone/longarm", "Fork three", "")+"]")
 	if r := run(); r.code != 0 || heads()["pr-3"] != fork3 || dstPRs()[4].State != "open" || len(dstPRs()) != 4 {
 		t.Fatalf("run 4: %+v %+v", r, dstPRs())

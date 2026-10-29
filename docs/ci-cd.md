@@ -423,8 +423,8 @@ What is mirrored:
 | here | in gim-home |
 |---|---|
 | every branch but `main` | the same branch, force-pushed |
-| `main` | merged into gim-home's `main` (commit "Sync main from lubobill1990/longarm"), a fast-forward there, never forced. gim-home's `main` has commits of its own (Start Right governance: `.github/acl/access.yml`, `.github/compliance/inventory.yml`, `.github/policies/jit.yml`, `.github/ISSUE_TEMPLATE/JitAccess.yml`); a merge conflict fails the run and is resolved there by hand |
-| an open pull request #N | a pull request with the same head branch, base, title and body, plus the footer `Mirrored from lubobill1990/longarm#N`; title, body and base kept in sync; closed there when #N is closed or merged here (reopened with it). Nothing is merged in gim-home: the commits arrive through `main` |
+| `main` | merged into gim-home's `main` (commit "Sync main from <owner>/longarm"), a fast-forward there, never forced. gim-home's `main` has commits of its own (Start Right governance: `.github/acl/access.yml`, `.github/compliance/inventory.yml`, `.github/policies/jit.yml`, `.github/ISSUE_TEMPLATE/JitAccess.yml`); a merge conflict fails the run and is resolved there by hand |
+| an open pull request #N | a pull request with the same head branch, base, title and body, plus the footer `Mirrored from <owner>/longarm#N` (this repository); title, body and base kept in sync; closed there when #N is closed or merged here (reopened with it). Nothing is merged in gim-home: the commits arrive through `main` |
 | an open pull request from a fork | its head (`refs/pull/N/head`) as branch `pr-N` and a pull request from it - by the schedule, as fork events get no secrets; git objects only, the fork's code is never checked out or run here. Not mirrored when it changes `.github/` (there it would be a same-repository branch whose workflows run with gim-home's token): it gets a notice, review it here |
 | a deleted branch | deleted there |
 | tags | **not mirrored**: gim-home never releases (and has no `LONGARM_HUB`) |
@@ -449,7 +449,7 @@ schedule catches up once it is set.
 
 1. Sign in to github.com as the EMU account. Settings → Developer settings →
    Personal access tokens → **Fine-grained tokens** → Generate new token.
-2. Token name `longarm mirror (lubobill1990 → gim-home)`; expiration: the
+2. Token name `longarm mirror to gim-home`; expiration: the
    longest gim-home's policy allows (note the date: see rotation below).
 3. **Resource owner: `gim-home`**. Repository access: **Only select
    repositories** → `gim-home/longarm`.
@@ -468,8 +468,8 @@ schedule catches up once it is set.
 6. Store it in **this** repository (never in gim-home):
 
    ```sh
-   gh secret set GIM_MIRROR_TOKEN --repo lubobill1990/longarm   # paste the token at the prompt
-   gh workflow run mirror-gim.yml --repo lubobill1990/longarm   # first run, then check its summary
+   gh secret set GIM_MIRROR_TOKEN --repo <owner>/longarm # paste the token at the prompt
+   gh workflow run mirror-gim.yml --repo <owner>/longarm # first run, then check its summary
    ```
 
 The token's user needs push access to gim-home/longarm, and - if gim-home's
