@@ -107,6 +107,9 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 			return nil, status.Errorf(codes.ResourceExhausted, "%s has %d unused worker codes already (they expire; max %d)", req.Owner, n, maxWorkerCodes)
 		}
 	}
+	if (r == pki.RoleClient || r == pki.RoleAdmin) && req.User == "" && h.TenancyOn() {
+		return nil, errUserlessCode
+	}
 	ttl := 10 * time.Minute
 	if req.Ttl != nil {
 		ttl = req.Ttl.AsDuration()
@@ -210,6 +213,10 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 	if jc.User != "" && h.userHasMachinesLocked(jc.User) { // enrolled meanwhile: the code was for the first one
 		h.mu.Unlock()
 		return nil, errUserHasMachines(jc.User)
+	}
+	if (jc.Role == string(pki.RoleClient) || jc.Role == string(pki.RoleAdmin)) && jc.User == "" && h.tenancyOnLocked() { // made before users were separated
+		h.mu.Unlock()
+		return nil, errUserlessCode
 	}
 	h.mu.Unlock()
 	if jc, err = h.store.UseJoinCode(hash, name, now); err != nil {
@@ -504,13 +511,20 @@ func (h *Hub) userHasMachinesLocked(user string) bool {
 	return false
 }
 
-// errUserHasMachines refuses a join code bound to a user (an admin's: user
-// add / user code / join-code --user) once the user has machines. Such a
-// code enrolls a user's first device only: after that, a device of the
-// user's comes from the user's own sign-in (longarm login, a pairing link
-// the user approves) - otherwise an admin could mint itself a certificate
-// of the user and act as the user, on the user's workers.
+// errUserHasMachines refuses an admin's credentials for a user (a join code
+// bound to the user: user add / user code / join-code --user; a panel
+// login: --panel) once the user has machines. They bootstrap a new user
+// only: after that, a device or login of the user's comes from the user's
+// own sign-in (longarm login, a pairing link the user approves) - otherwise
+// an admin could mint itself credentials of the user and act as the user,
+// on the user's machines.
 func errUserHasMachines(user string) error {
 	return status.Errorf(codes.FailedPrecondition,
-		"%s has machines already: a user-bound join code enrolls a user's first device only; further devices come from %s's own sign-in (longarm login, or a pairing link %s approves)", user, user, user)
+		"%s has machines already: an admin's join code or panel login for a user bootstraps a new user only; further devices come from %s's own sign-in (longarm login, or a pairing link %s approves)", user, user, user)
 }
+
+// errUserlessCode refuses a client or admin join code bound to no user once
+// users are separated: its device would act as the user its name names
+// (userOfLocked) - a way for an admin to become another user.
+var errUserlessCode = status.Error(codes.FailedPrecondition,
+	"with users separated, a client or admin code belongs to a user (longarm admin user add / user code, or join-code --user)")

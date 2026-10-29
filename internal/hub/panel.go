@@ -153,6 +153,15 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 		if !readJSON(w, r, &body) || !h.reauth(w, r, user, body.Current) {
 			return
 		}
+		// an administrator login named like a Longarm user would act as that
+		// user (panelViewer): never
+		h.mu.Lock()
+		isUser := h.tenants[body.Name] != nil || slices.Contains(h.purged, body.Name)
+		h.mu.Unlock()
+		if isUser {
+			httpError(w, http.StatusBadRequest, body.Name+" is a Longarm user's name")
+			return
+		}
 		secret, err := AddUser(h.store, body.Name, body.Password, body.Reset)
 		if err != nil {
 			httpError(w, http.StatusBadRequest, err.Error())

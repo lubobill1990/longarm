@@ -130,9 +130,9 @@ func (h *Hub) userOfLocked(id pki.Identity) string {
 
 // nodeNameReservedLocked reports whether a new node of role for user may
 // not take name: a Longarm user's name (live or purged) belongs to that
-// user - only that user's own devices may carry it (or an admin's
-// user-less client code, an old single-user device whose name is its
-// user), never a worker and never another user's device.
+// user - only devices bound to that user may carry it: never a worker,
+// another user's device or a device bound to no user (whose name would be
+// its user, userOfLocked).
 func (h *Hub) nodeNameReservedLocked(name, role, user string) bool {
 	if h.tenants[name] == nil && !slices.Contains(h.purged, name) {
 		return false
@@ -140,7 +140,7 @@ func (h *Hub) nodeNameReservedLocked(name, role, user string) bool {
 	if role != string(pki.RoleClient) && role != string(pki.RoleAdmin) {
 		return true
 	}
-	return user != "" && user != name
+	return user != name
 }
 
 // errNameReserved is the refusal of a node name that is a user's.

@@ -23,7 +23,13 @@ func TestOwnedWorkers(t *testing.T) {
 	t.Parallel()
 	h := newHubEnv(t, "")
 	alice, root := h.client, h.admin
-	h.mustLongarm(root, "admin", "user", "add", "alice", "--no-code")
+	// alice's panel login comes with her user, before she has machines (an
+	// admin can't hand itself a login of a user who has them, below)
+	pa := h.longarm(root, "admin", "user", "add", "alice", "--no-code", "--panel")
+	alicePanel := regexp.MustCompile(`password (\S+)\nTOTP secret (\S+)`).FindStringSubmatch(pa.stderr)
+	if pa.code != 0 || alicePanel == nil {
+		t.Fatalf("user add alice --panel: %+v", pa)
+	}
 	h.mustLongarm(root, "admin", "user", "add", "bob", "--no-code")
 	bob := filepath.Join(h.root, "cfg-bob")
 	h.mustLongarm(alice, "admin", "issue", "--role", "client", "--name", "bob-laptop", "--user", "bob",
@@ -99,12 +105,13 @@ func TestOwnedWorkers(t *testing.T) {
 	if r := h.longarm(root, "admin", "run", "aw", "--", bins.helper, "print", "1", "0", "0"); r.code == 0 || !strings.Contains(r.stderr, "NotFound") {
 		t.Fatalf("admin submits to alice's worker through the hub: %+v", r)
 	}
-	pr := h.longarm(root, "admin", "user", "set", "alice", "--panel")
-	m := regexp.MustCompile(`password (\S+)\nTOTP secret (\S+)`).FindStringSubmatch(pr.stderr)
-	if pr.code != 0 || m == nil {
-		t.Fatalf("panel login for alice: %+v", pr)
+	// a new panel login for alice now (she has machines) would be the
+	// admin's way in as alice: refused
+	if pr := h.longarm(root, "admin", "user", "set", "alice", "--panel"); pr.code == 0 || !strings.Contains(pr.stderr, "FailedPrecondition") {
+		t.Fatalf("panel login for alice with machines: %+v", pr)
 	}
-	p := (&uiStack{hubEnv: h, user: "alice", pass: m[1], secret: m[2]}).login(t)
+	m := alicePanel
+	p :=(&uiStack{hubEnv: h, user: "alice", pass: m[1], secret: m[2]}).login(t)
 	waitFor(t, "alice's job in the hub index", 20*time.Second, func() bool {
 		code, _ := p.do("GET", "/api/jobs/"+id, "")
 		return code == 200

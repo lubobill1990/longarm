@@ -59,7 +59,12 @@ compromised admins, hubs or workers; level 3 (untrusted code).
   machines, the hub makes and accepts no more codes bound to the user -
   otherwise an admin could mint itself a certificate of the user. More
   devices come from the user's own sign-in: `longarm login` (Entra ID) or a
-  pairing link the user approves in its panel login (`--panel`).
+  pairing link the user approves in its panel login (`--panel`). The same holds
+  for a panel login made by an admin (`user add --panel`, `user set --panel`):
+  for a user without machines only. With users separated, client and admin
+  codes always name their user (a device bound to no user would act as the
+  user its name names), and an administrator's panel login never takes a
+  user's name or login.
 - With Microsoft Entra ID sign-in, `longarm login` and the panel create
   the user on first sign-in and enroll the device without a code (see
   "Sign-in with Microsoft Entra ID").

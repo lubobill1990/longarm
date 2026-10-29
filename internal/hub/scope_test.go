@@ -81,7 +81,7 @@ func TestWorkerNamedLikeUser(t *testing.T) {
 		{"carol", "worker", "carol"}: true,  // not even carol's own
 		{"carol", "client", "alice"}: true,  // another user's device
 		{"carol", "client", "carol"}: false, // carol's own device
-		{"carol", "admin", ""}:       false, // an admin's user-less code (old single-user device)
+		{"carol", "admin", ""}:       true,  // a device bound to no user: its name would be its user
 		{"dave", "worker", "alice"}:  false, // no user of that name
 	}
 	for k, want := range reserved {
@@ -437,5 +437,59 @@ func TestTailnetRekeyHidden(t *testing.T) {
 	h.mu.Unlock()
 	if rekey {
 		t.Fatal("aw marked for a re-key")
+	}
+}
+
+// TestNoAdminCredentialsForUsers: an admin can't make itself credentials
+// that act as a user who has machines - a panel login for the user, an
+// administrator login named like the user, a device code bound to no user
+// (its device would act as the user its name names).
+func TestNoAdminCredentialsForUsers(t *testing.T) {
+	th, _ := ownedHub(t) // alice has a device and a worker
+	h := th.h
+	adm := pb.NewHubAdminClient(th.root)
+	if _, err := adm.PutUser(tctx(t), &pb.PutUserRequest{Name: "alice", Panel: true}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("admin makes alice a panel login: %v", err)
+	}
+	if _, err := h.store.GetUser("alice"); err == nil {
+		t.Fatal("a panel login for alice exists")
+	}
+	// a new user: its login comes with it, as before
+	if pr, err := adm.PutUser(tctx(t), &pb.PutUserRequest{Name: "erin", Create: true, Panel: true}); err != nil || pr.PanelPassword == "" {
+		t.Fatalf("new user with a panel login: %v %v", pr, err)
+	}
+	// userless client/admin codes: none once users are separated
+	for _, req := range []*pb.CreateJoinCodeRequest{{Role: "admin", Name: "alice"}, {Role: "client", Name: "alice-2"}, {Role: "client"}} {
+		if _, err := adm.CreateJoinCode(tctx(t), req); status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("userless code %v: %v", req, err)
+		}
+	}
+	// ... nor do ones made before users were separated enroll
+	code := newJoinCode()
+	hash := codeHash(code)
+	if err := h.store.AddJoinCode(hash, &store.JoinCode{ID: hash[:8], Role: "admin", Name: "alice", CreatedBy: "admin/root",
+		CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hubclient.Join(tctx(t), h.Addr("grpc"), code, hubclient.JoinOptions{Fingerprint: pki.Fingerprint(th.ca.Cert)}); err == nil {
+		t.Fatal("a userless admin code named alice enrolled")
+	}
+	// panel: an administrator login can't take a user's name, nor replace a user's login
+	if _, err := AddUser(h.store, "admin1", "admin-password-1", false); err != nil {
+		t.Fatal(err)
+	}
+	pu, _ := h.store.GetUser("admin1")
+	panel := panelLogin(t, h, "admin1", "admin-password-1", pu.TOTPSecret)
+	body := `{"name":"alice","password":"another-password-1","current_password":"admin-password-1"}`
+	resp, err := panel.Post("http://"+h.Addr("http")+"/api/users", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("admin login named alice: %d", resp.StatusCode)
+	}
+	if _, err := AddUser(h.store, "erin", "another-password-1", true); err == nil {
+		t.Fatal("erin's user login replaced by an administrator's")
 	}
 }

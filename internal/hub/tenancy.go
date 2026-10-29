@@ -367,6 +367,13 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "%s is a worker's name", req.Name)
 	}
+	// credentials for a user who has machines are the user's own business:
+	// with a device code or a panel login of the user an admin could act as
+	// the user, on the user's machines (errUserHasMachines)
+	if (req.JoinCode || req.Panel) && h.userHasMachinesLocked(req.Name) {
+		h.mu.Unlock()
+		return nil, errUserHasMachines(req.Name)
+	}
 	created := t == nil
 	if created {
 		t = &tenant{u: &pb.TenantUser{Name: req.Name, CreatedAt: tspb(time.Now().UTC()), CreatedBy: by}}

@@ -142,6 +142,9 @@ func AddPanelUser(st *store.Store, name, password, role, tenant string, replace 
 		if role == "user" && old.Admin() {
 			return "", fmt.Errorf("%s is a panel administrator's login", name)
 		}
+		if role == "admin" && !old.Admin() { // a user's login never becomes an administrator's (who would act as that user)
+			return "", fmt.Errorf("%s is a user's panel login", name)
+		}
 	}
 	u := &store.User{Name: name, PassHash: hashPassword(password), TOTPSecret: NewTOTPSecret(), CreatedAt: time.Now().UTC()}
 	if role == "user" {
