@@ -789,6 +789,20 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		wg.Add(1)
 		go func() { defer wg.Done(); agent.upd.Run(ctx) }()
 	}
+	// longarm worker update (the owner's; machineupdate.go)
+	selfWhy := ""
+	switch {
+	case !hubOn:
+		selfWhy = "this worker has no hub to update from"
+	case adminWorker:
+		selfWhy = "the admin worker updates with its MSI (the Longarm Update service is not installed here)"
+	case cfg.Update.Disabled:
+		selfWhy = "self-update is off in longarmd.toml ([update] disabled)"
+	}
+	mupd := newMachineUpdater(srv.Name, log, func() *updater { return agent.upd }, selfWhy)
+	srv.MachineUpdate = mupd
+	wg.Add(1)
+	go func() { defer wg.Done(); mupd.reportActivity(ctx, st.spaces) }()
 	legs.start(cfg.Listen, hubFile.Tailnet)
 	wg.Add(1)
 	go func() { defer wg.Done(); <-ctx.Done(); legs.wait() }()

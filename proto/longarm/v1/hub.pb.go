@@ -7466,11 +7466,17 @@ func (x *UpdateHint) GetVersion() string {
 }
 
 type UpdateCheckRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Os            string                 `protobuf:"bytes,1,opt,name=os,proto3" json:"os,omitempty"`
-	Arch          string                 `protobuf:"bytes,2,opt,name=arch,proto3" json:"arch,omitempty"`
-	Version       string                 `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"` // running version
-	Channel       string                 `protobuf:"bytes,4,opt,name=channel,proto3" json:"channel,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Os      string                 `protobuf:"bytes,1,opt,name=os,proto3" json:"os,omitempty"`
+	Arch    string                 `protobuf:"bytes,2,opt,name=arch,proto3" json:"arch,omitempty"`
+	Version string                 `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"` // running version
+	Channel string                 `protobuf:"bytes,4,opt,name=channel,proto3" json:"channel,omitempty"`
+	// An update the worker's owner asked for (longarm worker update): this
+	// version's files, whatever the rollout says ("latest" = the latest
+	// stable release). The worker refuses anything not newer than it runs and
+	// verifies the signatures as always. Older hubs ignore it (the worker
+	// then sees another version and says the hub is too old).
+	Want          string `protobuf:"bytes,5,opt,name=want,proto3" json:"want,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7529,6 +7535,13 @@ func (x *UpdateCheckRequest) GetVersion() string {
 func (x *UpdateCheckRequest) GetChannel() string {
 	if x != nil {
 		return x.Channel
+	}
+	return ""
+}
+
+func (x *UpdateCheckRequest) GetWant() string {
+	if x != nil {
+		return x.Want
 	}
 	return ""
 }
@@ -10052,12 +10065,13 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x02at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\"&\n" +
 	"\n" +
 	"UpdateHint\x12\x18\n" +
-	"\aversion\x18\x01 \x01(\tR\aversion\"l\n" +
+	"\aversion\x18\x01 \x01(\tR\aversion\"\x80\x01\n" +
 	"\x12UpdateCheckRequest\x12\x0e\n" +
 	"\x02os\x18\x01 \x01(\tR\x02os\x12\x12\n" +
 	"\x04arch\x18\x02 \x01(\tR\x04arch\x12\x18\n" +
 	"\aversion\x18\x03 \x01(\tR\aversion\x12\x18\n" +
-	"\achannel\x18\x04 \x01(\tR\achannel\"\x9f\x01\n" +
+	"\achannel\x18\x04 \x01(\tR\achannel\x12\x12\n" +
+	"\x04want\x18\x05 \x01(\tR\x04want\"\x9f\x01\n" +
 	"\x13UpdateCheckResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12-\n" +
 	"\x05files\x18\x02 \x03(\v2\x17.longarm.v1.ReleaseFileR\x05files\x12\x18\n" +

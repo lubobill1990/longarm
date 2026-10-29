@@ -55,11 +55,11 @@ func TestLsTable(t *testing.T) {
 	m := &pb.MetricsSnapshot{CpuPercent: 12.4, MemUsedBytes: 8 << 30, MemTotalBytes: 32 << 30, JobsRunning: 1}
 	rows := []lsRow{
 		{name: "box", state: "online", snap: m, path: "hub", node: &pb.NodeInfo{Name: "box", Role: "worker", State: "approved", Owner: "u",
-			Hostname: "box", Os: "windows", Labels: map[string]string{"os": "windows", "arch": "amd64", "pool": "devbox"}}},
+			Hostname: "box", Os: "windows", Version: "0.1.8", UpdateAvailable: &pb.UpdateAvailable{Version: "0.1.9"}, Labels: map[string]string{"os": "windows", "arch": "amd64", "pool": "devbox"}}},
 		{name: "box-admin", state: "online", snap: m, path: "hub", node: &pb.NodeInfo{Name: "box-admin", Role: "worker", State: "approved",
 			Owner: "u", Hostname: "box", AdminWorker: true, Labels: map[string]string{"longarm.io/admin": "true"}}},
 		{name: "old", state: "offline", snap: m, path: "hub", node: &pb.NodeInfo{Name: "old", Role: "worker", State: "approved", Owner: "u",
-			LastSeen: timestamppb.New(now.Add(-75 * time.Hour))}},
+			Version: "v0.1.9", LastSeen: timestamppb.New(now.Add(-75 * time.Hour))}},
 	}
 	var b strings.Builder
 	if failed := writeLsTable(&b, rows, false, now); failed != 0 {
@@ -67,14 +67,17 @@ func TestLsTable(t *testing.T) {
 	}
 	out := b.String()
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 3 || strings.Join(strings.Fields(lines[0]), " ") != "WORKER STATE OS CPU% MEM GB JOBS LABELS ADMIN OWNER" {
+	if len(lines) != 4 || strings.Join(strings.Fields(lines[0]), " ") != "WORKER STATE OS VERSION CPU% MEM GB JOBS LABELS ADMIN OWNER" {
 		t.Fatalf("compact:\n%s", out)
 	}
-	if f := strings.Fields(lines[1]); !slices.Equal(f, []string{"box", "online", "windows", "12", "8.0/32.0", "1", "pool=devbox", "online", "(box-admin)", "u"}) {
+	if f := strings.Fields(lines[1]); !slices.Equal(f, []string{"box", "online", "windows", "0.1.8↑", "12", "8.0/32.0", "1", "pool=devbox", "online", "(box-admin)", "u"}) {
 		t.Errorf("box row: %q", f)
 	}
-	if f := strings.Fields(lines[2]); !slices.Equal(f, []string{"old", "offline", "3d", "-", "-", "-", "-", "-", "-", "u"}) {
+	if f := strings.Fields(lines[2]); !slices.Equal(f, []string{"old", "offline", "3d", "-", "0.1.9", "-", "-", "-", "-", "-", "u"}) {
 		t.Errorf("old row: %q", f)
+	}
+	if lines[3] != "↑ 0.1.9 available for box: longarm worker update <worker> (owners)" {
+		t.Errorf("footer: %q", lines[3])
 	}
 	b.Reset()
 	writeLsTable(&b, rows, true, now)

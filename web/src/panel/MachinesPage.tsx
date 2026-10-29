@@ -5,6 +5,7 @@ import { ErrorBox, StatePill, useAction, usePoll } from '../components/common'
 import { VersionTag } from '../components/VersionTag'
 import { fmtAgo, GREEN, RED, since } from '../lib/format'
 import { ADMIN_LABEL, nodeMachines, type Group } from '../lib/machines'
+import { isOutdated } from '../lib/release'
 import { Link } from '../lib/router'
 
 /** The labels a user may edit (os/arch come from the worker). */
@@ -145,6 +146,13 @@ function WorkerRow({ n, latest, onChange }: { n: NodeInfo; latest?: string; onCh
       <td className="small">
         <VersionTag version={n.version} latest={latest} ua={n.update_available} testId={`outdated-${n.name}`} />
         {n.update_available?.reason && <div className="muted small">{n.update_available.reason}</div>}
+        {(n.update_available?.version || isOutdated(n.version, latest)) && (
+          // the panel can't start it (the hub has no way to update a machine): the owner's
+          // client does, end to end - or the tray's "Update to X"
+          <div className="muted small mono" data-testid={`update-hint-${n.name}`} title="update this machine from your client (or the tray's Update button)">
+            longarm worker update {n.name}
+          </div>
+        )}
       </td>
       <td className="small">
         {ownLabels(n).map(([k, v]) => (

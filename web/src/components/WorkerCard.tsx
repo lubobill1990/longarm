@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { LegStatus, MetricsSnapshot, PoolWorker, ProcGroup } from '../api/types'
+import type { WorkerUpdateJob } from '../api/local'
 import {
   AMBER,
   CPU_C,
@@ -37,6 +38,31 @@ export interface CardActions {
   remove?: (names: string[]) => void
   /** whether this user may remove the worker (its owner, or an admin) */
   canRemove?: (w: PoolWorker) => boolean
+  /** "Update to X": longarm worker update (the worker's owner only; the caller runs and tracks it) */
+  update?: (w: string, version: string) => void
+  /** whether this user may update the worker's machine (its owner) */
+  canUpdate?: (w: PoolWorker) => boolean
+  /** updates in progress or finished, by worker name */
+  updates?: Record<string, WorkerUpdateJob>
+}
+
+/** "0.1.8" (a leading v dropped), "" when unknown. */
+export function fmtVersion(v?: string): string {
+  return (v ?? '').replace(/^v/, '')
+}
+
+/** The machine's versions: "v0.1.8", "v0.1.8 · admin v0.1.7" when they differ. */
+export function machineVersion(session?: PoolWorker, admin?: PoolWorker): string {
+  const sv = fmtVersion(session?.node?.version)
+  const av = fmtVersion(admin?.node?.version)
+  if (sv && av && sv !== av) return `v${sv} · admin v${av}`
+  if (sv || av) return `v${sv || av}`
+  return ''
+}
+
+/** The worker an update of the machine goes to: the session worker, else the admin worker. */
+export function updateTarget(session?: PoolWorker, admin?: PoolWorker): PoolWorker | undefined {
+  return session ?? admin
 }
 
 const adminTip = (name: string) =>
@@ -118,11 +144,23 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
   if (admin && actions?.attach) menuItems.push([`run as admin (attach ${admin.name})`, () => actions.attach!(admin.name)])
   if (admin && actions?.ssh) menuItems.push([`ssh as admin (${admin.name})`, () => actions.ssh!(admin.name)])
   for (const x of [session, admin]) if (x && canRemove(x)) menuItems.push([`remove ${x.name}…`, () => actions!.remove!([x.name])])
+  const version = machineVersion(session, admin)
+  const target = updateTarget(session, admin)
+  const avail = target?.node?.update_available?.version ?? ''
+  const job = target ? actions?.updates?.[target.name] : undefined
+  const running = job?.state === 'running'
+  const canUpdate = !!target && !!avail && !!actions?.update && (actions.canUpdate?.(target) ?? false) && target.state === 'online'
   return (
     <div className="wcard" data-testid={`worker-${mm.key}`} data-state={state}>
       <div className="head">
         <span className={`dot is-${state}`} style={{ background: dot }} />
         <span className="name">{mm.key}</span>
+        {version && (
+          <span className={`pill ${avail ? 'warn' : 'chip'} ver`} data-testid="version" title={avail ? `Longarm ${avail} is available` : 'Longarm version'}>
+            {version}
+            {avail ? ' ↑' : ''}
+          </span>
+        )}
         <span className="sub">{statusText(session ?? admin ?? p, now)}</span>
         {draining && (
           <span className="pill warn" title={session?.node?.drain_reason}>
@@ -130,6 +168,17 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
           </span>
         )}
         <span className="actions">
+          {canUpdate && (
+            <button
+              className="act update"
+              data-testid="update-btn"
+              disabled={running}
+              title={`longarm worker update ${target!.name} --version ${avail}: installs the signed release; running jobs and sessions keep running`}
+              onClick={() => actions!.update!(target!.name, avail)}
+            >
+              {running ? 'Updating…' : `Update to ${avail}`}
+            </button>
+          )}
           {session && actions?.attach && (
             <button className="act" title={`open a terminal: longarm attach ${session.name}`} onClick={() => actions.attach!(session.name)}>
               attach
@@ -197,6 +246,7 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
           ))}
         </div>
       )}
+      {job && job.state !== 'idle' && <UpdateLine job={job} />}
       <LinkRows w={p} now={now} />
       {!metrics ? (
         <div className={`msg ${state === 'offline' ? 'red' : 'muted'}`}>
@@ -205,6 +255,29 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
       ) : (
         <Metrics m={metrics} w={p} now={now} />
       )}
+    </div>
+  )
+}
+
+/** An update of the machine: its progress, then the outcome. */
+export function UpdateLine({ job }: { job: WorkerUpdateJob }) {
+  if (job.state === 'running') {
+    const last = job.progress?.[job.progress.length - 1] ?? 'starting…'
+    return (
+      <div className="msg muted" data-testid="update-line">
+        updating: {last}
+      </div>
+    )
+  }
+  if (job.state === 'failed')
+    return (
+      <div className="msg red" data-testid="update-line">
+        update failed: {job.outcome?.error || job.error}
+      </div>
+    )
+  return (
+    <div className="msg ok" data-testid="update-line">
+      {job.outcome?.summary}
     </div>
   )
 }

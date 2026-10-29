@@ -277,7 +277,7 @@ func addCompletions(root *cobra.Command) {
 		}
 	}
 	set(completeWorkers(1), "info", "attach", "forward", "tail", "proxy", "exec", "run", "sessions", "jobs",
-		"worker share", "worker unshare", "worker remove", "worker label", "session start", "session send", "session stop")
+		"worker share", "worker unshare", "worker remove", "worker label", "worker update", "session start", "session send", "session stop")
 	set(completeWorkers(-1), "ls", "ssh-config")
 	set(completeJobArgs, "logs", "wait", "kill")
 	set(completeWorkerColon, "put", "get", "sync")

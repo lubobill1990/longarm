@@ -58,6 +58,8 @@ func (h *Hub) httpHandler() http.Handler {
 	mux.HandleFunc("GET /install.ps1", h.installScript("ps1"))
 	mux.HandleFunc("GET /releases/latest.json", h.latestJSON)
 	mux.HandleFunc("GET /releases/{version}/{file}", h.releaseFile)
+	// a version's record, for the LongarmUpdate service (releasejson.go; the latest: latestJSON)
+	mux.HandleFunc("GET /releases/{version}/release.json", h.releaseVersionJSON)
 
 	mux.HandleFunc("POST /api/login", h.apiLogin)
 	mux.HandleFunc("POST /login", h.formLogin)

@@ -13,7 +13,7 @@
 //     MSIRESTARTMANAGERCONTROL=Disable); the installer starts it again
 //     (LongarmTrayLaunch).
 //   - stop (deferred, elevated, before RemoveExistingProducts): records and
-//     stops the worker services (longarmd-admin, a RUN=service longarmd),
+//     stops the services (longarmd-admin, LongarmUpdate, a RUN=service longarmd),
 //     then every user's tray, user-session worker host and `longarmd run`
 //     whose image is in the install dir - asked first, ended by pid after a
 //     timeout - and moves binaries that are still in use (job shims and

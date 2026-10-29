@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { longarmApi, trayApi, traySettingsApi } from '../api/local'
+import { localUpdateApi, longarmApi, trayApi, traySettingsApi } from '../api/local'
 import type { FleetJob, Job, PoolView } from '../api/types'
 import { ErrorBox, LogView, StatePill, useAction, usePoll } from '../components/common'
 import { IconForward, IconTerminal } from '../components/icons'
@@ -223,7 +223,55 @@ export function Settings({
       {theme && onTheme && <Appearance theme={theme} onTheme={onTheme} />}
       {clientUp && <TransportPolicy />}
       <TraySettingsView pool={pool} clientUp={clientUp} />
+      <AutoUpdate />
     </div>
+  )
+}
+
+/**
+ * Automatic updates of this machine (the Longarm Update service of a
+ * Windows MSI install; absent elsewhere): off by default, changed by the
+ * machine's owner or an administrator only - never by the hub.
+ */
+export function AutoUpdate() {
+  const st = usePoll(localUpdateApi.status, 0)
+  const { run, busy } = useAction()
+  const u = st.data
+  if (!u?.service) return null
+  const newer = u.available && u.available !== u.installed ? ` · ${u.available} available` : ''
+  return (
+    <Section title="Updates" testId="auto-update">
+      <div className="field-help">
+        Longarm {u.installed ?? '…'}
+        {newer}
+      </div>
+      <label className="switch-row">
+        <input
+          type="checkbox"
+          className="switch"
+          aria-label="automatic updates"
+          checked={!!u.auto}
+          disabled={busy || !u.can_set_auto}
+          onChange={(e) =>
+            run(() => localUpdateApi.setAuto(e.target.checked), e.target.checked ? 'automatic updates on' : 'automatic updates off').then(
+              (r) => r && st.setData(r),
+            )
+          }
+        />
+        <span>
+          <span className="field-label">Install new releases automatically</span>
+          <span className="field-help">
+            every {u.auto_interval_hours ?? 6} h, once no job started for 5 minutes
+            {!u.can_set_auto ? ' (only this machine\'s owner or an administrator can change this)' : ''}
+          </span>
+        </span>
+      </label>
+      {u.last && (
+        <p className="field-help" data-testid="last-update">
+          last update: {u.last.from} → {u.last.to}: {u.last.ok ? 'installed' : `failed (${u.last.error ?? ''})`}
+        </p>
+      )}
+    </Section>
   )
 }
 

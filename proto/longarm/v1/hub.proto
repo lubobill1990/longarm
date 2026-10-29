@@ -1048,6 +1048,12 @@ message UpdateCheckRequest {
   string arch = 2;
   string version = 3; // running version
   string channel = 4;
+  // An update the worker's owner asked for (longarm worker update): this
+  // version's files, whatever the rollout says ("latest" = the latest
+  // stable release). The worker refuses anything not newer than it runs and
+  // verifies the signatures as always. Older hubs ignore it (the worker
+  // then sees another version and says the hub is too old).
+  string want = 5;
 }
 
 message UpdateCheckResponse {

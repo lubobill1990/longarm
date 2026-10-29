@@ -603,6 +603,10 @@ func (s *fleetServer) CheckUpdate(ctx context.Context, req *pb.UpdateCheckReques
 	if req.Version != "" {
 		n.rec.Version = req.Version
 	}
+	if req.Want != "" {
+		h.mu.Unlock()
+		return h.wantedRelease(req)
+	}
 	target := h.targetLocked(n)
 	stable := channelOf(n) == "stable"
 	state := ""
@@ -626,6 +630,40 @@ func (s *fleetServer) CheckUpdate(ctx context.Context, req *pb.UpdateCheckReques
 		if f.Kind == "binary" && f.OS == req.Os && f.Arch == req.Arch && isUpdateBinary(f.File) {
 			resp.Files = append(resp.Files, releaseFilePB(f))
 		}
+	}
+	return resp, nil
+}
+
+// wantedRelease answers CheckUpdate with want (longarm worker update: the
+// owner asked this worker for a version): that version's update binaries
+// for the worker's OS / arch, whatever the rollout says. The worker refuses
+// anything not newer than it runs and verifies the signatures.
+func (h *Hub) wantedRelease(req *pb.UpdateCheckRequest) (*pb.UpdateCheckResponse, error) {
+	v := req.Want
+	if v == "latest" {
+		latest, _, err := h.latestRelease()
+		if err != nil {
+			return nil, err
+		}
+		if latest == "" {
+			return nil, status.Error(codes.NotFound, "the hub has no stable release")
+		}
+		v = latest
+	} else if !versionRE.MatchString(v) {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid version %q", v)
+	}
+	files, err := h.releaseFiles(v)
+	if err != nil {
+		return nil, err
+	}
+	resp := &pb.UpdateCheckResponse{Version: v}
+	for _, f := range files {
+		if f.Kind == "binary" && f.OS == req.Os && f.Arch == req.Arch && isUpdateBinary(f.File) {
+			resp.Files = append(resp.Files, releaseFilePB(f))
+		}
+	}
+	if len(resp.Files) == 0 {
+		return nil, status.Errorf(codes.NotFound, "the hub has no release %s for %s/%s", v, req.Os, req.Arch)
 	}
 	return resp, nil
 }

@@ -125,6 +125,9 @@ type Server struct {
 	Conns *conntrack.Tracker
 	// GC runs a garbage collection for Admin.Gc.
 	GC func(ctx context.Context, req *pb.GcRequest) (*pb.GcResponse, error)
+	// MachineUpdate updates this machine for its owner (MachineUpdate;
+	// nil = not served).
+	MachineUpdate MachineUpdater
 
 	// UnaryInterceptors / StreamInterceptors run before the authorization
 	// (telemetry: they also see refused calls).
@@ -160,6 +163,7 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 	pb.RegisterFilesServer(g, &filesServer{s: s})
 	pb.RegisterWorkspaceServer(g, &workspaceServer{s: s})
 	pb.RegisterLinkTunnelServer(g, &linkTunnelServer{s: s})
+	pb.RegisterMachineUpdateServer(g, &machineUpdateServer{s: s})
 	return g
 }
 
@@ -184,6 +188,9 @@ func (n *nodeServer) Info(ctx context.Context, _ *pb.InfoRequest) (*pb.InfoRespo
 		StartedAt: timestamppb.New(n.s.StartedAt), CallerName: id.Name, CallerRole: string(id.Role),
 		Listeners: n.s.ListenerNames(), SshHostKey: n.s.SSHHostKey,
 		Isolation: n.s.Spaces.Mode(), CallerUser: id.Owner(), Features: WorkerFeatures,
+	}
+	if n.s.MachineUpdate != nil {
+		out.Features = append(slices.Clip(out.Features), FeatureMachineUpdate)
 	}
 	if n.s.perUser() {
 		out.Account = n.s.Spaces.AccountName(id.Owner())

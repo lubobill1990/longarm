@@ -153,6 +153,8 @@ var cliFeatures = []string{
 	"job-id-short",         // logs / wait / kill / jobs --id: a unique prefix or suffix of a job id, or "last"
 	"jobs-mine",            // jobs --mine / --all
 	"doctor-json",          // longarm doctor --json (docs/usage.md#doctor---json)
+	"worker-update",        // worker update <worker> [--latest|--version X] [--wait] [--json] [--auto on|off]
+	"ls-version",           // ls: the VERSION column, --json updateAvailable
 }
 
 func versionCmd() *cobra.Command {

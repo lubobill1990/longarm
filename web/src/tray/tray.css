@@ -1781,3 +1781,16 @@
     }
   }
 }
+
+/* machine updates: the version pill and "Update to X" (longarm worker update) */
+:root[data-app='tray'] {
+  & .wcard .pill.ver {
+    font-variant-numeric: tabular-nums;
+  }
+  & .wcard .actions button.act.update {
+    color: var(--accent);
+  }
+  & .wcard .msg.ok {
+    color: var(--green-ink);
+  }
+}

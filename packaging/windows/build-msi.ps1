@@ -10,7 +10,8 @@
     dotnet tool install --global wix --version 5.0.2
     wix extension add -g WixToolset.UI.wixext/5.0.2 WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2
   BinDir holds longarm.exe and longarmd.exe (and longarm-tray.exe, which is included when present;
-  longarm-msihelper.exe, the upgrade helper, is built into BinDir with Go when it isn't there).
+  longarm-msihelper.exe, the upgrade helper, and longarm-update.exe, the Longarm Update service, are
+  built into BinDir with Go when they aren't there).
   The MSI's worker data dir defaults to C:\ProgramData\Longarm\longarmd (DATADIR), the same dir
   longarmd itself uses as LocalSystem and for `service install --isolation per-user`.
   Install modes (longarm.wxs): MODE=default (the built-in hub, -DefaultHub) signs in with Microsoft
@@ -58,6 +59,27 @@ if (-not (Test-Path $helper)) {
     Pop-Location
     Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue
   }
+}
+# The Longarm Update service (internal/updatesvc; installed, runs as LocalSystem): taken from BinDir,
+# else built here with this version and the release key (LONGARM_UPDATE_PUBKEY, as goreleaser builds
+# the other binaries; without a key the service installs nothing). Needs Go.
+$updater = Join-Path (Resolve-Path $BinDir).Path 'longarm-update.exe'
+if (-not (Test-Path $updater)) {
+  $goArch = @{ x64 = 'amd64'; arm64 = 'arm64' }[$Arch]
+  $env:GOOS, $env:GOARCH, $env:CGO_ENABLED = 'windows', $goArch, '0'
+  $pub = "$env:LONGARM_UPDATE_PUBKEY".Trim()
+  if ($pub -and $pub -notmatch '^[A-Za-z0-9+/=]+$') { throw 'LONGARM_UPDATE_PUBKEY is not a minisign public key line' }
+  $ld = "-s -w -X github.com/lubobill1990/longarm/internal/version.Version=$($Version -replace '^v', '') " +
+    "-X github.com/lubobill1990/longarm/internal/update.PublicKey=$pub"
+  Push-Location (Join-Path $PSScriptRoot '..\..')
+  try {
+    & go build -trimpath -ldflags $ld -o $updater ./cmd/longarm-update
+    if ($LASTEXITCODE -ne 0) { throw "go build longarm-update failed ($LASTEXITCODE)" }
+  } finally {
+    Pop-Location
+    Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue
+  }
+  if (-not $pub) { Write-Warning 'longarm-update.exe has no release key (LONGARM_UPDATE_PUBKEY): its service will install nothing' }
 }
 $hasTray = if (Test-Path (Join-Path $BinDir 'longarm-tray.exe')) { 1 } else { 0 }
 $wix = Get-Command wix -ErrorAction SilentlyContinue

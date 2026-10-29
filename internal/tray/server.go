@@ -236,6 +236,7 @@ func (s *Server) Handler() http.Handler {
 	s.settingsRoutes(mux) // prefs.go
 	mux.HandleFunc("GET /trayapi/update", s.updateState)
 	mux.HandleFunc("POST /trayapi/update/install", s.updateInstall)
+	s.updateServiceRoutes(mux) // updatesvc.go
 	mux.Handle("/", webui.Handler("/local/", "/trayapi/"))
 	return s.guard(mux)
 }

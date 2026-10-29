@@ -42,6 +42,16 @@
 
 ### Security
 
+- The Longarm Update service (`LongarmUpdate`, every MSI install) installs
+  a Longarm MSI only when it comes from the hub recorded in HKLM (never one
+  named in a request), is signed with the release key built into the
+  service (the trusted comment naming that file and version), matches the
+  hub's sha256/size record, is strictly newer than the installed version
+  and is for this machine's architecture. Its pipe is created as the first
+  instance; clients check that the server is the installed service running
+  as SYSTEM. Remote updates take a certificate of the worker's owner, end
+  to end: the hub has no command that triggers one and can't turn
+  automatic updates on (docs/security.md "Update service").
 - MSI custom actions take their values as strictly parsed data
   (`install-helper msi <step> #LONGARM-MSI#k=v|...`), never as options; run
   only the installed, administrator-only binaries; refuse a
@@ -83,6 +93,30 @@
 - `TailnetKey` refuses with Unavailable, without charging the node's rate
   limit, while the provider can't mint yet (a starting sidecar).
 - deploy/azure/test/acirules checks ACI's limit of 5 ports per IP address.
+- Updating machines from your client: `longarm worker update <worker>
+  [--latest | --version X] [--wait] [--json]` (the worker's owner only; exit
+  codes 2 / 3 / 75 / 77 / 255) reports progress and the result
+  ("cpc-1: 0.1.8 → 0.1.9; 2 jobs and 1 session kept running"). On Windows
+  MSI installs the new Longarm Update service installs the newer signed MSI
+  without a UAC prompt (the user-session and admin workers restart, jobs
+  and sessions keep running); other installs update longarmd itself.
+  Workers too old for it get a clear message (`machine-update` feature).
+- Automatic updates (off by default): `longarm worker update <worker> --auto
+  on`, the tray's Settings, or `longarm-update auto on` - the machine's owner
+  or an administrator only. The service then installs the hub's latest
+  stable release every 6 hours once no job has started for 5 minutes.
+- Versions everywhere: `longarm ls` has a VERSION column (`0.1.8↑` and a
+  "0.1.9 available" line for workers that report a newer release they
+  can't install themselves: `NodeInfo.update_available`); the tray's
+  Workers tab shows each machine's worker and admin-worker versions and,
+  for the owner, an "Update to X" button with progress and the result; the
+  panel's My machines page says `longarm worker update <name>` next to an
+  outdated version. The tray's update banner installs through the service
+  when the machine has it (no UAC prompt).
+- The hub serves a version's release record
+  (`GET /releases/<version>/release.json`, next to `/releases/latest.json`)
+  and `CheckUpdate` takes `want` (an owner-requested version).
+- `longarm version --json` features `worker-update`, `ls-version`.
 - Clearer Windows installer roles: the Default page says what each choice
   installs - "This is my everyday computer: send jobs to workers" (client)
   or "This machine runs jobs (Dev Box, build machine)" (client + your

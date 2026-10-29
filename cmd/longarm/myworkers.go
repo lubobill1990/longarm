@@ -127,7 +127,7 @@ you are logged on; no password), elsewhere longarmd service install.`,
 	}
 	ls.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 
-	c.AddCommand(add, ls, shareCmd(true), shareCmd(false))
+	c.AddCommand(add, ls, shareCmd(true), shareCmd(false), workerUpdateCmd())
 	c.AddCommand(&cobra.Command{
 		Use:   "label <worker> KEY=VALUE[,KEY=VALUE...]... [KEY-]...",
 		Short: "Set labels of a worker of yours (KEY- or KEY= deletes; admins: any worker)",

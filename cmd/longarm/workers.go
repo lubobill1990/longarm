@@ -36,10 +36,11 @@ commands as SYSTEM, <worker>-admin) shows in its ADMIN column, an admin
 worker alone keeps its own row. Offline workers say when they were last
 seen.
 
-The default table is WORKER STATE OS CPU% MEM JOBS LABELS (ADMIN, OWNER when
-any worker has one); -o wide adds Claude Code / Copilot CLI sessions, free
-disk, uptime, the top processes and the path this client reaches each
-worker by. --json prints every worker's hub record (or metrics) by name.`,
+The default table is WORKER STATE OS VERSION CPU% MEM JOBS LABELS (ADMIN,
+OWNER when any worker has one); VERSION ends in "↑" when the hub has a newer
+stable release for the worker (longarm worker update); -o wide adds
+Claude Code / Copilot CLI sessions, free disk, uptime, the top processes
+and the path this client reaches each worker by. --json prints every worker's hub record (or metrics) by name.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := openSession()
 			if err != nil {

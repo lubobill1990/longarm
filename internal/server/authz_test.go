@@ -446,6 +446,23 @@ func TestAuthzTable(t *testing.T) {
 			_, err = st.CloseAndRecv()
 			return err
 		}, [4]codes.Code{codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument}},
+		// a fleet worker (no owner): nobody updates its machine (TestMachineUpdateOwnerOnly)
+		pb.MachineUpdate_Start_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			st, err := pb.NewMachineUpdateClient(c).Start(ctx, &pb.MachineUpdateRequest{Latest: true})
+			if err != nil {
+				return err
+			}
+			_, err = st.Recv()
+			return err
+		}, [4]codes.Code{pd, pd, pd, pd}},
+		pb.MachineUpdate_SetAuto_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := pb.NewMachineUpdateClient(c).SetAuto(ctx, &pb.MachineUpdateAutoRequest{Enabled: true})
+			return err
+		}, [4]codes.Code{pd, pd, pd, pd}},
+		pb.MachineUpdate_Status_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := pb.NewMachineUpdateClient(c).Status(ctx, &pb.MachineUpdateStatusRequest{})
+			return err
+		}, [4]codes.Code{codes.Unimplemented, codes.Unimplemented, codes.Unimplemented, codes.Unimplemented}},
 	}
 	var missing []string
 	for m := range MethodRoles {
