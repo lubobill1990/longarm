@@ -458,10 +458,34 @@ func fakeAz(args []string) {
 		}
 		tsv("acruser", "acr-s3cret-pw")
 	case "acr repository":
-		// an image of the registry (deploy.sh's pull check with the managed identity)
-		if args[2] != "show" || read("acr") != flag("-n") || strings.Contains(flag("--image"), "missing") {
-			fail("ResourceNotFound: " + flag("--image"))
+		// an image of the registry (deploy.sh's pull check with the managed
+		// identity); mirror/ images: those imported into it (any registry)
+		img := flag("--image")
+		if strings.HasPrefix(img, "mirror/") {
+			if args[2] != "show" || !slices.Contains(strings.Split(read("acr-mirror"), "\n"), flag("-n")+" "+img) {
+				fail("ResourceNotFound: " + img)
+			}
+			return
 		}
+		if args[2] != "show" || read("acr") != flag("-n") || strings.Contains(img, "missing") {
+			fail("ResourceNotFound: " + img)
+		}
+	case "acr import":
+		// a pinned Docker Hub image by digest, tagged mirror/<repository>:<hex>;
+		// HELPER_AZ_IMPORT_FAIL: Docker Hub's pull limit
+		src, tag := flag("--source"), flag("-t")
+		m := regexp.MustCompile(`^docker\.io/(?:library/)?([a-z0-9./-]+)@(sha256:([0-9a-f]{64}))$`).FindStringSubmatch(src)
+		if m == nil || flag("-n") == "" || tag != "mirror/"+m[1]+":"+m[3] {
+			fail("fake az: acr import " + strings.Join(args[2:], " "))
+		}
+		if os.Getenv("HELPER_AZ_IMPORT_FAIL") == "1" {
+			fail("toomanyrequests: You have reached your unauthenticated pull rate limit.")
+		}
+		have := read("acr-mirror")
+		for _, img := range []string{"mirror/" + m[1] + "@" + m[2], tag} {
+			have += "\n" + flag("-n") + " " + img
+		}
+		write("acr-mirror", strings.TrimSpace(have))
 	case "acr build":
 		// what ACR Tasks needs: the stage it can parse, the Dockerfile in the source
 		src := args[len(args)-1]

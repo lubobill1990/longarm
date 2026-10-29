@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.48.1.52935",
-      "templateHash": "5969775317194186769"
+      "templateHash": "15243626650125004720"
     }
   },
   "parameters": {
@@ -58,9 +58,9 @@
     },
     "caddyImage": {
       "type": "string",
-      "defaultValue": "ghcr.io/lubobill1990/longarm-mirror:caddy-eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f",
+      "defaultValue": "docker.io/library/caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f",
       "metadata": {
-        "description": "Caddy image of the panel sidecar: docker.io/library/caddy:2.11.7-alpine, mirrored by digest to ghcr.io/lubobill1990/longarm-mirror (deploy/azure/mirror-images.txt; nothing is pulled from Docker Hub)."
+        "description": "Caddy image of the panel sidecar (storageAuth key), pinned by digest (deploy/azure/mirror-images.txt). deploy.sh --acr points it at its copy in the registry, <acr>.azurecr.io/mirror/caddy:<hex>@sha256:<hex>, so nothing is pulled from Docker Hub."
       }
     },
     "enableLogAnalytics": {
@@ -158,7 +158,7 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "storageAuth identity: pull the image from this Azure Container Registry (in this resource group) with the managed identity (AcrPull). Empty: registryUsername or anonymous."
+        "description": "storageAuth identity: an Azure Container Registry (in this resource group) the managed identity pulls from (AcrPull): the hub image if it is there, and the sidecar images when caddyImage / headscaleImage point at it (deploy.sh --acr: its mirror/ copies). Empty: registryUsername or anonymous."
       }
     },
     "registryServer": {
@@ -185,9 +185,9 @@
     },
     "headscaleImage": {
       "type": "string",
-      "defaultValue": "ghcr.io/lubobill1990/longarm-mirror:headscale-162cf7e150072f677d70120fd9abaa78d55a37f6ab3944c040fb57626fefd12a@sha256:162cf7e150072f677d70120fd9abaa78d55a37f6ab3944c040fb57626fefd12a",
+      "defaultValue": "docker.io/headscale/headscale:v0.29.5-debug@sha256:162cf7e150072f677d70120fd9abaa78d55a37f6ab3944c040fb57626fefd12a",
       "metadata": {
-        "description": "Headscale image of the sidecar: docker.io/headscale/headscale:v0.29.5-debug (its busybox shell runs the start script that waits for the hub), mirrored by digest to ghcr.io/lubobill1990/longarm-mirror (deploy/azure/mirror-images.txt)."
+        "description": "Headscale image of the sidecar (the -debug image: its busybox shell runs the start script that waits for the hub), pinned by digest (deploy/azure/mirror-images.txt). deploy.sh --acr points it at its copy in the registry, <acr>.azurecr.io/mirror/headscale/headscale:<hex>@sha256:<hex>, pulled with the managed identity."
       }
     },
     "headscalePublicDerp": {

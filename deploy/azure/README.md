@@ -69,7 +69,7 @@ restarts the hub) prints everything too.
 | `--entra-apps LIST` | `-EntraApps` | app-only sign-in (CI): `<app id>=<user>`, comma-separated |
 | `--log-analytics` | `-LogAnalytics` | container logs to a Log Analytics workspace |
 | `--storage-auth key\|identity` | `-StorageAuth` | `identity`: no storage account keys, panel served by the hub ([below](#without-storage-account-keys)); a re-run keeps the mode (switching needs a new deployment) |
-| `--acr NAME` | `-Acr` | with `identity`: pull the image from this Azure Container Registry (same resource group) |
+| `--acr NAME` | `-Acr` | with `identity`: an Azure Container Registry (same resource group) the managed identity pulls from: the image if it is there, and the sidecars from its copies of [mirror-images.txt](mirror-images.txt), imported if missing ("Third-party images") |
 | `--telemetry` | `-Telemetry` | Application Insights + Log Analytics for the fleet's scrubbed telemetry ([below](#telemetry-and-diagnostic-bundles)) |
 | `--diagnostics` | `-Diagnostics` | with `identity`: a blob container for uploaded diagnostic bundles, deleted after 30 days |
 | `--panel` | `-Panel` | turn the panel back on (with `--recreate`) |
@@ -106,17 +106,16 @@ subscription's policy denies: the hub was down for 20 minutes. Now:
   sidecar) can be pulled: the registry's manifest, asked the way ACI pulls it
   (anonymously, or with `--registry-user`; an ACR pulled with the managed
   identity through `az acr`). `--skip-image-check` skips the latter.
-- **No Docker Hub.** The template's third-party images (Caddy, Headscale) are
-  copies in the GHCR package `ghcr.io/lubobill1990/longarm-mirror`, pinned by
-  digest ([mirror-images.txt](mirror-images.txt)). `.github/workflows/mirror.yml`
-  only verifies the pins on pull requests (read-only); on main it copies
-  them, from the source repositories the workflow itself allows, to tags
-  derived from the source and digest (`caddy-<digest hex>`), in that package
-  only. **One-time step:** a new GHCR package starts private and the API
-  can't change that: after the first publish, make `longarm-mirror` public
-  (GitHub -> Packages -> longarm-mirror -> Package settings -> Change
-  visibility) and re-run the workflow, which checks the anonymous pull. Until
-  then deploy.sh refuses before changing anything (the image check).
+- **Third-party images from your own registry (`--acr`).** The sidecars
+  (Headscale; Caddy with storage keys) are pinned by digest in
+  [mirror-images.txt](mirror-images.txt), from Docker Hub. With
+  `--storage-auth identity --acr NAME` they come from that Azure Container
+  Registry instead (see "Third-party images" below): before anything is
+  deleted, deploy.sh checks that each pinned digest is there and imports a
+  missing one (`az acr import`). Docker Hub's pull limits can then fail the
+  import, never a running hub: an import that fails stops the script with
+  nothing changed. Without `--acr` ACI pulls them from Docker Hub by digest
+  (the image check above runs first).
 - **The settings outlive the group.** A run that finds no container group
   takes the hub's settings from the parameters of the last successful
   deployment (ARM keeps them; forging them needs deployment write access),
@@ -277,9 +276,55 @@ identity` (template parameter `storageAuth=identity`) deploys without keys:
   crash reports of the hub process waiting to be sent to telemetry (the
   panic is in the container log too).
 - The admin join code is not in the log; get it with `--admin-code`.
-- `--acr NAME` pulls the image from an Azure Container Registry in the
-  resource group with the same identity (AcrPull), for registries without
-  admin users.
+- `--acr NAME` pulls from an Azure Container Registry in the resource group
+  with the same identity (AcrPull), for registries without admin users: the
+  hub image if it is there, and the sidecar images (see "Third-party
+  images").
+
+## Third-party images
+
+The sidecars (Headscale; Caddy with storage keys) are third-party images,
+pinned by digest in [mirror-images.txt](mirror-images.txt) (the template's
+`caddyImage` / `headscaleImage` defaults; `.github/workflows/mirror.yml`
+verifies the pins). Pulled from Docker Hub, a `--recreate` depends on its
+anonymous pull limits and outages: that once took a hub down (the new sidecar
+couldn't be pulled after the group was deleted). With `--acr NAME`
+(`--storage-auth identity`) they come from that registry instead:
+
+```sh
+./deploy.sh --name myhub --storage-auth identity --acr myacr --headscale --recreate
+```
+
+- The sidecars are `<acr>.azurecr.io/mirror/<repository>:<hex>@sha256:<hex>`
+  (`mirror/caddy`, `mirror/headscale/headscale`), pulled by digest with the
+  hub's managed identity (the template's `imageRegistryCredentials` entry for
+  the registry, and AcrPull for the identity). The hub image keeps its source
+  (ghcr.io by default; anonymous pulls need no credential).
+- `--acr` needs `--storage-auth identity` (no managed identity with storage
+  keys), so in practice it is the Headscale sidecar; with storage keys Caddy
+  and Headscale are pulled from Docker Hub by digest.
+- **Preflight import.** When the deployment (or its rollback) runs a sidecar,
+  deploy.sh checks, before anything is validated or deleted, that every
+  pinned digest is in the registry (`az acr repository show --image
+  mirror/<repository>@sha256:<hex>`) and imports a missing one from its
+  source, only from the pinned list (`az acr import --source
+  docker.io/<repository>@sha256:<hex> -t mirror/<repository>:<hex>`, all
+  architectures). An import that fails (e.g. Docker Hub's pull limit) stops
+  the script with nothing changed; retry later or run the printed `az acr
+  import` yourself. Importing needs Contributor (or the import action) on the
+  registry, as the operator; the hub only pulls.
+- It is the same `--acr` that pulls an image built in the registry
+  (`--build-in-acr`): one registry, one credential. A re-run keeps it (from
+  the group's registry credential or the last deployment's `acrName`), and it
+  is one of the security-relevant settings the recovery checks a settings
+  snapshot against.
+- The registry must be in the hub's resource group (the template assigns
+  AcrPull on it). If you granted AcrPull to the hub's identity yourself, remove
+  that assignment first: the template's own (another name, same principal,
+  role and scope) would fail with `RoleAssignmentExists`.
+- Bumping a pin: change [mirror-images.txt](mirror-images.txt) and the
+  matching default in [main.bicep](main.bicep) (CI checks they match), rebuild
+  `azuredeploy.json`; the next deploy imports the new digest.
 
 ## Backup and restore
 
@@ -394,11 +439,9 @@ traffic relayed by the longnet relay leaves Azure and counts. Direct
 - **The DNS label is first come, first served** in the region: after a
   teardown someone else could take it. Nodes would refuse such a hub (its
   certificate is not from your CA), but they couldn't reach yours either.
-- **Third-party images come from GHCR mirrors** (Caddy, Headscale:
-  [mirror-images.txt](mirror-images.txt), package `longarm-mirror`, which
-  must be public), never Docker Hub. A new entry is copied by
-  `.github/workflows/mirror.yml` on its push to main; the template refers
-  to it by digest.
+- **Third-party images** (Caddy, Headscale) are pinned by digest
+  ([mirror-images.txt](mirror-images.txt)); with `--acr` they come from your
+  registry, otherwise from Docker Hub (see "Third-party images").
 - **The image must be pullable**: make the `longarm-hub` package public on
   GitHub (package settings) or deploy with `--registry-user` and a token with
   `read:packages`.
@@ -464,9 +507,9 @@ linux/arm64` gives an arm64 image).
 
 The tailscale leg (DESIGN §4.2) on a control plane you own, with no VM and
 no manual Headscale steps: a **Headscale v0.29.5 sidecar** (image
-`headscale/headscale:v0.29.5-debug`, pinned by digest and pulled from its
-GHCR mirror: the template parameter `headscaleImage`) in the hub's container group becomes the hub's
-`[tailnet] provider`.
+`headscale/headscale:v0.29.5-debug`, pinned by digest: the template parameter
+`headscaleImage`; with `--acr` its copy in that registry) in the hub's
+container group becomes the hub's `[tailnet] provider`.
 
 ```text
   ┌──────────────────────────── ACI container group ─────────────────────────────┐
@@ -571,5 +614,6 @@ or `?stun=` on the longnet URL.
 | [azuredeploy.json](azuredeploy.json) | `bicep build main.bicep --outfile azuredeploy.json` (CI checks it is current) |
 | [deploy.sh](deploy.sh) / [deploy.ps1](deploy.ps1) | the one-command deploy / upgrade / teardown |
 | [test/container-smoke.sh](test/container-smoke.sh) | the image test in CI (docker + Azurite) |
+| [mirror-images.txt](mirror-images.txt) | the sidecar images, pinned by digest ("Third-party images") |
 | [test/acirules](test/acirules/main.go) | ACI's rules (ports, memory/CPU steps, limits) for every parameter combination, in CI |
 | [E2E.md](E2E.md) | the manual end-to-end test on a real subscription |

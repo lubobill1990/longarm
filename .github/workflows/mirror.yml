@@ -1,21 +1,15 @@
-# Mirrors the third-party images of deploy/azure (deploy/azure/mirror-images.txt)
-# by digest into ghcr.io/<owner>/longarm-mirror: deployments pull them from
-# GHCR, never from Docker Hub.
+# Verifies the third-party images of deploy/azure (deploy/azure/mirror-images.txt),
+# read-only, on every pull request that changes the list and on main:
+#   each line's source is an allowed repository (ALLOWED_SOURCES, here - not in
+#   the PR-editable list), its pinned digest resolves at the source and the
+#   manifest hashes to it; prints where deploy.sh --acr NAME imports it.
 #
-#   verify   every run (pull requests too, read-only): each line's source is
-#            an allowed repository (ALLOWED_SOURCES, here - not in the
-#            PR-editable list), its pinned digest resolves at the source and
-#            the manifest hashes to it; prints what publish would copy
-#   publish  push to main and manual runs on main only, the only job with
-#            packages:write: copies (crane, pinned and checksum-verified) to
-#            ghcr.io/<owner>/longarm-mirror:<repository name>-<digest hex>
-#            (derived, never chosen by the list; never longarm-hub), checks
-#            the digest and that it can be pulled anonymously, as ACI does
-#
-# A new GHCR package starts private and the API can't change that: after the
-# first publish, make ghcr.io/<owner>/longarm-mirror public once (package
-# settings -> Change visibility); until then publish fails at the anonymous
-# check, and deploy.sh refuses before changing anything (image check).
+# Nothing is published from here any more: deploy.sh --acr NAME imports the
+# pinned digests into the hub's Azure Container Registry itself (az acr import,
+# before anything is deleted) and the sidecars are pulled from there with the
+# managed identity (deploy/azure/README.md "Third-party images"). The GHCR
+# package longarm-mirror is retired: publishing it failed (DENIED) and ACI
+# would have needed it public.
 name: mirror
 
 on:
@@ -61,11 +55,8 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/tools"
           LONGARM_TOOLS=$RUNNER_TEMP/tools .github/scripts/fetch-tool.sh crane v0.22.1 "$CRANE_URL" "$CRANE_SHA256" crane
-      - name: verify, and what publish would copy
-        env:
-          OWNER: ${{ github.repository_owner }}
+      - name: verify, and where deploy.sh --acr imports each image
         run: |
-          dst_repo=ghcr.io/${OWNER,,}/longarm-mirror
           n=0
           while read -r src extra; do
             [[ -z $src || $src == \#* ]] && continue
@@ -78,61 +69,10 @@ jobs:
             [[ $got == "$digest" ]] || { echo "::error::$src: the source resolves to $got"; exit 1; }
             # the tag may have moved since it was pinned: worth knowing, not an error
             now=$(crane digest "${src%%@*}" 2>/dev/null || true)
-            [[ $now == "$digest" ]] || echo "::notice::${src%%@*} now points to ${now:-nothing}; the pinned $digest is mirrored"
-            echo "ok: $src -> $dst_repo:${repo##*/}-${digest#sha256:}"
+            [[ $now == "$digest" ]] || echo "::notice::${src%%@*} now points to ${now:-nothing}; the pinned $digest is deployed"
+            name=${repo#docker.io/}
+            echo "ok: $src -> <acr>.azurecr.io/mirror/${name#library/}:${digest#sha256:}@$digest"
             n=$((n + 1))
           done <deploy/azure/mirror-images.txt
           ((n > 0)) || { echo "::error::no images in deploy/azure/mirror-images.txt"; exit 1; }
 
-  publish:
-    name: publish to ghcr.io/<owner>/longarm-mirror
-    needs: verify
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      packages: write
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: crane (pinned, sha256-verified)
-        run: |
-          mkdir -p "$RUNNER_TEMP/tools"
-          LONGARM_TOOLS=$RUNNER_TEMP/tools .github/scripts/fetch-tool.sh crane v0.22.1 "$CRANE_URL" "$CRANE_SHA256" crane
-      - name: copy by digest and verify
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OWNER: ${{ github.repository_owner }}
-          ACTOR: ${{ github.actor }}
-        run: |
-          dst_repo=ghcr.io/${OWNER,,}/longarm-mirror
-          crane auth login ghcr.io -u "$ACTOR" --password-stdin <<<"$GH_TOKEN"
-          refs=()
-          while read -r src _; do
-            [[ -z $src || $src == \#* ]] && continue
-            # the same checks as verify, here too: this job has packages:write
-            [[ $src =~ ^([a-z0-9./-]+):([A-Za-z0-9._-]+)@(sha256:[0-9a-f]{64})$ ]] || exit 1
-            repo=${BASH_REMATCH[1]} digest=${BASH_REMATCH[3]}
-            [[ " $ALLOWED_SOURCES " == *" $repo "* ]] || { echo "::error::$repo is not an allowed source"; exit 1; }
-            dst=$dst_repo:${repo##*/}-${digest#sha256:}
-            if [[ $(crane digest "$dst" 2>/dev/null || true) != "$digest" ]]; then
-              crane copy "$repo@$digest" "$dst"
-            fi
-            got=$(crane digest "$dst")
-            [[ $got == "$digest" ]] || { echo "::error::$dst resolves to $got, want $digest"; exit 1; }
-            echo "mirrored $src -> $dst"
-            refs+=("$dst@$digest")
-          done <deploy/azure/mirror-images.txt
-          # anonymously, as Azure Container Instances pulls them
-          crane auth logout ghcr.io
-          for r in "${refs[@]}"; do
-            crane digest "$r" >/dev/null || {
-              echo "::error::$r can't be pulled anonymously: make the package ${dst_repo#ghcr.io/} public once (GitHub -> Packages -> longarm-mirror -> Package settings -> Change visibility), then re-run this workflow"
-              exit 1
-            }
-          done

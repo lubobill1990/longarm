@@ -22,6 +22,9 @@ AZ=${LONGARM_DEPLOY_AZ:-az}
 # command: "$AZ" is often "az", which would call this function again
 az() { command "$AZ" "$@"; }
 template=$here/azuredeploy.json
+# the third-party images (sidecars), pinned by digest; with --acr copied into
+# the registry as mirror/<repository>:<digest hex>
+mirror_list=$here/mirror-images.txt
 
 # empty = not given (a re-run keeps the running hub's value)
 name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=false yes=false
@@ -66,7 +69,9 @@ usage: deploy.sh --name NAME [--location REGION] [options]
   --log-analytics          send container logs to a Log Analytics workspace
   --storage-auth key|identity  key (default): storage account keys; identity: a managed
                            identity, shared key access off (subscriptions whose policy denies keys)
-  --acr NAME               with identity: pull the image from this registry in the resource group
+  --acr NAME               with identity: a registry in the resource group the managed identity pulls
+                           from: the image if it is there, and the sidecars (Headscale) from its
+                           mirror/ copies of mirror-images.txt, imported before anything changes
   --telemetry              Application Insights + Log Analytics for the fleet's telemetry (docs/telemetry.md)
   --diagnostics            a blob container for uploaded diagnostic bundles (identity only; 30 days)
   --subscription ID        Azure subscription (default: az account show)
@@ -728,7 +733,12 @@ write_params() {
 		printf ',"storageAuth":{"value":%s}' "$(json_str "$storage_auth")"
 		printf ',"enableTelemetry":{"value":%s},"enableDiagnostics":{"value":%s}' "$telemetry" "$diagnostics"
 		printf ',"enableHeadscale":{"value":%s},"headscalePublicDerp":{"value":%s}' "$headscale" "$public_derp"
-		[[ -z $acr ]] || printf ',"acrName":{"value":%s}' "$(json_str "$acr")"
+		if [[ -n $acr ]]; then
+			printf ',"acrName":{"value":%s}' "$(json_str "$acr")"
+			# the sidecars from the registry's copies (ensure_mirror)
+			printf ',"caddyImage":{"value":%s}' "$(json_str "$(sidecar_image caddyImage)")"
+			printf ',"headscaleImage":{"value":%s}' "$(json_str "$(sidecar_image headscaleImage)")"
+		fi
 		[[ -z $image ]] || printf ',"image":{"value":%s}' "$(json_str "$image")"
 		[[ -z $acme_email ]] || printf ',"acmeEmail":{"value":%s}' "$(json_str "$acme_email")"
 		if [[ -n $entra_tenant ]]; then
@@ -754,7 +764,54 @@ write_params() {
 		printf '}}\n'
 	} >"$1"
 }
+# mirror_repo SOURCE: the repository of a pinned Docker Hub image in the
+# registry (docker.io/library/caddy:... -> mirror/caddy)
+mirror_repo() {
+	local r=${1%%@*}
+	r=${r%:*}
+	r=${r#docker.io/}
+	printf 'mirror/%s' "${r#library/}"
+}
+# sidecar_image PARAM: a sidecar's image: the template's pin, or with --acr
+# its copy there, <acr>.azurecr.io/mirror/<repository>:<hex>@sha256:<hex>
+sidecar_image() {
+	local src d
+	src=$(template_default "$1")
+	if [[ -z $acr ]]; then
+		printf '%s' "$src"
+		return
+	fi
+	d=${src##*@sha256:}
+	printf '%s.azurecr.io/%s:%s@sha256:%s' "$(printf '%s' "$acr" | tr '[:upper:]' '[:lower:]')" "$(mirror_repo "$src")" "$d" "$d"
+}
 write_params "$tmp/params.json"
+
+# ensure_mirror: every pinned image of mirror-images.txt is in the registry
+# $acr (by digest), imported from its source if not - before anything is
+# deleted: Docker Hub's pull limits can fail an import, not a running hub
+ensure_mirror() {
+	local line src digest repo srcs=()
+	[[ -f $mirror_list ]] || die "$mirror_list is missing (run from a checkout of the repository)"
+	# read first: az must not read the list from stdin
+	while IFS= read -r line || [[ -n $line ]]; do
+		line=${line%$'\r'}
+		[[ -z $line || $line == \#* ]] && continue
+		[[ $line =~ ^docker\.io/[a-z0-9./-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$ ]] ||
+			die "$mirror_list: want docker.io/<repository>:<tag>@sha256:<digest>, one per line: $line"
+		srcs+=("$line")
+	done <"$mirror_list"
+	[[ ${#srcs[@]} -gt 0 ]] || die "$mirror_list lists no images"
+	for src in "${srcs[@]}"; do
+		digest=${src##*@}
+		repo=$(mirror_repo "$src")
+		az acr repository show -n "$acr" --image "$repo@$digest" -o none </dev/null 2>/dev/null && continue
+		echo "importing $src into the registry $acr as $repo:${digest#sha256:} (az acr import; nothing else is changed)"
+		az acr import -n "$acr" --source "${src%%:*}@$digest" -t "$repo:${digest#sha256:}" -o none </dev/null ||
+			die "importing $src into the registry $acr failed (above; Docker Hub's pull limits?): nothing was changed. Retry later, or import it yourself: az acr import -n $acr --source ${src%%:*}@$digest -t $repo:${digest#sha256:}"
+		az acr repository show -n "$acr" --image "$repo@$digest" -o none </dev/null ||
+			die "the registry $acr has no $repo@$digest after the import: nothing was changed"
+	done
+}
 
 
 # image_pullable IMAGE: the registry has the image's manifest, asked the way
@@ -827,8 +884,8 @@ image_pullable() {
 check_images() {
 	local imgs img
 	imgs=("${image:-$(template_default image)}")
-	[[ $storage_auth != key || $panel != true ]] || imgs+=("$(template_default caddyImage)")
-	[[ $headscale != true ]] || imgs+=("$(template_default headscaleImage)")
+	[[ $storage_auth != key || $panel != true ]] || imgs+=("$(sidecar_image caddyImage)")
+	[[ $headscale != true ]] || imgs+=("$(sidecar_image headscaleImage)")
 	for img in "${imgs[@]}"; do
 		[[ -n $img ]] || continue
 		image_pullable "$img" ||
@@ -836,6 +893,10 @@ check_images() {
 	done
 }
 
+# sidecars from the registry (now or in the rollback): its copies first
+if [[ -n $acr && ($headscale == true || $prev_headscale == true) ]]; then
+	ensure_mirror
+fi
 echo "validating the deployment (nothing is changed yet)"
 az deployment group validate -g "$rg" --template-file "$template" --parameters "@$tmp/params.json" -o none ||
 	die "the deployment does not validate (the error is above, e.g. a policy violation): nothing was changed"
