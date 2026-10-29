@@ -295,3 +295,24 @@ func TestRestartOldSupervised(t *testing.T) {
 		t.Error("waited for a service")
 	}
 }
+
+func TestNewerRelease(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"0.1.17", "0.1.15", true},
+		{"0.1.17", "0.1.2", true},
+		{"0.1.10", "0.1.9", true},
+		{"0.1.15", "0.1.17", false}, // never a downgrade
+		{"0.1.17", "0.1.17", false},
+		{"0.1.17", "0.1.17-rc.1", true},
+		{"dev", "0.1.15", false}, // a development build replaces nothing
+		{"0.1.17", "dev", false}, // nor is replaced
+		{"0.1.17", "", false},
+	} {
+		if got := NewerRelease(c.a, c.b); got != c.want {
+			t.Errorf("NewerRelease(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}

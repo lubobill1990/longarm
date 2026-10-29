@@ -4,6 +4,31 @@
 
 ### Fixed
 
+- "Update to X" on a Windows MSI worker failed with "this installation
+  can't update itself: C:\Program Files\Longarm is not writable for this
+  account (package-managed install?)" although the machine has the Longarm
+  Update service: the user-session longarmd (and the tray) asked the
+  service manager for full access to look the service up, which a
+  non-elevated user doesn't get, concluded there was none and tried to
+  update itself. The service query now asks only for
+  `SERVICE_QUERY_STATUS`; a Windows longarmd that can't update itself tries
+  the service's pipe anyway (checked to be the real service) and, with no
+  service, says to run the new MSI once instead of "package-managed
+  install?". `longarm worker update` (the tray's button too) hands a
+  refused update of an older user-session worker to the machine's admin
+  worker, so 0.1.15 to 0.1.18 workers update from the client. Workers
+  report whether the update can be installed remotely
+  (`UpdateAvailable.method`): the button shows only when it can.
+- After a Windows upgrade the tray ran the new version but the client
+  daemon kept running the old one ("longarm-tray 0.1.17 · longarm daemon
+  0.1.15"). `longarm daemon start` (and every command that starts the
+  daemon) now replaces a running daemon older than its `longarm` - its port
+  forwards move over - and the tray runs it when it finds an older daemon;
+  a newer daemon is never replaced by an older `longarm` (an app's bundled
+  copy just uses it). An exiting daemon removed `daemon.addr` even when a
+  daemon started right after it had written its own ("daemon is not
+  running" while it ran): the file is now removed before the channel
+  closes and only while it is still the exiting daemon's (longarmd's too).
 - Hub redeploys cost less: workers (and the `longarm daemon` event relay,
   hence the tray) retry an unreachable hub every 1, 2, 4, then 5 s (±20%
   jitter; up to 15 s after 3 minutes, 30 s when the hub refuses the node)

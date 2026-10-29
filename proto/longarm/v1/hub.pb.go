@@ -1672,9 +1672,13 @@ func (x *NodeState) GetUpdateAvailable() *UpdateAvailable {
 
 // UpdateAvailable: the hub has a newer complete release than the node runs.
 type UpdateAvailable struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
-	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"` // why the node can't update itself
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Version string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
+	Reason  string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"` // why the node can't update itself
+	// How its owner's `longarm worker update` installs it: "msi" (the
+	// machine's Longarm Update service), "none" (it can't: reason says why
+	// and what to do instead). Empty from workers before 0.1.19.
+	Method        string `protobuf:"bytes,3,opt,name=method,proto3" json:"method,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1719,6 +1723,13 @@ func (x *UpdateAvailable) GetVersion() string {
 func (x *UpdateAvailable) GetReason() string {
 	if x != nil {
 		return x.Reason
+	}
+	return ""
+}
+
+func (x *UpdateAvailable) GetMethod() string {
+	if x != nil {
+		return x.Method
 	}
 	return ""
 }
@@ -10176,10 +10187,11 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x19\n" +
 	"\bmax_jobs\x18\x03 \x01(\x05R\amaxJobs\x12&\n" +
 	"\x0freserved_mem_gb\x18\x04 \x01(\x01R\rreservedMemGb\x12F\n" +
-	"\x10update_available\x18\x05 \x01(\v2\x1b.longarm.v1.UpdateAvailableR\x0fupdateAvailable\"C\n" +
+	"\x10update_available\x18\x05 \x01(\v2\x1b.longarm.v1.UpdateAvailableR\x0fupdateAvailable\"[\n" +
 	"\x0fUpdateAvailable\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"_\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x16\n" +
+	"\x06method\x18\x03 \x01(\tR\x06method\"_\n" +
 	"\n" +
 	"JobsReport\x12\x12\n" +
 	"\x04full\x18\x01 \x01(\bR\x04full\x12#\n" +

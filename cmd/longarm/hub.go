@@ -264,7 +264,7 @@ func (s *session) saveCache(nodes []*pb.NodeInfo) {
 	c := hubCache{Updated: time.Now()}
 	for _, n := range nodes {
 		slim := &pb.NodeInfo{Name: n.Name, Endpoints: n.Endpoints, Labels: n.Labels, Os: n.Os, Arch: n.Arch,
-			Mirrors: n.Mirrors, WarmRepos: n.WarmRepos, State: n.State}
+			Mirrors: n.Mirrors, WarmRepos: n.WarmRepos, State: n.State, AdminWorker: n.AdminWorker, Companion: n.Companion}
 		b, err := protojson.Marshal(slim)
 		if err == nil {
 			c.Nodes = append(c.Nodes, b)

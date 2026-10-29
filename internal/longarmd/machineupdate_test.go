@@ -2,6 +2,7 @@ package longarmd
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -18,12 +19,16 @@ type fakeService struct {
 	mu   sync.Mutex
 	reqs []*updatesvc.Request
 	resp func(*updatesvc.Request) *updatesvc.Response
+	err  error // every request fails (no service)
 }
 
 func (f *fakeService) Do(_ context.Context, r *updatesvc.Request) (*updatesvc.Response, error) {
 	f.mu.Lock()
 	f.reqs = append(f.reqs, r)
 	f.mu.Unlock()
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.resp(r), nil
 }
 
@@ -34,6 +39,7 @@ func testMachineUpdater(svc *fakeService) *machineUpdater {
 	} else {
 		m.service = nil
 	}
+	m.probe = nil
 	return m
 }
 
@@ -132,4 +138,57 @@ func TestNoRelayedPathToUpdateService(t *testing.T) {
 	}
 	scan(".", map[string]bool{"machineupdate.go": true}, "updatesvc.OpInstall", "updatesvc.OpSetAuto")
 	scan(filepath.Join("..", "hub"), nil, "internal/updatesvc", "MachineUpdate")
+}
+
+// TestMachineUpdateProbesService: a Windows longarmd that didn't see the
+// Longarm Update service (the service query failed) and can't update
+// itself (Program Files) still tries the service's pipe - the user-session
+// worker of an MSI install - and, with no service answering, says what to
+// do instead of "package-managed install?".
+func TestMachineUpdateProbesService(t *testing.T) {
+	why := `C:\Program Files\Longarm is not writable for this account (package-managed install?)`
+	svc := &fakeService{resp: func(r *updatesvc.Request) *updatesvc.Response {
+		if r.Op == updatesvc.OpInstall {
+			return &updatesvc.Response{OK: true, Phase: updatesvc.PhaseInstalling, From: "0.1.15", To: "0.1.19"}
+		}
+		return &updatesvc.Response{OK: true, Status: &updatesvc.Status{State: updatesvc.PhaseIdle}}
+	}}
+	m := testMachineUpdater(nil)
+	m.why = why
+	m.probe = func() serviceClient { return svc }
+	if got := m.RemoteMethod(); got == "self" {
+		t.Fatalf("remote method %q", got)
+	}
+	evs := collect(t, m, &pb.MachineUpdateRequest{Version: "0.1.19"})
+	if l := evs[len(evs)-1]; l.Phase != "installing" || l.Method != "msi" || l.To != "0.1.19" || len(svc.reqs) == 0 || svc.reqs[0].Op != updatesvc.OpInstall {
+		t.Fatalf("probe: %v (requests %v)", evs, svc.reqs)
+	}
+
+	// no service answers: the actionable message, not the self-updater's
+	m.probe = func() serviceClient { return &fakeService{err: updatesvc.ErrNoService} }
+	evs = collect(t, m, &pb.MachineUpdateRequest{Latest: true})
+	l := evs[len(evs)-1]
+	if l.Phase != "failed" || l.Code != "unsupported" || !strings.Contains(l.Error, "no Longarm Update service") ||
+		!strings.Contains(l.Error, "run the new MSI on the machine") {
+		t.Fatalf("no service: %v", l)
+	}
+	// another failure of the service is reported as such
+	m.probe = func() serviceClient { return &fakeService{err: updatesvc.ErrImpostor} }
+	if l := collect(t, m, &pb.MachineUpdateRequest{Latest: true}); l[len(l)-1].Code != "unavailable" {
+		t.Fatalf("impostor: %v", l[len(l)-1])
+	}
+
+	// the notice: "msi" with a service, "none" without one or a self-updater
+	if got := testMachineUpdater(svc).RemoteMethod(); got != "msi" {
+		t.Errorf("with the service: %q", got)
+	}
+	if got := testMachineUpdater(nil).RemoteMethod(); got != "none" {
+		t.Errorf("neither: %q", got)
+	}
+	if ua := availableUpdate("0.1.15", "0.1.19", errors.New(why), "none"); ua.GetMethod() != "none" {
+		t.Errorf("notice %v", ua)
+	}
+	if ua := availableUpdate("0.1.15", "0.1.19", errors.New(why), "self"); ua.GetMethod() != "none" {
+		t.Errorf("notice %v", ua)
+	}
 }

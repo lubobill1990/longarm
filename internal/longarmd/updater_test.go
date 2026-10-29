@@ -23,7 +23,7 @@ func TestAvailableUpdate(t *testing.T) {
 		{"1.0.0", "not a v", ""}, // garbage from the hub
 		{"1.0.0", "1.0.1-rc1", "1.0.1-rc1"},
 	} {
-		got := availableUpdate(c.running, c.target, why)
+		got := availableUpdate(c.running, c.target, why, "msi")
 		if (got == nil) != (c.want == "") || (got != nil && (got.Version != c.want || got.Reason != why.Error())) {
 			t.Errorf("availableUpdate(%q, %q) = %v, want %q", c.running, c.target, got, c.want)
 		}

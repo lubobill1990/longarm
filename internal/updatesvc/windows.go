@@ -24,6 +24,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 
 	"github.com/lubobill1990/longarm/internal/msiupgrade"
+	"github.com/lubobill1990/longarm/internal/platform/ptypes"
 	win "github.com/lubobill1990/longarm/internal/platform/windows"
 )
 
@@ -155,7 +156,7 @@ func dialService(ctx context.Context) (net.Conn, error) {
 		return c, nil
 	}
 	if errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, os.ErrNotExist) {
-		if st, qerr := win.QueryService(ServiceName); qerr == nil {
+		if st, qerr := win.QueryService(ServiceName); qerr == nil && st != ptypes.ServiceNotInstalled {
 			return nil, fmt.Errorf("the %s service is installed but not running (%v)", ServiceName, st)
 		}
 		return nil, ErrNoService
@@ -164,10 +165,11 @@ func dialService(ctx context.Context) (net.Conn, error) {
 }
 
 // Installed reports whether this machine has the service (an MSI install
-// with LongarmUpdate).
+// with LongarmUpdate). Any account may ask (win.QueryService needs only
+// SERVICE_QUERY_STATUS): a user-session longarmd and the tray too.
 func Installed() bool {
-	_, err := win.QueryService(ServiceName)
-	return err == nil
+	st, err := win.QueryService(ServiceName)
+	return err == nil && st != ptypes.ServiceNotInstalled
 }
 
 // ---------------------------------------------------------------- settings

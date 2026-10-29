@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -34,20 +35,91 @@ import (
 // Listen opens the local channel for kind ("longarmd" / "longarm") and dir (the data
 // or config dir; one channel per dir) and records its address in addrFile.
 func Listen(kind, dir, addrFile string) (net.Listener, string, error) {
-	abs, err := filepath.Abs(dir)
+	ch, err := ListenChannel(kind, dir, addrFile)
 	if err != nil {
 		return nil, "", err
+	}
+	return ch.Listener, ch.Addr, nil
+}
+
+// Channel is a listening local channel and the address file it wrote.
+type Channel struct {
+	net.Listener
+	Addr     string
+	addrFile string
+	written  os.FileInfo // the address file as this process wrote it
+	once     sync.Once
+}
+
+// ListenChannel is Listen keeping track of the address file: Release
+// removes it only while it is still the one this process wrote.
+//
+// The channel's name is the same for every process serving dir (a daemon
+// restarted, an older or newer longarm): the file's content alone can't
+// tell whose it is. Each process writes a new file (renamed into place),
+// so the file's identity can.
+func ListenChannel(kind, dir, addrFile string) (*Channel, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
 	}
 	sum := sha256.Sum256([]byte(strings.ToLower(abs)))
 	ln, addr, err := platform.ListenLocal(kind + "-" + hex.EncodeToString(sum[:6]))
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	if err := os.WriteFile(addrFile, []byte(addr+"\n"), 0o600); err != nil {
+	fi, err := writeAddrFile(addrFile, addr)
+	if err != nil {
 		ln.Close()
-		return nil, "", err
+		return nil, err
 	}
-	return ln, addr, nil
+	return &Channel{Listener: ln, Addr: addr, addrFile: addrFile, written: fi}, nil
+}
+
+// writeAddrFile writes addr to a new file renamed over addrFile (in place
+// when the rename fails) and returns what it wrote.
+func writeAddrFile(addrFile, addr string) (os.FileInfo, error) {
+	data := []byte(addr + "\n")
+	tmp := fmt.Sprintf("%s.%d.tmp", addrFile, os.Getpid())
+	if err := os.WriteFile(tmp, data, 0o600); err == nil {
+		if err := platform.ReplaceFile(tmp, addrFile); err != nil {
+			os.Remove(tmp)
+			if err := os.WriteFile(addrFile, data, 0o600); err != nil {
+				return nil, err
+			}
+		}
+	} else if err := os.WriteFile(addrFile, data, 0o600); err != nil {
+		return nil, err
+	}
+	return os.Stat(addrFile)
+}
+
+// Release removes the address file if it is still the one this channel
+// wrote: same file, unchanged, naming this channel. A process that took
+// over meanwhile (a daemon started again at once) keeps its file. Call it
+// before closing the listener: while this process holds the channel, no
+// other one can open it and write the file (Windows: the pipe's first
+// instance is exclusive), so the check and the removal don't race.
+func (c *Channel) Release() {
+	c.once.Do(func() {
+		if OwnsAddrFile(c.addrFile, c.Addr, c.written) {
+			os.Remove(c.addrFile)
+		}
+	})
+}
+
+// OwnsAddrFile reports whether addrFile is still the file written (as
+// returned by Stat after writing it) with addr in it.
+func OwnsAddrFile(addrFile, addr string, written os.FileInfo) bool {
+	if written == nil {
+		return false
+	}
+	fi, err := os.Stat(addrFile)
+	if err != nil || !os.SameFile(fi, written) || !fi.ModTime().Equal(written.ModTime()) || fi.Size() != written.Size() {
+		return false
+	}
+	a, err := ReadAddr(addrFile)
+	return err == nil && a == addr
 }
 
 // ReadAddr reads an address file written by Listen.

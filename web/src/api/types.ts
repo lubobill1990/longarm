@@ -93,6 +93,12 @@ export interface UpdateAvailable {
   version?: string
   /** why the node can't update itself */
   reason?: string
+  /**
+   * how its owner's `longarm worker update` installs it: "msi" (the machine's
+   * Longarm Update service), "none" (it can't: reason says why); empty from
+   * workers before 0.1.19
+   */
+  method?: string
 }
 
 /** GET /releases/latest.json: the hub's newest complete stable release ("" = none). */

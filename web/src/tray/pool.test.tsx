@@ -123,6 +123,18 @@ describe('PoolTab', () => {
     expect(within(screen.getByTestId('worker-cpc-alice-x7k2q')).getByTestId('version').textContent).toBe('v0.1.8 ↑')
   })
 
+  it('no "Update to" button when the worker says longarm worker update cannot install it (method none)', () => {
+    const pool = devboxPool()
+    pool.workers = pool.workers!.map((x) => ({
+      ...x,
+      node: { ...x.node!, version: '0.1.8', update_available: { version: '0.1.9', method: 'none', reason: 'no Longarm Update service' } },
+    }))
+    render(<PoolTab pool={pool} />)
+    expect(screen.queryByTestId('update-btn')).toBeNull()
+    const v = within(screen.getByTestId('worker-cpc-alice-x7k2q')).getByTestId('version')
+    expect(v.getAttribute('title')).toContain('no Longarm Update service')
+  })
+
   it('one machine card for the session worker + admin worker; old workers collapsed, no red errors', () => {
     render(<PoolTab pool={devboxPool()} />)
     expect(screen.queryByTestId('worker-cpc-alice-x7k2q-admin')).toBeNull()

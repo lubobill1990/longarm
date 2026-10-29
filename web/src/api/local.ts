@@ -189,6 +189,8 @@ export interface WorkerUpdateOutcome {
   sessions: number
   kept_sessions: number
   companion?: string
+  /** the admin worker that took the request (a user-session worker too old to reach the Longarm Update service) */
+  via?: string
   code?: string
   error?: string
 }

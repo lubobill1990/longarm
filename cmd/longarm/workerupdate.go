@@ -15,6 +15,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/jobs"
+	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -40,8 +41,11 @@ type updateOutcome struct {
 	Sessions     int    `json:"sessions"`      // running when the update started
 	KeptSessions int    `json:"kept_sessions"` // of those, still running after it
 	Companion    string `json:"companion,omitempty"`
-	Code         string `json:"code,omitempty"`
-	Error        string `json:"error,omitempty"`
+	// Via: the admin worker that took the request (a user-session worker
+	// too old to reach the machine's Longarm Update service itself)
+	Via   string `json:"via,omitempty"`
+	Code  string `json:"code,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 // updateCodeExit maps a MachineUpdateEvent code to longarm's exit code.
@@ -89,42 +93,23 @@ func runWorkerUpdate(ctx context.Context, s *session, worker string, req *pb.Mac
 		return out, errTooOld(worker, info.Version)
 	}
 	started := time.Now()
-	st, err := conn.MachineUpdate().Start(ctx, req)
+	last, runJobs, runSessions, err := startMachineUpdate(ctx, conn, req, out, progress)
 	if err != nil {
 		return out, err
 	}
-	var last *pb.MachineUpdateEvent
-	var runJobs, runSessions []string
-	for {
-		ev, err := st.Recv()
-		if errors.Is(err, io.EOF) {
-			break
+	if adm := adminFallback(worker, s.updateNodes(ctx, last), last); adm != "" {
+		// A user-session worker before 0.1.19 didn't see the Longarm Update
+		// service (it asked the service manager for more access than a user
+		// has) and tried to update itself: its admin worker - same machine,
+		// SYSTEM - hands the request to the service.
+		if progress != nil {
+			progress(fmt.Sprintf("%s can't reach the Longarm Update service itself (longarmd %s); asking its admin worker %s", worker, out.From, adm))
 		}
-		if err != nil {
-			if last != nil && last.Phase == "installing" {
-				break // the worker restarts with the installer
-			}
-			return out, err
-		}
-		if len(ev.RunningJobs)+len(ev.RunningSessions) > 0 {
-			runJobs, runSessions = ev.RunningJobs, ev.RunningSessions
-		}
-		last = ev
-		if ev.Method != "" {
-			out.Method = ev.Method
-		}
-		if ev.From != "" {
-			out.From = ev.From
-		}
-		if ev.To != "" {
-			out.To = ev.To
-		}
-		if ev.Phase != "failed" && progress != nil {
-			msg := ev.Phase
-			if ev.Message != "" {
-				msg += ": " + ev.Message
-			}
-			progress(msg)
+		if l, err := updateThrough(ctx, s, adm, req, out, progress); err == nil {
+			last = l
+			out.Via = adm
+		} else if progress != nil {
+			progress(fmt.Sprintf("through %s: %v", adm, err))
 		}
 	}
 	out.Jobs, out.Sessions = len(runJobs), len(runSessions)
@@ -170,6 +155,123 @@ func runWorkerUpdate(ctx context.Context, s *session, worker string, req *pb.Mac
 		out.Summary += "; its admin worker " + out.Companion + " restarted too"
 	}
 	return out, nil
+}
+
+// startMachineUpdate runs MachineUpdate.Start on conn and returns its last
+// event and what ran when it started (jobs, sessions).
+func startMachineUpdate(ctx context.Context, conn *client.Conn, req *pb.MachineUpdateRequest, out *updateOutcome,
+	progress func(string)) (*pb.MachineUpdateEvent, []string, []string, error) {
+	st, err := conn.MachineUpdate().Start(ctx, req)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	var last *pb.MachineUpdateEvent
+	var runJobs, runSessions []string
+	for {
+		ev, err := st.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			if last != nil && last.Phase == "installing" {
+				break // the worker restarts with the installer
+			}
+			return nil, nil, nil, err
+		}
+		if len(ev.RunningJobs)+len(ev.RunningSessions) > 0 {
+			runJobs, runSessions = ev.RunningJobs, ev.RunningSessions
+		}
+		last = ev
+		if ev.Method != "" {
+			out.Method = ev.Method
+		}
+		if ev.From != "" {
+			out.From = ev.From
+		}
+		if ev.To != "" {
+			out.To = ev.To
+		}
+		if ev.Phase != "failed" && progress != nil {
+			msg := ev.Phase
+			if ev.Message != "" {
+				msg += ": " + ev.Message
+			}
+			progress(msg)
+		}
+	}
+	if last == nil {
+		return nil, nil, nil, errors.New("the worker ended the update without a word")
+	}
+	return last, runJobs, runSessions, nil
+}
+
+// updateThrough asks worker (the admin worker of the machine) for the
+// update: its last event.
+func updateThrough(ctx context.Context, s *session, worker string, req *pb.MachineUpdateRequest, out *updateOutcome,
+	progress func(string)) (*pb.MachineUpdateEvent, error) {
+	conn, err := s.conn(worker)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	ictx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	info, err := conn.Node().Info(ictx, &pb.InfoRequest{})
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(info.Features, jobs.FeatureMachineUpdate) {
+		return nil, errTooOld(worker, info.Version)
+	}
+	from := out.From
+	last, _, _, err := startMachineUpdate(ctx, conn, req, out, progress)
+	if from != "" {
+		out.From = from // the machine's (the session worker's) version
+	}
+	return last, err
+}
+
+// adminFallback names the admin worker to ask instead when worker (a
+// user-session worker) refused to update itself ("unsupported", method
+// self): an older longarmd that missed the machine's Longarm Update
+// service. "" = none (another failure, no admin worker, worker is one).
+func adminFallback(worker string, nodes []*pb.NodeInfo, last *pb.MachineUpdateEvent) string {
+	if last == nil || last.Phase != "failed" || last.Code != "unsupported" || last.Method != "self" {
+		return ""
+	}
+	var me *pb.NodeInfo
+	byName := map[string]*pb.NodeInfo{}
+	for _, n := range nodes {
+		byName[n.Name] = n
+		if n.Name == worker {
+			me = n
+		}
+	}
+	if me == nil || isAdminWorker(me) {
+		return ""
+	}
+	for _, name := range []string{me.Companion, worker + "-admin"} {
+		if c := byName[name]; name != "" && c != nil && isAdminWorker(c) && c.Os == "windows" {
+			return c.Name
+		}
+	}
+	return ""
+}
+
+func isAdminWorker(n *pb.NodeInfo) bool {
+	return n.AdminWorker || n.Labels[sched.AdminLabel] == "true"
+}
+
+// updateNodes: the hub's workers when an update may need its admin
+// worker (adminFallback), else nil. The cache when the hub is down.
+func (s *session) updateNodes(ctx context.Context, last *pb.MachineUpdateEvent) []*pb.NodeInfo {
+	if last == nil || last.Code != "unsupported" {
+		return nil
+	}
+	if nodes, ok := s.hubNodes(ctx, false); ok {
+		return nodes
+	}
+	return s.cachedNodes()
 }
 
 func methodName(m string) string {

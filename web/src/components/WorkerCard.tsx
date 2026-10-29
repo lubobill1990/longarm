@@ -146,17 +146,23 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
   for (const x of [session, admin]) if (x && canRemove(x)) menuItems.push([`remove ${x.name}…`, () => actions!.remove!([x.name])])
   const version = machineVersion(session, admin)
   const target = updateTarget(session, admin)
-  const avail = target?.node?.update_available?.version ?? ''
+  const ua = target?.node?.update_available
+  const avail = ua?.version ?? ''
   const job = target ? actions?.updates?.[target.name] : undefined
   const running = job?.state === 'running'
-  const canUpdate = !!target && !!avail && !!actions?.update && (actions.canUpdate?.(target) ?? false) && target.state === 'online'
+  // "none": longarm worker update can't install it there (no Longarm Update
+  // service, no self-update): no button, the version pill says why
+  const remote = ua?.method !== 'none'
+  const canUpdate =
+    !!target && !!avail && remote && !!actions?.update && (actions.canUpdate?.(target) ?? false) && target.state === 'online'
   return (
     <div className="wcard" data-testid={`worker-${mm.key}`} data-state={state}>
       <div className="head">
         <span className={`dot is-${state}`} style={{ background: dot }} />
         <span className="name">{mm.key}</span>
         {version && (
-          <span className={`pill ${avail ? 'warn' : 'chip'} ver`} data-testid="version" title={avail ? `Longarm ${avail} is available` : 'Longarm version'}>
+          <span className={`pill ${avail ? 'warn' : 'chip'} ver`} data-testid="version" title={avail ? `Longarm ${avail} is available${remote ? '' : ` - it can't be updated from here: ${ua?.reason ?? ''}`}` : 'Longarm version'}
+          >
             {version}
             {avail ? ' ↑' : ''}
           </span>

@@ -154,22 +154,34 @@ func waitState(s *mgr.Service, want svc.State, timeout time.Duration) error {
 }
 
 // QueryService returns the coarse service status.
+//
+// It asks for the least access (SC_MANAGER_CONNECT, SERVICE_QUERY_STATUS),
+// which every interactive user has: mgr.Connect / OpenService ask for
+// all access, which only an elevated administrator gets - a user-session
+// longarmd or the tray then saw no service at all.
 func QueryService(name string) (ptypes.ServiceStatus, error) {
-	m, err := mgr.Connect()
+	scm, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
 	if err != nil {
 		return ptypes.ServiceUnknown, err
 	}
-	defer m.Disconnect()
-	s, err := m.OpenService(name)
-	if err != nil {
-		return ptypes.ServiceNotInstalled, nil
-	}
-	defer s.Close()
-	st, err := s.Query()
+	defer windows.CloseServiceHandle(scm)
+	n, err := windows.UTF16PtrFromString(name)
 	if err != nil {
 		return ptypes.ServiceUnknown, err
 	}
-	switch st.State {
+	h, err := windows.OpenService(scm, n, windows.SERVICE_QUERY_STATUS)
+	if err != nil {
+		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) || errors.Is(err, windows.ERROR_INVALID_NAME) {
+			return ptypes.ServiceNotInstalled, nil
+		}
+		return ptypes.ServiceUnknown, err
+	}
+	defer windows.CloseServiceHandle(h)
+	var st windows.SERVICE_STATUS
+	if err := windows.QueryServiceStatus(h, &st); err != nil {
+		return ptypes.ServiceUnknown, err
+	}
+	switch svc.State(st.CurrentState) {
 	case svc.Running:
 		return ptypes.ServiceRunning, nil
 	case svc.Stopped:
