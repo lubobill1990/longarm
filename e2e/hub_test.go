@@ -160,7 +160,7 @@ func TestHub(t *testing.T) {
 			r := h.longarm(h.client, "jobs", "--json")
 			return r.code == 0 && strings.Contains(r.stdout, id) && strings.Contains(r.stdout, "JOB_STATE_FAILED")
 		})
-		if r := h.longarm(h.client, "wait", id); r.code != 3 || strings.Contains(r.stderr, "unreachable") {
+		if r := h.longarm(h.client, "wait", id); r.code != 3 || strings.Contains(r.stderr, "unavailable") {
 			t.Fatalf("wait via the restarted hub: %+v", r)
 		}
 	})
