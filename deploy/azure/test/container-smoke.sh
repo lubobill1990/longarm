@@ -115,6 +115,17 @@ wait_healthy() {
 	fail "$name not healthy in 60 s"
 }
 
+# replicated CONTAINER: Litestream has uploaded something to the blob
+# container (its first sync runs about a second after the start; a
+# container stopped before it leaves an empty replica)
+replicated() {
+	for _ in $(seq 1 60); do
+		[[ $(az storage blob list -c "$1" --connection-string "$conn" --query "length(@)" -o tsv) -gt 0 ]] && return 0
+		sleep 0.5
+	done
+	fail "nothing replicated to $1 in 30 s"
+}
+
 # timing: restart phases in milliseconds (printed as they happen and at the end)
 now_ms() { date +%s%3N; }
 timings=()
@@ -185,6 +196,7 @@ docker exec -i "$p-hub" /usr/local/bin/longarm-hub user add alice --password-std
 docker exec -i "$p-hub" /usr/local/bin/longarm-hub user add bob --password-stdin <<<'another passphrase' >/dev/null
 
 step "replace the container (SIGTERM, rm)"
+replicated litestream
 t0=$(now_ms)
 docker stop -t 60 "$p-hub" >/dev/null
 timing "key: SIGTERM to exit (restart notice, Litestream's last sync)" "$t0" "$(now_ms)"
@@ -239,6 +251,7 @@ head -c 300000 /dev/urandom >"$work/rel/longarm-windows-amd64.msi"
 lai admin release publish "$work/rel" --version 0.0.1 --no-sign >/dev/null
 curl -fsS -o "$work/got.msi" http://127.0.0.1:7480/releases/0.0.1/longarm-windows-amd64.msi || fail "download before the replacement"
 cmp -s "$work/got.msi" "$work/rel/longarm-windows-amd64.msi" || fail "downloaded msi differs"
+replicated litestream-id
 t0=$(now_ms)
 docker stop -t 60 "$p-id" >/dev/null
 timing "identity: SIGTERM to exit" "$t0" "$(now_ms)"
