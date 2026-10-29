@@ -118,7 +118,7 @@ func TestPortLinks(t *testing.T) {
 		t.Fatalf("alice's list %v %v", ls, err)
 	}
 
-	// others: invisible, not removable; admins see and may remove all
+	// others: invisible, not removable; admins may remove any (by id) but list only their own
 	if ls, _ := fleet(th.bob).ListPortLinks(ctx, &pb.ListPortLinksRequest{}); len(ls.GetLinks()) != 0 {
 		t.Fatalf("bob sees %v", ls)
 	}
@@ -128,7 +128,8 @@ func TestPortLinks(t *testing.T) {
 	if _, err := fleet(th.bob).RemovePortLink(ctx, &pb.RemovePortLinkRequest{Id: l.Id}); status.Code(err) != codes.NotFound {
 		t.Fatalf("bob removes alice's link: %v", err)
 	}
-	if ls, err := fleet(th.root).ListPortLinks(ctx, &pb.ListPortLinksRequest{All: true}); err != nil || len(ls.Links) != 1 {
+	// with multi-tenancy an admin lists its own user's links only
+	if ls, err := fleet(th.root).ListPortLinks(ctx, &pb.ListPortLinksRequest{All: true}); err != nil || len(ls.Links) != 0 {
 		t.Fatalf("root lists all: %v %v", ls, err)
 	}
 	// the listen port is taken - also for bob, who learns nothing about the link

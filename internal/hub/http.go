@@ -151,9 +151,9 @@ func (h *Hub) httpHandler() http.Handler {
 		res, err := h.ListJoinCodesFor(h.panelViewer(user), "web/"+user)
 		writeResult(w, res, err)
 	})
-	admin("GET /api/audit", func(w http.ResponseWriter, r *http.Request, _ string) {
+	admin("GET /api/audit", func(w http.ResponseWriter, r *http.Request, user string) {
 		q := r.URL.Query()
-		res, err := h.Audit(&pb.AuditRequest{Node: q.Get("node"), Limit: int32(atoiDefault(q.Get("limit"), 200))})
+		res, err := h.AuditFor(h.panelViewer(user), "web/"+user, &pb.AuditRequest{Node: q.Get("node"), Limit: int32(atoiDefault(q.Get("limit"), 200))})
 		writeResult(w, res, err)
 	})
 	admin("GET /api/profiles", func(w http.ResponseWriter, _ *http.Request, user string) {

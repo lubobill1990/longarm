@@ -202,25 +202,15 @@ func (s *fleetServer) Place(req *pb.PlaceRequest, st pb.Fleet_PlaceServer) error
 	return s.h.PlaceFor(st.Context(), c.id.String(), c.id.Owner(), req, st.Send)
 }
 
-// Audit returns forwarded audit records.
+// Audit returns forwarded audit records, all of them (the hub's own
+// callers; the read APIs use AuditFor).
 func (h *Hub) Audit(req *pb.AuditRequest) (*pb.AuditResponse, error) {
-	var since time.Time
-	if req.Since != nil {
-		since = req.Since.AsTime()
-	}
-	rows, err := h.store.Audit(req.Node, since, int(req.Limit))
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	out := &pb.AuditResponse{}
-	for _, r := range rows {
-		out.Records = append(out.Records, &pb.AuditRecord{Node: r.Node, Time: tspb(r.Time), Who: r.Who, Method: r.Method, Json: r.Line})
-	}
-	return out, nil
+	return h.AuditFor(tenancy.Caller{Admin: true}, "", req)
 }
 
-func (s *fleetServer) Audit(_ context.Context, req *pb.AuditRequest) (*pb.AuditResponse, error) {
-	return s.h.Audit(req)
+func (s *fleetServer) Audit(ctx context.Context, req *pb.AuditRequest) (*pb.AuditResponse, error) {
+	c := callerFrom(ctx)
+	return s.h.AuditFor(s.h.viewer(c), c.id.String(), req)
 }
 
 func (s *fleetServer) Whoami(ctx context.Context, req *pb.WhoamiRequest) (*pb.WhoamiResponse, error) {

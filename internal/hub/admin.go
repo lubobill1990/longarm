@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -70,21 +71,31 @@ func (h *Hub) ListJoinCodes() (*pb.ListJoinCodesResponse, error) {
 	return h.ListJoinCodesFor(tenancy.Caller{Admin: true}, "")
 }
 
-// ListJoinCodesFor lists the join codes v may see: fleet codes, codes of
-// v's own devices and workers, and the codes the caller (by) created. Other
-// users' device and worker codes would name their machines (used_by).
+// ListJoinCodesFor lists the join codes v may see: the codes the caller
+// (by) created, codes of v's own user (its devices and workers) and fleet
+// worker codes (no owner). used_by - the machine that enrolled with it -
+// reads "used" unless v may see that machine.
 func (h *Hub) ListJoinCodesFor(v tenancy.Caller, by string) (*pb.ListJoinCodesResponse, error) {
 	codes_, err := h.store.JoinCodes(time.Now())
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	out := &pb.ListJoinCodesResponse{}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	for _, c := range codes_ {
-		mine := (c.Owner == "" || c.Owner == v.User) && (c.User == "" || c.User == v.User)
-		if !v.Admin && !mine && (by == "" || c.CreatedBy != by) {
+		ok := v.Admin || (by != "" && c.CreatedBy == by) || (v.User != "" && (c.Owner == v.User || c.User == v.User)) ||
+			(c.Role == string(pki.RoleWorker) && c.Owner == "")
+		if !ok {
 			continue
 		}
-		out.Codes = append(out.Codes, joinCodePB(c))
+		jc := joinCodePB(c)
+		if jc.UsedBy != "" && !v.Admin {
+			if n := h.nodes[jc.UsedBy]; n == nil || !h.visibleNodeLocked(v, n) {
+				jc.UsedBy = "used"
+			}
+		}
+		out.Codes = append(out.Codes, jc)
 	}
 	return out, nil
 }

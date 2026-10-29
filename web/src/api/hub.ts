@@ -170,6 +170,11 @@ export const hubApi = {
   putProfile: (name: string, tools: ToolSpec[]) => put<Profile>(`/api/profiles/${enc(name)}`, { tools }),
   audit: (node?: string, limit = 200) =>
     get<{ records?: AuditRecord[] }>(`/api/audit?limit=${limit}${node ? `&node=${enc(node)}` : ''}`).then((r) => r.records ?? []),
+  // the same, with the other users' records counted by method (never shown)
+  auditView: (node?: string, limit = 200) =>
+    get<{ records?: AuditRecord[]; hidden?: { method?: string; count?: number }[]; hidden_total?: number }>(
+      `/api/audit?limit=${limit}${node ? `&node=${enc(node)}` : ''}`,
+    ),
   users: () => get<{ users: PanelLogin[] }>('/api/users').then((r) => r.users ?? []),
   addUser: (name: string, password: string, current_password: string, reset = false) =>
     post<{ name: string; totp_secret: string; otpauth: string }>('/api/users', { name, password, reset, current_password }),

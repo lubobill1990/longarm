@@ -37,9 +37,17 @@
   with name, owner and state only; `admin user ls` / "People" and `admin
   user remove` give device and worker counts instead of names; join codes,
   rollouts (counts plus visible names), toolchain canaries, `admin tailnet
-  status`, `admin links` and `link ls --all` name only machines the admin
-  may see; `admin logs` of another user's job is "not found". The audit log
-  still names nodes (the admins' security tool). Auto placement already
+  status` and `admin links` name only machines the admin may see; a release
+  push no worker can take fails with counts, not names; join codes are the
+  admin's own, its user's and fleet worker codes, with `used_by` "used"
+  unless the machine is visible; `link ls --all` and the panel's port links
+  are the admin's own user's links; `admin logs` of another user's job is
+  "not found". The audit log (`admin audit`, the panel, `Fleet.Audit`)
+  shows only the records about the admin's own user and the hub actions it
+  performed, and counts the rest by method; `users/remove` records count the
+  revoked machines. The complete trail stays in the hub's database and log
+  for the hub's operators (new `longarm-hub audit` on the hub host; on
+  Azure, the subscription's owners). Auto placement already
   used only workers the caller's user may use, admins included; the admin's
   `exec auto` now picks from the same list (before, from every worker the
   hub listed to the admin). See docs/security.md "What admins see".

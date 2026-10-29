@@ -277,6 +277,31 @@ describe('multi-tenancy', () => {
     expect(calls.some((c) => c.url === '/api/admin/summary?rows=1')).toBe(true)
   })
 
+  it('AuditPage shows the own records and only counts of the others', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    history.pushState(null, '', '/audit')
+    mockFetch({
+      '/api/me': () => [200, { user: 'ops', hub: 'hub1', version: 'dev', role: 'admin' }],
+      '/api/nodes': () => [200, { nodes: [] }],
+      '/api/audit': () => [
+        200,
+        {
+          records: [{ node: 'hub', who: 'web/ops', method: 'workers/label', time: '2026-10-29T10:00:00Z', json: '{"worker":"w1"}' }],
+          hidden: [
+            { method: '/longarm.v1.Jobs/Submit', count: 7 },
+            { method: 'users/remove', count: 1 },
+          ],
+          hidden_total: 8,
+        },
+      ],
+    })
+    render(<PanelApp />)
+    const note = await screen.findByTestId('audit-hidden')
+    expect(note.textContent).toContain('8 records of other users')
+    expect(note.textContent).toContain('Jobs/Submit 7')
+    expect(screen.getByTestId('audit').textContent).toContain('workers/label')
+  })
+
   it('TenantsPage removes a user with purge and changes team members', async () => {
     vi.stubGlobal('EventSource', FakeEventSource)
     history.pushState(null, '', '/tenants')

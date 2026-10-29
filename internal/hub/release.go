@@ -23,6 +23,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/update"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -344,6 +345,11 @@ func (h *Hub) hintLocked(n *node) {
 
 // pushRelease starts a rollout.
 func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, error) {
+	return h.pushReleaseAs(tenancy.Caller{Admin: true}, req, by)
+}
+
+// pushReleaseAs is pushRelease for a caller who sees the fleet as v.
+func (h *Hub) pushReleaseAs(v tenancy.Caller, req *pb.PushReleaseRequest, by string) (*pb.Rollout, error) {
 	files, err := h.releaseFiles(req.Version)
 	if err != nil {
 		return nil, err
@@ -398,7 +404,9 @@ func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, e
 		return &pb.Rollout{Version: req.Version, Channel: channel, State: rolloutNone, NotCapable: cantUpdate, Message: msg}, nil
 	}
 	if len(cands) == 0 {
-		return nil, status.Errorf(codes.FailedPrecondition, "no approved worker of channel %s can self-update (not capable: %v)", channel, cantUpdate)
+		// counts, and names only of the caller's visible workers (see rolloutFor)
+		return nil, status.Errorf(codes.FailedPrecondition, "no approved worker of channel %s can self-update (%s)", channel,
+			h.countedNamesLocked(v, cantUpdate, "can't self-update"))
 	}
 	// Canary preference: online, update-capable, fewest active jobs.
 	sort.Slice(cands, func(i, j int) bool {
@@ -760,8 +768,9 @@ func (s *hubAdminServer) PushRelease(ctx context.Context, req *pb.PushReleaseReq
 		// to an older (signed, maybe vulnerable) version.
 		return nil, status.Error(codes.PermissionDenied, "the release role may not downgrade workers (admin only)")
 	}
-	r, err := s.h.pushRelease(req, callerFrom(ctx).id.Name)
-	return s.h.rolloutFor(s.h.viewer(callerFrom(ctx)), r, err)
+	v := s.h.viewer(callerFrom(ctx))
+	r, err := s.h.pushReleaseAs(v, req, callerFrom(ctx).id.Name)
+	return s.h.rolloutFor(v, r, err)
 }
 
 func (s *hubAdminServer) GetRollout(ctx context.Context, _ *pb.GetRolloutRequest) (*pb.Rollout, error) {

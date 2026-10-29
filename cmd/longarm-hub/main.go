@@ -71,7 +71,7 @@ func main() {
 	}
 	root.PersistentFlags().StringVar(&configPath, "config", os.Getenv("LONGARM_HUB_CONFIG"), "hub.toml (env LONGARM_HUB_CONFIG)")
 	root.PersistentFlags().StringVar(&dataDir, "data-dir", "", "data directory (overrides hub.toml data_dir; env LONGARM_HUB_DATA_DIR)")
-	root.AddCommand(serveCmd(), caCmd(), userCmd(), joinCodeCmd(), releaseCmd(), issueCmd(), healthcheckCmd(), bootstrapCmd(), containerCmd())
+	root.AddCommand(serveCmd(), caCmd(), userCmd(), joinCodeCmd(), releaseCmd(), issueCmd(), healthcheckCmd(), bootstrapCmd(), containerCmd(), auditCmd())
 	if args, err := aliasArgs(os.Args[0]); err != nil {
 		fmt.Fprintln(os.Stderr, "longarm-hub:", err)
 		os.Exit(1)
@@ -608,4 +608,42 @@ func bundleTarB64(caPEM, certPEM, keyPEM []byte) (string, error) {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+}
+
+// auditCmd is `longarm-hub audit`: the complete audit trail from the hub's
+// database, for whoever operates the hub (its data directory: on Azure, the
+// subscription's owners). The admin role's reads (longarm admin audit, the
+// panel) are projected to the admin's own user (docs/security.md).
+func auditCmd() *cobra.Command {
+	var node string
+	var limit int
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "audit",
+		Short: "Print the complete audit trail from the hub's database (operators; newest first)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			st, _, err := openStore()
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			rows, err := st.Audit(node, time.Time{}, limit)
+			if err != nil {
+				return err
+			}
+			for _, r := range rows {
+				if asJSON {
+					fmt.Println(r.Line)
+					continue
+				}
+				fmt.Printf("%s  %-12s %-24s %s\n", r.Time.UTC().Format(time.RFC3339), r.Node, r.Who, r.Method)
+			}
+			return nil
+		},
+	}
+	c.Flags().StringVar(&node, "node", "", "only this node's records (\"hub\": the hub's own)")
+	c.Flags().IntVar(&limit, "limit", 200, "newest N records (at most 10000)")
+	c.Flags().BoolVar(&asJSON, "json", false, "print the records' JSON lines")
+	return c
 }

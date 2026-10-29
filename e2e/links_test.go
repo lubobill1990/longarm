@@ -167,9 +167,9 @@ func TestPortLinks(t *testing.T) {
 		if r := h.longarm(bob, "exec", "wa", "--", bins.helper, "env", "LONGARM_LINKS"); strings.TrimSpace(r.stdout) != "LONGARM_LINKS=" {
 			t.Fatalf("bob's environment: %+v", r)
 		}
-		// the admin sees everybody's links between workers it may see (fleet workers here)
-		if out := h.mustLongarm(h.admin, "link", "ls", "--all"); !strings.Contains(out, id) {
-			t.Fatalf("admin ls --all: %s", out)
+		// an admin sees its own user's links only, like any user
+		if out := h.mustLongarm(h.admin, "link", "ls", "--all"); strings.Contains(out, id) {
+			t.Fatalf("admin ls --all shows alice's link: %s", out)
 		}
 		// the target accepts LinkTunnel.Dial from workers with a grant only:
 		// bob's client certificate can't call it at all
@@ -282,16 +282,22 @@ func TestPortLinks(t *testing.T) {
 	})
 
 	t.Run("audit", func(t *testing.T) {
-		out := h.mustLongarm(h.admin, "admin", "audit", "--node", "hub", "--json", "--limit", "200")
+		// the complete trail: the hub's operators (longarm-hub audit)
+		out := h.hubCmd(t, "audit", "--node", "hub", "--json", "--limit", "200")
 		for _, want := range []string{`"links/create"`, `"links/remove"`, id} {
 			if !strings.Contains(out, want) {
 				t.Errorf("hub audit lacks %s", want)
 			}
 		}
 		waitFor(t, "the target's audit on the hub", 30*time.Second, func() bool {
-			out := h.longarm(h.admin, "admin", "audit", "--node", "wb", "--json", "--limit", "500").stdout
+			out := h.hubCmd(t, "audit", "--node", "wb", "--json", "--limit", "500")
 			return strings.Contains(out, "LinkTunnel/Dial") && strings.Contains(out, id) && strings.Contains(out, `"worker/wa"`)
 		})
+		// an admin reads none of alice's records, only their count
+		r := h.longarm(h.admin, "admin", "audit", "--node", "hub", "--json", "--limit", "200")
+		if r.code != 0 || strings.Contains(r.stdout, id) || !strings.Contains(r.stderr, "not shown") {
+			t.Fatalf("admin's audit: %+v", r)
+		}
 	})
 
 	h.mustLongarm(alice, "link", "rm", id)
@@ -413,7 +419,7 @@ func TestPerUserLinks(t *testing.T) {
 	}
 	// audit on w2: the refusal
 	waitFor(t, "w2's audit of the refused link", 30*time.Second, func() bool {
-		out := h.longarm(h.admin, "admin", "audit", "--node", "w2", "--json", "--limit", "500").stdout
+		out := h.hubCmd(t, "audit", "--node", "w2", "--json", "--limit", "500")
 		return strings.Contains(out, id2) && strings.Contains(out, "denied")
 	})
 	h.mustLongarm(alice, "link", "rm", id, id2)
@@ -484,7 +490,7 @@ func TestPortLinksWorkerPolicy(t *testing.T) {
 		t.Fatalf("alice reached wb, which doesn't serve her: %+v", r)
 	}
 	waitFor(t, "wb's audit of alice's refused link", 30*time.Second, func() bool {
-		out := h.longarm(h.admin, "admin", "audit", "--node", "wb", "--json", "--limit", "500").stdout
+		out := h.hubCmd(t, "audit", "--node", "wb", "--json", "--limit", "500")
 		return strings.Contains(out, aid) && strings.Contains(out, "not a user of this worker")
 	})
 

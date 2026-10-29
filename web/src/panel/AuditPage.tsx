@@ -7,7 +7,8 @@ export function AuditPage() {
   const [node, setNode] = useState('')
   const [open, setOpen] = useState<number>()
   const nodes = usePoll(() => hubApi.nodes(false), 60000)
-  const audit = usePoll(() => hubApi.audit(node, 300), 10000, [node])
+  const audit = usePoll(() => hubApi.auditView(node, 300), 10000, [node])
+  const hidden = audit.data?.hidden_total ?? 0
   return (
     <div>
       <div className="page-title">
@@ -20,6 +21,13 @@ export function AuditPage() {
         </select>
       </div>
       <ErrorBox error={audit.error} />
+      {hidden > 0 && (
+        <p className="muted small" data-testid="audit-hidden">
+          {hidden} records of other users are not shown, only counted:{' '}
+          {(audit.data?.hidden ?? []).map((c) => `${(c.method ?? '').replace('/longarm.v1.', '')} ${c.count ?? 0}`).join(', ')}. The
+          complete trail is kept by the hub&apos;s operators (longarm-hub audit).
+        </p>
+      )}
       <table className="grid" data-testid="audit">
         <thead>
           <tr>
@@ -31,7 +39,7 @@ export function AuditPage() {
           </tr>
         </thead>
         <tbody>
-          {(audit.data ?? []).map((r, i) => {
+          {(audit.data?.records ?? []).map((r, i) => {
             let details = ''
             try {
               const o = JSON.parse(r.json ?? '{}')

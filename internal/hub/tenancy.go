@@ -526,9 +526,10 @@ func (h *Hub) RemoveUser(by string, req *pb.RemoveUserRequest) (*pb.RemoveUserRe
 		h.store.DeleteUser(req.Name)
 	}
 	h.dropWorkerCodes(by, req.Name)
-	// the audit log (admins' security tool) names the revoked nodes
-	h.auditHub(by, "users/remove", map[string]any{"user": req.Name, "purge": req.Purge, "revoked": devices})
-	h.log.Info("user removed", "user", req.Name, "by", by, "purge", req.Purge, "revoked", len(devices))
+	// the audit log, which admins read, counts the revoked machines; their
+	// names go to the hub's own log only (the operators': docs/security.md)
+	h.auditHub(by, "users/remove", map[string]any{"user": req.Name, "purge": req.Purge, "revoked": len(devices)})
+	h.log.Info("user removed", "user", req.Name, "by", by, "purge", req.Purge, "revoked", devices)
 	return resp, nil
 }
 

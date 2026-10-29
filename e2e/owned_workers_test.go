@@ -236,7 +236,7 @@ func TestOwnedWorkers(t *testing.T) {
 	}
 
 	waitFor(t, "hub audit of the sharing", 20*time.Second, func() bool {
-		out := h.longarm(root, "admin", "audit", "--node", "hub", "--limit", "100", "--json").stdout
+		out := h.hubCmd(t, "audit", "--node", "hub", "--limit", "100", "--json") // alice's actions: the operators' trail
 		return strings.Contains(out, "workers/share") && strings.Contains(out, "workers/code")
 	})
 	h.mustLongarm(alice, "worker", "remove", "aw")
@@ -323,5 +323,14 @@ func adminSeesUserView(t *testing.T, h *hubEnv, root, bob string, print1 []strin
 	}
 	if r := h.longarm(bob, "admin", "summary"); r.code == 0 || !strings.Contains(r.stderr, "PermissionDenied") {
 		t.Fatalf("bob's admin summary: %+v", r)
+	}
+	// audit: alice's calls on her worker are counted, not shown, to the admin
+	var ar result
+	waitFor(t, "alice's records on aw, counted for the admin", 30*time.Second, func() bool {
+		ar = h.longarm(root, "admin", "audit", "--node", "aw", "--json", "--limit", "500")
+		return ar.code == 0 && strings.Contains(ar.stderr, "not shown")
+	})
+	if strings.Contains(ar.stdout, "client/alice") {
+		t.Fatalf("admin's audit of alice's worker shows her records:\n%s", ar.stdout)
 	}
 }

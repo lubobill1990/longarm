@@ -162,7 +162,7 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 			mine++
 		}
 		if e.l.From == req.From && e.l.ListenPort == listen {
-			if e.l.Owner == owner || v.Admin {
+			if e.l.Owner == owner || v.Admin && !h.tenancyOnLocked() { // others' link ids are theirs
 				return nil, status.Errorf(codes.AlreadyExists, "port %d on %s is taken by link %s", listen, req.From, e.l.Id)
 			}
 			return nil, status.Errorf(codes.AlreadyExists, "port %d on %s is taken by another link (choose --port)", listen, req.From)
@@ -196,25 +196,22 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 	return h.portLinkViewLocked(h.portLinks[id]), nil
 }
 
-// ListPortLinks lists the caller's links (all: every user's, admins only -
-// between workers the admin may see as a user: links that touch another
-// user's private worker would name it).
+// ListPortLinks lists the caller's links. all (admins only) lists every
+// user's without multi-tenancy; with it, admins too see their own user's
+// links only (a link names its job, creator and consent).
 func (h *Hub) ListPortLinks(c caller, all bool) (*pb.ListPortLinksResponse, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	v := h.viewerLocked(c.id.Owner(), c.id.Role == pki.RoleAdmin)
-	if all && !v.Admin {
+	if all && !v.Admin && c.id.Role != pki.RoleAdmin {
 		return nil, status.Error(codes.PermissionDenied, "only admins list every user's links")
 	}
-	return h.listPortLinksLocked(h.portLinkVisible(h.viewerLocked(c.id.Owner(), false), all)), nil
+	return h.listPortLinksLocked(h.portLinkVisible(h.viewerLocked(c.id.Owner(), false))), nil
 }
 
-// portLinkVisible: v's own links, and with all (admins) the links between
-// workers v may see.
-func (h *Hub) portLinkVisible(v tenancy.Caller, all bool) func(*pb.PortLink) bool {
-	return func(l *pb.PortLink) bool {
-		return l.Owner == v.User || all && h.visibleNameLocked(v, l.From) && h.visibleNameLocked(v, l.To)
-	}
+// portLinkVisible: v's own links (everybody's without multi-tenancy).
+func (h *Hub) portLinkVisible(v tenancy.Caller) func(*pb.PortLink) bool {
+	return func(l *pb.PortLink) bool { return v.Admin || l.Owner == v.User }
 }
 
 func (h *Hub) listPortLinksLocked(keep func(*pb.PortLink) bool) *pb.ListPortLinksResponse {
@@ -483,13 +480,13 @@ func (s *fleetServer) RemovePortLink(ctx context.Context, req *pb.RemovePortLink
 
 // portLinkRoutes are the panel's view of links:
 //
-//	GET    /api/port-links         the login's links (admins: everybody's between workers they may see)
+//	GET    /api/port-links         the login's own links (admins too, with multi-tenancy)
 //	DELETE /api/port-links/{id}    remove one (users: their own)
 func (h *Hub) portLinkRoutes(api func(string, func(http.ResponseWriter, *http.Request, string))) {
 	api("GET /api/port-links", func(w http.ResponseWriter, _ *http.Request, user string) {
-		v, admin := h.panelViewer(user), h.panelAdmin(user)
+		v := h.panelViewer(user)
 		h.mu.Lock()
-		res := h.listPortLinksLocked(h.portLinkVisible(v, admin || v.Admin))
+		res := h.listPortLinksLocked(h.portLinkVisible(v))
 		h.mu.Unlock()
 		writePB(w, res)
 	})

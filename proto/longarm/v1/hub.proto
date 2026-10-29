@@ -740,7 +740,19 @@ message AuditRecord {
 }
 
 message AuditResponse {
+  // With multi-tenancy only the records about the caller's user: its own
+  // calls (any of its devices), calls on its own workers, hub actions on it
+  // and the hub actions the caller performed (docs/security.md "What admins
+  // see"). The complete trail stays in the hub's storage.
   repeated AuditRecord records = 1;
+  // The other records in the same window, counted by method only.
+  repeated AuditCount hidden = 2;
+  int32 hidden_total = 3;
+}
+
+message AuditCount {
+  string method = 1;
+  int32 count = 2;
 }
 
 message WhoamiRequest {

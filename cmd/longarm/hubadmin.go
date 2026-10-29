@@ -358,7 +358,7 @@ machines are only counted, anonymously, by "longarm admin summary".`,
 	var auditLimit int
 	var auditJSON bool
 	audit := &cobra.Command{
-		Use: "audit", Short: "Show audit records forwarded by the workers", Args: cobra.NoArgs,
+		Use: "audit", Short: "Show audit records about your user (your devices, workers and jobs, your hub actions); others only counted", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
 				resp, err := h.Fleet().Audit(ctx, &pb.AuditRequest{Node: auditNode, Limit: int32(auditLimit)})
@@ -372,6 +372,15 @@ machines are only counted, anonymously, by "longarm admin summary".`,
 						continue
 					}
 					fmt.Printf("%s %-10s %-22s %s\n", r.Time.AsTime().Local().Format("01-02 15:04:05"), r.Node, r.Who, r.Method)
+				}
+				// other users' records: counted by method, never shown
+				if resp.HiddenTotal > 0 {
+					var parts []string
+					for _, c := range resp.Hidden {
+						parts = append(parts, fmt.Sprintf("%s %d", c.Method, c.Count))
+					}
+					fmt.Fprintf(os.Stderr, "longarm: %d records of other users not shown (%s); the complete trail is the hub operators' (longarm-hub audit)\n",
+						resp.HiddenTotal, strings.Join(parts, ", "))
 				}
 				return nil
 			})

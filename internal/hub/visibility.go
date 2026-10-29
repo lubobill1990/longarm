@@ -2,15 +2,21 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/update"
@@ -287,4 +293,122 @@ func (h *Hub) summaryRoutes(admin func(string, func(http.ResponseWriter, *http.R
 		h.auditHub("web/"+user, "fleet/summary", map[string]any{"rows": rows != ""})
 		writePB(w, resp)
 	})
+}
+
+// countedNamesLocked describes names (workers in some state) for v: the
+// count, and the names of those v may see - "12 workers can't self-update
+// (3 yours: a, b, c)". Hidden ones are counted, never named.
+func (h *Hub) countedNamesLocked(v tenancy.Caller, names []string, what string) string {
+	shown := h.visibleNamesLocked(v, names)
+	s := fmt.Sprintf("%d worker(s) %s", len(names), what)
+	if len(shown) > 0 {
+		s += fmt.Sprintf(" (%d you may see: %s)", len(shown), strings.Join(shown, ", "))
+	}
+	return s
+}
+
+// ---------------------------------------------------------------- audit
+
+// AuditFor is the audit trail as v may read it (Fleet.Audit, /api/audit).
+// With multi-tenancy - admins included - only records about v's user: its
+// own calls (any device of the user), calls on the user's own workers, hub
+// actions about the user (its devices, workers, quota ...) and the hub
+// actions the caller itself (by) performed. Every other record is only
+// counted by method. The complete trail stays in the hub's database (and
+// the hub's log), which only the hub's operators can read.
+func (h *Hub) AuditFor(v tenancy.Caller, by string, req *pb.AuditRequest) (*pb.AuditResponse, error) {
+	var since time.Time
+	if req.Since != nil {
+		since = req.Since.AsTime()
+	}
+	limit := int(req.Limit)
+	if limit <= 0 || limit > 10000 {
+		limit = 200
+	}
+	fetch := limit
+	if !v.Admin {
+		fetch = 10000 // filtered below: look further back for the caller's own
+	}
+	rows, err := h.store.Audit(req.Node, since, fetch)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	out := &pb.AuditResponse{}
+	hidden := map[string]int32{}
+	logins := map[string]string{} // panel login -> its user
+	for _, r := range rows {
+		if !v.Admin && !h.auditVisible(v, by, r, logins) {
+			hidden[r.Method]++
+			out.HiddenTotal++
+			continue
+		}
+		if len(out.Records) < limit {
+			out.Records = append(out.Records, &pb.AuditRecord{Node: r.Node, Time: tspb(r.Time), Who: r.Who, Method: r.Method, Json: r.Line})
+		}
+	}
+	for m, n := range hidden {
+		out.Hidden = append(out.Hidden, &pb.AuditCount{Method: m, Count: n})
+	}
+	sort.Slice(out.Hidden, func(i, j int) bool { return out.Hidden[i].Method < out.Hidden[j].Method })
+	return out, nil
+}
+
+// auditVisible reports whether record r is about v's user or by the caller.
+func (h *Hub) auditVisible(v tenancy.Caller, by string, r store.AuditRow, logins map[string]string) bool {
+	if by != "" && r.Who == by {
+		return true
+	}
+	var rec map[string]any
+	json.Unmarshal([]byte(r.Line), &rec)
+	str := func(k string) string { s, _ := rec[k].(string); return s }
+	if v.User == "" {
+		return false
+	}
+	// the subject of a hub action, or the user a worker record names
+	if str("user") == v.User || str("owner") == v.User {
+		return true
+	}
+	// the actor: a device of v's user, or v's panel login
+	if h.actorUser(r.Who, logins) == v.User {
+		return true
+	}
+	// a call on one of v's own workers
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if n := h.nodes[r.Node]; n != nil && n.rec.Role == string(pki.RoleWorker) && n.rec.Owner == v.User {
+		return true
+	}
+	return false
+}
+
+// actorUser is the Longarm user behind an audit "who": a certificate
+// (role/name: the node's user) or a panel login (web/<login>: its tenant).
+func (h *Hub) actorUser(who string, logins map[string]string) string {
+	who, _, _ = strings.Cut(who, " ") // "<who> via hub", "<who> (remove user x)"
+	role, name, ok := strings.Cut(who, "/")
+	if !ok {
+		return ""
+	}
+	switch role {
+	case string(pki.RoleClient), string(pki.RoleAdmin):
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if n := h.nodes[name]; n != nil {
+			return nodeUser(n.rec)
+		}
+		return name
+	case "web":
+		u, ok := logins[name]
+		if !ok {
+			if pu, err := h.store.GetUser(name); err == nil {
+				u = pu.Tenant
+				if u == "" && pu.Admin() {
+					u = name
+				}
+			}
+			logins[name] = u
+		}
+		return u
+	}
+	return ""
 }

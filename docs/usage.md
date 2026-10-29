@@ -1330,6 +1330,8 @@ longarm exec -- hostname                 # short command on the least loaded wor
 longarm wait <id>; longarm logs <id> -f; longarm kill <id>   # worker optional: found through the hub
 longarm admin nodes | approve | revoke | drain | undrain | label <node> k=v | join-codes | audit
 longarm admin summary [--rows]           # the whole fleet as counts per user (admin nodes lists what your user sees)
+longarm admin audit [--node N]           # the records about your user and your own hub actions; others' only counted
+longarm-hub audit [--node N] [--json]   # on the hub host (operators): the complete audit trail
 longarm admin tailnet status [--json] | rekey <node>   # tailnet provider + per-node state ("Tailnet provider" below)
 longarm admin profile set dev git=latest node=22 pnpm=latest claude=latest pwsh=7
 longarm admin profile assign w1 dev; longarm admin profile ls   # canary first, then the rest
