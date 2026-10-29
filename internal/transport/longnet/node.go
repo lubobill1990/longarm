@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"os"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -662,13 +663,24 @@ func (n *Node) waitRelay(ctx context.Context) (*relay.Conn, error) {
 
 // ---- end-to-end QUIC ----
 
+// innerIdleTimeout: an end-to-end connection survives a relay outage
+// (restart, hub redeploy) this long; LONGARM_NET_IDLE_TIMEOUT overrides it
+// (tests, at least 3 s; the keepalive is a third of it, at most 10 s).
+func innerIdleTimeout() time.Duration {
+	if d, err := time.ParseDuration(os.Getenv("LONGARM_NET_IDLE_TIMEOUT")); err == nil && d >= 3*time.Second {
+		return d
+	}
+	return 45 * time.Second
+}
+
 func innerQUICConfig() *quic.Config {
+	idle := innerIdleTimeout()
 	return &quic.Config{
 		InitialPacketSize:       1200, // fits a relay datagram; never grows (no PMTUD)
 		DisablePathMTUDiscovery: true,
 		HandshakeIdleTimeout:    10 * time.Second,
-		MaxIdleTimeout:          45 * time.Second,
-		KeepAlivePeriod:         10 * time.Second,
+		MaxIdleTimeout:          idle,
+		KeepAlivePeriod:         min(10*time.Second, idle/3),
 		MaxIncomingStreams:      4,
 		MaxIncomingUniStreams:   -1,
 	}

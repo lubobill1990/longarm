@@ -69,6 +69,41 @@ func fakeAz(args []string) {
 	identity := func() bool { return group()["storageAuth"] == "identity" }
 	cmd := strings.Join(args[:min(len(args), 2)], " ")
 	q := flag("--query")
+	// the external relay (deploy.sh --relay): its own container group
+	// <name>-relay = the parameters of its last deployment ("cg-relay")
+	if strings.HasSuffix(flag("-n"), "-relay") && strings.HasPrefix(cmd, "container ") {
+		relayParams := func() map[string]any {
+			var doc struct {
+				Parameters map[string]struct{ Value any } `json:"parameters"`
+			}
+			json.Unmarshal([]byte(read("cg-relay")), &doc)
+			m := map[string]any{}
+			for k, v := range doc.Parameters {
+				m[k] = v.Value
+			}
+			return m
+		}
+		if cmd != "container delete" && !exists("cg-relay") {
+			fail("ResourceNotFound")
+		}
+		switch {
+		case cmd == "container delete":
+			os.Remove(filepath.Join(dir, "cg-relay"))
+		case cmd == "container show" && strings.Contains(q, "currentState"):
+			fmt.Println("Running")
+		case cmd == "container show" && strings.Contains(q, "image"):
+			fmt.Println(relayParams()["image"])
+		case cmd == "container logs":
+			if os.Getenv("HELPER_AZ_RELAY_UNREGISTERED") == "1" || strings.Contains(fmt.Sprint(relayParams()["image"]), "unregistered") {
+				fmt.Println(`level=WARN msg="relay: hub subscription ended; relaying continues with the last policy"`)
+			} else {
+				fmt.Println(`level=INFO msg="relay: subscribed to the hub" hub=` + fmt.Sprint(relayParams()["hubAddress"]))
+			}
+		default:
+			fail("fake az: relay " + strings.Join(args, " "))
+		}
+		return
+	}
 	switch cmd {
 	case "account show":
 		if os.Getenv("HELPER_AZ_LOGGED_OUT") == "1" {
@@ -148,6 +183,30 @@ func fakeAz(args []string) {
 		g := group()
 		stuck := os.Getenv("HELPER_AZ_STUCK") == "1"
 		switch {
+		case strings.HasPrefix(q, "[containers[?name=='hub'].image | [0], ipAddress.fqdn"):
+			// relay.sh: the hub's image, fqdn, registry (+ identity), state, STUN servers
+			reg, ident := "", ""
+			if acr, _ := g["acrName"].(string); g["storageAuth"] == "identity" && acr != "" {
+				reg, ident = acr+".azurecr.io", "/subscriptions/0/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/hub-id"
+			} else if g["registryUsername"] != nil {
+				reg = "ghcr.io"
+				if s, ok := g["registryServer"].(string); ok {
+					reg = s
+				}
+			}
+			stun := "self,stun.cloudflare.com:3478,stun.l.google.com:19302"
+			if s, ok := g["stunServers"].(string); ok {
+				stun = "self"
+				if s != "" {
+					stun += "," + s
+				}
+			}
+			state := "Running"
+			if os.Getenv("HELPER_AZ_HUB_STOPPED") == "1" {
+				state = "Terminated"
+			}
+			h := os.Getenv("HELPER_AZ_HUB")
+			tsv(fmt.Sprint(g["image"]), h[:strings.LastIndex(h, ":")], orNone(reg), orNone(ident), state, stun)
 		case strings.HasPrefix(q, "[provisioningState"):
 			// state, hub container state, container events, group events
 			if stuck {
@@ -286,10 +345,19 @@ func fakeAz(args []string) {
 	case "container restart":
 		restart()
 	case "container exec":
-		if flag("--exec-command") != "/usr/local/bin/longarm-hub-admin-code" {
+		switch flag("--exec-command") {
+		case "/usr/local/bin/longarm-hub-admin-code":
+			fmt.Println("ABC-DEF")
+		case "/usr/local/bin/longarm-hub-relay-cert":
+			// like longarm-hub issue --b64 through a TTY: a note, then the bundle (CRLF)
+			b, err := os.ReadFile(os.Getenv("HELPER_AZ_RELAY_TLS"))
+			if err != nil {
+				fail("exec: no such file /usr/local/bin/longarm-hub-relay-cert") // an older hub image
+			}
+			fmt.Print("relay/myhub-relay bundle (base64 tar.gz of ca.crt node.crt node.key; it holds a private key):\r\n" + strings.TrimSpace(string(b)) + "\r\n")
+		default:
 			fail("ACI exec takes no arguments") // like the real one
 		}
-		fmt.Println("ABC-DEF")
 	case "deployment group":
 		if !exists("rg") {
 			fail("ResourceGroupNotFound")
@@ -370,6 +438,9 @@ func fakeAz(args []string) {
 				tsv(vals...)
 			case strings.Contains(q, "provisioningState"):
 				fmt.Println(read("dstate-" + dep))
+			case strings.Contains(q, "relayTcp"):
+				// relay.json's outputs: its name, and its TLS fallback (any listener: the hub's)
+				tsv("myhub-relay.eastasia.azurecontainer.io", host)
 			case strings.Contains(q, "outputs"):
 				if g := group(); g["enablePanel"] == true {
 					panel = os.Getenv("HELPER_AZ_PANEL")
@@ -418,6 +489,14 @@ func fakeAz(args []string) {
 		write("dstate-"+dep, state)
 		write("dparams-"+dep+".json", string(b))
 		write("deployments", strings.Join(append(deps, dep), " "))
+		if strings.HasSuffix(flag("--template-file"), "relay.json") {
+			// the relay's own group: the hub's stays as it is
+			if _, ok := doc.Parameters["relayTls"]; !ok {
+				fail("relay.json: relayTls is required")
+			}
+			write("cg-relay", string(b))
+			return
+		}
 		write("params.json", string(b))
 		write("cg", string(b)) // also a failed deployment leaves the group (in a failed state)
 		restart()              // a changed group restarts (the SAS expiry changes every time)

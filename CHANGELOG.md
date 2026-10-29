@@ -113,6 +113,30 @@
 
 ### Added
 
+- External relays: relayed connections that survive hub restarts
+  (docs/usage.md "External relays"). `longarm-relay --hub <hub> --advertise
+  <host>` registers with the hub (`HubNode.RelaySync`, role relay), which
+  keeps it in its database and advertises a relay set - external relays
+  first, its embedded relay last - to workers in the welcome and to running
+  sessions on every change. Loopback-only workers listen on every relay of
+  the set (cached in `relay-set.json`, used when the hub is down at start);
+  an external relay's endpoint carries its TLS fallback (`&tcp=`), which
+  clients use. The relay enforces the hub's revocation list and port-link
+  pairs on its own, cached on disk (pairs for 24 h without the hub; a relay
+  without a list refuses sessions), closes revoked nodes' sessions, renews
+  its certificate through the hub (keeping its host names), and serves
+  `/healthz` (`longarm-relay healthcheck`). `longarm admin relays` shows the
+  set and how many online workers still only know the embedded relay (older
+  versions, by version). Older nodes are unaffected: they ignore the new
+  fields and keep the embedded relay, which stays; nobody signs in again.
+- deploy/azure: `deploy.sh --relay` / `deploy.ps1 -Relay` deploys the
+  external relay as its own container group `<name>-relay` (relay.bicep:
+  7445/udp, 7446/udp, 7443/tcp; 0.5 vCPU / 0.5 GB, about 16 USD/month) with
+  the hub's image; its certificate comes from the hub's CA
+  (`longarm-hub-relay-cert`, `longarm-hub issue --role relay --host ... --b64`)
+  as a secure parameter. Validated first, waits for the relay's registration
+  with the hub, rolls an upgrade back to the previous relay image;
+  `--relay-remove` deletes it. The hub image now contains `longarm-relay`.
 - Agent credentials (`--agent-auth`, capability `agent-auth`):
   - When longarm starts Claude Code or Copilot CLI on a worker, it
     forwards the agent's credentials from the client with the job:

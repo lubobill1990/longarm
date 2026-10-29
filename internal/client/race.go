@@ -83,6 +83,8 @@ func (e Endpoint) Key() string { return e.Transport + "://" + e.Address }
 
 // ParseEndpoint parses an endpoint URL as advertised by longarmd:
 // tcp://host:port, tailscale://host[:port], longnet://relay:port[?name=..].
+// A longnet endpoint on an external relay carries the relay's TLS fallback
+// (&tcp=host:port), remembered for dialing that relay (relayTCPHint).
 func ParseEndpoint(s string) (Endpoint, error) {
 	u, err := url.Parse(s)
 	if err != nil || u.Host == "" {
@@ -90,11 +92,38 @@ func ParseEndpoint(s string) (Endpoint, error) {
 	}
 	switch u.Scheme {
 	case "tcp", "longnet":
+		if u.Scheme == "longnet" {
+			if t := u.Query().Get("tcp"); t != "" {
+				NoteRelayTCP(u.Host, t)
+			}
+		}
 		return Endpoint{Transport: u.Scheme, Address: u.Host}, nil
 	case "tailscale", "tsnet":
 		return Endpoint{Transport: "tailscale", Address: u.Host}, nil
 	}
 	return Endpoint{}, fmt.Errorf("endpoint %q: unknown transport %q", s, u.Scheme)
+}
+
+// relayTCP: the TLS fallback of external longnet relays by their UDP
+// "host:port", learned from advertised endpoints (ParseEndpoint) - the
+// relay's TCP port may differ from its UDP port (Azure Container Instances
+// can't put both on one number).
+var relayTCP sync.Map
+
+// NoteRelayTCP remembers relay's TLS fallback address.
+func NoteRelayTCP(relay, tcp string) {
+	if h, p, err := net.SplitHostPort(tcp); err != nil || h == "" || p == "" {
+		return
+	}
+	relayTCP.Store(relay, tcp)
+}
+
+// relayTCPHint is relay's TLS fallback as learned, "" = unknown.
+func relayTCPHint(relay string) string {
+	if v, ok := relayTCP.Load(relay); ok {
+		return v.(string)
+	}
+	return ""
 }
 
 // Legs is the worker's primary endpoint followed by its alternatives,

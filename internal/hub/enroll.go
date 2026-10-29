@@ -285,9 +285,14 @@ func (h *Hub) joinStatusLocked(th string) *pb.JoinResponse {
 
 // issue signs csr for rec's identity and records the certificate.
 func (h *Hub) issue(rec *store.Node, csr []byte) ([]byte, error) {
+	return h.issueHosts(rec, csr, nil)
+}
+
+// issueHosts is issue with DNS/IP SANs (a relay's renewal keeps its names).
+func (h *Hub) issueHosts(rec *store.Node, csr []byte, hosts []string) ([]byte, error) {
 	ttl := h.cfg.TTL(rec.Role)
 	cert, err := h.ca.SignCSR(csr, pki.IssueOptions{Role: pki.Role(rec.Role), Name: rec.Name, Validity: ttl,
-		Hosts: nil, User: rec.User})
+		Hosts: hosts, User: rec.User})
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "sign: %v", err)
 	}
@@ -380,8 +385,12 @@ func (h *Hub) Revoke(by, name string) (*pb.NodeInfo, error) {
 	h.event(context.Background(), "node.revoked", map[string]string{"role": role})
 	h.publishNodeLocked(n, "revoked by "+by)
 	info := h.nodeInfoLocked(n)
+	if role == string(pki.RoleRelay) {
+		h.forgetRelaysLocked(name) // out of the relay set at once
+	}
 	h.mu.Unlock()
 	h.broadcast(h.revocationsMsg())
+	h.relayPolicyNotify() // external relays get the new list
 	// End what already runs: hub streams of the node, its relay sessions.
 	closed := h.conns.CloseIf(h.revoked.Revoked)
 	kicked := 0
@@ -407,7 +416,14 @@ func (h *Hub) renew(c caller, csr []byte) (*pb.RenewResponse, error) {
 	}
 	rec := *n.rec
 	h.mu.Unlock()
-	cert, err := h.issue(&rec, csr)
+	var hosts []string
+	if c.id.Role == pki.RoleRelay && c.cert != nil { // nodes may check the relay's name: keep it
+		hosts = append(hosts, c.cert.DNSNames...)
+		for _, ip := range c.cert.IPAddresses {
+			hosts = append(hosts, ip.String())
+		}
+	}
+	cert, err := h.issueHosts(&rec, csr, hosts)
 	if err != nil {
 		return nil, err
 	}

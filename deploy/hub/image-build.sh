@@ -1,7 +1,7 @@
 #!/bin/sh
 # image-build.sh OUT: the build steps of deploy/hub/Dockerfile (shared by
 # its two build stages), run in the Go image from the source root:
-#   OUT/bin/longarm-hub (+ argument-free aliases), OUT/litestream,
+#   OUT/bin/longarm-hub (+ argument-free aliases), OUT/bin/longarm-relay, OUT/litestream,
 #   OUT/data and OUT/var/lib/longarm-hub (owned by the image's nonroot user)
 # Target: $TARGETARCH (BuildKit sets it), else the Go image's own
 # architecture (ACR Tasks, the legacy builder). Version: $VERSION.
@@ -12,6 +12,8 @@ arch=${TARGETARCH:-$(go env GOARCH)}
 CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
 	-ldflags "-s -w -X github.com/lubobill1990/longarm/internal/version.Version=${VERSION:-dev}" \
 	-o "$out/bin/longarm-hub" ./cmd/longarm-hub
+# the external relay (deploy/azure deploy.sh --relay runs this image with it)
+CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath 	-ldflags "-s -w -X github.com/lubobill1990/longarm/internal/version.Version=${VERSION:-dev}" 	-o "$out/bin/longarm-relay" ./cmd/longarm-relay
 # https = ":443" (hub.toml, LONGARM_HUB_HTTPS) as user nonroot: only the
 # right to bind ports below 1024 (deploy/azure without Caddy)
 apt-get update -qq
@@ -19,7 +21,7 @@ apt-get install -y -qq --no-install-recommends libcap2-bin >/dev/null
 setcap cap_net_bind_service=+ep "$out/bin/longarm-hub"
 getcap "$out/bin/longarm-hub"
 # argument-free names for az container exec (cmd/longarm-hub/container.go execAliases)
-for a in longarm-hub-admin-code longarm-hub-user-add longarm-hub-users longarm-hub-release-cert; do
+for a in longarm-hub-admin-code longarm-hub-user-add longarm-hub-users longarm-hub-release-cert longarm-hub-relay-cert; do
 	ln -s longarm-hub "$out/bin/$a"
 done
 mkdir -p "$out/data" "$out/var/lib/longarm-hub"

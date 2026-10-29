@@ -817,7 +817,10 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 					delete(longnets, relay)
 				}
 			},
-			changed: func() { writeEndpoints(); agent.rehello() }}
+			changed: func() { writeEndpoints(); agent.rehello() }, cache: filepath.Join(cfg.DataDir, RelaySetFile)}
+		if !legacyRelay() {
+			agent.relay.loadCache(agent.addr) // the hub may be down: listen on the external relays now
+		}
 		wg.Add(1)
 		go func() { defer wg.Done(); <-ctx.Done(); agent.relay.wait() }()
 	}

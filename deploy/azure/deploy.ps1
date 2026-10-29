@@ -25,6 +25,8 @@
   ./deploy.ps1 -Name myhub -Location eastasia -StorageAuth identity -Telemetry -Diagnostics   # no storage account keys
 .EXAMPLE
   ./deploy.ps1 -Name myhub -Headscale -Recreate   # + a Headscale sidecar (self-hosted tailnet)
+.EXAMPLE
+  ./deploy.ps1 -Name myhub -Relay   # + an external relay that survives hub restarts (relay.ps1)
 #>
 [CmdletBinding()]
 param(
@@ -85,6 +87,12 @@ param(
     [switch]$SkipImageCheck,
     # print a new one-time admin join code
     [switch]$AdminCode,
+    # deploy (or upgrade) the hub's external longnet relay: its own container group NAME-relay that
+    # keeps relayed connections up while the hub restarts (README "External relay"; takes -Image,
+    # -RegistryUser, -StunServers, -TimeoutSeconds; default image: the hub's)
+    [switch]$Relay,
+    # delete the external relay (the hub keeps its embedded relay)
+    [switch]$RelayRemove,
     [switch]$Teardown,
     [switch]$Yes,
     [int]$TimeoutSeconds = 1200,
@@ -322,6 +330,14 @@ if ($AdminCode) {
     # longarm-hub join-code --role admin --ttl 24h (cmd/longarm-hub/container.go)
     Write-Host 'A new one-time admin join code (valid 24 h):'
     Invoke-Az container exec -g $rg -n $Name --container-name hub --exec-command /usr/local/bin/longarm-hub-admin-code
+    return
+}
+
+if ($Relay -or $RelayRemove) {
+    if ($Recreate -or $BuildInAcr -or $Size -or $NoPanel -or $Panel -or $Headscale -or $NoHeadscale) {
+        throw '-Relay deploys the external relay only: -Recreate, -BuildInAcr, -Size, -Panel/-NoPanel and -Headscale are hub options'
+    }
+    . (Join-Path $PSScriptRoot 'relay.ps1')
     return
 }
 

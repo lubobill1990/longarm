@@ -108,6 +108,10 @@ type Server struct {
 	fakeSNAT netip.Addr
 	// workerPairs: worker pairs allowed to talk (SetWorkerPairs).
 	workerPairs atomic.Pointer[map[pairKey]struct{}]
+	// Admit, if set, is asked again when a session registers (under the
+	// lock KickCerts sweeps with): a certificate revoked between the TLS
+	// handshake and the node's Hello is refused, never registered.
+	Admit func(*x509.Certificate) error
 }
 
 func (s *Server) init() {
@@ -445,7 +449,8 @@ type session struct {
 	srv    *Server
 	id     ID
 	ident  pki.Identity
-	kind   string // "udp" | "tcp"
+	cert   *x509.Certificate // the node's leaf (KickCerts)
+	kind   string            // "udp" | "tcp"
 	remote netip.AddrPort
 	udp    *quic.Conn // UDP sessions: the current remote address follows NAT rebinding
 	since  time.Time
@@ -503,9 +508,9 @@ func (ss *session) sendCtrl(frame []byte) {
 	}
 }
 
-func (s *Server) newSession(ident pki.Identity, kind string, remote netip.AddrPort, h Hello) *session {
+func (s *Server) newSession(ident pki.Identity, cert *x509.Certificate, kind string, remote netip.AddrPort, h Hello) *session {
 	ss := &session{
-		srv: s, id: NodeID(ident, h.Instance), ident: ident, kind: kind, remote: remote,
+		srv: s, id: NodeID(ident, h.Instance), ident: ident, cert: cert, kind: kind, remote: remote,
 		cands: cleanCandidates(h.Candidates), since: time.Now(),
 		ctrl: make(chan []byte, 64), data: make(chan []byte, 1024), done: make(chan struct{}),
 		goneAt: map[ID]time.Time{}, cmmLim: rate.NewLimiter(cmmRate, cmmBurst),
@@ -532,6 +537,13 @@ func (s *Server) register(ss *session) error {
 	if s.ctx.Err() != nil {
 		s.mu.Unlock()
 		return net.ErrClosed
+	}
+	if s.Admit != nil {
+		if err := s.Admit(ss.cert); err != nil {
+			s.mu.Unlock()
+			s.Logger.Warn("relay: refused session", "node", ss.ident, "err", err)
+			return err
+		}
 	}
 	old := s.sessions[ss.id]
 	if old != nil && old.ident != ss.ident {
@@ -760,7 +772,7 @@ func (s *Server) handleQUIC(c *quic.Conn) {
 		return
 	}
 	st.SetReadDeadline(time.Time{})
-	ss := s.newSession(ident, "udp", addrPortOf(c.RemoteAddr()), h)
+	ss := s.newSession(ident, leafOf(c.ConnectionState().TLS), "udp", addrPortOf(c.RemoteAddr()), h)
 	ss.udp = c
 	ss.kick = func(reason string) { c.CloseWithError(0, reason) }
 	if err := s.register(ss); err != nil {
@@ -861,7 +873,7 @@ func (s *Server) handleTCP(raw net.Conn) {
 		return
 	}
 	tc.SetDeadline(time.Time{})
-	ss := s.newSession(ident, "tcp", addrPortOf(raw.RemoteAddr()), h)
+	ss := s.newSession(ident, leafOf(tc.ConnectionState()), "tcp", addrPortOf(raw.RemoteAddr()), h)
 	var closeReason atomic.Value
 	ss.kick = func(reason string) {
 		closeReason.Store(reason)

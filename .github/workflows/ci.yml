@@ -128,15 +128,24 @@ jobs:
             echo "::error::deploy/azure/azuredeploy.json is stale: bicep build deploy/azure/main.bicep --outfile deploy/azure/azuredeploy.json"
             exit 1
           fi
+          # the external relay (deploy.sh --relay)
+          "$bicep" build deploy/azure/relay.bicep --outfile "$RUNNER_TEMP/relay.json" 2>&1 | tee -a "$RUNNER_TEMP/bicep.log"
+          if ! diff -u deploy/azure/relay.json "$RUNNER_TEMP/relay.json"; then
+            echo "::error::deploy/azure/relay.json is stale: bicep build deploy/azure/relay.bicep --outfile deploy/azure/relay.json"
+            exit 1
+          fi
           "$bicep" lint deploy/azure/main.bicep 2>&1 | tee -a "$RUNNER_TEMP/bicep.log"
+          "$bicep" lint deploy/azure/relay.bicep 2>&1 | tee -a "$RUNNER_TEMP/bicep.log"
           if [ -s "$RUNNER_TEMP/bicep.log" ]; then
             echo "::error::bicep reported warnings"
             exit 1
           fi
       - uses: ./.github/actions/go-setup
       - name: ACI rules (ports, memory/CPU steps, env, volumes) for every parameter combination
-        run: go run ./deploy/azure/test/acirules deploy/azure/azuredeploy.json
-      - name: PSScriptAnalyzer (deploy/azure/deploy.ps1)
+        run: |
+          go run ./deploy/azure/test/acirules deploy/azure/azuredeploy.json
+          go run ./deploy/azure/test/acirules deploy/azure/relay.json relayTls=x
+      - name: PSScriptAnalyzer (deploy/azure/deploy.ps1, relay.ps1)
         shell: pwsh
         run: |
           # the PowerShell Gallery fails now and then ("No match was found"): retry
@@ -144,7 +153,7 @@ jobs:
             try { Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force -ErrorAction Stop; break }
             catch { if ($i -ge 4) { throw }; Write-Warning "Install-Module: $_ (retry $i)"; Start-Sleep -Seconds (15 * $i) }
           }
-          $r = Invoke-ScriptAnalyzer -Path deploy/azure/deploy.ps1 -Settings deploy/azure/PSScriptAnalyzerSettings.psd1
+          $r = @(Invoke-ScriptAnalyzer -Path deploy/azure/deploy.ps1 -Settings deploy/azure/PSScriptAnalyzerSettings.psd1) + @(Invoke-ScriptAnalyzer -Path deploy/azure/relay.ps1 -Settings deploy/azure/PSScriptAnalyzerSettings.psd1)
           $r | Format-Table RuleName, Severity, Line, Message -AutoSize -Wrap
           if ($r) { throw "PSScriptAnalyzer: $(@($r).Count) findings" }
 

@@ -41,7 +41,9 @@ var openMethods = map[string]bool{
 // hubMethodRoles is the hub's authorization table (default deny).
 var hubMethodRoles = map[string][]pki.Role{
 	pb.HubNode_Connect_FullMethodName:         {pki.RoleWorker},
-	pb.HubNode_Renew_FullMethodName:           anyNode,
+	pb.HubNode_Renew_FullMethodName:           {pki.RoleWorker, pki.RoleClient, pki.RoleAdmin, pki.RoleRelay},
+	pb.HubNode_RelaySync_FullMethodName:       {pki.RoleRelay},
+	pb.HubAdmin_Relays_FullMethodName:         adminOnly,
 	pb.HubNode_Leave_FullMethodName:           anyNode,
 	pb.Fleet_ReportLinks_FullMethodName:       users,
 	pb.Fleet_Links_FullMethodName:             adminOnly, // other clients' paths

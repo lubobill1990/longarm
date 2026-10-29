@@ -504,6 +504,7 @@ it installs a new one.`,
 
 func issueCmd() *cobra.Command {
 	var role, name, out string
+	var hosts []string
 	var days int
 	var b64 bool
 	c := &cobra.Command{
@@ -532,7 +533,7 @@ func issueCmd() *cobra.Command {
 			if out == "" && !b64 {
 				return errors.New("--out DIR or --b64")
 			}
-			certPEM, keyPEM, err := ca.Issue(pki.IssueOptions{Role: r, Name: name, Validity: time.Duration(days) * 24 * time.Hour})
+			certPEM, keyPEM, err := ca.Issue(pki.IssueOptions{Role: r, Name: name, Hosts: hosts, Validity: time.Duration(days) * 24 * time.Hour})
 			if err != nil {
 				return err
 			}
@@ -554,7 +555,8 @@ func issueCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&role, "role", "admin", "admin | client | worker | release (the CI credential, docs/ci-cd.md)")
+	c.Flags().StringVar(&role, "role", "admin", "admin | client | worker | relay (an external longarm-relay) | release (the CI credential, docs/ci-cd.md)")
+	c.Flags().StringArrayVar(&hosts, "host", nil, "DNS name / IP SAN for workers and relays (repeatable)")
 	c.Flags().StringVar(&name, "name", "", "node name (release: default ci-<date>)")
 	c.Flags().StringVar(&out, "out", "", "output dir (ca.crt, node.crt, node.key)")
 	c.Flags().BoolVar(&b64, "b64", false, "print the bundle as base64 of a tar.gz instead of writing files (CI secrets; az container exec)")

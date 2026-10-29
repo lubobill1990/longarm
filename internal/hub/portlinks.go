@@ -371,6 +371,7 @@ func (h *Hub) portLinksChangedLocked(workers ...string) {
 // updateRelayPairsLocked lets the relay carry traffic between linked
 // workers (and nothing else between workers).
 func (h *Hub) updateRelayPairsLocked() {
+	h.relayPolicyNotify() // external relays (relays.go)
 	if h.relay == nil {
 		return
 	}

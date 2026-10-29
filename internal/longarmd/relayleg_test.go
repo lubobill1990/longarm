@@ -1,6 +1,10 @@
 package longarmd
 
-import "testing"
+import (
+	"testing"
+
+	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+)
 
 func TestRelayListenURL(t *testing.T) {
 	for _, c := range []struct{ hub, relay, want string }{
@@ -33,6 +37,25 @@ func TestAutoRelayLeg(t *testing.T) {
 	} {
 		if got := autoRelayLeg(c.cfg); got != c.want {
 			t.Errorf("%+v: %v, want %v", c.cfg.Listen, got, c.want)
+		}
+	}
+}
+
+func TestRelaySetURL(t *testing.T) {
+	for _, c := range []struct {
+		r    *pb.RelayEndpoint
+		want string
+	}{
+		{&pb.RelayEndpoint{Udp: ":7445", Embedded: true}, "longnet://hub.example:7445?tcp=hub.example:7443&name=w1"},
+		{&pb.RelayEndpoint{Udp: "relay.example:7445", Tcp: "relay.example:7443"}, "longnet://relay.example:7445?tcp=relay.example:7443&name=w1"},
+		{&pb.RelayEndpoint{Udp: "relay.example:7445", Tcp: "relay.example:7445"}, "longnet://relay.example:7445?name=w1"},
+		{&pb.RelayEndpoint{Udp: "relay.example:7445"}, "longnet://relay.example:7445?name=w1"},
+		{&pb.RelayEndpoint{Udp: "relay.example:7445", Tcp: ":7443"}, ""},
+		{&pb.RelayEndpoint{Udp: "relay.example"}, ""},
+		{&pb.RelayEndpoint{Udp: ""}, ""},
+	} {
+		if got := relaySetURL("hub.example:7443", c.r, "w1"); got != c.want {
+			t.Errorf("%v: %q, want %q", c.r, got, c.want)
 		}
 	}
 }
