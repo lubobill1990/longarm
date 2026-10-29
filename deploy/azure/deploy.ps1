@@ -430,50 +430,116 @@ try {
         $p
     }
 
-    # the parameters of the last successful deployment of this script (absent
-    # parameters: the template's defaults)
+    # the parameters of the last successful deployment of this script; .has
+    # lists the settings it has (absent parameters: the template's defaults,
+    # or an older script), .param maps them to their parameter
+    $histMap = [ordered]@{
+        image = 'image'; size = 'size'; panel = 'enablePanel'; auth = 'storageAuth'; acr = 'acrName'; logs = 'enableLogAnalytics'
+        telemetry = 'enableTelemetry'; diagnostics = 'enableDiagnostics'; stun = 'stunServers'; gate = 'schedulerGateFreeGb'
+        relkey = 'releasePublicKey'; entra_tenant = 'entraTenantId'; entra_client = 'entraClientId'; entra_admins = 'entraAdmins'
+        entra_web = 'entraWeb'; entra_apps = 'entraApps'; headscale = 'enableHeadscale'; public_derp = 'headscalePublicDerp'
+        registry = 'registryServer'; registry_user = 'registryUsername'
+    }
+    $boolKeys = 'panel', 'logs', 'telemetry', 'diagnostics', 'headscale', 'public_derp'
     function Get-PrevDeployment {
         $deps = @(Invoke-AzQuiet deployment group list -g $rg -o tsv --query "[?properties.provisioningState=='Succeeded' && starts_with(name, 'longarm-hub-')].name" |
             ForEach-Object { "$_".Trim() } | Where-Object { $_ } | Sort-Object)
         if ($deps.Count -eq 0) { return $null }
         $dep = $deps[-1]
-        $list = 'image', 'size', 'enablePanel', 'storageAuth', 'acrName', 'enableLogAnalytics', 'enableTelemetry', 'enableDiagnostics', 'stunServers',
-            'schedulerGateFreeGb', 'releasePublicKey', 'entraTenantId', 'entraClientId', 'entraAdmins', 'entraWeb', 'entraApps', 'enableHeadscale',
-            'headscalePublicDerp', 'registryServer', 'registryUsername'
-        $q = '[' + (($list | ForEach-Object { "properties.parameters.$_.value" }) -join ', ') + ', properties.parameters.stunServers == null]'
+        $q = '[' + (($histMap.Values | ForEach-Object { "properties.parameters.$_.value, properties.parameters.$_ == null" }) -join ', ') + ']'
         $line = (Invoke-AzQuiet deployment group show -g $rg -n $dep -o tsv --query $q) -join ''
         if ($LASTEXITCODE -ne 0 -or -not $line) { return $null }
-        $f = Split-Tsv $line ($list.Count + 1)
-        $b = { param($x) ConvertTo-Flag ($x -eq 'true') }
+        $f = Split-Tsv $line ($histMap.Count * 2)
         $p = Get-EmptyPrev
-        $p.image = $f[0]; $p.size = if ($f[1]) { $f[1] } else { 'small' }; $p.panel = & $b $f[2]; $p.auth = $f[3]; $p.acr = $f[4]
-        $p.logs = & $b $f[5]; $p.telemetry = & $b $f[6]; $p.diagnostics = & $b $f[7]; $p.stun = $f[8]; $p.gate = $f[9]; $p.relkey = $f[10]
-        $p.entra_tenant = $f[11]; $p.entra_client = $f[12]; $p.entra_admins = $f[13]; $p.entra_web = $f[14]; $p.entra_apps = $f[15]
-        $p.headscale = & $b $f[16]; $p.public_derp = & $b $f[17]; $p.registry = $f[18]; $p.registry_user = $f[19]
-        # stunServers: absent = the template's default, "" = none
-        if ($f[20] -eq 'false' -and -not $p.stun) { $p.stun = 'none' }
+        $has = @()
+        $i = 0
+        foreach ($k in $histMap.Keys) {
+            $v = $f[$i]
+            if ($f[$i + 1] -ne 'true') {
+                $has += $k
+                if ($boolKeys -contains $k) { $v = ConvertTo-Flag ($v -eq 'true') }
+                if ($k -eq 'stun' -and -not $v) { $v = 'none' } # "" = none
+                $p[$k] = $v
+            }
+            $i += 2
+        }
+        # the template's defaults where the deployment had no parameter
+        if (-not $p.size) { $p.size = 'small' }
+        foreach ($k in $boolKeys) { if (-not $p[$k]) { $p[$k] = 'false' } }
         if ($p.auth -ne 'key' -and $p.auth -ne 'identity') { return $null }
         $p.Add('source', "deployment $dep")
+        $p.Add('has', $has)
         $p
     }
 
+    # Tags can be written by anyone with Tag Contributor, so the snapshot is
+    # not trusted: it only fills settings the last deployment's parameters
+    # don't have, and its security-relevant settings ($secKeys) are refused
+    # when they differ from that deployment's or there is no deployment to
+    # compare them with, unless the operator gives them explicitly.
+    $secOption = [ordered]@{
+        image = '-Image'; auth = '-StorageAuth'; acr = '-Acr'; registry_user = '-RegistryUser'
+        relkey = '-ReleasePublicKey'; entra_tenant = '-EntraTenant'; entra_client = '-EntraClient'; entra_admins = '-EntraAdmins'
+        entra_web = '-EntraWeb'; entra_apps = '-EntraApps'
+    }
+    $given = @{
+        image = [bool]$Image; auth = [bool]$StorageAuth; acr = [bool]$Acr; registry_user = [bool]$RegistryUser
+        relkey = [bool]$ReleasePublicKey; entra_tenant = [bool]$EntraTenant; entra_client = [bool]$EntraClient; entra_admins = [bool]$EntraAdmins
+        entra_web = [bool]$EntraWeb; entra_apps = [bool]$EntraApps
+    }
+    $tplDefaults = (Get-Content -Raw $template | ConvertFrom-Json).parameters
+
     $prevSrc = ''
+    $snap = $null
     $prev = Get-PrevGroup
     if ($prev) {
         $prevSrc = 'group'
     } else {
-        $prev = Get-PrevSnapshot
+        $snap = Get-PrevSnapshot
+        $prev = Get-PrevDeployment
         if ($prev) {
-            $prevSrc = 'snapshot'
-            Write-Host "the container group $Name is missing: its settings come from the snapshot taken before it was deleted"
-        } else {
-            $prev = Get-PrevDeployment
-            if ($prev) {
-                $prevSrc = 'deployment'
-                Write-Host "the container group $Name is missing: its settings come from the last successful deployment ($($prev.source.Substring(11)))"
-            } elseif (-not $StorageAuth -and (@(Invoke-AzQuiet storage account list -g $rg --query "[?starts_with(name, 'lahub')].name" -o tsv) -join '')) {
-                throw "the resource group $rg has a hub's storage, but neither a container group, a settings snapshot nor a successful deployment to read its settings from: pass them (at least -StorageAuth key|identity; and -Image, -Entra*, -Telemetry, -Diagnostics, -Headscale, -ReleasePublicKey, -GateFreeGb, -StunServers as the hub had them)"
+            $prevSrc = 'deployment'
+            Write-Host "the container group $Name is missing: its settings come from the last successful deployment ($($prev.source.Substring(11)))"
+            if ($snap) {
+                $filled = @()
+                $refused = @()
+                foreach ($k in $prevKeys) {
+                    $sec = $secOption.Contains($k)
+                    if ($prev.has -notcontains $k) {
+                        # the deployment had the template's default
+                        $def = ''
+                        if ($histMap.Contains($k) -and $tplDefaults.PSObject.Properties[$histMap[$k]]) { $def = [string]$tplDefaults.($histMap[$k]).defaultValue }
+                        if ($sec) {
+                            if ($snap[$k] -and $snap[$k] -ne $def -and -not $given[$k]) { $refused += "$($secOption[$k]) (deployment: the template's default, snapshot: $($snap[$k]))" }
+                        } else {
+                            $prev[$k] = $snap[$k]
+                            $filled += $k
+                        }
+                    } elseif ($sec -and $snap[$k] -cne $prev[$k] -and -not $given[$k]) {
+                        $d = if ($prev[$k]) { $prev[$k] } else { 'none' }
+                        $s = if ($snap[$k]) { $snap[$k] } else { 'none' }
+                        $refused += "$($secOption[$k]) (deployment: $d, snapshot: $s)"
+                    }
+                }
+                if ($refused) { throw "the settings snapshot in the resource group's tags (longarm-hub-prev-*) differs from the last deployment in security-relevant settings - it may have been tampered with (tags are writable by Tag Contributors). Give them explicitly if the snapshot is right: $($refused -join '; ')" }
+                if ($filled) { Write-Host "settings the deployment had no parameter for, from the snapshot: $($filled -join ' ')" }
             }
+        } elseif ($snap) {
+            Write-Host "the container group $Name is missing and there is no successful deployment: settings that aren't security-relevant come from the snapshot taken before it was deleted"
+            $missing = @()
+            $prev = Get-EmptyPrev
+            foreach ($k in $prevKeys) {
+                if ($secOption.Contains($k)) {
+                    if ($snap[$k] -and -not $given[$k]) { $missing += "$($secOption[$k]) (snapshot: $($snap[$k]))" }
+                } else {
+                    $prev[$k] = $snap[$k]
+                }
+            }
+            if ($missing) { throw "the settings snapshot (resource group tags, writable by Tag Contributors) can't be checked against a deployment: give its security-relevant settings explicitly if they are right: $($missing -join '; ')" }
+            $prev.auth = $StorageAuth
+            $prevSrc = 'snapshot'
+        } elseif (-not $StorageAuth -and (@(Invoke-AzQuiet storage account list -g $rg --query "[?starts_with(name, 'lahub')].name" -o tsv) -join '')) {
+            throw "the resource group $rg has a hub's storage, but neither a container group, a successful deployment nor a settings snapshot to read its settings from: pass them (at least -StorageAuth key|identity; and -Image, -Entra*, -Telemetry, -Diagnostics, -Headscale, -ReleasePublicKey, -GateFreeGb, -StunServers as the hub had them)"
         }
     }
 
@@ -875,7 +941,7 @@ try {
         Start-Sleep -Seconds 5
     }
     # the new configuration runs: the settings snapshot has done its job
-    if ($script:Deleted -or $prevSrc -eq 'snapshot') { Clear-Snapshot }
+    if ($script:Deleted -or $snap) { Clear-Snapshot }
     $fp = Get-Value $boot 'ca_fingerprint'
     $code = Get-Value $boot 'admin_join_code'
     $expires = Get-Value $boot 'admin_join_code_expires'

@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -546,23 +548,88 @@ func TestAzureDeployScripts(t *testing.T) {
 			if n := snapshotN(); n != "0" {
 				t.Fatalf("snapshot not cleared after the rollback: %q", n)
 			}
-			// the rollback fails too: the snapshot stays, and a re-run with
-			// the group gone deploys the saved settings
-			res = run([]string{"HELPER_AZ_DEPLOY_FAIL=1"}, name, "idhub", hsOn, recreate)
-			refused(res, "a failed rollback", "rollback failed too")
-			if n := snapshotN(); n == "" || n == "0" {
-				t.Fatalf("no snapshot after a failed rollback: %q", n)
+			// the rollback fails too: the snapshot stays; a re-run with the
+			// group gone takes the settings from the last successful
+			// deployment (the snapshot agrees with it) and clears the snapshot
+			failRecreate := func() {
+				t.Helper()
+				res := run([]string{"HELPER_AZ_DEPLOY_FAIL=1"}, name, "idhub", hsOn, recreate)
+				refused(res, "a failed rollback", "rollback failed too")
+				if n := snapshotN(); n == "" || n == "0" {
+					t.Fatalf("no snapshot after a failed rollback: %q", n)
+				}
+				os.Remove(filepath.Join(dir, "cg"))
 			}
-			os.Remove(filepath.Join(dir, "cg"))
+			failRecreate()
 			res = run(nil, name, "idhub")
-			ok(res, "re-run from the snapshot")
-			if !strings.Contains(res.stdout, "snapshot") {
-				t.Errorf("re-run from the snapshot: %s", res.stdout)
+			ok(res, "re-run with a snapshot")
+			if !strings.Contains(res.stdout, "last successful deployment") {
+				t.Errorf("re-run with a snapshot: %s", res.stdout)
 			}
-			kept("snapshot")
+			kept("re-run with a snapshot")
 			if n := snapshotN(); n != "0" {
 				t.Fatalf("snapshot not cleared: %q", n)
 			}
+			// a tampered snapshot (tags are writable by Tag Contributors):
+			// security-relevant settings that differ from the deployment are
+			// refused, unless given explicitly
+			tamper := func(set map[string]string) {
+				t.Helper()
+				var tags map[string]string
+				json.Unmarshal(must(os.ReadFile(filepath.Join(dir, "tags.json"))), &tags)
+				n, _ := strconv.Atoi(tags["longarm-hub-prev-n"])
+				var b64 string
+				for i := 0; i < n; i++ {
+					b64 += tags[fmt.Sprintf("longarm-hub-prev-%d", i)]
+					delete(tags, fmt.Sprintf("longarm-hub-prev-%d", i))
+				}
+				text, err := base64.StdEncoding.DecodeString(b64)
+				if err != nil || !strings.Contains(string(text), "auth=identity") {
+					t.Fatalf("snapshot: %q %v", text, err)
+				}
+				lines := strings.Split(string(text), "\n")
+				for i, l := range lines {
+					if v, ok := set[strings.SplitN(l, "=", 2)[0]]; ok {
+						lines[i] = strings.SplitN(l, "=", 2)[0] + "=" + v
+					}
+				}
+				b64 = base64.StdEncoding.EncodeToString([]byte(strings.Join(lines, "\n")))
+				n = 0
+				for ; len(b64) > 0; n++ {
+					c := min(250, len(b64))
+					tags[fmt.Sprintf("longarm-hub-prev-%d", n)], b64 = b64[:c], b64[c:]
+				}
+				tags["longarm-hub-prev-n"] = strconv.Itoa(n)
+				b, _ := json.Marshal(tags)
+				os.WriteFile(filepath.Join(dir, "tags.json"), b, 0o644)
+			}
+			failRecreate()
+			tamper(map[string]string{"image": "ghcr.io/evil/longarm-hub:1", "entra_admins": "mallory@evil.example", "telemetry": "false"})
+			from = len(calls())
+			res = run(nil, name, "idhub")
+			refused(res, "a tampered snapshot", "tampered")
+			if !strings.Contains(res.stderr, "mallory@evil.example") || strings.Contains(calls()[from:], "deployment group create") {
+				t.Fatalf("tampered snapshot: %+v", res)
+			}
+			res = run(nil, name, "idhub", image, "ghcr.io/example/longarm-hub:1.2.3", entraAdmins, "alice@example.com")
+			ok(res, "the snapshot's settings given explicitly")
+			kept("the snapshot's settings given explicitly") // telemetry: the deployment's, not the snapshot's
+			if p := params(); p["image"] == "ghcr.io/evil/longarm-hub:1" {
+				t.Fatalf("the snapshot's image deployed: %+v", p)
+			}
+			// a snapshot and no deployment to check it against: its
+			// security-relevant settings must be given
+			failRecreate()
+			tamper(map[string]string{"image": "ghcr.io/evil/longarm-hub:1"})
+			res = run([]string{"HELPER_AZ_NO_HISTORY=1"}, name, "idhub")
+			refused(res, "an unverifiable snapshot", strings.ToLower(sa))
+			if !strings.Contains(res.stderr, "ghcr.io/evil/longarm-hub:1") {
+				t.Fatalf("unverifiable snapshot: %+v", res)
+			}
+			res = run([]string{"HELPER_AZ_NO_HISTORY=1"}, name, "idhub", sa, "identity", image, "ghcr.io/example/longarm-hub:1.2.3",
+				acrFlag, "other", entraTenant, "tid", entraClient, "cid", entraAdmins, "alice@example.com", entraWeb, "confidential")
+			ok(res, "an unverifiable snapshot with its settings given")
+			kept("an unverifiable snapshot with its settings given") // telemetry, diagnostics: from the snapshot
 			// no snapshot: the last successful deployment's parameters
 			os.Remove(filepath.Join(dir, "cg"))
 			res = run(nil, name, "idhub", recreate)

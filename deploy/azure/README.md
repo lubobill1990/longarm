@@ -107,20 +107,31 @@ subscription's policy denies: the hub was down for 20 minutes. Now:
   (anonymously, or with `--registry-user`; an ACR pulled with the managed
   identity through `az acr`). `--skip-image-check` skips the latter.
 - **No Docker Hub.** The template's third-party images (Caddy, Headscale) are
-  copies in this repository's public GHCR package, pinned by digest
-  ([mirror-images.txt](mirror-images.txt), copied and verified by
-  `.github/workflows/mirror.yml`).
-- **The settings outlive the group.** Before `--recreate` deletes the group,
-  the hub's settings (image, size, panel, storage auth, ACR, Log Analytics,
-  telemetry, diagnostics, STUN, Entra, scheduler gate, release key,
-  Headscale, registry) are saved in the resource group's tags
-  (`longarm-hub-prev-*`, cleared once a deployment succeeds). A run that
-  finds no container group reads them from that snapshot, else from the
-  parameters of the last successful deployment (ARM keeps them), and says
-  which. With neither, a resource group that has a hub's storage needs
-  `--storage-auth` (and the other settings) given explicitly: nothing
-  falls back to defaults that would switch storage auth or drop the
-  identity. Secrets are never saved: pass them again.
+  copies in the GHCR package `ghcr.io/lubobill1990/longarm-mirror`, pinned by
+  digest ([mirror-images.txt](mirror-images.txt)). `.github/workflows/mirror.yml`
+  only verifies the pins on pull requests (read-only); on main it copies
+  them, from the source repositories the workflow itself allows, to tags
+  derived from the source and digest (`caddy-<digest hex>`), in that package
+  only. **One-time step:** a new GHCR package starts private and the API
+  can't change that: after the first publish, make `longarm-mirror` public
+  (GitHub -> Packages -> longarm-mirror -> Package settings -> Change
+  visibility) and re-run the workflow, which checks the anonymous pull. Until
+  then deploy.sh refuses before changing anything (the image check).
+- **The settings outlive the group.** A run that finds no container group
+  takes the hub's settings from the parameters of the last successful
+  deployment (ARM keeps them; forging them needs deployment write access),
+  and says so. Before `--recreate` deletes the group, the settings are also
+  saved in the resource group's tags (`longarm-hub-prev-*`, cleared once a
+  deployment succeeds). Tags can be written by anyone with Tag Contributor,
+  so that snapshot is not trusted: it only fills settings the deployment's
+  parameters lack, and its security-relevant settings (image, storage auth,
+  ACR, registry login, release key, Entra tenant/client/admins/web/apps)
+  are refused when they differ from the deployment's, or when there is no
+  deployment to compare them with, unless given explicitly. With neither
+  source, a resource group that has a hub's storage needs `--storage-auth`
+  (and the other settings) given explicitly: nothing falls back to defaults
+  that would switch storage auth or drop the identity. Secrets are never
+  saved: pass them again.
 - **Rollback.** If the new configuration fails after the delete (the
   deployment fails, the group is stuck, the hub doesn't start), the script
   deploys the previous configuration again (its image and settings, without
@@ -358,9 +369,10 @@ traffic relayed by the longnet relay leaves Azure and counts. Direct
   teardown someone else could take it. Nodes would refuse such a hub (its
   certificate is not from your CA), but they couldn't reach yours either.
 - **Third-party images come from GHCR mirrors** (Caddy, Headscale:
-  [mirror-images.txt](mirror-images.txt)), never Docker Hub. A new mirror
-  entry is copied by `.github/workflows/mirror.yml` on its push to main;
-  the template refers to it by digest.
+  [mirror-images.txt](mirror-images.txt), package `longarm-mirror`, which
+  must be public), never Docker Hub. A new entry is copied by
+  `.github/workflows/mirror.yml` on its push to main; the template refers
+  to it by digest.
 - **The image must be pullable**: make the `longarm-hub` package public on
   GitHub (package settings) or deploy with `--registry-user` and a token with
   `read:packages`.

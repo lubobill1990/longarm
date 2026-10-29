@@ -12,15 +12,20 @@
   deployment group validate`) and check that every image can be pulled
   before changing anything (`--skip-image-check` skips the latter); save the
   hub's settings in the resource group's tags before the delete; read a
-  missing group's settings from that snapshot, else the last successful
-  deployment, else stop and ask for them (never defaulting storage auth);
+  missing group's settings from the last successful deployment, with only
+  gaps filled from that (untrusted) snapshot and its security-relevant
+  settings refused unless they match or are given explicitly, else stop
+  and ask for them (never defaulting storage auth);
   and roll back to the previous configuration when the new one fails after
   the delete.
 - deploy/azure pulls nothing from Docker Hub: the Caddy and Headscale images
-  are mirrored by digest to `ghcr.io/lubobill1990/longarm-hub:mirror-*`
-  (`deploy/azure/mirror-images.txt`, `.github/workflows/mirror.yml`: the
-  source digest verified, copied with a pinned crane, the mirror verified
-  anonymously), and the template refers to the mirrors.
+  are mirrored by digest to `ghcr.io/lubobill1990/longarm-mirror` (a
+  separate package, which must be made public once), as tags derived from
+  the source and digest (`deploy/azure/mirror-images.txt`,
+  `.github/workflows/mirror.yml`: allow-listed sources, pins verified
+  read-only on pull requests, published from main only with a pinned
+  crane, the mirror verified anonymously), and the template refers to the
+  mirrors.
 - Workers signed in by any path (longarmd login, the tray, the MSI's
   session and admin workers) listened on loopback only and were unreachable
   from other machines. A worker whose listeners are all loopback now also

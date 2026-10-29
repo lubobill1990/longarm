@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -78,17 +79,24 @@ func TestMirroredImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mirrors := map[string]string{} // mirror tag -> digest
-	for _, line := range strings.Split(strings.ReplaceAll(string(list), "\r", ""), "\n") {
-		f := strings.Fields(line)
-		if len(f) == 0 || strings.HasPrefix(f[0], "#") {
+	// the repositories .github/workflows/mirror.yml allows (ALLOWED_SOURCES)
+	allowed := map[string]bool{"docker.io/library/caddy": true, "docker.io/headscale/headscale": true}
+	line := regexp.MustCompile(`^([a-z0-9./-]+):([A-Za-z0-9._-]+)@sha256:([0-9a-f]{64})$`)
+	mirrors := map[string]bool{} // ghcr.io/lubobill1990/longarm-mirror:<name>-<hex>@sha256:<hex>
+	for _, l := range strings.Split(strings.ReplaceAll(string(list), "\r", ""), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
 			continue
 		}
-		src, digest, ok := strings.Cut(f[0], "@")
-		if len(f) != 2 || !ok || !strings.HasPrefix(digest, "sha256:") || len(digest) != 71 || !strings.Contains(src, ":") {
-			t.Fatalf("mirror-images.txt: want <source tag>@sha256:<digest> <mirror tag>: %q", line)
+		m := line.FindStringSubmatch(l)
+		if m == nil {
+			t.Fatalf("mirror-images.txt: want <repository>:<tag>@sha256:<digest>: %q", l)
 		}
-		mirrors[f[1]] = digest
+		if !allowed[m[1]] {
+			t.Errorf("mirror-images.txt: %s is not a source mirror.yml allows", m[1])
+		}
+		name := m[1][strings.LastIndex(m[1], "/")+1:]
+		mirrors["ghcr.io/lubobill1990/longarm-mirror:"+name+"-"+m[3]+"@sha256:"+m[3]] = true
 	}
 	var tpl struct {
 		Parameters map[string]struct {
@@ -99,11 +107,8 @@ func TestMirroredImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []string{"caddyImage", "headscaleImage"} {
-		v, _ := tpl.Parameters[p].DefaultValue.(string)
-		ref, digest, _ := strings.Cut(v, "@")
-		tag, ok := strings.CutPrefix(ref, "ghcr.io/lubobill1990/longarm-hub:")
-		if !ok || mirrors[tag] == "" || mirrors[tag] != digest {
-			t.Errorf("%s = %q: want ghcr.io/lubobill1990/longarm-hub:<mirror tag>@<digest> of mirror-images.txt", p, v)
+		if v, _ := tpl.Parameters[p].DefaultValue.(string); !mirrors[v] {
+			t.Errorf("%s = %q: want ghcr.io/lubobill1990/longarm-mirror:<name>-<hex>@sha256:<hex> of mirror-images.txt", p, v)
 		}
 	}
 }

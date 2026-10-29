@@ -419,18 +419,47 @@ prev_text() {
 	done
 }
 
-# prev_parse TEXT: prev_* from prev_text's lines
+# prev_parse PREFIX TEXT: <PREFIX><key> from prev_text's lines
 prev_parse() {
 	local line k
 	while IFS= read -r line; do
 		k=${line%%=*}
 		[[ " $prev_keys " == *" $k "* ]] || continue
-		printf -v "prev_$k" '%s' "${line#*=}"
-	done <<<"$1"
+		printf -v "$1$k" '%s' "${line#*=}"
+	done <<<"$2"
 }
 
 # The snapshot: prev_text, base64, in resource group tags of 250 characters
-# (longarm-hub-prev-0..N-1; longarm-hub-prev-n = N, 0 = none).
+# (longarm-hub-prev-0..N-1; longarm-hub-prev-n = N, 0 = none). Tags can be
+# written by anyone with Tag Contributor, so the snapshot is not trusted: it
+# only fills settings the last deployment's parameters don't have, and its
+# security-relevant settings (sec_keys) are refused when they differ from
+# that deployment's or there is no deployment to compare them with, unless
+# the operator gives them explicitly.
+sec_keys='image auth acr registry_user relkey entra_tenant entra_client entra_admins entra_web entra_apps'
+# the option that gives each security-relevant setting explicitly
+sec_option() {
+	case $1 in
+	image) echo "--image" ;; auth) echo "--storage-auth" ;; acr) echo "--acr" ;;
+	registry | registry_user) echo "--registry-user" ;; relkey) echo "--release-public-key" ;;
+	entra_tenant) echo "--entra-tenant" ;; entra_client) echo "--entra-client" ;; entra_admins) echo "--entra-admins" ;;
+	entra_web) echo "--entra-web" ;; entra_apps) echo "--entra-apps" ;; stun) echo "--stun-servers" ;;
+	esac
+}
+# sec_given KEY: the operator gave that setting on the command line
+sec_given() {
+	case $1 in
+	image) [[ -n $image ]] ;; auth) [[ -n $storage_auth ]] ;; acr) [[ -n $acr ]] ;;
+	registry | registry_user) [[ -n $registry_user ]] ;; relkey) [[ -n $release_public_key ]] ;;
+	entra_tenant) [[ -n $entra_tenant ]] ;; entra_client) [[ -n $entra_client ]] ;; entra_admins) [[ -n $entra_admins ]] ;;
+	entra_web) [[ -n $entra_web ]] ;; entra_apps) [[ -n $entra_apps ]] ;; stun) [[ -n $stun_servers ]] ;;
+	esac
+}
+# template_default PARAM: a parameter's default in azuredeploy.json
+template_default() {
+	[[ -n $1 ]] || return 0
+	sed -n "/^    \"$1\": {/,/^    }/s/^ *\"defaultValue\": \"\(.*\)\",\{0,1\}\$/\1/p" "$template" | head -n 1
+}
 rg_id=''
 snapshot_tags() {
 	local b64 i n tags=()
@@ -448,7 +477,9 @@ clear_snapshot() {
 	az tag update --resource-id "$rg_id" --operation Merge --tags "longarm-hub-prev-n=0" -o none 2>/dev/null ||
 		echo "note: the settings snapshot (resource group tag longarm-hub-prev-n) was not cleared" >&2
 }
-load_prev_snapshot() {
+# load_snapshot: snap_* from the tags (1 = none)
+have_snapshot=false
+load_snapshot() {
 	local n i b64='' text
 	n=$(az group show -n "$rg" --query 'tags."longarm-hub-prev-n"' -o tsv 2>/dev/null | tr -d '\r' || true)
 	[[ $n =~ ^[1-9][0-9]*$ ]] || return 1
@@ -456,65 +487,108 @@ load_prev_snapshot() {
 		b64+=$(az group show -n "$rg" --query "tags.\"longarm-hub-prev-$i\"" -o tsv | tr -d '\r')
 	done
 	text=$(printf '%s' "$b64" | base64 -d 2>/dev/null) || return 1
-	[[ $text == *auth=key* || $text == *auth=identity* ]] || return 1
-	prev_parse "$text"
-	prev_src=snapshot
+	[[ $text == *auth=* ]] || return 1
+	prev_parse snap_ "$text"
+	have_snapshot=true
 }
 
 # load_prev_deployment: prev_* from the parameters of the last successful
-# deployment of this script (absent parameters: the template's defaults)
+# deployment of this script; hist_has lists the settings it has (absent
+# parameters: the template's defaults, or an older script)
+hist_has=''
 load_prev_deployment() {
-	local dep vals p
+	local dep vals p k kind q='' i=0 v
 	dep=$(az deployment group list -g "$rg" -o tsv \
 		--query "[?properties.provisioningState=='Succeeded' && starts_with(name, 'longarm-hub-')].name" 2>/dev/null |
 		tr -d '\r' | sort | tail -n 1 || true)
 	[[ -n $dep ]] || return 1
-	local q='' list='image size enablePanel storageAuth acrName enableLogAnalytics enableTelemetry enableDiagnostics stunServers schedulerGateFreeGb releasePublicKey entraTenantId entraClientId entraAdmins entraWeb entraApps enableHeadscale headscalePublicDerp registryServer registryUsername'
-	for p in $list; do
-		q+="${q:+, }properties.parameters.$p.value"
+	# key:parameter:kind
+	local list='image:image:s size:size:s panel:enablePanel:b auth:storageAuth:s acr:acrName:s logs:enableLogAnalytics:b telemetry:enableTelemetry:b diagnostics:enableDiagnostics:b stun:stunServers:stun gate:schedulerGateFreeGb:s relkey:releasePublicKey:s entra_tenant:entraTenantId:s entra_client:entraClientId:s entra_admins:entraAdmins:s entra_web:entraWeb:s entra_apps:entraApps:s headscale:enableHeadscale:b public_derp:headscalePublicDerp:b registry:registryServer:s registry_user:registryUsername:s'
+	for k in $list; do
+		p=${k#*:}
+		p=${p%%:*}
+		q+="${q:+, }properties.parameters.$p.value, properties.parameters.$p == null"
 	done
-	q+=", properties.parameters.stunServers == null"
 	vals=$(az deployment group show -g "$rg" -n "$dep" -o tsv --query "[$q]" 2>/dev/null | tr -d '\r' | tr '\t' '\n' | sed 's/^None$//') || return 1
-	bool() { case $1 in [Tt]rue) echo true ;; *) echo false ;; esac; }
-	{
-		read -r prev_image
-		read -r prev_size
-		read -r p && prev_panel=$(bool "$p")
-		read -r prev_auth
-		read -r prev_acr
-		read -r p && prev_logs=$(bool "$p")
-		read -r p && prev_telemetry=$(bool "$p")
-		read -r p && prev_diagnostics=$(bool "$p")
-		read -r prev_stun
-		read -r prev_gate
-		read -r prev_relkey
-		read -r prev_entra_tenant
-		read -r prev_entra_client
-		read -r prev_entra_admins
-		read -r prev_entra_web
-		read -r prev_entra_apps
-		read -r p && prev_headscale=$(bool "$p")
-		read -r p && prev_public_derp=$(bool "$p")
-		read -r prev_registry
-		read -r prev_registry_user
-		read -r p || true
-	} <<<"$vals"
+	local -a f=()
+	while IFS= read -r v; do f+=("$v"); done <<<"$vals"
+	for k in $list; do
+		kind=${k##*:}
+		p=${k#*:}
+		printf -v "param_${k%%:*}" '%s' "${p%%:*}"
+		v=${f[i]:-}
+		# absent: "<p> == null" is True
+		if [[ ${f[i + 1]:-} != [Tt]rue ]]; then
+			hist_has+=" ${k%%:*}"
+			case $kind in
+			b) case $v in [Tt]rue) v=true ;; *) v=false ;; esac ;;
+			stun) [[ -n $v ]] || v=none ;; # "" = none
+			esac
+			printf -v "prev_${k%%:*}" '%s' "$v"
+		fi
+		i=$((i + 2))
+	done
+	# the template's defaults where the deployment had no parameter
+	[[ -n $prev_size ]] || prev_size=small
+	for k in panel logs telemetry diagnostics headscale public_derp; do
+		v=prev_$k
+		[[ -n ${!v} ]] || printf -v "$v" '%s' false
+	done
 	[[ $prev_auth == key || $prev_auth == identity ]] || return 1
-	prev_size=${prev_size:-small}
-	# stunServers: absent = the template's default, "" = none
-	[[ $p != [Ff]alse || -n $prev_stun ]] || prev_stun=none
 	prev_tailscale=''
 	prev_src="deployment $dep"
 }
 
+# The source of the settings: the container group, else the last successful
+# deployment, with gaps filled from the snapshot (checked as above), else
+# the snapshot alone for what isn't security-relevant (those settings must
+# then be given), else nothing (a resource group with a hub's storage needs
+# the settings given explicitly).
 if load_prev_group; then
 	:
-elif load_prev_snapshot; then
-	echo "the container group $name is missing: its settings come from the snapshot taken before it was deleted"
-elif load_prev_deployment; then
-	echo "the container group $name is missing: its settings come from the last successful deployment (${prev_src#deployment })"
-elif [[ -z $storage_auth ]] && [[ -n $(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv 2>/dev/null | tr -d '\r') ]]; then
-	die "the resource group $rg has a hub's storage, but neither a container group, a settings snapshot nor a successful deployment to read its settings from: pass them (at least --storage-auth key|identity; and --image, --entra-*, --telemetry, --diagnostics, --headscale, --release-public-key, --gate-free-gb, --stun-servers as the hub had them)"
+else
+	load_snapshot || true
+	if load_prev_deployment; then
+		echo "the container group $name is missing: its settings come from the last successful deployment (${prev_src#deployment })"
+		if $have_snapshot; then
+			filled='' refused=''
+			for k in $prev_keys; do
+				s=snap_$k p=prev_$k
+				if [[ " $hist_has " != *" $k "* ]]; then
+					# the deployment had the template's default
+					d=param_$k
+					if [[ " $sec_keys " == *" $k "* && -n ${!s} && ${!s} != "$(template_default "${!d:-}")" ]] && ! sec_given "$k"; then
+						refused+=" $(sec_option "$k") (deployment: the template's default, snapshot: ${!s})"
+					elif [[ " $sec_keys " != *" $k "* ]]; then
+						printf -v "$p" '%s' "${!s}"
+						filled+=" $k"
+					fi
+				elif [[ " $sec_keys " == *" $k "* && ${!s} != "${!p}" ]] && ! sec_given "$k"; then
+					refused+=" $(sec_option "$k") (deployment: ${!p:-none}, snapshot: ${!s:-none})"
+				fi
+			done
+			[[ -z $refused ]] ||
+				die "the settings snapshot in the resource group's tags (longarm-hub-prev-*) differs from the last deployment in security-relevant settings - it may have been tampered with (tags are writable by Tag Contributors). Give them explicitly if the snapshot is right:$refused"
+			[[ -z $filled ]] || echo "settings the deployment had no parameter for, from the snapshot:$filled"
+		fi
+	elif $have_snapshot; then
+		echo "the container group $name is missing and there is no successful deployment: settings that aren't security-relevant come from the snapshot taken before it was deleted"
+		missing=''
+		for k in $prev_keys; do
+			s=snap_$k
+			if [[ " $sec_keys " == *" $k "* ]]; then
+				[[ -z ${!s} ]] || sec_given "$k" || missing+=" $(sec_option "$k") (snapshot: ${!s})"
+			else
+				printf -v "prev_$k" '%s' "${!s}"
+			fi
+		done
+		[[ -z $missing ]] ||
+			die "the settings snapshot (resource group tags, writable by Tag Contributors) can't be checked against a deployment: give its security-relevant settings explicitly if they are right:$missing"
+		prev_auth=$storage_auth
+		prev_src=snapshot
+	elif [[ -z $storage_auth ]] && [[ -n $(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv 2>/dev/null | tr -d '\r') ]]; then
+		die "the resource group $rg has a hub's storage, but neither a container group, a successful deployment nor a settings snapshot to read its settings from: pass them (at least --storage-auth key|identity; and --image, --entra-*, --telemetry, --diagnostics, --headscale, --release-public-key, --gate-free-gb, --stun-servers as the hub had them)"
+	fi
 fi
 
 cur_image='' prev_boot='' account='' key='' build_acr=''
@@ -681,10 +755,6 @@ write_params() {
 }
 write_params "$tmp/params.json"
 
-# template_default PARAM: a parameter's default in azuredeploy.json
-template_default() {
-	sed -n "/^    \"$1\": {/,/^    }/s/^ *\"defaultValue\": \"\(.*\)\",\{0,1\}\$/\1/p" "$template" | head -n 1
-}
 
 # image_pullable IMAGE: the registry has the image's manifest, asked the way
 # ACI pulls it (anonymously, or with the deployment's registry login; an
@@ -916,7 +986,7 @@ until tcp_open "$fqdn" "${hub_addr##*:}"; do
 	sleep 5
 done
 # the new configuration runs: the settings snapshot has done its job
-if $deleted || [[ $prev_src == snapshot ]]; then
+if $deleted || $have_snapshot; then
 	clear_snapshot
 fi
 fp=$(bootstrap_value ca_fingerprint)
