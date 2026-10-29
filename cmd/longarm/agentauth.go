@@ -9,6 +9,8 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +19,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 
 	"github.com/lubobill1990/longarm/internal/agentauth"
 	"github.com/lubobill1990/longarm/internal/client"
@@ -90,7 +95,8 @@ func forwardAgentAuth(ctx context.Context, s *session, conn *client.Conn, worker
 	note := func(msg string) { fmt.Fprintln(agentAuthStderr, "longarm: "+msg) }
 
 	ictx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	info, err := conn.Node().Info(ictx, &pb.InfoRequest{})
+	var pr peer.Peer // the worker's certificate, as this connection verified it
+	info, err := conn.Node().Info(ictx, &pb.InfoRequest{}, grpc.Peer(&pr))
 	cancel()
 	if err != nil {
 		return nil, env, secrets, err
@@ -103,11 +109,17 @@ func forwardAgentAuth(ctx context.Context, s *session, conn *client.Conn, worker
 			worker, info.Version, strings.Join(agents, ", ")))
 		return nil, env, secrets, nil
 	}
+	// Isolation and the admin flag: the worker's own report over this
+	// mTLS connection. Ownership: the hub's word, unless end-to-end trust
+	// is on - then only the user's own endorsement of the worker counts.
 	t := agentauth.Target{Worker: worker, Me: info.CallerUser, Owner: info.Owner, Isolation: info.Isolation, Admin: info.AdminWorker}
-	if n := s.hubNode(worker); n != nil {
+	if pol := s.dialer.Bundle().Trust.Load(); pol.Active() {
+		t.E2E = true
+		t.EndorsedByMe = agentauth.EndorsedBy(peerCert(&pr), pol, ownUserPublicKey(s.cfg.Dir))
+	} else if n := s.hubNode(worker); n != nil {
 		t.HubKnown = true
 		if n.Owner != "" {
-			t.Owner = n.Owner // the hub's word
+			t.Owner = n.Owner // the hub's word (it runs the CA: trusted without end-to-end trust)
 		}
 		t.Admin = t.Admin || machine.FromNode(n).Admin
 	}
@@ -160,4 +172,25 @@ func (s *session) hubNode(worker string) *pb.NodeInfo {
 		}
 	}
 	return nil
+}
+
+// peerCert is the worker certificate of a call's connection (nil: none).
+func peerCert(p *peer.Peer) *x509.Certificate {
+	if p == nil {
+		return nil
+	}
+	if ti, ok := p.AuthInfo.(credentials.TLSInfo); ok && len(ti.State.PeerCertificates) > 0 {
+		return ti.State.PeerCertificates[0]
+	}
+	return nil
+}
+
+// ownUserPublicKey is this device's own user key (longarm trust init; nil:
+// none).
+func ownUserPublicKey(cfgDir string) ed25519.PublicKey {
+	k, _, err := ownUserKey(client.TrustStore(cfgDir))
+	if err != nil {
+		return nil
+	}
+	return k.Public().(ed25519.PublicKey)
 }

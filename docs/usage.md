@@ -515,6 +515,14 @@ never a value.
   prints a note. Only when the agent is named (`--agent-auth claude`), and
   only to your own admin worker.
 
+"Your own" is the hub's word, as the owner it records. With end-to-end
+trust on the client (`longarm trust require on`), it is only a worker
+whose node key you endorsed with your own user key. A worker endorsed by
+another user you trust, or one the hub merely says is yours, then counts
+as somebody else's. Isolation is always the worker's own report over the
+verified connection. Under end-to-end trust, so is the admin flag
+([security](security.md#forwarded-agent-credentials)).
+
 #### Recommended invocations for unattended agent jobs
 
 Agents ask before using tools. A job has nobody to answer, so it needs

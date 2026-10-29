@@ -1081,11 +1081,13 @@ agent logins, and the credentials are not stored on them.
 
 **Which workers.** The client decides before anything is read or sent
 (`internal/agentauth.Check`). It uses the worker's `Node.Info` (its
-isolation, its owner, whether it is an admin worker) and the hub's record
-of the worker.
+isolation, its owner, whether it is an admin worker), the hub's record of
+the worker, and, under end-to-end trust, the worker certificate's
+endorsement.
 
 - **Your own workers, and workers the hub doesn't know** (workers.toml):
-  yes.
+  yes. Under end-to-end trust, "your own" means endorsed by your user key
+  (see below).
 - **Somebody else's worker** (shared with you, or a fleet worker):
   - **with per-user isolation:** yes. The job runs as your own OS
     account, and other users' processes cannot read its environment (see
@@ -1096,6 +1098,38 @@ of the worker.
     cannot override it.
 - **Admin workers** (SYSTEM): never with `auto`. Only when the agent is
   named, and only to your own admin worker.
+
+**Whose word counts.**
+
+- **Isolation** comes only from the worker's own `Node.Info`, over the
+  mTLS connection the client verified. The hub's listing is not used for
+  it.
+- **The admin flag** comes from the worker's own report. Without
+  end-to-end trust, the hub's record counts too: either one makes the
+  worker an admin worker, which is the stricter choice. Under end-to-end
+  trust, only the endorsed worker's own report counts. The isolation mode is the worker's local
+  configuration (`[isolation] mode`), so even under end-to-end trust it is
+  the worker's own assertion. That is acceptable: under end-to-end trust,
+  the worker is one the user endorsed.
+- **Ownership without end-to-end trust:** the hub's record of the worker's
+  owner counts. So does the owner the worker reports, which the hub pushed
+  to it. This is by design: the hub runs the CA and could issue any worker
+  certificate anyway, so a client that does not require end-to-end trust
+  trusts the hub, ownership claims included. A malicious hub could claim
+  that a shared worker is yours and so get your agent credentials
+  forwarded there without `--agent-auth-shared-ok`. If you don't trust
+  the hub with that, turn end-to-end trust on.
+- **Ownership with end-to-end trust** (`longarm trust require on`): neither
+  the hub's record nor the worker's (hub-pushed) owner counts.
+  - A worker is yours only if its certificate carries an endorsement of
+    its node key signed by this device's own user key (`longarm trust
+    init` / `import-key`). That is the same endorsement the TLS check
+    verifies, which no hub can forge.
+  - A worker endorsed by another user you trust (`longarm trust
+    add-user`), or claimed to be yours without your endorsement, is
+    somebody else's. It gets credentials only with per-user isolation, or
+    with `--agent-auth-shared-ok`.
+  - An admin worker gets credentials only if it is endorsed by you.
 
 The worker does not check these rules: it cannot tell a forwarded agent
 credential from any other `--secret-env`. They protect the user's own

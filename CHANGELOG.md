@@ -128,6 +128,10 @@
     isolation unless `--agent-auth-shared-ok` is given, and forwards to
     admin workers only when the agent is named. `Node.Info` reports the
     worker's `owner` and `admin_worker`.
+  - With end-to-end trust on the client, a worker counts as yours only
+    if your own user key endorsed it. The hub's ownership records, and the
+    worker's hub-pushed owner, don't count. Isolation and the admin flag
+    are the worker's own report.
   - Docs: docs/usage.md "Agent credentials" (with recommended unattended
     invocations), docs/security.md "Forwarded agent credentials".
 

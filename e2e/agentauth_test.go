@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -14,6 +15,10 @@ import (
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/jobs"
+	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/tenancy"
+	"github.com/lubobill1990/longarm/internal/trust"
+	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
 // agentHome is a fake home of the client for agent credential tests: Claude
@@ -257,4 +262,100 @@ func TestAgentAuth(t *testing.T) {
 		}
 	}
 	noSecretOnDisk(t, e.root, "", e2eClaudeValue, e2eCopilotValue)
+}
+
+// TestAgentAuthE2ETrust: with end-to-end trust on the client, only the
+// user's own endorsement of a worker proves it is theirs. A worker that
+// claims to be alice's (worker-access.json, i.e. what a hub pushed) but is
+// endorsed by another trusted user (bob) is treated as shared: refused with
+// shared isolation unless --agent-auth-shared-ok. Endorsed by alice, it is
+// hers.
+func TestAgentAuthE2ETrust(t *testing.T) {
+	h := newHubEnv(t, "")
+	e := h.env
+	// the hub's (forgeable) word: w1 belongs to alice
+	if err := tenancy.WriteWorkerAccess(filepath.Join(e.dataDir, tenancy.WorkerAccessFile), &pb.WorkerAccess{Version: 1, Owner: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	e.startLongarmd()
+	home := newAgentHome(t)
+	claude, _ := fakeAgents(t)
+	run := func(args ...string) result {
+		return longarmWith(t, e.client, home.env, append([]string{"run", "w1", "--wait"}, append(args, "--", claude)...)...)
+	}
+	// without end-to-end trust the hub's word counts (documented)
+	if r := run(); r.code != 0 || !strings.Contains(r.stderr, "forwarding agent credentials to w1") {
+		t.Fatalf("without e2e trust: %+v", r)
+	}
+
+	e.mustLongarm(e.client, "trust", "init")
+	e.mustLongarm(e.client, "trust", "require", "on")
+	// bob, a user alice trusts, endorses w1
+	bobStore := trust.Store{Dir: t.TempDir()}
+	bobKey, err := bobStore.CreateUserKey("bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobLine := pki.UserKeyLine{User: "bob", Key: bobKey.Public().(ed25519.PublicKey)}
+	e.mustLongarm(e.client, "trust", "add-user", bobLine.String())
+	ws := trust.Store{Dir: filepath.Join(e.dataDir, "trust")}
+	req, err := ws.Request(pki.KindWorker, "w1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	en, err := pki.Endorse(bobKey, "bob", pki.KindWorker, "w1", req.NodeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reissueWorker(t, e, ws, en)
+	if out := e.mustLongarm(e.client, "info", "w1"); !strings.Contains(out, "w1") { // bob's endorsement is accepted for the connection
+		t.Fatalf("info:\n%s", out)
+	}
+	r := run()
+	if r.code != 2 || !strings.Contains(r.stderr, "not endorsed by your user key") || !strings.Contains(r.stderr, "--agent-auth-shared-ok") {
+		t.Fatalf("hub-claimed ownership under e2e trust: %+v", r)
+	}
+	if r := run("--agent-auth-shared-ok"); r.code != 0 || !strings.Contains(r.stderr, "WARNING") {
+		t.Fatalf("--agent-auth-shared-ok: %+v", r)
+	}
+
+	// alice endorses w1 herself: hers
+	en, err = pki.ParseEndorsement(strings.TrimSpace(e.mustLongarm(e.client, "trust", "endorse", req.String())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reissueWorker(t, e, ws, en)
+	if r := run(); r.code != 0 || !strings.Contains(r.stderr, "forwarding agent credentials to w1") || strings.Contains(r.stderr, "WARNING") {
+		t.Fatalf("endorsed own worker: %+v", r)
+	}
+}
+
+// reissueWorker gives w1 a certificate carrying endorsement en of its node
+// key (longarmd trust accept + renewal, done directly) and restarts it.
+func reissueWorker(t *testing.T, e *env, ws trust.Store, en *pki.Endorsement) {
+	t.Helper()
+	if err := ws.SetEndorsement(en, pki.KindWorker, "w1"); err != nil {
+		t.Fatal(err)
+	}
+	ct, err := ws.CSRTrust()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, csrPEM, err := pki.NewKeyAndCSR("w1", ct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, err := pki.LoadCA(filepath.Join(e.client, "ca"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, err := ca.SignCSR(csrPEM, pki.IssueOptions{Role: pki.RoleWorker, Name: "w1", Validity: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pki.WriteBundleAtomic(filepath.Join(e.dataDir, "tls"), ca.CertPEM, certPEM, keyPEM); err != nil {
+		t.Fatal(err)
+	}
+	e.killLongarmd()
+	e.startLongarmd()
 }
