@@ -21,11 +21,3 @@ dbs:
 # On SIGTERM the hub stops first, then Litestream ships the last WAL frames
 # (up to this long) before it exits.
 shutdown-sync-timeout: 20s
-# A start restores the newest snapshot plus the compacted files since (with
-# storage-auth identity every start: the database is on the container's own
-# disk). Hourly instead of daily snapshots: a restore reads one snapshot and
-# at most an hour of 5-minute / 30-second files instead of up to 23 hourly
-# ones on top. Small databases: an hourly upload of a few MB.
-snapshot:
-  interval: 1h
-  retention: 24h
