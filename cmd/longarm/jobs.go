@@ -39,6 +39,7 @@ func execCmd() *cobra.Command {
 	var combined bool
 	var maxOut int64
 	var on, inSession string
+	var aa agentAuthOpts
 	c := &cobra.Command{
 		Use:   "exec [<worker>] -- command [args...]",
 		Short: "Run a short command synchronously (no job); exit code is mirrored. Without a worker (or --on auto) the least loaded passing worker is used",
@@ -73,6 +74,10 @@ func execCmd() *cobra.Command {
 				return err
 			}
 			defer conn.Close()
+			agentAuth, envM, sec, err := forwardAgentAuth(cmd.Context(), s, conn, worker, argv, aa, envM, sec)
+			if err != nil {
+				return err
+			}
 			mode := pb.OutputMode_OUTPUT_MODE_SEPARATE
 			if combined {
 				mode = pb.OutputMode_OUTPUT_MODE_COMBINED
@@ -81,8 +86,9 @@ func execCmd() *cobra.Command {
 			defer cancel()
 			resp, err := conn.Exec().Run(ctx, &pb.ExecRequest{
 				Argv: argv, Cwd: cwd, Env: envM, SecretEnv: sec, Timeout: durationpb.New(timeout),
-				Output: mode, MaxOutputBytes: maxOut,
+				Output: mode, MaxOutputBytes: maxOut, AgentAuth: agentAuth,
 			})
+			clear(sec)
 			if err != nil {
 				return err
 			}
@@ -119,6 +125,7 @@ func execCmd() *cobra.Command {
 	c.Flags().Int64Var(&maxOut, "max-output", 0, "max bytes captured per stream (default 1 MiB)")
 	c.Flags().StringVar(&on, "on", "", "worker name or \"auto\" (default when no worker is given)")
 	c.Flags().StringVarP(&inSession, "session", "s", "", "run on the worker of this session, in its working directory (--cwd: relative to it)")
+	aa.register(c)
 	return c
 }
 
@@ -142,6 +149,7 @@ func runCmd() *cobra.Command {
 	var wait, follow, noQueue bool
 	var memLimit string
 	var memGB, cpus float64
+	var aa agentAuthOpts
 	c := &cobra.Command{
 		Use:   "run [<worker>] -- command [args...]",
 		Short: "Submit a job; prints the job id (with --wait/--follow, exits with the job's code). Without a worker (or --on auto) the scheduler places it",
@@ -254,6 +262,10 @@ Without --repo or --cwd the job runs in the worker's home directory;
 				}
 				gitAuthPB = g.pb()
 			}
+			agentAuth, envM, sec, err := forwardAgentAuth(cmd.Context(), s, conn, worker, argv, aa, envM, sec)
+			if err != nil {
+				return err
+			}
 			ws, err := jobWorkspace(cmd.Context(), conn, repo, ref, lfs, g)
 			if err != nil {
 				return err
@@ -266,6 +278,7 @@ Without --repo or --cwd the job runs in the worker's home directory;
 				Stdin:     stdin,
 				GitAuth:   gitAuthPB, // for the workspace fetch only
 				Share:     share,
+				AgentAuth: agentAuth, // names; the credentials are in SecretEnv
 			}
 			ctx := cmd.Context()
 			// Retrying with the same id is safe: Submit is idempotent.
@@ -278,6 +291,7 @@ Without --repo or --cwd the job runs in the worker's home directory;
 				return err
 			})
 			clear(stdin) // sent (or given up): no copy of the payload stays here
+			clear(sec)
 			g.clear()
 			if err != nil {
 				return err
@@ -328,6 +342,7 @@ Without --repo or --cwd the job runs in the worker's home directory;
 	c.Flags().Float64Var(&cpus, "cpus", 0, "CPU limit of the job's process tree in cores (Windows; Linux with per-user isolation)")
 	c.Flags().StringVarP(&inSession, "session", "s", "", "run on the worker of this session, in its working directory (e.g. its --repo worktree; --cwd: relative to it)")
 	c.Flags().StringVar(&stdinFile, "stdin-file", "", "send this local file (- = longarm's stdin; at most 1 MiB) as the job's stdin: memory-only on the worker, never in job metadata, the hub or logs")
+	aa.register(c)
 	return c
 }
 

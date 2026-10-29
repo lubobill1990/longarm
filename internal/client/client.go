@@ -4,6 +4,10 @@ package client
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -22,6 +26,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
+	"github.com/lubobill1990/longarm/internal/agentauth"
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/telemetry/tgrpc"
@@ -95,6 +100,9 @@ type Config struct {
 	Hub       hubclient.Config `toml:"hub"` // default: hub.toml (written by longarm join)
 	Dial      DialConfig       `toml:"dial"`
 	Workers   []Worker         `toml:"worker"`
+	// AgentAuth is [agent_auth]: forwarding of coding-agent credentials
+	// (longarm run --agent-auth).
+	AgentAuth agentauth.Config `toml:"agent_auth"`
 
 	Dir string `toml:"-"`
 }
@@ -502,6 +510,9 @@ type Conn struct {
 	path transport.PathInfo
 	raw  net.Conn
 	legs []LegResult
+	// peer is PeerKey of the worker on the current transport; pin, once
+	// set (PinPeer), is the only peer any transport may have.
+	peer, pin string
 }
 
 // livePath is implemented by transport conns whose path can change (longnet).
@@ -523,6 +534,44 @@ func (c *Conn) Legs() []LegResult {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]LegResult(nil), c.legs...)
+}
+
+// PeerChanged marks the error of a transport refused by PinPeer (gRPC
+// flattens dial errors into status messages; Retryable finds it there).
+const PeerChanged = "worker identity changed"
+
+// PeerKey identifies the node behind a worker certificate: its end-to-end
+// trust node key when the certificate carries one (stable across
+// certificate renewals), else the certificate itself.
+func PeerKey(c *x509.Certificate) string {
+	if t, err := pki.TrustOf(c); err == nil && t != nil && len(t.NodeKey) > 0 {
+		return "node:" + base64.StdEncoding.EncodeToString(t.NodeKey)
+	}
+	h := sha256.Sum256(c.Raw)
+	return "cert:" + hex.EncodeToString(h[:])
+}
+
+// PinPeer binds the connection to the worker whose certificate cert was
+// verified on it (what an operation was authorized for, e.g. forwarding
+// agent credentials): every later transport - gRPC reconnects, re-raced
+// legs - must present the same node, or the dial fails (PeerChanged) and
+// no call goes out on it. It fails when the current transport is already
+// another node's (a reconnect since cert was seen).
+func (c *Conn) PinPeer(cert *x509.Certificate) error {
+	if cert == nil {
+		return fmt.Errorf("%s: no worker certificate to pin", PeerChanged)
+	}
+	key := PeerKey(cert)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pin != "" && c.pin != key {
+		return fmt.Errorf("%s: worker %s is pinned to another node", PeerChanged, c.Worker.Name)
+	}
+	if c.peer != "" && c.peer != key {
+		return fmt.Errorf("%s: worker %s reconnected to another node since it was checked", PeerChanged, c.Worker.Name)
+	}
+	c.pin = key
+	return nil
 }
 
 func (c *Conn) Node() pb.NodeClient           { return pb.NewNodeClient(c.ClientConn) }
@@ -552,7 +601,18 @@ func (d *Dialer) Dial(w Worker) (*Conn, error) {
 		conn.mu.Lock()
 		conn.legs = legs
 		if err == nil {
-			conn.path, conn.raw = pi, raw
+			// the transport carries nothing yet: a peer other than the
+			// pinned one is refused before a single byte of a call
+			key := ""
+			if cs := tc.ConnectionState(); len(cs.PeerCertificates) > 0 {
+				key = PeerKey(cs.PeerCertificates[0])
+			}
+			if conn.pin != "" && key != conn.pin {
+				conn.mu.Unlock()
+				tc.Close()
+				return nil, fmt.Errorf("%s: worker %s presented another node than this operation was authorized for", PeerChanged, w.Name)
+			}
+			conn.path, conn.raw, conn.peer = pi, raw, key
 		}
 		conn.mu.Unlock()
 		if err != nil {
@@ -593,6 +653,9 @@ func (d *Dialer) isConfigured(name string) bool {
 func Retryable(err error) bool {
 	if _, ok := TrustRefusal(err); ok {
 		return false // the worker stays refused until someone endorses it
+	}
+	if err != nil && strings.Contains(err.Error(), PeerChanged) {
+		return false // the pinned worker is gone: never send there
 	}
 	switch status.Code(err) {
 	case codes.Unavailable, codes.Aborted, codes.Internal, codes.Unknown:

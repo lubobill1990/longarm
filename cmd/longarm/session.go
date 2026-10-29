@@ -83,6 +83,7 @@ func sessionStartCmd() *cobra.Command {
 	var env, secrets, require []string
 	var noQueue, asJSON bool
 	var cols, rows uint32
+	var aa agentAuthOpts
 	c := &cobra.Command{
 		Use:   "start [<worker>|auto] -s NAME [--cwd DIR | --repo PATH|URL [--ref REF] [--lfs skip|ship|fetch] [--git-auth forward]] [-- command [args...]]",
 		Short: "Create a session without attaching (idempotent by name); prints the session and its worker",
@@ -174,6 +175,10 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 				}
 				gitAuthPB = g.pb()
 			}
+			agentAuth, envM, sec, err := forwardAgentAuth(ctx, s, conn, worker, argv, aa, envM, sec)
+			if err != nil {
+				return err
+			}
 			// the same workspace path as run (a local checkout: remote first
 			// with --git-auth forward, then the unpushed delta)
 			ws, err := jobWorkspace(ctx, conn, repo, ref, lfs, g)
@@ -184,7 +189,8 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 				ws.Ref = ref // shown in sessions --json; a checkout's commit is what it runs
 			}
 			req := &pb.StartSessionRequest{Name: name, Argv: argv, Cwd: cwd, Env: envM, SecretEnv: sec, Workspace: ws,
-				GitAuth: gitAuthPB} // for the workspace fetch only
+				GitAuth:   gitAuthPB, // for the workspace fetch only
+				AgentAuth: agentAuth}
 			if cols > 0 && rows > 0 {
 				req.Size = &pb.TermSize{Cols: cols, Rows: rows}
 			}
@@ -248,6 +254,7 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 	c.Flags().BoolVar(&asJSON, "json", false, `print {"worker","session","cwd","created","state"}`)
 	c.Flags().Uint32Var(&cols, "cols", 0, "initial terminal width (with --rows; default the worker's)")
 	c.Flags().Uint32Var(&rows, "rows", 0, "initial terminal height")
+	aa.register(c)
 	return c
 }
 

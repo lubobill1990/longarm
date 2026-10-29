@@ -141,6 +141,7 @@ type JobDetail struct {
 	Cwd        string            `json:"cwd,omitempty"`
 	EnvNames   []string          `json:"env_names,omitempty"` // values are never collected
 	SecretEnv  []string          `json:"secret_env_names,omitempty"`
+	AgentAuth  []string          `json:"agent_auth,omitempty"`
 	Labels     map[string]string `json:"labels,omitempty"`
 	Workspace  *jobs.Workspace   `json:"workspace,omitempty"`
 	Owner      string            `json:"owner,omitempty"`
@@ -165,7 +166,7 @@ func (b *Builder) IncludeJob(roots []JobRoot, id string) bool {
 			b.Errorf("%s: %v", id, err)
 			return true
 		}
-		d := JobDetail{ID: s.ID, Name: s.Name, Argv: s.Argv, Cwd: s.Cwd, SecretEnv: s.SecretEnvNames, Labels: s.Labels,
+		d := JobDetail{ID: s.ID, Name: s.Name, Argv: s.Argv, Cwd: s.Cwd, SecretEnv: s.SecretEnvNames, AgentAuth: s.AgentAuth, Labels: s.Labels,
 			Workspace: s.Workspace, LogMaxSize: s.LogMaxBytes}
 		if o := s.OwnerName(); o != "" {
 			d.Owner = b.Scrub.Hash(pii.KindUser, o)

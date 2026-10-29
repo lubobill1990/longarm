@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	"github.com/lubobill1990/longarm/internal/agentauth"
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/telemetry"
@@ -60,7 +62,10 @@ Tools: fleet_status, fleet_exec, fleet_job_submit, fleet_job_wait,
 fleet_job_logs, fleet_job_kill, fleet_read, fleet_write, fleet_sync,
 fleet_forward, fleet_link. Secrets for jobs are taken by name from this process's
 environment (secret_env); only names listed in LONGARM_MCP_SECRETS may be used:
-  claude mcp add longarm -e LONGARM_MCP_SECRETS=GH_TOKEN -- longarm mcp`,
+  claude mcp add longarm -e LONGARM_MCP_SECRETS=GH_TOKEN -- longarm mcp
+Agent credentials (agent_auth, docs/usage.md#agent-credentials) are
+forwarded for the agents in LONGARM_MCP_AGENT_AUTH (default claude,copilot;
+gh only when listed; none = off).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := openSession()
@@ -225,6 +230,7 @@ type cmdSpec struct {
 	Env       map[string]string `json:"env,omitempty" jsonschema:"environment variables"`
 	SecretEnv []string          `json:"secret_env,omitempty" jsonschema:"names of environment variables of the longarm mcp process to pass as secrets (NAME or NAME=LOCALVAR); only names the operator allowed in LONGARM_MCP_SECRETS work; values are redacted from logs and never stored on the worker's disk"`
 	Require   map[string]string `json:"require,omitempty" jsonschema:"labels the worker must have, e.g. {\"os\":\"linux\"} (auto placement)"`
+	AgentAuth []string          `json:"agent_auth,omitempty" jsonschema:"forward coding-agent credentials of this machine: auto (default: when argv[0] is claude or copilot), claude, copilot, gh or none; memory-only on the worker and redacted. Never to another user's worker with shared isolation"`
 }
 
 type execIn struct {
@@ -305,6 +311,11 @@ func (t *mcpTools) submitJob(ctx context.Context, spec cmdSpec, name, repo, ref,
 		conn.Close()
 		return "", nil, nil, err
 	}
+	agentAuth, env, sec, err := forwardAgentAuth(ctx, t.s, conn, worker, argv, agentAuthOpts{modes: spec.AgentAuth, allowed: mcpAgentAuthAllowed()}, spec.Env, sec)
+	if err != nil {
+		conn.Close()
+		return "", nil, nil, err
+	}
 	ws, err := jobWorkspace(ctx, conn, repo, ref, "", nil)
 	if err != nil {
 		conn.Close()
@@ -317,7 +328,8 @@ func (t *mcpTools) submitJob(ctx context.Context, spec cmdSpec, name, repo, ref,
 	if po.repo != "" {
 		labels[sched.LabelRepo] = po.repo
 	}
-	req := &pb.SubmitRequest{Spec: &pb.JobSpec{Id: id, Name: name, Argv: argv, Cwd: spec.Cwd, Env: spec.Env, Labels: labels, Workspace: ws}, SecretEnv: sec}
+	req := &pb.SubmitRequest{Spec: &pb.JobSpec{Id: id, Name: name, Argv: argv, Cwd: spec.Cwd, Env: env, Labels: labels, Workspace: ws}, SecretEnv: sec,
+		AgentAuth: agentAuth}
 	var job *pb.Job
 	err = client.Retry(ctx, 30*time.Second, nil, func(ctx context.Context, _ func()) error {
 		c, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -840,6 +852,24 @@ func (t *mcpTools) forward(ctx context.Context, _ *mcp.CallToolRequest, in forwa
 		return nil, conv(r.Forwards), nil
 	}
 	return nil, forwardOut{}, fmt.Errorf("unknown action %q", in.Action)
+}
+
+// mcpAgentAuthAllowed are the agents whose credentials MCP tools may
+// forward (agent_auth): LONGARM_MCP_AGENT_AUTH, comma-separated (default
+// "claude,copilot"; "none" = no agent credentials). gh - a GitHub token
+// for the job - only when the operator lists it.
+func mcpAgentAuthAllowed() []string {
+	v, ok := os.LookupEnv("LONGARM_MCP_AGENT_AUTH")
+	if !ok {
+		return []string{agentauth.Claude, agentauth.Copilot}
+	}
+	out := []string{}
+	for _, n := range strings.Split(v, ",") {
+		if n = strings.ToLower(strings.TrimSpace(n)); slices.Contains(agentauth.Agents, n) {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // mcpSecretEnv resolves secret_env for MCP tools. The model chooses the

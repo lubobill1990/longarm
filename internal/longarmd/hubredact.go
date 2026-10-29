@@ -30,6 +30,7 @@ func redactJob(j *pb.Job) *pb.Job {
 			}
 		}
 		s.Name, s.Argv, s.Cwd, s.Env, s.SecretEnvNames, s.Workspace = "", nil, "", nil, nil, nil
+		s.AgentAuth = nil
 	}
 	j.Workdir, j.Reason = "", "" // a start failure's reason names the program
 	return j

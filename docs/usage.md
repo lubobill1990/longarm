@@ -239,7 +239,7 @@ The job's own outcome comes from `jobs --json` (`state`, `exitCode`,
 ```json
 {"version": "v1.8.0", "features": ["exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label", "git-auth-forward",
   "session-start", "session-send", "session-send-if-idle", "session-stop", "sessions-json-v2", "tail", "run-session",
-  "job-id-short", "jobs-mine", "doctor-json", "worker-update", "ls-version"]}
+  "job-id-short", "jobs-mine", "doctor-json", "worker-update", "ls-version", "agent-auth"]}
 ```
 
 (indented in the real output). A program checks `features` instead of
@@ -269,6 +269,7 @@ exit 255) has none of these features.
 | `doctor-json` | `longarm doctor --json` / `longarmd doctor --json` (see [`doctor --json`](#doctor---json)) |
 | `worker-update` | `longarm worker update <worker> [--latest\|--version X] [--wait] [--json] [--auto on\|off]` (the worker must also support it: `machine-update` in its `Node.Info` features), see [Updating](#updating-longarm-worker-update-and-the-longarm-update-service) |
 | `ls-version` | `longarm ls` has the VERSION column; `ls --json` carries `version` and `updateAvailable` (`{"version", "reason"}`) |
+| `agent-auth` | `run` / `exec` / `session start` / `attach --agent-auth`, `--agent-auth-shared-ok`, `--copilot-account`, MCP `agent_auth` (the worker must also support it: `agent-auth` in its `Node.Info` features), see [Agent credentials](#agent-credentials---agent-auth) |
 
 The session and tail features also need the worker's (`session-start`,
 `session-send`, `session-send-if-idle`, `session-stop`, `session-info`,
@@ -364,6 +365,190 @@ Failure and retries (same `--id`):
   exit 2.
 
 Detached jobs work as usual: `run` returns once the job was submitted.
+
+### Agent credentials (`--agent-auth`)
+
+When longarm starts Claude Code or Copilot CLI on a worker, it forwards
+that agent's credentials from this machine with the job. Workers then need
+no agent logins of their own, and the credentials are not stored on them.
+The credentials travel like `--secret-env`: they go worker-direct (never
+through the hub), stay in memory on the worker, are put into the process
+environment, and are redacted from the job's log and the session
+transcript.
+
+```sh
+longarm run w1 --wait -- claude -p "fix the flaky test" --dangerously-skip-permissions
+longarm run w1 --wait -- copilot -p "fix the flaky test" --allow-all-tools
+longarm session start w1 -s fix --repo . -- claude
+longarm run w1 --agent-auth claude,gh -- pwsh -c "claude -p 'open a PR'"
+```
+
+| flag | |
+|---|---|
+| `--agent-auth auto\|claude\|copilot\|gh\|none` | What to forward. Repeatable or comma-separated (`--agent-auth auto,gh`). Default: `[agent_auth] default` in workers.toml, else `auto`. |
+| `--agent-auth-shared-ok` | Forward to somebody else's worker with shared isolation as well (see [Which workers](#which-workers-get-them)). |
+| `--copilot-account NAME` | Forward this account of the Copilot token pool. |
+
+The flags apply to `run`, `exec`, `session start` and `attach`. `attach`
+forwards only when it may create the session: attaching to a running
+session sends nothing. The MCP tools `fleet_exec` and `fleet_job_submit`
+take `agent_auth` (a list) and forward only the agents in
+`LONGARM_MCP_AGENT_AUTH` (default `claude,copilot`; `gh` only when listed;
+`none` turns it off). They never forward to a worker that would need
+`--agent-auth-shared-ok`.
+
+**`auto`** forwards an agent's credentials when the command's program is
+that agent. It looks at the base name of `argv[0]` only, case-insensitive
+and without `.exe` / `.cmd` / `.bat` / `.ps1` / `.js`: `claude` or
+`copilot`. It does not look into a command wrapped in a shell
+(`pwsh -c "claude ..."`, `sh -c`, `cmd /c`, `npx`), nor into MCP's
+`command` (it runs in a shell). For those, name the agent:
+`--agent-auth claude`. `gh` is never forwarded automatically. `none`
+forwards nothing.
+
+To turn forwarding off globally (then only an explicit `--agent-auth`
+forwards), or to choose accounts, use workers.toml:
+
+```toml
+[agent_auth]
+default = "none"              # "auto" (default), "none", or a list such as "claude,copilot"
+copilot_gh_user = "octocat"   # Copilot gets `gh auth token --user octocat`
+gh_user = "octocat"           # --agent-auth gh: `gh auth token --user octocat`
+```
+
+#### Where the credentials come from
+
+- **Claude Code**:
+  - The `env` block of `settings.json` in `$CLAUDE_CONFIG_DIR`, else in
+    `~/.claude`. This is where a proxy setup keeps `ANTHROPIC_BASE_URL`,
+    `ANTHROPIC_AUTH_TOKEN` and the model ids.
+    - Names with `TOKEN`, `KEY`, `SECRET` or `PASSWORD` in them, and
+      `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY` and
+      `CLAUDE_CODE_OAUTH_TOKEN`, go as secrets.
+    - The rest go as plain job environment. Plain values are stored in
+      `job.json` and shown by `jobs --json`, like `-e`.
+  - `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` from longarm's own
+    environment. These win over the file.
+  - Signed in with a Claude subscription only (`~/.claude/.credentials.json`,
+    or the macOS keychain), with none of the above: nothing is forwarded.
+    longarm says: run `claude setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN`,
+    or use an API key or proxy token. The subscription's OAuth refresh
+    token is never copied: it is a long-lived account credential
+    ([why](security.md#forwarded-agent-credentials)).
+  - With `CLAUDE_CODE_USE_BEDROCK` / `_VERTEX` / `_FOUNDRY` in the env block,
+    the env block is forwarded. The cloud credentials are not: they are the
+    worker's own.
+- **Copilot CLI**: the first of these is forwarded as `COPILOT_GITHUB_TOKEN`:
+  1. `--copilot-account NAME`: that account of the token pool.
+  2. `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` from longarm's
+     environment.
+  3. `[agent_auth] copilot_gh_user`: `gh auth token --user <login>`.
+  4. `gh auth token`: gh's active account.
+  5. The token pool `~/.copilot/accounts/tokens.json`, if there is one:
+     `{"<account>": "<token>", ...}` (or `{"<account>": {"token": "..."}}`).
+     Accounts are used in turn, by name. Only the position is kept, in the
+     longarm config dir; tokens are not.
+
+  Copilot CLI takes gh's OAuth tokens (`gho_...`) and fine-grained PATs
+  with the Copilot permission, not classic PATs (`ghp_...`).
+- **gh** (`--agent-auth gh`, opt-in only, never with `auto`): `GH_TOKEN`
+  for agents that use git or gh themselves. It comes from `gh auth token
+  --user <gh_user>` if configured, else from `GH_TOKEN` / `GITHUB_TOKEN`,
+  else from `gh auth token`. This gives the job the token's full scope. To
+  fetch the job's repository, `--git-auth forward` is enough; it never
+  reaches the job.
+
+What you give yourself wins: an `-e NAME=...` or `--secret-env NAME` of
+the same name replaces the forwarded value.
+
+With `auto`, an agent without credentials on this machine is a note on
+stderr, and the command runs without them. With an agent named explicitly,
+it is an error (exit 2). longarm names on stderr what it forwards and from
+where (`forwarding agent credentials to w1: claude: settings.json env`),
+never a value.
+
+#### On the worker
+
+- Credentials are handled like `--secret-env`. They are in memory only,
+  then in the process environment. They are redacted from `out.log`
+  (`logs`) and the session transcript (`logs --session`), and are never in
+  `job.json`, the audit log or longarmd's log.
+  - `jobs --json` (`spec.agentAuth`), `sessions --json` (`agentAuth`),
+    `job.json` (`agent_auth`) and the audit log (`agent_auth`) name the
+    forwarded agents, never values.
+  - `secretEnvNames` lists the secret variables' names.
+  - The live stream of an attached terminal is not redacted: it is your
+    own terminal.
+- With Copilot credentials, the job, session or exec gets a private
+  **`COPILOT_HOME`** of its own:
+  - `<data>/agent-home/<j|s|x>-<id>-<random>`, inside the user's space with
+    per-user isolation, accessible to that account only. Parallel jobs
+    don't share Copilot state, and nothing leaks between jobs or users.
+  - Copilot keeps its config, session state and logs there. It may also
+    cache the token there. That is the only place a forwarded credential
+    can reach the worker's disk, and longarm does not write it.
+  - The directory goes away with the job or session (GC, `[gc] keep`;
+    `longarm admin gc`, or a session replaced by a new one of its name) and
+    right after an `exec`. Leftovers are collected after an hour.
+  - `-e COPILOT_HOME=<dir>` keeps the account's own `~/.copilot` (or
+    another directory) instead. `handoff` does this to resume a Copilot
+    session it copied there.
+  - Note that the state of a session run with a private home is not in
+    the account's `~/.copilot`, so the worker-side session list doesn't
+    show it.
+- The worker must announce the `agent-auth` feature (`Node.Info`).
+  - Explicit `--agent-auth` on an older longarmd: exit 2.
+  - `auto` on an older longarmd: the command runs without forwarded
+    credentials, with a note.
+
+#### Which workers get them
+
+- **Your own workers**, and workers without a hub record (workers.toml):
+  yes.
+- **Somebody else's worker** (shared with you, or a fleet worker) **with
+  per-user isolation**: yes. The job runs as your own OS account there.
+- **Somebody else's worker with shared isolation**: refused (exit 2).
+  Other users' jobs run there as the same OS account and could read the
+  job's environment. `--agent-auth-shared-ok` forwards anyway, with a
+  warning.
+- **Admin workers** (they run as SYSTEM): never with `auto`, which only
+  prints a note. Only when the agent is named (`--agent-auth claude`), and
+  only to your own admin worker.
+
+"Your own" is the hub's word, as the owner it records. With end-to-end
+trust on the client (`longarm trust require on`), it is only a worker
+whose node key you endorsed with your own user key. A worker endorsed by
+another user you trust, or one the hub merely says is yours, then counts
+as somebody else's. Isolation is always the worker's own report over the
+verified connection. Under end-to-end trust, so is the admin flag
+([security](security.md#forwarded-agent-credentials)).
+
+#### Recommended invocations for unattended agent jobs
+
+Agents ask before using tools. A job has nobody to answer, so it needs
+permission flags. longarm doesn't add them: choose them yourself.
+Bypass/yolo modes let the agent run anything the job's account can,
+including reading the forwarded credentials. Use them on workers and
+repositories you trust.
+
+```sh
+# Claude Code: prompt from a file (memory-only on the worker), streamed JSON
+# output, all tools allowed. Narrower: --permission-mode acceptEdits, or
+# --allowedTools "Bash(go test:*)" Edit.
+longarm run w1 --repo . --stdin-file prompt.md --wait --name fix-x -- \
+  claude -p --dangerously-skip-permissions --output-format stream-json --verbose --session-id <uuid>
+# retry with the same conversation:  ... -- claude -p --resume <uuid> ...
+
+# Copilot CLI: all tools, no questions, no colors, logs in the job's dir.
+longarm run w1 --repo . --wait -e COPILOT_AUTO_UPDATE=false -- \
+  copilot -p "$(cat prompt.md)" --yolo --no-ask-user --no-color
+# narrower: --allow-all-tools without --yolo, or --allow-tool / --deny-tool
+```
+
+- `--wait` / `--follow` return the agent's exit code.
+- `logs <id>` shows Claude's stream-json lines or Copilot's transcript.
+- `--model` picks a model for either agent.
+- Give parallel agents separate worktrees (`--repo`) or directories.
 
 ### Interactive sessions (tmux-like)
 

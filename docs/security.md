@@ -995,6 +995,166 @@ feature: a remote the worker account can read is readable for every user
 of a shared worker. Per-user isolation keeps mirrors per user and skips the
 check (a user's mirror only ever holds what that user fetched or shipped).
 
+## Forwarded agent credentials
+
+`longarm run / exec / session start / attach --agent-auth` (and `auto`, the
+default, when the command is `claude` or `copilot`) forwards the
+credentials of coding agents from the client to a job
+([docs/usage.md](usage.md#agent-credentials---agent-auth)). Workers need no
+agent logins, and the credentials are not stored on them.
+
+**What is forwarded, and for how long it is good.**
+
+- **Claude Code.** The `env` block of the client's `settings.json` and
+  `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` from its environment.
+  - An API key or a proxy token is good until it is revoked.
+  - A `claude setup-token` token is good for about a year and can be
+    revoked on its own.
+- **Copilot CLI.** A GitHub token (`COPILOT_GITHUB_TOKEN`). gh's OAuth
+  token is good until revoked and carries all the scopes gh has, not only
+  Copilot.
+- **gh** (opt-in). The same kind of GitHub token, as `GH_TOKEN`.
+
+**Never forwarded: a Claude subscription's OAuth refresh token**
+(`~/.claude/.credentials.json`, the macOS keychain).
+
+- A refresh token is the account's long-lived credential. Whoever holds it
+  can mint new access tokens for as long as the session lasts: it is the
+  login itself.
+- It cannot be limited to one job or revoked for one machine. Revoking it
+  means signing out everywhere.
+- It rotates when used: a worker refreshing with a copy can invalidate the
+  client's own login, or the other way round.
+- Copying it to a worker would leave the account usable from that machine
+  long after the job.
+- longarm skips it and says what to do instead. `claude setup-token`
+  makes a separate token for this purpose that can be revoked on its
+  own. Or use an API key or a proxy token.
+
+**Who sees it.**
+
+- **The client.** It reads `settings.json`, the environment, `gh auth
+  token` (through a pipe) and the optional Copilot token pool, and holds
+  the values in memory until the request is sent. It never prints them.
+  stderr names the agents and the sources (`claude: settings.json env`);
+  a malformed settings file is reported without quoting it.
+- **The hub: never.** The credentials travel only in the worker-direct
+  request (`secret_env`), inside the end-to-end mTLS connection to the
+  worker. Placement only picks the worker.
+  - The hub's job index and its audit trail get the job spec: the
+    forwarded agents' names (`agent_auth`), the names of the secret
+    variables and, as for `-e`, the plain settings (for example
+    `ANTHROPIC_BASE_URL`), unless the worker hides job details.
+  - Telemetry records the agents' names only.
+- **The worker.**
+  - longarmd holds the credentials in memory and hands them to the job's
+    shim over its stdin pipe. They are never in `job.json`, the status,
+    the audit log (`agent_auth` and `secret_keys` are names only) or
+    longarmd's log.
+  - The job's log and session transcript mask their exact values. Like
+    any redaction, this cannot catch a transformed value (base64, split
+    across writes by the program itself).
+- **The job, and everything it runs.** The agent, its tools, its MCP
+  servers, and every command it executes can read the job's environment.
+  This is the point of forwarding, and the main risk:
+  - an agent running unattended in bypass/yolo mode will run whatever a
+    prompt, a repository file or a web page talks it into, including
+    sending the credentials somewhere;
+  - forward only what the job needs (`gh` is opt-in for that reason);
+  - prefer narrow permission flags;
+  - use tokens you can revoke.
+- **Copilot's own cache.** Copilot CLI may persist what it gets in its
+  `COPILOT_HOME`.
+  - longarm gives every job, session and exec a fresh private
+    `COPILOT_HOME` under the worker's data dir
+    (`agent-home/<j|s|x>-<id>-<random>`). It is accessible only to the
+    account the job runs as.
+  - It is removed together with the job or session (GC after `[gc] keep`,
+    `longarm admin gc`), right after an exec, or after an hour if nothing
+    refers to it.
+  - Until then, whatever Copilot wrote there is on the worker's disk.
+  - `-e COPILOT_HOME=...` opts out of the private home, and Copilot then
+    writes where you said.
+- **The worker's administrators** (and root / SYSTEM) can read any
+  process's environment. Forward only to workers whose administrators you
+  trust with the token.
+
+**Which workers.** The client decides before anything is read or sent
+(`internal/agentauth.Check`). It uses the worker's `Node.Info` (its
+isolation, its owner, whether it is an admin worker), the hub's record of
+the worker, and, under end-to-end trust, the worker certificate's
+endorsement.
+
+- **Your own workers, and workers the hub doesn't know** (workers.toml):
+  yes. Under end-to-end trust, "your own" means endorsed by your user key
+  (see below).
+- **Somebody else's worker** (shared with you, or a fleet worker):
+  - **with per-user isolation:** yes. The job runs as your own OS
+    account, and other users' processes cannot read its environment (see
+    [Per-user OS isolation](#per-user-os-isolation-on-workers)).
+  - **with shared isolation:** refused. Every user's jobs run as the same
+    OS account, so another user's job could read yours.
+    `--agent-auth-shared-ok` overrides this with a warning. The MCP tools
+    cannot override it.
+- **Admin workers** (SYSTEM): never with `auto`. Only when the agent is
+  named, and only to your own admin worker.
+
+**Whose word counts.**
+
+- **Isolation** comes only from the worker's own `Node.Info`, over the
+  mTLS connection the client verified. The hub's listing is not used for
+  it.
+- **The admin flag** comes from the worker's own report. Without
+  end-to-end trust, the hub's record counts too: either one makes the
+  worker an admin worker, which is the stricter choice. Under end-to-end
+  trust, only the endorsed worker's own report counts. The isolation mode is the worker's local
+  configuration (`[isolation] mode`), so even under end-to-end trust it is
+  the worker's own assertion. That is acceptable: under end-to-end trust,
+  the worker is one the user endorsed.
+- **Ownership without end-to-end trust:** the hub's record of the worker's
+  owner counts. So does the owner the worker reports, which the hub pushed
+  to it. This is by design: the hub runs the CA and could issue any worker
+  certificate anyway, so a client that does not require end-to-end trust
+  trusts the hub, ownership claims included. A malicious hub could claim
+  that a shared worker is yours and so get your agent credentials
+  forwarded there without `--agent-auth-shared-ok`. If you don't trust
+  the hub with that, turn end-to-end trust on.
+- **Ownership with end-to-end trust** (`longarm trust require on`): neither
+  the hub's record nor the worker's (hub-pushed) owner counts.
+  - A worker is yours only if its certificate carries an endorsement of
+    its node key signed by this device's own user key (`longarm trust
+    init` / `import-key`). That is the same endorsement the TLS check
+    verifies, which no hub can forge.
+  - A worker endorsed by another user you trust (`longarm trust
+    add-user`), or claimed to be yours without your endorsement, is
+    somebody else's. It gets credentials only with per-user isolation, or
+    with `--agent-auth-shared-ok`.
+  - An admin worker gets credentials only if it is endorsed by you.
+
+**The decision is bound to the node it was made for.** The client checks
+the rules on one RPC. The credentials then go out on later RPCs, which
+gRPC may send over a new transport after a reconnect or a re-raced leg. So
+once it decides to forward, the client pins the connection to the node
+whose certificate it checked:
+- that node's end-to-end trust node key, else the certificate itself;
+- every later transport of the operation must present that node, or the
+  dial fails ("worker identity changed", not retried) before a single call
+  goes out on it.
+
+This covers `run`, `exec`, `session start`, `attach` and the MCP tools,
+and their retries. Without it, a hub could route the check to your own
+worker and a reconnect to another node of the same name: one endorsed by
+another user you trust.
+
+`attach` sends secrets and agent credentials only in its first open (the
+one that may create the session). A re-attach after a disconnect carries
+none and never re-creates the session.
+
+The worker does not check these rules: it cannot tell a forwarded agent
+credential from any other `--secret-env`. They protect the user's own
+credentials from the user's own mistakes. Isolation between users is what
+the worker enforces.
+
 ## What is not isolated (known gaps)
 
 Level 2 keeps users apart through the OS's user separation, not through

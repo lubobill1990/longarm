@@ -94,6 +94,9 @@ func (c *Collector) Run(ctx context.Context, o Options) Result {
 		if wt != "" {
 			size += dirSize(wt)
 		}
+		if h := cd.job.Spec.AgentHome; h != "" {
+			size += dirSize(h) // removed with the job
+		}
 		name := cd.kind + "/" + cd.job.Spec.ID
 		if !o.DryRun {
 			// this generation only: a session that replaced it keeps its data
@@ -141,6 +144,7 @@ func (c *Collector) Run(ctx context.Context, o Options) Result {
 
 	c.collectStaging(o, &res)
 	c.collectOrphanWorktrees(ctx, o, &res)
+	c.collectOrphanAgentHomes(o, &res)
 	if low() {
 		c.collectMirrors(o, &res, low)
 	}
@@ -210,6 +214,48 @@ func (c *Collector) collectOrphanWorktrees(ctx context.Context, o Options, res *
 			}
 		}
 		res.Removed = append(res.Removed, "worktrees/"+e.Name())
+		res.Freed += size
+	}
+}
+
+// collectOrphanAgentHomes removes agent-home/<dir>s (private COPILOT_HOMEs
+// of forwarded Copilot credentials) that no job or session refers to any
+// more - left by a submit that failed or found its job existing, or by an
+// exec that longarmd did not live to clean up. A job's own goes with it
+// (supervisor.Remove).
+func (c *Collector) collectOrphanAgentHomes(o Options, res *Result) {
+	root := filepath.Join(c.DataDir, jobs.AgentHomeDir)
+	ents, err := os.ReadDir(root)
+	if err != nil || len(ents) == 0 {
+		return
+	}
+	used := map[string]bool{}
+	for _, m := range []*supervisor.Manager{c.Jobs, c.Sessions} {
+		if m == nil {
+			continue
+		}
+		for _, j := range m.List(nil, 0) {
+			if h := j.Spec.AgentHome; h != "" {
+				used[filepath.Clean(h)] = true
+			}
+		}
+	}
+	for _, e := range ents {
+		p := filepath.Join(root, e.Name())
+		if used[p] {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil || time.Since(fi.ModTime()) < time.Hour { // may be submitting right now
+			continue
+		}
+		size := dirSize(p)
+		if !o.DryRun {
+			if err := os.RemoveAll(p); err != nil {
+				continue
+			}
+		}
+		res.Removed = append(res.Removed, jobs.AgentHomeDir+"/"+e.Name())
 		res.Freed += size
 	}
 }

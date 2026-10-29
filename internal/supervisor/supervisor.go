@@ -410,7 +410,8 @@ func sameSpec(a, b *jobs.Spec) bool {
 		maps.Equal(a.Env, b.Env) && slices.Equal(a.SecretEnvNames, b.SecretEnvNames) &&
 		a.MemLimitBytes == b.MemLimitBytes && maps.Equal(a.Labels, b.Labels) &&
 		a.Pty == b.Pty && sameWorkspace(a.Workspace, b.Workspace) && a.Owner == b.Owner &&
-		slices.Equal(a.ShareTeams, b.ShareTeams) && a.CPULimit == b.CPULimit && a.StdinBytes == b.StdinBytes
+		slices.Equal(a.ShareTeams, b.ShareTeams) && a.CPULimit == b.CPULimit && a.StdinBytes == b.StdinBytes &&
+		slices.Equal(a.AgentAuth, b.AgentAuth) // not AgentHome: each submit makes its own
 }
 
 // sameWorkspace compares what a workspace resolves to - repository, url,
@@ -835,9 +836,20 @@ func (m *Manager) removeLocked(id string, created time.Time) error {
 	m.mu.Unlock()
 	e.rec.Lock()
 	defer e.rec.Unlock()
+	if h := e.spec.AgentHome; h != "" {
+		// the agent's own state (Copilot may cache the forwarded token
+		// there): goes with the job
+		removeAllRetry(h)
+	}
+	return removeAllRetry(string(e.dir))
+}
+
+// removeAllRetry is os.RemoveAll, retried for a second (Windows: a reader
+// may hold a file for a moment).
+func removeAllRetry(dir string) error {
 	var err error
-	for i := 0; i < 20; i++ { // Windows: a reader may hold a file for a moment
-		if err = os.RemoveAll(string(e.dir)); err == nil {
+	for i := 0; i < 20; i++ {
+		if err = os.RemoveAll(dir); err == nil {
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)

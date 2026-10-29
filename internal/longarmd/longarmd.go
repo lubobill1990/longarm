@@ -547,7 +547,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		Audit: audit, Log: log, Shutdown: cancel,
 		Revoked: revoked, Conns: conntrack.New(), Access: cfg.Access, WorkerAccess: workerAccess,
 		ForwardTargets: cfg.Forward.Targets, Trust: trustSrc,
-		MaxTails: cfg.Files.MaxTails, MaxTailsPerUser: cfg.Files.MaxTailsPerUser,
+		MaxTails: cfg.Files.MaxTails, MaxTailsPerUser: cfg.Files.MaxTailsPerUser, AdminWorker: adminWorker,
 	}
 	srv.UnaryInterceptors, srv.StreamInterceptors = wtel.interceptors()
 	trustSrc.Denied = func(err error) {

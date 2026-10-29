@@ -23,6 +23,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/client"
+	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -317,6 +318,33 @@ func TestPerUserIsolation(t *testing.T) {
 	secretFile := filepath.Join(homeA, "secret.txt")
 	if out, code := execAs(t, ca, w.helper, "write", secretFile, "topsecret"); code != 0 {
 		t.Fatalf("alice writes her file: %s", out)
+	}
+
+	// --- forwarded Copilot credentials: a private COPILOT_HOME in alice's
+	// space, writable by her account (the fake agent caches the token
+	// there), not readable by bob's, gone with the job
+	fakeCop := filepath.Join(w.binDir, exeName("copilot"))
+	copyExe(t, w.helper, fakeCop)
+	jobAg := "PUAGENT" + puRand(4)
+	if _, err := ca.Jobs().Submit(ctxT(t), &pb.SubmitRequest{Spec: &pb.JobSpec{Id: jobAg, Argv: []string{fakeCop}},
+		SecretEnv: map[string]string{"COPILOT_GITHUB_TOKEN": e2eCopilotValue}, AgentAuth: &pb.AgentAuth{Agents: []string{"copilot"}, CopilotHome: true}}); err != nil {
+		t.Fatal(err)
+	}
+	var agLog string
+	waitFor(t, "the agent job", 60*time.Second, func() bool {
+		agLog, _ = readLog(t, ca, jobAg)
+		return strings.Contains(agLog, "copilot_home")
+	})
+	time.Sleep(500 * time.Millisecond) // the cache write
+	agLog, _ = readLog(t, ca, jobAg)
+	_, after, _ := strings.Cut(agLog, "copilot_home ")
+	agHome := strings.TrimSpace(strings.SplitN(after, "\n", 2)[0])
+	if !strings.HasPrefix(agHome, w.dataDir) || filepath.Base(filepath.Dir(agHome)) != jobs.AgentHomeDir ||
+		strings.Contains(agLog, "cache error") || strings.Contains(agLog, e2eCopilotValue) {
+		t.Fatalf("per-user agent job:\n%s", agLog)
+	}
+	if out, code := execAs(t, cb, w.helper, "cat", filepath.Join(agHome, "token-cache.json")); code == 0 || strings.Contains(out, e2eCopilotValue) {
+		t.Fatalf("bob reads alice's COPILOT_HOME: %d %s", code, out)
 	}
 
 	// --- alice's job (a dev server with a secret), a shared job, a session
