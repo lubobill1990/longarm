@@ -203,7 +203,7 @@ func printRollout(r *pb.Rollout) {
 			}
 			names += fmt.Sprintf("+%d of other users", hidden)
 		}
-		fmt.Printf("  %-9s %d: %s\n", k, n, names)
+		fmt.Printf("  %-9s %s\n", k, names)
 	}
 	line("canary", r.Canary, r.CanaryCount)
 	line("targeted", r.Targeted, r.TargetedCount)
