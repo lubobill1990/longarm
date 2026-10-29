@@ -146,9 +146,7 @@ func copyExe(t *testing.T, src, dst string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dst, b, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExe(t, dst, b)
 }
 
 // userDir creates a client config dir with a certificate of user (device

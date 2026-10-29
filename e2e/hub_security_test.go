@@ -372,7 +372,32 @@ func copyBin(t *testing.T, src, dst string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dst, b, 0o755); err != nil {
+	writeExe(t, dst, b)
+}
+
+// writeExe writes an executable that the test runs right after. On Unix the
+// file is written by a child process (cp): a process forked by a parallel
+// test in the window before its exec inherits every open fd of this
+// process, and while it holds dst's write fd, exec of dst fails with
+// ETXTBSY ("text file busy", golang.org/issue/22315).
+func writeExe(t *testing.T, dst string, b []byte) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		if err := os.WriteFile(dst, b, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	src := dst + ".src"
+	if err := os.WriteFile(src, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(src)
+	os.Remove(dst)
+	if out, err := exec.Command("cp", src, dst).CombinedOutput(); err != nil {
+		t.Fatalf("cp %s: %v %s", dst, err, out)
+	}
+	if err := os.Chmod(dst, 0o755); err != nil {
 		t.Fatal(err)
 	}
 }

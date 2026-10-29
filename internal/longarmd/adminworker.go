@@ -141,14 +141,19 @@ func adminHandoffStep(dataDir string, log *slog.Logger) {
 		return
 	}
 	if b, err := os.ReadFile(filepath.Join(dir, AdminResponseFile)); err == nil {
-		os.Remove(filepath.Join(dir, AdminResponseFile))
+		// The response goes last: AdminWorkerTarget.Install takes "no
+		// response and no error" for success, so the error must be there
+		// before the response is gone (removed first, a refused enrollment
+		// could be reported as installed).
 		if err := installAdminResponse(dataDir, hf, b); err != nil {
 			log.Error("admin worker: the enrollment the sign-in left is unusable", "err", err)
 			os.WriteFile(filepath.Join(dir, AdminErrorFile), []byte(err.Error()+"\n"), 0o644)
+			os.Remove(filepath.Join(dir, AdminResponseFile))
 			return
 		}
 		os.Remove(filepath.Join(dir, AdminRequestFile))
 		os.Remove(filepath.Join(dir, AdminErrorFile))
+		os.Remove(filepath.Join(dir, AdminResponseFile))
 		log.Info("admin worker: signed in", "hub", hf.Address)
 		return
 	}

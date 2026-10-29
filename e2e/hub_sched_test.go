@@ -105,6 +105,10 @@ func TestHubScheduler(t *testing.T) {
 		// small job may not fit next to it once this shared machine's free
 		// memory shrinks. Drain onA: small jobs go to onB.
 		h.mustLongarm(h.client, "kill", idB)
+		// the hub releases it once it learns the job ended (asynchronously)
+		h.waitNode(t, onB, "B's reservation released", func(n map[string]any) bool {
+			return n["reserved_gb"] == nil || fmt.Sprint(n["reserved_gb"]) == "0"
+		})
 		h.mustLongarm(h.admin, "admin", "drain", onA)
 		r := run("--mem-gb", small, "--no-queue", "--wait", "--", bins.helper, "print", "1", "0", "0")
 		if r.code != 0 || placedOn(t, r.stderr) != onB {

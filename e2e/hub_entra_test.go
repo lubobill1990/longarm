@@ -40,9 +40,7 @@ func TestHubEntraLogin(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(azPath, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExe(t, azPath, []byte(script))
 	azEnv := []string{"LONGARM_AZ=" + azPath}
 
 	// a user

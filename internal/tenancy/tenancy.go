@@ -26,6 +26,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/platform"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -306,7 +307,9 @@ func (p *Policy) Set(np *pb.TenancyPolicy) error {
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Clean(path))
+	// (ReplaceFile: on Windows a reader holding the file open makes a plain
+	// rename fail with "Access is denied")
+	return platform.ReplaceFile(tmp, filepath.Clean(path))
 }
 
 // Get returns a copy of the policy.

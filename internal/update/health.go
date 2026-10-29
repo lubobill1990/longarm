@@ -166,6 +166,7 @@ func Watch(ctx context.Context, dataDir string, log *slog.Logger) error {
 		log = slog.Default()
 	}
 	fails := 0
+	self := os.Getpid()
 	for {
 		st, err := LoadState(dataDir)
 		if err != nil {
@@ -189,6 +190,13 @@ func Watch(ctx context.Context, dataDir string, log *slog.Logger) error {
 		fails = 0
 		if st == nil {
 			log.Info("update watchdog: no update in progress")
+			return nil
+		}
+		if st.WatchdogPID != 0 && st.WatchdogPID != self {
+			// A newer update (with its own watchdog) replaced the one this
+			// watchdog was started for: two watchdogs rolling back the same
+			// files race each other and can leave a binary missing.
+			log.Info("update watchdog: superseded", "to", st.To, "watchdog", st.WatchdogPID)
 			return nil
 		}
 		var why string
