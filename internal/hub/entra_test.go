@@ -304,7 +304,7 @@ func TestEntraEntries(t *testing.T) {
 			t.Errorf("validEntraEntry(%q) != %v", e, want)
 		}
 	}
-	for upn, want := range map[string]string{"bolu1@microsoft.com": "bolu1", "First.Last@x.com": "firstlast",
+	for upn, want := range map[string]string{"alice@example.com": "alice", "First.Last@x.com": "firstlast",
 		"1abc@x.com": "u1abc", "averyveryverylongusername@x.com": "averyveryverylong", "@x.com": "user", "": "user",
 		"Zoë_O'Neil-2@x.com": "zo_oneil-2"} {
 		if got := entraUserName(upn); got != want || !pki.ValidUser(got) {
