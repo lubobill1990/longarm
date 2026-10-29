@@ -4,6 +4,21 @@
 
 ### Fixed
 
+- Windows: the firewall fix command pastes into PowerShell. The tray's
+  warning, `longarm doctor`, `longarm firewall status` and the relay
+  warnings printed `"C:\...\longarm.exe" firewall allow`, which PowerShell
+  rejects (`Unexpected token 'firewall'`); a quoted path now gets the call
+  operator (`& '...' firewall allow`, one helper for every printed command).
+  Paths are single-quoted literals with every quote PowerShell recognizes
+  (' and the typographic ‘ ’ ‚ ‛) doubled, so no directory name - `$`,
+  backticks, “ ” „ - can end the argument and inject a command into an
+  elevated shell; paths with control characters get no command. Doctor's
+  remarks are shell comments (`# elevated`), and the tray quotes commands
+  from older daemons again. The tray's firewall card has an **Allow**
+  button: one administrator prompt runs the installed longarm.exe's
+  `firewall allow` for the program the daemon or longarmd reports (only an
+  existing longarm.exe / longarmd.exe), then checks again; a copy another
+  app ships (TMIA Desktop's) is pointed out as such.
 - deploy/azure: `--recreate` can no longer take a hub down. A live
   `--headscale --recreate` deleted the container group, then ACI couldn't
   pull the sidecar from Docker Hub, and the retry (no group left to read the

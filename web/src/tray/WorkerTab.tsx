@@ -37,7 +37,7 @@ export function WorkerTab({ info, onNavigate }: { info: TrayInfo; onNavigate?: (
     return <JoinForm />
   }
   if (!info.worker.running) return <WorkerDown info={info} />
-  return <WorkerStatusView />
+  return <WorkerStatusView info={info} />
 }
 
 /** The local worker isn't running: start it the way it runs, or look at its log. */
@@ -71,7 +71,7 @@ function WorkerDown({ info }: { info: TrayInfo }) {
   )
 }
 
-function WorkerStatusView() {
+function WorkerStatusView({ info }: { info: TrayInfo }) {
   const st = usePoll(longarmdApi.status, 2000)
   const jobs = usePoll(() => longarmdApi.jobs(30), 3000)
   const { run, busy } = useAction()
@@ -92,7 +92,11 @@ function WorkerStatusView() {
   return (
     <div>
       <ErrorBox error={st.error} />
-      <FirewallWarning fw={s.firewall} />
+      <FirewallWarning
+        fw={s.firewall}
+        installDir={info.install_dir}
+        onAllow={info.firewall_fix ? () => trayApi.firewallAllow('worker') : undefined}
+      />
       <section className="wcard">
         <div className="head">
           <span className={`dot ${hubOk ? 'is-online' : 'is-offline'}`} style={{ background: hubOk ? 'var(--green)' : 'var(--red)' }} />

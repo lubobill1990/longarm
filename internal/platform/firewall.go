@@ -68,16 +68,34 @@ func quoteAll(ss []string) []string {
 // FirewallFixCommand is the command that fixes s (run elevated): longarm.exe's
 // `firewall allow` for the program, which removes its Block rules and adds
 // the allow rules. longarmExe is the longarm.exe to run ("" = "longarm" on PATH).
-func FirewallFixCommand(longarmExe, program string) string {
-	cmd := "longarm"
+// The line pastes into PowerShell (CommandLine); ErrUnsupportedChars when
+// a path can't be put on one safely.
+func FirewallFixCommand(longarmExe, program string) (string, error) {
+	exe := "longarm"
 	if longarmExe != "" {
-		cmd = `"` + longarmExe + `"`
+		exe = longarmExe
 	}
-	cmd += " firewall allow"
-	if program != "" && !sameFile(program, longarmExe) {
-		cmd += ` --program "` + program + `"`
+	return CommandLine(exe, FirewallAllowArgs(longarmExe, program)...)
+}
+
+// FirewallFixText is FirewallFixCommand for printing: the command, or why
+// there is none.
+func FirewallFixText(longarmExe, program string) string {
+	cmd, err := FirewallFixCommand(longarmExe, program)
+	if err != nil {
+		return "none: the " + err.Error() + "; allow it with the tray's Allow button or Windows Security"
 	}
 	return cmd
+}
+
+// FirewallAllowArgs are longarm's arguments that allow program
+// (`firewall allow`, plus --program unless it is longarmExe itself).
+func FirewallAllowArgs(longarmExe, program string) []string {
+	args := []string{"firewall", "allow"}
+	if program != "" && !sameFile(program, longarmExe) {
+		args = append(args, "--program", program)
+	}
+	return args
 }
 
 func sameFile(a, b string) bool {

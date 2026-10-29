@@ -2447,10 +2447,16 @@ connections then silently stay on relays. longarm detects this (and a missing
 allow rule) for the executable that punches - longarm.exe for `longarm daemon`,
 longarmd.exe for longarmd - and shows it with the fix command: `longarm daemon status`,
 `longarmd status`, a line under `longarm pool` and on stderr of `longarm ls` when legs are
-relayed, and a warning in the tray popup. The fix, in an elevated terminal:
+relayed, and a warning in the tray popup. The fix, in an elevated PowerShell:
 `longarm firewall allow` (removes the program's Block rules, adds the allow
 rules; `--program <path>` for longarmd.exe). `longarm firewall status` exits 1 when
-blocked or missing. macOS: the pkg adds
+blocked or missing. The commands longarm prints paste into PowerShell: a quoted
+path gets the call operator (`& 'C:\Program Files\Longarm\longarm.exe' firewall allow`).
+The tray's warning has an **Allow** button: one administrator prompt runs the
+installed longarm.exe's `firewall allow --program <the program the daemon or
+longarmd reports>` (only an existing longarm.exe / longarmd.exe), then checks
+again - also for a copy another app ships, which the card points out
+([troubleshooting](troubleshooting.md#windows-firewall--connections-stay-on-relays)). macOS: the pkg adds
 longarm/longarmd to the application firewall when it is on (`socketfilterfw --add
 /usr/local/bin/longarmd --unblockapp ...`). Linux: only if ufw/firewalld is active,
 allow the longarmd/longarm UDP ports or the interface (e.g. `ufw allow in on tailscale0`;

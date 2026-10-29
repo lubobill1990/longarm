@@ -79,7 +79,7 @@ func TestWorkerChecks(t *testing.T) {
 		{"by hand", func(f *fakeWorkerEnv) { f.mode = modeNone }, "run-mode", doctor.Warn, startByHandFix()},
 		{"hub down", func(f *fakeWorkerEnv) { f.status.Hub = &pb.HubLink{Address: "hub:7443", Error: "timeout"} }, "hub", doctor.Fail, "longarmd diag --upload"},
 		{"revoked", func(f *fakeWorkerEnv) { f.status.Hub = &pb.HubLink{Address: "hub:7443", Error: "certificate revoked"} }, "hub", doctor.Fail, "longarmd login --force"},
-		{"pending", func(f *fakeWorkerEnv) { f.status.Hub.NodeState = "pending" }, "hub", doctor.Warn, "longarm admin approve pc1  (an admin)"},
+		{"pending", func(f *fakeWorkerEnv) { f.status.Hub.NodeState = "pending" }, "hub", doctor.Warn, "longarm admin approve pc1  # an admin"},
 		{"errors", func(f *fakeWorkerEnv) { f.errs = []string{"time=x level=ERROR msg=boom"} }, "errors", doctor.Warn, "longarmd diag --upload"},
 	} {
 		f := healthy()
@@ -99,7 +99,7 @@ func TestWorkerChecks(t *testing.T) {
 func TestStartCommandAndNotRunning(t *testing.T) {
 	for _, c := range []struct{ mode, goos, want string }{
 		{modeSession, "windows", "longarmd session-mode start"},
-		{modeService, "windows", "longarmd service start  (elevated)"},
+		{modeService, "windows", "longarmd service start  # elevated"},
 		{modeService, "linux", "sudo longarmd service start"},
 		{modeNone, "windows", "longarmd session-mode install  (or in the foreground: longarmd run)"},
 		{modeNone, "linux", "sudo longarmd service install --user $USER  (or in the foreground: longarmd run)"},

@@ -57,6 +57,48 @@ the same. Not `longarmd join --force` - that needs a new join code and is
 only for fleets enrolled with join codes (self-hosted without Microsoft
 sign-in).
 
+### "Windows Firewall: ... connections stay on relays"
+
+Windows Firewall drops unsolicited inbound UDP to a `longarm.exe` (or
+`longarmd.exe`) without an inbound allow rule, and always to one with a
+Block rule (dismissing the "allow access?" prompt adds one). Hole punching
+fails and every connection goes through a relay: it works, but slower.
+The tray, `longarm doctor`, `longarm pool` and `longarm ls` say so and name
+the program.
+
+- **The tray**: press **Allow** on the warning card and accept the
+  administrator prompt. The tray runs its own installed `longarm.exe
+  firewall allow --program <the program in the warning>` (removes that
+  program's Block rules, adds the allow rules), checks again and clears the
+  card.
+- **By hand**, in an elevated PowerShell (Start > "Terminal (Admin)"), the
+  command the warning shows, e.g.:
+
+  ```powershell
+  & 'C:\Program Files\Longarm\longarm.exe' firewall allow
+  & 'C:\Program Files\Longarm\longarm.exe' firewall allow --program 'C:\Program Files\Longarm\longarmd.exe'
+  longarm firewall status    # ok, or what is still wrong (exit 1)
+  ```
+
+  A quoted path at the start of a line needs PowerShell's call operator
+  `&`; without it PowerShell answers `ParserError: Unexpected token
+  'firewall'`. Paths are single-quoted: in double quotes PowerShell
+  expands `$` and backticks, and it also takes the typographic quotes
+  (“ ” „ ‘ ’) for quotes, so an unusual folder name could end the path
+  early. Older longarm versions print `"C:\...\longarm.exe" firewall allow`:
+  copy the command from a current tray instead (it quotes them again), or
+  type `& '<path>'` yourself. A path with control characters or line breaks
+  gets no command at all ("unsupported characters"): use the tray's Allow.
+  In cmd.exe, leave the `&` out.
+
+**A path under `%USERPROFILE%\tmia-desktop-live\longarm-x.y.z\`**: the
+daemon was started by the copy of longarm that TMIA Desktop ships, not by
+Longarm's installer (whose rules cover `C:\Program Files\Longarm`). The rule
+has to be for the program that runs, so the tray offers to allow that path
+and says it is a copy. The copy's folder changes with every TMIA Desktop
+version, and the new path needs a rule again (or stop that daemon,
+`longarm daemon stop`, and let the tray start the installed one).
+
 ### "A newer version is available"
 
 The hub tells every machine about its newest release:
