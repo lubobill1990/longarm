@@ -106,8 +106,16 @@ function Start-Running([bool] $wantTray, [bool] $wantHost) {
   # a running job: its console host (longarmd conhost, as the worker starts a job's command in) and the
   # command, which an upgrade must leave running, longarmd.exe moved aside
   if (-not @(Get-LongarmProcs | Where-Object Kind -EQ 'job').Count) {
-    Start-Process -WindowStyle Hidden (Join-Path $installDir 'longarmd.exe') -ArgumentList 'conhost', '--', 'ping.exe', '-n', '1800', '127.0.0.1'
-    if (-not (Wait-Until { @(Get-LongarmProcs | Where-Object Kind -EQ 'job').Count } 20 'the job')) { Fail 'longarmd conhost does not run' }
+    $out = Join-Path $LogDir 'job.out'
+    $null = New-Item -Force (Join-Path $LogDir 'job.in')
+    Start-Process -WindowStyle Hidden (Join-Path $installDir 'longarmd.exe') -RedirectStandardInput (Join-Path $LogDir 'job.in') `
+      -RedirectStandardOutput $out -RedirectStandardError "$out.err" `
+      -ArgumentList 'conhost', '--', 'waitfor.exe', '/t', '1800', 'LongarmMsiTestJob'
+    Start-Sleep -Seconds 3
+    if (-not (Wait-Until { @(Get-LongarmProcs | Where-Object Kind -EQ 'job').Count } 20 'the job')) {
+      Get-Content $out, "$out.err" -ErrorAction SilentlyContinue | Write-Host
+      Fail 'longarmd conhost does not run'
+    }
   }
   Start-Sleep -Seconds 5 # let them settle (a host starts its longarmd)
   Get-LongarmProcs | Format-Table -AutoSize ProcessId, Kind, SessionId, CommandLine | Out-String -Width 300 | Write-Host
@@ -182,7 +190,9 @@ function Invoke-Upgrade([string] $what, [string] $msi, [string] $arguments, [str
   $job = @($before | Where-Object Kind -EQ 'job' | ForEach-Object ProcessId)
   $job += @(Get-CimInstance Win32_Process | Where-Object { $job -contains $_.ParentProcessId } | ForEach-Object ProcessId)
   Write-Host "running before the upgrade: kinds $($kinds -join ', '); services $(($svcBefore.Keys | Sort-Object) -join ', '); a job's processes $($job -join ', ')"
-  if ($job.Count -lt 2) { Fail "the job (longarmd conhost and its command) does not run: $($job -join ', ')" }
+  if ($job.Count -lt 2) {
+    Get-Content (Join-Path $LogDir 'job.out'), (Join-Path $LogDir 'job.out.err') -ErrorAction SilentlyContinue | Write-Host
+    Fail "the job (longarmd conhost and its command) does not run: $($job -join ', ')" }
   if (-not $kinds.Count) { Fail 'nothing runs before the upgrade: the test would prove nothing' }
   $text = Invoke-Msi $what "/i `"$msi`" $arguments"
   if ($text -notmatch 'Disallowing uninstallation of component') { Write-Host '::warning::no component was shared with the old product' }
