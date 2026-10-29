@@ -27,7 +27,13 @@ export function SourceBar({ pool, now }: { pool: PoolView; now: number }) {
       <span className="dot" style={{ width: 8, height: 8, background: src === 'none' ? 'var(--red)' : src === 'hub' ? 'var(--green)' : 'var(--amber)' }} />
       <span data-testid="source-text">{srcText}</span>
       <span className="sep" aria-hidden="true">·</span>
-      <span>{hub?.address ? (hub.connected ? 'hub connected' : `hub down ${hub.since ? fmtAgo(since(hub.since, now)) : ''}`) : 'no hub'}</span>
+      <span data-testid="hub-state" title={hub?.address && !hub.connected ? 'Workers are reached directly (cached addresses); placement, sign-in and new links wait for the hub' : undefined}>
+        {hub?.address
+          ? hub.connected
+            ? 'hub connected'
+            : `hub unavailable${hub.since ? ' ' + fmtAgo(since(hub.since, now)) : ''} · direct connections still work`
+          : 'no hub'}
+      </span>
       <span className="spacer" />
       <span className="srcbar-chip" title="transport policy (Settings)">
         transport {pool.transport}

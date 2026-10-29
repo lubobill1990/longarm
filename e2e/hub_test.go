@@ -132,7 +132,7 @@ func TestHub(t *testing.T) {
 		if code := bgw.wait(t, 60*time.Second); code != 3 {
 			t.Fatalf("wait exit %d, stderr: %s", code, bgw.stderr.String())
 		}
-		if !strings.Contains(bgw.stderr.String(), "unreachable") {
+		if !strings.Contains(bgw.stderr.String(), "unavailable") {
 			t.Fatalf("no fallback note: %s", bgw.stderr.String())
 		}
 		// Without the hub: ls/jobs/wait still work from the cache.

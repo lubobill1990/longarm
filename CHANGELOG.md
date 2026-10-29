@@ -113,6 +113,17 @@
 
 ### Added
 
+- Direct-first clients while the hub is down: the daemon's pool streams
+  metrics directly from the workers first (up to 32,
+  `LONGARM_POOL_MAX_DIRECT`; jobs first, then the fastest) and uses the
+  hub's only for the others; it idles without a viewer for 5 minutes (no
+  direct streams, probes every 30 s). `longarm ls` uses the daemon's direct
+  metrics and shows their source and age in `-o wide` (METRICS). A
+  forwarded connection opened while the worker is briefly unreachable waits
+  for it (up to 30 s, `LONGARM_FORWARD_WAIT`) instead of failing. The hub
+  being down reads "hub unavailable; direct connections to workers still
+  work" (CLI, tray). An e2e measures attach, a log stream, a port forward
+  and the pool view through a hub restart and a relay restart.
 - External relays: relayed connections that survive hub restarts
   (docs/usage.md "External relays"). `longarm-relay --hub <hub> --advertise
   <host>` registers with the hub (`HubNode.RelaySync`, role relay), which

@@ -2,9 +2,12 @@
 // keeps a persistent connection per advertised leg (tcp / longnet /
 // tailscale endpoint), probes each leg's round trip every 2 s, tracks the
 // path kind (direct, relay, DERP ...) and its changes, and keeps ~5 min of
-// history. Metrics come from the hub's event stream while that is fresh;
-// otherwise the monitor streams them from the worker directly, so the view
-// keeps working with the hub down.
+// history. Metrics come from the workers directly first (a metrics stream
+// on the active leg of each worker, up to MaxDirect workers); the hub's
+// event stream only fills in for the workers the monitor can't reach or
+// doesn't stream from, so the view is the same with the hub down. Without a
+// viewer for IdleAfter (the tray closed) the monitor idles: no direct
+// streams, probes every IdleInterval.
 package pool
 
 import (
@@ -43,7 +46,16 @@ type Target struct {
 type Config struct {
 	Interval     time.Duration // probe / metrics interval (default 2 s)
 	ProbeTimeout time.Duration // default 5 s
-	HubStale     time.Duration // hub metrics older than this = use direct (default 3 intervals)
+	HubStale     time.Duration // metrics older than this are stale (default 3 intervals)
+	// MaxDirect caps the workers with a direct metrics stream (default 32;
+	// < 0 = none): those with this client's jobs first, then the fastest.
+	// The others get the hub's metrics.
+	MaxDirect int
+	// IdleAfter: without a viewer (Touch) for this long the monitor idles -
+	// no direct metrics streams, probes only every IdleInterval (defaults
+	// 5 min and 30 s; IdleAfter < 0 = never idle).
+	IdleAfter    time.Duration
+	IdleInterval time.Duration
 	Refresh      time.Duration // re-read Targets (default 30 s)
 	// Targets lists the workers to monitor; complete = the list is
 	// authoritative (the hub answered), so workers missing from it are
@@ -61,9 +73,10 @@ type Config struct {
 type Monitor struct {
 	cfg Config
 
-	mu      sync.Mutex
-	workers map[string]*worker
-	hubUp   bool
+	mu       sync.Mutex
+	workers  map[string]*worker
+	hubUp    bool
+	lastView time.Time // last Touch
 	myJobs  map[string]int32
 	changed chan struct{} // closed and replaced on every update
 }
@@ -76,6 +89,7 @@ type worker struct {
 	node     *pb.NodeInfo
 	metrics  *pb.MetricsSnapshot
 	source   string // of metrics: hub | direct
+	hubSnap  *pb.MetricsSnapshot // the hub's latest (fills in when direct isn't fresh)
 	hubAt    time.Time
 	directAt time.Time
 	hist     []*pb.MetricsPoint
@@ -92,6 +106,7 @@ type leg struct {
 	st       pb.LegStatus
 	hist     []*pb.LinkSample
 	probed   bool
+	lastAt   time.Time // last probe start
 }
 
 // New returns a monitor; Run drives it.
@@ -108,10 +123,19 @@ func New(cfg Config) *Monitor {
 	if cfg.Refresh <= 0 {
 		cfg.Refresh = 30 * time.Second
 	}
+	if cfg.MaxDirect == 0 {
+		cfg.MaxDirect = 32
+	}
+	if cfg.IdleAfter == 0 {
+		cfg.IdleAfter = 5 * time.Minute
+	}
+	if cfg.IdleInterval <= 0 {
+		cfg.IdleInterval = 30 * time.Second
+	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Monitor{cfg: cfg, workers: map[string]*worker{}, changed: make(chan struct{})}
+	return &Monitor{cfg: cfg, workers: map[string]*worker{}, changed: make(chan struct{}), lastView: cfg.Now()}
 }
 
 func (m *Monitor) now() time.Time { return m.cfg.Now() }
@@ -244,33 +268,104 @@ func (m *Monitor) dropLocked(w *worker) {
 	w.legs = nil
 }
 
+// Touch records a viewer (the tray's pool view, longarm ls): the monitor
+// leaves its idle mode.
+func (m *Monitor) Touch() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastView = m.now()
+}
+
+// idleLocked: no viewer for IdleAfter.
+func (m *Monitor) idleLocked(now time.Time) bool {
+	return m.cfg.IdleAfter > 0 && now.Sub(m.lastView) >= m.cfg.IdleAfter
+}
+
+// directRankLocked orders the workers for the MaxDirect cap: those with
+// this client's jobs, then by the active leg's round trip, then by name.
+func (m *Monitor) directRankLocked() []*worker {
+	type rw struct {
+		w   *worker
+		rtt float64
+	}
+	var ws []rw
+	for _, w := range m.workers {
+		l := m.activeLegLocked(w)
+		if l == nil || l.prober == nil || !l.st.Up {
+			continue
+		}
+		ws = append(ws, rw{w, l.st.RttMs})
+	}
+	sort.Slice(ws, func(i, j int) bool {
+		a, b := m.myJobs[ws[i].w.name] > 0, m.myJobs[ws[j].w.name] > 0
+		if a != b {
+			return a
+		}
+		if ws[i].rtt != ws[j].rtt {
+			return ws[i].rtt < ws[j].rtt
+		}
+		return ws[i].w.name < ws[j].w.name
+	})
+	out := make([]*worker, len(ws))
+	for i, x := range ws {
+		out[i] = x.w
+	}
+	return out
+}
+
 // tick starts the probes that are due and the direct metrics streams that
-// are needed.
+// are needed (direct first; the hub fills in).
 func (m *Monitor) tick(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.now()
+	idle := m.idleLocked(now)
+	want := map[*worker]bool{}
+	if !idle && m.cfg.MaxDirect > 0 {
+		for i, w := range m.directRankLocked() {
+			if i >= m.cfg.MaxDirect {
+				break
+			}
+			want[w] = true
+		}
+	}
 	for _, w := range m.workers {
 		for _, l := range w.legs {
-			if l.prober == nil || l.inflight {
+			if l.prober == nil || l.inflight || (idle && now.Sub(l.lastAt) < m.cfg.IdleInterval) {
 				continue
 			}
-			l.inflight = true
+			l.inflight, l.lastAt = true, now
 			go m.probe(ctx, w.name, l)
 		}
-		hubFresh := m.hubUp && !w.hubAt.IsZero() && now.Sub(w.hubAt) < m.cfg.HubStale
 		switch {
-		case hubFresh && w.direct != nil:
+		case !want[w] && w.direct != nil:
 			w.direct()
-			w.direct = nil
-		case !hubFresh && w.direct == nil:
+			w.direct, w.directAt = nil, time.Time{} // no longer current: the hub fills in
+		case want[w] && w.direct == nil:
 			if l := m.activeLegLocked(w); l != nil && l.prober != nil && l.st.Up {
 				dctx, cancel := context.WithCancel(ctx)
 				w.direct = cancel
 				go m.streamDirect(dctx, w, l.prober)
 			}
 		}
+		m.hubFillLocked(w) // a stalled or missing direct stream: the hub's, if any
 		m.updateStateLocked(w, now)
+	}
+}
+
+// directFreshLocked: the worker's direct metrics are current.
+func (m *Monitor) directFreshLocked(w *worker, now time.Time) bool {
+	return w.source == "direct" && !w.directAt.IsZero() && now.Sub(w.directAt) < m.cfg.HubStale
+}
+
+// hubFillLocked shows the hub's latest metrics when the direct ones aren't
+// current (no direct stream, or it stalled).
+func (m *Monitor) hubFillLocked(w *worker) {
+	if w.hubSnap == nil || m.directFreshLocked(w, m.now()) {
+		return
+	}
+	if w.metrics == nil || w.source != "hub" || !proto.Equal(w.hubSnap.Time, w.metrics.Time) {
+		m.setMetricsLocked(w, w.hubSnap, "hub")
 	}
 }
 
@@ -514,9 +609,9 @@ func (m *Monitor) HubNode(n *pb.NodeInfo) {
 			w.legs = append(w.legs, m.newLeg(tl))
 		}
 	}
-	if n.Online && n.Metrics != nil && (w.metrics == nil || w.source != "hub" || !proto.Equal(n.Metrics.Time, w.metrics.Time)) {
-		m.setMetricsLocked(w, n.Metrics, "hub")
-		w.hubAt = m.now()
+	if n.Online && n.Metrics != nil && (w.hubSnap == nil || !proto.Equal(n.Metrics.Time, w.hubSnap.Time)) {
+		w.hubSnap, w.hubAt = n.Metrics, m.now()
+		m.hubFillLocked(w) // direct metrics win while they are current
 	}
 	m.updateStateLocked(w, m.now())
 	m.notifyLocked()
@@ -563,7 +658,7 @@ func (m *Monitor) View(history bool) *pb.PoolView {
 	for _, w := range m.workers {
 		pw := &pb.PoolWorker{Name: w.name, State: w.state, Since: timestamppb.New(w.since), Node: w.node,
 			Error: w.err, MyJobs: m.myJobs[w.name], Link: m.linkLocked(w, history)}
-		fresh := w.metrics != nil && ((w.source == "hub" && now.Sub(w.hubAt) < m.cfg.HubStale) ||
+		fresh := w.metrics != nil && ((w.source == "hub" && m.hubUp && now.Sub(w.hubAt) < m.cfg.HubStale) ||
 			(w.source == "direct" && now.Sub(w.directAt) < m.cfg.HubStale))
 		switch {
 		case fresh:
