@@ -144,8 +144,11 @@ func clientChecks(ctx context.Context, env clientEnv, now time.Time) []doctor.Ch
 	case fw.Ok:
 		out = append(out, doctor.Check{ID: "firewall", Title: "firewall", Status: doctor.OK, Detail: "inbound allow rule for " + fw.Program})
 	default:
-		out = append(out, doctor.Check{ID: "firewall", Title: "firewall", Status: doctor.Warn,
-			Detail: fw.Problem, Fix: fw.Fix + "  # elevated"})
+		c := doctor.Check{ID: "firewall", Title: "firewall", Status: doctor.Warn, Detail: fw.Problem}
+		if fw.Fix != "" { // none for a path no command line can carry
+			c.Fix = fw.Fix + "  # elevated"
+		}
+		out = append(out, c)
 	}
 
 	if !signedIn {

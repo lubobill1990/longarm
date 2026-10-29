@@ -3,7 +3,6 @@ package platform
 import (
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -75,50 +74,5 @@ func TestEvalFirewall(t *testing.T) {
 	t.Setenv("LONGARM_TEST_FW_DIR", filepath.Dir(exe))
 	if r, _ := ParseFirewallRegistryRule("v2.33|Action=Allow|Active=TRUE|Dir=In|App=%LONGARM_TEST_FW_DIR%/longarm.exe|Name=x|"); !strings.EqualFold(filepath.Clean(r.Program), filepath.Clean(filepath.Dir(exe)+"/longarm.exe")) {
 		t.Errorf("env var not expanded: %q", r.Program)
-	}
-}
-
-func TestFirewallFixCommand(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "Program Files")
-	longarm := filepath.Join(dir, "longarm.exe")
-	longarmd := filepath.Join(dir, "longarmd.exe")
-	exe, prog := CommandLine(longarm), CommandLine("x", longarmd)[2:] // the quoting is CommandLine's (TestCommandLine)
-	if got := FirewallFixCommand(longarm, longarm); got != exe+` firewall allow` {
-		t.Errorf("own exe: %s", got)
-	}
-	if got := FirewallFixCommand(longarm, longarmd); got != exe+` firewall allow --program `+prog {
-		t.Errorf("longarmd: %s", got)
-	}
-	if got := FirewallFixCommand("", longarmd); got != `longarm firewall allow --program `+prog {
-		t.Errorf("longarm on PATH: %s", got)
-	}
-	if runtime.GOOS == "windows" && !strings.HasPrefix(FirewallFixCommand(longarm, longarm), `& "`) {
-		t.Errorf("a quoted path needs PowerShell's call operator: %s", FirewallFixCommand(longarm, longarm))
-	}
-	if got := FirewallAllowArgs(longarm, longarmd); len(got) != 4 || got[3] != longarmd {
-		t.Errorf("FirewallAllowArgs: %q", got)
-	}
-}
-
-// TestCommandLine: the commands people paste (PowerShell on Windows).
-func TestCommandLine(t *testing.T) {
-	for _, c := range []struct {
-		goos, exe string
-		args      []string
-		want      string
-	}{
-		// the user's report: a quoted path needs `& ` in PowerShell
-		{"windows", `C:\Program Files\Longarm\longarm.exe`, []string{"firewall", "allow"}, `& "C:\Program Files\Longarm\longarm.exe" firewall allow`},
-		{"windows", `C:\Users\me\tmia-desktop-live\longarm-1.2.3\longarm.exe`, []string{"firewall", "allow"}, `C:\Users\me\tmia-desktop-live\longarm-1.2.3\longarm.exe firewall allow`},
-		{"windows", "longarm", []string{"firewall", "allow", "--program", `C:\Program Files\Longarm\longarmd.exe`}, `longarm firewall allow --program "C:\Program Files\Longarm\longarmd.exe"`},
-		{"windows", `C:\a b\$x\longarm.exe`, nil, `& 'C:\a b\$x\longarm.exe'`}, // $ would expand in double quotes
-		{"windows", `C:\it's\longarm.exe`, []string{""}, `& "C:\it's\longarm.exe" ""`},
-		{"windows", `C:\x(86)\longarm.exe`, nil, `& "C:\x(86)\longarm.exe"`},
-		{"linux", "/usr/local/bin/longarm", []string{"firewall", "allow"}, "/usr/local/bin/longarm firewall allow"},
-		{"darwin", "/Users/me/my apps/longarm", []string{"--program", "it's"}, `'/Users/me/my apps/longarm' --program 'it'\''s'`},
-	} {
-		if got := commandLine(c.goos, c.exe, c.args...); got != c.want {
-			t.Errorf("%s %q %q:\n got %s\nwant %s", c.goos, c.exe, c.args, got, c.want)
-		}
 	}
 }

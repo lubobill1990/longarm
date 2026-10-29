@@ -2451,7 +2451,7 @@ relayed, and a warning in the tray popup. The fix, in an elevated PowerShell:
 `longarm firewall allow` (removes the program's Block rules, adds the allow
 rules; `--program <path>` for longarmd.exe). `longarm firewall status` exits 1 when
 blocked or missing. The commands longarm prints paste into PowerShell: a quoted
-path gets the call operator (`& "C:\Program Files\Longarm\longarm.exe" firewall allow`).
+path gets the call operator (`& 'C:\Program Files\Longarm\longarm.exe' firewall allow`).
 The tray's warning has an **Allow** button: one administrator prompt runs the
 installed longarm.exe's `firewall allow --program <the program the daemon or
 longarmd reports>` (only an existing longarm.exe / longarmd.exe), then checks

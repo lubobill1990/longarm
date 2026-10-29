@@ -153,15 +153,41 @@ export function StatePill({ state }: { state?: string }) {
   return <span className={`pill ${cls}`}>{s || '—'}</span>
 }
 
+/** Characters PowerShell ends a single-quoted string with (doubled to escape). */
+const PS_SINGLE_QUOTES = /['\u2018\u2019\u201A\u201B]/g
+/** Control characters and line breaks: no paste-ready command for them. */
+const UNSUPPORTED = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/
+
+/** A word for PowerShell (as platform.CommandLine): bare, or a single-quoted literal. */
+export function psQuote(s: string): string {
+  if (/^[A-Za-z0-9_.:\\/-]+$/.test(s) && !s.startsWith('--%')) return s
+  return "'" + s.replace(PS_SINGLE_QUOTES, (q) => q + q) + "'"
+}
+
 /**
  * The fix command as PowerShell (the default Windows terminal shell) runs
- * it: a quoted executable needs the call operator (`& "C:\...\longarm.exe"
- * firewall allow`; without it PowerShell reports "Unexpected token"). Newer
- * longarm builds send it so; older ones (or a copy another app ships) don't.
+ * it, often elevated; undefined when a path has characters no paste-ready
+ * line can carry. Newer longarm builds send it ready (single-quoted, `& `
+ * before a quoted executable). Older ones (or a copy another app ships)
+ * sent `"C:\...\longarm.exe" firewall allow [--program "..."]`, which
+ * PowerShell rejects and in which `$`, a backtick or a Unicode quote
+ * (“ ” „, which PowerShell takes for ") in a path would run code: those
+ * are taken apart and quoted again here.
  */
-export function psCommand(cmd: string): string {
+export function psCommand(cmd: string): string | undefined {
   const c = cmd.trim()
-  return c.startsWith('"') || c.startsWith("'") ? `& ${c}` : c
+  if (UNSUPPORTED.test(c)) return undefined
+  const legacy = /^(?:"([^"]*)"|longarm) firewall allow(?: --program "([^"]*)")?$/.exec(c)
+  if (legacy) {
+    const [, exe, program] = legacy
+    if (exe?.startsWith('-')) return undefined
+    const parts = [exe ? psQuote(exe) : 'longarm', 'firewall', 'allow']
+    if (program !== undefined) parts.push('--program', psQuote(program))
+    if (exe && parts[0] !== exe) parts[0] = '& ' + parts[0]
+    return parts.join(' ')
+  }
+  // the current form never has a double quote
+  return c.includes('"') ? undefined : c
 }
 
 /** A path's directory, compared case-insensitively (Windows). */
@@ -211,6 +237,7 @@ export function FirewallWarning({
     )
   }
   const fix = fw.fix ? psCommand(fw.fix) : ''
+  const unsupported = fix === undefined
   const copy = !!fw.program && !!installDir && !sameDir(fw.program, installDir)
   return (
     <div className="warn-box" data-testid="firewall-warning">
@@ -254,6 +281,12 @@ export function FirewallWarning({
           >
             copy
           </button>
+        </div>
+      )}
+      {unsupported && (
+        <div className="fixcmd" data-testid="firewall-fix-unsupported">
+          No command to copy: the path contains unsupported characters.
+          {onAllow ? ' Use Allow.' : ' Allow the program in Windows Security (Firewall & network protection).'}
         </div>
       )}
     </div>

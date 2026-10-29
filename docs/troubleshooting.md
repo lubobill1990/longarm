@@ -75,14 +75,20 @@ the program.
   command the warning shows, e.g.:
 
   ```powershell
-  & "C:\Program Files\Longarm\longarm.exe" firewall allow
-  & "C:\Program Files\Longarm\longarm.exe" firewall allow --program "C:\Program Files\Longarm\longarmd.exe"
+  & 'C:\Program Files\Longarm\longarm.exe' firewall allow
+  & 'C:\Program Files\Longarm\longarm.exe' firewall allow --program 'C:\Program Files\Longarm\longarmd.exe'
   longarm firewall status    # ok, or what is still wrong (exit 1)
   ```
 
   A quoted path at the start of a line needs PowerShell's call operator
   `&`; without it PowerShell answers `ParserError: Unexpected token
-  'firewall'`. Older longarm versions print the command without `&`: add it.
+  'firewall'`. Paths are single-quoted: in double quotes PowerShell
+  expands `$` and backticks, and it also takes the typographic quotes
+  (“ ” „ ‘ ’) for quotes, so an unusual folder name could end the path
+  early. Older longarm versions print `"C:\...\longarm.exe" firewall allow`:
+  copy the command from a current tray instead (it quotes them again), or
+  type `& '<path>'` yourself. A path with control characters or line breaks
+  gets no command at all ("unsupported characters"): use the tray's Allow.
   In cmd.exe, leave the `&` out.
 
 **A path under `%USERPROFILE%\tmia-desktop-live\longarm-x.y.z\`**: the

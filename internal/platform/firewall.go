@@ -68,13 +68,24 @@ func quoteAll(ss []string) []string {
 // FirewallFixCommand is the command that fixes s (run elevated): longarm.exe's
 // `firewall allow` for the program, which removes its Block rules and adds
 // the allow rules. longarmExe is the longarm.exe to run ("" = "longarm" on PATH).
-// The line pastes into PowerShell (CommandLine).
-func FirewallFixCommand(longarmExe, program string) string {
+// The line pastes into PowerShell (CommandLine); ErrUnsupportedChars when
+// a path can't be put on one safely.
+func FirewallFixCommand(longarmExe, program string) (string, error) {
 	exe := "longarm"
 	if longarmExe != "" {
 		exe = longarmExe
 	}
 	return CommandLine(exe, FirewallAllowArgs(longarmExe, program)...)
+}
+
+// FirewallFixText is FirewallFixCommand for printing: the command, or why
+// there is none.
+func FirewallFixText(longarmExe, program string) string {
+	cmd, err := FirewallFixCommand(longarmExe, program)
+	if err != nil {
+		return "none: the " + err.Error() + "; allow it with the tray's Allow button or Windows Security"
+	}
+	return cmd
 }
 
 // FirewallAllowArgs are longarm's arguments that allow program

@@ -8,9 +8,13 @@
   warning, `longarm doctor`, `longarm firewall status` and the relay
   warnings printed `"C:\...\longarm.exe" firewall allow`, which PowerShell
   rejects (`Unexpected token 'firewall'`); a quoted path now gets the call
-  operator (`& "..." firewall allow`, one helper for every printed command),
-  doctor's remarks are shell comments (`# elevated`), and the tray adds `&`
-  to commands from older daemons. The tray's firewall card has an **Allow**
+  operator (`& '...' firewall allow`, one helper for every printed command).
+  Paths are single-quoted literals with every quote PowerShell recognizes
+  (' and the typographic ‘ ’ ‚ ‛) doubled, so no directory name - `$`,
+  backticks, “ ” „ - can end the argument and inject a command into an
+  elevated shell; paths with control characters get no command. Doctor's
+  remarks are shell comments (`# elevated`), and the tray quotes commands
+  from older daemons again. The tray's firewall card has an **Allow**
   button: one administrator prompt runs the installed longarm.exe's
   `firewall allow` for the program the daemon or longarmd reports (only an
   existing longarm.exe / longarmd.exe), then checks again; a copy another

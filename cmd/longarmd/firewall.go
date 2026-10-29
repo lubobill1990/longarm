@@ -31,7 +31,7 @@ func init() {
 			}
 			if st, err := platform.CheckFirewall(exe); err == nil && !st.OK() {
 				fmt.Fprintf(os.Stderr, "longarmd: hole punching to %s got no answer (%d pings): %s. Fix (elevated): %s\n",
-					peer, sent, st.Problem(), platform.FirewallFixCommand(longarmBeside(exe), exe))
+					peer, sent, st.Problem(), platform.FirewallFixText(longarmBeside(exe), exe))
 			}
 		})
 	}
