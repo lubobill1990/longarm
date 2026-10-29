@@ -8,7 +8,9 @@
 #            split into parallel jobs (unit, e2e-1..3; e2e-1..2 on macOS)
 #   msi:     windows-latest: the MSI built with WiX 5 (pinned, as release.yml), with and without
 #            a built-in hub, ICE-validated, extracted with an administrative install (nothing is
-#            installed) and its tables checked
+#            installed) and its tables checked (RemoveExistingProducts' place too: error 2613)
+#   msi-install: windows-latest, the MSIs really installed: fresh install, repair, upgrade, uninstall;
+#            upgrades from released versions (0.1.6, the latest) with Longarm running
 #   tests:   one check for branch protection / auto-merge: every test job passed
 #            (jobs GitHub never started for want of a runner: ci-requeue.yml)
 #   release-cache: push to main only: the Go build cache release.yml restores (read-only)
@@ -318,28 +320,51 @@ jobs:
           $wix >> $env:GITHUB_PATH
           & "$wix\wix.exe" extension add WixToolset.UI.wixext/5.0.2 WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2
           if ($LASTEXITCODE) { throw 'wix extension add failed' }
+      # Two builds: 0.250.0 (default.msi, custom.msi) and 0.250.1 (next.msi, other files: the version is
+      # linked in), newer than every release, for the install / upgrade tests (job msi-install).
       - name: binaries
         run: |
-          $bin = Join-Path $env:RUNNER_TEMP 'msi-bin'
-          New-Item -ItemType Directory -Force $bin | Out-Null
           $env:CGO_ENABLED = '0'
-          $hub = '-X github.com/lubobill1990/longarm/internal/version.DefaultHub=longarm.example.com'
-          go build -trimpath -ldflags $hub -o "$bin\longarm.exe" ./cmd/longarm
-          if ($LASTEXITCODE) { throw 'go build longarm' }
-          go build -trimpath -ldflags $hub -o "$bin\longarmd.exe" ./cmd/longarmd
-          if ($LASTEXITCODE) { throw 'go build longarmd' }
-          go build -trimpath -tags production -ldflags "-H windowsgui $hub" -o "$bin\longarm-tray.exe" ./cmd/longarm-tray
-          if ($LASTEXITCODE) { throw 'go build longarm-tray' }
-          & "$bin\longarm.exe" version --json
-      - name: build the MSIs (default hub / custom only)
+          foreach ($v in '0.250.0', '0.250.1') {
+            $bin = Join-Path $env:RUNNER_TEMP "msi-bin-$v"
+            New-Item -ItemType Directory -Force $bin | Out-Null
+            $ld = "-X github.com/lubobill1990/longarm/internal/version.DefaultHub=longarm.example.com -X github.com/lubobill1990/longarm/internal/version.Version=$v"
+            go build -trimpath -ldflags $ld -o "$bin\longarm.exe" ./cmd/longarm
+            if ($LASTEXITCODE) { throw 'go build longarm' }
+            go build -trimpath -ldflags $ld -o "$bin\longarmd.exe" ./cmd/longarmd
+            if ($LASTEXITCODE) { throw 'go build longarmd' }
+            go build -trimpath -tags production -ldflags "-H windowsgui $ld" -o "$bin\longarm-tray.exe" ./cmd/longarm-tray
+            if ($LASTEXITCODE) { throw 'go build longarm-tray' }
+            & "$bin\longarm.exe" version --json
+          }
+      - name: build the MSIs (default hub / custom only / the next version)
         run: |
-          $bin = Join-Path $env:RUNNER_TEMP 'msi-bin'
           $out = Join-Path $env:RUNNER_TEMP 'msi'
-          ./packaging/windows/build-msi.ps1 -BinDir $bin -Version 0.0.1 -Arch x64 -Out "$out\default.msi" `
+          $bin = Join-Path $env:RUNNER_TEMP 'msi-bin-0.250.0'
+          ./packaging/windows/build-msi.ps1 -BinDir $bin -Version 0.250.0 -Arch x64 -Out "$out\default.msi" `
             -DefaultHub longarm.example.com -DefaultHubCA ('ab' * 32)
-          ./packaging/windows/build-msi.ps1 -BinDir $bin -Version 0.0.1 -Arch x64 -Out "$out\custom.msi" -DefaultHub ''
+          ./packaging/windows/build-msi.ps1 -BinDir $bin -Version 0.250.0 -Arch x64 -Out "$out\custom.msi" -DefaultHub ''
+          $next = Join-Path $env:RUNNER_TEMP 'msi-bin-0.250.1'
+          ./packaging/windows/build-msi.ps1 -BinDir $next -Version 0.250.1 -Arch x64 -Out "$out\next.msi" `
+            -DefaultHub longarm.example.com -DefaultHubCA ('ab' * 32)
+          # what an install of each must leave in Program Files\Longarm
+          foreach ($p in @{ default = $bin; next = $next }.GetEnumerator()) {
+            Get-ChildItem $p.Value -File | Where-Object Name -In 'longarm.exe', 'longarmd.exe', 'longarm-tray.exe', 'longarm-update.exe' |
+              ForEach-Object { "$($_.Name) $((Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower())" } |
+              Set-Content "$out\hashes-$($p.Key).txt"
+          }
       - name: validate (ICE), extract (administrative install), check the tables
         run: ./.github/scripts/msi-check.ps1 -Dir (Join-Path $env:RUNNER_TEMP 'msi')
+      # the sequencing check is not vacuous: 0.1.13 (a deferred stop step before RemoveExistingProducts,
+      # error 2613 on every upgrade) fails it
+      - name: the sequencing check catches the 0.1.13 MSI (error 2613)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP 'msi-0.1.13'
+          gh release download v0.1.13 -R $env:GITHUB_REPOSITORY -p longarm-windows-amd64.msi -D $d
+          if ($LASTEXITCODE) { throw 'gh release download v0.1.13 failed' }
+          ./.github/scripts/msi-sequence-check.ps1 -Msi "$d\longarm-windows-amd64.msi" -ExpectFailure
       - name: upload the MSIs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -348,6 +373,86 @@ jobs:
           path: ${{ runner.temp }}/msi
           if-no-files-found: ignore
           retention-days: 7
+
+  # The MSIs really installed (a disposable hosted runner: its user is an
+  # administrator; .github/scripts/msi-install-test.ps1): a fresh install of
+  # this build (Default mode, LOGIN=1 with the dummy hub: nobody signs in), a
+  # repair, a refused service switch, an upgrade to the next build, the
+  # uninstall; and upgrades from released versions - 0.1.6 and the latest
+  # (with the admin worker; and as a LocalSystem service) - with the tray and
+  # the user-session worker running: they must stop and start again, the
+  # job (longarmd conhost + its command) keep running, the new files be in place, the
+  # verbose log be free of errors 2613 / 1722 / 1603 and failed custom actions.
+  msi-install:
+    name: msi install (${{ matrix.name }})
+    needs: msi
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: fresh, repair, upgrade, uninstall
+            scenario: fresh
+          - name: upgrade from 0.1.6, session worker
+            scenario: upgrade
+            old: v0.1.6
+            args: MODE=custom HUB=longarm.example.com LOGIN=1 ROLES=both
+          - name: upgrade from the latest, session + admin worker
+            scenario: upgrade
+            old: latest
+            args: MODE=custom HUB=longarm.example.com LOGIN=1 ROLES=both ADMIN_WORKER=1
+          - name: upgrade from the latest, service worker
+            scenario: upgrade
+            old: latest
+            args: MODE=custom HUB=longarm.example.com LOGIN=1 ROLES=both RUN=service SERVICE_ACCOUNT=LocalSystem
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: msi
+          path: ${{ runner.temp }}/msi
+      - name: the released MSI
+        if: matrix.old != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD: ${{ matrix.old }}
+        run: |
+          $tag = $env:OLD
+          if ($tag -eq 'latest') { $tag = gh release view -R $env:GITHUB_REPOSITORY --json tagName -q .tagName }
+          $d = Join-Path $env:RUNNER_TEMP 'old-msi'
+          gh release download $tag -R $env:GITHUB_REPOSITORY -p longarm-windows-amd64.msi -D $d
+          if ($LASTEXITCODE) { throw "gh release download $tag failed" }
+          Write-Host "old: $tag"
+      - name: install, upgrade, uninstall
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+          OLD_ARGS: ${{ matrix.args }}
+        run: |
+          $old = Join-Path $env:RUNNER_TEMP 'old-msi\longarm-windows-amd64.msi'
+          ./.github/scripts/msi-install-test.ps1 -Scenario $env:SCENARIO -MsiDir (Join-Path $env:RUNNER_TEMP 'msi') -OldMsi $old -OldArgs "$env:OLD_ARGS"
+      - name: collect the helper's logs
+        if: always()
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP 'msi-logs'
+          New-Item -ItemType Directory -Force $d | Out-Null
+          foreach ($f in 'install-helper.log', 'msi-upgrade.json') {
+            $p = Join-Path $env:ProgramData "Longarm\$f"
+            if (Test-Path $p) { Copy-Item $p $d }
+          }
+      - name: upload the logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: msi-install-logs-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/msi-logs
+          if-no-files-found: ignore
+          retention-days: 14
 
   # The Go build cache release.yml restores (read-only; docs/ci-cd.md
   # "Caches"): the release's compile units (.github/scripts/release-go-cache.sh,
@@ -400,7 +505,7 @@ jobs:
   tests:
     name: tests
     if: always()
-    needs: [test, msi]
+    needs: [test, msi, msi-install]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -408,6 +513,7 @@ jobs:
         env:
           RESULT: ${{ needs.test.result }}
           MSI: ${{ needs.msi.result }}
+          MSI_INSTALL: ${{ needs.msi-install.result }}
         run: |
-          echo "test matrix: $RESULT, msi: $MSI"
-          [ "$RESULT" = success ] && [ "$MSI" = success ]
+          echo "test matrix: $RESULT, msi: $MSI, msi install: $MSI_INSTALL"
+          [ "$RESULT" = success ] && [ "$MSI" = success ] && [ "$MSI_INSTALL" = success ]

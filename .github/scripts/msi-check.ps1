@@ -130,8 +130,13 @@ $order = @(
   @('LongarmStopTray', 'InstallValidate'),
   @('InstallInitialize', 'LongarmUpgradeStopRollback'),
   @('LongarmUpgradeStopRollback', 'LongarmUpgradeStop'),
-  @('LongarmUpgradeStop', 'RemoveExistingProducts'),
-  @('RemoveExistingProducts', 'InstallFiles'),
+  @('LongarmUpgradeStop', 'StopServices'),
+  @('LongarmUpgradeStop', 'InstallFiles'),
+  # the new version installs over the old one, which is removed afterwards (afterInstallExecute), and
+  # what was stopped starts again once it is gone
+  @('InstallFiles', 'InstallExecute'),
+  @('InstallExecute', 'RemoveExistingProducts'),
+  @('RemoveExistingProducts', 'LongarmdUpgradeRestart'),
   @('LongarmRemoveStop', 'StopServices'),
   @('InstallInitialize', 'LongarmRemoveStop'),
   @('LongarmTrayLaunch', 'LongarmdUpgradeRestart'),
@@ -143,6 +148,15 @@ foreach ($o in $order) {
   $a, $b = (Seq $o[0]), (Seq $o[1])
   if ($a -ge $b) { throw "default.msi: $($o[0]) ($a) must run before $($o[1]) ($b)" }
   Write-Host "$($o[0]) ($a) < $($o[1]) ($b)"
+}
+foreach ($m in $default, $custom) {
+  & (Join-Path $PSScriptRoot 'msi-sequence-check.ps1') -Msi $m # no error 2613
+}
+# an upgrade can't move longarmd.exe between its components (the old product's uninstall would delete it)
+if ($actions -notcontains 'CheckLongarmdSwitch' -or $exec -notcontains 'CheckLongarmdSwitch') { throw 'default.msi: CheckLongarmdSwitch is not scheduled' }
+if ((Seq 'CheckLongarmdSwitch') -ge (Seq 'LongarmStopTray')) { throw 'default.msi: CheckLongarmdSwitch runs after LongarmStopTray (a refused upgrade would have stopped the tray)' }
+foreach ($p in 'PREV_LONGARMD_SERVICE', 'PREV_LONGARMD_PLAIN') {
+  if ($searches -notcontains $p) { throw "default.msi: no AppSearch for $p" }
 }
 foreach ($id in 'AdminSvcStop', 'LongarmdSvcCtl') {
   $ev = Query $default "SELECT ``Event`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = '$id'"

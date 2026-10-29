@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- Windows MSI upgrades failed with error 2613 ("RemoveExistingProducts
+  action sequenced incorrectly") for every upgrade by 0.1.8 to 0.1.13: the
+  elevated stop step (upgrades with Longarm running) was a deferred action
+  before RemoveExistingProducts, which Windows Installer refuses when the old
+  product is removed inside the transaction. The new version now installs
+  over the old one and removes it afterwards (`afterInstallExecute`; the
+  components keep their GUIDs, and no released version's uninstall steps run
+  during an upgrade), the stop step runs before StopServices / InstallFiles.
+  An upgrade that would switch the worker between a service and the
+  user-session worker is refused up front (uninstall first). CI now checks
+  the built sequence (and shows that 0.1.13 fails the check) and really
+  installs, repairs, upgrades (from 0.1.6 and the latest release, with the
+  tray and the workers running) and uninstalls the MSIs on windows-latest.
 - Windows: the firewall fix command pastes into PowerShell. The tray's
   warning, `longarm doctor`, `longarm firewall status` and the relay
   warnings printed `"C:\...\longarm.exe" firewall allow`, which PowerShell

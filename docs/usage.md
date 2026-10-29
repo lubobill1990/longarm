@@ -1973,8 +1973,8 @@ sessions keep running. What happens (`internal/msiupgrade`;
    window, the only one Windows Installer's in-use check would list.
    Restart Manager is off (`MSIRESTARTMANAGERCONTROL=Disable`): it can't
    close windowless processes, which is what showed the dialog.
-2. **Before the old version is removed** (elevated, before
-   `RemoveExistingProducts`): the services that run (`longarmd-admin`, `LongarmUpdate`,
+2. **Before the files are replaced** (elevated, before `StopServices` and
+   `InstallFiles`): the services that run (`longarmd-admin`, `LongarmUpdate`,
    a `RUN=service` `longarmd`) are stopped and waited for, then every user's
    tray, worker host (`longarm-tray --worker-host`, `longarmd session-mode
    run`) and `longarmd run` whose image is in the install dir - asked
@@ -1985,7 +1985,19 @@ sessions keep running. What happens (`internal/msiupgrade`;
    running: the binaries they hold are moved to `<install dir>\old`
    (Windows lets a running program be renamed), and the new ones go in
    beside them. What ran is recorded in `C:\ProgramData\Longarm\msi-upgrade.json`.
-3. **After the install** (`longarmd install-helper msi restart`, at the end):
+   The new version is installed over the old one, and the old product is
+   uninstalled afterwards (`MajorUpgrade Schedule="afterInstallExecute"`):
+   the files and components the two share stay (the new ones), and none of
+   the old version's uninstall steps (leaving the hub, removing the worker
+   task, services or data) runs during an upgrade. (0.1.8 to 0.1.13 removed
+   the old product first, after this stop step, which Windows Installer
+   refuses: error 2613, "RemoveExistingProducts action sequenced
+   incorrectly". Upgrading from those versions works with 0.1.14 and later.)
+   An upgrade can't switch the worker between a service and the user-session
+   worker (`RUN`, or `ROLES=client` on a service worker): it is refused
+   before anything stops - uninstall first (`KEEP_DATA=1` keeps the jobs).
+3. **After the install** (`longarmd install-helper msi restart`, at the end,
+   once the old product is gone):
    the recorded services start again (the admin worker's is also re-created
    by its setup step), each recorded user's worker task runs
    (`LongarmWorker-<SID>`; the installing user's is restarted anyway), and
