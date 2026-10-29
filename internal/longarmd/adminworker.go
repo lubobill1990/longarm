@@ -369,11 +369,25 @@ func (a AdminWorkerTarget) Install(hub string, r *hubclient.JoinResult, note fun
 		wait = time.Minute
 	}
 	deadline := time.Now().Add(wait)
-	for time.Now().Before(deadline) {
+	refused := func() error {
 		if e, err := os.ReadFile(filepath.Join(a.Handoff, AdminErrorFile)); err == nil {
-			return "", fmt.Errorf("the admin worker refused its enrollment: %s", strings.TrimSpace(string(e)))
+			return fmt.Errorf("the admin worker refused its enrollment: %s", strings.TrimSpace(string(e)))
+		}
+		return nil
+	}
+	for time.Now().Before(deadline) {
+		if err := refused(); err != nil {
+			return "", err
+		}
+		if installCheckHook != nil {
+			installCheckHook()
 		}
 		if !fileExists(filepath.Join(a.Handoff, AdminResponseFile)) {
+			// The service writes its error before it removes the response:
+			// a refusal between the check above and this one is there now.
+			if err := refused(); err != nil {
+				return "", err
+			}
 			if note != nil {
 				note(fmt.Sprintf("admin worker %s: runs as SYSTEM, only %s can use it; disable it in the tray or with: longarmd admin-worker disable (elevated)", r.Resp.Name, r.Resp.Owner))
 			}
@@ -383,6 +397,10 @@ func (a AdminWorkerTarget) Install(hub string, r *hubclient.JoinResult, note fun
 	}
 	return "", fmt.Errorf("the admin worker service did not take its enrollment within %s (is the %s service running?)", wait, AdminServiceName)
 }
+
+// installCheckHook runs in Install between its error and response checks
+// (tests: the service acting in that window).
+var installCheckHook func()
 
 // AdminInstall is what the MSI recorded about the admin worker
 // (InstalledAdmin).

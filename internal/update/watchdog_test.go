@@ -44,8 +44,10 @@ func TestWatchdogSuperseded(t *testing.T) {
 	if err := Apply(context.Background(), f.cfg, "2.0.0", f.files, f.fetch); err != nil {
 		t.Fatal(err)
 	}
+	other := sleeper(t) // the newer update's watchdog, alive
 	st, _ := LoadState(f.data)
-	st.Phase, st.Error, st.WatchdogPID = PhaseUnhealthy, "fatal: broken", os.Getpid()+1
+	st.Phase, st.Error, st.WatchdogPID = PhaseUnhealthy, "fatal: broken", other.Process.Pid
+	st.WatchdogStart, _ = platform.ProcessStartTime(other.Process.Pid)
 	st.Save(f.data)
 	done := make(chan error, 1)
 	go func() { done <- Watch(context.Background(), f.data, nil) }()
@@ -96,5 +98,32 @@ func TestApplyKeepsRunningWatchdog(t *testing.T) {
 	Apply(context.Background(), f.cfg, "2.0.0", f.files, f.fetch)
 	if !platform.ProcessAlive(pid, start) {
 		t.Fatal("the watchdog of an update in progress was stopped")
+	}
+}
+
+// TestWatchdogReplacesDeadOne: a replacement watchdog (ensureWatchdog after
+// a reboot or a watchdog crash) reads update.json before its own PID is
+// saved there: the recorded PID is its dead predecessor's. It must not take
+// that for a newer watchdog and leave the update unprotected: it rolls back.
+func TestWatchdogReplacesDeadOne(t *testing.T) {
+	f := newFakeInstall(t)
+	f.cfg.Args = nil
+	if err := Apply(context.Background(), f.cfg, "2.0.0", f.files, f.fetch); err != nil {
+		t.Fatal(err)
+	}
+	dead := sleeper(t)
+	deadStart, _ := platform.ProcessStartTime(dead.Process.Pid)
+	dead.Process.Kill()
+	dead.Wait()
+	st, _ := LoadState(f.data)
+	st.Phase, st.Error = PhaseUnhealthy, "fatal: broken"
+	st.WatchdogPID, st.WatchdogStart = dead.Process.Pid, deadStart
+	st.Save(f.data)
+	Watch(context.Background(), f.data, nil) // the exec-mode restart of the fake binary fails; the files are restored regardless
+	if f.read(t, "longarmd") != "longarmd v1" || f.read(t, "longarm") != "longarm v1" {
+		t.Fatalf("not rolled back: %q %q", f.read(t, "longarmd"), f.read(t, "longarm"))
+	}
+	if st, _ := LoadState(f.data); st.Phase != PhaseRolledBack {
+		t.Fatalf("phase %s (%s)", st.Phase, st.Error)
 	}
 }
