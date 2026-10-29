@@ -182,6 +182,11 @@ logs_have "$p-hub" "no matching backups found" || fail "first start: no empty-re
 [[ $(docker inspect -f '{{.Config.User}}' "$p-hub") == nonroot:nonroot ]] || fail "image user"
 docker run --rm --entrypoint /usr/local/bin/longarm-hub "$image" healthcheck --url http://127.0.0.1:1/ >/dev/null 2>&1 &&
 	fail "healthcheck against nothing succeeded"
+# liveness (deploy/azure livenessProbe): passes on a serving hub, fails
+# without a hub when no start (restore) refreshes the startup marker
+docker exec "$p-hub" /usr/local/bin/longarm-hub healthcheck --live >/dev/null || fail "healthcheck --live on a serving hub"
+docker run --rm --entrypoint /usr/local/bin/longarm-hub "$image" healthcheck --live --url http://127.0.0.1:1/ --marker /nonexistent/marker >/dev/null 2>&1 &&
+	fail "healthcheck --live against nothing succeeded"
 
 step "admin joins with the printed code"
 la join "$addr" "$code" --ca-fingerprint "$fp" --name ci-admin

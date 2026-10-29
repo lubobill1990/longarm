@@ -27,6 +27,14 @@ param location string = resourceGroup().location
 @description('longarm-hub image. Pin a version (ghcr.io/<owner>/longarm-hub:X.Y.Z) for reproducible upgrades; :latest is the newest release, :edge the main branch.')
 param image string = 'ghcr.io/lubobill1990/longarm-hub:latest'
 
+@description('The hub\'s liveness probe. live: `longarm-hub healthcheck --live`, which also passes while the container start (Litestream restore, bootstrap) is still running and alive, so a long restore is not killed and a dead hub is restarted within minutes. legacy: plain `healthcheck` after 30 minutes, for images without --live (releases up to 0.1.17). auto: legacy for an image pinned to such a release, else live.')
+@allowed([
+  'auto'
+  'live'
+  'legacy'
+])
+param hubLivenessProbe string = 'auto'
+
 @description('Hub size: small = 1 vCPU / 1.5 GB, medium = 2 vCPU / 3 GB.')
 @allowed([
   'small'
@@ -442,7 +450,12 @@ var headscaleSas = useKey && useHeadscale
       signedExpiry: sasExpiry
     }).serviceSasToken
   : ''
-var probe = {
+// readiness: /healthz answers. liveness (--live): /healthz answers, or the
+// container is still starting (Litestream restore, bootstrap, the hub opening
+// its database) and that start refreshed its marker within 60 s: a restore
+// can take many minutes (long WAL), a dead or hung one (each start step at
+// most LONGARM_HUB_STARTUP_TIMEOUT, 60m) is restarted
+var readyProbe = {
   exec: {
     command: [
       '/usr/local/bin/longarm-hub'
@@ -450,6 +463,44 @@ var probe = {
     ]
   }
 }
+var liveProbe = {
+  exec: {
+    command: [
+      '/usr/local/bin/longarm-hub'
+      'healthcheck'
+      '--live'
+    ]
+  }
+}
+// the image's tag without a leading v ('' for a reference without a tag)
+var imageRepoTag = last(split(first(split(image, '@')), '/'))
+var imageTag = contains(imageRepoTag, ':') ? last(split(imageRepoTag, ':')) : ''
+var imageVersion = startsWith(imageTag, 'v') ? skip(imageTag, 1) : imageTag
+// releases whose healthcheck has no --live (it would fail every probe)
+var legacyProbeVersions = [
+  '0.1.0'
+  '0.1.1'
+  '0.1.2'
+  '0.1.3'
+  '0.1.4'
+  '0.1.5'
+  '0.1.6'
+  '0.1.7'
+  '0.1.8'
+  '0.1.9'
+  '0.1.10'
+  '0.1.11'
+  '0.1.12'
+  '0.1.13'
+  '0.1.14'
+  '0.1.15'
+  '0.1.16'
+  '0.1.17'
+]
+var liveProbeOn = hubLivenessProbe == 'live' || (hubLivenessProbe == 'auto' && !contains(legacyProbeVersions, imageVersion))
+var livenessProbe = liveProbeOn
+  ? union(liveProbe, { initialDelaySeconds: 60, periodSeconds: 30, timeoutSeconds: 10, failureThreshold: 4 })
+  : union(readyProbe, { initialDelaySeconds: 1800, periodSeconds: 30, timeoutSeconds: 10, failureThreshold: 4 })
 
 var hubEnv = concat(
   [
@@ -557,9 +608,11 @@ var hubContainer = {
       useKey ? [{ name: 'state', mountPath: '/data' }] : [],
       useHeadscale ? [{ name: 'headscale', mountPath: '/headscale' }] : []
     )
-    // restore + bootstrap run before the hub listens
-    livenessProbe: union(probe, { initialDelaySeconds: 180, periodSeconds: 30, timeoutSeconds: 10, failureThreshold: 4 })
-    readinessProbe: union(probe, { initialDelaySeconds: 5, periodSeconds: 10, timeoutSeconds: 10, failureThreshold: 3 })
+    // restore + bootstrap run before the hub listens: liveness passes on
+    // their heartbeat (healthcheck --live), so a dead hub is restarted about
+    // 3 min after it stops answering however long a restore takes
+    livenessProbe: livenessProbe
+    readinessProbe: union(readyProbe, { initialDelaySeconds: 5, periodSeconds: 10, timeoutSeconds: 10, failureThreshold: 3 })
   }
 }
 

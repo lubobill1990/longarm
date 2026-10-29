@@ -80,6 +80,7 @@ restarts the hub) prints everything too.
 | `--teardown [--yes]` | `-Teardown [-Yes]` | delete the resource group (only one the script created) |
 | `--timeout S` | `-TimeoutSeconds` | how long to wait for the deployment and the hub (default 1200) |
 | `--stuck-timeout S` | `-StuckTimeoutSeconds` | give up on a group stuck in `Creating` without any event (default 600) |
+| `--restore-timeout S` | `-RestoreTimeoutSeconds` | while the hub's log shows its database restore running, keep waiting up to this long after it was first seen, past `--timeout` (default 1200); a hub mid-restore is never restarted or rolled back as dead |
 
 **A group stuck in Creating.** Once, a deployment sat in `Creating` with
 both containers `Waiting` and no events at all for over 30 minutes (not
@@ -186,7 +187,17 @@ subscription's policy denies: the hub was down for 20 minutes. Now:
   confidential` with `storageAuth = identity` redeems codes with the managed
   identity: `identityPrincipalId` is the federated credential's subject).
 - **Health**: `longarm-hub healthcheck` (GET `/healthz` on 127.0.0.1:7480) is
-  the liveness and readiness probe.
+  the readiness probe. The liveness probe is `longarm-hub healthcheck --live`:
+  it also passes while the container is still starting - the Litestream
+  restore (minutes when it replays a long WAL), bootstrap, the hub opening
+  its database - as long as that start refreshed its marker
+  (`/var/lib/longarm-hub/longarm-hub.starting`, every 10 s) within the last
+  60 s. So a long restore is never killed, while a dead or hung one (each
+  start step at most `LONGARM_HUB_STARTUP_TIMEOUT`, default 60m) and a hub
+  that stops answering are restarted within about 3 minutes. Images up to
+  0.1.17 have no `--live`: for an image pinned to one of them the template
+  (`hubLivenessProbe` = `auto`) falls back to a plain `healthcheck` liveness
+  probe after 30 minutes.
 - **Stop** (restart, upgrade, ACI maintenance): SIGTERM reaches Litestream
   (PID 1), which stops the hub (it closes its listeners and the database),
   then ships the last WAL frames (up to 20 s) and exits.
@@ -369,7 +380,7 @@ its part; `az container logs ... --container-name hub` has the hub's:
 | submit to the old container stopping | 10-30 s | ARM validates and applies; the old hub still serves |
 | old hub stops | < 1 s + Litestream's last sync | SIGTERM: the hub tells every worker and client "restarting" (`HubCommand.restarting`), they close their sessions, Litestream ships the last WAL frames (`shutdown-sync-timeout`) |
 | ACI recreates the group, pulls the image | Azure's: typically 20-40 s | ACI recreates the containers on an update and does not keep the image across it; the image is ~30 MB compressed (static hub ~16 MB, Litestream ~14 MB, distroless base < 1 MB) |
-| Litestream restore | 1-3 s for a small database | every start (the database lives on the container's disk); hourly snapshots keep it to one snapshot plus at most an hour of compacted files |
+| Litestream restore | 1-3 s for a small database; minutes with a long WAL | every start (the database lives on the container's disk); hourly snapshots keep it to one snapshot plus at most an hour of compacted files. The log has `restoring ...`, `restore of ... still running after 1m0s` every minute and `restore took`; deploy.sh prints `[+Ns] database restore running` / `finished` and waits for it (`--restore-timeout`) |
 | bootstrap, hub start | < 1 s | gRPC listens first; telemetry, the release store check and Headscale run behind it |
 | workers back | ≤ 6 s after the hub answers | `hubclient.Reconnect`: 1, 2, 4, 5, 5 ... s (±20%) while the hub is unreachable (up to 15 s after 3 minutes, 30 s when the hub refuses a node); after a restart notice the first try is after ~1 s |
 

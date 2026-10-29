@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // fakeAz is a stand-in for the Azure CLI (helper copied to az / az.exe) for
@@ -37,7 +38,22 @@ func fakeAz(args []string) {
 	read := func(f string) string { b, _ := os.ReadFile(filepath.Join(dir, f)); return strings.TrimSpace(string(b)) }
 	write := func(f, s string) { os.WriteFile(filepath.Join(dir, f), []byte(s), 0o644) }
 	fail := func(msg string) { fmt.Fprintln(os.Stderr, "ERROR:", msg); os.Exit(3) }
-	restart := func() { n, _ := strconv.Atoi(read("boots")); write("boots", strconv.Itoa(n+1)) }
+	// HELPER_AZ_RESTORE_SECONDS: every start restores the database that long
+	// (Litestream replaying a long WAL): the log shows the restore running and
+	// no bootstrap values of this start before it is done
+	restart := func() {
+		n, _ := strconv.Atoi(read("boots"))
+		write("boots", strconv.Itoa(n+1))
+		if secs, _ := strconv.Atoi(os.Getenv("HELPER_AZ_RESTORE_SECONDS")); secs > 0 {
+			write("restore-until", strconv.FormatInt(time.Now().Add(time.Duration(secs)*time.Second).UnixMilli(), 10))
+		} else {
+			os.Remove(filepath.Join(dir, "restore-until"))
+		}
+	}
+	restoring := func() bool {
+		ms, _ := strconv.ParseInt(read("restore-until"), 10, 64)
+		return time.Now().UnixMilli() < ms
+	}
 	// the container group = the parameters it was deployed with
 	group := func() map[string]any {
 		var doc struct {
@@ -338,6 +354,15 @@ func fakeAz(args []string) {
 		}
 		fmt.Println("litestream: restoring hub.db")
 		fmt.Println("LONGARM_BOOTSTRAP boot_id=stale ca_fingerprint=stale hub_address=stale admin_joined=true")
+		if exists("restore-until") {
+			// this start's restore (the stale line above: an earlier start)
+			fmt.Println("longarm-hub container: restoring /var/lib/longarm-hub/hub.db from the replica (if it has one)")
+			if restoring() {
+				fmt.Println("longarm-hub container: restore of /var/lib/longarm-hub/hub.db still running after 1m0s")
+				return
+			}
+			fmt.Println("longarm-hub container: restore took 7m1.5s (/var/lib/longarm-hub/hub.db)")
+		}
 		fmt.Println(strings.Join(line, " "))
 		fmt.Println("hub: serving")
 	case "container delete":
@@ -597,6 +622,9 @@ func fakeAz(args []string) {
 		}
 		if identity() {
 			fail("ShareNotFound") // identity: no file shares
+		}
+		if restoring() {
+			fail("ResourceNotFound") // the hub writes bootstrap.env after its restore
 		}
 		os.WriteFile(flag("--dest"), bootstrap(), 0o644)
 	default:

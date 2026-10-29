@@ -37,6 +37,9 @@ import (
 
 // Hub is a running longarm-hub.
 type Hub struct {
+	// startupMarker: removed once the listeners are up (startup_marker.go)
+	startupMarker *StartupMarker
+
 	cfg    *Config
 	log    *slog.Logger
 	store  *store.Store
@@ -567,6 +570,12 @@ func (h *Hub) Serve(ctx context.Context) error {
 	}
 	os.WriteFile(ep, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
 	defer os.Remove(ep)
+	// listening: /healthz answers, the liveness probe no longer needs the marker
+	if h.startupMarker != nil {
+		if err := h.startupMarker.Remove(); err != nil {
+			h.log.Warn("startup marker", "err", err)
+		}
+	}
 	h.logStartup(serveAt)
 	h.log.Info("longarm-hub started", "version", version.Version, "grpc", h.Addr("grpc"), "relay_udp", h.Addr("udp"), "stun2", h.Addr("stun2"),
 		"http", h.Addr("http"), "https", h.Addr("https"), "data", h.cfg.DataDir, "ca", pki.Fingerprint(h.ca.Cert))

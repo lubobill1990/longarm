@@ -42,6 +42,9 @@ VOLUME /data
 # 443/80 panel over https (optional)
 EXPOSE 7443/tcp 7443/udp 7444/udp 7480/tcp 443/tcp 80/tcp
 USER nonroot:nonroot
+# readiness (/healthz answers); an orchestrator that restarts on a failed
+# liveness probe should use `healthcheck --live`, which also passes while the
+# start's Litestream restore runs (deploy/azure livenessProbe)
 HEALTHCHECK --interval=30s --timeout=5s CMD ["/usr/local/bin/longarm-hub", "healthcheck"]
 ENTRYPOINT ["/usr/local/bin/longarm-hub"]
 CMD ["container"]
