@@ -132,6 +132,10 @@
     if your own user key endorsed it. The hub's ownership records, and the
     worker's hub-pushed owner, don't count. Isolation and the admin flag
     are the worker's own report.
+  - The forwarding decision is pinned to the checked node (its node key,
+    else its certificate) for the whole operation. A reconnect to another
+    node fails before anything is sent. `attach` sends credentials only in
+    the open that creates the session, never on a re-attach.
   - Docs: docs/usage.md "Agent credentials" (with recommended unattended
     invocations), docs/security.md "Forwarded agent credentials".
 

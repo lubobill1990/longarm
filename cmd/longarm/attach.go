@@ -279,6 +279,20 @@ func runAttach(ctx context.Context, conn *client.Conn, open *pb.AttachOpen) erro
 	return nil
 }
 
+// stripOpenCredentials: secrets and agent credentials travel in the first
+// open only - the one that may create the session, which keeps them. A
+// re-attach after a disconnect never carries them (the session has them,
+// and the reconnect may have reached another node), and never re-creates
+// the session: a session that the first open did not create would run
+// without its credentials.
+func stripOpenCredentials(open *pb.AttachOpen) {
+	if len(open.SecretEnv) == 0 && open.AgentAuth == nil {
+		return
+	}
+	open.SecretEnv, open.AgentAuth = nil, nil
+	open.NoCreate = true
+}
+
 // attachOnce runs one Attach stream until the session exits, the user
 // detaches, or the connection breaks (error, retryable if Unavailable).
 func attachOnce(ctx context.Context, conn *client.Conn, open *pb.AttachOpen, in *inputReader,
@@ -289,7 +303,9 @@ func attachOnce(ctx context.Context, conn *client.Conn, open *pb.AttachOpen, in 
 	if err != nil {
 		return attachEnd{}, err
 	}
-	if err := st.Send(&pb.AttachInput{Msg: &pb.AttachInput_Open{Open: open}}); err != nil {
+	err = st.Send(&pb.AttachInput{Msg: &pb.AttachInput_Open{Open: open}})
+	stripOpenCredentials(open)
+	if err != nil {
 		return attachEnd{}, recvErr(st, err)
 	}
 	m, err := st.Recv()

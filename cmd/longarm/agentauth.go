@@ -133,6 +133,13 @@ func forwardAgentAuth(ctx context.Context, s *session, conn *client.Conn, worker
 	if dec.Skip {
 		return nil, env, secrets, nil
 	}
+	// The decision holds for the node it was made for: pin it for the rest
+	// of the operation. A reconnect (gRPC's own, a re-raced leg) to any
+	// other node - say, one with the same name endorsed by another user -
+	// fails before a call goes out, so the credentials never reach it.
+	if err := conn.PinPeer(peerCert(&pr)); err != nil {
+		return nil, env, secrets, fmt.Errorf("agent credentials not forwarded: %w", err)
+	}
 
 	src := agentauth.System(s.cfg.Dir, s.cfg.AgentAuth, o.copilotAccount)
 	b, err := src.Collect(ctx, agents, explicit)

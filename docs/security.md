@@ -1131,6 +1131,25 @@ endorsement.
     with `--agent-auth-shared-ok`.
   - An admin worker gets credentials only if it is endorsed by you.
 
+**The decision is bound to the node it was made for.** The client checks
+the rules on one RPC. The credentials then go out on later RPCs, which
+gRPC may send over a new transport after a reconnect or a re-raced leg. So
+once it decides to forward, the client pins the connection to the node
+whose certificate it checked:
+- that node's end-to-end trust node key, else the certificate itself;
+- every later transport of the operation must present that node, or the
+  dial fails ("worker identity changed", not retried) before a single call
+  goes out on it.
+
+This covers `run`, `exec`, `session start`, `attach` and the MCP tools,
+and their retries. Without it, a hub could route the check to your own
+worker and a reconnect to another node of the same name: one endorsed by
+another user you trust.
+
+`attach` sends secrets and agent credentials only in its first open (the
+one that may create the session). A re-attach after a disconnect carries
+none and never re-creates the session.
+
 The worker does not check these rules: it cannot tell a forwarded agent
 credential from any other `--secret-env`. They protect the user's own
 credentials from the user's own mistakes. Isolation between users is what
