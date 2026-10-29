@@ -1,0 +1,15 @@
+# Third-party images the template runs, pinned by digest, mirrored by
+# .github/workflows/mirror.yml into the package ghcr.io/<owner>/longarm-mirror
+# (never longarm-hub) as <repository name>-<digest hex>, so a deployment never
+# pulls from Docker Hub (anonymous pull limits and outages took a hub down: a
+# --recreate whose new sidecar couldn't be pulled).
+#
+# Only the source repositories allowed in the workflow (ALLOWED_SOURCES) can
+# be listed; the mirror tag is derived from the source and digest, never
+# chosen here. Pull requests only verify the pins; main publishes.
+#
+# main.bicep caddyImage / headscaleImage reference
+# ghcr.io/lubobill1990/longarm-mirror:<name>-<hex>@sha256:<hex>
+# (deploy/azure/test/acirules checks that they match this file).
+docker.io/library/caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+docker.io/headscale/headscale:v0.29.5-debug@sha256:162cf7e150072f677d70120fd9abaa78d55a37f6ab3944c040fb57626fefd12a

@@ -73,7 +73,8 @@ restarts the hub) prints everything too.
 | `--telemetry` | `-Telemetry` | Application Insights + Log Analytics for the fleet's scrubbed telemetry ([below](#telemetry-and-diagnostic-bundles)) |
 | `--diagnostics` | `-Diagnostics` | with `identity`: a blob container for uploaded diagnostic bundles, deleted after 30 days |
 | `--panel` | `-Panel` | turn the panel back on (with `--recreate`) |
-| `--recreate` | `-Recreate` | delete the container group first (to change size or panel; data stays) |
+| `--recreate` | `-Recreate` | delete the container group first (to change size, panel or `--headscale`; data stays): validated, images checked and settings saved first, rolled back if the new configuration fails ([below](#safe-re-runs-and---recreate)) |
+| `--skip-image-check` | `-SkipImageCheck` | don't check that every image can be pulled before deploying |
 | `--admin-code` | `-AdminCode` | print a new one-time admin join code |
 | `--teardown [--yes]` | `-Teardown [-Yes]` | delete the resource group (only one the script created) |
 | `--timeout S` | `-TimeoutSeconds` | how long to wait for the deployment and the hub (default 1200) |
@@ -90,6 +91,53 @@ the failed operations (e.g. `InaccessibleImage`).
 
 Secrets (registry password, Tailscale secret) go to the deployment through a
 temporary parameters file, never on a command line.
+
+### Safe re-runs and `--recreate`
+
+A real `--headscale --recreate` once deleted the group, then failed (Docker
+Hub refused to hand ACI the sidecar's image), and the retry - with no group
+left to read the settings from - fell back to storage keys, which the
+subscription's policy denies: the hub was down for 20 minutes. Now:
+
+- **Nothing changes before the deployment is known to work.** Every run
+  first validates the deployment with the same parameters (`az deployment
+  group validate`: template, quotas, policy) and checks that every image it
+  runs (the hub, Caddy with storage keys and the panel, the Headscale
+  sidecar) can be pulled: the registry's manifest, asked the way ACI pulls it
+  (anonymously, or with `--registry-user`; an ACR pulled with the managed
+  identity through `az acr`). `--skip-image-check` skips the latter.
+- **No Docker Hub.** The template's third-party images (Caddy, Headscale) are
+  copies in the GHCR package `ghcr.io/lubobill1990/longarm-mirror`, pinned by
+  digest ([mirror-images.txt](mirror-images.txt)). `.github/workflows/mirror.yml`
+  only verifies the pins on pull requests (read-only); on main it copies
+  them, from the source repositories the workflow itself allows, to tags
+  derived from the source and digest (`caddy-<digest hex>`), in that package
+  only. **One-time step:** a new GHCR package starts private and the API
+  can't change that: after the first publish, make `longarm-mirror` public
+  (GitHub -> Packages -> longarm-mirror -> Package settings -> Change
+  visibility) and re-run the workflow, which checks the anonymous pull. Until
+  then deploy.sh refuses before changing anything (the image check).
+- **The settings outlive the group.** A run that finds no container group
+  takes the hub's settings from the parameters of the last successful
+  deployment (ARM keeps them; forging them needs deployment write access),
+  and says so. Before `--recreate` deletes the group, the settings are also
+  saved in the resource group's tags (`longarm-hub-prev-*`, cleared once a
+  deployment succeeds). Tags can be written by anyone with Tag Contributor,
+  so that snapshot is not trusted: it only fills settings the deployment's
+  parameters lack, and its security-relevant settings (image, storage auth,
+  ACR, registry login, release key, Entra tenant/client/admins/web/apps)
+  are refused when they differ from the deployment's, or when there is no
+  deployment to compare them with, unless given explicitly. With neither
+  source, a resource group that has a hub's storage needs `--storage-auth`
+  (and the other settings) given explicitly: nothing falls back to defaults
+  that would switch storage auth or drop the identity. Secrets are never
+  saved: pass them again.
+- **Rollback.** If the new configuration fails after the delete (the
+  deployment fails, the group is stuck, the hub doesn't start), the script
+  deploys the previous configuration again (its image and settings, without
+  a new sidecar; validated before the delete too) and stops with the error
+  and `ROLLED BACK`. If that fails as well, the snapshot stays and a plain
+  re-run (without `--recreate`) deploys it.
 
 ## Architecture
 
@@ -320,8 +368,11 @@ traffic relayed by the longnet relay leaves Azure and counts. Direct
 - **The DNS label is first come, first served** in the region: after a
   teardown someone else could take it. Nodes would refuse such a hub (its
   certificate is not from your CA), but they couldn't reach yours either.
-- **Docker Hub pull limits** may apply to the Caddy image; set the
-  `caddyImage` parameter to a mirror (e.g. your ACR) if pulls fail.
+- **Third-party images come from GHCR mirrors** (Caddy, Headscale:
+  [mirror-images.txt](mirror-images.txt), package `longarm-mirror`, which
+  must be public), never Docker Hub. A new entry is copied by
+  `.github/workflows/mirror.yml` on its push to main; the template refers
+  to it by digest.
 - **The image must be pullable**: make the `longarm-hub` package public on
   GitHub (package settings) or deploy with `--registry-user` and a token with
   `read:packages`.
@@ -387,8 +438,8 @@ linux/arm64` gives an arm64 image).
 
 The tailscale leg (DESIGN §4.2) on a control plane you own, with no VM and
 no manual Headscale steps: a **Headscale v0.29.5 sidecar** (image
-`headscale/headscale:v0.29.5-debug`, pinned by digest: the template
-parameter `headscaleImage`) in the hub's container group becomes the hub's
+`headscale/headscale:v0.29.5-debug`, pinned by digest and pulled from its
+GHCR mirror: the template parameter `headscaleImage`) in the hub's container group becomes the hub's
 `[tailnet] provider`.
 
 ```text

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -83,17 +84,45 @@ func fakeAz(args []string) {
 			fail("ResourceGroupNotFound")
 		}
 		lines := strings.Split(read("rg"), "\n")
-		switch q {
-		case "location":
+		tags := map[string]string{}
+		json.Unmarshal([]byte(read("tags.json")), &tags)
+		switch {
+		case q == "location":
 			fmt.Println(lines[0])
-		case "tags":
-			b, _ := json.Marshal(map[string]string{"longarm-hub": lines[1]})
+		case q == "id":
+			fmt.Println("/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/" + flag("-n"))
+		case q == "tags":
+			tags["longarm-hub"] = lines[1]
+			b, _ := json.Marshal(tags)
 			fmt.Println(string(b))
+		case strings.HasPrefix(q, `tags."longarm-hub-prev`):
+			// the settings snapshot (deploy.sh / deploy.ps1 before a delete); az prints nothing for a missing tag
+			fmt.Println(tags[strings.TrimSuffix(strings.TrimPrefix(q, `tags."`), `"`)])
 		default:
 			fmt.Println(lines[1]) // tags."longarm-hub"
 		}
+	case "tag update":
+		if !strings.Contains(flag("--resource-id"), "/resourceGroups/") || flag("--operation") != "Merge" {
+			fail("fake az: tag update " + strings.Join(args[2:], " "))
+		}
+		tags := map[string]string{}
+		json.Unmarshal([]byte(read("tags.json")), &tags)
+		for i, a := range args {
+			if a != "--tags" {
+				continue
+			}
+			for _, kv := range args[i+1:] {
+				if strings.HasPrefix(kv, "-") {
+					break
+				}
+				k, v, _ := strings.Cut(kv, "=")
+				tags[k] = v
+			}
+		}
+		b, _ := json.Marshal(tags)
+		write("tags.json", string(b))
 	case "group delete":
-		for _, f := range []string{"rg", "cg", "acr", "acr-admin"} {
+		for _, f := range []string{"rg", "cg", "acr", "acr-admin", "tags.json", "deployments"} {
 			os.Remove(filepath.Join(dir, f))
 		}
 	case "provider show":
@@ -213,6 +242,13 @@ func fakeAz(args []string) {
 					tsv("LONGARM_HUB_ENTRA_APPS", a)
 				}
 			}
+			// the scheduler gate and the release key in the same query (set only when non-empty)
+			if v, _ := g["schedulerGateFreeGb"].(string); v != "" && strings.Contains(q, "LONGARM_HUB_SCHED_GATE_FREE_GB") {
+				tsv("LONGARM_HUB_SCHED_GATE_FREE_GB", v)
+			}
+			if v, _ := g["releasePublicKey"].(string); v != "" && strings.Contains(q, "LONGARM_HUB_RELEASES_PUBLIC_KEY") {
+				tsv("LONGARM_HUB_RELEASES_PUBLIC_KEY", v)
+			}
 		case strings.Contains(q, "LONGARM_HUB_SCHED_GATE_FREE_GB"), strings.Contains(q, "LONGARM_HUB_RELEASES_PUBLIC_KEY"):
 			// one plain variable (main.bicep sets it only when non-empty)
 			p := "schedulerGateFreeGb"
@@ -260,21 +296,80 @@ func fakeAz(args []string) {
 		}
 		host := os.Getenv("HELPER_AZ_HUB")
 		panel := ""
+		// every deployment: its state (decided when it was created) and parameters
+		deps := strings.Fields(read("deployments"))
+		params := func(dep string) map[string]any {
+			var doc struct {
+				Parameters map[string]struct{ Value any } `json:"parameters"`
+			}
+			json.Unmarshal([]byte(read("dparams-"+dep+".json")), &doc)
+			m := map[string]any{}
+			for k, v := range doc.Parameters {
+				m[k] = v.Value
+			}
+			return m
+		}
+		switch args[2] {
+		case "validate":
+			// preflight: the template and parameters, the subscription's policy
+			b, err := os.ReadFile(strings.TrimPrefix(flag("--parameters"), "@"))
+			if err != nil || flag("--template-file") == "" {
+				fail("fake az: deployment group validate " + strings.Join(args[3:], " "))
+			}
+			var doc struct {
+				Parameters map[string]struct{ Value any } `json:"parameters"`
+			}
+			if err := json.Unmarshal(b, &doc); err != nil {
+				fail("bad parameters file: " + err.Error())
+			}
+			if os.Getenv("HELPER_AZ_VALIDATE_FAIL") == "1" ||
+				(os.Getenv("HELPER_AZ_DENY_KEYS") == "1" && doc.Parameters["storageAuth"].Value != "identity") {
+				fail("InvalidTemplateDeployment: The template deployment failed because of policy violation (storage accounts must not allow shared key access).")
+			}
+			write(fmt.Sprintf("validated-%x", sha256.Sum256(b)), "")
+			return
+		case "list":
+			if !strings.Contains(q, "Succeeded") || os.Getenv("HELPER_AZ_NO_HISTORY") == "1" {
+				return
+			}
+			for _, d := range deps {
+				if read("dstate-"+d) == "Succeeded" {
+					fmt.Println(d)
+				}
+			}
+			return
+		}
 		if args[2] == "show" {
 			// --no-wait deployments: state and outputs by name
-			if read("deployment") != flag("-n") {
+			dep := flag("-n")
+			if !slices.Contains(deps, dep) {
 				fail("DeploymentNotFound")
 			}
 			switch {
-			case strings.Contains(q, "provisioningState"):
-				switch {
-				case os.Getenv("HELPER_AZ_DEPLOY_FAIL") == "1":
-					fmt.Println("Failed")
-				case os.Getenv("HELPER_AZ_STUCK") == "1":
-					fmt.Println("Running")
-				default:
-					fmt.Println("Succeeded")
+			case strings.HasPrefix(q, "[properties.parameters."):
+				// the kept settings of a past deployment: [properties.parameters.<p>.value, ...,
+				// properties.parameters.<p> == null]; az prints True/False and None
+				p := params(dep)
+				var vals []string
+				for _, e := range strings.Split(strings.Trim(q, "[]"), ", ") {
+					k := strings.TrimPrefix(e, "properties.parameters.")
+					if n, ok := strings.CutSuffix(k, " == null"); ok {
+						_, has := p[n]
+						vals = append(vals, map[bool]string{true: "False", false: "True"}[has])
+						continue
+					}
+					switch v := p[strings.TrimSuffix(k, ".value")].(type) {
+					case nil:
+						vals = append(vals, "None")
+					case bool:
+						vals = append(vals, map[bool]string{true: "True", false: "False"}[v])
+					default:
+						vals = append(vals, fmt.Sprint(v))
+					}
 				}
+				tsv(vals...)
+			case strings.Contains(q, "provisioningState"):
+				fmt.Println(read("dstate-" + dep))
 			case strings.Contains(q, "outputs"):
 				if g := group(); g["enablePanel"] == true {
 					panel = os.Getenv("HELPER_AZ_PANEL")
@@ -288,7 +383,8 @@ func fakeAz(args []string) {
 		if !slices.Contains(args, "--no-wait") {
 			fail("fake az: the scripts deploy with --no-wait")
 		}
-		write("deployment", flag("-n"))
+		dep := flag("-n")
+		write("deployment", dep)
 		b, err := os.ReadFile(strings.TrimPrefix(flag("--parameters"), "@"))
 		if err != nil {
 			fail(err.Error())
@@ -302,9 +398,29 @@ func fakeAz(args []string) {
 		if _, ok := doc.Parameters["location"]; ok {
 			fail("location is the resource group's")
 		}
+		if !exists(fmt.Sprintf("validated-%x", sha256.Sum256(b))) {
+			fail("fake az: deployed without validating these parameters first")
+		}
+		// the state: HELPER_AZ_DEPLOY_FAIL fails every deployment,
+		// HELPER_AZ_DEPLOY_FAIL_IMAGE those of an image containing it,
+		// HELPER_AZ_DEPLOY_FAIL_HEADSCALE those with the sidecar (its image
+		// can't be pulled: the v0.1.9 incident)
+		state := "Succeeded"
+		img, _ := doc.Parameters["image"].Value.(string)
+		switch {
+		case os.Getenv("HELPER_AZ_DEPLOY_FAIL") == "1",
+			os.Getenv("HELPER_AZ_DEPLOY_FAIL_IMAGE") != "" && strings.Contains(img, os.Getenv("HELPER_AZ_DEPLOY_FAIL_IMAGE")),
+			os.Getenv("HELPER_AZ_DEPLOY_FAIL_HEADSCALE") == "1" && doc.Parameters["enableHeadscale"].Value == true:
+			state = "Failed"
+		case os.Getenv("HELPER_AZ_STUCK") == "1":
+			state = "Running"
+		}
+		write("dstate-"+dep, state)
+		write("dparams-"+dep+".json", string(b))
+		write("deployments", strings.Join(append(deps, dep), " "))
 		write("params.json", string(b))
-		write("cg", string(b))
-		restart() // a changed group restarts (the SAS expiry changes every time)
+		write("cg", string(b)) // also a failed deployment leaves the group (in a failed state)
+		restart()              // a changed group restarts (the SAS expiry changes every time)
 	case "deployment operation":
 		fmt.Println(`[{"resource": "myhub", "error": {"code": "InaccessibleImage", "message": "fake failure"}}]`)
 	case "acr list":
@@ -341,6 +457,11 @@ func fakeAz(args []string) {
 			fail("Run 'az acr update -n " + flag("-n") + " --admin-enabled true' to enable admin first.")
 		}
 		tsv("acruser", "acr-s3cret-pw")
+	case "acr repository":
+		// an image of the registry (deploy.sh's pull check with the managed identity)
+		if args[2] != "show" || read("acr") != flag("-n") || strings.Contains(flag("--image"), "missing") {
+			fail("ResourceNotFound: " + flag("--image"))
+		}
 	case "acr build":
 		// what ACR Tasks needs: the stage it can parse, the Dockerfile in the source
 		src := args[len(args)-1]
@@ -357,7 +478,9 @@ func fakeAz(args []string) {
 			fail("KeyBasedAuthenticationNotPermitted") // allowSharedKeyAccess: false
 		}
 		if args[2] == "list" {
-			fmt.Println("lahubtest")
+			if exists("deployments") { // the template created it
+				fmt.Println("lahubtest")
+			}
 		} else {
 			fmt.Println("dGVzdGtleQ==")
 		}

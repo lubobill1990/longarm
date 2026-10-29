@@ -40,8 +40,8 @@ param enablePanel bool = true
 @description('E-mail for Let\'s Encrypt expiry notices (optional).')
 param acmeEmail string = ''
 
-@description('Caddy image of the panel sidecar (pinned by digest; point it at a mirror if Docker Hub rate limits bite).')
-param caddyImage string = 'docker.io/library/caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f'
+@description('Caddy image of the panel sidecar: docker.io/library/caddy:2.11.7-alpine, mirrored by digest to ghcr.io/lubobill1990/longarm-mirror (deploy/azure/mirror-images.txt; nothing is pulled from Docker Hub).')
+param caddyImage string = 'ghcr.io/lubobill1990/longarm-mirror:caddy-eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f'
 
 @description('Send container logs to a new Log Analytics workspace (about 2-3 USD per GB ingested).')
 param enableLogAnalytics bool = false
@@ -104,8 +104,8 @@ param registryPassword string = ''
 @description('Self-hosted Tailscale control plane: a Headscale sidecar in the container group (README "Headscale"). The hub serves its endpoints on https://<fqdn> (same certificate), keeps its database in the blob container "headscale" (Litestream), its private keys and API key in the hub\'s database, and mints the nodes\' tailnet keys with it ([tailnet] provider headscale). Needs enablePanel; about 9 USD/month more.')
 param enableHeadscale bool = false
 
-@description('Headscale image of the sidecar, pinned by digest: the -debug variant (its busybox shell runs the start script that waits for the hub).')
-param headscaleImage string = 'docker.io/headscale/headscale:v0.29.5-debug@sha256:162cf7e150072f677d70120fd9abaa78d55a37f6ab3944c040fb57626fefd12a'
+@description('Headscale image of the sidecar: docker.io/headscale/headscale:v0.29.5-debug (its busybox shell runs the start script that waits for the hub), mirrored by digest to ghcr.io/lubobill1990/longarm-mirror (deploy/azure/mirror-images.txt).')
+param headscaleImage string = 'ghcr.io/lubobill1990/longarm-mirror:headscale-162cf7e150072f677d70120fd9abaa78d55a37f6ab3944c040fb57626fefd12a@sha256:162cf7e150072f677d70120fd9abaa78d55a37f6ab3944c040fb57626fefd12a'
 
 @description('Headscale: also give nodes Tailscale Inc.\'s public DERP map (relay fallback through their servers). Off: only the hub\'s embedded DERP relay, so relayed traffic stays on the hub.')
 param headscalePublicDerp bool = false
