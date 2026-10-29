@@ -331,6 +331,9 @@ func (a *hubAgent) hello() *pb.NodeHello {
 	h.Tailnet = a.tailnet.state()
 	h.Isolation = a.spaces.Mode()
 	h.TenancyVersion = a.policy.Version()
+	if !legacyRelay() {
+		h.Capabilities = append(h.Capabilities, capRelaySet)
+	}
 	return h
 }
 
@@ -417,7 +420,11 @@ func (a *hubAgent) session(ctx context.Context) error {
 	}
 	a.log.Info("hub: connected", "hub", a.addr, "state", w.NodeState)
 	a.tailnet.apply(w.Tailnet)
-	a.relay.apply(a.addr, w.Relay)
+	if len(w.Relays) > 0 && !legacyRelay() {
+		a.relay.applySet(a.addr, w.Relays)
+	} else {
+		a.relay.apply(a.addr, w.Relay) // an older hub: its embedded relay only
+	}
 
 	errc := make(chan error, 2)
 	go func() {
@@ -663,6 +670,10 @@ func (a *hubAgent) handle(cmd *pb.HubCommand) {
 		}
 	case *pb.HubCommand_Tailnet:
 		a.tailnet.apply(x.Tailnet)
+	case *pb.HubCommand_Relays:
+		if !legacyRelay() {
+			a.relay.applySet(a.addr, x.Relays.Relays)
+		}
 	case *pb.HubCommand_WorkerAccess:
 		a.applyWorkerAccess(x.WorkerAccess)
 	case *pb.HubCommand_Tenancy:

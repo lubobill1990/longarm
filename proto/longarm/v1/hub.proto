@@ -9,7 +9,8 @@
 // Authorization is by the certificate role, like longarmd:
 //   Enroll           no certificate needed (the join code is the credential)
 //   HubNode.Connect  worker
-//   HubNode.Renew    any enrolled role
+//   HubNode.Renew    any enrolled role (and relay)
+//   HubNode.RelaySync relay (an external longarm-relay)
 //   Fleet            client, admin (ListNodes also worker)
 //   HubAdmin         admin
 //   Fleet.ReportLinks / Links / History  client, admin
@@ -177,6 +178,60 @@ service HubNode {
   // revoked, it disappears from scheduling); used by longarmd leave / longarm leave and
   // the uninstallers.
   rpc Leave(LeaveRequest) returns (LeaveResponse);
+  // RelaySync is an external longnet relay's subscription (role relay, a
+  // longarm-relay started with --hub): the relay registers its public
+  // endpoints (the hub advertises them to nodes as part of the relay set)
+  // and receives what it enforces without asking the hub per session: the
+  // revocation list and the worker pairs it may relay between (port links).
+  // The hub sends the full policy at once, on every change and at least
+  // every minute; the relay keeps the last one (on disk) and keeps relaying
+  // while the hub is away (pairs for RelayPolicy.ttl).
+  rpc RelaySync(RelaySyncRequest) returns (stream RelayPolicy);
+}
+
+message RelaySyncRequest {
+  // The relay's public QUIC/UDP endpoint, "host:port" (a name the nodes
+  // resolve, or an IP).
+  string udp = 1;
+  // Its TLS-over-TCP fallback, "host:port"; "" = the same as udp.
+  string tcp = 2;
+  string version = 3;
+}
+
+message RelayPolicy {
+  google.protobuf.Timestamp time = 1;
+  // How long the relay keeps the worker pairs without hearing from the hub
+  // (the revocation list is kept regardless: it only ever restricts).
+  google.protobuf.Duration ttl = 2;
+  Revocations revocations = 3;
+  // Worker pairs that may talk through the relay (both directions): the
+  // active port links. Client <-> worker needs no entry.
+  repeated WorkerPair worker_pairs = 4;
+  // Renew the relay certificate when it expires sooner (HubNode.Renew).
+  google.protobuf.Duration renew_before = 5;
+}
+
+message WorkerPair {
+  string a = 1;
+  string b = 2;
+}
+
+// RelayEndpoint is one longnet relay of the hub's relay set.
+message RelayEndpoint {
+  // "host:port" of the relay's QUIC/UDP socket. An empty host (":7445") is
+  // the host the node dials the hub on (the hub's embedded relay).
+  string udp = 1;
+  // The TLS-over-TCP fallback "host:port"; "" = udp's (an external relay)
+  // or the hub's own address (the embedded relay).
+  string tcp = 2;
+  string name = 3; // the relay's certificate name (display, logs)
+  bool embedded = 4; // the relay inside longarm-hub (restarts with the hub)
+}
+
+// RelaySet replaces the relay set of a running session (a relay registered
+// or was forgotten); sent only to workers that announce "relay-set".
+message RelaySet {
+  repeated RelayEndpoint relays = 1;
 }
 
 message NodeReport {
@@ -226,6 +281,9 @@ message NodeHello {
   TailnetState tailnet = 15; // the embedded tailscale node (hub-managed tailnet)
   string isolation = 16; // longarmd.toml [isolation] mode: "shared" | "per-user"
   int64 tenancy_version = 17; // version of the tenancy policy the worker has
+  // What this longarmd supports: "relay-set" = it reads HubWelcome.relays
+  // and HubCommand.relays (listens on every relay of the set).
+  repeated string capabilities = 18;
 }
 
 message NodeState {
@@ -311,6 +369,8 @@ message HubCommand {
     // reconnect after reconnect_after (with jitter) and keep retrying
     // quickly; not a failure of the worker or its link.
     HubRestarting restarting = 15;
+    // The relay set changed (see HubWelcome.relays).
+    RelaySet relays = 16;
   }
 }
 
@@ -380,8 +440,14 @@ message HubWelcome {
   // own TCP port). An empty host is the host the node dials the hub on;
   // "" = the hub runs no relay. Workers that listen on loopback only (the
   // default of sign-in installs) listen on it too, so other machines reach
-  // them (longarmd.toml [hub] relay).
+  // them (longarmd.toml [hub] relay). Kept for older workers: newer ones
+  // use relays.
   string relay = 7;
+  // The relay set, by preference: external relays (longarm-relay --hub, a
+  // separate deployment that keeps running while the hub restarts) first,
+  // the embedded relay last. Workers listen on every one; clients race the
+  // resulting endpoints. Empty = only relay (an older hub).
+  repeated RelayEndpoint relays = 10;
 }
 
 message Revocations {
@@ -875,6 +941,9 @@ service HubAdmin {
   // with a fresh key: pushed to an online worker at once, otherwise on its
   // next hub session (clients: their next hub contact).
   rpc TailnetRekey(NodeRequest) returns (TailnetNodeStatus);
+  // Relays lists the relay set (external relays: connected, last seen) and
+  // how many nodes use it (longarm admin relays).
+  rpc Relays(RelaysRequest) returns (RelaysResponse);
   // Users, teams and quotas (multi-tenancy, docs/security.md).
   rpc PutUser(PutUserRequest) returns (PutUserResponse);
   rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
@@ -1298,4 +1367,24 @@ message PortLinkSpec {
   string job_id = 8;
   string device = 9; // the signing device (the endorsement's name)
   int64 issued_unix = 10;
+}
+
+message RelaysRequest {}
+
+message RelayStatus {
+  RelayEndpoint endpoint = 1;
+  bool connected = 2; // its RelaySync stream is open now
+  google.protobuf.Timestamp last_seen = 3; // unset for the embedded relay
+  string version = 4;
+  string remote = 5; // the address it connects to the hub from
+}
+
+message RelaysResponse {
+  repeated RelayStatus relays = 1; // the advertised set, by preference
+  // Online workers that listen on the whole set ("relay-set") and those
+  // that only know the embedded relay (older versions, by version): the
+  // latter lose their relayed connections while the hub restarts.
+  int32 workers_relay_set = 2;
+  int32 workers_legacy = 3;
+  map<string, int32> legacy_versions = 4;
 }

@@ -879,6 +879,35 @@ use the hub's longnet relay. The relay forwards worker ↔ worker packets
 only for pairs with an active link (`longarm-relay` run standalone never
 does).
 
+**External relays** (`longarm-relay --hub`, docs/usage.md "External
+relays") enforce the same policy without asking the hub per session: the
+hub sends them its revocation list and the pairs of the active links over
+`HubNode.RelaySync` (relay certificates only; the relay authenticates to the
+hub with its CA certificate and the hub only to the relay with its hub
+certificate). The relay checks every node certificate against the CA and
+the list in the TLS handshake and closes the sessions of newly revoked
+certificates. What that means while the hub is away:
+
+- A relay keeps the last list and pairs on disk. A link removed during a
+  hub outage keeps relaying until the hub is back, at most 24 hours (then
+  the relay drops all worker pairs until it hears from the hub); the
+  workers themselves still end it at its TTL. A revocation made while the
+  hub is down can't reach anyone anyway.
+- A relay that has never received a list (first start, empty disk, hub
+  down) refuses every session: it can't know who is revoked.
+- Who can run one: whoever holds a relay certificate of the CA (`longarm
+  admin issue --role relay` with the CA key, or the hub's `longarm-hub
+  issue`). Relays see only end-to-end encrypted QUIC / TLS records, like
+  the embedded one; a relay can drop or delay traffic, and it learns who
+  talks to whom (as the hub's relay does). Registering makes the hub
+  advertise the relay to workers, so a relay certificate is as sensitive as
+  the hub's own relay. `longarm admin revoke <relay>` revokes it and takes
+  it out of the relay set at once.
+- deploy/azure passes the relay's bundle (private key) as a secure
+  environment variable of its container group (never on a command line;
+  readable by whoever can exec into the container, like the hub's own
+  keys).
+
 ## Forwarded git credentials
 
 `longarm run / sync --git-auth forward` lets a worker fetch a repository

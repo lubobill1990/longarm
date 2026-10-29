@@ -17,12 +17,12 @@ func TestRegisterRefusesOtherIdentity(t *testing.T) {
 	s.init()
 	defer s.Close()
 	w := pki.Identity{Role: pki.RoleWorker, Name: "w1"}
-	holder := s.newSession(w, "tcp", netip.AddrPort{}, Hello{})
+	holder := s.newSession(w, nil, "tcp", netip.AddrPort{}, Hello{})
 	holder.kick = func(string) {}
 	if err := s.register(holder); err != nil {
 		t.Fatal(err)
 	}
-	evil := s.newSession(pki.Identity{Role: pki.RoleClient, Name: "mallory"}, "tcp", netip.AddrPort{}, Hello{})
+	evil := s.newSession(pki.Identity{Role: pki.RoleClient, Name: "mallory"}, nil, "tcp", netip.AddrPort{}, Hello{})
 	evil.id = holder.id // pretend the hash collided
 	evil.kick = func(string) {}
 	if err := s.register(evil); !errors.Is(err, errIDInUse) {
@@ -32,7 +32,7 @@ func TestRegisterRefusesOtherIdentity(t *testing.T) {
 		t.Fatal("holder evicted")
 	}
 	// The same identity reconnecting replaces it.
-	again := s.newSession(w, "udp", netip.AddrPort{}, Hello{})
+	again := s.newSession(w, nil, "udp", netip.AddrPort{}, Hello{})
 	kicked := false
 	holder.kick = func(string) { kicked = true }
 	again.kick = func(string) {}
@@ -49,7 +49,7 @@ func TestCallMeMaybeForwarding(t *testing.T) {
 	s.init()
 	defer s.Close()
 	mk := func(id pki.Identity, remote string) *session {
-		ss := s.newSession(id, "tcp", netip.MustParseAddrPort(remote), Hello{Candidates: []netip.AddrPort{
+		ss := s.newSession(id, nil, "tcp", netip.MustParseAddrPort(remote), Hello{Candidates: []netip.AddrPort{
 			netip.MustParseAddrPort("10.0.0.5:7000"), netip.MustParseAddrPort("127.0.0.1:7000")}})
 		ss.kick = func(string) {}
 		if err := s.register(ss); err != nil {

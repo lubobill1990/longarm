@@ -1,0 +1,250 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.48.1.52935",
+      "templateHash": "11781634392064826925"
+    }
+  },
+  "parameters": {
+    "name": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 40,
+      "metadata": {
+        "description": "The hub's name (deploy.sh --name): the relay is <name>-relay.<region>.azurecontainer.io."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region (default: the resource group's)."
+      }
+    },
+    "image": {
+      "type": "string",
+      "defaultValue": "ghcr.io/lubobill1990/longarm-hub:latest",
+      "metadata": {
+        "description": "Image with longarm-relay: the hub's image (deploy.sh uses the running hub's)."
+      }
+    },
+    "hubAddress": {
+      "type": "string",
+      "defaultValue": "[format('{0}.{1}.azurecontainer.io:7443', parameters('name'), parameters('location'))]",
+      "metadata": {
+        "description": "The hub the relay registers with (host:port)."
+      }
+    },
+    "relayTls": {
+      "type": "securestring",
+      "metadata": {
+        "description": "The relay certificate bundle: base64 of a tar.gz with ca.crt, node.crt and node.key (role relay, from the hub's CA: az container exec ... longarm-hub-relay-cert)."
+      }
+    },
+    "relayUdpPort": {
+      "type": "int",
+      "defaultValue": 7445,
+      "minValue": 7444,
+      "maxValue": 65534,
+      "metadata": {
+        "description": "UDP port of the relay (QUIC + STUN); STUN's second port is this + 1. Not 7443: ACI refuses one port number for TCP and UDP, and the TLS fallback (nodes whose UDP is blocked) is on 7443/tcp, as on the hub."
+      }
+    },
+    "stunServers": {
+      "type": "string",
+      "defaultValue": "stun.cloudflare.com:3478,stun.l.google.com:19302",
+      "metadata": {
+        "description": "External STUN servers the relay advertises next to its own ports (comma-separated host:port; empty = only its own). ACI rewrites the source address of inbound UDP, so its own answers are useless there (README \"Direct connections\")."
+      }
+    },
+    "cpu": {
+      "type": "string",
+      "defaultValue": "0.5",
+      "allowedValues": [
+        "0.5",
+        "1",
+        "2"
+      ],
+      "metadata": {
+        "description": "vCPUs of the relay container (QUIC crypto for relayed sessions; 0.5 carries a fleet of tens of nodes)."
+      }
+    },
+    "memoryInGB": {
+      "type": "string",
+      "defaultValue": "0.5",
+      "allowedValues": [
+        "0.5",
+        "1",
+        "2"
+      ],
+      "metadata": {
+        "description": "Memory of the relay container in GB."
+      }
+    },
+    "acrName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "storageAuth identity hubs: pull the image from this Azure Container Registry (in this resource group) with the hub's managed identity <name>-id (AcrPull). Empty: registryUsername or anonymous."
+      }
+    },
+    "registryServer": {
+      "type": "string",
+      "defaultValue": "ghcr.io",
+      "metadata": {
+        "description": "Registry login for a private image (empty = anonymous pull)."
+      }
+    },
+    "registryUsername": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "registryPassword": {
+      "type": "securestring",
+      "defaultValue": ""
+    }
+  },
+  "variables": {
+    "relayName": "[format('{0}-relay', parameters('name'))]",
+    "relayTcpPort": 7443,
+    "fqdn": "[format('{0}.{1}.azurecontainer.io', variables('relayName'), parameters('location'))]",
+    "useAcr": "[not(empty(parameters('acrName')))]",
+    "tags": {
+      "longarm-hub": "[parameters('name')]",
+      "longarm-role": "relay"
+    },
+    "stunAdvertise": "[if(empty(parameters('stunServers')), 'self', format('self,{0}', parameters('stunServers')))]",
+    "relayContainer": {
+      "name": "relay",
+      "properties": {
+        "image": "[parameters('image')]",
+        "command": [
+          "/usr/local/bin/longarm-relay",
+          "--udp",
+          "[format(':{0}', parameters('relayUdpPort'))]",
+          "--tcp",
+          "[format(':{0}', variables('relayTcpPort'))]",
+          "--stun2",
+          "[format(':{0}', add(parameters('relayUdpPort'), 1))]",
+          "--tls-dir",
+          "/data/relay/tls",
+          "--state-dir",
+          "/data/relay/state",
+          "--metrics",
+          "127.0.0.1:7801",
+          "--hub",
+          "[parameters('hubAddress')]",
+          "--advertise",
+          "[variables('fqdn')]",
+          "--stun-advertise",
+          "[variables('stunAdvertise')]"
+        ],
+        "environmentVariables": [
+          {
+            "name": "LONGARM_RELAY_TLS_B64",
+            "secureValue": "[parameters('relayTls')]"
+          }
+        ],
+        "resources": {
+          "requests": {
+            "cpu": "[json(parameters('cpu'))]",
+            "memoryInGB": "[json(parameters('memoryInGB'))]"
+          }
+        },
+        "ports": [
+          {
+            "port": "[variables('relayTcpPort')]",
+            "protocol": "TCP"
+          },
+          {
+            "port": "[parameters('relayUdpPort')]",
+            "protocol": "UDP"
+          },
+          {
+            "port": "[add(parameters('relayUdpPort'), 1)]",
+            "protocol": "UDP"
+          }
+        ],
+        "livenessProbe": {
+          "exec": {
+            "command": [
+              "/usr/local/bin/longarm-relay",
+              "healthcheck",
+              "--addr",
+              "127.0.0.1:7801"
+            ]
+          },
+          "initialDelaySeconds": 20,
+          "periodSeconds": 30,
+          "failureThreshold": 3,
+          "timeoutSeconds": 10
+        }
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ContainerInstance/containerGroups",
+      "apiVersion": "2025-09-01",
+      "name": "[variables('relayName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "identity": "[if(variables('useAcr'), createObject('type', 'UserAssigned', 'userAssignedIdentities', createObject(format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('name')))), createObject())), null())]",
+      "properties": {
+        "osType": "Linux",
+        "sku": "Standard",
+        "restartPolicy": "Always",
+        "containers": [
+          "[variables('relayContainer')]"
+        ],
+        "imageRegistryCredentials": "[if(variables('useAcr'), createArray(createObject('server', reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), '2023-07-01').loginServer, 'identity', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('name'))))), if(empty(parameters('registryUsername')), createArray(), createArray(createObject('server', parameters('registryServer'), 'username', parameters('registryUsername'), 'password', parameters('registryPassword')))))]",
+        "ipAddress": {
+          "type": "Public",
+          "dnsNameLabel": "[variables('relayName')]",
+          "ports": [
+            {
+              "port": "[variables('relayTcpPort')]",
+              "protocol": "TCP"
+            },
+            {
+              "port": "[parameters('relayUdpPort')]",
+              "protocol": "UDP"
+            },
+            {
+              "port": "[add(parameters('relayUdpPort'), 1)]",
+              "protocol": "UDP"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "fqdn": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerInstance/containerGroups', variables('relayName')), '2025-09-01').ipAddress.fqdn]"
+    },
+    "ipAddress": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerInstance/containerGroups', variables('relayName')), '2025-09-01').ipAddress.ip]"
+    },
+    "containerGroup": {
+      "type": "string",
+      "value": "[variables('relayName')]"
+    },
+    "relayUdp": {
+      "type": "string",
+      "metadata": {
+        "description": "The relay as nodes reach it: UDP (QUIC) and the TLS fallback."
+      },
+      "value": "[format('{0}:{1}', variables('fqdn'), parameters('relayUdpPort'))]"
+    },
+    "relayTcp": {
+      "type": "string",
+      "value": "[format('{0}:{1}', variables('fqdn'), variables('relayTcpPort'))]"
+    }
+  }
+}

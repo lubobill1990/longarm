@@ -502,7 +502,7 @@ func (c *Config) SchedParams() sched.Params {
 
 // TTL of a certificate for role.
 func (c *Config) TTL(role string) time.Duration {
-	if role == "worker" {
+	if role == "worker" || role == "relay" {
 		return c.Certs.WorkerTTL.Duration
 	}
 	return c.Certs.ClientTTL.Duration

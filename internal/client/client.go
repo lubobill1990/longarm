@@ -324,6 +324,9 @@ func (d *Dialer) longnetTransport(relayAddr string) (transport.Transport, error)
 		relayTCP = r.RelayTCP
 	}
 	if relayTCP == "" {
+		relayTCP = relayTCPHint(relayAddr) // an external relay's, from its endpoints
+	}
+	if relayTCP == "" {
 		relayTCP = hubRelayTCP(relayAddr, d.cfg.Hub.Address)
 	}
 	o, err := longnet.ClientOptions(relayAddr, relayTCP, r.Mode, r.DisableDirect, d.bundle, nil)

@@ -77,7 +77,7 @@ func TestSNATDetectedEffects(t *testing.T) {
 	s := &Server{STUN: []string{":7443", ":7444", "stun.example.net:3478"}}
 	s.init()
 	defer s.Close()
-	ss := s.newSession(pki.Identity{Role: pki.RoleWorker, Name: "w1"}, "udp", netip.AddrPort{}, Hello{})
+	ss := s.newSession(pki.Identity{Role: pki.RoleWorker, Name: "w1"}, nil, "udp", netip.AddrPort{}, Hello{})
 	var w Welcome
 	if json.Unmarshal(s.welcome(ss)[3:], &w); len(w.STUN) != 3 || !w.NodeInfo {
 		t.Fatalf("welcome %+v", w)

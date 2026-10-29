@@ -2697,7 +2697,71 @@ nodes use TLS over TCP to the relay instead.
 `longnet://hub.example.com:7443?name=w1` (UDP 7443; the TLS fallback shares the
 hub's TCP 7443) and clients learn that endpoint from the hub, no relay
 certificate or workers.toml needed. The standalone `longarm-relay` below remains
-for setups without a hub. The longnet listener follows certificate renewals.
+for setups without a hub, and as an **external relay** of a hub (next
+section). The longnet listener follows certificate renewals.
+
+### External relays: relayed connections that survive hub restarts
+
+The relay inside longarm-hub restarts with the hub, so every relayed
+connection (a client and a worker without a direct path) drops while the hub
+redeploys - a minute or two on Azure Container Instances. An external relay
+is a `longarm-relay` started with `--hub`, deployed apart from the hub (on
+Azure: `deploy.sh --relay`, its own container group, see
+[deploy/azure/README.md](../deploy/azure/README.md#external-relay)):
+
+```sh
+# a relay certificate from the hub's CA (on the hub: longarm-hub issue; or longarm admin issue with the CA)
+longarm-hub issue --role relay --name relay1 --host relay.example.com --out ./relay-tls
+longarm-relay --listen :7445 --tcp :7443 --tls-dir ./relay-tls --metrics 127.0.0.1:7801 \
+  --hub hub.example.com:7443 --advertise relay.example.com [--state-dir DIR]
+longarm admin relays          # the relay set, connected relays, workers on old versions
+```
+
+- **Relay set.** The relay registers its public endpoints with the hub
+  (`--advertise HOST` with the bound ports, or `--advertise-udp` /
+  `--advertise-tcp HOST:PORT`). The hub keeps them in its database and
+  advertises the set - external relays first, its embedded relay last - in
+  every worker session (and pushes changes to running ones). Loopback-only
+  workers (every sign-in install) listen on every relay of the set and
+  advertise one longnet endpoint per relay (an external relay's carries its
+  TLS fallback: `longnet://relay:7445?name=w1&tcp=relay:7443`); clients race
+  them like any other legs and keep them in `hub-cache.json`. Workers keep
+  the last set in `relay-set.json` and listen on it when they start while the
+  hub is down. A relay not seen for 7 days leaves the set;
+  `longarm admin revoke <relay>` removes it at once.
+- **Authorization without the hub.** Nodes authenticate to the relay with
+  their CA certificates, as with the embedded relay (the relay's certificate
+  is from the same CA: nothing new to trust). The hub sends the relay its
+  revocation list and the worker pairs it may relay between (the active port
+  links; client <-> worker needs none) over a subscription
+  (`HubNode.RelaySync`) at once, on every change and every minute. The relay
+  enforces them on its own and keeps them on disk (`--state-dir`): it never
+  asks the hub per session, keeps relaying while the hub is down, and a
+  relay that restarts during a hub outage starts with the cached list. A
+  relay that has never had a list refuses sessions until the hub answers.
+  Worker pairs end 24 hours after the relay last heard from the hub; the
+  revocation list never expires (it only restricts). A revocation reaches
+  the relay within a second and closes the node's relay sessions.
+- **Certificate.** Valid 90 days (`worker_ttl`) when issued by the hub's
+  renewal, 365 days from `deploy.sh --relay`; the relay renews it through the
+  hub (`HubNode.Renew`, keeping its host names) when it expires within the
+  hub's `renew_before` (30 days by default), and writes it to `--tls-dir`.
+- **STUN** is answered on the relay's UDP port and `--stun2` as before;
+  `--stun-advertise` (or `LONGARM_RELAY_STUN_ADVERTISE`) lists external
+  servers for a relay behind source NAT (ACI).
+- **Health:** `GET /healthz` on `--metrics` (503 until the relay has a
+  policy); `longarm-relay healthcheck [--ready]`.
+
+**Compatibility.** Nothing needs signing in again or reinstalling: workers
+of this release pick up the relay set in their next hub session (connected
+ones within seconds), older workers ignore the new fields and keep using the
+embedded relay, which stays as the fallback. Surviving hub restarts needs the
+new version on both ends: the worker to listen on the external relay, the
+client to dial its endpoint with its TLS fallback (an older client still uses
+the relay's UDP endpoint, and the embedded relay). MSI installs update
+through the Longarm Update service (the tray's banner, `longarm worker
+update`), script installs through self-update; `longarm admin relays` counts
+the online workers that use the set and those still on older versions.
 
 ```sh
 # relay host (public): certificate with the relay role from the same CA

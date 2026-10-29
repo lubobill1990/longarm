@@ -90,6 +90,12 @@ type Hub struct {
 	// port links (portlinks.go): by id; the version counts pushes
 	portLinks        map[string]*portLinkEntry
 	portLinksVersion int64
+	// external relays (relays.go): registered by cert name; the last relay
+	// set pushed; RelaySync streams wait on relayPolCh (closed on a change)
+	extRelays    map[string]*extRelay
+	lastRelaySet *pb.RelaySet
+	relayPolMu   sync.Mutex
+	relayPolCh   chan struct{}
 
 	started time.Time
 	relay   *relay.Server
@@ -115,6 +121,7 @@ type node struct {
 	maxJobs     int32               // local limits (NodeState)
 	updateAvail *pb.UpdateAvailable // a release the worker can't install itself (NodeState)
 	reservedGB  float64
+	caps        []string // NodeHello.capabilities of the current session
 }
 
 type nodeSession struct {
@@ -261,6 +268,7 @@ func (h *Hub) load() error {
 		h.tenancyChangedLocked()
 	}
 	h.recheckPortLinksLocked() // isolation or hub.toml may have changed since
+	h.loadRelaysLocked()
 	v, _ := h.store.Meta("revocation_version")
 	h.revVersion, _ = strconv.ParseInt(v, 10, 64)
 	h.revoked, _ = pki.LoadRevocationList("")
@@ -442,6 +450,10 @@ func (h *Hub) Serve(ctx context.Context) error {
 		h.updateRelayPairsLocked() // linked workers may talk through the relay
 		h.mu.Unlock()
 	}
+	run("relay forget", func() error { h.runRelayForget(ctx); return nil })
+	h.mu.Lock()
+	h.relaySetChangedLocked() // the embedded relay's port is known now
+	h.mu.Unlock()
 	h.startTelemetry(ctx, run)
 	run("releases", func() error { h.rel.reconcile(ctx, h.store); return nil })
 	run("mux", mux.Serve)

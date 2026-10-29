@@ -76,6 +76,7 @@ restarts the hub) prints everything too.
 | `--recreate` | `-Recreate` | delete the container group first (to change size, panel or `--headscale`; data stays): validated, images checked and settings saved first, rolled back if the new configuration fails ([below](#safe-re-runs-and---recreate)) |
 | `--skip-image-check` | `-SkipImageCheck` | don't check that every image can be pulled before deploying |
 | `--admin-code` | `-AdminCode` | print a new one-time admin join code |
+| `--relay` / `--relay-remove` | `-Relay` / `-RelayRemove` | deploy (upgrade) or delete the external relay `<name>-relay` ([below](#external-relay)) |
 | `--teardown [--yes]` | `-Teardown [-Yes]` | delete the resource group (only one the script created) |
 | `--timeout S` | `-TimeoutSeconds` | how long to wait for the deployment and the hub (default 1200) |
 | `--stuck-timeout S` | `-StuckTimeoutSeconds` | give up on a group stuck in `Creating` without any event (default 600) |
@@ -426,6 +427,76 @@ traffic relayed by the longnet relay leaves Azure and counts. Direct
 - **ACI rewrites the source address of inbound UDP** (see below): the hub's
   own STUN answers are useless for NAT detection there.
 
+## External relay
+
+```sh
+./deploy.sh --name myhub --relay            # PowerShell: ./deploy.ps1 -Name myhub -Relay
+./deploy.sh --name myhub --relay-remove     # delete it (the hub keeps its embedded relay)
+```
+
+The hub's longnet relay restarts with the hub, so every relayed client <->
+worker connection drops for the minute or two a redeploy takes. `--relay`
+adds an **external relay**: `longarm-relay --hub` (docs/usage.md "External
+relays") in its own container group `<name>-relay` with its own public IP
+and DNS label `<name>-relay.<region>.azurecontainer.io`, so hub redeploys
+never restart it.
+
+```text
+  <name>-relay.<region>.azurecontainer.io (own IP)      <name>.<region>.azurecontainer.io
+  ┌── ACI container group <name>-relay ──┐               ┌── the hub's group (unchanged) ──┐
+  │ relay  longarm-relay (the hub image) │ ── RelaySync ─▶│ hub  :7443/tcp ...              │
+  │   :7445/udp QUIC + STUN, :7446/udp   │  revocations,  │   (its embedded relay stays    │
+  │   :7443/tcp TLS fallback             │  port links    │    as the fallback)             │
+  └──────────────────────────────────────┘               └─────────────────────────────────┘
+```
+
+- **Certificate**: issued from the hub's CA by the hub itself (`az container
+  exec ... /usr/local/bin/longarm-hub-relay-cert`, i.e. `longarm-hub issue
+  --role relay --b64`: name `<name>-relay`, the relay's DNS name, a year),
+  passed to the container as a secure environment variable
+  (`LONGARM_RELAY_TLS_B64`; never on a command line). The relay renews it
+  through the hub; a re-run issues a fresh one. Every node already trusts it
+  (same CA): no new trust anchor, nothing to configure on any machine.
+- **Registration**: the relay registers its endpoints with the hub, which
+  keeps them in its database and advertises them in every worker session.
+  Workers on a version with the relay set listen on it within seconds;
+  older ones keep the embedded relay (`longarm admin relays` counts them).
+- **No storage, no state to back up**: the policy (revocations, port-link
+  pairs) comes from the hub and is kept on the container's disk while it
+  runs. Litestream is not involved.
+- **Image**: the running hub's (the image has `longarm-relay`); `--image`
+  overrides it, `--registry-user` as for the hub; an ACR pulled with the
+  hub's managed identity (`--storage-auth identity`) works too. STUN: the
+  hub's `--stun-servers` (ACI source-NATs inbound UDP, as for the hub).
+- **Safe runs**: the hub must be running and new enough (it issues the
+  certificate; an older image is refused before anything changes). The
+  deployment is validated first (`az deployment group validate`, also the
+  rollback); the script waits for the container, its registration with the
+  hub (log line `relay: subscribed to the hub`) and its TLS port. An upgrade
+  that doesn't come up is **rolled back** to the previous relay image. The
+  hub is never touched: its embedded relay works throughout.
+- **Ports**: 7445/udp, 7446/udp, 7443/tcp - 3 of the 5 ports ACI allows per
+  IP address (the hub with its panel uses all 5 of its own IP, which is why
+  the relay needs a group of its own). ACI refuses one number for TCP and
+  UDP, hence UDP 7445 and TCP 7443, like the hub.
+- **Cost**: 0.5 vCPU / 0.5 GB, about **16 USD/month** (0.0405 USD per
+  vCPU-hour, 0.0045 USD per GB-hour), plus egress: relayed traffic leaves
+  Azure through the relay instead of the hub (same volume, not more).
+- **Health**: the liveness probe runs `longarm-relay healthcheck`
+  (`/healthz` on 127.0.0.1:7801). Logs: `az container logs -g <rg> -n
+  <name>-relay`.
+
+What survives a hub redeploy, before and after:
+
+| | before (embedded relay only) | with the external relay |
+|---|---|---|
+| direct paths (tcp, longnet direct, tailscale direct) | survive | survive |
+| relayed client <-> worker sessions (attach, logs -f, port forwards, exec) | break; reconnect after the hub is back | survive (no break) |
+| new connections while the hub is down | direct paths and cached endpoints only | also through the external relay |
+| worker <-> worker relayed (port links) | break | survive (the relay keeps the pairs for 24 h) |
+| metrics in the tray / `longarm ls` | hub's go stale | the hub's still go stale (direct metrics: docs/usage.md) |
+| hub-only features (placement `auto`, sign-in, link creation) | unavailable | unavailable |
+
 ## Building the image in Azure (no docker)
 
 The default image is `ghcr.io/lubobill1990/longarm-hub` (public once the
@@ -570,6 +641,8 @@ or `?stun=` on the longnet URL.
 | [main.bicep](main.bicep) | the template (`az deployment group create --template-file main.bicep -p name=myhub`) |
 | [azuredeploy.json](azuredeploy.json) | `bicep build main.bicep --outfile azuredeploy.json` (CI checks it is current) |
 | [deploy.sh](deploy.sh) / [deploy.ps1](deploy.ps1) | the one-command deploy / upgrade / teardown |
+| [relay.bicep](relay.bicep) / [relay.json](relay.json) | the external relay's container group (`--relay`; relay.json compiled, CI checks it) |
+| [relay.sh](relay.sh) / [relay.ps1](relay.ps1) | `--relay` / `-Relay` (sourced by the deploy scripts) |
 | [test/container-smoke.sh](test/container-smoke.sh) | the image test in CI (docker + Azurite) |
 | [test/acirules](test/acirules/main.go) | ACI's rules (ports, memory/CPU steps, limits) for every parameter combination, in CI |
 | [E2E.md](E2E.md) | the manual end-to-end test on a real subscription |

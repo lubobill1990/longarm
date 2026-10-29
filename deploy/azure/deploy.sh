@@ -10,6 +10,7 @@
 #   ./deploy.sh --name myhub --location eastasia --build-in-acr          # image built from this checkout in your ACR
 #   ./deploy.sh --name myhub --location eastasia --storage-auth identity # no storage account keys
 #   ./deploy.sh --name myhub --headscale --recreate                      # + a Headscale sidecar (tailnet)
+#   ./deploy.sh --name myhub --relay                                     # + an external relay (relay.sh)
 #
 # Re-running is an upgrade: the template is applied again with the running
 # hub's settings (image, size, panel, ...) unless an option changes them,
@@ -28,7 +29,7 @@ name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=fa
 recreate=false admin_code=false subscription='' acme_email='' registry_user='' tailscale_secret_file=''
 entra_tenant='' entra_client='' entra_admins='' entra_web='' entra_apps='' gate_free_gb='' release_public_key=''
 build_in_acr=false stun_servers='' storage_auth='' acr='' timeout=1200 stuck_timeout=600
-telemetry='' diagnostics='' headscale='' public_derp='' skip_image_check=false
+telemetry='' diagnostics='' headscale='' public_derp='' skip_image_check=false relay=false relay_remove=false
 # seconds between status polls (tests make it short; each az call takes a
 # second or two on its own)
 poll=${LONGARM_DEPLOY_POLL_SECONDS:-5}
@@ -76,6 +77,11 @@ usage: deploy.sh --name NAME [--location REGION] [options]
                            one fails
   --skip-image-check       don't check that every image can be pulled before deploying
   --admin-code             print a new one-time admin join code (az container exec)
+  --relay                  deploy (or upgrade) the hub's external longnet relay: its own container
+                           group NAME-relay that keeps relayed connections up while the hub
+                           restarts (README "External relay"; takes --image, --registry-user,
+                           --stun-servers, --timeout; default image: the hub's)
+  --relay-remove           delete the external relay (the hub keeps its embedded relay)
   --teardown               delete the resource group (asks for the name unless --yes)
   --yes                    don't ask
   --timeout SECONDS        how long to wait for the hub (default 1200)
@@ -121,6 +127,8 @@ while [[ $# -gt 0 ]]; do
 	--recreate) recreate=true ;;
 	--skip-image-check) skip_image_check=true ;;
 	--admin-code) admin_code=true ;;
+	--relay) relay=true ;;
+	--relay-remove) relay_remove=true ;;
 	--teardown) teardown=true ;;
 	--yes | -y) yes=true ;;
 	--timeout) timeout=${2:?}; shift ;;
@@ -326,6 +334,13 @@ if $admin_code; then
 	# MSYS_NO_PATHCONV: Git Bash on Windows would turn the path into C:/Program Files/Git/usr/...
 	MSYS_NO_PATHCONV=1 az container exec -g "$rg" -n "$name" --container-name hub --exec-command /usr/local/bin/longarm-hub-admin-code
 	exit 0
+fi
+
+if $relay || $relay_remove; then
+	! $recreate && ! $build_in_acr && [[ -z $size && -z $panel && -z $headscale ]] ||
+		die "--relay deploys the external relay only: --recreate, --build-in-acr, --size, --panel and --headscale are hub options"
+	# shellcheck source=/dev/null # relay.sh: checked on its own
+	. "$here/relay.sh" # exits
 fi
 
 [[ -f $template ]] || die "$template is missing (run from a checkout of the repository)"

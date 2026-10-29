@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -252,6 +253,29 @@ var execAliases = map[string][]string{
 	// the release certificate of CI (docs/ci-cd.md), as the
 	// LONGARM_RELEASE_TLS secret wants it: valid 180 days, name ci-<date>
 	"longarm-hub-release-cert": {"issue", "--role", "release", "--days", "180", "--b64"},
+	// the certificate of the external relay deploy/azure runs next to the
+	// hub (deploy.sh --relay): valid a year (the relay renews it through the
+	// hub), name and host from the hub's advertised name (relayIdentity)
+	"longarm-hub-relay-cert": {"issue", "--role", "relay", "--days", "365", "--b64"},
+}
+
+// relayIdentity is the external relay's certificate name and DNS name for
+// a hub advertised as fqdn: <label>-relay and <label>-relay.<rest> (the DNS
+// label deploy/azure gives the relay's container group). Without an fqdn:
+// "relay" and no name.
+func relayIdentity(fqdn string) (name, host string) {
+	if h, _, err := net.SplitHostPort(fqdn); err == nil {
+		fqdn = h
+	}
+	label, rest, _ := strings.Cut(fqdn, ".")
+	if label == "" || net.ParseIP(fqdn) != nil {
+		return "relay", ""
+	}
+	name = label + "-relay"
+	if rest == "" {
+		return name, name
+	}
+	return name, name + "." + rest
 }
 
 // aliasArgs maps argv[0] to subcommand arguments (nil: not an alias).
@@ -269,6 +293,13 @@ func aliasArgs(argv0 string) ([]string, error) {
 			return nil, fmt.Errorf("no user name: %v", err)
 		}
 		args = append(args, user)
+	}
+	if name == "longarm-hub-relay-cert" {
+		rn, host := relayIdentity(os.Getenv("LONGARM_HUB_ADVERTISE"))
+		args = append(args, "--name", rn)
+		if host != "" {
+			args = append(args, "--host", host)
+		}
 	}
 	return args, nil
 }

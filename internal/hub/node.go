@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -103,6 +104,7 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 		HubDraining:     n.rec.AdminDrain,
 		Tailnet:         h.tailnetInfo(n),
 		Relay:           h.relayAdvert(),
+		Relays:          h.relaySetLocked(),
 	}
 	// The session's first messages are queued before h.mu is released: from
 	// then on other goroutines may push to it too (port links, share changes,
@@ -189,6 +191,7 @@ func (h *Hub) applyHelloLocked(n *node, hello *pb.NodeHello) {
 	r.HelloLabels = maps.Clone(hello.Labels)
 	maps.DeleteFunc(r.HelloLabels, func(k, _ string) bool { return sched.ReservedLabel(k) })
 	r.Isolation = hello.Isolation
+	n.caps = slices.Clone(hello.Capabilities)
 	if st := hello.State; st != nil {
 		n.localDrain, n.localReason = st.Draining, st.Reason
 		n.maxJobs, n.reservedGB = st.MaxJobs, st.ReservedMemGb

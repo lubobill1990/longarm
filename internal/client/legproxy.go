@@ -78,6 +78,7 @@ type legDialRequest struct {
 	Transport string `json:"transport"`
 	Address   string `json:"address"`
 	Explicit  bool   `json:"explicit"`
+	RelayTCP  string `json:"relay_tcp,omitempty"` // longnet: the relay's TLS fallback, if known (NoteRelayTCP)
 }
 
 // legPath is PathInfo on the wire.
@@ -152,7 +153,7 @@ func (p *LocalLegProxy) DialLeg(ctx context.Context, w Worker, e Endpoint, expli
 	// The request and the response head are bounded by ctx; the stream
 	// itself isn't.
 	stop := context.AfterFunc(ctx, func() { c.SetDeadline(time.Unix(1, 0)) })
-	conn, pi, err := legHandshake(c, legDialRequest{Worker: w.Name, CertName: w.CertName, Transport: e.Transport, Address: e.Address, Explicit: explicit})
+	conn, pi, err := legHandshake(c, legDialRequest{Worker: w.Name, CertName: w.CertName, Transport: e.Transport, Address: e.Address, Explicit: explicit, RelayTCP: relayTCPHint(e.Address)})
 	if !stop() || err != nil {
 		c.Close()
 		if ctx.Err() != nil {
@@ -287,6 +288,9 @@ func legProxyHandler(dial func(ctx context.Context, w Worker, e Endpoint, explic
 		}
 		if lr.CertName == "" {
 			lr.CertName = lr.Worker
+		}
+		if lr.Transport == "longnet" && lr.RelayTCP != "" {
+			NoteRelayTCP(lr.Address, lr.RelayTCP)
 		}
 		wk := Worker{Name: lr.Worker, CertName: lr.CertName, Transport: lr.Transport, Address: lr.Address}
 		// The caller bounds the dial: it closes the channel when it gives

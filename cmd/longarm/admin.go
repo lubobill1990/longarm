@@ -183,7 +183,7 @@ func adminCmd() *cobra.Command {
 	gcc.Flags().BoolVar(&gcDry, "dry-run", false, "only list what would be removed")
 	c.AddCommand(ca, issue, shutdown, gcc)
 	c.AddCommand(hubAdminCmds()...)
-	c.AddCommand(tailnetAdminCmd())
+	c.AddCommand(tailnetAdminCmd(), relaysAdminCmd())
 	c.AddCommand(hubUICmds()...)
 	c.AddCommand(userAdminCmd(), teamAdminCmd())
 	c.AddCommand(adminDiagCmd(), pseudonymCmd())

@@ -193,6 +193,12 @@ docker exec -i "$p-hub" /usr/local/bin/longarm-hub user add alice --password-std
 [[ $(docker exec "$p-hub" /usr/local/bin/longarm-hub-users) == *alice* ]] || fail "longarm-hub-users"
 [[ $(docker exec "$p-hub" /usr/local/bin/longarm-hub-release-cert 2>/dev/null | base64 -d | tar -tz | sort | tr '\n' ' ') == "ca.crt node.crt node.key " ]] ||
 	fail "longarm-hub-release-cert"
+# deploy.sh --relay: the relay's certificate (role relay, a DNS name from the
+# hub's advertised name) and the relay itself, from the same image
+relay_cert=$(docker exec "$p-hub" /usr/local/bin/longarm-hub-relay-cert 2>/dev/null)
+[[ $(printf '%s' "$relay_cert" | base64 -d | tar -tz | sort | tr '\n' ' ') == "ca.crt node.crt node.key " ]] ||
+	fail "longarm-hub-relay-cert"
+docker exec "$p-hub" /usr/local/bin/longarm-relay --version >/dev/null || fail "longarm-relay is not in the image"
 docker exec -i "$p-hub" /usr/local/bin/longarm-hub user add bob --password-stdin <<<'another passphrase' >/dev/null
 
 step "replace the container (SIGTERM, rm)"
