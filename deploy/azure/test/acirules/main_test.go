@@ -117,3 +117,55 @@ func TestMirroredImages(t *testing.T) {
 		}
 	}
 }
+
+// TestLivenessProbe: the hub's liveness probe is `healthcheck --live`,
+// except for images pinned to a release without --live (auto) or when
+// asked for (legacy): there a plain healthcheck after 30 min. With the
+// legacy delay shortened to 3 min (the crash loop of a long restore), the
+// rule must fire exactly when the legacy probe is chosen.
+func TestLivenessProbe(t *testing.T) {
+	raw, err := os.ReadFile("../../azuredeploy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	short := strings.Replace(string(raw), "'initialDelaySeconds', 1800", "'initialDelaySeconds', 180", 1)
+	if short == string(raw) {
+		t.Fatal("no legacy liveness delay of 1800 s in the template: update the test")
+	}
+	for _, tc := range []struct {
+		image, mode string
+		legacy      bool
+	}{
+		{"ghcr.io/lubobill1990/longarm-hub:latest", "auto", false},
+		{"ghcr.io/lubobill1990/longarm-hub:edge", "auto", false},
+		{"ghcr.io/lubobill1990/longarm-hub:0.1.18", "auto", false},
+		{"ghcr.io/lubobill1990/longarm-hub:0.1.17", "auto", true},
+		{"ghcr.io/lubobill1990/longarm-hub:v0.1.16", "auto", true},
+		{"myacr.azurecr.io/longarm-hub:0.1.3", "auto", true},
+		{"localhost:5000/longarm-hub", "auto", false},
+		{"ghcr.io/lubobill1990/longarm-hub@sha256:0123", "auto", false},
+		{"ghcr.io/lubobill1990/longarm-hub:0.1.16", "live", false},
+		{"ghcr.io/lubobill1990/longarm-hub:latest", "legacy", true},
+	} {
+		t.Run(tc.image+" "+tc.mode, func(t *testing.T) {
+			ov := map[string]any{"image": tc.image, "hubLivenessProbe": tc.mode,
+				// one combination is enough here
+				"enablePanel": true, "storageAuth": "identity", "enableHeadscale": false, "enableLogAnalytics": false}
+			_, problems, err := Check(raw, ov)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(problems) > 0 {
+				t.Fatalf("the template's probes: %s", strings.Join(problems, "\n"))
+			}
+			_, problems, err = Check([]byte(short), ov)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := strings.Contains(strings.Join(problems, "\n"), "kills a long Litestream restore")
+			if got != tc.legacy {
+				t.Fatalf("legacy probe chosen: %v, want %v (%s)", got, tc.legacy, strings.Join(problems, "\n"))
+			}
+		})
+	}
+}

@@ -31,7 +31,7 @@ mirror_list=$here/mirror-images.txt
 name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=false yes=false
 recreate=false admin_code=false subscription='' acme_email='' registry_user='' tailscale_secret_file=''
 entra_tenant='' entra_client='' entra_admins='' entra_web='' entra_apps='' gate_free_gb='' release_public_key=''
-build_in_acr=false stun_servers='' storage_auth='' acr='' timeout=1200 stuck_timeout=600
+build_in_acr=false stun_servers='' storage_auth='' acr='' timeout=1200 stuck_timeout=600 restore_timeout=1200
 telemetry='' diagnostics='' headscale='' public_derp='' skip_image_check=false relay=false relay_remove=false
 # seconds between status polls (tests make it short; each az call takes a
 # second or two on its own)
@@ -91,6 +91,8 @@ usage: deploy.sh --name NAME [--location REGION] [options]
   --yes                    don't ask
   --timeout SECONDS        how long to wait for the hub (default 1200)
   --stuck-timeout SECONDS  give up on a container group stuck in Creating without events (default 600)
+  --restore-timeout SECONDS  while the hub's log shows its database restore running, wait
+                           up to this long after it was first seen, past --timeout (default 1200)
 EOF
 }
 
@@ -138,6 +140,7 @@ while [[ $# -gt 0 ]]; do
 	--yes | -y) yes=true ;;
 	--timeout) timeout=${2:?}; shift ;;
 	--stuck-timeout) stuck_timeout=${2:?}; shift ;;
+	--restore-timeout) restore_timeout=${2:?}; shift ;;
 	-h | --help) usage; exit 0 ;;
 	*) usage >&2; die "unknown argument: $1" ;;
 	esac
@@ -150,6 +153,7 @@ done
 [[ -z $size || $size == small || $size == medium ]] || die "--size: small or medium"
 [[ $timeout =~ ^[0-9]+$ ]] || die "--timeout: seconds"
 [[ $stuck_timeout =~ ^[0-9]+$ ]] || die "--stuck-timeout: seconds"
+[[ $restore_timeout =~ ^[0-9]+$ ]] || die "--restore-timeout: seconds"
 [[ $poll =~ ^[0-9]+$ ]] || die "LONGARM_DEPLOY_POLL_SECONDS: seconds"
 ! $build_in_acr || [[ -z $image ]] || die "--build-in-acr builds the image: drop --image"
 # none alone, or host:port / [v6]:port entries (the hub refuses a missing
@@ -948,6 +952,74 @@ if $recreate && [[ -n $cur_image ]]; then
 	deleted=true
 fi
 
+# restore_status: the state of the hub's database restore in its current
+# log ("running", "done <took>", "failed" or nothing): the last of the
+# entrypoint's lines (longarm-hub container) decides. A restore replays the
+# WAL since the last snapshot and can take many minutes; the hub listens only
+# after it.
+restore_status() {
+	az container logs -g "$rg" -n "$name" --container-name hub 2>/dev/null | tr -d '\r' | awk '
+		/^longarm-hub container: restoring / { s = "running"; t = ""; next }
+		/^longarm-hub container: restore of .* still running/ { s = "running"; next }
+		/^longarm-hub container: restore of .* failed/ { s = "failed"; next }
+		/^longarm-hub container: restore took / { s = "done"; t = $5; next }
+		/^longarm-hub container: (bootstrap took|starting the hub)/ || /^LONGARM_BOOTSTRAP / { if (s == "running") s = "done" }
+		END { if (s != "") print s (t != "" ? " " t : "") }' || true
+}
+
+# check_restore: at most every 2 polls, reads the restore's state from the
+# hub's log, prints its [+Ns] marks and keeps $deadline ahead of a running
+# restore - bounded: until --restore-timeout after it was first seen. After
+# it, the hub gets at least 5 more minutes to bootstrap and listen.
+# restore_running: the last check saw it running.
+restore_seen='' restore_done=false restore_checked='' restore_running=false
+check_restore() {
+	[[ -z $restore_checked ]] || ((SECONDS - restore_checked >= 2 * poll)) || return 0
+	restore_checked=$SECONDS
+	local st cap
+	st=$(restore_status)
+	restore_running=false
+	case $st in
+	running)
+		restore_running=true
+		if [[ -z $restore_seen ]]; then
+			restore_seen=$SECONDS
+			phase "database restore running (Litestream; the hub listens after it)"
+		fi
+		cap=$((restore_seen + restore_timeout))
+		if ((deadline < SECONDS + 60 && deadline < cap)); then
+			deadline=$((SECONDS + 60 < cap ? SECONDS + 60 : cap))
+		fi
+		;;
+	done*)
+		if [[ -n $restore_seen ]] && ! $restore_done; then
+			restore_done=true
+			phase "database restore finished${st#done}"
+			((deadline >= SECONDS + 300)) || deadline=$((SECONDS + 300))
+		fi
+		;;
+	failed)
+		if [[ -n $restore_seen ]] && ! $restore_done; then
+			restore_done=true
+			phase "database restore FAILED: $logs_hint"
+		fi
+		;;
+	esac
+}
+
+# restore_reset: a new start of the hub (a deployment, a rollback)
+restore_reset() { restore_seen='' restore_done=false restore_checked='' restore_running=false; }
+
+# wait_hub_answers HOST PORT: waits until the hub listens on HOST:PORT,
+# past $deadline while its restore runs; 1 = it didn't
+wait_hub_answers() {
+	until tcp_open "$1" "$2"; do
+		check_restore
+		((SECONDS < deadline)) || return 1
+		sleep 2
+	done
+}
+
 # deploy_run FILE NAME: deploys and waits for the deployment; 1 = it
 # failed ($deploy_err says why). --no-wait + polling: a container group
 # stuck in Creating would block "az deployment group create" for an hour
@@ -990,12 +1062,29 @@ fail_deploy() {
 	echo "deploy.sh: $1" >&2
 	echo "rolling back: deploying the previous configuration again (image ${prev_image:-the template default}, size $prev_size, panel $prev_panel, headscale $prev_headscale)" >&2
 	az container delete -g "$rg" -n "$name" --yes -o none 2>/dev/null || true
-	if deploy_run "$tmp/rollback.json" "longarm-hub-$(date -u +%Y%m%d%H%M%S)-rollback"; then
-		local st='' end=$((SECONDS + timeout))
-		until [[ $st == Running ]] || ((SECONDS >= end)); do
+	local rb
+	rb="longarm-hub-$(date -u +%Y%m%d%H%M%S)-rollback"
+	if deploy_run "$tmp/rollback.json" "$rb"; then
+		local st='' addr='' host=''
+		phase "rollback deployment succeeded"
+		deadline=$((SECONDS + timeout))
+		restore_reset
+		until [[ $st == Running ]] || ((SECONDS >= deadline)); do
 			sleep "$poll"
 			st=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv 2>/dev/null | tr -d '\r' || true)
 		done
+		# the previous hub restores its database too: wait until it answers
+		# (a rollback that gives up mid-restore looks like a dead hub)
+		IFS=$'\t' read -r addr host _ <<<"$(az deployment group show -g "$rg" -n "$rb" -o tsv \
+			--query "[properties.outputs.hubAddress.value, properties.outputs.fqdn.value]" 2>/dev/null | tr -d '\r' || true)" || true
+		if [[ $st == Running && -n $addr && -n $host ]]; then
+			if wait_hub_answers "$host" "${addr##*:}"; then
+				phase "rolled-back hub answers on $addr"
+				st='answering'
+			else
+				st="running, not answering on $addr yet: $logs_hint"
+			fi
+		fi
 		clear_snapshot
 		die "$1
 ROLLED BACK: the previous configuration is deployed again (hub ${st:-state unknown}; data kept). Nothing of the new configuration is running; fix the cause and run deploy.sh again."
@@ -1055,8 +1144,10 @@ phase "hub container running"
 # didn't restart the hub)
 restarted=false
 until read_bootstrap && [[ $(bootstrap_value boot_id) != "$prev_boot" ]]; do
-	((SECONDS < deadline)) || fail_deploy "no bootstrap values from this start: $logs_hint"
-	if [[ -n $prev_boot ]] && ! $restarted && ((SECONDS > waited_from + 240)); then
+	check_restore
+	((SECONDS < deadline)) || fail_deploy "no bootstrap values from this start$($restore_running && echo " (its database restore still runs after ${restore_timeout}s: --restore-timeout)"): $logs_hint"
+	# a hub still restoring its database did restart: never restart it mid-restore
+	if [[ -n $prev_boot ]] && ! $restarted && [[ -z $restore_seen ]] && ((SECONDS > waited_from + 240)); then
 		echo "the hub did not restart: az container restart"
 		az container restart -g "$rg" -n "$name" -o none
 		restarted=true
@@ -1064,10 +1155,12 @@ until read_bootstrap && [[ $(bootstrap_value boot_id) != "$prev_boot" ]]; do
 	sleep 2
 done
 phase "new hub start bootstrapped"
-until tcp_open "$fqdn" "${hub_addr##*:}"; do
-	((SECONDS < deadline)) || fail_deploy "$hub_addr does not answer: $logs_hint"
-	sleep 2
-done
+# the restore's end (and how long it took), once it was seen running
+if [[ -n $restore_seen ]] && ! $restore_done; then
+	restore_checked=''
+	check_restore
+fi
+wait_hub_answers "$fqdn" "${hub_addr##*:}" || fail_deploy "$hub_addr does not answer: $logs_hint"
 phase "hub answers on $hub_addr"
 # the new configuration runs: the settings snapshot has done its job
 if $deleted || $have_snapshot; then

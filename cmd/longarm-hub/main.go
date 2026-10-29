@@ -9,7 +9,7 @@
 //	longarm-hub release add <dir> --version V [--channel C] | sign <dir> --version V --key K | keygen | ls
 //	longarm-hub release verify <file> --version V [--name N]   (signature check, used by deploy/hub/longarm-hub-deploy)
 //	longarm-hub issue --role admin --name root --out DIR      (local, for bootstrap; --role release for CI)
-//	longarm-hub healthcheck                                   (container health check)
+//	longarm-hub healthcheck [--live]                          (container readiness / liveness probe)
 //	longarm-hub bootstrap [--admin-code-ttl 24h]              (CA + admin join code when missing; idempotent)
 //	longarm-hub container                                     (image entrypoint: litestream restore, bootstrap, serve)
 //
@@ -27,7 +27,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -101,11 +100,27 @@ func serveCmd() *cobra.Command {
 				return err
 			}
 			defer closer.Close()
+			// a container start (longarm-hub container): the liveness probe
+			// passes while the hub opens; Serve removes the marker once it
+			// listens
+			var mk *hub.StartupMarker
+			if p := os.Getenv(hub.EnvStartupMarker); p != "" {
+				mk = hub.NewStartupMarker(p, 0)
+				limit, terr := startupTimeout()
+				if terr != nil {
+					limit = time.Hour
+				}
+				if err := mk.Begin("open", limit); err != nil {
+					log.Warn("startup marker", "err", err)
+				}
+				defer mk.End()
+			}
 			h, err := hub.Open(cfg, log)
 			if err != nil {
 				return err
 			}
 			defer h.Close()
+			h.SetStartupMarker(mk)
 			if rebuildJobs {
 				if err := h.Store().ClearJobs(); err != nil {
 					return err
@@ -588,38 +603,4 @@ func bundleTarB64(caPEM, certPEM, keyPEM []byte) (string, error) {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
-}
-
-func healthcheckCmd() *cobra.Command {
-	var url string
-	c := &cobra.Command{
-		Use:   "healthcheck",
-		Short: "Exit 0 when the hub's /healthz answers (for container health checks)",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if url == "" {
-				cfg, err := loadConfig()
-				if err != nil {
-					return err
-				}
-				addr := cfg.HTTP
-				if strings.HasPrefix(addr, ":") || strings.HasPrefix(addr, "0.0.0.0:") {
-					addr = "127.0.0.1:" + addr[strings.LastIndex(addr, ":")+1:]
-				}
-				url = "http://" + addr + "/healthz"
-			}
-			c := &http.Client{Timeout: 5 * time.Second}
-			resp, err := c.Get(url)
-			if err != nil {
-				return err
-			}
-			resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("%s: %s", url, resp.Status)
-			}
-			return nil
-		},
-	}
-	c.Flags().StringVar(&url, "url", "", "health URL (default: from the config's http listener)")
-	return c
 }

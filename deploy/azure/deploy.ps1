@@ -97,7 +97,10 @@ param(
     [switch]$Yes,
     [int]$TimeoutSeconds = 1200,
     # give up on a container group stuck in Creating without events
-    [int]$StuckTimeoutSeconds = 600
+    [int]$StuckTimeoutSeconds = 600,
+    # while the hub's log shows its database restore running, wait up to this
+    # long after it was first seen, past -TimeoutSeconds
+    [int]$RestoreTimeoutSeconds = 1200
 )
 
 $ErrorActionPreference = 'Stop'
@@ -200,6 +203,28 @@ function Get-BootstrapLog {
     }
     if ($kv.Count -eq 0) { return $null }
     $kv
+}
+
+function Get-RestoreStatus {
+    # the state of the hub's database restore in its current log: 'running',
+    # 'done <took>', 'failed' or '': the last of the entrypoint's lines
+    # (longarm-hub container) decides. A restore replays the WAL since the
+    # last snapshot and can take many minutes; the hub listens only after it.
+    $out = Invoke-AzQuiet container logs -g $rg -n $Name --container-name hub
+    if ($LASTEXITCODE -ne 0) { return '' }
+    $st = ''
+    $took = ''
+    foreach ($l in (($out -join "`n") -split "`r?`n")) {
+        if ($l.StartsWith('longarm-hub container: restoring ')) { $st = 'running'; $took = '' }
+        elseif ($l -match '^longarm-hub container: restore of .* still running') { $st = 'running' }
+        elseif ($l -match '^longarm-hub container: restore of .* failed') { $st = 'failed' }
+        elseif ($l -match '^longarm-hub container: restore took (\S+)') { $st = 'done'; $took = $Matches[1] }
+        elseif ($l -match '^longarm-hub container: (bootstrap took|starting the hub)' -or $l.StartsWith('LONGARM_BOOTSTRAP ')) {
+            if ($st -eq 'running') { $st = 'done' }
+        }
+    }
+    if ($took) { return "$st $took" }
+    $st
 }
 
 function Read-Bootstrap([string]$Account, [string]$Key, [string]$Dest) {
@@ -900,6 +925,59 @@ try {
         $script:Deleted = $true
     }
 
+    # Invoke-CheckRestore: at most every 2 polls, reads the restore's state
+    # from the hub's log, prints its [+Ns] marks and keeps $deadline ahead of
+    # a running restore - bounded: until -RestoreTimeoutSeconds after it was
+    # first seen. After it, the hub gets at least 5 more minutes to bootstrap
+    # and listen. $script:RestoreRunning: the last check saw it running.
+    function Clear-RestoreState {
+        $script:RestoreSeen = $null
+        $script:RestoreDone = $false
+        $script:RestoreChecked = $null
+        $script:RestoreRunning = $false
+    }
+    Clear-RestoreState
+    function Invoke-CheckRestore {
+        $now = Get-Date
+        if ($script:RestoreChecked -and ($now - $script:RestoreChecked).TotalSeconds -lt 2 * $script:Poll) { return }
+        $script:RestoreChecked = $now
+        $st = Get-RestoreStatus
+        $script:RestoreRunning = $false
+        if ($st -eq 'running') {
+            $script:RestoreRunning = $true
+            if (-not $script:RestoreSeen) {
+                $script:RestoreSeen = $now
+                Write-Phase 'database restore running (Litestream; the hub listens after it)'
+            }
+            $cap = $script:RestoreSeen.AddSeconds($RestoreTimeoutSeconds)
+            $soon = $now.AddSeconds(60)
+            if ($script:deadline -lt $soon -and $script:deadline -lt $cap) {
+                $script:deadline = if ($soon -lt $cap) { $soon } else { $cap }
+            }
+        } elseif ($st -like 'done*') {
+            if ($script:RestoreSeen -and -not $script:RestoreDone) {
+                $script:RestoreDone = $true
+                Write-Phase ('database restore finished' + $st.Substring(4))
+                if ($script:deadline -lt $now.AddSeconds(300)) { $script:deadline = $now.AddSeconds(300) }
+            }
+        } elseif ($st -eq 'failed') {
+            if ($script:RestoreSeen -and -not $script:RestoreDone) {
+                $script:RestoreDone = $true
+                Write-Phase "database restore FAILED: $logsHint"
+            }
+        }
+    }
+    # Wait-HubAnswer: waits until the hub listens on HostName:Port, past
+    # $deadline while its restore runs; $false = it didn't
+    function Wait-HubAnswer([string]$HostName, [int]$Port) {
+        while (-not (Test-TcpPort $HostName $Port)) {
+            Invoke-CheckRestore
+            if ((Get-Date) -gt $script:deadline) { return $false }
+            Start-Sleep -Seconds 2
+        }
+        $true
+    }
+
     # Invoke-DeployRun: deploys and waits for the deployment; $null when it
     # succeeded, else why not. --no-wait + polling: a container group stuck in
     # Creating would block "az deployment group create" for an hour (Test-Stuck)
@@ -933,13 +1011,28 @@ try {
         $pimg = if ($prev.image) { $prev.image } else { 'the template default' }
         Write-Warning "rolling back: deploying the previous configuration again (image $pimg, size $($prev.size), panel $($prev.panel), headscale $($prev.headscale))"
         Invoke-AzQuiet container delete -g $rg -n $Name --yes -o none | Out-Null
-        $rb = Invoke-DeployRun $rollbackFile ('longarm-hub-' + (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss') + '-rollback')
+        $rbDep = 'longarm-hub-' + (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss') + '-rollback'
+        $rb = Invoke-DeployRun $rollbackFile $rbDep
         if (-not $rb) {
+            Write-Phase 'rollback deployment succeeded'
             $st = ''
-            $end = (Get-Date).AddSeconds($TimeoutSeconds)
-            while ($st -ne 'Running' -and (Get-Date) -lt $end) {
+            $script:deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+            Clear-RestoreState
+            while ($st -ne 'Running' -and (Get-Date) -lt $script:deadline) {
                 Start-Sleep -Seconds $script:Poll
                 $st = (Invoke-AzQuiet container show -g $rg -n $Name --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv) -join ''
+            }
+            # the previous hub restores its database too: wait until it answers
+            # (a rollback that gives up mid-restore looks like a dead hub)
+            $rbOuts = Split-Tsv ((Invoke-AzQuiet deployment group show -g $rg -n $rbDep --query '[properties.outputs.hubAddress.value, properties.outputs.fqdn.value]' -o tsv) -join '') 2
+            $rbAddr, $rbHost = $rbOuts[0], $rbOuts[1]
+            if ($st -eq 'Running' -and $rbAddr -and $rbHost) {
+                if (Wait-HubAnswer $rbHost ([int]$rbAddr.Substring($rbAddr.LastIndexOf(':') + 1))) {
+                    Write-Phase "rolled-back hub answers on $rbAddr"
+                    $st = 'answering'
+                } else {
+                    $st = "running, not answering on $rbAddr yet: $logsHint"
+                }
             }
             Clear-Snapshot
             throw "$Why`nROLLED BACK: the previous configuration is deployed again (hub $st; data kept). Nothing of the new configuration is running; fix the cause and run deploy.ps1 again."
@@ -999,8 +1092,13 @@ try {
     while ($true) {
         $boot = Read-Bootstrap $account $key $bootFile
         if ($boot -and (Get-Value $boot 'boot_id') -ne $prevBoot) { break }
-        if ((Get-Date) -gt $deadline) { Invoke-FailDeploy "no bootstrap values from this start: $logsHint" }
-        if ($prevBoot -and -not $restarted -and ((Get-Date) - $start).TotalSeconds -gt 240) {
+        Invoke-CheckRestore
+        if ((Get-Date) -gt $deadline) {
+            $why = if ($script:RestoreRunning) { " (its database restore still runs after $RestoreTimeoutSeconds s: -RestoreTimeoutSeconds)" } else { '' }
+            Invoke-FailDeploy "no bootstrap values from this start${why}: $logsHint"
+        }
+        # a hub still restoring its database did restart: never restart it mid-restore
+        if ($prevBoot -and -not $restarted -and -not $script:RestoreSeen -and ((Get-Date) - $start).TotalSeconds -gt 240) {
             Write-Host 'the hub did not restart: az container restart'
             Invoke-Az container restart -g $rg -n $Name -o none | Out-Null
             $restarted = $true
@@ -1008,11 +1106,13 @@ try {
         Start-Sleep -Seconds 2
     }
     Write-Phase 'new hub start bootstrapped'
-    $port = [int]$hubPort
-    while (-not (Test-TcpPort $fqdn $port)) {
-        if ((Get-Date) -gt $deadline) { Invoke-FailDeploy "$hubAddr does not answer: $logsHint" }
-        Start-Sleep -Seconds 2
+    # the restore's end (and how long it took), once it was seen running
+    if ($script:RestoreSeen -and -not $script:RestoreDone) {
+        $script:RestoreChecked = $null
+        Invoke-CheckRestore
     }
+    $port = [int]$hubPort
+    if (-not (Wait-HubAnswer $fqdn $port)) { Invoke-FailDeploy "$hubAddr does not answer: $logsHint" }
     Write-Phase "hub answers on $hubAddr"
     # the new configuration runs: the settings snapshot has done its job
     if ($script:Deleted -or $snap) { Clear-Snapshot }

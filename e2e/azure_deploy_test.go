@@ -410,6 +410,27 @@ func TestAzureDeployScripts(t *testing.T) {
 			// a failed deployment shows the failed operations
 			refused(run([]string{"HELPER_AZ_DEPLOY_FAIL=1"}, name, "myhub"), "failed deployment", "inaccessibleimage")
 
+			// a database restore that outlasts --timeout (the 7-minute WAL
+			// replay of the v0.1.17 deploy): the hub's log shows it running,
+			// so the script waits for it instead of failing or restarting
+			// the hub mid-restore, and prints its timing; bounded by
+			// --restore-timeout
+			timeout := r.flag("--timeout", "-TimeoutSeconds")
+			restoreTimeout := r.flag("--restore-timeout", "-RestoreTimeoutSeconds")
+			n = restarts()
+			res = run([]string{"HELPER_AZ_RESTORE_SECONDS=10"}, name, "myhub", timeout, "3")
+			ok(res, "long restore")
+			for _, want := range []string{"database restore running", "database restore finished 7m1.5s", "hub answers on"} {
+				if !strings.Contains(res.stdout, want) {
+					t.Fatalf("long restore: no %q in\n%s", want, res.stdout)
+				}
+			}
+			if restarts() != n {
+				t.Fatalf("long restore: the hub was restarted mid-restore:\n%s", calls())
+			}
+			res = run([]string{"HELPER_AZ_RESTORE_SECONDS=600"}, name, "myhub", timeout, "3", restoreTimeout, "4")
+			refused(res, "restore past --restore-timeout", "restore still runs")
+
 			// a new admin code: az container exec of the argument-free alias
 			if res := run(nil, name, "myhub", r.flag("--admin-code", "-AdminCode")); res.code != 0 || !strings.Contains(res.stdout, "ABC-DEF") {
 				t.Fatalf("admin code: %+v", res)
