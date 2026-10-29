@@ -1,0 +1,61 @@
+# Mirrors every branch and pull request into the Microsoft-internal copy
+# gim-home/longarm (.github/scripts/mirror-gim.sh; docs/ci-cd.md "Internal
+# mirror (gim-home)"): branches as they are, main merged into gim-home's main
+# (which carries its governance commits), one PR there per open PR here,
+# closed there when closed or merged here, branches deleted here deleted
+# there. Tags are not mirrored: gim-home never releases.
+#
+# Every run reconciles the whole state, whatever event started it, so runs
+# that were skipped, cancelled or ran out of order heal on the next one; the
+# schedule catches what no event covers (fork pull requests, whose events get
+# no secrets, and anything while the secret was missing).
+#
+# Auth: the repository secret GIM_MIRROR_TOKEN, a fine-grained PAT for
+# gim-home/longarm only (Contents, Pull requests, Workflows: read and write).
+# Without it the job prints a notice and passes. Fork code is never checked
+# out or run here: their heads are mirrored as git objects only.
+name: mirror-gim
+
+on:
+  push:
+    branches: ["**"] # branches only: tags are not mirrored
+  delete:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, closed]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read # lists this repository's open pull requests
+
+# one at a time, in order; a queued run is replaced by a newer one, which is
+# fine: each run mirrors the whole current state
+concurrency:
+  group: mirror-gim
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    # not in gim-home itself (this file is mirrored there too), not for tag
+    # deletes, and never for a fork's pull request (the schedule covers them)
+    if: >-
+      github.repository != 'gim-home/longarm' &&
+      (github.event_name != 'delete' || github.event.ref_type == 'branch') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the script only; a closed PR's merge ref may be gone, its head isn't
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: mirror to gim-home/longarm
+        env:
+          GIM_MIRROR_TOKEN: ${{ secrets.GIM_MIRROR_TOKEN }}
+          SRC_TOKEN: ${{ github.token }}
+          DST_REPO: gim-home/longarm
+        run: .github/scripts/mirror-gim.sh
