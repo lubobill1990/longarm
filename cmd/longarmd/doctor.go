@@ -133,7 +133,7 @@ func workerChecks(ctx context.Context, env workerEnv, now time.Time) []doctor.Ch
 	case modeService:
 		switch {
 		case !registered:
-			rm.Status, rm.Detail, rm.Fix = doctor.Fail, "service mode, but the service is not installed", "longarmd service install --user <account>  (elevated)"
+			rm.Status, rm.Detail, rm.Fix = doctor.Fail, "service mode, but the service is not installed", "longarmd service install --user <account>  # elevated"
 		case state != "" && state != string(platform.ServiceRunning):
 			rm.Status, rm.Detail, rm.Fix = doctor.Fail, "service "+state, start
 		default:
@@ -174,7 +174,7 @@ func hubLinkCheck(st *pb.WorkerStatus) doctor.Check {
 	case h.Connected:
 		c.Status, c.Detail = doctor.OK, h.Address+" connected ("+h.NodeState+")"
 		if h.NodeState == "pending" {
-			c.Status, c.Fix = doctor.Warn, "longarm admin approve "+st.Name+"  (an admin)"
+			c.Status, c.Fix = doctor.Warn, "longarm admin approve "+st.Name+"  # an admin"
 		}
 	default:
 		c.Status, c.Detail, c.Fix = doctor.Fail, h.Address+" disconnected", "longarmd diag --upload"
@@ -194,7 +194,7 @@ func startCommand(mode, goos string) string {
 	case mode == modeSession:
 		return "longarmd session-mode start"
 	case mode == modeService && goos == "windows":
-		return "longarmd service start  (elevated)"
+		return "longarmd service start  # elevated"
 	case mode == modeService:
 		return "sudo longarmd service start"
 	case goos == "windows":

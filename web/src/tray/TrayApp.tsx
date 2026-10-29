@@ -163,7 +163,7 @@ export function TrayApp() {
                   </Banner>
                 )}
                 {info && info.roles.client && !info.client.running && cur !== 'worker' && cur !== 'account' && !needSignIn && <DaemonDown info={info} />}
-                {cur !== 'worker' && <ClientFirewall pool={pool} />}
+                {cur !== 'worker' && <ClientFirewall pool={pool} info={info} />}
               </div>
               {cur === 'pool' && <PoolTab pool={pool} error={poolErr} info={info} onNavigate={(t) => setTab(t as Tab)} />}
               {cur === 'jobs' && clientUp && <ClientJobs />}
@@ -183,11 +183,18 @@ export function TrayApp() {
  * The daemon's firewall problem: a Block rule always (it defeats every
  * direct path), a missing allow rule once legs are relayed (as longarm pool).
  */
-function ClientFirewall({ pool }: { pool?: PoolView }) {
+function ClientFirewall({ pool, info }: { pool?: PoolView; info?: TrayInfo }) {
   const fw = pool?.firewall
   const relayed = relayedWorkers(pool)
   if (!fw || fw.ok || (!(fw.blocking ?? []).length && !relayed.length)) return null
-  return <FirewallWarning fw={fw} relayed={relayed} />
+  return (
+    <FirewallWarning
+      fw={fw}
+      relayed={relayed}
+      installDir={info?.install_dir}
+      onAllow={info?.firewall_fix ? () => trayApi.firewallAllow('client') : undefined}
+    />
+  )
 }
 
 /** Workers with a leg that is up over a relay ("wa (longnet relay-udp)"). */

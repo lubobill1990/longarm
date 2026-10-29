@@ -336,7 +336,7 @@ func TestDoctorClientChecks(t *testing.T) {
 		{"daemon", func(f *fakeClientEnv) { f.daemonErr = errors.New("not running") }, "daemon", doctor.Warn, "longarm daemon start"},
 		{"firewall", func(f *fakeClientEnv) {
 			f.fw = &pb.FirewallStatus{Problem: "a Block rule", Fix: `longarm firewall allow`}
-		}, "firewall", doctor.Warn, "longarm firewall allow  (elevated)"},
+		}, "firewall", doctor.Warn, "longarm firewall allow  # elevated"},
 		{"no legs", func(f *fakeClientEnv) { f.legs["box"] = workerLegs{Error: "all 2 transport legs failed"} }, "worker:box", doctor.Fail, "longarm diag --upload"},
 	}
 	for _, b := range broken {

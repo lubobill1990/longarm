@@ -144,10 +144,45 @@ describe('FirewallWarning', () => {
     )
     expect(screen.getByTestId('firewall-warning').textContent).toContain('Block rule')
     expect(screen.getByTestId('firewall-warning').textContent).toContain('wa (longnet relay-udp)')
-    expect(screen.getByTestId('firewall-fix').textContent).toBe(fix)
+    // PowerShell: a quoted path needs the call operator (older builds send it without)
+    expect(screen.getByTestId('firewall-fix').textContent).toBe('& ' + fix)
+    expect(screen.getByTestId('firewall-warning').textContent).toContain('elevated PowerShell')
+    expect(screen.queryByTestId('firewall-allow')).toBeNull()
+    rerender(<FirewallWarning fw={{ ok: false, problem: 'p', fix: '& ' + fix }} />)
+    expect(screen.getByTestId('firewall-fix').textContent).toBe('& ' + fix)
     rerender(<FirewallWarning fw={{ ok: true }} />)
     expect(screen.queryByTestId('firewall-warning')).toBeNull()
     rerender(<FirewallWarning />)
     expect(screen.queryByTestId('firewall-warning')).toBeNull()
+  })
+
+  it('allows the program with one click; says when it is a copy another app ships', async () => {
+    const program = 'C:\\Users\\me\\tmia-desktop-live\\longarm-1.2.3\\longarm.exe'
+    const onAllow = vi.fn().mockResolvedValue({ program, ok: true, message: 'Allowed: inbound connections pass.' })
+    render(
+      <FirewallWarning
+        fw={{ ok: false, program, problem: 'no inbound allow rule', fix: program + ' firewall allow' }}
+        installDir={'C:\\Program Files\\Longarm'}
+        onAllow={onAllow}
+      />,
+    )
+    expect(screen.getByTestId('firewall-copy').textContent).toContain('TMIA Desktop')
+    expect(screen.getByTestId('firewall-warning').textContent).toContain('Or in an elevated PowerShell')
+    fireEvent.click(screen.getByTestId('firewall-allow'))
+    expect(await screen.findByTestId('firewall-fixed')).toBeTruthy()
+    expect(onAllow).toHaveBeenCalledOnce()
+    expect(screen.queryByTestId('firewall-warning')).toBeNull()
+  })
+
+  it('no copy note for the installed longarm.exe', () => {
+    render(
+      <FirewallWarning
+        fw={{ ok: false, program: 'C:/Program Files/Longarm/longarm.exe', problem: 'p' }}
+        installDir={'c:\\program files\\longarm\\'}
+        onAllow={vi.fn()}
+      />,
+    )
+    expect(screen.queryByTestId('firewall-copy')).toBeNull()
+    expect(screen.getByTestId('firewall-allow')).toBeTruthy()
   })
 })

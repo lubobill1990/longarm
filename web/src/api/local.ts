@@ -2,6 +2,7 @@
 // longarmd (/local/longarmd/...) proxied by longarm-tray, plus the tray's own desktop
 // actions (/trayapi/...: open a terminal, open a URL, pin the popup ...).
 import { get, post, request, sse } from './http'
+import type { FirewallFixResult } from '../components/common'
 import type {
   ClientStatus,
   FleetJob,
@@ -26,6 +27,10 @@ export interface TrayInfo {
   headless?: boolean
   /** this machine's sign-in (older trays: absent) */
   account?: Account
+  /** the firewall card can allow the program (an administrator prompt; Windows) */
+  firewall_fix?: boolean
+  /** where the longarm.exe installed with the tray is */
+  install_dir?: string
 }
 
 /** What a sign-in enrolls: the user's device, the worker, the admin worker. */
@@ -114,6 +119,8 @@ export const trayApi = {
   adminDisable: () => post<{ output: string }>('/trayapi/admin/disable'),
   rolesChange: (want: AccountRoles) => post<RolesState>('/trayapi/roles', want),
   rolesState: () => get<RolesState>('/trayapi/roles/state'),
+  /** allow the program the daemon (client) or longarmd (worker) runs from, elevated */
+  firewallAllow: (target: 'client' | 'worker') => post<FirewallFixResult>('/trayapi/firewall/allow', { for: target }),
   // the update banner: the hub's newest release; install = download, verify (sha256 + signature), run the MSI
   update: (refresh = false) => get<TrayUpdate>(`/trayapi/update${refresh ? '?refresh=1' : ''}`),
   installUpdate: (version: string) => post<{ state: string }>('/trayapi/update/install', { version }),
