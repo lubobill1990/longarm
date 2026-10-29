@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -128,6 +129,8 @@ type Server struct {
 	// MachineUpdate updates this machine for its owner (MachineUpdate;
 	// nil = not served).
 	MachineUpdate MachineUpdater
+	// AdminWorker: this is an admin worker (InfoResponse.admin_worker).
+	AdminWorker bool
 
 	// UnaryInterceptors / StreamInterceptors run before the authorization
 	// (telemetry: they also see refused calls).
@@ -172,7 +175,7 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 // WorkerFeatures are the optional features of this longarmd
 // (InfoResponse.features).
 var WorkerFeatures = []string{jobs.FeatureStdin, jobs.FeatureGitAuth, jobs.FeatureSessionStart, jobs.FeatureSessionSend,
-	jobs.FeatureSessionSendIfIdle, jobs.FeatureSessionStop, jobs.FeatureSessionInfo, jobs.FeatureFileTail}
+	jobs.FeatureSessionSendIfIdle, jobs.FeatureSessionStop, jobs.FeatureSessionInfo, jobs.FeatureFileTail, jobs.FeatureAgentAuth}
 
 type nodeServer struct {
 	pb.UnimplementedNodeServer
@@ -188,6 +191,7 @@ func (n *nodeServer) Info(ctx context.Context, _ *pb.InfoRequest) (*pb.InfoRespo
 		StartedAt: timestamppb.New(n.s.StartedAt), CallerName: id.Name, CallerRole: string(id.Role),
 		Listeners: n.s.ListenerNames(), SshHostKey: n.s.SSHHostKey,
 		Isolation: n.s.Spaces.Mode(), CallerUser: id.Owner(), Features: WorkerFeatures,
+		Owner: n.s.WorkerAccess.Owner(), AdminWorker: n.s.AdminWorker,
 	}
 	if n.s.MachineUpdate != nil {
 		out.Features = append(slices.Clip(out.Features), FeatureMachineUpdate)
@@ -331,7 +335,7 @@ func JobToPB(j supervisor.Job) *pb.Job {
 			Id: j.Spec.ID, Name: j.Spec.Name, Argv: j.Spec.Argv, Cwd: j.Spec.Cwd, Env: j.Spec.Env,
 			SecretEnvNames: j.Spec.SecretEnvNames, MemLimitBytes: j.Spec.MemLimitBytes, Labels: j.Spec.Labels,
 			SubmittedBy: j.Spec.SubmittedBy, Owner: j.Spec.OwnerName(), ShareTeams: j.Spec.ShareTeams,
-			CpuLimit: j.Spec.CPULimit, StdinBytes: j.Spec.StdinBytes,
+			CpuLimit: j.Spec.CPULimit, StdinBytes: j.Spec.StdinBytes, AgentAuth: j.Spec.AgentAuth,
 		},
 		State: stateToPB[j.Status.State], Pid: int32(j.Status.PID), ShimPid: int32(j.Status.ShimPID),
 		CreatedAt: ts(j.Status.CreatedAt), StartedAt: ts(j.Status.StartedAt), EndedAt: ts(j.Status.EndedAt),
@@ -390,8 +394,14 @@ func (j *jobsServer) Submit(ctx context.Context, req *pb.SubmitRequest) (*pb.Job
 		auth.Clear()
 		return nil, status.Error(codes.InvalidArgument, "git_auth goes with a workspace url")
 	}
+	var copilotHome bool
+	var err error
+	if spec.AgentAuth, copilotHome, err = agentAuthFromPB(req.AgentAuth); err != nil {
+		auth.Clear()
+		return nil, err
+	}
 	telemetry.Remember(ctx, "job/"+spec.ID) // before it starts: it may end at once
-	job, err := j.submit(ctx, owner, spec, req.SecretEnv, supervisor.Input{Stdin: req.Stdin, GitAuth: auth}, req.Share)
+	job, err := j.submit(ctx, owner, spec, req.SecretEnv, supervisor.Input{Stdin: req.Stdin, GitAuth: auth}, req.Share, copilotHome)
 	if err != nil {
 		auth.Clear() // not handed to a workspace preparation
 	}
@@ -400,7 +410,7 @@ func (j *jobsServer) Submit(ctx context.Context, req *pb.SubmitRequest) (*pb.Job
 	j.s.Audit.Log(id, pb.Jobs_Submit_FullMethodName, map[string]any{
 		"job": spec.ID, "argv": spec.Argv, "cwd": spec.Cwd, "env_keys": keys(spec.Env),
 		"secret_keys": keys(req.SecretEnv), "stdin_bytes": len(req.Stdin), "git_auth": auth != nil, "share": req.Share,
-		"error": errString(err),
+		"agent_auth": spec.AgentAuth, "error": errString(err),
 	})
 	if err != nil {
 		if _, ok := status.FromError(err); ok {
@@ -411,7 +421,7 @@ func (j *jobsServer) Submit(ctx context.Context, req *pb.SubmitRequest) (*pb.Job
 	// telemetry: what kind of job, never its command line
 	telemetry.Event(ctx, "job.submitted", map[string]string{"workspace": strconv.FormatBool(spec.Workspace != nil),
 		"shared": strconv.FormatBool(len(req.Share) > 0), "secrets": strconv.FormatBool(len(req.SecretEnv) > 0),
-		"stdin": strconv.FormatBool(len(req.Stdin) > 0), "git_auth": strconv.FormatBool(auth != nil), "caller_role": string(id.Role), "isolation": j.s.Spaces.Mode()},
+		"stdin": strconv.FormatBool(len(req.Stdin) > 0), "git_auth": strconv.FormatBool(auth != nil), "agent_auth": strings.Join(spec.AgentAuth, ","), "caller_role": string(id.Role), "isolation": j.s.Spaces.Mode()},
 		map[string]float64{"mem_limit_gb": float64(job.Spec.MemLimitBytes) / (1 << 30), "cpu_limit": job.Spec.CPULimit})
 	return JobToPB(job), nil
 }
@@ -426,12 +436,14 @@ func (s *Server) SubmitAs(ctx context.Context, owner string, spec jobs.Spec, sec
 		return supervisor.Job{}, status.Errorf(codes.PermissionDenied, "user %s may not use this worker (%s)", owner, why)
 	}
 	spec.Owner = owner
-	return (&jobsServer{s: s}).submit(ctx, owner, spec, secrets, supervisor.Input{}, nil)
+	return (&jobsServer{s: s}).submit(ctx, owner, spec, secrets, supervisor.Input{}, nil, false)
 }
 
 // submit places a job in owner's space with the owner's sharing, limits and
 // per-worker quota.
-func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, secrets map[string]string, in supervisor.Input, share []string) (supervisor.Job, error) {
+// copilotHome: give a new job a private COPILOT_HOME (forwarded Copilot
+// credentials).
+func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, secrets map[string]string, in supervisor.Input, share []string, copilotHome bool) (supervisor.Job, error) {
 	var teams []string
 	if j.s.Policy != nil {
 		teams = j.s.Policy.Teams(owner)
@@ -469,8 +481,18 @@ func (j *jobsServer) submit(ctx context.Context, owner string, spec jobs.Spec, s
 				return supervisor.Job{}, err
 			}
 		}
+		if copilotHome {
+			if spec.AgentHome, err = sp.NewAgentHome("j", spec.ID); err != nil {
+				in.GitAuth.Clear()
+				return supervisor.Job{}, status.Errorf(codes.Internal, "agent home: %v", err)
+			}
+		}
 	}
-	return j.s.Spaces.SubmitJob(ctx, sp, spec, secrets, in)
+	job, err := j.s.Spaces.SubmitJob(ctx, sp, spec, secrets, in)
+	if spec.AgentHome != "" && (err != nil || job.Spec.AgentHome != spec.AgentHome) {
+		sp.RemoveAgentHome(spec.AgentHome) // not this job's (a retry found it existing), or no job
+	}
+	return job, err
 }
 
 func errString(err error) string {

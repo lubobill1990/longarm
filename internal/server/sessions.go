@@ -78,6 +78,7 @@ func (ss *sessionsServer) toPB(sp *userspace.Space, j supervisor.Job) *pb.Sessio
 		Pid: int32(j.Status.PID), CreatedAt: ts(j.Status.CreatedAt), EndedAt: ts(j.Status.EndedAt),
 		Attached: int32(n), LogSize: j.LogSize, CreatedBy: j.Spec.SubmittedBy, Owner: j.Spec.OwnerName(),
 		Workdir: j.Status.Workdir, Dir: sessionDir(j), StartedAt: ts(j.Status.StartedAt), Reason: j.Status.Reason,
+		AgentAuth: j.Spec.AgentAuth,
 	}
 	if j.Status.ExitCode != nil {
 		out.HasExitCode, out.ExitCode = true, int32(*j.Status.ExitCode)
@@ -137,6 +138,10 @@ type sessionReq struct {
 	// auth: a credential for the workspace fetch (Start --git-auth forward);
 	// handed to the preparation of a new session, else the caller clears it.
 	auth *jobs.GitAuth
+	// agents whose credentials came in secrets (names); copilotHome: a new
+	// session gets a private COPILOT_HOME.
+	agents      []string
+	copilotHome bool
 }
 
 // argvFor is the command of a new session: argv, else the user's shell.
@@ -170,6 +175,8 @@ func sessionSpecDiff(have jobs.Spec, argv []string, r sessionReq) string {
 		return "env"
 	case !slices.Equal(have.SecretEnvNames, slices.Sorted(maps.Keys(r.secrets))):
 		return "secret env names"
+	case !slices.Equal(have.AgentAuth, r.agents):
+		return "agent auth"
 	}
 	a, b := have.Workspace, r.ws
 	if (a == nil) != (b == nil) || (a != nil && (a.Repo != b.Repo || a.URL != b.URL || a.Ref != b.Ref || a.Commit != b.Commit)) {
@@ -238,8 +245,18 @@ func (ss *sessionsServer) ensure(ctx context.Context, sp *userspace.Space, r ses
 	spec := jobs.Spec{
 		ID: name, Name: name, Argv: argvFor(sp, r.argv), Cwd: r.cwd, Env: ss.s.linkEnv(owner, r.env), Pty: true, SubmittedBy: by, Owner: owner,
 		Cols: uint16(r.size.GetCols()), Rows: uint16(r.size.GetRows()), LogMaxBytes: ss.s.LogMaxBytes, Workspace: r.ws,
+		AgentAuth: r.agents,
+	}
+	if r.copilotHome && !hasEnv("COPILOT_HOME", r.env, r.secrets) {
+		var err error
+		if spec.AgentHome, err = sp.NewAgentHome("s", name); err != nil {
+			return j, false, status.Errorf(codes.Internal, "agent home: %v", err)
+		}
 	}
 	j, created, err := ss.s.Spaces.SubmitSession(ctx, sp, spec, r.secrets, r.auth)
+	if spec.AgentHome != "" && (err != nil || !created || j.Spec.AgentHome != spec.AgentHome) {
+		sp.RemoveAgentHome(spec.AgentHome) // no new session of ours
+	}
 	if errors.Is(err, supervisor.ErrAlreadyExists) { // created concurrently by someone else
 		if j, err = mgr.Get(name); err == nil {
 			if ss.foreign(ctx, j, owner) {
@@ -339,14 +356,18 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 	}
 	var j supervisor.Job
 	var created bool
+	r := sessionReq{argv: o.Argv, cwd: o.Cwd, env: o.Env, secrets: o.SecretEnv, size: o.Size, noCreate: o.NoCreate}
+	r.agents, r.copilotHome, err = agentAuthFromPB(o.AgentAuth)
+	if err != nil {
+		return err
+	}
 	sp, err := ss.sessionSpace(ctx, owner, name, !o.NoCreate)
 	if err == nil {
-		r := sessionReq{argv: o.Argv, cwd: o.Cwd, env: o.Env, secrets: o.SecretEnv, size: o.Size, noCreate: o.NoCreate}
 		j, created, err = ss.ensure(ctx, sp, r, name, owner, id.String())
 	}
 	ss.s.Audit.Log(id, pb.Sessions_Attach_FullMethodName, map[string]any{
 		"session": name, "owner": owner, "created": created, "argv": j.Spec.Argv, "env_keys": keys(o.Env),
-		"secret_keys": keys(o.SecretEnv), "error": errString(err),
+		"secret_keys": keys(o.SecretEnv), "agent_auth": r.agents, "error": errString(err),
 	})
 	if err != nil {
 		return err

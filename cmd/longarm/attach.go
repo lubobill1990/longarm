@@ -28,6 +28,7 @@ func attachCmd() *cobra.Command {
 	var session, cwd, owner string
 	var env, secrets []string
 	var kill, noReplay, noCreate bool
+	var aa agentAuthOpts
 	c := &cobra.Command{
 		Use:   "attach <worker> [--session NAME] [-- command [args...]]",
 		Short: "Attach to a named interactive session (created if missing); detach with Ctrl-] d",
@@ -41,7 +42,9 @@ Several clients may attach to one session at the same time. longarm exits with t
 session's exit code when its process ends.
 
 Secrets (--secret-env) are injected when the session is created: memory-only
-on the worker and redacted from the session transcript (longarm logs --session).`,
+on the worker and redacted from the session transcript (longarm logs --session).
+So are agent credentials (--agent-auth; by default when the command is claude
+or copilot: docs/usage.md#agent-credentials).`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			worker := args[0]
@@ -86,8 +89,15 @@ on the worker and redacted from the session transcript (longarm logs --session).
 				fmt.Printf("%s %s\n", ss.Name, stateName(ss.State))
 				return nil
 			}
+			var agentAuth *pb.AgentAuth
+			if !noCreate && owner == "" && !sessionRunning(cmd.Context(), conn, session) {
+				// credentials only for a session this attach may create
+				if agentAuth, envM, sec, err = forwardAgentAuth(cmd.Context(), s, conn, worker, argv, aa, envM, sec); err != nil {
+					return err
+				}
+			}
 			open := &pb.AttachOpen{Name: session, Argv: argv, Cwd: cwd, Env: envM, SecretEnv: sec,
-				NoCreate: noCreate, NoReplay: noReplay, Owner: owner}
+				NoCreate: noCreate, NoReplay: noReplay, Owner: owner, AgentAuth: agentAuth}
 			return runAttach(cmd.Context(), conn, open)
 		},
 	}
@@ -98,6 +108,7 @@ on the worker and redacted from the session transcript (longarm logs --session).
 	c.Flags().BoolVar(&kill, "kill", false, "kill the session's process tree instead of attaching")
 	c.Flags().BoolVar(&noReplay, "no-replay", false, "do not replay recent output")
 	c.Flags().BoolVar(&noCreate, "no-create", false, "fail if the session does not exist")
+	aa.register(c)
 	c.Flags().StringVar(&owner, "owner", "", "admins: another user's session (multi-tenancy)")
 	return c
 }
@@ -154,6 +165,18 @@ type attachEnd struct {
 	exited   bool
 	code     int
 	detached bool
+}
+
+// sessionRunning reports whether session name (default "default") runs on
+// the worker already (false when unknown: an older worker).
+func sessionRunning(ctx context.Context, conn *client.Conn, name string) bool {
+	if name == "" {
+		name = "default"
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	ss, err := conn.Sessions().Get(ctx, &pb.GetSessionRequest{Name: name})
+	return err == nil && !terminalState(ss.State)
 }
 
 func runAttach(ctx context.Context, conn *client.Conn, open *pb.AttachOpen) error {

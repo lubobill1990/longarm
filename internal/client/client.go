@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
+	"github.com/lubobill1990/longarm/internal/agentauth"
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/telemetry/tgrpc"
@@ -95,6 +96,9 @@ type Config struct {
 	Hub       hubclient.Config `toml:"hub"` // default: hub.toml (written by longarm join)
 	Dial      DialConfig       `toml:"dial"`
 	Workers   []Worker         `toml:"worker"`
+	// AgentAuth is [agent_auth]: forwarding of coding-agent credentials
+	// (longarm run --agent-auth).
+	AgentAuth agentauth.Config `toml:"agent_auth"`
 
 	Dir string `toml:"-"`
 }

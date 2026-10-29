@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -85,6 +87,10 @@ func (e *execServer) Run(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResp
 	if max > maxExecOutput {
 		max = maxExecOutput
 	}
+	agents, copilotHome, err := agentAuthFromPB(req.AgentAuth)
+	if err != nil {
+		return nil, err
+	}
 	values := make([]string, 0, len(req.SecretEnv))
 	for _, v := range req.SecretEnv {
 		values = append(values, v)
@@ -109,7 +115,6 @@ func (e *execServer) Run(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResp
 	copts := platform.ContainerOptions{Name: "longarm-exec"}
 	var code int
 	var timedOut bool
-	var err error
 	if e.s.perUser() {
 		// As the caller's OS account, with its environment and home.
 		sp, serr := e.s.spaceFor(IdentityFrom(ctx).Owner())
@@ -127,7 +132,21 @@ func (e *execServer) Run(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResp
 	if cmd.Dir == "" {
 		cmd.Dir, _ = os.UserHomeDir()
 	}
-	cmd.Env = mergeEnv(base, e.s.linkEnv(IdentityFrom(ctx).Owner(), req.Env), req.SecretEnv)
+	var agentEnv map[string]string
+	if copilotHome && !hasEnv("COPILOT_HOME", req.Env, req.SecretEnv) {
+		// a private COPILOT_HOME for this one run, removed after it
+		sp, serr := e.s.spaceFor(IdentityFrom(ctx).Owner())
+		if serr != nil {
+			return nil, serr
+		}
+		home, herr := sp.NewAgentHome("x", strconv.FormatInt(time.Now().UnixNano(), 36))
+		if herr != nil {
+			return nil, status.Errorf(codes.Internal, "agent home: %v", herr)
+		}
+		defer sp.RemoveAgentHome(home)
+		agentEnv = map[string]string{"COPILOT_HOME": home}
+	}
+	cmd.Env = mergeEnv(base, agentEnv, e.s.linkEnv(IdentityFrom(ctx).Owner(), req.Env), req.SecretEnv)
 	var stdin *os.File
 	if len(req.Stdin) > 0 {
 		// a pipe (processes of other accounts get files only)
@@ -162,9 +181,22 @@ func (e *execServer) Run(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResp
 	resp.Duration = durationpb.New(time.Since(start))
 	e.s.Audit.Log(IdentityFrom(ctx), pb.Exec_Run_FullMethodName, map[string]any{
 		"argv": req.Argv, "cwd": req.Cwd, "env_keys": keys(req.Env), "secret_keys": keys(req.SecretEnv),
-		"exit": code, "timed_out": timedOut,
+		"agent_auth": agents, "exit": code, "timed_out": timedOut,
 	})
 	return resp, nil
+}
+
+// hasEnv reports whether one of the maps sets variable k (any case: Windows
+// names are case-insensitive).
+func hasEnv(k string, ms ...map[string]string) bool {
+	for _, m := range ms {
+		for n := range m {
+			if strings.EqualFold(n, k) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func keys(m map[string]string) []string {

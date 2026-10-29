@@ -995,6 +995,113 @@ feature: a remote the worker account can read is readable for every user
 of a shared worker. Per-user isolation keeps mirrors per user and skips the
 check (a user's mirror only ever holds what that user fetched or shipped).
 
+## Forwarded agent credentials
+
+`longarm run / exec / session start / attach --agent-auth` (and `auto`, the
+default, when the command is `claude` or `copilot`) forwards the
+credentials of coding agents from the client to a job
+([docs/usage.md](usage.md#agent-credentials---agent-auth)). Workers need no
+agent logins, and the credentials are not stored on them.
+
+**What is forwarded, and for how long it is good.**
+
+- **Claude Code.** The `env` block of the client's `settings.json` and
+  `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` from its environment.
+  - An API key or a proxy token is good until it is revoked.
+  - A `claude setup-token` token is good for about a year and can be
+    revoked on its own.
+- **Copilot CLI.** A GitHub token (`COPILOT_GITHUB_TOKEN`). gh's OAuth
+  token is good until revoked and carries all the scopes gh has, not only
+  Copilot.
+- **gh** (opt-in). The same kind of GitHub token, as `GH_TOKEN`.
+
+**Never forwarded: a Claude subscription's OAuth refresh token**
+(`~/.claude/.credentials.json`, the macOS keychain).
+
+- A refresh token is the account's long-lived credential. Whoever holds it
+  can mint new access tokens for as long as the session lasts: it is the
+  login itself.
+- It cannot be limited to one job or revoked for one machine. Revoking it
+  means signing out everywhere.
+- It rotates when used: a worker refreshing with a copy can invalidate the
+  client's own login, or the other way round.
+- Copying it to a worker would leave the account usable from that machine
+  long after the job.
+- longarm skips it and says what to do instead. `claude setup-token`
+  makes a separate token for this purpose that can be revoked on its
+  own. Or use an API key or a proxy token.
+
+**Who sees it.**
+
+- **The client.** It reads `settings.json`, the environment, `gh auth
+  token` (through a pipe) and the optional Copilot token pool, and holds
+  the values in memory until the request is sent. It never prints them.
+  stderr names the agents and the sources (`claude: settings.json env`);
+  a malformed settings file is reported without quoting it.
+- **The hub: never.** The credentials travel only in the worker-direct
+  request (`secret_env`), inside the end-to-end mTLS connection to the
+  worker. Placement only picks the worker.
+  - The hub's job index and its audit trail get the job spec: the
+    forwarded agents' names (`agent_auth`), the names of the secret
+    variables and, as for `-e`, the plain settings (for example
+    `ANTHROPIC_BASE_URL`), unless the worker hides job details.
+  - Telemetry records the agents' names only.
+- **The worker.**
+  - longarmd holds the credentials in memory and hands them to the job's
+    shim over its stdin pipe. They are never in `job.json`, the status,
+    the audit log (`agent_auth` and `secret_keys` are names only) or
+    longarmd's log.
+  - The job's log and session transcript mask their exact values. Like
+    any redaction, this cannot catch a transformed value (base64, split
+    across writes by the program itself).
+- **The job, and everything it runs.** The agent, its tools, its MCP
+  servers, and every command it executes can read the job's environment.
+  This is the point of forwarding, and the main risk:
+  - an agent running unattended in bypass/yolo mode will run whatever a
+    prompt, a repository file or a web page talks it into, including
+    sending the credentials somewhere;
+  - forward only what the job needs (`gh` is opt-in for that reason);
+  - prefer narrow permission flags;
+  - use tokens you can revoke.
+- **Copilot's own cache.** Copilot CLI may persist what it gets in its
+  `COPILOT_HOME`.
+  - longarm gives every job, session and exec a fresh private
+    `COPILOT_HOME` under the worker's data dir
+    (`agent-home/<j|s|x>-<id>-<random>`). It is accessible only to the
+    account the job runs as.
+  - It is removed together with the job or session (GC after `[gc] keep`,
+    `longarm admin gc`), right after an exec, or after an hour if nothing
+    refers to it.
+  - Until then, whatever Copilot wrote there is on the worker's disk.
+  - `-e COPILOT_HOME=...` opts out of the private home, and Copilot then
+    writes where you said.
+- **The worker's administrators** (and root / SYSTEM) can read any
+  process's environment. Forward only to workers whose administrators you
+  trust with the token.
+
+**Which workers.** The client decides before anything is read or sent
+(`internal/agentauth.Check`). It uses the worker's `Node.Info` (its
+isolation, its owner, whether it is an admin worker) and the hub's record
+of the worker.
+
+- **Your own workers, and workers the hub doesn't know** (workers.toml):
+  yes.
+- **Somebody else's worker** (shared with you, or a fleet worker):
+  - **with per-user isolation:** yes. The job runs as your own OS
+    account, and other users' processes cannot read its environment (see
+    [Per-user OS isolation](#per-user-os-isolation-on-workers)).
+  - **with shared isolation:** refused. Every user's jobs run as the same
+    OS account, so another user's job could read yours.
+    `--agent-auth-shared-ok` overrides this with a warning. The MCP tools
+    cannot override it.
+- **Admin workers** (SYSTEM): never with `auto`. Only when the agent is
+  named, and only to your own admin worker.
+
+The worker does not check these rules: it cannot tell a forwarded agent
+credential from any other `--secret-env`. They protect the user's own
+credentials from the user's own mistakes. Isolation between users is what
+the worker enforces.
+
 ## What is not isolated (known gaps)
 
 Level 2 keeps users apart through the OS's user separation, not through

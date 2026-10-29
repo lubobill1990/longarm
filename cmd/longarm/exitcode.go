@@ -155,6 +155,7 @@ var cliFeatures = []string{
 	"doctor-json",          // longarm doctor --json (docs/usage.md#doctor---json)
 	"worker-update",        // worker update <worker> [--latest|--version X] [--wait] [--json] [--auto on|off]
 	"ls-version",           // ls: the VERSION column, --json updateAvailable
+	"agent-auth",           // run / exec / session start / attach --agent-auth, MCP agent_auth (docs/usage.md#agent-credentials)
 }
 
 func versionCmd() *cobra.Command {

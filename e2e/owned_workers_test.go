@@ -180,6 +180,30 @@ func TestOwnedWorkers(t *testing.T) {
 	if out := h.mustLongarm(bob, "worker", "ls"); !strings.Contains(out, "shared") {
 		t.Fatalf("bob's worker ls:\n%s", out)
 	}
+	// Agent credentials (--agent-auth): not from bob to alice's worker with
+	// shared isolation (alice's jobs run as the same OS account there)
+	// unless he insists; alice's own worker gets hers, and the hub never
+	// sees a value.
+	ah := newAgentHome(t)
+	withTok := append(ah.env, "COPILOT_GITHUB_TOKEN="+e2eCopilotValue)
+	_, fakeCopilot := fakeAgents(t)
+	if r := longarmWith(t, bob, withTok, "exec", "aw", "--", fakeCopilot); r.code != 2 || !strings.Contains(r.stderr, "alice's worker with shared isolation") ||
+		!strings.Contains(r.stderr, "--agent-auth-shared-ok") {
+		t.Fatalf("bob forwards to alice's shared-isolation worker: %+v", r)
+	}
+	if r := longarmWith(t, bob, withTok, "exec", "aw", "--agent-auth-shared-ok", "--", fakeCopilot); r.code != 0 || !strings.Contains(r.stderr, "WARNING") ||
+		!strings.Contains(r.stdout, shaLine("COPILOT_GITHUB_TOKEN", e2eCopilotValue)) {
+		t.Fatalf("bob with --agent-auth-shared-ok: %+v", r)
+	}
+	ar := longarmWith(t, alice, withTok, "run", "aw", "--wait", "--", fakeCopilot)
+	if ar.code != 0 || !strings.Contains(ar.stderr, "forwarding agent credentials to aw") {
+		t.Fatalf("alice forwards to her worker: %+v", ar)
+	}
+	agentJob := strings.TrimSpace(ar.stdout)
+	waitFor(t, "the agent job in the hub index", 30*time.Second, func() bool {
+		return strings.Contains(h.longarm(alice, "jobs", "--hub-only", "--id", agentJob, "--json").stdout, agentJob)
+	})
+	noSecretOnDisk(t, h.hubDir, "", e2eCopilotValue)
 
 	h.mustLongarm(alice, "worker", "unshare", "aw", "--user", "bob")
 	waitAccess("unshared", func(s string) bool { return !strings.Contains(s, `"bob"`) })

@@ -96,6 +96,41 @@
 
 ### Added
 
+- Agent credentials (`--agent-auth`, capability `agent-auth`):
+  - When longarm starts Claude Code or Copilot CLI on a worker, it
+    forwards the agent's credentials from the client with the job:
+    `run`, `exec`, `session start`, `attach` (when it creates the
+    session), and the MCP job tools (`agent_auth`, limited by
+    `LONGARM_MCP_AGENT_AUTH`). Workers need no agent logins, and nothing
+    is stored on them.
+  - `--agent-auth auto|claude|copilot|gh|none`, repeatable or
+    comma-separated. The default is `auto`: forward when `argv[0]` is
+    `claude` or `copilot`. `[agent_auth] default = "none"` in workers.toml
+    turns this off.
+  - Claude Code's credentials come from the `env` block of
+    `settings.json` (honours `CLAUDE_CONFIG_DIR`; tokens and keys go as
+    secrets, the rest as plain env) and from `ANTHROPIC_API_KEY` /
+    `CLAUDE_CODE_OAUTH_TOKEN`. A subscription's refresh token is never
+    copied: longarm suggests `claude setup-token` instead.
+  - Copilot's token comes from `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` /
+    `GITHUB_TOKEN`, else `[agent_auth] copilot_gh_user` (`gh auth token
+    --user`), else `gh auth token`, else the token pool
+    `~/.copilot/accounts/tokens.json` (`--copilot-account`, or
+    round-robin).
+  - `--agent-auth gh` (opt-in) forwards `GH_TOKEN`.
+  - On the worker, the credentials are handled like `--secret-env`: in
+    memory only, in the process environment, and redacted from logs and
+    session transcripts. `jobs --json` / `sessions --json` (`agentAuth`),
+    `job.json` and the audit log name the agents only.
+  - Forwarded Copilot credentials come with a private `COPILOT_HOME` per
+    job, session or exec (`<data>/agent-home`), removed with the job.
+  - longarm refuses to forward to somebody else's worker with shared
+    isolation unless `--agent-auth-shared-ok` is given, and forwards to
+    admin workers only when the agent is named. `Node.Info` reports the
+    worker's `owner` and `admin_worker`.
+  - Docs: docs/usage.md "Agent credentials" (with recommended unattended
+    invocations), docs/security.md "Forwarded agent credentials".
+
 - A self-hosted Tailscale control plane next to the hub on Azure Container
   Instances: `deploy.sh --headscale` / `deploy.ps1 -Headscale` (bicep
   `enableHeadscale`, kept on re-runs; switching it needs `--recreate`) adds

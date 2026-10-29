@@ -20,6 +20,8 @@ package userspace
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -523,6 +525,50 @@ func (sp *Space) Env() ([]string, error) {
 		env = append(env, "TMPDIR="+sp.Tmp)
 	}
 	return env, nil
+}
+
+// NewAgentHome creates a fresh, private directory for the agent state of
+// one job, session or exec (kind "j", "s" or "x" and its id): the
+// COPILOT_HOME of a command that got forwarded Copilot credentials, so
+// that tokens and sessions an agent caches there stay apart from other
+// jobs and users, and go away with the job. Per-user isolation: the
+// account's (and nobody else's) directory.
+func (sp *Space) NewAgentHome(kind, id string) (string, error) {
+	root := filepath.Join(sp.Root, jobs.AgentHomeDir)
+	var rnd [6]byte
+	if _, err := rand.Read(rnd[:]); err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, kind+"-"+id+"-"+hex.EncodeToString(rnd[:]))
+	if sp.Account != nil {
+		if err := platform.SecureUserDir(root, sp.Account); err != nil {
+			return "", err
+		}
+		if err := platform.SecureUserDir(dir, sp.Account); err != nil {
+			return "", err
+		}
+		return dir, nil
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// RemoveAgentHome removes an agent home of this space made by NewAgentHome
+// (anything else is left alone).
+func (sp *Space) RemoveAgentHome(dir string) {
+	if dir == "" {
+		return
+	}
+	rel, err := filepath.Rel(filepath.Join(sp.Root, jobs.AgentHomeDir), dir)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) || strings.ContainsAny(rel, `/\`) {
+		return
+	}
+	os.RemoveAll(dir)
 }
 
 // Home is the space account's home ("" = longarmd's).
