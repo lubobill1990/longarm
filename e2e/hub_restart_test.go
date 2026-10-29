@@ -40,7 +40,7 @@ func TestHubRestartReconnect(t *testing.T) {
 	var names []string
 	for i := range n {
 		w := h.newWorkerDir(t, fmt.Sprintf("rw%d", i), "")
-		h.joinWorker(t, w, true)
+		h.joinWorkerPaced(t, w)
 		w.start(t, true)
 		names = append(names, w.name)
 	}
@@ -98,6 +98,26 @@ func TestHubRestartReconnect(t *testing.T) {
 				t.Errorf("%s logged no restart notice", w.name)
 			}
 		}
+	}
+}
+
+// joinWorkerPaced is joinWorker (approved) for many workers from one
+// address: the hub allows 10 join attempts per IP, then one every 5 s.
+func (h *hubEnv) joinWorkerPaced(t *testing.T, w *hubWorker) {
+	t.Helper()
+	code := strings.TrimSpace(h.mustLongarm(h.admin, "admin", "join-code", "--role", "worker", "--labels", "pool=e2e,tier=test"))
+	for try := 0; ; try++ {
+		r := longarmdCmd(t, "join", h.addr(), code, "--data-dir", w.dataDir, "--name", w.name, "--ca-fingerprint", h.fp, "--no-wait")
+		if r.code == 0 && strings.Contains(r.stdout, "pending approval") {
+			break
+		}
+		if !strings.Contains(r.stderr, "too many join attempts") || try >= 10 {
+			t.Fatalf("longarmd join %s: %+v", w.name, r)
+		}
+		time.Sleep(6 * time.Second)
+	}
+	if out := h.mustLongarm(h.admin, "admin", "approve", w.name); !strings.Contains(out, "approved") {
+		t.Fatalf("approve: %s", out)
 	}
 }
 
