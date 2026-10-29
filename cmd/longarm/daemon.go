@@ -29,6 +29,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/fwcheck"
+	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/localapi"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/pool"
@@ -210,17 +211,24 @@ func (d *daemon) Shutdown(context.Context, *pb.ShutdownRequest) (*pb.ShutdownRes
 	return &pb.ShutdownResponse{}, nil
 }
 
-// relayHubEvents keeps a Fleet.Events subscription and fans it out.
+// relayHubEvents keeps a Fleet.Events subscription and fans it out. It
+// asks for kind "hub" too: a hub that stops says so ("restarting"), and the
+// subscription is back within seconds of the new hub answering
+// (hubclient.Reconnect) instead of after a long backoff.
 func (d *daemon) relayHubEvents(ctx context.Context) {
-	wait := time.Second
+	var bo hubclient.Reconnect
 	for ctx.Err() == nil {
 		h := d.s.hub()
 		if h == nil {
 			return
 		}
-		st, err := h.Fleet().Events(ctx, &pb.EventsRequest{Kinds: []string{"job", "node", "queue", "metrics"}})
+		restarting := false
+		st, err := h.Fleet().Events(ctx, &pb.EventsRequest{Kinds: []string{"job", "node", "queue", "metrics", "hub"}})
 		if err == nil {
 			d.setLink(true, nil)
+			// the hub answers again: forget a failure remembered while it
+			// restarted (no 30 s skip of a hub that is back)
+			d.s.hubUp()
 			if nodes, ok := d.s.hubNodes(ctx, false); ok {
 				for _, n := range nodes {
 					d.mon.HubNode(n)
@@ -231,6 +239,11 @@ func (d *daemon) relayHubEvents(ctx context.Context) {
 				var ev *pb.FleetEvent
 				if ev, err = st.Recv(); err != nil {
 					break
+				}
+				if ev.Kind == "hub" {
+					// the hub's own state, not a fleet event for subscribers
+					restarting = restarting || ev.Message == "restarting"
+					continue
 				}
 				if ev.NodeInfo != nil && (ev.Kind == "node" || ev.Kind == "metrics") {
 					d.mon.HubNode(ev.NodeInfo)
@@ -244,21 +257,26 @@ func (d *daemon) relayHubEvents(ctx context.Context) {
 				}
 				d.mu.Unlock()
 			}
-			if time.Since(start) > 30*time.Second {
-				wait = time.Second
+			if time.Since(start) > 2*time.Second {
+				bo.Connected()
 			}
 		}
 		if ctx.Err() != nil {
 			return
 		}
-		d.setLink(false, err)
+		var wait time.Duration
+		if restarting {
+			bo.Restarting(time.Second)
+			wait = bo.Next(nil)
+			d.setLink(false, errors.New("hub restarting; reconnecting"))
+		} else {
+			wait = bo.Next(err)
+			d.setLink(false, err)
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(wait):
-		}
-		if wait *= 2; wait > 30*time.Second {
-			wait = 30 * time.Second
 		}
 	}
 }

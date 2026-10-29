@@ -634,6 +634,8 @@ func eventFilter(v tenancy.Caller) func(*pb.FleetEvent, string) *pb.FleetEvent {
 				c.Message = "updated"
 			}
 			return c
+		case "hub": // the hub restarting: about nobody's data
+			return ev
 		default:
 			return nil
 		}

@@ -29,8 +29,9 @@ recreate=false admin_code=false subscription='' acme_email='' registry_user='' t
 entra_tenant='' entra_client='' entra_admins='' entra_web='' entra_apps='' gate_free_gb='' release_public_key=''
 build_in_acr=false stun_servers='' storage_auth='' acr='' timeout=1200 stuck_timeout=600
 telemetry='' diagnostics='' headscale='' public_derp='' skip_image_check=false
-# seconds between status polls (tests make it short)
-poll=${LONGARM_DEPLOY_POLL_SECONDS:-10}
+# seconds between status polls (tests make it short; each az call takes a
+# second or two on its own)
+poll=${LONGARM_DEPLOY_POLL_SECONDS:-5}
 
 usage() {
 	cat <<'EOF'
@@ -932,7 +933,11 @@ echo "deploying $name to $rg ($location, $size, panel $panel, storage auth $stor
 deadline=$((SECONDS + timeout))
 logs_hint="az container logs -g $rg -n $name --container-name hub"
 deployment=longarm-hub-$(date -u +%Y%m%d%H%M%S)
+# phases of the redeploy (seconds since the submit; README "Redeploy downtime")
+t_submit=$SECONDS
+phase() { echo "  [+$((SECONDS - t_submit))s] $*"; }
 deploy_run "$tmp/params.json" "$deployment" || fail_deploy "$deploy_err"
+phase "deployment succeeded"
 outputs=$(az deployment group show -g "$rg" -n "$deployment" -o tsv \
 	--query "[properties.outputs.hubAddress.value, properties.outputs.fqdn.value, properties.outputs.storageAccount.value, properties.outputs.relayUdpPort.value, properties.outputs.panelUrl.value]")
 # one value per line (az prints a list as tab-separated fields; panelUrl last: empty without the panel)
@@ -969,6 +974,7 @@ until [[ $state == Running ]]; do
 	((SECONDS < deadline)) || fail_deploy "the hub container is not running ($state): $logs_hint"
 	sleep "$poll"
 done
+phase "hub container running"
 # bootstrap.env of this start (a new boot_id; restart once if the update
 # didn't restart the hub)
 restarted=false
@@ -979,12 +985,14 @@ until read_bootstrap && [[ $(bootstrap_value boot_id) != "$prev_boot" ]]; do
 		az container restart -g "$rg" -n "$name" -o none
 		restarted=true
 	fi
-	sleep 5
+	sleep 2
 done
+phase "new hub start bootstrapped"
 until tcp_open "$fqdn" "${hub_addr##*:}"; do
 	((SECONDS < deadline)) || fail_deploy "$hub_addr does not answer: $logs_hint"
-	sleep 5
+	sleep 2
 done
+phase "hub answers on $hub_addr"
 # the new configuration runs: the settings snapshot has done its job
 if $deleted || $have_snapshot; then
 	clear_snapshot

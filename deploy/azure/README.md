@@ -312,6 +312,32 @@ or the panel needs `--recreate` (ACI can't change a running group's resources
 or ports); data is kept either way. The hub is down for about a minute;
 workers and clients reconnect by themselves.
 
+### Redeploy downtime
+
+What a redeploy costs, phase by phase (the script prints `[+Ns]` marks for
+its part; `az container logs ... --container-name hub` has the hub's:
+`restore took`, `bootstrap took`, `startup timing`, `restart announced`):
+
+| Phase | Time | Notes |
+| --- | --- | --- |
+| submit to the old container stopping | 10-30 s | ARM validates and applies; the old hub still serves |
+| old hub stops | < 1 s + Litestream's last sync | SIGTERM: the hub tells every worker and client "restarting" (`HubCommand.restarting`), they close their sessions, Litestream ships the last WAL frames (`shutdown-sync-timeout`) |
+| ACI recreates the group, pulls the image | Azure's: typically 20-40 s | ACI recreates the containers on an update and does not keep the image across it; the image is ~30 MB compressed (static hub ~16 MB, Litestream ~14 MB, distroless base < 1 MB) |
+| Litestream restore | 1-3 s for a small database | every start (the database lives on the container's disk); hourly snapshots keep it to one snapshot plus at most an hour of compacted files |
+| bootstrap, hub start | < 1 s | gRPC listens first; telemetry, the release store check and Headscale run behind it |
+| workers back | ≤ 6 s after the hub answers | `hubclient.Reconnect`: 1, 2, 4, 5, 5 ... s (±20%) while the hub is unreachable (up to 15 s after 3 minutes, 30 s when the hub refuses a node); after a restart notice the first try is after ~1 s |
+
+The part under our control is the start (a few seconds) and the
+reconnect; the 20-40 s in between is ACI. ACI can't pull the new image
+before it stops the old container (an update recreates the group's
+containers), and a second group can't take over the DNS name, so a
+redeploy is never seamless: deploy in quiet hours (e.g. `at 03:00` /
+a scheduled task running `deploy.sh`). With `:latest` / `:edge` and no new
+tag the script restarts the group after the deployment so the image is
+pulled again - with `--storage-auth key` that is a second restart (every
+deployment renews the Litestream SAS, which already restarts the hub): pin
+version tags to upgrade with a single restart.
+
 ## Telemetry and diagnostic bundles
 
 ```sh

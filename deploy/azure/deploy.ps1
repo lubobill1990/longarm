@@ -97,7 +97,7 @@ Set-StrictMode -Version 3.0
 $script:AzCli = 'az'
 if ($env:LONGARM_DEPLOY_AZ) { $script:AzCli = $env:LONGARM_DEPLOY_AZ }
 # seconds between status polls (tests make it short)
-$script:Poll = 10
+$script:Poll = 5
 if ($env:LONGARM_DEPLOY_POLL_SECONDS) { $script:Poll = [int]$env:LONGARM_DEPLOY_POLL_SECONDS }
 
 function Invoke-Az {
@@ -889,8 +889,12 @@ try {
     $deadline = $start.AddSeconds($TimeoutSeconds)
     $logsHint = "az container logs -g $rg -n $Name --container-name hub"
     $deployment = 'longarm-hub-' + (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
+    # phases of the redeploy (seconds since the submit; README "Redeploy downtime")
+    $tSubmit = Get-Date
+    function Write-Phase([string]$What) { Write-Host ("  [+{0}s] {1}" -f [int]((Get-Date) - $tSubmit).TotalSeconds, $What) }
     $err = Invoke-DeployRun $paramsFile $deployment
     if ($err) { Invoke-FailDeploy $err }
+    Write-Phase 'deployment succeeded'
     $outLine = (Invoke-Az deployment group show -g $rg -n $deployment --query $query -o tsv) -join ''
     $outs = Split-Tsv $outLine 5
     $hubAddr, $fqdn, $account, $relayPort, $panelUrl = $outs[0], $outs[1], $outs[2], $outs[3], $outs[4]
@@ -921,6 +925,7 @@ try {
         if ((Get-Date) -gt $deadline) { Invoke-FailDeploy "the hub container is not running ($state): $logsHint" }
         Start-Sleep -Seconds $script:Poll
     }
+    Write-Phase 'hub container running'
     # the bootstrap values of this start (a new boot_id; restart once if the
     # update didn't restart the hub)
     $restarted = $false
@@ -933,13 +938,15 @@ try {
             Invoke-Az container restart -g $rg -n $Name -o none | Out-Null
             $restarted = $true
         }
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 2
     }
+    Write-Phase 'new hub start bootstrapped'
     $port = [int]$hubPort
     while (-not (Test-TcpPort $fqdn $port)) {
         if ((Get-Date) -gt $deadline) { Invoke-FailDeploy "$hubAddr does not answer: $logsHint" }
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 2
     }
+    Write-Phase "hub answers on $hubAddr"
     # the new configuration runs: the settings snapshot has done its job
     if ($script:Deleted -or $snap) { Clear-Snapshot }
     $fp = Get-Value $boot 'ca_fingerprint'

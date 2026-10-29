@@ -4,6 +4,23 @@
 
 ### Fixed
 
+- Hub redeploys cost less: workers (and the `longarm daemon` event relay,
+  hence the tray) retry an unreachable hub every 1, 2, 4, then 5 s (±20%
+  jitter; up to 15 s after 3 minutes, 30 s when the hub refuses the node)
+  instead of backing off to 30 s, so they are back within seconds of the new
+  hub answering rather than up to 30 s later. A stopping hub announces the
+  restart (a new, additive `HubCommand.restarting`, and a `hub` event for
+  `Fleet.Events` subscribers that ask for it): workers close their sessions
+  at once (the hub's shutdown no longer waits 3 s for them), log it as a
+  restart rather than a failure and retry after about a second; the daemon
+  forgets the remembered hub failure as soon as the hub answers again.
+  Litestream takes hourly snapshots (was daily), so the restore on every
+  container start reads fewer files. The container entrypoint and the hub
+  log their startup phases (`restore took`, `bootstrap took`,
+  `startup timing`), deploy.sh / deploy.ps1 print the redeploy phases and
+  poll faster, the container smoke test prints the restart timings, and an
+  e2e test restarts the hub under N workers and bounds their return
+  (deploy/azure/README.md "Redeploy downtime").
 - Windows MSI upgrades failed with error 2613 ("RemoveExistingProducts
   action sequenced incorrectly") for every upgrade by 0.1.8 to 0.1.13: the
   elevated stop step (upgrades with Longarm running) was a deferred action

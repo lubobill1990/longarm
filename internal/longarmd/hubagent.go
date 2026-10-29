@@ -269,33 +269,52 @@ func (a *hubAgent) watch() (chan *pb.LocalEvent, func()) {
 
 // Run keeps a session with the hub until ctx is done.
 func (a *hubAgent) Run(ctx context.Context) {
-	wait := time.Second
+	var bo hubclient.Reconnect
 	for ctx.Err() == nil {
 		start, welcomed := time.Now(), a.welcomes.Load()
 		err := a.session(ctx)
 		if ctx.Err() != nil {
 			break
 		}
-		a.setLink(false, err, "")
-		// The backoff is for a hub that can't be reached or refuses us; a
-		// session the hub accepted and kept for a while (it restarted, the
-		// connection broke) reconnects after the first delay again. (It
-		// only reset after 30 s before, so a hub restarted a few times in a
-		// row was waited for 8, 16, 30 s.) One dropped right after the
-		// welcome keeps backing off.
-		if a.welcomes.Load() != welcomed && time.Since(start) > 2*time.Second || time.Since(start) > 30*time.Second {
-			wait = time.Second
+		var wait time.Duration
+		if after, ok := hubRestartingAfter(err); ok {
+			// the hub said it is restarting (a redeploy): not a failure;
+			// back within seconds of the new hub answering
+			bo.Restarting(after)
+			wait = bo.Next(nil)
+			a.setLink(false, errors.New("hub restarting; reconnecting"), "")
+			a.log.Info("hub: restarting; reconnecting", "in", wait.Round(time.Millisecond))
+		} else {
+			a.setLink(false, err, "")
+			// A session the hub accepted and kept for a while (it restarted
+			// without notice, the connection broke) starts the backoff over;
+			// one dropped right after the welcome keeps backing off.
+			if a.welcomes.Load() != welcomed && time.Since(start) > 2*time.Second || time.Since(start) > 30*time.Second {
+				bo.Connected()
+			}
+			wait = bo.Next(err)
+			a.log.Info("hub: session ended; reconnecting", "err", err, "in", wait.Round(time.Millisecond))
 		}
-		a.log.Info("hub: session ended; reconnecting", "err", err, "in", wait)
 		select {
 		case <-ctx.Done():
 		case <-time.After(wait):
 		}
-		if wait *= 2; wait > 30*time.Second {
-			wait = 30 * time.Second
-		}
 	}
 	a.setLink(false, nil, "")
+}
+
+// errHubRestarting ends a session whose hub announced a restart
+// (HubCommand.restarting).
+type errHubRestarting struct{ after time.Duration }
+
+func (e errHubRestarting) Error() string { return "hub restarting" }
+
+func hubRestartingAfter(err error) (time.Duration, bool) {
+	var r errHubRestarting
+	if errors.As(err, &r) {
+		return r.after, true
+	}
+	return 0, false
 }
 
 func (a *hubAgent) hello() *pb.NodeHello {
@@ -419,6 +438,11 @@ func (a *hubAgent) session(ctx context.Context) error {
 			cmd, err := st.Recv()
 			if err != nil {
 				errc <- err
+				return
+			}
+			if r := cmd.GetRestarting(); r != nil {
+				// end the session now: the hub's shutdown need not wait for it
+				errc <- errHubRestarting{after: r.GetReconnectAfter().AsDuration()}
 				return
 			}
 			a.handle(cmd)
