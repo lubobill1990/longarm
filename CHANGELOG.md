@@ -4,6 +4,36 @@
 
 ### Fixed
 
+- The hub on Azure crash-looped on every start (2026-10-29, 0.1.18 and
+  0.1.16 alike): `litestream restore` ran out of memory. Litestream 0.5.17's
+  Azure Blob client listed "the files from TXID X" as the blob name prefix
+  X, so every compaction took exactly one file of the level below and fell
+  further behind with every write: L0 files were never deleted, L2/L3 never
+  moved, and the replica grew to 21,400 files. The restore opens every file
+  since the newest snapshot at once (about 100 KB each), passed 1.5 GB
+  (`--size small`) and was killed. The image now builds Litestream from the
+  upstream commit with the fix (benbjohnson/litestream#1461, unreleased
+  after 0.5.17), the Litestream configs spell out levels, L0 retention and
+  hourly snapshots kept 24 h, and the image smoke test checks that
+  compaction merges files. A replica that has already grown needs a
+  bigger start once or a prune (deploy/azure/README.md "Replica size and
+  memory").
+- A failed restore now says why: `litestream restore killed by SIGKILL
+  (out of memory? the container has 1536 MB)` (the cgroup's limit, and
+  "the kernel's OOM killer ended it" when the cgroup counted it), and the
+  entrypoint exits 128 + the signal (137) instead of 1, which ACI keeps
+  across restarts. With `--storage-auth identity --diagnostics` the failure
+  is also recorded in the diagnostics container (`hub-start-failures/`).
+- deploy.sh / deploy.ps1: an update in place that fails (the 0.1.18 deploy:
+  "no bootstrap values from this start", exit 1, the hub left
+  crash-looping) is rolled back to the running configuration like a failed
+  `--recreate`. While waiting they print every restart of the hub
+  container with the exit code of the start before and stop after 3 (2 in
+  CrashLoopBackOff) with "the hub is crash-looping"; before deploying they
+  print the replica's files per level and warn above 5000 in levels 0-3.
+  `--log-analytics` with `--telemetry` sends the container logs to the
+  telemetry workspace (no second workspace); README "Logs of crashed
+  starts" says how to get the log of a start ACI restarted.
 - "Update to X" on a Windows MSI worker failed with "this installation
   can't update itself: C:\Program Files\Longarm is not writable for this
   account (package-managed install?)" although the machine has the Longarm

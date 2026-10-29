@@ -80,6 +80,11 @@ func main() {
 	}
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "longarm-hub:", err)
+		// a restore killed by a signal: 128+signal, like a shell (container.go)
+		var rf *restoreFailure
+		if errors.As(err, &rf) && rf.ExitCode() > 0 {
+			os.Exit(rf.ExitCode())
+		}
 		os.Exit(1)
 	}
 }

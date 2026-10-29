@@ -21,11 +21,25 @@ dbs:
 # On SIGTERM the hub stops first, then Litestream ships the last WAL frames
 # (up to this long) before it exits.
 shutdown-sync-timeout: 20s
-# A start restores the newest snapshot plus the compacted files since (with
-# storage-auth identity every start: the database is on the container's own
-# disk). Hourly instead of daily snapshots: a restore reads one snapshot and
-# at most an hour of 5-minute / 30-second files instead of up to 23 hourly
-# ones on top. Small databases: an hourly upload of a few MB.
+# Retention (Litestream 0.5; deploy/azure/README.md "Replica size and
+# memory"). Each sync uploads an L0 file; L1-L3 merge the level below every
+# 30 s, 5 min and 1 h; an L0 file is deleted once L1 covers it and it is
+# older than l0-retention; a snapshot (L9, the whole database) is taken
+# every hour and kept 24 h, and the L1-L3 files older than the oldest kept
+# snapshot go with it. A start (with storage-auth identity every start: the
+# database is on the container's own disk) restores the newest snapshot plus
+# the files since - at most an hour of L3/L2/L1 files and a few minutes of
+# L0 - and opens all of them at once, so its memory grows with that count.
+# The image's Litestream must have the Azure Blob compaction fix
+# (deploy/hub/image-build.sh): with 0.5.17 compaction falls behind and none
+# of this deletes anything. The values are Litestream's defaults except the
+# snapshot interval (default 24 h), spelled out so they are not lost.
+levels:
+  - interval: 30s
+  - interval: 5m
+  - interval: 1h
+l0-retention: 5m
+l0-retention-check-interval: 15s
 snapshot:
   interval: 1h
   retention: 24h

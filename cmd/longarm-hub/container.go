@@ -66,8 +66,9 @@ func runRestore(ctx context.Context, mk *hub.StartupMarker, phase string, limit 
 	rc := exec.CommandContext(ctx, ls, "restore", "-config", lsConfig, "-if-db-not-exists", "-if-replica-exists", db)
 	rc.Stdout, rc.Stderr = os.Stderr, os.Stderr
 	t := time.Now()
+	_, oomBefore, _ := cgroupMemory()
 	if err := rc.Start(); err != nil {
-		return err
+		return fmt.Errorf("litestream restore: %w", err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- rc.Wait() }()
@@ -77,8 +78,10 @@ func runRestore(ctx context.Context, mk *hub.StartupMarker, phase string, limit 
 		select {
 		case err := <-done:
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "longarm-hub container: restore of %s failed after %s\n", db, time.Since(t).Round(time.Second))
-				return err
+				// deploy.sh / deploy.ps1 read "restore of <db> failed" (restore_status)
+				rf := describeRestoreExit(err, oomBefore)
+				fmt.Fprintf(os.Stderr, "longarm-hub container: restore of %s failed after %s: %s\n", db, time.Since(t).Round(time.Second), rf.msg)
+				return rf
 			}
 			fmt.Fprintf(os.Stderr, "longarm-hub container: restore took %s (%s)\n", time.Since(t).Round(time.Millisecond), db)
 			return nil
@@ -208,7 +211,8 @@ func runContainer() error {
 			return err
 		}
 		if err := runRestore(context.Background(), mk, "restore", maxPhase, ls, lsConfig, db); err != nil {
-			return fmt.Errorf("litestream restore: %w (not starting: the replica may hold the hub's data)", err)
+			recordStartFailure(db, err)
+			return fmt.Errorf("%w (not starting: the replica may hold the hub's data)", err)
 		}
 	}
 	if dir := cfg.Tailnet.Headscale.SidecarDir; dir != "" {
@@ -291,7 +295,7 @@ func prepareHeadscaleDB(dir, ls, lsConfig string, mk *hub.StartupMarker, maxPhas
 	db := hub.HeadscaleDB(dir)
 	if lsConfig != "" {
 		if err := runRestore(context.Background(), mk, "restore-headscale", maxPhase, ls, lsConfig, db); err != nil {
-			fail("litestream restore of %s: %v (Headscale stays stopped: the replica may hold its nodes)", db, err)
+			fail("%s: %v (Headscale stays stopped: the replica may hold its nodes)", db, err)
 			return
 		}
 	}

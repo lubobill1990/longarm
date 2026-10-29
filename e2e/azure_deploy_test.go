@@ -126,7 +126,7 @@ func TestAzureDeployScripts(t *testing.T) {
 			}
 			run := func(extraEnv []string, args ...string) result {
 				t.Helper()
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute) // Windows PowerShell 5.1 and a rollback: slow
 				defer cancel()
 				argv := r.argv(args...)
 				cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
@@ -294,6 +294,38 @@ func TestAzureDeployScripts(t *testing.T) {
 			ok(run(pw, name, "myhub", regUser, "bot"), "re-run on 1.2.3")
 			if restarts() != n+1 || params()["image"] != "ghcr.io/example/longarm-hub:1.2.3" {
 				t.Fatalf("pinned re-run: %d restarts, %+v", restarts(), params())
+			}
+
+			// an update in place whose image crash-loops (the 0.1.18 deploy:
+			// Litestream's restore ran out of memory on every start; the
+			// script gave up without a rollback): the replica's size is warned
+			// about first, the crash loop reported with its exit code, and the
+			// running image deployed again
+			cfrom := len(calls())
+			res = run(append([]string{"HELPER_AZ_CRASHLOOP_IMAGE=oom", "HELPER_AZ_REPLICA_FILES=21400"}, pw...),
+				name, "myhub", regUser, "bot", image, "ghcr.io/example/longarm-hub:oom")
+			refused(res, "a crash-looping update", "rolled back")
+			out := res.stdout + res.stderr
+			for _, want := range []string{"database replica: L0 21400, L9 1", "the hub's database replica has 21400 files",
+				"hub container restarted (2 since this deployment", "the hub is crash-looping: ACI restarted it 2 times since this deployment (CrashLoopBackOff)",
+				"exit code 137 = killed by SIGKILL: out of memory?", "Replica size and memory", r.flag("--log-analytics", "-LogAnalytics") + " keeps them",
+				"rolling back", "rolled-back hub answers on"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("crash loop: no %q in\n%s", want, out)
+				}
+			}
+			if cl := calls()[cfrom:]; !strings.Contains(cl, "-rollback") || strings.Contains(cl, "container delete") ||
+				!strings.Contains(cl, "storage blob list --account-name lahubtest -c litestream --prefix hub.db/ltx/") {
+				t.Fatalf("crash loop: no in-place rollback / replica check:\n%s", cl)
+			}
+			if p := params(); p["image"] != "ghcr.io/example/longarm-hub:1.2.3" || p["registryUsername"] != "bot" {
+				t.Fatalf("crash loop: not rolled back: %+v", p)
+			}
+			// nothing to roll back to (the same configuration): no rollback
+			cfrom = len(calls())
+			refused(run(append([]string{"HELPER_AZ_DEPLOY_FAIL=1"}, pw...), name, "myhub", regUser, "bot"), "a failed re-run", "inaccessibleimage")
+			if strings.Contains(calls()[cfrom:], "-rollback") {
+				t.Fatalf("a rollback to the same configuration:\n%s", calls()[cfrom:])
 			}
 
 			// the external STUN servers the hub advertises (template default
@@ -478,7 +510,7 @@ func TestAzureDeployScripts(t *testing.T) {
 			}
 			// telemetry looks at its providers (already registered); Log
 			// Analytics stays off (enableLogAnalytics above)
-			if cl := calls()[from:]; strings.Contains(cl, "storage ") || strings.Contains(cl, "provider register") ||
+			if cl := calls()[from:]; strings.Contains(cl, "storage file") || strings.Contains(cl, "keys list") || strings.Contains(cl, "provider register") ||
 				!strings.Contains(cl, "provider show -n Microsoft.Insights") {
 				t.Fatalf("identity re-run:\n%s", cl)
 			}

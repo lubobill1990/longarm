@@ -43,7 +43,8 @@ usage: deploy.sh --name NAME [--location REGION] [options]
 
   --name NAME              hub name = DNS label: NAME.REGION.azurecontainer.io
   --location REGION        Azure region, e.g. eastasia, westeurope (needed on the first run)
-  --size small|medium      small = 1 vCPU / 1.5 GB (default), medium = 2 vCPU / 3 GB
+  --size small|medium      small = 1 vCPU / 1.5 GB (default), medium = 2 vCPU / 3 GB (README
+                           "Replica size and memory")
   --no-panel / --panel     without / with the HTTPS panel (Caddy sidecar on 80/443; default with)
   --resource-group RG      default: NAME-rg
   --image IMAGE            longarm-hub image (first run: the template's :latest; re-run: the running one)
@@ -67,7 +68,8 @@ usage: deploy.sh --name NAME [--location REGION] [options]
                            refuses uploads whose signature doesn't verify (tail -1 longarm-release.pub)
   --stun-servers LIST      external STUN servers the hub advertises (host:port,...; "none" = only the
                            hub's own; default: the template's public ones, see README "Direct connections")
-  --log-analytics          send container logs to a Log Analytics workspace
+  --log-analytics          send container logs to Log Analytics (with --telemetry its workspace, else
+                           one of their own): they keep the logs of crashed starts, which ACI drops
   --storage-auth key|identity  key (default): storage account keys; identity: a managed
                            identity, shared key access off (subscriptions whose policy denies keys)
   --acr NAME               with identity: a registry in the resource group the managed identity pulls
@@ -319,6 +321,69 @@ EOM
 		fi
 	else
 		stuck_since=''
+	fi
+}
+
+# exit_meaning CODE: what a hub container's exit code says
+exit_meaning() {
+	case $1 in
+	137) echo " = killed by SIGKILL: out of memory? (the restore of a large replica: README \"Replica size and memory\"; --size medium)" ;;
+	143) echo " = stopped by SIGTERM" ;;
+	1) echo " = the start failed (the hub's log says why)" ;;
+	esac
+}
+
+# crashed_logs: where the log of a crashed start is (ACI keeps only the
+# current start's)
+crashed_logs() {
+	local s="the logs of crashed starts are gone with them: --log-analytics keeps them (README \"Logs of crashed starts\")"
+	if [[ $storage_auth == identity && $diagnostics == true ]]; then
+		s+="; failed restores are recorded in the diagnostics container: az storage blob list --auth-mode login --account-name ${account:-<storage account>} -c diagnostics --prefix hub-start-failures/ -o table"
+	fi
+	echo "$s"
+}
+
+# check_crash: the hub container's restarts since this deployment (ACI
+# restarts a container that exits, and drops its log). Prints each new one
+# with the exit code of the start before; 1 = a crash loop (crash_limit
+# restarts, or CrashLoopBackOff after 2) and $crash_msg says so.
+# crash_note: the restarts so far, for other messages.
+crash_limit=3
+crash_reset() { crash_base='' crash_seen=0 crash_msg='' crash_note='' crash_checked=''; }
+crash_reset
+crash_checked=''
+check_crash() {
+	local info n st detail code pdetail finish
+	# at most every poll (an az call takes a second or two)
+	[[ -z $crash_checked ]] || ((SECONDS - crash_checked >= poll)) || return 0
+	crash_checked=$SECONDS
+	info=$(az container show -g "$rg" -n "$name" -o tsv \
+		--query "containers[?name=='hub'] | [0].instanceView.[restartCount, currentState.state, currentState.detailStatus, previousState.exitCode, previousState.detailStatus, previousState.finishTime]" \
+		2>/dev/null | tr -d '\r' | tr '\t' '\n' | sed 's/^None$//') || return 0
+	{
+		read -r n || true
+		read -r st || true
+		read -r detail || true
+		read -r code || true
+		read -r pdetail || true
+		read -r finish || true
+	} <<<"$info"
+	[[ $n =~ ^[0-9]+$ ]] || return 0
+	# the first look, or ACI started counting anew (a restart of the group)
+	if [[ -z $crash_base ]] || ((n < crash_base)); then
+		crash_base=$n
+		crash_seen=0
+		return 0
+	fi
+	((n - crash_base > crash_seen)) || return 0
+	crash_seen=$((n - crash_base))
+	local last
+	last="exit code ${code:-unknown}$(exit_meaning "$code")${pdetail:+, $pdetail}${finish:+, at $finish}"
+	phase "hub container restarted (${crash_seen} since this deployment; now ${st:-unknown}${detail:+: $detail}): the start before ended with $last"
+	crash_note=" (restarted $crash_seen times; the last start ended with $last; $(crashed_logs))"
+	if ((crash_seen >= crash_limit)) || [[ $crash_seen -ge 2 && $detail == *CrashLoopBackOff* ]]; then
+		crash_msg="the hub is crash-looping: ACI restarted it $crash_seen times since this deployment${detail:+ (${detail%%:*})}; its last start ended with $last. $(crashed_logs); the current start: $logs_hint"
+		return 1
 	fi
 }
 
@@ -912,6 +977,52 @@ check_images() {
 	done
 }
 
+# replica_check: warns when the hub's Litestream replica has many files.
+# Every start restores the database from it (with storage-auth identity:
+# the database is on the container's disk), and the restore opens every
+# file since the newest snapshot at once - about 100 KB of memory each. A
+# healthy replica has a few thousand files at most (24 h of compacted ones,
+# of which a restore reads a few dozen); a replica whose compaction fell
+# behind (Litestream 0.5.17, the 0.1.18 deploy) had 21,400, and the restore
+# ran out of the 1.5 GB of --size small. Best effort: listing needs read
+# access to the blobs (identity: Storage Blob Data Reader on the container).
+replica_files_warn=${LONGARM_DEPLOY_REPLICA_FILES_WARN:-5000}
+replica_check() {
+	local acct names counts total mb have
+	acct=$(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv 2>/dev/null | tr -d '\r' | sed -n 1p) || true
+	[[ -n $acct ]] || return 0
+	if [[ $storage_auth == identity ]]; then
+		names=$(az storage blob list --auth-mode login --account-name "$acct" -c litestream --prefix hub.db/ltx/ \
+			--num-results '*' --query '[].name' -o tsv 2>/dev/null) || names=''
+	else
+		names=$(
+			unset AZURE_STORAGE_CONNECTION_STRING AZURE_STORAGE_SAS_TOKEN AZURE_STORAGE_ACCOUNT AZURE_STORAGE_AUTH_MODE
+			AZURE_STORAGE_KEY=$(az storage account keys list -g "$rg" -n "$acct" --query "[0].value" -o tsv | tr -d '\r') \
+				az storage blob list --account-name "$acct" -c litestream --prefix hub.db/ltx/ \
+				--num-results '*' --query '[].name' -o tsv 2>/dev/null
+		) || names=''
+	fi
+	if [[ -z $names ]]; then
+		echo "note: the database replica's files could not be counted (no read access to the blob container litestream?): skipped"
+		return 0
+	fi
+	# files per level (hub.db/ltx/<level>/<min>-<max>.ltx), L0-L3: the ones a restore may read after a snapshot
+	counts=$(printf '%s\n' "$names" | tr -d '\r' | awk -F/ 'NF >= 4 { n[$3]++ } END { for (l = 0; l <= 9; l++) if (n[l]) printf "L%d %d, ", l, n[l] }')
+	total=$(printf '%s\n' "$names" | tr -d '\r' | awk -F/ 'NF >= 4 && $3 <= 3 { n++ } END { print n + 0 }')
+	echo "database replica: ${counts%, }"
+	((total > replica_files_warn)) || return 0
+	mb=$((total / 10))
+	have=1536
+	[[ $size != medium ]] || have=3072
+	cat >&2 <<EOM
+WARNING: the hub's database replica has $total files in levels 0-3 (more than $replica_files_warn): its
+compaction has fallen behind. Every start restores the database from it and may open all of
+them at once (about 100 KB each: ~$mb MB; --size $size has $have MB). A restore that runs out of
+memory is killed (SIGKILL, exit code 137) and the hub crash-loops (the 0.1.18 deploy).
+Prune the replica before deploying: deploy/azure/README.md "Replica size and memory".
+EOM
+}
+
 # sidecars from the registry (now or in the rollback): its copies first
 if [[ -n $acr && ($headscale == true || $prev_headscale == true) ]]; then
 	ensure_mirror
@@ -921,8 +1032,14 @@ az deployment group validate -g "$rg" --template-file "$template" --parameters "
 	die "the deployment does not validate (the error is above, e.g. a policy violation): nothing was changed"
 $skip_image_check || check_images
 
-deleted=false
-if $recreate && [[ -n $cur_image ]]; then
+replica_check
+
+# rollback: fail_deploy deploys the previous configuration again - after
+# --recreate deleted the group, and after an update in place that changed
+# it (the 0.1.18 deploy: the new image's starts failed, the script gave up
+# and left the hub crash-looping). deleted: --recreate deleted the group.
+deleted=false rollback=false
+if [[ -n $cur_image ]]; then
 	# the previous configuration, for a rollback if the new one fails: the
 	# settings swapped for the previous ones while its parameters are written
 	swap='image:prev_image size:prev_size panel:prev_panel acr:prev_acr headscale:prev_headscale public_derp:prev_public_derp log_analytics:prev_logs telemetry:prev_telemetry diagnostics:prev_diagnostics stun_servers:prev_stun gate_free_gb:prev_gate release_public_key:prev_relkey entra_tenant:prev_entra_tenant entra_client:prev_entra_client entra_admins:prev_entra_admins entra_web:prev_entra_web entra_apps:prev_entra_apps'
@@ -943,13 +1060,24 @@ if $recreate && [[ -n $cur_image ]]; then
 		printf -v "${kv%%:*}" '%s' "${!v}"
 	done
 	reg_host=$saved_reg_host tailscale_secret_file=$saved_tailscale_secret_file
-	az deployment group validate -g "$rg" --template-file "$template" --parameters "@$tmp/rollback.json" -o none ||
-		die "the previous configuration (the rollback if the new one fails) does not validate (above): nothing was changed"
-	echo "saving the hub's settings (resource group tags longarm-hub-prev-*: a re-run finds them if the group is gone)"
-	snapshot_tags
-	echo "deleting container group $name (storage and data stay)"
-	az container delete -g "$rg" -n "$name" --yes -o none
-	deleted=true
+	if $recreate; then
+		az deployment group validate -g "$rg" --template-file "$template" --parameters "@$tmp/rollback.json" -o none ||
+			die "the previous configuration (the rollback if the new one fails) does not validate (above): nothing was changed"
+		rollback=true
+		echo "saving the hub's settings (resource group tags longarm-hub-prev-*: a re-run finds them if the group is gone)"
+		snapshot_tags
+		echo "deleting container group $name (storage and data stay)"
+		az container delete -g "$rg" -n "$name" --yes -o none
+		deleted=true
+	elif ! cmp -s "$tmp/rollback.json" "$tmp/params.json"; then
+		# an update in place: the running configuration is the rollback (no
+		# rollback when it no longer validates, e.g. a new policy)
+		if az deployment group validate -g "$rg" --template-file "$template" --parameters "@$tmp/rollback.json" -o none; then
+			rollback=true
+		else
+			echo "note: the running configuration does not validate any more (above): no rollback if this update fails" >&2
+		fi
+	fi
 fi
 
 # restore_status: the state of the hub's database restore in its current
@@ -1015,6 +1143,7 @@ restore_reset() { restore_seen='' restore_done=false restore_checked='' restore_
 wait_hub_answers() {
 	until tcp_open "$1" "$2"; do
 		check_restore
+		check_crash || return 1
 		((SECONDS < deadline)) || return 1
 		sleep 2
 	done
@@ -1047,21 +1176,26 @@ deploy_run() {
 			deploy_err="the container group $name is stuck in Creating (above)"
 			return 1
 		fi
-		if ((SECONDS >= end)); then
+		if [[ $dstate != Succeeded ]] && ((SECONDS >= end)); then
 			deploy_err="deployment $2 is still ${dstate:-not started} after ${timeout}s: az deployment group show -g $rg -n $2"
 			return 1
 		fi
 	done
 }
 
-# fail_deploy MESSAGE: the new configuration failed. After --recreate
-# deleted the group, the previous configuration is deployed again.
+# fail_deploy MESSAGE: the new configuration failed. With a rollback
+# (--recreate deleted the group, or an update in place changed it), the
+# previous configuration is deployed again.
 fail_deploy() {
-	$deleted || die "$1"
+	$rollback || die "$1"
+	rollback=false
+	local was_deleted=$deleted
 	deleted=false
 	echo "deploy.sh: $1" >&2
 	echo "rolling back: deploying the previous configuration again (image ${prev_image:-the template default}, size $prev_size, panel $prev_panel, headscale $prev_headscale)" >&2
-	az container delete -g "$rg" -n "$name" --yes -o none 2>/dev/null || true
+	# after --recreate: the failed new group goes (it may have other ports or
+	# containers); an update in place is updated back
+	! $was_deleted || az container delete -g "$rg" -n "$name" --yes -o none 2>/dev/null || true
 	local rb
 	rb="longarm-hub-$(date -u +%Y%m%d%H%M%S)-rollback"
 	if deploy_run "$tmp/rollback.json" "$rb"; then
@@ -1069,8 +1203,13 @@ fail_deploy() {
 		phase "rollback deployment succeeded"
 		deadline=$((SECONDS + timeout))
 		restore_reset
+		crash_reset
 		until [[ $st == Running ]] || ((SECONDS >= deadline)); do
 			sleep "$poll"
+			if ! check_crash; then
+				st="crash-looping too: $crash_msg"
+				break
+			fi
 			st=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv 2>/dev/null | tr -d '\r' || true)
 		done
 		# the previous hub restores its database too: wait until it answers
@@ -1081,17 +1220,24 @@ fail_deploy() {
 			if wait_hub_answers "$host" "${addr##*:}"; then
 				phase "rolled-back hub answers on $addr"
 				st='answering'
+			elif [[ -n $crash_msg ]]; then
+				st="crash-looping too: $crash_msg"
 			else
 				st="running, not answering on $addr yet: $logs_hint"
 			fi
 		fi
-		clear_snapshot
+		! $was_deleted || clear_snapshot
 		die "$1
 ROLLED BACK: the previous configuration is deployed again (hub ${st:-state unknown}; data kept). Nothing of the new configuration is running; fix the cause and run deploy.sh again."
 	fi
-	die "$1
+	if $was_deleted; then
+		die "$1
 The rollback failed too: $deploy_err
 The hub's settings are saved in the resource group's tags (longarm-hub-prev-*): ./deploy.sh --name $name --resource-group $rg (without --recreate) deploys them again."
+	fi
+	die "$1
+The rollback failed too: $deploy_err
+./deploy.sh --name $name --resource-group $rg --image ${prev_image:-<the previous image>} deploys the previous image again."
 }
 
 echo "deploying $name to $rg ($location, $size, panel $panel, storage auth $storage_auth$([[ $headscale == true ]] && echo ", headscale")${image:+, $image}); this takes a few minutes"
@@ -1136,7 +1282,8 @@ until [[ $state == Running ]]; do
 	state=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv 2>/dev/null | tr -d '\r' || true)
 	[[ $state != Running ]] || break
 	check_stuck || fail_deploy "the container group $name is stuck in Creating (above)"
-	((SECONDS < deadline)) || fail_deploy "the hub container is not running ($state): $logs_hint"
+	check_crash || fail_deploy "$crash_msg"
+	((SECONDS < deadline)) || fail_deploy "the hub container is not running ($state)$crash_note: $logs_hint"
 	sleep "$poll"
 done
 phase "hub container running"
@@ -1145,12 +1292,14 @@ phase "hub container running"
 restarted=false
 until read_bootstrap && [[ $(bootstrap_value boot_id) != "$prev_boot" ]]; do
 	check_restore
-	((SECONDS < deadline)) || fail_deploy "no bootstrap values from this start$($restore_running && echo " (its database restore still runs after ${restore_timeout}s: --restore-timeout)"): $logs_hint"
+	check_crash || fail_deploy "$crash_msg"
+	((SECONDS < deadline)) || fail_deploy "no bootstrap values from this start$($restore_running && echo " (its database restore still runs after ${restore_timeout}s: --restore-timeout)")$crash_note: $logs_hint"
 	# a hub still restoring its database did restart: never restart it mid-restore
 	if [[ -n $prev_boot ]] && ! $restarted && [[ -z $restore_seen ]] && ((SECONDS > waited_from + 240)); then
 		echo "the hub did not restart: az container restart"
 		az container restart -g "$rg" -n "$name" -o none
 		restarted=true
+		crash_reset # ours, not a crash
 	fi
 	sleep 2
 done
@@ -1160,7 +1309,7 @@ if [[ -n $restore_seen ]] && ! $restore_done; then
 	restore_checked=''
 	check_restore
 fi
-wait_hub_answers "$fqdn" "${hub_addr##*:}" || fail_deploy "$hub_addr does not answer: $logs_hint"
+wait_hub_answers "$fqdn" "${hub_addr##*:}" || fail_deploy "${crash_msg:-$hub_addr does not answer$crash_note: $logs_hint}"
 phase "hub answers on $hub_addr"
 # the new configuration runs: the settings snapshot has done its job
 if $deleted || $have_snapshot; then

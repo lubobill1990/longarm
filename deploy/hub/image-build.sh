@@ -27,23 +27,23 @@ done
 mkdir -p "$out/data" "$out/var/lib/longarm-hub"
 chown 65532:65532 "$out/data" "$out/var/lib/longarm-hub"
 
-# Litestream (pinned release, SHA-256 from its checksums.txt)
-v=${LITESTREAM_VERSION:-0.5.17}
-case $arch in
-amd64) la=x86_64 sum=cfb371176d164437ae869f8351cfde49bd1804ae71c61923f75c9cba9c9c006d ;;
-arm64) la=arm64 sum=f8ca4a050095c1efbda2c4365172e61bf9d955ea0d9ac42f448b52e51819baa5 ;;
-*)
-	echo "no litestream for $arch" >&2
-	exit 1
-	;;
-esac
-[ "$v" = 0.5.17 ] || {
-	echo "image-build.sh: update the Litestream checksums for $v" >&2
-	exit 1
-}
-f="litestream-$v-linux-$la.tar.gz"
-curl -fsSL --retry 3 -o "/tmp/$f" "https://github.com/benbjohnson/litestream/releases/download/v$v/$f"
-echo "$sum  /tmp/$f" | sha256sum -c -
-tar -xzf "/tmp/$f" -C "$out" litestream
-chmod 0755 "$out/litestream"
-rm -f "/tmp/$f"
+# Litestream, built from source at a pinned upstream commit (module
+# version; go verifies it against the checksum database, sum.golang.org).
+# Not the 0.5.17 release: its Azure Blob client lists a level "from TXID X"
+# as the blob name prefix X, so every compaction took exactly one file of the
+# level below and fell behind for good - L0 was never cleaned up, L2+ never
+# advanced, the replica grew without bound and the restore on every start,
+# which opens every file of its plan at once, ran out of memory (the
+# 2026-10-29 incident, deploy/azure/README.md "Replica size and memory").
+# Fixed upstream in benbjohnson/litestream#1461 (24ead772, after 0.5.17);
+# go back to a release binary once one has it. Static like the release
+# binaries (CGO_ENABLED=0, .goreleaser.yml).
+lsmod=github.com/benbjohnson/litestream
+lsver=${LITESTREAM_VERSION:-v0.5.18-0.20261008011441-24ead772b436}
+CGO_ENABLED=0 GOOS=linux GOARCH=$arch GOBIN='' go install -trimpath \
+	-ldflags "-s -w -X main.Version=$lsver" "$lsmod/cmd/litestream@$lsver"
+# a native build lands in GOPATH/bin, a cross-compiled one in GOPATH/bin/linux_<arch>
+gobin=$(go env GOPATH)/bin
+[ -f "$gobin/litestream" ] || gobin=$gobin/linux_$arch
+install -m 0755 "$gobin/litestream" "$out/litestream"
+rm -f "$gobin/litestream"

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 )
 
 // execve runs argv as a child and exits with its status (no exec(2) here;
@@ -30,3 +31,10 @@ func execve(path string, argv []string) error {
 	}
 	return err
 }
+
+// sigKill: no signals here (Windows); the restore never ends by one.
+const sigKill = 9
+
+func exitSignal(*os.ProcessState) (int, bool) { return 0, false }
+
+func signalName(sig int) string { return "signal " + strconv.Itoa(sig) }

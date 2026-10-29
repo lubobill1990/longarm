@@ -206,6 +206,58 @@ relay_cert=$(docker exec "$p-hub" /usr/local/bin/longarm-hub-relay-cert 2>/dev/n
 docker exec "$p-hub" /usr/local/bin/longarm-relay --version >/dev/null || fail "longarm-relay is not in the image"
 docker exec -i "$p-hub" /usr/local/bin/longarm-hub user add bob --password-stdin <<<'another passphrase' >/dev/null
 
+step "Litestream compacts the replica (one L1 file takes in several L0 files)"
+# Litestream 0.5.17's Azure Blob client listed "files from TXID X" as the name
+# prefix X: every compaction took exactly one file of the level below, fell
+# behind for good, nothing was deleted, and the restore of the grown replica
+# ran out of memory (deploy/hub/image-build.sh). A few writes over several
+# syncs (one L0 file per second at most), then up to two L1 compactions
+# (every 30 s).
+# l1_spans_l0: some L1 file covers at least two L0 files
+l1_spans_l0() {
+	local names f g lo hi a b n
+	local -a l0=() l1=()
+	names=$(az storage blob list -c litestream --connection-string "$conn" --prefix hub.db/ltx/ --query "[].name" -o tsv | tr -d '\r')
+	while IFS= read -r f; do
+		case $f in
+		hub.db/ltx/0/*.ltx) l0+=("${f##*/}") ;;
+		hub.db/ltx/1/*.ltx) l1+=("${f##*/}") ;;
+		esac
+	done <<<"$names"
+	for f in "${l1[@]}"; do
+		lo=$((16#${f%%-*}))
+		hi=${f#*-}
+		hi=$((16#${hi%.ltx}))
+		n=0
+		for g in "${l0[@]}"; do
+			a=$((16#${g%%-*}))
+			b=${g#*-}
+			b=$((16#${b%.ltx}))
+			if ((a >= lo && b <= hi)); then
+				n=$((n + 1))
+			fi
+		done
+		if ((n >= 2)); then
+			echo "L1 $f covers $n L0 files (${#l0[@]} in L0, ${#l1[@]} in L1)"
+			return 0
+		fi
+	done
+	return 1
+}
+for _ in 1 2 3 4; do
+	la admin join-code --role worker >/dev/null
+	sleep 1.5
+done
+compacted=false
+for _ in $(seq 1 50); do
+	if l1_spans_l0; then
+		compacted=true
+		break
+	fi
+	sleep 1
+done
+$compacted || fail "no L1 file covers more than one L0 file after 50 tries: Litestream's compaction is behind (0.5.17's Azure Blob seek bug?)"
+
 step "replace the container (SIGTERM, rm)"
 replicated litestream
 t0=$(now_ms)
