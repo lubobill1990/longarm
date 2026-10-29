@@ -44,6 +44,7 @@ func fakeAz(args []string) {
 	restart := func() {
 		n, _ := strconv.Atoi(read("boots"))
 		write("boots", strconv.Itoa(n+1))
+		os.Remove(filepath.Join(dir, "crashes"))
 		if secs, _ := strconv.Atoi(os.Getenv("HELPER_AZ_RESTORE_SECONDS")); secs > 0 {
 			write("restore-until", strconv.FormatInt(time.Now().Add(time.Duration(secs)*time.Second).UnixMilli(), 10))
 		} else {
@@ -83,6 +84,13 @@ func fakeAz(args []string) {
 		return regexp.MustCompile(`(?m)^boot_id=.*$`).ReplaceAll(b, []byte("boot_id=fake-"+read("boots")))
 	}
 	identity := func() bool { return group()["storageAuth"] == "identity" }
+	// HELPER_AZ_CRASHLOOP_IMAGE: a group whose image contains it crash-loops
+	// (the 0.1.18 deploy: Litestream's restore ran out of memory on every
+	// start, exit 137): ACI counts two restarts between two looks
+	crashLoop := func() bool {
+		c := os.Getenv("HELPER_AZ_CRASHLOOP_IMAGE")
+		return c != "" && exists("cg") && strings.Contains(fmt.Sprint(group()["image"]), c)
+	}
 	cmd := strings.Join(args[:min(len(args), 2)], " ")
 	q := flag("--query")
 	// the external relay (deploy.sh --relay): its own container group
@@ -225,13 +233,26 @@ func fakeAz(args []string) {
 			tsv(fmt.Sprint(g["image"]), h[:strings.LastIndex(h, ":")], orNone(reg), orNone(ident), state, stun)
 		case strings.HasPrefix(q, "[provisioningState"):
 			// state, hub container state, container events, group events
-			if stuck {
+			switch {
+			case stuck:
 				tsv("Creating", "Waiting", "0", "0")
-			} else {
+			case crashLoop():
+				tsv("Succeeded", "Waiting", "9", "0")
+			default:
 				tsv("Succeeded", "Running", "4", "0")
 			}
+		case strings.Contains(q, "restartCount"):
+			// the hub container's instance view: restartCount, current state
+			// and detail, the previous start's exit code, detail, finish time
+			if !crashLoop() {
+				tsv("0", "Running", "None", "None", "None", "None")
+				return
+			}
+			n, _ := strconv.Atoi(read("crashes"))
+			write("crashes", strconv.Itoa(n+2))
+			tsv(strconv.Itoa(n+2), "Waiting", "CrashLoopBackOff: Back-off 40s restarting failed container=hub", "137", "Error", "2026-10-29T08:12:00+00:00")
 		case strings.Contains(q, "currentState"):
-			if stuck {
+			if stuck || crashLoop() {
 				fmt.Println("Waiting")
 			} else {
 				fmt.Println("Running")
@@ -353,6 +374,12 @@ func fakeAz(args []string) {
 			}
 		}
 		fmt.Println("litestream: restoring hub.db")
+		if crashLoop() {
+			// the current start, before ACI restarts it again
+			fmt.Println("longarm-hub container: restoring /var/lib/longarm-hub/hub.db from the replica (if it has one)")
+			fmt.Println("longarm-hub container: restore of /var/lib/longarm-hub/hub.db failed after 9m2s: litestream restore killed by SIGKILL (out of memory? the container has 1536 MB)")
+			return
+		}
 		fmt.Println("LONGARM_BOOTSTRAP boot_id=stale ca_fingerprint=stale hub_address=stale admin_joined=true")
 		if exists("restore-until") {
 			// this start's restore (the stale line above: an earlier start)
@@ -612,6 +639,27 @@ func fakeAz(args []string) {
 		} else {
 			fmt.Println("dGVzdGtleQ==")
 		}
+	case "storage blob":
+		// the Litestream replica's files (deploy.sh's replica check):
+		// HELPER_AZ_REPLICA_FILES L0 files and a snapshot; identity: read with
+		// the caller's Entra login, key: the account key from the environment
+		if args[2] != "list" || flag("-c") != "litestream" || flag("--prefix") != "hub.db/ltx/" {
+			fail("fake az: storage blob " + strings.Join(args[2:], " "))
+		}
+		if identity() != (flag("--auth-mode") == "login") {
+			fail("fake az: storage blob list: --auth-mode login exactly with storage-auth identity")
+		}
+		if !identity() && (os.Getenv("AZURE_STORAGE_KEY") != "dGVzdGtleQ==" || os.Getenv("AZURE_STORAGE_CONNECTION_STRING") != "") {
+			fail("no storage key in AZURE_STORAGE_KEY")
+		}
+		n, _ := strconv.Atoi(os.Getenv("HELPER_AZ_REPLICA_FILES"))
+		if n == 0 {
+			fail("AuthorizationPermissionMismatch") // the caller may not read blobs
+		}
+		for i := 1; i <= n; i++ {
+			fmt.Println(fmt.Sprintf("hub.db/ltx/0/%016x-%016x.ltx", i, i))
+		}
+		fmt.Println(fmt.Sprintf("hub.db/ltx/9/%016x-%016x.ltx", 1, n))
 	case "storage file":
 		if os.Getenv("AZURE_STORAGE_KEY") != "dGVzdGtleQ==" {
 			fail("no storage key in AZURE_STORAGE_KEY")

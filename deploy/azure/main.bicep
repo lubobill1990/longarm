@@ -51,7 +51,7 @@ param acmeEmail string = ''
 @description('Caddy image of the panel sidecar (storageAuth key), pinned by digest (deploy/azure/mirror-images.txt). deploy.sh --acr points it at its copy in the registry, <acr>.azurecr.io/mirror/caddy:<hex>@sha256:<hex>, so nothing is pulled from Docker Hub.')
 param caddyImage string = 'docker.io/library/caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f'
 
-@description('Send container logs to a new Log Analytics workspace (about 2-3 USD per GB ingested).')
+@description('Send the container logs to Log Analytics (about 2-3 USD per GB ingested): those of every start, also of the starts ACI restarted after a crash, which `az container logs` no longer shows (README "Logs of crashed starts"). With enableTelemetry into its workspace, else into a new one of their own.')
 param enableLogAnalytics bool = false
 
 @description('Telemetry (docs/telemetry.md): a Log Analytics workspace and a workspace-based Application Insights resource the hub sends the fleet\'s scrubbed telemetry to. With storageAuth identity the hub authenticates with its managed identity (Monitoring Metrics Publisher) and the resource accepts no instrumentation-key ingestion.')
@@ -313,7 +313,10 @@ resource caddyShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-
   }
 }
 
-resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (enableLogAnalytics) {
+// container logs: the telemetry workspace when there is one (one workspace, one bill)
+var logsInTelemetry = enableLogAnalytics && enableTelemetry
+
+resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (enableLogAnalytics && !logsInTelemetry) {
   name: '${name}-logs'
   location: location
   tags: tags
@@ -762,8 +765,8 @@ resource group 'Microsoft.ContainerInstance/containerGroups@2025-09-01' = {
     volumes: concat(baseVolumes, enablePanel && useKey ? panelVolumes : [], useHeadscale ? headscaleVolumes : [])
     diagnostics: enableLogAnalytics ? {
       logAnalytics: {
-        workspaceId: logs!.properties.customerId
-        workspaceKey: logs!.listKeys().primarySharedKey
+        workspaceId: logsInTelemetry ? telemetryWorkspace!.properties.customerId : logs!.properties.customerId
+        workspaceKey: logsInTelemetry ? telemetryWorkspace!.listKeys().primarySharedKey : logs!.listKeys().primarySharedKey
       }
     } : null
   }

@@ -33,7 +33,7 @@ param(
     # hub name = DNS label: NAME.REGION.azurecontainer.io (lowercase: Options None = case-sensitive)
     [Parameter(Mandatory = $true)][ValidatePattern('^[a-z][a-z0-9-]{1,38}[a-z0-9]$', Options = 'None')][string]$Name,
     [string]$Location = '',
-    # small = 1 vCPU / 1.5 GB (first run default), medium = 2 vCPU / 3 GB
+    # small = 1 vCPU / 1.5 GB (first run default), medium = 2 vCPU / 3 GB (README "Replica size and memory")
     [ValidateSet('', 'small', 'medium')][string]$Size = '',
     # without / with the HTTPS panel (first run default: with)
     [switch]$NoPanel,
@@ -68,6 +68,8 @@ param(
     # the minisign public key line (RW...) releases are signed with: the hub refuses uploads whose
     # signature doesn't verify, e.g. -ReleasePublicKey (Get-Content longarm-release.pub)[-1]
     [string]$ReleasePublicKey = '',
+    # send container logs to Log Analytics (with -Telemetry its workspace, else one of their own):
+    # they keep the logs of crashed starts, which ACI drops
     [switch]$LogAnalytics,
     # key (default): storage account keys; identity: a managed identity, shared key access off
     [ValidateSet('', 'key', 'identity')][string]$StorageAuth = '',
@@ -302,6 +304,135 @@ That is an Azure Container Instances hiccup, not the template (seen once: the sa
     } else {
         $script:StuckSince = $null
     }
+}
+
+function Get-ExitMeaning([string]$Code) {
+    # what a hub container's exit code says
+    switch ($Code) {
+        '137' { return ' = killed by SIGKILL: out of memory? (the restore of a large replica: README "Replica size and memory"; -Size medium)' }
+        '143' { return ' = stopped by SIGTERM' }
+        '1' { return " = the start failed (the hub's log says why)" }
+    }
+    ''
+}
+
+function Get-CrashedLogHint {
+    # where the log of a crashed start is (ACI keeps only the current start's)
+    $s = 'the logs of crashed starts are gone with them: -LogAnalytics keeps them (README "Logs of crashed starts")'
+    if ($StorageAuth -eq 'identity' -and $script:DiagnosticsOn) {
+        $acct = if ($script:Account) { $script:Account } else { '<storage account>' }
+        $s += "; failed restores are recorded in the diagnostics container: az storage blob list --auth-mode login --account-name $acct -c diagnostics --prefix hub-start-failures/ -o table"
+    }
+    $s
+}
+
+# Test-Crash: the hub container's restarts since this deployment (ACI
+# restarts a container that exits, and drops its log). Prints each new one
+# with the exit code of the start before; returns the message of a crash
+# loop (3 restarts, or CrashLoopBackOff after 2), else $null.
+# $script:CrashNote: the restarts so far, for other messages.
+function Clear-CrashState {
+    $script:CrashBase = $null
+    $script:CrashSeen = 0
+    $script:CrashMsg = ''
+    $script:CrashNote = ''
+    $script:CrashChecked = $null
+}
+Clear-CrashState
+function Test-Crash {
+    # at most every poll (an az call takes a second or two)
+    $now = Get-Date
+    if ($script:CrashChecked -and ($now - $script:CrashChecked).TotalSeconds -lt $script:Poll) { return }
+    $script:CrashChecked = $now
+    $q = "containers[?name=='hub'] | [0].instanceView.[restartCount, currentState.state, currentState.detailStatus, previousState.exitCode, previousState.detailStatus, previousState.finishTime]"
+    $line = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $q) -join ''
+    if ($LASTEXITCODE -ne 0 -or -not $line) { return }
+    $f = Split-Tsv $line 6
+    if ($f[0] -notmatch '^\d+$') { return }
+    $n = [int]$f[0]
+    # the first look, or ACI started counting anew (a restart of the group)
+    if ($null -eq $script:CrashBase -or $n -lt $script:CrashBase) {
+        $script:CrashBase = $n
+        $script:CrashSeen = 0
+        return
+    }
+    if ($n - $script:CrashBase -le $script:CrashSeen) { return }
+    $script:CrashSeen = $n - $script:CrashBase
+    $code = if ($f[3]) { $f[3] } else { 'unknown' }
+    $last = "exit code $code$(Get-ExitMeaning $f[3])"
+    if ($f[4]) { $last += ", $($f[4])" }
+    if ($f[5]) { $last += ", at $($f[5])" }
+    $st = if ($f[1]) { $f[1] } else { 'unknown' }
+    $det = if ($f[2]) { ": $($f[2])" } else { '' }
+    Write-Phase "hub container restarted ($($script:CrashSeen) since this deployment; now $st$det): the start before ended with $last"
+    $script:CrashNote = " (restarted $($script:CrashSeen) times; the last start ended with $last; $(Get-CrashedLogHint))"
+    if ($script:CrashSeen -ge 3 -or ($script:CrashSeen -ge 2 -and $f[2] -like '*CrashLoopBackOff*')) {
+        $kind = if ($f[2]) { " ($(($f[2] -split ':')[0]))" } else { '' }
+        $script:CrashMsg = "the hub is crash-looping: ACI restarted it $($script:CrashSeen) times since this deployment$kind; its last start ended with $last. $(Get-CrashedLogHint); the current start: $logsHint"
+        return $script:CrashMsg
+    }
+}
+
+# Test-Replica: warns when the hub's Litestream replica has many files.
+# Every start restores the database from it (storage-auth identity: the
+# database is on the container's disk), and the restore opens every file
+# since the newest snapshot at once - about 100 KB of memory each. A healthy
+# replica has a few thousand files at most; one whose compaction fell behind
+# (Litestream 0.5.17, the 0.1.18 deploy) had 21,400, and the restore ran out
+# of the 1.5 GB of -Size small. Best effort: listing needs read access to
+# the blobs (identity: Storage Blob Data Reader on the container).
+function Test-Replica {
+    $acct = @(Invoke-AzQuiet storage account list -g $rg --query "[?starts_with(name, 'lahub')].name" -o tsv) | Select-Object -First 1
+    if (-not $acct) { return }
+    $names = $null
+    if ($StorageAuth -eq 'identity') {
+        $names = Invoke-AzQuiet storage blob list --auth-mode login --account-name $acct -c litestream --prefix hub.db/ltx/ --num-results '*' --query '[].name' -o tsv
+        if ($LASTEXITCODE -ne 0) { $names = $null }
+    } else {
+        $k = (Invoke-AzQuiet storage account keys list -g $rg -n $acct --query '[0].value' -o tsv) -join ''
+        if ($LASTEXITCODE -eq 0 -and $k) {
+            # the key through the environment; the caller's connection string / SAS hidden (Get-Bootstrap)
+            $hidden = @{}
+            foreach ($n in 'AZURE_STORAGE_CONNECTION_STRING', 'AZURE_STORAGE_SAS_TOKEN', 'AZURE_STORAGE_ACCOUNT', 'AZURE_STORAGE_AUTH_MODE') {
+                $v = [Environment]::GetEnvironmentVariable($n, 'Process')
+                if ($null -ne $v) { $hidden[$n] = $v; [Environment]::SetEnvironmentVariable($n, $null, 'Process') }
+            }
+            $env:AZURE_STORAGE_KEY = $k
+            try {
+                $names = Invoke-AzQuiet storage blob list --account-name $acct -c litestream --prefix hub.db/ltx/ --num-results '*' --query '[].name' -o tsv
+                if ($LASTEXITCODE -ne 0) { $names = $null }
+            } finally {
+                Remove-Item Env:\AZURE_STORAGE_KEY -ErrorAction SilentlyContinue
+                foreach ($n in $hidden.Keys) { [Environment]::SetEnvironmentVariable($n, $hidden[$n], 'Process') }
+            }
+        }
+    }
+    if (-not $names) {
+        Write-Host 'note: the database replica''s files could not be counted (no read access to the blob container litestream?): skipped'
+        return
+    }
+    # files per level (hub.db/ltx/<level>/<min>-<max>.ltx), L0-L3: the ones a restore may read after a snapshot
+    $levels = @{}
+    $total = 0
+    foreach ($l in @($names)) {
+        $p = $l.Trim().Split('/')
+        if ($p.Count -lt 4 -or $p[2] -notmatch '^\d$') { continue }
+        $levels[$p[2]] = 1 + [int]$levels[$p[2]]
+        if ([int]$p[2] -le 3) { $total++ }
+    }
+    $counts = @(foreach ($lv in 0..9) { if ($levels.ContainsKey("$lv")) { "L$lv $($levels["$lv"])" } }) -join ', '
+    Write-Host "database replica: $counts"
+    $warnAt = 5000
+    if ($env:LONGARM_DEPLOY_REPLICA_FILES_WARN) { $warnAt = [int]$env:LONGARM_DEPLOY_REPLICA_FILES_WARN }
+    if ($total -le $warnAt) { return }
+    $have = if ($Size -eq 'medium') { 3072 } else { 1536 }
+    Write-Warning @"
+the hub's database replica has $total files in levels 0-3 (more than $warnAt): its
+compaction has fallen behind. Every start restores the database from it and may open all of
+them at once (about 100 KB each: ~$([int][math]::Floor($total / 10)) MB; -Size $Size has $have MB). A restore that runs out of
+memory is killed (SIGKILL, exit code 137) and the hub crash-loops (the 0.1.18 deploy).
+Prune the replica before deploying: deploy/azure/README.md "Replica size and memory".
+"@
 }
 
 if ($NoPanel -and $Panel) { throw '-NoPanel and -Panel exclude each other' }
@@ -903,9 +1034,16 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'the deployment does not validate (the error is above, e.g. a policy violation): nothing was changed' }
     if (-not $SkipImageCheck) { Test-DeploymentImage }
 
+    Test-Replica
+
+    # rollback: Invoke-FailDeploy deploys the previous configuration again -
+    # after -Recreate deleted the group, and after an update in place that
+    # changed it (the 0.1.18 deploy: the new image's starts failed, the script
+    # gave up and left the hub crash-looping). Deleted: -Recreate deleted it.
     $script:Deleted = $false
+    $script:Rollback = $false
     $rollbackFile = Join-Path $tmp 'rollback.json'
-    if ($Recreate -and $curImage) {
+    if ($curImage) {
         # the previous configuration, for a rollback if the new one fails
         $rcfg = $cfg.Clone()
         $rcfg.Image = $prev.image; $rcfg.Size = $prev.size; $rcfg.Panel = $prev.panel -eq 'true'; $rcfg.Acr = $prev.acr
@@ -916,13 +1054,25 @@ try {
         $rcfg.RegHost = Get-RegistryHost $prev.image
         if ($prev.tailscale -ne 'true') { $rcfg.TailscaleSecretFile = '' }
         Write-ParamFile $rcfg $rollbackFile
-        & $script:AzCli deployment group validate -g $rg --template-file $template --parameters "@$rollbackFile" -o none | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'the previous configuration (the rollback if the new one fails) does not validate (the error is above): nothing was changed' }
-        Write-Host "saving the hub's settings (resource group tags longarm-hub-prev-*: a re-run finds them if the group is gone)"
-        Save-Snapshot $prev
-        Write-Host "deleting container group $Name (storage and data stay)"
-        Invoke-Az container delete -g $rg -n $Name --yes -o none | Out-Null
-        $script:Deleted = $true
+        if ($Recreate) {
+            & $script:AzCli deployment group validate -g $rg --template-file $template --parameters "@$rollbackFile" -o none | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'the previous configuration (the rollback if the new one fails) does not validate (the error is above): nothing was changed' }
+            $script:Rollback = $true
+            Write-Host "saving the hub's settings (resource group tags longarm-hub-prev-*: a re-run finds them if the group is gone)"
+            Save-Snapshot $prev
+            Write-Host "deleting container group $Name (storage and data stay)"
+            Invoke-Az container delete -g $rg -n $Name --yes -o none | Out-Null
+            $script:Deleted = $true
+        } elseif ([IO.File]::ReadAllText($rollbackFile) -cne [IO.File]::ReadAllText($paramsFile)) {
+            # an update in place: the running configuration is the rollback (no
+            # rollback when it no longer validates, e.g. a new policy)
+            & $script:AzCli deployment group validate -g $rg --template-file $template --parameters "@$rollbackFile" -o none | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                $script:Rollback = $true
+            } else {
+                Write-Warning 'the running configuration does not validate any more (above): no rollback if this update fails'
+            }
+        }
     }
 
     # Invoke-CheckRestore: at most every 2 polls, reads the restore's state
@@ -968,10 +1118,12 @@ try {
         }
     }
     # Wait-HubAnswer: waits until the hub listens on HostName:Port, past
-    # $deadline while its restore runs; $false = it didn't
+    # $deadline while its restore runs; $false = it didn't (a crash loop:
+    # $script:CrashMsg says so)
     function Wait-HubAnswer([string]$HostName, [int]$Port) {
         while (-not (Test-TcpPort $HostName $Port)) {
             Invoke-CheckRestore
+            if (Test-Crash) { return $false }
             if ((Get-Date) -gt $script:deadline) { return $false }
             Start-Sleep -Seconds 2
         }
@@ -997,20 +1149,25 @@ try {
             }
             $stuck = Test-Stuck
             if ($stuck) { return $stuck }
-            if ((Get-Date) -gt $end) { return "deployment $Dep is still $dstate after $TimeoutSeconds s: az deployment group show -g $rg -n $Dep" }
+            if ($dstate -ne 'Succeeded' -and (Get-Date) -gt $end) { return "deployment $Dep is still $dstate after $TimeoutSeconds s: az deployment group show -g $rg -n $Dep" }
         }
         $null
     }
 
-    # Invoke-FailDeploy: the new configuration failed. After -Recreate deleted
-    # the group, the previous configuration is deployed again.
+    # Invoke-FailDeploy: the new configuration failed. With a rollback
+    # (-Recreate deleted the group, or an update in place changed it), the
+    # previous configuration is deployed again.
     function Invoke-FailDeploy([string]$Why) {
-        if (-not $script:Deleted) { throw $Why }
+        if (-not $script:Rollback) { throw $Why }
+        $script:Rollback = $false
+        $wasDeleted = $script:Deleted
         $script:Deleted = $false
         Write-Warning $Why
         $pimg = if ($prev.image) { $prev.image } else { 'the template default' }
         Write-Warning "rolling back: deploying the previous configuration again (image $pimg, size $($prev.size), panel $($prev.panel), headscale $($prev.headscale))"
-        Invoke-AzQuiet container delete -g $rg -n $Name --yes -o none | Out-Null
+        # after -Recreate: the failed new group goes (it may have other ports
+        # or containers); an update in place is updated back
+        if ($wasDeleted) { Invoke-AzQuiet container delete -g $rg -n $Name --yes -o none | Out-Null }
         $rbDep = 'longarm-hub-' + (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss') + '-rollback'
         $rb = Invoke-DeployRun $rollbackFile $rbDep
         if (-not $rb) {
@@ -1018,8 +1175,13 @@ try {
             $st = ''
             $script:deadline = (Get-Date).AddSeconds($TimeoutSeconds)
             Clear-RestoreState
+            Clear-CrashState
             while ($st -ne 'Running' -and (Get-Date) -lt $script:deadline) {
                 Start-Sleep -Seconds $script:Poll
+                if (Test-Crash) {
+                    $st = "crash-looping too: $($script:CrashMsg)"
+                    break
+                }
                 $st = (Invoke-AzQuiet container show -g $rg -n $Name --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv) -join ''
             }
             # the previous hub restores its database too: wait until it answers
@@ -1030,14 +1192,20 @@ try {
                 if (Wait-HubAnswer $rbHost ([int]$rbAddr.Substring($rbAddr.LastIndexOf(':') + 1))) {
                     Write-Phase "rolled-back hub answers on $rbAddr"
                     $st = 'answering'
+                } elseif ($script:CrashMsg) {
+                    $st = "crash-looping too: $($script:CrashMsg)"
                 } else {
                     $st = "running, not answering on $rbAddr yet: $logsHint"
                 }
             }
-            Clear-Snapshot
+            if ($wasDeleted) { Clear-Snapshot }
             throw "$Why`nROLLED BACK: the previous configuration is deployed again (hub $st; data kept). Nothing of the new configuration is running; fix the cause and run deploy.ps1 again."
         }
-        throw "$Why`nThe rollback failed too: $rb`nThe hub's settings are saved in the resource group's tags (longarm-hub-prev-*): ./deploy.ps1 -Name $Name -ResourceGroup $rg (without -Recreate) deploys them again."
+        if ($wasDeleted) {
+            throw "$Why`nThe rollback failed too: $rb`nThe hub's settings are saved in the resource group's tags (longarm-hub-prev-*): ./deploy.ps1 -Name $Name -ResourceGroup $rg (without -Recreate) deploys them again."
+        }
+        $pi = if ($prev.image) { $prev.image } else { '<the previous image>' }
+        throw "$Why`nThe rollback failed too: $rb`n./deploy.ps1 -Name $Name -ResourceGroup $rg -Image $pi deploys the previous image again."
     }
 
     $imageText = if ($Image) { ", $Image" } else { '' }
@@ -1082,7 +1250,9 @@ try {
         if ($state -eq 'Running') { break }
         $stuck = Test-Stuck
         if ($stuck) { Invoke-FailDeploy $stuck }
-        if ((Get-Date) -gt $deadline) { Invoke-FailDeploy "the hub container is not running ($state): $logsHint" }
+        $crash = Test-Crash
+        if ($crash) { Invoke-FailDeploy $crash }
+        if ((Get-Date) -gt $deadline) { Invoke-FailDeploy "the hub container is not running ($state)$($script:CrashNote): $logsHint" }
         Start-Sleep -Seconds $script:Poll
     }
     Write-Phase 'hub container running'
@@ -1093,15 +1263,18 @@ try {
         $boot = Read-Bootstrap $account $key $bootFile
         if ($boot -and (Get-Value $boot 'boot_id') -ne $prevBoot) { break }
         Invoke-CheckRestore
+        $crash = Test-Crash
+        if ($crash) { Invoke-FailDeploy $crash }
         if ((Get-Date) -gt $deadline) {
             $why = if ($script:RestoreRunning) { " (its database restore still runs after $RestoreTimeoutSeconds s: -RestoreTimeoutSeconds)" } else { '' }
-            Invoke-FailDeploy "no bootstrap values from this start${why}: $logsHint"
+            Invoke-FailDeploy "no bootstrap values from this start${why}$($script:CrashNote): $logsHint"
         }
         # a hub still restoring its database did restart: never restart it mid-restore
         if ($prevBoot -and -not $restarted -and -not $script:RestoreSeen -and ((Get-Date) - $start).TotalSeconds -gt 240) {
             Write-Host 'the hub did not restart: az container restart'
             Invoke-Az container restart -g $rg -n $Name -o none | Out-Null
             $restarted = $true
+            Clear-CrashState # ours, not a crash
         }
         Start-Sleep -Seconds 2
     }
@@ -1112,7 +1285,10 @@ try {
         Invoke-CheckRestore
     }
     $port = [int]$hubPort
-    if (-not (Wait-HubAnswer $fqdn $port)) { Invoke-FailDeploy "$hubAddr does not answer: $logsHint" }
+    if (-not (Wait-HubAnswer $fqdn $port)) {
+        if ($script:CrashMsg) { Invoke-FailDeploy $script:CrashMsg }
+        Invoke-FailDeploy "$hubAddr does not answer$($script:CrashNote): $logsHint"
+    }
     Write-Phase "hub answers on $hubAddr"
     # the new configuration runs: the settings snapshot has done its job
     if ($script:Deleted -or $snap) { Clear-Snapshot }

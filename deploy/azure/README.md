@@ -50,7 +50,7 @@ restarts the hub) prints everything too.
 |---|---|---|
 | `--name NAME` | `-Name` | DNS label and resource prefix (3-40: `a-z0-9-`) |
 | `--location REGION` | `-Location` | needed on the first run (`az account list-locations -o table`) |
-| `--size small\|medium` | `-Size` | small = 1 vCPU / 1.5 GB (default), medium = 2 vCPU / 3 GB |
+| `--size small\|medium` | `-Size` | small = 1 vCPU / 1.5 GB (default), medium = 2 vCPU / 3 GB ([memory and the replica](#replica-size-and-memory)) |
 | `--no-panel` | `-NoPanel` | no Caddy sidecar, no ports 80/443 (no panel, no install scripts) |
 | `--resource-group RG` | `-ResourceGroup` | default `NAME-rg` |
 | `--image IMAGE` | `-Image` | default `ghcr.io/lubobill1990/longarm-hub:latest` |
@@ -67,7 +67,7 @@ restarts the hub) prints everything too.
 | `--gate-free-gb N` | `-GateFreeGb` | scheduler memory gate: free GB a worker needs for scheduled jobs (default 20); lower it for small workers (containers, laptops); a re-run keeps it |
 | `--release-public-key KEY` | `-ReleasePublicKey` | the minisign public key line (`RW…`) releases are signed with, e.g. `"$(tail -1 longarm-release.pub)"` ([CI/CD 2.1](../../docs/ci-cd.md#21-release-key-and-update-public-key)): the hub refuses uploaded releases whose signature doesn't verify, so its install scripts only hand out signed files; a re-run keeps it |
 | `--entra-apps LIST` | `-EntraApps` | app-only sign-in (CI): `<app id>=<user>`, comma-separated |
-| `--log-analytics` | `-LogAnalytics` | container logs to a Log Analytics workspace |
+| `--log-analytics` | `-LogAnalytics` | container logs to Log Analytics (with `--telemetry` its workspace, else one of their own): they keep the [logs of crashed starts](#logs-of-crashed-starts) |
 | `--storage-auth key\|identity` | `-StorageAuth` | `identity`: no storage account keys, panel served by the hub ([below](#without-storage-account-keys)); a re-run keeps the mode (switching needs a new deployment) |
 | `--acr NAME` | `-Acr` | with `identity`: an Azure Container Registry (same resource group) the managed identity pulls from: the image if it is there, and the sidecars from its copies of [mirror-images.txt](mirror-images.txt), imported if missing ("Third-party images") |
 | `--telemetry` | `-Telemetry` | Application Insights + Log Analytics for the fleet's scrubbed telemetry ([below](#telemetry-and-diagnostic-bundles)) |
@@ -138,7 +138,22 @@ subscription's policy denies: the hub was down for 20 minutes. Now:
   deploys the previous configuration again (its image and settings, without
   a new sidecar; validated before the delete too) and stops with the error
   and `ROLLED BACK`. If that fails as well, the snapshot stays and a plain
-  re-run (without `--recreate`) deploys it.
+  re-run (without `--recreate`) deploys it. An update in place that changes
+  the configuration (a new `--image`, other settings) is rolled back the
+  same way, without a delete: the running configuration is validated before
+  the update and deployed again if the new one fails (the 0.1.18 deploy
+  gave up with "no bootstrap values from this start" and left the hub
+  crash-looping).
+- **Crash loops.** While it waits, the script watches the hub container's
+  restarts: each one is printed with the exit code of the start before
+  (`137` = SIGKILL, typically out of memory: see "Replica size and
+  memory"), and after 3 restarts (2 in `CrashLoopBackOff`) it stops waiting
+  and fails the deployment (and rolls back) with "the hub is crash-looping".
+- **Replica size.** Before it changes anything, the script counts the files
+  of the hub's Litestream replica (with storage-auth identity this needs
+  read access to the `litestream` blob container) and warns when levels 0-3
+  hold more than 5000 (`LONGARM_DEPLOY_REPLICA_FILES_WARN`): see "Replica
+  size and memory".
 
 ## Architecture
 
@@ -162,7 +177,9 @@ subscription's policy denies: the hub was down for 20 minutes. Now:
   with the hub end to end; the CA fingerprint they pin is the hub's own CA.
   Azure Container Apps can't do this (no UDP ingress), ACI can.
 - **The image** (`deploy/hub/Dockerfile`): static `longarm-hub` + Litestream
-  0.5.17 (checksum-verified) on distroless, user `nonroot`. Its command
+  (built from a pinned upstream commit after 0.5.17 with its Azure Blob
+  compaction fix, verified against the Go checksum database:
+  `deploy/hub/image-build.sh`) on distroless, user `nonroot`. Its command
   `longarm-hub container` restores the database if the replica has one,
   runs `longarm-hub bootstrap`, then becomes `litestream replicate -exec
   "longarm-hub serve"`.
@@ -225,7 +242,7 @@ group like the hub's root of trust.
 **Durability (RPO/RTO).** Litestream ships WAL changes every second; a
 crash or host loss loses at most about a second of hub writes (a join, a
 job record). A normal stop loses nothing. Restore on the next start takes
-seconds. Litestream keeps a daily snapshot and 24 h of history; blob soft
+seconds. Litestream keeps hourly snapshots and 24 h of history; blob soft
 delete keeps deleted blobs 7 days, share soft delete 7 days. Storage is
 locally redundant by default (`storageSku` parameter: ZRS/GRS). The hub is
 never on the data path: while it restarts, workers keep running jobs and
@@ -394,6 +411,102 @@ tag the script restarts the group after the deployment so the image is
 pulled again - with `--storage-auth key` that is a second restart (every
 deployment renews the Litestream SAS, which already restarts the hub): pin
 version tags to upgrade with a single restart.
+
+### Replica size and memory
+
+Every start restores the database from its Litestream replica (with
+`--storage-auth identity` on every start: the database lives on the
+container's disk), and `litestream restore` opens every file of its plan
+at once: the newest snapshot plus every file since. Its memory grows with
+the number of those files - about 100 KB each (an open blob download) - not
+with the database's size. The replica (blob container `litestream`,
+`hub.db/ltx/<level>/`) is kept small by Litestream's compaction
+([litestream-abs.yml](../hub/litestream-abs.yml)): each sync uploads an L0
+file; L1, L2 and L3 merge the level below every 30 s, 5 min and 1 h; L0 files
+are deleted once L1 covers them (after 5 min); an hourly snapshot (L9) is
+kept 24 h, the L1-L3 files older than the oldest one go with it. A healthy
+replica has a few thousand files at most, and a restore reads one snapshot
+plus a few dozen: tens of MB.
+
+That needs a Litestream whose compaction works on Azure Blob Storage.
+0.5.17 (the image up to 0.1.18) listed "the files from TXID X" as the blob
+name prefix X, so each compaction took exactly one file of the level below:
+L1 fell further behind with every write, L0 was never deleted, L2 and L3
+never moved. On 2026-10-29 the replica had 21,400 files (17,280 in L0, 4,138
+in L1, the only snapshot 14 hours old); the restore grew past 1.46 GB in 9
+minutes, was killed at the 1.5 GB of `--size small` (SIGKILL, exit 137) and
+the hub crash-looped (it needed 8 GB to finish). The image now builds
+Litestream from the upstream commit with the fix
+([image-build.sh](../hub/image-build.sh)); `container-smoke.sh` checks that an
+L1 file takes in several L0 files.
+
+Sizing: `small` (1 vCPU / 1.5 GB) stays the default - a healthy replica's
+restore needs tens of MB and the hub itself a few hundred. Budget about
+100 KB per file a restore reads (the files after the newest snapshot) on top
+of the hub: 1.5 GB is exhausted around 12,000 of them, 3 GB (`--size
+medium`) around 25,000. deploy.sh / deploy.ps1 print the replica's files per
+level on every re-run (`database replica: L0 12, L1 300, ...`) and warn above
+5000 in levels 0-3. To count them yourself (identity: Storage Blob Data
+Reader on the container):
+
+```sh
+az storage blob list --auth-mode login --account-name <account> -c litestream --prefix hub.db/ltx/ \
+  --num-results '*' --query '[].name' -o tsv | cut -d/ -f3 | sort | uniq -c
+```
+
+**A replica that has grown** (a hub that ran 0.1.18 or older for a while):
+the first start of a fixed image still has to restore it, and its first L1
+compaction opens the whole L0 backlog at once too. Either give that start
+the memory (`--size medium --recreate`, back to `small` once the replica is
+small again - about an hour, after the next snapshot), or prune it first,
+with the hub running (it takes a snapshot every hour; images before 0.1.18:
+daily):
+
+1. Find the newest snapshot and when it was written:
+   `az storage blob list --auth-mode login --account-name <account> -c litestream --prefix hub.db/ltx/9/ --query "[].{name:name, written:properties.lastModified}" -o table`
+2. Delete the level 0-3 files written before it (10 minutes of margin; they
+   are in the snapshot), first with `--dryrun`; needs Storage Blob Data
+   Contributor on the container (blob soft delete keeps them 7 days):
+   `az storage blob delete-batch --auth-mode login --account-name <account> -s litestream --pattern 'hub.db/ltx/[0-3]/*' --if-unmodified-since <snapshot time minus 10 minutes, e.g. 2026-10-29T13:50Z> --dryrun`
+
+A restore then reads that snapshot plus the files written since.
+
+### Logs of crashed starts
+
+ACI restarts a container that exits (restart policy Always) and keeps only
+the log of its current start: after a crash, `az container logs` shows the
+next start, not the one that failed. What it keeps of the failed start is
+its exit code:
+
+```sh
+az container show -g <rg> -n <name> --query "containers[?name=='hub'] | [0].instanceView.{restarts: restartCount, now: currentState, before: previousState}"
+```
+
+`137` is SIGKILL (the container entrypoint exits 128 + the signal when
+Litestream's restore was killed, and logs `litestream restore killed by
+SIGKILL (out of memory? the container has 1536 MB)`), `1` any other failed
+start. deploy.sh / deploy.ps1 print every restart they see while waiting,
+with that exit code, and stop with "the hub is crash-looping" after 3.
+
+To keep the logs of every start, deploy with `--log-analytics`: the
+container group sends them to Log Analytics - with `--telemetry` into the
+telemetry workspace (its retention, `telemetryRetentionDays`), else into a
+workspace `<name>-logs` of their own (30 days); about 2-3 USD per GB. In the
+workspace (portal: Logs):
+
+```kusto
+ContainerInstanceLog_CL
+| where ContainerGroup_s == "<name>" and ContainerName_s == "hub"
+| order by TimeGenerated desc
+```
+
+With `--storage-auth identity --diagnostics` a failed restore is also
+recorded in the diagnostics container (`hub-start-failures/<date>/<time>-<pid>.txt`:
+exit status, signal, the container's memory; deleted with the bundles):
+
+```sh
+az storage blob list --auth-mode login --account-name <account> -c diagnostics --prefix hub-start-failures/ -o table
+```
 
 ## Telemetry and diagnostic bundles
 
