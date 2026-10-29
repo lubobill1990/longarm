@@ -54,7 +54,12 @@ compromised admins, hubs or workers; level 3 (untrusted code).
 - `longarm admin user add alice` creates the user on the hub and prints a
   join code **bound to the user**: the device that enrols with it gets a
   certificate of user `alice` (device name `alice`, or `alice-2`, ... or
-  `--device`). More devices: `longarm admin user code alice`.
+  `--device`). Such a code enrols a user's **first** device only (`longarm
+  admin user code alice` for a user added with `--no-code`): once a user has
+  machines, the hub makes and accepts no more codes bound to the user -
+  otherwise an admin could mint itself a certificate of the user. More
+  devices come from the user's own sign-in: `longarm login` (Entra ID) or a
+  pairing link the user approves in its panel login (`--panel`).
 - With Microsoft Entra ID sign-in, `longarm login` and the panel create
   the user on first sign-in and enroll the device without a code (see
   "Sign-in with Microsoft Entra ID").
@@ -1287,7 +1292,7 @@ Other admin answers follow the same line:
 | release rollouts (`admin release status / push`) | counts of canary / targeted / updated / failed / waiting workers; names only of the workers the admin may see ("+N of other users"); a push that no worker can take fails with a count ("3 worker(s) can't self-update (1 you may see: w1)") |
 | toolchain profiles, `admin tailnet status`, `admin links` | only the machines the admin may see; a hidden canary or failing node reads "(another user's machine)" |
 | `link ls --all`, panel "Port links" | the admin's own user's links only (a link carries its job, creator and consent); removing another user's link by id answers with the id only |
-| audit log (`admin audit`, panel "Audit") | only the records about the admin's own user - by the attribution **recorded when each record was written** (the acting user, and the user it is about: the worker's owner, the link's owner, the user changed), never by today's ownership, so a revoked and re-enrolled name doesn't reopen old records; records from before attribution count by their own `user` field only, otherwise only in the operators' trail. A hub record of the admin's own action on another user's things (removing the user or its link, labelling its worker) shows time, actor, action and that user only. Everything else is **counted by method** ("N records of other users not shown") - in the unfiltered log only: a `--node` filter is checked first (another user's machine answers like an unknown one: nothing) and its answer counts nothing it doesn't show. `users/remove` records count the revoked machines instead of naming them |
+| audit log (`admin audit`, panel "Audit") | only the records about the admin's own user - by the attribution **recorded when each record was written** (the acting user, and the user it is about: the worker's owner, the link's owner, the user changed), never by today's ownership, so a revoked and re-enrolled name doesn't reopen old records; records from before attribution count by their own `user` field only, otherwise only in the operators' trail. A hub record of the admin's own action on another user's things (removing the user or its link, labelling its worker) shows time, actor, action and that user only. Everything else is **counted by method** ("N records of other users not shown") - in the unfiltered log and the hub's own records (`--node hub`) only: a machine `--node` filter is checked first (another user's machine answers like an unknown one: nothing) and its answer counts nothing it doesn't show. `users/remove` records count the revoked machines instead of naming them |
 | actors everywhere (event messages, join codes' `created_by`, users' `created_by`, jobs' `submitted_by`, audit `who`) | another user's device appears as its role and user ("labels changed by admin bob"), never by name |
 | events (`Fleet.Events`, the panel's `/api/events`, the daemon/tray stream) | every kind goes through one projection: job events for jobs the admin may read, node and metrics events for machines it may see (an event without a node record only for a known, visible node), its own queue events; each kind keeps only its own fields, messages projected; fleet administration events (rollouts, link reports) are not streamed |
 

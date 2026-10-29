@@ -157,7 +157,11 @@ func TestAdminLearnsNothingOfAnotherUsersMachines(t *testing.T) {
 	if _, err := h.CreateJoinCode("admin/xavadm-q9", &pb.CreateJoinCodeRequest{Role: "worker"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.CreateJoinCode("admin/xavadm-q9", &pb.CreateJoinCodeRequest{Role: "client", User: "xavier", Name: "xavlap-q9"}); err != nil {
+	// (stored directly: made before his machines - once a user has
+	// machines, the hub makes no more codes bound to the user)
+	lapHash := codeHash(newJoinCode())
+	if err := h.store.AddJoinCode(lapHash, &store.JoinCode{ID: lapHash[:8], Role: "client", Name: "xavlap-q9", User: "xavier",
+		CreatedBy: "admin/xavadm-q9", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	// his admin device labels the fleet worker (node event "... by admin/xavadm-q9")

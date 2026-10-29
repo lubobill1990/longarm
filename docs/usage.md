@@ -1397,7 +1397,7 @@ longarm admin user add alice [--team web]... [--max-jobs 8] [--max-mem-gb 64] [-
 #   prints a client join code bound to the user (the device's certificate names the user);
 #   --panel also creates a web panel login (role user: "My jobs", nodes, "Me") and prints
 #   its generated password and TOTP secret once
-longarm admin user code alice [--device alice-desktop]     # a join code for another device
+longarm admin user code alice [--device alice-desktop]     # a join code for the first device (user added with --no-code)
 longarm admin user set alice --team web --team infra       # replace teams; quota flags change the quota
 longarm admin user set alice --clear-quota                 # back to the default quota
 longarm admin user ls [--json]                             # number of devices and workers, teams, usage, quotas

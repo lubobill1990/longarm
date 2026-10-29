@@ -135,15 +135,12 @@ func TestOwnedWorkers(t *testing.T) {
 	if r := h.longarm(alice, "worker", "label", "wf", "pool=x"); r.code == 0 || !strings.Contains(r.stderr, "PermissionDenied") {
 		t.Fatalf("alice labels the fleet worker: %+v", r)
 	}
-	// an admin may label it by name, but learns nothing about it from the answer
-	if out := h.mustLongarm(root, "worker", "label", "aw", "zone=a"); strings.Contains(out, "zone=a") || !strings.Contains(out, "labels set") {
-		t.Fatalf("admin labels aw: %s", out)
-	}
-	h.waitNode(t, "aw", "zone=a", func(n map[string]any) bool {
-		return fmt.Sprint(n["labels"]) != "" && strings.Contains(fmt.Sprint(n["labels"]), "zone:a")
-	})
-	if out := h.mustLongarm(root, "admin", "audit", "--node", "hub", "--limit", "200"); !strings.Contains(out, "workers/label") {
-		t.Fatalf("no workers/label in the hub's audit:\n%s", out)
+	// an admin can't label it either: by name it is "not found", word for
+	// word like a name nobody has
+	for _, name := range []string{"aw", "no-such-worker"} {
+		if r := h.longarm(root, "worker", "label", name, "zone=a"); r.code == 0 || !strings.Contains(r.stderr, `no worker "`+name+`"`) {
+			t.Fatalf("admin labels %s: %+v", name, r)
+		}
 	}
 	bobLocked := func(when string) {
 		t.Helper()
@@ -324,13 +321,18 @@ func adminSeesUserView(t *testing.T, h *hubEnv, root, bob string, print1 []strin
 	if r := h.longarm(bob, "admin", "summary"); r.code == 0 || !strings.Contains(r.stderr, "PermissionDenied") {
 		t.Fatalf("bob's admin summary: %+v", r)
 	}
-	// audit: alice's calls on her worker are counted, not shown, to the admin
+	// audit: alice's calls on her worker reach the admin only as fleet-wide
+	// counts by method; asked for by name, her worker gives nothing at all
 	var ar result
-	waitFor(t, "alice's records on aw, counted for the admin", 30*time.Second, func() bool {
-		ar = h.longarm(root, "admin", "audit", "--node", "aw", "--json", "--limit", "500")
+	waitFor(t, "alice's records, counted for the admin", 30*time.Second, func() bool {
+		ar = h.longarm(root, "admin", "audit", "--json", "--limit", "500")
 		return ar.code == 0 && strings.Contains(ar.stderr, "not shown")
 	})
 	if strings.Contains(ar.stdout, "client/alice") {
-		t.Fatalf("admin's audit of alice's worker shows her records:\n%s", ar.stdout)
+		t.Fatalf("admin's audit shows alice's records:\n%s", ar.stdout)
+	}
+	ar = h.longarm(root, "admin", "audit", "--node", "aw", "--json", "--limit", "500")
+	if ar.code != 0 || strings.TrimSpace(ar.stdout) != "" || strings.Contains(ar.stderr, "not shown") {
+		t.Fatalf("admin's audit of alice's worker by name: %+v", ar)
 	}
 }

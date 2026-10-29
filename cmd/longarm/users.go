@@ -156,7 +156,7 @@ creates belongs to the user and - on workers with [isolation] mode =
 	var cttl time.Duration
 	code := &cobra.Command{
 		Use:   "code <name>",
-		Short: "Print a join code for another device of a user",
+		Short: "Print a join code for a user's first device (later ones come from the user's own sign-in)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {

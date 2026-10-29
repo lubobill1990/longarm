@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -289,6 +290,11 @@ func TestAuditNodeFilter(t *testing.T) {
 	if r := audit(root, ""); r.HiddenTotal < 4 {
 		t.Errorf("unfiltered hidden total %d", r.HiddenTotal)
 	}
+	// the hub's own records: counted like the unfiltered log
+	h.auditHub("client/alice", "workers/label", map[string]any{"worker": "aw", "owner": "alice"})
+	if r := audit(root, "hub"); r.HiddenTotal < 1 || len(r.Records) != 0 {
+		t.Errorf("hub records for root: %v", r)
+	}
 }
 
 // TestUserListUsage: user listings keep only the job count of other users'
@@ -361,5 +367,75 @@ func TestUserListUsage(t *testing.T) {
 		if u.Usage.MemGb != 0 {
 			t.Errorf("/api/tenants: %s reserves %v", u.Name, u.Usage.MemGb)
 		}
+	}
+}
+
+// TestUserBoundCodesFirstDeviceOnly: an admin can't mint itself a device of
+// a user who has machines (and act as that user on the user's workers): a
+// user-bound join code enrolls a user's first device only.
+func TestUserBoundCodesFirstDeviceOnly(t *testing.T) {
+	th, _ := ownedHub(t) // alice: a device and a worker (aw)
+	h := th.h
+	adm := pb.NewHubAdminClient(th.root)
+	if _, err := adm.PutUser(tctx(t), &pb.PutUserRequest{Name: "alice", JoinCode: true, Admin: true}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("admin user code alice: %v", err)
+	}
+	if _, err := adm.CreateJoinCode(tctx(t), &pb.CreateJoinCodeRequest{Role: "client", User: "alice"}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("admin join-code --user alice: %v", err)
+	}
+	// a new user's first device: as before - and that code dies with the
+	// first enrollment
+	pr, err := adm.PutUser(tctx(t), &pb.PutUserRequest{Name: "dave", Create: true, JoinCode: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spare, err := adm.CreateJoinCode(tctx(t), &pb.CreateJoinCodeRequest{Role: "client", User: "dave", Name: "dave-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := hubclient.JoinOptions{Fingerprint: pki.Fingerprint(th.ca.Cert)}
+	r, err := hubclient.Join(tctx(t), h.Addr("grpc"), pr.JoinCode.Code, opts)
+	if err != nil || r.Resp.State != stateApproved {
+		t.Fatalf("dave's first device: %v %v", r, err)
+	}
+	if _, err := hubclient.Join(tctx(t), h.Addr("grpc"), spare.Code, opts); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("a second code of dave's after his first device: %v", err)
+	}
+	// alice without machines (all revoked): a code again
+	h.mu.Lock()
+	for _, n := range h.nodes {
+		if n.rec.Owner == "alice" || n.rec.Role != "worker" && nodeUser(n.rec) == "alice" {
+			n.rec.State = stateRevoked
+		}
+	}
+	h.mu.Unlock()
+	if _, err := h.CreateJoinCode("test", &pb.CreateJoinCodeRequest{Role: "client", User: "alice"}); err != nil {
+		t.Fatalf("alice without machines: %v", err)
+	}
+}
+
+type fakeTailnet struct{}
+
+func (fakeTailnet) Name() string                                      { return "fake" }
+func (fakeTailnet) Mint(context.Context, mintRequest) (string, error) { return "", nil }
+
+// TestTailnetRekeyHidden: a re-key of another user's machine by name is
+// the unknown name's answer and does nothing.
+func TestTailnetRekeyHidden(t *testing.T) {
+	th, _ := ownedHub(t)
+	h := th.h
+	h.tailnet = fakeTailnet{}
+	adm := pb.NewHubAdminClient(th.root)
+	_, want := adm.TailnetRekey(tctx(t), &pb.NodeRequest{Name: "nosuch"})
+	_, got := adm.TailnetRekey(tctx(t), &pb.NodeRequest{Name: "aw"})
+	if status.Code(want) != codes.NotFound || status.Code(got) != codes.NotFound ||
+		strings.ReplaceAll(status.Convert(got).Message(), "aw", "?") != strings.ReplaceAll(status.Convert(want).Message(), "nosuch", "?") {
+		t.Fatalf("rekey aw: %v (unknown: %v)", got, want)
+	}
+	h.mu.Lock()
+	rekey := h.nodes["aw"].rec.TailnetRekey
+	h.mu.Unlock()
+	if rekey {
+		t.Fatal("aw marked for a re-key")
 	}
 }

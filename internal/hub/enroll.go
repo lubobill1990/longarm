@@ -78,6 +78,12 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 		if !pki.ValidUser(req.User) {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid user name %q", req.User)
 		}
+		h.mu.Lock()
+		has := h.userHasMachinesLocked(req.User)
+		h.mu.Unlock()
+		if has {
+			return nil, errUserHasMachines(req.User)
+		}
 	}
 	if req.Owner != "" {
 		if r != pki.RoleWorker {
@@ -200,6 +206,10 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 	if jc.Owner != "" && (h.tenants[jc.Owner] == nil || h.userDisabledLocked(jc.Owner)) { // removed or disabled since
 		h.mu.Unlock()
 		return nil, errBadCode
+	}
+	if jc.User != "" && h.userHasMachinesLocked(jc.User) { // enrolled meanwhile: the code was for the first one
+		h.mu.Unlock()
+		return nil, errUserHasMachines(jc.User)
 	}
 	h.mu.Unlock()
 	if jc, err = h.store.UseJoinCode(hash, name, now); err != nil {
@@ -472,4 +482,35 @@ func checkDevice(hostname, os, arch, version string) error {
 		}
 	}
 	return nil
+}
+
+// userHasMachinesLocked reports whether user has a machine that is not
+// revoked: a device (client, admin) of the user's or a worker it owns.
+func (h *Hub) userHasMachinesLocked(user string) bool {
+	for _, n := range h.nodes {
+		if n.rec.State == stateRevoked {
+			continue
+		}
+		if n.rec.Role == string(pki.RoleWorker) {
+			if n.rec.Owner == user {
+				return true
+			}
+			continue
+		}
+		if userNodeRole(n.rec.Role) && nodeUser(n.rec) == user {
+			return true
+		}
+	}
+	return false
+}
+
+// errUserHasMachines refuses a join code bound to a user (an admin's: user
+// add / user code / join-code --user) once the user has machines. Such a
+// code enrolls a user's first device only: after that, a device of the
+// user's comes from the user's own sign-in (longarm login, a pairing link
+// the user approves) - otherwise an admin could mint itself a certificate
+// of the user and act as the user, on the user's workers.
+func errUserHasMachines(user string) error {
+	return status.Errorf(codes.FailedPrecondition,
+		"%s has machines already: a user-bound join code enrolls a user's first device only; further devices come from %s's own sign-in (longarm login, or a pairing link %s approves)", user, user, user)
 }

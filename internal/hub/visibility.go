@@ -302,6 +302,9 @@ func (h *Hub) AuditFor(v tenancy.Caller, by string, req *pb.AuditRequest) (*pb.A
 	if limit <= 0 || limit > 10000 {
 		limit = 200
 	}
+	// counts: whether records v may not read are counted by method - in the
+	// fleet-wide log and the hub's own records only, never for a machine
+	counts := req.Node == ""
 	if req.Node != "" {
 		// a node filter names a machine: v must be able to see it first.
 		// Unknown and hidden machines answer alike - nothing - and the
@@ -309,8 +312,8 @@ func (h *Hub) AuditFor(v tenancy.Caller, by string, req *pb.AuditRequest) (*pb.A
 		// the activity of a machine v may not see, or of its other users).
 		h.mu.Lock()
 		n := h.nodes[req.Node]
-		ok := n != nil && (!userNodeRole(n.rec.Role) || h.visibleNodeLocked(v, n)) ||
-			n == nil && req.Node == "hub" // the hub's own records (auditHub)
+		counts = n == nil && req.Node == "hub" // the hub's own records (auditHub)
+		ok := counts || n != nil && (!userNodeRole(n.rec.Role) || h.visibleNodeLocked(v, n))
 		h.mu.Unlock()
 		if !ok {
 			return &pb.AuditResponse{}, nil
@@ -329,7 +332,7 @@ func (h *Hub) AuditFor(v tenancy.Caller, by string, req *pb.AuditRequest) (*pb.A
 	hidden := map[string]int32{}
 	for _, r := range rows {
 		if !v.Admin && !auditAbout(v, r) {
-			if req.Node == "" { // fleet-wide counts only, never a machine's
+			if counts {
 				hidden[r.Method]++
 				out.HiddenTotal++
 			}

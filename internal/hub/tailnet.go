@@ -304,7 +304,10 @@ func (a *hubAdminServer) TailnetRekey(ctx context.Context, req *pb.NodeRequest) 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	n := h.nodes[req.Name]
-	if n == nil || n.rec.State != stateApproved {
+	v := h.viewerLocked(callerFrom(ctx).user, false)
+	// other users' machines: the unknown name's answer, word for word, and
+	// nothing done (opOn)
+	if n == nil || n.rec.State != stateApproved || userNodeRole(n.rec.Role) && !h.visibleNodeLocked(v, n) {
 		return nil, status.Errorf(codes.NotFound, "no approved node %q", req.Name)
 	}
 	n.rec.TailnetRekey = true
@@ -314,7 +317,7 @@ func (a *hubAdminServer) TailnetRekey(ctx context.Context, req *pb.NodeRequest) 
 	h.sendLocked(n, &pb.HubCommand{Msg: &pb.HubCommand_Tailnet{Tailnet: h.tailnetInfo(n)}})
 	h.log.Info("tailnet re-key requested", "node", n.rec.Name, "by", callerFrom(ctx).id.String(), "online", n.sess != nil)
 	ns := h.tailnetNodeStatusLocked(n)
-	if !h.visibleNodeLocked(h.viewerLocked(callerFrom(ctx).user, false), n) { // by name: no more than the admin knew
+	if !h.visibleNodeLocked(v, n) { // an infrastructure node: no more than the admin knew
 		ns = &pb.TailnetNodeStatus{Name: ns.Name, Role: ns.Role, Online: ns.Online, RekeyPending: ns.RekeyPending}
 	}
 	return ns, nil
