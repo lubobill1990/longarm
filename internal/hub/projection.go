@@ -259,12 +259,17 @@ func (p projector) joinCode(jc *pb.JoinCode) *pb.JoinCode {
 	return jc
 }
 
-// tenantUser projects a user record (created_by may be another admin's device).
+// tenantUser projects a user record (created_by may be another admin's
+// device). Of another user's usage only the job count stays: the memory
+// its jobs reserve is a measure of its machines' and placements' load.
 func (p projector) tenantUser(u *pb.TenantUser) *pb.TenantUser {
 	if u == nil || p.v.Admin {
 		return u
 	}
 	u.CreatedBy = p.actor(u.CreatedBy)
+	if u.Name != p.v.User && u.Usage != nil {
+		u.Usage = &pb.QuotaUsage{Jobs: u.Usage.Jobs}
+	}
 	return u
 }
 

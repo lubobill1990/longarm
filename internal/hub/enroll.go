@@ -193,6 +193,10 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name, or revoke the old node)", name)
 	}
+	if h.nodeNameReservedLocked(name, jc.Role, jc.User) {
+		h.mu.Unlock()
+		return nil, errNameReserved(name)
+	}
 	if jc.Owner != "" && (h.tenants[jc.Owner] == nil || h.userDisabledLocked(jc.Owner)) { // removed or disabled since
 		h.mu.Unlock()
 		return nil, errBadCode

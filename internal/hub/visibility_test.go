@@ -60,7 +60,7 @@ func TestAdminSeesUserView(t *testing.T) {
 	if _, err := h.PutUser("test", &pb.PutUserRequest{Name: "root", Create: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.ShareWorker("test", "", true, &pb.ShareWorkerRequest{Worker: "bw", AddUsers: []string{"root"}}); err != nil {
+	if _, err := h.ShareWorker("test", "bob", true, &pb.ShareWorkerRequest{Worker: "bw", AddUsers: []string{"root"}}); err != nil {
 		t.Fatal(err)
 	}
 	m := nodeNames(t, th.root)
@@ -81,7 +81,7 @@ func TestAdminSeesUserView(t *testing.T) {
 		}
 	}
 	// history
-	v := h.viewer(caller{id: pki.Identity{Role: pki.RoleAdmin, Name: "root"}})
+	v := h.viewer(caller{id: pki.Identity{Role: pki.RoleAdmin, Name: "root"}, user: "root"})
 	if v.Admin || v.User != "root" {
 		t.Fatalf("admin viewer %+v", v)
 	}
@@ -138,25 +138,6 @@ func TestAdminPlacement(t *testing.T) {
 		if w, err := place(t, h, "root"); err != nil || w != "rw" {
 			t.Fatalf("admin placed on %q: %v", w, err)
 		}
-	}
-}
-
-// TestAdminOperationsByName: operations on another user's machine by name
-// work, but answer with no more than the admin knew.
-func TestAdminOperationsByName(t *testing.T) {
-	th, _ := ownedHub(t)
-	adm := pb.NewHubAdminClient(th.root)
-	n, err := adm.SetDrain(tctx(t), &pb.SetDrainRequest{Name: "aw", Draining: true})
-	if err != nil || n.Name != "aw" || !n.Draining || n.Metrics != nil || n.Labels != nil || n.Hostname != "" || n.Endpoints != nil {
-		t.Fatalf("drain aw: %v %v", n, err)
-	}
-	n, err = adm.Revoke(tctx(t), &pb.NodeRequest{Name: "aw"})
-	if err != nil || n.State != "revoked" || n.Owner != "alice" || n.Version != "" || n.Os != "" {
-		t.Fatalf("revoke aw: %v %v", n, err)
-	}
-	// the fleet worker: the user's view
-	if n, err = adm.SetDrain(tctx(t), &pb.SetDrainRequest{Name: "w1", Draining: true}); err != nil || n.Isolation != "per-user" {
-		t.Fatalf("drain w1: %v %v", n, err)
 	}
 }
 

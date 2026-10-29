@@ -103,14 +103,14 @@ func (h *Hub) viewerLocked(user string, admin bool) tenancy.Caller {
 func (h *Hub) viewer(c caller) tenancy.Caller {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.viewerLocked(c.id.Owner(), false)
+	return h.viewerLocked(c.user, false)
 }
 
-// opNodeView is what an admin operation on a node by name (approve, revoke,
-// drain, label, profile, remove ...) returns: the node as v sees it as a
-// user, or - for nodes v may not see (other users' private workers and
-// devices) - only what v already knows: the name, role, owner, state and
-// drain, none of the machine's details.
+// opNodeView is what an operation on a node by name (approve, revoke,
+// drain, label, profile, share, remove ...) returns: the node as v sees it
+// as a user, or - for a node v may not see (an infrastructure node: a
+// relay, a release credential; or one that left v's view by the operation
+// itself) - only its name, role and state.
 func opNodeView(v tenancy.Caller, n *pb.NodeInfo) *pb.NodeInfo {
 	if n == nil {
 		return nil
@@ -118,18 +118,34 @@ func opNodeView(v tenancy.Caller, n *pb.NodeInfo) *pb.NodeInfo {
 	if canSeeNode(v, n) {
 		return nodeView(v, n)
 	}
-	return &pb.NodeInfo{Name: n.Name, Role: n.Role, State: n.State, Owner: n.Owner, User: n.User, Online: n.Online,
-		Draining: n.Draining, AdminDrain: n.AdminDrain, AdminWorker: n.AdminWorker}
+	return &pb.NodeInfo{Name: n.Name, Role: n.Role, State: n.State}
 }
 
-// opResult applies opNodeView to an operation's (info, err) result.
-func (h *Hub) opResult(v tenancy.Caller) func(*pb.NodeInfo, error) (*pb.NodeInfo, error) {
-	return func(info *pb.NodeInfo, err error) (*pb.NodeInfo, error) {
-		if err != nil {
-			return nil, err
-		}
-		return opNodeView(v, info), nil
+// userNodeRole reports whether role is a user's machine: a worker or a
+// device (client, admin). The rest - relays, release credentials, hubs -
+// belong to no user.
+func userNodeRole(role string) bool {
+	return role == string(pki.RoleWorker) || role == string(pki.RoleClient) || role == string(pki.RoleAdmin)
+}
+
+// opOn runs op, an operation on the node name by name, for v. Users'
+// machines v may not see (other users' devices and private workers) are
+// refused before anything is done, with the error an unknown name gets
+// ("no <kind> <name>"): an operation never tells a hidden machine from a
+// missing one. The answer is opNodeView.
+func (h *Hub) opOn(v tenancy.Caller, kind, name string, op func() (*pb.NodeInfo, error)) (*pb.NodeInfo, error) {
+	h.mu.Lock()
+	n := h.nodes[name]
+	hidden := n != nil && userNodeRole(n.rec.Role) && !h.visibleNodeLocked(v, n)
+	h.mu.Unlock()
+	if hidden {
+		return nil, status.Errorf(codes.NotFound, "no %s %q", kind, name)
 	}
+	info, err := op()
+	if err != nil {
+		return nil, err
+	}
+	return opNodeView(v, info), nil
 }
 
 // canSeeJob reports whether v may read j.
@@ -620,7 +636,11 @@ func (h *Hub) userDisabledLocked(user string) bool {
 // ---------------------------------------------------------------- gRPC
 
 func (s *hubAdminServer) PutUser(ctx context.Context, req *pb.PutUserRequest) (*pb.PutUserResponse, error) {
-	return s.h.PutUser(by(ctx), req)
+	resp, err := s.h.PutUser(by(ctx), req)
+	if resp != nil {
+		s.h.projector(s.h.viewer(callerFrom(ctx))).tenantUser(resp.User)
+	}
+	return resp, err
 }
 
 func (s *hubAdminServer) ListUsers(ctx context.Context, _ *pb.ListUsersRequest) (*pb.ListUsersResponse, error) {
@@ -755,6 +775,9 @@ func (h *Hub) tenancyRoutes(api, admin func(string, func(http.ResponseWriter, *h
 			return
 		}
 		res, err := h.PutUser("web/"+user, req)
+		if res != nil {
+			h.projector(h.panelViewer(user)).tenantUser(res.User)
+		}
 		writeResult(w, res, err)
 	})
 	admin("DELETE /api/tenants/{name}", func(w http.ResponseWriter, r *http.Request, user string) {

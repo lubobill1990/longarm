@@ -81,7 +81,8 @@ func (h *Hub) httpHandler() http.Handler {
 	})
 	nodeAction := func(fn func(by, name string) (*pb.NodeInfo, error)) func(http.ResponseWriter, *http.Request, string) {
 		return func(w http.ResponseWriter, r *http.Request, user string) {
-			info, err := h.opResult(h.panelViewer(user))(fn("web/"+user, r.PathValue("name")))
+			name := r.PathValue("name")
+			info, err := h.opOn(h.panelViewer(user), "node", name, func() (*pb.NodeInfo, error) { return fn("web/"+user, name) })
 			writeResult(w, info, err)
 		}
 	}
@@ -94,7 +95,8 @@ func (h *Hub) httpHandler() http.Handler {
 		if !readJSON(w, r, &labels) {
 			return
 		}
-		info, err := h.opResult(h.panelViewer(user))(h.SetLabels("web/"+user, r.PathValue("name"), labels))
+		name := r.PathValue("name")
+		info, err := h.opOn(h.panelViewer(user), "node", name, func() (*pb.NodeInfo, error) { return h.SetLabels("web/"+user, name, labels) })
 		writeResult(w, info, err)
 	})
 	admin("PUT /api/nodes/{name}/profile", func(w http.ResponseWriter, r *http.Request, user string) {
@@ -104,7 +106,8 @@ func (h *Hub) httpHandler() http.Handler {
 		if !readJSON(w, r, &body) {
 			return
 		}
-		info, err := h.opResult(h.panelViewer(user))(h.AssignProfile("web/"+user, r.PathValue("name"), body.Profile))
+		name := r.PathValue("name")
+		info, err := h.opOn(h.panelViewer(user), "node", name, func() (*pb.NodeInfo, error) { return h.AssignProfile("web/"+user, name, body.Profile) })
 		writeResult(w, info, err)
 	})
 	api("GET /api/jobs", func(w http.ResponseWriter, r *http.Request, user string) {

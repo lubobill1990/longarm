@@ -78,6 +78,8 @@ type tenancyHub struct {
 	h                       *Hub
 	ca                      *pki.CA
 	alice, bob, carol, root *grpc.ClientConn
+	// dial connects with a new certificate of the hub's CA
+	dial func(pki.IssueOptions) *grpc.ClientConn
 }
 
 func newTenancyHub(t *testing.T) *tenancyHub {
@@ -124,6 +126,7 @@ func newTenancyHub(t *testing.T) *tenancyHub {
 		t.Cleanup(func() { conn.Close() })
 		return conn
 	}
+	th.dial = dial
 	th.alice = dial(pki.IssueOptions{Role: pki.RoleClient, Name: "alice"})
 	th.bob = dial(pki.IssueOptions{Role: pki.RoleClient, Name: "bob-laptop", User: "bob"})
 	th.carol = dial(pki.IssueOptions{Role: pki.RoleClient, Name: "carol"})

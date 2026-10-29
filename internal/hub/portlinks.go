@@ -98,7 +98,7 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 	if req.Ttl != nil {
 		ttl = req.Ttl.AsDuration()
 	}
-	owner := c.id.Owner()
+	owner := c.user
 	now := time.Now()
 	expires := now.Add(ttl)
 	id := ""
@@ -202,11 +202,11 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 func (h *Hub) ListPortLinks(c caller, all bool) (*pb.ListPortLinksResponse, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	v := h.viewerLocked(c.id.Owner(), c.id.Role == pki.RoleAdmin)
+	v := h.viewerLocked(c.user, c.id.Role == pki.RoleAdmin)
 	if all && !v.Admin && c.id.Role != pki.RoleAdmin {
 		return nil, status.Error(codes.PermissionDenied, "only admins list every user's links")
 	}
-	return h.listPortLinksLocked(h.portLinkVisible(h.viewerLocked(c.id.Owner(), false))), nil
+	return h.listPortLinksLocked(h.portLinkVisible(h.viewerLocked(c.user, false))), nil
 }
 
 // portLinkVisible: v's own links (everybody's without multi-tenancy).
@@ -251,7 +251,7 @@ func (h *Hub) portLinkViewLocked(e *portLinkEntry) *pb.PortLink {
 func (h *Hub) RemovePortLink(c caller, id string) (*pb.PortLink, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	v := h.viewerLocked(c.id.Owner(), c.id.Role == pki.RoleAdmin)
+	v := h.viewerLocked(c.user, c.id.Role == pki.RoleAdmin)
 	e := h.portLinks[id]
 	if e == nil || (!v.Admin && e.l.Owner != v.User) {
 		return nil, status.Errorf(codes.NotFound, "no link %s", id)

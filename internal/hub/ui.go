@@ -379,7 +379,7 @@ func (s *hubAdminServer) KillJob(ctx context.Context, req *pb.FleetJobRequest) (
 	if _, err := s.h.GetJobFor(v, req.Id, req.Worker); err != nil {
 		return nil, status.Errorf(codes.NotFound, "job %s not known to the hub", req.Id)
 	}
-	fj, err := s.h.KillJob(ctx, by(ctx), callerFrom(ctx).id.Owner(), req.Id, req.Worker)
+	fj, err := s.h.KillJob(ctx, by(ctx), callerFrom(ctx).user, req.Id, req.Worker)
 	if err != nil {
 		return nil, err
 	}
@@ -392,15 +392,15 @@ func (s *hubAdminServer) JobLogs(req *pb.HubLogsRequest, st pb.HubAdmin_JobLogsS
 	if _, err := s.h.GetJobFor(s.h.viewer(callerFrom(st.Context())), req.Id, req.Worker); err != nil {
 		return err
 	}
-	return s.h.JobLogs(st.Context(), by(st.Context()), callerFrom(st.Context()).id.Owner(), req, st.Send)
+	return s.h.JobLogs(st.Context(), by(st.Context()), callerFrom(st.Context()).user, req, st.Send)
 }
 
 func (s *hubAdminServer) SubmitJob(ctx context.Context, req *pb.HubSubmitRequest) (*pb.FleetJob, error) {
-	return s.h.SubmitJobAs(ctx, by(ctx), callerFrom(ctx).id.Owner(), true, req)
+	return s.h.SubmitJobAs(ctx, by(ctx), callerFrom(ctx).user, true, req)
 }
 
 func (s *hubAdminServer) ToolchainApply(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
-	return s.h.opResult(s.h.viewer(callerFrom(ctx)))(s.h.ToolchainApply(ctx, by(ctx), req.Name))
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "worker", req.Name, func() (*pb.NodeInfo, error) { return s.h.ToolchainApply(ctx, by(ctx), req.Name) })
 }
 
 func (s *fleetServer) ReportLinks(ctx context.Context, req *pb.LinkReport) (*pb.ReportLinksResponse, error) {

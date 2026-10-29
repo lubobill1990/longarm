@@ -103,6 +103,49 @@ type caller struct {
 	id   pki.Identity
 	cert *x509.Certificate
 	addr string
+	// user is the Longarm user the caller acts as (userOfLocked): empty
+	// for workers, relays and the release credential, which never act as
+	// a user whatever their name.
+	user string
+}
+
+// userOfLocked is the Longarm user a certificate acts as on the hub. Only
+// clients and admins have one: the certificate's user, else the user the
+// hub recorded for that device, else (an old single-user certificate)
+// its name - a client/admin name the hub never hands to another user's
+// device (nodeNameReservedLocked). A worker's name is never a user: a
+// worker named like a user sees nothing of that user's.
+func (h *Hub) userOfLocked(id pki.Identity) string {
+	if id.Role != pki.RoleClient && id.Role != pki.RoleAdmin {
+		return ""
+	}
+	if id.User != "" {
+		return id.User
+	}
+	if n := h.nodes[id.Name]; n != nil && n.rec.Role == string(id.Role) && n.rec.User != "" {
+		return n.rec.User
+	}
+	return id.Name
+}
+
+// nodeNameReservedLocked reports whether a new node of role for user may
+// not take name: a Longarm user's name (live or purged) belongs to that
+// user - only that user's own devices may carry it (or an admin's
+// user-less client code, an old single-user device whose name is its
+// user), never a worker and never another user's device.
+func (h *Hub) nodeNameReservedLocked(name, role, user string) bool {
+	if h.tenants[name] == nil && !slices.Contains(h.purged, name) {
+		return false
+	}
+	if role != string(pki.RoleClient) && role != string(pki.RoleAdmin) {
+		return true
+	}
+	return user != "" && user != name
+}
+
+// errNameReserved is the refusal of a node name that is a user's.
+func errNameReserved(name string) error {
+	return status.Errorf(codes.AlreadyExists, "node name %q is a user's name (pick another with --name)", name)
 }
 
 func callerFrom(ctx context.Context) caller {
@@ -137,13 +180,12 @@ func (h *Hub) authorize(ctx context.Context, method string) (context.Context, er
 	if err := h.checkNode(id, cert); err != nil {
 		return nil, err
 	}
-	if id.Role == pki.RoleClient || id.Role == pki.RoleAdmin {
-		h.mu.Lock()
-		disabled := h.userDisabledLocked(id.Owner())
-		h.mu.Unlock()
-		if disabled {
-			return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled", id.Owner())
-		}
+	h.mu.Lock()
+	c.user = h.userOfLocked(id)
+	disabled := c.user != "" && h.userDisabledLocked(c.user)
+	h.mu.Unlock()
+	if disabled {
+		return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled", c.user)
 	}
 	c.id, c.cert = id, cert
 	return context.WithValue(ctx, callerKey{}, c), nil

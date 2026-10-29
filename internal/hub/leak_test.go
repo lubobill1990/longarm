@@ -318,7 +318,7 @@ func TestEventProjectionAllKinds(t *testing.T) {
 		}
 	}
 	kinds["some-new-kind"] = true
-	f := h.eventFilter(h.viewer(caller{id: pki.Identity{Role: pki.RoleAdmin, Name: "root"}}))
+	f := h.eventFilter(h.viewer(caller{id: pki.Identity{Role: pki.RoleAdmin, Name: "root"}, user: "root"}))
 	if f == nil {
 		t.Fatal("no filter for the admin")
 	}

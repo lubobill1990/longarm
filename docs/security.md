@@ -396,16 +396,21 @@ A user can register their own machine as a worker (`longarm worker add`,
 worker's **owner**; the worker joins approved and is usable by its owner
 only, until shared - by user, team or everyone. Only users an admin
 granted `can_share` (`longarm admin user set <u> --can-share`) may share
-their workers; admins share and unshare any. Workers without owner (admins'
-join codes) are the shared fleet as before. An owned worker turns user
-separation on (like the first user).
+their workers; only a worker's owner shares it - an admin never shares
+another user's worker, with itself or anybody. Workers without owner
+(admins' join codes) are the shared fleet as before; admins label, drain and
+remove those. An owned worker turns user
+separation on (like the first user). A worker's name is never a user: a
+worker certificate acts as no user on the hub (whatever its name), and no
+machine may be named after a user other than that user's own devices
+(enrollment refuses it).
 
 | Caller (its user) | On a user-owned worker |
 |---|---|
 | the owner | everything its role allows, as on any worker |
 | a user it is shared with (by name, a team of theirs, or everyone) | like any user of a multi-user worker: its own jobs and sessions only |
 | anybody else, **admin certificates included** | hub: the worker is hidden (lists, events, history, panel, rollouts) and never placed for them, a named submit is "not found"; worker: `Node.Info` only, everything else (`Admin.Shutdown` / `Gc` too) `PermissionDenied`, audited as `worker owner/shares` |
-| hub admins (the hub's API, panel) | count it (`longarm admin summary`); share, unshare, label, drain and remove (revoke) it **by name** - the answer carries name, owner and state only |
+| hub admins (the hub's API, panel) | count it (`longarm admin summary`), nothing else: share, label, drain, revoke, remove and every other operation **by name** answer "not found" exactly as for an unknown name, and do nothing. An admin takes a user's machines away by disabling or removing the user (`longarm admin user set <u> --disabled`, `admin user remove`) |
 
 Admin certificates shared with get no admin rights over the owner's jobs
 and sessions there. Every code, join, share, unshare and removal is audited
@@ -1275,14 +1280,14 @@ Other admin answers follow the same line:
 | Admin path | What it shows of other users' machines |
 |---|---|
 | `admin nodes`, `ls`, tray, panel "Nodes", events (`node`, `metrics`, `job`, `queue`) | nothing (a count on stderr after `admin nodes`) |
-| operations by name: `admin approve / revoke / drain / label / profile`, `worker label / share / remove`, `admin tailnet rekey`, toolchain apply | allowed when the admin knows the name (from the owner); the answer carries name, role, owner and state only |
+| operations by name: `admin approve / revoke / drain / label / profile`, `worker label / share / remove`, `admin tailnet rekey`, toolchain apply | other users' workers and devices are "no node" / "no worker", word for word the answer for an unknown name, checked before anything is done; fleet workers, the admin's own machines and infrastructure nodes (relays, release credentials) as before |
 | `admin kill <id>`, `admin logs <id>`, `admin run <worker>` | jobs are read and killed as their reader: another user's job is "not known to the hub" (checked before it is resolved to a worker, so neither the answer nor the audit names its worker); a named submit to another user's worker is "no worker" |
-| `admin user ls`, panel "People", `admin user remove` | device and worker **counts** per user; `remove` revokes them all and reports a count |
+| `admin user ls`, panel "People", `admin user remove` | device and worker **counts** per user and the number of active jobs - not the memory they reserve; `remove` revokes them all and reports a count |
 | `admin join-codes`, panel "Add machine" | the codes the admin created, its own user's, and fleet worker codes (no owner); other codes - other users' and unowned client codes other admins made - are left out; `used_by` reads "used" unless the admin may see the enrolled machine |
 | release rollouts (`admin release status / push`) | counts of canary / targeted / updated / failed / waiting workers; names only of the workers the admin may see ("+N of other users"); a push that no worker can take fails with a count ("3 worker(s) can't self-update (1 you may see: w1)") |
 | toolchain profiles, `admin tailnet status`, `admin links` | only the machines the admin may see; a hidden canary or failing node reads "(another user's machine)" |
 | `link ls --all`, panel "Port links" | the admin's own user's links only (a link carries its job, creator and consent); removing another user's link by id answers with the id only |
-| audit log (`admin audit`, panel "Audit") | only the records about the admin's own user - by the attribution **recorded when each record was written** (the acting user, and the user it is about: the worker's owner, the link's owner, the user changed), never by today's ownership, so a revoked and re-enrolled name doesn't reopen old records; records from before attribution count by their own `user` field only, otherwise only in the operators' trail. A hub record of the admin's own action on another user's things (removing the user or its link, labelling its worker) shows time, actor, action and that user only. Everything else is **counted by method** ("N records of other users not shown"). `users/remove` records count the revoked machines instead of naming them |
+| audit log (`admin audit`, panel "Audit") | only the records about the admin's own user - by the attribution **recorded when each record was written** (the acting user, and the user it is about: the worker's owner, the link's owner, the user changed), never by today's ownership, so a revoked and re-enrolled name doesn't reopen old records; records from before attribution count by their own `user` field only, otherwise only in the operators' trail. A hub record of the admin's own action on another user's things (removing the user or its link, labelling its worker) shows time, actor, action and that user only. Everything else is **counted by method** ("N records of other users not shown") - in the unfiltered log only: a `--node` filter is checked first (another user's machine answers like an unknown one: nothing) and its answer counts nothing it doesn't show. `users/remove` records count the revoked machines instead of naming them |
 | actors everywhere (event messages, join codes' `created_by`, users' `created_by`, jobs' `submitted_by`, audit `who`) | another user's device appears as its role and user ("labels changed by admin bob"), never by name |
 | events (`Fleet.Events`, the panel's `/api/events`, the daemon/tray stream) | every kind goes through one projection: job events for jobs the admin may read, node and metrics events for machines it may see (an event without a node record only for a known, visible node), its own queue events; each kind keeps only its own fields, messages projected; fleet administration events (rollouts, link reports) are not streamed |
 

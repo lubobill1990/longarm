@@ -200,7 +200,7 @@ func (s *fleetServer) Events(req *pb.EventsRequest, st pb.Fleet_EventsServer) er
 
 func (s *fleetServer) Place(req *pb.PlaceRequest, st pb.Fleet_PlaceServer) error {
 	c := callerFrom(st.Context())
-	return s.h.PlaceFor(st.Context(), c.id.String(), c.id.Owner(), req, st.Send)
+	return s.h.PlaceFor(st.Context(), c.id.String(), c.user, req, st.Send)
 }
 
 // Audit returns forwarded audit records, all of them (the hub's own
@@ -218,18 +218,18 @@ func (s *fleetServer) Whoami(ctx context.Context, req *pb.WhoamiRequest) (*pb.Wh
 	c := callerFrom(ctx)
 	resp := &pb.WhoamiResponse{Name: c.id.Name, Role: string(c.id.Role), HubName: s.h.cfg.Name, HubVersion: version.Version,
 		CertNotAfter: tspb(c.cert.NotAfter), RenewBefore: durationpb.New(s.h.cfg.RenewBefore(string(c.id.Role))),
-		Tailnet: s.h.callerTailnet(c.id.Name), User: c.id.Owner(), PublicUrl: s.h.cfg.PublicURL}
+		Tailnet: s.h.callerTailnet(c.id.Name), User: c.user, PublicUrl: s.h.cfg.PublicURL}
 	latest, files := s.h.latestNotice()
 	resp.LatestVersion, resp.LatestPath = latest, latestPath(latest, files, req.GetOs(), req.GetArch())
 	s.h.mu.Lock()
 	if resp.Tenancy = s.h.tenancyOnLocked(); resp.Tenancy && c.id.Role != pki.RoleWorker {
-		if t := s.h.tenants[c.id.Owner()]; t != nil {
+		if t := s.h.tenants[c.user]; t != nil {
 			resp.Teams, resp.CanShare, resp.Upn = t.u.Teams, t.u.CanShare, t.u.Upn
 		}
-		if q := s.h.quotaLocked(c.id.Owner()); !tenancy.QuotaEmpty(q) {
+		if q := s.h.quotaLocked(c.user); !tenancy.QuotaEmpty(q) {
 			resp.Quota = q
 		}
-		resp.Usage = s.h.usageLocked(c.id.Owner())
+		resp.Usage = s.h.usageLocked(c.user)
 	}
 	s.h.mu.Unlock()
 	return resp, nil

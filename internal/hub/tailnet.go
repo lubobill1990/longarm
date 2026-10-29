@@ -314,7 +314,7 @@ func (a *hubAdminServer) TailnetRekey(ctx context.Context, req *pb.NodeRequest) 
 	h.sendLocked(n, &pb.HubCommand{Msg: &pb.HubCommand_Tailnet{Tailnet: h.tailnetInfo(n)}})
 	h.log.Info("tailnet re-key requested", "node", n.rec.Name, "by", callerFrom(ctx).id.String(), "online", n.sess != nil)
 	ns := h.tailnetNodeStatusLocked(n)
-	if !h.visibleNodeLocked(h.viewerLocked(callerFrom(ctx).id.Owner(), false), n) { // by name: no more than the admin knew
+	if !h.visibleNodeLocked(h.viewerLocked(callerFrom(ctx).user, false), n) { // by name: no more than the admin knew
 		ns = &pb.TailnetNodeStatus{Name: ns.Name, Role: ns.Role, Online: ns.Online, RekeyPending: ns.RekeyPending}
 	}
 	return ns, nil

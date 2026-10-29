@@ -118,9 +118,10 @@ func (h *Hub) activeWorkerCodes(owner string) (int, error) {
 	return n, nil
 }
 
-// ShareWorker changes who may use a worker: an admin (admin = the caller
-// has an admin certificate) for any owned worker, its owner if an admin
-// granted the owner can_share.
+// ShareWorker changes who may use a worker: only its owner - if an admin
+// granted the owner can_share, or the owner is an admin (admin = the
+// caller has an admin certificate). Admins never share other users'
+// workers (with themselves or anybody): that would hand them the machine.
 func (h *Hub) ShareWorker(by, user string, admin bool, req *pb.ShareWorkerRequest) (*pb.NodeInfo, error) {
 	for _, u := range append(slices.Clone(req.AddUsers), req.RemoveUsers...) {
 		if !pki.ValidUser(u) {
@@ -133,7 +134,7 @@ func (h *Hub) ShareWorker(by, user string, admin bool, req *pb.ShareWorkerReques
 		}
 	}
 	h.mu.Lock()
-	n, err := h.ownedWorkerLocked(req.Worker, user, admin)
+	n, err := h.ownedWorkerLocked(req.Worker, user, admin) // its owner (admins: fleet workers, refused below)
 	if err != nil {
 		h.mu.Unlock()
 		return nil, err
@@ -192,15 +193,17 @@ func (h *Hub) ShareWorker(by, user string, admin bool, req *pb.ShareWorkerReques
 	return info, nil
 }
 
-// ownedWorkerLocked finds a worker the caller may manage (share, label, remove):
-// its owner's or, for admins, any. Workers the caller may not even see are
-// "not found", like on ListNodes.
+// ownedWorkerLocked finds a worker the caller may manage (label, remove;
+// share with admin=false): its own or, for admins, a fleet worker (one
+// without an owner). Workers the caller may not see - other users' private
+// workers, admins included - are "not found", like on ListNodes; workers
+// shared with the caller are its owner's to manage.
 func (h *Hub) ownedWorkerLocked(name, user string, admin bool) (*node, error) {
 	n := h.nodes[name]
-	if n == nil || n.rec.Role != string(pki.RoleWorker) || (!admin && !h.mayUseLocked(user, n)) {
+	if n == nil || n.rec.Role != string(pki.RoleWorker) || !h.mayUseLocked(user, n) {
 		return nil, status.Errorf(codes.NotFound, "no worker %q", name)
 	}
-	if !admin && n.rec.Owner != user {
+	if n.rec.Owner != user && !(admin && n.rec.Owner == "") {
 		return nil, status.Errorf(codes.PermissionDenied, "worker %s belongs to %s", name, ownerName(n.rec.Owner))
 	}
 	return n, nil
@@ -274,22 +277,28 @@ func errString(err error) string {
 
 func (s *fleetServer) CreateWorkerCode(ctx context.Context, req *pb.CreateWorkerCodeRequest) (*pb.JoinCode, error) {
 	c := callerFrom(ctx)
-	return s.h.CreateWorkerCode(c.id.String(), c.id.Owner(), req)
+	return s.h.CreateWorkerCode(c.id.String(), c.user, req)
 }
 
 func (s *fleetServer) ShareWorker(ctx context.Context, req *pb.ShareWorkerRequest) (*pb.NodeInfo, error) {
 	c := callerFrom(ctx)
-	return s.h.opResult(s.h.viewer(c))(s.h.ShareWorker(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req))
+	return s.h.opOn(s.h.viewer(c), "worker", req.Worker, func() (*pb.NodeInfo, error) {
+		return s.h.ShareWorker(c.id.String(), c.user, c.id.Role == pki.RoleAdmin, req)
+	})
 }
 
 func (s *fleetServer) RemoveWorker(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
 	c := callerFrom(ctx)
-	return s.h.opResult(s.h.viewer(c))(s.h.RemoveWorker(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req.Name))
+	return s.h.opOn(s.h.viewer(c), "worker", req.Name, func() (*pb.NodeInfo, error) {
+		return s.h.RemoveWorker(c.id.String(), c.user, c.id.Role == pki.RoleAdmin, req.Name)
+	})
 }
 
 func (s *fleetServer) SetWorkerLabels(ctx context.Context, req *pb.SetLabelsRequest) (*pb.NodeInfo, error) {
 	c := callerFrom(ctx)
-	return s.h.opResult(s.h.viewer(c))(s.h.SetWorkerLabels(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req))
+	return s.h.opOn(s.h.viewer(c), "worker", req.Name, func() (*pb.NodeInfo, error) {
+		return s.h.SetWorkerLabels(c.id.String(), c.user, c.id.Role == pki.RoleAdmin, req)
+	})
 }
 
 // ---------------------------------------------------------------- panel
@@ -303,11 +312,9 @@ func (s *fleetServer) SetWorkerLabels(ctx context.Context, req *pb.SetLabelsRequ
 //
 // A user login acts as its Longarm user; admin logins as admins.
 func (h *Hub) workerRoutes(api func(string, func(http.ResponseWriter, *http.Request, string))) {
+	// the user a login acts as is its viewer's (an admin login's tenant, else its name)
 	who := func(login string) (user string, admin bool) {
-		if h.panelAdmin(login) {
-			return login, true
-		}
-		return h.panelViewer(login).User, false
+		return h.panelViewer(login).User, h.panelAdmin(login)
 	}
 	api("POST /api/workercodes", func(w http.ResponseWriter, r *http.Request, login string) {
 		var body struct {
@@ -348,12 +355,13 @@ func (h *Hub) workerRoutes(api func(string, func(http.ResponseWriter, *http.Requ
 		}
 		req.Worker = r.PathValue("name")
 		user, admin := who(login)
-		info, err := h.opResult(h.panelViewer(login))(h.ShareWorker("web/"+login, user, admin, req))
+		info, err := h.opOn(h.panelViewer(login), "worker", req.Worker, func() (*pb.NodeInfo, error) { return h.ShareWorker("web/"+login, user, admin, req) })
 		writeResult(w, info, err)
 	})
 	api("POST /api/nodes/{name}/remove", func(w http.ResponseWriter, r *http.Request, login string) {
 		user, admin := who(login)
-		info, err := h.opResult(h.panelViewer(login))(h.RemoveWorker("web/"+login, user, admin, r.PathValue("name")))
+		name := r.PathValue("name")
+		info, err := h.opOn(h.panelViewer(login), "worker", name, func() (*pb.NodeInfo, error) { return h.RemoveWorker("web/"+login, user, admin, name) })
 		writeResult(w, info, err)
 	})
 	api("POST /api/nodes/{name}/worker-labels", func(w http.ResponseWriter, r *http.Request, login string) {
@@ -362,7 +370,10 @@ func (h *Hub) workerRoutes(api func(string, func(http.ResponseWriter, *http.Requ
 			return
 		}
 		user, admin := who(login)
-		info, err := h.opResult(h.panelViewer(login))(h.SetWorkerLabels("web/"+login, user, admin, &pb.SetLabelsRequest{Name: r.PathValue("name"), Labels: labels}))
+		name := r.PathValue("name")
+		info, err := h.opOn(h.panelViewer(login), "worker", name, func() (*pb.NodeInfo, error) {
+			return h.SetWorkerLabels("web/"+login, user, admin, &pb.SetLabelsRequest{Name: name, Labels: labels})
+		})
 		writeResult(w, info, err)
 	})
 }

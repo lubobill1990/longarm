@@ -31,26 +31,23 @@ func (s *hubAdminServer) ListJoinCodes(ctx context.Context, _ *pb.ListJoinCodesR
 
 // Operations on a node by name: the admin must know the name (the hub
 // doesn't list other users' nodes to admins); the answer carries no more
-// than the admin's user may see of the node (opNodeView).
+// than the admin's user may see of the node, and other users' machines are
+// "no node" (opOn).
 
 func (s *hubAdminServer) Approve(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
-	info, err := s.h.Approve(by(ctx), req.Name)
-	return s.h.opResult(s.h.viewer(callerFrom(ctx)))(info, err)
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func() (*pb.NodeInfo, error) { return s.h.Approve(by(ctx), req.Name) })
 }
 
 func (s *hubAdminServer) Revoke(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
-	info, err := s.h.Revoke(by(ctx), req.Name)
-	return s.h.opResult(s.h.viewer(callerFrom(ctx)))(info, err)
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func() (*pb.NodeInfo, error) { return s.h.Revoke(by(ctx), req.Name) })
 }
 
 func (s *hubAdminServer) SetDrain(ctx context.Context, req *pb.SetDrainRequest) (*pb.NodeInfo, error) {
-	info, err := s.h.SetDrain(by(ctx), req.Name, req.Draining)
-	return s.h.opResult(s.h.viewer(callerFrom(ctx)))(info, err)
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func() (*pb.NodeInfo, error) { return s.h.SetDrain(by(ctx), req.Name, req.Draining) })
 }
 
 func (s *hubAdminServer) SetLabels(ctx context.Context, req *pb.SetLabelsRequest) (*pb.NodeInfo, error) {
-	info, err := s.h.SetLabels(by(ctx), req.Name, req.Labels)
-	return s.h.opResult(s.h.viewer(callerFrom(ctx)))(info, err)
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func() (*pb.NodeInfo, error) { return s.h.SetLabels(by(ctx), req.Name, req.Labels) })
 }
 
 func (s *hubAdminServer) PutProfile(ctx context.Context, req *pb.Profile) (*pb.Profile, error) {
@@ -63,8 +60,7 @@ func (s *hubAdminServer) ListProfiles(ctx context.Context, _ *pb.ListProfilesReq
 }
 
 func (s *hubAdminServer) AssignProfile(ctx context.Context, req *pb.AssignProfileRequest) (*pb.NodeInfo, error) {
-	info, err := s.h.AssignProfile(by(ctx), req.Node, req.Profile)
-	return s.h.opResult(s.h.viewer(callerFrom(ctx)))(info, err)
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Node, func() (*pb.NodeInfo, error) { return s.h.AssignProfile(by(ctx), req.Node, req.Profile) })
 }
 
 // ListJoinCodes lists recent join codes (without the codes themselves).

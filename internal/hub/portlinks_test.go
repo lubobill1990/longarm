@@ -371,14 +371,14 @@ func TestPortLinksOwnedWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("alice: %v", err)
 	}
-	if _, err := h.ShareWorker("test", "", true, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); err != nil {
+	if _, err := h.ShareWorker("test", "alice", true, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); err != nil {
 		t.Fatal(err)
 	}
 	bl, err := pb.NewFleetClient(th.bob).CreatePortLink(ctx, &pb.CreatePortLinkRequest{From: "w2", To: "aw", Port: 8081, ListenPort: 18081})
 	if err != nil {
 		t.Fatalf("bob after the share: %v", err)
 	}
-	if _, err := h.ShareWorker("test", "", true, &pb.ShareWorkerRequest{Worker: "aw", RemoveUsers: []string{"bob"}}); err != nil {
+	if _, err := h.ShareWorker("test", "alice", true, &pb.ShareWorkerRequest{Worker: "aw", RemoveUsers: []string{"bob"}}); err != nil {
 		t.Fatal(err)
 	}
 	h.mu.Lock()

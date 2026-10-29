@@ -602,10 +602,11 @@ func (h *Hub) enrollDevice(who, user string, admin bool, d deviceRequest) (resp 
 	h.mu.Lock()
 	for i, base := 2, name; ; i++ {
 		n := h.nodes[name]
-		if n == nil || n.rec.State == stateRevoked {
+		reserved := h.nodeNameReservedLocked(name, string(role), user)
+		if !reserved && (n == nil || n.rec.State == stateRevoked) {
 			break
 		}
-		if mine(n) {
+		if !reserved && mine(n) {
 			replaced = true
 			break
 		}
@@ -670,6 +671,10 @@ func (h *Hub) enrollOwnedWorker(who, owner string, d deviceRequest) (*pb.JoinRes
 	if n := h.nodes[name]; n != nil && n.rec.State != stateRevoked {
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name, or remove the old worker)", name)
+	}
+	if h.nodeNameReservedLocked(name, string(pki.RoleWorker), owner) {
+		h.mu.Unlock()
+		return nil, errNameReserved(name)
 	}
 	h.mu.Unlock()
 	now := time.Now().UTC()

@@ -1,0 +1,365 @@
+package hub
+
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/hubclient"
+	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/tenancy"
+	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+)
+
+// Visibility scope: non-owners - admins included - neither see nor use
+// other users' workers and devices. These tests cover the ways around it a
+// security review found: a worker named like a user, an admin sharing
+// another user's worker with itself, operations by name, node-filtered
+// audit counts and other users' reserved memory.
+
+// TestWorkerNamedLikeUser: a worker certificate never acts as a user, even
+// one whose name is a user's; and node names never take a user's name.
+func TestWorkerNamedLikeUser(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	nodeNames(t, th.bob) // bob's device is known to the hub
+	// a worker certificate named "bob" (issued by hand: enrollment refuses
+	// the name, below) sees none of bob's machines
+	wb := th.dial(pki.IssueOptions{Role: pki.RoleWorker, Name: "bob"})
+	addWorker(h, "bw", "bob", false, "1.0.0")
+	r, err := pb.NewFleetClient(wb).ListNodes(tctx(t), &pb.ListNodesRequest{All: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range r.Nodes {
+		if n.Name == "bob-laptop" || n.Name == "bw" {
+			t.Errorf("a worker named bob sees bob's %s: %v", n.Name, n)
+		}
+	}
+	me, err := pb.NewFleetClient(wb).Whoami(tctx(t), &pb.WhoamiRequest{})
+	if err != nil || me.User != "" || me.Usage != nil {
+		t.Errorf("worker whoami %v %v", me, err)
+	}
+	h.mu.Lock()
+	if u := h.userOfLocked(pki.Identity{Role: pki.RoleWorker, Name: "bob"}); u != "" {
+		t.Errorf("worker acts as %q", u)
+	}
+	// a device whose certificate lacks the user: the hub's record decides
+	h.nodes["bobs-old"] = &node{rec: &store.Node{Name: "bobs-old", Role: "client", State: stateApproved, User: "bob"}}
+	if u := h.userOfLocked(pki.Identity{Role: pki.RoleClient, Name: "bobs-old"}); u != "bob" {
+		t.Errorf("recorded device acts as %q", u)
+	}
+	// the record of another role does not
+	if u := h.userOfLocked(pki.Identity{Role: pki.RoleAdmin, Name: "bobs-old"}); u != "bobs-old" {
+		t.Errorf("admin certificate with a client's name acts as %q", u)
+	}
+	h.mu.Unlock()
+
+	// alice can't enroll a worker named after a user (code, sign-in)
+	jc, err := pb.NewFleetClient(th.alice).CreateWorkerCode(tctx(t), &pb.CreateWorkerCodeRequest{Name: "carol"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = hubclient.Join(tctx(t), h.Addr("grpc"), jc.Code, hubclient.JoinOptions{Fingerprint: pki.Fingerprint(th.ca.Cert)})
+	if status.Code(err) != codes.AlreadyExists || !strings.Contains(err.Error(), "user's name") {
+		t.Fatalf("worker named carol: %v", err)
+	}
+	if _, err := h.enrollOwnedWorker("test", "alice", deviceRequest{name: "carol", hostname: "x"}); status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("owned worker named carol: %v", err)
+	}
+	h.mu.Lock()
+	reserved := map[[3]string]bool{
+		{"carol", "worker", "alice"}: true,  // a worker never
+		{"carol", "worker", "carol"}: true,  // not even carol's own
+		{"carol", "client", "alice"}: true,  // another user's device
+		{"carol", "client", "carol"}: false, // carol's own device
+		{"carol", "admin", ""}:       false, // an admin's user-less code (old single-user device)
+		{"dave", "worker", "alice"}:  false, // no user of that name
+	}
+	for k, want := range reserved {
+		if got := h.nodeNameReservedLocked(k[0], k[1], k[2]); got != want {
+			t.Errorf("reserved%v = %v", k, got)
+		}
+	}
+	h.mu.Unlock()
+}
+
+// TestAdminOperationsByName: an admin's operations on another user's
+// machine by name answer exactly like an unknown name and do nothing;
+// fleet workers still work.
+func TestAdminOperationsByName(t *testing.T) {
+	th, _ := ownedHub(t)
+	h := th.h
+	nodeNames(t, th.bob) // bob-laptop: known to the hub
+	ctx := tctx(t)
+	adm, fleet := pb.NewHubAdminClient(th.root), pb.NewFleetClient(th.root)
+	same := func(what string, call func(name string) error) {
+		t.Helper()
+		want := call("nosuch")
+		for _, name := range []string{"aw", "bob-laptop"} {
+			got := call(name)
+			if status.Code(want) != codes.NotFound || status.Code(got) != codes.NotFound ||
+				strings.ReplaceAll(status.Convert(got).Message(), name, "?") != strings.ReplaceAll(status.Convert(want).Message(), "nosuch", "?") {
+				t.Errorf("%s %s: %v (unknown name: %v)", what, name, got, want)
+			}
+		}
+	}
+	same("drain", func(n string) error {
+		_, err := adm.SetDrain(ctx, &pb.SetDrainRequest{Name: n, Draining: true})
+		return err
+	})
+	same("labels {}", func(n string) error {
+		_, err := adm.SetLabels(ctx, &pb.SetLabelsRequest{Name: n, Labels: map[string]string{}})
+		return err
+	})
+	same("labels", func(n string) error {
+		_, err := adm.SetLabels(ctx, &pb.SetLabelsRequest{Name: n, Labels: map[string]string{"zone": "x"}})
+		return err
+	})
+	same("profile", func(n string) error {
+		_, err := adm.AssignProfile(ctx, &pb.AssignProfileRequest{Node: n})
+		return err
+	})
+	same("approve", func(n string) error { _, err := adm.Approve(ctx, &pb.NodeRequest{Name: n}); return err })
+	same("toolchain", func(n string) error { _, err := adm.ToolchainApply(ctx, &pb.NodeRequest{Name: n}); return err })
+	same("worker labels", func(n string) error {
+		_, err := fleet.SetWorkerLabels(ctx, &pb.SetLabelsRequest{Name: n, Labels: map[string]string{"zone": "x"}})
+		return err
+	})
+	same("share", func(n string) error {
+		_, err := fleet.ShareWorker(ctx, &pb.ShareWorkerRequest{Worker: n, AddUsers: []string{"alice"}})
+		return err
+	})
+	same("remove", func(n string) error { _, err := fleet.RemoveWorker(ctx, &pb.NodeRequest{Name: n}); return err })
+	same("revoke", func(n string) error { _, err := adm.Revoke(ctx, &pb.NodeRequest{Name: n}); return err })
+
+	// the panel: the same answers
+	if _, err := AddUser(h.store, "admin1", "admin-password-1", false); err != nil {
+		t.Fatal(err)
+	}
+	pu, _ := h.store.GetUser("admin1")
+	panel := panelLogin(t, h, "admin1", "admin-password-1", pu.TOTPSecret)
+	post := func(method, path, body string) (int, string) {
+		req, _ := http.NewRequest(method, "http://"+h.Addr("http")+path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := panel.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	for _, c := range [][3]string{
+		{"PUT", "/api/nodes/%s/labels", "{}"},
+		{"POST", "/api/nodes/%s/drain", ""},
+		{"POST", "/api/nodes/%s/revoke", ""},
+		{"PUT", "/api/nodes/%s/profile", `{"profile":""}`},
+		{"POST", "/api/nodes/%s/share", `{"add_users":["admin1"]}`},
+		{"POST", "/api/nodes/%s/worker-labels", `{"zone":"x"}`},
+		{"POST", "/api/nodes/%s/remove", ""},
+	} {
+		wc, wb := post(c[0], strings.Replace(c[1], "%s", "nosuch", 1), c[2])
+		for _, name := range []string{"aw", "bob-laptop"} {
+			gc, gb := post(c[0], strings.Replace(c[1], "%s", name, 1), c[2])
+			if gc != http.StatusNotFound || gc != wc || strings.ReplaceAll(gb, name, "?") != strings.ReplaceAll(wb, "nosuch", "?") {
+				t.Errorf("panel %s %s: %d %s (unknown name: %d %s)", c[0], strings.Replace(c[1], "%s", name, 1), gc, gb, wc, wb)
+			}
+		}
+	}
+
+	// nothing happened to them
+	h.mu.Lock()
+	aw, bl := *h.nodes["aw"].rec, *h.nodes["bob-laptop"].rec
+	h.mu.Unlock()
+	if aw.AdminDrain || aw.State != stateApproved || aw.Labels["zone"] != "" || aw.Shares != nil || bl.State != stateApproved || bl.AdminDrain {
+		t.Fatalf("hidden machines changed: %+v %+v", aw, bl)
+	}
+	// the fleet worker: the user's view
+	if n, err := adm.SetDrain(ctx, &pb.SetDrainRequest{Name: "w1", Draining: true}); err != nil || n.Isolation != "per-user" {
+		t.Fatalf("drain w1: %v %v", n, err)
+	}
+	// alice still manages hers
+	if n, err := pb.NewFleetClient(th.alice).SetWorkerLabels(ctx, &pb.SetLabelsRequest{Name: "aw", Labels: map[string]string{"zone": "a"}}); err != nil || n.Labels["zone"] != "a" {
+		t.Fatalf("alice labels aw: %v %v", n, err)
+	}
+}
+
+// TestAdminCantShareOthersWorker: an admin can't share another user's
+// worker with itself (or anybody) - not when it is hidden, not when it is
+// already shared with the admin; its owner can.
+func TestAdminCantShareOthersWorker(t *testing.T) {
+	th, _ := ownedHub(t)
+	h := th.h
+	if _, err := h.PutUser("test", &pb.PutUserRequest{Name: "root", Create: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.PutUser("test", &pb.PutUserRequest{Name: "alice", SetCanShare: true, CanShare: true}); err != nil {
+		t.Fatal(err)
+	}
+	share := pb.NewFleetClient(th.root).ShareWorker
+	if _, err := share(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"root"}}); status.Code(err) != codes.NotFound {
+		t.Fatalf("admin shares a hidden worker with itself: %v", err)
+	}
+	if _, err := h.ShareWorker("web/admin1", "admin1", true, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"root"}}); status.Code(err) != codes.NotFound {
+		t.Fatalf("panel admin shares a hidden worker: %v", err)
+	}
+	h.mu.Lock()
+	rootMay := h.mayUseLocked("root", h.nodes["aw"])
+	h.mu.Unlock()
+	if rootMay {
+		t.Fatal("root may use aw")
+	}
+	// alice shares it with bob; root still can't add itself
+	if _, err := pb.NewFleetClient(th.alice).ShareWorker(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := share(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"root"}}); status.Code(err) != codes.NotFound {
+		t.Fatalf("admin adds itself to a worker shared with bob: %v", err)
+	}
+	// shared with root by alice: root uses it, and still can't re-share it
+	if _, err := pb.NewFleetClient(th.alice).ShareWorker(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"root"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := nodeNames(t, th.root)["aw"]; !ok {
+		t.Fatal("root does not see a worker shared with it")
+	}
+	if _, err := share(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"carol"}, SetEveryone: true, Everyone: true}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("admin re-shares a worker shared with it: %v", err)
+	}
+	h.mu.Lock()
+	s := h.nodes["aw"].rec.Shares
+	h.mu.Unlock()
+	if s == nil || s.Everyone || len(s.Users) != 2 {
+		t.Fatalf("shares %+v", s)
+	}
+}
+
+// TestAuditNodeFilter: a node filter is authorized first; unknown and
+// hidden machines answer alike (nothing), and a filtered answer never
+// counts other users' records.
+func TestAuditNodeFilter(t *testing.T) {
+	th, _ := ownedHub(t)
+	h := th.h
+	now := time.Now()
+	var rows []store.AuditRow
+	for i := range 3 {
+		rows = append(rows, store.AuditRow{Node: "aw", Time: now.Add(time.Duration(i) * time.Millisecond), Who: "client/alice",
+			Method: "/longarm.v1.Exec/Run", Line: `{"user":"alice"}`, ActorUser: "alice", SubjectUser: "alice", Attributed: true})
+	}
+	rows = append(rows, store.AuditRow{Node: "w1", Time: now, Who: "client/alice", Method: "/longarm.v1.Exec/Run",
+		Line: `{"user":"alice"}`, ActorUser: "alice", SubjectUser: "alice", Attributed: true})
+	if err := h.store.AddAudit(rows); err != nil {
+		t.Fatal(err)
+	}
+	audit := func(c tenancy.Caller, node string) *pb.AuditResponse {
+		r, err := h.AuditFor(c, "", &pb.AuditRequest{Node: node})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	root := tenancy.Caller{User: "root"}
+	for _, node := range []string{"aw", "nosuch"} {
+		if r := audit(root, node); len(r.Records) != 0 || r.HiddenTotal != 0 || len(r.Hidden) != 0 {
+			t.Errorf("admin audit of %s: %v", node, r)
+		}
+	}
+	// a visible fleet worker: own records only, no counts of others'
+	if r := audit(root, "w1"); len(r.Records) != 0 || r.HiddenTotal != 0 || len(r.Hidden) != 0 {
+		t.Errorf("admin audit of w1: %v", r)
+	}
+	// the owner sees its records
+	if r := audit(tenancy.Caller{User: "alice"}, "aw"); len(r.Records) != 3 {
+		t.Errorf("alice's audit of aw: %v", r)
+	}
+	// the gRPC call answers the same
+	r, err := pb.NewFleetClient(th.root).Audit(tctx(t), &pb.AuditRequest{Node: "aw"})
+	if err != nil || len(r.Records) != 0 || r.HiddenTotal != 0 {
+		t.Errorf("Fleet.Audit node aw: %v %v", r, err)
+	}
+	// unfiltered: fleet-wide counts by method remain
+	if r := audit(root, ""); r.HiddenTotal < 4 {
+		t.Errorf("unfiltered hidden total %d", r.HiddenTotal)
+	}
+}
+
+// TestUserListUsage: user listings keep only the job count of other users'
+// usage - not the memory their jobs reserve.
+func TestUserListUsage(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	full := h.ListUsers()
+	var bobMem float64
+	for _, u := range full.Users {
+		if u.Name == "bob" {
+			bobMem = u.Usage.GetMemGb()
+		}
+	}
+	if bobMem <= 0 {
+		t.Fatalf("test setup: bob reserves %v GB", bobMem)
+	}
+	for _, u := range h.ListUsersFor(tenancy.Caller{User: "alice"}).Users {
+		switch u.Name {
+		case "alice":
+			if u.Usage.GetMemGb() <= 0 || u.Usage.GetJobs() != 2 {
+				t.Errorf("alice's own usage %v", u.Usage)
+			}
+		default:
+			if u.Usage.GetMemGb() != 0 {
+				t.Errorf("%s's memory reaches alice: %v", u.Name, u.Usage)
+			}
+		}
+		if u.Name == "bob" && u.Usage.GetJobs() != 1 {
+			t.Errorf("bob's job count %v", u.Usage)
+		}
+	}
+	// gRPC (admin certificate) and the panel's answer to PutUser
+	r, err := pb.NewHubAdminClient(th.root).ListUsers(tctx(t), &pb.ListUsersRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range r.Users {
+		if u.Usage.GetMemGb() != 0 {
+			t.Errorf("admin ListUsers: %s reserves %v", u.Name, u.Usage)
+		}
+	}
+	pr, err := pb.NewHubAdminClient(th.root).PutUser(tctx(t), &pb.PutUserRequest{Name: "bob"})
+	if err != nil || pr.User.GetUsage().GetMemGb() != 0 {
+		t.Errorf("admin PutUser bob: %v %v", pr, err)
+	}
+	if _, err := AddUser(h.store, "admin1", "admin-password-1", false); err != nil {
+		t.Fatal(err)
+	}
+	pu, _ := h.store.GetUser("admin1")
+	panel := panelLogin(t, h, "admin1", "admin-password-1", pu.TOTPSecret)
+	resp, err := panel.Get("http://" + h.Addr("http") + "/api/tenants")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lu struct {
+		Users []struct {
+			Name  string `json:"name"`
+			Usage struct {
+				MemGb float64 `json:"mem_gb"`
+			} `json:"usage"`
+		} `json:"users"`
+	}
+	json.NewDecoder(resp.Body).Decode(&lu)
+	resp.Body.Close()
+	if len(lu.Users) == 0 {
+		t.Fatal("no users in /api/tenants")
+	}
+	for _, u := range lu.Users {
+		if u.Usage.MemGb != 0 {
+			t.Errorf("/api/tenants: %s reserves %v", u.Name, u.Usage.MemGb)
+		}
+	}
+}
