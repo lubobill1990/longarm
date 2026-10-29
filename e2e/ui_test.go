@@ -323,10 +323,13 @@ func TestUIDaemonPool(t *testing.T) {
 		}
 		return v["source"] == "hub"
 	})
-	// longarm pool (CLI) shows the same.
-	if out := s.mustLongarm(s.client, "pool"); !strings.Contains(out, "source hub") || !strings.Contains(out, "wa") || !strings.Contains(out, "online") {
-		t.Fatalf("longarm pool: %s", out)
-	}
+	// longarm pool (CLI) shows the same. (A worker's hub metrics can go
+	// stale for a moment on a loaded runner - "source mixed" - so poll.)
+	var out string
+	waitFor(t, "longarm pool: source hub", 30*time.Second, func() bool {
+		out = s.mustLongarm(s.client, "pool")
+		return strings.Contains(out, "source hub") && strings.Contains(out, "wa") && strings.Contains(out, "online")
+	})
 	// My jobs: a job alice submits counts; the pool and /v1/jobs?mine=1 show it.
 	id := strings.TrimSpace(s.mustLongarm(s.client, "run", "wa", "--", bins.helper, "sleep", "300"))
 	waitFor(t, "my job listed", 30*time.Second, func() bool {

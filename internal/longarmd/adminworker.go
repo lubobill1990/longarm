@@ -141,14 +141,19 @@ func adminHandoffStep(dataDir string, log *slog.Logger) {
 		return
 	}
 	if b, err := os.ReadFile(filepath.Join(dir, AdminResponseFile)); err == nil {
-		os.Remove(filepath.Join(dir, AdminResponseFile))
+		// The response goes last: AdminWorkerTarget.Install takes "no
+		// response and no error" for success, so the error must be there
+		// before the response is gone (removed first, a refused enrollment
+		// could be reported as installed).
 		if err := installAdminResponse(dataDir, hf, b); err != nil {
 			log.Error("admin worker: the enrollment the sign-in left is unusable", "err", err)
 			os.WriteFile(filepath.Join(dir, AdminErrorFile), []byte(err.Error()+"\n"), 0o644)
+			os.Remove(filepath.Join(dir, AdminResponseFile))
 			return
 		}
 		os.Remove(filepath.Join(dir, AdminRequestFile))
 		os.Remove(filepath.Join(dir, AdminErrorFile))
+		os.Remove(filepath.Join(dir, AdminResponseFile))
 		log.Info("admin worker: signed in", "hub", hf.Address)
 		return
 	}
@@ -364,11 +369,25 @@ func (a AdminWorkerTarget) Install(hub string, r *hubclient.JoinResult, note fun
 		wait = time.Minute
 	}
 	deadline := time.Now().Add(wait)
-	for time.Now().Before(deadline) {
+	refused := func() error {
 		if e, err := os.ReadFile(filepath.Join(a.Handoff, AdminErrorFile)); err == nil {
-			return "", fmt.Errorf("the admin worker refused its enrollment: %s", strings.TrimSpace(string(e)))
+			return fmt.Errorf("the admin worker refused its enrollment: %s", strings.TrimSpace(string(e)))
+		}
+		return nil
+	}
+	for time.Now().Before(deadline) {
+		if err := refused(); err != nil {
+			return "", err
+		}
+		if installCheckHook != nil {
+			installCheckHook()
 		}
 		if !fileExists(filepath.Join(a.Handoff, AdminResponseFile)) {
+			// The service writes its error before it removes the response:
+			// a refusal between the check above and this one is there now.
+			if err := refused(); err != nil {
+				return "", err
+			}
 			if note != nil {
 				note(fmt.Sprintf("admin worker %s: runs as SYSTEM, only %s can use it; disable it in the tray or with: longarmd admin-worker disable (elevated)", r.Resp.Name, r.Resp.Owner))
 			}
@@ -378,6 +397,10 @@ func (a AdminWorkerTarget) Install(hub string, r *hubclient.JoinResult, note fun
 	}
 	return "", fmt.Errorf("the admin worker service did not take its enrollment within %s (is the %s service running?)", wait, AdminServiceName)
 }
+
+// installCheckHook runs in Install between its error and response checks
+// (tests: the service acting in that window).
+var installCheckHook func()
 
 // AdminInstall is what the MSI recorded about the admin worker
 // (InstalledAdmin).

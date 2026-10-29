@@ -197,7 +197,9 @@ func TestDirectPath(t *testing.T) {
 	c := dial(t, cn, "w1")
 	echo(t, c, 10)
 	pi := waitPath(t, c, transport.PathDirect, 5*time.Second)
-	if !strings.HasPrefix(pi.Detail, "127.0.0.1:") || pi.RTT <= 0 {
+	// (RTT 0 on loopback is real on Windows: its monotonic clock ticks
+	// coarsely)
+	if !strings.HasPrefix(pi.Detail, "127.0.0.1:") || pi.RTT < 0 {
 		t.Fatalf("direct path %v", pi)
 	}
 	d0, r0 := cn.Stats()

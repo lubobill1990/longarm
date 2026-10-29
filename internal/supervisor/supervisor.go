@@ -235,6 +235,17 @@ func (m *Manager) shimAlive(e *entry, st *jobs.Status) bool {
 func (m *Manager) reconcile(e *entry) {
 	e.rec.Lock()
 	defer e.rec.Unlock()
+	// e may have been removed since pollOnce listed it, and a newer job of
+	// the same id (a replaced session) may own its directory now: reading
+	// "its" status would read the newer job's, and with e's shim gone, e
+	// would mark the newer job lost. While e.rec is held, removeLocked can't
+	// delete the directory, so checking here is enough.
+	m.mu.Lock()
+	current := m.jobs[e.spec.ID] == e
+	m.mu.Unlock()
+	if !current {
+		return
+	}
 	st, err := e.dir.ReadStatus()
 	if err != nil {
 		m.log.Warn("read status", "job", e.spec.ID, "err", err)

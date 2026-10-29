@@ -147,7 +147,9 @@ func TestPortLinks(t *testing.T) {
 			l := linkStatus(t, h, alice, id)
 			return strings.Contains(l, "listening") && !strings.Contains(l, " 0 (")
 		})
-		if l := linkStatus(t, h, alice, id); !strings.Contains(l, "tcp/direct") || !strings.Contains(l, "wb:"+port) {
+		// direct: wa reaches wb over its tcp leg or longnet's direct path,
+		// whichever wins the race (on macOS runners longnet often does)
+		if l := linkStatus(t, h, alice, id); !regexp.MustCompile(`(tcp|longnet)/direct`).MatchString(l) || !strings.Contains(l, "wb:"+port) {
 			t.Fatalf("link ls: %s", l)
 		}
 	})
