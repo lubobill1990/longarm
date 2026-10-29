@@ -488,17 +488,41 @@ func TestAzureDeployScripts(t *testing.T) {
 			pubDERP := r.flag("--headscale-public-derp", "-HeadscalePublicDerp")
 			refused(run(nil, name, "idhub", hsOn), "headscale without --recreate", "recreate")
 			refused(run(nil, name, "idhub", hsOn, pubDERP, "maybe", recreate), "bad public DERP value", "on or off")
+			// with --acr the sidecars come from the registry's copies of
+			// mirror-images.txt, imported before anything is deleted; a
+			// failed import (Docker Hub's pull limit) changes nothing
+			from = len(calls())
+			res = run([]string{"HELPER_AZ_IMPORT_FAIL=1"}, name, "idhub", hsOn, pubDERP, "on", recreate)
+			refused(res, "a failed import", "nothing was changed")
+			if cl := calls()[from:]; !strings.Contains(cl, "acr import -n other --source docker.io/") || strings.Contains(cl, "container delete") ||
+				strings.Contains(cl, "deployment group create") || strings.Contains(cl, "tag update") {
+				t.Fatalf("a failed import changed something:\n%s", cl)
+			}
+			from = len(calls())
 			res = run(nil, name, "idhub", hsOn, pubDERP, "on", recreate)
 			ok(res, "headscale")
-			if p := params(); p["enableHeadscale"] != true || p["headscalePublicDerp"] != true || p["storageAuth"] != "identity" {
+			mirrored := mirroredImages(t, "other")
+			if p := params(); p["enableHeadscale"] != true || p["headscalePublicDerp"] != true || p["storageAuth"] != "identity" ||
+				p["acrName"] != "other" || p["headscaleImage"] != mirrored["headscale"] || p["caddyImage"] != mirrored["caddy"] {
 				t.Fatalf("headscale: %+v", p)
+			}
+			cl = calls()[from:]
+			imp, del := strings.Index(cl, "acr import -n other"), strings.Index(cl, "container delete")
+			if n := strings.Count(cl, "acr import "); n != len(mirrored) || imp < 0 || del < imp ||
+				!strings.Contains(cl, "acr repository show -n other --image mirror/headscale/headscale@sha256:") {
+				t.Fatalf("headscale: %d imports, not all before the delete:\n%s", n, cl)
 			}
 			if !strings.Contains(res.stdout, "tailnet         headscale ") || !strings.Contains(res.stdout, "about 44 USD/month") {
 				t.Errorf("headscale: output:\n%s", res.stdout)
 			}
+			from = len(calls())
 			ok(run(nil, name, "idhub"), "headscale re-run")
-			if p := params(); p["enableHeadscale"] != true || p["headscalePublicDerp"] != true {
+			if p := params(); p["enableHeadscale"] != true || p["headscalePublicDerp"] != true || p["acrName"] != "other" ||
+				p["headscaleImage"] != mirrored["headscale"] {
 				t.Fatalf("headscale re-run: %+v", p)
+			}
+			if cl := calls()[from:]; strings.Contains(cl, "acr import") {
+				t.Fatalf("headscale re-run imported again:\n%s", cl)
 			}
 			refused(run(nil, name, "idhub", noPanel, recreate), "headscale without the panel", "needs the panel")
 			ok(run(nil, name, "idhub", hsOff, recreate), "headscale off")
@@ -647,4 +671,22 @@ func TestAzureDeployScripts(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mirroredImages: the sidecar images deploy.sh --acr ACR deploys, by
+// repository name (caddy, headscale): ACR.azurecr.io/mirror/<repository>:<hex>@sha256:<hex>
+// of deploy/azure/mirror-images.txt
+func mirroredImages(t *testing.T, acr string) map[string]string {
+	t.Helper()
+	m := map[string]string{}
+	re := regexp.MustCompile(`^docker\.io/(?:library/)?([a-z0-9./-]+):[A-Za-z0-9._-]+@sha256:([0-9a-f]{64})$`)
+	for _, l := range strings.Split(string(must(os.ReadFile("../deploy/azure/mirror-images.txt"))), "\n") {
+		if g := re.FindStringSubmatch(strings.TrimSpace(l)); g != nil {
+			m[g[1][strings.LastIndex(g[1], "/")+1:]] = acr + ".azurecr.io/mirror/" + g[1] + ":" + g[2] + "@sha256:" + g[2]
+		}
+	}
+	if m["caddy"] == "" || m["headscale"] == "" {
+		t.Fatalf("mirror-images.txt: no caddy / headscale: %v", m)
+	}
+	return m
 }

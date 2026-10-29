@@ -61,19 +61,15 @@ func TestTemplate(t *testing.T) {
 	}
 }
 
-// TestMirroredImages: the template pulls nothing from Docker Hub; its
-// third-party images are the GHCR mirrors of deploy/azure/mirror-images.txt
-// (.github/workflows/mirror.yml), with the digests pinned there.
+// TestMirroredImages: the template's third-party images (caddyImage,
+// headscaleImage) are the images pinned by digest in
+// deploy/azure/mirror-images.txt, from the sources .github/workflows/mirror.yml
+// allows; deploy.sh --acr imports exactly those into the registry. Docker Hub
+// appears in the template only there (and in descriptions).
 func TestMirroredImages(t *testing.T) {
 	raw, err := os.ReadFile("../../azuredeploy.json")
 	if err != nil {
 		t.Fatal(err)
-	}
-	// docker.io may only appear in descriptions (where a mirror comes from)
-	for _, line := range strings.Split(string(raw), "\n") {
-		if strings.Contains(line, "docker.io/") && !strings.Contains(line, "\"description\"") {
-			t.Errorf("a Docker Hub image in the template: %s", strings.TrimSpace(line))
-		}
 	}
 	list, err := os.ReadFile("../../mirror-images.txt")
 	if err != nil {
@@ -81,8 +77,8 @@ func TestMirroredImages(t *testing.T) {
 	}
 	// the repositories .github/workflows/mirror.yml allows (ALLOWED_SOURCES)
 	allowed := map[string]bool{"docker.io/library/caddy": true, "docker.io/headscale/headscale": true}
-	line := regexp.MustCompile(`^([a-z0-9./-]+):([A-Za-z0-9._-]+)@sha256:([0-9a-f]{64})$`)
-	mirrors := map[string]bool{} // ghcr.io/lubobill1990/longarm-mirror:<name>-<hex>@sha256:<hex>
+	line := regexp.MustCompile(`^(docker\.io/[a-z0-9./-]+):([A-Za-z0-9._-]+)@sha256:([0-9a-f]{64})$`)
+	pinned := map[string]bool{}
 	for _, l := range strings.Split(strings.ReplaceAll(string(list), "\r", ""), "\n") {
 		l = strings.TrimSpace(l)
 		if l == "" || strings.HasPrefix(l, "#") {
@@ -90,13 +86,12 @@ func TestMirroredImages(t *testing.T) {
 		}
 		m := line.FindStringSubmatch(l)
 		if m == nil {
-			t.Fatalf("mirror-images.txt: want <repository>:<tag>@sha256:<digest>: %q", l)
+			t.Fatalf("mirror-images.txt: want docker.io/<repository>:<tag>@sha256:<digest>: %q", l)
 		}
 		if !allowed[m[1]] {
 			t.Errorf("mirror-images.txt: %s is not a source mirror.yml allows", m[1])
 		}
-		name := m[1][strings.LastIndex(m[1], "/")+1:]
-		mirrors["ghcr.io/lubobill1990/longarm-mirror:"+name+"-"+m[3]+"@sha256:"+m[3]] = true
+		pinned[l] = true
 	}
 	var tpl struct {
 		Parameters map[string]struct {
@@ -106,9 +101,19 @@ func TestMirroredImages(t *testing.T) {
 	if err := json.Unmarshal(raw, &tpl); err != nil {
 		t.Fatal(err)
 	}
+	defaults := map[string]bool{}
 	for _, p := range []string{"caddyImage", "headscaleImage"} {
-		if v, _ := tpl.Parameters[p].DefaultValue.(string); !mirrors[v] {
-			t.Errorf("%s = %q: want ghcr.io/lubobill1990/longarm-mirror:<name>-<hex>@sha256:<hex> of mirror-images.txt", p, v)
+		v, _ := tpl.Parameters[p].DefaultValue.(string)
+		if !pinned[v] {
+			t.Errorf("%s = %q: want an image of mirror-images.txt (pinned by digest)", p, v)
+		}
+		defaults[v] = true
+	}
+	for _, l := range strings.Split(string(raw), "\n") {
+		if strings.Contains(l, "docker.io/") && !strings.Contains(l, "\"description\"") {
+			if _, v, ok := strings.Cut(l, "\"defaultValue\": \""); !ok || !defaults[strings.TrimRight(strings.TrimSpace(v), "\",")] {
+				t.Errorf("a Docker Hub image in the template that isn't a pinned sidecar default: %s", strings.TrimSpace(l))
+			}
 		}
 	}
 }

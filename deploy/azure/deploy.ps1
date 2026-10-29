@@ -69,7 +69,9 @@ param(
     [switch]$LogAnalytics,
     # key (default): storage account keys; identity: a managed identity, shared key access off
     [ValidateSet('', 'key', 'identity')][string]$StorageAuth = '',
-    # with identity: pull the image from this registry in the resource group
+    # with identity: a registry in the resource group the managed identity pulls from: the image if
+    # it is there, and the sidecars (Headscale) from its mirror/ copies of mirror-images.txt,
+    # imported before anything changes
     [string]$Acr = '',
     # Application Insights + Log Analytics for the fleet's telemetry (docs/telemetry.md)
     [switch]$Telemetry,
@@ -222,6 +224,16 @@ function Register-Provider([string[]]$Namespaces) {
     }
 }
 
+function Get-MirrorRepo([string]$Src) {
+    # the repository of a pinned Docker Hub image in the registry
+    # (docker.io/library/caddy:... -> mirror/caddy)
+    $r = $Src.Substring(0, $Src.IndexOf('@'))
+    $r = $r.Substring(0, $r.LastIndexOf(':'))
+    if ($r.StartsWith('docker.io/')) { $r = $r.Substring(10) }
+    if ($r.StartsWith('library/')) { $r = $r.Substring(8) }
+    "mirror/$r"
+}
+
 function Get-RegistryHost([string]$Ref) {
     # the registry of an image reference ('' = Docker Hub)
     if ($Ref -notlike '*/*') { return '' }
@@ -277,6 +289,9 @@ if ($ReleasePublicKey -and $ReleasePublicKey -cnotmatch '^RW[A-Za-z0-9+/=]{40,}$
 $StorageAuth = $StorageAuth.ToLowerInvariant()
 $rg = $ResourceGroup
 $template = Join-Path $PSScriptRoot 'azuredeploy.json'
+# the third-party images (sidecars), pinned by digest; with -Acr copied into
+# the registry as mirror/<repository>:<digest hex>
+$mirrorList = Join-Path $PSScriptRoot 'mirror-images.txt'
 
 if (-not (Get-Command $script:AzCli -ErrorAction SilentlyContinue)) {
     throw 'the Azure CLI (az) is missing: https://aka.ms/azure-cli (or use Azure Cloud Shell)'
@@ -669,6 +684,14 @@ try {
         EntraTenant = $EntraTenant; EntraClient = $EntraClient; EntraAdmins = $EntraAdmins; EntraWeb = $EntraWeb; EntraApps = $EntraApps
         RegistryUser = $RegistryUser; RegistryPassword = $registryPassword; RegHost = $regHost; Stun = $StunServers; TailscaleSecretFile = $TailscaleSecretFile
     }
+    # a sidecar's image: the template's pin, or with a registry its copy there,
+    # <acr>.azurecr.io/mirror/<repository>:<hex>@sha256:<hex>
+    function Get-SidecarImage([string]$Param, [string]$AcrName) {
+        $src = [string]$tplDefaults.$Param.defaultValue
+        if (-not $AcrName) { return $src }
+        $d = $src.Substring($src.IndexOf('@sha256:') + 8)
+        "$($AcrName.ToLowerInvariant()).azurecr.io/$(Get-MirrorRepo $src):$d@sha256:$d"
+    }
     function Write-ParamFile($c, [string]$File) {
         $p = [ordered]@{
             name                = @{ value = $c.Name }
@@ -681,7 +704,12 @@ try {
             enableHeadscale     = @{ value = [bool]$c.Headscale }
             headscalePublicDerp = @{ value = [bool]$c.PublicDerp }
         }
-        if ($c.Acr) { $p.acrName = @{ value = $c.Acr } }
+        if ($c.Acr) {
+            $p.acrName = @{ value = $c.Acr }
+            # the sidecars from the registry's copies (Confirm-Mirror)
+            $p.caddyImage = @{ value = (Get-SidecarImage 'caddyImage' $c.Acr) }
+            $p.headscaleImage = @{ value = (Get-SidecarImage 'headscaleImage' $c.Acr) }
+        }
         if ($c.Image) { $p.image = @{ value = $c.Image } }
         if ($c.AcmeEmail) { $p.acmeEmail = @{ value = $c.AcmeEmail } }
         if ($c.Gate) { $p.schedulerGateFreeGb = @{ value = $c.Gate } }
@@ -797,14 +825,37 @@ try {
     function Test-DeploymentImage {
         $defaults = (Get-Content -Raw $template | ConvertFrom-Json).parameters
         $imgs = @($(if ($Image) { $Image } else { $defaults.image.defaultValue }))
-        if ($StorageAuth -eq 'key' -and $panelOn) { $imgs += $defaults.caddyImage.defaultValue }
-        if ($headscaleOn) { $imgs += $defaults.headscaleImage.defaultValue }
+        if ($StorageAuth -eq 'key' -and $panelOn) { $imgs += Get-SidecarImage 'caddyImage' $Acr }
+        if ($headscaleOn) { $imgs += Get-SidecarImage 'headscaleImage' $Acr }
         foreach ($img in $imgs) {
             if (-not $img) { continue }
             $problem = Test-ImagePullable $img
             if ($problem) { throw "the image $img can't be pulled ($problem): nothing was changed. Check the tag, that the package is public (or -RegistryUser), or skip this check with -SkipImageCheck" }
         }
     }
+
+    # every pinned image of mirror-images.txt is in the registry (by digest),
+    # imported from its source if not - before anything is deleted: Docker
+    # Hub's pull limits can fail an import, not a running hub
+    function Confirm-Mirror {
+        if (-not (Test-Path $mirrorList)) { throw "$mirrorList is missing (run from a checkout of the repository)" }
+        $srcs = @(Get-Content $mirrorList | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') })
+        if ($srcs.Count -eq 0) { throw "$mirrorList lists no images" }
+        foreach ($src in $srcs) {
+            if ($src -cnotmatch '^docker\.io/[a-z0-9./-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$') { throw "${mirrorList}: want docker.io/<repository>:<tag>@sha256:<digest>, one per line: $src" }
+            $digest = $src.Substring($src.IndexOf('@') + 1)
+            $hex = $digest.Substring(7)
+            $repo = Get-MirrorRepo $src
+            $from = "$($src.Substring(0, $src.IndexOf(':')))@$digest"
+            if (Test-Az acr repository show -n $Acr --image "$repo@$digest" -o none) { continue }
+            Write-Host "importing $src into the registry $Acr as ${repo}:$hex (az acr import; nothing else is changed)"
+            & $script:AzCli acr import -n $Acr --source $from -t "${repo}:$hex" -o none | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "importing $src into the registry $Acr failed (above; Docker Hub's pull limits?): nothing was changed. Retry later, or import it yourself: az acr import -n $Acr --source $from -t ${repo}:$hex" }
+            if (-not (Test-Az acr repository show -n $Acr --image "$repo@$digest" -o none)) { throw "the registry $Acr has no $repo@$digest after the import: nothing was changed" }
+        }
+    }
+    # sidecars from the registry (now or in the rollback): its copies first
+    if ($Acr -and ($headscaleOn -or ($prev -and $prev.headscale -eq 'true'))) { Confirm-Mirror }
 
     Write-Host 'validating the deployment (nothing is changed yet)'
     & $script:AzCli deployment group validate -g $rg --template-file $template --parameters "@$paramsFile" -o none | Out-Null
