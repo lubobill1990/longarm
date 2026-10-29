@@ -30,7 +30,7 @@ import (
 // other users' machines - rollouts, toolchain canaries, tailnet status,
 // link reports, join codes, operations by name - are cut down to that view
 // here; the fleet as a whole is visible only as the anonymous FleetSummary.
-// The audit log, an admin security tool, still names nodes.
+// The audit log too: AuditFor and projector.auditRecord.
 
 // visibleNodeLocked reports whether v may see node n (as ListNodes shows it).
 func (h *Hub) visibleNodeLocked(v tenancy.Caller, n *node) bool {
@@ -67,29 +67,9 @@ var nameToken = regexp.MustCompile(`[A-Za-z0-9._-]+`)
 // hiddenNode replaces the names of nodes in free text that v may not see.
 const hiddenNode = "(another user's machine)"
 
-// scrubNamesLocked replaces node names v may not see in a message.
-func (h *Hub) scrubNamesLocked(v tenancy.Caller, s string) string {
-	if v.Admin || s == "" {
-		return s
-	}
-	return nameToken.ReplaceAllStringFunc(s, func(t string) string {
-		if n := h.nodes[t]; n != nil && !h.visibleNodeLocked(v, n) {
-			return hiddenNode
-		}
-		return t
-	})
-}
-
-// rolloutForLocked is the rollout as v may see it: counts of every list,
-// names of v's visible workers only.
+// rolloutForLocked is the rollout as v may see it (projector.rollout).
 func (h *Hub) rolloutForLocked(v tenancy.Caller, r *pb.Rollout) *pb.Rollout {
-	r = proto.Clone(r).(*pb.Rollout)
-	r.CanaryCount, r.TargetedCount, r.UpdatedCount = int32(len(r.Canary)), int32(len(r.Targeted)), int32(len(r.Updated))
-	r.FailedCount, r.WaitingCount, r.NotCapableCount = int32(len(r.Failed)), int32(len(r.Waiting)), int32(len(r.NotCapable))
-	r.Canary, r.Targeted, r.Updated = h.visibleNamesLocked(v, r.Canary), h.visibleNamesLocked(v, r.Targeted), h.visibleNamesLocked(v, r.Updated)
-	r.Failed, r.Waiting, r.NotCapable = h.visibleNamesLocked(v, r.Failed), h.visibleNamesLocked(v, r.Waiting), h.visibleNamesLocked(v, r.NotCapable)
-	r.Message = h.scrubNamesLocked(v, r.Message)
-	return r
+	return h.projector(v).rollout(r)
 }
 
 // rolloutFor is rolloutForLocked for callers without the lock.
@@ -97,21 +77,15 @@ func (h *Hub) rolloutFor(v tenancy.Caller, r *pb.Rollout, err error) (*pb.Rollou
 	if err != nil || r == nil {
 		return r, err
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.rolloutForLocked(v, r), nil
+	return h.projector(v).rollout(r), nil
 }
 
-// ProfilesFor lists the toolchain profiles; a canary v may not see is not named.
+// ProfilesFor lists the toolchain profiles as v may see them (projector.profile).
 func (h *Hub) ProfilesFor(v tenancy.Caller) []*pb.Profile {
+	p := h.projector(v)
 	out := h.Profiles()
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for _, p := range out {
-		if p.Canary != "" && !h.visibleNameLocked(v, p.Canary) {
-			p.Canary = hiddenNode
-		}
-		p.Message = h.scrubNamesLocked(v, p.Message)
+	for i, pr := range out {
+		out[i] = p.profile(pr)
 	}
 	return out
 }
@@ -310,12 +284,15 @@ func (h *Hub) countedNamesLocked(v tenancy.Caller, names []string, what string) 
 // ---------------------------------------------------------------- audit
 
 // AuditFor is the audit trail as v may read it (Fleet.Audit, /api/audit).
-// With multi-tenancy - admins included - only records about v's user: its
-// own calls (any device of the user), calls on the user's own workers, hub
-// actions about the user (its devices, workers, quota ...) and the hub
-// actions the caller itself (by) performed. Every other record is only
-// counted by method. The complete trail stays in the hub's database (and
-// the hub's log), which only the hub's operators can read.
+// With multi-tenancy - admins included - only the records about v's user,
+// by the attribution fixed when each was written (never by today's node
+// ownership: a re-enrolled name doesn't reopen its old records): records
+// whose actor was the user (any of its devices, its panel login) and
+// records about the user (calls on its workers, hub actions on its things).
+// Records from before attribution count only by their own "user" field.
+// Every other record is only counted by method, and records are projected
+// (projector.auditRecord). The complete trail stays in the hub's database
+// and log, which only the hub's operators read (longarm-hub audit).
 func (h *Hub) AuditFor(v tenancy.Caller, by string, req *pb.AuditRequest) (*pb.AuditResponse, error) {
 	var since time.Time
 	if req.Since != nil {
@@ -333,17 +310,17 @@ func (h *Hub) AuditFor(v tenancy.Caller, by string, req *pb.AuditRequest) (*pb.A
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+	p := h.projector(v)
 	out := &pb.AuditResponse{}
 	hidden := map[string]int32{}
-	logins := map[string]string{} // panel login -> its user
 	for _, r := range rows {
-		if !v.Admin && !h.auditVisible(v, by, r, logins) {
+		if !v.Admin && !auditAbout(v, r) {
 			hidden[r.Method]++
 			out.HiddenTotal++
 			continue
 		}
 		if len(out.Records) < limit {
-			out.Records = append(out.Records, &pb.AuditRecord{Node: r.Node, Time: tspb(r.Time), Who: r.Who, Method: r.Method, Json: r.Line})
+			out.Records = append(out.Records, p.auditRecord(r))
 		}
 	}
 	for m, n := range hidden {
@@ -353,37 +330,27 @@ func (h *Hub) AuditFor(v tenancy.Caller, by string, req *pb.AuditRequest) (*pb.A
 	return out, nil
 }
 
-// auditVisible reports whether record r is about v's user or by the caller.
-func (h *Hub) auditVisible(v tenancy.Caller, by string, r store.AuditRow, logins map[string]string) bool {
-	if by != "" && r.Who == by {
-		return true
-	}
-	var rec map[string]any
-	json.Unmarshal([]byte(r.Line), &rec)
-	str := func(k string) string { s, _ := rec[k].(string); return s }
+// auditAbout reports whether record r is about v's user, by what was
+// recorded when it was written.
+func auditAbout(v tenancy.Caller, r store.AuditRow) bool {
 	if v.User == "" {
 		return false
 	}
-	// the subject of a hub action, or the user a worker record names
-	if str("user") == v.User || str("owner") == v.User {
-		return true
+	if r.Attributed {
+		return r.ActorUser == v.User || r.SubjectUser == v.User
 	}
-	// the actor: a device of v's user, or v's panel login
-	if h.actorUser(r.Who, logins) == v.User {
-		return true
+	var rec struct {
+		User string `json:"user"`
 	}
-	// a call on one of v's own workers
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if n := h.nodes[r.Node]; n != nil && n.rec.Role == string(pki.RoleWorker) && n.rec.Owner == v.User {
-		return true
-	}
-	return false
+	json.Unmarshal([]byte(r.Line), &rec)
+	return rec.User == v.User
 }
 
-// actorUser is the Longarm user behind an audit "who": a certificate
-// (role/name: the node's user) or a panel login (web/<login>: its tenant).
-func (h *Hub) actorUser(who string, logins map[string]string) string {
+// auditActorUser is the Longarm user behind an audit "who" at the time of
+// writing: a certificate (role/name: the node's user), a panel login
+// (web/<login>: its tenant; an administrator without one: the login).
+// Lock-free (the directory): auditHub runs with and without the hub lock.
+func (h *Hub) auditActorUser(who string) string {
 	who, _, _ = strings.Cut(who, " ") // "<who> via hub", "<who> (remove user x)"
 	role, name, ok := strings.Cut(who, "/")
 	if !ok {
@@ -391,24 +358,19 @@ func (h *Hub) actorUser(who string, logins map[string]string) string {
 	}
 	switch role {
 	case string(pki.RoleClient), string(pki.RoleAdmin):
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		if n := h.nodes[name]; n != nil {
-			return nodeUser(n.rec)
+		if e, ok := h.dir.load()[name]; ok && e.user != "" {
+			return e.user
 		}
-		return name
+		return name // a certificate the hub didn't enroll (admin issue): its name is its user
 	case "web":
-		u, ok := logins[name]
-		if !ok {
-			if pu, err := h.store.GetUser(name); err == nil {
-				u = pu.Tenant
-				if u == "" && pu.Admin() {
-					u = name
-				}
+		if pu, err := h.store.GetUser(name); err == nil {
+			if pu.Tenant != "" {
+				return pu.Tenant
 			}
-			logins[name] = u
+			if pu.Admin() {
+				return name
+			}
 		}
-		return u
 	}
 	return ""
 }

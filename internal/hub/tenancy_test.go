@@ -143,6 +143,7 @@ func newTenancyHub(t *testing.T) *tenancyHub {
 		Mirrors: []string{"alice/secret-repo", "bob/bobs-repo"}},
 		metrics: &pb.MetricsSnapshot{TopCpu: []*pb.ProcGroup{{Name: "alices-build"}}}}
 	h.nodes["w1"] = n
+	h.indexNode(n.rec)
 	h.applyJobsLocked(n, &pb.JobsReport{Jobs: []*pb.Job{
 		{Spec: &pb.JobSpec{Id: "JA", Owner: "alice"}, State: pb.JobState_JOB_STATE_RUNNING},
 		{Spec: &pb.JobSpec{Id: "JS", Owner: "alice", ShareTeams: []string{"t1"}}, State: pb.JobState_JOB_STATE_RUNNING},

@@ -94,6 +94,9 @@ func TestReleasePushErrorCounts(t *testing.T) {
 	h.nodes["msi-fleet"] = &node{rec: &store.Node{Name: "msi-fleet", Role: "worker", State: stateApproved, Version: "1.1.0"}}
 	h.nodes["msi-alice"] = &node{rec: &store.Node{Name: "msi-alice", Role: "worker", State: stateApproved, Version: "1.1.0", Owner: "alice"}}
 	h.nodes["msi-root"] = &node{rec: &store.Node{Name: "msi-root", Role: "worker", State: stateApproved, Version: "1.1.0", Owner: "root"}}
+	for _, n := range h.nodes {
+		h.indexNode(n.rec)
+	}
 	h.mu.Unlock()
 	root := tenancy.Caller{User: "root"}
 	_, err = h.pushReleaseAs(root, &pb.PushReleaseRequest{Version: "1.2.0"}, "root")
@@ -134,14 +137,20 @@ func TestAuditProjection(t *testing.T) {
 	h := th.h
 	now := time.Now()
 	line := func(m map[string]any) string { b, _ := json.Marshal(m); return string(b) }
+	// attributed as they would be when written (storeAuditLocked, auditHub)
 	rows := []store.AuditRow{
-		{Node: "w1", Time: now, Who: "client/bob-laptop", Method: "/longarm.v1.Jobs/Submit",
+		{Node: "w1", Time: now, Who: "client/bob-laptop", Method: "/longarm.v1.Jobs/Submit", ActorUser: "bob", Attributed: true,
 			Line: line(map[string]any{"who": "client/bob-laptop", "user": "bob", "argv": []string{"secret-bob-cmd"}})},
-		{Node: "aw", Time: now, Who: "client/alice", Method: "/longarm.v1.Sessions/Attach",
+		{Node: "aw", Time: now, Who: "client/alice", Method: "/longarm.v1.Sessions/Attach", ActorUser: "alice", SubjectUser: "alice", Attributed: true,
 			Line: line(map[string]any{"who": "client/alice", "session": "alice-session"})},
-		{Node: "w1", Time: now, Who: "admin/root", Method: "/longarm.v1.Exec/Run", Line: line(map[string]any{"who": "admin/root"})},
-		{Node: "hub", Time: now, Who: "admin/other", Method: "users/set", Line: line(map[string]any{"who": "admin/other", "user": "carol"})},
-		{Node: "hub", Time: now, Who: "admin/root", Method: "workers/label", Line: line(map[string]any{"who": "admin/root", "worker": "w1"})},
+		{Node: "w1", Time: now, Who: "admin/root", Method: "/longarm.v1.Exec/Run", ActorUser: "root", Attributed: true,
+			Line: line(map[string]any{"who": "admin/root"})},
+		{Node: "hub", Time: now, Who: "admin/other", Method: "users/set", ActorUser: "other", SubjectUser: "carol", Attributed: true,
+			Line: line(map[string]any{"who": "admin/other", "user": "carol"})},
+		{Node: "hub", Time: now, Who: "admin/root", Method: "workers/label", ActorUser: "root", Attributed: true,
+			Line: line(map[string]any{"who": "admin/root", "worker": "w1"})},
+		// from before attribution: only its own "user" field counts
+		{Node: "w1", Time: now, Who: "client/root-old", Method: "/longarm.v1.Files/Read", Line: line(map[string]any{"who": "client/root-old"})},
 	}
 	if err := h.store.AddAudit(rows); err != nil {
 		t.Fatal(err)
@@ -176,7 +185,8 @@ func TestAuditProjection(t *testing.T) {
 	for _, c := range r.Hidden {
 		counted[c.Method] = c.Count
 	}
-	if counted["/longarm.v1.Jobs/Submit"] != 1 || counted["/longarm.v1.Sessions/Attach"] != 1 || counted["users/set"] != 1 || counted["users/remove"] != 1 {
+	if counted["/longarm.v1.Jobs/Submit"] != 1 || counted["/longarm.v1.Sessions/Attach"] != 1 || counted["users/set"] != 1 ||
+		counted["users/remove"] != 1 || counted["/longarm.v1.Files/Read"] != 1 {
 		t.Errorf("hidden counts %v", counted)
 	}
 
@@ -215,4 +225,42 @@ func slicesContains(s []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// TestAuditAttributionIsHistorical: an admin who revokes another user's
+// device and enrolls the name again for itself does not get the old
+// records: reads go by the user recorded when each was written.
+func TestAuditAttributionIsHistorical(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	h.mu.Lock()
+	n := &node{rec: &store.Node{Name: "bob-pc", Role: "client", State: stateApproved, User: "bob"}}
+	h.nodes["bob-pc"] = n
+	h.indexNode(n.rec)
+	w1 := h.nodes["w1"]
+	h.storeAuditLocked(w1, nil, &pb.AuditBatch{Lines: []string{
+		`{"time":"2026-10-29T10:00:00Z","who":"client/bob-pc","method":"/longarm.v1.Jobs/Submit","argv":["bobs-secret-arg"]}`,
+	}})
+	h.mu.Unlock()
+	// the name goes to root
+	h.mu.Lock()
+	n.rec.User, n.rec.Role = "root", "admin"
+	h.indexNode(n.rec)
+	h.mu.Unlock()
+	r, err := pb.NewFleetClient(th.root).Audit(tctx(t), &pb.AuditRequest{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range r.Records {
+		if strings.Contains(rec.Json, "bobs-secret-arg") {
+			t.Fatalf("re-enrolled name opened bob's record: %s", rec.Json)
+		}
+	}
+	if r.HiddenTotal == 0 {
+		t.Fatal("bob's record not counted")
+	}
+	// bob still reads it
+	if !strings.Contains(h.mustAudit(t, tenancy.Caller{User: "bob"}, ""), "bobs-secret-arg") {
+		t.Fatal("bob lost his own record")
+	}
 }

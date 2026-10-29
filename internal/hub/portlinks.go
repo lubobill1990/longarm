@@ -258,6 +258,9 @@ func (h *Hub) RemovePortLink(c caller, id string) (*pb.PortLink, error) {
 	}
 	l := h.portLinkViewLocked(e)
 	h.removePortLinkLocked(e, c.id.String(), "removed")
+	if e.l.Owner != v.User { // an admin removed another user's link by id: an ack, no details
+		return foreignLinkAck(l.Id), nil
+	}
 	return l, nil
 }
 
@@ -503,6 +506,14 @@ func (h *Hub) portLinkRoutes(api func(string, func(http.ResponseWriter, *http.Re
 		l := h.portLinkViewLocked(e)
 		h.removePortLinkLocked(e, "web/"+user, "removed")
 		h.mu.Unlock()
+		if e.l.Owner != v.User {
+			l = foreignLinkAck(l.Id)
+		}
 		writeResult(w, l, nil)
 	})
+}
+
+// foreignLinkAck answers the removal of another user's link: its id only.
+func foreignLinkAck(id string) *pb.PortLink {
+	return &pb.PortLink{Id: id, Status: &pb.PortLinkStatus{Id: id, State: "removed"}}
 }

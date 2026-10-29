@@ -376,17 +376,21 @@ func (h *Hub) relayCheck(by, user, worker, action, job string) error {
 	n := h.nodes[worker]
 	ok := n == nil || n.rec.Owner == "" || h.mayUseLocked(user, n)
 	admin := n != nil && n.rec.Admin
+	owner := ""
+	if n != nil {
+		owner = n.rec.Owner
+	}
 	h.mu.Unlock()
 	if admin {
 		// the hub issues no commands to an admin worker, not even its
 		// owner's: they go to it directly, with the owner's certificate
-		h.auditHub(by, "workers/denied", map[string]any{"worker": worker, "action": action, "job": job, "user": user, "why": "admin worker"})
+		h.auditHub(by, "workers/denied", map[string]any{"worker": worker, "action": action, "job": job, "user": user, "owner": owner, "why": "admin worker"})
 		return status.Errorf(codes.PermissionDenied, "worker %s is an admin worker: the hub relays nothing to it; use it directly (longarm run %s -- ...)", worker, worker)
 	}
 	if ok {
 		return nil
 	}
-	h.auditHub(by, "workers/denied", map[string]any{"worker": worker, "action": action, "job": job, "user": user})
+	h.auditHub(by, "workers/denied", map[string]any{"worker": worker, "action": action, "job": job, "user": user, "owner": owner})
 	h.log.Info("hub request on a user-owned worker refused", "worker", worker, "action", action, "job", job, "by", by)
 	return status.Errorf(codes.PermissionDenied, "user %q may not %s on worker %s (a user's own worker, not shared with them)",
 		user, action, worker)

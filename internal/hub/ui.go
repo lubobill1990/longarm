@@ -275,10 +275,8 @@ func (h *Hub) SubmitJobAs(ctx context.Context, by, owner string, admin bool, req
 	spec := &pb.JobSpec{Id: id, Name: req.Name, Argv: req.Argv, Cwd: req.Cwd, Env: req.Env, Labels: labels}
 	if req.Worker != "" && req.Worker != "auto" { // placed jobs passed the quota already
 		if err := h.relayCheck(by, owner, worker, "submit jobs", id); err != nil {
-			if !admin { // others' own workers don't exist for users (admins see them)
-				return nil, status.Errorf(codes.NotFound, "no worker %q", worker)
-			}
-			return nil, err
+			// others' own workers don't exist for anybody else, admins included
+			return nil, status.Errorf(codes.NotFound, "no worker %q", worker)
 		}
 		h.mu.Lock()
 		if h.nodes[worker] == nil {
@@ -375,15 +373,17 @@ func (h *Hub) Links() *pb.LinksResponse {
 // ---------------------------------------------------------------- gRPC
 
 func (s *hubAdminServer) KillJob(ctx context.Context, req *pb.FleetJobRequest) (*pb.FleetJob, error) {
+	// visibility first: a job the admin's user may not read is "not known"
+	// - not resolved to its worker, not named in an error or the audit
+	v := s.h.viewer(callerFrom(ctx))
+	if _, err := s.h.GetJobFor(v, req.Id, req.Worker); err != nil {
+		return nil, status.Errorf(codes.NotFound, "job %s not known to the hub", req.Id)
+	}
 	fj, err := s.h.KillJob(ctx, by(ctx), callerFrom(ctx).id.Owner(), req.Id, req.Worker)
 	if err != nil {
 		return nil, err
 	}
-	if !canSeeJob(s.h.viewer(callerFrom(ctx)), fj.Job) { // killed by id: not a way to read others' jobs
-		fj = &pb.FleetJob{Worker: fj.Worker, Job: &pb.Job{Spec: &pb.JobSpec{Id: req.Id}, State: fj.Job.GetState()},
-			UpdatedAt: fj.UpdatedAt, WorkerOnline: fj.WorkerOnline}
-	}
-	return fj, nil
+	return s.h.projector(v).fleetJob(fj), nil
 }
 
 func (s *hubAdminServer) JobLogs(req *pb.HubLogsRequest, st pb.HubAdmin_JobLogsServer) error {

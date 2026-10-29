@@ -218,7 +218,14 @@ func (h *Hub) auditHub(who, method string, fields map[string]any) {
 		rec[k] = v
 	}
 	b, _ := json.Marshal(rec)
-	if err := h.store.AddAudit([]store.AuditRow{{Node: "hub", Time: time.Now(), Who: who, Method: method, Line: string(b)}}); err != nil {
+	// attribution, fixed now: who acted (its user) and whose thing it is
+	subject, _ := fields["owner"].(string)
+	if subject == "" {
+		subject, _ = fields["user"].(string)
+	}
+	row := store.AuditRow{Node: "hub", Time: time.Now(), Who: who, Method: method, Line: string(b),
+		ActorUser: h.auditActorUser(who), SubjectUser: subject, Attributed: true}
+	if err := h.store.AddAudit([]store.AuditRow{row}); err != nil {
 		h.log.Warn("audit", "err", err)
 	}
 }

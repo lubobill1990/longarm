@@ -28,6 +28,7 @@ func addWorker(h *Hub, name, owner string, admin bool, version string) {
 		n.rec.AccessVersion = 1
 	}
 	h.nodes[name] = n
+	h.indexNode(n.rec)
 }
 
 // TestAdminSeesUserView: with multi-tenancy an admin certificate sees

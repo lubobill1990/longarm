@@ -96,7 +96,7 @@ func TestOwnedWorkers(t *testing.T) {
 	if r := h.longarm(root, "admin", "logs", id); r.code == 0 || !strings.Contains(r.stderr, "NotFound") {
 		t.Fatalf("admin logs of alice's job through the hub: %+v", r)
 	}
-	if r := h.longarm(root, "admin", "run", "aw", "--", bins.helper, "print", "1", "0", "0"); r.code == 0 || !strings.Contains(r.stderr, "PermissionDenied") {
+	if r := h.longarm(root, "admin", "run", "aw", "--", bins.helper, "print", "1", "0", "0"); r.code == 0 || !strings.Contains(r.stderr, "NotFound") {
 		t.Fatalf("admin submits to alice's worker through the hub: %+v", r)
 	}
 	pr := h.longarm(root, "admin", "user", "set", "alice", "--panel")

@@ -171,7 +171,7 @@ func (h *Hub) httpHandler() http.Handler {
 		}
 		p.Name = r.PathValue("name")
 		res, err := h.PutProfile("web/"+user, p)
-		writeResult(w, res, err)
+		writeResult(w, h.projector(h.panelViewer(user)).profile(res), err)
 	})
 	admin("GET /api/releases", func(w http.ResponseWriter, _ *http.Request, _ string) {
 		rels, err := h.store.Releases()
@@ -429,7 +429,7 @@ func (h *Hub) sse(w http.ResponseWriter, r *http.Request, user string) {
 	}
 	// Subscribe before the headers go out: a client that sees the stream
 	// open must not miss an event it triggers right after.
-	sub := h.bus.subscribeFiltered(kinds, q.Get("job"), eventFilter(h.panelViewer(user)))
+	sub := h.bus.subscribeFiltered(kinds, q.Get("job"), h.eventFilter(h.panelViewer(user)))
 	defer h.bus.unsubscribe(sub)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

@@ -57,6 +57,7 @@ func (h *Hub) ListJobs(req *pb.FleetJobsRequest) []*pb.FleetJob {
 
 // ListJobsFor is ListJobs as v may see it (own and team-shared jobs).
 func (h *Hub) ListJobsFor(v tenancy.Caller, req *pb.FleetJobsRequest) []*pb.FleetJob {
+	p := h.projector(v)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var out []*pb.FleetJob
@@ -71,7 +72,7 @@ func (h *Hub) ListJobsFor(v tenancy.Caller, req *pb.FleetJobsRequest) []*pb.Flee
 			if !canSeeJob(v, e.job) {
 				continue
 			}
-			out = append(out, h.fleetJobLocked(w, e))
+			out = append(out, p.fleetJob(h.fleetJobLocked(w, e)))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -104,7 +105,7 @@ func (h *Hub) GetJobFor(v tenancy.Caller, id, worker string) (*pb.FleetJob, erro
 	if e == nil || !canSeeJob(v, e.job) {
 		return nil, status.Errorf(codes.NotFound, "job %s not known to the hub", id)
 	}
-	return h.fleetJobLocked(w, e), nil
+	return h.projector(v).fleetJob(h.fleetJobLocked(w, e)), nil
 }
 
 func (s *fleetServer) GetJob(ctx context.Context, req *pb.FleetJobRequest) (*pb.FleetJob, error) {
@@ -121,7 +122,7 @@ func (h *Hub) WaitJob(ctx context.Context, req *pb.FleetJobRequest, send func(*p
 
 // WaitJobFor is WaitJob for a job v may see.
 func (h *Hub) WaitJobFor(ctx context.Context, v tenancy.Caller, req *pb.FleetJobRequest, send func(*pb.FleetJob) error) error {
-	sub := h.bus.subscribeFiltered([]string{"job"}, req.Id, eventFilter(v))
+	sub := h.bus.subscribeFiltered([]string{"job"}, req.Id, h.eventFilter(v))
 	defer h.bus.unsubscribe(sub)
 	fj, err := h.GetJobFor(v, req.Id, req.Worker)
 	if err == nil {
@@ -176,7 +177,7 @@ func (h *Hub) EventsFor(ctx context.Context, v tenancy.Caller, req *pb.EventsReq
 	if len(kinds) == 0 {
 		kinds = []string{"job", "node", "queue"}
 	}
-	sub := h.bus.subscribeFiltered(kinds, req.JobId, eventFilter(v))
+	sub := h.bus.subscribeFiltered(kinds, req.JobId, h.eventFilter(v))
 	defer h.bus.unsubscribe(sub)
 	for {
 		select {

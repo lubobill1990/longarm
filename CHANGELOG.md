@@ -45,8 +45,17 @@
   "not found". The audit log (`admin audit`, the panel, `Fleet.Audit`)
   shows only the records about the admin's own user and the hub actions it
   performed, and counts the rest by method; `users/remove` records count the
-  revoked machines. The complete trail stays in the hub's database and log
-  for the hub's operators (new `longarm-hub audit` on the hub host; on
+  revoked machines; reads go by the acting and affected user recorded when
+  each record was written (schema migration 5), never by today's node
+  ownership, so re-enrolling a revoked name doesn't reopen its records.
+  Every outbound record type and every event kind goes through one
+  projection (`internal/hub/projection.go`): actors appear as role and user
+  ("admin bob"), never by device name - event messages, join codes, users,
+  jobs' submitter, audit records; profile updates, rollouts and tailnet
+  status are projected like listings; an admin's kill of another user's job
+  is "not known" (checked before resolving its worker) and removing another
+  user's link answers with its id only. The complete trail stays in the
+  hub's database and log for the hub's operators (new `longarm-hub audit` on the hub host; on
   Azure, the subscription's owners). Auto placement already
   used only workers the caller's user may use, admins included; the admin's
   `exec auto` now picks from the same list (before, from every worker the

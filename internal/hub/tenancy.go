@@ -11,7 +11,6 @@ import (
 	"slices"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -624,8 +623,19 @@ func (s *hubAdminServer) PutUser(ctx context.Context, req *pb.PutUserRequest) (*
 	return s.h.PutUser(by(ctx), req)
 }
 
-func (s *hubAdminServer) ListUsers(context.Context, *pb.ListUsersRequest) (*pb.ListUsersResponse, error) {
-	return s.h.ListUsers(), nil
+func (s *hubAdminServer) ListUsers(ctx context.Context, _ *pb.ListUsersRequest) (*pb.ListUsersResponse, error) {
+	return s.h.ListUsersFor(s.h.viewer(callerFrom(ctx))), nil
+}
+
+// ListUsersFor is ListUsers projected for v (created_by may name another
+// admin's device).
+func (h *Hub) ListUsersFor(v tenancy.Caller) *pb.ListUsersResponse {
+	r := h.ListUsers()
+	p := h.projector(v)
+	for _, u := range r.Users {
+		p.tenantUser(u)
+	}
+	return r
 }
 
 func (s *hubAdminServer) RemoveUser(ctx context.Context, req *pb.RemoveUserRequest) (*pb.RemoveUserResponse, error) {
@@ -640,45 +650,23 @@ func (s *hubAdminServer) ListTeams(context.Context, *pb.ListTeamsRequest) (*pb.L
 	return s.h.ListTeams(), nil
 }
 
-// eventFilter is what a viewer may see of the event stream: its jobs and
-// those shared with its teams, nodes without other users' process lists
-// and mirrors, its own queue events; link reports are admins'.
-func eventFilter(v tenancy.Caller) func(*pb.FleetEvent, string) *pb.FleetEvent {
+// eventFilter is what a viewer may see of the event stream (projector.event):
+// its jobs and those shared with its teams, nodes it may see without other
+// users' process lists and mirrors, its own queue events; names of machines
+// it may not see projected out of every message.
+func (h *Hub) eventFilter(v tenancy.Caller) func(*pb.FleetEvent, string) *pb.FleetEvent {
 	if v.Admin {
 		return nil
 	}
 	return func(ev *pb.FleetEvent, owner string) *pb.FleetEvent {
-		switch ev.Kind {
-		case "job":
-			if ev.Job == nil || !canSeeJob(v, ev.Job.Job) {
-				return nil
-			}
-			return ev
-		case "queue":
-			if owner != v.User {
-				return nil
-			}
-			return ev
-		case "node", "metrics":
-			if ev.NodeInfo == nil {
-				return ev
-			}
-			if !canSeeNode(v, ev.NodeInfo) {
-				return nil
-			}
-			c := proto.Clone(ev).(*pb.FleetEvent)
-			c.NodeInfo = nodeView(v, c.NodeInfo)
-			// a message naming the owner-only admin worker is the owner's
-			if a := ev.NodeInfo.Companion; a != "" && c.NodeInfo.Companion == "" && strings.Contains(c.Message, a) {
-				c.Message = "updated"
-			}
-			return c
-		case "hub": // the hub restarting: about nobody's data
-			return ev
-		default:
-			return nil
-		}
+		return h.projector(v).event(ev, owner) // the directory as it is now
 	}
+}
+
+// eventFilter without a hub (tests): no directory, so events without a
+// node record are dropped.
+func eventFilter(v tenancy.Caller) func(*pb.FleetEvent, string) *pb.FleetEvent {
+	return (&Hub{}).eventFilter(v)
 }
 
 // nodeUserOf is the user of a client/admin NodeInfo.
@@ -752,8 +740,8 @@ func (h *Hub) mayControl(v tenancy.Caller, id, worker string) error {
 //	GET    /api/teams
 //	POST   /api/teams/{team}            {"add": [...], "remove": [...]}
 func (h *Hub) tenancyRoutes(api, admin func(string, func(http.ResponseWriter, *http.Request, string))) {
-	admin("GET /api/tenants", func(w http.ResponseWriter, _ *http.Request, _ string) {
-		writePB(w, h.ListUsers())
+	admin("GET /api/tenants", func(w http.ResponseWriter, _ *http.Request, user string) {
+		writePB(w, h.ListUsersFor(h.panelViewer(user)))
 	})
 	admin("POST /api/tenants", func(w http.ResponseWriter, r *http.Request, user string) {
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))

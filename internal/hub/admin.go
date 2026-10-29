@@ -54,7 +54,8 @@ func (s *hubAdminServer) SetLabels(ctx context.Context, req *pb.SetLabelsRequest
 }
 
 func (s *hubAdminServer) PutProfile(ctx context.Context, req *pb.Profile) (*pb.Profile, error) {
-	return s.h.PutProfile(by(ctx), req)
+	pr, err := s.h.PutProfile(by(ctx), req)
+	return s.h.projector(s.h.viewer(callerFrom(ctx))).profile(pr), err
 }
 
 func (s *hubAdminServer) ListProfiles(ctx context.Context, _ *pb.ListProfilesRequest) (*pb.ListProfilesResponse, error) {
@@ -81,21 +82,14 @@ func (h *Hub) ListJoinCodesFor(v tenancy.Caller, by string) (*pb.ListJoinCodesRe
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	out := &pb.ListJoinCodesResponse{}
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	p := h.projector(v) // used_by "used" unless visible, created_by as its user
 	for _, c := range codes_ {
 		ok := v.Admin || (by != "" && c.CreatedBy == by) || (v.User != "" && (c.Owner == v.User || c.User == v.User)) ||
 			(c.Role == string(pki.RoleWorker) && c.Owner == "")
 		if !ok {
 			continue
 		}
-		jc := joinCodePB(c)
-		if jc.UsedBy != "" && !v.Admin {
-			if n := h.nodes[jc.UsedBy]; n == nil || !h.visibleNodeLocked(v, n) {
-				jc.UsedBy = "used"
-			}
-		}
-		out.Codes = append(out.Codes, jc)
+		out.Codes = append(out.Codes, p.joinCode(joinCodePB(c)))
 	}
 	return out, nil
 }

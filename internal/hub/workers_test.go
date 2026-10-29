@@ -142,7 +142,9 @@ func TestOwnedWorkers(t *testing.T) {
 	h.mu.Lock()
 	h.applyJobsLocked(h.nodes["aw"], &pb.JobsReport{Jobs: []*pb.Job{{Spec: &pb.JobSpec{Id: "JAW", Owner: "alice"}, State: pb.JobState_JOB_STATE_RUNNING}}})
 	h.mu.Unlock()
-	if _, err := pb.NewHubAdminClient(th.root).KillJob(tctx(t), &pb.FleetJobRequest{Id: "JAW"}); status.Code(err) != codes.PermissionDenied {
+	// the job is not even known to the admin: nothing names aw
+	if _, err := pb.NewHubAdminClient(th.root).KillJob(tctx(t), &pb.FleetJobRequest{Id: "JAW"}); status.Code(err) != codes.NotFound ||
+		strings.Contains(err.Error(), "aw") {
 		t.Fatalf("admin kills alice's job through the hub: %v", err)
 	}
 	st, err := pb.NewHubAdminClient(th.root).JobLogs(tctx(t), &pb.HubLogsRequest{Id: "JAW"})
@@ -152,7 +154,7 @@ func TestOwnedWorkers(t *testing.T) {
 	if status.Code(err) != codes.NotFound { // not even known to the admin
 		t.Fatalf("admin reads alice's job through the hub: %v", err)
 	}
-	if _, err := pb.NewHubAdminClient(th.root).SubmitJob(tctx(t), &pb.HubSubmitRequest{Worker: "aw", Argv: []string{"x"}}); status.Code(err) != codes.PermissionDenied {
+	if _, err := pb.NewHubAdminClient(th.root).SubmitJob(tctx(t), &pb.HubSubmitRequest{Worker: "aw", Argv: []string{"x"}}); status.Code(err) != codes.NotFound {
 		t.Fatalf("admin submits to alice's worker through the hub: %v", err)
 	}
 	// alice herself (her panel login acts as alice) passes the check

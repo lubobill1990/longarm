@@ -283,6 +283,7 @@ func (a *hubAdminServer) TailnetStatus(ctx context.Context, _ *pb.TailnetStatusR
 	if resp.LastMintErrorNode != "" && !h.visibleNameLocked(v, resp.LastMintErrorNode) {
 		resp.LastMintErrorNode = hiddenNode
 	}
+	resp.LastMintError = h.projector(v).text(resp.LastMintError)
 	h.mu.Unlock()
 	sort.Slice(resp.Nodes, func(i, j int) bool {
 		a, b := resp.Nodes[i], resp.Nodes[j]
