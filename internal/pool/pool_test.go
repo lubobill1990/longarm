@@ -127,19 +127,16 @@ func TestMonitorLegsPathsAndMetricsSource(t *testing.T) {
 		t.Fatalf("metrics history: %v", v.Workers[0].History)
 	}
 
-	// Hub events take over while fresh.
+	// Direct first: the hub's events don't replace current direct metrics
+	// (they fill in only for workers without them, TestHubFillsIn).
 	m.SetHubUp(true)
-	feed := func() {
-		m.HubNode(&pb.NodeInfo{Name: "w1", Role: "worker", State: "approved", Online: true,
-			Metrics: &pb.MetricsSnapshot{CpuPercent: 50, MemTotalBytes: 100, MemUsedBytes: 10, Time: timestamppb.Now()}})
+	m.HubNode(&pb.NodeInfo{Name: "w1", Role: "worker", State: "approved", Online: true,
+		Metrics: &pb.MetricsSnapshot{CpuPercent: 50, MemTotalBytes: 100, MemUsedBytes: 10, Time: timestamppb.Now()}})
+	time.Sleep(60 * time.Millisecond)
+	v = waitView(t, m, "still direct", func(v *pb.PoolView) bool { return v.Source == "direct" })
+	if v.Workers[0].Metrics.CpuPercent != 12 || v.Workers[0].Node == nil {
+		t.Fatalf("direct metrics with the hub up: %v", v.Workers[0])
 	}
-	feed()
-	v = waitView(t, m, "hub source", func(v *pb.PoolView) bool { return v.Source == "hub" })
-	if v.Workers[0].Metrics.CpuPercent != 50 || v.Workers[0].Node == nil {
-		t.Fatalf("hub metrics: %v", v.Workers[0])
-	}
-	// Hub goes quiet: back to direct.
-	waitView(t, m, "direct again", func(v *pb.PoolView) bool { return v.Source == "direct" })
 
 	// Race: the clearly fastest leg that is up is active (>20 % and >5 ms
 	// faster, or a better path kind); the longnet leg moving to a direct path
@@ -274,4 +271,73 @@ func TestAuthoritativeTargets(t *testing.T) {
 	if v := m.View(false); len(v.Workers) != 1 || v.Workers[0].Name != "w1" {
 		t.Fatalf("authoritative list: %v", v.Workers)
 	}
+}
+
+// TestHubFillsIn: workers beyond the direct cap (or with no reachable leg)
+// show the hub's metrics; an idle monitor (no viewer) stops its direct
+// streams and the hub fills in, a viewer brings them back.
+func TestHubFillsIn(t *testing.T) {
+	p := &fakeProber{path: transport.PathInfo{Transport: "tcp"}}
+	p.set(2*time.Millisecond, transport.PathDirect, "10.0.0.2:7701", nil)
+	p.snap = &pb.MetricsSnapshot{CpuPercent: 7, Time: timestamppb.Now()}
+	var now struct {
+		sync.Mutex
+		t time.Time
+	}
+	now.t = time.Now()
+	m := New(Config{
+		Interval: 20 * time.Millisecond, HubStale: time.Hour, MaxDirect: 1, IdleAfter: time.Minute,
+		Targets: func(context.Context) ([]Target, bool) {
+			return []Target{{Name: "a", Legs: client.NodeLegs("a", []string{"tcp://10.0.0.2:7701"})},
+				{Name: "b", Legs: client.NodeLegs("b", []string{"tcp://10.0.0.3:7701"})}}, true
+		},
+		Dial: func(l client.Worker) (Prober, error) {
+			if l.Address == "10.0.0.3:7701" {
+				q := &fakeProber{path: transport.PathInfo{Transport: "tcp"}}
+				q.set(50*time.Millisecond, transport.PathDirect, "10.0.0.3:7701", nil)
+				q.snap = &pb.MetricsSnapshot{CpuPercent: 99, Time: timestamppb.Now()}
+				return q, nil
+			}
+			return p, nil
+		},
+		Now: func() time.Time { now.Lock(); defer now.Unlock(); return now.t },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go m.Run(ctx)
+	m.SetHubUp(true)
+	hub := func(name string, cpu float64) {
+		m.HubNode(&pb.NodeInfo{Name: name, Role: "worker", State: "approved", Online: true,
+			Metrics: &pb.MetricsSnapshot{CpuPercent: cpu, Time: timestamppb.New(time.Now().Add(time.Duration(cpu) * time.Millisecond))}})
+	}
+	hub("a", 1)
+	hub("b", 2)
+	byName := func(v *pb.PoolView, n string) *pb.PoolWorker {
+		for _, w := range v.Workers {
+			if w.Name == n {
+				return w
+			}
+		}
+		return nil
+	}
+	// a (faster) streams directly, b (beyond MaxDirect 1) shows the hub's
+	waitView(t, m, "a direct, b from the hub", func(v *pb.PoolView) bool {
+		a, b := byName(v, "a"), byName(v, "b")
+		return a != nil && b != nil && a.Source == "direct" && a.Metrics.GetCpuPercent() == 7 &&
+			b.Source == "hub" && b.Metrics.GetCpuPercent() == 2 && v.Source == "mixed"
+	})
+	// no viewer for IdleAfter: the direct stream stops, the hub fills in
+	now.Lock()
+	now.t = now.t.Add(2 * time.Minute)
+	now.Unlock()
+	hub("a", 3)
+	waitView(t, m, "idle: hub for a", func(v *pb.PoolView) bool {
+		a := byName(v, "a")
+		return a != nil && a.Source == "hub" && a.Metrics.GetCpuPercent() == 3
+	})
+	m.Touch()
+	waitView(t, m, "a viewer: direct again", func(v *pb.PoolView) bool {
+		a := byName(v, "a")
+		return a != nil && a.Source == "direct" && a.Metrics.GetCpuPercent() == 7
+	})
 }

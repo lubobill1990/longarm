@@ -306,11 +306,11 @@ func TestUIDaemonPool(t *testing.T) {
 		return nil
 	}
 	var v map[string]any
-	waitFor(t, "both workers online with hub metrics and RTT history", 30*time.Second, func() bool {
+	waitFor(t, "both workers online with direct metrics, the hub's node info and RTT history", 30*time.Second, func() bool {
 		v = pool()
 		for _, n := range []string{"wa", "wb"} {
 			w := worker(v, n)
-			if w == nil || w["state"] != "online" || w["source"] != "hub" || w["metrics"] == nil {
+			if w == nil || w["state"] != "online" || w["source"] != "direct" || w["metrics"] == nil || w["node"] == nil { // direct first, the hub fills in
 				return false
 			}
 			l := activeLeg(w)
@@ -321,14 +321,14 @@ func TestUIDaemonPool(t *testing.T) {
 				return false
 			}
 		}
-		return v["source"] == "hub"
+		return v["source"] == "direct"
 	})
-	// longarm pool (CLI) shows the same. (A worker's hub metrics can go
-	// stale for a moment on a loaded runner - "source mixed" - so poll.)
+	// longarm pool (CLI) shows the same. (A worker's direct stream can lag
+	// for a moment on a loaded runner - "source mixed" - so poll.)
 	var out string
-	waitFor(t, "longarm pool: source hub", 30*time.Second, func() bool {
+	waitFor(t, "longarm pool: source direct", 30*time.Second, func() bool {
 		out = s.mustLongarm(s.client, "pool")
-		return strings.Contains(out, "source hub") && strings.Contains(out, "wa") && strings.Contains(out, "online")
+		return strings.Contains(out, "source direct") && strings.Contains(out, "wa") && strings.Contains(out, "online")
 	})
 	// My jobs: a job alice submits counts; the pool and /v1/jobs?mine=1 show it.
 	id := strings.TrimSpace(s.mustLongarm(s.client, "run", "wa", "--", bins.helper, "sleep", "300"))

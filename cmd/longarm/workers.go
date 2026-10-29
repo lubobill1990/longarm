@@ -50,6 +50,10 @@ and the path this client reaches each worker by. --json prints every worker's hu
 			type row = lsRow
 			var rows []row
 			fromHub := map[string]bool{}
+			// the daemon's pool (the tray's view): direct metrics it streams
+			// from the workers, used over the hub's (direct first)
+			poolCh := make(chan *pb.PoolView, 1)
+			go func() { poolCh <- daemonPool(cmd.Context()) }()
 
 			// Ask the hub and, at the same time, the workers we already know
 			// (workers.toml, the hub cache): with the hub down, longarm ls costs
@@ -98,6 +102,7 @@ and the path this client reaches each worker by. --json prints every worker's hu
 					}
 					defer conn.Close()
 					p.r.snap, p.r.err = conn.Metrics().Snapshot(ctx, &pb.MetricsRequest{})
+					p.r.src = "direct"
 					p.r.path = conn.Path().String()
 					if legs := conn.Legs(); len(legs) > 1 {
 						p.r.path += " [" + client.RaceSummary(legs) + "]"
@@ -194,7 +199,7 @@ and the path this client reaches each worker by. --json prints every worker's hu
 						if c, ok := s.dialer.Sticky(n.Name); ok {
 							path = "hub; last " + c.Path
 						}
-						rows = append(rows, row{name: n.Name, state: st, snap: n.Metrics, path: path, node: n})
+						rows = append(rows, row{name: n.Name, state: st, snap: n.Metrics, path: path, node: n, src: "hub"})
 						fromHub[n.Name] = true
 					}
 				} else {
@@ -228,6 +233,8 @@ and the path this client reaches each worker by. --json prints every worker's hu
 			if output != "" && output != "wide" {
 				return usagef("-o %s: the only other format is -o wide (or --json)", output)
 			}
+			mergePool(rows, <-poolCh, time.Now())
+
 			if asJSON {
 				out := map[string]any{}
 				for _, r := range rows {
@@ -340,3 +347,53 @@ func infoCmd() *cobra.Command {
 // relayedPathRE finds a relayed path in longarm ls' PATH column
 // ("longnet/relay 2.4ms (...)", "hub; last tailscale/derp ...").
 var relayedPathRE = regexp.MustCompile(`\b(longnet|tailscale)/(relay|derp|peer-relay)\b`)
+
+// daemonPool is the running daemon's pool view (nil without a daemon; it
+// is not started for this).
+func daemonPool(ctx context.Context) *pb.PoolView {
+	if noDaemonPool {
+		return nil
+	}
+	c, closeFn, err := daemonClient(false)
+	if err != nil {
+		return nil
+	}
+	defer closeFn()
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	v, err := c.Pool(ctx, &pb.PoolRequest{})
+	if err != nil {
+		return nil
+	}
+	return v
+}
+
+// noDaemonPool: tests of the hub/probe paths alone (LONGARM_LS_NO_DAEMON=1).
+var noDaemonPool = os.Getenv("LONGARM_LS_NO_DAEMON") == "1"
+
+// mergePool puts the daemon's direct metrics into longarm ls' rows when they
+// are newer than the row's (direct first: the hub's numbers fill in for
+// workers the daemon doesn't stream from).
+func mergePool(rows []lsRow, v *pb.PoolView, now time.Time) {
+	if v == nil {
+		return
+	}
+	pw := map[string]*pb.PoolWorker{}
+	for _, w := range v.Workers {
+		pw[w.Name] = w
+	}
+	for i := range rows {
+		r := &rows[i]
+		w := pw[r.name]
+		if r.err != nil || w == nil || w.Source != "direct" || w.Metrics == nil {
+			continue
+		}
+		if r.snap != nil && r.src == "direct" && !w.Metrics.GetTime().AsTime().After(r.snap.GetTime().AsTime()) {
+			continue // a probe just now is as good
+		}
+		r.snap, r.src = w.Metrics, "direct"
+		if r.state == "offline" && w.State == "online" {
+			r.state = "online" // the hub hasn't seen it (it may be down); this client reaches it
+		}
+	}
+}

@@ -1339,6 +1339,33 @@ remembered for 30 s in `hub-state.json` (`LONGARM_HUB_RETRY_AFTER`), so the next
 commands skip it, and the longnet legs through its built-in relay, at once.
 `--no-hub` / `LONGARM_NO_HUB=1` ignore the hub entirely.
 
+**While the hub is down** (a redeploy, an outage), everything that talks to
+a worker keeps working over cached endpoints and pinned identities (the
+worker's certificate from the CA, end-to-end trust as configured): `exec`,
+`run <worker>`, `attach`, `logs`, `get` / `put`, sessions, port forwards,
+`longarm mcp`, the tray. Longarm says so once ("hub ... unavailable; direct
+connections to workers still work"); the tray's header shows "hub
+unavailable · direct connections still work". Only what needs the hub
+waits: placement without a worker (`--on auto`), workers not in the cache,
+sign-in, new port links, the panel. Relayed paths survive a hub restart
+through an external relay ([below](#external-relays-relayed-connections-that-survive-hub-restarts));
+through the hub's own relay they reconnect by themselves once it is back
+(`attach`, `logs -f` and `wait` reconnect with backoff; a forwarded
+connection opened meanwhile waits up to 30 s for the worker,
+`LONGARM_FORWARD_WAIT`).
+
+**Metrics direct-first.** The client daemon (the tray's) keeps a connection
+per leg to the workers this user may use (the hub's list for this user, and
+its cache) and streams each worker's metrics directly from it; the hub's
+metrics only fill in for workers it doesn't reach or stream from. At most
+32 workers get a direct stream (`LONGARM_POOL_MAX_DIRECT`; those with this
+client's jobs first, then the fastest); without a viewer (tray closed, no
+`longarm ls`) for 5 minutes the daemon idles: no direct streams, legs probed
+every 30 s. The tray shows per worker where its numbers come from and how
+old they are ("metrics direct · updated 2s ago"); `longarm ls -o wide` has a
+METRICS column (`direct 2s`, `hub 1s`, `hub 3m (stale)`), and `longarm ls`
+uses the running daemon's direct metrics over the hub's.
+
 Toolchain profiles: longarmd reconciles the assigned profile idempotently (winget /
 npm on Windows, apt + official install scripts / npm on Linux, Homebrew on
 macOS), only while no job runs (it drains meanwhile), and reports versions. A

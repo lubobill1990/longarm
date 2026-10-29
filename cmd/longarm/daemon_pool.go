@@ -100,8 +100,9 @@ func (d *daemon) poolTargets(ctx context.Context) ([]pool.Target, bool) {
 // newMonitor builds the pool monitor of the daemon.
 func (d *daemon) newMonitor() *pool.Monitor {
 	return pool.New(pool.Config{
-		Interval: poolInterval,
-		Targets:  d.poolTargets,
+		Interval:  poolInterval,
+		MaxDirect: poolMaxDirect,
+		Targets:   d.poolTargets,
 		Dial: func(leg client.Worker) (pool.Prober, error) {
 			c, err := d.s.dialer.Dial(leg)
 			if err != nil {
@@ -126,6 +127,15 @@ var poolInterval = func() time.Duration {
 		return v
 	}
 	return 2 * time.Second
+}()
+
+// poolMaxDirect caps the workers the daemon streams metrics from directly
+// (LONGARM_POOL_MAX_DIRECT; default 32, -1 = none: the hub's only).
+var poolMaxDirect = func() int {
+	if v, err := strconv.Atoi(os.Getenv("LONGARM_POOL_MAX_DIRECT")); err == nil && v != 0 {
+		return v
+	}
+	return 32
 }()
 
 // poolSideLoops reports links to the hub and counts this client's jobs.
@@ -205,6 +215,7 @@ func (d *daemon) closeConns() {
 // ---------------------------------------------------------------- RPCs
 
 func (d *daemon) Pool(_ context.Context, req *pb.PoolRequest) (*pb.PoolView, error) {
+	d.mon.Touch() // a viewer: direct metrics streams on (pool.Config.IdleAfter)
 	v := d.mon.View(req.History)
 	d.mu.Lock()
 	v.Hub = proto.Clone(d.link).(*pb.HubLink)

@@ -95,7 +95,7 @@ func (s *session) hubDown(err error) {
 			os.Remove(tmp)
 		}
 		if !quietHub {
-			fmt.Fprintf(os.Stderr, "longarm: hub %s unreachable (%s); talking to workers directly\n", s.cfg.Hub.Address, oneLine(err))
+			fmt.Fprintf(os.Stderr, "longarm: hub %s unavailable (%s); direct connections to workers still work (known workers from the cache; placement, sign-in and new links wait for the hub)\n", s.cfg.Hub.Address, oneLine(err))
 		}
 		telemetry.Event(context.Background(), "hub.unreachable", map[string]string{"error": client.ErrClass(err.Error()),
 			"grpc_code": status.Code(err).String()}, nil)
@@ -135,7 +135,7 @@ func (s *session) loadHubState() {
 			s.hubErr, s.hubErrAt = errors.New(st.Error), st.Down
 		}
 		s.hubMu.Unlock()
-		s.hubStateNote = fmt.Sprintf("longarm: hub %s was unreachable %s ago (%s); talking to workers directly (next try in %s)",
+		s.hubStateNote = fmt.Sprintf("longarm: hub %s was unavailable %s ago (%s); direct connections to workers still work (next try in %s)",
 			s.cfg.Hub.Address, age.Round(time.Second), st.Error, (hubRetryAfter - age).Round(time.Second))
 	})
 }

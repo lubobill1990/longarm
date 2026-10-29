@@ -132,7 +132,7 @@ func TestHub(t *testing.T) {
 		if code := bgw.wait(t, 60*time.Second); code != 3 {
 			t.Fatalf("wait exit %d, stderr: %s", code, bgw.stderr.String())
 		}
-		if !strings.Contains(bgw.stderr.String(), "unreachable") {
+		if !strings.Contains(bgw.stderr.String(), "unavailable") {
 			t.Fatalf("no fallback note: %s", bgw.stderr.String())
 		}
 		// Without the hub: ls/jobs/wait still work from the cache.
@@ -160,7 +160,7 @@ func TestHub(t *testing.T) {
 			r := h.longarm(h.client, "jobs", "--json")
 			return r.code == 0 && strings.Contains(r.stdout, id) && strings.Contains(r.stdout, "JOB_STATE_FAILED")
 		})
-		if r := h.longarm(h.client, "wait", id); r.code != 3 || strings.Contains(r.stderr, "unreachable") {
+		if r := h.longarm(h.client, "wait", id); r.code != 3 || strings.Contains(r.stderr, "unavailable") {
 			t.Fatalf("wait via the restarted hub: %+v", r)
 		}
 	})
