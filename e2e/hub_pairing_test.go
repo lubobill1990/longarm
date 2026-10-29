@@ -133,8 +133,9 @@ func (p *panel) post(path, ctype, body string) (int, string) {
 // waitNode waits until the panel login's view of the hub's nodes
 // (/api/nodes?all=1) reports cond for node: a user's own workers are only
 // in that user's view (admins see them as counts).
-func (p *panel) waitNode(name, what string, cond func(n map[string]any) bool) {
+func (p *panel) waitNode(name, what string, cond func(n map[string]any) bool) map[string]any {
 	p.t.Helper()
+	var last map[string]any
 	waitFor(p.t, name+" "+what, 30*time.Second, func() bool {
 		resp, err := p.c.Get(p.base + "/api/nodes?all=1")
 		if err != nil {
@@ -149,11 +150,13 @@ func (p *panel) waitNode(name, what string, cond func(n map[string]any) bool) {
 		}
 		for _, n := range r.Nodes {
 			if n["name"] == name {
+				last = n
 				return cond(n)
 			}
 		}
 		return false
 	})
+	return last
 }
 
 var (
