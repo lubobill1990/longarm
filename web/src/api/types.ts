@@ -372,9 +372,44 @@ export interface TenantUser {
   disabled?: boolean
   created_at?: string
   created_by?: string
-  devices?: string[]
+  devices?: string[] // no longer filled by the hub: see device_count
+  device_count?: number // client / admin devices of the user
+  worker_count?: number // workers the user owns
   usage?: QuotaUsage
   panel?: boolean // has a web panel login
+}
+
+/** Admin.FleetSummary (/api/admin/summary): the admins' only fleet-wide view - counts, no names. */
+export interface FleetCounts {
+  workers?: number
+  workers_online?: number
+  admin_workers?: number
+  admin_workers_online?: number
+  clients?: number
+  pending?: number
+}
+
+export interface FleetMachine {
+  role?: string // worker | admin-worker | client | admin
+  online?: boolean
+  version?: string
+  os?: string
+  last_seen?: string
+}
+
+export interface UserFleetSummary {
+  user?: string // "" / absent = fleet workers (no owner)
+  counts?: FleetCounts
+  last_seen?: string
+  machines?: FleetMachine[]
+}
+
+export interface FleetSummary {
+  time?: string
+  users?: UserFleetSummary[]
+  totals?: FleetCounts
+  worker_versions?: { version?: string; workers?: number; online?: number }[]
+  tenancy?: boolean
 }
 
 export interface ListUsersResponse {
@@ -408,7 +443,8 @@ export interface PutUserResponse {
 }
 
 export interface RemoveUserResponse {
-  revoked?: string[]
+  revoked?: string[] // no longer filled: see revoked_count
+  revoked_count?: number
   purge?: boolean
 }
 

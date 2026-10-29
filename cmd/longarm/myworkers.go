@@ -150,7 +150,7 @@ worker reports itself (longarmd.toml [hub] labels) are changed there.`,
 				if err != nil {
 					return err
 				}
-				fmt.Printf("%s: %s\n", n.Name, labelString(n.Labels))
+				fmt.Println(labelResult(n))
 				for k, v := range m {
 					if got, ok := n.Labels[k]; v == "" && ok {
 						fmt.Fprintf(os.Stderr, "longarm: %s=%s stays: the worker reports it itself (longarmd.toml [hub] labels)\n", k, got)

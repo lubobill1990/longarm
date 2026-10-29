@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lubobill1990/longarm/internal/sched"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -23,46 +24,66 @@ func (s *hubAdminServer) CreateJoinCode(ctx context.Context, req *pb.CreateJoinC
 	return s.h.CreateJoinCode(by(ctx), req)
 }
 
-func (s *hubAdminServer) ListJoinCodes(context.Context, *pb.ListJoinCodesRequest) (*pb.ListJoinCodesResponse, error) {
-	return s.h.ListJoinCodes()
+func (s *hubAdminServer) ListJoinCodes(ctx context.Context, _ *pb.ListJoinCodesRequest) (*pb.ListJoinCodesResponse, error) {
+	return s.h.ListJoinCodesFor(s.h.viewer(callerFrom(ctx)), by(ctx))
 }
 
+// Operations on a node by name: the admin must know the name (the hub
+// doesn't list other users' nodes to admins); the answer carries no more
+// than the admin's user may see of the node (opNodeView).
+
 func (s *hubAdminServer) Approve(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
-	return s.h.Approve(by(ctx), req.Name)
+	info, err := s.h.Approve(by(ctx), req.Name)
+	return s.h.opResult(s.h.viewer(callerFrom(ctx)))(info, err)
 }
 
 func (s *hubAdminServer) Revoke(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
-	return s.h.Revoke(by(ctx), req.Name)
+	info, err := s.h.Revoke(by(ctx), req.Name)
+	return s.h.opResult(s.h.viewer(callerFrom(ctx)))(info, err)
 }
 
 func (s *hubAdminServer) SetDrain(ctx context.Context, req *pb.SetDrainRequest) (*pb.NodeInfo, error) {
-	return s.h.SetDrain(by(ctx), req.Name, req.Draining)
+	info, err := s.h.SetDrain(by(ctx), req.Name, req.Draining)
+	return s.h.opResult(s.h.viewer(callerFrom(ctx)))(info, err)
 }
 
 func (s *hubAdminServer) SetLabels(ctx context.Context, req *pb.SetLabelsRequest) (*pb.NodeInfo, error) {
-	return s.h.SetLabels(by(ctx), req.Name, req.Labels)
+	info, err := s.h.SetLabels(by(ctx), req.Name, req.Labels)
+	return s.h.opResult(s.h.viewer(callerFrom(ctx)))(info, err)
 }
 
 func (s *hubAdminServer) PutProfile(ctx context.Context, req *pb.Profile) (*pb.Profile, error) {
 	return s.h.PutProfile(by(ctx), req)
 }
 
-func (s *hubAdminServer) ListProfiles(context.Context, *pb.ListProfilesRequest) (*pb.ListProfilesResponse, error) {
-	return &pb.ListProfilesResponse{Profiles: s.h.Profiles()}, nil
+func (s *hubAdminServer) ListProfiles(ctx context.Context, _ *pb.ListProfilesRequest) (*pb.ListProfilesResponse, error) {
+	return &pb.ListProfilesResponse{Profiles: s.h.ProfilesFor(s.h.viewer(callerFrom(ctx)))}, nil
 }
 
 func (s *hubAdminServer) AssignProfile(ctx context.Context, req *pb.AssignProfileRequest) (*pb.NodeInfo, error) {
-	return s.h.AssignProfile(by(ctx), req.Node, req.Profile)
+	info, err := s.h.AssignProfile(by(ctx), req.Node, req.Profile)
+	return s.h.opResult(s.h.viewer(callerFrom(ctx)))(info, err)
 }
 
 // ListJoinCodes lists recent join codes (without the codes themselves).
 func (h *Hub) ListJoinCodes() (*pb.ListJoinCodesResponse, error) {
+	return h.ListJoinCodesFor(tenancy.Caller{Admin: true}, "")
+}
+
+// ListJoinCodesFor lists the join codes v may see: fleet codes, codes of
+// v's own devices and workers, and the codes the caller (by) created. Other
+// users' device and worker codes would name their machines (used_by).
+func (h *Hub) ListJoinCodesFor(v tenancy.Caller, by string) (*pb.ListJoinCodesResponse, error) {
 	codes_, err := h.store.JoinCodes(time.Now())
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	out := &pb.ListJoinCodesResponse{}
 	for _, c := range codes_ {
+		mine := (c.Owner == "" || c.Owner == v.User) && (c.User == "" || c.User == v.User)
+		if !v.Admin && !mine && (by == "" || c.CreatedBy != by) {
+			continue
+		}
 		out.Codes = append(out.Codes, joinCodePB(c))
 	}
 	return out, nil

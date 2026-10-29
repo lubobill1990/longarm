@@ -49,7 +49,8 @@ func TestSetWorkerLabels(t *testing.T) {
 	if n, err := set("root", &pb.SetLabelsRequest{Name: "w1", Labels: map[string]string{"zone": "a"}}); err != nil || n.Labels["zone"] != "a" {
 		t.Fatalf("admin labels w1: %v %v", n, err)
 	}
-	if n, err := set("root", &pb.SetLabelsRequest{Name: "aw", Labels: map[string]string{"zone": "b"}}); err != nil || n.Labels["zone"] != "b" {
+	// by name: the answer tells the admin no more than it knew
+	if n, err := set("root", &pb.SetLabelsRequest{Name: "aw", Labels: map[string]string{"zone": "b"}}); err != nil || n.Name != "aw" || n.Labels != nil {
 		t.Fatalf("admin labels aw: %v %v", n, err)
 	}
 	h.mu.Lock()

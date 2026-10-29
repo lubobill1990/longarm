@@ -501,7 +501,7 @@ func TestPerUserIsolation(t *testing.T) {
 
 	// --- the hub's views follow the same rules
 	waitFor(t, "the hub indexes the jobs", 30*time.Second, func() bool {
-		return strings.Contains(h.mustLongarm(root, "jobs", "--json"), jobB)
+		return strings.Contains(h.mustLongarm(bob, "jobs", "--json"), jobB)
 	})
 	if out := h.mustLongarm(bob, "jobs", "--json"); strings.Contains(out, jobA) || strings.Contains(out, jobShared) || !strings.Contains(out, jobB) {
 		t.Fatalf("bob's hub job list:\n%s", out)

@@ -196,7 +196,9 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 	return h.portLinkViewLocked(h.portLinks[id]), nil
 }
 
-// ListPortLinks lists the caller's links (all: every user's, admins only).
+// ListPortLinks lists the caller's links (all: every user's, admins only -
+// between workers the admin may see as a user: links that touch another
+// user's private worker would name it).
 func (h *Hub) ListPortLinks(c caller, all bool) (*pb.ListPortLinksResponse, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -204,7 +206,15 @@ func (h *Hub) ListPortLinks(c caller, all bool) (*pb.ListPortLinksResponse, erro
 	if all && !v.Admin {
 		return nil, status.Error(codes.PermissionDenied, "only admins list every user's links")
 	}
-	return h.listPortLinksLocked(func(l *pb.PortLink) bool { return all || l.Owner == v.User }), nil
+	return h.listPortLinksLocked(h.portLinkVisible(h.viewerLocked(c.id.Owner(), false), all)), nil
+}
+
+// portLinkVisible: v's own links, and with all (admins) the links between
+// workers v may see.
+func (h *Hub) portLinkVisible(v tenancy.Caller, all bool) func(*pb.PortLink) bool {
+	return func(l *pb.PortLink) bool {
+		return l.Owner == v.User || all && h.visibleNameLocked(v, l.From) && h.visibleNameLocked(v, l.To)
+	}
 }
 
 func (h *Hub) listPortLinksLocked(keep func(*pb.PortLink) bool) *pb.ListPortLinksResponse {
@@ -473,22 +483,22 @@ func (s *fleetServer) RemovePortLink(ctx context.Context, req *pb.RemovePortLink
 
 // portLinkRoutes are the panel's view of links:
 //
-//	GET    /api/port-links         the login's links (admins: everybody's)
+//	GET    /api/port-links         the login's links (admins: everybody's between workers they may see)
 //	DELETE /api/port-links/{id}    remove one (users: their own)
 func (h *Hub) portLinkRoutes(api func(string, func(http.ResponseWriter, *http.Request, string))) {
 	api("GET /api/port-links", func(w http.ResponseWriter, _ *http.Request, user string) {
-		v := h.panelViewer(user)
+		v, admin := h.panelViewer(user), h.panelAdmin(user)
 		h.mu.Lock()
-		res := h.listPortLinksLocked(func(l *pb.PortLink) bool { return v.Admin || l.Owner == v.User })
+		res := h.listPortLinksLocked(h.portLinkVisible(v, admin || v.Admin))
 		h.mu.Unlock()
 		writePB(w, res)
 	})
 	api("DELETE /api/port-links/{id}", func(w http.ResponseWriter, r *http.Request, user string) {
-		v := h.panelViewer(user)
+		v, admin := h.panelViewer(user), h.panelAdmin(user)
 		id := r.PathValue("id")
 		h.mu.Lock()
 		e := h.portLinks[id]
-		if e == nil || (!v.Admin && e.l.Owner != v.User) {
+		if e == nil || (!v.Admin && !admin && e.l.Owner != v.User) { // admins: any, by id
 			h.mu.Unlock()
 			writeResult(w, nil, status.Errorf(codes.NotFound, "no link %s", id))
 			return

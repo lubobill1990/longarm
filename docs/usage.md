@@ -141,7 +141,7 @@ message naming the blocking directory, and longarmd refuses to start on it.
 ## Usage
 
 ```sh
-longarm ls                                         # CPU / memory / jobs / labels of all workers, one row per machine
+longarm ls                                         # CPU / memory / jobs / labels of your workers, one row per machine
 longarm ls -o wide                                 # + claude/copilot sessions, disk, uptime, top processes, path
 longarm exec w1 -- git status                      # short synchronous command, exit code mirrored
 longarm run w1 --name build --cwd C:/src/app --env CI=1 --secret-env GH_TOKEN -- pnpm test
@@ -157,9 +157,17 @@ longarm admin shutdown w1                          # admin role only; jobs keep 
 longarm logs last -f                               # your most recent job; a job is also a unique prefix or
 longarm kill 7K3M9Q2A                              #   suffix of its id (the tray shows the last 8 characters)
 longarm logs -s a1 [-f]                            # a session's transcript (also: logs w1 a1 --session)
-longarm jobs [--mine | --all] [--limit N]          # the newest 20 (0 = all); admins see their own unless --all
+longarm jobs [--mine | --all] [--limit N]          # the newest 20 (0 = all); admin certificates: only yours unless --all
 longarm doctor [--json]                            # checklist: sign-in, hub, daemon, firewall, your workers
 ```
+
+**Which workers you see.** On a hub, `ls`, `ls -o wide`, `worker ls`,
+`jobs`, the tray's Workers tab and the MCP tools show your own workers and
+devices, the workers shared with you and the fleet workers (no owner) -
+admins included: an admin certificate gets exactly a user's view there, and
+there is no flag that widens it. Other users' machines are counted, never
+listed, by `longarm admin summary` (admins; see below and
+[security.md](security.md#what-admins-see)).
 
 A job id on the command line (`logs`, `wait`, `kill`, `jobs --id`) is the
 full id, a unique prefix or suffix of it (case-insensitive), or `last` - your
@@ -1321,6 +1329,7 @@ longarm run --no-queue -- ...            # fail (exit 75) instead of queueing wh
 longarm exec -- hostname                 # short command on the least loaded worker
 longarm wait <id>; longarm logs <id> -f; longarm kill <id>   # worker optional: found through the hub
 longarm admin nodes | approve | revoke | drain | undrain | label <node> k=v | join-codes | audit
+longarm admin summary [--rows]           # the whole fleet as counts per user (admin nodes lists what your user sees)
 longarm admin tailnet status [--json] | rekey <node>   # tailnet provider + per-node state ("Tailnet provider" below)
 longarm admin profile set dev git=latest node=22 pnpm=latest claude=latest pwsh=7
 longarm admin profile assign w1 dev; longarm admin profile ls   # canary first, then the rest
@@ -1389,10 +1398,14 @@ longarm admin user add alice [--team web]... [--max-jobs 8] [--max-mem-gb 64] [-
 longarm admin user code alice [--device alice-desktop]     # a join code for another device
 longarm admin user set alice --team web --team infra       # replace teams; quota flags change the quota
 longarm admin user set alice --clear-quota                 # back to the default quota
-longarm admin user ls [--json]                             # devices, teams, usage, quotas
+longarm admin user ls [--json]                             # number of devices and workers, teams, usage, quotas
 longarm admin user disable|enable alice                    # refused on the hub and every worker
-longarm admin user remove alice [--purge]                  # revoke all of alice's devices; --purge: workers
-                                                           # delete her jobs, data and OS account
+longarm admin user remove alice [--purge]                  # revoke all of alice's devices and workers; --purge:
+                                                           # workers delete her jobs, data and OS account
+longarm admin summary [--rows] [--json]                    # the fleet per user: workers / admin workers / devices,
+                                                           # online, last seen, worker versions; --rows: one
+                                                           # anonymous row per machine (role, state, version, OS,
+                                                           # last seen). No names; audited
 longarm admin team add web alice bob; longarm admin team rm web bob; longarm admin team ls
 longarm admin join-code --role client --user alice --name alice-2   # the same, by hand
 longarm admin issue --role client --name alice-pc --user alice --out DIR   # without a hub
@@ -1974,7 +1987,12 @@ One frontend, two shells. **The hub panel** is served on longarm-hub's HTTP
 listener at `/` (the old server-rendered page moved to `/status`). Log in with
 an account from `longarm-hub user add` + TOTP (panel administrators; logins of
 Longarm users, created with `longarm admin user add --panel` or on the
-"People" page, see only "My jobs", the nodes read-only and "Me"). Pages: nodes (online state, CPU and
+"People" page, see only "My jobs", the nodes read-only and "Me"). With
+multi-tenancy an administrator's "Nodes" and "Jobs" pages show what its
+user sees (its own and shared machines, fleet workers; its own jobs) and
+the "Fleet" page the whole fleet as counts per user, worker versions and,
+optionally, anonymous rows (`GET /api/admin/summary`; no names, audited).
+Pages: nodes (online state, CPU and
 memory sparklines, Claude/Copilot sessions, each client's path and RTT to the
 worker, labels, approve pending, drain/resume, revoke, toolchain profile and
 "update now"), jobs (filter, live logs, kill, run a command), "add machine"
@@ -1991,8 +2009,9 @@ longarm-hub user add|ls|rm
 **longarm-tray** (one desktop app for both roles; tabs by installed role) is a
 tray icon with live per-worker CPU/memory columns and a popup
 next to it (left click; hides on focus loss unless pinned; drag it by the
-title bar). The popup shows every worker's load plus this client's link to every
-worker: active leg and path (tcp, tailscale direct/peer-relay/DERP, longnet
+title bar). The popup shows the load of every worker you may see (your own,
+shared with you, the fleet's - admins too, there is no "all workers" switch)
+plus this client's link to each: active leg and path (tcp, tailscale direct/peer-relay/DERP, longnet
 direct/relay-udp/relay-tcp), NAT types, RTT with a 5-minute sparkline. Data
 comes from `longarm daemon` (hub events when the hub is reachable, otherwise
 streamed from the workers; the popup shows which). Tabs: workers, my jobs

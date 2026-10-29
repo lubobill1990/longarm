@@ -64,7 +64,7 @@ func TestTenancyRoleTable(t *testing.T) {
 	if !slices.Equal(got, clientMay) {
 		t.Fatalf("clients may call %v\nwant %v", got, clientMay)
 	}
-	for _, m := range []string{pb.HubAdmin_PutUser_FullMethodName, pb.HubAdmin_ListUsers_FullMethodName,
+	for _, m := range []string{pb.HubAdmin_PutUser_FullMethodName, pb.HubAdmin_ListUsers_FullMethodName, pb.HubAdmin_FleetSummary_FullMethodName,
 		pb.HubAdmin_RemoveUser_FullMethodName, pb.HubAdmin_SetTeam_FullMethodName, pb.HubAdmin_ListTeams_FullMethodName,
 		pb.Fleet_Audit_FullMethodName, pb.Fleet_Links_FullMethodName, pb.HubAdmin_KillJob_FullMethodName,
 		pb.HubAdmin_JobLogs_FullMethodName, pb.HubAdmin_SubmitJob_FullMethodName} {
@@ -181,7 +181,7 @@ func TestTenancyViews(t *testing.T) {
 	for _, c := range []struct {
 		conn *grpc.ClientConn
 		want []string
-	}{{th.alice, []string{"JA", "JS"}}, {th.bob, []string{"JB"}}, {th.carol, []string{"JS"}}, {th.root, []string{"JA", "JB", "JS"}}} {
+	}{{th.alice, []string{"JA", "JS"}}, {th.bob, []string{"JB"}}, {th.carol, []string{"JS"}}, {th.root, nil}} { // admins: their user's view
 		if got := jobIDs(t, c.conn); !slices.Equal(got, c.want) {
 			t.Errorf("jobs %v, want %v", got, c.want)
 		}
@@ -215,9 +215,16 @@ func TestTenancyViews(t *testing.T) {
 			t.Errorf("bob's view of w1: top %v mirrors %v", n.Metrics.GetTopCpu(), n.Mirrors)
 		}
 	}
-	nl, _ = fleet(th.root).ListNodes(tctx(t), &pb.ListNodesRequest{})
-	if len(nl.Nodes) != 1 || len(nl.Nodes[0].Metrics.GetTopCpu()) != 1 || len(nl.Nodes[0].Mirrors) != 2 {
-		t.Errorf("admin's view of w1: %v", nl.Nodes)
+	// an admin sees what a user sees: the fleet worker without process
+	// lists or other users' mirrors, no other user's devices
+	nl, _ = fleet(th.root).ListNodes(tctx(t), &pb.ListNodesRequest{All: true})
+	for _, n := range nl.Nodes {
+		if n.Role != "worker" && n.User != "root" && n.Name != "root" {
+			t.Errorf("admin sees node %s of %s", n.Name, n.User)
+		}
+		if n.Name == "w1" && (n.Metrics.GetTopCpu() != nil || len(n.Mirrors) != 0) {
+			t.Errorf("admin's view of w1: %v", n)
+		}
 	}
 
 	// events: bob gets his job's, not alice's
@@ -269,7 +276,7 @@ func TestTenancyViews(t *testing.T) {
 		t.Fatalf("users: %v %v", lu, err)
 	}
 	for _, u := range lu.Users {
-		if u.Name == "bob" && (!slices.Equal(u.Devices, []string{"bob-laptop"}) || u.Usage.GetJobs() != 0) {
+		if u.Name == "bob" && (len(u.Devices) != 0 || u.DeviceCount != 1 || u.WorkerCount != 0 || u.Usage.GetJobs() != 0) { // counts, not names
 			t.Errorf("bob: %+v", u)
 		}
 	}
@@ -324,7 +331,7 @@ func TestTenancyQuotaAndPolicy(t *testing.T) {
 	}
 	// removing with purge revokes bob's devices and tells workers to purge
 	r, err := h.RemoveUser("test", &pb.RemoveUserRequest{Name: "bob", Purge: true})
-	if err != nil || !slices.Equal(r.Revoked, []string{"bob-laptop"}) {
+	if err != nil || len(r.Revoked) != 0 || r.RevokedCount != 1 {
 		t.Fatalf("remove: %v %v", r, err)
 	}
 	h.mu.Lock()
@@ -387,8 +394,22 @@ func TestTenancyPanelRoles(t *testing.T) {
 			t.Errorf("carol GET %s: %d", p, code)
 		}
 	}
-	if code, body := get(admin, "/api/jobs"); code != 200 || !strings.Contains(body, `"JA"`) || !strings.Contains(body, `"JB"`) {
+	// an admin login sees its own user's jobs only (admin1 has none) ...
+	if code, body := get(admin, "/api/jobs"); code != 200 || strings.Contains(body, `"JA"`) || strings.Contains(body, `"JB"`) || strings.Contains(body, `"JS"`) {
 		t.Errorf("admin's jobs: %d %s", code, body)
+	}
+	// ... and the fleet as counts: the summary is admins' only (and audited)
+	if code, _ := get(carol, "/api/admin/summary"); code != http.StatusForbidden {
+		t.Errorf("carol GET /api/admin/summary: %d", code)
+	}
+	code, body := get(admin, "/api/admin/summary?rows=1")
+	if flat := strings.ReplaceAll(body, " ", ""); code != 200 || !strings.Contains(flat, `"user":"carol"`) || !strings.Contains(flat, `"workers":1`) {
+		t.Errorf("admin's summary: %d %s", code, body)
+	}
+	for _, leak := range []string{"w1", "bob-laptop", "alices-build", "secret-repo", "JA"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("the summary names %q: %s", leak, body)
+		}
 	}
 	if code, body := get(admin, "/api/tenants"); code != 200 || !strings.Contains(body, `"carol"`) {
 		t.Errorf("admin's tenants: %d %s", code, body)

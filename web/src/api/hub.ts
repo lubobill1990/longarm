@@ -4,6 +4,7 @@ import type {
   AuditRecord,
   FleetEvent,
   FleetJob,
+  FleetSummary,
   JoinCode,
   LatestRelease,
   LinkReport,
@@ -153,6 +154,8 @@ export const hubApi = {
     for (const k of kinds) h[k] = (d) => onEvent(d as FleetEvent)
     return sse(`/api/events?kinds=${kinds.join(',')}`, h)
   },
+  // administrators: per-user counts of machines, no names (audited)
+  fleetSummary: (rows = false) => get<FleetSummary>(`/api/admin/summary${rows ? '?rows=1' : ''}`),
   history: () => get<{ nodes?: { node: string; points?: MetricsPoint[] }[] }>('/api/history').then((r) => r.nodes ?? []),
   links: () => get<{ reports?: LinkReport[] }>('/api/links').then((r) => r.reports ?? []),
   // port links (longarm link): the login's own, administrators see everybody's

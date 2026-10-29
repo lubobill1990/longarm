@@ -272,12 +272,16 @@ func (a *hubAdminServer) TailnetStatus(ctx context.Context, _ *pb.TailnetStatusR
 	if last.err != "" {
 		resp.LastMintError, resp.LastMintErrorAt, resp.LastMintErrorNode = last.err, tspb(last.at), last.node
 	}
+	v := h.viewer(callerFrom(ctx))
 	h.mu.Lock()
 	for _, n := range h.nodes {
-		if n.rec.State != stateApproved {
+		if n.rec.State != stateApproved || !h.visibleNodeLocked(v, n) { // other users' machines: not listed
 			continue
 		}
 		resp.Nodes = append(resp.Nodes, h.tailnetNodeStatusLocked(n))
+	}
+	if resp.LastMintErrorNode != "" && !h.visibleNameLocked(v, resp.LastMintErrorNode) {
+		resp.LastMintErrorNode = hiddenNode
 	}
 	h.mu.Unlock()
 	sort.Slice(resp.Nodes, func(i, j int) bool {
@@ -308,7 +312,11 @@ func (a *hubAdminServer) TailnetRekey(ctx context.Context, req *pb.NodeRequest) 
 	}
 	h.sendLocked(n, &pb.HubCommand{Msg: &pb.HubCommand_Tailnet{Tailnet: h.tailnetInfo(n)}})
 	h.log.Info("tailnet re-key requested", "node", n.rec.Name, "by", callerFrom(ctx).id.String(), "online", n.sess != nil)
-	return h.tailnetNodeStatusLocked(n), nil
+	ns := h.tailnetNodeStatusLocked(n)
+	if !h.visibleNodeLocked(h.viewerLocked(callerFrom(ctx).id.Owner(), false), n) { // by name: no more than the admin knew
+		ns = &pb.TailnetNodeStatus{Name: ns.Name, Role: ns.Role, Online: ns.Online, RekeyPending: ns.RekeyPending}
+	}
+	return ns, nil
 }
 
 // callerTailnet is the hub's tailnet for a node (Whoami).

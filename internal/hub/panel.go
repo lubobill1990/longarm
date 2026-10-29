@@ -95,14 +95,14 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 		})
 	})
 	admin("POST /api/nodes/{name}/toolchain/apply", func(w http.ResponseWriter, r *http.Request, user string) {
-		info, err := h.ToolchainApply(r.Context(), "web/"+user, r.PathValue("name"))
+		info, err := h.opResult(h.panelViewer(user))(h.ToolchainApply(r.Context(), "web/"+user, r.PathValue("name")))
 		writeResult(w, info, err)
 	})
 	api("GET /api/history", func(w http.ResponseWriter, r *http.Request, user string) {
 		writePB(w, h.HistoryFor(h.panelViewer(user), r.URL.Query().Get("node")))
 	})
-	admin("GET /api/links", func(w http.ResponseWriter, r *http.Request, _ string) {
-		writePB(w, h.Links())
+	admin("GET /api/links", func(w http.ResponseWriter, r *http.Request, user string) {
+		writePB(w, h.LinksFor(h.panelViewer(user)))
 	})
 	admin("GET /api/install", func(w http.ResponseWriter, r *http.Request, _ string) {
 		q := r.URL.Query()

@@ -819,11 +819,15 @@ message TenantUser {
   bool disabled = 4; // calls are refused until enabled again
   google.protobuf.Timestamp created_at = 5;
   string created_by = 6;
-  repeated string devices = 7; // output: nodes with certificates of this user
+  // output: no longer filled (device names are their owner's business,
+  // not the admins'); see device_count / worker_count
+  repeated string devices = 7;
   QuotaUsage usage = 8; // output
   bool panel = 9; // output: has a web panel login
   string upn = 10; // users created by Entra sign-in: their sign-in name
   bool can_share = 11; // may share own workers (set by an admin)
+  int32 device_count = 12; // output: clients/admin devices with certificates of this user
+  int32 worker_count = 13; // output: workers this user owns (not revoked)
 }
 
 // TenancyPolicy is what workers need to know about users.
@@ -883,8 +887,9 @@ message RemoveUserRequest {
 }
 
 message RemoveUserResponse {
-  repeated string revoked = 1; // nodes whose certificates were revoked
+  repeated string revoked = 1; // no longer filled: see revoked_count
   bool purge = 2;
+  int32 revoked_count = 3; // nodes whose certificates were revoked
 }
 
 message SetTeamRequest {
@@ -956,6 +961,57 @@ service HubAdmin {
   rpc RemoveUser(RemoveUserRequest) returns (RemoveUserResponse);
   rpc SetTeam(SetTeamRequest) returns (ListTeamsResponse);
   rpc ListTeams(ListTeamsRequest) returns (ListTeamsResponse);
+  // FleetSummary is the admins' only fleet-wide view of machines: per user
+  // counts by role and online state, anonymous rows (role, state, version,
+  // OS, last seen) and a version histogram - never names, IDs, host names,
+  // labels, metrics, processes, sessions or jobs. Audited.
+  rpc FleetSummary(FleetSummaryRequest) returns (FleetSummaryResponse);
+}
+
+message FleetSummaryRequest {
+  bool rows = 1; // include the anonymous per-machine rows
+}
+
+// FleetCounts counts machines (revoked ones excluded). Clients have no hub
+// session: their online state is not known.
+message FleetCounts {
+  int32 workers = 1; // session workers (not admin workers)
+  int32 workers_online = 2;
+  int32 admin_workers = 3;
+  int32 admin_workers_online = 4;
+  int32 clients = 5; // client and admin certificates (devices)
+  int32 pending = 6; // workers waiting for approval
+}
+
+// FleetMachine is one machine without anything that identifies it. The
+// rows of a user are sorted by role, state, version and OS only.
+message FleetMachine {
+  string role = 1; // worker | admin-worker | client | admin
+  bool online = 2; // workers: hub session
+  string version = 3;
+  string os = 4;
+  google.protobuf.Timestamp last_seen = 5; // workers; truncated to the minute
+}
+
+message UserFleetSummary {
+  string user = 1; // "" = fleet workers (no owner)
+  FleetCounts counts = 2;
+  google.protobuf.Timestamp last_seen = 3; // latest of its workers
+  repeated FleetMachine machines = 4; // with rows
+}
+
+message VersionCount {
+  string version = 1; // "" = not reported
+  int32 workers = 2;
+  int32 online = 3;
+}
+
+message FleetSummaryResponse {
+  google.protobuf.Timestamp time = 1;
+  repeated UserFleetSummary users = 2; // every user, then the fleet workers ("")
+  FleetCounts totals = 3;
+  repeated VersionCount worker_versions = 4; // newest first
+  bool tenancy = 5;
 }
 
 message HubLogsRequest {
@@ -1256,6 +1312,15 @@ message Rollout {
   // state "none" (PushReleaseRequest.allow_none): the workers of the
   // channel that can't self-update; nothing was started
   repeated string not_capable = 17;
+  // Counts of the lists above. The name lists carry only the workers the
+  // caller may see as a user (its own, shared with it, fleet workers):
+  // other users' workers are counted, never named.
+  int32 canary_count = 18;
+  int32 targeted_count = 19;
+  int32 updated_count = 20;
+  int32 failed_count = 21;
+  int32 waiting_count = 22;
+  int32 not_capable_count = 23;
 }
 
 message LeaveRequest {

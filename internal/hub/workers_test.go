@@ -120,8 +120,8 @@ func TestOwnedWorkers(t *testing.T) {
 			t.Errorf("%s does not see the fleet worker", name)
 		}
 	}
-	if n := nodeNames(t, th.root)["aw"]; n == nil || n.Owner != "alice" {
-		t.Fatalf("admin's list: %v", n)
+	if n, ok := nodeNames(t, th.root)["aw"]; ok { // admins see what users see
+		t.Fatalf("admin's list shows alice's worker: %v", n)
 	}
 	if hist := h.HistoryFor(h.viewer(caller{id: pki.Identity{Role: pki.RoleClient, Name: "bob-laptop", User: "bob"}}), "aw"); len(hist.Nodes) != 0 {
 		t.Errorf("bob gets aw's history")
@@ -149,7 +149,7 @@ func TestOwnedWorkers(t *testing.T) {
 	if err == nil {
 		_, err = st.Recv()
 	}
-	if status.Code(err) != codes.PermissionDenied {
+	if status.Code(err) != codes.NotFound { // not even known to the admin
 		t.Fatalf("admin reads alice's job through the hub: %v", err)
 	}
 	if _, err := pb.NewHubAdminClient(th.root).SubmitJob(tctx(t), &pb.HubSubmitRequest{Worker: "aw", Argv: []string{"x"}}); status.Code(err) != codes.PermissionDenied {

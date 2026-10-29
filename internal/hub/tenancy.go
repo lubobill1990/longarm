@@ -95,11 +95,42 @@ func (h *Hub) viewerLocked(user string, admin bool) tenancy.Caller {
 	return c
 }
 
-// viewer of a gRPC caller.
+// viewer of a gRPC caller, for what it may read (nodes, jobs, events,
+// history): admin certificates get exactly their user's view - their own
+// workers and devices, the workers shared with them, fleet workers, their
+// own and team-shared jobs. The only fleet-wide view of machines admins have
+// is the anonymous FleetSummary (docs/security.md "What admins see").
+// Without multi-tenancy (one user) everybody sees everything.
 func (h *Hub) viewer(c caller) tenancy.Caller {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.viewerLocked(c.id.Owner(), c.id.Role == pki.RoleAdmin)
+	return h.viewerLocked(c.id.Owner(), false)
+}
+
+// opNodeView is what an admin operation on a node by name (approve, revoke,
+// drain, label, profile, remove ...) returns: the node as v sees it as a
+// user, or - for nodes v may not see (other users' private workers and
+// devices) - only what v already knows: the name, role, owner, state and
+// drain, none of the machine's details.
+func opNodeView(v tenancy.Caller, n *pb.NodeInfo) *pb.NodeInfo {
+	if n == nil {
+		return nil
+	}
+	if canSeeNode(v, n) {
+		return nodeView(v, n)
+	}
+	return &pb.NodeInfo{Name: n.Name, Role: n.Role, State: n.State, Owner: n.Owner, User: n.User, Online: n.Online,
+		Draining: n.Draining, AdminDrain: n.AdminDrain, AdminWorker: n.AdminWorker}
+}
+
+// opResult applies opNodeView to an operation's (info, err) result.
+func (h *Hub) opResult(v tenancy.Caller) func(*pb.NodeInfo, error) (*pb.NodeInfo, error) {
+	return func(info *pb.NodeInfo, err error) (*pb.NodeInfo, error) {
+		if err != nil {
+			return nil, err
+		}
+		return opNodeView(v, info), nil
+	}
 }
 
 // canSeeJob reports whether v may read j.
@@ -272,7 +303,13 @@ func nodeUser(r *store.Node) string {
 
 func (h *Hub) userInfoLocked(t *tenant) *pb.TenantUser {
 	u := proto.Clone(t.u).(*pb.TenantUser)
-	u.Devices = h.devicesLocked(u.Name)
+	// counts, not names: admins don't learn other users' device names
+	u.DeviceCount = int32(len(h.devicesLocked(u.Name)))
+	for _, n := range h.nodes {
+		if n.rec.Owner == u.Name && n.rec.Role == string(pki.RoleWorker) && n.rec.State != stateRevoked {
+			u.WorkerCount++
+		}
+	}
 	u.Usage = h.usageLocked(u.Name)
 	if pu, err := h.store.GetUser(u.Name); err == nil && pu.Tenant == u.Name {
 		u.Panel = true
@@ -469,7 +506,7 @@ func (h *Hub) RemoveUser(by string, req *pb.RemoveUserRequest) (*pb.RemoveUserRe
 		if _, err := h.Revoke(by+" (remove user "+req.Name+")", d); err != nil {
 			return nil, err
 		}
-		resp.Revoked = append(resp.Revoked, d)
+		resp.RevokedCount++
 	}
 	h.mu.Lock()
 	delete(h.tenants, req.Name)
@@ -489,8 +526,9 @@ func (h *Hub) RemoveUser(by string, req *pb.RemoveUserRequest) (*pb.RemoveUserRe
 		h.store.DeleteUser(req.Name)
 	}
 	h.dropWorkerCodes(by, req.Name)
-	h.auditHub(by, "users/remove", map[string]any{"user": req.Name, "purge": req.Purge, "revoked": resp.Revoked})
-	h.log.Info("user removed", "user", req.Name, "by", by, "purge", req.Purge, "revoked", resp.Revoked)
+	// the audit log (admins' security tool) names the revoked nodes
+	h.auditHub(by, "users/remove", map[string]any{"user": req.Name, "purge": req.Purge, "revoked": devices})
+	h.log.Info("user removed", "user", req.Name, "by", by, "purge", req.Purge, "revoked", len(devices))
 	return resp, nil
 }
 
@@ -658,8 +696,10 @@ func (h *Hub) panelAdmin(user string) bool {
 	return err == nil && u.Admin()
 }
 
-// panelViewer is how the hub sees a panel account: administrators see
-// everything; a user login (role user) sees what its Longarm user may.
+// panelViewer is how the hub sees a panel account: what its Longarm user
+// may see. Administrators are no exception (with multi-tenancy): they see
+// their own user's machines and jobs (the login's tenant, else the login
+// name), and the fleet only through the anonymous summary (/api/admin/summary).
 func (h *Hub) panelViewer(user string) tenancy.Caller {
 	u, err := h.store.GetUser(user)
 	h.mu.Lock()
@@ -668,7 +708,11 @@ func (h *Hub) panelViewer(user string) tenancy.Caller {
 		return tenancy.Caller{User: user} // vanished meanwhile: nothing
 	}
 	if u.Admin() {
-		return h.viewerLocked(user, true)
+		name := user
+		if u.Tenant != "" {
+			name = u.Tenant
+		}
+		return h.viewerLocked(name, false)
 	}
 	v := h.viewerLocked(u.Tenant, false)
 	v.Admin = false // a user login never sees others' jobs, tenancy or not

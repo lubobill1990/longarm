@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
@@ -127,8 +129,12 @@ func hubAdminCmds() []*cobra.Command {
 	var all, asJSON bool
 	nodes := &cobra.Command{
 		Use:   "nodes",
-		Short: "List the hub's nodes (pending ones too); --all includes clients and revoked nodes",
-		Args:  cobra.NoArgs,
+		Short: "List your nodes as the hub shows them to your user (pending ones too); --all includes clients and revoked nodes",
+		Long: `List the nodes your user may see: your own workers and devices, the
+workers shared with you and the fleet workers (no owner), pending ones too.
+With multi-tenancy an admin sees no more than any user here: other users'
+machines are only counted, anonymously, by "longarm admin summary".`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
 				resp, err := h.Fleet().ListNodes(ctx, &pb.ListNodesRequest{All: all})
@@ -158,7 +164,16 @@ func hubAdminCmds() []*cobra.Command {
 					fmt.Fprintf(tw, "%s\t%s\t%s\t%v\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n", n.Name, n.Role, n.State, n.Online, drain,
 						n.JobsActive, labelString(n.Labels), prof, n.Version, ago(n.LastSeen, n.LastSeen == nil), exp)
 				}
-				return tw.Flush()
+				if err := tw.Flush(); err != nil {
+					return err
+				}
+				// the rest of the fleet: counts only
+				if sum, err := h.Admin().FleetSummary(ctx, &pb.FleetSummaryRequest{}); err == nil && sum.Tenancy {
+					t := sum.Totals
+					fmt.Fprintf(os.Stderr, "fleet: %d users, %d workers (%d online), %d admin workers, %d devices; other users' machines are counted, not listed (longarm admin summary)\n",
+						len(sum.Users), t.GetWorkers(), t.GetWorkersOnline(), t.GetAdminWorkers(), t.GetClients())
+				}
+				return nil
 			})
 		},
 	}
@@ -269,7 +284,7 @@ func hubAdminCmds() []*cobra.Command {
 				if err != nil {
 					return err
 				}
-				fmt.Printf("%s: %s\n", n.Name, labelString(n.Labels))
+				fmt.Println(labelResult(n))
 				return nil
 			})
 		},
@@ -365,5 +380,101 @@ func hubAdminCmds() []*cobra.Command {
 	audit.Flags().StringVar(&auditNode, "node", "", "only this worker")
 	audit.Flags().IntVar(&auditLimit, "limit", 50, "newest N records")
 	audit.Flags().BoolVar(&auditJSON, "json", false, "print the raw JSON records")
-	return []*cobra.Command{nodes, joinCode, codes, approve, revoke, drain, undrain, label, prof, audit, releaseCmd()}
+	return []*cobra.Command{nodes, summaryCmd(), joinCode, codes, approve, revoke, drain, undrain, label, prof, audit, releaseCmd()}
+}
+
+// summaryCmd is `longarm admin summary`: the admins' fleet-wide view (Admin.FleetSummary):
+// per user the number of workers and devices and how many are online, the
+// workers' versions; --rows adds one anonymous row per machine (role, state,
+// version, OS, last seen). Never names, IDs, labels, metrics or jobs.
+func summaryCmd() *cobra.Command {
+	var asJSON, rows bool
+	c := &cobra.Command{
+		Use:   "summary",
+		Short: "Fleet-wide counts per user: workers, devices, online, versions (no names; audited)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
+				r, err := h.Admin().FleetSummary(ctx, &pb.FleetSummaryRequest{Rows: rows})
+				if err != nil {
+					return err
+				}
+				if asJSON {
+					return printJSON(r)
+				}
+				printSummary(os.Stdout, r, rows)
+				return nil
+			})
+		},
+	}
+	c.Flags().BoolVar(&rows, "rows", false, "one anonymous row per machine: role, state, version, OS, last seen")
+	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
+	return c
+}
+
+func printSummary(w io.Writer, r *pb.FleetSummaryResponse, rows bool) {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "USER\tWORKERS\tONLINE\tADMIN WORKERS\tONLINE\tDEVICES\tPENDING\tLAST SEEN")
+	row := func(name string, c *pb.FleetCounts, seen *timestamppb.Timestamp) {
+		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n", name, c.GetWorkers(), c.GetWorkersOnline(), c.GetAdminWorkers(),
+			c.GetAdminWorkersOnline(), c.GetClients(), c.GetPending(), ago(seen, seen == nil))
+	}
+	for _, u := range r.Users {
+		name := u.User
+		if name == "" {
+			name = "(fleet)"
+		}
+		row(name, u.Counts, u.LastSeen)
+	}
+	row("TOTAL", r.Totals, nil)
+	tw.Flush()
+	if len(r.WorkerVersions) > 0 {
+		fmt.Fprintln(w)
+		tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "VERSION\tWORKERS\tONLINE")
+		for _, v := range r.WorkerVersions {
+			name := v.Version
+			if name == "" {
+				name = "-"
+			}
+			fmt.Fprintf(tw, "%s\t%d\t%d\n", name, v.Workers, v.Online)
+		}
+		tw.Flush()
+	}
+	if !rows {
+		return
+	}
+	for _, u := range r.Users {
+		if len(u.Machines) == 0 {
+			continue
+		}
+		name := u.User
+		if name == "" {
+			name = "(fleet)"
+		}
+		fmt.Fprintf(w, "\n%s:\n", name)
+		tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "  ROLE\tSTATE\tVERSION\tOS\tLAST SEEN")
+		for _, m := range u.Machines {
+			st := "offline"
+			switch {
+			case m.Online:
+				st = "online"
+			case m.Role == "client" || m.Role == "admin":
+				st = "-"
+			}
+			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", m.Role, st, m.Version, m.Os, ago(m.LastSeen, m.LastSeen == nil))
+		}
+		tw.Flush()
+	}
+}
+
+// labelResult is the answer to a label change: the worker's labels, or -
+// for another user's worker, whose details the hub shows its owner only
+// (no machine, no labels in the answer) - just that it worked.
+func labelResult(n *pb.NodeInfo) string {
+	if n.Role == "worker" && n.Machine == "" {
+		return n.Name + ": labels set (another user's worker: the hub shows its labels to its owner)"
+	}
+	return n.Name + ": " + labelString(n.Labels)
 }

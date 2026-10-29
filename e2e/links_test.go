@@ -167,7 +167,7 @@ func TestPortLinks(t *testing.T) {
 		if r := h.longarm(bob, "exec", "wa", "--", bins.helper, "env", "LONGARM_LINKS"); strings.TrimSpace(r.stdout) != "LONGARM_LINKS=" {
 			t.Fatalf("bob's environment: %+v", r)
 		}
-		// the admin sees everybody's links
+		// the admin sees everybody's links between workers it may see (fleet workers here)
 		if out := h.mustLongarm(h.admin, "link", "ls", "--all"); !strings.Contains(out, id) {
 			t.Fatalf("admin ls --all: %s", out)
 		}

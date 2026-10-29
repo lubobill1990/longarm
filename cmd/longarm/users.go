@@ -214,7 +214,7 @@ creates belongs to the user and - on workers with [isolation] mode =
 
 	var asJSON bool
 	ls := &cobra.Command{
-		Use: "ls", Short: "List users with devices, teams, quotas and usage", Args: cobra.NoArgs,
+		Use: "ls", Short: "List users with their number of devices and workers, teams, quotas and usage", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
 				r, err := h.Admin().ListUsers(ctx, &pb.ListUsersRequest{})
@@ -230,14 +230,14 @@ creates belongs to the user and - on workers with [isolation] mode =
 				}
 				fmt.Printf("multi-tenancy %s; default quota: %s\n", state, quotaString(r.DefaultQuota))
 				tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(tw, "USER\tSTATE\tTEAMS\tDEVICES\tJOBS\tMEM GB\tQUOTA\tCAN SHARE")
+				fmt.Fprintln(tw, "USER\tSTATE\tTEAMS\tDEVICES\tWORKERS\tJOBS\tMEM GB\tQUOTA\tCAN SHARE")
 				for _, u := range r.Users {
 					st := "active"
 					if u.Disabled {
 						st = "disabled"
 					}
-					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%.1f\t%s\t%v\n", u.Name, st, strings.Join(u.Teams, ","),
-						strings.Join(u.Devices, ","), u.Usage.GetJobs(), u.Usage.GetMemGb(), quotaString(u.Quota), u.CanShare)
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%.1f\t%s\t%v\n", u.Name, st, strings.Join(u.Teams, ","),
+						u.DeviceCount, u.WorkerCount, u.Usage.GetJobs(), u.Usage.GetMemGb(), quotaString(u.Quota), u.CanShare)
 				}
 				return tw.Flush()
 			})
@@ -272,7 +272,7 @@ creates belongs to the user and - on workers with [isolation] mode =
 				if err != nil {
 					return err
 				}
-				fmt.Printf("removed %s; revoked: %s\n", args[0], strings.Join(r.Revoked, ", "))
+				fmt.Printf("removed %s; revoked the certificates of %d device(s) and worker(s)\n", args[0], r.RevokedCount)
 				if r.Purge {
 					fmt.Println("workers delete the user's jobs, data and OS account (now, or when they next connect)")
 				}

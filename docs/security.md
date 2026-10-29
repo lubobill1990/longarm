@@ -95,12 +95,12 @@ but the worker's owners - its `[access]` policy restricts anybody
 | sessions: list, attach, kill, logs | yes | no | not found / denied | yes (`--owner`) |
 | files, workspace sync, exec, sshd/sftp | as the user's OS account (per-user) | - | - | as the admin's own account |
 | port forwards (per-user) | to loopback ports the user's own processes listen on | - | refused | any loopback port (`[forward] targets = "any"`: any address) |
-| port links (`longarm link`, `fleet_link`): create, list, remove, use | own (as the user's account on both workers, per-user), between workers the user may use; both workers' own policies apply ([below](#port-links)) | - | not found; can't use the listener (per-user) | everybody's (own links: only between workers the admin's user may use) |
+| port links (`longarm link`, `fleet_link`): create, list, remove, use | own (as the user's account on both workers, per-user), between workers the user may use; both workers' own policies apply ([below](#port-links)) | - | not found; can't use the listener (per-user) | lists everybody's links between workers the admin's user may see (`link ls --all`), removes any by id (own links: only between workers the admin's user may use) |
 | worker metrics | aggregate (no process lists) | - | - | with process lists |
-| hub job index, events, `longarm jobs`, MCP tools | own + team-shared | | hidden | everything |
-| hub node list | workers without process lists and others' mirrors; own devices | | others' devices hidden | everything |
-| audit log, users, teams, join codes, links, releases, profiles | no | | no | yes |
-| web panel | "My jobs", nodes (read-only), "Me" for user logins | | | everything ("People" page for users, teams, quotas) |
+| hub job index, events, `longarm jobs`, MCP tools | own + team-shared | | hidden | like any user: own + team-shared ([below](#what-admins-see)) |
+| hub node list (`ls`, `worker ls`, `admin nodes`, tray, panel "Nodes", events) | workers without process lists and others' mirrors; own devices | | others' devices hidden | like any user: own workers and devices, workers shared with the admin, fleet workers; everybody else's machines only as counts (`longarm admin summary`, panel "Fleet") |
+| audit log, users, teams, join codes, link reports, releases, profiles | no | | no | yes - naming only machines the admin may see as a user; the audit log names every node |
+| web panel | "My jobs", nodes (read-only), "Me" for user logins | | | "Nodes" and "Jobs" as the admin's user, "Fleet" (counts), "People" (users, teams, quotas; device counts), the rest of the administration |
 | a worker with `[access]` | users not in `users` get node info only | | | an admin certificate of a non-owner gets what `admins` allows (`own`: the "Owner" column; `observe`; `none`) |
 | a user-owned worker (`longarm worker add`) | its owner; users it is shared with | | hidden on the hub, never placed, node info only on the worker | sees, shares, unshares and removes it on the hub; on the worker refused like anybody unless owner or shared with ([below](#user-owned-workers)) |
 
@@ -404,8 +404,8 @@ separation on (like the first user).
 |---|---|
 | the owner | everything its role allows, as on any worker |
 | a user it is shared with (by name, a team of theirs, or everyone) | like any user of a multi-user worker: its own jobs and sessions only |
-| anybody else, **admin certificates included** | hub: the worker is hidden (lists, events, history, panel) and never placed for them, a named submit is "not found"; worker: `Node.Info` only, everything else (`Admin.Shutdown` / `Gc` too) `PermissionDenied`, audited as `worker owner/shares` |
-| hub admins (the hub's API, panel) | see it with owner and shares, share, unshare and remove it |
+| anybody else, **admin certificates included** | hub: the worker is hidden (lists, events, history, panel, rollouts) and never placed for them, a named submit is "not found"; worker: `Node.Info` only, everything else (`Admin.Shutdown` / `Gc` too) `PermissionDenied`, audited as `worker owner/shares` |
+| hub admins (the hub's API, panel) | count it (`longarm admin summary`); share, unshare, label, drain and remove (revoke) it **by name** - the answer carries name, owner and state only |
 
 Admin certificates shared with get no admin rights over the owner's jobs
 and sessions there. Every code, join, share, unshare and removal is audited
@@ -471,7 +471,7 @@ the panel or the CLI does:
 | Rule | Where |
 |---|---|
 | **Owner only, never shared**: `worker share` is refused for it (owner, `can_share` or admin alike); shares that reached its record anyway are ignored (`mayUse`), and the worker gets an access rule with the owner alone | hub (`ShareWorker`, `mayUseLocked`, `worker_access`) and the worker (owner/shares rule) |
-| **Admin certificates get nothing**: a fleet admin who is not the owner is refused like any other user - hidden from users, `PermissionDenied` on the worker (owner-only means owner-only), and `--owner` (acting on another user's sessions) can't reach it either. Fleet admins still see it (with the `admin` marker), drain it and remove (revoke) it | worker (`ownerDeny`), hub (`relayCheck`) |
+| **Admin certificates get nothing**: a fleet admin who is not the owner is refused like any other user - hidden from users, `PermissionDenied` on the worker (owner-only means owner-only), and `--owner` (acting on another user's sessions) can't reach it either. Fleet admins count it (`longarm admin summary`) and can drain and remove (revoke) it by name | worker (`ownerDeny`), hub (`relayCheck`) |
 | **No hub-relayed commands**: the hub relays no submit, kill or logs to it, not even its owner's (panel, `longarm admin run|kill|logs`): commands go to it directly with the owner's certificate (`workers/denied` in the hub's audit) | hub (`relayCheck`) |
 | **Never placed**: no `auto`, `--require` (even `--require longarm.io/admin=true`), scheduler queue, `session start auto`, MCP or client-side pick chooses it (`sched.Pick` rejects it as "admin worker (by name only)"): it is reachable by its name only | `sched.Pick` (hub and client) |
 | **Reserved label**: `longarm.io/...` keys are the hub's - `worker label`, `admin label`, join codes and sign-in labels can't set or remove them (`PermissionDenied`), and a worker's own `[hub] labels` with such keys are dropped | hub (`SetLabels`, `CreateJoinCode`, `StartLink`, hello) |
@@ -1239,6 +1239,60 @@ containers. These remain:
   `C:\Users\la-<user>` until the next reboot.
 - **Side channels** (CPU caches, timing, `/proc/meminfo`-style aggregates,
   the hub's node metrics) are out of scope.
+
+## What admins see
+
+With multi-tenancy (see [When users are separated](#when-users-are-separated))
+a hub admin - an admin certificate or an administrator's panel login - sees
+machines and jobs **exactly as its user does**: `longarm ls`, `ls -o wide`,
+`worker ls`, `jobs`, `sessions`, the MCP tools, the tray, `longarm admin
+nodes`, the hub's event stream and the panel's "Nodes" and "Jobs" pages
+show the admin's own workers and devices, the workers shared with it and
+the fleet workers (no owner), and the admin's own and team-shared jobs.
+There is no flag or toggle that widens this. Another user's private worker
+(owner not the admin, not shared with it) and another user's admin worker
+are not listed, streamed, placed on or named anywhere in those views; the
+admin's own `run --on auto` / `exec auto` never lands on them (the hub
+places with the admin's user, like any user's, and the client-side pick
+only knows the workers the hub listed). This is a hub-side rule: it applies
+to every client version.
+
+The **only fleet-wide view** is `Admin.FleetSummary` (`longarm admin
+summary`, the panel's "Fleet" page, `GET /api/admin/summary`): per user the
+number of workers, admin workers and devices, how many workers are online
+and when one was last seen, the workers' version histogram (for rollouts)
+and - with `--rows` - one anonymous row per machine: role (worker /
+admin-worker / client / admin), online, version, OS, last seen (to the
+minute). It never carries device or worker names, node IDs, host names,
+endpoints, labels, CPU / memory, processes, agent sessions or jobs; rows are
+ordered by role, state, version and OS only, so they carry no stable
+identity. Every request is audited (`fleet/summary`). Clients have no hub
+session: their online state is not known.
+
+Other admin answers follow the same line:
+
+| Admin path | What it shows of other users' machines |
+|---|---|
+| `admin nodes`, `ls`, tray, panel "Nodes", events (`node`, `metrics`, `job`, `queue`) | nothing (a count on stderr after `admin nodes`) |
+| operations by name: `admin approve / revoke / drain / label / profile`, `worker label / share / remove`, `admin tailnet rekey`, toolchain apply | allowed when the admin knows the name (from the owner); the answer carries name, role, owner and state only |
+| `admin kill <id>` | allowed on fleet workers (not on others' own workers: `relayCheck`); the answer carries id and state only |
+| `admin logs <id>` | not found: logs are read as their job's reader |
+| `admin user ls`, panel "People", `admin user remove` | device and worker **counts** per user; `remove` revokes them all and reports a count |
+| `admin join-codes` | fleet codes, the admin's own and the codes it created; other users' device and worker codes are left out |
+| release rollouts (`admin release status / push`) | counts of canary / targeted / updated / failed / waiting workers; names only of the workers the admin may see ("+N of other users") |
+| toolchain profiles, `admin tailnet status`, `admin links` | only the machines the admin may see; a hidden canary or failing node reads "(another user's machine)" |
+| `link ls --all` | links between workers the admin may see |
+| **audit log** (`admin audit`, panel "Audit") | **names nodes**: it is the admins' security tool (who did what where, refusals included) and stays complete; it records calls, not process lists or metrics |
+
+Without multi-tenancy (one user, no owned or per-user workers) everybody
+sees everything, as before.
+
+The rule is the hub's. Worker-side enforcement is unchanged: a fleet
+worker still lets an admin certificate list its jobs and sessions directly
+(`[access] admins`, [above](#worker-side-access-policy)), and whoever runs
+the hub (its database, the CA key) is trusted with everything the hub
+knows - the protection against hub insiders is the worker-side pinning
+and [end-to-end trust](#end-to-end-trust-the-hub-is-not-trusted-with-access).
 
 ## Audit trail
 

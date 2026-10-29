@@ -375,10 +375,23 @@ func (h *Hub) Links() *pb.LinksResponse {
 // ---------------------------------------------------------------- gRPC
 
 func (s *hubAdminServer) KillJob(ctx context.Context, req *pb.FleetJobRequest) (*pb.FleetJob, error) {
-	return s.h.KillJob(ctx, by(ctx), callerFrom(ctx).id.Owner(), req.Id, req.Worker)
+	fj, err := s.h.KillJob(ctx, by(ctx), callerFrom(ctx).id.Owner(), req.Id, req.Worker)
+	if err != nil {
+		return nil, err
+	}
+	if !canSeeJob(s.h.viewer(callerFrom(ctx)), fj.Job) { // killed by id: not a way to read others' jobs
+		fj = &pb.FleetJob{Worker: fj.Worker, Job: &pb.Job{Spec: &pb.JobSpec{Id: req.Id}, State: fj.Job.GetState()},
+			UpdatedAt: fj.UpdatedAt, WorkerOnline: fj.WorkerOnline}
+	}
+	return fj, nil
 }
 
 func (s *hubAdminServer) JobLogs(req *pb.HubLogsRequest, st pb.HubAdmin_JobLogsServer) error {
+	// a job's output is read as its reader: admins included (their own and
+	// team-shared jobs; others' jobs are "not known", as on GetJob)
+	if _, err := s.h.GetJobFor(s.h.viewer(callerFrom(st.Context())), req.Id, req.Worker); err != nil {
+		return err
+	}
 	return s.h.JobLogs(st.Context(), by(st.Context()), callerFrom(st.Context()).id.Owner(), req, st.Send)
 }
 
@@ -387,7 +400,7 @@ func (s *hubAdminServer) SubmitJob(ctx context.Context, req *pb.HubSubmitRequest
 }
 
 func (s *hubAdminServer) ToolchainApply(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
-	return s.h.ToolchainApply(ctx, by(ctx), req.Name)
+	return s.h.opResult(s.h.viewer(callerFrom(ctx)))(s.h.ToolchainApply(ctx, by(ctx), req.Name))
 }
 
 func (s *fleetServer) ReportLinks(ctx context.Context, req *pb.LinkReport) (*pb.ReportLinksResponse, error) {
@@ -395,8 +408,8 @@ func (s *fleetServer) ReportLinks(ctx context.Context, req *pb.LinkReport) (*pb.
 	return &pb.ReportLinksResponse{}, nil
 }
 
-func (s *fleetServer) Links(context.Context, *pb.LinksRequest) (*pb.LinksResponse, error) {
-	return s.h.Links(), nil
+func (s *fleetServer) Links(ctx context.Context, _ *pb.LinksRequest) (*pb.LinksResponse, error) {
+	return s.h.LinksFor(s.h.viewer(callerFrom(ctx))), nil
 }
 
 func (s *fleetServer) History(ctx context.Context, req *pb.HistoryRequest) (*pb.HistoryResponse, error) {

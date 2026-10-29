@@ -187,7 +187,7 @@ describe('multi-tenancy', () => {
               200,
               {
                 users: [
-                  { name: 'alice', teams: ['dev'], devices: ['alice', 'alice-2'], usage: { jobs: 2, mem_gb: 12 }, quota: { max_jobs: 5 }, panel: true },
+                  { name: 'alice', teams: ['dev'], device_count: 2, worker_count: 1, usage: { jobs: 2, mem_gb: 12 }, quota: { max_jobs: 5 }, panel: true },
                   { name: 'bob', disabled: true },
                 ],
                 default_quota: { max_jobs: 8, max_mem_gb: 64 },
@@ -201,7 +201,10 @@ describe('multi-tenancy', () => {
     const alice = await screen.findByTestId('tenant-alice')
     expect(alice.textContent).toContain('2/5') // own quota override
     expect(alice.textContent).toContain('12/64 GB') // default quota
-    expect(alice.textContent).toContain('alice-2')
+    // device and worker counts, never names
+    const cells = alice.querySelectorAll('td')
+    expect(cells[2].textContent).toBe('2')
+    expect(cells[3].textContent).toBe('1')
     expect(screen.getByTestId('tenant-bob').textContent).toContain('disabled')
     expect(screen.getByTestId('tenancy').textContent).toContain('on')
     expect(screen.getByTestId('default-quota').textContent).toContain('64 GB')
@@ -234,12 +237,52 @@ describe('multi-tenancy', () => {
     expect(screen.getByTestId('panel-totp').textContent).toBe('TOTPSECRET')
   })
 
+  it('FleetPage shows per-user counts and versions, never machine names', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    history.pushState(null, '', '/fleet')
+    const summary = {
+      time: '2026-10-29T10:00:00Z',
+      users: [
+        { user: 'alice', counts: { workers: 3, workers_online: 2, admin_workers: 1, admin_workers_online: 1, clients: 2 }, last_seen: '2026-10-29T09:59:00Z' },
+        { user: 'bob', counts: { clients: 1 } },
+        { counts: { workers: 4, workers_online: 4 } },
+      ],
+      totals: { workers: 7, workers_online: 6, admin_workers: 1, admin_workers_online: 1, clients: 3 },
+      worker_versions: [
+        { version: '0.2.0', workers: 6, online: 6 },
+        { version: '0.1.9', workers: 1 },
+      ],
+      tenancy: true,
+    }
+    const withRows = {
+      ...summary,
+      users: [{ ...summary.users[0], machines: [{ role: 'worker', online: true, version: '0.2.0', os: 'windows', last_seen: '2026-10-29T09:59:00Z' }] }, ...summary.users.slice(1)],
+    }
+    const calls = mockFetch({
+      '/api/me': () => [200, { user: 'ops', hub: 'hub1', version: 'dev', role: 'admin' }],
+      '/api/admin/summary?rows=1': () => [200, withRows],
+      '/api/admin/summary': () => [200, summary],
+    })
+    render(<PanelApp />)
+    const alice = await screen.findByTestId('fleet-alice')
+    expect(Array.from(alice.querySelectorAll('td')).map((td) => td.textContent).slice(0, 7)).toEqual(['alice', '3', '2', '1', '1', '2', '0'])
+    expect(screen.getByTestId('fleet-fleet').textContent).toContain('fleet workers')
+    expect(screen.getByTestId('fleet-total').textContent).toContain('7')
+    expect(screen.getByTestId('fleet-versions').textContent).toContain('0.1.9')
+    // only the summary: no node list, jobs or links behind it
+    expect(calls.some((c) => /\/api\/(nodes|jobs|links|history)/.test(c.url))).toBe(false)
+    fireEvent.click(screen.getByLabelText('anonymous rows'))
+    const rows = await screen.findByTestId('fleet-rows-alice')
+    expect(rows.textContent).toContain('windows')
+    expect(calls.some((c) => c.url === '/api/admin/summary?rows=1')).toBe(true)
+  })
+
   it('TenantsPage removes a user with purge and changes team members', async () => {
     vi.stubGlobal('EventSource', FakeEventSource)
     history.pushState(null, '', '/tenants')
     const calls = mockFetch({
       '/api/me': () => [200, { user: 'ops', hub: 'hub1', version: 'dev', role: 'admin' }],
-      '/api/tenants/bob': () => [200, { revoked: ['bob'], purge: true }],
+      '/api/tenants/bob': () => [200, { revoked_count: 1, purge: true }],
       '/api/tenants': () => [200, { users: [{ name: 'alice', teams: ['dev'] }, { name: 'bob' }], tenancy: true }],
       '/api/teams/dev': () => [200, { teams: [{ name: 'dev', members: ['alice', 'bob'] }] }],
       '/api/teams': () => [200, { teams: [{ name: 'dev', members: ['alice'] }] }],

@@ -10,20 +10,33 @@ import (
 	"time"
 )
 
-// nodes returns the hub's nodes (longarm admin nodes --all --json) as maps.
+// nodes returns the hub's nodes (longarm admin nodes --all --json) as maps:
+// what root (the admin) and alice (the client) see together. With
+// multi-tenancy an admin sees no more than its user does - alice's own
+// workers are alice's to see.
 func (h *hubEnv) nodes(t *testing.T) []map[string]any {
 	t.Helper()
-	r := h.longarm(h.admin, "admin", "nodes", "--all", "--json")
-	if r.code != 0 {
-		return nil
+	var all []map[string]any
+	seen := map[any]bool{}
+	for _, cfg := range []string{h.admin, h.client} {
+		r := h.longarm(cfg, "admin", "nodes", "--all", "--json")
+		if r.code != 0 {
+			continue
+		}
+		var resp struct {
+			Nodes []map[string]any `json:"nodes"`
+		}
+		if err := json.Unmarshal([]byte(r.stdout), &resp); err != nil {
+			t.Fatalf("nodes json: %v\n%s", err, r.stdout)
+		}
+		for _, n := range resp.Nodes {
+			if !seen[n["name"]] {
+				seen[n["name"]] = true
+				all = append(all, n)
+			}
+		}
 	}
-	var resp struct {
-		Nodes []map[string]any `json:"nodes"`
-	}
-	if err := json.Unmarshal([]byte(r.stdout), &resp); err != nil {
-		t.Fatalf("nodes json: %v\n%s", err, r.stdout)
-	}
-	return resp.Nodes
+	return all
 }
 
 func isTrue(v any) bool { b, _ := v.(bool); return b }

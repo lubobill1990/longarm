@@ -279,17 +279,17 @@ func (s *fleetServer) CreateWorkerCode(ctx context.Context, req *pb.CreateWorker
 
 func (s *fleetServer) ShareWorker(ctx context.Context, req *pb.ShareWorkerRequest) (*pb.NodeInfo, error) {
 	c := callerFrom(ctx)
-	return s.h.ShareWorker(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req)
+	return s.h.opResult(s.h.viewer(c))(s.h.ShareWorker(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req))
 }
 
 func (s *fleetServer) RemoveWorker(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
 	c := callerFrom(ctx)
-	return s.h.RemoveWorker(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req.Name)
+	return s.h.opResult(s.h.viewer(c))(s.h.RemoveWorker(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req.Name))
 }
 
 func (s *fleetServer) SetWorkerLabels(ctx context.Context, req *pb.SetLabelsRequest) (*pb.NodeInfo, error) {
 	c := callerFrom(ctx)
-	return s.h.SetWorkerLabels(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req)
+	return s.h.opResult(s.h.viewer(c))(s.h.SetWorkerLabels(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req))
 }
 
 // ---------------------------------------------------------------- panel
@@ -348,12 +348,12 @@ func (h *Hub) workerRoutes(api func(string, func(http.ResponseWriter, *http.Requ
 		}
 		req.Worker = r.PathValue("name")
 		user, admin := who(login)
-		info, err := h.ShareWorker("web/"+login, user, admin, req)
+		info, err := h.opResult(h.panelViewer(login))(h.ShareWorker("web/"+login, user, admin, req))
 		writeResult(w, info, err)
 	})
 	api("POST /api/nodes/{name}/remove", func(w http.ResponseWriter, r *http.Request, login string) {
 		user, admin := who(login)
-		info, err := h.RemoveWorker("web/"+login, user, admin, r.PathValue("name"))
+		info, err := h.opResult(h.panelViewer(login))(h.RemoveWorker("web/"+login, user, admin, r.PathValue("name")))
 		writeResult(w, info, err)
 	})
 	api("POST /api/nodes/{name}/worker-labels", func(w http.ResponseWriter, r *http.Request, login string) {
@@ -362,7 +362,7 @@ func (h *Hub) workerRoutes(api func(string, func(http.ResponseWriter, *http.Requ
 			return
 		}
 		user, admin := who(login)
-		info, err := h.SetWorkerLabels("web/"+login, user, admin, &pb.SetLabelsRequest{Name: r.PathValue("name"), Labels: labels})
+		info, err := h.opResult(h.panelViewer(login))(h.SetWorkerLabels("web/"+login, user, admin, &pb.SetLabelsRequest{Name: r.PathValue("name"), Labels: labels}))
 		writeResult(w, info, err)
 	})
 }

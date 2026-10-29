@@ -708,7 +708,7 @@ func (s *fleetServer) DownloadRelease(req *pb.ReleaseFileRequest, stream pb.Flee
 	}
 }
 
-func (s *hubAdminServer) ListReleases(_ context.Context, req *pb.ListReleasesRequest) (*pb.ListReleasesResponse, error) {
+func (s *hubAdminServer) ListReleases(ctx context.Context, req *pb.ListReleasesRequest) (*pb.ListReleasesResponse, error) {
 	rels, err := s.h.store.Releases()
 	if err != nil {
 		return nil, err
@@ -744,8 +744,9 @@ func (s *hubAdminServer) ListReleases(_ context.Context, req *pb.ListReleasesReq
 	for _, v := range order {
 		resp.Releases = append(resp.Releases, byVersion[v])
 	}
+	v := s.h.viewer(callerFrom(ctx))
 	s.h.mu.Lock()
-	resp.Rollout = s.h.rolloutPBLocked()
+	resp.Rollout = s.h.rolloutForLocked(v, s.h.rolloutPBLocked())
 	s.h.mu.Unlock()
 	return resp, nil
 }
@@ -759,17 +760,20 @@ func (s *hubAdminServer) PushRelease(ctx context.Context, req *pb.PushReleaseReq
 		// to an older (signed, maybe vulnerable) version.
 		return nil, status.Error(codes.PermissionDenied, "the release role may not downgrade workers (admin only)")
 	}
-	return s.h.pushRelease(req, callerFrom(ctx).id.Name)
+	r, err := s.h.pushRelease(req, callerFrom(ctx).id.Name)
+	return s.h.rolloutFor(s.h.viewer(callerFrom(ctx)), r, err)
 }
 
-func (s *hubAdminServer) GetRollout(context.Context, *pb.GetRolloutRequest) (*pb.Rollout, error) {
+func (s *hubAdminServer) GetRollout(ctx context.Context, _ *pb.GetRolloutRequest) (*pb.Rollout, error) {
+	v := s.h.viewer(callerFrom(ctx))
 	s.h.mu.Lock()
 	defer s.h.mu.Unlock()
-	return s.h.rolloutPBLocked(), nil
+	return s.h.rolloutForLocked(v, s.h.rolloutPBLocked()), nil
 }
 
 func (s *hubAdminServer) AbortRollout(ctx context.Context, _ *pb.GetRolloutRequest) (*pb.Rollout, error) {
 	h := s.h
+	v := h.viewer(callerFrom(ctx))
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.rollout == nil {
@@ -781,7 +785,7 @@ func (s *hubAdminServer) AbortRollout(ctx context.Context, _ *pb.GetRolloutReque
 		h.saveRolloutLocked()
 		h.bus.publish(&pb.FleetEvent{Kind: "release", Message: "rollout of " + h.rollout.Version + " aborted"})
 	}
-	return h.rolloutPBLocked(), nil
+	return h.rolloutForLocked(v, h.rolloutPBLocked()), nil
 }
 
 // Upload limits of PublishRelease.

@@ -14,6 +14,36 @@
   the tray and the CLIs no longer say "Sign in with Microsoft" only.
   docs/usage.md "Sign in with a Google, Apple or personal Microsoft account".
 
+### Security
+
+- Hub admins no longer see other users' machines. With multi-tenancy an
+  admin certificate or an administrator's panel login sees machines and jobs
+  exactly as its user does: `longarm ls` / `ls -o wide`, `worker ls`,
+  `jobs`, `sessions`, the MCP tools, the tray's Workers tab, `longarm admin
+  nodes`, the hub's event stream and the panel's "Nodes" and "Jobs" pages
+  show the admin's own workers and devices, the workers shared with it and
+  the fleet workers - before, an admin saw every user's private workers with
+  process lists, agent sessions and jobs. The rule is the hub's, so it holds
+  for every client version; there is no flag or toggle that widens it. The
+  only fleet-wide view is the new anonymous summary (`longarm admin summary
+  [--rows]`, the panel's "Fleet" page, `GET /api/admin/summary`,
+  `HubAdmin.FleetSummary`; admins only, audited): per user the number of
+  workers, admin workers and devices, how many are online, last seen, the
+  workers' version histogram, and optional rows with role, state, version,
+  OS and last seen - never names, IDs, host names, labels, metrics,
+  processes, sessions or jobs. Admin answers that named other users'
+  machines are cut down the same way: operations by name (approve, revoke,
+  drain, label, profile, remove, tailnet rekey, toolchain apply) answer
+  with name, owner and state only; `admin user ls` / "People" and `admin
+  user remove` give device and worker counts instead of names; join codes,
+  rollouts (counts plus visible names), toolchain canaries, `admin tailnet
+  status`, `admin links` and `link ls --all` name only machines the admin
+  may see; `admin logs` of another user's job is "not found". The audit log
+  still names nodes (the admins' security tool). Auto placement already
+  used only workers the caller's user may use, admins included; the admin's
+  `exec auto` now picks from the same list (before, from every worker the
+  hub listed to the admin). See docs/security.md "What admins see".
+
 ### Fixed
 
 - The hub on Azure crash-looped on every start (2026-10-29, 0.1.18 and

@@ -69,6 +69,12 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
         <button onClick={reload}>Refresh</button>
       </div>
       <ErrorBox error={error} />
+      {admin && (
+        <p className="muted small" data-testid="nodes-scope">
+          Your machines, the workers shared with you and the fleet workers. Other users&apos; machines are only counted, on the Fleet
+          page.
+        </p>
+      )}
       {admin && pending.length > 0 && (
         <div className="card" style={{ marginBottom: 12, borderColor: '#9e6a03' }} data-testid="pending">
           <h3 style={{ margin: '0 0 8px' }}>Waiting for approval</h3>

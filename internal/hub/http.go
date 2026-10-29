@@ -81,7 +81,7 @@ func (h *Hub) httpHandler() http.Handler {
 	})
 	nodeAction := func(fn func(by, name string) (*pb.NodeInfo, error)) func(http.ResponseWriter, *http.Request, string) {
 		return func(w http.ResponseWriter, r *http.Request, user string) {
-			info, err := fn("web/"+user, r.PathValue("name"))
+			info, err := h.opResult(h.panelViewer(user))(fn("web/"+user, r.PathValue("name")))
 			writeResult(w, info, err)
 		}
 	}
@@ -94,7 +94,7 @@ func (h *Hub) httpHandler() http.Handler {
 		if !readJSON(w, r, &labels) {
 			return
 		}
-		info, err := h.SetLabels("web/"+user, r.PathValue("name"), labels)
+		info, err := h.opResult(h.panelViewer(user))(h.SetLabels("web/"+user, r.PathValue("name"), labels))
 		writeResult(w, info, err)
 	})
 	admin("PUT /api/nodes/{name}/profile", func(w http.ResponseWriter, r *http.Request, user string) {
@@ -104,7 +104,7 @@ func (h *Hub) httpHandler() http.Handler {
 		if !readJSON(w, r, &body) {
 			return
 		}
-		info, err := h.AssignProfile("web/"+user, r.PathValue("name"), body.Profile)
+		info, err := h.opResult(h.panelViewer(user))(h.AssignProfile("web/"+user, r.PathValue("name"), body.Profile))
 		writeResult(w, info, err)
 	})
 	api("GET /api/jobs", func(w http.ResponseWriter, r *http.Request, user string) {
@@ -147,8 +147,8 @@ func (h *Hub) httpHandler() http.Handler {
 		jc, err := h.CreateJoinCode("web/"+user, req)
 		writeResult(w, jc, err)
 	})
-	admin("GET /api/joincodes", func(w http.ResponseWriter, _ *http.Request, _ string) {
-		res, err := h.ListJoinCodes()
+	admin("GET /api/joincodes", func(w http.ResponseWriter, _ *http.Request, user string) {
+		res, err := h.ListJoinCodesFor(h.panelViewer(user), "web/"+user)
 		writeResult(w, res, err)
 	})
 	admin("GET /api/audit", func(w http.ResponseWriter, r *http.Request, _ string) {
@@ -156,8 +156,8 @@ func (h *Hub) httpHandler() http.Handler {
 		res, err := h.Audit(&pb.AuditRequest{Node: q.Get("node"), Limit: int32(atoiDefault(q.Get("limit"), 200))})
 		writeResult(w, res, err)
 	})
-	admin("GET /api/profiles", func(w http.ResponseWriter, _ *http.Request, _ string) {
-		writePB(w, &pb.ListProfilesResponse{Profiles: h.Profiles()})
+	admin("GET /api/profiles", func(w http.ResponseWriter, _ *http.Request, user string) {
+		writePB(w, &pb.ListProfilesResponse{Profiles: h.ProfilesFor(h.panelViewer(user))})
 	})
 	admin("PUT /api/profiles/{name}", func(w http.ResponseWriter, r *http.Request, user string) {
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -184,6 +184,7 @@ func (h *Hub) httpHandler() http.Handler {
 	api("GET /api/events", h.sse)
 	h.panelRoutes(mux, api, admin)
 	h.tenancyRoutes(api, admin)
+	h.summaryRoutes(admin)
 	h.workerRoutes(api)
 	h.entraRoutes(mux)
 	h.linkRoutes(mux)
