@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"sync"
 	"time"
 
@@ -34,6 +35,11 @@ type machineUpdater struct {
 	self func() *updater
 	why  string // why self is nil
 
+	// probe: the service's client to try when Installed() said no and
+	// longarmd can't update itself (Windows: the service query may have
+	// failed; the client checks the pipe's server is the real service).
+	probe func() serviceClient
+
 	mu   sync.Mutex
 	busy bool
 }
@@ -45,10 +51,51 @@ type serviceClient interface {
 
 func newMachineUpdater(name string, log *slog.Logger, self func() *updater, why string) *machineUpdater {
 	m := &machineUpdater{name: name, log: log.With("component", "machine-update"), self: self, why: why}
+	client := func() serviceClient { return updatesvc.NewClient("longarmd " + name) }
 	if updatesvc.Installed() {
-		m.service = func() serviceClient { return updatesvc.NewClient("longarmd " + name) }
+		m.service = client
+	} else if runtime.GOOS == "windows" {
+		m.probe = client
 	}
 	return m
+}
+
+// selfWhy says why longarmd can't update itself (nil: it can).
+func (m *machineUpdater) selfWhy() error {
+	u := m.selfUpdater()
+	switch {
+	case u == nil && m.why != "":
+		return errors.New(m.why)
+	case u == nil:
+		return errors.New("this installation can't update itself")
+	}
+	if u.canApply != nil {
+		return fmt.Errorf("this installation can't update itself: %w", u.canApply)
+	}
+	return nil
+}
+
+// RemoteMethod is how its owner's `longarm worker update` installs a
+// release here (UpdateAvailable.method): "msi" through the Longarm Update
+// service, "self" longarmd itself, "none" neither (see noServiceError).
+func (m *machineUpdater) RemoteMethod() string {
+	switch {
+	case m.service != nil:
+		return "msi"
+	case m.selfWhy() == nil:
+		return "self"
+	case m.probe != nil && updatesvc.Installed(): // installed since longarmd started
+		return "msi"
+	}
+	return "none"
+}
+
+// noServiceError: an update of a Windows install that can't update itself
+// (Program Files, an MSI) and has no Longarm Update service - what to do.
+func noServiceError(why error) string {
+	return fmt.Sprintf("this machine has no Longarm Update service (%s), which installs updates of an MSI install, "+
+		"and longarmd can't update itself (%v): run the new MSI on the machine once (the tray's update banner there, "+
+		"or msiexec /i longarm-<version>-windows-amd64.msi); it installs the service, and later updates work from here", updatesvc.ServiceName, why)
 }
 
 func (m *machineUpdater) method() string {
@@ -75,23 +122,27 @@ func (m *machineUpdater) Start(ctx context.Context, by string, req *pb.MachineUp
 	if req.Latest {
 		want = "latest"
 	}
+	method := m.method()
 	ev := func(phase, msg string) *pb.MachineUpdateEvent {
-		return &pb.MachineUpdateEvent{Phase: phase, Message: msg, From: version.Version, Method: m.method(), At: timestamppb.Now()}
+		return &pb.MachineUpdateEvent{Phase: phase, Message: msg, From: version.Version, Method: method, At: timestamppb.Now()}
 	}
 	if err := send(ev("checking", "updating "+m.name+" to "+want)); err != nil {
 		return err
 	}
 	if m.service != nil {
-		return m.startMSI(ctx, by, req, send, ev)
+		return m.startMSI(ctx, by, req, send, ev, m.service(), nil)
+	}
+	if why := m.selfWhy(); why != nil {
+		if m.probe != nil {
+			// The service query said no, but the service may be there all
+			// the same: its pipe answers (the client checks it is the real
+			// service), else the actionable message.
+			method = "msi"
+			return m.startMSI(ctx, by, req, send, ev, m.probe(), why)
+		}
+		return send(failedEvent("self", "unsupported", why.Error()))
 	}
 	u := m.selfUpdater()
-	if u == nil {
-		why := m.why
-		if why == "" {
-			why = "this installation can't update itself"
-		}
-		return send(failedEvent("self", "unsupported", why))
-	}
 	var sendErr error
 	to, phase, err := u.applyWanted(ctx, want, func(phase, msg string) {
 		if phase != "checking" && sendErr == nil {
@@ -127,9 +178,11 @@ func (m *machineUpdater) selfUpdater() *updater {
 // startMSI hands the request to the LongarmUpdate service and reports its
 // phases while it downloads and verifies. Once msiexec runs, Longarm
 // (this longarmd too) restarts: the last event is "installing".
+//
+// selfWhy != nil: probing a service Installed() didn't see - no service
+// answering ends with what to do instead (noServiceError).
 func (m *machineUpdater) startMSI(ctx context.Context, by string, req *pb.MachineUpdateRequest, send func(*pb.MachineUpdateEvent) error,
-	ev func(phase, msg string) *pb.MachineUpdateEvent) error {
-	c := m.service()
+	ev func(phase, msg string) *pb.MachineUpdateEvent, c serviceClient, selfWhy error) error {
 	type answer struct {
 		r   *updatesvc.Response
 		err error
@@ -147,6 +200,9 @@ func (m *machineUpdater) startMSI(ctx context.Context, by string, req *pb.Machin
 		select {
 		case a := <-done:
 			if a.err != nil {
+				if selfWhy != nil && errors.Is(a.err, updatesvc.ErrNoService) {
+					return send(failedEvent("msi", "unsupported", noServiceError(selfWhy)))
+				}
 				return send(failedEvent("msi", "unavailable", "the Longarm Update service: "+a.err.Error()))
 			}
 			r := a.r

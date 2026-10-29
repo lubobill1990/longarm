@@ -303,6 +303,10 @@ message NodeState {
 message UpdateAvailable {
   string version = 1;
   string reason = 2; // why the node can't update itself
+  // How its owner's `longarm worker update` installs it: "msi" (the
+  // machine's Longarm Update service), "none" (it can't: reason says why
+  // and what to do instead). Empty from workers before 0.1.19.
+  string method = 3;
 }
 
 message JobsReport {

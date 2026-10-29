@@ -695,11 +695,14 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 
 	// The local control API listens before longarmd.endpoints is written, so that
 	// file's existence means "ready" for both channels.
-	lln, laddr, lerr := localapi.Listen("longarmd", cfg.DataDir, filepath.Join(cfg.DataDir, LocalAddrFile))
+	var lln net.Listener
+	var laddr string
+	lch, lerr := localapi.ListenChannel("longarmd", cfg.DataDir, filepath.Join(cfg.DataDir, LocalAddrFile))
 	if lerr != nil {
 		log.Warn("local control API unavailable", "err", lerr)
 	} else {
-		defer os.Remove(filepath.Join(cfg.DataDir, LocalAddrFile))
+		lln, laddr = lch.Listener, lch.Addr
+		defer lch.Release() // only while it is still this longarmd's
 	}
 
 	endpoints := filepath.Join(cfg.DataDir, EndpointsFile)
@@ -778,17 +781,6 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	if agent.channel == "" {
 		agent.channel = "stable"
 	}
-	if hubOn && !cfg.Update.Disabled {
-		agent.upd = newUpdater(cfg, agent, exe, log, func() { cancelCause(update.ErrRestart) })
-		if adminWorker {
-			// the admin worker updates with the MSI only: it checks for
-			// the notice, never applies
-			agent.upd.canApply = errors.New("an admin worker updates with the MSI only")
-		}
-		agent.upd.startup(ctx, hubOn)
-		wg.Add(1)
-		go func() { defer wg.Done(); agent.upd.Run(ctx) }()
-	}
 	// longarm worker update (the owner's; machineupdate.go)
 	selfWhy := ""
 	switch {
@@ -800,6 +792,19 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		selfWhy = "self-update is off in longarmd.toml ([update] disabled)"
 	}
 	mupd := newMachineUpdater(srv.Name, log, func() *updater { return agent.upd }, selfWhy)
+	if hubOn && !cfg.Update.Disabled {
+		agent.upd = newUpdater(cfg, agent, exe, log, func() { cancelCause(update.ErrRestart) })
+		if adminWorker {
+			// the admin worker updates with the MSI only: it checks for
+			// the notice, never applies
+			agent.upd.canApply = errors.New("an admin worker updates with the MSI only")
+		}
+		// the notice says whether longarm worker update can install it
+		agent.upd.remote = mupd.RemoteMethod
+		agent.upd.startup(ctx, hubOn)
+		wg.Add(1)
+		go func() { defer wg.Done(); agent.upd.Run(ctx) }()
+	}
 	srv.MachineUpdate = mupd
 	wg.Add(1)
 	go func() { defer wg.Done(); mupd.reportActivity(ctx, st.spaces) }()

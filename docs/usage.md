@@ -1858,7 +1858,7 @@ longarmd status | drain [--reason R] | undrain | toolchain status|apply | events
 longarmd limits [--max-jobs N] [--reserve-mem GB]  # local limits, honoured by the hub's scheduler
 longarmd jobs | logs <job> [-f] | kill <job>        # this worker's jobs
 longarmd leave [--reason R] [--force] [--kill-jobs] [--purge]   # unregister (hub revokes the certs); a running longarmd stops
-longarm daemon start | stop | status | events     # client session daemon (also: tailscale/longnet legs of one-shot longarm)
+longarm daemon start | stop | status | events     # client session daemon (also: tailscale/longnet legs of one-shot longarm); start replaces an older daemon
 longarm pool [--watch] [--json]                    # live pool view: metrics + this client's latency per leg
 longarm transport [race|tcp|tailscale|longnet]       # transport policy (see "Transport legs and racing")
 longarm forward w1 3000 --bg                       # forward hosted by longarm daemon; prints the URL
@@ -2196,7 +2196,11 @@ sessions keep running. What happens (`internal/msiupgrade`;
    conhost`), `longarm` clients in terminals and the client daemon keep
    running: the binaries they hold are moved to `<install dir>\old`
    (Windows lets a running program be renamed), and the new ones go in
-   beside them. What ran is recorded in `C:\ProgramData\Longarm\msi-upgrade.json`.
+   beside them. The restarted tray then finds the client daemon older than
+   itself and runs `longarm daemon start`, which replaces a daemon older
+   than its own `longarm` (its port forwards move to the new one) - never
+   a newer one: an older `longarm` (an app's bundled copy, an old CLI)
+   just uses the daemon that runs. What ran is recorded in `C:\ProgramData\Longarm\msi-upgrade.json`.
    The new version is installed over the old one, and the old product is
    uninstalled afterwards (`MajorUpgrade Schedule="afterInstallExecute"`):
    the files and components the two share stay (the new ones), and none of
@@ -2268,7 +2272,18 @@ longarm worker update cpc-alice-1 --auto on [--hours 6]   # automatic updates (M
   it and can't relay one - fleet admins update fleet workers with
   rollouts. A worker without an owner (a fleet worker) refuses.
 - **Which worker:** the user-session worker (or the admin worker when it
-  is alone): the machine updates once and both workers restart.
+  is alone): the machine updates once and both workers restart. The
+  user-session worker (your account) reaches the service like the tray:
+  it asks the service manager only for `SERVICE_QUERY_STATUS`, which every
+  interactive user has. (Before 0.1.19 it asked for full access, got
+  "access denied", concluded there was no service and tried to update
+  itself: "C:\Program Files\Longarm is not writable for this account
+  (package-managed install?)". `longarm worker update` - the tray's
+  button too - then asks the machine's admin worker, which runs as SYSTEM
+  and hands the request to the service, so such a worker updates from
+  your client once.) A Windows install that can't update itself and has
+  no service says what to do (run the new MSI there once: it installs the
+  service).
 - **Other installs** (`install.ps1` per user, Linux, macOS) take the same
   command and output: longarmd fetches that version through the hub
   (`CheckUpdate` with `want`), verifies the signatures with the key built
@@ -2284,7 +2299,9 @@ longarm worker update cpc-alice-1 --auto on [--hours 6]   # automatic updates (M
   they can't install themselves (`NodeInfo.update_available`: MSI
   installs). The tray's Workers tab shows each machine's versions (worker
   and admin worker) and, for the owner, an **Update to X** button with the
-  progress and the result; the panel's My machines page shows
+  progress and the result - only when the worker says `longarm worker
+  update` can install it (`update_available.method`: `msi`; `none` shows
+  the reason on the version instead); the panel's My machines page shows
   `longarm worker update <name>` next to an outdated version (the panel
   itself can't start an update: the hub has no way to).
 

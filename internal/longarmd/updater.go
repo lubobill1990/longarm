@@ -47,7 +47,10 @@ type updater struct {
 	interval time.Duration
 	restart  func() // ends Run with update.ErrRestart
 	canApply error  // why this installation can't update itself (nil = it can)
-	kick     chan struct{}
+	// remote: how longarm worker update installs a release here
+	// (machineUpdater.RemoteMethod; nil: "")
+	remote func() string
+	kick   chan struct{}
 
 	mu     sync.Mutex
 	busy   bool // an update is being applied, or this version is on probation
@@ -125,7 +128,11 @@ func (u *updater) check(ctx context.Context) error {
 		// It can't install the update itself (an MSI install under
 		// Program Files, a user-session worker): it says so (status, the
 		// hub's node list, the tray); the MSI or install script updates it.
-		u.agent.setUpdateAvailable(availableUpdate(version.Version, cmp.Or(resp.Version, resp.LatestVersion), u.canApply))
+		method := ""
+		if u.remote != nil {
+			method = u.remote()
+		}
+		u.agent.setUpdateAvailable(availableUpdate(version.Version, cmp.Or(resp.Version, resp.LatestVersion), u.canApply, method))
 		return nil
 	}
 	target := resp.Version
@@ -197,7 +204,9 @@ var releaseVersion = regexp.MustCompile(`^v?[0-9]+\.[0-9]+`)
 
 // availableUpdate is the notice for a worker running running that can't
 // update itself (why) when the hub has target: nil unless target is newer.
-func availableUpdate(running, target string, why error) *pb.UpdateAvailable {
+// method: how its owner's longarm worker update would install it ("msi",
+// "none"; the UI offers "Update to X" only when it can work).
+func availableUpdate(running, target string, why error, method string) *pb.UpdateAvailable {
 	if !releaseVersion.MatchString(target) || !update.ValidVersion(target) || !releaseVersion.MatchString(running) ||
 		update.Compare(target, running) <= 0 {
 		return nil
@@ -206,7 +215,10 @@ func availableUpdate(running, target string, why error) *pb.UpdateAvailable {
 	if why != nil {
 		reason = why.Error()
 	}
-	return &pb.UpdateAvailable{Version: target, Reason: reason}
+	if method == "self" { // not here: why says it can't; keep the notice honest
+		method = "none"
+	}
+	return &pb.UpdateAvailable{Version: target, Reason: reason, Method: method}
 }
 
 // startup handles a finished or in-progress update when longarmd starts: the

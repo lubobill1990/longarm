@@ -30,6 +30,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -82,6 +83,9 @@ func main() {
 		b, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("longarm daemon start: %v: %s", err, b)
+		}
+		if out := strings.TrimSpace(string(b)); out != "" && out != "longarm daemon running" {
+			o.Log.Info("longarm daemon start", "output", out) // e.g. an older daemon replaced
 		}
 		return nil
 	}
