@@ -76,7 +76,8 @@ func writeLsTable(w io.Writer, rows []lsRow, wide bool, now time.Time) (failed i
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	head := "WORKER\tSTATE\tOS\tVERSION\tCPU%\tMEM GB\tJOBS\tLABELS"
 	if wide {
-		head = "WORKER\tSTATE\tVERSION\tCPU%\tMEM GB\tJOBS\tCLAUDE\tCOPILOT\tDISK FREE\tUPTIME\tTOP CPU\tPATH"
+		// VERSION last: STATE is followed by the metrics ("online  -": none yet)
+		head = "WORKER\tSTATE\tCPU%\tMEM GB\tJOBS\tCLAUDE\tCOPILOT\tDISK FREE\tUPTIME\tTOP CPU\tPATH\tVERSION"
 	}
 	avail := map[string][]string{} // newer version -> workers (shown)
 	if admins {
@@ -122,7 +123,7 @@ func writeLsTable(w io.Writer, rows []lsRow, wide bool, now time.Time) (failed i
 			continue
 		}
 		if m == nil {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t-\t-\t%s%s\n", r.name, lsState(r, now), lsVersion(r.node), r.path, tail(r))
+			fmt.Fprintf(tw, "%s\t%s\t-\t-\t-\t-\t-\t-\t-\t-\t%s\t%s%s\n", r.name, lsState(r, now), r.path, lsVersion(r.node), tail(r))
 			continue
 		}
 		agent := func(k string) string {
@@ -139,10 +140,10 @@ func writeLsTable(w io.Writer, rows []lsRow, wide bool, now time.Time) (failed i
 			}
 			top = append(top, fmt.Sprintf("%s %.0f%%", g.Name, g.CpuPercent))
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%.1f\t%s/%s\t%s\t%s\t%s\t%s G\t%s\t%s\t%s%s\n", r.name, lsState(r, now), lsVersion(r.node), m.CpuPercent,
+		fmt.Fprintf(tw, "%s\t%s\t%.1f\t%s/%s\t%s\t%s\t%s\t%s G\t%s\t%s\t%s\t%s%s\n", r.name, lsState(r, now), m.CpuPercent,
 			humanBytes(m.MemUsedBytes), humanBytes(m.MemTotalBytes), jobs, agent("claude"),
 			agent("copilot"), humanBytes(m.DiskFreeBytes), humanDuration(time.Duration(m.UptimeSeconds)*time.Second),
-			strings.Join(top, ", "), r.path, tail(r))
+			strings.Join(top, ", "), r.path, lsVersion(r.node), tail(r))
 	}
 	tw.Flush()
 	vs := make([]string, 0, len(avail))

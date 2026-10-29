@@ -313,9 +313,23 @@ func (winDirOps) Remove(path string) error {
 		return err
 	}
 	if reparse(fi) || !fi.IsDir() {
-		return os.Remove(path) // the link itself, never its target
+		return retryRemove(func() error { return os.Remove(path) }) // the link itself, never its target
 	}
-	return os.RemoveAll(path)
+	return retryRemove(func() error { return os.RemoveAll(path) })
+}
+
+// retryRemove retries a removal for a few seconds: a file another process
+// still has open (msiexec closing the package, an anti-virus scan) can't be
+// deleted for a moment. Missing = done.
+func retryRemove(rm func() error) error {
+	var err error
+	for i := 0; i < 60; i++ {
+		if err = rm(); err == nil || errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return err
 }
 
 func (winDirOps) Trusted(path string) error { return win.TrustedSystemPath(path) }

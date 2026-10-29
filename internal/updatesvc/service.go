@@ -248,8 +248,14 @@ func (s *Service) reconcile(ctx context.Context, p *Pending) {
 // with Start's context).
 func (s *Service) Wait() { s.watchers.Wait() }
 
-// finish records an install's result and cleans up.
+// finish cleans up after an install - its directory (every handle on the
+// package is closed by now: watch closes its lock first), the scheduled
+// task - and then records the result.
 func (s *Service) finish(p *Pending, ok bool, code int, msg string) {
+	if p.Dir != "" {
+		s.cfg.Workspace.Remove(p.Dir)
+	}
+	s.cfg.Launcher.Forget()
 	r := &Result{From: p.From, To: p.To, OK: ok, Code: code, Error: msg, At: s.cfg.Now().UTC(), By: p.By}
 	s.mu.Lock()
 	s.state.Pending = nil
@@ -257,10 +263,6 @@ func (s *Service) finish(p *Pending, ok bool, code int, msg string) {
 	s.busy, s.phase, s.target, s.message = false, PhaseIdle, "", ""
 	st := s.state
 	s.mu.Unlock()
-	if p.Dir != "" {
-		s.cfg.Workspace.Remove(p.Dir)
-	}
-	s.cfg.Launcher.Forget()
 	if err := s.cfg.Store.Save(&st); err != nil {
 		s.cfg.Log.Warn("saving the update state", "err", err)
 	}
@@ -276,9 +278,13 @@ func (s *Service) finish(p *Pending, ok bool, code int, msg string) {
 // unchanged meanwhile.
 func (s *Service) watch(ctx context.Context, p *Pending, lock io.Closer) {
 	defer s.watchers.Done()
-	if lock != nil {
-		defer lock.Close()
+	unlock := func() {
+		if lock != nil {
+			lock.Close() // before finish removes the directory (Windows can't delete an open file)
+			lock = nil
+		}
 	}
+	defer unlock()
 	t := time.NewTicker(s.cfg.WatchEvery)
 	defer t.Stop()
 	for {
@@ -294,10 +300,12 @@ func (s *Service) watch(ctx context.Context, p *Pending, lock io.Closer) {
 			if !ok {
 				msg = fmt.Sprintf("the installer failed (msiexec exit code %d; log %s)", code, p.Log)
 			}
+			unlock()
 			s.finish(p, ok, code, msg)
 			return
 		}
 		if s.cfg.Now().Sub(p.Started) > s.cfg.InstallTimeout {
+			unlock()
 			s.finish(p, false, 0, "the installer did not finish within "+s.cfg.InstallTimeout.String())
 			return
 		}
