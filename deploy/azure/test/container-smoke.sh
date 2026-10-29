@@ -19,6 +19,10 @@
 #      with a key the hub minted; after both containers and the shared
 #      volume are replaced, Headscale's nodes, Noise key and API key survive
 #   5. a replica that can't be read stops the start
+# Prints the restart phases (TIMING lines, a summary at the end): SIGTERM to
+# exit (the hub's restart notice, Litestream's last sync), container start to
+# healthy (restore, bootstrap, hub start) - the part of a redeploy's
+# downtime that is ours, not Azure's.
 set -euo pipefail
 
 image=${1:?usage: container-smoke.sh <image> <longarm binary> [<tsprobe binary>]}
@@ -101,14 +105,40 @@ hub_run() {
 
 wait_healthy() {
 	local name=$1
-	for _ in $(seq 1 60); do
+	for _ in $(seq 1 240); do
 		if [[ $(docker inspect -f '{{.State.Running}}' "$name") != true ]]; then
 			fail "$name exited: $(docker inspect -f '{{.State.ExitCode}}' "$name")"
 		fi
 		docker exec "$name" /usr/local/bin/longarm-hub healthcheck >/dev/null 2>&1 && return 0
-		sleep 1
+		sleep 0.25
 	done
 	fail "$name not healthy in 60 s"
+}
+
+# replicated CONTAINER: Litestream has uploaded something to the blob
+# container (its first sync runs about a second after the start; a
+# container stopped before it leaves an empty replica)
+replicated() {
+	for _ in $(seq 1 60); do
+		[[ $(az storage blob list -c "$1" --connection-string "$conn" --query "length(@)" -o tsv) -gt 0 ]] && return 0
+		sleep 0.5
+	done
+	fail "nothing replicated to $1 in 30 s"
+}
+
+# timing: restart phases in milliseconds (printed as they happen and at the end)
+now_ms() { date +%s%3N; }
+timings=()
+timing() {
+	local line="TIMING $1: $(($3 - $2)) ms"
+	echo "$line"
+	timings+=("$line")
+}
+# phase_logs NAME: the entrypoint's and the hub's own timing lines
+phase_logs() {
+	local l
+	l=$(docker logs "$1" 2>&1)
+	grep -E 'restore took|bootstrap took|starting the hub|startup timing|restart announced' <<<"$l" | sed "s/^/TIMING $1: /" || true
 }
 
 # bootstrap NAME KEY: a value of the LONGARM_BOOTSTRAP log line
@@ -166,7 +196,11 @@ docker exec -i "$p-hub" /usr/local/bin/longarm-hub user add alice --password-std
 docker exec -i "$p-hub" /usr/local/bin/longarm-hub user add bob --password-stdin <<<'another passphrase' >/dev/null
 
 step "replace the container (SIGTERM, rm)"
+replicated litestream
+t0=$(now_ms)
 docker stop -t 60 "$p-hub" >/dev/null
+timing "key: SIGTERM to exit (restart notice, Litestream's last sync)" "$t0" "$(now_ms)"
+phase_logs "$p-hub"
 logs_have "$p-hub" "longarm-hub stopped" || fail "hub did not stop gracefully"
 logs_have "$p-hub" "litestream shut down" || fail "litestream did not shut down"
 [[ $(docker inspect -f '{{.State.ExitCode}}' "$p-hub") == 0 ]] || fail "exit code $(docker inspect -f '{{.State.ExitCode}}' "$p-hub")"
@@ -174,8 +208,11 @@ docker rm "$p-hub" >/dev/null
 n=$(az storage blob list -c litestream --connection-string "$conn" --query "length(@)" -o tsv)
 [[ $n -gt 0 ]] || fail "no replica in blob storage"
 
+t0=$(now_ms)
 hub_run "$p-hub2"
 wait_healthy "$p-hub2"
+timing "key: container start to healthy (restore, bootstrap, hub start)" "$t0" "$(now_ms)"
+phase_logs "$p-hub2"
 logs_have "$p-hub2" "no matching backups found" && fail "hub2 found no replica"
 [[ $(bootstrap "$p-hub2" ca_fingerprint) == "$fp" ]] || fail "CA changed"
 [[ $(bootstrap "$p-hub2" admin_joined) == true ]] || fail "the restored database lost the admin"
@@ -214,10 +251,16 @@ head -c 300000 /dev/urandom >"$work/rel/longarm-windows-amd64.msi"
 lai admin release publish "$work/rel" --version 0.0.1 --no-sign >/dev/null
 curl -fsS -o "$work/got.msi" http://127.0.0.1:7480/releases/0.0.1/longarm-windows-amd64.msi || fail "download before the replacement"
 cmp -s "$work/got.msi" "$work/rel/longarm-windows-amd64.msi" || fail "downloaded msi differs"
+replicated litestream-id
+t0=$(now_ms)
 docker stop -t 60 "$p-id" >/dev/null
+timing "identity: SIGTERM to exit" "$t0" "$(now_ms)"
 docker rm "$p-id" >/dev/null
+t0=$(now_ms)
 id_run "$p-id2"
 wait_healthy "$p-id2"
+timing "identity: container start to healthy (full restore every start)" "$t0" "$(now_ms)"
+phase_logs "$p-id2"
 [[ $(bootstrap "$p-id2" ca_fingerprint) == "$idfp" ]] || fail "identity hub: CA changed"
 rm -f "$work/got.msi"
 curl -fsS -o "$work/got.msi" http://127.0.0.1:7480/releases/0.0.1/longarm-windows-amd64.msi ||
@@ -362,4 +405,6 @@ done
 [[ $(docker inspect -f '{{.State.Running}}' "$p-hub3") == false ]] || fail "started with a wrong storage key"
 logs_have "$p-hub3" "litestream restore" || fail "no restore error in the log"
 
+echo "== restart timing"
+printf '%s\n' "${timings[@]}"
 echo "container-smoke: ok"

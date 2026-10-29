@@ -340,6 +340,7 @@ const EndpointsFile = "hub.endpoints"
 
 // Serve runs the listeners until ctx is done.
 func (h *Hub) Serve(ctx context.Context) error {
+	serveAt := time.Now()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -544,6 +545,7 @@ func (h *Hub) Serve(ctx context.Context) error {
 	}
 	os.WriteFile(ep, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
 	defer os.Remove(ep)
+	h.logStartup(serveAt)
 	h.log.Info("longarm-hub started", "version", version.Version, "grpc", h.Addr("grpc"), "relay_udp", h.Addr("udp"), "stun2", h.Addr("stun2"),
 		"http", h.Addr("http"), "https", h.Addr("https"), "data", h.cfg.DataDir, "ca", pki.Fingerprint(h.ca.Cert))
 
@@ -553,6 +555,9 @@ func (h *Hub) Serve(ctx context.Context) error {
 	case runErr = <-errc:
 		h.log.Error("listener failed", "err", runErr)
 	}
+	// tell the nodes and the clients' event streams first: they reconnect
+	// promptly instead of treating the drop as an outage (restart.go)
+	h.announceRestart(restartReconnectAfter, restartFlush)
 	cancel()
 	h.bus.closeAll()
 	mux.Close()

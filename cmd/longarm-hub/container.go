@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -103,6 +104,9 @@ Without either variable this is plain 'serve' (docker compose setups).`,
 }
 
 func runContainer() error {
+	// the hub logs its startup timing from here (internal/hub restart.go)
+	start := time.Now()
+	os.Setenv(hub.EnvContainerStart, strconv.FormatInt(start.UnixMilli(), 10))
 	if os.Getenv(envBootstrap) == "1" && configPath != "" {
 		// hub.toml doesn't exist before the first bootstrap
 		if _, err := hub.WriteConfigTemplate(configPath); err != nil {
@@ -134,9 +138,11 @@ func runContainer() error {
 		fmt.Fprintf(os.Stderr, "longarm-hub container: restoring %s from the replica (if it has one)\n", db)
 		rc := exec.CommandContext(context.Background(), ls, "restore", "-config", lsConfig, "-if-db-not-exists", "-if-replica-exists", db)
 		rc.Stdout, rc.Stderr = os.Stderr, os.Stderr
+		t := time.Now()
 		if err := rc.Run(); err != nil {
 			return fmt.Errorf("litestream restore: %w (not starting: the replica may hold the hub's data)", err)
 		}
+		fmt.Fprintf(os.Stderr, "longarm-hub container: restore took %s\n", time.Since(t).Round(time.Millisecond))
 	}
 	if dir := cfg.Tailnet.Headscale.SidecarDir; dir != "" {
 		prepareHeadscaleDB(dir, ls, lsConfig)
@@ -148,10 +154,13 @@ func runContainer() error {
 				return fmt.Errorf("%s: %w", envBootstrapTTL, err)
 			}
 		}
+		t := time.Now()
 		if err := runBootstrap(ttl); err != nil {
 			return fmt.Errorf("bootstrap: %w", err)
 		}
+		fmt.Fprintf(os.Stderr, "longarm-hub container: bootstrap took %s\n", time.Since(t).Round(time.Millisecond))
 	}
+	fmt.Fprintf(os.Stderr, "longarm-hub container: starting the hub %s after the entrypoint started\n", time.Since(start).Round(time.Millisecond))
 	serve := []string{self}
 	if configPath != "" {
 		serve = append(serve, "--config", configPath)

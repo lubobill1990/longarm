@@ -306,7 +306,20 @@ message HubCommand {
     // connect and on every change; the list is authoritative (a link missing
     // from it is revoked).
     PortLinks port_links = 14;
+    // The hub is shutting down (SIGTERM: a redeploy, an upgrade, a
+    // restart) and will close the session right after this message:
+    // reconnect after reconnect_after (with jitter) and keep retrying
+    // quickly; not a failure of the worker or its link.
+    HubRestarting restarting = 15;
   }
+}
+
+// HubRestarting: sent to every node session (HubCommand.restarting) and to
+// Fleet.Events subscribers that ask for kind "hub" (FleetEvent kind "hub",
+// message "restarting") when the hub stops.
+message HubRestarting {
+  google.protobuf.Duration reconnect_after = 1;
+  string reason = 2; // e.g. "shutting down"
 }
 
 // WorkerAccess: a user-owned worker is usable by its owner and whoever it
@@ -606,7 +619,10 @@ message FleetJobRequest {
 }
 
 message EventsRequest {
-  repeated string kinds = 1; // "job", "node", "queue"; empty = all
+  // "job", "node", "queue", "metrics", "hub"; empty = job, node, queue.
+  // "hub" (only when asked for): {kind "hub", message "restarting"} right
+  // before the hub stops - reconnect promptly, it is not an outage.
+  repeated string kinds = 1;
   string job_id = 2; // only this job
 }
 

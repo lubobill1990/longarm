@@ -149,7 +149,8 @@ func TestMachineUpdateOwnerOnly(t *testing.T) {
 // added here deliberately.
 func TestHubCannotTriggerMachineUpdate(t *testing.T) {
 	known := []string{"welcome", "revocations", "toolchain", "audit_ack", "drain", "update", "kill_job", "log_request",
-		"submit_job", "toolchain_apply", "tailnet", "tenancy", "worker_access", "port_links"}
+		"submit_job", "toolchain_apply", "tailnet", "tenancy", "worker_access", "port_links",
+		"restarting"} // restarting: a duration and a reason
 	md := (&pb.HubCommand{}).ProtoReflect().Descriptor()
 	var forbidden = map[protoreflect.FullName]bool{
 		(&pb.MachineUpdateRequest{}).ProtoReflect().Descriptor().FullName():     true,
