@@ -60,7 +60,7 @@ function Get-LongarmProcs {
     $name = $_.Name.ToLower()
     $cmd = "$($_.CommandLine)"
     # (a client daemon whose longarm.exe was moved aside runs as old\longarm-<n>.exe)
-    $kind = if ($cmd -match '\sdaemon\s+run\b' -and $name -notmatch '^longarmd') { 'client-daemon' } else {
+    $kind = if ($cmd -match '\sdaemon\s+(run|start)\b' -and $name -notmatch '^longarmd') { 'client-daemon' } else {
       switch -Regex ($name) {
         '^longarm-tray\.exe$' { if ($cmd -match '--?worker-host') { 'host' } else { 'tray' } }
         '^longarmd\.exe$' { if ($cmd -match '\ssession-mode\s+run\b') { 'host' } elseif ($cmd -match '\srun\b') { 'daemon' } else { 'longarmd-other' } }
@@ -131,8 +131,12 @@ function Invoke-Msi([string] $what, [string] $arguments, [int[]] $ok = @(0), [st
   Write-Host "exit $($p.ExitCode) after $([int]((Get-Date) - $t).TotalSeconds)s; log $log"
   $text = Get-Content $log -Raw # UTF-16 with a BOM, or ANSI
   $bad = @()
-  foreach ($pat in '\b(?:Error|Note: 1: |error code )(2613|1722|1603)\b', 'Return value 3\.', 'is being held in use',
-    'returned actual error code', 'MainEngineThread is returning (?!0\b)\d+', 'Product: Longarm -- (?:Installation|Removal|Configuration) failed') {
+  # InstallValidate lists the processes holding files ("Info 1603. The file ... is being held in use") before
+  # the elevated stop step ends them: informational, silent installs show no dialog. A file still in use when
+  # InstallFiles replaces it is a reboot: ReplacedInUseFiles, exit code 3010.
+  foreach ($m in [regex]::Matches($text, '(?m)^.*is being held in use.*$')) { Write-Host "  (InstallValidate) $($m.Value.Trim())" }
+  foreach ($pat in '\b(?:Error|Note: 1: |error code )(2613|1722|1603)\b', 'Return value 3\.', 'ReplacedInUseFiles = 1',
+    'returned actual error code','MainEngineThread is returning (?!0\b)\d+', 'Product: Longarm -- (?:Installation|Removal|Configuration) failed') {
     foreach ($m in [regex]::Matches($text, "(?m)^.*$pat.*$")) {
       $line = $m.Value.Trim()
       if (@($allow | Where-Object { $line -match $_ }).Count) { Write-Host "allowed: $line"; continue }
