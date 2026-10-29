@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.48.1.52935",
-      "templateHash": "11781634392064826925"
+      "templateHash": "4084103609039882751"
     }
   },
   "parameters": {
@@ -88,7 +88,7 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "storageAuth identity hubs: pull the image from this Azure Container Registry (in this resource group) with the hub's managed identity <name>-id (AcrPull). Empty: registryUsername or anonymous."
+        "description": "storageAuth identity hubs: pull the image from this Azure Container Registry (in this resource group) with the relay's own managed identity <name>-relay-id (AcrPull on the registry only; never the hub's identity, which can read the replicated database and with it the CA). Empty: registryUsername or anonymous."
       }
     },
     "registryServer": {
@@ -187,12 +187,35 @@
   },
   "resources": [
     {
+      "condition": "[variables('useAcr')]",
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[format('{0}-id', variables('relayName'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]"
+    },
+    {
+      "condition": "[variables('useAcr')]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName'))]",
+      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), format('{0}-id', variables('relayName')), '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', variables('relayName'))), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', variables('relayName')))]"
+      ]
+    },
+    {
       "type": "Microsoft.ContainerInstance/containerGroups",
       "apiVersion": "2025-09-01",
       "name": "[variables('relayName')]",
       "location": "[parameters('location')]",
       "tags": "[variables('tags')]",
-      "identity": "[if(variables('useAcr'), createObject('type', 'UserAssigned', 'userAssignedIdentities', createObject(format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('name')))), createObject())), null())]",
+      "identity": "[if(variables('useAcr'), createObject('type', 'UserAssigned', 'userAssignedIdentities', createObject(format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', variables('relayName')))), createObject())), null())]",
       "properties": {
         "osType": "Linux",
         "sku": "Standard",
@@ -200,7 +223,7 @@
         "containers": [
           "[variables('relayContainer')]"
         ],
-        "imageRegistryCredentials": "[if(variables('useAcr'), createArray(createObject('server', reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), '2023-07-01').loginServer, 'identity', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('name'))))), if(empty(parameters('registryUsername')), createArray(), createArray(createObject('server', parameters('registryServer'), 'username', parameters('registryUsername'), 'password', parameters('registryPassword')))))]",
+        "imageRegistryCredentials": "[if(variables('useAcr'), createArray(createObject('server', reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), '2023-07-01').loginServer, 'identity', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', variables('relayName'))))), if(empty(parameters('registryUsername')), createArray(), createArray(createObject('server', parameters('registryServer'), 'username', parameters('registryUsername'), 'password', parameters('registryPassword')))))]",
         "ipAddress": {
           "type": "Public",
           "dnsNameLabel": "[variables('relayName')]",
@@ -219,7 +242,11 @@
             }
           ]
         }
-      }
+      },
+      "dependsOn": [
+        "[extensionResourceId(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), format('{0}-id', variables('relayName')), '7f951dda-4ed3-4680-a7ca-43fe172d538d'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', variables('relayName')))]"
+      ]
     }
   ],
   "outputs": {

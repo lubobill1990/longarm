@@ -906,7 +906,9 @@ certificates. What that means while the hub is away:
 - deploy/azure passes the relay's bundle (private key) as a secure
   environment variable of its container group (never on a command line;
   readable by whoever can exec into the container, like the hub's own
-  keys).
+  keys). Pulling from an ACR, the relay has its own managed identity with
+  AcrPull only: never the hub's, which can read the database replica (and
+  with it the CA in identity mode).
 
 ## Forwarded git credentials
 

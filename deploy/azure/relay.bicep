@@ -57,7 +57,7 @@ param cpu string = '0.5'
 ])
 param memoryInGB string = '0.5'
 
-@description('storageAuth identity hubs: pull the image from this Azure Container Registry (in this resource group) with the hub\'s managed identity <name>-id (AcrPull). Empty: registryUsername or anonymous.')
+@description('storageAuth identity hubs: pull the image from this Azure Container Registry (in this resource group) with the relay\'s own managed identity <name>-relay-id (AcrPull on the registry only; never the hub\'s identity, which can read the replicated database and with it the CA). Empty: registryUsername or anonymous.')
 param acrName string = ''
 
 @description('Registry login for a private image (empty = anonymous pull).')
@@ -76,12 +76,27 @@ var tags = {
 }
 var stunAdvertise = empty(stunServers) ? 'self' : 'self,${stunServers}'
 
-resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = if (useAcr) {
-  name: '${name}-id'
+// The relay's own identity: AcrPull on the registry and nothing else. The
+// hub's identity (<name>-id) may read the database replica, which holds the
+// CA key in identity mode: a relay container must never carry it.
+resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (useAcr) {
+  name: '${relayName}-id'
+  location: location
+  tags: tags
 }
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = if (useAcr) {
   name: acrName
+}
+
+resource acrRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (useAcr) {
+  name: guid(resourceId('Microsoft.ContainerRegistry/registries', acrName), '${relayName}-id', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+  scope: acr
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+    principalId: identity!.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
 }
 
 var relayContainer = {
@@ -152,6 +167,9 @@ resource group 'Microsoft.ContainerInstance/containerGroups@2025-09-01' = {
       '${identity.id}': {}
     }
   } : null
+  dependsOn: [
+    acrRole // the pull right before the first pull
+  ]
   properties: {
     osType: 'Linux'
     sku: 'Standard'

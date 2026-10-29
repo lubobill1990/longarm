@@ -465,8 +465,10 @@ never restart it.
   pairs) comes from the hub and is kept on the container's disk while it
   runs. Litestream is not involved.
 - **Image**: the running hub's (the image has `longarm-relay`); `--image`
-  overrides it, `--registry-user` as for the hub; an ACR pulled with the
-  hub's managed identity (`--storage-auth identity`) works too. STUN: the
+  overrides it, `--registry-user` as for the hub; an ACR pulled with a
+  managed identity (`--storage-auth identity`) works too - the relay's own
+  `<name>-relay-id` with AcrPull on the registry only (never the hub's
+  identity, which can read the database replica and with it the CA). STUN: the
   hub's `--stun-servers` (ACI source-NATs inbound UDP, as for the hub).
 - **Safe runs**: the hub must be running and new enough (it issues the
   certificate; an older image is refused before anything changes). The
