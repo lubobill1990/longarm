@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -183,17 +184,21 @@ func TestFleetSummary(t *testing.T) {
 	if s.Totals.Workers != 4 || s.Totals.AdminWorkers != 1 || s.Totals.Clients != 1 {
 		t.Errorf("totals %v", s.Totals)
 	}
-	// rows: role, state, version, OS, last seen; sorted by those only
+	// rows: the user's versions (workers, online, devices) - aggregates only,
+	// nothing per machine
 	var rows []string
-	for _, m := range by["alice"].Machines {
-		rows = append(rows, m.Role+"/"+map[bool]string{true: "on", false: "off"}[m.Online]+"/"+m.Version)
+	for _, v := range by["alice"].Versions {
+		rows = append(rows, fmt.Sprintf("%s:%d/%d/%d", v.Version, v.Workers, v.Online, v.Clients))
 	}
-	if !slices.Equal(rows, []string{"admin-worker/on/0.2.0", "worker/on/0.2.0", "worker/off/0.1.0"}) {
-		t.Errorf("alice's rows %v", rows)
+	if !slices.Equal(rows, []string{"0.2.0:2/2/0", "0.1.0:1/0/0"}) {
+		t.Errorf("alice's versions %v", rows)
 	}
-	for _, m := range by["alice"].Machines {
-		if m.LastSeen != nil && m.LastSeen.AsTime().Second() != 0 {
-			t.Errorf("last seen not truncated: %v", m.LastSeen.AsTime())
+	if v := by["bob"].Versions; len(v) != 1 || v[0].Version != "0.2.0" || v[0].Clients != 1 || v[0].Workers != 0 {
+		t.Errorf("bob's versions %v", v)
+	}
+	for _, u := range s.Users {
+		if u.Machines != nil || u.LastSeen != nil {
+			t.Errorf("%q: per-machine data %v %v", u.User, u.Machines, u.LastSeen)
 		}
 	}
 	// versions: newest first, workers only
@@ -205,7 +210,7 @@ func TestFleetSummary(t *testing.T) {
 		t.Errorf("versions %v", s.WorkerVersions)
 	}
 	b, _ := protojson.Marshal(s)
-	for _, leak := range []string{"a1", "a2", "f1", "w1", "bob-laptop", "gone", ".corp", "secret-label", "-proc", "alices-build", "secret-repo", "JA"} {
+	for _, leak := range []string{"a1", "a2", "f1", "w1", "bob-laptop", "gone", ".corp", "secret-label", "-proc", "alices-build", "secret-repo", "JA", "linux", "last_seen", "lastSeen", "2026-01-02"} {
 		if strings.Contains(string(b), leak) {
 			t.Errorf("the summary names %q: %s", leak, b)
 		}
@@ -215,7 +220,7 @@ func TestFleetSummary(t *testing.T) {
 	if _, err := pb.NewHubAdminClient(th.bob).FleetSummary(tctx(t), &pb.FleetSummaryRequest{}); status.Code(err) != codes.PermissionDenied {
 		t.Errorf("bob asks for the summary: %v", err)
 	}
-	if r, err := pb.NewHubAdminClient(th.root).FleetSummary(tctx(t), &pb.FleetSummaryRequest{}); err != nil || len(r.Users) < 4 || r.Users[0].Machines != nil {
+	if r, err := pb.NewHubAdminClient(th.root).FleetSummary(tctx(t), &pb.FleetSummaryRequest{}); err != nil || len(r.Users) < 4 || r.Users[0].Versions != nil {
 		t.Errorf("admin's summary without rows: %v %v", r, err)
 	}
 }

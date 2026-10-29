@@ -243,7 +243,7 @@ describe('multi-tenancy', () => {
     const summary = {
       time: '2026-10-29T10:00:00Z',
       users: [
-        { user: 'alice', counts: { workers: 3, workers_online: 2, admin_workers: 1, admin_workers_online: 1, clients: 2 }, last_seen: '2026-10-29T09:59:00Z' },
+        { user: 'alice', counts: { workers: 3, workers_online: 2, admin_workers: 1, admin_workers_online: 1, clients: 2 } },
         { user: 'bob', counts: { clients: 1 } },
         { counts: { workers: 4, workers_online: 4 } },
       ],
@@ -256,7 +256,7 @@ describe('multi-tenancy', () => {
     }
     const withRows = {
       ...summary,
-      users: [{ ...summary.users[0], machines: [{ role: 'worker', online: true, version: '0.2.0', os: 'windows', last_seen: '2026-10-29T09:59:00Z' }] }, ...summary.users.slice(1)],
+      users: [{ ...summary.users[0], versions: [{ version: '0.2.1', workers: 3, online: 2, clients: 2 }] }, ...summary.users.slice(1)],
     }
     const calls = mockFetch({
       '/api/me': () => [200, { user: 'ops', hub: 'hub1', version: 'dev', role: 'admin' }],
@@ -271,9 +271,9 @@ describe('multi-tenancy', () => {
     expect(screen.getByTestId('fleet-versions').textContent).toContain('0.1.9')
     // only the summary: no node list, jobs or links behind it
     expect(calls.some((c) => /\/api\/(nodes|jobs|links|history)/.test(c.url))).toBe(false)
-    fireEvent.click(screen.getByLabelText('anonymous rows'))
+    fireEvent.click(screen.getByLabelText('versions per user'))
     const rows = await screen.findByTestId('fleet-rows-alice')
-    expect(rows.textContent).toContain('windows')
+    expect(Array.from(rows.querySelectorAll('tbody td')).map((td) => td.textContent)).toEqual(['0.2.1', '3', '2', '2'])
     expect(calls.some((c) => c.url === '/api/admin/summary?rows=1')).toBe(true)
   })
 

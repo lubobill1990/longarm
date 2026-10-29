@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
@@ -394,8 +393,8 @@ machines are only counted, anonymously, by "longarm admin summary".`,
 
 // summaryCmd is `longarm admin summary`: the admins' fleet-wide view (Admin.FleetSummary):
 // per user the number of workers and devices and how many are online, the
-// workers' versions; --rows adds one anonymous row per machine (role, state,
-// version, OS, last seen). Never names, IDs, labels, metrics or jobs.
+// workers' versions; --rows adds each user's machines by version. Aggregates
+// only: never names, IDs, OS, last seen, labels, metrics or jobs.
 func summaryCmd() *cobra.Command {
 	var asJSON, rows bool
 	c := &cobra.Command{
@@ -416,26 +415,26 @@ func summaryCmd() *cobra.Command {
 			})
 		},
 	}
-	c.Flags().BoolVar(&rows, "rows", false, "one anonymous row per machine: role, state, version, OS, last seen")
+	c.Flags().BoolVar(&rows, "rows", false, "per user, the machines by version (workers, online, devices)")
 	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 	return c
 }
 
 func printSummary(w io.Writer, r *pb.FleetSummaryResponse, rows bool) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "USER\tWORKERS\tONLINE\tADMIN WORKERS\tONLINE\tDEVICES\tPENDING\tLAST SEEN")
-	row := func(name string, c *pb.FleetCounts, seen *timestamppb.Timestamp) {
-		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n", name, c.GetWorkers(), c.GetWorkersOnline(), c.GetAdminWorkers(),
-			c.GetAdminWorkersOnline(), c.GetClients(), c.GetPending(), ago(seen, seen == nil))
+	fmt.Fprintln(tw, "USER\tWORKERS\tONLINE\tADMIN WORKERS\tONLINE\tDEVICES\tPENDING")
+	row := func(name string, c *pb.FleetCounts) {
+		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%d\t%d\n", name, c.GetWorkers(), c.GetWorkersOnline(), c.GetAdminWorkers(),
+			c.GetAdminWorkersOnline(), c.GetClients(), c.GetPending())
 	}
 	for _, u := range r.Users {
 		name := u.User
 		if name == "" {
 			name = "(fleet)"
 		}
-		row(name, u.Counts, u.LastSeen)
+		row(name, u.Counts)
 	}
-	row("TOTAL", r.Totals, nil)
+	row("TOTAL", r.Totals)
 	tw.Flush()
 	if len(r.WorkerVersions) > 0 {
 		fmt.Fprintln(w)
@@ -454,7 +453,7 @@ func printSummary(w io.Writer, r *pb.FleetSummaryResponse, rows bool) {
 		return
 	}
 	for _, u := range r.Users {
-		if len(u.Machines) == 0 {
+		if len(u.Versions) == 0 {
 			continue
 		}
 		name := u.User
@@ -463,16 +462,13 @@ func printSummary(w io.Writer, r *pb.FleetSummaryResponse, rows bool) {
 		}
 		fmt.Fprintf(w, "\n%s:\n", name)
 		tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "  ROLE\tSTATE\tVERSION\tOS\tLAST SEEN")
-		for _, m := range u.Machines {
-			st := "offline"
-			switch {
-			case m.Online:
-				st = "online"
-			case m.Role == "client" || m.Role == "admin":
-				st = "-"
+		fmt.Fprintln(tw, "  VERSION\tWORKERS\tONLINE\tDEVICES")
+		for _, v := range u.Versions {
+			ver := v.Version
+			if ver == "" {
+				ver = "-"
 			}
-			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", m.Role, st, m.Version, m.Os, ago(m.LastSeen, m.LastSeen == nil))
+			fmt.Fprintf(tw, "  %s\t%d\t%d\t%d\n", ver, v.Workers, v.Online, v.Clients)
 		}
 		tw.Flush()
 	}

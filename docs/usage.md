@@ -1405,9 +1405,9 @@ longarm admin user disable|enable alice                    # refused on the hub 
 longarm admin user remove alice [--purge]                  # revoke all of alice's devices and workers; --purge:
                                                            # workers delete her jobs, data and OS account
 longarm admin summary [--rows] [--json]                    # the fleet per user: workers / admin workers / devices,
-                                                           # online, last seen, worker versions; --rows: one
-                                                           # anonymous row per machine (role, state, version, OS,
-                                                           # last seen). No names; audited
+                                                           # online, worker versions; --rows: each user's
+                                                           # machines by version (aggregates only).
+                                                           # No names; audited
 longarm admin team add web alice bob; longarm admin team rm web bob; longarm admin team ls
 longarm admin join-code --role client --user alice --name alice-2   # the same, by hand
 longarm admin issue --role client --name alice-pc --user alice --out DIR   # without a hub
@@ -1993,7 +1993,8 @@ Longarm users, created with `longarm admin user add --panel` or on the
 multi-tenancy an administrator's "Nodes" and "Jobs" pages show what its
 user sees (its own and shared machines, fleet workers; its own jobs) and
 the "Fleet" page the whole fleet as counts per user, worker versions and,
-optionally, anonymous rows (`GET /api/admin/summary`; no names, audited).
+optionally, each user's versions (`GET /api/admin/summary`; aggregates
+only, no names, audited).
 Pages: nodes (online state, CPU and
 memory sparklines, Claude/Copilot sessions, each client's path and RTT to the
 worker, labels, approve pending, drain/resume, revoke, toolchain profile and

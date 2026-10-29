@@ -389,26 +389,24 @@ export interface FleetCounts {
   pending?: number
 }
 
-export interface FleetMachine {
-  role?: string // worker | admin-worker | client | admin
-  online?: boolean
+export interface VersionCount {
   version?: string
-  os?: string
-  last_seen?: string
+  workers?: number
+  online?: number
+  clients?: number // devices (per-user versions)
 }
 
 export interface UserFleetSummary {
   user?: string // "" / absent = fleet workers (no owner)
   counts?: FleetCounts
-  last_seen?: string
-  machines?: FleetMachine[]
+  versions?: VersionCount[] // with rows: the user's machines by version - aggregates only
 }
 
 export interface FleetSummary {
   time?: string
   users?: UserFleetSummary[]
   totals?: FleetCounts
-  worker_versions?: { version?: string; workers?: number; online?: number }[]
+  worker_versions?: VersionCount[]
   tenancy?: boolean
 }
 

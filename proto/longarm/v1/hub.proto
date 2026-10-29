@@ -981,7 +981,7 @@ service HubAdmin {
 }
 
 message FleetSummaryRequest {
-  bool rows = 1; // include the anonymous per-machine rows
+  bool rows = 1; // include each user's version histogram (UserFleetSummary.versions)
 }
 
 // FleetCounts counts machines (revoked ones excluded). Clients have no hub
@@ -995,8 +995,8 @@ message FleetCounts {
   int32 pending = 6; // workers waiting for approval
 }
 
-// FleetMachine is one machine without anything that identifies it. The
-// rows of a user are sorted by role, state, version and OS only.
+// FleetMachine: no longer sent (a row per machine - OS, last seen - could
+// be joined back to a device); kept for the wire format.
 message FleetMachine {
   string role = 1; // worker | admin-worker | client | admin
   bool online = 2; // workers: hub session
@@ -1008,14 +1008,16 @@ message FleetMachine {
 message UserFleetSummary {
   string user = 1; // "" = fleet workers (no owner)
   FleetCounts counts = 2;
-  google.protobuf.Timestamp last_seen = 3; // latest of its workers
-  repeated FleetMachine machines = 4; // with rows
+  google.protobuf.Timestamp last_seen = 3; // no longer filled (one machine's activity)
+  repeated FleetMachine machines = 4; // no longer filled: per-user aggregates only
+  repeated VersionCount versions = 5; // with rows: the user's machines by version, newest first
 }
 
 message VersionCount {
   string version = 1; // "" = not reported
   int32 workers = 2;
   int32 online = 3;
+  int32 clients = 4; // devices (client, admin) of that version (per-user rows)
 }
 
 message FleetSummaryResponse {

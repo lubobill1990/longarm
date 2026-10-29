@@ -28,13 +28,18 @@
   only fleet-wide view is the new anonymous summary (`longarm admin summary
   [--rows]`, the panel's "Fleet" page, `GET /api/admin/summary`,
   `HubAdmin.FleetSummary`; admins only, audited): per user the number of
-  workers, admin workers and devices, how many are online, last seen, the
-  workers' version histogram, and optional rows with role, state, version,
-  OS and last seen - never names, IDs, host names, labels, metrics,
-  processes, sessions or jobs. Admin answers that named other users'
+  workers, admin workers and devices, how many are online, the workers'
+  version histogram, and optionally each user's machines by version -
+  aggregates only, never names, IDs, host names, OS, last-seen times,
+  labels, CPU / memory, processes, sessions or jobs. Admin answers that named other users'
   machines are cut down the same way: operations by name (approve, revoke,
-  drain, label, profile, remove, tailnet rekey, toolchain apply) answer
-  with name, owner and state only; `admin user ls` / "People" and `admin
+  drain, label, share, profile, remove, tailnet rekey, toolchain apply) on
+  another user's machine answer "not found" word for word like an unknown
+  name and do nothing; admins never share another user's worker; a worker
+  certificate never acts as a user (whatever its name) and node names never
+  take a user's; an admin's join code or panel login for a user is for a
+  user without machines only; user listings drop other users' reserved
+  memory; `admin user ls` / "People" and `admin
   user remove` give device and worker counts instead of names; join codes,
   rollouts (counts plus visible names), toolchain canaries, `admin tailnet
   status` and `admin links` name only machines the admin may see; a release

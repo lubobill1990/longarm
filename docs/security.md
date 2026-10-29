@@ -1275,14 +1275,13 @@ to every client version.
 
 The **only fleet-wide view** is `Admin.FleetSummary` (`longarm admin
 summary`, the panel's "Fleet" page, `GET /api/admin/summary`): per user the
-number of workers, admin workers and devices, how many workers are online
-and when one was last seen, the workers' version histogram (for rollouts)
-and - with `--rows` - one anonymous row per machine: role (worker /
-admin-worker / client / admin), online, version, OS, last seen (to the
-minute). It never carries device or worker names, node IDs, host names,
-endpoints, labels, CPU / memory, processes, agent sessions or jobs; rows are
-ordered by role, state, version and OS only, so they carry no stable
-identity. Every request is audited (`fleet/summary`). Clients have no hub
+number of workers, admin workers and devices and how many workers are
+online, the workers' version histogram (for rollouts) and - with `--rows` -
+each user's machines by version (workers, online, devices per version).
+Aggregates only: it never carries device or worker names, node IDs, host
+names, OS, last-seen times, endpoints, labels, CPU / memory, processes,
+agent sessions or jobs, and nothing per machine that could be joined back
+to a device. Every request is audited (`fleet/summary`). Clients have no hub
 session: their online state is not known.
 
 Other admin answers follow the same line:

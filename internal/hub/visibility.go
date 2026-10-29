@@ -113,22 +113,11 @@ func (h *Hub) LinksFor(v tenancy.Caller) *pb.LinksResponse {
 
 // ---------------------------------------------------------------- summary
 
-// machineRole is a FleetMachine's role.
-func machineRole(worker, adminWorker, adminCert bool) string {
-	switch {
-	case worker && adminWorker:
-		return "admin-worker"
-	case worker:
-		return "worker"
-	case adminCert:
-		return "admin"
-	}
-	return "client"
-}
-
 // FleetSummary is HubAdmin.FleetSummary: per user, counts of machines by
-// role and state, optional anonymous rows and the workers' versions. No
-// names, IDs, host names, labels, metrics, processes, sessions or jobs.
+// role and state (online for workers), and the versions - fleet-wide and,
+// with rows, per user. Aggregates only: no names, IDs, host names, OS,
+// last-seen times, labels, CPU or memory, processes, sessions or jobs,
+// nothing per machine that could be joined back to a device.
 func (h *Hub) FleetSummary(rows bool) *pb.FleetSummaryResponse {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -136,13 +125,23 @@ func (h *Hub) FleetSummary(rows bool) *pb.FleetSummaryResponse {
 	resp := &pb.FleetSummaryResponse{Time: timestamppb.New(now.Truncate(time.Minute)), Totals: &pb.FleetCounts{},
 		Tenancy: h.tenancyOnLocked()}
 	users := map[string]*pb.UserFleetSummary{}
+	userVersions := map[string]map[string]*pb.VersionCount{}
 	get := func(u string) *pb.UserFleetSummary {
 		s := users[u]
 		if s == nil {
 			s = &pb.UserFleetSummary{User: u, Counts: &pb.FleetCounts{}}
 			users[u] = s
+			userVersions[u] = map[string]*pb.VersionCount{}
 		}
 		return s
+	}
+	count := func(m map[string]*pb.VersionCount, version string) *pb.VersionCount {
+		vc := m[version]
+		if vc == nil {
+			vc = &pb.VersionCount{Version: version}
+			m[version] = vc
+		}
+		return vc
 	}
 	for name := range h.tenants {
 		get(name)
@@ -154,6 +153,9 @@ func (h *Hub) FleetSummary(rows bool) *pb.FleetSummaryResponse {
 			continue
 		}
 		worker := r.Role == string(pki.RoleWorker)
+		if !worker && r.Role != string(pki.RoleClient) && r.Role != string(pki.RoleAdmin) {
+			continue // relays, release credentials: nobody's machines
+		}
 		user := r.Owner
 		if !worker {
 			user = nodeUser(r)
@@ -178,55 +180,40 @@ func (h *Hub) FleetSummary(rows bool) *pb.FleetSummaryResponse {
 				c.Clients++
 			}
 		}
-		var seen time.Time
+		if r.State == statePending {
+			continue
+		}
 		if worker {
-			seen = r.LastSeen
-			if n.sess != nil {
-				seen = n.lastReport
+			vc := count(versions, r.Version)
+			vc.Workers++
+			if online {
+				vc.Online++
 			}
-			seen = seen.Truncate(time.Minute)
-			if seen.After(tsTime(s.LastSeen)) {
-				s.LastSeen = timestamppb.New(seen)
-			}
-			if r.State != statePending {
-				vc := versions[r.Version]
-				if vc == nil {
-					vc = &pb.VersionCount{Version: r.Version}
-					versions[r.Version] = vc
-				}
+		}
+		if rows {
+			vc := count(userVersions[user], r.Version)
+			if worker {
 				vc.Workers++
 				if online {
 					vc.Online++
 				}
+			} else {
+				vc.Clients++
 			}
-		}
-		if rows {
-			m := &pb.FleetMachine{Role: machineRole(worker, r.Admin, r.Role == string(pki.RoleAdmin)),
-				Online: online, Version: r.Version, Os: r.OS}
-			if !seen.IsZero() {
-				m.LastSeen = timestamppb.New(seen)
-			}
-			s.Machines = append(s.Machines, m)
 		}
 	}
-	for _, s := range users {
-		// no stable order beyond what the rows say: role, state, version, OS
-		sort.SliceStable(s.Machines, func(i, j int) bool {
-			a, b := s.Machines[i], s.Machines[j]
-			if a.Role != b.Role {
-				return a.Role < b.Role
-			}
-			if a.Online != b.Online {
-				return a.Online
-			}
-			if a.Version != b.Version {
-				return update.Compare(a.Version, b.Version) > 0
-			}
-			if a.Os != b.Os {
-				return a.Os < b.Os
-			}
-			return tsTime(a.LastSeen).After(tsTime(b.LastSeen))
-		})
+	newestFirst := func(m map[string]*pb.VersionCount) []*pb.VersionCount {
+		var out []*pb.VersionCount
+		for _, vc := range m {
+			out = append(out, vc)
+		}
+		sort.Slice(out, func(i, j int) bool { return update.Compare(out[i].Version, out[j].Version) > 0 })
+		return out
+	}
+	for u, s := range users {
+		if rows {
+			s.Versions = newestFirst(userVersions[u])
+		}
 		resp.Users = append(resp.Users, s)
 	}
 	sort.Slice(resp.Users, func(i, j int) bool {
@@ -236,12 +223,7 @@ func (h *Hub) FleetSummary(rows bool) *pb.FleetSummaryResponse {
 		}
 		return a < b
 	})
-	for _, vc := range versions {
-		resp.WorkerVersions = append(resp.WorkerVersions, vc)
-	}
-	sort.Slice(resp.WorkerVersions, func(i, j int) bool {
-		return update.Compare(resp.WorkerVersions[i].Version, resp.WorkerVersions[j].Version) > 0
-	})
+	resp.WorkerVersions = newestFirst(versions)
 	return resp
 }
 

@@ -111,7 +111,7 @@ func TestOwnedWorkers(t *testing.T) {
 		t.Fatalf("panel login for alice with machines: %+v", pr)
 	}
 	m := alicePanel
-	p :=(&uiStack{hubEnv: h, user: "alice", pass: m[1], secret: m[2]}).login(t)
+	p := (&uiStack{hubEnv: h, user: "alice", pass: m[1], secret: m[2]}).login(t)
 	waitFor(t, "alice's job in the hub index", 20*time.Second, func() bool {
 		code, _ := p.do("GET", "/api/jobs/"+id, "")
 		return code == 200
@@ -322,7 +322,8 @@ func adminSeesUserView(t *testing.T, h *hubEnv, root, bob string, print1 []strin
 	for _, u := range sum.Users {
 		alice = alice || (u.User == "alice" && fmt.Sprint(u.Counts["workers"]) == "1")
 	}
-	if !alice || strings.Contains(out, `"aw"`) || strings.Contains(out, `"wf"`) || strings.Contains(out, "kind") {
+	if !alice || strings.Contains(out, `"aw"`) || strings.Contains(out, `"wf"`) || strings.Contains(out, "kind") ||
+		strings.Contains(out, "machines") || strings.Contains(out, "last_seen") || !strings.Contains(out, `"versions"`) {
 		t.Fatalf("admin summary:\n%s", out)
 	}
 	if r := h.longarm(bob, "admin", "summary"); r.code == 0 || !strings.Contains(r.stderr, "PermissionDenied") {
