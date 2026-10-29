@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example-owner/longarm/internal/pki"
-	"github.com/example-owner/longarm/internal/update"
+	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/update"
 )
 
 // bashPath turns a path into one bash and the tools it runs understand
