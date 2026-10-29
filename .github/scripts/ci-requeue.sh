@@ -11,6 +11,7 @@ run=$1 attempt=$2
 max=${MAX_ATTEMPTS:-3}
 repo=${GITHUB_REPOSITORY:?}
 summary=${GITHUB_STEP_SUMMARY:-/dev/stdout}
+list() { while IFS= read -r l; do echo "- $l"; done <<<"$1"; }
 # name<TAB>conclusion<TAB>runner (empty: never started)
 jobs=$(gh api --paginate "repos/$repo/actions/runs/$run/attempts/$attempt/jobs?per_page=100" \
 	-q '.jobs[] | [.name, (.conclusion // "none"), (.runner_name // "")] | @tsv')
@@ -23,13 +24,13 @@ failed=$(awk -F'\t' '$1 != "tests" && ($2 == "failure" || $2 == "timed_out" || (
 		echo "No job was left unstarted: nothing to re-queue."
 	elif [ -n "$failed" ]; then
 		echo "Jobs failed for real (not re-run, so the failure stays visible):"
-		sed 's/^/- /' <<<"$failed"
+		list "$failed"
 	elif [ "$attempt" -ge "$max" ]; then
 		echo "GitHub did not start these jobs, but the run had $attempt attempts already:"
-		sed 's/^/- /' <<<"$unstarted"
+		list "$unstarted"
 	else
 		echo "GitHub did not start these jobs (no hosted runner acquired); re-running them:"
-		sed 's/^/- /' <<<"$unstarted"
+		list "$unstarted"
 	fi
 } >>"$summary"
 if [ -n "$unstarted" ] && [ -z "$failed" ] && [ "$attempt" -lt "$max" ]; then
