@@ -1,6 +1,7 @@
 package hubsync
 
 import (
+	"crypto/tls"
 	"crypto/x509"
 	"path/filepath"
 	"testing"
@@ -75,6 +76,18 @@ func TestPolicyCacheAndTTL(t *testing.T) {
 	}
 	if err := s.VerifyPeerCertificate(nil, chains(bob)); err == nil {
 		t.Fatal("revoked bob accepted")
+	}
+	// the TLS config: VerifyConnection (also on resumed handshakes), no
+	// session tickets, and the check at registration
+	tc := &tls.Config{}
+	s.Install(tc)
+	if !tc.SessionTicketsDisabled || tc.VerifyConnection == nil || s.cfg.Server.Admit == nil {
+		t.Fatalf("Install: tickets off %v, VerifyConnection %v, Admit %v", tc.SessionTicketsDisabled, tc.VerifyConnection != nil, s.cfg.Server.Admit != nil)
+	}
+	if tc.VerifyConnection(tls.ConnectionState{PeerCertificates: []*x509.Certificate{bob}}) == nil ||
+		tc.VerifyConnection(tls.ConnectionState{PeerCertificates: []*x509.Certificate{alice}}) != nil ||
+		s.cfg.Server.Admit(bob) == nil {
+		t.Fatal("Install: bob admitted or alice refused")
 	}
 
 	// a restart while the hub is away: the cached policy

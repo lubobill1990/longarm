@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"net/netip"
@@ -113,5 +114,30 @@ func TestCallMeMaybeForwarding(t *testing.T) {
 	}
 	if st := s.Stats(); len(st.Sessions) != 3 || st.Sessions[2].NAT != NATEasy {
 		t.Fatalf("stats %+v", st.Sessions)
+	}
+}
+
+// A certificate revoked between the TLS handshake and the node's Hello is
+// refused at registration (Server.Admit), not registered.
+func TestRegisterAdmit(t *testing.T) {
+	revoked := false
+	s := &Server{Admit: func(*x509.Certificate) error {
+		if revoked {
+			return errors.New("revoked")
+		}
+		return nil
+	}}
+	s.init()
+	defer s.Close()
+	w := pki.Identity{Role: pki.RoleWorker, Name: "w1"}
+	revoked = true
+	ss := s.newSession(w, nil, "tcp", netip.AddrPort{}, Hello{})
+	ss.kick = func(string) {}
+	if err := s.register(ss); err == nil || s.lookup(ss.id) != nil {
+		t.Fatalf("a revoked certificate registered: %v", err)
+	}
+	revoked = false
+	if err := s.register(ss); err != nil {
+		t.Fatal(err)
 	}
 }

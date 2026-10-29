@@ -210,7 +210,7 @@ func main() {
 				if err != nil {
 					return err
 				}
-				tlsConf.VerifyPeerCertificate = hs.VerifyPeerCertificate
+				hs.Install(tlsConf) // revocations on every handshake (resumed ones too) and at registration
 				go hs.Run(ctx)
 				log.Info("relay: registering with the hub", "hub", hubAddr, "udp", pubUDP, "tcp", pubTCP, "state_dir", stateDir)
 			}

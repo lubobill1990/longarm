@@ -15,6 +15,7 @@ package hubsync
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -125,16 +126,51 @@ func New(cfg Config) (*Sync, error) {
 	return s, nil
 }
 
-// VerifyPeerCertificate is the relay's tls.Config hook: no session before
-// a revocation list is known, none with a revoked certificate.
+// VerifyPeerCertificate checks a verified chain (tests; Install uses
+// VerifyConnection): no session before a revocation list is known, none
+// with a revoked certificate.
 func (s *Sync) VerifyPeerCertificate(raw [][]byte, chains [][]*x509.Certificate) error {
+	for _, ch := range chains {
+		if len(ch) > 0 {
+			if err := s.Admit(ch[0]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Admit is the relay's admission check of a node certificate.
+func (s *Sync) Admit(c *x509.Certificate) error {
 	s.mu.Lock()
 	ready := s.ready
 	s.mu.Unlock()
 	if !ready {
 		return errors.New("the relay has no revocation list from its hub yet")
 	}
-	return s.revoked.VerifyNotRevoked(raw, chains)
+	if c == nil {
+		return errors.New("no client certificate")
+	}
+	if s.revoked.Revoked(c) {
+		return fmt.Errorf("certificate %s is revoked", pki.Serial(c))
+	}
+	return nil
+}
+
+// Install puts the checks into the relay: in the TLS config through
+// VerifyConnection, which also runs on resumed handshakes (unlike
+// VerifyPeerCertificate), with session tickets off, and again when a
+// session registers (Server.Admit), atomically with the sweep of a new
+// revocation list.
+func (s *Sync) Install(tc *tls.Config) {
+	tc.SessionTicketsDisabled = true
+	tc.VerifyConnection = func(cs tls.ConnectionState) error {
+		if len(cs.PeerCertificates) == 0 {
+			return errors.New("no client certificate")
+		}
+		return s.Admit(cs.PeerCertificates[0])
+	}
+	s.cfg.Server.Admit = s.Admit
 }
 
 // Status reports the subscription's state (logs, /healthz).
@@ -283,8 +319,10 @@ func (s *Sync) apply(p *pb.RelayPolicy) {
 	if err := s.revoked.Replace(p.GetRevocations().GetVersion(), m); err != nil {
 		s.log.Warn("relay: save revocation list", "err", err)
 	}
-	if v := s.revoked.Version(); v != oldVersion {
-		n := s.cfg.Server.KickCerts(s.revoked.Revoked, "revoked")
+	// every policy sweeps (a session that slipped in is closed at the latest
+	// with the next one); registration checks the list too (Server.Admit)
+	n := s.cfg.Server.KickCerts(s.revoked.Revoked, "revoked")
+	if v := s.revoked.Version(); v != oldVersion || n > 0 {
 		s.log.Info("relay: revocation list updated", "version", v, "revoked", s.revoked.Len(), "sessions_closed", n)
 	}
 	var pairs [][2]string

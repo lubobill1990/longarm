@@ -108,6 +108,10 @@ type Server struct {
 	fakeSNAT netip.Addr
 	// workerPairs: worker pairs allowed to talk (SetWorkerPairs).
 	workerPairs atomic.Pointer[map[pairKey]struct{}]
+	// Admit, if set, is asked again when a session registers (under the
+	// lock KickCerts sweeps with): a certificate revoked between the TLS
+	// handshake and the node's Hello is refused, never registered.
+	Admit func(*x509.Certificate) error
 }
 
 func (s *Server) init() {
@@ -533,6 +537,13 @@ func (s *Server) register(ss *session) error {
 	if s.ctx.Err() != nil {
 		s.mu.Unlock()
 		return net.ErrClosed
+	}
+	if s.Admit != nil {
+		if err := s.Admit(ss.cert); err != nil {
+			s.mu.Unlock()
+			s.Logger.Warn("relay: refused session", "node", ss.ident, "err", err)
+			return err
+		}
 	}
 	old := s.sessions[ss.id]
 	if old != nil && old.ident != ss.ident {

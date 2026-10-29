@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -402,7 +403,16 @@ func (h *Hub) Serve(ctx context.Context) error {
 			return err
 		}
 		rtls.VerifyPeerCertificate = h.revoked.VerifyNotRevoked
-		h.relay = &relay.Server{TLS: rtls, Logger: h.log.With("component", "relay"), Rate: rate, Burst: int(rate)}
+		// a resumed handshake skips VerifyPeerCertificate: no tickets, and
+		// the list is checked again when a session registers
+		rtls.SessionTicketsDisabled = true
+		h.relay = &relay.Server{TLS: rtls, Logger: h.log.With("component", "relay"), Rate: rate, Burst: int(rate),
+			Admit: func(c *x509.Certificate) error {
+				if h.revoked.Revoked(c) {
+					return fmt.Errorf("certificate %s is revoked", pki.Serial(c))
+				}
+				return nil
+			}}
 		if rate > 0 && rate < 64<<10 {
 			h.relay.Burst = 64 << 10
 		}
