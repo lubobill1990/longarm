@@ -251,12 +251,12 @@ func TestMSIStepKeysHavePatterns(t *testing.T) {
 		}
 	}
 	raw := `"C:\Program Files\Longarm\longarmd.exe" install-helper msi settings ` + MSIDataMarker +
-		`hub=longarm.southeastasia.azurecontainer.io|ca=|login=1|labels=|mode=default|usersid=S-1-12-1-2854910761-1075605851-3754951082-3037235755`
+		`hub=longarm.example.com|ca=|login=1|labels=|mode=default|usersid=S-1-12-1-1000000001-1000000002-1000000003-1000000004`
 	d, err := MSIData(raw, MSISteps["settings"]...)
 	if err != nil {
 		t.Fatalf("settings: %v", err)
 	}
-	if d["mode"] != "default" || d["hub"] != "longarm.southeastasia.azurecontainer.io" {
+	if d["mode"] != "default" || d["hub"] != "longarm.example.com" {
 		t.Fatalf("settings: %v", d)
 	}
 	if _, err := MSIData(strings.Replace(raw, "mode=default", "mode=evil", 1), MSISteps["settings"]...); err == nil {

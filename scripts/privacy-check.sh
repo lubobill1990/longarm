@@ -47,8 +47,11 @@ else
 		else
 			args=(-i -E -e "$p")
 		fi
-		# don't echo the pattern: CI logs are public
-		if out=$(git grep -n -I "${args[@]}" -- . ':!.privacy-patterns'); then
+		# don't echo the pattern: CI logs are public. The governed repository
+		# files (Start Right: owners, access and inventory of the internal
+		# copy) name their maintainers by design.
+		if out=$(git grep -n -I "${args[@]}" -- . ':!.privacy-patterns' \
+			':!.github/acl/' ':!.github/compliance/' ':!.github/policies/' ':!.github/ISSUE_TEMPLATE/JitAccess.yml'); then
 			report "deny-list entry #$n" "$out"
 		fi
 	done <<<"$patterns"
