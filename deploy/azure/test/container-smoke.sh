@@ -242,6 +242,7 @@ cmp -s "$work/got.msi" "$work/rel/longarm-windows-amd64.msi" || fail "downloaded
 t0=$(now_ms)
 docker stop -t 60 "$p-id" >/dev/null
 timing "identity: SIGTERM to exit" "$t0" "$(now_ms)"
+echo "::group::DEBUG p-id logs"; docker logs "$p-id" 2>&1 | grep -v "compaction monitor" | tail -n 80; echo "::endgroup::"
 docker rm "$p-id" >/dev/null
 t0=$(now_ms)
 id_run "$p-id2"
