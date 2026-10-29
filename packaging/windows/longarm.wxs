@@ -81,11 +81,25 @@
   version's files go, and an older installed longarmd knows nothing of it) asks Longarm's processes to
   stop - their stop events - and ends them by pid only when they can't (an older version) or don't in
   time: the installing user's tray before InstallValidate (the only one with a window), then, elevated and
-  before RemoveExistingProducts, the worker services and every user's tray, worker host and longarmd run.
+  before StopServices / InstallFiles, the worker services and every user's tray, worker host and longarmd run.
   Running jobs and sessions keep running: their shims are longarmd.exe processes too, so binaries still in
   use move to <install dir>\old (a running image may be renamed) and the new ones go in beside them. At the
   end the restart step starts again what ran: the services, the users' worker tasks, the trays (unelevated,
   in their users' sessions). A failed upgrade's rollback puts the old binaries back and starts them.
+
+  Major upgrade order (MajorUpgrade Schedule="afterInstallExecute"): the new version is installed over
+  the old one (InstallFiles replaces the files; every component keeps its GUID, so the two products
+  share them), then RemoveExistingProducts uninstalls the old product, which removes only what the new
+  one no longer has: a component another product still uses stays ("Disallowing uninstallation of
+  component ... since another client exists"). Every released version's uninstall steps (leave the hub,
+  remove tasks, services, data) are conditioned NOT UPGRADINGPRODUCTCODE, so nothing is revoked.
+  Not afterInstallInitialize: RemoveExistingProducts then has to come before every action that writes
+  to the install script, and the elevated stop step is one (error 2613 "RemoveExistingProducts action
+  sequenced incorrectly": every upgrade by 0.1.8 to 0.1.13 failed). Not afterInstallValidate: outside
+  the transaction, and before any elevated step could stop anything. The one change an upgrade over the
+  old product can't make: longarmd.exe moving between the service component and the plain one
+  (RUN=service <-> session, or ROLES=client on a service worker) - the old product's uninstall would
+  delete the file the new one wrote - so CheckLongarmdSwitch refuses it (uninstall, then install).
 
   Every install has the Longarm Update service (LongarmUpdate, longarm-update.exe, LocalSystem): it
   installs a newer MSI from the recorded hub when the owner asks (longarm worker update, the tray's
@@ -113,7 +127,8 @@
   <Package Name="Longarm" Manufacturer="Longarm contributors" Version="$(var.Version)" Language="1033"
            UpgradeCode="0d623137-abc8-4dc1-8e7d-32fc483c9e93" Scope="perMachine" Compressed="yes" InstallerVersion="500">
     <SummaryInformation Description="Longarm client and worker (longarm, longarmd, longarm-tray)" />
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Longarm is already installed." Schedule="afterInstallInitialize" />
+    <!-- afterInstallExecute: "Major upgrade order" above (never afterInstallInitialize: error 2613) -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Longarm is already installed." Schedule="afterInstallExecute" />
     <MediaTemplate EmbedCab="yes" />
 
     <!-- The built-in hub of this build (-DefaultHub): the "Default" choice. -->
@@ -154,6 +169,14 @@
       <RegistrySearch Id="RegAdminWorker" Root="HKLM" Key="Software\Longarm" Name="AdminWorker" Type="raw" />
     </Property>
     <Property Id="LAUNCH_TRAY" Value="1" Secure="yes" />
+    <!-- Which longarmd component the installed version has (read-only, AppSearch): an upgrade can't
+         move longarmd.exe from one to the other (CheckLongarmdSwitch). -->
+    <Property Id="PREV_LONGARMD_SERVICE">
+      <ComponentSearch Id="CompLongarmdService" Guid="3e96d676-1a38-455f-a841-7b7642e651c8" Type="file" />
+    </Property>
+    <Property Id="PREV_LONGARMD_PLAIN">
+      <ComponentSearch Id="CompLongarmdPlain" Guid="0afe2b69-cb68-4395-a6fb-5a51b76aef5b" Type="file" />
+    </Property>
     <!-- A Windows 365 Cloud PC / Microsoft Dev Box (read-only searches, no elevation: AppSearch):
          the Default page preselects "This machine runs jobs" (CLOUD_PC, set below) unless roles are
          recorded (an upgrade). The same names as longarmd.LooksLikeCloudPC (the tray's hint). -->
@@ -320,6 +343,7 @@
     <CustomAction Id="CheckRun" Error="RUN must be session or service (ISOLATION=per-user needs RUN=service)." />
     <CustomAction Id="CheckSessionUser" Error="RUN=session runs the worker as the user who logs on, but this install runs as SYSTEM (UserSID S-1-5-18): install as that user (elevated), pass SESSION_SID=&lt;the user's SID&gt;, or use RUN=service." />
     <CustomAction Id="CheckAdminRole" Error="ADMIN_WORKER=1 adds the admin worker, which comes with the worker role: use ROLES=both (or ROLES=worker), or leave ADMIN_WORKER out." />
+    <CustomAction Id="CheckLongarmdSwitch" Error="This upgrade would switch the worker between a Windows service and the user-session worker (RUN, or ROLES=client on a service worker), which an upgrade can't do: leave RUN and ROLES out to keep the installed ones, or uninstall first (msiexec /x, KEEP_DATA=1 keeps the jobs) and install again." />
     <CustomAction Id="CheckAdminWorker" Error="ADMIN_WORKER=1 signs the admin worker in with Microsoft at the hub, as the user who installs it: it needs a hub (MODE=default or HUB=...) and an installing user (not SYSTEM, or SESSION_SID=...)." />
     <!-- Secrets (JOIN_CODE, CLIENT_JOIN_CODE, CLIENT_CODE, SERVICE_PASSWORD) stay out of verbose
          logs (msiexec /l*v): the properties are Hidden (masked in property dumps and changes), and
@@ -502,15 +526,15 @@
     <!-- as the installing user, before InstallValidate looks for files in use: their tray -->
     <CustomAction Id="LongarmStopTray" BinaryRef="LongarmMsiHelper" Execute="immediate" Return="ignore"
                   ExeCommand='stop-tray #LONGARM-MSI#usersid=[UserSID]' />
-    <!-- elevated, before the old version goes: services, every user's tray / worker host / longarmd run,
-         binaries still in use (job shims) moved aside; what ran is recorded -->
+    <!-- elevated, before the services stop and the files are replaced: services, every user's tray /
+         worker host / longarmd run, binaries still in use (job shims) moved aside; what ran is recorded -->
     <CustomAction Id="LongarmUpgradeStop" BinaryRef="LongarmMsiHelper" Execute="deferred" Impersonate="no" Return="ignore"
                   ExeCommand='stop #LONGARM-MSI#usersid=[UserSID]' />
     <CustomAction Id="LongarmUpgradeStopRollback" BinaryRef="LongarmMsiHelper" Execute="rollback" Impersonate="no" Return="ignore"
                   ExeCommand='rollback #LONGARM-MSI#usersid=[UserSID]' />
     <CustomAction Id="LongarmRemoveStop" BinaryRef="LongarmMsiHelper" Execute="deferred" Impersonate="no" Return="ignore"
                   ExeCommand='stop-remove #LONGARM-MSI#usersid=[UserSID]' />
-    <!-- at the end, the new longarmd: what was stopped starts again (the tray of SESSION_SID is
+    <!-- at the end (after RemoveExistingProducts), the new longarmd: what was stopped starts again (the tray of SESSION_SID is
          LongarmTrayLaunch's when LAUNCH_TRAY isn't 0) -->
     <CustomAction Id="LongarmdUpgradeRestart" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
                   ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi restart #LONGARM-MSI#sid=[SESSION_SID]|launch=[LAUNCH_TRAY]|usersid=[UserSID]' />
@@ -534,6 +558,10 @@
       <Custom Action="CheckSessionUser" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND IsWorker AND RUN="session" AND (NOT SESSION_SID OR SESSION_SID="S-1-5-18")' />
       <!-- an install from before this rule that has the admin worker without a worker keeps it -->
       <Custom Action="CheckAdminRole" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND ADMIN_WORKER="1" AND NOT IsWorker AND SAVED_ADMIN_WORKER&lt;&gt;"1"' />
+      <!-- the old product's uninstall (after the new install) would remove the longarmd.exe the new
+           product's other component wrote; before anything is stopped -->
+      <Custom Action="CheckLongarmdSwitch" Before="LongarmStopTray"
+              Condition='WIX_UPGRADE_DETECTED AND NOT REMOVE="ALL" AND ((PREV_LONGARMD_SERVICE AND NOT (IsWorker AND RUN="service")) OR (PREV_LONGARMD_PLAIN AND IsWorker AND RUN="service"))' />
       <Custom Action="CheckAdminWorker" Before="InstallInitialize" Condition='NOT REMOVE="ALL" AND ADMIN_WORKER="1" AND (NOT HUB OR NOT SESSION_SID OR SESSION_SID="S-1-5-18")' />
       <Custom Action="CheckServiceAccount" Before="InstallInitialize"
               Condition='IsWorker AND RUN="service" AND NOT REMOVE="ALL" AND (NOT Installed OR REINSTALL) AND (NOT SERVICE_ACCOUNT OR (SERVICE_ACCOUNT~&lt;&gt;"LocalSystem" AND NOT SERVICE_PASSWORD))' />
@@ -547,7 +575,7 @@
       <Custom Action="LongarmStopTray" Before="InstallValidate"
               Condition='(WIX_UPGRADE_DETECTED OR REMOVE="ALL") AND NOT UPGRADINGPRODUCTCODE AND UserSID=SESSION_SID' />
       <Custom Action="LongarmUpgradeStopRollback" Before="LongarmUpgradeStop" Condition='WIX_UPGRADE_DETECTED AND NOT UPGRADINGPRODUCTCODE AND NOT REMOVE="ALL"' />
-      <Custom Action="LongarmUpgradeStop" Before="RemoveExistingProducts" Condition='WIX_UPGRADE_DETECTED AND NOT UPGRADINGPRODUCTCODE AND NOT REMOVE="ALL"' />
+      <Custom Action="LongarmUpgradeStop" Before="StopServices" Condition='WIX_UPGRADE_DETECTED AND NOT UPGRADINGPRODUCTCODE AND NOT REMOVE="ALL"' />
       <Custom Action="LongarmRemoveStop" Before="StopServices" Condition='REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE' />
       <Custom Action="LongarmdUpgradeRestart" Before="InstallFinalize" Condition='WIX_UPGRADE_DETECTED AND NOT UPGRADINGPRODUCTCODE AND NOT REMOVE="ALL"' />
       <Custom Action="LongarmdSettings" After="InstallServices" Condition='$Settings=3' />
