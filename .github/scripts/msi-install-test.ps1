@@ -241,6 +241,9 @@ function Invoke-Uninstall {
   }
   if (Get-Service LongarmUpdate -ErrorAction SilentlyContinue) { Fail 'the LongarmUpdate service is left' }
   if (Get-ScheduledTask -TaskName "LongarmWorker-$sid" -ErrorAction SilentlyContinue) { Fail 'the worker task is left' }
+  # (the tray's `longarm daemon start`, a client waiting up to 30 s for the daemon, may outlive the tray: as
+  # any `longarm` client it is left to end by itself)
+  $null = Wait-Until { -not @(Get-LongarmProcs).Count } 45 'the last Longarm processes to end'
   $left = @(Get-LongarmProcs)
   if ($left.Count) { Fail "processes left after the uninstall: $($left.CommandLine -join '; ')" }
   if (@(Get-NetFirewallRule -DisplayName 'Longarm longarm (UDP)' -ErrorAction SilentlyContinue).Count) { Fail 'a firewall rule is left' }
