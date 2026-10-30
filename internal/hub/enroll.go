@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -319,6 +320,16 @@ func (h *Hub) issue(rec *store.Node, csr []byte) ([]byte, error) {
 	return h.issueHosts(rec, csr, nil)
 }
 
+// certUser is the user a node's certificates carry: a client's or admin's
+// pinned user (else its certificates' name); relays, release credentials
+// and workers carry none (pki refuses one).
+func certUser(rec *store.Node) string {
+	if rec.Role != string(pki.RoleClient) && rec.Role != string(pki.RoleAdmin) {
+		return ""
+	}
+	return cmp.Or(rec.User, rec.DialName())
+}
+
 // issueHosts is issue with DNS/IP SANs (a relay's renewal keeps its names).
 func (h *Hub) issueHosts(rec *store.Node, csr []byte, hosts []string) ([]byte, error) {
 	if rec.ID == "" {
@@ -345,7 +356,7 @@ func (h *Hub) issueHosts(rec *store.Node, csr []byte, hosts []string) ([]byte, e
 	}
 	ttl := h.cfg.TTL(rec.Role)
 	cert, err := h.ca.SignCSR(csr, pki.IssueOptions{Role: pki.Role(rec.Role), Name: name, Validity: ttl,
-		Hosts: hosts, User: rec.User, ID: rec.ID})
+		Hosts: hosts, User: certUser(rec), ID: rec.ID})
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "sign: %v", err)
 	}
