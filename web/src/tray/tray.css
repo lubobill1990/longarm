@@ -73,7 +73,12 @@
     font-weight: var(--fw-semibold);
   }
   & .sr-only {
+    /* at its positioned parent's corner: a focused hidden input (a
+       segmented choice's radio) must never be away from what was clicked,
+       or the browser scrolls the whole shell to it */
     position: absolute;
+    top: 0;
+    left: 0;
     width: 1px;
     height: 1px;
     overflow: hidden;
@@ -296,6 +301,7 @@
     border: 1px solid var(--border);
   }
   & .segmented label {
+    position: relative; /* holds its sr-only radio (see .sr-only) */
     display: inline-flex;
     align-items: center;
     height: 26px;
