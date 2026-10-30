@@ -611,11 +611,11 @@ Every release goes to a **channel**; every machine follows one and takes
 the newest release of its channel *or of a more tested one*
 (`internal/update/channel.go`):
 
-| channel | made by | version | GitHub Release | hub deploy, fleet rollout |
-|---|---|---|---|---|
-| `stable` | a tag `vX.Y.Z` on `main` | `X.Y.Z` | yes | yes |
-| `preview` | a tag `vX.Y.Z-<pre>` (e.g. `v0.1.22-rc.1`) | `X.Y.Z-rc.1` | prerelease | no |
-| `dev` | every push to `main` (merged pull requests; not docs-only) | `<next patch>-dev.<run>` | no | no |
+| channel | made by | version | GitHub Release | hub deploy | fleet rollout |
+|---|---|---|---|---|---|
+| `stable` | a tag `vX.Y.Z` on `main` | `X.Y.Z` | yes | yes | yes |
+| `preview` | a tag `vX.Y.Z-<pre>` (e.g. `v0.1.22-rc.1`) | `X.Y.Z-rc.1` | prerelease | yes | no |
+| `dev` | every push to `main` (merged pull requests; not docs-only) | `<next patch>-dev.<run>` | no | no | no |
 
 - **Versions sort in release order.** A dev build's version is the next
   patch after the highest version tagged so far (stable or prerelease),
@@ -639,6 +639,19 @@ the newest release of its channel *or of a more tested one*
 - **Going back** to a more tested channel takes effect with that
   channel's next release (no downgrades): a machine on `0.1.22-dev.9` that
   moves to stable stays there until `0.1.22` is released.
+- **The hub follows preview.** There is one hub for every channel, so it
+  runs a release candidate as soon as one is tagged (the `hub` job: the SSH
+  forced command, health check, automatic rollback); a dev build must work
+  with the hub as it is - the gRPC API only grows, so new clients and
+  workers talk to an older hub, and what needs the hub's side lights up with
+  the next release candidate. A hub on Azure Container Instances
+  (`deploy/azure`) can't be deployed from CI (the tenant refuses GitHub's
+  OIDC tokens): the run's summary (job `hub-manual`) gives the command,
+  `deploy.ps1 -Name <hub> -ResourceGroup <rg> -Image
+  ghcr.io/<owner>/longarm-hub:<version>`, to run from a checkout of the tag
+  where `az` is signed in. To try something hub-side before an rc, deploy
+  main's image `ghcr.io/<owner>/longarm-hub:sha-<12 hex>` (image.yml) the
+  same way, briefly.
 - **The hub** answers `GET /releases/latest.json?channel=preview|dev` with
   the newest complete release for that channel; an older hub ignores the
   parameter and answers its latest stable, so machines fall back to stable
@@ -655,8 +668,8 @@ the newest release of its channel *or of a more tested one*
   the image tags (image.yml pushes `:edge` for main itself).
 
 Typical flow: merge → dev build on the hub minutes later → the people on
-`dev` run it → tag `vX.Y.Z-rc.1` when it looks good → preview machines get
-it → tag `vX.Y.Z` → everybody.
+`dev` run it → tag `vX.Y.Z-rc.1` when it looks good → the hub and preview
+machines get it → tag `vX.Y.Z` → everybody.
 
 Use **Re-run failed jobs** after a failure: publish skips identical files (and
 fails if the hub has *different* files under that version) - unless the hub

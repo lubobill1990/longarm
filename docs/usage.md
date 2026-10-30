@@ -2728,6 +2728,9 @@ install):
 longarm-update status                      # installed, available, in progress, last result, auto
 longarm-update install --latest | --version 0.1.9
 longarm-update install --version 0.1.9 --reinstall   # the same version again: an elevated administrator only
+longarm-update channel                     # the release channel: stable | preview | dev
+longarm-update channel dev                 # follow dev builds (the owner or an administrator; the tray's Release channel)
+# a worker of yours, from your machine: longarm exec <worker> -- longarm-update channel dev
 ```
 
 The tray's own update banner installs through the service when the machine

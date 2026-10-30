@@ -66,9 +66,12 @@
 # prerelease; a push to main -> dev, version <next patch>-dev.<run number>
 # (the next patch after the highest version tagged so far, so dev builds sort
 # after its release candidates and before the next release), no GitHub
-# Release, no versioned image. Preview and dev: no hub deploy, no fleet
-# rollout - machines on those channels pick them up through the tray's
-# banner, the update service's automatic updates or longarm worker update.
+# Release, no versioned image. The hub follows preview: release candidates and releases deploy
+# it (one hub serves every channel, so it runs at least what preview
+# machines need; dev builds must work with it). Only releases roll out to
+# the fleet; machines on preview and dev pick their builds up through the
+# tray's banner, the update service's automatic updates or longarm worker
+# update.
 #
 # Isolation: no job saves a cache; the Go jobs start from fresh module caches
 # and restore only the build cache that ci.yml saves on pushes to main
@@ -614,7 +617,8 @@ jobs:
   hub:
     name: hub (longarm-hub over SSH forced command)
     needs: [meta, publish]
-    if: needs.meta.outputs.prerelease == 'false' && needs.meta.outputs.dry_run == 'false' && vars.LONGARM_HUB != '' && vars.HUB_SSH != ''
+    # the hub follows preview: release candidates and releases, never dev builds
+    if: needs.meta.outputs.dev == 'false' && needs.meta.outputs.dry_run == 'false' && vars.LONGARM_HUB != '' && vars.HUB_SSH != ''
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -637,6 +641,39 @@ jobs:
         run: |
           .github/scripts/hub-deploy.sh check "$VERSION"
           .github/scripts/hub-deploy.sh deploy "$VERSION"
+
+  # A hub without the SSH deploy (HUB_SSH unset) - one on Azure Container
+  # Instances (deploy/azure), which CI can't sign in to (the tenant refuses
+  # GitHub's OIDC tokens): the hub follows preview too, so the run says how
+  # to deploy it, with the image the image job pushed for this version.
+  hub-manual:
+    name: hub (deploy by hand)
+    needs: [meta, publish, image]
+    if: needs.meta.outputs.dev == 'false' && needs.meta.outputs.dry_run == 'false' && vars.HUB_SSH == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: how to deploy the hub
+        env:
+          OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          img="ghcr.io/${OWNER,,}/longarm-hub:$VERSION"
+          echo "::notice title=Deploy the hub::the hub follows preview: deploy $img (docs/ci-cd.md \"Release channels\")"
+          {
+            echo "### Deploy the hub ($VERSION)"
+            echo
+            echo "The hub follows preview: release candidates and releases deploy it. This repository has no SSH"
+            echo "deploy (HUB_SSH), so deploy it by hand, from a checkout of v$VERSION, where the hub runs:"
+            echo
+            echo '```sh'
+            echo "deploy/azure/deploy.sh --name <hub> --resource-group <rg> --image $img"
+            echo "# or: pwsh deploy/azure/deploy.ps1 -Name <hub> -ResourceGroup <rg> -Image $img"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
 
   rollout:
     name: rollout (canary, then the fleet)

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- The hub follows the **preview** channel: release candidate tags deploy
+  the hub too (release.yml's `hub` job), not only releases; dev builds never
+  do. A hub on Azure Container Instances, which CI can't sign in to, gets
+  the command to run in the release run's summary (`hub-manual`).
+  docs/ci-cd.md "Release channels".
+
 ### Added
 
 - **Release channels: stable, preview, dev.** Every push to `main` now
@@ -153,6 +161,13 @@
   `/link` audit records name the provider (`google/<e-mail>`).
 
 ### Fixed
+
+- deploy/azure/deploy.ps1: a re-run read a hub with `-StorageAuth identity`
+  as `key` with Azure CLI 2.91, which prints `-o tsv` lists one field per
+  line (joined without a separator they ran together), and its template was
+  refused by policies against storage account keys ("RequestDisallowedByPolicy",
+  nothing changed). The lines are joined with tabs now; deploy.sh already
+  read both forms.
 
 - Windows: the tray's "Update to ..." (and a user-session longarmd's machine
   update) refused the real Longarm Update service: "the update pipe is
