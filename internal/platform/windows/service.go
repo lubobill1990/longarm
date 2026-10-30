@@ -191,6 +191,64 @@ func QueryService(name string) (ptypes.ServiceStatus, error) {
 	}
 }
 
+// ServiceProcess is what any interactive user may read about a service
+// (SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG, granted to interactive
+// users and service logons by the SCM's default service security): its
+// current process, its account and its command line. The process itself is
+// never opened (a LocalSystem service's isn't readable for a user).
+type ServiceProcess struct {
+	Running bool
+	PID     uint32 // 0 unless running
+	// Account: its logon account as configured ("LocalSystem",
+	// `NT AUTHORITY\LocalService`, `.\user`).
+	Account string
+	// Command: its binary path with arguments, as configured.
+	Command string
+}
+
+// QueryServiceProcess returns name's ServiceProcess (a missing service:
+// windows.ERROR_SERVICE_DOES_NOT_EXIST).
+func QueryServiceProcess(name string) (ServiceProcess, error) {
+	scm, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
+	if err != nil {
+		return ServiceProcess{}, err
+	}
+	defer windows.CloseServiceHandle(scm)
+	n, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return ServiceProcess{}, err
+	}
+	h, err := windows.OpenService(scm, n, windows.SERVICE_QUERY_STATUS|windows.SERVICE_QUERY_CONFIG)
+	if err != nil {
+		return ServiceProcess{}, err
+	}
+	defer windows.CloseServiceHandle(h)
+	var sp ServiceProcess
+	var st windows.SERVICE_STATUS_PROCESS
+	var need uint32
+	if err := windows.QueryServiceStatusEx(h, windows.SC_STATUS_PROCESS_INFO, (*byte)(unsafe.Pointer(&st)), uint32(unsafe.Sizeof(st)), &need); err != nil {
+		return ServiceProcess{}, fmt.Errorf("QueryServiceStatusEx: %w", err)
+	}
+	if st.CurrentState == windows.SERVICE_RUNNING {
+		sp.Running, sp.PID = true, st.ProcessId
+	}
+	size := uint32(1024)
+	for {
+		buf := make([]byte, size)
+		cfg := (*windows.QUERY_SERVICE_CONFIG)(unsafe.Pointer(&buf[0]))
+		err := windows.QueryServiceConfig(h, cfg, size, &need)
+		if err == nil {
+			sp.Account = windows.UTF16PtrToString(cfg.ServiceStartName)
+			sp.Command = windows.UTF16PtrToString(cfg.BinaryPathName)
+			return sp, nil
+		}
+		if !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) || need <= size || need > 1<<20 {
+			return ServiceProcess{}, fmt.Errorf("QueryServiceConfig: %w", err)
+		}
+		size = need
+	}
+}
+
 // RunAsService runs fn under the SCM if the current process was started by
 // it. handled=false means "not a service, run in the foreground instead".
 func RunAsService(name string, fn func(ctx context.Context) error) (handled bool, err error) {

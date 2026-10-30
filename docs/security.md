@@ -568,10 +568,20 @@ service fails to start rather than share it), remote clients rejected,
 network logons denied, authenticated local users may read and write but
 not add a server instance (`0x12019b`: no `FILE_CREATE_PIPE_INSTANCE`).
 Clients connect at identification level and **verify the server** before
-sending anything: `GetNamedPipeServerProcessId`, its image must be
-`longarm-update.exe` in the install dir the MSI recorded (checked to be
-writable by administrators only) and its token SYSTEM - a squatter gets
-`ErrImpostor` (tested). The service identifies each client from its token
+sending anything, without opening the server's process (a LocalSystem
+process can't be opened by a user: the tray and a user-session longarmd
+are users): the pipe instance's owner must be SYSTEM or Administrators (the
+service's default owner; a user's process can't give what it creates
+either owner), and the process that created the instance
+(`GetNamedPipeServerProcessId`) must be the service's current process as
+the service manager reports it (`QueryServiceStatusEx`), with the service
+configured to run `longarm-update.exe` from the install dir the MSI
+recorded (checked to be writable by administrators only) as LocalSystem
+(`QueryServiceConfig`) - both readable with `SERVICE_QUERY_STATUS` /
+`SERVICE_QUERY_CONFIG`, which interactive users have. Only administrators
+can install or change a service, so a squatter (another process, or the
+name taken while the service is stopped) gets `ErrImpostor` (tested). The
+service identifies each client from its token
 (`ImpersonateNamedPipeClient`, on a locked thread, reverted at once).
 
 | Request | Who |
