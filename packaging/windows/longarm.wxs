@@ -246,6 +246,10 @@
     <!-- Repair would re-create the service and needs the account password again (msiexec /fa ... SERVICE_PASSWORD=...). -->
     <Property Id="ARPNOREPAIR" Value="1" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/lubobill1990/longarm" />
+    <!-- The Longarm icon (packaging/icons, go run ./packaging/icons): Add/Remove Programs and the
+         Start menu shortcut. The exes carry it too (cmd/<tool>/rsrc_windows_<arch>.syso). -->
+    <Icon Id="LongarmIcon" SourceFile="$(sys.SOURCEFILEDIR)..\icons\longarm.ico" />
+    <Property Id="ARPPRODUCTICON" Value="LongarmIcon" />
 
     <!-- Derived (private) properties, computed before costing in both sequences. -->
     <!-- The same dir longarmd defaults to as LocalSystem and for service install isolation per-user
@@ -459,7 +463,7 @@
         <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="longarm-tray" Type="string" Value='"[INSTALLFOLDER]longarm-tray.exe"' />
       </Component>
       <Component Id="TrayShortcut" Directory="MenuFolder" Guid="936cbf15-9d7c-4e3d-8b7a-173b2bb11b9d">
-        <Shortcut Id="TrayMenu" Name="Longarm" Description="Longarm tray" Target="[INSTALLFOLDER]longarm-tray.exe" WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut Id="TrayMenu" Name="Longarm" Description="Longarm tray" Target="[INSTALLFOLDER]longarm-tray.exe" WorkingDirectory="INSTALLFOLDER" Icon="LongarmIcon" />
         <RemoveFolder Id="RemoveMenu" On="uninstall" />
         <RegistryValue Root="HKCU" Key="Software\Longarm" Name="MenuShortcut" Type="integer" Value="1" KeyPath="yes" />
       </Component>

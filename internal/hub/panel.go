@@ -48,7 +48,7 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 		mux.Handle("GET /"+p, withCSP(spa))
 		mux.Handle("GET /"+p+"/", withCSP(spa))
 	}
-	mux.Handle("GET /favicon.svg", withCSP(spa))
+	mux.Handle("GET /favicon.png", withCSP(spa))
 	mux.HandleFunc("GET /status", h.statusPage)
 
 	api("POST /api/jobs", func(w http.ResponseWriter, r *http.Request, user string) {

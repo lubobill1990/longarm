@@ -15,6 +15,14 @@
 
 ### Added
 
+- **The Longarm icon**: the friendly agent whose long arm reaches out with the
+  finished task. Every Windows exe carries it (`longarm`, `longarmd`,
+  `longarm-tray`, `longarm-update`, `longarm-hub`, `longarm-relay`), the
+  MSI shows it in Add/Remove Programs and on the Start menu shortcut (so on
+  the tray's notifications too), and the hub panel and the tray window use it
+  as their favicon; 16-32 px use a simplified version. The notification-area
+  icon stays the live per-worker chart. packaging/icons/README.md.
+
 - **Agent sessions in the tray**: Claude Code / Copilot CLI on a worker's
   card opens a Sessions window listing every agent session of your workers
   (working, waiting for input, ended, outside Longarm), each in a tab with
