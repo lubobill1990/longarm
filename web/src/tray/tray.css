@@ -1472,28 +1472,6 @@
   & .signin-hero .card-title {
     margin: 0;
   }
-  & .ms-mark {
-    display: grid;
-    grid-template-columns: 8px 8px;
-    gap: 2px;
-    flex: none;
-  }
-  & .ms-mark span {
-    width: 8px;
-    height: 8px;
-  }
-  & .ms-mark span:nth-child(1) {
-    background: #f25022;
-  }
-  & .ms-mark span:nth-child(2) {
-    background: #7fba00;
-  }
-  & .ms-mark span:nth-child(3) {
-    background: #00a4ef;
-  }
-  & .ms-mark span:nth-child(4) {
-    background: #ffb900;
-  }
   & .lead {
     color: var(--text-2);
     font-size: var(--fs-md);

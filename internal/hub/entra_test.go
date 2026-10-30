@@ -614,7 +614,7 @@ func TestEntraWebSignIn(t *testing.T) {
 	if code, _ := plainGet(t, base+"/auth/spa-callback?code=x&state=y"); code != http.StatusNotFound {
 		t.Fatalf("spa callback in confidential mode: %d", code)
 	}
-	if _, body := plainGet(t, base+"/status"); !strings.Contains(body, `href="/auth/login?next=/status"`) {
+	if _, body := plainGet(t, base+"/status"); !strings.Contains(body, `href="/auth/login?provider=entra&amp;next=/status"`) {
 		t.Fatalf("login page without the Microsoft link: %s", body)
 	}
 	if _, body := plainGet(t, base+"/"); strings.Contains(body, "la-entra") {

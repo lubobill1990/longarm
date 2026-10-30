@@ -86,7 +86,7 @@ export function TrayApp() {
   if (info?.roles.worker) tabs.push(['worker', 'This worker'])
   if (!info || info.roles.client) tabs.push(['settings', 'Settings'])
   if (info?.account) tabs.push(['account', 'Account'])
-  // not signed in yet: the account tab (Sign in with Microsoft) first
+  // not signed in yet: the account tab (Sign in) first
   const needSignIn = !!info?.account?.needed
   const asked = new URLSearchParams(location.search).has('tab')
   const want = needSignIn && !asked && tab === 'pool' ? 'account' : tab
@@ -155,7 +155,7 @@ export function TrayApp() {
                     testId="signin-banner"
                     action={
                       <button className="primary" onClick={() => setTab('account')}>
-                        Sign in with Microsoft
+                        Sign in
                       </button>
                     }
                   >

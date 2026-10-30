@@ -186,9 +186,9 @@ type tokenCheck struct {
 
 var b64url = base64.RawURLEncoding
 
-// verifyEntraToken checks token's RS256 signature against keys and its
-// claims against want. Errors say why, never echo the token.
-func verifyEntraToken(ctx context.Context, keys *jwks, token string, want tokenCheck, now time.Time) (*entraClaims, error) {
+// verifyJWT checks token's RS256 signature against keys and returns its
+// payload. Errors say why, never echo the token.
+func verifyJWT(ctx context.Context, keys *jwks, token string) ([]byte, error) {
 	if len(token) > maxTokenLen {
 		return nil, errors.New("token too long")
 	}
@@ -229,6 +229,16 @@ func verifyEntraToken(ctx context.Context, keys *jwks, token string, want tokenC
 	payload, err := b64url.DecodeString(parts[1])
 	if err != nil {
 		return nil, errors.New("bad token payload")
+	}
+	return payload, nil
+}
+
+// verifyEntraToken checks token's RS256 signature against keys and its
+// claims against want. Errors say why, never echo the token.
+func verifyEntraToken(ctx context.Context, keys *jwks, token string, want tokenCheck, now time.Time) (*entraClaims, error) {
+	payload, err := verifyJWT(ctx, keys, token)
+	if err != nil {
+		return nil, err
 	}
 	var c entraClaims
 	if err := json.Unmarshal(payload, &c); err != nil {

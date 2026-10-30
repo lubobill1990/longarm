@@ -13,7 +13,7 @@ import { IconUser } from '../components/icons'
 import { Banner } from './ui'
 
 /**
- * longarm-tray's account tab: "Sign in with Microsoft" (one code, one
+ * longarm-tray's account tab: "Sign in" (one code, one
  * approval for this device, the worker and the admin worker; it starts by
  * itself after an install), then who is signed in, the worker's state,
  * what this computer does (send jobs / run jobs / admin commands, changed
@@ -96,8 +96,7 @@ function SignInCard({ acct, onStarted }: { acct: Account; onStarted: (s: SignInS
   return (
     <section className="wcard signin-card" data-testid="signin-card">
       <div className="signin-hero">
-        <MsMark />
-        <h2 className="card-title">{acct.expired ? 'Sign in again' : 'Sign in with Microsoft'}</h2>
+        <h2 className="card-title">{acct.expired ? 'Sign in again' : 'Sign in'}</h2>
       </div>
       {acct.expired && (
         <Banner tone="warn">
@@ -136,7 +135,7 @@ function SignInCard({ acct, onStarted }: { acct: Account; onStarted: (s: SignInS
             if (r) onStarted(r)
           }}
         >
-          Sign in with Microsoft
+          Sign in
         </button>
         {!needHub && !more && (
           <button className="link" onClick={() => setMore(true)}>
@@ -165,8 +164,7 @@ function SignInProgress({ st }: { st: SignInState }) {
   return (
     <section className="wcard signin-card" data-testid="signin-progress">
       <div className="signin-hero">
-        <MsMark />
-        <h2 className="card-title">Sign in with Microsoft</h2>
+        <h2 className="card-title">Sign in</h2>
       </div>
       {c ? (
         <>
@@ -181,7 +179,7 @@ function SignInProgress({ st }: { st: SignInState }) {
             >
               {c.url}
             </a>
-            . Sign in with Microsoft there and enter this code:
+            . Sign in there (Microsoft, Google or Apple account) and enter this code:
           </p>
           <div className="signin-codebox">
             <div className="signin-code mono" data-testid="signin-code">
@@ -431,17 +429,5 @@ function AdminCard({ admin, onChange }: { admin: NonNullable<Account['admin']>; 
         </button>
       </p>
     </section>
-  )
-}
-
-/** The four squares of "Sign in with Microsoft". */
-function MsMark() {
-  return (
-    <span className="ms-mark" aria-hidden="true">
-      <span />
-      <span />
-      <span />
-      <span />
-    </span>
   )
 }

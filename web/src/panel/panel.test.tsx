@@ -364,6 +364,34 @@ describe('sign-in, machines, updates', () => {
     expect(details?.querySelector('input[aria-label="TOTP code"]')).toBeTruthy()
   })
 
+  it('LoginPage: one button per provider (work or school, Microsoft account, Google, Apple)', async () => {
+    mockFetch({
+      '/auth/info': () => [
+        200,
+        {
+          entra: false,
+          providers: [
+            { id: 'microsoft', label: 'Microsoft account' },
+            { id: 'google', label: 'Google' },
+            { id: 'apple', label: 'Apple' },
+          ],
+        },
+      ],
+    })
+    history.pushState(null, '', '/jobs')
+    render(
+      <Toasts>
+        <LoginPage onLogin={() => {}} />
+      </Toasts>,
+    )
+    const g = await screen.findByTestId('signin-google')
+    expect(g.getAttribute('href')).toBe('/auth/login?provider=google&next=%2Fjobs')
+    expect(g.textContent).toBe('Sign in with Google')
+    expect(screen.getByTestId('signin-microsoft-account').className).toBe('button primary')
+    expect(screen.getByTestId('signin-apple').getAttribute('href')).toBe('/auth/login?provider=apple&next=%2Fjobs')
+    expect(g.className).toBe('button')
+  })
+
   it('LoginPage: the password form alone without Entra', async () => {
     mockFetch({ '/auth/info': () => [200, { entra: false }] })
     render(

@@ -24,9 +24,13 @@ import (
 // credEnv is the environment of a client whose git credential helper
 // knows tok for every host (the e2e stand-in for Git Credential Manager;
 // the client's `git credential fill` asks it). longarmd never gets it.
+// The empty helper first clears the machine's helpers (the real GCM would
+// otherwise be asked first and pop up a login window for the test server).
 func credEnv(tok string) []string {
-	return []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=credential.helper",
-		"GIT_CONFIG_VALUE_0=!f() { echo username=e2e; echo password=" + tok + "; }; f"}
+	return []string{"GIT_CONFIG_COUNT=2",
+		"GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0=",
+		"GIT_CONFIG_KEY_1=credential.helper",
+		"GIT_CONFIG_VALUE_1=!f() { echo username=e2e; echo password=" + tok + "; }; f"}
 }
 
 // longarmWithEnv is env.longarm with extra environment.
@@ -35,7 +39,8 @@ func longarmWithEnv(t *testing.T, cfgDir string, extra []string, args ...string)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bins.longarm, args...)
-	cmd.Env = append(append(os.Environ(), "LONGARM_CONFIG_DIR="+cfgDir), extra...)
+	// never a GCM login window for the test server
+	cmd.Env = append(append(os.Environ(), "LONGARM_CONFIG_DIR="+cfgDir, "GCM_INTERACTIVE=never"), extra...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()

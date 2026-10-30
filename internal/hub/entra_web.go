@@ -41,8 +41,8 @@ import (
 // itself (signature, issuer, audience, tenant, expiry, nonce) before it
 // opens a panel session.
 //
-//	GET  /auth/info          {"entra": bool, "mode": ...} (the login page's button)
-//	GET  /auth/login         ?next=/path: to Microsoft (top-level navigations only)
+//	GET  /auth/info          {"entra": bool, "mode": ..., "providers": [{id, label}]} (the login page's buttons)
+//	GET  /auth/login         ?provider=entra&next=/path: to Microsoft (top-level navigations only; idp.go)
 //	GET  /auth/callback      confidential: code -> ID token -> session
 //	GET  /auth/spa-callback  spa: the page redeeming the code in the browser
 //	POST /auth/spa-session   spa: {"id_token"} -> session, {"next"}
@@ -55,6 +55,7 @@ const (
 )
 
 type oidcState struct {
+	Provider string `json:"p,omitempty"` // "" = Entra, else idp.go's
 	State    string `json:"s"`
 	Verifier string `json:"v"`
 	Nonce    string `json:"n"`
@@ -72,9 +73,10 @@ func (h *Hub) entraWeb() string {
 
 func (h *Hub) entraRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/info", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, map[string]any{"entra": h.entraWeb() != "", "mode": h.entraWeb()})
+		writeJSON(w, map[string]any{"entra": h.entraWeb() != "", "mode": h.entraWeb(), "providers": h.webProviders()})
 	})
-	mux.HandleFunc("GET /auth/login", h.entraLogin)
+	mux.HandleFunc("GET /auth/login", h.signInStart)
+	h.idpRoutes(mux)
 	mux.HandleFunc("GET /auth/callback", h.entraCallback)
 	mux.HandleFunc("GET /auth/spa-callback", h.entraSPACallback)
 	mux.HandleFunc("POST /auth/spa-session", h.entraSPASession)
@@ -150,7 +152,7 @@ func (h *Hub) callbackState(w http.ResponseWriter, r *http.Request) (oidcState, 
 		return oidcState{}, false
 	}
 	st, ok := h.openOIDC(r)
-	if !ok || !constantEqual(q.Get("state"), st.State) || q.Get("code") == "" {
+	if !ok || st.Provider != "" || !constantEqual(q.Get("state"), st.State) || q.Get("code") == "" {
 		h.setOIDCCookie(w, "", -1)
 		h.entraPage(w, http.StatusBadRequest, "This sign-in expired or was not started here. Please try again.", "")
 		return oidcState{}, false
@@ -175,7 +177,7 @@ func (h *Hub) entraCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.setOIDCCookie(w, "", -1) // one attempt per cookie
-	if !h.entra.consumeState(st.State, time.Unix(st.Exp, 0)) {
+	if !h.oidc.consumeState(st.State, time.Unix(st.Exp, 0)) {
 		h.entraPage(w, http.StatusBadRequest, "This sign-in was already used. Please try again.", "")
 		return
 	}
@@ -247,11 +249,11 @@ func (h *Hub) entraSPASession(w http.ResponseWriter, r *http.Request) {
 	}
 	st, ok := h.openOIDC(r)
 	h.setOIDCCookie(w, "", -1) // one attempt per cookie
-	if !ok {
+	if !ok || st.Provider != "" {
 		httpError(w, http.StatusBadRequest, "this sign-in expired or was not started here; please try again")
 		return
 	}
-	if !h.entra.consumeState(st.State, time.Unix(st.Exp, 0)) {
+	if !h.oidc.consumeState(st.State, time.Unix(st.Exp, 0)) {
 		httpError(w, http.StatusBadRequest, "this sign-in was already used; please try again")
 		return
 	}
@@ -274,13 +276,20 @@ func (h *Hub) entraSession(ctx context.Context, w http.ResponseWriter, ip, idTok
 		h.log.Warn("entra web sign-in: ID token rejected", "err", err, "remote", ip)
 		return "", http.StatusUnauthorized, fmt.Errorf("the ID token was rejected: %w", err)
 	}
-	id := claims.identity()
+	return h.identitySession(w, ip, claims.identity(), e.Web)
+}
+
+// identitySession maps a verified identity to its Longarm user, opens a
+// panel session and marks it as an identity provider's sign-in (/link
+// approves only those). mode is for the log: Entra's web mode, or the
+// personal-account provider. On error: an HTTP status code.
+func (h *Hub) identitySession(w http.ResponseWriter, ip string, id entraIdentity, mode string) (string, int, error) {
 	user, admin, err := h.entraSignIn(id, "web")
 	if err != nil {
 		return "", http.StatusForbidden, errors.New(errMessage(err))
 	}
-	if err := h.entraPanelLogin(user, id.oid, admin); err != nil {
-		h.log.Warn("entra web sign-in: panel account", "user", user, "err", err)
+	if err := h.entraPanelLogin(user, id.key(), admin); err != nil {
+		h.log.Warn("web sign-in: panel account", "user", user, "err", err)
 		return "", http.StatusConflict, err
 	}
 	tok := randomToken()
@@ -290,16 +299,18 @@ func (h *Hub) entraSession(ctx context.Context, w http.ResponseWriter, ip, idTok
 	h.setSession(w, tok)
 	h.setEntraMark(w, sessionHash(tok), int(h.cfg.Web.SessionTTL.Seconds()))
 	role := map[bool]string{true: "admin", false: "user"}[admin]
-	h.log.Info("panel login (entra)", "user", user, "upn", id.upn, "role", role, "mode", e.Web, "remote", ip)
-	h.auditHub("entra/"+id.upn, "entra/panel-login", map[string]any{"user": user, "upn": id.upn, "oid": id.oid,
-		"role": role, "mode": e.Web, "remote": ip})
+	provider := cmpOr(id.provider, "entra")
+	h.log.Info("panel login ("+provider+")", "user", user, "upn", id.upn, "role", role, "mode", mode, "remote", ip)
+	h.auditHub(id.who(), provider+"/panel-login", map[string]any{"user": user, "upn": id.upn, "oid": id.oid,
+		"role": role, "mode": mode, "remote": ip})
 	return user, http.StatusOK, nil
 }
 
-// entraPanelLogin creates or updates the panel account of an Entra user:
-// named like its Longarm user, role admin for the hub's Entra admins, else
-// user. The user's own password login (longarm admin user add --panel)
-// becomes reachable by Entra sign-in too; anyone else's is left alone.
+// entraPanelLogin creates or updates the panel account of an identity
+// provider's user (oid: its identity key): named like its Longarm user,
+// role admin for the provider's admins, else user. The user's own
+// password login (longarm admin user add --panel) becomes reachable by the
+// sign-in too; anyone else's is left alone.
 func (h *Hub) entraPanelLogin(user, oid string, admin bool) error {
 	h.loginMu.Lock() // password logins rewrite the record too (TOTP step)
 	defer h.loginMu.Unlock()
@@ -321,18 +332,30 @@ func (h *Hub) entraPanelLogin(user, oid string, admin bool) error {
 }
 
 func (h *Hub) setOIDCCookie(w http.ResponseWriter, val string, maxAge int) {
-	// Lax, not Strict: the callback is a top-level navigation from Microsoft.
+	h.setOIDCCookieFor(w, val, maxAge, false)
+}
+
+// setOIDCCookieFor sets the sign-in state cookie. Lax, not Strict: the
+// callback is a top-level navigation from the provider; None for a
+// provider that posts the result back (Apple's form_post: a cross-site
+// POST carries no Lax cookie) - the state's MAC, single use and the nonce
+// still bind it.
+func (h *Hub) setOIDCCookieFor(w http.ResponseWriter, val string, maxAge int, crossSitePost bool) {
+	ss := http.SameSiteLaxMode
+	if crossSitePost && !h.cfg.Web.InsecureCookie {
+		ss = http.SameSiteNoneMode
+	}
 	http.SetCookie(w, &http.Cookie{Name: oidcCookie, Value: val, Path: "/auth/", HttpOnly: true,
-		Secure: !h.cfg.Web.InsecureCookie, SameSite: http.SameSiteLaxMode, MaxAge: maxAge})
+		Secure: !h.cfg.Web.InsecureCookie, SameSite: ss, MaxAge: maxAge})
 }
 
 // oidcKey is the cookie MAC key, made once and kept in the database (the
 // hub's state, replicated with it).
 func (h *Hub) oidcKey() ([]byte, error) {
-	h.entra.mu.Lock()
-	defer h.entra.mu.Unlock()
-	if h.entra.cookieKey != nil {
-		return h.entra.cookieKey, nil
+	h.oidc.mu.Lock()
+	defer h.oidc.mu.Unlock()
+	if h.oidc.cookieKey != nil {
+		return h.oidc.cookieKey, nil
 	}
 	v, err := h.store.Meta(oidcKeyMeta)
 	if err != nil {
@@ -346,7 +369,7 @@ func (h *Hub) oidcKey() ([]byte, error) {
 			return nil, err
 		}
 	}
-	h.entra.cookieKey = key
+	h.oidc.cookieKey = key
 	return key, nil
 }
 
@@ -391,7 +414,7 @@ func (h *Hub) openOIDC(r *http.Request) (oidcState, bool) {
 }
 
 // consumeState marks a state used; false if it was already.
-func (e *entraState) consumeState(state string, exp time.Time) bool {
+func (e *oidcWeb) consumeState(state string, exp time.Time) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := time.Now()

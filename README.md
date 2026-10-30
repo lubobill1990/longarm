@@ -218,9 +218,13 @@ longarm-hub --data-dir /var/lib/longarm-hub join-code --role admin
 ```
 
 Then join it as above (`longarmd login hub.example.com --role both`, or the
-one-liners). Microsoft sign-in needs `[auth.entra]` on the hub
-([docs/usage.md](docs/usage.md#sign-in-with-microsoft-entra-id); without it a
-panel login approves the code). Or use join codes:
+one-liners). Sign-in with accounts needs them configured on the hub:
+`[auth.entra]` for Microsoft work or school accounts
+([docs/usage.md](docs/usage.md#sign-in-with-microsoft-entra-id)), `[auth.google]`,
+`[auth.apple]`, `[auth.microsoft]` for personal accounts
+([docs/usage.md](docs/usage.md#sign-in-with-a-google-apple-or-personal-microsoft-account));
+without any, a panel login approves the code. Every machine one account
+links is that account's: its devices and its workers. Or use join codes:
 `longarm join hub.example.com:7443 <admin-code> --ca-fingerprint <fp>` on your
 laptop, `longarm admin join-code --role worker` for each worker, there
 `longarmd join hub.example.com:7443 <code> --ca-fingerprint <fp> --name worker-1`,

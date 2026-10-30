@@ -103,6 +103,12 @@ export function normPortLink(raw: unknown): PortLink {
 }
 
 /** Panel logins with role "user" see their own jobs only (no fleet administration). */
+/** A sign-in button of the panel (GET /auth/info): "entra", "microsoft", "google", "apple". */
+export interface AuthProvider {
+  id: string
+  label: string
+}
+
 export const isAdmin = (me: Me) => me.role !== 'user'
 
 export const hubApi = {
@@ -121,8 +127,8 @@ export const hubApi = {
   shareWorker: (name: string, req: { add_users?: string[]; remove_users?: string[]; add_teams?: string[]; remove_teams?: string[]; set_everyone?: boolean; everyone?: boolean }) =>
     post<NodeInfo>(`/api/nodes/${enc(name)}/share`, req),
   removeWorker: (name: string) => post<NodeInfo>(`/api/nodes/${enc(name)}/remove`),
-  // public: the login page's "Sign in with Microsoft", the newest release
-  authInfo: () => get<{ entra?: boolean; mode?: string }>('/auth/info'),
+  // public: the login page's sign-in buttons, the newest release
+  authInfo: () => get<{ entra?: boolean; mode?: string; providers?: AuthProvider[] }>('/auth/info'),
   latestRelease: () => get<LatestRelease>('/releases/latest.json'),
   jobs: (q: { worker?: string; states?: string[]; limit?: number } = {}) => {
     const p = new URLSearchParams()

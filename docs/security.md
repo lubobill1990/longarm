@@ -1377,10 +1377,12 @@ placed on the attacker's "worker". Hence:
   `/link` are rate limited per address and per user (10, then one per 10 s):
   guessing a code would enroll someone else's machine as one's own. The
   device prints whose it became ("owned by ...", "signed in as ...").
-- **Only real sign-ins approve**: with `[auth.entra]`, a panel session that
-  a Microsoft sign-in opened (marked by an HMAC cookie bound to that
-  session); password logins - perhaps a shared admin account - can't. Only
-  hubs without Entra accept any panel login of a Longarm user.
+- **Only real sign-ins approve**: with `[auth.entra]` or a personal-account
+  provider (`[auth.google]`, `[auth.apple]`, `[auth.microsoft]`), a panel
+  session that a provider's sign-in opened (marked by an HMAC cookie bound
+  to that session); password logins - perhaps a shared admin account -
+  can't. Only hubs without any provider accept any panel login of a
+  Longarm user.
 - **CSRF**: the forms are POST only, need an `Origin` of the hub and (when
   the browser sends it) `Sec-Fetch-Site: same-origin`, and carry a token
   HMAC-bound to the session, the step and the pairing (10 minutes); the
@@ -1440,6 +1442,38 @@ channel you trust) where DNS or the web PKI is not trusted, and for hubs
 without a public HTTPS panel, which fail with a message asking for it.
 `longarm join` / `longarmd join` with join codes keep their behavior
 (`--ca-fingerprint`, else trust on first use with a warning).
+
+
+## Sign-in with Google, Apple and personal Microsoft accounts
+
+With `[auth.google]`, `[auth.apple]` or `[auth.microsoft]` (docs/usage.md
+"Sign in with a Google, Apple or personal Microsoft account") the hub
+vouches for whoever the provider vouches for, like with Entra, through the
+web sign-in only (the panel, and `/link` for devices and workers):
+
+- **Authorization code flow, redeemed by the hub** with its client
+  credential (Google, Microsoft: a client secret in a file; Apple: an ES256
+  JWT the hub signs per sign-in with the team's key, valid 10 minutes). The
+  browser never sees a token. A sign-in's state is single use and travels
+  in a short-lived cookie MAC'd with a key in the hub's database, bound to
+  the provider it was started for (a state of one provider is refused at
+  another's callback); a nonce binds the ID token to it; Google and
+  Microsoft also use PKCE (S256). Apple posts the result back
+  (`form_post`), so its state cookie is `SameSite=None` (still `Secure`,
+  `HttpOnly`, path `/auth/`, 10 minutes).
+- **ID tokens are checked by the hub**: RS256 signature against the
+  provider's published keys (the same cached JWKS client as Entra's), issuer,
+  audience = the hub's `client_id`, expiry and not-before, nonce, a subject;
+  for `[auth.microsoft]` the consumer tenant
+  (`9188040d-6c67-4c5b-b47c-a35d26f2fe1d`): work accounts are refused there.
+- **Identity = provider + subject**, never the e-mail address: an address
+  that changes or is reassigned doesn't move an account to another user.
+  The address names the user and is matched against `admins` / `allowed`
+  only when the provider vouches for it (Google and Apple: `email_verified`;
+  Microsoft accounts: the sign-in name). Subjects are compared exactly
+  (case-sensitive), Entra object IDs as before.
+- **No other path**: no token sign-in over gRPC (`EntraJoin` stays Entra's),
+  no app-only identities.
 
 ## End-to-end trust (the hub is not trusted with access)
 

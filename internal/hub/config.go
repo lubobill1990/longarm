@@ -433,7 +433,7 @@ func (c *Config) applyDefaults() error {
 	if err := c.releasesEnvDefaults(); err != nil {
 		return err
 	}
-	if err := c.Auth.Entra.applyDefaults(); err != nil {
+	if err := c.Auth.applyDefaults(); err != nil {
 		return err
 	}
 	c.PublicURL = strings.TrimRight(c.PublicURL, "/")

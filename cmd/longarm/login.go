@@ -19,10 +19,13 @@ func loginCmd() *cobra.Command {
 	var force, useAz, link, noBrowser bool
 	c := &cobra.Command{
 		Use:   "login [hub]",
-		Short: "Sign in to longarm-hub with your Microsoft account and enroll this machine",
-		Long: `Sign in to longarm-hub with your Microsoft account (Microsoft Entra ID). The
-hub creates your Longarm user on first sign-in and issues this machine a
-certificate (an admin certificate for the hub's Entra admins).
+		Short: "Sign in to longarm-hub with your account (Microsoft, Google, Apple) and enroll this machine",
+		Long: `Sign in to longarm-hub with your account: a Microsoft work or school account
+(Microsoft Entra ID), or - where the hub offers them - a personal Microsoft
+account, Google or Apple. The hub creates your Longarm user on first
+sign-in and issues this machine a certificate (an admin certificate for
+the hub's admins). The same account on another machine is the same user:
+its devices and workers are yours together.
 
 The hub is its domain - longarm login longarm.example.com - or
 https://longarm.example.com, or host:port (the gRPC port, default 7443).
@@ -38,7 +41,7 @@ With the Azure CLI signed in (az login), its access token is used and
 nothing else is asked. Without az, or when az has no token (and without
 --az), or with --link: login prints the hub's /link address and a code;
 open the page in any browser (another machine works too: phone, laptop),
-sign in with Microsoft, type the code and approve. The page is opened
+sign in (Microsoft, Google or Apple), type the code and approve. The page is opened
 here when this machine has a desktop (--no-browser: never).
 
 To make this machine your worker too, with the same single approval:
