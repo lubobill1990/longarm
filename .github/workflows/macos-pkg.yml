@@ -98,6 +98,9 @@ jobs:
             base64 -i "$c/$kind.p12" -o "$c/$kind.p12.b64"
             printf '%s' "$pw" >"$c/$kind.pw"
           done
+          # productbuild only signs with a trusted identity (Apple's Developer ID
+          # certificates are; the stand-in is made a trusted root on this runner)
+          sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$c/installer.crt"
       - name: self-signed - sign, repack, pkg
         run: |
           c=$RUNNER_TEMP/certs d=$RUNNER_TEMP/rel-sign o=$RUNNER_TEMP/rel
