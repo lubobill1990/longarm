@@ -177,7 +177,7 @@ export interface AttachHandlers {
 
 export interface Attachment {
   /** keyboard input bytes */
-  input(b: Uint8Array): void
+  input(b: Uint8Array<ArrayBuffer>): void
   resize(cols: number, rows: number): void
   /** detaches (the session keeps running) */
   close(): void

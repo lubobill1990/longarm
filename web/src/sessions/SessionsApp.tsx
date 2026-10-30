@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { longarmApi } from '../api/local'
 import { sessionsApi, type Agent, type AgentSession, type AgentSessionList, type AgentState } from '../api/sessions'
 import { ErrorBox, Toasts, useAction } from '../components/common'
 import { installAppBehaviour } from '../tray/appShell'

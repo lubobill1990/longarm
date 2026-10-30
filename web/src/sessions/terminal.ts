@@ -9,7 +9,7 @@ export interface Term {
   /** clears the screen and the scrollback (before a replay) */
   reset(): void
   /** keyboard input as bytes (typed text UTF-8 encoded; mouse reports as is) */
-  onInput(fn: (b: Uint8Array) => void): void
+  onInput(fn: (b: Uint8Array<ArrayBuffer>) => void): void
   /** fits the terminal to its element: the new size */
   fit(): { cols: number; rows: number }
   size(): { cols: number; rows: number }
