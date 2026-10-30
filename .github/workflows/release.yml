@@ -287,7 +287,7 @@ jobs:
           if ($why) {
             # the pinned tools are still fetched and checked, so a release with signing set up doesn't fail on them
             ./packaging/windows/sign.ps1 -Setup (Join-Path $env:RUNNER_TEMP 'signing') -ToolsOnly
-            "::notice title=Windows binaries and MSIs are not Authenticode-signed::$why (docs/ci-cd.md 2.7); minisign signatures and checksums are unaffected"
+            "::notice title=Windows binaries and MSIs are not Authenticode-signed::reason: $why (docs/ci-cd.md 2.7); the minisign signatures and checksums are unaffected"
             'enabled=false' >> $env:GITHUB_OUTPUT
           } else {
             'enabled=true' >> $env:GITHUB_OUTPUT
