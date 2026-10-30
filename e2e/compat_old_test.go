@@ -235,6 +235,20 @@ func certOf(t *testing.T, dir string) pki.Identity {
 	return id
 }
 
+// certSerial is the serial of a config dir's certificate.
+func certSerial(t *testing.T, dir string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, "tls", "node.crt"))
+	if err != nil {
+		return err.Error()
+	}
+	c, err := pki.ParseCertPEM(b)
+	if err != nil {
+		return err.Error()
+	}
+	return pki.Serial(c)
+}
+
 // listedNames is what a longarm lists as hub workers (ls --json names).
 func listedNames(t *testing.T, exe, cfgDir string) []string {
 	t.Helper()
@@ -316,6 +330,7 @@ func TestOldReleaseCompat(t *testing.T) {
 	if out := mustBin(t, r21.longarm, oc, "exec", "ow", "--", bins.helper, "print", "1", "0", "0"); !strings.Contains(out, "line 1") {
 		t.Fatalf("v0.1.21 exec on the old hub: %s", out)
 	}
+	t.Logf("before the upgrade: root's certificate %s, alice's %s", certSerial(t, h.admin), certSerial(t, h.client))
 	h.killHub()
 	if b, err := os.ReadFile(filepath.Join(h.hubDir, "hub.db")); err != nil || len(b) == 0 {
 		t.Fatalf("no database of the old hub: %v", err)
@@ -336,6 +351,7 @@ func TestOldReleaseCompat(t *testing.T) {
 	if l := strings.ReplaceAll(hubLog(), `\"`, `"`); !strings.Contains(l, `database migration: node "dead" (worker, approved) renamed to "w-dead-2"`) {
 		t.Fatalf("no migration note for dead:\n%s", tail(hubLog(), 4000))
 	}
+	t.Logf("after the upgrade: root's certificate %s, alice's %s", certSerial(t, h.admin), certSerial(t, h.client))
 	nw := h.newWorkerDir(t, "nw", "") // a worker of this tree
 	h.joinWorker(t, nw, true)
 	nw.start(t, true)
