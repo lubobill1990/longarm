@@ -85,6 +85,9 @@ func hold(addr string) {
 			up = true
 			fmt.Println("up")
 		}
+		if i > 0 && i%25 == 0 { // progress: the connection still carries traffic
+			fmt.Printf("pings %d\n", i)
+		}
 		time.Sleep(200 * time.Millisecond)
 	}
 }
