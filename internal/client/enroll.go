@@ -8,6 +8,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/signin"
 )
 
 // DeviceTarget is the user's client device as a sign-in target
@@ -34,6 +35,11 @@ func (d DeviceTarget) Prepare(hub string) (*pki.CSRTrust, error) {
 		return nil, fmt.Errorf("end-to-end trust: %w", err)
 	}
 	return tr, nil
+}
+
+// Current is the device enrollment ConfigDir holds (signin.Holder).
+func (d DeviceTarget) Current() (*signin.Current, error) {
+	return signin.ReadCurrent("device", d.ConfigDir, TLSDir)
 }
 
 // Install writes an approved enrollment (InstallEnrollment).

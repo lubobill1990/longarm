@@ -91,8 +91,31 @@ export interface RolesState {
   signin?: boolean
 }
 
+/** One enrollment this machine holds already. */
+export interface SignInHeld {
+  kind: 'device' | 'worker'
+  /** "admin/alice-pc" */
+  identity: string
+  /** a device's user, a worker's owner */
+  user?: string
+  hub?: string
+  same_hub: boolean
+  expired?: boolean
+}
+
+/** A sign-in that would replace what this machine is signed in as. */
+export interface SignInConfirm {
+  hub: string
+  other_hub?: boolean
+  current: SignInHeld[]
+  /** the admin worker is signed in and stays its owner's */
+  admin_worker_stays?: boolean
+  request: { hub?: string; labels?: string }
+}
+
 export interface SignInState {
-  state: 'idle' | 'running' | 'done' | 'error' | 'canceled'
+  state: 'idle' | 'running' | 'done' | 'error' | 'canceled' | 'confirm'
+  confirm?: SignInConfirm
   hub?: string
   code?: { url: string; code: string; expires: string; kind: string; host: string; admin_worker?: boolean }
   steps?: string[]
@@ -113,7 +136,7 @@ export const trayApi = {
   join: (hub: string, code: string, fingerprint: string, name: string) =>
     post<{ output: string }>('/trayapi/join', { hub, code, fingerprint, name }),
   signinState: () => get<SignInState>('/trayapi/signin/state'),
-  signinStart: (hub = '', labels = '') => post<SignInState>('/trayapi/signin/start', { hub, labels }),
+  signinStart: (hub = '', labels = '', replace = false) => post<SignInState>('/trayapi/signin/start', { hub, labels, replace }),
   signinCancel: () => post('/trayapi/signin/cancel'),
   signout: () => post<{ output: string }>('/trayapi/signout'),
   adminDisable: () => post<{ output: string }>('/trayapi/admin/disable'),
@@ -130,6 +153,8 @@ export const trayApi = {
 export interface TrayUpdate {
   current: string
   latest?: string
+  /** the hub's own version (its /healthz) */
+  hub?: string
   /** a newer release with an MSI for this machine */
   available: boolean
   msi?: string

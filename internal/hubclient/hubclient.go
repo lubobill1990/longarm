@@ -479,9 +479,16 @@ type LinkOptions struct {
 	// placed; the hub marks it longarm.io/admin=true). Its CSR is normally
 	// pre-made (JoinOptions.CSR); Labels are not allowed.
 	AdminWorker *JoinOptions
+	// Replace: nodes of this machine the pairing replaces (their
+	// certificates and keys: each signs pki.ReplaceMessage of this
+	// pairing's CSRs); the hub removes them at the approval.
+	Replace []ReplaceKey
 	// Show is called once with the code and the URL to enter it at.
 	Show func(*pb.StartLinkResponse)
 }
+
+// ReplaceKey is an enrolled node's certificate and key (PEM).
+type ReplaceKey struct{ CertPEM, KeyPEM []byte }
 
 var (
 	// ErrNoBothLink: the hub predates kind "both" pairings (one code for a
@@ -531,6 +538,17 @@ func Link(ctx context.Context, addr string, o LinkOptions) (*JoinResult, error) 
 		}
 		aname = o.AdminWorker.Name
 	}
+	var replaces []*pb.LinkReplace
+	if len(o.Replace) > 0 {
+		msg := pki.ReplaceMessage(csrPEM, wcsrPEM, acsrPEM)
+		for _, r := range o.Replace {
+			sig, err := pki.SignReplace(r.CertPEM, r.KeyPEM, msg)
+			if err != nil {
+				return nil, fmt.Errorf("proving the enrollment to replace: %w", err)
+			}
+			replaces = append(replaces, &pb.LinkReplace{CertPem: r.CertPEM, Signature: sig})
+		}
+	}
 	var ca *x509.Certificate
 	c, err := dial(NormalizeAddr(addr), enrollTLS(o.Fingerprint, &ca))
 	if err != nil {
@@ -544,7 +562,7 @@ func Link(ctx context.Context, addr string, o LinkOptions) (*JoinResult, error) 
 	}
 	st, err := c.Enroll().StartLink(ctx, &pb.StartLinkRequest{Kind: o.Kind, CsrPem: csrPEM, Name: o.Name, Hostname: host,
 		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version, WorkerCsrPem: wcsrPEM, WorkerName: o.Worker.Name,
-		WorkerLabels: wlabels, AdminWorkerCsrPem: acsrPEM, AdminWorkerName: aname})
+		WorkerLabels: wlabels, AdminWorkerCsrPem: acsrPEM, AdminWorkerName: aname, Replaces: replaces})
 	if o.Kind == "both" && status.Code(err) == codes.InvalidArgument && strings.Contains(status.Convert(err).Message(), "want client or worker") {
 		return nil, ErrNoBothLink
 	}

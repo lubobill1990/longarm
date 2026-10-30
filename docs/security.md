@@ -765,10 +765,20 @@ service fails to start rather than share it), remote clients rejected,
 network logons denied, authenticated local users may read and write but
 not add a server instance (`0x12019b`: no `FILE_CREATE_PIPE_INSTANCE`).
 Clients connect at identification level and **verify the server** before
-sending anything: `GetNamedPipeServerProcessId`, its image must be
-`longarm-update.exe` in the install dir the MSI recorded (checked to be
-writable by administrators only) and its token SYSTEM - a squatter gets
-`ErrImpostor` (tested). The service identifies each client from its token
+sending anything, without opening the server's process (a LocalSystem
+process can't be opened by a user: the tray and a user-session longarmd
+are users): the pipe instance's owner must be SYSTEM or Administrators (the
+service's default owner; a user's process can't give what it creates
+either owner), and the process that created the instance
+(`GetNamedPipeServerProcessId`) must be the service's current process as
+the service manager reports it (`QueryServiceStatusEx`), with the service
+configured to run `longarm-update.exe` from the install dir the MSI
+recorded (checked to be writable by administrators only) as LocalSystem
+(`QueryServiceConfig`) - both readable with `SERVICE_QUERY_STATUS` /
+`SERVICE_QUERY_CONFIG`, which interactive users have. Only administrators
+can install or change a service, so a squatter (another process, or the
+name taken while the service is stopped) gets `ErrImpostor` (tested). The
+service identifies each client from its token
 (`ImpersonateNamedPipeClient`, on a locked thread, reverted at once).
 
 | Request | Who |
@@ -1710,6 +1720,54 @@ below): pairing runs over the same TLS as join.
 (or an Entra account takeover) yields at most a certificate the hub signed;
 workers and clients that require endorsements still refuse the device until
 your user key endorses it.
+
+### Signing in again
+
+A machine that is signed in already - by a join code (say an admin
+certificate `admin/<user>-<machine>`, its session worker and its admin
+worker), an earlier sign-in, another account, another hub - is never
+re-enrolled silently. `longarmd login`, the tray and `signin.SignIn` first
+read what the machine holds (the device's certificate in longarm's config
+dir, the worker's in longarmd's data dir) and stop, naming it, unless the
+user agreed (`longarmd login --force`; the tray's "Replace and sign in"
+after a confirmation that lists the identities and what changes). Running
+`longarm login` again is that agreement for the device (its documented
+use); another hub's certificate still needs `--force`. An expired
+enrollment of the same hub is replaced without asking - its sign-in ended.
+
+Replacing goes through the pairing, with **proof of possession**: the
+StartLink request carries each replaced node's current certificate and a
+signature by its key over the SHA-256 of this pairing's CSRs (domain
+separated: `pki.ReplaceMessage`). The hub accepts it only for a node of its
+own CA that is enrolled and not revoked (an expired certificate only if it
+is the node's latest), for the matching kind (a device for kind client or
+both, a worker for worker or both; at most one each), never an admin
+worker (its key is SYSTEM's: it signs in by itself). A certificate alone is
+no proof - certificates aren't secret - and a proof is bound to the new
+keys, so it can't be replayed for another pairing (tested).
+
+At the approval the hub **revokes the replaced nodes first** (what their own
+`leave` would do - whoever holds their keys can do that anyway), audited
+as `link/replace`, then enrolls the new parts for the approver. The worker
+keeps its name. **Ownership never moves**: the new worker is the
+approver's, a fresh record; the replaced worker's sharing, profile, labels
+and machine pairing carry over only when the approver *is* its owner - the
+hub knows it is the same person because the approver's sign-in maps to
+that Longarm user. A worker or device of another user (a join code's
+`admin/<user>`, a fleet worker) is removed, not given to the approver:
+nothing of it - sharing, jobs, admin rights - becomes the approver's, and
+whoever enrolled it sees it revoked. The `/link` page says, before Approve,
+that the machine is signed in already and lists each replaced node: "your
+worker `<name>` ... keeps its name and sharing" for the approver's own,
+"a worker enrolled for another account: it is removed ... It does not
+become yours" otherwise - without naming the other account or its node
+(docs: "What admins see"). Signing in to another hub only overwrites the
+local certificate; the old hub keeps listing the node until it is removed
+there.
+
+The admin worker is not part of this: when it is signed in it stays as it
+is (owned and pinned to its owner, `[access]`); the tray says so and how to
+move it (disable it, then turn "Admin commands" on again - one approval).
 
 ### First contact (domain-only sign-in)
 

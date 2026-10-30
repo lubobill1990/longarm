@@ -4,6 +4,13 @@
 
 ### Added
 
+- The tray shows its version in the title bar ("v0.1.21"): hover for a
+  summary, click for the details - this tray, the client daemon, this
+  machine's worker and admin worker, the hub and the newest release at the
+  hub - with whatever is behind marked (the tray behind the newest release,
+  a daemon or worker older or newer than the tray: not restarted, or not
+  updated) and "Update to X" when the hub has a newer release. The hub's
+  version comes from its public `/healthz`.
 - **Signed apt and dnf/yum repositories** on GitHub Pages
   (`https://lubobill1990.github.io/longarm/`): `apt install longarm` /
   `dnf install longarm`, updates through the package manager. The rpm is
@@ -124,6 +131,27 @@
 
 ### Fixed
 
+- Windows: the tray's "Update to ..." (and a user-session longarmd's machine
+  update) refused the real Longarm Update service: "the update pipe is
+  served by another program ... (pid N: Access is denied.)". The pipe
+  server was checked by opening its process, which a user can't do to a
+  LocalSystem service. Now the pipe server's PID must be the service's
+  current PID as the service manager reports it, the service configured as
+  LocalSystem running the installed `longarm-update.exe`, and the pipe
+  owned by SYSTEM or Administrators - readable by any user; a squatter is
+  still refused (docs/security.md "Update service").
+- Signing in on a machine that is signed in already (a join code's
+  `admin/<user>-<machine>` with its worker, an earlier sign-in, another
+  hub) failed in the tray with "~\.longarm\tls already holds a certificate
+  (use --force to enroll again)". The tray now lists what the machine is
+  signed in as and what changes, and signs in again only when you confirm
+  ("Replace and sign in"; the Account tab also offers "Sign in with an
+  account..."). One approval replaces the device and the worker: the
+  pairing proves their keys, the hub removes them and the worker keeps its
+  name. Ownership never moves: another user's worker is removed, not given
+  to you; your own keeps its sharing. `longarmd login --force` does the
+  same; an expired sign-in is replaced without asking (docs/security.md
+  "Signing in again").
 - The hub on Azure crash-looped on every start (2026-10-29, 0.1.18 and
   0.1.16 alike): `litestream restore` ran out of memory. Litestream 0.5.17's
   Azure Blob client listed "the files from TXID X" as the blob name prefix

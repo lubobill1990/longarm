@@ -556,6 +556,10 @@ type deviceRequest struct {
 	// companion: the ID of the worker an admin worker is enrolled with (the
 	// same machine's, same pairing): the two get linked (store.Node.Companion)
 	companion string
+	// carry: the worker this one replaces on its machine, of the same
+	// owner (replaceLinkNodes): its sharing, profile, labels and companion
+	// carry over
+	carry *store.Node
 }
 
 // checkWorkerLabels validates the labels a sign-in asks for: workers only,
@@ -687,6 +691,14 @@ func (h *Hub) enrollOwnedWorker(who, owner string, d deviceRequest) (*pb.JoinRes
 	rec := &store.Node{ID: nodeid.New(), Name: name, Role: string(pki.RoleWorker), Hostname: d.hostname, OS: d.os, Arch: d.arch,
 		Version: d.version, JoinedAt: now, Owner: owner, AccessVersion: 1, Labels: maps.Clone(d.labels), Admin: d.admin,
 		Companion: d.companion}
+	if c := d.carry; c != nil && c.Owner == owner && !d.admin {
+		// the companion (the machine's admin worker, by ID) is linked
+		// back to the new worker below (pairLocked)
+		rec.Shares, rec.Profile, rec.Companion, rec.AccessVersion = c.Shares, c.Profile, c.Companion, c.AccessVersion+1
+		if len(rec.Labels) == 0 {
+			rec.Labels = maps.Clone(c.Labels)
+		}
+	}
 	cert, err := h.issue(rec, d.csr)
 	if err != nil {
 		return nil, err

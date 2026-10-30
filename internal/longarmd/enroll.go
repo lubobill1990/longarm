@@ -187,14 +187,18 @@ func ownerNotes(ow string) []string {
 // be able to write DataDir (the service account, or an administrator).
 type WorkerTarget struct {
 	DataDir string
-	// Force replaces an existing certificate.
-	Force bool
 }
 
-// Prepare refuses an enrolled data dir without Force, makes the data dir
-// and returns the worker's end-to-end trust binding.
+// Current is the worker enrollment DataDir holds (signin.Holder: SignIn
+// replaces it only with Options.Replace, or when it expired).
+func (w WorkerTarget) Current() (*signin.Current, error) {
+	return signin.ReadCurrent("worker", w.DataDir, TLSDir)
+}
+
+// Prepare makes the data dir and returns the worker's end-to-end trust
+// binding (an enrollment there is SignIn's to weigh: Current).
 func (w WorkerTarget) Prepare(string) (*pki.CSRTrust, error) {
-	return prepareEnroll(w.DataDir, w.Force)
+	return prepareEnroll(w.DataDir, true)
 }
 
 // Install writes an approved owned-worker enrollment. A longarmd service
@@ -220,7 +224,9 @@ type LoginOptions struct {
 	// Fingerprint pins the hub CA (sha256 hex); empty: fetched from
 	// https://<hub>/ca.crt (signin.SignIn).
 	Fingerprint string
-	Force       bool // replace an existing certificate
+	// Force: replace what this machine is signed in as already (the old
+	// worker and device leave the hub with the approval)
+	Force bool
 	// Az: sign in with the Azure CLI's token (EntraJoin) instead of
 	// pairing; Scope overrides the token's scope.
 	Az      bool
@@ -247,8 +253,8 @@ type LoginOptions struct {
 // the same approval also makes this machine the user's client device.
 func Login(ctx context.Context, dataDir, hub string, o LoginOptions) error {
 	so := signin.Options{Hub: hub, Fingerprint: o.Fingerprint, WorkerName: o.Name, DeviceName: o.DeviceName,
-		Worker: WorkerTarget{DataDir: dataDir, Force: o.Force}, Scope: o.Scope, OpenBrowser: o.Browser, WorkerLabels: o.Labels,
-		WorkerKind: o.WorkerKind}
+		Worker: WorkerTarget{DataDir: dataDir}, Scope: o.Scope, OpenBrowser: o.Browser, WorkerLabels: o.Labels,
+		WorkerKind: o.WorkerKind, Replace: o.Force}
 	if o.Client {
 		so.Client = client.DeviceTarget{ConfigDir: o.ConfigDir, Force: o.Force}
 	}

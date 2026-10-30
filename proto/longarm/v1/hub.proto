@@ -107,6 +107,24 @@ message StartLinkRequest {
   // owner-only, never shared, never placed automatically.
   bytes admin_worker_csr_pem = 11;
   string admin_worker_name = 12;
+  // Nodes of this machine the pairing replaces (signing in again,
+  // perhaps with another account): at most one client/admin device and
+  // one worker (not an admin worker), each proving that the requester
+  // holds its key. The /link page shows them; the approval removes them
+  // (revokes their certificates) and enrolls the new parts. A replaced
+  // worker's name goes to the new worker; its sharing carries over only
+  // when the approver is its owner - nothing of another user's node moves
+  // to the approver (docs/security.md "Signing in again").
+  repeated LinkReplace replaces = 13;
+}
+
+// LinkReplace: a node's current certificate and its key's signature over
+// pki.ReplaceMessage(csr_pem, worker_csr_pem, admin_worker_csr_pem) of the
+// StartLinkRequest it rides in (ECDSA P-256 / SHA-256, ASN.1): bound to
+// this pairing's new keys, useless for any other.
+message LinkReplace {
+  bytes cert_pem = 1;
+  bytes signature = 2;
 }
 
 message StartLinkResponse {

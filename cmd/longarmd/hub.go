@@ -92,7 +92,15 @@ browser, no code.
 
 --label pool=devbox (repeatable) has the hub record labels for the worker,
 like longarm worker add --label; its owner changes them later with
-longarm worker label <worker> KEY=VALUE KEY-.`,
+longarm worker label <worker> KEY=VALUE KEY-.
+
+Signed in already (a join code, an earlier sign-in, another account)?
+login lists what this machine is and stops; --force signs in again: the
+pairing proves the old worker's (and device's) key and the hub removes
+them at the approval. The worker keeps its name; its sharing stays only
+when you approve as its owner - another user's worker is removed, never
+moved to you. An expired sign-in of the same hub is replaced without
+--force.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dataDir, err := filepath.Abs(dataDir)
@@ -133,7 +141,7 @@ longarm worker label <worker> KEY=VALUE KEY-.`,
 	c.Flags().BoolVar(&az, "az", false, "sign in with the Azure CLI on this machine (az login) instead of a code")
 	c.Flags().StringVar(&scope, "scope", "", "--az: token scope to request (default: the hub's)")
 	c.Flags().BoolVar(&noBrowser, "no-browser", false, "only print the /link address and the code; don't open a browser here")
-	c.Flags().BoolVar(&force, "force", false, "enroll again although a certificate exists")
+	c.Flags().BoolVar(&force, "force", false, "sign in again although this machine is signed in already (replaces that enrollment)")
 	return c
 }
 
