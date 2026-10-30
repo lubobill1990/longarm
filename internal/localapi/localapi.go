@@ -91,7 +91,18 @@ func writeAddrFile(addrFile, addr string) (os.FileInfo, error) {
 	} else if err := os.WriteFile(addrFile, data, 0o600); err != nil {
 		return nil, err
 	}
-	return os.Stat(addrFile)
+	fi, err := os.Stat(addrFile)
+	if err != nil {
+		return nil, err
+	}
+	// Pin the file's identity now. On Windows os.SameFile loads a Stat
+	// result's file ID lazily, by opening its path at the first comparison:
+	// at exit that is the file a newer daemon wrote meanwhile (same pipe
+	// name, so the same content), and only the modification time would have
+	// told them apart - the old daemon deleted the new one's address file
+	// whenever both were written within one timestamp tick.
+	os.SameFile(fi, fi)
+	return fi, nil
 }
 
 // Release removes the address file if it is still the one this channel

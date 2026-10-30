@@ -38,3 +38,29 @@ func TestReleaseKeepsAnotherProcesssFile(t *testing.T) {
 	}
 	cur.Release() // idempotent
 }
+
+// TestReleaseSameTimestamp: the new daemon's file has the very modification
+// time of the old one's (both written within one timestamp tick) and the
+// same content (the same channel): only the file's identity, pinned when
+// the old one was written, tells them apart.
+func TestReleaseSameTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	addrFile := filepath.Join(dir, "daemon.addr")
+	old, err := ListenChannel("latest", dir, addrFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+	cur, err := ListenChannel("latest", dir, addrFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cur.Close()
+	if err := os.Chtimes(addrFile, old.written.ModTime(), old.written.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	old.Release()
+	if a, err := ReadAddr(addrFile); err != nil || a != cur.Addr {
+		t.Fatalf("the new daemon's address file: %q, %v", a, err)
+	}
+}
