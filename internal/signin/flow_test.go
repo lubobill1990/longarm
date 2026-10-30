@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -84,7 +85,14 @@ var (
 // code at /link; it returns the confirmation page.
 func approve(t *testing.T, h *hub.Hub, linkURL, code string) string {
 	t.Helper()
-	secret, err := hub.AddPanelUser(h.Store(), "alice-web", "correct horse battery", "user", "alice", true)
+	return approveAs(t, h, "alice", linkURL, code)
+}
+
+// approveAs is approve as the Longarm user user (a panel login user-web).
+func approveAs(t *testing.T, h *hub.Hub, user, linkURL, code string) string {
+	t.Helper()
+	login := user + "-web"
+	secret, err := hub.AddPanelUser(h.Store(), login, "correct horse battery", "user", user, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +112,7 @@ func approve(t *testing.T, h *hub.Hub, linkURL, code string) string {
 		return string(b)
 	}
 	totp, _ := hub.TOTP(secret, time.Now())
-	post("/login", url.Values{"user": {"alice-web"}, "password": {"correct horse battery"}, "totp": {totp}})
+	post("/login", url.Values{"user": {login}, "password": {"correct horse battery"}, "totp": {totp}})
 	resp, err := c.Get(base + "/link")
 	if err != nil {
 		t.Fatal(err)
@@ -218,11 +226,12 @@ func TestSignInBoth(t *testing.T) {
 		t.Fatalf("worker hub.toml: %+v", hc)
 	}
 
-	// Signing in again over an enrolled worker needs Force; nothing is
+	// Signing in again over an enrolled worker needs Replace; nothing is
 	// asked of the hub before that check.
 	_, err := signin.SignIn(context.Background(), signin.Options{Hub: panelURL, Roots: roots,
 		Worker: longarmd.WorkerTarget{DataDir: dataDir}}, signin.Events{})
-	if err == nil || !strings.Contains(err.Error(), "already holds a certificate") {
+	var held *signin.SignedInError
+	if !errors.As(err, &held) || len(held.Current) != 1 || held.Current[0].Identity() != "worker/lap-w" || held.Current[0].User != "alice" {
 		t.Fatalf("enrolled again: %v", err)
 	}
 }
@@ -346,6 +355,125 @@ func TestSignInAdminWorker(t *testing.T) {
 		}
 		if alone == (r.Worker != nil) {
 			t.Fatalf("worker part: %+v", r.Worker)
+		}
+	}
+}
+
+// TestSignInAgain: a machine enrolled for one user (bob: a join code's
+// admin/<user>-<machine>, say) signs in with another account (alice).
+// Without Replace SignIn names what it would replace and asks the hub
+// nothing; with it, one approval replaces the device and the worker: the
+// pairing proves their keys, the /link page says they are another
+// account's (without naming it), the hub removes them - bob's worker is
+// revoked, not given to alice: its sharing stays behind - and the worker
+// keeps its name. Signing in again as alice keeps her worker's sharing.
+func TestSignInAgain(t *testing.T) {
+	h := testHub(t)
+	for _, u := range []string{"alice", "bob"} {
+		if _, err := h.PutUser("test", &pb.PutUserRequest{Name: u, Create: u == "bob", SetCanShare: true, CanShare: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	share := func(owner, worker, with string) {
+		t.Helper()
+		if _, err := h.ShareWorker("test", owner, false, &pb.ShareWorkerRequest{Worker: worker, AddUsers: []string{with}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fp := pki.Fingerprint(h.CA().Cert)
+	cfgDir, dataDir := t.TempDir(), t.TempDir()
+	signIn := func(user string, replace bool, check func(page string)) (*signin.Result, error) {
+		t.Helper()
+		rec := &recorder{codes: make(chan signin.Code, 2)}
+		type out struct {
+			r   *signin.Result
+			err error
+		}
+		done := make(chan out, 1)
+		go func() {
+			r, err := signin.SignIn(context.Background(), signin.Options{Hub: h.Addr("grpc"), Fingerprint: fp,
+				Client: client.DeviceTarget{ConfigDir: cfgDir}, Worker: longarmd.WorkerTarget{DataDir: dataDir},
+				DeviceName: user + "-box", Replace: replace}, rec.events())
+			done <- out{r, err}
+		}()
+		select {
+		case c := <-rec.codes:
+			page := approveAs(t, h, user, c.URL, c.Code)
+			if check != nil {
+				check(page)
+			}
+		case o := <-done:
+			return o.r, o.err
+		}
+		select {
+		case o := <-done:
+			return o.r, o.err
+		case <-time.After(60 * time.Second):
+			t.Fatal("SignIn did not finish")
+		}
+		return nil, nil
+	}
+	r, err := signIn("bob", false, nil)
+	if err != nil || r.Worker.Owner != "bob" {
+		t.Fatalf("bob: %+v %v", r, err)
+	}
+	bobWorker := r.Worker.Name
+	bobCert, _ := os.ReadFile(filepath.Join(dataDir, longarmd.TLSDir, pki.NodeCertFile))
+	share("bob", bobWorker, "alice")
+
+	// asked first: nothing changes, the hub is asked nothing
+	_, err = signIn("alice", false, func(string) { t.Fatal("a pairing started before the user agreed") })
+	var held *signin.SignedInError
+	if !errors.As(err, &held) || len(held.Current) != 2 || held.OtherHub() || !strings.Contains(err.Error(), "device client/bob-box (user bob)") ||
+		!strings.Contains(err.Error(), "worker worker/"+bobWorker+" (owner bob)") {
+		t.Fatalf("not asked: %v", err)
+	}
+
+	// agreed: one approval as alice replaces both
+	r, err = signIn("alice", true, func(page string) {
+		if !strings.Contains(page, "This machine is signed in already") || strings.Count(page, "another account") != 2 || strings.Contains(page, "bob") {
+			t.Errorf("confirmation page: %s", page)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.User != "alice" || r.Worker.Name != bobWorker || r.Worker.Owner != "alice" || r.Device.Name != "alice-box" || len(r.Replaced) != 2 {
+		t.Fatalf("alice: %+v %+v %+v", r, r.Worker, r.Device)
+	}
+	nodes := map[string]*pb.NodeInfo{}
+	for _, n := range h.ListNodes(true) {
+		nodes[n.Name] = n
+	}
+	if n := nodes["bob-box"]; n == nil || n.State != "revoked" {
+		t.Fatalf("bob's device: %+v", n)
+	}
+	if n := nodes[bobWorker]; n == nil || n.State != "approved" || n.Owner != "alice" || n.Shares != nil {
+		t.Fatalf("the worker: %+v (bob's sharing must not move to alice)", n)
+	}
+	if hc, _ := hubclient.LoadFile(dataDir); hc.Owner != "alice" {
+		t.Fatalf("worker hub.toml: %+v", hc)
+	}
+	// bob's old certificate proves nothing any more
+	if c, _ := pki.ParseCertPEM(bobCert); c == nil {
+		t.Fatal("bob's worker certificate")
+	} else if revoked, err := h.Store().CertRevoked(pki.Serial(c)); err != nil || !revoked {
+		t.Fatalf("bob's worker certificate is not revoked: %v", err)
+	}
+
+	// alice again (her worker shared with bob): it keeps its sharing
+	share("alice", bobWorker, "bob")
+	r, err = signIn("alice", true, func(page string) {
+		if !strings.Contains(page, "your worker <code>"+bobWorker+"</code>") || !strings.Contains(page, "your device <code>alice-box</code>") {
+			t.Errorf("confirmation page: %s", page)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range h.ListNodes(true) {
+		if n.Name == bobWorker && (n.Owner != "alice" || n.Shares == nil || !slices.Contains(n.Shares.Users, "bob")) {
+			t.Fatalf("alice's worker lost its sharing: %+v", n)
 		}
 	}
 }

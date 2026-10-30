@@ -8,6 +8,7 @@ import { poolMachines } from '../lib/machines'
 import { WorkerTab } from './WorkerTab'
 import { AccountTab } from './AccountTab'
 import { UpdateBanner } from './UpdateBanner'
+import { VersionChip } from './VersionInfo'
 import { wailsMessage } from '../lib/wails'
 import { ContextMenu, installAppBehaviour } from './appShell'
 import { IconChip, IconClose, IconForward, IconPin, IconServers, IconSettings, IconTerminal, IconUser } from '../components/icons'
@@ -116,7 +117,7 @@ export function TrayApp() {
       <div className="tray">
         {/* fixed: the title bar, the tabs (a rail in a wide window) and the pool's source line; only .body scrolls */}
         <header className="tray-head" data-testid="tray-head">
-          <TitleBar info={info} online={online} total={machines.active.length + machines.offline.length} />
+          <TitleBar info={info} pool={pool} online={online} total={machines.active.length + machines.offline.length} />
         </header>
         <nav className="tray-nav" aria-label="Sections">
           <div className="tabs" role="tablist">
@@ -206,7 +207,7 @@ function relayedWorkers(pool?: PoolView): string[] {
   })
 }
 
-function TitleBar({ info, online, total }: { info?: TrayInfo; online: number; total: number }) {
+function TitleBar({ info, pool, online, total }: { info?: TrayInfo; pool?: PoolView; online: number; total: number }) {
   const [pinned, setPinned] = useState(false)
   useEffect(() => {
     if (info) setPinned(info.pinned)
@@ -217,11 +218,12 @@ function TitleBar({ info, online, total }: { info?: TrayInfo; online: number; to
       className="titlebar"
       onMouseDown={(e) => {
         // drag the frameless popup by its title bar (Wails)
-        if (e.button === 0 && !(e.target as HTMLElement).closest('button')) wailsMessage('wails:drag')
+        if (e.button === 0 && !(e.target as HTMLElement).closest('button, .ver-pop')) wailsMessage('wails:drag')
       }}
     >
       <span className="brand-mark" aria-hidden="true" />
       <span className="title">Remote Workers</span>
+      <VersionChip info={info} pool={pool} />
       <span className={`count-pill ${total === 0 ? '' : allUp ? 'ok' : online ? 'warn' : 'bad'}`}>
         <span className="count-dot" aria-hidden="true" />
         <span data-testid="online-count">

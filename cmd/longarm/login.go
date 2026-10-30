@@ -48,7 +48,9 @@ To make this machine your worker too, with the same single approval:
 longarmd login <hub> --role both.
 
 Signing in again (an expired certificate, another account) replaces this
-machine's certificate; the device keeps its name.
+machine's certificate: the hub removes the old device at the approval
+(through the browser; the pairing proves its key). Signed in as the same
+user, the device keeps its name.
 
 CI: with az signed in as a service principal (az login --service-principal,
 e.g. a GitHub Actions federated credential) the token is an app-only one
@@ -69,7 +71,10 @@ in its [auth.entra] apps. Such a sign-in never falls back to the browser.`,
 				}
 			}
 			o := signin.Options{Hub: hub, Fingerprint: fp, DeviceName: name, Scope: scope, OpenBrowser: !noBrowser,
-				Client: client.DeviceTarget{ConfigDir: configDir, Force: force}, Method: signin.MethodAuto}
+				Client: client.DeviceTarget{ConfigDir: configDir, Force: force}, Method: signin.MethodAuto,
+				// running login again is how a device signs in again (another
+				// account, an expired certificate); another hub's needs --force
+				Replace: true}
 			switch {
 			case useAz:
 				o.Method = signin.MethodAz

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/longarmd"
 	"github.com/lubobill1990/longarm/internal/signin"
 )
@@ -159,4 +160,99 @@ func TestSignInAPI(t *testing.T) {
 	mu.Unlock()
 	call("POST", "/trayapi/signin/cancel", `{}`, nil)
 	waitState(func() bool { return st.State == "canceled" })
+}
+
+// TestSignInConfirmReplace: on a machine signed in already (a join code,
+// another account) the sign-in stops in state "confirm" naming what it
+// would replace - nothing is replaced silently; "replace" starts it again
+// with signin.Options.Replace (and the device's Force for another hub);
+// "keep" ends the question.
+func TestSignInConfirmReplace(t *testing.T) {
+	cfg, data := t.TempDir(), t.TempDir()
+	s, err := NewServer(Options{LongarmConfigDir: cfg, LongarmdDataDir: data, LongarmExe: "longarm", LongarmdExe: "longarmd"}, &fakeDesk{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.installedRolesFn = func() string { return "both" }
+	s.installedWorker = func() (string, longarmd.AdminInstall) { return "session", longarmd.AdminInstall{} }
+	var mu sync.Mutex
+	var calls []signin.Options
+	s.signIn = func(ctx context.Context, o signin.Options, ev signin.Events) (*signin.Result, error) {
+		mu.Lock()
+		calls = append(calls, o)
+		mu.Unlock()
+		if !o.Replace {
+			return nil, &signin.SignedInError{Hub: "longarm.example.com:7443", CAFingerprint: "ab", Current: []*signin.Current{
+				{Kind: "device", Role: "admin", Name: "alice-box", User: "alice", CAFingerprint: "ab", NotAfter: time.Now().Add(time.Hour)},
+				{Kind: "worker", Role: "worker", Name: "box", User: "alice", CAFingerprint: "ab", NotAfter: time.Now().Add(time.Hour)},
+			}}
+		}
+		return &signin.Result{Hub: "longarm.example.com:7443", User: "alice2", Device: &signin.Enrolled{Name: "alice2-box"}, Worker: &signin.Enrolled{Name: "box"}}, nil
+	}
+	go s.Serve()
+	defer s.Close()
+	jar, _ := cookiejar.New(nil)
+	c := &http.Client{Jar: jar}
+	if resp, err := c.Get(s.URL("/tray")); err != nil {
+		t.Fatal(err)
+	} else {
+		resp.Body.Close()
+	}
+	call := func(method, path, body string, v any) int {
+		t.Helper()
+		req, _ := http.NewRequest(method, "http://"+s.Addr()+path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if v != nil {
+			json.NewDecoder(resp.Body).Decode(v)
+		}
+		return resp.StatusCode
+	}
+	var st SignInState
+	waitState := func(want string) {
+		t.Helper()
+		for i := 0; i < 100; i++ {
+			st = SignInState{}
+			call("GET", "/trayapi/signin/state", "", &st)
+			if st.State == want {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Fatalf("state %+v, want %s", st, want)
+	}
+	if code := call("POST", "/trayapi/signin/start", `{"hub":"longarm.example.com"}`, nil); code != 200 {
+		t.Fatalf("start: %d", code)
+	}
+	waitState("confirm")
+	cf := st.Confirm
+	if cf == nil || cf.Hub != "longarm.example.com:7443" || cf.OtherHub || len(cf.Current) != 2 || cf.Current[0].Identity != "admin/alice-box" ||
+		!cf.Current[0].SameHub || cf.Current[1].Kind != "worker" || cf.Request.Hub != "longarm.example.com" {
+		t.Fatalf("confirm %+v", cf)
+	}
+	// keep: the question goes away, nothing else ran
+	call("POST", "/trayapi/signin/cancel", `{}`, nil)
+	waitState("idle")
+	// replace: the same sign-in, now with Replace
+	call("POST", "/trayapi/signin/start", `{"hub":"longarm.example.com"}`, nil)
+	waitState("confirm")
+	if code := call("POST", "/trayapi/signin/start", `{"hub":"longarm.example.com","replace":true}`, nil); code != 200 {
+		t.Fatalf("replace: %d", code)
+	}
+	waitState("done")
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) != 3 || calls[0].Replace || calls[1].Replace || !calls[2].Replace {
+		t.Fatalf("calls %+v", calls)
+	}
+	if d, ok := calls[2].Client.(client.DeviceTarget); !ok || !d.Force {
+		t.Fatalf("device target %+v", calls[2].Client)
+	}
+	if _, ok := calls[2].Worker.(longarmd.WorkerTarget); !ok {
+		t.Fatalf("worker target %T", calls[2].Worker)
+	}
 }

@@ -27,15 +27,18 @@ import (
 
 // SignInState is what /trayapi/signin/state reports.
 type SignInState struct {
-	// State: "idle", "running", "done", "error" or "canceled".
-	State   string       `json:"state"`
-	Hub     string       `json:"hub,omitempty"`
-	Code    *SignInCode  `json:"code,omitempty"`
-	Steps   []string     `json:"steps,omitempty"`
-	Result  *SignInDone  `json:"result,omitempty"`
-	Error   string       `json:"error,omitempty"`
-	Started time.Time    `json:"started,omitempty"`
-	Targets SignInTarget `json:"targets"`
+	// State: "idle", "running", "done", "error", "canceled" or "confirm"
+	// (this machine is signed in already: Confirm says as what; the page
+	// asks, then starts again with replace).
+	State   string         `json:"state"`
+	Confirm *SignInConfirm `json:"confirm,omitempty"`
+	Hub     string         `json:"hub,omitempty"`
+	Code    *SignInCode    `json:"code,omitempty"`
+	Steps   []string       `json:"steps,omitempty"`
+	Result  *SignInDone    `json:"result,omitempty"`
+	Error   string         `json:"error,omitempty"`
+	Started time.Time      `json:"started,omitempty"`
+	Targets SignInTarget   `json:"targets"`
 }
 
 // SignInCode is the pairing code to show.
@@ -58,6 +61,36 @@ type SignInDone struct {
 	Summary     string `json:"summary"`
 }
 
+// SignInConfirm: what a sign-in would replace (signin.SignedInError).
+type SignInConfirm struct {
+	Hub string `json:"hub"`
+	// OtherHub: something is signed in to another hub (it stays listed
+	// there; only this machine's certificate is replaced).
+	OtherHub bool         `json:"other_hub,omitempty"`
+	Current  []SignInHeld `json:"current"`
+	// AdminWorkerStays: the admin worker is signed in and not part of
+	// this sign-in: it stays its current owner's.
+	AdminWorkerStays bool `json:"admin_worker_stays,omitempty"`
+	// Request: the hub and labels asked for, to start again with.
+	Request SignInRequest `json:"request"`
+}
+
+// SignInHeld is one enrollment this machine holds.
+type SignInHeld struct {
+	Kind     string `json:"kind"`     // "device" or "worker"
+	Identity string `json:"identity"` // "admin/alice-pc"
+	User     string `json:"user,omitempty"`
+	Hub      string `json:"hub,omitempty"`
+	SameHub  bool   `json:"same_hub"`
+	Expired  bool   `json:"expired,omitempty"`
+}
+
+// SignInRequest is a sign-in's input.
+type SignInRequest struct {
+	Hub    string `json:"hub,omitempty"`
+	Labels string `json:"labels,omitempty"`
+}
+
 // SignInTarget: what a sign-in enrolls.
 type SignInTarget struct {
 	Client      bool `json:"client"`
@@ -69,6 +102,7 @@ type signinRun struct {
 	mu     sync.Mutex
 	st     SignInState
 	cancel context.CancelFunc
+	only   *SignInTarget // the running / to-be-confirmed sign-in's
 }
 
 func (r *signinRun) snapshot() SignInState {
@@ -281,11 +315,22 @@ func (s *Server) signinStart(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Hub    string `json:"hub"`
 		Labels string `json:"labels"`
+		// Replace: the user confirmed replacing what this machine is
+		// signed in as (state "confirm")
+		Replace bool `json:"replace"`
 	}
 	if !readBody(w, r, &body) {
 		return
 	}
-	st, code, err := s.startSignIn(body.Hub, body.Labels, nil)
+	var only *SignInTarget
+	if body.Replace {
+		s.signin.mu.Lock()
+		if s.signin.st.State == "confirm" { // the role change it came from, if any
+			only = s.signin.only
+		}
+		s.signin.mu.Unlock()
+	}
+	st, code, err := s.startSignIn(body.Hub, body.Labels, only, body.Replace)
 	if err != nil {
 		httpError(w, code, err.Error())
 		return
@@ -294,8 +339,9 @@ func (s *Server) signinStart(w http.ResponseWriter, r *http.Request) {
 }
 
 // startSignIn starts a sign-in to hubIn ("" = signinHub) of the targets
-// (only narrows them); a refusal comes with its HTTP status.
-func (s *Server) startSignIn(hubIn, labelsIn string, only *SignInTarget) (SignInState, int, error) {
+// (only narrows them); a refusal comes with its HTTP status. Without
+// replace, a machine signed in already ends it in state "confirm".
+func (s *Server) startSignIn(hubIn, labelsIn string, only *SignInTarget, replace bool) (SignInState, int, error) {
 	hubIn = strings.TrimSpace(hubIn)
 	if len(hubIn) > 256 || strings.ContainsAny(hubIn, " \t\"'`;&|") {
 		return SignInState{}, http.StatusBadRequest, errors.New("bad hub address")
@@ -319,9 +365,10 @@ func (s *Server) startSignIn(hubIn, labelsIn string, only *SignInTarget) (SignIn
 	if !t.Client && !t.Worker && !t.AdminWorker {
 		return SignInState{}, http.StatusConflict, errors.New("nothing to sign in")
 	}
-	so := signin.Options{Hub: hub, Fingerprint: fp, OpenBrowser: true, WorkerLabels: labels}
+	so := signin.Options{Hub: hub, Fingerprint: fp, OpenBrowser: true, WorkerLabels: labels, Replace: replace}
 	if t.Client {
-		so.Client = client.DeviceTarget{ConfigDir: s.opts.LongarmConfigDir}
+		// replace: confirmed, also another hub's certificate
+		so.Client = client.DeviceTarget{ConfigDir: s.opts.LongarmConfigDir, Force: replace}
 	}
 	if t.Worker {
 		so.Worker = longarmd.WorkerTarget{DataDir: s.opts.LongarmdDataDir}
@@ -342,10 +389,10 @@ func (s *Server) startSignIn(hubIn, labelsIn string, only *SignInTarget) (SignIn
 		return SignInState{}, http.StatusConflict, errors.New("a sign-in is already running")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	run.cancel = cancel
+	run.cancel, run.only = cancel, only
 	run.st = SignInState{State: "running", Hub: hub, Started: time.Now(), Targets: t}
 	run.mu.Unlock()
-	go s.runSignIn(ctx, so)
+	go s.runSignIn(ctx, so, SignInRequest{Hub: hubIn, Labels: labelsIn})
 	return run.snapshot(), http.StatusOK, nil
 }
 
@@ -364,11 +411,11 @@ func (s *Server) AutoSignIn() bool {
 	if !a.Needed || a.Hub == "" {
 		return false
 	}
-	_, _, err := s.startSignIn("", "", nil)
+	_, _, err := s.startSignIn("", "", nil, false)
 	return err == nil
 }
 
-func (s *Server) runSignIn(ctx context.Context, so signin.Options) {
+func (s *Server) runSignIn(ctx context.Context, so signin.Options, req SignInRequest) {
 	run := &s.signin
 	defer run.cancel()
 	ev := signin.Events{
@@ -393,9 +440,17 @@ func (s *Server) runSignIn(ctx context.Context, so signin.Options) {
 		signIn = signin.SignIn
 	}
 	res, err := signIn(ctx, so, ev)
+	var held *signin.SignedInError
+	confirm := errors.As(err, &held)
+	var cf *SignInConfirm
+	if confirm {
+		cf = s.confirmOf(held, so, req)
+	}
 	run.update(func(st *SignInState) {
 		st.Code = nil
 		switch {
+		case confirm:
+			st.State, st.Confirm = "confirm", cf
 		case errors.Is(err, context.Canceled):
 			st.State, st.Error = "canceled", "canceled"
 		case err != nil:
@@ -420,6 +475,21 @@ func (s *Server) runSignIn(ctx context.Context, so signin.Options) {
 	}
 }
 
+// confirmOf describes what a sign-in would replace, for the page to ask.
+func (s *Server) confirmOf(e *signin.SignedInError, so signin.Options, req SignInRequest) *SignInConfirm {
+	cf := &SignInConfirm{Hub: e.Hub, OtherHub: e.OtherHub(), Request: req}
+	for _, c := range e.Current {
+		cf.Current = append(cf.Current, SignInHeld{Kind: c.Kind, Identity: c.Identity(), User: c.User, Hub: c.Hub,
+			SameHub: c.SameHub(e.CAFingerprint), Expired: c.Expired(s.now())})
+	}
+	if so.AdminWorker == nil && s.installedWorker != nil {
+		if _, adm := s.installedWorker(); adm.Enabled {
+			cf.AdminWorkerStays = longarmd.AdminWorkerStatus(adm, queryService).SignedIn
+		}
+	}
+	return cf
+}
+
 func (s *Server) signinState(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.signin.snapshot())
 }
@@ -428,6 +498,9 @@ func (s *Server) signinCancel(w http.ResponseWriter, _ *http.Request) {
 	s.signin.mu.Lock()
 	if s.signin.cancel != nil {
 		s.signin.cancel()
+	}
+	if s.signin.st.State == "confirm" { // "keep things as they are"
+		s.signin.st = SignInState{State: "idle"}
 	}
 	s.signin.mu.Unlock()
 	writeJSON(w, map[string]bool{"ok": true})

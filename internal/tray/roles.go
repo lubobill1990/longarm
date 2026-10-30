@@ -190,7 +190,7 @@ func (s *Server) applyRoles(cur longarmd.MachineRoles, want longarmd.RoleChange,
 		st.Message += " " + strings.Join(notes, "; ")
 	}
 	if only.Client || only.Worker || only.AdminWorker {
-		if _, _, err := s.startSignIn("", "", &only); err != nil {
+		if _, _, err := s.startSignIn("", "", &only, false); err != nil {
 			st.Message += " Sign in from this tab: " + err.Error()
 		} else {
 			st.SignIn = true

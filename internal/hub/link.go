@@ -116,6 +116,9 @@ type pairLink struct {
 	adminCSR              []byte
 	adminName, adminKeyID string
 	adminSerial           string
+	// replaces: this machine's enrolled nodes the approval removes
+	// (linkReplaces)
+	replaces []linkReplace
 }
 
 // drop forgets the CSRs (decided or expired).
@@ -129,6 +132,13 @@ func (l *pairLink) fields() map[string]any {
 	}
 	if len(l.workerLabels) > 0 {
 		f["worker_labels"] = l.workerLabels
+	}
+	if len(l.replaces) > 0 {
+		var names []string
+		for _, r := range l.replaces {
+			names = append(names, r.name)
+		}
+		f["replaces"] = names
 	}
 	if l.admin {
 		f["admin_worker"], f["admin_worker_name"], f["admin_worker_node_key"] = true, l.adminName, l.adminKeyID
@@ -317,6 +327,10 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 	} else if req.AdminWorkerName != "" {
 		return nil, status.Error(codes.InvalidArgument, "admin_worker_name goes with admin_worker_csr_pem")
 	}
+	replaces, err := h.linkReplaces(req)
+	if err != nil {
+		return nil, err
+	}
 	u := h.linkURL(ctx)
 	if u == "" {
 		return nil, status.Error(codes.FailedPrecondition, "this hub has no web panel (http) to approve pairings at")
@@ -331,6 +345,16 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 		admin: acsr != nil, adminCSR: acsr, adminName: req.AdminWorkerName, adminKeyID: akeyID}
 	if l.kind == linkAdmin {
 		l.admin, l.adminName, l.adminKeyID = true, l.name, l.keyID
+	}
+	l.replaces = replaces
+	for _, r := range replaces {
+		// signing in again keeps the worker's name (unless another is asked for)
+		switch {
+		case r.worker && l.kind == linkBoth && l.workerName == "":
+			l.workerName = r.name
+		case r.worker && l.kind == linkWorker && l.name == "":
+			l.name = r.name
+		}
 	}
 	p := h.pair
 	p.mu.Lock()
@@ -603,7 +627,13 @@ func (h *Hub) approveLink(a *linkApprover, l *pairLink) (*pb.JoinResponse, error
 	if !ok {
 		return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled or unknown", user)
 	}
-	dev := deviceRequest{csr: l.csr, name: l.name, hostname: l.hostname, os: l.os, arch: l.arch, version: l.version}
+	// this machine's nodes it replaces go first: a worker's name is taken
+	// until then
+	carry, err := h.replaceLinkNodes(who, user, l)
+	if err != nil {
+		return nil, err
+	}
+	dev := deviceRequest{csr: l.csr, name: l.name, hostname: l.hostname, os: l.os, arch: l.arch, version: l.version, carry: carry}
 	if l.kind == linkAdmin {
 		if dev.name == "" {
 			dev.name = adminWorkerName(l, nil)
@@ -625,7 +655,7 @@ func (h *Hub) approveLink(a *linkApprover, l *pairLink) (*pb.JoinResponse, error
 		aname = adminWorkerName(l, resp)
 	}
 	adev := dev
-	adev.csr, adev.name, adev.labels, adev.admin = l.adminCSR, aname, nil, true
+	adev.csr, adev.name, adev.labels, adev.admin, adev.carry = l.adminCSR, aname, nil, true, nil
 	aw, err := h.enrollOwnedWorker(who, user, adev)
 	if err != nil {
 		for _, r := range []*pb.JoinResponse{resp.Worker, resp} {
@@ -768,6 +798,9 @@ type linkDetails struct {
 	// AdminWorker: the pairing includes an admin worker (runs as SYSTEM)
 	AdminWorker                 bool
 	AdminWorkerName, AdminKeyID string
+	// Replaces: what this machine is enrolled as now, removed by the
+	// approval
+	Replaces []linkReplaceView
 }
 
 func (h *Hub) renderLink(w http.ResponseWriter, code int, v linkView) {
@@ -850,7 +883,8 @@ func (h *Hub) linkLookup(w http.ResponseWriter, r *http.Request) {
 			Version: l.version, IP: l.ip, KeyID: l.keyID, Ago: now.Sub(l.started).Round(time.Second).String(),
 			Left: l.expires.Sub(now).Round(time.Second).String(), Worker: l.kind == linkWorker,
 			Both: l.kind == linkBoth, WorkerName: l.workerName, WorkerKeyID: l.workerKeyID,
-			WorkerLabels: labelList(l.workerLabels), AdminWorker: l.admin, AdminWorkerName: l.adminName, AdminKeyID: l.adminKeyID}
+			WorkerLabels: labelList(l.workerLabels), AdminWorker: l.admin, AdminWorkerName: l.adminName, AdminKeyID: l.adminKeyID,
+			Replaces: replaceViews(l.replaces, a.user)}
 	}
 	p.mu.Unlock()
 	h.auditExpired(expired)
@@ -1031,6 +1065,7 @@ input[name=code]{font-size:1.4em;letter-spacing:.1em;width:9em;text-transform:up
 {{if .Both}}<tr><th>worker node key</th><td>{{if .WorkerKeyID}}<code>{{.WorkerKeyID}}</code> (compare: longarmd trust status){{else}}none{{end}}</td></tr>{{end}}
 {{if .AdminWorker}}<tr><th>admin worker node key</th><td>{{if .AdminKeyID}}<code>{{.AdminKeyID}}</code>{{else}}none{{end}}</td></tr>{{end}}
 <tr><th>started</th><td>{{.Ago}} ago (expires in {{.Left}})</td></tr></table>
+{{if .Replaces}}<p class="warn"><b>This machine is signed in already.</b> Approving replaces:</p><ul>{{range .Replaces}}<li>{{if .Yours}}your {{.Kind}} <code>{{.Name}}</code>: it gets a new certificate{{if eq .Kind "worker"}} and keeps its name and sharing{{end}}{{else}}a {{.Kind}} enrolled for <b>another account</b>: it is <b>removed</b> from the hub. It does not become yours: nothing of it (sharing, jobs, admin rights) moves to you{{end}}</li>{{end}}</ul>{{end}}
 {{if .Both}}<p class="warn">Only confirm if this is your device: it gets a certificate that acts as you{{if .Admin}} - an <b>administrator</b> certificate{{end}}, and it becomes your worker: jobs you run may be placed on it.</p>
 {{else if .Worker}}<p class="warn">Only confirm if this is your machine: jobs you run may be placed on it.</p>
 {{else if eq .Kind "admin"}}
