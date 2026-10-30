@@ -160,6 +160,8 @@ var cliFeatures = []string{
 	// id prefix, id:/name:; worker rename / admin rename; ids in listings
 	// and JSON (worker_id / workerId / id)
 	"node-ids",
+	"agent-handoff",  // handoff --to/--from: move a Claude Code / Copilot CLI session and its code
+	"agent-sessions", // agent-sessions [<worker>|local] [--json]
 }
 
 func versionCmd() *cobra.Command {

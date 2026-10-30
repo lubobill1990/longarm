@@ -643,6 +643,7 @@ const (
 	Fleet_CreatePortLink_FullMethodName   = "/longarm.v1.Fleet/CreatePortLink"
 	Fleet_ListPortLinks_FullMethodName    = "/longarm.v1.Fleet/ListPortLinks"
 	Fleet_RemovePortLink_FullMethodName   = "/longarm.v1.Fleet/RemovePortLink"
+	Fleet_HandoffPair_FullMethodName      = "/longarm.v1.Fleet/HandoffPair"
 )
 
 // FleetClient is the client API for Fleet service.
@@ -706,6 +707,13 @@ type FleetClient interface {
 	CreatePortLink(ctx context.Context, in *CreatePortLinkRequest, opts ...grpc.CallOption) (*PortLink, error)
 	ListPortLinks(ctx context.Context, in *ListPortLinksRequest, opts ...grpc.CallOption) (*ListPortLinksResponse, error)
 	RemovePortLink(ctx context.Context, in *RemovePortLinkRequest, opts ...grpc.CallOption) (*PortLink, error)
+	// A temporary worker pair for a direct handoff transfer between two
+	// workers of the caller's own (longarm handoff, docs/usage.md "Hand off
+	// an agent session"): the hub's relays - embedded and external - carry
+	// traffic between the two workers until it expires or is released. Never
+	// for another user's worker, admins included (NotFound, as for unknown
+	// names).
+	HandoffPair(ctx context.Context, in *HandoffPairRequest, opts ...grpc.CallOption) (*HandoffPairResponse, error)
 }
 
 type fleetClient struct {
@@ -972,6 +980,16 @@ func (c *fleetClient) RemovePortLink(ctx context.Context, in *RemovePortLinkRequ
 	return out, nil
 }
 
+func (c *fleetClient) HandoffPair(ctx context.Context, in *HandoffPairRequest, opts ...grpc.CallOption) (*HandoffPairResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HandoffPairResponse)
+	err := c.cc.Invoke(ctx, Fleet_HandoffPair_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FleetServer is the server API for Fleet service.
 // All implementations must embed UnimplementedFleetServer
 // for forward compatibility.
@@ -1033,6 +1051,13 @@ type FleetServer interface {
 	CreatePortLink(context.Context, *CreatePortLinkRequest) (*PortLink, error)
 	ListPortLinks(context.Context, *ListPortLinksRequest) (*ListPortLinksResponse, error)
 	RemovePortLink(context.Context, *RemovePortLinkRequest) (*PortLink, error)
+	// A temporary worker pair for a direct handoff transfer between two
+	// workers of the caller's own (longarm handoff, docs/usage.md "Hand off
+	// an agent session"): the hub's relays - embedded and external - carry
+	// traffic between the two workers until it expires or is released. Never
+	// for another user's worker, admins included (NotFound, as for unknown
+	// names).
+	HandoffPair(context.Context, *HandoffPairRequest) (*HandoffPairResponse, error)
 	mustEmbedUnimplementedFleetServer()
 }
 
@@ -1108,6 +1133,9 @@ func (UnimplementedFleetServer) ListPortLinks(context.Context, *ListPortLinksReq
 }
 func (UnimplementedFleetServer) RemovePortLink(context.Context, *RemovePortLinkRequest) (*PortLink, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemovePortLink not implemented")
+}
+func (UnimplementedFleetServer) HandoffPair(context.Context, *HandoffPairRequest) (*HandoffPairResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method HandoffPair not implemented")
 }
 func (UnimplementedFleetServer) mustEmbedUnimplementedFleetServer() {}
 func (UnimplementedFleetServer) testEmbeddedByValue()               {}
@@ -1498,6 +1526,24 @@ func _Fleet_RemovePortLink_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Fleet_HandoffPair_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HandoffPairRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).HandoffPair(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_HandoffPair_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).HandoffPair(ctx, req.(*HandoffPairRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Fleet_ServiceDesc is the grpc.ServiceDesc for Fleet service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1576,6 +1622,10 @@ var Fleet_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemovePortLink",
 			Handler:    _Fleet_RemovePortLink_Handler,
+		},
+		{
+			MethodName: "HandoffPair",
+			Handler:    _Fleet_HandoffPair_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

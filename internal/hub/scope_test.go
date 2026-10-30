@@ -179,7 +179,7 @@ func TestAdminOperationsByName(t *testing.T) {
 
 	// nothing happened to them
 	h.mu.Lock()
-	aw, bl := *h.nodes["aw"].rec, *h.nodes["bob-laptop"].rec
+	aw, bl := *h.nodeLocked("aw").rec, *h.nodeLocked("bob-laptop").rec
 	h.mu.Unlock()
 	if aw.AdminDrain || aw.State != stateApproved || aw.Labels["zone"] != "" || aw.Shares != nil || bl.State != stateApproved || bl.AdminDrain {
 		t.Fatalf("hidden machines changed: %+v %+v", aw, bl)
@@ -214,7 +214,7 @@ func TestAdminCantShareOthersWorker(t *testing.T) {
 		t.Fatalf("panel admin shares a hidden worker: %v", err)
 	}
 	h.mu.Lock()
-	rootMay := h.mayUseLocked("root", h.nodes["aw"])
+	rootMay := h.mayUseLocked("root", h.nodeLocked("aw"))
 	h.mu.Unlock()
 	if rootMay {
 		t.Fatal("root may use aw")
@@ -237,7 +237,7 @@ func TestAdminCantShareOthersWorker(t *testing.T) {
 		t.Fatalf("admin re-shares a worker shared with it: %v", err)
 	}
 	h.mu.Lock()
-	s := h.nodes["aw"].rec.Shares
+	s := h.nodeLocked("aw").rec.Shares
 	h.mu.Unlock()
 	if s == nil || s.Everyone || len(s.Users) != 2 {
 		t.Fatalf("shares %+v", s)
@@ -434,7 +434,7 @@ func TestTailnetRekeyHidden(t *testing.T) {
 		t.Fatalf("rekey aw: %v (unknown: %v)", got, want)
 	}
 	h.mu.Lock()
-	rekey := h.nodes["aw"].rec.TailnetRekey
+	rekey := h.nodeLocked("aw").rec.TailnetRekey
 	h.mu.Unlock()
 	if rekey {
 		t.Fatal("aw marked for a re-key")
@@ -496,8 +496,8 @@ func TestNoAdminCredentialsForUsers(t *testing.T) {
 	// ... nor the name of a user without a user record: an old certificate's
 	// (its name is its user), a worker's owner
 	h.mu.Lock()
-	h.nodes["lega"] = &node{rec: &store.Node{Name: "lega", Role: "client", State: stateApproved}}
-	h.nodes["gw"] = &node{rec: &store.Node{Name: "gw", Role: "worker", Owner: "ghost", State: stateRevoked}}
+	h.putTestNode(&node{rec: &store.Node{Name: "lega", Role: "client", State: stateApproved}})
+	h.putTestNode(&node{rec: &store.Node{Name: "gw", Role: "worker", Owner: "ghost", State: stateRevoked}})
 	h.mu.Unlock()
 	for _, name := range []string{"lega", "ghost"} {
 		body := `{"name":"` + name + `","password":"another-password-1","current_password":"admin-password-1"}`
@@ -621,7 +621,7 @@ func TestEventStreamFollowsTeams(t *testing.T) {
 	}
 	h.mu.Lock()
 	f := h.eventFilter(h.viewerLocked("bob", false)) // subscribed while in t1
-	info := h.nodeInfoLocked(h.nodes["aw"])
+	info := h.nodeInfoLocked(h.nodeLocked("aw"))
 	h.mu.Unlock()
 	ev := &pb.FleetEvent{Kind: "node", Node: "aw", NodeInfo: info}
 	if f(ev, "") == nil {

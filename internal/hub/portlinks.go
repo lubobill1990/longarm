@@ -17,6 +17,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/portlink"
+	"github.com/lubobill1990/longarm/internal/relay"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -418,18 +419,26 @@ func (h *Hub) portLinksChangedLocked(workers ...string) {
 }
 
 // updateRelayPairsLocked lets the relay carry traffic between linked
-// workers (and nothing else between workers); the relay knows workers by
-// their certificate names.
+// workers and the workers of a running handoff transfer (handoffpairs.go),
+// and nothing else between workers. Pairs name the workers by their
+// certificate names and node IDs: a worker whose certificate carries an ID
+// is matched by it (a reused or renamed name never inherits a pair).
 func (h *Hub) updateRelayPairsLocked() {
 	h.relayPolicyNotify() // external relays (relays.go)
 	if h.relay == nil {
 		return
 	}
-	pairs := make([][2]string, 0, len(h.portLinks))
+	h.relay.SetWorkerPairs(h.relayWorkerPairsLocked(time.Now()))
+}
+
+// relayWorkerPairsLocked are the worker pairs relays may carry: those of
+// the port links and of handoff transfers, by certificate name and node ID.
+func (h *Hub) relayWorkerPairsLocked(now time.Time) []relay.WorkerPair {
+	pairs := make([]relay.WorkerPair, 0, len(h.portLinks)+len(h.handoffPairs))
 	for _, e := range h.portLinks {
-		pairs = append(pairs, [2]string{e.l.From, e.l.To})
+		pairs = append(pairs, relay.WorkerPair{A: e.l.From, B: e.l.To, AID: e.l.FromId, BID: e.l.ToId})
 	}
-	h.relay.SetWorkerPairs(pairs)
+	return append(pairs, h.handoffPairsLocked(now)...)
 }
 
 // portLinksMsgLocked is the list of links naming worker (an ID), with

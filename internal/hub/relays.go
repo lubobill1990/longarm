@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/relay"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -181,15 +182,14 @@ func (h *Hub) relayPolicyLocked() *pb.RelayPolicy {
 	p := &pb.RelayPolicy{Time: timestamppb.Now(), Ttl: durationpb.New(relayPolicyTTL),
 		Revocations: h.revocationsMsgLocked().GetRevocations(),
 		RenewBefore: durationpb.New(h.cfg.RenewBefore(string(pki.RoleRelay)))}
-	seen := map[[2]string]bool{}
-	for _, e := range h.portLinks {
-		k := [2]string{e.l.From, e.l.To}
-		if k[1] < k[0] {
-			k[0], k[1] = k[1], k[0]
+	seen := map[relay.WorkerPair]bool{}
+	for _, k := range h.relayWorkerPairsLocked(time.Now()) {
+		if k.B < k.A {
+			k.A, k.B, k.AID, k.BID = k.B, k.A, k.BID, k.AID
 		}
 		if !seen[k] {
 			seen[k] = true
-			p.WorkerPairs = append(p.WorkerPairs, &pb.WorkerPair{A: k[0], B: k[1]})
+			p.WorkerPairs = append(p.WorkerPairs, &pb.WorkerPair{A: k.A, B: k.B, AId: k.AID, BId: k.BID})
 		}
 	}
 	sort.Slice(p.WorkerPairs, func(i, j int) bool {

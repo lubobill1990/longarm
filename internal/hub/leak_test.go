@@ -118,7 +118,7 @@ func TestAdminLearnsNothingOfAnotherUsersMachines(t *testing.T) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		n := &node{rec: r}
-		h.nodes[r.Name] = n
+		h.putTestNode(n)
 		return n
 	}
 	put(&store.Node{Name: "xavlap-q9", Role: "client", State: stateApproved, User: "xavier", Version: "0.2.0"})
@@ -129,19 +129,19 @@ func TestAdminLearnsNothingOfAnotherUsersMachines(t *testing.T) {
 	xw.metrics = &pb.MetricsSnapshot{MemTotalBytes: 8 << 30, TopCpu: []*pb.ProcGroup{{Name: "xavproc-q9"}},
 		Agents: map[string]*pb.AgentStat{"claude": {Sessions: 2}}}
 	for _, name := range []string{"xavlap-q9", "xavadm-q9", "xavws-q9"} {
-		h.publishNodeLocked(h.nodes[name], "online")
+		h.publishNodeLocked(h.nodeLocked(name), "online")
 	}
 	h.bus.publish(&pb.FleetEvent{Kind: "metrics", Node: "xavws-q9", NodeInfo: h.nodeInfoLocked(xw)})
 	h.bus.publish(&pb.FleetEvent{Kind: "node", Node: "xavws-q9", Message: "xavws-q9 updated by client/xavlap-q9"}) // no NodeInfo
 	// jobs on his worker and on the fleet worker
 	h.applyJobsLocked(xw, &pb.JobsReport{Jobs: []*pb.Job{{Spec: &pb.JobSpec{Id: "XAVJOBQ9", Owner: "xavier", Argv: []string{"xavarg-q9"},
 		SubmittedBy: "client/xavlap-q9"}, State: pb.JobState_JOB_STATE_RUNNING}}})
-	h.applyJobsLocked(h.nodes["w1"], &pb.JobsReport{Jobs: []*pb.Job{{Spec: &pb.JobSpec{Id: "XAVJOBFLQ9", Owner: "xavier", Argv: []string{"xavarg-q9"},
+	h.applyJobsLocked(h.nodeLocked("w1"), &pb.JobsReport{Jobs: []*pb.Job{{Spec: &pb.JobSpec{Id: "XAVJOBFLQ9", Owner: "xavier", Argv: []string{"xavarg-q9"},
 		SubmittedBy: "client/xavlap-q9"}, State: pb.JobState_JOB_STATE_RUNNING}}})
 	// audit from both workers
 	line := `{"time":"2026-10-29T10:00:00Z","who":"client/xavlap-q9","user":"xavier","method":"/longarm.v1.Sessions/Attach","session":"xavsess-q9","argv":["xavarg-q9"]}`
 	h.storeAuditLocked(xw, nil, &pb.AuditBatch{Lines: []string{line}})
-	h.storeAuditLocked(h.nodes["w1"], nil, &pb.AuditBatch{Lines: []string{strings.Replace(line, `"user":"xavier",`, "", 1)}})
+	h.storeAuditLocked(h.nodeLocked("w1"), nil, &pb.AuditBatch{Lines: []string{strings.Replace(line, `"user":"xavier",`, "", 1)}})
 	// a port link of his (fleet worker -> his worker), a profile canary, a rollout
 	h.portLinks["XLINKQ9"] = &portLinkEntry{l: &pb.PortLink{Id: "XLINKQ9", Owner: "xavier", From: "w1", To: "xavws-q9", Port: 7777,
 		ListenPort: 17777, JobId: "XAVJOBQ9", CreatedBy: "client/xavlap-q9"}}
@@ -189,7 +189,7 @@ func TestAdminLearnsNothingOfAnotherUsersMachines(t *testing.T) {
 	}
 	time.Sleep(200 * time.Millisecond)
 	h.mu.Lock()
-	h.publishNodeLocked(h.nodes["w1"], "control")
+	h.publishNodeLocked(h.nodeLocked("w1"), "control")
 	h.mu.Unlock()
 	for _, done := range []chan struct{}{grpcDone, sseDone} {
 		select {

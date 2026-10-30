@@ -107,7 +107,7 @@ func TestUpdateNotice(t *testing.T) {
 
 	// CheckUpdate: a worker of the stable channel hears of 1.2.0 without a rollout
 	h.mu.Lock()
-	h.nodes["w1"] = &node{rec: &store.Node{Name: "w1", Role: "worker", State: stateApproved, Version: "1.0.0"}}
+	h.putTestNode(&node{rec: &store.Node{Name: "w1", Role: "worker", State: stateApproved, Version: "1.0.0"}})
 	h.mu.Unlock()
 	wctx := context.WithValue(ctx, callerKey{}, caller{id: pki.Identity{Role: pki.RoleWorker, Name: "w1"}, cert: &x509.Certificate{}})
 	resp, err := fs.CheckUpdate(wctx, &pb.UpdateCheckRequest{Os: "windows", Arch: "amd64", Version: "1.0.0", Channel: "stable"})
@@ -144,7 +144,7 @@ func TestPushReleaseAllowNone(t *testing.T) {
 	}
 	h.mu.Lock()
 	for _, name := range []string{"msi-b", "msi-a"} {
-		h.nodes[name] = &node{rec: &store.Node{Name: name, Role: "worker", State: stateApproved, Version: "1.1.0"}}
+		h.putTestNode(&node{rec: &store.Node{Name: name, Role: "worker", State: stateApproved, Version: "1.1.0"}})
 	}
 	h.mu.Unlock()
 	if _, err := h.pushRelease(&pb.PushReleaseRequest{Version: "1.2.0"}, "test"); status.Code(err) != codes.FailedPrecondition {

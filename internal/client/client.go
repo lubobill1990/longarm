@@ -134,8 +134,15 @@ type Config struct {
 	// AgentAuth is [agent_auth]: forwarding of coding-agent credentials
 	// (longarm run --agent-auth).
 	AgentAuth agentauth.Config `toml:"agent_auth"`
+	Handoff   HandoffConfig    `toml:"handoff"`
 
 	Dir string `toml:"-"`
+}
+
+// HandoffConfig is the [handoff] section: defaults of longarm handoff.
+type HandoffConfig struct {
+	Via          string `toml:"via"`           // remote | relay | auto
+	ViaThreshold string `toml:"via_threshold"` // --via auto: e.g. "20M"
 }
 
 // LoadConfig reads <dir>/workers.toml (missing file = no workers).
@@ -628,6 +635,7 @@ func (c *Conn) Sessions() pb.SessionsClient   { return pb.NewSessionsClient(c.Cl
 func (c *Conn) Forward() pb.ForwardClient     { return pb.NewForwardClient(c.ClientConn) }
 func (c *Conn) Files() pb.FilesClient         { return pb.NewFilesClient(c.ClientConn) }
 func (c *Conn) Workspace() pb.WorkspaceClient { return pb.NewWorkspaceClient(c.ClientConn) }
+func (c *Conn) Handoff() pb.HandoffClient     { return pb.NewHandoffClient(c.ClientConn) }
 
 // MachineUpdate: the owner's update of the worker's machine.
 func (c *Conn) MachineUpdate() pb.MachineUpdateClient { return pb.NewMachineUpdateClient(c.ClientConn) }

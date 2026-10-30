@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/lubobill1990/longarm/internal/pki"
 )
@@ -90,7 +91,18 @@ func rolesAllowed(a, b pki.Role) bool {
 	return (a == pki.RoleWorker) != (b == pki.RoleWorker)
 }
 
-// pairKey is an unordered pair of worker names.
+// WorkerPair is a pair of workers that may talk to each other through the
+// relay: their certificate names and node IDs (docs/security.md "Node
+// identity"). A worker whose certificate carries a node ID matches by it
+// only, so a reused or renamed name never inherits a pair; a certificate
+// without one (an older worker) matches by name. An empty ID (an older
+// hub) leaves that side to its name.
+type WorkerPair struct {
+	A, B     string // certificate names
+	AID, BID string // node IDs ("" = unknown)
+}
+
+// pairKey is an unordered pair of worker keys (nodeKey).
 type pairKey struct{ a, b string }
 
 func newPairKey(a, b string) pairKey {
@@ -100,14 +112,41 @@ func newPairKey(a, b string) pairKey {
 	return pairKey{a, b}
 }
 
+// nodeKey is how a worker's certificate is matched against pairs.
+func nodeKey(id pki.Identity) string {
+	if id.ID != "" {
+		return "id:" + strings.ToLower(id.ID)
+	}
+	return "name:" + id.Name
+}
+
+// pairKeys are the keys a pair side matches: its ID (certificates with
+// one) and its name (certificates without one).
+func pairKeys(name, id string) []string {
+	var ks []string
+	if id != "" {
+		ks = append(ks, "id:"+strings.ToLower(id))
+	}
+	if name != "" {
+		ks = append(ks, "name:"+name)
+	}
+	return ks
+}
+
 // SetWorkerPairs replaces the worker pairs that may talk to each other
 // through the relay (both directions): the hub passes the pairs of its
-// active port links and updates them on every change. Default: none - a
-// standalone longarm-relay never relays between workers.
-func (s *Server) SetWorkerPairs(pairs [][2]string) {
+// active port links and handoffs and updates them on every change.
+// Default: none - a standalone longarm-relay never relays between workers.
+func (s *Server) SetWorkerPairs(pairs []WorkerPair) {
 	m := make(map[pairKey]struct{}, len(pairs))
 	for _, p := range pairs {
-		m[newPairKey(p[0], p[1])] = struct{}{}
+		for _, a := range pairKeys(p.A, p.AID) {
+			for _, b := range pairKeys(p.B, p.BID) {
+				if a != b {
+					m[newPairKey(a, b)] = struct{}{}
+				}
+			}
+		}
 	}
 	s.workerPairs.Store(&m)
 }
@@ -117,13 +156,14 @@ func (s *Server) allowed(a, b pki.Identity) bool {
 	if rolesAllowed(a.Role, b.Role) {
 		return true
 	}
-	if a.Role != pki.RoleWorker || b.Role != pki.RoleWorker || a.Name == b.Name {
+	ka, kb := nodeKey(a), nodeKey(b)
+	if a.Role != pki.RoleWorker || b.Role != pki.RoleWorker || ka == kb || a.Name == b.Name {
 		return false
 	}
 	m := s.workerPairs.Load()
 	if m == nil {
 		return false
 	}
-	_, ok := (*m)[newPairKey(a.Name, b.Name)]
+	_, ok := (*m)[newPairKey(ka, kb)]
 	return ok
 }

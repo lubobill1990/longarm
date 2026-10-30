@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -383,4 +384,55 @@ func CredentialHelperMain(args []string, stdin io.Reader, stdout io.Writer) int 
 	}
 	fmt.Fprintf(stdout, "username=%s\npassword=%s\n", ans.Username, ans.Password)
 	return 0
+}
+
+// HandoffBranchRE is the only namespace PushHandoff writes: the temporary
+// branches of longarm handoff (longarm/handoff/<user>/<id>-<time>).
+var HandoffBranchRE = regexp.MustCompile(`^longarm/handoff/[a-z0-9._-]{1,64}/[A-Za-z0-9._-]{1,80}$`)
+
+// PushHandoff pushes commit from the checkout at dir to refs/heads/<branch>
+// of u (or deletes that branch: commit ""), with the forwarded credential
+// for this one push of this exact URL: served by the loopback credential
+// helper as for a fetch, never in a config file, the command line or a
+// remote URL, gone afterwards. Hooks are off (an empty hooks dir): a
+// repository's hook never runs with the credential within reach. Only
+// branches under longarm/handoff/ are written.
+func (s *Store) PushHandoff(ctx context.Context, dir, u, commit, branch string, auth *jobs.GitAuth) error {
+	if !auth.Valid() {
+		return fmt.Errorf("a push needs a forwarded credential")
+	}
+	if !HandoffBranchRE.MatchString(branch) || strings.Contains(branch, "..") {
+		return fmt.Errorf("bad branch %q (want longarm/handoff/<user>/<id>)", branch)
+	}
+	if commit != "" && !shaRE.MatchString(commit) {
+		return fmt.Errorf("bad commit %q", commit)
+	}
+	if strings.HasPrefix(u, "-") || !strings.HasPrefix(u, "https://") {
+		return fmt.Errorf("bad url %q (https only)", RedactURLs(u))
+	}
+	fa, err := newFetchAuth(u, auth, "")
+	if err != nil {
+		return err
+	}
+	defer fa.close()
+	hooks, err := os.MkdirTemp("", "longarm-nohooks-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(hooks)
+	ref := commit + ":refs/heads/" + branch
+	if commit == "" {
+		ref = ":refs/heads/" + branch
+	}
+	// exactly this ref: no tags that follow the commit (push.followTags in
+	// any git config), no push options, no submodules; to a URL, so no
+	// remote's push / mirror / tagOpt settings apply; no "+": a
+	// non-fast-forward is refused
+	_, err = s.runAuth(ctx, dir, nil, fa, nil, "-c", "core.hooksPath="+filepath.ToSlash(hooks), "-c", "push.followTags=false",
+		"-c", "push.pushOption=", "-c", "push.recurseSubmodules=no",
+		"push", "--no-verify", "--no-follow-tags", "--no-recurse-submodules", "--porcelain", "--", u, ref)
+	if err != nil {
+		return fmt.Errorf("pushing to %s: %s", RedactURLs(u), RedactURLs(err.Error()))
+	}
+	return nil
 }

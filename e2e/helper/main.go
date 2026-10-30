@@ -11,7 +11,8 @@
 //	                                   every process appends its pid to PIDFILE
 //	                                   and sleeps (5 processes in total)
 //	az ...                             (the binary copied to az[.exe]) a fake Azure CLI, fakeaz.go
-//	claude|copilot ...                 (copied to claude[.exe] / copilot[.exe]) a fake agent printing
+//	claude|copilot ...                 (copied to claude[.exe] / copilot[.exe]) a fake agent CLI: --version,
+//	                                   auth status, --resume for handoff (fakeagent.go); otherwise prints
 //	                                   the agent variables it got (names, hashes), agentauth.go
 //	helper restore|replicate ...       a fake litestream (HELPER_LITESTREAM_LOG: args are
 //	                                   appended there; restore exits HELPER_LITESTREAM_RESTORE_EXIT;
@@ -52,7 +53,7 @@ import (
 
 func main() {
 	if a := agentAuthName(os.Args[0]); a != "" {
-		fakeAgentAuth(a) // copied to claude / copilot (agentauth.go)
+		fakeAgent(a, os.Args[1:]) // copied to claude / copilot (fakeagent.go, agentauth.go)
 		return
 	}
 	if strings.HasPrefix(strings.ToLower(filepath.Base(os.Args[0])), "az") {

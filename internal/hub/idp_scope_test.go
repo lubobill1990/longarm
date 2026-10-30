@@ -148,7 +148,7 @@ func TestIdPAccountsScope(t *testing.T) {
 		// using another user's worker: never
 		h.mu.Lock()
 		for _, o := range accts {
-			if o != a && h.mayUseLocked(a.user, h.nodes[o.wk]) {
+			if o != a && h.mayUseLocked(a.user, h.nodeLocked(o.wk)) {
 				t.Errorf("%s may use %s's worker", a.user, o.user)
 			}
 		}
@@ -157,7 +157,7 @@ func TestIdPAccountsScope(t *testing.T) {
 			t.Errorf("%s's worker acts as %q", a.user, u)
 		}
 		v := h.viewerLocked(h.userOfLocked(a.worker, ""), false)
-		if h.visibleNodeLocked(v, h.nodes[a.pc]) {
+		if h.visibleNodeLocked(v, h.nodeLocked(a.pc)) {
 			t.Errorf("%s's worker sees its owner's device", a.user)
 		}
 		h.mu.Unlock()

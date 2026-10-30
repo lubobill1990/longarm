@@ -91,9 +91,9 @@ func TestReleasePushErrorCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.mu.Lock()
-	h.nodes["msi-fleet"] = &node{rec: &store.Node{Name: "msi-fleet", Role: "worker", State: stateApproved, Version: "1.1.0"}}
-	h.nodes["msi-alice"] = &node{rec: &store.Node{Name: "msi-alice", Role: "worker", State: stateApproved, Version: "1.1.0", Owner: "alice"}}
-	h.nodes["msi-root"] = &node{rec: &store.Node{Name: "msi-root", Role: "worker", State: stateApproved, Version: "1.1.0", Owner: "root"}}
+	h.putTestNode(&node{rec: &store.Node{Name: "msi-fleet", Role: "worker", State: stateApproved, Version: "1.1.0"}})
+	h.putTestNode(&node{rec: &store.Node{Name: "msi-alice", Role: "worker", State: stateApproved, Version: "1.1.0", Owner: "alice"}})
+	h.putTestNode(&node{rec: &store.Node{Name: "msi-root", Role: "worker", State: stateApproved, Version: "1.1.0", Owner: "root"}})
 	for _, n := range h.nodes {
 		h.indexNode(n.rec)
 	}
@@ -156,7 +156,7 @@ func TestAuditProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.mu.Lock()
-	h.nodes["bob-laptop"] = &node{rec: &store.Node{Name: "bob-laptop", Role: "client", State: stateApproved, User: "bob"}}
+	h.putTestNode(&node{rec: &store.Node{Name: "bob-laptop", Role: "client", State: stateApproved, User: "bob"}})
 	h.mu.Unlock()
 	if _, err := h.RemoveUser("admin/other", &pb.RemoveUserRequest{Name: "bob"}); err != nil {
 		t.Fatal(err)
@@ -235,9 +235,9 @@ func TestAuditAttributionIsHistorical(t *testing.T) {
 	h := th.h
 	h.mu.Lock()
 	n := &node{rec: &store.Node{Name: "bob-pc", Role: "client", State: stateApproved, User: "bob"}}
-	h.nodes["bob-pc"] = n
+	h.putTestNode(n)
 	h.indexNode(n.rec)
-	w1 := h.nodes["w1"]
+	w1 := h.nodeLocked("w1")
 	h.storeAuditLocked(w1, nil, &pb.AuditBatch{Lines: []string{
 		`{"time":"2026-10-29T10:00:00Z","who":"client/bob-pc","method":"/longarm.v1.Jobs/Submit","argv":["bobs-secret-arg"]}`,
 	}})

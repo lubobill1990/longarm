@@ -52,6 +52,7 @@ var hubMethodRoles = map[string][]pki.Role{
 	pb.Fleet_CreatePortLink_FullMethodName:    users,
 	pb.Fleet_ListPortLinks_FullMethodName:     users,
 	pb.Fleet_RemovePortLink_FullMethodName:    users,
+	pb.Fleet_HandoffPair_FullMethodName:       users, // the caller's own workers only (handoffpairs.go)
 	pb.HubAdmin_KillJob_FullMethodName:        adminOnly,
 	pb.HubAdmin_JobLogs_FullMethodName:        adminOnly,
 	pb.HubAdmin_SubmitJob_FullMethodName:      adminOnly,

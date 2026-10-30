@@ -175,6 +175,10 @@ const (
 	FeatureSessionInfo       = "session-info"         // Session workdir, dir, reason and activity fields
 	FeatureFileTail          = "file-tail"            // Files.Tail
 	FeatureMachineUpdate     = "machine-update"       // MachineUpdate (longarm worker update; the owner's)
+	FeatureSessionEnv        = "session-env"          // sessions get LONGARM_WORKER and LONGARM_SESSION
+	FeatureFileLstat         = "file-lstat"           // FileStatRequest.no_follow
+	FeatureHandoffDirect     = "handoff-direct"       // Handoff service: worker-to-worker transfer of handoff bundles
+	FeatureHandoffPush       = "handoff-push"         // Workspace.PushHandoff: push a handoff snapshot with a forwarded credential
 )
 
 // SessionWorktreeKey names the worktree of one generation of session name

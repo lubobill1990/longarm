@@ -215,8 +215,14 @@ message RelayPolicy {
 }
 
 message WorkerPair {
-  string a = 1;
+  string a = 1; // the workers' certificate names
   string b = 2;
+  // The workers' node IDs (docs/security.md "Node identity"): a worker
+  // whose certificate carries a node ID matches the pair by it only; a
+  // name matches certificates without one (older workers). "" = unknown
+  // (an older hub): names only.
+  string a_id = 3;
+  string b_id = 4;
 }
 
 // RelayEndpoint is one longnet relay of the hub's relay set.
@@ -577,6 +583,13 @@ service Fleet {
   rpc CreatePortLink(CreatePortLinkRequest) returns (PortLink);
   rpc ListPortLinks(ListPortLinksRequest) returns (ListPortLinksResponse);
   rpc RemovePortLink(RemovePortLinkRequest) returns (PortLink);
+  // A temporary worker pair for a direct handoff transfer between two
+  // workers of the caller's own (longarm handoff, docs/usage.md "Hand off
+  // an agent session"): the hub's relays - embedded and external - carry
+  // traffic between the two workers until it expires or is released. Never
+  // for another user's worker, admins included (NotFound, as for unknown
+  // names).
+  rpc HandoffPair(HandoffPairRequest) returns (HandoffPairResponse);
 }
 
 // LinkSample is one RTT probe.
@@ -1549,4 +1562,19 @@ message RelaysResponse {
   int32 workers_relay_set = 2;
   int32 workers_legacy = 3;
   map<string, int32> legacy_versions = 4;
+}
+
+message HandoffPairRequest {
+  string a = 1; // worker (certificate) names, in any order
+  string b = 2;
+  google.protobuf.Duration ttl = 3; // at most 10 minutes (default)
+  bool release = 4; // the transfer is over: drop the pair now
+  // the workers' node IDs (from their certificates, as the client verified
+  // them): the hub holds a and b to them ("" = an older client: by name)
+  string a_id = 5;
+  string b_id = 6;
+}
+
+message HandoffPairResponse {
+  google.protobuf.Timestamp expires_at = 1; // unset after release
 }
