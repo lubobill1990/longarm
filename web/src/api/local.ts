@@ -296,3 +296,33 @@ export const traySettingsApi = {
   /** longarm diag into the diag folder (nothing uploaded), then opens it */
   collectDiag: () => post<{ zip: string; output: string }>('/trayapi/diag'),
 }
+
+/** One coding agent's copy of the Longarm skill (internal/agentskill.Status). */
+export interface AgentSkillStatus {
+  agent: string
+  name: string
+  detected: boolean
+  detected_by?: string
+  /** the skill's folder in the agent's user-global skills directory */
+  dir: string
+  /** absent | current | outdated | modified (changed by the user) | foreign (not Longarm's) */
+  state: 'absent' | 'current' | 'outdated' | 'modified' | 'foreign'
+  installed_version?: string
+  bundled_version: string
+  modified?: string[]
+  extra?: string[]
+  note?: string
+}
+
+export interface AgentSkills {
+  bundled_version: string
+  agents: AgentSkillStatus[]
+  message?: string
+}
+
+/** The Longarm agent skill: opt-in install into each agent's skills directory (Settings). */
+export const skillsApi = {
+  list: () => get<AgentSkills>('/trayapi/skills'),
+  install: (agent: string) => post<AgentSkills>('/trayapi/skills/install', { agent }),
+  remove: (agent: string) => post<AgentSkills>('/trayapi/skills/remove', { agent }),
+}

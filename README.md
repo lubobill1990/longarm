@@ -60,6 +60,10 @@ Longarm lets the agent (or you) say *"run this over there"*:
   `fleet_status`, `fleet_exec`, `fleet_job_submit`, `fleet_job_wait`,
   `fleet_sync`, `fleet_forward` and `fleet_link`. Secrets are passed by name, never through
   the model.
+- **Agent skill** - `skills/longarm` teaches Claude Code, Copilot CLI, Codex
+  and Gemini CLI to dispatch work, steer sessions and hand them off; one click
+  in the tray (or `longarm skill install`) puts it in the agent's skills
+  directory, and it updates with Longarm.
 - **Scheduler with a memory gate** - `longarm run -- make` picks the least loaded
   worker that has enough free memory and CPU headroom, reserves memory per job
   type, prefers workers that already have your repository, and queues when

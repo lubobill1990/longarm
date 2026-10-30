@@ -162,6 +162,7 @@ var cliFeatures = []string{
 	"node-ids",
 	"agent-handoff",  // handoff --to/--from: move a Claude Code / Copilot CLI session and its code
 	"agent-sessions", // agent-sessions [<worker>|local] [--json]
+	"agent-skill",    // skill status|install|update|remove [--agent ID] [--json]
 }
 
 func versionCmd() *cobra.Command {

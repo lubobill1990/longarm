@@ -426,6 +426,8 @@ func runDaemon(ctx context.Context) error {
 		return err
 	}
 	ln, addr := ch.Listener, ch.Addr
+	// after an update of longarm: the skill copies it installed follow
+	go refreshSkills()
 	// The address file goes before the channel closes, and only while it
 	// is still this daemon's: a daemon started right after this one
 	// stopped keeps its own (it used to be deleted: "not running").
