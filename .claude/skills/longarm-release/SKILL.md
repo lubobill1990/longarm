@@ -27,7 +27,8 @@ local admin) or with `[update] channel` in longarmd.toml. `beta` = `preview`.
   after the highest `v*` tag) → builds → signs → uploads to the hub on
   channel dev. No GitHub Release, no hub deploy, no fleet rollout. Nothing to
   do by hand.
-- **`vX.Y.Z-rc.N` tag** → same, channel preview, plus a GitHub prerelease.
+- **`vX.Y.Z-rc.N` tag** → same, channel preview, a GitHub prerelease, and
+  the **hub deploy** (the hub follows preview; no fleet rollout).
 - **`vX.Y.Z` tag** (must be on main) → channel stable, GitHub Release, hub
   deploy (SSH forced command, auto rollback), canary rollout, image `:latest`.
 
@@ -54,8 +55,28 @@ longarm ls                      # workers; ↑ = a newer release of their channe
 ```
 
 An older hub ignores `?channel=` and answers stable: channels only work once
-the hub runs a version that has them (stable releases deploy the hub;
-otherwise deploy.yml → hub deploy <version>).
+the hub runs a version that has them.
+
+## Deploying the hub
+
+The hub follows preview: every rc and release tag deploys it. With
+`HUB_SSH` set, release.yml's `hub` job does (SSH forced command, auto
+rollback). A hub on Azure Container Instances can't be deployed from CI
+(the tenant refuses GitHub OIDC): after the release run, deploy it by hand
+from a checkout of the tag, with `az` signed in (the run's summary has the
+command):
+
+```powershell
+pwsh deploy/azure/deploy.ps1 -Name <hub> -ResourceGroup <rg> -Image ghcr.io/<owner>/longarm-hub:<version>
+```
+
+It keeps the hub's settings, validates first (a policy refusal changes
+nothing), waits for the new start and rolls back a failed one. Find the hub
+with Resource Graph: container groups whose `properties.ipAddress.fqdn` is
+the hub's host. Deploying is outward-facing (everybody's control plane):
+confirm with the user first. Before an rc, main's image
+`ghcr.io/<owner>/longarm-hub:sha-<12 hex of the commit>` can be deployed the
+same way to try something hub-side.
 
 ## When something goes wrong
 

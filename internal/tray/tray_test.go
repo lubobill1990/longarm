@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/lubobill1990/longarm/internal/localapi"
+	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -160,15 +161,34 @@ func TestRules(t *testing.T) {
 		t.Fatalf("relay after 5 min: %+v", notes)
 	}
 
-	job := func(id string, st pb.JobState, exit int32) *pb.FleetJob {
-		return &pb.FleetJob{Worker: "w1", Job: &pb.Job{Spec: &pb.JobSpec{Id: id, Argv: []string{"pnpm", "test"}}, State: st, HasExitCode: exit >= 0, ExitCode: exit}}
+	// agent sessions notify however they end; plain commands never
+	job := func(id string, st pb.JobState, exit int32, argv ...string) *pb.FleetJob {
+		return &pb.FleetJob{Worker: "w1", Job: &pb.Job{Spec: &pb.JobSpec{Id: id, Argv: argv}, State: st, HasExitCode: exit >= 0, ExitCode: exit}}
 	}
-	if n := r.Jobs([]*pb.FleetJob{job("a", pb.JobState_JOB_STATE_RUNNING, -1), job("old", pb.JobState_JOB_STATE_DONE, 0)}); len(n) != 0 {
+	claude := []string{"claude", "-p", "fix the tests"}
+	if n := r.Jobs([]*pb.FleetJob{job("a", pb.JobState_JOB_STATE_RUNNING, -1, claude...), job("old", pb.JobState_JOB_STATE_DONE, 0, claude...)}); len(n) != 0 {
 		t.Fatalf("first jobs: %+v", n)
 	}
-	n := r.Jobs([]*pb.FleetJob{job("a", pb.JobState_JOB_STATE_FAILED, 3), job("old", pb.JobState_JOB_STATE_DONE, 0), job("b", pb.JobState_JOB_STATE_DONE, 0)})
-	if len(n) != 2 || n[0].Title != "job failed on w1" || n[0].Body != "exit 3: pnpm test" || n[1].Title != "job done on w1" {
-		t.Fatalf("jobs: %+v", n)
+	copilotLabel := job("c", pb.JobState_JOB_STATE_DONE, 0, "pwsh", "-c", "copilot -p review")
+	copilotLabel.Job.Spec.Labels = map[string]string{sched.LabelType: "copilot"}
+	auth := job("d", pb.JobState_JOB_STATE_DONE, 0, "bash", "-lc", "claude -p x")
+	auth.Job.Spec.AgentAuth = []string{"claude"}
+	n := r.Jobs([]*pb.FleetJob{
+		job("a", pb.JobState_JOB_STATE_FAILED, 3, claude...), job("old", pb.JobState_JOB_STATE_DONE, 0, claude...),
+		job("b", pb.JobState_JOB_STATE_DONE, 0, `C:\Users\a\AppData\Roaming\npm\claude.cmd`, "-p", "x"),
+		copilotLabel, auth,
+		job("plain", pb.JobState_JOB_STATE_DONE, 0, "pnpm", "test"),
+		job("plain-failed", pb.JobState_JOB_STATE_FAILED, 1, "pwsh", "-NoProfile", "-EncodedCommand", "CgAk"),
+		job("gh-only", pb.JobState_JOB_STATE_DONE, 0, "gh", "pr", "list"),
+	})
+	var got []string
+	for _, x := range n {
+		got = append(got, x.Title+": "+x.Body)
+	}
+	want := []string{"job failed on w1: exit 3: claude -p fix the tests", `job done on w1: C:\Users\a\AppData\Roaming\npm\claude.cmd -p x`,
+		"job done on w1: pwsh -c copilot -p review", "job done on w1: bash -lc claude -p x"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("jobs:\n got %q\nwant %q", got, want)
 	}
 }
 

@@ -2351,8 +2351,11 @@ opens a job's command, times and output right under it; kill; there is no
 "everyone" switch - `longarm jobs --all` lists your jobs from other
 computers and team-shared ones), forwards, this worker (longarmd: drain, limits, toolchain, jobs,
 leave; join with a code when not enrolled), settings (transport policy).
-Notifications: worker offline/back, memory ≥ 90 %, link relayed > 5 min, my
-job finished/failed.
+Notifications: worker offline/back, memory ≥ 90 %, link relayed > 5 min, one
+of my Claude Code / Copilot CLI sessions finished or failed (a job whose command
+is claude or copilot, typed so with `longarm run --type`, or run with their
+credentials forwarded). Plain commands (`longarm exec`, `run`) don't notify:
+agents run many and read their results themselves.
 
 ```sh
 longarm-tray                         # tray + popup (starts longarm daemon if needed)
@@ -2820,6 +2823,9 @@ install):
 longarm-update status                      # installed, available, in progress, last result, auto
 longarm-update install --latest | --version 0.1.9
 longarm-update install --version 0.1.9 --reinstall   # the same version again: an elevated administrator only
+longarm-update channel                     # the release channel: stable | preview | dev
+longarm-update channel dev                 # follow dev builds (the owner or an administrator; the tray's Release channel)
+# a worker of yours, from your machine: longarm exec <worker> -- longarm-update channel dev
 ```
 
 The tray's own update banner installs through the service when the machine
@@ -3349,7 +3355,8 @@ Azure: `deploy.sh --relay`, its own container group, see
 [deploy/azure/README.md](../deploy/azure/README.md#external-relay)):
 
 ```sh
-# a relay certificate from the hub's CA (on the hub: longarm-hub issue; or longarm admin issue with the CA)
+# a relay certificate from the hub's CA (on the hub, the hub running or not: longarm-hub issue - for the
+# existing relay1 node, with its ID, or a new node; with only the CA: longarm admin issue --id <node id>)
 longarm-hub issue --role relay --name relay1 --host relay.example.com --out ./relay-tls
 longarm-relay --listen :7445 --tcp :7443 --tls-dir ./relay-tls --metrics 127.0.0.1:7801 \
   --hub hub.example.com:7443 --advertise relay.example.com [--state-dir DIR]

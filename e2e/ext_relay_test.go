@@ -296,4 +296,51 @@ func TestExternalRelay(t *testing.T) {
 		b, _ := os.ReadFile(x.logPath)
 		return strings.Contains(string(b), "revocation list updated")
 	})
+
+	// The relay's upgrade (deploy.sh --relay again): a new certificate,
+	// issued next to the running hub for a relay name with history, and a
+	// restarted relay. The hub accepts it at once (the certificate carries
+	// the relay node's ID; v0.1.24's was refused: "the name ... has
+	// history"), and the relay stays one node.
+	relayID := func() string {
+		t.Helper()
+		var resp struct {
+			Nodes []map[string]any `json:"nodes"`
+		}
+		if err := json.Unmarshal([]byte(h.mustLongarm(h.admin, "admin", "nodes", "--all", "--json")), &resp); err != nil {
+			t.Fatal(err)
+		}
+		id := ""
+		for _, n := range resp.Nodes {
+			if n["name"] == "xrelay" && n["state"] != "revoked" {
+				if id != "" {
+					t.Fatalf("two xrelay nodes: %v", resp.Nodes)
+				}
+				id = fmt.Sprint(n["id"])
+			}
+		}
+		return id
+	}
+	idBefore := relayID()
+	if idBefore == "" {
+		t.Fatal("no relay node")
+	}
+	x.stop()
+	logBefore, _ := os.ReadFile(x.logPath)
+	h.hubCmd(t, "issue", "--role", "relay", "--name", "xrelay", "--host", "127.0.0.1", "--out", x.tlsDir)
+	x.start()
+	waitFor(t, "the upgraded relay on the hub", 30*time.Second, func() bool {
+		hs, _ := x.health()["hub"].(map[string]any)
+		return isTrue(hs["connected"])
+	})
+	if b, _ := os.ReadFile(x.logPath); strings.Contains(string(b[len(logBefore):]), "has history") {
+		t.Fatalf("the upgraded relay was refused:\n%s", tail(string(b[len(logBefore):]), 4000))
+	}
+	if after := relayID(); after != idBefore {
+		t.Fatalf("the relay's node after the upgrade: %s, was %s", after, idBefore)
+	}
+	waitFor(t, "exec over the upgraded relay", 60*time.Second, func() bool {
+		r := longarm("exec", "wa-x", "--", bins.helper, "print", "2", "0", "0")
+		return r.code == 0 && r.stdout == lines(1, 2)
+	})
 }

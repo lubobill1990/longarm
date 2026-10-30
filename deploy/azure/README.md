@@ -622,7 +622,9 @@ never restart it.
   --role relay --b64`: name `<name>-relay`, the relay's DNS name, a year),
   passed to the container as a secure environment variable
   (`LONGARM_RELAY_TLS_B64`; never on a command line). The relay renews it
-  through the hub; a re-run issues a fresh one. Every node already trusts it
+  through the hub; a re-run issues a fresh one for the same relay node (its
+  node ID in the certificate, the serial recorded in the hub's database, so
+  the running hub accepts it at once); the first run creates the node. Every node already trusts it
   (same CA): no new trust anchor, nothing to configure on any machine.
 - **Registration**: the relay registers its endpoints with the hub, which
   keeps them in its database and advertises them in every worker session.

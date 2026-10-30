@@ -539,6 +539,11 @@ func TestMSIUpgradeRunning(t *testing.T) {
 	if p.Upgrade.Schedule != "afterInstallExecute" {
 		t.Errorf("MajorUpgrade Schedule %q: the new version installs over the old one, which is removed afterwards (afterInstallExecute)", p.Upgrade.Schedule)
 	}
+	// the Longarm icon: Add/Remove Programs (packaging/icons)
+	if !strings.Contains(string(src), `<Property Id="ARPPRODUCTICON" Value="LongarmIcon" />`) ||
+		!strings.Contains(string(src), `<Icon Id="LongarmIcon" SourceFile="$(sys.SOURCEFILEDIR)..\icons\longarm.ico" />`) {
+		t.Error("ARPPRODUCTICON: the MSI shows the Longarm icon (packaging/icons/longarm.ico)")
+	}
 	if p.Upgrade.SameVer != "yes" {
 		t.Errorf("MajorUpgrade AllowSameVersionUpgrades %q: dev builds and release candidates share their MSI version (a.b.c) and must replace each other", p.Upgrade.SameVer)
 	}

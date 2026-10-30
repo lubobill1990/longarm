@@ -2,7 +2,26 @@
 
 ## Unreleased
 
+### Changed
+
+- Tray: only Claude Code / Copilot CLI sessions notify when they end (done,
+  failed, killed, lost); plain commands - the many `longarm exec` / `run`
+  calls an agent makes - no longer pop a toast each.
+- The hub follows the **preview** channel: release candidate tags deploy
+  the hub too (release.yml's `hub` job), not only releases; dev builds never
+  do. A hub on Azure Container Instances, which CI can't sign in to, gets
+  the command to run in the release run's summary (`hub-manual`).
+  docs/ci-cd.md "Release channels".
+
 ### Added
+
+- **The Longarm icon**: the friendly agent whose long arm reaches out with the
+  finished task. Every Windows exe carries it (`longarm`, `longarmd`,
+  `longarm-tray`, `longarm-update`, `longarm-hub`, `longarm-relay`), the
+  MSI shows it in Add/Remove Programs and on the Start menu shortcut (so on
+  the tray's notifications too), and the hub panel and the tray window use it
+  as their favicon; 16-32 px use a simplified version. The notification-area
+  icon stays the live per-worker chart. packaging/icons/README.md.
 
 - **Agent sessions in the tray**: Claude Code / Copilot CLI on a worker's
   card opens a Sessions window listing every agent session of your workers
@@ -173,6 +192,28 @@
 
 ### Fixed
 
+- **External relay upgrades on hubs with node IDs (#45).** `longarm-hub
+  issue` - and with it `longarm-hub-relay-cert` (`deploy.sh --relay`,
+  `deploy.ps1 -Relay`) and `longarm-hub-release-cert` - signed straight
+  from the CA files: certificates without the node ID and unrecorded, so a
+  hub on schema 6 refused the relay's new certificate ("the name
+  <name>-relay has history ... never mapped by name"), and the relay's
+  rollback with it. Every relay upgrade and every re-deploy next to an
+  existing relay failed; the hub's embedded relay kept working. The command
+  now issues for the existing node of that name and role (its ID in the
+  certificate, the serial recorded against it, as the hub's own issuance
+  does), or creates a new approved node in the database, which the running
+  hub adopts on the node's first call. A second release credential on the
+  same day works too. The hub's own renewal of a relay certificate failed
+  as well (it put the relay's pinned user into a relay certificate, which
+  the CA refuses); fixed.
+- deploy/azure/deploy.ps1: a re-run read a hub with `-StorageAuth identity`
+  as `key` with Azure CLI 2.91, which prints `-o tsv` lists one field per
+  line (joined without a separator they ran together), and its template was
+  refused by policies against storage account keys ("RequestDisallowedByPolicy",
+  nothing changed). The lines are joined with tabs now. deploy.sh read both
+  forms except after a rollback, where it skipped the check that the
+  rolled-back hub answers (one tab-separated line expected).
 - Tray and panel: every menu and popover (a worker card's ⋯ menu, the
   version details in the tray's title bar, the tray's right-click menu)
   closes on a click outside, on Escape and when the focus leaves it, through
