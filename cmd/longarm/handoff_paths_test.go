@@ -111,7 +111,7 @@ func TestHandoffMoveRefusesForged(t *testing.T) {
 	ep := localEP(t)
 	ca := claudeAdapter{}
 	list := func() *agentSession {
-		got, err := ca.list(ctx, ep, srcCfg, id, true)
+		got, err := ca.list(ctx, ep, srcCfg, id, true, nil)
 		if err != nil || len(got) != 1 {
 			t.Fatalf("list: %v %d", err, len(got))
 		}

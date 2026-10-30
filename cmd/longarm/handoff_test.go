@@ -297,11 +297,11 @@ func TestHandoffDiscovery(t *testing.T) {
 	if got := ca.configDir(ctx, ep); got != cfg {
 		t.Fatalf("configDir %q (CLAUDE_CONFIG_DIR)", got)
 	}
-	list, err := ca.list(ctx, ep, cfg, "", false)
+	list, err := ca.list(ctx, ep, cfg, "", false, nil)
 	if err != nil || len(list) != 2 {
 		t.Fatalf("list: %v %d", err, len(list))
 	}
-	got, err := ca.list(ctx, ep, cfg, "11111111-2222-3333-4444-555555555555", true)
+	got, err := ca.list(ctx, ep, cfg, "11111111-2222-3333-4444-555555555555", true, nil)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("list id: %v %d", err, len(got))
 	}
@@ -325,7 +325,7 @@ func TestHandoffDiscovery(t *testing.T) {
 	// a marker newer than the transcript: handed off
 	mb, _ := json.Marshal(handoffMark{To: "w1", At: time.Now().Add(time.Minute)})
 	writeFileT(t, s.marker, string(mb))
-	got, _ = ca.list(ctx, ep, cfg, s.ID, false)
+	got, _ = ca.list(ctx, ep, cfg, s.ID, false, nil)
 	if got[0].HandedOff == nil || got[0].HandedOff.To != "w1" {
 		t.Errorf("marker not seen: %+v", got[0])
 	}
@@ -337,7 +337,7 @@ func TestHandoffDiscovery(t *testing.T) {
 		`{"type":"user.message","data":{"content":"add a flag"},"id":"e2"}`+"\n", id, proj, proj))
 	writeFileT(t, filepath.Join(sd, "workspace.yaml"), "id: "+id+"\ncwd: "+proj+"\ngit_root: "+proj+"\n")
 	writeFileT(t, filepath.Join(sd, "checkpoints", "c1.json"), "{}")
-	cl, err := copilotAdapter{}.list(ctx, ep, cop, "", true)
+	cl, err := copilotAdapter{}.list(ctx, ep, cop, "", true, nil)
 	if err != nil || len(cl) != 1 {
 		t.Fatalf("copilot list: %v %d", err, len(cl))
 	}

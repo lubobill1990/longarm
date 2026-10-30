@@ -29,6 +29,7 @@ import (
 	"path"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,6 +38,43 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/platform"
 )
+
+// keepSession picks sessions by id and modification time (the Sessions
+// window lists recent ones; older pages on request).
+type keepSession func(id string, modified time.Time) bool
+
+// describeCache remembers what describe read from a transcript - by the
+// machine, its path, size and modification time - so that listing again
+// (the Sessions window refreshes every few seconds) reads only what
+// changed.
+var describeCache = struct {
+	sync.Mutex
+	m map[string]described
+}{m: map[string]described{}}
+
+type described struct{ projectDir, title, version string }
+
+// maxDescribed bounds describeCache (it starts over when full).
+const maxDescribed = 20000
+
+// describeCached runs describe for s unless the cache has s as it is.
+func describeCached(ctx context.Context, ep *hoEndpoint, s *agentSession, describe func(context.Context, *hoEndpoint, *agentSession)) {
+	key := fmt.Sprintf("%s\x00%s\x00%d\x00%d", ep.name, s.transcript, s.Size, s.Modified.UnixNano())
+	describeCache.Lock()
+	d, ok := describeCache.m[key]
+	describeCache.Unlock()
+	if ok {
+		s.ProjectDir, s.Title, s.Version = d.projectDir, d.title, d.version
+		return
+	}
+	describe(ctx, ep, s)
+	describeCache.Lock()
+	if len(describeCache.m) >= maxDescribed {
+		clear(describeCache.m)
+	}
+	describeCache.m[key] = described{s.ProjectDir, s.Title, s.Version}
+	describeCache.Unlock()
+}
 
 // agentSession is one resumable conversation of an agent on a machine.
 type agentSession struct {
@@ -85,8 +123,10 @@ type agentAdapter interface {
 	// configDir is the agent's state directory on ep.
 	configDir(ctx context.Context, ep *hoEndpoint) string
 	// list finds the sessions on ep (id "": all; with files: what a
-	// handoff moves, else only the transcript and its sizes).
-	list(ctx context.Context, ep *hoEndpoint, cfg, id string, withFiles bool) ([]*agentSession, error)
+	// handoff moves, else only the transcript and its sizes). keep (nil:
+	// all) picks sessions by id and modification time before their
+	// transcripts are read.
+	list(ctx context.Context, ep *hoEndpoint, cfg, id string, withFiles bool, keep keepSession) ([]*agentSession, error)
 	// projectBase is the target directory of "project" files (Claude: the
 	// project directory of cwd); "" when the agent has none.
 	projectBase(ep *hoEndpoint, cfg, cwd string) (string, error)
@@ -232,7 +272,7 @@ func scanLines(b []byte, f func([]byte)) {
 	}
 }
 
-func (a claudeAdapter) list(ctx context.Context, ep *hoEndpoint, cfg, id string, withFiles bool) ([]*agentSession, error) {
+func (a claudeAdapter) list(ctx context.Context, ep *hoEndpoint, cfg, id string, withFiles bool, keep keepSession) ([]*agentSession, error) {
 	projects := ep.join(cfg, "projects")
 	ents, err := ep.list(ctx, projects)
 	if err != nil {
@@ -276,6 +316,9 @@ func (a claudeAdapter) list(ctx context.Context, ep *hoEndpoint, cfg, id string,
 				rel: rel, size: f.size, rewrite: rewriteKind(rel)})
 		}
 	}
+	if keep != nil {
+		order = slices.DeleteFunc(order, func(k string) bool { return !keep(byKey[k].s.ID, byKey[k].s.Modified) })
+	}
 	out := make([]*agentSession, 0, len(order))
 	for _, k := range order {
 		out = append(out, byKey[k].s)
@@ -290,7 +333,7 @@ func (a claudeAdapter) list(ctx context.Context, ep *hoEndpoint, cfg, id string,
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			a.describe(ctx, ep, ac.s)
+			describeCached(ctx, ep, ac.s, a.describe)
 			if m, ok := markers[k]; ok {
 				if b, err := ep.readSmall(ctx, ep.join(projects, filepath2native(ep, m)), 64<<10); err == nil {
 					var hm handoffMark
@@ -563,7 +606,7 @@ func (copilotAdapter) targetTops(id string) []agentFile {
 // copilotMarker is the hand-off marker's name inside a session directory.
 const copilotMarker = "longarm-handoff.json"
 
-func (a copilotAdapter) list(ctx context.Context, ep *hoEndpoint, cfg, id string, withFiles bool) ([]*agentSession, error) {
+func (a copilotAdapter) list(ctx context.Context, ep *hoEndpoint, cfg, id string, withFiles bool, keep keepSession) ([]*agentSession, error) {
 	root := ep.join(cfg, "session-state")
 	var ents []hoFile
 	var err error
@@ -610,7 +653,7 @@ func (a copilotAdapter) list(ctx context.Context, ep *hoEndpoint, cfg, id string
 	}
 	var out []*agentSession
 	for _, sid := range order {
-		if _, ok := hasFile(byID[sid].files, "events.jsonl"); ok {
+		if _, ok := hasFile(byID[sid].files, "events.jsonl"); ok && (keep == nil || keep(sid, byID[sid].Modified)) {
 			out = append(out, byID[sid])
 		}
 	}
@@ -622,7 +665,7 @@ func (a copilotAdapter) list(ctx context.Context, ep *hoEndpoint, cfg, id string
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			a.describe(ctx, ep, s)
+			describeCached(ctx, ep, s, a.describe)
 		}()
 	}
 	wg.Wait()

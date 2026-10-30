@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -88,19 +89,67 @@ type agentItem struct {
 
 	transcript string // path on the worker ("" = none yet)
 	live       bool
+	lastOutput time.Time // the Longarm session's terminal output (zero: unknown)
 }
+
+// agentBusyOutput: an agent whose terminal printed this recently is
+// working (its TUI animates while it works and is quiet while it waits).
+const agentBusyOutput = 3 * time.Second
 
 type agentListJSON struct {
 	Items       []*agentItem `json:"items"`
 	Unreachable []string     `json:"unreachable"`
+	// Older is the modification time of the newest transcript older than
+	// the window (unset: none): the next page is until=<older>.
+	Older time.Time `json:"older,omitzero"`
+}
+
+// agentRecent is how far back the first page of the list goes.
+const agentRecent = 7 * 24 * time.Hour
+
+// agentWindow is the part of the transcripts a list shows: modified in
+// [since, until]; until zero: the first page (no upper bound; the running
+// sessions too, whenever their transcripts were written), else an older
+// page (transcripts only).
+type agentWindow struct{ since, until time.Time }
+
+func (w agentWindow) page() bool { return !w.until.IsZero() }
+
+func (w agentWindow) has(t time.Time) bool {
+	return !t.Before(w.since) && (w.until.IsZero() || !t.After(w.until))
+}
+
+// queryWindow reads since and until (RFC 3339); since defaults to
+// agentRecent before until (or now).
+func queryWindow(q url.Values, now time.Time) (agentWindow, error) {
+	var w agentWindow
+	for _, f := range []struct {
+		k string
+		t *time.Time
+	}{{"since", &w.since}, {"until", &w.until}} {
+		if v := q.Get(f.k); v != "" {
+			t, err := time.Parse(time.RFC3339Nano, v)
+			if err != nil {
+				return w, usagef("%s %q: want an RFC 3339 time", f.k, v)
+			}
+			*f.t = t
+		}
+	}
+	if w.since.IsZero() {
+		w.since = cmp.Or(w.until, now).Add(-agentRecent)
+	}
+	return w, nil
 }
 
 type messagesJSON struct {
-	Messages   []agentlog.Message `json:"messages"`
-	NextOffset int64              `json:"next_offset"`
-	Size       int64              `json:"size"`
-	Truncated  bool               `json:"truncated"`
-	State      string             `json:"state"`
+	Messages []agentlog.Message `json:"messages"`
+	// Start is where the first message's line begins: the next "load
+	// earlier" asks before=<start>.
+	Start      int64  `json:"start"`
+	NextOffset int64  `json:"next_offset"`
+	Size       int64  `json:"size"`
+	Truncated  bool   `json:"truncated"`
+	State      string `json:"state"`
 }
 
 // agentsGateway adds the routes of the Sessions window (see the top of this file).
@@ -112,11 +161,16 @@ func (d *daemon) agentsGateway(mux *http.ServeMux) {
 			agentError(w, usagef("agent %q: want claude or copilot", agent))
 			return
 		}
+		win, err := queryWindow(q, time.Now())
+		if err != nil {
+			agentError(w, err)
+			return
+		}
 		workers := []string{q.Get("worker")}
 		if workers[0] == "" {
 			workers = d.agentWorkers()
 		}
-		agentJSON(w, http.StatusOK, d.listAgentSessions(r.Context(), workers, agent, queryFlag(q, "all")))
+		agentJSON(w, http.StatusOK, d.listAgentSessions(r.Context(), workers, agent, queryFlag(q, "all"), win))
 	})
 	mux.HandleFunc("GET /v1/agent-sessions/{worker}/{agent}/{id}/messages", func(w http.ResponseWriter, r *http.Request) {
 		m, err := d.agentMessages(r.Context(), r.PathValue("worker"), r.PathValue("agent"), r.PathValue("id"), r.URL.Query())
@@ -218,7 +272,7 @@ func (d *daemon) agentWorkers() []string {
 }
 
 // listAgentSessions asks the workers in parallel (agentListTimeout each).
-func (d *daemon) listAgentSessions(ctx context.Context, workers []string, agent string, all bool) agentListJSON {
+func (d *daemon) listAgentSessions(ctx context.Context, workers []string, agent string, all bool, win agentWindow) agentListJSON {
 	out := agentListJSON{Items: []*agentItem{}, Unreachable: []string{}}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -228,7 +282,7 @@ func (d *daemon) listAgentSessions(ctx context.Context, workers []string, agent 
 			defer wg.Done()
 			c, cancel := context.WithTimeout(ctx, agentListTimeout)
 			defer cancel()
-			items, err := d.workerAgentSessions(c, w, agent, all)
+			items, older, err := d.workerAgentSessions(c, w, agent, all, win)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -237,6 +291,9 @@ func (d *daemon) listAgentSessions(ctx context.Context, workers []string, agent 
 				return
 			}
 			out.Items = append(out.Items, items...)
+			if older.After(out.Older) {
+				out.Older = older
+			}
 		}()
 	}
 	wg.Wait()
@@ -245,56 +302,88 @@ func (d *daemon) listAgentSessions(ctx context.Context, workers []string, agent 
 	return out
 }
 
-// workerAgentSessions lists one worker's sessions: its Longarm sessions,
-// the agents' transcripts and live processes, matched.
-func (d *daemon) workerAgentSessions(ctx context.Context, worker, agent string, all bool) ([]*agentItem, error) {
+// workerAgentSessions lists one worker's sessions in win: its Longarm
+// sessions, the agents' transcripts and live processes, matched (an older
+// page: the transcripts only). older: the newest transcript before win.
+func (d *daemon) workerAgentSessions(ctx context.Context, worker, agent string, all bool, win agentWindow) (items []*agentItem, older time.Time, err error) {
 	ep, h, err := d.agentEndpoint(ctx, worker)
 	if err != nil {
-		return nil, err
+		return nil, older, err
 	}
+	adapters := slices.DeleteFunc(slices.Clone(allAdapters), func(ad agentAdapter) bool { return agent != "" && ad.name() != agent })
 	var sessions []*pb.Session
 	var serr error
-	var transcripts []*agentSession
 	live := map[string]int{}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(1) // an older page too: what the running sessions resume stays on the first
 	go func() {
 		defer wg.Done()
 		resp, err := ep.conn.Sessions().List(ctx, &pb.ListSessionsRequest{All: all})
 		sessions, serr = resp.GetSessions(), err
 	}()
-	for _, ad := range allAdapters {
-		if agent != "" && ad.name() != agent {
-			continue
-		}
+	for _, ad := range adapters {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			list, err := ad.list(ctx, ep, h.cfg[ad.name()], "", false)
-			if err != nil { // the Longarm sessions are still worth listing
-				fmt.Fprintf(os.Stderr, "longarm daemon: %s sessions on %s: %s\n", ad.name(), worker, oneLine(err))
-			}
 			procs := liveAgents(ctx, ep, ad.name(), h.cfg[ad.name()])
 			mu.Lock()
 			defer mu.Unlock()
-			transcripts = append(transcripts, list...)
-			for k, pid := range procs {
-				live[k] = pid
-			}
+			maps.Copy(live, procs)
 		}()
 	}
 	wg.Wait()
 	if serr != nil {
-		return nil, serr
+		return nil, older, serr
 	}
+	// the running sessions' transcripts are on the first page, however old
+	pinned := map[string]bool{}
+	for k := range live {
+		pinned[k] = true
+	}
+	for _, ss := range sessions {
+		if a, id := agentOf(ss.Argv), resumedID(ss.Argv); a != "" && id != "" && !terminalState(ss.State) {
+			pinned[a+"/"+id] = true
+		}
+	}
+	var transcripts []*agentSession
+	for _, ad := range adapters {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			keep := func(id string, mod time.Time) bool {
+				if pinned[ad.name()+"/"+id] {
+					return !win.page()
+				}
+				if mod.Before(win.since) {
+					mu.Lock()
+					if mod.After(older) {
+						older = mod
+					}
+					mu.Unlock()
+				}
+				return win.has(mod)
+			}
+			list, err := ad.list(ctx, ep, h.cfg[ad.name()], "", false, keep)
+			if err != nil { // the Longarm sessions are still worth listing
+				fmt.Fprintf(os.Stderr, "longarm daemon: %s sessions on %s: %s\n", ad.name(), worker, oneLine(err))
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			transcripts = append(transcripts, list...)
+		}()
+	}
+	wg.Wait()
 	h.remember(transcripts)
-	items := matchAgentSessions(ep, sessions, transcripts, live, all)
+	if win.page() {
+		sessions = nil // listed on the first page
+	}
+	items = matchAgentSessions(ep, sessions, transcripts, live, all)
 	if agent != "" {
 		items = slices.DeleteFunc(items, func(it *agentItem) bool { return it.Agent != agent })
 	}
 	inferStates(ctx, ep, items)
-	return items, nil
+	return items, older, nil
 }
 
 // agentOf is the agent a command line runs: claude or copilot by the
@@ -426,6 +515,7 @@ func sessionItem(worker string, ss *pb.Session, t *agentSession) *agentItem {
 		it.LastActivity = pbTime(ss.CreatedAt)
 	}
 	it.Where, it.Session, it.PID, it.live = whereLongarm, ss.Name, int(ss.Pid), !terminalState(ss.State)
+	it.lastOutput = pbTime(ss.LastOutput)
 	switch {
 	case !it.live:
 		it.State = agentlog.StateEnded
@@ -477,6 +567,10 @@ func inferStates(ctx context.Context, ep *hoEndpoint, items []*agentItem) {
 	sem := make(chan struct{}, 8)
 	for _, it := range items {
 		if it.State != "" {
+			continue
+		}
+		if !it.lastOutput.IsZero() && now.Sub(it.lastOutput) < agentBusyOutput {
+			it.State = agentlog.StateWorking // the terminal says so, whatever the transcript's end
 			continue
 		}
 		wg.Add(1)
@@ -629,7 +723,7 @@ func (d *daemon) agentTranscript(ctx context.Context, worker, agent, id string) 
 	if p := h.path(agent + "/" + id); p != "" {
 		return ep, h, p, nil
 	}
-	list, err := ad.list(ctx, ep, h.cfg[agent], id, false)
+	list, err := ad.list(ctx, ep, h.cfg[agent], id, false, nil)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -701,9 +795,14 @@ func splitLines(b []byte, base int64, skipFirst bool) (lines []agentlog.Line, ne
 }
 
 // agentMessages is GET .../messages: from offset (a line start), else the
-// last tail_bytes aligned to the next line start.
+// last tail_bytes before before (a line start; default: the end) aligned to
+// the next line start.
 func (d *daemon) agentMessages(ctx context.Context, worker, agent, id string, q url.Values) (*messagesJSON, error) {
 	off, given, err := queryInt(q, "offset")
+	if err != nil {
+		return nil, err
+	}
+	before, beforeGiven, err := queryInt(q, "before")
 	if err != nil {
 		return nil, err
 	}
@@ -731,25 +830,41 @@ func (d *daemon) agentMessages(ctx context.Context, worker, agent, id string, q 
 	}
 	limit = min(limit, agentReadMax)
 	align := !given || off < 0 || off > fi.size // a stale offset (the file shrank): the tail
+	end := fi.size
 	if align {
 		if tail <= 0 {
 			tail = agentTailDefault
 		}
-		off = max(fi.size-min(tail, agentReadMax), 0)
-		limit = fi.size - off
+		if beforeGiven && before >= 0 && before < end {
+			end = before // load earlier: the part before the first message shown
+		}
+		off = max(end-min(tail, agentReadMax), 0)
+		limit = end - off
 	}
-	lines, next, err := transcriptLines(ctx, ep, p, off, limit, align)
-	if err != nil {
-		return nil, err
+	var lines []agentlog.Line
+	var next int64
+	for {
+		if lines, next, err = transcriptLines(ctx, ep, p, off, limit, align); err != nil {
+			return nil, err
+		}
+		// a window inside one long line (a big tool result) holds no
+		// complete line: look further back
+		if len(lines) > 0 || !align || off == 0 || limit >= agentReadMax {
+			break
+		}
+		off = max(end-min(limit*4, agentReadMax), 0)
+		limit = end - off
 	}
 	first := next
 	if len(lines) > 0 {
 		first = lines[0].Offset
+	} else if align {
+		first, next = end, end
 	}
 	msgs := agentlog.Parse(agent, lines, 0)
 	live := liveAgents(ctx, ep, agent, agentHostCfg(worker, agent))
 	_, isLive := live[agent+"/"+id]
-	m := &messagesJSON{Messages: msgs, NextOffset: next, Size: fi.size, Truncated: first > 0,
+	m := &messagesJSON{Messages: msgs, Start: first, NextOffset: next, Size: fi.size, Truncated: first > 0,
 		State: agentlog.InferState(agent, msgs, isLive, fi.mtime, time.Now())}
 	if m.Messages == nil {
 		m.Messages = []agentlog.Message{}
