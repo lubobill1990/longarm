@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { AgentSession } from '../api/sessions'
 import { fmtAgo, since } from '../lib/format'
 
@@ -43,6 +44,7 @@ export function SessionList({
   selected,
   onOpen,
   now = Date.now(),
+  older,
 }: {
   items: AgentSession[]
   unreachable?: string[]
@@ -51,6 +53,8 @@ export function SessionList({
   selected?: string
   onOpen: (s: AgentSession) => void
   now?: number
+  /** older sessions exist (the list shows the last days first): load the next page */
+  older?: { loading: boolean; load: () => void }
 }) {
   const groups = groupByWorker(items.filter((s) => matches(s, filter)))
   return (
@@ -85,6 +89,7 @@ export function SessionList({
             })}
           </div>
         ))}
+        {older && <OlderSentinel older={older} />}
         {unreachable && unreachable.length > 0 && (
           <div className="small amber slist-unreachable" data-testid="unreachable">
             unreachable: {unreachable.join(', ')}
@@ -92,5 +97,24 @@ export function SessionList({
         )}
       </div>
     </div>
+  )
+}
+
+/** "Load older sessions" at the end of the list; scrolling it into view loads the next page too. */
+function OlderSentinel({ older }: { older: { loading: boolean; load: () => void } }) {
+  const ref = useRef<HTMLButtonElement>(null)
+  const load = useRef(older.load)
+  load.current = older.load
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && load.current())
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+  return (
+    <button ref={ref} type="button" className="link small slist-older" data-testid="load-older" disabled={older.loading} onClick={older.load}>
+      {older.loading ? 'loading older sessions…' : 'Load older sessions'}
+    </button>
   )
 }

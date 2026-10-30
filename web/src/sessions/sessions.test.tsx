@@ -275,21 +275,52 @@ describe('SessionsApp', () => {
   })
 
   it('shows an agent outside Longarm read-only, with Continue here (a fork of the live session)', async () => {
-    location.hash = '#key=cpc-a/copilot/xyz'
+    const deskClaude = { ...desk, key: 'cpc-a/claude/xyz', agent: 'claude' as const }
+    location.hash = '#key=cpc-a/claude/xyz'
     const calls = mockFetch({
-      '/local/longarm/v1/agent-sessions/cpc-a/copilot/xyz/messages': () => [200, { messages: [], next_offset: 0, size: 0 }],
-      '/local/longarm/v1/agent-sessions': () => [200, { items: [a, desk] }],
-      '/local/longarm/v1/workers/cpc-a/sessions': () => [201, { name: 'copilot-1a2b', dir: 'C:\\src' }],
+      '/local/longarm/v1/agent-sessions/cpc-a/claude/xyz/messages': () => [200, { messages: [], next_offset: 0, size: 0 }],
+      '/local/longarm/v1/agent-sessions': () => [200, { items: [a, deskClaude] }],
+      '/local/longarm/v1/workers/cpc-a/sessions': () => [201, { name: 'claude-1a2b', dir: 'C:\\src' }],
     })
     render(<SessionsApp />)
-    const panel = await screen.findByTestId('panel-cpc-a/copilot/xyz')
+    const panel = await screen.findByTestId('panel-cpc-a/claude/xyz')
     expect(within(panel).queryByTestId('steer')).toBeNull()
     expect(within(panel).queryByTestId('terminal')).toBeNull()
     await within(panel).findByTestId('conversation')
     fireEvent.click(within(panel).getByTestId('continue-here'))
-    await screen.findByTestId('tab-cpc-a/session/copilot-1a2b')
+    await screen.findByTestId('tab-cpc-a/session/claude-1a2b')
     const start = calls.find((c) => c.url === '/local/longarm/v1/workers/cpc-a/sessions')!
-    expect(body(start)).toEqual({ agent: 'copilot', resume: 'xyz', fork: true, cwd: 'C:\\src\\longarm' })
+    expect(body(start)).toEqual({ agent: 'claude', resume: 'xyz', fork: true, cwd: 'C:\\src\\longarm' })
+  })
+
+  it('lists the last days first and loads older sessions page by page', async () => {
+    location.hash = ''
+    const old = item({ key: 'cpc-a/claude/old', id: 'old', title: 'an old one', where: 'none', session: undefined, state: 'ended' })
+    const calls = mockFetch({
+      '/local/longarm/v1/agent-sessions?until=': () => [200, { items: [old] }],
+      '/local/longarm/v1/agent-sessions': () => [200, { items: [a], older: '2026-10-20T08:00:00.123456789Z' }],
+    })
+    render(<SessionsApp />)
+    fireEvent.click(await screen.findByTestId('load-older'))
+    await screen.findByTestId('session-cpc-a/claude/old')
+    const page = calls.find((c) => c.url.includes('until='))!
+    expect(new URL(page.url, 'http://x').searchParams.get('until')).toBe('2026-10-20T08:00:00.123456789Z')
+    expect(screen.getByTestId(`session-${a.key}`)).toBeTruthy() // the first page stays
+    expect(screen.queryByTestId('load-older')).toBeNull() // no older than that
+  })
+
+  it("a live Copilot session outside Longarm can't be copied: Continue here waits for its end", async () => {
+    location.hash = '#key=cpc-a/copilot/xyz'
+    mockFetch({
+      '/local/longarm/v1/agent-sessions/cpc-a/copilot/xyz/messages': () => [200, { messages: [], next_offset: 0, size: 0 }],
+      '/local/longarm/v1/agent-sessions': () => [200, { items: [a, desk] }],
+    })
+    render(<SessionsApp />)
+    const panel = await screen.findByTestId('panel-cpc-a/copilot/xyz')
+    await within(panel).findByTestId('conversation') // its content is shown, read-only
+    const cont = within(panel).getByTestId('continue-here') as HTMLButtonElement
+    expect(cont.disabled).toBe(true)
+    expect(cont.title).toContain('once it has ended')
   })
 })
 
@@ -413,7 +444,7 @@ describe('ConversationView', () => {
     render(<ConversationView item={item({})} onState={onState} />)
     expect((await screen.findByTestId('msg-user')).textContent).toBe('fix the flaky relay test')
     expect(calls[0].url).toBe('/local/longarm/v1/agent-sessions/cpc-a/claude/abc/messages')
-    expect(screen.getByText('earlier messages are not shown')).toBeTruthy()
+    expect(screen.getByTestId('load-earlier')).toBeTruthy()
     const tool = screen.getByTestId('tool-call')
     expect(tool.tagName).toBe('DETAILS')
     expect((tool as HTMLDetailsElement).open).toBe(false)
@@ -431,6 +462,53 @@ describe('ConversationView', () => {
     })
     expect(screen.getAllByTestId('msg-assistant').map((x) => x.textContent)).toEqual(['Fixed: the test waited on a closed port.'])
     expect(onState).toHaveBeenLastCalledWith('waiting')
+  })
+
+  it('loads earlier messages before the first one shown, until the beginning', async () => {
+    const at = (offset: number, seq: number, text: string) => msg(seq, { offset, role: 'user', text })
+    const calls = mockFetch({
+      '/local/longarm/v1/agent-sessions/cpc-a/claude/abc/messages?before=1000': () => [
+        200,
+        { messages: [at(0, 0, 'first prompt'), at(500, 1, 'second prompt')], start: 0, next_offset: 1000, size: 2000, truncated: false },
+      ],
+      '/local/longarm/v1/agent-sessions/cpc-a/claude/abc/messages': () => [
+        200,
+        { messages: [at(1000, 0, 'third prompt')], start: 1000, next_offset: 2000, size: 2000, truncated: true },
+      ],
+    })
+    render(<ConversationView item={item({})} />)
+    await screen.findByText('third prompt')
+    fireEvent.click(screen.getByTestId('load-earlier'))
+    await screen.findByText('first prompt')
+    expect(calls.some((c) => c.url.endsWith('/messages?before=1000'))).toBe(true)
+    // in order, the earlier part on top; the beginning reached: no more button
+    expect(screen.getAllByTestId('msg-user').map((x) => x.textContent)).toEqual(['first prompt', 'second prompt', 'third prompt'])
+    expect(screen.queryByTestId('load-earlier')).toBeNull()
+  })
+
+  it('renders what the agent writes as Markdown, and tool output as it is', async () => {
+    mockFetch({
+      '/local/longarm/v1/agent-sessions/cpc-a/claude/abc/messages': () => [
+        200,
+        {
+          messages: [
+            msg(0, { text: '**Fixed** the `relay` test:\n\n```go\nfunc f() {}\n```\n\n- one\n- two\n\nsee [docs](https://example.com) <b>raw</b>' }),
+          ],
+          start: 0,
+          next_offset: 100,
+          size: 100,
+        },
+      ],
+    })
+    render(<ConversationView item={item({})} />)
+    const bubble = await screen.findByTestId('msg-assistant')
+    expect(bubble.querySelector('strong')?.textContent).toBe('Fixed')
+    expect(bubble.querySelector('code')?.textContent).toBe('relay')
+    expect(bubble.querySelector('pre')?.textContent).toBe('func f() {}')
+    expect([...bubble.querySelectorAll('li')].map((l) => l.textContent)).toEqual(['one', 'two'])
+    expect(bubble.querySelector('a')?.getAttribute('href')).toBe('https://example.com')
+    expect(bubble.querySelector('b')).toBeNull() // markup in the text stays text
+    expect(bubble.textContent).toContain('<b>raw</b>')
   })
 
   it('says when there is no transcript yet', () => {
