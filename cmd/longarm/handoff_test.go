@@ -472,12 +472,16 @@ func TestOwnMachine(t *testing.T) {
 		ok   bool
 	}{
 		{&hoEndpoint{name: localMachine}, nil, true},
-		{w("", "alice"), nil, true},                         // fleet worker / no hub
+		// a fleet worker, or no hub
+		{w("", "alice"), nil, true},
 		{w("alice", "alice"), &pb.NodeInfo{Owner: "alice"}, true},
-		{w("alice", "bob"), nil, false},                     // shared with bob or not
-		{w("", "bob"), &pb.NodeInfo{Owner: "alice"}, false}, // an older worker: the hub knows
+		// shared with bob or not
+		{w("alice", "bob"), nil, false},
+		// an older worker: the hub knows
+		{w("", "bob"), &pb.NodeInfo{Owner: "alice"}, false},
 		{w("alice", "root"), &pb.NodeInfo{Owner: "alice"}, false},
-		{w("?", "alice"), nil, false}, // owner unknown yet
+		// owner unknown yet
+		{w("?", "alice"), nil, false},
 	} {
 		err := ownMachine(c.ep, c.node)
 		if c.ok != (err == nil) {
