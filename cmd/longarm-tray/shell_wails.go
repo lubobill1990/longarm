@@ -201,7 +201,7 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 	t.OnClick(d.toggle)
 	menu := app.NewMenu()
 	menu.Add("Show panel").OnClick(func(*application.Context) { d.show() })
-	menu.Add("Sign in with Microsoft…").OnClick(func(*application.Context) {
+	menu.Add("Sign in…").OnClick(func(*application.Context) {
 		srv.AutoSignIn() // when one is needed: the code at once
 		d.show()
 	})

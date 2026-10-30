@@ -1,5 +1,5 @@
-// Package signin is the client side of signing in to longarm-hub with a
-// Microsoft account, shared by `longarm login` and `longarmd login`: an
+// Package signin is the client side of signing in to longarm-hub with an
+// account (Microsoft, Google, Apple: the hub's /link page offers them), shared by `longarm login` and `longarmd login`: an
 // access token from the Azure CLI (az) when it has one, else the hub's
 // pairing flow - a code the user types into the hub's /link page.
 package signin
@@ -152,7 +152,7 @@ func Console(w io.Writer) Events {
 			case "both":
 				what = "this machine as your device and your worker (one approval for both)"
 			}
-			fmt.Fprintf(w, "To link %s, sign in with your Microsoft account (or the hub's panel login) in a browser:\n\n", what)
+			fmt.Fprintf(w, "To link %s, sign in with your account (Microsoft, Google or Apple, as the hub offers) in a browser:\n\n", what)
 			fmt.Fprintf(w, "  Open %s and enter code %s\n\n", c.URL, c.Code)
 			mins := int(time.Until(c.Expires).Round(time.Minute).Minutes())
 			fmt.Fprintf(w, "Check that the page shows this machine (%s) before you approve. The code expires in %d minutes.\n", c.Host, mins)

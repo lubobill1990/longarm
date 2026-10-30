@@ -45,7 +45,7 @@ func workerCmd() *cobra.Command {
 users, never placed for them) until you share it - which needs an admin's
 permission (longarm admin user set <you> --can-share).
 
-The easy way, on that machine - it signs in with your Microsoft account:
+The easy way, on that machine - it signs in with your account:
   Windows: install the Longarm MSI and choose "This machine runs jobs"
            (the tray signs it in), or run: longarmd login <hub>
   Linux / macOS: longarmd login <hub>, as the account the worker runs as
@@ -223,7 +223,7 @@ func workerAddHelp(hub, code, fp, name, owner, expires string) string {
 		join += " --name " + name
 		what = "worker " + name
 	}
-	return fmt.Sprintf(`The easy way, on the new machine (signs in with your Microsoft account):
+	return fmt.Sprintf(`The easy way, on the new machine (signs in with your account):
   Windows: install the Longarm MSI and choose "This machine runs jobs", or run: longarmd login %s
   Linux / macOS: longarmd login %s
 Or with the code above (for %s, owned by %s, expires %s), on the new machine:

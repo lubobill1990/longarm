@@ -65,7 +65,7 @@ export function GetPage({ me }: { me: Me }) {
           </div>
         </li>
         <li>
-          <b>Sign in with Microsoft.</b> The tray (or the install script) shows a code: open the link it shows in any browser, sign in, enter the code and
+          <b>Sign in.</b> The tray (or the install script) shows a code: open the link it shows in any browser, sign in (Microsoft, Google or Apple account), enter the code and
           approve the machine - once, for both the device and the worker. Already installed? <span className="mono">longarmd login --role both</span>.
         </li>
         <li>

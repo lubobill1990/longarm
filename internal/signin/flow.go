@@ -50,7 +50,7 @@ import (
 //     long): Progress for each step with a one-line message (show it, or
 //     log it); Code once per pairing with the /link URL and the code to
 //     display - the user opens the URL in any browser, signs in with
-//     Microsoft and types the code. SignIn opens the URL itself only with
+//     the hub's identity provider (Microsoft, Google, Apple) and types the code. SignIn opens the URL itself only with
 //     Options.OpenBrowser (never with the code in it).
 //   - Cancellation: cancel ctx; SignIn returns ctx.Err() (wrapped or not:
 //     use errors.Is). A pairing ends by itself after its code expires (10

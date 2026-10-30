@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+- Sign-in with **Google, Apple and personal Microsoft accounts**
+  (`[auth.google]`, `[auth.apple]`, `[auth.microsoft]` in hub.toml), next to
+  Entra work and school accounts: the panel shows one button per provider,
+  and `/link` - behind `longarm login`, `longarmd login`, the tray and the MSI's
+  `LOGIN=1` - signs in the same way. The account (provider + subject) maps to
+  one Longarm user, created on first sign-in, so the clients and workers one
+  account links are that user's together. `/auth/info` lists the providers;
+  the tray and the CLIs no longer say "Sign in with Microsoft" only.
+  docs/usage.md "Sign in with a Google, Apple or personal Microsoft account".
+
 ### Fixed
 
 - The hub on Azure crash-looped on every start (2026-10-29, 0.1.18 and

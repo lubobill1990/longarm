@@ -56,8 +56,8 @@ $env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/inst
 # 2. sign in - the one-liners and the tray do it; already installed:
 longarmd login hub.example.com --role both     # worker + client: one code, one approval
 longarm login hub.example.com                  # a client only
-#   Open https://hub.example.com/link and enter code BCDF-GHJK  - in any browser: sign in with
-#   Microsoft, type the code, approve
+#   Open https://hub.example.com/link and enter code BCDF-GHJK  - in any browser: sign in (Microsoft,
+#   Google or Apple account, as the hub offers), type the code, approve
 
 # 3. run something
 longarm ls                                     # your workers (this machine too)
@@ -67,7 +67,7 @@ longarm run --repo . -f -- pnpm test           # placed by the scheduler, in a f
 On Windows the worker runs as you, started at your logon, no service and no
 password ([the user-session worker](#the-user-session-worker-runsession-the-default));
 on Linux / macOS `install.sh` installs the longarmd service as the `sudo`
-user. Everything about the sign-in: [Sign in with Microsoft Entra ID](#sign-in-with-microsoft-entra-id);
+user. Everything about the sign-in: [Sign in with Microsoft Entra ID](#sign-in-with-microsoft-entra-id) and [with a Google, Apple or personal Microsoft account](#sign-in-with-a-google-apple-or-personal-microsoft-account);
 installers and their options: [Install](#install); removing it:
 [Uninstall](#uninstall).
 
@@ -1786,6 +1786,88 @@ panel account), never another person's - to block someone
 use `allowed`, or `longarm admin user disable`; a change to `admins` applies
 at the next sign-in (panel sessions last `[web] session_ttl`, certificates
 their TTL).
+
+### Sign in with a Google, Apple or personal Microsoft account
+
+Besides Entra (work and school accounts of one tenant), a hub can let
+people sign in with **personal accounts**: Google, Apple and Microsoft
+accounts (outlook.com, live.com, hotmail.com ...). Each provider is a
+`[auth.<provider>]` block in hub.toml; any combination works, also next to
+`[auth.entra]`. The panel's login page then has one button per provider
+(`/auth/login` without a provider shows a page to choose), and `/link` -
+the page `longarm login`, `longarmd login`, the tray and the MSI with
+`LOGIN=1` send you to - signs you in the same way.
+
+The account maps to a Longarm user exactly like an Entra user: **created
+on first sign-in** (named after the verified e-mail address's local part,
+`alice@example.com` -> `alice`; without an address, after the provider:
+`google`, `apple2`), bound to the provider's stable subject (`sub`), not to
+the address. So **every machine one account links is that one user's**:
+`longarmd login` on a box at home and `longarm login` on a laptop, both
+approved with the same Google account, give the laptop a client
+certificate of that user and the box a worker owned by it - its jobs are
+placed there, nobody else's. Another account is another user (accounts of
+different providers too; there is no merging by e-mail address).
+
+Only the browser path exists for these providers: no `--az` (that is
+Entra's token), and no app-only sign-in. As with Entra, once any provider
+is configured only sessions opened by a provider's sign-in may approve at
+`/link` (a password login could be a shared admin account).
+
+```toml
+[auth.google]
+client_id = "<id>.apps.googleusercontent.com"
+client_secret_file = "/etc/longarm-hub/google-client-secret"   # root:longarm-hub 0640
+admins = ["you@example.com"]       # admin certificates and the panel's admin role
+allowed = []                       # who may sign in (empty: every account of the provider);
+                                   # entries: verified e-mail "user@example.com", "*@example.com",
+                                   # or the provider's subject "sub:<id>" (exact case)
+
+[auth.microsoft]                   # personal Microsoft accounts (work/school: [auth.entra])
+client_id = "<application id>"     # a GUID
+client_secret_file = "/etc/longarm-hub/microsoft-client-secret"
+admins = ["you@example.com"]
+
+[auth.apple]
+client_id = "com.example.longarm.signin"   # the Services ID
+team_id = "ABCDE12345"
+key_id = "KEY1234567"              # the "Sign in with Apple" key
+private_key_file = "/etc/longarm-hub/apple-AuthKey.p8"   # checked when the hub starts
+```
+
+Registration, with `<public_url>` the hub's `public_url` (the redirect
+URIs must match it exactly):
+
+- **Google** (Google Cloud console -> Google Auth Platform): an External
+  app with the scopes `openid`, `email`, `profile` (non-sensitive: publish
+  it "In production" without a review, else only test users get in); a
+  client of type *Web application* with the redirect URI
+  `<public_url>/auth/callback/google`. Only addresses Google marks
+  verified count (name, `admins`, `allowed`).
+- **Microsoft account**: an app registration with *Supported account
+  types* = personal Microsoft accounts only (`az ad app create
+  --sign-in-audience PersonalMicrosoftAccount --web-redirect-uris
+  <public_url>/auth/callback/microsoft`), and a client secret (`az ad app
+  credential reset`). The hub accepts ID tokens of the consumer tenant
+  only; a work account that reaches this button is refused (it signs in
+  with `[auth.entra]`). The address is the account's sign-in name.
+- **Apple** (Apple Developer -> Certificates, Identifiers & Profiles): an
+  App ID with *Sign in with Apple*; a Services ID (the `client_id`) with
+  *Sign in with Apple* configured for the hub's domain and the return URL
+  `<public_url>/auth/callback/apple`; a key with *Sign in with Apple* (its
+  `.p8` downloads once: `private_key_file`, its ID: `key_id`). Apple posts
+  the result back (`response_mode=form_post`); the hub signs a short-lived
+  ES256 client secret per sign-in. A "Hide my e-mail" relay address is the
+  user's address as far as the hub is concerned.
+
+Each sign-in carries a state (single use, in a MAC'd cookie), a nonce and,
+for Google and Microsoft, PKCE; the hub redeems the code with its client
+credential and checks the ID token itself (signature against the
+provider's published keys, issuer, audience = `client_id`, expiry, nonce).
+A change to `admins` / `allowed` applies at the next sign-in and at every
+`/link` approval. Removing a provider's block locks its users out of the
+panel and `/link` (their devices keep working until their certificates
+expire; `longarm admin user disable` ends them at once).
 
 ### End-to-end trust on workers
 

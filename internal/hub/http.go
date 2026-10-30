@@ -375,7 +375,7 @@ func (h *Hub) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
 		Secure: !h.cfg.Web.InsecureCookie, SameSite: http.SameSiteStrictMode})
-	if h.entra != nil {
+	if h.idpOn() {
 		h.setEntraMark(w, "", -1)
 	}
 }
@@ -555,7 +555,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(template.FuncMap{
 <form method="post" action="/login"><p><input name="user" placeholder="user" autocomplete="username"></p>
 <p><input name="password" type="password" placeholder="password" autocomplete="current-password"></p>
 <p><input name="totp" placeholder="TOTP code" autocomplete="one-time-code" inputmode="numeric"></p><p><button>Log in</button></p></form>
-{{if .Entra}}<p><a href="/auth/login?next=/status">Sign in with Microsoft</a></p>{{end}}
+{{range .Providers}}<p><a href="/auth/login?provider={{.ID}}&amp;next=/status">Sign in with {{.Label}}</a></p>{{end}}
 {{else}}<form method="post" action="/logout" style="float:right"><button>Log out {{.User}}</button></form>
 <h1>longarm-hub {{.Version}}</h1><h2>Workers</h2><table><tr><th>name</th><th>state</th><th>online</th><th>cpu%</th><th>mem GB</th><th>jobs</th><th>reserved GB</th><th>labels</th><th>version</th></tr>
 {{range .Nodes}}<tr{{if not .Online}} class="off"{{end}}><td>{{.Name}}</td><td>{{.State}}{{if .Draining}} (draining){{end}}</td><td>{{.Online}}</td>
@@ -568,7 +568,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(template.FuncMap{
 
 func (h *Hub) renderLogin(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	pageTmpl.Execute(w, map[string]any{"Login": true, "Error": msg, "Entra": h.entraWeb() != ""})
+	pageTmpl.Execute(w, map[string]any{"Login": true, "Error": msg, "Providers": h.webProviders()})
 }
 
 func (h *Hub) statusPage(w http.ResponseWriter, r *http.Request) {

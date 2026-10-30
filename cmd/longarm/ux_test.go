@@ -61,7 +61,7 @@ func TestUXMessages(t *testing.T) {
 			"  Warning: it revokes this machine's sign-in (its certificate) at the hub and deletes it here;\n" +
 			"  to use Longarm again you sign in anew with `longarm login`."},
 		{"worker add", workerAddHelp("hub:7443", "K7P-Q2M", "ab:cd", "pc2", "alice", "10-29 15:04"),
-			"The easy way, on the new machine (signs in with your Microsoft account):\n" +
+			"The easy way, on the new machine (signs in with your account):\n" +
 				"  Windows: install the Longarm MSI and choose \"This machine runs jobs\", or run: longarmd login hub:7443\n" +
 				"  Linux / macOS: longarmd login hub:7443\n" +
 				"Or with the code above (for worker pc2, owned by alice, expires 10-29 15:04), on the new machine:\n" +

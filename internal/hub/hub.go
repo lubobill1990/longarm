@@ -89,8 +89,10 @@ type Hub struct {
 	tenancyVersion int64
 	purged         []string
 	lastTenancyOn  bool
-	entra          *entraState // nil = no [auth.entra]
-	pair           *pairing    // pending pairings (link.go)
+	entra          *entraState            // nil = no [auth.entra]
+	idps           map[string]*idProvider // [auth.google], [auth.apple], [auth.microsoft] (idp.go)
+	oidc           *oidcWeb               // web sign-in state (any provider)
+	pair           *pairing               // pending pairings (link.go)
 	// port links (portlinks.go): by id; the version counts pushes
 	portLinks        map[string]*portLinkEntry
 	portLinksVersion int64
@@ -177,6 +179,7 @@ func Open(cfg *Config, log *slog.Logger) (*Hub, error) {
 		profiles: map[string]*pb.Profile{}, stable: map[string]*pb.Profile{}, knownSerials: map[string]bool{}, kick: make(chan struct{}, 1),
 		pending: map[string]*pendingReq{}, links: map[string]*linkEntry{}, tenants: map[string]*tenant{}, portLinks: map[string]*portLinkEntry{},
 		started: time.Now(), addrs: map[string]string{}, entra: newEntraState(&cfg.Auth.Entra), pair: newPairing(),
+		idps: newIdProviders(&cfg.Auth), oidc: &oidcWeb{usedState: map[string]time.Time{}},
 	}
 	if h.tailnet, err = newTailnetProvider(cfg.Tailnet); err != nil {
 		st.Close()
