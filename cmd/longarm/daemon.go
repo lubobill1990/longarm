@@ -360,6 +360,7 @@ func (d *daemon) gateway() http.Handler {
 	})
 	d.poolGateway(mux)
 	d.updateGateway(mux)
+	d.agentsGateway(mux)
 	// One-shot longarm processes dial their tailscale / longnet legs through the
 	// daemon's long-lived nodes.
 	mux.Handle("POST /v1/legs/dial", client.LegProxyHandler(d.s.dialer, d.s.worker))
