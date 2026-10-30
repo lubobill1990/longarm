@@ -512,7 +512,7 @@ func locateSession(ctx context.Context, src *hoEndpoint, adapters []agentAdapter
 	var all []found
 	for _, ad := range adapters {
 		cfg := ad.configDir(ctx, src)
-		list, err := ad.list(ctx, src, cfg, o.id, false)
+		list, err := ad.list(ctx, src, cfg, o.id, false, nil)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s sessions on %s: %w", ad.name(), src.name, err)
 		}
@@ -553,7 +553,7 @@ func locateSession(ctx context.Context, src *hoEndpoint, adapters []agentAdapter
 
 // relist lists the session again with every file a handoff moves.
 func relist(ctx context.Context, ad agentAdapter, ep *hoEndpoint, s *agentSession) (*agentSession, error) {
-	list, err := ad.list(ctx, ep, s.cfg, s.ID, true)
+	list, err := ad.list(ctx, ep, s.cfg, s.ID, true, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -912,7 +912,7 @@ Files, worker-direct); prints titles only, never transcript contents.
 			defer ep.close()
 			var rows []*agentSession
 			for _, ad := range adapters {
-				list, err := ad.list(ctx, ep, ad.configDir(ctx, ep), "", false)
+				list, err := ad.list(ctx, ep, ad.configDir(ctx, ep), "", false, nil)
 				if err != nil {
 					return fmt.Errorf("%s sessions on %s: %w", ad.name(), ep.name, err)
 				}

@@ -807,13 +807,16 @@ Click **Claude Code** or **Copilot CLI** on a worker's card (the tray's
 Pool tab) to open the **Sessions window**: every Claude Code / Copilot CLI
 session of your workers, grouped by worker, with its state - ● working,
 ◐ waiting for input, ○ ended, ◇ running outside Longarm (a terminal on the
-worker's desktop). A session opens in a tab:
+worker's desktop). The list shows the last 7 days and every running
+session; older ones load page by page as you scroll to its end. A session
+opens in a tab:
 
 - **Terminal** - the session's live terminal in the window (xterm.js), as
   `longarm attach` shows it: replay, then live; type into it, resize the
   window. Closing the tab detaches; the session keeps running.
 - **Conversation** - the agent's transcript as a conversation: your
-  prompts, its answers, tool calls with their results, live.
+  prompts, its answers (Markdown), tool calls with their results, live;
+  scroll up to the top for earlier parts.
 - **Steer** - a message box under the session: Enter sends the text and
   Enter, plus Esc (interrupt), "y" and Ctrl-C buttons. It types into the
   session's terminal like `longarm session send ... --if-idle-ms 1500`:
@@ -827,7 +830,8 @@ Agents Longarm started (`longarm attach -- claude`, `longarm session
 start`, the tray, `longarm handoff`) have all three views. An agent started
 in a terminal on the worker's desktop shows its conversation only - Longarm
 has no access to that terminal; **Continue here** resumes it in a Longarm
-session (a fork while the original still runs). The window works against
+session (a fork while the original still runs; Copilot CLI can't fork,
+so for Copilot it waits until the original has ended). The window works against
 workers of any version (it uses the existing `Sessions` and `Files` calls);
 transcripts are read with your rights and shown, never stored.
 `docs/agent-sessions-ui.md` has the design and the daemon API

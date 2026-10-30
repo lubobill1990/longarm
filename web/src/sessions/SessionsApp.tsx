@@ -80,6 +80,11 @@ function Sessions() {
   const [scope, setScope] = useState<{ worker?: string; agent?: Agent }>({ worker: target.worker, agent: target.agent })
   const [all, setAll] = useState(false)
   const [list, setList] = useState<AgentSessionList>()
+  // older pages (transcripts before the first page's window) and the next one's cursor
+  const [olderPages, setOlderPages] = useState<AgentSession[]>([])
+  const [older, setOlder] = useState<string>()
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const pagedRef = useRef(false)
   const [error, setError] = useState<string>()
   const [filter, setFilter] = useState('')
   const [tabs, setTabs] = useState<Tab[]>([])
@@ -100,12 +105,16 @@ function Sessions() {
 
   useEffect(() => {
     let gone = false
+    setOlderPages([])
+    setOlder(undefined)
+    pagedRef.current = false
     const load = () =>
       sessionsApi
         .list({ ...scope, all })
         .then((l) => {
           if (gone) return
           setList(l)
+          if (!pagedRef.current) setOlder(l.older) // once older pages are shown, their cursor rules
           setError(undefined)
         })
         .catch((e) => !gone && setError(e instanceof Error ? e.message : String(e)))
@@ -160,6 +169,20 @@ function Sessions() {
     }
   }, [list, open])
 
+  const loadOlder = useCallback(() => {
+    if (!older || loadingOlder) return
+    setLoadingOlder(true)
+    sessionsApi
+      .list({ ...scope, all, until: older })
+      .then((l) => {
+        pagedRef.current = true
+        setOlderPages((have) => [...have, ...(l.items ?? []).filter((s) => !have.some((h) => h.key === s.key))])
+        setOlder(l.older)
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoadingOlder(false))
+  }, [older, loadingOlder, scope, all])
+
   // output in a background tab, or a state from its conversation
   const mark = useCallback((id: string, c: { badge?: boolean; state?: AgentState }) => {
     setTabs((ts) => {
@@ -174,7 +197,8 @@ function Sessions() {
   }, [])
 
   const connected = connectedTabs(recent, active)
-  const items = list?.items ?? []
+  const first = list?.items ?? []
+  const items = [...first, ...olderPages.filter((s) => !first.some((f) => f.key === s.key))]
   const workers = [...new Set([...(scope.worker ? [scope.worker] : []), ...items.map((s) => s.worker)])].sort()
   return (
     <div className="sessions" data-testid="sessions">
@@ -212,7 +236,16 @@ function Sessions() {
         {!list && !error ? (
           <div className="muted small slist-empty">loading sessions…</div>
         ) : (
-          <SessionList items={items} unreachable={list?.unreachable} filter={filter} onFilter={setFilter} selected={tabs.find((t) => t.id === active)?.item.key} onOpen={open} now={now} />
+          <SessionList
+            items={items}
+            unreachable={list?.unreachable}
+            filter={filter}
+            onFilter={setFilter}
+            selected={tabs.find((t) => t.id === active)?.item.key}
+            onOpen={open}
+            now={now}
+            older={older ? { loading: loadingOlder, load: loadOlder } : undefined}
+          />
         )}
       </aside>
       <main className="sessions-main">
@@ -266,6 +299,8 @@ function TabPanel({
       const started = await sessionsApi.start(s.worker, { agent, resume: s.id, fork: s.where === 'desktop', cwd: s.project_dir })
       onOpen(startedItem(s.worker, agent, started, s.id))
     })
+  // a live Copilot session can't be forked; it can be resumed once it has ended
+  const noCopy = s.where === 'desktop' && s.agent === 'copilot'
   const showTerm = inLongarm && view === 'terminal'
   return (
     <section className="tabpanel" role="tabpanel" hidden={!visible} data-testid={`panel-${tab.id}`}>
@@ -289,9 +324,15 @@ function TabPanel({
         {!inLongarm && s.agent && s.id && (
           <button
             className="sm primary"
-            disabled={busy}
+            disabled={busy || noCopy}
             data-testid="continue-here"
-            title={s.where === 'desktop' ? 'resume a copy (--fork-session) in a Longarm session: the original stays open' : 'resume it in a Longarm session'}
+            title={
+              noCopy
+                ? "Copilot CLI can't copy a conversation that is still open: continue here once it has ended there"
+                : s.where === 'desktop'
+                  ? 'resume a copy (--fork-session) in a Longarm session: the original stays open'
+                  : 'resume it in a Longarm session'
+            }
             onClick={cont}
           >
             Continue here

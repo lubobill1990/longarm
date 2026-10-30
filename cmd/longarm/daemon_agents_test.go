@@ -11,9 +11,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -728,4 +730,106 @@ func TestAttachWebSocket(t *testing.T) {
 	ws = dial("missing")
 	expect(ws, websocket.MessageText, `{"message":"no session missing","type":"error"}`)
 	closed(ws, websocket.StatusInternalError)
+}
+
+// The list's first page holds the last agentRecent and the running
+// sessions, whatever their age; "older" leads to the next page.
+func TestAgentListWindow(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "src", "app")
+	recent, old, pinned := "9f1c2d3e-0000-4000-8000-0000000000a1", "9f1c2d3e-0000-4000-8000-0000000000a2", "9f1c2d3e-0000-4000-8000-0000000000a3"
+	writeClaudeTranscript(t, home, recent, proj, 1)
+	oldTime := time.Now().Add(-10 * 24 * time.Hour).Truncate(time.Second)
+	for _, id := range []string{old, pinned} {
+		p := writeClaudeTranscript(t, home, id, proj, 1)
+		mt := oldTime
+		if id == pinned {
+			mt = oldTime.Add(-24 * time.Hour)
+		}
+		if err := os.Chtimes(p, mt, mt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fk := &fakeSessions{sessions: []*pb.Session{{Name: "resumed", Argv: []string{"claude", "--resume", pinned}, Dir: proj,
+		State: pb.JobState_JOB_STATE_RUNNING, StartedAt: timestamppb.New(time.Now().Add(-time.Minute)), Pid: 7}}}
+	hs := agentTestDaemon(t, home, fk)
+	ids := func(l agentListJSON) []string {
+		var out []string
+		for _, it := range l.Items {
+			out = append(out, it.ID)
+		}
+		slices.Sort(out)
+		return out
+	}
+	var first agentListJSON
+	if c := call(t, "GET", hs.URL+"/v1/agent-sessions?worker=w1", "", &first); c != 200 {
+		t.Fatalf("status %d", c)
+	}
+	if got := ids(first); !slices.Equal(got, []string{recent, pinned}) || !first.Older.Equal(oldTime) {
+		t.Fatalf("first page: %v older %v", got, first.Older)
+	}
+	var page agentListJSON
+	q := url.Values{"worker": {"w1"}, "until": {first.Older.Format(time.RFC3339Nano)}}
+	call(t, "GET", hs.URL+"/v1/agent-sessions?"+q.Encode(), "", &page)
+	if got := ids(page); !slices.Equal(got, []string{old}) || !page.Older.IsZero() {
+		t.Fatalf("older page: %v older %v", got, page.Older) // the pinned one is on the first page only
+	}
+	if c := call(t, "GET", hs.URL+"/v1/agent-sessions?worker=w1&since=yesterday", "", nil); c != 400 {
+		t.Fatalf("bad since: %d", c)
+	}
+}
+
+// "Load earlier": before=<start> returns the part before what is shown.
+func TestAgentMessagesBefore(t *testing.T) {
+	home := t.TempDir()
+	id := "9f1c2d3e-0000-4000-8000-0000000000b1"
+	p := writeClaudeTranscript(t, home, id, filepath.Join(home, "src", "app"), 6)
+	full, _ := os.ReadFile(p)
+	hs := agentTestDaemon(t, home, &fakeSessions{})
+	base := hs.URL + "/v1/agent-sessions/w1/claude/" + id + "/messages"
+	var tail messagesJSON
+	call(t, "GET", base+"?tail_bytes=200", "", &tail)
+	if !tail.Truncated || tail.Start <= 0 || tail.NextOffset != int64(len(full)) {
+		t.Fatalf("tail: %+v", tail)
+	}
+	var earlier messagesJSON
+	call(t, "GET", fmt.Sprintf("%s?before=%d&tail_bytes=1000000", base, tail.Start), "", &earlier)
+	if earlier.Truncated || earlier.Start != 0 || earlier.NextOffset != tail.Start || len(earlier.Messages) == 0 {
+		t.Fatalf("earlier: %+v", earlier)
+	}
+	if got := len(earlier.Messages) + len(tail.Messages); got != 6 {
+		t.Fatalf("%d messages in both parts, want 6", got)
+	}
+	var step messagesJSON // a small window: still whole lines, ending at before
+	call(t, "GET", fmt.Sprintf("%s?before=%d&tail_bytes=150", base, tail.Start), "", &step)
+	if step.NextOffset != tail.Start || !step.Truncated || len(step.Messages) == 0 {
+		t.Fatalf("step: %+v", step)
+	}
+}
+
+// describe runs once per transcript as it is (the Sessions window lists
+// every few seconds); a changed file is read again.
+func TestDescribeCached(t *testing.T) {
+	ep := &hoEndpoint{name: "w-cache"}
+	s := &agentSession{transcript: "/x/a.jsonl", Size: 10, Modified: time.Unix(100, 0)}
+	n := 0
+	describe := func(_ context.Context, _ *hoEndpoint, s *agentSession) { n++; s.Title = fmt.Sprint("title ", n) }
+	for range 3 {
+		c := *s
+		describeCached(context.Background(), ep, &c, describe)
+		if c.Title != "title 1" {
+			t.Fatalf("cached title %q", c.Title)
+		}
+	}
+	if n != 1 {
+		t.Fatalf("described %d times", n)
+	}
+	changed := *s
+	changed.Size = 11
+	describeCached(context.Background(), ep, &changed, describe)
+	other := *s
+	describeCached(context.Background(), &hoEndpoint{name: "w-other"}, &other, describe)
+	if n != 3 || changed.Title != "title 2" || other.Title != "title 3" {
+		t.Fatalf("n %d: %q %q", n, changed.Title, other.Title)
+	}
 }

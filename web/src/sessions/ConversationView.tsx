@@ -1,8 +1,15 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { sessionsApi, type AgentMessage, type AgentSession, type AgentState } from '../api/sessions'
+import { Markdown } from './Markdown'
 
 /** Keep at most this many messages in the view (the oldest go). */
 const MAX_MESSAGES = 5000
+
+/** Scrolled this close to the top: load earlier messages. */
+const EARLIER_AT_PX = 80
+
+/** A message's key: its line's offset and its place in the line (seq restarts with every answer). */
+export const msgKey = (m: AgentMessage) => `${m.offset}.${m.seq}`
 
 /** A tool call with its result (matched by the tool's id), or any other message. */
 export type Entry = { kind: 'message'; m: AgentMessage } | ToolEntry
@@ -28,16 +35,22 @@ export function entries(msgs: AgentMessage[]): Entry[] {
 
 /**
  * The parsed transcript of an agent session: the last part, then live
- * (the watch SSE). User and assistant bubbles; tool calls collapsed with
- * their result; scrolls along while at the bottom.
+ * (the watch SSE); scrolling up to the top loads earlier parts. User and
+ * assistant bubbles (Markdown); tool calls collapsed with their result;
+ * scrolls along while at the bottom.
  */
 export function ConversationView({ item, onState }: { item: AgentSession; onState?: (s: AgentState) => void }) {
   const [msgs, setMsgs] = useState<AgentMessage[]>([])
   const [truncated, setTruncated] = useState(false)
   const [error, setError] = useState<string>()
   const [loading, setLoading] = useState(true)
+  const [earlier, setEarlier] = useState(false)
   const box = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
+  // the offset of the oldest line shown: load earlier asks before it
+  const start = useRef(0)
+  // the scroll position to keep while earlier messages are put on top
+  const anchor = useRef<{ height: number; top: number }>(undefined)
   const stateCb = useRef(onState)
   stateCb.current = onState
   const hasTranscript = !!item.agent && !!item.id
@@ -50,11 +63,14 @@ export function ConversationView({ item, onState }: { item: AgentSession; onStat
     setMsgs([])
     setLoading(true)
     setError(undefined)
+    setTruncated(false)
+    stick.current = true
     sessionsApi
       .messages(item)
       .then((r) => {
         if (gone) return
         add(r.messages)
+        start.current = r.start ?? 0
         setTruncated(!!r.truncated)
         setLoading(false)
         if (r.state) stateCb.current?.(r.state)
@@ -80,8 +96,29 @@ export function ConversationView({ item, onState }: { item: AgentSession; onStat
 
   useLayoutEffect(() => {
     const el = box.current
-    if (el && stick.current) el.scrollTop = el.scrollHeight
+    if (!el) return
+    const a = anchor.current
+    anchor.current = undefined
+    if (a) el.scrollTop = el.scrollHeight - a.height + a.top // earlier messages went on top: stay put
+    else if (stick.current) el.scrollTop = el.scrollHeight
   }, [msgs])
+
+  const loadEarlier = useCallback(() => {
+    if (earlier || !truncated || msgs.length >= MAX_MESSAGES) return
+    setEarlier(true)
+    sessionsApi
+      .messages(item, { before: start.current })
+      .then((r) => {
+        const el = box.current
+        if (el) anchor.current = { height: el.scrollHeight, top: el.scrollTop }
+        start.current = r.start ?? 0
+        setTruncated(!!r.truncated)
+        if (r.messages?.length) setMsgs((old) => [...r.messages!, ...old])
+        else anchor.current = undefined
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setEarlier(false))
+  }, [earlier, truncated, msgs.length, item])
 
   if (!hasTranscript)
     return (
@@ -97,12 +134,19 @@ export function ConversationView({ item, onState }: { item: AgentSession; onStat
       onScroll={(e) => {
         const el = e.currentTarget
         stick.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 16
+        if (el.scrollTop < EARLIER_AT_PX) loadEarlier()
       }}
     >
-      {truncated && <div className="conv-note muted small">earlier messages are not shown</div>}
+      {truncated && (
+        <button type="button" className="btn small conv-earlier" data-testid="load-earlier" disabled={earlier} onClick={loadEarlier}>
+          {earlier ? 'loading earlier messages…' : 'Load earlier messages'}
+        </button>
+      )}
       {error && <div className="error-box">{error}</div>}
       {loading && <div className="conv-note muted small">loading…</div>}
-      {entries(msgs).map((e) => (e.kind === 'tool' ? <ToolCall key={e.call.seq} call={e.call} result={e.result} /> : <Bubble key={e.m.seq} m={e.m} />))}
+      {entries(msgs).map((e) =>
+        e.kind === 'tool' ? <ToolCall key={msgKey(e.call)} call={e.call} result={e.result} /> : <Bubble key={msgKey(e.m)} m={e.m} />,
+      )}
     </div>
   )
 }
@@ -122,9 +166,11 @@ function Bubble({ m }: { m: AgentMessage }) {
       </div>
     )
   const role = m.role === 'user' ? 'user' : m.role === 'tool' ? 'tool' : 'assistant'
+  // what people and agents write is Markdown; tool output and errors are shown as they are
+  const md = (role === 'user' || role === 'assistant') && m.kind === 'text' && !m.is_error
   return (
     <div className={`bubble ${role} ${m.is_error ? 'is-error' : ''}`} data-testid={`msg-${role}`}>
-      <div className="msg-text">{m.text}</div>
+      {md ? <Markdown text={m.text} /> : <div className="msg-text">{m.text}</div>}
     </div>
   )
 }

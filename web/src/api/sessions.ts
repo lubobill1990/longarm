@@ -37,6 +37,8 @@ export interface AgentSessionList {
   items?: AgentSession[]
   /** workers that did not answer */
   unreachable?: string[]
+  /** the modification time of the newest transcript before this page (absent: none): the next page is until=<older> */
+  older?: string
 }
 
 export interface ToolRef {
@@ -61,6 +63,8 @@ export interface AgentMessage {
 /** GET .../messages and the watch's "messages" events (new messages only). */
 export interface AgentMessages {
   messages?: AgentMessage[]
+  /** where the first message's line starts: load earlier with before=<start> */
+  start?: number
   next_offset: number
   size: number
   /** older content exists before the first message */
@@ -117,6 +121,16 @@ export interface ListQuery {
   agent?: Agent
   /** also ended Longarm sessions and handed-off transcripts */
   all?: boolean
+  /** an older page: transcripts modified until then (the previous page's older) */
+  until?: string
+}
+
+/** Which part of a transcript GET .../messages returns. */
+export interface MessagesQuery {
+  /** from this line start on */
+  offset?: number
+  /** the part before this line start (load earlier) */
+  before?: number
 }
 
 const messagesPath = (s: Pick<AgentSession, 'worker' | 'agent' | 'id'>) =>
@@ -130,12 +144,18 @@ export const sessionsApi = {
     if (q.worker) p.set('worker', q.worker)
     if (q.agent) p.set('agent', q.agent)
     if (q.all) p.set('all', '1')
+    if (q.until) p.set('until', q.until)
     const qs = p.toString()
     return get<AgentSessionList>(`${BASE}/agent-sessions${qs ? `?${qs}` : ''}`)
   },
-  /** the transcript's last part (offset undefined) or from offset */
-  messages: (s: Pick<AgentSession, 'worker' | 'agent' | 'id'>, offset?: number) =>
-    get<AgentMessages>(`${messagesPath(s)}${offset !== undefined ? `?offset=${offset}` : ''}`),
+  /** the transcript's last part, the part from offset on, or the part before before */
+  messages: (s: Pick<AgentSession, 'worker' | 'agent' | 'id'>, q: MessagesQuery = {}) => {
+    const p = new URLSearchParams()
+    if (q.offset !== undefined) p.set('offset', String(q.offset))
+    if (q.before !== undefined) p.set('before', String(q.before))
+    const qs = p.toString()
+    return get<AgentMessages>(`${messagesPath(s)}${qs ? `?${qs}` : ''}`)
+  },
   /** new messages from offset as the transcript grows; state changes */
   watchMessages: (
     s: Pick<AgentSession, 'worker' | 'agent' | 'id'>,

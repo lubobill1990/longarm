@@ -65,11 +65,24 @@ session), 409 (not idle, see send), 502 (worker unreachable), 500.
 
 ### 3.1 List
 
-`GET /v1/agent-sessions[?worker=W][&agent=claude|copilot][&all=1]`
+`GET /v1/agent-sessions[?worker=W][&agent=claude|copilot][&all=1][&since=T][&until=T]`
 
 Workers: `W`, else every approved worker of the user that is online in the
 pool view (`d.mon`), queried in parallel, 15 s per worker. `all=1` also
 returns ended Longarm sessions and handed-off transcripts.
+
+Transcripts are listed by time (RFC 3339 `since` / `until`, modification
+time, both inclusive): the **first page** (no `until`) holds those of the
+last 7 days (`since` default) plus the running sessions - Longarm
+sessions, live agent processes and what they resume - however old their
+transcripts; an **older page** (`until`) holds the transcripts of
+[`since` (default `until` - 7 days), `until`] other than those. The answer's
+`older` is the modification time of the newest transcript before the
+window (absent: none): the next page is `until=<older>`, so a page is never
+empty. Only the transcripts in the window are read (their first and last
+bytes); what was read is cached by machine, path, size and modification
+time, so listing again (the window refreshes every 5 s) reads only what
+changed.
 
 ```json
 {
@@ -95,7 +108,8 @@ returns ended Longarm sessions and handed-off transcripts.
       "where": "longarm", "session": "shell1", "state": "running", "last_activity": "..."
     }
   ],
-  "unreachable": ["cpc-c"]
+  "unreachable": ["cpc-c"],
+  "older": "2026-10-20T08:00:00.123456789Z"
 }
 ```
 
@@ -106,7 +120,10 @@ returns ended Longarm sessions and handed-off transcripts.
   transcript only).
 - `state`: `working` | `waiting` (the agent finished its turn and waits for
   input) | `running` (a Longarm session whose program is not a known agent)
-  | `ended`. Inferred, best effort (section 5).
+  | `ended`. Inferred, best effort (section 4): an agent in a Longarm
+  session whose terminal printed in the last 3 s is `working` (its TUI
+  animates while it works, and is quiet while it waits); otherwise the
+  transcript's end decides.
 - Matching an agent transcript to a Longarm session: the session's argv[0]
   base name is `claude` / `copilot` (`.exe`, `.cmd` stripped) and its `dir`
   equals the transcript's project directory (case-insensitive on Windows),
@@ -118,11 +135,13 @@ returns ended Longarm sessions and handed-off transcripts.
 
 ### 3.2 Conversation
 
-`GET /v1/agent-sessions/{worker}/{agent}/{id}/messages[?offset=N][&tail_bytes=B]`
+`GET /v1/agent-sessions/{worker}/{agent}/{id}/messages[?offset=N][&tail_bytes=B][&before=N]`
 
 Reads the transcript with `Files.Read` from `offset` (default: the last
-`tail_bytes`, default 2 MiB, aligned to the next line start) and returns
-complete lines parsed with `agentlog.Parse`:
+`tail_bytes`, default 2 MiB, before `before` - default the end - aligned to
+the next line start) and returns complete lines parsed with
+`agentlog.Parse`. A window inside one long line (a big tool result) grows
+until a line fits (up to the read limit).
 
 ```json
 {
@@ -131,6 +150,7 @@ complete lines parsed with `agentlog.Parse`:
     {"seq": 1, "offset": 1290, "time": "...", "role": "assistant", "kind": "tool_call", "text": "go test ./internal/relay -run TestUDP", "tool": {"id": "toolu_01", "name": "Bash"}},
     {"seq": 2, "offset": 1580, "time": "...", "role": "tool", "kind": "tool_result", "text": "ok ... 2.1s", "tool": {"id": "toolu_01", "name": "Bash"}, "is_error": false}
   ],
+  "start": 1024,
   "next_offset": 482113,
   "size": 482113,
   "truncated": true,
@@ -138,8 +158,10 @@ complete lines parsed with `agentlog.Parse`:
 }
 ```
 
-`truncated`: older content exists before the first message (the UI offers
-"load earlier": `?offset=<earlier>&limit_bytes=...`, optional in v1).
+`start`: where the first message's line begins; `truncated`: older content
+exists before it - scrolling to the top loads it with `?before=<start>`.
+`seq` numbers the messages of one answer; a message's identity is
+(`offset`, `seq`).
 
 `GET /v1/agent-sessions/{worker}/{agent}/{id}/messages/watch?offset=N` -
 SSE (same framing as `/v1/pool/watch`): `event: messages`, data = the
