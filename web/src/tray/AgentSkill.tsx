@@ -33,7 +33,7 @@ export function AgentSkill() {
   const act = (fn: () => Promise<AgentSkills>) => run(fn, (r) => r.message ?? 'done').then((r) => (r ? st.setData(r) : st.reload()))
   const s = st.data
   return (
-    <Section title="Agent skill" testId="agent-skill">
+    <Section card title="Agent skill" testId="agent-skill">
       <div className="field-help">
         Teaches Claude Code, Copilot CLI and other agents to use Longarm. Bundled with Longarm {s?.bundled_version ?? '…'}; installed copies are
         updated with Longarm unless you changed them.
