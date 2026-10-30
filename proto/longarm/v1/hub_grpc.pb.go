@@ -1588,6 +1588,7 @@ const (
 	HubAdmin_RemoveUser_FullMethodName     = "/longarm.v1.HubAdmin/RemoveUser"
 	HubAdmin_SetTeam_FullMethodName        = "/longarm.v1.HubAdmin/SetTeam"
 	HubAdmin_ListTeams_FullMethodName      = "/longarm.v1.HubAdmin/ListTeams"
+	HubAdmin_FleetSummary_FullMethodName   = "/longarm.v1.HubAdmin/FleetSummary"
 )
 
 // HubAdminClient is the client API for HubAdmin service.
@@ -1643,6 +1644,11 @@ type HubAdminClient interface {
 	RemoveUser(ctx context.Context, in *RemoveUserRequest, opts ...grpc.CallOption) (*RemoveUserResponse, error)
 	SetTeam(ctx context.Context, in *SetTeamRequest, opts ...grpc.CallOption) (*ListTeamsResponse, error)
 	ListTeams(ctx context.Context, in *ListTeamsRequest, opts ...grpc.CallOption) (*ListTeamsResponse, error)
+	// FleetSummary is the admins' only fleet-wide view of machines: per user
+	// counts by role and online state, anonymous rows (role, state, version,
+	// OS, last seen) and a version histogram - never names, IDs, host names,
+	// labels, metrics, processes, sessions or jobs. Audited.
+	FleetSummary(ctx context.Context, in *FleetSummaryRequest, opts ...grpc.CallOption) (*FleetSummaryResponse, error)
 }
 
 type hubAdminClient struct {
@@ -1925,6 +1931,16 @@ func (c *hubAdminClient) ListTeams(ctx context.Context, in *ListTeamsRequest, op
 	return out, nil
 }
 
+func (c *hubAdminClient) FleetSummary(ctx context.Context, in *FleetSummaryRequest, opts ...grpc.CallOption) (*FleetSummaryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FleetSummaryResponse)
+	err := c.cc.Invoke(ctx, HubAdmin_FleetSummary_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HubAdminServer is the server API for HubAdmin service.
 // All implementations must embed UnimplementedHubAdminServer
 // for forward compatibility.
@@ -1978,6 +1994,11 @@ type HubAdminServer interface {
 	RemoveUser(context.Context, *RemoveUserRequest) (*RemoveUserResponse, error)
 	SetTeam(context.Context, *SetTeamRequest) (*ListTeamsResponse, error)
 	ListTeams(context.Context, *ListTeamsRequest) (*ListTeamsResponse, error)
+	// FleetSummary is the admins' only fleet-wide view of machines: per user
+	// counts by role and online state, anonymous rows (role, state, version,
+	// OS, last seen) and a version histogram - never names, IDs, host names,
+	// labels, metrics, processes, sessions or jobs. Audited.
+	FleetSummary(context.Context, *FleetSummaryRequest) (*FleetSummaryResponse, error)
 	mustEmbedUnimplementedHubAdminServer()
 }
 
@@ -2065,6 +2086,9 @@ func (UnimplementedHubAdminServer) SetTeam(context.Context, *SetTeamRequest) (*L
 }
 func (UnimplementedHubAdminServer) ListTeams(context.Context, *ListTeamsRequest) (*ListTeamsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListTeams not implemented")
+}
+func (UnimplementedHubAdminServer) FleetSummary(context.Context, *FleetSummaryRequest) (*FleetSummaryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FleetSummary not implemented")
 }
 func (UnimplementedHubAdminServer) mustEmbedUnimplementedHubAdminServer() {}
 func (UnimplementedHubAdminServer) testEmbeddedByValue()                  {}
@@ -2537,6 +2561,24 @@ func _HubAdmin_ListTeams_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HubAdmin_FleetSummary_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FleetSummaryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HubAdminServer).FleetSummary(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HubAdmin_FleetSummary_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HubAdminServer).FleetSummary(ctx, req.(*FleetSummaryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // HubAdmin_ServiceDesc is the grpc.ServiceDesc for HubAdmin service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2639,6 +2681,10 @@ var HubAdmin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListTeams",
 			Handler:    _HubAdmin_ListTeams_Handler,
+		},
+		{
+			MethodName: "FleetSummary",
+			Handler:    _HubAdmin_FleetSummary_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -1,0 +1,171 @@
+# The macOS release path of release.yml's build-macos job
+# (.github/scripts/macos-sign.sh, packaging/macos) on a macOS runner, without
+# Apple's certificates (docs/ci-cd.md 2.8):
+#   - no secrets: everything stays unsigned, the pkgs are built, a warning
+#   - self-signed stand-ins for the Developer ID Application / Installer
+#     certificates: the binaries signed (hardened runtime, timestamp,
+#     identifiers), the archives repacked with them and checksums.txt
+#     updated, the pkgs signed; the arm64 pkg installed for real; a re-run is
+#     a no-op; a wrong APPLE_TEAM_ID stops the job
+# Notarization needs Apple's real certificates and API key: only a release runs it.
+name: macos-pkg
+
+on:
+  pull_request:
+    paths:
+      - packaging/macos/**
+      - .github/scripts/macos-sign.sh
+      - .github/scripts/release-files.sh
+      - .github/workflows/macos-pkg.yml
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-pkg-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pkg:
+    name: macOS pkg + signing (self-signed)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      V: 0.0.0-pkgtest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/go-setup
+      - name: a release-unix artifact (longarm, longarmd for darwin amd64 + arm64)
+        run: |
+          d=$RUNNER_TEMP/rel
+          mkdir -p "$d/hub" "$d/extra" "$d/checksums"
+          for a in amd64 arm64; do
+            for t in longarm longarmd; do
+              GOOS=darwin GOARCH=$a CGO_ENABLED=0 go build -trimpath \
+                -ldflags "-s -w -X github.com/lubobill1990/longarm/internal/version.Version=$V" \
+                -o "$d/hub/$t-darwin-$a" "./cmd/$t"
+            done
+            x=$(mktemp -d)
+            cp LICENSE README.md "$x/"
+            cp "$d/hub/longarm-darwin-$a" "$x/longarm"
+            cp "$d/hub/longarmd-darwin-$a" "$x/longarmd"
+            chmod 0755 "$x/longarm" "$x/longarmd"
+            tar -czf "$d/hub/longarm-darwin-$a.tar.gz" -C "$x" LICENSE README.md longarm longarmd
+            echo "$(shasum -a 256 "$d/hub/longarm-darwin-$a.tar.gz" | cut -d' ' -f1)  longarm_${V}_darwin_$a.tar.gz" >>"$d/checksums/unix.txt"
+          done
+          echo "0000000000000000000000000000000000000000000000000000000000000000  longarm_${V}_linux_amd64.tar.gz" >>"$d/checksums/unix.txt"
+          echo x >"$d/extra/x"
+          for c in nosign sign team; do cp -R "$d" "$RUNNER_TEMP/rel-$c"; done
+      - name: no secrets - unsigned, pkgs built, a warning
+        run: |
+          d=$RUNNER_TEMP/rel-nosign o=$RUNNER_TEMP/rel
+          .github/scripts/macos-sign.sh "$d" "$V" | tee "$RUNNER_TEMP/nosign.log"
+          grep -q 'NOT signed or notarized' "$RUNNER_TEMP/nosign.log"
+          for a in amd64 arm64; do
+            for f in longarm-darwin-$a longarmd-darwin-$a longarm-darwin-$a.tar.gz; do
+              cmp "$o/hub/$f" "$d/hub/$f"
+            done
+            p=$d/hub/longarm-darwin-$a.pkg
+            if pkgutil --check-signature "$p"; then echo "::error::$p is signed"; exit 1; fi
+            x=$(mktemp -d)/x
+            pkgutil --expand "$p" "$x"
+            lsbom -s "$x/longarm-component.pkg/Bom" | tee "$RUNNER_TEMP/bom"
+            grep -qx './usr/local/bin/longarmd' "$RUNNER_TEMP/bom"
+            grep -q "hostArchitectures=\"$([ $a = amd64 ] && echo x86_64 || echo arm64)\"" "$x/Distribution"
+          done
+          cmp "$o/checksums/unix.txt" "$d/checksums/unix.txt"
+          test -f "$d/checksums/macos.done"
+      - name: self-signed stand-ins for the Developer ID certificates
+        run: |
+          c=$RUNNER_TEMP/certs
+          mkdir -p "$c"
+          # LibreSSL (/usr/bin/openssl) writes the .p12 format `security import` reads
+          for kind in app installer; do
+            # like Apple's: EKU code signing / Apple package signing, plus the Developer ID marker extension
+            if [ $kind = app ]; then eku=codeSigning; mark=1.2.840.113635.100.6.1.13; cn='Developer ID Application: Longarm Test (TESTTEAM01)'
+            else eku=1.2.840.113635.100.4.13; mark=1.2.840.113635.100.6.1.14; cn='Developer ID Installer: Longarm Test (TESTTEAM01)'; fi
+            printf '[req]\ndistinguished_name=dn\nprompt=no\n[dn]\nCN=%s\nOU=TESTTEAM01\n[ext]\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,%s\n%s=critical,DER:0500\n' "$cn" "$eku" "$mark" >"$c/$kind.cnf"
+            /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 2 -config "$c/$kind.cnf" -extensions ext \
+              -keyout "$c/$kind.key" -out "$c/$kind.crt" 2>/dev/null
+            pw=$(openssl rand -hex 12)
+            /usr/bin/openssl pkcs12 -export -inkey "$c/$kind.key" -in "$c/$kind.crt" -passout "pass:$pw" -out "$c/$kind.p12"
+            base64 -i "$c/$kind.p12" -o "$c/$kind.p12.b64"
+            printf '%s' "$pw" >"$c/$kind.pw"
+          done
+          # productbuild only signs with a trusted identity (Apple's Developer ID
+          # certificates are; the stand-in is made a trusted root on this runner)
+          sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$c/installer.crt"
+      - name: self-signed - sign, repack, pkg
+        run: |
+          c=$RUNNER_TEMP/certs d=$RUNNER_TEMP/rel-sign o=$RUNNER_TEMP/rel
+          APPLE_DEVELOPER_ID_APP_P12=$(cat "$c/app.p12.b64") \
+          APPLE_DEVELOPER_ID_APP_P12_PASSWORD=$(cat "$c/app.pw") \
+          APPLE_DEVELOPER_ID_INSTALLER_P12=$(cat "$c/installer.p12.b64") \
+          APPLE_DEVELOPER_ID_INSTALLER_P12_PASSWORD=$(cat "$c/installer.pw") \
+            .github/scripts/macos-sign.sh "$d" "$V"
+          for a in amd64 arm64; do
+            for t in longarm longarmd; do
+              f=$d/hub/$t-darwin-$a
+              codesign --verify --strict --verbose=2 "$f"
+              codesign -dv --verbose=4 "$f" 2>&1 | tee "$RUNNER_TEMP/cs"
+              grep -q "^Identifier=com.longarm.$t\$" "$RUNNER_TEMP/cs"
+              grep -q 'flags=.*(runtime)' "$RUNNER_TEMP/cs"
+              grep -q '^Authority=Developer ID Application: Longarm Test (TESTTEAM01)$' "$RUNNER_TEMP/cs"
+              if cmp -s "$o/hub/$t-darwin-$a" "$f"; then echo "::error::$f unchanged"; exit 1; fi
+            done
+            # the archive holds the signed binaries; checksums.txt has its new sum
+            tgz=$d/hub/longarm-darwin-$a.tar.gz
+            x=$(mktemp -d)
+            tar -xzf "$tgz" -C "$x"
+            [ "$(tar -tzf "$tgz" | tr '\n' ' ')" = "LICENSE README.md longarm longarmd " ]
+            cmp "$x/longarm" "$d/hub/longarm-darwin-$a"
+            cmp "$x/longarmd" "$d/hub/longarmd-darwin-$a"
+            test -x "$x/longarmd"
+            grep -qx "$(shasum -a 256 "$tgz" | cut -d' ' -f1)  longarm_${V}_darwin_$a.tar.gz" "$d/checksums/unix.txt"
+            pkgutil --check-signature "$d/hub/longarm-darwin-$a.pkg" | tee "$RUNNER_TEMP/ps" || true
+            grep -q 'Developer ID Installer: Longarm Test (TESTTEAM01)' "$RUNNER_TEMP/ps"
+          done
+          grep -q '  longarm_0.0.0-pkgtest_linux_amd64.tar.gz$' "$d/checksums/unix.txt"
+          # what self-update installs: the signed thin binary runs (arm64 kills invalid signatures)
+          cp "$d/hub/longarmd-darwin-arm64" "$RUNNER_TEMP/longarmd"
+          "$RUNNER_TEMP/longarmd" version
+          # a second run (re-run of the job) changes nothing
+          cp -R "$d" "$RUNNER_TEMP/rel-sign2"
+          APPLE_DEVELOPER_ID_APP_P12=$(cat "$c/app.p12.b64") APPLE_DEVELOPER_ID_APP_P12_PASSWORD=$(cat "$c/app.pw") \
+            .github/scripts/macos-sign.sh "$RUNNER_TEMP/rel-sign2" "$V"
+          diff -r "$d" "$RUNNER_TEMP/rel-sign2"
+      - name: install the signed arm64 pkg
+        run: |
+          d=$RUNNER_TEMP/rel-sign
+          before=$(stat -f '%Su:%Sg %Lp' /usr/local/bin)
+          sudo installer -pkg "$d/hub/longarm-darwin-arm64.pkg" -target / -allowUntrusted -verboseR
+          pkgutil --pkg-info com.longarm.pkg
+          /usr/local/bin/longarm version
+          /usr/local/bin/longarmd version
+          codesign --verify --strict --verbose=2 /usr/local/bin/longarmd
+          cmp /usr/local/bin/longarmd "$d/hub/longarmd-darwin-arm64"
+          ls -ld /usr/local/bin /usr/local/bin/longarm /usr/local/bin/longarmd /usr/local/share/longarm /usr/local/share/longarm/*
+          # an existing /usr/local/bin keeps its owner and mode
+          [ "$(stat -f '%Su:%Sg %Lp' /usr/local/bin)" = "$before" ]
+          for f in /usr/local/bin/longarm /usr/local/bin/longarmd /usr/local/share/longarm; do
+            [ "$(stat -f '%Su:%Sg %Lp' "$f")" = "root:wheel 755" ] || { echo "::error::$f: $(stat -f '%Su:%Sg %Lp' "$f")"; exit 1; }
+          done
+          [ "$(stat -f '%Lp' /usr/local/share/longarm/com.longarm.longarmd.plist.example)" = 644 ]
+      - name: a wrong APPLE_TEAM_ID stops the signing
+        run: |
+          c=$RUNNER_TEMP/certs d=$RUNNER_TEMP/rel-team
+          if APPLE_TEAM_ID=ABCDEFGHIJ APPLE_DEVELOPER_ID_APP_P12=$(cat "$c/app.p12.b64") \
+            APPLE_DEVELOPER_ID_APP_P12_PASSWORD=$(cat "$c/app.pw") \
+            .github/scripts/macos-sign.sh "$d" "$V" 2>&1 | tee "$RUNNER_TEMP/team.log"; then
+            echo "::error::signed with a certificate of another team"
+            exit 1
+          fi
+          grep -q 'is not a certificate of team ABCDEFGHIJ' "$RUNNER_TEMP/team.log"
+          [ ! -e "$d/hub/longarm-darwin-arm64.pkg" ]

@@ -237,7 +237,7 @@ func (v jobsView) note(more bool) string {
 		parts = append(parts, fmt.Sprintf("the newest %d jobs; --limit 0 for all", v.show))
 	}
 	if v.mineByDefault {
-		parts = append(parts, "only yours; --all for everybody's")
+		parts = append(parts, "only yours; --all for every job you may see")
 	}
 	if len(parts) == 0 {
 		return ""

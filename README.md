@@ -150,12 +150,37 @@ worker as a Windows service. Silently: `msiexec /i longarm-windows-amd64.msi
 "Default" hub is built into the release (repository variable
 `LONGARM_DEFAULT_HUB`, [docs/ci-cd.md](docs/ci-cd.md#24-secrets-and-variables)).
 
+**SmartScreen.** A release whose MSI and exes are not Authenticode-signed
+(releases are signed with Azure Trusted Signing only once a validated
+certificate profile is set up, [docs/ci-cd.md](docs/ci-cd.md#27-authenticode-azure-trusted-signing-windows))
+makes Windows show "Windows protected your PC" / "Unknown publisher": choose
+**More info → Run anyway**, after checking the file against the release's
+`SHA256SUMS` (`Get-FileHash longarm-windows-amd64.msi`). A signed release
+shows the publisher; SmartScreen may still warn for a new release until it
+has built up download reputation. Updates (tray, Longarm Update service)
+always verify the release key's minisign signature, signed or not.
+
 Or one line - the hub serves the scripts with its address and CA pinned:
 
 ```sh
 curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --role both          # Linux / macOS
 $env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex   # Windows (elevated: the MSI)
 msiexec /i longarm-windows-amd64.msi /qn MODE=custom ROLES=both HUB=hub.example.com LOGIN=1   # MSI, another hub
+```
+
+Linux from the signed package repositories (updates with `apt upgrade` /
+`dnf upgrade`; key fingerprint, the one-line apt format, key rotation:
+[docs/linux-repos.md](docs/linux-repos.md)):
+
+```sh
+# Debian / Ubuntu
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://lubobill1990.github.io/longarm/longarm.gpg | sudo tee /etc/apt/keyrings/longarm.gpg >/dev/null
+curl -fsSL https://lubobill1990.github.io/longarm/longarm.sources | sudo tee /etc/apt/sources.list.d/longarm.sources >/dev/null
+sudo apt-get update && sudo apt-get install longarm
+# Fedora / RHEL / Rocky / AlmaLinux (gpgcheck + repo_gpgcheck)
+sudo curl -fsSL -o /etc/yum.repos.d/longarm.repo https://lubobill1990.github.io/longarm/longarm.repo
+sudo dnf install longarm
 ```
 
 Already installed? `longarmd login hub.example.com --role both` - the hub's
@@ -277,7 +302,7 @@ the limits):
 longarm admin user add alice --team web --max-jobs 8 --max-mem-gb-per-worker 64 --panel
 longarm admin user add bob   --team web
 #   -> a join code per user; on their laptops: longarm join hub.example.com:7443 <code> ...
-longarm admin user code alice --device alice-desktop   # another device of alice
+longarm admin user code alice --device alice-desktop   # first device of alice (added with --no-code)
 longarm admin team ls ; longarm admin user ls          # devices, usage, quotas
 
 # workers that several people use: per-user OS isolation (LocalSystem / root)

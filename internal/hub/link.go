@@ -928,8 +928,8 @@ func (h *Hub) linkDecide(w http.ResponseWriter, r *http.Request) {
 	p.mu.Unlock()
 	h.auditExpired(expired)
 	who := "web/" + a.login
-	if a.id.upn != "" {
-		who = "entra/" + a.id.upn
+	if a.id.oid != "" { // an identity provider's sign-in: "<provider>/<e-mail or subject>"
+		who = a.id.who()
 	}
 	fields := l.fields()
 	fields["user"] = a.user

@@ -1,10 +1,12 @@
 package e2e
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +23,13 @@ func TestOwnedWorkers(t *testing.T) {
 	t.Parallel()
 	h := newHubEnv(t, "")
 	alice, root := h.client, h.admin
-	h.mustLongarm(root, "admin", "user", "add", "alice", "--no-code")
+	// alice's panel login comes with her user, before she has machines (an
+	// admin can't hand itself a login of a user who has them, below)
+	pa := h.longarm(root, "admin", "user", "add", "alice", "--no-code", "--panel")
+	alicePanel := regexp.MustCompile(`password (\S+)\nTOTP secret (\S+)`).FindStringSubmatch(pa.stderr)
+	if pa.code != 0 || alicePanel == nil {
+		t.Fatalf("user add alice --panel: %+v", pa)
+	}
 	h.mustLongarm(root, "admin", "user", "add", "bob", "--no-code")
 	bob := filepath.Join(h.root, "cfg-bob")
 	h.mustLongarm(alice, "admin", "issue", "--role", "client", "--name", "bob-laptop", "--user", "bob",
@@ -90,19 +98,19 @@ func TestOwnedWorkers(t *testing.T) {
 	h.mustLongarm(alice, "wait", "aw", id)
 
 	// The hub session is no way around it: an admin can't read alice's job
-	// through the hub (remote_jobs is "control" there) - alice can, in the panel.
-	if r := h.longarm(root, "admin", "logs", id); r.code == 0 || !strings.Contains(r.stderr, "PermissionDenied") ||
-		!strings.Contains(r.stderr, "own worker") {
+	// through the hub - to the admin it doesn't even exist - alice can, in the panel.
+	if r := h.longarm(root, "admin", "logs", id); r.code == 0 || !strings.Contains(r.stderr, "NotFound") {
 		t.Fatalf("admin logs of alice's job through the hub: %+v", r)
 	}
-	if r := h.longarm(root, "admin", "run", "aw", "--", bins.helper, "print", "1", "0", "0"); r.code == 0 || !strings.Contains(r.stderr, "PermissionDenied") {
+	if r := h.longarm(root, "admin", "run", "aw", "--", bins.helper, "print", "1", "0", "0"); r.code == 0 || !strings.Contains(r.stderr, "NotFound") {
 		t.Fatalf("admin submits to alice's worker through the hub: %+v", r)
 	}
-	pr := h.longarm(root, "admin", "user", "set", "alice", "--panel")
-	m := regexp.MustCompile(`password (\S+)\nTOTP secret (\S+)`).FindStringSubmatch(pr.stderr)
-	if pr.code != 0 || m == nil {
-		t.Fatalf("panel login for alice: %+v", pr)
+	// a new panel login for alice now (she has machines) would be the
+	// admin's way in as alice: refused
+	if pr := h.longarm(root, "admin", "user", "set", "alice", "--panel"); pr.code == 0 || !strings.Contains(pr.stderr, "FailedPrecondition") {
+		t.Fatalf("panel login for alice with machines: %+v", pr)
 	}
+	m := alicePanel
 	p := (&uiStack{hubEnv: h, user: "alice", pass: m[1], secret: m[2]}).login(t)
 	waitFor(t, "alice's job in the hub index", 20*time.Second, func() bool {
 		code, _ := p.do("GET", "/api/jobs/"+id, "")
@@ -134,11 +142,12 @@ func TestOwnedWorkers(t *testing.T) {
 	if r := h.longarm(alice, "worker", "label", "wf", "pool=x"); r.code == 0 || !strings.Contains(r.stderr, "PermissionDenied") {
 		t.Fatalf("alice labels the fleet worker: %+v", r)
 	}
-	if out := h.mustLongarm(root, "worker", "label", "aw", "zone=a"); !strings.Contains(out, "zone=a") {
-		t.Fatalf("admin labels aw: %s", out)
-	}
-	if out := h.mustLongarm(root, "admin", "audit", "--node", "hub", "--limit", "200"); !strings.Contains(out, "workers/label") {
-		t.Fatalf("no workers/label in the hub's audit:\n%s", out)
+	// an admin can't label it either: by name it is "not found", word for
+	// word like a name nobody has
+	for _, name := range []string{"aw", "no-such-worker"} {
+		if r := h.longarm(root, "worker", "label", name, "zone=a"); r.code == 0 || !strings.Contains(r.stderr, `no worker "`+name+`"`) {
+			t.Fatalf("admin labels %s: %+v", name, r)
+		}
 	}
 	bobLocked := func(when string) {
 		t.Helper()
@@ -163,6 +172,7 @@ func TestOwnedWorkers(t *testing.T) {
 	if r := exec(root, direct); r.code == 0 || !strings.Contains(r.stderr, "worker owner/shares") {
 		t.Fatalf("admin exec on alice's worker: %+v", r)
 	}
+	adminSeesUserView(t, h, root, bob, print1)
 
 	// sharing needs an admin's permission
 	if r := h.longarm(alice, "worker", "share", "aw", "--user", "bob"); r.code == 0 || !strings.Contains(r.stderr, "can-share") {
@@ -230,7 +240,7 @@ func TestOwnedWorkers(t *testing.T) {
 	}
 
 	waitFor(t, "hub audit of the sharing", 20*time.Second, func() bool {
-		out := h.longarm(root, "admin", "audit", "--node", "hub", "--limit", "100", "--json").stdout
+		out := h.hubCmd(t, "audit", "--node", "hub", "--limit", "100", "--json") // alice's actions: the operators' trail
 		return strings.Contains(out, "workers/share") && strings.Contains(out, "workers/code")
 	})
 	h.mustLongarm(alice, "worker", "remove", "aw")
@@ -245,4 +255,92 @@ func lineStarts(out, prefix string) bool {
 		}
 	}
 	return false
+}
+
+// adminSeesUserView: with multi-tenancy an admin certificate gets exactly a
+// regular user's view - ls, ls -o wide, worker ls and jobs show bob's
+// (another regular user's) set of workers, never alice's private aw;
+// placement never puts the admin's jobs on aw (hub and client-side picks);
+// the fleet-wide view is the anonymous summary.
+func adminSeesUserView(t *testing.T, h *hubEnv, root, bob string, print1 []string) {
+	t.Helper()
+	names := func(cfg string) []string {
+		var m map[string]json.RawMessage
+		out := h.mustLongarm(cfg, "ls", "--json")
+		if err := json.Unmarshal([]byte(out), &m); err != nil {
+			t.Fatalf("ls --json: %v\n%s", err, out)
+		}
+		var ns []string
+		for n := range m {
+			if n != "w1" { // the e2e config's workers.toml entry (root's, not bob's)
+				ns = append(ns, n)
+			}
+		}
+		slices.Sort(ns)
+		return ns
+	}
+	if r, b := names(root), names(bob); !slices.Equal(r, b) || slices.Contains(r, "aw") {
+		t.Fatalf("admin's ls --json %v, bob's %v", r, b)
+	}
+	for _, args := range [][]string{{"ls", "-o", "wide"}, {"worker", "ls"}, {"admin", "nodes", "--all"}} {
+		if out := h.mustLongarm(root, args...); lineStarts(out, "aw ") || strings.Contains(out, "aw-") {
+			t.Fatalf("admin's %v shows alice's worker:\n%s", args, out)
+		}
+	}
+	if out := h.mustLongarm(root, "jobs", "--all", "--json"); strings.Contains(out, `"aw"`) {
+		t.Fatalf("admin's jobs --all show jobs on alice's worker:\n%s", out)
+	}
+	// placement: hub-side (run) and client-side (exec auto)
+	for i := 0; i < 3; i++ {
+		if r := h.longarm(root, append([]string{"run", "--on", "auto", "--no-queue"}, print1...)...); r.code != 0 || !strings.Contains(r.stderr, "placed on wf") {
+			t.Fatalf("admin's run --on auto: %+v", r)
+		}
+		if r := h.longarm(root, append([]string{"exec", "auto"}, print1...)...); r.code != 0 || !strings.Contains(r.stdout, "line 1") ||
+			!strings.Contains(r.stderr, "running on wf") {
+			t.Fatalf("admin's exec auto: %+v", r)
+		}
+	}
+	waitFor(t, "the admin's jobs in the hub index", 20*time.Second, func() bool {
+		out := h.longarm(root, "jobs", "--hub-only", "--json").stdout
+		return strings.Contains(out, `"wf"`)
+	})
+	if out := h.mustLongarm(root, "jobs", "--hub-only", "--json"); strings.Contains(out, `"aw"`) {
+		t.Fatalf("an admin's job landed on alice's worker:\n%s", out)
+	}
+	// the fleet: counts per user, no names
+	out := h.mustLongarm(root, "admin", "summary", "--rows", "--json")
+	var sum struct {
+		Users []struct {
+			User   string         `json:"user"`
+			Counts map[string]any `json:"counts"`
+		} `json:"users"`
+	}
+	if err := json.Unmarshal([]byte(out), &sum); err != nil {
+		t.Fatalf("summary json: %v\n%s", err, out)
+	}
+	alice := false
+	for _, u := range sum.Users {
+		alice = alice || (u.User == "alice" && fmt.Sprint(u.Counts["workers"]) == "1")
+	}
+	if !alice || strings.Contains(out, `"aw"`) || strings.Contains(out, `"wf"`) || strings.Contains(out, "kind") ||
+		strings.Contains(out, "machines") || strings.Contains(out, "last_seen") || !strings.Contains(out, `"versions"`) {
+		t.Fatalf("admin summary:\n%s", out)
+	}
+	if r := h.longarm(bob, "admin", "summary"); r.code == 0 || !strings.Contains(r.stderr, "PermissionDenied") {
+		t.Fatalf("bob's admin summary: %+v", r)
+	}
+	// audit: alice's calls on her worker reach the admin only as fleet-wide
+	// counts by method; asked for by name, her worker gives nothing at all
+	var ar result
+	waitFor(t, "alice's records, counted for the admin", 30*time.Second, func() bool {
+		ar = h.longarm(root, "admin", "audit", "--json", "--limit", "500")
+		return ar.code == 0 && strings.Contains(ar.stderr, "not shown")
+	})
+	if strings.Contains(ar.stdout, "client/alice") {
+		t.Fatalf("admin's audit shows alice's records:\n%s", ar.stdout)
+	}
+	ar = h.longarm(root, "admin", "audit", "--node", "aw", "--json", "--limit", "500")
+	if ar.code != 0 || strings.TrimSpace(ar.stdout) != "" || strings.Contains(ar.stderr, "not shown") {
+		t.Fatalf("admin's audit of alice's worker by name: %+v", ar)
+	}
 }

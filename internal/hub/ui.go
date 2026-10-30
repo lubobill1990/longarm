@@ -275,10 +275,8 @@ func (h *Hub) SubmitJobAs(ctx context.Context, by, owner string, admin bool, req
 	spec := &pb.JobSpec{Id: id, Name: req.Name, Argv: req.Argv, Cwd: req.Cwd, Env: req.Env, Labels: labels}
 	if req.Worker != "" && req.Worker != "auto" { // placed jobs passed the quota already
 		if err := h.relayCheck(by, owner, worker, "submit jobs", id); err != nil {
-			if !admin { // others' own workers don't exist for users (admins see them)
-				return nil, status.Errorf(codes.NotFound, "no worker %q", worker)
-			}
-			return nil, err
+			// others' own workers don't exist for anybody else, admins included
+			return nil, status.Errorf(codes.NotFound, "no worker %q", worker)
 		}
 		h.mu.Lock()
 		if h.nodes[worker] == nil {
@@ -375,19 +373,34 @@ func (h *Hub) Links() *pb.LinksResponse {
 // ---------------------------------------------------------------- gRPC
 
 func (s *hubAdminServer) KillJob(ctx context.Context, req *pb.FleetJobRequest) (*pb.FleetJob, error) {
-	return s.h.KillJob(ctx, by(ctx), callerFrom(ctx).id.Owner(), req.Id, req.Worker)
+	// visibility first: a job the admin's user may not read is "not known"
+	// - not resolved to its worker, not named in an error or the audit
+	v := s.h.viewer(callerFrom(ctx))
+	if _, err := s.h.GetJobFor(v, req.Id, req.Worker); err != nil {
+		return nil, status.Errorf(codes.NotFound, "job %s not known to the hub", req.Id)
+	}
+	fj, err := s.h.KillJob(ctx, by(ctx), callerFrom(ctx).user, req.Id, req.Worker)
+	if err != nil {
+		return nil, err
+	}
+	return s.h.projector(v).fleetJob(fj), nil
 }
 
 func (s *hubAdminServer) JobLogs(req *pb.HubLogsRequest, st pb.HubAdmin_JobLogsServer) error {
-	return s.h.JobLogs(st.Context(), by(st.Context()), callerFrom(st.Context()).id.Owner(), req, st.Send)
+	// a job's output is read as its reader: admins included (their own and
+	// team-shared jobs; others' jobs are "not known", as on GetJob)
+	if _, err := s.h.GetJobFor(s.h.viewer(callerFrom(st.Context())), req.Id, req.Worker); err != nil {
+		return err
+	}
+	return s.h.JobLogs(st.Context(), by(st.Context()), callerFrom(st.Context()).user, req, st.Send)
 }
 
 func (s *hubAdminServer) SubmitJob(ctx context.Context, req *pb.HubSubmitRequest) (*pb.FleetJob, error) {
-	return s.h.SubmitJobAs(ctx, by(ctx), callerFrom(ctx).id.Owner(), true, req)
+	return s.h.SubmitJobAs(ctx, by(ctx), callerFrom(ctx).user, true, req)
 }
 
 func (s *hubAdminServer) ToolchainApply(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
-	return s.h.ToolchainApply(ctx, by(ctx), req.Name)
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "worker", req.Name, func() (*pb.NodeInfo, error) { return s.h.ToolchainApply(ctx, by(ctx), req.Name) })
 }
 
 func (s *fleetServer) ReportLinks(ctx context.Context, req *pb.LinkReport) (*pb.ReportLinksResponse, error) {
@@ -395,8 +408,8 @@ func (s *fleetServer) ReportLinks(ctx context.Context, req *pb.LinkReport) (*pb.
 	return &pb.ReportLinksResponse{}, nil
 }
 
-func (s *fleetServer) Links(context.Context, *pb.LinksRequest) (*pb.LinksResponse, error) {
-	return s.h.Links(), nil
+func (s *fleetServer) Links(ctx context.Context, _ *pb.LinksRequest) (*pb.LinksResponse, error) {
+	return s.h.LinksFor(s.h.viewer(callerFrom(ctx))), nil
 }
 
 func (s *fleetServer) History(ctx context.Context, req *pb.HistoryRequest) (*pb.HistoryResponse, error) {

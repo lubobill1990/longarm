@@ -27,6 +27,15 @@
   Windows 365 portal; another Windows worker with Remote Desktop on is
   reached through a forward to its Remote Desktop port and mstsc.
   docs/usage.md "Remote desktop: `longarm desktop`".
+- **Signed apt and dnf/yum repositories** on GitHub Pages
+  (`https://lubobill1990.github.io/longarm/`): `apt install longarm` /
+  `dnf install longarm`, updates through the package manager. The rpm is
+  GPG-signed (nfpm), the apt Release file (InRelease, Release.gpg) and the
+  yum repomd.xml too, with the key "Longarm Release Signing" (secret
+  `LONGARM_GPG_PRIVATE_KEY`; public key packaging/linux/repo/longarm.asc).
+  Rebuilt on every stable release (the newest 3 versions), installed from
+  in Debian, Fedora and AlmaLinux containers before it is deployed.
+  docs/linux-repos.md.
 - Sign-in with **Google, Apple and personal Microsoft accounts**
   (`[auth.google]`, `[auth.apple]`, `[auth.microsoft]` in hub.toml), next to
   Entra work and school accounts: the panel shows one button per provider,
@@ -36,6 +45,80 @@
   account links are that user's together. `/auth/info` lists the providers;
   the tray and the CLIs no longer say "Sign in with Microsoft" only.
   docs/usage.md "Sign in with a Google, Apple or personal Microsoft account".
+
+- **Signed and notarized macOS releases**: the release builds
+  `longarm-darwin-arm64.pkg` and `longarm-darwin-amd64.pkg` (longarm and
+  longarmd in `/usr/local/bin`), signed with a Developer ID Installer
+  certificate, notarized and stapled, so MDM-managed Macs install them; the
+  darwin binaries (also the self-update files and those in the archives) are
+  signed with a Developer ID Application certificate and the hardened
+  runtime. A new job, build-macos, does it before the checksums and minisign
+  signatures are made; without the `APPLE_*` secrets the files stay unsigned
+  with a warning. The pkg's postinstall also reads a configuration profile
+  (`com.longarm`), validates its values and restarts an installed
+  LaunchDaemon on upgrades. docs/ci-cd.md 2.8 (credentials), docs/usage.md
+  "macOS installer (.pkg) and MDM".
+
+### Security
+
+- Hub admins no longer see other users' machines. With multi-tenancy an
+  admin certificate or an administrator's panel login sees machines and jobs
+  exactly as its user does: `longarm ls` / `ls -o wide`, `worker ls`,
+  `jobs`, `sessions`, the MCP tools, the tray's Workers tab, `longarm admin
+  nodes`, the hub's event stream and the panel's "Nodes" and "Jobs" pages
+  show the admin's own workers and devices, the workers shared with it and
+  the fleet workers - before, an admin saw every user's private workers with
+  process lists, agent sessions and jobs. The rule is the hub's, so it holds
+  for every client version; there is no flag or toggle that widens it. The
+  only fleet-wide view is the new anonymous summary (`longarm admin summary
+  [--rows]`, the panel's "Fleet" page, `GET /api/admin/summary`,
+  `HubAdmin.FleetSummary`; admins only, audited): per user the number of
+  workers, admin workers and devices, how many are online, the workers'
+  version histogram, and optionally each user's machines by version -
+  aggregates only, never names, IDs, host names, OS, last-seen times,
+  labels, CPU / memory, processes, sessions or jobs. Admin answers that named other users'
+  machines are cut down the same way: operations by name (approve, revoke,
+  drain, label, share, profile, remove, tailnet rekey, toolchain apply) on
+  another user's machine answer "not found" word for word like an unknown
+  name and do nothing; admins never share another user's worker; a worker
+  certificate never acts as a user (whatever its name) and node names never
+  take a user's; an admin's join code or panel login for a user is for a
+  user without machines only; user listings drop other users' reserved
+  memory; `admin user ls` / "People" and `admin
+  user remove` give device and worker counts instead of names; join codes,
+  rollouts (counts plus visible names), toolchain canaries, `admin tailnet
+  status` and `admin links` name only machines the admin may see; a release
+  push no worker can take fails with counts, not names; join codes are the
+  admin's own, its user's and fleet worker codes, with `used_by` "used"
+  unless the machine is visible; `link ls --all` and the panel's port links
+  are the admin's own user's links; `admin logs` of another user's job is
+  "not found". The audit log (`admin audit`, the panel, `Fleet.Audit`)
+  shows only the records about the admin's own user and the hub actions it
+  performed, and counts the rest by method; `users/remove` records count the
+  revoked machines; reads go by the acting and affected user recorded when
+  each record was written (schema migration 5), never by today's node
+  ownership, so re-enrolling a revoked name doesn't reopen its records.
+  Every outbound record type and every event kind goes through one
+  projection (`internal/hub/projection.go`): actors appear as role and user
+  ("admin bob"), never by device name - event messages, join codes, users,
+  jobs' submitter, audit records; profile updates, rollouts and tailnet
+  status are projected like listings; an admin's kill of another user's job
+  is "not known" (checked before resolving its worker) and removing another
+  user's link answers with its id only. The complete trail stays in the
+  hub's database and log for the hub's operators (new `longarm-hub audit` on the hub host; on
+  Azure, the subscription's owners). Auto placement already
+  used only workers the caller's user may use, admins included; the admin's
+  `exec auto` now picks from the same list (before, from every worker the
+  hub listed to the admin). See docs/security.md "What admins see".
+- The same holds for accounts of every sign-in provider (Entra, Google,
+  Apple, personal Microsoft): an account is one user whatever its role, the
+  same e-mail address at two providers is two users. An admin can't add its
+  own user to a team; an admin's user-bound join code or panel login is
+  refused for a user who signs in with a provider or has another user's
+  worker shared with it (checked again when the code is used), and a panel
+  administrator login can't take the name of any user (old certificates,
+  worker owners included). Open event streams follow team changes at once.
+  `/link` audit records name the provider (`google/<e-mail>`).
 
 ### Fixed
 

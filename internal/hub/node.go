@@ -334,13 +334,21 @@ func (h *Hub) storeAuditLocked(n *node, sess *nodeSession, b *pb.AuditBatch) {
 			Time   string `json:"time"`
 			Who    string `json:"who"`
 			Method string `json:"method"`
+			User   string `json:"user"` // the caller's user, as the worker saw its certificate
 		}
 		json.Unmarshal([]byte(l), &rec)
 		t, err := time.Parse(time.RFC3339Nano, rec.Time)
 		if err != nil {
 			t = time.Now()
 		}
-		rows = append(rows, store.AuditRow{Node: n.rec.Name, Time: t, Who: rec.Who, Method: rec.Method, Line: l})
+		// attribution, fixed at arrival: the acting user, and the worker's
+		// owner as the user the record is about ("" for fleet workers)
+		actor := rec.User
+		if actor == "" {
+			actor = h.auditActorUser(rec.Who)
+		}
+		rows = append(rows, store.AuditRow{Node: n.rec.Name, Time: t, Who: rec.Who, Method: rec.Method, Line: l,
+			ActorUser: actor, SubjectUser: n.rec.Owner, Attributed: true})
 	}
 	if err := h.store.AddAudit(rows); err != nil {
 		h.log.Warn("store audit", "node", n.rec.Name, "err", err)

@@ -10,7 +10,8 @@ in `dist/homebrew/Casks/longarm.rb`. To publish:
 3. Users: `brew install your-org/tap/longarm && longarmd join <hub> <code>`
    (worker as a LaunchDaemon: `sudo longarmd service install --user $USER`).
 
-The binaries are not notarized when installed through the cask; the signed
-and notarized installer is the `.pkg` (`packaging/macos`). Homebrew installs
+The cask installs the binaries of `longarm-darwin-<arch>.tar.gz`, which a
+release with the Apple credentials signs (Developer ID, hardened runtime) and
+notarizes; for MDM-managed Macs use the signed `.pkg` (`packaging/macos`). Homebrew installs
 update through `brew upgrade` (longarmd's self-update can't write into the
 Caskroom; set `[update] disabled = true`).

@@ -40,6 +40,7 @@ type Hub struct {
 	// startupMarker: removed once the listeners are up (startup_marker.go)
 	startupMarker *StartupMarker
 
+	dir    nodeDirectory // lock-free name directory for projection (projection.go)
 	cfg    *Config
 	log    *slog.Logger
 	store  *store.Store
@@ -181,6 +182,7 @@ func Open(cfg *Config, log *slog.Logger) (*Hub, error) {
 		started: time.Now(), addrs: map[string]string{}, entra: newEntraState(&cfg.Auth.Entra), pair: newPairing(),
 		idps: newIdProviders(&cfg.Auth), oidc: &oidcWeb{usedState: map[string]time.Time{}},
 	}
+	st.OnNodePut = h.indexNode
 	if h.tailnet, err = newTailnetProvider(cfg.Tailnet); err != nil {
 		st.Close()
 		return nil, err
@@ -221,6 +223,7 @@ func (h *Hub) load() error {
 		return err
 	}
 	for _, r := range recs {
+		h.indexNode(r)
 		n := &node{rec: r}
 		if len(r.Toolchain) > 0 {
 			tc := &pb.ToolchainReport{}

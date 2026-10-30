@@ -10,6 +10,7 @@ import { JobsPage } from './JobsPage'
 import { JoinCodesPage } from './JoinCodesPage'
 import { LinksPage } from './LinksPage'
 import { LoginPage } from './LoginPage'
+import { FleetPage } from './FleetPage'
 import { MachinesPage } from './MachinesPage'
 import { MePage } from './MePage'
 import { NodesPage } from './NodesPage'
@@ -18,8 +19,11 @@ import { ProfilesPage } from './ProfilesPage'
 import { TenantsPage } from './TenantsPage'
 import { UsersPage } from './UsersPage'
 
+// Administrators see machines and jobs as their user does (Nodes, Jobs);
+// the fleet as a whole only as counts (Fleet).
 const ADMIN_NAV: [string, string][] = [
   ['/nodes', 'Nodes'],
+  ['/fleet', 'Fleet'],
   ['/jobs', 'Jobs'],
   ['/joincodes', 'Add machine'],
   ['/tenants', 'People'],
@@ -110,6 +114,7 @@ export function PanelApp() {
           {page === '/me' && <MePage me={me} />}
           {page === '/get' && <GetPage me={me} />}
           {!admin && page === '/machines' && <MachinesPage me={me} />}
+          {admin && page === '/fleet' && <FleetPage />}
           {admin && page === '/joincodes' && <JoinCodesPage me={me} />}
           {admin && page === '/tenants' && <TenantsPage me={me} />}
           {admin && page === '/profiles' && <ProfilesPage />}

@@ -140,6 +140,13 @@ Account 页里改。worker 以你本人的身份运行，只要你处于
 “Default” 用的 hub 是在构建发布版本时写进去的（仓库变量
 `LONGARM_DEFAULT_HUB`，见 [docs/ci-cd.md](docs/ci-cd.md#24-secrets-and-variables)）。
 
+**SmartScreen。** 没有 Authenticode 签名的版本（只有配置好经过验证的 Azure Trusted Signing
+证书配置文件后才会签名，见 [docs/ci-cd.md](docs/ci-cd.md#27-authenticode-azure-trusted-signing-windows)），
+Windows 会显示"Windows 已保护你的电脑"/"未知发布者"：先用发布页的 `SHA256SUMS` 核对文件
+（`Get-FileHash longarm-windows-amd64.msi`），再点 **更多信息 → 仍要运行**。签名的版本会显示发布者；
+新版本在积累下载信誉之前 SmartScreen 仍可能提示。自动更新（托盘、Longarm Update 服务）无论是否有
+Authenticode 签名，都会校验发布密钥的 minisign 签名。
+
 也可以用一行命令安装——hub 提供的脚本里已经写好了它的地址并固定了 CA：
 
 ```sh

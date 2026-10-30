@@ -141,7 +141,7 @@ message naming the blocking directory, and longarmd refuses to start on it.
 ## Usage
 
 ```sh
-longarm ls                                         # CPU / memory / jobs / labels of all workers, one row per machine
+longarm ls                                         # CPU / memory / jobs / labels of your workers, one row per machine
 longarm ls -o wide                                 # + claude/copilot sessions, disk, uptime, top processes, path
 longarm exec w1 -- git status                      # short synchronous command, exit code mirrored
 longarm run w1 --name build --cwd C:/src/app --env CI=1 --secret-env GH_TOKEN -- pnpm test
@@ -157,9 +157,17 @@ longarm admin shutdown w1                          # admin role only; jobs keep 
 longarm logs last -f                               # your most recent job; a job is also a unique prefix or
 longarm kill 7K3M9Q2A                              #   suffix of its id (the tray shows the last 8 characters)
 longarm logs -s a1 [-f]                            # a session's transcript (also: logs w1 a1 --session)
-longarm jobs [--mine | --all] [--limit N]          # the newest 20 (0 = all); admins see their own unless --all
+longarm jobs [--mine | --all] [--limit N]          # the newest 20 (0 = all); admin certificates: only yours unless --all
 longarm doctor [--json]                            # checklist: sign-in, hub, daemon, firewall, your workers
 ```
+
+**Which workers you see.** On a hub, `ls`, `ls -o wide`, `worker ls`,
+`jobs`, the tray's Workers tab and the MCP tools show your own workers and
+devices, the workers shared with you and the fleet workers (no owner) -
+admins included: an admin certificate gets exactly a user's view there, and
+there is no flag that widens it. Other users' machines are counted, never
+listed, by `longarm admin summary` (admins; see below and
+[security.md](security.md#what-admins-see)).
 
 A job id on the command line (`logs`, `wait`, `kill`, `jobs --id`) is the
 full id, a unique prefix or suffix of it (case-insensitive), or `last` - your
@@ -1359,6 +1367,9 @@ longarm run --no-queue -- ...            # fail (exit 75) instead of queueing wh
 longarm exec -- hostname                 # short command on the least loaded worker
 longarm wait <id>; longarm logs <id> -f; longarm kill <id>   # worker optional: found through the hub
 longarm admin nodes | approve | revoke | drain | undrain | label <node> k=v | join-codes | audit
+longarm admin summary [--rows]           # the whole fleet as counts per user (admin nodes lists what your user sees)
+longarm admin audit [--node N]           # the records about your user and your own hub actions; others' only counted
+longarm-hub audit [--node N] [--json]   # on the hub host (operators): the complete audit trail
 longarm admin tailnet status [--json] | rekey <node>   # tailnet provider + per-node state ("Tailnet provider" below)
 longarm admin profile set dev git=latest node=22 pnpm=latest claude=latest pwsh=7
 longarm admin profile assign w1 dev; longarm admin profile ls   # canary first, then the rest
@@ -1424,13 +1435,17 @@ longarm admin user add alice [--team web]... [--max-jobs 8] [--max-mem-gb 64] [-
 #   prints a client join code bound to the user (the device's certificate names the user);
 #   --panel also creates a web panel login (role user: "My jobs", nodes, "Me") and prints
 #   its generated password and TOTP secret once
-longarm admin user code alice [--device alice-desktop]     # a join code for another device
+longarm admin user code alice [--device alice-desktop]     # a join code for the first device (user added with --no-code)
 longarm admin user set alice --team web --team infra       # replace teams; quota flags change the quota
 longarm admin user set alice --clear-quota                 # back to the default quota
-longarm admin user ls [--json]                             # devices, teams, usage, quotas
+longarm admin user ls [--json]                             # number of devices and workers, teams, usage, quotas
 longarm admin user disable|enable alice                    # refused on the hub and every worker
-longarm admin user remove alice [--purge]                  # revoke all of alice's devices; --purge: workers
-                                                           # delete her jobs, data and OS account
+longarm admin user remove alice [--purge]                  # revoke all of alice's devices and workers; --purge:
+                                                           # workers delete her jobs, data and OS account
+longarm admin summary [--rows] [--json]                    # the fleet per user: workers / admin workers / devices,
+                                                           # online, worker versions; --rows: each user's
+                                                           # machines by version (aggregates only).
+                                                           # No names; audited
 longarm admin team add web alice bob; longarm admin team rm web bob; longarm admin team ls
 longarm admin join-code --role client --user alice --name alice-2   # the same, by hand
 longarm admin issue --role client --name alice-pc --user alice --out DIR   # without a hub
@@ -2012,7 +2027,13 @@ One frontend, two shells. **The hub panel** is served on longarm-hub's HTTP
 listener at `/` (the old server-rendered page moved to `/status`). Log in with
 an account from `longarm-hub user add` + TOTP (panel administrators; logins of
 Longarm users, created with `longarm admin user add --panel` or on the
-"People" page, see only "My jobs", the nodes read-only and "Me"). Pages: nodes (online state, CPU and
+"People" page, see only "My jobs", the nodes read-only and "Me"). With
+multi-tenancy an administrator's "Nodes" and "Jobs" pages show what its
+user sees (its own and shared machines, fleet workers; its own jobs) and
+the "Fleet" page the whole fleet as counts per user, worker versions and,
+optionally, each user's versions (`GET /api/admin/summary`; aggregates
+only, no names, audited).
+Pages: nodes (online state, CPU and
 memory sparklines, Claude/Copilot sessions, each client's path and RTT to the
 worker, labels, approve pending, drain/resume, revoke, toolchain profile and
 "update now"), jobs (filter, live logs, kill, run a command), "add machine"
@@ -2029,8 +2050,9 @@ longarm-hub user add|ls|rm
 **longarm-tray** (one desktop app for both roles; tabs by installed role) is a
 tray icon with live per-worker CPU/memory columns and a popup
 next to it (left click; hides on focus loss unless pinned; drag it by the
-title bar). The popup shows every worker's load plus this client's link to every
-worker: active leg and path (tcp, tailscale direct/peer-relay/DERP, longnet
+title bar). The popup shows the load of every worker you may see (your own,
+shared with you, the fleet's - admins too, there is no "all workers" switch)
+plus this client's link to each: active leg and path (tcp, tailscale direct/peer-relay/DERP, longnet
 direct/relay-udp/relay-tcp), NAT types, RTT with a 5-minute sparkline. Data
 comes from `longarm daemon` (hub events when the hub is reachable, otherwise
 streamed from the workers; the popup shows which). Tabs: workers, my jobs
@@ -2117,7 +2139,7 @@ the certificates issued so far ([Fleet with longarm-hub](#fleet-with-longarm-hub
 |---|---|---|
 | Windows | `longarm-windows-<arch>.msi` (longarm, longarmd, longarm-tray if built; Default / Custom dialog) | `msiexec /i longarm-windows-amd64.msi /qn MODE=default ROLES=both LOGIN=1 [LABELS=pool=devbox] [ADMIN_WORKER=1]` (the built-in hub, user-session worker, no password; sign in with the tray or `longarmd login --role both`); another hub: `MODE=custom HUB=hub.example.com LOGIN=1`; join codes and services: the table below |
 | Linux | `longarm_<v>_<arch>.deb/.rpm` (longarm, longarmd, `longarmd@.service`) | `sudo env LONGARM_ROLES=worker LONGARM_HUB=hub:7443 LONGARM_JOIN_CODE=K7P-Q2M LONGARM_USER=$USER apt install ./longarm_*.deb` (or `/etc/longarm/join.env`) |
-| macOS | `longarm-<v>.pkg` (packaging/macos, signed + notarized on a Mac); Homebrew cask | `defaults write /Library/Preferences/com.longarm ...` then `installer -pkg` |
+| macOS | `longarm-darwin-<arch>.pkg` (longarm, longarmd in `/usr/local/bin`; Developer ID signed and notarized: [macOS installer and MDM](#macos-installer-pkg-and-mdm)); Homebrew cask | a configuration profile (domain `com.longarm`) or `defaults write /Library/Preferences/com.longarm ...`, then `installer -pkg` |
 | hub | `ghcr.io/<owner>/longarm-hub` image, `longarm-hub_<v>_<arch>.deb` | `docker compose up -d` (deploy/hub) |
 
 **Default or Custom.** The MSI's first page offers **Default
@@ -2503,6 +2525,99 @@ Building a release (packaging/): `pwsh packaging/build.ps1 [-Snapshot] [-Key lon
 `dist/hub-release`), `sh packaging/build.sh` elsewhere; winget manifests:
 `packaging/winget/render.ps1`.
 
+### macOS installer (.pkg) and MDM
+
+Every release has two installers, `longarm-darwin-arm64.pkg` (Apple silicon)
+and `longarm-darwin-amd64.pkg` (Intel), on the GitHub Release and on the hub
+(`https://hub.example.com/releases/<version>/longarm-darwin-arm64.pkg`). Each
+is a flat package that installs `longarm` and `longarmd` into `/usr/local/bin`
+(macOS 12 or later). In a release built with the maintainer's Apple
+credentials ([ci-cd.md 2.8](ci-cd.md#28-macos-signing-and-notarization-apple-developer-id)):
+
+- the binaries are signed with a **Developer ID Application** certificate,
+  with the hardened runtime and a secure timestamp, identifiers
+  `com.longarm.longarm` and `com.longarm.longarmd` (also the plain binaries
+  `longarm-darwin-<arch>`, `longarmd-darwin-<arch>`, `longarm-hub-…`,
+  `longarm-relay-…` and the ones in `longarm-darwin-<arch>.tar.gz`);
+- the package is signed with a **Developer ID Installer** certificate,
+  **notarized** by Apple, and the ticket is **stapled** to it (Gatekeeper
+  accepts it offline);
+- `SHA256SUMS`, `checksums.txt` and the `.minisig` signatures are made from
+  these final, signed files.
+
+A release built without them ships the same files unsigned (its build log
+says so); MDM-managed Macs refuse unsigned packages.
+
+**Install by hand.** Double-click the pkg, or:
+
+```sh
+pkgutil --check-signature longarm-darwin-arm64.pkg   # "Developer ID Installer: <maintainer> (<TEAMID>)", "Notarized"
+spctl --assess --type install -vv longarm-darwin-arm64.pkg   # accepted, source=Notarized Developer ID
+sudo installer -pkg longarm-darwin-arm64.pkg -target /
+longarmd login hub.example.com --role both            # then, for a worker:
+sudo longarmd service install --user "$USER" && sudo longarmd service start
+```
+
+What the package's `postinstall` does (as root): adds `longarm` and
+`longarmd` to the application firewall when it is on; on an upgrade,
+restarts an installed `com.longarm.longarmd` LaunchDaemon so it runs the new
+binary (jobs keep running); and, only if the preference domain `com.longarm`
+holds `Roles` (`worker` / `both` / `client`), `Hub`, `JoinCode` and `User`
+(optional `CAFingerprint`), joins the hub as that user and, for a worker,
+installs and starts the LaunchDaemon with the data dir `~User/.longarm`.
+The values are validated (a malformed or non-root-owned preferences file is
+ignored); the join code is removed from `/Library/Preferences/com.longarm`
+afterwards.
+
+**For MDM administrators** (Jamf, Intune, Kandji, Mosyle, …):
+
+- **Package**: upload the pkg for the Macs' architecture (both, scoped by
+  architecture; the arm64 package refuses Intel Macs, the amd64 package needs
+  Rosetta on Apple silicon). It is a signed distribution package, as Intune's
+  "macOS app (PKG)" and Jamf policies require. Package ID `com.longarm.pkg`,
+  version = the release version; installs `/usr/local/bin/longarm`,
+  `/usr/local/bin/longarmd` and `/usr/local/share/longarm/`.
+- **Team ID**: the 10-character Apple Team ID of the signing certificates
+  (`pkgutil --check-signature` shows it in parentheses; `codesign -dv
+  /usr/local/bin/longarmd` as `TeamIdentifier=`). The maintainer publishes it
+  next to the release; it identifies Longarm in the profiles below.
+- **Unattended join**: a custom settings / Application & Custom Settings
+  payload for the domain `com.longarm` with `Roles`, `Hub`, `JoinCode`,
+  `User`, `CAFingerprint` (lands in `/Library/Managed Preferences/com.longarm.plist`,
+  which `postinstall` reads first). Use a join code that expires (`longarm
+  worker add --ttl 24h`): the profile keeps it until it is removed. Or
+  install without it and let users run `longarmd login`.
+- **Background items** (macOS 13+): `longarmd service install` adds the
+  LaunchDaemon `/Library/LaunchDaemons/com.longarm.longarmd.plist`
+  (program `/usr/local/bin/longarmd`), which macOS reports as a background
+  item. To keep users from turning it off, a **Service Management - Managed
+  Login Items** payload (`com.apple.servicemanagement`) with the rule
+  `RuleType` = `TeamIdentifier`, `RuleValue` = the Team ID (or `Label`
+  `com.longarm.longarmd`).
+- **Privacy (PPPC)**: Longarm needs no system extension, kernel extension
+  or entitlement. Only if jobs must read TCC-protected places (Desktop,
+  Documents, removable volumes, another app's data), give `longarmd` access
+  with a **Privacy Preferences Policy Control** payload: `IdentifierType`
+  `path`, `Identifier` `/usr/local/bin/longarmd`, `CodeRequirement` as
+  `codesign -dr - /usr/local/bin/longarmd` prints it (`identifier
+  "com.longarm.longarmd" and anchor apple generic and certificate
+  1[field.1.2.840.113635.100.6.2.6] and certificate
+  leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] =
+  <TEAMID>`), and the service, e.g.
+  `SystemPolicyAllFiles` (Full Disk Access). The code requirement pins the
+  Team ID, so a re-signed or replaced binary doesn't inherit the access.
+- **Firewall**: with a managed application firewall, allow
+  `/usr/local/bin/longarmd` and `/usr/local/bin/longarm` (or the identifiers
+  above) incoming connections; `postinstall` only adds them when the user's
+  firewall is on.
+- **Updates**: a worker whose LaunchDaemon runs as a user (`--user`, the
+  pkg's unattended setup) can't write `/usr/local/bin` and doesn't update
+  itself: deploy the next release's pkg (`longarmd status` and the hub
+  panel show outdated workers). A root LaunchDaemon (no `--user`) updates
+  itself from the hub; the files it installs are the same signed binaries,
+  checked against the release key first ([Self-update](#self-update)), so the
+  code signature stays valid.
+
 ### Uninstall
 
 No uninstaller removes the **client** enrollment (`~/.config/longarm`,
@@ -2576,8 +2691,8 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\Longarm", "$HOME\.config\longar
   longarm leave && rm -rf ~/.config/longarm
   sudo rm /usr/local/bin/longarm /usr/local/bin/longarmd   # or ~/.local/bin/...
   ```
-- **macOS pkg**: the same, then `sudo pkgutil --forget com.longarm.pkg`
-  ([packaging/macos](../packaging/macos/README.md)).
+- **macOS pkg**: the same, then `sudo rm -rf /usr/local/share/longarm; sudo
+  pkgutil --forget com.longarm.pkg` ([packaging/macos](../packaging/macos/README.md)).
 
 ### Transport legs and racing
 
@@ -2843,7 +2958,9 @@ detail: [ci-cd.md](ci-cd.md).
   cross-compile 6 targets, shellcheck, actionlint; `go test ./...` on Linux,
   Windows and macOS.
 - `release.yml` (tag `v*`): build on Linux (linux, macOS, deb/rpm) and on
-  Windows (Windows, MSIs) in parallel, the hub image next to them →
+  Windows (Windows, MSIs) in parallel, the macOS files signed, packaged
+  (`.pkg`) and notarized on a Mac after the Linux build, the hub image next
+  to them →
   **publish** (sign with the release key, upload with the `release`
   certificate, GitHub Release) → **hub** (SSH forced command
   [`deploy/hub/longarm-hub-deploy`](../deploy/hub/longarm-hub-deploy): verify, install,

@@ -736,10 +736,11 @@ configured or no answer exits 69. --id <job> lists that job alone and exits
 3 when it is not known (to the hub; with the fallback: to the workers that
 answered). See docs/usage.md#jobs---json.
 
-The table shows the newest 20 jobs (--limit N; 0 = all). Admins see
-everybody's jobs, so for an admin certificate it shows only yours unless
---all; --mine shows only yours for anyone (without it you also see jobs
-shared with your teams). --json lists every job you may see unless
+The table shows the newest 20 jobs (--limit N; 0 = all). For an admin
+certificate it shows only yours unless --all. With multi-tenancy admins see
+jobs like any user (their own and those shared with their teams); on a hub
+without it, everybody's. --mine shows only yours for anyone (without it you
+also see jobs shared with your teams). --json lists every job you may see unless
 --limit, --mine or --all are given (as before).`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -862,7 +863,7 @@ shared with your teams). --json lists every job you may see unless
 	c.Flags().StringSliceVar(&states, "state", nil, "filter by state (running, done, failed, killed, lost, ...)")
 	c.Flags().IntVar(&limit, "limit", defaultJobsLimit, "max jobs (0 = all; --json without --limit: all)")
 	c.Flags().BoolVar(&mine, "mine", false, "only your own jobs (the default for admin certificates)")
-	c.Flags().BoolVar(&all, "all", false, "every job you may see (admins: everybody's)")
+	c.Flags().BoolVar(&all, "all", false, "every job you may see (with multi-tenancy admins too see their own and team-shared jobs only)")
 	c.Flags().BoolVar(&asJSON, "json", false, `JSON output: {"jobs": [...], "source": "hub"|"workers"}`)
 	c.Flags().BoolVar(&hubOnly, "hub-only", false, "ask only the hub: exit 69 when there is none or it does not answer (no fallback to the workers)")
 	c.Flags().StringVar(&jobID, "id", "", "only this job; exit 3 when it is not known")

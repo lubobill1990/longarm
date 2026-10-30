@@ -8,7 +8,7 @@ release is cut and rolled back. Everything runs on GitHub-hosted runners.
 | [`ci.yml`](../.github/workflows/ci.yml) | pull request, push to `main`, manual | **lint** (ubuntu): `scripts/privacy-check.sh`, gitleaks, gofmt, `go vet`, cross-compile (vet + build + e2e test binary) for windows/linux/darwin × amd64/arm64, shellcheck, actionlint · **test** (ubuntu-latest, windows-latest, macos-latest), parallel jobs per OS: *unit* (`go build`, `go test` of every package but `./e2e`, the per-user isolation tests) and *e2e-1..3* (*e2e-1..2* on macOS: `./e2e`'s top-level tests dealt out by `.github/scripts/test-shard.sh`, balanced by the durations in `.github/test-durations.txt`, refreshed with `.github/scripts/test-durations.sh <run ids>`); go test runs through `.github/gotest`, which puts failed tests (and the tests a `-timeout` panic caught running, with its goroutine dump in the log) into the job summary and annotations and uploads each job's test durations (artifact `test-timings-*`) · **msi** (windows-latest): the MSIs built with WiX 5, ICE-validated, extracted, their tables checked (`.github/scripts/msi-check.ps1`; `msi-sequence-check.ps1`: RemoveExistingProducts where Windows Installer allows it, never after a deferred action - error 2613, which the 0.1.13 MSI is shown to fail) · **msi-install** (windows-latest, the runner's administrator; `.github/scripts/msi-install-test.ps1`): the MSIs really installed - a fresh install (Default, `ROLES=both`, `LOGIN=1` with a dummy hub), repair, a refused service switch, an upgrade to the next build and the uninstall; upgrades from the released 0.1.6 and the latest release (session worker, admin worker, LocalSystem service) with the tray and worker running: they must stop and start again, a running job (`longarmd conhost` and its command) keep running, the new files be in place, the verbose log be free of errors 2613 / 1722 / 1603 and failed custom actions · **tests**: passes when every test job did (msi and msi-install included) - the required check of `main`'s ruleset, so `gh pr merge --auto --squash` merges once CI is green · **azure** (ubuntu): `bicep build` of deploy/azure/main.bicep must equal the committed `azuredeploy.json`, `bicep lint` without warnings, PSScriptAnalyzer on deploy.ps1 · **release-cache** (push to `main` only, ubuntu + windows): the Go build cache release.yml restores, see "Caches" below |
 | [`ci-requeue.yml`](../.github/workflows/ci-requeue.yml) | a ci.yml run failed | re-runs ci.yml jobs GitHub never started (no hosted runner acquired - macOS capacity), and the `tests` check with them, when no job ran and failed; at most 3 attempts per run (`.github/scripts/ci-requeue.sh`). Jobs that failed for real are never re-run, so flaky tests stay visible |
 | [`image.yml`](../.github/workflows/image.yml) | pull request, push to `main`, called by release.yml | **smoke** (ubuntu): build the hub image (deploy/hub/Dockerfile), `deploy/azure/test/container-smoke.sh` with Azurite (bootstrap, admin join, restore after the container is replaced, health) · **publish** (push to main, releases): `ghcr.io/<owner>/longarm-hub` for linux/amd64+arm64 with SBOM and provenance: `:edge` + `:sha-<commit>` from main, `:X.Y.Z` (+ `:latest` for stable releases) from a tag |
-| [`release.yml`](../.github/workflows/release.yml) | tag `v*`; push to `main` (a **dev** build, see "Release channels"; not for docs-only changes) | **meta** (tag check; the dev version) → **build-unix** (ubuntu) and **build-windows** (windows-latest, MSIs) in parallel → **publish** (merges and checks them, signs) → **hub** → **rollout**; **image** (image.yml) runs next to the builds, **image-latest** after publish; hub and rollout only run when a deployment is configured. A manual run is a dry run (builds, gather, image smoke test; nothing signed, published or pushed) |
+| [`release.yml`](../.github/workflows/release.yml) | tag `v*`; push to `main` (a **dev** build, see "Release channels"; not for docs-only changes) | **meta** (tag check; the dev version) → **build-unix** (ubuntu) and **build-windows** (windows-latest, MSIs) in parallel, **build-macos** (macos-latest, after build-unix: Developer ID signing, the `.pkg` installers, notarization; 2.8) → **publish** (merges and checks them, signs) → **hub** → **rollout**; **image** (image.yml) runs next to the builds, **image-latest** after publish; hub and rollout only run when a deployment is configured (and never for dev builds or release candidates). A manual run is a dry run (builds, gather, image smoke test; nothing signed, published or pushed) |
 | [`deploy.yml`](../.github/workflows/deploy.yml) | manual | hub deploy / rollback / status, fleet push of a version already on the hub |
 | [`mirror.yml`](../.github/workflows/mirror.yml) | pull request or push to `main` changing `deploy/azure/mirror-images.txt` or the workflow, manual | **verify** (ubuntu, read-only, `contents: read`): each third-party image the Azure template runs (the sidecars) comes from an allowed source repository and its pinned digest resolves there (crane). Nothing is published: `deploy/azure/deploy.sh --acr NAME` imports the pinned digests into the hub's Azure Container Registry itself, before anything is deleted (deploy/azure/README.md "Third-party images"); the former GHCR package `longarm-mirror` is retired |
 | [`mirror-gim.yml`](../.github/workflows/mirror-gim.yml) | push to any branch, branch delete, same-repository pull request, every 15 min, manual | mirrors branches, `main` and pull requests into the internal copy gim-home/longarm (`.github/scripts/mirror-gim.sh`), see "6. Internal mirror (gim-home)" |
@@ -78,8 +78,14 @@ targets, MSIs, deb/rpm packages, the hub release directory and `SHA256SUMS`.
   self-update turned off (a warning says so).
 - Without the secret `LONGARM_RELEASE_KEY` the files are not signed (a
   warning says so); self-updating workers only install signed releases.
+- Without the `APPLE_*` secrets (2.8) the macOS binaries, archives and
+  `.pkg` installers are not signed or notarized (a warning says so);
+  MDM-managed Macs refuse unsigned packages.
 - Without the variable `LONGARM_HUB` nothing is uploaded to a hub and the
   `hub` / `rollout` jobs are skipped.
+- Without the Trusted Signing variables (2.7) the Windows binaries and MSIs
+  are not Authenticode-signed (a notice says so; SmartScreen warns on the
+  download). Minisign signatures and checksums don't depend on it.
 
 ## 2. One-time setup for an own deployment
 
@@ -226,6 +232,15 @@ Try it from your machine: `ssh -i hub-deploy deploy@hub.example.com status`.
 | `LONGARM_RELEASE_TLS` | base64 of the tar.gz with `ca.crt node.crt node.key` of the release certificate (2.2) |
 | `HUB_DEPLOY_SSH_KEY` | the private key `hub-deploy` (2.3) |
 | `HUB_SSH_KNOWN_HOSTS` | the `hub-known-hosts` line(s) |
+| `APPLE_DEVELOPER_ID_APP_P12` | base64 of the Developer ID Application certificate + private key (`.p12`) (2.8) |
+| `APPLE_DEVELOPER_ID_APP_P12_PASSWORD` | its export password |
+| `APPLE_DEVELOPER_ID_INSTALLER_P12` | base64 of the Developer ID Installer certificate + private key (`.p12`) (2.8) |
+| `APPLE_DEVELOPER_ID_INSTALLER_P12_PASSWORD` | its export password |
+| `APPLE_NOTARY_API_KEY_P8` | the App Store Connect API key file (`AuthKey_<KEYID>.p8`), verbatim (2.8) |
+| `APPLE_NOTARY_KEY_ID` | its key ID |
+| `APPLE_NOTARY_ISSUER_ID` | the issuer ID shown above the keys |
+| `LONGARM_GPG_PRIVATE_KEY` | the GPG key (armored) that signs the rpm and the apt/yum repositories on GitHub Pages ([linux-repos.md](linux-repos.md)); unset: unsigned rpm, no repositories |
+| `LONGARM_GPG_PASSPHRASE` | its passphrase (optional) |
 
 | variable (not secret) | content |
 |---|---|
@@ -234,6 +249,11 @@ Try it from your machine: `ssh -i hub-deploy deploy@hub.example.com status`.
 | `HUB_SSH` | `deploy@hub.example.com`; enables the `hub` job |
 | `LONGARM_DEFAULT_HUB` | the hub built into the release (a domain, e.g. `longarm.example.com`): `longarm login` / `longarmd login` / the tray without a hub, and the MSI's "Default" choice ([usage](usage.md#built-in-default-hub)); unset: no default (the release warns; the MSI offers Custom only) |
 | `LONGARM_DEFAULT_HUB_CA` | optional: that hub's CA fingerprint (`longarm-hub ca show`), pinned instead of trusting `https://<hub>/ca.crt` |
+| `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | the Entra app that signs (GitHub OIDC, no secret; 2.7) |
+| `TRUSTED_SIGNING_ENDPOINT`, `TRUSTED_SIGNING_ACCOUNT`, `TRUSTED_SIGNING_PROFILE` | the Trusted Signing account's endpoint (`https://<region>.codesigning.azure.net`), its name and the certificate profile; all six set: Authenticode signing on (2.7) |
+| `TRUSTED_SIGNING_SUBJECT` | optional: the certificate's CN (the validated name); every signed file is checked against it |
+| `APPLE_TEAM_ID` | the Apple Team ID (10 characters) of the Developer ID certificates; build-macos refuses certificates of another team (2.8) |
+| `LONGARM_REPO_KEEP` | optional: how many stable releases the apt/yum repositories keep (default 3; [linux-repos.md](linux-repos.md)) |
 
 ```sh
 R=your-org/longarm
@@ -285,6 +305,90 @@ versioned image `:X.Y.Z` is pushed before the approval (only `:latest`
 waits for publish) - to hold it back too, add `publish` to the `needs` of
 release.yml's `image` job (it then starts after the approval).
 
+### 2.7 Authenticode: Azure Trusted Signing (Windows)
+
+The Windows exes (`longarm`, `longarmd`, `longarm-tray`, `longarm-hub`,
+`longarm-relay`, the MSI's `longarm-update` and upgrade helper) and the MSIs
+are Authenticode-signed with [Azure Trusted Signing](https://learn.microsoft.com/azure/artifact-signing/)
+("Artifact Signing") when the six variables of 2.4 are set; without them the
+release is built unsigned with a notice. Only the Windows build job is
+involved:
+
+- **Order.** GoReleaser's build hook (`.goreleaser.yaml`, `hooks: *winsign`)
+  signs each exe right after it is built - before the zips and
+  `checksums.txt`; `packaging/windows/build-msi.ps1` signs the binaries it
+  builds, packs the signed exes into the MSI, then signs the MSI. The
+  minisign signatures (publish) and `SHA256SUMS` are made afterwards, over
+  the signed files. A check step verifies every published exe and MSI
+  (signature, RFC 3161 timestamp from `http://timestamp.acs.microsoft.com`,
+  and the publisher when `TRUSTED_SIGNING_SUBJECT` is set).
+- **Tools.** signtool from the runner's Windows SDK with the dlib
+  `Microsoft.ArtifactSigning.Client` from nuget.org, pinned by SHA256
+  (`packaging/windows/sign.ps1`; every release build fetches and checks it,
+  signed or not).
+- **Credential.** No secret: `azure/login` with GitHub OIDC. The job runs in
+  the environment `release-signing` only for a real release with
+  `TRUSTED_SIGNING_PROFILE` set; the app's single federated credential trusts
+  exactly `repo:<owner>/<repo>:environment:release-signing`, and the
+  environment accepts deployments from `v*` tags only (no branch, no pull
+  request, no dry run). The app's only role is *Artifact Signing Certificate
+  Profile Signer* on the account. Its token lives in the build job only.
+- **Updates are unaffected.** The LongarmUpdate service and the tray accept
+  an MSI only with a valid minisign signature by the release key built into
+  them (name and version in the trusted comment) and the hub record's
+  sha256 - signed or unsigned Authenticode alike, so upgrades from and to
+  unsigned builds keep working. Authenticode is for Windows (SmartScreen,
+  the UAC prompt's publisher), not a second trust root: the update path does
+  not check it, because a check that only applies "when a signature is
+  present" adds nothing an attacker can't strip, and requiring it would
+  break every installation updating from an unsigned release.
+
+**Setup** (once; `deploy/azure/signing/trusted-signing.sh`, needs `az` on the
+right subscription and `gh` with admin rights):
+
+```sh
+S=deploy/azure/signing/trusted-signing.sh R=your-org/longarm
+$S account  my-rg my-signing eastus     # provider + account, Basic SKU
+$S verifier my-rg my-signing            # you: "Artifact Signing Identity Verifier"
+# identity validation in the portal (below), then:
+$S ci       my-rg my-signing $R         # app + federated credential + Signer role + environment + 5 variables
+$S profile  my-rg my-signing longarm-public <identity validation id> $R   # Public Trust profile; sets TRUSTED_SIGNING_PROFILE
+```
+
+**Identity validation** (portal only, by a person with the Identity Verifier
+role; 1-20 business days for organizations): Azure portal → the Trusted
+Signing account → *Identity validations* → *New identity* → *Public*, then
+either
+
+- *Organization*: a legal entity in the US, Canada, the EU, the UK,
+  Australia, New Zealand, Japan, South Korea, Singapore, Switzerland, Norway
+  or Israel, with its legal name, website, an email on its domain, business
+  ID and address; or
+- *Individual*: a developer located in the US or Canada. The form is filled
+  from the subscription's **billing account, which must be of type
+  Individual** with the legal name and sold-to address of the person's
+  government ID; the person then completes a Microsoft Entra Verified ID
+  check (AU10TIX, phone + ID + face check) and presents it.
+
+Not possible: free, trial or sponsored subscriptions, and subscriptions billed
+to an employer's internal or enterprise billing account for an individual
+validation. The certificate's CN is the validated legal name; it can't be
+customized.
+
+**Cost.** Basic SKU: about USD 9.99 per month per account (5,000 signatures;
+billed in full for the month, not pro-rated). A release signs about 16 files.
+
+**Rotation.** Nothing to rotate in GitHub: there is no secret, and the
+service renews the short-lived certificates itself (every signature is
+timestamped, so it stays valid after the certificate expires). To replace
+the CI identity: `$S ci ...` again (re-creates the federated credential;
+delete the old app registration). To replace the profile (a new validation,
+a new name): `$S profile ...` with the new values; the identity validation
+must be renewed before it expires (reminders start 60 days ahead) or
+signing stops. To turn signing off: delete the variable
+`TRUSTED_SIGNING_PROFILE` (the release goes back to unsigned with a notice);
+to stop paying: delete the account.
+
 ### 2.6 Ordering: hub first, then the fleet
 
 `publish → hub → rollout`. The control plane goes first (the usual skew rule:
@@ -303,6 +407,140 @@ control plane ≥ nodes):
 Compatibility in both directions holds as long as the gRPC API only grows
 (new fields/methods; old longarmd ignore them, a new hub treats missing
 fields as defaults) - keep it that way.
+
+### 2.8 macOS signing and notarization (Apple Developer ID)
+
+MDM-managed Macs install only packages signed with a **Developer ID
+Installer** certificate, and Gatekeeper wants the code inside signed with a
+**Developer ID Application** certificate (hardened runtime) and **notarized**
+by Apple. release.yml's **build-macos** job (macos-latest, right after
+build-unix, next to build-windows) does that with
+[`.github/scripts/macos-sign.sh`](../.github/scripts/macos-sign.sh), on the
+`release-unix` artifact, before publish computes `checksums.txt` /
+`SHA256SUMS` and the minisign signatures:
+
+1. imports the two `.p12` into temporary keychains (deleted at the end;
+   Apple's Developer ID intermediate CAs come from `packaging/macos/certs`,
+   pinned by SHA256) and checks that both certificates are `APPLE_TEAM_ID`'s;
+2. signs the eight darwin binaries (`longarm`, `longarmd`, `longarm-hub`,
+   `longarm-relay` × amd64/arm64) with `codesign --options runtime
+   --timestamp --identifier com.longarm.<tool>` and verifies them (hardened
+   runtime, timestamp, team);
+3. repacks `longarm-darwin-<arch>.tar.gz` with the signed `longarm` and
+   `longarmd` (after checking the archive held exactly the unsigned
+   binaries) and puts the new sums into build-unix's `checksums.txt`;
+4. builds `longarm-darwin-<arch>.pkg` ([packaging/macos](../packaging/macos/README.md):
+   `/usr/local/bin`, a postinstall like the deb's), signed with
+   `productbuild --sign … --timestamp`;
+5. submits the binaries (one zip) and both pkgs to `xcrun notarytool` with
+   the API key, in parallel (`--wait`; a rejection prints Apple's log and
+   fails the job), staples the tickets to the pkgs and checks them with
+   `spctl --assess --type install` (`source=Notarized Developer ID`);
+6. replaces the `release-unix` artifact with the result (a re-run of the job
+   finds it done and changes nothing).
+
+Self-update keeps working: workers download exactly these signed
+`longarmd-darwin-<arch>` files (checked against the release key) and swap
+them in by rename, so the installed binary's code signature stays valid.
+
+Without any `APPLE_*` secret (forks, a dry run) the files stay unsigned, the
+pkgs are built unsigned, and the job warns; a partial setup warns about what
+is missing. A secret that is set but doesn't work (wrong password, another
+team, notarization rejected) fails the release.
+[`macos-pkg.yml`](../.github/workflows/macos-pkg.yml) tests the script on
+pull requests with self-signed stand-in certificates (signing, repacking, a
+real `installer -pkg`, the no-secrets path, a wrong team); notarization
+needs the real credentials.
+
+**Getting the credentials** (once; the certificates last 5 years, the API
+key until it is revoked):
+
+1. **Apple Developer Program** (99 USD a year): enrol at
+   <https://developer.apple.com/programs/enroll/> with an Apple Account that
+   has two-factor authentication.
+   - *Organization* (recommended for a company): needs a D-U-N-S number for
+     the legal entity and the authority to sign for it; the certificates and
+     macOS's prompts show the organization's name. Apple verifies it (days
+     to weeks).
+   - *Individual*: your own name appears in the certificates and prompts;
+     usually approved within a day or two.
+
+   Only the **Account Holder** can create Developer ID certificates (an
+   organization's Account Holder can delegate it to Admins). The **Team ID**
+   is under Membership details at <https://developer.apple.com/account>:
+   set it as `APPLE_TEAM_ID` and give it to the MDM administrators
+   ([usage](usage.md#macos-installer-pkg-and-mdm)).
+2. **Two certificates: Developer ID Application and Developer ID
+   Installer.** Each needs a certificate signing request (CSR). On a Mac:
+   Keychain Access → Certificate Assistant → Request a Certificate From a
+   Certificate Authority → your e-mail, a name, "Saved to disk" (twice). Or
+   with openssl on any machine (the private keys stay there):
+
+   ```sh
+   umask 077
+   openssl req -new -newkey rsa:2048 -nodes -keyout devid-app.key -out devid-app.csr -subj "/CN=Longarm Developer ID Application"
+   openssl req -new -newkey rsa:2048 -nodes -keyout devid-installer.key -out devid-installer.csr -subj "/CN=Longarm Developer ID Installer"
+   ```
+
+   At <https://developer.apple.com/account/resources/certificates/add>
+   choose **Developer ID Application** (profile type "G2 Sub-CA"), upload
+   `devid-app.csr`, download the `.cer`; again for **Developer ID
+   Installer** with `devid-installer.csr`. Then export each as a `.p12`
+   with a strong password:
+   - Keychain Access (CSR made there): double-click the `.cer`; under "My
+     Certificates" right-click "Developer ID Application: <name> (<TEAMID>)"
+     → Export → `.p12`, set a password. The same for the Installer one.
+   - openssl (CSR made with openssl; `-legacy` writes the format macOS's
+     `security import` reads - OpenSSL 3; with LibreSSL leave it out):
+
+     ```sh
+     openssl x509 -inform der -in developerID_application.cer -out devid-app.crt
+     openssl pkcs12 -export -legacy -inkey devid-app.key -in devid-app.crt -out devid-app.p12              # asks for the password
+     openssl x509 -inform der -in developerID_installer.cer -out devid-installer.crt
+     openssl pkcs12 -export -legacy -inkey devid-installer.key -in devid-installer.crt -out devid-installer.p12
+     ```
+
+   Keep the `.p12` files and their passwords in a password manager; delete
+   the `.key` files once the `.p12` are checked
+   (`openssl pkcs12 -info -nokeys -in devid-app.p12`).
+3. **An App Store Connect API key for notarization**: App Store Connect →
+   Users and Access → Integrations → App Store Connect API → Team Keys
+   (<https://appstoreconnect.apple.com/access/integrations/api>; the Account
+   Holder requests API access once). Generate a key with the **Developer**
+   role, e.g. "longarm-notary". Note the **Issuer ID** (above the list) and
+   the **Key ID**, and download `AuthKey_<KEYID>.p8` - Apple offers the
+   download only once.
+4. **The secrets**, from the files, never as command-line arguments
+   (`gh secret set` without `--body` reads the value from stdin, and at a
+   terminal prompts without echoing):
+
+   ```sh
+   R=your-org/longarm
+   base64 -i devid-app.p12 | gh secret set APPLE_DEVELOPER_ID_APP_P12 --repo $R         # Linux: base64 -w0 devid-app.p12 | ...
+   gh secret set APPLE_DEVELOPER_ID_APP_P12_PASSWORD --repo $R                          # prompts, no echo
+   base64 -i devid-installer.p12 | gh secret set APPLE_DEVELOPER_ID_INSTALLER_P12 --repo $R
+   gh secret set APPLE_DEVELOPER_ID_INSTALLER_P12_PASSWORD --repo $R
+   gh secret set APPLE_NOTARY_API_KEY_P8 --repo $R < AuthKey_ABCDE12345.p8
+   gh secret set APPLE_NOTARY_KEY_ID --repo $R                                           # prompts: the Key ID
+   gh secret set APPLE_NOTARY_ISSUER_ID --repo $R                                        # prompts: the Issuer ID
+   gh variable set APPLE_TEAM_ID --repo $R --body ABCDE12345                             # not a secret
+   ```
+
+   With the approval gate (2.5), put them into the `release` environment
+   (`--env release`) and add `environment: release` to `build-macos` as well.
+5. **Check** with the next tag (a dry run never signs): build-macos's
+   summary lists the signed files and their sums; on a Mac,
+   `pkgutil --check-signature longarm-darwin-arm64.pkg` names the
+   Developer ID Installer certificate and "Notarization: trusted by the
+   Apple notary service", and `spctl --assess --type install -vv
+   longarm-darwin-arm64.pkg` says `source=Notarized Developer ID`.
+
+Renewal and leaks: a Developer ID certificate expires after 5 years; what
+was signed (with a timestamp) and notarized before stays valid - replace the
+`.p12` secrets before then. If the API key leaks, revoke it in App Store
+Connect (it can only submit notarizations). If a `.p12` leaks, ask Apple
+Developer Support to revoke the certificate - which also invalidates what it
+signed - and release again with a new one.
 
 ## 3. Cutting a release
 
@@ -324,13 +562,18 @@ git push origin v1.4.0
    artifacts `release-unix` and `release-windows` (unsigned `hub-release/`
    files with canonical names, the longarm-hub debs, each side's
    `checksums.txt`), kept 14 days (re-run publish within that time).
+   **build-macos** (macos-latest, after build-unix, 2.8; the only job with
+   the `APPLE_*` secrets): signs the darwin binaries, repacks the darwin
+   archives, builds and signs `longarm-darwin-<arch>.pkg`, notarizes and
+   staples, and replaces `release-unix` with the result.
    **image** (next to the builds; it builds from the tag's source, not from
    their output): image.yml builds and smoke-tests the hub image, then pushes
    `ghcr.io/<owner>/longarm-hub:<v>` with the job's `GITHUB_TOKEN` (packages:
    write); **image-latest** moves `:latest` to it once publish succeeded
    (stable tags). The first push creates a private package: make it public
    once so [deploy/azure](../deploy/azure/README.md) can pull it anonymously.
-2. **publish**: merges the two artifacts into one release directory with one
+2. **publish**: merges the two artifacts (release-unix as build-macos left
+   it) into one release directory with one
    `checksums.txt`; `.github/scripts/release-files.sh` stops the release
    unless the file names are exactly those of the releases so far and
    `checksums.txt` matches the published copies (a dry run does this in its

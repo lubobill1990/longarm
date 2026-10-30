@@ -8,7 +8,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -23,47 +25,67 @@ func (s *hubAdminServer) CreateJoinCode(ctx context.Context, req *pb.CreateJoinC
 	return s.h.CreateJoinCode(by(ctx), req)
 }
 
-func (s *hubAdminServer) ListJoinCodes(context.Context, *pb.ListJoinCodesRequest) (*pb.ListJoinCodesResponse, error) {
-	return s.h.ListJoinCodes()
+func (s *hubAdminServer) ListJoinCodes(ctx context.Context, _ *pb.ListJoinCodesRequest) (*pb.ListJoinCodesResponse, error) {
+	return s.h.ListJoinCodesFor(s.h.viewer(callerFrom(ctx)), by(ctx))
 }
 
+// Operations on a node by name: the admin must know the name (the hub
+// doesn't list other users' nodes to admins); the answer carries no more
+// than the admin's user may see of the node, and other users' machines are
+// "no node" (opOn).
+
 func (s *hubAdminServer) Approve(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
-	return s.h.Approve(by(ctx), req.Name)
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func() (*pb.NodeInfo, error) { return s.h.Approve(by(ctx), req.Name) })
 }
 
 func (s *hubAdminServer) Revoke(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
-	return s.h.Revoke(by(ctx), req.Name)
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func() (*pb.NodeInfo, error) { return s.h.Revoke(by(ctx), req.Name) })
 }
 
 func (s *hubAdminServer) SetDrain(ctx context.Context, req *pb.SetDrainRequest) (*pb.NodeInfo, error) {
-	return s.h.SetDrain(by(ctx), req.Name, req.Draining)
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func() (*pb.NodeInfo, error) { return s.h.SetDrain(by(ctx), req.Name, req.Draining) })
 }
 
 func (s *hubAdminServer) SetLabels(ctx context.Context, req *pb.SetLabelsRequest) (*pb.NodeInfo, error) {
-	return s.h.SetLabels(by(ctx), req.Name, req.Labels)
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func() (*pb.NodeInfo, error) { return s.h.SetLabels(by(ctx), req.Name, req.Labels) })
 }
 
 func (s *hubAdminServer) PutProfile(ctx context.Context, req *pb.Profile) (*pb.Profile, error) {
-	return s.h.PutProfile(by(ctx), req)
+	pr, err := s.h.PutProfile(by(ctx), req)
+	return s.h.projector(s.h.viewer(callerFrom(ctx))).profile(pr), err
 }
 
-func (s *hubAdminServer) ListProfiles(context.Context, *pb.ListProfilesRequest) (*pb.ListProfilesResponse, error) {
-	return &pb.ListProfilesResponse{Profiles: s.h.Profiles()}, nil
+func (s *hubAdminServer) ListProfiles(ctx context.Context, _ *pb.ListProfilesRequest) (*pb.ListProfilesResponse, error) {
+	return &pb.ListProfilesResponse{Profiles: s.h.ProfilesFor(s.h.viewer(callerFrom(ctx)))}, nil
 }
 
 func (s *hubAdminServer) AssignProfile(ctx context.Context, req *pb.AssignProfileRequest) (*pb.NodeInfo, error) {
-	return s.h.AssignProfile(by(ctx), req.Node, req.Profile)
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Node, func() (*pb.NodeInfo, error) { return s.h.AssignProfile(by(ctx), req.Node, req.Profile) })
 }
 
 // ListJoinCodes lists recent join codes (without the codes themselves).
 func (h *Hub) ListJoinCodes() (*pb.ListJoinCodesResponse, error) {
+	return h.ListJoinCodesFor(tenancy.Caller{Admin: true}, "")
+}
+
+// ListJoinCodesFor lists the join codes v may see: the codes the caller
+// (by) created, codes of v's own user (its devices and workers) and fleet
+// worker codes (no owner). used_by - the machine that enrolled with it -
+// reads "used" unless v may see that machine.
+func (h *Hub) ListJoinCodesFor(v tenancy.Caller, by string) (*pb.ListJoinCodesResponse, error) {
 	codes_, err := h.store.JoinCodes(time.Now())
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	out := &pb.ListJoinCodesResponse{}
+	p := h.projector(v) // used_by "used" unless visible, created_by as its user
 	for _, c := range codes_ {
-		out.Codes = append(out.Codes, joinCodePB(c))
+		ok := v.Admin || (by != "" && c.CreatedBy == by) || (v.User != "" && (c.Owner == v.User || c.User == v.User)) ||
+			(c.Role == string(pki.RoleWorker) && c.Owner == "")
+		if !ok {
+			continue
+		}
+		out.Codes = append(out.Codes, p.joinCode(joinCodePB(c)))
 	}
 	return out, nil
 }

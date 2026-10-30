@@ -33,7 +33,8 @@ func TestHubSignInWorkerRelay(t *testing.T) {
 		t.Fatalf("longarmd login: %d\n%s", c, p.out.String())
 	}
 	w.start(t, true)
-	n := h.waitNode(t, "rw", "online with the hub relay leg", func(n map[string]any) bool {
+	// erin's own worker: in erin's view (admins only count it)
+	n := erinWeb.waitNode("rw", "online with the hub relay leg", func(n map[string]any) bool {
 		return isTrue(n["online"]) && strings.Contains(fmt.Sprint(n["endpoints"]), "longnet://")
 	})
 

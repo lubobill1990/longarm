@@ -25,6 +25,9 @@ import (
 // Store is the hub database.
 type Store struct {
 	db *sql.DB
+	// OnNodePut, if set, is called after a node record was saved (the hub's
+	// lock-free name directory for event projection).
+	OnNodePut func(*Node)
 }
 
 // ErrNotFound is returned when a row does not exist.
@@ -108,6 +111,14 @@ var migrations = []string{
 		owner TEXT NOT NULL,
 		data TEXT NOT NULL
 	);`,
+	// 5: audit attribution, fixed when a record is written: the Longarm
+	// user who acted and the user the record is about (the owner of the
+	// worker it came from, of the link, the user changed ...). Reads are
+	// authorized by these, never by today's node ownership. attributed = 0:
+	// a record from before (only its own "user" field counts).
+	`ALTER TABLE audit ADD COLUMN actor_user TEXT NOT NULL DEFAULT '';
+	ALTER TABLE audit ADD COLUMN subject_user TEXT NOT NULL DEFAULT '';
+	ALTER TABLE audit ADD COLUMN attributed INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // Open opens (creating if needed) the database at path and migrates it.
@@ -278,6 +289,9 @@ func (s *Store) PutNode(n *Node) error {
 	_, err = s.db.Exec(`INSERT INTO nodes(name,role,state,data) VALUES(?,?,?,?)
 		ON CONFLICT(name) DO UPDATE SET role=excluded.role, state=excluded.state, data=excluded.data`,
 		n.Name, n.Role, n.State, string(b))
+	if err == nil && s.OnNodePut != nil {
+		s.OnNodePut(n)
+	}
 	return err
 }
 
@@ -560,6 +574,10 @@ type AuditRow struct {
 	Who    string
 	Method string
 	Line   string
+	// attribution at write time (migration 5); Attributed false: older row
+	ActorUser   string
+	SubjectUser string
+	Attributed  bool
 }
 
 // AddAudit stores records.
@@ -573,8 +591,8 @@ func (s *Store) AddAudit(rows []AuditRow) error {
 	}
 	defer tx.Rollback()
 	for _, r := range rows {
-		if _, err := tx.Exec(`INSERT INTO audit(node,time,who,method,line) VALUES(?,?,?,?,?)`,
-			r.Node, r.Time.UnixMilli(), r.Who, r.Method, r.Line); err != nil {
+		if _, err := tx.Exec(`INSERT INTO audit(node,time,who,method,line,actor_user,subject_user,attributed) VALUES(?,?,?,?,?,?,?,?)`,
+			r.Node, r.Time.UnixMilli(), r.Who, r.Method, r.Line, r.ActorUser, r.SubjectUser, r.Attributed); err != nil {
 			return err
 		}
 	}
@@ -586,7 +604,7 @@ func (s *Store) Audit(node string, since time.Time, limit int) ([]AuditRow, erro
 	if limit <= 0 || limit > 10000 {
 		limit = 200
 	}
-	q := `SELECT node,time,who,method,line FROM audit WHERE time >= ?`
+	q := `SELECT node,time,who,method,line,actor_user,subject_user,attributed FROM audit WHERE time >= ?`
 	args := []any{since.UnixMilli()}
 	if node != "" {
 		q += ` AND node = ?`
@@ -603,7 +621,7 @@ func (s *Store) Audit(node string, since time.Time, limit int) ([]AuditRow, erro
 	for rows.Next() {
 		var r AuditRow
 		var t int64
-		if err := rows.Scan(&r.Node, &t, &r.Who, &r.Method, &r.Line); err != nil {
+		if err := rows.Scan(&r.Node, &t, &r.Who, &r.Method, &r.Line, &r.ActorUser, &r.SubjectUser, &r.Attributed); err != nil {
 			return nil, err
 		}
 		r.Time = time.UnixMilli(t)
