@@ -88,9 +88,10 @@ jobs:
           mkdir -p "$c"
           # LibreSSL (/usr/bin/openssl) writes the .p12 format `security import` reads
           for kind in app installer; do
-            if [ $kind = app ]; then eku=codeSigning; cn='Developer ID Application: Longarm Test (TESTTEAM01)'
-            else eku='codeSigning, 1.2.840.113635.100.4.13'; cn='Developer ID Installer: Longarm Test (TESTTEAM01)'; fi
-            printf '[req]\ndistinguished_name=dn\nprompt=no\n[dn]\nCN=%s\nOU=TESTTEAM01\n[ext]\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,%s\n' "$cn" "$eku" >"$c/$kind.cnf"
+            # like Apple's: EKU code signing / Apple package signing, plus the Developer ID marker extension
+            if [ $kind = app ]; then eku=codeSigning; mark=1.2.840.113635.100.6.1.13; cn='Developer ID Application: Longarm Test (TESTTEAM01)'
+            else eku=1.2.840.113635.100.4.13; mark=1.2.840.113635.100.6.1.14; cn='Developer ID Installer: Longarm Test (TESTTEAM01)'; fi
+            printf '[req]\ndistinguished_name=dn\nprompt=no\n[dn]\nCN=%s\nOU=TESTTEAM01\n[ext]\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,%s\n%s=critical,DER:0500\n' "$cn" "$eku" "$mark" >"$c/$kind.cnf"
             /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 2 -config "$c/$kind.cnf" -extensions ext \
               -keyout "$c/$kind.key" -out "$c/$kind.crt" 2>/dev/null
             pw=$(openssl rand -hex 12)
