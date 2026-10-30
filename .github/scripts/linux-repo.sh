@@ -6,9 +6,11 @@
 #       optional) into $GNUPGHOME and checks that it is the key of <public key> (the
 #       committed packaging/linux/repo/longarm.asc): a wrong secret fails here, before
 #       anything is signed with it
-#   linux-repo.sh fetch <owner/repo> <keep> <pkgdir> [<tag>]
-#       the deb/rpm packages of the newest <keep> stable GitHub Releases (gh, GH_TOKEN);
-#       <tag> must be one of them (the release that runs this)
+#   linux-repo.sh previous <base url> <public key> <pkgdir> <keep> <version>
+#       the packages of the newest <keep>-1 versions other than <version> from the
+#       repositories published at <base url>, verified as apt and dnf would (InRelease and
+#       repomd.xml signed by <public key>, hashes): what was vetted when it was first
+#       published, never re-taken from (mutable) GitHub Release assets; none yet: nothing
 #   linux-repo.sh build <pkgdir> <site> <base url> <public key>
 #       <site>/deb (apt: pool/, dists/stable/ with Release, InRelease, Release.gpg),
 #       <site>/rpm (yum/dnf: packages/, repodata/ with repomd.xml.asc), the public key
@@ -16,7 +18,7 @@
 #       Signs with the key of <public key> from $GNUPGHOME (`key` above); rpms that
 #       are not signed by that key (releases before the rpm signing) are left out.
 #
-# Needs: gpg, gpgv, dpkg-deb, apt-ftparchive (apt-utils), rpm, createrepo_c.
+# Needs: gpg, gpgv, curl, dpkg-deb, apt-ftparchive (apt-utils), rpm, createrepo_c.
 set -euo pipefail
 
 die() {
@@ -66,32 +68,78 @@ cmd_key() {
 	echo "signing key $want"
 }
 
-cmd_fetch() {
-	local repo=${1:?usage: linux-repo.sh fetch <owner/repo> <keep> <pkgdir> [<tag>]}
-	local keep=${2:?} dir=${3:?} need=${4:-}
+cmd_previous() {
+	local base=${1:?usage: linux-repo.sh previous <base url> <public key> <pkgdir> <keep> <version>}
+	local pub=${2:?} dir=${3:?} keep=${4:?} cur=${5:?}
+	base=${base%/}
 	[[ $keep =~ ^[1-9][0-9]*$ ]] || die "keep: '$keep' is not a positive number"
 	mkdir -p "$dir"
-	local tags
-	tags=$(gh release list --repo "$repo" --exclude-drafts --exclude-pre-releases --limit 200 \
-		--json tagName --jq '.[].tagName' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n "$keep")
-	[[ -n $tags ]] || die "$repo: no stable release"
-	if [[ -n $need ]] && ! grep -qxF -- "$need" <<<"$tags"; then
-		die "$need is not among the newest $keep stable releases: $(echo "$tags" | tr '\n' ' ')"
+	local t
+	t=$(mktemp -d)
+	gpg --batch --yes --dearmor -o "$t/pub.gpg" <"$pub"
+	local code
+	code=$(curl -sS -o "$t/InRelease" -w '%{http_code}' "$base/deb/dists/stable/InRelease") || code=000
+	if [[ $code == 404 ]]; then
+		echo "::notice::$base: no repository yet, starting with this release only"
+		rm -rf "$t"
+		return 0
 	fi
-	local tag
-	for tag in $tags; do
-		mkdir -p "$dir/$tag"
-		# longarm-linux-<arch>.deb|rpm (the hub's names) and longarm-hub_<v>_<arch>.deb
-		gh release download "$tag" --repo "$repo" --dir "$dir/$tag" --clobber \
-			--pattern 'longarm-linux-*.deb' --pattern 'longarm-linux-*.rpm' --pattern 'longarm-hub_*.deb'
-		# the files the release lists in SHA256SUMS must match it
-		if gh release download "$tag" --repo "$repo" --dir "$dir/$tag" --clobber --pattern SHA256SUMS 2>/dev/null; then
-			(cd "$dir/$tag" && grep -E ' (longarm-linux-[a-z0-9]+\.(deb|rpm)|longarm-hub_[^ ]+\.deb)$' SHA256SUMS | sha256sum -c --quiet -) ||
-				die "$tag: packages don't match the release's SHA256SUMS"
-			rm "$dir/$tag/SHA256SUMS"
-		fi
-		echo "$tag: $(find "$dir/$tag" -type f | wc -l) packages"
+	[[ $code == 200 ]] || die "$base/deb/dists/stable/InRelease: HTTP $code"
+	# the published repository, verified as apt would: InRelease by the key,
+	# the Packages indexes by InRelease's hashes, the .debs by the indexes'
+	gpgv --keyring "$t/pub.gpg" --output "$t/Release" "$t/InRelease" 2>/dev/null ||
+		die "$base: InRelease is not signed by the key of $pub"
+	local a
+	: >"$t/all"
+	for a in amd64 arm64; do
+		local want got
+		want=$(awk -v f="main/binary-$a/Packages" '/^SHA256:/ {s=1; next} /^[^ ]/ {s=0} s && $3 == f {print $1}' "$t/Release")
+		[[ $want =~ ^[0-9a-f]{64}$ ]] || die "Release: no SHA256 of main/binary-$a/Packages"
+		curl -fsSL -o "$t/Packages" "$base/deb/dists/stable/main/binary-$a/Packages"
+		got=$(sha256sum "$t/Packages" | cut -d' ' -f1)
+		[[ $got == "$want" ]] || die "main/binary-$a/Packages: sha256 mismatch"
+		# package version filename sha256
+		awk '/^Package: / {p=$2} /^Version: / {v=$2} /^Filename: / {f=$2} /^SHA256: / {h=$2}
+			/^$/ {if (p != "") print p, v, f, h; p=v=f=h=""}
+			END {if (p != "") print p, v, f, h}' "$t/Packages" >>"$t/all"
 	done
+	# the newest <keep>-1 versions of longarm other than <version>
+	local vers
+	vers=$(awk -v c="$cur" '$1 == "longarm" && $2 != c {print $2}' "$t/all" | sort -uV | tail -n $((keep - 1)))
+	if [[ -z $vers ]]; then
+		echo "previous versions: none"
+		rm -rf "$t"
+		return 0
+	fi
+	echo "previous versions: $(echo "$vers" | tr '\n' ' ')"
+	mkdir -p "$dir/deb" "$dir/rpm"
+	local p v f h
+	while read -r p v f h; do
+		grep -qxF -- "$v" <<<"$vers" || continue
+		[[ $f =~ ^pool/main/[a-z0-9]/[a-z0-9.+-]+/[A-Za-z0-9._+~-]+\.deb$ ]] || die "Packages: odd Filename '$f'"
+		curl -fsSL -o "$dir/deb/${f##*/}" "$base/deb/$f"
+		[[ $(sha256sum "$dir/deb/${f##*/}" | cut -d' ' -f1) == "$h" ]] || die "$f: sha256 mismatch"
+	done <"$t/all"
+	# rpms: by version from the (signed) repomd's primary; each rpm's own
+	# signature is checked by `build`
+	curl -fsSL -o "$t/repomd.xml" "$base/rpm/repodata/repomd.xml"
+	curl -fsSL -o "$t/repomd.xml.asc" "$base/rpm/repodata/repomd.xml.asc"
+	gpgv --keyring "$t/pub.gpg" "$t/repomd.xml.asc" "$t/repomd.xml" 2>/dev/null ||
+		die "$base: repomd.xml is not signed by the key of $pub"
+	local prim
+	prim=$(grep -o 'href="repodata/[A-Za-z0-9._-]*primary\.xml\.gz"' "$t/repomd.xml" | head -1 | cut -d'"' -f2)
+	[[ -n $prim ]] || die "repomd.xml: no primary"
+	curl -fsSL -o "$t/primary.xml.gz" "$base/rpm/$prim"
+	local href
+	for href in $(gzip -dc "$t/primary.xml.gz" | grep -o 'href="packages/[A-Za-z0-9._+~^-]*\.rpm"' | cut -d'"' -f2); do
+		# packages/<name>-<version>-<release>.<arch>.rpm
+		v=$(sed -E 's#^packages/longarm-([^-]+)-[^-]+\.[a-z0-9_]+\.rpm$#\1#' <<<"$href")
+		# (an rpm version has "_" where the deb's has "-": prereleases, snapshots)
+		if [[ $v == "$href" ]] || ! tr - _ <<<"$vers" | grep -qxF -- "${v//-/_}"; then continue; fi
+		curl -fsSL -o "$dir/rpm/${href#packages/}" "$base/rpm/$href"
+	done
+	rm -rf "$t"
+	echo "previous: $(find "$dir" -type f | wc -l) packages"
 }
 
 write_index() { # <site> <base> <fpr>
@@ -227,7 +275,7 @@ EOF
 }
 
 case ${1:-} in
-key | fetch | build)
+key | previous | build)
 	c=$1
 	shift
 	"cmd_$c" "$@"

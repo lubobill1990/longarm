@@ -212,8 +212,7 @@ jobs:
           GNUPGHOME=$h .github/scripts/linux-repo.sh key packaging/linux/repo/longarm.asc
           gpgconf --homedir "$h" --kill all || true
           rm -rf "$h"
-          (umask 077; printf '%s
-' "$LONGARM_GPG_PRIVATE_KEY" >"$RUNNER_TEMP/rpm-signing-key.asc")
+          (umask 077; printf '%s\n' "$LONGARM_GPG_PRIVATE_KEY" >"$RUNNER_TEMP/rpm-signing-key.asc")
           echo "LONGARM_RPM_KEY_FILE=$RUNNER_TEMP/rpm-signing-key.asc" >>"$GITHUB_ENV"
       - name: build (goreleaser + hub-release)
         env:
@@ -631,8 +630,9 @@ jobs:
         run: .github/scripts/longarm-release.sh rollout "$RUNNER_TEMP/longarm" "$VERSION" 15m
 
   # The signed apt and yum repositories on GitHub Pages (docs/linux-repos.md):
-  # rebuilt on every stable release from the deb/rpm packages of the newest
-  # LONGARM_REPO_KEEP (default 3) stable GitHub Releases, signed with the
+  # rebuilt on every stable release from this run's deb/rpm packages and those
+  # of the previous LONGARM_REPO_KEEP-1 (default 2) versions, taken from the
+  # published repositories after checking their signatures; signed with the
   # secret LONGARM_GPG_PRIVATE_KEY (which must be the committed
   # packaging/linux/repo/longarm.asc), installed from in Debian, Fedora and
   # AlmaLinux containers, then deployed. Without the secret: a warning, nothing
@@ -686,12 +686,24 @@ jobs:
       - id: pages
         if: steps.key.outputs.signed == 'true'
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
-      - name: packages of the newest stable releases
+      # this release's packages: the build artifact of this run (what publish
+      # signed and uploaded), not the release assets
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.key.outputs.signed == 'true'
+        with:
+          name: release-unix
+          path: ${{ runner.temp }}/artifact
+      - name: packages (this release + the previous ones from the published repositories)
         if: steps.key.outputs.signed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
           KEEP: ${{ vars.LONGARM_REPO_KEEP || '3' }}
-        run: .github/scripts/linux-repo.sh fetch "$GITHUB_REPOSITORY" "$KEEP" "$RUNNER_TEMP/pkg" "$TAG"
+        run: |
+          mkdir -p "$RUNNER_TEMP/pkg/current"
+          cp "$RUNNER_TEMP"/artifact/hub/longarm-linux-*.deb "$RUNNER_TEMP"/artifact/hub/longarm-linux-*.rpm \
+            "$RUNNER_TEMP"/artifact/extra/longarm-hub_*.deb "$RUNNER_TEMP/pkg/current/"
+          ls -l "$RUNNER_TEMP/pkg/current"
+          .github/scripts/linux-repo.sh previous "$BASE_URL" packaging/linux/repo/longarm.asc "$RUNNER_TEMP/pkg/previous" "$KEEP" "$VERSION"
       - name: build and sign the repositories
         if: steps.key.outputs.signed == 'true'
         env:

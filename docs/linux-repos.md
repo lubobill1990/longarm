@@ -83,13 +83,17 @@ The `.deb`s carry no signature of their own; apt verifies them through the
 signed Release file, as for Debian's own archive.
 
 The repositories are rebuilt on every stable release by release.yml's
-`linux-repo` job: the deb/rpm packages of the newest 3 stable GitHub Releases
-(repository variable `LONGARM_REPO_KEEP` to change it; GitHub Pages sites
-are limited to 1 GB, a release adds about 170 MB), checked against each
-release's `SHA256SUMS`, rpms that the key didn't sign left out (releases
-before the signing). The job installs from the result in Debian, Fedora and
-AlmaLinux containers before it deploys it; ci.yml's `linux-repo` job runs the
-same with a throwaway key on every pull request.
+`linux-repo` job from this run's own build artifact (the packages the
+release just published) and the packages of the previous 2 versions
+(repository variable `LONGARM_REPO_KEEP`, default 3 versions in all; GitHub
+Pages sites are limited to 1 GB, a version adds about 170 MB). The previous
+ones are taken from the published repositories themselves, checked as apt
+and dnf would (InRelease and repomd.xml against the committed key, the
+indexes' hashes, each rpm's signature) - never re-taken from GitHub Release
+assets, which anyone with write access could replace. The job installs from
+the result in Debian, Fedora and AlmaLinux containers before it deploys it;
+ci.yml's `linux-repo` job runs the same with a throwaway key on every pull
+request.
 
 Prereleases are not published to the repositories.
 

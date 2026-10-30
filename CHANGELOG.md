@@ -10,7 +10,7 @@
   GPG-signed (nfpm), the apt Release file (InRelease, Release.gpg) and the
   yum repomd.xml too, with the key "Longarm Release Signing" (secret
   `LONGARM_GPG_PRIVATE_KEY`; public key packaging/linux/repo/longarm.asc).
-  Rebuilt on every stable release from the newest 3 releases, installed from
+  Rebuilt on every stable release (the newest 3 versions), installed from
   in Debian, Fedora and AlmaLinux containers before it is deployed.
   docs/linux-repos.md.
 - Sign-in with **Google, Apple and personal Microsoft accounts**
