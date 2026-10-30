@@ -141,6 +141,14 @@ port links, the panel's actions, MCP tools - the target is resolved to an ID:
 | hex digits and dashes, 4+ characters | an ID prefix (git-style; never a name, rule 2) |
 | anything else | a name |
 
+A target resolves among the nodes the caller **may see** only ([What admins
+see](#what-admins-see)): with multi-tenancy another user's private worker
+or device is no candidate at all - by name, full ID, ID prefix or the
+explicit forms it gets word for word the answer of an unknown target ("no
+worker ..."), before anything is done or audited, and an ID prefix it
+shares with a visible node is not ambiguous (an ambiguity lists visible
+nodes only). Admins are no exception.
+
 Among the nodes visible to the caller (others' own workers don't exist for
 a user). A name means the non-revoked node of that name; with none, the one
 revoked node of that name (dispatching to it fails: revoked). A prefix
@@ -191,6 +199,15 @@ and that user is recorded at its registration (join, migration, first
 use) and kept through renames - a renewal under a new name never makes it
 another user; a device whose user can't be written into a certificate under
 another name (not a valid user name) is not renamed (enroll it again).
+Who may rename what: owners their own workers; admins (with multi-tenancy)
+their own user's workers and devices and the fleet workers - another user's
+machine is "not found" (above); without multi-tenancy admins rename any
+user's machine. Relays and release credentials are never renamed (nodes
+check their certificates' names). A rename never gives a node a Longarm
+user's name (a live or purged user's: only that user's own devices may
+carry it, never a worker) and never a name another non-revoked node has as
+its name or certificate name; when that node is one the caller may not see,
+the answer says only that the name is taken.
 
 **Admin worker pairing.** A worker and the admin worker enrolled with it by
 one pairing are linked by ID (`store.Node.Companion`, both ways; shown as
@@ -252,8 +269,11 @@ names** - never the hub's labels: a hub that relabels another of the
 owner's workers can't reuse a consent. (Worker-to-worker grants for other
 purposes, e.g. hand-off, bind IDs the same way.)
 
-**Migration** (hub database schema 4 -> 5, at the first start of a hub
-with this version; one transaction):
+**Migration** (hub database schema 5 -> 6, at the first start of a hub
+with this version; one transaction with the schema version - a failure
+leaves the schema-5 database as it was, and the next start migrates from
+scratch; migration 5 is the audit attribution of [What admins
+see](#what-admins-see), whose columns the records keep):
 
 - every node gets an ID; names stay as display names; the nodes table is
   keyed by ID with the unique index over non-revoked names;
@@ -274,6 +294,28 @@ with this version; one transaction):
   ID at their next renewal. Old clients and workers keep working: they send
   names, which the hub resolves; they ignore the new SAN (but can't verify
   v2 endorsements, see above).
+- the migration's rename records are attributed to the machine's user (its
+  owner sees them).
+
+**Older versions** (tested with the released v0.1.21 and v0.1.13 binaries:
+`e2e/compat_old_test.go`): workers and clients keep their certificates and
+renew into ones with the node ID; old clients list the hub's nodes under the
+names in their certificates (a client without `ListNodesRequest.node_ids`),
+so a worker the migration renamed (an older longarmd keeps its
+certificate's name: `dead` listed as `w-dead-2` to new clients) is reached
+by old clients under its certificate's name; old and new nodes reach each
+other directly and through the hub's and external relays (older
+longarm-relay too: it enforces the revoked serials, this version's also the
+revoked node IDs). With end-to-end trust, endorsements made by older nodes
+(name-bound) are verified by new ones; ID-bound endorsements made by new
+nodes are refused by older nodes - update the workers (and clients) that
+verify them.
+
+**Rollback**: a hub refuses a database a newer hub migrated ("database
+schema 6 is newer than this longarm-hub"). Going back to the previous
+release means restoring the database from before the upgrade (on Azure the
+Litestream snapshot taken before the deploy), losing what changed since -
+never running the older hub on the migrated database.
 
 ## When users are separated
 
@@ -1513,7 +1555,7 @@ Other admin answers follow the same line:
 | Admin path | What it shows of other users' machines |
 |---|---|
 | `admin nodes`, `ls`, tray, panel "Nodes", events (`node`, `metrics`, `job`, `queue`) | nothing (a count on stderr after `admin nodes`) |
-| operations by name: `admin approve / revoke / drain / label / profile`, `worker label / share / remove`, `admin tailnet rekey`, toolchain apply | other users' workers and devices are "no node" / "no worker", word for word the answer for an unknown name, checked before anything is done; fleet workers, the admin's own machines and infrastructure nodes (relays, release credentials) as before |
+| operations by name or node ID: `admin approve / revoke / drain / label / rename / profile`, `worker label / share / remove / rename`, `admin tailnet rekey`, toolchain apply, `admin audit --node` | other users' workers and devices are "no node" / "no worker", word for word the answer for an unknown name, ID or ID prefix - they are no candidates of the target ([Node identity](#node-identity)), checked before anything is done; fleet workers, the admin's own machines and infrastructure nodes (relays, release credentials) as before |
 | `admin kill <id>`, `admin logs <id>`, `admin run <worker>` | jobs are read and killed as their reader: another user's job is "not known to the hub" (checked before it is resolved to a worker, so neither the answer nor the audit names its worker); a named submit to another user's worker is "no worker" |
 | `admin user ls`, panel "People", `admin user remove` | device and worker **counts** per user and the number of active jobs - not the memory they reserve; `remove` revokes them all and reports a count |
 | `admin join-codes`, panel "Add machine" | the codes the admin created, its own user's, and fleet worker codes (no owner); other codes - other users' and unowned client codes other admins made - are left out; `used_by` reads "used" unless the admin may see the enrolled machine |

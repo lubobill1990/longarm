@@ -333,7 +333,7 @@ func TestOldReleaseCompat(t *testing.T) {
 	}
 	h.startHub(t)
 	hubLog := func() string { b, _ := os.ReadFile(filepath.Join(h.root, "hub.log")); return string(b) }
-	if !strings.Contains(hubLog(), `database migration: node "dead" (worker, approved) renamed to "w-dead-2"`) {
+	if l := strings.ReplaceAll(hubLog(), `\"`, `"`); !strings.Contains(l, `database migration: node "dead" (worker, approved) renamed to "w-dead-2"`) {
 		t.Fatalf("no migration note for dead:\n%s", tail(hubLog(), 4000))
 	}
 	nw := h.newWorkerDir(t, "nw", "") // a worker of this tree
