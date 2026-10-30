@@ -433,6 +433,26 @@ func TestAuthzTable(t *testing.T) {
 			_, err = st.Recv()
 			return err
 		}, [4]codes.Code{pd, pd, pd, pd}},
+		pb.Handoff_Fetch_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			st, err := pb.NewHandoffClient(c).Fetch(ctx, &pb.HandoffFetchRequest{TransferId: "none-0000"}) // workers only (TestHandoffOfferScope)
+			if err != nil {
+				return err
+			}
+			_, err = st.Recv()
+			return err
+		}, [4]codes.Code{pd, pd, pd, pd}},
+		pb.Handoff_Offer_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := pb.NewHandoffClient(c).Offer(ctx, &pb.HandoffOfferRequest{TransferId: "x"})
+			return err
+		}, [4]codes.Code{codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument}},
+		pb.Handoff_Pull_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := pb.NewHandoffClient(c).Pull(ctx, &pb.HandoffPullRequest{})
+			return err
+		}, [4]codes.Code{codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument}},
+		pb.Workspace_PushHandoff_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := pb.NewWorkspaceClient(c).PushHandoff(ctx, &pb.PushHandoffRequest{Branch: "main"})
+			return err
+		}, [4]codes.Code{codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument}},
 		pb.Workspace_Fetch_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
 			_, err := pb.NewWorkspaceClient(c).Fetch(ctx, &pb.FetchRequest{Repo: "../x"})
 			return err

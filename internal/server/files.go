@@ -100,7 +100,11 @@ func (f *filesServer) Stat(ctx context.Context, req *pb.FileStatRequest) (*pb.Fi
 	if req.Partial {
 		target += PartialSuffix
 	}
-	fi, err := os.Stat(target)
+	stat := os.Stat
+	if req.NoFollow {
+		stat = os.Lstat
+	}
+	fi, err := stat(target)
 	if errors.Is(err, fs.ErrNotExist) {
 		return &pb.FileInfo{Path: req.Path, AbsPath: abs}, nil
 	}
@@ -108,6 +112,10 @@ func (f *filesServer) Stat(ctx context.Context, req *pb.FileStatRequest) (*pb.Fi
 		return nil, fileErr(err)
 	}
 	out := infoOf(req.Path, abs, fi)
+	if req.NoFollow && fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+		out.IsSymlink = true // a symlink, junction or other reparse point: never hashed
+		return out, nil
+	}
 	if req.Hash && !fi.IsDir() {
 		if out.Sha256, err = hashFile(target, req.HashLimit); err != nil {
 			return nil, fileErr(err)

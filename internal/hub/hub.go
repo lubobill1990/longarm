@@ -97,6 +97,8 @@ type Hub struct {
 	// port links (portlinks.go): by id; the version counts pushes
 	portLinks        map[string]*portLinkEntry
 	portLinksVersion int64
+	// temporary relay pairs of handoff transfers (handoffpairs.go): expiry
+	handoffPairs map[handoffPairKey]time.Time
 	// external relays (relays.go): registered by cert name; the last relay
 	// set pushed; RelaySync streams wait on relayPolCh (closed on a change)
 	extRelays    map[string]*extRelay
@@ -653,6 +655,7 @@ func (h *Hub) sweep() {
 		}
 	}
 	h.sweepPortLinksLocked(now)
+	h.sweepHandoffPairsLocked(now)
 	h.advanceRolloutsLocked()
 	h.advanceReleaseLocked()
 }

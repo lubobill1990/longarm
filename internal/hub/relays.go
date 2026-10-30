@@ -182,8 +182,7 @@ func (h *Hub) relayPolicyLocked() *pb.RelayPolicy {
 		Revocations: h.revocationsMsgLocked().GetRevocations(),
 		RenewBefore: durationpb.New(h.cfg.RenewBefore(string(pki.RoleRelay)))}
 	seen := map[[2]string]bool{}
-	for _, e := range h.portLinks {
-		k := [2]string{e.l.From, e.l.To}
+	for _, k := range h.relayWorkerPairsLocked(time.Now()) {
 		if k[1] < k[0] {
 			k[0], k[1] = k[1], k[0]
 		}

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"google.golang.org/grpc"
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/conntrack"
@@ -628,6 +629,28 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 			m.learn = wtel.learn // names stay out of telemetry
 		})
 	srv.Links = links
+	srv.PeerDial = func(name string, endpoints []string) (grpc.ClientConnInterface, func(), error) {
+		w := client.Worker{Name: name, CertName: name}
+		for _, s := range endpoints {
+			e, err := client.ParseEndpoint(s)
+			if err != nil {
+				continue
+			}
+			if w.Address == "" {
+				w.Transport, w.Address = e.Transport, e.Address
+			} else {
+				w.Alt = append(w.Alt, e)
+			}
+		}
+		if w.Address == "" {
+			return nil, nil, fmt.Errorf("no endpoints of %s", name)
+		}
+		conn, err := linkDialer.Dial(w)
+		if err != nil {
+			return nil, nil, err
+		}
+		return conn.ClientConn, func() { conn.Close() }, nil
+	}
 	defer func() {
 		closersMu.Lock()
 		defer closersMu.Unlock()
