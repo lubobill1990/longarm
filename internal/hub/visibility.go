@@ -47,11 +47,28 @@ func (h *Hub) visibleNodeLocked(v tenancy.Caller, n *node) bool {
 	return tenancy.MayUseWorker(v.User, v.Teams, r.Owner, sharesPB(r.Shares))
 }
 
-// visibleNameLocked is visibleNodeLocked by name; unknown names are left
-// alone (they name nothing anybody could look up).
+// visibleNameLocked is visibleNodeLocked by name (or node ID); unknown
+// names are left alone (they name nothing anybody could look up). Names
+// are unique among non-revoked nodes - as names and as the names in their
+// certificates (a renamed node answers to its old one until it renews) -
+// so a non-revoked node of that name decides; else (only revoked nodes had
+// it, names are reused) the name is visible only if every one of them is.
 func (h *Hub) visibleNameLocked(v tenancy.Caller, name string) bool {
-	n := h.nodes[name]
-	return n == nil || h.visibleNodeLocked(v, n)
+	if v.Admin {
+		return true
+	}
+	if n := h.nodes[name]; n != nil { // an ID
+		return h.visibleNodeLocked(v, n)
+	}
+	if n := h.nameTakenLocked(name, ""); n != nil {
+		return h.visibleNodeLocked(v, n)
+	}
+	for _, n := range h.nodes {
+		if (n.rec.Name == name || n.rec.DialName() == name) && !h.visibleNodeLocked(v, n) {
+			return false
+		}
+	}
+	return true
 }
 
 // visibleNamesLocked keeps the names v may see.
@@ -101,7 +118,11 @@ func (h *Hub) LinksFor(v tenancy.Caller) *pb.LinksResponse {
 	defer h.mu.Unlock()
 	out := &pb.LinksResponse{}
 	for _, r := range all.Reports {
-		if n := h.nodes[r.Client]; n == nil || !h.visibleNodeLocked(v, n) {
+		n := h.nodes[r.ClientId]
+		if n == nil && r.ClientId == "" { // reported before node IDs
+			n = h.nameTakenLocked(r.Client, "")
+		}
+		if n == nil || !h.visibleNodeLocked(v, n) {
 			continue
 		}
 		r = proto.Clone(r).(*pb.LinkReport)
@@ -287,25 +308,37 @@ func (h *Hub) AuditFor(v tenancy.Caller, by string, req *pb.AuditRequest) (*pb.A
 	// counts: whether records v may not read are counted by method - in the
 	// fleet-wide log and the hub's own records only, never for a machine
 	counts := req.Node == ""
+	nodeID, nodeName := "", ""
 	if req.Node != "" {
 		// a node filter names a machine: v must be able to see it first.
 		// Unknown and hidden machines answer alike - nothing - and the
 		// answer never counts other users' records on it (that would be
 		// the activity of a machine v may not see, or of its other users).
-		h.mu.Lock()
-		n := h.nodes[req.Node]
-		counts = n == nil && req.Node == "hub" // the hub's own records (auditHub)
-		ok := counts || n != nil && (!userNodeRole(n.rec.Role) || h.visibleNodeLocked(v, n))
-		h.mu.Unlock()
-		if !ok {
-			return &pb.AuditResponse{}, nil
+		// A target (name, ID, ID prefix) resolves among the nodes v may
+		// see only: a hidden node is as unknown as a missing one, and an
+		// ambiguous prefix lists visible candidates only.
+		if req.Node == "hub" {
+			counts, nodeName = true, "hub" // the hub's own records (auditHub)
+		} else {
+			h.mu.Lock()
+			n, err := h.resolveLocked(req.Node, h.visibleLocked(v), "node")
+			if err == nil {
+				nodeID = n.rec.ID
+			}
+			h.mu.Unlock()
+			if status.Code(err) == codes.InvalidArgument {
+				return nil, err
+			}
+			if err != nil {
+				return &pb.AuditResponse{}, nil
+			}
 		}
 	}
 	fetch := limit
 	if !v.Admin {
 		fetch = 10000 // filtered below: look further back for the caller's own
 	}
-	rows, err := h.store.Audit(req.Node, since, fetch)
+	rows, err := h.store.Audit(nodeID, nodeName, since, fetch)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

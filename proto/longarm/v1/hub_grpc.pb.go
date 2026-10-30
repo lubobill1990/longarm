@@ -639,6 +639,7 @@ const (
 	Fleet_ShareWorker_FullMethodName      = "/longarm.v1.Fleet/ShareWorker"
 	Fleet_RemoveWorker_FullMethodName     = "/longarm.v1.Fleet/RemoveWorker"
 	Fleet_SetWorkerLabels_FullMethodName  = "/longarm.v1.Fleet/SetWorkerLabels"
+	Fleet_RenameWorker_FullMethodName     = "/longarm.v1.Fleet/RenameWorker"
 	Fleet_CreatePortLink_FullMethodName   = "/longarm.v1.Fleet/CreatePortLink"
 	Fleet_ListPortLinks_FullMethodName    = "/longarm.v1.Fleet/ListPortLinks"
 	Fleet_RemovePortLink_FullMethodName   = "/longarm.v1.Fleet/RemovePortLink"
@@ -697,6 +698,9 @@ type FleetClient interface {
 	// SetWorkerLabels merges labels into a worker's labels ("" deletes), as
 	// HubAdmin.SetLabels: the worker's owner, or an admin (any worker).
 	SetWorkerLabels(ctx context.Context, in *SetLabelsRequest, opts ...grpc.CallOption) (*NodeInfo, error)
+	// RenameWorker changes the display name of a worker of the caller's user
+	// (owner or admin); the worker keeps its ID. Audited.
+	RenameWorker(ctx context.Context, in *RenameNodeRequest, opts ...grpc.CallOption) (*NodeInfo, error)
 	// Port links (worker-to-worker, docs/usage.md "Port links"): the caller
 	// owns what it creates; users see and remove their own links (others'
 	// are NotFound), admins every link.
@@ -936,6 +940,16 @@ func (c *fleetClient) SetWorkerLabels(ctx context.Context, in *SetLabelsRequest,
 	return out, nil
 }
 
+func (c *fleetClient) RenameWorker(ctx context.Context, in *RenameNodeRequest, opts ...grpc.CallOption) (*NodeInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NodeInfo)
+	err := c.cc.Invoke(ctx, Fleet_RenameWorker_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *fleetClient) CreatePortLink(ctx context.Context, in *CreatePortLinkRequest, opts ...grpc.CallOption) (*PortLink, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PortLink)
@@ -1028,6 +1042,9 @@ type FleetServer interface {
 	// SetWorkerLabels merges labels into a worker's labels ("" deletes), as
 	// HubAdmin.SetLabels: the worker's owner, or an admin (any worker).
 	SetWorkerLabels(context.Context, *SetLabelsRequest) (*NodeInfo, error)
+	// RenameWorker changes the display name of a worker of the caller's user
+	// (owner or admin); the worker keeps its ID. Audited.
+	RenameWorker(context.Context, *RenameNodeRequest) (*NodeInfo, error)
 	// Port links (worker-to-worker, docs/usage.md "Port links"): the caller
 	// owns what it creates; users see and remove their own links (others'
 	// are NotFound), admins every link.
@@ -1104,6 +1121,9 @@ func (UnimplementedFleetServer) RemoveWorker(context.Context, *NodeRequest) (*No
 }
 func (UnimplementedFleetServer) SetWorkerLabels(context.Context, *SetLabelsRequest) (*NodeInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetWorkerLabels not implemented")
+}
+func (UnimplementedFleetServer) RenameWorker(context.Context, *RenameNodeRequest) (*NodeInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenameWorker not implemented")
 }
 func (UnimplementedFleetServer) CreatePortLink(context.Context, *CreatePortLinkRequest) (*PortLink, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreatePortLink not implemented")
@@ -1434,6 +1454,24 @@ func _Fleet_SetWorkerLabels_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Fleet_RenameWorker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenameNodeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).RenameWorker(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_RenameWorker_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).RenameWorker(ctx, req.(*RenameNodeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Fleet_CreatePortLink_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CreatePortLinkRequest)
 	if err := dec(in); err != nil {
@@ -1570,6 +1608,10 @@ var Fleet_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Fleet_SetWorkerLabels_Handler,
 		},
 		{
+			MethodName: "RenameWorker",
+			Handler:    _Fleet_RenameWorker_Handler,
+		},
+		{
 			MethodName: "CreatePortLink",
 			Handler:    _Fleet_CreatePortLink_Handler,
 		},
@@ -1639,6 +1681,7 @@ const (
 	HubAdmin_SetTeam_FullMethodName        = "/longarm.v1.HubAdmin/SetTeam"
 	HubAdmin_ListTeams_FullMethodName      = "/longarm.v1.HubAdmin/ListTeams"
 	HubAdmin_FleetSummary_FullMethodName   = "/longarm.v1.HubAdmin/FleetSummary"
+	HubAdmin_RenameNode_FullMethodName     = "/longarm.v1.HubAdmin/RenameNode"
 )
 
 // HubAdminClient is the client API for HubAdmin service.
@@ -1699,6 +1742,8 @@ type HubAdminClient interface {
 	// OS, last seen) and a version histogram - never names, IDs, host names,
 	// labels, metrics, processes, sessions or jobs. Audited.
 	FleetSummary(ctx context.Context, in *FleetSummaryRequest, opts ...grpc.CallOption) (*FleetSummaryResponse, error)
+	// RenameNode changes any node's display name (it keeps its ID). Audited.
+	RenameNode(ctx context.Context, in *RenameNodeRequest, opts ...grpc.CallOption) (*NodeInfo, error)
 }
 
 type hubAdminClient struct {
@@ -1991,6 +2036,16 @@ func (c *hubAdminClient) FleetSummary(ctx context.Context, in *FleetSummaryReque
 	return out, nil
 }
 
+func (c *hubAdminClient) RenameNode(ctx context.Context, in *RenameNodeRequest, opts ...grpc.CallOption) (*NodeInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NodeInfo)
+	err := c.cc.Invoke(ctx, HubAdmin_RenameNode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // HubAdminServer is the server API for HubAdmin service.
 // All implementations must embed UnimplementedHubAdminServer
 // for forward compatibility.
@@ -2049,6 +2104,8 @@ type HubAdminServer interface {
 	// OS, last seen) and a version histogram - never names, IDs, host names,
 	// labels, metrics, processes, sessions or jobs. Audited.
 	FleetSummary(context.Context, *FleetSummaryRequest) (*FleetSummaryResponse, error)
+	// RenameNode changes any node's display name (it keeps its ID). Audited.
+	RenameNode(context.Context, *RenameNodeRequest) (*NodeInfo, error)
 	mustEmbedUnimplementedHubAdminServer()
 }
 
@@ -2139,6 +2196,9 @@ func (UnimplementedHubAdminServer) ListTeams(context.Context, *ListTeamsRequest)
 }
 func (UnimplementedHubAdminServer) FleetSummary(context.Context, *FleetSummaryRequest) (*FleetSummaryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FleetSummary not implemented")
+}
+func (UnimplementedHubAdminServer) RenameNode(context.Context, *RenameNodeRequest) (*NodeInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenameNode not implemented")
 }
 func (UnimplementedHubAdminServer) mustEmbedUnimplementedHubAdminServer() {}
 func (UnimplementedHubAdminServer) testEmbeddedByValue()                  {}
@@ -2629,6 +2689,24 @@ func _HubAdmin_FleetSummary_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HubAdmin_RenameNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenameNodeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HubAdminServer).RenameNode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HubAdmin_RenameNode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HubAdminServer).RenameNode(ctx, req.(*RenameNodeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // HubAdmin_ServiceDesc is the grpc.ServiceDesc for HubAdmin service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2735,6 +2813,10 @@ var HubAdmin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FleetSummary",
 			Handler:    _HubAdmin_FleetSummary_Handler,
+		},
+		{
+			MethodName: "RenameNode",
+			Handler:    _HubAdmin_RenameNode_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

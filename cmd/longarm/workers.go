@@ -127,6 +127,7 @@ and the path this client reaches each worker by. --json prints every worker's hu
 						continue
 					}
 					if w, ok := workerFromNode(n); ok {
+						w.TrustAny = true // listing every worker: no target to hold it to
 						known[n.Name] = w
 					}
 				}
@@ -238,6 +239,9 @@ and the path this client reaches each worker by. --json prints every worker's hu
 			if asJSON {
 				out := map[string]any{}
 				for _, r := range rows {
+					if _, dup := out[r.name]; dup && r.node.GetState() == "revoked" {
+						continue // a revoked node whose name a new node has (names are reused)
+					}
 					switch {
 					case r.node != nil:
 						b, _ := protojson.Marshal(r.node)

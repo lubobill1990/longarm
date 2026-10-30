@@ -8,6 +8,7 @@ package main
 // attach, the MCP job tools - and handoff (forwardAgentAuth is its hook).
 
 import (
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"crypto/x509"
@@ -26,6 +27,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/agentauth"
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/machine"
+	"github.com/lubobill1990/longarm/internal/pki"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -116,7 +118,7 @@ func forwardAgentAuth(ctx context.Context, s *session, conn *client.Conn, worker
 	if pol := s.dialer.Bundle().Trust.Load(); pol.Active() {
 		t.E2E = true
 		t.EndorsedByMe = agentauth.EndorsedBy(peerCert(&pr), pol, ownUserPublicKey(s.cfg.Dir))
-	} else if n := s.hubNode(worker); n != nil {
+	} else if n := s.hubNode(peerCert(&pr)); n != nil {
 		t.HubKnown = true
 		if n.Owner != "" {
 			t.Owner = n.Owner // the hub's word (it runs the CA: trusted without end-to-end trust)
@@ -162,19 +164,34 @@ func forwardAgentAuth(ctx context.Context, s *session, conn *client.Conn, worker
 	return &pb.AgentAuth{Agents: b.Agents, CopilotHome: b.Has(agentauth.Copilot) && !o.keepCopilotHome}, env, secrets, nil
 }
 
-// hubNode is the hub's record of worker (nil = not hub-known, or no hub).
-func (s *session) hubNode(worker string) *pb.NodeInfo {
-	if !s.cfg.Hub.Enabled() {
+// hubNode is the hub's record of the worker whose certificate cert was
+// verified on this connection (nil = not hub-known, or no hub): by the
+// node ID the certificate carries (docs/security.md "Node identity"), a
+// certificate without one (an older worker) by its certificate name among
+// the non-revoked workers - never by the name the user typed, which may
+// be a reused or renamed one.
+func (s *session) hubNode(cert *x509.Certificate) *pb.NodeInfo {
+	if !s.cfg.Hub.Enabled() || cert == nil {
+		return nil
+	}
+	id, err := pki.IdentityFromCert(cert)
+	if err != nil || id.Role != pki.RoleWorker {
 		return nil
 	}
 	s.refreshNodes(false)
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
-	if s.placed != nil && s.placed.Name == worker {
-		return s.placed
-	}
 	for _, n := range s.nodes {
-		if n.Name == worker {
+		if n.State == "revoked" || n.Role != "" && n.Role != string(pki.RoleWorker) {
+			continue
+		}
+		if id.ID != "" {
+			if strings.EqualFold(n.Id, id.ID) {
+				return n
+			}
+			continue
+		}
+		if cmp.Or(n.CertName, n.Name) == id.Name {
 			return n
 		}
 	}

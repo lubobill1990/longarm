@@ -71,7 +71,8 @@ func TypeOf(argv []string) string {
 
 // Candidate is one worker as the scheduler sees it.
 type Candidate struct {
-	Name       string
+	Name       string            // display name (reasons, tie-breaks)
+	ID         string            // node ID (Result.WorkerID; Exclude matches it too)
 	Labels     map[string]string // includes os=, arch=
 	FreeGB     float64           // memory not in use
 	TotalGB    float64           // physical memory (0 = unknown: the fixed gate)
@@ -106,9 +107,10 @@ func Score(c Candidate) float64 {
 
 // Result of Pick.
 type Result struct {
-	Worker  string
-	Score   float64
-	Reasons map[string]string // per rejected candidate
+	Worker   string // the winner's name
+	WorkerID string // and node ID
+	Score    float64
+	Reasons  map[string]string // per rejected candidate
 }
 
 // Summary is a one-line explanation of why nobody passed.
@@ -139,7 +141,7 @@ func Pick(p Params, cands []Candidate, req Request) Result {
 		}
 		s := Score(c)
 		if res.Worker == "" || s > best || (s == best && c.Name < res.Worker) {
-			res.Worker, res.Score, best = c.Name, s, s
+			res.Worker, res.WorkerID, res.Score, best = c.Name, c.ID, s, s
 		}
 	}
 	return res
@@ -150,7 +152,7 @@ func reject(p Params, c Candidate, req Request) string {
 	case IsAdminWorker(c.Labels):
 		// never placed: an admin worker is used by its name only
 		return "admin worker (by name only)"
-	case slices.Contains(req.Exclude, c.Name):
+	case slices.Contains(req.Exclude, c.Name) || (c.ID != "" && slices.Contains(req.Exclude, c.ID)):
 		return "excluded"
 	case !c.Online:
 		return "offline"

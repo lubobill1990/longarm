@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -129,20 +130,31 @@ func userNodeRole(role string) bool {
 	return role == string(pki.RoleWorker) || role == string(pki.RoleClient) || role == string(pki.RoleAdmin)
 }
 
-// opOn runs op, an operation on the node name by name, for v. Users'
-// machines v may not see (other users' devices and private workers) are
-// refused before anything is done, with the error an unknown name gets
-// ("no <kind> <name>"): an operation never tells a hidden machine from a
-// missing one. The answer is opNodeView.
-func (h *Hub) opOn(v tenancy.Caller, kind, name string, op func() (*pb.NodeInfo, error)) (*pb.NodeInfo, error) {
+// opOn runs op, an operation on the node target names (a name, an ID, an
+// ID prefix, id:<prefix>, name:<name>), for v. The target resolves among
+// the nodes v may see (visibleLocked): users' machines v may not see
+// (other users' devices and private workers) are no candidates, so they
+// are refused before anything is done with the error an unknown target
+// gets ("no <kind> ...") - an operation never tells a hidden machine from
+// a missing one, and an ambiguous ID prefix lists visible nodes only. op
+// gets the node as "id:<its ID>": it acts on exactly that node. The answer
+// is opNodeView.
+func (h *Hub) opOn(v tenancy.Caller, kind, target string, op func(target string) (*pb.NodeInfo, error)) (*pb.NodeInfo, error) {
 	h.mu.Lock()
-	n := h.nodes[name]
-	hidden := n != nil && userNodeRole(n.rec.Role) && !h.visibleNodeLocked(v, n)
-	h.mu.Unlock()
-	if hidden {
-		return nil, status.Errorf(codes.NotFound, "no %s %q", kind, name)
+	visible := h.visibleLocked(v)
+	if kind == "worker" {
+		visible = func(n *node) bool { return isWorker(n) && h.visibleNodeLocked(v, n) }
 	}
-	info, err := op()
+	n, err := h.resolveLocked(target, visible, kind)
+	id := ""
+	if err == nil {
+		id = n.rec.ID
+	}
+	h.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	info, err := op(nodeid.IDPrefixForm + id)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +180,7 @@ func nodeView(v tenancy.Caller, n *pb.NodeInfo) *pb.NodeInfo {
 		n.Shares = nil
 		// so is its admin worker (owner-only): the machine is the worker's
 		if n.Companion != "" && !n.AdminWorker {
-			n.Companion, n.Machine = "", n.Name
+			n.Companion, n.CompanionId, n.Machine = "", "", n.Name
 		}
 	}
 	own := func(repos []string) []string {
@@ -365,7 +377,7 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "user %s exists", req.Name)
 	}
-	if n := h.nodes[req.Name]; t == nil && n != nil && n.rec.Role == string(pki.RoleWorker) {
+	if n := h.activeByNameLocked(req.Name); t == nil && n != nil && n.rec.Role == string(pki.RoleWorker) {
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "%s is a worker's name", req.Name)
 	}
@@ -468,15 +480,13 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 func (h *Hub) freeDeviceName(user string) string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	taken := func(n string) bool {
-		x := h.nodes[n]
-		return x != nil && x.rec.State != stateRevoked
-	}
-	if !taken(user) {
-		return user
+	base := nodeid.SafeName(user, "d-") // a user called "cafe" gets device d-cafe
+	taken := func(n string) bool { return h.nameTakenLocked(n, "") != nil }
+	if !taken(base) {
+		return base
 	}
 	for i := 2; ; i++ {
-		if n := fmt.Sprintf("%s-%d", user, i); !taken(n) {
+		if n := fmt.Sprintf("%s-%d", base, i); !taken(n) {
 			return n
 		}
 	}
@@ -525,11 +535,16 @@ func (h *Hub) RemoveUser(by string, req *pb.RemoveUserRequest) (*pb.RemoveUserRe
 	}
 	h.mu.Lock()
 	_, known := h.tenants[req.Name]
-	devices := h.devicesLocked(req.Name)
-	// the user's own workers go too: nobody else could use them anyway
+	// the user's devices, and the user's own workers: nobody else could use them anyway
+	var devices, deviceIDs []string
 	for _, n := range h.nodes {
-		if n.rec.Owner == req.Name && n.rec.Role == string(pki.RoleWorker) && n.rec.State != stateRevoked {
-			devices = append(devices, n.rec.Name)
+		if n.rec.State == stateRevoked {
+			continue
+		}
+		mine := n.rec.Role == string(pki.RoleWorker) && n.rec.Owner == req.Name ||
+			userNodeRole(n.rec.Role) && n.rec.Role != string(pki.RoleWorker) && nodeUser(n.rec) == req.Name
+		if mine {
+			devices, deviceIDs = append(devices, n.rec.Name), append(deviceIDs, n.rec.ID)
 		}
 	}
 	h.mu.Unlock()
@@ -537,8 +552,8 @@ func (h *Hub) RemoveUser(by string, req *pb.RemoveUserRequest) (*pb.RemoveUserRe
 		return nil, status.Errorf(codes.NotFound, "no user %q", req.Name)
 	}
 	resp := &pb.RemoveUserResponse{Purge: req.Purge}
-	for _, d := range devices {
-		if _, err := h.Revoke(by+" (remove user "+req.Name+")", d); err != nil {
+	for i := range devices {
+		if _, err := h.Revoke(by+" (remove user "+req.Name+")", "id:"+deviceIDs[i]); err != nil {
 			return nil, err
 		}
 		resp.RevokedCount++

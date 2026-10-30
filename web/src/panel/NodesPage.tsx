@@ -4,7 +4,7 @@ import type { LinkReport, MetricsPoint, NodeInfo, Profile } from '../api/types'
 import { MiniBar, Sparkline } from '../components/charts'
 import { ErrorBox, StatePill, useAction, usePoll } from '../components/common'
 import { VersionTag } from '../components/VersionTag'
-import { AMBER, CPU_C, fmtAgo, fmtRTT, gb, GREEN, isRelayed, MEM_C, memPct, RED, since } from '../lib/format'
+import { AMBER, CPU_C, fmtAgo, fmtRTT, gb, GREEN, isRelayed, MEM_C, memPct, nodeKey, RED, shortIds, since } from '../lib/format'
 import { nodeMachines } from '../lib/machines'
 
 const HIST = 150
@@ -18,22 +18,28 @@ export function useLiveNodes() {
   const reload = () => setTick((t) => t + 1)
   useEffect(() => {
     let alive = true
+    // keyed by node ID: a revoked node's name may belong to a new node
     hubApi
       .nodes(true)
-      .then((ns) => alive && setNodes(Object.fromEntries(ns.map((n) => [n.name, n]))))
+      .then((ns) => alive && setNodes(Object.fromEntries(ns.map((n) => [nodeKey(n), n]))))
       .catch((e) => setError(String(e.message ?? e)))
     hubApi
       .history()
-      .then((hs) => alive && setHist(Object.fromEntries(hs.map((h) => [h.node, h.points ?? []]))))
+      .then((hs) => alive && setHist(Object.fromEntries(hs.map((h) => [h.node_id || h.node, h.points ?? []]))))
       .catch(() => {})
     const s = hubApi.events(['node', 'metrics'], (ev) => {
       const n = ev.node_info
       if (!n) return
-      setNodes((old) => ({ ...old, [n.name]: n }))
+      const k = nodeKey(n)
+      setNodes((old) => {
+        const next = { ...old, [k]: n }
+        if (n.id && next[n.name] && !next[n.name].id) delete next[n.name] // an entry of an older hub
+        return next
+      })
       if (ev.kind === 'metrics' && n.metrics) {
         const m = n.metrics
         const p: MetricsPoint = { time: m.time, cpu: m.cpu_percent ?? 0, mem: memPct(m) }
-        setHist((old) => ({ ...old, [n.name]: [...(old[n.name] ?? []), p].slice(-HIST) }))
+        setHist((old) => ({ ...old, [k]: [...(old[k] ?? []), p].slice(-HIST) }))
       }
     })
     return () => {
@@ -51,7 +57,8 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
   const profiles = usePoll(() => (admin ? hubApi.profiles() : Promise.resolve([])), admin ? 30000 : 0, [admin])
   // the newest complete release: outdated versions are marked
   const latest = usePoll(() => hubApi.latestRelease().catch(() => undefined), 600000)
-  const list = useMemo(() => Object.values(nodes).sort((a, b) => a.name.localeCompare(b.name)), [nodes])
+  const list = useMemo(() => Object.values(nodes).sort((a, b) => a.name.localeCompare(b.name) || nodeKey(a).localeCompare(nodeKey(b))), [nodes])
+  const short = useMemo(() => shortIds(list.map((n) => n.id)), [list])
   const pending = list.filter((n) => n.state === 'pending')
   const workers = list.filter((n) => n.role === 'worker' && n.state !== 'pending')
   // one machine together: a session worker, then its admin worker; online machines first
@@ -81,7 +88,7 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
           <table className="grid">
             <tbody>
               {pending.map((n) => (
-                <PendingRow key={n.name} n={n} />
+                <PendingRow key={nodeKey(n)} n={n} short={short} />
               ))}
             </tbody>
           </table>
@@ -105,10 +112,10 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
           {machines.flatMap((g) => {
             const main = g.session ?? g.admin!
             const rows = [
-              <NodeRow key={main.name} n={main} adminWorker={g.session ? g.admin : undefined} hist={hist[main.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} latest={latest.data?.version} />,
+              <NodeRow key={nodeKey(main)} n={main} short={short} adminWorker={g.session ? g.admin : undefined} hist={hist[nodeKey(main)] ?? hist[main.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} latest={latest.data?.version} />,
             ]
             if (g.session && g.admin)
-              rows.push(<NodeRow key={g.admin.name} n={g.admin} sub hist={hist[g.admin.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} latest={latest.data?.version} />)
+              rows.push(<NodeRow key={nodeKey(g.admin)} n={g.admin} short={short} sub hist={hist[nodeKey(g.admin)] ?? hist[g.admin.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} latest={latest.data?.version} />)
             return rows
           })}
           {workers.length === 0 && (
@@ -128,7 +135,7 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
           <table className="grid">
             <tbody>
               {others.map((n) => (
-                <OtherRow key={n.name} n={n} admin={admin} latest={latest.data?.version} />
+                <OtherRow key={nodeKey(n)} n={n} short={short} admin={admin} latest={latest.data?.version} />
               ))}
             </tbody>
           </table>
@@ -138,22 +145,40 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
   )
 }
 
-function PendingRow({ n }: { n: NodeInfo }) {
+/** The short node ID next to a name (title: the full ID). */
+function NodeId({ n, short }: { n: NodeInfo; short: Record<string, string> }) {
+  if (!n.id) return null
+  return (
+    <span className="mono faint small" title={`node ID ${n.id}`} data-testid={`id-${n.name}`}>
+      {short[n.id.toLowerCase()] ?? n.id.slice(0, 8)}
+    </span>
+  )
+}
+
+/** Ask for a new name and rename the node (it keeps its ID). */
+function renameNode(n: NodeInfo, run: ReturnType<typeof useAction>['run']) {
+  const name = prompt(`New name for ${n.name} (it keeps its ID ${n.id ?? ''}):`, n.name)
+  if (!name || name === n.name) return
+  run(() => hubApi.rename(nodeKey(n), name), `${n.name} renamed to ${name}`)
+}
+
+function PendingRow({ n, short }: { n: NodeInfo; short: Record<string, string> }) {
   const { run, busy } = useAction()
+  const target = nodeKey(n)
   return (
     <tr data-testid={`pending-${n.name}`}>
       <td>
-        <b>{n.name}</b> <span className="muted">{n.role}</span>
+        <b>{n.name}</b> <NodeId n={n} short={short} /> <span className="muted">{n.role}</span>
       </td>
       <td className="muted">
         {n.hostname} {n.os}/{n.arch} {n.version}
       </td>
       <td className="muted">joined {fmtAgo(since(n.joined_at))} ago</td>
       <td style={{ textAlign: 'right' }}>
-        <button className="primary" disabled={busy} onClick={() => run(() => hubApi.approve(n.name), `${n.name} approved`)}>
+        <button className="primary" disabled={busy} onClick={() => run(() => hubApi.approve(target), `${n.name} approved`)}>
           Approve
         </button>{' '}
-        <button className="danger" disabled={busy} onClick={() => confirm(`Reject ${n.name}?`) && run(() => hubApi.revoke(n.name), `${n.name} rejected`)}>
+        <button className="danger" disabled={busy} onClick={() => confirm(`Reject ${n.name}?`) && run(() => hubApi.revoke(target), `${n.name} rejected`)}>
           Reject
         </button>
       </td>
@@ -163,6 +188,7 @@ function PendingRow({ n }: { n: NodeInfo }) {
 
 function NodeRow({
   n,
+  short,
   hist,
   links,
   profiles,
@@ -172,6 +198,7 @@ function NodeRow({
   latest,
 }: {
   n: NodeInfo
+  short: Record<string, string>
   hist: MetricsPoint[]
   links: LinkReport[]
   profiles: Profile[]
@@ -185,6 +212,7 @@ function NodeRow({
   const { run, busy } = useAction()
   const m = n.online ? n.metrics : undefined
   const revoked = n.state === 'revoked'
+  const target = nodeKey(n) // actions name the node by ID
   const pairs = links.flatMap((r) => (r.links ?? []).filter((l) => l.worker === n.name).map((l) => ({ client: r.client, l })))
   const editLabels = () => {
     const cur = Object.entries(n.labels ?? {})
@@ -199,7 +227,7 @@ function NodeRow({
       const i = kv.indexOf('=')
       if (i > 0) next[kv.slice(0, i)] = kv.slice(i + 1)
     }
-    run(() => hubApi.setLabels(n.name, next), 'labels saved')
+    run(() => hubApi.setLabels(target, next), 'labels saved')
   }
   return (
     <tr data-testid={`node-${n.name}`} className={sub ? 'subrow' : undefined} style={revoked ? { opacity: 0.5 } : undefined}>
@@ -208,6 +236,7 @@ function NodeRow({
           {sub && <span className="faint" title="the admin worker of the machine above">↳</span>}
           <span className="dot" style={{ background: revoked ? RED : n.online ? GREEN : RED }} />
           <b>{n.name}</b>
+          <NodeId n={n} short={short} />
           {adminWorker && (
             <span
               className="pill info"
@@ -297,7 +326,7 @@ function NodeRow({
             aria-label={`profile of ${n.name}`}
             value={n.profile ?? ''}
             disabled={revoked || busy}
-            onChange={(e) => run(() => hubApi.assignProfile(n.name, e.target.value), 'profile assigned')}
+            onChange={(e) => run(() => hubApi.assignProfile(target, e.target.value), 'profile assigned')}
           >
             <option value="">(none)</option>
             {profiles.map((p) => (
@@ -319,13 +348,16 @@ function NodeRow({
         <td className="nowrap" style={{ textAlign: 'right' }}>
           {!revoked && (
             <>
-              <button disabled={busy} onClick={() => run(() => hubApi.drain(n.name, !n.admin_drain), n.admin_drain ? 'resumed' : 'drained')}>
+              <button disabled={busy} onClick={() => run(() => hubApi.drain(target, !n.admin_drain), n.admin_drain ? 'resumed' : 'drained')}>
                 {n.admin_drain ? 'Resume' : 'Drain'}
               </button>{' '}
-              <button disabled={busy || !n.online} title="reconcile the toolchain profile now" onClick={() => run(() => hubApi.toolchainApply(n.name), 'toolchain apply requested')}>
+              <button disabled={busy || !n.online} title="reconcile the toolchain profile now" onClick={() => run(() => hubApi.toolchainApply(target), 'toolchain apply requested')}>
                 Update
               </button>{' '}
-              <button className="danger" disabled={busy} onClick={() => confirm(`Revoke ${n.name}? Its certificates stop working everywhere.`) && run(() => hubApi.revoke(n.name), `${n.name} revoked`)}>
+              <button disabled={busy} title="change the display name (the node keeps its ID)" onClick={() => renameNode(n, run)}>
+                Rename
+              </button>{' '}
+              <button className="danger" disabled={busy} onClick={() => confirm(`Revoke ${n.name}? Its certificates stop working everywhere.`) && run(() => hubApi.revoke(target), `${n.name} revoked`)}>
                 Revoke
               </button>
             </>
@@ -336,12 +368,13 @@ function NodeRow({
   )
 }
 
-function OtherRow({ n, admin, latest }: { n: NodeInfo; admin: boolean; latest?: string }) {
+function OtherRow({ n, short, admin, latest }: { n: NodeInfo; short: Record<string, string>; admin: boolean; latest?: string }) {
   const { run, busy } = useAction()
+  const target = nodeKey(n)
   return (
     <tr>
       <td>
-        <b>{n.name}</b> <span className="muted">{n.role}</span>
+        <b>{n.name}</b> <NodeId n={n} short={short} /> <span className="muted">{n.role}</span>
         {n.user && n.user !== n.name && <span className="muted small"> · user {n.user}</span>}
         {n.version && (
           <span className="muted small">
@@ -356,9 +389,14 @@ function OtherRow({ n, admin, latest }: { n: NodeInfo; admin: boolean; latest?: 
       <td className="muted small">last seen {n.last_seen ? `${fmtAgo(since(n.last_seen))} ago` : '—'}</td>
       <td style={{ textAlign: 'right' }}>
         {admin && n.state !== 'revoked' && (
-          <button className="danger" disabled={busy} onClick={() => confirm(`Revoke ${n.name}?`) && run(() => hubApi.revoke(n.name), `${n.name} revoked`)}>
-            Revoke
-          </button>
+          <>
+            <button disabled={busy} title="change the display name (the node keeps its ID)" onClick={() => renameNode(n, run)}>
+              Rename
+            </button>{' '}
+            <button className="danger" disabled={busy} onClick={() => confirm(`Revoke ${n.name}?`) && run(() => hubApi.revoke(target), `${n.name} revoked`)}>
+              Revoke
+            </button>
+          </>
         )}
       </td>
     </tr>

@@ -45,6 +45,11 @@ const RelaySetFile = "relay-set.json"
 // (hub.CapRelaySet).
 const capRelaySet = "relay-set"
 
+// capNodeID is this longarmd's NodeHello capability for node identity: it
+// renews its certificate and restarts when the hub renames it
+// (hub followsRenames).
+const capNodeID = "node-id"
+
 // envLegacyRelay (tests only) makes longarmd behave like a version without
 // the relay set: no capability in the hello, HubWelcome.relays and
 // HubCommand.relays ignored (the embedded relay only).

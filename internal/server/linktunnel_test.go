@@ -23,6 +23,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/portlink"
 	"github.com/lubobill1990/longarm/internal/tenancy"
@@ -382,7 +383,8 @@ func linkTestEnv(t *testing.T) (*authzEnv, *fakeLinks, *pki.Bundle, int) {
 func linkGrant(t *testing.T, hub *pki.Bundle, l *pb.PortLink) *pb.SignedPortLinkGrant {
 	t.Helper()
 	g, err := portlink.Sign(hub.Certificate(), &pb.PortLinkGrant{Id: l.Id, Owner: l.Owner, From: l.From, To: l.To,
-		Port: l.Port, ListenPort: l.ListenPort, ExpiresUnix: l.ExpiresAt.AsTime().Unix(), IssuedUnix: time.Now().Unix()})
+		Port: l.Port, ListenPort: l.ListenPort, ExpiresUnix: l.ExpiresAt.AsTime().Unix(), IssuedUnix: time.Now().Unix(),
+		FromId: l.FromId, ToId: l.ToId})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,6 +442,23 @@ func TestLinkTunnelConsent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer wa.Close()
+	// w1 (this server, the target) is alice's too: a consent names its
+	// ends, and the target holds itself to its own endorsement
+	_, tnk, _ := ed25519.GenerateKey(rand.Reader)
+	te, err := pki.Endorse(alice, "alice", pki.KindWorker, "w1", tnk.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, tcsr, err := pki.NewKeyAndCSR("w1", &pki.CSRTrust{NodeKey: tnk, Endorsement: te})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcert, err := e.ca.SignCSR(tcsr, pki.IssueOptions{Role: pki.RoleWorker, Name: "w1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tleaf, _ := pki.ParseCertPEM(tcert)
+	e.srv.SelfCert = func() *x509.Certificate { return tleaf }
 
 	_, dnk, _ := ed25519.GenerateKey(rand.Reader)
 	de, err := pki.Endorse(alice, "alice", pki.KindDevice, "alice-laptop", dnk.Public().(ed25519.PublicKey))
@@ -532,5 +551,53 @@ func TestLinkTunnelPending(t *testing.T) {
 	}
 	if status.Code(err) != codes.PermissionDenied || !strings.Contains(err.Error(), "no link grant") {
 		t.Fatalf("after the idle streams: %v", err)
+	}
+}
+
+// TestLinkTunnelNodeIDs: a grant binds the ends' node IDs - the calling
+// worker's certificate must be the grant's from_id (a worker that got the
+// name - its certificate says "wa" - but is another node is refused), and
+// the grant's to_id must be this worker.
+func TestLinkTunnelNodeIDs(t *testing.T) {
+	e, links, hub, port := linkTestEnv(t)
+	waID, selfID := nodeid.New(), nodeid.New()
+	dial := func(id string) *grpc.ClientConn {
+		certPEM, keyPEM, err := e.ca.Issue(pki.IssueOptions{Role: pki.RoleWorker, Name: "wa", ID: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := pki.ParseBundle(e.ca.CertPEM, certPEM, keyPEM)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := grpc.NewClient(e.addr, grpc.WithTransportCredentials(credentials.NewTLS(b.ClientConfig("w1"))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close() })
+		return c
+	}
+	selfPEM, _, err := e.ca.Issue(pki.IssueOptions{Role: pki.RoleWorker, Name: "w1", ID: selfID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	self, _ := pki.ParseCertPEM(selfPEM)
+	e.srv.SelfCert = func() *x509.Certificate { return self }
+	exp := time.Now().Add(time.Hour)
+	link := func(fromID, toID string) *pb.PortLink {
+		l := &pb.PortLink{Id: portlink.NewID(), Owner: "alice", From: "wa", To: "w1", Port: int32(port), ListenPort: 18080,
+			ExpiresAt: timestamppb.New(exp), FromId: fromID, ToId: toID}
+		links.add(l)
+		return l
+	}
+	wa, impostor := dial(waID), dial(nodeid.New())
+	if err := linkOpen(t, wa, linkGrant(t, hub, link(waID, selfID))); err != nil {
+		t.Fatalf("the right nodes: %v", err)
+	}
+	if err := linkOpen(t, impostor, linkGrant(t, hub, link(waID, selfID))); status.Code(err) != codes.PermissionDenied || !strings.Contains(err.Error(), "is for node") {
+		t.Fatalf("another node named wa: %v", err)
+	}
+	if err := linkOpen(t, wa, linkGrant(t, hub, link(waID, nodeid.New()))); status.Code(err) != codes.PermissionDenied || !strings.Contains(err.Error(), "targets node") {
+		t.Fatalf("a grant for another target node: %v", err)
 	}
 }

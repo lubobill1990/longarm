@@ -47,6 +47,18 @@ cert_name = "worker-2"
 	if _, err := c.Worker("nope"); err == nil {
 		t.Fatal("unknown worker accepted")
 	}
+	// manual and ad-hoc targets are the user's own: with end-to-end trust
+	// the worker must be endorsed under the name asked for (a hub/CA can't
+	// hand the name to another endorsed worker), never "any worker"
+	for _, w := range []Worker{w1, w2, adhoc} {
+		dt := w.DialTarget()
+		if dt.Name != w.CertName || dt.Any {
+			t.Fatalf("%s: dial target %+v", w.Name, dt)
+		}
+	}
+	if (Worker{Name: "x"}).DialTarget().Any {
+		t.Fatal("a worker without a target is not unconstrained by default")
+	}
 	empty, err := LoadConfig(t.TempDir())
 	if err != nil || len(empty.Workers) != 0 {
 		t.Fatalf("missing file: %v", err)

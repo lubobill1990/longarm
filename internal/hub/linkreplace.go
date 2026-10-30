@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -23,9 +24,12 @@ import (
 // Longarm user). Another user's node is removed, never moved: nothing of it
 // becomes the approver's.
 
-// linkReplace is one node a pairing replaces.
+// linkReplace is one node a pairing replaces: by its node ID (the
+// certificate's, or - a certificate from before node IDs - its recorded
+// serial's), never by name.
 type linkReplace struct {
-	name, role string
+	id         string // the node's ID
+	name, role string // its (display) name when the pairing started
 	worker     bool   // a worker (else a client or admin device)
 	who        string // the worker's owner ("": a fleet worker) / the device's user
 }
@@ -70,7 +74,7 @@ func (h *Hub) linkReplaces(req *pb.StartLinkRequest) ([]linkReplace, error) {
 		}
 		h.mu.Lock()
 		var rec store.Node
-		n := h.nodes[id.Name]
+		n := h.nodeForCertLocked(id, c)
 		if n != nil {
 			rec = *n.rec
 		}
@@ -82,7 +86,7 @@ func (h *Hub) linkReplaces(req *pb.StartLinkRequest) ([]linkReplace, error) {
 		case time.Now().After(c.NotAfter) && pki.Serial(c) != rec.CertSerial:
 			return nil, status.Errorf(codes.PermissionDenied, "replaces %s: an expired certificate that is not its latest", id.Name)
 		}
-		lr := linkReplace{name: id.Name, role: rec.Role}
+		lr := linkReplace{id: rec.ID, name: rec.Name, role: rec.Role}
 		switch pki.Role(rec.Role) {
 		case pki.RoleWorker:
 			if rec.Admin {
@@ -133,7 +137,7 @@ func (h *Hub) replaceLinkNodes(who, user string, l *pairLink) (*store.Node, erro
 	for _, r := range l.replaces {
 		h.mu.Lock()
 		var rec store.Node
-		n := h.nodes[r.name]
+		n := h.nodes[r.id]
 		live := n != nil && n.rec.State == stateApproved && n.rec.Role == r.role
 		if live {
 			rec = *n.rec
@@ -152,10 +156,10 @@ func (h *Hub) replaceLinkNodes(who, user string, l *pairLink) (*store.Node, erro
 		} else {
 			same = nodeUser(&rec) == user
 		}
-		if _, err := h.Revoke(who+" (replaced by a sign-in on its machine)", r.name); err != nil {
+		if _, err := h.Revoke(who+" (replaced by a sign-in on its machine)", nodeid.IDPrefixForm+r.id); err != nil {
 			return nil, err
 		}
-		h.auditHub(who, "link/replace", map[string]any{"id": l.id, "node": r.name, "role": rec.Role, "same_user": same, "user": user})
+		h.auditHub(who, "link/replace", map[string]any{"id": l.id, "node": rec.Name, "node_id": r.id, "role": rec.Role, "same_user": same, "user": user})
 		h.log.Info("pairing: node replaced", "node", r.name, "role", rec.Role, "same_user", same, "by", user)
 	}
 	return carry, nil

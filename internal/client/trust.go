@@ -68,17 +68,21 @@ func trustRefusal(w Worker, err error) *TrustError {
 // tlsConfig is the mTLS configuration for a worker: the bundle's (which
 // enforces the trust policy) with trust refusals typed as TrustError.
 func (d *Dialer) tlsConfig(w Worker) *tls.Config {
-	cfg := d.bundle.ClientConfig(w.CertName)
+	cfg := d.bundle.ClientConfigFor(w.DialTarget())
 	verify := cfg.VerifyConnection
 	cfg.VerifyConnection = func(cs tls.ConnectionState) error {
 		err := verify(cs)
 		if err == nil || len(cs.PeerCertificates) == 0 {
 			return err
 		}
-		// Only the trust check can have failed for a worker certificate.
+		// The trust check (or the node ID) failed for a worker certificate.
 		if id, ierr := pki.IdentityFromCert(cs.PeerCertificates[0]); ierr == nil && id.Role == pki.RoleWorker {
 			if p := d.bundle.Trust.Load(); p.Active() {
-				if _, terr := p.Check(cs.PeerCertificates[0]); terr != nil {
+				e, terr := p.CheckEndorsement(cs.PeerCertificates[0])
+				if terr == nil {
+					terr = pki.CheckTarget(e, w.DialTarget())
+				}
+				if terr != nil {
 					return &TrustError{Worker: w.Name, Reason: terr.Error()}
 				}
 			}

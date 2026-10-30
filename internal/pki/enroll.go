@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/platform"
 )
 
@@ -158,26 +159,35 @@ func WriteBundleAtomic(dir string, caPEM, certPEM, keyPEM []byte) error {
 
 // ---------------------------------------------------------------- revocation
 
-// RevocationList is the set of revoked certificate serials (DESIGN §6.2:
-// pushed by the hub with the heartbeat; longarmd rejects revoked client
-// certificates). Entries are kept until the certificate would have expired.
+// RevocationList is the set of revoked certificate serials and node IDs
+// (DESIGN §6.2: pushed by the hub with the heartbeat; longarmd rejects
+// revoked client certificates). Revocation is by node: every certificate
+// of a revoked node is listed by serial (which covers certificates issued
+// before node IDs), and the node's ID refuses any certificate carrying it.
+// Names are never revoked: a revoked node's name is free for a new node.
+// Entries are kept until the certificate would have expired (an ID: until
+// the node's last certificate would have).
 type RevocationList struct {
 	path string
 
 	mu      sync.RWMutex
 	serials map[string]time.Time // serial -> not_after
+	ids     map[string]time.Time // node ID -> not_after of its last certificate
+	names   map[string]time.Time // "role/name" -> until: certificates WITHOUT a node ID only
 	version int64
 	changed chan struct{} // closed (and replaced) by Replace
 }
 
 type revocationFile struct {
 	Version int64            `json:"version"`
-	Serials map[string]int64 `json:"serials"` // serial -> not_after (unix)
+	Serials map[string]int64 `json:"serials"`         // serial -> not_after (unix)
+	IDs     map[string]int64 `json:"ids,omitempty"`   // node ID -> not_after (unix)
+	Names   map[string]int64 `json:"names,omitempty"` // role/name -> until (unix): ID-less certificates
 }
 
 // LoadRevocationList loads path (missing = empty); Replace persists there.
 func LoadRevocationList(path string) (*RevocationList, error) {
-	r := &RevocationList{path: path, serials: map[string]time.Time{}}
+	r := &RevocationList{path: path, serials: map[string]time.Time{}, ids: map[string]time.Time{}, names: map[string]time.Time{}}
 	if path == "" {
 		return r, nil
 	}
@@ -195,18 +205,57 @@ func LoadRevocationList(path string) (*RevocationList, error) {
 	for s, na := range f.Serials {
 		r.serials[s] = time.Unix(na, 0)
 	}
+	for id, na := range f.IDs {
+		r.ids[id] = time.Unix(na, 0)
+	}
+	for n, na := range f.Names {
+		r.names[n] = time.Unix(na, 0)
+	}
 	r.version = f.Version
 	return r, nil
 }
 
-// Revoked reports whether the certificate is on the list.
+// Revoked reports whether the certificate is on the list: its serial, or
+// the node ID it carries.
 func (r *RevocationList) Revoked(c *x509.Certificate) bool {
 	if r == nil || c == nil {
 		return false
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	_, ok := r.serials[Serial(c)]
+	if _, ok := r.serials[Serial(c)]; ok {
+		return true
+	}
+	id, err := nodeIDFromCert(c)
+	if err != nil {
+		return true // a malformed node id: never accepted
+	}
+	if id != "" {
+		_, ok := r.ids[id]
+		return ok
+	}
+	// a certificate without a node ID: its (role, name) may be revoked
+	// (a copy of a revoked or renamed node's legacy certificate)
+	if len(r.names) > 0 {
+		if ident, err := IdentityFromCert(c); err == nil {
+			_, ok := r.names[RevokedNameKey(ident.Role, ident.Name)]
+			return ok
+		}
+	}
+	return false
+}
+
+// RevokedNameKey is the key of a legacy name revocation.
+func RevokedNameKey(role Role, name string) string { return string(role) + "/" + name }
+
+// RevokedID reports whether the node ID is on the list.
+func (r *RevocationList) RevokedID(id string) bool {
+	if r == nil || id == "" {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.ids[strings.ToLower(id)]
 	return ok
 }
 
@@ -217,17 +266,29 @@ func (r *RevocationList) Version() int64 {
 	return r.version
 }
 
-// Len is the number of entries.
+// Len is the number of entries (certificates).
 func (r *RevocationList) Len() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return len(r.serials)
 }
 
-// Replace installs a new full list (expired entries are dropped) and
-// persists it.
+// Replace installs a new full list of serials (expired entries are
+// dropped) and persists it.
 func (r *RevocationList) Replace(version int64, serials map[string]time.Time) error {
+	return r.ReplaceAll(version, serials, nil)
+}
+
+// ReplaceAll is Replace with revoked node IDs.
+func (r *RevocationList) ReplaceAll(version int64, serials, ids map[string]time.Time) error {
+	return r.ReplaceAllNames(version, serials, ids, nil)
+}
+
+// ReplaceAllNames is ReplaceAll with legacy name revocations ("role/name"
+// -> until; certificates without a node ID only).
+func (r *RevocationList) ReplaceAllNames(version int64, serials, ids, names map[string]time.Time) error {
 	m := make(map[string]time.Time, len(serials))
+	mi := make(map[string]time.Time, len(ids))
 	f := revocationFile{Version: version, Serials: map[string]int64{}}
 	now := time.Now()
 	for s, na := range serials {
@@ -237,8 +298,30 @@ func (r *RevocationList) Replace(version int64, serials map[string]time.Time) er
 		m[s] = na
 		f.Serials[s] = na.Unix()
 	}
+	for id, na := range ids {
+		if na.Before(now) || !nodeid.Valid(id) {
+			continue
+		}
+		id = strings.ToLower(id)
+		mi[id] = na
+		if f.IDs == nil {
+			f.IDs = map[string]int64{}
+		}
+		f.IDs[id] = na.Unix()
+	}
+	mn := make(map[string]time.Time, len(names))
+	for n, na := range names {
+		if na.Before(now) {
+			continue
+		}
+		mn[n] = na
+		if f.Names == nil {
+			f.Names = map[string]int64{}
+		}
+		f.Names[n] = na.Unix()
+	}
 	r.mu.Lock()
-	r.serials, r.version = m, version
+	r.serials, r.ids, r.names, r.version = m, mi, mn, version
 	if r.changed != nil {
 		close(r.changed)
 	}
@@ -293,12 +376,25 @@ func (b *Bundle) Live() *Bundle {
 	return &c
 }
 
-// Update installs nb's certificate into a live bundle (same identity only).
+// CurrentIdentity is the identity of the certificate presented now (a
+// live bundle's Identity stays the one it was created with; a renewal may
+// have added the node ID or, after a rename, changed the name).
+func (b *Bundle) CurrentIdentity() Identity {
+	if l := b.Leaf(); l != nil {
+		if id, err := IdentityFromCert(l); err == nil {
+			return id
+		}
+	}
+	return b.Identity
+}
+
+// Update installs nb's certificate into a live bundle (same node only:
+// Identity.SameNode).
 func (b *Bundle) Update(nb *Bundle) error {
 	if b.live == nil {
 		return errors.New("not a live bundle")
 	}
-	if nb.Identity != b.Identity {
+	if !nb.Identity.SameNode(b.Identity) {
 		return fmt.Errorf("identity changed from %s to %s", b.Identity, nb.Identity)
 	}
 	b.live.Store(&nb.Cert)

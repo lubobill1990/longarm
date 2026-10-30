@@ -41,6 +41,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hub"
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/update"
@@ -628,7 +629,11 @@ func auditCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			rows, err := st.Audit(node, time.Time{}, limit)
+			nodeID, name := "", node // a node ID, else the node's name when each record was written
+			if nodeid.Valid(node) {
+				nodeID, name = nodeid.Canonical(node), ""
+			}
+			rows, err := st.Audit(nodeID, name, time.Time{}, limit)
 			if err != nil {
 				return err
 			}
@@ -642,7 +647,7 @@ func auditCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&node, "node", "", "only this node's records (\"hub\": the hub's own)")
+	c.Flags().StringVar(&node, "node", "", "only this node's records: its ID, or the name it had (\"hub\": the hub's own)")
 	c.Flags().IntVar(&limit, "limit", 200, "newest N records (at most 10000)")
 	c.Flags().BoolVar(&asJSON, "json", false, "print the records' JSON lines")
 	return c

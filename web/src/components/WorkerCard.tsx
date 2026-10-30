@@ -162,6 +162,11 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
       <div className="head">
         <span className={`dot is-${state}`} style={{ background: dot }} />
         <span className="name">{mm.key}</span>
+        {p.node?.id && (
+          <span className="mono faint small" title={`node ID ${p.node.id}`} data-testid={`id-${mm.key}`}>
+            {p.node.id.slice(0, 8)}
+          </span>
+        )}
         {version && (
           <span className={`pill ${avail ? 'warn' : 'chip'} ver`} data-testid="version" title={avail ? `Longarm ${avail} is available${remote ? '' : ` - it can't be updated from here: ${ua?.reason ?? ''}`}` : 'Longarm version'}
           >

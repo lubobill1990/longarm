@@ -33,6 +33,7 @@ type linkPair struct {
 	hub      *pki.Bundle // signs grants
 	endpoint string      // wb's
 	echo     int         // a port on wb answering "hello " + what it reads
+	ca       *pki.CA
 }
 
 func newLinkPair(t *testing.T) *linkPair {
@@ -60,7 +61,7 @@ func newLinkPair(t *testing.T) *linkPair {
 		}
 		return b
 	}
-	p := &linkPair{hub: bundle(pki.IssueOptions{Role: pki.RoleHub, Name: "hub"})}
+	p := &linkPair{hub: bundle(pki.IssueOptions{Role: pki.RoleHub, Name: "hub"}), ca: ca}
 	wa := bundle(pki.IssueOptions{Role: pki.RoleWorker, Name: "wa"})
 	wb := bundle(pki.IssueOptions{Role: pki.RoleWorker, Name: "wb", Hosts: []string{"127.0.0.1"}})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -405,6 +406,9 @@ func TestLinkSourceConsent(t *testing.T) {
 	_, alice, _ := ed25519.GenerateKey(rand.Reader)
 	p.a.trust = &pki.TrustSource{}
 	p.a.trust.Store(&pki.TrustPolicy{Users: map[string]ed25519.PublicKey{"alice": alice.Public().(ed25519.PublicKey)}})
+	// wa (the listening end) is alice's endorsed worker: a consent names
+	// its ends, and each end holds itself to its own endorsement
+	p.a.bundle = endorsedBundle(t, p.ca, "wa", alice)
 	_, nk, _ := ed25519.GenerateKey(rand.Reader)
 	e, err := pki.Endorse(alice, "alice", pki.KindDevice, "alice-laptop", nk.Public().(ed25519.PublicKey))
 	if err != nil {
@@ -463,4 +467,28 @@ func TestGrantMismatch(t *testing.T) {
 	if why := grantMismatch(p.a.Roots(), nil, x.Link); why == "" {
 		t.Fatal("no grant accepted")
 	}
+}
+
+// endorsedBundle is a worker bundle named name whose certificate carries
+// user's endorsement (kind worker, name-bound).
+func endorsedBundle(t *testing.T, ca *pki.CA, name string, userKey ed25519.PrivateKey) *pki.Bundle {
+	t.Helper()
+	_, nk, _ := ed25519.GenerateKey(rand.Reader)
+	e, err := pki.Endorse(userKey, "alice", pki.KindWorker, name, nk.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, csr, err := pki.NewKeyAndCSR(name, &pki.CSRTrust{NodeKey: nk, Endorsement: e})
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, err := ca.SignCSR(csr, pki.IssueOptions{Role: pki.RoleWorker, Name: name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := pki.ParseBundle(ca.CertPEM, certPEM, keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

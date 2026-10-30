@@ -78,7 +78,7 @@ func (r *Reloader) load() error {
 	}
 	r.mu.Lock()
 	r.cfg, r.bundle, r.stamp = cfg, b, stamp
-	if r.live != nil && r.live.Identity == b.Identity {
+	if r.live != nil && r.live.Identity.SameNode(b.Identity) {
 		r.live.live.Store(&b.Cert)
 	}
 	r.mu.Unlock()

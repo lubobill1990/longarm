@@ -31,6 +31,8 @@ type dirEntry struct {
 	role, user, owner string
 	adminWorker       bool
 	shares            *pb.WorkerShares
+	id                string // the node's ID
+	revoked           bool
 }
 
 type directory map[string]dirEntry
@@ -71,19 +73,33 @@ func (d *nodeDirectory) load() directory {
 
 // indexNode records (or updates) a node in the hub's directory (the
 // store's OnNodePut hook; tests that add nodes directly call it too).
+// A node is found by its ID, its name and the name in its certificate (a
+// renamed node answers to its old name until it renews; names never look
+// like IDs, so the keys can't collide). Names are reused once a node is
+// revoked: a revoked record never takes a name over from another node
+// that is not revoked, whatever the order records are saved in.
 func (h *Hub) indexNode(r *store.Node) {
-	e := dirEntry{role: r.Role, owner: r.Owner, adminWorker: r.Admin, shares: sharesPB(r.Shares)}
+	e := dirEntry{role: r.Role, owner: r.Owner, adminWorker: r.Admin, shares: sharesPB(r.Shares), id: r.ID,
+		revoked: r.State == stateRevoked}
 	if r.Role != string(pki.RoleWorker) {
 		e.user, e.owner = nodeUser(r), ""
 	}
 	h.dir.mu.Lock()
 	defer h.dir.mu.Unlock()
 	old := h.dir.load()
-	next := make(directory, len(old)+1)
+	next := make(directory, len(old)+3)
 	for k, v := range old {
 		next[k] = v
 	}
-	next[r.Name] = e
+	for _, k := range append([]string{r.ID, r.Name, r.DialName()}, r.PendingNames...) {
+		if k == "" {
+			continue
+		}
+		if o, ok := next[k]; ok && o.id != r.ID && e.revoked && !o.revoked {
+			continue // the name is another node's now
+		}
+		next[k] = e
+	}
 	h.dir.p.Store(&next)
 }
 
@@ -176,14 +192,14 @@ func (p projector) fleetJob(fj *pb.FleetJob) *pb.FleetJob {
 	if p.v.Admin || fj == nil {
 		return fj
 	}
-	if !p.hidden(fj.Worker) {
+	if !p.hidden(fj.Worker) && (fj.WorkerId == "" || !p.hidden(fj.WorkerId)) {
 		if sb := fj.Job.GetSpec().GetSubmittedBy(); sb == "" || p.actor(sb) == sb {
 			return fj
 		}
 	}
 	fj = proto.Clone(fj).(*pb.FleetJob)
-	if p.hidden(fj.Worker) {
-		fj.Worker = hiddenNode
+	if p.hidden(fj.Worker) || fj.WorkerId != "" && p.hidden(fj.WorkerId) {
+		fj.Worker, fj.WorkerId = hiddenNode, ""
 	}
 	if s := fj.Job.GetSpec(); s != nil {
 		s.SubmittedBy = p.actor(s.SubmittedBy)
@@ -212,7 +228,10 @@ func (p projector) event(ev *pb.FleetEvent, owner string) *pb.FleetEvent {
 		}
 		return &pb.FleetEvent{Time: ev.Time, Kind: ev.Kind, Node: p.text(ev.Node), Message: p.text(ev.Message)}
 	case "node", "metrics":
-		out := &pb.FleetEvent{Time: ev.Time, Kind: ev.Kind, Node: ev.Node}
+		out := &pb.FleetEvent{Time: ev.Time, Kind: ev.Kind, Node: ev.Node, NodeId: ev.NodeId}
+		if ev.NodeId != "" && p.hidden(ev.NodeId) {
+			return nil
+		}
 		if ev.NodeInfo == nil {
 			// no record to check: only a node the directory knows and
 			// the caller may see (fail closed)
@@ -222,7 +241,8 @@ func (p projector) event(ev *pb.FleetEvent, owner string) *pb.FleetEvent {
 			out.Message = p.text(ev.Message)
 			return out
 		}
-		if !canSeeNode(p.v, ev.NodeInfo) || (ev.Node != "" && ev.Node != ev.NodeInfo.Name) {
+		if !canSeeNode(p.v, ev.NodeInfo) || (ev.Node != "" && ev.Node != ev.NodeInfo.Name) ||
+			(ev.NodeId != "" && ev.NodeId != ev.NodeInfo.Id) {
 			return nil
 		}
 		out.NodeInfo = nodeView(p.v, proto.Clone(ev.NodeInfo).(*pb.NodeInfo))
@@ -301,10 +321,13 @@ func (p projector) tenantUser(u *pb.TenantUser) *pb.TenantUser {
 // its worker, removed the user) keeps time, actor, method and the user it
 // is about, nothing else; other records get their names projected.
 func (p projector) auditRecord(r store.AuditRow) *pb.AuditRecord {
-	out := &pb.AuditRecord{Node: r.Node, Time: tspb(r.Time), Who: p.actor(r.Who), Method: r.Method}
+	out := &pb.AuditRecord{Node: r.Node, NodeId: r.NodeID, Time: tspb(r.Time), Who: p.actor(r.Who), Method: r.Method}
 	if p.v.Admin {
 		out.Who, out.Json = r.Who, r.Line
 		return out
+	}
+	if r.NodeID != "" && p.hidden(r.NodeID) {
+		out.NodeId = ""
 	}
 	if r.Node == "hub" && r.SubjectUser != "" && r.SubjectUser != p.v.User {
 		b, _ := json.Marshal(map[string]any{"time": r.Time.UTC().Format("2006-01-02T15:04:05.000Z07:00"), "who": out.Who,

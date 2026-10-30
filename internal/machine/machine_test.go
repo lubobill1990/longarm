@@ -53,3 +53,26 @@ func TestPairs(t *testing.T) {
 		t.Error("Candidate")
 	}
 }
+
+// TestPairsByID: from a hub with node IDs, pairs come from its node-ID link
+// only - a reused name (a revoked node of it) or <worker>-admin never pair.
+func TestPairsByID(t *testing.T) {
+	withID := func(n *pb.NodeInfo, id, companion string) *pb.NodeInfo {
+		n.Id, n.CompanionId = id, companion
+		return n
+	}
+	old := withID(node("box", "alice", "box", false), "id-old", "")
+	old.State = "revoked"
+	nodes := []*pb.NodeInfo{
+		withID(node("box", "alice", "box", false), "id-box", "id-sys"),
+		old,
+		withID(node("sys", "alice", "box", true), "id-sys", "id-box"),
+		withID(node("lab", "alice", "lab", false), "id-lab", ""),
+		withID(node("lab-admin", "alice", "lab", true), "id-lab-admin", ""), // no link
+	}
+	nodes[2].Companion = "box"
+	got := Pairs(nodes)
+	if len(got) != 1 || got["sys"] != "box" {
+		t.Fatalf("pairs %v", got)
+	}
+}

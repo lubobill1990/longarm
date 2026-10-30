@@ -13,11 +13,14 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	grpccodes "google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -136,7 +139,7 @@ machines are only counted, anonymously, by "longarm admin summary".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
-				resp, err := h.Fleet().ListNodes(ctx, &pb.ListNodesRequest{All: all})
+				resp, err := h.Fleet().ListNodes(ctx, &pb.ListNodesRequest{All: all, NodeIds: true})
 				if err != nil {
 					return err
 				}
@@ -146,7 +149,8 @@ machines are only counted, anonymously, by "longarm admin summary".`,
 					return nil
 				}
 				tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(tw, "NAME\tROLE\tSTATE\tONLINE\tDRAIN\tJOBS\tLABELS\tPROFILE\tVERSION\tLAST SEEN\tCERT EXPIRES")
+				short := shortIDsOf(resp.Nodes)
+				fmt.Fprintln(tw, "NAME\tID\tROLE\tSTATE\tONLINE\tDRAIN\tJOBS\tLABELS\tPROFILE\tVERSION\tLAST SEEN\tCERT EXPIRES")
 				for _, n := range resp.Nodes {
 					drain := "-"
 					if n.Draining {
@@ -160,7 +164,7 @@ machines are only counted, anonymously, by "longarm admin summary".`,
 					if n.CertNotAfter != nil {
 						exp = n.CertNotAfter.AsTime().Local().Format("2006-01-02 15:04")
 					}
-					fmt.Fprintf(tw, "%s\t%s\t%s\t%v\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n", n.Name, n.Role, n.State, n.Online, drain,
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%v\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n", n.Name, dash(short[n.Id]), n.Role, n.State, n.Online, drain,
 						n.JobsActive, labelString(n.Labels), prof, n.Version, ago(n.LastSeen, n.LastSeen == nil), exp)
 				}
 				if err := tw.Flush(); err != nil {
@@ -249,7 +253,7 @@ machines are only counted, anonymously, by "longarm admin summary".`,
 					if err != nil {
 						return err
 					}
-					fmt.Printf("%s: %s", n.Name, n.State)
+					fmt.Printf("%s (%s): %s", n.Name, dash(nodeid.Short(n.Id)), n.State)
 					if n.Draining {
 						fmt.Printf(" (draining: %s)", n.DrainReason)
 					}
@@ -388,7 +392,47 @@ machines are only counted, anonymously, by "longarm admin summary".`,
 	audit.Flags().StringVar(&auditNode, "node", "", "only this worker")
 	audit.Flags().IntVar(&auditLimit, "limit", 50, "newest N records")
 	audit.Flags().BoolVar(&auditJSON, "json", false, "print the raw JSON records")
-	return []*cobra.Command{nodes, summaryCmd(), joinCode, codes, approve, revoke, drain, undrain, label, prof, audit, releaseCmd()}
+	rename := &cobra.Command{
+		Use:   "rename <node> <new-name>",
+		Short: "Rename any node (it keeps its ID; the old name is free once its certificate renewed)",
+		Long: `Rename a node: worker, admin worker, client or admin device. The node keeps
+its ID; <node> is a name, an ID, a unique ID prefix, id:<prefix> or name:<name>.
+The new name must not be in use by another node that isn't revoked, and must
+not look like an ID (only hex digits and dashes). Audited.`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
+				n, err := h.Admin().RenameNode(ctx, &pb.RenameNodeRequest{Target: args[0], NewName: args[1]})
+				if status.Code(err) == grpccodes.Unimplemented {
+					return errors.New("this hub is too old to rename nodes (update it)")
+				}
+				if err != nil {
+					return err
+				}
+				printRenamed(n)
+				return nil
+			})
+		},
+	}
+	return []*cobra.Command{nodes, summaryCmd(), joinCode, codes, approve, revoke, drain, undrain, label, rename, prof, audit, releaseCmd()}
+}
+
+// shortIDsOf maps node IDs to their shortest unambiguous prefixes among nodes.
+func shortIDsOf(nodes []*pb.NodeInfo) map[string]string {
+	ids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		ids = append(ids, n.Id)
+	}
+	return nodeid.ShortIDs(ids)
+}
+
+// printRenamed reports a rename.
+func printRenamed(n *pb.NodeInfo) {
+	fmt.Printf("%s (%s): renamed\n", n.Name, n.Id)
+	if n.CertName != "" && n.CertName != n.Name {
+		fmt.Fprintf(os.Stderr, "longarm: its certificate says %s until it renews (a worker that follows renames does so at once); %s stays reserved until then\n",
+			n.CertName, n.CertName)
+	}
 }
 
 // summaryCmd is `longarm admin summary`: the admins' fleet-wide view (Admin.FleetSummary):

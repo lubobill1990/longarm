@@ -42,12 +42,39 @@ func (h *Hub) ListNodesFor(v tenancy.Caller, all bool) []*pb.NodeInfo {
 		}
 		out = append(out, nodeView(v, info))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	// by name; a name's non-revoked node before its revoked ones (names are
+	// reused): clients before node IDs take the first node of a name
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		if ra, rb := a.State == stateRevoked, b.State == stateRevoked; ra != rb {
+			return rb
+		}
+		return a.Id < b.Id
+	})
 	return out
 }
 
 func (s *fleetServer) ListNodes(ctx context.Context, req *pb.ListNodesRequest) (*pb.ListNodesResponse, error) {
-	return &pb.ListNodesResponse{Nodes: s.h.ListNodesFor(s.h.viewer(callerFrom(ctx)), req.All)}, nil
+	nodes := s.h.ListNodesFor(s.h.viewer(callerFrom(ctx)), req.All)
+	if !req.NodeIds {
+		legacyNames(nodes)
+	}
+	return &pb.ListNodesResponse{Nodes: nodes}, nil
+}
+
+// legacyNames lists nodes for a client before node IDs: under the name in
+// their certificates, the only name such a client can dial and verify (a
+// worker renamed by the migration or an admin keeps its certificate's name
+// until it follows renames: longarmd with the "node-id" capability).
+func legacyNames(nodes []*pb.NodeInfo) {
+	for _, n := range nodes {
+		if n.CertName != "" && n.CertName != n.Name {
+			n.Name = n.CertName
+		}
+	}
 }
 
 // ListJobs returns cached jobs, newest first.
@@ -61,8 +88,16 @@ func (h *Hub) ListJobsFor(v tenancy.Caller, req *pb.FleetJobsRequest) []*pb.Flee
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var out []*pb.FleetJob
+	worker := ""
+	if req.Worker != "" {
+		n, err := h.resolveLocked(req.Worker, h.workerVisibleLocked(v), "worker")
+		if err != nil {
+			return nil // an unknown worker has no jobs
+		}
+		worker = n.rec.ID
+	}
 	for w, jm := range h.jobs {
-		if req.Worker != "" && w != req.Worker {
+		if worker != "" && w != worker {
 			continue
 		}
 		for _, e := range jm {
@@ -97,10 +132,18 @@ func (h *Hub) GetJob(id, worker string) (*pb.FleetJob, error) {
 	return h.GetJobFor(tenancy.Caller{Admin: true}, id, worker)
 }
 
-// GetJobFor finds a job v may see (others' jobs are "not known").
+// GetJobFor finds a job v may see (others' jobs are "not known"); worker
+// is a target ("" = any).
 func (h *Hub) GetJobFor(v tenancy.Caller, id, worker string) (*pb.FleetJob, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if worker != "" {
+		n, err := h.resolveLocked(worker, h.workerVisibleLocked(v), "worker")
+		if err != nil {
+			return nil, err
+		}
+		worker = n.rec.ID
+	}
 	w, e := h.findJobLocked(id, worker)
 	if e == nil || !canSeeJob(v, e.job) {
 		return nil, status.Errorf(codes.NotFound, "job %s not known to the hub", id)
@@ -122,6 +165,10 @@ func (h *Hub) WaitJob(ctx context.Context, req *pb.FleetJobRequest, send func(*p
 
 // WaitJobFor is WaitJob for a job v may see.
 func (h *Hub) WaitJobFor(ctx context.Context, v tenancy.Caller, req *pb.FleetJobRequest, send func(*pb.FleetJob) error) error {
+	workerID, err := h.resolveWorkerFor(v, req.Worker)
+	if err != nil {
+		return err
+	}
 	sub := h.bus.subscribeFiltered([]string{"job"}, req.Id, h.eventFilter(v))
 	defer h.bus.unsubscribe(sub)
 	fj, err := h.GetJobFor(v, req.Id, req.Worker)
@@ -147,7 +194,7 @@ func (h *Hub) WaitJobFor(ctx context.Context, v tenancy.Caller, req *pb.FleetJob
 			if !ok {
 				return status.Error(codes.Unavailable, "hub event stream closed")
 			}
-			if req.Worker != "" && ev.Job.Worker != req.Worker {
+			if workerID != "" && ev.Job.WorkerId != workerID {
 				continue
 			}
 			appear = nil
@@ -204,7 +251,8 @@ func (s *fleetServer) Place(req *pb.PlaceRequest, st pb.Fleet_PlaceServer) error
 }
 
 // Audit returns forwarded audit records, all of them (the hub's own
-// callers; the read APIs use AuditFor).
+// callers; the read APIs use AuditFor). req.node: a node target, or "hub"
+// for the hub's own records.
 func (h *Hub) Audit(req *pb.AuditRequest) (*pb.AuditResponse, error) {
 	return h.AuditFor(tenancy.Caller{Admin: true}, "", req)
 }
@@ -218,10 +266,16 @@ func (s *fleetServer) Whoami(ctx context.Context, req *pb.WhoamiRequest) (*pb.Wh
 	c := callerFrom(ctx)
 	resp := &pb.WhoamiResponse{Name: c.id.Name, Role: string(c.id.Role), HubName: s.h.cfg.Name, HubVersion: version.Version,
 		CertNotAfter: tspb(c.cert.NotAfter), RenewBefore: durationpb.New(s.h.cfg.RenewBefore(string(c.id.Role))),
-		Tailnet: s.h.callerTailnet(c.id.Name), User: c.user, PublicUrl: s.h.cfg.PublicURL}
+		Tailnet: s.h.callerTailnet(c.nodeID), User: c.user, Id: c.nodeID, PublicUrl: s.h.cfg.PublicURL}
 	latest, files := s.h.latestNotice()
 	resp.LatestVersion, resp.LatestPath = latest, latestPath(latest, files, req.GetOs(), req.GetArch())
 	s.h.mu.Lock()
+	if n := s.h.callerNodeLocked(c); n != nil {
+		if f := forcedRenewBefore(n, c.cert); f > resp.RenewBefore.AsDuration() {
+			// its certificate lacks the node ID or has an old name: renew now
+			resp.RenewBefore = durationpb.New(f)
+		}
+	}
 	if resp.Tenancy = s.h.tenancyOnLocked(); resp.Tenancy && c.id.Role != pki.RoleWorker {
 		if t := s.h.tenants[c.user]; t != nil {
 			resp.Teams, resp.CanShare, resp.Upn = t.u.Teams, t.u.CanShare, t.u.Upn

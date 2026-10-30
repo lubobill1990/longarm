@@ -87,6 +87,40 @@ describe('PanelApp', () => {
     fireEvent.click(screen.getByText('Approve'))
     await waitFor(() => expect(calls.some((c) => c.url === '/api/nodes/new1/approve' && c.init?.method === 'POST')).toBe(true))
   })
+
+  it('keys nodes by ID: a reused name shows both nodes, short IDs, actions by ID, rename', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('prompt', () => 'box2')
+    vi.stubGlobal('confirm', () => true)
+    history.pushState(null, '', '/nodes')
+    const live = '3f2a9c1e-4b5d-4c3e-8f00-1234567890ab'
+    const old = '77aa0000-0000-4000-8000-000000000001'
+    const calls = mockFetch({
+      '/api/me': () => [200, { user: 'ops', hub: 'hub1', version: 'dev' }],
+      [`/api/nodes/${live}/rename`]: () => [200, { name: 'box2', id: live, state: 'approved' }],
+      '/api/nodes': () => [
+        200,
+        {
+          nodes: [
+            { name: 'box', id: old, role: 'worker', state: 'revoked' },
+            { name: 'box', id: live, role: 'worker', state: 'approved', online: true },
+          ],
+        },
+      ],
+      '/api/history': () => [200, { nodes: [] }],
+      '/api/links': () => [200, { reports: [] }],
+      '/api/profiles': () => [200, { profiles: [] }],
+    })
+    render(<PanelApp />)
+    await waitFor(() => expect(screen.getAllByTestId('node-box')).toHaveLength(2))
+    const ids = screen.getAllByTestId('id-box').map((e) => e.textContent)
+    expect(ids).toContain('3f2a9c1e')
+    expect(ids).toContain('77aa0000')
+    fireEvent.click(screen.getByText('Rename'))
+    await waitFor(() =>
+      expect(calls.some((c) => c.url === `/api/nodes/${live}/rename` && c.init?.method === 'POST' && String(c.init?.body).includes('box2'))).toBe(true),
+    )
+  })
 })
 
 describe('multi-tenancy', () => {

@@ -23,11 +23,14 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/client"
+	"github.com/lubobill1990/longarm/internal/pki"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -38,6 +41,7 @@ const localMachine = "local"
 type hoEndpoint struct {
 	name       string
 	cert       string // the worker's certificate name (Node.Info)
+	id         string // the worker's node ID, from the certificate this connection verified ("" = an older worker)
 	conn       *client.Conn
 	goos       string // "windows", "linux", "darwin"
 	home       string // absolute home directory (of the worker's account the files and sessions use)
@@ -139,17 +143,24 @@ func openEndpoint(ctx context.Context, s *session, name string) (*hoEndpoint, er
 	}
 	c, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	info, err := conn.Node().Info(c, &pb.InfoRequest{})
+	var pr peer.Peer // the worker's certificate, as this connection verified it
+	info, err := conn.Node().Info(c, &pb.InfoRequest{}, grpc.Peer(&pr))
 	if err != nil {
 		conn.Close()
 		return nil, err
+	}
+	nodeID := ""
+	if cert := peerCert(&pr); cert != nil {
+		if id, err := pki.IdentityFromCert(cert); err == nil {
+			nodeID = id.ID
+		}
 	}
 	home, err := conn.Files().Stat(c, &pb.FileStatRequest{Path: "~"})
 	if err != nil {
 		conn.Close()
 		return nil, err
 	}
-	return &hoEndpoint{name: name, cert: info.Name, conn: conn, goos: info.Os, home: home.AbsPath, callerUser: info.CallerUser,
+	return &hoEndpoint{name: name, cert: info.Name, id: nodeID, conn: conn, goos: info.Os, home: home.AbsPath, callerUser: info.CallerUser,
 		owner: info.Owner, isolation: info.Isolation, version: info.Version, features: info.Features}, nil
 }
 

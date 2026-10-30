@@ -105,8 +105,9 @@ var errNoDiag = status.Error(codes.FailedPrecondition,
 func (s *diagServer) scrubber() *pii.Scrubber {
 	names := map[string]string{}
 	s.h.mu.Lock()
-	for n, nd := range s.h.nodes {
-		names[n] = pii.KindNode
+	for _, nd := range s.h.nodes {
+		names[nd.rec.Name] = pii.KindNode
+		names[nd.rec.DialName()] = pii.KindNode
 		if nd.rec.User != "" {
 			names[nd.rec.User] = pii.KindUser
 		}
@@ -178,7 +179,7 @@ func (s *diagServer) Upload(stream pb.Diagnostics_UploadServer) error {
 	if _, err := hex.DecodeString(want); err != nil || len(want) != 64 {
 		return status.Error(codes.InvalidArgument, "sha256 missing")
 	}
-	refund, ok := s.allow(c.id.Name)
+	refund, ok := s.allow(c.nodeID)
 	if !ok {
 		return status.Errorf(codes.ResourceExhausted, "at most %d diagnostic uploads per node and hour ([diagnostics] per_node_per_hour); try later", s.rate)
 	}

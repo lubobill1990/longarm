@@ -5,6 +5,7 @@ package longarmd
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -545,7 +546,8 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 
 	srv := &server.Server{
 		Name: bundle.Identity.Name, Version: version.Version, DataDir: cfg.DataDir, StartedAt: time.Now(),
-		Spaces: st.spaces, Policy: policy, LogMaxBytes: cfg.MaxLogBytes, Sampler: sampler,
+		SelfCert: func() *x509.Certificate { return reloader.Bundle().Cert.Leaf },
+		Spaces:   st.spaces, Policy: policy, LogMaxBytes: cfg.MaxLogBytes, Sampler: sampler,
 		Audit: audit, Log: log, Shutdown: cancel,
 		Revoked: revoked, Conns: conntrack.New(), Access: cfg.Access, WorkerAccess: workerAccess,
 		ForwardTargets: cfg.Forward.Targets, Trust: trustSrc,
@@ -758,6 +760,8 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		admin: adminWorker,
 		audit: srv.Audit, remoteJobs: cfg.Hub.RemoteJobs, hideJobDetails: !cfg.HubJobDetails, trust: trustSrc, trustStore: trustStore,
 		stop: cancel, logMaxBytes: cfg.MaxLogBytes, tel: wtel,
+		restart:   func() { cancelCause(update.ErrRestart) },
+		nameBound: hasLongnetListener(cfg.Listen),
 		endpoints: func() []string {
 			if len(cfg.Hub.Advertise) > 0 {
 				return cfg.Hub.Advertise

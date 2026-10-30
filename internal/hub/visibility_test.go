@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -28,7 +29,7 @@ func addWorker(h *Hub, name, owner string, admin bool, version string) {
 	if owner != "" {
 		n.rec.AccessVersion = 1
 	}
-	h.nodes[name] = n
+	h.putTestNode(n)
 	h.indexNode(n.rec)
 }
 
@@ -99,10 +100,10 @@ func TestAdminSeesUserView(t *testing.T) {
 	}
 	time.Sleep(200 * time.Millisecond) // subscribed
 	h.mu.Lock()
-	h.applyJobsLocked(h.nodes["aw"], &pb.JobsReport{Jobs: []*pb.Job{{Spec: &pb.JobSpec{Id: "JAW2", Owner: "alice", Argv: []string{"secret"}}, State: pb.JobState_JOB_STATE_RUNNING}}})
-	h.publishNodeLocked(h.nodes["aw"], "test")
-	h.publishNodeLocked(h.nodes["aw-admin"], "test")
-	h.publishNodeLocked(h.nodes["w1"], "test")
+	h.applyJobsLocked(h.nodeLocked("aw"), &pb.JobsReport{Jobs: []*pb.Job{{Spec: &pb.JobSpec{Id: "JAW2", Owner: "alice", Argv: []string{"secret"}}, State: pb.JobState_JOB_STATE_RUNNING}}})
+	h.publishNodeLocked(h.nodeLocked("aw"), "test")
+	h.publishNodeLocked(h.nodeLocked("aw-admin"), "test")
+	h.publishNodeLocked(h.nodeLocked("w1"), "test")
 	h.mu.Unlock()
 	for {
 		e, err := ev.Recv()
@@ -152,10 +153,10 @@ func TestFleetSummary(t *testing.T) {
 	addWorker(h, "a1-admin", "alice", true, "0.2.0")
 	addWorker(h, "f1", "", false, "0.2.0")
 	h.mu.Lock()
-	h.nodes["a2"].sess = nil // offline
-	h.nodes["a2"].rec.LastSeen = time.Date(2026, 1, 2, 3, 4, 5, 6, time.UTC)
-	h.nodes["bob-laptop"] = &node{rec: &store.Node{Name: "bob-laptop", Role: "client", State: stateApproved, User: "bob", Version: "0.2.0"}}
-	h.nodes["gone"] = &node{rec: &store.Node{Name: "gone", Role: "worker", State: stateRevoked, Owner: "alice"}}
+	h.nodeLocked("a2").sess = nil // offline
+	h.nodeLocked("a2").rec.LastSeen = time.Date(2026, 1, 2, 3, 4, 5, 6, time.UTC)
+	h.putTestNode(&node{rec: &store.Node{Name: "bob-laptop", Role: "client", State: stateApproved, User: "bob", Version: "0.2.0"}})
+	h.putTestNode(&node{rec: &store.Node{Name: "gone", Role: "worker", State: stateRevoked, Owner: "alice"}})
 	h.mu.Unlock()
 
 	s := h.FleetSummary(true)
@@ -231,10 +232,12 @@ func TestAdminAnswersNameOnlyVisibleNodes(t *testing.T) {
 	th, _ := ownedHub(t)
 	h := th.h
 	addWorker(h, "rw", "root", false, "")
-	h.mu.Lock()
-	h.nodes["root"] = &node{rec: &store.Node{Name: "root", Role: "admin", State: stateApproved}}
-	h.nodes["alice"] = &node{rec: &store.Node{Name: "alice", Role: "client", State: stateApproved}}
-	h.mu.Unlock()
+	// root's and alice's devices, registered by their certificates
+	for _, c := range []*grpc.ClientConn{th.root, th.alice} {
+		if _, err := pb.NewFleetClient(c).Whoami(tctx(t), &pb.WhoamiRequest{}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	v := tenancy.Caller{User: "root"}
 	h.mu.Lock()
 	r := h.rolloutForLocked(v, &pb.Rollout{Canary: []string{"aw"}, Targeted: []string{"aw", "rw", "w1"}, Waiting: []string{"aw"},

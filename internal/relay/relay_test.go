@@ -385,7 +385,7 @@ func TestRelayWorkerPairs(t *testing.T) {
 	}
 	waitDrops(2)
 
-	srv.SetWorkerPairs([][2]string{{"wb", "wa"}})
+	srv.SetWorkerPairs([]relay.WorkerPair{{A: "wb", B: "wa"}})
 	wa.SendData(wb.Self(), []byte("a to b"))
 	hb.waitFor(t, "a->b", func() bool { return len(hb.data[wa.Self()]) == 1 })
 	wb.SendData(wa.Self(), []byte("b to a"))

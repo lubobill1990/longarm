@@ -95,8 +95,8 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 		})
 	})
 	admin("POST /api/nodes/{name}/toolchain/apply", func(w http.ResponseWriter, r *http.Request, user string) {
-		info, err := h.opOn(h.panelViewer(user), "worker", r.PathValue("name"), func() (*pb.NodeInfo, error) {
-			return h.ToolchainApply(r.Context(), "web/"+user, r.PathValue("name"))
+		info, err := h.opOn(h.panelViewer(user), "worker", r.PathValue("name"), func(t string) (*pb.NodeInfo, error) {
+			return h.ToolchainApply(r.Context(), "web/"+user, t)
 		})
 		writeResult(w, info, err)
 	})

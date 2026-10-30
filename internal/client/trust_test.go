@@ -70,7 +70,7 @@ func (e *raceEnv) endorsedWorker(name string, userKey ed25519.PrivateKey) *pki.B
 func TestRaceRefusesUnendorsedWorker(t *testing.T) {
 	e := newRaceEnv(t)
 	plain := e.serve(0)
-	w := Worker{Name: "w1", CertName: "w1", Transport: "tcp", Address: plain.Addr().String()}
+	w := Worker{Name: "w1", CertName: "w1", Transport: "tcp", Address: plain.Addr().String(), TrustName: "w1"}
 	if _, _, err := e.race(w); err != nil {
 		t.Fatalf("no policy: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestRaceRefusesUnendorsedWorker(t *testing.T) {
 	_, other, _ := ed25519.GenerateKey(nil)
 	e.worker = e.endorsedWorker("w1", other)
 	foreign := e.serve(0)
-	_, _, err = e.race(Worker{Name: "w1", CertName: "w1", Transport: "tcp", Address: foreign.Addr().String()})
+	_, _, err = e.race(Worker{Name: "w1", CertName: "w1", Transport: "tcp", Address: foreign.Addr().String(), TrustName: "w1"})
 	if !errors.As(err, &te) || !strings.Contains(err.Error(), "not trusted") {
 		t.Fatalf("foreign endorsement: %v", err)
 	}

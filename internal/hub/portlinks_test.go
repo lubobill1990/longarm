@@ -29,10 +29,10 @@ func linkNode(h *Hub, name string, endpoints ...string) chan *pb.HubCommand {
 	out := make(chan *pb.HubCommand, 64)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	n := h.nodes[name]
+	n := h.nodeLocked(name)
 	if n == nil {
 		n = &node{rec: &store.Node{Name: name, Role: "worker", State: stateApproved}}
-		h.nodes[name] = n
+		h.putTestNode(n)
 	}
 	n.rec.Endpoints = endpoints
 	n.sess = &nodeSession{id: 1000 + uint64(len(h.nodes)), out: out, cancel: func() {}}
@@ -101,8 +101,8 @@ func TestPortLinks(t *testing.T) {
 	}
 	// w2's endpoints change: w1 gets them anew
 	h.mu.Lock()
-	h.nodes["w2"].rec.Endpoints = []string{"tcp://10.0.0.22:7701"}
-	h.portLinkTargetChangedLocked("w2")
+	h.nodeLocked("w2").rec.Endpoints = []string{"tcp://10.0.0.22:7701"}
+	h.portLinkTargetChangedLocked(h.nodeLocked("w2").rec.ID)
 	h.mu.Unlock()
 	if p := lastLinks(t, out1); p.Links[0].TargetEndpoints[0] != "tcp://10.0.0.22:7701" {
 		t.Fatalf("new endpoints not pushed: %v", p)
@@ -110,8 +110,8 @@ func TestPortLinks(t *testing.T) {
 
 	// status reports from w1 (not from w2) show up in the list
 	h.mu.Lock()
-	h.applyPortLinkReportLocked(h.nodes["w2"], &pb.PortLinkReport{Links: []*pb.PortLinkStatus{{Id: l.Id, State: "error", Error: "forged"}}})
-	h.applyPortLinkReportLocked(h.nodes["w1"], &pb.PortLinkReport{Links: []*pb.PortLinkStatus{{Id: l.Id, State: "listening", Connections: 3}}})
+	h.applyPortLinkReportLocked(h.nodeLocked("w2"), &pb.PortLinkReport{Links: []*pb.PortLinkStatus{{Id: l.Id, State: "error", Error: "forged"}}})
+	h.applyPortLinkReportLocked(h.nodeLocked("w1"), &pb.PortLinkReport{Links: []*pb.PortLinkStatus{{Id: l.Id, State: "listening", Connections: 3}}})
 	h.mu.Unlock()
 	ls, err := fleet(th.alice).ListPortLinks(ctx, &pb.ListPortLinksRequest{})
 	if err != nil || len(ls.Links) != 1 || ls.Links[0].Status.State != "listening" || ls.Links[0].Status.Connections != 3 {
@@ -158,7 +158,7 @@ func TestPortLinks(t *testing.T) {
 		}
 	}
 	h.mu.Lock()
-	h.nodes["alice"] = &node{rec: &store.Node{Name: "alice", Role: "client", State: stateApproved}}
+	h.putTestNode(&node{rec: &store.Node{Name: "alice", Role: "client", State: stateApproved}})
 	h.mu.Unlock()
 	if _, err := create(th.alice, &pb.CreatePortLinkRequest{From: "w1", To: "alice", Port: 8080, ListenPort: 28080}); status.Code(err) != codes.NotFound {
 		t.Fatalf("link to a client: %v", err)
@@ -170,7 +170,7 @@ func TestPortLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.mu.Lock()
-	h.applyJobsLocked(h.nodes["w1"], &pb.JobsReport{Jobs: []*pb.Job{{Spec: &pb.JobSpec{Id: "JA", Owner: "alice"}, State: pb.JobState_JOB_STATE_DONE}}})
+	h.applyJobsLocked(h.nodeLocked("w1"), &pb.JobsReport{Jobs: []*pb.Job{{Spec: &pb.JobSpec{Id: "JA", Owner: "alice"}, State: pb.JobState_JOB_STATE_DONE}}})
 	_, still := h.portLinks[lj.Id]
 	h.mu.Unlock()
 	if still {
@@ -188,7 +188,7 @@ func TestPortLinks(t *testing.T) {
 		t.Fatalf("shared -> per-user: %v", err)
 	}
 	h.mu.Lock()
-	h.nodes["w2"].rec.Isolation = tenancy.PerUser
+	h.nodeLocked("w2").rec.Isolation = tenancy.PerUser
 	h.mu.Unlock()
 
 	// expiry
@@ -249,7 +249,7 @@ func TestPortLinks(t *testing.T) {
 	}
 
 	// audit on the hub
-	rows, err := h.store.Audit("hub", time.Time{}, 100)
+	rows, err := h.store.Audit("", "hub", time.Time{}, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestPortLinksIsolationRecheck(t *testing.T) {
 
 	// w3 reports per-user isolation
 	h.mu.Lock()
-	n3 := h.nodes["w3"]
+	n3 := h.nodeLocked("w3")
 	h.mu.Unlock()
 	h.handleReport(n3, n3.sess, &pb.NodeReport{Msg: &pb.NodeReport_Hello{Hello: &pb.NodeHello{Isolation: tenancy.PerUser, Endpoints: []string{"tcp://10.0.0.3:7701"}}}})
 	h.mu.Lock()
@@ -313,7 +313,7 @@ func TestPortLinksIsolationRecheck(t *testing.T) {
 			t.Fatalf("%s's list after the recheck: %v", name, p)
 		}
 	}
-	rows, err := h.store.Audit("hub", time.Time{}, 100)
+	rows, err := h.store.Audit("", "hub", time.Time{}, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestPortLinksIsolationRecheck(t *testing.T) {
 	lb := create(th.alice, 3002)
 	h.mu.Lock()
 	n3.rec.Isolation = tenancy.PerUser
-	if err := errors.Join(h.store.PutNode(n3.rec), h.store.PutNode(h.nodes["w2"].rec)); err != nil {
+	if err := errors.Join(h.store.PutNode(n3.rec), h.store.PutNode(h.nodeLocked("w2").rec)); err != nil {
 		h.mu.Unlock()
 		t.Fatal(err)
 	}

@@ -588,6 +588,9 @@ func (m *Monitor) HubNode(n *pb.NodeInfo) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	w := m.workers[n.Name]
+	if w != nil && w.node != nil && n.State == "revoked" && n.Id != "" && w.node.Id != "" && w.node.Id != n.Id {
+		return // an earlier, revoked node of this name (names are reused): not this worker
+	}
 	if w == nil {
 		if n.State != "approved" {
 			return
@@ -605,7 +608,7 @@ func (m *Monitor) HubNode(n *pb.NodeInfo) {
 	w.node.Metrics = nil
 	if len(w.legs) == 0 && len(n.Endpoints) > 0 && m.cfg.Dial != nil && n.State == "approved" {
 		// a worker that appeared since the last refresh: probe it now
-		for _, tl := range client.NodeLegs(n.Name, client.ReachableEndpoints(n.Endpoints, n.Hostname)) {
+		for _, tl := range client.NodeLegsOf(n) {
 			w.legs = append(w.legs, m.newLeg(tl))
 		}
 	}

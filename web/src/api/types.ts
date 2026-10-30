@@ -73,9 +73,15 @@ export interface NodeInfo {
   owner?: string // workers: the user who registered it ("" = shared fleet worker)
   /** an admin worker: runs commands as SYSTEM on its machine; owner-only, never shared, never placed */
   admin_worker?: boolean
+  /** the node's immutable ID (docs/security.md "Node identity"); name is its display name */
+  id?: string
+  /** the name in the node's current certificate (differs from name after a rename until it renews) */
+  cert_name?: string
+  /** a worker and its admin worker on the same machine: the other one's ID */
+  companion_id?: string
   /** workers: the machine it runs on (a session worker and its admin worker share the session worker's name) */
   machine?: string
-  /** workers: the other worker on the same machine (session <-> admin worker), if any */
+  /** workers: the other worker on the same machine (session <-> admin worker), if any: the name of companion_id */
   companion?: string
   /** workers with an owner: who else may use it */
   shares?: WorkerShares
@@ -146,12 +152,14 @@ export interface FleetJob {
   job: Job
   updated_at?: string
   worker_online?: boolean
+  worker_id?: string
 }
 
 export interface FleetEvent {
   time?: string
   kind: string
   node?: string
+  node_id?: string
   job?: FleetJob
   node_info?: NodeInfo
   message?: string
@@ -488,4 +496,6 @@ export interface PortLink {
   job_id?: string // the link goes when this job on `from` ends
   created_by?: string // certificate identity ("client/alice-laptop")
   status?: PortLinkStatus
+  from_id?: string
+  to_id?: string
 }

@@ -49,16 +49,17 @@ func TestWorkerNamedLikeUser(t *testing.T) {
 		t.Errorf("worker whoami %v %v", me, err)
 	}
 	h.mu.Lock()
-	if u := h.userOfLocked(pki.Identity{Role: pki.RoleWorker, Name: "bob"}); u != "" {
+	if u := h.userOfLocked(pki.Identity{Role: pki.RoleWorker, Name: "bob"}, ""); u != "" {
 		t.Errorf("worker acts as %q", u)
 	}
 	// a device whose certificate lacks the user: the hub's record decides
-	h.nodes["bobs-old"] = &node{rec: &store.Node{Name: "bobs-old", Role: "client", State: stateApproved, User: "bob"}}
-	if u := h.userOfLocked(pki.Identity{Role: pki.RoleClient, Name: "bobs-old"}); u != "bob" {
+	old := &node{rec: &store.Node{Name: "bobs-old", Role: "client", State: stateApproved, User: "bob"}}
+	h.putTestNode(old)
+	if u := h.userOfLocked(pki.Identity{Role: pki.RoleClient, Name: "bobs-old"}, old.rec.ID); u != "bob" {
 		t.Errorf("recorded device acts as %q", u)
 	}
 	// the record of another role does not
-	if u := h.userOfLocked(pki.Identity{Role: pki.RoleAdmin, Name: "bobs-old"}); u != "bobs-old" {
+	if u := h.userOfLocked(pki.Identity{Role: pki.RoleAdmin, Name: "bobs-old"}, old.rec.ID); u != "bobs-old" {
 		t.Errorf("admin certificate with a client's name acts as %q", u)
 	}
 	h.mu.Unlock()
@@ -178,7 +179,7 @@ func TestAdminOperationsByName(t *testing.T) {
 
 	// nothing happened to them
 	h.mu.Lock()
-	aw, bl := *h.nodes["aw"].rec, *h.nodes["bob-laptop"].rec
+	aw, bl := *h.nodeLocked("aw").rec, *h.nodeLocked("bob-laptop").rec
 	h.mu.Unlock()
 	if aw.AdminDrain || aw.State != stateApproved || aw.Labels["zone"] != "" || aw.Shares != nil || bl.State != stateApproved || bl.AdminDrain {
 		t.Fatalf("hidden machines changed: %+v %+v", aw, bl)
@@ -213,7 +214,7 @@ func TestAdminCantShareOthersWorker(t *testing.T) {
 		t.Fatalf("panel admin shares a hidden worker: %v", err)
 	}
 	h.mu.Lock()
-	rootMay := h.mayUseLocked("root", h.nodes["aw"])
+	rootMay := h.mayUseLocked("root", h.nodeLocked("aw"))
 	h.mu.Unlock()
 	if rootMay {
 		t.Fatal("root may use aw")
@@ -236,7 +237,7 @@ func TestAdminCantShareOthersWorker(t *testing.T) {
 		t.Fatalf("admin re-shares a worker shared with it: %v", err)
 	}
 	h.mu.Lock()
-	s := h.nodes["aw"].rec.Shares
+	s := h.nodeLocked("aw").rec.Shares
 	h.mu.Unlock()
 	if s == nil || s.Everyone || len(s.Users) != 2 {
 		t.Fatalf("shares %+v", s)
@@ -250,12 +251,15 @@ func TestAuditNodeFilter(t *testing.T) {
 	th, _ := ownedHub(t)
 	h := th.h
 	now := time.Now()
+	h.mu.Lock()
+	awID, w1ID := h.nodeLocked("aw").rec.ID, h.nodeLocked("w1").rec.ID
+	h.mu.Unlock()
 	var rows []store.AuditRow
-	for i := range 3 {
-		rows = append(rows, store.AuditRow{Node: "aw", Time: now.Add(time.Duration(i) * time.Millisecond), Who: "client/alice",
+	for i := range 3 { // as workers' records arrive: with the node's ID
+		rows = append(rows, store.AuditRow{Node: "aw", NodeID: awID, Time: now.Add(time.Duration(i) * time.Millisecond), Who: "client/alice",
 			Method: "/longarm.v1.Exec/Run", Line: `{"user":"alice"}`, ActorUser: "alice", SubjectUser: "alice", Attributed: true})
 	}
-	rows = append(rows, store.AuditRow{Node: "w1", Time: now, Who: "client/alice", Method: "/longarm.v1.Exec/Run",
+	rows = append(rows, store.AuditRow{Node: "w1", NodeID: w1ID, Time: now, Who: "client/alice", Method: "/longarm.v1.Exec/Run",
 		Line: `{"user":"alice"}`, ActorUser: "alice", SubjectUser: "alice", Attributed: true})
 	if err := h.store.AddAudit(rows); err != nil {
 		t.Fatal(err)
@@ -433,7 +437,7 @@ func TestTailnetRekeyHidden(t *testing.T) {
 		t.Fatalf("rekey aw: %v (unknown: %v)", got, want)
 	}
 	h.mu.Lock()
-	rekey := h.nodes["aw"].rec.TailnetRekey
+	rekey := h.nodeLocked("aw").rec.TailnetRekey
 	h.mu.Unlock()
 	if rekey {
 		t.Fatal("aw marked for a re-key")
@@ -495,8 +499,8 @@ func TestNoAdminCredentialsForUsers(t *testing.T) {
 	// ... nor the name of a user without a user record: an old certificate's
 	// (its name is its user), a worker's owner
 	h.mu.Lock()
-	h.nodes["lega"] = &node{rec: &store.Node{Name: "lega", Role: "client", State: stateApproved}}
-	h.nodes["gw"] = &node{rec: &store.Node{Name: "gw", Role: "worker", Owner: "ghost", State: stateRevoked}}
+	h.putTestNode(&node{rec: &store.Node{Name: "lega", Role: "client", State: stateApproved}})
+	h.putTestNode(&node{rec: &store.Node{Name: "gw", Role: "worker", Owner: "ghost", State: stateRevoked}})
 	h.mu.Unlock()
 	for _, name := range []string{"lega", "ghost"} {
 		body := `{"name":"` + name + `","password":"another-password-1","current_password":"admin-password-1"}`
@@ -620,7 +624,7 @@ func TestEventStreamFollowsTeams(t *testing.T) {
 	}
 	h.mu.Lock()
 	f := h.eventFilter(h.viewerLocked("bob", false)) // subscribed while in t1
-	info := h.nodeInfoLocked(h.nodes["aw"])
+	info := h.nodeInfoLocked(h.nodeLocked("aw"))
 	h.mu.Unlock()
 	ev := &pb.FleetEvent{Kind: "node", Node: "aw", NodeInfo: info}
 	if f(ev, "") == nil {

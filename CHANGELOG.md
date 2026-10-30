@@ -68,6 +68,31 @@
 
 ### Security
 
+- Node identity (docs/security.md "Node identity"): every node has an
+  immutable ID (UUID) the hub assigns; certificates carry it as URI SAN
+  `urn:longarm:node:<uuid>`; the hub authorizes and revokes by ID (the
+  revocation list now holds revoked node IDs too), so a revoked node's name
+  is free for a new node at once; a certificate the hub never saw is never
+  mapped to a node by name (refused for a name with history: re-issue it
+  with `longarm admin issue --id`), and a renamed node's older
+  certificates are revoked once it uses the new one. Endorsements bind the
+  ID in their own signing domain (no name-only signature beside it: no
+  downgrade by stripping the ID; peers before node IDs refuse them);
+  name-bound endorsements stay valid while the node keeps that name, on
+  certificates with an ID only if made before 2027-01-31. Port-link consents
+  and grants bind the ends' node IDs. Devices' users are pinned, so a new
+  name never makes a device another user. With
+  `require_workers`, a worker targeted by name must be endorsed under that
+  name, one targeted by ID with that ID. Names never look like IDs (hex and
+  dashes only, 4+ characters, are refused) and are unique among non-revoked
+  nodes (database index); a rename never takes a Longarm user's name (only
+  that user's own devices may carry it). Targets resolve among the nodes
+  the caller may see only (docs/security.md "What admins see"): another
+  user's machine is "not found" by name, ID or ID prefix alike, and an
+  ambiguous prefix lists visible nodes only. Schema migration 6 gives every
+  existing node an ID (names and certificates keep working); external relays
+  enforce revocations by node ID too.
+
 - Hub admins no longer see other users' machines. With multi-tenancy an
   admin certificate or an administrator's panel login sees machines and jobs
   exactly as its user does: `longarm ls` / `ls -o wide`, `worker ls`,
@@ -467,15 +492,28 @@
   links open in the system browser.
 - `install.ps1 --login` starts the tray right away (in your session, not
   elevated) instead of at the next logon.
+- Node IDs: targets everywhere (run, exec, sessions, files, forward, links,
+  admin and worker commands, panel, MCP) accept a name, a node ID, a unique
+  ID prefix (git-style, 4+ hex digits), `id:<prefix>` or `name:<name>`; an
+  ambiguous prefix is an error listing the candidates. `longarm worker
+  rename` (owners) and `longarm admin rename` (admins) rename a node, which
+  keeps its ID (audited; the panel's Rename too). Listings show the short ID
+  next to names (`ls`, `worker ls`, `admin nodes`, `jobs`, `sessions`, the
+  panel, the tray); JSON gains `id` / `workerId` / `worker_id` fields. A
+  worker and its admin worker are linked by ID (`companion_id`). The hub
+  database migrates to schema 5 (IDs for existing nodes; names that look
+  like IDs get a `w-`/`d-` prefix, audited); certificates without an ID keep
+  working (mapped by serial) and get one at their next renewal.
 - One machine, one entry: a user-session worker and its admin worker (runs
   as SYSTEM, `<worker>-admin`) show together - one tray card with an
   "admin commands: on" badge, the per-capability state ("worker online ·
   admin offline 2h") and the labels as chips; `longarm ls` folds the admin
   worker into its worker's row (ADMIN column); the panel lists it right
   under its worker. attach / ssh go to the session worker; "run as admin"
-  (the card's ⋯ menu) names the admin worker. The hub records the pair at
-  sign-in (`NodeInfo.companion`, `NodeInfo.machine` - additive JSON fields);
-  older registrations pair by `<worker>-admin`, owner and host name.
+  (the card's ⋯ menu) names the admin worker. The hub records the pair by node ID
+  (`NodeInfo.companion_id`; `NodeInfo.companion`, `NodeInfo.machine` - additive
+  JSON fields - come from it); the hub's migration pairs older registrations
+  (owner and host name).
 - Tray: workers offline for over an hour move to a collapsed "Offline (n)"
   section, one line each with "last seen", the error behind "details";
   online machines first. "Remove" (with a confirmation) revokes your own

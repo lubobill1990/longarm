@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,6 +27,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/jobs"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/workspace"
@@ -243,7 +245,7 @@ Without --repo or --cwd the job runs in the worker's home directory;
 			if po.repo != "" {
 				labelM[sched.LabelRepo] = po.repo
 			}
-			conn, err := s.conn(worker)
+			conn, err := s.connFor(worker, po) // the hub's placement: for this run only
 			if err != nil {
 				return err
 			}
@@ -821,7 +823,13 @@ also see jobs shared with your teams). --json lists every job you may see unless
 				return nil
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "WORKER\tID\tSTATE\tEXIT\tSTARTED\tDURATION\tLOG\tOWNER\tNAME\tCOMMAND")
+			// NODE: the worker's node ID (shortest unambiguous prefix); ID: the job's
+			var ids []string
+			for _, fj := range rows {
+				ids = append(ids, fj.WorkerId)
+			}
+			short := nodeid.ShortIDs(ids)
+			fmt.Fprintln(tw, "WORKER\tNODE\tID\tSTATE\tEXIT\tSTARTED\tDURATION\tLOG\tOWNER\tNAME\tCOMMAND")
 			for _, fj := range rows {
 				j := fj.Job
 				exit := "-"
@@ -848,7 +856,7 @@ also see jobs shared with your teams). --json lists every job you may see unless
 				if len(cmdline) > 60 {
 					cmdline = cmdline[:57] + "..."
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", fj.Worker, j.Spec.Id, st, exit, started, dur,
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", fj.Worker, dash(short[fj.WorkerId]), j.Spec.Id, st, exit, started, dur,
 					j.LogSize, dash(j.Spec.Owner), j.Spec.Name, cmdline)
 			}
 			if err := tw.Flush(); err != nil {
@@ -936,7 +944,8 @@ func workerJobs(ctx context.Context, s *session, worker, id string, want []pb.Jo
 				if err == nil {
 					mu.Lock()
 					for _, j := range js {
-						rows = append(rows, &pb.FleetJob{Worker: t, Job: j, WorkerOnline: true})
+						// t may be an id or a prefix: the worker's name, and its id
+						rows = append(rows, &pb.FleetJob{Worker: cmp.Or(conn.Worker.Name, t), WorkerId: conn.Worker.ID, Job: j, WorkerOnline: true})
 					}
 					mu.Unlock()
 					return

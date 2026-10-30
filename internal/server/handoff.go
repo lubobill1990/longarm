@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/workspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -76,6 +78,7 @@ func (s *Server) handoffDeny(user string) string {
 // offer is one registered transfer.
 type offer struct {
 	id, owner, peer string
+	peerID          string // the peer's node ID ("" = by name only: an older client)
 	token           []byte
 	file            string // in this worker's staging area
 	size            int64
@@ -166,7 +169,7 @@ func (h *handoffServer) Offer(ctx context.Context, req *pb.HandoffOfferRequest) 
 		}
 		return nil, status.Error(codes.FailedPrecondition, err.Error())
 	}
-	o := &offer{id: req.TransferId, owner: owner, peer: req.Peer, token: bytes.Clone(req.Token), file: file, size: n,
+	o := &offer{id: req.TransferId, owner: owner, peer: req.Peer, peerID: strings.ToLower(req.PeerId), token: bytes.Clone(req.Token), file: file, size: n,
 		expires: time.Now().Add(ttl)}
 	h.mu.Lock()
 	h.offers[o.id] = o
@@ -268,7 +271,9 @@ func (h *handoffServer) Fetch(req *pb.HandoffFetchRequest, st pb.Handoff_FetchSe
 	case o == nil:
 		h.mu.Unlock()
 		return deny(codes.NotFound, "no transfer %s (expired, used or never offered)", req.TransferId)
-	case o.peer != id.Name:
+	case o.peer != id.Name || o.peerID != "" && !strings.EqualFold(o.peerID, id.ID):
+		// the peer's name and, from newer clients, its node ID: another
+		// node of that name (renamed, re-enrolled) is not the peer
 		h.mu.Unlock()
 		return deny(codes.PermissionDenied, "transfer %s is not for %s", req.TransferId, id.Name)
 	case subtle.ConstantTimeCompare(o.token, req.Token) != 1:
@@ -375,6 +380,13 @@ func (h *handoffServer) Pull(ctx context.Context, req *pb.HandoffPullRequest) (*
 	if why := LinkPeerTrustDeny(h.s.Trust.Load(), clientPeerCert(&p), owner); why != "" {
 		tmp.Close()
 		return fail(status.Error(codes.PermissionDenied, why))
+	}
+	if req.FromId != "" { // the source the client verified, by node ID
+		src, err := pki.IdentityFromCert(clientPeerCert(&p))
+		if err != nil || !strings.EqualFold(src.ID, req.FromId) {
+			tmp.Close()
+			return fail(status.Errorf(codes.PermissionDenied, "%s is not the node the handoff was offered by", req.From))
+		}
 	}
 	sum := sha256.New()
 	var n int64

@@ -589,12 +589,12 @@ func (c *coder) direct(ctx context.Context, bundle, dstPath string) (*codeResult
 	tid := "h" + strings.ReplaceAll(c.hid, ".", "-") + "-" + hex.EncodeToString(token[:4])
 	octx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
-	off, err := c.src.conn.Handoff().Offer(octx, &pb.HandoffOfferRequest{Path: bundle, Peer: c.dst.cert, TransferId: tid, Token: token,
+	off, err := c.src.conn.Handoff().Offer(octx, &pb.HandoffOfferRequest{Path: bundle, Peer: c.dst.cert, PeerId: c.dst.id, TransferId: tid, Token: token,
 		Ttl: durationpb.New(directOfferTTL), MaxBytes: maxRelayBundle})
 	if err != nil {
 		return nil, c.src.name + ": " + grpcMessage(err)
 	}
-	pull := &pb.HandoffPullRequest{From: c.src.cert, FromEndpoints: endpoints, TransferId: tid, Token: token,
+	pull := &pb.HandoffPullRequest{From: c.src.cert, FromId: c.src.id, FromEndpoints: endpoints, TransferId: tid, Token: token,
 		Size: off.Size, Sha256: off.Sha256, Header: &pb.SyncHeader{Repo: c.srcRepo.key, Commit: c.snap, Branch: "handoff-" + c.hid, Path: dstPath}}
 	res, err := c.dst.conn.Handoff().Pull(octx, pull)
 	if status.Code(err) == codes.Unavailable { // once more: a relay may learn the pair a moment after the hub listed it
@@ -621,7 +621,7 @@ func (c *coder) relayPair(ctx context.Context) func() {
 	if h == nil {
 		return func() {}
 	}
-	req := &pb.HandoffPairRequest{A: c.src.cert, B: c.dst.cert, Ttl: durationpb.New(directOfferTTL)}
+	req := &pb.HandoffPairRequest{A: c.src.cert, B: c.dst.cert, AId: c.src.id, BId: c.dst.id, Ttl: durationpb.New(directOfferTTL)}
 	hctx, cancel := context.WithTimeout(ctx, hubTimeout)
 	defer cancel()
 	if _, err := h.Fleet().HandoffPair(hctx, req); err != nil {
@@ -633,7 +633,7 @@ func (c *coder) relayPair(ctx context.Context) func() {
 	return func() {
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), hubTimeout)
 		defer cancel()
-		h.Fleet().HandoffPair(rctx, &pb.HandoffPairRequest{A: c.src.cert, B: c.dst.cert, Release: true})
+		h.Fleet().HandoffPair(rctx, &pb.HandoffPairRequest{A: c.src.cert, B: c.dst.cert, AId: c.src.id, BId: c.dst.id, Release: true})
 	}
 }
 
