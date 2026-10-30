@@ -200,6 +200,27 @@ func realDir(dir string) (exists bool, err error) {
 	return true, nil
 }
 
+// openRoot opens dir as an os.Root, checking that what was opened is the
+// plain directory Lstat saw (not a symlink swapped in meanwhile).
+func openRoot(dir string) (*os.Root, error) {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return nil, err
+	}
+	if fi.Mode().Type() != fs.ModeDir {
+		return nil, &RefusedError{Dir: dir, Reason: "not a plain directory (a file, symlink or junction): Longarm leaves it alone"}
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	if opened, err := root.Stat("."); err != nil || !os.SameFile(fi, opened) {
+		root.Close()
+		return nil, &RefusedError{Dir: dir, Reason: "the directory changed while Longarm opened it"}
+	}
+	return root, nil
+}
+
 func inspect(dir string, b *bundle) (*inspection, error) {
 	in := &inspection{dir: dir}
 	exists, err := realDir(dir)
@@ -207,7 +228,7 @@ func inspect(dir string, b *bundle) (*inspection, error) {
 		return in, err
 	}
 	in.exists = true
-	root, err := os.OpenRoot(dir)
+	root, err := openRoot(dir)
 	if err != nil {
 		return in, err
 	}
@@ -392,7 +413,7 @@ func (e Env) Install(id string) (Status, error) {
 			return st, err
 		}
 	}
-	root, err := os.OpenRoot(st.Dir)
+	root, err := openRoot(st.Dir)
 	if err != nil {
 		return st, err
 	}
@@ -451,7 +472,7 @@ func (e Env) Remove(id string) (Status, error) {
 	case Modified:
 		return st, &RefusedError{Dir: st.Dir, Reason: "the skill was changed since Longarm installed it; Longarm does not delete your changes - remove the folder yourself if you no longer want it", Files: st.Modified}
 	}
-	root, err := os.OpenRoot(st.Dir)
+	root, err := openRoot(st.Dir)
 	if err != nil {
 		return st, err
 	}
