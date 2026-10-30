@@ -37,6 +37,10 @@
 #                  the rollout halts; a warning (not a failure) when no worker
 #                  can self-update (--allow-none, exit 79: MSI workers update
 #                  through the tray's banner); needs LONGARM_HUB
+#   linux-repo     after publish, stable releases: the GPG-signed apt and yum
+#                  repositories on GitHub Pages (docs/linux-repos.md); needs the
+#                  secret LONGARM_GPG_PRIVATE_KEY (which also signs the rpm in
+#                  build-unix), else skipped with a warning
 #
 # Dry run (Actions -> release -> Run workflow, any branch): meta, the builds,
 # gather (publish's merge and check, no secrets) and the image smoke test,
@@ -190,15 +194,40 @@ jobs:
           .github/scripts/fetch-tool.sh goreleaser v2.19.0 \
             https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz \
             ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b goreleaser
+      # The rpm's GPG signature (nfpm; docs/linux-repos.md): the secret, checked
+      # against the committed public key, as a file for .goreleaser.yaml. Not
+      # in a dry run; without the secret the rpm is unsigned and the linux-repo
+      # job doesn't publish the repositories.
+      - name: rpm signing key (LONGARM_GPG_PRIVATE_KEY)
+        if: needs.meta.outputs.dry_run == 'false'
+        env:
+          LONGARM_GPG_PRIVATE_KEY: ${{ secrets.LONGARM_GPG_PRIVATE_KEY }}
+          LONGARM_GPG_PASSPHRASE: ${{ secrets.LONGARM_GPG_PASSPHRASE }}
+        run: |
+          if [ -z "$LONGARM_GPG_PRIVATE_KEY" ]; then
+            echo "::warning::secret LONGARM_GPG_PRIVATE_KEY is not set: the rpm packages are not signed and the apt/yum repositories are not published (docs/linux-repos.md)"
+            exit 0
+          fi
+          h=$(mktemp -d)
+          GNUPGHOME=$h .github/scripts/linux-repo.sh key packaging/linux/repo/longarm.asc
+          gpgconf --homedir "$h" --kill all || true
+          rm -rf "$h"
+          (umask 077; printf '%s\n' "$LONGARM_GPG_PRIVATE_KEY" >"$RUNNER_TEMP/rpm-signing-key.asc")
+          echo "LONGARM_RPM_KEY_FILE=$RUNNER_TEMP/rpm-signing-key.asc" >>"$GITHUB_ENV"
       - name: build (goreleaser + hub-release)
         env:
           LONGARM_UPDATE_PUBKEY: ${{ vars.LONGARM_UPDATE_PUBKEY }}
           # the built-in hub; empty: none
           LONGARM_DEFAULT_HUB: ${{ vars.LONGARM_DEFAULT_HUB }}
           LONGARM_DEFAULT_HUB_CA: ${{ vars.LONGARM_DEFAULT_HUB_CA }}
+          # the rpm signing key's passphrase (LONGARM_RPM_KEY_FILE: the step above)
+          NFPM_PASSPHRASE: ${{ needs.meta.outputs.dry_run == 'false' && secrets.LONGARM_GPG_PASSPHRASE || '' }}
         run: |
           goreleaser release --clean --skip=publish,docker
           go run -trimpath ./packaging/hubrelease --dist dist --out dist/hub-release
+      - name: remove the rpm signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/rpm-signing-key.asc"
       - name: stage the artifact
         run: |
           v=$(jq -r .version dist/metadata.json)
@@ -599,3 +628,114 @@ jobs:
           LONGARM_HUB: ${{ vars.LONGARM_HUB }}
           LONGARM_RELEASE_TLS: ${{ secrets.LONGARM_RELEASE_TLS }}
         run: .github/scripts/longarm-release.sh rollout "$RUNNER_TEMP/longarm" "$VERSION" 15m
+
+  # The signed apt and yum repositories on GitHub Pages (docs/linux-repos.md):
+  # rebuilt on every stable release from this run's deb/rpm packages and those
+  # of the previous LONGARM_REPO_KEEP-1 (default 2) versions, taken from the
+  # published repositories after checking their signatures; signed with the
+  # secret LONGARM_GPG_PRIVATE_KEY (which must be the committed
+  # packaging/linux/repo/longarm.asc), installed from in Debian, Fedora and
+  # AlmaLinux containers, then deployed. Without the secret: a warning, nothing
+  # is published (the release itself is unaffected). Pages must use "GitHub
+  # Actions" as its source, and the github-pages environment must allow v* tags.
+  linux-repo:
+    name: linux repos (apt, yum on GitHub Pages)
+    needs: [meta, publish]
+    if: needs.meta.outputs.prerelease == 'false' && needs.meta.outputs.dry_run == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pages: write # the Pages deployment
+      id-token: write # deploy-pages
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ needs.meta.outputs.tag }}
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github
+            packaging/linux/repo
+      - name: signing key (LONGARM_GPG_PRIVATE_KEY)
+        id: key
+        env:
+          LONGARM_GPG_PRIVATE_KEY: ${{ secrets.LONGARM_GPG_PRIVATE_KEY }}
+          LONGARM_GPG_PASSPHRASE: ${{ secrets.LONGARM_GPG_PASSPHRASE }}
+        run: |
+          if [ -z "$LONGARM_GPG_PRIVATE_KEY" ]; then
+            echo "::warning::secret LONGARM_GPG_PRIVATE_KEY is not set: the apt/yum repositories are not published (docs/linux-repos.md)"
+            echo "signed=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "GNUPGHOME=$RUNNER_TEMP/gnupg" >>"$GITHUB_ENV"
+          GNUPGHOME=$RUNNER_TEMP/gnupg .github/scripts/linux-repo.sh key packaging/linux/repo/longarm.asc
+          echo "signed=true" >>"$GITHUB_OUTPUT"
+      - name: tools
+        if: steps.key.outputs.signed == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends apt-utils createrepo-c rpm >/dev/null
+      - id: pages
+        if: steps.key.outputs.signed == 'true'
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      # this release's packages: the build artifact of this run (what publish
+      # signed and uploaded), not the release assets
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.key.outputs.signed == 'true'
+        with:
+          name: release-unix
+          path: ${{ runner.temp }}/artifact
+      - name: packages (this release + the previous ones from the published repositories)
+        if: steps.key.outputs.signed == 'true'
+        env:
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+          KEEP: ${{ vars.LONGARM_REPO_KEEP || '3' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/pkg/current"
+          cp "$RUNNER_TEMP"/artifact/hub/longarm-linux-*.deb "$RUNNER_TEMP"/artifact/hub/longarm-linux-*.rpm \
+            "$RUNNER_TEMP"/artifact/extra/longarm-hub_*.deb "$RUNNER_TEMP/pkg/current/"
+          ls -l "$RUNNER_TEMP/pkg/current"
+          .github/scripts/linux-repo.sh previous "$BASE_URL" packaging/linux/repo/longarm.asc "$RUNNER_TEMP/pkg/previous" "$KEEP" "$VERSION"
+      - name: build and sign the repositories
+        if: steps.key.outputs.signed == 'true'
+        env:
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          .github/scripts/linux-repo.sh build "$RUNNER_TEMP/pkg" "$RUNNER_TEMP/site" "$BASE_URL" packaging/linux/repo/longarm.asc
+          # this release's rpms must be in it (signed by the key)
+          for a in x86_64 aarch64; do
+            [ -f "$RUNNER_TEMP/site/rpm/packages/longarm-$VERSION-1.$a.rpm" ] || {
+              echo "::error::longarm-$VERSION-1.$a.rpm is missing from the yum repository (not signed?)"
+              exit 1
+            }
+          done
+      - name: install from them (Debian, Fedora, AlmaLinux)
+        if: steps.key.outputs.signed == 'true'
+        run: |
+          # the same site, served locally under a test URL
+          test="$RUNNER_TEMP/site-test"
+          .github/scripts/linux-repo.sh build "$RUNNER_TEMP/pkg" "$test" http://127.0.0.1:8080 packaging/linux/repo/longarm.asc >/dev/null
+          .github/scripts/linux-repo-test.sh "$test" http://127.0.0.1:8080
+      - name: remove the signing key
+        if: always()
+        run: |
+          if [ -d "$RUNNER_TEMP/gnupg" ]; then
+            gpgconf --homedir "$RUNNER_TEMP/gnupg" --kill all || true
+            rm -rf "$RUNNER_TEMP/gnupg"
+          fi
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        if: steps.key.outputs.signed == 'true'
+        with:
+          path: ${{ runner.temp }}/site
+          retention-days: 3
+      - id: deploy
+        if: steps.key.outputs.signed == 'true'
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
