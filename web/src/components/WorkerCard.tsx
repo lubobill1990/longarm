@@ -44,6 +44,8 @@ export interface CardActions {
   canUpdate?: (w: PoolWorker) => boolean
   /** updates in progress or finished, by worker name */
   updates?: Record<string, WorkerUpdateJob>
+  /** the Claude Code / Copilot CLI counters open the Sessions window (worker, agent) */
+  sessions?: (w: string, agent: string) => void
 }
 
 /** "0.1.8" (a leading v dropped), "" when unknown. */
@@ -259,7 +261,7 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
           {(p.error || (state === 'connecting' ? 'waiting for the first sample…' : 'unreachable')).slice(0, 120)}
         </div>
       ) : (
-        <Metrics m={metrics} w={p} now={now} />
+        <Metrics m={metrics} w={p} now={now} onAgent={actions?.sessions && ((a) => actions.sessions!((session ?? p).name, a))} />
       )}
     </div>
   )
@@ -403,7 +405,7 @@ export function metricsSource(w: PoolWorker, m: MetricsSnapshot, now: number): {
   }
 }
 
-function Metrics({ m, w, now }: { m: MetricsSnapshot; w: PoolWorker; now: number }) {
+function Metrics({ m, w, now, onAgent }: { m: MetricsSnapshot; w: PoolWorker; now: number; onAgent?: (agent: string) => void }) {
   const cpu = m.cpu_percent ?? 0
   const mp = memPct(m)
   const hist = w.history ?? []
@@ -430,13 +432,24 @@ function Metrics({ m, w, now }: { m: MetricsSnapshot; w: PoolWorker; now: number
         {AGENTS.map(([key, label, color]) => {
           const a = m.agents?.[key]
           const n = a?.sessions ?? 0
-          return (
-            <div key={key} className="agent" style={{ ['--c' as string]: n ? color : undefined }} data-testid={`agent-${key}`}>
+          const body = (
+            <>
               <span style={{ color: n ? 'var(--fg)' : 'var(--muted)' }}>{label}</span>
               <span className="n" style={{ color: n ? color : 'var(--faint)' }}>
                 {n}
               </span>
               <span className="m">{n ? `${gb(a?.mem_bytes).toFixed(1)}G` : '—'}</span>
+            </>
+          )
+          const style = { ['--c' as string]: n ? color : undefined }
+          // a button when the Sessions window can open (the tray), a plain counter elsewhere
+          return onAgent ? (
+            <button key={key} className="agent" style={{ ...style, width: '100%' }} data-testid={`agent-${key}`} title={`${label} sessions on ${w.name}`} onClick={() => onAgent(key)}>
+              {body}
+            </button>
+          ) : (
+            <div key={key} className="agent" style={style} data-testid={`agent-${key}`}>
+              {body}
             </div>
           )
         })}

@@ -130,6 +130,8 @@ export const trayApi = {
   ssh: (worker: string) => post('/trayapi/ssh', { worker }),
   open: (url: string) => post('/trayapi/open', { url }),
   openPanel: (path = '/') => post('/trayapi/panel', { path }),
+  /** opens (or focuses) the Sessions window, filtered to a worker and agent, or at a session */
+  openSessions: (to: { worker?: string; agent?: string; key?: string } = {}) => post('/trayapi/sessions/open', to),
   pin: (pinned: boolean) => post<{ pinned: boolean }>('/trayapi/pin', { pinned }),
   hide: () => post('/trayapi/hide'),
   startDaemon: () => post('/trayapi/daemon/start'),

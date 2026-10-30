@@ -121,6 +121,7 @@ export function PoolTab({ pool, error, info, onNavigate }: { pool?: PoolView; er
     update: hubUp ? (name, version) => run(() => startUpdate(name, version), `updating ${name} to ${version}`) : undefined,
     canUpdate: (w: PoolWorker) => !!me && !!w.node?.owner && w.node.owner === me,
     updates,
+    sessions: (name, agent) => run(() => trayApi.openSessions({ worker: name, agent })),
   }
   const empty = (pool.workers ?? []).length === 0
   return (
