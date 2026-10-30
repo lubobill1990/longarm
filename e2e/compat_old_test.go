@@ -242,8 +242,7 @@ func listedNames(t *testing.T, exe, cfgDir string) []string {
 	out := mustBin(t, exe, cfgDir, "ls", "--json")
 	var byName map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(out), &byName); err != nil {
-		t.Fatalf("ls --json: %v
-%s", err, out)
+		t.Fatalf("ls --json: %v\n%s", err, out)
 	}
 	var names []string
 	for n := range byName {
@@ -265,14 +264,12 @@ func keyUser(t *testing.T, line string) string {
 // keyLine is the user key line in longarm trust init's output.
 func keyLine(t *testing.T, out string) string {
 	t.Helper()
-	for _, l := range strings.Split(out, "
-") {
+	for _, l := range strings.Split(out, "\n") {
 		if l = strings.TrimSpace(l); strings.HasPrefix(l, "longarm-user-key.") {
 			return l
 		}
 	}
-	t.Fatalf("no user key line in:
-%s", out)
+	t.Fatalf("no user key line in:\n%s", out)
 	return ""
 }
 
