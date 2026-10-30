@@ -1261,6 +1261,44 @@ for the owner like `Forward.Open`. Creation, removal (with the reason) and
 every connection B accepts or refuses are audited (`longarm admin audit
 --node hub|wb`). See [security.md](security.md#port-links).
 
+### Remote desktop: `longarm desktop`
+
+```
+longarm desktop cpc-alice-x7k2q                 # opens it (the tray: "desktop" on its card)
+longarm desktop cpc-alice-x7k2q --pick          # choose its Dev Box again
+longarm desktop cpc-alice-x7k2q --devbox arm1   # say which Dev Box it is ([project/]name)
+longarm desktop cpc-alice-x7k2q --web           # the browser client instead of Windows App
+longarm desktop cpc-alice-x7k2q --print         # print the link (or the forward's address)
+longarm desktop cpc-alice-x7k2q --url 'ms-avd:connect?...'   # remember this link
+longarm desktop cpc-alice-x7k2q --forget
+```
+
+What the worker is decides how its desktop opens (longarmd reports it in
+`Node.Info`; workers before this release don't, update them first):
+
+- **Microsoft Dev Box**: opens in **Windows App**, which connects through
+  Azure Virtual Desktop itself - RDP Shortpath, Entra sign-in, the Dev
+  Box's Conditional Access. Longarm carries none of it; it only finds the
+  link. longarmd recognizes a Dev Box by its Azure instance metadata (the
+  Dev Center it was made by); `longarm desktop` then asks that Dev Center
+  for your Dev Boxes with your Azure CLI sign-in (`az login --tenant
+  <tenant>`; Longarm stores no Azure tokens) and for the chosen one's
+  `ms-avd:` link. Which Dev Box a worker is can't be told from either side,
+  so the first time it takes the only Dev Box no other worker has, or asks
+  (`--devbox` without a terminal). The choice, the link and the Dev Center's
+  endpoint are kept in `<config>/desktop.json`; after that the link opens
+  without reaching the worker, so a stopped or hibernated Dev Box starts as
+  Windows App connects. Without the Azure CLI it opens
+  https://devbox.microsoft.com.
+- **Windows 365 Cloud PC** (not a Dev Box): opens https://windows365.microsoft.com.
+- **Any other Windows worker with Remote Desktop on**: a forward to its
+  Remote Desktop port (like `longarm forward`, listed by `forward --list`)
+  opened in mstsc on Windows, Windows App on macOS, FreeRDP on Linux; it
+  ends when mstsc closes (elsewhere: Ctrl+C). The Windows firewall rule for
+  Remote Desktop can stay off - the forward connects to 127.0.0.1 on the
+  worker. With per-user isolation forwards only reach your own processes'
+  ports, so this needs an admin certificate there.
+
 ### SSH / scp / VS Code Remote-SSH
 
 ```sh
@@ -2668,10 +2706,20 @@ tray's Settings tab ("install new releases automatically"),
 `longarm worker update <worker> --auto on` (relayed by your own worker),
 or `longarm-update auto on` on the machine. The hub can't: the setting
 lives in `HKLM\Software\Longarm\Update`, written by the service only for
-those callers. When on, the service checks the hub's latest stable release
-every 6 hours (`--hours`) and installs it under the same rules - once no
-job has started for 5 minutes (the workers tell it when jobs run), at
-most a day later.
+those callers. When on, the service checks the hub's newest release of the
+machine's **release channel** every 6 hours (`--hours`) and installs it
+under the same rules - once no job has started for 5 minutes (the workers
+tell it when jobs run), at most a day later.
+
+**Release channel**: stable (the default: releases only), preview
+(release candidates too) or dev (a build of every change merged to main).
+The tray's Settings tab → Updates → Release channel, for the machine's
+owner or a local administrator (stored next to the automatic-updates
+setting); the tray's update banner, automatic updates and
+`longarm worker update` then mean that channel's newest release, and the
+machine's longarmd tells the hub (`longarm ls` marks newer releases of the
+channel). Moving back to a more tested channel takes effect with its next
+release. docs/ci-cd.md "Release channels".
 
 **On the machine** (any local user may ask; only newer signed releases
 install):
@@ -3118,8 +3166,9 @@ old binary waits: the new version must keep its hub session for 60 s
 (`[update] health_window`); if it fails, or does not start within
 `start_grace` (2m), the watchdog restores the old files and restarts it, the
 version goes on the worker's skip list and the rollout halts. Jobs keep
-running throughout. longarmd.toml: `[update] disabled, channel, interval (1h),
-health_window, start_grace`. Package-managed installs (deb/rpm/brew) update
+running throughout. longarmd.toml: `[update] disabled, channel (stable |
+preview | dev; default: the machine's channel from the tray, else stable),
+interval (1h), health_window, start_grace`. Package-managed installs (deb/rpm/brew) update
 through their package manager.
 
 ### Firewalls
@@ -3170,7 +3219,9 @@ detail: [ci-cd.md](ci-cd.md).
   [`deploy/hub/longarm-hub-deploy`](../deploy/hub/longarm-hub-deploy): verify, install,
   health check, automatic rollback) → **rollout** (`--canary 1 --wait 15m`,
   fails when it halts). Without a configured hub only the GitHub Release is
-  made. `v1.2.3-rc1` → channel beta, no hub/fleet.
+  made. `v1.2.3-rc.1` → channel preview, a push to `main` → a dev build
+  (channel dev); neither deploys the hub or rolls out (docs/ci-cd.md
+  "Release channels").
 - `deploy.yml` (manual, from `main`): hub deploy/rollback, fleet push (downgrades are admin-only).
 
 ```sh

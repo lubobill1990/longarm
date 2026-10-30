@@ -26,6 +26,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/msiupgrade"
 	"github.com/lubobill1990/longarm/internal/platform/ptypes"
 	win "github.com/lubobill1990/longarm/internal/platform/windows"
+	"github.com/lubobill1990/longarm/internal/update"
 )
 
 const (
@@ -213,8 +214,9 @@ func Installed() bool {
 // ---------------------------------------------------------------- settings
 
 // RegistrySettings: HKLM\Software\Longarm (Hub, SessionUserSID: written by
-// the installer) and HKLM\Software\Longarm\Update (Auto, IntervalHours:
-// written by this service only).
+// the installer) and HKLM\Software\Longarm\Update (Auto, IntervalHours,
+// Channel: written by this service only; longarmd reads Channel, see
+// MachineChannel).
 type RegistrySettings struct{}
 
 const (
@@ -257,6 +259,32 @@ func (RegistrySettings) Auto() (bool, int) {
 	on, _, _ := k.GetIntegerValue("Auto")
 	h, _, _ := k.GetIntegerValue("IntervalHours")
 	return on == 1, normHours(int(h))
+}
+
+func (RegistrySettings) Channel() string { return MachineChannel() }
+
+func (RegistrySettings) SetChannel(channel string) error {
+	k, _, err := registry.CreateKey(registry.LOCAL_MACHINE, regUpdateKey, registry.SET_VALUE|registry.WOW64_64KEY)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	return k.SetStringValue("Channel", channel)
+}
+
+// MachineChannel is the release channel this machine follows (set through
+// the update service: the tray's Client tab), normalized; stable when unset.
+func MachineChannel() string {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, regUpdateKey, registry.QUERY_VALUE|registry.WOW64_64KEY)
+	if err != nil {
+		return update.ChannelStable
+	}
+	defer k.Close()
+	v, _, _ := k.GetStringValue("Channel")
+	if ch, ok := update.NormalizeChannel(v); ok {
+		return ch
+	}
+	return update.ChannelStable
 }
 
 func (RegistrySettings) SetAuto(on bool, hours int) error {

@@ -26,6 +26,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/lubobill1990/longarm/internal/conntrack"
+	"github.com/lubobill1990/longarm/internal/desktop"
 	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/metrics"
 	"github.com/lubobill1990/longarm/internal/pki"
@@ -135,6 +136,9 @@ type Server struct {
 	MachineUpdate MachineUpdater
 	// AdminWorker: this is an admin worker (InfoResponse.admin_worker).
 	AdminWorker bool
+	// Desktop says how this machine's desktop is reached
+	// (InfoResponse.desktop); nil = not reported.
+	Desktop *desktop.Detector
 
 	// UnaryInterceptors / StreamInterceptors run before the authorization
 	// (telemetry: they also see refused calls).
@@ -201,6 +205,9 @@ func (n *nodeServer) Info(ctx context.Context, _ *pb.InfoRequest) (*pb.InfoRespo
 		Listeners: n.s.ListenerNames(), SshHostKey: n.s.SSHHostKey,
 		Isolation: n.s.Spaces.Mode(), CallerUser: id.Owner(), Features: WorkerFeatures,
 		Owner: n.s.WorkerAccess.Owner(), AdminWorker: n.s.AdminWorker,
+	}
+	if n.s.Desktop != nil {
+		out.Desktop = n.s.Desktop.Info(ctx)
 	}
 	if n.s.MachineUpdate != nil {
 		out.Features = append(slices.Clip(out.Features), FeatureMachineUpdate)

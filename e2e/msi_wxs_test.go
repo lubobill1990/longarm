@@ -511,6 +511,7 @@ func TestMSIUpgradeRunning(t *testing.T) {
 		After       string `xml:"After,attr"`
 		Condition   string `xml:"Condition,attr"`
 		BinaryRef   string `xml:"BinaryRef,attr"`
+		SameVer     string `xml:"AllowSameVersionUpgrades,attr"`
 		Execute     string `xml:"Execute,attr"`
 		Impersonate string `xml:"Impersonate,attr"`
 		Return      string `xml:"Return,attr"`
@@ -537,6 +538,9 @@ func TestMSIUpgradeRunning(t *testing.T) {
 	p := doc.Package
 	if p.Upgrade.Schedule != "afterInstallExecute" {
 		t.Errorf("MajorUpgrade Schedule %q: the new version installs over the old one, which is removed afterwards (afterInstallExecute)", p.Upgrade.Schedule)
+	}
+	if p.Upgrade.SameVer != "yes" {
+		t.Errorf("MajorUpgrade AllowSameVersionUpgrades %q: dev builds and release candidates share their MSI version (a.b.c) and must replace each other", p.Upgrade.SameVer)
 	}
 	for _, c := range p.Sequence {
 		if c.Before == "RemoveExistingProducts" || c.After == "RemoveExistingProducts" {

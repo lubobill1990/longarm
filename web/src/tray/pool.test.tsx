@@ -161,7 +161,11 @@ describe('PoolTab', () => {
   })
 
   it('attach / ssh go to the session worker; admin actions name the admin worker; remove confirms', async () => {
-    const calls = mockFetch({ '/trayapi/attach': () => [200, { ok: true }], '/local/longarm/v1/workers/': () => [200, { name: 'x', state: 'revoked' }] })
+    const calls = mockFetch({
+      '/trayapi/attach': () => [200, { ok: true }],
+      '/trayapi/desktop': () => [200, { ok: true }],
+      '/local/longarm/v1/workers/': () => [200, { name: 'x', state: 'revoked' }],
+    })
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(
       <Toasts>
@@ -175,6 +179,9 @@ describe('PoolTab', () => {
     await waitFor(() => expect(calls.filter((c) => c.url === '/trayapi/attach')).toHaveLength(2))
     const bodies = calls.filter((c) => c.url === '/trayapi/attach').map((c) => JSON.parse(String(c.init?.body)).worker)
     expect(bodies).toEqual(['cpc-alice-x7k2q', 'cpc-alice-x7k2q-admin'])
+    // desktop: the session worker (longarm desktop picks Windows App for a Dev Box)
+    fireEvent.click(within(card).getByText('desktop'))
+    await waitFor(() => expect(calls.filter((c) => c.url === '/trayapi/desktop').map((c) => JSON.parse(String(c.init?.body)).worker)).toEqual(['cpc-alice-x7k2q']))
     // not an admin: no drain; the fleet worker isn't hers to remove
     expect(within(card).queryByText('drain')).toBeNull()
     expect(within(screen.getByTestId('worker-fleet-1')).queryByLabelText('more actions')).toBeNull()

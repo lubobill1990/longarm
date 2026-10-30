@@ -2,6 +2,7 @@ package longarmd
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/x509"
 	"encoding/json"
@@ -31,6 +32,8 @@ import (
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/toolchain"
 	"github.com/lubobill1990/longarm/internal/trust"
+	"github.com/lubobill1990/longarm/internal/update"
+	"github.com/lubobill1990/longarm/internal/updatesvc"
 	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/version"
 	"github.com/lubobill1990/longarm/internal/workspace"
@@ -324,12 +327,20 @@ func hubRestartingAfter(err error) (time.Duration, bool) {
 	return 0, false
 }
 
+// releaseChannel is the release channel this worker follows: [update]
+// channel, else the machine's (Windows: the update service's setting, the
+// tray's choice), else stable. Read on every hello and update check: the
+// tray may change it while longarmd runs.
+func (a *hubAgent) releaseChannel() string {
+	return cmp.Or(a.channel, updatesvc.MachineChannel(), update.ChannelStable)
+}
+
 func (a *hubAgent) hello() *pb.NodeHello {
 	host, _ := os.Hostname()
 	h := &pb.NodeHello{Version: version.Version, Os: runtime.GOOS, Arch: runtime.GOARCH, Hostname: host,
 		NumCpu: int32(runtime.NumCPU()), Endpoints: a.endpoints(), Labels: a.labels, State: a.State(),
 		RevocationVersion: a.revoked.Version()}
-	h.Channel = a.channel
+	h.Channel = a.releaseChannel()
 	if a.upd != nil {
 		h.UpdateEnabled = a.upd.enabled()
 		h.Update = a.upd.Status()

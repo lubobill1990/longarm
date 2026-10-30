@@ -128,7 +128,12 @@
            UpgradeCode="0d623137-abc8-4dc1-8e7d-32fc483c9e93" Scope="perMachine" Compressed="yes" InstallerVersion="500">
     <SummaryInformation Description="Longarm client and worker (longarm, longarmd, longarm-tray)" />
     <!-- afterInstallExecute: "Major upgrade order" above (never afterInstallInitialize: error 2613) -->
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Longarm is already installed." Schedule="afterInstallExecute" />
+    <!-- AllowSameVersionUpgrades: MSI versions keep a.b.c only, so the dev builds and release candidates
+         of one version (0.1.21-dev.5, 0.1.21-dev.6, 0.1.21-rc.1, 0.1.21) are the same MSI version 0.1.21;
+         each must replace the one before (a major upgrade), not install beside it. Which one is newer is
+         decided before msiexec runs (the update service and the tray only install a newer release). -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Longarm is already installed." Schedule="afterInstallExecute"
+                  AllowSameVersionUpgrades="yes" />
     <MediaTemplate EmbedCab="yes" />
 
     <!-- The built-in hub of this build (-DefaultHub): the "Default" choice. -->

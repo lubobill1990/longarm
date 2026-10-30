@@ -31,6 +31,8 @@ const AGENTS: [string, string, string][] = [
 export interface CardActions {
   attach?: (w: string) => void
   ssh?: (w: string) => void
+  /** longarm desktop: Windows App for a Dev Box, Remote Desktop otherwise (Windows workers) */
+  desktop?: (w: string) => void
   panel?: (w: string) => void
   /** longarm admin drain / undrain: admins only (leave it unset for others) */
   drain?: (w: string, on: boolean) => void
@@ -198,6 +200,15 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
           {session && actions?.ssh && (
             <button className="act" title={`longarm ssh ${session.name} (a new window)`} onClick={() => actions.ssh!(session.name)}>
               ssh <IconExternal aria-hidden="true" />
+            </button>
+          )}
+          {session && actions?.desktop && (session.node?.os ?? 'windows') === 'windows' && (
+            <button
+              className="act"
+              title={`longarm desktop ${session.name}: a Dev Box opens in Windows App, other workers in Remote Desktop`}
+              onClick={() => actions.desktop!(session.name)}
+            >
+              desktop <IconExternal aria-hidden="true" />
             </button>
           )}
           {actions?.panel && (
