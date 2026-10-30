@@ -98,7 +98,7 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 	if req.Ttl != nil {
 		ttl = req.Ttl.AsDuration()
 	}
-	owner := c.id.Owner()
+	owner := c.user
 	now := time.Now()
 	expires := now.Add(ttl)
 	id := ""
@@ -162,7 +162,7 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 			mine++
 		}
 		if e.l.From == req.From && e.l.ListenPort == listen {
-			if e.l.Owner == owner || v.Admin {
+			if e.l.Owner == owner || v.Admin && !h.tenancyOnLocked() { // others' link ids are theirs
 				return nil, status.Errorf(codes.AlreadyExists, "port %d on %s is taken by link %s", listen, req.From, e.l.Id)
 			}
 			return nil, status.Errorf(codes.AlreadyExists, "port %d on %s is taken by another link (choose --port)", listen, req.From)
@@ -196,15 +196,22 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 	return h.portLinkViewLocked(h.portLinks[id]), nil
 }
 
-// ListPortLinks lists the caller's links (all: every user's, admins only).
+// ListPortLinks lists the caller's links. all (admins only) lists every
+// user's without multi-tenancy; with it, admins too see their own user's
+// links only (a link names its job, creator and consent).
 func (h *Hub) ListPortLinks(c caller, all bool) (*pb.ListPortLinksResponse, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	v := h.viewerLocked(c.id.Owner(), c.id.Role == pki.RoleAdmin)
-	if all && !v.Admin {
+	v := h.viewerLocked(c.user, c.id.Role == pki.RoleAdmin)
+	if all && !v.Admin && c.id.Role != pki.RoleAdmin {
 		return nil, status.Error(codes.PermissionDenied, "only admins list every user's links")
 	}
-	return h.listPortLinksLocked(func(l *pb.PortLink) bool { return all || l.Owner == v.User }), nil
+	return h.listPortLinksLocked(h.portLinkVisible(h.viewerLocked(c.user, false))), nil
+}
+
+// portLinkVisible: v's own links (everybody's without multi-tenancy).
+func (h *Hub) portLinkVisible(v tenancy.Caller) func(*pb.PortLink) bool {
+	return func(l *pb.PortLink) bool { return v.Admin || l.Owner == v.User }
 }
 
 func (h *Hub) listPortLinksLocked(keep func(*pb.PortLink) bool) *pb.ListPortLinksResponse {
@@ -244,13 +251,16 @@ func (h *Hub) portLinkViewLocked(e *portLinkEntry) *pb.PortLink {
 func (h *Hub) RemovePortLink(c caller, id string) (*pb.PortLink, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	v := h.viewerLocked(c.id.Owner(), c.id.Role == pki.RoleAdmin)
+	v := h.viewerLocked(c.user, c.id.Role == pki.RoleAdmin)
 	e := h.portLinks[id]
 	if e == nil || (!v.Admin && e.l.Owner != v.User) {
 		return nil, status.Errorf(codes.NotFound, "no link %s", id)
 	}
 	l := h.portLinkViewLocked(e)
 	h.removePortLinkLocked(e, c.id.String(), "removed")
+	if e.l.Owner != v.User { // an admin removed another user's link by id: an ack, no details
+		return foreignLinkAck(l.Id), nil
+	}
 	return l, nil
 }
 
@@ -473,22 +483,22 @@ func (s *fleetServer) RemovePortLink(ctx context.Context, req *pb.RemovePortLink
 
 // portLinkRoutes are the panel's view of links:
 //
-//	GET    /api/port-links         the login's links (admins: everybody's)
+//	GET    /api/port-links         the login's own links (admins too, with multi-tenancy)
 //	DELETE /api/port-links/{id}    remove one (users: their own)
 func (h *Hub) portLinkRoutes(api func(string, func(http.ResponseWriter, *http.Request, string))) {
 	api("GET /api/port-links", func(w http.ResponseWriter, _ *http.Request, user string) {
 		v := h.panelViewer(user)
 		h.mu.Lock()
-		res := h.listPortLinksLocked(func(l *pb.PortLink) bool { return v.Admin || l.Owner == v.User })
+		res := h.listPortLinksLocked(h.portLinkVisible(v))
 		h.mu.Unlock()
 		writePB(w, res)
 	})
 	api("DELETE /api/port-links/{id}", func(w http.ResponseWriter, r *http.Request, user string) {
-		v := h.panelViewer(user)
+		v, admin := h.panelViewer(user), h.panelAdmin(user)
 		id := r.PathValue("id")
 		h.mu.Lock()
 		e := h.portLinks[id]
-		if e == nil || (!v.Admin && e.l.Owner != v.User) {
+		if e == nil || (!v.Admin && !admin && e.l.Owner != v.User) { // admins: any, by id
 			h.mu.Unlock()
 			writeResult(w, nil, status.Errorf(codes.NotFound, "no link %s", id))
 			return
@@ -496,6 +506,14 @@ func (h *Hub) portLinkRoutes(api func(string, func(http.ResponseWriter, *http.Re
 		l := h.portLinkViewLocked(e)
 		h.removePortLinkLocked(e, "web/"+user, "removed")
 		h.mu.Unlock()
+		if e.l.Owner != v.User {
+			l = foreignLinkAck(l.Id)
+		}
 		writeResult(w, l, nil)
 	})
+}
+
+// foreignLinkAck answers the removal of another user's link: its id only.
+func foreignLinkAck(id string) *pb.PortLink {
+	return &pb.PortLink{Id: id, Status: &pb.PortLinkStatus{Id: id, State: "removed"}}
 }

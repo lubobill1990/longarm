@@ -4,6 +4,7 @@ import type {
   AuditRecord,
   FleetEvent,
   FleetJob,
+  FleetSummary,
   JoinCode,
   LatestRelease,
   LinkReport,
@@ -153,6 +154,8 @@ export const hubApi = {
     for (const k of kinds) h[k] = (d) => onEvent(d as FleetEvent)
     return sse(`/api/events?kinds=${kinds.join(',')}`, h)
   },
+  // administrators: per-user counts of machines, no names (audited)
+  fleetSummary: (rows = false) => get<FleetSummary>(`/api/admin/summary${rows ? '?rows=1' : ''}`),
   history: () => get<{ nodes?: { node: string; points?: MetricsPoint[] }[] }>('/api/history').then((r) => r.nodes ?? []),
   links: () => get<{ reports?: LinkReport[] }>('/api/links').then((r) => r.reports ?? []),
   // port links (longarm link): the login's own, administrators see everybody's
@@ -167,6 +170,11 @@ export const hubApi = {
   putProfile: (name: string, tools: ToolSpec[]) => put<Profile>(`/api/profiles/${enc(name)}`, { tools }),
   audit: (node?: string, limit = 200) =>
     get<{ records?: AuditRecord[] }>(`/api/audit?limit=${limit}${node ? `&node=${enc(node)}` : ''}`).then((r) => r.records ?? []),
+  // the same, with the other users' records counted by method (never shown)
+  auditView: (node?: string, limit = 200) =>
+    get<{ records?: AuditRecord[]; hidden?: { method?: string; count?: number }[]; hidden_total?: number }>(
+      `/api/audit?limit=${limit}${node ? `&node=${enc(node)}` : ''}`,
+    ),
   users: () => get<{ users: PanelLogin[] }>('/api/users').then((r) => r.users ?? []),
   addUser: (name: string, password: string, current_password: string, reset = false) =>
     post<{ name: string; totp_secret: string; otpauth: string }>('/api/users', { name, password, reset, current_password }),

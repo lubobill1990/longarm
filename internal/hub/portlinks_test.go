@@ -118,7 +118,7 @@ func TestPortLinks(t *testing.T) {
 		t.Fatalf("alice's list %v %v", ls, err)
 	}
 
-	// others: invisible, not removable; admins see and may remove all
+	// others: invisible, not removable; admins may remove any (by id) but list only their own
 	if ls, _ := fleet(th.bob).ListPortLinks(ctx, &pb.ListPortLinksRequest{}); len(ls.GetLinks()) != 0 {
 		t.Fatalf("bob sees %v", ls)
 	}
@@ -128,7 +128,8 @@ func TestPortLinks(t *testing.T) {
 	if _, err := fleet(th.bob).RemovePortLink(ctx, &pb.RemovePortLinkRequest{Id: l.Id}); status.Code(err) != codes.NotFound {
 		t.Fatalf("bob removes alice's link: %v", err)
 	}
-	if ls, err := fleet(th.root).ListPortLinks(ctx, &pb.ListPortLinksRequest{All: true}); err != nil || len(ls.Links) != 1 {
+	// with multi-tenancy an admin lists its own user's links only
+	if ls, err := fleet(th.root).ListPortLinks(ctx, &pb.ListPortLinksRequest{All: true}); err != nil || len(ls.Links) != 0 {
 		t.Fatalf("root lists all: %v %v", ls, err)
 	}
 	// the listen port is taken - also for bob, who learns nothing about the link
@@ -370,14 +371,14 @@ func TestPortLinksOwnedWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("alice: %v", err)
 	}
-	if _, err := h.ShareWorker("test", "", true, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); err != nil {
+	if _, err := h.ShareWorker("test", "alice", true, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); err != nil {
 		t.Fatal(err)
 	}
 	bl, err := pb.NewFleetClient(th.bob).CreatePortLink(ctx, &pb.CreatePortLinkRequest{From: "w2", To: "aw", Port: 8081, ListenPort: 18081})
 	if err != nil {
 		t.Fatalf("bob after the share: %v", err)
 	}
-	if _, err := h.ShareWorker("test", "", true, &pb.ShareWorkerRequest{Worker: "aw", RemoveUsers: []string{"bob"}}); err != nil {
+	if _, err := h.ShareWorker("test", "alice", true, &pb.ShareWorkerRequest{Worker: "aw", RemoveUsers: []string{"bob"}}); err != nil {
 		t.Fatal(err)
 	}
 	h.mu.Lock()

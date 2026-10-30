@@ -284,7 +284,7 @@ the limits):
 longarm admin user add alice --team web --max-jobs 8 --max-mem-gb-per-worker 64 --panel
 longarm admin user add bob   --team web
 #   -> a join code per user; on their laptops: longarm join hub.example.com:7443 <code> ...
-longarm admin user code alice --device alice-desktop   # another device of alice
+longarm admin user code alice --device alice-desktop   # first device of alice (added with --no-code)
 longarm admin team ls ; longarm admin user ls          # devices, usage, quotas
 
 # workers that several people use: per-user OS isolation (LocalSystem / root)

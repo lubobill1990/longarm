@@ -11,7 +11,6 @@ import (
 	"slices"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -50,6 +49,7 @@ func (h *Hub) loadTenants() error {
 		}
 		h.tenants[r.Name] = &tenant{u: u}
 	}
+	h.indexTeamsLocked()
 	v, _ := h.store.Meta("tenancy_version")
 	h.tenancyVersion, _ = strconv.ParseInt(v, 10, 64)
 	if p, _ := h.store.Meta("tenancy_purge"); p != "" {
@@ -95,11 +95,58 @@ func (h *Hub) viewerLocked(user string, admin bool) tenancy.Caller {
 	return c
 }
 
-// viewer of a gRPC caller.
+// viewer of a gRPC caller, for what it may read (nodes, jobs, events,
+// history): admin certificates get exactly their user's view - their own
+// workers and devices, the workers shared with them, fleet workers, their
+// own and team-shared jobs. The only fleet-wide view of machines admins have
+// is the anonymous FleetSummary (docs/security.md "What admins see").
+// Without multi-tenancy (one user) everybody sees everything.
 func (h *Hub) viewer(c caller) tenancy.Caller {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.viewerLocked(c.id.Owner(), c.id.Role == pki.RoleAdmin)
+	return h.viewerLocked(c.user, false)
+}
+
+// opNodeView is what an operation on a node by name (approve, revoke,
+// drain, label, profile, share, remove ...) returns: the node as v sees it
+// as a user, or - for a node v may not see (an infrastructure node: a
+// relay, a release credential; or one that left v's view by the operation
+// itself) - only its name, role and state.
+func opNodeView(v tenancy.Caller, n *pb.NodeInfo) *pb.NodeInfo {
+	if n == nil {
+		return nil
+	}
+	if canSeeNode(v, n) {
+		return nodeView(v, n)
+	}
+	return &pb.NodeInfo{Name: n.Name, Role: n.Role, State: n.State}
+}
+
+// userNodeRole reports whether role is a user's machine: a worker or a
+// device (client, admin). The rest - relays, release credentials, hubs -
+// belong to no user.
+func userNodeRole(role string) bool {
+	return role == string(pki.RoleWorker) || role == string(pki.RoleClient) || role == string(pki.RoleAdmin)
+}
+
+// opOn runs op, an operation on the node name by name, for v. Users'
+// machines v may not see (other users' devices and private workers) are
+// refused before anything is done, with the error an unknown name gets
+// ("no <kind> <name>"): an operation never tells a hidden machine from a
+// missing one. The answer is opNodeView.
+func (h *Hub) opOn(v tenancy.Caller, kind, name string, op func() (*pb.NodeInfo, error)) (*pb.NodeInfo, error) {
+	h.mu.Lock()
+	n := h.nodes[name]
+	hidden := n != nil && userNodeRole(n.rec.Role) && !h.visibleNodeLocked(v, n)
+	h.mu.Unlock()
+	if hidden {
+		return nil, status.Errorf(codes.NotFound, "no %s %q", kind, name)
+	}
+	info, err := op()
+	if err != nil {
+		return nil, err
+	}
+	return opNodeView(v, info), nil
 }
 
 // canSeeJob reports whether v may read j.
@@ -214,6 +261,7 @@ func (h *Hub) policyLocked() *pb.TenancyPolicy {
 // tenancyChangedLocked bumps the policy version and pushes it to every
 // connected worker.
 func (h *Hub) tenancyChangedLocked() {
+	h.indexTeamsLocked()
 	h.tenancyVersion++
 	h.store.SetMeta("tenancy_version", strconv.FormatInt(h.tenancyVersion, 10))
 	h.lastTenancyOn = h.tenancyOnLocked()
@@ -272,7 +320,13 @@ func nodeUser(r *store.Node) string {
 
 func (h *Hub) userInfoLocked(t *tenant) *pb.TenantUser {
 	u := proto.Clone(t.u).(*pb.TenantUser)
-	u.Devices = h.devicesLocked(u.Name)
+	// counts, not names: admins don't learn other users' device names
+	u.DeviceCount = int32(len(h.devicesLocked(u.Name)))
+	for _, n := range h.nodes {
+		if n.rec.Owner == u.Name && n.rec.Role == string(pki.RoleWorker) && n.rec.State != stateRevoked {
+			u.WorkerCount++
+		}
+	}
 	u.Usage = h.usageLocked(u.Name)
 	if pu, err := h.store.GetUser(u.Name); err == nil && pu.Tenant == u.Name {
 		u.Panel = true
@@ -314,6 +368,24 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 	if n := h.nodes[req.Name]; t == nil && n != nil && n.rec.Role == string(pki.RoleWorker) {
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "%s is a worker's name", req.Name)
+	}
+	// credentials for a user who has machines, its own sign-in or workers
+	// shared with it are the user's own business: with a device code or a
+	// panel login of the user an admin could act as the user
+	// (adminCredentialsRefusedLocked)
+	if req.JoinCode || req.Panel {
+		if err := h.adminCredentialsRefusedLocked(req.Name); err != nil {
+			h.mu.Unlock()
+			return nil, err
+		}
+	}
+	if self := h.auditActorUser(by); self != "" && self == req.Name && (req.SetTeams || t == nil) {
+		for _, team := range req.Teams {
+			if t == nil || !slices.Contains(t.u.Teams, team) {
+				h.mu.Unlock()
+				return nil, errSelfTeam(team)
+			}
+		}
 	}
 	created := t == nil
 	if created {
@@ -469,7 +541,7 @@ func (h *Hub) RemoveUser(by string, req *pb.RemoveUserRequest) (*pb.RemoveUserRe
 		if _, err := h.Revoke(by+" (remove user "+req.Name+")", d); err != nil {
 			return nil, err
 		}
-		resp.Revoked = append(resp.Revoked, d)
+		resp.RevokedCount++
 	}
 	h.mu.Lock()
 	delete(h.tenants, req.Name)
@@ -489,8 +561,10 @@ func (h *Hub) RemoveUser(by string, req *pb.RemoveUserRequest) (*pb.RemoveUserRe
 		h.store.DeleteUser(req.Name)
 	}
 	h.dropWorkerCodes(by, req.Name)
-	h.auditHub(by, "users/remove", map[string]any{"user": req.Name, "purge": req.Purge, "revoked": resp.Revoked})
-	h.log.Info("user removed", "user", req.Name, "by", by, "purge", req.Purge, "revoked", resp.Revoked)
+	// the audit log, which admins read, counts the revoked machines; their
+	// names go to the hub's own log only (the operators': docs/security.md)
+	h.auditHub(by, "users/remove", map[string]any{"user": req.Name, "purge": req.Purge, "revoked": len(devices)})
+	h.log.Info("user removed", "user", req.Name, "by", by, "purge", req.Purge, "revoked", devices)
 	return resp, nil
 }
 
@@ -513,10 +587,22 @@ func (h *Hub) closeUserConns(user string) {
 	h.log.Info("user disabled: connections closed", "user", user, "connections", n)
 }
 
+// errSelfTeam refuses an admin adding its own user to a team: membership
+// opens the workers and jobs others share with the team - the owners'
+// choice, not the admin's (like sharing another user's worker with
+// itself). Another admin adds it, or the owners share with it by name.
+func errSelfTeam(team string) error {
+	return status.Errorf(codes.PermissionDenied,
+		"an admin can't add its own user to a team (%s): membership opens what others share with the team; another admin adds it", team)
+}
+
 // SetTeam adds and removes members of a team.
 func (h *Hub) SetTeam(by string, req *pb.SetTeamRequest) (*pb.ListTeamsResponse, error) {
 	if !tenancy.ValidTeam(req.Team) {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid team name %q", req.Team)
+	}
+	if self := h.auditActorUser(by); self != "" && slices.Contains(req.Add, self) {
+		return nil, errSelfTeam(req.Team)
 	}
 	h.mu.Lock()
 	for _, m := range append(slices.Clone(req.Add), req.Remove...) {
@@ -582,11 +668,26 @@ func (h *Hub) userDisabledLocked(user string) bool {
 // ---------------------------------------------------------------- gRPC
 
 func (s *hubAdminServer) PutUser(ctx context.Context, req *pb.PutUserRequest) (*pb.PutUserResponse, error) {
-	return s.h.PutUser(by(ctx), req)
+	resp, err := s.h.PutUser(by(ctx), req)
+	if resp != nil {
+		s.h.projector(s.h.viewer(callerFrom(ctx))).tenantUser(resp.User)
+	}
+	return resp, err
 }
 
-func (s *hubAdminServer) ListUsers(context.Context, *pb.ListUsersRequest) (*pb.ListUsersResponse, error) {
-	return s.h.ListUsers(), nil
+func (s *hubAdminServer) ListUsers(ctx context.Context, _ *pb.ListUsersRequest) (*pb.ListUsersResponse, error) {
+	return s.h.ListUsersFor(s.h.viewer(callerFrom(ctx))), nil
+}
+
+// ListUsersFor is ListUsers projected for v (created_by may name another
+// admin's device).
+func (h *Hub) ListUsersFor(v tenancy.Caller) *pb.ListUsersResponse {
+	r := h.ListUsers()
+	p := h.projector(v)
+	for _, u := range r.Users {
+		p.tenantUser(u)
+	}
+	return r
 }
 
 func (s *hubAdminServer) RemoveUser(ctx context.Context, req *pb.RemoveUserRequest) (*pb.RemoveUserResponse, error) {
@@ -601,45 +702,27 @@ func (s *hubAdminServer) ListTeams(context.Context, *pb.ListTeamsRequest) (*pb.L
 	return s.h.ListTeams(), nil
 }
 
-// eventFilter is what a viewer may see of the event stream: its jobs and
-// those shared with its teams, nodes without other users' process lists
-// and mirrors, its own queue events; link reports are admins'.
-func eventFilter(v tenancy.Caller) func(*pb.FleetEvent, string) *pb.FleetEvent {
+// eventFilter is what a viewer may see of the event stream (projector.event):
+// its jobs and those shared with its teams, nodes it may see without other
+// users' process lists and mirrors, its own queue events; names of machines
+// it may not see projected out of every message.
+func (h *Hub) eventFilter(v tenancy.Caller) func(*pb.FleetEvent, string) *pb.FleetEvent {
 	if v.Admin {
 		return nil
 	}
 	return func(ev *pb.FleetEvent, owner string) *pb.FleetEvent {
-		switch ev.Kind {
-		case "job":
-			if ev.Job == nil || !canSeeJob(v, ev.Job.Job) {
-				return nil
-			}
-			return ev
-		case "queue":
-			if owner != v.User {
-				return nil
-			}
-			return ev
-		case "node", "metrics":
-			if ev.NodeInfo == nil {
-				return ev
-			}
-			if !canSeeNode(v, ev.NodeInfo) {
-				return nil
-			}
-			c := proto.Clone(ev).(*pb.FleetEvent)
-			c.NodeInfo = nodeView(v, c.NodeInfo)
-			// a message naming the owner-only admin worker is the owner's
-			if a := ev.NodeInfo.Companion; a != "" && c.NodeInfo.Companion == "" && strings.Contains(c.Message, a) {
-				c.Message = "updated"
-			}
-			return c
-		case "hub": // the hub restarting: about nobody's data
-			return ev
-		default:
-			return nil
+		cur := v
+		if teams, ok := h.dir.teamsOf(v.User); ok {
+			cur.Teams = teams // the teams as they are now: a removed member stops seeing the team's
 		}
+		return h.projector(cur).event(ev, owner) // the directory as it is now
 	}
+}
+
+// eventFilter without a hub (tests): no directory, so events without a
+// node record are dropped.
+func eventFilter(v tenancy.Caller) func(*pb.FleetEvent, string) *pb.FleetEvent {
+	return (&Hub{}).eventFilter(v)
 }
 
 // nodeUserOf is the user of a client/admin NodeInfo.
@@ -658,8 +741,10 @@ func (h *Hub) panelAdmin(user string) bool {
 	return err == nil && u.Admin()
 }
 
-// panelViewer is how the hub sees a panel account: administrators see
-// everything; a user login (role user) sees what its Longarm user may.
+// panelViewer is how the hub sees a panel account: what its Longarm user
+// may see. Administrators are no exception (with multi-tenancy): they see
+// their own user's machines and jobs (the login's tenant, else the login
+// name), and the fleet only through the anonymous summary (/api/admin/summary).
 func (h *Hub) panelViewer(user string) tenancy.Caller {
 	u, err := h.store.GetUser(user)
 	h.mu.Lock()
@@ -668,7 +753,11 @@ func (h *Hub) panelViewer(user string) tenancy.Caller {
 		return tenancy.Caller{User: user} // vanished meanwhile: nothing
 	}
 	if u.Admin() {
-		return h.viewerLocked(user, true)
+		name := user
+		if u.Tenant != "" {
+			name = u.Tenant
+		}
+		return h.viewerLocked(name, false)
 	}
 	v := h.viewerLocked(u.Tenant, false)
 	v.Admin = false // a user login never sees others' jobs, tenancy or not
@@ -707,8 +796,8 @@ func (h *Hub) mayControl(v tenancy.Caller, id, worker string) error {
 //	GET    /api/teams
 //	POST   /api/teams/{team}            {"add": [...], "remove": [...]}
 func (h *Hub) tenancyRoutes(api, admin func(string, func(http.ResponseWriter, *http.Request, string))) {
-	admin("GET /api/tenants", func(w http.ResponseWriter, _ *http.Request, _ string) {
-		writePB(w, h.ListUsers())
+	admin("GET /api/tenants", func(w http.ResponseWriter, _ *http.Request, user string) {
+		writePB(w, h.ListUsersFor(h.panelViewer(user)))
 	})
 	admin("POST /api/tenants", func(w http.ResponseWriter, r *http.Request, user string) {
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -722,6 +811,9 @@ func (h *Hub) tenancyRoutes(api, admin func(string, func(http.ResponseWriter, *h
 			return
 		}
 		res, err := h.PutUser("web/"+user, req)
+		if res != nil {
+			h.projector(h.panelViewer(user)).tenantUser(res.User)
+		}
 		writeResult(w, res, err)
 	})
 	admin("DELETE /api/tenants/{name}", func(w http.ResponseWriter, r *http.Request, user string) {

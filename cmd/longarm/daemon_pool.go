@@ -401,7 +401,7 @@ func (d *daemon) SetSettings(ctx context.Context, req *pb.ClientSettings) (*pb.C
 //	POST /v1/jobs/{id}/kill?worker=
 //	GET  /v1/settings ; POST /v1/settings {"transport": "race"}
 //	POST /v1/workers/{name}/drain {"draining": true}   (longarm admin drain; admin role)
-//	POST /v1/workers/{name}/remove                     (longarm worker remove: the owner, or an admin)
+//	POST /v1/workers/{name}/remove                     (longarm worker remove: the owner; admins: fleet workers)
 func (d *daemon) poolGateway(mux *http.ServeMux) {
 	flag := func(r *http.Request, k string) bool { v := r.URL.Query().Get(k); return v == "1" || v == "true" }
 	mux.HandleFunc("GET /v1/pool", func(w http.ResponseWriter, r *http.Request) {
@@ -634,7 +634,7 @@ func (d *daemon) DrainWorker(ctx context.Context, req *pb.SetDrainRequest) (*pb.
 }
 
 // RemoveWorker removes a worker through the hub (longarm worker remove):
-// the hub revokes it when it is this user's own worker, or for an admin.
+// the hub revokes it when it is this user's own worker (admins: a fleet worker).
 func (d *daemon) RemoveWorker(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
 	if req.GetName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "no worker named")

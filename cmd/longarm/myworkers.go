@@ -130,11 +130,11 @@ you are logged on; no password), elsewhere longarmd service install.`,
 	c.AddCommand(add, ls, shareCmd(true), shareCmd(false), workerUpdateCmd())
 	c.AddCommand(&cobra.Command{
 		Use:   "label <worker> KEY=VALUE[,KEY=VALUE...]... [KEY-]...",
-		Short: "Set labels of a worker of yours (KEY- or KEY= deletes; admins: any worker)",
+		Short: "Set labels of a worker of yours (KEY- or KEY= deletes; admins: fleet workers too)",
 		Long: `Set or delete labels of your own worker - scheduler constraints, e.g.
 longarm run --require pool=devbox - like longarm worker add --label at
 registration. KEY- (or KEY=) deletes a label. The hub checks that the
-worker is yours (admins: any worker) and audits the change. Labels the
+worker is yours (admins: fleet workers too) and audits the change. Labels the
 worker reports itself (longarmd.toml [hub] labels) are changed there.`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -150,7 +150,7 @@ worker reports itself (longarmd.toml [hub] labels) are changed there.`,
 				if err != nil {
 					return err
 				}
-				fmt.Printf("%s: %s\n", n.Name, labelString(n.Labels))
+				fmt.Println(labelResult(n))
 				for k, v := range m {
 					if got, ok := n.Labels[k]; v == "" && ok {
 						fmt.Fprintf(os.Stderr, "longarm: %s=%s stays: the worker reports it itself (longarmd.toml [hub] labels)\n", k, got)
@@ -161,7 +161,7 @@ worker reports itself (longarmd.toml [hub] labels) are changed there.`,
 		},
 	})
 	c.AddCommand(&cobra.Command{
-		Use: "remove <worker>", Aliases: []string{"rm"}, Short: "Remove a worker of yours: revoke its certificates (admins: any worker)", Args: cobra.ExactArgs(1),
+		Use: "remove <worker>", Aliases: []string{"rm"}, Short: "Remove a worker of yours: revoke its certificates (admins: fleet workers too)", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
 				n, err := h.Fleet().RemoveWorker(ctx, &pb.NodeRequest{Name: args[0]})

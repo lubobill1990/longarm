@@ -236,7 +236,7 @@ func TestJobsView(t *testing.T) {
 	}
 	v = planJobsView(jobsViewOpts{admin: true})
 	out, more = v.apply(rows, "alice")
-	if len(out) != 13 || more || v.note(more) != "longarm: only yours; --all for everybody's" {
+	if len(out) != 13 || more || v.note(more) != "longarm: only yours; --all for every job you may see" {
 		t.Errorf("admin: %d %v %q", len(out), more, v.note(more))
 	}
 	for _, j := range out {

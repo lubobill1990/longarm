@@ -280,7 +280,7 @@ func (s *telemetryServer) Push(ctx context.Context, b *pb.TelemetryBatch) (*pb.T
 	node := scr.Hash(pii.KindNode, c.id.Name)
 	user := ""
 	if c.id.Role != pki.RoleWorker {
-		user = scr.Hash(pii.KindUser, c.id.Owner())
+		user = scr.Hash(pii.KindUser, c.user)
 	}
 	out := make([]telemetry.Item, 0, len(items))
 	for _, p := range items {

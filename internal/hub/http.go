@@ -81,7 +81,8 @@ func (h *Hub) httpHandler() http.Handler {
 	})
 	nodeAction := func(fn func(by, name string) (*pb.NodeInfo, error)) func(http.ResponseWriter, *http.Request, string) {
 		return func(w http.ResponseWriter, r *http.Request, user string) {
-			info, err := fn("web/"+user, r.PathValue("name"))
+			name := r.PathValue("name")
+			info, err := h.opOn(h.panelViewer(user), "node", name, func() (*pb.NodeInfo, error) { return fn("web/"+user, name) })
 			writeResult(w, info, err)
 		}
 	}
@@ -94,7 +95,8 @@ func (h *Hub) httpHandler() http.Handler {
 		if !readJSON(w, r, &labels) {
 			return
 		}
-		info, err := h.SetLabels("web/"+user, r.PathValue("name"), labels)
+		name := r.PathValue("name")
+		info, err := h.opOn(h.panelViewer(user), "node", name, func() (*pb.NodeInfo, error) { return h.SetLabels("web/"+user, name, labels) })
 		writeResult(w, info, err)
 	})
 	admin("PUT /api/nodes/{name}/profile", func(w http.ResponseWriter, r *http.Request, user string) {
@@ -104,7 +106,8 @@ func (h *Hub) httpHandler() http.Handler {
 		if !readJSON(w, r, &body) {
 			return
 		}
-		info, err := h.AssignProfile("web/"+user, r.PathValue("name"), body.Profile)
+		name := r.PathValue("name")
+		info, err := h.opOn(h.panelViewer(user), "node", name, func() (*pb.NodeInfo, error) { return h.AssignProfile("web/"+user, name, body.Profile) })
 		writeResult(w, info, err)
 	})
 	api("GET /api/jobs", func(w http.ResponseWriter, r *http.Request, user string) {
@@ -147,17 +150,17 @@ func (h *Hub) httpHandler() http.Handler {
 		jc, err := h.CreateJoinCode("web/"+user, req)
 		writeResult(w, jc, err)
 	})
-	admin("GET /api/joincodes", func(w http.ResponseWriter, _ *http.Request, _ string) {
-		res, err := h.ListJoinCodes()
+	admin("GET /api/joincodes", func(w http.ResponseWriter, _ *http.Request, user string) {
+		res, err := h.ListJoinCodesFor(h.panelViewer(user), "web/"+user)
 		writeResult(w, res, err)
 	})
-	admin("GET /api/audit", func(w http.ResponseWriter, r *http.Request, _ string) {
+	admin("GET /api/audit", func(w http.ResponseWriter, r *http.Request, user string) {
 		q := r.URL.Query()
-		res, err := h.Audit(&pb.AuditRequest{Node: q.Get("node"), Limit: int32(atoiDefault(q.Get("limit"), 200))})
+		res, err := h.AuditFor(h.panelViewer(user), "web/"+user, &pb.AuditRequest{Node: q.Get("node"), Limit: int32(atoiDefault(q.Get("limit"), 200))})
 		writeResult(w, res, err)
 	})
-	admin("GET /api/profiles", func(w http.ResponseWriter, _ *http.Request, _ string) {
-		writePB(w, &pb.ListProfilesResponse{Profiles: h.Profiles()})
+	admin("GET /api/profiles", func(w http.ResponseWriter, _ *http.Request, user string) {
+		writePB(w, &pb.ListProfilesResponse{Profiles: h.ProfilesFor(h.panelViewer(user))})
 	})
 	admin("PUT /api/profiles/{name}", func(w http.ResponseWriter, r *http.Request, user string) {
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -171,7 +174,7 @@ func (h *Hub) httpHandler() http.Handler {
 		}
 		p.Name = r.PathValue("name")
 		res, err := h.PutProfile("web/"+user, p)
-		writeResult(w, res, err)
+		writeResult(w, h.projector(h.panelViewer(user)).profile(res), err)
 	})
 	admin("GET /api/releases", func(w http.ResponseWriter, _ *http.Request, _ string) {
 		rels, err := h.store.Releases()
@@ -184,6 +187,7 @@ func (h *Hub) httpHandler() http.Handler {
 	api("GET /api/events", h.sse)
 	h.panelRoutes(mux, api, admin)
 	h.tenancyRoutes(api, admin)
+	h.summaryRoutes(admin)
 	h.workerRoutes(api)
 	h.entraRoutes(mux)
 	h.linkRoutes(mux)
@@ -428,7 +432,7 @@ func (h *Hub) sse(w http.ResponseWriter, r *http.Request, user string) {
 	}
 	// Subscribe before the headers go out: a client that sees the stream
 	// open must not miss an event it triggers right after.
-	sub := h.bus.subscribeFiltered(kinds, q.Get("job"), eventFilter(h.panelViewer(user)))
+	sub := h.bus.subscribeFiltered(kinds, q.Get("job"), h.eventFilter(h.panelViewer(user)))
 	defer h.bus.unsubscribe(sub)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

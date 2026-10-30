@@ -106,9 +106,13 @@ failure).`,
 				printRollout(r)
 				if r.State == "none" {
 					msg := "nothing rolled out: no approved worker of channel " + r.Channel
-					if len(r.NotCapable) > 0 {
-						msg = fmt.Sprintf("nothing rolled out: no worker can self-update %s (not capable: %s); they update with the MSI (the tray's banner) or the install script",
-							r.Version, strings.Join(r.NotCapable, ", "))
+					if n := max(int(r.NotCapableCount), len(r.NotCapable)); n > 0 {
+						which := strings.Join(r.NotCapable, ", ")
+						if hidden := n - len(r.NotCapable); hidden > 0 { // other users' workers: counted, not named
+							which = strings.TrimPrefix(fmt.Sprintf("%s, %d of other users", which, hidden), ", ")
+						}
+						msg = fmt.Sprintf("nothing rolled out: no worker can self-update %s (%d not capable: %s); they update with the MSI (the tray's banner) or the install script",
+							r.Version, n, which)
 					}
 					return &exitError{code: exitNoneCapable, msg: msg}
 				}
@@ -185,16 +189,27 @@ func printRollout(r *pb.Rollout) {
 		fmt.Printf(" - %s", r.Message)
 	}
 	fmt.Println()
-	line := func(k string, v []string) {
-		if len(v) > 0 {
-			fmt.Printf("  %-9s %s\n", k, strings.Join(v, " "))
+	// The hub names only the workers this admin may see as a user (own,
+	// shared, fleet); the counts include every worker.
+	line := func(k string, v []string, n int32) {
+		n = max(n, int32(len(v)))
+		if n == 0 {
+			return
 		}
+		names := strings.Join(v, " ")
+		if hidden := int(n) - len(v); hidden > 0 {
+			if names != "" {
+				names += " "
+			}
+			names += fmt.Sprintf("+%d of other users", hidden)
+		}
+		fmt.Printf("  %-9s %s\n", k, names)
 	}
-	line("canary", r.Canary)
-	line("targeted", r.Targeted)
-	line("updated", r.Updated)
-	line("failed", r.Failed)
-	line("waiting", r.Waiting)
+	line("canary", r.Canary, r.CanaryCount)
+	line("targeted", r.Targeted, r.TargetedCount)
+	line("updated", r.Updated, r.UpdatedCount)
+	line("failed", r.Failed, r.FailedCount)
+	line("waiting", r.Waiting, r.WaitingCount)
 	if r.PhaseSince != nil {
 		fmt.Printf("  healthy since %s\n", r.PhaseSince.AsTime().Local().Format(time.TimeOnly))
 	}

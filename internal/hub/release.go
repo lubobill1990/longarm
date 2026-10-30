@@ -23,6 +23,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/update"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -344,6 +345,11 @@ func (h *Hub) hintLocked(n *node) {
 
 // pushRelease starts a rollout.
 func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, error) {
+	return h.pushReleaseAs(tenancy.Caller{Admin: true}, req, by)
+}
+
+// pushReleaseAs is pushRelease for a caller who sees the fleet as v.
+func (h *Hub) pushReleaseAs(v tenancy.Caller, req *pb.PushReleaseRequest, by string) (*pb.Rollout, error) {
 	files, err := h.releaseFiles(req.Version)
 	if err != nil {
 		return nil, err
@@ -398,7 +404,9 @@ func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, e
 		return &pb.Rollout{Version: req.Version, Channel: channel, State: rolloutNone, NotCapable: cantUpdate, Message: msg}, nil
 	}
 	if len(cands) == 0 {
-		return nil, status.Errorf(codes.FailedPrecondition, "no approved worker of channel %s can self-update (not capable: %v)", channel, cantUpdate)
+		// counts, and names only of the caller's visible workers (see rolloutFor)
+		return nil, status.Errorf(codes.FailedPrecondition, "no approved worker of channel %s can self-update (%s)", channel,
+			h.countedNamesLocked(v, cantUpdate, "can't self-update"))
 	}
 	// Canary preference: online, update-capable, fewest active jobs.
 	sort.Slice(cands, func(i, j int) bool {
@@ -708,7 +716,7 @@ func (s *fleetServer) DownloadRelease(req *pb.ReleaseFileRequest, stream pb.Flee
 	}
 }
 
-func (s *hubAdminServer) ListReleases(_ context.Context, req *pb.ListReleasesRequest) (*pb.ListReleasesResponse, error) {
+func (s *hubAdminServer) ListReleases(ctx context.Context, req *pb.ListReleasesRequest) (*pb.ListReleasesResponse, error) {
 	rels, err := s.h.store.Releases()
 	if err != nil {
 		return nil, err
@@ -744,8 +752,9 @@ func (s *hubAdminServer) ListReleases(_ context.Context, req *pb.ListReleasesReq
 	for _, v := range order {
 		resp.Releases = append(resp.Releases, byVersion[v])
 	}
+	v := s.h.viewer(callerFrom(ctx))
 	s.h.mu.Lock()
-	resp.Rollout = s.h.rolloutPBLocked()
+	resp.Rollout = s.h.rolloutForLocked(v, s.h.rolloutPBLocked())
 	s.h.mu.Unlock()
 	return resp, nil
 }
@@ -759,17 +768,21 @@ func (s *hubAdminServer) PushRelease(ctx context.Context, req *pb.PushReleaseReq
 		// to an older (signed, maybe vulnerable) version.
 		return nil, status.Error(codes.PermissionDenied, "the release role may not downgrade workers (admin only)")
 	}
-	return s.h.pushRelease(req, callerFrom(ctx).id.Name)
+	v := s.h.viewer(callerFrom(ctx))
+	r, err := s.h.pushReleaseAs(v, req, callerFrom(ctx).id.Name)
+	return s.h.rolloutFor(v, r, err)
 }
 
-func (s *hubAdminServer) GetRollout(context.Context, *pb.GetRolloutRequest) (*pb.Rollout, error) {
+func (s *hubAdminServer) GetRollout(ctx context.Context, _ *pb.GetRolloutRequest) (*pb.Rollout, error) {
+	v := s.h.viewer(callerFrom(ctx))
 	s.h.mu.Lock()
 	defer s.h.mu.Unlock()
-	return s.h.rolloutPBLocked(), nil
+	return s.h.rolloutForLocked(v, s.h.rolloutPBLocked()), nil
 }
 
 func (s *hubAdminServer) AbortRollout(ctx context.Context, _ *pb.GetRolloutRequest) (*pb.Rollout, error) {
 	h := s.h
+	v := h.viewer(callerFrom(ctx))
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.rollout == nil {
@@ -781,7 +794,7 @@ func (s *hubAdminServer) AbortRollout(ctx context.Context, _ *pb.GetRolloutReque
 		h.saveRolloutLocked()
 		h.bus.publish(&pb.FleetEvent{Kind: "release", Message: "rollout of " + h.rollout.Version + " aborted"})
 	}
-	return h.rolloutPBLocked(), nil
+	return h.rolloutForLocked(v, h.rolloutPBLocked()), nil
 }
 
 // Upload limits of PublishRelease.

@@ -14,6 +14,67 @@
   the tray and the CLIs no longer say "Sign in with Microsoft" only.
   docs/usage.md "Sign in with a Google, Apple or personal Microsoft account".
 
+### Security
+
+- Hub admins no longer see other users' machines. With multi-tenancy an
+  admin certificate or an administrator's panel login sees machines and jobs
+  exactly as its user does: `longarm ls` / `ls -o wide`, `worker ls`,
+  `jobs`, `sessions`, the MCP tools, the tray's Workers tab, `longarm admin
+  nodes`, the hub's event stream and the panel's "Nodes" and "Jobs" pages
+  show the admin's own workers and devices, the workers shared with it and
+  the fleet workers - before, an admin saw every user's private workers with
+  process lists, agent sessions and jobs. The rule is the hub's, so it holds
+  for every client version; there is no flag or toggle that widens it. The
+  only fleet-wide view is the new anonymous summary (`longarm admin summary
+  [--rows]`, the panel's "Fleet" page, `GET /api/admin/summary`,
+  `HubAdmin.FleetSummary`; admins only, audited): per user the number of
+  workers, admin workers and devices, how many are online, the workers'
+  version histogram, and optionally each user's machines by version -
+  aggregates only, never names, IDs, host names, OS, last-seen times,
+  labels, CPU / memory, processes, sessions or jobs. Admin answers that named other users'
+  machines are cut down the same way: operations by name (approve, revoke,
+  drain, label, share, profile, remove, tailnet rekey, toolchain apply) on
+  another user's machine answer "not found" word for word like an unknown
+  name and do nothing; admins never share another user's worker; a worker
+  certificate never acts as a user (whatever its name) and node names never
+  take a user's; an admin's join code or panel login for a user is for a
+  user without machines only; user listings drop other users' reserved
+  memory; `admin user ls` / "People" and `admin
+  user remove` give device and worker counts instead of names; join codes,
+  rollouts (counts plus visible names), toolchain canaries, `admin tailnet
+  status` and `admin links` name only machines the admin may see; a release
+  push no worker can take fails with counts, not names; join codes are the
+  admin's own, its user's and fleet worker codes, with `used_by` "used"
+  unless the machine is visible; `link ls --all` and the panel's port links
+  are the admin's own user's links; `admin logs` of another user's job is
+  "not found". The audit log (`admin audit`, the panel, `Fleet.Audit`)
+  shows only the records about the admin's own user and the hub actions it
+  performed, and counts the rest by method; `users/remove` records count the
+  revoked machines; reads go by the acting and affected user recorded when
+  each record was written (schema migration 5), never by today's node
+  ownership, so re-enrolling a revoked name doesn't reopen its records.
+  Every outbound record type and every event kind goes through one
+  projection (`internal/hub/projection.go`): actors appear as role and user
+  ("admin bob"), never by device name - event messages, join codes, users,
+  jobs' submitter, audit records; profile updates, rollouts and tailnet
+  status are projected like listings; an admin's kill of another user's job
+  is "not known" (checked before resolving its worker) and removing another
+  user's link answers with its id only. The complete trail stays in the
+  hub's database and log for the hub's operators (new `longarm-hub audit` on the hub host; on
+  Azure, the subscription's owners). Auto placement already
+  used only workers the caller's user may use, admins included; the admin's
+  `exec auto` now picks from the same list (before, from every worker the
+  hub listed to the admin). See docs/security.md "What admins see".
+- The same holds for accounts of every sign-in provider (Entra, Google,
+  Apple, personal Microsoft): an account is one user whatever its role, the
+  same e-mail address at two providers is two users. An admin can't add its
+  own user to a team; an admin's user-bound join code or panel login is
+  refused for a user who signs in with a provider or has another user's
+  worker shared with it (checked again when the code is used), and a panel
+  administrator login can't take the name of any user (old certificates,
+  worker owners included). Open event streams follow team changes at once.
+  `/link` audit records name the provider (`google/<e-mail>`).
+
 ### Fixed
 
 - The hub on Azure crash-looped on every start (2026-10-29, 0.1.18 and
