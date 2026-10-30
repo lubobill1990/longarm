@@ -105,6 +105,31 @@ func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
 	} else {
 		ev.progress(StepCA, fmt.Sprintf("hub %s: CA %s pinned (given)", tg.Address, tg.Fingerprint))
 	}
+	// What this machine holds already: replaced only when the user said so
+	// (Replace) - an expired enrollment of this hub needs no asking (its
+	// sign-in ended; this is signing in again). This hub's are proven to it
+	// with their keys, and it removes them at the approval.
+	held, err := current(o)
+	if err != nil {
+		return nil, err
+	}
+	var ask []*Current
+	var proofs []held1
+	for _, h := range held {
+		same := h.cur.SameHub(tg.Fingerprint)
+		if !same || !h.cur.Expired(time.Now()) {
+			ask = append(ask, h.cur)
+		}
+		if same && len(h.cur.KeyPEM) > 0 {
+			proofs = append(proofs, h)
+		}
+	}
+	if len(ask) > 0 && !o.Replace {
+		return nil, &SignedInError{Hub: tg.Address, CAFingerprint: tg.Fingerprint, Current: ask}
+	}
+	for _, h := range held {
+		res.Replaced = append(res.Replaced, h.cur)
+	}
 	var ctr, wtr, atr *pki.CSRTrust
 	if o.Client != nil {
 		if ctr, err = o.Client.Prepare(tg.Address); err != nil {
@@ -148,6 +173,12 @@ func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
 		ev.progress(StepNote, "the admin worker signs in through the browser: one code for everything")
 		method = MethodLink
 	}
+	if method == MethodAuto && replacesWorker(proofs) {
+		// the worker's old enrollment goes with the approval (its name too):
+		// the pairing carries the proof, az's sign-in can't
+		ev.progress(StepNote, "replacing this machine's worker: signing in through the browser")
+		method = MethodLink
+	}
 	if method == MethodAz || method == MethodAuto {
 		res.Method = MethodAz
 		ev.progress(StepAz, "signing in with the Azure CLI's account")
@@ -166,7 +197,7 @@ func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
 	}
 	if method != MethodAz && method != MethodAuto {
 		res.Method = MethodLink
-		if cr, wr, ar, err = pair(ctx, tg.Address, o, ev, cjo, wjo, ajo); err != nil {
+		if cr, wr, ar, err = pair(ctx, tg.Address, o, ev, cjo, wjo, ajo, proofs); err != nil {
 			return nil, err
 		}
 	}
@@ -206,6 +237,16 @@ func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
 			if id, err := pki.IdentityFromCert(c); err == nil && id.User != "" {
 				res.User = id.User
 			}
+		}
+	}
+	for _, c := range res.Replaced {
+		switch {
+		case c.SameHub(tg.Fingerprint) && res.Method == MethodLink:
+			note("replaced " + c.String() + " (removed from the hub)")
+		case c.SameHub(tg.Fingerprint):
+			note("replaced " + c.String())
+		default:
+			note("replaced " + c.String() + " of another hub here; it stays listed there until removed")
 		}
 	}
 	ev.progress(StepDone, res.summary())
@@ -281,6 +322,15 @@ type Options struct {
 	// (started at the user's logon), "service" ("": not said).
 	WorkerKind string
 	Method     Method
+	// Replace: the user agreed to replace what this machine is signed in
+	// as already (a SignedInError lists it: a device or worker certificate
+	// of this hub, valid, or of another hub). Without it SignIn returns
+	// that error before asking the hub for anything. This hub's
+	// enrollments are removed at the approval (the pairing proves their
+	// keys); a worker keeps its name, and its sharing when the approver is
+	// its owner. An expired enrollment of this hub is replaced without
+	// asking.
+	Replace bool
 	// Scope overrides the az token's scope (MethodAz / MethodAuto).
 	Scope string
 	// OpenBrowser: open the /link page here (when there is a desktop).
@@ -352,6 +402,8 @@ type Result struct {
 	AdminWorker   *Enrolled // Options.AdminWorker's
 	// WorkerKind: Options.WorkerKind (how the worker runs, for Summary).
 	WorkerKind string
+	// Replaced: what this machine was signed in as before (now replaced).
+	Replaced []*Current
 }
 
 // Enrolled is one installed enrollment.
@@ -435,9 +487,23 @@ func azJoin(ctx context.Context, addr string, o Options, cjo, wjo hubclient.Join
 // code for both when both are asked for.
 // An admin worker (ajo) goes with the one code (alone: kind "admin");
 // older hubs without "both" can't have one (hubclient.ErrNoAdminLink).
-func pair(ctx context.Context, addr string, o Options, ev Events, cjo, wjo hubclient.JoinOptions, ajo *hubclient.JoinOptions) (cr, wr, ar *hubclient.JoinResult, err error) {
+func pair(ctx context.Context, addr string, o Options, ev Events, cjo, wjo hubclient.JoinOptions, ajo *hubclient.JoinOptions, proofs []held1) (cr, wr, ar *hubclient.JoinResult, err error) {
 	link := func(kind string, jo hubclient.JoinOptions, w hubclient.JoinOptions, a *hubclient.JoinOptions) (*hubclient.JoinResult, error) {
-		return hubclient.Link(ctx, addr, hubclient.LinkOptions{JoinOptions: jo, Kind: kind, Worker: w, AdminWorker: a,
+		// the enrollments this pairing replaces: the device's (kinds
+		// client, both), the worker's (worker, both)
+		var replace []hubclient.ReplaceKey
+		for _, p := range proofs {
+			if (p.cur.Kind == "worker" && (kind == "worker" || kind == "both")) || (p.cur.Kind == "device" && (kind == "client" || kind == "both")) {
+				replace = append(replace, hubclient.ReplaceKey{CertPEM: p.cur.CertPEM, KeyPEM: p.cur.KeyPEM})
+				if p.cur.Kind == "worker" && w.Name == "" && kind == "both" {
+					w.Name = p.cur.Name // keeps its name
+				}
+				if p.cur.Kind == "worker" && jo.Name == "" && kind == "worker" {
+					jo.Name = p.cur.Name
+				}
+			}
+		}
+		return hubclient.Link(ctx, addr, hubclient.LinkOptions{JoinOptions: jo, Kind: kind, Worker: w, AdminWorker: a, Replace: replace,
 			Show: func(st *pb.StartLinkResponse) {
 				c := Code{URL: st.VerificationUrl, Code: st.UserCode, Expires: st.ExpiresAt.AsTime(), Kind: kind, Host: hostname(),
 					AdminWorker: ajo != nil}
@@ -504,6 +570,40 @@ func pair(ctx context.Context, addr string, o Options, ev Events, cjo, wjo hubcl
 		ar, cr.AdminWorker = cr.AdminWorker, nil
 		return cr, nil, ar, checkAdminWorker(ar)
 	}
+}
+
+// held1 is an enrollment a target holds (Holder).
+type held1 struct {
+	t   Target
+	cur *Current
+}
+
+// current is what o's client and worker targets hold already.
+func current(o Options) ([]held1, error) {
+	var out []held1
+	for _, t := range []Target{o.Client, o.Worker} {
+		hd, ok := t.(Holder)
+		if t == nil || !ok {
+			continue
+		}
+		c, err := hd.Current()
+		if err != nil {
+			return nil, err
+		}
+		if c != nil {
+			out = append(out, held1{t, c})
+		}
+	}
+	return out, nil
+}
+
+func replacesWorker(ps []held1) bool {
+	for _, p := range ps {
+		if p.cur.Kind == "worker" {
+			return true
+		}
+	}
+	return false
 }
 
 // checkAdminWorker checks an admin worker's enrollment, if there is one.

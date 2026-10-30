@@ -111,6 +111,59 @@ describe('AccountTab roles', () => {
   })
 })
 
+describe('AccountTab signed in already', () => {
+  it('asks before replacing what the machine is signed in as, then starts again with replace', async () => {
+    const confirm = {
+      state: 'confirm',
+      hub: 'longarm.example.com:7443',
+      targets: { client: true, worker: true, admin_worker: false },
+      confirm: {
+        hub: 'longarm.example.com:7443',
+        current: [
+          { kind: 'device', identity: 'admin/alice-box', user: 'alice', same_hub: true },
+          { kind: 'worker', identity: 'worker/box', user: 'alice', same_hub: true },
+        ],
+        admin_worker_stays: true,
+        request: { hub: '', labels: '' },
+      },
+    }
+    const calls = mockFetch({
+      '/trayapi/signin/state': () => [200, confirm],
+      '/trayapi/signin/start': () => [200, { state: 'running', hub: 'longarm.example.com', targets: confirm.targets }],
+    })
+    render(
+      <Toasts>
+        <AccountTab info={info({ needed: true })} />
+      </Toasts>,
+    )
+    await waitFor(() => expect(screen.getByTestId('signin-confirm')).toBeTruthy())
+    const listed = screen.getByTestId('signin-confirm-current').textContent ?? ''
+    expect(listed).toContain('device admin/alice-box (user alice)')
+    expect(listed).toContain('worker worker/box (owner alice)')
+    expect(screen.getByTestId('signin-confirm-admin').textContent).toContain('admin worker stays')
+    expect(screen.queryByTestId('signin-start')).toBeNull() // never a plain "Sign in" that would replace silently
+    fireEvent.click(screen.getByTestId('signin-replace'))
+    await waitFor(() => expect(calls.some((c) => c.url === '/trayapi/signin/start')).toBe(true))
+    const post = calls.find((c) => c.url === '/trayapi/signin/start')!
+    expect(JSON.parse(String(post.init?.body))).toEqual({ hub: '', labels: '', replace: true })
+  })
+
+  it('offers signing in with an account when signed in', async () => {
+    const calls = mockFetch({
+      '/trayapi/signin/state': () => [200, { state: 'idle', targets: { client: true, worker: false, admin_worker: false } }],
+      '/trayapi/signin/start': () => [200, { state: 'running', targets: { client: true, worker: false, admin_worker: false } }],
+    })
+    render(
+      <Toasts>
+        <AccountTab info={info({})} />
+      </Toasts>,
+    )
+    fireEvent.click(screen.getByTestId('signin-again'))
+    await waitFor(() => expect(calls.some((c) => c.url === '/trayapi/signin/start')).toBe(true))
+    expect(JSON.parse(String(calls.find((c) => c.url === '/trayapi/signin/start')!.init?.body)).replace).toBe(false)
+  })
+})
+
 describe('rolesChangeText', () => {
   it('names each change', () => {
     const none = { client: false, worker: false, admin_worker: false }
