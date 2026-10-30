@@ -20,8 +20,10 @@ import (
 )
 
 // Port links through an external relay (longarm-relay --hub, docs/usage.md
-// "External relays"): the relay enforces the hub's worker pairs on its own,
-// by node ID, and keeps carrying linked workers while the hub restarts.
+// "External relays"), beyond TestPortLinksExternalRelay (a link carries
+// traffic, its pair comes and goes on the relay): the relay enforces the
+// pairs on its own, by node ID, keeps carrying linked workers while the hub
+// restarts, and refuses revoked workers.
 
 var pingsRE = regexp.MustCompile(`pings (\d+)`)
 
@@ -123,7 +125,7 @@ func listenOnly(t *testing.T, w *hubWorker, url string) {
 	}
 }
 
-// TestPortLinksExternalRelay: two workers that reach each other only
+// TestPortLinksExternalRelayPolicy: two workers that reach each other only
 // through an external relay (no tcp listeners, hole punching off, the hub's
 // embedded relay off):
 //   - a link between them carries traffic over the external relay, which
@@ -135,7 +137,7 @@ func listenOnly(t *testing.T, w *hubWorker, url string) {
 //   - removing the links drops the pair on the relay and cuts the open
 //     connection;
 //   - a worker revoked by ID is refused by the relay.
-func TestPortLinksExternalRelay(t *testing.T) {
+func TestPortLinksExternalRelayPolicy(t *testing.T) {
 	t.Parallel()
 	h := newHubEnv(t, "")
 	alice := h.client
@@ -195,13 +197,9 @@ func TestPortLinksExternalRelay(t *testing.T) {
 	lport := strconv.Itoa(freePort(t))
 	id := linkCreate(t, h, alice, "rb:"+port, "--on", "ra", "--port", lport)
 
-	t.Run("linked_pair_by_node_id", func(t *testing.T) {
+	t.Run("unlinked_refused_pair_by_node_id", func(t *testing.T) {
 		waitFor(t, "alice's server through the external relay", 60*time.Second, func() bool {
 			return strings.Contains(get(lport, "/x").stdout, "hello /x")
-		})
-		waitFor(t, "link ls: the path through the external relay", 20*time.Second, func() bool {
-			l := linkStatus(t, h, alice, id)
-			return strings.Contains(l, "longnet/relay") && (strings.Contains(l, x.udp) || strings.Contains(l, x.tcp))
 		})
 		// the relay's policy: the pair, by node ID
 		waitFor(t, "the pair on the relay, by node ID", 30*time.Second, func() bool {
