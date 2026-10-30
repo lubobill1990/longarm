@@ -2314,8 +2314,11 @@ opens a job's command, times and output right under it; kill; there is no
 "everyone" switch - `longarm jobs --all` lists your jobs from other
 computers and team-shared ones), forwards, this worker (longarmd: drain, limits, toolchain, jobs,
 leave; join with a code when not enrolled), settings (transport policy).
-Notifications: worker offline/back, memory ≥ 90 %, link relayed > 5 min, my
-job finished/failed.
+Notifications: worker offline/back, memory ≥ 90 %, link relayed > 5 min, one
+of my Claude Code / Copilot CLI sessions finished or failed (a job whose command
+is claude or copilot, typed so with `longarm run --type`, or run with their
+credentials forwarded). Plain commands (`longarm exec`, `run`) don't notify:
+agents run many and read their results themselves.
 
 ```sh
 longarm-tray                         # tray + popup (starts longarm daemon if needed)

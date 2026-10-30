@@ -4,6 +4,9 @@
 
 ### Changed
 
+- Tray: only Claude Code / Copilot CLI sessions notify when they end (done,
+  failed, killed, lost); plain commands - the many `longarm exec` / `run`
+  calls an agent makes - no longer pop a toast each.
 - The hub follows the **preview** channel: release candidate tags deploy
   the hub too (release.yml's `hub` job), not only releases; dev builds never
   do. A hub on Azure Container Instances, which CI can't sign in to, gets
