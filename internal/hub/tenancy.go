@@ -49,6 +49,7 @@ func (h *Hub) loadTenants() error {
 		}
 		h.tenants[r.Name] = &tenant{u: u}
 	}
+	h.indexTeamsLocked()
 	v, _ := h.store.Meta("tenancy_version")
 	h.tenancyVersion, _ = strconv.ParseInt(v, 10, 64)
 	if p, _ := h.store.Meta("tenancy_purge"); p != "" {
@@ -260,6 +261,7 @@ func (h *Hub) policyLocked() *pb.TenancyPolicy {
 // tenancyChangedLocked bumps the policy version and pushes it to every
 // connected worker.
 func (h *Hub) tenancyChangedLocked() {
+	h.indexTeamsLocked()
 	h.tenancyVersion++
 	h.store.SetMeta("tenancy_version", strconv.FormatInt(h.tenancyVersion, 10))
 	h.lastTenancyOn = h.tenancyOnLocked()
@@ -367,12 +369,27 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "%s is a worker's name", req.Name)
 	}
-	// credentials for a user who has machines are the user's own business:
-	// with a device code or a panel login of the user an admin could act as
-	// the user, on the user's machines (errUserHasMachines)
-	if (req.JoinCode || req.Panel) && h.userHasMachinesLocked(req.Name) {
-		h.mu.Unlock()
-		return nil, errUserHasMachines(req.Name)
+	// credentials for a user who has machines, its own sign-in, teams or
+	// shared workers are the user's own business: with a device code or a
+	// panel login of the user an admin could act as the user
+	// (adminCredentialsRefusedLocked) - teams given here count too
+	if req.JoinCode || req.Panel {
+		err := h.adminCredentialsRefusedLocked(req.Name)
+		if err == nil && (req.SetTeams || t == nil) && len(req.Teams) > 0 {
+			err = errUserHasAccess(req.Name)
+		}
+		if err != nil {
+			h.mu.Unlock()
+			return nil, err
+		}
+	}
+	if self := h.auditActorUser(by); self != "" && self == req.Name && (req.SetTeams || t == nil) {
+		for _, team := range req.Teams {
+			if t == nil || !slices.Contains(t.u.Teams, team) {
+				h.mu.Unlock()
+				return nil, errSelfTeam(team)
+			}
+		}
 	}
 	created := t == nil
 	if created {
@@ -574,10 +591,22 @@ func (h *Hub) closeUserConns(user string) {
 	h.log.Info("user disabled: connections closed", "user", user, "connections", n)
 }
 
+// errSelfTeam refuses an admin adding its own user to a team: membership
+// opens the workers and jobs others share with the team - the owners'
+// choice, not the admin's (like sharing another user's worker with
+// itself). Another admin adds it, or the owners share with it by name.
+func errSelfTeam(team string) error {
+	return status.Errorf(codes.PermissionDenied,
+		"an admin can't add its own user to a team (%s): membership opens what others share with the team; another admin adds it", team)
+}
+
 // SetTeam adds and removes members of a team.
 func (h *Hub) SetTeam(by string, req *pb.SetTeamRequest) (*pb.ListTeamsResponse, error) {
 	if !tenancy.ValidTeam(req.Team) {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid team name %q", req.Team)
+	}
+	if self := h.auditActorUser(by); self != "" && slices.Contains(req.Add, self) {
+		return nil, errSelfTeam(req.Team)
 	}
 	h.mu.Lock()
 	for _, m := range append(slices.Clone(req.Add), req.Remove...) {
@@ -686,7 +715,11 @@ func (h *Hub) eventFilter(v tenancy.Caller) func(*pb.FleetEvent, string) *pb.Fle
 		return nil
 	}
 	return func(ev *pb.FleetEvent, owner string) *pb.FleetEvent {
-		return h.projector(v).event(ev, owner) // the directory as it is now
+		cur := v
+		if teams, ok := h.dir.teamsOf(v.User); ok {
+			cur.Teams = teams // the teams as they are now: a removed member stops seeing the team's
+		}
+		return h.projector(cur).event(ev, owner) // the directory as it is now
 	}
 }
 

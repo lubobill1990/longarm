@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,6 +38,28 @@ type directory map[string]dirEntry
 type nodeDirectory struct {
 	mu sync.Mutex // writers
 	p  atomic.Pointer[directory]
+	// teams: every user's teams (indexTeamsLocked), so that open event
+	// streams follow membership changes instead of the teams at subscribe
+	teams atomic.Pointer[map[string][]string]
+}
+
+// indexTeamsLocked records every user's teams (after loading the users and
+// on every change of them: tenancyChangedLocked).
+func (h *Hub) indexTeamsLocked() {
+	m := make(map[string][]string, len(h.tenants))
+	for name, t := range h.tenants {
+		m[name] = slices.Clone(t.u.Teams)
+	}
+	h.dir.teams.Store(&m)
+}
+
+// teamsOf is user's teams now; ok is false before the first index.
+func (d *nodeDirectory) teamsOf(user string) (teams []string, ok bool) {
+	p := d.teams.Load()
+	if p == nil {
+		return nil, false
+	}
+	return (*p)[user], true
 }
 
 func (d *nodeDirectory) load() directory {

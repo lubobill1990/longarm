@@ -493,3 +493,136 @@ func TestNoAdminCredentialsForUsers(t *testing.T) {
 		t.Fatal("erin's user login replaced by an administrator's")
 	}
 }
+
+// TestAdminCantJoinTeams: an admin can't add its own user to a team - that
+// would open the workers and jobs others share with the team (an indirect
+// self-share); another admin can.
+func TestAdminCantJoinTeams(t *testing.T) {
+	th, _ := ownedHub(t) // alice (team t1) owns aw
+	h := th.h
+	if _, err := h.PutUser("test", &pb.PutUserRequest{Name: "root", Create: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.PutUser("test", &pb.PutUserRequest{Name: "alice", SetCanShare: true, CanShare: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pb.NewFleetClient(th.alice).ShareWorker(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddTeams: []string{"t1"}}); err != nil {
+		t.Fatal(err)
+	}
+	adm := pb.NewHubAdminClient(th.root)
+	if _, err := adm.SetTeam(tctx(t), &pb.SetTeamRequest{Team: "t1", Add: []string{"root"}}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("admin adds itself to t1: %v", err)
+	}
+	if _, err := adm.PutUser(tctx(t), &pb.PutUserRequest{Name: "root", SetTeams: true, Teams: []string{"t1"}}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("admin sets its own teams: %v", err)
+	}
+	if _, err := h.SetTeam("web/root", &pb.SetTeamRequest{Team: "t1", Add: []string{"root"}}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("panel admin root adds itself to t1: %v", err)
+	}
+	if _, ok := nodeNames(t, th.root)["aw"]; ok {
+		t.Fatal("root sees aw")
+	}
+	// leaving a team, and adding others: as before
+	if _, err := adm.SetTeam(tctx(t), &pb.SetTeamRequest{Team: "t2", Add: []string{"bob"}, Remove: []string{"root"}}); err != nil {
+		t.Fatalf("admin adds bob to t2: %v", err)
+	}
+	if _, err := h.SetTeam("admin/other", &pb.SetTeamRequest{Team: "t1", Add: []string{"root"}}); err != nil {
+		t.Fatalf("another admin adds root: %v", err)
+	}
+}
+
+// TestAdminCredentialsForUsersWithAccess: an admin's join code or panel
+// login bootstraps a new user only - not a user who signs in with an
+// identity provider, is in a team or has workers shared with it (the
+// credential would hand the admin that access), also when the access
+// came after the code was made.
+func TestAdminCredentialsForUsersWithAccess(t *testing.T) {
+	th, _ := ownedHub(t)
+	h := th.h
+	adm := pb.NewHubAdminClient(th.root)
+	if _, err := h.PutUser("test", &pb.PutUserRequest{Name: "alice", SetCanShare: true, CanShare: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []string{"frank", "gina", "ivy", "jo"} {
+		if _, err := h.PutUser("test", &pb.PutUserRequest{Name: u, Create: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a code for ivy, made while she was new
+	code, err := adm.CreateJoinCode(tctx(t), &pb.CreateJoinCodeRequest{Role: "client", User: "ivy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pb.NewFleetClient(th.alice).ShareWorker(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"frank", "ivy"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.SetTeam("test", &pb.SetTeamRequest{Team: "t1", Add: []string{"gina"}}); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	h.store.SetMeta(entraUserKey("jo"), "google:1234") // jo signs in with Google
+	h.mu.Unlock()
+	for _, u := range []string{"frank", "gina", "jo"} {
+		if _, err := adm.CreateJoinCode(tctx(t), &pb.CreateJoinCodeRequest{Role: "client", User: u}); status.Code(err) != codes.FailedPrecondition {
+			t.Errorf("join-code --user %s: %v", u, err)
+		}
+		if _, err := adm.PutUser(tctx(t), &pb.PutUserRequest{Name: u, JoinCode: true}); status.Code(err) != codes.FailedPrecondition {
+			t.Errorf("user code %s: %v", u, err)
+		}
+		if _, err := adm.PutUser(tctx(t), &pb.PutUserRequest{Name: u, Panel: true}); status.Code(err) != codes.FailedPrecondition {
+			t.Errorf("panel login for %s: %v", u, err)
+		}
+	}
+	// a new user with teams: no code either (and no user)
+	if _, err := adm.PutUser(tctx(t), &pb.PutUserRequest{Name: "hank", Create: true, Teams: []string{"t1"}, JoinCode: true}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("new user in t1 with a code: %v", err)
+	}
+	h.mu.Lock()
+	hank := h.tenants["hank"]
+	h.mu.Unlock()
+	if hank != nil {
+		t.Error("hank was created")
+	}
+	// ivy's code, made before aw was shared with her: refused now
+	if _, err := hubclient.Join(tctx(t), h.Addr("grpc"), code.Code, hubclient.JoinOptions{Fingerprint: pki.Fingerprint(th.ca.Cert)}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("ivy's code after the share: %v", err)
+	}
+	// a new user without access: as before
+	if _, err := adm.PutUser(tctx(t), &pb.PutUserRequest{Name: "kim", Create: true, JoinCode: true}); err != nil {
+		t.Fatalf("new user with a code: %v", err)
+	}
+}
+
+// TestEventStreamFollowsTeams: an open event stream sees what the
+// viewer's teams share now - removed from a team, the team's worker
+// leaves the stream at once.
+func TestEventStreamFollowsTeams(t *testing.T) {
+	th, _ := ownedHub(t)
+	h := th.h
+	if _, err := h.PutUser("test", &pb.PutUserRequest{Name: "alice", SetCanShare: true, CanShare: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pb.NewFleetClient(th.alice).ShareWorker(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddTeams: []string{"t1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.SetTeam("test", &pb.SetTeamRequest{Team: "t1", Add: []string{"bob"}}); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	f := h.eventFilter(h.viewerLocked("bob", false)) // subscribed while in t1
+	info := h.nodeInfoLocked(h.nodes["aw"])
+	h.mu.Unlock()
+	ev := &pb.FleetEvent{Kind: "node", Node: "aw", NodeInfo: info}
+	if f(ev, "") == nil {
+		t.Fatal("bob (t1) does not see aw's event")
+	}
+	if _, err := h.SetTeam("test", &pb.SetTeamRequest{Team: "t1", Remove: []string{"bob"}}); err != nil {
+		t.Fatal(err)
+	}
+	if out := f(ev, ""); out != nil {
+		t.Fatalf("bob, removed from t1, still gets aw's event: %v", out)
+	}
+	if out := f(&pb.FleetEvent{Kind: "metrics", Node: "aw"}, ""); out != nil {
+		t.Fatalf("bob, removed from t1, still gets aw's metrics: %v", out)
+	}
+}
