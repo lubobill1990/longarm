@@ -1022,6 +1022,44 @@ for the owner like `Forward.Open`. Creation, removal (with the reason) and
 every connection B accepts or refuses are audited (`longarm admin audit
 --node hub|wb`). See [security.md](security.md#port-links).
 
+### Remote desktop: `longarm desktop`
+
+```
+longarm desktop cpc-alice-x7k2q                 # opens it (the tray: "desktop" on its card)
+longarm desktop cpc-alice-x7k2q --pick          # choose its Dev Box again
+longarm desktop cpc-alice-x7k2q --devbox arm1   # say which Dev Box it is ([project/]name)
+longarm desktop cpc-alice-x7k2q --web           # the browser client instead of Windows App
+longarm desktop cpc-alice-x7k2q --print         # print the link (or the forward's address)
+longarm desktop cpc-alice-x7k2q --url 'ms-avd:connect?...'   # remember this link
+longarm desktop cpc-alice-x7k2q --forget
+```
+
+What the worker is decides how its desktop opens (longarmd reports it in
+`Node.Info`; workers before this release don't, update them first):
+
+- **Microsoft Dev Box**: opens in **Windows App**, which connects through
+  Azure Virtual Desktop itself - RDP Shortpath, Entra sign-in, the Dev
+  Box's Conditional Access. Longarm carries none of it; it only finds the
+  link. longarmd recognizes a Dev Box by its Azure instance metadata (the
+  Dev Center it was made by); `longarm desktop` then asks that Dev Center
+  for your Dev Boxes with your Azure CLI sign-in (`az login --tenant
+  <tenant>`; Longarm stores no Azure tokens) and for the chosen one's
+  `ms-avd:` link. Which Dev Box a worker is can't be told from either side,
+  so the first time it takes the only Dev Box no other worker has, or asks
+  (`--devbox` without a terminal). The choice, the link and the Dev Center's
+  endpoint are kept in `<config>/desktop.json`; after that the link opens
+  without reaching the worker, so a stopped or hibernated Dev Box starts as
+  Windows App connects. Without the Azure CLI it opens
+  https://devbox.microsoft.com.
+- **Windows 365 Cloud PC** (not a Dev Box): opens https://windows365.microsoft.com.
+- **Any other Windows worker with Remote Desktop on**: a forward to its
+  Remote Desktop port (like `longarm forward`, listed by `forward --list`)
+  opened in mstsc on Windows, Windows App on macOS, FreeRDP on Linux; it
+  ends when mstsc closes (elsewhere: Ctrl+C). The Windows firewall rule for
+  Remote Desktop can stay off - the forward connects to 127.0.0.1 on the
+  worker. With per-user isolation forwards only reach your own processes'
+  ports, so this needs an admin certificate there.
+
 ### SSH / scp / VS Code Remote-SSH
 
 ```sh

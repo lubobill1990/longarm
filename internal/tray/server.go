@@ -218,6 +218,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /trayapi/info", s.info)
 	mux.HandleFunc("POST /trayapi/attach", s.attach)
 	mux.HandleFunc("POST /trayapi/ssh", s.ssh)
+	mux.HandleFunc("POST /trayapi/desktop", s.desktop)
 	mux.HandleFunc("POST /trayapi/open", s.open)
 	mux.HandleFunc("POST /trayapi/panel", s.panel)
 	mux.HandleFunc("POST /trayapi/pin", s.pin)
@@ -498,6 +499,25 @@ func (s *Server) ssh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.term(s.longarmArgs("ssh", body.Worker)); err != nil {
+		httpError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// desktop opens a terminal running `longarm desktop <worker>`: it says what
+// it does, asks which Dev Box the worker is the first time and keeps a
+// Remote Desktop forward open while mstsc runs.
+func (s *Server) desktop(w http.ResponseWriter, r *http.Request) {
+	var body struct{ Worker string }
+	if !readBody(w, r, &body) {
+		return
+	}
+	if !validWorker(body.Worker) {
+		httpError(w, http.StatusBadRequest, "bad worker name")
+		return
+	}
+	if err := s.term(s.longarmArgs("desktop", body.Worker)); err != nil {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -105,6 +105,7 @@ export const trayApi = {
   info: () => get<TrayInfo>('/trayapi/info'),
   attach: (worker: string, session?: string) => post('/trayapi/attach', { worker, session }),
   ssh: (worker: string) => post('/trayapi/ssh', { worker }),
+  desktop: (worker: string) => post('/trayapi/desktop', { worker }),
   open: (url: string) => post('/trayapi/open', { url }),
   openPanel: (path = '/') => post('/trayapi/panel', { path }),
   pin: (pinned: boolean) => post<{ pinned: boolean }>('/trayapi/pin', { pinned }),

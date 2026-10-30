@@ -53,6 +53,9 @@ Longarm lets the agent (or you) say *"run this over there"*:
   commit id; Git LFS files as pointers, or their content with `--lfs ship`).
 - **Built-in sshd** - `ssh`, `scp`, `sftp` and VS Code Remote-SSH work through
   the same mTLS channel, no SSH keys to manage.
+- **Remote desktop** - `longarm desktop worker-1` opens a Microsoft Dev Box in
+  Windows App (straight through Azure Virtual Desktop, Longarm only finds the
+  link) and other Windows workers in Remote Desktop through a forward.
 - **MCP server** - `longarm mcp` gives Claude Code and Copilot CLI tools such as
   `fleet_status`, `fleet_exec`, `fleet_job_submit`, `fleet_job_wait`,
   `fleet_sync`, `fleet_forward` and `fleet_link`. Secrets are passed by name, never through

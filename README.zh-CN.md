@@ -50,6 +50,9 @@ Longarm 让智能体（或者你）可以说一句 *“去那边跑”*：
   文件默认是指针文件，`--lfs ship` 则一并发送其内容）。
 - **内置 sshd**——`ssh`、`scp`、`sftp` 和 VS Code Remote-SSH 都走同一条 mTLS
   通道，无需管理 SSH 密钥。
+- **远程桌面**——`longarm desktop worker-1` 用 Windows App 打开 Microsoft Dev Box
+  （直接走 Azure Virtual Desktop，Longarm 只负责找到链接），其他 Windows
+  worker 则通过端口转发用远程桌面打开。
 - **MCP 服务器**——`longarm mcp` 为 Claude Code 和 Copilot CLI 提供
   `fleet_status`、`fleet_exec`、`fleet_job_submit`、`fleet_job_wait`、
   `fleet_sync`、`fleet_forward`、`fleet_link` 等工具。密钥按名称传递，从不经过模型。

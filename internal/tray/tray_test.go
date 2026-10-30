@@ -335,6 +335,13 @@ func TestServer(t *testing.T) {
 	if strings.Join(term[1], " ") != "longarm --config-dir "+cfg+" ssh w1" {
 		t.Fatalf("ssh: %v", term)
 	}
+	if code, _ := post("/trayapi/desktop", "application/json", `{"worker":"--url=x"}`); code != 400 {
+		t.Fatalf("bad desktop worker accepted: %d", code)
+	}
+	post("/trayapi/desktop", "application/json", `{"worker":"w1"}`)
+	if strings.Join(term[2], " ") != "longarm --config-dir "+cfg+" desktop w1" {
+		t.Fatalf("desktop: %v", term)
+	}
 	if code, _ := post("/trayapi/open", "application/json", `{"url":"file:///etc/passwd"}`); code != 400 {
 		t.Fatalf("file url opened: %d", code)
 	}

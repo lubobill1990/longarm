@@ -24,6 +24,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/conntrack"
+	"github.com/lubobill1990/longarm/internal/desktop"
 	"github.com/lubobill1990/longarm/internal/gc"
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/localapi"
@@ -548,7 +549,9 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		Revoked: revoked, Conns: conntrack.New(), Access: cfg.Access, WorkerAccess: workerAccess,
 		ForwardTargets: cfg.Forward.Targets, Trust: trustSrc,
 		MaxTails: cfg.Files.MaxTails, MaxTailsPerUser: cfg.Files.MaxTailsPerUser, AdminWorker: adminWorker,
+		Desktop: &desktop.Detector{},
 	}
+	srv.Desktop.Start(ctx)
 	srv.UnaryInterceptors, srv.StreamInterceptors = wtel.interceptors()
 	trustSrc.Denied = func(err error) {
 		srv.Audit.LogAs("tls", "trust/denied", map[string]any{"error": err.Error()})

@@ -4,6 +4,17 @@
 
 ### Added
 
+- `longarm desktop <worker>` (and **desktop** on a worker's card in the
+  tray) opens the worker's desktop. A **Microsoft Dev Box** opens in
+  Windows App through Azure Virtual Desktop, not through Longarm: longarmd
+  recognizes a Dev Box by its Azure instance metadata (`Node.Info` reports
+  `desktop: {kind: devbox, dev_center, dev_center_tenant}`), and the client
+  asks the Dev Center API - with the user's Azure CLI sign-in - for the
+  user's Dev Boxes and the chosen one's `ms-avd:` link, remembered per
+  worker in `<config>/desktop.json`. A Windows 365 Cloud PC opens the
+  Windows 365 portal; another Windows worker with Remote Desktop on is
+  reached through a forward to its Remote Desktop port and mstsc.
+  docs/usage.md "Remote desktop: `longarm desktop`".
 - Sign-in with **Google, Apple and personal Microsoft accounts**
   (`[auth.google]`, `[auth.apple]`, `[auth.microsoft]` in hub.toml), next to
   Entra work and school accounts: the panel shows one button per provider,

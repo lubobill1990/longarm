@@ -60,6 +60,23 @@ message InfoResponse {
   // ("agent-auth").
   string owner = 17;
   bool admin_worker = 18;
+  // The remote desktop of this machine (longarm desktop); unset = a worker
+  // older than the feature.
+  DesktopInfo desktop = 19;
+}
+
+// DesktopInfo says how a client reaches the worker's desktop. A Dev Box is
+// connected to with Windows App through its Dev Center (the AVD gateway,
+// RDP Shortpath, Entra sign-in), never through a Longarm forward; plain
+// Remote Desktop is reached through Forward.Open to rdp_port.
+message DesktopInfo {
+  // "devbox" (a Microsoft Dev Box), "cloudpc" (a Windows 365 Cloud PC that
+  // is not a Dev Box), "rdp" (Remote Desktop is on) or "" (none: reason).
+  string kind = 1;
+  string reason = 2;
+  int32 rdp_port = 3; // rdp: the port Remote Desktop listens on
+  string dev_center = 4; // devbox: the Dev Center's name
+  string dev_center_tenant = 5; // devbox: its Entra tenant id
 }
 
 // AgentAuth says which coding agents' credentials the client forwarded
