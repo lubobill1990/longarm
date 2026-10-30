@@ -408,12 +408,21 @@ func (e *hoEndpoint) rename(ctx context.Context, from, to string) error {
 	if _, err := e.conn.Files().Mkdir(ctx, &pb.MkdirRequest{Path: e.dir(to), Mode: 0o700}); err != nil {
 		return err
 	}
-	argv := []string{"mv", from, to}
 	if e.windows() {
-		argv = []string{"cmd", "/c", "move", "/y", from, to}
+		// never through cmd.exe: names come from the source (& | ^ ...);
+		// PowerShell takes them from the environment, literally
+		_, err := e.run(ctx, "", map[string]string{"LONGARM_HO_FROM": from, "LONGARM_HO_TO": to}, nil, time.Minute,
+			winPS("Move-Item -LiteralPath $env:LONGARM_HO_FROM -Destination $env:LONGARM_HO_TO -Force")...)
+		return err
 	}
-	_, err := e.run(ctx, "", nil, nil, time.Minute, argv...)
+	_, err := e.run(ctx, "", nil, nil, time.Minute, "mv", "--", from, to)
 	return err
+}
+
+// winPS is a PowerShell command line that runs script (arguments come in
+// through the environment, never spliced into the script).
+func winPS(script string) []string {
+	return []string{"powershell", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; " + script}
 }
 
 // removeFile deletes a file longarm created on the endpoint (a temporary
@@ -426,11 +435,12 @@ func (e *hoEndpoint) removeFile(ctx context.Context, p string) error {
 		}
 		return err
 	}
-	argv := []string{"rm", "-f", p}
 	if e.windows() {
-		argv = []string{"cmd", "/c", "del", "/f", "/q", p}
+		_, err := e.run(ctx, "", map[string]string{"LONGARM_HO_PATH": p}, nil, time.Minute,
+			winPS("if (Test-Path -LiteralPath $env:LONGARM_HO_PATH) { Remove-Item -LiteralPath $env:LONGARM_HO_PATH -Force }")...)
+		return err
 	}
-	_, err := e.run(ctx, "", nil, nil, time.Minute, argv...)
+	_, err := e.run(ctx, "", nil, nil, time.Minute, "rm", "-f", "--", p)
 	return err
 }
 

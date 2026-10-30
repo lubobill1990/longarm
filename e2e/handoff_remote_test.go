@@ -149,6 +149,29 @@ func TestAgentHandoffRemote(t *testing.T) {
 		if got := tempBranches(); got != "refs/heads/"+out.Temp {
 			t.Errorf("after cleanup: %q (the stale one gone, the fresh one kept)", got)
 		}
+		w2 = out
+	})
+
+	t.Run("worker_to_local_via_remote_allow_secrets", func(t *testing.T) {
+		// the session is on w2 (kept); a secret in its changes: --allow-secrets
+		// pushes anyway, with a warning; the new temporary branch goes, the
+		// kept one stays
+		kept := tempBranches()
+		mustWrite(t, filepath.Join(w2.Worktree, "deploy.env"), "AWS_KEY="+fakeAWSKey+"\n")
+		out, r := h.handoff(repo, "--from", "w2", "--to", "local", "--session", id, "--idle", "1s", "--grace", "5s",
+			"--git-auth", "forward", "--via", "remote", "--allow-secrets")
+		if out.Transfer != "remote" || !strings.Contains(r.stderr, "pushing despite the secret check") || strings.Contains(r.stderr, fakeAWSKey) {
+			t.Fatalf("handoff: %+v\n%s", out, r.stderr)
+		}
+		if got := tempBranches(); got != kept {
+			t.Errorf("temporary branches after the handoff: %q (want only the kept %q)", got, kept)
+		}
+		if got := readText(t, filepath.Join(out.Worktree, "deploy.env")); !strings.Contains(got, "AWS_KEY=") {
+			t.Errorf("deploy.env locally: %q", got)
+		}
+		if cfg := git(t, out.Worktree, "config", "--list"); strings.Contains(cfg, token) {
+			t.Error("a credential in the local worktree's git config")
+		}
 	})
 
 	noToken(t, token, h.e.dataDir, h.e2.dataDir, h.w1home, h.w2home)

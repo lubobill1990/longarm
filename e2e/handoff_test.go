@@ -387,7 +387,11 @@ func TestAgentHandoff(t *testing.T) {
 		mustWrite(t, filepath.Join(sd, "events.jsonl"), fmt.Sprintf(`{"type":"session.start","data":{"sessionId":%q,"copilotVersion":"1.0.0","context":{"cwd":%s,"gitRoot":%s}},"id":"e1"}`+"\n"+
 			`{"type":"user.message","data":{"content":"add a flag"},"id":"e2"}`+"\n", cid, jsonQ(repo), jsonQ(repo)))
 		mustWrite(t, filepath.Join(sd, "workspace.yaml"), "id: "+cid+"\ncwd: "+repo+"\ngit_root: "+repo+"\nname: flag work\n")
-		out := handoff(repo, "--to", "w1", "--agent", "copilot", "--session", cid, "--no-attach", "--name", "cop1")
+		// --via remote without a remote: relayed (uploaded), with a note
+		out, rr := h.handoff(repo, "--to", "w1", "--agent", "copilot", "--session", cid, "--no-attach", "--name", "cop1", "--via", "remote")
+		if out.Transfer != "upload" || !strings.Contains(rr.stderr, "not through the remote (the checkout has no remote)") {
+			t.Errorf("--via remote without a remote: %+v %s", out, rr.stderr)
+		}
 		short := "0cb916db"
 		wantTop := filepath.Join(w1home, "longarm-handoff", "app-"+short)
 		if out.Worktree != wantTop || out.Session != "cop1" || strings.Join(out.Resume, " ") != "copilot --resume="+cid {
@@ -535,6 +539,27 @@ func TestAgentHandoff(t *testing.T) {
 		if ents, _ := os.ReadDir(evil); len(ents) != 0 {
 			t.Error("the handoff wrote through a symlink on the worker")
 		}
+	})
+	t.Run("back_to_w1_backs_up_its_state", func(t *testing.T) {
+		// w1 still has this session's earlier state, and a todo whose name a
+		// shell would run ("&"): the worker moves it into its backup as it is
+		// (never through cmd.exe), and the new one arrives
+		todo := "todos/" + id + "-a&echo pwned&.json"
+		mustWrite(t, filepath.Join(w1home, ".claude", filepath.FromSlash(todo)), `{"old":true}`)
+		mustWrite(t, filepath.Join(chome, ".claude", filepath.FromSlash(todo)), `{"new":true}`)
+		localTop := filepath.Join(root, "src", "app-handoff-"+short)
+		out := handoff(localTop, "--to", "w1", "--session", id, "--no-attach", "--name", "again")
+		if out.Session != "again" {
+			t.Fatalf("handoff: %+v", out)
+		}
+		bk, _ := filepath.Glob(filepath.Join(w1home, ".claude", "longarm-handoff-backup", id+"-*", "config", filepath.FromSlash(todo)))
+		if len(bk) != 1 || !strings.Contains(readText(t, bk[0]), `"old"`) {
+			t.Errorf("backup of the earlier todo on w1: %v", bk)
+		}
+		if got := readText(t, filepath.Join(w1home, ".claude", filepath.FromSlash(todo))); !strings.Contains(got, `"new"`) {
+			t.Errorf("todo on w1: %q", got)
+		}
+		e.mustLongarm(e.client, "session", "stop", "w1", "-s", "again", "--grace", "0")
 	})
 	if runtime.GOOS == "windows" {
 		killShims(e2.dataDir)
