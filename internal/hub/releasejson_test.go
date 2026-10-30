@@ -83,7 +83,7 @@ func TestReleaseRecordsAndUpdateAvailable(t *testing.T) {
 		{"9.9.9", "", codes.NotFound},
 		{"../1.0.0", "", codes.InvalidArgument},
 	} {
-		resp, err := h.wantedRelease(&pb.UpdateCheckRequest{Os: "linux", Arch: "amd64", Version: "1.0.0", Want: tc.want})
+		resp, err := h.wantedRelease(&pb.UpdateCheckRequest{Os: "linux", Arch: "amd64", Version: "1.0.0", Want: tc.want}, "stable")
 		if status.Code(err) != tc.code {
 			t.Fatalf("want %s: %v", tc.want, err)
 		}
@@ -91,7 +91,7 @@ func TestReleaseRecordsAndUpdateAvailable(t *testing.T) {
 			t.Fatalf("want %s: %+v", tc.want, resp)
 		}
 	}
-	if _, err := h.wantedRelease(&pb.UpdateCheckRequest{Os: "darwin", Arch: "arm64", Want: "latest"}); status.Code(err) != codes.NotFound {
+	if _, err := h.wantedRelease(&pb.UpdateCheckRequest{Os: "darwin", Arch: "arm64", Want: "latest"}, "stable"); status.Code(err) != codes.NotFound {
 		t.Fatalf("no files for the platform: %v", err)
 	}
 }

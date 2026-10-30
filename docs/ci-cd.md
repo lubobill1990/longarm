@@ -8,7 +8,7 @@ release is cut and rolled back. Everything runs on GitHub-hosted runners.
 | [`ci.yml`](../.github/workflows/ci.yml) | pull request, push to `main`, manual | **lint** (ubuntu): `scripts/privacy-check.sh`, gitleaks, gofmt, `go vet`, cross-compile (vet + build + e2e test binary) for windows/linux/darwin × amd64/arm64, shellcheck, actionlint · **test** (ubuntu-latest, windows-latest, macos-latest), parallel jobs per OS: *unit* (`go build`, `go test` of every package but `./e2e`, the per-user isolation tests) and *e2e-1..3* (*e2e-1..2* on macOS: `./e2e`'s top-level tests dealt out by `.github/scripts/test-shard.sh`, balanced by the durations in `.github/test-durations.txt`, refreshed with `.github/scripts/test-durations.sh <run ids>`); go test runs through `.github/gotest`, which puts failed tests (and the tests a `-timeout` panic caught running, with its goroutine dump in the log) into the job summary and annotations and uploads each job's test durations (artifact `test-timings-*`) · **msi** (windows-latest): the MSIs built with WiX 5, ICE-validated, extracted, their tables checked (`.github/scripts/msi-check.ps1`; `msi-sequence-check.ps1`: RemoveExistingProducts where Windows Installer allows it, never after a deferred action - error 2613, which the 0.1.13 MSI is shown to fail) · **msi-install** (windows-latest, the runner's administrator; `.github/scripts/msi-install-test.ps1`): the MSIs really installed - a fresh install (Default, `ROLES=both`, `LOGIN=1` with a dummy hub), repair, a refused service switch, an upgrade to the next build and the uninstall; upgrades from the released 0.1.6 and the latest release (session worker, admin worker, LocalSystem service) with the tray and worker running: they must stop and start again, a running job (`longarmd conhost` and its command) keep running, the new files be in place, the verbose log be free of errors 2613 / 1722 / 1603 and failed custom actions · **tests**: passes when every test job did (msi and msi-install included) - the required check of `main`'s ruleset, so `gh pr merge --auto --squash` merges once CI is green · **azure** (ubuntu): `bicep build` of deploy/azure/main.bicep must equal the committed `azuredeploy.json`, `bicep lint` without warnings, PSScriptAnalyzer on deploy.ps1 · **release-cache** (push to `main` only, ubuntu + windows): the Go build cache release.yml restores, see "Caches" below |
 | [`ci-requeue.yml`](../.github/workflows/ci-requeue.yml) | a ci.yml run failed | re-runs ci.yml jobs GitHub never started (no hosted runner acquired - macOS capacity), and the `tests` check with them, when no job ran and failed; at most 3 attempts per run (`.github/scripts/ci-requeue.sh`). Jobs that failed for real are never re-run, so flaky tests stay visible |
 | [`image.yml`](../.github/workflows/image.yml) | pull request, push to `main`, called by release.yml | **smoke** (ubuntu): build the hub image (deploy/hub/Dockerfile), `deploy/azure/test/container-smoke.sh` with Azurite (bootstrap, admin join, restore after the container is replaced, health) · **publish** (push to main, releases): `ghcr.io/<owner>/longarm-hub` for linux/amd64+arm64 with SBOM and provenance: `:edge` + `:sha-<commit>` from main, `:X.Y.Z` (+ `:latest` for stable releases) from a tag |
-| [`release.yml`](../.github/workflows/release.yml) | tag `v*` | **meta** (tag check) → **build-unix** (ubuntu) and **build-windows** (windows-latest, MSIs) in parallel, **build-macos** (macos-latest, after build-unix: Developer ID signing, the `.pkg` installers, notarization; 2.8) → **publish** (merges and checks them, signs) → **hub** → **rollout**; **image** (image.yml) runs next to the builds, **image-latest** after publish; hub and rollout only run when a deployment is configured. A manual run is a dry run (builds, gather, image smoke test; nothing signed, published or pushed) |
+| [`release.yml`](../.github/workflows/release.yml) | tag `v*`; push to `main` (a **dev** build, see "Release channels"; not for docs-only changes) | **meta** (tag check; the dev version) → **build-unix** (ubuntu) and **build-windows** (windows-latest, MSIs) in parallel, **build-macos** (macos-latest, after build-unix: Developer ID signing, the `.pkg` installers, notarization; 2.8) → **publish** (merges and checks them, signs) → **hub** → **rollout**; **image** (image.yml) runs next to the builds, **image-latest** after publish; hub and rollout only run when a deployment is configured (and never for dev builds or release candidates). A manual run is a dry run (builds, gather, image smoke test; nothing signed, published or pushed) |
 | [`deploy.yml`](../.github/workflows/deploy.yml) | manual | hub deploy / rollback / status, fleet push of a version already on the hub |
 | [`mirror.yml`](../.github/workflows/mirror.yml) | pull request or push to `main` changing `deploy/azure/mirror-images.txt` or the workflow, manual | **verify** (ubuntu, read-only, `contents: read`): each third-party image the Azure template runs (the sidecars) comes from an allowed source repository and its pinned digest resolves there (crane). Nothing is published: `deploy/azure/deploy.sh --acr NAME` imports the pinned digests into the hub's Azure Container Registry itself, before anything is deleted (deploy/azure/README.md "Third-party images"); the former GHCR package `longarm-mirror` is retired |
 | [`mirror-gim.yml`](../.github/workflows/mirror-gim.yml) | push to any branch, branch delete, same-repository pull request, every 15 min, manual | mirrors branches, `main` and pull requests into the internal copy gim-home/longarm (`.github/scripts/mirror-gim.sh`), see "6. Internal mirror (gim-home)" |
@@ -599,11 +599,64 @@ git push origin v1.4.0
    Nodes page show them as outdated. A real rollout failure - a canary
    that halts, a worker that rolls back, an abort - still fails the job.
 
-**Prereleases** (`v1.5.0-rc1`, any `-` suffix): channel `beta`, GitHub
-prerelease, and no hub deploy or fleet rollout. Beta workers
-(`[update] channel = "beta"` in longarmd.toml) get it with
-`longarm admin release push 1.5.0-rc1 --canary 1 --wait 15m` by hand (or
-deploy.yml).
+**Prereleases** (`v1.5.0-rc.1`, any `-` suffix): channel `preview`, GitHub
+prerelease, and no hub deploy or fleet rollout - see "Release channels"
+below. Self-updating preview workers (`[update] channel = "preview"`) get it
+with `longarm admin release push 1.5.0-rc.1 --canary 1 --wait 15m` by hand
+(or deploy.yml); MSI machines on preview or dev pick it up themselves.
+
+### Release channels
+
+Every release goes to a **channel**; every machine follows one and takes
+the newest release of its channel *or of a more tested one*
+(`internal/update/channel.go`):
+
+| channel | made by | version | GitHub Release | hub deploy, fleet rollout |
+|---|---|---|---|---|
+| `stable` | a tag `vX.Y.Z` on `main` | `X.Y.Z` | yes | yes |
+| `preview` | a tag `vX.Y.Z-<pre>` (e.g. `v0.1.22-rc.1`) | `X.Y.Z-rc.1` | prerelease | no |
+| `dev` | every push to `main` (merged pull requests; not docs-only) | `<next patch>-dev.<run>` | no | no |
+
+- **Versions sort in release order.** A dev build's version is the next
+  patch after the highest version tagged so far (stable or prerelease),
+  with `-dev.<run number of release.yml>`: after `v0.1.21` main builds
+  `0.1.22-dev.57`, `0.1.22-dev.58`, ...; `v0.1.22-rc.1` sorts above them,
+  `v0.1.22` above that, and the next dev builds become `0.1.23-dev.N`.
+  Nothing on a channel ever needs a downgrade. Tags with a `-dev` suffix
+  are refused (dev versions come from main only).
+- **Who gets what.** Stable machines (everybody, by default) only see stable
+  releases: the tray's banner, the update service's automatic updates,
+  `longarm worker update`, the hub's "update available" notices
+  (`GET /releases/latest.json`, `CheckUpdate.latest_version`) and the
+  install scripts all mean the newest stable. A machine on `preview`
+  takes release candidates and stable releases, on `dev` everything.
+- **Choosing a channel.** Windows (MSI installs): the tray's Client tab →
+  Updates → Release channel (the machine's owner or a local administrator;
+  stored by the update service in `HKLM\Software\Longarm\Update`, value
+  `Channel`, and reported by the machine's longarmd to the hub). Elsewhere,
+  or to pin one worker: `[update] channel = "preview"` in longarmd.toml.
+  `beta`, the old name of `preview`, still works.
+- **Going back** to a more tested channel takes effect with that
+  channel's next release (no downgrades): a machine on `0.1.22-dev.9` that
+  moves to stable stays there until `0.1.22` is released.
+- **The hub** answers `GET /releases/latest.json?channel=preview|dev` with
+  the newest complete release for that channel; an older hub ignores the
+  parameter and answers its latest stable, so machines fall back to stable
+  until the hub runs a version with channels.
+- **MSIs** of one `X.Y.Z` (its dev builds, release candidates and the
+  release) share the MSI version `X.Y.Z`; `MajorUpgrade
+  AllowSameVersionUpgrades` makes each replace the one before. Which one is
+  newer is decided before msiexec runs.
+- **Dev builds** run the same workflow as a release (build, sign, upload
+  with the release certificate) in their own concurrency group
+  (`longarm-release-dev`: they queue among themselves, never behind or in
+  front of a release; a burst of merges builds the first and the newest),
+  and never touch the hub deploy, the fleet rollout, the GitHub Releases or
+  the image tags (image.yml pushes `:edge` for main itself).
+
+Typical flow: merge → dev build on the hub minutes later → the people on
+`dev` run it → tag `vX.Y.Z-rc.1` when it looks good → preview machines get
+it → tag `vX.Y.Z` → everybody.
 
 Use **Re-run failed jobs** after a failure: publish skips identical files (and
 fails if the hub has *different* files under that version) - unless the hub
