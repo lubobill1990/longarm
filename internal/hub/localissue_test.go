@@ -114,7 +114,7 @@ func TestIssueLocal(t *testing.T) {
 		t.Fatalf("release credentials: %s, %s", r1.NodeID, r2.NodeID)
 	}
 	for _, r := range []*LocalIssued{r1, r2} {
-		if _, err := pb.NewFleetClient(dial(r)).Whoami(tctx(t), &pb.WhoamiRequest{}); err != nil {
+		if _, err := pb.NewHubAdminClient(dial(r)).ListReleases(tctx(t), &pb.ListReleasesRequest{}); err != nil {
 			t.Fatalf("release credential %s: %v", r.Serial, err)
 		}
 	}
