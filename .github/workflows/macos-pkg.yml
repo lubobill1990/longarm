@@ -150,8 +150,11 @@ jobs:
           /usr/local/bin/longarmd version
           codesign --verify --strict --verbose=2 /usr/local/bin/longarmd
           cmp /usr/local/bin/longarmd "$d/hub/longarmd-darwin-arm64"
-          ls -l /usr/local/bin/longarm /usr/local/bin/longarmd /usr/local/share/longarm/
-          [ "$(stat -f '%Su:%Sg %Lp' /usr/local/bin/longarmd)" = "root:wheel 755" ]
+          ls -ld /usr/local/bin /usr/local/bin/longarm /usr/local/bin/longarmd /usr/local/share/longarm /usr/local/share/longarm/*
+          for f in /usr/local/bin/longarmd /usr/local/bin /usr/local/share/longarm; do
+            [ "$(stat -f '%Su:%Sg %Lp' "$f")" = "root:wheel 755" ] || { echo "::error::$f: $(stat -f '%Su:%Sg %Lp' "$f")"; exit 1; }
+          done
+          [ "$(stat -f '%Lp' /usr/local/share/longarm/com.longarm.longarmd.plist.example)" = 644 ]
       - name: a wrong APPLE_TEAM_ID stops the signing
         run: |
           c=$RUNNER_TEMP/certs d=$RUNNER_TEMP/rel-team

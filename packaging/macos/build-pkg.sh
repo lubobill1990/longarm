@@ -14,6 +14,9 @@
 # PKG_IDENTITY the package is unsigned (MDM-managed Macs refuse it).
 # Needs a Mac (pkgbuild, productbuild).
 set -eu
+# the payload's modes are installed as they are (also on /usr/local/bin):
+# never inherit a caller's umask 077
+umask 022
 here=$(cd "$(dirname "$0")" && pwd)
 : "${VERSION:?set VERSION}" "${ARCH:?set ARCH (amd64 or arm64)}" "${BINDIR:?set BINDIR}" "${OUT:?set OUT}"
 case $ARCH in
@@ -28,6 +31,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 root="$work/root"
 mkdir -p "$root/usr/local/bin" "$root/usr/local/share/longarm"
+chmod 0755 "$root" "$root/usr" "$root/usr/local" "$root/usr/local/bin" "$root/usr/local/share" "$root/usr/local/share/longarm"
 for b in longarm longarmd; do
 	cp "$BINDIR/$b" "$root/usr/local/bin/$b"
 	chmod 0755 "$root/usr/local/bin/$b"
