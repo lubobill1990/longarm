@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { trayApi } from '../api/local'
+import { useDismiss } from '../lib/dismiss'
 
 /**
  * The tray popup behaves as an app, not a browser page: links open in the
@@ -104,6 +105,8 @@ export function menuItems(target: Element | null, sel: string): Item[] {
 /** The popup's own right-click menu (only in the webview). */
 export function ContextMenu() {
   const [menu, setMenu] = useState<{ x: number; y: number; items: Item[] }>()
+  // a click outside it (on the backdrop), Escape or the focus leaving: closed
+  const ref = useDismiss<HTMLUListElement>(!!menu, () => setMenu(undefined))
   useEffect(() => {
     if (!inWebview()) return
     const onMenu = (e: MouseEvent) => {
@@ -124,7 +127,7 @@ export function ContextMenu() {
   if (!menu) return null
   return (
     <div className="ctx-backdrop" onMouseDown={() => setMenu(undefined)} onContextMenu={(e) => e.preventDefault()}>
-      <ul className="ctx-menu" role="menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
+      <ul ref={ref} className="ctx-menu" role="menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.stopPropagation()}>
         {menu.items.map((it) => (
           <li key={it.label} role="menuitem">
             <button

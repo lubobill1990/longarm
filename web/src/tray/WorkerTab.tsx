@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import { longarmdApi, trayApi, traySettingsApi, type TrayInfo } from '../api/local'
-import type { Job } from '../api/types'
 import { Bar } from '../components/charts'
 import { ErrorBox, FirewallWarning, LogView, StatePill, useAction, usePoll } from '../components/common'
 import { IconChip, IconTerminal } from '../components/icons'
 import { fmtAgo, fmtTime, gb, isActive, memPct, since } from '../lib/format'
-import { killQuestion } from './ClientTab'
+import { JobDetailRow, killQuestion } from './ClientTab'
 import { Banner, EmptyState, Section, Skeleton } from './ui'
 
 /** longarm-tray's worker tab: this machine's longarmd through its local API. */
@@ -75,7 +74,7 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
   const st = usePoll(longarmdApi.status, 2000)
   const jobs = usePoll(() => longarmdApi.jobs(30), 3000)
   const { run, busy } = useAction()
-  const [open, setOpen] = useState<Job>()
+  const [open, setOpen] = useState<string>()
   const [maxJobs, setMaxJobs] = useState('')
   const [reserve, setReserve] = useState('')
   const s = st.data
@@ -198,42 +197,53 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
         <ErrorBox error={jobs.error} />
         <table className="grid list small" data-testid="worker-jobs">
           <tbody>
-            {(jobs.data ?? []).map((j) => (
-              <tr
-                key={j.spec.id}
-                className={`clickable ${open?.spec.id === j.spec.id ? 'selected' : ''}`}
-                tabIndex={0}
-                onClick={() => setOpen(j)}
-                onKeyDown={(e) => {
-                  if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
-                    e.preventDefault()
-                    setOpen(j)
-                  }
-                }}
-              >
-                <td className="mono strong">{j.spec.name || j.spec.id.slice(-8)}</td>
-                <td>
-                  <StatePill state={j.state} />
-                </td>
-                <td className="muted">{j.spec.owner || j.spec.submitted_by}</td>
-                <td className="muted nowrap hide-narrow">{fmtTime(j.created_at)}</td>
-                <td className="actions-cell">
-                  {isActive(j.state) && (
-                    <button
-                      className="danger sm"
-                      disabled={busy}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (!confirm(killQuestion(j, s.name))) return
-                        run(() => longarmdApi.kill(j.spec.id), 'killed').then(jobs.reload)
-                      }}
-                    >
-                      kill
-                    </button>
+            {(jobs.data ?? []).map((j) => {
+              const isOpen = open === j.spec.id
+              const toggle = () => setOpen(isOpen ? undefined : j.spec.id)
+              return (
+                <Fragment key={j.spec.id}>
+                  <tr
+                    className={`clickable ${isOpen ? 'selected' : ''}`}
+                    tabIndex={0}
+                    aria-expanded={isOpen}
+                    onClick={toggle}
+                    onKeyDown={(e) => {
+                      if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
+                        e.preventDefault()
+                        toggle()
+                      }
+                    }}
+                  >
+                    <td className="mono strong">{j.spec.name || j.spec.id.slice(-8)}</td>
+                    <td>
+                      <StatePill state={j.state} />
+                    </td>
+                    <td className="muted">{j.spec.owner || j.spec.submitted_by}</td>
+                    <td className="muted nowrap hide-narrow">{fmtTime(j.created_at)}</td>
+                    <td className="actions-cell">
+                      {isActive(j.state) && (
+                        <button
+                          className="danger sm"
+                          disabled={busy}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (!confirm(killQuestion(j, s.name))) return
+                            run(() => longarmdApi.kill(j.spec.id), 'killed').then(jobs.reload)
+                          }}
+                        >
+                          kill
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <JobDetailRow colSpan={5} job={j}>
+                      <WorkerJobLogs id={j.spec.id} />
+                    </JobDetailRow>
                   )}
-                </td>
-              </tr>
-            ))}
+                </Fragment>
+              )
+            })}
             {jobs.data === undefined && !jobs.error && (
               <tr className="placeholder">
                 <td colSpan={5}>
@@ -250,7 +260,6 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
             )}
           </tbody>
         </table>
-        {open && <WorkerJobLogs key={open.spec.id} id={open.spec.id} />}
       </Section>
       <Section title="Fleet membership">
         <div className="field-inline">

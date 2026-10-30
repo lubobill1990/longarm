@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { longarmApi, longarmdApi, trayApi, type TrayInfo, type TrayUpdate } from '../api/local'
 import type { PoolView } from '../api/types'
 import { useAction } from '../components/common'
+import { useDismiss } from '../lib/dismiss'
 import { compareVersions } from '../lib/release'
 
 /** One line of the version details. */
@@ -78,7 +79,7 @@ export function VersionChip({ info, pool }: { info?: TrayInfo; pool?: PoolView }
   const [daemon, setDaemon] = useState<string>()
   const [worker, setWorker] = useState<{ name?: string; version?: string }>()
   const { run, busy } = useAction()
-  const wrap = useRef<HTMLSpanElement>(null)
+  const wrap = useDismiss<HTMLSpanElement>(open, () => setOpen(false))
   const clientUp = !!info?.client.running
   const workerRole = !!info?.roles.worker
   useEffect(() => {
@@ -106,12 +107,6 @@ export function VersionChip({ info, pool }: { info?: TrayInfo; pool?: PoolView }
       clearInterval(t)
     }
   }, [open, clientUp, workerRole])
-  useEffect(() => {
-    if (!open) return
-    const close = (e: MouseEvent) => !wrap.current?.contains(e.target as Node) && setOpen(false)
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [open])
   if (!info?.version) return null
   const rows = versionRows({
     tray: info.version,
@@ -137,13 +132,12 @@ export function VersionChip({ info, pool }: { info?: TrayInfo; pool?: PoolView }
         aria-expanded={open}
         title={summary}
         onClick={() => setOpen((v) => !v)}
-        onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
       >
         {label}
         {behind.length > 0 && <span className="ver-dot" aria-label="something is behind" />}
       </button>
       {open && (
-        <span className="ver-pop" role="dialog" aria-label="Versions" data-testid="version-details" onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}>
+        <span className="ver-pop" role="dialog" aria-label="Versions" data-testid="version-details">
           <span className="ver-head">Versions</span>
           {rows.map((r) => (
             <span key={r.key} className={`ver-row ${r.behind ? 'behind' : ''}`} data-testid={`version-${r.key}`}>

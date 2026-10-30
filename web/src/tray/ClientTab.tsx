@@ -1,69 +1,90 @@
-import { useCallback, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { localUpdateApi, longarmApi, trayApi, traySettingsApi } from '../api/local'
-import type { FleetJob, Job, PoolView } from '../api/types'
+import type { Job, PoolView } from '../api/types'
 import { ErrorBox, LogView, StatePill, useAction, usePoll } from '../components/common'
 import { IconForward, IconTerminal } from '../components/icons'
 import { fmtTime, isActive } from '../lib/format'
 import type { ThemePref } from './theme'
 import { EmptyState, Section, Skeleton } from './ui'
 
-/** My jobs (submitted by this client), with logs and kill. */
+/**
+ * My jobs: the jobs this computer started (longarm jobs --mine, what the
+ * job notifications are about), with their output and kill. There is no
+ * "everyone" switch: the hub shows a user only its own and team-shared jobs
+ * (an administrator too: docs/security.md "What admins see"), so a wider
+ * list would only add this user's jobs from other computers and other
+ * people's shared ones; longarm jobs --all lists those.
+ *
+ * A job's details (command, times, output) open right under its row, so a
+ * long list never sends you to the bottom for them; a second click closes.
+ */
 export function ClientJobs() {
-  const [all, setAll] = useState(false)
-  const jobs = usePoll(() => longarmApi.jobs({ mine: !all, limit: 50 }), 3000, [all])
-  const [open, setOpen] = useState<FleetJob>()
+  const jobs = usePoll(() => longarmApi.jobs({ mine: true, limit: 50 }), 3000)
+  const [open, setOpen] = useState<string>()
   const { run, busy } = useAction()
   return (
     <div>
       <div className="toolbar">
-        <label className="switch-row inline small">
-          <input type="checkbox" className="switch" checked={all} onChange={(e) => setAll(e.target.checked)} /> everyone&apos;s jobs
-        </label>
+        <span className="muted small" data-testid="jobs-scope">
+          Started from this computer
+        </span>
         <span className="spacer" />
-        <span className="muted small mono">longarm jobs · logs · kill</span>
+        <span className="muted small mono" title="longarm jobs --all: every job you may see, from all your computers">
+          longarm jobs · logs · kill
+        </span>
       </div>
       <ErrorBox error={jobs.error} />
       <table className="grid list small" data-testid="my-jobs">
         <tbody>
           {(jobs.data ?? []).map((j) => {
+            const key = `${j.worker}/${j.job.spec.id}`
             const name = j.job.spec.name || j.job.spec.id.slice(-8)
+            const isOpen = open === key
+            const toggle = () => setOpen(isOpen ? undefined : key)
             return (
-              <tr
-                key={`${j.worker}/${j.job.spec.id}`}
-                className={`clickable ${open?.job.spec.id === j.job.spec.id ? 'selected' : ''}`}
-                tabIndex={0}
-                aria-label={`${name} on ${j.worker}: show its output`}
-                onClick={() => setOpen(j)}
-                onKeyDown={(e) => {
-                  if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
-                    e.preventDefault()
-                    setOpen(j)
-                  }
-                }}
-              >
-                <td className="mono strong">{name}</td>
-                <td className="muted">{j.worker}</td>
-                <td className="nowrap">
-                  <StatePill state={j.job.state} />
-                  {j.job.has_exit_code ? <span className="mono muted"> {j.job.exit_code ?? 0}</span> : ''}
-                </td>
-                <td className="muted nowrap hide-narrow">{fmtTime(j.job.created_at)}</td>
-                <td className="actions-cell">
-                  {isActive(j.job.state) && (
-                    <button
-                      className="danger sm"
-                      disabled={busy}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (!confirm(killQuestion(j.job, j.worker))) return
-                        run(() => longarmApi.kill(j.job.spec.id, j.worker), 'killed').then(jobs.reload)
-                      }}
-                    >
-                      kill
-                    </button>
-                  )}
-                </td>
-              </tr>
+              <Fragment key={key}>
+                <tr
+                  className={`clickable ${isOpen ? 'selected' : ''}`}
+                  tabIndex={0}
+                  aria-expanded={isOpen}
+                  aria-label={`${name} on ${j.worker}: ${isOpen ? 'hide' : 'show'} its output`}
+                  onClick={toggle}
+                  onKeyDown={(e) => {
+                    if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
+                      e.preventDefault()
+                      toggle()
+                    }
+                  }}
+                >
+                  <td className="mono strong">{name}</td>
+                  <td className="muted">{j.worker}</td>
+                  <td className="nowrap">
+                    <StatePill state={j.job.state} />
+                    {j.job.has_exit_code ? <span className="mono muted"> {j.job.exit_code ?? 0}</span> : ''}
+                  </td>
+                  <td className="muted nowrap hide-narrow">{fmtTime(j.job.created_at)}</td>
+                  <td className="actions-cell">
+                    {isActive(j.job.state) && (
+                      <button
+                        className="danger sm"
+                        disabled={busy}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (!confirm(killQuestion(j.job, j.worker))) return
+                          run(() => longarmApi.kill(j.job.spec.id, j.worker), 'killed').then(jobs.reload)
+                        }}
+                      >
+                        kill
+                      </button>
+                    )}
+                  </td>
+                </tr>
+                {isOpen && (
+                  <JobDetailRow colSpan={5} job={j.job} worker={j.worker}>
+                    <ClientJobLogs id={j.job.spec.id} worker={j.worker} />
+                  </JobDetailRow>
+                )}
+              </Fragment>
             )
           })}
           {jobs.data === undefined && !jobs.error && (
@@ -76,15 +97,14 @@ export function ClientJobs() {
           {jobs.data !== undefined && jobs.data.length === 0 && (
             <tr className="placeholder">
               <td colSpan={5}>
-                <EmptyState compact icon={<IconTerminal size={20} />} title={all ? 'No jobs' : 'No jobs of yours yet'}>
-                  {all ? 'Nobody has run a job yet.' : <span className="mono">longarm run &lt;worker&gt; -- &lt;command&gt;</span>}
+                <EmptyState compact icon={<IconTerminal size={20} />} title="No jobs from this computer yet">
+                  <span className="mono">longarm run &lt;worker&gt; -- &lt;command&gt;</span>
                 </EmptyState>
               </td>
             </tr>
           )}
         </tbody>
       </table>
-      {open && <JobLogs key={open.job.spec.id} j={open} />}
     </div>
   )
 }
@@ -96,23 +116,61 @@ export function killQuestion(job: Job, worker?: string): string {
   return `Kill job ${name}${owner ? ` (${owner})` : ''}${worker ? ` on ${worker}` : ''}? It stops at once; its output so far is kept.`
 }
 
-function JobLogs({ j }: { j: FleetJob }) {
-  const openStream = useCallback(
-    (onChunk: Parameters<typeof longarmApi.logs>[2], onDone: Parameters<typeof longarmApi.logs>[3]) => longarmApi.logs(j.job.spec.id, j.worker, onChunk, onDone),
-    [j.job.spec.id, j.worker],
-  )
+/**
+ * A job's details as a row right under the job's own row (My jobs, Jobs on
+ * this worker): the command, where and when, the reason, then its output
+ * (children). It scrolls into view when it opens.
+ */
+export function JobDetailRow({ job, worker, colSpan, children }: { job: Job; worker?: string; colSpan: number; children: ReactNode }) {
+  const ref = useRef<HTMLTableRowElement>(null)
+  useEffect(() => {
+    ref.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [])
+  const owner = job.spec.owner || job.spec.submitted_by
   return (
-    <Section
-      className="logs"
-      title={
-        <>
-          {j.worker} · <span className="mono">{(j.job.spec.argv ?? []).join(' ').slice(0, 80)}</span>
-        </>
-      }
-    >
-      <LogView open={openStream} />
-    </Section>
+    <tr className="row-detail" ref={ref} data-testid="job-detail">
+      <td colSpan={colSpan}>
+        <dl className="facts small">
+          <dt>command</dt>
+          <dd className="mono">{(job.spec.argv ?? []).join(' ') || '—'}</dd>
+          {worker && (
+            <>
+              <dt>worker</dt>
+              <dd>{worker}</dd>
+            </>
+          )}
+          {owner && (
+            <>
+              <dt>owner</dt>
+              <dd>{owner}</dd>
+            </>
+          )}
+          <dt>started</dt>
+          <dd>
+            {fmtTime(job.created_at)}
+            {job.ended_at ? ` · ended ${fmtTime(job.ended_at)}` : ''}
+          </dd>
+          {job.reason && (
+            <>
+              <dt>reason</dt>
+              <dd>{job.reason}</dd>
+            </>
+          )}
+          <dt>id</dt>
+          <dd className="mono">{job.spec.id}</dd>
+        </dl>
+        {children}
+      </td>
+    </tr>
   )
+}
+
+function ClientJobLogs({ id, worker }: { id: string; worker: string }) {
+  const openStream = useCallback(
+    (onChunk: Parameters<typeof longarmApi.logs>[2], onDone: Parameters<typeof longarmApi.logs>[3]) => longarmApi.logs(id, worker, onChunk, onDone),
+    [id, worker],
+  )
+  return <LogView open={openStream} />
 }
 
 /** Port forwards hosted by longarm daemon (longarm forward --bg / --list / --stop). */
@@ -250,7 +308,7 @@ export function AutoUpdate() {
   const channel = u.channel || 'stable'
   const owner = u.can_set_auto ? '' : " (only this machine's owner or an administrator can change this)"
   return (
-    <Section title="Updates" testId="auto-update">
+    <Section card title="Updates" testId="auto-update">
       <div className="field-help">
         Longarm {u.installed ?? '…'}
         {newer}
@@ -322,7 +380,7 @@ const THEMES: [ThemePref, string][] = [
 function Appearance({ theme, onTheme }: { theme: ThemePref; onTheme: (t: ThemePref) => Promise<void> }) {
   const { run } = useAction()
   return (
-    <Section title="Appearance" testId="appearance">
+    <Section card title="Appearance" testId="appearance">
       <div className="field-inline">
         <div>
           <div className="field-label" id="theme-label">
@@ -349,7 +407,7 @@ function TransportPolicy() {
   const [choice, setChoice] = useState<string>()
   const current = choice ?? s.data?.transport ?? 'race'
   return (
-    <Section title="Transport policy">
+    <Section card title="Transport policy" testId="transport">
       <div className="radio-list">
         {POLICIES.map(([b, label]) => (
           <label key={b} className={`radio-row ${current === b ? 'is-checked' : ''}`}>
@@ -381,7 +439,7 @@ function TraySettingsView({ pool, clientUp }: { pool?: PoolView; clientUp: boole
   const set = (v: Parameters<typeof traySettingsApi.set>[0], ok: string) => run(() => traySettingsApi.set(v), ok).then((r) => r && st.setData(r))
   return (
     <>
-      <Section title="Notifications">
+      <Section card title="Notifications" testId="notifications">
         <ErrorBox error={st.error} />
         <label className="switch-row">
           <input
@@ -413,7 +471,7 @@ function TraySettingsView({ pool, clientUp }: { pool?: PoolView; clientUp: boole
         </label>
         <p className="muted small">Only your own workers and the jobs you started notify; other people&apos;s machines never do.</p>
       </Section>
-      <Section title="This client">
+      <Section card title="This client" testId="this-client">
         <dl className="facts small" data-testid="client-info">
           <dt>longarm-tray</dt>
           <dd className="mono">
