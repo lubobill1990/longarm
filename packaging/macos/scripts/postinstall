@@ -1,37 +1,93 @@
 #!/bin/sh
-# Longarm postinstall (runs as root). Optional unattended setup, read from
-# /Library/Preferences/com.longarm.plist before installing:
-#   sudo defaults write /Library/Preferences/com.longarm Roles worker
-#   sudo defaults write /Library/Preferences/com.longarm Hub hub.example.com
-#   sudo defaults write /Library/Preferences/com.longarm JoinCode K7P-Q2M
-#   sudo defaults write /Library/Preferences/com.longarm User alice
-#   sudo installer -pkg longarm-1.2.3.pkg -target /
+# Longarm postinstall (runs as root after the files are in /usr/local/bin).
+#
+# 1. Application firewall: allow incoming connections for longarm and
+#    longarmd (hole punching, direct tailscale paths), if the firewall is on.
+# 2. Upgrade: an installed longarmd LaunchDaemon (`longarmd service install`)
+#    is restarted so it runs the new binary (jobs keep running:
+#    AbandonProcessGroup).
+# 3. Optional unattended setup, read from the preference domain com.longarm:
+#    a configuration profile (MDM: /Library/Managed Preferences/com.longarm.plist)
+#    or the root-owned /Library/Preferences/com.longarm.plist written before
+#    the install:
+#      sudo defaults write /Library/Preferences/com.longarm Roles worker   # worker | both | client
+#      sudo defaults write /Library/Preferences/com.longarm Hub hub.example.com
+#      sudo defaults write /Library/Preferences/com.longarm JoinCode K7P-Q2M
+#      sudo defaults write /Library/Preferences/com.longarm User alice
+#      sudo defaults write /Library/Preferences/com.longarm CAFingerprint sha256:...   # optional
+#      sudo installer -pkg longarm-darwin-arm64.pkg -target /
+#    The join code is deleted from the local file afterwards (a profile's
+#    stays until the profile is removed: use a code that expires).
+# Never fails the installation: the binaries are in place either way.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+bin=/usr/local/bin
 pref=/Library/Preferences/com.longarm
-get() { defaults read "$pref" "$1" 2>/dev/null || true; }
-roles=$(get Roles); hub=$(get Hub); code=$(get JoinCode); user=$(get User); fp=$(get CAFingerprint)
+label=com.longarm.longarmd
 
-# Application firewall: allow incoming connections for longarm and longarmd (hole
-# punching / tailscale direct paths), only if the firewall is on.
+# 1. firewall
 fw=/usr/libexec/ApplicationFirewall/socketfilterfw
-if [ -x "$fw" ] && "$fw" --getglobalstate | grep -q enabled; then
-  for b in /usr/local/bin/longarmd /usr/local/bin/longarm; do
-    "$fw" --add "$b" >/dev/null 2>&1 || true
-    "$fw" --unblockapp "$b" >/dev/null 2>&1 || true
-  done
+if [ -x "$fw" ] && "$fw" --getglobalstate 2>/dev/null | grep -q enabled; then
+	for b in "$bin/longarmd" "$bin/longarm"; do
+		"$fw" --add "$b" >/dev/null 2>&1 || true
+		"$fw" --unblockapp "$b" >/dev/null 2>&1 || true
+	done
 fi
 
-[ -n "$roles" ] && [ -n "$hub" ] && [ -n "$code" ] && [ -n "$user" ] || exit 0
-if [ -n "$fp" ]; then set -- --ca-fingerprint "$fp"; else set --; fi
-case "$roles" in
-  worker|both)
-    sudo -u "$user" /usr/local/bin/longarmd join "$hub" "$code" --no-wait "$@" || exit 0
-    if /usr/local/bin/longarmd service install --user "$user" --data-dir "$(eval echo ~"$user")/.longarm"; then
-      /usr/local/bin/longarmd service start || true
-    fi
-    ;;
-  client)
-    sudo -u "$user" /usr/local/bin/longarm join "$hub" "$code" "$@" || true
-    ;;
+# 2. restart the installed service on an upgrade
+if launchctl print "system/$label" 2>/dev/null | grep -q "program = $bin/longarmd\$"; then
+	launchctl kickstart -k "system/$label" >/dev/null 2>&1 || true
+fi
+
+# 3. unattended setup: a configuration profile's managed preferences (domain
+# com.longarm) take precedence over the local file
+if [ -f "/Library/Managed Preferences/com.longarm.plist" ]; then
+	pref="/Library/Managed Preferences/com.longarm"
+fi
+[ -f "$pref.plist" ] || exit 0
+# only a root-owned preferences file that nobody else can write (an admin's)
+owner=$(stat -f '%u %Lp' "$pref.plist" 2>/dev/null) || exit 0
+case $owner in
+"0 "[0-7][0145][0145]) ;;
+*)
+	echo "longarm postinstall: $pref.plist is not root-owned or is writable by others; ignored" >&2
+	exit 0
+	;;
 esac
-defaults delete "$pref" JoinCode 2>/dev/null || true
+get() { defaults read "$pref" "$1" 2>/dev/null || true; }
+roles=$(get Roles)
+hub=$(get Hub)
+code=$(get JoinCode)
+user=$(get User)
+fp=$(get CAFingerprint)
+[ -n "$roles" ] && [ -n "$hub" ] && [ -n "$code" ] && [ -n "$user" ] || exit 0
+bad() {
+	echo "longarm postinstall: $1 in $pref is invalid; no unattended setup" >&2
+	exit 0
+}
+case $roles in worker | both | client) ;; *) bad Roles ;; esac
+case $user in "" | -* | *[!A-Za-z0-9._-]*) bad User ;; esac
+case $hub in "" | -* | *[!A-Za-z0-9.:_-]*) bad Hub ;; esac
+case $code in "" | -* | *[!A-Za-z0-9-]*) bad JoinCode ;; esac
+case $fp in -* | *[!A-Za-z0-9:+/=_-]*) bad CAFingerprint ;; esac
+id -u "$user" >/dev/null 2>&1 || bad User
+home=$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: //p')
+[ -n "$home" ] && [ -d "$home" ] || bad User
+
+if [ -n "$fp" ]; then set -- --ca-fingerprint "$fp"; else set --; fi
+case $roles in
+worker | both)
+	if sudo -H -u "$user" "$bin/longarmd" join "$hub" "$code" --no-wait "$@"; then
+		if "$bin/longarmd" service install --user "$user" --data-dir "$home/.longarm"; then
+			"$bin/longarmd" service start || true
+		fi
+	fi
+	;;
+client)
+	sudo -H -u "$user" "$bin/longarm" join "$hub" "$code" "$@" || true
+	;;
+esac
+if [ "$pref" = /Library/Preferences/com.longarm ]; then
+	defaults delete "$pref" JoinCode 2>/dev/null || true
+fi
 exit 0

@@ -4,3 +4,5 @@ deploy/azure/azuredeploy.json linguist-generated=true
 deploy/azure/** text eol=lf
 *.sh text eol=lf
 deploy/hub/** text eol=lf
+packaging/macos/scripts/* text eol=lf
+packaging/macos/certs/*.cer binary

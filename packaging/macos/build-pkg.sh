@@ -1,51 +1,55 @@
 #!/bin/sh
-# Build the signed + notarized macOS installer (longarm-<version>.pkg).
-# Runs on a Mac with Xcode command line tools and a Developer ID.
+# Build the macOS installer for one architecture: longarm-darwin-<arch>.pkg,
+# a flat distribution package that installs longarm and longarmd into
+# /usr/local/bin (scripts/postinstall: firewall, optional unattended join,
+# restart of an installed LaunchDaemon).
 #
-#   VERSION=1.2.3 DIST=dist \
-#   APP_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
-#   PKG_IDENTITY="Developer ID Installer: Your Name (TEAMID)" \
-#   NOTARY_PROFILE=longarm-notary \
+#   VERSION=1.2.3 ARCH=arm64 BINDIR=dir-with-longarm-and-longarmd OUT=longarm-darwin-arm64.pkg \
+#   [PKG_IDENTITY="Developer ID Installer: Your Name (TEAMID)" [KEYCHAIN=path]] \
 #   sh packaging/macos/build-pkg.sh
 #
-# One-time: xcrun notarytool store-credentials longarm-notary --apple-id you@example.com --team-id TEAMID
-# Without identities the script builds an unsigned pkg (local testing only).
+# The binaries in BINDIR are packaged as they are: sign them first (Developer
+# ID Application, hardened runtime, secure timestamp). The release does that,
+# and notarizes and staples the package: .github/scripts/macos-sign.sh. Without
+# PKG_IDENTITY the package is unsigned (MDM-managed Macs refuse it).
+# Needs a Mac (pkgbuild, productbuild).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
-: "${VERSION:?set VERSION}"
-DIST=${DIST:-dist}
-OUT=${OUT:-$DIST/longarm-$VERSION.pkg}
+: "${VERSION:?set VERSION}" "${ARCH:?set ARCH (amd64 or arm64)}" "${BINDIR:?set BINDIR}" "${OUT:?set OUT}"
+case $ARCH in
+amd64) host=x86_64 ;;
+arm64) host=arm64 ;;
+*)
+	echo "build-pkg.sh: ARCH must be amd64 or arm64" >&2
+	exit 2
+	;;
+esac
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 root="$work/root"
-mkdir -p "$root/usr/local/bin" "$root/Library/LaunchDaemons"
-
-# Universal binaries from GoReleaser's darwin builds.
+mkdir -p "$root/usr/local/bin" "$root/usr/local/share/longarm"
 for b in longarm longarmd; do
-  # shellcheck disable=SC2012 # the build dir name has a variable suffix (_v1, _v8.0)
-  a=$(ls "$DIST"/${b}_darwin_amd64*/"$b" | head -1)
-  # shellcheck disable=SC2012
-  r=$(ls "$DIST"/${b}_darwin_arm64*/"$b" | head -1)
-  lipo -create -output "$root/usr/local/bin/$b" "$a" "$r"
-  chmod 0755 "$root/usr/local/bin/$b"
-  if [ -n "${APP_IDENTITY:-}" ]; then
-    codesign --force --options runtime --timestamp --sign "$APP_IDENTITY" "$root/usr/local/bin/$b"
-  fi
+	cp "$BINDIR/$b" "$root/usr/local/bin/$b"
+	chmod 0755 "$root/usr/local/bin/$b"
 done
-cp "$here/com.longarm.longarmd.plist.example" "$root/Library/LaunchDaemons/com.longarm.longarmd.plist.example"
+cp "$here/com.longarm.longarmd.plist.example" "$root/usr/local/share/longarm/"
+chmod 0644 "$root/usr/local/share/longarm/com.longarm.longarmd.plist.example"
+mkdir -p "$work/scripts"
+cp "$here/scripts/postinstall" "$work/scripts/postinstall"
+chmod 0755 "$work/scripts/postinstall"
 
+# root:wheel, whoever builds it
 pkgbuild --root "$root" --identifier com.longarm.pkg --version "$VERSION" \
-  --scripts "$here/scripts" --install-location / "$work/longarm-component.pkg"
-sed "s/@VERSION@/$VERSION/g" "$here/distribution.xml" > "$work/distribution.xml"
+	--ownership recommended --scripts "$work/scripts" --install-location / \
+	"$work/longarm-component.pkg"
+sed -e "s/@VERSION@/$VERSION/g" -e "s/@HOSTARCH@/$host/g" "$here/distribution.xml" >"$work/distribution.xml"
+set -- --distribution "$work/distribution.xml" --package-path "$work"
 if [ -n "${PKG_IDENTITY:-}" ]; then
-  productbuild --distribution "$work/distribution.xml" --package-path "$work" --sign "$PKG_IDENTITY" "$OUT"
-else
-  productbuild --distribution "$work/distribution.xml" --package-path "$work" "$OUT"
-  echo "warning: unsigned pkg (set APP_IDENTITY / PKG_IDENTITY)" >&2
+	set -- "$@" --sign "$PKG_IDENTITY" --timestamp
+	if [ -n "${KEYCHAIN:-}" ]; then set -- "$@" --keychain "$KEYCHAIN"; fi
 fi
-if [ -n "${NOTARY_PROFILE:-}" ] && [ -n "${PKG_IDENTITY:-}" ]; then
-  xcrun notarytool submit "$OUT" --keychain-profile "$NOTARY_PROFILE" --wait
-  xcrun stapler staple "$OUT"
-  spctl --assess --type install -vv "$OUT"
+productbuild "$@" "$OUT"
+if [ -z "${PKG_IDENTITY:-}" ]; then
+	echo "build-pkg.sh: $OUT is NOT signed (no PKG_IDENTITY)" >&2
 fi
 echo "built $OUT"

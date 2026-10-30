@@ -14,6 +14,19 @@
   the tray and the CLIs no longer say "Sign in with Microsoft" only.
   docs/usage.md "Sign in with a Google, Apple or personal Microsoft account".
 
+- **Signed and notarized macOS releases**: the release builds
+  `longarm-darwin-arm64.pkg` and `longarm-darwin-amd64.pkg` (longarm and
+  longarmd in `/usr/local/bin`), signed with a Developer ID Installer
+  certificate, notarized and stapled, so MDM-managed Macs install them; the
+  darwin binaries (also the self-update files and those in the archives) are
+  signed with a Developer ID Application certificate and the hardened
+  runtime. A new job, build-macos, does it before the checksums and minisign
+  signatures are made; without the `APPLE_*` secrets the files stay unsigned
+  with a warning. The pkg's postinstall also reads a configuration profile
+  (`com.longarm`), validates its values and restarts an installed
+  LaunchDaemon on upgrades. docs/ci-cd.md 2.8 (credentials), docs/usage.md
+  "macOS installer (.pkg) and MDM".
+
 ### Security
 
 - Hub admins no longer see other users' machines. With multi-tenancy an

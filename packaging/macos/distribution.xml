@@ -1,13 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- packaging/macos/build-pkg.sh fills in @VERSION@ and @HOSTARCH@ (x86_64 or arm64).
+     macOS 12: the oldest macOS the Go toolchain of go.mod supports. -->
 <installer-gui-script minSpecVersion="2">
-  <title>longarm @VERSION@</title>
-  <options customize="never" require-scripts="true" hostArchitectures="arm64,x86_64" />
+  <title>Longarm @VERSION@</title>
+  <options customize="never" require-scripts="true" hostArchitectures="@HOSTARCH@" />
   <domains enable_localSystem="true" />
+  <volume-check>
+    <allowed-os-versions>
+      <os-version min="12.0" />
+    </allowed-os-versions>
+  </volume-check>
   <pkg-ref id="com.longarm.pkg" />
   <choices-outline>
     <line choice="default" />
   </choices-outline>
-  <choice id="default" title="longarm">
+  <choice id="default" title="Longarm">
     <pkg-ref id="com.longarm.pkg" />
   </choice>
   <pkg-ref id="com.longarm.pkg" version="@VERSION@" onConclusion="none">longarm-component.pkg</pkg-ref>

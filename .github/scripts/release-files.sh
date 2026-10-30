@@ -6,8 +6,9 @@
 # each side's GoReleaser checksums.txt). Merges the checksums into
 # extra/checksums.txt (GoReleaser's format: sorted by file name, byte order);
 # then the directory must hold exactly the files of the
-# releases so far (the list below is v0.1.6's, before signing: publish adds a
-# <file>.minisig per hub/ file and SHA256SUMS), and checksums.txt must list
+# releases so far (the list below is v0.1.6's plus the macOS .pkg installers
+# of build-macos, before signing: publish adds a <file>.minisig per hub/ file
+# and SHA256SUMS), and checksums.txt must list
 # exactly GoReleaser's 18 archives/packages, with the sums of the copies that
 # are published under the hub's names.
 set -euo pipefail
@@ -25,8 +26,10 @@ err() {
 expect_hub=$(
 	sed "s/@V@/$v/g" <<'LIST'
 longarm-darwin-amd64
+longarm-darwin-amd64.pkg
 longarm-darwin-amd64.tar.gz
 longarm-darwin-arm64
+longarm-darwin-arm64.pkg
 longarm-darwin-arm64.tar.gz
 longarm-hub-darwin-amd64
 longarm-hub-darwin-arm64
