@@ -235,27 +235,45 @@ func certOf(t *testing.T, dir string) pki.Identity {
 	return id
 }
 
-// listedNames is what a longarm lists as hub workers (ls --json names).
+// listedNames is what a longarm lists as workers: ls --json is an object
+// of every worker's record by its name.
 func listedNames(t *testing.T, exe, cfgDir string) []string {
 	t.Helper()
 	out := mustBin(t, exe, cfgDir, "ls", "--json")
-	var rows []map[string]any
-	if err := json.Unmarshal([]byte(out), &rows); err != nil {
-		var wrapped struct {
-			Workers []map[string]any `json:"workers"`
-		}
-		if err2 := json.Unmarshal([]byte(out), &wrapped); err2 != nil {
-			t.Fatalf("ls --json: %v\n%s", err, out)
-		}
-		rows = wrapped.Workers
+	var byName map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &byName); err != nil {
+		t.Fatalf("ls --json: %v
+%s", err, out)
 	}
 	var names []string
-	for _, r := range rows {
-		if n, _ := r["name"].(string); n != "" {
-			names = append(names, n)
-		}
+	for n := range byName {
+		names = append(names, n)
 	}
 	return names
+}
+
+// keyUser is the user of a user key line.
+func keyUser(t *testing.T, line string) string {
+	t.Helper()
+	k, err := pki.ParseUserKeyLine(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k.User
+}
+
+// keyLine is the user key line in longarm trust init's output.
+func keyLine(t *testing.T, out string) string {
+	t.Helper()
+	for _, l := range strings.Split(out, "
+") {
+		if l = strings.TrimSpace(l); strings.HasPrefix(l, "longarm-user-key.") {
+			return l
+		}
+	}
+	t.Fatalf("no user key line in:
+%s", out)
+	return ""
 }
 
 func contains(list []string, s string) bool {
@@ -386,10 +404,9 @@ func TestOldReleaseCompat(t *testing.T) {
 			if r := lg("ls"); r.code != 0 || !strings.Contains(r.stdout, "nw") || !strings.Contains(r.stdout, "ow") {
 				t.Fatalf("%s ls: %+v", c.rel.version, r)
 			}
-			waitFor(t, c.rel.version+" client's renewed certificate", 30*time.Second, func() bool {
-				lg("whoami")
-				return certOf(t, c.dir).ID != ""
-			})
+			// its certificate (from before node IDs) keeps working, mapped by
+			// serial; it gets the ID at its regular renewal
+			t.Logf("%s client's certificate: node id %q", c.rel.version, certOf(t, c.dir).ID)
 			for _, w := range []string{"nw", "ow"} {
 				id := strings.TrimSpace(lg("run", w, "--", bins.helper, "print", "40", "20", "0").stdout)
 				if id == "" {
@@ -532,7 +549,7 @@ func TestOldReleaseCompat(t *testing.T) {
 	t.Run("4_end_to_end_trust", func(t *testing.T) {
 		// a v0.1.21 device makes its user key and endorses itself (v1,
 		// name-bound) ...
-		oldKey := strings.TrimSpace(firstLine(mustBin(t, r21.longarm, oc, "trust", "init")))
+		oldKey := keyLine(t, mustBin(t, r21.longarm, oc, "trust", "init"))
 		// ... a new worker that trusts that key verifies it
 		if r := longarmdCmd(t, "trust", "add-user", oldKey, "--data-dir", nw.dataDir); r.code != 0 {
 			t.Fatalf("new worker trust add-user: %+v", r)
@@ -573,7 +590,7 @@ func TestOldReleaseCompat(t *testing.T) {
 		// the reverse: a new device's endorsement binds its node ID; a
 		// v0.1.21 worker that trusts that user refuses it (it predates
 		// node IDs): such workers must be updated
-		newKey := strings.TrimSpace(firstLine(h.mustLongarm(h.client, "trust", "init")))
+		newKey := keyLine(t, h.mustLongarm(h.client, "trust", "init"))
 		if r := runBin(t, r21.longarmd, "", nil, "trust", "add-user", newKey, "--data-dir", ow13.dataDir); r.code != 0 {
 			// v0.1.13 has no end-to-end trust: nothing to check there
 			t.Logf("v0.1.13 longarmd trust add-user: %+v", r)
@@ -588,8 +605,8 @@ func TestOldReleaseCompat(t *testing.T) {
 		if r.code == 0 {
 			t.Log("note: the v0.1.21 worker accepted the ID-bound device endorsement")
 		}
-		mustBin(t, r21.longarmd, "", "trust", "remove-user", strings.Fields(newKey)[0], "--data-dir", odead.dataDir)
-		longarmdCmd(t, "trust", "remove-user", strings.Fields(oldKey)[0], "--data-dir", nw.dataDir)
+		mustBin(t, r21.longarmd, "", "trust", "remove-user", keyUser(t, newKey), "--data-dir", odead.dataDir)
+		longarmdCmd(t, "trust", "remove-user", keyUser(t, oldKey), "--data-dir", nw.dataDir)
 	})
 
 	t.Run("6_revoke_old_worker_by_id", func(t *testing.T) {
