@@ -108,6 +108,11 @@ describe('PoolTab', () => {
     expect(within(card).getByTestId('version').textContent).toBe('v0.1.8 · admin v0.1.7 ↑')
     // a fleet worker (no owner) gets no button: its updates are the hub's rollouts
     expect(within(screen.getByTestId('worker-fleet-1')).queryByTestId('update-btn')).toBeNull()
+    // in the first row, right after the version (not in the action row, where it pushed drain out of view)
+    const btn = within(card).getByTestId('update-btn')
+    expect(btn.closest('.actions')).toBeNull()
+    expect(within(card).getByTestId('version').nextElementSibling).toBe(btn)
+    expect(btn.getAttribute('aria-label')).toBe('Update to 0.1.9')
     fireEvent.click(within(card).getByTestId('update-btn'))
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/update') && c.init?.method === 'POST')).toBe(true))
     await waitFor(() => expect(within(card).getByTestId('update-line').textContent).toContain('2 jobs and 1 session kept running'), {
