@@ -191,7 +191,9 @@ func listening(l *pb.PortLink) bool {
 // target refuses new streams, even with a grant that is still valid.
 func TestLinkExpiryWithoutHub(t *testing.T) {
 	p := newLinkPair(t)
-	expires := time.Now().Add(3 * time.Second)
+	// whole seconds: a grant carries its expiry in seconds (expires_unix),
+	// so the link really ends at the truncated second
+	expires := time.Now().Add(3 * time.Second).Truncate(time.Second)
 	pl := p.link(t, "", expires, time.Now().Add(time.Hour))
 	l := pl.Links[0].Link
 	p.a.apply(pl, false)
