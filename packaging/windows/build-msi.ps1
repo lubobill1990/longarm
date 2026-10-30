@@ -45,6 +45,10 @@ if ($DefaultHub -and $DefaultHub -notmatch '^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-
 $DefaultHubCA = ("$DefaultHubCA".Trim() -replace '[: ]', '').ToLower()
 if ($DefaultHubCA -and $DefaultHubCA -notmatch '^[0-9a-f]{64}$') { throw '-DefaultHubCA is not a sha256 fingerprint (64 hex digits)' }
 if ($DefaultHubCA -and -not $DefaultHub) { throw '-DefaultHubCA without -DefaultHub' }
+# Authenticode (packaging/windows/sign.ps1): the binaries built here and the MSI, when signing is set
+# up (LONGARM_SIGN_PROFILE; release.yml), else nothing. The binaries taken from BinDir are signed by
+# whoever built them (GoReleaser's build hook, .goreleaser.yaml).
+$sign = Join-Path $PSScriptRoot 'sign.ps1'
 # The upgrade helper (internal/msiupgrade; the MSI's Binary table, not installed): taken from BinDir,
 # else built here (small, stdlib + x/sys; needs Go).
 $helper = Join-Path (Resolve-Path $BinDir).Path 'longarm-msihelper.exe'
@@ -59,6 +63,7 @@ if (-not (Test-Path $helper)) {
     Pop-Location
     Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue
   }
+  & $sign $helper  # Authenticode when set up (LONGARM_SIGN_PROFILE), else nothing
 }
 # The Longarm Update service (internal/updatesvc; installed, runs as LocalSystem): taken from BinDir,
 # else built here with this version and the release key (LONGARM_UPDATE_PUBKEY, as goreleaser builds
@@ -80,6 +85,7 @@ if (-not (Test-Path $updater)) {
     Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue
   }
   if (-not $pub) { Write-Warning 'longarm-update.exe has no release key (LONGARM_UPDATE_PUBKEY): its service will install nothing' }
+  & $sign $updater
 }
 $hasTray = if (Test-Path (Join-Path $BinDir 'longarm-tray.exe')) { 1 } else { 0 }
 $wix = Get-Command wix -ErrorAction SilentlyContinue
@@ -99,4 +105,5 @@ New-Item -ItemType Directory -Force (Split-Path -Parent ([IO.Path]::GetFullPath(
   -o $Out $src
 if ($LASTEXITCODE -ne 0) { throw "wix build failed ($LASTEXITCODE)" }
 Remove-Item ([IO.Path]::ChangeExtension($Out, ".wixpdb")) -ErrorAction SilentlyContinue
+& $sign $Out  # after WiX: the MSI's own signature (the embedded cabinet is inside it)
 Write-Host "built $Out (version $msiVersion, $Arch, tray=$hasTray, default hub: $(if ($DefaultHub) { $DefaultHub } else { 'none: Custom only' }))"

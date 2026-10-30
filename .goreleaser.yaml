@@ -11,6 +11,8 @@
 #   LONGARM_DEFAULT_HUB_CA  optional sha256 pin of that hub's CA
 #   LONGARM_TRAY=1          also build cmd/longarm-tray (set by the wrappers when it exists)
 #   LONGARM_BUILD_SIDE      unix / windows: only that side's targets (release.yml; see builds); empty = all
+#   LONGARM_SIGN_PROFILE    set: Authenticode-sign the Windows binaries as they are built
+#                           (packaging/windows/sign.ps1 -Setup sets the rest); empty = unsigned
 #   (the native Linux tray + its deb: packaging/linux/goreleaser-tray.yaml, run by build.sh)
 version: 2
 project_name: longarm
@@ -50,6 +52,15 @@ builds:
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags: *ldflags
+    # Authenticode (Trusted Signing) right after the build, before the archives and checksums:
+    # packaging/windows/sign.ps1 when LONGARM_SIGN_PROFILE is set (release.yml), else a no-op.
+    # The path in single quotes: the hook's command line is split shell-style (backslashes).
+    hooks: &winsign
+      post:
+        - cmd: >-
+            {{ if ne (envOrDefault "LONGARM_SIGN_PROFILE" "") "" }}pwsh -NoLogo -NoProfile -NonInteractive
+            -File packaging/windows/sign.ps1 '{{ .Path }}'{{ else }}go version{{ end }}
+          output: true
   - id: longarmd
     main: ./cmd/longarmd
     binary: longarmd
@@ -66,6 +77,7 @@ builds:
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags: *ldflags
+    hooks: *winsign
   - id: longarm-hub
     main: ./cmd/longarm-hub
     binary: longarm-hub
@@ -82,6 +94,7 @@ builds:
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags: *ldflags
+    hooks: *winsign
   - id: longarm-relay
     main: ./cmd/longarm-relay
     binary: longarm-relay
@@ -98,6 +111,7 @@ builds:
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags: *ldflags
+    hooks: *winsign
   # The tray (built on the ui branch). Windows only by default: the shells
   # for macOS/Linux use system WebViews that need cgo (build those natively).
   - id: longarm-tray
@@ -116,6 +130,7 @@ builds:
       - -X github.com/lubobill1990/longarm/internal/version.DefaultHubCA={{ envOrDefault "LONGARM_DEFAULT_HUB_CA" "" }}
       # the tray's "Update to X" verifies the MSI's signature with it
       - -X github.com/lubobill1990/longarm/internal/update.PublicKey={{ envOrDefault "LONGARM_UPDATE_PUBKEY" "" }}
+    hooks: *winsign
 
 archives:
   # Client + worker bundle: longarm, longarmd (+ longarm-tray).
