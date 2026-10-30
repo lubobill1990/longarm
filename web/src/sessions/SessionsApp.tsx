@@ -108,6 +108,9 @@ function Sessions() {
     setOlderPages([])
     setOlder(undefined)
     pagedRef.current = false
+    let t: ReturnType<typeof setTimeout> | undefined
+    // the next refresh LIST_MS after this one answered: a slow worker (the
+    // list waits up to 15 s for each) never stacks requests up
     const load = () =>
       sessionsApi
         .list({ ...scope, all })
@@ -118,11 +121,13 @@ function Sessions() {
           setError(undefined)
         })
         .catch((e) => !gone && setError(e instanceof Error ? e.message : String(e)))
+        .finally(() => {
+          if (!gone) t = setTimeout(load, LIST_MS)
+        })
     load()
-    const t = setInterval(load, LIST_MS)
     return () => {
       gone = true
-      clearInterval(t)
+      clearTimeout(t)
     }
   }, [scope.worker, scope.agent, all]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -271,6 +276,19 @@ function Sessions() {
 }
 
 /**
+ * Why "Continue here" can't resume s ("" = it can): a live Copilot CLI
+ * conversation can't be forked; a running job takes no input (claude -p /
+ * copilot -p); a Copilot job's conversation is in the job's private
+ * COPILOT_HOME, which a new session doesn't see.
+ */
+export function continueBlocked(s: AgentSession): string {
+  if (s.where === 'desktop' && s.agent === 'copilot') return "Copilot CLI can't copy a conversation that is still open: continue here once it has ended there"
+  if (s.where === 'job' && s.state !== 'ended') return 'a Longarm job (non-interactive): continue here once it has ended'
+  if (s.where === 'job' && s.agent === 'copilot') return "the conversation is in the job's private Copilot home, which a new session can't resume"
+  return ''
+}
+
+/**
  * One session's tab: Terminal | Conversation for a Longarm session (the
  * terminal first) with the steer box; the conversation only, with
  * "Continue here", for an agent outside Longarm or a transcript.
@@ -299,8 +317,7 @@ function TabPanel({
       const started = await sessionsApi.start(s.worker, { agent, resume: s.id, fork: s.where === 'desktop', cwd: s.project_dir })
       onOpen(startedItem(s.worker, agent, started, s.id))
     })
-  // a live Copilot session can't be forked; it can be resumed once it has ended
-  const noCopy = s.where === 'desktop' && s.agent === 'copilot'
+  const blocked = continueBlocked(s)
   const showTerm = inLongarm && view === 'terminal'
   return (
     <section className="tabpanel" role="tabpanel" hidden={!visible} data-testid={`panel-${tab.id}`}>
@@ -317,21 +334,26 @@ function TabPanel({
         )}
         <span className="small muted tabpanel-where">
           {s.worker}
-          {s.session ? ` · session ${s.session}` : s.where === 'desktop' ? ' · outside Longarm (read-only)' : ' · transcript'}
+          {s.session
+            ? ` · session ${s.session}`
+            : s.where === 'job'
+              ? ` · Longarm job ${s.job_name || s.job} (read-only)`
+              : s.where === 'desktop'
+                ? ' · outside Longarm (read-only)'
+                : ' · transcript'}
           {s.project_dir ? ` · ${s.project_dir}` : ''}
         </span>
         <span className="spacer" />
         {!inLongarm && s.agent && s.id && (
           <button
             className="sm primary"
-            disabled={busy || noCopy}
+            disabled={busy || !!blocked}
             data-testid="continue-here"
             title={
-              noCopy
-                ? "Copilot CLI can't copy a conversation that is still open: continue here once it has ended there"
-                : s.where === 'desktop'
-                  ? 'resume a copy (--fork-session) in a Longarm session: the original stays open'
-                  : 'resume it in a Longarm session'
+              blocked ||
+              (s.where === 'desktop'
+                ? 'resume a copy (--fork-session) in a Longarm session: the original stays open'
+                : 'resume it in a Longarm session')
             }
             onClick={cont}
           >

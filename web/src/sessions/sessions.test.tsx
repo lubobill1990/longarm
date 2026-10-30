@@ -6,8 +6,8 @@ import { Toasts } from '../components/common'
 import type { PoolWorker } from '../api/types'
 import { PoolTab } from '../tray/PoolTab'
 import { ConversationView, entries } from './ConversationView'
-import { groupByWorker, matches, SessionList } from './SessionList'
-import { connectedTabs, parseHash, SessionsApp } from './SessionsApp'
+import { groupByWorker, matches, SessionList, stateMark } from './SessionList'
+import { connectedTabs, continueBlocked, parseHash, SessionsApp } from './SessionsApp'
 import { shortcutTarget } from './SessionTabs'
 import { SteerBox } from './SteerBox'
 import { BACKOFF, TerminalView } from './TerminalView'
@@ -549,5 +549,40 @@ describe('agent counters on the worker card', () => {
     await waitFor(() => expect(calls).toHaveLength(1))
     expect(calls[0].init?.method).toBe('POST')
     expect(body(calls[0])).toEqual({ worker: 'cpc-a', agent: 'claude' })
+  })
+})
+
+describe('agents in Longarm jobs', () => {
+  const job = item({ key: 'cpc-a/copilot/j1', agent: 'copilot', id: 'j1', title: 'review W29', where: 'job', session: undefined, job: '01M66YJJ2AHVSSW2DBRQNSDWSF', job_name: 'review-W29', state: 'working' })
+
+  it('are marked as jobs in the list and found by the job name', () => {
+    expect(stateMark(job)).toMatchObject({ mark: '▸', cls: 'job' })
+    expect(stateMark({ ...job, state: 'ended' }).cls).toBe('ended')
+    expect(matches(job, 'W29')).toBe(true)
+    render(<SessionList items={[job]} filter="" onFilter={() => {}} onOpen={() => {}} />)
+    expect(screen.getByTestId('session-cpc-a/copilot/j1').title).toContain('Longarm job review-W29')
+  })
+
+  it('open read-only: the conversation, no steer, no Continue here while the job runs', async () => {
+    location.hash = '#key=cpc-a/copilot/j1'
+    mockFetch({
+      '/local/longarm/v1/agent-sessions/cpc-a/copilot/j1/messages': () => [200, { messages: [], next_offset: 0, size: 0 }],
+      '/local/longarm/v1/agent-sessions': () => [200, { items: [job] }],
+    })
+    render(<SessionsApp />)
+    const panel = await screen.findByTestId('panel-cpc-a/copilot/j1')
+    await within(panel).findByTestId('conversation')
+    expect(within(panel).queryByTestId('steer')).toBeNull()
+    expect(within(panel).queryByTestId('terminal')).toBeNull()
+    expect(panel.textContent).toContain('Longarm job review-W29 (read-only)')
+    expect((within(panel).getByTestId('continue-here') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('Continue here: why not, per case', () => {
+    expect(continueBlocked(job)).toContain('once it has ended')
+    expect(continueBlocked({ ...job, state: 'ended' })).toContain('private Copilot home')
+    expect(continueBlocked({ ...job, agent: 'claude', state: 'ended' })).toBe('') // a Claude job's transcript resumes
+    expect(continueBlocked({ ...job, where: 'desktop' })).toContain("can't copy")
+    expect(continueBlocked({ ...job, where: 'none', state: 'ended' })).toBe('')
   })
 })

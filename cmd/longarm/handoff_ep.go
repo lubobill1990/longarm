@@ -50,6 +50,9 @@ type hoEndpoint struct {
 	isolation  string // "shared" | "per-user" ("" locally)
 	version    string // longarmd's
 	features   []string
+	// listed are recursive listings already made, by directory: list
+	// answers for them and their subdirectories without asking again.
+	listed map[string][]hoFile
 }
 
 func (e *hoEndpoint) local() bool { return e.conn == nil }
@@ -181,6 +184,21 @@ type hoFile struct {
 
 // list walks dir recursively (symlinks are skipped); a missing dir is empty.
 func (e *hoEndpoint) list(ctx context.Context, dir string) ([]hoFile, error) {
+	for root, ents := range e.listed {
+		if sub, ok := e.subRel(root, dir); ok {
+			var out []hoFile
+			for _, f := range ents {
+				if sub == "" {
+					out = append(out, f)
+				} else if rest, ok := strings.CutPrefix(f.rel, sub+"/"); ok {
+					g := f
+					g.rel = rest
+					out = append(out, g)
+				}
+			}
+			return out, nil
+		}
+	}
 	var out []hoFile
 	if e.local() {
 		err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -219,6 +237,20 @@ func (e *hoEndpoint) list(ctx context.Context, dir string) ([]hoFile, error) {
 		out = append(out, hoFile{rel: f.Path, isDir: f.IsDir, size: f.Size, mtime: f.Mtime.AsTime()})
 	}
 	return out, nil
+}
+
+// subRel is dir relative to root ('/'-separated; "" for root itself); ok
+// is false when dir is not root or inside it.
+func (e *hoEndpoint) subRel(root, dir string) (string, bool) {
+	if !e.within(dir, root) {
+		return "", false
+	}
+	if e.samePath(dir, root) {
+		return "", true
+	}
+	r := strings.TrimRight(e.native(root), e.sep())
+	rel := strings.TrimPrefix(e.native(dir)[len(r):], e.sep())
+	return strings.ReplaceAll(strings.TrimRight(rel, e.sep()), e.sep(), "/"), true
 }
 
 // stat reports a path (exists false when it does not).

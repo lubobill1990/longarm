@@ -112,7 +112,8 @@
     color: var(--gray-dot);
   }
   & .sdot.working,
-  & .sdot.running {
+  & .sdot.running,
+  & .sdot.job {
     color: var(--green);
   }
   & .sdot.waiting {

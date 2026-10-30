@@ -83,6 +83,8 @@ type agentItem struct {
 	Size         int64     `json:"size,omitempty"`
 	Where        string    `json:"where"`
 	Session      string    `json:"session,omitempty"`
+	Job          string    `json:"job,omitempty"`      // where job: the job's id
+	JobName      string    `json:"job_name,omitempty"` // and its name
 	State        string    `json:"state"`
 	LastActivity time.Time `json:"last_activity,omitzero"`
 	PID          int       `json:"pid,omitempty"`
@@ -103,6 +105,10 @@ type agentListJSON struct {
 	// the window (unset: none): the next page is until=<older>.
 	Older time.Time `json:"older,omitzero"`
 }
+
+// agentJobsMax: the newest jobs the list asks a worker for (their names
+// and states for the agents in them).
+const agentJobsMax = 500
 
 // agentRecent is how far back the first page of the list goes.
 const agentRecent = 7 * 24 * time.Hour
@@ -314,24 +320,26 @@ func (d *daemon) workerAgentSessions(ctx context.Context, worker, agent string, 
 	var sessions []*pb.Session
 	var serr error
 	live := map[string]int{}
+	jobsByID := map[string]*pb.Job{}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	wg.Add(1) // an older page too: what the running sessions resume stays on the first
+	wg.Add(2) // an older page too: what the running sessions resume stays on the first
 	go func() {
 		defer wg.Done()
 		resp, err := ep.conn.Sessions().List(ctx, &pb.ListSessionsRequest{All: all})
 		sessions, serr = resp.GetSessions(), err
 	}()
-	for _, ad := range adapters {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			procs := liveAgents(ctx, ep, ad.name(), h.cfg[ad.name()])
-			mu.Lock()
-			defer mu.Unlock()
-			maps.Copy(live, procs)
-		}()
-	}
+	go func() { // the agents in jobs: their names, whether they run
+		defer wg.Done()
+		resp, err := ep.conn.Jobs().List(ctx, &pb.ListJobsRequest{Limit: agentJobsMax})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "longarm daemon: jobs on %s: %s\n", worker, oneLine(err))
+		}
+		for _, j := range resp.GetJobs() {
+			jobsByID[j.Spec.GetId()] = j
+		}
+	}()
+	maps.Copy(live, d.agentLive(ctx, ep, h))
 	wg.Wait()
 	if serr != nil {
 		return nil, older, serr
@@ -346,7 +354,35 @@ func (d *daemon) workerAgentSessions(ctx context.Context, worker, agent string, 
 			pinned[a+"/"+id] = true
 		}
 	}
+	sawOlder := func(mod time.Time) {
+		if mod.Before(win.since) {
+			mu.Lock()
+			if mod.After(older) {
+				older = mod
+			}
+			mu.Unlock()
+		}
+	}
 	var transcripts []*agentSession
+	owners := map[*agentSession]agentOwner{}
+	if h.dataDir != "" && slices.ContainsFunc(adapters, func(ad agentAdapter) bool { return ad.name() == agentlog.Copilot }) {
+		running := map[string]bool{} // "j-<id>" / "s-<name>" of what runs
+		for id, j := range jobsByID {
+			running["j-"+id] = !terminalState(j.State)
+		}
+		for _, ss := range sessions {
+			running["s-"+ss.Name] = !terminalState(ss.State)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			list, owned := d.homeTranscripts(ctx, ep, h.dataDir, running, win, sawOlder)
+			mu.Lock()
+			defer mu.Unlock()
+			transcripts = append(transcripts, list...)
+			maps.Copy(owners, owned)
+		}()
+	}
 	for _, ad := range adapters {
 		wg.Add(1)
 		go func() {
@@ -355,13 +391,7 @@ func (d *daemon) workerAgentSessions(ctx context.Context, worker, agent string, 
 				if pinned[ad.name()+"/"+id] {
 					return !win.page()
 				}
-				if mod.Before(win.since) {
-					mu.Lock()
-					if mod.After(older) {
-						older = mod
-					}
-					mu.Unlock()
-				}
+				sawOlder(mod)
 				return win.has(mod)
 			}
 			list, err := ad.list(ctx, ep, h.cfg[ad.name()], "", false, keep)
@@ -375,10 +405,17 @@ func (d *daemon) workerAgentSessions(ctx context.Context, worker, agent string, 
 	}
 	wg.Wait()
 	h.remember(transcripts)
+	for _, t := range transcripts { // an agent in a job's worktree: the job's
+		if _, ok := owners[t]; !ok {
+			if id := jobOfDir(ep, h.dataDir, t.ProjectDir); id != "" {
+				owners[t] = agentOwner{job: id}
+			}
+		}
+	}
 	if win.page() {
 		sessions = nil // listed on the first page
 	}
-	items = matchAgentSessions(ep, sessions, transcripts, live, all)
+	items = matchAgentSessions(ep, sessions, transcripts, live, all, owners, jobsByID)
 	if agent != "" {
 		items = slices.DeleteFunc(items, func(it *agentItem) bool { return it.Agent != agent })
 	}
@@ -423,11 +460,19 @@ func resumedID(argv []string) string {
 // live: the running agent processes, pid by "<agent>/<id>" (0: unknown).
 // A session is paired with the transcript its process has open, the one
 // it resumes, else the newest one of its agent in its directory written
-// since it started. States other than ended and running are inferStates'.
-func matchAgentSessions(ep *hoEndpoint, sessions []*pb.Session, transcripts []*agentSession, live map[string]int, all bool) []*agentItem {
+// since it started. owners: transcripts known to be a job's or a session's
+// (their private Copilot homes, job worktrees); a session's own comes
+// first, a job's are listed as the job's. States other than ended and
+// running are inferStates'.
+func matchAgentSessions(ep *hoEndpoint, sessions []*pb.Session, transcripts []*agentSession, live map[string]int, all bool,
+	owners map[*agentSession]agentOwner, jobs map[string]*pb.Job) []*agentItem {
 	byKey := map[string]*agentSession{}
+	bySession := map[string]*agentSession{}
 	for _, t := range transcripts {
 		byKey[t.Agent+"/"+t.ID] = t
+		if o := owners[t]; o.session != "" && (bySession[o.session] == nil || t.Modified.After(bySession[o.session].Modified)) {
+			bySession[o.session] = t
+		}
 	}
 	byPID := map[int]string{}
 	for k, pid := range live {
@@ -445,6 +490,9 @@ func matchAgentSessions(ep *hoEndpoint, sessions []*pb.Session, transcripts []*a
 		t := byKey[a+"/"+resumedID(ss.Argv)]
 		if k, ok := byPID[int(ss.Pid)]; ok && strings.HasPrefix(k, a+"/") && byKey[k] != nil {
 			t = byKey[k]
+		}
+		if own := bySession[ss.Name]; own != nil && own.Agent == a { // its private Copilot home
+			t = own
 		}
 		if t != nil && !claimed[t] {
 			found[i], claimed[t] = t, true
@@ -484,6 +532,11 @@ func matchAgentSessions(ep *hoEndpoint, sessions []*pb.Session, transcripts []*a
 			continue
 		}
 		it := transcriptItem(ep.name, t)
+		if o := owners[t]; o.job != "" {
+			jobItem(it, o.job, jobs[o.job])
+			items = append(items, it)
+			continue
+		}
 		if pid, ok := live[t.Agent+"/"+t.ID]; ok {
 			it.Where, it.PID, it.live = whereDesktop, pid, true
 		} else {
@@ -604,13 +657,19 @@ func liveAgents(ctx context.Context, ep *hoEndpoint, agent, cfg string) map[stri
 		}
 		var mu sync.Mutex
 		var wg sync.WaitGroup
+		// the processes, listed once (a check per file took a tasklist each:
+		// workers with many ended claude -p jobs ran out of time)
+		names := sync.OnceValue(func() map[int]string { return processNames(ctx, ep) })
+		sem := make(chan struct{}, 8)
 		for _, f := range ents {
 			if f.isDir || strings.Contains(f.rel, "/") || !strings.HasSuffix(f.rel, ".json") {
 				continue
 			}
 			wg.Add(1)
+			sem <- struct{}{}
 			go func() {
 				defer wg.Done()
+				defer func() { <-sem }()
 				b, err := ep.readSmall(ctx, ep.join(dir, f.rel), 256<<10)
 				var ps struct {
 					PID       int    `json:"pid"`
@@ -619,7 +678,13 @@ func liveAgents(ctx context.Context, ep *hoEndpoint, agent, cfg string) map[stri
 				if err != nil || json.Unmarshal(b, &ps) != nil || ps.PID <= 0 || ps.SessionID == "" {
 					return
 				}
-				if name, alive := processAlive(ctx, ep, ps.PID); alive && (name == "" || agentProcName(name)) {
+				name, alive := "", false
+				if all := names(); all != nil {
+					name, alive = all[ps.PID]
+				} else {
+					name, alive = processAlive(ctx, ep, ps.PID)
+				}
+				if alive && (name == "" || agentProcName(name)) {
 					mu.Lock()
 					out[agent+"/"+ps.SessionID] = ps.PID
 					mu.Unlock()
@@ -651,9 +716,15 @@ func liveAgents(ctx context.Context, ep *hoEndpoint, agent, cfg string) map[stri
 // where the transcripts listed last are.
 type agentHost struct {
 	goos, home string
+	dataDir    string            // longarmd's ("" when the worker doesn't say: per-user isolation)
 	cfg        map[string]string // by agent
 	paths      map[string]string // transcript by "<agent>/<id>"
-	at         time.Time
+	// the live agent processes (agentLive): the last answer, when, and the
+	// refresh under way (nil: none)
+	live     map[string]int
+	liveAt   time.Time
+	liveDone chan struct{}
+	at       time.Time
 }
 
 var agentHosts = struct {
@@ -697,7 +768,7 @@ func (d *daemon) agentEndpoint(ctx context.Context, worker string) (*hoEndpoint,
 		return nil, nil, err
 	}
 	ep := &hoEndpoint{name: worker, conn: conn, goos: info.Os, home: home.AbsPath}
-	h = &agentHost{goos: ep.goos, home: ep.home, cfg: map[string]string{}, paths: map[string]string{}, at: time.Now()}
+	h = &agentHost{goos: ep.goos, home: ep.home, dataDir: info.DataDir, cfg: map[string]string{}, paths: map[string]string{}, at: time.Now()}
 	for _, ad := range allAdapters {
 		h.cfg[ad.name()] = ad.configDir(ctx, ep)
 	}
@@ -726,6 +797,17 @@ func (d *daemon) agentTranscript(ctx context.Context, worker, agent, id string) 
 	list, err := ad.list(ctx, ep, h.cfg[agent], id, false, nil)
 	if err != nil {
 		return nil, nil, "", err
+	}
+	if len(list) == 0 && agent == agentlog.Copilot && h.dataDir != "" {
+		// a job's or session's private Copilot home
+		homes, listed, _ := agentHomes(ctx, ep, h.dataDir)
+		lep := *ep
+		lep.listed = listed
+		for _, home := range homes {
+			if list, _ = ad.list(ctx, &lep, home.path, id, false, nil); len(list) > 0 {
+				break
+			}
+		}
 	}
 	if len(list) == 0 {
 		return nil, nil, "", notFoundf("no %s session %s on %s", agent, id, worker)
@@ -814,7 +896,7 @@ func (d *daemon) agentMessages(ctx context.Context, worker, agent, id string, q 
 	if err != nil {
 		return nil, err
 	}
-	ep, _, p, err := d.agentTranscript(ctx, worker, agent, id)
+	ep, h, p, err := d.agentTranscript(ctx, worker, agent, id)
 	if err != nil {
 		return nil, err
 	}
@@ -862,8 +944,10 @@ func (d *daemon) agentMessages(ctx context.Context, worker, agent, id string, q 
 		first, next = end, end
 	}
 	msgs := agentlog.Parse(agent, lines, 0)
-	live := liveAgents(ctx, ep, agent, agentHostCfg(worker, agent))
-	_, isLive := live[agent+"/"+id]
+	_, isLive := d.agentLive(ctx, ep, h)[agent+"/"+id]
+	if !isLive {
+		isLive = d.jobRunning(ctx, ep, h, p)
+	}
 	m := &messagesJSON{Messages: msgs, Start: first, NextOffset: next, Size: fi.size, Truncated: first > 0,
 		State: agentlog.InferState(agent, msgs, isLive, fi.mtime, time.Now())}
 	if m.Messages == nil {
@@ -872,21 +956,11 @@ func (d *daemon) agentMessages(ctx context.Context, worker, agent, id string, q 
 	return m, nil
 }
 
-// agentHostCfg is the agent's config directory on worker as last learned.
-func agentHostCfg(worker, agent string) string {
-	agentHosts.Lock()
-	defer agentHosts.Unlock()
-	if h := agentHosts.m[worker]; h != nil {
-		return h.cfg[agent]
-	}
-	return ""
-}
-
 // watchMessages follows a transcript from off (default: its end) and
 // sends "messages" whenever complete lines arrive and "state" when the
 // inferred state changes, until ctx ends.
 func (d *daemon) watchMessages(ctx context.Context, worker, agent, id string, off int64, given bool, send func(string, any) error) error {
-	ep, _, p, err := d.agentTranscript(ctx, worker, agent, id)
+	ep, h, p, err := d.agentTranscript(ctx, worker, agent, id)
 	if err != nil {
 		return err
 	}
@@ -900,8 +974,8 @@ func (d *daemon) watchMessages(ctx context.Context, worker, agent, id string, of
 	}
 	w := &transcriptWatch{agent: agent, base: off, recent: agentlog.Parse(agent, recent, 0), lastActivity: time.Now()}
 	isLive := func() bool {
-		_, ok := liveAgents(ctx, ep, agent, agentHostCfg(worker, agent))[agent+"/"+id]
-		return ok
+		_, ok := d.agentLive(ctx, ep, h)[agent+"/"+id]
+		return ok || d.jobRunning(ctx, ep, h, p)
 	}
 	w.live = isLive()
 	w.state = w.inferState()

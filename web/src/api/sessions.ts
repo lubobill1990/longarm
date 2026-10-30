@@ -10,8 +10,11 @@ const BASE = '/local/longarm/v1'
 export type Agent = 'claude' | 'copilot'
 /** working | waiting (its turn is over) | running (not a known agent) | ended */
 export type AgentState = 'working' | 'waiting' | 'running' | 'ended'
-/** longarm: in Longarm session `session`; desktop: a live process outside Longarm; none: a transcript only */
-export type Where = 'longarm' | 'desktop' | 'none'
+/**
+ * longarm: in Longarm session `session`; job: in Longarm job `job` (claude -p / copilot -p: read-only);
+ * desktop: a live process outside Longarm; none: a transcript only
+ */
+export type Where = 'longarm' | 'job' | 'desktop' | 'none'
 
 /** One row of GET /v1/agent-sessions. */
 export interface AgentSession {
@@ -28,6 +31,9 @@ export interface AgentSession {
   where: Where
   /** the Longarm session's name (where: longarm) */
   session?: string
+  /** the Longarm job's id and name (where: job) */
+  job?: string
+  job_name?: string
   state: AgentState
   last_activity?: string
   pid?: number
