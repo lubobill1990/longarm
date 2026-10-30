@@ -100,13 +100,13 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	welcome := &pb.HubWelcome{
 		NodeState: n.rec.State, AuditOffset: n.rec.AuditOffset,
 		MetricsInterval: durationpb.New(h.cfg.Heartbeat.Interval.Duration),
-		RenewBefore:     durationpb.New(h.cfg.RenewBefore(n.rec.Role)),
+		RenewBefore:     durationpb.New(max(h.cfg.RenewBefore(n.rec.Role), forcedRenewBefore(n, c.cert))),
 		HubDraining:     n.rec.AdminDrain,
 		Tailnet:         h.tailnetInfo(n),
 		Relay:           h.relayAdvert(),
 		Relays:          h.relaySetLocked(),
 		// renamed: a worker that follows renames renews with the new name
-		RenewNow: renameRenewal(n, c.cert),
+		RenewNow: renameRenewal(n, c.cert) || idMismatch(n, c.cert),
 	}
 	// The session's first messages are queued before h.mu is released: from
 	// then on other goroutines may push to it too (port links, share changes,

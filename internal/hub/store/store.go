@@ -424,6 +424,17 @@ func (s *Store) CertNode(serial string) (string, error) {
 	return id, err
 }
 
+// CertRecord is how a certificate was recorded: its node's ID and whether
+// the hub knew it to carry a node ID (has_id; certificates recorded before
+// node IDs, by an older hub, never did). nodeID "" = not recorded.
+func (s *Store) CertRecord(serial string) (nodeID string, hasID bool, err error) {
+	err = s.db.QueryRow(`SELECT node_id, has_id FROM certs WHERE serial=?`, serial).Scan(&nodeID, &hasID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return nodeID, hasID, err
+}
+
 // NameHasCerts reports whether a certificate was ever recorded for the
 // name (as issued; any node, revoked or expired ones too).
 func (s *Store) NameHasCerts(name string) (bool, error) {

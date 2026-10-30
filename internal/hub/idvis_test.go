@@ -5,13 +5,16 @@ package hub
 // user's name, and IDs never leak hidden nodes.
 
 import (
+	"crypto/x509"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -195,5 +198,55 @@ func TestProjectionHidesIDs(t *testing.T) {
 	h.indexNode(&store.Node{ID: bobWorkerID, Name: "bw2", CertName: "bw", Role: "worker", State: stateApproved, Owner: "bob"})
 	if p := h.projector(alice); !p.hidden("bw2") || !p.hidden("bw") {
 		t.Fatal("renamed node not hidden by both names")
+	}
+}
+
+// TestCertWithAnIDAnOlderHubRecorded: a certificate carrying a node ID this
+// hub never assigned (issued by a newer longarm admin issue while an older
+// hub ran) maps to the node the older hub recorded its serial for - as a
+// certificate without an ID would - and renews into that node's ID at once;
+// one recorded with its ID, or never recorded, maps to nothing.
+func TestCertWithAnIDAnOlderHubRecorded(t *testing.T) {
+	th := idHub(t)
+	h := th.h
+	issue := func(id string) (*x509.Certificate, pki.Identity) {
+		certPEM, _, err := th.ca.Issue(pki.IssueOptions{Role: pki.RoleWorker, Name: "rw", ID: id})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := pki.ParseCertPEM(certPEM)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ident, _ := pki.IdentityFromCert(c)
+		return c, ident
+	}
+	lookup := func(c *x509.Certificate, id pki.Identity) *node {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.nodeForCertLocked(id, c)
+	}
+	c, id := issue("eeee0000-0000-4000-8000-000000000009")
+	if n := lookup(c, id); n != nil {
+		t.Fatalf("an unrecorded certificate with an unknown ID mapped to %s", n.rec.Name)
+	}
+	// recorded by an older hub (it couldn't read the ID: has_id 0)
+	if err := h.store.AddCert(store.Cert{Serial: pki.Serial(c), Node: "rw", NodeID: rootWorkerID, NotAfter: c.NotAfter, IssuedAt: c.NotBefore}); err != nil {
+		t.Fatal(err)
+	}
+	n := lookup(c, id)
+	if n == nil || n.rec.ID != rootWorkerID {
+		t.Fatalf("the recorded certificate: %v", n)
+	}
+	if !idMismatch(n, c) || forcedRenewBefore(n, c) <= time.Until(c.NotAfter) {
+		t.Fatal("no renewal into the node's ID")
+	}
+	// recorded with its ID (by a hub that knows IDs): never remapped
+	c2, id2 := issue("eeee0000-0000-4000-8000-00000000000a")
+	if err := h.store.AddCert(store.Cert{Serial: pki.Serial(c2), Node: "rw", NodeID: rootWorkerID, NotAfter: c2.NotAfter, IssuedAt: c2.NotBefore, HasID: true}); err != nil {
+		t.Fatal(err)
+	}
+	if n := lookup(c2, id2); n != nil {
+		t.Fatalf("a certificate recorded with another ID mapped to %s", n.rec.Name)
 	}
 }

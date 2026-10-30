@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -186,7 +187,20 @@ func isWorker(n *node) bool { return n.rec.Role == string(pki.RoleWorker) }
 // question (nil).
 func (h *Hub) nodeForCertLocked(id pki.Identity, cert *x509.Certificate) *node {
 	if id.ID != "" {
-		return h.nodes[id.ID]
+		if n := h.nodes[id.ID]; n != nil {
+			return n
+		}
+		// A node ID this hub never assigned, on a certificate an older hub
+		// recorded (by serial, for a node it knew by name: before node IDs
+		// it couldn't read the ID) - e.g. issued by a newer `longarm admin
+		// issue` before the hub's upgrade: that node's, by its recorded
+		// serial, as a certificate without an ID would be. It renews into
+		// the node's ID at once (idMismatch). A certificate the hub recorded
+		// with its ID, or never saw, is not mapped.
+		if nid, hasID, err := h.store.CertRecord(pki.Serial(cert)); err == nil && !hasID && nid != "" {
+			return h.nodes[nid]
+		}
+		return nil
 	}
 	serial := pki.Serial(cert)
 	nid := h.knownSerials[serial]
@@ -329,11 +343,24 @@ func renameRenewal(n *node, cert *x509.Certificate) bool {
 	return err == nil && id.Name != n.rec.Name
 }
 
-// forcedRenewBefore is renameRenewal for a client's Whoami: a renew_before
-// longer than the certificate's remaining life (a client asks once per run,
-// and its renewed certificate has the new name: no loop). 0 = no need.
+// idMismatch reports whether cert carries a node ID other than n's (a
+// certificate an older hub recorded by serial: nodeForCertLocked). Such a
+// node renews at once, whatever its version: its certificate's ID is not
+// the one the hub reports for it, so clients would refuse it.
+func idMismatch(n *node, cert *x509.Certificate) bool {
+	if cert == nil {
+		return false
+	}
+	id, err := pki.IdentityFromCert(cert)
+	return err == nil && id.ID != "" && !strings.EqualFold(id.ID, n.rec.ID)
+}
+
+// forcedRenewBefore is renameRenewal (clients) and idMismatch (any node)
+// as a renew_before longer than the certificate's remaining life: the node
+// renews now (a client asks once per run; a worker at its next welcome;
+// the renewed certificate has the name and ID: no loop). 0 = no need.
 func forcedRenewBefore(n *node, cert *x509.Certificate) time.Duration {
-	if !renameRenewal(n, cert) || n.rec.Role == string(pki.RoleWorker) {
+	if !(renameRenewal(n, cert) && n.rec.Role != string(pki.RoleWorker)) && !idMismatch(n, cert) {
 		return 0
 	}
 	left := time.Until(cert.NotAfter)
