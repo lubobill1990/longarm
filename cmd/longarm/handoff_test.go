@@ -15,6 +15,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lubobill1990/longarm/internal/client"
+	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
 // The test binary doubles as a fake agent CLI (copied to claude[.exe] /
@@ -453,5 +456,36 @@ func TestHandoffPreflight(t *testing.T) {
 	w = nil
 	if err := preflight(ctx, claudeAdapter{}, ep, ep, dstCfg, sess, repo, false, &w); err != nil || len(w) != 0 {
 		t.Errorf("all good: %v %v", err, w)
+	}
+}
+
+// TestOwnMachine: handoff refuses a worker of another user - by what the
+// worker says or what the hub lists - whoever the caller is; ownerless
+// workers and the local machine pass.
+func TestOwnMachine(t *testing.T) {
+	w := func(owner, caller string) *hoEndpoint {
+		return &hoEndpoint{name: "w", conn: &client.Conn{}, owner: owner, callerUser: caller}
+	}
+	for _, c := range []struct {
+		ep   *hoEndpoint
+		node *pb.NodeInfo
+		ok   bool
+	}{
+		{&hoEndpoint{name: localMachine}, nil, true},
+		{w("", "alice"), nil, true},                         // fleet worker / no hub
+		{w("alice", "alice"), &pb.NodeInfo{Owner: "alice"}, true},
+		{w("alice", "bob"), nil, false},                     // shared with bob or not
+		{w("", "bob"), &pb.NodeInfo{Owner: "alice"}, false}, // an older worker: the hub knows
+		{w("alice", "root"), &pb.NodeInfo{Owner: "alice"}, false},
+		{w("?", "alice"), nil, false}, // owner unknown yet
+	} {
+		err := ownMachine(c.ep, c.node)
+		if c.ok != (err == nil) {
+			t.Errorf("owner %q caller %q node %v: %v", c.ep.owner, c.ep.callerUser, c.node, err)
+		}
+		var ce *codedError
+		if err != nil && (!errors.As(err, &ce) || ce.code != exitNoPerm) {
+			t.Errorf("not a permission error: %v", err)
+		}
 	}
 }

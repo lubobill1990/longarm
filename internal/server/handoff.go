@@ -10,9 +10,11 @@ package server
 // random token, until this expiry, once. The target worker (Pull) dials
 // the source with its worker certificate over the port-link legs; both
 // sides apply the port-link rules for the owner (LinkOwnerDeny: a user of
-// the worker, owner / shares, disabled users, pinned key) and, with
-// end-to-end trust, demand that the other worker is endorsed by the owner
-// (LinkPeerTrustDeny).
+// the worker, owner / shares, disabled users, pinned key) plus handoff's
+// own: a worker with an owner takes part for its owner only - never for a
+// user it is shared with, never for an admin of another user
+// (handoffDeny) - and, with end-to-end trust, demand that the other worker
+// is endorsed by the owner (LinkPeerTrustDeny).
 
 import (
 	"bytes"
@@ -54,6 +56,22 @@ var bundleNameRE = regexp.MustCompile(`^longarm-handoff-[A-Za-z0-9_-]{1,80}\.bun
 // PeerDialer connects to another worker with this worker's certificate
 // over the port-link legs; close releases the connection.
 type PeerDialer func(worker string, endpoints []string) (conn grpc.ClientConnInterface, close func(), err error)
+
+// handoffDeny says why user may not hand a session off to or from this
+// worker ("" = may): the port-link rules (LinkOwnerDeny), and a worker with
+// an owner (the hub's WorkerAccess, or [access] owners) serves handoffs of
+// its owner only. Sharing a worker lets others run jobs there, not move
+// agent sessions and their code in or out; admin certificates are no
+// exception (they act as their user).
+func (s *Server) handoffDeny(user string) string {
+	if why := s.LinkOwnerDeny(user); why != "" {
+		return why
+	}
+	if (s.WorkerAccess.Owner() != "" || (s.Access != nil && len(s.Access.Owners) > 0)) && !s.machineOwner(user) {
+		return "this worker is another user's: handoff moves sessions only between your own machines"
+	}
+	return ""
+}
 
 // offer is one registered transfer.
 type offer struct {
@@ -113,7 +131,7 @@ func (h *handoffServer) Offer(ctx context.Context, req *pb.HandoffOfferRequest) 
 	case !bundleNameRE.MatchString(filepath.Base(filepath.FromSlash(req.Path))):
 		return deny(codes.InvalidArgument, "only bundles longarm handoff made can be offered")
 	}
-	if why := h.s.LinkOwnerDeny(owner); why != "" {
+	if why := h.s.handoffDeny(owner); why != "" {
 		return deny(codes.PermissionDenied, "%s", why)
 	}
 	h.mu.Lock()
@@ -268,7 +286,7 @@ func (h *handoffServer) Fetch(req *pb.HandoffFetchRequest, st pb.Handoff_FetchSe
 	h.mu.Unlock()
 	defer h.drop(o.id)
 	fields["owner"], fields["peer"] = o.owner, id.Name
-	if why := h.s.LinkOwnerDeny(o.owner); why != "" {
+	if why := h.s.handoffDeny(o.owner); why != "" {
 		return deny(codes.PermissionDenied, "%s", why)
 	}
 	if why := LinkPeerTrustDeny(h.s.Trust.Load(), peerCert(ctx), o.owner); why != "" {
@@ -318,7 +336,7 @@ func (h *handoffServer) Pull(ctx context.Context, req *pb.HandoffPullRequest) (*
 	case req.Size <= 0 || req.Size > handoffMaxBytes || len(req.Sha256) != sha256.Size:
 		return fail(status.Error(codes.InvalidArgument, "bad size or sha256"))
 	}
-	if why := h.s.LinkOwnerDeny(owner); why != "" {
+	if why := h.s.handoffDeny(owner); why != "" {
 		return fail(status.Errorf(codes.PermissionDenied, "%s", why))
 	}
 	if h.s.PeerDial == nil {

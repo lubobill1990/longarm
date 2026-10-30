@@ -885,7 +885,12 @@ would carry, after the remote-first fetch with `--git-auth forward`) decides
   end-to-end trust the pinned key, and the other worker must be endorsed by
   the owner). The offer is given by the owner's own device over its mTLS
   connections to the workers, never through the hub, so the hub can't forge
-  or widen it. The source copies the bundle into its staging area and
+  or widen it. Relays carry worker <-> worker traffic only for the worker
+  pairs the hub lists (those of port links), so with a hub this machine
+  first asks it to list the pair for the transfer (`Fleet.HandoffPair`, at
+  most 10 minutes, released right after; the caller's own workers or fleet
+  workers only, never another user's - admins included); the hub's relays,
+  embedded and external (`longarm-relay --hub`), then carry it. The source copies the bundle into its staging area and
   deletes it after the one fetch or at expiry; the target checks the size
   and sha256 against what the source reported before importing it (its
   prerequisites must be in the mirror). When that fails - a worker without
@@ -962,7 +967,13 @@ project-level; Claude's `.mcp.json` travels with the code) that the target
 lacks - server names only, read in memory. The session's files may be at
 most `--max-size` (default 64M; else exit 2).
 
-**Safety.** Only your own sessions: on a worker, the longarm session
+**Safety.** Only your own machines: a worker with an owner other than you
+(as the worker says, or as the hub lists it) is refused as `--from` and as
+`--to` (exit 77) - also when it is shared with you, and also for admin
+certificates (they act as their user); the worker refuses the handoff calls
+(`Handoff.Offer` / `Fetch` / `Pull`, `Workspace.PushHandoff`) of anybody but
+its owner as well. Fleet workers (no owner) and workers without a hub
+follow the rules below. Only your own sessions: on a worker, the longarm session
 running the agent must be yours (else exit 77); without one, the worker's
 agent state must be yours - per-user isolation, your own worker, or a
 setup without a hub - else exit 77 (a fleet or shared worker in shared

@@ -216,6 +216,9 @@ func (w *workspaceServer) PushHandoff(ctx context.Context, req *pb.PushHandoffRe
 	if !workspace.HandoffBranchRE.MatchString(req.Branch) || strings.Contains(req.Branch, "..") {
 		return nil, status.Errorf(codes.InvalidArgument, "bad branch %q", req.Branch)
 	}
+	if why := w.s.handoffDeny(IdentityFrom(ctx).Owner()); why != "" {
+		return nil, status.Error(codes.PermissionDenied, why)
+	}
 	var err error
 	if w.s.perUser() {
 		var h *userspace.Helper

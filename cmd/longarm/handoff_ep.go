@@ -42,6 +42,7 @@ type hoEndpoint struct {
 	goos       string // "windows", "linux", "darwin"
 	home       string // absolute home directory (of the worker's account the files and sessions use)
 	callerUser string // the user the worker sees us as ("" = no users)
+	owner      string // the worker's owner ("" = none: a fleet worker, or no hub)
 	isolation  string // "shared" | "per-user" ("" locally)
 	version    string // longarmd's
 	features   []string
@@ -149,7 +150,7 @@ func openEndpoint(ctx context.Context, s *session, name string) (*hoEndpoint, er
 		return nil, err
 	}
 	return &hoEndpoint{name: name, cert: info.Name, conn: conn, goos: info.Os, home: home.AbsPath, callerUser: info.CallerUser,
-		isolation: info.Isolation, version: info.Version, features: info.Features}, nil
+		owner: info.Owner, isolation: info.Isolation, version: info.Version, features: info.Features}, nil
 }
 
 func (e *hoEndpoint) close() {

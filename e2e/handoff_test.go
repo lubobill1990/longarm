@@ -437,6 +437,82 @@ func TestAgentHandoff(t *testing.T) {
 			t.Error("a refused handoff marked the source")
 		}
 
+		// a session for the refusals below: each leaves it as it was
+		rid := "6e55a7c1-0000-4000-8000-00000000c1a0"
+		rProj := filepath.Join(chome, ".claude", "projects", claudeDir(repo))
+		mustWrite(t, filepath.Join(rProj, rid+".jsonl"),
+			fmt.Sprintf(`{"type":"user","cwd":%s,"sessionId":%q,"version":"1.0.0","message":{"role":"user","content":"x"}}`+"
+", jsonQ(repo), rid))
+		untouched := func(what string) {
+			t.Helper()
+			if _, err := os.Stat(filepath.Join(rProj, rid+".handoff.json")); err == nil {
+				t.Errorf("%s: the source was marked handed off", what)
+			}
+			if m, _ := filepath.Glob(filepath.Join(w2home, ".claude", "projects", "*", rid+"*")); len(m) != 0 {
+				t.Errorf("%s: written on w2: %v", what, m)
+			}
+		}
+
+		// a forged source listing (a compromised source: a name that climbs
+		// out of the session's files): refused before anything moves
+		h.extra = []string{"LONGARM_TEST_HANDOFF_FORGE=project:" + rid + "/../../../../outside.txt"}
+		r := client(repo, "handoff", "--to", "w2", "--agent", "claude", "--session", rid, "--no-attach")
+		h.extra = nil
+		if r.code != 2 || !strings.Contains(r.stderr, "unsafe file name") {
+			t.Errorf("a forged source listing: %+v", r)
+		}
+		untouched("forged listing")
+		if _, err := os.Stat(filepath.Join(w2home, "outside.txt")); err == nil {
+			t.Error("a forged name wrote outside the agent's directory")
+		}
+
+		// the session is open in an agent here (Claude Code's sessions/<pid>.json
+		// names a live claude process): exit 75, nothing changed
+		agent := exec.Command(filepath.Join(h.fakebin, exeName("claude")), "--resume", rid)
+		agent.Dir = repo
+		agent.Env = append(os.Environ(), homeEnv(chome, h.path)...)
+		stdin, _ := agent.StdinPipe()
+		stdout, _ := agent.StdoutPipe()
+		if err := agent.Start(); err != nil {
+			t.Fatal(err)
+		}
+		ready := make(chan bool, 1)
+		go func() {
+			sc := bufio.NewScanner(stdout)
+			for sc.Scan() {
+				if strings.Contains(sc.Text(), "fake agent ready") {
+					ready <- true
+				}
+			}
+			close(ready)
+		}()
+		if !<-ready {
+			agent.Process.Kill()
+			t.Fatal("the local agent did not start")
+		}
+		r = client(repo, "handoff", "--to", "w2", "--agent", "claude", "--session", rid, "--no-attach")
+		stdin.Close()
+		agent.Wait()
+		if r.code != 75 || !strings.Contains(r.stderr, "still has session "+rid+" open") {
+			t.Errorf("a session open in a local agent: %+v", r)
+		}
+		untouched("session in use")
+		// Copilot CLI: a freshly refreshed open-sessions-state.json entry
+		ocid := "3cb916db-26aa-40f2-86b5-1ba81b225fd2"
+		mustWrite(t, filepath.Join(chome, ".copilot", "session-state", ocid, "events.jsonl"),
+			fmt.Sprintf(`{"type":"session.start","data":{"copilotVersion":"1.0.0","context":{"cwd":%s}},"id":"e1"}`+"
+", jsonQ(repo)))
+		mustWrite(t, filepath.Join(chome, ".copilot", "open-sessions-state.json"),
+			fmt.Sprintf(`{%q:{"schemaVersion":1,"refreshedAt":%q}}`, ocid, time.Now().UTC().Format(time.RFC3339)))
+		r = client(repo, "handoff", "--to", "w2", "--agent", "copilot", "--session", ocid, "--no-attach")
+		os.Remove(filepath.Join(chome, ".copilot", "open-sessions-state.json"))
+		if r.code != 75 || !strings.Contains(r.stderr, "open-sessions-state.json") {
+			t.Errorf("a session open in a local Copilot CLI: %+v", r)
+		}
+		if _, err := os.Stat(filepath.Join(chome, ".copilot", "session-state", ocid, "longarm-handoff.json")); err == nil {
+			t.Error("a refused Copilot handoff marked the source")
+		}
+
 		// a symlink (or junction) in the worker's destination tree: refused, nothing written through it
 		evil := filepath.Join(root, "evil")
 		os.MkdirAll(evil, 0o755)

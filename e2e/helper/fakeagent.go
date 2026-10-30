@@ -20,7 +20,10 @@ import (
 //	                           agent looks for it and the cwd recorded in it, LONGARM_WORKER /
 //	                           LONGARM_SESSION - then appends a "continued on <home>" line to
 //	                           the transcript, prints "fake agent ready" and reads stdin until
-//	                           it ends (or Ctrl-C ends the process).
+//	                           it ends (or Ctrl-C ends the process). Claude: while it runs,
+//	                           <config>/sessions/<pid>.json names the session, as Claude
+//	                           Code's does (handoff's in-use check).
+//	anything else              fakeAgentAuth (agentauth.go)
 //
 // It never prints a transcript's content.
 func fakeAgent(agent string, args []string) {
@@ -51,8 +54,8 @@ func fakeAgent(agent string, args []string) {
 		}
 	}
 	if id == "" {
-		fmt.Fprintln(os.Stderr, "fake agent: want --version, auth status or --resume <id>")
-		os.Exit(2)
+		fakeAgentAuth(agent) // the agent credential tests (agentauth.go)
+		return
 	}
 	cwd, _ := os.Getwd()
 	rec := map[string]any{"agent": agent, "args": args, "cwd": cwd, "worker": os.Getenv("LONGARM_WORKER"), "session": os.Getenv("LONGARM_SESSION")}
@@ -102,6 +105,14 @@ func fakeAgent(agent string, args []string) {
 	if f, err := os.OpenFile(filepath.Join(home, "fake-agent.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 		f.Write(append(b, '\n'))
 		f.Close()
+	}
+	if agent == "claude" {
+		pidFile := filepath.Join(cfg, "sessions", fmt.Sprintf("%d.json", os.Getpid()))
+		os.MkdirAll(filepath.Dir(pidFile), 0o755)
+		b, _ := json.Marshal(map[string]any{"pid": os.Getpid(), "sessionId": id, "cwd": cwd})
+		if os.WriteFile(pidFile, b, 0o600) == nil {
+			defer os.Remove(pidFile)
+		}
 	}
 	fmt.Println("fake agent ready")
 	sc := bufio.NewScanner(os.Stdin)

@@ -32,6 +32,8 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/client"
@@ -576,6 +578,7 @@ func (c *coder) direct(ctx context.Context, bundle, dstPath string) (*codeResult
 	if len(endpoints) == 0 {
 		return nil, "no endpoints of " + c.src.name
 	}
+	defer c.relayPair(ctx)()
 	token := make([]byte, 32)
 	rand.Read(token)
 	defer clear(token)
@@ -587,13 +590,47 @@ func (c *coder) direct(ctx context.Context, bundle, dstPath string) (*codeResult
 	if err != nil {
 		return nil, c.src.name + ": " + grpcMessage(err)
 	}
-	res, err := c.dst.conn.Handoff().Pull(octx, &pb.HandoffPullRequest{From: c.src.cert, FromEndpoints: endpoints, TransferId: tid, Token: token,
-		Size: off.Size, Sha256: off.Sha256, Header: &pb.SyncHeader{Repo: c.srcRepo.key, Commit: c.snap, Branch: "handoff-" + c.hid, Path: dstPath}})
+	pull := &pb.HandoffPullRequest{From: c.src.cert, FromEndpoints: endpoints, TransferId: tid, Token: token,
+		Size: off.Size, Sha256: off.Sha256, Header: &pb.SyncHeader{Repo: c.srcRepo.key, Commit: c.snap, Branch: "handoff-" + c.hid, Path: dstPath}}
+	res, err := c.dst.conn.Handoff().Pull(octx, pull)
+	if status.Code(err) == codes.Unavailable { // once more: a relay may learn the pair a moment after the hub listed it
+		select {
+		case <-octx.Done():
+		case <-time.After(2 * time.Second):
+			res, err = c.dst.conn.Handoff().Pull(octx, pull)
+		}
+	}
 	if err != nil {
 		return nil, c.dst.name + ": " + grpcMessage(err)
 	}
 	notef("%s fetched %s of commits from %s directly", c.dst.name, humanSize(off.Size), c.src.name)
 	return &codeResult{top: res.Path, transfer: "direct"}, ""
+}
+
+// relayPair asks the hub to let its relays carry the target's connection
+// to the source for this transfer (Fleet.HandoffPair: relays carry worker
+// <-> worker traffic only for listed pairs); the returned func releases
+// it. Without a hub, or with a hub that predates it, the transfer needs a
+// direct path between the workers (else: relayed through this client).
+func (c *coder) relayPair(ctx context.Context) func() {
+	h := c.s.optionalHub(ctx)
+	if h == nil {
+		return func() {}
+	}
+	req := &pb.HandoffPairRequest{A: c.src.cert, B: c.dst.cert, Ttl: durationpb.New(directOfferTTL)}
+	hctx, cancel := context.WithTimeout(ctx, hubTimeout)
+	defer cancel()
+	if _, err := h.Fleet().HandoffPair(hctx, req); err != nil {
+		if status.Code(err) != codes.Unimplemented {
+			c.note("note: the hub's relays won't carry %s -> %s (%s): a direct transfer needs a direct path", c.dst.name, c.src.name, grpcMessage(err))
+		}
+		return func() {}
+	}
+	return func() {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), hubTimeout)
+		defer cancel()
+		h.Fleet().HandoffPair(rctx, &pb.HandoffPairRequest{A: c.src.cert, B: c.dst.cert, Release: true})
+	}
 }
 
 // endpointsOf are a worker's endpoints as this client knows them.

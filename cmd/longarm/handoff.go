@@ -250,6 +250,14 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 		}
 		return nil
 	}
+	// only between the caller's own machines (and fleet workers): never to
+	// or from another user's worker, shared with the caller or not, the
+	// caller an admin or not
+	for _, ep := range []*hoEndpoint{src, dst} {
+		if err := ownMachine(ep, nodeOf(ep.name)); err != nil {
+			return err
+		}
+	}
 	if n := nodeOf(src.name); n != nil && n.AdminWorker && o.fromImplicit {
 		return usagef("%s is an admin worker: name it with --from to hand off from it", src.name)
 	}
@@ -260,6 +268,11 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 		return err
 	}
 	notef("%s session %s (%s) in %s on %s", ad.name(), sess.ID, humanSize(sess.Size), sess.ProjectDir, src.name)
+	if v := os.Getenv("LONGARM_TEST_HANDOFF_FORGE"); v != "" && len(sess.files) > 0 { // tests: a source listing a forged name
+		if base, rel, ok := strings.Cut(v, ":"); ok {
+			sess.files = append(sess.files, agentFile{src: sess.files[0].src, base: base, rel: rel, size: 1})
+		}
+	}
 
 	// who may touch it
 	var host *pb.Session
@@ -453,6 +466,22 @@ func sessionBytes(s *agentSession) int64 {
 		n += f.size
 	}
 	return n
+}
+
+// ownMachine refuses a worker of another user: its owner as the worker
+// says (Node.Info) or as the hub lists it, against the user the worker
+// sees the caller as. Workers without an owner (fleet workers, no hub)
+// pass; sharing doesn't make a worker the caller's.
+func ownMachine(ep *hoEndpoint, node *pb.NodeInfo) error {
+	if ep.local() {
+		return nil
+	}
+	for _, owner := range []string{ep.owner, node.GetOwner()} {
+		if owner != "" && owner != ep.callerUser {
+			return noPermf("%s is another user's worker: handoff moves sessions only between your own machines", ep.name)
+		}
+	}
+	return nil
 }
 
 // filesAreMine: agent state in the worker account's home is the caller's

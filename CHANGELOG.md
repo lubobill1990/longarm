@@ -475,6 +475,13 @@
   and the branch is deleted afterwards (`--keep-branch`; `handoff
   --cleanup`). A built-in secret check of changed and untracked files, files
   over 50 MB and refused pushes fall back to relay (`--allow-secrets`).
+- Handoff only between your own machines: another user's worker (shared
+  with you or not, admin certificates included) is refused as source and
+  target (exit 77), by the client and by the worker's handoff methods.
+  Worker -> worker transfers go through the hub's relays - embedded and
+  external - too: the hub lists the pair in the relay policy for the
+  transfer (`Fleet.HandoffPair`, the caller's own workers only, at most 10
+  minutes, released afterwards).
 - `longarm agent-sessions [<worker>|local] [--repo-path DIR] [--json]`: the
   resumable agent sessions of a machine (agent, id, project directory, last
   modified, title or first prompt, size, handed-off state).

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +15,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -105,5 +108,74 @@ func TestHandoffOfferScope(t *testing.T) {
 	if _, err := hc.Pull(cctx(t), &pb.HandoffPullRequest{From: "w2", FromEndpoints: []string{"tcp://127.0.0.1:1"}, TransferId: "transfer-5",
 		Token: token, Size: 1, Sha256: make([]byte, 32), Header: &pb.SyncHeader{Repo: "app", Commit: "x", Path: dir}}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("pull without a dialer: %v", err)
+	}
+}
+
+// TestHandoffOwnedWorker: a worker with an owner takes part in handoffs of
+// its owner only - not of a user it is shared with, not of an admin
+// certificate of another user (shared with them too, so that only the
+// handoff rule stands in the way) - on every handoff method (Offer, Fetch of an
+// offer made before the owner changed, Pull, PushHandoff).
+func TestHandoffOwnedWorker(t *testing.T) {
+	e := newAuthzEnv(t)
+	dir := t.TempDir()
+	bundle := filepath.Join(dir, "longarm-handoff-abc12345-x.bundle")
+	os.WriteFile(bundle, []byte("bundle"), 0o600)
+	token := bytes.Repeat([]byte{7}, 32)
+	offer := func(c *grpc.ClientConn, id string) error {
+		_, err := pb.NewHandoffClient(c).Offer(cctx(t), &pb.HandoffOfferRequest{Path: bundle, Peer: "w2", TransferId: id, Token: token,
+			Ttl: durationpb.New(time.Minute), MaxBytes: 1 << 20})
+		return err
+	}
+	pull := func(c *grpc.ClientConn) error {
+		_, err := pb.NewHandoffClient(c).Pull(cctx(t), &pb.HandoffPullRequest{From: "w2", FromEndpoints: []string{"tcp://127.0.0.1:1"},
+			TransferId: "transfer-p", Token: token, Size: 1, Sha256: make([]byte, 32), Header: &pb.SyncHeader{Repo: "app", Commit: "x", Path: dir}})
+		return err
+	}
+	push := func(c *grpc.ClientConn) error {
+		_, err := pb.NewWorkspaceClient(c).PushHandoff(cctx(t), &pb.PushHandoffRequest{Dir: dir, Url: "https://example.com/r.git",
+			Branch: "longarm/handoff/alice/abc12345-x", GitAuth: &pb.GitAuth{Scheme: jobs.GitAuthBearer, Secret: []byte("example-token")}})
+		return err
+	}
+	denied := func(err error) bool {
+		return status.Code(err) == codes.PermissionDenied && strings.Contains(status.Convert(err).Message(), "another user's")
+	}
+
+	// a fleet worker (no owner): the existing rules
+	if err := offer(e.alice, "transfer-fleet"); err != nil {
+		t.Fatalf("fleet worker: %v", err)
+	}
+
+	wa, _ := tenancy.LoadWorkerAccess("")
+	wa.Set(&pb.WorkerAccess{Version: 1, Owner: "alice", Shares: &pb.WorkerShares{Users: []string{"bob", "root", "carol"}}})
+	e.srv.WorkerAccess = wa
+	defer func() { e.srv.WorkerAccess = nil }()
+	if err := offer(e.alice, "transfer-own"); err != nil {
+		t.Fatalf("the owner's offer: %v", err)
+	}
+	hubAdmin := e.dial(pki.IssueOptions{Role: pki.RoleAdmin, Name: "hub-admin", User: "carol"})
+	for name, c := range map[string]*grpc.ClientConn{"bob (shared)": e.bob, "root (admin)": e.root, "hub-admin (carol's admin cert)": hubAdmin} {
+		if err := offer(c, "transfer-x"); !denied(err) {
+			t.Errorf("%s offered on alice's worker: %v", name, err)
+		}
+		if err := pull(c); !denied(err) {
+			t.Errorf("%s pulled into alice's worker: %v", name, err)
+		}
+		if err := push(c); !denied(err) {
+			t.Errorf("%s pushed a handoff branch from alice's worker: %v", name, err)
+		}
+	}
+	// the worker changes hands between an offer and its fetch: refused
+	w2 := e.dial(pki.IssueOptions{Role: pki.RoleWorker, Name: "w2", Hosts: []string{"127.0.0.1"}})
+	wa.Set(&pb.WorkerAccess{Version: 2, Owner: "bob"})
+	if _, err := handoffFetch(t, w2, "transfer-own", token); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("fetch of alice's offer from bob's worker: %v", err)
+	}
+	// an owner pinned in longarmd.toml ([access] owners)
+	e.srv.WorkerAccess = nil
+	e.srv.Access = &Access{Owners: []string{"carol"}}
+	defer func() { e.srv.Access = nil }()
+	if err := offer(e.alice, "transfer-pinned"); !denied(err) {
+		t.Errorf("alice on carol's pinned worker: %v", err)
 	}
 }
