@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -153,6 +154,59 @@ func popupOptions(url string, bg tray.RGB) application.WebviewWindowOptions {
 	}
 }
 
+// sessionsOptions: the Sessions window (docs/agent-sessions-ui.md section
+// 5) - a normal, resizable app window (no zoom, no file drops, no default
+// context menu, like the popup).
+func sessionsOptions(url string, bg tray.RGB) application.WebviewWindowOptions {
+	return application.WebviewWindowOptions{
+		Name: "sessions", Title: "Longarm Sessions", Width: 1200, Height: 760, MinWidth: 640, MinHeight: 400,
+		URL: url, BackgroundColour: rgba(bg),
+		DefaultContextMenuDisabled: true,
+		ZoomControlEnabled:         false,
+		EnableFileDrop:             false,
+		DevToolsEnabled:            !releaseBuild,
+	}
+}
+
+// sessionsWindow is the Sessions window: created when first opened;
+// closing it hides it (re-opening is instant), quitting the tray closes it.
+type sessionsWindow struct {
+	app      *application.App
+	srv      *tray.Server
+	prefsDir string
+
+	mu  sync.Mutex
+	win *application.WebviewWindow
+}
+
+// open shows the window at the location hash ("": as it is) and focuses
+// it; an open window only gets the new hash (the page follows hashchange).
+func (s *sessionsWindow) open(hash string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case s.win == nil:
+		s.win = s.app.Window.NewWithOptions(sessionsOptions(s.srv.SessionsURL(hash, true), tray.CurrentPopupBackground(s.prefsDir)))
+		s.win.RegisterHook(events.Common.WindowClosing, s.hideOnClose)
+	case hash != "":
+		js, _ := json.Marshal(hash) // a JS string literal
+		s.win.ExecJS("location.hash = " + string(js))
+	}
+	if s.win.IsMinimised() {
+		s.win.Restore()
+	}
+	s.win.Show().Focus()
+}
+
+// hideOnClose: the close button hides the window, unless the tray quits.
+func (s *sessionsWindow) hideOnClose(e *application.WindowEvent) {
+	if s.app.Context().Err() != nil {
+		return
+	}
+	e.Cancel()
+	s.win.Hide()
+}
+
 func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error {
 	prefs := tray.LoadWindowPrefs(o.LongarmConfigDir)
 	d := &desktop{prefsDir: o.LongarmConfigDir, pinned: !prefs.AutoHide}
@@ -177,6 +231,8 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 		Mac: application.MacOptions{ActivationPolicy: application.ActivationPolicyAccessory},
 	})
 	d.app = app
+	sessions := &sessionsWindow{app: app, srv: srv, prefsDir: o.LongarmConfigDir}
+	srv.OpenSessions = sessions.open
 	d.win = app.Window.NewWithOptions(popupOptions(srv.URL("/tray"), tray.CurrentPopupBackground(o.LongarmConfigDir)))
 	d.win.OnWindowEvent(events.Common.WindowLostFocus, func(*application.WindowEvent) {
 		// a short delay: focus can bounce while the window is being shown
