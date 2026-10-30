@@ -29,6 +29,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/lubobill1990/longarm/internal/agentlog"
 	"github.com/lubobill1990/longarm/internal/client"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -37,10 +38,21 @@ import (
 
 type fakeNode struct {
 	pb.UnimplementedNodeServer
+	dataDir string
 }
 
-func (fakeNode) Info(context.Context, *pb.InfoRequest) (*pb.InfoResponse, error) {
-	return &pb.InfoResponse{Name: "w1", Os: runtime.GOOS}, nil
+func (n fakeNode) Info(context.Context, *pb.InfoRequest) (*pb.InfoResponse, error) {
+	return &pb.InfoResponse{Name: "w1", Os: runtime.GOOS, DataDir: n.dataDir}, nil
+}
+
+// fakeJobs lists the fake worker's jobs.
+type fakeJobs struct {
+	pb.UnimplementedJobsServer
+	jobs []*pb.Job
+}
+
+func (f fakeJobs) List(context.Context, *pb.ListJobsRequest) (*pb.ListJobsResponse, error) {
+	return &pb.ListJobsResponse{Jobs: f.jobs}, nil
 }
 
 // fakeFiles serves this machine's files; "~" is home.
@@ -126,6 +138,8 @@ type fakeSessions struct {
 	opens    []*pb.AttachOpen
 	resizes  []*pb.TermSize
 	busy     bool
+	dataDir  string    // the worker's (Node.Info)
+	jobs     []*pb.Job // Jobs.List
 }
 
 func (f *fakeSessions) List(context.Context, *pb.ListSessionsRequest) (*pb.ListSessionsResponse, error) {
@@ -217,7 +231,8 @@ func agentTestDaemon(t *testing.T, home string, fk *fakeSessions) *httptest.Serv
 		t.Fatal(err)
 	}
 	srv := grpc.NewServer()
-	pb.RegisterNodeServer(srv, fakeNode{})
+	pb.RegisterNodeServer(srv, fakeNode{dataDir: fk.dataDir})
+	pb.RegisterJobsServer(srv, fakeJobs{jobs: fk.jobs})
 	pb.RegisterFilesServer(srv, &fakeFiles{home: home})
 	pb.RegisterSessionsServer(srv, fk)
 	go srv.Serve(ln)
@@ -292,7 +307,7 @@ func TestMatchAgentSessions(t *testing.T) {
 	}
 	live := map[string]int{"claude/id-pid": 200, "claude/id-desktop": 300}
 	got := map[string]*agentItem{}
-	for _, it := range matchAgentSessions(ep, sessions, transcripts, live, false) {
+	for _, it := range matchAgentSessions(ep, sessions, transcripts, live, false, nil, nil) {
 		if got[it.Key] != nil {
 			t.Fatalf("key %s twice", it.Key)
 		}
@@ -332,7 +347,7 @@ func TestMatchAgentSessions(t *testing.T) {
 	if it := got["w1/session/shell1"]; it.Title != "pwsh" || it.Agent != "" {
 		t.Errorf("shell: %+v", it)
 	}
-	all := matchAgentSessions(ep, sessions, transcripts, live, true)
+	all := matchAgentSessions(ep, sessions, transcripts, live, true, nil, nil)
 	if len(all) != len(want)+1 {
 		t.Errorf("all: %d items, want the handed-off one too", len(all))
 	}
@@ -831,5 +846,140 @@ func TestDescribeCached(t *testing.T) {
 	describeCached(context.Background(), &hoEndpoint{name: "w-other"}, &other, describe)
 	if n != 3 || changed.Title != "title 2" || other.Title != "title 3" {
 		t.Fatalf("n %d: %q %q", n, changed.Title, other.Title)
+	}
+}
+
+// Agents in jobs: a Copilot job's conversation in its private
+// COPILOT_HOME, a Claude job's transcript in its worktree - listed as the
+// job's; a Longarm session's own Copilot home pairs with it.
+func TestAgentListJobs(t *testing.T) {
+	home := t.TempDir()
+	data := filepath.Join(home, ".longarm")
+	running, done := "01M66YJJ2AHVSSW2DBRQNSDWSF", "01M66Y2FGEAF79SP1EFNJT0WG8"
+	jobConv, sessConv, claudeJob := "11111111-0000-4000-8000-000000000001", "11111111-0000-4000-8000-000000000002", "9f1c2d3e-0000-4000-8000-0000000000c1"
+	copilotConv := func(homeDir, id, prompt string) {
+		dir := filepath.Join(data, "agent-home", homeDir, "session-state", id)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		ev := `{"type":"session.start","data":{"sessionId":"` + id + `","context":{"cwd":"C:\\src"}},"id":"e1","timestamp":"` + now + `"}` + "\n" +
+			`{"type":"user.message","data":{"content":"` + prompt + `"},"id":"e2","timestamp":"` + now + `"}` + "\n"
+		if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(ev), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(filepath.Join(dir, "workspace.yaml"), []byte("id: "+id+"\ncwd: C:\\src\n"), 0o600)
+	}
+	copilotConv("j-"+running+"-0123456789ab", jobConv, "review W29")
+	copilotConv("s-cop1-abcdef012345", sessConv, "in my session")
+	writeClaudeTranscript(t, home, claudeJob, filepath.Join(data, "worktrees", done, "app"), 1)
+	fk := &fakeSessions{dataDir: data,
+		sessions: []*pb.Session{{Name: "cop1", Argv: []string{"copilot"}, Dir: filepath.Join(home, "elsewhere"), State: pb.JobState_JOB_STATE_RUNNING,
+			StartedAt: timestamppb.New(time.Now().Add(-time.Hour)), Pid: 99}},
+		jobs: []*pb.Job{
+			{Spec: &pb.JobSpec{Id: running, Name: "review-W29"}, State: pb.JobState_JOB_STATE_RUNNING},
+			{Spec: &pb.JobSpec{Id: done, Name: "fix-W28"}, State: pb.JobState_JOB_STATE_DONE},
+		}}
+	hs := agentTestDaemon(t, home, fk)
+	var got agentListJSON
+	if c := call(t, "GET", hs.URL+"/v1/agent-sessions?worker=w1", "", &got); c != 200 {
+		t.Fatalf("status %d", c)
+	}
+	byKey := map[string]*agentItem{}
+	for _, it := range got.Items {
+		byKey[it.Key] = it
+	}
+	if it := byKey["w1/copilot/"+jobConv]; it == nil || it.Where != whereJob || it.Job != running || it.JobName != "review-W29" ||
+		it.State == agentlog.StateEnded || it.Title != "review W29" {
+		t.Fatalf("copilot job: %+v (items %+v)", it, got.Items)
+	}
+	if it := byKey["w1/claude/"+claudeJob]; it == nil || it.Where != whereJob || it.Job != done || it.JobName != "fix-W28" || it.State != agentlog.StateEnded {
+		t.Fatalf("claude job: %+v", it)
+	}
+	if it := byKey["w1/copilot/"+sessConv]; it == nil || it.Where != whereLongarm || it.Session != "cop1" {
+		t.Fatalf("session's own copilot home: %+v", it)
+	}
+	// its conversation: found from the list, and again by a fresh daemon (searching the homes)
+	base := "/v1/agent-sessions/w1/copilot/" + jobConv + "/messages"
+	var m messagesJSON
+	if c := call(t, "GET", hs.URL+base, "", &m); c != 200 || len(m.Messages) == 0 {
+		t.Fatalf("messages: %d %+v", c, m)
+	}
+	hs2 := agentTestDaemon(t, home, fk)
+	if c := call(t, "GET", hs2.URL+base, "", &m); c != 200 {
+		t.Fatalf("messages from a fresh daemon: %d", c)
+	}
+}
+
+func TestJobOfDir(t *testing.T) {
+	ep := &hoEndpoint{name: "w", goos: "windows"}
+	data := `C:\Users\u\.longarm`
+	for dir, want := range map[string]string{
+		`C:\Users\u\.longarm\worktrees\01M66YJJ2AHVSSW2DBRQNSDWSF`:       "01M66YJJ2AHVSSW2DBRQNSDWSF",
+		`c:\users\u\.longarm\worktrees\01M66YJJ2AHVSSW2DBRQNSDWSF\sub\x`: "01M66YJJ2AHVSSW2DBRQNSDWSF",
+		`C:\Users\u\.longarm\worktrees\s.agent1.3`:                       "", // a session's worktree
+		`C:\Users\u\.longarm\worktrees`:                                  "",
+		`C:\Users\u\src\app`:                                             "",
+		``:                                                               "",
+	} {
+		if got := jobOfDir(ep, data, dir); got != want {
+			t.Errorf("jobOfDir(%q) = %q, want %q", dir, got, want)
+		}
+	}
+	if got := jobOfDir(ep, "", `C:\x\worktrees\01M66YJJ2AHVSSW2DBRQNSDWSF`); got != "" {
+		t.Errorf("no data dir: %q", got)
+	}
+}
+
+// A listing already made answers for its directory and subdirectories.
+func TestEndpointListed(t *testing.T) {
+	ep := &hoEndpoint{name: "w", goos: "windows", conn: &client.Conn{}, listed: map[string][]hoFile{
+		`C:\data\agent-home`: {
+			{rel: "j-1", isDir: true},
+			{rel: "j-1/session-state", isDir: true},
+			{rel: "j-1/session-state/a/events.jsonl", size: 3},
+			{rel: "s-x/session-state/b/events.jsonl", size: 4},
+		},
+	}}
+	rels := func(dir string) []string {
+		got, err := ep.list(context.Background(), dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, f := range got {
+			out = append(out, f.rel)
+		}
+		return out
+	}
+	if got := rels(`C:\data\agent-home\j-1\session-state`); !slices.Equal(got, []string{"a/events.jsonl"}) {
+		t.Fatalf("subdirectory: %v", got)
+	}
+	if got := rels(`c:\DATA\agent-home\`); len(got) != 4 {
+		t.Fatalf("the root (case, trailing separator): %v", got)
+	}
+	if got := rels(`C:\data\agent-home\s-x`); !slices.Equal(got, []string{"session-state/b/events.jsonl"}) {
+		t.Fatalf("s-x: %v", got)
+	}
+	if sub, ok := ep.subRel(`C:\data\agent-home`, `C:\data\other`); ok {
+		t.Fatalf("outside the listing: %q", sub)
+	}
+}
+
+// describe reads firstHeadRead, and more when the first prompt lies beyond.
+func TestDescribeReadsMoreWhenNeeded(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "s.jsonl")
+	meta, _ := json.Marshal(map[string]any{"type": "user", "isMeta": true, "cwd": `C:\src\app`,
+		"message": map[string]any{"role": "user", "content": strings.Repeat("x", 40<<10)}})
+	prompt, _ := json.Marshal(map[string]any{"type": "user", "cwd": `C:\src\app`, "message": map[string]any{"role": "user", "content": "the real prompt"}})
+	data := append(append(meta, '\n'), append(prompt, '\n')...)
+	if err := os.WriteFile(p, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &agentSession{transcript: p, Size: int64(len(data))}
+	claudeAdapter{}.describe(context.Background(), &hoEndpoint{name: localMachine, goos: runtime.GOOS}, s)
+	if s.Title != "the real prompt" || s.ProjectDir != `C:\src\app` {
+		t.Fatalf("got title %q dir %q", s.Title, s.ProjectDir)
 	}
 }

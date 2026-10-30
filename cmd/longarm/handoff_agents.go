@@ -68,6 +68,9 @@ func describeCached(ctx context.Context, ep *hoEndpoint, s *agentSession, descri
 		return
 	}
 	describe(ctx, ep, s)
+	if ctx.Err() != nil {
+		return // cut short: what it read may be incomplete
+	}
 	describeCache.Lock()
 	if len(describeCache.m) >= maxDescribed {
 		clear(describeCache.m)
@@ -158,11 +161,31 @@ var allAdapters = []agentAdapter{claudeAdapter{}, copilotAdapter{}}
 
 var sessionIDRE = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z_-]{5,127}$`)
 
-// maxHeadRead / maxTailRead bound what agent-sessions reads of a transcript.
+// maxHeadRead / maxTailRead bound what agent-sessions reads of a
+// transcript; firstHeadRead is read first (the project directory and the
+// first prompt are usually there: the Sessions window lists every
+// transcript of the last days), maxHeadRead only when they aren't.
 const (
-	maxHeadRead = 256 << 10
-	maxTailRead = 128 << 10
+	firstHeadRead = 32 << 10
+	maxHeadRead   = 256 << 10
+	maxTailRead   = 32 << 10
 )
+
+// readHead reads the first bytes of a transcript: firstHeadRead, and up to
+// maxHeadRead when scan (run on what was read) says it needs more.
+func readHead(ctx context.Context, ep *hoEndpoint, p string, scan func(head []byte) (more bool)) ([]byte, error) {
+	head, err := ep.readRange(ctx, p, 0, firstHeadRead)
+	if err != nil {
+		return nil, err
+	}
+	if scan(head) && len(head) == firstHeadRead {
+		if all, err := ep.readRange(ctx, p, 0, maxHeadRead); err == nil {
+			head = all
+			scan(head)
+		}
+	}
+	return head, nil
+}
 
 // ---------------------------------------------------------------- Claude Code
 
@@ -355,14 +378,9 @@ func (a claudeAdapter) list(ctx context.Context, ep *hoEndpoint, cfg, id string,
 	return out, nil
 }
 
-// describe fills in the project directory, title and version from the
-// transcript's first and last bytes.
-func (claudeAdapter) describe(ctx context.Context, ep *hoEndpoint, s *agentSession) {
-	head, err := ep.readRange(ctx, s.transcript, 0, maxHeadRead)
-	if err != nil {
-		return
-	}
-	prompt := ""
+// scanClaudeHead takes the project directory, version and titles from a
+// transcript's first lines, and the first prompt into prompt.
+func scanClaudeHead(head []byte, s *agentSession, prompt *string) {
 	scanLines(head, func(l []byte) {
 		var cl claudeLine
 		if json.Unmarshal(l, &cl) != nil {
@@ -374,8 +392,8 @@ func (claudeAdapter) describe(ctx context.Context, ep *hoEndpoint, s *agentSessi
 		if cl.Version != "" {
 			s.Version = cl.Version
 		}
-		if prompt == "" && cl.Type == "user" && !cl.IsMeta && !cl.IsSidechain {
-			prompt = oneLineTitle(userText(cl.Message))
+		if *prompt == "" && cl.Type == "user" && !cl.IsMeta && !cl.IsSidechain {
+			*prompt = oneLineTitle(userText(cl.Message))
 		}
 		switch {
 		case cl.CustomTitle != "":
@@ -384,6 +402,20 @@ func (claudeAdapter) describe(ctx context.Context, ep *hoEndpoint, s *agentSessi
 			s.Title = oneLineTitle(cl.AITitle)
 		}
 	})
+}
+
+// describe fills in the project directory, title and version from the
+// transcript's first and last bytes.
+func (claudeAdapter) describe(ctx context.Context, ep *hoEndpoint, s *agentSession) {
+	prompt := ""
+	head, err := readHead(ctx, ep, s.transcript, func(head []byte) bool {
+		prompt = ""
+		scanClaudeHead(head, s, &prompt)
+		return prompt == "" || s.ProjectDir == ""
+	})
+	if err != nil {
+		return
+	}
 	if s.Size > int64(len(head)) {
 		if tail, err := ep.readRange(ctx, s.transcript, -maxTailRead, maxTailRead); err == nil {
 			custom := ""
@@ -542,6 +574,49 @@ func (a claudeAdapter) inUse(ctx context.Context, ep *hoEndpoint, s *agentSessio
 }
 
 // processAlive reports whether pid runs on ep, and its name.
+// processNames lists ep's processes once: name by pid (nil: the listing
+// failed - check pids one by one with processAlive).
+func processNames(ctx context.Context, ep *hoEndpoint) map[int]string {
+	out := map[int]string{}
+	if ep.local() {
+		procs, err := platform.ListProcesses()
+		if err != nil {
+			return nil
+		}
+		for _, p := range procs {
+			out[p.PID] = p.Name
+		}
+		return out
+	}
+	if ep.windows() {
+		b, err := ep.run(ctx, "", nil, nil, 30*time.Second, "tasklist", "/FO", "CSV", "/NH")
+		if err != nil {
+			return nil
+		}
+		for _, l := range strings.Split(string(b), "\n") {
+			f := strings.Split(strings.TrimSpace(l), ",")
+			if len(f) < 2 {
+				continue
+			}
+			if pid, err := strconv.Atoi(strings.Trim(f[1], `"`)); err == nil {
+				out[pid] = strings.Trim(f[0], `"`)
+			}
+		}
+		return out
+	}
+	b, err := ep.run(ctx, "", nil, nil, 30*time.Second, "ps", "-e", "-o", "pid=,comm=")
+	if err != nil {
+		return nil
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		pidS, name, ok := strings.Cut(strings.TrimSpace(l), " ")
+		if pid, err := strconv.Atoi(pidS); ok && err == nil {
+			out[pid] = path.Base(strings.TrimSpace(name))
+		}
+	}
+	return out
+}
+
 func processAlive(ctx context.Context, ep *hoEndpoint, pid int) (string, bool) {
 	if ep.local() {
 		if !platform.ProcessAlive(pid, 0) {
@@ -702,11 +777,29 @@ func (copilotAdapter) describe(ctx context.Context, ep *hoEndpoint, s *agentSess
 			}
 		}
 	}
-	head, err := ep.readRange(ctx, s.transcript, 0, maxHeadRead)
-	if err != nil {
+	prompt := ""
+	scan := func(head []byte) bool {
+		prompt = ""
+		scanCopilotHead(head, s, &prompt)
+		return prompt == ""
+	}
+	if _, err := readHead(ctx, ep, s.transcript, scan); err != nil {
 		return
 	}
-	prompt := ""
+	if s.Title == "" {
+		s.Title = prompt
+	}
+	if b, err := ep.readSmall(ctx, s.marker, 64<<10); err == nil {
+		var hm handoffMark
+		if json.Unmarshal(b, &hm) == nil && !s.Modified.After(hm.At.Add(2*time.Second)) {
+			s.HandedOff = &hm
+		}
+	}
+}
+
+// scanCopilotHead takes the project directory and version from an
+// events.jsonl's first lines, and the first prompt into prompt.
+func scanCopilotHead(head []byte, s *agentSession, prompt *string) {
 	scanLines(head, func(l []byte) {
 		var ev struct {
 			Type string `json:"type"`
@@ -731,20 +824,11 @@ func (copilotAdapter) describe(ctx context.Context, ep *hoEndpoint, s *agentSess
 			}
 		case "user.message":
 			var c string
-			if prompt == "" && json.Unmarshal(ev.Data.Content, &c) == nil {
-				prompt = oneLineTitle(c)
+			if *prompt == "" && json.Unmarshal(ev.Data.Content, &c) == nil {
+				*prompt = oneLineTitle(c)
 			}
 		}
 	})
-	if s.Title == "" {
-		s.Title = prompt
-	}
-	if b, err := ep.readSmall(ctx, s.marker, 64<<10); err == nil {
-		var hm handoffMark
-		if json.Unmarshal(b, &hm) == nil && !s.Modified.After(hm.At.Add(2*time.Second)) {
-			s.HandedOff = &hm
-		}
-	}
 }
 
 // yamlScalar is the value of a simple "key: value" YAML line.

@@ -831,7 +831,10 @@ start`, the tray, `longarm handoff`) have all three views. An agent started
 in a terminal on the worker's desktop shows its conversation only - Longarm
 has no access to that terminal; **Continue here** resumes it in a Longarm
 session (a fork while the original still runs; Copilot CLI can't fork,
-so for Copilot it waits until the original has ended). The window works against
+so for Copilot it waits until the original has ended). Agents in Longarm
+jobs (`longarm run -- claude -p ...`, `copilot -p`) are listed as the job's
+(▸ while it runs, with the job's name): their conversation, live and
+read-only. The window works against
 workers of any version (it uses the existing `Sessions` and `Files` calls);
 transcripts are read with your rights and shown, never stored.
 `docs/agent-sessions-ui.md` has the design and the daemon API

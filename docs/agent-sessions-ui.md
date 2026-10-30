@@ -115,9 +115,21 @@ changed.
 
 - `key` is unique and stable: `<worker>/<agent>/<id>` for agent sessions,
   `<worker>/session/<name>` for Longarm sessions without a known agent.
-- `where`: `longarm` (the agent runs in Longarm session `session`),
-  `desktop` (a live process outside Longarm), `none` (no live process: the
-  transcript only).
+- `where`: `longarm` (the agent runs in Longarm session `session`), `job`
+  (in Longarm job `job`, named `job_name`: `longarm run -- claude -p` /
+  `copilot -p`; read-only, live while the job runs), `desktop` (a live
+  process outside Longarm), `none` (no live process: the transcript only).
+- Agents in jobs and sessions: a job, session or exec given Copilot
+  credentials gets a private `COPILOT_HOME`, `<data dir>/agent-home/<j|s>-<job
+  id|session name>-<12 hex>` (`Node.Info` data_dir): its conversations are
+  listed from there (one listing of `agent-home`; only the homes of running
+  jobs and sessions and those in the window are read) and belong to that job
+  or session. A Claude Code transcript whose project directory is in
+  `<data dir>/worktrees/<job id>` belongs to that job. Jobs come from
+  `Jobs.List` (the newest 500).
+- Live processes (Claude Code's `sessions/<pid>.json` checked against one
+  process listing of the worker) are cached for 20 s and refreshed in the
+  background: a busy worker's `tasklist` takes seconds.
 - `state`: `working` | `waiting` (the agent finished its turn and waits for
   input) | `running` (a Longarm session whose program is not a known agent)
   | `ended`. Inferred, best effort (section 4): an agent in a Longarm

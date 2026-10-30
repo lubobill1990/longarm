@@ -4,9 +4,10 @@ import { fmtAgo, since } from '../lib/format'
 
 export const AGENT_LABEL: Record<string, string> = { claude: 'Claude Code', copilot: 'Copilot CLI' }
 
-/** The state dot: ● working, ◐ waiting, ○ ended, ◇ a desktop process (outside Longarm). */
+/** The state dot: ● working, ◐ waiting, ○ ended, ◇ a desktop process (outside Longarm), ▸ a running Longarm job. */
 export function stateMark(s: AgentSession): { mark: string; cls: string; label: string } {
   if (s.where === 'desktop') return { mark: '◇', cls: 'desktop', label: `outside Longarm, ${s.state}` }
+  if (s.where === 'job' && s.state !== 'ended') return { mark: '▸', cls: 'job', label: `Longarm job ${s.job_name || s.job}, ${s.state}` }
   if (s.state === 'waiting') return { mark: '◐', cls: 'waiting', label: 'waiting for input' }
   if (s.state === 'ended') return { mark: '○', cls: 'ended', label: 'ended' }
   return { mark: '●', cls: s.state, label: s.state }
@@ -16,7 +17,7 @@ export function stateMark(s: AgentSession): { mark: string; cls: string; label: 
 export function matches(s: AgentSession, q: string): boolean {
   const t = q.trim().toLowerCase()
   if (!t) return true
-  return [s.title, s.worker, s.project_dir, s.session, s.agent && AGENT_LABEL[s.agent], s.id].some((v) => v?.toLowerCase().includes(t))
+  return [s.title, s.worker, s.project_dir, s.session, s.job_name, s.agent && AGENT_LABEL[s.agent], s.id].some((v) => v?.toLowerCase().includes(t))
 }
 
 /** Sessions by worker, workers in name order; the list's own order inside. */
@@ -75,7 +76,9 @@ export function SessionList({
                   data-testid={`session-${s.key}`}
                   data-state={st.cls}
                   aria-current={selected === s.key || undefined}
-                  title={[s.title, s.project_dir, s.session && `Longarm session ${s.session}`].filter(Boolean).join('\n')}
+                  title={[s.title, s.project_dir, s.session && `Longarm session ${s.session}`, s.where === 'job' && `Longarm job ${s.job_name || s.job}`]
+                    .filter(Boolean)
+                    .join('\n')}
                   onClick={() => onOpen(s)}
                 >
                   <span className={`sdot ${st.cls}`} aria-label={st.label} role="img">
