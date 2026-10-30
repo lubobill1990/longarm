@@ -4,6 +4,7 @@ import type { Job, PoolView } from '../api/types'
 import { ErrorBox, LogView, StatePill, useAction, usePoll } from '../components/common'
 import { IconForward, IconTerminal } from '../components/icons'
 import { fmtTime, isActive } from '../lib/format'
+import { AgentSkill } from './AgentSkill'
 import type { ThemePref } from './theme'
 import { EmptyState, Section, Skeleton } from './ui'
 
@@ -281,6 +282,7 @@ export function Settings({
       {theme && onTheme && <Appearance theme={theme} onTheme={onTheme} />}
       {clientUp && <TransportPolicy />}
       <TraySettingsView pool={pool} clientUp={clientUp} />
+      <AgentSkill />
       <AutoUpdate />
     </div>
   )

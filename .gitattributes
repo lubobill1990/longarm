@@ -6,3 +6,4 @@ deploy/azure/** text eol=lf
 deploy/hub/** text eol=lf
 packaging/macos/scripts/* text eol=lf
 packaging/macos/certs/*.cer binary
+skills/** text eol=lf

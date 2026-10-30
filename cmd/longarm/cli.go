@@ -70,7 +70,7 @@ func newRootCmd() *cobra.Command {
 	group("sessions", attachCmd(), sessionCmd(), sessionsCmd(), handoffCmd(), agentSessionsCmd())
 	group("files", putCmd(), getCmd(), syncCmd(), tailCmd(), forwardCmd(), linkCmd(), sshCmd(), sshConfigCmd())
 	group("workers", workerCmd(), infoCmd(), desktopCmd())
-	group("account", whoamiCmd(), joinCmd(), leaveCmd(), logoutCmd(), versionCmd())
+	group("account", whoamiCmd(), joinCmd(), leaveCmd(), logoutCmd(), versionCmd(), skillCmd())
 	group("admin", adminCmd(), diagCmd(), mcpCmd())
 	// Plumbing: usable, not listed.
 	for _, c := range []*cobra.Command{daemonCmd(), poolCmd(), proxyCmd(), transportCmd(), firewallCmd(), trustCmd(), telemetryCmd()} {
