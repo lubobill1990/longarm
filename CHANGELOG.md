@@ -4,6 +4,18 @@
 
 ### Added
 
+- **Release channels: stable, preview, dev.** Every push to `main` now
+  publishes a dev build to the hub (`<next patch>-dev.<run>`, signed, no
+  GitHub Release, no hub deploy or rollout), prerelease tags go to
+  `preview` (formerly `beta`, still accepted), and stable tags work as
+  before. Machines follow stable unless their owner picks another channel
+  in the tray (Settings → Updates → Release channel; Windows MSI installs,
+  kept by the update service) or in longarmd.toml (`[update] channel`).
+  The tray's update banner, automatic updates, `longarm worker update` and
+  the hub's update notices follow the machine's channel;
+  `GET /releases/latest.json?channel=` answers per channel. MSIs of one
+  version's dev builds and release candidates upgrade each other
+  (`AllowSameVersionUpgrades`). docs/ci-cd.md "Release channels".
 - `longarm desktop <worker>` (and **desktop** on a worker's card in the
   tray) opens the worker's desktop. A **Microsoft Dev Box** opens in
   Windows App through Azure Virtual Desktop, not through Longarm: longarmd

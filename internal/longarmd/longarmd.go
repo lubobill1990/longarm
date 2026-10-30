@@ -780,10 +780,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	}
 	wg.Add(1)
 	go func() { defer wg.Done(); links.run(ctx) }()
-	agent.channel = cfg.Update.Channel
-	if agent.channel == "" {
-		agent.channel = "stable"
-	}
+	agent.channel = cfg.Update.Channel // "": the machine's (releaseChannel)
 	// longarm worker update (the owner's; machineupdate.go)
 	selfWhy := ""
 	switch {

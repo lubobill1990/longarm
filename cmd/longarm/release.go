@@ -292,6 +292,7 @@ out with 'longarm admin release push'.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := args[0]
+			channel, _ = update.NormalizeChannel(channel) // beta is preview (older hubs store what they get)
 			if !noSign {
 				if _, err := update.SignDir(dir, ver, releaseKey(keyFile), os.Getenv(passEnv)); err != nil {
 					return fmt.Errorf("sign: %w (--no-sign uploads existing signatures)", err)
@@ -340,7 +341,7 @@ out with 'longarm admin release push'.`,
 		},
 	}
 	c.Flags().StringVar(&ver, "version", "", "version label (required)")
-	c.Flags().StringVar(&channel, "channel", "stable", "release channel")
+	c.Flags().StringVar(&channel, "channel", "stable", "release channel: stable, preview (beta) or dev (docs/ci-cd.md \"Release channels\")")
 	c.Flags().BoolVar(&noSign, "no-sign", false, "don't sign; upload the existing .minisig files")
 	c.Flags().BoolVar(&replace, "replace", false, "overwrite a version that exists on the hub")
 	c.Flags().BoolVar(&skipSame, "skip-identical", false, "succeed without uploading when the hub has this version with exactly these files (same names and sha256; for re-runs); different files still fail")
@@ -356,11 +357,12 @@ func sameRelease(ctx context.Context, h *hubclient.Conn, dir, version, channel s
 	if err != nil {
 		return false, err
 	}
+	want, _ := update.NormalizeChannel(channel) // beta is preview
 	for _, r := range resp.Releases {
 		if r.Version != version {
 			continue
 		}
-		if r.Channel != channel {
+		if have, _ := update.NormalizeChannel(r.Channel); have != want {
 			return false, fmt.Errorf("%s exists on the hub on channel %s, not %s", version, r.Channel, channel)
 		}
 		have := map[string]string{}

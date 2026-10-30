@@ -153,3 +153,38 @@ func TestTrayUpdateInfo(t *testing.T) {
 		t.Fatal("banner without a hub")
 	}
 }
+
+// TestTrayUpdateChannel: the banner asks for the newest release of the
+// machine's channel and asks again as soon as the channel changes.
+func TestTrayUpdateChannel(t *testing.T) {
+	var asked []string
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ch := r.URL.Query().Get("channel")
+		asked = append(asked, ch)
+		v := map[string]string{"": "0.1.20", "preview": "0.1.21-rc.1", "dev": "0.1.22-dev.7"}[ch]
+		json.NewEncoder(w).Encode(map[string]any{"version": v, "files": []map[string]any{{"name": msiName(), "sha256": "00", "size": 1}}})
+	}))
+	defer hub.Close()
+	channel := "dev"
+	s := &Server{opts: Options{Version: "0.1.20", HubURL: hub.URL, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	s.upd.goos = "windows"
+	s.upd.chanFn = func() string { return channel }
+	s.refreshUpdate(context.Background(), false)
+	if got := s.updateInfo(); !got.Available || got.Latest != "0.1.22-dev.7" || got.Channel != "dev" {
+		t.Fatalf("dev: %+v", got)
+	}
+	s.refreshUpdate(context.Background(), false) // fresh: no request
+	channel = "beta"
+	s.refreshUpdate(context.Background(), false) // the channel changed: asks again
+	if got := s.updateInfo(); got.Latest != "0.1.21-rc.1" || got.Channel != "preview" {
+		t.Fatalf("preview: %+v", got)
+	}
+	channel = ""
+	s.refreshUpdate(context.Background(), false)
+	if got := s.updateInfo(); got.Available || got.Channel != "stable" {
+		t.Fatalf("stable, running 0.1.20: %+v", got)
+	}
+	if strings.Join(asked, ",") != "dev,preview," {
+		t.Fatalf("asked %q", asked)
+	}
+}

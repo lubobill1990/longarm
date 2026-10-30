@@ -243,6 +243,8 @@ export interface LocalUpdateStatus {
   message?: string
   auto?: boolean
   auto_interval_hours?: number
+  /** the release channel this machine follows: stable | preview | dev (older services: absent = stable) */
+  channel?: string
   last?: { from: string; to: string; ok: boolean; error?: string; at: string }
   /** the tray's user may change automatic updates (the machine's owner, or an administrator) */
   can_set_auto?: boolean
@@ -253,6 +255,8 @@ export const localUpdateApi = {
   /** the service's status (the update banner installs through it when present: trayApi.installUpdate) */
   status: () => get<LocalUpdateStatus>('/trayapi/update/service'),
   setAuto: (auto: boolean, hours = 0) => post<LocalUpdateStatus>('/trayapi/update/auto', { auto, hours }),
+  /** the machine's release channel (the owner or an administrator) */
+  setChannel: (channel: string) => post<LocalUpdateStatus>('/trayapi/update/channel', { channel }),
 }
 
 export const traySettingsApi = {

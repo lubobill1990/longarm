@@ -27,7 +27,7 @@ import (
 // §7.2). Updates need a hub and a build with an update public key.
 type UpdateConfig struct {
 	Disabled bool   `toml:"disabled"`
-	Channel  string `toml:"channel"` // default "stable"
+	Channel  string `toml:"channel"` // stable | preview | dev; default: the machine's (the tray), else stable
 	// Interval between checks (default 1h; the hub also nudges on a push).
 	Interval Duration `toml:"interval"`
 	// HealthWindow: a new version must stay healthy this long (default 60s).
@@ -43,7 +43,6 @@ type updater struct {
 	cfg      update.Config
 	addr     string
 	agent    *hubAgent
-	channel  string
 	interval time.Duration
 	restart  func() // ends Run with update.ErrRestart
 	canApply error  // why this installation can't update itself (nil = it can)
@@ -119,7 +118,7 @@ func (u *updater) check(ctx context.Context) error {
 	defer conn.Close()
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	resp, err := conn.Fleet().CheckUpdate(cctx, &pb.UpdateCheckRequest{Os: runtime.GOOS, Arch: runtime.GOARCH,
-		Version: version.Version, Channel: u.channel})
+		Version: version.Version, Channel: u.agent.releaseChannel()})
 	cancel()
 	if err != nil {
 		return err
@@ -274,7 +273,7 @@ func (u *updater) reported(s *pb.UpdateStatus) {
 }
 
 func newUpdater(cfg Config, agent *hubAgent, exe string, log *slog.Logger, restart func()) *updater {
-	u := &updater{addr: cfg.Hub.Address, agent: agent, channel: agent.channel, restart: restart,
+	u := &updater{addr: cfg.Hub.Address, agent: agent, restart: restart,
 		kick: make(chan struct{}, 1), interval: cfg.Update.Interval.Duration}
 	if u.interval <= 0 {
 		u.interval = time.Hour
@@ -346,7 +345,7 @@ func (u *updater) applyWanted(ctx context.Context, want string, progress func(ph
 	defer conn.Close()
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	resp, err := conn.Fleet().CheckUpdate(cctx, &pb.UpdateCheckRequest{Os: runtime.GOOS, Arch: runtime.GOARCH,
-		Version: version.Version, Channel: u.channel, Want: want})
+		Version: version.Version, Channel: u.agent.releaseChannel(), Want: want})
 	cancel()
 	if err != nil {
 		switch status.Code(err) {

@@ -19,17 +19,20 @@ import (
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/update"
+	"github.com/lubobill1990/longarm/internal/updatesvc"
 )
 
-// Update banner: the tray asks the hub for its newest complete release
-// (GET /releases/latest.json) and, on the user's click, downloads the MSI,
+// Update banner: the tray asks the hub for the newest complete release of
+// the machine's release channel (GET /releases/latest.json?channel=, the
+// channel the update service keeps: the Client tab's choice; stable by
+// default) and, on the user's click, downloads the MSI,
 // checks it against the hub's sha256 AND the minisign signature of the
 // release key built into this binary (update.PublicKey, as longarmd's
 // self-update), and runs it (msiexec /i <file> /qb: the installer keeps
 // the remembered MSI properties and asks for elevation itself). An MSI that
 // fails a check never runs.
 //
-//	GET  /trayapi/update          {current, latest, available, msi, state, error}
+//	GET  /trayapi/update          {current, latest, channel, available, msi, state, error}
 //	POST /trayapi/update/install  {"version"}: download, verify, run
 
 // updateCheckEvery: how often the tray asks the hub.
@@ -42,6 +45,7 @@ type trayUpdate struct {
 	mu      sync.Mutex
 	checked time.Time
 	latest  string     // the hub's newest complete release ("" = none / unknown)
+	channel string     // the channel latest is of
 	msi     latestFile // its MSI for this architecture (Name "" = none)
 	state   string     // "" | downloading | installing | failed
 	err     string
@@ -49,6 +53,7 @@ type trayUpdate struct {
 	client  *http.Client
 	pubKey  *string
 	runMSI  func(path string) error
+	chanFn  func() string // the machine's channel (nil: updatesvc.MachineChannel)
 	tempDir func() (string, error)
 	goos    string
 }
@@ -62,6 +67,7 @@ type latestFile struct {
 type updateInfo struct {
 	Current   string `json:"current"`
 	Latest    string `json:"latest,omitempty"`
+	Channel   string `json:"channel,omitempty"`
 	Available bool   `json:"available"`
 	MSI       string `json:"msi,omitempty"`
 	State     string `json:"state,omitempty"`
@@ -79,6 +85,20 @@ func (u *trayUpdate) httpClient() *http.Client {
 	return &http.Client{Timeout: 30 * time.Minute}
 }
 
+// machineChannel is the release channel the banner follows.
+func (u *trayUpdate) machineChannel() string {
+	c := ""
+	if u.chanFn != nil {
+		c = u.chanFn()
+	} else {
+		c = updatesvc.MachineChannel()
+	}
+	if n, ok := update.NormalizeChannel(c); ok {
+		return n
+	}
+	return update.ChannelStable
+}
+
 func (u *trayUpdate) key() string {
 	if u.pubKey != nil {
 		return *u.pubKey
@@ -90,8 +110,9 @@ func (u *trayUpdate) key() string {
 // updateCheckEvery unless force).
 func (s *Server) refreshUpdate(ctx context.Context, force bool) {
 	u := &s.upd
+	channel := u.machineChannel()
 	u.mu.Lock()
-	fresh := !u.checked.IsZero() && time.Since(u.checked) < updateCheckEvery
+	fresh := !u.checked.IsZero() && time.Since(u.checked) < updateCheckEvery && u.channel == channel
 	u.mu.Unlock()
 	base := strings.TrimRight(s.hubURL(), "/")
 	if (fresh && !force) || base == "" {
@@ -99,7 +120,11 @@ func (s *Server) refreshUpdate(ctx context.Context, force bool) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(cctx, http.MethodGet, base+"/releases/latest.json", nil)
+	q := ""
+	if channel != update.ChannelStable {
+		q = "?channel=" + channel // an older hub ignores it: its latest stable
+	}
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, base+"/releases/latest.json"+q, nil)
 	if err != nil {
 		return
 	}
@@ -123,7 +148,7 @@ func (s *Server) refreshUpdate(ctx context.Context, force bool) {
 		}
 	}
 	u.mu.Lock()
-	u.checked, u.latest, u.msi = time.Now(), lj.Version, msi
+	u.checked, u.latest, u.msi, u.channel = time.Now(), lj.Version, msi, channel
 	u.mu.Unlock()
 }
 
@@ -135,7 +160,7 @@ func (s *Server) updateInfo() updateInfo {
 	if goos == "" {
 		goos = runtime.GOOS
 	}
-	info := updateInfo{Current: s.opts.Version, Latest: u.latest, MSI: u.msi.Name, State: u.state, Error: u.err}
+	info := updateInfo{Current: s.opts.Version, Latest: u.latest, Channel: u.channel, MSI: u.msi.Name, State: u.state, Error: u.err}
 	info.Available = goos == "windows" && u.msi.Name != "" && releaseVersionRE.MatchString(s.opts.Version) &&
 		update.ValidVersion(u.latest) && update.Compare(u.latest, s.opts.Version) > 0
 	return info

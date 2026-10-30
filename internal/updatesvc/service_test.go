@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -25,13 +26,22 @@ type fakeSource struct {
 	mu       sync.Mutex
 	releases map[string]*Release
 	latest   string
+	latestBy map[string]string // channel -> version (else latest)
+	channels []string          // Latest was asked for
 	files    map[string][]byte // version/name
 	gets     int
 	hold     chan struct{} // Download waits for it (nil = no wait)
 }
 
-func (f *fakeSource) Latest(ctx context.Context) (*Release, error) {
-	return f.Get(ctx, f.latest)
+func (f *fakeSource) Latest(ctx context.Context, channel string) (*Release, error) {
+	f.mu.Lock()
+	f.channels = append(f.channels, channel)
+	v := f.latest
+	if l := f.latestBy[channel]; l != "" {
+		v = l
+	}
+	f.mu.Unlock()
+	return f.Get(ctx, v)
 }
 
 func (f *fakeSource) Get(_ context.Context, v string) (*Release, error) {
@@ -126,11 +136,12 @@ func (l *fakeLauncher) Forget() { l.mu.Lock(); l.forgot++; l.mu.Unlock() }
 func (l *fakeLauncher) count() int { l.mu.Lock(); defer l.mu.Unlock(); return len(l.launched) }
 
 type fakeSettings struct {
-	mu    sync.Mutex
-	hub   string
-	owner string
-	auto  bool
-	hours int
+	mu      sync.Mutex
+	hub     string
+	owner   string
+	auto    bool
+	hours   int
+	channel string
 }
 
 func (s *fakeSettings) Hub() (string, error) {
@@ -144,6 +155,17 @@ func (s *fakeSettings) Auto() (bool, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.auto, s.hours
+}
+func (s *fakeSettings) Channel() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.channel
+}
+func (s *fakeSettings) SetChannel(c string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.channel = c
+	return nil
 }
 func (s *fakeSettings) SetAuto(on bool, h int) error {
 	s.mu.Lock()
@@ -533,6 +555,46 @@ func TestSetAutoOwnerOrAdminOnly(t *testing.T) {
 	r.settings.owner = ""
 	if resp := set(Caller{SID: ownerSID}, false); resp.Code != CodeDenied {
 		t.Fatalf("no owner recorded: %+v", resp)
+	}
+}
+
+// TestSetChannel: the owner (or an administrator) picks the release
+// channel; "install latest" then takes that channel's newest release.
+func TestSetChannel(t *testing.T) {
+	r := newRig(t, "0.1.20")
+	set := func(c Caller, ch string) *Response {
+		return r.svc.Handle(context.Background(), c, &Request{Op: OpSetChannel, Channel: ch})
+	}
+	if st := r.svc.Status(); st.Channel != "stable" {
+		t.Fatalf("default channel: %q", st.Channel)
+	}
+	if resp := set(user, "dev"); resp.Code != CodeDenied || r.settings.Channel() != "" {
+		t.Fatalf("another user: %+v", resp)
+	}
+	if resp := set(Caller{SID: ownerSID}, "canary"); resp.Code != CodeInvalid {
+		t.Fatalf("unknown channel: %+v", resp)
+	}
+	if resp := set(Caller{SID: "S-1-5-21-5", Admin: true}, "beta"); !resp.OK || resp.Status.Channel != "preview" {
+		t.Fatalf("admin, beta: %+v", resp)
+	}
+	if resp := set(Caller{SID: ownerSID}, "dev"); !resp.OK || resp.Status.Channel != "dev" || r.settings.Channel() != "dev" {
+		t.Fatalf("owner: %+v", resp)
+	}
+	r.good("0.1.21")                                              // the latest stable
+	data := []byte("MSI package dev" + strings.Repeat("x", 1000)) // and a newer dev build
+	r.publish("0.1.22-dev.7", "amd64", data, r.sign(data, update.MSIName("amd64"), "0.1.22-dev.7"), false)
+	r.src.mu.Lock()
+	r.src.latestBy = map[string]string{"dev": "0.1.22-dev.7"}
+	r.src.mu.Unlock()
+	resp := r.install(user, Request{Latest: true})
+	if !resp.OK || resp.To != "0.1.22-dev.7" {
+		t.Fatalf("install latest on dev: %+v", resp)
+	}
+	r.src.mu.Lock()
+	asked := slices.Clone(r.src.channels)
+	r.src.mu.Unlock()
+	if len(asked) == 0 || asked[len(asked)-1] != "dev" {
+		t.Fatalf("Latest asked for %v", asked)
 	}
 }
 

@@ -228,9 +228,17 @@ export function Settings({
   )
 }
 
+/** Release channels, most tested first (docs/ci-cd.md "Release channels"). */
+export const CHANNELS: [string, string, string][] = [
+  ['stable', 'Stable', 'releases only'],
+  ['preview', 'Preview', 'release candidates too, before everybody gets them'],
+  ['dev', 'Dev', 'every change merged to main: the newest, least tested'],
+]
+
 /**
- * Automatic updates of this machine (the Longarm Update service of a
- * Windows MSI install; absent elsewhere): off by default, changed by the
+ * Updates of this machine (the Longarm Update service of a Windows MSI
+ * install; absent elsewhere): the release channel it follows (stable by
+ * default) and automatic updates (off by default), both changed by the
  * machine's owner or an administrator only - never by the hub.
  */
 export function AutoUpdate() {
@@ -239,11 +247,40 @@ export function AutoUpdate() {
   const u = st.data
   if (!u?.service) return null
   const newer = u.available && u.available !== u.installed ? ` · ${u.available} available` : ''
+  const channel = u.channel || 'stable'
+  const owner = u.can_set_auto ? '' : " (only this machine's owner or an administrator can change this)"
   return (
     <Section title="Updates" testId="auto-update">
       <div className="field-help">
         Longarm {u.installed ?? '…'}
         {newer}
+      </div>
+      <div className="field-inline">
+        <div>
+          <div className="field-label" id="channel-label">
+            Release channel
+          </div>
+          <div className="field-help" data-testid="channel-help">
+            {CHANNELS.find(([c]) => c === channel)?.[2] ?? channel}
+            {owner}. Moving to a more tested channel takes effect with its next release.
+          </div>
+        </div>
+        <div className="segmented" role="radiogroup" aria-labelledby="channel-label">
+          {CHANNELS.map(([c, label]) => (
+            <label key={c} className={channel === c ? 'is-active' : ''}>
+              <input
+                type="radio"
+                name="channel"
+                className="sr-only"
+                value={c}
+                checked={channel === c}
+                disabled={busy || !u.can_set_auto}
+                onChange={() => run(() => localUpdateApi.setChannel(c), `release channel: ${label}`).then((r) => r && st.setData(r))}
+              />
+              {label}
+            </label>
+          ))}
+        </div>
       </div>
       <label className="switch-row">
         <input
@@ -261,8 +298,8 @@ export function AutoUpdate() {
         <span>
           <span className="field-label">Install new releases automatically</span>
           <span className="field-help">
-            every {u.auto_interval_hours ?? 6} h, once no job started for 5 minutes
-            {!u.can_set_auto ? ' (only this machine\'s owner or an administrator can change this)' : ''}
+            every {u.auto_interval_hours ?? 6} h, once no job started for 5 minutes, from the {channel} channel
+            {owner}
           </span>
         </span>
       </label>

@@ -50,8 +50,9 @@ var ErrNoRelease = errors.New("no such release on the hub")
 
 // Source is where releases come from: the recorded hub.
 type Source interface {
-	// Latest is the hub's latest stable release whose files it has.
-	Latest(ctx context.Context) (*Release, error)
+	// Latest is the hub's newest release for a machine on channel
+	// (update.Channels) whose files it has.
+	Latest(ctx context.Context, channel string) (*Release, error)
 	// Get is version's record.
 	Get(ctx context.Context, version string) (*Release, error)
 	// Download writes version's file name (or its .minisig) to w, at
@@ -180,7 +181,11 @@ func (s *HTTPSource) record(ctx context.Context, path string) (*Release, error) 
 	return &r, nil
 }
 
-func (s *HTTPSource) Latest(ctx context.Context) (*Release, error) {
+func (s *HTTPSource) Latest(ctx context.Context, channel string) (*Release, error) {
+	if ch, _ := update.NormalizeChannel(channel); ch != update.ChannelStable && update.ChannelRE.MatchString(ch) {
+		// an older hub ignores the parameter and answers its latest stable
+		return s.record(ctx, "/releases/latest.json?channel="+url.QueryEscape(ch))
+	}
 	return s.record(ctx, "/releases/latest.json")
 }
 

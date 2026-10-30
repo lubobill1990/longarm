@@ -2431,10 +2431,20 @@ tray's Settings tab ("install new releases automatically"),
 `longarm worker update <worker> --auto on` (relayed by your own worker),
 or `longarm-update auto on` on the machine. The hub can't: the setting
 lives in `HKLM\Software\Longarm\Update`, written by the service only for
-those callers. When on, the service checks the hub's latest stable release
-every 6 hours (`--hours`) and installs it under the same rules - once no
-job has started for 5 minutes (the workers tell it when jobs run), at
-most a day later.
+those callers. When on, the service checks the hub's newest release of the
+machine's **release channel** every 6 hours (`--hours`) and installs it
+under the same rules - once no job has started for 5 minutes (the workers
+tell it when jobs run), at most a day later.
+
+**Release channel**: stable (the default: releases only), preview
+(release candidates too) or dev (a build of every change merged to main).
+The tray's Settings tab → Updates → Release channel, for the machine's
+owner or a local administrator (stored next to the automatic-updates
+setting); the tray's update banner, automatic updates and
+`longarm worker update` then mean that channel's newest release, and the
+machine's longarmd tells the hub (`longarm ls` marks newer releases of the
+channel). Moving back to a more tested channel takes effect with its next
+release. docs/ci-cd.md "Release channels".
 
 **On the machine** (any local user may ask; only newer signed releases
 install):
@@ -2788,8 +2798,9 @@ old binary waits: the new version must keep its hub session for 60 s
 (`[update] health_window`); if it fails, or does not start within
 `start_grace` (2m), the watchdog restores the old files and restarts it, the
 version goes on the worker's skip list and the rollout halts. Jobs keep
-running throughout. longarmd.toml: `[update] disabled, channel, interval (1h),
-health_window, start_grace`. Package-managed installs (deb/rpm/brew) update
+running throughout. longarmd.toml: `[update] disabled, channel (stable |
+preview | dev; default: the machine's channel from the tray, else stable),
+interval (1h), health_window, start_grace`. Package-managed installs (deb/rpm/brew) update
 through their package manager.
 
 ### Firewalls
@@ -2838,7 +2849,9 @@ detail: [ci-cd.md](ci-cd.md).
   [`deploy/hub/longarm-hub-deploy`](../deploy/hub/longarm-hub-deploy): verify, install,
   health check, automatic rollback) → **rollout** (`--canary 1 --wait 15m`,
   fails when it halts). Without a configured hub only the GitHub Release is
-  made. `v1.2.3-rc1` → channel beta, no hub/fleet.
+  made. `v1.2.3-rc.1` → channel preview, a push to `main` → a dev build
+  (channel dev); neither deploys the hub or rolls out (docs/ci-cd.md
+  "Release channels").
 - `deploy.yml` (manual, from `main`): hub deploy/rollback, fleet push (downgrades are admin-only).
 
 ```sh
