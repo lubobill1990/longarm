@@ -291,6 +291,9 @@ func identityFromKey(k string) entraIdentity {
 // idpPolicy says whether id is an admin and whether it may sign in at all.
 func (h *Hub) idpPolicy(id entraIdentity) (admin, allowed bool) {
 	if id.provider == "" {
+		if h.entra == nil { // [auth.entra] was removed from hub.toml
+			return false, false
+		}
 		e := &h.cfg.Auth.Entra
 		admin = entraMatchAny(e.Admins, id.upn, id.oid)
 		return admin, admin || len(e.Allowed) == 0 || entraMatchAny(e.Allowed, id.upn, id.oid)
