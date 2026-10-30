@@ -40,6 +40,7 @@ async function serve(page: Page, sc: Scenario = {}) {
       if (sc.loading && (p.includes('/pool') || p.includes('/jobs'))) return // pending forever
       if (p === '/trayapi/info') return json(r, mock.info(sc))
       if (p === '/trayapi/settings') return json(r, mock.traySettings)
+      if (p === '/trayapi/skills') return json(r, mock.skills)
       if (p === '/trayapi/signin/state') return json(r, mock.signinState(sc.signin ?? 'idle'))
       if (p === '/trayapi/update') return sc.update ? json(r, mock.update) : json(r, { error: 'no' }, 404)
       if (p === '/trayapi/pin') return json(r, { pinned: true })
@@ -107,6 +108,14 @@ for (const scheme of ['light', 'dark'] as const) {
           await shot(page, `tray-${file}-${scheme}-${size}`)
         })
       }
+
+      test('settings: agent skill', async ({ page }) => {
+        await open(page, 'settings')
+        const section = page.getByTestId('agent-skill')
+        await expect(section.getByTestId('skill-state-copilot')).toHaveText('0.9.1 → 0.9.2')
+        await section.scrollIntoViewIfNeeded()
+        await section.screenshot({ path: join(out, `tray-agent-skill-${scheme}-${size}.png`) })
+      })
 
       test('workers, menu and offline section open', async ({ page }) => {
         await open(page, 'pool')

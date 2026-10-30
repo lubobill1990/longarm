@@ -249,3 +249,14 @@ export const traySettings = {
 }
 
 export const update = { available: true, current: '0.9.2', latest: '0.10.0', hub: '0.10.0', state: 'idle' }
+
+/** Settings > Agent skill: one agent current, one behind, one not installed, one changed by the user. */
+export const skills = {
+  bundled_version: '0.9.2',
+  agents: [
+    { agent: 'claude', name: 'Claude Code', detected: true, detected_by: 'claude on PATH', dir: 'C:\\Users\\alice\\.claude\\skills\\longarm', state: 'current', installed_version: '0.9.2', bundled_version: '0.9.2' },
+    { agent: 'copilot', name: 'GitHub Copilot CLI', detected: true, detected_by: 'copilot on PATH', dir: 'C:\\Users\\alice\\.copilot\\skills\\longarm', state: 'outdated', installed_version: '0.9.1', bundled_version: '0.9.2' },
+    { agent: 'codex', name: 'OpenAI Codex CLI', detected: true, detected_by: 'codex on PATH', dir: 'C:\\Users\\alice\\.agents\\skills\\longarm', state: 'absent', bundled_version: '0.9.2' },
+    { agent: 'gemini', name: 'Gemini CLI', detected: false, dir: 'C:\\Users\\alice\\.gemini\\skills\\longarm', state: 'modified', installed_version: '0.9.1', bundled_version: '0.9.2', modified: ['SKILL.md'] },
+  ],
+}

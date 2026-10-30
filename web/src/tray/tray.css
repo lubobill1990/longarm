@@ -404,6 +404,31 @@
   & .button-row.end {
     justify-content: flex-end;
   }
+
+  /* Settings > Agent skill */
+  & .skill-list {
+    list-style: none;
+    margin: var(--sp-2) 0 0;
+    padding: 0;
+  }
+  & .skill-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    padding: var(--sp-2) 0;
+    border-top: 1px solid var(--border);
+  }
+  & .skill-row .button-row {
+    margin: 0;
+    flex-wrap: nowrap;
+  }
+  & .skill-what {
+    min-width: 0;
+  }
+  & .skill-dir {
+    overflow-wrap: anywhere;
+  }
   & .toolbar {
     display: flex;
     align-items: center;

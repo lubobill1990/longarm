@@ -4,6 +4,16 @@
 
 ### Added
 
+- **The Longarm agent skill**, versioned with the code (`skills/longarm/`:
+  a lean `SKILL.md` plus reference files for jobs, sessions, handoff,
+  ports, credentials and diagnostics) and embedded in the binaries.
+  `longarm skill status|install|update|remove [--agent ...]` and the
+  tray's Settings > Agent skill install it - opt-in, per agent - into the
+  user-global skills directory of Claude Code (`~/.claude/skills`),
+  GitHub Copilot CLI (`~/.copilot/skills`), OpenAI Codex
+  (`~/.agents/skills`) or Gemini CLI (`~/.gemini/skills`). Copies carry a
+  manifest with every file's hash; Longarm updates them when it updates
+  and removes only its own unmodified files. docs/usage.md "Agent skill".
 - **Release channels: stable, preview, dev.** Every push to `main` now
   publishes a dev build to the hub (`<next patch>-dev.<run>`, signed, no
   GitHub Release, no hub deploy or rollout), prerelease tags go to

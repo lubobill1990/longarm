@@ -282,6 +282,7 @@ exit 255) has none of these features.
 | `node-ids` | node IDs: a worker target may be a name, a node ID, a unique ID prefix, `id:<prefix>` or `name:<name>`; `longarm worker rename`, `longarm admin rename`; IDs in listings and JSON (`workerId`, `id`) - see [Node IDs](#node-ids-and-targets) |
 | `agent-handoff` | `longarm handoff` (see [Hand off an agent session](#hand-off-an-agent-session)) |
 | `agent-sessions` | `longarm agent-sessions` |
+| `agent-skill` | `longarm skill status\|install\|update\|remove` (see [Agent skill](#agent-skill-for-claude-code-copilot-cli-codex)) |
 
 The session and tail features also need the worker's (`session-start`,
 `session-send`, `session-send-if-idle`, `session-stop`, `session-info`,
@@ -2333,6 +2334,58 @@ Browser e2e (Playwright, headless Chromium) against a real hub, workers,
 cd web && pnpm install && npx playwright install chromium && cd ..
 LONGARM_PLAYWRIGHT=1 go test -run TestUIPlaywright -v ./e2e
 ```
+
+### Agent skill for Claude Code, Copilot CLI, Codex
+
+Longarm ships an agent skill - `skills/longarm/` in this repository:
+`SKILL.md` plus reference files the agent loads when needed - that teaches
+a coding agent the commands above: choosing workers and dispatching jobs,
+sessions (attach, steer, take over), handoff, port links and forwards,
+credential forwarding, diagnostics and the exit codes. It is embedded in
+`longarm` and `longarm-tray`, so every installer carries the version that
+matches the binaries. Nothing is installed until you ask:
+
+```sh
+longarm skill status [--agent claude] [--json]   # per agent: detected, installed version, bundled version
+longarm skill install [--agent claude]...        # default: every detected agent
+longarm skill update                             # refresh the copies Longarm installed
+longarm skill remove [--agent claude]...         # default: every copy Longarm installed
+```
+
+The tray: Settings > Agent skill, with Install / Update / Remove per agent.
+
+| agent | user-global skills directory | source |
+|---|---|---|
+| Claude Code (`claude`) | `~/.claude/skills/` (`$CLAUDE_CONFIG_DIR/skills/`) | [docs](https://code.claude.com/docs/en/skills) |
+| GitHub Copilot CLI (`copilot`) | `~/.copilot/skills/` (`$COPILOT_HOME/skills/`) | [docs](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-skills); `.github/skills/` is a project directory |
+| OpenAI Codex CLI (`codex`) | `~/.agents/skills/` (`$CODEX_HOME/skills` is deprecated) | [docs](https://developers.openai.com/codex/skills) |
+| Gemini CLI (`gemini`) | `~/.gemini/skills/` | [docs](https://geminicli.com/docs/cli/skills/) |
+
+An agent counts as detected when its program is on PATH or its
+configuration directory exists. `~/.agents/skills/` is also read by
+Copilot CLI and Gemini CLI, so installing for Codex and one of them
+lists the skill twice there.
+
+- **A copy, not a link.** The skill is copied into `<skills dir>/longarm/`
+  with a manifest, `.longarm-skill.json` (Longarm's version, a digest and
+  every file's sha256). Links would point into the install directory -
+  per-machine on Windows, a different path per platform - need privileges
+  on Windows (symlinks) or break across volumes (junctions), and some
+  agents don't follow them.
+- **Updated with Longarm.** When the tray or `longarm daemon` starts with
+  a new release, copies Longarm installed that are older and unmodified
+  are rewritten (`longarm skill update` does it by hand).
+- **Your changes win.** A copy whose files no longer match the manifest
+  (changed, deleted, or a file added where the new version puts one) is
+  never updated or removed: status shows `modified` with the files, and
+  install / remove exit 2 naming them. A `longarm` skill without the
+  manifest is somebody else's (`foreign`) and left alone. Remove deletes
+  only the manifest's files; files you added stay, and so does the folder.
+- **No surprises on disk.** The skill folder must be a plain directory (no
+  symlink or junction), files are written through an `os.Root` of it
+  (nothing outside), atomically, and only regular files are replaced. The
+  tray's API takes an agent ID from the table, never a path, behind its
+  session cookie and same-origin JSON rule.
 
 ### MCP server for Claude Code / Copilot CLI
 

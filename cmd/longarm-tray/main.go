@@ -116,6 +116,7 @@ func main() {
 		}
 	default:
 		defer watchEndSession(stopEv)()
+		go tray.RefreshSkills(o.Log, o.Version) // the skill copies Longarm installed follow its updates
 		if err := runGUI(ctx, o, startDaemon); err != nil {
 			fmt.Fprintln(os.Stderr, "longarm-tray:", err)
 			os.Exit(1)
