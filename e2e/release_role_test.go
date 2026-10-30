@@ -57,8 +57,9 @@ func TestReleaseRole(t *testing.T) {
 	if r := h.longarm(ci, "admin", "release", "publish", rel, "--version", "1.5.0", "--key", keyFile, "--skip-identical"); r.code == 0 || !strings.Contains(r.stderr, "with a different longarm-hub-linux-amd64") {
 		t.Fatalf("re-publish of other files: %+v", r)
 	}
+	// beta is the old name of preview: the hub stores preview
 	out = h.mustLongarm(ci, "admin", "release", "publish", rel, "--version", "1.6.0-rc1", "--channel", "beta", "--key", keyFile)
-	if !strings.Contains(out, "1.6.0-rc1 (beta) on the hub") {
+	if !strings.Contains(out, "1.6.0-rc1 (preview) on the hub") {
 		t.Fatalf("publish beta: %s", out)
 	}
 	if ls := h.mustLongarm(ci, "admin", "release", "ls"); !strings.Contains(ls, "1.5.0") || !strings.Contains(ls, "1.6.0-rc1") {
@@ -83,8 +84,11 @@ func TestReleaseRole(t *testing.T) {
 	if r := h.longarm(ci, "admin", "release", "publish", rel, "--version", "1.5.0", "--key", keyFile, "--replace"); !strings.Contains(r.stderr, "may not replace") {
 		t.Fatalf("replace as release: %+v", r)
 	}
-	if r := h.longarm(ci, "admin", "release", "publish", rel, "--version", "1.6.0-rc1", "--key", keyFile, "--skip-identical"); r.code == 0 || !strings.Contains(r.stderr, "on channel beta") {
+	if r := h.longarm(ci, "admin", "release", "publish", rel, "--version", "1.6.0-rc1", "--key", keyFile, "--skip-identical"); r.code == 0 || !strings.Contains(r.stderr, "on channel preview") {
 		t.Fatalf("skip-identical across channels: %+v", r)
+	}
+	if r := h.longarm(ci, "admin", "release", "publish", rel, "--version", "1.6.0-rc1", "--channel", "preview", "--key", keyFile, "--skip-identical"); r.code != 0 {
+		t.Fatalf("skip-identical, beta published as preview: %+v", r)
 	}
 
 	// ---- denied on the hub: nodes, jobs, join codes, approval, revocation,

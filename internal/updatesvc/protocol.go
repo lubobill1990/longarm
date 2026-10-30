@@ -13,8 +13,8 @@
 //   - for this installation's architecture.
 //
 // Local programs talk to it over a named pipe (PipeName): any local,
-// authenticated user may ask for "install version X" / "install the latest
-// stable" (harmless: only newer signed releases install) and for the
+// authenticated user may ask for "install version X" / "install the newest
+// of the machine's channel" (harmless: only newer signed releases install) and for the
 // status; turning automatic updates on or off is for the machine's owner
 // (the user the MSI was installed for) and local administrators only.
 // Clients check that the pipe's server is the service (its process image is
@@ -49,10 +49,13 @@ const (
 
 // Ops of Request.
 const (
-	OpStatus   = "status"   // anybody local
-	OpInstall  = "install"  // anybody local: only newer signed releases install
-	OpSetAuto  = "set-auto" // the owner or an administrator
-	OpActivity = "activity" // a worker started a job (auto-update waits for a quiet moment)
+	OpStatus  = "status"   // anybody local
+	OpInstall = "install"  // anybody local: only newer signed releases install
+	OpSetAuto = "set-auto" // the owner or an administrator
+	// set-channel: the release channel this machine follows (update.Channels;
+	// the owner or an administrator)
+	OpSetChannel = "set-channel"
+	OpActivity   = "activity" // a worker started a job (auto-update waits for a quiet moment)
 )
 
 // Codes of a refused or failed request (Response.Code).
@@ -82,7 +85,8 @@ const (
 // Request is one line a client sends.
 type Request struct {
 	Op string `json:"op"`
-	// install: Version, or Latest (the hub's latest stable release).
+	// install: Version, or Latest (the hub's newest release of the
+	// machine's channel).
 	Version string `json:"version,omitempty"`
 	Latest  bool   `json:"latest,omitempty"`
 	// install: the installed version again (a repair) - a local
@@ -91,6 +95,8 @@ type Request struct {
 	// set-auto
 	Auto          bool `json:"auto,omitempty"`
 	IntervalHours int  `json:"interval_hours,omitempty"`
+	// set-channel
+	Channel string `json:"channel,omitempty"`
 	// Requester: who asked, for the log (e.g. "longarm worker update by
 	// alice@example.com"); informational only.
 	Requester string `json:"requester,omitempty"`
@@ -109,16 +115,20 @@ type Result struct {
 
 // Status of the service.
 type Status struct {
-	Installed string    `json:"installed"`
-	Available string    `json:"available,omitempty"` // the hub's latest stable ("" = unknown)
-	Checked   time.Time `json:"checked,omitempty"`
-	Hub       string    `json:"hub,omitempty"`
-	Arch      string    `json:"arch"`
-	State     string    `json:"state"` // a Phase
-	Target    string    `json:"target,omitempty"`
-	Started   time.Time `json:"started,omitempty"`
-	Message   string    `json:"message,omitempty"`
-	Last      *Result   `json:"last,omitempty"`
+	Installed string `json:"installed"`
+	Available string `json:"available,omitempty"` // the hub's newest of Channel ("" = unknown)
+	// Channel: the release channel this machine follows (stable, preview,
+	// dev; update.Channels): what Available, automatic updates and
+	// "install latest" mean.
+	Channel string    `json:"channel"`
+	Checked time.Time `json:"checked,omitempty"`
+	Hub     string    `json:"hub,omitempty"`
+	Arch    string    `json:"arch"`
+	State   string    `json:"state"` // a Phase
+	Target  string    `json:"target,omitempty"`
+	Started time.Time `json:"started,omitempty"`
+	Message string    `json:"message,omitempty"`
+	Last    *Result   `json:"last,omitempty"`
 	// Auto: automatic updates (off by default), every AutoIntervalHours.
 	Auto              bool      `json:"auto"`
 	AutoIntervalHours int       `json:"auto_interval_hours"`

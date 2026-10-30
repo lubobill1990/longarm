@@ -48,6 +48,10 @@ type Settings interface {
 	// Auto: automatic updates on, every hours.
 	Auto() (enabled bool, hours int)
 	SetAuto(enabled bool, hours int) error
+	// Channel is the release channel the machine follows (normalized;
+	// stable when unset).
+	Channel() string
+	SetChannel(channel string) error
 }
 
 // Workspace is where packages are downloaded: a directory only SYSTEM can
@@ -320,7 +324,8 @@ func (s *Service) Status() *Status {
 	defer s.mu.Unlock()
 	st := &Status{Installed: s.cfg.Version, Available: s.state.Available, Checked: s.state.Checked, Hub: hub,
 		Arch: s.cfg.Arch, State: s.phase, Target: s.target, Started: s.started, Message: s.message,
-		Auto: auto, AutoIntervalHours: normHours(hours), CanVerify: strings.TrimSpace(s.cfg.PublicKey) != ""}
+		Auto: auto, AutoIntervalHours: normHours(hours), CanVerify: strings.TrimSpace(s.cfg.PublicKey) != "",
+		Channel: s.channel()}
 	if auto {
 		st.AutoNext = s.autoNext
 	}
@@ -329,6 +334,14 @@ func (s *Service) Status() *Status {
 		st.Last = &l
 	}
 	return st
+}
+
+// channel is the machine's release channel (stable when unset or unknown).
+func (s *Service) channel() string {
+	if ch, ok := update.NormalizeChannel(s.cfg.Settings.Channel()); ok {
+		return ch
+	}
+	return update.ChannelStable
 }
 
 func normHours(h int) int {
@@ -392,6 +405,28 @@ func (s *Service) Handle(ctx context.Context, c Caller, req *Request) *Response 
 		s.mu.Lock()
 		s.autoNext = time.Time{}
 		s.mu.Unlock()
+		st := s.Status()
+		return &Response{OK: true, Phase: st.State, Status: st}
+	case OpSetChannel:
+		owner := s.cfg.Settings.Owner()
+		if !c.Admin && !c.System && (owner == "" || !strings.EqualFold(owner, c.SID)) {
+			s.cfg.Log.Warn("set-channel refused", "caller", c.String())
+			return refuse(CodeDenied, "only this machine's owner or a local administrator may change the release channel")
+		}
+		ch, ok := update.NormalizeChannel(req.Channel)
+		if !ok {
+			return refuse(CodeInvalid, "unknown release channel %q (stable, preview or dev)", clip(req.Channel, 40))
+		}
+		if err := s.cfg.Settings.SetChannel(ch); err != nil {
+			return refuse(CodeFailed, "saving the setting: %v", err)
+		}
+		s.cfg.Log.Info("release channel set", "channel", ch, "by", c.String(), "requester", req.Requester)
+		s.mu.Lock()
+		// the newest release of the new channel: look again (and soon)
+		s.state.Available, s.state.Checked = "", time.Time{}
+		s.autoNext = time.Time{}
+		s.mu.Unlock()
+		s.maybeRefresh()
 		st := s.Status()
 		return &Response{OK: true, Phase: st.State, Status: st}
 	case OpInstall:
@@ -462,13 +497,13 @@ func (s *Service) install(ctx context.Context, req *Request, by string) *Respons
 	s.setPhase(PhaseChecking, req.Version, "asking "+hub)
 	var rel *Release
 	if req.Latest {
-		rel, err = src.Latest(ctx)
+		rel, err = src.Latest(ctx, s.channel())
 	} else {
 		rel, err = src.Get(ctx, req.Version)
 	}
 	if errors.Is(err, ErrNoRelease) {
 		if req.Latest {
-			return refuse(CodeNotFound, "hub %s has no stable release", hub)
+			return refuse(CodeNotFound, "hub %s has no %s release", hub, s.channel())
 		}
 		return refuse(CodeNotFound, "hub %s has no release %s", hub, req.Version)
 	}
@@ -576,7 +611,7 @@ func downloadFile(ctx context.Context, src Source, version, name, path string, s
 	return err
 }
 
-// maybeRefresh looks up the hub's latest stable release in the background
+// maybeRefresh looks up the hub's newest release of the machine's channel in the background
 // when the last look is older than an hour.
 func (s *Service) maybeRefresh() {
 	s.mu.Lock()
@@ -608,7 +643,7 @@ func (s *Service) refresh(ctx context.Context) (string, error) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	rel, err := src.Latest(cctx)
+	rel, err := src.Latest(cctx, s.channel())
 	if err != nil {
 		return "", err
 	}

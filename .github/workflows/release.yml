@@ -1,4 +1,5 @@
-# Release on a v* tag (docs/ci-cd.md "Cutting a release").
+# Release on a v* tag (docs/ci-cd.md "Cutting a release"), and a dev build
+# on every push to main (docs/ci-cd.md "Release channels").
 #
 #   meta           ubuntu-latest: validates the tag (stable tags only from main)
 #   build-unix     ubuntu-latest: goreleaser (LONGARM_BUILD_SIDE=unix: linux +
@@ -60,8 +61,14 @@
 # deploy rolls back by itself and stops the workflow before any worker is
 # touched.
 #
-# Prerelease tags (v1.2.3-rc1, any "-" suffix): channel beta, GitHub
-# prerelease; no hub deploy, no fleet rollout (push it by hand to beta workers).
+# Channels (internal/update/channel.go): a stable tag vX.Y.Z -> stable;
+# a prerelease tag (v1.2.3-rc.1, any "-" suffix) -> preview, a GitHub
+# prerelease; a push to main -> dev, version <next patch>-dev.<run number>
+# (the next patch after the highest version tagged so far, so dev builds sort
+# after its release candidates and before the next release), no GitHub
+# Release, no versioned image. Preview and dev: no hub deploy, no fleet
+# rollout - machines on those channels pick them up through the tray's
+# banner, the update service's automatic updates or longarm worker update.
 #
 # Isolation: no job saves a cache; the Go jobs start from fresh module caches
 # and restore only the build cache that ci.yml saves on pushes to main
@@ -75,6 +82,9 @@ name: release
 on:
   push:
     tags: ["v*"]
+    # dev builds; path filters don't apply to tag pushes
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**", "web/shots/**", ".github/ISSUE_TEMPLATE/**"]
   workflow_dispatch:
     inputs:
       dry_run:
@@ -88,9 +98,11 @@ permissions:
   contents: read
 
 # One release (or deploy.yml) at a time; never cancel a running one. Dry runs
-# queue per branch, apart from releases.
+# queue per branch, dev builds among themselves (GitHub keeps one pending
+# run per group: a burst of merges builds the first and the newest), apart
+# from releases.
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && format('longarm-release-dry-run-{0}', github.ref) || 'longarm-release' }}
+  group: ${{ github.event_name == 'workflow_dispatch' && format('longarm-release-dry-run-{0}', github.ref) || (github.ref_type == 'branch' && 'longarm-release-dev' || 'longarm-release') }}
   cancel-in-progress: false
 
 jobs:
@@ -107,6 +119,9 @@ jobs:
       channel: ${{ steps.meta.outputs.channel }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
       dry_run: ${{ steps.meta.outputs.dry_run }}
+      dev: ${{ steps.meta.outputs.dev }}
+      # the build jobs tag HEAD themselves (dry runs, dev builds; never pushed)
+      local_tag: ${{ steps.meta.outputs.local_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -116,13 +131,24 @@ jobs:
         id: meta
         env:
           EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
           TAG: ${{ github.ref_name }}
           DRY_RUN: ${{ inputs.dry_run }}
           PUBKEY: ${{ vars.LONGARM_UPDATE_PUBKEY }}
           DEFAULT_HUB: ${{ vars.LONGARM_DEFAULT_HUB }}
         run: |
           dry=false
-          if [ "$EVENT" = workflow_dispatch ]; then
+          dev=false
+          if [ "$EVENT" = push ] && [ "$REF_TYPE" = branch ]; then
+            # a dev build of main: the next patch after the highest version
+            # tagged so far (stable or prerelease)
+            dev=true
+            top=$(git tag -l 'v[0-9]*' | sed -E 's/^v//; s/[-+].*$//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' |
+              sort -t. -k1,1n -k2,2n -k3,3n | tail -1 || true)
+            IFS=. read -r major minor patch <<<"${top:-0.0.0}"
+            TAG="v$major.$minor.$((patch + 1))-dev.$GITHUB_RUN_NUMBER"
+            echo "dev build $TAG of $(git rev-parse --short HEAD) (a local tag of the build jobs, never pushed)"
+          elif [ "$EVENT" = workflow_dispatch ]; then
             if [ "$DRY_RUN" != true ]; then
               echo "::error::a manual run is a dry run only: releases come from v* tags"
               exit 1
@@ -139,6 +165,10 @@ jobs:
           fi
           pre=false
           if [ -n "${BASH_REMATCH[2]}" ]; then pre=true; fi
+          if [ "$dev" = false ] && [[ ${BASH_REMATCH[2]} == -dev* ]]; then
+            echo "::error::$TAG: dev versions come from pushes to main, not tags"
+            exit 1
+          fi
           # stable releases only from main
           if [ "$pre" = false ] && ! git merge-base --is-ancestor HEAD origin/main; then
             echo "::error::$TAG is not on main"
@@ -151,13 +181,18 @@ jobs:
             echo '::warning::repository variable LONGARM_DEFAULT_HUB is not set: no built-in hub - the MSI offers Custom only and login needs a hub argument (docs/ci-cd.md)'
           fi
           channel=stable
-          if [ "$pre" = true ]; then channel=beta; fi
+          if [ "$pre" = true ]; then channel=preview; fi
+          if [ "$dev" = true ]; then channel=dev; fi
+          local_tag=false
+          if [ "$dry" = true ] || [ "$dev" = true ]; then local_tag=true; fi
           {
             echo "tag=$TAG"
             echo "version=${TAG#v}"
             echo "prerelease=$pre"
             echo "channel=$channel"
             echo "dry_run=$dry"
+            echo "dev=$dev"
+            echo "local_tag=$local_tag"
           } >>"$GITHUB_OUTPUT"
 
   build-unix:
@@ -179,8 +214,8 @@ jobs:
         with:
           fetch-depth: 0 # goreleaser: changelog, previous tag
           persist-credentials: false
-      - name: local tag (dry run)
-        if: needs.meta.outputs.dry_run == 'true'
+      - name: local tag (dry run, dev build)
+        if: needs.meta.outputs.local_tag == 'true'
         run: git tag "$TAG"
       - uses: ./.github/actions/go-setup
         with:
@@ -273,8 +308,8 @@ jobs:
         with:
           fetch-depth: 0 # goreleaser: changelog, previous tag
           persist-credentials: false
-      - name: local tag (dry run)
-        if: needs.meta.outputs.dry_run == 'true'
+      - name: local tag (dry run, dev build)
+        if: needs.meta.outputs.local_tag == 'true'
         run: git tag $env:TAG
       - uses: ./.github/actions/go-setup
         with:
@@ -466,8 +501,10 @@ jobs:
     name: image (ghcr.io)
     # next to the builds (the image is built from the tag's source by its
     # Dockerfile); :X.Y.Z is pushed even if the build jobs fail, :latest only
-    # after publish (image-latest). A dry run only runs the smoke test.
+    # after publish (image-latest). A dry run only runs the smoke test; a dev
+    # build none (image.yml publishes :edge for every push to main).
     needs: meta
+    if: needs.meta.outputs.dev == 'false'
     permissions:
       contents: read
       packages: write
@@ -481,7 +518,7 @@ jobs:
     # for a release that was signed and published (and approved, with the
     # approval gate of docs/ci-cd.md 2.5)
     needs: [meta, publish, image]
-    if: needs.meta.outputs.prerelease == 'false' && needs.meta.outputs.dry_run == 'false'
+    if: needs.meta.outputs.prerelease == 'false' && needs.meta.outputs.dry_run == 'false' && needs.meta.outputs.dev == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -559,6 +596,8 @@ jobs:
           LONGARM_RELEASE_KEY_PASSWORD: ${{ secrets.LONGARM_RELEASE_KEY_PASSWORD }}
         run: .github/scripts/longarm-release.sh publish "$RUNNER_TEMP/longarm" "$RUNNER_TEMP/release/hub" "$VERSION" "$CHANNEL"
       - name: GitHub Release
+        # dev builds: the hub only (one per push to main would bury the releases)
+        if: needs.meta.outputs.dev == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

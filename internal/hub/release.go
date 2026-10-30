@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -82,7 +81,7 @@ func addRelease(ctx context.Context, rs *releaseStore, st *store.Store, dir, ver
 	if !versionRE.MatchString(version) {
 		return nil, fmt.Errorf("invalid version %q", version)
 	}
-	channel = cmp.Or(channel, "stable")
+	channel = normChannel(channel) // "" stable, beta -> preview
 	if !channelRE.MatchString(channel) {
 		return nil, fmt.Errorf("invalid channel %q", channel)
 	}
@@ -109,7 +108,7 @@ func addRelease(ctx context.Context, rs *releaseStore, st *store.Store, dir, ver
 			return nil, errReleaseDiffers
 		}
 		for _, it := range items {
-			if old, ok := existing[it.r.File]; !ok || old.SHA256 != it.r.SHA256 || old.Channel != channel {
+			if old, ok := existing[it.r.File]; !ok || old.SHA256 != it.r.SHA256 || normChannel(old.Channel) != channel {
 				return nil, errReleaseDiffers
 			}
 		}
@@ -279,7 +278,7 @@ func (h *Hub) saveRolloutLocked() {
 	}
 }
 
-func channelOf(n *node) string { return cmp.Or(n.rec.Channel, "stable") }
+func channelOf(n *node) string { return normChannel(n.rec.Channel) }
 
 // updateFailedLocked reports whether n's last update to version failed. An
 // "unhealthy" report counts too: the watchdog is about to roll back, and if
@@ -304,7 +303,7 @@ func updateFailedLocked(n *node, version string) (bool, string) {
 // targetLocked is the version n should run ("" = stay).
 func (h *Hub) targetLocked(n *node) string {
 	r := h.rollout
-	if r == nil || n.rec.Role != "worker" || n.rec.Admin || channelOf(n) != r.Channel {
+	if r == nil || n.rec.Role != "worker" || n.rec.Admin || channelOf(n) != normChannel(r.Channel) {
 		return ""
 	}
 	name := n.rec.Name
@@ -369,7 +368,7 @@ func (h *Hub) pushReleaseAs(v tenancy.Caller, req *pb.PushReleaseRequest, by str
 	if miss := h.rel.missingFiles(files); len(miss) > 0 {
 		return nil, status.Errorf(codes.FailedPrecondition, "the hub lost files of release %s (%s); publish the same files again first", req.Version, strings.Join(miss, ", "))
 	}
-	channel := files[0].Channel
+	channel := normChannel(files[0].Channel)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var cands []*node
@@ -612,18 +611,19 @@ func (s *fleetServer) CheckUpdate(ctx context.Context, req *pb.UpdateCheckReques
 		n.rec.Version = req.Version
 	}
 	if req.Want != "" {
+		channel := channelOf(n)
 		h.mu.Unlock()
-		return h.wantedRelease(req)
+		return h.wantedRelease(req, channel)
 	}
 	target := h.targetLocked(n)
-	stable := channelOf(n) == "stable"
+	channel := channelOf(n)
 	state := ""
 	if h.rollout != nil {
 		state = h.rollout.Version + " " + h.rollout.State
 	}
 	h.mu.Unlock()
 	resp := &pb.UpdateCheckResponse{Rollout: state}
-	if latest, _ := h.latestNotice(); latest != "" && stable {
+	if latest, _ := h.latestNoticeIn(channel); latest != "" {
 		resp.LatestVersion = latest
 	}
 	if target == "" || target == req.Version {
@@ -644,17 +644,18 @@ func (s *fleetServer) CheckUpdate(ctx context.Context, req *pb.UpdateCheckReques
 
 // wantedRelease answers CheckUpdate with want (longarm worker update: the
 // owner asked this worker for a version): that version's update binaries
-// for the worker's OS / arch, whatever the rollout says. The worker refuses
-// anything not newer than it runs and verifies the signatures.
-func (h *Hub) wantedRelease(req *pb.UpdateCheckRequest) (*pb.UpdateCheckResponse, error) {
+// for the worker's OS / arch, whatever the rollout says ("latest": the
+// newest of the worker's channel). The worker refuses anything not newer
+// than it runs and verifies the signatures.
+func (h *Hub) wantedRelease(req *pb.UpdateCheckRequest, channel string) (*pb.UpdateCheckResponse, error) {
 	v := req.Want
 	if v == "latest" {
-		latest, _, err := h.latestRelease()
+		latest, _, err := h.latestReleaseIn(channel)
 		if err != nil {
 			return nil, err
 		}
 		if latest == "" {
-			return nil, status.Error(codes.NotFound, "the hub has no stable release")
+			return nil, status.Errorf(codes.NotFound, "the hub has no %s release", channel)
 		}
 		v = latest
 	} else if !versionRE.MatchString(v) {
@@ -920,7 +921,7 @@ func (s *hubAdminServer) PublishRelease(st pb.HubAdmin_PublishReleaseServer) err
 	if err != nil {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	}
-	v := &pb.ReleaseVersion{Version: hdr.Version, Channel: cmp.Or(hdr.Channel, "stable"), AddedAt: timestamppb.Now(), Signed: true}
+	v := &pb.ReleaseVersion{Version: hdr.Version, Channel: normChannel(hdr.Channel), AddedAt: timestamppb.Now(), Signed: true}
 	var names []string
 	for _, r := range rels {
 		f := releaseFilePB(r)

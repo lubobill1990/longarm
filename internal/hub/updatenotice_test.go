@@ -39,9 +39,7 @@ func TestUpdateNotice(t *testing.T) {
 	defer h.Close()
 	fs := &fleetServer{h: h}
 	who := func(goos, goarch string) *pb.WhoamiResponse {
-		h.latest.mu.Lock()
-		h.latest.at = h.latest.at.AddDate(-1, 0, 0) // expire the cache
-		h.latest.mu.Unlock()
+		expireLatest(h)
 		cctx := context.WithValue(ctx, callerKey{}, caller{id: pki.Identity{Role: pki.RoleClient, Name: "c1"}, cert: &x509.Certificate{}})
 		r, err := fs.Whoami(cctx, &pb.WhoamiRequest{Os: goos, Arch: goarch})
 		if err != nil {
@@ -114,9 +112,93 @@ func TestUpdateNotice(t *testing.T) {
 	if err != nil || resp.Version != "" || resp.LatestVersion != "1.2.0" {
 		t.Fatalf("CheckUpdate: %v %v", resp, err)
 	}
+	// beta is preview: the release candidate (newer than the stable 1.2.0)
 	resp, err = fs.CheckUpdate(wctx, &pb.UpdateCheckRequest{Os: "windows", Arch: "amd64", Version: "1.0.0", Channel: "beta"})
-	if err != nil || resp.LatestVersion != "" {
+	if err != nil || resp.LatestVersion != "1.3.0-rc1" {
 		t.Fatalf("CheckUpdate on beta: %v %v", resp, err)
+	}
+}
+
+func expireLatest(h *Hub) {
+	h.latest.mu.Lock()
+	h.latest.byCh = nil
+	h.latest.mu.Unlock()
+}
+
+// TestLatestByChannel: GET /releases/latest.json?channel= and CheckUpdate
+// give each channel the newest complete release of it or of a more tested
+// channel; a dev build that lost a file falls back to the next one.
+func TestLatestByChannel(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	if _, err := InitCA(dir); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{DataDir: dir, Listen: "127.0.0.1:0", RelayUDP: "off", HTTP: "off"}
+	if err := cfg.applyDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Open(cfg, slog.New(slog.NewTextHandler(&syncWriter{w: &bytes.Buffer{}}, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	files := map[string]string{"longarmd-windows-amd64.exe": "d", "longarm-windows-amd64.msi": "msi"}
+	for _, r := range [][2]string{{"0.1.20", ""}, {"0.1.21-dev.5", "dev"}, {"0.1.21-rc.1", "beta"}, {"0.1.22-dev.9", "dev"}, {"0.1.22-dev.10", "dev"}} {
+		if _, err := addRelease(ctx, h.rel, h.store, releaseDir(t, files), r[0], r[1], "", false); err != nil {
+			t.Fatal(r, err)
+		}
+	}
+	latest := func(q string) (string, string) {
+		expireLatest(h)
+		w := httptest.NewRecorder()
+		h.latestJSON(w, httptest.NewRequest(http.MethodGet, "/releases/latest.json"+q, nil))
+		var lj struct{ Version, Channel string }
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &lj) != nil {
+			return "", w.Body.String()
+		}
+		return lj.Version, lj.Channel
+	}
+	for q, want := range map[string][2]string{
+		"":                 {"0.1.20", "stable"},
+		"?channel=stable":  {"0.1.20", "stable"},
+		"?channel=preview": {"0.1.21-rc.1", "preview"}, // published as beta
+		"?channel=beta":    {"0.1.21-rc.1", "preview"},
+		"?channel=dev":     {"0.1.22-dev.10", "dev"},
+		"?channel=other":   {"0.1.20", "stable"}, // custom channels: stable releases only
+	} {
+		if v, ch := latest(q); v != want[0] || ch != want[1] {
+			t.Errorf("latest.json%s = %s %s, want %v", q, v, ch, want)
+		}
+	}
+	if _, body := latest("?channel=../x"); !strings.Contains(body, "invalid channel") {
+		t.Errorf("bad channel: %s", body)
+	}
+	// the newest dev build lost its MSI: the one before it
+	os.Remove(h.rel.localPath("0.1.22-dev.10", "longarm-windows-amd64.msi"))
+	h.rel.reconcile(ctx, h.store)
+	if v, _ := latest("?channel=dev"); v != "0.1.22-dev.9" {
+		t.Errorf("dev with an incomplete newest build: %s", v)
+	}
+	// CheckUpdate follows the worker's channel; want=latest too
+	fs := &fleetServer{h: h}
+	h.mu.Lock()
+	h.nodes["w1"] = &node{rec: &store.Node{Name: "w1", Role: "worker", State: stateApproved, Version: "0.1.20"}}
+	h.mu.Unlock()
+	wctx := context.WithValue(ctx, callerKey{}, caller{id: pki.Identity{Role: pki.RoleWorker, Name: "w1"}, cert: &x509.Certificate{}})
+	expireLatest(h)
+	resp, err := fs.CheckUpdate(wctx, &pb.UpdateCheckRequest{Os: "windows", Arch: "amd64", Version: "0.1.20", Channel: "dev"})
+	if err != nil || resp.LatestVersion != "0.1.22-dev.9" {
+		t.Fatalf("CheckUpdate dev: %v %v", resp, err)
+	}
+	resp, err = fs.CheckUpdate(wctx, &pb.UpdateCheckRequest{Os: "windows", Arch: "amd64", Version: "0.1.20", Want: "latest"})
+	if err != nil || resp.Version != "0.1.22-dev.9" {
+		t.Fatalf("want latest on dev: %v %v", resp, err)
+	}
+	// the release record says the normalized channel
+	recs, _ := h.releaseFiles("0.1.21-rc.1")
+	if len(recs) == 0 || recs[0].Channel != "preview" {
+		t.Fatalf("rc channel: %+v", recs)
 	}
 }
 

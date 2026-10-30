@@ -20,3 +20,7 @@ func Installed() bool { return false }
 
 // MayChangeAuto: no service here.
 func MayChangeAuto() bool { return false }
+
+// MachineChannel: no machine setting outside Windows (longarmd.toml
+// [update] channel decides).
+func MachineChannel() string { return "" }

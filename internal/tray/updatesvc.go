@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lubobill1990/longarm/internal/update"
 	"github.com/lubobill1990/longarm/internal/updatesvc"
 )
 
@@ -15,8 +16,9 @@ import (
 // newer MSI from the recorded hub, signed with the release key built into
 // it - and falls back to its own download and msiexec with UAC otherwise.
 //
-//	GET  /trayapi/update/service   the service's status (Settings: automatic updates)
+//	GET  /trayapi/update/service   the service's status (Settings: automatic updates, release channel)
 //	POST /trayapi/update/auto {"auto": true, "hours": 6}   (the owner or an administrator)
+//	POST /trayapi/update/channel {"channel": "preview"}    (the owner or an administrator)
 
 // updateService is the service's client (tests fake it); nil = none here.
 var updateService = func() serviceClient {
@@ -39,6 +41,7 @@ type localUpdateStatus struct {
 	Message           string            `json:"message,omitempty"`
 	Auto              bool              `json:"auto"`
 	AutoIntervalHours int               `json:"auto_interval_hours,omitempty"`
+	Channel           string            `json:"channel,omitempty"`
 	Last              *updatesvc.Result `json:"last,omitempty"`
 	CanSetAuto        bool              `json:"can_set_auto"`
 	Error             string            `json:"error,omitempty"`
@@ -46,7 +49,8 @@ type localUpdateStatus struct {
 
 func toLocalStatus(st *updatesvc.Status) localUpdateStatus {
 	return localUpdateStatus{Service: true, Installed: st.Installed, Available: st.Available, State: st.State, Target: st.Target,
-		Message: st.Message, Auto: st.Auto, AutoIntervalHours: st.AutoIntervalHours, Last: st.Last, CanSetAuto: updatesvc.MayChangeAuto()}
+		Message: st.Message, Auto: st.Auto, AutoIntervalHours: st.AutoIntervalHours, Channel: st.Channel, Last: st.Last,
+		CanSetAuto: updatesvc.MayChangeAuto()}
 }
 
 // installViaService asks the update service for version: handled = false
@@ -110,6 +114,40 @@ func (s *Server) updateServiceRoutes(mux *http.ServeMux) {
 			httpError(w, http.StatusBadGateway, "no status in the answer")
 			return
 		}
+		writeJSON(w, toLocalStatus(resp.Status))
+	})
+	mux.HandleFunc("POST /trayapi/update/channel", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Channel string `json:"channel"`
+		}
+		if !readBody(w, r, &body) {
+			return
+		}
+		if _, ok := update.NormalizeChannel(body.Channel); !ok {
+			httpError(w, http.StatusBadRequest, "unknown release channel (stable, preview or dev)")
+			return
+		}
+		c := updateService()
+		if c == nil {
+			httpError(w, http.StatusConflict, updatesvc.ErrNoService.Error())
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		resp, err := c.Do(ctx, &updatesvc.Request{Op: updatesvc.OpSetChannel, Channel: body.Channel})
+		if err == nil {
+			err = resp.Err()
+		}
+		if err != nil {
+			httpError(w, http.StatusForbidden, err.Error())
+			return
+		}
+		if resp.Status == nil {
+			httpError(w, http.StatusBadGateway, "no status in the answer")
+			return
+		}
+		// the banner: the newest release of the new channel, now
+		go s.refreshUpdate(context.WithoutCancel(r.Context()), true)
 		writeJSON(w, toLocalStatus(resp.Status))
 	})
 }
