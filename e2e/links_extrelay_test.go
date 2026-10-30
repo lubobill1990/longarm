@@ -8,9 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -37,33 +37,15 @@ func lastPings(out string) int {
 	return n
 }
 
-// relayRecorder counts the packets a relay delivers to a test session, by
-// source.
-type relayRecorder struct {
-	mu   sync.Mutex
-	from map[relay.ID]int
-}
+// nopRelayHandler ignores what a relay delivers to a test session.
+type nopRelayHandler struct{}
 
-func (r *relayRecorder) RelayData(src relay.ID, _ []byte) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.from == nil {
-		r.from = map[relay.ID]int{}
-	}
-	r.from[src]++
-}
-func (r *relayRecorder) RelayCallMeMaybe(relay.ID, relay.CallMeMaybe) {}
-func (r *relayRecorder) RelayPeerGone(relay.ID)                       {}
-
-func (r *relayRecorder) got(src relay.ID) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.from[src]
-}
+func (nopRelayHandler) RelayData(relay.ID, []byte)                   {}
+func (nopRelayHandler) RelayCallMeMaybe(relay.ID, relay.CallMeMaybe) {}
+func (nopRelayHandler) RelayPeerGone(relay.ID)                       {}
 
 // connect opens a session on the relay (TLS/TCP) with bundle b, as a node
-// would: a test's own session next to the workers' (another instance, so
-// another relay ID).
+// would.
 func (x *extRelay) connect(t *testing.T, b *pki.Bundle, h relay.Handler) (*relay.Conn, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -128,9 +110,10 @@ func listenOnly(t *testing.T, w *hubWorker, url string) {
 // TestPortLinksExternalRelayPolicy: two workers that reach each other only
 // through an external relay (no tcp listeners, hole punching off, the hub's
 // embedded relay off):
-//   - a link between them carries traffic over the external relay, which
-//     holds the pair by the workers' node IDs: a certificate with the
-//     linked name but another node ID, and an unlinked worker, are refused;
+//   - the relay holds the linked pair by the workers' node IDs and refuses
+//     an unlinked worker; a certificate with the linked worker's name but
+//     another node ID gets no session while that worker is connected, and
+//     no part in its pair while it is away;
 //   - the hub restarts (down for longer than the end-to-end idle timeout)
 //     while a connection through the link is open: the connection goes on,
 //     new connections work while the hub is down and after;
@@ -216,10 +199,10 @@ func TestPortLinksExternalRelayPolicy(t *testing.T) {
 				pf.Pairs[0] == [2]string{"ra", "rb"} && strings.EqualFold(pf.PairIDs[0][0], ids["ra"]) && strings.EqualFold(pf.PairIDs[0][1], ids["rb"])
 		})
 
-		// Sessions of our own on the relay (another instance of each node):
-		// the workers' real certificates, a certificate with ra's name and
-		// another node ID (what a reused or renamed name would carry), and a
-		// worker no link names.
+		// Sessions of our own on the relay, with certificates of the hub's
+		// CA: a worker no link names, and one with ra's name but another
+		// node ID (what a name reused after a revocation would carry). A
+		// worker's relay ID is its certificate name's, so they send to rb's.
 		ca, err := pki.LoadCA(filepath.Join(h.client, "ca"))
 		if err != nil {
 			t.Fatal(err)
@@ -235,45 +218,43 @@ func TestPortLinksExternalRelayPolicy(t *testing.T) {
 			}
 			return b
 		}
-		session := func(b *pki.Bundle, rh relay.Handler) *relay.Conn {
-			c, err := x.connect(t, b, rh)
-			if err != nil {
-				t.Fatalf("session on the relay: %v", err)
-			}
-			return c
-		}
-		recv := &relayRecorder{}
-		rb := session(mustBundle(t, ws["rb"]), recv)
-		ra := session(mustBundle(t, ws["ra"]), &relayRecorder{})
-		fakeRA := session(issued("ra"), &relayRecorder{})
-		rc := session(issued("rc"), &relayRecorder{})
-		waitFor(t, "ra's certificate reaching rb's through the relay", 20*time.Second, func() bool {
-			ra.SendData(rb.Self(), []byte("linked"))
-			return recv.got(ra.Self()) > 0
-		})
-		for _, c := range []struct {
-			what string
-			c    *relay.Conn
-		}{{"ra's name with another node ID", fakeRA}, {"an unlinked worker", rc}} {
+		rbID := relay.WorkerID("rb")
+		refused := func(what string, c *relay.Conn) {
+			t.Helper()
 			before := x.stats(t).DropPolicy
-			waitFor(t, c.what+" refused by the relay's policy", 20*time.Second, func() bool {
-				c.c.SendData(rb.Self(), []byte("not linked"))
+			waitFor(t, what+" refused by the relay's policy", 20*time.Second, func() bool {
+				c.SendData(rbID, []byte("not linked"))
 				return x.stats(t).DropPolicy > before
 			})
 		}
-		// the linked pair still gets through after them (the relay
-		// forwards in order per source; the others were dropped, not late)
-		n := recv.got(ra.Self())
-		waitFor(t, "ra's certificate reaching rb's again", 20*time.Second, func() bool {
-			ra.SendData(rb.Self(), []byte("linked"))
-			return recv.got(ra.Self()) > n
+		rc, err := x.connect(t, issued("rc"), nopRelayHandler{})
+		if err != nil {
+			t.Fatalf("an unlinked worker's session: %v", err)
+		}
+		refused("an unlinked worker", rc)
+		rc.Close()
+
+		// ra's name with another ID: no session while ra holds its relay ID
+		// ...
+		fake := issued("ra")
+		if _, err := x.connect(t, fake, nopRelayHandler{}); err == nil || !strings.Contains(err.Error(), "in use by another identity") {
+			t.Fatalf("a session with ra's name and another node ID while ra is connected: %v", err)
+		}
+		// ... and with ra away, a session but not ra's pair
+		ws["ra"].kill()
+		var fc *relay.Conn
+		waitFor(t, "ra's relay session to end", 60*time.Second, func() bool {
+			c, err := x.connect(t, fake, nopRelayHandler{})
+			fc = c
+			return err == nil
 		})
-		if a, b := recv.got(fakeRA.Self()), recv.got(rc.Self()); a != 0 || b != 0 {
-			t.Fatalf("the relay delivered %d packets from ra's name with another ID and %d from an unlinked worker", a, b)
-		}
-		for _, c := range []*relay.Conn{ra, rb, fakeRA, rc} {
-			c.Close()
-		}
+		refused("ra's name with another node ID", fc)
+		fc.Close()
+		ws["ra"].start(t, true)
+		h.waitNode(t, "ra", "online again", func(n map[string]any) bool { return isTrue(n["online"]) })
+		waitFor(t, "alice's server through the external relay again", 60*time.Second, func() bool {
+			return strings.Contains(get(lport, "/again").stdout, "hello /again")
+		})
 	})
 
 	var holdJob, echoJob, el, ep string
@@ -342,19 +323,6 @@ func TestPortLinksExternalRelayPolicy(t *testing.T) {
 		if holdJob == "" {
 			t.Skip("needs hub_restart_mid_connection's connection")
 		}
-		recv := &relayRecorder{}
-		rb, err := x.connect(t, mustBundle(t, ws["rb"]), recv)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ra, err := x.connect(t, mustBundle(t, ws["ra"]), &relayRecorder{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		waitFor(t, "ra's certificate reaching rb's while linked", 20*time.Second, func() bool {
-			ra.SendData(rb.Self(), []byte("linked"))
-			return recv.got(ra.Self()) > 0
-		})
 		h.mustLongarm(alice, "link", "rm", id, el)
 		waitFor(t, "the relay dropping the pair", 30*time.Second, func() bool {
 			n, ok := x.hubStatus()["worker_pairs"].(float64)
@@ -366,40 +334,17 @@ func TestPortLinksExternalRelayPolicy(t *testing.T) {
 		waitFor(t, "new connections refused", 30*time.Second, func() bool {
 			return la("exec", "ra", "--", bins.helper, "connect", ep).code != 0
 		})
-		before, n := x.stats(t).DropPolicy, recv.got(ra.Self())
-		waitFor(t, "ra -> rb refused by the relay's policy", 20*time.Second, func() bool {
-			ra.SendData(rb.Self(), []byte("unlinked now"))
-			return x.stats(t).DropPolicy > before
-		})
-		if got := recv.got(ra.Self()); got != n {
-			t.Fatalf("the relay delivered %d packets ra -> rb after the link went", got-n)
-		}
-		ra.Close()
-		rb.Close()
 		h.longarm(alice, "kill", echoJob)
 	})
 
 	t.Run("revoked_by_id", func(t *testing.T) {
 		before, _ := x.hubStatus()["revoked"].(float64)
-		b := mustBundle(t, ws["ra"])
-		s, err := x.connect(t, b, &relayRecorder{})
-		if err != nil {
-			t.Fatalf("ra's certificate before the revocation: %v", err)
-		}
 		h.mustLongarm(h.admin, "admin", "revoke", ids["ra"][:8])
 		waitFor(t, "the revocation on the relay", 30*time.Second, func() bool {
 			n, _ := x.hubStatus()["revoked"].(float64)
 			return n > before
 		})
-		select {
-		case <-s.Done():
-		case <-time.After(30 * time.Second):
-			t.Fatal("the relay kept a session of the revoked worker")
-		}
-		if _, err := x.connect(t, b, &relayRecorder{}); err == nil {
-			t.Fatal("the relay accepted a session of the revoked worker")
-		}
-		waitFor(t, "the revoked worker's own sessions gone from the relay", 30*time.Second, func() bool {
+		waitFor(t, "the revoked worker's sessions gone from the relay", 30*time.Second, func() bool {
 			for _, ss := range x.stats(t).Sessions {
 				if ss.Node == "worker/ra" {
 					return false
@@ -407,9 +352,12 @@ func TestPortLinksExternalRelayPolicy(t *testing.T) {
 			}
 			return true
 		})
-		// rb is still welcome
-		if _, err := x.connect(t, mustBundle(t, ws["rb"]), &relayRecorder{}); err != nil {
-			t.Fatalf("rb's certificate after ra's revocation: %v", err)
+		if _, err := x.connect(t, mustBundle(t, ws["ra"]), nopRelayHandler{}); err == nil {
+			t.Fatal("the relay accepted a session of the revoked worker")
+		}
+		h.waitNode(t, "rb", "still online on the relay", func(n map[string]any) bool { return isTrue(n["online"]) })
+		if s := x.stats(t).Sessions; !slices.ContainsFunc(s, func(ss relay.SessionStats) bool { return ss.Node == "worker/rb" }) {
+			t.Fatalf("rb lost its relay session: %+v", s)
 		}
 	})
 	h.longarm(alice, "kill", srvJob)
