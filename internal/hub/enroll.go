@@ -367,8 +367,13 @@ func (h *Hub) issueHosts(rec *store.Node, csr []byte, hosts []string) ([]byte, e
 	if prevName != name {
 		// renamed: the older certificates (the old name) go once one with
 		// the new name is in use (supersedeIfDue); later renewals - even
-		// with an old certificate - keep that pending
+		// with an old certificate - keep that pending, and the old name
+		// stays reserved until then (PendingNames): a certificate that is
+		// still valid answers to it
 		rec.RetirePending = true
+		if !slices.Contains(rec.PendingNames, prevName) {
+			rec.PendingNames = append(slices.Clone(rec.PendingNames), prevName)
+		}
 	}
 	return cert, nil
 }
@@ -524,6 +529,11 @@ func (h *Hub) renew(c caller, csr []byte) (*pb.RenewResponse, error) {
 	n.rec.CertSerial, n.rec.CertNotAfter = rec.CertSerial, rec.CertNotAfter
 	n.rec.CertName, n.rec.CertHasID, n.rec.NodeKey, n.rec.User = rec.CertName, rec.CertHasID, rec.NodeKey, rec.User
 	n.rec.RetirePending = n.rec.RetirePending || rec.RetirePending
+	for _, p := range rec.PendingNames {
+		if !slices.Contains(n.rec.PendingNames, p) {
+			n.rec.PendingNames = append(n.rec.PendingNames, p)
+		}
+	}
 	if oldDial != n.rec.DialName() {
 		h.dialNameChangedLocked(n) // port links name workers by their certificate names
 	}

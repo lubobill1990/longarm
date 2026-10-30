@@ -599,8 +599,8 @@ func TestOldReleaseCompat(t *testing.T) {
 		})
 		r := h.longarm(h.client, "exec", "w-dead-2", "--", bins.helper, "print", "1", "0", "0")
 		t.Logf("new client (ID-bound endorsement) -> v0.1.21 worker with end-to-end trust: exit %d %s", r.code, strings.TrimSpace(r.stderr))
-		if r.code == 0 {
-			t.Log("note: the v0.1.21 worker accepted the ID-bound device endorsement")
+		if r.code == 0 { // docs/security.md "Older versions": update such workers
+			t.Fatal("the v0.1.21 worker accepted an ID-bound device endorsement (it predates them)")
 		}
 		mustBin(t, r21.longarmd, "", "trust", "remove-user", keyUser(t, newKey), "--data-dir", odead.dataDir)
 		longarmdCmd(t, "trust", "remove-user", keyUser(t, oldKey), "--data-dir", nw.dataDir)

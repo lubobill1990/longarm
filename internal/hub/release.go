@@ -373,7 +373,9 @@ func (h *Hub) pushReleaseAs(v tenancy.Caller, req *pb.PushReleaseRequest, by str
 	defer h.mu.Unlock()
 	only := map[string]bool{} // req.Nodes: targets (names, IDs, ID prefixes)
 	for _, t := range req.Nodes {
-		n, err := h.resolveLocked(t, isWorker, "worker")
+		// among the workers v may see: another user's is "no worker", and
+		// an ambiguous prefix lists visible workers only
+		n, err := h.resolveLocked(t, h.workerVisibleLocked(v), "worker")
 		if err != nil {
 			return nil, err
 		}

@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -66,15 +67,17 @@ func (h *Hub) activeByNameLocked(name string) *node {
 }
 
 // nameTakenLocked reports whether name is in use by a non-revoked node
-// other than except (an ID): as its name, or as the name in its current
+// other than except (an ID): as its name, as the name in its current
 // certificate (a renamed node that hasn't renewed yet still answers to
-// the old name: TLS server name, longnet relay address).
+// the old name: TLS server name, longnet relay address), or as the name in
+// an older certificate of it that is still valid (PendingNames: renewed
+// with its new name, the old certificates not retired yet).
 func (h *Hub) nameTakenLocked(name, except string) *node {
 	for id, n := range h.nodes {
 		if id == except || n.rec.State == stateRevoked {
 			continue
 		}
-		if n.rec.Name == name || n.rec.DialName() == name {
+		if n.rec.Name == name || n.rec.DialName() == name || slices.Contains(n.rec.PendingNames, name) {
 			return n
 		}
 	}
@@ -218,7 +221,7 @@ func (h *Hub) nodeForCertLocked(id pki.Identity, cert *x509.Certificate) *node {
 // certificate was recorded for it.
 func (h *Hub) nameHistoryLocked(name string) string {
 	for _, n := range h.nodes {
-		if n.rec.Name == name || n.rec.DialName() == name {
+		if n.rec.Name == name || n.rec.DialName() == name || slices.Contains(n.rec.PendingNames, name) {
 			return fmt.Sprintf("node %s, %s", nodeid.Short(n.rec.ID), n.rec.State)
 		}
 	}
@@ -273,7 +276,7 @@ func (h *Hub) supersedeIfDue(nodeID string, cert *x509.Certificate) {
 		h.log.Warn("revoke superseded certificates", "id", nodeID, "err", err)
 		return
 	}
-	n.rec.RetirePending = false
+	n.rec.RetirePending, n.rec.PendingNames = false, nil // every older certificate is revoked: the names are free
 	h.store.PutNode(n.rec)
 	k++ // the legacy name revocations change the list too
 	if k > 0 {

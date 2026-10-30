@@ -91,7 +91,7 @@ func (h *Hub) indexNode(r *store.Node) {
 	for k, v := range old {
 		next[k] = v
 	}
-	for _, k := range []string{r.ID, r.Name, r.DialName()} {
+	for _, k := range append([]string{r.ID, r.Name, r.DialName()}, r.PendingNames...) {
 		if k == "" {
 			continue
 		}

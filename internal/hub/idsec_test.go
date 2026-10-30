@@ -172,11 +172,30 @@ func TestRenameSupersedesOldCertificates(t *testing.T) {
 	if h.revoked.Revoked(old.Leaf()) {
 		t.Fatal("the old certificate revoked before the new one is in use")
 	}
+	// renewed with the new name, but the old certificate is still valid:
+	// its name stays reserved (nobody else may answer to "dev1" meanwhile)
+	taken := func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.nameTakenLocked("dev1", "") != nil
+	}
+	if !taken() {
+		t.Fatal("the old certificate's name is free while that certificate is valid")
+	}
+	if _, err := pb.NewFleetClient(th.carol).Whoami(tctx(t), &pb.WhoamiRequest{}); err != nil { // registers carol
+		t.Fatal(err)
+	}
+	if _, err := h.RenameNode("admin/root", tenancy.Caller{Admin: true}, true, "carol", "dev1"); status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("another node renamed to the pending name: %v", err)
+	}
 	if _, err := pb.NewFleetClient(bundleConn(t, h, nb)).Whoami(tctx(t), &pb.WhoamiRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	if !h.revoked.Revoked(old.Leaf()) || h.revoked.Revoked(nb.Leaf()) {
 		t.Fatalf("after the new certificate's first use: old revoked %v, new %v", h.revoked.Revoked(old.Leaf()), h.revoked.Revoked(nb.Leaf()))
+	}
+	if taken() {
+		t.Fatal("the old name still reserved after its certificates were revoked")
 	}
 
 	// legacy serials: alice's hand-issued certificate (no ID) is reported

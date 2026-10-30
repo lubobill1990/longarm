@@ -330,6 +330,10 @@ type Node struct {
 	// certificate with its new name; once it presents one, every other
 	// certificate of it is revoked. Renewals keep it set.
 	RetirePending bool `json:"retire_pending,omitempty"`
+	// PendingNames: the names in the node's older certificates while
+	// RetirePending (renamed, those certificates not revoked yet): no other
+	// node may take them until they are (hub nameTakenLocked).
+	PendingNames []string `json:"pending_names,omitempty"`
 }
 
 // DialName is the name in the node's current certificate.
