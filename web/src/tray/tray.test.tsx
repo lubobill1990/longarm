@@ -4,6 +4,7 @@ import type { Account, TrayInfo } from '../api/local'
 import { Toasts } from '../components/common'
 import { AccountTab, rolesChangeText } from './AccountTab'
 import { externalHref, installAppBehaviour, menuItems } from './appShell'
+import { VersionChip, versionRows } from './VersionInfo'
 
 afterEach(() => {
   cleanup()
@@ -161,6 +162,64 @@ describe('AccountTab signed in already', () => {
     fireEvent.click(screen.getByTestId('signin-again'))
     await waitFor(() => expect(calls.some((c) => c.url === '/trayapi/signin/start')).toBe(true))
     expect(JSON.parse(String(calls.find((c) => c.url === '/trayapi/signin/start')!.init?.body)).replace).toBe(false)
+  })
+})
+
+describe('version chip', () => {
+  it('marks what is behind: the tray behind the newest release, a daemon or worker behind the tray', () => {
+    const rows = versionRows({
+      tray: '0.1.21',
+      latest: '0.1.22',
+      daemon: '0.1.20',
+      worker: '0.1.21',
+      admin: '0.1.22',
+      hub: '0.1.19',
+      client: true,
+      workerRole: true,
+      adminWorker: true,
+    })
+    const by = Object.fromEntries(rows.map((r) => [r.key, r]))
+    expect(by.tray.behind && by.tray.note).toContain('0.1.22 is available')
+    expect(by.daemon.behind && by.daemon.note).toContain('older than this tray')
+    expect(by.worker.behind).toBeFalsy()
+    expect(by.admin.behind && by.admin.note).toContain('newer than this tray')
+    expect(by.hub.behind).toBe(true)
+    // development builds compare with nothing; parts this machine lacks have no row
+    const dev = versionRows({ tray: 'dev', latest: '0.1.22', daemon: 'dev', client: true, workerRole: false, adminWorker: false })
+    expect(dev.some((r) => r.behind)).toBe(false)
+    expect(dev.map((r) => r.key)).toEqual(['tray', 'daemon', 'hub'])
+  })
+
+  it('shows the tray version in the title bar; the details mark the old daemon and offer the update', async () => {
+    const calls = mockFetch({
+      '/trayapi/update/install': () => [200, { state: 'downloading' }],
+      '/trayapi/update': () => [200, { current: '0.1.21', latest: '0.1.22', available: true, hub: '0.1.22' }],
+      '/local/longarm/v1/status': () => [200, { version: '0.1.20' }],
+      '/local/longarmd/v1/status': () => [200, { name: 'box', version: '0.1.21' }],
+    })
+    const i = info({ admin: { enabled: true, signed_in: true, pending: false } })
+    i.version = '0.1.21'
+    i.roles = { client: true, worker: true }
+    const pool = { workers: [{ name: 'box-admin', node: { name: 'box-admin', admin_worker: true, machine: 'box', version: '0.1.21' } }] }
+    render(
+      <Toasts>
+        <VersionChip info={i} pool={pool as never} />
+      </Toasts>,
+    )
+    const chip = screen.getByTestId('version-chip')
+    expect(chip.textContent).toContain('v0.1.21')
+    await waitFor(() => expect(chip.className).toContain('warn'))
+    expect(chip.getAttribute('title')).toContain('longarm daemon 0.1.20 (behind)')
+    fireEvent.click(chip)
+    expect(screen.getByTestId('version-details')).toBeTruthy()
+    expect(screen.getByTestId('version-daemon').className).toContain('behind')
+    expect(screen.getByTestId('version-worker').className).not.toContain('behind')
+    expect(screen.getByTestId('version-admin').textContent).toContain('0.1.21')
+    expect(screen.getByTestId('version-hub').textContent).toContain('0.1.22')
+    expect(screen.getByTestId('version-tray').className).toContain('behind')
+    fireEvent.click(screen.getByTestId('version-update'))
+    await waitFor(() => expect(calls.some((c) => c.url === '/trayapi/update/install')).toBe(true))
+    expect(JSON.parse(String(calls.find((c) => c.url === '/trayapi/update/install')!.init?.body))).toEqual({ version: '0.1.22' })
   })
 })
 

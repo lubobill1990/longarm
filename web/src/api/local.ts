@@ -153,6 +153,8 @@ export const trayApi = {
 export interface TrayUpdate {
   current: string
   latest?: string
+  /** the hub's own version (its /healthz) */
+  hub?: string
   /** a newer release with an MSI for this machine */
   available: boolean
   msi?: string

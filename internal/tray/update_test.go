@@ -35,6 +35,8 @@ func (f *fakeReleaseHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			{"name": name, "sha256": hex.EncodeToString(sum[:]), "size": len(f.record)},
 			{"name": "longarmd-linux-amd64", "sha256": "00", "size": 1},
 		}})
+	case "/healthz":
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "version": "1.1.5"})
 	case "/releases/" + f.version + "/" + name:
 		w.Write(f.msi)
 	case "/releases/" + f.version + "/" + name + update.SigExt:
@@ -142,7 +144,7 @@ func TestTrayUpdateInfo(t *testing.T) {
 		s := &Server{opts: Options{Version: c.current, HubURL: hub.URL, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 		s.upd.goos = c.goos
 		s.refreshUpdate(context.Background(), false)
-		if got := s.updateInfo(); got.Available != c.want {
+		if got := s.updateInfo(); got.Available != c.want || got.Hub != "1.1.5" || got.Latest != "1.2.0" {
 			t.Errorf("%s on %s: %+v", c.current, c.goos, got)
 		}
 	}

@@ -4,6 +4,13 @@
 
 ### Added
 
+- The tray shows its version in the title bar ("v0.1.21"): hover for a
+  summary, click for the details - this tray, the client daemon, this
+  machine's worker and admin worker, the hub and the newest release at the
+  hub - with whatever is behind marked (the tray behind the newest release,
+  a daemon or worker older or newer than the tray: not restarted, or not
+  updated) and "Update to X" when the hub has a newer release. The hub's
+  version comes from its public `/healthz`.
 - **Signed apt and dnf/yum repositories** on GitHub Pages
   (`https://lubobill1990.github.io/longarm/`): `apt install longarm` /
   `dnf install longarm`, updates through the package manager. The rpm is

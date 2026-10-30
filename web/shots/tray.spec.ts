@@ -18,12 +18,14 @@ const TYPES: Record<string, string> = { '.js': 'text/javascript', '.css': 'text/
 
 interface Scenario {
   needSignIn?: boolean
-  signin?: 'idle' | 'running'
+  signin?: 'idle' | 'running' | 'confirm'
   daemonDown?: boolean
   emptyPool?: boolean
   /** never answer the pool and jobs: the loading skeletons */
   loading?: boolean
   update?: boolean
+  /** the client daemon is older than the tray (not restarted after an update) */
+  daemonOld?: boolean
 }
 
 async function serve(page: Page, sc: Scenario = {}) {
@@ -50,7 +52,7 @@ async function serve(page: Page, sc: Scenario = {}) {
         })
       if (p === '/local/longarm/v1/forwards') return json(r, post ? mock.forwards[0] : { forwards: mock.forwards })
       if (p === '/local/longarm/v1/settings') return json(r, { transport: 'race' })
-      if (p === '/local/longarm/v1/status') return json(r, { version: '0.9.2', identity: 'client/alice-laptop' })
+      if (p === '/local/longarm/v1/status') return json(r, { version: sc.daemonOld ? '0.9.1' : '0.9.2', identity: 'client/alice-laptop' })
       if (p === '/local/longarmd/v1/status') return json(r, mock.workerStatus)
       if (p.startsWith('/local/longarmd/v1/jobs')) return json(r, { jobs: mock.workerJobs })
       return json(r, { error: 'not found' }, 404)
@@ -129,6 +131,21 @@ for (const scheme of ['light', 'dark'] as const) {
         await expect(page.getByTestId('signin-banner')).toBeVisible()
         await expect(page.getByTestId('empty-pool')).toBeVisible()
         await shot(page, `tray-banners-${scheme}-${size}`)
+      })
+
+      test('version details: the daemon behind, an update', async ({ page }) => {
+        await open(page, 'pool', { update: true, daemonOld: true })
+        await expect(page.getByTestId('version-chip')).toHaveClass(/warn/)
+        await page.getByTestId('version-chip').click()
+        await expect(page.getByTestId('version-daemon')).toHaveClass(/behind/)
+        await expect(page.getByTestId('version-update')).toBeVisible()
+        await shot(page, `tray-versions-${scheme}-${size}`)
+      })
+
+      test('sign-in: signed in already', async ({ page }) => {
+        await open(page, 'account', { signin: 'confirm' })
+        await expect(page.getByTestId('signin-confirm')).toBeVisible()
+        await shot(page, `tray-signin-confirm-${scheme}-${size}`)
       })
 
       test('daemon down', async ({ page }) => {

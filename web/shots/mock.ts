@@ -179,8 +179,23 @@ export function info(o: { needSignIn?: boolean; daemonDown?: boolean } = {}) {
   }
 }
 
-export function signinState(kind: 'idle' | 'running') {
+export function signinState(kind: 'idle' | 'running' | 'confirm') {
   if (kind === 'idle') return { state: 'idle', targets: { client: true, worker: true, admin_worker: true } }
+  if (kind === 'confirm')
+    return {
+      state: 'confirm',
+      hub: 'longarm.example.com:7443',
+      targets: { client: true, worker: true, admin_worker: false },
+      confirm: {
+        hub: 'longarm.example.com:7443',
+        current: [
+          { kind: 'device', identity: 'admin/alice-laptop', user: 'alice', hub: 'longarm.example.com:7443', same_hub: true },
+          { kind: 'worker', identity: 'worker/alice-laptop', user: 'alice', hub: 'longarm.example.com:7443', same_hub: true },
+        ],
+        admin_worker_stays: true,
+        request: {},
+      },
+    }
   return {
     state: 'running',
     hub: 'longarm.example.com',
@@ -218,4 +233,4 @@ export const traySettings = {
   worker_logs: 'C:\\Users\\alice\\AppData\\Local\\longarmd',
 }
 
-export const update = { available: true, current: '0.9.2', latest: '0.10.0', state: 'idle' }
+export const update = { available: true, current: '0.9.2', latest: '0.10.0', hub: '0.10.0', state: 'idle' }
