@@ -169,8 +169,9 @@
   as `key` with Azure CLI 2.91, which prints `-o tsv` lists one field per
   line (joined without a separator they ran together), and its template was
   refused by policies against storage account keys ("RequestDisallowedByPolicy",
-  nothing changed). The lines are joined with tabs now; deploy.sh already
-  read both forms.
+  nothing changed). The lines are joined with tabs now. deploy.sh read both
+  forms except after a rollback, where it skipped the check that the
+  rolled-back hub answers (one tab-separated line expected).
 - Tray and panel: every menu and popover (a worker card's ⋯ menu, the
   version details in the tray's title bar, the tray's right-click menu)
   closes on a click outside, on Escape and when the focus leaves it, through
