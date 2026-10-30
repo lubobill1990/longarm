@@ -22,6 +22,40 @@ function token(el: HTMLElement, name: string, fallback: string): string {
   return getComputedStyle(el).getPropertyValue(name).trim() || fallback
 }
 
+/** The clipboard side of a terminal (xterm's selection and paste). */
+export interface ClipboardTerm {
+  hasSelection(): boolean
+  getSelection(): string
+  clearSelection(): void
+  paste(text: string): void
+}
+
+/**
+ * Copy and paste as Windows Terminal does (the window has no context
+ * menu): Ctrl+Shift+C / Ctrl+Shift+V always; Ctrl+C copies when text is
+ * selected (else it reaches the program: an interrupt); Ctrl+V pastes
+ * (bracketed when the program asked for it). Returns false for a key it
+ * handled, so xterm doesn't send it.
+ */
+export function clipboardKey(term: ClipboardTerm, e: KeyboardEvent, clip: Clipboard | undefined = navigator.clipboard): boolean {
+  if (e.type !== 'keydown' || !e.ctrlKey || e.altKey || e.metaKey || !clip) return true
+  const key = e.key.toLowerCase()
+  if (key === 'c' && (e.shiftKey || term.hasSelection())) {
+    if (term.hasSelection()) {
+      void clip.writeText(term.getSelection())
+      term.clearSelection()
+    }
+    e.preventDefault()
+    return false
+  }
+  if (key === 'v') {
+    void clip.readText().then((t) => t && term.paste(t))
+    e.preventDefault()
+    return false
+  }
+  return true
+}
+
 export function createTerminal(el: HTMLElement): Term {
   const term = new Terminal({
     fontFamily: token(el, '--mono', 'monospace'),
@@ -38,6 +72,7 @@ export function createTerminal(el: HTMLElement): Term {
   const fit = new FitAddon()
   term.loadAddon(fit)
   term.open(el)
+  term.attachCustomKeyEventHandler((e) => clipboardKey(term, e))
   const utf8 = new TextEncoder()
   return {
     write: (d) => term.write(d),
