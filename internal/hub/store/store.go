@@ -369,6 +369,54 @@ func (s *Store) PutNode(n *Node) error {
 	return err
 }
 
+// Node is the node record with id (nil: none).
+func (s *Store) Node(id string) (*Node, error) {
+	var d string
+	err := s.db.QueryRow(`SELECT data FROM nodes WHERE id=?`, id).Scan(&d)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	n := &Node{}
+	if err := json.Unmarshal([]byte(d), n); err != nil {
+		return nil, err
+	}
+	return n, nil
+}
+
+// CreateNodeWithCert inserts a new node and records its first certificate
+// in one transaction - for issuers outside the hub process (longarm-hub
+// issue next to a running hub), which never update a record the hub holds
+// in memory: an existing ID fails, and so does a name another non-revoked
+// node has (ErrNameTaken).
+func (s *Store) CreateNodeWithCert(n *Node, c Cert) error {
+	if n.ID == "" || c.NodeID != n.ID {
+		return errors.New("store: node without id")
+	}
+	b, err := json.Marshal(n)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO nodes(id,name,role,state,data) VALUES(?,?,?,?,?)`, n.ID, n.Name, n.Role, n.State, string(b)); err != nil {
+		if strings.Contains(err.Error(), "nodes.name") {
+			return fmt.Errorf("%w: %q", ErrNameTaken, n.Name)
+		}
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO certs(serial,node,node_id,not_after,issued_at,has_id) VALUES(?,?,?,?,?,?)`,
+		c.Serial, c.Node, c.NodeID, c.NotAfter.Unix(), c.IssuedAt.Unix(), c.HasID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // DeleteNode removes a node record.
 func (s *Store) DeleteNode(id string) error {
 	_, err := s.db.Exec(`DELETE FROM nodes WHERE id=?`, id)

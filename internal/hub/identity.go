@@ -200,8 +200,15 @@ func (h *Hub) nodeForCertLocked(id pki.Identity, cert *x509.Certificate) *node {
 		// serial, as a certificate without an ID would be. It renews into
 		// the node's ID at once (idMismatch). A certificate the hub recorded
 		// with its ID, or never saw, is not mapped.
-		if nid, hasID, err := h.store.CertRecord(pki.Serial(cert)); err == nil && !hasID && nid != "" {
+		nid, hasID, err := h.store.CertRecord(pki.Serial(cert))
+		if err == nil && !hasID && nid != "" {
 			return h.nodes[nid]
+		}
+		if err == nil && hasID && nid == id.ID {
+			// recorded with this ID by another process (IssueLocal:
+			// longarm-hub issue next to the running hub), which created
+			// the node in the database
+			return h.adoptNodeLocked(id.ID)
 		}
 		return nil
 	}
@@ -214,6 +221,29 @@ func (h *Hub) nodeForCertLocked(id pki.Identity, cert *x509.Certificate) *node {
 		}
 	}
 	return h.nodes[nid]
+}
+
+// adoptNodeLocked loads a node that another process created in the
+// database since the hub started (IssueLocal) into the hub's nodes (nil:
+// no such record). Only the record is new to the hub: a node the hub
+// knows is never reloaded (it holds the current state in memory).
+func (h *Hub) adoptNodeLocked(id string) *node {
+	if n := h.nodes[id]; n != nil {
+		return n
+	}
+	rec, err := h.store.Node(id)
+	if err != nil || rec == nil {
+		if err != nil {
+			h.log.Warn("load node", "id", id, "err", err)
+		}
+		return nil
+	}
+	n := &node{rec: rec}
+	h.nodes[id] = n
+	h.indexNode(rec)
+	h.log.Info("node created outside the hub process adopted", "node", rec.Name, "role", rec.Role, "id", id, "state", rec.State)
+	h.publishNodeLocked(n, "issued by longarm-hub issue")
+	return n
 }
 
 // nameHistoryLocked says what history the name has ("" = none): a node

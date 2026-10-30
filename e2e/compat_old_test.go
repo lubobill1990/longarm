@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -654,4 +655,135 @@ func TestOldReleaseCompat(t *testing.T) {
 func firstLine(s string) string {
 	s, _, _ = strings.Cut(strings.TrimSpace(s), "\n")
 	return strings.TrimSpace(s)
+}
+
+// joinWorkerOldBin enrolls w with a release's longarmd on this tree's hub
+// (join code and approval by this tree's longarm) and runs w with that
+// longarmd: an older worker joining an updated fleet.
+func (h *hubEnv) joinWorkerOldBin(t *testing.T, w *hubWorker, rel *oldRel) {
+	t.Helper()
+	code := strings.TrimSpace(h.mustLongarm(h.admin, "admin", "join-code", "--role", "worker", "--labels", "pool=e2e"))
+	r := runBin(t, rel.longarmd, "", nil, "join", h.addr(), code, "--data-dir", w.dataDir, "--name", w.name, "--ca-fingerprint", h.fp, "--no-wait")
+	if r.code != 0 {
+		t.Fatalf("%s longarmd join %s: %+v", rel.version, w.name, r)
+	}
+	if out := h.mustLongarm(h.admin, "admin", "approve", w.name); !strings.Contains(out, "approved") {
+		t.Fatalf("approve %s: %s", w.name, out)
+	}
+	w.exe = rel.longarmd
+}
+
+// TestOldWorkerPortLinks: port links between a v0.1.21 worker (the released
+// longarmd) and a worker of this tree, in both directions, on a hub of this
+// tree - directly, through the hub's embedded relay and through an
+// external relay (this tree's longarm-relay --hub; v0.1.21 follows the
+// relay set and listens on external relays). Between the paths both
+// workers restart with listeners that leave only that path (no tcp
+// listener and no hole punching for the relayed ones), and link ls must
+// report it.
+func TestOldWorkerPortLinks(t *testing.T) {
+	t.Parallel()
+	r21 := oldRelease(t, "v0.1.21")
+	h := newHubEnv(t, "")
+	alice := h.client
+	os.Remove(filepath.Join(alice, "workers.toml")) // workers come from the hub
+	ow := h.newWorkerDir(t, "ow", "")
+	h.joinWorkerOldBin(t, ow, r21)
+	nw := h.newWorkerDir(t, "nw", "")
+	h.joinWorker(t, nw, true)
+	ws := []*hubWorker{ow, nw}
+	for _, w := range ws {
+		w.start(t, true)
+	}
+	for _, w := range ws {
+		n := h.waitNode(t, w.name, "online", func(n map[string]any) bool { return isTrue(n["online"]) })
+		// a v0.1.21 longarmd gets a certificate with its node ID from this
+		// hub too (it doesn't read it; relays and new workers do)
+		if id := certOf(t, w.dataDir); id.ID == "" || id.ID != n["id"] {
+			t.Fatalf("%s's certificate: %+v, the hub says node %v", w.name, id, n["id"])
+		}
+	}
+	if v := h.waitNode(t, "ow", "reporting its version", func(n map[string]any) bool { return n["version"] != nil && n["version"] != "" }); !strings.Contains(fmt.Sprint(v["version"]), "0.1.21") {
+		t.Fatalf("ow runs %v, not v0.1.21", v["version"])
+	}
+
+	var x *extRelay
+	relayed := func(addr ...string) func(string) bool {
+		return func(l string) bool {
+			if !strings.Contains(l, "longnet/relay") {
+				return false
+			}
+			for _, a := range addr {
+				if strings.Contains(l, a) {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	direct := regexp.MustCompile(`(tcp|longnet)/direct`)
+	paths := []struct {
+		name   string
+		listen func(w *hubWorker) string // "" = the default tcp listener
+		ep     func() string             // what the hub must list as the workers' endpoint
+		path   func(linkLine string) bool
+	}{
+		{"direct", nil, nil, direct.MatchString},
+		{"hub_relay",
+			func(w *hubWorker) string { return fmt.Sprintf("longnet://%s?name=%s", h.addr(), w.name) },
+			func() string { return "longnet://" + h.addr() },
+			func(l string) bool { return relayed(h.addr())(l) }},
+		{"external_relay",
+			func(w *hubWorker) string { return fmt.Sprintf("longnet://%s?tcp=%s&name=%s", x.udp, x.tcp, w.name) },
+			func() string { return "longnet://" + x.udp },
+			func(l string) bool { return relayed(x.udp, x.tcp)(l) }},
+	}
+	for _, p := range paths {
+		t.Run(p.name, func(t *testing.T) {
+			if p.name == "external_relay" {
+				x = startExtRelay(t, h, "xrelay")
+				waitFor(t, "the relay registered with the hub", 30*time.Second, func() bool {
+					hs, _ := x.health()["hub"].(map[string]any)
+					return isTrue(hs["connected"]) && isTrue(hs["ready"])
+				})
+			}
+			if p.listen != nil {
+				for _, w := range ws {
+					w.kill()
+					listenOnly(t, w, p.listen(w))
+					w.env = []string{"LONGARM_NET_DISABLE_DIRECT=1"}
+					w.start(t, true)
+				}
+				for _, w := range ws {
+					h.waitNode(t, w.name, "online on "+p.ep(), func(n map[string]any) bool {
+						eps := fmt.Sprint(n["endpoints"])
+						return isTrue(n["online"]) && strings.Contains(eps, p.ep()) && !strings.Contains(eps, "tcp://")
+					})
+				}
+			}
+			for _, d := range []struct{ from, to *hubWorker }{{ow, nw}, {nw, ow}} {
+				what := fmt.Sprintf("%s -> %s (%s)", d.from.name, d.to.name, p.name)
+				port, job := jobPort(t, h, alice, d.to.name, bins.helper, "http-serve", "600")
+				lp := strconv.Itoa(freePort(t))
+				id := linkCreate(t, h, alice, d.to.name+":"+port, "--on", d.from.name, "--port", lp)
+				var r result
+				waitFor(t, what, 60*time.Second, func() bool {
+					r = linkGet(h, alice, d.from.name, bins.helper, "127.0.0.1:"+lp, "/"+p.name)
+					return strings.Contains(r.stdout, "hello /"+p.name)
+				})
+				var l string
+				waitFor(t, what+": the path in link ls", 30*time.Second, func() bool {
+					l = linkStatus(t, h, alice, id)
+					return p.path(l)
+				})
+				t.Logf("%s: %s", what, l)
+				h.mustLongarm(alice, "link", "rm", id)
+				waitFor(t, what+": closed after link rm", 30*time.Second, func() bool {
+					r := linkGet(h, alice, d.from.name, bins.helper, "127.0.0.1:"+lp, "/gone")
+					return r.code != 0 && !strings.Contains(r.stdout, "hello")
+				})
+				h.longarm(alice, "kill", job)
+			}
+		})
+	}
 }

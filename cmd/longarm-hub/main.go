@@ -63,16 +63,7 @@ func loadConfig() (*hub.Config, error) {
 }
 
 func main() {
-	root := &cobra.Command{
-		Use:           "longarm-hub",
-		Short:         "Longarm control plane (registry, enrollment, scheduler, relay, panel API)",
-		Version:       version.Version,
-		SilenceUsage:  true,
-		SilenceErrors: true,
-	}
-	root.PersistentFlags().StringVar(&configPath, "config", os.Getenv("LONGARM_HUB_CONFIG"), "hub.toml (env LONGARM_HUB_CONFIG)")
-	root.PersistentFlags().StringVar(&dataDir, "data-dir", "", "data directory (overrides hub.toml data_dir; env LONGARM_HUB_DATA_DIR)")
-	root.AddCommand(serveCmd(), caCmd(), userCmd(), joinCodeCmd(), releaseCmd(), issueCmd(), healthcheckCmd(), bootstrapCmd(), containerCmd(), auditCmd())
+	root := newRoot()
 	if args, err := aliasArgs(os.Args[0]); err != nil {
 		fmt.Fprintln(os.Stderr, "longarm-hub:", err)
 		os.Exit(1)
@@ -88,6 +79,20 @@ func main() {
 		}
 		os.Exit(1)
 	}
+}
+
+func newRoot() *cobra.Command {
+	root := &cobra.Command{
+		Use:           "longarm-hub",
+		Short:         "Longarm control plane (registry, enrollment, scheduler, relay, panel API)",
+		Version:       version.Version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+	root.PersistentFlags().StringVar(&configPath, "config", os.Getenv("LONGARM_HUB_CONFIG"), "hub.toml (env LONGARM_HUB_CONFIG)")
+	root.PersistentFlags().StringVar(&dataDir, "data-dir", "", "data directory (overrides hub.toml data_dir; env LONGARM_HUB_DATA_DIR)")
+	root.AddCommand(serveCmd(), caCmd(), userCmd(), joinCodeCmd(), releaseCmd(), issueCmd(), healthcheckCmd(), bootstrapCmd(), containerCmd(), auditCmd())
+	return root
 }
 
 func serveCmd() *cobra.Command {
@@ -530,17 +535,14 @@ func issueCmd() *cobra.Command {
 	var b64 bool
 	c := &cobra.Command{
 		Use:   "issue",
-		Short: "Issue a certificate bundle from the hub's CA locally (e.g. the first admin)",
-		Args:  cobra.NoArgs,
+		Short: "Issue a certificate bundle from the hub's CA locally (e.g. the first admin), for the node of that name or a new one",
+		Long: `Issue a certificate bundle from the hub's CA, next to a running hub or not.
+The certificate is the node's that has the name and role (it carries the node's
+ID and its serial is recorded against the node, so the hub maps it by ID - as
+it does for the certificates it issues itself); without such a node, a new
+approved node is created. A revoked node's name gets a new node.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := loadConfig()
-			if err != nil {
-				return err
-			}
-			ca, err := pki.LoadCA(cfg.DataDir + string(os.PathSeparator) + hub.CADir)
-			if err != nil {
-				return err
-			}
 			r, err := pki.ParseRole(role)
 			if err != nil {
 				return err
@@ -554,14 +556,26 @@ func issueCmd() *cobra.Command {
 			if out == "" && !b64 {
 				return errors.New("--out DIR or --b64")
 			}
-			certPEM, keyPEM, err := ca.Issue(pki.IssueOptions{Role: r, Name: name, Hosts: hosts, Validity: time.Duration(days) * 24 * time.Hour})
+			cfg, err := loadConfig()
 			if err != nil {
 				return err
 			}
+			// for the node of that name (its ID in the certificate, the
+			// serial recorded against it) or a new one: a running hub maps
+			// the certificate by ID (hub.IssueLocal)
+			iss, err := hub.IssueLocal(cfg, hub.LocalIssueOptions{Role: r, Name: name, Hosts: hosts, Validity: time.Duration(days) * 24 * time.Hour})
+			if err != nil {
+				return err
+			}
+			which := "node"
+			if iss.NewNode {
+				which = "new node"
+			}
+			fmt.Fprintf(os.Stderr, "%s/%s: %s %s, certificate %s\n", r, name, which, iss.NodeID, iss.Serial)
 			if b64 {
 				// the LONGARM_RELEASE_TLS secret's format (docs/ci-cd.md):
 				// base64 of a tar.gz with ca.crt, node.crt, node.key
-				s, err := bundleTarB64(ca.CertPEM, certPEM, keyPEM)
+				s, err := bundleTarB64(iss.CAPEM, iss.CertPEM, iss.KeyPEM)
 				if err != nil {
 					return err
 				}
@@ -569,7 +583,7 @@ func issueCmd() *cobra.Command {
 				fmt.Println(s)
 				return nil
 			}
-			if err := pki.WriteBundle(out, ca.CertPEM, certPEM, keyPEM); err != nil {
+			if err := pki.WriteBundle(out, iss.CAPEM, iss.CertPEM, iss.KeyPEM); err != nil {
 				return err
 			}
 			fmt.Printf("wrote %s/%s bundle to %s\n", r, name, out)

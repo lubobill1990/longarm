@@ -111,7 +111,12 @@ certificate was recorded for it) - otherwise it is refused, whatever node
 now has the name; re-issue it for the node (`longarm admin issue --id <node
 id>`; `longarm admin issue` gives a new node a fresh ID) or enroll again.
 Certificates get the ID at their next renewal, including workers'
-automatic renewal.
+automatic renewal. `longarm-hub issue` (on the hub, also next to the running
+hub: `longarm-hub-relay-cert`, `longarm-hub-release-cert`) issues like the
+hub: for the non-revoked node of that name and role (its ID, the serial
+recorded against it), else for a new node it creates in the database, which
+the running hub takes over on that node's first call. It needs the hub's data
+directory (the CA key), so whoever can run it could issue anything anyway.
 
 **Names never collide with IDs.** Two rules make every target string mean
 one thing:
