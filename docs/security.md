@@ -1280,6 +1280,16 @@ providers is two users, and being in a provider's `admins` list changes
 the role, never whose machines an account sees. Worker certificates never
 act as a user (not as their owner, not as an admin), whoever linked them.
 
+An admin can't make itself credentials of another user: a user-bound join
+code or a panel login from an admin bootstraps a new user only - not a user
+who has machines, who signs in with an identity provider, or who has
+another user's worker shared with it (checked again when the code is used).
+An admin can't add its own user to a team either (`admin team add`, `user
+set --teams`): membership opens what others share with the team. Teams as
+such are administered by admins, though - a worker or job shared with a
+team is shared with whoever the admins put in it (audited: `teams/set`,
+`users/add`); share with users by name to rule that out.
+
 The **only fleet-wide view** is `Admin.FleetSummary` (`longarm admin
 summary`, the panel's "Fleet" page, `GET /api/admin/summary`): per user the
 number of workers, admin workers and devices and how many workers are

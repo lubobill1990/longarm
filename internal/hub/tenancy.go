@@ -369,16 +369,12 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "%s is a worker's name", req.Name)
 	}
-	// credentials for a user who has machines, its own sign-in, teams or
-	// shared workers are the user's own business: with a device code or a
+	// credentials for a user who has machines, its own sign-in or workers
+	// shared with it are the user's own business: with a device code or a
 	// panel login of the user an admin could act as the user
-	// (adminCredentialsRefusedLocked) - teams given here count too
+	// (adminCredentialsRefusedLocked)
 	if req.JoinCode || req.Panel {
-		err := h.adminCredentialsRefusedLocked(req.Name)
-		if err == nil && (req.SetTeams || t == nil) && len(req.Teams) > 0 {
-			err = errUserHasAccess(req.Name)
-		}
-		if err != nil {
+		if err := h.adminCredentialsRefusedLocked(req.Name); err != nil {
 			h.mu.Unlock()
 			return nil, err
 		}

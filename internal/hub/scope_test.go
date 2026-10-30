@@ -516,6 +516,9 @@ func TestAdminCantJoinTeams(t *testing.T) {
 	if _, err := adm.PutUser(tctx(t), &pb.PutUserRequest{Name: "root", SetTeams: true, Teams: []string{"t1"}}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("admin sets its own teams: %v", err)
 	}
+	if _, err := AddUser(h.store, "root", "admin-password-1", false); err != nil { // a panel administrator "root"
+		t.Fatal(err)
+	}
 	if _, err := h.SetTeam("web/root", &pb.SetTeamRequest{Team: "t1", Add: []string{"root"}}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("panel admin root adds itself to t1: %v", err)
 	}
@@ -533,9 +536,9 @@ func TestAdminCantJoinTeams(t *testing.T) {
 
 // TestAdminCredentialsForUsersWithAccess: an admin's join code or panel
 // login bootstraps a new user only - not a user who signs in with an
-// identity provider, is in a team or has workers shared with it (the
-// credential would hand the admin that access), also when the access
-// came after the code was made.
+// identity provider or has workers shared with it (the credential would
+// hand the admin that access), also when the access came after the code
+// was made.
 func TestAdminCredentialsForUsersWithAccess(t *testing.T) {
 	th, _ := ownedHub(t)
 	h := th.h
@@ -543,7 +546,7 @@ func TestAdminCredentialsForUsersWithAccess(t *testing.T) {
 	if _, err := h.PutUser("test", &pb.PutUserRequest{Name: "alice", SetCanShare: true, CanShare: true}); err != nil {
 		t.Fatal(err)
 	}
-	for _, u := range []string{"frank", "gina", "ivy", "jo"} {
+	for _, u := range []string{"frank", "ivy", "jo"} {
 		if _, err := h.PutUser("test", &pb.PutUserRequest{Name: u, Create: true}); err != nil {
 			t.Fatal(err)
 		}
@@ -556,13 +559,10 @@ func TestAdminCredentialsForUsersWithAccess(t *testing.T) {
 	if _, err := pb.NewFleetClient(th.alice).ShareWorker(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"frank", "ivy"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.SetTeam("test", &pb.SetTeamRequest{Team: "t1", Add: []string{"gina"}}); err != nil {
-		t.Fatal(err)
-	}
 	h.mu.Lock()
 	h.store.SetMeta(entraUserKey("jo"), "google:1234") // jo signs in with Google
 	h.mu.Unlock()
-	for _, u := range []string{"frank", "gina", "jo"} {
+	for _, u := range []string{"frank", "jo"} {
 		if _, err := adm.CreateJoinCode(tctx(t), &pb.CreateJoinCodeRequest{Role: "client", User: u}); status.Code(err) != codes.FailedPrecondition {
 			t.Errorf("join-code --user %s: %v", u, err)
 		}
@@ -572,16 +572,6 @@ func TestAdminCredentialsForUsersWithAccess(t *testing.T) {
 		if _, err := adm.PutUser(tctx(t), &pb.PutUserRequest{Name: u, Panel: true}); status.Code(err) != codes.FailedPrecondition {
 			t.Errorf("panel login for %s: %v", u, err)
 		}
-	}
-	// a new user with teams: no code either (and no user)
-	if _, err := adm.PutUser(tctx(t), &pb.PutUserRequest{Name: "hank", Create: true, Teams: []string{"t1"}, JoinCode: true}); status.Code(err) != codes.FailedPrecondition {
-		t.Errorf("new user in t1 with a code: %v", err)
-	}
-	h.mu.Lock()
-	hank := h.tenants["hank"]
-	h.mu.Unlock()
-	if hank != nil {
-		t.Error("hank was created")
 	}
 	// ivy's code, made before aw was shared with her: refused now
 	if _, err := hubclient.Join(tctx(t), h.Addr("grpc"), code.Code, hubclient.JoinOptions{Fingerprint: pki.Fingerprint(th.ca.Cert)}); status.Code(err) != codes.FailedPrecondition {

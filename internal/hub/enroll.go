@@ -532,10 +532,11 @@ func errUserHasMachines(user string) error {
 // user only - one with nothing of its own and no access to anybody else's:
 // otherwise an admin could mint itself credentials of the user and act as
 // the user, on the user's machines or on the workers and jobs others share
-// with the user. Refused for a user who has machines, who signs in with an
-// identity provider (Entra, Google, Apple, a personal Microsoft account:
-// its devices come from its own sign-in), who is in a team or who has
-// another user's worker shared with it.
+// with the user by name. Refused for a user who has machines, who signs in
+// with an identity provider (Entra, Google, Apple, a personal Microsoft
+// account: its devices come from its own sign-in) or who has another
+// user's worker shared with it. (Teams are the admins' to administer:
+// docs/security.md "What admins see".)
 func (h *Hub) adminCredentialsRefusedLocked(user string) error {
 	if h.userHasMachinesLocked(user) {
 		return errUserHasMachines(user)
@@ -544,8 +545,9 @@ func (h *Hub) adminCredentialsRefusedLocked(user string) error {
 		return status.Errorf(codes.FailedPrecondition,
 			"%s signs in with an identity provider: its devices and logins come from its own sign-in (longarm login, or a pairing link %s approves), not from an admin", user, user)
 	}
-	if t := h.tenants[user]; t != nil && len(t.u.Teams) > 0 || h.sharedWithLocked(user) {
-		return errUserHasAccess(user)
+	if h.sharedWithLocked(user) {
+		return status.Errorf(codes.FailedPrecondition,
+			"%s has workers shared with it: an admin's join code or panel login for a user bootstraps a new user only; %s's devices come from its own sign-in (longarm login, or a pairing link %s approves)", user, user, user)
 	}
 	return nil
 }
@@ -560,11 +562,6 @@ func (h *Hub) sharedWithLocked(user string) bool {
 		}
 	}
 	return false
-}
-
-func errUserHasAccess(user string) error {
-	return status.Errorf(codes.FailedPrecondition,
-		"%s is in a team or has workers shared with it: an admin's join code or panel login for a user bootstraps a new user only; %s's devices come from its own sign-in (longarm login, or a pairing link %s approves)", user, user, user)
 }
 
 // errUserlessCode refuses a client or admin join code bound to no user once
