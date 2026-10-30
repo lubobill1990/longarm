@@ -65,6 +65,15 @@
   used only workers the caller's user may use, admins included; the admin's
   `exec auto` now picks from the same list (before, from every worker the
   hub listed to the admin). See docs/security.md "What admins see".
+- The same holds for accounts of every sign-in provider (Entra, Google,
+  Apple, personal Microsoft): an account is one user whatever its role, the
+  same e-mail address at two providers is two users. An admin can't add its
+  own user to a team; an admin's user-bound join code or panel login is
+  refused for a user who signs in with a provider or has another user's
+  worker shared with it (checked again when the code is used), and a panel
+  administrator login can't take the name of any user (old certificates,
+  worker owners included). Open event streams follow team changes at once.
+  `/link` audit records name the provider (`google/<e-mail>`).
 
 ### Fixed
 
