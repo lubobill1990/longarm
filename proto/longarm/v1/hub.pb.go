@@ -4497,8 +4497,15 @@ func (x *NodeInfo) GetLegacySerials() []string {
 }
 
 type ListNodesRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	All           bool                   `protobuf:"varint,1,opt,name=all,proto3" json:"all,omitempty"` // include clients/admins and revoked nodes
+	state protoimpl.MessageState `protogen:"open.v1"`
+	All   bool                   `protobuf:"varint,1,opt,name=all,proto3" json:"all,omitempty"` // include clients/admins and revoked nodes
+	// The client knows node IDs (docs/security.md "Node identity"): it dials
+	// a node by NodeInfo.cert_name and holds it to NodeInfo.id. Without it
+	// (a client before node IDs, which dials a node by its listed name and
+	// expects that name in its certificate) a node is listed under the name
+	// in its certificate - e.g. a worker the node ID migration renamed, whose
+	// older longarmd keeps its certificate's name.
+	NodeIds       bool `protobuf:"varint,2,opt,name=node_ids,json=nodeIds,proto3" json:"node_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4536,6 +4543,13 @@ func (*ListNodesRequest) Descriptor() ([]byte, []int) {
 func (x *ListNodesRequest) GetAll() bool {
 	if x != nil {
 		return x.All
+	}
+	return false
+}
+
+func (x *ListNodesRequest) GetNodeIds() bool {
+	if x != nil {
+		return x.NodeIds
 	}
 	return false
 }
@@ -11597,9 +11611,10 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x0elegacy_serials\x18& \x03(\tR\rlegacySerials\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"$\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"?\n" +
 	"\x10ListNodesRequest\x12\x10\n" +
-	"\x03all\x18\x01 \x01(\bR\x03all\"?\n" +
+	"\x03all\x18\x01 \x01(\bR\x03all\x12\x19\n" +
+	"\bnode_ids\x18\x02 \x01(\bR\anodeIds\"?\n" +
 	"\x11ListNodesResponse\x12*\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x14.longarm.v1.NodeInfoR\x05nodes\"\xc2\x01\n" +
 	"\bFleetJob\x12\x16\n" +

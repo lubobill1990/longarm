@@ -245,7 +245,7 @@ func (s *session) hubNodes(ctx context.Context, all bool) ([]*pb.NodeInfo, bool)
 	}
 	cctx, cancel := context.WithTimeout(ctx, hubTimeout)
 	defer cancel()
-	resp, err := h.Fleet().ListNodes(cctx, &pb.ListNodesRequest{All: all})
+	resp, err := h.Fleet().ListNodes(cctx, &pb.ListNodesRequest{All: all, NodeIds: true})
 	if err != nil {
 		if hubUnavailable(err) {
 			s.hubDown(err)

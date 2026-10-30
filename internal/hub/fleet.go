@@ -58,7 +58,23 @@ func (h *Hub) ListNodesFor(v tenancy.Caller, all bool) []*pb.NodeInfo {
 }
 
 func (s *fleetServer) ListNodes(ctx context.Context, req *pb.ListNodesRequest) (*pb.ListNodesResponse, error) {
-	return &pb.ListNodesResponse{Nodes: s.h.ListNodesFor(s.h.viewer(callerFrom(ctx)), req.All)}, nil
+	nodes := s.h.ListNodesFor(s.h.viewer(callerFrom(ctx)), req.All)
+	if !req.NodeIds {
+		legacyNames(nodes)
+	}
+	return &pb.ListNodesResponse{Nodes: nodes}, nil
+}
+
+// legacyNames lists nodes for a client before node IDs: under the name in
+// their certificates, the only name such a client can dial and verify (a
+// worker renamed by the migration or an admin keeps its certificate's name
+// until it follows renames: longarmd with the "node-id" capability).
+func legacyNames(nodes []*pb.NodeInfo) {
+	for _, n := range nodes {
+		if n.CertName != "" && n.CertName != n.Name {
+			n.Name = n.CertName
+		}
+	}
 }
 
 // ListJobs returns cached jobs, newest first.

@@ -139,7 +139,7 @@ machines are only counted, anonymously, by "longarm admin summary".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
-				resp, err := h.Fleet().ListNodes(ctx, &pb.ListNodesRequest{All: all})
+				resp, err := h.Fleet().ListNodes(ctx, &pb.ListNodesRequest{All: all, NodeIds: true})
 				if err != nil {
 					return err
 				}

@@ -88,7 +88,7 @@ you are logged on; no password), elsewhere longarmd service install.`,
 				if err != nil {
 					return err
 				}
-				resp, err := h.Fleet().ListNodes(ctx, &pb.ListNodesRequest{})
+				resp, err := h.Fleet().ListNodes(ctx, &pb.ListNodesRequest{NodeIds: true})
 				if err != nil {
 					return err
 				}

@@ -739,6 +739,13 @@ message NodeInfo {
 
 message ListNodesRequest {
   bool all = 1; // include clients/admins and revoked nodes
+  // The client knows node IDs (docs/security.md "Node identity"): it dials
+  // a node by NodeInfo.cert_name and holds it to NodeInfo.id. Without it
+  // (a client before node IDs, which dials a node by its listed name and
+  // expects that name in its certificate) a node is listed under the name
+  // in its certificate - e.g. a worker the node ID migration renamed, whose
+  // older longarmd keeps its certificate's name.
+  bool node_ids = 2;
 }
 
 message ListNodesResponse {
