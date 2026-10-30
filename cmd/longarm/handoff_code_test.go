@@ -15,13 +15,13 @@ import (
 func TestTempBranchName(t *testing.T) {
 	at := time.Date(2026, 10, 28, 9, 5, 0, 0, time.UTC)
 	for user, want := range map[string]string{
-		"alice":            "longarm/handoff/alice/5e55a7c1-202610280905",
-		"Bob.Smith@corp":   "longarm/handoff/bob.smith-corp/5e55a7c1-202610280905",
-		"../..":            "longarm/handoff/user/5e55a7c1-202610280905",
-		"a..b":             "longarm/handoff/a.b/5e55a7c1-202610280905",
-		"x y/z\\w:q*?[~^]": "longarm/handoff/x-y-z-w-q/5e55a7c1-202610280905",
+		"alice":            "longarm/handoff/alice/5e55a7c1-202610280905-0a1b2c",
+		"Bob.Smith@corp":   "longarm/handoff/bob.smith-corp/5e55a7c1-202610280905-0a1b2c",
+		"../..":            "longarm/handoff/user/5e55a7c1-202610280905-0a1b2c",
+		"a..b":             "longarm/handoff/a.b/5e55a7c1-202610280905-0a1b2c",
+		"x y/z\\w:q*?[~^]": "longarm/handoff/x-y-z-w-q/5e55a7c1-202610280905-0a1b2c",
 	} {
-		got := tempBranchName(user, "5e55a7c1", at)
+		got := tempBranchName(user, "5e55a7c1", at, "0a1b2c")
 		if got != want {
 			t.Errorf("tempBranchName(%q) = %q, want %q", user, got, want)
 		}

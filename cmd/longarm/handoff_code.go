@@ -173,9 +173,11 @@ func sanitizeRefPart(s string) string {
 	return s
 }
 
-// tempBranchName is longarm/handoff/<user>/<short-id>-<yyyymmddhhmm>.
-func tempBranchName(user, short string, t time.Time) string {
-	return "longarm/handoff/" + sanitizeRefPart(user) + "/" + sanitizeRefPart(short) + "-" + t.UTC().Format("200601021504")
+// tempBranchName is longarm/handoff/<user>/<short-id>-<yyyymmddhhmm>-<nonce>:
+// the nonce keeps two handoffs of a session within a minute (one of them
+// --keep-branch) from pushing to the same branch.
+func tempBranchName(user, short string, t time.Time, nonce string) string {
+	return "longarm/handoff/" + sanitizeRefPart(user) + "/" + sanitizeRefPart(short) + "-" + t.UTC().Format("200601021504") + "-" + sanitizeRefPart(nonce)
 }
 
 // openLocalRepo is the user's checkout for --to local from a worker.
@@ -330,7 +332,9 @@ func (c *coder) remote(ctx context.Context) (res *codeResult, why string, err er
 	case len(hits) > 0:
 		c.note("warning: pushing despite the secret check (--allow-secrets): %s", describeHits(hits))
 	}
-	branch := tempBranchName(c.user, c.short, time.Now())
+	nonce := make([]byte, 3)
+	rand.Read(nonce)
+	branch := tempBranchName(c.user, c.short, time.Now(), hex.EncodeToString(nonce))
 	tb := &tempBranch{url: u, branch: branch, keep: c.o.keepBranch}
 	// push
 	if c.src.local() {
@@ -708,7 +712,7 @@ func runHandoffCleanup(ctx context.Context, o handoffOpts) error {
 		Error   string `json:"error,omitempty"`
 	}
 	var list []branch
-	stampRE := regexp.MustCompile(`-(\d{12})$`)
+	stampRE := regexp.MustCompile(`-(\d{12})(?:-[0-9a-f]{1,16})?$`)
 	for _, l := range strings.Split(out, "\n") {
 		f := strings.Fields(l)
 		if len(f) != 2 || !strings.HasPrefix(f[1], prefix) {

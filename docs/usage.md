@@ -900,7 +900,7 @@ would carry, after the remote-first fetch with `--git-auth forward`) decides
   `relay`, `bundle`, `remote`) and `"relayedBytes"` (what this machine
   relayed between workers).
 - **remote** pushes the snapshot commit to a temporary branch
-  `longarm/handoff/<user>/<id8>-<yyyymmddhhmm>` of the repository's https
+  `longarm/handoff/<user>/<id8>-<yyyymmddhhmm>-<random>` of the repository's https
   remote (Azure DevOps, GitHub, ...) - `git push <remote>
   <snapshot>:refs/heads/<branch>`: your branch, index and upstream are not
   touched - and the target fetches it from there (a worker with the
