@@ -4,6 +4,8 @@ import {
   type Account,
   type AccountRoles,
   type RolesState,
+  type SignInConfirm,
+  type SignInHeld,
   type SignInState,
   type SignInTargets,
   type TrayInfo,
@@ -63,7 +65,13 @@ export function AccountTab({ info, onChange }: { info: TrayInfo; onChange?: () =
               <span data-testid="signin-error">{st.state === 'canceled' ? 'Sign-in canceled.' : `Sign-in failed: ${st.error ?? ''}`}</span>
             </Banner>
           )}
-          {acct.needed ? <SignInCard acct={acct} onStarted={setSt} /> : <AccountCard acct={acct} info={info} onChange={onChange} />}
+          {st?.state === 'confirm' && st.confirm ? (
+            <ConfirmReplaceCard cf={st.confirm} onDone={setSt} />
+          ) : acct.needed ? (
+            <SignInCard acct={acct} onStarted={setSt} />
+          ) : (
+            <AccountCard acct={acct} info={info} onChange={onChange} onStarted={setSt} />
+          )}
         </>
       )}
       {acct.roles && <RolesCard acct={acct} cur={acct.roles} busy={running} onChange={onChange} />}
@@ -149,6 +157,84 @@ function SignInCard({ acct, onStarted }: { acct: Account; onStarted: (s: SignInS
           again.
         </p>
       )}
+    </section>
+  )
+}
+
+/** "admin/alice-pc (user alice)" */
+export function heldText(h: SignInHeld) {
+  let s = `${h.kind === 'worker' ? 'worker' : 'device'} ${h.identity}`
+  if (h.user && !h.identity.endsWith('/' + h.user)) s += h.kind === 'worker' ? ` (owner ${h.user})` : ` (user ${h.user})`
+  if (!h.same_hub && h.hub) s += ` at ${h.hub}`
+  if (h.expired) s += ', expired'
+  return s
+}
+
+/**
+ * This machine is signed in already (a join code, another account, another
+ * hub): say what signing in changes, never replace it silently.
+ */
+function ConfirmReplaceCard({ cf, onDone }: { cf: SignInConfirm; onDone: (s: SignInState) => void }) {
+  const { run, busy } = useAction()
+  const same = cf.current.filter((h) => h.same_hub)
+  const other = cf.current.filter((h) => !h.same_hub)
+  return (
+    <section className="wcard signin-card" data-testid="signin-confirm">
+      <div className="signin-hero">
+        <h2 className="card-title">{cf.other_hub ? 'Signed in to another hub' : 'Signed in already'}</h2>
+      </div>
+      <p className="lead">This machine is signed in as:</p>
+      <ul className="small" data-testid="signin-confirm-current">
+        {cf.current.map((h, i) => (
+          <li key={i} className="mono">
+            {heldText(h)}
+          </li>
+        ))}
+      </ul>
+      <p className="small">
+        Signing in at <span className="mono">{cf.hub}</span> with your account makes this machine yours as that account: the device acts as you and
+        the worker becomes yours.
+      </p>
+      {same.length > 0 && (
+        <p className="small">
+          What is listed above is removed from the hub when you approve (this machine proves it holds those certificates). A worker keeps its
+          name; its sharing stays only if you approve as its owner. A worker or device of another account is <b>not</b> moved to you: it is
+          removed, and nothing of it (sharing, jobs, admin rights) becomes yours. The approval page shows this again.
+        </p>
+      )}
+      {other.length > 0 && (
+        <p className="small" data-testid="signin-confirm-other-hub">
+          The enrollment at another hub is replaced on this machine only: it stays listed at that hub until someone removes it there.
+        </p>
+      )}
+      {cf.admin_worker_stays && (
+        <p className="small muted" data-testid="signin-confirm-admin">
+          The admin worker stays as it is (its owner keeps it). To make it this account&apos;s, disable it below and turn &quot;Admin
+          commands&quot; on again.
+        </p>
+      )}
+      <p className="button-row">
+        <button
+          className="primary"
+          data-testid="signin-replace"
+          disabled={busy}
+          onClick={async () => {
+            const r = await run(() => trayApi.signinStart(cf.request.hub ?? '', cf.request.labels ?? '', true))
+            if (r) onDone(r)
+          }}
+        >
+          {cf.other_hub ? `Switch to ${cf.hub} and sign in` : 'Replace and sign in'}
+        </button>
+        <button
+          disabled={busy}
+          onClick={async () => {
+            await run(() => trayApi.signinCancel())
+            onDone({ state: 'idle', targets: { client: false, worker: false, admin_worker: false } })
+          }}
+        >
+          Keep as it is
+        </button>
+      </p>
     </section>
   )
 }
@@ -244,7 +330,17 @@ export async function copyText(text: string) {
   }
 }
 
-function AccountCard({ acct, info, onChange }: { acct: Account; info: TrayInfo; onChange?: () => void }) {
+function AccountCard({
+  acct,
+  info,
+  onChange,
+  onStarted,
+}: {
+  acct: Account
+  info: TrayInfo
+  onChange?: () => void
+  onStarted?: (s: SignInState) => void
+}) {
   const { run, busy } = useAction()
   return (
     <section className="wcard" data-testid="account-card">
@@ -273,6 +369,19 @@ function AccountCard({ acct, info, onChange }: { acct: Account; info: TrayInfo; 
       )}
       <p className="button-row">
         {info.hub_url && <button onClick={() => trayApi.openPanel('/')}>Open panel</button>}
+        {acct.signed_in && acct.hub && (
+          <button
+            data-testid="signin-again"
+            disabled={busy}
+            title="Sign in with your account (Microsoft, Google or Apple): this machine becomes that account's"
+            onClick={async () => {
+              const r = await run(() => trayApi.signinStart())
+              if (r) onStarted?.(r)
+            }}
+          >
+            Sign in with an account…
+          </button>
+        )}
         {acct.signed_in && (
           <button
             className="danger"

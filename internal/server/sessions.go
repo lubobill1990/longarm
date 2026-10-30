@@ -243,7 +243,7 @@ func (ss *sessionsServer) ensure(ctx context.Context, sp *userspace.Space, r ses
 		}
 	}
 	spec := jobs.Spec{
-		ID: name, Name: name, Argv: argvFor(sp, r.argv), Cwd: r.cwd, Env: ss.s.linkEnv(owner, r.env), Pty: true, SubmittedBy: by, Owner: owner,
+		ID: name, Name: name, Argv: argvFor(sp, r.argv), Cwd: r.cwd, Env: ss.s.sessionEnv(name, ss.s.linkEnv(owner, r.env)), Pty: true, SubmittedBy: by, Owner: owner,
 		Cols: uint16(r.size.GetCols()), Rows: uint16(r.size.GetRows()), LogMaxBytes: ss.s.LogMaxBytes, Workspace: r.ws,
 		AgentAuth: r.agents,
 	}

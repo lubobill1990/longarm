@@ -32,3 +32,24 @@ func TestSessionSpecDiff(t *testing.T) {
 		t.Errorf("no workspace: %q", d)
 	}
 }
+
+// TestSessionEnv: a new session gets LONGARM_WORKER / LONGARM_SESSION
+// (what the caller set wins), and a start of the same spec still matches
+// the running session that has them.
+func TestSessionEnv(t *testing.T) {
+	s := &Server{Name: "w1"}
+	env := s.sessionEnv("agent1", map[string]string{"A": "1"})
+	if env[EnvSessionWorker] != "w1" || env[EnvSessionName] != "agent1" || env["A"] != "1" {
+		t.Fatalf("env %v", env)
+	}
+	if got := s.sessionEnv("agent1", map[string]string{EnvSessionName: "mine"}); got[EnvSessionName] != "mine" {
+		t.Errorf("the caller's value must win: %v", got)
+	}
+	have := jobs.Spec{Argv: []string{"claude"}, Env: env}
+	if d := sessionSpecDiff(have, []string{"claude"}, sessionReq{env: map[string]string{"A": "1"}}); d != "" {
+		t.Errorf("same spec differs in %s", d)
+	}
+	if d := sessionSpecDiff(have, []string{"claude"}, sessionReq{env: map[string]string{"A": "2"}}); d != "env" {
+		t.Errorf("other env: %q", d)
+	}
+}

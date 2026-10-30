@@ -1733,9 +1733,10 @@ var Files_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Workspace_Refs_FullMethodName  = "/longarm.v1.Workspace/Refs"
-	Workspace_Sync_FullMethodName  = "/longarm.v1.Workspace/Sync"
-	Workspace_Fetch_FullMethodName = "/longarm.v1.Workspace/Fetch"
+	Workspace_Refs_FullMethodName        = "/longarm.v1.Workspace/Refs"
+	Workspace_Sync_FullMethodName        = "/longarm.v1.Workspace/Sync"
+	Workspace_Fetch_FullMethodName       = "/longarm.v1.Workspace/Fetch"
+	Workspace_PushHandoff_FullMethodName = "/longarm.v1.Workspace/PushHandoff"
 )
 
 // WorkspaceClient is the client API for Workspace service.
@@ -1757,6 +1758,11 @@ type WorkspaceClient interface {
 	// the worker fetch what the remote already has, then sends only the
 	// delta ("git-auth-forward").
 	Fetch(ctx context.Context, in *FetchRequest, opts ...grpc.CallOption) (*FetchResponse, error)
+	// PushHandoff pushes a handoff snapshot from the checkout at dir to a
+	// temporary branch longarm/handoff/<user>/<id> of the remote (or deletes
+	// it), with a forwarded credential for this one push of this exact URL
+	// ("handoff-push"). Hooks do not run.
+	PushHandoff(ctx context.Context, in *PushHandoffRequest, opts ...grpc.CallOption) (*PushHandoffResponse, error)
 }
 
 type workspaceClient struct {
@@ -1800,6 +1806,16 @@ func (c *workspaceClient) Fetch(ctx context.Context, in *FetchRequest, opts ...g
 	return out, nil
 }
 
+func (c *workspaceClient) PushHandoff(ctx context.Context, in *PushHandoffRequest, opts ...grpc.CallOption) (*PushHandoffResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PushHandoffResponse)
+	err := c.cc.Invoke(ctx, Workspace_PushHandoff_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkspaceServer is the server API for Workspace service.
 // All implementations must embed UnimplementedWorkspaceServer
 // for forward compatibility.
@@ -1819,6 +1835,11 @@ type WorkspaceServer interface {
 	// the worker fetch what the remote already has, then sends only the
 	// delta ("git-auth-forward").
 	Fetch(context.Context, *FetchRequest) (*FetchResponse, error)
+	// PushHandoff pushes a handoff snapshot from the checkout at dir to a
+	// temporary branch longarm/handoff/<user>/<id> of the remote (or deletes
+	// it), with a forwarded credential for this one push of this exact URL
+	// ("handoff-push"). Hooks do not run.
+	PushHandoff(context.Context, *PushHandoffRequest) (*PushHandoffResponse, error)
 	mustEmbedUnimplementedWorkspaceServer()
 }
 
@@ -1837,6 +1858,9 @@ func (UnimplementedWorkspaceServer) Sync(grpc.ClientStreamingServer[SyncChunk, S
 }
 func (UnimplementedWorkspaceServer) Fetch(context.Context, *FetchRequest) (*FetchResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Fetch not implemented")
+}
+func (UnimplementedWorkspaceServer) PushHandoff(context.Context, *PushHandoffRequest) (*PushHandoffResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PushHandoff not implemented")
 }
 func (UnimplementedWorkspaceServer) mustEmbedUnimplementedWorkspaceServer() {}
 func (UnimplementedWorkspaceServer) testEmbeddedByValue()                   {}
@@ -1902,6 +1926,24 @@ func _Workspace_Fetch_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Workspace_PushHandoff_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PushHandoffRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkspaceServer).PushHandoff(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Workspace_PushHandoff_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkspaceServer).PushHandoff(ctx, req.(*PushHandoffRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Workspace_ServiceDesc is the grpc.ServiceDesc for Workspace service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1917,12 +1959,224 @@ var Workspace_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Fetch",
 			Handler:    _Workspace_Fetch_Handler,
 		},
+		{
+			MethodName: "PushHandoff",
+			Handler:    _Workspace_PushHandoff_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Sync",
 			Handler:       _Workspace_Sync_Handler,
 			ClientStreams: true,
+		},
+	},
+	Metadata: "longarm/v1/longarm.proto",
+}
+
+const (
+	Handoff_Offer_FullMethodName = "/longarm.v1.Handoff/Offer"
+	Handoff_Fetch_FullMethodName = "/longarm.v1.Handoff/Fetch"
+	Handoff_Pull_FullMethodName  = "/longarm.v1.Handoff/Pull"
+)
+
+// HandoffClient is the client API for Handoff service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Handoff moves the commits of a `longarm handoff` between two workers
+// directly (worker feature "handoff-direct"), without the client relaying
+// them. The owner's client - over its own end-to-end mTLS connections to
+// both workers, never through the hub - registers a one-time offer on the
+// source worker and asks the target worker to pull it; the target dials the
+// source with its worker certificate over the same legs as port links.
+type HandoffClient interface {
+	// Offer (the owner's client): serve the bundle at path once, to worker
+	// peer, to the caller presenting token, within ttl. The worker copies the
+	// file (read as the caller) into its own staging area.
+	Offer(ctx context.Context, in *HandoffOfferRequest, opts ...grpc.CallOption) (*HandoffOfferResponse, error)
+	// Fetch (the peer's worker certificate): the offered bundle, once.
+	Fetch(ctx context.Context, in *HandoffFetchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FileChunk], error)
+	// Pull (the owner's client): fetch an offer from worker `from` and make
+	// header.path a worktree of it, as Workspace.Sync does with a bundle.
+	Pull(ctx context.Context, in *HandoffPullRequest, opts ...grpc.CallOption) (*SyncResult, error)
+}
+
+type handoffClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewHandoffClient(cc grpc.ClientConnInterface) HandoffClient {
+	return &handoffClient{cc}
+}
+
+func (c *handoffClient) Offer(ctx context.Context, in *HandoffOfferRequest, opts ...grpc.CallOption) (*HandoffOfferResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HandoffOfferResponse)
+	err := c.cc.Invoke(ctx, Handoff_Offer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *handoffClient) Fetch(ctx context.Context, in *HandoffFetchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FileChunk], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Handoff_ServiceDesc.Streams[0], Handoff_Fetch_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[HandoffFetchRequest, FileChunk]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Handoff_FetchClient = grpc.ServerStreamingClient[FileChunk]
+
+func (c *handoffClient) Pull(ctx context.Context, in *HandoffPullRequest, opts ...grpc.CallOption) (*SyncResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SyncResult)
+	err := c.cc.Invoke(ctx, Handoff_Pull_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// HandoffServer is the server API for Handoff service.
+// All implementations must embed UnimplementedHandoffServer
+// for forward compatibility.
+//
+// Handoff moves the commits of a `longarm handoff` between two workers
+// directly (worker feature "handoff-direct"), without the client relaying
+// them. The owner's client - over its own end-to-end mTLS connections to
+// both workers, never through the hub - registers a one-time offer on the
+// source worker and asks the target worker to pull it; the target dials the
+// source with its worker certificate over the same legs as port links.
+type HandoffServer interface {
+	// Offer (the owner's client): serve the bundle at path once, to worker
+	// peer, to the caller presenting token, within ttl. The worker copies the
+	// file (read as the caller) into its own staging area.
+	Offer(context.Context, *HandoffOfferRequest) (*HandoffOfferResponse, error)
+	// Fetch (the peer's worker certificate): the offered bundle, once.
+	Fetch(*HandoffFetchRequest, grpc.ServerStreamingServer[FileChunk]) error
+	// Pull (the owner's client): fetch an offer from worker `from` and make
+	// header.path a worktree of it, as Workspace.Sync does with a bundle.
+	Pull(context.Context, *HandoffPullRequest) (*SyncResult, error)
+	mustEmbedUnimplementedHandoffServer()
+}
+
+// UnimplementedHandoffServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedHandoffServer struct{}
+
+func (UnimplementedHandoffServer) Offer(context.Context, *HandoffOfferRequest) (*HandoffOfferResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Offer not implemented")
+}
+func (UnimplementedHandoffServer) Fetch(*HandoffFetchRequest, grpc.ServerStreamingServer[FileChunk]) error {
+	return status.Error(codes.Unimplemented, "method Fetch not implemented")
+}
+func (UnimplementedHandoffServer) Pull(context.Context, *HandoffPullRequest) (*SyncResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method Pull not implemented")
+}
+func (UnimplementedHandoffServer) mustEmbedUnimplementedHandoffServer() {}
+func (UnimplementedHandoffServer) testEmbeddedByValue()                 {}
+
+// UnsafeHandoffServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to HandoffServer will
+// result in compilation errors.
+type UnsafeHandoffServer interface {
+	mustEmbedUnimplementedHandoffServer()
+}
+
+func RegisterHandoffServer(s grpc.ServiceRegistrar, srv HandoffServer) {
+	// If the following call panics, it indicates UnimplementedHandoffServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&Handoff_ServiceDesc, srv)
+}
+
+func _Handoff_Offer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HandoffOfferRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HandoffServer).Offer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Handoff_Offer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HandoffServer).Offer(ctx, req.(*HandoffOfferRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Handoff_Fetch_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(HandoffFetchRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(HandoffServer).Fetch(m, &grpc.GenericServerStream[HandoffFetchRequest, FileChunk]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Handoff_FetchServer = grpc.ServerStreamingServer[FileChunk]
+
+func _Handoff_Pull_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HandoffPullRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HandoffServer).Pull(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Handoff_Pull_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HandoffServer).Pull(ctx, req.(*HandoffPullRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// Handoff_ServiceDesc is the grpc.ServiceDesc for Handoff service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Handoff_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "longarm.v1.Handoff",
+	HandlerType: (*HandoffServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Offer",
+			Handler:    _Handoff_Offer_Handler,
+		},
+		{
+			MethodName: "Pull",
+			Handler:    _Handoff_Pull_Handler,
+		},
+	},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Fetch",
+			Handler:       _Handoff_Fetch_Handler,
+			ServerStreams: true,
 		},
 	},
 	Metadata: "longarm/v1/longarm.proto",

@@ -27,6 +27,13 @@
   Windows 365 portal; another Windows worker with Remote Desktop on is
   reached through a forward to its Remote Desktop port and mstsc.
   docs/usage.md "Remote desktop: `longarm desktop`".
+- The tray shows its version in the title bar ("v0.1.21"): hover for a
+  summary, click for the details - this tray, the client daemon, this
+  machine's worker and admin worker, the hub and the newest release at the
+  hub - with whatever is behind marked (the tray behind the newest release,
+  a daemon or worker older or newer than the tray: not restarted, or not
+  updated) and "Update to X" when the hub has a newer release. The hub's
+  version comes from its public `/healthz`.
 - **Signed apt and dnf/yum repositories** on GitHub Pages
   (`https://lubobill1990.github.io/longarm/`): `apt install longarm` /
   `dnf install longarm`, updates through the package manager. The rpm is
@@ -122,6 +129,27 @@
 
 ### Fixed
 
+- Windows: the tray's "Update to ..." (and a user-session longarmd's machine
+  update) refused the real Longarm Update service: "the update pipe is
+  served by another program ... (pid N: Access is denied.)". The pipe
+  server was checked by opening its process, which a user can't do to a
+  LocalSystem service. Now the pipe server's PID must be the service's
+  current PID as the service manager reports it, the service configured as
+  LocalSystem running the installed `longarm-update.exe`, and the pipe
+  owned by SYSTEM or Administrators - readable by any user; a squatter is
+  still refused (docs/security.md "Update service").
+- Signing in on a machine that is signed in already (a join code's
+  `admin/<user>-<machine>` with its worker, an earlier sign-in, another
+  hub) failed in the tray with "~\.longarm\tls already holds a certificate
+  (use --force to enroll again)". The tray now lists what the machine is
+  signed in as and what changes, and signs in again only when you confirm
+  ("Replace and sign in"; the Account tab also offers "Sign in with an
+  account..."). One approval replaces the device and the worker: the
+  pairing proves their keys, the hub removes them and the worker keeps its
+  name. Ownership never moves: another user's worker is removed, not given
+  to you; your own keeps its sharing. `longarmd login --force` does the
+  same; an expired sign-in is replaced without asking (docs/security.md
+  "Signing in again").
 - The hub on Azure crash-looped on every start (2026-10-29, 0.1.18 and
   0.1.16 alike): `litestream restore` ran out of memory. Litestream 0.5.17's
   Azure Blob client listed "the files from TXID X" as the blob name prefix
@@ -480,6 +508,59 @@
   machine: labels, sharing, removal) and "Get Longarm" (the newest MSI, the
   one-liners, three steps), outdated versions are marked on Nodes, and a
   kill asks first (job, worker, owner).
+- `longarm handoff --to <worker|local> [--from ...] (--session ID | --latest)`
+  ([docs/usage.md](docs/usage.md#hand-off-an-agent-session)): move an
+  in-progress Claude Code or Copilot CLI conversation local -> worker,
+  worker -> worker or worker -> local together with its code - a snapshot
+  commit of HEAD + uncommitted + untracked files made with a temporary index
+  (the user's branch and index untouched), a new worktree on the target on
+  branch `handoff/<id>` with the changes uncommitted again (workers: remote
+  first with `--git-auth forward`; worker -> worker: only the delta relayed
+  through the client; local: `git worktree add` next to the checkout) - and
+  resume it there (`claude --resume` / `copilot --resume=` in a longarm
+  session, then attach; locally in the terminal). The source longarm session
+  is stopped once idle; a local agent that still has the session open is
+  refused (exit 75). The transcript and its state are copied with the paths
+  rewritten structurally (known path fields, plus exact source-path prefixes
+  at path boundaries), the session id kept, the source copy kept and marked
+  handed off. Preflight: the agent on the target (missing or older: exit 2),
+  logged in, MCP servers the target lacks (warnings), `--max-size` (64M).
+  Only through the worker-direct channels: the hub never sees a transcript.
+  Running processes (tool calls, background shells, MCP servers) are not
+  carried over. Copilot CLI support is experimental.
+  Session file names from the source are untrusted: validated as plain
+  relative paths inside the session's own files (no `..`, absolute, drive,
+  backslash, control characters; Windows device names, `:` and trailing
+  dots on Windows targets), no symlink / junction on the destination path
+  (`Files.Stat` `no_follow`, worker feature `file-lstat`), exclusive
+  creation, file count and per-file size bounded.
+  How the code travels: `--via relay|remote|auto` (default auto: relay
+  below `--via-threshold`, 20M of objects the target lacks, else remote;
+  `[handoff]` in workers.toml). Relay worker -> worker goes directly
+  between the workers (Handoff service, worker feature `handoff-direct`: a
+  one-time, single-peer, token-bound, 10-minute offer registered by the
+  owner's client, the target dials the source over the port-link legs under
+  the port-link owner and trust rules; falls back to the client relay).
+  Remote pushes the snapshot to `longarm/handoff/<user>/<id>-<time>` of the
+  https remote (a worker source with the forwarded credential,
+  `Workspace.PushHandoff`, worker feature `handoff-push`: write access for
+  that push only, hooks off, only that namespace), the target fetches it,
+  and the branch is deleted afterwards (`--keep-branch`; `handoff
+  --cleanup`). A built-in secret check of changed and untracked files, files
+  over 50 MB and refused pushes fall back to relay (`--allow-secrets`).
+- Handoff only between your own machines: another user's worker (shared
+  with you or not, admin certificates included) is refused as source and
+  target (exit 77), by the client and by the worker's handoff methods.
+  Worker -> worker transfers go through the hub's relays - embedded and
+  external - too: the hub lists the pair in the relay policy for the
+  transfer (`Fleet.HandoffPair`, the caller's own workers only, at most 10
+  minutes, released afterwards).
+- `longarm agent-sessions [<worker>|local] [--repo-path DIR] [--json]`: the
+  resumable agent sessions of a machine (agent, id, project directory, last
+  modified, title or first prompt, size, handed-off state).
+- Sessions get `LONGARM_WORKER` and `LONGARM_SESSION` in their environment
+  (worker feature `session-env`); `handoff` uses them for its default
+  `--from`. Capabilities `agent-handoff`, `agent-sessions`.
 - Windows installer for password-less machines (Entra-only sign-in with
   Windows Hello or a security key, e.g. Microsoft Dev Box): the MSI's first
   page is **Default (recommended)** - the hub built into the release, a

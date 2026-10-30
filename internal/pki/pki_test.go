@@ -230,3 +230,36 @@ func TestUserIdentity(t *testing.T) {
 		t.Fatalf("uri %v", c.URIs)
 	}
 }
+
+// TestReplaceProof: a node key's proof verifies with its certificate only,
+// for the message it signed only.
+func TestReplaceProof(t *testing.T) {
+	ca, err := InitCA(t.TempDir(), "test", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM, keyPEM, err := ca.Issue(IssueOptions{Role: RoleWorker, Name: "w1", Validity: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, otherKey, _ := ca.Issue(IssueOptions{Role: RoleWorker, Name: "w2", Validity: time.Hour})
+	msg := ReplaceMessage([]byte("csr"), nil, nil)
+	sig, err := SignReplace(certPEM, keyPEM, msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ := ParseCertPEM(certPEM)
+	if err := VerifyReplace(c, msg, sig); err != nil {
+		t.Fatal(err)
+	}
+	if VerifyReplace(c, ReplaceMessage([]byte("another csr"), nil, nil), sig) == nil {
+		t.Fatal("a proof verified for another pairing")
+	}
+	oc, _ := ParseCertPEM(other)
+	if VerifyReplace(oc, msg, sig) == nil {
+		t.Fatal("a proof verified with another node's certificate")
+	}
+	if _, err := SignReplace(certPEM, otherKey, msg); err == nil {
+		t.Fatal("signed with a key that isn't the certificate's")
+	}
+}

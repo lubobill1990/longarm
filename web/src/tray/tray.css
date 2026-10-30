@@ -1772,3 +1772,105 @@
     color: var(--green-ink);
   }
 }
+
+/* the version chip in the title bar ("v0.1.21") and its details */
+:root[data-app='tray'] {
+  & .ver-wrap {
+    position: relative;
+    display: inline-flex;
+  }
+  & .titlebar .ver-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 20px;
+    padding: 0 7px;
+    border: 0;
+    border-radius: var(--r-pill);
+    background: transparent;
+    color: var(--text-3);
+    font: var(--fw-medium) var(--fs-xs) / 1 var(--font);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+  }
+  & .titlebar .ver-chip:hover,
+  & .titlebar .ver-chip[aria-expanded='true'] {
+    background: var(--hover);
+    color: var(--text-2);
+  }
+  & .titlebar .ver-chip:focus-visible {
+    box-shadow: var(--focus);
+    outline: none;
+  }
+  & .titlebar .ver-chip.warn {
+    color: var(--amber-ink);
+  }
+  & .ver-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--amber);
+  }
+  & .ver-pop {
+    position: absolute;
+    left: 0;
+    top: calc(100% + 6px);
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 260px;
+    padding: var(--sp-2) var(--sp-3) var(--sp-3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-xl);
+    background: var(--surface);
+    box-shadow: var(--shadow-2);
+    color: var(--text);
+    font-size: var(--fs-sm);
+    user-select: text;
+    cursor: auto;
+    animation: tray-rise var(--dur) var(--ease);
+  }
+  & .ver-head {
+    margin-bottom: 2px;
+    color: var(--text-3);
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  & .ver-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    column-gap: var(--sp-3);
+    padding: 3px 6px;
+    border-radius: var(--r-sm);
+  }
+  & .ver-row .ver-label {
+    color: var(--text-2);
+  }
+  & .ver-row .ver-val {
+    font-size: var(--fs-sm);
+    text-align: right;
+  }
+  & .ver-row .ver-note {
+    grid-column: 1 / -1;
+    color: var(--text-3);
+    font-size: var(--fs-xs);
+  }
+  & .ver-row.behind {
+    background: var(--amber-soft);
+  }
+  & .ver-row.behind .ver-val,
+  & .ver-row.behind .ver-note {
+    color: var(--amber-ink);
+    font-weight: var(--fw-semibold);
+  }
+  & .ver-latest {
+    margin-top: 4px;
+  }
+  & .ver-pop button.primary {
+    align-self: flex-start;
+    margin-top: var(--sp-2);
+  }
+}

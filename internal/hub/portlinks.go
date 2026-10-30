@@ -379,17 +379,24 @@ func (h *Hub) portLinksChangedLocked(workers ...string) {
 }
 
 // updateRelayPairsLocked lets the relay carry traffic between linked
-// workers (and nothing else between workers).
+// workers and the workers of a running handoff transfer (handoffpairs.go),
+// and nothing else between workers.
 func (h *Hub) updateRelayPairsLocked() {
 	h.relayPolicyNotify() // external relays (relays.go)
 	if h.relay == nil {
 		return
 	}
-	pairs := make([][2]string, 0, len(h.portLinks))
+	h.relay.SetWorkerPairs(h.relayWorkerPairsLocked(time.Now()))
+}
+
+// relayWorkerPairsLocked are the worker pairs relays may carry: those of
+// the port links and of handoff transfers.
+func (h *Hub) relayWorkerPairsLocked(now time.Time) [][2]string {
+	pairs := make([][2]string, 0, len(h.portLinks)+len(h.handoffPairs))
 	for _, e := range h.portLinks {
 		pairs = append(pairs, [2]string{e.l.From, e.l.To})
 	}
-	h.relay.SetWorkerPairs(pairs)
+	return append(pairs, h.handoffPairsLocked(now)...)
 }
 
 // portLinksMsgLocked is the list of links naming worker, with grants and

@@ -99,49 +99,87 @@ func IdentifyPipeClient(c net.Conn) (Caller, error) {
 	return c2, nil
 }
 
-// VerifyPipeServer checks the pipe's server process: the installed
-// longarm-update.exe (in the install dir the MSI recorded, which only
-// administrators can change) running as SYSTEM. Anything else is a
-// squatter: ErrImpostor.
+// VerifyPipeServer checks that the pipe's server is the LongarmUpdate
+// service (anything else is a squatter: ErrImpostor), without opening the
+// server's process - a LocalSystem process can't be opened by a user, and
+// the tray and a user-session longarmd are users (#66's check refused the
+// real service: "Access is denied"). Two independent checks:
+//
+//   - the pipe instance's owner is SYSTEM or Administrators: the service
+//     (LocalSystem) creates it with its token's default owner; a process
+//     of a user can't set either as the owner of what it creates;
+//   - the process that created the instance (GetNamedPipeServerProcessId)
+//     is the service's current process as the service manager reports it
+//     (QueryServiceStatusEx, SERVICE_QUERY_STATUS), and the service runs
+//     the installed longarm-update.exe as LocalSystem (QueryServiceConfig,
+//     SERVICE_QUERY_CONFIG): rights every interactive user has.
+//
+// longarmd (machineupdate) and the tray both go through it
+// (NewClient).
 func VerifyPipeServer(c net.Conn) error {
+	return verifyPipeServer(c, pipeServerChecks{
+		owner: pipeOwnerTrusted,
+		service: func() (serviceProcess, error) {
+			sp, err := win.QueryServiceProcess(ServiceName)
+			return serviceProcess(sp), err
+		},
+		exe: func() (string, error) {
+			dir, err := msiupgrade.RecordedInstallDir()
+			if err != nil {
+				return "", err
+			}
+			return filepath.Join(dir, BinaryName), nil
+		},
+	})
+}
+
+// pipeServerChecks: VerifyPipeServer's sources (tests replace them).
+type pipeServerChecks struct {
+	owner   func(windows.Handle) error // nil: not checked (tests)
+	service func() (serviceProcess, error)
+	exe     func() (string, error) // the installed longarm-update.exe
+}
+
+func verifyPipeServer(c net.Conn, ck pipeServerChecks) error {
 	f, ok := c.(fder)
 	if !ok {
 		return errors.New("not a pipe")
 	}
+	h := windows.Handle(f.Fd())
 	var pid uint32
-	if err := windows.GetNamedPipeServerProcessId(windows.Handle(f.Fd()), &pid); err != nil {
+	if err := windows.GetNamedPipeServerProcessId(h, &pid); err != nil {
 		return fmt.Errorf("the update pipe's server: %w", err)
 	}
-	dir, err := msiupgrade.RecordedInstallDir()
+	if ck.owner != nil {
+		if err := ck.owner(h); err != nil {
+			return fmt.Errorf("%w (pid %d: %v)", ErrImpostor, pid, err)
+		}
+	}
+	sp, err := ck.service()
+	if err != nil {
+		return fmt.Errorf("%w (pid %d; the %s service: %v)", ErrImpostor, pid, ServiceName, err)
+	}
+	want, err := ck.exe()
 	if err != nil {
 		return fmt.Errorf("%w (no install dir recorded: %v)", ErrImpostor, err)
 	}
-	return verifyServerProcess(pid, filepath.Join(dir, BinaryName))
+	return checkPipeServer(pid, sp, want)
 }
 
-func verifyServerProcess(pid uint32, want string) error {
-	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+// pipeOwnerTrusted checks the owner of the pipe instance h is connected
+// to: SYSTEM or Administrators (win.SystemOwnerSID). The client's handle
+// has READ_CONTROL (GENERIC_READ; the pipe's DACL grants it).
+func pipeOwnerTrusted(h windows.Handle) error {
+	sd, err := windows.GetSecurityInfo(h, windows.SE_KERNEL_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
-		return fmt.Errorf("%w (pid %d: %v)", ErrImpostor, pid, err)
+		return fmt.Errorf("the pipe's owner: %w", err)
 	}
-	defer windows.CloseHandle(h)
-	buf := make([]uint16, windows.MAX_LONG_PATH)
-	n := uint32(len(buf))
-	if err := windows.QueryFullProcessImageName(h, 0, &buf[0], &n); err != nil {
-		return fmt.Errorf("%w (pid %d: %v)", ErrImpostor, pid, err)
+	owner, _, err := sd.Owner()
+	if err != nil || owner == nil {
+		return fmt.Errorf("the pipe has no owner (%v)", err)
 	}
-	exe := windows.UTF16ToString(buf[:n])
-	if !strings.EqualFold(filepath.Clean(exe), filepath.Clean(want)) {
-		return fmt.Errorf("%w: pid %d is %s, not %s", ErrImpostor, pid, exe, want)
-	}
-	var tok windows.Token
-	if err := windows.OpenProcessToken(h, windows.TOKEN_QUERY, &tok); err != nil {
-		return fmt.Errorf("%w (pid %d's token: %v)", ErrImpostor, pid, err)
-	}
-	defer tok.Close()
-	u, err := tok.GetTokenUser()
-	if err != nil || u.User.Sid.String() != systemSID {
-		return fmt.Errorf("%w: pid %d does not run as SYSTEM", ErrImpostor, pid)
+	if !win.SystemOwnerSID(owner) {
+		return fmt.Errorf("the pipe is owned by %s, not SYSTEM or Administrators", owner)
 	}
 	return nil
 }

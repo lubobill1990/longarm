@@ -46,6 +46,7 @@ type trayUpdate struct {
 	checked time.Time
 	latest  string     // the hub's newest complete release ("" = none / unknown)
 	channel string     // the channel latest is of
+	hub     string     // the hub's own version (its /healthz; "" = unknown)
 	msi     latestFile // its MSI for this architecture (Name "" = none)
 	state   string     // "" | downloading | installing | failed
 	err     string
@@ -65,9 +66,11 @@ type latestFile struct {
 }
 
 type updateInfo struct {
-	Current   string `json:"current"`
-	Latest    string `json:"latest,omitempty"`
-	Channel   string `json:"channel,omitempty"`
+	Current string `json:"current"`
+	Latest  string `json:"latest,omitempty"`
+	Channel string `json:"channel,omitempty"`
+	// Hub: the hub's own version (the tray's version details)
+	Hub       string `json:"hub,omitempty"`
 	Available bool   `json:"available"`
 	MSI       string `json:"msi,omitempty"`
 	State     string `json:"state,omitempty"`
@@ -120,6 +123,7 @@ func (s *Server) refreshUpdate(ctx context.Context, force bool) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	hubVersion := s.hubVersion(cctx, base)
 	q := ""
 	if channel != update.ChannelStable {
 		q = "?channel=" + channel // an older hub ignores it: its latest stable
@@ -148,8 +152,29 @@ func (s *Server) refreshUpdate(ctx context.Context, force bool) {
 		}
 	}
 	u.mu.Lock()
-	u.checked, u.latest, u.msi, u.channel = time.Now(), lj.Version, msi, channel
+	u.checked, u.latest, u.msi, u.channel, u.hub = time.Now(), lj.Version, msi, channel, hubVersion
 	u.mu.Unlock()
+}
+
+// hubVersion is the hub's version from its public /healthz ("" when it
+// can't be had).
+func (s *Server) hubVersion(ctx context.Context, base string) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/healthz", nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := s.upd.httpClient().Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var hz struct {
+		Version string `json:"version"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&hz) != nil || len(hz.Version) > 64 {
+		return ""
+	}
+	return hz.Version
 }
 
 func (s *Server) updateInfo() updateInfo {
@@ -160,7 +185,7 @@ func (s *Server) updateInfo() updateInfo {
 	if goos == "" {
 		goos = runtime.GOOS
 	}
-	info := updateInfo{Current: s.opts.Version, Latest: u.latest, Channel: u.channel, MSI: u.msi.Name, State: u.state, Error: u.err}
+	info := updateInfo{Current: s.opts.Version, Latest: u.latest, Channel: u.channel, Hub: u.hub, MSI: u.msi.Name, State: u.state, Error: u.err}
 	info.Available = goos == "windows" && u.msi.Name != "" && releaseVersionRE.MatchString(s.opts.Version) &&
 		update.ValidVersion(u.latest) && update.Compare(u.latest, s.opts.Version) > 0
 	return info

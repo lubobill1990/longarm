@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lubobill1990/longarm/internal/jobs"
+	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/workspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -199,4 +201,46 @@ func (w *workspaceServer) Sync(st pb.Workspace_SyncServer) error {
 		return status.Error(codes.Aborted, err.Error())
 	}
 	return st.SendAndClose(res)
+}
+
+// PushHandoff pushes a handoff snapshot to a temporary branch of the
+// remote (or deletes it) with a forwarded credential, used for that push
+// only and zeroed; the audit log records the url, branch and commit, never
+// the credential.
+func (w *workspaceServer) PushHandoff(ctx context.Context, req *pb.PushHandoffRequest) (*pb.PushHandoffResponse, error) {
+	auth := GitAuthFromPB(req.GitAuth)
+	defer auth.Clear()
+	if !auth.Valid() {
+		return nil, status.Error(codes.InvalidArgument, "a push needs a forwarded credential (git_auth)")
+	}
+	if !workspace.HandoffBranchRE.MatchString(req.Branch) || strings.Contains(req.Branch, "..") {
+		return nil, status.Errorf(codes.InvalidArgument, "bad branch %q", req.Branch)
+	}
+	if why := w.s.handoffDeny(IdentityFrom(ctx).Owner()); why != "" {
+		return nil, status.Error(codes.PermissionDenied, why)
+	}
+	var err error
+	if w.s.perUser() {
+		var h *userspace.Helper
+		if h, err = w.s.helper(ctx); err == nil {
+			_, err = pb.NewWorkspaceClient(h.Conn).PushHandoff(ctx, req)
+			h.Close()
+		}
+	} else {
+		var dir string
+		if dir, err = resolvePath(req.Dir); err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+		if err = w.s.ws().PushHandoff(ctx, dir, req.Url, req.Commit, req.Branch, auth); err != nil {
+			err = status.Error(codes.FailedPrecondition, workspace.RedactURLs(err.Error()))
+		}
+	}
+	w.s.Audit.Log(IdentityFrom(ctx), pb.Workspace_PushHandoff_FullMethodName, map[string]any{
+		"url": workspace.RedactURLs(req.Url), "branch": req.Branch, "commit": req.Commit, "delete": req.Commit == "",
+		"git_auth": true, "error": errString(err),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &pb.PushHandoffResponse{}, nil
 }

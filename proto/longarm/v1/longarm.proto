@@ -603,6 +603,9 @@ message FileStatRequest {
   bool partial = 2; // stat "<path>.lapart" instead
   bool hash = 3; // compute sha256
   int64 hash_limit = 4; // hash only the first N bytes (0 = whole file)
+  // Do not follow a symlink (or Windows reparse point) at path: report the
+  // link itself (is_symlink). Workers with the "file-lstat" feature.
+  bool no_follow = 5;
 }
 
 message FileInfo {
@@ -679,7 +682,22 @@ service Workspace {
   // the worker fetch what the remote already has, then sends only the
   // delta ("git-auth-forward").
   rpc Fetch(FetchRequest) returns (FetchResponse);
+  // PushHandoff pushes a handoff snapshot from the checkout at dir to a
+  // temporary branch longarm/handoff/<user>/<id> of the remote (or deletes
+  // it), with a forwarded credential for this one push of this exact URL
+  // ("handoff-push"). Hooks do not run.
+  rpc PushHandoff(PushHandoffRequest) returns (PushHandoffResponse);
 }
+
+message PushHandoffRequest {
+  string dir = 1; // a checkout on this worker
+  string url = 2; // https url of the remote
+  string commit = 3; // full id; "" = delete the branch
+  string branch = 4; // longarm/handoff/<user>/<id>
+  GitAuth git_auth = 5;
+}
+
+message PushHandoffResponse {}
 
 message FetchRequest {
   string repo = 1;
@@ -749,6 +767,55 @@ message SyncResult {
   int64 patch_bytes = 5;
   int64 untracked_bytes = 6;
   int64 lfs_bytes = 7;
+}
+
+// ---------------------------------------------------------------- Handoff
+
+// Handoff moves the commits of a `longarm handoff` between two workers
+// directly (worker feature "handoff-direct"), without the client relaying
+// them. The owner's client - over its own end-to-end mTLS connections to
+// both workers, never through the hub - registers a one-time offer on the
+// source worker and asks the target worker to pull it; the target dials the
+// source with its worker certificate over the same legs as port links.
+service Handoff {
+  // Offer (the owner's client): serve the bundle at path once, to worker
+  // peer, to the caller presenting token, within ttl. The worker copies the
+  // file (read as the caller) into its own staging area.
+  rpc Offer(HandoffOfferRequest) returns (HandoffOfferResponse);
+  // Fetch (the peer's worker certificate): the offered bundle, once.
+  rpc Fetch(HandoffFetchRequest) returns (stream FileChunk);
+  // Pull (the owner's client): fetch an offer from worker `from` and make
+  // header.path a worktree of it, as Workspace.Sync does with a bundle.
+  rpc Pull(HandoffPullRequest) returns (SyncResult);
+}
+
+message HandoffOfferRequest {
+  string path = 1; // the bundle on this worker (as the caller may read it)
+  string peer = 2; // the worker (certificate name) that may fetch it
+  string transfer_id = 3; // [A-Za-z0-9_-]{8,64}
+  bytes token = 4; // 32 random bytes, the client's
+  google.protobuf.Duration ttl = 5; // at most 10 minutes
+  int64 max_bytes = 6; // refuse a larger file
+}
+
+message HandoffOfferResponse {
+  int64 size = 1;
+  bytes sha256 = 2;
+}
+
+message HandoffFetchRequest {
+  string transfer_id = 1;
+  bytes token = 2;
+}
+
+message HandoffPullRequest {
+  string from = 1; // the source worker (certificate name)
+  repeated string from_endpoints = 2; // how to reach it ("tcp://host:port", ...)
+  string transfer_id = 3;
+  bytes token = 4;
+  int64 size = 5; // what the offer reported: the bundle must be exactly this
+  bytes sha256 = 6;
+  SyncHeader header = 7; // repo, commit, branch, path of the worktree to make
 }
 
 // ---------------------------------------------------------------- UserHelper

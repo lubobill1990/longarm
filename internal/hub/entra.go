@@ -552,6 +552,10 @@ type deviceRequest struct {
 	// admin: an admin worker (a pairing's admin_worker_csr_pem): marked
 	// (store.Node.Admin, label longarm.io/admin=true), owner-only, never placed
 	admin bool
+	// carry: the worker this one replaces on its machine, of the same
+	// owner (replaceLinkNodes): its sharing, profile, labels and companion
+	// carry over
+	carry *store.Node
 }
 
 // checkWorkerLabels validates the labels a sign-in asks for: workers only,
@@ -680,6 +684,12 @@ func (h *Hub) enrollOwnedWorker(who, owner string, d deviceRequest) (*pb.JoinRes
 	now := time.Now().UTC()
 	rec := &store.Node{Name: name, Role: string(pki.RoleWorker), Hostname: d.hostname, OS: d.os, Arch: d.arch,
 		Version: d.version, JoinedAt: now, Owner: owner, AccessVersion: 1, Labels: maps.Clone(d.labels), Admin: d.admin}
+	if c := d.carry; c != nil && c.Owner == owner && !d.admin {
+		rec.Shares, rec.Profile, rec.Companion, rec.AccessVersion = c.Shares, c.Profile, c.Companion, c.AccessVersion+1
+		if len(rec.Labels) == 0 {
+			rec.Labels = maps.Clone(c.Labels)
+		}
+	}
 	cert, err := h.issue(rec, d.csr)
 	if err != nil {
 		return nil, err
