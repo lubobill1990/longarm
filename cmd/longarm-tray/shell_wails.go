@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -207,6 +208,15 @@ func (s *sessionsWindow) hideOnClose(e *application.WindowEvent) {
 	s.win.Hide()
 }
 
+// pauseLabel is the menu item that pauses (or, paused, resumes) this
+// machine's worker.
+func pauseLabel(paused bool) string {
+	if paused {
+		return "Resume this machine"
+	}
+	return "Pause this machine (no new jobs)"
+}
+
 func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error {
 	prefs := tray.LoadWindowPrefs(o.LongarmConfigDir)
 	d := &desktop{prefsDir: o.LongarmConfigDir, pinned: !prefs.AutoHide}
@@ -274,12 +284,66 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 		d.show()
 	})
 	menu.AddSeparator()
-	menu.Add("Quit").OnClick(func(*application.Context) { app.Quit() })
+	// Closing the tray leaves this machine working (its worker, your
+	// forwards): the menu says so, and offers pausing the worker or quitting
+	// Longarm here (internal/tray/machine.go).
+	pause := menu.Add(pauseLabel(false))
+	pause.SetHidden(true) // until the local worker answers
+	menu.AddSeparator()
+	menu.Add("Close tray (keeps working)").OnClick(func(*application.Context) { app.Quit() })
+	quitAll := menu.Add("Quit Longarm on this machine…")
 	t.SetMenu(menu)
 
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	shell := &wailsShell{tray: t, notes: notes}
+	refresh := func() tray.MachineState {
+		st := srv.MachineState(cctx)
+		pause.SetHidden(!st.Worker)
+		pause.SetLabel(pauseLabel(st.Draining))
+		menu.Update()
+		return st
+	}
+	go func() {
+		for {
+			refresh()
+			select {
+			case <-cctx.Done():
+				return
+			case <-time.After(10 * time.Second):
+			}
+		}
+	}()
+	pause.OnClick(func(*application.Context) {
+		go func() {
+			st := srv.MachineState(cctx)
+			if err := srv.PauseWorker(cctx, !st.Draining); err != nil {
+				shell.Notify("Longarm", "Could not "+strings.ToLower(pauseLabel(st.Draining))+": "+err.Error())
+			} else if st.Draining {
+				shell.Notify("Longarm", "This machine takes new jobs again.")
+			} else {
+				shell.Notify("Longarm", "Paused: this machine takes no new jobs. Running jobs and sessions continue.")
+			}
+			refresh()
+		}()
+	})
+	quitAll.OnClick(func(*application.Context) {
+		st := srv.MachineState(cctx)
+		dlg := app.Dialog.Question().SetTitle("Quit Longarm on this machine?").SetMessage(tray.QuitSummary(st))
+		yes := dlg.AddButton("Quit Longarm")
+		no := dlg.AddButton("Cancel")
+		dlg.SetDefaultButton(no)
+		dlg.SetCancelButton(no)
+		yes.OnClick(func() {
+			go func() {
+				if problems := srv.QuitLongarm(st); len(problems) > 0 {
+					shell.Notify("Longarm", "Quit, but: "+strings.Join(problems, "; "))
+				}
+				app.Quit()
+			}()
+		})
+		dlg.Show()
+	})
 	ctrl := tray.NewController(o, shell, startDaemon)
 	go ctrl.Run(cctx)
 	go srv.WatchSignIn(cctx, shell.Notify)

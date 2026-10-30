@@ -2370,6 +2370,16 @@ cd web && pnpm install && npx playwright install chromium && cd ..
 LONGARM_PLAYWRIGHT=1 go test -run TestUIPlaywright -v ./e2e
 ```
 
+**The tray icon's menu** (right click): **Close tray (keeps working)** closes
+only the tray - this machine's worker keeps serving jobs and sessions and the
+client daemon keeps your port forwards. **Pause this machine (no new jobs)**
+drains the local worker (`longarmd drain`: the hub places nothing new on it,
+running jobs and sessions finish; **Resume this machine** undoes it).
+**Quit Longarm on this machine…** says what is running and, confirmed, stops
+the user-session worker until the next sign-in (`longarmd session-mode
+stop`), the client daemon (`longarm daemon stop`) and the tray; a worker
+installed as a Windows service and the update service keep running.
+
 ### Agent skill for Claude Code, Copilot CLI, Codex
 
 Longarm ships an agent skill - `skills/longarm/` in this repository:
