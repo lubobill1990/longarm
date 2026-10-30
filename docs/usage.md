@@ -2309,7 +2309,10 @@ plus this client's link to each: active leg and path (tcp, tailscale direct/peer
 direct/relay-udp/relay-tcp), NAT types, RTT with a 5-minute sparkline. Data
 comes from `longarm daemon` (hub events when the hub is reachable, otherwise
 streamed from the workers; the popup shows which). Tabs: workers, my jobs
-(logs, kill), forwards, this worker (longarmd: drain, limits, toolchain, jobs,
+(the jobs started from this computer, like `longarm jobs --mine`: a click
+opens a job's command, times and output right under it; kill; there is no
+"everyone" switch - `longarm jobs --all` lists your jobs from other
+computers and team-shared ones), forwards, this worker (longarmd: drain, limits, toolchain, jobs,
 leave; join with a code when not enrolled), settings (transport policy).
 Notifications: worker offline/back, memory ≥ 90 %, link relayed > 5 min, my
 job finished/failed.

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { LegStatus, MetricsSnapshot, PoolWorker, ProcGroup } from '../api/types'
+import { useDismiss } from '../lib/dismiss'
 import type { WorkerUpdateJob } from '../api/local'
 import {
   AMBER,
@@ -133,6 +134,7 @@ export function machineOf(w: PoolWorker): PoolMachine {
  */
 export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker; m?: PoolMachine; actions?: CardActions; now?: number }) {
   const [menu, setMenu] = useState(false)
+  const menuRef = useDismiss<HTMLSpanElement>(menu, () => setMenu(false))
   const mm = m ?? machineOf(w!)
   const session = mm.session
   const admin = mm.admin
@@ -222,19 +224,18 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
             </button>
           )}
           {menuItems.length > 0 && (
-            <span className="menuwrap">
+            <span className="menuwrap" ref={menuRef}>
               <button
                 className="act icon"
                 aria-label="more actions"
                 aria-haspopup="menu"
                 aria-expanded={menu}
                 onClick={() => setMenu((v) => !v)}
-                onKeyDown={(e) => e.key === 'Escape' && setMenu(false)}
               >
                 <IconMore />
               </button>
               {menu && (
-                <span className="menu" role="menu" onKeyDown={(e) => e.key === 'Escape' && setMenu(false)}>
+                <span className="menu" role="menu">
                   {menuItems.map(([label, fn]) => (
                     <button
                       key={label}

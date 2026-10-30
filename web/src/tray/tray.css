@@ -898,12 +898,32 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  & .group.logs .group-head h3 {
-    text-transform: none;
-    letter-spacing: 0;
-    font-size: var(--fs-md);
+  /* a section on a card (Settings): the look and rhythm of Account's cards */
+  & .group.card {
+    padding: var(--sp-3) 14px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-1);
+    min-width: 0;
+  }
+  & .group.card + .group.card {
+    margin-top: var(--sp-3);
+  }
+  & .group.card .group-head h3 {
+    font-family: var(--font-display);
+    font-size: var(--fs-lg);
     font-weight: var(--fw-semibold);
-    color: var(--text-2);
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--text);
+  }
+  & .group.card .field-inline + .switch-row {
+    margin-top: var(--sp-2);
+    border-top: 1px solid var(--border);
+  }
+  & .group.card dl.facts {
+    margin-top: 0;
   }
   & .group-head h3 .mono {
     text-transform: none;
@@ -1397,6 +1417,28 @@
   }
   & table.grid .dot-cell {
     width: 1%;
+  }
+  /* a job's details, right under its (selected) row: one block with it */
+  & table.grid tr.selected td:first-child,
+  & table.grid tr.row-detail td {
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  & table.grid tr.selected td {
+    border-bottom-color: transparent;
+  }
+  & table.grid tr.row-detail td,
+  & table.grid tr.row-detail:hover td {
+    padding: var(--sp-1) var(--sp-3) var(--sp-3) var(--sp-4);
+    background: var(--active);
+    cursor: auto;
+    white-space: normal;
+  }
+  & table.grid tr.row-detail dl.facts {
+    margin: var(--sp-1) 0 var(--sp-3);
+  }
+  & table.grid tr.row-detail .logview {
+    max-height: 40vh;
+    background: var(--surface);
   }
 
   & .forward-form,

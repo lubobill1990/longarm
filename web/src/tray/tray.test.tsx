@@ -220,6 +220,13 @@ describe('version chip', () => {
     fireEvent.click(screen.getByTestId('version-update'))
     await waitFor(() => expect(calls.some((c) => c.url === '/trayapi/update/install')).toBe(true))
     expect(JSON.parse(String(calls.find((c) => c.url === '/trayapi/update/install')!.init?.body))).toEqual({ version: '0.1.22' })
+    // a click elsewhere in the title bar closes the details; so does Escape
+    fireEvent.mouseDown(document.body)
+    expect(screen.queryByTestId('version-details')).toBeNull()
+    fireEvent.click(chip)
+    expect(screen.getByTestId('version-details')).toBeTruthy()
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(screen.queryByTestId('version-details')).toBeNull()
   })
 })
 

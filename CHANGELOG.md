@@ -168,7 +168,16 @@
   refused by policies against storage account keys ("RequestDisallowedByPolicy",
   nothing changed). The lines are joined with tabs now; deploy.sh already
   read both forms.
-
+- Tray and panel: every menu and popover (a worker card's ⋯ menu, the
+  version details in the tray's title bar, the tray's right-click menu)
+  closes on a click outside, on Escape and when the focus leaves it, through
+  one shared hook (`web/src/lib/dismiss.ts`); the ⋯ menu stayed open.
+- Tray: My jobs opens a job's details (command, times, output) right under
+  its row instead of below the whole list (Jobs on this worker too), and
+  drops the misleading "everyone's jobs" switch: the hub never shows other
+  users' jobs (docs/security.md "What admins see"), so it only added your
+  jobs from other computers and team-shared ones; `longarm jobs --all`
+  still lists those. Settings uses cards with the spacing of Account.
 - Windows: the tray's "Update to ..." (and a user-session longarmd's machine
   update) refused the real Longarm Update service: "the update pipe is
   served by another program ... (pid N: Access is denied.)". The pipe
