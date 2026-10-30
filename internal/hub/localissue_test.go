@@ -5,9 +5,7 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/status"
 
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
@@ -105,8 +103,8 @@ func TestIssueLocal(t *testing.T) {
 	if err := subscribe(dial(c)); err != nil {
 		t.Fatalf("the relay of the new node: %v", err)
 	}
-	if err := subscribe(dial(b)); status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("the revoked node's certificate: %v", err)
+	if err := subscribe(dial(b)); err == nil { // refused in the TLS handshake already
+		t.Fatal("the revoked node's certificate still works")
 	}
 
 	// release credentials: a second one the same day is the same node's

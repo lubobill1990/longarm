@@ -47,7 +47,7 @@ func TestRelayCertAlias(t *testing.T) {
 		os.Unsetenv(k)
 	}
 	t.Setenv("LONGARM_HUB_CONFIG", cfgPath)
-	t.Setenv("LONGARM_HUB_ADVERTISE", "myhub.eastasia.azurecontainer.io")
+	t.Setenv("LONGARM_HUB_ADVERTISE", "myhub.eastasia.azurecontainer.io:7443")
 	ca, err := hub.InitCA(dir)
 	if err != nil {
 		t.Fatal(err)
