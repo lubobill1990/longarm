@@ -178,6 +178,19 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
             {avail ? ' ↑' : ''}
           </span>
         )}
+        {canUpdate && (
+          // next to the version it updates (the action row has no room for it)
+          <button
+            className="pill warn upd"
+            data-testid="update-btn"
+            disabled={running}
+            aria-label={`Update to ${avail}`}
+            title={`Update to ${avail}: longarm worker update ${target!.name} --version ${avail} installs the signed release; running jobs and sessions keep running`}
+            onClick={() => actions!.update!(target!.name, avail)}
+          >
+            {running ? 'Updating…' : 'Update'}
+          </button>
+        )}
         <span className="sub">{statusText(session ?? admin ?? p, now)}</span>
         {draining && (
           <span className="pill warn" title={session?.node?.drain_reason}>
@@ -185,17 +198,6 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
           </span>
         )}
         <span className="actions">
-          {canUpdate && (
-            <button
-              className="act update"
-              data-testid="update-btn"
-              disabled={running}
-              title={`longarm worker update ${target!.name} --version ${avail}: installs the signed release; running jobs and sessions keep running`}
-              onClick={() => actions!.update!(target!.name, avail)}
-            >
-              {running ? 'Updating…' : `Update to ${avail}`}
-            </button>
-          )}
           {session && actions?.attach && (
             <button className="act" title={`open a terminal: longarm attach ${session.name}`} onClick={() => actions.attach!(session.name)}>
               attach
