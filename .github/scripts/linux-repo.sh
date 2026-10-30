@@ -113,8 +113,8 @@ cmd_previous() {
 	fi
 	echo "previous versions: $(echo "$vers" | tr '\n' ' ')"
 	mkdir -p "$dir/deb" "$dir/rpm"
-	local p v f h
-	while read -r p v f h; do
+	local v f h
+	while read -r _ v f h; do
 		grep -qxF -- "$v" <<<"$vers" || continue
 		[[ $f =~ ^pool/main/[a-z0-9]/[a-z0-9.+-]+/[A-Za-z0-9._+~-]+\.deb$ ]] || die "Packages: odd Filename '$f'"
 		curl -fsSL -o "$dir/deb/${f##*/}" "$base/deb/$f"
