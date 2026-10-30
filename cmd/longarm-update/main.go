@@ -7,10 +7,12 @@
 //	longarm-update status                    the service's status (JSON)
 //	longarm-update install --latest | --version V [--reinstall]
 //	longarm-update auto on|off [--hours N]   automatic updates (the machine's owner or an administrator)
+//	longarm-update channel [stable|preview|dev]   the release channel (setting it: the owner or an administrator)
 //	longarm-update version
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +21,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/lubobill1990/longarm/internal/update"
 	"github.com/lubobill1990/longarm/internal/updatesvc"
 	"github.com/lubobill1990/longarm/internal/version"
 )
@@ -37,6 +40,8 @@ func main() {
 		err = install(os.Args[2:])
 	case "auto":
 		err = auto(os.Args[2:])
+	case "channel":
+		err = channel(os.Args[2:])
 	case "version":
 		fmt.Println("longarm-update", version.Version)
 	default:
@@ -49,7 +54,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: longarm-update run | status | install --latest|--version V [--reinstall] | auto on|off [--hours N] | version")
+	fmt.Fprintln(os.Stderr, "usage: longarm-update run | status | install --latest|--version V [--reinstall] | auto on|off [--hours N] | channel [stable|preview|dev] | version")
 	os.Exit(2)
 }
 
@@ -71,7 +76,7 @@ func status() error {
 
 func install(args []string) error {
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
-	latest := fs.Bool("latest", false, "the hub's latest stable release")
+	latest := fs.Bool("latest", false, "the hub's newest release of the machine's channel")
 	ver := fs.String("version", "", "a version the hub has")
 	re := fs.Bool("reinstall", false, "install the installed version again (administrators)")
 	fs.Parse(args)
@@ -95,6 +100,29 @@ func auto(args []string) error {
 	hours := fs.Int("hours", 0, "hours between checks (default 6)")
 	fs.Parse(args[1:])
 	r, err := client().Do(context.Background(), &updatesvc.Request{Op: updatesvc.OpSetAuto, Auto: args[0] == "on", IntervalHours: *hours})
+	if err != nil {
+		return err
+	}
+	return show(r)
+}
+
+// channel prints the machine's release channel, or sets it.
+func channel(args []string) error {
+	if len(args) == 0 {
+		r, err := client().Do(context.Background(), &updatesvc.Request{Op: updatesvc.OpStatus})
+		if err != nil {
+			return err
+		}
+		if r.Status == nil {
+			return r.Err()
+		}
+		fmt.Println(cmp.Or(r.Status.Channel, update.ChannelStable)) // older services: stable
+		return nil
+	}
+	if _, ok := update.NormalizeChannel(args[0]); !ok || len(args) > 1 {
+		return errors.New("channel [stable|preview|dev]")
+	}
+	r, err := client().Do(context.Background(), &updatesvc.Request{Op: updatesvc.OpSetChannel, Channel: args[0]})
 	if err != nil {
 		return err
 	}

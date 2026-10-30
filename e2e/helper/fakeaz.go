@@ -67,7 +67,20 @@ func fakeAz(args []string) {
 		}
 		return m
 	}
-	tsv := func(vals ...string) { fmt.Println(strings.Join(vals, "\t")) }
+	// the answer to a query that is one flat list: one tab-separated line,
+	// or with HELPER_AZ_TSV_LINES=1 one field per line, as az 2.91 prints it
+	// (deploy.ps1 joined those lines without a separator and read an
+	// identity hub as storage auth key)
+	tsv := func(vals ...string) {
+		if os.Getenv("HELPER_AZ_TSV_LINES") == "1" {
+			fmt.Println(strings.Join(vals, "\n"))
+			return
+		}
+		fmt.Println(strings.Join(vals, "\t"))
+	}
+	// one row of a list of lists ([name, value] per element): always one
+	// tab-separated line
+	row := func(vals ...string) { fmt.Println(strings.Join(vals, "\t")) }
 	// the real az prints None for a null field of a tsv list
 	orNone := func(s string) string {
 		if s == "" {
@@ -328,22 +341,22 @@ func fakeAz(args []string) {
 		case strings.Contains(q, "LONGARM_HUB_ENTRA_"):
 			// [name, value] of the Entra variables, one per line
 			if t, _ := g["entraTenantId"].(string); t != "" {
-				tsv("LONGARM_HUB_ENTRA_TENANT_ID", t)
-				tsv("LONGARM_HUB_ENTRA_CLIENT_ID", fmt.Sprint(g["entraClientId"]))
-				tsv("LONGARM_HUB_ENTRA_WEB", fmt.Sprint(g["entraWeb"]))
+				row("LONGARM_HUB_ENTRA_TENANT_ID", t)
+				row("LONGARM_HUB_ENTRA_CLIENT_ID", fmt.Sprint(g["entraClientId"]))
+				row("LONGARM_HUB_ENTRA_WEB", fmt.Sprint(g["entraWeb"]))
 				if a, _ := g["entraAdmins"].(string); a != "" {
-					tsv("LONGARM_HUB_ENTRA_ADMINS", a)
+					row("LONGARM_HUB_ENTRA_ADMINS", a)
 				}
 				if a, _ := g["entraApps"].(string); a != "" {
-					tsv("LONGARM_HUB_ENTRA_APPS", a)
+					row("LONGARM_HUB_ENTRA_APPS", a)
 				}
 			}
 			// the scheduler gate and the release key in the same query (set only when non-empty)
 			if v, _ := g["schedulerGateFreeGb"].(string); v != "" && strings.Contains(q, "LONGARM_HUB_SCHED_GATE_FREE_GB") {
-				tsv("LONGARM_HUB_SCHED_GATE_FREE_GB", v)
+				row("LONGARM_HUB_SCHED_GATE_FREE_GB", v)
 			}
 			if v, _ := g["releasePublicKey"].(string); v != "" && strings.Contains(q, "LONGARM_HUB_RELEASES_PUBLIC_KEY") {
-				tsv("LONGARM_HUB_RELEASES_PUBLIC_KEY", v)
+				row("LONGARM_HUB_RELEASES_PUBLIC_KEY", v)
 			}
 		case strings.Contains(q, "LONGARM_HUB_SCHED_GATE_FREE_GB"), strings.Contains(q, "LONGARM_HUB_RELEASES_PUBLIC_KEY"):
 			// one plain variable (main.bicep sets it only when non-empty)

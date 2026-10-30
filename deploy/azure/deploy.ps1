@@ -137,9 +137,13 @@ function Test-Az {
 }
 
 function Split-Tsv([string]$Line, [int]$Count) {
-    # the fields of one az -o tsv line, at least $Count of them; the real az
+    # the fields of one az -o tsv answer, at least $Count of them; the real az
     # prints None for a null field in a list (a hub without registry
-    # credentials): that is an empty field
+    # credentials): that is an empty field. Callers join az's output lines
+    # with tabs: az 2.91 prints a list one field per line (older ones: one
+    # tab-separated line), and joined without a separator the fields ran
+    # together - a hub with storage auth identity was read as key, and the
+    # re-run's template was refused by the policy against shared keys.
     $f = @($Line.Trim("`r", "`n") -split "`t" | ForEach-Object { if ($_ -ceq 'None') { '' } else { $_ } })
     while ($f.Count -lt $Count) { $f += '' }
     , $f
@@ -284,7 +288,7 @@ function Test-Stuck {
     # containers and no events at all for -StuckTimeoutSeconds (seen once on
     # a real run: 30+ min, while a recreate came up in 3.5 min)
     $q = "[provisioningState, containers[?name=='hub'].instanceView.currentState.state | [0], length(containers[].instanceView.events[] || ``[]``), length(instanceView.events || ``[]``)]"
-    $line = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $q) -join ''
+    $line = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $q) -join "`t"
     if ($LASTEXITCODE -ne 0 -or -not $line) { return }
     $f = Split-Tsv $line 4
     $events = 0
@@ -345,7 +349,7 @@ function Test-Crash {
     if ($script:CrashChecked -and ($now - $script:CrashChecked).TotalSeconds -lt $script:Poll) { return }
     $script:CrashChecked = $now
     $q = "containers[?name=='hub'] | [0].instanceView.[restartCount, currentState.state, currentState.detailStatus, previousState.exitCode, previousState.detailStatus, previousState.finishTime]"
-    $line = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $q) -join ''
+    $line = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $q) -join "`t"
     if ($LASTEXITCODE -ne 0 -or -not $line) { return }
     $f = Split-Tsv $line 6
     if ($f[0] -notmatch '^\d+$') { return }
@@ -542,7 +546,7 @@ try {
 
     function Get-PrevGroup {
         $q = "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId, containers[0].environmentVariables[?name=='LONGARM_HUB_RELAY_STUN_ADVERTISE'].value | [0]]"
-        $line = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $q) -join ''
+        $line = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $q) -join "`t"
         if ($LASTEXITCODE -ne 0 -or -not $line) { return $null }
         $f = Split-Tsv $line 7
         $p = Get-EmptyPrev
@@ -634,7 +638,7 @@ try {
         if ($deps.Count -eq 0) { return $null }
         $dep = $deps[-1]
         $q = '[' + (($histMap.Values | ForEach-Object { "properties.parameters.$_.value, properties.parameters.$_ == null" }) -join ', ') + ']'
-        $line = (Invoke-AzQuiet deployment group show -g $rg -n $dep -o tsv --query $q) -join ''
+        $line = (Invoke-AzQuiet deployment group show -g $rg -n $dep -o tsv --query $q) -join "`t"
         if ($LASTEXITCODE -ne 0 -or -not $line) { return $null }
         $f = Split-Tsv $line ($histMap.Count * 2)
         $p = Get-EmptyPrev
@@ -839,7 +843,7 @@ try {
         if ($StorageAuth -eq 'identity') {
             if (-not $Acr) { $Acr = $regAcr }
         } elseif ($regAcr) {
-            $cred = Split-Tsv ((Invoke-Az acr credential show -n $regAcr -g $rg --query '[username, passwords[0].value]' -o tsv) -join '') 2
+            $cred = Split-Tsv ((Invoke-Az acr credential show -n $regAcr -g $rg --query '[username, passwords[0].value]' -o tsv) -join "`t") 2
             if (-not $cred[0] -or -not $cred[1]) { throw "no admin credentials for the registry $regAcr (az acr update -n $regAcr --admin-enabled true)" }
             $RegistryUser, $registryPassword = $cred[0], $cred[1]
         }
@@ -1186,7 +1190,7 @@ try {
             }
             # the previous hub restores its database too: wait until it answers
             # (a rollback that gives up mid-restore looks like a dead hub)
-            $rbOuts = Split-Tsv ((Invoke-AzQuiet deployment group show -g $rg -n $rbDep --query '[properties.outputs.hubAddress.value, properties.outputs.fqdn.value]' -o tsv) -join '') 2
+            $rbOuts = Split-Tsv ((Invoke-AzQuiet deployment group show -g $rg -n $rbDep --query '[properties.outputs.hubAddress.value, properties.outputs.fqdn.value]' -o tsv) -join "`t") 2
             $rbAddr, $rbHost = $rbOuts[0], $rbOuts[1]
             if ($st -eq 'Running' -and $rbAddr -and $rbHost) {
                 if (Wait-HubAnswer $rbHost ([int]$rbAddr.Substring($rbAddr.LastIndexOf(':') + 1))) {
@@ -1223,7 +1227,7 @@ try {
     $err = Invoke-DeployRun $paramsFile $deployment
     if ($err) { Invoke-FailDeploy $err }
     Write-Phase 'deployment succeeded'
-    $outLine = (Invoke-Az deployment group show -g $rg -n $deployment --query $query -o tsv) -join ''
+    $outLine = (Invoke-Az deployment group show -g $rg -n $deployment --query $query -o tsv) -join "`t"
     $outs = Split-Tsv $outLine 5
     $hubAddr, $fqdn, $account, $relayPort, $panelUrl = $outs[0], $outs[1], $outs[2], $outs[3], $outs[4]
     if (-not $hubAddr -or -not $fqdn -or -not $account) { throw "deployment returned no outputs: $outLine" }

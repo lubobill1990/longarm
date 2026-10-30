@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Changed
+
+- Tray: only Claude Code / Copilot CLI sessions notify when they end (done,
+  failed, killed, lost); plain commands - the many `longarm exec` / `run`
+  calls an agent makes - no longer pop a toast each.
+- The hub follows the **preview** channel: release candidate tags deploy
+  the hub too (release.yml's `hub` job), not only releases; dev builds never
+  do. A hub on Azure Container Instances, which CI can't sign in to, gets
+  the command to run in the release run's summary (`hub-manual`).
+  docs/ci-cd.md "Release channels".
+
 ### Added
 
 - **Agent sessions in the tray**: Claude Code / Copilot CLI on a worker's
@@ -173,6 +184,13 @@
 
 ### Fixed
 
+- deploy/azure/deploy.ps1: a re-run read a hub with `-StorageAuth identity`
+  as `key` with Azure CLI 2.91, which prints `-o tsv` lists one field per
+  line (joined without a separator they ran together), and its template was
+  refused by policies against storage account keys ("RequestDisallowedByPolicy",
+  nothing changed). The lines are joined with tabs now. deploy.sh read both
+  forms except after a rollback, where it skipped the check that the
+  rolled-back hub answers (one tab-separated line expected).
 - Tray and panel: every menu and popover (a worker card's ⋯ menu, the
   version details in the tray's title bar, the tray's right-click menu)
   closes on a click outside, on Escape and when the focus leaves it, through

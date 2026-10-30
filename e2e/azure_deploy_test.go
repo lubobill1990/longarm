@@ -148,6 +148,9 @@ func TestAzureDeployScripts(t *testing.T) {
 				}
 				cmd.Env = append(append(base,
 					"HELPER_AZ_DIR="+dir,
+					// az 2.91's tsv lists: one field per line (the relay test
+					// keeps the one-line form, so both are covered)
+					"HELPER_AZ_TSV_LINES=1",
 					"HELPER_AZ_HUB="+b["hub_address"],
 					"HELPER_AZ_BOOTSTRAP="+filepath.Join(c.share, "bootstrap.env"),
 					"LONGARM_REGISTRY_PASSWORD=",

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -19,8 +20,9 @@ var RelayAlertAfter = 5 * time.Minute
 
 // Rules turns successive pool views and job lists into notifications: a
 // worker going offline / back online, memory crossing 90 %, the link falling
-// back to a relay for more than 5 minutes, and this client's jobs ending. The
-// first observation of anything only records state.
+// back to a relay for more than 5 minutes, and this client's coding-agent
+// sessions ending (agentJob; plain commands don't notify). The first
+// observation of anything only records state.
 type Rules struct {
 	status  map[string]string
 	memHigh map[string]bool
@@ -77,7 +79,8 @@ func (r *Rules) Pool(v *pb.PoolView, now time.Time) []Notification {
 	return out
 }
 
-// Jobs compares this client's jobs with the previous list.
+// Jobs compares this client's jobs with the previous list: agent sessions
+// that ended notify, however they ended.
 func (r *Rules) Jobs(jobs []*pb.FleetJob) []Notification {
 	var out []Notification
 	for _, fj := range jobs {
@@ -85,7 +88,7 @@ func (r *Rules) Jobs(jobs []*pb.FleetJob) []Notification {
 		key := fj.Worker + "/" + j.GetSpec().GetId()
 		prev, seen := r.jobs[key]
 		r.jobs[key] = j.GetState()
-		if !r.jobsSet || prev == j.GetState() || !terminal(j.GetState()) || (seen && terminal(prev)) {
+		if !r.jobsSet || prev == j.GetState() || !terminal(j.GetState()) || (seen && terminal(prev)) || !agentJob(j) {
 			continue
 		}
 		name := j.GetSpec().GetName()
@@ -112,6 +115,27 @@ func (r *Rules) Jobs(jobs []*pb.FleetJob) []Notification {
 	}
 	r.jobsSet = true
 	return out
+}
+
+// agentJob reports whether j is a coding-agent session (Claude Code,
+// Copilot CLI): its type label (longarm run --type, the MCP server), its
+// command, or the agent credentials forwarded with it. Only those notify
+// when they end: agents run many plain commands (longarm exec, run) whose
+// results they read themselves - a toast for each was noise.
+func agentJob(j *pb.Job) bool {
+	s := j.GetSpec()
+	if t := s.GetLabels()[sched.LabelType]; t == "claude" || t == "copilot" {
+		return true
+	}
+	if sched.TypeOf(s.GetArgv()) != "" {
+		return true
+	}
+	for _, a := range s.GetAgentAuth() {
+		if a == "claude" || a == "copilot" {
+			return true
+		}
+	}
+	return false
 }
 
 func terminal(s pb.JobState) bool {

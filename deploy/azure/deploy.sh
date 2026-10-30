@@ -1214,8 +1214,12 @@ fail_deploy() {
 		done
 		# the previous hub restores its database too: wait until it answers
 		# (a rollback that gives up mid-restore looks like a dead hub)
-		IFS=$'\t' read -r addr host _ <<<"$(az deployment group show -g "$rg" -n "$rb" -o tsv \
-			--query "[properties.outputs.hubAddress.value, properties.outputs.fqdn.value]" 2>/dev/null | tr -d '\r' || true)" || true
+		# one field per line (az 2.91; older ones print one tab-separated line)
+		{
+			read -r addr
+			read -r host || true
+		} <<<"$(az deployment group show -g "$rg" -n "$rb" -o tsv \
+			--query "[properties.outputs.hubAddress.value, properties.outputs.fqdn.value]" 2>/dev/null | tr -d '\r' | tr '\t' '\n' || true)" || true
 		if [[ $st == Running && -n $addr && -n $host ]]; then
 			if wait_hub_answers "$host" "${addr##*:}"; then
 				phase "rolled-back hub answers on $addr"
