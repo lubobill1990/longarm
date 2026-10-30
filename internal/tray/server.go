@@ -282,6 +282,14 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			http.Error(w, "open longarm-tray from its tray icon (missing token)", http.StatusUnauthorized)
 			return
 		}
+		// A WebSocket handshake is a GET, and a page on another localhost
+		// port is same-site (its requests carry the SameSite=Strict
+		// cookie): upgrades (the Sessions window's terminal) need our own
+		// Origin, which browsers always send with them.
+		if r.Header.Get("Upgrade") != "" && r.Header.Get("Origin") != "http://"+r.Host {
+			http.Error(w, "cross-origin upgrade refused", http.StatusForbidden)
+			return
+		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 				http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
