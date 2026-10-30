@@ -353,6 +353,9 @@ func (s *session) worker(target string) (client.Worker, error) {
 	if terr == nil && t.Mode == nodeid.ByName {
 		for _, w := range s.cfg.Workers { // manual entries win
 			if w.Name == t.Value {
+				if s.cfg.Hub.Enabled() {
+					return s.checkManualWorker(w)
+				}
 				return w, nil
 			}
 		}
@@ -840,16 +843,45 @@ func clientParams() sched.Params {
 	return p
 }
 
-// revokedWorker reports whether the hub (or its cached list) says name is
-// a revoked worker; longarm refuses to dial it even from workers.toml.
-func (s *session) revokedWorker(name string) bool {
+// checkManualWorker holds a workers.toml entry to the hub's word on the
+// node it names (its id, else its certificate name): a node the hub
+// revoked is refused - its certificate may still be valid, and a client
+// doesn't check revocations itself - and an entry of a name a non-revoked
+// node has is held to that node's ID, so no other node with a valid
+// certificate of the name (a revoked or renamed one's) answers for it. A
+// name the hub doesn't know is the entry's own business.
+func (s *session) checkManualWorker(w client.Worker) (client.Worker, error) {
 	s.refreshNodes(false)
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
+	cn := w.CertName
+	if cn == "" {
+		cn = w.Name
+	}
+	var live *pb.NodeInfo
+	revoked := false
 	for _, n := range s.nodes {
-		if n.Name == name {
-			return n.State == "revoked"
+		match := n.Name == cn || n.CertName == cn
+		if w.ID != "" {
+			match = strings.EqualFold(n.Id, w.ID)
+		}
+		if !match {
+			continue
+		}
+		if n.State == "revoked" {
+			revoked = true
+		} else {
+			live = n
 		}
 	}
-	return false
+	switch {
+	case live != nil:
+		if w.ID == "" && live.Id != "" {
+			w.ID = live.Id
+		}
+		return w, nil
+	case revoked:
+		return client.Worker{}, fmt.Errorf("worker %s is revoked (longarm admin nodes)", w.Name)
+	}
+	return w, nil
 }

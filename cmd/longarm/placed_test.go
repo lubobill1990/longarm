@@ -64,3 +64,29 @@ func TestLinkSignsAuthenticatedEnd(t *testing.T) {
 		t.Fatalf("legacy certificate: %s %q %v", name, id, err)
 	}
 }
+
+// TestManualEntryHeldToTheHub: a workers.toml entry of a worker the hub
+// revoked is refused (its certificate may still be valid); an entry of a
+// name a non-revoked node has is held to that node's ID (a revoked node of
+// the name, whose certificate is still valid, can't answer for it); a name
+// the hub doesn't know is the entry's own.
+func TestManualEntryHeldToTheHub(t *testing.T) {
+	const oldID, newID = "0000dead-0000-4000-8000-000000000001", "1111aaaa-0000-4000-8000-000000000002"
+	entries := []client.Worker{{Name: "box", Address: "127.0.0.1:7701", Transport: "tcp"}, {Name: "gone", Address: "127.0.0.1:7702", Transport: "tcp"},
+		{Name: "lan", Address: "127.0.0.1:7703", Transport: "tcp"}}
+	s := &session{cfg: &client.Config{Hub: hubclient.Config{Address: "127.0.0.1:1"}, Workers: entries}, nodesAt: time.Now(),
+		nodes: []*pb.NodeInfo{
+			{Name: "box", Id: oldID, State: "revoked", Role: "worker"},
+			{Name: "box", Id: newID, State: "approved", Role: "worker"},
+			{Name: "gone", Id: oldID[:35] + "9", State: "revoked", Role: "worker"},
+		}}
+	if w, err := s.worker("box"); err != nil || w.ID != newID {
+		t.Fatalf("box: %+v %v (want held to %s)", w, err, newID)
+	}
+	if _, err := s.worker("gone"); err == nil {
+		t.Fatal("a revoked worker's workers.toml entry dialed")
+	}
+	if w, err := s.worker("lan"); err != nil || w.ID != "" {
+		t.Fatalf("an entry the hub doesn't know: %+v %v", w, err)
+	}
+}
