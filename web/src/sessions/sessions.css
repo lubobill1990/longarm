@@ -1,0 +1,425 @@
+/*
+ * The Sessions window (/sessions): the session list on the left, the tabs
+ * on the right. On tokens.css and the tray's controls (tray.css); only the
+ * list, the terminal and the conversation scroll.
+ */
+:root[data-app='tray'] {
+  & .sessions {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  /* ------------------------------------------------------------ the list */
+
+  & .sessions-side {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--border);
+  }
+  & .sessions-head {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    height: var(--head-h);
+    padding: 0 var(--sp-3);
+    flex: none;
+  }
+  & .sessions-head .title {
+    font: var(--fw-semibold) var(--fs-lg) / 1 var(--font-display);
+  }
+  & .sessions-scope {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--sp-1);
+    padding: 0 var(--sp-3) var(--sp-2);
+  }
+  & .sessions-scope .pill button.link {
+    padding: 0 0 0 4px;
+    color: inherit;
+  }
+  & .sessions-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+  }
+  & .slist {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1;
+  }
+  & .slist-filter {
+    margin: 0 var(--sp-3) var(--sp-2);
+  }
+  & .slist-body {
+    overflow-y: auto;
+    padding: 0 var(--sp-2) var(--sp-3);
+  }
+  & .slist-empty {
+    padding: var(--sp-3);
+  }
+  & .slist-worker {
+    padding: var(--sp-2) var(--sp-2) 2px;
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-semibold);
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  & button.slist-item {
+    display: flex;
+    justify-content: flex-start;
+    width: 100%;
+    height: 32px;
+    padding: 0 var(--sp-2);
+    border: 0;
+    background: transparent;
+    font-weight: normal;
+    text-align: left;
+  }
+  & button.slist-item:hover:not(:disabled) {
+    background: var(--hover);
+  }
+  & button.slist-item.active {
+    background: var(--active);
+  }
+  & .slist-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  & .slist-time {
+    flex: none;
+  }
+  & .slist-unreachable {
+    padding: var(--sp-2);
+  }
+
+  /* state dots and agent icons */
+  & .sdot {
+    flex: none;
+    width: 14px;
+    text-align: center;
+    font-size: 11px;
+    color: var(--gray-dot);
+  }
+  & .sdot.working,
+  & .sdot.running {
+    color: var(--green);
+  }
+  & .sdot.waiting {
+    color: var(--amber);
+  }
+  & .sdot.desktop {
+    color: var(--blue);
+  }
+  & .agent-icon {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    font: var(--fw-bold) 10px / 1 var(--font);
+    color: var(--accent-text);
+    background: var(--gray-dot);
+  }
+  & .agent-icon.claude {
+    background: var(--claude);
+  }
+  & .agent-icon.copilot {
+    background: var(--copilot);
+  }
+  & .agent-icon.none {
+    background: transparent;
+  }
+
+  /* ------------------------------------------------------------ tabs */
+
+  & .sessions-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+  & .sessions-empty {
+    margin: auto;
+    padding: var(--sp-5);
+  }
+  & .stabs {
+    display: flex;
+    gap: 2px;
+    flex: none;
+    padding: var(--sp-2) var(--sp-2) 0;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--border);
+  }
+  & .stab {
+    display: flex;
+    align-items: center;
+    max-width: 240px;
+    border: 1px solid transparent;
+    border-bottom: 0;
+    border-radius: var(--r-md) var(--r-md) 0 0;
+  }
+  & .stab.active {
+    background: var(--surface);
+    border-color: var(--border);
+  }
+  & .stab button.stab-main {
+    min-width: 0;
+    height: var(--ctl-h);
+    border: 0;
+    background: transparent;
+    font-weight: normal;
+  }
+  & .stab-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  & .stab-badge {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  & .stab .stab-close {
+    width: 22px;
+    height: 22px;
+    margin-right: 4px;
+  }
+
+  /* ------------------------------------------------------------ a tab */
+
+  & .tabpanel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+  & .tabpanel[hidden] {
+    display: none;
+  }
+  & .tabpanel-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-3);
+    flex: none;
+  }
+  & .tabpanel-where {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  & .seg {
+    display: inline-flex;
+    flex: none;
+  }
+  & .seg button {
+    border-radius: 0;
+  }
+  & .seg button:first-child {
+    border-radius: var(--r-md) 0 0 var(--r-md);
+  }
+  & .seg button:last-child {
+    border-radius: 0 var(--r-md) var(--r-md) 0;
+    margin-left: -1px;
+  }
+  & .seg button.on {
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+  }
+  & .tabpanel-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    padding: 0 var(--sp-3);
+  }
+  & .tabpanel-term {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+  }
+  & .tabpanel-term[hidden] {
+    display: none;
+  }
+
+  /* the terminal */
+  & .term-wrap {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    padding: var(--sp-2);
+    background: var(--log-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+  }
+  & .term {
+    width: 100%;
+    height: 100%;
+    font-family: var(--mono);
+  }
+  & .term-overlay {
+    position: absolute;
+    right: var(--sp-3);
+    bottom: var(--sp-3);
+    padding: var(--sp-1) var(--sp-3);
+    border-radius: var(--r-pill);
+    background: var(--surface);
+    box-shadow: var(--shadow-2);
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-medium);
+  }
+  & .term-overlay.subtle {
+    color: var(--amber-ink);
+  }
+
+  /* the conversation */
+  & .conv {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    padding: var(--sp-2) 0 var(--sp-3);
+  }
+  & .conv-empty {
+    align-items: center;
+    justify-content: center;
+  }
+  & .conv-note {
+    text-align: center;
+  }
+  & .bubble {
+    max-width: 82%;
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+  & .bubble.user {
+    align-self: flex-end;
+    background: var(--accent-soft);
+    border-color: transparent;
+  }
+  & .bubble.tool,
+  & .bubble.is-error {
+    font-family: var(--mono);
+    font-size: var(--fs-sm);
+  }
+  & .bubble.is-error {
+    color: var(--red-ink);
+  }
+  & .msg-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  & .msg-summary {
+    padding: var(--sp-2) var(--sp-3);
+    border-left: 3px solid var(--border-strong);
+  }
+  & .msg-thinking,
+  & .toolcall {
+    max-width: 82%;
+    font-size: var(--fs-sm);
+  }
+  & .toolcall {
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--surface-2);
+  }
+  & .toolcall.is-error {
+    border-color: color-mix(in srgb, var(--red) 40%, var(--border));
+  }
+  & .toolcall summary {
+    padding: 4px var(--sp-2);
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  & .tool-name {
+    font-weight: var(--fw-semibold);
+  }
+  & .tool-arg {
+    color: var(--text-2);
+  }
+  & .tool-result {
+    margin: 0;
+    padding: var(--sp-2);
+    max-height: 320px;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    border-top: 1px solid var(--border);
+    background: var(--log-bg);
+    color: var(--log-text);
+  }
+
+  /* the steer box */
+  & .steer {
+    flex: none;
+    padding: var(--sp-2) var(--sp-3) var(--sp-3);
+  }
+  & .steer textarea {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 10px;
+    resize: vertical;
+    font-family: var(--mono);
+  }
+  & .steer-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    margin-top: var(--sp-1);
+  }
+
+  /* the new session dialog */
+  & .sdialog-backdrop {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 20;
+  }
+  & .sdialog {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    width: 420px;
+    padding: var(--sp-5);
+    border-radius: var(--r-xl);
+    background: var(--surface);
+    box-shadow: var(--shadow-3);
+  }
+  & .sdialog h2 {
+    margin: 0;
+    font: var(--fw-semibold) var(--fs-xl) / 1.2 var(--font-display);
+  }
+  & .sdialog label {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    align-items: center;
+    gap: var(--sp-2);
+  }
+  & .sdialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--sp-2);
+  }
+}

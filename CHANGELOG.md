@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Agent sessions in the tray**: Claude Code / Copilot CLI on a worker's
+  card opens a Sessions window listing every agent session of your workers
+  (working, waiting for input, ended, outside Longarm), each in a tab with
+  its live terminal (xterm.js over a WebSocket bridge in `longarm daemon`
+  to `Sessions.Attach`), its conversation (the transcript, parsed and
+  followed live) and a steer box (`Sessions.Send`, only when nobody else is
+  typing); new sessions and "continue here" (resume / fork) of agents
+  started outside Longarm. Works with existing workers. docs/usage.md
+  "Agent sessions in the tray", docs/agent-sessions-ui.md.
 - **The Longarm agent skill**, versioned with the code (`skills/longarm/`:
   a lean `SKILL.md` plus reference files for jobs, sessions, handoff,
   ports, credentials and diagnostics) and embedded in the binaries.

@@ -801,6 +801,38 @@ Against a longarmd without them `session start|send|stop` and
 `tail` exit 2 ("does not support it; update longarmd") before doing
 anything; `sessions` lists such a worker's sessions without the new fields.
 
+### Agent sessions in the tray: watch, attach, steer
+
+Click **Claude Code** or **Copilot CLI** on a worker's card (the tray's
+Pool tab) to open the **Sessions window**: every Claude Code / Copilot CLI
+session of your workers, grouped by worker, with its state - ● working,
+◐ waiting for input, ○ ended, ◇ running outside Longarm (a terminal on the
+worker's desktop). A session opens in a tab:
+
+- **Terminal** - the session's live terminal in the window (xterm.js), as
+  `longarm attach` shows it: replay, then live; type into it, resize the
+  window. Closing the tab detaches; the session keeps running.
+- **Conversation** - the agent's transcript as a conversation: your
+  prompts, its answers, tool calls with their results, live.
+- **Steer** - a message box under the session: Enter sends the text and
+  Enter, plus Esc (interrupt), "y" and Ctrl-C buttons. It types into the
+  session's terminal like `longarm session send ... --if-idle-ms 1500`:
+  when somebody else is typing in it right then, nothing is sent and the
+  box says so.
+- **New session** starts `claude` or `copilot` (optionally resuming a
+  transcript) in a Longarm session on a worker, with your agent
+  credentials forwarded as `session start` does.
+
+Agents Longarm started (`longarm attach -- claude`, `longarm session
+start`, the tray, `longarm handoff`) have all three views. An agent started
+in a terminal on the worker's desktop shows its conversation only - Longarm
+has no access to that terminal; **Continue here** resumes it in a Longarm
+session (a fork while the original still runs). The window works against
+workers of any version (it uses the existing `Sessions` and `Files` calls);
+transcripts are read with your rights and shown, never stored.
+`docs/agent-sessions-ui.md` has the design and the daemon API
+(`/v1/agent-sessions`, the WebSocket attach bridge).
+
 ### Hand off an agent session
 
 Move an in-progress Claude Code or Copilot CLI conversation - and the code

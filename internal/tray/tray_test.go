@@ -316,6 +316,19 @@ func TestServer(t *testing.T) {
 	if resp, _ := c.Do(r2); resp.StatusCode != 403 {
 		t.Fatalf("cross-origin post: %d", resp.StatusCode)
 	}
+	// WebSocket upgrades (GETs): our own Origin only - a page on another
+	// localhost port is same-site and would carry the cookie.
+	for _, origin := range []string{"http://127.0.0.1:1", "http://evil.example", ""} {
+		r3, _ := http.NewRequest("GET", base+"/local/longarm/v1/workers/w1/sessions/s1/attach", nil)
+		r3.Header.Set("Upgrade", "websocket")
+		r3.Header.Set("Connection", "Upgrade")
+		if origin != "" {
+			r3.Header.Set("Origin", origin)
+		}
+		if resp, _ := c.Do(r3); resp.StatusCode != 403 {
+			t.Fatalf("upgrade from %q: %d", origin, resp.StatusCode)
+		}
+	}
 	if code, body := post("/trayapi/pin", "application/json", `{"pinned":true}`); code != 200 || !desk.pinned || !strings.Contains(body, `"pinned":true`) {
 		t.Fatalf("pin: %d %s", code, body)
 	}
