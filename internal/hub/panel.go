@@ -156,7 +156,7 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 		// an administrator login named like a Longarm user would act as that
 		// user (panelViewer): never
 		h.mu.Lock()
-		isUser := h.tenants[body.Name] != nil || slices.Contains(h.purged, body.Name)
+		isUser := h.userNameLocked(body.Name)
 		h.mu.Unlock()
 		if isUser {
 			httpError(w, http.StatusBadRequest, body.Name+" is a Longarm user's name")
@@ -239,6 +239,32 @@ func (h *Hub) auditHub(who, method string, fields map[string]any) {
 	if err := h.store.AddAudit([]store.AuditRow{row}); err != nil {
 		h.log.Warn("audit", "err", err)
 	}
+}
+
+// userNameLocked reports whether name is (or was) a Longarm user's: a user
+// record, a purged user, an identity-provider binding, the user of a
+// client/admin certificate (an old one's name is its user: userOfLocked)
+// or a worker's owner - revoked machines too. An administrator's panel
+// login of that name would act as that user (panelViewer).
+func (h *Hub) userNameLocked(name string) bool {
+	if h.tenants[name] != nil || slices.Contains(h.purged, name) {
+		return true
+	}
+	if id, _ := h.store.Meta(entraUserKey(name)); id != "" {
+		return true
+	}
+	for _, n := range h.nodes {
+		if n.rec.Role == string(pki.RoleWorker) {
+			if n.rec.Owner == name {
+				return true
+			}
+			continue
+		}
+		if userNodeRole(n.rec.Role) && nodeUser(n.rec) == name {
+			return true
+		}
+	}
+	return false
 }
 
 func withCSP(next http.Handler) http.Handler {

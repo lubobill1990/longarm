@@ -492,6 +492,26 @@ func TestNoAdminCredentialsForUsers(t *testing.T) {
 	if _, err := AddUser(h.store, "erin", "another-password-1", true); err == nil {
 		t.Fatal("erin's user login replaced by an administrator's")
 	}
+	// ... nor the name of a user without a user record: an old certificate's
+	// (its name is its user), a worker's owner
+	h.mu.Lock()
+	h.nodes["lega"] = &node{rec: &store.Node{Name: "lega", Role: "client", State: stateApproved}}
+	h.nodes["gw"] = &node{rec: &store.Node{Name: "gw", Role: "worker", Owner: "ghost", State: stateRevoked}}
+	h.mu.Unlock()
+	for _, name := range []string{"lega", "ghost"} {
+		body := `{"name":"` + name + `","password":"another-password-1","current_password":"admin-password-1"}`
+		resp, err := panel.Post("http://"+h.Addr("http")+"/api/users", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("admin login named %s: %d", name, resp.StatusCode)
+		}
+		if _, err := h.store.GetUser(name); err == nil {
+			t.Errorf("a panel login %s exists", name)
+		}
+	}
 }
 
 // TestAdminCantJoinTeams: an admin can't add its own user to a team - that
