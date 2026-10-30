@@ -239,6 +239,8 @@ Try it from your machine: `ssh -i hub-deploy deploy@hub.example.com status`.
 | `APPLE_NOTARY_API_KEY_P8` | the App Store Connect API key file (`AuthKey_<KEYID>.p8`), verbatim (2.8) |
 | `APPLE_NOTARY_KEY_ID` | its key ID |
 | `APPLE_NOTARY_ISSUER_ID` | the issuer ID shown above the keys |
+| `LONGARM_GPG_PRIVATE_KEY` | the GPG key (armored) that signs the rpm and the apt/yum repositories on GitHub Pages ([linux-repos.md](linux-repos.md)); unset: unsigned rpm, no repositories |
+| `LONGARM_GPG_PASSPHRASE` | its passphrase (optional) |
 
 | variable (not secret) | content |
 |---|---|
@@ -251,6 +253,7 @@ Try it from your machine: `ssh -i hub-deploy deploy@hub.example.com status`.
 | `TRUSTED_SIGNING_ENDPOINT`, `TRUSTED_SIGNING_ACCOUNT`, `TRUSTED_SIGNING_PROFILE` | the Trusted Signing account's endpoint (`https://<region>.codesigning.azure.net`), its name and the certificate profile; all six set: Authenticode signing on (2.7) |
 | `TRUSTED_SIGNING_SUBJECT` | optional: the certificate's CN (the validated name); every signed file is checked against it |
 | `APPLE_TEAM_ID` | the Apple Team ID (10 characters) of the Developer ID certificates; build-macos refuses certificates of another team (2.8) |
+| `LONGARM_REPO_KEEP` | optional: how many stable releases the apt/yum repositories keep (default 3; [linux-repos.md](linux-repos.md)) |
 
 ```sh
 R=your-org/longarm

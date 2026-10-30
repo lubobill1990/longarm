@@ -165,6 +165,21 @@ $env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/inst
 msiexec /i longarm-windows-amd64.msi /qn MODE=custom ROLES=both HUB=hub.example.com LOGIN=1   # MSI, another hub
 ```
 
+Linux from the signed package repositories (updates with `apt upgrade` /
+`dnf upgrade`; key fingerprint, the one-line apt format, key rotation:
+[docs/linux-repos.md](docs/linux-repos.md)):
+
+```sh
+# Debian / Ubuntu
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://lubobill1990.github.io/longarm/longarm.gpg | sudo tee /etc/apt/keyrings/longarm.gpg >/dev/null
+curl -fsSL https://lubobill1990.github.io/longarm/longarm.sources | sudo tee /etc/apt/sources.list.d/longarm.sources >/dev/null
+sudo apt-get update && sudo apt-get install longarm
+# Fedora / RHEL / Rocky / AlmaLinux (gpgcheck + repo_gpgcheck)
+sudo curl -fsSL -o /etc/yum.repos.d/longarm.repo https://lubobill1990.github.io/longarm/longarm.repo
+sudo dnf install longarm
+```
+
 Already installed? `longarmd login hub.example.com --role both` - the hub's
 domain is enough: its CA is fetched from `https://hub.example.com/ca.crt`
 over HTTPS and pinned ([docs/security.md](docs/security.md#first-contact-domain-only-sign-in)).

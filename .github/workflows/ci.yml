@@ -11,6 +11,8 @@
 #            installed) and its tables checked (RemoveExistingProducts' place too: error 2613)
 #   msi-install: windows-latest, the MSIs really installed: fresh install, repair, upgrade, uninstall;
 #            upgrades from released versions (0.1.6, the latest) with Longarm running
+#   linux-repo: the signed apt/yum repositories built with a throwaway key and installed
+#            from in Debian, Fedora and AlmaLinux containers (docs/linux-repos.md)
 #   tests:   one check for branch protection / auto-merge: every test job passed
 #            (jobs GitHub never started for want of a runner: ci-requeue.yml)
 #   release-cache: push to main only: the Go build cache release.yml restores (read-only)
@@ -509,12 +511,68 @@ jobs:
           path: ${{ steps.cache.outputs.path }}
           key: ${{ steps.cache.outputs.key }}
 
+  # The signed apt and yum repositories (docs/linux-repos.md) end to end, with a
+  # throwaway GPG key (no secrets): the deb/rpm packages built as release.yml
+  # does (goreleaser, the rpm signed by nfpm), the repositories built and signed
+  # by .github/scripts/linux-repo.sh, then installed from in Debian (apt,
+  # signed-by; and refused under another key), Fedora and AlmaLinux (dnf,
+  # gpgcheck + repo_gpgcheck) containers.
+  linux-repo:
+    name: linux repos (apt, dnf install)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      LONGARM_BUILD_SIDE: unix
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # goreleaser
+          persist-credentials: false
+      - uses: ./.github/actions/go-setup
+      - name: tools (goreleaser pinned, apt-utils, createrepo-c, rpm)
+        run: |
+          .github/scripts/fetch-tool.sh goreleaser v2.19.0             https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz             ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b goreleaser
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends apt-utils createrepo-c rpm >/dev/null
+      - name: throwaway signing key
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/gen"
+          mkdir -m 0700 "$GNUPGHOME"
+          pass=$(head -c 24 /dev/urandom | base64)
+          echo "::add-mask::$pass"
+          gpg --batch --pinentry-mode loopback --passphrase "$pass"             --quick-gen-key "Longarm CI Test" rsa3072 sign 1d
+          gpg --armor --export >"$RUNNER_TEMP/test-pub.asc"
+          (umask 077
+           gpg --batch --pinentry-mode loopback --passphrase "$pass" --armor --export-secret-keys >"$RUNNER_TEMP/test-key.asc"
+           printf '%s' "$pass" >"$RUNNER_TEMP/test-pass")
+          gpgconf --kill all
+      - name: packages (goreleaser snapshot, signed rpm)
+        run: |
+          LONGARM_RPM_KEY_FILE="$RUNNER_TEMP/test-key.asc" NFPM_PASSPHRASE=$(cat "$RUNNER_TEMP/test-pass")             goreleaser release --snapshot --clean --skip=publish,docker
+          mkdir -p "$RUNNER_TEMP/pkg"
+          cp dist/*.deb dist/*.rpm "$RUNNER_TEMP/pkg/"
+          ls -l "$RUNNER_TEMP/pkg"
+      - name: build and sign the repositories
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          LONGARM_GPG_PRIVATE_KEY=$(cat "$RUNNER_TEMP/test-key.asc") LONGARM_GPG_PASSPHRASE=$(cat "$RUNNER_TEMP/test-pass")             .github/scripts/linux-repo.sh key "$RUNNER_TEMP/test-pub.asc"
+          .github/scripts/linux-repo.sh build "$RUNNER_TEMP/pkg" "$RUNNER_TEMP/site" http://127.0.0.1:8080 "$RUNNER_TEMP/test-pub.asc"
+          n=$(find "$RUNNER_TEMP/site/rpm/packages" -name '*.rpm' | wc -l)
+          [ "$n" = 2 ] || { echo "::error::$n signed rpms in the yum repository, want 2"; exit 1; }
+          find "$RUNNER_TEMP/site" -type f | sort
+      - name: install (Debian, Fedora, AlmaLinux)
+        run: .github/scripts/linux-repo-test.sh "$RUNNER_TEMP/site" http://127.0.0.1:8080
+
   # The required check (ruleset of main): the matrix's job names change with
   # its parts, this one doesn't.
   tests:
     name: tests
     if: always()
-    needs: [test, msi, msi-install]
+    needs: [test, msi, msi-install, linux-repo]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -523,6 +581,7 @@ jobs:
           RESULT: ${{ needs.test.result }}
           MSI: ${{ needs.msi.result }}
           MSI_INSTALL: ${{ needs.msi-install.result }}
+          LINUX_REPO: ${{ needs.linux-repo.result }}
         run: |
-          echo "test matrix: $RESULT, msi: $MSI, msi install: $MSI_INSTALL"
-          [ "$RESULT" = success ] && [ "$MSI" = success ] && [ "$MSI_INSTALL" = success ]
+          echo "test matrix: $RESULT, msi: $MSI, msi install: $MSI_INSTALL, linux repos: $LINUX_REPO"
+          [ "$RESULT" = success ] && [ "$MSI" = success ] && [ "$MSI_INSTALL" = success ] && [ "$LINUX_REPO" = success ]

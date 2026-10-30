@@ -13,6 +13,7 @@
 #   LONGARM_BUILD_SIDE      unix / windows: only that side's targets (release.yml; see builds); empty = all
 #   LONGARM_SIGN_PROFILE    set: Authenticode-sign the Windows binaries as they are built
 #                           (packaging/windows/sign.ps1 -Setup sets the rest); empty = unsigned
+#   LONGARM_RPM_KEY_FILE    GPG private key (armored) the rpm is signed with, NFPM_PASSPHRASE its passphrase; empty = unsigned
 #   (the native Linux tray + its deb: packaging/linux/goreleaser-tray.yaml, run by build.sh)
 version: 2
 project_name: longarm
@@ -184,6 +185,12 @@ nfpms:
     scripts:
       postinstall: packaging/linux/postinst.sh
       preremove: packaging/linux/prerm.sh
+    # The rpm's GPG signature (dnf's gpgcheck; docs/linux-repos.md): release.yml
+    # writes the secret LONGARM_GPG_PRIVATE_KEY to a file and sets
+    # LONGARM_RPM_KEY_FILE (passphrase: NFPM_PASSPHRASE); unset = unsigned.
+    rpm:
+      signature:
+        key_file: '{{ envOrDefault "LONGARM_RPM_KEY_FILE" "" }}'
   - id: longarm-hub
     package_name: longarm-hub
     ids: [longarm-hub, longarm-relay]

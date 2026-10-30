@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Signed apt and dnf/yum repositories** on GitHub Pages
+  (`https://lubobill1990.github.io/longarm/`): `apt install longarm` /
+  `dnf install longarm`, updates through the package manager. The rpm is
+  GPG-signed (nfpm), the apt Release file (InRelease, Release.gpg) and the
+  yum repomd.xml too, with the key "Longarm Release Signing" (secret
+  `LONGARM_GPG_PRIVATE_KEY`; public key packaging/linux/repo/longarm.asc).
+  Rebuilt on every stable release from the newest 3 releases, installed from
+  in Debian, Fedora and AlmaLinux containers before it is deployed.
+  docs/linux-repos.md.
 - Sign-in with **Google, Apple and personal Microsoft accounts**
   (`[auth.google]`, `[auth.apple]`, `[auth.microsoft]` in hub.toml), next to
   Entra work and school accounts: the panel shows one button per provider,
