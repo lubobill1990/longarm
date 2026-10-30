@@ -2101,7 +2101,7 @@ the certificates issued so far ([Fleet with longarm-hub](#fleet-with-longarm-hub
 |---|---|---|
 | Windows | `longarm-windows-<arch>.msi` (longarm, longarmd, longarm-tray if built; Default / Custom dialog) | `msiexec /i longarm-windows-amd64.msi /qn MODE=default ROLES=both LOGIN=1 [LABELS=pool=devbox] [ADMIN_WORKER=1]` (the built-in hub, user-session worker, no password; sign in with the tray or `longarmd login --role both`); another hub: `MODE=custom HUB=hub.example.com LOGIN=1`; join codes and services: the table below |
 | Linux | `longarm_<v>_<arch>.deb/.rpm` (longarm, longarmd, `longarmd@.service`) | `sudo env LONGARM_ROLES=worker LONGARM_HUB=hub:7443 LONGARM_JOIN_CODE=K7P-Q2M LONGARM_USER=$USER apt install ./longarm_*.deb` (or `/etc/longarm/join.env`) |
-| macOS | `longarm-<v>.pkg` (packaging/macos, signed + notarized on a Mac); Homebrew cask | `defaults write /Library/Preferences/com.longarm ...` then `installer -pkg` |
+| macOS | `longarm-darwin-<arch>.pkg` (longarm, longarmd in `/usr/local/bin`; Developer ID signed and notarized: [macOS installer and MDM](#macos-installer-pkg-and-mdm)); Homebrew cask | a configuration profile (domain `com.longarm`) or `defaults write /Library/Preferences/com.longarm ...`, then `installer -pkg` |
 | hub | `ghcr.io/<owner>/longarm-hub` image, `longarm-hub_<v>_<arch>.deb` | `docker compose up -d` (deploy/hub) |
 
 **Default or Custom.** The MSI's first page offers **Default
@@ -2477,6 +2477,99 @@ Building a release (packaging/): `pwsh packaging/build.ps1 [-Snapshot] [-Key lon
 `dist/hub-release`), `sh packaging/build.sh` elsewhere; winget manifests:
 `packaging/winget/render.ps1`.
 
+### macOS installer (.pkg) and MDM
+
+Every release has two installers, `longarm-darwin-arm64.pkg` (Apple silicon)
+and `longarm-darwin-amd64.pkg` (Intel), on the GitHub Release and on the hub
+(`https://hub.example.com/releases/<version>/longarm-darwin-arm64.pkg`). Each
+is a flat package that installs `longarm` and `longarmd` into `/usr/local/bin`
+(macOS 12 or later). In a release built with the maintainer's Apple
+credentials ([ci-cd.md 2.8](ci-cd.md#28-macos-signing-and-notarization-apple-developer-id)):
+
+- the binaries are signed with a **Developer ID Application** certificate,
+  with the hardened runtime and a secure timestamp, identifiers
+  `com.longarm.longarm` and `com.longarm.longarmd` (also the plain binaries
+  `longarm-darwin-<arch>`, `longarmd-darwin-<arch>`, `longarm-hub-…`,
+  `longarm-relay-…` and the ones in `longarm-darwin-<arch>.tar.gz`);
+- the package is signed with a **Developer ID Installer** certificate,
+  **notarized** by Apple, and the ticket is **stapled** to it (Gatekeeper
+  accepts it offline);
+- `SHA256SUMS`, `checksums.txt` and the `.minisig` signatures are made from
+  these final, signed files.
+
+A release built without them ships the same files unsigned (its build log
+says so); MDM-managed Macs refuse unsigned packages.
+
+**Install by hand.** Double-click the pkg, or:
+
+```sh
+pkgutil --check-signature longarm-darwin-arm64.pkg   # "Developer ID Installer: <maintainer> (<TEAMID>)", "Notarized"
+spctl --assess --type install -vv longarm-darwin-arm64.pkg   # accepted, source=Notarized Developer ID
+sudo installer -pkg longarm-darwin-arm64.pkg -target /
+longarmd login hub.example.com --role both            # then, for a worker:
+sudo longarmd service install --user "$USER" && sudo longarmd service start
+```
+
+What the package's `postinstall` does (as root): adds `longarm` and
+`longarmd` to the application firewall when it is on; on an upgrade,
+restarts an installed `com.longarm.longarmd` LaunchDaemon so it runs the new
+binary (jobs keep running); and, only if the preference domain `com.longarm`
+holds `Roles` (`worker` / `both` / `client`), `Hub`, `JoinCode` and `User`
+(optional `CAFingerprint`), joins the hub as that user and, for a worker,
+installs and starts the LaunchDaemon with the data dir `~User/.longarm`.
+The values are validated (a malformed or non-root-owned preferences file is
+ignored); the join code is removed from `/Library/Preferences/com.longarm`
+afterwards.
+
+**For MDM administrators** (Jamf, Intune, Kandji, Mosyle, …):
+
+- **Package**: upload the pkg for the Macs' architecture (both, scoped by
+  architecture; the arm64 package refuses Intel Macs, the amd64 package needs
+  Rosetta on Apple silicon). It is a signed distribution package, as Intune's
+  "macOS app (PKG)" and Jamf policies require. Package ID `com.longarm.pkg`,
+  version = the release version; installs `/usr/local/bin/longarm`,
+  `/usr/local/bin/longarmd` and `/usr/local/share/longarm/`.
+- **Team ID**: the 10-character Apple Team ID of the signing certificates
+  (`pkgutil --check-signature` shows it in parentheses; `codesign -dv
+  /usr/local/bin/longarmd` as `TeamIdentifier=`). The maintainer publishes it
+  next to the release; it identifies Longarm in the profiles below.
+- **Unattended join**: a custom settings / Application & Custom Settings
+  payload for the domain `com.longarm` with `Roles`, `Hub`, `JoinCode`,
+  `User`, `CAFingerprint` (lands in `/Library/Managed Preferences/com.longarm.plist`,
+  which `postinstall` reads first). Use a join code that expires (`longarm
+  worker add --ttl 24h`): the profile keeps it until it is removed. Or
+  install without it and let users run `longarmd login`.
+- **Background items** (macOS 13+): `longarmd service install` adds the
+  LaunchDaemon `/Library/LaunchDaemons/com.longarm.longarmd.plist`
+  (program `/usr/local/bin/longarmd`), which macOS reports as a background
+  item. To keep users from turning it off, a **Service Management - Managed
+  Login Items** payload (`com.apple.servicemanagement`) with the rule
+  `RuleType` = `TeamIdentifier`, `RuleValue` = the Team ID (or `Label`
+  `com.longarm.longarmd`).
+- **Privacy (PPPC)**: Longarm needs no system extension, kernel extension
+  or entitlement. Only if jobs must read TCC-protected places (Desktop,
+  Documents, removable volumes, another app's data), give `longarmd` access
+  with a **Privacy Preferences Policy Control** payload: `IdentifierType`
+  `path`, `Identifier` `/usr/local/bin/longarmd`, `CodeRequirement` as
+  `codesign -dr - /usr/local/bin/longarmd` prints it (`identifier
+  "com.longarm.longarmd" and anchor apple generic and certificate
+  1[field.1.2.840.113635.100.6.2.6] and certificate
+  leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] =
+  <TEAMID>`), and the service, e.g.
+  `SystemPolicyAllFiles` (Full Disk Access). The code requirement pins the
+  Team ID, so a re-signed or replaced binary doesn't inherit the access.
+- **Firewall**: with a managed application firewall, allow
+  `/usr/local/bin/longarmd` and `/usr/local/bin/longarm` (or the identifiers
+  above) incoming connections; `postinstall` only adds them when the user's
+  firewall is on.
+- **Updates**: a worker whose LaunchDaemon runs as a user (`--user`, the
+  pkg's unattended setup) can't write `/usr/local/bin` and doesn't update
+  itself: deploy the next release's pkg (`longarmd status` and the hub
+  panel show outdated workers). A root LaunchDaemon (no `--user`) updates
+  itself from the hub; the files it installs are the same signed binaries,
+  checked against the release key first ([Self-update](#self-update)), so the
+  code signature stays valid.
+
 ### Uninstall
 
 No uninstaller removes the **client** enrollment (`~/.config/longarm`,
@@ -2550,8 +2643,8 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\Longarm", "$HOME\.config\longar
   longarm leave && rm -rf ~/.config/longarm
   sudo rm /usr/local/bin/longarm /usr/local/bin/longarmd   # or ~/.local/bin/...
   ```
-- **macOS pkg**: the same, then `sudo pkgutil --forget com.longarm.pkg`
-  ([packaging/macos](../packaging/macos/README.md)).
+- **macOS pkg**: the same, then `sudo rm -rf /usr/local/share/longarm; sudo
+  pkgutil --forget com.longarm.pkg` ([packaging/macos](../packaging/macos/README.md)).
 
 ### Transport legs and racing
 
@@ -2816,7 +2909,9 @@ detail: [ci-cd.md](ci-cd.md).
   cross-compile 6 targets, shellcheck, actionlint; `go test ./...` on Linux,
   Windows and macOS.
 - `release.yml` (tag `v*`): build on Linux (linux, macOS, deb/rpm) and on
-  Windows (Windows, MSIs) in parallel, the hub image next to them →
+  Windows (Windows, MSIs) in parallel, the macOS files signed, packaged
+  (`.pkg`) and notarized on a Mac after the Linux build, the hub image next
+  to them →
   **publish** (sign with the release key, upload with the `release`
   certificate, GitHub Release) → **hub** (SSH forced command
   [`deploy/hub/longarm-hub-deploy`](../deploy/hub/longarm-hub-deploy): verify, install,
