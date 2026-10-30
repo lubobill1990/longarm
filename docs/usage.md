@@ -3351,7 +3351,8 @@ Azure: `deploy.sh --relay`, its own container group, see
 [deploy/azure/README.md](../deploy/azure/README.md#external-relay)):
 
 ```sh
-# a relay certificate from the hub's CA (on the hub: longarm-hub issue; or longarm admin issue with the CA)
+# a relay certificate from the hub's CA (on the hub, the hub running or not: longarm-hub issue - for the
+# existing relay1 node, with its ID, or a new node; with only the CA: longarm admin issue --id <node id>)
 longarm-hub issue --role relay --name relay1 --host relay.example.com --out ./relay-tls
 longarm-relay --listen :7445 --tcp :7443 --tls-dir ./relay-tls --metrics 127.0.0.1:7801 \
   --hub hub.example.com:7443 --advertise relay.example.com [--state-dir DIR]
