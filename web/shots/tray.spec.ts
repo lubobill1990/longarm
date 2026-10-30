@@ -26,6 +26,8 @@ interface Scenario {
   update?: boolean
   /** the client daemon is older than the tray (not restarted after an update) */
   daemonOld?: boolean
+  /** a long jobs list (30 jobs) */
+  manyJobs?: boolean
 }
 
 async function serve(page: Page, sc: Scenario = {}) {
@@ -43,7 +45,7 @@ async function serve(page: Page, sc: Scenario = {}) {
       if (p === '/trayapi/pin') return json(r, { pinned: true })
       if (p.startsWith('/trayapi/')) return json(r, { ok: true })
       if (p === '/local/longarm/v1/pool') return json(r, mock.pool({ empty: sc.emptyPool }))
-      if (p === '/local/longarm/v1/jobs') return json(r, { jobs: mock.jobs })
+      if (p === '/local/longarm/v1/jobs') return json(r, { jobs: sc.manyJobs ? mock.manyJobs : mock.jobs })
       if (p.startsWith('/local/longarm/v1/jobs/') && p.endsWith('/logs'))
         return r.fulfill({
           status: 200,
@@ -112,6 +114,23 @@ for (const scheme of ['light', 'dark'] as const) {
         await card.getByLabel('more actions').click()
         await page.getByTestId('offline-section').locator('summary').click()
         await shot(page, `tray-workers-menu-${scheme}-${size}`)
+      })
+
+      test('my jobs: a long list, a job opened', async ({ page }) => {
+        await open(page, 'jobs', { manyJobs: true })
+        await page.getByText('test-e2e', { exact: true }).click()
+        await expect(page.getByTestId('log')).toContainText('built in')
+        await shot(page, `tray-my-jobs-long-${scheme}-${size}`)
+      })
+
+      test('workers: the ⋯ menu, then a click outside', async ({ page }) => {
+        await open(page, 'pool')
+        const card = page.getByTestId('worker-cpc-alice-x7k2q')
+        await card.getByLabel('more actions').click()
+        await expect(card.getByRole('menu')).toBeVisible()
+        await page.getByTestId('online-count').click()
+        await expect(card.getByRole('menu')).toBeHidden()
+        await shot(page, `tray-menu-outside-click-${scheme}-${size}`)
       })
 
       test('sign-in: start', async ({ page }) => {

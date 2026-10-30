@@ -150,6 +150,21 @@ export const jobs = [
   { worker: 'cpc-alice-x7k2q', job: { spec: { id: 'j-01hf39aa02', name: '', owner: 'alice', argv: ['npm', 'run', 'dev'] }, state: 'JOB_STATE_KILLED', created_at: ago(86400) } },
 ]
 
+/** A long list (a busy day): the opened job is near the top, its details right under it. */
+export const manyJobs = [
+  ...jobs,
+  ...Array.from({ length: 26 }, (_, i) => ({
+    worker: i % 2 ? 'build-linux-02' : 'cpc-alice-x7k2q',
+    job: {
+      spec: { id: `j-01hf2${String(i).padStart(5, '0')}`, name: `nightly-${i + 1}`, owner: 'alice', argv: ['go', 'test', `./pkg/${i}`] },
+      state: i % 5 === 3 ? 'JOB_STATE_FAILED' : 'JOB_STATE_DONE',
+      has_exit_code: true,
+      exit_code: i % 5 === 3 ? 1 : 0,
+      created_at: ago(90000 + i * 3600),
+    },
+  })),
+]
+
 export const forwards = [
   { worker: 'cpc-alice-x7k2q', target: '3000', local_addr: '127.0.0.1:53000', url: 'http://127.0.0.1:53000/', connections: 4, started_at: ago(600) },
   { worker: 'build-linux-02', target: 'localhost:9229', local_addr: '127.0.0.1:59229', url: 'http://127.0.0.1:59229/', connections: 0, error: 'dial: connection refused' },

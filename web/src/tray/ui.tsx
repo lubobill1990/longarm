@@ -68,10 +68,24 @@ export function Skeleton({ lines = 3, label, card }: { lines?: number; label: st
   )
 }
 
-/** A titled group of settings or facts. */
-export function Section({ title, aside, children, testId, className }: { title: ReactNode; aside?: ReactNode; children: ReactNode; testId?: string; className?: string }) {
+/** A titled group of settings or facts; card: on a card, like Account's (Settings). */
+export function Section({
+  title,
+  aside,
+  children,
+  testId,
+  className,
+  card,
+}: {
+  title: ReactNode
+  aside?: ReactNode
+  children: ReactNode
+  testId?: string
+  className?: string
+  card?: boolean
+}) {
   return (
-    <section className={`group ${className ?? ''}`} data-testid={testId}>
+    <section className={`group ${card ? 'card' : ''} ${className ?? ''}`} data-testid={testId}>
       <div className="group-head">
         <h3>{title}</h3>
         {aside && <div className="group-aside">{aside}</div>}

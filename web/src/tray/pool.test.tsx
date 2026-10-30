@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NodeInfo, PoolView, PoolWorker } from '../api/types'
 import { Toasts } from '../components/common'
+import { longarmApi } from '../api/local'
 import { ClientJobs } from './ClientTab'
 import { PoolTab } from './PoolTab'
 
@@ -234,5 +235,46 @@ describe('ClientJobs', () => {
     fireEvent.click(await screen.findByText('kill'))
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Kill job build (alice) on cpc-alice-x7k2q?'))
     expect(calls.some((c) => c.url.includes('/kill'))).toBe(false)
+  })
+
+  it("lists this computer's jobs only: no everyone switch, every request mine=1", async () => {
+    const calls = mockFetch({ '/local/longarm/v1/jobs?': () => [200, { jobs: [] }] })
+    render(<ClientJobs />)
+    expect(await screen.findByText('No jobs from this computer yet')).toBeTruthy()
+    expect(screen.getByTestId('jobs-scope').textContent).toBe('Started from this computer')
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect(screen.queryByText(/everyone/i)).toBeNull()
+    const lists = calls.filter((c) => c.url.startsWith('/local/longarm/v1/jobs?'))
+    expect(lists.length).toBeGreaterThan(0)
+    for (const c of lists) {
+      const q = new URL(c.url, 'http://x').searchParams
+      expect(q.get('mine')).toBe('1')
+    }
+  })
+
+  it("opens a job's details right under its row; a second click closes them", async () => {
+    const jobs = ['a', 'b', 'c'].map((n, i) => ({
+      worker: 'box',
+      job: { spec: { id: `j-${n}`, name: `job-${n}`, owner: 'alice', argv: ['make', n] }, state: 'JOB_STATE_DONE', has_exit_code: true, exit_code: i },
+    }))
+    mockFetch({ '/local/longarm/v1/jobs?': () => [200, { jobs }] })
+    const logs = vi.spyOn(longarmApi, 'logs').mockReturnValue({ close: () => {} })
+    render(<ClientJobs />)
+    fireEvent.click(await screen.findByText('job-b'))
+    const rows = Array.from(screen.getByTestId('my-jobs').querySelectorAll('tbody > tr'))
+    const at = rows.findIndex((r) => r.textContent?.includes('job-b'))
+    expect(rows[at].getAttribute('aria-expanded')).toBe('true')
+    // the details are the next row, not after the list
+    expect(rows[at + 1].getAttribute('data-testid')).toBe('job-detail')
+    expect(rows[at + 1].textContent).toContain('make b')
+    expect(rows[rows.length - 1].textContent).toContain('job-c')
+    expect(logs).toHaveBeenCalledWith('j-b', 'box', expect.any(Function), expect.any(Function))
+    // another job: its details move under it
+    fireEvent.click(screen.getByText('job-c'))
+    expect(screen.getAllByTestId('job-detail')).toHaveLength(1)
+    expect(screen.getByTestId('job-detail').previousElementSibling?.textContent).toContain('job-c')
+    // the same row again (or Enter on it): closed
+    fireEvent.keyDown(screen.getByText('job-c').closest('tr')!, { key: 'Enter' })
+    expect(screen.queryByTestId('job-detail')).toBeNull()
   })
 })
