@@ -129,18 +129,11 @@ func TestDeviceUserPinned(t *testing.T) {
 	if _, err := h.RenameNode("admin/root", tenancy.Caller{Admin: true}, true, "Big-PC", "big-pc"); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("rename of a device whose user can't be carried: %v", err)
 	}
-	// a join code without a user: the device's user is pinned to its name
-	jc, err := h.CreateJoinCode("test", &pb.CreateJoinCodeRequest{Role: "client", Name: "dana"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := hubclient.Join(tctx(t), h.Addr("grpc"), jc.Code, hubclient.JoinOptions{Fingerprint: pki.Fingerprint(th.ca.Cert)}); err != nil {
-		t.Fatal(err)
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if u := h.activeByNameLocked("dana").rec.User; u != "dana" {
-		t.Fatalf("dana's user %q", u)
+	// a join code without a user: with users separated it enrolls nothing
+	// (#60); a device that has one acts as that user (carol above, the
+	// migration: TestMigrateNodeIDs)
+	if _, err := h.CreateJoinCode("test", &pb.CreateJoinCodeRequest{Role: "client", Name: "dana"}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("userless client code: %v", err)
 	}
 }
 

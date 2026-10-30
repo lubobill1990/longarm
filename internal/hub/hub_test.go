@@ -131,7 +131,7 @@ func TestStore(t *testing.T) {
 	if len(nodes) != 1 || nodes[0].Labels["a"] != "b" {
 		t.Fatalf("nodes %v", nodes)
 	}
-	if v, _ := st.Meta("schema_version"); v != "5" {
+	if v, _ := st.Meta("schema_version"); v != "6" {
 		t.Fatal(v)
 	}
 }

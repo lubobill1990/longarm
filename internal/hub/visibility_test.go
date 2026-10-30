@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -231,10 +232,12 @@ func TestAdminAnswersNameOnlyVisibleNodes(t *testing.T) {
 	th, _ := ownedHub(t)
 	h := th.h
 	addWorker(h, "rw", "root", false, "")
-	h.mu.Lock()
-	h.putTestNode(&node{rec: &store.Node{Name: "root", Role: "admin", State: stateApproved}})
-	h.putTestNode(&node{rec: &store.Node{Name: "alice", Role: "client", State: stateApproved}})
-	h.mu.Unlock()
+	// root's and alice's devices, registered by their certificates
+	for _, c := range []*grpc.ClientConn{th.root, th.alice} {
+		if _, err := pb.NewFleetClient(c).Whoami(tctx(t), &pb.WhoamiRequest{}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	v := tenancy.Caller{User: "root"}
 	h.mu.Lock()
 	r := h.rolloutForLocked(v, &pb.Rollout{Canary: []string{"aw"}, Targeted: []string{"aw", "rw", "w1"}, Waiting: []string{"aw"},

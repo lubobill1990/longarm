@@ -164,6 +164,13 @@ func TestOwnedWorkers(t *testing.T) {
 	if err := h.relayCheck("admin/root", "root", "w1", "kill jobs", "JB"); err != nil {
 		t.Fatalf("admin on a fleet worker: %v", err)
 	}
+	// the check itself (behind every relayed request: a job the caller may
+	// read on a worker it may not use) refuses and audits workers/denied;
+	// the APIs above never get that far for a hidden worker - it is no
+	// candidate of the target, "no worker" before anything is resolved
+	if err := h.relayCheck("admin/root", "root", "aw", "kill jobs", "JAW"); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("admin on alice's worker: %v", err)
+	}
 
 	// sharing needs can_share; others can't touch it
 	share := func(c *grpc.ClientConn, req *pb.ShareWorkerRequest) (*pb.NodeInfo, error) {

@@ -3,7 +3,10 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -11,9 +14,17 @@ import (
 	"github.com/lubobill1990/longarm/internal/nodeid"
 )
 
-// schema4 makes a database as a hub before node IDs (schema version 4)
-// left it, with rows like the live hub's.
-func schema4(t *testing.T, path string) {
+// liveWorkers is how many plain workers schema5 adds (the live hub's
+// size), next to the special cases.
+const liveWorkers = 30
+
+// schema5 makes a database as a hub before node IDs left it - schema
+// version 5 (#60's audit attribution: the last schema released before node
+// IDs) - with rows like the live hub's: user-owned and fleet workers,
+// admin workers, devices of users that sign in (with and without a pinned
+// user), revoked nodes, certificates, attributed and older audit records,
+// cached jobs, port links.
+func schema5(t *testing.T, path string) {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path))
 	if err != nil {
@@ -27,10 +38,10 @@ func schema4(t *testing.T, path string) {
 		}
 	}
 	exec(`CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`)
-	for _, m := range migrations[:4] {
+	for _, m := range migrations[:5] {
 		exec(m)
 	}
-	exec(`INSERT INTO meta(k,v) VALUES('schema_version','4')`)
+	exec(`INSERT INTO meta(k,v) VALUES('schema_version','5')`)
 	exec(`INSERT INTO meta(k,v) VALUES('revocation_version','7')`) // workers synced version 7
 	now := time.Now()
 	node := func(name, role, state string, extra map[string]any) {
@@ -63,23 +74,32 @@ func schema4(t *testing.T, path string) {
 	node("w-dead", "worker", "approved", nil)
 	node("dead", "worker", "approved", nil)  // wants w-dead, which an active node has
 	node("w-cafe", "worker", "revoked", nil) // the name "cafe" will want
+	for i := range liveWorkers {             // the bulk: plain workers, owned and fleet
+		extra := map[string]any{"hostname": fmt.Sprintf("host-%02d", i), "version": "0.1.13", "labels": map[string]string{"pool": "p"}}
+		if i%3 != 0 {
+			extra["owner"] = fmt.Sprintf("user%d", i%5)
+		}
+		node(fmt.Sprintf("live-%02d", i), "worker", "approved", extra)
+	}
 	for _, c := range []struct{ serial, node string }{{"a1", "alice-pc"}, {"a2", "old-box"}, {"a3", "cafe"}, {"a4", "1234"}} {
 		exec(`INSERT INTO certs(serial,node,not_after,issued_at) VALUES(?,?,?,?)`, c.serial, c.node, now.Add(time.Hour).Unix(), now.Unix())
 	}
 	exec(`UPDATE certs SET revoked_at=? WHERE node='old-box'`, now.Unix())
 	exec(`INSERT INTO audit(node,time,who,method,line) VALUES('alice-pc',?,'client/root','/x','{}')`, now.UnixMilli())
 	exec(`INSERT INTO audit(node,time,who,method,line) VALUES('hub',?,'web/root','users/add','{}')`, now.UnixMilli())
+	// written by a schema-5 hub: attributed (#60)
+	exec(`INSERT INTO audit(node,time,who,method,line,actor_user,subject_user,attributed) VALUES('bob-cpc-bob-x7k2h',?,'client/bob-laptop','/longarm.v1.Jobs/Submit','{}','bob','bob',1)`, now.UnixMilli())
 	exec(`INSERT INTO jobs(worker,id,state,updated_at,data) VALUES('alice-pc','J1',2,?,x'00')`, now.UnixMilli())
 	exec(`INSERT INTO port_links(id,owner,data) VALUES('L1','alice','{"id":"L1","owner":"alice","from":"alice-pc","to":"cafe","port":80}')`)
 }
 
-// TestMigrateNodeIDs: schema 4 -> 5 keeps every node and its data, gives
+// TestMigrateNodeIDs: schema 5 -> 6 keeps every node and its data, gives
 // each an ID, renames names that look like IDs (audited, noted), maps
 // certificates, audit records, cached jobs and port links to IDs, links a
 // worker and its admin worker, and enforces unique active names.
 func TestMigrateNodeIDs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hub.db")
-	schema4(t, path)
+	schema5(t, path)
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +126,7 @@ func TestMigrateNodeIDs(t *testing.T) {
 		}
 		by[n.Name] = n
 	}
-	if len(nodes) != 18 {
+	if len(nodes) != 18+liveWorkers {
 		t.Fatalf("%d nodes", len(nodes))
 	}
 	for _, name := range []string{"alice-pair", "alice-pc", "e2e-worker", "spike-1", "cpc-bob-x7k2h-admin", "bob-cpc-bob-x7k2h", "root", "alice-laptop", "old-box"} {
@@ -157,6 +177,26 @@ func TestMigrateNodeIDs(t *testing.T) {
 	}
 	if renames != 4 {
 		t.Fatalf("%d rename audit records", renames)
+	}
+	// every live worker: its name, owner, labels and version, no rename
+	for i := range liveWorkers {
+		n := by[fmt.Sprintf("live-%02d", i)]
+		if n == nil || n.CertName != "" || n.Version != "0.1.13" || n.Labels["pool"] != "p" || (i%3 != 0) != (n.Owner != "") {
+			t.Fatalf("live-%02d: %+v", i, n)
+		}
+	}
+	// #60's attribution survives; the migration's own records are
+	// attributed to the renamed machine's user
+	if a, _ := s.Audit(by["bob-cpc-bob-x7k2h"].ID, "", time.Time{}, 10); len(a) != 1 || !a[0].Attributed || a[0].ActorUser != "bob" || a[0].SubjectUser != "bob" {
+		t.Fatalf("attributed record %+v", a)
+	}
+	for _, r := range rows {
+		if r.Who == "hub/migration" && (!r.Attributed || r.ActorUser != "") {
+			t.Fatalf("migration record %+v", r)
+		}
+		if r.Who == "hub/migration" && strings.Contains(r.Line, `"old_name":"beef"`) && r.SubjectUser != "beef" {
+			t.Fatalf("d-beef's rename is not its user's: %+v", r)
+		}
 	}
 	// companion link: the admin worker and the worker on its host
 	aw, w := by["cpc-bob-x7k2h-admin"], by["bob-cpc-bob-x7k2h"]
@@ -242,7 +282,7 @@ func TestMigrateNodeIDs(t *testing.T) {
 		t.Fatalf("migrated again: %v", s2.MigrationNotes)
 	}
 	again, _ := s2.Nodes()
-	if len(again) != 19 {
+	if len(again) != 19+liveWorkers {
 		t.Fatalf("%d nodes after reopening", len(again))
 	}
 }
@@ -253,4 +293,77 @@ func names(nodes []*Node) []string {
 		out = append(out, n.Name+"("+n.State+")")
 	}
 	return out
+}
+
+// TestMigrateNodeIDsAtomic: migration 6 runs in one transaction with its
+// schema version: a failure anywhere (here: after its Go step did all its
+// work) leaves the schema-5 database exactly as it was - a hub that can't
+// migrate refuses to start and the old hub can still open it - and the
+// next start migrates from scratch, once.
+func TestMigrateNodeIDsAtomic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hub.db")
+	schema5(t, path)
+	real := goMigrations[5]
+	goMigrations[5] = func(tx *sql.Tx, notes *[]string) error {
+		if err := real(tx, notes); err != nil {
+			return err
+		}
+		return errors.New("injected failure")
+	}
+	_, err := Open(path)
+	goMigrations[5] = real
+	if err == nil || !strings.Contains(err.Error(), "migration 6: injected failure") {
+		t.Fatalf("open with a failing migration: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v string
+	var nodes, auditRows, idCols int
+	db.QueryRow(`SELECT v FROM meta WHERE k='schema_version'`).Scan(&v)
+	db.QueryRow(`SELECT count(*) FROM nodes`).Scan(&nodes)
+	db.QueryRow(`SELECT count(*) FROM audit`).Scan(&auditRows)
+	db.QueryRow(`SELECT count(*) FROM pragma_table_info('nodes') WHERE name='id'`).Scan(&idCols)
+	var tables int
+	db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name IN ('nodes_v6','revoked_names')`).Scan(&tables)
+	db.Close()
+	if v != "5" || nodes != 18+liveWorkers || auditRows != 3 || idCols != 0 || tables != 0 {
+		t.Fatalf("after a failed migration: schema %s, %d nodes, %d audit rows, id column %d, new tables %d", v, nodes, auditRows, idCols, tables)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	all, _ := s.Nodes()
+	if s.SchemaVersion() != 6 || len(all) != 18+liveWorkers || len(s.MigrationNotes) != 5 {
+		t.Fatalf("migrated: schema %d, %d nodes, notes %v", s.SchemaVersion(), len(all), s.MigrationNotes)
+	}
+	rows, _ := s.Audit("", "hub", time.Time{}, 100)
+	renames := 0
+	for _, r := range rows {
+		if r.Who == "hub/migration" {
+			renames++
+		}
+	}
+	if renames != 4 {
+		t.Fatalf("%d migration records (the failed attempt left some?)", renames)
+	}
+}
+
+// TestNewerSchemaRefused: a hub refuses a database a newer hub migrated -
+// the rollback story is restoring the pre-deploy snapshot, never running
+// the older hub on the migrated database.
+func TestNewerSchemaRefused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hub.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetMeta("schema_version", strconv.Itoa(len(migrations)+1))
+	s.Close()
+	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "newer than this longarm-hub") {
+		t.Fatalf("newer schema: %v", err)
+	}
 }

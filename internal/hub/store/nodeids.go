@@ -116,8 +116,15 @@ func migrateNodeIDs(tx *sql.Tx, notes *[]string) error {
 			r.data["cert_name"] = r.name
 			line, _ := json.Marshal(map[string]any{"time": now.Format(time.RFC3339Nano), "who": "hub/migration",
 				"method": "nodes/rename", "id": r.id, "old_name": r.name, "new_name": r.newName, "reason": reason})
-			if _, err := tx.Exec(`INSERT INTO audit(node,node_id,time,who,method,line) VALUES('hub','',?,?,?,?)`,
-				now.UnixMilli(), "hub/migration", "nodes/rename", string(line)); err != nil {
+			// attributed (migration 5) to the machine's user: its owner
+			// sees that its machine was renamed, nobody else does
+			subject, _ := r.data["owner"].(string)
+			if device {
+				subject, _ = r.data["user"].(string)
+			}
+			if _, err := tx.Exec(`INSERT INTO audit(node,node_id,time,who,method,line,actor_user,subject_user,attributed)
+				VALUES('hub','',?,?,?,?,'',?,1)`,
+				now.UnixMilli(), "hub/migration", "nodes/rename", string(line), subject); err != nil {
 				return err
 			}
 			*notes = append(*notes, fmt.Sprintf("node %q (%s, %s) renamed to %q: %s", r.name, r.role, r.state, r.newName, reason))

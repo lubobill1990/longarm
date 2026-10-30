@@ -21,6 +21,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -112,6 +113,9 @@ func TestAdminLearnsNothingOfAnotherUsersMachines(t *testing.T) {
 
 	// --- the scenario
 	put := func(r *store.Node) *node {
+		if r.ID == "" {
+			r.ID = nodeid.New()
+		}
 		if err := h.store.PutNode(r); err != nil { // indexes the name, as enrollment does
 			t.Fatal(err)
 		}

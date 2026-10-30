@@ -251,12 +251,15 @@ func TestAuditNodeFilter(t *testing.T) {
 	th, _ := ownedHub(t)
 	h := th.h
 	now := time.Now()
+	h.mu.Lock()
+	awID, w1ID := h.nodeLocked("aw").rec.ID, h.nodeLocked("w1").rec.ID
+	h.mu.Unlock()
 	var rows []store.AuditRow
-	for i := range 3 {
-		rows = append(rows, store.AuditRow{Node: "aw", Time: now.Add(time.Duration(i) * time.Millisecond), Who: "client/alice",
+	for i := range 3 { // as workers' records arrive: with the node's ID
+		rows = append(rows, store.AuditRow{Node: "aw", NodeID: awID, Time: now.Add(time.Duration(i) * time.Millisecond), Who: "client/alice",
 			Method: "/longarm.v1.Exec/Run", Line: `{"user":"alice"}`, ActorUser: "alice", SubjectUser: "alice", Attributed: true})
 	}
-	rows = append(rows, store.AuditRow{Node: "w1", Time: now, Who: "client/alice", Method: "/longarm.v1.Exec/Run",
+	rows = append(rows, store.AuditRow{Node: "w1", NodeID: w1ID, Time: now, Who: "client/alice", Method: "/longarm.v1.Exec/Run",
 		Line: `{"user":"alice"}`, ActorUser: "alice", SubjectUser: "alice", Attributed: true})
 	if err := h.store.AddAudit(rows); err != nil {
 		t.Fatal(err)

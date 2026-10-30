@@ -107,9 +107,10 @@ func TestUpdateNotice(t *testing.T) {
 
 	// CheckUpdate: a worker of the stable channel hears of 1.2.0 without a rollout
 	h.mu.Lock()
-	h.putTestNode(&node{rec: &store.Node{Name: "w1", Role: "worker", State: stateApproved, Version: "1.0.0"}})
+	w1 := &node{rec: &store.Node{Name: "w1", Role: "worker", State: stateApproved, Version: "1.0.0"}}
+	h.putTestNode(w1)
 	h.mu.Unlock()
-	wctx := context.WithValue(ctx, callerKey{}, caller{id: pki.Identity{Role: pki.RoleWorker, Name: "w1"}, cert: &x509.Certificate{}})
+	wctx := context.WithValue(ctx, callerKey{}, caller{id: pki.Identity{Role: pki.RoleWorker, Name: "w1"}, cert: &x509.Certificate{}, nodeID: w1.rec.ID})
 	resp, err := fs.CheckUpdate(wctx, &pb.UpdateCheckRequest{Os: "windows", Arch: "amd64", Version: "1.0.0", Channel: "stable"})
 	if err != nil || resp.Version != "" || resp.LatestVersion != "1.2.0" {
 		t.Fatalf("CheckUpdate: %v %v", resp, err)
