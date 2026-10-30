@@ -80,6 +80,9 @@ targets, MSIs, deb/rpm packages, the hub release directory and `SHA256SUMS`.
   warning says so); self-updating workers only install signed releases.
 - Without the variable `LONGARM_HUB` nothing is uploaded to a hub and the
   `hub` / `rollout` jobs are skipped.
+- Without the Trusted Signing variables (2.7) the Windows binaries and MSIs
+  are not Authenticode-signed (a notice says so; SmartScreen warns on the
+  download). Minisign signatures and checksums don't depend on it.
 
 ## 2. One-time setup for an own deployment
 
@@ -234,6 +237,9 @@ Try it from your machine: `ssh -i hub-deploy deploy@hub.example.com status`.
 | `HUB_SSH` | `deploy@hub.example.com`; enables the `hub` job |
 | `LONGARM_DEFAULT_HUB` | the hub built into the release (a domain, e.g. `longarm.example.com`): `longarm login` / `longarmd login` / the tray without a hub, and the MSI's "Default" choice ([usage](usage.md#built-in-default-hub)); unset: no default (the release warns; the MSI offers Custom only) |
 | `LONGARM_DEFAULT_HUB_CA` | optional: that hub's CA fingerprint (`longarm-hub ca show`), pinned instead of trusting `https://<hub>/ca.crt` |
+| `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | the Entra app that signs (GitHub OIDC, no secret; 2.7) |
+| `TRUSTED_SIGNING_ENDPOINT`, `TRUSTED_SIGNING_ACCOUNT`, `TRUSTED_SIGNING_PROFILE` | the Trusted Signing account's endpoint (`https://<region>.codesigning.azure.net`), its name and the certificate profile; all six set: Authenticode signing on (2.7) |
+| `TRUSTED_SIGNING_SUBJECT` | optional: the certificate's CN (the validated name); every signed file is checked against it |
 
 ```sh
 R=your-org/longarm
@@ -284,6 +290,90 @@ The run then waits for an approval before anything is signed or deployed;
 versioned image `:X.Y.Z` is pushed before the approval (only `:latest`
 waits for publish) - to hold it back too, add `publish` to the `needs` of
 release.yml's `image` job (it then starts after the approval).
+
+### 2.7 Authenticode: Azure Trusted Signing (Windows)
+
+The Windows exes (`longarm`, `longarmd`, `longarm-tray`, `longarm-hub`,
+`longarm-relay`, the MSI's `longarm-update` and upgrade helper) and the MSIs
+are Authenticode-signed with [Azure Trusted Signing](https://learn.microsoft.com/azure/artifact-signing/)
+("Artifact Signing") when the six variables of 2.4 are set; without them the
+release is built unsigned with a notice. Only the Windows build job is
+involved:
+
+- **Order.** GoReleaser's build hook (`.goreleaser.yaml`, `hooks: *winsign`)
+  signs each exe right after it is built - before the zips and
+  `checksums.txt`; `packaging/windows/build-msi.ps1` signs the binaries it
+  builds, packs the signed exes into the MSI, then signs the MSI. The
+  minisign signatures (publish) and `SHA256SUMS` are made afterwards, over
+  the signed files. A check step verifies every published exe and MSI
+  (signature, RFC 3161 timestamp from `http://timestamp.acs.microsoft.com`,
+  and the publisher when `TRUSTED_SIGNING_SUBJECT` is set).
+- **Tools.** signtool from the runner's Windows SDK with the dlib
+  `Microsoft.ArtifactSigning.Client` from nuget.org, pinned by SHA256
+  (`packaging/windows/sign.ps1`; every release build fetches and checks it,
+  signed or not).
+- **Credential.** No secret: `azure/login` with GitHub OIDC. The job runs in
+  the environment `release-signing` only for a real release with
+  `TRUSTED_SIGNING_PROFILE` set; the app's single federated credential trusts
+  exactly `repo:<owner>/<repo>:environment:release-signing`, and the
+  environment accepts deployments from `v*` tags only (no branch, no pull
+  request, no dry run). The app's only role is *Artifact Signing Certificate
+  Profile Signer* on the account. Its token lives in the build job only.
+- **Updates are unaffected.** The LongarmUpdate service and the tray accept
+  an MSI only with a valid minisign signature by the release key built into
+  them (name and version in the trusted comment) and the hub record's
+  sha256 - signed or unsigned Authenticode alike, so upgrades from and to
+  unsigned builds keep working. Authenticode is for Windows (SmartScreen,
+  the UAC prompt's publisher), not a second trust root: the update path does
+  not check it, because a check that only applies "when a signature is
+  present" adds nothing an attacker can't strip, and requiring it would
+  break every installation updating from an unsigned release.
+
+**Setup** (once; `deploy/azure/signing/trusted-signing.sh`, needs `az` on the
+right subscription and `gh` with admin rights):
+
+```sh
+S=deploy/azure/signing/trusted-signing.sh R=your-org/longarm
+$S account  my-rg my-signing eastus     # provider + account, Basic SKU
+$S verifier my-rg my-signing            # you: "Artifact Signing Identity Verifier"
+# identity validation in the portal (below), then:
+$S ci       my-rg my-signing $R         # app + federated credential + Signer role + environment + 5 variables
+$S profile  my-rg my-signing longarm-public <identity validation id> $R   # Public Trust profile; sets TRUSTED_SIGNING_PROFILE
+```
+
+**Identity validation** (portal only, by a person with the Identity Verifier
+role; 1-20 business days for organizations): Azure portal → the Trusted
+Signing account → *Identity validations* → *New identity* → *Public*, then
+either
+
+- *Organization*: a legal entity in the US, Canada, the EU, the UK,
+  Australia, New Zealand, Japan, South Korea, Singapore, Switzerland, Norway
+  or Israel, with its legal name, website, an email on its domain, business
+  ID and address; or
+- *Individual*: a developer located in the US or Canada. The form is filled
+  from the subscription's **billing account, which must be of type
+  Individual** with the legal name and sold-to address of the person's
+  government ID; the person then completes a Microsoft Entra Verified ID
+  check (AU10TIX, phone + ID + face check) and presents it.
+
+Not possible: free, trial or sponsored subscriptions, and subscriptions billed
+to an employer's internal or enterprise billing account for an individual
+validation. The certificate's CN is the validated legal name; it can't be
+customized.
+
+**Cost.** Basic SKU: about USD 9.99 per month per account (5,000 signatures;
+billed in full for the month, not pro-rated). A release signs about 16 files.
+
+**Rotation.** Nothing to rotate in GitHub: there is no secret, and the
+service renews the short-lived certificates itself (every signature is
+timestamped, so it stays valid after the certificate expires). To replace
+the CI identity: `$S ci ...` again (re-creates the federated credential;
+delete the old app registration). To replace the profile (a new validation,
+a new name): `$S profile ...` with the new values; the identity validation
+must be renewed before it expires (reminders start 60 days ahead) or
+signing stops. To turn signing off: delete the variable
+`TRUSTED_SIGNING_PROFILE` (the release goes back to unsigned with a notice);
+to stop paying: delete the account.
 
 ### 2.6 Ordering: hub first, then the fleet
 

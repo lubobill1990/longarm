@@ -5,6 +5,10 @@
 #                  darwin binaries, archives, deb/rpm) + packaging/hubrelease
 #   build-windows  windows-latest: packaging/build.ps1 -Side windows (the Windows
 #                  binaries + archives, the MSIs) + packaging/hubrelease
+#                  exes and MSIs Authenticode-signed (Azure Trusted Signing, GitHub
+#                  OIDC, environment release-signing) when TRUSTED_SIGNING_* and
+#                  AZURE_* are set, before the zips, checksums and minisign
+#                  signatures; else unsigned with a notice (docs/ci-cd.md 2.7)
 #                  Both: the repository variable LONGARM_UPDATE_PUBKEY (if set)
 #                  is built into longarmd (without it the binaries have
 #                  self-update turned off), and LONGARM_DEFAULT_HUB (+ _CA) into
@@ -210,6 +214,14 @@ jobs:
     needs: meta
     runs-on: windows-latest
     timeout-minutes: 60
+    # Authenticode (Azure Trusted Signing, docs/ci-cd.md 2.7): only a real release with the
+    # signing variables set runs in the environment release-signing (deployments: v* tags only),
+    # the one subject the Azure identity's federated credential trusts; a dry run or a
+    # repository without the variables builds unsigned, outside it.
+    environment: ${{ needs.meta.outputs.dry_run == 'false' && vars.TRUSTED_SIGNING_PROFILE != '' && 'release-signing' || '' }}
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC -> Azure (azure/login), for Trusted Signing only
     defaults:
       run:
         shell: pwsh
@@ -255,6 +267,47 @@ jobs:
           # Extensions go to .wix\ in the repo root (wix build runs there; gitignored).
           & "$wix\wix.exe" extension add WixToolset.UI.wixext/5.0.2 WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2
           if ($LASTEXITCODE) { throw 'wix extension add failed' }
+      # Authenticode: GoReleaser's build hook signs each exe right after it is built (before the
+      # zips and checksums.txt), build-msi.ps1 the helper, longarm-update.exe and the MSIs; the
+      # minisign signatures (publish) and SHA256SUMS are made later, over the signed files.
+      - name: code signing (Trusted Signing) - set up or skip
+        id: signing
+        env:
+          DRY_RUN: ${{ needs.meta.outputs.dry_run }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          TRUSTED_SIGNING_ENDPOINT: ${{ vars.TRUSTED_SIGNING_ENDPOINT }}
+          TRUSTED_SIGNING_ACCOUNT: ${{ vars.TRUSTED_SIGNING_ACCOUNT }}
+          TRUSTED_SIGNING_PROFILE: ${{ vars.TRUSTED_SIGNING_PROFILE }}
+        run: |
+          $names = 'AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID', 'TRUSTED_SIGNING_ENDPOINT', 'TRUSTED_SIGNING_ACCOUNT', 'TRUSTED_SIGNING_PROFILE'
+          $missing = @($names | Where-Object { -not "$((Get-Item "Env:$_" -ErrorAction SilentlyContinue).Value)".Trim() })
+          $why = if ($env:DRY_RUN -eq 'true') { 'a dry run' } elseif ($missing.Count -eq $names.Count) { 'Trusted Signing is not set up' } elseif ($missing) { "repository variables not set: $($missing -join ', ')" }
+          if ($why) {
+            # the pinned tools are still fetched and checked, so a release with signing set up doesn't fail on them
+            ./packaging/windows/sign.ps1 -Setup (Join-Path $env:RUNNER_TEMP 'signing') -ToolsOnly
+            "::notice title=Windows binaries and MSIs are not Authenticode-signed::reason: $why (docs/ci-cd.md 2.7); the minisign signatures and checksums are unaffected"
+            'enabled=false' >> $env:GITHUB_OUTPUT
+          } else {
+            'enabled=true' >> $env:GITHUB_OUTPUT
+          }
+      - name: Azure login (GitHub OIDC, for Trusted Signing)
+        if: steps.signing.outputs.enabled == 'true'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: code signing (Trusted Signing) - tools, metadata
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          LONGARM_SIGN_ENDPOINT: ${{ vars.TRUSTED_SIGNING_ENDPOINT }}
+          LONGARM_SIGN_ACCOUNT: ${{ vars.TRUSTED_SIGNING_ACCOUNT }}
+          LONGARM_SIGN_PROFILE: ${{ vars.TRUSTED_SIGNING_PROFILE }}
+        run: |
+          $lines = ./packaging/windows/sign.ps1 -Setup (Join-Path $env:RUNNER_TEMP 'signing')
+          $lines + "LONGARM_SIGN_PROFILE=$env:LONGARM_SIGN_PROFILE" | Add-Content -Encoding utf8 $env:GITHUB_ENV
       - name: build (goreleaser + MSIs + hub-release)
         env:
           LONGARM_UPDATE_PUBKEY: ${{ vars.LONGARM_UPDATE_PUBKEY }}
@@ -262,6 +315,24 @@ jobs:
           LONGARM_DEFAULT_HUB: ${{ vars.LONGARM_DEFAULT_HUB }}
           LONGARM_DEFAULT_HUB_CA: ${{ vars.LONGARM_DEFAULT_HUB_CA }}
         run: ./packaging/build.ps1 -SkipPublish -Side windows
+      - name: check the Authenticode signatures (signature, timestamp, publisher)
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          # optional: the certificate's CN (the validated name), checked on every file
+          LONGARM_SIGN_SUBJECT: ${{ vars.TRUSTED_SIGNING_SUBJECT }}
+        run: |
+          # what is published: the exes and MSIs of hub-release, and the exes inside the zips
+          $files = @(Get-ChildItem dist/hub-release -File | Where-Object Extension -in '.exe', '.msi' | ForEach-Object FullName)
+          $x = Join-Path $env:RUNNER_TEMP 'zips'
+          foreach ($z in Get-ChildItem dist -Filter '*_windows_*.zip') {
+            $d = Join-Path $x $z.BaseName
+            Expand-Archive -Force $z.FullName $d
+            $files += Get-ChildItem $d -Recurse -Filter *.exe | ForEach-Object FullName
+          }
+          # and what the MSIs install (longarm-update.exe, the helper): wix msi decompile is heavy; the
+          # build signed them before WiX packed them, and sign.ps1 checked each one right after signing
+          ./packaging/windows/sign.ps1 -Verify @files
+          "$($files.Count) files signed and timestamped"
       - name: stage the artifact
         run: |
           $v = (Get-Content dist/metadata.json | ConvertFrom-Json).version

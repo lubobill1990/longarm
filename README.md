@@ -147,6 +147,16 @@ worker as a Windows service. Silently: `msiexec /i longarm-windows-amd64.msi
 "Default" hub is built into the release (repository variable
 `LONGARM_DEFAULT_HUB`, [docs/ci-cd.md](docs/ci-cd.md#24-secrets-and-variables)).
 
+**SmartScreen.** A release whose MSI and exes are not Authenticode-signed
+(releases are signed with Azure Trusted Signing only once a validated
+certificate profile is set up, [docs/ci-cd.md](docs/ci-cd.md#27-authenticode-azure-trusted-signing-windows))
+makes Windows show "Windows protected your PC" / "Unknown publisher": choose
+**More info → Run anyway**, after checking the file against the release's
+`SHA256SUMS` (`Get-FileHash longarm-windows-amd64.msi`). A signed release
+shows the publisher; SmartScreen may still warn for a new release until it
+has built up download reputation. Updates (tray, Longarm Update service)
+always verify the release key's minisign signature, signed or not.
+
 Or one line - the hub serves the scripts with its address and CA pinned:
 
 ```sh
