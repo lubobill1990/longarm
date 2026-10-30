@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -100,10 +101,12 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 		NodeState: n.rec.State, AuditOffset: n.rec.AuditOffset,
 		MetricsInterval: durationpb.New(h.cfg.Heartbeat.Interval.Duration),
 		RenewBefore:     durationpb.New(h.cfg.RenewBefore(n.rec.Role)),
+		HubDraining:     n.rec.AdminDrain,
+		Tailnet:         h.tailnetInfo(n),
+		Relay:           h.relayAdvert(),
+		Relays:          h.relaySetLocked(),
 		// renamed: a worker that follows renames renews with the new name
-		RenewNow:    renameRenewal(n, c.cert),
-		HubDraining: n.rec.AdminDrain,
-		Tailnet:     h.tailnetInfo(n),
+		RenewNow: renameRenewal(n, c.cert),
 	}
 	// The session's first messages are queued before h.mu is released: from
 	// then on other goroutines may push to it too (port links, share changes,
@@ -190,9 +193,11 @@ func (h *Hub) applyHelloLocked(n *node, hello *pb.NodeHello) {
 	r.HelloLabels = maps.Clone(hello.Labels)
 	maps.DeleteFunc(r.HelloLabels, func(k, _ string) bool { return sched.ReservedLabel(k) })
 	r.Isolation = hello.Isolation
+	n.caps = slices.Clone(hello.Capabilities)
 	if st := hello.State; st != nil {
 		n.localDrain, n.localReason = st.Draining, st.Reason
 		n.maxJobs, n.reservedGB = st.MaxJobs, st.ReservedMemGb
+		n.updateAvail = st.UpdateAvailable
 	}
 	r.Channel, r.UpdateEnabled = hello.Channel, hello.UpdateEnabled
 	r.Capabilities = hello.Capabilities
@@ -237,6 +242,7 @@ func (h *Hub) handleReport(n *node, sess *nodeSession, m *pb.NodeReport) {
 	case *pb.NodeReport_State:
 		n.localDrain, n.localReason = x.State.Draining, x.State.Reason
 		n.maxJobs, n.reservedGB = x.State.MaxJobs, x.State.ReservedMemGb
+		n.updateAvail = x.State.UpdateAvailable
 		h.publishNodeLocked(n, "state changed")
 		h.kickQueue()
 	case *pb.NodeReport_Update:
@@ -331,13 +337,21 @@ func (h *Hub) storeAuditLocked(n *node, sess *nodeSession, b *pb.AuditBatch) {
 			Time   string `json:"time"`
 			Who    string `json:"who"`
 			Method string `json:"method"`
+			User   string `json:"user"` // the caller's user, as the worker saw its certificate
 		}
 		json.Unmarshal([]byte(l), &rec)
 		t, err := time.Parse(time.RFC3339Nano, rec.Time)
 		if err != nil {
 			t = time.Now()
 		}
-		rows = append(rows, store.AuditRow{Node: n.rec.Name, NodeID: n.rec.ID, Time: t, Who: rec.Who, Method: rec.Method, Line: l})
+		// attribution, fixed at arrival: the acting user, and the worker's
+		// owner as the user the record is about ("" for fleet workers)
+		actor := rec.User
+		if actor == "" {
+			actor = h.auditActorUser(rec.Who)
+		}
+		rows = append(rows, store.AuditRow{Node: n.rec.Name, NodeID: n.rec.ID, Time: t, Who: rec.Who, Method: rec.Method, Line: l,
+			ActorUser: actor, SubjectUser: n.rec.Owner, Attributed: true})
 	}
 	if err := h.store.AddAudit(rows); err != nil {
 		h.log.Warn("store audit", "node", n.rec.Name, "err", err)
@@ -417,7 +431,8 @@ func (h *Hub) nodeInfoLocked(n *node) *pb.NodeInfo {
 		Metrics: n.metrics, LastSeen: tspb(r.LastSeen), JoinedAt: tspb(r.JoinedAt), CertNotAfter: tspb(r.CertNotAfter),
 		Mirrors: r.Mirrors, WarmRepos: r.WarmRepos, Profile: r.Profile, Toolchain: n.toolchain, AdminWorker: r.Admin,
 		MaxJobs: n.maxJobs, ReservedMemGb: n.reservedGB, Tailnet: n.tailnet, Isolation: r.Isolation,
-		Id: r.ID, CertName: r.DialName(), LegacySerials: h.legacySerials[r.ID],
+		UpdateAvailable: n.updateAvail,
+		Id:              r.ID, CertName: r.DialName(), LegacySerials: h.legacySerials[r.ID],
 	}
 	if r.Role != string(pki.RoleWorker) {
 		info.User = nodeUser(r)

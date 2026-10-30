@@ -35,7 +35,9 @@ type Check struct {
 	Status Status `json:"status"`
 	Detail string `json:"detail,omitempty"`
 	// Fix is the exact next command when Status is warn or fail ("" when
-	// there is nothing to run).
+	// there is nothing to run). It must paste as is into the shell
+	// (PowerShell on Windows; executable paths via platform.CommandLine), so
+	// a remark is a shell comment: "longarmd service start  # elevated".
 	Fix string `json:"fix,omitempty"`
 	// Data carries machine-readable facts of the check (e.g. not_after,
 	// last_seen, legs), all optional.

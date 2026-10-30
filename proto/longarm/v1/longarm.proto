@@ -54,6 +54,24 @@ message InfoResponse {
   // (SubmitRequest.stdin). Clients check before relying on a field an older
   // worker would silently ignore.
   repeated string features = 16;
+  // The user owning this worker ("" = none recorded: a fleet worker, or one
+  // without a hub) and whether it is an admin worker (runs as SYSTEM).
+  // Clients decide with them where to forward agent credentials
+  // ("agent-auth").
+  string owner = 17;
+  bool admin_worker = 18;
+}
+
+// AgentAuth says which coding agents' credentials the client forwarded
+// with a job, exec or session (InfoResponse feature "agent-auth"). The
+// credentials themselves travel in secret_env (memory-only, redacted) and
+// non-secret settings in env; this message only names them.
+message AgentAuth {
+  repeated string agents = 1; // "claude", "copilot", "gh"
+  // Give the process a fresh private COPILOT_HOME of its own (under the
+  // worker's data dir, removed with the job or session) unless env sets
+  // COPILOT_HOME.
+  bool copilot_home = 2;
 }
 
 // ---------------------------------------------------------------- Exec
@@ -80,6 +98,7 @@ message ExecRequest {
   OutputMode output = 6;
   int64 max_output_bytes = 7; // per buffer; default 1 MiB
   bytes stdin = 8;
+  AgentAuth agent_auth = 9;
 }
 
 message ExecResponse {
@@ -156,6 +175,9 @@ message JobSpec {
   // Output only: the size of SubmitRequest.stdin, if any. The content
   // itself is never persisted.
   int64 stdin_bytes = 20;
+  // Output only: the agents whose credentials were forwarded
+  // (SubmitRequest.agent_auth) - names, never values.
+  repeated string agent_auth = 21;
 }
 
 message JobWorkspace {
@@ -206,6 +228,7 @@ message SubmitRequest {
   // fetch (git and git-lfs) and zeroed; never in job.json, the index, the
   // audit log, logs or the job's environment.
   GitAuth git_auth = 5;
+  AgentAuth agent_auth = 6;
 }
 
 message Job {
@@ -391,6 +414,7 @@ message AttachOpen {
   bool no_replay = 8; // skip the scrollback replay
   // Admins only: attach to another user's session (default: the caller's).
   string owner = 9;
+  AgentAuth agent_auth = 10; // as secret_env: used when the session is created
 }
 
 message TermSize {
@@ -443,6 +467,8 @@ message Session {
   uint64 input_seq = 21;
   string last_input_source = 22; // "attach" | "send" | "stop"
   google.protobuf.Timestamp last_activity = 23; // max(last_output, last_input)
+  // The agents whose credentials were forwarded (names, never values).
+  repeated string agent_auth = 24;
 }
 
 message StartSessionRequest {
@@ -461,6 +487,7 @@ message StartSessionRequest {
   // SubmitRequest.git_auth (InfoResponse feature "git-auth-forward"):
   // memory-only, never seen by the session's program.
   GitAuth git_auth = 8;
+  AgentAuth agent_auth = 9;
 }
 
 message GetSessionRequest {
@@ -788,4 +815,67 @@ message SignedPortLinkGrant {
   // SHA-256("longarm port-link grant v1\x00" || grant)
   bytes signature = 2;
   repeated bytes chain = 3; // DER: the hub certificate first, then intermediates
+}
+
+// ---------------------------------------------------------------- MachineUpdate
+
+// MachineUpdate updates the machine a worker runs on to a newer signed
+// release (`longarm worker update`, the tray's "Update to X";
+// docs/usage.md "Updating"). Only the worker's owner (a client or admin
+// certificate of an owner) may call it, end to end: the hub has no command
+// that reaches it. An MSI install forwards the request to the LongarmUpdate
+// service (Windows; it installs the hub's newer, signed MSI and nothing
+// else), other installs run longarmd's own self-update for that version.
+service MachineUpdate {
+  // Start installs request's version (or the hub's latest stable) and
+  // streams the progress. With an MSI the worker itself restarts while the
+  // installer runs: the stream then ends with phase "installing" and the
+  // caller reconnects (Status, Node.Info's version) for the result.
+  rpc Start(MachineUpdateRequest) returns (stream MachineUpdateEvent);
+  // Status: installed / available versions, an update in progress, the
+  // last result and the auto-update setting.
+  rpc Status(MachineUpdateStatusRequest) returns (MachineUpdateEvent);
+  // SetAuto turns automatic updates on or off (MSI installs only; the
+  // owner or a local administrator, never the hub).
+  rpc SetAuto(MachineUpdateAutoRequest) returns (MachineUpdateEvent);
+}
+
+message MachineUpdateRequest {
+  string version = 1; // a version the hub has; "" with latest
+  bool latest = 2; // the hub's latest stable release
+}
+
+message MachineUpdateStatusRequest {}
+
+message MachineUpdateAutoRequest {
+  bool enabled = 1;
+  int32 interval_hours = 2; // 0 = the default (6)
+}
+
+message MachineUpdateEvent {
+  // checking | downloading | verifying | installing | restarting | done |
+  // up_to_date | failed | status
+  string phase = 1;
+  string message = 2;
+  string from = 3;
+  string to = 4;
+  string method = 5; // msi (the LongarmUpdate service) | self (longarmd's self-update)
+  // what ran when the update started (the caller counts what kept running)
+  repeated string running_jobs = 6;
+  repeated string running_sessions = 7;
+  string error = 8;
+  // why it failed: denied | refused (downgrade, not for this machine) |
+  // not_found | busy | rate_limited | unavailable | unsupported | invalid
+  string code = 9;
+  bool auto = 10;
+  int32 auto_interval_hours = 11;
+  string installed = 12;
+  string available = 13; // the hub's latest stable ("" = unknown)
+  google.protobuf.Timestamp at = 14;
+  // the last finished update on this machine
+  string last_from = 15;
+  string last_to = 16;
+  bool last_ok = 17;
+  string last_error = 18;
+  google.protobuf.Timestamp last_at = 19;
 }

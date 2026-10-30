@@ -36,9 +36,25 @@ const maxAutoDeviceName = 56
 // Connect (entra_web.go). Either way the Entra identity (its object ID)
 // maps to a Longarm user, created on first sign-in.
 
-// AuthConfig is [auth]: sign-in with an identity provider.
+// AuthConfig is [auth]: sign-in with identity providers - Entra (work
+// and school accounts of one tenant) and personal accounts (idp.go).
 type AuthConfig struct {
-	Entra EntraConfig `toml:"entra"`
+	Entra     EntraConfig `toml:"entra"`
+	Microsoft IdPConfig   `toml:"microsoft"` // personal Microsoft accounts
+	Google    IdPConfig   `toml:"google"`
+	Apple     IdPConfig   `toml:"apple"`
+}
+
+func (a *AuthConfig) applyDefaults() error {
+	if err := a.Entra.applyDefaults(); err != nil {
+		return err
+	}
+	for name, c := range a.idps() {
+		if err := c.applyDefaults(name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // EntraConfig is [auth.entra]. Off unless tenant_id and client_id are set.
@@ -211,21 +227,30 @@ func constantEqual(a, b string) bool { return subtle.ConstantTimeCompare([]byte(
 type entraState struct {
 	keys *jwks
 
-	mu        sync.Mutex
-	usedState map[string]time.Time // consumed web sign-in states (single use)
-	mi        cachedToken          // managed identity token (client assertion)
-	cookieKey []byte               // web sign-in state MAC key (oidcKey)
+	mu sync.Mutex
+	mi cachedToken // managed identity token (client assertion)
 }
 
 func newEntraState(cfg *EntraConfig) *entraState {
 	if !cfg.Enabled() {
 		return nil
 	}
-	return &entraState{keys: newJWKS(cfg.endpoint("/discovery/v2.0/keys")), usedState: map[string]time.Time{}}
+	return &entraState{keys: newJWKS(cfg.endpoint("/discovery/v2.0/keys"))}
 }
 
-// entraIdentity is a verified Entra user.
+// oidcWeb is the web sign-ins' state, whatever the provider.
+type oidcWeb struct {
+	mu        sync.Mutex
+	usedState map[string]time.Time // consumed web sign-in states (single use)
+	cookieKey []byte               // web sign-in state MAC key (oidcKey)
+}
+
+// entraIdentity is a verified user of an identity provider: an Entra user
+// (provider "": oid is its object ID, upn its sign-in name) or a personal
+// account (provider "google", "apple", "microsoft": oid is the provider's
+// subject, upn its verified e-mail address or "").
 type entraIdentity struct {
+	provider string
 	oid, upn string
 }
 
@@ -272,11 +297,17 @@ func (h *Hub) entraAppUser(app, oid string) (string, error) {
 	return user, nil
 }
 
-// entraOIDKey is the meta key mapping an Entra object ID to its user;
-// entraUserKey binds the user to that object ID (the user record's
-// immutable Entra identity, kept next to the protojson record in the
-// store). A sign-in only lands on a user when both agree.
-func entraOIDKey(oid string) string   { return "entra_oid:" + strings.ToLower(oid) }
+// entraOIDKey is the meta key mapping an identity key (an Entra object ID,
+// "<provider>:<subject>": entraIdentity.key) to its user; entraUserKey
+// binds the user to that identity (the user record's immutable identity,
+// kept next to the protojson record in the store). A sign-in only lands
+// on a user when both agree. (Named after Entra, the first provider.)
+func entraOIDKey(key string) string {
+	if !strings.Contains(key, ":") { // object IDs; subjects are case-sensitive
+		key = strings.ToLower(key)
+	}
+	return "entra_oid:" + key
+}
 func entraUserKey(user string) string { return "entra_user:" + user }
 
 // entraForgetLocked drops user's Entra binding (RemoveUser): its name may
@@ -290,19 +321,20 @@ func (h *Hub) entraForgetLocked(user string) {
 	}
 }
 
-// entraSignIn maps a verified Entra user to its Longarm user - created on
-// first sign-in, named after the UPN - and says whether it is one of the
-// hub's Entra admins. Refused: users outside [auth.entra] allowed, and
-// disabled users. by names the path ("longarm login", "web") for the audit.
+// entraSignIn maps a verified user of an identity provider to its Longarm
+// user - created on first sign-in, named after the UPN / e-mail address -
+// and says whether it is one of the provider's admins. Refused: users
+// outside the provider's allowed list, and disabled users. by names the
+// path ("longarm login", "web") for the audit.
 func (h *Hub) entraSignIn(id entraIdentity, by string) (user string, admin bool, err error) {
-	cfg := &h.cfg.Auth.Entra
-	admin = entraMatchAny(cfg.Admins, id.upn, id.oid)
-	if !admin && len(cfg.Allowed) > 0 && !entraMatchAny(cfg.Allowed, id.upn, id.oid) {
-		h.log.Warn("entra sign-in refused: not in auth.entra allowed", "upn", id.upn, "oid", id.oid, "via", by)
-		return "", false, status.Errorf(codes.PermissionDenied, "%s may not sign in to this hub", id.upn)
+	admin, allowed := h.idpPolicy(id)
+	if !allowed {
+		h.log.Warn("sign-in refused: not in the allowed list", "provider", cmpOr(id.provider, "entra"), "upn", id.upn, "oid", id.oid, "via", by)
+		return "", false, status.Errorf(codes.PermissionDenied, "%s may not sign in to this hub", cmpOr(id.upn, id.who()))
 	}
+	key := id.key()
 	h.mu.Lock()
-	user, err = h.store.Meta(entraOIDKey(id.oid))
+	user, err = h.store.Meta(entraOIDKey(key))
 	if err != nil {
 		h.mu.Unlock()
 		return "", false, status.Error(codes.Internal, err.Error())
@@ -313,9 +345,9 @@ func (h *Hub) entraSignIn(id entraIdentity, by string) (user string, admin bool,
 			h.mu.Unlock()
 			return "", false, status.Error(codes.Internal, err.Error())
 		}
-		if h.tenants[user] == nil || bound != id.oid { // removed, or its name went to someone else
-			h.log.Warn("entra sign-in: stale user mapping dropped", "user", user, "oid", id.oid, "via", by)
-			h.store.DeleteMeta(entraOIDKey(id.oid))
+		if h.tenants[user] == nil || bound != key { // removed, or its name went to someone else
+			h.log.Warn("sign-in: stale user mapping dropped", "user", user, "identity", key, "via", by)
+			h.store.DeleteMeta(entraOIDKey(key))
 			user = ""
 		}
 	}
@@ -335,17 +367,21 @@ func (h *Hub) entraSignIn(id entraIdentity, by string) (user string, admin bool,
 		}
 	} else {
 		// First sign-in, or the user was removed since (a new user then).
-		user = h.freeUserNameLocked(entraUserName(id.upn))
-		u := &pb.TenantUser{Name: user, CreatedAt: tspb(time.Now().UTC()), CreatedBy: "entra", Upn: id.upn}
+		base := entraUserName(id.upn)
+		if id.upn == "" && id.provider != "" {
+			base = id.provider // no e-mail address to name it after
+		}
+		user = h.freeUserNameLocked(base)
+		u := &pb.TenantUser{Name: user, CreatedAt: tspb(time.Now().UTC()), CreatedBy: cmpOr(id.provider, "entra"), Upn: id.upn}
 		if err := h.saveTenantLocked(u); err != nil {
 			h.mu.Unlock()
 			return "", false, status.Error(codes.Internal, err.Error())
 		}
-		if err := h.store.SetMeta(entraUserKey(user), id.oid); err != nil {
+		if err := h.store.SetMeta(entraUserKey(user), key); err != nil {
 			h.mu.Unlock()
 			return "", false, status.Error(codes.Internal, err.Error())
 		}
-		if err := h.store.SetMeta(entraOIDKey(id.oid), user); err != nil {
+		if err := h.store.SetMeta(entraOIDKey(key), user); err != nil {
 			h.mu.Unlock()
 			return "", false, status.Error(codes.Internal, err.Error())
 		}
@@ -355,8 +391,8 @@ func (h *Hub) entraSignIn(id entraIdentity, by string) (user string, admin bool,
 	}
 	h.mu.Unlock()
 	if created {
-		h.auditHub("entra/"+id.upn, "users/add", map[string]any{"user": user, "upn": id.upn, "oid": id.oid, "via": by})
-		h.log.Info("user created by entra sign-in", "user", user, "upn", id.upn, "oid", id.oid, "via", by)
+		h.auditHub(id.who(), "users/add", map[string]any{"user": user, "upn": id.upn, "oid": id.oid, "provider": cmpOr(id.provider, "entra"), "via": by})
+		h.log.Info("user created by sign-in", "user", user, "provider", cmpOr(id.provider, "entra"), "upn", id.upn, "oid", id.oid, "via", by)
 	}
 	return user, admin, nil
 }
@@ -572,10 +608,11 @@ func (h *Hub) enrollDevice(who, user string, admin bool, d deviceRequest) (resp 
 	var old *node // the same user's device of that name: taken over
 	for i, base := 2, name; ; i++ {
 		n := h.nameTakenLocked(name, "")
-		if n == nil {
+		reserved := h.nodeNameReservedLocked(name, string(role), user)
+		if !reserved && n == nil {
 			break
 		}
-		if mine(n) && n.rec.Name == name {
+		if !reserved && mine(n) && n.rec.Name == name {
 			replaced, old = true, n
 			break
 		}
@@ -640,6 +677,10 @@ func (h *Hub) enrollOwnedWorker(who, owner string, d deviceRequest) (*pb.JoinRes
 	if n := h.nameTakenLocked(name, ""); n != nil {
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name, or remove the old worker)", name)
+	}
+	if h.nodeNameReservedLocked(name, string(pki.RoleWorker), owner) {
+		h.mu.Unlock()
+		return nil, errNameReserved(name)
 	}
 	h.mu.Unlock()
 	now := time.Now().UTC()

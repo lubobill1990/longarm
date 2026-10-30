@@ -116,6 +116,16 @@ func TestTraySettings(t *testing.T) {
 	if p := LoadPrefs(cfg); !p.MuteWorkers || !p.MuteJobs {
 		t.Fatalf("prefs after a partial change: %+v", p)
 	}
+	// the popup's theme: light / dark, "system" = follow Windows (stored as "")
+	if code, got := call(s.setSettings, `{"theme": "dark"}`); code != 200 || got["theme"] != "dark" || got["mute_jobs"] != true {
+		t.Fatalf("theme dark: %d %v", code, got)
+	}
+	if code, _ := call(s.setSettings, `{"theme": "purple"}`); code != 400 || LoadPrefs(cfg).Theme != "dark" {
+		t.Fatalf("theme purple: %d %+v", code, LoadPrefs(cfg))
+	}
+	if code, got := call(s.setSettings, `{"theme": "system"}`); code != 200 || got["theme"] != nil || LoadPrefs(cfg).Theme != "" {
+		t.Fatalf("theme system: %d %v", code, got)
+	}
 	if code, _ := call(s.openFolder, `{"which": "worker-logs"}`); code != 200 || !slices.Equal(opened, []string{data}) {
 		t.Fatalf("folder: %d %v", code, opened)
 	}

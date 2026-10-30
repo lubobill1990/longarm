@@ -4,7 +4,9 @@ import type {
   AuditRecord,
   FleetEvent,
   FleetJob,
+  FleetSummary,
   JoinCode,
+  LatestRelease,
   LinkReport,
   ListUsersResponse,
   LogChunk,
@@ -102,6 +104,12 @@ export function normPortLink(raw: unknown): PortLink {
 }
 
 /** Panel logins with role "user" see their own jobs only (no fleet administration). */
+/** A sign-in button of the panel (GET /auth/info): "entra", "microsoft", "google", "apple". */
+export interface AuthProvider {
+  id: string
+  label: string
+}
+
 export const isAdmin = (me: Me) => me.role !== 'user'
 
 export const hubApi = {
@@ -117,6 +125,14 @@ export const hubApi = {
   toolchainApply: (name: string) => post<NodeInfo>(`/api/nodes/${enc(name)}/toolchain/apply`),
   /** rename a node (admins: any; users: their own workers); it keeps its ID */
   rename: (target: string, name: string) => post<NodeInfo>(`/api/nodes/${enc(target)}/rename`, { name }),
+  // a user's own workers (owner or admin): labels, sharing, removal
+  setWorkerLabels: (name: string, labels: Record<string, string>) => post<NodeInfo>(`/api/nodes/${enc(name)}/worker-labels`, labels),
+  shareWorker: (name: string, req: { add_users?: string[]; remove_users?: string[]; add_teams?: string[]; remove_teams?: string[]; set_everyone?: boolean; everyone?: boolean }) =>
+    post<NodeInfo>(`/api/nodes/${enc(name)}/share`, req),
+  removeWorker: (name: string) => post<NodeInfo>(`/api/nodes/${enc(name)}/remove`),
+  // public: the login page's sign-in buttons, the newest release
+  authInfo: () => get<{ entra?: boolean; mode?: string; providers?: AuthProvider[] }>('/auth/info'),
+  latestRelease: () => get<LatestRelease>('/releases/latest.json'),
   jobs: (q: { worker?: string; states?: string[]; limit?: number } = {}) => {
     const p = new URLSearchParams()
     if (q.worker) p.set('worker', q.worker)
@@ -140,6 +156,8 @@ export const hubApi = {
     for (const k of kinds) h[k] = (d) => onEvent(d as FleetEvent)
     return sse(`/api/events?kinds=${kinds.join(',')}`, h)
   },
+  // administrators: per-user counts of machines, no names (audited)
+  fleetSummary: (rows = false) => get<FleetSummary>(`/api/admin/summary${rows ? '?rows=1' : ''}`),
   history: () => get<{ nodes?: { node: string; node_id?: string; points?: MetricsPoint[] }[] }>('/api/history').then((r) => r.nodes ?? []),
   links: () => get<{ reports?: LinkReport[] }>('/api/links').then((r) => r.reports ?? []),
   // port links (longarm link): the login's own, administrators see everybody's
@@ -154,6 +172,11 @@ export const hubApi = {
   putProfile: (name: string, tools: ToolSpec[]) => put<Profile>(`/api/profiles/${enc(name)}`, { tools }),
   audit: (node?: string, limit = 200) =>
     get<{ records?: AuditRecord[] }>(`/api/audit?limit=${limit}${node ? `&node=${enc(node)}` : ''}`).then((r) => r.records ?? []),
+  // the same, with the other users' records counted by method (never shown)
+  auditView: (node?: string, limit = 200) =>
+    get<{ records?: AuditRecord[]; hidden?: { method?: string; count?: number }[]; hidden_total?: number }>(
+      `/api/audit?limit=${limit}${node ? `&node=${enc(node)}` : ''}`,
+    ),
   users: () => get<{ users: PanelLogin[] }>('/api/users').then((r) => r.users ?? []),
   addUser: (name: string, password: string, current_password: string, reset = false) =>
     post<{ name: string; totp_secret: string; otpauth: string }>('/api/users', { name, password, reset, current_password }),

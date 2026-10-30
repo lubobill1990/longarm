@@ -332,7 +332,7 @@ func TestServer(t *testing.T) {
 		t.Fatalf("attach: %d %v", code, term)
 	}
 	post("/trayapi/ssh", "application/json", `{"worker":"w1"}`)
-	if strings.Join(term[1], " ") != "ssh longarm-w1" {
+	if strings.Join(term[1], " ") != "longarm --config-dir "+cfg+" ssh w1" {
 		t.Fatalf("ssh: %v", term)
 	}
 	if code, _ := post("/trayapi/open", "application/json", `{"url":"file:///etc/passwd"}`); code != 400 {

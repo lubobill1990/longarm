@@ -120,10 +120,10 @@ func TestOwnedWorkers(t *testing.T) {
 			t.Errorf("%s does not see the fleet worker", name)
 		}
 	}
-	if n := nodeNames(t, th.root)["aw"]; n == nil || n.Owner != "alice" {
-		t.Fatalf("admin's list: %v", n)
+	if n, ok := nodeNames(t, th.root)["aw"]; ok { // admins see what users see
+		t.Fatalf("admin's list shows alice's worker: %v", n)
 	}
-	if hist := h.HistoryFor(h.viewer(caller{id: pki.Identity{Role: pki.RoleClient, Name: "bob-laptop", User: "bob"}}), "aw"); len(hist.Nodes) != 0 {
+	if hist := h.HistoryFor(h.viewer(caller{id: pki.Identity{Role: pki.RoleClient, Name: "bob-laptop", User: "bob"}, user: "bob"}), "aw"); len(hist.Nodes) != 0 {
 		t.Errorf("bob gets aw's history")
 	}
 
@@ -142,17 +142,19 @@ func TestOwnedWorkers(t *testing.T) {
 	h.mu.Lock()
 	h.applyJobsLocked(h.nodeLocked("aw"), &pb.JobsReport{Jobs: []*pb.Job{{Spec: &pb.JobSpec{Id: "JAW", Owner: "alice"}, State: pb.JobState_JOB_STATE_RUNNING}}})
 	h.mu.Unlock()
-	if _, err := pb.NewHubAdminClient(th.root).KillJob(tctx(t), &pb.FleetJobRequest{Id: "JAW"}); status.Code(err) != codes.PermissionDenied {
+	// the job is not even known to the admin: nothing names aw
+	if _, err := pb.NewHubAdminClient(th.root).KillJob(tctx(t), &pb.FleetJobRequest{Id: "JAW"}); status.Code(err) != codes.NotFound ||
+		strings.Contains(err.Error(), "aw") {
 		t.Fatalf("admin kills alice's job through the hub: %v", err)
 	}
 	st, err := pb.NewHubAdminClient(th.root).JobLogs(tctx(t), &pb.HubLogsRequest{Id: "JAW"})
 	if err == nil {
 		_, err = st.Recv()
 	}
-	if status.Code(err) != codes.PermissionDenied {
+	if status.Code(err) != codes.NotFound { // not even known to the admin
 		t.Fatalf("admin reads alice's job through the hub: %v", err)
 	}
-	if _, err := pb.NewHubAdminClient(th.root).SubmitJob(tctx(t), &pb.HubSubmitRequest{Worker: "aw", Argv: []string{"x"}}); status.Code(err) != codes.PermissionDenied {
+	if _, err := pb.NewHubAdminClient(th.root).SubmitJob(tctx(t), &pb.HubSubmitRequest{Worker: "aw", Argv: []string{"x"}}); status.Code(err) != codes.NotFound {
 		t.Fatalf("admin submits to alice's worker through the hub: %v", err)
 	}
 	// alice herself (her panel login acts as alice) passes the check
@@ -224,13 +226,27 @@ func TestOwnedWorkers(t *testing.T) {
 	if _, ok := nodeNames(t, th.carol)["aw"]; !ok {
 		t.Error("carol (team t1) does not see aw")
 	}
-	if _, err := share(th.root, &pb.ShareWorkerRequest{Worker: "aw", RemoveTeams: []string{"t1"}, SetEveryone: true, Everyone: true}); err != nil {
+	// an admin never shares another user's worker - not with everyone, not
+	// with itself (that would hand it the machine): not even found
+	for _, req := range []*pb.ShareWorkerRequest{
+		{Worker: "aw", SetEveryone: true, Everyone: true},
+		{Worker: "aw", AddUsers: []string{"root"}},
+	} {
+		if _, err := share(th.root, req); status.Code(err) != codes.NotFound || !strings.Contains(err.Error(), `no worker "aw"`) {
+			t.Fatalf("admin shares alice's worker %v: %v", req, err)
+		}
+	}
+	if _, err := share(th.alice, &pb.ShareWorkerRequest{Worker: "aw", RemoveTeams: []string{"t1"}, SetEveryone: true, Everyone: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := nodeNames(t, th.bob)["aw"]; !ok {
 		t.Error("bob does not see a worker shared with everyone")
 	}
-	if _, err := share(th.root, &pb.ShareWorkerRequest{Worker: "aw", SetEveryone: true}); err != nil {
+	// shared with everyone, root may use aw - and still not share it
+	if _, err := share(th.root, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"root"}}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("admin shares a worker shared with everyone: %v", err)
+	}
+	if _, err := share(th.alice, &pb.ShareWorkerRequest{Worker: "aw", SetEveryone: true}); err != nil {
 		t.Fatal(err)
 	}
 	h.mu.Lock()
@@ -252,7 +268,10 @@ func TestOwnedWorkers(t *testing.T) {
 		}
 	}
 
-	// removal: owner (or admin) only
+	// removal: the owner only (admins: fleet workers)
+	if _, err := pb.NewFleetClient(th.root).RemoveWorker(tctx(t), &pb.NodeRequest{Name: "aw"}); status.Code(err) != codes.NotFound {
+		t.Fatalf("admin removes aw: %v", err)
+	}
 	if _, err := pb.NewFleetClient(th.bob).RemoveWorker(tctx(t), &pb.NodeRequest{Name: "aw"}); status.Code(err) != codes.NotFound {
 		t.Fatalf("bob removes aw: %v", err)
 	}
@@ -343,7 +362,7 @@ func TestCanSeeNode(t *testing.T) {
 func TestFollowedLogsEndOnUnshare(t *testing.T) {
 	th, out := ownedHub(t)
 	h := th.h
-	if _, err := h.ShareWorker("test", "", true, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); err != nil {
+	if _, err := h.ShareWorker("test", "alice", true, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); err != nil {
 		t.Fatal(err)
 	}
 	// the fake worker answers every log request with one more byte, never EOF
@@ -374,7 +393,7 @@ func TestFollowedLogsEndOnUnshare(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("no log output for bob")
 	}
-	if _, err := h.ShareWorker("test", "", true, &pb.ShareWorkerRequest{Worker: "aw", RemoveUsers: []string{"bob"}}); err != nil {
+	if _, err := h.ShareWorker("test", "alice", true, &pb.ShareWorkerRequest{Worker: "aw", RemoveUsers: []string{"bob"}}); err != nil {
 		t.Fatal(err)
 	}
 	select {

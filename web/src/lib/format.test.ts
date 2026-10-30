@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decodeB64, fmtAgo, fmtBytes, fmtRTT, fmtUptime, isActive, isRelayed, levelColor, logDecoder, memPct, nodeKey, num, shortIds, stateName, stripAnsi, until } from './format'
+import { cssColor, decodeB64, fmtAgo, fmtBytes, fmtRTT, fmtUptime, isActive, isRelayed, levelColor, logDecoder, memPct, nodeKey, num, shortIds, stateName, stripAnsi, until } from './format'
 import { niceMax } from '../components/charts'
 import { formatTools, parseTools } from '../panel/ProfilesPage'
 
@@ -27,6 +27,9 @@ describe('format', () => {
     expect(levelColor(60)).toBe('#d29922')
     expect(levelColor(84.9)).toBe('#d29922')
     expect(levelColor(85)).toBe('#f85149')
+    // the tray's themes recolour them; elsewhere the colour itself
+    expect(cssColor(levelColor(10))).toBe('var(--c-green, #3fb950)')
+    expect(cssColor('#123456')).toBe('#123456')
   })
   it('fmtUptime / fmtAgo', () => {
     expect(fmtUptime(3 * 86400 + 4 * 3600 + 5)).toBe('3d 4h')

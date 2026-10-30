@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -22,6 +23,28 @@ type lsRow struct {
 	path  string
 	err   error
 	node  *pb.NodeInfo
+	// src: where snap comes from - "direct" (the daemon's stream or a
+	// probe), "hub" - and when it was taken (snap.time)
+	src string
+}
+
+// lsSource is the METRICS column: "direct 2s", "hub 1s", "hub 3m (stale)".
+func lsSource(r lsRow, now time.Time) string {
+	if r.snap == nil || r.src == "" {
+		return "-"
+	}
+	s := r.src
+	if t := r.snap.GetTime(); t != nil {
+		age := now.Sub(t.AsTime())
+		if age < 0 {
+			age = 0
+		}
+		s += " " + humanAgo(age)
+		if age > 30*time.Second {
+			s += " (stale)"
+		}
+	}
+	return s
 }
 
 // writeLsTable prints longarm ls' table and returns how many rows failed.
@@ -96,10 +119,12 @@ func writeLsTable(w io.Writer, rows []lsRow, wide bool, now time.Time) (failed i
 		return s
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	head := "WORKER\tID\tSTATE\tOS\tCPU%\tMEM GB\tJOBS\tLABELS"
+	head := "WORKER\tID\tSTATE\tOS\tVERSION\tCPU%\tMEM GB\tJOBS\tLABELS"
 	if wide {
-		head = "WORKER\tID\tSTATE\tCPU%\tMEM GB\tJOBS\tCLAUDE\tCOPILOT\tDISK FREE\tUPTIME\tTOP CPU\tPATH"
+		// VERSION last: STATE is followed by the metrics ("online  -": none yet)
+		head = "WORKER\tID\tSTATE\tCPU%\tMEM GB\tJOBS\tCLAUDE\tCOPILOT\tDISK FREE\tUPTIME\tTOP CPU\tMETRICS\tPATH\tVERSION"
 	}
+	avail := map[string][]string{} // newer version -> workers (shown)
 	if admins {
 		head += "\tADMIN"
 	}
@@ -114,6 +139,9 @@ func writeLsTable(w io.Writer, rows []lsRow, wide bool, now time.Time) (failed i
 	}
 	for _, n := range shown {
 		r := byName[n]
+		if u := r.node.GetUpdateAvailable().GetVersion(); u != "" && r.err == nil {
+			avail[u] = append(avail[u], r.name)
+		}
 		if r.err != nil {
 			fmt.Fprintf(tw, "%s\t%s\terror\tERROR: %s\n", r.name, idCol(r), oneLine(r.err))
 			continue
@@ -135,12 +163,12 @@ func writeLsTable(w io.Writer, rows []lsRow, wide bool, now time.Time) (failed i
 				cpu = fmt.Sprintf("%.0f", m.CpuPercent)
 				mem = humanBytes(m.MemUsedBytes) + "/" + humanBytes(m.MemTotalBytes)
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", r.name, idCol(r), lsState(r, now), dash(r.node.GetOs()), cpu, mem, jobs,
-				lsLabels(r.node.GetLabels()), tail(r))
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", r.name, idCol(r), lsState(r, now), dash(r.node.GetOs()), lsVersion(r.node),
+				cpu, mem, jobs, lsLabels(r.node.GetLabels()), tail(r))
 			continue
 		}
 		if m == nil {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t-\t-\t%s%s\n", r.name, idCol(r), lsState(r, now), r.path, tail(r))
+			fmt.Fprintf(tw, "%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t-\t-\t-\t%s\t%s%s\n", r.name, idCol(r), lsState(r, now), r.path, lsVersion(r.node), tail(r))
 			continue
 		}
 		agent := func(k string) string {
@@ -157,13 +185,34 @@ func writeLsTable(w io.Writer, rows []lsRow, wide bool, now time.Time) (failed i
 			}
 			top = append(top, fmt.Sprintf("%s %.0f%%", g.Name, g.CpuPercent))
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%.1f\t%s/%s\t%s\t%s\t%s\t%s G\t%s\t%s\t%s%s\n", r.name, idCol(r), lsState(r, now), m.CpuPercent,
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%.1f\t%s/%s\t%s\t%s\t%s\t%s G\t%s\t%s\t%s\t%s\t%s%s\n", r.name, idCol(r), lsState(r, now), m.CpuPercent,
 			humanBytes(m.MemUsedBytes), humanBytes(m.MemTotalBytes), jobs, agent("claude"),
 			agent("copilot"), humanBytes(m.DiskFreeBytes), humanDuration(time.Duration(m.UptimeSeconds)*time.Second),
-			strings.Join(top, ", "), r.path, tail(r))
+			strings.Join(top, ", "), lsSource(r, now), r.path, lsVersion(r.node), tail(r))
 	}
 	tw.Flush()
+	vs := make([]string, 0, len(avail))
+	for v := range avail {
+		vs = append(vs, v)
+	}
+	sort.Strings(vs)
+	for _, v := range vs {
+		fmt.Fprintf(w, "↑ %s available for %s: longarm worker update <worker> (owners)\n", v, strings.Join(avail[v], ", "))
+	}
 	return failed
+}
+
+// lsVersion: the worker's version, "↑" when the hub has a newer stable
+// release for it (NodeInfo.update_available).
+func lsVersion(n *pb.NodeInfo) string {
+	v := strings.TrimPrefix(n.GetVersion(), "v")
+	if v == "" {
+		return "-"
+	}
+	if n.GetUpdateAvailable().GetVersion() != "" {
+		v += "↑"
+	}
+	return v
 }
 
 // lsState is a row's state; an offline worker says when the hub last saw

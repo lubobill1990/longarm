@@ -407,7 +407,7 @@ func TestReleaseServing(t *testing.T) {
 			t.Fatalf("1.1.0 %s missing=%v", f.Name, f.Missing)
 		}
 	}
-	if _, err := h.pushRelease(&pb.PushReleaseRequest{Version: "1.1.0"}, "test"); err == nil || !strings.Contains(err.Error(), "lost files") {
+	if _, err := h.pushRelease(&pb.PushReleaseRequest{Version: "1.1.0", AllowNone: true}, "test"); err == nil || !strings.Contains(err.Error(), "lost files") {
 		t.Fatalf("push of an incomplete release: %v", err)
 	}
 	// nothing complete: no release

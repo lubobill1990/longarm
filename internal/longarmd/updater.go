@@ -1,15 +1,19 @@
 package longarmd
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"regexp"
 	"runtime"
 	"sync"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -43,7 +47,10 @@ type updater struct {
 	interval time.Duration
 	restart  func() // ends Run with update.ErrRestart
 	canApply error  // why this installation can't update itself (nil = it can)
-	kick     chan struct{}
+	// remote: how longarm worker update installs a release here
+	// (machineUpdater.RemoteMethod; nil: "")
+	remote func() string
+	kick   chan struct{}
 
 	mu     sync.Mutex
 	busy   bool // an update is being applied, or this version is on probation
@@ -98,9 +105,6 @@ func (u *updater) Run(ctx context.Context) {
 }
 
 func (u *updater) check(ctx context.Context) error {
-	if !u.enabled() {
-		return nil
-	}
 	u.mu.Lock()
 	if u.busy {
 		u.missed = true
@@ -120,6 +124,17 @@ func (u *updater) check(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if !u.enabled() {
+		// It can't install the update itself (an MSI install under
+		// Program Files, a user-session worker): it says so (status, the
+		// hub's node list, the tray); the MSI or install script updates it.
+		method := ""
+		if u.remote != nil {
+			method = u.remote()
+		}
+		u.agent.setUpdateAvailable(availableUpdate(version.Version, cmp.Or(resp.Version, resp.LatestVersion), u.canApply, method))
+		return nil
+	}
 	target := resp.Version
 	if target == "" || target == version.Version {
 		return nil
@@ -136,11 +151,35 @@ func (u *updater) check(ctx context.Context) error {
 	u.mu.Unlock()
 	u.cfg.Log.Info("update: applying", "from", version.Version, "to", target)
 	u.setStatus(&pb.UpdateStatus{State: "applying", From: version.Version, To: target})
+	dctx, dcancel := context.WithTimeout(ctx, 15*time.Minute)
+	err = update.Apply(dctx, u.cfg, target, releaseFiles(resp.Files), hubFetch(conn))
+	dcancel()
+	if err != nil {
+		u.mu.Lock()
+		u.busy = false
+		u.mu.Unlock()
+		// "error" (unlike "failed") doesn't halt the rollout: the hub offers
+		// the version again at the next check.
+		u.setStatus(&pb.UpdateStatus{State: "error", From: version.Version, To: target, Error: err.Error()})
+		return err
+	}
+	u.setStatus(&pb.UpdateStatus{State: update.PhaseRestarting, From: version.Version, To: target})
+	time.Sleep(500 * time.Millisecond) // let the report reach the hub
+	u.restart()
+	return nil
+}
+
+func releaseFiles(fs []*pb.ReleaseFile) []update.File {
 	var files []update.File
-	for _, f := range resp.Files {
+	for _, f := range fs {
 		files = append(files, update.File{Name: f.Name, SHA256: f.Sha256, Size: f.Size, Signature: f.Signature})
 	}
-	fetch := func(ctx context.Context, ver, name string, w io.Writer) error {
+	return files
+}
+
+// hubFetch downloads release files through the hub (Fleet.DownloadRelease).
+func hubFetch(conn *hubclient.Conn) func(ctx context.Context, ver, name string, w io.Writer) error {
+	return func(ctx context.Context, ver, name string, w io.Writer) error {
 		st, err := conn.Fleet().DownloadRelease(ctx, &pb.ReleaseFileRequest{Version: ver, Name: name})
 		if err != nil {
 			return err
@@ -158,22 +197,28 @@ func (u *updater) check(ctx context.Context) error {
 			}
 		}
 	}
-	dctx, dcancel := context.WithTimeout(ctx, 15*time.Minute)
-	err = update.Apply(dctx, u.cfg, target, files, fetch)
-	dcancel()
-	if err != nil {
-		u.mu.Lock()
-		u.busy = false
-		u.mu.Unlock()
-		// "error" (unlike "failed") doesn't halt the rollout: the hub offers
-		// the version again at the next check.
-		u.setStatus(&pb.UpdateStatus{State: "error", From: version.Version, To: target, Error: err.Error()})
-		return err
+}
+
+// releaseVersion: a released version (development builds: "dev").
+var releaseVersion = regexp.MustCompile(`^v?[0-9]+\.[0-9]+`)
+
+// availableUpdate is the notice for a worker running running that can't
+// update itself (why) when the hub has target: nil unless target is newer.
+// method: how its owner's longarm worker update would install it ("msi",
+// "none"; the UI offers "Update to X" only when it can work).
+func availableUpdate(running, target string, why error, method string) *pb.UpdateAvailable {
+	if !releaseVersion.MatchString(target) || !update.ValidVersion(target) || !releaseVersion.MatchString(running) ||
+		update.Compare(target, running) <= 0 {
+		return nil
 	}
-	u.setStatus(&pb.UpdateStatus{State: update.PhaseRestarting, From: version.Version, To: target})
-	time.Sleep(500 * time.Millisecond) // let the report reach the hub
-	u.restart()
-	return nil
+	reason := "this installation can't update itself"
+	if why != nil {
+		reason = why.Error()
+	}
+	if method == "self" { // not here: why says it can't; keep the notice honest
+		method = "none"
+	}
+	return &pb.UpdateAvailable{Version: target, Reason: reason, Method: method}
 }
 
 // startup handles a finished or in-progress update when longarmd starts: the
@@ -248,4 +293,95 @@ func newUpdater(cfg Config, agent *hubAgent, exe string, log *slog.Logger, resta
 		u.cfg.Log.Info("self-update unavailable", "why", u.canApply)
 	}
 	return u
+}
+
+// Phases of an owner's update (MachineUpdate.Start, method "self").
+const (
+	wantUpToDate   = "up_to_date"
+	wantRestarting = "restarting"
+)
+
+// errCode is a refusal with the MachineUpdateEvent code.
+type errCode struct {
+	code string
+	err  error
+}
+
+func (e *errCode) Error() string { return e.err.Error() }
+func (e *errCode) Unwrap() error { return e.err }
+
+func coded(code string, format string, a ...any) error {
+	return &errCode{code: code, err: fmt.Errorf(format, a...)}
+}
+
+// applyWanted is an owner's update of an installation that updates itself
+// (longarm worker update): want ("latest" or a version) from the hub, only
+// when it is newer than this version, signatures verified as for a
+// rollout. It returns the version and wantUpToDate or wantRestarting (the
+// restart follows a moment later); progress hears the phases.
+func (u *updater) applyWanted(ctx context.Context, want string, progress func(phase, msg string)) (string, string, error) {
+	if u.canApply != nil {
+		return "", "", coded("unsupported", "this installation can't update itself: %v", u.canApply)
+	}
+	u.mu.Lock()
+	if u.busy {
+		u.mu.Unlock()
+		return "", "", coded("busy", "an update is in progress (or the new version is still on probation)")
+	}
+	u.busy = true
+	u.mu.Unlock()
+	keepBusy := false
+	defer func() {
+		if !keepBusy {
+			u.mu.Lock()
+			u.busy = false
+			u.mu.Unlock()
+		}
+	}()
+	progress("checking", "asking the hub for "+want)
+	conn, err := hubclient.Dial(u.addr, u.agent.live)
+	if err != nil {
+		return "", "", coded("unavailable", "hub: %v", err)
+	}
+	defer conn.Close()
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	resp, err := conn.Fleet().CheckUpdate(cctx, &pb.UpdateCheckRequest{Os: runtime.GOOS, Arch: runtime.GOARCH,
+		Version: version.Version, Channel: u.channel, Want: want})
+	cancel()
+	if err != nil {
+		switch status.Code(err) {
+		case codes.NotFound:
+			return "", "", coded("not_found", "%s", status.Convert(err).Message())
+		case codes.InvalidArgument:
+			return "", "", coded("invalid", "%s", status.Convert(err).Message())
+		}
+		return "", "", coded("unavailable", "hub: %v", err)
+	}
+	to := resp.Version
+	if to == "" || (want != "latest" && to != want) {
+		return "", "", coded("unavailable", "the hub did not offer %s (it is older than this worker: update the hub)", want)
+	}
+	switch err := update.CheckNewer(version.Version, to); {
+	case errors.Is(err, update.ErrSameVersion):
+		return to, wantUpToDate, nil
+	case err != nil:
+		return "", "", coded("refused", "%v", err)
+	}
+	progress("downloading", "downloading and verifying "+to)
+	u.cfg.Log.Info("update: applying (asked by the owner)", "from", version.Version, "to", to)
+	u.setStatus(&pb.UpdateStatus{State: "applying", From: version.Version, To: to})
+	dctx, dcancel := context.WithTimeout(ctx, 15*time.Minute)
+	err = update.Apply(dctx, u.cfg, to, releaseFiles(resp.Files), hubFetch(conn))
+	dcancel()
+	if err != nil {
+		u.setStatus(&pb.UpdateStatus{State: "error", From: version.Version, To: to, Error: err.Error()})
+		return "", "", coded("failed", "%v", err)
+	}
+	keepBusy = true
+	u.setStatus(&pb.UpdateStatus{State: update.PhaseRestarting, From: version.Version, To: to})
+	go func() {
+		time.Sleep(1500 * time.Millisecond) // the answer and the report go out first
+		u.restart()
+	}()
+	return to, wantRestarting, nil
 }

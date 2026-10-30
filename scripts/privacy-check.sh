@@ -47,8 +47,11 @@ else
 		else
 			args=(-i -E -e "$p")
 		fi
-		# don't echo the pattern: CI logs are public
-		if out=$(git grep -n -I "${args[@]}" -- . ':!.privacy-patterns'); then
+		# don't echo the pattern: CI logs are public. The governed repository
+		# files (Start Right: owners, access and inventory of the internal
+		# copy) name their maintainers by design.
+		if out=$(git grep -n -I "${args[@]}" -- . ':!.privacy-patterns' \
+			':!.github/acl/' ':!.github/compliance/' ':!.github/policies/' ':!.github/ISSUE_TEMPLATE/JitAccess.yml'); then
 			report "deny-list entry #$n" "$out"
 		fi
 	done <<<"$patterns"
@@ -56,12 +59,14 @@ else
 fi
 
 # The repository owner's account name only in the module path / repository
-# URLs, the hub image (ghcr.io/<owner>/longarm-hub), the "Deploy to Azure"
-# link (its URL-encoded raw.githubusercontent.com path), the noreply e-mail
-# address and the LICENSE.
+# URLs, the hub image and the deploy mirrors (ghcr.io/<owner>/longarm-hub,
+# ghcr.io/<owner>/longarm-mirror), the "Deploy to Azure"
+# link (its URL-encoded raw.githubusercontent.com path), the project's GitHub
+# Pages site (<owner>.github.io/longarm: the apt/yum repositories,
+# docs/linux-repos.md), the noreply e-mail address and the LICENSE.
 owner=$(sed -n -E 's#^module github\.com/([^/]+)/.*#\1#p' go.mod)
 if out=$(git grep -n -I -F "$owner" -- . ':!LICENSE' |
-	sed -E "s#github\.com/$owner/longarm##g; s#ghcr\.io/$owner/longarm-hub##g; s#githubusercontent\.com%2F$owner%2Flongarm%2F##g; s#$owner@users\.noreply\.github\.com##g" |
+	sed -E "s#github\.com/$owner/longarm##g; s#ghcr\.io/$owner/longarm-(hub|mirror)##g; s#githubusercontent\.com%2F$owner%2Flongarm%2F##g; s#$owner\.github\.io/longarm##g; s#$owner@users\.noreply\.github\.com##g" |
 	grep -F "$owner"); then
 	report "account name outside the module path / repository URLs" "$out"
 fi

@@ -156,7 +156,7 @@ func (h *Hub) failPendingLocked(worker string, sessID uint64) {
 
 // KillJob kills a job through its worker (user: the caller's, see relayCheck).
 func (h *Hub) KillJob(ctx context.Context, by, user, id, worker string) (*pb.FleetJob, error) {
-	w, err := h.jobWorker(id, worker)
+	w, err := h.jobWorker(id, worker, user)
 	if err != nil {
 		return nil, err
 	}
@@ -179,13 +179,15 @@ func (h *Hub) KillJob(ctx context.Context, by, user, id, worker string) (*pb.Fle
 }
 
 // jobWorker finds the worker (its ID) of a job; worker, a target, may be
-// given.
-func (h *Hub) jobWorker(id, worker string) (string, error) {
+// given: it resolves among the workers user may use (fleet workers, its
+// own, shared with it), like relayCheck - another user's worker is no
+// candidate, so the answer never tells it from an unknown one.
+func (h *Hub) jobWorker(id, worker, user string) (string, error) {
 	if id == "" {
 		return "", status.Error(codes.InvalidArgument, "missing job id")
 	}
 	if worker != "" {
-		w, err := h.resolveWorker(worker)
+		w, err := h.resolve(worker, func(n *node) bool { return isWorker(n) && (n.rec.Owner == "" || h.mayUseLocked(user, n)) }, "worker")
 		if err != nil {
 			return "", err
 		}
@@ -205,7 +207,7 @@ func (h *Hub) jobWorker(id, worker string) (string, error) {
 
 // JobLogs reads a job's output through its worker, polling while follow.
 func (h *Hub) JobLogs(ctx context.Context, by, user string, req *pb.HubLogsRequest, send func(*pb.LogChunk) error) error {
-	w, err := h.jobWorker(req.Id, req.Worker)
+	w, err := h.jobWorker(req.Id, req.Worker, user)
 	if err != nil {
 		return err
 	}
@@ -292,16 +294,18 @@ func (h *Hub) SubmitJobAs(ctx context.Context, by, owner string, admin bool, req
 	}
 	spec := &pb.JobSpec{Id: id, Name: req.Name, Argv: req.Argv, Cwd: req.Cwd, Env: req.Env, Labels: labels}
 	if req.Worker != "" && req.Worker != "auto" { // placed jobs passed the quota already
-		w, err := h.resolve(req.Worker, func(n *node) bool { return isWorker(n) && (admin || n.rec.Owner == "" || h.mayUseLocked(owner, n)) }, "worker")
+		// candidates: the workers owner may use (fleet workers, its own,
+		// shared with it) - for admins too: another user's worker is "no
+		// worker", whatever the target
+		w, err := h.resolve(req.Worker, func(n *node) bool { return isWorker(n) && (n.rec.Owner == "" || h.mayUseLocked(owner, n)) }, "worker")
 		if err != nil {
 			return nil, err
 		}
 		worker = w
 		if err := h.relayCheck(by, owner, worker, "submit jobs", id); err != nil {
-			if !admin { // others' own workers don't exist for users (admins see them)
-				return nil, status.Errorf(codes.NotFound, "no worker %q", req.Worker)
-			}
-			return nil, err
+			// others' own workers don't exist for anybody else, admins
+			// included (they are no candidates of the target either)
+			return nil, status.Errorf(codes.NotFound, "no worker %q", req.Worker)
 		}
 		h.mu.Lock()
 		if h.nodes[worker] == nil {
@@ -402,19 +406,34 @@ func (h *Hub) Links() *pb.LinksResponse {
 // ---------------------------------------------------------------- gRPC
 
 func (s *hubAdminServer) KillJob(ctx context.Context, req *pb.FleetJobRequest) (*pb.FleetJob, error) {
-	return s.h.KillJob(ctx, by(ctx), callerFrom(ctx).id.Owner(), req.Id, req.Worker)
+	// visibility first: a job the admin's user may not read is "not known"
+	// - not resolved to its worker, not named in an error or the audit
+	v := s.h.viewer(callerFrom(ctx))
+	if _, err := s.h.GetJobFor(v, req.Id, req.Worker); err != nil {
+		return nil, status.Errorf(codes.NotFound, "job %s not known to the hub", req.Id)
+	}
+	fj, err := s.h.KillJob(ctx, by(ctx), callerFrom(ctx).user, req.Id, req.Worker)
+	if err != nil {
+		return nil, err
+	}
+	return s.h.projector(v).fleetJob(fj), nil
 }
 
 func (s *hubAdminServer) JobLogs(req *pb.HubLogsRequest, st pb.HubAdmin_JobLogsServer) error {
-	return s.h.JobLogs(st.Context(), by(st.Context()), callerFrom(st.Context()).id.Owner(), req, st.Send)
+	// a job's output is read as its reader: admins included (their own and
+	// team-shared jobs; others' jobs are "not known", as on GetJob)
+	if _, err := s.h.GetJobFor(s.h.viewer(callerFrom(st.Context())), req.Id, req.Worker); err != nil {
+		return err
+	}
+	return s.h.JobLogs(st.Context(), by(st.Context()), callerFrom(st.Context()).user, req, st.Send)
 }
 
 func (s *hubAdminServer) SubmitJob(ctx context.Context, req *pb.HubSubmitRequest) (*pb.FleetJob, error) {
-	return s.h.SubmitJobAs(ctx, by(ctx), callerFrom(ctx).id.Owner(), true, req)
+	return s.h.SubmitJobAs(ctx, by(ctx), callerFrom(ctx).user, true, req)
 }
 
 func (s *hubAdminServer) ToolchainApply(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
-	return s.h.ToolchainApply(ctx, by(ctx), req.Name)
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "worker", req.Name, func(t string) (*pb.NodeInfo, error) { return s.h.ToolchainApply(ctx, by(ctx), t) })
 }
 
 func (s *fleetServer) ReportLinks(ctx context.Context, req *pb.LinkReport) (*pb.ReportLinksResponse, error) {
@@ -424,8 +443,8 @@ func (s *fleetServer) ReportLinks(ctx context.Context, req *pb.LinkReport) (*pb.
 	return &pb.ReportLinksResponse{}, nil
 }
 
-func (s *fleetServer) Links(context.Context, *pb.LinksRequest) (*pb.LinksResponse, error) {
-	return s.h.Links(), nil
+func (s *fleetServer) Links(ctx context.Context, _ *pb.LinksRequest) (*pb.LinksResponse, error) {
+	return s.h.LinksFor(s.h.viewer(callerFrom(ctx))), nil
 }
 
 func (s *fleetServer) History(ctx context.Context, req *pb.HistoryRequest) (*pb.HistoryResponse, error) {

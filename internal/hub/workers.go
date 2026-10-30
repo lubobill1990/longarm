@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
@@ -118,9 +119,10 @@ func (h *Hub) activeWorkerCodes(owner string) (int, error) {
 	return n, nil
 }
 
-// ShareWorker changes who may use a worker: an admin (admin = the caller
-// has an admin certificate) for any owned worker, its owner if an admin
-// granted the owner can_share.
+// ShareWorker changes who may use a worker: only its owner - if an admin
+// granted the owner can_share, or the owner is an admin (admin = the
+// caller has an admin certificate). Admins never share other users'
+// workers (with themselves or anybody): that would hand them the machine.
 func (h *Hub) ShareWorker(by, user string, admin bool, req *pb.ShareWorkerRequest) (*pb.NodeInfo, error) {
 	for _, u := range append(slices.Clone(req.AddUsers), req.RemoveUsers...) {
 		if !pki.ValidUser(u) {
@@ -133,7 +135,7 @@ func (h *Hub) ShareWorker(by, user string, admin bool, req *pb.ShareWorkerReques
 		}
 	}
 	h.mu.Lock()
-	n, err := h.ownedWorkerLocked(req.Worker, user, admin)
+	n, err := h.ownedWorkerLocked(req.Worker, user, admin) // its owner (admins: fleet workers, refused below)
 	if err != nil {
 		h.mu.Unlock()
 		return nil, err
@@ -192,16 +194,18 @@ func (h *Hub) ShareWorker(by, user string, admin bool, req *pb.ShareWorkerReques
 	return info, nil
 }
 
-// ownedWorkerLocked finds a worker the caller may manage (share, label,
-// remove, rename) by target (name, ID, ID prefix): its owner's or, for
-// admins, any. Workers the caller may not even see are "not found", like
-// on ListNodes.
+// ownedWorkerLocked finds a worker the caller may manage (label, remove,
+// rename; share with admin=false) by target (name, ID, ID prefix): its own
+// or, for admins, a fleet worker (one without an owner). Workers the
+// caller may not see - other users' private workers, admins included - are
+// not candidates: "not found", like on ListNodes, whatever the target;
+// workers shared with the caller are its owner's to manage.
 func (h *Hub) ownedWorkerLocked(target, user string, admin bool) (*node, error) {
-	n, err := h.resolveLocked(target, func(n *node) bool { return isWorker(n) && (admin || h.mayUseLocked(user, n)) }, "worker")
+	n, err := h.resolveLocked(target, func(n *node) bool { return isWorker(n) && h.mayUseLocked(user, n) }, "worker")
 	if err != nil {
 		return nil, err
 	}
-	if !admin && n.rec.Owner != user {
+	if n.rec.Owner != user && !(admin && n.rec.Owner == "") {
 		return nil, status.Errorf(codes.PermissionDenied, "worker %s belongs to %s", n.rec.Name, ownerName(n.rec.Owner))
 	}
 	return n, nil
@@ -240,10 +244,11 @@ func (h *Hub) RemoveWorker(by, user string, admin bool, target string) (*pb.Node
 	return info, err
 }
 
-// RenameWorker renames a worker of user's (admins: any worker).
-func (h *Hub) RenameWorker(by, user string, admin bool, target, newName string) (*pb.NodeInfo, error) {
+// RenameWorker renames a worker of v's user (admins: also fleet workers),
+// found as ownedWorkerLocked finds it.
+func (h *Hub) RenameWorker(by string, v tenancy.Caller, admin bool, target, newName string) (*pb.NodeInfo, error) {
 	h.mu.Lock()
-	n, err := h.ownedWorkerLocked(target, user, admin)
+	n, err := h.ownedWorkerLocked(target, v.User, admin)
 	id := ""
 	if err == nil {
 		id = n.rec.ID
@@ -252,7 +257,7 @@ func (h *Hub) RenameWorker(by, user string, admin bool, target, newName string) 
 	if err != nil {
 		return nil, err
 	}
-	return h.RenameNode(by, user, admin, "id:"+id, newName)
+	return h.RenameNode(by, v, admin, "id:"+id, newName)
 }
 
 // SetWorkerLabels merges labels into a worker's labels ("" deletes), as
@@ -290,27 +295,35 @@ func errString(err error) string {
 
 func (s *fleetServer) CreateWorkerCode(ctx context.Context, req *pb.CreateWorkerCodeRequest) (*pb.JoinCode, error) {
 	c := callerFrom(ctx)
-	return s.h.CreateWorkerCode(c.id.String(), c.id.Owner(), req)
+	return s.h.CreateWorkerCode(c.id.String(), c.user, req)
 }
 
 func (s *fleetServer) ShareWorker(ctx context.Context, req *pb.ShareWorkerRequest) (*pb.NodeInfo, error) {
 	c := callerFrom(ctx)
-	return s.h.ShareWorker(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req)
+	return s.h.opOn(s.h.viewer(c), "worker", req.Worker, func(t string) (*pb.NodeInfo, error) {
+		r := proto.Clone(req).(*pb.ShareWorkerRequest)
+		r.Worker = t
+		return s.h.ShareWorker(c.id.String(), c.user, c.id.Role == pki.RoleAdmin, r)
+	})
 }
 
 func (s *fleetServer) RemoveWorker(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
 	c := callerFrom(ctx)
-	return s.h.RemoveWorker(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req.Name)
+	return s.h.opOn(s.h.viewer(c), "worker", req.Name, func(t string) (*pb.NodeInfo, error) {
+		return s.h.RemoveWorker(c.id.String(), c.user, c.id.Role == pki.RoleAdmin, t)
+	})
 }
 
 func (s *fleetServer) SetWorkerLabels(ctx context.Context, req *pb.SetLabelsRequest) (*pb.NodeInfo, error) {
 	c := callerFrom(ctx)
-	return s.h.SetWorkerLabels(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req)
+	return s.h.opOn(s.h.viewer(c), "worker", req.Name, func(t string) (*pb.NodeInfo, error) {
+		return s.h.SetWorkerLabels(c.id.String(), c.user, c.id.Role == pki.RoleAdmin, &pb.SetLabelsRequest{Name: t, Labels: req.Labels})
+	})
 }
 
 func (s *fleetServer) RenameWorker(ctx context.Context, req *pb.RenameNodeRequest) (*pb.NodeInfo, error) {
 	c := callerFrom(ctx)
-	return s.h.RenameWorker(c.id.String(), c.id.Owner(), c.id.Role == pki.RoleAdmin, req.Target, req.NewName)
+	return s.h.RenameWorker(c.id.String(), s.h.viewer(c), c.id.Role == pki.RoleAdmin, req.Target, req.NewName)
 }
 
 // ---------------------------------------------------------------- panel
@@ -320,17 +333,16 @@ func (s *fleetServer) RenameWorker(ctx context.Context, req *pb.RenameNodeReques
 //	POST /api/workercodes             {name, ttl, labels}: a worker code of the login's user (user logins)
 //	POST /api/nodes/{name}/share      ShareWorkerRequest (protojson; worker = the path)
 //	POST /api/nodes/{name}/remove     revoke a worker of the login's user (admins: any)
-//	POST /api/nodes/{name}/rename     {name}: rename a worker of the login's user (admins: any node)
+//	POST /api/nodes/{name}/worker-labels  {"k": "v", "gone": ""}: SetWorkerLabels (owner or admin)
+//	POST /api/nodes/{name}/rename     {name}: rename a worker of the login's user (admins: also its devices and fleet workers)
 //
 // {name} is a node target: a name, an ID or an ID prefix.
 //
 // A user login acts as its Longarm user; admin logins as admins.
 func (h *Hub) workerRoutes(api func(string, func(http.ResponseWriter, *http.Request, string))) {
+	// the user a login acts as is its viewer's (an admin login's tenant, else its name)
 	who := func(login string) (user string, admin bool) {
-		if h.panelAdmin(login) {
-			return login, true
-		}
-		return h.panelViewer(login).User, false
+		return h.panelViewer(login).User, h.panelAdmin(login)
 	}
 	api("POST /api/workercodes", func(w http.ResponseWriter, r *http.Request, login string) {
 		var body struct {
@@ -371,12 +383,28 @@ func (h *Hub) workerRoutes(api func(string, func(http.ResponseWriter, *http.Requ
 		}
 		req.Worker = r.PathValue("name")
 		user, admin := who(login)
-		info, err := h.ShareWorker("web/"+login, user, admin, req)
+		info, err := h.opOn(h.panelViewer(login), "worker", req.Worker, func(t string) (*pb.NodeInfo, error) {
+			req.Worker = t
+			return h.ShareWorker("web/"+login, user, admin, req)
+		})
 		writeResult(w, info, err)
 	})
 	api("POST /api/nodes/{name}/remove", func(w http.ResponseWriter, r *http.Request, login string) {
 		user, admin := who(login)
-		info, err := h.RemoveWorker("web/"+login, user, admin, r.PathValue("name"))
+		name := r.PathValue("name")
+		info, err := h.opOn(h.panelViewer(login), "worker", name, func(t string) (*pb.NodeInfo, error) { return h.RemoveWorker("web/"+login, user, admin, t) })
+		writeResult(w, info, err)
+	})
+	api("POST /api/nodes/{name}/worker-labels", func(w http.ResponseWriter, r *http.Request, login string) {
+		var labels map[string]string
+		if !readJSON(w, r, &labels) {
+			return
+		}
+		user, admin := who(login)
+		name := r.PathValue("name")
+		info, err := h.opOn(h.panelViewer(login), "worker", name, func(t string) (*pb.NodeInfo, error) {
+			return h.SetWorkerLabels("web/"+login, user, admin, &pb.SetLabelsRequest{Name: t, Labels: labels})
+		})
 		writeResult(w, info, err)
 	})
 	api("POST /api/nodes/{name}/rename", func(w http.ResponseWriter, r *http.Request, login string) {
@@ -386,14 +414,15 @@ func (h *Hub) workerRoutes(api func(string, func(http.ResponseWriter, *http.Requ
 		if !readJSON(w, r, &body) {
 			return
 		}
-		user, admin := who(login)
+		v, admin := h.panelViewer(login), h.panelAdmin(login)
 		var info *pb.NodeInfo
 		var err error
 		if admin {
-			info, err = h.RenameNode("web/"+login, user, true, r.PathValue("name"), body.Name)
+			info, err = h.RenameNode("web/"+login, v, true, r.PathValue("name"), body.Name)
 		} else {
-			info, err = h.RenameWorker("web/"+login, user, false, r.PathValue("name"), body.Name)
+			info, err = h.RenameWorker("web/"+login, v, false, r.PathValue("name"), body.Name)
 		}
+		info = opNodeView(v, info)
 		writeResult(w, info, err)
 	})
 }
@@ -407,20 +436,22 @@ func (h *Hub) relayCheck(by, user, worker, action, job string) error {
 	n := h.nodeLocked(worker)
 	ok := n == nil || n.rec.Owner == "" || h.mayUseLocked(user, n)
 	admin := n != nil && n.rec.Admin
+	owner := ""
 	if n != nil {
 		worker = n.rec.Name // for the messages: worker may be an ID
+		owner = n.rec.Owner
 	}
 	h.mu.Unlock()
 	if admin {
 		// the hub issues no commands to an admin worker, not even its
 		// owner's: they go to it directly, with the owner's certificate
-		h.auditHub(by, "workers/denied", map[string]any{"worker": worker, "action": action, "job": job, "user": user, "why": "admin worker"})
+		h.auditHub(by, "workers/denied", map[string]any{"worker": worker, "action": action, "job": job, "user": user, "owner": owner, "why": "admin worker"})
 		return status.Errorf(codes.PermissionDenied, "worker %s is an admin worker: the hub relays nothing to it; use it directly (longarm run %s -- ...)", worker, worker)
 	}
 	if ok {
 		return nil
 	}
-	h.auditHub(by, "workers/denied", map[string]any{"worker": worker, "action": action, "job": job, "user": user})
+	h.auditHub(by, "workers/denied", map[string]any{"worker": worker, "action": action, "job": job, "user": user, "owner": owner})
 	h.log.Info("hub request on a user-owned worker refused", "worker", worker, "action", action, "job", job, "by", by)
 	return status.Errorf(codes.PermissionDenied, "user %q may not %s on worker %s (a user's own worker, not shared with them)",
 		user, action, worker)

@@ -52,6 +52,15 @@ const (
 	EnvEntraSecretFile      = "LONGARM_HUB_ENTRA_CLIENT_SECRET_FILE"
 	EnvEntraWeb             = "LONGARM_HUB_ENTRA_WEB"
 	EnvEntraApps            = "LONGARM_HUB_ENTRA_APPS"
+	// [tailnet] provider and [tailnet.headscale]; the booleans take
+	// true/false or 1/0.
+	EnvTailnetProvider     = "LONGARM_HUB_TAILNET_PROVIDER"
+	EnvHeadscaleURL        = "LONGARM_HUB_HEADSCALE_URL"
+	EnvHeadscaleAPIURL     = "LONGARM_HUB_HEADSCALE_API_URL"
+	EnvHeadscaleAPIKeyFile = "LONGARM_HUB_HEADSCALE_API_KEY_FILE"
+	EnvHeadscaleDir        = "LONGARM_HUB_HEADSCALE_DIR" // sidecar_dir
+	EnvHeadscaleProxy      = "LONGARM_HUB_HEADSCALE_PROXY"
+	EnvHeadscalePublicDERP = "LONGARM_HUB_HEADSCALE_PUBLIC_DERP"
 )
 
 func (c *Config) applyEnv() error {
@@ -76,7 +85,10 @@ func (c *Config) applyEnv() error {
 		{EnvEntraTenant, &c.Auth.Entra.TenantID}, {EnvEntraClient, &c.Auth.Entra.ClientID}, {EnvEntraScope, &c.Auth.Entra.Scope},
 		{EnvEntraClientAssertion, &c.Auth.Entra.ClientAssertion}, {EnvEntraSecretFile, &c.Auth.Entra.ClientSecretFile},
 		{EnvEntraWeb, &c.Auth.Entra.Web}, {EnvAppInsights, &c.Telemetry.ConnectionString},
-		{EnvReleasePublicKey, &c.Releases.PublicKey}} {
+		{EnvReleasePublicKey, &c.Releases.PublicKey},
+		{EnvTailnetProvider, &c.Tailnet.Provider}, {EnvHeadscaleURL, &c.Tailnet.Headscale.URL},
+		{EnvHeadscaleAPIURL, &c.Tailnet.Headscale.APIURL}, {EnvHeadscaleAPIKeyFile, &c.Tailnet.Headscale.APIKeyFile},
+		{EnvHeadscaleDir, &c.Tailnet.Headscale.SidecarDir}} {
 		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
 			*kv.dst = v
 		}
@@ -95,12 +107,17 @@ func (c *Config) applyEnv() error {
 			}
 		}
 	}
-	if v := strings.TrimSpace(os.Getenv(EnvCAInDB)); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			return fmt.Errorf("%s=%q: want true or false", EnvCAInDB, v)
+	for _, kv := range []struct {
+		env string
+		dst *bool
+	}{{EnvCAInDB, &c.CAInDB}, {EnvHeadscaleProxy, &c.Tailnet.Headscale.Proxy}, {EnvHeadscalePublicDERP, &c.Tailnet.Headscale.PublicDERP}} {
+		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return fmt.Errorf("%s=%q: want true or false", kv.env, v)
+			}
+			*kv.dst = b
 		}
-		c.CAInDB = b
 	}
 	adv := strings.TrimSpace(os.Getenv(EnvAdvertise))
 	if adv == "" {

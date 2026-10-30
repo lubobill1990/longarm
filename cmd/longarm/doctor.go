@@ -144,8 +144,11 @@ func clientChecks(ctx context.Context, env clientEnv, now time.Time) []doctor.Ch
 	case fw.Ok:
 		out = append(out, doctor.Check{ID: "firewall", Title: "firewall", Status: doctor.OK, Detail: "inbound allow rule for " + fw.Program})
 	default:
-		out = append(out, doctor.Check{ID: "firewall", Title: "firewall", Status: doctor.Warn,
-			Detail: fw.Problem, Fix: fw.Fix + "  (elevated)"})
+		c := doctor.Check{ID: "firewall", Title: "firewall", Status: doctor.Warn, Detail: fw.Problem}
+		if fw.Fix != "" { // none for a path no command line can carry
+			c.Fix = fw.Fix + "  # elevated"
+		}
+		out = append(out, c)
 	}
 
 	if !signedIn {
@@ -194,7 +197,7 @@ func workerCheck(n *pb.NodeInfo, l workerLegs, now time.Time) doctor.Check {
 	}
 	switch {
 	case n.State == "pending":
-		c.Status, c.Detail, c.Fix = doctor.Warn, "waiting for an admin's approval", "longarm admin approve "+n.Name+"  (an admin)"
+		c.Status, c.Detail, c.Fix = doctor.Warn, "waiting for an admin's approval", "longarm admin approve "+n.Name+"  # an admin"
 	case !n.Online:
 		c.Status, c.Detail = doctor.Fail, strings.TrimPrefix(offlineNote(n, now), "worker "+n.Name+" ")
 		c.Fix = workerStartFix(n)

@@ -8,10 +8,16 @@
 //   - a port number at most once per container and per group, whatever the
 //     protocol (DuplicateContainerPorts: 7443/tcp + 7443/udp was refused)
 //   - every port of the group's IP address is a port of some container
+//   - at most 5 ports per IP address (an ACI hard limit; the hub with its
+//     panel uses all 5, which is why the Headscale sidecar has no STUN port)
 //   - memoryInGB in steps of 0.1 GB (the 0.25 GB sidecar was refused), CPU in
 //     steps of 0.01, both > 0; the group at most 4 vCPU / 16 GB
 //   - environment variable names unique, each with value or secureValue
 //   - volume mounts name volumes of the group
+//   - the hub's liveness probe survives a long Litestream restore: either
+//     `healthcheck --live` (passes on the restore's heartbeat) or a plain
+//     healthcheck no earlier than 20 min (a 7-minute restore was killed at
+//     3 min: a crash loop)
 //
 // The template is evaluated with a small ARM expression evaluator (the
 // functions the template uses; anything resolved at deploy time such as
@@ -89,6 +95,9 @@ var notShaping = map[string]any{
 	"telemetryRetentionDays":   nil,
 	"diagnosticsRetentionDays": nil,
 	"adminCodeTtlHours":        nil,
+	"headscalePublicDerp":      true,
+	// only the hub's liveness command (TestLivenessProbe checks each)
+	"hubLivenessProbe": nil,
 }
 
 // Check evaluates the container group(s) of the template for every
@@ -289,6 +298,9 @@ func checkGroup(props any) []string {
 				bad("container %s: environment variable %s needs exactly one of value / secureValue", name, n)
 			}
 		}
+		if name == "hub" {
+			out = append(out, checkHubProbes(p)...)
+		}
 		for _, x := range list(p["volumeMounts"]) {
 			vm, _ := x.(map[string]any)
 			if !volumes[fmt.Sprint(vm["name"])] {
@@ -311,6 +323,37 @@ func checkGroup(props any) []string {
 		gports[n] = true
 		if cp, ok := exposed[n]; !ok || cp != proto {
 			bad("ipAddress: port %v/%s is not a port of any container", n, proto)
+		}
+	}
+	if len(gports) > 5 {
+		bad("ipAddress: %d ports: ACI allows at most 5 ports per IP address", len(gports))
+	}
+	return out
+}
+
+// checkHubProbes: the hub's probes are longarm-hub healthcheck; the
+// liveness probe must not kill a restore that takes minutes.
+func checkHubProbes(p map[string]any) []string {
+	var out []string
+	for _, k := range []string{"livenessProbe", "readinessProbe"} {
+		pr, ok := p[k].(map[string]any)
+		if !ok {
+			out = append(out, "container hub: no "+k)
+			continue
+		}
+		cmd, _ := mapAt(pr, "exec")
+		args := list(cmd["command"])
+		if len(args) < 2 || fmt.Sprint(args[0]) != "/usr/local/bin/longarm-hub" || fmt.Sprint(args[1]) != "healthcheck" {
+			out = append(out, fmt.Sprintf("container hub: %s %v is not longarm-hub healthcheck", k, args))
+			continue
+		}
+		live := slices.ContainsFunc(args[2:], func(a any) bool { return a == "--live" })
+		delay, _ := pr["initialDelaySeconds"].(float64)
+		switch {
+		case k == "readinessProbe" && live:
+			out = append(out, "container hub: the readiness probe has --live (a restoring hub is not ready)")
+		case k == "livenessProbe" && !live && delay < 1200:
+			out = append(out, fmt.Sprintf("container hub: liveness probe without --live after %v s kills a long Litestream restore", delay))
 		}
 	}
 	return out
@@ -706,6 +749,48 @@ func (e *evaluator) eval(n *node) (any, error) {
 			s = s[:k]
 		}
 		return s, nil
+	case "skip":
+		s := str(0)
+		k := min(max(int(num(1)), 0), len(s))
+		return s[k:], nil
+	case "startsWith":
+		return strings.HasPrefix(str(0), str(1)), nil
+	case "first", "last":
+		switch a := args[0].(type) {
+		case string:
+			if a == "" {
+				return "", nil
+			}
+			if n.name == "first" {
+				return a[:1], nil
+			}
+			return a[len(a)-1:], nil
+		case []any:
+			if len(a) == 0 {
+				return nil, nil
+			}
+			if n.name == "first" {
+				return a[0], nil
+			}
+			return a[len(a)-1], nil
+		}
+		return nil, fmt.Errorf("%s of %T", n.name, args[0])
+	case "contains":
+		switch a := args[0].(type) {
+		case string:
+			return strings.Contains(a, str(1)), nil
+		case []any:
+			for _, x := range a {
+				if fmt.Sprint(x) == fmt.Sprint(args[1]) {
+					return true, nil
+				}
+			}
+			return false, nil
+		case map[string]any:
+			_, ok := a[str(1)]
+			return ok, nil
+		}
+		return nil, fmt.Errorf("contains of %T", args[0])
 	case "join":
 		l, _ := args[0].([]any)
 		parts := make([]string, len(l))

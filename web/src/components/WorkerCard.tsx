@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import type { LegStatus, MetricsSnapshot, PoolWorker, ProcGroup } from '../api/types'
+import type { WorkerUpdateJob } from '../api/local'
 import {
   AMBER,
   CPU_C,
+  cssColor,
   fmtAgo,
   fmtBytes,
   fmtRTT,
@@ -19,6 +21,7 @@ import {
 } from '../lib/format'
 import { ADMIN_LABEL, fmtLastSeen, isAdminNode, offlineSeconds, type PoolMachine } from '../lib/machines'
 import { Bar, Sparkline } from './charts'
+import { IconExternal, IconMore } from './icons'
 
 const AGENTS: [string, string, string][] = [
   ['claude', 'Claude Code', 'var(--claude)'],
@@ -35,6 +38,31 @@ export interface CardActions {
   remove?: (names: string[]) => void
   /** whether this user may remove the worker (its owner, or an admin) */
   canRemove?: (w: PoolWorker) => boolean
+  /** "Update to X": longarm worker update (the worker's owner only; the caller runs and tracks it) */
+  update?: (w: string, version: string) => void
+  /** whether this user may update the worker's machine (its owner) */
+  canUpdate?: (w: PoolWorker) => boolean
+  /** updates in progress or finished, by worker name */
+  updates?: Record<string, WorkerUpdateJob>
+}
+
+/** "0.1.8" (a leading v dropped), "" when unknown. */
+export function fmtVersion(v?: string): string {
+  return (v ?? '').replace(/^v/, '')
+}
+
+/** The machine's versions: "v0.1.8", "v0.1.8 · admin v0.1.7" when they differ. */
+export function machineVersion(session?: PoolWorker, admin?: PoolWorker): string {
+  const sv = fmtVersion(session?.node?.version)
+  const av = fmtVersion(admin?.node?.version)
+  if (sv && av && sv !== av) return `v${sv} · admin v${av}`
+  if (sv || av) return `v${sv || av}`
+  return ''
+}
+
+/** The worker an update of the machine goes to: the session worker, else the admin worker. */
+export function updateTarget(session?: PoolWorker, admin?: PoolWorker): PoolWorker | undefined {
+  return session ?? admin
 }
 
 const adminTip = (name: string) =>
@@ -108,7 +136,7 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
   const admin = mm.admin
   const p = mm.primary
   const state = mm.state
-  const dot = state === 'online' ? GREEN : state === 'offline' ? RED : AMBER
+  const dot = cssColor(state === 'online' ? GREEN : state === 'offline' ? RED : AMBER)
   const metrics = p.state === 'online' || p.source === 'hub' ? p.metrics : undefined
   const draining = session?.node?.draining
   const canRemove = (x?: PoolWorker) => !!x && !!actions?.remove && (actions.canRemove?.(x) ?? false)
@@ -116,14 +144,32 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
   if (admin && actions?.attach) menuItems.push([`run as admin (attach ${admin.name})`, () => actions.attach!(admin.name)])
   if (admin && actions?.ssh) menuItems.push([`ssh as admin (${admin.name})`, () => actions.ssh!(admin.name)])
   for (const x of [session, admin]) if (x && canRemove(x)) menuItems.push([`remove ${x.name}…`, () => actions!.remove!([x.name])])
+  const version = machineVersion(session, admin)
+  const target = updateTarget(session, admin)
+  const ua = target?.node?.update_available
+  const avail = ua?.version ?? ''
+  const job = target ? actions?.updates?.[target.name] : undefined
+  const running = job?.state === 'running'
+  // "none": longarm worker update can't install it there (no Longarm Update
+  // service, no self-update): no button, the version pill says why
+  const remote = ua?.method !== 'none'
+  const canUpdate =
+    !!target && !!avail && remote && !!actions?.update && (actions.canUpdate?.(target) ?? false) && target.state === 'online'
   return (
     <div className="wcard" data-testid={`worker-${mm.key}`} data-state={state}>
       <div className="head">
-        <span className="dot" style={{ background: dot }} />
+        <span className={`dot is-${state}`} style={{ background: dot }} />
         <span className="name">{mm.key}</span>
         {p.node?.id && (
           <span className="mono faint small" title={`node ID ${p.node.id}`} data-testid={`id-${mm.key}`}>
             {p.node.id.slice(0, 8)}
+          </span>
+        )}
+        {version && (
+          <span className={`pill ${avail ? 'warn' : 'chip'} ver`} data-testid="version" title={avail ? `Longarm ${avail} is available${remote ? '' : ` - it can't be updated from here: ${ua?.reason ?? ''}`}` : 'Longarm version'}
+          >
+            {version}
+            {avail ? ' ↑' : ''}
           </span>
         )}
         <span className="sub">{statusText(session ?? admin ?? p, now)}</span>
@@ -132,27 +178,52 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
             draining
           </span>
         )}
-        {p.source && p.source !== 'none' && (
-          <span className="pill" title="where these metrics come from">
-            {p.source}
-          </span>
-        )}
         <span className="actions">
-          {session && actions?.attach && <button onClick={() => actions.attach!(session.name)}>attach</button>}
-          {session && actions?.ssh && <button onClick={() => actions.ssh!(session.name)}>ssh ↗</button>}
-          {actions?.panel && <button onClick={() => actions.panel!(mm.key)}>hub ↗</button>}
+          {canUpdate && (
+            <button
+              className="act update"
+              data-testid="update-btn"
+              disabled={running}
+              title={`longarm worker update ${target!.name} --version ${avail}: installs the signed release; running jobs and sessions keep running`}
+              onClick={() => actions!.update!(target!.name, avail)}
+            >
+              {running ? 'Updating…' : `Update to ${avail}`}
+            </button>
+          )}
+          {session && actions?.attach && (
+            <button className="act" title={`open a terminal: longarm attach ${session.name}`} onClick={() => actions.attach!(session.name)}>
+              attach
+            </button>
+          )}
+          {session && actions?.ssh && (
+            <button className="act" title={`longarm ssh ${session.name} (a new window)`} onClick={() => actions.ssh!(session.name)}>
+              ssh <IconExternal aria-hidden="true" />
+            </button>
+          )}
+          {actions?.panel && (
+            <button className="act" title="open this machine in the hub panel" onClick={() => actions.panel!(mm.key)}>
+              hub <IconExternal aria-hidden="true" />
+            </button>
+          )}
           {session && actions?.drain && (
-            <button title="longarm admin drain / undrain (admin certificate)" onClick={() => actions.drain!(session.name, !session.node?.admin_drain)}>
+            <button className="act" title="longarm admin drain / undrain (admin certificate)" onClick={() => actions.drain!(session.name, !session.node?.admin_drain)}>
               {session.node?.admin_drain ? 'resume' : 'drain'}
             </button>
           )}
           {menuItems.length > 0 && (
             <span className="menuwrap">
-              <button aria-label="more actions" aria-expanded={menu} onClick={() => setMenu((v) => !v)}>
-                ⋯
+              <button
+                className="act icon"
+                aria-label="more actions"
+                aria-haspopup="menu"
+                aria-expanded={menu}
+                onClick={() => setMenu((v) => !v)}
+                onKeyDown={(e) => e.key === 'Escape' && setMenu(false)}
+              >
+                <IconMore />
               </button>
               {menu && (
-                <span className="menu" role="menu">
+                <span className="menu" role="menu" onKeyDown={(e) => e.key === 'Escape' && setMenu(false)}>
                   {menuItems.map(([label, fn]) => (
                     <button
                       key={label}
@@ -186,14 +257,38 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
           ))}
         </div>
       )}
+      {job && job.state !== 'idle' && <UpdateLine job={job} />}
       <LinkRows w={p} now={now} />
       {!metrics ? (
         <div className={`msg ${state === 'offline' ? 'red' : 'muted'}`}>
           {(p.error || (state === 'connecting' ? 'waiting for the first sample…' : 'unreachable')).slice(0, 120)}
         </div>
       ) : (
-        <Metrics m={metrics} w={p} />
+        <Metrics m={metrics} w={p} now={now} />
       )}
+    </div>
+  )
+}
+
+/** An update of the machine: its progress, then the outcome. */
+export function UpdateLine({ job }: { job: WorkerUpdateJob }) {
+  if (job.state === 'running') {
+    const last = job.progress?.[job.progress.length - 1] ?? 'starting…'
+    return (
+      <div className="msg muted" data-testid="update-line">
+        updating: {last}
+      </div>
+    )
+  }
+  if (job.state === 'failed')
+    return (
+      <div className="msg red" data-testid="update-line">
+        update failed: {job.outcome?.error || job.error}
+      </div>
+    )
+  return (
+    <div className="msg ok" data-testid="update-line">
+      {job.outcome?.summary}
     </div>
   )
 }
@@ -207,7 +302,7 @@ export function OfflineRow({ m, actions }: { m: PoolMachine; actions?: CardActio
   return (
     <div className="orow" data-testid={`offline-${m.key}`}>
       <div className="row">
-        <span className="dot" style={{ width: 8, height: 8, background: 'var(--faint)' }} />
+        <span className="dot is-gone" style={{ width: 8, height: 8, background: 'var(--faint)' }} />
         <span className="oname">{m.key}</span>
         {m.admin && <AdminBadge admin={m.admin} compact />}
         <span className="muted small">last seen {fmtLastSeen(m.offlineFor)} ago</span>
@@ -228,9 +323,34 @@ export function OfflineRow({ m, actions }: { m: PoolMachine; actions?: CardActio
   )
 }
 
+/** Loopback / unspecified endpoints: only usable on the worker's own machine. */
+export function isLocalOnly(endpoint?: string): boolean {
+  const m = /^[a-z]+:\/\/(\[[^\]]*\]|[^:/?]*)/.exec(endpoint ?? '')
+  const h = (m?.[1] ?? '').replace(/^\[|\]$/g, '')
+  return h === 'localhost' || h.startsWith('127.') || h === '::1' || h === '0.0.0.0' || h === '::'
+}
+
 function LinkRows({ w, now }: { w: PoolWorker; now: number }) {
   const legs = w.link?.legs ?? []
-  if (!legs.length) return null
+  if (!legs.length) {
+    // The worker advertises only endpoints of its own machine (loopback):
+    // nothing this client can dial - say so instead of a bare "down".
+    const eps = w.node?.endpoints ?? []
+    if (!eps.length || !eps.every(isLocalOnly)) return null
+    return (
+      <div data-testid="link">
+        <div className="linkrow">
+          <span className="muted small linklabel">
+            LINK
+          </span>
+          <span className="path is-down" style={{ color: cssColor(RED) }} data-testid="link-path" title={eps.join(' ')}>
+            tcp (loopback only): unreachable from here
+          </span>
+        </div>
+        <div className="small muted">the worker listens on its own machine only; a current longarmd also listens on the hub's relay</div>
+      </div>
+    )
+  }
   const active = legs.find((l) => l.active) ?? legs[0]
   const hist = (active.history ?? []).map((s) => (s.rtt_ms !== undefined && s.rtt_ms >= 0 ? s.rtt_ms : null))
   const fails = (active.history ?? [])
@@ -242,10 +362,10 @@ function LinkRows({ w, now }: { w: PoolWorker; now: number }) {
   return (
     <div data-testid="link">
       <div className="linkrow">
-        <span className="muted small" style={{ width: 36, fontWeight: 700 }}>
+        <span className="muted small linklabel">
           LINK
         </span>
-        <span className="path" style={{ color: !active.up ? RED : relayed ? AMBER : GREEN }} data-testid="link-path">
+        <span className={`path ${!active.up ? 'is-down' : relayed ? 'is-relayed' : 'is-up'}`} style={{ color: cssColor(!active.up ? RED : relayed ? AMBER : GREEN) }} data-testid="link-path">
           {active.label || active.transport}
         </span>
         {active.nat && <span className="pill">nat {active.nat}</span>}
@@ -274,13 +394,31 @@ function Legs({ legs }: { legs: LegStatus[] }) {
   )
 }
 
-function Metrics({ m, w }: { m: MetricsSnapshot; w: PoolWorker }) {
+/** Metrics older than this are stale: 2 × the 5 s the hub's and the direct samples arrive within. */
+export const METRICS_STALE_S = 10
+
+/** Where the metrics come from and how old they are; stale ones are grayed out. */
+export function metricsSource(w: PoolWorker, m: MetricsSnapshot, now: number): { text: string; stale: boolean } {
+  const age = m.time ? since(m.time, now) : undefined
+  const fresh = w.source === 'hub' || w.source === 'direct'
+  const via = w.source === 'hub' ? 'metrics via hub' : w.source === 'direct' ? 'metrics direct' : 'last known metrics'
+  return {
+    text: age === undefined ? via : `${via} · updated ${fmtAgo(age)} ago`,
+    stale: !fresh || (age !== undefined && age > METRICS_STALE_S),
+  }
+}
+
+function Metrics({ m, w, now }: { m: MetricsSnapshot; w: PoolWorker; now: number }) {
   const cpu = m.cpu_percent ?? 0
   const mp = memPct(m)
   const hist = w.history ?? []
   const diskFree = gb(m.disk_free_bytes)
+  const src = metricsSource(w, m, now)
   return (
-    <div style={{ marginTop: 6 }}>
+    <div style={{ marginTop: 6, opacity: src.stale ? 0.45 : undefined }} data-stale={src.stale ? 'true' : undefined}>
+      <div className="small muted" data-testid="metrics-source" title="where these metrics come from">
+        {src.text}
+      </div>
       <Bar label="CPU" pct={cpu} value={`${cpu.toFixed(0)}%`} />
       <Bar label="MEM" pct={mp} value={`${gb(m.mem_used_bytes).toFixed(1)} / ${gb(m.mem_total_bytes).toFixed(0)} GB`} />
       <div style={{ marginTop: 4 }}>

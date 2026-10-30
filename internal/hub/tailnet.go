@@ -168,6 +168,13 @@ func (s *fleetServer) TailnetKey(ctx context.Context, req *pb.TailnetKeyRequest)
 	// Workers are never ephemeral: every key can become a device that stays
 	// until an admin deletes it, so their budget is tight. Clients' nodes
 	// are ephemeral by default and re-key whenever theirs was removed.
+	// a provider that can't mint yet (a Headscale sidecar still starting)
+	// costs the node no rate limit: it retries
+	if r, ok := s.h.tailnet.(interface{ Ready() error }); ok {
+		if err := r.Ready(); err != nil {
+			return nil, status.Errorf(codes.Unavailable, "%s", err)
+		}
+	}
 	lim := s.h.tailnetClientLimit
 	if c.id.Role == pki.RoleWorker {
 		lim = s.h.tailnetWorkerLimit
@@ -254,6 +261,12 @@ func (a *hubAdminServer) TailnetStatus(ctx context.Context, _ *pb.TailnetStatusR
 	if t.Provider == ProviderTailscale {
 		resp.Tailnet = t.Tailscale.Tailnet
 	}
+	if st, detail := h.headscaleHealth(); st != "" {
+		resp.ControlHealth = st
+		if detail != "" {
+			resp.ControlHealth += ": " + detail
+		}
+	}
 	h.tailnetMu.Lock()
 	var last mintFailure // the most recent of the roles' failures
 	for _, f := range h.tailnetMintErr {
@@ -265,13 +278,18 @@ func (a *hubAdminServer) TailnetStatus(ctx context.Context, _ *pb.TailnetStatusR
 	if last.err != "" {
 		resp.LastMintError, resp.LastMintErrorAt, resp.LastMintErrorNode = last.err, tspb(last.at), last.node
 	}
+	v := h.viewer(callerFrom(ctx))
 	h.mu.Lock()
 	for _, n := range h.nodes {
-		if n.rec.State != stateApproved {
+		if n.rec.State != stateApproved || !h.visibleNodeLocked(v, n) { // other users' machines: not listed
 			continue
 		}
 		resp.Nodes = append(resp.Nodes, h.tailnetNodeStatusLocked(n))
 	}
+	if resp.LastMintErrorNode != "" && !h.visibleNameLocked(v, resp.LastMintErrorNode) {
+		resp.LastMintErrorNode = hiddenNode
+	}
+	resp.LastMintError = h.projector(v).text(resp.LastMintError)
 	h.mu.Unlock()
 	sort.Slice(resp.Nodes, func(i, j int) bool {
 		a, b := resp.Nodes[i], resp.Nodes[j]
@@ -291,7 +309,10 @@ func (a *hubAdminServer) TailnetRekey(ctx context.Context, req *pb.NodeRequest) 
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	n, err := h.resolveLocked(req.Name, nil, "node")
+	v := h.viewerLocked(callerFrom(ctx).user, false)
+	// other users' machines are no candidates: the unknown target's answer,
+	// word for word, and nothing done (opOn)
+	n, err := h.resolveLocked(req.Name, h.visibleLocked(v), "node")
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +325,11 @@ func (a *hubAdminServer) TailnetRekey(ctx context.Context, req *pb.NodeRequest) 
 	}
 	h.sendLocked(n, &pb.HubCommand{Msg: &pb.HubCommand_Tailnet{Tailnet: h.tailnetInfo(n)}})
 	h.log.Info("tailnet re-key requested", "node", n.rec.Name, "by", callerFrom(ctx).id.String(), "online", n.sess != nil)
-	return h.tailnetNodeStatusLocked(n), nil
+	ns := h.tailnetNodeStatusLocked(n)
+	if !h.visibleNodeLocked(v, n) { // an infrastructure node: no more than the admin knew
+		ns = &pb.TailnetNodeStatus{Name: ns.Name, Role: ns.Role, Online: ns.Online, RekeyPending: ns.RekeyPending}
+	}
+	return ns, nil
 }
 
 // callerTailnet is the hub's tailnet for a node (by ID; Whoami).

@@ -41,6 +41,7 @@ func execCmd() *cobra.Command {
 	var combined bool
 	var maxOut int64
 	var on, inSession string
+	var aa agentAuthOpts
 	c := &cobra.Command{
 		Use:   "exec [<worker>] -- command [args...]",
 		Short: "Run a short command synchronously (no job); exit code is mirrored. Without a worker (or --on auto) the least loaded passing worker is used",
@@ -75,6 +76,10 @@ func execCmd() *cobra.Command {
 				return err
 			}
 			defer conn.Close()
+			agentAuth, envM, sec, err := forwardAgentAuth(cmd.Context(), s, conn, worker, argv, aa, envM, sec)
+			if err != nil {
+				return err
+			}
 			mode := pb.OutputMode_OUTPUT_MODE_SEPARATE
 			if combined {
 				mode = pb.OutputMode_OUTPUT_MODE_COMBINED
@@ -83,8 +88,9 @@ func execCmd() *cobra.Command {
 			defer cancel()
 			resp, err := conn.Exec().Run(ctx, &pb.ExecRequest{
 				Argv: argv, Cwd: cwd, Env: envM, SecretEnv: sec, Timeout: durationpb.New(timeout),
-				Output: mode, MaxOutputBytes: maxOut,
+				Output: mode, MaxOutputBytes: maxOut, AgentAuth: agentAuth,
 			})
+			clear(sec)
 			if err != nil {
 				return err
 			}
@@ -121,6 +127,7 @@ func execCmd() *cobra.Command {
 	c.Flags().Int64Var(&maxOut, "max-output", 0, "max bytes captured per stream (default 1 MiB)")
 	c.Flags().StringVar(&on, "on", "", "worker name or \"auto\" (default when no worker is given)")
 	c.Flags().StringVarP(&inSession, "session", "s", "", "run on the worker of this session, in its working directory (--cwd: relative to it)")
+	aa.register(c)
 	return c
 }
 
@@ -144,6 +151,7 @@ func runCmd() *cobra.Command {
 	var wait, follow, noQueue bool
 	var memLimit string
 	var memGB, cpus float64
+	var aa agentAuthOpts
 	c := &cobra.Command{
 		Use:   "run [<worker>] -- command [args...]",
 		Short: "Submit a job; prints the job id (with --wait/--follow, exits with the job's code). Without a worker (or --on auto) the scheduler places it",
@@ -256,6 +264,10 @@ Without --repo or --cwd the job runs in the worker's home directory;
 				}
 				gitAuthPB = g.pb()
 			}
+			agentAuth, envM, sec, err := forwardAgentAuth(cmd.Context(), s, conn, worker, argv, aa, envM, sec)
+			if err != nil {
+				return err
+			}
 			ws, err := jobWorkspace(cmd.Context(), conn, repo, ref, lfs, g)
 			if err != nil {
 				return err
@@ -268,6 +280,7 @@ Without --repo or --cwd the job runs in the worker's home directory;
 				Stdin:     stdin,
 				GitAuth:   gitAuthPB, // for the workspace fetch only
 				Share:     share,
+				AgentAuth: agentAuth, // names; the credentials are in SecretEnv
 			}
 			ctx := cmd.Context()
 			// Retrying with the same id is safe: Submit is idempotent.
@@ -280,6 +293,7 @@ Without --repo or --cwd the job runs in the worker's home directory;
 				return err
 			})
 			clear(stdin) // sent (or given up): no copy of the payload stays here
+			clear(sec)
 			g.clear()
 			if err != nil {
 				return err
@@ -330,6 +344,7 @@ Without --repo or --cwd the job runs in the worker's home directory;
 	c.Flags().Float64Var(&cpus, "cpus", 0, "CPU limit of the job's process tree in cores (Windows; Linux with per-user isolation)")
 	c.Flags().StringVarP(&inSession, "session", "s", "", "run on the worker of this session, in its working directory (e.g. its --repo worktree; --cwd: relative to it)")
 	c.Flags().StringVar(&stdinFile, "stdin-file", "", "send this local file (- = longarm's stdin; at most 1 MiB) as the job's stdin: memory-only on the worker, never in job metadata, the hub or logs")
+	aa.register(c)
 	return c
 }
 
@@ -723,10 +738,11 @@ configured or no answer exits 69. --id <job> lists that job alone and exits
 3 when it is not known (to the hub; with the fallback: to the workers that
 answered). See docs/usage.md#jobs---json.
 
-The table shows the newest 20 jobs (--limit N; 0 = all). Admins see
-everybody's jobs, so for an admin certificate it shows only yours unless
---all; --mine shows only yours for anyone (without it you also see jobs
-shared with your teams). --json lists every job you may see unless
+The table shows the newest 20 jobs (--limit N; 0 = all). For an admin
+certificate it shows only yours unless --all. With multi-tenancy admins see
+jobs like any user (their own and those shared with their teams); on a hub
+without it, everybody's. --mine shows only yours for anyone (without it you
+also see jobs shared with your teams). --json lists every job you may see unless
 --limit, --mine or --all are given (as before).`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -855,7 +871,7 @@ shared with your teams). --json lists every job you may see unless
 	c.Flags().StringSliceVar(&states, "state", nil, "filter by state (running, done, failed, killed, lost, ...)")
 	c.Flags().IntVar(&limit, "limit", defaultJobsLimit, "max jobs (0 = all; --json without --limit: all)")
 	c.Flags().BoolVar(&mine, "mine", false, "only your own jobs (the default for admin certificates)")
-	c.Flags().BoolVar(&all, "all", false, "every job you may see (admins: everybody's)")
+	c.Flags().BoolVar(&all, "all", false, "every job you may see (with multi-tenancy admins too see their own and team-shared jobs only)")
 	c.Flags().BoolVar(&asJSON, "json", false, `JSON output: {"jobs": [...], "source": "hub"|"workers"}`)
 	c.Flags().BoolVar(&hubOnly, "hub-only", false, "ask only the hub: exit 69 when there is none or it does not answer (no fallback to the workers)")
 	c.Flags().StringVar(&jobID, "id", "", "only this job; exit 3 when it is not known")

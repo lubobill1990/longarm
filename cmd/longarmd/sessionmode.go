@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/lubobill1990/longarm/internal/longarmd"
+	"github.com/lubobill1990/longarm/internal/stopsignal"
 )
 
 // sessionModeCmd manages the user-session worker (Windows): longarmd as the
@@ -166,6 +167,8 @@ func runSessionHost(dir, longarmdExe string) error {
 	defer done()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ctx, stopEv := stopsignal.NotifyContext(ctx) // the installer's stop (upgrade)
+	defer stopEv()
 	err = h.Run(ctx)
 	if errors.Is(err, longarmd.ErrHostRunning) {
 		fmt.Fprintln(os.Stderr, "longarmd:", err)

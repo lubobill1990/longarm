@@ -176,6 +176,10 @@ type HubConfig struct {
 	// read logs, apply the toolchain now), "all" (also submit command
 	// jobs, which makes the hub able to run commands here) or "none".
 	RemoteJobs string `toml:"remote_jobs"`
+	// Relay: "auto" (default) also listens on the hub's longnet relay when
+	// every listen URL is loopback (sign-in installs), so other machines
+	// reach this worker; "off" never does (relayleg.go).
+	Relay string `toml:"relay"`
 }
 
 // ToolchainConfig is the [toolchain] section.
@@ -545,7 +549,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		Audit: audit, Log: log, Shutdown: cancel,
 		Revoked: revoked, Conns: conntrack.New(), Access: cfg.Access, WorkerAccess: workerAccess,
 		ForwardTargets: cfg.Forward.Targets, Trust: trustSrc,
-		MaxTails: cfg.Files.MaxTails, MaxTailsPerUser: cfg.Files.MaxTailsPerUser,
+		MaxTails: cfg.Files.MaxTails, MaxTailsPerUser: cfg.Files.MaxTailsPerUser, AdminWorker: adminWorker,
 	}
 	srv.UnaryInterceptors, srv.StreamInterceptors = wtel.interceptors()
 	trustSrc.Denied = func(err error) {
@@ -693,11 +697,14 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 
 	// The local control API listens before longarmd.endpoints is written, so that
 	// file's existence means "ready" for both channels.
-	lln, laddr, lerr := localapi.Listen("longarmd", cfg.DataDir, filepath.Join(cfg.DataDir, LocalAddrFile))
+	var lln net.Listener
+	var laddr string
+	lch, lerr := localapi.ListenChannel("longarmd", cfg.DataDir, filepath.Join(cfg.DataDir, LocalAddrFile))
 	if lerr != nil {
 		log.Warn("local control API unavailable", "err", lerr)
 	} else {
-		defer os.Remove(filepath.Join(cfg.DataDir, LocalAddrFile))
+		lln, laddr = lch.Listener, lch.Addr
+		defer lch.Release() // only while it is still this longarmd's
 	}
 
 	endpoints := filepath.Join(cfg.DataDir, EndpointsFile)
@@ -778,15 +785,54 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	if agent.channel == "" {
 		agent.channel = "stable"
 	}
-	if hubOn && !cfg.Update.Disabled && !adminWorker { // the admin worker updates with the MSI only
+	// longarm worker update (the owner's; machineupdate.go)
+	selfWhy := ""
+	switch {
+	case !hubOn:
+		selfWhy = "this worker has no hub to update from"
+	case adminWorker:
+		selfWhy = "the admin worker updates with its MSI (the Longarm Update service is not installed here)"
+	case cfg.Update.Disabled:
+		selfWhy = "self-update is off in longarmd.toml ([update] disabled)"
+	}
+	mupd := newMachineUpdater(srv.Name, log, func() *updater { return agent.upd }, selfWhy)
+	if hubOn && !cfg.Update.Disabled {
 		agent.upd = newUpdater(cfg, agent, exe, log, func() { cancelCause(update.ErrRestart) })
+		if adminWorker {
+			// the admin worker updates with the MSI only: it checks for
+			// the notice, never applies
+			agent.upd.canApply = errors.New("an admin worker updates with the MSI only")
+		}
+		// the notice says whether longarm worker update can install it
+		agent.upd.remote = mupd.RemoteMethod
 		agent.upd.startup(ctx, hubOn)
 		wg.Add(1)
 		go func() { defer wg.Done(); agent.upd.Run(ctx) }()
 	}
+	srv.MachineUpdate = mupd
+	wg.Add(1)
+	go func() { defer wg.Done(); mupd.reportActivity(ctx, st.spaces) }()
 	legs.start(cfg.Listen, hubFile.Tailnet)
 	wg.Add(1)
 	go func() { defer wg.Done(); <-ctx.Done(); legs.wait() }()
+	if hubOn && autoRelayLeg(cfg) {
+		agent.relay = &relayLeg{ctx: ctx, log: log, node: srv.Name, env: legs.env, srv: srv, serve: legs.serve,
+			track: func(relay string, lt *longnet.Transport) {
+				closersMu.Lock()
+				defer closersMu.Unlock()
+				if lt != nil {
+					longnets[relay] = lt
+				} else {
+					delete(longnets, relay)
+				}
+			},
+			changed: func() { writeEndpoints(); agent.rehello() }, cache: filepath.Join(cfg.DataDir, RelaySetFile)}
+		if !legacyRelay() {
+			agent.relay.loadCache(agent.addr) // the hub may be down: listen on the external relays now
+		}
+		wg.Add(1)
+		go func() { defer wg.Done(); <-ctx.Done(); agent.relay.wait() }()
+	}
 	if hubOn && !cfg.Toolchain.Disabled && !adminWorker { // no package operations as SYSTEM on the hub's say
 		backend, err := toolchain.New(cfg.Toolchain.Backend, cfg.Toolchain.FakeState)
 		if sys, ok := backend.(*toolchain.System); ok {

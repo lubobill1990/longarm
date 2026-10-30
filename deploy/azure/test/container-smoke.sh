@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# container-smoke.sh <image> <longarm binary>
+# container-smoke.sh <image> <longarm binary> [<tsprobe binary>]
 # The longarm-hub image as deploy/azure runs it, with Azurite standing in for
 # Blob Storage and a docker volume for the Azure Files share (CI:
 # .github/workflows/image.yml; needs docker and the Azure CLI):
@@ -12,11 +12,23 @@
 #      a published release is still served after the container is replaced
 #      (the files in [releases] blob_url - a docker volume as file:// here,
 #      as Azurite has no Entra tokens - and the CA in the database)
-#   4. a replica that can't be read stops the start
+#   4. the Headscale sidecar (main.bicep enableHeadscale: its image and start
+#      script from azuredeploy.json): the hub restores its database, writes
+#      its config and keys, creates its API key over the socket, proxies
+#      /key and /ts2021; a tsnet node (tsprobe) registers through the hub
+#      with a key the hub minted; after both containers and the shared
+#      volume are replaced, Headscale's nodes, Noise key and API key survive
+#   5. a replica that can't be read stops the start
+# Prints the restart phases (TIMING lines, a summary at the end): SIGTERM to
+# exit (the hub's restart notice, Litestream's last sync), container start to
+# healthy (restore, bootstrap, hub start) - the part of a redeploy's
+# downtime that is ours, not Azure's.
 set -euo pipefail
 
-image=${1:?usage: container-smoke.sh <image> <longarm binary>}
-longarm=${2:?usage: container-smoke.sh <image> <longarm binary>}
+image=${1:?usage: container-smoke.sh <image> <longarm binary> [<tsprobe binary>]}
+longarm=${2:?usage: container-smoke.sh <image> <longarm binary> [<tsprobe binary>]}
+tsprobe=${3:-}
+template=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/azuredeploy.json
 azurite_image=mcr.microsoft.com/azure-storage/azurite:3.37.0@sha256:830430c1da1a2d537e08f3e6764dd1f5ae00cf0346bcaf625b968ec3f0971fd5
 p=lasmoke$$
 # Azurite's well-known development account (public, documented by Microsoft)
@@ -28,7 +40,7 @@ work=$(mktemp -d)
 cleanup() {
 	rc=$?
 	if [[ $rc -ne 0 ]]; then
-		for c in "$p-hub" "$p-hub2" "$p-hub3" "$p-id" "$p-id2"; do
+		for c in "$p-hub" "$p-hub2" "$p-hub3" "$p-id" "$p-id2" "$p-hsh" "$p-hs" "$p-hsh2" "$p-hs2"; do
 			if docker inspect "$c" >/dev/null 2>&1; then
 				echo "::group::docker logs $c"
 				docker logs "$c" 2>&1 | tail -n 200
@@ -36,8 +48,8 @@ cleanup() {
 			fi
 		done
 	fi
-	docker rm -f "$p-hub" "$p-hub2" "$p-hub3" "$p-id" "$p-id2" "$p-https" "$p-azurite" >/dev/null 2>&1 || true
-	docker volume rm "$p-share" "$p-rel" >/dev/null 2>&1 || true
+	docker rm -f "$p-hub" "$p-hub2" "$p-hub3" "$p-id" "$p-id2" "$p-https" "$p-hs" "$p-hs2" "$p-hsh" "$p-hsh2" "$p-azurite" >/dev/null 2>&1 || true
+	docker volume rm "$p-share" "$p-rel" "$p-hsshare" "$p-hsvol" "$p-hsvol2" >/dev/null 2>&1 || true
 	docker network rm "$p" >/dev/null 2>&1 || true
 	rm -rf "$work"
 	exit "$rc"
@@ -93,14 +105,40 @@ hub_run() {
 
 wait_healthy() {
 	local name=$1
-	for _ in $(seq 1 60); do
+	for _ in $(seq 1 240); do
 		if [[ $(docker inspect -f '{{.State.Running}}' "$name") != true ]]; then
 			fail "$name exited: $(docker inspect -f '{{.State.ExitCode}}' "$name")"
 		fi
 		docker exec "$name" /usr/local/bin/longarm-hub healthcheck >/dev/null 2>&1 && return 0
-		sleep 1
+		sleep 0.25
 	done
 	fail "$name not healthy in 60 s"
+}
+
+# replicated CONTAINER: Litestream has uploaded something to the blob
+# container (its first sync runs about a second after the start; a
+# container stopped before it leaves an empty replica)
+replicated() {
+	for _ in $(seq 1 60); do
+		[[ $(az storage blob list -c "$1" --connection-string "$conn" --query "length(@)" -o tsv) -gt 0 ]] && return 0
+		sleep 0.5
+	done
+	fail "nothing replicated to $1 in 30 s"
+}
+
+# timing: restart phases in milliseconds (printed as they happen and at the end)
+now_ms() { date +%s%3N; }
+timings=()
+timing() {
+	local line="TIMING $1: $(($3 - $2)) ms"
+	echo "$line"
+	timings+=("$line")
+}
+# phase_logs NAME: the entrypoint's and the hub's own timing lines
+phase_logs() {
+	local l
+	l=$(docker logs "$1" 2>&1)
+	grep -E 'restore took|bootstrap took|starting the hub|startup timing|restart announced' <<<"$l" | sed "s/^/TIMING $1: /" || true
 }
 
 # bootstrap NAME KEY: a value of the LONGARM_BOOTSTRAP log line
@@ -144,6 +182,11 @@ logs_have "$p-hub" "no matching backups found" || fail "first start: no empty-re
 [[ $(docker inspect -f '{{.Config.User}}' "$p-hub") == nonroot:nonroot ]] || fail "image user"
 docker run --rm --entrypoint /usr/local/bin/longarm-hub "$image" healthcheck --url http://127.0.0.1:1/ >/dev/null 2>&1 &&
 	fail "healthcheck against nothing succeeded"
+# liveness (deploy/azure livenessProbe): passes on a serving hub, fails
+# without a hub when no start (restore) refreshes the startup marker
+docker exec "$p-hub" /usr/local/bin/longarm-hub healthcheck --live >/dev/null || fail "healthcheck --live on a serving hub"
+docker run --rm --entrypoint /usr/local/bin/longarm-hub "$image" healthcheck --live --url http://127.0.0.1:1/ --marker /nonexistent/marker >/dev/null 2>&1 &&
+	fail "healthcheck --live against nothing succeeded"
 
 step "admin joins with the printed code"
 la join "$addr" "$code" --ca-fingerprint "$fp" --name ci-admin
@@ -155,10 +198,72 @@ docker exec -i "$p-hub" /usr/local/bin/longarm-hub user add alice --password-std
 [[ $(docker exec "$p-hub" /usr/local/bin/longarm-hub-users) == *alice* ]] || fail "longarm-hub-users"
 [[ $(docker exec "$p-hub" /usr/local/bin/longarm-hub-release-cert 2>/dev/null | base64 -d | tar -tz | sort | tr '\n' ' ') == "ca.crt node.crt node.key " ]] ||
 	fail "longarm-hub-release-cert"
+# deploy.sh --relay: the relay's certificate (role relay, a DNS name from the
+# hub's advertised name) and the relay itself, from the same image
+relay_cert=$(docker exec "$p-hub" /usr/local/bin/longarm-hub-relay-cert 2>/dev/null)
+[[ $(printf '%s' "$relay_cert" | base64 -d | tar -tz | sort | tr '\n' ' ') == "ca.crt node.crt node.key " ]] ||
+	fail "longarm-hub-relay-cert"
+docker exec "$p-hub" /usr/local/bin/longarm-relay --version >/dev/null || fail "longarm-relay is not in the image"
 docker exec -i "$p-hub" /usr/local/bin/longarm-hub user add bob --password-stdin <<<'another passphrase' >/dev/null
 
+step "Litestream compacts the replica (one L1 file takes in several L0 files)"
+# Litestream 0.5.17's Azure Blob client listed "files from TXID X" as the name
+# prefix X: every compaction took exactly one file of the level below, fell
+# behind for good, nothing was deleted, and the restore of the grown replica
+# ran out of memory (deploy/hub/image-build.sh). A few writes over several
+# syncs (one L0 file per second at most), then up to two L1 compactions
+# (every 30 s).
+# l1_spans_l0: some L1 file covers at least two L0 files
+l1_spans_l0() {
+	local names f g lo hi a b n
+	local -a l0=() l1=()
+	names=$(az storage blob list -c litestream --connection-string "$conn" --prefix hub.db/ltx/ --query "[].name" -o tsv | tr -d '\r')
+	while IFS= read -r f; do
+		case $f in
+		hub.db/ltx/0/*.ltx) l0+=("${f##*/}") ;;
+		hub.db/ltx/1/*.ltx) l1+=("${f##*/}") ;;
+		esac
+	done <<<"$names"
+	for f in "${l1[@]}"; do
+		lo=$((16#${f%%-*}))
+		hi=${f#*-}
+		hi=$((16#${hi%.ltx}))
+		n=0
+		for g in "${l0[@]}"; do
+			a=$((16#${g%%-*}))
+			b=${g#*-}
+			b=$((16#${b%.ltx}))
+			if ((a >= lo && b <= hi)); then
+				n=$((n + 1))
+			fi
+		done
+		if ((n >= 2)); then
+			echo "L1 $f covers $n L0 files (${#l0[@]} in L0, ${#l1[@]} in L1)"
+			return 0
+		fi
+	done
+	return 1
+}
+for _ in 1 2 3 4; do
+	la admin join-code --role worker >/dev/null
+	sleep 1.5
+done
+compacted=false
+for _ in $(seq 1 50); do
+	if l1_spans_l0; then
+		compacted=true
+		break
+	fi
+	sleep 1
+done
+$compacted || fail "no L1 file covers more than one L0 file after 50 tries: Litestream's compaction is behind (0.5.17's Azure Blob seek bug?)"
+
 step "replace the container (SIGTERM, rm)"
+replicated litestream
+t0=$(now_ms)
 docker stop -t 60 "$p-hub" >/dev/null
+timing "key: SIGTERM to exit (restart notice, Litestream's last sync)" "$t0" "$(now_ms)"
+phase_logs "$p-hub"
 logs_have "$p-hub" "longarm-hub stopped" || fail "hub did not stop gracefully"
 logs_have "$p-hub" "litestream shut down" || fail "litestream did not shut down"
 [[ $(docker inspect -f '{{.State.ExitCode}}' "$p-hub") == 0 ]] || fail "exit code $(docker inspect -f '{{.State.ExitCode}}' "$p-hub")"
@@ -166,8 +271,11 @@ docker rm "$p-hub" >/dev/null
 n=$(az storage blob list -c litestream --connection-string "$conn" --query "length(@)" -o tsv)
 [[ $n -gt 0 ]] || fail "no replica in blob storage"
 
+t0=$(now_ms)
 hub_run "$p-hub2"
 wait_healthy "$p-hub2"
+timing "key: container start to healthy (restore, bootstrap, hub start)" "$t0" "$(now_ms)"
+phase_logs "$p-hub2"
 logs_have "$p-hub2" "no matching backups found" && fail "hub2 found no replica"
 [[ $(bootstrap "$p-hub2" ca_fingerprint) == "$fp" ]] || fail "CA changed"
 [[ $(bootstrap "$p-hub2" admin_joined) == true ]] || fail "the restored database lost the admin"
@@ -206,10 +314,16 @@ head -c 300000 /dev/urandom >"$work/rel/longarm-windows-amd64.msi"
 lai admin release publish "$work/rel" --version 0.0.1 --no-sign >/dev/null
 curl -fsS -o "$work/got.msi" http://127.0.0.1:7480/releases/0.0.1/longarm-windows-amd64.msi || fail "download before the replacement"
 cmp -s "$work/got.msi" "$work/rel/longarm-windows-amd64.msi" || fail "downloaded msi differs"
+replicated litestream-id
+t0=$(now_ms)
 docker stop -t 60 "$p-id" >/dev/null
+timing "identity: SIGTERM to exit" "$t0" "$(now_ms)"
 docker rm "$p-id" >/dev/null
+t0=$(now_ms)
 id_run "$p-id2"
 wait_healthy "$p-id2"
+timing "identity: container start to healthy (full restore every start)" "$t0" "$(now_ms)"
+phase_logs "$p-id2"
 [[ $(bootstrap "$p-id2" ca_fingerprint) == "$idfp" ]] || fail "identity hub: CA changed"
 rm -f "$work/got.msi"
 curl -fsS -o "$work/got.msi" http://127.0.0.1:7480/releases/0.0.1/longarm-windows-amd64.msi ||
@@ -219,6 +333,118 @@ script=$(curl -fsS http://127.0.0.1:7480/install.sh) || fail "install.sh"
 grep -qF "VERSION='0.0.1'" <<<"$script" || fail "install.sh doesn't hand out 0.0.1"
 logs_have "$p-id2" "RELEASE FILES MISSING" && fail "the replaced hub reports missing release files"
 docker rm -f "$p-id2" >/dev/null
+hub_mount=(-v "$p-share:/data")
+hub_replica=litestream
+hub_sas=$sas
+
+step "headscale sidecar"
+# the template's image and start script (variables.headscaleScript)
+hs_image=$(jq -r '.parameters.headscaleImage.defaultValue' "$template")
+# the pinned image of deploy/azure/mirror-images.txt (deploy.sh --acr: its copy in
+# the hub's registry); here the same digest from its source
+hs_image=$(awk -v d="${hs_image##*@}" '$1 !~ /^#/ && index($1, "@" d) { print $1 }' "$(dirname "$template")/mirror-images.txt")
+hs_script=$(jq -r '.variables.headscaleScript' "$template")
+[[ $hs_image == *@sha256:* && $hs_script == *ready* ]] || fail "headscale image / script not in $template"
+az storage container create -n litestream-hs --connection-string "$conn" -o none
+az storage container create -n headscale --connection-string "$conn" -o none
+sas_for() {
+	az storage container generate-sas -n "$1" --connection-string "$conn" --permissions racwdl \
+		--expiry "$(date -u -d '+1 day' +%Y-%m-%dT%H:%MZ)" -o tsv
+}
+hub_sas=$(sas_for litestream-hs)
+hs_sas=$(sas_for headscale)
+docker volume create "$p-hsshare" >/dev/null
+hub_mount=(-v "$p-hsshare:/data")
+hub_replica=litestream-hs
+# hs_run HUB SIDECAR VOLUME: the hub (with the panel on 7480, the template's
+# environment) and the sidecar in its network namespace, sharing VOLUME
+hs_run() {
+	hub_run "$1" -p 127.0.0.1:7480:7480 -e LONGARM_HUB_HTTP=:7480 -v "$3:/headscale" \
+		-e LONGARM_HUB_LITESTREAM_CONFIG=/etc/longarm-hub/litestream-abs-headscale.yml \
+		-e LONGARM_HUB_TAILNET_PROVIDER=headscale \
+		-e LONGARM_HUB_HEADSCALE_URL=http://127.0.0.1:7480 \
+		-e LONGARM_HUB_HEADSCALE_API_URL=http://127.0.0.1:8080 \
+		-e LONGARM_HUB_HEADSCALE_API_KEY_FILE=/var/lib/longarm-hub/headscale-api.key \
+		-e LONGARM_HUB_HEADSCALE_DIR=/headscale \
+		-e LONGARM_HUB_HEADSCALE_BLOB_CONTAINER=headscale \
+		-e LONGARM_HUB_HEADSCALE_SAS_TOKEN="$hs_sas"
+	docker run -d --name "$2" --network "container:$1" -v "$3:/headscale" \
+		--entrypoint /busybox/sh "$hs_image" -c "$hs_script" >/dev/null
+}
+hs_ok() {
+	local h=''
+	for _ in $(seq 1 90); do
+		h=$(curl -fsS -m 5 http://127.0.0.1:7480/healthz 2>/dev/null || true)
+		# /healthz is indented JSON
+		[[ $(tr -d ' \n' <<<"$h") != *'"headscale":"ok"'* ]] || return 0
+		sleep 1
+	done
+	fail "headscale not ok via the hub: $h"
+}
+hs() { docker exec "$1" /ko-app/headscale --config /headscale/config.yaml "${@:2}"; }
+docker volume create "$p-hsvol" >/dev/null
+hs_run "$p-hsh" "$p-hs" "$p-hsvol"
+wait_healthy "$p-hsh"
+hs_ok
+logs_have "$p-hsh" "headscale: new API key" || fail "the hub created no API key"
+# no secret in the logs or the environment
+hskey=$(docker cp "$p-hsh:/var/lib/longarm-hub/headscale-api.key" - | tar -xO)
+[[ $hskey == hskey-api-* ]] || fail "api key file"
+logs_have "$p-hsh" "$hskey" && fail "the API key is in the hub's log"
+logs_have "$p-hs" "$hskey" && fail "the API key is in headscale's log"
+[[ $(hs "$p-hs" apikeys list -o json | jq length) == 1 ]] || fail "not one API key: $(hs "$p-hs" apikeys list)"
+# the proxy: Headscale's /key through the hub, its API not
+key1=$(curl -fsS 'http://127.0.0.1:7480/key?v=130')
+[[ $key1 == *'"publicKey":"mkey:'* ]] || fail "/key through the hub: $key1"
+code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $hskey" http://127.0.0.1:7480/api/v1/apikey)
+[[ $code != 200 && $code != 401 ]] || fail "Headscale's API is reachable through the hub ($code)"
+derp=$(curl -s -o /dev/null -w '%{http_code}' --http1.1 -m 5 -H 'Connection: Upgrade' -H 'Upgrade: DERP' http://127.0.0.1:7480/derp || true)
+[[ $derp == 101 ]] || fail "DERP upgrade through the hub: $derp"
+fph=$(bootstrap "$p-hsh" ca_fingerprint)
+hcode=$(bootfile "$p-hsh" admin_join_code)
+lah() { LONGARM_CONFIG_DIR=$work/laptop-hs "$longarm" "$@"; }
+lah join 127.0.0.1:7443 "$hcode" --ca-fingerprint "$fph" --name ci-admin
+st=$(lah admin tailnet status)
+[[ $st == *"provider  headscale"* && $st == *"health    ok"* ]] || fail "tailnet status: $st"
+if [[ -n $tsprobe ]]; then
+	# a node registers through the hub's proxy (/key, /ts2021) with a key the
+	# hub minted. It stays up (an ephemeral client node is deleted when it
+	# logs out) and is killed, which leaves it registered for the restore check
+	"$tsprobe" -config-dir "$work/laptop-hs" -hub 127.0.0.1:7443 -hold 10m >"$work/tsprobe.log" 2>&1 &
+	probe=$!
+	for _ in $(seq 1 90); do
+		grep -q '^tsprobe: up' "$work/tsprobe.log" && break
+		kill -0 "$probe" 2>/dev/null || fail "tsprobe: $(cat "$work/tsprobe.log")"
+		sleep 1
+	done
+	grep -q '^tsprobe: up' "$work/tsprobe.log" || fail "tsprobe not up: $(tail -n 20 "$work/tsprobe.log")"
+	nodes=$(hs "$p-hs" nodes list -o json)
+	[[ $(jq length <<<"$nodes") -ge 1 && $nodes == *tag:longarm-client* ]] || fail "headscale nodes: $nodes"
+	kill "$probe"
+	wait "$probe" || true
+	sleep 3 # Litestream ships Headscale's WAL every second
+fi
+
+step "headscale sidecar: both containers and the shared volume replaced"
+docker stop -t 60 "$p-hsh" >/dev/null
+docker rm -f "$p-hs" >/dev/null
+docker rm "$p-hsh" >/dev/null
+[[ $(az storage blob list -c headscale --connection-string "$conn" --query "length(@)" -o tsv) -gt 0 ]] ||
+	fail "no Headscale replica in blob storage"
+docker volume create "$p-hsvol2" >/dev/null
+hs_run "$p-hsh2" "$p-hs2" "$p-hsvol2"
+wait_healthy "$p-hsh2"
+hs_ok
+logs_have "$p-hsh2" "headscale: new API key" && fail "a new API key after the replacement"
+logs_have "$p-hsh2" "headscale: new private key" && fail "new private keys after the replacement"
+[[ $(curl -fsS 'http://127.0.0.1:7480/key?v=130') == "$key1" ]] || fail "Headscale's Noise key changed"
+[[ $(hs "$p-hs2" apikeys list -o json | jq length) == 1 ]] || fail "API keys after the replacement: $(hs "$p-hs2" apikeys list)"
+if [[ -n $tsprobe ]]; then
+	nodes2=$(hs "$p-hs2" nodes list -o json)
+	[[ $nodes2 == *tag:longarm-client* ]] || fail "Headscale lost its nodes: $nodes2"
+	"$tsprobe" -config-dir "$work/laptop-hs" -hub 127.0.0.1:7443 || fail "tsprobe after the replacement"
+fi
+docker rm -f "$p-hsh2" "$p-hs2" >/dev/null
 hub_mount=(-v "$p-share:/data")
 hub_replica=litestream
 hub_sas=$sas
@@ -242,4 +468,6 @@ done
 [[ $(docker inspect -f '{{.State.Running}}' "$p-hub3") == false ]] || fail "started with a wrong storage key"
 logs_have "$p-hub3" "litestream restore" || fail "no restore error in the log"
 
+echo "== restart timing"
+printf '%s\n' "${timings[@]}"
 echo "container-smoke: ok"

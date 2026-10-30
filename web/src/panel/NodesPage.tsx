@@ -3,6 +3,7 @@ import { hubApi } from '../api/hub'
 import type { LinkReport, MetricsPoint, NodeInfo, Profile } from '../api/types'
 import { MiniBar, Sparkline } from '../components/charts'
 import { ErrorBox, StatePill, useAction, usePoll } from '../components/common'
+import { VersionTag } from '../components/VersionTag'
 import { AMBER, CPU_C, fmtAgo, fmtRTT, gb, GREEN, isRelayed, MEM_C, memPct, nodeKey, RED, shortIds, since } from '../lib/format'
 import { nodeMachines } from '../lib/machines'
 
@@ -54,6 +55,8 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
   const { nodes, hist, error, reload } = useLiveNodes()
   const links = usePoll(() => (admin ? hubApi.links() : Promise.resolve([])), admin ? 10000 : 0, [admin])
   const profiles = usePoll(() => (admin ? hubApi.profiles() : Promise.resolve([])), admin ? 30000 : 0, [admin])
+  // the newest complete release: outdated versions are marked
+  const latest = usePoll(() => hubApi.latestRelease().catch(() => undefined), 600000)
   const list = useMemo(() => Object.values(nodes).sort((a, b) => a.name.localeCompare(b.name) || nodeKey(a).localeCompare(nodeKey(b))), [nodes])
   const short = useMemo(() => shortIds(list.map((n) => n.id)), [list])
   const pending = list.filter((n) => n.state === 'pending')
@@ -73,6 +76,12 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
         <button onClick={reload}>Refresh</button>
       </div>
       <ErrorBox error={error} />
+      {admin && (
+        <p className="muted small" data-testid="nodes-scope">
+          Your machines, the workers shared with you and the fleet workers. Other users&apos; machines are only counted, on the Fleet
+          page.
+        </p>
+      )}
       {admin && pending.length > 0 && (
         <div className="card" style={{ marginBottom: 12, borderColor: '#9e6a03' }} data-testid="pending">
           <h3 style={{ margin: '0 0 8px' }}>Waiting for approval</h3>
@@ -103,10 +112,10 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
           {machines.flatMap((g) => {
             const main = g.session ?? g.admin!
             const rows = [
-              <NodeRow key={nodeKey(main)} n={main} short={short} adminWorker={g.session ? g.admin : undefined} hist={hist[nodeKey(main)] ?? hist[main.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} />,
+              <NodeRow key={nodeKey(main)} n={main} short={short} adminWorker={g.session ? g.admin : undefined} hist={hist[nodeKey(main)] ?? hist[main.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} latest={latest.data?.version} />,
             ]
             if (g.session && g.admin)
-              rows.push(<NodeRow key={nodeKey(g.admin)} n={g.admin} short={short} sub hist={hist[nodeKey(g.admin)] ?? hist[g.admin.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} />)
+              rows.push(<NodeRow key={nodeKey(g.admin)} n={g.admin} short={short} sub hist={hist[nodeKey(g.admin)] ?? hist[g.admin.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} latest={latest.data?.version} />)
             return rows
           })}
           {workers.length === 0 && (
@@ -126,7 +135,7 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
           <table className="grid">
             <tbody>
               {others.map((n) => (
-                <OtherRow key={nodeKey(n)} n={n} short={short} admin={admin} />
+                <OtherRow key={nodeKey(n)} n={n} short={short} admin={admin} latest={latest.data?.version} />
               ))}
             </tbody>
           </table>
@@ -186,6 +195,7 @@ function NodeRow({
   admin,
   adminWorker,
   sub,
+  latest,
 }: {
   n: NodeInfo
   short: Record<string, string>
@@ -197,6 +207,7 @@ function NodeRow({
   adminWorker?: NodeInfo
   /** this is the admin worker of the row above (same machine) */
   sub?: boolean
+  latest?: string
 }) {
   const { run, busy } = useAction()
   const m = n.online ? n.metrics : undefined
@@ -248,7 +259,8 @@ function NodeRow({
           {revoked && <StatePill state="revoked" />}
         </div>
         <div className="muted small">
-          {n.online ? 'online' : `offline ${fmtAgo(since(n.last_seen))}`} · {n.os}/{n.arch} · {n.version}
+          {n.online ? 'online' : `offline ${fmtAgo(since(n.last_seen))}`} · {n.os}/{n.arch} ·{' '}
+          <VersionTag version={n.version} latest={latest} ua={n.update_available} testId={`outdated-${n.name}`} />
           {n.isolation === 'per-user' && <span title="jobs run under per-user OS accounts"> · per-user</span>}
         </div>
       </td>
@@ -356,7 +368,7 @@ function NodeRow({
   )
 }
 
-function OtherRow({ n, short, admin }: { n: NodeInfo; short: Record<string, string>; admin: boolean }) {
+function OtherRow({ n, short, admin, latest }: { n: NodeInfo; short: Record<string, string>; admin: boolean; latest?: string }) {
   const { run, busy } = useAction()
   const target = nodeKey(n)
   return (
@@ -364,6 +376,12 @@ function OtherRow({ n, short, admin }: { n: NodeInfo; short: Record<string, stri
       <td>
         <b>{n.name}</b> <NodeId n={n} short={short} /> <span className="muted">{n.role}</span>
         {n.user && n.user !== n.name && <span className="muted small"> · user {n.user}</span>}
+        {n.version && (
+          <span className="muted small">
+            {' '}
+            · <VersionTag version={n.version} latest={latest} testId={`outdated-${n.name}`} />
+          </span>
+        )}
       </td>
       <td>
         <StatePill state={n.state} />

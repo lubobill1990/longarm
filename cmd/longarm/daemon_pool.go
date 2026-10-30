@@ -100,8 +100,9 @@ func (d *daemon) poolTargets(ctx context.Context) ([]pool.Target, bool) {
 // newMonitor builds the pool monitor of the daemon.
 func (d *daemon) newMonitor() *pool.Monitor {
 	return pool.New(pool.Config{
-		Interval: poolInterval,
-		Targets:  d.poolTargets,
+		Interval:  poolInterval,
+		MaxDirect: poolMaxDirect,
+		Targets:   d.poolTargets,
 		Dial: func(leg client.Worker) (pool.Prober, error) {
 			c, err := d.s.dialer.Dial(leg)
 			if err != nil {
@@ -126,6 +127,15 @@ var poolInterval = func() time.Duration {
 		return v
 	}
 	return 2 * time.Second
+}()
+
+// poolMaxDirect caps the workers the daemon streams metrics from directly
+// (LONGARM_POOL_MAX_DIRECT; default 32, -1 = none: the hub's only).
+var poolMaxDirect = func() int {
+	if v, err := strconv.Atoi(os.Getenv("LONGARM_POOL_MAX_DIRECT")); err == nil && v != 0 {
+		return v
+	}
+	return 32
 }()
 
 // poolSideLoops reports links to the hub and counts this client's jobs.
@@ -205,6 +215,7 @@ func (d *daemon) closeConns() {
 // ---------------------------------------------------------------- RPCs
 
 func (d *daemon) Pool(_ context.Context, req *pb.PoolRequest) (*pb.PoolView, error) {
+	d.mon.Touch() // a viewer: direct metrics streams on (pool.Config.IdleAfter)
 	v := d.mon.View(req.History)
 	d.mu.Lock()
 	v.Hub = proto.Clone(d.link).(*pb.HubLink)
@@ -390,7 +401,7 @@ func (d *daemon) SetSettings(ctx context.Context, req *pb.ClientSettings) (*pb.C
 //	POST /v1/jobs/{id}/kill?worker=
 //	GET  /v1/settings ; POST /v1/settings {"transport": "race"}
 //	POST /v1/workers/{name}/drain {"draining": true}   (longarm admin drain; admin role)
-//	POST /v1/workers/{name}/remove                     (longarm worker remove: the owner, or an admin)
+//	POST /v1/workers/{name}/remove                     (longarm worker remove: the owner; admins: fleet workers)
 func (d *daemon) poolGateway(mux *http.ServeMux) {
 	flag := func(r *http.Request, k string) bool { v := r.URL.Query().Get(k); return v == "1" || v == "true" }
 	mux.HandleFunc("GET /v1/pool", func(w http.ResponseWriter, r *http.Request) {
@@ -623,7 +634,7 @@ func (d *daemon) DrainWorker(ctx context.Context, req *pb.SetDrainRequest) (*pb.
 }
 
 // RemoveWorker removes a worker through the hub (longarm worker remove):
-// the hub revokes it when it is this user's own worker, or for an admin.
+// the hub revokes it when it is this user's own worker (admins: a fleet worker).
 func (d *daemon) RemoveWorker(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
 	if req.GetName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "no worker named")

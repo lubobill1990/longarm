@@ -67,6 +67,74 @@ function devboxPool(identity = 'client/alice-cpc'): PoolView {
 }
 
 describe('PoolTab', () => {
+  it('shows the versions and "Update to X" for the owner; runs the update through the daemon', async () => {
+    const pool = devboxPool()
+    pool.workers = pool.workers!.map((x) =>
+      x.name === 'cpc-alice-x7k2q'
+        ? { ...x, node: { ...x.node!, version: '0.1.8', update_available: { version: '0.1.9' } } }
+        : x.name === 'cpc-alice-x7k2q-admin'
+          ? { ...x, node: { ...x.node!, version: '0.1.7' } }
+          : x.name === 'fleet-1'
+            ? { ...x, node: { ...x.node!, version: '0.1.8', update_available: { version: '0.1.9' } } }
+            : x,
+    )
+    const calls = mockFetch({
+      '/local/longarm/v1/workers/cpc-alice-x7k2q/update': (init) =>
+        init?.method === 'POST'
+          ? [202, { state: 'running', progress: [] }]
+          : [
+              200,
+              {
+                state: 'done',
+                outcome: {
+                  worker: 'cpc-alice-x7k2q',
+                  phase: 'done',
+                  summary: 'cpc-alice-x7k2q: 0.1.8 → 0.1.9; 2 jobs and 1 session kept running',
+                  jobs: 2,
+                  kept_jobs: 2,
+                  sessions: 1,
+                  kept_sessions: 1,
+                },
+              },
+            ],
+    })
+    render(
+      <Toasts>
+        <PoolTab pool={pool} />
+      </Toasts>,
+    )
+    const card = screen.getByTestId('worker-cpc-alice-x7k2q')
+    expect(within(card).getByTestId('version').textContent).toBe('v0.1.8 · admin v0.1.7 ↑')
+    // a fleet worker (no owner) gets no button: its updates are the hub's rollouts
+    expect(within(screen.getByTestId('worker-fleet-1')).queryByTestId('update-btn')).toBeNull()
+    fireEvent.click(within(card).getByTestId('update-btn'))
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/update') && c.init?.method === 'POST')).toBe(true))
+    await waitFor(() => expect(within(card).getByTestId('update-line').textContent).toContain('2 jobs and 1 session kept running'), {
+      timeout: 5000,
+    })
+  })
+
+  it('no "Update to" button for workers of other users', () => {
+    const pool = devboxPool()
+    pool.user = 'bob'
+    pool.workers = pool.workers!.map((x) => ({ ...x, node: { ...x.node!, version: '0.1.8', update_available: { version: '0.1.9' } } }))
+    render(<PoolTab pool={pool} />)
+    expect(screen.queryByTestId('update-btn')).toBeNull()
+    expect(within(screen.getByTestId('worker-cpc-alice-x7k2q')).getByTestId('version').textContent).toBe('v0.1.8 ↑')
+  })
+
+  it('no "Update to" button when the worker says longarm worker update cannot install it (method none)', () => {
+    const pool = devboxPool()
+    pool.workers = pool.workers!.map((x) => ({
+      ...x,
+      node: { ...x.node!, version: '0.1.8', update_available: { version: '0.1.9', method: 'none', reason: 'no Longarm Update service' } },
+    }))
+    render(<PoolTab pool={pool} />)
+    expect(screen.queryByTestId('update-btn')).toBeNull()
+    const v = within(screen.getByTestId('worker-cpc-alice-x7k2q')).getByTestId('version')
+    expect(v.getAttribute('title')).toContain('no Longarm Update service')
+  })
+
   it('one machine card for the session worker + admin worker; old workers collapsed, no red errors', () => {
     render(<PoolTab pool={devboxPool()} />)
     expect(screen.queryByTestId('worker-cpc-alice-x7k2q-admin')).toBeNull()
@@ -143,7 +211,7 @@ describe('PoolTab', () => {
         info={{ version: 'x', roles: { client: true, worker: false }, client: { running: true }, worker: { running: false, enrolled: false }, pinned: false, account: { signed_in: false, needed: true, targets: { client: true, worker: false, admin_worker: false } } }}
       />,
     )
-    expect(screen.getByTestId('empty-pool').textContent).toContain('sign in on the Account tab')
+    expect(screen.getByTestId('empty-pool').textContent).toContain('Sign in on the Account tab')
     fireEvent.click(screen.getByText('Account tab'))
     expect(nav).toHaveBeenCalledWith('account')
   })

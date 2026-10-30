@@ -9,7 +9,7 @@
 //	longarm-hub release add <dir> --version V [--channel C] | sign <dir> --version V --key K | keygen | ls
 //	longarm-hub release verify <file> --version V [--name N]   (signature check, used by deploy/hub/longarm-hub-deploy)
 //	longarm-hub issue --role admin --name root --out DIR      (local, for bootstrap; --role release for CI)
-//	longarm-hub healthcheck                                   (container health check)
+//	longarm-hub healthcheck [--live]                          (container readiness / liveness probe)
 //	longarm-hub bootstrap [--admin-code-ttl 24h]              (CA + admin join code when missing; idempotent)
 //	longarm-hub container                                     (image entrypoint: litestream restore, bootstrap, serve)
 //
@@ -27,7 +27,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -42,6 +41,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hub"
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/update"
@@ -72,7 +72,7 @@ func main() {
 	}
 	root.PersistentFlags().StringVar(&configPath, "config", os.Getenv("LONGARM_HUB_CONFIG"), "hub.toml (env LONGARM_HUB_CONFIG)")
 	root.PersistentFlags().StringVar(&dataDir, "data-dir", "", "data directory (overrides hub.toml data_dir; env LONGARM_HUB_DATA_DIR)")
-	root.AddCommand(serveCmd(), caCmd(), userCmd(), joinCodeCmd(), releaseCmd(), issueCmd(), healthcheckCmd(), bootstrapCmd(), containerCmd())
+	root.AddCommand(serveCmd(), caCmd(), userCmd(), joinCodeCmd(), releaseCmd(), issueCmd(), healthcheckCmd(), bootstrapCmd(), containerCmd(), auditCmd())
 	if args, err := aliasArgs(os.Args[0]); err != nil {
 		fmt.Fprintln(os.Stderr, "longarm-hub:", err)
 		os.Exit(1)
@@ -81,6 +81,11 @@ func main() {
 	}
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "longarm-hub:", err)
+		// a restore killed by a signal: 128+signal, like a shell (container.go)
+		var rf *restoreFailure
+		if errors.As(err, &rf) && rf.ExitCode() > 0 {
+			os.Exit(rf.ExitCode())
+		}
 		os.Exit(1)
 	}
 }
@@ -101,11 +106,27 @@ func serveCmd() *cobra.Command {
 				return err
 			}
 			defer closer.Close()
+			// a container start (longarm-hub container): the liveness probe
+			// passes while the hub opens; Serve removes the marker once it
+			// listens
+			var mk *hub.StartupMarker
+			if p := os.Getenv(hub.EnvStartupMarker); p != "" {
+				mk = hub.NewStartupMarker(p, 0)
+				limit, terr := startupTimeout()
+				if terr != nil {
+					limit = time.Hour
+				}
+				if err := mk.Begin("open", limit); err != nil {
+					log.Warn("startup marker", "err", err)
+				}
+				defer mk.End()
+			}
 			h, err := hub.Open(cfg, log)
 			if err != nil {
 				return err
 			}
 			defer h.Close()
+			h.SetStartupMarker(mk)
 			if rebuildJobs {
 				if err := h.Store().ClearJobs(); err != nil {
 					return err
@@ -504,6 +525,7 @@ it installs a new one.`,
 
 func issueCmd() *cobra.Command {
 	var role, name, out string
+	var hosts []string
 	var days int
 	var b64 bool
 	c := &cobra.Command{
@@ -532,7 +554,7 @@ func issueCmd() *cobra.Command {
 			if out == "" && !b64 {
 				return errors.New("--out DIR or --b64")
 			}
-			certPEM, keyPEM, err := ca.Issue(pki.IssueOptions{Role: r, Name: name, Validity: time.Duration(days) * 24 * time.Hour})
+			certPEM, keyPEM, err := ca.Issue(pki.IssueOptions{Role: r, Name: name, Hosts: hosts, Validity: time.Duration(days) * 24 * time.Hour})
 			if err != nil {
 				return err
 			}
@@ -554,7 +576,8 @@ func issueCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&role, "role", "admin", "admin | client | worker | release (the CI credential, docs/ci-cd.md)")
+	c.Flags().StringVar(&role, "role", "admin", "admin | client | worker | relay (an external longarm-relay) | release (the CI credential, docs/ci-cd.md)")
+	c.Flags().StringArrayVar(&hosts, "host", nil, "DNS name / IP SAN for workers and relays (repeatable)")
 	c.Flags().StringVar(&name, "name", "", "node name (release: default ci-<date>)")
 	c.Flags().StringVar(&out, "out", "", "output dir (ca.crt, node.crt, node.key)")
 	c.Flags().BoolVar(&b64, "b64", false, "print the bundle as base64 of a tar.gz instead of writing files (CI secrets; az container exec)")
@@ -588,36 +611,44 @@ func bundleTarB64(caPEM, certPEM, keyPEM []byte) (string, error) {
 	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
-func healthcheckCmd() *cobra.Command {
-	var url string
+// auditCmd is `longarm-hub audit`: the complete audit trail from the hub's
+// database, for whoever operates the hub (its data directory: on Azure, the
+// subscription's owners). The admin role's reads (longarm admin audit, the
+// panel) are projected to the admin's own user (docs/security.md).
+func auditCmd() *cobra.Command {
+	var node string
+	var limit int
+	var asJSON bool
 	c := &cobra.Command{
-		Use:   "healthcheck",
-		Short: "Exit 0 when the hub's /healthz answers (for container health checks)",
+		Use:   "audit",
+		Short: "Print the complete audit trail from the hub's database (operators; newest first)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if url == "" {
-				cfg, err := loadConfig()
-				if err != nil {
-					return err
-				}
-				addr := cfg.HTTP
-				if strings.HasPrefix(addr, ":") || strings.HasPrefix(addr, "0.0.0.0:") {
-					addr = "127.0.0.1:" + addr[strings.LastIndex(addr, ":")+1:]
-				}
-				url = "http://" + addr + "/healthz"
-			}
-			c := &http.Client{Timeout: 5 * time.Second}
-			resp, err := c.Get(url)
+			st, _, err := openStore()
 			if err != nil {
 				return err
 			}
-			resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("%s: %s", url, resp.Status)
+			defer st.Close()
+			nodeID, name := "", node // a node ID, else the node's name when each record was written
+			if nodeid.Valid(node) {
+				nodeID, name = nodeid.Canonical(node), ""
+			}
+			rows, err := st.Audit(nodeID, name, time.Time{}, limit)
+			if err != nil {
+				return err
+			}
+			for _, r := range rows {
+				if asJSON {
+					fmt.Println(r.Line)
+					continue
+				}
+				fmt.Printf("%s  %-12s %-24s %s\n", r.Time.UTC().Format(time.RFC3339), r.Node, r.Who, r.Method)
 			}
 			return nil
 		},
 	}
-	c.Flags().StringVar(&url, "url", "", "health URL (default: from the config's http listener)")
+	c.Flags().StringVar(&node, "node", "", "only this node's records: its ID, or the name it had (\"hub\": the hub's own)")
+	c.Flags().IntVar(&limit, "limit", 200, "newest N records (at most 10000)")
+	c.Flags().BoolVar(&asJSON, "json", false, "print the records' JSON lines")
 	return c
 }

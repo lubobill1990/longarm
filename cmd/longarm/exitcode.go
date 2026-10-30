@@ -22,6 +22,7 @@ const (
 	exitHubUnavailable = 69  // --hub-only: no hub configured or it did not answer
 	exitTempFail       = 75  // refused for capacity, quota or rate: retry later
 	exitNoPerm         = 77  // not allowed (permission, authentication, trust)
+	exitNoneCapable    = 79  // release push --allow-none: no worker can self-update, nothing rolled out
 	exitKilled         = 137 // job was killed
 	exitLost           = 254 // job was lost (supervisor vanished)
 	exitLongarmError   = 255 // transport, hub or worker failure; anything else
@@ -152,6 +153,9 @@ var cliFeatures = []string{
 	"job-id-short",         // logs / wait / kill / jobs --id: a unique prefix or suffix of a job id, or "last"
 	"jobs-mine",            // jobs --mine / --all
 	"doctor-json",          // longarm doctor --json (docs/usage.md#doctor---json)
+	"worker-update",        // worker update <worker> [--latest|--version X] [--wait] [--json] [--auto on|off]
+	"ls-version",           // ls: the VERSION column, --json updateAvailable
+	"agent-auth",           // run / exec / session start / attach --agent-auth, MCP agent_auth (docs/usage.md#agent-credentials)
 	// node identity (docs/security.md#node-identity): targets by name, id,
 	// id prefix, id:/name:; worker rename / admin rename; ids in listings
 	// and JSON (worker_id / workerId / id)

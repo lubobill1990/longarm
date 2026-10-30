@@ -14,6 +14,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -23,6 +24,7 @@ func (h *Hub) putTestNode(n *node) {
 		n.rec.ID = nodeid.New()
 	}
 	h.nodes[n.rec.ID] = n
+	h.indexNode(n.rec)
 }
 
 // TestResolveTargets: names, full IDs, unique prefixes; ambiguity lists
@@ -83,7 +85,7 @@ func TestNameRules(t *testing.T) {
 		if _, err := h.CreateJoinCode("test", &pb.CreateJoinCodeRequest{Name: bad}); status.Code(err) != codes.InvalidArgument {
 			t.Errorf("join code named %q: %v", bad, err)
 		}
-		if _, err := h.RenameNode("test", "", true, "w1", bad); status.Code(err) != codes.InvalidArgument {
+		if _, err := h.RenameNode("test", tenancy.Caller{Admin: true}, true, "w1", bad); status.Code(err) != codes.InvalidArgument {
 			t.Errorf("rename to %q: %v", bad, err)
 		}
 	}
@@ -121,11 +123,11 @@ func TestRenameNode(t *testing.T) {
 	h.mu.Unlock()
 
 	// bob may not (not his, not even visible)
-	if _, err := h.RenameWorker("client/bob", "bob", false, "aw", "x1"); status.Code(err) != codes.NotFound {
+	if _, err := h.RenameWorker("client/bob", tenancy.Caller{User: "bob"}, false, "aw", "x1"); status.Code(err) != codes.NotFound {
 		t.Fatalf("bob renames alice's worker: %v", err)
 	}
 	// taken (w1, a fleet worker, is active), and ID-shaped names
-	if _, err := h.RenameWorker("client/alice", "alice", false, "aw", "w1"); status.Code(err) != codes.AlreadyExists {
+	if _, err := h.RenameWorker("client/alice", tenancy.Caller{User: "alice"}, false, "aw", "w1"); status.Code(err) != codes.AlreadyExists {
 		t.Fatalf("rename onto w1: %v", err)
 	}
 	info, err := pb.NewFleetClient(th.alice).RenameWorker(tctx(t), &pb.RenameNodeRequest{Target: nodeid.Short(id), NewName: "aw2"})
@@ -150,7 +152,7 @@ func TestRenameNode(t *testing.T) {
 		t.Fatal("the old certificate name is free while the certificate has it")
 	}
 	// admins rename any node (a device too)
-	if info, err := h.RenameNode("admin/root", "root", true, "w1", "fleet-1"); err != nil || info.Name != "fleet-1" {
+	if info, err := h.RenameNode("admin/root", tenancy.Caller{Admin: true}, true, "w1", "fleet-1"); err != nil || info.Name != "fleet-1" {
 		t.Fatalf("admin rename: %v %v", info, err)
 	}
 	rows, _ := h.store.Audit("", "hub", time.Time{}, 100)
@@ -265,7 +267,7 @@ func TestLegacyCertificates(t *testing.T) {
 	if err != nil || !nodeid.Valid(who.Id) || who.Name != "alice" {
 		t.Fatalf("whoami: %v %v", who, err)
 	}
-	if _, err := h.RenameNode("admin/root", "root", true, "alice", "alice-pc"); err != nil {
+	if _, err := h.RenameNode("admin/root", tenancy.Caller{Admin: true}, true, "alice", "alice-pc"); err != nil {
 		t.Fatal(err)
 	}
 	who2, err := fc.Whoami(tctx(t), &pb.WhoamiRequest{})

@@ -12,6 +12,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -105,7 +106,7 @@ func TestDeviceUserPinned(t *testing.T) {
 		t.Fatalf("carol's user %q", user)
 	}
 	// renamed to a name that looks like another user's: still carol
-	if _, err := h.RenameNode("admin/root", "root", true, "carol", "d-bob"); err != nil {
+	if _, err := h.RenameNode("admin/root", tenancy.Caller{Admin: true}, true, "carol", "d-bob"); err != nil {
 		t.Fatal(err)
 	}
 	h.mu.Lock()
@@ -125,7 +126,7 @@ func TestDeviceUserPinned(t *testing.T) {
 	if _, err := pb.NewFleetClient(dialAs(t, th, pki.IssueOptions{Role: pki.RoleClient, Name: "Big-PC"})).Whoami(tctx(t), &pb.WhoamiRequest{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.RenameNode("admin/root", "root", true, "Big-PC", "big-pc"); status.Code(err) != codes.FailedPrecondition {
+	if _, err := h.RenameNode("admin/root", tenancy.Caller{Admin: true}, true, "Big-PC", "big-pc"); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("rename of a device whose user can't be carried: %v", err)
 	}
 	// a join code without a user: the device's user is pinned to its name
@@ -159,7 +160,7 @@ func TestRenameSupersedesOldCertificates(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := writeTestBundle(t, h, r)
-	if _, err := h.RenameNode("admin/root", "root", true, "dev1", "dev2"); err != nil {
+	if _, err := h.RenameNode("admin/root", tenancy.Caller{Admin: true}, true, "dev1", "dev2"); err != nil {
 		t.Fatal(err)
 	}
 	hc, err := hubclient.Dial(h.Addr("grpc"), old)
@@ -226,7 +227,7 @@ func TestRetirePendingSurvivesRenewals(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := writeTestBundle(t, h, r)
-	if _, err := h.RenameNode("admin/root", "root", true, "dev1", "dev2"); err != nil {
+	if _, err := h.RenameNode("admin/root", tenancy.Caller{Admin: true}, true, "dev1", "dev2"); err != nil {
 		t.Fatal(err)
 	}
 	hc, err := hubclient.Dial(h.Addr("grpc"), old)

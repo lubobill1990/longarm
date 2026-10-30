@@ -68,12 +68,13 @@ func (h *Hub) ListJobs(req *pb.FleetJobsRequest) []*pb.FleetJob {
 
 // ListJobsFor is ListJobs as v may see it (own and team-shared jobs).
 func (h *Hub) ListJobsFor(v tenancy.Caller, req *pb.FleetJobsRequest) []*pb.FleetJob {
+	p := h.projector(v)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var out []*pb.FleetJob
 	worker := ""
 	if req.Worker != "" {
-		n, err := h.resolveLocked(req.Worker, isWorker, "worker")
+		n, err := h.resolveLocked(req.Worker, h.workerVisibleLocked(v), "worker")
 		if err != nil {
 			return nil // an unknown worker has no jobs
 		}
@@ -90,7 +91,7 @@ func (h *Hub) ListJobsFor(v tenancy.Caller, req *pb.FleetJobsRequest) []*pb.Flee
 			if !canSeeJob(v, e.job) {
 				continue
 			}
-			out = append(out, h.fleetJobLocked(w, e))
+			out = append(out, p.fleetJob(h.fleetJobLocked(w, e)))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -121,7 +122,7 @@ func (h *Hub) GetJobFor(v tenancy.Caller, id, worker string) (*pb.FleetJob, erro
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if worker != "" {
-		n, err := h.resolveLocked(worker, isWorker, "worker")
+		n, err := h.resolveLocked(worker, h.workerVisibleLocked(v), "worker")
 		if err != nil {
 			return nil, err
 		}
@@ -131,7 +132,7 @@ func (h *Hub) GetJobFor(v tenancy.Caller, id, worker string) (*pb.FleetJob, erro
 	if e == nil || !canSeeJob(v, e.job) {
 		return nil, status.Errorf(codes.NotFound, "job %s not known to the hub", id)
 	}
-	return h.fleetJobLocked(w, e), nil
+	return h.projector(v).fleetJob(h.fleetJobLocked(w, e)), nil
 }
 
 func (s *fleetServer) GetJob(ctx context.Context, req *pb.FleetJobRequest) (*pb.FleetJob, error) {
@@ -148,11 +149,11 @@ func (h *Hub) WaitJob(ctx context.Context, req *pb.FleetJobRequest, send func(*p
 
 // WaitJobFor is WaitJob for a job v may see.
 func (h *Hub) WaitJobFor(ctx context.Context, v tenancy.Caller, req *pb.FleetJobRequest, send func(*pb.FleetJob) error) error {
-	workerID, err := h.resolveWorker(req.Worker)
+	workerID, err := h.resolveWorkerFor(v, req.Worker)
 	if err != nil {
 		return err
 	}
-	sub := h.bus.subscribeFiltered([]string{"job"}, req.Id, eventFilter(v))
+	sub := h.bus.subscribeFiltered([]string{"job"}, req.Id, h.eventFilter(v))
 	defer h.bus.unsubscribe(sub)
 	fj, err := h.GetJobFor(v, req.Id, req.Worker)
 	if err == nil {
@@ -207,7 +208,7 @@ func (h *Hub) EventsFor(ctx context.Context, v tenancy.Caller, req *pb.EventsReq
 	if len(kinds) == 0 {
 		kinds = []string{"job", "node", "queue"}
 	}
-	sub := h.bus.subscribeFiltered(kinds, req.JobId, eventFilter(v))
+	sub := h.bus.subscribeFiltered(kinds, req.JobId, h.eventFilter(v))
 	defer h.bus.unsubscribe(sub)
 	for {
 		select {
@@ -230,48 +231,28 @@ func (s *fleetServer) Events(req *pb.EventsRequest, st pb.Fleet_EventsServer) er
 
 func (s *fleetServer) Place(req *pb.PlaceRequest, st pb.Fleet_PlaceServer) error {
 	c := callerFrom(st.Context())
-	return s.h.PlaceFor(st.Context(), c.id.String(), c.id.Owner(), req, st.Send)
+	return s.h.PlaceFor(st.Context(), c.id.String(), c.user, req, st.Send)
 }
 
-// Audit returns forwarded audit records (req.node: a node target, or
-// "hub" for the hub's own records).
+// Audit returns forwarded audit records, all of them (the hub's own
+// callers; the read APIs use AuditFor). req.node: a node target, or "hub"
+// for the hub's own records.
 func (h *Hub) Audit(req *pb.AuditRequest) (*pb.AuditResponse, error) {
-	var since time.Time
-	if req.Since != nil {
-		since = req.Since.AsTime()
-	}
-	nodeID, nodeName := "", ""
-	switch req.Node {
-	case "":
-	case "hub":
-		nodeName = "hub"
-	default:
-		id, err := h.resolve(req.Node, nil, "node")
-		if err != nil {
-			return nil, err
-		}
-		nodeID = id
-	}
-	rows, err := h.store.Audit(nodeID, nodeName, since, int(req.Limit))
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-	out := &pb.AuditResponse{}
-	for _, r := range rows {
-		out.Records = append(out.Records, &pb.AuditRecord{Node: r.Node, NodeId: r.NodeID, Time: tspb(r.Time), Who: r.Who, Method: r.Method, Json: r.Line})
-	}
-	return out, nil
+	return h.AuditFor(tenancy.Caller{Admin: true}, "", req)
 }
 
-func (s *fleetServer) Audit(_ context.Context, req *pb.AuditRequest) (*pb.AuditResponse, error) {
-	return s.h.Audit(req)
+func (s *fleetServer) Audit(ctx context.Context, req *pb.AuditRequest) (*pb.AuditResponse, error) {
+	c := callerFrom(ctx)
+	return s.h.AuditFor(s.h.viewer(c), c.id.String(), req)
 }
 
-func (s *fleetServer) Whoami(ctx context.Context, _ *pb.WhoamiRequest) (*pb.WhoamiResponse, error) {
+func (s *fleetServer) Whoami(ctx context.Context, req *pb.WhoamiRequest) (*pb.WhoamiResponse, error) {
 	c := callerFrom(ctx)
 	resp := &pb.WhoamiResponse{Name: c.id.Name, Role: string(c.id.Role), HubName: s.h.cfg.Name, HubVersion: version.Version,
 		CertNotAfter: tspb(c.cert.NotAfter), RenewBefore: durationpb.New(s.h.cfg.RenewBefore(string(c.id.Role))),
-		Tailnet: s.h.callerTailnet(c.nodeID), User: c.id.Owner(), Id: c.nodeID}
+		Tailnet: s.h.callerTailnet(c.nodeID), User: c.user, Id: c.nodeID, PublicUrl: s.h.cfg.PublicURL}
+	latest, files := s.h.latestNotice()
+	resp.LatestVersion, resp.LatestPath = latest, latestPath(latest, files, req.GetOs(), req.GetArch())
 	s.h.mu.Lock()
 	if n := s.h.callerNodeLocked(c); n != nil {
 		if f := forcedRenewBefore(n, c.cert); f > resp.RenewBefore.AsDuration() {
@@ -280,13 +261,13 @@ func (s *fleetServer) Whoami(ctx context.Context, _ *pb.WhoamiRequest) (*pb.Whoa
 		}
 	}
 	if resp.Tenancy = s.h.tenancyOnLocked(); resp.Tenancy && c.id.Role != pki.RoleWorker {
-		if t := s.h.tenants[c.id.Owner()]; t != nil {
+		if t := s.h.tenants[c.user]; t != nil {
 			resp.Teams, resp.CanShare, resp.Upn = t.u.Teams, t.u.CanShare, t.u.Upn
 		}
-		if q := s.h.quotaLocked(c.id.Owner()); !tenancy.QuotaEmpty(q) {
+		if q := s.h.quotaLocked(c.user); !tenancy.QuotaEmpty(q) {
 			resp.Quota = q
 		}
-		resp.Usage = s.h.usageLocked(c.id.Owner())
+		resp.Usage = s.h.usageLocked(c.user)
 	}
 	s.h.mu.Unlock()
 	return resp, nil

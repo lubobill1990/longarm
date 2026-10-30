@@ -3,12 +3,14 @@ package hub
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -36,6 +38,10 @@ import (
 
 // Hub is a running longarm-hub.
 type Hub struct {
+	// startupMarker: removed once the listeners are up (startup_marker.go)
+	startupMarker *StartupMarker
+
+	dir    nodeDirectory // lock-free name directory for projection (projection.go)
 	cfg    *Config
 	log    *slog.Logger
 	store  *store.Store
@@ -71,6 +77,7 @@ type Hub struct {
 	kick          chan struct{}   // re-run the queue
 	rollout       *pb.Rollout     // the current / last release rollout
 	rel           *releaseStore   // release files (relstore.go)
+	latest        latestCache     // the newest complete release, for update notices (updatenotice.go)
 	tailnet       tailnetProvider // nil = no tailnet enrollment
 	// TailnetKey calls per node: workers 5, then one per hour; clients
 	// 10, then one per 10 minutes.
@@ -78,6 +85,7 @@ type Hub struct {
 	tailnetMu                              sync.Mutex
 	tailnetIssued                          map[string]issuedKey   // enrollment -> minted key (JoinStatus polls)
 	tailnetMintErr                         map[string]mintFailure // last failed mint per role (tailnetMu)
+	hsHealth, hsHealthDetail               string                 // Headscale's state (tailnetMu; headscale_sidecar.go)
 	pending                                map[string]*pendingReq // requests relayed to workers, by request id
 	links                                  map[string]*linkEntry  // latest link report per client
 	// multi-tenancy: users, the policy version workers have to have, users
@@ -86,11 +94,19 @@ type Hub struct {
 	tenancyVersion int64
 	purged         []string
 	lastTenancyOn  bool
-	entra          *entraState // nil = no [auth.entra]
-	pair           *pairing    // pending pairings (link.go)
+	entra          *entraState            // nil = no [auth.entra]
+	idps           map[string]*idProvider // [auth.google], [auth.apple], [auth.microsoft] (idp.go)
+	oidc           *oidcWeb               // web sign-in state (any provider)
+	pair           *pairing               // pending pairings (link.go)
 	// port links (portlinks.go): by id; the version counts pushes
 	portLinks        map[string]*portLinkEntry
 	portLinksVersion int64
+	// external relays (relays.go): registered by cert name; the last relay
+	// set pushed; RelaySync streams wait on relayPolCh (closed on a change)
+	extRelays    map[string]*extRelay
+	lastRelaySet *pb.RelaySet
+	relayPolMu   sync.Mutex
+	relayPolCh   chan struct{}
 
 	started time.Time
 	relay   *relay.Server
@@ -98,6 +114,7 @@ type Hub struct {
 
 	addrMu sync.Mutex
 	addrs  map[string]string // "grpc", "http", "udp" -> bound address
+
 }
 
 // node is the in-memory state of a registered node.
@@ -109,11 +126,13 @@ type node struct {
 	localDrain  bool
 	localReason string
 	toolchain   *pb.ToolchainReport
-	tailnet     *pb.TailnetState   // as last reported (workers)
-	savedSeen   time.Time          // last time LastSeen was persisted
-	history     []*pb.MetricsPoint // recent metrics (sparklines)
-	maxJobs     int32              // local limits (NodeState)
+	tailnet     *pb.TailnetState    // as last reported (workers)
+	savedSeen   time.Time           // last time LastSeen was persisted
+	history     []*pb.MetricsPoint  // recent metrics (sparklines)
+	maxJobs     int32               // local limits (NodeState)
+	updateAvail *pb.UpdateAvailable // a release the worker can't install itself (NodeState)
 	reservedGB  float64
+	caps        []string // NodeHello.capabilities of the current session
 }
 
 type nodeSession struct {
@@ -168,7 +187,9 @@ func Open(cfg *Config, log *slog.Logger) (*Hub, error) {
 		profiles: map[string]*pb.Profile{}, stable: map[string]*pb.Profile{}, knownSerials: map[string]string{}, kick: make(chan struct{}, 1),
 		pending: map[string]*pendingReq{}, links: map[string]*linkEntry{}, tenants: map[string]*tenant{}, portLinks: map[string]*portLinkEntry{},
 		started: time.Now(), addrs: map[string]string{}, entra: newEntraState(&cfg.Auth.Entra), pair: newPairing(),
+		idps: newIdProviders(&cfg.Auth), oidc: &oidcWeb{usedState: map[string]time.Time{}},
 	}
+	st.OnNodePut = h.indexNode
 	if h.tailnet, err = newTailnetProvider(cfg.Tailnet); err != nil {
 		st.Close()
 		return nil, err
@@ -209,6 +230,7 @@ func (h *Hub) load() error {
 		return err
 	}
 	for _, r := range recs {
+		h.indexNode(r)
 		n := &node{rec: r}
 		if len(r.Toolchain) > 0 {
 			tc := &pb.ToolchainReport{}
@@ -269,6 +291,7 @@ func (h *Hub) load() error {
 		h.tenancyChangedLocked()
 	}
 	h.recheckPortLinksLocked() // isolation or hub.toml may have changed since
+	h.loadRelaysLocked()
 	return h.loadRevocations()
 }
 
@@ -411,6 +434,18 @@ func (h *Hub) Addr(name string) string {
 	return h.addrs[name]
 }
 
+// relayAdvert is the relay address of the welcome (HubWelcome.relay):
+// ":port" of the relay's UDP socket - nodes use the host they dial the hub
+// on, which reaches the relay's TLS fallback on the hub's port too; "" when
+// the hub runs no relay.
+func (h *Hub) relayAdvert() string {
+	_, port, err := net.SplitHostPort(h.Addr("udp"))
+	if err != nil || port == "" || port == "0" {
+		return ""
+	}
+	return ":" + port
+}
+
 func (h *Hub) setAddr(name, a string) {
 	h.addrMu.Lock()
 	h.addrs[name] = a
@@ -423,6 +458,7 @@ const EndpointsFile = "hub.endpoints"
 
 // Serve runs the listeners until ctx is done.
 func (h *Hub) Serve(ctx context.Context) error {
+	serveAt := time.Now()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -476,7 +512,16 @@ func (h *Hub) Serve(ctx context.Context) error {
 			return err
 		}
 		rtls.VerifyPeerCertificate = h.revoked.VerifyNotRevoked
-		h.relay = &relay.Server{TLS: rtls, Logger: h.log.With("component", "relay"), Rate: rate, Burst: int(rate)}
+		// a resumed handshake skips VerifyPeerCertificate: no tickets, and
+		// the list is checked again when a session registers
+		rtls.SessionTicketsDisabled = true
+		h.relay = &relay.Server{TLS: rtls, Logger: h.log.With("component", "relay"), Rate: rate, Burst: int(rate),
+			Admit: func(c *x509.Certificate) error {
+				if h.revoked.Revoked(c) {
+					return fmt.Errorf("certificate %s is revoked", pki.Serial(c))
+				}
+				return nil
+			}}
 		if rate > 0 && rate < 64<<10 {
 			h.relay.Burst = 64 << 10
 		}
@@ -524,6 +569,10 @@ func (h *Hub) Serve(ctx context.Context) error {
 		h.updateRelayPairsLocked() // linked workers may talk through the relay
 		h.mu.Unlock()
 	}
+	run("relay forget", func() error { h.runRelayForget(ctx); return nil })
+	h.mu.Lock()
+	h.relaySetChangedLocked() // the embedded relay's port is known now
+	h.mu.Unlock()
 	h.startTelemetry(ctx, run)
 	run("releases", func() error { h.rel.reconcile(ctx, h.store); return nil })
 	run("mux", mux.Serve)
@@ -566,9 +615,22 @@ func (h *Hub) Serve(ctx context.Context) error {
 		})
 		return nil
 	}
-	var handler http.Handler
+	var handler, hsProxy http.Handler
 	if h.cfg.HTTP != "off" || h.cfg.HTTPS != "" {
 		handler = h.httpHandler()
+		if hc := h.cfg.Tailnet.Headscale; h.cfg.Tailnet.Provider == ProviderHeadscale && hc.Proxy {
+			target, err := url.Parse(hc.APIURL)
+			if err != nil {
+				mux.Close()
+				return fmt.Errorf("[tailnet.headscale] api_url: %w", err)
+			}
+			hsProxy = headscaleProxy(target, h.log.With("component", "headscale-proxy"))
+			handler = withHeadscale(handler, hsProxy)
+		}
+	}
+	if hs, ok := h.tailnet.(*headscaleClient); ok {
+		wg.Add(1)
+		go func() { defer wg.Done(); h.runHeadscale(ctx, hs) }()
 	}
 	if h.cfg.HTTP != "off" {
 		if err := serveHTTP("http", h.cfg.HTTP, &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}); err != nil {
@@ -592,7 +654,11 @@ func (h *Hub) Serve(ctx context.Context) error {
 			return err
 		}
 		if h.cfg.HTTPSRedirect != "" {
-			if err := serveHTTP("https_redirect", h.cfg.HTTPSRedirect, &http.Server{Handler: m.HTTPHandler(nil), ReadHeaderTimeout: 10 * time.Second}); err != nil {
+			var redirect http.Handler = m.HTTPHandler(nil)
+			if hsProxy != nil {
+				redirect = withHeadscaleNoise(redirect, hsProxy)
+			}
+			if err := serveHTTP("https_redirect", h.cfg.HTTPSRedirect, &http.Server{Handler: redirect, ReadHeaderTimeout: 10 * time.Second}); err != nil {
 				return err
 			}
 		}
@@ -610,6 +676,13 @@ func (h *Hub) Serve(ctx context.Context) error {
 	}
 	os.WriteFile(ep, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
 	defer os.Remove(ep)
+	// listening: /healthz answers, the liveness probe no longer needs the marker
+	if h.startupMarker != nil {
+		if err := h.startupMarker.Remove(); err != nil {
+			h.log.Warn("startup marker", "err", err)
+		}
+	}
+	h.logStartup(serveAt)
 	h.log.Info("longarm-hub started", "version", version.Version, "grpc", h.Addr("grpc"), "relay_udp", h.Addr("udp"), "stun2", h.Addr("stun2"),
 		"http", h.Addr("http"), "https", h.Addr("https"), "data", h.cfg.DataDir, "ca", pki.Fingerprint(h.ca.Cert))
 
@@ -619,6 +692,9 @@ func (h *Hub) Serve(ctx context.Context) error {
 	case runErr = <-errc:
 		h.log.Error("listener failed", "err", runErr)
 	}
+	// tell the nodes and the clients' event streams first: they reconnect
+	// promptly instead of treating the drop as an outage (restart.go)
+	h.announceRestart(restartReconnectAfter, restartFlush)
 	cancel()
 	h.bus.closeAll()
 	mux.Close()

@@ -30,6 +30,9 @@ type Store struct {
 	// MigrationNotes says what migrations of this Open changed beyond the
 	// schema (renamed nodes ...), for the hub's log.
 	MigrationNotes []string
+	// OnNodePut, if set, is called after a node record was saved (the hub's
+	// lock-free name directory for event projection).
+	OnNodePut func(*Node)
 }
 
 // ErrNameTaken: a non-revoked node has the name already (PutNode).
@@ -116,11 +119,19 @@ var migrations = []string{
 		owner TEXT NOT NULL,
 		data TEXT NOT NULL
 	);`,
-	// 5: node IDs (docs/security.md "Node identity"): nodes are keyed by an
+	// 5: audit attribution, fixed when a record is written: the Longarm
+	// user who acted and the user the record is about (the owner of the
+	// worker it came from, of the link, the user changed ...). Reads are
+	// authorized by these, never by today's node ownership. attributed = 0:
+	// a record from before (only its own "user" field counts).
+	`ALTER TABLE audit ADD COLUMN actor_user TEXT NOT NULL DEFAULT '';
+	ALTER TABLE audit ADD COLUMN subject_user TEXT NOT NULL DEFAULT '';
+	ALTER TABLE audit ADD COLUMN attributed INTEGER NOT NULL DEFAULT 0;`,
+	// 6: node IDs (docs/security.md "Node identity"): nodes are keyed by an
 	// immutable ID, names are display names unique among non-revoked
 	// nodes; certificates, audit records, cached jobs and port links refer
 	// to the ID. The rows are moved by migrateNodeIDs.
-	`CREATE TABLE nodes_v5 (
+	`CREATE TABLE nodes_v6 (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
 		role TEXT NOT NULL,
@@ -140,7 +151,7 @@ var migrations = []string{
 
 // goMigrations are Go steps of migrations (index: migration number - 1).
 var goMigrations = map[int]func(*sql.Tx, *[]string) error{
-	4: migrateNodeIDs,
+	5: migrateNodeIDs,
 }
 
 // Open opens (creating if needed) the database at path and migrates it.
@@ -347,6 +358,9 @@ func (s *Store) PutNode(n *Node) error {
 		n.ID, n.Name, n.Role, n.State, string(b))
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 		return fmt.Errorf("%w: %q", ErrNameTaken, n.Name)
+	}
+	if err == nil && s.OnNodePut != nil {
+		s.OnNodePut(n)
 	}
 	return err
 }
@@ -767,6 +781,10 @@ type AuditRow struct {
 	Who    string
 	Method string
 	Line   string
+	// attribution at write time (migration 5); Attributed false: older row
+	ActorUser   string
+	SubjectUser string
+	Attributed  bool
 }
 
 // AddAudit stores records.
@@ -780,8 +798,8 @@ func (s *Store) AddAudit(rows []AuditRow) error {
 	}
 	defer tx.Rollback()
 	for _, r := range rows {
-		if _, err := tx.Exec(`INSERT INTO audit(node,node_id,time,who,method,line) VALUES(?,?,?,?,?,?)`,
-			r.Node, r.NodeID, r.Time.UnixMilli(), r.Who, r.Method, r.Line); err != nil {
+		if _, err := tx.Exec(`INSERT INTO audit(node,node_id,time,who,method,line,actor_user,subject_user,attributed) VALUES(?,?,?,?,?,?,?,?,?)`,
+			r.Node, r.NodeID, r.Time.UnixMilli(), r.Who, r.Method, r.Line, r.ActorUser, r.SubjectUser, r.Attributed); err != nil {
 			return err
 		}
 	}
@@ -794,7 +812,7 @@ func (s *Store) Audit(nodeID, node string, since time.Time, limit int) ([]AuditR
 	if limit <= 0 || limit > 10000 {
 		limit = 200
 	}
-	q := `SELECT node,node_id,time,who,method,line FROM audit WHERE time >= ?`
+	q := `SELECT node,node_id,time,who,method,line,actor_user,subject_user,attributed FROM audit WHERE time >= ?`
 	args := []any{since.UnixMilli()}
 	switch {
 	case nodeID != "":
@@ -815,7 +833,7 @@ func (s *Store) Audit(nodeID, node string, since time.Time, limit int) ([]AuditR
 	for rows.Next() {
 		var r AuditRow
 		var t int64
-		if err := rows.Scan(&r.Node, &r.NodeID, &t, &r.Who, &r.Method, &r.Line); err != nil {
+		if err := rows.Scan(&r.Node, &r.NodeID, &t, &r.Who, &r.Method, &r.Line, &r.ActorUser, &r.SubjectUser, &r.Attributed); err != nil {
 			return nil, err
 		}
 		r.Time = time.UnixMilli(t)

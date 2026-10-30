@@ -13,7 +13,7 @@ func TestReleaseTrayIsProduction(t *testing.T) {
 	for file, want := range map[string]string{
 		"../../.goreleaser.yaml":                     "tags: [production]",
 		"../../packaging/linux/goreleaser-tray.yaml": "-tags=traynative,production",
-		"../../.github/workflows/ci.yml":             `go build -trimpath -tags production -ldflags "-H windowsgui $hub" -o "$bin\longarm-tray.exe"`,
+		"../../.github/workflows/ci.yml":             `go build -trimpath -tags production -ldflags "-H windowsgui $ld" -o "$bin\longarm-tray.exe"`,
 	} {
 		b, err := os.ReadFile(file)
 		if err != nil {

@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/platform"
@@ -245,6 +246,12 @@ func Apply(ctx context.Context, cfg Config, version string, files []File, fetch 
 			return err
 		}
 	}
+	// The watchdog of the previous, finished update may still be polling
+	// update.json (it leaves within watchInterval of the outcome): it must
+	// not take this update for its own and roll it back in parallel with
+	// this update's watchdog (both renaming the same files). Watchdogs
+	// started by older versions don't check WatchdogPID, so stop it here.
+	stopFinishedWatchdog(cfg.DataDir, cfg.Log)
 	// Swap: current -> .old, staged -> current. Undo on any error.
 	st := &State{From: cfg.Version, To: version, Phase: PhaseRestarting, Started: time.Now(),
 		HealthWindow: Duration{cfg.HealthWindow}, StartGrace: Duration{cfg.StartGrace},
@@ -262,12 +269,12 @@ func Apply(ctx context.Context, cfg Config, version string, files []File, fetch 
 			undo()
 			return err
 		}
-		if err := os.Rename(it.path, backup); err != nil {
+		if err := renameRetry(it.path, backup); err != nil {
 			undo()
 			return fmt.Errorf("update: move %s aside: %w", it.path, err)
 		}
 		st.Swaps = append(st.Swaps, Swap{Path: it.path, Backup: backup})
-		if err := os.Rename(it.stage, it.path); err != nil {
+		if err := renameRetry(it.stage, it.path); err != nil {
 			undo()
 			return fmt.Errorf("update: install %s: %w", it.path, err)
 		}
@@ -300,6 +307,50 @@ func Apply(ctx context.Context, cfg Config, version string, files []File, fetch 
 	st.Save(cfg.DataDir)
 	cfg.Log.Info("update: installed; restarting", "from", cfg.Version, "to", version, "files", len(st.Swaps), "watchdog", st.WatchdogPID)
 	return nil
+}
+
+// stopFinishedWatchdog kills the watchdog of the previous update when that
+// update is over (ok, rolled back, failed) and the watchdog still runs.
+func stopFinishedWatchdog(dataDir string, log *slog.Logger) {
+	prev, err := LoadState(dataDir)
+	if err != nil || prev == nil || prev.WatchdogPID == 0 || prev.WatchdogPID == os.Getpid() {
+		return
+	}
+	switch prev.Phase {
+	case PhaseOK, PhaseRolledBack, PhaseFailed:
+	default:
+		return
+	}
+	if platform.ProcessAlive(prev.WatchdogPID, prev.WatchdogStart) {
+		log.Info("update: stopping the watchdog of the previous update", "pid", prev.WatchdogPID, "to", prev.To, "phase", prev.Phase)
+		platform.KillProcess(prev.WatchdogPID)
+	}
+}
+
+// renameRetry is os.Rename that rides out a file held open for a moment
+// without FILE_SHARE_DELETE (Windows: an antivirus scan or the indexer
+// reading a freshly written binary: "being used by another process").
+func renameRetry(from, to string) error {
+	deadline := time.Now().Add(renameRetryFor)
+	for d := 50 * time.Millisecond; ; d = min(2*d, time.Second) {
+		err := os.Rename(from, to)
+		if err == nil || !transientRenameErr(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(d)
+	}
+}
+
+var renameRetryFor = 15 * time.Second
+
+// transientRenameErr: Windows' ERROR_ACCESS_DENIED (5) and
+// ERROR_SHARING_VIOLATION (32) while another process has the file open.
+func transientRenameErr(err error) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	var errno syscall.Errno
+	return errors.As(err, &errno) && (errno == 5 || errno == 32)
 }
 
 // moveAside frees name (an older backup): removed, or renamed if it is

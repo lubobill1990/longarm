@@ -168,6 +168,9 @@ func printTailnetStatus(r *pb.TailnetStatusResponse) {
 		fmt.Println("provider  none (no [tailnet] provider on the hub: nodes use only tcp/longnet)")
 	} else {
 		fmt.Printf("provider  %s\ncontrol   %s\n", r.Provider, r.ControlUrl)
+		if r.ControlHealth != "" {
+			fmt.Printf("health    %s\n", r.ControlHealth)
+		}
 		if r.Tailnet != "" {
 			fmt.Printf("tailnet   %s\n", r.Tailnet)
 		}

@@ -2,6 +2,7 @@
 // longarmd (/local/longarmd/...) proxied by longarm-tray, plus the tray's own desktop
 // actions (/trayapi/...: open a terminal, open a URL, pin the popup ...).
 import { get, post, request, sse } from './http'
+import type { FirewallFixResult } from '../components/common'
 import type {
   ClientStatus,
   FleetJob,
@@ -26,6 +27,10 @@ export interface TrayInfo {
   headless?: boolean
   /** this machine's sign-in (older trays: absent) */
   account?: Account
+  /** the firewall card can allow the program (an administrator prompt; Windows) */
+  firewall_fix?: boolean
+  /** where the longarm.exe installed with the tray is */
+  install_dir?: string
 }
 
 /** What a sign-in enrolls: the user's device, the worker, the admin worker. */
@@ -114,6 +119,23 @@ export const trayApi = {
   adminDisable: () => post<{ output: string }>('/trayapi/admin/disable'),
   rolesChange: (want: AccountRoles) => post<RolesState>('/trayapi/roles', want),
   rolesState: () => get<RolesState>('/trayapi/roles/state'),
+  /** allow the program the daemon (client) or longarmd (worker) runs from, elevated */
+  firewallAllow: (target: 'client' | 'worker') => post<FirewallFixResult>('/trayapi/firewall/allow', { for: target }),
+  // the update banner: the hub's newest release; install = download, verify (sha256 + signature), run the MSI
+  update: (refresh = false) => get<TrayUpdate>(`/trayapi/update${refresh ? '?refresh=1' : ''}`),
+  installUpdate: (version: string) => post<{ state: string }>('/trayapi/update/install', { version }),
+}
+
+/** GET /trayapi/update */
+export interface TrayUpdate {
+  current: string
+  latest?: string
+  /** a newer release with an MSI for this machine */
+  available: boolean
+  msi?: string
+  /** "" | downloading | installing | failed */
+  state?: string
+  error?: string
 }
 
 export const longarmApi = {
@@ -147,6 +169,39 @@ export const longarmApi = {
   drainWorker: (name: string, draining: boolean) => post(`/local/longarm/v1/workers/${enc(name)}/drain`, { draining }),
   /** longarm worker remove through the daemon: the hub revokes the worker (its owner, or an admin). */
   removeWorker: (name: string) => post<NodeInfo>(`/local/longarm/v1/workers/${enc(name)}/remove`),
+  /** longarm worker update <name> --wait through the daemon (the worker's owner): starts it */
+  updateWorker: (name: string, version = '') =>
+    post<WorkerUpdateJob>(`/local/longarm/v1/workers/${enc(name)}/update`, version ? { version } : { latest: true }),
+  /** the state of that update */
+  workerUpdate: (name: string) => get<WorkerUpdateJob>(`/local/longarm/v1/workers/${enc(name)}/update`),
+}
+
+/** longarm worker update's outcome (--json). */
+export interface WorkerUpdateOutcome {
+  worker: string
+  method?: 'msi' | 'self'
+  from?: string
+  to?: string
+  phase: 'up_to_date' | 'requested' | 'done' | 'failed'
+  summary: string
+  jobs: number
+  kept_jobs: number
+  sessions: number
+  kept_sessions: number
+  companion?: string
+  /** the admin worker that took the request (a user-session worker too old to reach the Longarm Update service) */
+  via?: string
+  code?: string
+  error?: string
+}
+
+/** An update the daemon runs for the tray (GET /v1/workers/{name}/update). */
+export interface WorkerUpdateJob {
+  state: 'idle' | 'running' | 'done' | 'failed'
+  progress?: string[]
+  outcome?: WorkerUpdateOutcome
+  error?: string
+  exit_code?: number
 }
 
 export const longarmdApi = {
@@ -167,6 +222,8 @@ export interface TraySettings {
   version: string
   mute_workers?: boolean
   mute_jobs?: boolean
+  /** Settings > Appearance: light / dark; absent = follow the system */
+  theme?: 'light' | 'dark'
   telemetry_disabled: boolean
   /** LONGARM_TELEMETRY=0 in the environment: off whatever the switch says */
   telemetry_env_off?: boolean
@@ -174,9 +231,32 @@ export interface TraySettings {
   worker_logs?: string
 }
 
+/** This machine's Longarm Update service (Windows MSI installs), through the tray. */
+export interface LocalUpdateStatus {
+  /** the service is installed (else: no automatic updates, the tray's banner uses UAC) */
+  service: boolean
+  installed?: string
+  available?: string
+  state?: string
+  target?: string
+  message?: string
+  auto?: boolean
+  auto_interval_hours?: number
+  last?: { from: string; to: string; ok: boolean; error?: string; at: string }
+  /** the tray's user may change automatic updates (the machine's owner, or an administrator) */
+  can_set_auto?: boolean
+  error?: string
+}
+
+export const localUpdateApi = {
+  /** the service's status (the update banner installs through it when present: trayApi.installUpdate) */
+  status: () => get<LocalUpdateStatus>('/trayapi/update/service'),
+  setAuto: (auto: boolean, hours = 0) => post<LocalUpdateStatus>('/trayapi/update/auto', { auto, hours }),
+}
+
 export const traySettingsApi = {
   get: () => get<TraySettings>('/trayapi/settings'),
-  set: (s: { mute_workers?: boolean; mute_jobs?: boolean; telemetry_disabled?: boolean }) => post<TraySettings>('/trayapi/settings', s),
+  set: (s: { mute_workers?: boolean; mute_jobs?: boolean; theme?: 'system' | 'light' | 'dark'; telemetry_disabled?: boolean }) => post<TraySettings>('/trayapi/settings', s),
   /** opens a known folder (never a path from the page) in the file manager */
   openFolder: (which: 'client-logs' | 'worker-logs' | 'diag') => post<{ folder: string }>('/trayapi/folder', { which }),
   /** starts this machine's worker the way it runs: the session task or the service */

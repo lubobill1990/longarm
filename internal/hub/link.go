@@ -220,7 +220,7 @@ func ipOnly(addr string) string {
 // linkUnavailable: pairing needs a panel the user can sign in to - with
 // Microsoft when the hub has Entra sign-in.
 func (h *Hub) linkUnavailable() error {
-	if h.entra != nil && h.entraWeb() == "" {
+	if h.idpOn() && !h.webSignIn() {
 		return status.Error(codes.FailedPrecondition, "pairing needs the panel's Microsoft sign-in, which is off on this hub ([auth.entra] web); use az (--az) or a join code")
 	}
 	return nil
@@ -535,7 +535,7 @@ type linkApprover struct {
 
 var (
 	errLinkNoSession = errors.New("sign in first")
-	errLinkEntra     = errors.New("linking a device needs a Microsoft sign-in")
+	errLinkEntra     = errors.New("linking a device needs a sign-in with an account (Microsoft, Google, Apple), not a password login")
 )
 
 // linkApproverOf is the signed-in user behind r: with Entra sign-in on the
@@ -558,11 +558,11 @@ func (h *Hub) linkApproverOf(r *http.Request) (*linkApprover, error) {
 	if err != nil {
 		return nil, errLinkNoSession
 	}
-	if h.entra != nil {
+	if h.idpOn() {
 		if u.Entra == "" || !h.entraMarked(r, a.sessHash) {
 			return nil, errLinkEntra
 		}
-		a.user, a.id.oid = u.Tenant, u.Entra
+		a.user, a.id = u.Tenant, identityFromKey(u.Entra)
 		h.mu.Lock()
 		if t := h.tenants[a.user]; t != nil {
 			a.id.upn = t.u.Upn
@@ -586,7 +586,7 @@ func (h *Hub) linkApproverOf(r *http.Request) (*linkApprover, error) {
 // approveLink enrolls l for a: as a's device or as a's own worker.
 func (h *Hub) approveLink(a *linkApprover, l *pairLink) (*pb.JoinResponse, error) {
 	who, user, admin := "web/"+a.login, a.user, a.admin
-	if h.entra != nil {
+	if h.idpOn() {
 		// A sign-in's rules, applied now: allowed list, disabled users, admins.
 		u, adm, err := h.entraSignIn(a.id, "link")
 		if err != nil {
@@ -595,7 +595,7 @@ func (h *Hub) approveLink(a *linkApprover, l *pairLink) (*pb.JoinResponse, error
 		if u != user {
 			return nil, status.Error(codes.PermissionDenied, "your sign-in no longer matches this panel session; sign in again")
 		}
-		who, admin = "entra/"+a.id.upn, adm
+		who, admin = a.id.who(), adm
 	}
 	h.mu.Lock()
 	ok := h.tenants[user] != nil && !h.userDisabledLocked(user)
@@ -786,12 +786,12 @@ func (h *Hub) linkSignIn(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case !errors.Is(err, errLinkNoSession) && !errors.Is(err, errLinkEntra):
 		h.renderLink(w, http.StatusForbidden, linkView{Error: err.Error()})
-	case h.entraWeb() != "" && r.Method == http.MethodGet && topLevelNavigation(r):
+	case h.webSignIn() && r.Method == http.MethodGet && topLevelNavigation(r):
 		w.Header().Set("Cache-Control", "no-store")
 		http.Redirect(w, r, "/auth/login?next=/link", http.StatusFound)
-	case h.entraWeb() != "":
+	case h.webSignIn():
 		h.renderLink(w, http.StatusUnauthorized, linkView{Error: errLinkEntra.Error() + ".", SignIn: "/auth/login?next=/link"})
-	case h.entra != nil:
+	case h.idpOn():
 		h.renderLink(w, http.StatusForbidden, linkView{Error: "This hub's Microsoft sign-in for the panel is off: link devices with az (--az) or a join code."})
 	default:
 		h.renderLink(w, http.StatusUnauthorized, linkView{Error: "Sign in to the panel first, then come back to /link.", SignIn: "/status"})
@@ -885,8 +885,9 @@ func (h *Hub) linkLookup(w http.ResponseWriter, r *http.Request) {
 
 // linkAdmin: would a client approved by a get an admin certificate?
 func (h *Hub) linkAdmin(a *linkApprover) bool {
-	if h.entra != nil {
-		return entraMatchAny(h.cfg.Auth.Entra.Admins, a.id.upn, a.id.oid)
+	if h.idpOn() {
+		admin, _ := h.idpPolicy(a.id)
+		return admin
 	}
 	return a.admin
 }
@@ -929,8 +930,8 @@ func (h *Hub) linkDecide(w http.ResponseWriter, r *http.Request) {
 	p.mu.Unlock()
 	h.auditExpired(expired)
 	who := "web/" + a.login
-	if a.id.upn != "" {
-		who = "entra/" + a.id.upn
+	if a.id.oid != "" { // an identity provider's sign-in: "<provider>/<e-mail or subject>"
+		who = a.id.who()
 	}
 	fields := l.fields()
 	fields["user"] = a.user

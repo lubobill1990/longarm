@@ -9,7 +9,8 @@
 // Authorization is by the certificate role, like longarmd:
 //   Enroll           no certificate needed (the join code is the credential)
 //   HubNode.Connect  worker
-//   HubNode.Renew    any enrolled role
+//   HubNode.Renew    any enrolled role (and relay)
+//   HubNode.RelaySync relay (an external longarm-relay)
 //   Fleet            client, admin (ListNodes also worker)
 //   HubAdmin         admin
 //   Fleet.ReportLinks / Links / History  client, admin
@@ -180,6 +181,60 @@ service HubNode {
   // revoked, it disappears from scheduling); used by longarmd leave / longarm leave and
   // the uninstallers.
   rpc Leave(LeaveRequest) returns (LeaveResponse);
+  // RelaySync is an external longnet relay's subscription (role relay, a
+  // longarm-relay started with --hub): the relay registers its public
+  // endpoints (the hub advertises them to nodes as part of the relay set)
+  // and receives what it enforces without asking the hub per session: the
+  // revocation list and the worker pairs it may relay between (port links).
+  // The hub sends the full policy at once, on every change and at least
+  // every minute; the relay keeps the last one (on disk) and keeps relaying
+  // while the hub is away (pairs for RelayPolicy.ttl).
+  rpc RelaySync(RelaySyncRequest) returns (stream RelayPolicy);
+}
+
+message RelaySyncRequest {
+  // The relay's public QUIC/UDP endpoint, "host:port" (a name the nodes
+  // resolve, or an IP).
+  string udp = 1;
+  // Its TLS-over-TCP fallback, "host:port"; "" = the same as udp.
+  string tcp = 2;
+  string version = 3;
+}
+
+message RelayPolicy {
+  google.protobuf.Timestamp time = 1;
+  // How long the relay keeps the worker pairs without hearing from the hub
+  // (the revocation list is kept regardless: it only ever restricts).
+  google.protobuf.Duration ttl = 2;
+  Revocations revocations = 3;
+  // Worker pairs that may talk through the relay (both directions): the
+  // active port links. Client <-> worker needs no entry.
+  repeated WorkerPair worker_pairs = 4;
+  // Renew the relay certificate when it expires sooner (HubNode.Renew).
+  google.protobuf.Duration renew_before = 5;
+}
+
+message WorkerPair {
+  string a = 1;
+  string b = 2;
+}
+
+// RelayEndpoint is one longnet relay of the hub's relay set.
+message RelayEndpoint {
+  // "host:port" of the relay's QUIC/UDP socket. An empty host (":7445") is
+  // the host the node dials the hub on (the hub's embedded relay).
+  string udp = 1;
+  // The TLS-over-TCP fallback "host:port"; "" = udp's (an external relay)
+  // or the hub's own address (the embedded relay).
+  string tcp = 2;
+  string name = 3; // the relay's certificate name (display, logs)
+  bool embedded = 4; // the relay inside longarm-hub (restarts with the hub)
+}
+
+// RelaySet replaces the relay set of a running session (a relay registered
+// or was forgotten); sent only to workers that announce "relay-set".
+message RelaySet {
+  repeated RelayEndpoint relays = 1;
 }
 
 message NodeReport {
@@ -229,8 +284,10 @@ message NodeHello {
   TailnetState tailnet = 15; // the embedded tailscale node (hub-managed tailnet)
   string isolation = 16; // longarmd.toml [isolation] mode: "shared" | "per-user"
   int64 tenancy_version = 17; // version of the tenancy policy the worker has
-  // what this longarmd supports: "node-id" = it follows a rename (renews
-  // its certificate and restarts when the hub asks)
+  // What this longarmd supports: "relay-set" = it reads HubWelcome.relays
+  // and HubCommand.relays (listens on every relay of the set); "node-id" =
+  // it follows a rename (renews its certificate and restarts when the hub
+  // asks).
   repeated string capabilities = 18;
 }
 
@@ -242,6 +299,19 @@ message NodeState {
   // reserved_mem_gb of memory free for the desktop user.
   int32 max_jobs = 3;
   double reserved_mem_gb = 4;
+  // a newer release this worker can't install itself (an MSI install under
+  // Program Files, a user-session worker, no update key): a notice only
+  UpdateAvailable update_available = 5;
+}
+
+// UpdateAvailable: the hub has a newer complete release than the node runs.
+message UpdateAvailable {
+  string version = 1;
+  string reason = 2; // why the node can't update itself
+  // How its owner's `longarm worker update` installs it: "msi" (the
+  // machine's Longarm Update service), "none" (it can't: reason says why
+  // and what to do instead). Empty from workers before 0.1.19.
+  string method = 3;
 }
 
 message JobsReport {
@@ -303,7 +373,22 @@ message HubCommand {
     // connect and on every change; the list is authoritative (a link missing
     // from it is revoked).
     PortLinks port_links = 14;
+    // The hub is shutting down (SIGTERM: a redeploy, an upgrade, a
+    // restart) and will close the session right after this message:
+    // reconnect after reconnect_after (with jitter) and keep retrying
+    // quickly; not a failure of the worker or its link.
+    HubRestarting restarting = 15;
+    // The relay set changed (see HubWelcome.relays).
+    RelaySet relays = 16;
   }
+}
+
+// HubRestarting: sent to every node session (HubCommand.restarting) and to
+// Fleet.Events subscribers that ask for kind "hub" (FleetEvent kind "hub",
+// message "restarting") when the hub stops.
+message HubRestarting {
+  google.protobuf.Duration reconnect_after = 1;
+  string reason = 2; // e.g. "shutting down"
 }
 
 // WorkerAccess: a user-owned worker is usable by its owner and whoever it
@@ -360,9 +445,21 @@ message HubWelcome {
   // The hub's tailnet: a node whose embedded tailscale node uses another
   // control server switches (new key, own state dir per control URL).
   TailnetInfo tailnet = 6;
+  // The hub's longnet relay, "host:port" (UDP; its TLS fallback is the hub's
+  // own TCP port). An empty host is the host the node dials the hub on;
+  // "" = the hub runs no relay. Workers that listen on loopback only (the
+  // default of sign-in installs) listen on it too, so other machines reach
+  // them (longarmd.toml [hub] relay). Kept for older workers: newer ones
+  // use relays.
+  string relay = 7;
+  // The relay set, by preference: external relays (longarm-relay --hub, a
+  // separate deployment that keeps running while the hub restarts) first,
+  // the embedded relay last. Workers listen on every one; clients race the
+  // resulting endpoints. Empty = only relay (an older hub).
+  repeated RelayEndpoint relays = 10;
   // Renew the certificate now, once (a renamed worker that follows renames:
   // its certificate carries the old name). Older workers ignore it.
-  bool renew_now = 7;
+  bool renew_now = 11;
 }
 
 message Revocations {
@@ -591,20 +688,22 @@ message NodeInfo {
   // worker, an admin worker's session worker), recorded at enrollment or
   // matched by <worker>-admin, owner and host name; "" = none.
   string companion = 33;
+  // workers: a newer release they can't install themselves (NodeState)
+  UpdateAvailable update_available = 34;
   // Node identity (docs/security.md "Node identity"): the immutable ID
   // (name = the display name, which can change); targets resolve to it.
-  string id = 34;
+  string id = 35;
   // The name in the node's current certificate: what clients dial (TLS
   // server name, longnet relay address). It equals name except after a
   // rename until the node renewed its certificate. "" = name.
-  string cert_name = 35;
+  string cert_name = 36;
   // A worker and its admin worker on the same machine (paired together):
   // the other one's ID (the link companion / machine come from).
-  string companion_id = 36;
+  string companion_id = 37;
   // Serials of the node's valid certificates without a node ID (issued
   // before IDs, not yet renewed): the only ID-less certificates clients
   // accept for this node.
-  repeated string legacy_serials = 37;
+  repeated string legacy_serials = 38;
 }
 
 message ListNodesRequest {
@@ -639,7 +738,10 @@ message FleetJobRequest {
 }
 
 message EventsRequest {
-  repeated string kinds = 1; // "job", "node", "queue"; empty = all
+  // "job", "node", "queue", "metrics", "hub"; empty = job, node, queue.
+  // "hub" (only when asked for): {kind "hub", message "restarting"} right
+  // before the hub stops - reconnect promptly, it is not an outage.
+  repeated string kinds = 1;
   string job_id = 2; // only this job
 }
 
@@ -690,10 +792,26 @@ message AuditRecord {
 }
 
 message AuditResponse {
+  // With multi-tenancy only the records about the caller's user: its own
+  // calls (any of its devices), calls on its own workers, hub actions on it
+  // and the hub actions the caller performed (docs/security.md "What admins
+  // see"). The complete trail stays in the hub's storage.
   repeated AuditRecord records = 1;
+  // The other records in the same window, counted by method only.
+  repeated AuditCount hidden = 2;
+  int32 hidden_total = 3;
 }
 
-message WhoamiRequest {}
+message AuditCount {
+  string method = 1;
+  int32 count = 2;
+}
+
+message WhoamiRequest {
+  // the caller's platform (optional): picks WhoamiResponse.latest_path
+  string os = 1;
+  string arch = 2;
+}
 
 message CreateWorkerCodeRequest {
   string name = 1; // the worker's name (default: its hostname)
@@ -726,7 +844,14 @@ message WhoamiResponse {
   bool tenancy = 12; // the hub separates users (multi-tenancy is on)
   bool can_share = 13; // may share own workers (ShareWorker)
   string upn = 14; // Entra users: the sign-in name
-  string id = 15; // the caller's node ID
+  // The newest stable release whose files the hub has (update notices for
+  // clients; "" = none), and where to get it: the MSI for os/arch of the
+  // request when the release has one ("/releases/<v>/longarm-windows-amd64.msi"),
+  // else the install script ("/install.sh", "/install.ps1").
+  string latest_version = 15;
+  string latest_path = 16;
+  string public_url = 17; // the hub's [http] public_url ("" = not configured)
+  string id = 18; // the caller's node ID
 }
 
 // ---------------------------------------------------------------- tenancy
@@ -759,11 +884,15 @@ message TenantUser {
   bool disabled = 4; // calls are refused until enabled again
   google.protobuf.Timestamp created_at = 5;
   string created_by = 6;
-  repeated string devices = 7; // output: nodes with certificates of this user
+  // output: no longer filled (device names are their owner's business,
+  // not the admins'); see device_count / worker_count
+  repeated string devices = 7;
   QuotaUsage usage = 8; // output
   bool panel = 9; // output: has a web panel login
   string upn = 10; // users created by Entra sign-in: their sign-in name
   bool can_share = 11; // may share own workers (set by an admin)
+  int32 device_count = 12; // output: clients/admin devices with certificates of this user
+  int32 worker_count = 13; // output: workers this user owns (not revoked)
 }
 
 // TenancyPolicy is what workers need to know about users.
@@ -823,8 +952,9 @@ message RemoveUserRequest {
 }
 
 message RemoveUserResponse {
-  repeated string revoked = 1; // nodes whose certificates were revoked
+  repeated string revoked = 1; // no longer filled: see revoked_count
   bool purge = 2;
+  int32 revoked_count = 3; // nodes whose certificates were revoked
 }
 
 message SetTeamRequest {
@@ -885,6 +1015,9 @@ service HubAdmin {
   // with a fresh key: pushed to an online worker at once, otherwise on its
   // next hub session (clients: their next hub contact).
   rpc TailnetRekey(NodeRequest) returns (TailnetNodeStatus);
+  // Relays lists the relay set (external relays: connected, last seen) and
+  // how many nodes use it (longarm admin relays).
+  rpc Relays(RelaysRequest) returns (RelaysResponse);
   // Users, teams and quotas (multi-tenancy, docs/security.md).
   rpc PutUser(PutUserRequest) returns (PutUserResponse);
   rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
@@ -893,8 +1026,61 @@ service HubAdmin {
   rpc RemoveUser(RemoveUserRequest) returns (RemoveUserResponse);
   rpc SetTeam(SetTeamRequest) returns (ListTeamsResponse);
   rpc ListTeams(ListTeamsRequest) returns (ListTeamsResponse);
+  // FleetSummary is the admins' only fleet-wide view of machines: per user
+  // counts by role and online state, anonymous rows (role, state, version,
+  // OS, last seen) and a version histogram - never names, IDs, host names,
+  // labels, metrics, processes, sessions or jobs. Audited.
+  rpc FleetSummary(FleetSummaryRequest) returns (FleetSummaryResponse);
   // RenameNode changes any node's display name (it keeps its ID). Audited.
   rpc RenameNode(RenameNodeRequest) returns (NodeInfo);
+}
+
+message FleetSummaryRequest {
+  bool rows = 1; // include each user's version histogram (UserFleetSummary.versions)
+}
+
+// FleetCounts counts machines (revoked ones excluded). Clients have no hub
+// session: their online state is not known.
+message FleetCounts {
+  int32 workers = 1; // session workers (not admin workers)
+  int32 workers_online = 2;
+  int32 admin_workers = 3;
+  int32 admin_workers_online = 4;
+  int32 clients = 5; // client and admin certificates (devices)
+  int32 pending = 6; // workers waiting for approval
+}
+
+// FleetMachine: no longer sent (a row per machine - OS, last seen - could
+// be joined back to a device); kept for the wire format.
+message FleetMachine {
+  string role = 1; // worker | admin-worker | client | admin
+  bool online = 2; // workers: hub session
+  string version = 3;
+  string os = 4;
+  google.protobuf.Timestamp last_seen = 5; // workers; truncated to the minute
+}
+
+message UserFleetSummary {
+  string user = 1; // "" = fleet workers (no owner)
+  FleetCounts counts = 2;
+  google.protobuf.Timestamp last_seen = 3; // no longer filled (one machine's activity)
+  repeated FleetMachine machines = 4; // no longer filled: per-user aggregates only
+  repeated VersionCount versions = 5; // with rows: the user's machines by version, newest first
+}
+
+message VersionCount {
+  string version = 1; // "" = not reported
+  int32 workers = 2;
+  int32 online = 3;
+  int32 clients = 4; // devices (client, admin) of that version (per-user rows)
+}
+
+message FleetSummaryResponse {
+  google.protobuf.Timestamp time = 1;
+  repeated UserFleetSummary users = 2; // every user, then the fleet workers ("")
+  FleetCounts totals = 3;
+  repeated VersionCount worker_versions = 4; // newest first
+  bool tenancy = 5;
 }
 
 message HubLogsRequest {
@@ -1058,6 +1244,10 @@ message TailnetStatusResponse {
   string last_mint_error = 9;
   google.protobuf.Timestamp last_mint_error_at = 10;
   string last_mint_error_node = 11;
+  // Headscale (provider headscale): "ok", "starting: <detail>" (a sidecar
+  // coming up) or "down: <detail>", as the hub's health check of its API
+  // sees it. Empty for other providers.
+  string control_health = 12;
 }
 
 // -------------------------------------------------------- self-update (P2)
@@ -1080,12 +1270,21 @@ message UpdateCheckRequest {
   string arch = 2;
   string version = 3; // running version
   string channel = 4;
+  // An update the worker's owner asked for (longarm worker update): this
+  // version's files, whatever the rollout says ("latest" = the latest
+  // stable release). The worker refuses anything not newer than it runs and
+  // verifies the signatures as always. Older hubs ignore it (the worker
+  // then sees another version and says the hub is too old).
+  string want = 5;
 }
 
 message UpdateCheckResponse {
   string version = 1; // target version; "" or == running = stay
   repeated ReleaseFile files = 2; // files of the target for the node's os/arch
   string rollout = 3; // human-readable rollout state
+  // the newest stable release whose files the hub has (a notice for nodes
+  // that can't update themselves; "" = none)
+  string latest_version = 4;
 }
 
 message ReleaseFile {
@@ -1162,6 +1361,10 @@ message PushReleaseRequest {
   google.protobuf.Duration batch_wait = 5; // between batches (default 5m)
   bool allow_downgrade = 6;
   repeated string nodes = 7; // limit to these workers (default: all of the channel)
+  // no worker of the channel can self-update (MSI installs, user-session
+  // workers: they update through the tray's MSI banner): answer a Rollout
+  // in state "none" listing them instead of FailedPrecondition
+  bool allow_none = 8;
 }
 
 message GetRolloutRequest {}
@@ -1169,7 +1372,7 @@ message GetRolloutRequest {}
 message Rollout {
   string version = 1;
   string channel = 2;
-  string state = 3; // canary | rolling | done | halted | aborted
+  string state = 3; // canary | rolling | done | halted | aborted | none (allow_none)
   repeated string canary = 4;
   repeated string targeted = 5; // nodes told to run version
   repeated string updated = 6; // nodes that report version and are healthy
@@ -1183,6 +1386,18 @@ message Rollout {
   google.protobuf.Duration batch_wait = 14;
   string previous = 15; // version most nodes ran before
   bool allow_downgrade = 16;
+  // state "none" (PushReleaseRequest.allow_none): the workers of the
+  // channel that can't self-update; nothing was started
+  repeated string not_capable = 17;
+  // Counts of the lists above. The name lists carry only the workers the
+  // caller may see as a user (its own, shared with it, fleet workers):
+  // other users' workers are counted, never named.
+  int32 canary_count = 18;
+  int32 targeted_count = 19;
+  int32 updated_count = 20;
+  int32 failed_count = 21;
+  int32 waiting_count = 22;
+  int32 not_capable_count = 23;
 }
 
 message LeaveRequest {
@@ -1314,4 +1529,24 @@ message PortLinkSpec {
   // ends' endorsements must carry from / to as their names.
   string from_id = 11;
   string to_id = 12;
+}
+
+message RelaysRequest {}
+
+message RelayStatus {
+  RelayEndpoint endpoint = 1;
+  bool connected = 2; // its RelaySync stream is open now
+  google.protobuf.Timestamp last_seen = 3; // unset for the embedded relay
+  string version = 4;
+  string remote = 5; // the address it connects to the hub from
+}
+
+message RelaysResponse {
+  repeated RelayStatus relays = 1; // the advertised set, by preference
+  // Online workers that listen on the whole set ("relay-set") and those
+  // that only know the embedded relay (older versions, by version): the
+  // latter lose their relayed connections while the hub restarts.
+  int32 workers_relay_set = 2;
+  int32 workers_legacy = 3;
+  map<string, int32> legacy_versions = 4;
 }

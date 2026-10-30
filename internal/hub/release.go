@@ -23,6 +23,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/update"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -249,6 +250,9 @@ const (
 	rolloutDone    = "done"
 	rolloutHalted  = "halted"
 	rolloutAborted = "aborted"
+	// rolloutNone: PushRelease with allow_none found no worker that can
+	// self-update; only an answer, never stored
+	rolloutNone = "none"
 )
 
 func (h *Hub) loadRollout() {
@@ -340,6 +344,11 @@ func (h *Hub) hintLocked(n *node) {
 
 // pushRelease starts a rollout.
 func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, error) {
+	return h.pushReleaseAs(tenancy.Caller{Admin: true}, req, by)
+}
+
+// pushReleaseAs is pushRelease for a caller who sees the fleet as v.
+func (h *Hub) pushReleaseAs(v tenancy.Caller, req *pb.PushReleaseRequest, by string) (*pb.Rollout, error) {
 	files, err := h.releaseFiles(req.Version)
 	if err != nil {
 		return nil, err
@@ -391,8 +400,20 @@ func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, e
 		cands = append(cands, n)
 	}
 	sort.Strings(cantUpdate)
+	if len(cands) == 0 && req.AllowNone {
+		// nothing to roll out; the workers that can't self-update get the
+		// version as a notice (CheckUpdate.latest_version: the tray's
+		// MSI banner, longarmd status) - the current rollout stays as is
+		msg := fmt.Sprintf("no approved worker of channel %s", channel)
+		if len(cantUpdate) > 0 {
+			msg = fmt.Sprintf("no worker of channel %s can self-update; %d update with the MSI (the tray's banner) or the install script", channel, len(cantUpdate))
+		}
+		return &pb.Rollout{Version: req.Version, Channel: channel, State: rolloutNone, NotCapable: cantUpdate, Message: msg}, nil
+	}
 	if len(cands) == 0 {
-		return nil, status.Errorf(codes.FailedPrecondition, "no approved worker of channel %s can self-update (not capable: %v)", channel, cantUpdate)
+		// counts, and names only of the caller's visible workers (see rolloutFor)
+		return nil, status.Errorf(codes.FailedPrecondition, "no approved worker of channel %s can self-update (%s)", channel,
+			h.countedNamesLocked(v, cantUpdate, "can't self-update"))
 	}
 	// Canary preference: online, update-capable, fewest active jobs.
 	sort.Slice(cands, func(i, j int) bool {
@@ -625,13 +646,21 @@ func (s *fleetServer) CheckUpdate(ctx context.Context, req *pb.UpdateCheckReques
 	if req.Version != "" {
 		n.rec.Version = req.Version
 	}
+	if req.Want != "" {
+		h.mu.Unlock()
+		return h.wantedRelease(req)
+	}
 	target := h.targetLocked(n)
+	stable := channelOf(n) == "stable"
 	state := ""
 	if h.rollout != nil {
 		state = h.rollout.Version + " " + h.rollout.State
 	}
 	h.mu.Unlock()
 	resp := &pb.UpdateCheckResponse{Rollout: state}
+	if latest, _ := h.latestNotice(); latest != "" && stable {
+		resp.LatestVersion = latest
+	}
 	if target == "" || target == req.Version {
 		return resp, nil
 	}
@@ -644,6 +673,40 @@ func (s *fleetServer) CheckUpdate(ctx context.Context, req *pb.UpdateCheckReques
 		if f.Kind == "binary" && f.OS == req.Os && f.Arch == req.Arch && isUpdateBinary(f.File) {
 			resp.Files = append(resp.Files, releaseFilePB(f))
 		}
+	}
+	return resp, nil
+}
+
+// wantedRelease answers CheckUpdate with want (longarm worker update: the
+// owner asked this worker for a version): that version's update binaries
+// for the worker's OS / arch, whatever the rollout says. The worker refuses
+// anything not newer than it runs and verifies the signatures.
+func (h *Hub) wantedRelease(req *pb.UpdateCheckRequest) (*pb.UpdateCheckResponse, error) {
+	v := req.Want
+	if v == "latest" {
+		latest, _, err := h.latestRelease()
+		if err != nil {
+			return nil, err
+		}
+		if latest == "" {
+			return nil, status.Error(codes.NotFound, "the hub has no stable release")
+		}
+		v = latest
+	} else if !versionRE.MatchString(v) {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid version %q", v)
+	}
+	files, err := h.releaseFiles(v)
+	if err != nil {
+		return nil, err
+	}
+	resp := &pb.UpdateCheckResponse{Version: v}
+	for _, f := range files {
+		if f.Kind == "binary" && f.OS == req.Os && f.Arch == req.Arch && isUpdateBinary(f.File) {
+			resp.Files = append(resp.Files, releaseFilePB(f))
+		}
+	}
+	if len(resp.Files) == 0 {
+		return nil, status.Errorf(codes.NotFound, "the hub has no release %s for %s/%s", v, req.Os, req.Arch)
 	}
 	return resp, nil
 }
@@ -688,7 +751,7 @@ func (s *fleetServer) DownloadRelease(req *pb.ReleaseFileRequest, stream pb.Flee
 	}
 }
 
-func (s *hubAdminServer) ListReleases(_ context.Context, req *pb.ListReleasesRequest) (*pb.ListReleasesResponse, error) {
+func (s *hubAdminServer) ListReleases(ctx context.Context, req *pb.ListReleasesRequest) (*pb.ListReleasesResponse, error) {
 	rels, err := s.h.store.Releases()
 	if err != nil {
 		return nil, err
@@ -724,8 +787,9 @@ func (s *hubAdminServer) ListReleases(_ context.Context, req *pb.ListReleasesReq
 	for _, v := range order {
 		resp.Releases = append(resp.Releases, byVersion[v])
 	}
+	v := s.h.viewer(callerFrom(ctx))
 	s.h.mu.Lock()
-	resp.Rollout = s.h.rolloutPBLocked()
+	resp.Rollout = s.h.rolloutForLocked(v, s.h.rolloutPBLocked())
 	s.h.mu.Unlock()
 	return resp, nil
 }
@@ -739,17 +803,21 @@ func (s *hubAdminServer) PushRelease(ctx context.Context, req *pb.PushReleaseReq
 		// to an older (signed, maybe vulnerable) version.
 		return nil, status.Error(codes.PermissionDenied, "the release role may not downgrade workers (admin only)")
 	}
-	return s.h.pushRelease(req, callerFrom(ctx).id.Name)
+	v := s.h.viewer(callerFrom(ctx))
+	r, err := s.h.pushReleaseAs(v, req, callerFrom(ctx).id.Name)
+	return s.h.rolloutFor(v, r, err)
 }
 
-func (s *hubAdminServer) GetRollout(context.Context, *pb.GetRolloutRequest) (*pb.Rollout, error) {
+func (s *hubAdminServer) GetRollout(ctx context.Context, _ *pb.GetRolloutRequest) (*pb.Rollout, error) {
+	v := s.h.viewer(callerFrom(ctx))
 	s.h.mu.Lock()
 	defer s.h.mu.Unlock()
-	return s.h.rolloutPBLocked(), nil
+	return s.h.rolloutForLocked(v, s.h.rolloutPBLocked()), nil
 }
 
 func (s *hubAdminServer) AbortRollout(ctx context.Context, _ *pb.GetRolloutRequest) (*pb.Rollout, error) {
 	h := s.h
+	v := h.viewer(callerFrom(ctx))
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.rollout == nil {
@@ -761,7 +829,7 @@ func (s *hubAdminServer) AbortRollout(ctx context.Context, _ *pb.GetRolloutReque
 		h.saveRolloutLocked()
 		h.bus.publish(&pb.FleetEvent{Kind: "release", Message: "rollout of " + h.rollout.Version + " aborted"})
 	}
-	return h.rolloutPBLocked(), nil
+	return h.rolloutForLocked(v, h.rolloutPBLocked()), nil
 }
 
 // Upload limits of PublishRelease.

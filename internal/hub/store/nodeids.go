@@ -17,7 +17,7 @@ import (
 // (the hub extends them to its CA's NotAfter when that is later).
 const LegacyNameTombstoneTTL = 2 * 365 * 24 * time.Hour
 
-// migrateNodeIDs is migration 5's Go step (docs/security.md "Node
+// migrateNodeIDs is migration 6's Go step (docs/security.md "Node
 // identity", "Migration"): every node gets an ID; names that break the
 // naming rules (one that looks like an ID; a name two non-revoked nodes
 // share) are changed, with an audit record and a note for the log;
@@ -168,14 +168,14 @@ func migrateNodeIDs(tx *sql.Tx, notes *[]string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`INSERT INTO nodes_v5(id,name,role,state,data) VALUES(?,?,?,?,?)`,
+		if _, err := tx.Exec(`INSERT INTO nodes_v6(id,name,role,state,data) VALUES(?,?,?,?,?)`,
 			r.id, r.newName, r.role, r.state, string(b)); err != nil {
 			return err
 		}
 	}
 	for _, q := range []string{
 		`DROP TABLE nodes`,
-		`ALTER TABLE nodes_v5 RENAME TO nodes`,
+		`ALTER TABLE nodes_v6 RENAME TO nodes`,
 		`CREATE UNIQUE INDEX nodes_active_name ON nodes(name) WHERE state != 'revoked'`,
 		`CREATE INDEX nodes_name ON nodes(name)`,
 		`CREATE INDEX certs_node_id ON certs(node_id)`,

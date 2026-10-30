@@ -265,6 +265,9 @@ func run(d jobs.Dir, stdin io.Reader, log *slog.Logger) error {
 		if ra.Tmp != "" && runtime.GOOS != "windows" {
 			env = append(env, "TMPDIR="+ra.Tmp)
 		}
+		if h := agentHome(spec, secrets); h != "" {
+			env = append(env, "COPILOT_HOME="+h)
+		}
 		for _, k := range keys {
 			env = append(env, k+"="+spec.Env[k])
 		}
@@ -277,6 +280,9 @@ func run(d jobs.Dir, stdin io.Reader, log *slog.Logger) error {
 		// The child inherits the shim's environment (= longarmd's, i.e. the
 		// service account's) plus job env plus secrets. Setting them on the
 		// shim itself also makes exec's PATH lookup honour a job-provided PATH.
+		if h := agentHome(spec, secrets); h != "" {
+			os.Setenv("COPILOT_HOME", h)
+		}
 		for _, k := range keys {
 			os.Setenv(k, spec.Env[k])
 		}
@@ -302,6 +308,22 @@ func run(d jobs.Dir, stdin io.Reader, log *slog.Logger) error {
 		return j.runSession(ctr)
 	}
 	return j.runPipe(ctr)
+}
+
+// agentHome is the job's private COPILOT_HOME (forwarded Copilot
+// credentials), unless the job sets COPILOT_HOME itself.
+func agentHome(spec *jobs.Spec, secrets map[string]string) string {
+	if spec.AgentHome == "" {
+		return ""
+	}
+	for _, m := range []map[string]string{spec.Env, secrets} {
+		for k := range m {
+			if strings.EqualFold(k, "COPILOT_HOME") {
+				return ""
+			}
+		}
+	}
+	return spec.AgentHome
 }
 
 // readInput reads what longarmd sends on the shim's stdin: the secrets (a

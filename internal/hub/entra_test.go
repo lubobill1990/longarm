@@ -304,7 +304,7 @@ func TestEntraEntries(t *testing.T) {
 			t.Errorf("validEntraEntry(%q) != %v", e, want)
 		}
 	}
-	for upn, want := range map[string]string{"bolu1@microsoft.com": "bolu1", "First.Last@x.com": "firstlast",
+	for upn, want := range map[string]string{"alice@example.com": "alice", "First.Last@x.com": "firstlast",
 		"1abc@x.com": "u1abc", "averyveryverylongusername@x.com": "averyveryverylong", "@x.com": "user", "": "user",
 		"Zoë_O'Neil-2@x.com": "zo_oneil-2"} {
 		if got := entraUserName(upn); got != want || !pki.ValidUser(got) {
@@ -567,8 +567,8 @@ func TestEntraNoConfig(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("/auth/login: %d", resp.StatusCode)
 	}
-	if _, body := plainGet(t, "http://"+th.h.Addr("http")+"/"); strings.Contains(body, "la-entra") {
-		t.Fatal("Microsoft link without Entra")
+	if _, body := plainGet(t, "http://"+th.h.Addr("http")+"/auth/info"); !strings.Contains(body, `"entra": false`) {
+		t.Fatalf("/auth/info without Entra: %s", body)
 	}
 }
 
@@ -614,11 +614,11 @@ func TestEntraWebSignIn(t *testing.T) {
 	if code, _ := plainGet(t, base+"/auth/spa-callback?code=x&state=y"); code != http.StatusNotFound {
 		t.Fatalf("spa callback in confidential mode: %d", code)
 	}
-	if _, body := plainGet(t, base+"/status"); !strings.Contains(body, `href="/auth/login?next=/status"`) {
+	if _, body := plainGet(t, base+"/status"); !strings.Contains(body, `href="/auth/login?provider=entra&amp;next=/status"`) {
 		t.Fatalf("login page without the Microsoft link: %s", body)
 	}
-	if _, body := plainGet(t, base+"/"); !strings.Contains(body, `<a id="la-entra" href="/auth/login">`) || !strings.Contains(body, "body:has(form.login)") {
-		t.Fatalf("panel page without the Microsoft link: %s", body)
+	if _, body := plainGet(t, base+"/"); strings.Contains(body, "la-entra") {
+		t.Fatalf("panel page with the injected Microsoft link (the login page asks /auth/info): %s", body)
 	}
 
 	newBrowser := func() *http.Client {

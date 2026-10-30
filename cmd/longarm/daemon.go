@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -29,9 +30,11 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/fwcheck"
+	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/localapi"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/pool"
+	"github.com/lubobill1990/longarm/internal/update"
 	"github.com/lubobill1990/longarm/internal/version"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -210,17 +213,24 @@ func (d *daemon) Shutdown(context.Context, *pb.ShutdownRequest) (*pb.ShutdownRes
 	return &pb.ShutdownResponse{}, nil
 }
 
-// relayHubEvents keeps a Fleet.Events subscription and fans it out.
+// relayHubEvents keeps a Fleet.Events subscription and fans it out. It
+// asks for kind "hub" too: a hub that stops says so ("restarting"), and the
+// subscription is back within seconds of the new hub answering
+// (hubclient.Reconnect) instead of after a long backoff.
 func (d *daemon) relayHubEvents(ctx context.Context) {
-	wait := time.Second
+	var bo hubclient.Reconnect
 	for ctx.Err() == nil {
 		h := d.s.hub()
 		if h == nil {
 			return
 		}
-		st, err := h.Fleet().Events(ctx, &pb.EventsRequest{Kinds: []string{"job", "node", "queue", "metrics"}})
+		restarting := false
+		st, err := h.Fleet().Events(ctx, &pb.EventsRequest{Kinds: []string{"job", "node", "queue", "metrics", "hub"}})
 		if err == nil {
 			d.setLink(true, nil)
+			// the hub answers again: forget a failure remembered while it
+			// restarted (no 30 s skip of a hub that is back)
+			d.s.hubUp()
 			if nodes, ok := d.s.hubNodes(ctx, false); ok {
 				for _, n := range nodes {
 					d.mon.HubNode(n)
@@ -231,6 +241,11 @@ func (d *daemon) relayHubEvents(ctx context.Context) {
 				var ev *pb.FleetEvent
 				if ev, err = st.Recv(); err != nil {
 					break
+				}
+				if ev.Kind == "hub" {
+					// the hub's own state, not a fleet event for subscribers
+					restarting = restarting || ev.Message == "restarting"
+					continue
 				}
 				if ev.NodeInfo != nil && (ev.Kind == "node" || ev.Kind == "metrics") {
 					d.mon.HubNode(ev.NodeInfo)
@@ -244,21 +259,26 @@ func (d *daemon) relayHubEvents(ctx context.Context) {
 				}
 				d.mu.Unlock()
 			}
-			if time.Since(start) > 30*time.Second {
-				wait = time.Second
+			if time.Since(start) > 2*time.Second {
+				bo.Connected()
 			}
 		}
 		if ctx.Err() != nil {
 			return
 		}
-		d.setLink(false, err)
+		var wait time.Duration
+		if restarting {
+			bo.Restarting(time.Second)
+			wait = bo.Next(nil)
+			d.setLink(false, errors.New("hub restarting; reconnecting"))
+		} else {
+			wait = bo.Next(err)
+			d.setLink(false, err)
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(wait):
-		}
-		if wait *= 2; wait > 30*time.Second {
-			wait = 30 * time.Second
 		}
 	}
 }
@@ -339,6 +359,7 @@ func (d *daemon) gateway() http.Handler {
 		localapi.WriteProto(w, s, err)
 	})
 	d.poolGateway(mux)
+	d.updateGateway(mux)
 	// One-shot longarm processes dial their tailscale / longnet legs through the
 	// daemon's long-lived nodes.
 	mux.Handle("POST /v1/legs/dial", client.LegProxyHandler(d.s.dialer, d.s.worker))
@@ -399,11 +420,25 @@ func runDaemon(ctx context.Context) error {
 			return errors.New("longarm daemon is already running for " + configDir)
 		}
 	}
-	ln, addr, err := localapi.Listen("longarm", configDir, addrFile)
+	ch, err := localapi.ListenChannel("longarm", configDir, addrFile)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(addrFile)
+	ln, addr := ch.Listener, ch.Addr
+	// The address file goes before the channel closes, and only while it
+	// is still this daemon's: a daemon started right after this one
+	// stopped keeps its own (it used to be deleted: "not running").
+	defer ch.Release()
+	serveCtx, serveCancel := context.WithCancel(context.Background())
+	defer serveCancel()
+	go func() {
+		select {
+		case <-ctx.Done():
+			ch.Release()
+			serveCancel()
+		case <-serveCtx.Done():
+		}
+	}()
 	s.dialer.WarmTailnet()
 	g := grpc.NewServer()
 	pb.RegisterLocalClientServer(g, d)
@@ -418,7 +453,7 @@ func runDaemon(ctx context.Context) error {
 	waitPush := runPusher(ctx, s)
 	defer func() { cancel(); <-monDone; d.closeConns(); waitPush() }()
 	fmt.Fprintf(os.Stderr, "longarm daemon %s listening on %s (pid %d)\n", version.Version, addr, os.Getpid())
-	err = localapi.Serve(ctx, ln, g, d.gateway())
+	err = localapi.Serve(serveCtx, ln, g, d.gateway())
 	d.mu.Lock()
 	for _, f := range d.forwards {
 		f.ln.Close()
@@ -429,23 +464,33 @@ func runDaemon(ctx context.Context) error {
 }
 
 // daemonClient connects to the running daemon (starting it if asked).
+// Starting it also replaces a daemon older than this longarm (an upgrade
+// left the old one running, or an app's bundled older copy started it):
+// never a newer one - an older longarm just uses what runs.
 func daemonClient(start bool) (pb.LocalClientClient, func(), error) {
 	addrFile := filepath.Join(configDir, daemonAddrFile)
-	try := func() (pb.LocalClientClient, func(), error) {
+	try := func() (pb.LocalClientClient, func(), *pb.ClientStatus, error) {
 		cc, err := localapi.DialFile(addrFile, "longarm daemon")
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		c := pb.NewLocalClientClient(cc)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		if _, err := c.Status(ctx, &pb.LocalStatusRequest{}); err != nil {
+		st, err := c.Status(ctx, &pb.LocalStatusRequest{})
+		if err != nil {
 			cc.Close()
-			return nil, nil, fmt.Errorf("longarm daemon not reachable: %w", err)
+			return nil, nil, nil, fmt.Errorf("longarm daemon not reachable: %w", err)
 		}
-		return c, func() { cc.Close() }, nil
+		return c, func() { cc.Close() }, st, nil
 	}
-	c, closeFn, err := try()
+	c, closeFn, st, err := try()
+	if err == nil && start {
+		r := &daemonReplacer{mine: version.Version, dial: try, start: startDaemonProcess,
+			alive: func(pid int) bool { return platform.ProcessAlive(pid, 0) },
+			logf:  func(f string, a ...any) { fmt.Fprintf(os.Stderr, "longarm: "+f+"\n", a...) }}
+		return r.upgrade(context.Background(), c, closeFn, st)
+	}
 	if err == nil || !start {
 		return c, closeFn, err
 	}
@@ -454,7 +499,7 @@ func daemonClient(start bool) (pb.LocalClientClient, func(), error) {
 	}
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		if c, closeFn, err = try(); err == nil {
+		if c, closeFn, _, err = try(); err == nil {
 			return c, closeFn, nil
 		}
 		if time.Now().After(deadline) {
@@ -462,6 +507,130 @@ func daemonClient(start bool) (pb.LocalClientClient, func(), error) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// daemonReplacer replaces a running daemon that is older than this
+// longarm with this longarm's (moving its port forwards over).
+type daemonReplacer struct {
+	mine  string // this longarm's version
+	dial  func() (pb.LocalClientClient, func(), *pb.ClientStatus, error)
+	start func() error // starts this longarm's daemon
+	alive func(pid int) bool
+	logf  func(format string, a ...any)
+	// how long to wait for the old daemon to exit and the new one to
+	// answer (0: 20 s, 30 s)
+	stopWait, startWait time.Duration
+}
+
+// replaceAttempts: an app's bundled older longarm may start its daemon in
+// the moment between ours stopping the old one and starting the new one;
+// it is replaced again, this many times at most.
+const replaceAttempts = 3
+
+// upgrade returns a client of the daemon that runs after replacing it when
+// it is older than this longarm (c, st: the running one). A daemon of the
+// same or a newer version, or of a development build, is left alone.
+func (r *daemonReplacer) upgrade(ctx context.Context, c pb.LocalClientClient, closeFn func(), st *pb.ClientStatus) (pb.LocalClientClient, func(), error) {
+	if !update.NewerRelease(r.mine, st.GetVersion()) {
+		return c, closeFn, nil
+	}
+	old := st
+	var fwds []*pb.ForwardInfo
+	if lf, err := c.ListForwards(ctx, &pb.ListForwardsRequest{}); err == nil {
+		fwds = lf.Forwards
+	}
+	for attempt := 1; ; attempt++ {
+		r.logf("the running longarm daemon %s (pid %d) is older than this longarm %s: replacing it", st.GetVersion(), st.GetPid(), r.mine)
+		sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_, err := c.Shutdown(sctx, &pb.ShutdownRequest{})
+		cancel()
+		closeFn()
+		if err != nil {
+			return r.redial(fmt.Errorf("stopping the older daemon %s (pid %d): %w", st.GetVersion(), st.GetPid(), err))
+		}
+		if !r.waitExit(ctx, int(st.GetPid())) {
+			return r.redial(fmt.Errorf("the older daemon %s (pid %d) did not stop", st.GetVersion(), st.GetPid()))
+		}
+		if err := r.start(); err != nil {
+			return nil, nil, err
+		}
+		c, closeFn, st, err = r.waitUp(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !update.NewerRelease(r.mine, st.GetVersion()) {
+			break // ours (or a newer one) runs
+		}
+		if attempt >= replaceAttempts {
+			r.logf("another program keeps starting the older longarm daemon %s; using it", st.GetVersion())
+			return c, closeFn, nil
+		}
+	}
+	moved := 0
+	for _, f := range fwds {
+		if req := forwardAgain(f); req != nil {
+			fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			if _, err := c.StartForward(fctx, req); err == nil {
+				moved++
+			} else {
+				r.logf("forward %s -> %s:%s: %v", f.LocalAddr, f.Worker, f.Target, err)
+			}
+			cancel()
+		}
+	}
+	note := ""
+	if len(fwds) > 0 {
+		note = fmt.Sprintf("; %d of %d forwards moved", moved, len(fwds))
+	}
+	r.logf("longarm daemon %s (pid %d) replaced the older %s (pid %d)%s", st.GetVersion(), st.GetPid(), old.GetVersion(), old.GetPid(), note)
+	return c, closeFn, nil
+}
+
+// redial: after a failed replacement, whatever daemon answers (else err).
+func (r *daemonReplacer) redial(err error) (pb.LocalClientClient, func(), error) {
+	if c, closeFn, _, derr := r.dial(); derr == nil {
+		r.logf("%v; using the running daemon", err)
+		return c, closeFn, nil
+	}
+	return nil, nil, err
+}
+
+func (r *daemonReplacer) waitExit(ctx context.Context, pid int) bool {
+	d := cmp.Or(r.stopWait, 20*time.Second)
+	for end := time.Now().Add(d); ; {
+		if pid <= 0 || !r.alive(pid) {
+			return true
+		}
+		if time.Now().After(end) || ctx.Err() != nil {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func (r *daemonReplacer) waitUp(ctx context.Context) (pb.LocalClientClient, func(), *pb.ClientStatus, error) {
+	d := cmp.Or(r.startWait, 30*time.Second)
+	for end := time.Now().Add(d); ; {
+		c, closeFn, st, err := r.dial()
+		if err == nil {
+			return c, closeFn, st, nil
+		}
+		if time.Now().After(end) || ctx.Err() != nil {
+			return nil, nil, nil, fmt.Errorf("longarm daemon did not start: %w (see %s)", err, filepath.Join(configDir, "daemon.log"))
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// forwardAgain is the request that opens forward f again, on the same
+// local address (nil: not one this daemon can recreate).
+func forwardAgain(f *pb.ForwardInfo) *pb.StartForwardRequest {
+	host, port, err := net.SplitHostPort(f.GetLocalAddr())
+	p, perr := strconv.Atoi(port)
+	if err != nil || perr != nil || p <= 0 || f.GetWorker() == "" || f.GetTarget() == "" {
+		return nil
+	}
+	return &pb.StartForwardRequest{Worker: f.Worker, Target: f.Target, LocalPort: int32(p), Bind: host}
 }
 
 func startDaemonProcess() error {

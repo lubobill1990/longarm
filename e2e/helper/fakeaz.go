@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // fakeAz is a stand-in for the Azure CLI (helper copied to az / az.exe) for
@@ -36,7 +38,23 @@ func fakeAz(args []string) {
 	read := func(f string) string { b, _ := os.ReadFile(filepath.Join(dir, f)); return strings.TrimSpace(string(b)) }
 	write := func(f, s string) { os.WriteFile(filepath.Join(dir, f), []byte(s), 0o644) }
 	fail := func(msg string) { fmt.Fprintln(os.Stderr, "ERROR:", msg); os.Exit(3) }
-	restart := func() { n, _ := strconv.Atoi(read("boots")); write("boots", strconv.Itoa(n+1)) }
+	// HELPER_AZ_RESTORE_SECONDS: every start restores the database that long
+	// (Litestream replaying a long WAL): the log shows the restore running and
+	// no bootstrap values of this start before it is done
+	restart := func() {
+		n, _ := strconv.Atoi(read("boots"))
+		write("boots", strconv.Itoa(n+1))
+		os.Remove(filepath.Join(dir, "crashes"))
+		if secs, _ := strconv.Atoi(os.Getenv("HELPER_AZ_RESTORE_SECONDS")); secs > 0 {
+			write("restore-until", strconv.FormatInt(time.Now().Add(time.Duration(secs)*time.Second).UnixMilli(), 10))
+		} else {
+			os.Remove(filepath.Join(dir, "restore-until"))
+		}
+	}
+	restoring := func() bool {
+		ms, _ := strconv.ParseInt(read("restore-until"), 10, 64)
+		return time.Now().UnixMilli() < ms
+	}
 	// the container group = the parameters it was deployed with
 	group := func() map[string]any {
 		var doc struct {
@@ -66,8 +84,50 @@ func fakeAz(args []string) {
 		return regexp.MustCompile(`(?m)^boot_id=.*$`).ReplaceAll(b, []byte("boot_id=fake-"+read("boots")))
 	}
 	identity := func() bool { return group()["storageAuth"] == "identity" }
+	// HELPER_AZ_CRASHLOOP_IMAGE: a group whose image contains it crash-loops
+	// (the 0.1.18 deploy: Litestream's restore ran out of memory on every
+	// start, exit 137): ACI counts two restarts between two looks
+	crashLoop := func() bool {
+		c := os.Getenv("HELPER_AZ_CRASHLOOP_IMAGE")
+		return c != "" && exists("cg") && strings.Contains(fmt.Sprint(group()["image"]), c)
+	}
 	cmd := strings.Join(args[:min(len(args), 2)], " ")
 	q := flag("--query")
+	// the external relay (deploy.sh --relay): its own container group
+	// <name>-relay = the parameters of its last deployment ("cg-relay")
+	if strings.HasSuffix(flag("-n"), "-relay") && strings.HasPrefix(cmd, "container ") {
+		relayParams := func() map[string]any {
+			var doc struct {
+				Parameters map[string]struct{ Value any } `json:"parameters"`
+			}
+			json.Unmarshal([]byte(read("cg-relay")), &doc)
+			m := map[string]any{}
+			for k, v := range doc.Parameters {
+				m[k] = v.Value
+			}
+			return m
+		}
+		if cmd != "container delete" && !exists("cg-relay") {
+			fail("ResourceNotFound")
+		}
+		switch {
+		case cmd == "container delete":
+			os.Remove(filepath.Join(dir, "cg-relay"))
+		case cmd == "container show" && strings.Contains(q, "currentState"):
+			fmt.Println("Running")
+		case cmd == "container show" && strings.Contains(q, "image"):
+			fmt.Println(relayParams()["image"])
+		case cmd == "container logs":
+			if os.Getenv("HELPER_AZ_RELAY_UNREGISTERED") == "1" || strings.Contains(fmt.Sprint(relayParams()["image"]), "unregistered") {
+				fmt.Println(`level=WARN msg="relay: hub subscription ended; relaying continues with the last policy"`)
+			} else {
+				fmt.Println(`level=INFO msg="relay: subscribed to the hub" hub=` + fmt.Sprint(relayParams()["hubAddress"]))
+			}
+		default:
+			fail("fake az: relay " + strings.Join(args, " "))
+		}
+		return
+	}
 	switch cmd {
 	case "account show":
 		if os.Getenv("HELPER_AZ_LOGGED_OUT") == "1" {
@@ -83,17 +143,45 @@ func fakeAz(args []string) {
 			fail("ResourceGroupNotFound")
 		}
 		lines := strings.Split(read("rg"), "\n")
-		switch q {
-		case "location":
+		tags := map[string]string{}
+		json.Unmarshal([]byte(read("tags.json")), &tags)
+		switch {
+		case q == "location":
 			fmt.Println(lines[0])
-		case "tags":
-			b, _ := json.Marshal(map[string]string{"longarm-hub": lines[1]})
+		case q == "id":
+			fmt.Println("/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/" + flag("-n"))
+		case q == "tags":
+			tags["longarm-hub"] = lines[1]
+			b, _ := json.Marshal(tags)
 			fmt.Println(string(b))
+		case strings.HasPrefix(q, `tags."longarm-hub-prev`):
+			// the settings snapshot (deploy.sh / deploy.ps1 before a delete); az prints nothing for a missing tag
+			fmt.Println(tags[strings.TrimSuffix(strings.TrimPrefix(q, `tags."`), `"`)])
 		default:
 			fmt.Println(lines[1]) // tags."longarm-hub"
 		}
+	case "tag update":
+		if !strings.Contains(flag("--resource-id"), "/resourceGroups/") || flag("--operation") != "Merge" {
+			fail("fake az: tag update " + strings.Join(args[2:], " "))
+		}
+		tags := map[string]string{}
+		json.Unmarshal([]byte(read("tags.json")), &tags)
+		for i, a := range args {
+			if a != "--tags" {
+				continue
+			}
+			for _, kv := range args[i+1:] {
+				if strings.HasPrefix(kv, "-") {
+					break
+				}
+				k, v, _ := strings.Cut(kv, "=")
+				tags[k] = v
+			}
+		}
+		b, _ := json.Marshal(tags)
+		write("tags.json", string(b))
 	case "group delete":
-		for _, f := range []string{"rg", "cg", "acr", "acr-admin"} {
+		for _, f := range []string{"rg", "cg", "acr", "acr-admin", "tags.json", "deployments"} {
 			os.Remove(filepath.Join(dir, f))
 		}
 	case "provider show":
@@ -119,15 +207,52 @@ func fakeAz(args []string) {
 		g := group()
 		stuck := os.Getenv("HELPER_AZ_STUCK") == "1"
 		switch {
+		case strings.HasPrefix(q, "[containers[?name=='hub'].image | [0], ipAddress.fqdn"):
+			// relay.sh: the hub's image, fqdn, registry (+ identity), state, STUN servers
+			reg, ident := "", ""
+			if acr, _ := g["acrName"].(string); g["storageAuth"] == "identity" && acr != "" {
+				reg, ident = acr+".azurecr.io", "/subscriptions/0/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/hub-id"
+			} else if g["registryUsername"] != nil {
+				reg = "ghcr.io"
+				if s, ok := g["registryServer"].(string); ok {
+					reg = s
+				}
+			}
+			stun := "self,stun.cloudflare.com:3478,stun.l.google.com:19302"
+			if s, ok := g["stunServers"].(string); ok {
+				stun = "self"
+				if s != "" {
+					stun += "," + s
+				}
+			}
+			state := "Running"
+			if os.Getenv("HELPER_AZ_HUB_STOPPED") == "1" {
+				state = "Terminated"
+			}
+			h := os.Getenv("HELPER_AZ_HUB")
+			tsv(fmt.Sprint(g["image"]), h[:strings.LastIndex(h, ":")], orNone(reg), orNone(ident), state, stun)
 		case strings.HasPrefix(q, "[provisioningState"):
 			// state, hub container state, container events, group events
-			if stuck {
+			switch {
+			case stuck:
 				tsv("Creating", "Waiting", "0", "0")
-			} else {
+			case crashLoop():
+				tsv("Succeeded", "Waiting", "9", "0")
+			default:
 				tsv("Succeeded", "Running", "4", "0")
 			}
+		case strings.Contains(q, "restartCount"):
+			// the hub container's instance view: restartCount, current state
+			// and detail, the previous start's exit code, detail, finish time
+			if !crashLoop() {
+				tsv("0", "Running", "None", "None", "None", "None")
+				return
+			}
+			n, _ := strconv.Atoi(read("crashes"))
+			write("crashes", strconv.Itoa(n+2))
+			tsv(strconv.Itoa(n+2), "Waiting", "CrashLoopBackOff: Back-off 40s restarting failed container=hub", "137", "Error", "2026-10-29T08:12:00+00:00")
 		case strings.Contains(q, "currentState"):
-			if stuck {
+			if stuck || crashLoop() {
 				fmt.Println("Waiting")
 			} else {
 				fmt.Println("Running")
@@ -172,6 +297,12 @@ func fakeAz(args []string) {
 			if g["enablePanel"] == true && id {
 				env += ",LONGARM_HUB_HTTPS,LONGARM_HUB_HTTPS_REDIRECT"
 			}
+			if g["enableHeadscale"] == true && g["enablePanel"] == true {
+				env += ",LONGARM_HUB_TAILNET_PROVIDER,LONGARM_HUB_HEADSCALE_DIR"
+				if g["headscalePublicDerp"] == true {
+					env += ",LONGARM_HUB_HEADSCALE_PUBLIC_DERP"
+				}
+			}
 			if g["tailscaleOAuthSecret"] != nil {
 				env += ",LONGARM_HUB_TAILSCALE_OAUTH_SECRET"
 			}
@@ -207,6 +338,13 @@ func fakeAz(args []string) {
 					tsv("LONGARM_HUB_ENTRA_APPS", a)
 				}
 			}
+			// the scheduler gate and the release key in the same query (set only when non-empty)
+			if v, _ := g["schedulerGateFreeGb"].(string); v != "" && strings.Contains(q, "LONGARM_HUB_SCHED_GATE_FREE_GB") {
+				tsv("LONGARM_HUB_SCHED_GATE_FREE_GB", v)
+			}
+			if v, _ := g["releasePublicKey"].(string); v != "" && strings.Contains(q, "LONGARM_HUB_RELEASES_PUBLIC_KEY") {
+				tsv("LONGARM_HUB_RELEASES_PUBLIC_KEY", v)
+			}
 		case strings.Contains(q, "LONGARM_HUB_SCHED_GATE_FREE_GB"), strings.Contains(q, "LONGARM_HUB_RELEASES_PUBLIC_KEY"):
 			// one plain variable (main.bicep sets it only when non-empty)
 			p := "schedulerGateFreeGb"
@@ -236,7 +374,22 @@ func fakeAz(args []string) {
 			}
 		}
 		fmt.Println("litestream: restoring hub.db")
+		if crashLoop() {
+			// the current start, before ACI restarts it again
+			fmt.Println("longarm-hub container: restoring /var/lib/longarm-hub/hub.db from the replica (if it has one)")
+			fmt.Println("longarm-hub container: restore of /var/lib/longarm-hub/hub.db failed after 9m2s: litestream restore killed by SIGKILL (out of memory? the container has 1536 MB)")
+			return
+		}
 		fmt.Println("LONGARM_BOOTSTRAP boot_id=stale ca_fingerprint=stale hub_address=stale admin_joined=true")
+		if exists("restore-until") {
+			// this start's restore (the stale line above: an earlier start)
+			fmt.Println("longarm-hub container: restoring /var/lib/longarm-hub/hub.db from the replica (if it has one)")
+			if restoring() {
+				fmt.Println("longarm-hub container: restore of /var/lib/longarm-hub/hub.db still running after 1m0s")
+				return
+			}
+			fmt.Println("longarm-hub container: restore took 7m1.5s (/var/lib/longarm-hub/hub.db)")
+		}
 		fmt.Println(strings.Join(line, " "))
 		fmt.Println("hub: serving")
 	case "container delete":
@@ -244,31 +397,102 @@ func fakeAz(args []string) {
 	case "container restart":
 		restart()
 	case "container exec":
-		if flag("--exec-command") != "/usr/local/bin/longarm-hub-admin-code" {
+		switch flag("--exec-command") {
+		case "/usr/local/bin/longarm-hub-admin-code":
+			fmt.Println("ABC-DEF")
+		case "/usr/local/bin/longarm-hub-relay-cert":
+			// like longarm-hub issue --b64 through a TTY: a note, then the bundle (CRLF)
+			b, err := os.ReadFile(os.Getenv("HELPER_AZ_RELAY_TLS"))
+			if err != nil {
+				fail("exec: no such file /usr/local/bin/longarm-hub-relay-cert") // an older hub image
+			}
+			fmt.Print("relay/myhub-relay bundle (base64 tar.gz of ca.crt node.crt node.key; it holds a private key):\r\n" + strings.TrimSpace(string(b)) + "\r\n")
+		default:
 			fail("ACI exec takes no arguments") // like the real one
 		}
-		fmt.Println("ABC-DEF")
 	case "deployment group":
 		if !exists("rg") {
 			fail("ResourceGroupNotFound")
 		}
 		host := os.Getenv("HELPER_AZ_HUB")
 		panel := ""
+		// every deployment: its state (decided when it was created) and parameters
+		deps := strings.Fields(read("deployments"))
+		params := func(dep string) map[string]any {
+			var doc struct {
+				Parameters map[string]struct{ Value any } `json:"parameters"`
+			}
+			json.Unmarshal([]byte(read("dparams-"+dep+".json")), &doc)
+			m := map[string]any{}
+			for k, v := range doc.Parameters {
+				m[k] = v.Value
+			}
+			return m
+		}
+		switch args[2] {
+		case "validate":
+			// preflight: the template and parameters, the subscription's policy
+			b, err := os.ReadFile(strings.TrimPrefix(flag("--parameters"), "@"))
+			if err != nil || flag("--template-file") == "" {
+				fail("fake az: deployment group validate " + strings.Join(args[3:], " "))
+			}
+			var doc struct {
+				Parameters map[string]struct{ Value any } `json:"parameters"`
+			}
+			if err := json.Unmarshal(b, &doc); err != nil {
+				fail("bad parameters file: " + err.Error())
+			}
+			if os.Getenv("HELPER_AZ_VALIDATE_FAIL") == "1" ||
+				(os.Getenv("HELPER_AZ_DENY_KEYS") == "1" && doc.Parameters["storageAuth"].Value != "identity") {
+				fail("InvalidTemplateDeployment: The template deployment failed because of policy violation (storage accounts must not allow shared key access).")
+			}
+			write(fmt.Sprintf("validated-%x", sha256.Sum256(b)), "")
+			return
+		case "list":
+			if !strings.Contains(q, "Succeeded") || os.Getenv("HELPER_AZ_NO_HISTORY") == "1" {
+				return
+			}
+			for _, d := range deps {
+				if read("dstate-"+d) == "Succeeded" {
+					fmt.Println(d)
+				}
+			}
+			return
+		}
 		if args[2] == "show" {
 			// --no-wait deployments: state and outputs by name
-			if read("deployment") != flag("-n") {
+			dep := flag("-n")
+			if !slices.Contains(deps, dep) {
 				fail("DeploymentNotFound")
 			}
 			switch {
-			case strings.Contains(q, "provisioningState"):
-				switch {
-				case os.Getenv("HELPER_AZ_DEPLOY_FAIL") == "1":
-					fmt.Println("Failed")
-				case os.Getenv("HELPER_AZ_STUCK") == "1":
-					fmt.Println("Running")
-				default:
-					fmt.Println("Succeeded")
+			case strings.HasPrefix(q, "[properties.parameters."):
+				// the kept settings of a past deployment: [properties.parameters.<p>.value, ...,
+				// properties.parameters.<p> == null]; az prints True/False and None
+				p := params(dep)
+				var vals []string
+				for _, e := range strings.Split(strings.Trim(q, "[]"), ", ") {
+					k := strings.TrimPrefix(e, "properties.parameters.")
+					if n, ok := strings.CutSuffix(k, " == null"); ok {
+						_, has := p[n]
+						vals = append(vals, map[bool]string{true: "False", false: "True"}[has])
+						continue
+					}
+					switch v := p[strings.TrimSuffix(k, ".value")].(type) {
+					case nil:
+						vals = append(vals, "None")
+					case bool:
+						vals = append(vals, map[bool]string{true: "True", false: "False"}[v])
+					default:
+						vals = append(vals, fmt.Sprint(v))
+					}
 				}
+				tsv(vals...)
+			case strings.Contains(q, "provisioningState"):
+				fmt.Println(read("dstate-" + dep))
+			case strings.Contains(q, "relayTcp"):
+				// relay.json's outputs: its name, and its TLS fallback (any listener: the hub's)
+				tsv("myhub-relay.eastasia.azurecontainer.io", host)
 			case strings.Contains(q, "outputs"):
 				if g := group(); g["enablePanel"] == true {
 					panel = os.Getenv("HELPER_AZ_PANEL")
@@ -282,7 +506,8 @@ func fakeAz(args []string) {
 		if !slices.Contains(args, "--no-wait") {
 			fail("fake az: the scripts deploy with --no-wait")
 		}
-		write("deployment", flag("-n"))
+		dep := flag("-n")
+		write("deployment", dep)
 		b, err := os.ReadFile(strings.TrimPrefix(flag("--parameters"), "@"))
 		if err != nil {
 			fail(err.Error())
@@ -296,9 +521,37 @@ func fakeAz(args []string) {
 		if _, ok := doc.Parameters["location"]; ok {
 			fail("location is the resource group's")
 		}
+		if !exists(fmt.Sprintf("validated-%x", sha256.Sum256(b))) {
+			fail("fake az: deployed without validating these parameters first")
+		}
+		// the state: HELPER_AZ_DEPLOY_FAIL fails every deployment,
+		// HELPER_AZ_DEPLOY_FAIL_IMAGE those of an image containing it,
+		// HELPER_AZ_DEPLOY_FAIL_HEADSCALE those with the sidecar (its image
+		// can't be pulled: the v0.1.9 incident)
+		state := "Succeeded"
+		img, _ := doc.Parameters["image"].Value.(string)
+		switch {
+		case os.Getenv("HELPER_AZ_DEPLOY_FAIL") == "1",
+			os.Getenv("HELPER_AZ_DEPLOY_FAIL_IMAGE") != "" && strings.Contains(img, os.Getenv("HELPER_AZ_DEPLOY_FAIL_IMAGE")),
+			os.Getenv("HELPER_AZ_DEPLOY_FAIL_HEADSCALE") == "1" && doc.Parameters["enableHeadscale"].Value == true:
+			state = "Failed"
+		case os.Getenv("HELPER_AZ_STUCK") == "1":
+			state = "Running"
+		}
+		write("dstate-"+dep, state)
+		write("dparams-"+dep+".json", string(b))
+		write("deployments", strings.Join(append(deps, dep), " "))
+		if strings.HasSuffix(flag("--template-file"), "relay.json") {
+			// the relay's own group: the hub's stays as it is
+			if _, ok := doc.Parameters["relayTls"]; !ok {
+				fail("relay.json: relayTls is required")
+			}
+			write("cg-relay", string(b))
+			return
+		}
 		write("params.json", string(b))
-		write("cg", string(b))
-		restart() // a changed group restarts (the SAS expiry changes every time)
+		write("cg", string(b)) // also a failed deployment leaves the group (in a failed state)
+		restart()              // a changed group restarts (the SAS expiry changes every time)
 	case "deployment operation":
 		fmt.Println(`[{"resource": "myhub", "error": {"code": "InaccessibleImage", "message": "fake failure"}}]`)
 	case "acr list":
@@ -335,6 +588,35 @@ func fakeAz(args []string) {
 			fail("Run 'az acr update -n " + flag("-n") + " --admin-enabled true' to enable admin first.")
 		}
 		tsv("acruser", "acr-s3cret-pw")
+	case "acr repository":
+		// an image of the registry (deploy.sh's pull check with the managed
+		// identity); mirror/ images: those imported into it (any registry)
+		img := flag("--image")
+		if strings.HasPrefix(img, "mirror/") {
+			if args[2] != "show" || !slices.Contains(strings.Split(read("acr-mirror"), "\n"), flag("-n")+" "+img) {
+				fail("ResourceNotFound: " + img)
+			}
+			return
+		}
+		if args[2] != "show" || read("acr") != flag("-n") || strings.Contains(img, "missing") {
+			fail("ResourceNotFound: " + img)
+		}
+	case "acr import":
+		// a pinned Docker Hub image by digest, tagged mirror/<repository>:<hex>;
+		// HELPER_AZ_IMPORT_FAIL: Docker Hub's pull limit
+		src, tag := flag("--source"), flag("-t")
+		m := regexp.MustCompile(`^docker\.io/(?:library/)?([a-z0-9./-]+)@(sha256:([0-9a-f]{64}))$`).FindStringSubmatch(src)
+		if m == nil || flag("-n") == "" || tag != "mirror/"+m[1]+":"+m[3] {
+			fail("fake az: acr import " + strings.Join(args[2:], " "))
+		}
+		if os.Getenv("HELPER_AZ_IMPORT_FAIL") == "1" {
+			fail("toomanyrequests: You have reached your unauthenticated pull rate limit.")
+		}
+		have := read("acr-mirror")
+		for _, img := range []string{"mirror/" + m[1] + "@" + m[2], tag} {
+			have += "\n" + flag("-n") + " " + img
+		}
+		write("acr-mirror", strings.TrimSpace(have))
 	case "acr build":
 		// what ACR Tasks needs: the stage it can parse, the Dockerfile in the source
 		src := args[len(args)-1]
@@ -351,10 +633,33 @@ func fakeAz(args []string) {
 			fail("KeyBasedAuthenticationNotPermitted") // allowSharedKeyAccess: false
 		}
 		if args[2] == "list" {
-			fmt.Println("lahubtest")
+			if exists("deployments") { // the template created it
+				fmt.Println("lahubtest")
+			}
 		} else {
 			fmt.Println("dGVzdGtleQ==")
 		}
+	case "storage blob":
+		// the Litestream replica's files (deploy.sh's replica check):
+		// HELPER_AZ_REPLICA_FILES L0 files and a snapshot; identity: read with
+		// the caller's Entra login, key: the account key from the environment
+		if args[2] != "list" || flag("-c") != "litestream" || flag("--prefix") != "hub.db/ltx/" {
+			fail("fake az: storage blob " + strings.Join(args[2:], " "))
+		}
+		if identity() != (flag("--auth-mode") == "login") {
+			fail("fake az: storage blob list: --auth-mode login exactly with storage-auth identity")
+		}
+		if !identity() && (os.Getenv("AZURE_STORAGE_KEY") != "dGVzdGtleQ==" || os.Getenv("AZURE_STORAGE_CONNECTION_STRING") != "") {
+			fail("no storage key in AZURE_STORAGE_KEY")
+		}
+		n, _ := strconv.Atoi(os.Getenv("HELPER_AZ_REPLICA_FILES"))
+		if n == 0 {
+			fail("AuthorizationPermissionMismatch") // the caller may not read blobs
+		}
+		for i := 1; i <= n; i++ {
+			fmt.Println(fmt.Sprintf("hub.db/ltx/0/%016x-%016x.ltx", i, i))
+		}
+		fmt.Println(fmt.Sprintf("hub.db/ltx/9/%016x-%016x.ltx", 1, n))
 	case "storage file":
 		if os.Getenv("AZURE_STORAGE_KEY") != "dGVzdGtleQ==" {
 			fail("no storage key in AZURE_STORAGE_KEY")
@@ -365,6 +670,9 @@ func fakeAz(args []string) {
 		}
 		if identity() {
 			fail("ShareNotFound") // identity: no file shares
+		}
+		if restoring() {
+			fail("ResourceNotFound") // the hub writes bootstrap.env after its restore
 		}
 		os.WriteFile(flag("--dest"), bootstrap(), 0o644)
 	default:

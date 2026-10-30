@@ -117,6 +117,7 @@ export function TenantsPage({ me }: { me: Me }) {
             <th>user</th>
             <th>teams</th>
             <th>devices</th>
+            <th>workers</th>
             <th>active jobs</th>
             <th>reserved memory</th>
             <th>quota overrides</th>
@@ -138,7 +139,7 @@ export function TenantsPage({ me }: { me: Me }) {
           ))}
           {tenants.data && users.length === 0 && (
             <tr>
-              <td colSpan={8} className="notice">
+              <td colSpan={9} className="notice">
                 No users yet: everybody acts as an administrator. Add a user per person to separate their jobs and data.
               </td>
             </tr>
@@ -193,7 +194,8 @@ function TenantRows({
             </span>
           ))}
         </td>
-        <td className="small">{(u.devices ?? []).length ? (u.devices ?? []).join(', ') : <span className="faint">none</span>}</td>
+        <td className="small">{u.device_count ? u.device_count : <span className="faint">none</span>}</td>
+        <td className="small">{u.worker_count ? u.worker_count : <span className="faint">none</span>}</td>
         <td>
           <UsageOf used={u.usage?.jobs ?? 0} limit={eff.max_jobs} />
         </td>
@@ -216,7 +218,7 @@ function TenantRows({
       </tr>
       {open === 'edit' && (
         <tr>
-          <td colSpan={8}>
+          <td colSpan={9}>
             <EditUser
               u={u}
               onDone={(res) => {
@@ -230,7 +232,7 @@ function TenantRows({
       )}
       {open === 'remove' && (
         <tr>
-          <td colSpan={8}>
+          <td colSpan={9}>
             <RemoveUser
               u={u}
               onDone={() => {
@@ -402,7 +404,7 @@ function RemoveUser({ u, onDone, onCancel }: { u: TenantUser; onDone: () => void
   return (
     <div className="row wrap" data-testid={`remove-${u.name}`}>
       <span>
-        Remove <b>{u.name}</b>? Revokes the certificates of {(u.devices ?? []).length ? (u.devices ?? []).join(', ') : 'all devices'} and deletes the panel login.
+        Remove <b>{u.name}</b>? Revokes the certificates of all its devices and workers ({(u.device_count ?? 0) + (u.worker_count ?? 0)}) and deletes the panel login.
       </span>
       <label>
         <input type="checkbox" checked={purge} onChange={(e) => setPurge(e.target.checked)} /> purge data and OS account on workers
@@ -414,7 +416,7 @@ function RemoveUser({ u, onDone, onCancel }: { u: TenantUser; onDone: () => void
         onClick={async () => {
           const r = await run(
             () => hubApi.removeTenant(u.name, purge),
-            (r) => `${u.name} removed${r.revoked?.length ? `, revoked ${r.revoked.join(', ')}` : ''}${r.purge ? ', purging on workers' : ''}`,
+            (r) => `${u.name} removed${r.revoked_count ? `, revoked ${r.revoked_count} certificate(s)` : ''}${r.purge ? ', purging on workers' : ''}`,
           )
           if (r) onDone()
         }}

@@ -72,6 +72,9 @@ oauth_secret_file = "/etc/longarm-hub/tailscale-oauth.secret"   # root:longarm-h
 # api_url = "http://127.0.0.1:8080"      # where the hub reaches the REST API (default: url)
 # api_key_file = "/etc/longarm-hub/headscale-api.key"   # or env LONGARM_HUB_HEADSCALE_API_KEY
 # user = ""                              # Headscale < 0.28: keys need a user
+# proxy = false                          # serve Headscale's node endpoints (/ts2021, /key, /derp...) on the hub's https
+# sidecar_dir = ""                       # a Headscale container sharing this dir: the hub sets it up (deploy/azure --headscale)
+# public_derp = false                    # sidecar: also Tailscale's public DERP map
 
 # Telemetry (docs/telemetry.md): scrubbed errors, crashes, request counts and
 # durations of the hub and its nodes, forwarded to Azure Application Insights.
@@ -90,3 +93,20 @@ oauth_secret_file = "/etc/longarm-hub/tailscale-oauth.secret"   # root:longarm-h
 # blob_url = "https://<account>.blob.core.windows.net/diagnostics"   # Entra ID (managed identity, Storage Blob Data Contributor); no keys / SAS. Or file:///var/lib/longarm-hub/diagnostics. Env LONGARM_HUB_DIAG_BLOB_URL
 # max_mb = 50                      # largest bundle
 # per_node_per_hour = 10           # uploads per node and hour
+
+# Sign-in with personal accounts (docs/usage.md "Sign in with a Google, Apple or
+# personal Microsoft account"; work/school accounts: [auth.entra]). Each block is
+# off without client_id. Redirect URIs: <public_url>/auth/callback/<provider>.
+# [auth.google]
+# client_id = "<id>.apps.googleusercontent.com"
+# client_secret_file = "/etc/longarm-hub/google-client-secret"
+# admins = ["you@example.com"]     # verified e-mail, "*@example.com" or "sub:<subject>"
+# allowed = []                     # empty: every account of the provider
+# [auth.microsoft]                 # personal Microsoft accounts only
+# client_id = "<application id>"
+# client_secret_file = "/etc/longarm-hub/microsoft-client-secret"
+# [auth.apple]
+# client_id = "com.example.longarm.signin"   # Services ID
+# team_id = "ABCDE12345"
+# key_id = "KEY1234567"
+# private_key_file = "/etc/longarm-hub/apple-AuthKey.p8"

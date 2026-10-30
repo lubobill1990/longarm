@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Added
+
+- **Signed apt and dnf/yum repositories** on GitHub Pages
+  (`https://lubobill1990.github.io/longarm/`): `apt install longarm` /
+  `dnf install longarm`, updates through the package manager. The rpm is
+  GPG-signed (nfpm), the apt Release file (InRelease, Release.gpg) and the
+  yum repomd.xml too, with the key "Longarm Release Signing" (secret
+  `LONGARM_GPG_PRIVATE_KEY`; public key packaging/linux/repo/longarm.asc).
+  Rebuilt on every stable release (the newest 3 versions), installed from
+  in Debian, Fedora and AlmaLinux containers before it is deployed.
+  docs/linux-repos.md.
+- Sign-in with **Google, Apple and personal Microsoft accounts**
+  (`[auth.google]`, `[auth.apple]`, `[auth.microsoft]` in hub.toml), next to
+  Entra work and school accounts: the panel shows one button per provider,
+  and `/link` - behind `longarm login`, `longarmd login`, the tray and the MSI's
+  `LOGIN=1` - signs in the same way. The account (provider + subject) maps to
+  one Longarm user, created on first sign-in, so the clients and workers one
+  account links are that user's together. `/auth/info` lists the providers;
+  the tray and the CLIs no longer say "Sign in with Microsoft" only.
+  docs/usage.md "Sign in with a Google, Apple or personal Microsoft account".
+
+- **Signed and notarized macOS releases**: the release builds
+  `longarm-darwin-arm64.pkg` and `longarm-darwin-amd64.pkg` (longarm and
+  longarmd in `/usr/local/bin`), signed with a Developer ID Installer
+  certificate, notarized and stapled, so MDM-managed Macs install them; the
+  darwin binaries (also the self-update files and those in the archives) are
+  signed with a Developer ID Application certificate and the hardened
+  runtime. A new job, build-macos, does it before the checksums and minisign
+  signatures are made; without the `APPLE_*` secrets the files stay unsigned
+  with a warning. The pkg's postinstall also reads a configuration profile
+  (`com.longarm`), validates its values and restarts an installed
+  LaunchDaemon on upgrades. docs/ci-cd.md 2.8 (credentials), docs/usage.md
+  "macOS installer (.pkg) and MDM".
+
 ### Security
 
 - Node identity (docs/security.md "Node identity"): every node has an
@@ -21,8 +55,223 @@
   `require_workers`, a worker targeted by name must be endorsed under that
   name, one targeted by ID with that ID. Names never look like IDs (hex and
   dashes only, 4+ characters, are refused) and are unique among non-revoked
-  nodes (database index).
+  nodes (database index); a rename never takes a Longarm user's name (only
+  that user's own devices may carry it). Targets resolve among the nodes
+  the caller may see only (docs/security.md "What admins see"): another
+  user's machine is "not found" by name, ID or ID prefix alike, and an
+  ambiguous prefix lists visible nodes only. Schema migration 6 gives every
+  existing node an ID (names and certificates keep working); external relays
+  enforce revocations by node ID too.
 
+- Hub admins no longer see other users' machines. With multi-tenancy an
+  admin certificate or an administrator's panel login sees machines and jobs
+  exactly as its user does: `longarm ls` / `ls -o wide`, `worker ls`,
+  `jobs`, `sessions`, the MCP tools, the tray's Workers tab, `longarm admin
+  nodes`, the hub's event stream and the panel's "Nodes" and "Jobs" pages
+  show the admin's own workers and devices, the workers shared with it and
+  the fleet workers - before, an admin saw every user's private workers with
+  process lists, agent sessions and jobs. The rule is the hub's, so it holds
+  for every client version; there is no flag or toggle that widens it. The
+  only fleet-wide view is the new anonymous summary (`longarm admin summary
+  [--rows]`, the panel's "Fleet" page, `GET /api/admin/summary`,
+  `HubAdmin.FleetSummary`; admins only, audited): per user the number of
+  workers, admin workers and devices, how many are online, the workers'
+  version histogram, and optionally each user's machines by version -
+  aggregates only, never names, IDs, host names, OS, last-seen times,
+  labels, CPU / memory, processes, sessions or jobs. Admin answers that named other users'
+  machines are cut down the same way: operations by name (approve, revoke,
+  drain, label, share, profile, remove, tailnet rekey, toolchain apply) on
+  another user's machine answer "not found" word for word like an unknown
+  name and do nothing; admins never share another user's worker; a worker
+  certificate never acts as a user (whatever its name) and node names never
+  take a user's; an admin's join code or panel login for a user is for a
+  user without machines only; user listings drop other users' reserved
+  memory; `admin user ls` / "People" and `admin
+  user remove` give device and worker counts instead of names; join codes,
+  rollouts (counts plus visible names), toolchain canaries, `admin tailnet
+  status` and `admin links` name only machines the admin may see; a release
+  push no worker can take fails with counts, not names; join codes are the
+  admin's own, its user's and fleet worker codes, with `used_by` "used"
+  unless the machine is visible; `link ls --all` and the panel's port links
+  are the admin's own user's links; `admin logs` of another user's job is
+  "not found". The audit log (`admin audit`, the panel, `Fleet.Audit`)
+  shows only the records about the admin's own user and the hub actions it
+  performed, and counts the rest by method; `users/remove` records count the
+  revoked machines; reads go by the acting and affected user recorded when
+  each record was written (schema migration 5), never by today's node
+  ownership, so re-enrolling a revoked name doesn't reopen its records.
+  Every outbound record type and every event kind goes through one
+  projection (`internal/hub/projection.go`): actors appear as role and user
+  ("admin bob"), never by device name - event messages, join codes, users,
+  jobs' submitter, audit records; profile updates, rollouts and tailnet
+  status are projected like listings; an admin's kill of another user's job
+  is "not known" (checked before resolving its worker) and removing another
+  user's link answers with its id only. The complete trail stays in the
+  hub's database and log for the hub's operators (new `longarm-hub audit` on the hub host; on
+  Azure, the subscription's owners). Auto placement already
+  used only workers the caller's user may use, admins included; the admin's
+  `exec auto` now picks from the same list (before, from every worker the
+  hub listed to the admin). See docs/security.md "What admins see".
+- The same holds for accounts of every sign-in provider (Entra, Google,
+  Apple, personal Microsoft): an account is one user whatever its role, the
+  same e-mail address at two providers is two users. An admin can't add its
+  own user to a team; an admin's user-bound join code or panel login is
+  refused for a user who signs in with a provider or has another user's
+  worker shared with it (checked again when the code is used), and a panel
+  administrator login can't take the name of any user (old certificates,
+  worker owners included). Open event streams follow team changes at once.
+  `/link` audit records name the provider (`google/<e-mail>`).
+
+### Fixed
+
+- The hub on Azure crash-looped on every start (2026-10-29, 0.1.18 and
+  0.1.16 alike): `litestream restore` ran out of memory. Litestream 0.5.17's
+  Azure Blob client listed "the files from TXID X" as the blob name prefix
+  X, so every compaction took exactly one file of the level below and fell
+  further behind with every write: L0 files were never deleted, L2/L3 never
+  moved, and the replica grew to 21,400 files. The restore opens every file
+  since the newest snapshot at once (about 100 KB each), passed 1.5 GB
+  (`--size small`) and was killed. The image now builds Litestream from the
+  upstream commit with the fix (benbjohnson/litestream#1461, unreleased
+  after 0.5.17), the Litestream configs spell out levels, L0 retention and
+  hourly snapshots kept 24 h, and the image smoke test checks that
+  compaction merges files. A replica that has already grown needs a
+  bigger start once or a prune (deploy/azure/README.md "Replica size and
+  memory").
+- A failed restore now says why: `litestream restore killed by SIGKILL
+  (out of memory? the container has 1536 MB)` (the cgroup's limit, and
+  "the kernel's OOM killer ended it" when the cgroup counted it), and the
+  entrypoint exits 128 + the signal (137) instead of 1, which ACI keeps
+  across restarts. With `--storage-auth identity --diagnostics` the failure
+  is also recorded in the diagnostics container (`hub-start-failures/`).
+- deploy.sh / deploy.ps1: an update in place that fails (the 0.1.18 deploy:
+  "no bootstrap values from this start", exit 1, the hub left
+  crash-looping) is rolled back to the running configuration like a failed
+  `--recreate`. While waiting they print every restart of the hub
+  container with the exit code of the start before and stop after 3 (2 in
+  CrashLoopBackOff) with "the hub is crash-looping"; before deploying they
+  print the replica's files per level and warn above 5000 in levels 0-3.
+  `--log-analytics` with `--telemetry` sends the container logs to the
+  telemetry workspace (no second workspace); README "Logs of crashed
+  starts" says how to get the log of a start ACI restarted.
+- "Update to X" on a Windows MSI worker failed with "this installation
+  can't update itself: C:\Program Files\Longarm is not writable for this
+  account (package-managed install?)" although the machine has the Longarm
+  Update service: the user-session longarmd (and the tray) asked the
+  service manager for full access to look the service up, which a
+  non-elevated user doesn't get, concluded there was none and tried to
+  update itself. The service query now asks only for
+  `SERVICE_QUERY_STATUS`; a Windows longarmd that can't update itself tries
+  the service's pipe anyway (checked to be the real service) and, with no
+  service, says to run the new MSI once instead of "package-managed
+  install?". `longarm worker update` (the tray's button too) hands a
+  refused update of an older user-session worker to the machine's admin
+  worker, so 0.1.15 to 0.1.18 workers update from the client. Workers
+  report whether the update can be installed remotely
+  (`UpdateAvailable.method`): the button shows only when it can.
+- After a Windows upgrade the tray ran the new version but the client
+  daemon kept running the old one ("longarm-tray 0.1.17 · longarm daemon
+  0.1.15"). `longarm daemon start` (and every command that starts the
+  daemon) now replaces a running daemon older than its `longarm` - its port
+  forwards move over - and the tray runs it when it finds an older daemon;
+  a newer daemon is never replaced by an older `longarm` (an app's bundled
+  copy just uses it). An exiting daemon removed `daemon.addr` even when a
+  daemon started right after it had written its own ("daemon is not
+  running" while it ran): the file is now removed before the channel
+  closes and only while it is still the exiting daemon's (longarmd's too).
+- Hub redeploys cost less: workers (and the `longarm daemon` event relay,
+  hence the tray) retry an unreachable hub every 1, 2, 4, then 5 s (±20%
+  jitter; up to 15 s after 3 minutes, 30 s when the hub refuses the node)
+  instead of backing off to 30 s, so they are back within seconds of the new
+  hub answering rather than up to 30 s later. A stopping hub announces the
+  restart (a new, additive `HubCommand.restarting`, and a `hub` event for
+  `Fleet.Events` subscribers that ask for it): workers close their sessions
+  at once (the hub's shutdown no longer waits 3 s for them), log it as a
+  restart rather than a failure and retry after about a second; the daemon
+  forgets the remembered hub failure as soon as the hub answers again.
+  Litestream takes hourly snapshots (was daily), so the restore on every
+  container start reads fewer files. The container entrypoint and the hub
+  log their startup phases (`restore took`, `bootstrap took`,
+  `startup timing`), deploy.sh / deploy.ps1 print the redeploy phases and
+  poll faster, the container smoke test prints the restart timings, and an
+  e2e test restarts the hub under N workers and bounds their return
+  (deploy/azure/README.md "Redeploy downtime").
+- Windows MSI upgrades failed with error 2613 ("RemoveExistingProducts
+  action sequenced incorrectly") for every upgrade by 0.1.8 to 0.1.13: the
+  elevated stop step (upgrades with Longarm running) was a deferred action
+  before RemoveExistingProducts, which Windows Installer refuses when the old
+  product is removed inside the transaction. The new version now installs
+  over the old one and removes it afterwards (`afterInstallExecute`; the
+  components keep their GUIDs, and no released version's uninstall steps run
+  during an upgrade), the stop step runs before StopServices / InstallFiles.
+  An upgrade that would switch the worker between a service and the
+  user-session worker is refused up front (uninstall first). CI now checks
+  the built sequence (and shows that 0.1.13 fails the check) and really
+  installs, repairs, upgrades (from 0.1.6 and the latest release, with the
+  tray and the workers running) and uninstalls the MSIs on windows-latest.
+- Windows: the firewall fix command pastes into PowerShell. The tray's
+  warning, `longarm doctor`, `longarm firewall status` and the relay
+  warnings printed `"C:\...\longarm.exe" firewall allow`, which PowerShell
+  rejects (`Unexpected token 'firewall'`); a quoted path now gets the call
+  operator (`& '...' firewall allow`, one helper for every printed command).
+  Paths are single-quoted literals with every quote PowerShell recognizes
+  (' and the typographic ‘ ’ ‚ ‛) doubled, so no directory name - `$`,
+  backticks, “ ” „ - can end the argument and inject a command into an
+  elevated shell; paths with control characters get no command. Doctor's
+  remarks are shell comments (`# elevated`), and the tray quotes commands
+  from older daemons again. The tray's firewall card has an **Allow**
+  button: one administrator prompt runs the installed longarm.exe's
+  `firewall allow` for the program the daemon or longarmd reports (only an
+  existing longarm.exe / longarmd.exe), then checks again; a copy another
+  app ships (TMIA Desktop's) is pointed out as such.
+- deploy/azure: `--recreate` can no longer take a hub down. A live
+  `--headscale --recreate` deleted the container group, then ACI couldn't
+  pull the sidecar from Docker Hub, and the retry (no group left to read the
+  settings from) fell back to storage keys, which the subscription's policy
+  denies. Now `deploy.sh` / `deploy.ps1` validate the deployment (`az
+  deployment group validate`) and check that every image can be pulled
+  before changing anything (`--skip-image-check` skips the latter); save the
+  hub's settings in the resource group's tags before the delete; read a
+  missing group's settings from the last successful deployment, with only
+  gaps filled from that (untrusted) snapshot and its security-relevant
+  settings refused unless they match or are given explicitly, else stop
+  and ask for them (never defaulting storage auth);
+  and roll back to the previous configuration when the new one fails after
+  the delete.
+- deploy/azure pulls nothing from Docker Hub: the Caddy and Headscale images
+  are mirrored by digest to `ghcr.io/lubobill1990/longarm-mirror` (a
+  separate package, which must be made public once), as tags derived from
+  the source and digest (`deploy/azure/mirror-images.txt`,
+  `.github/workflows/mirror.yml`: allow-listed sources, pins verified
+  read-only on pull requests, published from main only with a pinned
+  crane, the mirror verified anonymously), and the template refers to the
+  mirrors.
+- Workers signed in by any path (longarmd login, the tray, the MSI's
+  session and admin workers) listened on loopback only and were unreachable
+  from other machines. A worker whose listeners are all loopback now also
+  listens on the hub's longnet relay (announced in each hub session:
+  existing installs pick it up when longarmd restarts or updates), with
+  hole punching for a direct path; `[hub] relay = "off"` opts out.
+- Clients skip a remote worker's loopback endpoints (and say why when
+  that's all it has); the relay's TLS fallback uses the hub's TCP port.
+- The tray's ssh buttons run `longarm ssh <worker>` (new): OpenSSH with
+  longarm's ProxyCommand built on the fly, no ~/.ssh/config entries.
+- Tray worker cards say where CPU/MEM come from and how old they are
+  (grayed out when stale), and "loopback only: unreachable from here"
+  instead of a bare "down".
+
+### Security
+
+- The Longarm Update service (`LongarmUpdate`, every MSI install) installs
+  a Longarm MSI only when it comes from the hub recorded in HKLM (never one
+  named in a request), is signed with the release key built into the
+  service (the trusted comment naming that file and version), matches the
+  hub's sha256/size record, is strictly newer than the installed version
+  and is for this machine's architecture. Its pipe is created as the first
+  instance; clients check that the server is the installed service running
+  as SYSTEM. Remote updates take a certificate of the worker's owner, end
+  to end: the hub has no command that triggers one and can't turn
+  automatic updates on (docs/security.md "Update service").
 - MSI custom actions take their values as strictly parsed data
   (`install-helper msi <step> #LONGARM-MSI#k=v|...`), never as options; run
   only the installed, administrator-only binaries; refuse a
@@ -39,6 +288,133 @@
 
 ### Added
 
+- Direct-first clients while the hub is down: the daemon's pool streams
+  metrics directly from the workers first (up to 32,
+  `LONGARM_POOL_MAX_DIRECT`; jobs first, then the fastest) and uses the
+  hub's only for the others; it idles without a viewer for 5 minutes (no
+  direct streams, probes every 30 s). `longarm ls` uses the daemon's direct
+  metrics and shows their source and age in `-o wide` (METRICS). A
+  forwarded connection opened while the worker is briefly unreachable waits
+  for it (up to 30 s, `LONGARM_FORWARD_WAIT`) instead of failing. The hub
+  being down reads "hub unavailable; direct connections to workers still
+  work" (CLI, tray). An e2e measures attach, a log stream, a port forward
+  and the pool view through a hub restart and a relay restart.
+- External relays: relayed connections that survive hub restarts
+  (docs/usage.md "External relays"). `longarm-relay --hub <hub> --advertise
+  <host>` registers with the hub (`HubNode.RelaySync`, role relay), which
+  keeps it in its database and advertises a relay set - external relays
+  first, its embedded relay last - to workers in the welcome and to running
+  sessions on every change. Loopback-only workers listen on every relay of
+  the set (cached in `relay-set.json`, used when the hub is down at start);
+  an external relay's endpoint carries its TLS fallback (`&tcp=`), which
+  clients use. The relay enforces the hub's revocation list and port-link
+  pairs on its own, cached on disk (pairs for 24 h without the hub; a relay
+  without a list refuses sessions), closes revoked nodes' sessions, renews
+  its certificate through the hub (keeping its host names), and serves
+  `/healthz` (`longarm-relay healthcheck`). `longarm admin relays` shows the
+  set and how many online workers still only know the embedded relay (older
+  versions, by version). Older nodes are unaffected: they ignore the new
+  fields and keep the embedded relay, which stays; nobody signs in again.
+- deploy/azure: `deploy.sh --relay` / `deploy.ps1 -Relay` deploys the
+  external relay as its own container group `<name>-relay` (relay.bicep:
+  7445/udp, 7446/udp, 7443/tcp; 0.5 vCPU / 0.5 GB, about 16 USD/month) with
+  the hub's image; its certificate comes from the hub's CA
+  (`longarm-hub-relay-cert`, `longarm-hub issue --role relay --host ... --b64`)
+  as a secure parameter. Validated first, waits for the relay's registration
+  with the hub, rolls an upgrade back to the previous relay image;
+  `--relay-remove` deletes it. The hub image now contains `longarm-relay`.
+- Agent credentials (`--agent-auth`, capability `agent-auth`):
+  - When longarm starts Claude Code or Copilot CLI on a worker, it
+    forwards the agent's credentials from the client with the job:
+    `run`, `exec`, `session start`, `attach` (when it creates the
+    session), and the MCP job tools (`agent_auth`, limited by
+    `LONGARM_MCP_AGENT_AUTH`). Workers need no agent logins, and nothing
+    is stored on them.
+  - `--agent-auth auto|claude|copilot|gh|none`, repeatable or
+    comma-separated. The default is `auto`: forward when `argv[0]` is
+    `claude` or `copilot`. `[agent_auth] default = "none"` in workers.toml
+    turns this off.
+  - Claude Code's credentials come from the `env` block of
+    `settings.json` (honours `CLAUDE_CONFIG_DIR`; tokens and keys go as
+    secrets, the rest as plain env) and from `ANTHROPIC_API_KEY` /
+    `CLAUDE_CODE_OAUTH_TOKEN`. A subscription's refresh token is never
+    copied: longarm suggests `claude setup-token` instead.
+  - Copilot's token comes from `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` /
+    `GITHUB_TOKEN`, else `[agent_auth] copilot_gh_user` (`gh auth token
+    --user`), else `gh auth token`, else the token pool
+    `~/.copilot/accounts/tokens.json` (`--copilot-account`, or
+    round-robin).
+  - `--agent-auth gh` (opt-in) forwards `GH_TOKEN`.
+  - On the worker, the credentials are handled like `--secret-env`: in
+    memory only, in the process environment, and redacted from logs and
+    session transcripts. `jobs --json` / `sessions --json` (`agentAuth`),
+    `job.json` and the audit log name the agents only.
+  - Forwarded Copilot credentials come with a private `COPILOT_HOME` per
+    job, session or exec (`<data>/agent-home`), removed with the job.
+  - longarm refuses to forward to somebody else's worker with shared
+    isolation unless `--agent-auth-shared-ok` is given, and forwards to
+    admin workers only when the agent is named. `Node.Info` reports the
+    worker's `owner` and `admin_worker`.
+  - With end-to-end trust on the client, a worker counts as yours only
+    if your own user key endorsed it. The hub's ownership records, and the
+    worker's hub-pushed owner, don't count. Isolation and the admin flag
+    are the worker's own report.
+  - The forwarding decision is pinned to the checked node (its node key,
+    else its certificate) for the whole operation. A reconnect to another
+    node fails before anything is sent. `attach` sends credentials only in
+    the open that creates the session, never on a re-attach.
+  - Docs: docs/usage.md "Agent credentials" (with recommended unattended
+    invocations), docs/security.md "Forwarded agent credentials".
+
+- A self-hosted Tailscale control plane next to the hub on Azure Container
+  Instances: `deploy.sh --headscale` / `deploy.ps1 -Headscale` (bicep
+  `enableHeadscale`, kept on re-runs; switching it needs `--recreate`) adds
+  a Headscale v0.29.5 sidecar (pinned image digest) and makes it the hub's
+  tailnet provider. The hub serves Headscale's node endpoints (`/ts2021`,
+  `/key`, `/derp`, ...) on its own https port with its certificate; nothing
+  else of Headscale is public and the group gets no new port. The hub
+  writes Headscale's config, ACL policy and DERP map, keeps its Noise and
+  DERP keys and its own API key in the hub's database (created over
+  Headscale's unix socket: no manual step, no secret in the environment or
+  the logs), and Litestream replicates Headscale's database to the blob
+  container `headscale` (managed identity or SAS). Relayed traffic stays on
+  the hub's embedded DERP (`--headscale-public-derp on` adds Tailscale's);
+  STUN comes from the external STUN servers the hub already advertises
+  (ACI source-NATs inbound UDP and allows 5 ports per IP). Existing nodes
+  join the tailnet on their next hub session. `/healthz` and `longarm admin
+  tailnet status` report Headscale's state; deploy.sh prints it.
+- hub.toml `[tailnet.headscale] proxy`, `sidecar_dir`, `public_derp` and the
+  environment overrides `LONGARM_HUB_TAILNET_PROVIDER`,
+  `LONGARM_HUB_HEADSCALE_URL`, `LONGARM_HUB_HEADSCALE_API_URL`,
+  `LONGARM_HUB_HEADSCALE_API_KEY_FILE`, `LONGARM_HUB_HEADSCALE_DIR`,
+  `LONGARM_HUB_HEADSCALE_PROXY`, `LONGARM_HUB_HEADSCALE_PUBLIC_DERP`.
+- `TailnetKey` refuses with Unavailable, without charging the node's rate
+  limit, while the provider can't mint yet (a starting sidecar).
+- deploy/azure/test/acirules checks ACI's limit of 5 ports per IP address.
+- Updating machines from your client: `longarm worker update <worker>
+  [--latest | --version X] [--wait] [--json]` (the worker's owner only; exit
+  codes 2 / 3 / 75 / 77 / 255) reports progress and the result
+  ("cpc-1: 0.1.8 → 0.1.9; 2 jobs and 1 session kept running"). On Windows
+  MSI installs the new Longarm Update service installs the newer signed MSI
+  without a UAC prompt (the user-session and admin workers restart, jobs
+  and sessions keep running); other installs update longarmd itself.
+  Workers too old for it get a clear message (`machine-update` feature).
+- Automatic updates (off by default): `longarm worker update <worker> --auto
+  on`, the tray's Settings, or `longarm-update auto on` - the machine's owner
+  or an administrator only. The service then installs the hub's latest
+  stable release every 6 hours once no job has started for 5 minutes.
+- Versions everywhere: `longarm ls` has a VERSION column (`0.1.8↑` and a
+  "0.1.9 available" line for workers that report a newer release they
+  can't install themselves: `NodeInfo.update_available`); the tray's
+  Workers tab shows each machine's worker and admin-worker versions and,
+  for the owner, an "Update to X" button with progress and the result; the
+  panel's My machines page says `longarm worker update <name>` next to an
+  outdated version. The tray's update banner installs through the service
+  when the machine has it (no UAC prompt).
+- The hub serves a version's release record
+  (`GET /releases/<version>/release.json`, next to `/releases/latest.json`)
+  and `CheckUpdate` takes `want` (an owner-requested version).
+- `longarm version --json` features `worker-update`, `ls-version`.
 - Clearer Windows installer roles: the Default page says what each choice
   installs - "This is my everyday computer: send jobs to workers" (client)
   or "This machine runs jobs (Dev Box, build machine)" (client + your
@@ -100,6 +476,25 @@
   for a hub points at the Account tab instead of the join-code form (still
   there under "Use a join code").
 
+- Update notices for installs that can't update themselves: workers (MSI
+  installs, user-session workers, the admin worker) ask the hub anyway and
+  report `update_available` (version, why not automatic) in `longarmd
+  status`, the hub's node list and the panel; `longarm` prints a notice on a
+  terminal once a day (`LONGARM_NO_UPDATE_NOTICE=1` turns it off); the tray
+  shows "Update to X", downloads the MSI, checks the hub's sha256 and the
+  release signature, and runs it. The hub serves `GET /releases/latest.json`
+  and fills `WhoamiResponse.latest_version` / `latest_path`.
+- `longarm admin release push --allow-none`: when no worker of the channel
+  can self-update (MSI installs, user-session workers) it lists them and
+  exits 79 instead of failing; release.yml's rollout job turns that into a
+  warning (they update through the tray's MSI banner), while a halted or
+  rolled-back rollout still fails the job.
+- Panel: "Sign in with Microsoft" is the login page's first button (the
+  password + TOTP form folds under "Panel account"; no injected link any
+  more), users get "My machines" (their workers and devices, one row per
+  machine: labels, sharing, removal) and "Get Longarm" (the newest MSI, the
+  one-liners, three steps), outdated versions are marked on Nodes, and a
+  kill asks first (job, worker, owner).
 - Windows installer for password-less machines (Entra-only sign-in with
   Windows Hello or a security key, e.g. Microsoft Dev Box): the MSI's first
   page is **Default (recommended)** - the hub built into the release, a
@@ -293,6 +688,26 @@
   `worker-label`) ([docs/usage.md](docs/usage.md#capabilities-longarm-version---json)).
 
 ### Fixed
+
+- **Upgrading the MSI with Longarm running showed "The setup was unable to
+  automatically close all requested applications"** (and could need a
+  reboot): Restart Manager can't close the tray's WebView2 window, the
+  windowless worker host and `longarmd run`. Restart Manager is now off
+  for the MSI (`MSIRESTARTMANAGERCONTROL=Disable`) and an upgrade helper in
+  the MSI stops Longarm's own processes instead: the installing user's tray
+  before the in-use check, then (elevated, before the old version goes) the
+  worker services (`longarmd-admin`, a `RUN=service` `longarmd`) and every
+  user's tray, worker host and `longarmd run` - asked to stop through a
+  per-process stop event (`Global\LongarmStop-<pid>`), ended by process id
+  only when they have none (older versions) or after 20 s, and only
+  processes whose image is in the install dir. Running jobs and sessions
+  survive: binaries their shims (and `longarm` clients) still hold are
+  moved to `<install dir>\old` instead of being replaced in place. After
+  the install, what ran starts again: services, the users' worker tasks,
+  the trays in their users' sessions (unelevated); a failed upgrade puts
+  the old binaries back and restarts them. The tray quits on Windows'
+  end-of-session / Restart Manager messages and registers for restart
+  (docs/usage.md "Upgrading with Longarm running").
 
 - **Release files of a hub on Azure Container Instances with
   `--storage-auth identity` were lost on every restart**: its data dir is

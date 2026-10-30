@@ -74,7 +74,7 @@ func releaseCmd() *cobra.Command {
 
 	var canary, batch int32
 	var wait, batchWait time.Duration
-	var downgrade, follow bool
+	var downgrade, follow, allowNone bool
 	var nodes []string
 	push := &cobra.Command{
 		Use:   "push <version>",
@@ -86,17 +86,36 @@ follow in batches of --batch (0 = all at once) with --batch-wait between
 batches. A worker whose new version fails its 60 s health check rolls back
 by itself and halts the rollout. Example:
 
-  longarm admin release push 1.4.0 --canary 1 --wait 30m`,
+  longarm admin release push 1.4.0 --canary 1 --wait 30m
+
+Workers that can't update themselves (MSI installs under Program Files,
+user-session workers) are skipped: they get the version as a notice and
+update with the MSI (the tray's "Update to" banner) or the install script.
+When no worker of the channel can self-update, push fails - with
+--allow-none it lists them and exits 79 instead (CI: a warning, not a
+failure).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
 				r, err := h.Admin().PushRelease(ctx, &pb.PushReleaseRequest{Version: args[0], Canary: canary,
 					Wait: durationpb.New(wait), Batch: batch, BatchWait: durationpb.New(batchWait),
-					AllowDowngrade: downgrade, Nodes: nodes})
+					AllowDowngrade: downgrade, Nodes: nodes, AllowNone: allowNone})
 				if err != nil {
 					return err
 				}
 				printRollout(r)
+				if r.State == "none" {
+					msg := "nothing rolled out: no approved worker of channel " + r.Channel
+					if n := max(int(r.NotCapableCount), len(r.NotCapable)); n > 0 {
+						which := strings.Join(r.NotCapable, ", ")
+						if hidden := n - len(r.NotCapable); hidden > 0 { // other users' workers: counted, not named
+							which = strings.TrimPrefix(fmt.Sprintf("%s, %d of other users", which, hidden), ", ")
+						}
+						msg = fmt.Sprintf("nothing rolled out: no worker can self-update %s (%d not capable: %s); they update with the MSI (the tray's banner) or the install script",
+							r.Version, n, which)
+					}
+					return &exitError{code: exitNoneCapable, msg: msg}
+				}
 				if follow {
 					return followRollout(cmd, h)
 				}
@@ -111,6 +130,7 @@ by itself and halts the rollout. Example:
 	push.Flags().BoolVar(&downgrade, "allow-downgrade", false, "also move workers that run a newer version")
 	push.Flags().StringSliceVar(&nodes, "nodes", nil, "only these workers")
 	push.Flags().BoolVarP(&follow, "follow", "f", false, "follow the rollout until it ends")
+	push.Flags().BoolVar(&allowNone, "allow-none", false, "no worker can self-update: list them and exit 79 instead of failing")
 
 	status := &cobra.Command{
 		Use: "status", Short: "Show the current rollout", Args: cobra.NoArgs,
@@ -169,16 +189,27 @@ func printRollout(r *pb.Rollout) {
 		fmt.Printf(" - %s", r.Message)
 	}
 	fmt.Println()
-	line := func(k string, v []string) {
-		if len(v) > 0 {
-			fmt.Printf("  %-9s %s\n", k, strings.Join(v, " "))
+	// The hub names only the workers this admin may see as a user (own,
+	// shared, fleet); the counts include every worker.
+	line := func(k string, v []string, n int32) {
+		n = max(n, int32(len(v)))
+		if n == 0 {
+			return
 		}
+		names := strings.Join(v, " ")
+		if hidden := int(n) - len(v); hidden > 0 {
+			if names != "" {
+				names += " "
+			}
+			names += fmt.Sprintf("+%d of other users", hidden)
+		}
+		fmt.Printf("  %-9s %s\n", k, names)
 	}
-	line("canary", r.Canary)
-	line("targeted", r.Targeted)
-	line("updated", r.Updated)
-	line("failed", r.Failed)
-	line("waiting", r.Waiting)
+	line("canary", r.Canary, r.CanaryCount)
+	line("targeted", r.Targeted, r.TargetedCount)
+	line("updated", r.Updated, r.UpdatedCount)
+	line("failed", r.Failed, r.FailedCount)
+	line("waiting", r.Waiting, r.WaitingCount)
 	if r.PhaseSince != nil {
 		fmt.Printf("  healthy since %s\n", r.PhaseSince.AsTime().Local().Format(time.TimeOnly))
 	}

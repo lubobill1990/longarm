@@ -36,7 +36,10 @@ func main() {
 	cli.start, cli.span = time.Now(), telemetry.NewSpan()
 	telemetry.SetFallback(cli.span)
 	root.SetContext(telemetry.WithSpan(context.Background(), cli.span))
-	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) { startTelemetry(cmd) }
+	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+		noticeOK = allowUpdateNotice(cmd)
+		startTelemetry(cmd)
+	}
 	defer telemetry.Guard()
 	var validated bool
 	markUsageErrors(root, &validated)

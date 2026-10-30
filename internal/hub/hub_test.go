@@ -82,7 +82,7 @@ func TestStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.SchemaVersion() != 5 { // 1 initial, 2 release channels/signatures (P2), 3 tenants, 4 port links, 5 node IDs
+	if st.SchemaVersion() != 6 { // 1 initial, 2 release channels/signatures (P2), 3 tenants, 4 port links, 5 audit attribution, 6 node IDs
 		st.Close()
 		t.Fatalf("schema %d", st.SchemaVersion())
 	}

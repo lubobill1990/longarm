@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/localapi"
+	"github.com/lubobill1990/longarm/internal/update"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -26,6 +27,10 @@ type Controller struct {
 	shell Shell
 	rules *Rules
 	start func() error // longarm daemon start
+	// version: the tray's (Options.Version); a daemon older than it is
+	// replaced once (longarm daemon start replaces an older daemon)
+	version string
+	tried   map[int32]bool // daemon pids it tried to replace
 
 	mu   sync.Mutex
 	last *pb.PoolView
@@ -34,7 +39,7 @@ type Controller struct {
 
 // NewController returns a controller; Run drives it.
 func NewController(opts Options, shell Shell, startDaemon func() error) *Controller {
-	return &Controller{opts: opts, shell: shell, rules: NewRules(), start: startDaemon}
+	return &Controller{opts: opts, shell: shell, rules: NewRules(), start: startDaemon, version: opts.Version, tried: map[int32]bool{}}
 }
 
 // Last is the latest pool view (nil before the first) and the last error.
@@ -78,6 +83,12 @@ func (c *Controller) watch(ctx context.Context, addrFile string) error {
 	cc, err := localapi.DialFile(addrFile, "longarm daemon")
 	if err != nil {
 		return err
+	}
+	if c.replaceOlder(ctx, pb.NewLocalClientClient(cc)) {
+		cc.Close()
+		if cc, err = localapi.DialFile(addrFile, "longarm daemon"); err != nil {
+			return err
+		}
 	}
 	defer cc.Close()
 	st, err := pb.NewLocalClientClient(cc).WatchPool(ctx, &pb.PoolRequest{})
@@ -136,4 +147,27 @@ func (c *Controller) jobsLoop(ctx context.Context, addrFile string) {
 		case <-t.C:
 		}
 	}
+}
+
+// replaceOlder runs longarm daemon start when the running daemon is older
+// than the tray - an upgrade restarted the tray, not the daemon it left
+// running, or another app's bundled older longarm started it - once per
+// daemon process: it replaces an older daemon with this install's (never
+// a newer one). Reports whether it ran.
+func (c *Controller) replaceOlder(ctx context.Context, lc pb.LocalClientClient) bool {
+	if c.start == nil {
+		return false
+	}
+	sctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	st, err := lc.Status(sctx, &pb.LocalStatusRequest{})
+	cancel()
+	if err != nil || !update.NewerRelease(c.version, st.GetVersion()) || c.tried[st.GetPid()] {
+		return false
+	}
+	c.tried[st.GetPid()] = true
+	c.opts.Log.Info("longarm daemon is older than the tray: replacing it", "daemon", st.GetVersion(), "pid", st.GetPid(), "tray", c.version)
+	if err := c.start(); err != nil {
+		c.opts.Log.Warn("longarm daemon start", "err", err)
+	}
+	return true
 }

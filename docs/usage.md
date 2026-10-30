@@ -38,21 +38,38 @@ CGO_ENABLED=1 go build -tags traynative -o bin/ ./cmd/longarm-tray    # Linux (o
 # the e2e tests build longarm-tray without cgo outside Windows (headless); LONGARM_TRAY_CGO=1 builds the native one
 ```
 
-## Quick start (one admin machine, one worker)
+## Quick start (join a hub, sign in with Microsoft)
+
+Install, sign in, run something. The hub is `hub.example.com` (or the one
+built into the release: [Built-in default hub](#built-in-default-hub));
+running one yourself: [Fleet with longarm-hub](#fleet-with-longarm-hub);
+no hub at all: [Advanced: self-hosted without sign-in](#advanced-self-hosted-without-sign-in-ca-and-admin-issue).
 
 ```sh
-# on the admin/client machine
-longarm admin ca init                                     # ~/.config/longarm/ca
-longarm admin issue --role admin --name me --install      # client cert for this longarm (admin role)
-longarm admin issue --role worker --name w1 --out ./w1-tls
-# copy ./w1-tls to the worker as <longarmd data dir>/tls  (default data dir: ~/.longarm; root: see "Data directory")
+# 1. install - Windows: longarm-windows-amd64.msi from the hub's "Get Longarm" page
+#    (https://hub.example.com/get) or https://hub.example.com/releases/<version>/longarm-windows-amd64.msi,
+#    Default (recommended), "This machine runs jobs"; the tray starts the sign-in and shows the code.
+#    Or one line (worker + client; the scripts carry the hub's address and CA):
+curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --role both           # Linux / macOS
+$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex   # Windows (elevated: the MSI)
 
-# on the worker
-longarmd run --listen tcp://$(tailscale ip -4):7701       # foreground
-# or as a service running as a normal user account (Windows, elevated prompt):
-#   $env:LONGARM_SERVICE_PASSWORD = '...'; longarmd service install --user .\me --listen tcp://100.x.y.z:7701
-#   longarmd service start
+# 2. sign in - the one-liners and the tray do it; already installed:
+longarmd login hub.example.com --role both     # worker + client: one code, one approval
+longarm login hub.example.com                  # a client only
+#   Open https://hub.example.com/link and enter code BCDF-GHJK  - in any browser: sign in (Microsoft,
+#   Google or Apple account, as the hub offers), type the code, approve
+
+# 3. run something
+longarm ls                                     # your workers (this machine too)
+longarm run --repo . -f -- pnpm test           # placed by the scheduler, in a fresh worktree
 ```
+
+On Windows the worker runs as you, started at your logon, no service and no
+password ([the user-session worker](#the-user-session-worker-runsession-the-default));
+on Linux / macOS `install.sh` installs the longarmd service as the `sudo`
+user. Everything about the sign-in: [Sign in with Microsoft Entra ID](#sign-in-with-microsoft-entra-id) and [with a Google, Apple or personal Microsoft account](#sign-in-with-a-google-apple-or-personal-microsoft-account);
+installers and their options: [Install](#install); removing it:
+[Uninstall](#uninstall).
 
 ### Data directory
 
@@ -121,24 +138,10 @@ or `[isolation] users_dir`) traversable by the accounts (Unix `o+x`), which a
 home like `/root` (0700) is not: `service install` refuses such a dir with a
 message naming the blocking directory, and longarmd refuses to start on it.
 
-`~/.config/longarm/workers.toml` on the client:
-
-```toml
-[[worker]]
-name = "w1"                     # must match the worker certificate name (or set cert_name)
-address = "100.64.0.11:7701"
-transport = "tcp"               # or "tailscale" (embedded tsnet node; address = tailnet name)
-
-# [tailscale]                   # only for transport = "tailscale"
-# hostname = "longarm-client-mybox"  # auth key from $TS_AUTHKEY on first use
-# control_url = ""              # Tailscale SaaS by default; Headscale URL possible
-#                               # (longarm join with a hub that has a [tailnet] provider sets this up)
-```
-
 ## Usage
 
 ```sh
-longarm ls                                         # CPU / memory / jobs / labels of all workers, one row per machine
+longarm ls                                         # CPU / memory / jobs / labels of your workers, one row per machine
 longarm ls -o wide                                 # + claude/copilot sessions, disk, uptime, top processes, path
 longarm exec w1 -- git status                      # short synchronous command, exit code mirrored
 longarm run w1 --name build --cwd C:/src/app --env CI=1 --secret-env GH_TOKEN -- pnpm test
@@ -154,9 +157,17 @@ longarm admin shutdown w1                          # admin role only; jobs keep 
 longarm logs last -f                               # your most recent job; a job is also a unique prefix or
 longarm kill 7K3M9Q2A                              #   suffix of its id (the tray shows the last 8 characters)
 longarm logs -s a1 [-f]                            # a session's transcript (also: logs w1 a1 --session)
-longarm jobs [--mine | --all] [--limit N]          # the newest 20 (0 = all); admins see their own unless --all
+longarm jobs [--mine | --all] [--limit N]          # the newest 20 (0 = all); admin certificates: only yours unless --all
 longarm doctor [--json]                            # checklist: sign-in, hub, daemon, firewall, your workers
 ```
+
+**Which workers you see.** On a hub, `ls`, `ls -o wide`, `worker ls`,
+`jobs`, the tray's Workers tab and the MCP tools show your own workers and
+devices, the workers shared with you and the fleet workers (no owner) -
+admins included: an admin certificate gets exactly a user's view there, and
+there is no flag that widens it. Other users' machines are counted, never
+listed, by `longarm admin summary` (admins; see below and
+[security.md](security.md#what-admins-see)).
 
 A job id on the command line (`logs`, `wait`, `kill`, `jobs --id`) is the
 full id, a unique prefix or suffix of it (case-insensitive), or `last` - your
@@ -196,6 +207,7 @@ Programs driving longarm can rely on these exit codes:
 | 69 | `jobs --hub-only`: no hub configured, or it did not answer | retry later, or ask the workers (without `--hub-only`) |
 | 75 | refused for capacity, quota or rate (`ResourceExhausted`): no worker passes the gate with `--no-queue`, a quota, too many attempts; `session send --if-idle-ms`: input arrived within the window (nothing sent); too many `tail`s open on the worker | retry later |
 | 77 | not allowed: `PermissionDenied`, `Unauthenticated`, a refusal of end-to-end trust, an expired sign-in (`your sign-in expired on <date>: run longarm login`); `--git-auth forward` with `--repo <url>` (`run`, `session start`): no credential for the URL could be obtained on this machine (nothing was submitted) | fix the credentials or the rights |
+| 79 | `admin release push --allow-none`: no worker of the channel can update itself (MSI installs, user-session workers), nothing was rolled out; the message lists them | nothing to do: they update with the MSI (the tray's banner) or the install script |
 | 137 | `wait` / `run --wait`: the job was killed; `session start`: the session was killed before it ran | |
 | 254 | `wait` / `run --wait`: the job was lost (its supervisor vanished; outcome unknown); `session start` likewise | |
 | 255 | anything else: worker or hub unreachable (also a worker the hub reports offline), timeouts, `Aborted`, internal errors | the outcome may be unknown: look the job up (`jobs --id`) or retry with the same `--id` |
@@ -235,7 +247,7 @@ The job's own outcome comes from `jobs --json` (`state`, `exitCode`,
 ```json
 {"version": "v1.8.0", "features": ["exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label", "git-auth-forward",
   "session-start", "session-send", "session-send-if-idle", "session-stop", "sessions-json-v2", "tail", "run-session",
-  "job-id-short", "jobs-mine", "doctor-json"]}
+  "job-id-short", "jobs-mine", "doctor-json", "worker-update", "ls-version", "agent-auth"]}
 ```
 
 (indented in the real output). A program checks `features` instead of
@@ -263,6 +275,9 @@ exit 255) has none of these features.
 | `job-id-short` | `logs` / `wait` / `kill` / `jobs --id` take a unique prefix or suffix of a job id, or `last` |
 | `jobs-mine` | `jobs --mine` / `--all` (the table's defaults: 20 rows, admins their own jobs) |
 | `doctor-json` | `longarm doctor --json` / `longarmd doctor --json` (see [`doctor --json`](#doctor---json)) |
+| `worker-update` | `longarm worker update <worker> [--latest\|--version X] [--wait] [--json] [--auto on\|off]` (the worker must also support it: `machine-update` in its `Node.Info` features), see [Updating](#updating-longarm-worker-update-and-the-longarm-update-service) |
+| `ls-version` | `longarm ls` has the VERSION column; `ls --json` carries `version` and `updateAvailable` (`{"version", "reason"}`) |
+| `agent-auth` | `run` / `exec` / `session start` / `attach --agent-auth`, `--agent-auth-shared-ok`, `--copilot-account`, MCP `agent_auth` (the worker must also support it: `agent-auth` in its `Node.Info` features), see [Agent credentials](#agent-credentials---agent-auth) |
 | `node-ids` | node IDs: a worker target may be a name, a node ID, a unique ID prefix, `id:<prefix>` or `name:<name>`; `longarm worker rename`, `longarm admin rename`; IDs in listings and JSON (`workerId`, `id`) - see [Node IDs](#node-ids-and-targets) |
 
 The session and tail features also need the worker's (`session-start`,
@@ -360,6 +375,190 @@ Failure and retries (same `--id`):
   exit 2.
 
 Detached jobs work as usual: `run` returns once the job was submitted.
+
+### Agent credentials (`--agent-auth`)
+
+When longarm starts Claude Code or Copilot CLI on a worker, it forwards
+that agent's credentials from this machine with the job. Workers then need
+no agent logins of their own, and the credentials are not stored on them.
+The credentials travel like `--secret-env`: they go worker-direct (never
+through the hub), stay in memory on the worker, are put into the process
+environment, and are redacted from the job's log and the session
+transcript.
+
+```sh
+longarm run w1 --wait -- claude -p "fix the flaky test" --dangerously-skip-permissions
+longarm run w1 --wait -- copilot -p "fix the flaky test" --allow-all-tools
+longarm session start w1 -s fix --repo . -- claude
+longarm run w1 --agent-auth claude,gh -- pwsh -c "claude -p 'open a PR'"
+```
+
+| flag | |
+|---|---|
+| `--agent-auth auto\|claude\|copilot\|gh\|none` | What to forward. Repeatable or comma-separated (`--agent-auth auto,gh`). Default: `[agent_auth] default` in workers.toml, else `auto`. |
+| `--agent-auth-shared-ok` | Forward to somebody else's worker with shared isolation as well (see [Which workers](#which-workers-get-them)). |
+| `--copilot-account NAME` | Forward this account of the Copilot token pool. |
+
+The flags apply to `run`, `exec`, `session start` and `attach`. `attach`
+forwards only when it may create the session: attaching to a running
+session sends nothing. The MCP tools `fleet_exec` and `fleet_job_submit`
+take `agent_auth` (a list) and forward only the agents in
+`LONGARM_MCP_AGENT_AUTH` (default `claude,copilot`; `gh` only when listed;
+`none` turns it off). They never forward to a worker that would need
+`--agent-auth-shared-ok`.
+
+**`auto`** forwards an agent's credentials when the command's program is
+that agent. It looks at the base name of `argv[0]` only, case-insensitive
+and without `.exe` / `.cmd` / `.bat` / `.ps1` / `.js`: `claude` or
+`copilot`. It does not look into a command wrapped in a shell
+(`pwsh -c "claude ..."`, `sh -c`, `cmd /c`, `npx`), nor into MCP's
+`command` (it runs in a shell). For those, name the agent:
+`--agent-auth claude`. `gh` is never forwarded automatically. `none`
+forwards nothing.
+
+To turn forwarding off globally (then only an explicit `--agent-auth`
+forwards), or to choose accounts, use workers.toml:
+
+```toml
+[agent_auth]
+default = "none"              # "auto" (default), "none", or a list such as "claude,copilot"
+copilot_gh_user = "octocat"   # Copilot gets `gh auth token --user octocat`
+gh_user = "octocat"           # --agent-auth gh: `gh auth token --user octocat`
+```
+
+#### Where the credentials come from
+
+- **Claude Code**:
+  - The `env` block of `settings.json` in `$CLAUDE_CONFIG_DIR`, else in
+    `~/.claude`. This is where a proxy setup keeps `ANTHROPIC_BASE_URL`,
+    `ANTHROPIC_AUTH_TOKEN` and the model ids.
+    - Names with `TOKEN`, `KEY`, `SECRET` or `PASSWORD` in them, and
+      `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY` and
+      `CLAUDE_CODE_OAUTH_TOKEN`, go as secrets.
+    - The rest go as plain job environment. Plain values are stored in
+      `job.json` and shown by `jobs --json`, like `-e`.
+  - `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` from longarm's own
+    environment. These win over the file.
+  - Signed in with a Claude subscription only (`~/.claude/.credentials.json`,
+    or the macOS keychain), with none of the above: nothing is forwarded.
+    longarm says: run `claude setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN`,
+    or use an API key or proxy token. The subscription's OAuth refresh
+    token is never copied: it is a long-lived account credential
+    ([why](security.md#forwarded-agent-credentials)).
+  - With `CLAUDE_CODE_USE_BEDROCK` / `_VERTEX` / `_FOUNDRY` in the env block,
+    the env block is forwarded. The cloud credentials are not: they are the
+    worker's own.
+- **Copilot CLI**: the first of these is forwarded as `COPILOT_GITHUB_TOKEN`:
+  1. `--copilot-account NAME`: that account of the token pool.
+  2. `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` from longarm's
+     environment.
+  3. `[agent_auth] copilot_gh_user`: `gh auth token --user <login>`.
+  4. `gh auth token`: gh's active account.
+  5. The token pool `~/.copilot/accounts/tokens.json`, if there is one:
+     `{"<account>": "<token>", ...}` (or `{"<account>": {"token": "..."}}`).
+     Accounts are used in turn, by name. Only the position is kept, in the
+     longarm config dir; tokens are not.
+
+  Copilot CLI takes gh's OAuth tokens (`gho_...`) and fine-grained PATs
+  with the Copilot permission, not classic PATs (`ghp_...`).
+- **gh** (`--agent-auth gh`, opt-in only, never with `auto`): `GH_TOKEN`
+  for agents that use git or gh themselves. It comes from `gh auth token
+  --user <gh_user>` if configured, else from `GH_TOKEN` / `GITHUB_TOKEN`,
+  else from `gh auth token`. This gives the job the token's full scope. To
+  fetch the job's repository, `--git-auth forward` is enough; it never
+  reaches the job.
+
+What you give yourself wins: an `-e NAME=...` or `--secret-env NAME` of
+the same name replaces the forwarded value.
+
+With `auto`, an agent without credentials on this machine is a note on
+stderr, and the command runs without them. With an agent named explicitly,
+it is an error (exit 2). longarm names on stderr what it forwards and from
+where (`forwarding agent credentials to w1: claude: settings.json env`),
+never a value.
+
+#### On the worker
+
+- Credentials are handled like `--secret-env`. They are in memory only,
+  then in the process environment. They are redacted from `out.log`
+  (`logs`) and the session transcript (`logs --session`), and are never in
+  `job.json`, the audit log or longarmd's log.
+  - `jobs --json` (`spec.agentAuth`), `sessions --json` (`agentAuth`),
+    `job.json` (`agent_auth`) and the audit log (`agent_auth`) name the
+    forwarded agents, never values.
+  - `secretEnvNames` lists the secret variables' names.
+  - The live stream of an attached terminal is not redacted: it is your
+    own terminal.
+- With Copilot credentials, the job, session or exec gets a private
+  **`COPILOT_HOME`** of its own:
+  - `<data>/agent-home/<j|s|x>-<id>-<random>`, inside the user's space with
+    per-user isolation, accessible to that account only. Parallel jobs
+    don't share Copilot state, and nothing leaks between jobs or users.
+  - Copilot keeps its config, session state and logs there. It may also
+    cache the token there. That is the only place a forwarded credential
+    can reach the worker's disk, and longarm does not write it.
+  - The directory goes away with the job or session (GC, `[gc] keep`;
+    `longarm admin gc`, or a session replaced by a new one of its name) and
+    right after an `exec`. Leftovers are collected after an hour.
+  - `-e COPILOT_HOME=<dir>` keeps the account's own `~/.copilot` (or
+    another directory) instead. `handoff` does this to resume a Copilot
+    session it copied there.
+  - Note that the state of a session run with a private home is not in
+    the account's `~/.copilot`, so the worker-side session list doesn't
+    show it.
+- The worker must announce the `agent-auth` feature (`Node.Info`).
+  - Explicit `--agent-auth` on an older longarmd: exit 2.
+  - `auto` on an older longarmd: the command runs without forwarded
+    credentials, with a note.
+
+#### Which workers get them
+
+- **Your own workers**, and workers without a hub record (workers.toml):
+  yes.
+- **Somebody else's worker** (shared with you, or a fleet worker) **with
+  per-user isolation**: yes. The job runs as your own OS account there.
+- **Somebody else's worker with shared isolation**: refused (exit 2).
+  Other users' jobs run there as the same OS account and could read the
+  job's environment. `--agent-auth-shared-ok` forwards anyway, with a
+  warning.
+- **Admin workers** (they run as SYSTEM): never with `auto`, which only
+  prints a note. Only when the agent is named (`--agent-auth claude`), and
+  only to your own admin worker.
+
+"Your own" is the hub's word, as the owner it records. With end-to-end
+trust on the client (`longarm trust require on`), it is only a worker
+whose node key you endorsed with your own user key. A worker endorsed by
+another user you trust, or one the hub merely says is yours, then counts
+as somebody else's. Isolation is always the worker's own report over the
+verified connection. Under end-to-end trust, so is the admin flag
+([security](security.md#forwarded-agent-credentials)).
+
+#### Recommended invocations for unattended agent jobs
+
+Agents ask before using tools. A job has nobody to answer, so it needs
+permission flags. longarm doesn't add them: choose them yourself.
+Bypass/yolo modes let the agent run anything the job's account can,
+including reading the forwarded credentials. Use them on workers and
+repositories you trust.
+
+```sh
+# Claude Code: prompt from a file (memory-only on the worker), streamed JSON
+# output, all tools allowed. Narrower: --permission-mode acceptEdits, or
+# --allowedTools "Bash(go test:*)" Edit.
+longarm run w1 --repo . --stdin-file prompt.md --wait --name fix-x -- \
+  claude -p --dangerously-skip-permissions --output-format stream-json --verbose --session-id <uuid>
+# retry with the same conversation:  ... -- claude -p --resume <uuid> ...
+
+# Copilot CLI: all tools, no questions, no colors, logs in the job's dir.
+longarm run w1 --repo . --wait -e COPILOT_AUTO_UPDATE=false -- \
+  copilot -p "$(cat prompt.md)" --yolo --no-ask-user --no-color
+# narrower: --allow-all-tools without --yolo, or --allow-tool / --deny-tool
+```
+
+- `--wait` / `--follow` return the agent's exit code.
+- `logs <id>` shows Claude's stream-json lines or Copilot's transcript.
+- `--model` picks a model for either agent.
+- Give parallel agents separate worktrees (`--repo`) or directories.
 
 ### Interactive sessions (tmux-like)
 
@@ -836,6 +1035,8 @@ every connection B accepts or refuses are audited (`longarm admin audit
 ### SSH / scp / VS Code Remote-SSH
 
 ```sh
+longarm ssh w1                                     # ssh without any ssh config (what the tray's ssh buttons run)
+longarm ssh w1 -- git status                       # a command
 longarm ssh-config >> ~/.ssh/config                # Host longarm-<worker> entries + known_hosts from mTLS
 ssh longarm-w1                                     # interactive shell
 ssh longarm-w1 git -C C:/work/proj status          # exec (cmd.exe /c on Windows workers, like OpenSSH)
@@ -1130,6 +1331,9 @@ longarm run --no-queue -- ...            # fail (exit 75) instead of queueing wh
 longarm exec -- hostname                 # short command on the least loaded worker
 longarm wait <id>; longarm logs <id> -f; longarm kill <id>   # worker optional: found through the hub
 longarm admin nodes | approve | revoke | drain | undrain | label <node> k=v | join-codes | audit
+longarm admin summary [--rows]           # the whole fleet as counts per user (admin nodes lists what your user sees)
+longarm admin audit [--node N]           # the records about your user and your own hub actions; others' only counted
+longarm-hub audit [--node N] [--json]   # on the hub host (operators): the complete audit trail
 longarm admin tailnet status [--json] | rekey <node>   # tailnet provider + per-node state ("Tailnet provider" below)
 longarm admin profile set dev git=latest node=22 pnpm=latest claude=latest pwsh=7
 longarm admin profile assign w1 dev; longarm admin profile ls   # canary first, then the rest
@@ -1147,6 +1351,33 @@ plus the hub cache `hub-cache.json`) in parallel. A hub that didn't answer is
 remembered for 30 s in `hub-state.json` (`LONGARM_HUB_RETRY_AFTER`), so the next
 commands skip it, and the longnet legs through its built-in relay, at once.
 `--no-hub` / `LONGARM_NO_HUB=1` ignore the hub entirely.
+
+**While the hub is down** (a redeploy, an outage), everything that talks to
+a worker keeps working over cached endpoints and pinned identities (the
+worker's certificate from the CA, end-to-end trust as configured): `exec`,
+`run <worker>`, `attach`, `logs`, `get` / `put`, sessions, port forwards,
+`longarm mcp`, the tray. Longarm says so once ("hub ... unavailable; direct
+connections to workers still work"); the tray's header shows "hub
+unavailable · direct connections still work". Only what needs the hub
+waits: placement without a worker (`--on auto`), workers not in the cache,
+sign-in, new port links, the panel. Relayed paths survive a hub restart
+through an external relay ([below](#external-relays-relayed-connections-that-survive-hub-restarts));
+through the hub's own relay they reconnect by themselves once it is back
+(`attach`, `logs -f` and `wait` reconnect with backoff; a forwarded
+connection opened meanwhile waits up to 30 s for the worker,
+`LONGARM_FORWARD_WAIT`).
+
+**Metrics direct-first.** The client daemon (the tray's) keeps a connection
+per leg to the workers this user may use (the hub's list for this user, and
+its cache) and streams each worker's metrics directly from it; the hub's
+metrics only fill in for workers it doesn't reach or stream from. At most
+32 workers get a direct stream (`LONGARM_POOL_MAX_DIRECT`; those with this
+client's jobs first, then the fastest); without a viewer (tray closed, no
+`longarm ls`) for 5 minutes the daemon idles: no direct streams, legs probed
+every 30 s. The tray shows per worker where its numbers come from and how
+old they are ("metrics direct · updated 2s ago"); `longarm ls -o wide` has a
+METRICS column (`direct 2s`, `hub 1s`, `hub 3m (stale)`), and `longarm ls`
+uses the running daemon's direct metrics over the hub's.
 
 Toolchain profiles: longarmd reconciles the assigned profile idempotently (winget /
 npm on Windows, apt + official install scripts / npm on Linux, Homebrew on
@@ -1168,13 +1399,17 @@ longarm admin user add alice [--team web]... [--max-jobs 8] [--max-mem-gb 64] [-
 #   prints a client join code bound to the user (the device's certificate names the user);
 #   --panel also creates a web panel login (role user: "My jobs", nodes, "Me") and prints
 #   its generated password and TOTP secret once
-longarm admin user code alice [--device alice-desktop]     # a join code for another device
+longarm admin user code alice [--device alice-desktop]     # a join code for the first device (user added with --no-code)
 longarm admin user set alice --team web --team infra       # replace teams; quota flags change the quota
 longarm admin user set alice --clear-quota                 # back to the default quota
-longarm admin user ls [--json]                             # devices, teams, usage, quotas
+longarm admin user ls [--json]                             # number of devices and workers, teams, usage, quotas
 longarm admin user disable|enable alice                    # refused on the hub and every worker
-longarm admin user remove alice [--purge]                  # revoke all of alice's devices; --purge: workers
-                                                           # delete her jobs, data and OS account
+longarm admin user remove alice [--purge]                  # revoke all of alice's devices and workers; --purge:
+                                                           # workers delete her jobs, data and OS account
+longarm admin summary [--rows] [--json]                    # the fleet per user: workers / admin workers / devices,
+                                                           # online, worker versions; --rows: each user's
+                                                           # machines by version (aggregates only).
+                                                           # No names; audited
 longarm admin team add web alice bob; longarm admin team rm web bob; longarm admin team ls
 longarm admin join-code --role client --user alice --name alice-2   # the same, by hand
 longarm admin issue --role client --name alice-pc --user alice --out DIR   # without a hub
@@ -1591,6 +1826,88 @@ use `allowed`, or `longarm admin user disable`; a change to `admins` applies
 at the next sign-in (panel sessions last `[web] session_ttl`, certificates
 their TTL).
 
+### Sign in with a Google, Apple or personal Microsoft account
+
+Besides Entra (work and school accounts of one tenant), a hub can let
+people sign in with **personal accounts**: Google, Apple and Microsoft
+accounts (outlook.com, live.com, hotmail.com ...). Each provider is a
+`[auth.<provider>]` block in hub.toml; any combination works, also next to
+`[auth.entra]`. The panel's login page then has one button per provider
+(`/auth/login` without a provider shows a page to choose), and `/link` -
+the page `longarm login`, `longarmd login`, the tray and the MSI with
+`LOGIN=1` send you to - signs you in the same way.
+
+The account maps to a Longarm user exactly like an Entra user: **created
+on first sign-in** (named after the verified e-mail address's local part,
+`alice@example.com` -> `alice`; without an address, after the provider:
+`google`, `apple2`), bound to the provider's stable subject (`sub`), not to
+the address. So **every machine one account links is that one user's**:
+`longarmd login` on a box at home and `longarm login` on a laptop, both
+approved with the same Google account, give the laptop a client
+certificate of that user and the box a worker owned by it - its jobs are
+placed there, nobody else's. Another account is another user (accounts of
+different providers too; there is no merging by e-mail address).
+
+Only the browser path exists for these providers: no `--az` (that is
+Entra's token), and no app-only sign-in. As with Entra, once any provider
+is configured only sessions opened by a provider's sign-in may approve at
+`/link` (a password login could be a shared admin account).
+
+```toml
+[auth.google]
+client_id = "<id>.apps.googleusercontent.com"
+client_secret_file = "/etc/longarm-hub/google-client-secret"   # root:longarm-hub 0640
+admins = ["you@example.com"]       # admin certificates and the panel's admin role
+allowed = []                       # who may sign in (empty: every account of the provider);
+                                   # entries: verified e-mail "user@example.com", "*@example.com",
+                                   # or the provider's subject "sub:<id>" (exact case)
+
+[auth.microsoft]                   # personal Microsoft accounts (work/school: [auth.entra])
+client_id = "<application id>"     # a GUID
+client_secret_file = "/etc/longarm-hub/microsoft-client-secret"
+admins = ["you@example.com"]
+
+[auth.apple]
+client_id = "com.example.longarm.signin"   # the Services ID
+team_id = "ABCDE12345"
+key_id = "KEY1234567"              # the "Sign in with Apple" key
+private_key_file = "/etc/longarm-hub/apple-AuthKey.p8"   # checked when the hub starts
+```
+
+Registration, with `<public_url>` the hub's `public_url` (the redirect
+URIs must match it exactly):
+
+- **Google** (Google Cloud console -> Google Auth Platform): an External
+  app with the scopes `openid`, `email`, `profile` (non-sensitive: publish
+  it "In production" without a review, else only test users get in); a
+  client of type *Web application* with the redirect URI
+  `<public_url>/auth/callback/google`. Only addresses Google marks
+  verified count (name, `admins`, `allowed`).
+- **Microsoft account**: an app registration with *Supported account
+  types* = personal Microsoft accounts only (`az ad app create
+  --sign-in-audience PersonalMicrosoftAccount --web-redirect-uris
+  <public_url>/auth/callback/microsoft`), and a client secret (`az ad app
+  credential reset`). The hub accepts ID tokens of the consumer tenant
+  only; a work account that reaches this button is refused (it signs in
+  with `[auth.entra]`). The address is the account's sign-in name.
+- **Apple** (Apple Developer -> Certificates, Identifiers & Profiles): an
+  App ID with *Sign in with Apple*; a Services ID (the `client_id`) with
+  *Sign in with Apple* configured for the hub's domain and the return URL
+  `<public_url>/auth/callback/apple`; a key with *Sign in with Apple* (its
+  `.p8` downloads once: `private_key_file`, its ID: `key_id`). Apple posts
+  the result back (`response_mode=form_post`); the hub signs a short-lived
+  ES256 client secret per sign-in. A "Hide my e-mail" relay address is the
+  user's address as far as the hub is concerned.
+
+Each sign-in carries a state (single use, in a MAC'd cookie), a nonce and,
+for Google and Microsoft, PKCE; the hub redeems the code with its client
+credential and checks the ID token itself (signature against the
+provider's published keys, issuer, audience = `client_id`, expiry, nonce).
+A change to `admins` / `allowed` applies at the next sign-in and at every
+`/link` approval. Removing a provider's block locks its users out of the
+panel and `/link` (their devices keep working until their certificates
+expire; `longarm admin user disable` ends them at once).
+
 ### End-to-end trust on workers
 
 A worker can refuse every certificate the hub's CA mints on its own and
@@ -1662,7 +1979,7 @@ longarmd status | drain [--reason R] | undrain | toolchain status|apply | events
 longarmd limits [--max-jobs N] [--reserve-mem GB]  # local limits, honoured by the hub's scheduler
 longarmd jobs | logs <job> [-f] | kill <job>        # this worker's jobs
 longarmd leave [--reason R] [--force] [--kill-jobs] [--purge]   # unregister (hub revokes the certs); a running longarmd stops
-longarm daemon start | stop | status | events     # client session daemon (also: tailscale/longnet legs of one-shot longarm)
+longarm daemon start | stop | status | events     # client session daemon (also: tailscale/longnet legs of one-shot longarm); start replaces an older daemon
 longarm pool [--watch] [--json]                    # live pool view: metrics + this client's latency per leg
 longarm transport [race|tcp|tailscale|longnet]       # transport policy (see "Transport legs and racing")
 longarm forward w1 3000 --bg                       # forward hosted by longarm daemon; prints the URL
@@ -1676,6 +1993,11 @@ longarm forward --list; longarm forward --stop 3000|all
 address = "hub.example.com:7443"     # usually written to hub.toml by longarmd join
 labels = { region = "eu" }           # scheduler constraints (longarm run --require region=eu)
 # advertise = ["tcp://100.64.0.11:7701"]   # endpoints clients get (default: the listeners)
+# relay = "auto"                   # auto (default): when every listen URL is loopback (sign-in
+#                                  # installs: longarmd login, the tray, the MSI's session and admin
+#                                  # workers), also listen on the hub's longnet relay - the address
+#                                  # comes with each hub session, so nothing to configure, also after
+#                                  # an upgrade - with hole punching for a direct path; "off": never
 # remote_jobs = "control"          # what the hub (web panel, longarm admin kill|logs|run) may do here:
 #                                  # control = kill, logs, toolchain apply (default); all = also
 #                                  # run commands submitted through the hub; none (the default
@@ -1691,7 +2013,13 @@ One frontend, two shells. **The hub panel** is served on longarm-hub's HTTP
 listener at `/` (the old server-rendered page moved to `/status`). Log in with
 an account from `longarm-hub user add` + TOTP (panel administrators; logins of
 Longarm users, created with `longarm admin user add --panel` or on the
-"People" page, see only "My jobs", the nodes read-only and "Me"). Pages: nodes (online state, CPU and
+"People" page, see only "My jobs", the nodes read-only and "Me"). With
+multi-tenancy an administrator's "Nodes" and "Jobs" pages show what its
+user sees (its own and shared machines, fleet workers; its own jobs) and
+the "Fleet" page the whole fleet as counts per user, worker versions and,
+optionally, each user's versions (`GET /api/admin/summary`; aggregates
+only, no names, audited).
+Pages: nodes (online state, CPU and
 memory sparklines, Claude/Copilot sessions, each client's path and RTT to the
 worker, labels, approve pending, drain/resume, revoke, toolchain profile and
 "update now"), jobs (filter, live logs, kill, run a command), "add machine"
@@ -1708,8 +2036,9 @@ longarm-hub user add|ls|rm
 **longarm-tray** (one desktop app for both roles; tabs by installed role) is a
 tray icon with live per-worker CPU/memory columns and a popup
 next to it (left click; hides on focus loss unless pinned; drag it by the
-title bar). The popup shows every worker's load plus this client's link to every
-worker: active leg and path (tcp, tailscale direct/peer-relay/DERP, longnet
+title bar). The popup shows the load of every worker you may see (your own,
+shared with you, the fleet's - admins too, there is no "all workers" switch)
+plus this client's link to each: active leg and path (tcp, tailscale direct/peer-relay/DERP, longnet
 direct/relay-udp/relay-tcp), NAT types, RTT with a 5-minute sparkline. Data
 comes from `longarm daemon` (hub events when the hub is reachable, otherwise
 streamed from the workers; the popup shows which). Tabs: workers, my jobs
@@ -1752,15 +2081,51 @@ large output comes back as head + tail with a job handle), `fleet_job_submit`,
 name (`secret_env`) from the environment of `longarm mcp`, never through the model,
 and only names the operator allows: `claude mcp add longarm -e LONGARM_MCP_SECRETS=GH_TOKEN -- longarm mcp`.
 
+## Advanced: self-hosted without sign-in (CA and `admin issue`)
+
+No hub and no Microsoft sign-in: one admin machine holds the fleet's CA and
+issues certificates by hand; the client finds workers in `workers.toml`.
+
+```sh
+# on the admin/client machine
+longarm admin ca init                                     # ~/.config/longarm/ca
+longarm admin issue --role admin --name me --install      # client cert for this longarm (admin role)
+longarm admin issue --role worker --name w1 --out ./w1-tls
+# copy ./w1-tls to the worker as <longarmd data dir>/tls  (default data dir: ~/.longarm; root: see "Data directory")
+
+# on the worker
+longarmd run --listen tcp://$(tailscale ip -4):7701       # foreground
+# or as a service running as a normal user account (Windows, elevated prompt):
+#   $env:LONGARM_SERVICE_PASSWORD = '...'; longarmd service install --user .\me --listen tcp://100.x.y.z:7701
+#   longarmd service start
+```
+
+`~/.config/longarm/workers.toml` on the client:
+
+```toml
+[[worker]]
+name = "w1"                     # must match the worker certificate name (or set cert_name)
+address = "100.64.0.11:7701"
+transport = "tcp"               # or "tailscale" (embedded tsnet node; address = tailnet name)
+
+# [tailscale]                   # only for transport = "tailscale"
+# hostname = "longarm-client-mybox"  # auth key from $TS_AUTHKEY on first use
+# control_url = ""              # Tailscale SaaS by default; Headscale URL possible
+#                               # (longarm join with a hub that has a [tailnet] provider sets this up)
+```
+
+A hub can be added later: `longarm-hub --data-dir <dir> ca import ~/.config/longarm/ca` keeps
+the certificates issued so far ([Fleet with longarm-hub](#fleet-with-longarm-hub)).
+
 ## Installers, transport racing, self-update
 
 ### Install
 
 | Platform | Package | Unattended |
 |---|---|---|
-| Windows | `longarm-windows-<arch>.msi` (longarm, longarmd, longarm-tray if built; role dialog) | `msiexec /i longarm.msi /qn ROLES=worker HUB=hub:7443 JOIN_CODE=K7P-Q2M [CA_FINGERPRINT=..] [LISTEN=tcp://100.x.y.z:7701] [NODE_NAME=w3] SERVICE_USER=.\me SERVICE_PASSWORD=..` (or `SERVICE_ACCOUNT=LocalSystem`) |
+| Windows | `longarm-windows-<arch>.msi` (longarm, longarmd, longarm-tray if built; Default / Custom dialog) | `msiexec /i longarm-windows-amd64.msi /qn MODE=default ROLES=both LOGIN=1 [LABELS=pool=devbox] [ADMIN_WORKER=1]` (the built-in hub, user-session worker, no password; sign in with the tray or `longarmd login --role both`); another hub: `MODE=custom HUB=hub.example.com LOGIN=1`; join codes and services: the table below |
 | Linux | `longarm_<v>_<arch>.deb/.rpm` (longarm, longarmd, `longarmd@.service`) | `sudo env LONGARM_ROLES=worker LONGARM_HUB=hub:7443 LONGARM_JOIN_CODE=K7P-Q2M LONGARM_USER=$USER apt install ./longarm_*.deb` (or `/etc/longarm/join.env`) |
-| macOS | `longarm-<v>.pkg` (packaging/macos, signed + notarized on a Mac); Homebrew cask | `defaults write /Library/Preferences/com.longarm ...` then `installer -pkg` |
+| macOS | `longarm-darwin-<arch>.pkg` (longarm, longarmd in `/usr/local/bin`; Developer ID signed and notarized: [macOS installer and MDM](#macos-installer-pkg-and-mdm)); Homebrew cask | a configuration profile (domain `com.longarm`) or `defaults write /Library/Preferences/com.longarm ...`, then `installer -pkg` |
 | hub | `ghcr.io/<owner>/longarm-hub` image, `longarm-hub_<v>_<arch>.deb` | `docker compose up -d` (deploy/hub) |
 
 **Default or Custom.** The MSI's first page offers **Default
@@ -1931,6 +2296,172 @@ or `-ServiceAccount LocalSystem` / `$env:LONGARM_SERVICE_ACCOUNT`. By default
 (`-Run session`) it installs the user-session worker, and `-Login` runs the
 MSI with `LOGIN=1 RUN=session`, then signs in in the console.
 
+#### Upgrading with Longarm running
+
+Install the newer MSI over the old one (double-click, `msiexec /i`, or the
+tray's update banner) while the tray, the user-session worker and the admin
+worker run: there is no "files in use" / "unable to automatically close
+all requested applications" dialog and no reboot, and running jobs and
+sessions keep running. What happens (`internal/msiupgrade`;
+`packaging/windows/longarm.wxs`):
+
+1. **Before the in-use check** (as you, before `InstallValidate`): your
+   tray is asked to exit - its stop event, a named kernel event
+   `Global\LongarmStop-<pid>` that only its user, SYSTEM and Administrators
+   may set - and ended by its process id after 10 s, or at once when it
+   has none (an older version). The tray is Longarm's only process with a
+   window, the only one Windows Installer's in-use check would list.
+   Restart Manager is off (`MSIRESTARTMANAGERCONTROL=Disable`): it can't
+   close windowless processes, which is what showed the dialog.
+2. **Before the files are replaced** (elevated, before `StopServices` and
+   `InstallFiles`): the services that run (`longarmd-admin`, `LongarmUpdate`,
+   a `RUN=service` `longarmd`) are stopped and waited for, then every user's
+   tray, worker host (`longarm-tray --worker-host`, `longarmd session-mode
+   run`) and `longarmd run` whose image is in the install dir - asked
+   through their stop events, ended by process id (checked: same start
+   time, image still in the install dir) after 20 s or when they have none.
+   No other program is touched. Job shims (`longarmd shim`, `longarmd
+   conhost`), `longarm` clients in terminals and the client daemon keep
+   running: the binaries they hold are moved to `<install dir>\old`
+   (Windows lets a running program be renamed), and the new ones go in
+   beside them. The restarted tray then finds the client daemon older than
+   itself and runs `longarm daemon start`, which replaces a daemon older
+   than its own `longarm` (its port forwards move to the new one) - never
+   a newer one: an older `longarm` (an app's bundled copy, an old CLI)
+   just uses the daemon that runs. What ran is recorded in `C:\ProgramData\Longarm\msi-upgrade.json`.
+   The new version is installed over the old one, and the old product is
+   uninstalled afterwards (`MajorUpgrade Schedule="afterInstallExecute"`):
+   the files and components the two share stay (the new ones), and none of
+   the old version's uninstall steps (leaving the hub, removing the worker
+   task, services or data) runs during an upgrade. (0.1.8 to 0.1.13 removed
+   the old product first, after this stop step, which Windows Installer
+   refuses: error 2613, "RemoveExistingProducts action sequenced
+   incorrectly". Upgrading from those versions works with 0.1.14 and later.)
+   An upgrade can't switch the worker between a service and the user-session
+   worker (`RUN`, or `ROLES=client` on a service worker): it is refused
+   before anything stops - uninstall first (`KEEP_DATA=1` keeps the jobs).
+3. **After the install** (`longarmd install-helper msi restart`, at the end,
+   once the old product is gone):
+   the recorded services start again (the admin worker's is also re-created
+   by its setup step), each recorded user's worker task runs
+   (`LongarmWorker-<SID>`; the installing user's is restarted anyway), and
+   the trays start again in their users' sessions, not elevated (the
+   on-demand task `LongarmTray-<SID>`; the installing user's by the usual
+   start at the end of the install, unless `LAUNCH_TRAY=0`). Only what was
+   running is started. Moved-aside binaries nothing holds any more are
+   deleted (the others at the next upgrade).
+4. **A failed upgrade** rolls back: the old binaries are moved back and what
+   was stopped starts again.
+
+An uninstall stops the trays, worker hosts and `longarmd run` the same way
+before removing the files. The tray also answers Windows' end-of-session
+messages and Restart Manager (another installer that needs a file it holds,
+e.g. a WebView2 update): it quits at once and is registered to be restarted
+afterwards (`RegisterApplicationRestart`). An update started from the tray
+(its banner runs `msiexec`) needs nothing from the tray: the MSI asks it to
+exit and starts it again. The helper's log is
+`C:\ProgramData\Longarm\install-helper.log`.
+
+#### Updating: `longarm worker update` and the Longarm Update service
+
+Every MSI install (each role, client-only machines too) has a small
+Windows service, **Longarm Update** (`LongarmUpdate`,
+`longarm-update.exe`, LocalSystem, delayed auto start). It can do one
+thing: install a newer Longarm MSI - downloaded from the hub this machine
+recorded at install (`HKLM\Software\Longarm` `Hub`; never a hub named in a
+request), signed with the release key built into `longarm-update.exe`
+(the minisign trusted comment must name exactly that file and version),
+matching the hub's release record (sha256, size), strictly newer than the
+installed version, and for this machine's architecture
+(`longarm-windows-<arch>.msi`). It runs `msiexec /i <msi> /qn /norestart`
+as a one-shot SYSTEM scheduled task (`LongarmUpdate-Install`), so the
+upgrade above - which stops and replaces LongarmUpdate too - completes;
+the installed product's remembered properties (hub, roles, run mode, admin
+worker) carry over. Running jobs and sessions keep running.
+
+From your client, for a worker you own:
+
+```sh
+longarm worker update cpc-alice-1                    # the hub's latest stable release
+longarm worker update cpc-alice-1 --version 0.1.9 --wait
+# cpc-alice-1: checking: updating cpc-alice-1 to 0.1.9
+# cpc-alice-1: downloading: downloading longarm-windows-amd64.msi (31 MB)
+# cpc-alice-1: verifying: verifying longarm-windows-amd64.msi
+# cpc-alice-1: installing: installing Longarm 0.1.9 (from 0.1.8); ...
+# cpc-alice-1: 0.1.8 → 0.1.9; 2 jobs and 1 session kept running; its admin worker cpc-alice-1-admin restarted too
+longarm worker update cpc-alice-1 --json             # {"worker", "from", "to", "phase", "summary", "kept_jobs", ...}
+longarm worker update cpc-alice-1 --auto on [--hours 6]   # automatic updates (MSI installs)
+```
+
+- **Who:** the worker's owner only (a client or admin certificate of the
+  owner; the admin worker's owner pinned in its `longarmd.toml`). The
+  request goes end to end to the worker (`MachineUpdate.Start`), which
+  hands it to the service over its local pipe; the hub has no command for
+  it and can't relay one - fleet admins update fleet workers with
+  rollouts. A worker without an owner (a fleet worker) refuses.
+- **Which worker:** the user-session worker (or the admin worker when it
+  is alone): the machine updates once and both workers restart. The
+  user-session worker (your account) reaches the service like the tray:
+  it asks the service manager only for `SERVICE_QUERY_STATUS`, which every
+  interactive user has. (Before 0.1.19 it asked for full access, got
+  "access denied", concluded there was no service and tried to update
+  itself: "C:\Program Files\Longarm is not writable for this account
+  (package-managed install?)". `longarm worker update` - the tray's
+  button too - then asks the machine's admin worker, which runs as SYSTEM
+  and hands the request to the service, so such a worker updates from
+  your client once.) A Windows install that can't update itself and has
+  no service says what to do (run the new MSI there once: it installs the
+  service).
+- **Other installs** (`install.ps1` per user, Linux, macOS) take the same
+  command and output: longarmd fetches that version through the hub
+  (`CheckUpdate` with `want`), verifies the signatures with the key built
+  into it and updates itself (Self-update below), only to a newer version.
+- **Too old:** a worker without the `machine-update` feature (its
+  `Node.Info`) is refused with exit 2 and how to update it once by hand.
+- **Exit codes:** 0 updated, up to date or requested (without `--wait`);
+  2 refused (a downgrade, a package that isn't for this machine, a worker
+  too old); 3 no such worker or version; 75 an update in progress or rate
+  limited (retry); 77 not the owner; 255 the update failed.
+- **Versions:** `longarm ls` has a VERSION column; `0.1.8↑` and the line
+  `↑ 0.1.9 available for ...` mark workers that report a newer release
+  they can't install themselves (`NodeInfo.update_available`: MSI
+  installs). The tray's Workers tab shows each machine's versions (worker
+  and admin worker) and, for the owner, an **Update to X** button with the
+  progress and the result - only when the worker says `longarm worker
+  update` can install it (`update_available.method`: `msi`; `none` shows
+  the reason on the version instead); the panel's My machines page shows
+  `longarm worker update <name>` next to an outdated version (the panel
+  itself can't start an update: the hub has no way to).
+
+**Automatic updates** are off by default. The machine's owner (the user
+the MSI was installed for) or a local administrator turns them on: the
+tray's Settings tab ("install new releases automatically"),
+`longarm worker update <worker> --auto on` (relayed by your own worker),
+or `longarm-update auto on` on the machine. The hub can't: the setting
+lives in `HKLM\Software\Longarm\Update`, written by the service only for
+those callers. When on, the service checks the hub's latest stable release
+every 6 hours (`--hours`) and installs it under the same rules - once no
+job has started for 5 minutes (the workers tell it when jobs run), at
+most a day later.
+
+**On the machine** (any local user may ask; only newer signed releases
+install):
+
+```powershell
+longarm-update status                      # installed, available, in progress, last result, auto
+longarm-update install --latest | --version 0.1.9
+longarm-update install --version 0.1.9 --reinstall   # the same version again: an elevated administrator only
+```
+
+The tray's own update banner installs through the service when the machine
+has it (no UAC prompt; the Settings tab shows the service's status) and
+otherwise downloads and checks the MSI itself and runs `msiexec` with a UAC
+prompt.
+The service's downloads, state and log are in
+`C:\ProgramData\Longarm\updates` (SYSTEM only; the installer's verbose log
+is `install-<version>.log` there, the service's `longarm-update.log`); an
+uninstall removes the service, the setting and that directory.
+
 #### Built-in default hub
 
 A release carries a default hub: `version.DefaultHub` (and optionally
@@ -1969,6 +2500,175 @@ Building a release (packaging/): `pwsh packaging/build.ps1 [-Snapshot] [-Key lon
 (Windows: GoReleaser for all 6 targets, the MSIs, the flat signed directory
 `dist/hub-release`), `sh packaging/build.sh` elsewhere; winget manifests:
 `packaging/winget/render.ps1`.
+
+### macOS installer (.pkg) and MDM
+
+Every release has two installers, `longarm-darwin-arm64.pkg` (Apple silicon)
+and `longarm-darwin-amd64.pkg` (Intel), on the GitHub Release and on the hub
+(`https://hub.example.com/releases/<version>/longarm-darwin-arm64.pkg`). Each
+is a flat package that installs `longarm` and `longarmd` into `/usr/local/bin`
+(macOS 12 or later). In a release built with the maintainer's Apple
+credentials ([ci-cd.md 2.8](ci-cd.md#28-macos-signing-and-notarization-apple-developer-id)):
+
+- the binaries are signed with a **Developer ID Application** certificate,
+  with the hardened runtime and a secure timestamp, identifiers
+  `com.longarm.longarm` and `com.longarm.longarmd` (also the plain binaries
+  `longarm-darwin-<arch>`, `longarmd-darwin-<arch>`, `longarm-hub-…`,
+  `longarm-relay-…` and the ones in `longarm-darwin-<arch>.tar.gz`);
+- the package is signed with a **Developer ID Installer** certificate,
+  **notarized** by Apple, and the ticket is **stapled** to it (Gatekeeper
+  accepts it offline);
+- `SHA256SUMS`, `checksums.txt` and the `.minisig` signatures are made from
+  these final, signed files.
+
+A release built without them ships the same files unsigned (its build log
+says so); MDM-managed Macs refuse unsigned packages.
+
+**Install by hand.** Double-click the pkg, or:
+
+```sh
+pkgutil --check-signature longarm-darwin-arm64.pkg   # "Developer ID Installer: <maintainer> (<TEAMID>)", "Notarized"
+spctl --assess --type install -vv longarm-darwin-arm64.pkg   # accepted, source=Notarized Developer ID
+sudo installer -pkg longarm-darwin-arm64.pkg -target /
+longarmd login hub.example.com --role both            # then, for a worker:
+sudo longarmd service install --user "$USER" && sudo longarmd service start
+```
+
+What the package's `postinstall` does (as root): adds `longarm` and
+`longarmd` to the application firewall when it is on; on an upgrade,
+restarts an installed `com.longarm.longarmd` LaunchDaemon so it runs the new
+binary (jobs keep running); and, only if the preference domain `com.longarm`
+holds `Roles` (`worker` / `both` / `client`), `Hub`, `JoinCode` and `User`
+(optional `CAFingerprint`), joins the hub as that user and, for a worker,
+installs and starts the LaunchDaemon with the data dir `~User/.longarm`.
+The values are validated (a malformed or non-root-owned preferences file is
+ignored); the join code is removed from `/Library/Preferences/com.longarm`
+afterwards.
+
+**For MDM administrators** (Jamf, Intune, Kandji, Mosyle, …):
+
+- **Package**: upload the pkg for the Macs' architecture (both, scoped by
+  architecture; the arm64 package refuses Intel Macs, the amd64 package needs
+  Rosetta on Apple silicon). It is a signed distribution package, as Intune's
+  "macOS app (PKG)" and Jamf policies require. Package ID `com.longarm.pkg`,
+  version = the release version; installs `/usr/local/bin/longarm`,
+  `/usr/local/bin/longarmd` and `/usr/local/share/longarm/`.
+- **Team ID**: the 10-character Apple Team ID of the signing certificates
+  (`pkgutil --check-signature` shows it in parentheses; `codesign -dv
+  /usr/local/bin/longarmd` as `TeamIdentifier=`). The maintainer publishes it
+  next to the release; it identifies Longarm in the profiles below.
+- **Unattended join**: a custom settings / Application & Custom Settings
+  payload for the domain `com.longarm` with `Roles`, `Hub`, `JoinCode`,
+  `User`, `CAFingerprint` (lands in `/Library/Managed Preferences/com.longarm.plist`,
+  which `postinstall` reads first). Use a join code that expires (`longarm
+  worker add --ttl 24h`): the profile keeps it until it is removed. Or
+  install without it and let users run `longarmd login`.
+- **Background items** (macOS 13+): `longarmd service install` adds the
+  LaunchDaemon `/Library/LaunchDaemons/com.longarm.longarmd.plist`
+  (program `/usr/local/bin/longarmd`), which macOS reports as a background
+  item. To keep users from turning it off, a **Service Management - Managed
+  Login Items** payload (`com.apple.servicemanagement`) with the rule
+  `RuleType` = `TeamIdentifier`, `RuleValue` = the Team ID (or `Label`
+  `com.longarm.longarmd`).
+- **Privacy (PPPC)**: Longarm needs no system extension, kernel extension
+  or entitlement. Only if jobs must read TCC-protected places (Desktop,
+  Documents, removable volumes, another app's data), give `longarmd` access
+  with a **Privacy Preferences Policy Control** payload: `IdentifierType`
+  `path`, `Identifier` `/usr/local/bin/longarmd`, `CodeRequirement` as
+  `codesign -dr - /usr/local/bin/longarmd` prints it (`identifier
+  "com.longarm.longarmd" and anchor apple generic and certificate
+  1[field.1.2.840.113635.100.6.2.6] and certificate
+  leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] =
+  <TEAMID>`), and the service, e.g.
+  `SystemPolicyAllFiles` (Full Disk Access). The code requirement pins the
+  Team ID, so a re-signed or replaced binary doesn't inherit the access.
+- **Firewall**: with a managed application firewall, allow
+  `/usr/local/bin/longarmd` and `/usr/local/bin/longarm` (or the identifiers
+  above) incoming connections; `postinstall` only adds them when the user's
+  firewall is on.
+- **Updates**: a worker whose LaunchDaemon runs as a user (`--user`, the
+  pkg's unattended setup) can't write `/usr/local/bin` and doesn't update
+  itself: deploy the next release's pkg (`longarmd status` and the hub
+  panel show outdated workers). A root LaunchDaemon (no `--user`) updates
+  itself from the hub; the files it installs are the same signed binaries,
+  checked against the release key first ([Self-update](#self-update)), so the
+  code signature stays valid.
+
+### Uninstall
+
+No uninstaller removes the **client** enrollment (`~/.config/longarm`,
+`%USERPROFILE%\.config\longarm` on Windows): run `longarm leave` first (the
+hub revokes the client's certificate, its credentials are removed), then
+delete the directory if you want `workers.toml` and the caches gone too.
+Workers are handled below. A worker that left while the hub was unreachable
+(`--force`) is still listed there: `longarm worker remove <name>` (yours) or
+`longarm admin revoke <name>`.
+
+**MSI** (also what `install.ps1` installs when elevated). Settings > Apps >
+Installed apps > **Longarm** > Uninstall, or:
+
+```powershell
+msiexec /x longarm-windows-amd64.msi /qn [KEEP_DATA=1]     # the installed version's MSI file
+# without the file: by product code (the product is "Longarm", UpgradeCode {0d623137-abc8-4dc1-8e7d-32fc483c9e93})
+$pc = (Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | Where-Object DisplayName -eq 'Longarm').PSChildName
+msiexec /x $pc /qn
+```
+
+No `longarmd leave` needed: the uninstall runs it (forced, `--kill-jobs`)
+for every worker it installed - the user-session worker (the installing
+user's `~\.longarm`), the service (`DATADIR`, default
+`C:\ProgramData\Longarm\longarmd`) and the admin worker
+(`C:\ProgramData\Longarm\longarmd-admin`) - so their certificates are
+revoked, running jobs end and the data dirs go (`KEEP_DATA=1` keeps jobs and
+mirrors; the enrollment goes either way). It also removes the scheduled task
+`LongarmWorker-<SID>`, the services `longarmd` / `longarmd-admin`, the
+firewall rules, the PATH entry, the tray's autostart, the settings in
+`HKLM\Software\Longarm` and `C:\Program Files\Longarm`.
+
+**`install.ps1` without the MSI** (not elevated, `-NoMsi`, `-Prefix`, or a
+release without an MSI). What it installed: `longarm.exe`, `longarmd.exe`
+(and `longarm-tray.exe`, the logon task's host) in `-Prefix` - default
+`%LOCALAPPDATA%\Programs\Longarm`, elevated `C:\Program Files\Longarm`; the
+prefix on the user's `Path` (machine `Path` when elevated; not with
+`-NoPath`); elevated, a firewall rule for `longarm.exe` (`longarm firewall
+allow`); for a worker the scheduled task `LongarmWorker-<SID>` (`-Run
+session`, the default) or the service `longarmd` (`-Run service`); the data
+dir `~\.longarm` (or `-DataDir`). Remove in this order:
+
+```powershell
+longarmd session-mode uninstall            # the logon task; stops the worker (else the host restarts it)
+#   -Run service, elevated: longarmd service uninstall
+longarmd leave --kill-jobs --purge         # hub revokes the worker; --purge deletes the data dir (-DataDir: --data-dir D)
+longarm leave                              # the client
+longarm firewall remove                    # elevated, if the rule was added
+Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\Longarm", "$HOME\.config\longarm"
+# and the prefix from Path: System > About > Advanced system settings > Environment Variables (user or system)
+```
+
+**Linux / macOS.**
+
+- **deb / rpm** (also `install.sh` as root on Linux when the release has a
+  package): `sudo apt remove longarm` / `sudo dnf remove longarm`. Its prerm
+  stops and disables every `longarmd@<user>` unit and runs `longarmd leave
+  --kill-jobs` as that user; the data dirs (`~<user>/.longarm`) stay - delete
+  them by hand. `longarmd-peruser` (per-user isolation) is not left by the
+  prerm: `sudo systemctl disable --now longarmd-peruser; sudo longarmd leave
+  --kill-jobs --purge` (data dir `/var/lib/longarmd`) first.
+- **`install.sh` binaries** (`--no-package`, `--prefix`, not root, macOS):
+  `longarm` and `longarmd` in `/usr/local/bin` (root) or `~/.local/bin`
+  (`--prefix`); a worker gets the service `longarmd` (`longarmd service
+  install --user <sudo user>`): systemd `/etc/systemd/system/longarmd.service`,
+  launchd `/Library/LaunchDaemons/com.longarm.longarmd.plist`; data dir
+  `~/.longarm` of that user (`--data-dir`). Remove:
+
+  ```sh
+  sudo longarmd service uninstall           # stop + remove the unit / LaunchDaemon
+  longarmd leave --kill-jobs --purge        # as the service's user: revoke, delete ~/.longarm
+  longarm leave && rm -rf ~/.config/longarm
+  sudo rm /usr/local/bin/longarm /usr/local/bin/longarmd   # or ~/.local/bin/...
+  ```
+- **macOS pkg**: the same, then `sudo rm -rf /usr/local/share/longarm; sudo
+  pkgutil --forget com.longarm.pkg` ([packaging/macos](../packaging/macos/README.md)).
 
 ### Transport legs and racing
 
@@ -2084,6 +2784,27 @@ api_key_file = "/etc/longarm-hub/headscale-api.key"
   the REST API, embedded DERP + STUN behind Caddy, plus Tailscale's public DERP map by
   default so nodes behind networks that filter UDP to the hub still find a
   STUN server and go direct; `derp.urls: []` for a fully self-hosted setup).
+- **Headscale next to the hub** (Azure Container Instances: `deploy.sh
+  --headscale`, [deploy/azure](../deploy/azure/README.md#headscale-a-self-hosted-tailnet)):
+  `[tailnet.headscale] sidecar_dir` (env `LONGARM_HUB_HEADSCALE_DIR`) names a
+  directory the hub shares with a Headscale container. The hub then runs it
+  without anybody touching Headscale: it writes Headscale's config, ACL
+  policy, DERP map and private keys there (the keys live in the hub's
+  database), creates its own API key over Headscale's unix socket in that
+  directory (renewed before it expires, replaced when Headscale no longer
+  knows it), and serves Headscale's node endpoints on its own https listener
+  (`proxy = true`): `/ts2021`, `/key`, `/derp` (+ `/derp/probe`,
+  `/derp/latency-check`), `/bootstrap-dns` and `/machine/ping-response`, forwarded to
+  `api_url` (default `http://127.0.0.1:8080`). Headscale's REST/gRPC API,
+  metrics and interactive pages stay local. `url` defaults to `public_url`.
+  The environment of a container: `LONGARM_HUB_TAILNET_PROVIDER`,
+  `LONGARM_HUB_HEADSCALE_URL`, `LONGARM_HUB_HEADSCALE_API_URL`,
+  `LONGARM_HUB_HEADSCALE_API_KEY_FILE`, `LONGARM_HUB_HEADSCALE_DIR`,
+  `LONGARM_HUB_HEADSCALE_PROXY`, `LONGARM_HUB_HEADSCALE_PUBLIC_DERP` (Tailscale's
+  public DERP map too; default off). `longarm admin tailnet status` shows
+  `health ok | starting: ... | down: ...`, the hub's `/healthz` has
+  `"headscale": "ok"`. While the sidecar starts, `TailnetKey` answers
+  Unavailable without charging the node's key budget; nodes retry.
 - **Switching providers**: change `provider` and restart the hub. Workers
   follow on their next hub session; clients follow on their next hub contact
   (`longarm ls` and the like). The node records the new control server in hub.toml
@@ -2188,10 +2909,16 @@ connections then silently stay on relays. longarm detects this (and a missing
 allow rule) for the executable that punches - longarm.exe for `longarm daemon`,
 longarmd.exe for longarmd - and shows it with the fix command: `longarm daemon status`,
 `longarmd status`, a line under `longarm pool` and on stderr of `longarm ls` when legs are
-relayed, and a warning in the tray popup. The fix, in an elevated terminal:
+relayed, and a warning in the tray popup. The fix, in an elevated PowerShell:
 `longarm firewall allow` (removes the program's Block rules, adds the allow
 rules; `--program <path>` for longarmd.exe). `longarm firewall status` exits 1 when
-blocked or missing. macOS: the pkg adds
+blocked or missing. The commands longarm prints paste into PowerShell: a quoted
+path gets the call operator (`& 'C:\Program Files\Longarm\longarm.exe' firewall allow`).
+The tray's warning has an **Allow** button: one administrator prompt runs the
+installed longarm.exe's `firewall allow --program <the program the daemon or
+longarmd reports>` (only an existing longarm.exe / longarmd.exe), then checks
+again - also for a copy another app ships, which the card points out
+([troubleshooting](troubleshooting.md#windows-firewall--connections-stay-on-relays)). macOS: the pkg adds
 longarm/longarmd to the application firewall when it is on (`socketfilterfw --add
 /usr/local/bin/longarmd --unblockapp ...`). Linux: only if ufw/firewalld is active,
 allow the longarmd/longarm UDP ports or the interface (e.g. `ufw allow in on tailscale0`;
@@ -2205,7 +2932,10 @@ detail: [ci-cd.md](ci-cd.md).
 - `ci.yml` (pull requests, `main`): privacy check, gitleaks, gofmt, vet,
   cross-compile 6 targets, shellcheck, actionlint; `go test ./...` on Linux,
   Windows and macOS.
-- `release.yml` (tag `v*`): build on Windows (GoReleaser + MSIs) →
+- `release.yml` (tag `v*`): build on Linux (linux, macOS, deb/rpm) and on
+  Windows (Windows, MSIs) in parallel, the macOS files signed, packaged
+  (`.pkg`) and notarized on a Mac after the Linux build, the hub image next
+  to them →
   **publish** (sign with the release key, upload with the `release`
   certificate, GitHub Release) → **hub** (SSH forced command
   [`deploy/hub/longarm-hub-deploy`](../deploy/hub/longarm-hub-deploy): verify, install,
@@ -2234,7 +2964,71 @@ nodes use TLS over TCP to the relay instead.
 `longnet://hub.example.com:7443?name=w1` (UDP 7443; the TLS fallback shares the
 hub's TCP 7443) and clients learn that endpoint from the hub, no relay
 certificate or workers.toml needed. The standalone `longarm-relay` below remains
-for setups without a hub. The longnet listener follows certificate renewals.
+for setups without a hub, and as an **external relay** of a hub (next
+section). The longnet listener follows certificate renewals.
+
+### External relays: relayed connections that survive hub restarts
+
+The relay inside longarm-hub restarts with the hub, so every relayed
+connection (a client and a worker without a direct path) drops while the hub
+redeploys - a minute or two on Azure Container Instances. An external relay
+is a `longarm-relay` started with `--hub`, deployed apart from the hub (on
+Azure: `deploy.sh --relay`, its own container group, see
+[deploy/azure/README.md](../deploy/azure/README.md#external-relay)):
+
+```sh
+# a relay certificate from the hub's CA (on the hub: longarm-hub issue; or longarm admin issue with the CA)
+longarm-hub issue --role relay --name relay1 --host relay.example.com --out ./relay-tls
+longarm-relay --listen :7445 --tcp :7443 --tls-dir ./relay-tls --metrics 127.0.0.1:7801 \
+  --hub hub.example.com:7443 --advertise relay.example.com [--state-dir DIR]
+longarm admin relays          # the relay set, connected relays, workers on old versions
+```
+
+- **Relay set.** The relay registers its public endpoints with the hub
+  (`--advertise HOST` with the bound ports, or `--advertise-udp` /
+  `--advertise-tcp HOST:PORT`). The hub keeps them in its database and
+  advertises the set - external relays first, its embedded relay last - in
+  every worker session (and pushes changes to running ones). Loopback-only
+  workers (every sign-in install) listen on every relay of the set and
+  advertise one longnet endpoint per relay (an external relay's carries its
+  TLS fallback: `longnet://relay:7445?name=w1&tcp=relay:7443`); clients race
+  them like any other legs and keep them in `hub-cache.json`. Workers keep
+  the last set in `relay-set.json` and listen on it when they start while the
+  hub is down. A relay not seen for 7 days leaves the set;
+  `longarm admin revoke <relay>` removes it at once.
+- **Authorization without the hub.** Nodes authenticate to the relay with
+  their CA certificates, as with the embedded relay (the relay's certificate
+  is from the same CA: nothing new to trust). The hub sends the relay its
+  revocation list and the worker pairs it may relay between (the active port
+  links; client <-> worker needs none) over a subscription
+  (`HubNode.RelaySync`) at once, on every change and every minute. The relay
+  enforces them on its own and keeps them on disk (`--state-dir`): it never
+  asks the hub per session, keeps relaying while the hub is down, and a
+  relay that restarts during a hub outage starts with the cached list. A
+  relay that has never had a list refuses sessions until the hub answers.
+  Worker pairs end 24 hours after the relay last heard from the hub; the
+  revocation list never expires (it only restricts). A revocation reaches
+  the relay within a second and closes the node's relay sessions.
+- **Certificate.** Valid 90 days (`worker_ttl`) when issued by the hub's
+  renewal, 365 days from `deploy.sh --relay`; the relay renews it through the
+  hub (`HubNode.Renew`, keeping its host names) when it expires within the
+  hub's `renew_before` (30 days by default), and writes it to `--tls-dir`.
+- **STUN** is answered on the relay's UDP port and `--stun2` as before;
+  `--stun-advertise` (or `LONGARM_RELAY_STUN_ADVERTISE`) lists external
+  servers for a relay behind source NAT (ACI).
+- **Health:** `GET /healthz` on `--metrics` (503 until the relay has a
+  policy); `longarm-relay healthcheck [--ready]`.
+
+**Compatibility.** Nothing needs signing in again or reinstalling: workers
+of this release pick up the relay set in their next hub session (connected
+ones within seconds), older workers ignore the new fields and keep using the
+embedded relay, which stays as the fallback. Surviving hub restarts needs the
+new version on both ends: the worker to listen on the external relay, the
+client to dial its endpoint with its TLS fallback (an older client still uses
+the relay's UDP endpoint, and the embedded relay). MSI installs update
+through the Longarm Update service (the tray's banner, `longarm worker
+update`), script installs through self-update; `longarm admin relays` counts
+the online workers that use the set and those still on older versions.
 
 ```sh
 # relay host (public): certificate with the relay role from the same CA

@@ -42,7 +42,9 @@ var openMethods = map[string]bool{
 // hubMethodRoles is the hub's authorization table (default deny).
 var hubMethodRoles = map[string][]pki.Role{
 	pb.HubNode_Connect_FullMethodName:         {pki.RoleWorker},
-	pb.HubNode_Renew_FullMethodName:           anyNode,
+	pb.HubNode_Renew_FullMethodName:           {pki.RoleWorker, pki.RoleClient, pki.RoleAdmin, pki.RoleRelay},
+	pb.HubNode_RelaySync_FullMethodName:       {pki.RoleRelay},
+	pb.HubAdmin_Relays_FullMethodName:         adminOnly,
 	pb.HubNode_Leave_FullMethodName:           anyNode,
 	pb.Fleet_ReportLinks_FullMethodName:       users,
 	pb.Fleet_Links_FullMethodName:             adminOnly, // other clients' paths
@@ -93,6 +95,7 @@ var hubMethodRoles = map[string][]pki.Role{
 	pb.HubAdmin_RemoveUser_FullMethodName:     adminOnly,
 	pb.HubAdmin_SetTeam_FullMethodName:        adminOnly,
 	pb.HubAdmin_ListTeams_FullMethodName:      adminOnly,
+	pb.HubAdmin_FleetSummary_FullMethodName:   adminOnly,
 	pb.Telemetry_Push_FullMethodName:          anyNode,
 }
 
@@ -104,6 +107,51 @@ type caller struct {
 	cert   *x509.Certificate
 	addr   string
 	nodeID string // the caller's node (also for certificates without an ID)
+	// user is the Longarm user the caller acts as (userOfLocked): empty
+	// for workers, relays and the release credential, which never act as
+	// a user whatever their name.
+	user string
+}
+
+// userOfLocked is the Longarm user a certificate of node nodeID acts as on
+// the hub. Only clients and admins have one: the certificate's user, else
+// the user the hub recorded for that device (pinned at enrollment, by the
+// node ID migration and before a rename: a rename never changes whom a
+// device acts as), else (an old single-user certificate) its name - a
+// client/admin name the hub never hands to another user's device
+// (nodeNameReservedLocked). A worker's name is never a user: a worker
+// named like a user sees nothing of that user's.
+func (h *Hub) userOfLocked(id pki.Identity, nodeID string) string {
+	if id.Role != pki.RoleClient && id.Role != pki.RoleAdmin {
+		return ""
+	}
+	if id.User != "" {
+		return id.User
+	}
+	if n := h.nodes[nodeID]; n != nil && n.rec.Role == string(id.Role) && n.rec.User != "" {
+		return n.rec.User
+	}
+	return id.Name
+}
+
+// nodeNameReservedLocked reports whether a node of role for user may not
+// take name (a new node's, or a rename's): a Longarm user's name (live or
+// purged) belongs to that user - only devices bound to that user may carry
+// it: never a worker, another user's device or a device bound to no user
+// (whose name would be its user, userOfLocked).
+func (h *Hub) nodeNameReservedLocked(name, role, user string) bool {
+	if h.tenants[name] == nil && !slices.Contains(h.purged, name) {
+		return false
+	}
+	if role != string(pki.RoleClient) && role != string(pki.RoleAdmin) {
+		return true
+	}
+	return user != name
+}
+
+// errNameReserved is the refusal of a node name that is a user's.
+func errNameReserved(name string) error {
+	return status.Errorf(codes.AlreadyExists, "node name %q is a user's name (pick another with --name)", name)
 }
 
 func callerFrom(ctx context.Context) caller {
@@ -140,13 +188,12 @@ func (h *Hub) authorize(ctx context.Context, method string) (context.Context, er
 		return nil, err
 	}
 	h.supersedeIfDue(nodeID, cert)
-	if id.Role == pki.RoleClient || id.Role == pki.RoleAdmin {
-		h.mu.Lock()
-		disabled := h.userDisabledLocked(id.Owner())
-		h.mu.Unlock()
-		if disabled {
-			return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled", id.Owner())
-		}
+	h.mu.Lock()
+	c.user = h.userOfLocked(id, nodeID)
+	disabled := c.user != "" && h.userDisabledLocked(c.user)
+	h.mu.Unlock()
+	if disabled {
+		return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled", c.user)
 	}
 	c.id, c.cert, c.nodeID = id, cert, nodeID
 	return context.WithValue(ctx, callerKey{}, c), nil

@@ -50,7 +50,7 @@ restarts the hub) prints everything too.
 |---|---|---|
 | `--name NAME` | `-Name` | DNS label and resource prefix (3-40: `a-z0-9-`) |
 | `--location REGION` | `-Location` | needed on the first run (`az account list-locations -o table`) |
-| `--size small\|medium` | `-Size` | small = 1 vCPU / 1.5 GB (default), medium = 2 vCPU / 3 GB |
+| `--size small\|medium` | `-Size` | small = 1 vCPU / 1.5 GB (default), medium = 2 vCPU / 3 GB ([memory and the replica](#replica-size-and-memory)) |
 | `--no-panel` | `-NoPanel` | no Caddy sidecar, no ports 80/443 (no panel, no install scripts) |
 | `--resource-group RG` | `-ResourceGroup` | default `NAME-rg` |
 | `--image IMAGE` | `-Image` | default `ghcr.io/lubobill1990/longarm-hub:latest` |
@@ -58,6 +58,8 @@ restarts the hub) prints everything too.
 | `--build-in-acr` | `-BuildInAcr` | build the image from this checkout in an Azure Container Registry ([below](#building-the-image-in-azure-no-docker)) |
 | `--stun-servers LIST` | `-StunServers` | external STUN servers the hub advertises (default Cloudflare + Google, `none` = only the hub's own; [Direct connections](#direct-connections-longnet-on-aci)) |
 | `--tailscale-secret-file F` | `-TailscaleSecretFile` | Tailscale OAuth secret ([tailnet] provider, [deploy/hub](../hub/README.md#tailnet-provider-tailscale-default-or-headscale)) |
+| `--headscale` / `--no-headscale` | `-Headscale` / `-NoHeadscale` | a Headscale sidecar as the hub's tailnet provider ([below](#headscale-a-self-hosted-tailnet)); needs the panel; switching it needs `--recreate`; a re-run keeps it |
+| `--headscale-public-derp on\|off` | `-HeadscalePublicDerp on\|off` | also hand nodes Tailscale's public DERP relays (default off: relayed traffic stays on the hub); a re-run keeps it |
 | `--acme-email E` | `-AcmeEmail` | Let's Encrypt contact |
 | `--entra-tenant ID --entra-client ID` | `-EntraTenant -EntraClient` | Sign in with Microsoft Entra ID (`longarm login`, panel); a re-run keeps them ([usage](../../docs/usage.md)) |
 | `--entra-admins LIST` | `-EntraAdmins` | Entra admins: UPNs, `*@domain` or object IDs, comma-separated |
@@ -65,17 +67,20 @@ restarts the hub) prints everything too.
 | `--gate-free-gb N` | `-GateFreeGb` | scheduler memory gate: free GB a worker needs for scheduled jobs (default 20); lower it for small workers (containers, laptops); a re-run keeps it |
 | `--release-public-key KEY` | `-ReleasePublicKey` | the minisign public key line (`RW…`) releases are signed with, e.g. `"$(tail -1 longarm-release.pub)"` ([CI/CD 2.1](../../docs/ci-cd.md#21-release-key-and-update-public-key)): the hub refuses uploaded releases whose signature doesn't verify, so its install scripts only hand out signed files; a re-run keeps it |
 | `--entra-apps LIST` | `-EntraApps` | app-only sign-in (CI): `<app id>=<user>`, comma-separated |
-| `--log-analytics` | `-LogAnalytics` | container logs to a Log Analytics workspace |
+| `--log-analytics` | `-LogAnalytics` | container logs to Log Analytics (with `--telemetry` its workspace, else one of their own): they keep the [logs of crashed starts](#logs-of-crashed-starts) |
 | `--storage-auth key\|identity` | `-StorageAuth` | `identity`: no storage account keys, panel served by the hub ([below](#without-storage-account-keys)); a re-run keeps the mode (switching needs a new deployment) |
-| `--acr NAME` | `-Acr` | with `identity`: pull the image from this Azure Container Registry (same resource group) |
+| `--acr NAME` | `-Acr` | with `identity`: an Azure Container Registry (same resource group) the managed identity pulls from: the image if it is there, and the sidecars from its copies of [mirror-images.txt](mirror-images.txt), imported if missing ("Third-party images") |
 | `--telemetry` | `-Telemetry` | Application Insights + Log Analytics for the fleet's scrubbed telemetry ([below](#telemetry-and-diagnostic-bundles)) |
 | `--diagnostics` | `-Diagnostics` | with `identity`: a blob container for uploaded diagnostic bundles, deleted after 30 days |
 | `--panel` | `-Panel` | turn the panel back on (with `--recreate`) |
-| `--recreate` | `-Recreate` | delete the container group first (to change size or panel; data stays) |
+| `--recreate` | `-Recreate` | delete the container group first (to change size, panel or `--headscale`; data stays): validated, images checked and settings saved first, rolled back if the new configuration fails ([below](#safe-re-runs-and---recreate)) |
+| `--skip-image-check` | `-SkipImageCheck` | don't check that every image can be pulled before deploying |
 | `--admin-code` | `-AdminCode` | print a new one-time admin join code |
+| `--relay` / `--relay-remove` | `-Relay` / `-RelayRemove` | deploy (upgrade) or delete the external relay `<name>-relay` ([below](#external-relay)) |
 | `--teardown [--yes]` | `-Teardown [-Yes]` | delete the resource group (only one the script created) |
 | `--timeout S` | `-TimeoutSeconds` | how long to wait for the deployment and the hub (default 1200) |
 | `--stuck-timeout S` | `-StuckTimeoutSeconds` | give up on a group stuck in `Creating` without any event (default 600) |
+| `--restore-timeout S` | `-RestoreTimeoutSeconds` | while the hub's log shows its database restore running, keep waiting up to this long after it was first seen, past `--timeout` (default 1200); a hub mid-restore is never restarted or rolled back as dead |
 
 **A group stuck in Creating.** Once, a deployment sat in `Creating` with
 both containers `Waiting` and no events at all for over 30 minutes (not
@@ -88,6 +93,67 @@ the failed operations (e.g. `InaccessibleImage`).
 
 Secrets (registry password, Tailscale secret) go to the deployment through a
 temporary parameters file, never on a command line.
+
+### Safe re-runs and `--recreate`
+
+A real `--headscale --recreate` once deleted the group, then failed (Docker
+Hub refused to hand ACI the sidecar's image), and the retry - with no group
+left to read the settings from - fell back to storage keys, which the
+subscription's policy denies: the hub was down for 20 minutes. Now:
+
+- **Nothing changes before the deployment is known to work.** Every run
+  first validates the deployment with the same parameters (`az deployment
+  group validate`: template, quotas, policy) and checks that every image it
+  runs (the hub, Caddy with storage keys and the panel, the Headscale
+  sidecar) can be pulled: the registry's manifest, asked the way ACI pulls it
+  (anonymously, or with `--registry-user`; an ACR pulled with the managed
+  identity through `az acr`). `--skip-image-check` skips the latter.
+- **Third-party images from your own registry (`--acr`).** The sidecars
+  (Headscale; Caddy with storage keys) are pinned by digest in
+  [mirror-images.txt](mirror-images.txt), from Docker Hub. With
+  `--storage-auth identity --acr NAME` they come from that Azure Container
+  Registry instead (see "Third-party images" below): before anything is
+  deleted, deploy.sh checks that each pinned digest is there and imports a
+  missing one (`az acr import`). Docker Hub's pull limits can then fail the
+  import, never a running hub: an import that fails stops the script with
+  nothing changed. Without `--acr` ACI pulls them from Docker Hub by digest
+  (the image check above runs first).
+- **The settings outlive the group.** A run that finds no container group
+  takes the hub's settings from the parameters of the last successful
+  deployment (ARM keeps them; forging them needs deployment write access),
+  and says so. Before `--recreate` deletes the group, the settings are also
+  saved in the resource group's tags (`longarm-hub-prev-*`, cleared once a
+  deployment succeeds). Tags can be written by anyone with Tag Contributor,
+  so that snapshot is not trusted: it only fills settings the deployment's
+  parameters lack, and its security-relevant settings (image, storage auth,
+  ACR, registry login, release key, Entra tenant/client/admins/web/apps)
+  are refused when they differ from the deployment's, or when there is no
+  deployment to compare them with, unless given explicitly. With neither
+  source, a resource group that has a hub's storage needs `--storage-auth`
+  (and the other settings) given explicitly: nothing falls back to defaults
+  that would switch storage auth or drop the identity. Secrets are never
+  saved: pass them again.
+- **Rollback.** If the new configuration fails after the delete (the
+  deployment fails, the group is stuck, the hub doesn't start), the script
+  deploys the previous configuration again (its image and settings, without
+  a new sidecar; validated before the delete too) and stops with the error
+  and `ROLLED BACK`. If that fails as well, the snapshot stays and a plain
+  re-run (without `--recreate`) deploys it. An update in place that changes
+  the configuration (a new `--image`, other settings) is rolled back the
+  same way, without a delete: the running configuration is validated before
+  the update and deployed again if the new one fails (the 0.1.18 deploy
+  gave up with "no bootstrap values from this start" and left the hub
+  crash-looping).
+- **Crash loops.** While it waits, the script watches the hub container's
+  restarts: each one is printed with the exit code of the start before
+  (`137` = SIGKILL, typically out of memory: see "Replica size and
+  memory"), and after 3 restarts (2 in `CrashLoopBackOff`) it stops waiting
+  and fails the deployment (and rolls back) with "the hub is crash-looping".
+- **Replica size.** Before it changes anything, the script counts the files
+  of the hub's Litestream replica (with storage-auth identity this needs
+  read access to the `litestream` blob container) and warns when levels 0-3
+  hold more than 5000 (`LONGARM_DEPLOY_REPLICA_FILES_WARN`): see "Replica
+  size and memory".
 
 ## Architecture
 
@@ -111,7 +177,9 @@ temporary parameters file, never on a command line.
   with the hub end to end; the CA fingerprint they pin is the hub's own CA.
   Azure Container Apps can't do this (no UDP ingress), ACI can.
 - **The image** (`deploy/hub/Dockerfile`): static `longarm-hub` + Litestream
-  0.5.17 (checksum-verified) on distroless, user `nonroot`. Its command
+  (built from a pinned upstream commit after 0.5.17 with its Azure Blob
+  compaction fix, verified against the Go checksum database:
+  `deploy/hub/image-build.sh`) on distroless, user `nonroot`. Its command
   `longarm-hub container` restores the database if the replica has one,
   runs `longarm-hub bootstrap`, then becomes `litestream replicate -exec
   "longarm-hub serve"`.
@@ -136,7 +204,17 @@ temporary parameters file, never on a command line.
   confidential` with `storageAuth = identity` redeems codes with the managed
   identity: `identityPrincipalId` is the federated credential's subject).
 - **Health**: `longarm-hub healthcheck` (GET `/healthz` on 127.0.0.1:7480) is
-  the liveness and readiness probe.
+  the readiness probe. The liveness probe is `longarm-hub healthcheck --live`:
+  it also passes while the container is still starting - the Litestream
+  restore (minutes when it replays a long WAL), bootstrap, the hub opening
+  its database - as long as that start refreshed its marker
+  (`/var/lib/longarm-hub/longarm-hub.starting`, every 10 s) within the last
+  60 s. So a long restore is never killed, while a dead or hung one (each
+  start step at most `LONGARM_HUB_STARTUP_TIMEOUT`, default 60m) and a hub
+  that stops answering are restarted within about 3 minutes. Images up to
+  0.1.17 have no `--live`: for an image pinned to one of them the template
+  (`hubLivenessProbe` = `auto`) falls back to a plain `healthcheck` liveness
+  probe after 30 minutes.
 - **Stop** (restart, upgrade, ACI maintenance): SIGTERM reaches Litestream
   (PID 1), which stops the hub (it closes its listeners and the database),
   then ships the last WAL frames (up to 20 s) and exits.
@@ -164,7 +242,7 @@ group like the hub's root of trust.
 **Durability (RPO/RTO).** Litestream ships WAL changes every second; a
 crash or host loss loses at most about a second of hub writes (a join, a
 job record). A normal stop loses nothing. Restore on the next start takes
-seconds. Litestream keeps a daily snapshot and 24 h of history; blob soft
+seconds. Litestream keeps hourly snapshots and 24 h of history; blob soft
 delete keeps deleted blobs 7 days, share soft delete 7 days. Storage is
 locally redundant by default (`storageSku` parameter: ZRS/GRS). The hub is
 never on the data path: while it restarts, workers keep running jobs and
@@ -227,9 +305,55 @@ identity` (template parameter `storageAuth=identity`) deploys without keys:
   crash reports of the hub process waiting to be sent to telemetry (the
   panic is in the container log too).
 - The admin join code is not in the log; get it with `--admin-code`.
-- `--acr NAME` pulls the image from an Azure Container Registry in the
-  resource group with the same identity (AcrPull), for registries without
-  admin users.
+- `--acr NAME` pulls from an Azure Container Registry in the resource group
+  with the same identity (AcrPull), for registries without admin users: the
+  hub image if it is there, and the sidecar images (see "Third-party
+  images").
+
+## Third-party images
+
+The sidecars (Headscale; Caddy with storage keys) are third-party images,
+pinned by digest in [mirror-images.txt](mirror-images.txt) (the template's
+`caddyImage` / `headscaleImage` defaults; `.github/workflows/mirror.yml`
+verifies the pins). Pulled from Docker Hub, a `--recreate` depends on its
+anonymous pull limits and outages: that once took a hub down (the new sidecar
+couldn't be pulled after the group was deleted). With `--acr NAME`
+(`--storage-auth identity`) they come from that registry instead:
+
+```sh
+./deploy.sh --name myhub --storage-auth identity --acr myacr --headscale --recreate
+```
+
+- The sidecars are `<acr>.azurecr.io/mirror/<repository>:<hex>@sha256:<hex>`
+  (`mirror/caddy`, `mirror/headscale/headscale`), pulled by digest with the
+  hub's managed identity (the template's `imageRegistryCredentials` entry for
+  the registry, and AcrPull for the identity). The hub image keeps its source
+  (ghcr.io by default; anonymous pulls need no credential).
+- `--acr` needs `--storage-auth identity` (no managed identity with storage
+  keys), so in practice it is the Headscale sidecar; with storage keys Caddy
+  and Headscale are pulled from Docker Hub by digest.
+- **Preflight import.** When the deployment (or its rollback) runs a sidecar,
+  deploy.sh checks, before anything is validated or deleted, that every
+  pinned digest is in the registry (`az acr repository show --image
+  mirror/<repository>@sha256:<hex>`) and imports a missing one from its
+  source, only from the pinned list (`az acr import --source
+  docker.io/<repository>@sha256:<hex> -t mirror/<repository>:<hex>`, all
+  architectures). An import that fails (e.g. Docker Hub's pull limit) stops
+  the script with nothing changed; retry later or run the printed `az acr
+  import` yourself. Importing needs Contributor (or the import action) on the
+  registry, as the operator; the hub only pulls.
+- It is the same `--acr` that pulls an image built in the registry
+  (`--build-in-acr`): one registry, one credential. A re-run keeps it (from
+  the group's registry credential or the last deployment's `acrName`), and it
+  is one of the security-relevant settings the recovery checks a settings
+  snapshot against.
+- The registry must be in the hub's resource group (the template assigns
+  AcrPull on it). If you granted AcrPull to the hub's identity yourself, remove
+  that assignment first: the template's own (another name, same principal,
+  role and scope) would fail with `RoleAssignmentExists`.
+- Bumping a pin: change [mirror-images.txt](mirror-images.txt) and the
+  matching default in [main.bicep](main.bicep) (CI checks they match), rebuild
+  `azuredeploy.json`; the next deploy imports the new digest.
 
 ## Backup and restore
 
@@ -261,6 +385,128 @@ otherwise), and `--acme-email` too if you want to keep it. Changing `--size`
 or the panel needs `--recreate` (ACI can't change a running group's resources
 or ports); data is kept either way. The hub is down for about a minute;
 workers and clients reconnect by themselves.
+
+### Redeploy downtime
+
+What a redeploy costs, phase by phase (the script prints `[+Ns]` marks for
+its part; `az container logs ... --container-name hub` has the hub's:
+`restore took`, `bootstrap took`, `startup timing`, `restart announced`):
+
+| Phase | Time | Notes |
+| --- | --- | --- |
+| submit to the old container stopping | 10-30 s | ARM validates and applies; the old hub still serves |
+| old hub stops | < 1 s + Litestream's last sync | SIGTERM: the hub tells every worker and client "restarting" (`HubCommand.restarting`), they close their sessions, Litestream ships the last WAL frames (`shutdown-sync-timeout`) |
+| ACI recreates the group, pulls the image | Azure's: typically 20-40 s | ACI recreates the containers on an update and does not keep the image across it; the image is ~30 MB compressed (static hub ~16 MB, Litestream ~14 MB, distroless base < 1 MB) |
+| Litestream restore | 1-3 s for a small database; minutes with a long WAL | every start (the database lives on the container's disk); hourly snapshots keep it to one snapshot plus at most an hour of compacted files. The log has `restoring ...`, `restore of ... still running after 1m0s` every minute and `restore took`; deploy.sh prints `[+Ns] database restore running` / `finished` and waits for it (`--restore-timeout`) |
+| bootstrap, hub start | < 1 s | gRPC listens first; telemetry, the release store check and Headscale run behind it |
+| workers back | ≤ 6 s after the hub answers | `hubclient.Reconnect`: 1, 2, 4, 5, 5 ... s (±20%) while the hub is unreachable (up to 15 s after 3 minutes, 30 s when the hub refuses a node); after a restart notice the first try is after ~1 s |
+
+The part under our control is the start (a few seconds) and the
+reconnect; the 20-40 s in between is ACI. ACI can't pull the new image
+before it stops the old container (an update recreates the group's
+containers), and a second group can't take over the DNS name, so a
+redeploy is never seamless: deploy in quiet hours (e.g. `at 03:00` /
+a scheduled task running `deploy.sh`). With `:latest` / `:edge` and no new
+tag the script restarts the group after the deployment so the image is
+pulled again - with `--storage-auth key` that is a second restart (every
+deployment renews the Litestream SAS, which already restarts the hub): pin
+version tags to upgrade with a single restart.
+
+### Replica size and memory
+
+Every start restores the database from its Litestream replica (with
+`--storage-auth identity` on every start: the database lives on the
+container's disk), and `litestream restore` opens every file of its plan
+at once: the newest snapshot plus every file since. Its memory grows with
+the number of those files - about 100 KB each (an open blob download) - not
+with the database's size. The replica (blob container `litestream`,
+`hub.db/ltx/<level>/`) is kept small by Litestream's compaction
+([litestream-abs.yml](../hub/litestream-abs.yml)): each sync uploads an L0
+file; L1, L2 and L3 merge the level below every 30 s, 5 min and 1 h; L0 files
+are deleted once L1 covers them (after 5 min); an hourly snapshot (L9) is
+kept 24 h, the L1-L3 files older than the oldest one go with it. A healthy
+replica has a few thousand files at most, and a restore reads one snapshot
+plus a few dozen: tens of MB.
+
+That needs a Litestream whose compaction works on Azure Blob Storage.
+0.5.17 (the image up to 0.1.18) listed "the files from TXID X" as the blob
+name prefix X, so each compaction took exactly one file of the level below:
+L1 fell further behind with every write, L0 was never deleted, L2 and L3
+never moved. On 2026-10-29 the replica had 21,400 files (17,280 in L0, 4,138
+in L1, the only snapshot 14 hours old); the restore grew past 1.46 GB in 9
+minutes, was killed at the 1.5 GB of `--size small` (SIGKILL, exit 137) and
+the hub crash-looped (it needed 8 GB to finish). The image now builds
+Litestream from the upstream commit with the fix
+([image-build.sh](../hub/image-build.sh)); `container-smoke.sh` checks that an
+L1 file takes in several L0 files.
+
+Sizing: `small` (1 vCPU / 1.5 GB) stays the default - a healthy replica's
+restore needs tens of MB and the hub itself a few hundred. Budget about
+100 KB per file a restore reads (the files after the newest snapshot) on top
+of the hub: 1.5 GB is exhausted around 12,000 of them, 3 GB (`--size
+medium`) around 25,000. deploy.sh / deploy.ps1 print the replica's files per
+level on every re-run (`database replica: L0 12, L1 300, ...`) and warn above
+5000 in levels 0-3. To count them yourself (identity: Storage Blob Data
+Reader on the container):
+
+```sh
+az storage blob list --auth-mode login --account-name <account> -c litestream --prefix hub.db/ltx/ \
+  --num-results '*' --query '[].name' -o tsv | cut -d/ -f3 | sort | uniq -c
+```
+
+**A replica that has grown** (a hub that ran 0.1.18 or older for a while):
+the first start of a fixed image still has to restore it, and its first L1
+compaction opens the whole L0 backlog at once too. Either give that start
+the memory (`--size medium --recreate`, back to `small` once the replica is
+small again - about an hour, after the next snapshot), or prune it first,
+with the hub running (it takes a snapshot every hour; images before 0.1.18:
+daily):
+
+1. Find the newest snapshot and when it was written:
+   `az storage blob list --auth-mode login --account-name <account> -c litestream --prefix hub.db/ltx/9/ --query "[].{name:name, written:properties.lastModified}" -o table`
+2. Delete the level 0-3 files written before it (10 minutes of margin; they
+   are in the snapshot), first with `--dryrun`; needs Storage Blob Data
+   Contributor on the container (blob soft delete keeps them 7 days):
+   `az storage blob delete-batch --auth-mode login --account-name <account> -s litestream --pattern 'hub.db/ltx/[0-3]/*' --if-unmodified-since <snapshot time minus 10 minutes, e.g. 2026-10-29T13:50Z> --dryrun`
+
+A restore then reads that snapshot plus the files written since.
+
+### Logs of crashed starts
+
+ACI restarts a container that exits (restart policy Always) and keeps only
+the log of its current start: after a crash, `az container logs` shows the
+next start, not the one that failed. What it keeps of the failed start is
+its exit code:
+
+```sh
+az container show -g <rg> -n <name> --query "containers[?name=='hub'] | [0].instanceView.{restarts: restartCount, now: currentState, before: previousState}"
+```
+
+`137` is SIGKILL (the container entrypoint exits 128 + the signal when
+Litestream's restore was killed, and logs `litestream restore killed by
+SIGKILL (out of memory? the container has 1536 MB)`), `1` any other failed
+start. deploy.sh / deploy.ps1 print every restart they see while waiting,
+with that exit code, and stop with "the hub is crash-looping" after 3.
+
+To keep the logs of every start, deploy with `--log-analytics`: the
+container group sends them to Log Analytics - with `--telemetry` into the
+telemetry workspace (its retention, `telemetryRetentionDays`), else into a
+workspace `<name>-logs` of their own (30 days); about 2-3 USD per GB. In the
+workspace (portal: Logs):
+
+```kusto
+ContainerInstanceLog_CL
+| where ContainerGroup_s == "<name>" and ContainerName_s == "hub"
+| order by TimeGenerated desc
+```
+
+With `--storage-auth identity --diagnostics` a failed restore is also
+recorded in the diagnostics container (`hub-start-failures/<date>/<time>-<pid>.txt`:
+exit status, signal, the container's memory; deleted with the bundles):
+
+```sh
+az storage blob list --auth-mode login --account-name <account> -c diagnostics --prefix hub-start-failures/ -o table
+```
 
 ## Telemetry and diagnostic bundles
 
@@ -298,6 +544,7 @@ regions are up to ~20 % more; check the
 | small | 1 vCPU / 1.5 GB | yes | ~44 USD |
 | small, `--storage-auth identity` | 1 vCPU / 1.5 GB | yes (in the hub) | ~36 USD |
 | small | 1 vCPU / 1.5 GB | no | ~36 USD |
+| small, identity, `--headscale` (+ 0.25 vCPU / 0.3 GB) | 1 vCPU / 1.5 GB | yes (in the hub) | ~44 USD |
 | medium | 2 vCPU / 3 GB | yes | ~78 USD |
 
 Plus storage (a few GB: under 1 USD), Log Analytics if enabled (per GB
@@ -317,8 +564,9 @@ traffic relayed by the longnet relay leaves Azure and counts. Direct
 - **The DNS label is first come, first served** in the region: after a
   teardown someone else could take it. Nodes would refuse such a hub (its
   certificate is not from your CA), but they couldn't reach yours either.
-- **Docker Hub pull limits** may apply to the Caddy image; set the
-  `caddyImage` parameter to a mirror (e.g. your ACR) if pulls fail.
+- **Third-party images** (Caddy, Headscale) are pinned by digest
+  ([mirror-images.txt](mirror-images.txt)); with `--acr` they come from your
+  registry, otherwise from Docker Hub (see "Third-party images").
 - **The image must be pullable**: make the `longarm-hub` package public on
   GitHub (package settings) or deploy with `--registry-user` and a token with
   `read:packages`.
@@ -345,6 +593,78 @@ traffic relayed by the longnet relay leaves Azure and counts. Direct
   memory in 0.1 GB steps, CPU, group limits.
 - **ACI rewrites the source address of inbound UDP** (see below): the hub's
   own STUN answers are useless for NAT detection there.
+
+## External relay
+
+```sh
+./deploy.sh --name myhub --relay            # PowerShell: ./deploy.ps1 -Name myhub -Relay
+./deploy.sh --name myhub --relay-remove     # delete it (the hub keeps its embedded relay)
+```
+
+The hub's longnet relay restarts with the hub, so every relayed client <->
+worker connection drops for the minute or two a redeploy takes. `--relay`
+adds an **external relay**: `longarm-relay --hub` (docs/usage.md "External
+relays") in its own container group `<name>-relay` with its own public IP
+and DNS label `<name>-relay.<region>.azurecontainer.io`, so hub redeploys
+never restart it.
+
+```text
+  <name>-relay.<region>.azurecontainer.io (own IP)      <name>.<region>.azurecontainer.io
+  ┌── ACI container group <name>-relay ──┐               ┌── the hub's group (unchanged) ──┐
+  │ relay  longarm-relay (the hub image) │ ── RelaySync ─▶│ hub  :7443/tcp ...              │
+  │   :7445/udp QUIC + STUN, :7446/udp   │  revocations,  │   (its embedded relay stays    │
+  │   :7443/tcp TLS fallback             │  port links    │    as the fallback)             │
+  └──────────────────────────────────────┘               └─────────────────────────────────┘
+```
+
+- **Certificate**: issued from the hub's CA by the hub itself (`az container
+  exec ... /usr/local/bin/longarm-hub-relay-cert`, i.e. `longarm-hub issue
+  --role relay --b64`: name `<name>-relay`, the relay's DNS name, a year),
+  passed to the container as a secure environment variable
+  (`LONGARM_RELAY_TLS_B64`; never on a command line). The relay renews it
+  through the hub; a re-run issues a fresh one. Every node already trusts it
+  (same CA): no new trust anchor, nothing to configure on any machine.
+- **Registration**: the relay registers its endpoints with the hub, which
+  keeps them in its database and advertises them in every worker session.
+  Workers on a version with the relay set listen on it within seconds;
+  older ones keep the embedded relay (`longarm admin relays` counts them).
+- **No storage, no state to back up**: the policy (revocations, port-link
+  pairs) comes from the hub and is kept on the container's disk while it
+  runs. Litestream is not involved.
+- **Image**: the running hub's (the image has `longarm-relay`); `--image`
+  overrides it, `--registry-user` as for the hub; an ACR pulled with a
+  managed identity (`--storage-auth identity`) works too - the relay's own
+  `<name>-relay-id` with AcrPull on the registry only (never the hub's
+  identity, which can read the database replica and with it the CA). STUN: the
+  hub's `--stun-servers` (ACI source-NATs inbound UDP, as for the hub).
+- **Safe runs**: the hub must be running and new enough (it issues the
+  certificate; an older image is refused before anything changes). The
+  deployment is validated first (`az deployment group validate`, also the
+  rollback); the script waits for the container, its registration with the
+  hub (log line `relay: subscribed to the hub`) and its TLS port. An upgrade
+  that doesn't come up is **rolled back** to the previous relay image. The
+  hub is never touched: its embedded relay works throughout.
+- **Ports**: 7445/udp, 7446/udp, 7443/tcp - 3 of the 5 ports ACI allows per
+  IP address (the hub with its panel uses all 5 of its own IP, which is why
+  the relay needs a group of its own). ACI refuses one number for TCP and
+  UDP, hence UDP 7445 and TCP 7443, like the hub.
+- **Cost**: 0.5 vCPU / 0.5 GB, about **16 USD/month** (0.0405 USD per
+  vCPU-hour, 0.0045 USD per GB-hour), plus egress: relayed traffic leaves
+  Azure through the relay instead of the hub (same volume, not more).
+- **Health**: the liveness probe runs `longarm-relay healthcheck`
+  (`/healthz` on 127.0.0.1:7801). Logs: `az container logs -g <rg> -n
+  <name>-relay`.
+
+What survives a hub redeploy, before and after:
+
+| | before (embedded relay only) | with the external relay |
+|---|---|---|
+| direct paths (tcp, longnet direct, tailscale direct) | survive | survive |
+| relayed client <-> worker sessions (attach, logs -f, port forwards, exec) | break; reconnect after the hub is back | survive (no break) |
+| new connections while the hub is down | direct paths and cached endpoints only | also through the external relay |
+| worker <-> worker relayed (port links) | break | survive (the relay keeps the pairs for 24 h) |
+| metrics in the tray / `longarm ls` | hub's go stale | the hub's still go stale (direct metrics: docs/usage.md) |
+| hub-only features (placement `auto`, sign-in, link creation) | unavailable | unavailable |
 
 ## Building the image in Azure (no docker)
 
@@ -375,6 +695,79 @@ default (last) stage uses `FROM --platform=$BUILDPLATFORM` for BuildKit's
 cross-compiling multi-arch build (CI), which ACR Tasks rejects with "failed
 to scan dependencies". The `acr` stage builds natively (`--platform
 linux/arm64` gives an arm64 image).
+
+## Headscale: a self-hosted tailnet
+
+```sh
+./deploy.sh --name myhub --headscale --recreate     # an existing hub (data kept); new ones: no --recreate
+```
+
+The tailscale leg (DESIGN §4.2) on a control plane you own, with no VM and
+no manual Headscale steps: a **Headscale v0.29.5 sidecar** (image
+`headscale/headscale:v0.29.5-debug`, pinned by digest: the template parameter
+`headscaleImage`; with `--acr` its copy in that registry) in the hub's
+container group becomes the hub's `[tailnet] provider`.
+
+```text
+  ┌──────────────────────────── ACI container group ─────────────────────────────┐
+  │  hub (longarm-hub)                                 headscale (sidecar)        │
+  │   :443 https (Let's Encrypt, the hub's)  ──proxy──▶ 127.0.0.1:8080             │
+  │     /ts2021 /key /derp /derp/probe /derp/latency-check                         │
+  │     /bootstrap-dns /machine/ping-response    (nothing else of Headscale)      │
+  │   :80 http: /ts2021 too (Noise is authenticated), else the https redirect      │
+  │   Litestream: hub.db ─▶ "litestream"   /headscale/db.sqlite ─▶ "headscale"     │
+  │                 /headscale (emptyDir: config, policy, DERP map, keys, socket) │
+  └──────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Ports**: none new. Headscale listens on the group's localhost only; the
+  hub serves exactly the endpoints nodes use on its own https port, with its
+  certificate, at `https://<fqdn>` (the nodes' control URL). Its REST and
+  gRPC API, metrics, swagger and the interactive `/register` / `/oidc`
+  pages are not reachable from outside (keys are pre-auth keys the hub
+  mints). The proxy passes the HTTP Upgrades of `/ts2021` (Noise) and
+  `/derp` through, never DERP's "fast start" (the TLS is the hub's).
+- **DERP and STUN**: Headscale's embedded DERP relay (region 900,
+  `longarm-hub`) runs over that https; Tailscale's public DERP map is off
+  (`--headscale-public-derp on` adds it), so relayed traffic stays on the
+  hub. STUN does **not** run on the hub: ACI allows **5 ports per IP** (the hub
+  with its panel uses all five: 7443/tcp, 7445-7446/udp, 80, 443) and
+  source-NATs inbound UDP (STUN answers from inside the group would show
+  every node a private address, see below). The region carries the external
+  STUN servers the hub advertises for longnet (`--stun-servers`, default
+  Cloudflare and Google) as STUN-only nodes instead; they only answer
+  binding requests. With `--stun-servers none` nodes have no STUN and go
+  through DERP unless they are on one network.
+- **Persistence**: Headscale's SQLite database is on the shared `emptyDir`
+  and Litestream (the hub's, the same storage account, the managed identity
+  with Storage Blob Data Contributor on the new blob container `headscale`,
+  or a SAS for it with storage keys) replicates it. The hub restores it
+  before it lets Headscale start (`longarm-hub container`); a failed restore
+  keeps Headscale stopped, not the hub. Headscale's **Noise and DERP
+  private keys** live in the hub's database (replicated, like the CA in
+  identity mode): every start writes them to the shared directory, so the
+  nodes never have to register again.
+- **API key**: once Headscale runs, the hub creates its API key over
+  Headscale's unix socket in the shared directory (the directory belongs to
+  the two containers only) and keeps it in its database; it is checked
+  every 10 minutes, renewed 30 days before it expires (1 year) and replaced
+  if Headscale no longer knows it (the old one is expired). It never
+  appears in the environment, the portal or a log.
+- **ACL policy** (written by the hub): `tag:longarm-client` → `tag:longarm-worker:7701`,
+  and `tag:longarm-worker` → `tag:longarm-worker:7701` (port links); nothing else.
+- **Existing nodes** need nothing: workers get the hub's new tailnet in their
+  next hub session, clients on their next hub contact, and fetch a key
+  (docs/usage.md "Switching providers"). While Headscale starts, the hub
+  answers their key requests "unavailable" without charging their rate limit.
+- **Health**: `/healthz` has `"headscale": "ok" | "starting" | "down"`,
+  `longarm admin tailnet status` the detail; deploy.sh prints it at the end.
+  Logs: `az container logs -g <rg> -n <name> --container-name headscale`.
+  Headscale commands: `az container exec -g <rg> -n <name> --container-name
+  headscale --exec-command "/ko-app/headscale --config /headscale/config.yaml nodes list"`
+  (stale worker devices: `nodes delete`).
+- **Cost**: the sidecar requests 0.25 vCPU / 0.3 GB, about 9 USD/month.
+- Key mode (storage account keys, Caddy in front): the same; Caddy forwards
+  everything to the hub, which proxies Headscale's endpoints.
 
 ## Direct connections (longnet) on ACI
 
@@ -417,6 +810,9 @@ or `?stun=` on the longnet URL.
 | [main.bicep](main.bicep) | the template (`az deployment group create --template-file main.bicep -p name=myhub`) |
 | [azuredeploy.json](azuredeploy.json) | `bicep build main.bicep --outfile azuredeploy.json` (CI checks it is current) |
 | [deploy.sh](deploy.sh) / [deploy.ps1](deploy.ps1) | the one-command deploy / upgrade / teardown |
+| [relay.bicep](relay.bicep) / [relay.json](relay.json) | the external relay's container group (`--relay`; relay.json compiled, CI checks it) |
+| [relay.sh](relay.sh) / [relay.ps1](relay.ps1) | `--relay` / `-Relay` (sourced by the deploy scripts) |
 | [test/container-smoke.sh](test/container-smoke.sh) | the image test in CI (docker + Azurite) |
+| [mirror-images.txt](mirror-images.txt) | the sidecar images, pinned by digest ("Third-party images") |
 | [test/acirules](test/acirules/main.go) | ACI's rules (ports, memory/CPU steps, limits) for every parameter combination, in CI |
 | [E2E.md](E2E.md) | the manual end-to-end test on a real subscription |

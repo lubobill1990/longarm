@@ -130,7 +130,24 @@ type Spec struct {
 	// StdinBytes is the size of the job's stdin payload (its content is
 	// memory-only: longarmd -> shim -> the job, never on disk).
 	StdinBytes int64 `json:"stdin_bytes,omitempty"`
+	// AgentAuth names the agents whose credentials the client forwarded
+	// (in the secrets: never their values).
+	AgentAuth []string `json:"agent_auth,omitempty"`
+	// AgentHome is the job's private COPILOT_HOME (<space>/agent-home/...),
+	// written by longarmd only and removed with the job; the shim sets
+	// COPILOT_HOME to it unless Env does.
+	AgentHome string `json:"agent_home,omitempty"`
 }
+
+// AgentHomeDir holds the private agent homes (COPILOT_HOME) of jobs,
+// sessions and execs that got forwarded Copilot credentials, in a space's
+// root.
+const AgentHomeDir = "agent-home"
+
+// FeatureAgentAuth is the InfoResponse.features entry of workers that take
+// forwarded agent credentials (SubmitRequest.agent_auth: a private
+// COPILOT_HOME, the names in the job's spec).
+const FeatureAgentAuth = "agent-auth"
 
 // MaxStdinBytes caps a job's stdin payload (longarm run --stdin-file).
 const MaxStdinBytes = 1 << 20
@@ -157,6 +174,7 @@ const (
 	FeatureSessionStop       = "session-stop"         // Sessions.Stop
 	FeatureSessionInfo       = "session-info"         // Session workdir, dir, reason and activity fields
 	FeatureFileTail          = "file-tail"            // Files.Tail
+	FeatureMachineUpdate     = "machine-update"       // MachineUpdate (longarm worker update; the owner's)
 )
 
 // SessionWorktreeKey names the worktree of one generation of session name

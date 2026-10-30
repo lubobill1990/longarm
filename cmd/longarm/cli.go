@@ -68,7 +68,7 @@ func newRootCmd() *cobra.Command {
 	group("start", loginCmd(), lsCmd(), execCmd(), runCmd(), doctorCmd())
 	group("jobs", jobsCmd(), logsCmd(), waitCmd(), killCmd())
 	group("sessions", attachCmd(), sessionCmd(), sessionsCmd())
-	group("files", putCmd(), getCmd(), syncCmd(), tailCmd(), forwardCmd(), linkCmd(), sshConfigCmd())
+	group("files", putCmd(), getCmd(), syncCmd(), tailCmd(), forwardCmd(), linkCmd(), sshCmd(), sshConfigCmd())
 	group("workers", workerCmd(), infoCmd())
 	group("account", whoamiCmd(), joinCmd(), leaveCmd(), logoutCmd(), versionCmd())
 	group("admin", adminCmd(), diagCmd(), mcpCmd())
@@ -277,7 +277,7 @@ func addCompletions(root *cobra.Command) {
 		}
 	}
 	set(completeWorkers(1), "info", "attach", "forward", "tail", "proxy", "exec", "run", "sessions", "jobs",
-		"worker share", "worker unshare", "worker remove", "worker label", "session start", "session send", "session stop")
+		"worker share", "worker unshare", "worker remove", "worker label", "worker update", "session start", "session send", "session stop")
 	set(completeWorkers(-1), "ls", "ssh-config")
 	set(completeJobArgs, "logs", "wait", "kill")
 	set(completeWorkerColon, "put", "get", "sync")

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -161,5 +162,75 @@ func TestCollectSessionWorktrees(t *testing.T) {
 		if _, err := os.Stat(p); err == nil {
 			t.Errorf("%s survived: %+v", p, res)
 		}
+	}
+}
+
+// Agent homes (private COPILOT_HOMEs of forwarded Copilot credentials) go
+// with their job; unreferenced ones are collected after an hour.
+func TestCollectAgentHomes(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	old := now.Add(-48 * time.Hour)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	home := func(name string) string {
+		p := filepath.Join(root, jobs.AgentHomeDir, name)
+		os.MkdirAll(p, 0o700)
+		os.WriteFile(filepath.Join(p, "config.json"), []byte(`{"cached":"token"}`), 0o600)
+		os.Chtimes(p, old, old)
+		return p
+	}
+	withHome := func(kind, id string, state jobs.State, ended time.Time) string {
+		mkJob(t, root, kind, id, state, ended, "")
+		d := jobs.Dir(filepath.Join(root, kind, id))
+		spec, err := d.ReadSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec.AgentHome = home(kind[:1] + "-" + id + "-abc")
+		if err := d.WriteSpec(spec); err != nil {
+			t.Fatal(err)
+		}
+		return spec.AgentHome
+	}
+	oldHome := withHome("jobs", "old", jobs.Done, now.Add(-10*24*time.Hour))
+	keptHome := withHome("jobs", "new", jobs.Done, now.Add(-time.Hour))
+	runHome := withHome("sessions", "live", jobs.Running, time.Time{})
+	orphan := home("j-gone-123")
+	fresh := filepath.Join(root, jobs.AgentHomeDir, "j-submitting-456")
+	os.MkdirAll(fresh, 0o700) // may be a submit in progress
+
+	opts := supervisor.Options{Logger: log, ShimCommand: func(string) *exec.Cmd { return exec.Command("true") }}
+	o1, o2 := opts, opts
+	o1.JobsDir, o2.JobsDir = filepath.Join(root, "jobs"), filepath.Join(root, "sessions")
+	jm, err := supervisor.New(o1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm, err := supervisor.New(o2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Collector{DataDir: root, Jobs: jm, Sessions: sm, Log: log,
+		DiskUsage: func(string) (uint64, uint64, error) { return 50, 100, nil }}
+	res := c.Run(context.Background(), Options{Keep: 7 * 24 * time.Hour})
+	for _, p := range []string{oldHome, orphan} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s survived (%v)", p, res.Removed)
+		}
+	}
+	for _, p := range []string{keptHome, runHome, fresh} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s removed (%v)", p, res.Removed)
+		}
+	}
+	if !slices.Contains(res.Removed, jobs.AgentHomeDir+"/j-gone-123") {
+		t.Errorf("removed: %v", res.Removed)
+	}
+	// removing the job (gc, a replaced session) takes its home along
+	if err := jm.Remove("new"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(keptHome); err == nil {
+		t.Error("the agent home outlived its job")
 	}
 }

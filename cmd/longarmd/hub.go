@@ -63,7 +63,7 @@ func loginCmd() *cobra.Command {
 	var az, force, noBrowser bool
 	c := &cobra.Command{
 		Use:   "login [hub]",
-		Short: "Enroll this worker as yours, signing in with your Microsoft account",
+		Short: "Enroll this worker as yours, signing in with your account (Microsoft, Google, Apple)",
 		Long: `Enroll this worker with longarm-hub as your own worker: usable by you only
 until you share it (longarm worker share), approved right away.
 
@@ -79,8 +79,8 @@ recorded, else the one built into this release (if any: longarm version --json).
 
 By default longarmd login prints the hub's /link address and a code: open
 the page in any browser (your laptop or phone will do - this machine needs
-none), sign in with Microsoft, type the code, check the details and
-approve. The page is opened here when this machine has a desktop
+none), sign in with your account (Microsoft, Google or Apple, as the hub
+offers), type the code, check the details and approve. The page is opened here when this machine has a desktop
 (--no-browser: never).
 
 --role both also signs this machine in as your client device (longarm's

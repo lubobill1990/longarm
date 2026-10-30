@@ -1,0 +1,56 @@
+# Litestream for the longarm-hub image with a Headscale sidecar
+# (/etc/longarm-hub/litestream-abs-headscale.yml; deploy/azure
+# enableHeadscale): litestream-abs.yml's hub database plus Headscale's, which
+# lives in the directory the hub shares with the sidecar. Configured only by
+# the environment (Litestream expands ${VAR}):
+#   LONGARM_HUB_DB, LONGARM_HUB_BLOB_ACCOUNT, LONGARM_HUB_BLOB_CONTAINER,
+#   LONGARM_HUB_BLOB_ENDPOINT, LITESTREAM_AZURE_SAS_TOKEN   as litestream-abs.yml
+#   LONGARM_HUB_HEADSCALE_DB              set by `longarm-hub container` from
+#                                         LONGARM_HUB_HEADSCALE_DIR (<dir>/db.sqlite)
+#   LONGARM_HUB_HEADSCALE_BLOB_CONTAINER  blob container of Headscale's replica
+#   LONGARM_HUB_HEADSCALE_SAS_TOKEN       storage-auth key: a SAS for that container
+#                                         (empty: LITESTREAM_AZURE_SAS_TOKEN, else the
+#                                         managed identity)
+# The hub restores Headscale's database before it lets the sidecar start
+# (cmd/longarm-hub container.go).
+dbs:
+  - path: ${LONGARM_HUB_DB}
+    replica:
+      type: abs
+      account-name: ${LONGARM_HUB_BLOB_ACCOUNT}
+      bucket: ${LONGARM_HUB_BLOB_CONTAINER}
+      endpoint: ${LONGARM_HUB_BLOB_ENDPOINT}
+      path: hub.db
+      sync-interval: 1s
+  - path: ${LONGARM_HUB_HEADSCALE_DB}
+    replica:
+      type: abs
+      account-name: ${LONGARM_HUB_BLOB_ACCOUNT}
+      bucket: ${LONGARM_HUB_HEADSCALE_BLOB_CONTAINER}
+      endpoint: ${LONGARM_HUB_BLOB_ENDPOINT}
+      sas-token: ${LONGARM_HUB_HEADSCALE_SAS_TOKEN}
+      path: headscale.db
+      sync-interval: 1s
+shutdown-sync-timeout: 20s
+# Retention (Litestream 0.5; deploy/azure/README.md "Replica size and
+# memory"). Each sync uploads an L0 file; L1-L3 merge the level below every
+# 30 s, 5 min and 1 h; an L0 file is deleted once L1 covers it and it is
+# older than l0-retention; a snapshot (L9, the whole database) is taken
+# every hour and kept 24 h, and the L1-L3 files older than the oldest kept
+# snapshot go with it. A start (with storage-auth identity every start: the
+# database is on the container's own disk) restores the newest snapshot plus
+# the files since - at most an hour of L3/L2/L1 files and a few minutes of
+# L0 - and opens all of them at once, so its memory grows with that count.
+# The image's Litestream must have the Azure Blob compaction fix
+# (deploy/hub/image-build.sh): with 0.5.17 compaction falls behind and none
+# of this deletes anything. The values are Litestream's defaults except the
+# snapshot interval (default 24 h), spelled out so they are not lost.
+levels:
+  - interval: 30s
+  - interval: 5m
+  - interval: 1h
+l0-retention: 5m
+l0-retention-check-interval: 15s
+snapshot:
+  interval: 1h
+  retention: 24h

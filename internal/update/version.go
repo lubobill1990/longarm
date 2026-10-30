@@ -106,3 +106,13 @@ var versionRE = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$`)
 // ValidVersion reports whether v is a safe version label (it becomes part of
 // file paths: no separators, no "..").
 func ValidVersion(v string) bool { return versionRE.MatchString(v) && !strings.Contains(v, "..") }
+
+// NewerRelease reports whether a is a newer release than b: both release
+// versions ("0.1.17", "v1.2.3-rc.1"; not "dev" or another development
+// build's label) and a sorts after b. Deciding whether to replace a running
+// program with this one: never a downgrade, never on a development build.
+func NewerRelease(a, b string) bool {
+	_, _, oka := split(a)
+	_, _, okb := split(b)
+	return oka && okb && Compare(a, b) > 0
+}

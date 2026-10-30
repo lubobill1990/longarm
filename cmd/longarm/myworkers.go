@@ -45,7 +45,7 @@ func workerCmd() *cobra.Command {
 users, never placed for them) until you share it - which needs an admin's
 permission (longarm admin user set <you> --can-share).
 
-The easy way, on that machine - it signs in with your Microsoft account:
+The easy way, on that machine - it signs in with your account:
   Windows: install the Longarm MSI and choose "This machine runs jobs"
            (the tray signs it in), or run: longarmd login <hub>
   Linux / macOS: longarmd login <hub>, as the account the worker runs as
@@ -128,14 +128,14 @@ you are logged on; no password), elsewhere longarmd service install.`,
 	}
 	ls.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 
-	c.AddCommand(add, ls, shareCmd(true), shareCmd(false))
+	c.AddCommand(add, ls, shareCmd(true), shareCmd(false), workerUpdateCmd())
 	c.AddCommand(&cobra.Command{
 		Use:   "label <worker> KEY=VALUE[,KEY=VALUE...]... [KEY-]...",
-		Short: "Set labels of a worker of yours (KEY- or KEY= deletes; admins: any worker)",
+		Short: "Set labels of a worker of yours (KEY- or KEY= deletes; admins: fleet workers too)",
 		Long: `Set or delete labels of your own worker - scheduler constraints, e.g.
 longarm run --require pool=devbox - like longarm worker add --label at
 registration. KEY- (or KEY=) deletes a label. The hub checks that the
-worker is yours (admins: any worker) and audits the change. Labels the
+worker is yours (admins: fleet workers too) and audits the change. Labels the
 worker reports itself (longarmd.toml [hub] labels) are changed there.`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -151,7 +151,7 @@ worker reports itself (longarmd.toml [hub] labels) are changed there.`,
 				if err != nil {
 					return err
 				}
-				fmt.Printf("%s: %s\n", n.Name, labelString(n.Labels))
+				fmt.Println(labelResult(n))
 				for k, v := range m {
 					if got, ok := n.Labels[k]; v == "" && ok {
 						fmt.Fprintf(os.Stderr, "longarm: %s=%s stays: the worker reports it itself (longarmd.toml [hub] labels)\n", k, got)
@@ -163,11 +163,12 @@ worker reports itself (longarmd.toml [hub] labels) are changed there.`,
 	})
 	c.AddCommand(&cobra.Command{
 		Use:   "rename <worker> <new-name>",
-		Short: "Rename a worker of yours (admins: any worker); it keeps its ID",
-		Long: `Rename a worker of yours (admins: any worker). It keeps its ID, so jobs,
+		Short: "Rename a worker of yours (admins: fleet workers too); it keeps its ID",
+		Long: `Rename a worker of yours (admins: fleet workers too). It keeps its ID, so jobs,
 links and shares stay with it; <worker> is a name, an ID, a unique ID prefix,
 id:<prefix> or name:<name>. The new name must not be in use by another node
-that isn't revoked and must not look like an ID. Audited.
+that isn't revoked, must not be another Longarm user's name and must not
+look like an ID. Audited.
 
 With end-to-end trust, an endorsement made before node IDs is bound to the
 old name: endorse the worker again (longarmd trust request / longarm trust
@@ -188,7 +189,7 @@ endorse), or target it by ID.`,
 		},
 	})
 	c.AddCommand(&cobra.Command{
-		Use: "remove <worker>", Aliases: []string{"rm"}, Short: "Remove a worker of yours: revoke its certificates (admins: any worker)", Args: cobra.ExactArgs(1),
+		Use: "remove <worker>", Aliases: []string{"rm"}, Short: "Remove a worker of yours: revoke its certificates (admins: fleet workers too)", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
 				n, err := h.Fleet().RemoveWorker(ctx, &pb.NodeRequest{Name: args[0]})
@@ -250,7 +251,7 @@ func workerAddHelp(hub, code, fp, name, owner, expires string) string {
 		join += " --name " + name
 		what = "worker " + name
 	}
-	return fmt.Sprintf(`The easy way, on the new machine (signs in with your Microsoft account):
+	return fmt.Sprintf(`The easy way, on the new machine (signs in with your account):
   Windows: install the Longarm MSI and choose "This machine runs jobs", or run: longarmd login %s
   Linux / macOS: longarmd login %s
 Or with the code above (for %s, owned by %s, expires %s), on the new machine:

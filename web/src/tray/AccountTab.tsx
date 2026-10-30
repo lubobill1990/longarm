@@ -9,9 +9,11 @@ import {
   type TrayInfo,
 } from '../api/local'
 import { ErrorBox, useAction } from '../components/common'
+import { IconUser } from '../components/icons'
+import { Banner } from './ui'
 
 /**
- * longarm-tray's account tab: "Sign in with Microsoft" (one code, one
+ * longarm-tray's account tab: "Sign in" (one code, one
  * approval for this device, the worker and the admin worker; it starts by
  * itself after an install), then who is signed in, the worker's state,
  * what this computer does (send jobs / run jobs / admin commands, changed
@@ -52,14 +54,14 @@ export function AccountTab({ info, onChange }: { info: TrayInfo; onChange?: () =
       ) : (
         <>
           {st?.state === 'done' && st.result && (
-            <div className="ok-box" data-testid="signin-done">
-              {st.result.summary}
-            </div>
+            <Banner tone="ok">
+              <span data-testid="signin-done">{st.result.summary}</span>
+            </Banner>
           )}
           {(st?.state === 'error' || st?.state === 'canceled') && (
-            <div className="error-box" data-testid="signin-error">
-              {st.state === 'canceled' ? 'Sign-in canceled.' : `Sign-in failed: ${st.error ?? ''}`}
-            </div>
+            <Banner tone={st.state === 'canceled' ? 'info' : 'error'}>
+              <span data-testid="signin-error">{st.state === 'canceled' ? 'Sign-in canceled.' : `Sign-in failed: ${st.error ?? ''}`}</span>
+            </Banner>
           )}
           {acct.needed ? <SignInCard acct={acct} onStarted={setSt} /> : <AccountCard acct={acct} info={info} onChange={onChange} />}
         </>
@@ -92,14 +94,16 @@ function SignInCard({ acct, onStarted }: { acct: Account; onStarted: (s: SignInS
   const [more, setMore] = useState(false)
   const needHub = !acct.hub
   return (
-    <section className="wcard" data-testid="signin-card">
-      <h3>{acct.expired ? 'Sign in again' : 'Sign in with Microsoft'}</h3>
+    <section className="wcard signin-card" data-testid="signin-card">
+      <div className="signin-hero">
+        <h2 className="card-title">{acct.expired ? 'Sign in again' : 'Sign in'}</h2>
+      </div>
       {acct.expired && (
-        <div className="warn-box" data-testid="signin-expired">
-          Your sign-in expired on {when(acct.expires)}: sign in again.
-        </div>
+        <Banner tone="warn">
+          <span data-testid="signin-expired">Your sign-in expired on {when(acct.expires)}: sign in again.</span>
+        </Banner>
       )}
-      <p className="small">
+      <p className="lead">
         One code and one approval in your browser sign in {targetText(acct.targets)}
         {acct.hub ? (
           <>
@@ -121,9 +125,9 @@ function SignInCard({ acct, onStarted }: { acct: Account; onStarted: (s: SignInS
           )}
         </div>
       )}
-      <p className="row">
+      <p className="button-row">
         <button
-          className="primary"
+          className="primary lg"
           data-testid="signin-start"
           disabled={busy || (needHub && !hub)}
           onClick={async () => {
@@ -131,7 +135,7 @@ function SignInCard({ acct, onStarted }: { acct: Account; onStarted: (s: SignInS
             if (r) onStarted(r)
           }}
         >
-          Sign in with Microsoft
+          Sign in
         </button>
         {!needHub && !more && (
           <button className="link" onClick={() => setMore(true)}>
@@ -158,11 +162,13 @@ function SignInProgress({ st }: { st: SignInState }) {
   const [copied, setCopied] = useState(false)
   const c = st.code
   return (
-    <section className="wcard" data-testid="signin-progress">
-      <h3>Sign in with Microsoft</h3>
+    <section className="wcard signin-card" data-testid="signin-progress">
+      <div className="signin-hero">
+        <h2 className="card-title">Sign in</h2>
+      </div>
       {c ? (
         <>
-          <p className="small">
+          <p className="lead">
             Your browser opened{' '}
             <a
               href={c.url}
@@ -173,12 +179,14 @@ function SignInProgress({ st }: { st: SignInState }) {
             >
               {c.url}
             </a>
-            . Sign in with Microsoft there and enter this code:
+            . Sign in there (Microsoft, Google or Apple account) and enter this code:
           </p>
-          <div className="signin-code mono" data-testid="signin-code">
-            {c.code}
+          <div className="signin-codebox">
+            <div className="signin-code mono" data-testid="signin-code">
+              {c.code}
+            </div>
           </div>
-          <p className="row">
+          <p className="button-row">
             <button
               className="primary"
               data-testid="signin-copy"
@@ -200,16 +208,22 @@ function SignInProgress({ st }: { st: SignInState }) {
           </p>
         </>
       ) : (
-        <p className="muted small">Contacting the hub {st.hub}…</p>
+        <p className="muted small">
+          <span className="spinner" aria-hidden="true" /> Contacting the hub {st.hub}…
+        </p>
       )}
-      <ul className="small muted" data-testid="signin-steps">
-        {(st.steps ?? []).slice(-5).map((s, i) => (
-          <li key={i}>{s}</li>
+      <ol className="steps small" data-testid="signin-steps">
+        {(st.steps ?? []).slice(-5).map((s, i, a) => (
+          <li key={i} className={i === a.length - 1 ? 'current' : 'done'}>
+            {s}
+          </li>
         ))}
-      </ul>
-      <button className="danger" disabled={busy} onClick={() => run(() => trayApi.signinCancel())}>
-        Cancel
-      </button>
+      </ol>
+      <div className="button-row end">
+        <button className="danger" disabled={busy} onClick={() => run(() => trayApi.signinCancel())}>
+          Cancel
+        </button>
+      </div>
     </section>
   )
 }
@@ -234,25 +248,30 @@ function AccountCard({ acct, info, onChange }: { acct: Account; info: TrayInfo; 
   const { run, busy } = useAction()
   return (
     <section className="wcard" data-testid="account-card">
-      <div className="head">
-        <span className="dot" style={{ background: acct.signed_in ? 'var(--green)' : 'var(--amber)' }} />
-        <span className="name">{acct.signed_in ? `Signed in${acct.user ? ` as ${acct.user}` : ''}` : 'Not signed in'}</span>
+      <div className="account-head">
+        <span className="avatar" aria-hidden="true">
+          {acct.user ? acct.user.slice(0, 1).toUpperCase() : <IconUser />}
+        </span>
+        <div className="account-who">
+          <div className="name">{acct.signed_in ? `Signed in${acct.user ? ` as ${acct.user}` : ''}` : 'Not signed in'}</div>
+          {acct.hub && <div className="small muted">hub {acct.hub}</div>}
+        </div>
+        <span className={`pill ${acct.signed_in ? 'ok' : 'warn'}`}>{acct.signed_in ? 'signed in' : 'signed out'}</span>
       </div>
-      {acct.hub && <div className="small muted">hub {acct.hub}</div>}
       {acct.signed_in && acct.expires && <div className="small muted">sign-in valid until {when(acct.expires)} (renews by itself)</div>}
       {info.roles.worker && (
         <div className="small" data-testid="worker-online">
           worker:{' '}
           {info.worker.running ? (
-            <span className="green">running</span>
+            <span className="pill ok">running</span>
           ) : (
-            <span className="amber">not running{info.worker.error ? ` (${info.worker.error})` : ''}</span>
+            <span className="pill warn">not running{info.worker.error ? ` (${info.worker.error})` : ''}</span>
           )}
           {acct.run_mode === 'session' && <span className="muted"> · runs as you while you are logged on</span>}
           {acct.run_mode === 'service' && <span className="muted"> · Windows service</span>}
         </div>
       )}
-      <p className="row">
+      <p className="button-row">
         {info.hub_url && <button onClick={() => trayApi.openPanel('/')}>Open panel</button>}
         {acct.signed_in && (
           <button
@@ -322,7 +341,7 @@ function RolesCard({ acct, cur, busy, onChange }: { acct: Account; cur: AccountR
   }
   return (
     <section className="wcard" data-testid="roles-card">
-      <h3>This computer</h3>
+      <h3 className="card-title">This computer</h3>
       <label className="check">
         <input type="checkbox" checked={want.client} disabled={!editable} onChange={(e) => set('client', e.target.checked)} />
         <span>
@@ -353,13 +372,17 @@ function RolesCard({ acct, cur, busy, onChange }: { acct: Account; cur: AccountR
         </div>
       )}
       {acct.roles_note && <div className="small muted">{acct.roles_note}</div>}
-      {st?.state === 'error' && <div className="error-box">{st.error}</div>}
-      {st?.state === 'done' && st.message && <div className="small green">{st.message}</div>}
-      {applying && <div className="small muted">Confirm the administrator prompt…</div>}
+      {st?.state === 'error' && <Banner tone="error">{st.error}</Banner>}
+      {st?.state === 'done' && st.message && <Banner tone="ok">{st.message}</Banner>}
+      {applying && (
+        <div className="small muted">
+          <span className="spinner" aria-hidden="true" /> Confirm the administrator prompt…
+        </div>
+      )}
       {changes.length > 0 && !applying && (
         <>
           <p className="small">This will {changes.join('; ')}. An administrator prompt follows; then one approval in your browser signs in what was added.</p>
-          <p className="row">
+          <p className="button-row">
             <button
               className="primary"
               data-testid="roles-apply"
@@ -382,7 +405,7 @@ function AdminCard({ admin, onChange }: { admin: NonNullable<Account['admin']>; 
   return (
     <section className="wcard" data-testid="admin-card">
       <div className="head">
-        <span className="dot" style={{ background: admin.signed_in ? 'var(--green)' : 'var(--amber)' }} />
+        <span className={`dot ${admin.signed_in ? 'is-online' : 'is-connecting'}`} style={{ background: admin.signed_in ? 'var(--green)' : 'var(--amber)' }} />
         <span className="name">Admin worker</span>
         <span className="sub">
           {admin.service} · {admin.state ?? 'unknown'}
@@ -393,7 +416,7 @@ function AdminCard({ admin, onChange }: { admin: NonNullable<Account['admin']>; 
         {admin.pending ? ' Waiting for your sign-in.' : ''}
       </div>
       <ErrorBox error={admin.error} />
-      <p className="row">
+      <p className="button-row">
         <button
           className="danger"
           disabled={busy}

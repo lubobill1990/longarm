@@ -87,8 +87,15 @@ rollout)
 	fi
 	# Canary first; the rest follow once it stayed healthy for <wait>.
 	# -f exits non-zero when the rollout halts (a worker rolled back) or is
-	# aborted.
-	lac admin release push "$version" --canary 1 --wait "$wait" -f "$@"
+	# aborted. --allow-none: exit 79 when no worker can self-update (MSI
+	# installs, user-session workers) - nothing to roll out, a warning.
+	rc=0
+	lac admin release push "$version" --canary 1 --wait "$wait" -f --allow-none "$@" || rc=$?
+	if [[ $rc -eq 79 ]]; then
+		echo "::warning title=no self-updating worker::$version was not rolled out: no worker of its channel can update itself (see the list above). MSI-installed and user-session workers update through the tray's \"Update to $version\" banner (or the install script); longarmd status and the panel show them as outdated."
+		exit 0
+	fi
+	exit "$rc"
 	;;
 *) die "unknown command $cmd" ;;
 esac

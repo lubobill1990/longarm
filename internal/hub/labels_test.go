@@ -18,7 +18,8 @@ import (
 )
 
 // TestSetWorkerLabels: an owner labels its own worker (Fleet.SetWorkerLabels),
-// an admin any worker; others' and fleet workers are refused; labels are
+// an admin fleet workers; other users' workers are "not found" (admins
+// included) and fleet workers refused to users; labels are
 // validated as for longarm admin label, and every change is audited.
 func TestSetWorkerLabels(t *testing.T) {
 	th, _ := ownedHub(t)
@@ -49,13 +50,14 @@ func TestSetWorkerLabels(t *testing.T) {
 	if n, err := set("root", &pb.SetLabelsRequest{Name: "w1", Labels: map[string]string{"zone": "a"}}); err != nil || n.Labels["zone"] != "a" {
 		t.Fatalf("admin labels w1: %v %v", n, err)
 	}
-	if n, err := set("root", &pb.SetLabelsRequest{Name: "aw", Labels: map[string]string{"zone": "b"}}); err != nil || n.Labels["zone"] != "b" {
+	// another user's worker: not even found for an admin, and untouched
+	if n, err := set("root", &pb.SetLabelsRequest{Name: "aw", Labels: map[string]string{"zone": "b"}}); status.Code(err) != codes.NotFound || !strings.Contains(err.Error(), `no worker "aw"`) {
 		t.Fatalf("admin labels aw: %v %v", n, err)
 	}
 	h.mu.Lock()
 	got := maps.Clone(h.nodeLocked("aw").rec.Labels)
 	h.mu.Unlock()
-	if !maps.Equal(got, map[string]string{"pool": "devbox", "zone": "b"}) {
+	if !maps.Equal(got, map[string]string{"pool": "devbox"}) {
 		t.Fatalf("stored labels %v", got)
 	}
 	rows, _ := h.store.Audit("", "hub", time.Time{}, 100)

@@ -130,6 +130,35 @@ func (p *panel) post(path, ctype, body string) (int, string) {
 	return resp.StatusCode, string(b)
 }
 
+// waitNode waits until the panel login's view of the hub's nodes
+// (/api/nodes?all=1) reports cond for node: a user's own workers are only
+// in that user's view (admins see them as counts).
+func (p *panel) waitNode(name, what string, cond func(n map[string]any) bool) map[string]any {
+	p.t.Helper()
+	var last map[string]any
+	waitFor(p.t, name+" "+what, 30*time.Second, func() bool {
+		resp, err := p.c.Get(p.base + "/api/nodes?all=1")
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		var r struct {
+			Nodes []map[string]any `json:"nodes"`
+		}
+		if resp.StatusCode != 200 || json.NewDecoder(resp.Body).Decode(&r) != nil {
+			return false
+		}
+		for _, n := range r.Nodes {
+			if n["name"] == name {
+				last = n
+				return cond(n)
+			}
+		}
+		return false
+	})
+	return last
+}
+
 var (
 	formTokenRE = regexp.MustCompile(`name="token" value="([^"]+)"`)
 	formIDRE    = regexp.MustCompile(`name="id" value="([^"]+)"`)
@@ -254,7 +283,7 @@ func TestHubPairing(t *testing.T) {
 		t.Fatalf("worker access: %s %v", b, err)
 	}
 	w.start(t, true)
-	h.waitNode(t, "pw", "online, erin's", func(n map[string]any) bool { return isTrue(n["online"]) && n["owner"] == "erin" })
+	erinWeb.waitNode("pw", "online, erin's", func(n map[string]any) bool { return isTrue(n["online"]) && n["owner"] == "erin" })
 
 	// a client without az: longarm login falls back to pairing
 	erin := filepath.Join(h.root, "erin")
@@ -307,7 +336,7 @@ func TestHubPairing(t *testing.T) {
 		t.Fatalf("longarmd login --role both: %d\n%s", c, p.out.String())
 	}
 	w3.start(t, true)
-	h.waitNode(t, "pboth", "online, erin's", func(n map[string]any) bool { return isTrue(n["online"]) && n["owner"] == "erin" })
+	erinWeb.waitNode("pboth", "online, erin's", func(n map[string]any) bool { return isTrue(n["online"]) && n["owner"] == "erin" })
 	if r := h.longarm(erin2, "exec", "pboth", "--", bins.helper, "print", "1", "0", "0"); r.code != 0 || !strings.Contains(r.stdout, "line 1") {
 		t.Fatalf("erin's device on her worker, one approval: %+v", r)
 	}

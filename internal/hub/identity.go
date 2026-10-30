@@ -22,6 +22,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -144,6 +145,36 @@ func (h *Hub) resolveWorker(target string) (string, error) {
 		return "", nil
 	}
 	return h.resolve(target, isWorker, "worker")
+}
+
+// resolveWorkerFor resolves a target among the workers v may see ("" stays
+// "").
+func (h *Hub) resolveWorkerFor(v tenancy.Caller, target string) (string, error) {
+	if target == "" {
+		return "", nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n, err := h.resolveLocked(target, h.workerVisibleLocked(v), "worker")
+	if err != nil {
+		return "", err
+	}
+	return n.rec.ID, nil
+}
+
+// visibleLocked is the resolution filter for user input from v (docs/
+// security.md "What admins see"): users' machines v may see, and the nodes
+// of nobody (relays, release credentials: operations on them are for
+// admins anyway). Other users' machines are not candidates at all, so a
+// target naming one - by name, ID or ID prefix - gets the answer of an
+// unknown one, and an ambiguous prefix lists visible candidates only.
+func (h *Hub) visibleLocked(v tenancy.Caller) func(*node) bool {
+	return func(n *node) bool { return !userNodeRole(n.rec.Role) || h.visibleNodeLocked(v, n) }
+}
+
+// workerVisibleLocked is visibleLocked for worker targets.
+func (h *Hub) workerVisibleLocked(v tenancy.Caller) func(*node) bool {
+	return func(n *node) bool { return isWorker(n) && h.visibleNodeLocked(v, n) }
 }
 
 func isWorker(n *node) bool { return n.rec.Role == string(pki.RoleWorker) }
@@ -329,21 +360,28 @@ func (n *node) followsRenames() bool {
 	return false
 }
 
-// RenameNode changes a node's display name (it keeps its ID): admin =
-// any node; otherwise only a worker of user's own (owner == user). The
-// new name must pass checkNewName and be free among non-revoked nodes.
-// Audited.
-func (h *Hub) RenameNode(by, user string, admin bool, target, newName string) (*pb.NodeInfo, error) {
+// RenameNode changes a node's display name (it keeps its ID). The target
+// resolves among the nodes v may see (visibleLocked: another user's
+// machine is "not found", like an unknown one); then admin (HubAdmin, an
+// admin panel login) may rename its own user's devices and workers and the
+// fleet workers, others (Fleet.RenameWorker) their own workers only;
+// without multi-tenancy (v.Admin) admins rename any user's machine. Relays
+// and release credentials are never renamed (their certificate names are
+// what nodes check). The new name must pass checkNewName, be free among
+// non-revoked nodes (as names and certificate names) and not be a Longarm
+// user's name unless the node is a device of that very user
+// (nodeNameReservedLocked). Audited.
+func (h *Hub) RenameNode(by string, v tenancy.Caller, admin bool, target, newName string) (*pb.NodeInfo, error) {
 	if err := checkNewName(newName); err != nil {
 		return nil, err
 	}
 	h.certMu.Lock() // no renewal with the old name in between
 	defer h.certMu.Unlock()
 	h.mu.Lock()
-	visible := func(n *node) bool { return true }
+	visible := func(n *node) bool { return userNodeRole(n.rec.Role) && h.visibleNodeLocked(v, n) }
 	what := "node"
 	if !admin {
-		visible = func(n *node) bool { return isWorker(n) && h.mayUseLocked(user, n) }
+		visible = func(n *node) bool { return isWorker(n) && h.visibleNodeLocked(v, n) }
 		what = "worker"
 	}
 	n, err := h.resolveLocked(target, visible, what)
@@ -352,6 +390,16 @@ func (h *Hub) RenameNode(by, user string, admin bool, target, newName string) (*
 		return nil, err
 	}
 	old := n.rec.Name
+	user := n.rec.Owner // whose machine it is
+	if !isWorker(n) {
+		user = nodeUser(n.rec)
+	}
+	mayRename := v.Admin || // one user (no multi-tenancy): as before
+		user == v.User && v.User != "" || // the caller's own machine
+		admin && isWorker(n) && n.rec.Owner == "" // a fleet worker
+	if !admin && !isWorker(n) {
+		mayRename = false
+	}
 	if n.rec.Role != string(pki.RoleWorker) {
 		// the user the device acts as must survive the new name: pinned
 		// (a device whose user is its name and can't be written into a
@@ -363,12 +411,12 @@ func (h *Hub) RenameNode(by, user string, admin bool, target, newName string) (*
 	}
 	fail := func(err error) (*pb.NodeInfo, error) {
 		h.mu.Unlock()
-		h.auditHub(by, "nodes/rename", map[string]any{"id": n.rec.ID, "old_name": old, "new_name": newName, "error": errString(err)})
+		h.auditHub(by, "nodes/rename", renameAudit(n.rec, old, newName, err))
 		return nil, err
 	}
 	switch {
-	case !admin && n.rec.Owner != user:
-		return fail(status.Errorf(codes.PermissionDenied, "worker %s belongs to %s", old, ownerName(n.rec.Owner)))
+	case !mayRename:
+		return fail(status.Errorf(codes.PermissionDenied, "%s %s belongs to %s", what, old, ownerName(user)))
 	case n.rec.State == stateRevoked:
 		return fail(status.Errorf(codes.FailedPrecondition, "node %s (%s) is revoked", old, nodeid.Short(n.rec.ID)))
 	case old == newName:
@@ -377,7 +425,14 @@ func (h *Hub) RenameNode(by, user string, admin bool, target, newName string) (*
 		return info, nil
 	}
 	if o := h.nameTakenLocked(newName, n.rec.ID); o != nil {
-		return fail(status.Errorf(codes.AlreadyExists, "the name %q is taken by %s %s (%s)", newName, o.rec.Role, o.rec.Name, nodeid.Short(o.rec.ID)))
+		if !userNodeRole(o.rec.Role) || h.visibleNodeLocked(v, o) {
+			return fail(status.Errorf(codes.AlreadyExists, "the name %q is taken by %s %s (%s)", newName, o.rec.Role, o.rec.Name, nodeid.Short(o.rec.ID)))
+		}
+		// another user's machine: that the name is taken, nothing more
+		return fail(status.Errorf(codes.AlreadyExists, "the name %q is taken", newName))
+	}
+	if h.nodeNameReservedLocked(newName, n.rec.Role, user) {
+		return fail(errNameReserved(newName))
 	}
 	if n.rec.CertName == "" {
 		n.rec.CertName = old // what its certificate says until it renews
@@ -400,10 +455,25 @@ func (h *Hub) RenameNode(by, user string, admin bool, target, newName string) (*
 	h.publishNodeLocked(n, fmt.Sprintf("renamed from %s by %s", old, by))
 	info := h.nodeInfoLocked(n)
 	h.mu.Unlock()
-	h.auditHub(by, "nodes/rename", map[string]any{"id": rec.ID, "role": rec.Role, "old_name": old, "new_name": newName, "owner": rec.Owner})
+	h.auditHub(by, "nodes/rename", renameAudit(&rec, old, newName, nil))
 	h.log.Info("node renamed", "id", rec.ID, "old", old, "new", newName, "by", by)
 	h.event(context.Background(), "node.renamed", map[string]string{"role": rec.Role})
 	return info, nil
+}
+
+// renameAudit is the audit record of a rename: owner (workers) or user
+// (devices) attribute it to the machine's user (auditHub).
+func renameAudit(r *store.Node, old, newName string, err error) map[string]any {
+	m := map[string]any{"id": r.ID, "role": r.Role, "old_name": old, "new_name": newName}
+	if r.Role == string(pki.RoleWorker) {
+		m["owner"] = r.Owner
+	} else {
+		m["user"] = nodeUser(r)
+	}
+	if err != nil {
+		m["error"] = err.Error()
+	}
+	return m
 }
 
 // renamedLocked follows a rename: a worker that follows renames is asked

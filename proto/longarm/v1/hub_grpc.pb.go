@@ -9,7 +9,8 @@
 // Authorization is by the certificate role, like longarmd:
 //   Enroll           no certificate needed (the join code is the credential)
 //   HubNode.Connect  worker
-//   HubNode.Renew    any enrolled role
+//   HubNode.Renew    any enrolled role (and relay)
+//   HubNode.RelaySync relay (an external longarm-relay)
 //   Fleet            client, admin (ListNodes also worker)
 //   HubAdmin         admin
 //   Fleet.ReportLinks / Links / History  client, admin
@@ -370,9 +371,10 @@ var Enroll_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	HubNode_Connect_FullMethodName = "/longarm.v1.HubNode/Connect"
-	HubNode_Renew_FullMethodName   = "/longarm.v1.HubNode/Renew"
-	HubNode_Leave_FullMethodName   = "/longarm.v1.HubNode/Leave"
+	HubNode_Connect_FullMethodName   = "/longarm.v1.HubNode/Connect"
+	HubNode_Renew_FullMethodName     = "/longarm.v1.HubNode/Renew"
+	HubNode_Leave_FullMethodName     = "/longarm.v1.HubNode/Leave"
+	HubNode_RelaySync_FullMethodName = "/longarm.v1.HubNode/RelaySync"
 )
 
 // HubNodeClient is the client API for HubNode service.
@@ -392,6 +394,15 @@ type HubNodeClient interface {
 	// revoked, it disappears from scheduling); used by longarmd leave / longarm leave and
 	// the uninstallers.
 	Leave(ctx context.Context, in *LeaveRequest, opts ...grpc.CallOption) (*LeaveResponse, error)
+	// RelaySync is an external longnet relay's subscription (role relay, a
+	// longarm-relay started with --hub): the relay registers its public
+	// endpoints (the hub advertises them to nodes as part of the relay set)
+	// and receives what it enforces without asking the hub per session: the
+	// revocation list and the worker pairs it may relay between (port links).
+	// The hub sends the full policy at once, on every change and at least
+	// every minute; the relay keeps the last one (on disk) and keeps relaying
+	// while the hub is away (pairs for RelayPolicy.ttl).
+	RelaySync(ctx context.Context, in *RelaySyncRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RelayPolicy], error)
 }
 
 type hubNodeClient struct {
@@ -435,6 +446,25 @@ func (c *hubNodeClient) Leave(ctx context.Context, in *LeaveRequest, opts ...grp
 	return out, nil
 }
 
+func (c *hubNodeClient) RelaySync(ctx context.Context, in *RelaySyncRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RelayPolicy], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &HubNode_ServiceDesc.Streams[1], HubNode_RelaySync_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[RelaySyncRequest, RelayPolicy]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HubNode_RelaySyncClient = grpc.ServerStreamingClient[RelayPolicy]
+
 // HubNodeServer is the server API for HubNode service.
 // All implementations must embed UnimplementedHubNodeServer
 // for forward compatibility.
@@ -452,6 +482,15 @@ type HubNodeServer interface {
 	// revoked, it disappears from scheduling); used by longarmd leave / longarm leave and
 	// the uninstallers.
 	Leave(context.Context, *LeaveRequest) (*LeaveResponse, error)
+	// RelaySync is an external longnet relay's subscription (role relay, a
+	// longarm-relay started with --hub): the relay registers its public
+	// endpoints (the hub advertises them to nodes as part of the relay set)
+	// and receives what it enforces without asking the hub per session: the
+	// revocation list and the worker pairs it may relay between (port links).
+	// The hub sends the full policy at once, on every change and at least
+	// every minute; the relay keeps the last one (on disk) and keeps relaying
+	// while the hub is away (pairs for RelayPolicy.ttl).
+	RelaySync(*RelaySyncRequest, grpc.ServerStreamingServer[RelayPolicy]) error
 	mustEmbedUnimplementedHubNodeServer()
 }
 
@@ -470,6 +509,9 @@ func (UnimplementedHubNodeServer) Renew(context.Context, *RenewRequest) (*RenewR
 }
 func (UnimplementedHubNodeServer) Leave(context.Context, *LeaveRequest) (*LeaveResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Leave not implemented")
+}
+func (UnimplementedHubNodeServer) RelaySync(*RelaySyncRequest, grpc.ServerStreamingServer[RelayPolicy]) error {
+	return status.Error(codes.Unimplemented, "method RelaySync not implemented")
 }
 func (UnimplementedHubNodeServer) mustEmbedUnimplementedHubNodeServer() {}
 func (UnimplementedHubNodeServer) testEmbeddedByValue()                 {}
@@ -535,6 +577,17 @@ func _HubNode_Leave_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HubNode_RelaySync_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(RelaySyncRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(HubNodeServer).RelaySync(m, &grpc.GenericServerStream[RelaySyncRequest, RelayPolicy]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HubNode_RelaySyncServer = grpc.ServerStreamingServer[RelayPolicy]
+
 // HubNode_ServiceDesc is the grpc.ServiceDesc for HubNode service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -557,6 +610,11 @@ var HubNode_ServiceDesc = grpc.ServiceDesc{
 			Handler:       _HubNode_Connect_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
+		},
+		{
+			StreamName:    "RelaySync",
+			Handler:       _HubNode_RelaySync_Handler,
+			ServerStreams: true,
 		},
 	},
 	Metadata: "longarm/v1/hub.proto",
@@ -1566,11 +1624,13 @@ const (
 	HubAdmin_ToolchainApply_FullMethodName = "/longarm.v1.HubAdmin/ToolchainApply"
 	HubAdmin_TailnetStatus_FullMethodName  = "/longarm.v1.HubAdmin/TailnetStatus"
 	HubAdmin_TailnetRekey_FullMethodName   = "/longarm.v1.HubAdmin/TailnetRekey"
+	HubAdmin_Relays_FullMethodName         = "/longarm.v1.HubAdmin/Relays"
 	HubAdmin_PutUser_FullMethodName        = "/longarm.v1.HubAdmin/PutUser"
 	HubAdmin_ListUsers_FullMethodName      = "/longarm.v1.HubAdmin/ListUsers"
 	HubAdmin_RemoveUser_FullMethodName     = "/longarm.v1.HubAdmin/RemoveUser"
 	HubAdmin_SetTeam_FullMethodName        = "/longarm.v1.HubAdmin/SetTeam"
 	HubAdmin_ListTeams_FullMethodName      = "/longarm.v1.HubAdmin/ListTeams"
+	HubAdmin_FleetSummary_FullMethodName   = "/longarm.v1.HubAdmin/FleetSummary"
 	HubAdmin_RenameNode_FullMethodName     = "/longarm.v1.HubAdmin/RenameNode"
 )
 
@@ -1616,6 +1676,9 @@ type HubAdminClient interface {
 	// with a fresh key: pushed to an online worker at once, otherwise on its
 	// next hub session (clients: their next hub contact).
 	TailnetRekey(ctx context.Context, in *NodeRequest, opts ...grpc.CallOption) (*TailnetNodeStatus, error)
+	// Relays lists the relay set (external relays: connected, last seen) and
+	// how many nodes use it (longarm admin relays).
+	Relays(ctx context.Context, in *RelaysRequest, opts ...grpc.CallOption) (*RelaysResponse, error)
 	// Users, teams and quotas (multi-tenancy, docs/security.md).
 	PutUser(ctx context.Context, in *PutUserRequest, opts ...grpc.CallOption) (*PutUserResponse, error)
 	ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error)
@@ -1624,6 +1687,11 @@ type HubAdminClient interface {
 	RemoveUser(ctx context.Context, in *RemoveUserRequest, opts ...grpc.CallOption) (*RemoveUserResponse, error)
 	SetTeam(ctx context.Context, in *SetTeamRequest, opts ...grpc.CallOption) (*ListTeamsResponse, error)
 	ListTeams(ctx context.Context, in *ListTeamsRequest, opts ...grpc.CallOption) (*ListTeamsResponse, error)
+	// FleetSummary is the admins' only fleet-wide view of machines: per user
+	// counts by role and online state, anonymous rows (role, state, version,
+	// OS, last seen) and a version histogram - never names, IDs, host names,
+	// labels, metrics, processes, sessions or jobs. Audited.
+	FleetSummary(ctx context.Context, in *FleetSummaryRequest, opts ...grpc.CallOption) (*FleetSummaryResponse, error)
 	// RenameNode changes any node's display name (it keeps its ID). Audited.
 	RenameNode(ctx context.Context, in *RenameNodeRequest, opts ...grpc.CallOption) (*NodeInfo, error)
 }
@@ -1848,6 +1916,16 @@ func (c *hubAdminClient) TailnetRekey(ctx context.Context, in *NodeRequest, opts
 	return out, nil
 }
 
+func (c *hubAdminClient) Relays(ctx context.Context, in *RelaysRequest, opts ...grpc.CallOption) (*RelaysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RelaysResponse)
+	err := c.cc.Invoke(ctx, HubAdmin_Relays_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *hubAdminClient) PutUser(ctx context.Context, in *PutUserRequest, opts ...grpc.CallOption) (*PutUserResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PutUserResponse)
@@ -1892,6 +1970,16 @@ func (c *hubAdminClient) ListTeams(ctx context.Context, in *ListTeamsRequest, op
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListTeamsResponse)
 	err := c.cc.Invoke(ctx, HubAdmin_ListTeams_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hubAdminClient) FleetSummary(ctx context.Context, in *FleetSummaryRequest, opts ...grpc.CallOption) (*FleetSummaryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FleetSummaryResponse)
+	err := c.cc.Invoke(ctx, HubAdmin_FleetSummary_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1950,6 +2038,9 @@ type HubAdminServer interface {
 	// with a fresh key: pushed to an online worker at once, otherwise on its
 	// next hub session (clients: their next hub contact).
 	TailnetRekey(context.Context, *NodeRequest) (*TailnetNodeStatus, error)
+	// Relays lists the relay set (external relays: connected, last seen) and
+	// how many nodes use it (longarm admin relays).
+	Relays(context.Context, *RelaysRequest) (*RelaysResponse, error)
 	// Users, teams and quotas (multi-tenancy, docs/security.md).
 	PutUser(context.Context, *PutUserRequest) (*PutUserResponse, error)
 	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
@@ -1958,6 +2049,11 @@ type HubAdminServer interface {
 	RemoveUser(context.Context, *RemoveUserRequest) (*RemoveUserResponse, error)
 	SetTeam(context.Context, *SetTeamRequest) (*ListTeamsResponse, error)
 	ListTeams(context.Context, *ListTeamsRequest) (*ListTeamsResponse, error)
+	// FleetSummary is the admins' only fleet-wide view of machines: per user
+	// counts by role and online state, anonymous rows (role, state, version,
+	// OS, last seen) and a version histogram - never names, IDs, host names,
+	// labels, metrics, processes, sessions or jobs. Audited.
+	FleetSummary(context.Context, *FleetSummaryRequest) (*FleetSummaryResponse, error)
 	// RenameNode changes any node's display name (it keeps its ID). Audited.
 	RenameNode(context.Context, *RenameNodeRequest) (*NodeInfo, error)
 	mustEmbedUnimplementedHubAdminServer()
@@ -2030,6 +2126,9 @@ func (UnimplementedHubAdminServer) TailnetStatus(context.Context, *TailnetStatus
 func (UnimplementedHubAdminServer) TailnetRekey(context.Context, *NodeRequest) (*TailnetNodeStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method TailnetRekey not implemented")
 }
+func (UnimplementedHubAdminServer) Relays(context.Context, *RelaysRequest) (*RelaysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Relays not implemented")
+}
 func (UnimplementedHubAdminServer) PutUser(context.Context, *PutUserRequest) (*PutUserResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PutUser not implemented")
 }
@@ -2044,6 +2143,9 @@ func (UnimplementedHubAdminServer) SetTeam(context.Context, *SetTeamRequest) (*L
 }
 func (UnimplementedHubAdminServer) ListTeams(context.Context, *ListTeamsRequest) (*ListTeamsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListTeams not implemented")
+}
+func (UnimplementedHubAdminServer) FleetSummary(context.Context, *FleetSummaryRequest) (*FleetSummaryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FleetSummary not implemented")
 }
 func (UnimplementedHubAdminServer) RenameNode(context.Context, *RenameNodeRequest) (*NodeInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method RenameNode not implemented")
@@ -2411,6 +2513,24 @@ func _HubAdmin_TailnetRekey_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HubAdmin_Relays_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RelaysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HubAdminServer).Relays(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HubAdmin_Relays_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HubAdminServer).Relays(ctx, req.(*RelaysRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HubAdmin_PutUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PutUserRequest)
 	if err := dec(in); err != nil {
@@ -2497,6 +2617,24 @@ func _HubAdmin_ListTeams_Handler(srv interface{}, ctx context.Context, dec func(
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HubAdminServer).ListTeams(ctx, req.(*ListTeamsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HubAdmin_FleetSummary_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FleetSummaryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HubAdminServer).FleetSummary(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HubAdmin_FleetSummary_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HubAdminServer).FleetSummary(ctx, req.(*FleetSummaryRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2599,6 +2737,10 @@ var HubAdmin_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _HubAdmin_TailnetRekey_Handler,
 		},
 		{
+			MethodName: "Relays",
+			Handler:    _HubAdmin_Relays_Handler,
+		},
+		{
 			MethodName: "PutUser",
 			Handler:    _HubAdmin_PutUser_Handler,
 		},
@@ -2617,6 +2759,10 @@ var HubAdmin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListTeams",
 			Handler:    _HubAdmin_ListTeams_Handler,
+		},
+		{
+			MethodName: "FleetSummary",
+			Handler:    _HubAdmin_FleetSummary_Handler,
 		},
 		{
 			MethodName: "RenameNode",

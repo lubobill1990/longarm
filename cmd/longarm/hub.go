@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
@@ -98,7 +100,7 @@ func (s *session) hubDown(err error) {
 			os.Remove(tmp)
 		}
 		if !quietHub {
-			fmt.Fprintf(os.Stderr, "longarm: hub %s unreachable (%s); talking to workers directly\n", s.cfg.Hub.Address, oneLine(err))
+			fmt.Fprintf(os.Stderr, "longarm: hub %s unavailable (%s); direct connections to workers still work (known workers from the cache; placement, sign-in and new links wait for the hub)\n", s.cfg.Hub.Address, oneLine(err))
 		}
 		telemetry.Event(context.Background(), "hub.unreachable", map[string]string{"error": client.ErrClass(err.Error()),
 			"grpc_code": status.Code(err).String()}, nil)
@@ -138,7 +140,7 @@ func (s *session) loadHubState() {
 			s.hubErr, s.hubErrAt = errors.New(st.Error), st.Down
 		}
 		s.hubMu.Unlock()
-		s.hubStateNote = fmt.Sprintf("longarm: hub %s was unreachable %s ago (%s); talking to workers directly (next try in %s)",
+		s.hubStateNote = fmt.Sprintf("longarm: hub %s was unavailable %s ago (%s); direct connections to workers still work (next try in %s)",
 			s.cfg.Hub.Address, age.Round(time.Second), st.Error, (hubRetryAfter - age).Round(time.Second))
 	})
 }
@@ -255,7 +257,11 @@ func (s *session) hubNodes(ctx context.Context, all bool) ([]*pb.NodeInfo, bool)
 	if !all {
 		s.saveCache(resp.Nodes)
 	}
-	s.renewOnce.Do(func() { s.maybeRenew(ctx, h) })
+	s.renewOnce.Do(func() {
+		if who := s.maybeRenew(ctx, h); who != nil && noticeOK {
+			maybeUpdateNotice(os.Stderr, s.cfg.Dir, who, s.cfg.Hub.Address, time.Now())
+		}
+	})
 	return resp.Nodes, true
 }
 
@@ -264,7 +270,7 @@ func (s *session) saveCache(nodes []*pb.NodeInfo) {
 	for _, n := range nodes {
 		slim := &pb.NodeInfo{Name: n.Name, Endpoints: n.Endpoints, Labels: n.Labels, Os: n.Os, Arch: n.Arch,
 			Mirrors: n.Mirrors, WarmRepos: n.WarmRepos, State: n.State, Id: n.Id, CertName: n.CertName, Owner: n.Owner,
-			CompanionId: n.CompanionId}
+			CompanionId: n.CompanionId, AdminWorker: n.AdminWorker, Companion: n.Companion}
 		b, err := protojson.Marshal(slim)
 		if err == nil {
 			c.Nodes = append(c.Nodes, b)
@@ -322,7 +328,13 @@ func (s *session) knownWorkers(ctx context.Context) []client.Worker {
 		if seen[n.Name] || n.State == "revoked" || n.State == "pending" {
 			continue
 		}
-		if w, ok := workerFromNode(n); ok {
+		w, ok := workerFromNode(n)
+		if !ok { // listed all the same (ls, completion); dialing says why it fails
+			all := proto.Clone(n).(*pb.NodeInfo)
+			all.Hostname = "" // every endpoint, loopback ones too
+			w, ok = client.WorkerFromNode(all)
+		}
+		if ok {
 			w.TrustAny = true // every known worker (listings): no target to hold it to
 			out = append(out, w)
 			seen[n.Name] = true
@@ -366,6 +378,10 @@ func (s *session) worker(target string) (client.Worker, error) {
 				return client.Worker{}, offlineError(n, now)
 			}
 			w, ok := workerFromNode(n)
+			if !ok && len(n.Endpoints) > 0 {
+				return client.Worker{}, fmt.Errorf("worker %s listens only on its own machine (%s): unreachable from here; "+
+					"an updated longarmd there also listens on the hub's relay", n.Name, strings.Join(n.Endpoints, ", "))
+			}
 			if !ok {
 				return client.Worker{}, fmt.Errorf("worker %s has no usable endpoint (%v)", n.Name, n.Endpoints)
 			}
@@ -440,24 +456,25 @@ func (s *session) refreshNodes(force bool) {
 // maybeRenew renews this client's certificate through the hub when it
 // expires within the hub's renew window or a new endorsement waits for it
 // (longarm trust init|accept|import-key), and follows the hub's tailnet.
-func (s *session) maybeRenew(ctx context.Context, h *hubclient.Conn) {
+func (s *session) maybeRenew(ctx context.Context, h *hubclient.Conn) *pb.WhoamiResponse {
 	b := s.dialer.Bundle()
 	cctx, cancel := context.WithTimeout(ctx, hubTimeout)
 	defer cancel()
-	who, err := h.Fleet().Whoami(cctx, &pb.WhoamiRequest{})
+	who, err := h.Fleet().Whoami(cctx, &pb.WhoamiRequest{Os: runtime.GOOS, Arch: runtime.GOARCH})
 	if err != nil {
-		return
+		return nil
 	}
 	s.syncTailnet(ctx, h, who.Tailnet)
 	if !hubclient.NeedsRenewal(b.Leaf(), who.RenewBefore.AsDuration()) && !client.TrustStore(s.cfg.Dir).RenewalRequested() {
-		return
+		return who
 	}
 	leaf, err := s.renewCert(cctx, h)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, renewFailedNote(b.Leaf().NotAfter, time.Now(), oneLine(err)))
-		return
+		return who
 	}
 	fmt.Fprintf(os.Stderr, "longarm: certificate renewed (valid until %s)\n", leaf.NotAfter.Local().Format(time.RFC3339))
+	return who
 }
 
 // renewCert renews this client's certificate through h now. The new

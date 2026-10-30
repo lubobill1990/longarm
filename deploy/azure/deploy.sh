@@ -9,6 +9,8 @@
 #   ./deploy.sh --name myhub --teardown                                  # delete everything
 #   ./deploy.sh --name myhub --location eastasia --build-in-acr          # image built from this checkout in your ACR
 #   ./deploy.sh --name myhub --location eastasia --storage-auth identity # no storage account keys
+#   ./deploy.sh --name myhub --headscale --recreate                      # + a Headscale sidecar (tailnet)
+#   ./deploy.sh --name myhub --relay                                     # + an external relay (relay.sh)
 #
 # Re-running is an upgrade: the template is applied again with the running
 # hub's settings (image, size, panel, ...) unless an option changes them,
@@ -21,15 +23,19 @@ AZ=${LONGARM_DEPLOY_AZ:-az}
 # command: "$AZ" is often "az", which would call this function again
 az() { command "$AZ" "$@"; }
 template=$here/azuredeploy.json
+# the third-party images (sidecars), pinned by digest; with --acr copied into
+# the registry as mirror/<repository>:<digest hex>
+mirror_list=$here/mirror-images.txt
 
 # empty = not given (a re-run keeps the running hub's value)
 name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=false yes=false
 recreate=false admin_code=false subscription='' acme_email='' registry_user='' tailscale_secret_file=''
 entra_tenant='' entra_client='' entra_admins='' entra_web='' entra_apps='' gate_free_gb='' release_public_key=''
-build_in_acr=false stun_servers='' storage_auth='' acr='' timeout=1200 stuck_timeout=600
-telemetry='' diagnostics=''
-# seconds between status polls (tests make it short)
-poll=${LONGARM_DEPLOY_POLL_SECONDS:-10}
+build_in_acr=false stun_servers='' storage_auth='' acr='' timeout=1200 stuck_timeout=600 restore_timeout=1200
+telemetry='' diagnostics='' headscale='' public_derp='' skip_image_check=false relay=false relay_remove=false
+# seconds between status polls (tests make it short; each az call takes a
+# second or two on its own)
+poll=${LONGARM_DEPLOY_POLL_SECONDS:-5}
 
 usage() {
 	cat <<'EOF'
@@ -37,7 +43,8 @@ usage: deploy.sh --name NAME [--location REGION] [options]
 
   --name NAME              hub name = DNS label: NAME.REGION.azurecontainer.io
   --location REGION        Azure region, e.g. eastasia, westeurope (needed on the first run)
-  --size small|medium      small = 1 vCPU / 1.5 GB (default), medium = 2 vCPU / 3 GB
+  --size small|medium      small = 1 vCPU / 1.5 GB (default), medium = 2 vCPU / 3 GB (README
+                           "Replica size and memory")
   --no-panel / --panel     without / with the HTTPS panel (Caddy sidecar on 80/443; default with)
   --resource-group RG      default: NAME-rg
   --image IMAGE            longarm-hub image (first run: the template's :latest; re-run: the running one)
@@ -45,6 +52,10 @@ usage: deploy.sh --name NAME [--location REGION] [options]
   --build-in-acr           build the image from this checkout with az acr build in an Azure Container
                            Registry in the resource group (created once; no docker needed) and deploy it
   --tailscale-secret-file F  Tailscale OAuth client secret for the hub's tailnet provider
+  --headscale / --no-headscale  a self-hosted Tailscale control plane (Headscale) as a sidecar,
+                           served by the hub on https://<fqdn>; the hub's tailnet provider (needs
+                           the panel; switching it on or off needs --recreate; README "Headscale")
+  --headscale-public-derp on|off  also hand nodes Tailscale's public DERP relays (default off)
   --acme-email EMAIL       Let's Encrypt contact for the panel certificate
   --entra-tenant ID --entra-client ID   Sign in with Microsoft Entra ID (longarm login,
                            panel): the app registration (docs/usage.md)
@@ -57,19 +68,33 @@ usage: deploy.sh --name NAME [--location REGION] [options]
                            refuses uploads whose signature doesn't verify (tail -1 longarm-release.pub)
   --stun-servers LIST      external STUN servers the hub advertises (host:port,...; "none" = only the
                            hub's own; default: the template's public ones, see README "Direct connections")
-  --log-analytics          send container logs to a Log Analytics workspace
+  --log-analytics          send container logs to Log Analytics (with --telemetry its workspace, else
+                           one of their own): they keep the logs of crashed starts, which ACI drops
   --storage-auth key|identity  key (default): storage account keys; identity: a managed
                            identity, shared key access off (subscriptions whose policy denies keys)
-  --acr NAME               with identity: pull the image from this registry in the resource group
+  --acr NAME               with identity: a registry in the resource group the managed identity pulls
+                           from: the image if it is there, and the sidecars (Headscale) from its
+                           mirror/ copies of mirror-images.txt, imported before anything changes
   --telemetry              Application Insights + Log Analytics for the fleet's telemetry (docs/telemetry.md)
   --diagnostics            a blob container for uploaded diagnostic bundles (identity only; 30 days)
   --subscription ID        Azure subscription (default: az account show)
-  --recreate               delete the container group first (needed to change --size or the panel)
+  --recreate               delete the container group first (needed to change --size, the panel or
+                           --headscale). Validated first, the settings saved in the resource
+                           group's tags, and rolled back to the previous configuration if the new
+                           one fails
+  --skip-image-check       don't check that every image can be pulled before deploying
   --admin-code             print a new one-time admin join code (az container exec)
+  --relay                  deploy (or upgrade) the hub's external longnet relay: its own container
+                           group NAME-relay that keeps relayed connections up while the hub
+                           restarts (README "External relay"; takes --image, --registry-user,
+                           --stun-servers, --timeout; default image: the hub's)
+  --relay-remove           delete the external relay (the hub keeps its embedded relay)
   --teardown               delete the resource group (asks for the name unless --yes)
   --yes                    don't ask
   --timeout SECONDS        how long to wait for the hub (default 1200)
   --stuck-timeout SECONDS  give up on a container group stuck in Creating without events (default 600)
+  --restore-timeout SECONDS  while the hub's log shows its database restore running, wait
+                           up to this long after it was first seen, past --timeout (default 1200)
 EOF
 }
 
@@ -91,6 +116,9 @@ while [[ $# -gt 0 ]]; do
 	--build-in-acr) build_in_acr=true ;;
 	--stun-servers) stun_servers=${2:?}; shift ;;
 	--tailscale-secret-file) tailscale_secret_file=${2:?}; shift ;;
+	--headscale) headscale=true ;;
+	--no-headscale) headscale=false ;;
+	--headscale-public-derp) public_derp=${2:?}; shift ;;
 	--acme-email) acme_email=${2:?}; shift ;;
 	--entra-tenant) entra_tenant=${2:?}; shift ;;
 	--entra-client) entra_client=${2:?}; shift ;;
@@ -106,11 +134,15 @@ while [[ $# -gt 0 ]]; do
 	--diagnostics) diagnostics=true ;;
 	--subscription) subscription=${2:?}; shift ;;
 	--recreate) recreate=true ;;
+	--skip-image-check) skip_image_check=true ;;
 	--admin-code) admin_code=true ;;
+	--relay) relay=true ;;
+	--relay-remove) relay_remove=true ;;
 	--teardown) teardown=true ;;
 	--yes | -y) yes=true ;;
 	--timeout) timeout=${2:?}; shift ;;
 	--stuck-timeout) stuck_timeout=${2:?}; shift ;;
+	--restore-timeout) restore_timeout=${2:?}; shift ;;
 	-h | --help) usage; exit 0 ;;
 	*) usage >&2; die "unknown argument: $1" ;;
 	esac
@@ -123,6 +155,7 @@ done
 [[ -z $size || $size == small || $size == medium ]] || die "--size: small or medium"
 [[ $timeout =~ ^[0-9]+$ ]] || die "--timeout: seconds"
 [[ $stuck_timeout =~ ^[0-9]+$ ]] || die "--stuck-timeout: seconds"
+[[ $restore_timeout =~ ^[0-9]+$ ]] || die "--restore-timeout: seconds"
 [[ $poll =~ ^[0-9]+$ ]] || die "LONGARM_DEPLOY_POLL_SECONDS: seconds"
 ! $build_in_acr || [[ -z $image ]] || die "--build-in-acr builds the image: drop --image"
 # none alone, or host:port / [v6]:port entries (the hub refuses a missing
@@ -140,6 +173,12 @@ fi
 [[ -z $release_public_key || $release_public_key =~ ^RW[A-Za-z0-9+/=]{40,}$ ]] ||
 	die "--release-public-key: the minisign public key line (RW...), e.g. \"\$(tail -1 longarm-release.pub)\""
 [[ -z $tailscale_secret_file || -r $tailscale_secret_file ]] || die "--tailscale-secret-file: can't read $tailscale_secret_file"
+case $public_derp in
+'') ;;
+on) public_derp=true ;;
+off) public_derp=false ;;
+*) die "--headscale-public-derp: on or off" ;;
+esac
 rg=${rg:-$name-rg}
 
 command -v "$AZ" >/dev/null 2>&1 || die "the Azure CLI (az) is missing: https://aka.ms/azure-cli (or use Azure Cloud Shell)"
@@ -250,7 +289,7 @@ acr_login() {
 	export LONGARM_REGISTRY_PASSWORD
 }
 
-# check_stuck: dies when the container group has sat in Creating with
+# check_stuck: 1 (with what to do on stderr) when the container group has sat in Creating with
 # waiting containers and no events at all for --stuck-timeout seconds.
 # Seen once on a real run (both containers "Waiting", no events, 30+ min,
 # while the same deployment with --recreate came up in 3.5 min).
@@ -278,10 +317,73 @@ the template (seen once: the same deployment came up in 3.5 min after a recreate
   without the panel: ./deploy.sh --name $name --no-panel --recreate
   look:             az container show -g $rg -n $name -o table
 EOM
-			exit 1
+			return 1
 		fi
 	else
 		stuck_since=''
+	fi
+}
+
+# exit_meaning CODE: what a hub container's exit code says
+exit_meaning() {
+	case $1 in
+	137) echo " = killed by SIGKILL: out of memory? (the restore of a large replica: README \"Replica size and memory\"; --size medium)" ;;
+	143) echo " = stopped by SIGTERM" ;;
+	1) echo " = the start failed (the hub's log says why)" ;;
+	esac
+}
+
+# crashed_logs: where the log of a crashed start is (ACI keeps only the
+# current start's)
+crashed_logs() {
+	local s="the logs of crashed starts are gone with them: --log-analytics keeps them (README \"Logs of crashed starts\")"
+	if [[ $storage_auth == identity && $diagnostics == true ]]; then
+		s+="; failed restores are recorded in the diagnostics container: az storage blob list --auth-mode login --account-name ${account:-<storage account>} -c diagnostics --prefix hub-start-failures/ -o table"
+	fi
+	echo "$s"
+}
+
+# check_crash: the hub container's restarts since this deployment (ACI
+# restarts a container that exits, and drops its log). Prints each new one
+# with the exit code of the start before; 1 = a crash loop (crash_limit
+# restarts, or CrashLoopBackOff after 2) and $crash_msg says so.
+# crash_note: the restarts so far, for other messages.
+crash_limit=3
+crash_reset() { crash_base='' crash_seen=0 crash_msg='' crash_note='' crash_checked=''; }
+crash_reset
+crash_checked=''
+check_crash() {
+	local info n st detail code pdetail finish
+	# at most every poll (an az call takes a second or two)
+	[[ -z $crash_checked ]] || ((SECONDS - crash_checked >= poll)) || return 0
+	crash_checked=$SECONDS
+	info=$(az container show -g "$rg" -n "$name" -o tsv \
+		--query "containers[?name=='hub'] | [0].instanceView.[restartCount, currentState.state, currentState.detailStatus, previousState.exitCode, previousState.detailStatus, previousState.finishTime]" \
+		2>/dev/null | tr -d '\r' | tr '\t' '\n' | sed 's/^None$//') || return 0
+	{
+		read -r n || true
+		read -r st || true
+		read -r detail || true
+		read -r code || true
+		read -r pdetail || true
+		read -r finish || true
+	} <<<"$info"
+	[[ $n =~ ^[0-9]+$ ]] || return 0
+	# the first look, or ACI started counting anew (a restart of the group)
+	if [[ -z $crash_base ]] || ((n < crash_base)); then
+		crash_base=$n
+		crash_seen=0
+		return 0
+	fi
+	((n - crash_base > crash_seen)) || return 0
+	crash_seen=$((n - crash_base))
+	local last
+	last="exit code ${code:-unknown}$(exit_meaning "$code")${pdetail:+, $pdetail}${finish:+, at $finish}"
+	phase "hub container restarted (${crash_seen} since this deployment; now ${st:-unknown}${detail:+: $detail}): the start before ended with $last"
+	crash_note=" (restarted $crash_seen times; the last start ended with $last; $(crashed_logs))"
+	if ((crash_seen >= crash_limit)) || [[ $crash_seen -ge 2 && $detail == *CrashLoopBackOff* ]]; then
+		crash_msg="the hub is crash-looping: ACI restarted it $crash_seen times since this deployment${detail:+ (${detail%%:*})}; its last start ended with $last. $(crashed_logs); the current start: $logs_hint"
+		return 1
 	fi
 }
 
@@ -308,6 +410,13 @@ if $admin_code; then
 	exit 0
 fi
 
+if $relay || $relay_remove; then
+	! $recreate && ! $build_in_acr && [[ -z $size && -z $panel && -z $headscale ]] ||
+		die "--relay deploys the external relay only: --recreate, --build-in-acr, --size, --panel and --headscale are hub options"
+	# shellcheck source=/dev/null # relay.sh: checked on its own
+	. "$here/relay.sh" # exits
+fi
+
 [[ -f $template ]] || die "$template is missing (run from a checkout of the repository)"
 
 if rg_exists; then
@@ -319,99 +428,316 @@ else
 fi
 ensure_providers Microsoft.ContainerInstance Microsoft.Storage
 
-# A re-run keeps the running hub's settings. Secrets can't be read back
-# from ACI: a hub that has them needs them again.
-cur=$(az container show -g "$rg" -n "$name" -o tsv --query "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId, containers[0].environmentVariables[?name=='LONGARM_HUB_RELAY_STUN_ADVERTISE'].value | [0]]" 2>/dev/null || true)
-cur_image='' cur_registry='' prev_boot='' account='' key='' build_acr=''
-if [[ -n $cur ]]; then
+# A re-run keeps the hub's settings (prev_*). Their source, in this order:
+#   1. the container group (the running hub's image and environment)
+#   2. the snapshot this script tags the resource group with before it
+#      deletes the group (--recreate), until a deployment succeeds again
+#   3. the parameters of the last successful deployment (ARM keeps them)
+# Without any of them, a resource group that has a hub's storage needs the
+# settings given explicitly: defaulting would switch storage auth or drop
+# the identity (seen on a real run: a retry after a failed --recreate fell
+# back to storage keys, which the subscription's policy denies).
+# Secrets can't be read back from any of them: a hub that has them needs
+# them again.
+prev_src='' prev_image='' prev_size='' prev_panel='' prev_auth='' prev_acr='' prev_logs='' prev_telemetry=''
+prev_diagnostics='' prev_stun='' prev_gate='' prev_relkey='' prev_entra_tenant='' prev_entra_client=''
+prev_entra_admins='' prev_entra_web='' prev_entra_apps='' prev_headscale='' prev_public_derp=''
+prev_registry='' prev_registry_user='' prev_tailscale=''
+prev_keys='image size panel auth acr logs telemetry diagnostics stun gate relkey entra_tenant entra_client entra_admins entra_web entra_apps headscale public_derp registry registry_user tailscale'
+
+# load_prev_group: prev_* from the container group (1 = there is none)
+load_prev_group() {
+	local cur cur_cpu cur_c1 cur_env cur_logs cur_stun k v
+	cur=$(az container show -g "$rg" -n "$name" -o tsv --query "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId, containers[0].environmentVariables[?name=='LONGARM_HUB_RELAY_STUN_ADVERTISE'].value | [0]]" 2>/dev/null || true)
+	[[ -n $cur ]] || return 1
 	# one field per line; null fields are empty lines (the real az prints
 	# "None" for them in a tsv list: a hub without registry credentials)
 	{
-		read -r cur_image
+		read -r prev_image
 		read -r cur_cpu
 		read -r cur_c1
-		read -r cur_registry
+		read -r prev_registry
 		read -r cur_env
 		read -r cur_logs || true
 		read -r cur_stun || true
 	} <<<"$(printf '%s\n' "$cur" | tr -d '\r' | tr '\t' '\n' | sed 's/^None$//')"
-	cur_size=small
-	[[ ${cur_cpu%%.*} -lt 2 ]] || cur_size=medium
-	cur_panel=false
+	prev_size=small
+	[[ ${cur_cpu%%.*} -lt 2 ]] || prev_size=medium
+	prev_auth=key
+	[[ ,$cur_env, != *,LONGARM_HUB_CA_IN_DB,* ]] || prev_auth=identity
 	# the panel: Caddy (storage-auth key) or the hub on 443 (identity)
-	[[ $cur_c1 != caddy && ,$cur_env, != *,LONGARM_HUB_HTTPS,* ]] || cur_panel=true
-	cur_auth=key
-	[[ ,$cur_env, != *,LONGARM_HUB_CA_IN_DB,* ]] || cur_auth=identity
-	# a re-run keeps telemetry / diagnostics on
-	[[ -n $telemetry || ,$cur_env, != *,LONGARM_HUB_APPINSIGHTS_CONNECTION_STRING,* ]] || telemetry=true
-	[[ -n $diagnostics || ,$cur_env, != *,LONGARM_HUB_DIAG_BLOB_URL,* ]] || diagnostics=true
-	[[ -z $storage_auth || $storage_auth == "$cur_auth" ]] ||
-		die "the hub uses --storage-auth $cur_auth; switching needs a new deployment (another --name or --resource-group)"
-	storage_auth=$cur_auth
+	prev_panel=false
+	[[ $cur_c1 != caddy && ,$cur_env, != *,LONGARM_HUB_HTTPS,* ]] || prev_panel=true
 	# the registry pulled with the identity (identity mode)
-	[[ -n $acr || $cur_auth != identity || $cur_registry != *.azurecr.io ]] || acr=${cur_registry%%.*}
-	if ! $recreate; then
-		[[ -z $size || $size == "$cur_size" ]] ||
-			die "the hub is $cur_size; ACI can't resize a running container group: add --recreate (data is kept)"
-		[[ -z $panel || $panel == "$cur_panel" ]] ||
-			die "the panel is $([[ $cur_panel == true ]] && echo on || echo off); ACI can't change the ports of a running group: add --recreate (data is kept)"
-	fi
-	image=${image:-$cur_image}
-	size=${size:-$cur_size}
-	panel=${panel:-$cur_panel}
-	[[ -n $log_analytics || -z $cur_logs ]] || log_analytics=true
+	[[ $prev_auth != identity || $prev_registry != *.azurecr.io ]] || prev_acr=${prev_registry%%.*}
+	flag_of() { if [[ ,$cur_env, == *,$1,* ]]; then echo true; else echo false; fi; }
+	prev_logs=false
+	[[ -z $cur_logs ]] || prev_logs=true
+	prev_telemetry=$(flag_of LONGARM_HUB_APPINSIGHTS_CONNECTION_STRING)
+	prev_diagnostics=$(flag_of LONGARM_HUB_DIAG_BLOB_URL)
+	prev_headscale=$(flag_of LONGARM_HUB_HEADSCALE_DIR)
+	prev_public_derp=$(flag_of LONGARM_HUB_HEADSCALE_PUBLIC_DERP)
+	prev_tailscale=$(flag_of LONGARM_HUB_TAILSCALE_OAUTH_SECRET)
 	# the template sets self[,<stunServers>]; absent = a hub from before (template default)
-	if [[ -z $stun_servers ]]; then
-		case ${cur_stun:-} in
-		self) stun_servers=none ;;
-		self,*) stun_servers=${cur_stun#self,} ;;
+	case $cur_stun in
+	self) prev_stun=none ;;
+	self,*) prev_stun=${cur_stun#self,} ;;
+	esac
+	# plain environment values: the scheduler gate, the release key, Entra
+	while IFS=$'\t' read -r k v; do
+		[[ $v != None ]] || v=''
+		case $k in
+		LONGARM_HUB_SCHED_GATE_FREE_GB) prev_gate=$v ;;
+		LONGARM_HUB_RELEASES_PUBLIC_KEY) prev_relkey=$v ;;
+		LONGARM_HUB_ENTRA_TENANT_ID) prev_entra_tenant=$v ;;
+		LONGARM_HUB_ENTRA_CLIENT_ID) prev_entra_client=$v ;;
+		LONGARM_HUB_ENTRA_ADMINS) prev_entra_admins=$v ;;
+		LONGARM_HUB_ENTRA_WEB) prev_entra_web=$v ;;
+		LONGARM_HUB_ENTRA_APPS) prev_entra_apps=$v ;;
 		esac
+	done < <(az container show -g "$rg" -n "$name" -o tsv \
+		--query "containers[0].environmentVariables[?starts_with(name, 'LONGARM_HUB_ENTRA_') || name=='LONGARM_HUB_SCHED_GATE_FREE_GB' || name=='LONGARM_HUB_RELEASES_PUBLIC_KEY'].[name, value]" 2>/dev/null | tr -d '\r' || true)
+	prev_src=group
+}
+
+# prev_text: the prev_* settings as key=value lines
+prev_text() {
+	local k v
+	for k in $prev_keys; do
+		v=prev_$k
+		printf '%s=%s\n' "$k" "${!v}"
+	done
+}
+
+# prev_parse PREFIX TEXT: <PREFIX><key> from prev_text's lines
+prev_parse() {
+	local line k
+	while IFS= read -r line; do
+		k=${line%%=*}
+		[[ " $prev_keys " == *" $k "* ]] || continue
+		printf -v "$1$k" '%s' "${line#*=}"
+	done <<<"$2"
+}
+
+# The snapshot: prev_text, base64, in resource group tags of 250 characters
+# (longarm-hub-prev-0..N-1; longarm-hub-prev-n = N, 0 = none). Tags can be
+# written by anyone with Tag Contributor, so the snapshot is not trusted: it
+# only fills settings the last deployment's parameters don't have, and its
+# security-relevant settings (sec_keys) are refused when they differ from
+# that deployment's or there is no deployment to compare them with, unless
+# the operator gives them explicitly.
+sec_keys='image auth acr registry_user relkey entra_tenant entra_client entra_admins entra_web entra_apps'
+# the option that gives each security-relevant setting explicitly
+sec_option() {
+	case $1 in
+	image) echo "--image" ;; auth) echo "--storage-auth" ;; acr) echo "--acr" ;;
+	registry | registry_user) echo "--registry-user" ;; relkey) echo "--release-public-key" ;;
+	entra_tenant) echo "--entra-tenant" ;; entra_client) echo "--entra-client" ;; entra_admins) echo "--entra-admins" ;;
+	entra_web) echo "--entra-web" ;; entra_apps) echo "--entra-apps" ;; stun) echo "--stun-servers" ;;
+	esac
+}
+# sec_given KEY: the operator gave that setting on the command line
+sec_given() {
+	case $1 in
+	image) [[ -n $image ]] ;; auth) [[ -n $storage_auth ]] ;; acr) [[ -n $acr ]] ;;
+	registry | registry_user) [[ -n $registry_user ]] ;; relkey) [[ -n $release_public_key ]] ;;
+	entra_tenant) [[ -n $entra_tenant ]] ;; entra_client) [[ -n $entra_client ]] ;; entra_admins) [[ -n $entra_admins ]] ;;
+	entra_web) [[ -n $entra_web ]] ;; entra_apps) [[ -n $entra_apps ]] ;; stun) [[ -n $stun_servers ]] ;;
+	esac
+}
+# template_default PARAM: a parameter's default in azuredeploy.json
+template_default() {
+	[[ -n $1 ]] || return 0
+	sed -n "/^    \"$1\": {/,/^    }/s/^ *\"defaultValue\": \"\(.*\)\",\{0,1\}\$/\1/p" "$template" | head -n 1
+}
+rg_id=''
+snapshot_tags() {
+	local b64 i n tags=()
+	b64=$(prev_text | base64 | tr -d '\n\r')
+	n=$(((${#b64} + 249) / 250))
+	for ((i = 0; i < n; i++)); do
+		tags+=("longarm-hub-prev-$i=${b64:i*250:250}")
+	done
+	tags+=("longarm-hub-prev-n=$n" "longarm-hub-prev-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+	rg_id=${rg_id:-$(az group show -n "$rg" --query id -o tsv | tr -d '\r')}
+	az tag update --resource-id "$rg_id" --operation Merge --tags "${tags[@]}" -o none
+}
+clear_snapshot() {
+	rg_id=${rg_id:-$(az group show -n "$rg" --query id -o tsv | tr -d '\r')}
+	az tag update --resource-id "$rg_id" --operation Merge --tags "longarm-hub-prev-n=0" -o none 2>/dev/null ||
+		echo "note: the settings snapshot (resource group tag longarm-hub-prev-n) was not cleared" >&2
+}
+# load_snapshot: snap_* from the tags (1 = none)
+have_snapshot=false
+load_snapshot() {
+	local n i b64='' text
+	n=$(az group show -n "$rg" --query 'tags."longarm-hub-prev-n"' -o tsv 2>/dev/null | tr -d '\r' || true)
+	[[ $n =~ ^[1-9][0-9]*$ ]] || return 1
+	for ((i = 0; i < n; i++)); do
+		b64+=$(az group show -n "$rg" --query "tags.\"longarm-hub-prev-$i\"" -o tsv | tr -d '\r')
+	done
+	text=$(printf '%s' "$b64" | base64 -d 2>/dev/null) || return 1
+	[[ $text == *auth=* ]] || return 1
+	prev_parse snap_ "$text"
+	have_snapshot=true
+}
+
+# load_prev_deployment: prev_* from the parameters of the last successful
+# deployment of this script; hist_has lists the settings it has (absent
+# parameters: the template's defaults, or an older script)
+hist_has=''
+load_prev_deployment() {
+	local dep vals p k kind q='' i=0 v
+	dep=$(az deployment group list -g "$rg" -o tsv \
+		--query "[?properties.provisioningState=='Succeeded' && starts_with(name, 'longarm-hub-')].name" 2>/dev/null |
+		tr -d '\r' | sort | tail -n 1 || true)
+	[[ -n $dep ]] || return 1
+	# key:parameter:kind
+	local list='image:image:s size:size:s panel:enablePanel:b auth:storageAuth:s acr:acrName:s logs:enableLogAnalytics:b telemetry:enableTelemetry:b diagnostics:enableDiagnostics:b stun:stunServers:stun gate:schedulerGateFreeGb:s relkey:releasePublicKey:s entra_tenant:entraTenantId:s entra_client:entraClientId:s entra_admins:entraAdmins:s entra_web:entraWeb:s entra_apps:entraApps:s headscale:enableHeadscale:b public_derp:headscalePublicDerp:b registry:registryServer:s registry_user:registryUsername:s'
+	for k in $list; do
+		p=${k#*:}
+		p=${p%%:*}
+		q+="${q:+, }properties.parameters.$p.value, properties.parameters.$p == null"
+	done
+	vals=$(az deployment group show -g "$rg" -n "$dep" -o tsv --query "[$q]" 2>/dev/null | tr -d '\r' | tr '\t' '\n' | sed 's/^None$//') || return 1
+	local -a f=()
+	while IFS= read -r v; do f+=("$v"); done <<<"$vals"
+	for k in $list; do
+		kind=${k##*:}
+		p=${k#*:}
+		printf -v "param_${k%%:*}" '%s' "${p%%:*}"
+		v=${f[i]:-}
+		# absent: "<p> == null" is True
+		if [[ ${f[i + 1]:-} != [Tt]rue ]]; then
+			hist_has+=" ${k%%:*}"
+			case $kind in
+			b) case $v in [Tt]rue) v=true ;; *) v=false ;; esac ;;
+			stun) [[ -n $v ]] || v=none ;; # "" = none
+			esac
+			printf -v "prev_${k%%:*}" '%s' "$v"
+		fi
+		i=$((i + 2))
+	done
+	# the template's defaults where the deployment had no parameter
+	[[ -n $prev_size ]] || prev_size=small
+	for k in panel logs telemetry diagnostics headscale public_derp; do
+		v=prev_$k
+		[[ -n ${!v} ]] || printf -v "$v" '%s' false
+	done
+	[[ $prev_auth == key || $prev_auth == identity ]] || return 1
+	prev_tailscale=''
+	prev_src="deployment $dep"
+}
+
+# The source of the settings: the container group, else the last successful
+# deployment, with gaps filled from the snapshot (checked as above), else
+# the snapshot alone for what isn't security-relevant (those settings must
+# then be given), else nothing (a resource group with a hub's storage needs
+# the settings given explicitly).
+if load_prev_group; then
+	:
+else
+	load_snapshot || true
+	if load_prev_deployment; then
+		echo "the container group $name is missing: its settings come from the last successful deployment (${prev_src#deployment })"
+		if $have_snapshot; then
+			filled='' refused=''
+			for k in $prev_keys; do
+				s=snap_$k p=prev_$k
+				if [[ " $hist_has " != *" $k "* ]]; then
+					# the deployment had the template's default
+					d=param_$k
+					if [[ " $sec_keys " == *" $k "* && -n ${!s} && ${!s} != "$(template_default "${!d:-}")" ]] && ! sec_given "$k"; then
+						refused+=" $(sec_option "$k") (deployment: the template's default, snapshot: ${!s})"
+					elif [[ " $sec_keys " != *" $k "* ]]; then
+						printf -v "$p" '%s' "${!s}"
+						filled+=" $k"
+					fi
+				elif [[ " $sec_keys " == *" $k "* && ${!s} != "${!p}" ]] && ! sec_given "$k"; then
+					refused+=" $(sec_option "$k") (deployment: ${!p:-none}, snapshot: ${!s:-none})"
+				fi
+			done
+			[[ -z $refused ]] ||
+				die "the settings snapshot in the resource group's tags (longarm-hub-prev-*) differs from the last deployment in security-relevant settings - it may have been tampered with (tags are writable by Tag Contributors). Give them explicitly if the snapshot is right:$refused"
+			[[ -z $filled ]] || echo "settings the deployment had no parameter for, from the snapshot:$filled"
+		fi
+	elif $have_snapshot; then
+		echo "the container group $name is missing and there is no successful deployment: settings that aren't security-relevant come from the snapshot taken before it was deleted"
+		missing=''
+		for k in $prev_keys; do
+			s=snap_$k
+			if [[ " $sec_keys " == *" $k "* ]]; then
+				[[ -z ${!s} ]] || sec_given "$k" || missing+=" $(sec_option "$k") (snapshot: ${!s})"
+			else
+				printf -v "prev_$k" '%s' "${!s}"
+			fi
+		done
+		[[ -z $missing ]] ||
+			die "the settings snapshot (resource group tags, writable by Tag Contributors) can't be checked against a deployment: give its security-relevant settings explicitly if they are right:$missing"
+		prev_auth=$storage_auth
+		prev_src=snapshot
+	elif [[ -z $storage_auth ]] && [[ -n $(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv 2>/dev/null | tr -d '\r') ]]; then
+		die "the resource group $rg has a hub's storage, but neither a container group, a successful deployment nor a settings snapshot to read its settings from: pass them (at least --storage-auth key|identity; and --image, --entra-*, --telemetry, --diagnostics, --headscale, --release-public-key, --gate-free-gb, --stun-servers as the hub had them)"
 	fi
-	[[ ,$cur_env, != *,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,* || -n $tailscale_secret_file ]] ||
+fi
+
+cur_image='' prev_boot='' account='' key='' build_acr=''
+if [[ -n $prev_src ]]; then
+	[[ -z $storage_auth || $storage_auth == "$prev_auth" ]] ||
+		die "the hub uses --storage-auth $prev_auth; switching needs a new deployment (another --name or --resource-group)"
+	storage_auth=$prev_auth
+	[[ -n $acr ]] || acr=$prev_acr
+	if [[ $prev_src == group ]]; then
+		cur_image=$prev_image
+		if ! $recreate; then
+			[[ -z $size || $size == "$prev_size" ]] ||
+				die "the hub is $prev_size; ACI can't resize a running container group: add --recreate (data is kept)"
+			[[ -z $panel || $panel == "$prev_panel" ]] ||
+				die "the panel is $([[ $prev_panel == true ]] && echo on || echo off); ACI can't change the ports of a running group: add --recreate (data is kept)"
+			[[ -z $headscale || $headscale == "$prev_headscale" ]] ||
+				die "the Headscale sidecar is $([[ $prev_headscale == true ]] && echo on || echo off); ACI can't add or remove containers of a running group: add --recreate (data is kept)"
+		fi
+	fi
+	image=${image:-$prev_image}
+	size=${size:-$prev_size}
+	panel=${panel:-$prev_panel}
+	headscale=${headscale:-$prev_headscale}
+	public_derp=${public_derp:-$prev_public_derp}
+	log_analytics=${log_analytics:-$prev_logs}
+	telemetry=${telemetry:-$prev_telemetry}
+	diagnostics=${diagnostics:-$prev_diagnostics}
+	stun_servers=${stun_servers:-$prev_stun}
+	gate_free_gb=${gate_free_gb:-$prev_gate}
+	release_public_key=${release_public_key:-$prev_relkey}
+	if [[ -z $entra_tenant ]]; then
+		entra_tenant=$prev_entra_tenant
+		entra_client=${entra_client:-$prev_entra_client}
+		entra_admins=${entra_admins:-$prev_entra_admins}
+		entra_web=${entra_web:-$prev_entra_web}
+		entra_apps=${entra_apps:-$prev_entra_apps}
+	fi
+	[[ $prev_tailscale != true || -n $tailscale_secret_file || $headscale == true ]] ||
 		die "the hub has a Tailscale OAuth secret, which can't be read back: pass --tailscale-secret-file again"
 	# this start's bootstrap.env must differ from the running one's (boot_id)
-	if [[ $storage_auth == identity ]]; then
-		if fetch_bootstrap_log; then
-			prev_boot=$(bootstrap_value boot_id)
-		fi
-	else
-		account=$(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv | tr -d '\r' | sed -n 1p)
-		if [[ -n $account ]]; then
-			key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv | tr -d '\r')
-			if fetch_bootstrap "$account" "$key"; then
+	if [[ $prev_src == group ]]; then
+		if [[ $storage_auth == identity ]]; then
+			if fetch_bootstrap_log; then
 				prev_boot=$(bootstrap_value boot_id)
+			fi
+		else
+			account=$(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv | tr -d '\r' | sed -n 1p)
+			if [[ -n $account ]]; then
+				key=$(az storage account keys list -g "$rg" -n "$account" --query "[0].value" -o tsv | tr -d '\r')
+				if fetch_bootstrap "$account" "$key"; then
+					prev_boot=$(bootstrap_value boot_id)
+				fi
 			fi
 		fi
 	fi
 fi
 storage_auth=${storage_auth:-key}
 [[ ${diagnostics:-false} != true || $storage_auth == identity ]] || die "--diagnostics needs --storage-auth identity (the hub writes bundles with its managed identity)"
-# a re-run keeps the hub's Entra settings (plain environment values)
-# a re-run keeps the hub's scheduler gate (a plain environment value)
-if [[ -n $cur_image && -z $gate_free_gb ]]; then
-	gate_free_gb=$(az container show -g "$rg" -n "$name" -o tsv \
-		--query "containers[0].environmentVariables[?name=='LONGARM_HUB_SCHED_GATE_FREE_GB'].value | [0]" 2>/dev/null | tr -d '\r' || true)
-	[[ $gate_free_gb != None ]] || gate_free_gb=''
-fi
 [[ -z $gate_free_gb || $gate_free_gb =~ ^[0-9]+([.][0-9]+)?$ ]] || die "--gate-free-gb: a number of GB"
-# and the release signing key (likewise)
-if [[ -n $cur_image && -z $release_public_key ]]; then
-	release_public_key=$(az container show -g "$rg" -n "$name" -o tsv \
-		--query "containers[0].environmentVariables[?name=='LONGARM_HUB_RELEASES_PUBLIC_KEY'].value | [0]" 2>/dev/null | tr -d '\r' || true)
-	[[ $release_public_key != None ]] || release_public_key=''
-fi
-if [[ -n $cur_image && -z $entra_tenant ]]; then
-	while IFS=$'\t' read -r k v; do
-		case $k in
-		LONGARM_HUB_ENTRA_TENANT_ID) entra_tenant=$v ;;
-		LONGARM_HUB_ENTRA_CLIENT_ID) entra_client=${entra_client:-$v} ;;
-		LONGARM_HUB_ENTRA_ADMINS) entra_admins=${entra_admins:-$v} ;;
-		LONGARM_HUB_ENTRA_WEB) entra_web=${entra_web:-$v} ;;
-		LONGARM_HUB_ENTRA_APPS) entra_apps=${entra_apps:-$v} ;;
-		esac
-	done < <(az container show -g "$rg" -n "$name" -o tsv \
-		--query "containers[0].environmentVariables[?starts_with(name, 'LONGARM_HUB_ENTRA_')].[name, value]" 2>/dev/null | tr -d '\r' || true)
-fi
 [[ -z $entra_tenant && -z $entra_client ]] || [[ -n $entra_tenant && -n $entra_client ]] ||
 	die "--entra-tenant and --entra-client go together"
 [[ -z $entra_web || $entra_web =~ ^(spa|confidential|off)$ ]] || die "--entra-web: spa, confidential or off"
@@ -421,6 +747,10 @@ panel=${panel:-true}
 log_analytics=${log_analytics:-false}
 telemetry=${telemetry:-false}
 diagnostics=${diagnostics:-false}
+headscale=${headscale:-false}
+public_derp=${public_derp:-false}
+[[ $headscale == false || $panel == true ]] || die "--headscale needs the panel (Headscale is served on https://<fqdn>): drop --no-panel"
+[[ $headscale == false || -z $tailscale_secret_file ]] || die "--headscale and --tailscale-secret-file: one tailnet provider (the sidecar is the provider)"
 ! $log_analytics || ensure_providers Microsoft.OperationalInsights
 # Application Insights on its Log Analytics workspace
 ! $telemetry || ensure_providers Microsoft.OperationalInsights Microsoft.Insights
@@ -461,13 +791,8 @@ if [[ -z $registry_user && $reg_host == *.azurecr.io ]]; then
 		acr_login "$reg_acr"
 	fi
 fi
-[[ -z $cur_registry || -n $registry_user || -n $acr ]] ||
-	die "the hub pulls its image with a login for $cur_registry, which can't be read back: pass --registry-user again (password in LONGARM_REGISTRY_PASSWORD)"
-
-if $recreate && [[ -n $cur_image ]]; then
-	echo "deleting container group $name (storage and data stay)"
-	az container delete -g "$rg" -n "$name" --yes -o none
-fi
+[[ -z $prev_registry || -n $registry_user || -n $acr ]] ||
+	die "the hub pulls its image with a login for $prev_registry, which can't be read back: pass --registry-user ${prev_registry_user:-again} (password in LONGARM_REGISTRY_PASSWORD)"
 
 # parameters in a private file: no secrets on the command line. The
 # location is the resource group's (its programmatic name).
@@ -479,64 +804,451 @@ json_str() {
 	s=${s//$'\r'/}
 	printf '"%s"' "$s"
 }
-{
-	printf '{"contentVersion":"1.0.0.0","parameters":{'
-	printf '"name":{"value":%s}' "$(json_str "$name")"
-	printf ',"size":{"value":%s}' "$(json_str "$size")"
-	printf ',"enablePanel":{"value":%s}' "$panel"
-	printf ',"enableLogAnalytics":{"value":%s}' "$log_analytics"
-	[[ -z $gate_free_gb ]] || printf ',"schedulerGateFreeGb":{"value":%s}' "$(json_str "$gate_free_gb")"
-	[[ -z $release_public_key ]] || printf ',"releasePublicKey":{"value":%s}' "$(json_str "$release_public_key")"
-	printf ',"storageAuth":{"value":%s}' "$(json_str "$storage_auth")"
-	printf ',"enableTelemetry":{"value":%s},"enableDiagnostics":{"value":%s}' "$telemetry" "$diagnostics"
-	[[ -z $acr ]] || printf ',"acrName":{"value":%s}' "$(json_str "$acr")"
-	[[ -z $image ]] || printf ',"image":{"value":%s}' "$(json_str "$image")"
-	[[ -z $acme_email ]] || printf ',"acmeEmail":{"value":%s}' "$(json_str "$acme_email")"
-	if [[ -n $entra_tenant ]]; then
-		printf ',"entraTenantId":{"value":%s}' "$(json_str "$entra_tenant")"
-		printf ',"entraClientId":{"value":%s}' "$(json_str "$entra_client")"
-		[[ -z $entra_admins ]] || printf ',"entraAdmins":{"value":%s}' "$(json_str "$entra_admins")"
-		[[ -z $entra_apps ]] || printf ',"entraApps":{"value":%s}' "$(json_str "$entra_apps")"
-		[[ -z $entra_web ]] || printf ',"entraWeb":{"value":%s}' "$(json_str "$entra_web")"
-	fi
-	if [[ -n $registry_user ]]; then
-		[[ -n ${LONGARM_REGISTRY_PASSWORD:-} ]] || die "--registry-user needs LONGARM_REGISTRY_PASSWORD"
-		# the login is for the registry the image comes from (the template defaults to ghcr.io)
-		if [[ -n $reg_host ]]; then
-			printf ',"registryServer":{"value":%s}' "$(json_str "$reg_host")"
+# write_params FILE: the deployment's parameters from the settings above
+write_params() {
+	{
+		printf '{"contentVersion":"1.0.0.0","parameters":{'
+		printf '"name":{"value":%s}' "$(json_str "$name")"
+		printf ',"size":{"value":%s}' "$(json_str "$size")"
+		printf ',"enablePanel":{"value":%s}' "$panel"
+		printf ',"enableLogAnalytics":{"value":%s}' "$log_analytics"
+		[[ -z $gate_free_gb ]] || printf ',"schedulerGateFreeGb":{"value":%s}' "$(json_str "$gate_free_gb")"
+		[[ -z $release_public_key ]] || printf ',"releasePublicKey":{"value":%s}' "$(json_str "$release_public_key")"
+		printf ',"storageAuth":{"value":%s}' "$(json_str "$storage_auth")"
+		printf ',"enableTelemetry":{"value":%s},"enableDiagnostics":{"value":%s}' "$telemetry" "$diagnostics"
+		printf ',"enableHeadscale":{"value":%s},"headscalePublicDerp":{"value":%s}' "$headscale" "$public_derp"
+		if [[ -n $acr ]]; then
+			printf ',"acrName":{"value":%s}' "$(json_str "$acr")"
+			# the sidecars from the registry's copies (ensure_mirror)
+			printf ',"caddyImage":{"value":%s}' "$(json_str "$(sidecar_image caddyImage)")"
+			printf ',"headscaleImage":{"value":%s}' "$(json_str "$(sidecar_image headscaleImage)")"
 		fi
-		printf ',"registryUsername":{"value":%s}' "$(json_str "$registry_user")"
-		printf ',"registryPassword":{"value":%s}' "$(json_str "$LONGARM_REGISTRY_PASSWORD")"
+		[[ -z $image ]] || printf ',"image":{"value":%s}' "$(json_str "$image")"
+		[[ -z $acme_email ]] || printf ',"acmeEmail":{"value":%s}' "$(json_str "$acme_email")"
+		if [[ -n $entra_tenant ]]; then
+			printf ',"entraTenantId":{"value":%s}' "$(json_str "$entra_tenant")"
+			printf ',"entraClientId":{"value":%s}' "$(json_str "$entra_client")"
+			[[ -z $entra_admins ]] || printf ',"entraAdmins":{"value":%s}' "$(json_str "$entra_admins")"
+			[[ -z $entra_apps ]] || printf ',"entraApps":{"value":%s}' "$(json_str "$entra_apps")"
+			[[ -z $entra_web ]] || printf ',"entraWeb":{"value":%s}' "$(json_str "$entra_web")"
+		fi
+		if [[ -n $registry_user ]]; then
+			[[ -n ${LONGARM_REGISTRY_PASSWORD:-} ]] || die "--registry-user needs LONGARM_REGISTRY_PASSWORD"
+			# the login is for the registry the image comes from (the template defaults to ghcr.io)
+			if [[ -n $reg_host ]]; then
+				printf ',"registryServer":{"value":%s}' "$(json_str "$reg_host")"
+			fi
+			printf ',"registryUsername":{"value":%s}' "$(json_str "$registry_user")"
+			printf ',"registryPassword":{"value":%s}' "$(json_str "$LONGARM_REGISTRY_PASSWORD")"
+		fi
+		[[ -z $stun_servers ]] || printf ',"stunServers":{"value":%s}' "$(json_str "$([[ $stun_servers == none ]] || printf %s "$stun_servers")")"
+		if [[ -n $tailscale_secret_file ]]; then
+			printf ',"tailscaleOAuthSecret":{"value":%s}' "$(json_str "$(tr -d '\r\n' <"$tailscale_secret_file")")"
+		fi
+		printf '}}\n'
+	} >"$1"
+}
+# mirror_repo SOURCE: the repository of a pinned Docker Hub image in the
+# registry (docker.io/library/caddy:... -> mirror/caddy)
+mirror_repo() {
+	local r=${1%%@*}
+	r=${r%:*}
+	r=${r#docker.io/}
+	printf 'mirror/%s' "${r#library/}"
+}
+# sidecar_image PARAM: a sidecar's image: the template's pin, or with --acr
+# its copy there, <acr>.azurecr.io/mirror/<repository>:<hex>@sha256:<hex>
+sidecar_image() {
+	local src d
+	src=$(template_default "$1")
+	if [[ -z $acr ]]; then
+		printf '%s' "$src"
+		return
 	fi
-	[[ -z $stun_servers ]] || printf ',"stunServers":{"value":%s}' "$(json_str "$([[ $stun_servers == none ]] || printf %s "$stun_servers")")"
-	if [[ -n $tailscale_secret_file ]]; then
-		printf ',"tailscaleOAuthSecret":{"value":%s}' "$(json_str "$(tr -d '\r\n' <"$tailscale_secret_file")")"
-	fi
-	printf '}}\n'
-} >"$tmp/params.json"
+	d=${src##*@sha256:}
+	printf '%s.azurecr.io/%s:%s@sha256:%s' "$(printf '%s' "$acr" | tr '[:upper:]' '[:lower:]')" "$(mirror_repo "$src")" "$d" "$d"
+}
+write_params "$tmp/params.json"
 
-echo "deploying $name to $rg ($location, $size, panel $panel, storage auth $storage_auth${image:+, $image}); this takes a few minutes"
-deadline=$((SECONDS + timeout))
-logs_hint="az container logs -g $rg -n $name --container-name hub"
-# --no-wait + polling: a container group stuck in Creating would block
-# "az deployment group create" for an hour (check_stuck)
-deployment=longarm-hub-$(date -u +%Y%m%d%H%M%S)
-az deployment group create -g "$rg" -n "$deployment" --template-file "$template" \
-	--parameters "@$tmp/params.json" --no-wait -o none
-dstate=''
-until [[ $dstate == Succeeded ]]; do
-	sleep "$poll"
-	dstate=$(az deployment group show -g "$rg" -n "$deployment" --query properties.provisioningState -o tsv 2>/dev/null | tr -d '\r' || true)
-	case $dstate in
-	Failed | Canceled)
-		az deployment operation group list -g "$rg" -n "$deployment" \
-			--query "[?properties.provisioningState=='Failed'].{resource: properties.targetResource.resourceName, error: properties.statusMessage.error}" -o json >&2 || true
-		die "deployment $deployment: $dstate (errors above; az deployment group show -g $rg -n $deployment)"
+# ensure_mirror: every pinned image of mirror-images.txt is in the registry
+# $acr (by digest), imported from its source if not - before anything is
+# deleted: Docker Hub's pull limits can fail an import, not a running hub
+ensure_mirror() {
+	local line src digest repo srcs=()
+	[[ -f $mirror_list ]] || die "$mirror_list is missing (run from a checkout of the repository)"
+	# read first: az must not read the list from stdin
+	while IFS= read -r line || [[ -n $line ]]; do
+		line=${line%$'\r'}
+		[[ -z $line || $line == \#* ]] && continue
+		[[ $line =~ ^docker\.io/[a-z0-9./-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$ ]] ||
+			die "$mirror_list: want docker.io/<repository>:<tag>@sha256:<digest>, one per line: $line"
+		srcs+=("$line")
+	done <"$mirror_list"
+	[[ ${#srcs[@]} -gt 0 ]] || die "$mirror_list lists no images"
+	for src in "${srcs[@]}"; do
+		digest=${src##*@}
+		repo=$(mirror_repo "$src")
+		az acr repository show -n "$acr" --image "$repo@$digest" -o none </dev/null 2>/dev/null && continue
+		echo "importing $src into the registry $acr as $repo:${digest#sha256:} (az acr import; nothing else is changed)"
+		az acr import -n "$acr" --source "${src%%:*}@$digest" -t "$repo:${digest#sha256:}" -o none </dev/null ||
+			die "importing $src into the registry $acr failed (above; Docker Hub's pull limits?): nothing was changed. Retry later, or import it yourself: az acr import -n $acr --source ${src%%:*}@$digest -t $repo:${digest#sha256:}"
+		az acr repository show -n "$acr" --image "$repo@$digest" -o none </dev/null ||
+			die "the registry $acr has no $repo@$digest after the import: nothing was changed"
+	done
+}
+
+
+# image_pullable IMAGE: the registry has the image's manifest, asked the way
+# ACI pulls it (anonymously, or with the deployment's registry login; an
+# Azure Container Registry pulled with the managed identity: az acr). The
+# tests point LONGARM_DEPLOY_REGISTRY_URL at a fake registry.
+image_problem=''
+image_pullable() {
+	local ref=$1 host repo reference rest last url code hdr=$tmp/registry.hdr ch realm service scope tok
+	local accept='application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
+	host=$(registry_host "$ref")
+	rest=${ref#"$host/"}
+	if [[ -z $host || $host == docker.io ]]; then
+		host=registry-1.docker.io
+		rest=${ref#docker.io/}
+		[[ $rest == */* ]] || rest=library/$rest
+	fi
+	if [[ $rest == *@* ]]; then
+		repo=${rest%%@*}
+		reference=${rest##*@}
+		last=${repo##*/}
+		[[ $last != *:* ]] || repo=${repo%:*}
+	else
+		last=${rest##*/}
+		if [[ $last == *:* ]]; then
+			repo=${rest%:*}
+			reference=${rest##*:}
+		else
+			repo=$rest
+			reference=latest
+		fi
+	fi
+	if [[ $host == *.azurecr.io && $storage_auth == identity && -z $registry_user ]]; then
+		if [[ $reference == sha256:* ]]; then
+			az acr repository show -n "${host%%.*}" --image "$repo@$reference" -o none 2>/dev/null && return 0
+		else
+			az acr repository show -n "${host%%.*}" --image "$repo:$reference" -o none 2>/dev/null && return 0
+		fi
+		image_problem="az acr repository show -n ${host%%.*} --image $repo:$reference failed"
+		return 1
+	fi
+	url=https://$host/v2/$repo/manifests/$reference
+	[[ -z ${LONGARM_DEPLOY_REGISTRY_URL:-} ]] || url=$LONGARM_DEPLOY_REGISTRY_URL/$host/v2/$repo/manifests/$reference
+	code=$(curl -sS -I -m 20 -o /dev/null -D "$hdr" -w '%{http_code}' -H "Accept: $accept" "$url" 2>/dev/null) || code=000
+	if [[ $code == 401 ]]; then
+		# a token for repository:<repo>:pull from the realm the registry names
+		ch=$(tr -d '\r' <"$hdr" | sed -n 's/^[Ww][Ww][Ww]-[Aa]uthenticate: *[Bb]earer *//p' | head -n 1)
+		realm=$(printf '%s' "$ch" | sed -n 's/.*realm="\([^"]*\)".*/\1/p')
+		service=$(printf '%s' "$ch" | sed -n 's/.*service="\([^"]*\)".*/\1/p')
+		scope=$(printf '%s' "$ch" | sed -n 's/.*scope="\([^"]*\)".*/\1/p')
+		scope=${scope:-repository:$repo:pull}
+		if [[ -n $realm ]]; then
+			# the registry login (if the deployment has one for this registry) through curl's
+			# config on stdin, not argv
+			tok=$({
+				if [[ -n $registry_user && $host == "$reg_host" ]]; then
+					printf 'user = "%s:%s"\n' "$registry_user" "${LONGARM_REGISTRY_PASSWORD:-}"
+				fi
+			} | curl -sS -m 20 -K - "$realm?service=$service&scope=$scope" 2>/dev/null |
+				sed -n 's/.*"\(access_\)\{0,1\}token" *: *"\([^"]*\)".*/\2/p' | head -n 1) || tok=''
+			code=$(curl -sS -I -m 20 -o /dev/null -w '%{http_code}' -H "Accept: $accept" ${tok:+-H "Authorization: Bearer $tok"} "$url" 2>/dev/null) || code=000
+		fi
+	fi
+	[[ $code == 200 ]] && return 0
+	image_problem="the registry answered ${code/000/nothing} for $url"
+	return 1
+}
+
+# check_images: every image of the deployment can be pulled
+check_images() {
+	local imgs img
+	imgs=("${image:-$(template_default image)}")
+	[[ $storage_auth != key || $panel != true ]] || imgs+=("$(sidecar_image caddyImage)")
+	[[ $headscale != true ]] || imgs+=("$(sidecar_image headscaleImage)")
+	for img in "${imgs[@]}"; do
+		[[ -n $img ]] || continue
+		image_pullable "$img" ||
+			die "the image $img can't be pulled ($image_problem): nothing was changed. Check the tag, that the package is public (or --registry-user), or skip this check with --skip-image-check"
+	done
+}
+
+# replica_check: warns when the hub's Litestream replica has many files.
+# Every start restores the database from it (with storage-auth identity:
+# the database is on the container's disk), and the restore opens every
+# file since the newest snapshot at once - about 100 KB of memory each. A
+# healthy replica has a few thousand files at most (24 h of compacted ones,
+# of which a restore reads a few dozen); a replica whose compaction fell
+# behind (Litestream 0.5.17, the 0.1.18 deploy) had 21,400, and the restore
+# ran out of the 1.5 GB of --size small. Best effort: listing needs read
+# access to the blobs (identity: Storage Blob Data Reader on the container).
+replica_files_warn=${LONGARM_DEPLOY_REPLICA_FILES_WARN:-5000}
+replica_check() {
+	local acct names counts total mb have
+	acct=$(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv 2>/dev/null | tr -d '\r' | sed -n 1p) || true
+	[[ -n $acct ]] || return 0
+	if [[ $storage_auth == identity ]]; then
+		names=$(az storage blob list --auth-mode login --account-name "$acct" -c litestream --prefix hub.db/ltx/ \
+			--num-results '*' --query '[].name' -o tsv 2>/dev/null) || names=''
+	else
+		names=$(
+			unset AZURE_STORAGE_CONNECTION_STRING AZURE_STORAGE_SAS_TOKEN AZURE_STORAGE_ACCOUNT AZURE_STORAGE_AUTH_MODE
+			AZURE_STORAGE_KEY=$(az storage account keys list -g "$rg" -n "$acct" --query "[0].value" -o tsv | tr -d '\r') \
+				az storage blob list --account-name "$acct" -c litestream --prefix hub.db/ltx/ \
+				--num-results '*' --query '[].name' -o tsv 2>/dev/null
+		) || names=''
+	fi
+	if [[ -z $names ]]; then
+		echo "note: the database replica's files could not be counted (no read access to the blob container litestream?): skipped"
+		return 0
+	fi
+	# files per level (hub.db/ltx/<level>/<min>-<max>.ltx), L0-L3: the ones a restore may read after a snapshot
+	counts=$(printf '%s\n' "$names" | tr -d '\r' | awk -F/ 'NF >= 4 { n[$3]++ } END { for (l = 0; l <= 9; l++) if (n[l]) printf "L%d %d, ", l, n[l] }')
+	total=$(printf '%s\n' "$names" | tr -d '\r' | awk -F/ 'NF >= 4 && $3 <= 3 { n++ } END { print n + 0 }')
+	echo "database replica: ${counts%, }"
+	((total > replica_files_warn)) || return 0
+	mb=$((total / 10))
+	have=1536
+	[[ $size != medium ]] || have=3072
+	cat >&2 <<EOM
+WARNING: the hub's database replica has $total files in levels 0-3 (more than $replica_files_warn): its
+compaction has fallen behind. Every start restores the database from it and may open all of
+them at once (about 100 KB each: ~$mb MB; --size $size has $have MB). A restore that runs out of
+memory is killed (SIGKILL, exit code 137) and the hub crash-loops (the 0.1.18 deploy).
+Prune the replica before deploying: deploy/azure/README.md "Replica size and memory".
+EOM
+}
+
+# sidecars from the registry (now or in the rollback): its copies first
+if [[ -n $acr && ($headscale == true || $prev_headscale == true) ]]; then
+	ensure_mirror
+fi
+echo "validating the deployment (nothing is changed yet)"
+az deployment group validate -g "$rg" --template-file "$template" --parameters "@$tmp/params.json" -o none ||
+	die "the deployment does not validate (the error is above, e.g. a policy violation): nothing was changed"
+$skip_image_check || check_images
+
+replica_check
+
+# rollback: fail_deploy deploys the previous configuration again - after
+# --recreate deleted the group, and after an update in place that changed
+# it (the 0.1.18 deploy: the new image's starts failed, the script gave up
+# and left the hub crash-looping). deleted: --recreate deleted the group.
+deleted=false rollback=false
+if [[ -n $cur_image ]]; then
+	# the previous configuration, for a rollback if the new one fails: the
+	# settings swapped for the previous ones while its parameters are written
+	swap='image:prev_image size:prev_size panel:prev_panel acr:prev_acr headscale:prev_headscale public_derp:prev_public_derp log_analytics:prev_logs telemetry:prev_telemetry diagnostics:prev_diagnostics stun_servers:prev_stun gate_free_gb:prev_gate release_public_key:prev_relkey entra_tenant:prev_entra_tenant entra_client:prev_entra_client entra_admins:prev_entra_admins entra_web:prev_entra_web entra_apps:prev_entra_apps'
+	for kv in $swap; do
+		v=${kv%%:*}
+		printf -v "saved_$v" '%s' "${!v}"
+	done
+	for kv in $swap; do
+		v=${kv#*:}
+		printf -v "${kv%%:*}" '%s' "${!v}"
+	done
+	saved_reg_host=$reg_host saved_tailscale_secret_file=$tailscale_secret_file
+	reg_host=$(registry_host "$image")
+	[[ $prev_tailscale == true ]] || tailscale_secret_file=''
+	write_params "$tmp/rollback.json"
+	for kv in $swap; do
+		v=saved_${kv%%:*}
+		printf -v "${kv%%:*}" '%s' "${!v}"
+	done
+	reg_host=$saved_reg_host tailscale_secret_file=$saved_tailscale_secret_file
+	if $recreate; then
+		az deployment group validate -g "$rg" --template-file "$template" --parameters "@$tmp/rollback.json" -o none ||
+			die "the previous configuration (the rollback if the new one fails) does not validate (above): nothing was changed"
+		rollback=true
+		echo "saving the hub's settings (resource group tags longarm-hub-prev-*: a re-run finds them if the group is gone)"
+		snapshot_tags
+		echo "deleting container group $name (storage and data stay)"
+		az container delete -g "$rg" -n "$name" --yes -o none
+		deleted=true
+	elif ! cmp -s "$tmp/rollback.json" "$tmp/params.json"; then
+		# an update in place: the running configuration is the rollback (no
+		# rollback when it no longer validates, e.g. a new policy)
+		if az deployment group validate -g "$rg" --template-file "$template" --parameters "@$tmp/rollback.json" -o none; then
+			rollback=true
+		else
+			echo "note: the running configuration does not validate any more (above): no rollback if this update fails" >&2
+		fi
+	fi
+fi
+
+# restore_status: the state of the hub's database restore in its current
+# log ("running", "done <took>", "failed" or nothing): the last of the
+# entrypoint's lines (longarm-hub container) decides. A restore replays the
+# WAL since the last snapshot and can take many minutes; the hub listens only
+# after it.
+restore_status() {
+	az container logs -g "$rg" -n "$name" --container-name hub 2>/dev/null | tr -d '\r' | awk '
+		/^longarm-hub container: restoring / { s = "running"; t = ""; next }
+		/^longarm-hub container: restore of .* still running/ { s = "running"; next }
+		/^longarm-hub container: restore of .* failed/ { s = "failed"; next }
+		/^longarm-hub container: restore took / { s = "done"; t = $5; next }
+		/^longarm-hub container: (bootstrap took|starting the hub)/ || /^LONGARM_BOOTSTRAP / { if (s == "running") s = "done" }
+		END { if (s != "") print s (t != "" ? " " t : "") }' || true
+}
+
+# check_restore: at most every 2 polls, reads the restore's state from the
+# hub's log, prints its [+Ns] marks and keeps $deadline ahead of a running
+# restore - bounded: until --restore-timeout after it was first seen. After
+# it, the hub gets at least 5 more minutes to bootstrap and listen.
+# restore_running: the last check saw it running.
+restore_seen='' restore_done=false restore_checked='' restore_running=false
+check_restore() {
+	[[ -z $restore_checked ]] || ((SECONDS - restore_checked >= 2 * poll)) || return 0
+	restore_checked=$SECONDS
+	local st cap
+	st=$(restore_status)
+	restore_running=false
+	case $st in
+	running)
+		restore_running=true
+		if [[ -z $restore_seen ]]; then
+			restore_seen=$SECONDS
+			phase "database restore running (Litestream; the hub listens after it)"
+		fi
+		cap=$((restore_seen + restore_timeout))
+		if ((deadline < SECONDS + 60 && deadline < cap)); then
+			deadline=$((SECONDS + 60 < cap ? SECONDS + 60 : cap))
+		fi
+		;;
+	done*)
+		if [[ -n $restore_seen ]] && ! $restore_done; then
+			restore_done=true
+			phase "database restore finished${st#done}"
+			((deadline >= SECONDS + 300)) || deadline=$((SECONDS + 300))
+		fi
+		;;
+	failed)
+		if [[ -n $restore_seen ]] && ! $restore_done; then
+			restore_done=true
+			phase "database restore FAILED: $logs_hint"
+		fi
 		;;
 	esac
-	check_stuck
-	((SECONDS < deadline)) || die "deployment $deployment is still ${dstate:-not started} after ${timeout}s: az deployment group show -g $rg -n $deployment"
-done
+}
+
+# restore_reset: a new start of the hub (a deployment, a rollback)
+restore_reset() { restore_seen='' restore_done=false restore_checked='' restore_running=false; }
+
+# wait_hub_answers HOST PORT: waits until the hub listens on HOST:PORT,
+# past $deadline while its restore runs; 1 = it didn't
+wait_hub_answers() {
+	until tcp_open "$1" "$2"; do
+		check_restore
+		check_crash || return 1
+		((SECONDS < deadline)) || return 1
+		sleep 2
+	done
+}
+
+# deploy_run FILE NAME: deploys and waits for the deployment; 1 = it
+# failed ($deploy_err says why). --no-wait + polling: a container group
+# stuck in Creating would block "az deployment group create" for an hour
+# (check_stuck)
+deploy_err=''
+deploy_run() {
+	local dstate='' end=$((SECONDS + timeout))
+	stuck_since=''
+	if ! az deployment group create -g "$rg" -n "$2" --template-file "$template" --parameters "@$1" --no-wait -o none; then
+		deploy_err="az deployment group create $2 failed (above)"
+		return 1
+	fi
+	until [[ $dstate == Succeeded ]]; do
+		sleep "$poll"
+		dstate=$(az deployment group show -g "$rg" -n "$2" --query properties.provisioningState -o tsv 2>/dev/null | tr -d '\r' || true)
+		case $dstate in
+		Failed | Canceled)
+			az deployment operation group list -g "$rg" -n "$2" \
+				--query "[?properties.provisioningState=='Failed'].{resource: properties.targetResource.resourceName, error: properties.statusMessage.error}" -o json >&2 || true
+			deploy_err="deployment $2: $dstate (errors above; az deployment group show -g $rg -n $2)"
+			return 1
+			;;
+		esac
+		if ! check_stuck; then
+			deploy_err="the container group $name is stuck in Creating (above)"
+			return 1
+		fi
+		if [[ $dstate != Succeeded ]] && ((SECONDS >= end)); then
+			deploy_err="deployment $2 is still ${dstate:-not started} after ${timeout}s: az deployment group show -g $rg -n $2"
+			return 1
+		fi
+	done
+}
+
+# fail_deploy MESSAGE: the new configuration failed. With a rollback
+# (--recreate deleted the group, or an update in place changed it), the
+# previous configuration is deployed again.
+fail_deploy() {
+	$rollback || die "$1"
+	rollback=false
+	local was_deleted=$deleted
+	deleted=false
+	echo "deploy.sh: $1" >&2
+	echo "rolling back: deploying the previous configuration again (image ${prev_image:-the template default}, size $prev_size, panel $prev_panel, headscale $prev_headscale)" >&2
+	# after --recreate: the failed new group goes (it may have other ports or
+	# containers); an update in place is updated back
+	! $was_deleted || az container delete -g "$rg" -n "$name" --yes -o none 2>/dev/null || true
+	local rb
+	rb="longarm-hub-$(date -u +%Y%m%d%H%M%S)-rollback"
+	if deploy_run "$tmp/rollback.json" "$rb"; then
+		local st='' addr='' host=''
+		phase "rollback deployment succeeded"
+		deadline=$((SECONDS + timeout))
+		restore_reset
+		crash_reset
+		until [[ $st == Running ]] || ((SECONDS >= deadline)); do
+			sleep "$poll"
+			if ! check_crash; then
+				st="crash-looping too: $crash_msg"
+				break
+			fi
+			st=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv 2>/dev/null | tr -d '\r' || true)
+		done
+		# the previous hub restores its database too: wait until it answers
+		# (a rollback that gives up mid-restore looks like a dead hub)
+		IFS=$'\t' read -r addr host _ <<<"$(az deployment group show -g "$rg" -n "$rb" -o tsv \
+			--query "[properties.outputs.hubAddress.value, properties.outputs.fqdn.value]" 2>/dev/null | tr -d '\r' || true)" || true
+		if [[ $st == Running && -n $addr && -n $host ]]; then
+			if wait_hub_answers "$host" "${addr##*:}"; then
+				phase "rolled-back hub answers on $addr"
+				st='answering'
+			elif [[ -n $crash_msg ]]; then
+				st="crash-looping too: $crash_msg"
+			else
+				st="running, not answering on $addr yet: $logs_hint"
+			fi
+		fi
+		! $was_deleted || clear_snapshot
+		die "$1
+ROLLED BACK: the previous configuration is deployed again (hub ${st:-state unknown}; data kept). Nothing of the new configuration is running; fix the cause and run deploy.sh again."
+	fi
+	if $was_deleted; then
+		die "$1
+The rollback failed too: $deploy_err
+The hub's settings are saved in the resource group's tags (longarm-hub-prev-*): ./deploy.sh --name $name --resource-group $rg (without --recreate) deploys them again."
+	fi
+	die "$1
+The rollback failed too: $deploy_err
+./deploy.sh --name $name --resource-group $rg --image ${prev_image:-<the previous image>} deploys the previous image again."
+}
+
+echo "deploying $name to $rg ($location, $size, panel $panel, storage auth $storage_auth$([[ $headscale == true ]] && echo ", headscale")${image:+, $image}); this takes a few minutes"
+deadline=$((SECONDS + timeout))
+logs_hint="az container logs -g $rg -n $name --container-name hub"
+deployment=longarm-hub-$(date -u +%Y%m%d%H%M%S)
+# phases of the redeploy (seconds since the submit; README "Redeploy downtime")
+t_submit=$SECONDS
+phase() { echo "  [+$((SECONDS - t_submit))s] $*"; }
+deploy_run "$tmp/params.json" "$deployment" || fail_deploy "$deploy_err"
+phase "deployment succeeded"
 outputs=$(az deployment group show -g "$rg" -n "$deployment" -o tsv \
 	--query "[properties.outputs.hubAddress.value, properties.outputs.fqdn.value, properties.outputs.storageAccount.value, properties.outputs.relayUdpPort.value, properties.outputs.panelUrl.value]")
 # one value per line (az prints a list as tab-separated fields; panelUrl last: empty without the panel)
@@ -569,26 +1281,40 @@ state=''
 until [[ $state == Running ]]; do
 	state=$(az container show -g "$rg" -n "$name" --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv 2>/dev/null | tr -d '\r' || true)
 	[[ $state != Running ]] || break
-	check_stuck
-	((SECONDS < deadline)) || die "the hub container is not running ($state): $logs_hint"
+	check_stuck || fail_deploy "the container group $name is stuck in Creating (above)"
+	check_crash || fail_deploy "$crash_msg"
+	((SECONDS < deadline)) || fail_deploy "the hub container is not running ($state)$crash_note: $logs_hint"
 	sleep "$poll"
 done
+phase "hub container running"
 # bootstrap.env of this start (a new boot_id; restart once if the update
 # didn't restart the hub)
 restarted=false
 until read_bootstrap && [[ $(bootstrap_value boot_id) != "$prev_boot" ]]; do
-	((SECONDS < deadline)) || die "no bootstrap values from this start: $logs_hint"
-	if [[ -n $prev_boot ]] && ! $restarted && ((SECONDS > waited_from + 240)); then
+	check_restore
+	check_crash || fail_deploy "$crash_msg"
+	((SECONDS < deadline)) || fail_deploy "no bootstrap values from this start$($restore_running && echo " (its database restore still runs after ${restore_timeout}s: --restore-timeout)")$crash_note: $logs_hint"
+	# a hub still restoring its database did restart: never restart it mid-restore
+	if [[ -n $prev_boot ]] && ! $restarted && [[ -z $restore_seen ]] && ((SECONDS > waited_from + 240)); then
 		echo "the hub did not restart: az container restart"
 		az container restart -g "$rg" -n "$name" -o none
 		restarted=true
+		crash_reset # ours, not a crash
 	fi
-	sleep 5
+	sleep 2
 done
-until tcp_open "$fqdn" "${hub_addr##*:}"; do
-	((SECONDS < deadline)) || die "$hub_addr does not answer: $logs_hint"
-	sleep 5
-done
+phase "new hub start bootstrapped"
+# the restore's end (and how long it took), once it was seen running
+if [[ -n $restore_seen ]] && ! $restore_done; then
+	restore_checked=''
+	check_restore
+fi
+wait_hub_answers "$fqdn" "${hub_addr##*:}" || fail_deploy "${crash_msg:-$hub_addr does not answer$crash_note: $logs_hint}"
+phase "hub answers on $hub_addr"
+# the new configuration runs: the settings snapshot has done its job
+if $deleted || $have_snapshot; then
+	clear_snapshot
+fi
 fp=$(bootstrap_value ca_fingerprint)
 code=$(bootstrap_value admin_join_code)
 expires=$(bootstrap_value admin_join_code_expires)
@@ -606,12 +1332,30 @@ if [[ -n $panel_url ]]; then
 	$ok || echo "note: $panel_url/healthz does not answer yet (Let's Encrypt can take a few minutes): az container logs -g $rg -n $name --container-name $([[ $storage_auth == identity ]] && echo hub || echo caddy)" >&2
 fi
 
+# the tailnet: the hub's view of its Headscale sidecar (/healthz "headscale":
+# ok | starting | down; the detail: longarm admin tailnet status)
+tailnet_status='none (--headscale for a self-hosted one, or --tailscale-secret-file)'
+if [[ $headscale == true ]]; then
+	hs=''
+	for _ in $(seq 1 18); do
+		health=$(curl -fsS -m 10 "$panel_url/healthz" 2>/dev/null || true)
+		hs=$(printf '%s' "$health" | sed -n 's/.*"headscale": *"\([a-z]*\)".*/\1/p')
+		[[ $hs != ok ]] || break
+		sleep "$poll"
+	done
+	tailnet_status="headscale $panel_url: ${hs:-unknown}"
+	[[ $hs == ok ]] || echo "note: Headscale is ${hs:-not reported} after 3 min: az container logs -g $rg -n $name --container-name headscale (and --container-name hub); longarm admin tailnet status" >&2
+elif [[ -n $tailscale_secret_file ]]; then
+	tailnet_status='tailscale (OAuth client)'
+fi
+
 # Rough monthly cost (Linux ACI pay-as-you-go, about 0.0405 USD per vCPU-hour
 # and 0.0045 USD per GB-hour in US regions; other regions differ by up to ~20 %).
 cost() {
-	awk -v s="$size" -v p="$panel" -v a="$storage_auth" 'BEGIN {
+	awk -v s="$size" -v p="$panel" -v a="$storage_auth" -v h="$headscale" 'BEGIN {
 		cpu = (s == "medium") ? 2 : 1; mem = (s == "medium") ? 3 : 1.5
 		if (p == "true" && a == "key") { cpu += 0.25; mem += 0.3 } # Caddy
+		if (h == "true") { cpu += 0.25; mem += 0.3 } # Headscale
 		printf "%.0f", 730 * (cpu * 0.0405 + mem * 0.0045) + 1
 	}'
 }
@@ -622,6 +1366,7 @@ longarm-hub is up.
   hub address     $hub_addr
   CA fingerprint  $fp
   panel           ${panel_url:-off (--no-panel)}
+  tailnet         $tailnet_status
   resource group  $rg (storage account $account, storage auth $storage_auth)
   cost            about $(cost) USD/month (compute; plus egress over 100 GB/month, relay traffic counts)
 

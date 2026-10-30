@@ -4,10 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lubobill1990/longarm/internal/longarmd"
+	"github.com/lubobill1990/longarm/internal/msiupgrade"
 )
 
 type nopSched struct{ calls []string }
@@ -88,5 +93,73 @@ func TestMSIStepsPolicy(t *testing.T) {
 	}
 	if len(sched.calls) != 0 {
 		t.Fatalf("tasks touched: %v", sched.calls)
+	}
+}
+
+type fakeSvc struct{ running map[string]bool }
+
+func (s *fakeSvc) Running(n string) (bool, error) { return s.running[n], nil }
+func (s *fakeSvc) Stop(n string) error            { s.running[n] = false; return nil }
+func (s *fakeSvc) Start(n string) error           { s.running[n] = true; return nil }
+
+type existSched struct {
+	nopSched
+	exist map[string]bool
+}
+
+func (s *existSched) Exists(n string) bool { return s.exist[n] }
+
+// TestMSIRestart: after an upgrade the restart step starts what the upgrade
+// helper recorded - services, worker tasks, the trays (not the one
+// LongarmTrayLaunch starts) - removes the record and the old binaries
+// nothing holds; a non-administrator gets only their own worker and tray.
+func TestMSIRestart(t *testing.T) {
+	const user, admin, other = "S-1-5-21-1-2-3-1001", "S-1-5-21-1-2-3-500", "S-1-5-21-1-2-3-1002"
+	if longarmd.SessionTaskName(user) != msiupgrade.WorkerTaskName(user) || longarmd.TrayTaskName(user) != msiupgrade.TrayTaskName(user) {
+		t.Fatal("msiupgrade's task names differ from longarmd's")
+	}
+	for _, c := range []struct {
+		asker     string
+		wantRuns  []string
+		wantStart bool
+	}{
+		{admin, []string{"run " + longarmd.SessionTaskName(user), "run " + longarmd.SessionTaskName(other),
+			"register " + longarmd.TrayTaskName(other), "run " + longarmd.TrayTaskName(other)}, true},
+		{other, []string{"run " + longarmd.SessionTaskName(other), "register " + longarmd.TrayTaskName(other), "run " + longarmd.TrayTaskName(other)}, false},
+	} {
+		pd, own := t.TempDir(), t.TempDir()
+		os.WriteFile(filepath.Join(own, "longarm-tray.exe"), nil, 0o644)
+		os.MkdirAll(filepath.Join(own, msiupgrade.AsideDir), 0o755)
+		os.WriteFile(filepath.Join(own, msiupgrade.AsideDir, "longarmd-1.exe"), nil, 0o644)
+		rec := &msiupgrade.Record{Created: time.Now().UTC(), Services: []string{"longarmd-admin"},
+			Workers: []string{user, other}, Trays: []string{user, other}}
+		if err := rec.Save(pd); err != nil {
+			t.Fatal(err)
+		}
+		svc := &fakeSvc{running: map[string]bool{}}
+		sched := &existSched{exist: map[string]bool{longarmd.SessionTaskName(user): true, longarmd.SessionTaskName(other): true}}
+		env := msiEnv{
+			isAdmin:     func(sid string) (bool, error) { return sid == admin, nil },
+			userSID:     func(string) error { return nil },
+			ownDir:      func() (string, error) { return own, nil },
+			programData: func() string { return pd },
+			sched:       sched, services: svc, out: io.Discard,
+		}
+		err := runMSIStep(context.Background(), "restart", `x install-helper msi restart `+longarmd.MSIDataMarker+"sid="+user+"|launch=1|usersid="+c.asker, env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(sched.calls, ",") != strings.Join(c.wantRuns, ",") {
+			t.Errorf("%s: tasks %v, want %v", c.asker, sched.calls, c.wantRuns)
+		}
+		if svc.running["longarmd-admin"] != c.wantStart {
+			t.Errorf("%s: service started %v", c.asker, svc.running["longarmd-admin"])
+		}
+		if _, err := os.Stat(filepath.Join(pd, msiupgrade.RecordFile)); err == nil {
+			t.Error("record kept")
+		}
+		if _, err := os.Stat(filepath.Join(own, msiupgrade.AsideDir)); err == nil {
+			t.Error("old binaries kept")
+		}
 	}
 }

@@ -110,12 +110,89 @@ foreach ($p in 'ADMIN_SERVICE_NAME', 'ADMIN_DATADIR', 'ADMIN_HANDOFF') {
   if ($secure -contains $p) { throw "$p must not be a (secure) property any more" }
 }
 
+# upgrades with Longarm running (internal/msiupgrade, docs/usage.md "Upgrading"): no Restart Manager, the
+# upgrade helper from the Binary table, its steps in the right places, the services stopped and waited for
+function Seq([string] $action) {
+  $r = Query $default "SELECT ``Sequence`` FROM ``InstallExecuteSequence`` WHERE ``Action`` = '$action'"
+  if (-not $r.Count) { throw "default.msi: $action is not in InstallExecuteSequence" }
+  return [int]$r[0]
+}
+if ((Prop $default 'MSIRESTARTMANAGERCONTROL') -ne 'Disable') { throw 'default.msi: MSIRESTARTMANAGERCONTROL is not Disable' }
+$binaries = Query $default 'SELECT `Name` FROM `Binary`'
+if ($binaries -notcontains 'LongarmMsiHelper') { throw 'default.msi: no LongarmMsiHelper in the Binary table' }
+foreach ($a in @{ LongarmStopTray = 'stop-tray'; LongarmUpgradeStop = 'stop'; LongarmUpgradeStopRollback = 'rollback'; LongarmRemoveStop = 'stop-remove' }.GetEnumerator()) {
+  $src = Query $default "SELECT ``Source`` FROM ``CustomAction`` WHERE ``Action`` = '$($a.Key)'"
+  $tgt = Query $default "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action`` = '$($a.Key)'"
+  if ($src[0] -ne 'LongarmMsiHelper') { throw "default.msi: $($a.Key) does not run the upgrade helper ($($src[0]))" }
+  if ($tgt[0] -ne "$($a.Value) #LONGARM-MSI#usersid=[UserSID]") { throw "default.msi: $($a.Key) target '$($tgt[0])'" }
+}
+$order = @(
+  @('LongarmStopTray', 'InstallValidate'),
+  @('InstallInitialize', 'LongarmUpgradeStopRollback'),
+  @('LongarmUpgradeStopRollback', 'LongarmUpgradeStop'),
+  @('LongarmUpgradeStop', 'StopServices'),
+  @('LongarmUpgradeStop', 'InstallFiles'),
+  # the new version installs over the old one, which is removed afterwards (afterInstallExecute), and
+  # what was stopped starts again once it is gone
+  @('InstallFiles', 'InstallExecute'),
+  @('InstallExecute', 'RemoveExistingProducts'),
+  @('RemoveExistingProducts', 'LongarmdUpgradeRestart'),
+  @('LongarmRemoveStop', 'StopServices'),
+  @('InstallInitialize', 'LongarmRemoveStop'),
+  @('LongarmTrayLaunch', 'LongarmdUpgradeRestart'),
+  @('LongarmdAdminSetup', 'LongarmdUpgradeRestart'),
+  @('StartServices', 'LongarmdUpgradeRestart'),
+  @('LongarmdUpgradeRestart', 'InstallFinalize')
+)
+foreach ($o in $order) {
+  $a, $b = (Seq $o[0]), (Seq $o[1])
+  if ($a -ge $b) { throw "default.msi: $($o[0]) ($a) must run before $($o[1]) ($b)" }
+  Write-Host "$($o[0]) ($a) < $($o[1]) ($b)"
+}
+foreach ($m in $default, $custom) {
+  & (Join-Path $PSScriptRoot 'msi-sequence-check.ps1') -Msi $m # no error 2613
+}
+# an upgrade can't move longarmd.exe between its components (the old product's uninstall would delete it)
+if ($actions -notcontains 'CheckLongarmdSwitch' -or $exec -notcontains 'CheckLongarmdSwitch') { throw 'default.msi: CheckLongarmdSwitch is not scheduled' }
+if ((Seq 'CheckLongarmdSwitch') -ge (Seq 'LongarmStopTray')) { throw 'default.msi: CheckLongarmdSwitch runs after LongarmStopTray (a refused upgrade would have stopped the tray)' }
+foreach ($p in 'PREV_LONGARMD_SERVICE', 'PREV_LONGARMD_PLAIN') {
+  if ($searches -notcontains $p) { throw "default.msi: no AppSearch for $p" }
+}
+foreach ($id in 'AdminSvcStop', 'LongarmdSvcCtl') {
+  $ev = Query $default "SELECT ``Event`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = '$id'"
+  $wait = Query $default "SELECT ``Wait`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = '$id'"
+  if (-not $ev.Count -or ([int]$ev[0] -band 0x22) -ne 0x22 -or $wait[0] -ne '1') { throw "default.msi: ServiceControl $id must stop on install and uninstall and wait (Event $($ev[0]), Wait $($wait[0]))" }
+}
+
+# the Longarm Update service (internal/updatesvc): every install, LocalSystem, auto start (delayed),
+# "run"; stopped and waited for before its file changes, removed on uninstall; started without waiting
+$svc = Query $default "SELECT ``Name`` FROM ``ServiceInstall`` WHERE ``ServiceInstall`` = 'UpdateSvc'"
+if ($svc[0] -ne 'LongarmUpdate') { throw "default.msi: no ServiceInstall LongarmUpdate ($svc)" }
+$acct = Query $default "SELECT ``StartName`` FROM ``ServiceInstall`` WHERE ``ServiceInstall`` = 'UpdateSvc'"
+$args_ = Query $default "SELECT ``Arguments`` FROM ``ServiceInstall`` WHERE ``ServiceInstall`` = 'UpdateSvc'"
+$start = Query $default "SELECT ``StartType`` FROM ``ServiceInstall`` WHERE ``ServiceInstall`` = 'UpdateSvc'"
+$comp = Query $default "SELECT ``Component_`` FROM ``ServiceInstall`` WHERE ``ServiceInstall`` = 'UpdateSvc'"
+if ($acct[0] -ne 'LocalSystem' -or $args_[0] -ne 'run' -or [int]$start[0] -ne 2 -or $comp[0] -ne 'UpdateService') {
+  throw "default.msi: LongarmUpdate account '$($acct[0])', arguments '$($args_[0])', start $($start[0]), component $($comp[0])"
+}
+$cond = Query $default "SELECT ``Condition`` FROM ``Component`` WHERE ``Component`` = 'UpdateService'"
+if ($cond.Count -and $cond[0]) { throw "default.msi: the update service is conditional ($($cond[0])): every install has it" }
+$ev = Query $default "SELECT ``Event`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = 'UpdateSvcStop'"
+$wait = Query $default "SELECT ``Wait`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = 'UpdateSvcStop'"
+if (-not $ev.Count -or ([int]$ev[0] -band 0xA2) -ne 0xA2 -or $wait[0] -ne '1') { throw "default.msi: UpdateSvcStop must stop on install and uninstall, remove on uninstall and wait (Event $($ev[0]), Wait $($wait[0]))" }
+$ev = Query $default "SELECT ``Event`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = 'UpdateSvcStart'"
+$wait = Query $default "SELECT ``Wait`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = 'UpdateSvcStart'"
+if (-not $ev.Count -or ([int]$ev[0] -band 0x1) -ne 0x1 -or $wait[0] -eq '1') { throw "default.msi: UpdateSvcStart must start on install without waiting (Event $($ev[0]), Wait $($wait[0]))" }
+$files = Query $default 'SELECT `FileName` FROM `File`'
+if (-not ($files | Where-Object { $_ -like '*longarm-update.exe' })) { throw 'default.msi: no longarm-update.exe in the File table' }
+Write-Host "LongarmUpdate: LocalSystem, auto start, run"
+
 Write-Host '== administrative install (extract only)'
 $target = Join-Path $env:RUNNER_TEMP 'msi-admin'
 $log = Join-Path $Dir 'admin.log'
 $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/a `"$default`" /qn TARGETDIR=`"$target`" /l*v `"$log`""
 if ($p.ExitCode -ne 0) { throw "msiexec /a failed ($($p.ExitCode)); log: $log" }
-foreach ($f in 'longarm.exe', 'longarmd.exe', 'longarm-tray.exe') {
+foreach ($f in 'longarm.exe', 'longarmd.exe', 'longarm-tray.exe', 'longarm-update.exe') {
   $hit = Get-ChildItem -Recurse -File -Path $target -Filter $f | Select-Object -First 1
   if (-not $hit) { throw "$f not extracted" }
   Write-Host "extracted $($hit.FullName) ($($hit.Length) bytes)"

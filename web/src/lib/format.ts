@@ -40,6 +40,25 @@ export function shortIds(ids: (string | undefined)[]): Record<string, string> {
   return out
 }
 
+const THEMED: Record<string, string> = {
+  [GREEN]: '--c-green',
+  [AMBER]: '--c-amber',
+  [RED]: '--c-red',
+  [CPU_C]: '--c-cpu',
+  [MEM_C]: '--c-mem',
+  [RTT_C]: '--c-rtt',
+}
+
+/**
+ * A palette colour as CSS: the theme's variant where the page defines one
+ * (the tray's tokens.css: --c-green ...), else the colour itself (the
+ * panel). For style props only (SVG attributes don't take var()).
+ */
+export function cssColor(c: string): string {
+  const v = THEMED[c.toLowerCase()]
+  return v ? `var(${v}, ${c})` : c
+}
+
 /** green < 60 % <= amber < 85 % <= red (levels.json). */
 export function levelColor(pct: number): string {
   for (const l of LEVELS) {

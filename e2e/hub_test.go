@@ -10,20 +10,33 @@ import (
 	"time"
 )
 
-// nodes returns the hub's nodes (longarm admin nodes --all --json) as maps.
+// nodes returns the hub's nodes (longarm admin nodes --all --json) as maps:
+// what root (the admin) and alice (the client) see together. With
+// multi-tenancy an admin sees no more than its user does - alice's own
+// workers are alice's to see.
 func (h *hubEnv) nodes(t *testing.T) []map[string]any {
 	t.Helper()
-	r := h.longarm(h.admin, "admin", "nodes", "--all", "--json")
-	if r.code != 0 {
-		return nil
+	var all []map[string]any
+	seen := map[any]bool{}
+	for _, cfg := range []string{h.admin, h.client} {
+		r := h.longarm(cfg, "admin", "nodes", "--all", "--json")
+		if r.code != 0 {
+			continue
+		}
+		var resp struct {
+			Nodes []map[string]any `json:"nodes"`
+		}
+		if err := json.Unmarshal([]byte(r.stdout), &resp); err != nil {
+			t.Fatalf("nodes json: %v\n%s", err, r.stdout)
+		}
+		for _, n := range resp.Nodes {
+			if !seen[n["name"]] {
+				seen[n["name"]] = true
+				all = append(all, n)
+			}
+		}
 	}
-	var resp struct {
-		Nodes []map[string]any `json:"nodes"`
-	}
-	if err := json.Unmarshal([]byte(r.stdout), &resp); err != nil {
-		t.Fatalf("nodes json: %v\n%s", err, r.stdout)
-	}
-	return resp.Nodes
+	return all
 }
 
 func isTrue(v any) bool { b, _ := v.(bool); return b }
@@ -132,7 +145,7 @@ func TestHub(t *testing.T) {
 		if code := bgw.wait(t, 60*time.Second); code != 3 {
 			t.Fatalf("wait exit %d, stderr: %s", code, bgw.stderr.String())
 		}
-		if !strings.Contains(bgw.stderr.String(), "unreachable") {
+		if !strings.Contains(bgw.stderr.String(), "unavailable") {
 			t.Fatalf("no fallback note: %s", bgw.stderr.String())
 		}
 		// Without the hub: ls/jobs/wait still work from the cache.
@@ -160,7 +173,7 @@ func TestHub(t *testing.T) {
 			r := h.longarm(h.client, "jobs", "--json")
 			return r.code == 0 && strings.Contains(r.stdout, id) && strings.Contains(r.stdout, "JOB_STATE_FAILED")
 		})
-		if r := h.longarm(h.client, "wait", id); r.code != 3 || strings.Contains(r.stderr, "unreachable") {
+		if r := h.longarm(h.client, "wait", id); r.code != 3 || strings.Contains(r.stderr, "unavailable") {
 			t.Fatalf("wait via the restarted hub: %+v", r)
 		}
 	})

@@ -61,7 +61,7 @@ func TestUXMessages(t *testing.T) {
 			"  Warning: it revokes this machine's sign-in (its certificate) at the hub and deletes it here;\n" +
 			"  to use Longarm again you sign in anew with `longarm login`."},
 		{"worker add", workerAddHelp("hub:7443", "K7P-Q2M", "ab:cd", "pc2", "alice", "10-29 15:04"),
-			"The easy way, on the new machine (signs in with your Microsoft account):\n" +
+			"The easy way, on the new machine (signs in with your account):\n" +
 				"  Windows: install the Longarm MSI and choose \"This machine runs jobs\", or run: longarmd login hub:7443\n" +
 				"  Linux / macOS: longarmd login hub:7443\n" +
 				"Or with the code above (for worker pc2, owned by alice, expires 10-29 15:04), on the new machine:\n" +
@@ -236,7 +236,7 @@ func TestJobsView(t *testing.T) {
 	}
 	v = planJobsView(jobsViewOpts{admin: true})
 	out, more = v.apply(rows, "alice")
-	if len(out) != 13 || more || v.note(more) != "longarm: only yours; --all for everybody's" {
+	if len(out) != 13 || more || v.note(more) != "longarm: only yours; --all for every job you may see" {
 		t.Errorf("admin: %d %v %q", len(out), more, v.note(more))
 	}
 	for _, j := range out {
@@ -336,7 +336,7 @@ func TestDoctorClientChecks(t *testing.T) {
 		{"daemon", func(f *fakeClientEnv) { f.daemonErr = errors.New("not running") }, "daemon", doctor.Warn, "longarm daemon start"},
 		{"firewall", func(f *fakeClientEnv) {
 			f.fw = &pb.FirewallStatus{Problem: "a Block rule", Fix: `longarm firewall allow`}
-		}, "firewall", doctor.Warn, "longarm firewall allow  (elevated)"},
+		}, "firewall", doctor.Warn, "longarm firewall allow  # elevated"},
 		{"no legs", func(f *fakeClientEnv) { f.legs["box"] = workerLegs{Error: "all 2 transport legs failed"} }, "worker:box", doctor.Fail, "longarm diag --upload"},
 	}
 	for _, b := range broken {

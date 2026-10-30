@@ -9,7 +9,9 @@
   One-time setup (no admin needed):
     dotnet tool install --global wix --version 5.0.2
     wix extension add -g WixToolset.UI.wixext/5.0.2 WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2
-  BinDir holds longarm.exe and longarmd.exe (and longarm-tray.exe, which is included when present).
+  BinDir holds longarm.exe and longarmd.exe (and longarm-tray.exe, which is included when present;
+  longarm-msihelper.exe, the upgrade helper, and longarm-update.exe, the Longarm Update service, are
+  built into BinDir with Go when they aren't there).
   The MSI's worker data dir defaults to C:\ProgramData\Longarm\longarmd (DATADIR), the same dir
   longarmd itself uses as LocalSystem and for `service install --isolation per-user`.
   Install modes (longarm.wxs): MODE=default (the built-in hub, -DefaultHub) signs in with Microsoft
@@ -43,6 +45,48 @@ if ($DefaultHub -and $DefaultHub -notmatch '^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-
 $DefaultHubCA = ("$DefaultHubCA".Trim() -replace '[: ]', '').ToLower()
 if ($DefaultHubCA -and $DefaultHubCA -notmatch '^[0-9a-f]{64}$') { throw '-DefaultHubCA is not a sha256 fingerprint (64 hex digits)' }
 if ($DefaultHubCA -and -not $DefaultHub) { throw '-DefaultHubCA without -DefaultHub' }
+# Authenticode (packaging/windows/sign.ps1): the binaries built here and the MSI, when signing is set
+# up (LONGARM_SIGN_PROFILE; release.yml), else nothing. The binaries taken from BinDir are signed by
+# whoever built them (GoReleaser's build hook, .goreleaser.yaml).
+$sign = Join-Path $PSScriptRoot 'sign.ps1'
+# The upgrade helper (internal/msiupgrade; the MSI's Binary table, not installed): taken from BinDir,
+# else built here (small, stdlib + x/sys; needs Go).
+$helper = Join-Path (Resolve-Path $BinDir).Path 'longarm-msihelper.exe'
+if (-not (Test-Path $helper)) {
+  $goArch = @{ x64 = 'amd64'; arm64 = 'arm64' }[$Arch]
+  $env:GOOS, $env:GOARCH, $env:CGO_ENABLED = 'windows', $goArch, '0'
+  Push-Location (Join-Path $PSScriptRoot '..\..')
+  try {
+    & go build -trimpath -ldflags '-s -w -H windowsgui' -o $helper ./cmd/longarm-msihelper
+    if ($LASTEXITCODE -ne 0) { throw "go build longarm-msihelper failed ($LASTEXITCODE)" }
+  } finally {
+    Pop-Location
+    Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue
+  }
+  & $sign $helper  # Authenticode when set up (LONGARM_SIGN_PROFILE), else nothing
+}
+# The Longarm Update service (internal/updatesvc; installed, runs as LocalSystem): taken from BinDir,
+# else built here with this version and the release key (LONGARM_UPDATE_PUBKEY, as goreleaser builds
+# the other binaries; without a key the service installs nothing). Needs Go.
+$updater = Join-Path (Resolve-Path $BinDir).Path 'longarm-update.exe'
+if (-not (Test-Path $updater)) {
+  $goArch = @{ x64 = 'amd64'; arm64 = 'arm64' }[$Arch]
+  $env:GOOS, $env:GOARCH, $env:CGO_ENABLED = 'windows', $goArch, '0'
+  $pub = "$env:LONGARM_UPDATE_PUBKEY".Trim()
+  if ($pub -and $pub -notmatch '^[A-Za-z0-9+/=]+$') { throw 'LONGARM_UPDATE_PUBKEY is not a minisign public key line' }
+  $ld = "-s -w -X github.com/lubobill1990/longarm/internal/version.Version=$($Version -replace '^v', '') " +
+    "-X github.com/lubobill1990/longarm/internal/update.PublicKey=$pub"
+  Push-Location (Join-Path $PSScriptRoot '..\..')
+  try {
+    & go build -trimpath -ldflags $ld -o $updater ./cmd/longarm-update
+    if ($LASTEXITCODE -ne 0) { throw "go build longarm-update failed ($LASTEXITCODE)" }
+  } finally {
+    Pop-Location
+    Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue
+  }
+  if (-not $pub) { Write-Warning 'longarm-update.exe has no release key (LONGARM_UPDATE_PUBKEY): its service will install nothing' }
+  & $sign $updater
+}
 $hasTray = if (Test-Path (Join-Path $BinDir 'longarm-tray.exe')) { 1 } else { 0 }
 $wix = Get-Command wix -ErrorAction SilentlyContinue
 if (-not $wix) {
@@ -61,4 +105,5 @@ New-Item -ItemType Directory -Force (Split-Path -Parent ([IO.Path]::GetFullPath(
   -o $Out $src
 if ($LASTEXITCODE -ne 0) { throw "wix build failed ($LASTEXITCODE)" }
 Remove-Item ([IO.Path]::ChangeExtension($Out, ".wixpdb")) -ErrorAction SilentlyContinue
+& $sign $Out  # after WiX: the MSI's own signature (the embedded cabinet is inside it)
 Write-Host "built $Out (version $msiVersion, $Arch, tray=$hasTray, default hub: $(if ($DefaultHub) { $DefaultHub } else { 'none: Custom only' }))"

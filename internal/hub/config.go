@@ -214,6 +214,23 @@ type HeadscaleConfig struct {
 	APIKeyFile string `toml:"api_key_file"`
 	// User owns the nodes (created if missing; default "longarm").
 	User string `toml:"user"`
+	// Proxy serves Headscale's public endpoints (the Noise upgrade
+	// /ts2021, /key, the embedded DERP /derp...) on the hub's own http and
+	// https listeners, forwarded to api_url: Headscale shares the hub's
+	// domain and certificate (headscale_proxy.go). On with sidecar_dir.
+	Proxy bool `toml:"proxy"`
+	// SidecarDir is a directory shared with a Headscale container next to
+	// the hub (deploy/azure enableHeadscale): the hub writes Headscale's
+	// config, policy, DERP map and private keys there (the keys live in the
+	// hub's database), creates and renews the hub's API key over
+	// Headscale's unix socket in it, and proxies Headscale (Proxy). url
+	// defaults to public_url, api_url to http://127.0.0.1:8080
+	// (headscale_sidecar.go).
+	SidecarDir string `toml:"sidecar_dir"`
+	// PublicDERP (sidecar_dir) also hands nodes Tailscale Inc.'s public DERP
+	// map. Off: the hub's embedded DERP region only (relayed traffic stays on
+	// the hub).
+	PublicDERP bool `toml:"public_derp"`
 	// Old [headscale] spellings of the [tailnet] settings, used when
 	// [tailnet] doesn't set them. Ephemeral now only applies to clients
 	// (ephemeral_clients); workers are never ephemeral.
@@ -416,7 +433,7 @@ func (c *Config) applyDefaults() error {
 	if err := c.releasesEnvDefaults(); err != nil {
 		return err
 	}
-	if err := c.Auth.Entra.applyDefaults(); err != nil {
+	if err := c.Auth.applyDefaults(); err != nil {
 		return err
 	}
 	c.PublicURL = strings.TrimRight(c.PublicURL, "/")
@@ -485,7 +502,7 @@ func (c *Config) SchedParams() sched.Params {
 
 // TTL of a certificate for role.
 func (c *Config) TTL(role string) time.Duration {
-	if role == "worker" {
+	if role == "worker" || role == "relay" {
 		return c.Certs.WorkerTTL.Duration
 	}
 	return c.Certs.ClientTTL.Duration

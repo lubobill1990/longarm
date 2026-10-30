@@ -3,8 +3,10 @@ import { longarmdApi, trayApi, traySettingsApi, type TrayInfo } from '../api/loc
 import type { Job } from '../api/types'
 import { Bar } from '../components/charts'
 import { ErrorBox, FirewallWarning, LogView, StatePill, useAction, usePoll } from '../components/common'
+import { IconChip, IconTerminal } from '../components/icons'
 import { fmtAgo, fmtTime, gb, isActive, memPct, since } from '../lib/format'
 import { killQuestion } from './ClientTab'
+import { Banner, EmptyState, Section, Skeleton } from './ui'
 
 /** longarm-tray's worker tab: this machine's longarmd through its local API. */
 export function WorkerTab({ info, onNavigate }: { info: TrayInfo; onNavigate?: (tab: string) => void }) {
@@ -13,16 +15,21 @@ export function WorkerTab({ info, onNavigate }: { info: TrayInfo; onNavigate?: (
     if (info.account?.hub_from)
       return (
         <div data-testid="worker-signin">
-          <div className="notice">
-            This worker isn&apos;t signed in yet: sign in on the Account tab and it joins {info.account.hub || 'the hub'} as yours.{' '}
-            {onNavigate && (
-              <button className="primary" onClick={() => onNavigate('account')}>
-                Account tab
-              </button>
-            )}
-          </div>
-          <details>
-            <summary className="muted small">Use a join code</summary>
+          <EmptyState
+            icon={<IconChip size={20} />}
+            title="This worker isn't signed in yet"
+            action={
+              onNavigate && (
+                <button className="primary" onClick={() => onNavigate('account')}>
+                  Account tab
+                </button>
+              )
+            }
+          >
+            Sign in on the Account tab and it joins {info.account.hub || 'the hub'} as yours.
+          </EmptyState>
+          <details className="disclosure">
+            <summary>Use a join code</summary>
             <JoinForm />
           </details>
         </div>
@@ -30,7 +37,7 @@ export function WorkerTab({ info, onNavigate }: { info: TrayInfo; onNavigate?: (
     return <JoinForm />
   }
   if (!info.worker.running) return <WorkerDown info={info} />
-  return <WorkerStatusView />
+  return <WorkerStatusView info={info} />
 }
 
 /** The local worker isn't running: start it the way it runs, or look at its log. */
@@ -38,19 +45,21 @@ function WorkerDown({ info }: { info: TrayInfo }) {
   const { run, busy } = useAction()
   const session = info.account?.run_mode === 'session'
   return (
-    <div className="error-box" data-testid="worker-down">
-      longarmd is not running{info.worker.error ? `: ${info.worker.error}` : ''}.{' '}
-      {session ? (
-        <>
-          It starts at your logon (<span className="mono">longarmd session-mode start</span>)
-          {info.account?.needed ? '; it waits for your sign-in (Account tab)' : ''}.
-        </>
-      ) : (
-        <>
-          It runs as a service (<span className="mono">longarmd service start</span>; starting it may ask for an administrator).
-        </>
-      )}
-      <div className="row" style={{ marginTop: 6 }}>
+    <div data-testid="worker-down">
+      <Banner tone="error">
+        longarmd is not running{info.worker.error ? `: ${info.worker.error}` : ''}.{' '}
+        {session ? (
+          <>
+            It starts at your logon (<span className="mono">longarmd session-mode start</span>)
+            {info.account?.needed ? '; it waits for your sign-in (Account tab)' : ''}.
+          </>
+        ) : (
+          <>
+            It runs as a service (<span className="mono">longarmd service start</span>; starting it may ask for an administrator).
+          </>
+        )}
+      </Banner>
+      <div className="button-row">
         <button className="primary" disabled={busy} onClick={() => run(() => traySettingsApi.startWorker(), session ? 'starting the worker' : 'starting the worker service')}>
           Start worker
         </button>
@@ -62,7 +71,7 @@ function WorkerDown({ info }: { info: TrayInfo }) {
   )
 }
 
-function WorkerStatusView() {
+function WorkerStatusView({ info }: { info: TrayInfo }) {
   const st = usePoll(longarmdApi.status, 2000)
   const jobs = usePoll(() => longarmdApi.jobs(30), 3000)
   const { run, busy } = useAction()
@@ -76,16 +85,21 @@ function WorkerStatusView() {
       setReserve(String(s.limits.reserved_mem_gb ?? 0))
     }
   }, [s]) // eslint-disable-line react-hooks/exhaustive-deps
-  if (!s) return <ErrorBox error={st.error} />
+  if (!s) return st.error ? <ErrorBox error={st.error} /> : <Skeleton card lines={5} label="loading this worker…" />
   const draining = !!s.state?.draining
   const m = s.metrics
+  const hubOk = s.hub?.connected || !s.hub?.address
   return (
     <div>
       <ErrorBox error={st.error} />
-      <FirewallWarning fw={s.firewall} />
+      <FirewallWarning
+        fw={s.firewall}
+        installDir={info.install_dir}
+        onAllow={info.firewall_fix ? () => trayApi.firewallAllow('worker') : undefined}
+      />
       <section className="wcard">
         <div className="head">
-          <span className="dot" style={{ background: s.hub?.connected || !s.hub?.address ? 'var(--green)' : 'var(--red)' }} />
+          <span className={`dot ${hubOk ? 'is-online' : 'is-offline'}`} style={{ background: hubOk ? 'var(--green)' : 'var(--red)' }} />
           <span className="name">{s.name}</span>
           <span className="sub">
             longarmd {s.version} · {s.os}/{s.arch}
@@ -93,6 +107,7 @@ function WorkerStatusView() {
           <span className="actions">
             <button
               data-testid="drain-toggle"
+              className="act"
               disabled={busy}
               onClick={() => run(() => longarmdApi.drain(!draining, draining ? '' : 'paused in longarm-tray'), draining ? 'accepting work' : 'draining').then(st.reload)}
             >
@@ -100,15 +115,31 @@ function WorkerStatusView() {
             </button>
           </span>
         </div>
-        <div className="small" data-testid="worker-state">
-          {draining ? <span className="amber">draining: {s.state?.reason}</span> : <span className="green">accepting work</span>} · {s.jobs_running ?? 0} jobs, {s.sessions_running ?? 0} sessions
+        <div className="small state-line" data-testid="worker-state">
+          {draining ? <span className="pill warn">draining: {s.state?.reason}</span> : <span className="pill ok">accepting work</span>}{' '}
+          <span className="muted">
+            · {s.jobs_running ?? 0} jobs, {s.sessions_running ?? 0} sessions
+          </span>
         </div>
-        <div className="small muted" style={{ marginTop: 4 }}>
-          hub {s.hub?.address || 'not configured'}{' '}
-          {s.hub?.address && (s.hub.connected ? `connected (${s.hub.node_state}) ${fmtAgo(since(s.hub.since))}` : `disconnected ${s.hub.error ?? ''}`)}
-        </div>
-        <div className="small muted">listening {(s.endpoints ?? []).join(' ')}</div>
-        {s.cert_not_after && <div className="small muted">certificate valid until {fmtTime(s.cert_not_after)}</div>}
+        <dl className="facts small">
+          <dt>hub</dt>
+          <dd>
+            <span className="mono">{s.hub?.address || 'not configured'}</span>{' '}
+            {s.hub?.address && (
+              <span className="muted">
+                {s.hub.connected ? `connected (${s.hub.node_state}) ${fmtAgo(since(s.hub.since))}` : `disconnected ${s.hub.error ?? ''}`}
+              </span>
+            )}
+          </dd>
+          <dt>listening</dt>
+          <dd className="mono">{(s.endpoints ?? []).join(' ')}</dd>
+          {s.cert_not_after && (
+            <>
+              <dt>certificate</dt>
+              <dd>valid until {fmtTime(s.cert_not_after)}</dd>
+            </>
+          )}
+        </dl>
         {m && (
           <div style={{ marginTop: 6 }}>
             <Bar label="CPU" pct={m.cpu_percent ?? 0} value={`${(m.cpu_percent ?? 0).toFixed(0)}%`} />
@@ -116,27 +147,34 @@ function WorkerStatusView() {
           </div>
         )}
       </section>
-      <section>
-        <h3>Local limits</h3>
+      <Section title="Local limits">
         <form
-          className="row wrap"
+          className="limits-form"
           onSubmit={(e) => {
             e.preventDefault()
             run(() => longarmdApi.limits({ max_jobs: Number(maxJobs) || 0, reserved_mem_gb: Number(reserve) || 0 }), 'limits saved').then(st.reload)
           }}
         >
-          <label className="row small">
-            max jobs <input aria-label="max jobs" style={{ width: 60 }} type="number" min={0} value={maxJobs} onChange={(e) => setMaxJobs(e.target.value)} />
+          <label className="field">
+            <span className="field-label">max jobs</span>
+            <input aria-label="max jobs" type="number" min={0} value={maxJobs} onChange={(e) => setMaxJobs(e.target.value)} />
           </label>
-          <label className="row small">
-            keep free <input aria-label="reserved memory" style={{ width: 70 }} type="number" min={0} step="0.5" value={reserve} onChange={(e) => setReserve(e.target.value)} /> GB
+          <label className="field">
+            <span className="field-label">keep free (GB)</span>
+            <input aria-label="reserved memory" type="number" min={0} step="0.5" value={reserve} onChange={(e) => setReserve(e.target.value)} />
           </label>
           <button disabled={busy}>Save</button>
         </form>
-        <div className="muted small">0 = no limit. The hub's scheduler honours them (longarmd limits).</div>
-      </section>
-      <section>
-        <h3>Toolchain</h3>
+        <div className="field-help">0 = no limit. The hub&apos;s scheduler honours them (longarmd limits).</div>
+      </Section>
+      <Section
+        title="Toolchain"
+        aside={
+          <button className="sm" disabled={busy} onClick={() => run(() => longarmdApi.toolchainApply(), 'toolchain update requested')}>
+            Update now
+          </button>
+        }
+      >
         <div className="row small">
           {s.toolchain && s.toolchain.state !== 'none' ? (
             <>
@@ -144,39 +182,45 @@ function WorkerStatusView() {
                 {s.toolchain.profile} r{s.toolchain.revision}
               </span>
               <StatePill state={s.toolchain.state} />
-              <span className="red">{s.toolchain.error}</span>
+              {s.toolchain.error && <span className="pill bad">{s.toolchain.error}</span>}
             </>
           ) : (
             <span className="muted">no profile assigned</span>
           )}
-          <span className="spacer" />
-          <button disabled={busy} onClick={() => run(() => longarmdApi.toolchainApply(), 'toolchain update requested')}>
-            Update now
-          </button>
         </div>
         <div className="small mono muted">
           {Object.entries(s.toolchain?.versions ?? {})
             .map(([k, v]) => `${k} ${v || '✗'}`)
             .join(' · ')}
         </div>
-      </section>
-      <section>
-        <h3>Jobs on this worker</h3>
+      </Section>
+      <Section title="Jobs on this worker">
         <ErrorBox error={jobs.error} />
-        <table className="grid small" data-testid="worker-jobs">
+        <table className="grid list small" data-testid="worker-jobs">
           <tbody>
             {(jobs.data ?? []).map((j) => (
-              <tr key={j.spec.id} onClick={() => setOpen(j)} style={{ cursor: 'pointer' }}>
-                <td className="mono">{j.spec.name || j.spec.id.slice(-8)}</td>
+              <tr
+                key={j.spec.id}
+                className={`clickable ${open?.spec.id === j.spec.id ? 'selected' : ''}`}
+                tabIndex={0}
+                onClick={() => setOpen(j)}
+                onKeyDown={(e) => {
+                  if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
+                    e.preventDefault()
+                    setOpen(j)
+                  }
+                }}
+              >
+                <td className="mono strong">{j.spec.name || j.spec.id.slice(-8)}</td>
                 <td>
                   <StatePill state={j.state} />
                 </td>
                 <td className="muted">{j.spec.owner || j.spec.submitted_by}</td>
-                <td className="muted nowrap">{fmtTime(j.created_at)}</td>
-                <td>
+                <td className="muted nowrap hide-narrow">{fmtTime(j.created_at)}</td>
+                <td className="actions-cell">
                   {isActive(j.state) && (
                     <button
-                      className="danger"
+                      className="danger sm"
                       disabled={busy}
                       onClick={(e) => {
                         e.stopPropagation()
@@ -191,32 +235,38 @@ function WorkerStatusView() {
               </tr>
             ))}
             {jobs.data === undefined && !jobs.error && (
-              <tr>
-                <td className="notice">loading jobs…</td>
+              <tr className="placeholder">
+                <td colSpan={5}>
+                  <Skeleton lines={2} label="loading jobs…" />
+                </td>
               </tr>
             )}
             {jobs.data !== undefined && jobs.data.length === 0 && (
-              <tr>
-                <td className="notice">no jobs on this worker yet</td>
+              <tr className="placeholder">
+                <td colSpan={5}>
+                  <EmptyState compact icon={<IconTerminal size={20} />} title="No jobs on this worker yet" />
+                </td>
               </tr>
             )}
           </tbody>
         </table>
         {open && <WorkerJobLogs key={open.spec.id} id={open.spec.id} />}
-      </section>
-      <section>
-        <h3>Fleet membership</h3>
-        <button
-          className="danger"
-          disabled={busy}
-          onClick={() =>
-            confirm('Leave the fleet? The hub revokes this worker and longarmd stops. Running jobs keep running.') &&
-            run(() => longarmdApi.leave('left in longarm-tray'), (r) => r.message ?? 'left')
-          }
-        >
-          Leave the fleet
-        </button>
-      </section>
+      </Section>
+      <Section title="Fleet membership">
+        <div className="field-inline">
+          <div className="field-help">The hub revokes this worker and longarmd stops. Running jobs keep running.</div>
+          <button
+            className="danger"
+            disabled={busy}
+            onClick={() =>
+              confirm('Leave the fleet? The hub revokes this worker and longarmd stops. Running jobs keep running.') &&
+              run(() => longarmdApi.leave('left in longarm-tray'), (r) => r.message ?? 'left')
+            }
+          >
+            Leave the fleet
+          </button>
+        </div>
+      </Section>
     </div>
   )
 }
@@ -236,30 +286,31 @@ function JoinForm() {
   const [out, setOut] = useState<string>()
   return (
     <form
+      className="wcard join-form"
       onSubmit={async (e) => {
         e.preventDefault()
         const r = await run(() => trayApi.join(hub, code, fp, name))
         if (r) setOut(r.output)
       }}
     >
-      <h3>Join a fleet</h3>
+      <h3 className="card-title">Join a fleet</h3>
       <div className="form-grid">
-        <label>hub</label>
-        <input aria-label="hub address" placeholder="hub.example.com:7443" value={hub} onChange={(e) => setHub(e.target.value)} />
-        <label>join code</label>
-        <input aria-label="join code" placeholder="K7P-Q2M" value={code} onChange={(e) => setCode(e.target.value)} />
-        <label>CA fingerprint</label>
-        <input aria-label="CA fingerprint" placeholder="shown in the hub panel (recommended)" value={fp} onChange={(e) => setFp(e.target.value)} />
-        <label>name</label>
-        <input aria-label="worker name" placeholder="default: hostname" value={name} onChange={(e) => setName(e.target.value)} />
+        <label htmlFor="join-hub">hub</label>
+        <input id="join-hub" aria-label="hub address" placeholder="hub.example.com:7443" value={hub} onChange={(e) => setHub(e.target.value)} />
+        <label htmlFor="join-code">join code</label>
+        <input id="join-code" aria-label="join code" placeholder="K7P-Q2M" value={code} onChange={(e) => setCode(e.target.value)} />
+        <label htmlFor="join-fp">CA fingerprint</label>
+        <input id="join-fp" aria-label="CA fingerprint" placeholder="shown in the hub panel (recommended)" value={fp} onChange={(e) => setFp(e.target.value)} />
+        <label htmlFor="join-name">name</label>
+        <input id="join-name" aria-label="worker name" placeholder="default: hostname" value={name} onChange={(e) => setName(e.target.value)} />
       </div>
-      <p>
+      <div className="button-row">
         <button className="primary" disabled={busy || !hub || !code}>
           Join
         </button>
-      </p>
+      </div>
       {out && <pre className="logview">{out}</pre>}
-      <p className="muted small">Runs longarmd join; the worker then waits for an admin's approval in the hub panel.</p>
+      <p className="muted small">Runs longarmd join; the worker then waits for an admin&apos;s approval in the hub panel.</p>
     </form>
   )
 }

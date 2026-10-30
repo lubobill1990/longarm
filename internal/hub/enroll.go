@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -81,6 +82,12 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 		if !pki.ValidUser(req.User) {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid user name %q", req.User)
 		}
+		h.mu.Lock()
+		refused := h.adminCredentialsRefusedLocked(req.User)
+		h.mu.Unlock()
+		if refused != nil {
+			return nil, refused
+		}
 	}
 	if req.Owner != "" {
 		if r != pki.RoleWorker {
@@ -103,6 +110,9 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 		if n >= maxWorkerCodes {
 			return nil, status.Errorf(codes.ResourceExhausted, "%s has %d unused worker codes already (they expire; max %d)", req.Owner, n, maxWorkerCodes)
 		}
+	}
+	if (r == pki.RoleClient || r == pki.RoleAdmin) && req.User == "" && h.TenancyOn() {
+		return nil, errUserlessCode
 	}
 	ttl := 10 * time.Minute
 	if req.Ttl != nil {
@@ -196,9 +206,23 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name, or revoke the old node)", name)
 	}
+	if h.nodeNameReservedLocked(name, jc.Role, jc.User) {
+		h.mu.Unlock()
+		return nil, errNameReserved(name)
+	}
 	if jc.Owner != "" && (h.tenants[jc.Owner] == nil || h.userDisabledLocked(jc.Owner)) { // removed or disabled since
 		h.mu.Unlock()
 		return nil, errBadCode
+	}
+	if jc.User != "" { // enrolled, signed in, shared with meanwhile: the code was for a new user
+		if err := h.adminCredentialsRefusedLocked(jc.User); err != nil {
+			h.mu.Unlock()
+			return nil, err
+		}
+	}
+	if (jc.Role == string(pki.RoleClient) || jc.Role == string(pki.RoleAdmin)) && jc.User == "" && h.tenancyOnLocked() { // made before users were separated
+		h.mu.Unlock()
+		return nil, errUserlessCode
 	}
 	h.mu.Unlock()
 	if jc, err = h.store.UseJoinCode(hash, name, now); err != nil {
@@ -292,6 +316,11 @@ func (h *Hub) joinStatusLocked(th string) *pb.JoinResponse {
 // issue signs csr for rec's identity (its ID and name: certName) and
 // records the certificate.
 func (h *Hub) issue(rec *store.Node, csr []byte) ([]byte, error) {
+	return h.issueHosts(rec, csr, nil)
+}
+
+// issueHosts is issue with DNS/IP SANs (a relay's renewal keeps its names).
+func (h *Hub) issueHosts(rec *store.Node, csr []byte, hosts []string) ([]byte, error) {
 	if rec.ID == "" {
 		return nil, status.Error(codes.Internal, "node without id")
 	}
@@ -316,7 +345,7 @@ func (h *Hub) issue(rec *store.Node, csr []byte) ([]byte, error) {
 	}
 	ttl := h.cfg.TTL(rec.Role)
 	cert, err := h.ca.SignCSR(csr, pki.IssueOptions{Role: pki.Role(rec.Role), Name: name, Validity: ttl,
-		Hosts: nil, User: rec.User, ID: rec.ID})
+		Hosts: hosts, User: rec.User, ID: rec.ID})
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "sign: %v", err)
 	}
@@ -443,8 +472,12 @@ func (h *Hub) Revoke(by, target string) (*pb.NodeInfo, error) {
 	h.event(context.Background(), "node.revoked", map[string]string{"role": role})
 	h.publishNodeLocked(n, "revoked by "+by)
 	info := h.nodeInfoLocked(n)
+	if role == string(pki.RoleRelay) {
+		h.forgetRelaysLocked(name) // out of the relay set at once
+	}
 	h.mu.Unlock()
 	h.broadcast(h.revocationsMsg())
+	h.relayPolicyNotify() // external relays get the new list
 	// End what already runs: hub streams of the node, its relay sessions.
 	closed := h.conns.CloseIf(h.revoked.Revoked)
 	kicked := 0
@@ -475,7 +508,14 @@ func (h *Hub) renew(c caller, csr []byte) (*pb.RenewResponse, error) {
 	}
 	rec := *n.rec
 	h.mu.Unlock()
-	cert, err := h.issue(&rec, csr)
+	var hosts []string
+	if c.id.Role == pki.RoleRelay && c.cert != nil { // nodes may check the relay's name: keep it
+		hosts = append(hosts, c.cert.DNSNames...)
+		for _, ip := range c.cert.IPAddresses {
+			hosts = append(hosts, ip.String())
+		}
+	}
+	cert, err := h.issueHosts(&rec, csr, hosts)
 	if err != nil {
 		return nil, err
 	}
@@ -527,3 +567,79 @@ func checkDevice(hostname, os, arch, version string) error {
 	}
 	return nil
 }
+
+// userHasMachinesLocked reports whether user has a machine that is not
+// revoked: a device (client, admin) of the user's or a worker it owns.
+func (h *Hub) userHasMachinesLocked(user string) bool {
+	for _, n := range h.nodes {
+		if n.rec.State == stateRevoked {
+			continue
+		}
+		if n.rec.Role == string(pki.RoleWorker) {
+			if n.rec.Owner == user {
+				return true
+			}
+			continue
+		}
+		if userNodeRole(n.rec.Role) && nodeUser(n.rec) == user {
+			return true
+		}
+	}
+	return false
+}
+
+// errUserHasMachines refuses an admin's credentials for a user (a join code
+// bound to the user: user add / user code / join-code --user; a panel
+// login: --panel) once the user has machines. They bootstrap a new user
+// only: after that, a device or login of the user's comes from the user's
+// own sign-in (longarm login, a pairing link the user approves) - otherwise
+// an admin could mint itself credentials of the user and act as the user,
+// on the user's machines.
+func errUserHasMachines(user string) error {
+	return status.Errorf(codes.FailedPrecondition,
+		"%s has machines already: an admin's join code or panel login for a user bootstraps a new user only; further devices come from %s's own sign-in (longarm login, or a pairing link %s approves)", user, user, user)
+}
+
+// adminCredentialsRefusedLocked says why an admin may not make credentials
+// that act as user (a join code bound to the user: user add / user code /
+// join-code --user; a panel login: --panel), or nil. They bootstrap a new
+// user only - one with nothing of its own and no access to anybody else's:
+// otherwise an admin could mint itself credentials of the user and act as
+// the user, on the user's machines or on the workers and jobs others share
+// with the user by name. Refused for a user who has machines, who signs in
+// with an identity provider (Entra, Google, Apple, a personal Microsoft
+// account: its devices come from its own sign-in) or who has another
+// user's worker shared with it. (Teams are the admins' to administer:
+// docs/security.md "What admins see".)
+func (h *Hub) adminCredentialsRefusedLocked(user string) error {
+	if h.userHasMachinesLocked(user) {
+		return errUserHasMachines(user)
+	}
+	if id, _ := h.store.Meta(entraUserKey(user)); id != "" {
+		return status.Errorf(codes.FailedPrecondition,
+			"%s signs in with an identity provider: its devices and logins come from its own sign-in (longarm login, or a pairing link %s approves), not from an admin", user, user)
+	}
+	if h.sharedWithLocked(user) {
+		return status.Errorf(codes.FailedPrecondition,
+			"%s has workers shared with it: an admin's join code or panel login for a user bootstraps a new user only; %s's devices come from its own sign-in (longarm login, or a pairing link %s approves)", user, user, user)
+	}
+	return nil
+}
+
+// sharedWithLocked reports whether another user's live worker is shared
+// with user by name.
+func (h *Hub) sharedWithLocked(user string) bool {
+	for _, n := range h.nodes {
+		if n.rec.Role == string(pki.RoleWorker) && n.rec.State != stateRevoked && n.rec.Owner != user &&
+			n.rec.Shares != nil && slices.Contains(n.rec.Shares.Users, user) {
+			return true
+		}
+	}
+	return false
+}
+
+// errUserlessCode refuses a client or admin join code bound to no user once
+// users are separated: its device would act as the user its name names
+// (userOfLocked) - a way for an admin to become another user.
+var errUserlessCode = status.Error(codes.FailedPrecondition,
+	"with users separated, a client or admin code belongs to a user (longarm admin user add / user code, or join-code --user)")

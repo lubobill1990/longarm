@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/lubobill1990/longarm/internal/longarmd"
+	"github.com/lubobill1990/longarm/internal/msiupgrade"
+	"github.com/lubobill1990/longarm/internal/updatesvc"
 )
 
 // TestMSIPropertiesOverridable (static, every platform): a property given
@@ -129,7 +131,8 @@ func TestMSIModeRun(t *testing.T) {
 			}
 		}
 	}
-	actions := map[string]bool{"CostFinalize": true, "InstallInitialize": true, "InstallServices": true, "StopServices": true}
+	actions := map[string]bool{"CostFinalize": true, "InstallInitialize": true, "InstallServices": true, "StopServices": true,
+		"InstallValidate": true, "RemoveExistingProducts": true, "InstallFinalize": true}
 	sets := map[string]attrs{}
 	for _, s := range p.Sets {
 		id := s.Action
@@ -177,7 +180,8 @@ func TestMSIModeRun(t *testing.T) {
 		t.Errorf("SetHubDefault: %q", c)
 	}
 	for _, comp := range p.Components {
-		if len(comp.Services) > 0 || len(comp.Env) > 0 && comp.ID == "LongarmdService" {
+		// (the worker service; the update service is every install's: TestMSIUpdateService)
+		if comp.ID != "UpdateService" && (len(comp.Services) > 0 || len(comp.Env) > 0 && comp.ID == "LongarmdService") {
 			if !strings.Contains(comp.Condition, `RUN="service"`) || strings.Contains(comp.Condition, "NOT (") {
 				t.Errorf("component %s (service) condition %q", comp.ID, comp.Condition)
 			}
@@ -472,5 +476,374 @@ func TestMSICloudPCDetection(t *testing.T) {
 	}
 	if !regexp.MustCompile(`<Property Id="ROLES_RECORDED">\s*<RegistrySearch [^>]*Name="Roles"`).MatchString(src) {
 		t.Error("ROLES_RECORDED does not search the recorded roles")
+	}
+}
+
+// TestMSIUpgradeRunning (static): an upgrade with Longarm running shows no
+// "files in use" dialog and needs no reboot (internal/msiupgrade). Restart
+// Manager is off; the upgrade helper comes from the Binary table (it must
+// run before the installed files are replaced) and gets UserSID only; it
+// stops the installing user's tray before InstallValidate (where the
+// in-use check runs), everything else elevated before StopServices (with a
+// rollback step before it), on an upgrade and on an uninstall; the new
+// longarmd starts again what ran, at the end. None runs as the old product
+// of a later upgrade. The worker services stop (and are waited for) on
+// upgrades, repairs and uninstalls.
+//
+// The major upgrade installs over the old product and removes it afterwards
+// (afterInstallExecute): with afterInstallInitialize, RemoveExistingProducts
+// must come before every action that writes to the install script, and the
+// elevated stop step is one - error 2613, every upgrade failed (0.1.8 to
+// 0.1.13). Nothing is scheduled relative to RemoveExistingProducts (WiX
+// places it); msi-sequence-check.ps1 checks the built table.
+func TestMSIUpgradeRunning(t *testing.T) {
+	b, err := os.ReadFile("../packaging/windows/longarm.wxs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := regexp.MustCompile(`<\?[^>]*\?>`).ReplaceAll(b, nil)
+	src = append([]byte(`<?xml version="1.0" encoding="utf-8"?>`), src...)
+	type attrs struct {
+		ID          string `xml:"Id,attr"`
+		Action      string `xml:"Action,attr"`
+		Value       string `xml:"Value,attr"`
+		Before      string `xml:"Before,attr"`
+		After       string `xml:"After,attr"`
+		Condition   string `xml:"Condition,attr"`
+		BinaryRef   string `xml:"BinaryRef,attr"`
+		Execute     string `xml:"Execute,attr"`
+		Impersonate string `xml:"Impersonate,attr"`
+		Return      string `xml:"Return,attr"`
+		ExeCommand  string `xml:"ExeCommand,attr"`
+		SourceFile  string `xml:"SourceFile,attr"`
+		Schedule    string `xml:"Schedule,attr"`
+		Name        string `xml:"Name,attr"`
+		Stop        string `xml:"Stop,attr"`
+		Wait        string `xml:"Wait,attr"`
+	}
+	var doc struct {
+		Package struct {
+			Upgrade    attrs   `xml:"MajorUpgrade"`
+			Properties []attrs `xml:"Property"`
+			Binaries   []attrs `xml:"Binary"`
+			Actions    []attrs `xml:"CustomAction"`
+			Controls   []attrs `xml:"ComponentGroup>Component>ServiceControl"`
+			Sequence   []attrs `xml:"InstallExecuteSequence>Custom"`
+		} `xml:"Package"`
+	}
+	if err := xml.Unmarshal(src, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p := doc.Package
+	if p.Upgrade.Schedule != "afterInstallExecute" {
+		t.Errorf("MajorUpgrade Schedule %q: the new version installs over the old one, which is removed afterwards (afterInstallExecute)", p.Upgrade.Schedule)
+	}
+	for _, c := range p.Sequence {
+		if c.Before == "RemoveExistingProducts" || c.After == "RemoveExistingProducts" {
+			t.Errorf("%s is scheduled relative to RemoveExistingProducts (a deferred action before it is error 2613)", c.Action)
+		}
+	}
+	rm := false
+	for _, pr := range p.Properties {
+		if pr.ID == "MSIRESTARTMANAGERCONTROL" && pr.Value == "Disable" {
+			rm = true
+		}
+	}
+	if !rm {
+		t.Error("MSIRESTARTMANAGERCONTROL is not Disable")
+	}
+	if len(p.Binaries) != 1 || p.Binaries[0].ID != "LongarmMsiHelper" || !strings.HasSuffix(p.Binaries[0].SourceFile, `\longarm-msihelper.exe`) {
+		t.Errorf("Binary table: %+v", p.Binaries)
+	}
+	ca := map[string]attrs{}
+	for _, a := range p.Actions {
+		ca[a.ID] = a
+	}
+	seq := map[string]attrs{}
+	for _, c := range p.Sequence {
+		seq[c.Action] = c
+	}
+	for id, want := range map[string]struct{ step, execute, before string }{
+		"LongarmStopTray":            {"stop-tray", "immediate", "InstallValidate"},
+		"LongarmUpgradeStop":         {"stop", "deferred", "StopServices"},
+		"LongarmUpgradeStopRollback": {"rollback", "rollback", "LongarmUpgradeStop"},
+		"LongarmRemoveStop":          {"stop-remove", "deferred", "StopServices"},
+	} {
+		a, ok := ca[id]
+		if !ok {
+			t.Errorf("no custom action %s", id)
+			continue
+		}
+		if a.BinaryRef != "LongarmMsiHelper" || a.Execute != want.execute || a.Return != "ignore" {
+			t.Errorf("%s: %+v", id, a)
+		}
+		if want.execute != "immediate" && a.Impersonate != "no" {
+			t.Errorf("%s runs impersonated", id)
+		}
+		step, data, ok := strings.Cut(a.ExeCommand, " "+msiupgrade.DataMarker)
+		if !ok || step != want.step {
+			t.Errorf("%s: command %q", id, a.ExeCommand)
+			continue
+		}
+		var keys []string
+		for _, f := range strings.Split(data, "|") {
+			k, v, _ := strings.Cut(f, "=")
+			if v != "[UserSID]" {
+				t.Errorf("%s: field %q (the helper gets UserSID only)", id, f)
+			}
+			keys = append(keys, k)
+		}
+		if strings.Join(keys, ",") != strings.Join(msiupgrade.Steps[step], ",") {
+			t.Errorf("%s: fields %v, the helper expects %v", id, keys, msiupgrade.Steps[step])
+		}
+		s, ok := seq[id]
+		if !ok || s.Before != want.before {
+			t.Errorf("%s: scheduled %+v, want before %s", id, s, want.before)
+		}
+		if !strings.Contains(s.Condition, "NOT UPGRADINGPRODUCTCODE") {
+			t.Errorf("%s: condition %q runs as the old product of an upgrade", id, s.Condition)
+		}
+	}
+	if c := seq["LongarmStopTray"].Condition; !strings.Contains(c, "UserSID=SESSION_SID") || !strings.Contains(c, "WIX_UPGRADE_DETECTED") {
+		t.Errorf("LongarmStopTray condition %q", c)
+	}
+	for _, id := range []string{"LongarmUpgradeStop", "LongarmUpgradeStopRollback", "LongarmdUpgradeRestart"} {
+		if c := seq[id].Condition; !strings.Contains(c, "WIX_UPGRADE_DETECTED") || !strings.Contains(c, `NOT REMOVE="ALL"`) {
+			t.Errorf("%s condition %q", id, c)
+		}
+	}
+	if r := seq["LongarmdUpgradeRestart"]; r.Before != "InstallFinalize" || !strings.Contains(ca["LongarmdUpgradeRestart"].ExeCommand, "install-helper msi restart ") ||
+		ca["LongarmdUpgradeRestart"].Impersonate != "no" {
+		t.Errorf("LongarmdUpgradeRestart: %+v %+v", r, ca["LongarmdUpgradeRestart"])
+	}
+	stops := map[string]bool{}
+	for _, c := range p.Controls {
+		if c.Stop == "both" && c.Wait == "yes" {
+			stops[c.ID] = true
+		}
+	}
+	if !stops["AdminSvcStop"] || !stops["LongarmdSvcCtl"] {
+		t.Errorf("the admin worker's and the worker's service must stop on install and uninstall and be waited for: %+v", p.Controls)
+	}
+}
+
+// TestMSIUpdateService (static): every install has the Longarm Update
+// service - unconditional, LocalSystem, from the install dir, auto start -
+// stopped and waited for before its file changes, removed on uninstall,
+// started without waiting (an install never fails for it); the names match
+// what internal/updatesvc and its clients expect.
+func TestMSIUpdateService(t *testing.T) {
+	b, err := os.ReadFile("../packaging/windows/longarm.wxs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := regexp.MustCompile(`<\?[^>]*\?>`).ReplaceAll(b, nil)
+	src = append([]byte(`<?xml version="1.0" encoding="utf-8"?>`), src...)
+	type control struct {
+		ID     string `xml:"Id,attr"`
+		Name   string `xml:"Name,attr"`
+		Start  string `xml:"Start,attr"`
+		Stop   string `xml:"Stop,attr"`
+		Remove string `xml:"Remove,attr"`
+		Wait   string `xml:"Wait,attr"`
+	}
+	type component struct {
+		ID        string `xml:"Id,attr"`
+		Condition string `xml:"Condition,attr"`
+		File      []struct {
+			Name   string `xml:"Name,attr"`
+			Source string `xml:"Source,attr"`
+		} `xml:"File"`
+		Service []struct {
+			Name      string `xml:"Name,attr"`
+			Account   string `xml:"Account,attr"`
+			Arguments string `xml:"Arguments,attr"`
+			Start     string `xml:"Start,attr"`
+			Type      string `xml:"Type,attr"`
+		} `xml:"ServiceInstall"`
+		Controls []control `xml:"ServiceControl"`
+		RegKeys  []struct {
+			Key    string `xml:"Key,attr"`
+			Action string `xml:"Action,attr"`
+		} `xml:"RemoveRegistryKey"`
+	}
+	var doc struct {
+		Package struct {
+			Components []component `xml:"ComponentGroup>Component"`
+		} `xml:"Package"`
+	}
+	if err := xml.Unmarshal(src, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var c *component
+	for i := range doc.Package.Components {
+		if doc.Package.Components[i].ID == "UpdateService" {
+			c = &doc.Package.Components[i]
+		}
+	}
+	if c == nil {
+		t.Fatal("no UpdateService component")
+	}
+	if c.Condition != "" {
+		t.Errorf("the update service is conditional (%q): every install has it", c.Condition)
+	}
+	if len(c.File) != 1 || c.File[0].Name != updatesvc.BinaryName || !strings.HasSuffix(c.File[0].Source, `\`+updatesvc.BinaryName) {
+		t.Errorf("file %+v", c.File)
+	}
+	if len(c.Service) != 1 || c.Service[0].Name != updatesvc.ServiceName || c.Service[0].Account != "LocalSystem" ||
+		c.Service[0].Arguments != "run" || c.Service[0].Start != "auto" || c.Service[0].Type != "ownProcess" {
+		t.Errorf("service %+v", c.Service)
+	}
+	var stop, start bool
+	for _, sc := range c.Controls {
+		if sc.Name != updatesvc.ServiceName {
+			t.Errorf("control %+v names another service", sc)
+		}
+		if sc.Stop == "both" && sc.Remove == "uninstall" && sc.Wait == "yes" {
+			stop = true
+		}
+		if sc.Start == "install" && sc.Wait == "no" {
+			start = true
+		}
+	}
+	if !stop || !start {
+		t.Errorf("controls %+v: stop (both, waited, removed on uninstall) and start (install, not waited) wanted", c.Controls)
+	}
+	if len(c.RegKeys) != 1 || c.RegKeys[0].Key != `Software\Longarm\Update` || c.RegKeys[0].Action != "removeOnUninstall" {
+		t.Errorf("the auto-update setting is not removed on uninstall: %+v", c.RegKeys)
+	}
+}
+
+// TestMSIMajorUpgradeInPlace (static): the new version installs over the
+// old one and RemoveExistingProducts uninstalls the old product afterwards
+// (afterInstallExecute). That is only safe when
+//   - every component keeps the GUID (and key file) every released version
+//     has, so the old product's uninstall leaves the shared components alone
+//     ("another client exists") instead of deleting the new files;
+//   - no uninstall step (leave the hub, remove tasks, services, data) runs
+//     as the old product of an upgrade (NOT UPGRADINGPRODUCTCODE);
+//   - longarmd.exe never moves between its two components on an upgrade
+//     (CheckLongarmdSwitch, from component searches of the same GUIDs).
+func TestMSIMajorUpgradeInPlace(t *testing.T) {
+	b, err := os.ReadFile("../packaging/windows/longarm.wxs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := regexp.MustCompile(`<\?[^>]*\?>`).ReplaceAll(b, nil)
+	src = append([]byte(`<?xml version="1.0" encoding="utf-8"?>`), src...)
+	type file struct {
+		ID   string `xml:"Id,attr"`
+		Name string `xml:"Name,attr"`
+	}
+	type component struct {
+		ID    string `xml:"Id,attr"`
+		GUID  string `xml:"Guid,attr"`
+		Dir   string `xml:"Directory,attr"`
+		Files []file `xml:"File"`
+	}
+	type search struct {
+		GUID string `xml:"Guid,attr"`
+		Type string `xml:"Type,attr"`
+	}
+	type property struct {
+		ID     string  `xml:"Id,attr"`
+		Search *search `xml:"ComponentSearch"`
+	}
+	type custom struct {
+		Action    string `xml:"Action,attr"`
+		Before    string `xml:"Before,attr"`
+		Condition string `xml:"Condition,attr"`
+	}
+	var doc struct {
+		Package struct {
+			Components []component `xml:"ComponentGroup>Component"`
+			Properties []property  `xml:"Property"`
+			Actions    []struct {
+				ID    string `xml:"Id,attr"`
+				Error string `xml:"Error,attr"`
+			} `xml:"CustomAction"`
+			Sequence []custom `xml:"InstallExecuteSequence>Custom"`
+		} `xml:"Package"`
+	}
+	if err := xml.Unmarshal(src, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p := doc.Package
+	// Component -> GUID ("" = WiX's, from the key file's path: the file
+	// must keep its Id, Name and directory) and key file, as released
+	// (v0.1.2 to v0.1.13; UpdateService since v0.1.13).
+	want := map[string][2]string{
+		"LongarmExe":      {"", "longarm.exe"},
+		"UpdateService":   {"24b9f1c6-dc48-4bbc-8624-db45f8e3cee6", "longarm_update.exe"},
+		"LongarmdService": {"3e96d676-1a38-455f-a841-7b7642e651c8", "longarmd.exe"},
+		"LongarmdPlain":   {"0afe2b69-cb68-4395-a6fb-5a51b76aef5b", "longarmd.plain.exe"},
+		"LongarmdStart":   {"5380e22b-7c1c-4756-8c00-1616ee2b4647", ""},
+		"Settings":        {"165786a7-faa0-43e1-9643-f87e8ab45911", ""},
+		"Tray":            {"", "longarm_tray.exe"},
+		"TrayShortcut":    {"936cbf15-9d7c-4e3d-8b7a-173b2bb11b9d", ""},
+	}
+	got := map[string]component{}
+	for _, c := range p.Components {
+		got[c.ID] = c
+		w, ok := want[c.ID]
+		if !ok {
+			t.Errorf("component %s is new: add it here (a new component is fine; a changed GUID or key file is not)", c.ID)
+			continue
+		}
+		if !strings.EqualFold(c.GUID, w[0]) {
+			t.Errorf("component %s: Guid %q, released versions have %q (the old product's uninstall would delete the new files)", c.ID, c.GUID, w[0])
+		}
+		if w[1] != "" && (len(c.Files) != 1 || c.Files[0].ID != w[1]) {
+			t.Errorf("component %s: files %+v, released versions have %s", c.ID, c.Files, w[1])
+		}
+		if w[0] == "" && c.Dir != "" {
+			t.Errorf("component %s (generated Guid) moved to %s", c.ID, c.Dir)
+		}
+	}
+	for id := range want {
+		if _, ok := got[id]; !ok {
+			t.Errorf("no component %s", id)
+		}
+	}
+	for _, c := range p.Sequence {
+		cond := strings.ReplaceAll(c.Condition, `NOT REMOVE="ALL"`, "")
+		if strings.Contains(cond, `REMOVE="ALL"`) && !strings.Contains(cond, "NOT UPGRADINGPRODUCTCODE") {
+			t.Errorf("%s (%q) would run as the old product of an upgrade", c.Action, c.Condition)
+		}
+	}
+	searches := map[string]string{}
+	for _, pr := range p.Properties {
+		if pr.Search != nil {
+			if pr.Search.Type != "file" {
+				t.Errorf("%s: ComponentSearch Type %q", pr.ID, pr.Search.Type)
+			}
+			searches[pr.ID] = pr.Search.GUID
+		}
+	}
+	if !strings.EqualFold(searches["PREV_LONGARMD_SERVICE"], got["LongarmdService"].GUID) || !strings.EqualFold(searches["PREV_LONGARMD_PLAIN"], got["LongarmdPlain"].GUID) {
+		t.Errorf("component searches %v do not match the longarmd components", searches)
+	}
+	var sw *custom
+	for i, c := range p.Sequence {
+		if c.Action == "CheckLongarmdSwitch" {
+			sw = &p.Sequence[i]
+		}
+	}
+	if sw == nil || sw.Before != "LongarmStopTray" { // before anything is stopped
+		t.Fatalf("CheckLongarmdSwitch: %+v", sw)
+	}
+	for _, s := range []string{"WIX_UPGRADE_DETECTED", `NOT REMOVE="ALL"`, `PREV_LONGARMD_SERVICE AND NOT (IsWorker AND RUN="service")`, `PREV_LONGARMD_PLAIN AND IsWorker AND RUN="service"`} {
+		if !strings.Contains(sw.Condition, s) {
+			t.Errorf("CheckLongarmdSwitch condition %q lacks %s", sw.Condition, s)
+		}
+	}
+	found := false
+	for _, a := range p.Actions {
+		if a.ID == "CheckLongarmdSwitch" && strings.Contains(a.Error, "uninstall first") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("CheckLongarmdSwitch: no error message telling what to do")
 	}
 }

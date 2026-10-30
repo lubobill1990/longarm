@@ -106,6 +106,14 @@ table.grid tr:hover td { background: #11161d; }
 
 .login { max-width: 320px; margin: 12vh auto; display: flex; flex-direction: column; gap: 10px; }
 .login h1 { font-size: 20px; margin: 0 0 8px; }
+a.button {
+  display: inline-block; text-align: center; border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px;
+  background: var(--track); color: var(--fg);
+}
+a.button.primary { background: #238636; border-color: #2ea043; color: #fff; }
+a.button:hover { text-decoration: none; border-color: var(--muted); }
+.steps { padding-left: 20px; }
+.steps li { margin-bottom: 12px; }
 
 .form-grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 12px; align-items: center; }
 .codebox {
@@ -170,6 +178,8 @@ table.grid tr.subrow td { border-top: none; }
 
 .linkrow { display: flex; align-items: center; gap: 8px; font-size: 12px; margin: 2px 0 4px; }
 .linkrow .path { font-family: var(--mono); }
+.linkrow .linklabel { width: 36px; font-weight: 700; flex: none; }
+.wcard .actions button svg { vertical-align: -1px; }
 .legs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
 .leg { font-size: 10px; font-family: var(--mono); border: 1px solid var(--track); border-radius: 4px; padding: 0 5px; color: var(--muted); }
 .leg.active { border-color: var(--rtt); color: var(--fg); }
@@ -186,35 +196,4 @@ table.grid tr.subrow td { border-top: none; }
 .tops .p { display: flex; justify-content: space-between; font-size: 11px; height: 16px; }
 .tops .p .v { font-family: var(--mono); color: var(--muted); }
 
-/* ---------------------------------------------------------------- tray popup */
-
-/* The popup is exactly the window: the head (title, tabs, source line) stays, only .body scrolls. */
-.tray { background: var(--bg); height: 100%; display: flex; flex-direction: column; border: 1px solid var(--border); overflow: hidden; }
-.tray .tray-head { flex: none; background: var(--bg); border-bottom: 1px solid var(--border); }
-.tray .tray-head .srcbar { padding: 6px 12px; }
-.tray .titlebar {
-  display: flex; align-items: center; gap: 8px; padding: 8px 12px; height: 40px;
-  --wails-draggable: drag; user-select: none; cursor: default;
-}
-.tray .titlebar button { --wails-draggable: no-drag; }
-.tray .titlebar .title { font-weight: 700; font-size: 14px; }
-.tray .titlebar .tbtn { background: none; border: none; color: var(--muted); padding: 0 4px; font-size: 14px; }
-.tray .titlebar .tbtn.on { color: var(--cpu); }
-.tray .tabs { display: flex; gap: 2px; padding: 0 8px; }
-.tray .tray-head .srcbar { border-top: 1px solid var(--track); }
-.tray .tabs button { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; color: var(--muted); padding: 4px 10px; }
-.tray .tabs button.active { color: var(--fg); border-bottom-color: var(--cpu); }
-.tray .body { padding: 8px; overflow: auto; flex: 1; min-height: 0; }
-.tray .srcbar { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--muted); padding: 0 4px 6px; }
-.tray section + section { margin-top: 12px; }
-.tray h3 { font-size: 12px; color: var(--muted); margin: 8px 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }
-
-/* the tray's sign-in code, its roles, its own context menu */
-.signin-code { font-size: 34px; font-weight: 700; letter-spacing: 4px; margin: 8px 0; user-select: all; }
-.ok-box { color: var(--green); border: 1px solid #238636; border-radius: 6px; padding: 6px 10px; margin: 8px 0; background: #12261e; }
-label.check { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0; font-size: 13px; }
-label.check input { margin-top: 2px; }
-.ctx-backdrop { position: fixed; inset: 0; z-index: 1000; }
-.ctx-menu { position: fixed; list-style: none; margin: 0; padding: 4px 0; min-width: 120px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); }
-.ctx-menu button { display: block; width: 100%; text-align: left; border: 0; border-radius: 0; background: none; padding: 4px 12px; }
-.ctx-menu button:hover { background: var(--border); }
+/* the tray popup: tray/tokens.css and tray/tray.css */

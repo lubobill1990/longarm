@@ -25,6 +25,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/metrics"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/shim"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/userspace"
@@ -137,12 +138,27 @@ func newAuthzEnvWith(t *testing.T, cfg func(*userspace.Config)) *authzEnv {
 	go g.Serve(ln)
 	t.Cleanup(func() {
 		g.Stop()
+		type proc struct {
+			pid   int
+			start uint64
+		}
+		var procs []proc
 		for _, sp := range spaces.All() {
 			for _, j := range append(sp.Jobs.List(nil, 0), sp.Sessions.List(nil, 0)...) {
+				procs = append(procs, proc{j.Status.ShimPID, j.Status.ShimStart}, proc{j.Status.PID, j.Status.PIDStart})
 				if !j.Status.State.Terminal() {
 					sp.Jobs.Kill(context.Background(), j.Spec.ID)
 					sp.Sessions.Kill(context.Background(), j.Spec.ID)
 				}
+			}
+		}
+		// The shims write the jobs' final status into the data dir: wait
+		// for them (and the jobs) to exit before t.TempDir's RemoveAll
+		// (macOS: "unlinkat .../jobs/JOBA: directory not empty").
+		deadline := time.Now().Add(30 * time.Second)
+		for _, p := range procs {
+			for p.pid > 0 && platform.ProcessAlive(p.pid, p.start) && time.Now().Before(deadline) {
+				time.Sleep(20 * time.Millisecond)
 			}
 		}
 	})
@@ -430,6 +446,23 @@ func TestAuthzTable(t *testing.T) {
 			_, err = st.CloseAndRecv()
 			return err
 		}, [4]codes.Code{codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument}},
+		// a fleet worker (no owner): nobody updates its machine (TestMachineUpdateOwnerOnly)
+		pb.MachineUpdate_Start_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			st, err := pb.NewMachineUpdateClient(c).Start(ctx, &pb.MachineUpdateRequest{Latest: true})
+			if err != nil {
+				return err
+			}
+			_, err = st.Recv()
+			return err
+		}, [4]codes.Code{pd, pd, pd, pd}},
+		pb.MachineUpdate_SetAuto_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := pb.NewMachineUpdateClient(c).SetAuto(ctx, &pb.MachineUpdateAutoRequest{Enabled: true})
+			return err
+		}, [4]codes.Code{pd, pd, pd, pd}},
+		pb.MachineUpdate_Status_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := pb.NewMachineUpdateClient(c).Status(ctx, &pb.MachineUpdateStatusRequest{})
+			return err
+		}, [4]codes.Code{codes.Unimplemented, codes.Unimplemented, codes.Unimplemented, codes.Unimplemented}},
 	}
 	var missing []string
 	for m := range MethodRoles {

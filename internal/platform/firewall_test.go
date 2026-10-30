@@ -76,17 +76,3 @@ func TestEvalFirewall(t *testing.T) {
 		t.Errorf("env var not expanded: %q", r.Program)
 	}
 }
-
-func TestFirewallFixCommand(t *testing.T) {
-	longarm := filepath.Join(t.TempDir(), "longarm.exe")
-	longarmd := filepath.Join(filepath.Dir(longarm), "longarmd.exe")
-	if got := FirewallFixCommand(longarm, longarm); got != `"`+longarm+`" firewall allow` {
-		t.Errorf("own exe: %s", got)
-	}
-	if got := FirewallFixCommand(longarm, longarmd); got != `"`+longarm+`" firewall allow --program "`+longarmd+`"` {
-		t.Errorf("longarmd: %s", got)
-	}
-	if got := FirewallFixCommand("", longarmd); got != `longarm firewall allow --program "`+longarmd+`"` {
-		t.Errorf("longarm on PATH: %s", got)
-	}
-}

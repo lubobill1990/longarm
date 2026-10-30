@@ -23,13 +23,17 @@
   ./deploy.ps1 -Name myhub -Location eastasia -BuildInAcr   # image built from this checkout in your ACR
 .EXAMPLE
   ./deploy.ps1 -Name myhub -Location eastasia -StorageAuth identity -Telemetry -Diagnostics   # no storage account keys
+.EXAMPLE
+  ./deploy.ps1 -Name myhub -Headscale -Recreate   # + a Headscale sidecar (self-hosted tailnet)
+.EXAMPLE
+  ./deploy.ps1 -Name myhub -Relay   # + an external relay that survives hub restarts (relay.ps1)
 #>
 [CmdletBinding()]
 param(
     # hub name = DNS label: NAME.REGION.azurecontainer.io (lowercase: Options None = case-sensitive)
     [Parameter(Mandatory = $true)][ValidatePattern('^[a-z][a-z0-9-]{1,38}[a-z0-9]$', Options = 'None')][string]$Name,
     [string]$Location = '',
-    # small = 1 vCPU / 1.5 GB (first run default), medium = 2 vCPU / 3 GB
+    # small = 1 vCPU / 1.5 GB (first run default), medium = 2 vCPU / 3 GB (README "Replica size and memory")
     [ValidateSet('', 'small', 'medium')][string]$Size = '',
     # without / with the HTTPS panel (first run default: with)
     [switch]$NoPanel,
@@ -43,6 +47,12 @@ param(
     # external STUN servers the hub advertises (host:port,...; 'none' = only the hub's own)
     [string]$StunServers = '',
     [string]$TailscaleSecretFile = '',
+    # a self-hosted Tailscale control plane (Headscale) as a sidecar, served by the hub on
+    # https://<fqdn>; the hub's tailnet provider (needs the panel; switching needs -Recreate)
+    [switch]$Headscale,
+    [switch]$NoHeadscale,
+    # also hand nodes Tailscale's public DERP relays: on | off (default off)
+    [string]$HeadscalePublicDerp = '',
     [string]$AcmeEmail = '',
     # Sign in with Microsoft Entra ID (longarm login, panel): the app registration (docs/usage.md)
     [string]$EntraTenant = '',
@@ -58,25 +68,41 @@ param(
     # the minisign public key line (RW...) releases are signed with: the hub refuses uploads whose
     # signature doesn't verify, e.g. -ReleasePublicKey (Get-Content longarm-release.pub)[-1]
     [string]$ReleasePublicKey = '',
+    # send container logs to Log Analytics (with -Telemetry its workspace, else one of their own):
+    # they keep the logs of crashed starts, which ACI drops
     [switch]$LogAnalytics,
     # key (default): storage account keys; identity: a managed identity, shared key access off
     [ValidateSet('', 'key', 'identity')][string]$StorageAuth = '',
-    # with identity: pull the image from this registry in the resource group
+    # with identity: a registry in the resource group the managed identity pulls from: the image if
+    # it is there, and the sidecars (Headscale) from its mirror/ copies of mirror-images.txt,
+    # imported before anything changes
     [string]$Acr = '',
     # Application Insights + Log Analytics for the fleet's telemetry (docs/telemetry.md)
     [switch]$Telemetry,
     # a blob container for uploaded diagnostic bundles (identity only; 30 days)
     [switch]$Diagnostics,
     [string]$Subscription = '',
-    # delete the container group first (to change -Size or the panel)
+    # delete the container group first (to change -Size, the panel or -Headscale): validated first,
+    # the settings saved in the resource group's tags, rolled back if the new configuration fails
     [switch]$Recreate,
+    # don't check that every image can be pulled before deploying
+    [switch]$SkipImageCheck,
     # print a new one-time admin join code
     [switch]$AdminCode,
+    # deploy (or upgrade) the hub's external longnet relay: its own container group NAME-relay that
+    # keeps relayed connections up while the hub restarts (README "External relay"; takes -Image,
+    # -RegistryUser, -StunServers, -TimeoutSeconds; default image: the hub's)
+    [switch]$Relay,
+    # delete the external relay (the hub keeps its embedded relay)
+    [switch]$RelayRemove,
     [switch]$Teardown,
     [switch]$Yes,
     [int]$TimeoutSeconds = 1200,
     # give up on a container group stuck in Creating without events
-    [int]$StuckTimeoutSeconds = 600
+    [int]$StuckTimeoutSeconds = 600,
+    # while the hub's log shows its database restore running, wait up to this
+    # long after it was first seen, past -TimeoutSeconds
+    [int]$RestoreTimeoutSeconds = 1200
 )
 
 $ErrorActionPreference = 'Stop'
@@ -86,7 +112,7 @@ Set-StrictMode -Version 3.0
 $script:AzCli = 'az'
 if ($env:LONGARM_DEPLOY_AZ) { $script:AzCli = $env:LONGARM_DEPLOY_AZ }
 # seconds between status polls (tests make it short)
-$script:Poll = 10
+$script:Poll = 5
 if ($env:LONGARM_DEPLOY_POLL_SECONDS) { $script:Poll = [int]$env:LONGARM_DEPLOY_POLL_SECONDS }
 
 function Invoke-Az {
@@ -181,6 +207,28 @@ function Get-BootstrapLog {
     $kv
 }
 
+function Get-RestoreStatus {
+    # the state of the hub's database restore in its current log: 'running',
+    # 'done <took>', 'failed' or '': the last of the entrypoint's lines
+    # (longarm-hub container) decides. A restore replays the WAL since the
+    # last snapshot and can take many minutes; the hub listens only after it.
+    $out = Invoke-AzQuiet container logs -g $rg -n $Name --container-name hub
+    if ($LASTEXITCODE -ne 0) { return '' }
+    $st = ''
+    $took = ''
+    foreach ($l in (($out -join "`n") -split "`r?`n")) {
+        if ($l.StartsWith('longarm-hub container: restoring ')) { $st = 'running'; $took = '' }
+        elseif ($l -match '^longarm-hub container: restore of .* still running') { $st = 'running' }
+        elseif ($l -match '^longarm-hub container: restore of .* failed') { $st = 'failed' }
+        elseif ($l -match '^longarm-hub container: restore took (\S+)') { $st = 'done'; $took = $Matches[1] }
+        elseif ($l -match '^longarm-hub container: (bootstrap took|starting the hub)' -or $l.StartsWith('LONGARM_BOOTSTRAP ')) {
+            if ($st -eq 'running') { $st = 'done' }
+        }
+    }
+    if ($took) { return "$st $took" }
+    $st
+}
+
 function Read-Bootstrap([string]$Account, [string]$Key, [string]$Dest) {
     # this hub's bootstrap values: the share (key) or the log (identity)
     if ($StorageAuth -eq 'identity') { return Get-BootstrapLog }
@@ -211,6 +259,16 @@ function Register-Provider([string[]]$Namespaces) {
     }
 }
 
+function Get-MirrorRepo([string]$Src) {
+    # the repository of a pinned Docker Hub image in the registry
+    # (docker.io/library/caddy:... -> mirror/caddy)
+    $r = $Src.Substring(0, $Src.IndexOf('@'))
+    $r = $r.Substring(0, $r.LastIndexOf(':'))
+    if ($r.StartsWith('docker.io/')) { $r = $r.Substring(10) }
+    if ($r.StartsWith('library/')) { $r = $r.Substring(8) }
+    "mirror/$r"
+}
+
 function Get-RegistryHost([string]$Ref) {
     # the registry of an image reference ('' = Docker Hub)
     if ($Ref -notlike '*/*') { return '' }
@@ -222,7 +280,7 @@ function Get-RegistryHost([string]$Ref) {
 $script:StuckSince = $null
 $script:StuckTimeout = $StuckTimeoutSeconds
 function Test-Stuck {
-    # throws when the container group has sat in Creating with waiting
+    # the message (else $null) when the container group has sat in Creating with waiting
     # containers and no events at all for -StuckTimeoutSeconds (seen once on
     # a real run: 30+ min, while a recreate came up in 3.5 min)
     $q = "[provisioningState, containers[?name=='hub'].instanceView.currentState.state | [0], length(containers[].instanceView.events[] || ``[]``), length(instanceView.events || ``[]``)]"
@@ -235,7 +293,7 @@ function Test-Stuck {
         if (-not $script:StuckSince) { $script:StuckSince = Get-Date }
         $secs = [int]((Get-Date) - $script:StuckSince).TotalSeconds
         if ($secs -ge $script:StuckTimeout) {
-            throw @"
+            return @"
 the container group $Name has been $($f[0]) for $secs s with its containers waiting and no events at all.
 That is an Azure Container Instances hiccup, not the template (seen once: the same deployment came up in 3.5 min after a recreate).
   retry:             ./deploy.ps1 -Name $Name -Recreate            (storage and data are kept)
@@ -248,7 +306,138 @@ That is an Azure Container Instances hiccup, not the template (seen once: the sa
     }
 }
 
+function Get-ExitMeaning([string]$Code) {
+    # what a hub container's exit code says
+    switch ($Code) {
+        '137' { return ' = killed by SIGKILL: out of memory? (the restore of a large replica: README "Replica size and memory"; -Size medium)' }
+        '143' { return ' = stopped by SIGTERM' }
+        '1' { return " = the start failed (the hub's log says why)" }
+    }
+    ''
+}
+
+function Get-CrashedLogHint {
+    # where the log of a crashed start is (ACI keeps only the current start's)
+    $s = 'the logs of crashed starts are gone with them: -LogAnalytics keeps them (README "Logs of crashed starts")'
+    if ($StorageAuth -eq 'identity' -and $script:DiagnosticsOn) {
+        $acct = if ($script:Account) { $script:Account } else { '<storage account>' }
+        $s += "; failed restores are recorded in the diagnostics container: az storage blob list --auth-mode login --account-name $acct -c diagnostics --prefix hub-start-failures/ -o table"
+    }
+    $s
+}
+
+# Test-Crash: the hub container's restarts since this deployment (ACI
+# restarts a container that exits, and drops its log). Prints each new one
+# with the exit code of the start before; returns the message of a crash
+# loop (3 restarts, or CrashLoopBackOff after 2), else $null.
+# $script:CrashNote: the restarts so far, for other messages.
+function Clear-CrashState {
+    $script:CrashBase = $null
+    $script:CrashSeen = 0
+    $script:CrashMsg = ''
+    $script:CrashNote = ''
+    $script:CrashChecked = $null
+}
+Clear-CrashState
+function Test-Crash {
+    # at most every poll (an az call takes a second or two)
+    $now = Get-Date
+    if ($script:CrashChecked -and ($now - $script:CrashChecked).TotalSeconds -lt $script:Poll) { return }
+    $script:CrashChecked = $now
+    $q = "containers[?name=='hub'] | [0].instanceView.[restartCount, currentState.state, currentState.detailStatus, previousState.exitCode, previousState.detailStatus, previousState.finishTime]"
+    $line = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $q) -join ''
+    if ($LASTEXITCODE -ne 0 -or -not $line) { return }
+    $f = Split-Tsv $line 6
+    if ($f[0] -notmatch '^\d+$') { return }
+    $n = [int]$f[0]
+    # the first look, or ACI started counting anew (a restart of the group)
+    if ($null -eq $script:CrashBase -or $n -lt $script:CrashBase) {
+        $script:CrashBase = $n
+        $script:CrashSeen = 0
+        return
+    }
+    if ($n - $script:CrashBase -le $script:CrashSeen) { return }
+    $script:CrashSeen = $n - $script:CrashBase
+    $code = if ($f[3]) { $f[3] } else { 'unknown' }
+    $last = "exit code $code$(Get-ExitMeaning $f[3])"
+    if ($f[4]) { $last += ", $($f[4])" }
+    if ($f[5]) { $last += ", at $($f[5])" }
+    $st = if ($f[1]) { $f[1] } else { 'unknown' }
+    $det = if ($f[2]) { ": $($f[2])" } else { '' }
+    Write-Phase "hub container restarted ($($script:CrashSeen) since this deployment; now $st$det): the start before ended with $last"
+    $script:CrashNote = " (restarted $($script:CrashSeen) times; the last start ended with $last; $(Get-CrashedLogHint))"
+    if ($script:CrashSeen -ge 3 -or ($script:CrashSeen -ge 2 -and $f[2] -like '*CrashLoopBackOff*')) {
+        $kind = if ($f[2]) { " ($(($f[2] -split ':')[0]))" } else { '' }
+        $script:CrashMsg = "the hub is crash-looping: ACI restarted it $($script:CrashSeen) times since this deployment$kind; its last start ended with $last. $(Get-CrashedLogHint); the current start: $logsHint"
+        return $script:CrashMsg
+    }
+}
+
+# Test-Replica: warns when the hub's Litestream replica has many files.
+# Every start restores the database from it (storage-auth identity: the
+# database is on the container's disk), and the restore opens every file
+# since the newest snapshot at once - about 100 KB of memory each. A healthy
+# replica has a few thousand files at most; one whose compaction fell behind
+# (Litestream 0.5.17, the 0.1.18 deploy) had 21,400, and the restore ran out
+# of the 1.5 GB of -Size small. Best effort: listing needs read access to
+# the blobs (identity: Storage Blob Data Reader on the container).
+function Test-Replica {
+    $acct = @(Invoke-AzQuiet storage account list -g $rg --query "[?starts_with(name, 'lahub')].name" -o tsv) | Select-Object -First 1
+    if (-not $acct) { return }
+    $names = $null
+    if ($StorageAuth -eq 'identity') {
+        $names = Invoke-AzQuiet storage blob list --auth-mode login --account-name $acct -c litestream --prefix hub.db/ltx/ --num-results '*' --query '[].name' -o tsv
+        if ($LASTEXITCODE -ne 0) { $names = $null }
+    } else {
+        $k = (Invoke-AzQuiet storage account keys list -g $rg -n $acct --query '[0].value' -o tsv) -join ''
+        if ($LASTEXITCODE -eq 0 -and $k) {
+            # the key through the environment; the caller's connection string / SAS hidden (Get-Bootstrap)
+            $hidden = @{}
+            foreach ($n in 'AZURE_STORAGE_CONNECTION_STRING', 'AZURE_STORAGE_SAS_TOKEN', 'AZURE_STORAGE_ACCOUNT', 'AZURE_STORAGE_AUTH_MODE') {
+                $v = [Environment]::GetEnvironmentVariable($n, 'Process')
+                if ($null -ne $v) { $hidden[$n] = $v; [Environment]::SetEnvironmentVariable($n, $null, 'Process') }
+            }
+            $env:AZURE_STORAGE_KEY = $k
+            try {
+                $names = Invoke-AzQuiet storage blob list --account-name $acct -c litestream --prefix hub.db/ltx/ --num-results '*' --query '[].name' -o tsv
+                if ($LASTEXITCODE -ne 0) { $names = $null }
+            } finally {
+                Remove-Item Env:\AZURE_STORAGE_KEY -ErrorAction SilentlyContinue
+                foreach ($n in $hidden.Keys) { [Environment]::SetEnvironmentVariable($n, $hidden[$n], 'Process') }
+            }
+        }
+    }
+    if (-not $names) {
+        Write-Host 'note: the database replica''s files could not be counted (no read access to the blob container litestream?): skipped'
+        return
+    }
+    # files per level (hub.db/ltx/<level>/<min>-<max>.ltx), L0-L3: the ones a restore may read after a snapshot
+    $levels = @{}
+    $total = 0
+    foreach ($l in @($names)) {
+        $p = $l.Trim().Split('/')
+        if ($p.Count -lt 4 -or $p[2] -notmatch '^\d$') { continue }
+        $levels[$p[2]] = 1 + [int]$levels[$p[2]]
+        if ([int]$p[2] -le 3) { $total++ }
+    }
+    $counts = @(foreach ($lv in 0..9) { if ($levels.ContainsKey("$lv")) { "L$lv $($levels["$lv"])" } }) -join ', '
+    Write-Host "database replica: $counts"
+    $warnAt = 5000
+    if ($env:LONGARM_DEPLOY_REPLICA_FILES_WARN) { $warnAt = [int]$env:LONGARM_DEPLOY_REPLICA_FILES_WARN }
+    if ($total -le $warnAt) { return }
+    $have = if ($Size -eq 'medium') { 3072 } else { 1536 }
+    Write-Warning @"
+the hub's database replica has $total files in levels 0-3 (more than $warnAt): its
+compaction has fallen behind. Every start restores the database from it and may open all of
+them at once (about 100 KB each: ~$([int][math]::Floor($total / 10)) MB; -Size $Size has $have MB). A restore that runs out of
+memory is killed (SIGKILL, exit code 137) and the hub crash-loops (the 0.1.18 deploy).
+Prune the replica before deploying: deploy/azure/README.md "Replica size and memory".
+"@
+}
+
 if ($NoPanel -and $Panel) { throw '-NoPanel and -Panel exclude each other' }
+if ($NoHeadscale -and $Headscale) { throw '-NoHeadscale and -Headscale exclude each other' }
+if ($HeadscalePublicDerp -and $HeadscalePublicDerp -cnotmatch '^(on|off)$') { throw '-HeadscalePublicDerp: on or off' }
 if ($TailscaleSecretFile -and -not (Test-Path $TailscaleSecretFile)) { throw "-TailscaleSecretFile: can't read $TailscaleSecretFile" }
 if (-not $ResourceGroup) { $ResourceGroup = "$Name-rg" }
 if ($BuildInAcr -and $Image) { throw '-BuildInAcr builds the image: drop -Image' }
@@ -264,6 +453,9 @@ if ($ReleasePublicKey -and $ReleasePublicKey -cnotmatch '^RW[A-Za-z0-9+/=]{40,}$
 $StorageAuth = $StorageAuth.ToLowerInvariant()
 $rg = $ResourceGroup
 $template = Join-Path $PSScriptRoot 'azuredeploy.json'
+# the third-party images (sidecars), pinned by digest; with -Acr copied into
+# the registry as mirror/<repository>:<digest hex>
+$mirrorList = Join-Path $PSScriptRoot 'mirror-images.txt'
 
 if (-not (Get-Command $script:AzCli -ErrorAction SilentlyContinue)) {
     throw 'the Azure CLI (az) is missing: https://aka.ms/azure-cli (or use Azure Cloud Shell)'
@@ -297,6 +489,14 @@ if ($AdminCode) {
     return
 }
 
+if ($Relay -or $RelayRemove) {
+    if ($Recreate -or $BuildInAcr -or $Size -or $NoPanel -or $Panel -or $Headscale -or $NoHeadscale) {
+        throw '-Relay deploys the external relay only: -Recreate, -BuildInAcr, -Size, -Panel/-NoPanel and -Headscale are hub options'
+    }
+    . (Join-Path $PSScriptRoot 'relay.ps1')
+    return
+}
+
 if (-not (Test-Path $template)) { throw "$template is missing (run from a checkout of the repository)" }
 
 if (Test-ResourceGroup) {
@@ -319,91 +519,279 @@ try {
     $logsOn = [bool]$LogAnalytics
     $telemetryOn = [bool]$Telemetry
     $diagnosticsOn = [bool]$Diagnostics
+    $headscaleOn = $null
+    if ($NoHeadscale) { $headscaleOn = $false }
+    if ($Headscale) { $headscaleOn = $true }
+    $publicDerpOn = $null
+    if ($HeadscalePublicDerp) { $publicDerpOn = ($HeadscalePublicDerp -eq 'on') }
 
-    # A re-run keeps the running hub's settings. Secrets can't be read back
-    # from ACI: a hub that has them needs them again.
-    $curQuery = "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId, containers[0].environmentVariables[?name=='LONGARM_HUB_RELAY_STUN_ADVERTISE'].value | [0]]"
-    $curLine = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $curQuery) -join ''
+    # A re-run keeps the hub's settings ($prev). Their source, in this order:
+    #   1. the container group (the running hub's image and environment)
+    #   2. the snapshot this script tags the resource group with before it
+    #      deletes the group (-Recreate), until a deployment succeeds again
+    #   3. the parameters of the last successful deployment (ARM keeps them)
+    # Without any of them, a resource group that has a hub's storage needs the
+    # settings given explicitly: defaulting would switch storage auth or drop
+    # the identity (seen on a real run: a retry after a failed recreate fell
+    # back to storage keys, which the subscription's policy denies). Secrets
+    # can't be read back from any of them: a hub that has them needs them again.
+    $prevKeys = 'image', 'size', 'panel', 'auth', 'acr', 'logs', 'telemetry', 'diagnostics', 'stun', 'gate', 'relkey',
+        'entra_tenant', 'entra_client', 'entra_admins', 'entra_web', 'entra_apps', 'headscale', 'public_derp', 'registry', 'registry_user', 'tailscale'
+    function Get-EmptyPrev { $h = [ordered]@{}; foreach ($k in $prevKeys) { $h[$k] = '' }; $h }
+    function ConvertTo-Flag($b) { if ($b) { 'true' } else { 'false' } }
+
+    function Get-PrevGroup {
+        $q = "[containers[0].image, containers[0].resources.requests.cpu, containers[1].name, imageRegistryCredentials[0].server, join(',', containers[0].environmentVariables[].name), diagnostics.logAnalytics.workspaceId, containers[0].environmentVariables[?name=='LONGARM_HUB_RELAY_STUN_ADVERTISE'].value | [0]]"
+        $line = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $q) -join ''
+        if ($LASTEXITCODE -ne 0 -or -not $line) { return $null }
+        $f = Split-Tsv $line 7
+        $p = Get-EmptyPrev
+        $p.image = $f[0]
+        $p.size = if ([double]$f[1] -ge 2) { 'medium' } else { 'small' }
+        $p.registry = $f[3]
+        $names = ",$($f[4]),"
+        $p.auth = if ($names -like '*,LONGARM_HUB_CA_IN_DB,*') { 'identity' } else { 'key' }
+        # the panel: Caddy (storage-auth key) or the hub on 443 (identity)
+        $p.panel = ConvertTo-Flag (($f[2] -eq 'caddy') -or ($names -like '*,LONGARM_HUB_HTTPS,*'))
+        # the registry pulled with the identity (identity mode)
+        if ($p.auth -eq 'identity' -and $p.registry -like '*.azurecr.io') { $p.acr = $p.registry.Substring(0, $p.registry.IndexOf('.')) }
+        $p.logs = ConvertTo-Flag ([bool]$f[5])
+        $p.telemetry = ConvertTo-Flag ($names -like '*,LONGARM_HUB_APPINSIGHTS_CONNECTION_STRING,*')
+        $p.diagnostics = ConvertTo-Flag ($names -like '*,LONGARM_HUB_DIAG_BLOB_URL,*')
+        $p.headscale = ConvertTo-Flag ($names -like '*,LONGARM_HUB_HEADSCALE_DIR,*')
+        $p.public_derp = ConvertTo-Flag ($names -like '*,LONGARM_HUB_HEADSCALE_PUBLIC_DERP,*')
+        $p.tailscale = ConvertTo-Flag ($names -like '*,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,*')
+        # the template sets self[,<stunServers>]; absent = a hub from before (template default)
+        if ($f[6] -eq 'self') { $p.stun = 'none' } elseif ($f[6] -like 'self,*') { $p.stun = $f[6].Substring(5) }
+        # plain environment values: the scheduler gate, the release key, Entra
+        $vq = "containers[0].environmentVariables[?starts_with(name, 'LONGARM_HUB_ENTRA_') || name=='LONGARM_HUB_SCHED_GATE_FREE_GB' || name=='LONGARM_HUB_RELEASES_PUBLIC_KEY'].[name, value]"
+        foreach ($l in @(Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $vq)) {
+            $kv = "$l".TrimEnd("`r", "`n") -split "`t", 2
+            if ($kv.Count -lt 2) { continue }
+            $v = if ($kv[1] -ceq 'None') { '' } else { $kv[1] }
+            switch -CaseSensitive ($kv[0]) {
+                'LONGARM_HUB_SCHED_GATE_FREE_GB' { $p.gate = $v }
+                'LONGARM_HUB_RELEASES_PUBLIC_KEY' { $p.relkey = $v }
+                'LONGARM_HUB_ENTRA_TENANT_ID' { $p.entra_tenant = $v }
+                'LONGARM_HUB_ENTRA_CLIENT_ID' { $p.entra_client = $v }
+                'LONGARM_HUB_ENTRA_ADMINS' { $p.entra_admins = $v }
+                'LONGARM_HUB_ENTRA_WEB' { $p.entra_web = $v }
+                'LONGARM_HUB_ENTRA_APPS' { $p.entra_apps = $v }
+            }
+        }
+        $p
+    }
+
+    # The snapshot (the same format as deploy.sh's): key=value lines, base64,
+    # in resource group tags of 250 characters (longarm-hub-prev-0..N-1;
+    # longarm-hub-prev-n = N, 0 = none).
+    function Get-RgId { (Invoke-Az group show -n $rg --query id -o tsv) -join '' }
+    function Save-Snapshot($p) {
+        $text = ($prevKeys | ForEach-Object { "$_=$($p[$_])`n" }) -join ''
+        $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($text))
+        $n = [int][math]::Ceiling($b64.Length / 250)
+        $tags = @()
+        for ($i = 0; $i -lt $n; $i++) { $tags += "longarm-hub-prev-$i=" + $b64.Substring($i * 250, [math]::Min(250, $b64.Length - $i * 250)) }
+        $tags += "longarm-hub-prev-n=$n"
+        $tags += 'longarm-hub-prev-at=' + (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        Invoke-Az tag update --resource-id (Get-RgId) --operation Merge --tags @tags -o none | Out-Null
+    }
+    function Clear-Snapshot {
+        Invoke-AzQuiet tag update --resource-id (Get-RgId) --operation Merge --tags 'longarm-hub-prev-n=0' -o none | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Warning 'the settings snapshot (resource group tag longarm-hub-prev-n) was not cleared' }
+    }
+    function Get-PrevSnapshot {
+        $tags = ((Invoke-AzQuiet group show -n $rg --query tags -o json) -join "`n") | ConvertFrom-Json
+        if (-not $tags -or -not $tags.PSObject.Properties['longarm-hub-prev-n']) { return $null }
+        $n = 0
+        if (-not [int]::TryParse([string]$tags.'longarm-hub-prev-n', [ref]$n) -or $n -le 0) { return $null }
+        $b64 = ''
+        for ($i = 0; $i -lt $n; $i++) { $b64 += [string]$tags."longarm-hub-prev-$i" }
+        try { $text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)) } catch { return $null }
+        $p = Get-EmptyPrev
+        foreach ($l in ($text -split "`n")) {
+            $i = $l.IndexOf('=')
+            if ($i -gt 0 -and $p.Contains($l.Substring(0, $i))) { $p[$l.Substring(0, $i)] = $l.Substring($i + 1) }
+        }
+        if ($p.auth -ne 'key' -and $p.auth -ne 'identity') { return $null }
+        $p
+    }
+
+    # the parameters of the last successful deployment of this script; .has
+    # lists the settings it has (absent parameters: the template's defaults,
+    # or an older script), .param maps them to their parameter
+    $histMap = [ordered]@{
+        image = 'image'; size = 'size'; panel = 'enablePanel'; auth = 'storageAuth'; acr = 'acrName'; logs = 'enableLogAnalytics'
+        telemetry = 'enableTelemetry'; diagnostics = 'enableDiagnostics'; stun = 'stunServers'; gate = 'schedulerGateFreeGb'
+        relkey = 'releasePublicKey'; entra_tenant = 'entraTenantId'; entra_client = 'entraClientId'; entra_admins = 'entraAdmins'
+        entra_web = 'entraWeb'; entra_apps = 'entraApps'; headscale = 'enableHeadscale'; public_derp = 'headscalePublicDerp'
+        registry = 'registryServer'; registry_user = 'registryUsername'
+    }
+    $boolKeys = 'panel', 'logs', 'telemetry', 'diagnostics', 'headscale', 'public_derp'
+    function Get-PrevDeployment {
+        $deps = @(Invoke-AzQuiet deployment group list -g $rg -o tsv --query "[?properties.provisioningState=='Succeeded' && starts_with(name, 'longarm-hub-')].name" |
+            ForEach-Object { "$_".Trim() } | Where-Object { $_ } | Sort-Object)
+        if ($deps.Count -eq 0) { return $null }
+        $dep = $deps[-1]
+        $q = '[' + (($histMap.Values | ForEach-Object { "properties.parameters.$_.value, properties.parameters.$_ == null" }) -join ', ') + ']'
+        $line = (Invoke-AzQuiet deployment group show -g $rg -n $dep -o tsv --query $q) -join ''
+        if ($LASTEXITCODE -ne 0 -or -not $line) { return $null }
+        $f = Split-Tsv $line ($histMap.Count * 2)
+        $p = Get-EmptyPrev
+        $has = @()
+        $i = 0
+        foreach ($k in $histMap.Keys) {
+            $v = $f[$i]
+            if ($f[$i + 1] -ne 'true') {
+                $has += $k
+                if ($boolKeys -contains $k) { $v = ConvertTo-Flag ($v -eq 'true') }
+                if ($k -eq 'stun' -and -not $v) { $v = 'none' } # "" = none
+                $p[$k] = $v
+            }
+            $i += 2
+        }
+        # the template's defaults where the deployment had no parameter
+        if (-not $p.size) { $p.size = 'small' }
+        foreach ($k in $boolKeys) { if (-not $p[$k]) { $p[$k] = 'false' } }
+        if ($p.auth -ne 'key' -and $p.auth -ne 'identity') { return $null }
+        $p.Add('source', "deployment $dep")
+        $p.Add('has', $has)
+        $p
+    }
+
+    # Tags can be written by anyone with Tag Contributor, so the snapshot is
+    # not trusted: it only fills settings the last deployment's parameters
+    # don't have, and its security-relevant settings ($secKeys) are refused
+    # when they differ from that deployment's or there is no deployment to
+    # compare them with, unless the operator gives them explicitly.
+    $secOption = [ordered]@{
+        image = '-Image'; auth = '-StorageAuth'; acr = '-Acr'; registry_user = '-RegistryUser'
+        relkey = '-ReleasePublicKey'; entra_tenant = '-EntraTenant'; entra_client = '-EntraClient'; entra_admins = '-EntraAdmins'
+        entra_web = '-EntraWeb'; entra_apps = '-EntraApps'
+    }
+    $given = @{
+        image = [bool]$Image; auth = [bool]$StorageAuth; acr = [bool]$Acr; registry_user = [bool]$RegistryUser
+        relkey = [bool]$ReleasePublicKey; entra_tenant = [bool]$EntraTenant; entra_client = [bool]$EntraClient; entra_admins = [bool]$EntraAdmins
+        entra_web = [bool]$EntraWeb; entra_apps = [bool]$EntraApps
+    }
+    $tplDefaults = (Get-Content -Raw $template | ConvertFrom-Json).parameters
+
+    $prevSrc = ''
+    $snap = $null
+    $prev = Get-PrevGroup
+    if ($prev) {
+        $prevSrc = 'group'
+    } else {
+        $snap = Get-PrevSnapshot
+        $prev = Get-PrevDeployment
+        if ($prev) {
+            $prevSrc = 'deployment'
+            Write-Host "the container group $Name is missing: its settings come from the last successful deployment ($($prev.source.Substring(11)))"
+            if ($snap) {
+                $filled = @()
+                $refused = @()
+                foreach ($k in $prevKeys) {
+                    $sec = $secOption.Contains($k)
+                    if ($prev.has -notcontains $k) {
+                        # the deployment had the template's default
+                        $def = ''
+                        if ($histMap.Contains($k) -and $tplDefaults.PSObject.Properties[$histMap[$k]]) { $def = [string]$tplDefaults.($histMap[$k]).defaultValue }
+                        if ($sec) {
+                            if ($snap[$k] -and $snap[$k] -ne $def -and -not $given[$k]) { $refused += "$($secOption[$k]) (deployment: the template's default, snapshot: $($snap[$k]))" }
+                        } else {
+                            $prev[$k] = $snap[$k]
+                            $filled += $k
+                        }
+                    } elseif ($sec -and $snap[$k] -cne $prev[$k] -and -not $given[$k]) {
+                        $d = if ($prev[$k]) { $prev[$k] } else { 'none' }
+                        $s = if ($snap[$k]) { $snap[$k] } else { 'none' }
+                        $refused += "$($secOption[$k]) (deployment: $d, snapshot: $s)"
+                    }
+                }
+                if ($refused) { throw "the settings snapshot in the resource group's tags (longarm-hub-prev-*) differs from the last deployment in security-relevant settings - it may have been tampered with (tags are writable by Tag Contributors). Give them explicitly if the snapshot is right: $($refused -join '; ')" }
+                if ($filled) { Write-Host "settings the deployment had no parameter for, from the snapshot: $($filled -join ' ')" }
+            }
+        } elseif ($snap) {
+            Write-Host "the container group $Name is missing and there is no successful deployment: settings that aren't security-relevant come from the snapshot taken before it was deleted"
+            $missing = @()
+            $prev = Get-EmptyPrev
+            foreach ($k in $prevKeys) {
+                if ($secOption.Contains($k)) {
+                    if ($snap[$k] -and -not $given[$k]) { $missing += "$($secOption[$k]) (snapshot: $($snap[$k]))" }
+                } else {
+                    $prev[$k] = $snap[$k]
+                }
+            }
+            if ($missing) { throw "the settings snapshot (resource group tags, writable by Tag Contributors) can't be checked against a deployment: give its security-relevant settings explicitly if they are right: $($missing -join '; ')" }
+            $prev.auth = $StorageAuth
+            $prevSrc = 'snapshot'
+        } elseif (-not $StorageAuth -and (@(Invoke-AzQuiet storage account list -g $rg --query "[?starts_with(name, 'lahub')].name" -o tsv) -join '')) {
+            throw "the resource group $rg has a hub's storage, but neither a container group, a successful deployment nor a settings snapshot to read its settings from: pass them (at least -StorageAuth key|identity; and -Image, -Entra*, -Telemetry, -Diagnostics, -Headscale, -ReleasePublicKey, -GateFreeGb, -StunServers as the hub had them)"
+        }
+    }
+
     $curImage = ''
-    $curRegistry = ''
     $prevBoot = ''
     $account = ''
     $key = ''
-    if ($LASTEXITCODE -eq 0 -and $curLine) {
-        $f = Split-Tsv $curLine 7
-        $curImage = $f[0]
-        $curSize = 'small'
-        if ([double]$f[1] -ge 2) { $curSize = 'medium' }
-        $curRegistry = $f[3]
-        $curEnv = ",$($f[4]),"
-        # the panel: Caddy (storage-auth key) or the hub on 443 (identity)
-        $curPanel = ($f[2] -eq 'caddy') -or ($curEnv -like '*,LONGARM_HUB_HTTPS,*')
-        $curAuth = 'key'
-        if ($curEnv -like '*,LONGARM_HUB_CA_IN_DB,*') { $curAuth = 'identity' }
-        # a re-run keeps telemetry / diagnostics on
-        if ($curEnv -like '*,LONGARM_HUB_APPINSIGHTS_CONNECTION_STRING,*') { $telemetryOn = $true }
-        if ($curEnv -like '*,LONGARM_HUB_DIAG_BLOB_URL,*') { $diagnosticsOn = $true }
-        if ($StorageAuth -and $StorageAuth -ne $curAuth) { throw "the hub uses -StorageAuth $curAuth; switching needs a new deployment (another -Name or -ResourceGroup)" }
-        $StorageAuth = $curAuth
-        # the registry pulled with the identity (identity mode)
-        if (-not $Acr -and $curAuth -eq 'identity' -and $curRegistry -like '*.azurecr.io') { $Acr = $curRegistry.Substring(0, $curRegistry.IndexOf('.')) }
-        if (-not $Recreate) {
-            if ($Size -and $Size -ne $curSize) { throw "the hub is $curSize; ACI can't resize a running container group: add -Recreate (data is kept)" }
-            $curPanelText = if ($curPanel) { 'on' } else { 'off' }
-            if ($null -ne $panelOn -and $panelOn -ne $curPanel) { throw "the panel is $curPanelText; ACI can't change the ports of a running group: add -Recreate (data is kept)" }
+    if ($prev) {
+        if ($StorageAuth -and $StorageAuth -ne $prev.auth) { throw "the hub uses -StorageAuth $($prev.auth); switching needs a new deployment (another -Name or -ResourceGroup)" }
+        $StorageAuth = $prev.auth
+        if (-not $Acr) { $Acr = $prev.acr }
+        if ($prevSrc -eq 'group') {
+            $curImage = $prev.image
+            if (-not $Recreate) {
+                if ($Size -and $Size -ne $prev.size) { throw "the hub is $($prev.size); ACI can't resize a running container group: add -Recreate (data is kept)" }
+                $t = if ($prev.panel -eq 'true') { 'on' } else { 'off' }
+                if ($null -ne $panelOn -and (ConvertTo-Flag $panelOn) -ne $prev.panel) { throw "the panel is $t; ACI can't change the ports of a running group: add -Recreate (data is kept)" }
+                $t = if ($prev.headscale -eq 'true') { 'on' } else { 'off' }
+                if ($null -ne $headscaleOn -and (ConvertTo-Flag $headscaleOn) -ne $prev.headscale) { throw "the Headscale sidecar is $t; ACI can't add or remove containers of a running group: add -Recreate (data is kept)" }
+            }
         }
-        if (-not $Image) { $Image = $curImage }
-        if (-not $Size) { $Size = $curSize }
-        if ($null -eq $panelOn) { $panelOn = $curPanel }
-        if ($f[5]) { $logsOn = $true }
-        # the template sets self[,<stunServers>]; absent = a hub from before (template default)
-        if (-not $StunServers) {
-            if ($f[6] -eq 'self') { $StunServers = 'none' }
-            elseif ($f[6] -like 'self,*') { $StunServers = $f[6].Substring(5) }
+        if (-not $Image) { $Image = $prev.image }
+        if (-not $Size) { $Size = $prev.size }
+        if ($null -eq $panelOn) { $panelOn = $prev.panel -eq 'true' }
+        if ($null -eq $headscaleOn) { $headscaleOn = $prev.headscale -eq 'true' }
+        if ($null -eq $publicDerpOn) { $publicDerpOn = $prev.public_derp -eq 'true' }
+        if ($prev.logs -eq 'true') { $logsOn = $true }
+        if ($prev.telemetry -eq 'true') { $telemetryOn = $true }
+        if ($prev.diagnostics -eq 'true') { $diagnosticsOn = $true }
+        if (-not $StunServers) { $StunServers = $prev.stun }
+        if (-not $GateFreeGb) { $GateFreeGb = $prev.gate }
+        if (-not $ReleasePublicKey) { $ReleasePublicKey = $prev.relkey }
+        if (-not $EntraTenant) {
+            $EntraTenant = $prev.entra_tenant
+            if (-not $EntraClient) { $EntraClient = $prev.entra_client }
+            if (-not $EntraAdmins) { $EntraAdmins = $prev.entra_admins }
+            if (-not $EntraWeb) { $EntraWeb = $prev.entra_web }
+            if (-not $EntraApps) { $EntraApps = $prev.entra_apps }
         }
-        if ($curEnv -like '*,LONGARM_HUB_TAILSCALE_OAUTH_SECRET,*' -and -not $TailscaleSecretFile) { throw "the hub has a Tailscale OAuth secret, which can't be read back: pass -TailscaleSecretFile again" }
+        if ($prev.tailscale -eq 'true' -and -not $TailscaleSecretFile -and -not $headscaleOn) { throw "the hub has a Tailscale OAuth secret, which can't be read back: pass -TailscaleSecretFile again" }
         # this start's bootstrap values must differ from the running one's (boot_id)
-        if ($StorageAuth -eq 'identity') {
-            $prevBoot = Get-Value (Get-BootstrapLog) 'boot_id'
-        } else {
-            $account = @(Invoke-Az storage account list -g $rg --query "[?starts_with(name, 'lahub')].name" -o tsv) | Select-Object -First 1
-            if ($account) {
-                $key = (Invoke-Az storage account keys list -g $rg -n $account --query '[0].value' -o tsv) -join ''
-                $prevBoot = Get-Value (Get-Bootstrap $account $key $bootFile) 'boot_id'
+        if ($prevSrc -eq 'group') {
+            if ($StorageAuth -eq 'identity') {
+                $prevBoot = Get-Value (Get-BootstrapLog) 'boot_id'
+            } else {
+                $account = @(Invoke-Az storage account list -g $rg --query "[?starts_with(name, 'lahub')].name" -o tsv) | Select-Object -First 1
+                if ($account) {
+                    $key = (Invoke-Az storage account keys list -g $rg -n $account --query '[0].value' -o tsv) -join ''
+                    $prevBoot = Get-Value (Get-Bootstrap $account $key $bootFile) 'boot_id'
+                }
             }
         }
     }
     if (-not $StorageAuth) { $StorageAuth = 'key' }
     if ($diagnosticsOn -and $StorageAuth -ne 'identity') { throw '-Diagnostics needs -StorageAuth identity (the hub writes bundles with its managed identity)' }
-    # a re-run keeps the hub's Entra settings (plain environment values)
-    if ($curImage -and -not $EntraTenant) {
-        $entraQuery = "containers[0].environmentVariables[?starts_with(name, 'LONGARM_HUB_ENTRA_')].[name, value]"
-        foreach ($l in @(Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $entraQuery)) {
-            $kv = "$l".TrimEnd("`r", "`n") -split "`t", 2
-            if ($kv.Count -lt 2) { continue }
-            switch -CaseSensitive ($kv[0]) {
-                'LONGARM_HUB_ENTRA_TENANT_ID' { $EntraTenant = $kv[1] }
-                'LONGARM_HUB_ENTRA_CLIENT_ID' { if (-not $EntraClient) { $EntraClient = $kv[1] } }
-                'LONGARM_HUB_ENTRA_ADMINS' { if (-not $EntraAdmins) { $EntraAdmins = $kv[1] } }
-                'LONGARM_HUB_ENTRA_WEB' { if (-not $EntraWeb) { $EntraWeb = $kv[1] } }
-                'LONGARM_HUB_ENTRA_APPS' { if (-not $EntraApps) { $EntraApps = $kv[1] } }
-            }
-        }
-    }
-    # and its scheduler gate and release signing key (likewise)
-    if ($curImage -and -not $GateFreeGb) {
-        $GateFreeGb = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query "containers[0].environmentVariables[?name=='LONGARM_HUB_SCHED_GATE_FREE_GB'].value | [0]") -join ''
-        if ($GateFreeGb -ceq 'None') { $GateFreeGb = '' }
-    }
-    if ($curImage -and -not $ReleasePublicKey) {
-        $ReleasePublicKey = (Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query "containers[0].environmentVariables[?name=='LONGARM_HUB_RELEASES_PUBLIC_KEY'].value | [0]") -join ''
-        if ($ReleasePublicKey -ceq 'None') { $ReleasePublicKey = '' }
-    }
+    if ($GateFreeGb -and $GateFreeGb -notmatch '^[0-9]+([.][0-9]+)?$') { throw '-GateFreeGb: a number of GB' }
     if ([bool]$EntraTenant -ne [bool]$EntraClient) { throw '-EntraTenant and -EntraClient go together' }
     if ($EntraWeb -and $EntraWeb -cnotmatch '^(spa|confidential|off)$') { throw '-EntraWeb: spa, confidential or off' }
     if ($Acr -and $StorageAuth -ne 'identity') { throw '-Acr needs -StorageAuth identity' }
     if (-not $Size) { $Size = 'small' }
     if ($null -eq $panelOn) { $panelOn = $true }
+    $headscaleOn = [bool]$headscaleOn
+    $publicDerpOn = [bool]$publicDerpOn
+    if ($headscaleOn -and -not $panelOn) { throw '-Headscale needs the panel (Headscale is served on https://<fqdn>): drop -NoPanel' }
+    if ($headscaleOn -and $TailscaleSecretFile) { throw '-Headscale and -TailscaleSecretFile: one tailnet provider (the sidecar is the provider)' }
     if ($logsOn) { Register-Provider 'Microsoft.OperationalInsights' }
     # Application Insights on its Log Analytics workspace
     if ($telemetryOn) { Register-Provider 'Microsoft.OperationalInsights', 'Microsoft.Insights' }
@@ -456,78 +844,385 @@ try {
             $RegistryUser, $registryPassword = $cred[0], $cred[1]
         }
     }
-    if ($curRegistry -and -not $RegistryUser -and -not $Acr) { throw "the hub pulls its image with a login for $curRegistry, which can't be read back: pass -RegistryUser again (password in `$env:LONGARM_REGISTRY_PASSWORD)" }
-
-    if ($Recreate -and $curImage) {
-        Write-Host "deleting container group $Name (storage and data stay)"
-        Invoke-Az container delete -g $rg -n $Name --yes -o none | Out-Null
-    }
+    if ($prev -and $prev.registry -and -not $RegistryUser -and -not $Acr) { throw "the hub pulls its image with a login for $($prev.registry), which can't be read back: pass -RegistryUser again (password in `$env:LONGARM_REGISTRY_PASSWORD)" }
 
     # parameters in a private file: no secrets on the command line. The
-    # location is the resource group's (its programmatic name).
-    $p = [ordered]@{
-        name               = @{ value = $Name }
-        size               = @{ value = $Size }
-        enablePanel        = @{ value = [bool]$panelOn }
-        enableLogAnalytics = @{ value = [bool]$logsOn }
-        storageAuth        = @{ value = $StorageAuth }
-        enableTelemetry    = @{ value = [bool]$telemetryOn }
-        enableDiagnostics  = @{ value = [bool]$diagnosticsOn }
+    # location is the resource group's (its programmatic name). $cfg: this
+    # run's settings; the rollback's are a copy with the previous ones.
+    $cfg = @{
+        Name = $Name; Size = $Size; Panel = [bool]$panelOn; Logs = [bool]$logsOn; StorageAuth = $StorageAuth
+        Telemetry = [bool]$telemetryOn; Diagnostics = [bool]$diagnosticsOn; Headscale = [bool]$headscaleOn; PublicDerp = [bool]$publicDerpOn
+        Acr = $Acr; Image = $Image; AcmeEmail = $AcmeEmail; Gate = $GateFreeGb; RelKey = $ReleasePublicKey
+        EntraTenant = $EntraTenant; EntraClient = $EntraClient; EntraAdmins = $EntraAdmins; EntraWeb = $EntraWeb; EntraApps = $EntraApps
+        RegistryUser = $RegistryUser; RegistryPassword = $registryPassword; RegHost = $regHost; Stun = $StunServers; TailscaleSecretFile = $TailscaleSecretFile
     }
-    if ($Acr) { $p.acrName = @{ value = $Acr } }
-    if ($Image) { $p.image = @{ value = $Image } }
-    if ($AcmeEmail) { $p.acmeEmail = @{ value = $AcmeEmail } }
-    if ($GateFreeGb) { $p.schedulerGateFreeGb = @{ value = $GateFreeGb } }
-    if ($ReleasePublicKey) { $p.releasePublicKey = @{ value = $ReleasePublicKey } }
-    if ($EntraTenant) {
-        $p.entraTenantId = @{ value = $EntraTenant }
-        $p.entraClientId = @{ value = $EntraClient }
-        if ($EntraAdmins) { $p.entraAdmins = @{ value = $EntraAdmins } }
-        if ($EntraWeb) { $p.entraWeb = @{ value = $EntraWeb } }
-        if ($EntraApps) { $p.entraApps = @{ value = $EntraApps } }
+    # a sidecar's image: the template's pin, or with a registry its copy there,
+    # <acr>.azurecr.io/mirror/<repository>:<hex>@sha256:<hex>
+    function Get-SidecarImage([string]$Param, [string]$AcrName) {
+        $src = [string]$tplDefaults.$Param.defaultValue
+        if (-not $AcrName) { return $src }
+        $d = $src.Substring($src.IndexOf('@sha256:') + 8)
+        "$($AcrName.ToLowerInvariant()).azurecr.io/$(Get-MirrorRepo $src):$d@sha256:$d"
     }
-    if ($RegistryUser) {
-        if (-not $registryPassword) { throw '-RegistryUser needs $env:LONGARM_REGISTRY_PASSWORD' }
-        # the login is for the registry the image comes from (the template defaults to ghcr.io)
-        if ($regHost) { $p.registryServer = @{ value = $regHost } }
-        $p.registryUsername = @{ value = $RegistryUser }
-        $p.registryPassword = @{ value = $registryPassword }
-    }
-    if ($StunServers) {
-        $s = $StunServers
-        if ($s -eq 'none') { $s = '' }
-        $p.stunServers = @{ value = $s }
-    }
-    if ($TailscaleSecretFile) {
-        $p.tailscaleOAuthSecret = @{ value = (Get-Content -Raw $TailscaleSecretFile).Trim() }
+    function Write-ParamFile($c, [string]$File) {
+        $p = [ordered]@{
+            name                = @{ value = $c.Name }
+            size                = @{ value = $c.Size }
+            enablePanel         = @{ value = [bool]$c.Panel }
+            enableLogAnalytics  = @{ value = [bool]$c.Logs }
+            storageAuth         = @{ value = $c.StorageAuth }
+            enableTelemetry     = @{ value = [bool]$c.Telemetry }
+            enableDiagnostics   = @{ value = [bool]$c.Diagnostics }
+            enableHeadscale     = @{ value = [bool]$c.Headscale }
+            headscalePublicDerp = @{ value = [bool]$c.PublicDerp }
+        }
+        if ($c.Acr) {
+            $p.acrName = @{ value = $c.Acr }
+            # the sidecars from the registry's copies (Confirm-Mirror)
+            $p.caddyImage = @{ value = (Get-SidecarImage 'caddyImage' $c.Acr) }
+            $p.headscaleImage = @{ value = (Get-SidecarImage 'headscaleImage' $c.Acr) }
+        }
+        if ($c.Image) { $p.image = @{ value = $c.Image } }
+        if ($c.AcmeEmail) { $p.acmeEmail = @{ value = $c.AcmeEmail } }
+        if ($c.Gate) { $p.schedulerGateFreeGb = @{ value = $c.Gate } }
+        if ($c.RelKey) { $p.releasePublicKey = @{ value = $c.RelKey } }
+        if ($c.EntraTenant) {
+            $p.entraTenantId = @{ value = $c.EntraTenant }
+            $p.entraClientId = @{ value = $c.EntraClient }
+            if ($c.EntraAdmins) { $p.entraAdmins = @{ value = $c.EntraAdmins } }
+            if ($c.EntraWeb) { $p.entraWeb = @{ value = $c.EntraWeb } }
+            if ($c.EntraApps) { $p.entraApps = @{ value = $c.EntraApps } }
+        }
+        if ($c.RegistryUser) {
+            if (-not $c.RegistryPassword) { throw '-RegistryUser needs $env:LONGARM_REGISTRY_PASSWORD' }
+            # the login is for the registry the image comes from (the template defaults to ghcr.io)
+            if ($c.RegHost) { $p.registryServer = @{ value = $c.RegHost } }
+            $p.registryUsername = @{ value = $c.RegistryUser }
+            $p.registryPassword = @{ value = $c.RegistryPassword }
+        }
+        if ($c.Stun) {
+            $s = $c.Stun
+            if ($s -eq 'none') { $s = '' }
+            $p.stunServers = @{ value = $s }
+        }
+        if ($c.TailscaleSecretFile) {
+            $p.tailscaleOAuthSecret = @{ value = (Get-Content -Raw $c.TailscaleSecretFile).Trim() }
+        }
+        $doc = @{ contentVersion = '1.0.0.0'; parameters = $p }
+        [System.IO.File]::WriteAllText($File, ($doc | ConvertTo-Json -Depth 5))
     }
     $paramsFile = Join-Path $tmp 'params.json'
-    $doc = @{ contentVersion = '1.0.0.0'; parameters = $p }
-    [System.IO.File]::WriteAllText($paramsFile, ($doc | ConvertTo-Json -Depth 5))
+    Write-ParamFile $cfg $paramsFile
+
+    # Test-ImagePullable: $null when the registry has the image's manifest,
+    # asked the way ACI pulls it (anonymously, or with the deployment's
+    # registry login; an Azure Container Registry pulled with the managed
+    # identity: az acr), else what went wrong. The tests point
+    # LONGARM_DEPLOY_REGISTRY_URL at a fake registry.
+    function Test-ImagePullable([string]$Ref) {
+        $accept = 'application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
+        $h = Get-RegistryHost $Ref
+        $rest = if ($h) { $Ref.Substring($h.Length + 1) } else { $Ref }
+        if (-not $h -or $h -eq 'docker.io') {
+            $h = 'registry-1.docker.io'
+            if ($rest -notlike '*/*') { $rest = "library/$rest" }
+        }
+        if ($rest -like '*@*') {
+            $repo = $rest.Substring(0, $rest.IndexOf('@'))
+            $reference = $rest.Substring($rest.IndexOf('@') + 1)
+            $last = $repo.Substring($repo.LastIndexOf('/') + 1)
+            if ($last -like '*:*') { $repo = $repo.Substring(0, $repo.LastIndexOf(':')) }
+        } else {
+            $last = $rest.Substring($rest.LastIndexOf('/') + 1)
+            if ($last -like '*:*') {
+                $repo = $rest.Substring(0, $rest.LastIndexOf(':'))
+                $reference = $rest.Substring($rest.LastIndexOf(':') + 1)
+            } else {
+                $repo = $rest
+                $reference = 'latest'
+            }
+        }
+        if ($h -like '*.azurecr.io' -and $StorageAuth -eq 'identity' -and -not $RegistryUser) {
+            $sep = if ($reference -like 'sha256:*') { '@' } else { ':' }
+            Invoke-AzQuiet acr repository show -n $h.Substring(0, $h.IndexOf('.')) --image "$repo$sep$reference" -o none | Out-Null
+            if ($LASTEXITCODE -eq 0) { return $null }
+            return "az acr repository show --image $repo$sep$reference failed"
+        }
+        $url = "https://$h/v2/$repo/manifests/$reference"
+        if ($env:LONGARM_DEPLOY_REGISTRY_URL) { $url = "$($env:LONGARM_DEPLOY_REGISTRY_URL)/$h/v2/$repo/manifests/$reference" }
+        Add-Type -AssemblyName System.Net.Http
+        $client = New-Object System.Net.Http.HttpClient
+        $client.Timeout = [TimeSpan]::FromSeconds(20)
+        try {
+            $head = {
+                param($token)
+                $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Head, $url)
+                $req.Headers.TryAddWithoutValidation('Accept', $accept) | Out-Null
+                if ($token) { $req.Headers.TryAddWithoutValidation('Authorization', "Bearer $token") | Out-Null }
+                $client.SendAsync($req).GetAwaiter().GetResult()
+            }
+            $resp = & $head ''
+            if ([int]$resp.StatusCode -eq 401) {
+                # a token for repository:<repo>:pull from the realm the registry names
+                $ch = @($resp.Headers.WwwAuthenticate | Where-Object { $_.Scheme -eq 'Bearer' }) | Select-Object -First 1
+                $par = if ($ch) { [string]$ch.Parameter } else { '' }
+                $realm = if ($par -match 'realm="([^"]*)"') { $Matches[1] } else { '' }
+                $service = if ($par -match 'service="([^"]*)"') { $Matches[1] } else { '' }
+                $scope = if ($par -match 'scope="([^"]*)"') { $Matches[1] } else { "repository:${repo}:pull" }
+                if ($realm) {
+                    $treq = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "${realm}?service=$([uri]::EscapeDataString($service))&scope=$([uri]::EscapeDataString($scope))")
+                    if ($RegistryUser -and $h -eq $regHost) {
+                        $basic = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${RegistryUser}:$registryPassword"))
+                        $treq.Headers.TryAddWithoutValidation('Authorization', "Basic $basic") | Out-Null
+                    }
+                    $tresp = $client.SendAsync($treq).GetAwaiter().GetResult()
+                    $token = ''
+                    if ($tresp.IsSuccessStatusCode) {
+                        $tj = $tresp.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json
+                        if ($tj.PSObject.Properties['token']) { $token = $tj.token } elseif ($tj.PSObject.Properties['access_token']) { $token = $tj.access_token }
+                    }
+                    $resp = & $head $token
+                }
+            }
+            if ([int]$resp.StatusCode -eq 200) { return $null }
+            return "the registry answered $([int]$resp.StatusCode) for $url"
+        } catch {
+            return "no answer from $url ($($_.Exception.Message))"
+        } finally {
+            $client.Dispose()
+        }
+    }
+
+    # every image of the deployment can be pulled
+    function Test-DeploymentImage {
+        $defaults = (Get-Content -Raw $template | ConvertFrom-Json).parameters
+        $imgs = @($(if ($Image) { $Image } else { $defaults.image.defaultValue }))
+        if ($StorageAuth -eq 'key' -and $panelOn) { $imgs += Get-SidecarImage 'caddyImage' $Acr }
+        if ($headscaleOn) { $imgs += Get-SidecarImage 'headscaleImage' $Acr }
+        foreach ($img in $imgs) {
+            if (-not $img) { continue }
+            $problem = Test-ImagePullable $img
+            if ($problem) { throw "the image $img can't be pulled ($problem): nothing was changed. Check the tag, that the package is public (or -RegistryUser), or skip this check with -SkipImageCheck" }
+        }
+    }
+
+    # every pinned image of mirror-images.txt is in the registry (by digest),
+    # imported from its source if not - before anything is deleted: Docker
+    # Hub's pull limits can fail an import, not a running hub
+    function Confirm-Mirror {
+        if (-not (Test-Path $mirrorList)) { throw "$mirrorList is missing (run from a checkout of the repository)" }
+        $srcs = @(Get-Content $mirrorList | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') })
+        if ($srcs.Count -eq 0) { throw "$mirrorList lists no images" }
+        foreach ($src in $srcs) {
+            if ($src -cnotmatch '^docker\.io/[a-z0-9./-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$') { throw "${mirrorList}: want docker.io/<repository>:<tag>@sha256:<digest>, one per line: $src" }
+            $digest = $src.Substring($src.IndexOf('@') + 1)
+            $hex = $digest.Substring(7)
+            $repo = Get-MirrorRepo $src
+            $from = "$($src.Substring(0, $src.IndexOf(':')))@$digest"
+            if (Test-Az acr repository show -n $Acr --image "$repo@$digest" -o none) { continue }
+            Write-Host "importing $src into the registry $Acr as ${repo}:$hex (az acr import; nothing else is changed)"
+            & $script:AzCli acr import -n $Acr --source $from -t "${repo}:$hex" -o none | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "importing $src into the registry $Acr failed (above; Docker Hub's pull limits?): nothing was changed. Retry later, or import it yourself: az acr import -n $Acr --source $from -t ${repo}:$hex" }
+            if (-not (Test-Az acr repository show -n $Acr --image "$repo@$digest" -o none)) { throw "the registry $Acr has no $repo@$digest after the import: nothing was changed" }
+        }
+    }
+    # sidecars from the registry (now or in the rollback): its copies first
+    if ($Acr -and ($headscaleOn -or ($prev -and $prev.headscale -eq 'true'))) { Confirm-Mirror }
+
+    Write-Host 'validating the deployment (nothing is changed yet)'
+    & $script:AzCli deployment group validate -g $rg --template-file $template --parameters "@$paramsFile" -o none | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'the deployment does not validate (the error is above, e.g. a policy violation): nothing was changed' }
+    if (-not $SkipImageCheck) { Test-DeploymentImage }
+
+    Test-Replica
+
+    # rollback: Invoke-FailDeploy deploys the previous configuration again -
+    # after -Recreate deleted the group, and after an update in place that
+    # changed it (the 0.1.18 deploy: the new image's starts failed, the script
+    # gave up and left the hub crash-looping). Deleted: -Recreate deleted it.
+    $script:Deleted = $false
+    $script:Rollback = $false
+    $rollbackFile = Join-Path $tmp 'rollback.json'
+    if ($curImage) {
+        # the previous configuration, for a rollback if the new one fails
+        $rcfg = $cfg.Clone()
+        $rcfg.Image = $prev.image; $rcfg.Size = $prev.size; $rcfg.Panel = $prev.panel -eq 'true'; $rcfg.Acr = $prev.acr
+        $rcfg.Headscale = $prev.headscale -eq 'true'; $rcfg.PublicDerp = $prev.public_derp -eq 'true'; $rcfg.Logs = $prev.logs -eq 'true'
+        $rcfg.Telemetry = $prev.telemetry -eq 'true'; $rcfg.Diagnostics = $prev.diagnostics -eq 'true'; $rcfg.Stun = $prev.stun
+        $rcfg.Gate = $prev.gate; $rcfg.RelKey = $prev.relkey; $rcfg.EntraTenant = $prev.entra_tenant; $rcfg.EntraClient = $prev.entra_client
+        $rcfg.EntraAdmins = $prev.entra_admins; $rcfg.EntraWeb = $prev.entra_web; $rcfg.EntraApps = $prev.entra_apps
+        $rcfg.RegHost = Get-RegistryHost $prev.image
+        if ($prev.tailscale -ne 'true') { $rcfg.TailscaleSecretFile = '' }
+        Write-ParamFile $rcfg $rollbackFile
+        if ($Recreate) {
+            & $script:AzCli deployment group validate -g $rg --template-file $template --parameters "@$rollbackFile" -o none | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'the previous configuration (the rollback if the new one fails) does not validate (the error is above): nothing was changed' }
+            $script:Rollback = $true
+            Write-Host "saving the hub's settings (resource group tags longarm-hub-prev-*: a re-run finds them if the group is gone)"
+            Save-Snapshot $prev
+            Write-Host "deleting container group $Name (storage and data stay)"
+            Invoke-Az container delete -g $rg -n $Name --yes -o none | Out-Null
+            $script:Deleted = $true
+        } elseif ([IO.File]::ReadAllText($rollbackFile) -cne [IO.File]::ReadAllText($paramsFile)) {
+            # an update in place: the running configuration is the rollback (no
+            # rollback when it no longer validates, e.g. a new policy)
+            & $script:AzCli deployment group validate -g $rg --template-file $template --parameters "@$rollbackFile" -o none | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                $script:Rollback = $true
+            } else {
+                Write-Warning 'the running configuration does not validate any more (above): no rollback if this update fails'
+            }
+        }
+    }
+
+    # Invoke-CheckRestore: at most every 2 polls, reads the restore's state
+    # from the hub's log, prints its [+Ns] marks and keeps $deadline ahead of
+    # a running restore - bounded: until -RestoreTimeoutSeconds after it was
+    # first seen. After it, the hub gets at least 5 more minutes to bootstrap
+    # and listen. $script:RestoreRunning: the last check saw it running.
+    function Clear-RestoreState {
+        $script:RestoreSeen = $null
+        $script:RestoreDone = $false
+        $script:RestoreChecked = $null
+        $script:RestoreRunning = $false
+    }
+    Clear-RestoreState
+    function Invoke-CheckRestore {
+        $now = Get-Date
+        if ($script:RestoreChecked -and ($now - $script:RestoreChecked).TotalSeconds -lt 2 * $script:Poll) { return }
+        $script:RestoreChecked = $now
+        $st = Get-RestoreStatus
+        $script:RestoreRunning = $false
+        if ($st -eq 'running') {
+            $script:RestoreRunning = $true
+            if (-not $script:RestoreSeen) {
+                $script:RestoreSeen = $now
+                Write-Phase 'database restore running (Litestream; the hub listens after it)'
+            }
+            $cap = $script:RestoreSeen.AddSeconds($RestoreTimeoutSeconds)
+            $soon = $now.AddSeconds(60)
+            if ($script:deadline -lt $soon -and $script:deadline -lt $cap) {
+                $script:deadline = if ($soon -lt $cap) { $soon } else { $cap }
+            }
+        } elseif ($st -like 'done*') {
+            if ($script:RestoreSeen -and -not $script:RestoreDone) {
+                $script:RestoreDone = $true
+                Write-Phase ('database restore finished' + $st.Substring(4))
+                if ($script:deadline -lt $now.AddSeconds(300)) { $script:deadline = $now.AddSeconds(300) }
+            }
+        } elseif ($st -eq 'failed') {
+            if ($script:RestoreSeen -and -not $script:RestoreDone) {
+                $script:RestoreDone = $true
+                Write-Phase "database restore FAILED: $logsHint"
+            }
+        }
+    }
+    # Wait-HubAnswer: waits until the hub listens on HostName:Port, past
+    # $deadline while its restore runs; $false = it didn't (a crash loop:
+    # $script:CrashMsg says so)
+    function Wait-HubAnswer([string]$HostName, [int]$Port) {
+        while (-not (Test-TcpPort $HostName $Port)) {
+            Invoke-CheckRestore
+            if (Test-Crash) { return $false }
+            if ((Get-Date) -gt $script:deadline) { return $false }
+            Start-Sleep -Seconds 2
+        }
+        $true
+    }
+
+    # Invoke-DeployRun: deploys and waits for the deployment; $null when it
+    # succeeded, else why not. --no-wait + polling: a container group stuck in
+    # Creating would block "az deployment group create" for an hour (Test-Stuck)
+    function Invoke-DeployRun([string]$File, [string]$Dep) {
+        $script:StuckSince = $null
+        $end = (Get-Date).AddSeconds($TimeoutSeconds)
+        Invoke-AzQuiet deployment group create -g $rg -n $Dep --template-file $template --parameters "@$File" --no-wait -o none | Out-Null
+        if ($LASTEXITCODE -ne 0) { return "az deployment group create $Dep failed" }
+        $dstate = ''
+        while ($dstate -ne 'Succeeded') {
+            Start-Sleep -Seconds $script:Poll
+            $dstate = (Invoke-AzQuiet deployment group show -g $rg -n $Dep --query properties.provisioningState -o tsv) -join ''
+            if ($dstate -eq 'Failed' -or $dstate -eq 'Canceled') {
+                $ops = Invoke-AzQuiet deployment operation group list -g $rg -n $Dep --query "[?properties.provisioningState=='Failed'].{resource: properties.targetResource.resourceName, error: properties.statusMessage.error}" -o json
+                Write-Warning ($ops -join "`n")
+                return "deployment ${Dep}: $dstate (errors above; az deployment group show -g $rg -n $Dep)"
+            }
+            $stuck = Test-Stuck
+            if ($stuck) { return $stuck }
+            if ($dstate -ne 'Succeeded' -and (Get-Date) -gt $end) { return "deployment $Dep is still $dstate after $TimeoutSeconds s: az deployment group show -g $rg -n $Dep" }
+        }
+        $null
+    }
+
+    # Invoke-FailDeploy: the new configuration failed. With a rollback
+    # (-Recreate deleted the group, or an update in place changed it), the
+    # previous configuration is deployed again.
+    function Invoke-FailDeploy([string]$Why) {
+        if (-not $script:Rollback) { throw $Why }
+        $script:Rollback = $false
+        $wasDeleted = $script:Deleted
+        $script:Deleted = $false
+        Write-Warning $Why
+        $pimg = if ($prev.image) { $prev.image } else { 'the template default' }
+        Write-Warning "rolling back: deploying the previous configuration again (image $pimg, size $($prev.size), panel $($prev.panel), headscale $($prev.headscale))"
+        # after -Recreate: the failed new group goes (it may have other ports
+        # or containers); an update in place is updated back
+        if ($wasDeleted) { Invoke-AzQuiet container delete -g $rg -n $Name --yes -o none | Out-Null }
+        $rbDep = 'longarm-hub-' + (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss') + '-rollback'
+        $rb = Invoke-DeployRun $rollbackFile $rbDep
+        if (-not $rb) {
+            Write-Phase 'rollback deployment succeeded'
+            $st = ''
+            $script:deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+            Clear-RestoreState
+            Clear-CrashState
+            while ($st -ne 'Running' -and (Get-Date) -lt $script:deadline) {
+                Start-Sleep -Seconds $script:Poll
+                if (Test-Crash) {
+                    $st = "crash-looping too: $($script:CrashMsg)"
+                    break
+                }
+                $st = (Invoke-AzQuiet container show -g $rg -n $Name --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv) -join ''
+            }
+            # the previous hub restores its database too: wait until it answers
+            # (a rollback that gives up mid-restore looks like a dead hub)
+            $rbOuts = Split-Tsv ((Invoke-AzQuiet deployment group show -g $rg -n $rbDep --query '[properties.outputs.hubAddress.value, properties.outputs.fqdn.value]' -o tsv) -join '') 2
+            $rbAddr, $rbHost = $rbOuts[0], $rbOuts[1]
+            if ($st -eq 'Running' -and $rbAddr -and $rbHost) {
+                if (Wait-HubAnswer $rbHost ([int]$rbAddr.Substring($rbAddr.LastIndexOf(':') + 1))) {
+                    Write-Phase "rolled-back hub answers on $rbAddr"
+                    $st = 'answering'
+                } elseif ($script:CrashMsg) {
+                    $st = "crash-looping too: $($script:CrashMsg)"
+                } else {
+                    $st = "running, not answering on $rbAddr yet: $logsHint"
+                }
+            }
+            if ($wasDeleted) { Clear-Snapshot }
+            throw "$Why`nROLLED BACK: the previous configuration is deployed again (hub $st; data kept). Nothing of the new configuration is running; fix the cause and run deploy.ps1 again."
+        }
+        if ($wasDeleted) {
+            throw "$Why`nThe rollback failed too: $rb`nThe hub's settings are saved in the resource group's tags (longarm-hub-prev-*): ./deploy.ps1 -Name $Name -ResourceGroup $rg (without -Recreate) deploys them again."
+        }
+        $pi = if ($prev.image) { $prev.image } else { '<the previous image>' }
+        throw "$Why`nThe rollback failed too: $rb`n./deploy.ps1 -Name $Name -ResourceGroup $rg -Image $pi deploys the previous image again."
+    }
 
     $imageText = if ($Image) { ", $Image" } else { '' }
-    Write-Host "deploying $Name to $rg ($Location, $Size, panel $(([bool]$panelOn).ToString().ToLower()), storage auth $StorageAuth$imageText); this takes a few minutes"
+    $headscaleText = if ($headscaleOn) { ', headscale' } else { '' }
+    Write-Host "deploying $Name to $rg ($Location, $Size, panel $(([bool]$panelOn).ToString().ToLower()), storage auth $StorageAuth$headscaleText$imageText); this takes a few minutes"
     $query = '[properties.outputs.hubAddress.value, properties.outputs.fqdn.value, properties.outputs.storageAccount.value, properties.outputs.relayUdpPort.value, properties.outputs.panelUrl.value]'
     # one tab-separated line; panelUrl last (empty without the panel)
     $start = Get-Date
     $deadline = $start.AddSeconds($TimeoutSeconds)
     $logsHint = "az container logs -g $rg -n $Name --container-name hub"
-    # --no-wait + polling: a container group stuck in Creating would block
-    # "az deployment group create" for an hour (Test-Stuck)
     $deployment = 'longarm-hub-' + (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
-    Invoke-Az deployment group create -g $rg -n $deployment --template-file $template --parameters "@$paramsFile" --no-wait -o none | Out-Null
-    $dstate = ''
-    while ($dstate -ne 'Succeeded') {
-        Start-Sleep -Seconds $script:Poll
-        $dstate = (Invoke-AzQuiet deployment group show -g $rg -n $deployment --query properties.provisioningState -o tsv) -join ''
-        if ($dstate -eq 'Failed' -or $dstate -eq 'Canceled') {
-            $ops = Invoke-AzQuiet deployment operation group list -g $rg -n $deployment --query "[?properties.provisioningState=='Failed'].{resource: properties.targetResource.resourceName, error: properties.statusMessage.error}" -o json
-            Write-Warning ($ops -join "`n")
-            throw "deployment ${deployment}: $dstate (errors above; az deployment group show -g $rg -n $deployment)"
-        }
-        Test-Stuck
-        if ((Get-Date) -gt $deadline) { throw "deployment $deployment is still $dstate after $TimeoutSeconds s: az deployment group show -g $rg -n $deployment" }
-    }
+    # phases of the redeploy (seconds since the submit; README "Redeploy downtime")
+    $tSubmit = Get-Date
+    function Write-Phase([string]$What) { Write-Host ("  [+{0}s] {1}" -f [int]((Get-Date) - $tSubmit).TotalSeconds, $What) }
+    $err = Invoke-DeployRun $paramsFile $deployment
+    if ($err) { Invoke-FailDeploy $err }
+    Write-Phase 'deployment succeeded'
     $outLine = (Invoke-Az deployment group show -g $rg -n $deployment --query $query -o tsv) -join ''
     $outs = Split-Tsv $outLine 5
     $hubAddr, $fqdn, $account, $relayPort, $panelUrl = $outs[0], $outs[1], $outs[2], $outs[3], $outs[4]
@@ -553,29 +1248,50 @@ try {
     while ($true) {
         $state = (Invoke-AzQuiet container show -g $rg -n $Name --query "containers[?name=='hub'].instanceView.currentState.state" -o tsv) -join ''
         if ($state -eq 'Running') { break }
-        Test-Stuck
-        if ((Get-Date) -gt $deadline) { throw "the hub container is not running ($state): $logsHint" }
+        $stuck = Test-Stuck
+        if ($stuck) { Invoke-FailDeploy $stuck }
+        $crash = Test-Crash
+        if ($crash) { Invoke-FailDeploy $crash }
+        if ((Get-Date) -gt $deadline) { Invoke-FailDeploy "the hub container is not running ($state)$($script:CrashNote): $logsHint" }
         Start-Sleep -Seconds $script:Poll
     }
+    Write-Phase 'hub container running'
     # the bootstrap values of this start (a new boot_id; restart once if the
     # update didn't restart the hub)
     $restarted = $false
     while ($true) {
         $boot = Read-Bootstrap $account $key $bootFile
         if ($boot -and (Get-Value $boot 'boot_id') -ne $prevBoot) { break }
-        if ((Get-Date) -gt $deadline) { throw "no bootstrap values from this start: $logsHint" }
-        if ($prevBoot -and -not $restarted -and ((Get-Date) - $start).TotalSeconds -gt 240) {
+        Invoke-CheckRestore
+        $crash = Test-Crash
+        if ($crash) { Invoke-FailDeploy $crash }
+        if ((Get-Date) -gt $deadline) {
+            $why = if ($script:RestoreRunning) { " (its database restore still runs after $RestoreTimeoutSeconds s: -RestoreTimeoutSeconds)" } else { '' }
+            Invoke-FailDeploy "no bootstrap values from this start${why}$($script:CrashNote): $logsHint"
+        }
+        # a hub still restoring its database did restart: never restart it mid-restore
+        if ($prevBoot -and -not $restarted -and -not $script:RestoreSeen -and ((Get-Date) - $start).TotalSeconds -gt 240) {
             Write-Host 'the hub did not restart: az container restart'
             Invoke-Az container restart -g $rg -n $Name -o none | Out-Null
             $restarted = $true
+            Clear-CrashState # ours, not a crash
         }
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 2
+    }
+    Write-Phase 'new hub start bootstrapped'
+    # the restore's end (and how long it took), once it was seen running
+    if ($script:RestoreSeen -and -not $script:RestoreDone) {
+        $script:RestoreChecked = $null
+        Invoke-CheckRestore
     }
     $port = [int]$hubPort
-    while (-not (Test-TcpPort $fqdn $port)) {
-        if ((Get-Date) -gt $deadline) { throw "$hubAddr does not answer: $logsHint" }
-        Start-Sleep -Seconds 5
+    if (-not (Wait-HubAnswer $fqdn $port)) {
+        if ($script:CrashMsg) { Invoke-FailDeploy $script:CrashMsg }
+        Invoke-FailDeploy "$hubAddr does not answer$($script:CrashNote): $logsHint"
     }
+    Write-Phase "hub answers on $hubAddr"
+    # the new configuration runs: the settings snapshot has done its job
+    if ($script:Deleted -or $snap) { Clear-Snapshot }
     $fp = Get-Value $boot 'ca_fingerprint'
     $code = Get-Value $boot 'admin_join_code'
     $expires = Get-Value $boot 'admin_join_code_expires'
@@ -594,6 +1310,27 @@ try {
         $panelContainer = if ($StorageAuth -eq 'identity') { 'hub' } else { 'caddy' }
         if (-not $ok) { Write-Warning "$panelUrl/healthz does not answer yet (Let's Encrypt can take a few minutes): az container logs -g $rg -n $Name --container-name $panelContainer" }
     }
+
+    # the tailnet: the hub's view of its Headscale sidecar (/healthz "headscale":
+    # ok | starting | down; the detail: longarm admin tailnet status)
+    $tailnetText = 'none (-Headscale for a self-hosted one, or -TailscaleSecretFile)'
+    if ($headscaleOn) {
+        $hs = ''
+        for ($i = 0; $i -lt 18 -and $hs -ne 'ok'; $i++) {
+            try {
+                $health = Invoke-RestMethod -UseBasicParsing -TimeoutSec 10 -Uri "$panelUrl/healthz"
+                if ($health.PSObject.Properties.Name -contains 'headscale') { $hs = [string]$health.headscale }
+            } catch {
+                $hs = ''
+            }
+            if ($hs -ne 'ok') { Start-Sleep -Seconds $script:Poll }
+        }
+        $hsText = if ($hs) { $hs } else { 'unknown' }
+        $tailnetText = "headscale ${panelUrl}: $hsText"
+        if ($hs -ne 'ok') { Write-Warning "Headscale is $hsText after 3 min: az container logs -g $rg -n $Name --container-name headscale (and --container-name hub); longarm admin tailnet status" }
+    } elseif ($TailscaleSecretFile) {
+        $tailnetText = 'tailscale (OAuth client)'
+    }
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
@@ -604,6 +1341,8 @@ $cpu = 1.0; $mem = 1.5
 if ($Size -eq 'medium') { $cpu = 2.0; $mem = 3.0 }
 # Caddy (storage-auth identity: the hub serves the panel itself)
 if ($panelOn -and $StorageAuth -eq 'key') { $cpu += 0.25; $mem += 0.3 }
+# the Headscale sidecar
+if ($headscaleOn) { $cpu += 0.25; $mem += 0.3 }
 $cost = [math]::Round(730 * ($cpu * 0.0405 + $mem * 0.0045) + 1)
 
 $panelText = if ($panelUrl) { $panelUrl } else { 'off (-NoPanel)' }
@@ -613,6 +1352,7 @@ longarm-hub is up.
   hub address     $hubAddr
   CA fingerprint  $fp
   panel           $panelText
+  tailnet         $tailnetText
   resource group  $rg (storage account $account, storage auth $StorageAuth)
   cost            about $cost USD/month (compute; plus egress over 100 GB/month, relay traffic counts)
 

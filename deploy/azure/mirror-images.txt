@@ -1,0 +1,13 @@
+# Third-party images the template runs (sidecars), pinned by digest. They are
+# main.bicep's caddyImage / headscaleImage defaults (deploy/azure/test/acirules
+# checks that they match this file). deploy.sh / deploy.ps1 --acr NAME import
+# exactly these digests into that Azure Container Registry as
+# mirror/<repository>:<digest hex> (az acr import, before anything is deleted)
+# and deploy the sidecars from there, pulled with the managed identity, so a
+# --recreate never depends on Docker Hub (anonymous pull limits and outages
+# took a hub down: a --recreate whose new sidecar couldn't be pulled).
+#
+# Only the source repositories allowed in .github/workflows/mirror.yml
+# (ALLOWED_SOURCES) can be listed; that workflow verifies the pins, read-only.
+docker.io/library/caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+docker.io/headscale/headscale:v0.29.5-debug@sha256:162cf7e150072f677d70120fd9abaa78d55a37f6ab3944c040fb57626fefd12a

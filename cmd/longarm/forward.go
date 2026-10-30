@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/platform"
@@ -130,11 +131,20 @@ interrupted.
 
 // forwardConn carries one TCP connection over a Forward.Open stream with
 // half-close in both directions.
+//
+// A connection accepted while the worker is briefly unreachable (a relay
+// restarting, the path moving) waits up to forwardOpenWait for the
+// connection to the worker to come back (gRPC reconnects with backoff)
+// instead of failing at once.
 func forwardConn(ctx context.Context, conn *client.Conn, target string, c net.Conn) error {
 	defer c.Close()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	st, err := conn.Forward().Open(ctx)
+	waiting := time.AfterFunc(forwardOpenWait, cancel)
+	st, err := conn.Forward().Open(ctx, grpc.WaitForReady(true))
+	if !waiting.Stop() {
+		return fmt.Errorf("worker unreachable for %s", forwardOpenWait)
+	}
 	if err != nil {
 		return err
 	}
@@ -176,6 +186,15 @@ func forwardConn(ctx context.Context, conn *client.Conn, target string, c net.Co
 		}
 	}
 }
+
+// forwardOpenWait bounds how long a forwarded connection waits for the
+// worker's connection (LONGARM_FORWARD_WAIT).
+var forwardOpenWait = func() time.Duration {
+	if d, err := time.ParseDuration(os.Getenv("LONGARM_FORWARD_WAIT")); err == nil && d > 0 {
+		return d
+	}
+	return 30 * time.Second
+}()
 
 func registerForward(worker, remote, local string) func() {
 	dir := filepath.Join(configDir, forwardsDir)

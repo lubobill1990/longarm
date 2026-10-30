@@ -3,14 +3,18 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +81,38 @@ func TestAzureDeployScripts(t *testing.T) {
 	c.waitHealthy(hubBin, out, done)
 	b := bootstrapLine(t, out.String())
 	e := &env{t: t, root: c.root}
+	// a registry for the scripts' pull check (LONGARM_DEPLOY_REGISTRY_URL):
+	// ghcr.io wants a token from its realm first, like the real one; any
+	// reference with "missing" in it doesn't exist
+	var regURL string
+	reg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			if r.URL.Query().Get("scope") == "" || r.URL.Query().Get("service") != "ghcr.io" {
+				http.Error(w, "bad token request", http.StatusBadRequest)
+				return
+			}
+			fmt.Fprint(w, `{"token":"t0k"}`)
+			return
+		}
+		host, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		repo, _, isManifest := strings.Cut(strings.TrimPrefix(rest, "v2/"), "/manifests/")
+		if r.Method != http.MethodHead || !strings.HasPrefix(rest, "v2/") || !isManifest || !strings.Contains(r.Header.Get("Accept"), "manifest") {
+			http.Error(w, "not a manifest HEAD", http.StatusBadRequest)
+			return
+		}
+		if host == "ghcr.io" && r.Header.Get("Authorization") != "Bearer t0k" {
+			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="%s/token",service="ghcr.io",scope="repository:%s:pull"`, regURL, repo))
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if strings.Contains(r.URL.Path, "missing") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(reg.Close) // not defer: the subtests run in parallel, after this function returned
+	regURL = reg.URL
 
 	for i, r := range deployRunners(t) {
 		t.Run(r.name, func(t *testing.T) {
@@ -90,7 +126,7 @@ func TestAzureDeployScripts(t *testing.T) {
 			}
 			run := func(extraEnv []string, args ...string) result {
 				t.Helper()
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute) // Windows PowerShell 5.1 and a rollback: slow
 				defer cancel()
 				argv := r.argv(args...)
 				cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
@@ -116,6 +152,7 @@ func TestAzureDeployScripts(t *testing.T) {
 					"HELPER_AZ_BOOTSTRAP="+filepath.Join(c.share, "bootstrap.env"),
 					"LONGARM_REGISTRY_PASSWORD=",
 					"LONGARM_DEPLOY_POLL_SECONDS=1",
+					"LONGARM_DEPLOY_REGISTRY_URL="+regURL,
 					// the caller's storage settings for another account: the
 					// scripts must use the hub's key (fake az: ShareNotFound)
 					"AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=other;AccountKey=b3RoZXI=",
@@ -259,6 +296,38 @@ func TestAzureDeployScripts(t *testing.T) {
 				t.Fatalf("pinned re-run: %d restarts, %+v", restarts(), params())
 			}
 
+			// an update in place whose image crash-loops (the 0.1.18 deploy:
+			// Litestream's restore ran out of memory on every start; the
+			// script gave up without a rollback): the replica's size is warned
+			// about first, the crash loop reported with its exit code, and the
+			// running image deployed again
+			cfrom := len(calls())
+			res = run(append([]string{"HELPER_AZ_CRASHLOOP_IMAGE=oom", "HELPER_AZ_REPLICA_FILES=21400"}, pw...),
+				name, "myhub", regUser, "bot", image, "ghcr.io/example/longarm-hub:oom")
+			refused(res, "a crash-looping update", "rolled back")
+			out := res.stdout + res.stderr
+			for _, want := range []string{"database replica: L0 21400, L9 1", "the hub's database replica has 21400 files",
+				"hub container restarted (2 since this deployment", "the hub is crash-looping: ACI restarted it 2 times since this deployment (CrashLoopBackOff)",
+				"exit code 137 = killed by SIGKILL: out of memory?", "Replica size and memory", r.flag("--log-analytics", "-LogAnalytics") + " keeps them",
+				"rolling back", "rolled-back hub answers on"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("crash loop: no %q in\n%s", want, out)
+				}
+			}
+			if cl := calls()[cfrom:]; !strings.Contains(cl, "-rollback") || strings.Contains(cl, "container delete") ||
+				!strings.Contains(cl, "storage blob list --account-name lahubtest -c litestream --prefix hub.db/ltx/") {
+				t.Fatalf("crash loop: no in-place rollback / replica check:\n%s", cl)
+			}
+			if p := params(); p["image"] != "ghcr.io/example/longarm-hub:1.2.3" || p["registryUsername"] != "bot" {
+				t.Fatalf("crash loop: not rolled back: %+v", p)
+			}
+			// nothing to roll back to (the same configuration): no rollback
+			cfrom = len(calls())
+			refused(run(append([]string{"HELPER_AZ_DEPLOY_FAIL=1"}, pw...), name, "myhub", regUser, "bot"), "a failed re-run", "inaccessibleimage")
+			if strings.Contains(calls()[cfrom:], "-rollback") {
+				t.Fatalf("a rollback to the same configuration:\n%s", calls()[cfrom:])
+			}
+
 			// the external STUN servers the hub advertises (template default
 			// unless given; "none" = only the hub's own ports)
 			stun := r.flag("--stun-servers", "-StunServers")
@@ -373,6 +442,27 @@ func TestAzureDeployScripts(t *testing.T) {
 			// a failed deployment shows the failed operations
 			refused(run([]string{"HELPER_AZ_DEPLOY_FAIL=1"}, name, "myhub"), "failed deployment", "inaccessibleimage")
 
+			// a database restore that outlasts --timeout (the 7-minute WAL
+			// replay of the v0.1.17 deploy): the hub's log shows it running,
+			// so the script waits for it instead of failing or restarting
+			// the hub mid-restore, and prints its timing; bounded by
+			// --restore-timeout
+			timeout := r.flag("--timeout", "-TimeoutSeconds")
+			restoreTimeout := r.flag("--restore-timeout", "-RestoreTimeoutSeconds")
+			n = restarts()
+			res = run([]string{"HELPER_AZ_RESTORE_SECONDS=10"}, name, "myhub", timeout, "3")
+			ok(res, "long restore")
+			for _, want := range []string{"database restore running", "database restore finished 7m1.5s", "hub answers on"} {
+				if !strings.Contains(res.stdout, want) {
+					t.Fatalf("long restore: no %q in\n%s", want, res.stdout)
+				}
+			}
+			if restarts() != n {
+				t.Fatalf("long restore: the hub was restarted mid-restore:\n%s", calls())
+			}
+			res = run([]string{"HELPER_AZ_RESTORE_SECONDS=600"}, name, "myhub", timeout, "3", restoreTimeout, "4")
+			refused(res, "restore past --restore-timeout", "restore still runs")
+
 			// a new admin code: az container exec of the argument-free alias
 			if res := run(nil, name, "myhub", r.flag("--admin-code", "-AdminCode")); res.code != 0 || !strings.Contains(res.stdout, "ABC-DEF") {
 				t.Fatalf("admin code: %+v", res)
@@ -420,7 +510,7 @@ func TestAzureDeployScripts(t *testing.T) {
 			}
 			// telemetry looks at its providers (already registered); Log
 			// Analytics stays off (enableLogAnalytics above)
-			if cl := calls()[from:]; strings.Contains(cl, "storage ") || strings.Contains(cl, "provider register") ||
+			if cl := calls()[from:]; strings.Contains(cl, "storage file") || strings.Contains(cl, "keys list") || strings.Contains(cl, "provider register") ||
 				!strings.Contains(cl, "provider show -n Microsoft.Insights") {
 				t.Fatalf("identity re-run:\n%s", cl)
 			}
@@ -444,9 +534,212 @@ func TestAzureDeployScripts(t *testing.T) {
 			if p := params(); p["acrName"] != "other" {
 				t.Fatalf("identity --acr: %+v", p)
 			}
+			// the Headscale sidecar: switching it needs --recreate (one
+			// container more), a re-run keeps it and its DERP choice, it
+			// needs the panel
+			hsOn, hsOff := r.flag("--headscale", "-Headscale"), r.flag("--no-headscale", "-NoHeadscale")
+			pubDERP := r.flag("--headscale-public-derp", "-HeadscalePublicDerp")
+			refused(run(nil, name, "idhub", hsOn), "headscale without --recreate", "recreate")
+			refused(run(nil, name, "idhub", hsOn, pubDERP, "maybe", recreate), "bad public DERP value", "on or off")
+			// with --acr the sidecars come from the registry's copies of
+			// mirror-images.txt, imported before anything is deleted; a
+			// failed import (Docker Hub's pull limit) changes nothing
+			from = len(calls())
+			res = run([]string{"HELPER_AZ_IMPORT_FAIL=1"}, name, "idhub", hsOn, pubDERP, "on", recreate)
+			refused(res, "a failed import", "nothing was changed")
+			if cl := calls()[from:]; !strings.Contains(cl, "acr import -n other --source docker.io/") || strings.Contains(cl, "container delete") ||
+				strings.Contains(cl, "deployment group create") || strings.Contains(cl, "tag update") {
+				t.Fatalf("a failed import changed something:\n%s", cl)
+			}
+			from = len(calls())
+			res = run(nil, name, "idhub", hsOn, pubDERP, "on", recreate)
+			ok(res, "headscale")
+			mirrored := mirroredImages(t, "other")
+			if p := params(); p["enableHeadscale"] != true || p["headscalePublicDerp"] != true || p["storageAuth"] != "identity" ||
+				p["acrName"] != "other" || p["headscaleImage"] != mirrored["headscale"] || p["caddyImage"] != mirrored["caddy"] {
+				t.Fatalf("headscale: %+v", p)
+			}
+			cl = calls()[from:]
+			imp, del := strings.Index(cl, "acr import -n other"), strings.Index(cl, "container delete")
+			if n := strings.Count(cl, "acr import "); n != len(mirrored) || imp < 0 || del < imp ||
+				!strings.Contains(cl, "acr repository show -n other --image mirror/headscale/headscale@sha256:") {
+				t.Fatalf("headscale: %d imports, not all before the delete:\n%s", n, cl)
+			}
+			if !strings.Contains(res.stdout, "tailnet         headscale ") || !strings.Contains(res.stdout, "about 44 USD/month") {
+				t.Errorf("headscale: output:\n%s", res.stdout)
+			}
+			from = len(calls())
+			ok(run(nil, name, "idhub"), "headscale re-run")
+			if p := params(); p["enableHeadscale"] != true || p["headscalePublicDerp"] != true || p["acrName"] != "other" ||
+				p["headscaleImage"] != mirrored["headscale"] {
+				t.Fatalf("headscale re-run: %+v", p)
+			}
+			if cl := calls()[from:]; strings.Contains(cl, "acr import") {
+				t.Fatalf("headscale re-run imported again:\n%s", cl)
+			}
+			refused(run(nil, name, "idhub", noPanel, recreate), "headscale without the panel", "needs the panel")
+			ok(run(nil, name, "idhub", hsOff, recreate), "headscale off")
+			if p := params(); p["enableHeadscale"] != false {
+				t.Fatalf("headscale off: %+v", p)
+			}
+
+			// --recreate is safe (v0.1.9: the new sidecar's image couldn't be
+			// pulled after the group was deleted, and the retry fell back to
+			// storage keys): validated and every image checked before the
+			// delete, the settings snapshotted in the resource group's tags,
+			// a failed new configuration rolled back, and a missing group's
+			// settings read back from the snapshot or the last deployment
+			kept := func(what string) {
+				t.Helper()
+				if p := params(); p["storageAuth"] != "identity" || p["enableTelemetry"] != true || p["enableDiagnostics"] != true ||
+					p["entraTenantId"] != "tid" || p["entraClientId"] != "cid" || p["entraAdmins"] != "alice@example.com" ||
+					p["entraWeb"] != "confidential" || p["acrName"] != "other" || p["image"] != "ghcr.io/example/longarm-hub:1.2.3" {
+					t.Fatalf("%s: settings lost: %+v", what, p)
+				}
+			}
+			snapshotN := func() string {
+				var tags map[string]string
+				json.Unmarshal(must(os.ReadFile(filepath.Join(dir, "tags.json"))), &tags)
+				return tags["longarm-hub-prev-n"]
+			}
+			kept("before")
+			from = len(calls())
+			res = run(nil, name, "idhub", image, "ghcr.io/example/longarm-hub:missing", recreate)
+			refused(res, "an image that can't be pulled", "can't be pulled")
+			refused(run([]string{"HELPER_AZ_VALIDATE_FAIL=1"}, name, "idhub", hsOn, recreate), "a policy violation", "does not validate")
+			if cl := calls()[from:]; strings.Contains(cl, "container delete") || strings.Contains(cl, "deployment group create") {
+				t.Fatalf("changed something before the checks passed:\n%s", cl)
+			}
+			kept("after the refused runs")
+			// the new configuration fails after the delete: the previous one again
+			from = len(calls())
+			res = run([]string{"HELPER_AZ_DEPLOY_FAIL_HEADSCALE=1"}, name, "idhub", hsOn, recreate)
+			refused(res, "a failed headscale recreate", "rolled back")
+			if cl := calls()[from:]; !strings.Contains(cl, "container delete") || !strings.Contains(cl, "-rollback") {
+				t.Fatalf("no rollback:\n%s", cl)
+			}
+			if p := params(); p["enableHeadscale"] != false {
+				t.Fatalf("rollback: %+v", p)
+			}
+			kept("rollback")
+			if n := snapshotN(); n != "0" {
+				t.Fatalf("snapshot not cleared after the rollback: %q", n)
+			}
+			// the rollback fails too: the snapshot stays; a re-run with the
+			// group gone takes the settings from the last successful
+			// deployment (the snapshot agrees with it) and clears the snapshot
+			failRecreate := func() {
+				t.Helper()
+				res := run([]string{"HELPER_AZ_DEPLOY_FAIL=1"}, name, "idhub", hsOn, recreate)
+				refused(res, "a failed rollback", "rollback failed too")
+				if n := snapshotN(); n == "" || n == "0" {
+					t.Fatalf("no snapshot after a failed rollback: %q", n)
+				}
+				os.Remove(filepath.Join(dir, "cg"))
+			}
+			failRecreate()
+			res = run(nil, name, "idhub")
+			ok(res, "re-run with a snapshot")
+			if !strings.Contains(res.stdout, "last successful deployment") {
+				t.Errorf("re-run with a snapshot: %s", res.stdout)
+			}
+			kept("re-run with a snapshot")
+			if n := snapshotN(); n != "0" {
+				t.Fatalf("snapshot not cleared: %q", n)
+			}
+			// a tampered snapshot (tags are writable by Tag Contributors):
+			// security-relevant settings that differ from the deployment are
+			// refused, unless given explicitly
+			tamper := func(set map[string]string) {
+				t.Helper()
+				var tags map[string]string
+				json.Unmarshal(must(os.ReadFile(filepath.Join(dir, "tags.json"))), &tags)
+				n, _ := strconv.Atoi(tags["longarm-hub-prev-n"])
+				var b64 string
+				for i := 0; i < n; i++ {
+					b64 += tags[fmt.Sprintf("longarm-hub-prev-%d", i)]
+					delete(tags, fmt.Sprintf("longarm-hub-prev-%d", i))
+				}
+				text, err := base64.StdEncoding.DecodeString(b64)
+				if err != nil || !strings.Contains(string(text), "auth=identity") {
+					t.Fatalf("snapshot: %q %v", text, err)
+				}
+				lines := strings.Split(string(text), "\n")
+				for i, l := range lines {
+					if v, ok := set[strings.SplitN(l, "=", 2)[0]]; ok {
+						lines[i] = strings.SplitN(l, "=", 2)[0] + "=" + v
+					}
+				}
+				b64 = base64.StdEncoding.EncodeToString([]byte(strings.Join(lines, "\n")))
+				n = 0
+				for ; len(b64) > 0; n++ {
+					c := min(250, len(b64))
+					tags[fmt.Sprintf("longarm-hub-prev-%d", n)], b64 = b64[:c], b64[c:]
+				}
+				tags["longarm-hub-prev-n"] = strconv.Itoa(n)
+				b, _ := json.Marshal(tags)
+				os.WriteFile(filepath.Join(dir, "tags.json"), b, 0o644)
+			}
+			failRecreate()
+			tamper(map[string]string{"image": "ghcr.io/evil/longarm-hub:1", "entra_admins": "mallory@evil.example", "telemetry": "false"})
+			from = len(calls())
+			res = run(nil, name, "idhub")
+			refused(res, "a tampered snapshot", "tampered")
+			if !strings.Contains(res.stderr, "mallory@evil.example") || strings.Contains(calls()[from:], "deployment group create") {
+				t.Fatalf("tampered snapshot: %+v", res)
+			}
+			res = run(nil, name, "idhub", image, "ghcr.io/example/longarm-hub:1.2.3", entraAdmins, "alice@example.com")
+			ok(res, "the snapshot's settings given explicitly")
+			kept("the snapshot's settings given explicitly") // telemetry: the deployment's, not the snapshot's
+			if p := params(); p["image"] == "ghcr.io/evil/longarm-hub:1" {
+				t.Fatalf("the snapshot's image deployed: %+v", p)
+			}
+			// a snapshot and no deployment to check it against: its
+			// security-relevant settings must be given
+			failRecreate()
+			tamper(map[string]string{"image": "ghcr.io/evil/longarm-hub:1"})
+			res = run([]string{"HELPER_AZ_NO_HISTORY=1"}, name, "idhub")
+			refused(res, "an unverifiable snapshot", strings.ToLower(sa))
+			if !strings.Contains(res.stderr, "ghcr.io/evil/longarm-hub:1") {
+				t.Fatalf("unverifiable snapshot: %+v", res)
+			}
+			res = run([]string{"HELPER_AZ_NO_HISTORY=1"}, name, "idhub", sa, "identity", image, "ghcr.io/example/longarm-hub:1.2.3",
+				acrFlag, "other", entraTenant, "tid", entraClient, "cid", entraAdmins, "alice@example.com", entraWeb, "confidential")
+			ok(res, "an unverifiable snapshot with its settings given")
+			kept("an unverifiable snapshot with its settings given") // telemetry, diagnostics: from the snapshot
+			// no snapshot: the last successful deployment's parameters
+			os.Remove(filepath.Join(dir, "cg"))
+			res = run(nil, name, "idhub", recreate)
+			ok(res, "re-run from the last deployment")
+			if !strings.Contains(res.stdout, "last successful deployment") {
+				t.Errorf("re-run from the last deployment: %s", res.stdout)
+			}
+			kept("last deployment")
+			// nothing to read the settings from: no silent storage keys
+			os.Remove(filepath.Join(dir, "cg"))
+			refused(run([]string{"HELPER_AZ_NO_HISTORY=1"}, name, "idhub"), "no settings anywhere", strings.ToLower(sa))
+			ok(run(nil, name, "idhub"), "back to a group")
 			if res := run(nil, name, "idhub", r.flag("--teardown", "-Teardown"), yes); res.code != 0 || !strings.Contains(calls(), "group delete -n idhub-rg --yes") {
 				t.Fatalf("identity teardown: %+v", res)
 			}
 		})
 	}
+}
+
+// mirroredImages: the sidecar images deploy.sh --acr ACR deploys, by
+// repository name (caddy, headscale): ACR.azurecr.io/mirror/<repository>:<hex>@sha256:<hex>
+// of deploy/azure/mirror-images.txt
+func mirroredImages(t *testing.T, acr string) map[string]string {
+	t.Helper()
+	m := map[string]string{}
+	re := regexp.MustCompile(`^docker\.io/(?:library/)?([a-z0-9./-]+):[A-Za-z0-9._-]+@sha256:([0-9a-f]{64})$`)
+	for _, l := range strings.Split(string(must(os.ReadFile("../deploy/azure/mirror-images.txt"))), "\n") {
+		if g := re.FindStringSubmatch(strings.TrimSpace(l)); g != nil {
+			m[g[1][strings.LastIndex(g[1], "/")+1:]] = acr + ".azurecr.io/mirror/" + g[1] + ":" + g[2] + "@sha256:" + g[2]
+		}
+	}
+	if m["caddy"] == "" || m["headscale"] == "" {
+		t.Fatalf("mirror-images.txt: no caddy / headscale: %v", m)
+	}
+	return m
 }

@@ -146,8 +146,8 @@ func TestLinkAdminWorker(t *testing.T) {
 	if _, err := h.ShareWorker("client/alice", "alice", false, &pb.ShareWorkerRequest{Worker: aw, AddUsers: []string{"bob"}}); status.Code(err) != codes.PermissionDenied {
 		t.Errorf("owner shares the admin worker: %v", err)
 	}
-	if _, err := pb.NewFleetClient(th.root).ShareWorker(tctx(t), &pb.ShareWorkerRequest{Worker: aw, SetEveryone: true, Everyone: true}); status.Code(err) != codes.PermissionDenied {
-		t.Errorf("an admin certificate shares the admin worker: %v", err)
+	if _, err := pb.NewFleetClient(th.root).ShareWorker(tctx(t), &pb.ShareWorkerRequest{Worker: aw, SetEveryone: true, Everyone: true}); status.Code(err) != codes.NotFound {
+		t.Errorf("an admin certificate shares the admin worker (not even found): %v", err)
 	}
 	// shares that got into the record anyway are ignored
 	h.mu.Lock()

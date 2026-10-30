@@ -60,6 +60,7 @@ type hubAgent struct {
 	tc        *toolchain.Reconciler
 	upd       *updater // nil when self-update is off
 	tailnet   *tailnetLegs
+	relay     *relayLeg    // nil: no hub relay leg (relayleg.go)
 	links     *linkManager // port links (nil in tests)
 	channel   string
 	connected atomic.Bool // a session reached the welcome at least once
@@ -98,6 +99,7 @@ type hubAgent struct {
 	limitsMu    sync.Mutex          // serializes SetLimits (file + memory)
 	toolDrain   drainState          // toolchain update
 	adminDrain  bool
+	updAvail    *pb.UpdateAvailable // a release this worker can't install itself
 	renewBefore time.Duration
 	watchers    map[chan *pb.LocalEvent]struct{}
 }
@@ -170,7 +172,28 @@ func (a *hubAgent) stateLocked() *pb.NodeState {
 	if a.limits != nil {
 		st.MaxJobs, st.ReservedMemGb = a.limits.MaxJobs, a.limits.ReservedMemGb
 	}
+	if a.updAvail != nil {
+		st.UpdateAvailable = proto.Clone(a.updAvail).(*pb.UpdateAvailable)
+	}
 	return st
+}
+
+// setUpdateAvailable records a release this worker can't install itself
+// (nil = none) and tells the hub and the local API's listeners on a change.
+func (a *hubAgent) setUpdateAvailable(ua *pb.UpdateAvailable) {
+	a.mu.Lock()
+	if proto.Equal(a.updAvail, ua) {
+		a.mu.Unlock()
+		return
+	}
+	a.updAvail = ua
+	st := a.stateLocked()
+	a.mu.Unlock()
+	a.send(&pb.NodeReport{Msg: &pb.NodeReport_State{State: st}}, false)
+	if ua != nil {
+		a.log.Info("update available", "version", ua.Version, "why_not_automatic", ua.Reason)
+		a.notify(&pb.LocalEvent{Kind: "update", Message: "Longarm " + ua.Version + " is available (" + ua.Reason + ")"})
+	}
 }
 
 func nonEmpty(s, d string) string {
@@ -253,33 +276,52 @@ func (a *hubAgent) watch() (chan *pb.LocalEvent, func()) {
 
 // Run keeps a session with the hub until ctx is done.
 func (a *hubAgent) Run(ctx context.Context) {
-	wait := time.Second
+	var bo hubclient.Reconnect
 	for ctx.Err() == nil {
 		start, welcomed := time.Now(), a.welcomes.Load()
 		err := a.session(ctx)
 		if ctx.Err() != nil {
 			break
 		}
-		a.setLink(false, err, "")
-		// The backoff is for a hub that can't be reached or refuses us; a
-		// session the hub accepted and kept for a while (it restarted, the
-		// connection broke) reconnects after the first delay again. (It
-		// only reset after 30 s before, so a hub restarted a few times in a
-		// row was waited for 8, 16, 30 s.) One dropped right after the
-		// welcome keeps backing off.
-		if a.welcomes.Load() != welcomed && time.Since(start) > 2*time.Second || time.Since(start) > 30*time.Second {
-			wait = time.Second
+		var wait time.Duration
+		if after, ok := hubRestartingAfter(err); ok {
+			// the hub said it is restarting (a redeploy): not a failure;
+			// back within seconds of the new hub answering
+			bo.Restarting(after)
+			wait = bo.Next(nil)
+			a.setLink(false, errors.New("hub restarting; reconnecting"), "")
+			a.log.Info("hub: restarting; reconnecting", "in", wait.Round(time.Millisecond))
+		} else {
+			a.setLink(false, err, "")
+			// A session the hub accepted and kept for a while (it restarted
+			// without notice, the connection broke) starts the backoff over;
+			// one dropped right after the welcome keeps backing off.
+			if a.welcomes.Load() != welcomed && time.Since(start) > 2*time.Second || time.Since(start) > 30*time.Second {
+				bo.Connected()
+			}
+			wait = bo.Next(err)
+			a.log.Info("hub: session ended; reconnecting", "err", err, "in", wait.Round(time.Millisecond))
 		}
-		a.log.Info("hub: session ended; reconnecting", "err", err, "in", wait)
 		select {
 		case <-ctx.Done():
 		case <-time.After(wait):
 		}
-		if wait *= 2; wait > 30*time.Second {
-			wait = 30 * time.Second
-		}
 	}
 	a.setLink(false, nil, "")
+}
+
+// errHubRestarting ends a session whose hub announced a restart
+// (HubCommand.restarting).
+type errHubRestarting struct{ after time.Duration }
+
+func (e errHubRestarting) Error() string { return "hub restarting" }
+
+func hubRestartingAfter(err error) (time.Duration, bool) {
+	var r errHubRestarting
+	if errors.As(err, &r) {
+		return r.after, true
+	}
+	return 0, false
 }
 
 func (a *hubAgent) hello() *pb.NodeHello {
@@ -297,7 +339,10 @@ func (a *hubAgent) hello() *pb.NodeHello {
 	h.Isolation = a.spaces.Mode()
 	h.TenancyVersion = a.policy.Version()
 	// node identity: this longarmd renews and restarts when the hub renames it
-	h.Capabilities = []string{"node-id"}
+	h.Capabilities = []string{capNodeID}
+	if !legacyRelay() {
+		h.Capabilities = append(h.Capabilities, capRelaySet)
+	}
 	return h
 }
 
@@ -385,6 +430,11 @@ func (a *hubAgent) session(ctx context.Context) error {
 	}
 	a.log.Info("hub: connected", "hub", a.addr, "state", w.NodeState)
 	a.tailnet.apply(w.Tailnet)
+	if len(w.Relays) > 0 && !legacyRelay() {
+		a.relay.applySet(a.addr, w.Relays)
+	} else {
+		a.relay.apply(a.addr, w.Relay) // an older hub: its embedded relay only
+	}
 
 	errc := make(chan error, 2)
 	go func() {
@@ -405,6 +455,11 @@ func (a *hubAgent) session(ctx context.Context) error {
 			cmd, err := st.Recv()
 			if err != nil {
 				errc <- err
+				return
+			}
+			if r := cmd.GetRestarting(); r != nil {
+				// end the session now: the hub's shutdown need not wait for it
+				errc <- errHubRestarting{after: r.GetReconnectAfter().AsDuration()}
 				return
 			}
 			a.handle(cmd)
@@ -600,19 +655,7 @@ func (a *hubAgent) handle(cmd *pb.HubCommand) {
 	}
 	switch x := cmd.Msg.(type) {
 	case *pb.HubCommand_Revocations:
-		m := map[string]time.Time{}
-		for _, c := range x.Revocations.Certs {
-			m[c.Serial] = c.NotAfter.AsTime()
-		}
-		ids := map[string]time.Time{}
-		for _, n := range x.Revocations.Nodes {
-			ids[n.Id] = n.NotAfter.AsTime()
-		}
-		names := map[string]time.Time{}
-		for _, n := range x.Revocations.Names {
-			names[pki.RevokedNameKey(pki.Role(n.Role), n.Name)] = n.NotAfter.AsTime()
-		}
-		if err := a.revoked.ReplaceAllNames(x.Revocations.Version, m, ids, names); err != nil {
+		if err := hubclient.ApplyRevocations(a.revoked, x.Revocations); err != nil {
 			a.log.Warn("hub: save revocation list", "err", err)
 		}
 		a.log.Info("hub: revocation list updated", "version", x.Revocations.Version, "revoked", a.revoked.Len())
@@ -633,6 +676,10 @@ func (a *hubAgent) handle(cmd *pb.HubCommand) {
 		}
 	case *pb.HubCommand_Tailnet:
 		a.tailnet.apply(x.Tailnet)
+	case *pb.HubCommand_Relays:
+		if !legacyRelay() {
+			a.relay.applySet(a.addr, x.Relays.Relays)
+		}
 	case *pb.HubCommand_WorkerAccess:
 		a.applyWorkerAccess(x.WorkerAccess)
 	case *pb.HubCommand_Tenancy:

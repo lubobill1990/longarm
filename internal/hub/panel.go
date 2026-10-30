@@ -41,10 +41,10 @@ import (
 const panelCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
 func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.ResponseWriter, *http.Request, string))) {
-	spa := h.withEntraLink(webui.Handler("/api/", "/releases/"))
+	spa := webui.Handler("/api/", "/releases/")
 	mux.Handle("GET /{$}", withCSP(spa))
 	mux.Handle("GET /assets/", withCSP(spa))
-	for _, p := range []string{"nodes", "jobs", "joincodes", "profiles", "audit", "users", "links", "login", "tray", "tenants", "me"} {
+	for _, p := range []string{"nodes", "jobs", "joincodes", "profiles", "audit", "users", "links", "login", "tray", "tenants", "me", "machines", "get", "port-links"} {
 		mux.Handle("GET /"+p, withCSP(spa))
 		mux.Handle("GET /"+p+"/", withCSP(spa))
 	}
@@ -95,14 +95,16 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 		})
 	})
 	admin("POST /api/nodes/{name}/toolchain/apply", func(w http.ResponseWriter, r *http.Request, user string) {
-		info, err := h.ToolchainApply(r.Context(), "web/"+user, r.PathValue("name"))
+		info, err := h.opOn(h.panelViewer(user), "worker", r.PathValue("name"), func(t string) (*pb.NodeInfo, error) {
+			return h.ToolchainApply(r.Context(), "web/"+user, t)
+		})
 		writeResult(w, info, err)
 	})
 	api("GET /api/history", func(w http.ResponseWriter, r *http.Request, user string) {
 		writePB(w, h.HistoryFor(h.panelViewer(user), r.URL.Query().Get("node")))
 	})
-	admin("GET /api/links", func(w http.ResponseWriter, r *http.Request, _ string) {
-		writePB(w, h.Links())
+	admin("GET /api/links", func(w http.ResponseWriter, r *http.Request, user string) {
+		writePB(w, h.LinksFor(h.panelViewer(user)))
 	})
 	admin("GET /api/install", func(w http.ResponseWriter, r *http.Request, _ string) {
 		q := r.URL.Query()
@@ -149,6 +151,15 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 			Current  string `json:"current_password"`
 		}
 		if !readJSON(w, r, &body) || !h.reauth(w, r, user, body.Current) {
+			return
+		}
+		// an administrator login named like a Longarm user would act as that
+		// user (panelViewer): never
+		h.mu.Lock()
+		isUser := h.userNameLocked(body.Name)
+		h.mu.Unlock()
+		if isUser {
+			httpError(w, http.StatusBadRequest, body.Name+" is a Longarm user's name")
 			return
 		}
 		secret, err := AddUser(h.store, body.Name, body.Password, body.Reset)
@@ -218,9 +229,42 @@ func (h *Hub) auditHub(who, method string, fields map[string]any) {
 		rec[k] = v
 	}
 	b, _ := json.Marshal(rec)
-	if err := h.store.AddAudit([]store.AuditRow{{Node: "hub", Time: time.Now(), Who: who, Method: method, Line: string(b)}}); err != nil {
+	// attribution, fixed now: who acted (its user) and whose thing it is
+	subject, _ := fields["owner"].(string)
+	if subject == "" {
+		subject, _ = fields["user"].(string)
+	}
+	row := store.AuditRow{Node: "hub", Time: time.Now(), Who: who, Method: method, Line: string(b),
+		ActorUser: h.auditActorUser(who), SubjectUser: subject, Attributed: true}
+	if err := h.store.AddAudit([]store.AuditRow{row}); err != nil {
 		h.log.Warn("audit", "err", err)
 	}
+}
+
+// userNameLocked reports whether name is (or was) a Longarm user's: a user
+// record, a purged user, an identity-provider binding, the user of a
+// client/admin certificate (an old one's name is its user: userOfLocked)
+// or a worker's owner - revoked machines too. An administrator's panel
+// login of that name would act as that user (panelViewer).
+func (h *Hub) userNameLocked(name string) bool {
+	if h.tenants[name] != nil || slices.Contains(h.purged, name) {
+		return true
+	}
+	if id, _ := h.store.Meta(entraUserKey(name)); id != "" {
+		return true
+	}
+	for _, n := range h.nodes {
+		if n.rec.Role == string(pki.RoleWorker) {
+			if n.rec.Owner == name {
+				return true
+			}
+			continue
+		}
+		if userNodeRole(n.rec.Role) && nodeUser(n.rec) == name {
+			return true
+		}
+	}
+	return false
 }
 
 func withCSP(next http.Handler) http.Handler {

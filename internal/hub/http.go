@@ -56,7 +56,10 @@ func (h *Hub) httpHandler() http.Handler {
 	})
 	mux.HandleFunc("GET /install.sh", h.installScript("sh"))
 	mux.HandleFunc("GET /install.ps1", h.installScript("ps1"))
+	mux.HandleFunc("GET /releases/latest.json", h.latestJSON)
 	mux.HandleFunc("GET /releases/{version}/{file}", h.releaseFile)
+	// a version's record, for the LongarmUpdate service (releasejson.go; the latest: latestJSON)
+	mux.HandleFunc("GET /releases/{version}/release.json", h.releaseVersionJSON)
 
 	mux.HandleFunc("POST /api/login", h.apiLogin)
 	mux.HandleFunc("POST /login", h.formLogin)
@@ -78,7 +81,8 @@ func (h *Hub) httpHandler() http.Handler {
 	})
 	nodeAction := func(fn func(by, name string) (*pb.NodeInfo, error)) func(http.ResponseWriter, *http.Request, string) {
 		return func(w http.ResponseWriter, r *http.Request, user string) {
-			info, err := fn("web/"+user, r.PathValue("name"))
+			name := r.PathValue("name")
+			info, err := h.opOn(h.panelViewer(user), "node", name, func(t string) (*pb.NodeInfo, error) { return fn("web/"+user, t) })
 			writeResult(w, info, err)
 		}
 	}
@@ -91,7 +95,8 @@ func (h *Hub) httpHandler() http.Handler {
 		if !readJSON(w, r, &labels) {
 			return
 		}
-		info, err := h.SetLabels("web/"+user, r.PathValue("name"), labels)
+		name := r.PathValue("name")
+		info, err := h.opOn(h.panelViewer(user), "node", name, func(t string) (*pb.NodeInfo, error) { return h.SetLabels("web/"+user, t, labels) })
 		writeResult(w, info, err)
 	})
 	admin("PUT /api/nodes/{name}/profile", func(w http.ResponseWriter, r *http.Request, user string) {
@@ -101,7 +106,8 @@ func (h *Hub) httpHandler() http.Handler {
 		if !readJSON(w, r, &body) {
 			return
 		}
-		info, err := h.AssignProfile("web/"+user, r.PathValue("name"), body.Profile)
+		name := r.PathValue("name")
+		info, err := h.opOn(h.panelViewer(user), "node", name, func(t string) (*pb.NodeInfo, error) { return h.AssignProfile("web/"+user, t, body.Profile) })
 		writeResult(w, info, err)
 	})
 	api("GET /api/jobs", func(w http.ResponseWriter, r *http.Request, user string) {
@@ -144,17 +150,17 @@ func (h *Hub) httpHandler() http.Handler {
 		jc, err := h.CreateJoinCode("web/"+user, req)
 		writeResult(w, jc, err)
 	})
-	admin("GET /api/joincodes", func(w http.ResponseWriter, _ *http.Request, _ string) {
-		res, err := h.ListJoinCodes()
+	admin("GET /api/joincodes", func(w http.ResponseWriter, _ *http.Request, user string) {
+		res, err := h.ListJoinCodesFor(h.panelViewer(user), "web/"+user)
 		writeResult(w, res, err)
 	})
-	admin("GET /api/audit", func(w http.ResponseWriter, r *http.Request, _ string) {
+	admin("GET /api/audit", func(w http.ResponseWriter, r *http.Request, user string) {
 		q := r.URL.Query()
-		res, err := h.Audit(&pb.AuditRequest{Node: q.Get("node"), Limit: int32(atoiDefault(q.Get("limit"), 200))})
+		res, err := h.AuditFor(h.panelViewer(user), "web/"+user, &pb.AuditRequest{Node: q.Get("node"), Limit: int32(atoiDefault(q.Get("limit"), 200))})
 		writeResult(w, res, err)
 	})
-	admin("GET /api/profiles", func(w http.ResponseWriter, _ *http.Request, _ string) {
-		writePB(w, &pb.ListProfilesResponse{Profiles: h.Profiles()})
+	admin("GET /api/profiles", func(w http.ResponseWriter, _ *http.Request, user string) {
+		writePB(w, &pb.ListProfilesResponse{Profiles: h.ProfilesFor(h.panelViewer(user))})
 	})
 	admin("PUT /api/profiles/{name}", func(w http.ResponseWriter, r *http.Request, user string) {
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -168,7 +174,7 @@ func (h *Hub) httpHandler() http.Handler {
 		}
 		p.Name = r.PathValue("name")
 		res, err := h.PutProfile("web/"+user, p)
-		writeResult(w, res, err)
+		writeResult(w, h.projector(h.panelViewer(user)).profile(res), err)
 	})
 	admin("GET /api/releases", func(w http.ResponseWriter, _ *http.Request, _ string) {
 		rels, err := h.store.Releases()
@@ -181,6 +187,7 @@ func (h *Hub) httpHandler() http.Handler {
 	api("GET /api/events", h.sse)
 	h.panelRoutes(mux, api, admin)
 	h.tenancyRoutes(api, admin)
+	h.summaryRoutes(admin)
 	h.workerRoutes(api)
 	h.entraRoutes(mux)
 	h.linkRoutes(mux)
@@ -213,8 +220,15 @@ func (h *Hub) healthz(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	h.mu.Unlock()
-	writeJSON(w, map[string]any{"ok": true, "version": version.Version, "workers": workers, "online": online,
-		"uptime_seconds": int(time.Since(h.started).Seconds()), "schema": h.store.SchemaVersion()})
+	resp := map[string]any{"ok": true, "version": version.Version, "workers": workers, "online": online,
+		"uptime_seconds": int(time.Since(h.started).Seconds()), "schema": h.store.SchemaVersion()}
+	// Headscale's state (ok, starting, down; the detail is in longarm admin
+	// tailnet status): "ok" stays the hub's own, a container probe must not
+	// restart the hub for its sidecar
+	if st, _ := h.headscaleHealth(); st != "" {
+		resp["headscale"] = st
+	}
+	writeJSON(w, resp)
 }
 
 // ---------------------------------------------------------------- login
@@ -365,7 +379,7 @@ func (h *Hub) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
 		Secure: !h.cfg.Web.InsecureCookie, SameSite: http.SameSiteStrictMode})
-	if h.entra != nil {
+	if h.idpOn() {
 		h.setEntraMark(w, "", -1)
 	}
 }
@@ -418,7 +432,7 @@ func (h *Hub) sse(w http.ResponseWriter, r *http.Request, user string) {
 	}
 	// Subscribe before the headers go out: a client that sees the stream
 	// open must not miss an event it triggers right after.
-	sub := h.bus.subscribeFiltered(kinds, q.Get("job"), eventFilter(h.panelViewer(user)))
+	sub := h.bus.subscribeFiltered(kinds, q.Get("job"), h.eventFilter(h.panelViewer(user)))
 	defer h.bus.unsubscribe(sub)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -545,7 +559,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(template.FuncMap{
 <form method="post" action="/login"><p><input name="user" placeholder="user" autocomplete="username"></p>
 <p><input name="password" type="password" placeholder="password" autocomplete="current-password"></p>
 <p><input name="totp" placeholder="TOTP code" autocomplete="one-time-code" inputmode="numeric"></p><p><button>Log in</button></p></form>
-{{if .Entra}}<p><a href="/auth/login?next=/status">Sign in with Microsoft</a></p>{{end}}
+{{range .Providers}}<p><a href="/auth/login?provider={{.ID}}&amp;next=/status">Sign in with {{.Label}}</a></p>{{end}}
 {{else}}<form method="post" action="/logout" style="float:right"><button>Log out {{.User}}</button></form>
 <h1>longarm-hub {{.Version}}</h1><h2>Workers</h2><table><tr><th>name</th><th>state</th><th>online</th><th>cpu%</th><th>mem GB</th><th>jobs</th><th>reserved GB</th><th>labels</th><th>version</th></tr>
 {{range .Nodes}}<tr{{if not .Online}} class="off"{{end}}><td>{{.Name}}</td><td>{{.State}}{{if .Draining}} (draining){{end}}</td><td>{{.Online}}</td>
@@ -558,7 +572,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(template.FuncMap{
 
 func (h *Hub) renderLogin(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	pageTmpl.Execute(w, map[string]any{"Login": true, "Error": msg, "Entra": h.entraWeb() != ""})
+	pageTmpl.Execute(w, map[string]any{"Login": true, "Error": msg, "Providers": h.webProviders()})
 }
 
 func (h *Hub) statusPage(w http.ResponseWriter, r *http.Request) {

@@ -86,6 +86,10 @@ type Server struct {
 	// OnSignInCode (the shell): a sign-in shows its code - keep the popup
 	// up, copy the code, notify.
 	OnSignInCode func(SignInCode)
+	upd          trayUpdate // the update banner (update.go)
+	// the firewall card's Allow (firewall.go); checkFirewall: a hook for tests
+	fwBusy        sync.Mutex
+	checkFirewall func(program string) (platform.FirewallStatus, error)
 
 	mu       sync.Mutex
 	headless bool
@@ -232,7 +236,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /trayapi/admin/disable", s.adminDisable)
 	mux.HandleFunc("POST /trayapi/roles", s.rolesChange)
 	mux.HandleFunc("GET /trayapi/roles/state", s.rolesState)
+	mux.HandleFunc("POST /trayapi/firewall/allow", s.firewallAllow)
 	s.settingsRoutes(mux) // prefs.go
+	mux.HandleFunc("GET /trayapi/update", s.updateState)
+	mux.HandleFunc("POST /trayapi/update/install", s.updateInstall)
+	s.updateServiceRoutes(mux) // updatesvc.go
 	mux.Handle("/", webui.Handler("/local/", "/trayapi/"))
 	return s.guard(mux)
 }
@@ -380,7 +388,19 @@ func (s *Server) info(w http.ResponseWriter, _ *http.Request) {
 		"worker":  map[string]any{"running": werr == nil, "enrolled": terr == nil || herr == nil, "error": errText(werr), "data_dir": s.opts.LongarmdDataDir},
 		"hub_url": s.hubURL(), "pinned": pinned, "headless": headless,
 		"account": s.account(),
+		// the firewall card can fix it (an administrator prompt) and where
+		// the installed longarm.exe is (a daemon from elsewhere is a copy)
+		"firewall_fix": s.runElevatedWait != nil, "install_dir": s.installDir(),
 	})
+}
+
+// installDir is the directory of the longarm.exe installed with the tray
+// ("" when it is not a full path).
+func (s *Server) installDir() string {
+	if !filepath.IsAbs(s.opts.LongarmExe) {
+		return ""
+	}
+	return filepath.Dir(s.opts.LongarmExe)
 }
 
 func (s *Server) hubURL() string { return HubURL(s.opts) }
@@ -465,7 +485,9 @@ func (s *Server) attach(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// ssh opens a terminal running `ssh longarm-<worker>` (longarm ssh-config entries).
+// ssh opens a terminal running `longarm ssh <worker>`: OpenSSH with longarm
+// proxy as its ProxyCommand, built on the fly - no ~/.ssh/config entries
+// (longarm ssh-config) needed.
 func (s *Server) ssh(w http.ResponseWriter, r *http.Request) {
 	var body struct{ Worker string }
 	if !readBody(w, r, &body) {
@@ -475,7 +497,7 @@ func (s *Server) ssh(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "bad worker name")
 		return
 	}
-	if err := s.term([]string{"ssh", "longarm-" + body.Worker}); err != nil {
+	if err := s.term(s.longarmArgs("ssh", body.Worker)); err != nil {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
