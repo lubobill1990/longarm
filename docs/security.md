@@ -1273,6 +1273,13 @@ places with the admin's user, like any user's, and the client-side pick
 only knows the workers the hub listed). This is a hub-side rule: it applies
 to every client version.
 
+"Its user" is the Longarm user of the sign-in: one account of one provider
+(an Entra object ID, or a Google, Apple or personal Microsoft account's
+subject) is one user, whatever its role. The same e-mail address at two
+providers is two users, and being in a provider's `admins` list changes
+the role, never whose machines an account sees. Worker certificates never
+act as a user (not as their owner, not as an admin), whoever linked them.
+
 The **only fleet-wide view** is `Admin.FleetSummary` (`longarm admin
 summary`, the panel's "Fleet" page, `GET /api/admin/summary`): per user the
 number of workers, admin workers and devices and how many workers are
