@@ -86,6 +86,9 @@ type Server struct {
 	// OnSignInCode (the shell): a sign-in shows its code - keep the popup
 	// up, copy the code, notify.
 	OnSignInCode func(SignInCode)
+	// OpenSessions (the shell): show the Sessions window at the location
+	// hash (sessions.go); nil: open it in the default browser.
+	OpenSessions func(hash string)
 	upd          trayUpdate // the update banner (update.go)
 	// the firewall card's Allow (firewall.go); checkFirewall: a hook for tests
 	fwBusy        sync.Mutex
@@ -221,6 +224,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /trayapi/open", s.open)
 	mux.HandleFunc("POST /trayapi/panel", s.panel)
 	mux.HandleFunc("POST /trayapi/pin", s.pin)
+	mux.HandleFunc("POST /trayapi/sessions/open", s.sessionsOpen) // sessions.go
 	mux.HandleFunc("POST /trayapi/hide", func(w http.ResponseWriter, _ *http.Request) {
 		if s.desk != nil {
 			s.desk.Hide()
