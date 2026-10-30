@@ -441,8 +441,7 @@ func TestAgentHandoff(t *testing.T) {
 		rid := "6e55a7c1-0000-4000-8000-00000000c1a0"
 		rProj := filepath.Join(chome, ".claude", "projects", claudeDir(repo))
 		mustWrite(t, filepath.Join(rProj, rid+".jsonl"),
-			fmt.Sprintf(`{"type":"user","cwd":%s,"sessionId":%q,"version":"1.0.0","message":{"role":"user","content":"x"}}`+"
-", jsonQ(repo), rid))
+			fmt.Sprintf(`{"type":"user","cwd":%s,"sessionId":%q,"version":"1.0.0","message":{"role":"user","content":"x"}}`+"\n", jsonQ(repo), rid))
 		untouched := func(what string) {
 			t.Helper()
 			if _, err := os.Stat(filepath.Join(rProj, rid+".handoff.json")); err == nil {
@@ -500,8 +499,7 @@ func TestAgentHandoff(t *testing.T) {
 		// Copilot CLI: a freshly refreshed open-sessions-state.json entry
 		ocid := "3cb916db-26aa-40f2-86b5-1ba81b225fd2"
 		mustWrite(t, filepath.Join(chome, ".copilot", "session-state", ocid, "events.jsonl"),
-			fmt.Sprintf(`{"type":"session.start","data":{"copilotVersion":"1.0.0","context":{"cwd":%s}},"id":"e1"}`+"
-", jsonQ(repo)))
+			fmt.Sprintf(`{"type":"session.start","data":{"copilotVersion":"1.0.0","context":{"cwd":%s}},"id":"e1"}`+"\n", jsonQ(repo)))
 		mustWrite(t, filepath.Join(chome, ".copilot", "open-sessions-state.json"),
 			fmt.Sprintf(`{%q:{"schemaVersion":1,"refreshedAt":%q}}`, ocid, time.Now().UTC().Format(time.RFC3339)))
 		r = client(repo, "handoff", "--to", "w2", "--agent", "copilot", "--session", ocid, "--no-attach")
