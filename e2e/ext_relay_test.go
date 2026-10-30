@@ -291,7 +291,9 @@ func TestExternalRelay(t *testing.T) {
 		n, _ := hs["revoked"].(float64)
 		return n > revokedBefore
 	})
-	if b, _ := os.ReadFile(x.logPath); !strings.Contains(string(b), "revocation list updated") {
-		t.Fatalf("relay log without the revocation:\n%s", tail(string(b), 3000))
-	}
+	// the relay logs the update right after it counts the new list
+	waitFor(t, "the revocation in the relay's log", 10*time.Second, func() bool {
+		b, _ := os.ReadFile(x.logPath)
+		return strings.Contains(string(b), "revocation list updated")
+	})
 }

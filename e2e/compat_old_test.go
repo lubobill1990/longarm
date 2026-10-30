@@ -507,11 +507,22 @@ func TestOldReleaseCompat(t *testing.T) {
 					t.Errorf("%s -> %s direct: %+v", c.name, w, r)
 				}
 				for rn := range via {
+					// a worker that just renewed (or a relay that just got
+					// it) re-registers within seconds: retry for a while
 					target := w + "-" + rn
-					if r := runBin(t, c.exe, c.dir, netEnv, "exec", target, "--", bins.helper, "print", "1", "0", "0"); r.code != 0 || r.stdout != lines(1, 1) {
-						t.Errorf("%s -> %s through %s: %+v", c.name, w, rn, r)
+					var last result
+					ok := false
+					for deadline := time.Now().Add(45 * time.Second); time.Now().Before(deadline); time.Sleep(time.Second) {
+						last = runBin(t, c.exe, c.dir, netEnv, "exec", target, "--", bins.helper, "print", "1", "0", "0")
+						if ok = last.code == 0 && last.stdout == lines(1, 1); ok {
+							break
+						}
+					}
+					if !ok {
+						t.Errorf("%s -> %s through %s: %+v", c.name, w, rn, last)
 					}
 				}
+
 			}
 		}
 	})

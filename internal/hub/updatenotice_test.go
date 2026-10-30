@@ -184,9 +184,10 @@ func TestLatestByChannel(t *testing.T) {
 	// CheckUpdate follows the worker's channel; want=latest too
 	fs := &fleetServer{h: h}
 	h.mu.Lock()
-	h.nodes["w1"] = &node{rec: &store.Node{Name: "w1", Role: "worker", State: stateApproved, Version: "0.1.20"}}
+	cw := &node{rec: &store.Node{Name: "w1", Role: "worker", State: stateApproved, Version: "0.1.20"}}
+	h.putTestNode(cw)
 	h.mu.Unlock()
-	wctx := context.WithValue(ctx, callerKey{}, caller{id: pki.Identity{Role: pki.RoleWorker, Name: "w1"}, cert: &x509.Certificate{}})
+	wctx := context.WithValue(ctx, callerKey{}, caller{id: pki.Identity{Role: pki.RoleWorker, Name: "w1"}, cert: &x509.Certificate{}, nodeID: cw.rec.ID})
 	expireLatest(h)
 	resp, err := fs.CheckUpdate(wctx, &pb.UpdateCheckRequest{Os: "windows", Arch: "amd64", Version: "0.1.20", Channel: "dev"})
 	if err != nil || resp.LatestVersion != "0.1.22-dev.9" {
