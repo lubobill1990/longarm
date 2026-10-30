@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -69,6 +70,8 @@ var hubMethodRoles = map[string][]pki.Role{
 	pb.Fleet_ShareWorker_FullMethodName:       users,
 	pb.Fleet_RemoveWorker_FullMethodName:      users,
 	pb.Fleet_SetWorkerLabels_FullMethodName:   users,
+	pb.Fleet_RenameWorker_FullMethodName:      users,
+	pb.HubAdmin_RenameNode_FullMethodName:     adminOnly,
 	pb.HubAdmin_CreateJoinCode_FullMethodName: adminOnly,
 	pb.HubAdmin_ListJoinCodes_FullMethodName:  adminOnly,
 	pb.HubAdmin_Approve_FullMethodName:        adminOnly,
@@ -101,39 +104,42 @@ type callerKey struct{}
 
 // caller is the authenticated identity of a gRPC call.
 type caller struct {
-	id   pki.Identity
-	cert *x509.Certificate
-	addr string
+	id     pki.Identity
+	cert   *x509.Certificate
+	addr   string
+	nodeID string // the caller's node (also for certificates without an ID)
 	// user is the Longarm user the caller acts as (userOfLocked): empty
 	// for workers, relays and the release credential, which never act as
 	// a user whatever their name.
 	user string
 }
 
-// userOfLocked is the Longarm user a certificate acts as on the hub. Only
-// clients and admins have one: the certificate's user, else the user the
-// hub recorded for that device, else (an old single-user certificate)
-// its name - a client/admin name the hub never hands to another user's
-// device (nodeNameReservedLocked). A worker's name is never a user: a
-// worker named like a user sees nothing of that user's.
-func (h *Hub) userOfLocked(id pki.Identity) string {
+// userOfLocked is the Longarm user a certificate of node nodeID acts as on
+// the hub. Only clients and admins have one: the certificate's user, else
+// the user the hub recorded for that device (pinned at enrollment, by the
+// node ID migration and before a rename: a rename never changes whom a
+// device acts as), else (an old single-user certificate) its name - a
+// client/admin name the hub never hands to another user's device
+// (nodeNameReservedLocked). A worker's name is never a user: a worker
+// named like a user sees nothing of that user's.
+func (h *Hub) userOfLocked(id pki.Identity, nodeID string) string {
 	if id.Role != pki.RoleClient && id.Role != pki.RoleAdmin {
 		return ""
 	}
 	if id.User != "" {
 		return id.User
 	}
-	if n := h.nodes[id.Name]; n != nil && n.rec.Role == string(id.Role) && n.rec.User != "" {
+	if n := h.nodes[nodeID]; n != nil && n.rec.Role == string(id.Role) && n.rec.User != "" {
 		return n.rec.User
 	}
 	return id.Name
 }
 
-// nodeNameReservedLocked reports whether a new node of role for user may
-// not take name: a Longarm user's name (live or purged) belongs to that
-// user - only devices bound to that user may carry it: never a worker,
-// another user's device or a device bound to no user (whose name would be
-// its user, userOfLocked).
+// nodeNameReservedLocked reports whether a node of role for user may not
+// take name (a new node's, or a rename's): a Longarm user's name (live or
+// purged) belongs to that user - only devices bound to that user may carry
+// it: never a worker, another user's device or a device bound to no user
+// (whose name would be its user, userOfLocked).
 func (h *Hub) nodeNameReservedLocked(name, role, user string) bool {
 	if h.tenants[name] == nil && !slices.Contains(h.purged, name) {
 		return false
@@ -178,54 +184,90 @@ func (h *Hub) authorize(ctx context.Context, method string) (context.Context, er
 	if !slices.Contains(hubMethodRoles[method], id.Role) {
 		return nil, status.Errorf(codes.PermissionDenied, "%s may not call %s", id, method)
 	}
-	if err := h.checkNode(id, cert); err != nil {
+	nodeID, err := h.checkNode(id, cert)
+	if err != nil {
 		return nil, err
 	}
+	h.supersedeIfDue(nodeID, cert)
 	h.mu.Lock()
-	c.user = h.userOfLocked(id)
+	c.user = h.userOfLocked(id, nodeID)
 	disabled := c.user != "" && h.userDisabledLocked(c.user)
 	h.mu.Unlock()
 	if disabled {
 		return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled", c.user)
 	}
-	c.id, c.cert = id, cert
+	c.id, c.cert, c.nodeID = id, cert, nodeID
 	return context.WithValue(ctx, callerKey{}, c), nil
 }
 
-// checkNode refuses revoked nodes and identity/role mismatches. A valid
+// checkNode finds the caller's node (nodeForCertLocked) and refuses
+// revoked nodes and role mismatches; it returns the node's ID. A valid
 // certificate of the hub's CA that the hub has not seen before (issued by
-// hand with `longarm admin issue` before the hub existed) registers its node as
-// approved; its serial is recorded so a later revocation covers it.
-func (h *Hub) checkNode(id pki.Identity, cert *x509.Certificate) error {
+// hand with `longarm admin issue`, e.g. a release certificate) registers
+// its node as approved - with the ID the certificate carries, else a new
+// one - but only for a name without history: no node ever had it (as its
+// name or its certificates'), no certificate was ever recorded for it. A
+// certificate of a name with history that the hub can't map by ID or
+// recorded serial is refused, never mapped by name (it could be a copy
+// of a revoked node's, or a renamed node's old one): re-issue it with the
+// node's ID (`longarm admin issue --id`) or enroll again.
+func (h *Hub) checkNode(id pki.Identity, cert *x509.Certificate) (string, error) {
 	serial := pki.Serial(cert)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	n := h.nodes[id.Name]
+	n := h.nodeForCertLocked(id, cert)
 	switch {
 	case n == nil:
-		rec := &store.Node{Name: id.Name, Role: string(id.Role), State: stateApproved, JoinedAt: time.Now().UTC(),
-			ApprovedAt: time.Now().UTC(), CertSerial: serial, CertNotAfter: cert.NotAfter, User: id.User}
+		if o := h.nameHistoryLocked(id.Name); o != "" {
+			h.log.Warn("unknown certificate of a name with history refused", "identity", id.String(), "id", id.ID, "serial", serial, "history", o)
+			return "", status.Errorf(codes.PermissionDenied,
+				"certificate %s of %s is not known to the hub, and the name %s has history (%s): it is never mapped by name - re-issue it for the node (longarm admin issue --id <node id>) or enroll again",
+				serial, id, id.Name, o)
+		}
+		rec := &store.Node{ID: id.ID, Name: id.Name, Role: string(id.Role), State: stateApproved, JoinedAt: time.Now().UTC(),
+			ApprovedAt: time.Now().UTC(), CertSerial: serial, CertNotAfter: cert.NotAfter, User: id.User, CertHasID: id.ID != ""}
+		if rec.Role != string(pki.RoleWorker) {
+			rec.User = id.Owner() // pinned: a later name must not change whom it acts as
+		}
+		if rec.ID == "" {
+			rec.ID = nodeid.New()
+		}
 		if err := h.store.PutNode(rec); err != nil {
-			return status.Error(codes.Internal, err.Error())
+			return "", status.Error(codes.Internal, err.Error())
 		}
 		n = &node{rec: rec}
-		h.nodes[id.Name] = n
-		h.log.Info("node registered by certificate", "node", id.String(), "serial", serial)
+		h.nodes[rec.ID] = n
+		h.log.Info("node registered by certificate", "node", id.String(), "id", rec.ID, "serial", serial)
 		h.publishNodeLocked(n, "registered by certificate")
 	case n.rec.State == stateRevoked:
-		return status.Errorf(codes.Unauthenticated, "node %s is revoked", id.Name)
+		return "", status.Errorf(codes.Unauthenticated, "node %s (%s) is revoked", n.rec.Name, nodeid.Short(n.rec.ID))
 	case n.rec.Role != string(id.Role):
-		return status.Errorf(codes.PermissionDenied, "the name %s belongs to a %s, not a %s", id.Name, n.rec.Role, id.Role)
+		return "", status.Errorf(codes.PermissionDenied, "node %s is a %s, not a %s", n.rec.Name, n.rec.Role, id.Role)
 	case n.rec.State == statePending:
 		// A pending node has no certificate of the hub yet; this one is from
 		// an older enrollment or issued by hand: let it through as approved.
 	}
-	if !h.knownSerials[serial] {
-		if err := h.store.AddCert(store.Cert{Serial: serial, Node: id.Name, NotAfter: cert.NotAfter, IssuedAt: cert.NotBefore}); err != nil {
+	if _, ok := h.knownSerials[serial]; !ok {
+		if err := h.store.AddCert(store.Cert{Serial: serial, Node: id.Name, NodeID: n.rec.ID, NotAfter: cert.NotAfter, IssuedAt: cert.NotBefore,
+			HasID: id.ID != ""}); err != nil {
 			h.log.Warn("record certificate", "err", err) // retried on the next call
 		} else {
-			h.knownSerials[serial] = true
+			h.knownSerials[serial] = n.rec.ID
+			if id.ID == "" {
+				h.reloadLegacyLocked()
+			}
 		}
+	}
+	return n.rec.ID, nil
+}
+
+// callerNodeLocked is the caller's node (nil: unknown).
+func (h *Hub) callerNodeLocked(c caller) *node {
+	if n := h.nodes[c.nodeID]; n != nil {
+		return n
+	}
+	if c.cert != nil {
+		return h.nodeForCertLocked(c.id, c.cert)
 	}
 	return nil
 }

@@ -55,12 +55,12 @@ func TestSetWorkerLabels(t *testing.T) {
 		t.Fatalf("admin labels aw: %v %v", n, err)
 	}
 	h.mu.Lock()
-	got := maps.Clone(h.nodes["aw"].rec.Labels)
+	got := maps.Clone(h.nodeLocked("aw").rec.Labels)
 	h.mu.Unlock()
 	if !maps.Equal(got, map[string]string{"pool": "devbox"}) {
 		t.Fatalf("stored labels %v", got)
 	}
-	rows, _ := h.store.Audit("hub", time.Time{}, 100)
+	rows, _ := h.store.Audit("", "hub", time.Time{}, 100)
 	n2 := 0
 	for _, r := range rows {
 		if r.Method == "workers/label" {
@@ -96,7 +96,7 @@ func TestSignInWorkerLabels(t *testing.T) {
 		t.Fatalf("az worker sign-in with labels: %v %v", r, err)
 	}
 	h.mu.Lock()
-	got := maps.Clone(h.nodes["lw1"].rec.Labels)
+	got := maps.Clone(h.nodeLocked("lw1").rec.Labels)
 	h.mu.Unlock()
 	if !maps.Equal(got, want) {
 		t.Fatalf("recorded %v", got)
@@ -133,7 +133,7 @@ func TestSignInWorkerLabels(t *testing.T) {
 	if resp.State != linkApproved || resp.Labels["pool"] != "devbox" || resp.Labels["os.flavor"] != "ubuntu" {
 		t.Fatalf("pairing result: %v", resp)
 	}
-	rows, _ := h.store.Audit("hub", time.Time{}, 100)
+	rows, _ := h.store.Audit("", "hub", time.Time{}, 100)
 	var methods []string
 	for _, r := range rows {
 		if strings.Contains(r.Line, "devbox") {

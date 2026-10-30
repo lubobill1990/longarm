@@ -1,9 +1,10 @@
 // One machine, one entry: a user-session worker and its admin worker (runs
 // commands as SYSTEM; label longarm.io/admin=true) are two hub nodes on the
 // same machine. The tray, the panel and longarm ls (Go: internal/machine)
-// show them together. The hub names the pair (NodeInfo.companion /
-// machine); with an older hub, an admin worker named <worker>-admin with
-// the same owner and host name pairs with <worker>.
+// show them together. The hub links the pair by node ID (NodeInfo.companion_id;
+// companion / machine are their names); only with an older hub (nodes
+// without an id) does an admin worker named <worker>-admin with the same
+// owner and host name pair with <worker>.
 import type { NodeInfo, PoolWorker } from '../api/types'
 import { since } from './format'
 
@@ -37,6 +38,7 @@ export function sameMachine(session: NodeInfo, admin: NodeInfo): boolean {
 /** The session worker an admin worker may pair with ("" = none). */
 function candidate(admin: NodeInfo): string {
   if (admin.companion) return admin.companion
+  if (admin.id) return '' // linked by node ID or not at all
   if (admin.machine && admin.machine !== admin.name) return admin.machine
   return admin.name.endsWith(ADMIN_SUFFIX) ? admin.name.slice(0, -ADMIN_SUFFIX.length) : ''
 }
@@ -55,23 +57,28 @@ export interface Group<T> {
  * alone: admin only).
  */
 export function groupMachines<T>(items: T[], name: (t: T) => string, node: (t: T) => NodeInfo | undefined): Group<T>[] {
-  const byName = new Map(items.map((t) => [name(t), t]))
-  const pairOf = new Map<string, string>() // session -> admin
+  // items are told apart by node ID (names are reused after a revocation)
+  const id = (t: T) => node(t)?.id || name(t)
+  const byName = new Map<string, T>()
+  for (const t of items) if (!byName.has(name(t)) || node(t)?.state !== 'revoked') byName.set(name(t), t)
+  const byId = new Map(items.map((t) => [id(t), t]))
+  const pairOf = new Map<string, T>() // session (id) -> admin
   const paired = new Set<string>()
   for (const t of items) {
     const n = node(t)
     if (!n || !isAdminNode(n)) continue
-    const s = byName.get(candidate(n))
+    const s = n.companion_id ? byId.get(n.companion_id) : byName.get(candidate(n))
     const sn = s && node(s)
-    if (!s || !sn || pairOf.has(name(s)) || !sameMachine(sn, n)) continue
-    pairOf.set(name(s), name(t))
-    paired.add(name(t))
+    if (!s || !sn || pairOf.has(id(s)) || !sameMachine(sn, n)) continue
+    pairOf.set(id(s), t)
+    paired.add(id(t))
   }
   const out: Group<T>[] = []
   for (const t of items) {
     const k = name(t)
-    if (paired.has(k)) continue
-    if (pairOf.has(k)) out.push({ key: k, session: t, admin: byName.get(pairOf.get(k)!) })
+    if (paired.has(id(t))) continue
+    const a = pairOf.get(id(t))
+    if (a) out.push({ key: k, session: t, admin: a })
     else if (isAdminNode(node(t))) out.push({ key: k, admin: t })
     else out.push({ key: k, session: t })
   }

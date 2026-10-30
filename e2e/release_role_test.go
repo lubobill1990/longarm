@@ -33,7 +33,7 @@ func TestReleaseRole(t *testing.T) {
 		t.Fatalf("issue: %s", out)
 	}
 	b, err := pki.LoadBundle(filepath.Join(ci, "tls"))
-	if err != nil || b.Identity != (pki.Identity{Role: pki.RoleRelease, Name: "ci"}) {
+	if err != nil || b.Identity.Role != pki.RoleRelease || b.Identity.Name != "ci" || b.Identity.ID == "" {
 		t.Fatalf("bundle: %v %v", b, err)
 	}
 	os.WriteFile(filepath.Join(ci, "hub.toml"), []byte(fmt.Sprintf("address = %q\n", h.addr())), 0o600)

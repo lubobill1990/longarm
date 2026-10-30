@@ -10,6 +10,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -106,8 +107,16 @@ func TestLinkReplaceProofs(t *testing.T) {
 	if err := start(linkWorker, func(csr []byte) *pb.LinkReplace { return sign(w.Resp.CertPem, w.KeyPEM, csr) }); err != nil {
 		t.Fatalf("bob's own proof: %v", err)
 	}
+	// renamed meanwhile: its certificate (with the old name) still proves
+	// the node - found by the node ID it carries, never by name
+	if _, err := h.RenameNode("test", tenancy.Caller{Admin: true}, true, "bobs-box", "bobs-box2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := start(linkWorker, func(csr []byte) *pb.LinkReplace { return sign(w.Resp.CertPem, w.KeyPEM, csr) }); err != nil {
+		t.Fatalf("the renamed worker's proof: %v", err)
+	}
 	// once removed, it proves nothing
-	if _, err := h.Revoke("test", "bobs-box"); err != nil {
+	if _, err := h.Revoke("test", "bobs-box2"); err != nil {
 		t.Fatal(err)
 	}
 	if err := start(linkWorker, func(csr []byte) *pb.LinkReplace { return sign(w.Resp.CertPem, w.KeyPEM, csr) }); status.Code(err) != codes.PermissionDenied {

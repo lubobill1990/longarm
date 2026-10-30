@@ -648,8 +648,36 @@ func (m *linkManager) refused(l *pb.PortLink) string {
 		if err := portlink.VerifyConsent(p, l); err != nil {
 			return "end-to-end trust: " + err.Error()
 		}
+		// this worker must be the end the owner signed for (its ID, or -
+		// a consent from before IDs - its endorsed name)
+		spec, _, _ := portlink.ParseConsent(l.Consent)
+		self, e := m.self()
+		from := l.From == m.name
+		if l.FromId != "" && self.ID != "" {
+			from = strings.EqualFold(l.FromId, self.ID)
+		}
+		if err := portlink.CheckEnd(spec, from, self, e); err != nil {
+			return "end-to-end trust: " + err.Error()
+		}
 	}
 	return ""
+}
+
+// self is this worker's identity and endorsement (its current certificate).
+func (m *linkManager) self() (pki.Identity, *pki.Endorsement) {
+	if m.bundle == nil {
+		return pki.Identity{Role: pki.RoleWorker, Name: m.name}, nil
+	}
+	leaf := m.bundle.Leaf()
+	id, err := pki.IdentityFromCert(leaf)
+	if err != nil {
+		return pki.Identity{Role: pki.RoleWorker, Name: m.name}, nil
+	}
+	var e *pki.Endorsement
+	if t, err := pki.TrustOf(leaf); err == nil && t != nil {
+		e = t.Endorsement
+	}
+	return id, e
 }
 
 // denied says why this worker's policy refuses links of owner ("" = none).
@@ -692,9 +720,25 @@ func (m *linkManager) open(ctx context.Context, ls *linkState) (pb.LinkTunnel_Di
 			// With end-to-end trust the target must be the owner's (the TLS
 			// layer only checked that some trusted user endorsed it): no
 			// grant and no byte to a worker the hub picked otherwise.
-			if why := server.LinkPeerTrustDeny(m.trust.Load(), linkPeerCert(st.Context()), ls.link.Owner); why != "" {
+			peer := linkPeerCert(st.Context())
+			e, why := server.LinkPeerTrust(m.trust.Load(), peer, ls.link.Owner)
+			if why != "" {
 				m.release(t)
 				return nil, nil, status.Error(codes.PermissionDenied, why)
+			}
+			// and the target the owner signed for: by node ID (or, a
+			// consent from before IDs, its endorsed name) - not the hub's label
+			if e != nil {
+				spec, _, _ := portlink.ParseConsent(ls.link.Consent)
+				pid, _ := pki.IdentityFromCert(peer)
+				if spec == nil {
+					m.release(t)
+					return nil, nil, status.Error(codes.PermissionDenied, "end-to-end trust: link without the owner's consent")
+				}
+				if err := portlink.CheckEnd(spec, false, pid, e); err != nil {
+					m.release(t)
+					return nil, nil, status.Error(codes.PermissionDenied, "end-to-end trust: "+err.Error())
+				}
 			}
 			// The grant must be this listener's link: B picks the link (and
 			// checks its consent) by the grant, so a hub handing listener X
@@ -737,7 +781,10 @@ func (m *linkManager) target(a *pb.PortLinkAssignment) (*linkTarget, error) {
 		}
 		m.retireLocked(to, t) // the target's endpoints changed: new streams get a new connection
 	}
-	w := client.Worker{Name: to, CertName: to}
+	// held to the link's target node ID (a certificate without one: only
+	// the serials the hub reports for it); the endorsement is checked by
+	// the link itself (open: the owner's, the consented end)
+	w := client.Worker{Name: to, CertName: to, ID: a.Link.ToId, LegacySerials: a.TargetLegacySerials, TrustAny: true}
 	for _, s := range a.TargetEndpoints {
 		e, err := client.ParseEndpoint(s)
 		if err != nil {
@@ -782,7 +829,8 @@ func grantMismatch(roots *x509.CertPool, grant *pb.SignedPortLinkGrant, l *pb.Po
 	if err != nil {
 		return err.Error()
 	}
-	if g.Id != l.Id || g.Owner != l.Owner || g.From != l.From || g.To != l.To || g.Port != l.Port || g.ListenPort != l.ListenPort {
+	if g.Id != l.Id || g.Owner != l.Owner || g.From != l.From || g.To != l.To || g.Port != l.Port || g.ListenPort != l.ListenPort ||
+		!strings.EqualFold(g.FromId, l.FromId) || !strings.EqualFold(g.ToId, l.ToId) {
 		return fmt.Sprintf("link %s: the hub's grant is for another link (%s)", l.Id, g.Id)
 	}
 	return ""

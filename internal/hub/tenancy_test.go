@@ -42,7 +42,7 @@ func TestTenancyRoleTable(t *testing.T) {
 		pb.Telemetry_Push_FullMethodName, // the node's own, scrubbed telemetry
 		pb.Diagnostics_Upload_FullMethodName,
 		pb.Fleet_CreateWorkerCode_FullMethodName, pb.Fleet_ShareWorker_FullMethodName, pb.Fleet_RemoveWorker_FullMethodName,
-		pb.Fleet_SetWorkerLabels_FullMethodName,
+		pb.Fleet_SetWorkerLabels_FullMethodName, pb.Fleet_RenameWorker_FullMethodName,
 		// port links: ownership checked per link (TestPortLinks)
 		pb.Fleet_CreatePortLink_FullMethodName, pb.Fleet_ListPortLinks_FullMethodName, pb.Fleet_RemovePortLink_FullMethodName,
 		// handoff pairs: the caller's own workers only (TestHandoffPair)
@@ -147,8 +147,7 @@ func newTenancyHub(t *testing.T) *tenancyHub {
 	n := &node{rec: &store.Node{Name: "w1", Role: "worker", State: stateApproved, Isolation: tenancy.PerUser,
 		Mirrors: []string{"alice/secret-repo", "bob/bobs-repo"}},
 		metrics: &pb.MetricsSnapshot{TopCpu: []*pb.ProcGroup{{Name: "alices-build"}}}}
-	h.nodes["w1"] = n
-	h.indexNode(n.rec)
+	h.putTestNode(n)
 	h.applyJobsLocked(n, &pb.JobsReport{Jobs: []*pb.Job{
 		{Spec: &pb.JobSpec{Id: "JA", Owner: "alice"}, State: pb.JobState_JOB_STATE_RUNNING},
 		{Spec: &pb.JobSpec{Id: "JS", Owner: "alice", ShareTeams: []string{"t1"}}, State: pb.JobState_JOB_STATE_RUNNING},
@@ -240,11 +239,11 @@ func TestTenancyViews(t *testing.T) {
 	}
 	time.Sleep(200 * time.Millisecond) // subscribed
 	h.mu.Lock()
-	h.applyJobsLocked(h.nodes["w1"], &pb.JobsReport{Jobs: []*pb.Job{
+	h.applyJobsLocked(h.nodeLocked("w1"), &pb.JobsReport{Jobs: []*pb.Job{
 		{Spec: &pb.JobSpec{Id: "JA", Owner: "alice"}, State: pb.JobState_JOB_STATE_DONE},
 		{Spec: &pb.JobSpec{Id: "JB", Owner: "bob"}, State: pb.JobState_JOB_STATE_DONE},
 	}})
-	h.publishNodeLocked(h.nodes["w1"], "test")
+	h.publishNodeLocked(h.nodeLocked("w1"), "test")
 	h.mu.Unlock()
 	var seen []string
 	for len(seen) < 2 {

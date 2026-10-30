@@ -148,16 +148,16 @@ func TestIdPAccountsScope(t *testing.T) {
 		// using another user's worker: never
 		h.mu.Lock()
 		for _, o := range accts {
-			if o != a && h.mayUseLocked(a.user, h.nodes[o.wk]) {
+			if o != a && h.mayUseLocked(a.user, h.nodeLocked(o.wk)) {
 				t.Errorf("%s may use %s's worker", a.user, o.user)
 			}
 		}
 		// a worker certificate acts as nobody: not as its owner, not as an admin
-		if u := h.userOfLocked(a.worker); u != "" {
+		if u := h.userOfLocked(a.worker, ""); u != "" {
 			t.Errorf("%s's worker acts as %q", a.user, u)
 		}
-		v := h.viewerLocked(h.userOfLocked(a.worker), false)
-		if h.visibleNodeLocked(v, h.nodes[a.pc]) {
+		v := h.viewerLocked(h.userOfLocked(a.worker, ""), false)
+		if h.visibleNodeLocked(v, h.nodeLocked(a.pc)) {
 			t.Errorf("%s's worker sees its owner's device", a.user)
 		}
 		h.mu.Unlock()
@@ -195,7 +195,7 @@ func TestIdPAccountsScope(t *testing.T) {
 			t.Errorf("audit actor %s is user %q", who, u)
 		}
 	}
-	rows, err := h.store.Audit("hub", tsTime(nil), 1000)
+	rows, err := h.store.Audit("", "hub", tsTime(nil), 1000)
 	if err != nil {
 		t.Fatal(err)
 	}

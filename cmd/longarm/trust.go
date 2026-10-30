@@ -95,11 +95,11 @@ func endorseSelf(ts trust.Store, k ed25519.PrivateKey, user string, id pki.Ident
 	if err != nil {
 		return err
 	}
-	e, err := pki.Endorse(k, user, pki.KindDevice, id.Name, nk.Public().(ed25519.PublicKey))
+	e, err := pki.EndorseID(k, user, pki.KindDevice, id.Name, id.ID, nk.Public().(ed25519.PublicKey))
 	if err != nil {
 		return err
 	}
-	return ts.SetEndorsement(e, pki.KindDevice, id.Name)
+	return ts.SetEndorsementFor(e, pki.KindDevice, id)
 }
 
 // trustInit creates the user key of id's user on this device and endorses
@@ -138,7 +138,9 @@ func trustEndorse(ts trust.Store, line string) (*pki.Endorsement, error) {
 	if r.Kind == pki.KindDevice && r.User != user {
 		return nil, fmt.Errorf("the request is for a device of user %q; this user key is %s's", r.User, user)
 	}
-	return pki.Endorse(k, user, r.Kind, r.Name, r.NodeKey)
+	// a request with the node's ID gets an endorsement bound to it (valid
+	// through renames); one without, from a node before IDs, to its name
+	return pki.EndorseID(k, user, r.Kind, r.Name, r.ID, r.NodeKey)
 }
 
 // trustAccept installs this device's endorsement.
@@ -150,7 +152,7 @@ func trustAccept(ts trust.Store, line string, id pki.Identity) (*pki.Endorsement
 	if e.User != id.Owner() {
 		return nil, fmt.Errorf("endorsed by user %s, but this device belongs to %s (workers would refuse it)", e.User, id.Owner())
 	}
-	return e, ts.SetEndorsement(e, pki.KindDevice, id.Name)
+	return e, ts.SetEndorsementFor(e, pki.KindDevice, id)
 }
 
 // trustImportKey installs a user key and, if this device is not endorsed
@@ -342,7 +344,7 @@ run longarm trust endorse <request>, then back here longarm trust accept
 			if err != nil {
 				return err
 			}
-			r, err := trustStore().Request(pki.KindDevice, b.Identity.Name, b.Identity.Owner())
+			r, err := trustStore().RequestFor(pki.KindDevice, b.Identity)
 			if err != nil {
 				return err
 			}

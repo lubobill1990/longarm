@@ -443,7 +443,9 @@ func TestSignInAgain(t *testing.T) {
 	}
 	nodes := map[string]*pb.NodeInfo{}
 	for _, n := range h.ListNodes(true) {
-		nodes[n.Name] = n
+		if nodes[n.Name] == nil { // a name's non-revoked node first: bob's revoked worker had it too
+			nodes[n.Name] = n
+		}
 	}
 	if n := nodes["bob-box"]; n == nil || n.State != "revoked" {
 		t.Fatalf("bob's device: %+v", n)
@@ -472,7 +474,7 @@ func TestSignInAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, n := range h.ListNodes(true) {
-		if n.Name == bobWorker && (n.Owner != "alice" || n.Shares == nil || !slices.Contains(n.Shares.Users, "bob")) {
+		if n.Name == bobWorker && n.State != "revoked" && (n.Owner != "alice" || n.Shares == nil || !slices.Contains(n.Shares.Users, "bob")) {
 			t.Fatalf("alice's worker lost its sharing: %+v", n)
 		}
 	}

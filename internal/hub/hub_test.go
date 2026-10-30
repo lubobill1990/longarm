@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 )
 
@@ -81,7 +82,7 @@ func TestStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.SchemaVersion() != 5 { // 1 initial, 2 release channels/signatures (P2), 3 tenants, 4 port links, 5 audit attribution
+	if st.SchemaVersion() != 6 { // 1 initial, 2 release channels/signatures (P2), 3 tenants, 4 port links, 5 audit attribution, 6 node IDs
 		st.Close()
 		t.Fatalf("schema %d", st.SchemaVersion())
 	}
@@ -100,11 +101,16 @@ func TestStore(t *testing.T) {
 	if _, err := st.PeekJoinCode("h2", now); err != store.ErrNotFound {
 		t.Fatal("expired code usable")
 	}
-	st.AddCert(store.Cert{Serial: "s1", Node: "w1", NotAfter: now.Add(time.Hour), IssuedAt: now})
-	st.AddCert(store.Cert{Serial: "s1", Node: "w1", NotAfter: now.Add(time.Hour), IssuedAt: now}) // idempotent
-	st.AddCert(store.Cert{Serial: "s2", Node: "w1", NotAfter: now.Add(-time.Hour), IssuedAt: now})
-	if n, _ := st.RevokeNodeCerts("w1", now); n != 2 {
+	w1, other := nodeid.New(), nodeid.New()
+	st.AddCert(store.Cert{Serial: "s1", Node: "w1", NodeID: w1, NotAfter: now.Add(time.Hour), IssuedAt: now})
+	st.AddCert(store.Cert{Serial: "s1", Node: "w1", NodeID: w1, NotAfter: now.Add(time.Hour), IssuedAt: now}) // idempotent
+	st.AddCert(store.Cert{Serial: "s2", Node: "w1", NodeID: w1, NotAfter: now.Add(-time.Hour), IssuedAt: now})
+	st.AddCert(store.Cert{Serial: "s3", Node: "w1", NodeID: other, NotAfter: now.Add(time.Hour), IssuedAt: now}) // another node named w1
+	if n, _ := st.RevokeNodeCerts(w1, now); n != 2 {
 		t.Fatalf("revoked %d", n)
+	}
+	if r, _ := st.CertRevoked("s3"); r {
+		t.Fatal("revoking a node revoked another node's certificate of the same name")
 	}
 	rc, _ := st.RevokedCerts(now)
 	if len(rc) != 1 || rc[0].Serial != "s1" {
@@ -113,7 +119,7 @@ func TestStore(t *testing.T) {
 	if r, _ := st.CertRevoked("s1"); !r {
 		t.Fatal("CertRevoked")
 	}
-	st.PutNode(&store.Node{Name: "w1", Role: "worker", State: "approved", Labels: map[string]string{"a": "b"}})
+	st.PutNode(&store.Node{ID: nodeid.New(), Name: "w1", Role: "worker", State: "approved", Labels: map[string]string{"a": "b"}})
 	st.Close()
 	// Reopen: migrations are not re-applied, data is there.
 	st, err = store.Open(path)
@@ -125,7 +131,7 @@ func TestStore(t *testing.T) {
 	if len(nodes) != 1 || nodes[0].Labels["a"] != "b" {
 		t.Fatalf("nodes %v", nodes)
 	}
-	if v, _ := st.Meta("schema_version"); v != "5" {
+	if v, _ := st.Meta("schema_version"); v != "6" {
 		t.Fatal(v)
 	}
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/hubclient"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/tenancy"
@@ -90,16 +91,16 @@ func TestLinkAdminWorker(t *testing.T) {
 	}
 	const aw = "devbox-w-admin"
 	h.mu.Lock()
-	n := h.nodes[aw]
+	n := h.nodeLocked(aw)
 	info := h.nodeInfoLocked(n)
-	plain := h.nodeInfoLocked(h.nodes["devbox-w"])
+	plain := h.nodeInfoLocked(h.nodeLocked("devbox-w"))
 	h.mu.Unlock()
 	if !n.rec.Admin || !info.AdminWorker || info.Labels[sched.AdminLabel] != "true" || plain.AdminWorker {
 		t.Fatalf("hub record: %+v %+v", n.rec, info)
 	}
 	// one machine: the pairing records the two as companions
-	if n.rec.Companion != "devbox-w" || info.Companion != "devbox-w" || info.Machine != "devbox-w" ||
-		plain.Companion != aw || plain.Machine != "devbox-w" {
+	if n.rec.Companion != plain.Id || info.CompanionId != plain.Id || info.Companion != "devbox-w" || info.Machine != "devbox-w" ||
+		plain.Companion != aw || plain.CompanionId != info.Id || plain.Machine != "devbox-w" {
 		t.Fatalf("companions: admin %q/%q/%q, worker %q/%q", n.rec.Companion, info.Companion, info.Machine, plain.Companion, plain.Machine)
 	}
 
@@ -128,8 +129,8 @@ func TestLinkAdminWorker(t *testing.T) {
 		}
 	}
 	h.mu.Lock()
-	h.applyHelloLocked(h.nodes["devbox-w"], &pb.NodeHello{Labels: map[string]string{sched.AdminLabel: "true", "pool": "a"}})
-	got := labelsOf(h.nodes["devbox-w"])
+	h.applyHelloLocked(h.nodeLocked("devbox-w"), &pb.NodeHello{Labels: map[string]string{sched.AdminLabel: "true", "pool": "a"}})
+	got := labelsOf(h.nodeLocked("devbox-w"))
 	h.mu.Unlock()
 	if got[sched.AdminLabel] != "" || got["pool"] != "a" {
 		t.Errorf("a worker marked itself admin: %v", got)
@@ -253,8 +254,8 @@ func TestAdminWorkerNoHubActions(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.mu.Lock()
-	h.nodes["box-admin"] = &node{rec: &store.Node{Name: "box-admin", Role: "worker", State: stateApproved, Owner: "alice", Admin: true, UpdateEnabled: true}}
-	h.nodes["box"] = &node{rec: &store.Node{Name: "box", Role: "worker", State: stateApproved, Owner: "alice", UpdateEnabled: true}}
+	h.putTestNode(&node{rec: &store.Node{Name: "box-admin", Role: "worker", State: stateApproved, Owner: "alice", Admin: true, UpdateEnabled: true}})
+	h.putTestNode(&node{rec: &store.Node{Name: "box", Role: "worker", State: stateApproved, Owner: "alice", UpdateEnabled: true}})
 	h.mu.Unlock()
 	if _, err := h.AssignProfile("admin", "box-admin", "base"); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("profile on the admin worker: %v", err)
@@ -267,57 +268,68 @@ func TestAdminWorkerNoHubActions(t *testing.T) {
 	}
 	h.mu.Lock()
 	// even a profile already on its record (an older hub) yields nothing
-	h.nodes["box-admin"].rec.Profile = "base"
-	if d := h.desiredToolchainLocked(h.nodes["box-admin"]); d.Profile != "" || len(d.Tools) != 0 {
+	h.nodeLocked("box-admin").rec.Profile = "base"
+	if d := h.desiredToolchainLocked(h.nodeLocked("box-admin")); d.Profile != "" || len(d.Tools) != 0 {
 		t.Errorf("desired toolchain of the admin worker: %v", d)
 	}
 	h.rollout = &pb.Rollout{Version: "9.9.9", Channel: "stable", State: rolloutDone}
-	if v := h.targetLocked(h.nodes["box-admin"]); v != "" {
+	if v := h.targetLocked(h.nodeLocked("box-admin")); v != "" {
 		t.Errorf("rollout target of the admin worker: %q", v)
 	}
-	if v := h.targetLocked(h.nodes["box"]); v != "9.9.9" {
+	if v := h.targetLocked(h.nodeLocked("box")); v != "9.9.9" {
 		t.Errorf("rollout target of a plain worker: %q", v)
 	}
 	h.rollout = nil
 	h.mu.Unlock()
 }
 
-// TestMachineCompanion: workers enrolled without a recorded companion pair
-// by <worker>-admin, owner and host name; others' views of a shared
-// session worker leave the (owner-only) admin worker out; an admin worker
-// enrolled alone later pairs with the owner's worker on its host.
+// TestMachineCompanion: a machine's two workers pair by their node-ID link
+// (store.Node.Companion, both ways) while they still fit - never by name
+// (<worker>-admin): names are reused; others' views of a shared session
+// worker leave the (owner-only) admin worker out; an admin worker enrolled
+// alone later pairs with the owner's one worker on its host.
 func TestMachineCompanion(t *testing.T) {
 	th := newTenancyHub(t)
 	h := th.h
+	ids := map[string]string{}
+	for _, name := range []string{"box", "box-admin", "dev", "dev-admin", "lab", "lab-admin", "pc", "pc-sys"} {
+		ids[name] = nodeid.New()
+	}
 	put := func(r *store.Node) {
-		r.Role, r.State = string(pki.RoleWorker), stateApproved
+		r.ID, r.Role, r.State = ids[r.Name], string(pki.RoleWorker), stateApproved
 		h.mu.Lock()
-		h.nodes[r.Name] = &node{rec: r}
+		h.nodes[r.ID] = &node{rec: r}
 		h.mu.Unlock()
 		if err := h.store.PutNode(r); err != nil {
 			t.Fatal(err)
 		}
 	}
-	put(&store.Node{Name: "box", Owner: "alice", Hostname: "BOX.corp", Shares: &store.WorkerShares{Everyone: true}})
-	put(&store.Node{Name: "box-admin", Owner: "alice", Hostname: "box", Admin: true})
-	put(&store.Node{Name: "dev", Owner: "alice", Hostname: "dev"})
-	put(&store.Node{Name: "dev-admin", Owner: "bob", Hostname: "dev", Admin: true}) // another owner
+	put(&store.Node{Name: "box", Owner: "alice", Hostname: "BOX.corp", Shares: &store.WorkerShares{Everyone: true}, Companion: ids["box-admin"]})
+	put(&store.Node{Name: "box-admin", Owner: "alice", Hostname: "box", Admin: true, Companion: ids["box"]})
+	put(&store.Node{Name: "dev", Owner: "alice", Hostname: "dev", Companion: ids["dev-admin"]})
+	put(&store.Node{Name: "dev-admin", Owner: "bob", Hostname: "dev", Admin: true, Companion: ids["dev"]}) // another owner
+	put(&store.Node{Name: "lab", Owner: "alice", Hostname: "lab"})
+	put(&store.Node{Name: "lab-admin", Owner: "alice", Hostname: "lab", Admin: true}) // no link: not paired by its name
 	put(&store.Node{Name: "pc", Owner: "alice", Hostname: "pc", Shares: &store.WorkerShares{Everyone: true}})
 	info := func(name string) *pb.NodeInfo {
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		return h.nodeInfoLocked(h.nodes[name])
+		return h.nodeInfoLocked(h.nodes[ids[name]])
 	}
 	for name, want := range map[string][2]string{
-		"box": {"box", "box-admin"}, "box-admin": {"box", "box"}, "dev": {"dev", ""}, "dev-admin": {"dev-admin", ""}, "pc": {"pc", ""},
+		"box": {"box", "box-admin"}, "box-admin": {"box", "box"}, "dev": {"dev", ""}, "dev-admin": {"dev-admin", ""},
+		"lab": {"lab", ""}, "lab-admin": {"lab-admin", ""}, "pc": {"pc", ""},
 	} {
 		if i := info(name); i.Machine != want[0] || i.Companion != want[1] {
 			t.Errorf("%s: machine %q companion %q, want %v", name, i.Machine, i.Companion, want)
 		}
 	}
-	// bob sees alice's shared worker, not her admin worker
-	if v := nodeView(tenancy.Caller{User: "bob"}, info("box")); v.Companion != "" || v.Machine != "box" {
-		t.Errorf("bob's view: machine %q companion %q", v.Machine, v.Companion)
+	if i := info("box"); i.CompanionId != ids["box-admin"] {
+		t.Errorf("box: companion_id %q", i.CompanionId)
+	}
+	// bob sees alice's shared worker, not her admin worker (nor its ID)
+	if v := nodeView(tenancy.Caller{User: "bob"}, info("box")); v.Companion != "" || v.CompanionId != "" || v.Machine != "box" {
+		t.Errorf("bob's view: machine %q companion %q/%q", v.Machine, v.Companion, v.CompanionId)
 	}
 	if v := nodeView(tenancy.Caller{User: "alice"}, info("box")); v.Companion != "box-admin" {
 		t.Errorf("alice's view: companion %q", v.Companion)
@@ -330,7 +342,7 @@ func TestMachineCompanion(t *testing.T) {
 	aliceSub := h.bus.subscribeFiltered([]string{"node"}, "", eventFilter(tenancy.Caller{User: "alice"}))
 	defer h.bus.unsubscribe(aliceSub)
 	put(&store.Node{Name: "pc-sys", Owner: "alice", Hostname: "pc", Admin: true})
-	h.pairAdminWorker("pc-sys", "")
+	h.pairAdminWorker(ids["pc-sys"], "")
 	drain := func(s *sub) (out []*pb.FleetEvent) {
 		for {
 			select {
@@ -346,8 +358,8 @@ func TestMachineCompanion(t *testing.T) {
 		t.Fatal("bob got no event of the shared pc")
 	}
 	for _, ev := range bobEvs {
-		if ev.NodeInfo.GetName() != "pc" || ev.NodeInfo.GetCompanion() != "" || ev.NodeInfo.GetMachine() != "pc" ||
-			strings.Contains(ev.Message, "pc-sys") || strings.Contains(ev.String(), "pc-sys") {
+		if ev.NodeInfo.GetName() != "pc" || ev.NodeInfo.GetCompanion() != "" || ev.NodeInfo.GetCompanionId() != "" || ev.NodeInfo.GetMachine() != "pc" ||
+			strings.Contains(ev.Message, "pc-sys") || strings.Contains(ev.String(), "pc-sys") || strings.Contains(ev.String(), ids["pc-sys"]) {
 			t.Errorf("bob's event names the admin worker: %v", ev)
 		}
 	}
@@ -360,8 +372,8 @@ func TestMachineCompanion(t *testing.T) {
 	}
 	// placement answers show the worker as the placing user sees it
 	h.mu.Lock()
-	bobPlace := h.assignedLocked(&reservation{jobID: "j", worker: "pc", owner: "bob"}, 0)
-	alicePlace := h.assignedLocked(&reservation{jobID: "j", worker: "pc", owner: "alice"}, 0)
+	bobPlace := h.assignedLocked(&reservation{jobID: "j", worker: ids["pc"], owner: "bob"}, 0)
+	alicePlace := h.assignedLocked(&reservation{jobID: "j", worker: ids["pc"], owner: "alice"}, 0)
 	h.mu.Unlock()
 	if bobPlace.Node.GetCompanion() != "" || alicePlace.Node.GetCompanion() != "pc-sys" {
 		t.Errorf("placement: bob %q, alice %q", bobPlace.Node.GetCompanion(), alicePlace.Node.GetCompanion())
@@ -379,7 +391,7 @@ func TestMachineCompanion(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range stored {
-		if r.Name == "pc" && r.Companion != "pc-sys" {
+		if r.Name == "pc" && r.Companion != ids["pc-sys"] {
 			t.Errorf("stored: %+v", r)
 		}
 	}

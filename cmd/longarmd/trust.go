@@ -52,7 +52,7 @@ it renews its certificate through the hub).`,
 			if err != nil {
 				return err
 			}
-			r, err := store().Request(pki.KindWorker, b.Identity.Name, "")
+			r, err := store().RequestFor(pki.KindWorker, pki.Identity{Name: b.Identity.Name, ID: b.Identity.ID})
 			if err != nil {
 				return err
 			}
@@ -73,7 +73,7 @@ it renews its certificate through the hub).`,
 			if err != nil {
 				return err
 			}
-			if err := store().SetEndorsement(e, pki.KindWorker, b.Identity.Name); err != nil {
+			if err := store().SetEndorsementFor(e, pki.KindWorker, b.Identity); err != nil {
 				return err
 			}
 			fmt.Printf("worker %s endorsed by %s (key %s); the running longarmd renews its certificate through the hub to carry it\n",

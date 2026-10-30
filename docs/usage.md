@@ -279,6 +279,7 @@ exit 255) has none of these features.
 | `worker-update` | `longarm worker update <worker> [--latest\|--version X] [--wait] [--json] [--auto on\|off]` (the worker must also support it: `machine-update` in its `Node.Info` features), see [Updating](#updating-longarm-worker-update-and-the-longarm-update-service) |
 | `ls-version` | `longarm ls` has the VERSION column; `ls --json` carries `version` and `updateAvailable` (`{"version", "reason"}`) |
 | `agent-auth` | `run` / `exec` / `session start` / `attach --agent-auth`, `--agent-auth-shared-ok`, `--copilot-account`, MCP `agent_auth` (the worker must also support it: `agent-auth` in its `Node.Info` features), see [Agent credentials](#agent-credentials---agent-auth) |
+| `node-ids` | node IDs: a worker target may be a name, a node ID, a unique ID prefix, `id:<prefix>` or `name:<name>`; `longarm worker rename`, `longarm admin rename`; IDs in listings and JSON (`workerId`, `id`) - see [Node IDs](#node-ids-and-targets) |
 | `agent-handoff` | `longarm handoff` (see [Hand off an agent session](#hand-off-an-agent-session)) |
 | `agent-sessions` | `longarm agent-sessions` |
 
@@ -292,7 +293,7 @@ The session and tail features also need the worker's (`session-start`,
 
 ```json
 {
-  "jobs": [ { "worker": "w1", "job": { "spec": { "id": "...", ... }, "state": "JOB_STATE_RUNNING", ... }, "workerOnline": true } ],
+  "jobs": [ { "worker": "w1", "workerId": "3f2a9c1e-...", "job": { "spec": { "id": "...", ... }, "state": "JOB_STATE_RUNNING", ... }, "workerOnline": true } ],
   "source": "hub",
   "unreachable": ["w2"]
 }
@@ -300,7 +301,8 @@ The session and tail features also need the worker's (`session-start`,
 
 `jobs` is `FleetJobsResponse.jobs` as before (protojson field names; 64-bit
 numbers are strings; fields at their zero value are left out); it is `[]`
-when empty (the key used to be left out). `source` says who answered:
+when empty (the key used to be left out). `workerId` is the worker's node
+ID (left out for a worker the hub doesn't know); `worker` its name. `source` says who answered:
 `"hub"` (its fleet-wide job index) or `"workers"` (the hub was unreachable
 or none is configured: longarm asked the known workers directly, with a
 note on stderr). `unreachable` (only with `"source": "workers"`, left out
@@ -1799,6 +1801,27 @@ owners, who keep acting on everything as before; with `users` set or
 refuses to start with an unknown `admins` value or an invalid user name and
 logs the effective policy at start (`access policy ...`).
 
+### Node IDs and targets
+
+Every node has an immutable ID (a UUID) next to its name, which can change
+(`longarm worker rename`, `longarm admin rename`) and, once the node is
+revoked, be taken by a new node. Listings show the shortest unambiguous ID
+prefix (8+ characters) next to names (`longarm ls`, `worker ls`, `admin
+nodes`, `jobs` and `sessions`: NODE). Wherever a worker or node is named, the
+target may be:
+
+```sh
+longarm exec box -- hostname                # a name
+longarm exec 3f2a9c1e -- hostname           # a unique ID prefix (4+ hex digits), or the full ID
+longarm exec id:3f2a -- hostname            # explicitly an ID prefix
+longarm exec name:box -- hostname           # explicitly a name
+```
+
+A string of hex digits and dashes (4+ characters) is always an ID: names
+never look like that. A prefix that matches several nodes is an error listing
+them (ID, name, owner, state); nothing is guessed. See docs/security.md
+"Node identity" for the rules, revocation by ID and the migration.
+
 ### Your own workers
 
 Any user can register their **own** machines as workers and use them from
@@ -1827,6 +1850,7 @@ longarm worker label <worker> pool=devbox [gpu-]...   # set (KEY=VALUE) / delete
 longarm worker share <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker unshare <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker remove <worker>            # revoke it (owner or admin); also: worker rm
+longarm worker rename <worker> <new-name> # rename it (owner or admin; it keeps its ID; audited)
 longarm ls                                # an OWNER column appears once a worker has an owner; ADMIN: the machine's admin worker
                                           # ("-" = fleet, "+shared" = shared by its owner)
 ```
@@ -2317,7 +2341,10 @@ plus this client's link to each: active leg and path (tcp, tailscale direct/peer
 direct/relay-udp/relay-tcp), NAT types, RTT with a 5-minute sparkline. Data
 comes from `longarm daemon` (hub events when the hub is reachable, otherwise
 streamed from the workers; the popup shows which). Tabs: workers, my jobs
-(logs, kill), forwards, this worker (longarmd: drain, limits, toolchain, jobs,
+(the jobs started from this computer, like `longarm jobs --mine`: a click
+opens a job's command, times and output right under it; kill; there is no
+"everyone" switch - `longarm jobs --all` lists your jobs from other
+computers and team-shared ones), forwards, this worker (longarmd: drain, limits, toolchain, jobs,
 leave; join with a code when not enrolled), settings (transport policy).
 Notifications: worker offline/back, memory ≥ 90 %, link relayed > 5 min, my
 job finished/failed.

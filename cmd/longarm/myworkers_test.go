@@ -48,16 +48,22 @@ func TestFoldMachines(t *testing.T) {
 	}
 }
 
-// TestLsTable: the compact default (WORKER STATE OS CPU% MEM GB JOBS
-// LABELS), -o wide, one row per machine (ADMIN), "offline 3d".
+// TestLsTable: the compact default (WORKER ID STATE OS CPU% MEM GB JOBS
+// LABELS), -o wide, one row per machine (ADMIN, by the hub's node-ID
+// link), "offline 3d", a revoked node of a reused name left out.
 func TestLsTable(t *testing.T) {
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	m := &pb.MetricsSnapshot{CpuPercent: 12.4, MemUsedBytes: 8 << 30, MemTotalBytes: 32 << 30, JobsRunning: 1}
 	rows := []lsRow{
-		{name: "box", state: "online", snap: m, path: "hub", node: &pb.NodeInfo{Name: "box", Role: "worker", State: "approved", Owner: "u",
-			Hostname: "box", Os: "windows", Version: "0.1.8", UpdateAvailable: &pb.UpdateAvailable{Version: "0.1.9"}, Labels: map[string]string{"os": "windows", "arch": "amd64", "pool": "devbox"}}},
-		{name: "box-admin", state: "online", snap: m, path: "hub", node: &pb.NodeInfo{Name: "box-admin", Role: "worker", State: "approved",
-			Owner: "u", Hostname: "box", AdminWorker: true, Labels: map[string]string{"longarm.io/admin": "true"}}},
+		{name: "box", state: "offline", path: "hub", node: &pb.NodeInfo{Name: "box", Id: "0000dead-0000-4000-8000-000000000000", Role: "worker",
+			State: "revoked", Owner: "u"}}, // an earlier box
+		{name: "box", state: "online", snap: m, path: "hub", node: &pb.NodeInfo{Name: "box", Id: "1111aaaa-0000-4000-8000-000000000001", Role: "worker",
+			State: "approved", Owner: "u", Hostname: "box", Os: "windows", Version: "0.1.8", UpdateAvailable: &pb.UpdateAvailable{Version: "0.1.9"},
+			Labels:    map[string]string{"os": "windows", "arch": "amd64", "pool": "devbox"},
+			Companion: "sys", CompanionId: "2222bbbb-0000-4000-8000-000000000002"}},
+		{name: "sys", state: "online", snap: m, path: "hub", node: &pb.NodeInfo{Name: "sys", Id: "2222bbbb-0000-4000-8000-000000000002", Role: "worker",
+			State: "approved", Owner: "u", Hostname: "box", AdminWorker: true, Labels: map[string]string{"longarm.io/admin": "true"},
+			Companion: "box", CompanionId: "1111aaaa-0000-4000-8000-000000000001", Machine: "box"}},
 		{name: "old", state: "offline", snap: m, path: "hub", node: &pb.NodeInfo{Name: "old", Role: "worker", State: "approved", Owner: "u",
 			Version: "v0.1.9", LastSeen: timestamppb.New(now.Add(-75 * time.Hour))}},
 	}
@@ -67,13 +73,13 @@ func TestLsTable(t *testing.T) {
 	}
 	out := b.String()
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 4 || strings.Join(strings.Fields(lines[0]), " ") != "WORKER STATE OS VERSION CPU% MEM GB JOBS LABELS ADMIN OWNER" {
+	if len(lines) != 4 || strings.Join(strings.Fields(lines[0]), " ") != "WORKER ID STATE OS VERSION CPU% MEM GB JOBS LABELS ADMIN OWNER" {
 		t.Fatalf("compact:\n%s", out)
 	}
-	if f := strings.Fields(lines[1]); !slices.Equal(f, []string{"box", "online", "windows", "0.1.8↑", "12", "8.0/32.0", "1", "pool=devbox", "online", "(box-admin)", "u"}) {
+	if f := strings.Fields(lines[1]); !slices.Equal(f, []string{"box", "1111aaaa", "online", "windows", "0.1.8↑", "12", "8.0/32.0", "1", "pool=devbox", "online", "(sys)", "u"}) {
 		t.Errorf("box row: %q", f)
 	}
-	if f := strings.Fields(lines[2]); !slices.Equal(f, []string{"old", "offline", "3d", "-", "0.1.9", "-", "-", "-", "-", "-", "u"}) {
+	if f := strings.Fields(lines[2]); !slices.Equal(f, []string{"old", "-", "offline", "3d", "-", "0.1.9", "-", "-", "-", "-", "-", "u"}) {
 		t.Errorf("old row: %q", f)
 	}
 	if lines[3] != "↑ 0.1.9 available for box: longarm worker update <worker> (owners)" {
@@ -81,7 +87,7 @@ func TestLsTable(t *testing.T) {
 	}
 	b.Reset()
 	writeLsTable(&b, rows, true, now)
-	if out := b.String(); !strings.Contains(out, "CLAUDE") || !strings.Contains(out, "PATH") || strings.Contains(out, "box-admin  online") {
+	if out := b.String(); !strings.Contains(out, "CLAUDE") || !strings.Contains(out, "PATH") || strings.Contains(out, "sys  ") {
 		t.Fatalf("wide:\n%s", out)
 	}
 }

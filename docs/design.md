@@ -247,7 +247,7 @@ queued ──schedule──► assigned ──longarmd accepts──► preparin
 A port that "executes commands" is a remote code execution service, so:
 
 1. **Never listen on the public internet**: `longarmd` only listens on tsnet / longnet (both require a certificate or tailnet identity); the hub only exposes 443 (+ UDP relay port) publicly, and the relay only forwards packets between authenticated nodes.
-2. **mTLS + small CA**: the hub issues node certificates (workers 90 days, clients 30 days, auto-renewed); the revocation list is distributed with heartbeats; certificates carry a role (`worker` / `client` / `admin`) and the identity URI `longarm://<role>/<name>`.
+2. **mTLS + small CA**: the hub issues node certificates (workers 90 days, clients 30 days, auto-renewed); the revocation list is distributed with heartbeats; certificates carry a role (`worker` / `client` / `admin`), the identity URI `longarm://<role>/<name>` and the node's immutable ID (`urn:longarm:node:<uuid>`; names are display names that can change - docs/security.md "Node identity"); revocation is by node ID.
 3. **Join tokens**: `longarm admin token --ttl 1h --uses 1` generates a one-time join token; `longarmd join` exchanges it for a certificate. Newly joined workers are `pending` by default, optionally requiring approval in the panel.
 4. **Audit**: every exec/attach/job/file write is logged both locally on the worker and on the hub (who, which machine, what command, exit code).
 5. **Least privilege**: client certificates can be restricted to worker labels; dangerous operations (uninstalling/upgrading `longarmd`, profile changes) are `admin`-only.

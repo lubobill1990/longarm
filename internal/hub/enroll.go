@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -69,8 +70,10 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 	if err != nil || r == pki.RoleRelay || r == pki.RoleHub || r == pki.RoleRelease { // release: longarm admin issue only
 		return nil, status.Errorf(codes.InvalidArgument, "role %q: want worker, client or admin", role)
 	}
-	if req.Name != "" && !pki.ValidName(req.Name) {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid name %q", req.Name)
+	if req.Name != "" {
+		if err := checkNewName(req.Name); err != nil {
+			return nil, err
+		}
 	}
 	if req.User != "" {
 		if r != pki.RoleClient && r != pki.RoleAdmin {
@@ -193,13 +196,13 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 		name = req.Name
 	}
 	if name == "" {
-		name = sanitizeName(req.Hostname)
+		name = nodeid.SafeName(sanitizeName(req.Hostname), autoNamePrefix(jc.Role))
 	}
-	if !pki.ValidName(name) {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid node name %q (use --name)", name)
+	if err := checkNewName(name); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%s (use --name)", status.Convert(err).Message())
 	}
 	h.mu.Lock()
-	if n := h.nodes[name]; n != nil && n.rec.State != stateRevoked {
+	if n := h.nameTakenLocked(name, ""); n != nil {
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name, or revoke the old node)", name)
 	}
@@ -225,9 +228,12 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 	if jc, err = h.store.UseJoinCode(hash, name, now); err != nil {
 		return nil, errBadCode
 	}
-	rec := &store.Node{Name: name, Role: jc.Role, Labels: maps.Clone(jc.Labels), Profile: jc.Profile,
+	rec := &store.Node{ID: nodeid.New(), Name: name, Role: jc.Role, Labels: maps.Clone(jc.Labels), Profile: jc.Profile,
 		Hostname: req.Hostname, OS: req.Os, Arch: req.Arch, Version: req.Version, JoinedAt: now, User: jc.User}
-	resp := &pb.JoinResponse{Name: name, Role: jc.Role, CaPem: h.ca.CertPEM, HubName: h.cfg.Name, Labels: maps.Clone(jc.Labels)}
+	if rec.Role != string(pki.RoleWorker) && rec.User == "" {
+		rec.User = name // pinned: whom the device acts as never follows a later name
+	}
+	resp := &pb.JoinResponse{Name: name, Role: jc.Role, CaPem: h.ca.CertPEM, HubName: h.cfg.Name, Labels: maps.Clone(jc.Labels), Id: rec.ID}
 	if jc.Role == string(pki.RoleWorker) && jc.Owner != "" {
 		// A user's own machine: nobody else may use it (until shared), so
 		// there is nothing for an admin to approve.
@@ -247,17 +253,17 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 		resp.State, resp.CertPem = stateApproved, cert
 	}
 	h.mu.Lock()
-	if n := h.nodes[name]; n != nil && n.rec.State != stateRevoked { // raced with another join
+	if n := h.nameTakenLocked(name, ""); n != nil { // raced with another join
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken", name)
 	}
 	if err := h.store.PutNode(rec); err != nil {
 		h.mu.Unlock()
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, putNodeErr(err)
 	}
 	n := &node{rec: rec}
-	h.nodes[name] = n
-	h.log.Info("node joined", "node", name, "role", rec.Role, "state", rec.State, "owner", rec.Owner, "code", jc.ID, "remote", c.addr)
+	h.nodes[rec.ID] = n
+	h.log.Info("node joined", "node", name, "id", rec.ID, "role", rec.Role, "state", rec.State, "owner", rec.Owner, "code", jc.ID, "remote", c.addr)
 	h.event(ctx, "node.joined", map[string]string{"role": rec.Role, "state": rec.State, "os": req.Os, "arch": req.Arch, "node_version": req.Version})
 	h.publishNodeLocked(n, "joined ("+rec.State+")")
 	if rec.Owner != "" {
@@ -265,7 +271,7 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 	}
 	h.mu.Unlock()
 	if rec.Owner != "" {
-		h.auditHub("node/"+name, "workers/join", map[string]any{"worker": name, "owner": rec.Owner, "code": jc.ID, "remote": c.addr})
+		h.auditHub("node/"+name, "workers/join", map[string]any{"worker": name, "id": rec.ID, "owner": rec.Owner, "code": jc.ID, "remote": c.addr})
 	}
 	h.attachTailnet(ctx, resp) // after the race check, not under h.mu (HTTP to Headscale)
 	return resp, nil
@@ -293,7 +299,7 @@ func (h *Hub) joinStatusLocked(th string) *pb.JoinResponse {
 			continue
 		}
 		resp := &pb.JoinResponse{Name: n.rec.Name, Role: n.rec.Role, CaPem: h.ca.CertPEM, HubName: h.cfg.Name, State: n.rec.State,
-			Owner: n.rec.Owner}
+			Owner: n.rec.Owner, Id: n.rec.ID}
 		switch n.rec.State {
 		case stateApproved:
 			resp.CertPem = []byte(n.rec.IssuedCert)
@@ -307,16 +313,39 @@ func (h *Hub) joinStatusLocked(th string) *pb.JoinResponse {
 	return nil
 }
 
-// issue signs csr for rec's identity and records the certificate.
+// issue signs csr for rec's identity (its ID and name: certName) and
+// records the certificate.
 func (h *Hub) issue(rec *store.Node, csr []byte) ([]byte, error) {
 	return h.issueHosts(rec, csr, nil)
 }
 
 // issueHosts is issue with DNS/IP SANs (a relay's renewal keeps its names).
 func (h *Hub) issueHosts(rec *store.Node, csr []byte, hosts []string) ([]byte, error) {
+	if rec.ID == "" {
+		return nil, status.Error(codes.Internal, "node without id")
+	}
+	nk := trustNodeKey(csr)
+	h.mu.Lock()
+	o := h.nodeKeyTakenLocked(nk, rec.ID)
+	name := certName(h.nodes[rec.ID], rec)
+	h.mu.Unlock()
+	if rec.Role != string(pki.RoleWorker) && rec.User == "" {
+		// a device from before users were pinned: its certificates' name
+		// is its user
+		rec.User = rec.DialName()
+	}
+	prevName := rec.DialName()
+	if o != nil {
+		// one machine's trust directory enrolled twice (a worker joined
+		// again without leaving): harmless for end-to-end trust - an
+		// endorsement binds one node ID (or, made before IDs, one name) -
+		// but worth a look
+		h.log.Warn("certificate request with a node key another live node has", "node", rec.Name, "id", rec.ID,
+			"other", o.rec.Name, "other_id", o.rec.ID)
+	}
 	ttl := h.cfg.TTL(rec.Role)
-	cert, err := h.ca.SignCSR(csr, pki.IssueOptions{Role: pki.Role(rec.Role), Name: rec.Name, Validity: ttl,
-		Hosts: hosts, User: rec.User})
+	cert, err := h.ca.SignCSR(csr, pki.IssueOptions{Role: pki.Role(rec.Role), Name: name, Validity: ttl,
+		Hosts: hosts, User: rec.User, ID: rec.ID})
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "sign: %v", err)
 	}
@@ -324,26 +353,60 @@ func (h *Hub) issueHosts(rec *store.Node, csr []byte, hosts []string) ([]byte, e
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	if err := h.store.AddCert(store.Cert{Serial: pki.Serial(leaf), Node: rec.Name, NotAfter: leaf.NotAfter, IssuedAt: time.Now()}); err != nil {
+	if err := h.store.AddCert(store.Cert{Serial: pki.Serial(leaf), Node: name, NodeID: rec.ID, NotAfter: leaf.NotAfter, IssuedAt: time.Now(), HasID: true}); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	h.mu.Lock()
-	h.knownSerials[pki.Serial(leaf)] = true
+	h.knownSerials[pki.Serial(leaf)] = rec.ID
 	h.mu.Unlock()
 	rec.CertSerial, rec.CertNotAfter = pki.Serial(leaf), leaf.NotAfter
+	rec.CertName, rec.CertHasID, rec.NodeKey = "", true, nk
+	if name != rec.Name {
+		rec.CertName = name
+	}
+	if prevName != name {
+		// renamed: the older certificates (the old name) go once one with
+		// the new name is in use (supersedeIfDue); later renewals - even
+		// with an old certificate - keep that pending, and the old name
+		// stays reserved until then (PendingNames): a certificate that is
+		// still valid answers to it
+		rec.RetirePending = true
+		if !slices.Contains(rec.PendingNames, prevName) {
+			rec.PendingNames = append(slices.Clone(rec.PendingNames), prevName)
+		}
+	}
 	return cert, nil
 }
 
-// Approve admits a pending node (or re-approves one).
-func (h *Hub) Approve(by, name string) (*pb.NodeInfo, error) {
+// putNodeErr maps a store.PutNode error to a gRPC status.
+func putNodeErr(err error) error {
+	if errors.Is(err, store.ErrNameTaken) {
+		return status.Error(codes.AlreadyExists, err.Error())
+	}
+	return status.Error(codes.Internal, err.Error())
+}
+
+// autoNamePrefix goes in front of a host name that looks like a node ID
+// (nodeid.SafeName): w- for workers, d- for devices.
+func autoNamePrefix(role string) string {
+	if role == string(pki.RoleWorker) {
+		return "w-"
+	}
+	return "d-"
+}
+
+// Approve admits a pending node (or re-approves one); target is a name,
+// ID or ID prefix.
+func (h *Hub) Approve(by, target string) (*pb.NodeInfo, error) {
 	h.certMu.Lock()
 	defer h.certMu.Unlock()
 	h.mu.Lock()
-	n := h.nodes[name]
-	if n == nil {
+	n, err := h.resolveLocked(target, nil, "node")
+	if err != nil {
 		h.mu.Unlock()
-		return nil, status.Errorf(codes.NotFound, "no node %q", name)
+		return nil, err
 	}
+	name := n.rec.Name
 	if n.rec.State == stateApproved {
 		info := h.nodeInfoLocked(n)
 		h.mu.Unlock()
@@ -366,26 +429,29 @@ func (h *Hub) Approve(by, name string) (*pb.NodeInfo, error) {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	n.rec = &rec
-	h.log.Info("node approved", "node", name, "by", by)
+	h.log.Info("node approved", "node", name, "id", rec.ID, "by", by)
 	h.event(context.Background(), "node.approved", map[string]string{"role": rec.Role})
 	h.publishNodeLocked(n, "approved by "+by)
 	return h.nodeInfoLocked(n), nil
 }
 
-// Revoke revokes a node and all its certificates and pushes the new
-// revocation list to every connected worker.
-func (h *Hub) Revoke(by, name string) (*pb.NodeInfo, error) {
+// Revoke revokes a node (target: a name, ID or ID prefix) and all its
+// certificates and pushes the new revocation list to every connected
+// worker. Revocation is by ID: the name is free for a new node at once.
+func (h *Hub) Revoke(by, target string) (*pb.NodeInfo, error) {
 	h.certMu.Lock()
 	defer h.certMu.Unlock()
 	h.mu.Lock()
-	n := h.nodes[name]
-	if n == nil {
+	n, err := h.resolveLocked(target, nil, "node")
+	if err != nil {
 		h.mu.Unlock()
-		return nil, status.Errorf(codes.NotFound, "no node %q", name)
+		return nil, err
 	}
+	name, id := n.rec.Name, n.rec.ID
 	rec := *n.rec
 	rec.State, rec.CSR, rec.IssuedCert = stateRevoked, "", "" // the poll token stays: JoinStatus says "rejected"
-	if _, err := h.store.RevokeNodeCerts(name, time.Now()); err != nil {
+	h.revokeLegacyNamesLocked(n)
+	if _, err := h.store.RevokeNodeCerts(id, time.Now()); err != nil {
 		h.mu.Unlock()
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -399,13 +465,15 @@ func (h *Hub) Revoke(by, name string) (*pb.NodeInfo, error) {
 	if err := h.rebuildRevocations(); err != nil {
 		h.log.Warn("rebuild revocations", "err", err)
 	}
+	h.reloadLegacyLocked()
 	if n.sess != nil {
 		n.sess.cancel()
 		h.setOfflineLocked(n, n.sess.id)
 	}
-	h.removePortLinksLocked(func(l *pb.PortLink) bool { return l.From == name || l.To == name }, by, "node revoked")
+	h.removePortLinksLocked(func(l *pb.PortLink) bool { return l.FromId == id || l.ToId == id }, by, "node revoked")
+	h.unpairLocked(n)
 	role := n.rec.Role
-	h.log.Info("node revoked", "node", name, "by", by, "revocation_version", h.revVersion)
+	h.log.Info("node revoked", "node", name, "id", id, "by", by, "revocation_version", h.revVersion)
 	h.event(context.Background(), "node.revoked", map[string]string{"role": role})
 	h.publishNodeLocked(n, "revoked by "+by)
 	info := h.nodeInfoLocked(n)
@@ -419,9 +487,14 @@ func (h *Hub) Revoke(by, name string) (*pb.NodeInfo, error) {
 	closed := h.conns.CloseIf(h.revoked.Revoked)
 	kicked := 0
 	if h.relay != nil {
-		kicked = h.relay.Kick(func(id pki.Identity) bool { return id.Name == name && string(id.Role) == role }, "revoked")
+		kicked = h.relay.Kick(func(c pki.Identity) bool {
+			if c.ID != "" {
+				return c.ID == id
+			}
+			return c.Name == rec.DialName() && string(c.Role) == role
+		}, "revoked")
 	}
-	h.log.Info("revocation enforced", "node", name, "hub_conns_closed", closed, "relay_sessions_closed", kicked)
+	h.log.Info("revocation enforced", "node", name, "id", id, "hub_conns_closed", closed, "relay_sessions_closed", kicked)
 	return info, nil
 }
 
@@ -433,7 +506,7 @@ func (h *Hub) renew(c caller, csr []byte) (*pb.RenewResponse, error) {
 	h.certMu.Lock()
 	defer h.certMu.Unlock()
 	h.mu.Lock()
-	n := h.nodes[c.id.Name]
+	n := h.callerNodeLocked(c)
 	if n == nil || n.rec.State != stateApproved {
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.FailedPrecondition, "node %s is not approved", c.id.Name)
@@ -452,13 +525,24 @@ func (h *Hub) renew(c caller, csr []byte) (*pb.RenewResponse, error) {
 		return nil, err
 	}
 	h.mu.Lock()
+	oldDial := n.rec.DialName()
 	n.rec.CertSerial, n.rec.CertNotAfter = rec.CertSerial, rec.CertNotAfter
+	n.rec.CertName, n.rec.CertHasID, n.rec.NodeKey, n.rec.User = rec.CertName, rec.CertHasID, rec.NodeKey, rec.User
+	n.rec.RetirePending = n.rec.RetirePending || rec.RetirePending
+	for _, p := range rec.PendingNames {
+		if !slices.Contains(n.rec.PendingNames, p) {
+			n.rec.PendingNames = append(n.rec.PendingNames, p)
+		}
+	}
+	if oldDial != n.rec.DialName() {
+		h.dialNameChangedLocked(n) // port links name workers by their certificate names
+	}
 	err = h.store.PutNode(n.rec)
 	h.mu.Unlock()
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	h.log.Info("certificate renewed", "node", c.id.String(), "serial", rec.CertSerial, "not_after", rec.CertNotAfter)
+	h.log.Info("certificate renewed", "node", c.id.String(), "id", rec.ID, "name", rec.Name, "serial", rec.CertSerial, "not_after", rec.CertNotAfter)
 	h.event(context.Background(), "cert.renewed", map[string]string{"role": string(c.id.Role)})
 	return &pb.RenewResponse{CertPem: cert, CaPem: h.ca.CertPEM}, nil
 }

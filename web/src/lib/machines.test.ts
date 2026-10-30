@@ -115,3 +115,28 @@ describe('fmtLastSeen', () => {
     expect(fmtLastSeen(3 * 86400 + 5)).toBe('3d')
   })
 })
+
+describe('groupMachines with node IDs', () => {
+  it('pairs by companion_id only; names are reused, so no name match', () => {
+    const ws = [
+      node('box', { id: 'aaaaaaaa-0000-4000-8000-000000000001', state: 'revoked', online: false }), // an old box of the name
+      node('box', { id: 'aaaaaaaa-0000-4000-8000-000000000002', companion_id: 'aaaaaaaa-0000-4000-8000-000000000003' }),
+      node('admin-of-box', {
+        id: 'aaaaaaaa-0000-4000-8000-000000000003',
+        admin_worker: true,
+        hostname: 'box',
+        companion: 'box',
+        companion_id: 'aaaaaaaa-0000-4000-8000-000000000002',
+      }),
+      node('lab', { id: 'aaaaaaaa-0000-4000-8000-000000000004' }),
+      node('lab-admin', { id: 'aaaaaaaa-0000-4000-8000-000000000005', admin_worker: true, hostname: 'lab' }), // no link: not paired by name
+    ]
+    const gs = groupMachines(
+      ws,
+      (n) => n.name,
+      (n) => n,
+    )
+    const view = gs.map((g) => `${g.session?.id?.slice(-1) ?? '-'}+${g.admin?.id?.slice(-1) ?? '-'}`)
+    expect(view).toEqual(['1+-', '2+3', '4+-', '-+5'])
+  })
+})

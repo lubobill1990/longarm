@@ -59,7 +59,7 @@ func Join(ctx context.Context, dataDir, hubAddr, code string, o JoinOptions) err
 	if err := hubclient.SaveFile(dataDir, hubclient.Config{Address: hubAddr, PollToken: r.Resp.PollToken}); err != nil {
 		return err
 	}
-	fmt.Fprintf(o.Out, "enrolled as %s; pending approval: longarm admin approve %s\n", r.Resp.Name, r.Resp.Name)
+	fmt.Fprintf(o.Out, "enrolled as %s%s; pending approval: longarm admin approve %s\n", r.Resp.Name, idNote(r.Resp.Id), r.Resp.Name)
 	if o.NoWait {
 		fmt.Fprintln(o.Out, "longarmd run (or the service) finishes the enrollment once approved")
 		return nil
@@ -69,7 +69,7 @@ func Join(ctx context.Context, dataDir, hubAddr, code string, o JoinOptions) err
 	if err := completeEnrollment(ctx, cfg, log); err != nil {
 		return err
 	}
-	fmt.Fprintf(o.Out, "approved; joined as worker %s\n", r.Resp.Name)
+	fmt.Fprintf(o.Out, "approved; joined as worker %s%s\n", r.Resp.Name, idNote(r.Resp.Id))
 	return nil
 }
 
@@ -384,4 +384,12 @@ func labelString(m map[string]string) string {
 	}
 	sort.Strings(out)
 	return strings.Join(out, ",")
+}
+
+// idNote is " (id <node id>)" for a hub that reported one.
+func idNote(id string) string {
+	if id == "" {
+		return ""
+	}
+	return " (id " + id + ")"
 }

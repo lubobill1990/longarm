@@ -30,7 +30,7 @@ func TestHandoffPair(t *testing.T) {
 		{Name: "fw"}, // fleet
 	} {
 		n.Role, n.State = "worker", stateApproved
-		h.nodes[n.Name] = &node{rec: n}
+		h.putTestNode(&node{rec: n})
 	}
 	h.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

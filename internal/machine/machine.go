@@ -27,6 +27,9 @@ type Worker struct {
 	Companion             string // the hub's explicit pairing ("" = none recorded)
 	Revoked               bool
 	Worker                bool // role worker (clients and admins never pair)
+	// IDHub: the node comes from a hub with node IDs, which links pairs by
+	// ID (Companion is filled from that link): no pairing by name.
+	IDHub bool
 }
 
 // Candidate is the name of the worker that may pair with w: its recorded
@@ -35,6 +38,9 @@ type Worker struct {
 func Candidate(w Worker) string {
 	if w.Companion != "" {
 		return w.Companion
+	}
+	if w.IDHub {
+		return "" // linked by node ID or not at all
 	}
 	if w.Admin {
 		if base, ok := strings.CutSuffix(w.Name, AdminSuffix); ok && base != "" {
@@ -74,16 +80,22 @@ func shortHost(h string) string {
 func FromNode(n *pb.NodeInfo) Worker {
 	return Worker{Name: n.GetName(), Owner: n.GetOwner(), Hostname: n.GetHostname(),
 		Admin: n.GetAdminWorker() || sched.IsAdminWorker(n.GetLabels()), Companion: n.GetCompanion(),
-		Revoked: n.GetState() == "revoked", Worker: n.GetRole() == "" || n.GetRole() == "worker"}
+		Revoked: n.GetState() == "revoked", Worker: n.GetRole() == "" || n.GetRole() == "worker", IDHub: n.GetId() != ""}
 }
 
 // Pairs pairs nodes: admin worker name -> session worker name, for every
 // admin worker whose session worker is among nodes. The hub's companion
-// (NodeInfo.companion) wins; nodes from an older hub pair by Match.
+// link (NodeInfo.companion_id, by node ID) decides; only nodes from an
+// older hub (without IDs) pair by name and Match.
 func Pairs(nodes []*pb.NodeInfo) map[string]string {
-	by := map[string]*pb.NodeInfo{}
+	by, byID := map[string]*pb.NodeInfo{}, map[string]*pb.NodeInfo{}
 	for _, n := range nodes {
-		by[n.GetName()] = n
+		if o := by[n.GetName()]; o == nil || o.GetState() == "revoked" { // names are reused: the live one
+			by[n.GetName()] = n
+		}
+		if n.GetId() != "" {
+			byID[n.GetId()] = n
+		}
 	}
 	out := map[string]string{}
 	taken := map[string]bool{}
@@ -93,6 +105,9 @@ func Pairs(nodes []*pb.NodeInfo) map[string]string {
 			continue
 		}
 		s := by[Candidate(a)]
+		if id := n.GetCompanionId(); id != "" {
+			s = byID[id]
+		}
 		if s == nil || taken[s.GetName()] || !Match(FromNode(s), a) {
 			continue
 		}

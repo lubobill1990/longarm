@@ -17,7 +17,12 @@ import (
 
 func issue(t *testing.T, ca *pki.CA, role pki.Role, name string) *pki.Bundle {
 	t.Helper()
-	certPEM, keyPEM, err := ca.Issue(pki.IssueOptions{Role: role, Name: name})
+	return issueID(t, ca, role, name, "")
+}
+
+func issueID(t *testing.T, ca *pki.CA, role pki.Role, name, id string) *pki.Bundle {
+	t.Helper()
+	certPEM, keyPEM, err := ca.Issue(pki.IssueOptions{Role: role, Name: name, ID: id})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,5 +117,65 @@ func TestPolicyCacheAndTTL(t *testing.T) {
 	}
 	if err := s2.VerifyPeerCertificate(nil, chains(alice)); err != nil {
 		t.Fatalf("alice refused after the TTL: %v", err)
+	}
+}
+
+// TestPolicyRevokesNodes: an external relay enforces the hub's whole
+// revocation list, as workers do (docs/security.md "Node identity"):
+// revoked node IDs refuse every certificate carrying them, whatever the
+// serial; legacy name revocations refuse certificates without an ID of
+// that role and name, never a new node's certificate with an ID; worker
+// pairs keep their node IDs across a restart from the cached policy.
+func TestPolicyRevokesNodes(t *testing.T) {
+	dir := t.TempDir()
+	ca, err := pki.InitCA(filepath.Join(dir, "ca"), "test", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const revokedID, liveID, newID = "dead0000-0000-4000-8000-000000000001", "1111aaaa-0000-4000-8000-000000000002", "2222bbbb-0000-4000-8000-000000000003"
+	rb := issue(t, ca, pki.RoleRelay, "relay1").Live()
+	revoked := issueID(t, ca, pki.RoleWorker, "w-old", revokedID).Certificate().Leaf
+	revokedRenewed := issueID(t, ca, pki.RoleWorker, "w-renamed", revokedID).Certificate().Leaf // another serial, same node
+	legacy := issue(t, ca, pki.RoleWorker, "gone").Certificate().Leaf                           // no ID: a revoked node's copy
+	reuse := issueID(t, ca, pki.RoleWorker, "gone", newID).Certificate().Leaf                   // a new node with the free name
+	live := issueID(t, ca, pki.RoleWorker, "w1", liveID).Certificate().Leaf
+	chains := func(c *x509.Certificate) [][]*x509.Certificate { return [][]*x509.Certificate{{c}} }
+	state := filepath.Join(dir, "state")
+	newSync := func() *Sync {
+		tc, err := relay.ServerTLS(rb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := New(Config{Hub: "127.0.0.1:1", Bundle: rb, StateDir: state, Server: &relay.Server{TLS: tc}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	far := timestamppb.New(time.Now().Add(time.Hour))
+	s := newSync()
+	s.apply(&pb.RelayPolicy{Time: timestamppb.Now(), Ttl: durationpb.New(time.Hour),
+		Revocations: &pb.Revocations{Version: 9,
+			Nodes: []*pb.RevokedNode{{Id: revokedID, NotAfter: far}},
+			Names: []*pb.RevokedName{{Role: "worker", Name: "gone", NotAfter: far}}},
+		WorkerPairs: []*pb.WorkerPair{{A: "w1", B: "w2", AId: liveID, BId: newID}}})
+	for _, sy := range []*Sync{s, newSync()} { // live, then restarted from the cache
+		for name, c := range map[string]*x509.Certificate{"revoked node": revoked, "its renewed certificate": revokedRenewed, "legacy copy": legacy} {
+			if sy.VerifyPeerCertificate(nil, chains(c)) == nil {
+				t.Errorf("%s accepted", name)
+			}
+		}
+		for name, c := range map[string]*x509.Certificate{"new node of a revoked name": reuse, "live node": live} {
+			if err := sy.VerifyPeerCertificate(nil, chains(c)); err != nil {
+				t.Errorf("%s refused: %v", name, err)
+			}
+		}
+	}
+	s2 := newSync()
+	s2.mu.Lock()
+	pairs := s2.pairs
+	s2.mu.Unlock()
+	if len(pairs) != 1 || pairs[0].AID != liveID || pairs[0].BID != newID {
+		t.Fatalf("cached pairs %+v", pairs)
 	}
 }

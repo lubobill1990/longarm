@@ -120,8 +120,9 @@ func (h *Hub) event(ctx context.Context, name string, props map[string]string) {
 func (h *Hub) registryScrubber() *pii.Scrubber {
 	names := map[string]string{h.cfg.Name: pii.KindNode}
 	h.mu.Lock()
-	for name, n := range h.nodes {
-		names[name] = pii.KindNode
+	for _, n := range h.nodes {
+		names[n.rec.Name] = pii.KindNode
+		names[n.rec.DialName()] = pii.KindNode
 		if n.rec.Hostname != "" {
 			names[n.rec.Hostname] = pii.KindHost
 			if i := strings.IndexByte(n.rec.Hostname, '.'); i > 0 {
@@ -273,7 +274,7 @@ func (s *telemetryServer) Push(ctx context.Context, b *pb.TelemetryBatch) (*pb.T
 		return ack, nil
 	}
 	c := callerFrom(ctx)
-	n := t.allow(c.id.Name, len(items))
+	n := t.allow(c.nodeID, len(items))
 	ack.Dropped += int32(len(items) - n)
 	items = items[:n]
 	scr := t.scrubber(h)

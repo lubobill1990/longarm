@@ -73,7 +73,7 @@ type Sync struct {
 	ready     bool      // a policy is known (live or cached)
 	contact   time.Time // last policy from the hub
 	ttl       time.Duration
-	pairs     [][2]string
+	pairs     []relay.WorkerPair
 	pairsOn   bool // pairs are installed in the server
 	connected bool
 	lastErr   string
@@ -84,7 +84,21 @@ type Sync struct {
 type policyFile struct {
 	Received time.Time   `json:"received"`
 	TTLSec   int64       `json:"ttl_s"`
-	Pairs    [][2]string `json:"pairs"`
+	Pairs    [][2]string `json:"pairs"`              // certificate names
+	PairIDs  [][2]string `json:"pair_ids,omitempty"` // node IDs, parallel to Pairs ("" = unknown)
+}
+
+// workerPairs are the pairs of a policy file.
+func (pf policyFile) workerPairs() []relay.WorkerPair {
+	out := make([]relay.WorkerPair, 0, len(pf.Pairs))
+	for i, p := range pf.Pairs {
+		wp := relay.WorkerPair{A: p[0], B: p[1]}
+		if i < len(pf.PairIDs) {
+			wp.AID, wp.BID = pf.PairIDs[i][0], pf.PairIDs[i][1]
+		}
+		out = append(out, wp)
+	}
+	return out
 }
 
 // New loads the cached policy (if any) and installs it in cfg.Server.
@@ -113,7 +127,7 @@ func New(cfg Config) (*Sync, error) {
 		if b, err := os.ReadFile(filepath.Join(cfg.StateDir, PolicyFile)); err == nil {
 			var pf policyFile
 			if json.Unmarshal(b, &pf) == nil && !pf.Received.IsZero() { // the list (version 0: nothing revoked yet) is saved first
-				s.ready, s.contact, s.pairs = true, pf.Received, pf.Pairs
+				s.ready, s.contact, s.pairs = true, pf.Received, pf.workerPairs()
 				if pf.TTLSec > 0 {
 					s.ttl = time.Duration(pf.TTLSec) * time.Second
 				}
@@ -311,12 +325,9 @@ func (s *Sync) session(ctx context.Context) (got bool, err error) {
 // apply installs a policy from the hub.
 func (s *Sync) apply(p *pb.RelayPolicy) {
 	now := time.Now()
-	m := map[string]time.Time{}
-	for _, c := range p.GetRevocations().GetCerts() {
-		m[c.Serial] = c.NotAfter.AsTime()
-	}
 	oldVersion := s.revoked.Version()
-	if err := s.revoked.Replace(p.GetRevocations().GetVersion(), m); err != nil {
+	// serials, node IDs and legacy names: the same list workers enforce
+	if err := hubclient.ApplyRevocations(s.revoked, p.GetRevocations()); err != nil {
 		s.log.Warn("relay: save revocation list", "err", err)
 	}
 	// every policy sweeps (a session that slipped in is closed at the latest
@@ -325,10 +336,13 @@ func (s *Sync) apply(p *pb.RelayPolicy) {
 	if v := s.revoked.Version(); v != oldVersion || n > 0 {
 		s.log.Info("relay: revocation list updated", "version", v, "revoked", s.revoked.Len(), "sessions_closed", n)
 	}
-	var pairs [][2]string
+	var pairs []relay.WorkerPair
+	pf := policyFile{Received: now}
 	for _, wp := range p.WorkerPairs {
 		if wp.A != "" && wp.B != "" && wp.A != wp.B {
-			pairs = append(pairs, [2]string{wp.A, wp.B})
+			pairs = append(pairs, relay.WorkerPair{A: wp.A, B: wp.B, AID: wp.AId, BID: wp.BId})
+			pf.Pairs = append(pf.Pairs, [2]string{wp.A, wp.B})
+			pf.PairIDs = append(pf.PairIDs, [2]string{wp.AId, wp.BId})
 		}
 	}
 	ttl := p.GetTtl().AsDuration()
@@ -342,7 +356,8 @@ func (s *Sync) apply(p *pb.RelayPolicy) {
 	s.mu.Unlock()
 	s.applyPairs(now)
 	if s.cfg.StateDir != "" {
-		b, _ := json.Marshal(policyFile{Received: now, TTLSec: int64(ttl / time.Second), Pairs: pairs})
+		pf.TTLSec = int64(ttl / time.Second)
+		b, _ := json.Marshal(pf)
 		path := filepath.Join(s.cfg.StateDir, PolicyFile)
 		tmp := path + ".tmp"
 		if err := os.WriteFile(tmp, b, 0o600); err != nil || platform.ReplaceFile(tmp, path) != nil {

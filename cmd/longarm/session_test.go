@@ -64,7 +64,7 @@ func TestTailWriterJSON(t *testing.T) {
 }
 
 func TestSessionsJSON(t *testing.T) {
-	b := sessionsJSONBytes([]sessionRow{{"w1", &pb.Session{Name: "dev", State: pb.JobState_JOB_STATE_RUNNING, InputSeq: 3}}}, []string{"w2"})
+	b := sessionsJSONBytes([]sessionRow{{worker: "w1", s: &pb.Session{Name: "dev", State: pb.JobState_JOB_STATE_RUNNING, InputSeq: 3}}}, []string{"w2"})
 	var v struct {
 		Sessions    []map[string]any `json:"sessions"`
 		Source      string           `json:"source"`

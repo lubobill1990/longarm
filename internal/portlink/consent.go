@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -83,14 +84,51 @@ func ParseConsent(c *pb.PortLinkConsent) (*pb.PortLinkSpec, *pki.Endorsement, er
 }
 
 // ConsentMatches reports how l differs from what its owner consented to
-// (nil: it doesn't; it may end earlier).
+// (nil: it doesn't; it may end earlier). A consent that names the ends'
+// node IDs must name the link's.
 func ConsentMatches(s *pb.PortLinkSpec, l *pb.PortLink) error {
 	switch {
 	case s.Id != l.Id, s.Owner != l.Owner, s.From != l.From, s.To != l.To, s.Port != l.Port, s.ListenPort != l.ListenPort,
-		s.JobId != l.JobId:
+		s.JobId != l.JobId,
+		s.FromId != "" && !strings.EqualFold(s.FromId, l.FromId), s.ToId != "" && !strings.EqualFold(s.ToId, l.ToId):
 		return fmt.Errorf("link %s is not what its owner signed (%s %s -> %s:%d on port %d)", l.Id, s.Id, s.From, s.To, s.Port, s.ListenPort)
 	case l.ExpiresAt == nil || l.ExpiresAt.AsTime().Unix() > s.ExpiresUnix:
 		return fmt.Errorf("link %s outlives what its owner signed", l.Id)
+	}
+	return nil
+}
+
+// CheckEnd holds one end of a link (from: the listening worker A; else the
+// target B) to what its owner consented to, s: the end's certificate
+// identity id and its verified endorsement e (the owner's; nil = not
+// checked under end-to-end trust). A consent with the ends' node IDs
+// binds them: the certificate must carry the ID, and an endorsement with
+// an ID must be for it (one without - made before node IDs - must still
+// name the end). A consent without IDs (an older longarm) binds names only
+// through the endorsement: the end must be endorsed under the name the
+// owner signed - never the hub's label.
+func CheckEnd(s *pb.PortLinkSpec, from bool, id pki.Identity, e *pki.Endorsement) error {
+	side, wantID, wantName := "target", s.ToId, s.To
+	if from {
+		side, wantID, wantName = "listening", s.FromId, s.From
+	}
+	if wantID != "" {
+		if !strings.EqualFold(id.ID, wantID) {
+			return fmt.Errorf("link %s: the owner consented to %s worker %s (%s), this is %s (%s)", s.Id, side, wantName, wantID, id.Name, id.ID)
+		}
+		if e != nil && e.ID != "" && !strings.EqualFold(e.ID, wantID) {
+			return fmt.Errorf("link %s: the %s worker is endorsed as node %s, the owner consented to %s", s.Id, side, e.ID, wantID)
+		}
+		if e != nil && e.ID == "" && e.Name != wantName {
+			return fmt.Errorf("link %s: the %s worker is endorsed as %q, the owner consented to %q", s.Id, side, e.Name, wantName)
+		}
+		return nil
+	}
+	if e == nil {
+		return fmt.Errorf("link %s: a consent without node ids needs the %s worker's endorsement", s.Id, side)
+	}
+	if e.Name != wantName {
+		return fmt.Errorf("link %s: the %s worker is endorsed as %q, the owner consented to %q", s.Id, side, e.Name, wantName)
 	}
 	return nil
 }

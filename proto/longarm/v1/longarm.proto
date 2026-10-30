@@ -796,6 +796,10 @@ message HandoffOfferRequest {
   bytes token = 4; // 32 random bytes, the client's
   google.protobuf.Duration ttl = 5; // at most 10 minutes
   int64 max_bytes = 6; // refuse a larger file
+  // the peer's node ID (docs/security.md "Node identity"), from the
+  // certificate the client verified: only a certificate carrying it may
+  // fetch ("" = an older client: peer's name only)
+  string peer_id = 7;
 }
 
 message HandoffOfferResponse {
@@ -816,6 +820,9 @@ message HandoffPullRequest {
   int64 size = 5; // what the offer reported: the bundle must be exactly this
   bytes sha256 = 6;
   SyncHeader header = 7; // repo, commit, branch, path of the worktree to make
+  // the source's node ID, from the certificate the client verified: the
+  // source must present it ("" = an older client: its name only)
+  string from_id = 8;
 }
 
 // ---------------------------------------------------------------- UserHelper
@@ -883,6 +890,11 @@ message PortLinkGrant {
   int32 listen_port = 6; // 127.0.0.1:<listen_port> on A
   int64 expires_unix = 7; // seconds
   int64 issued_unix = 8;
+  // the ends' node IDs: B accepts only a caller whose certificate is
+  // from_id, and only a grant whose to_id is its own (a worker-to-worker
+  // grant binds immutable IDs, not names)
+  string from_id = 9;
+  string to_id = 10;
 }
 
 // SignedPortLinkGrant: the hub's signature over a serialized PortLinkGrant

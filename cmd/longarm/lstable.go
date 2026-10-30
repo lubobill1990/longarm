@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/machine"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -58,13 +59,35 @@ func writeLsTable(w io.Writer, rows []lsRow, wide bool, now time.Time) (failed i
 	nodes := map[string]*pb.NodeInfo{}
 	var names []string
 	byName := map[string]lsRow{}
+	// names are reused: a revoked node of a name a live node has is left out
+	live := map[string]bool{}
 	for _, r := range rows {
+		if r.node.GetState() != "revoked" {
+			live[r.name] = true
+		}
+	}
+	var kept []lsRow
+	for _, r := range rows {
+		if _, dup := byName[r.name]; dup || (r.node.GetState() == "revoked" && live[r.name]) {
+			continue
+		}
+		kept = append(kept, r)
 		names = append(names, r.name)
 		byName[r.name] = r
 		if r.node != nil {
 			nodes[r.name] = r.node
 		}
 	}
+	rows = kept
+	// ID: the node ID, shortest unambiguous prefix (8+ characters;
+	// docs/security.md "Node identity"); "-" for workers.toml entries the
+	// hub doesn't know
+	var ids []string
+	for _, r := range rows {
+		ids = append(ids, r.node.GetId())
+	}
+	short := nodeid.ShortIDs(ids)
+	idCol := func(r lsRow) string { return dash(short[r.node.GetId()]) }
 	shown, adminOf := foldMachines(names, nodes)
 	admins, owners := false, false
 	for _, r := range rows {
@@ -96,10 +119,10 @@ func writeLsTable(w io.Writer, rows []lsRow, wide bool, now time.Time) (failed i
 		return s
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	head := "WORKER\tSTATE\tOS\tVERSION\tCPU%\tMEM GB\tJOBS\tLABELS"
+	head := "WORKER\tID\tSTATE\tOS\tVERSION\tCPU%\tMEM GB\tJOBS\tLABELS"
 	if wide {
 		// VERSION last: STATE is followed by the metrics ("online  -": none yet)
-		head = "WORKER\tSTATE\tCPU%\tMEM GB\tJOBS\tCLAUDE\tCOPILOT\tDISK FREE\tUPTIME\tTOP CPU\tMETRICS\tPATH\tVERSION"
+		head = "WORKER\tID\tSTATE\tCPU%\tMEM GB\tJOBS\tCLAUDE\tCOPILOT\tDISK FREE\tUPTIME\tTOP CPU\tMETRICS\tPATH\tVERSION"
 	}
 	avail := map[string][]string{} // newer version -> workers (shown)
 	if admins {
@@ -120,7 +143,7 @@ func writeLsTable(w io.Writer, rows []lsRow, wide bool, now time.Time) (failed i
 			avail[u] = append(avail[u], r.name)
 		}
 		if r.err != nil {
-			fmt.Fprintf(tw, "%s\terror\tERROR: %s\n", r.name, oneLine(r.err))
+			fmt.Fprintf(tw, "%s\t%s\terror\tERROR: %s\n", r.name, idCol(r), oneLine(r.err))
 			continue
 		}
 		m := r.snap
@@ -140,12 +163,12 @@ func writeLsTable(w io.Writer, rows []lsRow, wide bool, now time.Time) (failed i
 				cpu = fmt.Sprintf("%.0f", m.CpuPercent)
 				mem = humanBytes(m.MemUsedBytes) + "/" + humanBytes(m.MemTotalBytes)
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", r.name, lsState(r, now), dash(r.node.GetOs()), lsVersion(r.node),
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", r.name, idCol(r), lsState(r, now), dash(r.node.GetOs()), lsVersion(r.node),
 				cpu, mem, jobs, lsLabels(r.node.GetLabels()), tail(r))
 			continue
 		}
 		if m == nil {
-			fmt.Fprintf(tw, "%s\t%s\t-\t-\t-\t-\t-\t-\t-\t-\t-\t%s\t%s%s\n", r.name, lsState(r, now), r.path, lsVersion(r.node), tail(r))
+			fmt.Fprintf(tw, "%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t-\t-\t-\t%s\t%s%s\n", r.name, idCol(r), lsState(r, now), r.path, lsVersion(r.node), tail(r))
 			continue
 		}
 		agent := func(k string) string {
@@ -162,7 +185,7 @@ func writeLsTable(w io.Writer, rows []lsRow, wide bool, now time.Time) (failed i
 			}
 			top = append(top, fmt.Sprintf("%s %.0f%%", g.Name, g.CpuPercent))
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%.1f\t%s/%s\t%s\t%s\t%s\t%s G\t%s\t%s\t%s\t%s\t%s%s\n", r.name, lsState(r, now), m.CpuPercent,
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%.1f\t%s/%s\t%s\t%s\t%s\t%s G\t%s\t%s\t%s\t%s\t%s%s\n", r.name, idCol(r), lsState(r, now), m.CpuPercent,
 			humanBytes(m.MemUsedBytes), humanBytes(m.MemTotalBytes), jobs, agent("claude"),
 			agent("copilot"), humanBytes(m.DiskFreeBytes), humanDuration(time.Duration(m.UptimeSeconds)*time.Second),
 			strings.Join(top, ", "), lsSource(r, now), r.path, lsVersion(r.node), tail(r))

@@ -25,6 +25,7 @@ type extRelay struct {
 	cmd               *exec.Cmd
 	exited            chan struct{}
 	udp, tcp, metrics string
+	exe               string // longarm-relay binary ("" = built from this tree)
 }
 
 // startExtRelay issues a relay certificate from the hub's CA (longarm-hub
@@ -33,7 +34,14 @@ type extRelay struct {
 // Instances), registered with the hub.
 func startExtRelay(t *testing.T, h *hubEnv, name string) *extRelay {
 	t.Helper()
-	x := &extRelay{t: t, h: h, udpPort: freePort(t), tcpPort: freePort(t),
+	return startExtRelayBin(t, h, name, "")
+}
+
+// startExtRelayBin is startExtRelay with another longarm-relay binary (an
+// older release; "" = this tree's).
+func startExtRelayBin(t *testing.T, h *hubEnv, name, exe string) *extRelay {
+	t.Helper()
+	x := &extRelay{t: t, h: h, udpPort: freePort(t), tcpPort: freePort(t), exe: exe,
 		tlsDir: filepath.Join(h.root, name+"-tls"), stateDir: filepath.Join(h.root, name+"-state"),
 		logPath: filepath.Join(h.root, name+".log")}
 	h.hubCmd(t, "issue", "--role", "relay", "--name", name, "--host", "127.0.0.1", "--out", x.tlsDir)
@@ -55,7 +63,11 @@ func (x *extRelay) start() {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(buildRelay(t), "--udp", fmt.Sprintf("127.0.0.1:%d", x.udpPort), "--tcp", fmt.Sprintf("127.0.0.1:%d", x.tcpPort),
+	bin := x.exe
+	if bin == "" {
+		bin = buildRelay(t)
+	}
+	cmd := exec.Command(bin, "--udp", fmt.Sprintf("127.0.0.1:%d", x.udpPort), "--tcp", fmt.Sprintf("127.0.0.1:%d", x.tcpPort),
 		"--stun2", "", "--tls-dir", x.tlsDir, "--state-dir", x.stateDir, "--metrics", "127.0.0.1:0", "--log-interval", "0", "--rate", "0",
 		"--hub", x.h.addr(), "--advertise", "127.0.0.1")
 	stdout, _ := cmd.StdoutPipe()
@@ -279,7 +291,9 @@ func TestExternalRelay(t *testing.T) {
 		n, _ := hs["revoked"].(float64)
 		return n > revokedBefore
 	})
-	if b, _ := os.ReadFile(x.logPath); !strings.Contains(string(b), "revocation list updated") {
-		t.Fatalf("relay log without the revocation:\n%s", tail(string(b), 3000))
-	}
+	// the relay logs the update right after it counts the new list
+	waitFor(t, "the revocation in the relay's log", 10*time.Second, func() bool {
+		b, _ := os.ReadFile(x.logPath)
+		return strings.Contains(string(b), "revocation list updated")
+	})
 }

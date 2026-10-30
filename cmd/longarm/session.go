@@ -27,6 +27,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/attach"
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/jobs"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -141,6 +142,7 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 			}
 			defer s.close()
 			ctx := cmd.Context()
+			var po *placeOpts // an automatic placement (connFor)
 			if worker == "" || worker == "auto" {
 				if rows, _, _ := listSessions(ctx, s, nil, name, false, ""); len(rows) > 0 {
 					worker = rows[0].worker
@@ -149,7 +151,7 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 					if typ == "" {
 						typ = sched.TypeOf(argv)
 					}
-					po := &placeOpts{jobID: ulid.Make().String(), typ: typ, require: reqM, noQueue: noQueue}
+					po = &placeOpts{jobID: ulid.Make().String(), typ: typ, require: reqM, noQueue: noQueue}
 					if repo != "" {
 						po.repo = repoKeyFor(repo)
 					}
@@ -158,7 +160,7 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 					}
 				}
 			}
-			conn, err := s.conn(worker)
+			conn, err := s.connFor(worker, po)
 			if err != nil {
 				return err
 			}
@@ -445,7 +447,7 @@ An ended session is reported as it is (exit 0); exit 3: no such session.`,
 				return tooOld(err, conn, "session stop")
 			}
 			if asJSON {
-				fmt.Println(string(sessionsJSONBytes([]sessionRow{{worker, ss}}, nil)))
+				fmt.Println(string(sessionsJSONBytes([]sessionRow{{worker: worker, s: ss}}, nil)))
 				return nil
 			}
 			fmt.Printf("%s %s\n", ss.Name, stateName(ss.State))
@@ -497,6 +499,7 @@ func sessionWorker(ctx context.Context, s *session, args []string, name string) 
 type sessionRow struct {
 	worker string
 	s      *pb.Session
+	id     string // the worker's node ID ("" = unknown: a workers.toml entry)
 }
 
 // listSessions asks workers (nil = every known worker) for their sessions:
@@ -521,6 +524,10 @@ func listSessions(ctx context.Context, s *session, workers []string, name string
 		go func() {
 			defer wg.Done()
 			got, err := workerSessions(ctx, s, w, name, all, owner)
+			display, id := w, ""
+			if wk, werr := s.worker(w); werr == nil { // the target may be an id: show the name
+				display, id = wk.Name, wk.ID
+			}
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -534,7 +541,7 @@ func listSessions(ctx context.Context, s *session, workers []string, name string
 				return
 			}
 			for _, ss := range got {
-				rows = append(rows, sessionRow{w, ss})
+				rows = append(rows, sessionRow{worker: display, s: ss, id: id})
 			}
 		}()
 	}
@@ -607,6 +614,9 @@ func sessionsJSONBytes(rows []sessionRow, unreachable []string) []byte {
 			continue
 		}
 		m["worker"] = r.worker
+		if r.id != "" {
+			m["workerId"] = r.id
+		}
 		out.Sessions = append(out.Sessions, m)
 	}
 	b, _ := json.MarshalIndent(out, "", "  ")
@@ -657,8 +667,13 @@ each session with every field (also those at their zero value) plus
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fleet := len(workers) == 0
+			var ids []string
+			for _, r := range rows {
+				ids = append(ids, r.id)
+			}
+			short := nodeid.ShortIDs(ids)
 			if fleet {
-				fmt.Fprint(tw, "WORKER\t")
+				fmt.Fprint(tw, "WORKER\tNODE\t")
 			}
 			fmt.Fprintln(tw, "NAME\tOWNER\tSTATE\tEXIT\tPID\tATTACHED\tCREATED\tACTIVE\tBY\tCOMMAND")
 			for _, r := range rows {
@@ -679,7 +694,7 @@ each session with every field (also those at their zero value) plus
 					cmdline = cmdline[:47] + "..."
 				}
 				if fleet {
-					fmt.Fprintf(tw, "%s\t", r.worker)
+					fmt.Fprintf(tw, "%s\t%s\t", r.worker, dash(short[r.id]))
 				}
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\n", ss.Name, ss.Owner, stateName(ss.State), exit, ss.Pid,
 					ss.Attached, created, active, ss.CreatedBy, cmdline)

@@ -35,19 +35,19 @@ func (s *hubAdminServer) ListJoinCodes(ctx context.Context, _ *pb.ListJoinCodesR
 // "no node" (opOn).
 
 func (s *hubAdminServer) Approve(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
-	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func() (*pb.NodeInfo, error) { return s.h.Approve(by(ctx), req.Name) })
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func(t string) (*pb.NodeInfo, error) { return s.h.Approve(by(ctx), t) })
 }
 
 func (s *hubAdminServer) Revoke(ctx context.Context, req *pb.NodeRequest) (*pb.NodeInfo, error) {
-	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func() (*pb.NodeInfo, error) { return s.h.Revoke(by(ctx), req.Name) })
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func(t string) (*pb.NodeInfo, error) { return s.h.Revoke(by(ctx), t) })
 }
 
 func (s *hubAdminServer) SetDrain(ctx context.Context, req *pb.SetDrainRequest) (*pb.NodeInfo, error) {
-	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func() (*pb.NodeInfo, error) { return s.h.SetDrain(by(ctx), req.Name, req.Draining) })
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func(t string) (*pb.NodeInfo, error) { return s.h.SetDrain(by(ctx), t, req.Draining) })
 }
 
 func (s *hubAdminServer) SetLabels(ctx context.Context, req *pb.SetLabelsRequest) (*pb.NodeInfo, error) {
-	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func() (*pb.NodeInfo, error) { return s.h.SetLabels(by(ctx), req.Name, req.Labels) })
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Name, func(t string) (*pb.NodeInfo, error) { return s.h.SetLabels(by(ctx), t, req.Labels) })
 }
 
 func (s *hubAdminServer) PutProfile(ctx context.Context, req *pb.Profile) (*pb.Profile, error) {
@@ -60,7 +60,14 @@ func (s *hubAdminServer) ListProfiles(ctx context.Context, _ *pb.ListProfilesReq
 }
 
 func (s *hubAdminServer) AssignProfile(ctx context.Context, req *pb.AssignProfileRequest) (*pb.NodeInfo, error) {
-	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Node, func() (*pb.NodeInfo, error) { return s.h.AssignProfile(by(ctx), req.Node, req.Profile) })
+	return s.h.opOn(s.h.viewer(callerFrom(ctx)), "node", req.Node, func(t string) (*pb.NodeInfo, error) { return s.h.AssignProfile(by(ctx), t, req.Profile) })
+}
+
+func (s *hubAdminServer) RenameNode(ctx context.Context, req *pb.RenameNodeRequest) (*pb.NodeInfo, error) {
+	c := callerFrom(ctx)
+	v := s.h.viewer(c)
+	info, err := s.h.RenameNode(c.id.String(), v, true, req.Target, req.NewName)
+	return opNodeView(v, info), err
 }
 
 // ListJoinCodes lists recent join codes (without the codes themselves).
@@ -90,13 +97,14 @@ func (h *Hub) ListJoinCodesFor(v tenancy.Caller, by string) (*pb.ListJoinCodesRe
 	return out, nil
 }
 
-// nodeOp loads a node, applies fn under the lock, saves and publishes it.
-func (h *Hub) nodeOp(name, what string, fn func(n *node) error) (*pb.NodeInfo, error) {
+// nodeOp resolves a node target (name, ID, ID prefix), applies fn under
+// the lock, saves and publishes it.
+func (h *Hub) nodeOp(target, what string, fn func(n *node) error) (*pb.NodeInfo, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	n := h.nodes[name]
-	if n == nil {
-		return nil, status.Errorf(codes.NotFound, "no node %q", name)
+	n, err := h.resolveLocked(target, nil, "node")
+	if err != nil {
+		return nil, err
 	}
 	if err := fn(n); err != nil {
 		return nil, err

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -18,13 +20,16 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/telemetry"
+	"github.com/lubobill1990/longarm/internal/trust"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -240,7 +245,7 @@ func (s *session) hubNodes(ctx context.Context, all bool) ([]*pb.NodeInfo, bool)
 	}
 	cctx, cancel := context.WithTimeout(ctx, hubTimeout)
 	defer cancel()
-	resp, err := h.Fleet().ListNodes(cctx, &pb.ListNodesRequest{All: all})
+	resp, err := h.Fleet().ListNodes(cctx, &pb.ListNodesRequest{All: all, NodeIds: true})
 	if err != nil {
 		if hubUnavailable(err) {
 			s.hubDown(err)
@@ -264,7 +269,8 @@ func (s *session) saveCache(nodes []*pb.NodeInfo) {
 	c := hubCache{Updated: time.Now()}
 	for _, n := range nodes {
 		slim := &pb.NodeInfo{Name: n.Name, Endpoints: n.Endpoints, Labels: n.Labels, Os: n.Os, Arch: n.Arch,
-			Mirrors: n.Mirrors, WarmRepos: n.WarmRepos, State: n.State, AdminWorker: n.AdminWorker, Companion: n.Companion}
+			Mirrors: n.Mirrors, WarmRepos: n.WarmRepos, State: n.State, Id: n.Id, CertName: n.CertName, Owner: n.Owner,
+			CompanionId: n.CompanionId, AdminWorker: n.AdminWorker, Companion: n.Companion}
 		b, err := protojson.Marshal(slim)
 		if err == nil {
 			c.Nodes = append(c.Nodes, b)
@@ -300,9 +306,10 @@ func cachedNodesIn(dir string) []*pb.NodeInfo {
 }
 
 // workerFromNode turns a hub-known worker into a client.Worker whose legs
-// are all its advertised endpoints (raced by the dialer).
+// are all its advertised endpoints (raced by the dialer), dialed by its
+// certificate's name and held to its node ID.
 func workerFromNode(n *pb.NodeInfo) (client.Worker, bool) {
-	return client.WorkerFromEndpoints(n.Name, client.ReachableEndpoints(n.Endpoints, n.Hostname))
+	return client.WorkerFromNode(n)
 }
 
 // knownWorkers are workers.toml's entries plus hub-known workers (live list
@@ -323,9 +330,12 @@ func (s *session) knownWorkers(ctx context.Context) []client.Worker {
 		}
 		w, ok := workerFromNode(n)
 		if !ok { // listed all the same (ls, completion); dialing says why it fails
-			w, ok = client.WorkerFromEndpoints(n.Name, n.Endpoints)
+			all := proto.Clone(n).(*pb.NodeInfo)
+			all.Hostname = "" // every endpoint, loopback ones too
+			w, ok = client.WorkerFromNode(all)
 		}
 		if ok {
+			w.TrustAny = true // every known worker (listings): no target to hold it to
 			out = append(out, w)
 			seen[n.Name] = true
 		}
@@ -333,58 +343,99 @@ func (s *session) knownWorkers(ctx context.Context) []client.Worker {
 	return out
 }
 
-// worker resolves a worker name: workers.toml, then the hub (or its cache),
-// then an ad-hoc "certname@host:port".
-func (s *session) worker(name string) (client.Worker, error) {
-	if s.cfg.Hub.Enabled() && s.revokedWorker(name) {
-		return client.Worker{}, fmt.Errorf("worker %s is revoked (longarm admin nodes)", name)
-	}
-	for _, w := range s.cfg.Workers {
-		if w.Name == name {
-			return w, nil
+// worker resolves a worker target (docs/security.md "Node identity"): a
+// name, a node ID, a unique ID prefix (4+ hex digits), id:<prefix> or
+// name:<name>. Names: workers.toml, then the hub (or its cache); IDs and
+// prefixes: the hub's workers; then an ad-hoc "certname@host:port". A
+// target matching several workers is an error listing them.
+func (s *session) worker(target string) (client.Worker, error) {
+	t, terr := nodeid.ParseTarget(target)
+	if terr == nil && t.Mode == nodeid.ByName {
+		for _, w := range s.cfg.Workers { // manual entries win
+			if w.Name == t.Value {
+				if s.cfg.Hub.Enabled() {
+					return s.checkManualWorker(w)
+				}
+				return w, nil
+			}
 		}
 	}
-	s.hubMu.Lock()
-	p := s.placed
-	s.hubMu.Unlock()
-	if p != nil && p.Name == name {
-		if w, ok := workerFromNode(p); ok {
-			return w, nil
-		}
-	}
-	if s.cfg.Hub.Enabled() {
+	if terr == nil && s.cfg.Hub.Enabled() {
 		for attempt := 0; attempt < 2; attempt++ {
 			s.refreshNodes(attempt > 0)
 			s.hubMu.Lock()
 			nodes, live := s.nodes, s.nodesLive
 			s.hubMu.Unlock()
-			for _, n := range nodes {
-				if n.Name == name {
-					now := time.Now()
-					if live && !forceDial && workerOffline(n, now) {
-						return client.Worker{}, offlineError(n, now)
-					}
-					w, ok := workerFromNode(n)
-					if !ok && len(n.Endpoints) > 0 {
-						return client.Worker{}, fmt.Errorf("worker %s listens only on its own machine (%s): unreachable from here; "+
-							"an updated longarmd there also listens on the hub's relay", name, strings.Join(n.Endpoints, ", "))
-					}
-					if !ok {
-						return client.Worker{}, fmt.Errorf("worker %s has no usable endpoint (%v)", name, n.Endpoints)
-					}
-					if live && !n.Online && n.State == "approved" {
-						w.Note = offlineNote(n, now) // said when no leg connects
-					}
-					return w, nil
-				}
+			n, err := resolveNode(t, nodes, "worker")
+			if errors.Is(err, nodeid.ErrAmbiguous) {
+				return client.Worker{}, usagef("%s", err.Error())
 			}
+			if err != nil {
+				continue
+			}
+			if n.State == "revoked" {
+				return client.Worker{}, fmt.Errorf("worker %s (%s) is revoked (longarm admin nodes)", n.Name, nodeid.Short(n.Id))
+			}
+			now := time.Now()
+			if live && !forceDial && workerOffline(n, now) {
+				return client.Worker{}, offlineError(n, now)
+			}
+			w, ok := workerFromNode(n)
+			if !ok && len(n.Endpoints) > 0 {
+				return client.Worker{}, fmt.Errorf("worker %s listens only on its own machine (%s): unreachable from here; "+
+					"an updated longarmd there also listens on the hub's relay", n.Name, strings.Join(n.Endpoints, ", "))
+			}
+			if !ok {
+				return client.Worker{}, fmt.Errorf("worker %s has no usable endpoint (%v)", n.Name, n.Endpoints)
+			}
+			if live && !n.Online && n.State == "approved" {
+				w.Note = offlineNote(n, now) // said when no leg connects
+			}
+			if t.Mode == nodeid.ByName {
+				w.TrustName = t.Value
+			} else {
+				w.TrustIDPrefix = t.Value
+			}
+			return w, nil
 		}
+	}
+	if terr == nil && t.Mode != nodeid.ByName {
+		return client.Worker{}, &codedError{code: exitNotFound, err: fmt.Errorf("no worker with id %s (the hub knows workers by id)", t.Value)}
+	}
+	name := target
+	if terr == nil {
+		name = t.Value
 	}
 	w, err := s.cfg.Worker(name)
 	if err != nil {
 		return w, &codedError{code: exitNotFound, err: unknownWorkerError(name, s.cfg.Dir, s.knownNames())}
 	}
 	return w, nil
+}
+
+// resolveNode picks the node target t means among nodes (nodeid.Resolve).
+func resolveNode(t nodeid.Target, nodes []*pb.NodeInfo, what string) (*pb.NodeInfo, error) {
+	cands := make([]nodeid.Candidate, 0, len(nodes))
+	byID := map[string]*pb.NodeInfo{}
+	for _, n := range nodes {
+		if n.Id == "" { // a cache of a hub before node IDs: names only
+			if t.Mode == nodeid.ByName && n.Name == t.Value {
+				return n, nil
+			}
+			continue
+		}
+		owner := n.Owner
+		if n.Role != "" && n.Role != "worker" {
+			owner = n.User
+		}
+		cands = append(cands, nodeid.Candidate{ID: n.Id, Name: n.Name, Owner: owner, State: n.State})
+		byID[n.Id] = n
+	}
+	c, err := t.Resolve(cands, what)
+	if err != nil {
+		return nil, err
+	}
+	return byID[c.ID], nil
 }
 
 // refreshNodes (re)loads the hub's worker list for name lookups: at most
@@ -450,7 +501,36 @@ func (s *session) renewCert(ctx context.Context, h *hubclient.Conn) (*x509.Certi
 	if requested {
 		ts.RenewalDone()
 	}
-	return pki.ParseCertPEM(certPEM)
+	leaf, err := pki.ParseCertPEM(certPEM)
+	if err == nil {
+		migrateSelfEndorsement(ts, leaf)
+	}
+	return leaf, err
+}
+
+// migrateSelfEndorsement moves this device's own endorsement to its node
+// ID (docs/security.md "Node identity", "Migration"): a device holding the
+// user key that endorsed it re-endorses itself once its certificate
+// carries an ID; the next renewal carries the new endorsement. Devices
+// without the user key keep the name-bound one (valid while the name is).
+func migrateSelfEndorsement(ts trust.Store, leaf *x509.Certificate) {
+	id, err := pki.IdentityFromCert(leaf)
+	if err != nil || id.ID == "" {
+		return
+	}
+	e, err := ts.Endorsement()
+	if err != nil || e == nil || e.ID != "" {
+		return
+	}
+	k, user, err := ts.UserKey()
+	if err != nil || user != e.User || user != id.Owner() || !bytes.Equal(k.Public().(ed25519.PublicKey), e.UserKey) {
+		return
+	}
+	if err := endorseSelf(ts, k, user, id); err != nil {
+		fmt.Fprintf(os.Stderr, "longarm: endorsing this device under its node id: %s\n", oneLine(err))
+		return
+	}
+	fmt.Fprintf(os.Stderr, "longarm: this device's endorsement now names its node id %s\n", id.ID)
 }
 
 // findJob locates the worker of a job: the hub's index, else every known
@@ -549,6 +629,35 @@ type placeOpts struct {
 	exclude []string
 }
 
+// connFor connects to the worker of an operation: the worker the hub
+// assigned to the automatic placement po (its job id) - consumed here, for
+// this operation only, the one case where the worker's endorsement needn't
+// match a name or ID the user gave (TrustAny) - else the target as asked
+// for (s.conn).
+func (s *session) connFor(target string, po *placeOpts) (*client.Conn, error) {
+	if po != nil {
+		if w, ok := s.takePlaced(po.jobID, target); ok {
+			return s.dialer.Dial(w)
+		}
+	}
+	return s.conn(target)
+}
+
+// takePlaced consumes the placement of job jobID if it put the job on
+// target: the worker, explicitly unconstrained (TrustAny).
+func (s *session) takePlaced(jobID, target string) (client.Worker, bool) {
+	s.hubMu.Lock()
+	n := s.placements[jobID]
+	delete(s.placements, jobID)
+	s.hubMu.Unlock()
+	if n == nil || n.Name != target {
+		return client.Worker{}, false
+	}
+	w, ok := workerFromNode(n)
+	w.TrustAny = true // the hub placed this job: no name or ID the user gave
+	return w, ok
+}
+
 // place picks a worker: through the hub (with reservation and queueing),
 // else client-side over the known workers (same algorithm, live metrics,
 // no reservations; it waits and retries when nobody passes).
@@ -584,9 +693,14 @@ func (s *session) placeViaHub(ctx context.Context, h *hubclient.Conn, o placeOpt
 		case "queued":
 			fmt.Fprintf(os.Stderr, "longarm: queued at position %d (%s)\n", u.Position, u.Reason)
 		case "assigned":
-			s.hubMu.Lock()
-			s.placed = u.Node
-			s.hubMu.Unlock()
+			if u.Node != nil {
+				s.hubMu.Lock()
+				if s.placements == nil {
+					s.placements = map[string]*pb.NodeInfo{}
+				}
+				s.placements[o.jobID] = u.Node
+				s.hubMu.Unlock()
+			}
 			fmt.Fprintf(os.Stderr, "longarm: placed on %s (score %.1f, %.0f GB reserved)\n", u.Worker, u.Score, u.MemGb)
 			return u.Worker, nil
 		}
@@ -729,16 +843,45 @@ func clientParams() sched.Params {
 	return p
 }
 
-// revokedWorker reports whether the hub (or its cached list) says name is
-// a revoked worker; longarm refuses to dial it even from workers.toml.
-func (s *session) revokedWorker(name string) bool {
+// checkManualWorker holds a workers.toml entry to the hub's word on the
+// node it names (its id, else its certificate name): a node the hub
+// revoked is refused - its certificate may still be valid, and a client
+// doesn't check revocations itself - and an entry of a name a non-revoked
+// node has is held to that node's ID, so no other node with a valid
+// certificate of the name (a revoked or renamed one's) answers for it. A
+// name the hub doesn't know is the entry's own business.
+func (s *session) checkManualWorker(w client.Worker) (client.Worker, error) {
 	s.refreshNodes(false)
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
+	cn := w.CertName
+	if cn == "" {
+		cn = w.Name
+	}
+	var live *pb.NodeInfo
+	revoked := false
 	for _, n := range s.nodes {
-		if n.Name == name {
-			return n.State == "revoked"
+		match := n.Name == cn || n.CertName == cn
+		if w.ID != "" {
+			match = strings.EqualFold(n.Id, w.ID)
+		}
+		if !match {
+			continue
+		}
+		if n.State == "revoked" {
+			revoked = true
+		} else {
+			live = n
 		}
 	}
-	return false
+	switch {
+	case live != nil:
+		if w.ID == "" && live.Id != "" {
+			w.ID = live.Id
+		}
+		return w, nil
+	case revoked:
+		return client.Worker{}, fmt.Errorf("worker %s is revoked (longarm admin nodes)", w.Name)
+	}
+	return w, nil
 }

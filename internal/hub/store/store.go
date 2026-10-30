@@ -1,7 +1,8 @@
 // Package store is longarm-hub's persistence: one SQLite database (pure Go
 // driver modernc.org/sqlite, no cgo) in WAL mode, so Litestream can stream
 // it to object storage (DESIGN §3.3). Schema changes are numbered migrations
-// recorded in the meta table.
+// recorded in the meta table; a migration may have a Go step too
+// (goMigrations), run in the same transaction after its SQL.
 //
 // The hub keeps its working state in memory and writes through to the store;
 // the store is read completely at start. Jobs are a cache of worker reports
@@ -17,6 +18,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // registers "sqlite"
@@ -25,10 +27,16 @@ import (
 // Store is the hub database.
 type Store struct {
 	db *sql.DB
+	// MigrationNotes says what migrations of this Open changed beyond the
+	// schema (renamed nodes ...), for the hub's log.
+	MigrationNotes []string
 	// OnNodePut, if set, is called after a node record was saved (the hub's
 	// lock-free name directory for event projection).
 	OnNodePut func(*Node)
 }
+
+// ErrNameTaken: a non-revoked node has the name already (PutNode).
+var ErrNameTaken = errors.New("name taken by another active node")
 
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("not found")
@@ -119,6 +127,31 @@ var migrations = []string{
 	`ALTER TABLE audit ADD COLUMN actor_user TEXT NOT NULL DEFAULT '';
 	ALTER TABLE audit ADD COLUMN subject_user TEXT NOT NULL DEFAULT '';
 	ALTER TABLE audit ADD COLUMN attributed INTEGER NOT NULL DEFAULT 0;`,
+	// 6: node IDs (docs/security.md "Node identity"): nodes are keyed by an
+	// immutable ID, names are display names unique among non-revoked
+	// nodes; certificates, audit records, cached jobs and port links refer
+	// to the ID. The rows are moved by migrateNodeIDs.
+	`CREATE TABLE nodes_v6 (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		role TEXT NOT NULL,
+		state TEXT NOT NULL,
+		data TEXT NOT NULL
+	);
+	ALTER TABLE certs ADD COLUMN node_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE certs ADD COLUMN has_id INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE audit ADD COLUMN node_id TEXT NOT NULL DEFAULT '';
+	CREATE TABLE revoked_names (
+		role TEXT NOT NULL,
+		name TEXT NOT NULL,
+		not_after INTEGER NOT NULL,
+		PRIMARY KEY (role, name)
+	);`,
+}
+
+// goMigrations are Go steps of migrations (index: migration number - 1).
+var goMigrations = map[int]func(*sql.Tx, *[]string) error{
+	5: migrateNodeIDs,
 }
 
 // Open opens (creating if needed) the database at path and migrates it.
@@ -174,6 +207,12 @@ func (s *Store) migrate() error {
 			tx.Rollback()
 			return fmt.Errorf("migration %d: %w", i+1, err)
 		}
+		if fn := goMigrations[i]; fn != nil {
+			if err := fn(tx, &s.MigrationNotes); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("migration %d: %w", i+1, err)
+			}
+		}
 		if _, err := tx.Exec(`INSERT INTO meta(k,v) VALUES('schema_version',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, strconv.Itoa(i+1)); err != nil {
 			tx.Rollback()
 			return err
@@ -213,6 +252,10 @@ func (s *Store) DeleteMeta(k string) error {
 
 // Node is a registered node (worker, client or admin).
 type Node struct {
+	// ID is the node's immutable ID (a UUID); Name its display name,
+	// unique among non-revoked nodes, which can change (rename) and be
+	// reused once the node is revoked.
+	ID            string            `json:"id"`
 	Name          string            `json:"name"`
 	Role          string            `json:"role"`
 	State         string            `json:"state"`                  // pending | approved | revoked
@@ -266,12 +309,35 @@ type Node struct {
 	// at enrollment only; it shows as the label longarm.io/admin=true and
 	// makes the worker owner-only (never shared) and never placed.
 	Admin bool `json:"admin_worker,omitempty"`
-	// Companion: the other worker on the same machine, recorded on both when
-	// a sign-in enrolls a session worker and its admin worker together (or
-	// an admin worker next to the owner's worker on the same host). Shown
-	// as NodeInfo.companion / machine; package machine checks it still fits.
+	// Companion links a worker and its admin worker on the same machine:
+	// the other one's node ID, recorded on both when a pairing enrolls them
+	// together, an admin worker joins next to the owner's worker on its host,
+	// or the migration pairs them. Shown as NodeInfo.companion_id /
+	// companion / machine; package machine checks it still fits.
 	Companion string `json:"companion,omitempty"`
+	// CertName is the name in the node's current certificate (what
+	// clients dial; "" = Name) and CertHasID whether that certificate
+	// carries the node ID. After a rename they differ from Name until the
+	// node renews.
+	CertName  string `json:"cert_name,omitempty"`
+	CertHasID bool   `json:"cert_has_id,omitempty"`
+	// NodeKey is the end-to-end trust node key (base64) of the node's
+	// last certificate: no other non-revoked node gets a certificate for it.
+	NodeKey string `json:"node_key,omitempty"`
+	// Capabilities the worker reported in its hello (NodeHello).
+	Capabilities []string `json:"capabilities,omitempty"`
+	// RetirePending: the node was renamed and got (or will get) a
+	// certificate with its new name; once it presents one, every other
+	// certificate of it is revoked. Renewals keep it set.
+	RetirePending bool `json:"retire_pending,omitempty"`
+	// PendingNames: the names in the node's older certificates while
+	// RetirePending (renamed, those certificates not revoked yet): no other
+	// node may take them until they are (hub nameTakenLocked).
+	PendingNames []string `json:"pending_names,omitempty"`
 }
+
+// DialName is the name in the node's current certificate.
+func (n *Node) DialName() string { return cmp.Or(n.CertName, n.Name) }
 
 // WorkerShares: who besides its owner may use a worker.
 type WorkerShares struct {
@@ -280,15 +346,23 @@ type WorkerShares struct {
 	Everyone bool     `json:"everyone,omitempty"`
 }
 
-// PutNode inserts or replaces a node.
+// PutNode inserts or replaces a node (by ID). ErrNameTaken: another
+// non-revoked node has its name (the database enforces rule 1 of
+// internal/nodeid).
 func (s *Store) PutNode(n *Node) error {
+	if n.ID == "" {
+		return errors.New("store: node without id")
+	}
 	b, err := json.Marshal(n)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO nodes(name,role,state,data) VALUES(?,?,?,?)
-		ON CONFLICT(name) DO UPDATE SET role=excluded.role, state=excluded.state, data=excluded.data`,
-		n.Name, n.Role, n.State, string(b))
+	_, err = s.db.Exec(`INSERT INTO nodes(id,name,role,state,data) VALUES(?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET name=excluded.name, role=excluded.role, state=excluded.state, data=excluded.data`,
+		n.ID, n.Name, n.Role, n.State, string(b))
+	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
+		return fmt.Errorf("%w: %q", ErrNameTaken, n.Name)
+	}
 	if err == nil && s.OnNodePut != nil {
 		s.OnNodePut(n)
 	}
@@ -296,14 +370,14 @@ func (s *Store) PutNode(n *Node) error {
 }
 
 // DeleteNode removes a node record.
-func (s *Store) DeleteNode(name string) error {
-	_, err := s.db.Exec(`DELETE FROM nodes WHERE name=?`, name)
+func (s *Store) DeleteNode(id string) error {
+	_, err := s.db.Exec(`DELETE FROM nodes WHERE id=?`, id)
 	return err
 }
 
 // Nodes returns all nodes.
 func (s *Store) Nodes() ([]*Node, error) {
-	rows, err := s.db.Query(`SELECT data FROM nodes ORDER BY name`)
+	rows, err := s.db.Query(`SELECT data FROM nodes ORDER BY name, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +402,9 @@ func (s *Store) Nodes() ([]*Node, error) {
 // Cert is an issued certificate.
 type Cert struct {
 	Serial    string
-	Node      string
+	Node      string // the node's name when it was issued (as in the certificate)
+	NodeID    string // the node it belongs to
+	HasID     bool   // the certificate carries the node ID (issued since node IDs)
 	NotAfter  time.Time
 	IssuedAt  time.Time
 	RevokedAt time.Time // zero = valid
@@ -336,23 +412,168 @@ type Cert struct {
 
 // AddCert records an issued certificate.
 func (s *Store) AddCert(c Cert) error {
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO certs(serial,node,not_after,issued_at) VALUES(?,?,?,?)`,
-		c.Serial, c.Node, c.NotAfter.Unix(), c.IssuedAt.Unix())
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO certs(serial,node,node_id,not_after,issued_at,has_id) VALUES(?,?,?,?,?,?)`,
+		c.Serial, c.Node, c.NodeID, c.NotAfter.Unix(), c.IssuedAt.Unix(), c.HasID)
 	return err
 }
 
-// RevokeNodeCerts revokes every unexpired certificate of node.
-func (s *Store) RevokeNodeCerts(node string, at time.Time) (int64, error) {
-	r, err := s.db.Exec(`UPDATE certs SET revoked_at=? WHERE node=? AND revoked_at IS NULL`, at.Unix(), node)
+// CertNode is the node ID a recorded certificate belongs to ("" = the
+// serial is not recorded).
+func (s *Store) CertNode(serial string) (string, error) {
+	var id string
+	err := s.db.QueryRow(`SELECT node_id FROM certs WHERE serial=?`, serial).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+// CertRecord is how a certificate was recorded: its node's ID and whether
+// the hub knew it to carry a node ID (has_id; certificates recorded before
+// node IDs, by an older hub, never did). nodeID "" = not recorded.
+func (s *Store) CertRecord(serial string) (nodeID string, hasID bool, err error) {
+	err = s.db.QueryRow(`SELECT node_id, has_id FROM certs WHERE serial=?`, serial).Scan(&nodeID, &hasID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return nodeID, hasID, err
+}
+
+// NameHasCerts reports whether a certificate was ever recorded for the
+// name (as issued; any node, revoked or expired ones too).
+func (s *Store) NameHasCerts(name string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM certs WHERE node=?`, name).Scan(&n)
+	return n > 0, err
+}
+
+// LegacyCertNames are the names of the certificates without a node ID
+// recorded for the node (any state).
+func (s *Store) LegacyCertNames(nodeID string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT node FROM certs WHERE node_id=? AND has_id=0 ORDER BY node`, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// RevokedName is a legacy name revocation (certificates without a node ID).
+type RevokedName struct {
+	Role, Name string
+	NotAfter   time.Time
+}
+
+// AddRevokedName records (or extends) a legacy name revocation.
+func (s *Store) AddRevokedName(r RevokedName) error {
+	_, err := s.db.Exec(`INSERT INTO revoked_names(role,name,not_after) VALUES(?,?,?)
+		ON CONFLICT(role,name) DO UPDATE SET not_after=max(not_after, excluded.not_after)`, r.Role, r.Name, r.NotAfter.Unix())
+	return err
+}
+
+// ExtendRevokedNames makes every legacy name revocation last at least
+// until t (the issuing CA's NotAfter: a certificate without an ID of a
+// listed name can't outlive the CA).
+func (s *Store) ExtendRevokedNames(t time.Time) error {
+	_, err := s.db.Exec(`UPDATE revoked_names SET not_after=? WHERE not_after < ?`, t.Unix(), t.Unix())
+	return err
+}
+
+// RevokedNames are the legacy name revocations in force at now.
+func (s *Store) RevokedNames(now time.Time) ([]RevokedName, error) {
+	rows, err := s.db.Query(`SELECT role,name,not_after FROM revoked_names WHERE not_after > ? ORDER BY role,name`, now.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RevokedName
+	for rows.Next() {
+		var r RevokedName
+		var na int64
+		if err := rows.Scan(&r.Role, &r.Name, &na); err != nil {
+			return nil, err
+		}
+		r.NotAfter = time.Unix(na, 0)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// LegacyCerts maps node IDs to the serials of their valid (unrevoked,
+// unexpired) certificates without a node ID.
+func (s *Store) LegacyCerts(now time.Time) (map[string][]string, error) {
+	rows, err := s.db.Query(`SELECT node_id, serial FROM certs WHERE has_id=0 AND revoked_at IS NULL AND not_after > ? AND node_id != '' ORDER BY serial`, now.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var id, serial string
+		if err := rows.Scan(&id, &serial); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], serial)
+	}
+	return out, rows.Err()
+}
+
+// RevokeCertsExcept revokes every unexpired certificate of the node with
+// ID nodeID but keep (superseded by keep: a renamed node's older ones).
+func (s *Store) RevokeCertsExcept(nodeID, keep string, at time.Time) (int64, error) {
+	r, err := s.db.Exec(`UPDATE certs SET revoked_at=? WHERE node_id=? AND serial != ? AND revoked_at IS NULL AND not_after > ?`,
+		at.Unix(), nodeID, keep, at.Unix())
 	if err != nil {
 		return 0, err
 	}
 	return r.RowsAffected()
 }
 
+// RevokeNodeCerts revokes every unexpired certificate of the node with
+// ID nodeID. Revocation is by ID: certificates of another node that had
+// the same name stay valid, and so do those of a node that gets the name
+// after this one.
+func (s *Store) RevokeNodeCerts(nodeID string, at time.Time) (int64, error) {
+	if nodeID == "" {
+		return 0, errors.New("store: revoke without node id")
+	}
+	r, err := s.db.Exec(`UPDATE certs SET revoked_at=? WHERE node_id=? AND revoked_at IS NULL`, at.Unix(), nodeID)
+	if err != nil {
+		return 0, err
+	}
+	return r.RowsAffected()
+}
+
+// CertNodes maps the serial of every recorded, unexpired certificate to
+// its node ID (legacy certificates without an ID find their node by it).
+func (s *Store) CertNodes(now time.Time) (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT serial,node_id FROM certs WHERE not_after > ?`, now.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var serial, id string
+		if err := rows.Scan(&serial, &id); err != nil {
+			return nil, err
+		}
+		out[serial] = id
+	}
+	return out, rows.Err()
+}
+
 // RevokedCerts returns revoked certificates that have not expired yet.
 func (s *Store) RevokedCerts(now time.Time) ([]Cert, error) {
-	rows, err := s.db.Query(`SELECT serial,node,not_after,issued_at,revoked_at FROM certs
+	rows, err := s.db.Query(`SELECT serial,node,node_id,not_after,issued_at,revoked_at FROM certs
 		WHERE revoked_at IS NOT NULL AND not_after > ? ORDER BY serial`, now.Unix())
 	if err != nil {
 		return nil, err
@@ -362,7 +583,7 @@ func (s *Store) RevokedCerts(now time.Time) ([]Cert, error) {
 	for rows.Next() {
 		var c Cert
 		var na, ia, ra int64
-		if err := rows.Scan(&c.Serial, &c.Node, &na, &ia, &ra); err != nil {
+		if err := rows.Scan(&c.Serial, &c.Node, &c.NodeID, &na, &ia, &ra); err != nil {
 			return nil, err
 		}
 		c.NotAfter, c.IssuedAt, c.RevokedAt = time.Unix(na, 0), time.Unix(ia, 0), time.Unix(ra, 0)
@@ -499,7 +720,7 @@ func (s *Store) JoinCodes(now time.Time) ([]*JoinCode, error) {
 
 // JobRow is a cached job (data = the marshalled pb.Job).
 type JobRow struct {
-	Worker    string
+	Worker    string // the worker's node ID
 	ID        string
 	State     int32
 	UpdatedAt time.Time
@@ -569,7 +790,8 @@ func (s *Store) ClearJobs() error {
 
 // AuditRow is one forwarded audit record.
 type AuditRow struct {
-	Node   string
+	Node   string // the node's name at the time ("hub": the hub's own records)
+	NodeID string // the node's ID ("" for the hub's own records)
 	Time   time.Time
 	Who    string
 	Method string
@@ -591,22 +813,27 @@ func (s *Store) AddAudit(rows []AuditRow) error {
 	}
 	defer tx.Rollback()
 	for _, r := range rows {
-		if _, err := tx.Exec(`INSERT INTO audit(node,time,who,method,line,actor_user,subject_user,attributed) VALUES(?,?,?,?,?,?,?,?)`,
-			r.Node, r.Time.UnixMilli(), r.Who, r.Method, r.Line, r.ActorUser, r.SubjectUser, r.Attributed); err != nil {
+		if _, err := tx.Exec(`INSERT INTO audit(node,node_id,time,who,method,line,actor_user,subject_user,attributed) VALUES(?,?,?,?,?,?,?,?,?)`,
+			r.Node, r.NodeID, r.Time.UnixMilli(), r.Who, r.Method, r.Line, r.ActorUser, r.SubjectUser, r.Attributed); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
-// Audit returns records, newest first.
-func (s *Store) Audit(node string, since time.Time, limit int) ([]AuditRow, error) {
+// Audit returns records, newest first: of the node with ID nodeID, or
+// with node name node (e.g. "hub"), or all ("", "").
+func (s *Store) Audit(nodeID, node string, since time.Time, limit int) ([]AuditRow, error) {
 	if limit <= 0 || limit > 10000 {
 		limit = 200
 	}
-	q := `SELECT node,time,who,method,line,actor_user,subject_user,attributed FROM audit WHERE time >= ?`
+	q := `SELECT node,node_id,time,who,method,line,actor_user,subject_user,attributed FROM audit WHERE time >= ?`
 	args := []any{since.UnixMilli()}
-	if node != "" {
+	switch {
+	case nodeID != "":
+		q += ` AND node_id = ?`
+		args = append(args, nodeID)
+	case node != "":
 		q += ` AND node = ?`
 		args = append(args, node)
 	}
@@ -621,7 +848,7 @@ func (s *Store) Audit(node string, since time.Time, limit int) ([]AuditRow, erro
 	for rows.Next() {
 		var r AuditRow
 		var t int64
-		if err := rows.Scan(&r.Node, &t, &r.Who, &r.Method, &r.Line, &r.ActorUser, &r.SubjectUser, &r.Attributed); err != nil {
+		if err := rows.Scan(&r.Node, &r.NodeID, &t, &r.Who, &r.Method, &r.Line, &r.ActorUser, &r.SubjectUser, &r.Attributed); err != nil {
 			return nil, err
 		}
 		r.Time = time.UnixMilli(t)

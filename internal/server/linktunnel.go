@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -143,11 +144,18 @@ func (t *linkTunnelServer) Dial(st pb.LinkTunnel_DialServer) error {
 	}
 	done() // verified: the link's own connection cap applies from here
 	fields := map[string]any{"link": g.Id, "owner": g.Owner, "from": g.From, "port": g.Port}
+	self := s.selfIdentity()
 	switch {
 	case g.From != id.Name:
 		return deny(codes.PermissionDenied, fields, "link %s is not for %s", g.Id, id.Name)
 	case g.To != s.Name:
 		return deny(codes.PermissionDenied, fields, "link %s targets %s, not this worker", g.Id, g.To)
+	// node IDs: the grant binds the ends' immutable IDs (a certificate
+	// without one - issued before IDs - is held to the names above)
+	case g.FromId != "" && id.ID != "" && !strings.EqualFold(g.FromId, id.ID):
+		return deny(codes.PermissionDenied, fields, "link %s is for node %s, not %s", g.Id, g.FromId, id.ID)
+	case g.ToId != "" && self.ID != "" && !strings.EqualFold(g.ToId, self.ID):
+		return deny(codes.PermissionDenied, fields, "link %s targets node %s, not this worker (%s)", g.Id, g.ToId, self.ID)
 	}
 	l, linkCtx, release, err := s.Links.Incoming(g.Id)
 	if errors.Is(err, ErrLinkInactive) {
@@ -159,7 +167,7 @@ func (t *linkTunnelServer) Dial(st pb.LinkTunnel_DialServer) error {
 		return deny(codes.ResourceExhausted, fields, "%v", err)
 	}
 	defer release()
-	if l.Owner != g.Owner || l.From != g.From || l.Port != g.Port {
+	if l.Owner != g.Owner || l.From != g.From || l.Port != g.Port || !strings.EqualFold(l.FromId, g.FromId) || !strings.EqualFold(l.ToId, g.ToId) {
 		return deny(codes.PermissionDenied, fields, "link %s: grant and the hub's list disagree", g.Id)
 	}
 	// This worker's own policy decides, not the hub's grant: the owner must
@@ -170,13 +178,24 @@ func (t *linkTunnelServer) Dial(st pb.LinkTunnel_DialServer) error {
 	if why := s.LinkOwnerDeny(g.Owner); why != "" {
 		return deny(codes.PermissionDenied, fields, "link %s: %s", g.Id, why)
 	}
-	if why := LinkPeerTrustDeny(s.Trust.Load(), peerCert(st.Context()), g.Owner); why != "" {
+	peerE, why := LinkPeerTrust(s.Trust.Load(), peerCert(st.Context()), g.Owner)
+	if why != "" {
 		return deny(codes.PermissionDenied, fields, "link %s: %s", g.Id, why)
 	}
 	// With end-to-end trust the hub's grant is not enough: the owner must
-	// have signed this very link (a device endorsed by the pinned key).
+	// have signed this very link (a device endorsed by the pinned key), and
+	// both ends must be the workers the owner signed for - by node ID, or
+	// (a consent from before IDs) by their endorsed names, never by the
+	// hub's labels.
 	if p := s.Trust.Load(); p.Active() {
 		if err := portlink.VerifyConsent(p, l); err != nil {
+			return deny(codes.PermissionDenied, fields, "end-to-end trust: %v", err)
+		}
+		spec, _, _ := portlink.ParseConsent(l.Consent)
+		if err := portlink.CheckEnd(spec, true, id, peerE); err != nil {
+			return deny(codes.PermissionDenied, fields, "end-to-end trust: %v", err)
+		}
+		if err := portlink.CheckEnd(spec, false, self, s.selfEndorsement()); err != nil {
 			return deny(codes.PermissionDenied, fields, "end-to-end trust: %v", err)
 		}
 	}
@@ -251,21 +270,57 @@ func (s *Server) LinkOwnerDeny(owner string) string {
 // owner's port to (or the owner's traffic from) a worker somebody else
 // controls.
 func LinkPeerTrustDeny(p *pki.TrustPolicy, peer *x509.Certificate, owner string) string {
+	_, why := LinkPeerTrust(p, peer, owner)
+	return why
+}
+
+// LinkPeerTrust is LinkPeerTrustDeny returning the peer's verified
+// endorsement (nil without end-to-end trust), for portlink.CheckEnd.
+func LinkPeerTrust(p *pki.TrustPolicy, peer *x509.Certificate, owner string) (*pki.Endorsement, string) {
 	if !p.Active() {
-		return ""
+		return nil, ""
 	}
 	if peer == nil {
-		return "end-to-end trust: no peer certificate"
+		return nil, "end-to-end trust: no peer certificate"
 	}
-	u, err := p.Check(peer)
+	e, err := p.CheckEndorsement(peer)
 	if err != nil {
-		return "end-to-end trust: " + err.Error()
+		return nil, "end-to-end trust: " + err.Error()
 	}
-	if u != owner {
+	if e.User != owner {
 		id, _ := pki.IdentityFromCert(peer)
-		return fmt.Sprintf("end-to-end trust: %s is endorsed by %s, not by the link's owner", id, u)
+		return nil, fmt.Sprintf("end-to-end trust: %s is endorsed by %s, not by the link's owner", id, e.User)
 	}
-	return ""
+	return e, ""
+}
+
+// selfIdentity is this worker's identity as its current certificate says
+// (Server.SelfCert; else the name it started with).
+func (s *Server) selfIdentity() pki.Identity {
+	if s.SelfCert != nil {
+		if c := s.SelfCert(); c != nil {
+			if id, err := pki.IdentityFromCert(c); err == nil {
+				return id
+			}
+		}
+	}
+	return pki.Identity{Role: pki.RoleWorker, Name: s.Name}
+}
+
+// selfEndorsement is the endorsement this worker's current certificate
+// carries (nil: none).
+func (s *Server) selfEndorsement() *pki.Endorsement {
+	if s.SelfCert == nil {
+		return nil
+	}
+	c := s.SelfCert()
+	if c == nil {
+		return nil
+	}
+	if t, err := pki.TrustOf(c); err == nil && t != nil {
+		return t.Endorsement
+	}
+	return nil
 }
 
 // peerCert is the TLS peer's leaf certificate of a stream (nil: none).

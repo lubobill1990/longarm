@@ -12,6 +12,7 @@ package hub
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -19,6 +20,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/relay"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -28,10 +30,16 @@ var (
 	handoffPairPerUser = 16
 )
 
-// handoffPairKey is one user's pair of workers (names ordered).
-type handoffPairKey struct{ a, b, owner string }
+// handoffPairKey is one user's pair of workers (ordered by node ID):
+// their IDs and certificate names.
+type handoffPairKey struct{ aID, bID, a, b, owner string }
 
 // HandoffPair lists (or, with release, drops) the caller's temporary pair.
+// a and b are the workers' certificate names; a_id / b_id (newer clients:
+// from the certificates they verified) hold them to node IDs. Each side
+// must be a worker the caller may hand off with (handoffWorkerLocked);
+// anything else - unknown, another user's, a name that is not that ID's -
+// is "no worker", word for word the same.
 func (h *Hub) HandoffPair(c caller, req *pb.HandoffPairRequest) (*pb.HandoffPairResponse, error) {
 	if req.A == "" || req.B == "" || req.A == req.B {
 		return nil, status.Error(codes.InvalidArgument, "a handoff pair needs two different workers")
@@ -43,25 +51,33 @@ func (h *Hub) HandoffPair(c caller, req *pb.HandoffPairRequest) (*pb.HandoffPair
 	if !req.Release && (ttl <= 0 || ttl > handoffPairMaxTTL) {
 		return nil, status.Errorf(codes.InvalidArgument, "ttl %s: at most %s", ttl, handoffPairMaxTTL)
 	}
-	owner := c.id.Owner()
-	k := handoffPairKey{req.A, req.B, owner}
-	if k.b < k.a {
-		k.a, k.b = k.b, k.a
-	}
+	owner := c.user
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for _, name := range []string{k.a, k.b} {
-		if !h.handoffWorkerLocked(owner, name) {
+	var ends [2]*node
+	for i, side := range [2][2]string{{req.A, req.AId}, {req.B, req.BId}} {
+		n := h.handoffWorkerLocked(owner, side[0], side[1])
+		if n == nil {
 			// word for word the unknown-name answer: another user's worker
 			// stays hidden
-			return nil, status.Errorf(codes.NotFound, "no worker %q", name)
+			return nil, status.Errorf(codes.NotFound, "no worker %q", side[0])
 		}
+		ends[i] = n
 	}
-	fields := map[string]any{"a": k.a, "b": k.b, "owner": owner}
+	if ends[0] == ends[1] {
+		return nil, status.Error(codes.InvalidArgument, "a handoff pair needs two different workers")
+	}
+	k := handoffPairKey{ends[0].rec.ID, ends[1].rec.ID, ends[0].rec.DialName(), ends[1].rec.DialName(), owner}
+	if k.bID < k.aID {
+		k.aID, k.bID, k.a, k.b = k.bID, k.aID, k.b, k.a
+	}
+	fields := map[string]any{"a": k.a, "b": k.b, "a_id": k.aID, "b_id": k.bID, "owner": owner}
 	if req.Release {
-		if _, ok := h.handoffPairs[k]; ok {
-			delete(h.handoffPairs, k)
-			h.updateRelayPairsLocked()
+		for o := range h.handoffPairs { // the same workers, whatever their names now
+			if o.aID == k.aID && o.bID == k.bID && o.owner == owner {
+				delete(h.handoffPairs, o)
+				h.updateRelayPairsLocked()
+			}
 		}
 		fields["release"] = true
 		h.auditHub(c.id.String(), "handoff/pair", fields)
@@ -92,27 +108,48 @@ func (h *Hub) HandoffPair(c caller, req *pb.HandoffPairRequest) (*pb.HandoffPair
 	return &pb.HandoffPairResponse{ExpiresAt: timestamppb.New(exp)}, nil
 }
 
-// handoffWorkerLocked: user may hand off to and from the worker - an
-// approved worker that is user's own, or an ownerless (fleet) worker user
-// may use. A worker of another user never, even when shared with user, and
-// for admins neither.
-func (h *Hub) handoffWorkerLocked(user, name string) bool {
-	n := h.nodes[name]
+// handoffWorkerLocked is the worker user may hand off to and from (nil:
+// none) - an approved worker that is user's own, or an ownerless (fleet)
+// worker user may use; a worker of another user never, even when shared
+// with user, and for admins neither. It is found by its node ID (id, when
+// given: name must then be the name in its certificate), else by the name
+// in its certificate (an older client) among the non-revoked workers.
+func (h *Hub) handoffWorkerLocked(user, name, id string) *node {
+	var n *node
+	if id != "" {
+		n = h.nodes[strings.ToLower(id)]
+		if n != nil && n.rec.DialName() != name {
+			return nil
+		}
+	} else {
+		for _, o := range h.nodes {
+			if o.rec.State != stateRevoked && o.rec.DialName() == name {
+				n = o
+				break
+			}
+		}
+	}
 	if user == "" || n == nil || n.rec.Role != string(pki.RoleWorker) || n.rec.State != stateApproved {
-		return false
+		return nil
 	}
 	if n.rec.Owner != "" {
-		return n.rec.Owner == user
+		if n.rec.Owner != user {
+			return nil
+		}
+		return n
 	}
-	return h.mayUseLocked(user, n)
+	if !h.mayUseLocked(user, n) {
+		return nil
+	}
+	return n
 }
 
 // handoffPairsLocked are the unexpired handoff pairs.
-func (h *Hub) handoffPairsLocked(now time.Time) [][2]string {
-	var pairs [][2]string
+func (h *Hub) handoffPairsLocked(now time.Time) []relay.WorkerPair {
+	var pairs []relay.WorkerPair
 	for k, exp := range h.handoffPairs {
 		if exp.After(now) {
-			pairs = append(pairs, [2]string{k.a, k.b})
+			pairs = append(pairs, relay.WorkerPair{A: k.a, B: k.b, AID: k.aID, BID: k.bID})
 		}
 	}
 	return pairs

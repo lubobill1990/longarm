@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,21 +61,24 @@ type Hub struct {
 	conns  *conntrack.Tracker
 
 	mu           sync.Mutex
-	nodes        map[string]*node
-	jobs         map[string]map[string]*jobEntry // worker -> id -> job
+	nodes        map[string]*node                // by node ID (identity.go)
+	jobs         map[string]map[string]*jobEntry // worker ID -> job id -> job
 	reservations map[string]*reservation         // job id
 	queue        []*queued
 	profiles     map[string]*pb.Profile // latest revision
 	stable       map[string]*pb.Profile // last revision past its canary
-	knownSerials map[string]bool
-	revVersion   int64
-	sessionSeq   uint64
-	queueSeq     uint64
-	kick         chan struct{}   // re-run the queue
-	rollout      *pb.Rollout     // the current / last release rollout
-	rel          *releaseStore   // release files (relstore.go)
-	latest       latestCache     // the newest complete release, for update notices (updatenotice.go)
-	tailnet      tailnetProvider // nil = no tailnet enrollment
+	knownSerials map[string]string      // recorded certificate serial -> node ID
+	// legacySerials: node ID -> serials of its valid certificates without
+	// a node ID (NodeInfo.legacy_serials; reloadLegacyLocked)
+	legacySerials map[string][]string
+	revVersion    int64
+	sessionSeq    uint64
+	queueSeq      uint64
+	kick          chan struct{}   // re-run the queue
+	rollout       *pb.Rollout     // the current / last release rollout
+	rel           *releaseStore   // release files (relstore.go)
+	latest        latestCache     // the newest complete release, for update notices (updatenotice.go)
+	tailnet       tailnetProvider // nil = no tailnet enrollment
 	// TailnetKey calls per node: workers 5, then one per hour; clients
 	// 10, then one per 10 minutes.
 	tailnetWorkerLimit, tailnetClientLimit *ipLimiter
@@ -146,7 +150,7 @@ type jobEntry struct {
 
 type reservation struct {
 	jobID  string
-	worker string
+	worker string // node ID
 	memGB  float64
 	at     time.Time
 	owner  string // the user who placed it (quotas)
@@ -174,12 +178,15 @@ func Open(cfg *Config, log *slog.Logger) (*Hub, error) {
 	if err != nil {
 		return nil, err
 	}
+	for _, note := range st.MigrationNotes {
+		log.Warn("database migration: " + note)
+	}
 	h := &Hub{
 		cfg: cfg, log: log, store: st, ca: ca, params: cfg.SchedParams(), bus: newBus(),
 		joinLimit: newIPLimiter(0.2, 10), loginLimit: newIPLimiter(0.1, 5), renewLimit: newIPLimiter(0.5, 10), conns: conntrack.New(),
 		tailnetWorkerLimit: newIPLimiter(1.0/3600, 5), tailnetClientLimit: newIPLimiter(1.0/600, 10), nodes: map[string]*node{},
 		jobs: map[string]map[string]*jobEntry{}, reservations: map[string]*reservation{},
-		profiles: map[string]*pb.Profile{}, stable: map[string]*pb.Profile{}, knownSerials: map[string]bool{}, kick: make(chan struct{}, 1),
+		profiles: map[string]*pb.Profile{}, stable: map[string]*pb.Profile{}, knownSerials: map[string]string{}, kick: make(chan struct{}, 1),
 		pending: map[string]*pendingReq{}, links: map[string]*linkEntry{}, tenants: map[string]*tenant{}, portLinks: map[string]*portLinkEntry{},
 		started: time.Now(), addrs: map[string]string{}, entra: newEntraState(&cfg.Auth.Entra), pair: newPairing(),
 		idps: newIdProviders(&cfg.Auth), oidc: &oidcWeb{usedState: map[string]time.Time{}},
@@ -239,7 +246,13 @@ func (h *Hub) load() error {
 				n.tailnet = ts
 			}
 		}
-		h.nodes[r.Name] = n
+		h.nodes[r.ID] = n
+	}
+	if h.knownSerials, err = h.store.CertNodes(time.Now()); err != nil {
+		return err
+	}
+	if h.legacySerials, err = h.store.LegacyCerts(time.Now()); err != nil {
+		return err
 	}
 	rows, err := h.store.Jobs()
 	if err != nil {
@@ -281,8 +294,18 @@ func (h *Hub) load() error {
 	}
 	h.recheckPortLinksLocked() // isolation or hub.toml may have changed since
 	h.loadRelaysLocked()
+	return h.loadRevocations()
+}
+
+// loadRevocations loads the revocation version and list (at start).
+func (h *Hub) loadRevocations() error {
 	v, _ := h.store.Meta("revocation_version")
 	h.revVersion, _ = strconv.ParseInt(v, 10, 64)
+	// legacy name revocations (also the migration's tombstones) last at
+	// least as long as the CA
+	if err := h.store.ExtendRevokedNames(h.ca.Cert.NotAfter); err != nil {
+		return err
+	}
 	h.revoked, _ = pki.LoadRevocationList("")
 	return h.rebuildRevocations()
 }
@@ -296,7 +319,8 @@ func (h *Hub) jobMap(worker string) map[string]*jobEntry {
 	return m
 }
 
-// rebuildRevocations reloads the revocation list from the store.
+// rebuildRevocations reloads the revocation list from the store (h.mu
+// held, or before serving).
 func (h *Hub) rebuildRevocations() error {
 	certs, err := h.store.RevokedCerts(time.Now())
 	if err != nil {
@@ -306,7 +330,83 @@ func (h *Hub) rebuildRevocations() error {
 	for _, c := range certs {
 		m[c.Serial] = c.NotAfter
 	}
-	return h.revoked.Replace(h.revVersion, m)
+	ids := map[string]time.Time{}
+	for _, n := range h.revokedNodesLocked(certs) {
+		ids[n.Id] = n.NotAfter.AsTime()
+	}
+	names := map[string]time.Time{}
+	for _, n := range h.revokedNamesLocked() {
+		names[pki.RevokedNameKey(pki.Role(n.Role), n.Name)] = n.NotAfter.AsTime()
+	}
+	return h.revoked.ReplaceAllNames(h.revVersion, m, ids, names)
+}
+
+// revokedNamesLocked are the legacy name revocations in force.
+func (h *Hub) revokedNamesLocked() []*pb.RevokedName {
+	rs, err := h.store.RevokedNames(time.Now())
+	if err != nil {
+		h.log.Warn("revoked names", "err", err)
+	}
+	out := make([]*pb.RevokedName, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, &pb.RevokedName{Role: r.Role, Name: r.Name, NotAfter: tspb(r.NotAfter)})
+	}
+	return out
+}
+
+// legacyNameRevocationTTL: how long a legacy name revocation lasts - longer
+// than any certificate issued before node IDs can live.
+const legacyNameRevocationTTL = store.LegacyNameTombstoneTTL
+
+// revokeLegacyNamesLocked adds legacy name revocations for the names of
+// node n's certificates without a node ID (a revoked node, or a renamed
+// one that adopted its new certificate): copies of them the hub never saw
+// stop working on workers too.
+func (h *Hub) revokeLegacyNamesLocked(n *node) {
+	names, err := h.store.LegacyCertNames(n.rec.ID)
+	if err != nil {
+		h.log.Warn("legacy certificate names", "id", n.rec.ID, "err", err)
+	}
+	if !n.rec.CertHasID && len(names) == 0 && n.rec.CertSerial != "" {
+		names = []string{n.rec.DialName()}
+	}
+	until := time.Now().Add(legacyNameRevocationTTL)
+	if ca := h.ca.Cert.NotAfter; ca.After(until) {
+		until = ca // as long as the CA could have issued such a certificate
+	}
+	for _, name := range names {
+		if err := h.store.AddRevokedName(store.RevokedName{Role: n.rec.Role, Name: name, NotAfter: until}); err != nil {
+			h.log.Warn("legacy name revocation", "name", name, "err", err)
+		}
+	}
+}
+
+// revokedNodesLocked are the revoked nodes whose certificates may not have
+// expired yet: by ID, until the last of them would expire. Only nodes the
+// hub revoked count - never the node a revoked certificate names by name.
+func (h *Hub) revokedNodesLocked(certs []store.Cert) []*pb.RevokedNode {
+	last := map[string]time.Time{}
+	for _, c := range certs {
+		if c.NodeID != "" && c.NotAfter.After(last[c.NodeID]) {
+			last[c.NodeID] = c.NotAfter
+		}
+	}
+	now := time.Now()
+	var out []*pb.RevokedNode
+	for id, n := range h.nodes {
+		if n.rec.State != stateRevoked {
+			continue
+		}
+		until := n.rec.CertNotAfter
+		if t := last[id]; t.After(until) {
+			until = t
+		}
+		if until.After(now) {
+			out = append(out, &pb.RevokedNode{Id: id, NotAfter: tspb(until)})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Id < out[j].Id })
+	return out
 }
 
 func (h *Hub) revocationsMsg() *pb.HubCommand {
@@ -322,7 +422,7 @@ func (h *Hub) revocationsMsgLocked() *pb.HubCommand {
 	if err != nil {
 		h.log.Warn("revocations", "err", err)
 	}
-	r := &pb.Revocations{Version: h.revVersion}
+	r := &pb.Revocations{Version: h.revVersion, Nodes: h.revokedNodesLocked(certs), Names: h.revokedNamesLocked()}
 	for _, c := range certs {
 		r.Certs = append(r.Certs, &pb.RevokedCert{Serial: c.Serial, NotAfter: tspb(c.NotAfter), Node: c.Node})
 	}

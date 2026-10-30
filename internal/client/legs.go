@@ -11,6 +11,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/transport"
+	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
 // The transport policy (DESIGN §4.1 "prefer=tailscale|longnet, race") is the
@@ -156,6 +157,35 @@ func NodeLegs(name string, endpoints []string) []Worker {
 		out[i] = r.w
 	}
 	return out
+}
+
+// WorkerFromNode is WorkerFromEndpoints for a node the hub reported: it is
+// dialed by the name in its certificate (NodeInfo.cert_name: after a
+// rename, until the worker renewed) and must present its node ID.
+func WorkerFromNode(n *pb.NodeInfo) (Worker, bool) {
+	w, ok := WorkerFromEndpoints(n.Name, ReachableEndpoints(n.Endpoints, n.Hostname))
+	if !ok {
+		return w, false
+	}
+	if n.CertName != "" {
+		w.CertName = n.CertName
+	}
+	w.ID, w.LegacySerials = n.Id, n.LegacySerials
+	return w, true
+}
+
+// NodeLegsOf is NodeLegs for a node the hub reported (WorkerFromNode),
+// for monitoring: any worker the user's keys endorsed (TrustAny), held to
+// the node's ID.
+func NodeLegsOf(n *pb.NodeInfo) []Worker {
+	legs := NodeLegs(n.Name, ReachableEndpoints(n.Endpoints, n.Hostname))
+	for i := range legs {
+		if n.CertName != "" {
+			legs[i].CertName = n.CertName
+		}
+		legs[i].ID, legs[i].LegacySerials, legs[i].TrustAny = n.Id, n.LegacySerials, true
+	}
+	return legs
 }
 
 // WorkerFromEndpoints is a hub-known worker whose legs are all its

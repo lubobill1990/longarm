@@ -105,9 +105,10 @@ func TestUpdateNotice(t *testing.T) {
 
 	// CheckUpdate: a worker of the stable channel hears of 1.2.0 without a rollout
 	h.mu.Lock()
-	h.nodes["w1"] = &node{rec: &store.Node{Name: "w1", Role: "worker", State: stateApproved, Version: "1.0.0"}}
+	w1 := &node{rec: &store.Node{Name: "w1", Role: "worker", State: stateApproved, Version: "1.0.0"}}
+	h.putTestNode(w1)
 	h.mu.Unlock()
-	wctx := context.WithValue(ctx, callerKey{}, caller{id: pki.Identity{Role: pki.RoleWorker, Name: "w1"}, cert: &x509.Certificate{}})
+	wctx := context.WithValue(ctx, callerKey{}, caller{id: pki.Identity{Role: pki.RoleWorker, Name: "w1"}, cert: &x509.Certificate{}, nodeID: w1.rec.ID})
 	resp, err := fs.CheckUpdate(wctx, &pb.UpdateCheckRequest{Os: "windows", Arch: "amd64", Version: "1.0.0", Channel: "stable"})
 	if err != nil || resp.Version != "" || resp.LatestVersion != "1.2.0" {
 		t.Fatalf("CheckUpdate: %v %v", resp, err)
@@ -183,9 +184,10 @@ func TestLatestByChannel(t *testing.T) {
 	// CheckUpdate follows the worker's channel; want=latest too
 	fs := &fleetServer{h: h}
 	h.mu.Lock()
-	h.nodes["w1"] = &node{rec: &store.Node{Name: "w1", Role: "worker", State: stateApproved, Version: "0.1.20"}}
+	cw := &node{rec: &store.Node{Name: "w1", Role: "worker", State: stateApproved, Version: "0.1.20"}}
+	h.putTestNode(cw)
 	h.mu.Unlock()
-	wctx := context.WithValue(ctx, callerKey{}, caller{id: pki.Identity{Role: pki.RoleWorker, Name: "w1"}, cert: &x509.Certificate{}})
+	wctx := context.WithValue(ctx, callerKey{}, caller{id: pki.Identity{Role: pki.RoleWorker, Name: "w1"}, cert: &x509.Certificate{}, nodeID: cw.rec.ID})
 	expireLatest(h)
 	resp, err := fs.CheckUpdate(wctx, &pb.UpdateCheckRequest{Os: "windows", Arch: "amd64", Version: "0.1.20", Channel: "dev"})
 	if err != nil || resp.LatestVersion != "0.1.22-dev.9" {
@@ -226,7 +228,7 @@ func TestPushReleaseAllowNone(t *testing.T) {
 	}
 	h.mu.Lock()
 	for _, name := range []string{"msi-b", "msi-a"} {
-		h.nodes[name] = &node{rec: &store.Node{Name: name, Role: "worker", State: stateApproved, Version: "1.1.0"}}
+		h.putTestNode(&node{rec: &store.Node{Name: name, Role: "worker", State: stateApproved, Version: "1.1.0"}})
 	}
 	h.mu.Unlock()
 	if _, err := h.pushRelease(&pb.PushReleaseRequest{Version: "1.2.0"}, "test"); status.Code(err) != codes.FailedPrecondition {

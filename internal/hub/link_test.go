@@ -354,7 +354,7 @@ func TestLinkEntra(t *testing.T) {
 		t.Fatalf("approved worker: %v %v", r, id)
 	}
 	h.mu.Lock()
-	n := h.nodes["aw"]
+	n := h.nodeLocked("aw")
 	ok := n.rec.Owner == "alice" && n.rec.State == stateApproved && h.mayUseLocked("alice", n) && !h.mayUseLocked("bob", n)
 	h.mu.Unlock()
 	if !ok {
@@ -877,7 +877,7 @@ func TestLinkBoth(t *testing.T) {
 		t.Fatalf("taken device name: %d", c)
 	}
 	h.mu.Lock()
-	n := h.nodes["dual2"]
+	n := h.nodeLocked("dual2")
 	h.mu.Unlock()
 	if n == nil || n.rec.State != stateRevoked {
 		t.Fatalf("worker of a failed pairing: %+v", n)
@@ -969,7 +969,7 @@ func TestEntraLoginBothRollback(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		h.mu.Lock()
-		n := h.nodes["aw"]
+		n := h.nodeLocked("aw")
 		revoked := n != nil && n.rec.State == stateRevoked
 		h.mu.Unlock()
 		if revoked {

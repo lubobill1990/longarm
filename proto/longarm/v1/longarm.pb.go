@@ -4860,13 +4860,17 @@ func (x *SyncResult) GetLfsBytes() int64 {
 }
 
 type HandoffOfferRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`                               // the bundle on this worker (as the caller may read it)
-	Peer          string                 `protobuf:"bytes,2,opt,name=peer,proto3" json:"peer,omitempty"`                               // the worker (certificate name) that may fetch it
-	TransferId    string                 `protobuf:"bytes,3,opt,name=transfer_id,json=transferId,proto3" json:"transfer_id,omitempty"` // [A-Za-z0-9_-]{8,64}
-	Token         []byte                 `protobuf:"bytes,4,opt,name=token,proto3" json:"token,omitempty"`                             // 32 random bytes, the client's
-	Ttl           *durationpb.Duration   `protobuf:"bytes,5,opt,name=ttl,proto3" json:"ttl,omitempty"`                                 // at most 10 minutes
-	MaxBytes      int64                  `protobuf:"varint,6,opt,name=max_bytes,json=maxBytes,proto3" json:"max_bytes,omitempty"`      // refuse a larger file
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Path       string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`                               // the bundle on this worker (as the caller may read it)
+	Peer       string                 `protobuf:"bytes,2,opt,name=peer,proto3" json:"peer,omitempty"`                               // the worker (certificate name) that may fetch it
+	TransferId string                 `protobuf:"bytes,3,opt,name=transfer_id,json=transferId,proto3" json:"transfer_id,omitempty"` // [A-Za-z0-9_-]{8,64}
+	Token      []byte                 `protobuf:"bytes,4,opt,name=token,proto3" json:"token,omitempty"`                             // 32 random bytes, the client's
+	Ttl        *durationpb.Duration   `protobuf:"bytes,5,opt,name=ttl,proto3" json:"ttl,omitempty"`                                 // at most 10 minutes
+	MaxBytes   int64                  `protobuf:"varint,6,opt,name=max_bytes,json=maxBytes,proto3" json:"max_bytes,omitempty"`      // refuse a larger file
+	// the peer's node ID (docs/security.md "Node identity"), from the
+	// certificate the client verified: only a certificate carrying it may
+	// fetch ("" = an older client: peer's name only)
+	PeerId        string `protobuf:"bytes,7,opt,name=peer_id,json=peerId,proto3" json:"peer_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4941,6 +4945,13 @@ func (x *HandoffOfferRequest) GetMaxBytes() int64 {
 		return x.MaxBytes
 	}
 	return 0
+}
+
+func (x *HandoffOfferRequest) GetPeerId() string {
+	if x != nil {
+		return x.PeerId
+	}
+	return ""
 }
 
 type HandoffOfferResponse struct {
@@ -5056,6 +5067,9 @@ type HandoffPullRequest struct {
 	Size          int64                  `protobuf:"varint,5,opt,name=size,proto3" json:"size,omitempty"` // what the offer reported: the bundle must be exactly this
 	Sha256        []byte                 `protobuf:"bytes,6,opt,name=sha256,proto3" json:"sha256,omitempty"`
 	Header        *SyncHeader            `protobuf:"bytes,7,opt,name=header,proto3" json:"header,omitempty"` // repo, commit, branch, path of the worktree to make
+	// the source's node ID, from the certificate the client verified: the
+	// source must present it ("" = an older client: its name only)
+	FromId        string `protobuf:"bytes,8,opt,name=from_id,json=fromId,proto3" json:"from_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5137,6 +5151,13 @@ func (x *HandoffPullRequest) GetHeader() *SyncHeader {
 		return x.Header
 	}
 	return nil
+}
+
+func (x *HandoffPullRequest) GetFromId() string {
+	if x != nil {
+		return x.FromId
+	}
+	return ""
 }
 
 type PrepareJobRequest struct {
@@ -5333,15 +5354,20 @@ func (*PruneResponse) Descriptor() ([]byte, []int) {
 
 // PortLinkGrant is what the hub signs for a port link (SignedPortLinkGrant).
 type PortLinkGrant struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Owner         string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`                                 // the user who created the link
-	From          string                 `protobuf:"bytes,3,opt,name=from,proto3" json:"from,omitempty"`                                   // worker A: its certificate name (listens, dials B)
-	To            string                 `protobuf:"bytes,4,opt,name=to,proto3" json:"to,omitempty"`                                       // worker B: its certificate name (the target)
-	Port          int32                  `protobuf:"varint,5,opt,name=port,proto3" json:"port,omitempty"`                                  // target port on B (127.0.0.1)
-	ListenPort    int32                  `protobuf:"varint,6,opt,name=listen_port,json=listenPort,proto3" json:"listen_port,omitempty"`    // 127.0.0.1:<listen_port> on A
-	ExpiresUnix   int64                  `protobuf:"varint,7,opt,name=expires_unix,json=expiresUnix,proto3" json:"expires_unix,omitempty"` // seconds
-	IssuedUnix    int64                  `protobuf:"varint,8,opt,name=issued_unix,json=issuedUnix,proto3" json:"issued_unix,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Id          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Owner       string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`                                 // the user who created the link
+	From        string                 `protobuf:"bytes,3,opt,name=from,proto3" json:"from,omitempty"`                                   // worker A: its certificate name (listens, dials B)
+	To          string                 `protobuf:"bytes,4,opt,name=to,proto3" json:"to,omitempty"`                                       // worker B: its certificate name (the target)
+	Port        int32                  `protobuf:"varint,5,opt,name=port,proto3" json:"port,omitempty"`                                  // target port on B (127.0.0.1)
+	ListenPort  int32                  `protobuf:"varint,6,opt,name=listen_port,json=listenPort,proto3" json:"listen_port,omitempty"`    // 127.0.0.1:<listen_port> on A
+	ExpiresUnix int64                  `protobuf:"varint,7,opt,name=expires_unix,json=expiresUnix,proto3" json:"expires_unix,omitempty"` // seconds
+	IssuedUnix  int64                  `protobuf:"varint,8,opt,name=issued_unix,json=issuedUnix,proto3" json:"issued_unix,omitempty"`
+	// the ends' node IDs: B accepts only a caller whose certificate is
+	// from_id, and only a grant whose to_id is its own (a worker-to-worker
+	// grant binds immutable IDs, not names)
+	FromId        string `protobuf:"bytes,9,opt,name=from_id,json=fromId,proto3" json:"from_id,omitempty"`
+	ToId          string `protobuf:"bytes,10,opt,name=to_id,json=toId,proto3" json:"to_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5430,6 +5456,20 @@ func (x *PortLinkGrant) GetIssuedUnix() int64 {
 		return x.IssuedUnix
 	}
 	return 0
+}
+
+func (x *PortLinkGrant) GetFromId() string {
+	if x != nil {
+		return x.FromId
+	}
+	return ""
+}
+
+func (x *PortLinkGrant) GetToId() string {
+	if x != nil {
+		return x.ToId
+	}
+	return ""
 }
 
 // SignedPortLinkGrant: the hub's signature over a serialized PortLinkGrant
@@ -6246,7 +6286,7 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\vpatch_bytes\x18\x05 \x01(\x03R\n" +
 	"patchBytes\x12'\n" +
 	"\x0funtracked_bytes\x18\x06 \x01(\x03R\x0euntrackedBytes\x12\x1b\n" +
-	"\tlfs_bytes\x18\a \x01(\x03R\blfsBytes\"\xbe\x01\n" +
+	"\tlfs_bytes\x18\a \x01(\x03R\blfsBytes\"\xd7\x01\n" +
 	"\x13HandoffOfferRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
 	"\x04peer\x18\x02 \x01(\tR\x04peer\x12\x1f\n" +
@@ -6254,14 +6294,15 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"transferId\x12\x14\n" +
 	"\x05token\x18\x04 \x01(\fR\x05token\x12+\n" +
 	"\x03ttl\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\x03ttl\x12\x1b\n" +
-	"\tmax_bytes\x18\x06 \x01(\x03R\bmaxBytes\"B\n" +
+	"\tmax_bytes\x18\x06 \x01(\x03R\bmaxBytes\x12\x17\n" +
+	"\apeer_id\x18\a \x01(\tR\x06peerId\"B\n" +
 	"\x14HandoffOfferResponse\x12\x12\n" +
 	"\x04size\x18\x01 \x01(\x03R\x04size\x12\x16\n" +
 	"\x06sha256\x18\x02 \x01(\fR\x06sha256\"L\n" +
 	"\x13HandoffFetchRequest\x12\x1f\n" +
 	"\vtransfer_id\x18\x01 \x01(\tR\n" +
 	"transferId\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\fR\x05token\"\xe2\x01\n" +
+	"\x05token\x18\x02 \x01(\fR\x05token\"\xfb\x01\n" +
 	"\x12HandoffPullRequest\x12\x12\n" +
 	"\x04from\x18\x01 \x01(\tR\x04from\x12%\n" +
 	"\x0efrom_endpoints\x18\x02 \x03(\tR\rfromEndpoints\x12\x1f\n" +
@@ -6270,7 +6311,8 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x05token\x18\x04 \x01(\fR\x05token\x12\x12\n" +
 	"\x04size\x18\x05 \x01(\x03R\x04size\x12\x16\n" +
 	"\x06sha256\x18\x06 \x01(\fR\x06sha256\x12.\n" +
-	"\x06header\x18\a \x01(\v2\x16.longarm.v1.SyncHeaderR\x06header\"\x9d\x02\n" +
+	"\x06header\x18\a \x01(\v2\x16.longarm.v1.SyncHeaderR\x06header\x12\x17\n" +
+	"\afrom_id\x18\b \x01(\tR\x06fromId\"\x9d\x02\n" +
 	"\x11PrepareJobRequest\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x126\n" +
 	"\tworkspace\x18\x02 \x01(\v2\x18.longarm.v1.JobWorkspaceR\tworkspace\x12K\n" +
@@ -6284,7 +6326,7 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x03log\x18\x01 \x01(\fR\x03log\x12\x18\n" +
 	"\aworkdir\x18\x02 \x01(\tR\aworkdir\"\x0e\n" +
 	"\fPruneRequest\"\x0f\n" +
-	"\rPruneResponse\"\xd2\x01\n" +
+	"\rPruneResponse\"\x80\x02\n" +
 	"\rPortLinkGrant\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05owner\x18\x02 \x01(\tR\x05owner\x12\x12\n" +
@@ -6295,7 +6337,10 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"listenPort\x12!\n" +
 	"\fexpires_unix\x18\a \x01(\x03R\vexpiresUnix\x12\x1f\n" +
 	"\vissued_unix\x18\b \x01(\x03R\n" +
-	"issuedUnix\"_\n" +
+	"issuedUnix\x12\x17\n" +
+	"\afrom_id\x18\t \x01(\tR\x06fromId\x12\x13\n" +
+	"\x05to_id\x18\n" +
+	" \x01(\tR\x04toId\"_\n" +
 	"\x13SignedPortLinkGrant\x12\x14\n" +
 	"\x05grant\x18\x01 \x01(\fR\x05grant\x12\x1c\n" +
 	"\tsignature\x18\x02 \x01(\fR\tsignature\x12\x14\n" +

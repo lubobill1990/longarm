@@ -17,6 +17,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/portlink"
+	"github.com/lubobill1990/longarm/internal/relay"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -32,6 +33,10 @@ import (
 // Workers get no new rights here: A learns its links on its own hub
 // session, and B accepts A's LinkTunnel.Dial only with a grant that names
 // both and a link B's own list still has.
+//
+// Node identity: a link refers to its workers by ID (from_id, to_id); from
+// and to are the names in their certificates (what the workers and the
+// relay know them by), updated when a renamed worker renews.
 
 // portLinkEntry is a link as the hub keeps it.
 type portLinkEntry struct {
@@ -60,6 +65,16 @@ func (h *Hub) loadPortLinks() error {
 			h.store.DeletePortLink(r.ID)
 			continue
 		}
+		if l.FromId == "" || l.ToId == "" { // not mapped by the migration: by name
+			f, t := h.activeByNameLocked(l.From), h.activeByNameLocked(l.To)
+			if f == nil || t == nil {
+				h.log.Warn("dropping a port link of unknown workers", "id", l.Id, "from", l.From, "to", l.To)
+				h.store.DeletePortLink(r.ID)
+				continue
+			}
+			l.FromId, l.ToId = f.rec.ID, t.rec.ID
+			h.savePortLinkLocked(l)
+		}
 		h.portLinks[l.Id] = &portLinkEntry{l: l}
 	}
 	return nil
@@ -80,9 +95,6 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 	}
 	if req.From == "" || req.To == "" {
 		return nil, status.Error(codes.InvalidArgument, "a link needs a worker to listen on (from) and a target worker (to)")
-	}
-	if req.From == req.To {
-		return nil, status.Error(codes.InvalidArgument, "from and to are the same worker (use a local port there)")
 	}
 	if !portlink.ValidPort(req.Port) {
 		return nil, status.Errorf(codes.InvalidArgument, "bad target port %d", req.Port)
@@ -130,22 +142,42 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	v := h.viewerLocked(owner, c.id.Role == pki.RoleAdmin)
-	for _, name := range []string{req.From, req.To} {
-		n := h.nodes[name]
-		if n == nil || n.rec.Role != string(pki.RoleWorker) || n.rec.State != stateApproved {
-			return nil, status.Errorf(codes.NotFound, "no worker %q", name)
-		}
+	var ends [2]*node
+	for i, target := range []string{req.From, req.To} {
 		// User-owned workers: the link's owner must be allowed to use both
 		// ends (admins are no exception); hidden workers stay hidden.
-		if !h.mayUseLocked(owner, n) {
-			return nil, status.Errorf(codes.NotFound, "no worker %q", name)
+		n, err := h.resolveLocked(target, func(n *node) bool { return isWorker(n) && h.mayUseLocked(owner, n) }, "worker")
+		if err != nil {
+			return nil, err
+		}
+		if n.rec.State != stateApproved {
+			return nil, status.Errorf(codes.NotFound, "no worker %q", target)
+		}
+		ends[i] = n
+	}
+	from, to := ends[0], ends[1]
+	if from == to {
+		return nil, status.Error(codes.InvalidArgument, "from and to are the same worker (use a local port there)")
+	}
+	if (req.FromId != "" && !strings.EqualFold(req.FromId, from.rec.ID)) || (req.ToId != "" && !strings.EqualFold(req.ToId, to.rec.ID)) {
+		return nil, status.Errorf(codes.FailedPrecondition, "the workers are not the nodes the request names (%s -> %s): resolve them again", req.FromId, req.ToId)
+	}
+	if req.Consent != nil {
+		if s, _, err := portlink.ParseConsent(req.Consent); err == nil &&
+			((s.FromId != "" && !strings.EqualFold(s.FromId, from.rec.ID)) || (s.ToId != "" && !strings.EqualFold(s.ToId, to.rec.ID))) {
+			return nil, status.Error(codes.InvalidArgument, "the link's consent names other worker nodes")
 		}
 	}
-	if why := h.portLinkExposesLocked(req.From, req.To, v.Admin); why != "" {
+	if req.Consent != nil && (req.From != from.rec.DialName() || req.To != to.rec.DialName()) {
+		// workers hold the signed spec to the names they know each other by
+		return nil, status.Errorf(codes.InvalidArgument, "a link with consent names its workers as their certificates do: %s, %s",
+			from.rec.DialName(), to.rec.DialName())
+	}
+	if why := h.portLinkExposesLocked(from.rec.ID, to.rec.ID, v.Admin); why != "" {
 		return nil, status.Errorf(codes.FailedPrecondition, "%s (an admin may create it)", why)
 	}
 	if req.JobId != "" {
-		e := h.jobs[req.From][req.JobId]
+		e := h.jobs[from.rec.ID][req.JobId]
 		if e == nil || !v.CanRead(tenancy.OwnerOf(e.job.GetSpec()), e.job.GetSpec().GetShareTeams()) {
 			return nil, status.Errorf(codes.NotFound, "no job %s on %s", req.JobId, req.From)
 		}
@@ -161,11 +193,11 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 		if e.l.Owner == owner {
 			mine++
 		}
-		if e.l.From == req.From && e.l.ListenPort == listen {
+		if e.l.FromId == from.rec.ID && e.l.ListenPort == listen {
 			if e.l.Owner == owner || v.Admin && !h.tenancyOnLocked() { // others' link ids are theirs
-				return nil, status.Errorf(codes.AlreadyExists, "port %d on %s is taken by link %s", listen, req.From, e.l.Id)
+				return nil, status.Errorf(codes.AlreadyExists, "port %d on %s is taken by link %s", listen, from.rec.Name, e.l.Id)
 			}
-			return nil, status.Errorf(codes.AlreadyExists, "port %d on %s is taken by another link (choose --port)", listen, req.From)
+			return nil, status.Errorf(codes.AlreadyExists, "port %d on %s is taken by another link (choose --port)", listen, from.rec.Name)
 		}
 	}
 	if mine >= h.cfg.Links.MaxPerUser {
@@ -179,20 +211,21 @@ func (h *Hub) CreatePortLink(c caller, req *pb.CreatePortLinkRequest) (*pb.PortL
 	} else if h.portLinks[id] != nil {
 		return nil, status.Errorf(codes.AlreadyExists, "link %s exists", id)
 	}
-	l := &pb.PortLink{Id: id, Owner: owner, From: req.From, To: req.To, Port: req.Port, ListenPort: listen,
+	l := &pb.PortLink{Id: id, Owner: owner, From: from.rec.DialName(), To: to.rec.DialName(), Port: req.Port, ListenPort: listen,
 		CreatedAt: timestamppb.New(now), ExpiresAt: timestamppb.New(expires), JobId: req.JobId, CreatedBy: c.id.String(),
-		Consent: req.Consent}
+		Consent: req.Consent, FromId: from.rec.ID, ToId: to.rec.ID}
 	if err := h.savePortLinkLocked(l); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	h.portLinks[id] = &portLinkEntry{l: l}
 	h.auditHub(c.id.String(), "links/create", map[string]any{"link": id, "owner": owner, "from": l.From, "to": l.To,
+		"from_id": l.FromId, "to_id": l.ToId,
 		"port": l.Port, "listen_port": l.ListenPort, "expires": l.ExpiresAt.AsTime().UTC().Format(time.RFC3339), "job": l.JobId})
 	h.log.Info("port link created", "link", id, "owner", owner, "from", l.From, "to", fmt.Sprintf("%s:%d", l.To, l.Port), "listen", l.ListenPort, "ttl", ttl)
 	// telemetry: no link, owner, worker or port
 	h.tel().Event(context.Background(), "link.created", map[string]string{"role": string(c.id.Role), "job_bound": boolStr(l.JobId != "")},
 		map[string]float64{"ttl_h": ttl.Hours()})
-	h.portLinksChangedLocked(l.From, l.To)
+	h.portLinksChangedLocked(l.FromId, l.ToId)
 	return h.portLinkViewLocked(h.portLinks[id]), nil
 }
 
@@ -240,9 +273,16 @@ func (h *Hub) portLinkViewLocked(e *portLinkEntry) *pb.PortLink {
 	default:
 		l.Status = &pb.PortLinkStatus{Id: l.Id, State: "pending"}
 	}
-	if n := h.nodes[l.From]; n == nil || n.sess == nil {
+	if n := h.nodes[l.FromId]; n == nil || n.sess == nil {
 		l.Status.State = "offline"
 		l.Status.Error = "worker " + l.From + " is offline"
+	}
+	// the workers' display names (from / to are their certificates')
+	if n := h.nodes[l.FromId]; n != nil {
+		l.From = n.rec.Name
+	}
+	if n := h.nodes[l.ToId]; n != nil {
+		l.To = n.rec.Name
 	}
 	return l
 }
@@ -272,11 +312,11 @@ func (h *Hub) removePortLinkLocked(e *portLinkEntry, by, reason string) {
 		h.log.Warn("delete port link", "link", l.Id, "err", err)
 	}
 	h.auditHub(by, "links/remove", map[string]any{"link": l.Id, "owner": l.Owner, "from": l.From, "to": l.To,
-		"port": l.Port, "listen_port": l.ListenPort, "reason": reason})
+		"from_id": l.FromId, "to_id": l.ToId, "port": l.Port, "listen_port": l.ListenPort, "reason": reason})
 	h.log.Info("port link removed", "link", l.Id, "owner", l.Owner, "by", by, "reason", reason)
 	h.tel().Event(context.Background(), "link.removed", map[string]string{"reason": linkRemovalClass(reason)},
 		map[string]float64{"age_s": time.Since(l.CreatedAt.AsTime()).Seconds()})
-	h.portLinksChangedLocked(l.From, l.To)
+	h.portLinksChangedLocked(l.FromId, l.ToId)
 }
 
 // linkRemovalClass is a removal reason without names (telemetry).
@@ -306,7 +346,7 @@ func (h *Hub) removePortLinksLocked(cond func(*pb.PortLink) bool, by, reason str
 // portLinkExposesLocked says why a link from -> to would expose a user's
 // private port ("" = it does not): a shared-isolation source lets every local
 // process use the listener, so it would open a per-user target's port to the
-// other users there. Links an admin creates are exempt.
+// other users there. Links an admin creates are exempt. from, to: IDs.
 func (h *Hub) portLinkExposesLocked(from, to string, admin bool) string {
 	if admin || !h.tenancyOnLocked() {
 		return ""
@@ -315,7 +355,7 @@ func (h *Hub) portLinkExposesLocked(from, to string, admin bool) string {
 	if f == nil || t == nil || f.rec.Isolation == tenancy.PerUser || t.rec.Isolation != tenancy.PerUser {
 		return ""
 	}
-	return fmt.Sprintf("%s isolates users and %s does not: everybody on %s could use the link", to, from, from)
+	return fmt.Sprintf("%s isolates users and %s does not: everybody on %s could use the link", t.rec.Name, f.rec.Name, f.rec.Name)
 }
 
 // recheckPortLinksLocked removes the links that are no longer allowed: their
@@ -327,13 +367,13 @@ func (h *Hub) recheckPortLinksLocked() {
 	why := map[*portLinkEntry]string{}
 	for _, e := range h.portLinks {
 		admin := strings.HasPrefix(e.l.CreatedBy, string(pki.RoleAdmin)+"/")
-		if w := h.portLinkExposesLocked(e.l.From, e.l.To, admin); w != "" {
+		if w := h.portLinkExposesLocked(e.l.FromId, e.l.ToId, admin); w != "" {
 			why[e] = w
 			continue
 		}
-		for _, name := range []string{e.l.From, e.l.To} {
-			if n := h.nodes[name]; n != nil && !h.mayUseLocked(e.l.Owner, n) {
-				why[e] = fmt.Sprintf("%s may no longer use %s", e.l.Owner, name)
+		for _, id := range []string{e.l.FromId, e.l.ToId} {
+			if n := h.nodes[id]; n != nil && !h.mayUseLocked(e.l.Owner, n) {
+				why[e] = fmt.Sprintf("%s may no longer use %s", e.l.Owner, n.rec.Name)
 				break
 			}
 		}
@@ -348,12 +388,12 @@ func (h *Hub) sweepPortLinksLocked(now time.Time) {
 	h.removePortLinksLocked(func(l *pb.PortLink) bool { return !l.ExpiresAt.AsTime().After(now) }, "hub", "expired")
 }
 
-// portLinkJobsLocked removes links whose job on worker ended (or vanished
-// from the worker).
+// portLinkJobsLocked removes links whose job on worker (an ID) ended (or
+// vanished from the worker).
 func (h *Hub) portLinkJobsLocked(worker string) {
 	jm := h.jobs[worker]
 	h.removePortLinksLocked(func(l *pb.PortLink) bool {
-		if l.From != worker || l.JobId == "" {
+		if l.FromId != worker || l.JobId == "" {
 			return false
 		}
 		e := jm[l.JobId]
@@ -361,7 +401,7 @@ func (h *Hub) portLinkJobsLocked(worker string) {
 	}, "hub", "job ended")
 }
 
-// portLinksChangedLocked pushes the link lists of the named workers and
+// portLinksChangedLocked pushes the link lists of the workers (IDs) and
 // updates the relay's worker pairs.
 func (h *Hub) portLinksChangedLocked(workers ...string) {
 	h.portLinksVersion++
@@ -380,7 +420,9 @@ func (h *Hub) portLinksChangedLocked(workers ...string) {
 
 // updateRelayPairsLocked lets the relay carry traffic between linked
 // workers and the workers of a running handoff transfer (handoffpairs.go),
-// and nothing else between workers.
+// and nothing else between workers. Pairs name the workers by their
+// certificate names and node IDs: a worker whose certificate carries an ID
+// is matched by it (a reused or renamed name never inherits a pair).
 func (h *Hub) updateRelayPairsLocked() {
 	h.relayPolicyNotify() // external relays (relays.go)
 	if h.relay == nil {
@@ -390,34 +432,35 @@ func (h *Hub) updateRelayPairsLocked() {
 }
 
 // relayWorkerPairsLocked are the worker pairs relays may carry: those of
-// the port links and of handoff transfers.
-func (h *Hub) relayWorkerPairsLocked(now time.Time) [][2]string {
-	pairs := make([][2]string, 0, len(h.portLinks)+len(h.handoffPairs))
+// the port links and of handoff transfers, by certificate name and node ID.
+func (h *Hub) relayWorkerPairsLocked(now time.Time) []relay.WorkerPair {
+	pairs := make([]relay.WorkerPair, 0, len(h.portLinks)+len(h.handoffPairs))
 	for _, e := range h.portLinks {
-		pairs = append(pairs, [2]string{e.l.From, e.l.To})
+		pairs = append(pairs, relay.WorkerPair{A: e.l.From, B: e.l.To, AID: e.l.FromId, BID: e.l.ToId})
 	}
 	return append(pairs, h.handoffPairsLocked(now)...)
 }
 
-// portLinksMsgLocked is the list of links naming worker, with grants and
-// the targets' endpoints for the links it listens for.
+// portLinksMsgLocked is the list of links naming worker (an ID), with
+// grants and the targets' endpoints for the links it listens for.
 func (h *Hub) portLinksMsgLocked(worker string) *pb.HubCommand {
 	msg := &pb.PortLinks{Version: h.portLinksVersion}
 	for _, e := range h.portLinks {
 		l := e.l
-		if l.From != worker && l.To != worker {
+		if l.FromId != worker && l.ToId != worker {
 			continue
 		}
 		a := &pb.PortLinkAssignment{Link: proto.Clone(l).(*pb.PortLink)}
-		if l.From == worker {
+		if l.FromId == worker {
 			g, err := h.portLinkGrantLocked(e)
 			if err != nil {
 				h.log.Warn("sign port link grant", "link", l.Id, "err", err)
 				continue
 			}
 			a.Grant = g
-			if n := h.nodes[l.To]; n != nil {
+			if n := h.nodes[l.ToId]; n != nil {
 				a.TargetEndpoints = append([]string(nil), n.rec.Endpoints...)
+				a.TargetLegacySerials = append([]string(nil), h.legacySerials[l.ToId]...)
 			}
 		}
 		msg.Links = append(msg.Links, a)
@@ -436,7 +479,8 @@ func (h *Hub) portLinkGrantLocked(e *portLinkEntry) (*pb.SignedPortLinkGrant, er
 	}
 	l := e.l
 	g, err := portlink.Sign(cert, &pb.PortLinkGrant{Id: l.Id, Owner: l.Owner, From: l.From, To: l.To, Port: l.Port,
-		ListenPort: l.ListenPort, ExpiresUnix: l.ExpiresAt.AsTime().Unix(), IssuedUnix: time.Now().Unix()})
+		ListenPort: l.ListenPort, ExpiresUnix: l.ExpiresAt.AsTime().Unix(), IssuedUnix: time.Now().Unix(),
+		FromId: l.FromId, ToId: l.ToId})
 	if err != nil {
 		return nil, err
 	}
@@ -445,16 +489,42 @@ func (h *Hub) portLinkGrantLocked(e *portLinkEntry) (*pb.SignedPortLinkGrant, er
 }
 
 // portLinkTargetChangedLocked re-sends the lists of the workers listening
-// for links to target (its endpoints changed).
+// for links to target (an ID; its endpoints changed).
 func (h *Hub) portLinkTargetChangedLocked(target string) {
 	var from []string
 	for _, e := range h.portLinks {
-		if e.l.To == target {
-			from = append(from, e.l.From)
+		if e.l.ToId == target {
+			from = append(from, e.l.FromId)
 		}
 	}
 	if len(from) > 0 {
 		h.portLinksChangedLocked(from...)
+	}
+}
+
+// dialNameChangedLocked follows a worker's new certificate name (a renamed
+// worker renewed): its links name it by that now (new grants), both ends
+// get their lists again and the relay its pairs.
+func (h *Hub) dialNameChangedLocked(n *node) {
+	var touched []string
+	for _, e := range h.portLinks {
+		changed := false
+		if e.l.FromId == n.rec.ID && e.l.From != n.rec.DialName() {
+			e.l.From, changed = n.rec.DialName(), true
+		}
+		if e.l.ToId == n.rec.ID && e.l.To != n.rec.DialName() {
+			e.l.To, changed = n.rec.DialName(), true
+		}
+		if changed {
+			e.grant = nil
+			if err := h.savePortLinkLocked(e.l); err != nil {
+				h.log.Warn("save port link", "link", e.l.Id, "err", err)
+			}
+			touched = append(touched, e.l.FromId, e.l.ToId)
+		}
+	}
+	if len(touched) > 0 {
+		h.portLinksChangedLocked(touched...)
 	}
 }
 
@@ -464,7 +534,7 @@ func (h *Hub) applyPortLinkReportLocked(n *node, rep *pb.PortLinkReport) {
 	now := timestamppb.Now()
 	for _, s := range rep.Links {
 		e := h.portLinks[s.GetId()]
-		if e == nil || e.l.From != n.rec.Name {
+		if e == nil || e.l.FromId != n.rec.ID {
 			continue
 		}
 		s.UpdatedAt = now

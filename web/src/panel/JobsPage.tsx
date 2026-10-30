@@ -150,7 +150,15 @@ function JobRow({ j, me }: { j: FleetJob; me: Me }) {
       <td className="mono small">
         <Link to={`/jobs/${encodeURIComponent(s.id)}?worker=${encodeURIComponent(j.worker)}`}>{s.name || s.id.slice(-10)}</Link>
       </td>
-      <td>{j.worker}</td>
+      <td>
+        {j.worker}
+        {j.worker_id && (
+          <span className="mono faint small" title={`node ID ${j.worker_id}`}>
+            {' '}
+            {j.worker_id.slice(0, 8)}
+          </span>
+        )}
+      </td>
       <td>
         <StatePill state={j.job.state} />
       </td>
@@ -249,7 +257,10 @@ function JobDetail({ id, me }: { id: string; me: Me }) {
             <span className="muted">id</span>
             <span className="mono">{j.job.spec.id}</span>
             <span className="muted">worker</span>
-            <span>{j.worker}</span>
+            <span>
+              {j.worker}
+              {j.worker_id && <span className="mono faint"> ({j.worker_id})</span>}
+            </span>
             <span className="muted">command</span>
             <span className="mono">{(j.job.spec.argv ?? []).join(' ')}</span>
             <span className="muted">owner</span>

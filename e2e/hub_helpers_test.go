@@ -80,8 +80,15 @@ type hubWorker struct {
 // hub.toml), imports the CA and starts the hub.
 func newHubEnv(t *testing.T, extra string) *hubEnv {
 	t.Helper()
+	return newHubEnvBin(t, extra, buildHub(t))
+}
+
+// newHubEnvBin is newHubEnv with another longarm-hub binary (an older
+// release: TestOldReleaseCompat).
+func newHubEnvBin(t *testing.T, extra, hubBinary string) *hubEnv {
+	t.Helper()
 	e := newEnv(t)
-	h := &hubEnv{env: e, hubBin: buildHub(t), hubDir: filepath.Join(e.root, "hub"), port: freePort(t), httpPort: freePort(t)}
+	h := &hubEnv{env: e, hubBin: hubBinary, hubDir: filepath.Join(e.root, "hub"), port: freePort(t), httpPort: freePort(t)}
 	h.cfgPath = filepath.Join(e.root, "hub.toml")
 	cfg := fmt.Sprintf(`data_dir = %q
 listen = "127.0.0.1:%d"

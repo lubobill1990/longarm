@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/client"
+	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/trust"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -530,7 +531,7 @@ func TestPortLinksTrust(t *testing.T) {
 		if err != nil {
 			t.Fatalf("trust request: %+v %v", r, err)
 		}
-		we, err := pki.Endorse(aliceKey, "alice", pki.KindWorker, req.Name, req.NodeKey)
+		we, err := pki.EndorseID(aliceKey, "alice", pki.KindWorker, req.Name, req.ID, req.NodeKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -560,18 +561,26 @@ func TestPortLinksTrust(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := pki.Endorse(aliceKey, "alice", pki.KindDevice, "alice", nk.Public().(ed25519.PublicKey))
+	// alice's node ID (a known name is never mapped by name: re-issued
+	// for its node; a name the hub doesn't know yet: a new node)
+	aliceID := nodeid.New()
+	for _, n := range h.nodes(t) {
+		if n["name"] == "alice" && n["role"] == "client" {
+			aliceID, _ = n["id"].(string)
+		}
+	}
+	e, err := pki.EndorseID(aliceKey, "alice", pki.KindDevice, "alice", aliceID, nk.Public().(ed25519.PublicKey))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetEndorsement(e, pki.KindDevice, "alice"); err != nil {
+	if err := st.SetEndorsementFor(e, pki.KindDevice, pki.Identity{Role: pki.RoleClient, Name: "alice", ID: aliceID}); err != nil {
 		t.Fatal(err)
 	}
 	keyPEM, csrPEM, err := pki.NewKeyAndCSR("alice", &pki.CSRTrust{NodeKey: nk, Endorsement: e})
 	if err != nil {
 		t.Fatal(err)
 	}
-	certPEM, err := ca.SignCSR(csrPEM, pki.IssueOptions{Role: pki.RoleClient, Name: "alice"})
+	certPEM, err := ca.SignCSR(csrPEM, pki.IssueOptions{Role: pki.RoleClient, Name: "alice", ID: aliceID})
 	if err != nil {
 		t.Fatal(err)
 	}
