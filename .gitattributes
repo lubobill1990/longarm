@@ -9,3 +9,4 @@ packaging/macos/certs/*.cer binary
 skills/** text eol=lf
 *.syso binary linguist-generated=true
 *.ico binary
+internal/steer/testdata/*.vt binary

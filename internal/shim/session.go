@@ -14,7 +14,9 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/attach"
 	"github.com/lubobill1990/longarm/internal/jobs"
+	"github.com/lubobill1990/longarm/internal/logfile"
 	"github.com/lubobill1990/longarm/internal/platform"
+	"github.com/lubobill1990/longarm/internal/redact"
 )
 
 // Scrollback is how much recent raw terminal output a session keeps in
@@ -37,9 +39,26 @@ func ChannelName(dir string) string {
 }
 
 // runSession runs an interactive session: the command on a pseudo terminal,
-// its output into the scrollback ring, every attached client and out.log.
+// its output into the scrollback ring, every attached client and out.log
+// (a steerable run: term.log; out.log gets the agent's answers).
 func (j *job) runSession(ctr platform.Container) error {
 	argv := j.command(j.spec.Argv)
+	var sr *steerRun
+	term := io.Writer(j.out)
+	if j.spec.Steer != nil {
+		var err error
+		if sr, argv, err = j.prepareSteer(argv); err != nil {
+			return j.failStart("steerable run", err)
+		}
+		tl, err := logfile.OpenWriter(j.d.Path(jobs.TermLog), j.spec.LogMaxBytes)
+		if err != nil {
+			return j.failStart("steerable run", err)
+		}
+		defer tl.Close()
+		tw := redact.NewWriter(tl, j.red)
+		defer tw.Flush() // before tl.Close (deferred calls run last-in first-out)
+		term = tw
+	}
 	if runtime.GOOS == "windows" {
 		// Run through `longarmd conhost --pty` so the pseudo console uses UTF-8
 		// code pages and Ctrl+C reaching the console cannot end the session.
@@ -71,9 +90,12 @@ func (j *job) runSession(ctr platform.Container) error {
 	j.log.Info("session started", "pid", j.st.PID, "argv", j.spec.Argv, "attach", addr)
 
 	h := &hub{ring: make([]byte, 0, Scrollback), clients: map[*client]struct{}{}}
+	if sr != nil {
+		h.obs = sr
+	}
 	go h.serve(ln, p, j)
 
-	dst := &sink{w: j.out, log: j.log}
+	dst := &sink{w: term, log: j.log}
 	copied := make(chan struct{})
 	go func() {
 		defer close(copied)
@@ -93,12 +115,22 @@ func (j *job) runSession(ctr platform.Container) error {
 	var killed atomic.Bool
 	stopWatch := make(chan struct{})
 	go j.watchKill(ctr, &killed, stopWatch)
+	steerDone := make(chan struct{})
+	if sr != nil {
+		go func() {
+			defer close(steerDone)
+			sr.loop(h, p, ctr, stopWatch)
+		}()
+	} else {
+		close(steerDone)
+	}
 
 	code, werr := p.Wait()
 	if werr != nil {
 		j.log.Warn("wait", "err", werr)
 	}
 	close(stopWatch)
+	<-steerDone // it writes out.log: done before the log is flushed
 	_ = ctr.Kill()
 	p.Close()
 	select {
@@ -111,8 +143,11 @@ func (j *job) runSession(ctr platform.Container) error {
 		p.Release()
 	}
 	dst.Stop()
+	reason := ""
 	if killed.Load() {
 		code = platform.KilledExitCode
+	} else if sr != nil {
+		code, reason = sr.finish(code)
 	}
 	if err := j.out.Flush(); err != nil {
 		j.log.Error("flush log", "err", err)
@@ -120,7 +155,11 @@ func (j *job) runSession(ctr platform.Container) error {
 	_ = j.logf.Sync()
 	// Record the final state before telling attached clients, so that what
 	// they see next (longarm sessions, longarm logs) is consistent.
-	err = j.finishExit(killed.Load(), code)
+	if reason != "" {
+		err = j.finish(jobs.Failed, code, reason)
+	} else {
+		err = j.finishExit(killed.Load(), code)
+	}
 	h.exit(code)
 	return err
 }
@@ -154,6 +193,17 @@ type hub struct {
 	inSeq    uint64
 	lastIn   time.Time
 	lastFrom string
+
+	// obs (a steerable run) sees the terminal's activity; set before
+	// serve.
+	obs observer
+}
+
+// observer is told about terminal output, input and resizes as they happen.
+type observer interface {
+	output(p []byte, t time.Time)
+	input(source string, t time.Time)
+	resize(cols, rows uint16)
 }
 
 // input writes p to the terminal as one write and records it. With
@@ -175,6 +225,9 @@ func (h *hub) input(w io.Writer, p []byte, source string, ifIdle time.Duration) 
 	if n > 0 { // the terminal got (some of) it
 		h.inSeq++
 		h.lastIn, h.lastFrom = time.Now().UTC(), source
+		if h.obs != nil {
+			h.obs.input(source, h.lastIn)
+		}
 	}
 	return err == nil, err
 }
@@ -191,9 +244,13 @@ func (h *hub) info() attach.InfoState {
 }
 
 func (h *hub) output(p []byte) {
+	now := time.Now().UTC()
+	if h.obs != nil {
+		h.obs.output(p, now)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.lastOut = time.Now().UTC()
+	h.lastOut = now
 	if over := len(h.ring) + len(p) - Scrollback; over > 0 {
 		if over >= len(h.ring) {
 			h.ring = h.ring[:0]
@@ -313,6 +370,8 @@ func (h *hub) handle(nc net.Conn, p platform.PTY, j *job) {
 			if cols, rows, ok := attach.ParseResize(payload); ok && cols > 0 && rows > 0 {
 				if err := p.Resize(cols, rows); err != nil {
 					j.log.Warn("resize", "err", err)
+				} else if h.obs != nil {
+					h.obs.resize(cols, rows)
 				}
 			}
 		}

@@ -983,3 +983,41 @@ func TestDescribeReadsMoreWhenNeeded(t *testing.T) {
 		t.Fatalf("got title %q dir %q", s.Title, s.ProjectDir)
 	}
 }
+
+// A steerable job: its conversation by the agent's session id, its state;
+// one still at a start-up screen (no transcript) listed all the same; send
+// and attach reach the job.
+func TestAgentListSteerable(t *testing.T) {
+	home := t.TempDir()
+	conv := "9f1c2d3e-0000-4000-8000-0000000000d1"
+	writeClaudeTranscript(t, home, conv, `C:\src\app`, 1)
+	withConv, starting := "01M66YJJ2AHVSSW2DBRQNSDWSA", "01M66YJJ2AHVSSW2DBRQNSDWSB"
+	fk := &fakeSessions{dataDir: filepath.Join(home, ".longarm"), jobs: []*pb.Job{
+		{Spec: &pb.JobSpec{Id: withConv, Name: "fix", Argv: []string{"claude", "fix it"}, Steer: &pb.SteerSpec{Agent: "claude"}},
+			State: pb.JobState_JOB_STATE_RUNNING, Steer: &pb.SteerState{State: "needs_you", SessionId: conv}},
+		{Spec: &pb.JobSpec{Id: starting, Argv: []string{"copilot", "-i", "go"}, Steer: &pb.SteerSpec{Agent: "copilot"}},
+			State: pb.JobState_JOB_STATE_RUNNING, StartedAt: timestamppb.Now()},
+	}}
+	hs := agentTestDaemon(t, home, fk)
+	var got agentListJSON
+	if c := call(t, "GET", hs.URL+"/v1/agent-sessions?worker=w1", "", &got); c != 200 {
+		t.Fatalf("status %d", c)
+	}
+	byKey := map[string]*agentItem{}
+	for _, it := range got.Items {
+		byKey[it.Key] = it
+	}
+	if it := byKey["w1/claude/"+conv]; it == nil || it.Where != whereJob || it.Job != withConv || it.Steer != "needs_you" || it.JobName != "fix" {
+		t.Fatalf("steerable claude job: %+v (items %+v)", it, got.Items)
+	}
+	if it := byKey["w1/job/"+starting]; it == nil || it.Agent != "copilot" || it.Job != starting || it.Steer != "starting" ||
+		it.State != agentlog.StateWorking || it.Title == "" {
+		t.Fatalf("starting job: %+v", it)
+	}
+	if c := call(t, "POST", hs.URL+"/v1/workers/w1/jobs/"+starting+"/send", `{"text":"y","keys":["enter"]}`, nil); c != 200 {
+		t.Fatalf("send: %d", c)
+	}
+	if len(fk.sends) != 2 || !fk.sends[0].Job || fk.sends[0].Name != starting {
+		t.Fatalf("sends %v", fk.sends)
+	}
+}

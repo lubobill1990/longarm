@@ -12,3 +12,4 @@ pull request description.
 | file | area |
 |---|---|
 | [agent-sessions-ui.md](agent-sessions-ui.md) | the tray's Sessions window (docs/agent-sessions-ui.md) |
+| [steerable-runs.md](steerable-runs.md) | `longarm run --steerable` (docs/steerable-runs.md) |

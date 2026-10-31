@@ -79,9 +79,10 @@ type job struct {
 	secrets map[string]string
 	stdin   []byte // the job's stdin payload
 	logf    *logfile.Writer
-	out     *redact.Writer // redacting writer into logf
-	env     []string       // the workload's environment
-	home    string         // the workload account's home ("" = the shim's)
+	out     *redact.Writer   // redacting writer into logf
+	red     *redact.Redactor // the secrets' values
+	env     []string         // the workload's environment
+	home    string           // the workload account's home ("" = the shim's)
 }
 
 func (j *job) finish(state jobs.State, code int, reason string) error {
@@ -238,7 +239,8 @@ func run(d jobs.Dir, stdin io.Reader, log *slog.Logger) error {
 	for _, v := range secrets {
 		values = append(values, v)
 	}
-	j.out = redact.NewWriter(j.logf, redact.New(values))
+	j.red = redact.New(values)
+	j.out = redact.NewWriter(j.logf, j.red)
 	j.logf.OnRotateError = func(err error) { log.Warn("log rotation failed; will retry", "err", err) }
 
 	keys := make([]string, 0, len(spec.Env))

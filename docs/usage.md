@@ -248,7 +248,7 @@ The job's own outcome comes from `jobs --json` (`state`, `exitCode`,
 {"version": "v1.8.0", "features": ["exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label", "git-auth-forward",
   "session-start", "session-send", "session-send-if-idle", "session-stop", "sessions-json-v2", "tail", "run-session",
   "job-id-short", "jobs-mine", "doctor-json", "worker-update", "ls-version", "agent-auth",
-  "agent-handoff", "agent-sessions"]}
+  "agent-handoff", "agent-sessions", "agent-skill", "steerable-run"]}
 ```
 
 (indented in the real output). A program checks `features` instead of
@@ -283,6 +283,7 @@ exit 255) has none of these features.
 | `agent-handoff` | `longarm handoff` (see [Hand off an agent session](#hand-off-an-agent-session)) |
 | `agent-sessions` | `longarm agent-sessions` |
 | `agent-skill` | `longarm skill status\|install\|update\|remove` (see [Agent skill](#agent-skill-for-claude-code-copilot-cli-codex)) |
+| `steerable-run` | `run --steerable [--until-exit]`, `attach --job`, `session send --job` (the worker must also support it: `steerable-run` in its `Node.Info` features), see [Steerable agent runs](#steerable-agent-runs---steerable) |
 
 The session and tail features also need the worker's (`session-start`,
 `session-send`, `session-send-if-idle`, `session-stop`, `session-info`,
@@ -326,6 +327,47 @@ So `longarm jobs --hub-only --json --id <job>` answers "unknown job" (exit 3)
 and "hub unreachable" (exit 69) apart. Workers report their jobs to the hub
 as they change; a job submitted a moment ago can be missing from the index
 for that moment (the `run` that printed its id is the confirmation).
+
+### Steerable agent runs (`--steerable`)
+
+`longarm run --steerable -- claude -p "task"` (or `copilot -p "task"`)
+runs the agent **interactively** on a terminal on the worker instead of
+headless, and it is still a job: it prints a job id, `longarm jobs`,
+`wait`, `logs`, `kill` work as usual, and it ends by itself when the agent
+is done.
+
+```
+longarm run cpc-1 --steerable --repo . -- claude "fix the flaky test"
+longarm attach cpc-1 --job 01KQ...                          # watch it, type into it (Ctrl-] d detaches)
+longarm session send cpc-1 --job 01KQ... --text "also add a test" --key enter
+longarm logs 01KQ...                                        # the agent's answers, like -p prints them
+```
+
+- The command becomes interactive: `claude -p task` runs as `claude task`
+  (print-only options such as `--output-format` are dropped), `copilot -p
+  task` as `copilot -i task`. Permission flags stay yours: without
+  `--permission-mode` / `--allowedTools` / `--allow-all` the agent stops at
+  permission prompts until someone answers them (the job shows `running
+  (needs you)`, the Sessions window a `!`).
+- **Done** means: a turn finished, no permission prompt open, the terminal
+  quiet for 5 s and nobody typing for a minute (after a human steered it,
+  its answer is a minute old too). Then Longarm types `/exit` and the job
+  ends `done` (exit 0). A turn that fails (Claude's API error) ends it
+  `failed` (exit 1). `--until-exit`: never `/exit`; the job ends when the
+  agent exits.
+- Longarm answers the start-up screens: Claude Code's folder trust (and
+  first-run screens), Copilot's folder trust (pre-trusted in its private
+  home).
+- `longarm logs` shows each turn's answer; `longarm jobs` the state
+  (`running (working)`, `running (needs you)`, ...); `jobs --json` has
+  `job.steer` (`state`, `turns`, `sessionId`, `transcript`).
+- In the tray's Sessions window a running steerable job has its terminal
+  and the steer box, like a Longarm session.
+- Copilot needs forwarded credentials (`--agent-auth copilot`, the default
+  for a copilot command): its hooks go into the job's private
+  `COPILOT_HOME`. Not on workers with per-user isolation yet; not for an
+  agent inside a wrapper script; Claude's own `--settings` is refused (the
+  run uses it). How it works: docs/steerable-runs.md.
 
 ### Job stdin payload (`--stdin-file`)
 

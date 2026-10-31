@@ -49,6 +49,7 @@ const (
 	SourceAttach = "attach" // an attached client's keystrokes (Input frames)
 	SourceSend   = "send"   // Sessions.Send
 	SourceStop   = "stop"   // Sessions.Stop's Ctrl-C
+	SourceSteer  = "steer"  // a steerable run's own keystrokes (start-up screens, /exit)
 )
 
 // MaxSend bounds the bytes of one Send.

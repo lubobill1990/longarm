@@ -200,7 +200,9 @@ func (w *workerTelemetry) jobChanged(j supervisor.Job, first bool) {
 		meas["start_delay_s"] = j.Status.StartedAt.Sub(j.Status.CreatedAt).Seconds()
 	}
 	name := "job.ended"
-	if j.Spec.Pty {
+	if j.Spec.Steer != nil {
+		props["steer"] = j.Spec.Steer.Agent // a steerable run: a job on a terminal
+	} else if j.Spec.Pty {
 		name = "session.ended"
 	}
 	w.tel.Event(ctx, name, props, meas)

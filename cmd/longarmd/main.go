@@ -36,6 +36,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/server"
 	"github.com/lubobill1990/longarm/internal/shim"
+	"github.com/lubobill1990/longarm/internal/steer"
 	"github.com/lubobill1990/longarm/internal/stopsignal"
 	"github.com/lubobill1990/longarm/internal/update"
 	"github.com/lubobill1990/longarm/internal/userspace"
@@ -59,6 +60,10 @@ func main() {
 	// before anything else (git waits for it)
 	if len(os.Args) > 1 && os.Args[1] == workspace.CredHelperArg {
 		os.Exit(workspace.CredentialHelperMain(os.Args[2:], os.Stdin, os.Stdout))
+	}
+	// a steerable run's hook (the agent waits for it): append the event
+	if len(os.Args) > 1 && os.Args[1] == steer.HookArg {
+		os.Exit(steer.HookMain(os.Args[2:], os.Stdin))
 	}
 	root := &cobra.Command{
 		Use:           "longarmd",

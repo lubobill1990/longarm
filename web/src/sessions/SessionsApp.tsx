@@ -36,10 +36,30 @@ export function parseHash(hash: string): HashTarget {
   }
 }
 
-/** The same session: the same key, or the same Longarm session (its key changes when the transcript appears). */
+/**
+ * The same session: the same key, or the same Longarm session or steerable
+ * job (its key changes when the transcript appears).
+ */
 export function sameSession(a: AgentSession, b: AgentSession): boolean {
   if (a.key === b.key) return true
-  return a.worker === b.worker && !!a.session && a.session === b.session && a.where === 'longarm' && b.where === 'longarm'
+  if (a.worker !== b.worker || a.where !== b.where) return false
+  if (a.where === 'job') return !!a.job && a.job === b.job && !!(a.steer || b.steer)
+  return !!a.session && a.session === b.session && a.where === 'longarm'
+}
+
+/** The terminal of s: its Longarm session, or a running steerable job (job: the name is its id). */
+export function terminalOf(s: AgentSession): { name: string; job: boolean } | undefined {
+  if (s.where === 'longarm' && s.session) return { name: s.session, job: false }
+  if (s.where === 'job' && s.job && s.steer) return { name: s.job, job: true }
+  return undefined
+}
+
+const STEER_LABEL: Record<string, string> = {
+  starting: 'starting',
+  working: 'working',
+  needs_you: 'needs you',
+  idle: 'answered; ends when quiet',
+  finishing: 'finishing',
 }
 
 /** The tabs whose terminal stays connected: the active one and the most recently shown others. */
@@ -283,6 +303,7 @@ function Sessions() {
  */
 export function continueBlocked(s: AgentSession): string {
   if (s.where === 'desktop' && s.agent === 'copilot') return "Copilot CLI can't copy a conversation that is still open: continue here once it has ended there"
+  if (s.where === 'job' && s.steer) return 'a steerable Longarm job: steer it here; continue here once it has ended'
   if (s.where === 'job' && s.state !== 'ended') return 'a Longarm job (non-interactive): continue here once it has ended'
   if (s.where === 'job' && s.agent === 'copilot') return "the conversation is in the job's private Copilot home, which a new session can't resume"
   return ''
@@ -307,7 +328,8 @@ function TabPanel({
   onMark: (c: { badge?: boolean; state?: AgentState }) => void
 }) {
   const s = tab.item
-  const inLongarm = s.where === 'longarm' && !!s.session
+  const term = terminalOf(s)
+  const inLongarm = !!term
   const [view, setView] = useState<'terminal' | 'conversation'>(inLongarm ? 'terminal' : 'conversation')
   const [ended, setEnded] = useState(false)
   const { run, busy } = useAction()
@@ -336,8 +358,10 @@ function TabPanel({
           {s.worker}
           {s.session
             ? ` · session ${s.session}`
-            : s.where === 'job'
-              ? ` · Longarm job ${s.job_name || s.job} (read-only)`
+            : s.where === 'job' && s.steer
+              ? ` · Longarm job ${s.job_name || s.job} (steerable: ${STEER_LABEL[s.steer] ?? s.steer})`
+              : s.where === 'job'
+                ? ` · Longarm job ${s.job_name || s.job} (read-only)`
               : s.where === 'desktop'
                 ? ' · outside Longarm (read-only)'
                 : ' · transcript'}
@@ -362,11 +386,12 @@ function TabPanel({
         )}
       </div>
       <div className="tabpanel-body">
-        {inLongarm && connected && (
+        {term && connected && (
           <div className="tabpanel-term" hidden={!showTerm}>
             <TerminalView
               worker={s.worker}
-              session={s.session!}
+              session={term.name}
+              job={term.job}
               visible={visible && showTerm}
               onOutput={() => !visible && !tab.badge && onMark({ badge: true })}
               onExit={() => {
@@ -379,7 +404,7 @@ function TabPanel({
         {inLongarm && !connected && showTerm && <div className="sessions-empty muted">detached (re-attaches when shown)</div>}
         {visible && !showTerm && <ConversationView item={s} onState={(state) => onMark({ state })} />}
       </div>
-      {inLongarm && <SteerBox worker={s.worker} session={s.session!} disabled={ended || s.state === 'ended'} />}
+      {term && <SteerBox worker={s.worker} session={term.name} job={term.job} disabled={ended || s.state === 'ended'} />}
     </section>
   )
 }

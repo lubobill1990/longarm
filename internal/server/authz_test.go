@@ -27,6 +27,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/shim"
+	"github.com/lubobill1990/longarm/internal/steer"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/workspace"
@@ -37,6 +38,15 @@ import (
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == workspace.CredHelperArg { // git's credential helper
 		os.Exit(workspace.CredentialHelperMain(os.Args[2:], os.Stdin, os.Stdout))
+	}
+	if len(os.Args) > 1 && os.Args[1] == steer.HookArg { // a steerable run's hook
+		os.Exit(steer.HookMain(os.Args[2:], os.Stdin))
+	}
+	if agent := os.Getenv("LONGARM_TEST_FAKE_AGENT"); agent != "" { // steer_test.go
+		if len(os.Args) > 1 && os.Args[1] == "conhost" {
+			os.Exit(shim.ConsoleHost(os.Args[2:]))
+		}
+		os.Exit(fakeAgent(agent))
 	}
 	if os.Getenv("LONGARM_TEST_SLEEP") != "" {
 		time.Sleep(2 * time.Minute)
@@ -53,6 +63,7 @@ func TestMain(m *testing.M) {
 	}
 	// (jobs inherit LONGARM_TEST_SHIM: the shim checks come last)
 	if dir := os.Getenv("LONGARM_TEST_SHIM"); dir != "" {
+		shim.SteerTimings = fastSteer
 		os.Exit(shim.Main(dir, os.Stdin))
 	}
 	os.Exit(m.Run())

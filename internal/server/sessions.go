@@ -297,8 +297,8 @@ func (ss *sessionsServer) removeWorktree(ctx context.Context, sp *userspace.Spac
 var errReplaced = status.Error(codes.FailedPrecondition, "the session ended and was replaced by a new one of the same name")
 
 // getGen returns session name if it is generation gen (zero: any).
-func getGen(sp *userspace.Space, name string, gen time.Time) (supervisor.Job, error) {
-	j, err := sp.Sessions.Get(name)
+func getGen(mgr *supervisor.Manager, name string, gen time.Time) (supervisor.Job, error) {
+	j, err := mgr.Get(name)
 	if err != nil {
 		return j, MgrErr(err)
 	}
@@ -310,11 +310,11 @@ func getGen(sp *userspace.Space, name string, gen time.Time) (supervisor.Job, er
 
 // waitAttachable waits until generation gen of the session published its
 // channel (or ended), at most d.
-func (ss *sessionsServer) waitAttachable(ctx context.Context, sp *userspace.Space, name string, gen time.Time, d time.Duration) (supervisor.Job, error) {
+func (ss *sessionsServer) waitAttachable(ctx context.Context, mgr *supervisor.Manager, name string, gen time.Time, d time.Duration) (supervisor.Job, error) {
 	deadline := time.After(d)
 	for {
-		ch := sp.Sessions.Changed()
-		j, err := getGen(sp, name, gen)
+		ch := mgr.Changed()
+		j, err := getGen(mgr, name, gen)
 		if err != nil {
 			return j, err
 		}
@@ -344,35 +344,49 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 		return status.Error(codes.InvalidArgument, "first message must be open")
 	}
 	name := o.Name
-	if name == "" {
+	if name == "" && !o.Job {
 		name = DefaultSessionName
 	}
 	if !jobs.ValidID(name) {
 		return status.Errorf(codes.InvalidArgument, "bad session name %q", name)
 	}
-	owner, err := ss.s.targetOwner(ctx, o.Owner)
-	if err != nil {
-		return err
-	}
+	var sp *userspace.Space
+	var mgr *supervisor.Manager
 	var j supervisor.Job
 	var created bool
-	r := sessionReq{argv: o.Argv, cwd: o.Cwd, env: o.Env, secrets: o.SecretEnv, size: o.Size, noCreate: o.NoCreate}
-	r.agents, r.copilotHome, err = agentAuthFromPB(o.AgentAuth)
-	if err != nil {
-		return err
+	key := name // of the attached count
+	if o.Job {
+		if sp, j, err = ss.steerable(ctx, name); err == nil {
+			mgr, key = sp.Jobs, "job:"+name
+		}
+		ss.s.Audit.Log(id, pb.Sessions_Attach_FullMethodName, map[string]any{"job": name, "error": errString(err)})
+		if err != nil {
+			return err
+		}
+	} else {
+		owner, err := ss.s.targetOwner(ctx, o.Owner)
+		if err != nil {
+			return err
+		}
+		r := sessionReq{argv: o.Argv, cwd: o.Cwd, env: o.Env, secrets: o.SecretEnv, size: o.Size, noCreate: o.NoCreate}
+		r.agents, r.copilotHome, err = agentAuthFromPB(o.AgentAuth)
+		if err != nil {
+			return err
+		}
+		sp, err = ss.sessionSpace(ctx, owner, name, !o.NoCreate)
+		if err == nil {
+			mgr = sp.Sessions
+			j, created, err = ss.ensure(ctx, sp, r, name, owner, id.String())
+		}
+		ss.s.Audit.Log(id, pb.Sessions_Attach_FullMethodName, map[string]any{
+			"session": name, "owner": owner, "created": created, "argv": j.Spec.Argv, "env_keys": keys(o.Env),
+			"secret_keys": keys(o.SecretEnv), "agent_auth": r.agents, "error": errString(err),
+		})
+		if err != nil {
+			return err
+		}
 	}
-	sp, err := ss.sessionSpace(ctx, owner, name, !o.NoCreate)
-	if err == nil {
-		j, created, err = ss.ensure(ctx, sp, r, name, owner, id.String())
-	}
-	ss.s.Audit.Log(id, pb.Sessions_Attach_FullMethodName, map[string]any{
-		"session": name, "owner": owner, "created": created, "argv": j.Spec.Argv, "env_keys": keys(o.Env),
-		"secret_keys": keys(o.SecretEnv), "agent_auth": r.agents, "error": errString(err),
-	})
-	if err != nil {
-		return err
-	}
-	if j, err = ss.waitAttachable(ctx, sp, name, j.Spec.CreatedAt, 15*time.Second); err != nil {
+	if j, err = ss.waitAttachable(ctx, mgr, name, j.Spec.CreatedAt, 15*time.Second); err != nil {
 		return err
 	}
 	if j.Status.State.Terminal() { // e.g. the command failed to start
@@ -407,8 +421,8 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 	if sz := o.GetSize(); !created && sz.GetCols() > 0 && sz.GetRows() > 0 {
 		conn.WriteFrame(attach.Resize, attach.ResizePayload(uint16(sz.Cols), uint16(sz.Rows)))
 	}
-	ss.count(attachKey(sp, name), 1)
-	defer ss.count(attachKey(sp, name), -1)
+	ss.count(attachKey(sp, key), 1)
+	defer ss.count(attachKey(sp, key), -1)
 	if err := st.Send(&pb.AttachOutput{Msg: &pb.AttachOutput_Started{Started: &pb.AttachStarted{Session: ss.toPB(sp, j), Created: created}}}); err != nil {
 		return err
 	}
@@ -457,7 +471,7 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 			case attach.Exit:
 				// Let the supervisor see the final state first, so a client
 				// that lists sessions right after the exit sees it ended.
-				ss.waitTerminalGen(ctx, sp, name, j.Spec.CreatedAt, 2*time.Second)
+				ss.waitTerminalGen(ctx, mgr, name, j.Spec.CreatedAt, 2*time.Second)
 				err = st.Send(&pb.AttachOutput{Msg: &pb.AttachOutput_ExitCode{ExitCode: int32(attach.ParseExit(p))}})
 				ended <- errSessionExited
 				return
@@ -480,7 +494,7 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 		}
 		// The channel broke without an exit frame: the shim died or the
 		// session ended right now. Report the final state if we can.
-		if j, werr := ss.waitTerminalGen(ctx, sp, name, j.Spec.CreatedAt, 3*time.Second); werr == nil {
+		if j, werr := ss.waitTerminalGen(ctx, mgr, name, j.Spec.CreatedAt, 3*time.Second); werr == nil {
 			return ss.sendExit(st, j)
 		}
 		return status.Errorf(codes.Unavailable, "session %q: attach channel closed: %v", name, err)
@@ -489,17 +503,17 @@ func (ss *sessionsServer) Attach(st pb.Sessions_AttachServer) error {
 
 var errSessionExited = errors.New("session exited")
 
-func (ss *sessionsServer) waitTerminal(ctx context.Context, sp *userspace.Space, name string, d time.Duration) (supervisor.Job, error) {
-	return ss.waitTerminalGen(ctx, sp, name, time.Time{}, d)
+func (ss *sessionsServer) waitTerminal(ctx context.Context, mgr *supervisor.Manager, name string, d time.Duration) (supervisor.Job, error) {
+	return ss.waitTerminalGen(ctx, mgr, name, time.Time{}, d)
 }
 
 // waitTerminalGen waits for generation gen (zero: any) to end; errReplaced
 // if a new session took the name (which means it had ended).
-func (ss *sessionsServer) waitTerminalGen(ctx context.Context, sp *userspace.Space, name string, gen time.Time, d time.Duration) (supervisor.Job, error) {
+func (ss *sessionsServer) waitTerminalGen(ctx context.Context, mgr *supervisor.Manager, name string, gen time.Time, d time.Duration) (supervisor.Job, error) {
 	deadline := time.After(d)
 	for {
-		ch := sp.Sessions.Changed()
-		j, err := getGen(sp, name, gen)
+		ch := mgr.Changed()
+		j, err := getGen(mgr, name, gen)
 		if err != nil {
 			return j, err
 		}

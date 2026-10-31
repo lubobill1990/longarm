@@ -69,6 +69,8 @@ type Job struct {
 	Spec    jobs.Spec
 	Status  jobs.Status
 	LogSize int64
+	// Steer: a steerable job's steer.json (nil: none yet, or not one).
+	Steer *jobs.SteerState
 }
 
 type entry struct {
@@ -341,6 +343,9 @@ func (m *Manager) snapshot(e *entry) Job {
 	j := Job{Spec: e.spec, Status: e.st}
 	m.mu.Unlock()
 	j.LogSize = e.dir.LogSize()
+	if j.Spec.Steer != nil {
+		j.Steer = e.dir.ReadSteer()
+	}
 	return j
 }
 
@@ -411,7 +416,8 @@ func sameSpec(a, b *jobs.Spec) bool {
 		a.MemLimitBytes == b.MemLimitBytes && maps.Equal(a.Labels, b.Labels) &&
 		a.Pty == b.Pty && sameWorkspace(a.Workspace, b.Workspace) && a.Owner == b.Owner &&
 		slices.Equal(a.ShareTeams, b.ShareTeams) && a.CPULimit == b.CPULimit && a.StdinBytes == b.StdinBytes &&
-		slices.Equal(a.AgentAuth, b.AgentAuth) // not AgentHome: each submit makes its own
+		slices.Equal(a.AgentAuth, b.AgentAuth) && // not AgentHome: each submit makes its own
+		(a.Steer == nil) == (b.Steer == nil) && (a.Steer == nil || *a.Steer == *b.Steer)
 }
 
 // sameWorkspace compares what a workspace resolves to - repository, url,

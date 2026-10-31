@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lubobill1990/longarm/internal/client"
+	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/platform"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -25,12 +26,12 @@ import (
 const detachPrefix = 0x1d
 
 func attachCmd() *cobra.Command {
-	var session, cwd, owner string
+	var session, cwd, owner, job string
 	var env, secrets []string
 	var kill, noReplay, noCreate bool
 	var aa agentAuthOpts
 	c := &cobra.Command{
-		Use:   "attach <worker> [--session NAME] [-- command [args...]]",
+		Use:   "attach <worker> [--session NAME] [-- command [args...]]  |  attach [<worker>] --job ID",
 		Short: "Attach to a named interactive session (created if missing); detach with Ctrl-] d",
 		Long: `Attach to an interactive terminal session on the worker, tmux-style.
 
@@ -44,9 +45,22 @@ session's exit code when its process ends.
 Secrets (--secret-env) are injected when the session is created: memory-only
 on the worker and redacted from the session transcript (longarm logs --session).
 So are agent credentials (--agent-auth; by default when the command is claude
-or copilot: docs/usage.md#agent-credentials).`,
-		Args: cobra.MinimumNArgs(1),
+or copilot: docs/usage.md#agent-credentials).
+
+--job attaches to the terminal of a steerable run (longarm run --steerable)
+instead: watch the agent, type into it; the run still ends by itself when
+the agent is done.`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if job != "" {
+				if session != "" || cmd.ArgsLenAtDash() >= 0 || kill || len(args) > 1 {
+					return usagef("--job attaches to a steerable run: no --session, --kill or command")
+				}
+				return attachJob(cmd.Context(), args, job, noReplay)
+			}
+			if len(args) == 0 {
+				return usagef("usage: longarm attach <worker> [--session NAME] [-- command...]")
+			}
 			worker := args[0]
 			var argv []string
 			if dash := cmd.ArgsLenAtDash(); dash >= 0 {
@@ -110,7 +124,30 @@ or copilot: docs/usage.md#agent-credentials).`,
 	c.Flags().BoolVar(&noCreate, "no-create", false, "fail if the session does not exist")
 	aa.register(c)
 	c.Flags().StringVar(&owner, "owner", "", "admins: another user's session (multi-tenancy)")
+	c.Flags().StringVar(&job, "job", "", "attach to this steerable run's terminal (longarm run --steerable); the worker may be omitted")
 	return c
+}
+
+// attachJob attaches to a steerable job's terminal.
+func attachJob(ctx context.Context, args []string, job string, noReplay bool) error {
+	s, err := openSession()
+	if err != nil {
+		return err
+	}
+	defer s.close()
+	worker, id, err := jobTarget(ctx, s, append(args, job))
+	if err != nil {
+		return err
+	}
+	conn, err := s.conn(worker)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if err := needFeature(ctx, conn, jobs.FeatureSteer, "--job"); err != nil {
+		return err
+	}
+	return runAttach(ctx, conn, &pb.AttachOpen{Name: id, Job: true, NoCreate: true, NoReplay: noReplay})
 }
 
 // inputReader reads stdin, handles the detach sequence and delivers input.
@@ -226,6 +263,10 @@ func runAttach(ctx context.Context, conn *client.Conn, open *pb.AttachOpen) erro
 	if name == "" {
 		name = "default"
 	}
+	what, again := "session", fmt.Sprintf("longarm attach %s --session %s", conn.Worker.Name, name)
+	if open.Job {
+		what, again = "job", fmt.Sprintf("longarm attach %s --job %s", conn.Worker.Name, name)
+	}
 	notice := func(format string, a ...any) {
 		fmt.Fprintf(os.Stderr, "\r\n[longarm] "+format+"\r\n", a...)
 	}
@@ -242,7 +283,7 @@ func runAttach(ctx context.Context, conn *client.Conn, open *pb.AttachOpen) erro
 				if started.Created {
 					verb = "created"
 				}
-				notice("%s session %q on %s; detach with Ctrl-] d", verb, name, conn.Worker.Name)
+				notice("%s %s %q on %s; detach with Ctrl-] d", verb, what, name, conn.Worker.Name)
 				first = false
 			}
 			enterRaw()
@@ -264,7 +305,7 @@ func runAttach(ctx context.Context, conn *client.Conn, open *pb.AttachOpen) erro
 	switch {
 	case end.exited:
 		if !first {
-			notice("session %q ended (exit %d)", name, end.code)
+			notice("%s %q ended (exit %d)", what, name, end.code)
 		}
 		if end.code != 0 {
 			code := end.code
@@ -274,7 +315,7 @@ func runAttach(ctx context.Context, conn *client.Conn, open *pb.AttachOpen) erro
 			return &exitError{code: code}
 		}
 	case end.detached:
-		notice("detached from session %q (longarm attach %s --session %s to resume)", name, conn.Worker.Name, name)
+		notice("detached from %s %q (%s to resume)", what, name, again)
 	}
 	return nil
 }

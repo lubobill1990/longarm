@@ -99,11 +99,11 @@ func (ss *sessionsServer) Start(ctx context.Context, req *pb.StartSessionRequest
 		wait = time.Until(dl) - 2*time.Second
 	}
 	if wait > 0 {
-		if j2, err := ss.waitAttachable(ctx, sp, name, j.Spec.CreatedAt, wait); err == nil {
+		if j2, err := ss.waitAttachable(ctx, sp.Sessions, name, j.Spec.CreatedAt, wait); err == nil {
 			j = j2
 		}
 	}
-	if latest, err := getGen(sp, name, j.Spec.CreatedAt); err == nil {
+	if latest, err := getGen(sp.Sessions, name, j.Spec.CreatedAt); err == nil {
 		j = latest
 	}
 	return &pb.AttachStarted{Session: ss.toPB(sp, j), Created: created}, nil
@@ -127,14 +127,22 @@ func (ss *sessionsServer) Send(ctx context.Context, req *pb.SendSessionRequest) 
 	if len(req.Data) > attach.MaxSend {
 		return nil, status.Errorf(codes.InvalidArgument, "at most %d bytes per send", attach.MaxSend)
 	}
-	sp, err := ss.lookup(ctx, req.Owner, req.Name)
+	var sp *userspace.Space
+	var err error
+	mgr := func() *supervisor.Manager { return sp.Sessions }
+	if req.Job {
+		sp, _, err = ss.steerable(ctx, req.Name)
+		mgr = func() *supervisor.Manager { return sp.Jobs }
+	} else {
+		sp, err = ss.lookup(ctx, req.Owner, req.Name)
+	}
 	var seq uint64
 	if err == nil {
-		seq, err = ss.send(ctx, sp, req.Name, time.Time{}, req.Data, req.IfIdleMs, attach.SourceSend)
+		seq, err = ss.send(ctx, mgr(), req.Name, time.Time{}, req.Data, req.IfIdleMs, attach.SourceSend)
 	}
 	// the input is like a payload: its size only, never its bytes
 	ss.s.Audit.Log(IdentityFrom(ctx), pb.Sessions_Send_FullMethodName, map[string]any{
-		"session": req.Name, "owner": req.Owner, "bytes": len(req.Data), "if_idle_ms": req.IfIdleMs, "error": errString(err),
+		"session": req.Name, "job": req.Job, "owner": req.Owner, "bytes": len(req.Data), "if_idle_ms": req.IfIdleMs, "error": errString(err),
 	})
 	if err != nil {
 		return nil, err
@@ -144,13 +152,13 @@ func (ss *sessionsServer) Send(ctx context.Context, req *pb.SendSessionRequest) 
 
 // send writes data to the session's terminal in one write; gen binds it
 // to one generation of the name (zero: the current one).
-func (ss *sessionsServer) send(ctx context.Context, sp *userspace.Space, name string, gen time.Time, data []byte, ifIdleMs uint32, source string) (uint64, error) {
-	j, err := getGen(sp, name, gen)
+func (ss *sessionsServer) send(ctx context.Context, mgr *supervisor.Manager, name string, gen time.Time, data []byte, ifIdleMs uint32, source string) (uint64, error) {
+	j, err := getGen(mgr, name, gen)
 	if err != nil {
 		return 0, err
 	}
 	if !j.Status.State.Terminal() && j.Status.AttachAddr == "" { // preparing / starting
-		if j, err = ss.waitAttachable(ctx, sp, name, j.Spec.CreatedAt, 15*time.Second); err != nil {
+		if j, err = ss.waitAttachable(ctx, mgr, name, j.Spec.CreatedAt, 15*time.Second); err != nil {
 			return 0, err
 		}
 	}
@@ -160,7 +168,7 @@ func (ss *sessionsServer) send(ctx context.Context, sp *userspace.Space, name st
 	// ended is the error of a failed write: FailedPrecondition (exit 2) if
 	// the session has ended meanwhile, else Unavailable (255)
 	ended := func(err error) error {
-		if e, gerr := getGen(sp, name, j.Spec.CreatedAt); gerr != nil || e.Status.State.Terminal() {
+		if e, gerr := getGen(mgr, name, j.Spec.CreatedAt); gerr != nil || e.Status.State.Terminal() {
 			return status.Errorf(codes.FailedPrecondition, "session %q has ended; nothing (or not all) was written", name)
 		}
 		return status.Errorf(codes.Unavailable, "session %q: %v", name, err)
@@ -242,18 +250,18 @@ func (ss *sessionsServer) stop(ctx context.Context, sp *userspace.Space, name st
 	if grace > 0 {
 		deadline := time.Now().Add(grace)
 		for i := 0; i < 2; i++ {
-			if _, err := ss.send(ctx, sp, name, gen, []byte{0x03}, 0, attach.SourceStop); err != nil {
+			if _, err := ss.send(ctx, sp.Sessions, name, gen, []byte{0x03}, 0, attach.SourceStop); err != nil {
 				break
 			}
 			wait := min(time.Second, time.Until(deadline))
 			if i == 1 {
 				wait = time.Until(deadline)
 			}
-			if j2, ok := done(ss.waitTerminalGen(ctx, sp, name, gen, max(wait, 0))); ok {
+			if j2, ok := done(ss.waitTerminalGen(ctx, sp.Sessions, name, gen, max(wait, 0))); ok {
 				return j2, nil
 			}
 		}
-		if j2, ok := done(ss.waitTerminalGen(ctx, sp, name, gen, max(time.Until(deadline), 0))); ok {
+		if j2, ok := done(ss.waitTerminalGen(ctx, sp.Sessions, name, gen, max(time.Until(deadline), 0))); ok {
 			return j2, nil
 		}
 	}

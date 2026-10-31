@@ -137,7 +137,23 @@ type Spec struct {
 	// written by longarmd only and removed with the job; the shim sets
 	// COPILOT_HOME to it unless Env does.
 	AgentHome string `json:"agent_home,omitempty"`
+	// Steer: a steerable run (Pty) of an agent; the shim answers its
+	// start-up screens, reads its hooks and ends it when it is done
+	// (docs/steerable-runs.md).
+	Steer *Steer `json:"steer,omitempty"`
 }
+
+// Steer is the spec of a steerable run.
+type Steer struct {
+	Agent string `json:"agent"` // "claude" or "copilot"
+	// UntilExit: never end the run when the agent is done, only when it
+	// exits.
+	UntilExit bool `json:"until_exit,omitempty"`
+}
+
+// FeatureSteer is the InfoResponse.features entry of workers that run
+// steerable jobs (JobSpec.steer, AttachOpen.job, SendSessionRequest.job).
+const FeatureSteer = "steerable-run"
 
 // AgentHomeDir holds the private agent homes (COPILOT_HOME) of jobs,
 // sessions and execs that got forwarded Copilot credentials, in a space's

@@ -12,6 +12,7 @@ package main
 // transcript in ~/.claude/projects with that directory.
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"maps"
@@ -151,6 +152,37 @@ func jobOfDir(ep *hoEndpoint, dataDir, dir string) string {
 	return id
 }
 
+// steerableItems are the running steerable jobs that have no item yet
+// (no transcript found: e.g. still at a start-up screen) - their terminal
+// is worth showing.
+func steerableItems(worker string, items []*agentItem, byID map[string]*pb.Job) []*agentItem {
+	have := map[string]bool{}
+	for _, it := range items {
+		if it.Job != "" {
+			have[it.Job] = true
+		}
+	}
+	var out []*agentItem
+	for id, j := range byID {
+		a := j.Spec.GetSteer().GetAgent()
+		if a == "" || have[id] || terminalState(j.State) {
+			continue
+		}
+		it := &agentItem{Key: worker + "/job/" + id, Worker: worker, Agent: a, Title: cmp.Or(j.Spec.GetName(), argvTitle(j.Spec.GetArgv())),
+			ProjectDir: j.GetWorkdir(), LastActivity: j.GetStartedAt().AsTime(), live: true}
+		if st := j.GetSteer().GetUpdatedAt(); st != nil {
+			it.LastActivity = st.AsTime()
+		}
+		jobItem(it, id, j)
+		it.State = agentlog.StateWorking
+		if it.Steer == jobs.SteerNeedsYou {
+			it.State = agentlog.StateWaiting
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
 // jobIDRE: a job id (a ULID).
 var jobIDRE = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
 
@@ -160,6 +192,9 @@ func jobItem(it *agentItem, id string, job *pb.Job) {
 	if job != nil {
 		it.JobName = job.Spec.GetName()
 		it.live = !terminalState(job.State)
+		if it.live && job.Spec.GetSteer() != nil {
+			it.Steer = cmp.Or(job.GetSteer().GetState(), jobs.SteerStarting)
+		}
 	}
 	if !it.live {
 		it.State = agentlog.StateEnded
