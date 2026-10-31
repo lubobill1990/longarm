@@ -7,7 +7,7 @@ import type { PoolWorker } from '../api/types'
 import { PoolTab } from '../tray/PoolTab'
 import { ConversationView, entries } from './ConversationView'
 import { groupByWorker, matches, SessionList, stateMark } from './SessionList'
-import { connectedTabs, continueBlocked, parseHash, SessionsApp } from './SessionsApp'
+import { connectedTabs, continueBlocked, parseHash, sameSession, SessionsApp, terminalOf } from './SessionsApp'
 import { shortcutTarget } from './SessionTabs'
 import { SteerBox } from './SteerBox'
 import { BACKOFF, TerminalView } from './TerminalView'
@@ -584,5 +584,47 @@ describe('agents in Longarm jobs', () => {
     expect(continueBlocked({ ...job, agent: 'claude', state: 'ended' })).toBe('') // a Claude job's transcript resumes
     expect(continueBlocked({ ...job, where: 'desktop' })).toContain("can't copy")
     expect(continueBlocked({ ...job, where: 'none', state: 'ended' })).toBe('')
+  })
+})
+
+describe('steerable jobs', () => {
+  const job = item({
+    key: 'cpc-a/job/01JOB',
+    id: '',
+    title: 'claude fix it',
+    where: 'job',
+    session: undefined,
+    job: '01JOB',
+    job_name: 'fix',
+    steer: 'needs_you',
+    state: 'waiting',
+  })
+
+  it('marks one that needs you; its terminal and the steer box reach the job', async () => {
+    location.hash = `#key=${job.key}`
+    const calls = mockFetch({
+      '/local/longarm/v1/workers/cpc-a/jobs/01JOB/send': () => [200, { input_seq: 1 }],
+      '/local/longarm/v1/agent-sessions': () => [200, { items: [job] }],
+    })
+    render(<SessionsApp />)
+    expect(stateMark(job)).toMatchObject({ mark: '!', cls: 'needs' })
+    const panel = await screen.findByTestId(`panel-${job.key}`)
+    expect(within(panel).getByText(/steerable: needs you/)).toBeTruthy()
+    await waitFor(() => expect(FakeWebSocket.all.some((w) => w.url.includes('/v1/workers/cpc-a/jobs/01JOB/attach?'))).toBe(true))
+    const box = within(panel).getByLabelText('message to the session') as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'y' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/workers/cpc-a/jobs/01JOB/send'))).toBe(true))
+    expect(within(panel).queryByTestId('continue-here')).toBeNull()
+  })
+
+  it('stays one tab when its transcript appears; read-only once it ended', () => {
+    const later = { ...job, key: 'cpc-a/claude/abc', id: 'abc', steer: 'working' as const, state: 'working' as const }
+    expect(sameSession(job, later)).toBe(true)
+    expect(sameSession(job, { ...later, job: '01OTHER' })).toBe(false)
+    expect(terminalOf(job)).toEqual({ name: '01JOB', job: true })
+    expect(terminalOf({ ...later, steer: undefined, state: 'ended' })).toBeUndefined()
+    expect(terminalOf(item({}))).toEqual({ name: 'agent1', job: false })
+    expect(continueBlocked(later)).toContain('steer it here')
   })
 })

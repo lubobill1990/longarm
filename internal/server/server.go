@@ -188,7 +188,7 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 // (InfoResponse.features).
 var WorkerFeatures = []string{jobs.FeatureStdin, jobs.FeatureGitAuth, jobs.FeatureSessionStart, jobs.FeatureSessionSend,
 	jobs.FeatureSessionSendIfIdle, jobs.FeatureSessionStop, jobs.FeatureSessionInfo, jobs.FeatureFileTail, jobs.FeatureAgentAuth,
-	jobs.FeatureSessionEnv, jobs.FeatureFileLstat, jobs.FeatureHandoffDirect, jobs.FeatureHandoffPush}
+	jobs.FeatureSessionEnv, jobs.FeatureFileLstat, jobs.FeatureHandoffDirect, jobs.FeatureHandoffPush, jobs.FeatureSteer}
 
 type nodeServer struct {
 	pb.UnimplementedNodeServer
@@ -364,6 +364,13 @@ func JobToPB(j supervisor.Job) *pb.Job {
 	if j.Status.ExitCode != nil {
 		out.HasExitCode, out.ExitCode = true, int32(*j.Status.ExitCode)
 	}
+	if s := j.Spec.Steer; s != nil {
+		out.Spec.Steer = &pb.SteerSpec{Agent: s.Agent, UntilExit: s.UntilExit}
+	}
+	if st := j.Steer; st != nil {
+		out.Steer = &pb.SteerState{State: st.State, Turns: int32(st.Turns), Message: st.Message, SessionId: st.SessionID,
+			Transcript: st.Transcript, UpdatedAt: ts(st.UpdatedAt)}
+	}
 	return out
 }
 
@@ -413,6 +420,10 @@ func (j *jobsServer) Submit(ctx context.Context, req *pb.SubmitRequest) (*pb.Job
 	var copilotHome bool
 	var err error
 	if spec.AgentAuth, copilotHome, err = agentAuthFromPB(req.AgentAuth); err != nil {
+		auth.Clear()
+		return nil, err
+	}
+	if err := j.steerSpec(&spec, req, copilotHome); err != nil {
 		auth.Clear()
 		return nil, err
 	}

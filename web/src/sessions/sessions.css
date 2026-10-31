@@ -122,6 +122,10 @@
   & .sdot.desktop {
     color: var(--blue);
   }
+  & .sdot.needs {
+    color: var(--amber);
+    font-weight: 700;
+  }
   & .agent-icon {
     flex: none;
     display: inline-grid;

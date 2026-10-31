@@ -163,6 +163,7 @@ var cliFeatures = []string{
 	"agent-handoff",  // handoff --to/--from: move a Claude Code / Copilot CLI session and its code
 	"agent-sessions", // agent-sessions [<worker>|local] [--json]
 	"agent-skill",    // skill status|install|update|remove [--agent ID] [--json]
+	"steerable-run",  // run --steerable [--until-exit], attach --job, session send --job (docs/steerable-runs.md)
 }
 
 func versionCmd() *cobra.Command {

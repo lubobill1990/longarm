@@ -195,6 +195,29 @@ message JobSpec {
   // Output only: the agents whose credentials were forwarded
   // (SubmitRequest.agent_auth) - names, never values.
   repeated string agent_auth = 21;
+  // Run an agent (Claude Code, Copilot CLI) interactively on a pseudo
+  // terminal that can be attached to and steered (AttachOpen.job,
+  // SendSessionRequest.job), ending the job when the agent is done
+  // (InfoResponse feature "steerable-run"; docs/steerable-runs.md).
+  SteerSpec steer = 22;
+}
+
+message SteerSpec {
+  string agent = 1; // "claude" or "copilot"; argv runs it interactively
+  // Never end the run when the agent is done: only when it exits.
+  bool until_exit = 2;
+}
+
+// SteerState is a steerable job's view of its agent (the shim's
+// steer.json).
+message SteerState {
+  // starting, working, needs_you, idle, finishing, done
+  string state = 1;
+  int32 turns = 2; // finished turns
+  string message = 3; // e.g. the permission prompt the agent waits on
+  string session_id = 4; // the agent's session id
+  string transcript = 5; // the agent's transcript on the worker
+  google.protobuf.Timestamp updated_at = 6;
 }
 
 message JobWorkspace {
@@ -262,6 +285,7 @@ message Job {
   string reason = 11; // human readable cause for failed/killed/lost
   bool orphaned = 12; // shim died but the process is still alive (read-only adoption)
   string workdir = 13; // prepared worktree (workspace jobs)
+  SteerState steer = 14; // steerable jobs (spec.steer)
 }
 
 message GetJobRequest {
@@ -432,6 +456,9 @@ message AttachOpen {
   // Admins only: attach to another user's session (default: the caller's).
   string owner = 9;
   AgentAuth agent_auth = 10; // as secret_env: used when the session is created
+  // name is a job id: attach to a steerable job's terminal (never
+  // creates; the caller must be able to control the job).
+  bool job = 11;
 }
 
 message TermSize {
@@ -519,6 +546,7 @@ message SendSessionRequest {
   // milliseconds (0 = always write).
   uint32 if_idle_ms = 3;
   string owner = 4; // admins only: another user's session
+  bool job = 5; // name is a steerable job's id (as AttachOpen.job)
 }
 
 message SendSessionResponse {

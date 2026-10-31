@@ -15,6 +15,18 @@
 
 ### Added
 
+- **Steerable agent runs**: `longarm run --steerable -- claude -p "task"`
+  (or `copilot -p`) runs the agent interactively on a terminal on the
+  worker, as a job: `longarm attach --job <id>` / the tray's Sessions
+  window show its terminal and take input (`session send --job`), and the
+  job ends by itself when the agent is done - its turn finished (from the
+  agent's hooks, which call `longarmd steer-hook`), no permission prompt
+  open, the terminal quiet, nobody typing - by typing `/exit`. `longarm
+  logs` shows the agent's answers; `jobs` shows `running (needs you)` when
+  it waits on a permission prompt. Folder trust screens are answered.
+  `--until-exit`: only the agent's own exit ends it. docs/steerable-runs.md,
+  docs/usage.md "Steerable agent runs".
+
 - **The Longarm icon**: the friendly agent whose long arm reaches out with the
   finished task. Every Windows exe carries it (`longarm`, `longarmd`,
   `longarm-tray`, `longarm-update`, `longarm-hub`, `longarm-relay`), the

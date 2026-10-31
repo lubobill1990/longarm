@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { attachSession, type Attachment } from '../api/sessions'
+import { attachSession, type AttachHandlers, type Attachment } from '../api/sessions'
 import { createTerminal, type Term } from './terminal'
 
 /** Re-attach delays (ms) after a lost connection; the last one repeats. */
@@ -16,12 +16,15 @@ type Status = { kind: 'connecting' } | { kind: 'live' } | { kind: 'retry'; why: 
 export function TerminalView({
   worker,
   session,
+  job,
   visible,
   onOutput,
   onExit,
 }: {
   worker: string
   session: string
+  /** session is a steerable job's id */
+  job?: boolean
   visible: boolean
   /** output arrived (badges on background tabs) */
   onOutput?: () => void
@@ -44,7 +47,7 @@ export function TerminalView({
     const connect = () => {
       const { cols, rows } = t.size()
       setStatus({ kind: 'connecting' })
-      conn.current = attachSession(worker, session, cols, rows, {
+      const handlers: AttachHandlers = {
         onData: (b) => {
           t.write(b)
           cb.current.onOutput?.()
@@ -73,7 +76,8 @@ export function TerminalView({
           setStatus((s) => (s.kind === 'retry' ? s : { kind: 'retry', why: code === 1008 ? 'too slow, re-attaching' : 'connection lost' }))
           timer = setTimeout(connect, delay)
         },
-      })
+      }
+      conn.current = attachSession(worker, session, cols, rows, handlers, job)
     }
     connect()
     return () => {
@@ -84,7 +88,7 @@ export function TerminalView({
       t.dispose()
       term.current = undefined
     }
-  }, [worker, session])
+  }, [worker, session, job])
 
   // fit to the element when shown and when it resizes; tell the session the new size
   useEffect(() => {

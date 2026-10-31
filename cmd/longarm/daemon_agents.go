@@ -73,18 +73,22 @@ var agentMO = protojson.MarshalOptions{UseProtoNames: true}
 
 // agentItem is one entry of the list.
 type agentItem struct {
-	Key          string    `json:"key"`
-	Worker       string    `json:"worker"`
-	Agent        string    `json:"agent"`
-	ID           string    `json:"id"`
-	Title        string    `json:"title"`
-	ProjectDir   string    `json:"project_dir,omitempty"`
-	Modified     time.Time `json:"modified,omitzero"`
-	Size         int64     `json:"size,omitempty"`
-	Where        string    `json:"where"`
-	Session      string    `json:"session,omitempty"`
-	Job          string    `json:"job,omitempty"`      // where job: the job's id
-	JobName      string    `json:"job_name,omitempty"` // and its name
+	Key        string    `json:"key"`
+	Worker     string    `json:"worker"`
+	Agent      string    `json:"agent"`
+	ID         string    `json:"id"`
+	Title      string    `json:"title"`
+	ProjectDir string    `json:"project_dir,omitempty"`
+	Modified   time.Time `json:"modified,omitzero"`
+	Size       int64     `json:"size,omitempty"`
+	Where      string    `json:"where"`
+	Session    string    `json:"session,omitempty"`
+	Job        string    `json:"job,omitempty"`      // where job: the job's id
+	JobName    string    `json:"job_name,omitempty"` // and its name
+	// Steer: a steerable job's state while it runs (starting, working,
+	// needs_you, idle, finishing; docs/steerable-runs.md): its terminal
+	// can be attached to and typed into (/v1/workers/{w}/jobs/{id}/...).
+	Steer        string    `json:"steer,omitempty"`
 	State        string    `json:"state"`
 	LastActivity time.Time `json:"last_activity,omitzero"`
 	PID          int       `json:"pid,omitempty"`
@@ -229,13 +233,28 @@ func (d *daemon) agentsGateway(mux *http.ServeMux) {
 			agentError(w, err)
 			return
 		}
-		seq, err := d.sendSession(r.Context(), r.PathValue("worker"), r.PathValue("name"), req)
+		seq, err := d.sendSession(r.Context(), r.PathValue("worker"), r.PathValue("name"), false, req)
 		if err != nil {
 			agentError(w, err)
 			return
 		}
 		agentJSON(w, http.StatusOK, map[string]uint64{"input_seq": seq})
 	})
+	// a steerable run (longarm run --steerable): type into it, watch it
+	mux.HandleFunc("POST /v1/workers/{worker}/jobs/{id}/send", func(w http.ResponseWriter, r *http.Request) {
+		var req sendReq
+		if err := readJSON(r, &req); err != nil {
+			agentError(w, err)
+			return
+		}
+		seq, err := d.sendSession(r.Context(), r.PathValue("worker"), r.PathValue("id"), true, req)
+		if err != nil {
+			agentError(w, err)
+			return
+		}
+		agentJSON(w, http.StatusOK, map[string]uint64{"input_seq": seq})
+	})
+	mux.HandleFunc("GET /v1/workers/{worker}/jobs/{id}/attach", d.attachWS)
 	mux.HandleFunc("POST /v1/workers/{worker}/sessions/{name}/stop", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			GraceMs *int64 `json:"grace_ms"`
@@ -405,9 +424,17 @@ func (d *daemon) workerAgentSessions(ctx context.Context, worker, agent string, 
 	}
 	wg.Wait()
 	h.remember(transcripts)
-	for _, t := range transcripts { // an agent in a job's worktree: the job's
+	steered := map[string]string{} // "<agent>/<session id>" of a steerable job: the job
+	for id, j := range jobsByID {
+		if a, sid := j.Spec.GetSteer().GetAgent(), j.GetSteer().GetSessionId(); a != "" && sid != "" {
+			steered[a+"/"+sid] = id
+		}
+	}
+	for _, t := range transcripts { // an agent in a job's worktree, a steerable job's: the job's
 		if _, ok := owners[t]; !ok {
 			if id := jobOfDir(ep, h.dataDir, t.ProjectDir); id != "" {
+				owners[t] = agentOwner{job: id}
+			} else if id := steered[t.Agent+"/"+t.ID]; id != "" {
 				owners[t] = agentOwner{job: id}
 			}
 		}
@@ -416,6 +443,9 @@ func (d *daemon) workerAgentSessions(ctx context.Context, worker, agent string, 
 		sessions = nil // listed on the first page
 	}
 	items = matchAgentSessions(ep, sessions, transcripts, live, all, owners, jobsByID)
+	if !win.page() {
+		items = append(items, steerableItems(ep.name, items, jobsByID)...)
+	}
 	if agent != "" {
 		items = slices.DeleteFunc(items, func(it *agentItem) bool { return it.Agent != agent })
 	}
@@ -1227,9 +1257,10 @@ func (r sendReq) writes() ([][]byte, error) {
 	return out, nil
 }
 
-// sendSession types into a session; if_idle_ms guards the first write
-// (the others follow it at once). Returns the input_seq after the last.
-func (d *daemon) sendSession(ctx context.Context, worker, name string, r sendReq) (uint64, error) {
+// sendSession types into a session (job: a steerable job of id name);
+// if_idle_ms guards the first write (the others follow it at once).
+// Returns the input_seq after the last.
+func (d *daemon) sendSession(ctx context.Context, worker, name string, job bool, r sendReq) (uint64, error) {
 	writes, err := r.writes()
 	if err != nil {
 		return 0, err
@@ -1242,7 +1273,7 @@ func (d *daemon) sendSession(ctx context.Context, worker, name string, r sendReq
 	defer cancel()
 	var seq uint64
 	for i, b := range writes {
-		req := &pb.SendSessionRequest{Name: name, Data: b}
+		req := &pb.SendSessionRequest{Name: name, Job: job, Data: b}
 		if i == 0 {
 			req.IfIdleMs = r.IfIdleMs
 		}

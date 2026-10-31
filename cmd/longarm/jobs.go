@@ -30,6 +30,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
+	"github.com/lubobill1990/longarm/internal/steer"
 	"github.com/lubobill1990/longarm/internal/workspace"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -148,7 +149,7 @@ func sessionTarget(ctx context.Context, s *session, worker, on, name, cwd string
 func runCmd() *cobra.Command {
 	var env, secrets, labels, require, share []string
 	var cwd, name, id, repo, ref, lfs, on, typ, stdinFile, gitAuth, inSession string
-	var wait, follow, noQueue bool
+	var wait, follow, noQueue, steerable, untilExit bool
 	var memLimit string
 	var memGB, cpus float64
 	var aa agentAuthOpts
@@ -167,12 +168,27 @@ test 4, else 2). When no worker passes, the job waits in the hub's queue
 the known workers itself.
 
 Without --repo or --cwd the job runs in the worker's home directory;
---repo . runs it in a fresh copy of the local checkout instead.`,
+--repo . runs it in a fresh copy of the local checkout instead.
+
+--steerable runs claude or copilot interactively on a terminal you can
+watch and type into (longarm attach --job, the tray's Sessions window)
+instead of headless: "claude -p task" becomes "claude task", "copilot -p
+task" "copilot -i task". The job ends by itself when the agent is done -
+its turn finished, no permission prompt open, the terminal quiet 5 s and
+nobody typing (after a human steered it: a minute after its answer) - and
+longarm logs shows the agent's answers. --until-exit: only when the agent
+exits. docs/steerable-runs.md`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			worker, argv, err := commandArgs(cmd, args)
 			if err != nil {
 				return err
+			}
+			var steerSpec *pb.SteerSpec
+			if steerable || untilExit {
+				if steerSpec, argv, err = steerableRun(argv, untilExit, steerable, stdinFile); err != nil {
+					return err
+				}
 			}
 			envM, err := parseEnv(env)
 			if err != nil {
@@ -268,13 +284,22 @@ Without --repo or --cwd the job runs in the worker's home directory;
 			if err != nil {
 				return err
 			}
+			if steerSpec != nil {
+				// an older worker would drop the field and run the agent headless without a terminal
+				if err := needFeature(cmd.Context(), conn, jobs.FeatureSteer, "--steerable"); err != nil {
+					return err
+				}
+				if steerSpec.Agent == steer.Copilot && !agentAuth.GetCopilotHome() {
+					return usagef("--steerable copilot needs forwarded Copilot credentials (--agent-auth copilot): its hooks go into the run's private COPILOT_HOME")
+				}
+			}
 			ws, err := jobWorkspace(cmd.Context(), conn, repo, ref, lfs, g)
 			if err != nil {
 				return err
 			}
 			req := &pb.SubmitRequest{
 				Spec: &pb.JobSpec{Id: id, Name: name, Argv: argv, Cwd: cwd, Env: envM, MemLimitBytes: mem, Labels: labelM,
-					Workspace: ws, CpuLimit: cpus},
+					Workspace: ws, CpuLimit: cpus, Steer: steerSpec},
 				// secrets and stdin are sent once, memory-only on the worker
 				SecretEnv: sec,
 				Stdin:     stdin,
@@ -310,6 +335,9 @@ Without --repo or --cwd the job runs in the worker's home directory;
 			} else if hints && !wait && !follow {
 				fmt.Fprintln(os.Stderr, followHint(job.Spec.Id))
 			}
+			if hints && steerSpec != nil && job.State != pb.JobState_JOB_STATE_FAILED {
+				fmt.Fprintf(os.Stderr, "longarm: watch / steer: longarm attach %s --job %s\n", worker, job.Spec.Id)
+			}
 			if follow {
 				if err := followLogs(ctx, conn, id, 0, os.Stdout); err != nil {
 					return err
@@ -343,6 +371,8 @@ Without --repo or --cwd the job runs in the worker's home directory;
 	c.Flags().StringArrayVar(&share, "share", nil, "let team members read the job (state, logs): team = all your teams, team:<name> = one")
 	c.Flags().Float64Var(&cpus, "cpus", 0, "CPU limit of the job's process tree in cores (Windows; Linux with per-user isolation)")
 	c.Flags().StringVarP(&inSession, "session", "s", "", "run on the worker of this session, in its working directory (e.g. its --repo worktree; --cwd: relative to it)")
+	c.Flags().BoolVar(&steerable, "steerable", false, "run claude / copilot interactively on a terminal you can attach to and steer; the job ends when the agent is done (docs/steerable-runs.md)")
+	c.Flags().BoolVar(&untilExit, "until-exit", false, "with --steerable: end the job only when the agent exits, not when it is done")
 	c.Flags().StringVar(&stdinFile, "stdin-file", "", "send this local file (- = longarm's stdin; at most 1 MiB) as the job's stdin: memory-only on the worker, never in job metadata, the hub or logs")
 	aa.register(c)
 	return c
@@ -350,6 +380,25 @@ Without --repo or --cwd the job runs in the worker's home directory;
 
 // readStdinFile reads run --stdin-file: a local file or ("-") longarm's own
 // stdin, at most jobs.MaxStdinBytes.
+// steerableRun checks --steerable's command and makes it interactive.
+func steerableRun(argv []string, untilExit, steerable bool, stdinFile string) (*pb.SteerSpec, []string, error) {
+	if !steerable {
+		return nil, nil, usagef("--until-exit goes with --steerable")
+	}
+	agent := steer.AgentOf(argv)
+	if agent == "" {
+		return nil, nil, usagef("--steerable runs claude or copilot (the command's first word), not %q", argv[0])
+	}
+	if stdinFile != "" {
+		return nil, nil, usagef("--steerable takes no --stdin-file: type into the run with longarm session send --job")
+	}
+	argv, err := steer.Interactive(agent, argv)
+	if err != nil {
+		return nil, nil, usageErr(err)
+	}
+	return &pb.SteerSpec{Agent: agent, UntilExit: untilExit}, argv, nil
+}
+
 func readStdinFile(name string) ([]byte, error) {
 	var r io.Reader = os.Stdin
 	if name != "-" {
@@ -848,6 +897,9 @@ also see jobs shared with your teams). --json lists every job you may see unless
 				st := stateName(j.State)
 				if j.Orphaned {
 					st += "(orphan)"
+				}
+				if s := j.GetSteer().GetState(); s != "" && j.State == pb.JobState_JOB_STATE_RUNNING {
+					st += "(" + strings.ReplaceAll(s, "_", " ") + ")" // running(needs you)
 				}
 				if !fj.WorkerOnline && !terminalState(j.State) {
 					st += "(worker offline)"

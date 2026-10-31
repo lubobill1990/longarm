@@ -32,7 +32,8 @@ const (
 	wsReadLimit  = 1 << 20 // a paste
 )
 
-// attachWS is GET /v1/workers/{worker}/sessions/{name}/attach?cols=&rows=.
+// attachWS is GET /v1/workers/{worker}/sessions/{name}/attach?cols=&rows=
+// and GET /v1/workers/{worker}/jobs/{id}/attach (a steerable run).
 func (d *daemon) attachWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := d.conn(r.PathValue("worker"))
 	if err != nil {
@@ -40,6 +41,9 @@ func (d *daemon) attachWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	open := &pb.AttachOpen{Name: r.PathValue("name"), NoCreate: true}
+	if id := r.PathValue("id"); id != "" {
+		open = &pb.AttachOpen{Name: id, Job: true, NoCreate: true}
+	}
 	cols, _ := strconv.ParseUint(r.URL.Query().Get("cols"), 10, 16)
 	rows, _ := strconv.ParseUint(r.URL.Query().Get("rows"), 10, 16)
 	if cols > 0 && rows > 0 {

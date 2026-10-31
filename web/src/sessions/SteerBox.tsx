@@ -11,7 +11,7 @@ export const IF_IDLE_MS = 1500
  * (confirmed) as buttons. Refused while someone is typing in the
  * terminal: the text stays for a retry.
  */
-export function SteerBox({ worker, session, disabled }: { worker: string; session: string; disabled?: boolean }) {
+export function SteerBox({ worker, session, job, disabled }: { worker: string; session: string; job?: boolean; disabled?: boolean }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<{ text: string; error?: boolean }>()
@@ -20,7 +20,7 @@ export function SteerBox({ worker, session, disabled }: { worker: string; sessio
     setBusy(true)
     setNote(undefined)
     try {
-      await sessionsApi.send(worker, session, { ...input, if_idle_ms: IF_IDLE_MS })
+      await sessionsApi.send(worker, session, { ...input, if_idle_ms: IF_IDLE_MS }, job)
       if (clear) setText('')
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) setNote({ text: 'someone is typing - retry' })

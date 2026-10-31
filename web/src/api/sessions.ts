@@ -11,7 +11,8 @@ export type Agent = 'claude' | 'copilot'
 /** working | waiting (its turn is over) | running (not a known agent) | ended */
 export type AgentState = 'working' | 'waiting' | 'running' | 'ended'
 /**
- * longarm: in Longarm session `session`; job: in Longarm job `job` (claude -p / copilot -p: read-only);
+ * longarm: in Longarm session `session`; job: in Longarm job `job` (claude -p / copilot -p: read-only;
+ * a steerable run - `steer` set - has a terminal and takes input);
  * desktop: a live process outside Longarm; none: a transcript only
  */
 export type Where = 'longarm' | 'job' | 'desktop' | 'none'
@@ -34,10 +35,15 @@ export interface AgentSession {
   /** the Longarm job's id and name (where: job) */
   job?: string
   job_name?: string
+  /** a running steerable job's state (longarm run --steerable; docs/steerable-runs.md) */
+  steer?: SteerState
   state: AgentState
   last_activity?: string
   pid?: number
 }
+
+/** A steerable run's state: needs_you = a permission prompt or a start-up screen waits for a human. */
+export type SteerState = 'starting' | 'working' | 'needs_you' | 'idle' | 'finishing'
 
 export interface AgentSessionList {
   items?: AgentSession[]
@@ -143,6 +149,9 @@ const messagesPath = (s: Pick<AgentSession, 'worker' | 'agent' | 'id'>) =>
   `${BASE}/agent-sessions/${enc(s.worker)}/${enc(s.agent)}/${enc(s.id)}/messages`
 
 const sessionPath = (worker: string, name: string) => `${BASE}/workers/${enc(worker)}/sessions/${enc(name)}`
+/** A terminal's path: a Longarm session's, or (job) a steerable job's. */
+const termPath = (worker: string, name: string, job = false) =>
+  job ? `${BASE}/workers/${enc(worker)}/jobs/${enc(name)}` : sessionPath(worker, name)
 
 export const sessionsApi = {
   list: (q: ListQuery = {}) => {
@@ -177,14 +186,14 @@ export const sessionsApi = {
     ),
   start: (worker: string, req: StartSession) => post<LongarmSession>(`${BASE}/workers/${enc(worker)}/sessions`, req),
   get: (worker: string, name: string) => get<LongarmSession>(sessionPath(worker, name)),
-  send: (worker: string, name: string, input: SendInput) => post<{ input_seq: number }>(`${sessionPath(worker, name)}/send`, input),
+  send: (worker: string, name: string, input: SendInput, job = false) => post<{ input_seq: number }>(`${termPath(worker, name, job)}/send`, input),
   stop: (worker: string, name: string, graceMs = 10000) => post<LongarmSession>(`${sessionPath(worker, name)}/stop`, { grace_ms: graceMs }),
 }
 
 /** The terminal's WebSocket URL (same origin: the tray checks it). */
-export function attachUrl(worker: string, name: string, cols: number, rows: number): string {
+export function attachUrl(worker: string, name: string, cols: number, rows: number, job = false): string {
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
-  return `${scheme}://${location.host}${sessionPath(worker, name)}/attach?cols=${cols}&rows=${rows}`
+  return `${scheme}://${location.host}${termPath(worker, name, job)}/attach?cols=${cols}&rows=${rows}`
 }
 
 /** The JSON control frames the server sends (text frames). */
@@ -209,9 +218,9 @@ export interface Attachment {
   close(): void
 }
 
-/** Attaches to a Longarm session's terminal: binary frames out and in, JSON control. */
-export function attachSession(worker: string, name: string, cols: number, rows: number, h: AttachHandlers): Attachment {
-  const ws = new WebSocket(attachUrl(worker, name, cols, rows))
+/** Attaches to a Longarm session's (job: a steerable job's) terminal: binary frames out and in, JSON control. */
+export function attachSession(worker: string, name: string, cols: number, rows: number, h: AttachHandlers, job = false): Attachment {
+  const ws = new WebSocket(attachUrl(worker, name, cols, rows, job))
   ws.binaryType = 'arraybuffer'
   let closed = false
   ws.onmessage = (ev) => {

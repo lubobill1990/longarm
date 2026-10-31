@@ -4,9 +4,13 @@ import { fmtAgo, since } from '../lib/format'
 
 export const AGENT_LABEL: Record<string, string> = { claude: 'Claude Code', copilot: 'Copilot CLI' }
 
-/** The state dot: ● working, ◐ waiting, ○ ended, ◇ a desktop process (outside Longarm), ▸ a running Longarm job. */
+/**
+ * The state dot: ● working, ◐ waiting, ○ ended, ◇ a desktop process (outside Longarm), ▸ a running Longarm job,
+ * ! a steerable job that needs you (a permission prompt, a start-up screen).
+ */
 export function stateMark(s: AgentSession): { mark: string; cls: string; label: string } {
   if (s.where === 'desktop') return { mark: '◇', cls: 'desktop', label: `outside Longarm, ${s.state}` }
+  if (s.steer === 'needs_you') return { mark: '!', cls: 'needs', label: `Longarm job ${s.job_name || s.job}: needs you` }
   if (s.where === 'job' && s.state !== 'ended') return { mark: '▸', cls: 'job', label: `Longarm job ${s.job_name || s.job}, ${s.state}` }
   if (s.state === 'waiting') return { mark: '◐', cls: 'waiting', label: 'waiting for input' }
   if (s.state === 'ended') return { mark: '○', cls: 'ended', label: 'ended' }

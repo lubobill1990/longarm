@@ -311,12 +311,12 @@ func typed(b []byte) []byte {
 }
 
 func sessionSendCmd() *cobra.Command {
-	var name, text, file string
+	var name, job, text, file string
 	var keys []string
 	var raw, asJSON bool
 	var ifIdle uint32
 	c := &cobra.Command{
-		Use:   "send [<worker>] -s NAME (--text TEXT | --stdin-file FILE | --key KEY...)",
+		Use:   "send [<worker>] (-s NAME | --job ID) (--text TEXT | --stdin-file FILE | --key KEY...)",
 		Short: "Type input into a running session without attaching (one contiguous write)",
 		Long: `Write input to a running session's terminal, as if typed, without attaching
 or reading its output. --text / --stdin-file bytes come first, then the
@@ -333,12 +333,16 @@ The input is not stored in the session's metadata or the audit log (its
 size only). The session transcript (longarm logs --session) holds what the
 terminal shows, which includes input the program echoes.
 
+--job ID types into a steerable run (longarm run --steerable) instead: it
+counts as a human steering the run (the run waits a minute after its next
+answer before it ends).
+
 Exit codes: 0 written, 2 the session has ended (or a usage error), 3 no such
 session, 75 --if-idle-ms: input arrived within the window.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if name == "" {
-				return usagef("--session (-s) NAME is required")
+			if (name == "") == (job == "") {
+				return usagef("give --session (-s) NAME or --job ID")
 			}
 			if text != "" && file != "" {
 				return usagef("give --text or --stdin-file, not both")
@@ -375,7 +379,12 @@ session, 75 --if-idle-ms: input arrived within the window.`,
 				return err
 			}
 			defer s.close()
-			worker, err := sessionWorker(cmd.Context(), s, args, name)
+			var worker string
+			if job != "" {
+				worker, name, err = jobTarget(cmd.Context(), s, append(args, job))
+			} else {
+				worker, err = sessionWorker(cmd.Context(), s, args, name)
+			}
 			if err != nil {
 				return err
 			}
@@ -384,21 +393,31 @@ session, 75 --if-idle-ms: input arrived within the window.`,
 				return err
 			}
 			defer conn.Close()
+			if job != "" {
+				if err := needFeature(cmd.Context(), conn, jobs.FeatureSteer, "--job"); err != nil {
+					return err
+				}
+			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), time.Minute)
 			defer cancel()
-			resp, err := conn.Sessions().Send(ctx, &pb.SendSessionRequest{Name: name, Data: data, IfIdleMs: ifIdle})
+			resp, err := conn.Sessions().Send(ctx, &pb.SendSessionRequest{Name: name, Job: job != "", Data: data, IfIdleMs: ifIdle})
 			clear(data)
 			if err != nil {
 				return tooOld(err, conn, "session send")
 			}
 			if asJSON {
-				b, _ := json.Marshal(map[string]any{"worker": worker, "session": name, "inputSeq": resp.InputSeq})
+				out := map[string]any{"worker": worker, "session": name, "inputSeq": resp.InputSeq}
+				if job != "" {
+					out = map[string]any{"worker": worker, "job": name, "inputSeq": resp.InputSeq}
+				}
+				b, _ := json.Marshal(out)
 				fmt.Println(string(b))
 			}
 			return nil
 		},
 	}
-	c.Flags().StringVarP(&name, "session", "s", "", "session name (required)")
+	c.Flags().StringVarP(&name, "session", "s", "", "session name")
+	c.Flags().StringVar(&job, "job", "", "a steerable run's job id instead of a session (longarm run --steerable)")
 	c.Flags().StringVar(&text, "text", "", "text to type (newline = Enter)")
 	c.Flags().StringVar(&file, "stdin-file", "", "send this file's content (- = longarm's stdin; at most 256 KiB)")
 	c.Flags().StringArrayVar(&keys, "key", nil, "a key after the text (repeatable): enter, tab, shift-tab, esc, backspace, space, up, down, left, right, home, end, pageup, pagedown, delete, ctrl-<letter>")
