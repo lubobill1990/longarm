@@ -328,7 +328,7 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
       {!metrics ? (
         updating ? (
           <div className="msg muted" data-testid="update-wait">
-            {view?.detail}
+            metrics resume when the worker is back
           </div>
         ) : (
           <div className={`msg ${state === 'offline' ? 'red' : 'muted'}`}>

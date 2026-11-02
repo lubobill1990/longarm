@@ -75,6 +75,9 @@ function updatingPool(p: ReturnType<typeof basePool>) {
     }
     if (w.name === 'mac-mini') {
       w.state = 'online'
+      w.error = undefined
+      w.metrics = metrics(12, 9.1, 16, 0, 0)
+      w.history = history(12, 16)
       w.node = { ...w.node, online: true, update: upd({ state: 'failed', code: 'sha256', error: 'longarmd-darwin-arm64: sha256 9f2c…, the hub says 41aa…', attempt: 'self-1' }) }
     }
   }

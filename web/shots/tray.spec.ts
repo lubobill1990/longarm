@@ -152,6 +152,10 @@ for (const scheme of ['light', 'dark'] as const) {
         await expect(page.getByTestId('worker-build-linux-02').getByTestId('update-detail')).toContainText('downloading 12/42 MB')
         await expect(page.getByTestId('worker-mac-mini').getByTestId('update-badge')).toContainText('failed')
         await shot(page, `tray-workers-updating-${scheme}-${size}`)
+        // the cards themselves: restarting for an MSI update (both workers), a failed one
+        await card.scrollIntoViewIfNeeded()
+        await card.screenshot({ path: join(out, `tray-update-restarting-${scheme}-${size}.png`) })
+        await page.getByTestId('worker-mac-mini').screenshot({ path: join(out, `tray-update-failed-${scheme}-${size}.png`) })
       })
 
       test('workers: add a machine', async ({ page }) => {
