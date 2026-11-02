@@ -722,6 +722,12 @@ function GetStarted({ me, hubHome, providers, feedback }: { me: Me | null | unde
               </p>
               <p className="small faint">Or one line in PowerShell:</p>
               <CopyLine text={lines.windows} testId="landing-ps1" />
+              <p className="small faint">
+                It asks for administrator rights and installs the MSI. For your account only, without them:
+              </p>
+              <CopyLine text={lines.windowsPerUser} testId="landing-ps1-user" />
+              <p className="small faint">Remove it again (either way):</p>
+              <CopyLine text={lines.windowsUninstall} testId="landing-uninstall" />
             </div>
           )}
           {os === 'unix' && (

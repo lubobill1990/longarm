@@ -76,6 +76,8 @@ describe('PanelApp', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Windows' }))
     expect((await screen.findByTestId('landing-msi')).getAttribute('href')).toBe('/releases/v1.2.3/longarm-windows-amd64.msi')
     expect(screen.getByTestId('landing-ps1').textContent).toContain(`irm ${location.origin}/install.ps1 | iex`)
+    expect(screen.getByTestId('landing-ps1-user').textContent).toContain('$env:LONGARM_PER_USER=1;')
+    expect(screen.getByTestId('landing-uninstall').textContent).toContain(`irm ${location.origin}/uninstall.ps1 | iex`)
     expect(screen.queryByText('Log in')).toBeNull()
   })
 

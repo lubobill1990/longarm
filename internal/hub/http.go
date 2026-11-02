@@ -56,6 +56,7 @@ func (h *Hub) httpHandler() http.Handler {
 	})
 	mux.HandleFunc("GET /install.sh", h.installScript("sh"))
 	mux.HandleFunc("GET /install.ps1", h.installScript("ps1"))
+	mux.HandleFunc("GET /uninstall.ps1", h.installScript("uninstall-ps1"))
 	mux.HandleFunc("GET /releases/latest.json", h.latestJSON)
 	mux.HandleFunc("GET /releases/{version}/{file}", h.releaseFile)
 	// a version's record, for the LongarmUpdate service (releasejson.go; the latest: latestJSON)

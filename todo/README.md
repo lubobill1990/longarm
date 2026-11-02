@@ -16,3 +16,4 @@ pull request description.
 | [updates.md](updates.md) | a worker's update as the hub shows it (docs/usage.md "While a worker updates") |
 | [remote-desktop.md](remote-desktop.md) | `longarm desktop` (docs/usage.md "Remote desktop") |
 | [release-channels.md](release-channels.md) | release channels and updates (docs/ci-cd.md "Release channels") |
+| [install-scripts.md](install-scripts.md) | the hub's install.ps1 / install.sh / uninstall.ps1 (docs/usage.md "Uninstall") |
