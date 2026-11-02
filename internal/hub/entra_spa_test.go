@@ -133,7 +133,8 @@ func TestEntraSPASignIn(t *testing.T) {
 		t.Fatalf("default web mode without a credential: %q", h.cfg.Auth.Entra.Web)
 	}
 	base := "http://" + h.Addr("http")
-	if code, body := plainGet(t, base+"/auth/info"); code != 200 || !strings.Contains(body, `"mode": "spa"`) {
+	if code, body := plainGet(t, base+"/auth/info"); code != 200 || !strings.Contains(body, `"mode": "spa"`) ||
+		!strings.Contains(body, `"tenant": "`+h.cfg.Auth.Entra.TenantID+`"`) {
 		t.Fatalf("/auth/info: %d %s", code, body)
 	}
 	if code, _ := plainGet(t, base+"/auth/callback?code=x&state=y"); code != http.StatusNotFound {
