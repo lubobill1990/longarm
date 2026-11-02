@@ -393,6 +393,10 @@ Issues and pull requests are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[MIT](LICENSE). Claude Code is a product of Anthropic and Copilot CLI a
+[MIT](LICENSE). The software Longarm includes is under permissive licenses
+(MIT, BSD, Apache-2.0, ...; no copyleft): their notices are in
+[THIRD_PARTY_NOTICES.txt](internal/notices/THIRD_PARTY_NOTICES.txt), which
+every binary prints (`longarm licenses`) and every package installs
+([docs/licenses.md](docs/licenses.md)). Claude Code is a product of Anthropic and Copilot CLI a
 product of GitHub; Longarm is an independent project and not affiliated with
 either.

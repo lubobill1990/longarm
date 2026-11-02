@@ -810,6 +810,7 @@ function Footer({ version, feedback }: { version?: string; feedback: string }) {
       <a href={`${GITHUB}/blob/main/docs/security.md`}>Security</a>
       <a href={`${GITHUB}#run-your-own-hub`}>Run your own hub</a>
       <a href="/status">Status</a>
+      <a href="/licenses.txt">Licenses</a>
     </footer>
   )
 }

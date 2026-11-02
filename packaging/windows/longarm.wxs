@@ -454,6 +454,15 @@
              ran: a Start here would fail on a machine without it) -->
       </Component>
 
+      <!-- the license and the third-party notices (internal/notices); one
+           file each: WiX's GUID comes from the key file -->
+      <Component Id="License">
+        <File Id="LicenseTxt" Name="LICENSE.txt" Source="$(var.RepoDir)\LICENSE" KeyPath="yes" />
+      </Component>
+      <Component Id="Notices">
+        <File Id="NoticesTxt" Name="THIRD_PARTY_NOTICES.txt" Source="$(var.RepoDir)\internal\notices\THIRD_PARTY_NOTICES.txt" KeyPath="yes" />
+      </Component>
+
       <?if $(var.HasTray) = 1 ?>
       <Component Id="Tray">
         <File Id="longarm_tray.exe" Name="longarm-tray.exe" Source="$(var.BinDir)\longarm-tray.exe" KeyPath="yes">

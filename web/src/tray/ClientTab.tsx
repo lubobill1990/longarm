@@ -284,7 +284,39 @@ export function Settings({
       <TraySettingsView pool={pool} clientUp={clientUp} />
       <AgentSkill />
       <AutoUpdate />
+      <Licenses />
     </div>
+  )
+}
+
+/** Longarm's license and the licenses of what it includes (internal/notices), loaded when first opened. */
+export function Licenses() {
+  const [text, setText] = useState<string>()
+  const [error, setError] = useState<string>()
+  const asked = useRef(false)
+  return (
+    <Section card title="Licenses" testId="licenses">
+      <p className="muted small">Longarm is open source under the MIT License. It includes open-source software under the licenses listed here.</p>
+      <details
+        onToggle={(e) => {
+          if (!(e.target as HTMLDetailsElement).open || asked.current) return
+          asked.current = true
+          trayApi.licenses().then(
+            (t) => setText(String(t)),
+            (err) => setError(err instanceof Error ? err.message : String(err)),
+          )
+        }}
+      >
+        <summary>Show the licenses</summary>
+        {error ? (
+          <ErrorBox error={error} />
+        ) : (
+          <pre className="licenses-text" data-testid="licenses-text">
+            {text ?? 'loading…'}
+          </pre>
+        )}
+      </details>
+    </Section>
   )
 }
 

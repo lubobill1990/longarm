@@ -126,6 +126,8 @@ export interface SignInState {
 
 export const trayApi = {
   info: () => get<TrayInfo>('/trayapi/info'),
+  /** Longarm's license and the third-party notices (plain text) */
+  licenses: () => get<string>('/trayapi/licenses'),
   attach: (worker: string, session?: string) => post('/trayapi/attach', { worker, session }),
   ssh: (worker: string) => post('/trayapi/ssh', { worker }),
   desktop: (worker: string) => post('/trayapi/desktop', { worker }),

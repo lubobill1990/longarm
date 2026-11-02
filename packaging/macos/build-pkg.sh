@@ -38,6 +38,10 @@ for b in longarm longarmd; do
 done
 cp "$here/com.longarm.longarmd.plist.example" "$root/usr/local/share/longarm/"
 chmod 0644 "$root/usr/local/share/longarm/com.longarm.longarmd.plist.example"
+# the license and the third-party notices (internal/notices)
+cp "$here/../../LICENSE" "$root/usr/local/share/longarm/LICENSE"
+cp "$here/../../internal/notices/THIRD_PARTY_NOTICES.txt" "$root/usr/local/share/longarm/THIRD_PARTY_NOTICES.txt"
+chmod 0644 "$root/usr/local/share/longarm/LICENSE" "$root/usr/local/share/longarm/THIRD_PARTY_NOTICES.txt"
 mkdir -p "$work/scripts"
 cp "$here/scripts/postinstall" "$work/scripts/postinstall"
 chmod 0755 "$work/scripts/postinstall"

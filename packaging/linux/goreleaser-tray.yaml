@@ -27,6 +27,10 @@ archives:
     ids: [longarm-tray-linux]
     name_template: "longarm-tray_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
+    files:
+      - LICENSE*
+      - src: internal/notices/THIRD_PARTY_NOTICES.txt
+        strip_parent: true
 
 nfpms:
   - id: longarm-tray
@@ -42,6 +46,11 @@ nfpms:
     file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
     # Runtime libraries of Wails v3's default (GTK 4) Linux backend.
     dependencies: [longarm, libgtk-4-1, libwebkitgtk-6.0-4, libsoup-3.0-0]
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/longarm-tray/LICENSE
+      - src: internal/notices/THIRD_PARTY_NOTICES.txt
+        dst: /usr/share/doc/longarm-tray/THIRD_PARTY_NOTICES.txt
 
 checksum:
   name_template: checksums.txt
