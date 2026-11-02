@@ -85,6 +85,8 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	now := time.Now()
 	n.lastReport = now
 	h.applyHelloLocked(n, hello)
+	h.updateHelloLocked(n, hello, now)
+	n.encodeUpdate()
 	if n.rec.IssuedCert != "" && n.rec.CertSerial == pki.Serial(c.cert) {
 		// The node collected its enrollment certificate: forget the pending data.
 		n.rec.IssuedCert, n.rec.PollTokenHash = "", ""
@@ -203,7 +205,7 @@ func (h *Hub) applyHelloLocked(n *node, hello *pb.NodeHello) {
 	r.Capabilities = hello.Capabilities
 	h.applyTailnetLocked(n, hello.Tailnet)
 	if hello.Update != nil {
-		if b, err := protojson.Marshal(hello.Update); err == nil {
+		if b, err := protojson.Marshal(legacyUpdateStatus(hello.Update)); err == nil {
 			r.Update = b
 		}
 	}
@@ -224,6 +226,7 @@ func (h *Hub) handleReport(n *node, sess *nodeSession, m *pb.NodeReport) {
 	switch x := m.Msg.(type) {
 	case *pb.NodeReport_Metrics:
 		n.metrics = x.Metrics
+		h.updateMetricsLocked(n, x.Metrics, now)
 		recordMetricsLocked(n, x.Metrics)
 		h.bus.publish(&pb.FleetEvent{Kind: "metrics", Node: n.rec.Name, NodeId: n.rec.ID, NodeInfo: h.nodeInfoLocked(n)})
 		h.kickQueue()
@@ -246,13 +249,29 @@ func (h *Hub) handleReport(n *node, sess *nodeSession, m *pb.NodeReport) {
 		h.publishNodeLocked(n, "state changed")
 		h.kickQueue()
 	case *pb.NodeReport_Update:
-		if b, err := protojson.Marshal(x.Update); err == nil {
-			n.rec.Update = b
-			h.store.PutNode(n.rec)
+		u := x.Update
+		prevState := ""
+		if len(n.rec.Update) > 0 {
+			prev := &pb.UpdateStatus{}
+			if (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(n.rec.Update, prev) == nil && prev.To == u.To {
+				prevState = prev.State
+			}
 		}
-		h.log.Info("node update", "node", n.rec.Name, "state", x.Update.State, "from", x.Update.From, "to", x.Update.To, "err", x.Update.Error)
-		h.event(context.Background(), "node.update", map[string]string{"state": x.Update.State, "from": x.Update.From, "to": x.Update.To, "error": x.Update.Error})
-		h.publishNodeLocked(n, "update "+x.Update.State+" "+x.Update.To)
+		changed := h.updateReportLocked(n, u, now)
+		if prevState == u.State && !changed {
+			// progress only (bytes, the same phase again): shown, not
+			// saved, logged or fed to the rollout
+			h.publishNodeLocked(n, "update "+u.State+" "+u.To)
+			break
+		}
+		if b, err := protojson.Marshal(legacyUpdateStatus(u)); err == nil {
+			n.rec.Update = b // what older hubs read too (a downgrade)
+		}
+		n.encodeUpdate()
+		h.store.PutNode(n.rec)
+		h.log.Info("node update", "node", n.rec.Name, "state", u.State, "phase", u.Phase, "from", u.From, "to", u.To, "err", u.Error)
+		h.event(context.Background(), "node.update", map[string]string{"state": u.State, "phase": u.Phase, "from": u.From, "to": u.To, "error": u.Error})
+		h.publishNodeLocked(n, "update "+u.State+" "+u.To)
 		h.advanceReleaseLocked()
 	case *pb.NodeReport_PortLinks:
 		h.applyPortLinkReportLocked(n, x.PortLinks)
@@ -369,6 +388,7 @@ func (h *Hub) setOfflineLocked(n *node, id uint64) {
 	}
 	n.sess = nil
 	h.failPendingLocked(n.rec.ID, id)
+	h.updateOfflineLocked(n, time.Now())
 	n.rec.LastSeen = time.Now().UTC()
 	h.store.PutNode(n.rec)
 	h.log.Info("node offline", "node", n.rec.Name)
@@ -456,6 +476,7 @@ func (h *Hub) nodeInfoLocked(n *node) *pb.NodeInfo {
 		info.LastSeen = tspb(n.lastReport)
 	}
 	info.JobsActive, info.ReservedGb = h.loadLocked(r.ID)
+	info.Update = h.updateInfoLocked(n)
 	return info
 }
 

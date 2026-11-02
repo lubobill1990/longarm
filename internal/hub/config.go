@@ -121,6 +121,9 @@ type Config struct {
 	Diagnostics DiagConfig  `toml:"diagnostics"`
 	Auth        AuthConfig  `toml:"auth"` // entra.go
 	Links       LinksConfig `toml:"links"`
+	// Updates: how long an update of a worker may take before the hub
+	// says it didn't finish (updatestate.go).
+	Updates UpdatesConfig `toml:"updates"`
 	// Headscale is P2's [headscale] section; still accepted (it means
 	// [tailnet] provider = "headscale" with these settings).
 	Headscale HeadscaleConfig `toml:"headscale"`
@@ -319,6 +322,23 @@ type WebConfig struct {
 type HeartbeatConfig struct {
 	Interval Duration `toml:"interval"` // metrics period asked from workers, default 2s
 	Offline  Duration `toml:"offline"`  // no report for this long = offline, default 10s
+}
+
+// UpdatesConfig is [updates]: the deadlines of a worker's update
+// (NodeInfo.update). Zero = the defaults.
+type UpdatesConfig struct {
+	// Phase: a phase (checking, downloading, verifying, installing) without
+	// progress for this long (default 15m).
+	Phase Duration `toml:"phase_timeout"`
+	// Restart: the worker went away to restart and is not back (default
+	// 10m).
+	Restart Duration `toml:"restart_timeout"`
+	// Requested: a rollout asked the worker to update; it hasn't started
+	// (default 10m).
+	Requested Duration `toml:"requested_timeout"`
+	// Max: an update never takes longer than this, whatever it reports
+	// (default 60m).
+	Max Duration `toml:"max_duration"`
 }
 
 // DefaultPort of the hub.

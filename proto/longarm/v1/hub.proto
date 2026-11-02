@@ -738,6 +738,62 @@ message NodeInfo {
   // before IDs, not yet renewed): the only ID-less certificates clients
   // accept for this node.
   repeated string legacy_serials = 38;
+  // Workers: an update of the node's machine in progress, or how the last
+  // one ended until it is resolved (NodeUpdate); unset = none.
+  NodeUpdate update = 39;
+}
+
+// NodeUpdate is the hub's view of an update of a worker's machine
+// (docs/usage.md "Updating"; internal/hub/updatestate.go), for everyone who
+// may see the node: set only from the node's own session (its update
+// reports and hello) and by the hub's rollouts, never by a client.
+message NodeUpdate {
+  // updating: in progress (phase); requested: a rollout told the worker to
+  // update and it has not reported yet; failed: it ended on the old
+  // version (error); timed_out: no result by the deadline ("didn't
+  // finish"); restart_pending: installed, the machine must restart to
+  // finish (msiexec 3010); mismatch: it came back on another version
+  // than to.
+  string state = 1;
+  string from = 2;
+  string to = 3;
+  // Who started it: owner (longarm worker update, the tray's "Update"),
+  // rollout (longarm admin release push), auto (the Longarm Update
+  // service's automatic updates), local (on the machine: the tray's
+  // banner), "" = unknown.
+  string initiator = 4;
+  // checking | downloading | verifying | installing | restarting |
+  // health_check | "" (unknown: an older worker)
+  string phase = 5;
+  int64 bytes_done = 6;
+  int64 bytes_total = 7;
+  google.protobuf.Timestamp started_at = 8;
+  // The hub's clock: no result by then = timed_out.
+  google.protobuf.Timestamp deadline = 9;
+  google.protobuf.Timestamp updated_at = 10; // the last report
+  string method = 11; // msi | self | "" (unknown)
+  // failed / mismatch / timed_out: why, in the worker's words (its owner
+  // and admins only; others get code)
+  string error = 12;
+  // a short reason: signature, sha256, disk, msi, downgrade, health,
+  // refused, unavailable, timeout, version ...
+  string code = 13;
+  // reported: the worker reports this update itself (phases); false = the
+  // hub only knows it asked (an older worker): a generic "updating".
+  bool reported = 14;
+  // The node went offline during the update (the restart): since when.
+  google.protobuf.Timestamp offline_since = 15;
+  // The state is the companion's (the admin worker and the session worker
+  // restart together in one MSI update): its name; owner and admins only.
+  string via = 16;
+  // Running jobs and sessions keep running (both update methods: the job
+  // shims outlive longarmd); false = unknown.
+  bool jobs_keep_running = 17;
+  google.protobuf.Timestamp finished_at = 18;
+  // The update attempt (the worker's or the rollout's): a report of
+  // another attempt replaces this one.
+  string attempt = 19;
+  string message = 20; // the worker's progress text (owner and admins)
 }
 
 message ListNodesRequest {
@@ -1294,12 +1350,30 @@ message TailnetStatusResponse {
 // -------------------------------------------------------- self-update (P2)
 
 message UpdateStatus {
-  // applying | restarting | checking | ok | rolled_back | failed
+  // applying | restarting | checking | ok | rolled_back | failed | error |
+  // unhealthy. Older hubs read only these: "failed", "rolled_back" and
+  // "unhealthy" of a rollout's version halt the rollout, "error" doesn't.
   string state = 1;
   string from = 2;
   string to = 3;
   string error = 4;
   google.protobuf.Timestamp at = 5;
+  // Since 0.1.30 (older workers leave them unset, older hubs ignore them):
+  // the detailed phase (checking | downloading | verifying | installing |
+  // restarting | health_check), the download's progress, who started it
+  // (owner | rollout | auto | local), how (msi | self), a short failure
+  // code, when the attempt started and its ID, a progress message, and
+  // whether the machine must restart to finish (msiexec 3010 / 1641).
+  string phase = 6;
+  int64 bytes_done = 7;
+  int64 bytes_total = 8;
+  string initiator = 9;
+  string method = 10;
+  string code = 11;
+  google.protobuf.Timestamp started = 12;
+  string attempt = 13;
+  string message = 14;
+  bool reboot_required = 15;
 }
 
 message UpdateHint {

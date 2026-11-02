@@ -288,7 +288,7 @@ func updateFailedLocked(n *node, version string) (bool, string) {
 		return false, ""
 	}
 	us := &pb.UpdateStatus{}
-	if protojson.Unmarshal(n.rec.Update, us) != nil || us.To != version {
+	if (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(n.rec.Update, us) != nil || us.To != version {
 		return false, ""
 	}
 	switch us.State {
@@ -338,6 +338,7 @@ func (h *Hub) nodeUpdatedLocked(n *node, version string) bool {
 func (h *Hub) hintLocked(n *node) {
 	if t := h.targetLocked(n); t != "" && n.rec.Version != t {
 		h.sendLocked(n, &pb.HubCommand{Msg: &pb.HubCommand_Update{Update: &pb.UpdateHint{Version: t}}})
+		h.updateRequestedLocked(n, t, time.Now())
 	}
 }
 
