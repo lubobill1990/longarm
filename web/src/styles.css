@@ -229,3 +229,14 @@ table.grid tr.subrow td { border-top: none; }
 .leg-row .leg-ep { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .netrow { display: flex; gap: 12px; align-items: baseline; margin: 2px 0; font-variant-numeric: tabular-nums; }
 .netrow .label { color: var(--muted); width: 34px; }
+
+/* an update of a machine (lib/update.ts; the tray styles it in tray.css) */
+.wcard .upd-status, .wcard .upd-badge { position: relative; display: flex; flex-direction: column; gap: 3px; margin: 0 0 6px; padding: 6px 28px 6px 8px; border-radius: 6px; background: #2b2111; font-size: 12px; }
+.wcard .upd-title { color: var(--amber); font-weight: 600; }
+.wcard .upd-badge.is-failed, .wcard .upd-badge.is-mismatch, .wcard .upd-badge.is-timed_out { background: #2d1214; }
+.wcard .upd-badge.is-failed .upd-title, .wcard .upd-badge.is-mismatch .upd-title, .wcard .upd-badge.is-timed_out .upd-title { color: var(--red); }
+.wcard .upd-detail, .wcard .upd-note { color: var(--muted); }
+.wcard .upd-bar { height: 4px; border-radius: 2px; background: var(--track); overflow: hidden; }
+.wcard .upd-bar span { display: block; height: 100%; background: var(--amber); }
+.wcard .upd-x { position: absolute; top: 2px; right: 2px; background: none; border: none; color: var(--muted); cursor: pointer; }
+.state-updating { color: var(--amber); }

@@ -54,7 +54,38 @@ function node(name: string, extra: Record<string, unknown> = {}) {
   return { name, role: 'worker', state: 'approved', online: true, owner: 'alice', hostname: name.replace(/-admin$/, ''), version: '0.9.2', ...extra }
 }
 
-export function pool(opts: { empty?: boolean } = {}) {
+/** The demo pool while machines update (lib/update.ts): a devbox restarting
+ * for its MSI update (both workers), a fleet worker downloading for a
+ * rollout, a Mac whose update failed, an old box whose update didn't finish. */
+function updatingPool(p: ReturnType<typeof basePool>) {
+  const upd = (extra: Record<string, unknown>) => ({ from: '0.9.2', to: '0.9.3', jobs_keep_running: true, started_at: ago(95), ...extra })
+  for (const w of p.workers as Record<string, any>[]) {
+    if (w.name === 'cpc-alice-x7k2q' || w.name === 'cpc-alice-x7k2q-admin') {
+      w.state = 'offline'
+      w.since = ago(34)
+      w.source = 'none'
+      w.error = 'rpc error: code = DeadlineExceeded desc = context deadline exceeded'
+      w.node = { ...w.node, online: false, update: upd({ state: 'updating', phase: 'installing', method: 'msi', initiator: 'owner', offline_since: ago(34) }) }
+      if (w.link) {
+        w.link = { ...w.link, legs: w.link.legs.map((l: any) => (l.active ? { ...l, up: false, history: [...(l.history ?? []).slice(0, -12), ...Array(12).fill({ rtt_ms: -1 })] } : { ...l, up: false })) }
+      }
+    }
+    if (w.name === 'build-linux-02') {
+      w.node = { ...w.node, update: upd({ state: 'updating', phase: 'downloading', method: 'self', initiator: 'rollout', bytes_done: String(12 << 20), bytes_total: String(42 << 20) }) }
+    }
+    if (w.name === 'mac-mini') {
+      w.state = 'online'
+      w.node = { ...w.node, online: true, update: upd({ state: 'failed', code: 'sha256', error: 'longarmd-darwin-arm64: sha256 9f2c…, the hub says 41aa…', attempt: 'self-1' }) }
+    }
+  }
+  return p
+}
+
+export function pool(opts: { empty?: boolean; updating?: boolean } = {}) {
+  return opts.updating ? updatingPool(basePool(opts)) : basePool(opts)
+}
+
+function basePool(opts: { empty?: boolean } = {}) {
   if (opts.empty) return { source: 'hub', hub: { address: 'longarm.example.com:7443', connected: true }, transport: 'race', identity: 'client/alice-laptop', user: 'alice', workers: [] }
   const offline = (name: string, hours: number) => ({
     name,

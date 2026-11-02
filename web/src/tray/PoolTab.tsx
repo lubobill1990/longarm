@@ -3,6 +3,7 @@ import { longarmApi, trayApi, type TrayInfo, type WorkerUpdateJob } from '../api
 import type { PoolView, PoolWorker } from '../api/types'
 import { ErrorBox, useAction } from '../components/common'
 import { OfflineRow, WorkerCard, type CardActions } from '../components/WorkerCard'
+import { updateRunning } from '../lib/update'
 import { fmtAgo, since } from '../lib/format'
 import { poolMachines } from '../lib/machines'
 import { IconServers, IconUser } from '../components/icons'
@@ -66,13 +67,14 @@ export function useWorkerUpdates(): [Record<string, WorkerUpdateJob>, (name: str
   const timers = useRef<Record<string, ReturnType<typeof setInterval>>>({})
   useEffect(() => () => Object.values(timers.current).forEach(clearInterval), [])
   const start = async (name: string, version: string) => {
+    const started = Date.now()
     const j = await longarmApi.updateWorker(name, version)
-    setJobs((m) => ({ ...m, [name]: j }))
+    setJobs((m) => ({ ...m, [name]: { ...j, started, to: version } }))
     clearInterval(timers.current[name])
     timers.current[name] = setInterval(async () => {
       try {
         const s = await longarmApi.workerUpdate(name)
-        setJobs((m) => ({ ...m, [name]: s }))
+        setJobs((m) => ({ ...m, [name]: { ...s, started, to: version } }))
         if (s.state !== 'running') clearInterval(timers.current[name])
       } catch {
         /* the daemon restarts too when this machine updates: keep polling */
@@ -80,6 +82,18 @@ export function useWorkerUpdates(): [Record<string, WorkerUpdateJob>, (name: str
     }, 2000)
   }
   return [jobs, start]
+}
+
+/**
+ * The confirmation of "Update": what happens to the machine (Longarm restarts
+ * for a minute or two; its admin worker too) and to the jobs and sessions
+ * on it (they keep running), or that an update runs already.
+ */
+export function updateConfirmText(name: string, version: string, w?: PoolWorker, adminWorker?: string): string {
+  const u = w?.node?.update
+  if (updateRunning(u)) return `${name} is already updating to ${u?.to}. Start another update anyway? (the worker refuses it while one runs)`
+  const companion = adminWorker ? ` Its admin worker ${adminWorker} restarts too.` : ''
+  return `Update ${name} to ${version}?\n\nLongarm on the machine restarts for a minute or two; running jobs and sessions keep running.${companion}`
 }
 
 export function PoolTab({ pool, error, info, onNavigate }: { pool?: PoolView; error?: string; info?: TrayInfo; onNavigate?: (tab: string) => void }) {
@@ -119,7 +133,14 @@ export function PoolTab({ pool, error, info, onNavigate }: { pool?: PoolView; er
       : undefined,
     canRemove: (w: PoolWorker) => admin || (!!me && !!w.node?.owner && w.node.owner === me),
     // the owner only (an admin certificate is no exception): longarm worker update
-    update: hubUp ? (name, version) => run(() => startUpdate(name, version), `updating ${name} to ${version}`) : undefined,
+    update: hubUp
+      ? (name, version) => {
+          const w = (pool.workers ?? []).find((x) => x.name === name)
+          const m = [...active, ...offline].find((x) => x.session?.name === name)
+          if (!confirm(updateConfirmText(name, version, w, m?.admin?.name))) return
+          run(() => startUpdate(name, version), `updating ${name} to ${version}`)
+        }
+      : undefined,
     canUpdate: (w: PoolWorker) => !!me && !!w.node?.owner && w.node.owner === me,
     updates,
     sessions: (name, agent) => run(() => trayApi.openSessions({ worker: name, agent })),
