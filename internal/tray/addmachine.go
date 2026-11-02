@@ -86,7 +86,8 @@ func (s *Server) addMachineInfo(ctx context.Context) addMachineInfo {
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	var auth struct {
-		Tenant string `json:"tenant"`
+		Tenant  string `json:"tenant"`
+		RepoURL string `json:"repo_url"` // [web] repo_url (an older hub: "")
 	}
 	if s.hubGetJSON(cctx, base, "/auth/info", &auth) == nil {
 		info.Tenant = strings.ToLower(auth.Tenant)
@@ -97,11 +98,27 @@ func (s *Server) addMachineInfo(ctx context.Context) addMachineInfo {
 	if s.hubGetJSON(cctx, base, "/releases/latest.json", &latest) == nil && update.ValidVersion(latest.Version) {
 		info.Version = latest.Version // stable: the channels' builds have no GitHub Release
 	}
-	if info.Tenant == MicrosoftTenant {
+	// the hub's repository when it names a GitHub one; an older hub: its tenant decides
+	if r := githubRepo(auth.RepoURL); r != "" {
+		info.Repo, info.Internal = r, r != PublicRepo
+	} else if info.Tenant == MicrosoftTenant {
 		info.Internal, info.Repo = true, InternalRepo
 	}
 	c.base, c.at, c.info = base, time.Now(), info
 	return info
+}
+
+// githubRepo is u as github.com/OWNER/REPO when it is a GitHub repository
+// URL (the installers' release downloads), else "".
+func githubRepo(u string) string {
+	p, err := url.Parse(strings.TrimRight(u, "/"))
+	if err != nil || p.Scheme != "https" || !strings.EqualFold(p.Host, "github.com") {
+		return ""
+	}
+	if parts := strings.Split(strings.Trim(p.Path, "/"), "/"); len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+		return "github.com/" + parts[0] + "/" + parts[1]
+	}
+	return ""
 }
 
 func (s *Server) addMachineHandler(w http.ResponseWriter, r *http.Request) {

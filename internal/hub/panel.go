@@ -48,8 +48,12 @@ func serveLicenses(w http.ResponseWriter, _ *http.Request) {
 	io.WriteString(w, notices.Text)
 }
 
-// panelCSP: everything from this origin; inline styles for the charts.
-const panelCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+// panelCSP: everything from this origin; inline styles for the charts;
+// media: the front page's film, a GitHub release asset (github.com
+// redirects the download to its asset hosts).
+const panelCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; " +
+	"media-src 'self' https://github.com https://objects.githubusercontent.com https://release-assets.githubusercontent.com; " +
+	"frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
 func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.ResponseWriter, *http.Request, string))) {
 	spa := webui.Handler("/api/", "/releases/")
@@ -291,7 +295,15 @@ func (h *Hub) feedbackURL() string {
 	if h.cfg.Web.FeedbackURL != "" {
 		return h.cfg.Web.FeedbackURL
 	}
-	return DefaultFeedbackURL
+	return h.repoURL() + "/issues"
+}
+
+// repoURL is [web] repo_url (GET /auth/info, /healthz, /api/me).
+func (h *Hub) repoURL() string {
+	if h.cfg.Web.RepoURL != "" {
+		return h.cfg.Web.RepoURL
+	}
+	return DefaultRepoURL
 }
 
 // meInfo is GET /api/me (+ role: admin | user; for users their Longarm
@@ -304,7 +316,7 @@ func (h *Hub) meInfo(r *http.Request, user string) map[string]any {
 	}
 	m := map[string]any{"user": user, "hub": h.cfg.Name, "version": version.Version,
 		"hub_address": h.hubAddr(r), "ca_fingerprint": pki.Fingerprint(h.ca.Cert), "base_url": h.baseURL(r),
-		"role": role, "tenant": v.User, "teams": v.Teams, "feedback_url": h.feedbackURL()}
+		"role": role, "tenant": v.User, "teams": v.Teams, "feedback_url": h.feedbackURL(), "repo_url": h.repoURL()}
 	h.mu.Lock()
 	m["tenancy"] = h.tenancyOnLocked()
 	if q := h.quotaLocked(v.User); !tenancy.QuotaEmpty(q) {

@@ -343,11 +343,11 @@ function AccountCard({
   onStarted?: (s: SignInState) => void
 }) {
   const { run, busy } = useAction()
-  // the signed-in hub's feedback link (its /healthz, via the update check)
-  const [feedback, setFeedback] = useState<string>()
+  // the signed-in hub's links (its /healthz, via the update check)
+  const [links, setLinks] = useState<{ feedback?: string; repo?: string }>({})
   useEffect(() => {
     trayApi.update().then(
-      (u) => setFeedback(u.feedback_url),
+      (u) => setLinks({ feedback: u.feedback_url, repo: u.repo_url }),
       () => {},
     )
   }, [acct.hub])
@@ -378,7 +378,7 @@ function AccountCard({
       )}
       <p className="button-row">
         {info.hub_url && <button onClick={() => trayApi.openPanel('/')}>Open panel</button>}
-        <button data-testid="account-feedback" title="Feedback and bug reports" onClick={() => trayApi.open(feedbackURL(feedback)).catch(() => {})}>
+        <button data-testid="account-feedback" title="Feedback and bug reports" onClick={() => trayApi.open(feedbackURL(links.feedback, links.repo)).catch(() => {})}>
           Feedback
         </button>
         {acct.signed_in && acct.hub && (

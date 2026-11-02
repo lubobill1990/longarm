@@ -232,6 +232,24 @@ describe('PoolTab', () => {
     fireEvent.click(screen.getByText('Account tab'))
     expect(nav).toHaveBeenCalledWith('account')
   })
+
+  it('empty: "How to install" opens the install docs of the repository the hub points at', async () => {
+    const calls = mockFetch({
+      '/trayapi/update': () => [200, { current: 'x', available: false, repo_url: 'https://github.com/gim-home/longarm' }],
+      '/trayapi/open': () => [200, {}],
+    })
+    render(
+      <PoolTab
+        pool={{ ...devboxPool(), workers: [] }}
+        info={{ version: 'x', roles: { client: true, worker: false }, client: { running: true }, worker: { running: false, enrolled: false }, pinned: false, account: { signed_in: true, needed: false, targets: { client: true, worker: false, admin_worker: false } } }}
+      />,
+    )
+    fireEvent.click(screen.getByTestId('install-docs'))
+    await waitFor(() => expect(calls.some((c) => c.url === '/trayapi/open')).toBe(true))
+    expect(JSON.parse(String(calls.find((c) => c.url === '/trayapi/open')!.init?.body))).toEqual({
+      url: 'https://github.com/gim-home/longarm/blob/main/docs/usage.md#install',
+    })
+  })
 })
 
 describe('ClientJobs', () => {

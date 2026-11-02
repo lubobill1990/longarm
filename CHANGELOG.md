@@ -65,6 +65,15 @@
   hub's front page, the panel's top bar and longarm-tray (version details,
   Account tab) send feedback and bug reports; default, and with older hubs,
   the project's GitHub issues. In `/auth/info`, `/healthz` and `/api/me`.
+- **Repository link per hub**: `[web] repo_url` (`LONGARM_HUB_WEB_REPO_URL`;
+  Azure `--repo-url` / `-RepoUrl`) is the repository every link on the
+  hub's pages and in longarm-tray points at - the front page's GitHub and
+  docs links, the tray's "How to install" and its "Add a machine" downloads
+  (over the Entra-tenant rule) - e.g. a company's internal copy; default the
+  public one. `feedback_url` now defaults to that repository's issues.
+- **The film on the front page**: "Watch the film" scrolls to it and plays
+  it; it streams from the public repository's `promo-film` release only
+  when played (the panel's CSP allows GitHub's release asset hosts).
 - **Hub front page**: `/` is a public page that explains Longarm (what it is
   for, three steps, agents, disconnects, NAT traversal, the toolbox) and
   how to install it on this hub - its MSI, the one-line installs and its
