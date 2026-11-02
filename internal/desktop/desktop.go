@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -108,6 +110,28 @@ type Detector struct {
 	done chan struct{}
 	dc   DevCenter
 	isDB bool
+
+	mu      sync.Mutex
+	factsAt time.Time
+	facts   devBoxFacts
+}
+
+// devBoxFacts are what tells a Dev Box apart from the user's others
+// (DesktopInfo.os_installed, last_remote_logon).
+type devBoxFacts struct {
+	installed, lastLogon time.Time
+}
+
+// factsTTL: the last remote logon is read from the event log at most this often.
+const factsTTL = time.Minute
+
+func (d *Detector) devBoxFacts() devBoxFacts {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.factsAt.IsZero() || time.Since(d.factsAt) > factsTTL {
+		d.facts, d.factsAt = readDevBoxFacts(), time.Now()
+	}
+	return d.facts
 }
 
 // Start asks the metadata service in the background (Info does not wait
@@ -138,9 +162,38 @@ func (d *Detector) Info(ctx context.Context) *pb.DesktopInfo {
 	select {
 	case <-d.done:
 		if d.isDB {
-			return &pb.DesktopInfo{Kind: KindDevBox, DevCenter: d.dc.Name, DevCenterTenant: d.dc.Tenant}
+			out := &pb.DesktopInfo{Kind: KindDevBox, DevCenter: d.dc.Name, DevCenterTenant: d.dc.Tenant}
+			f := d.devBoxFacts()
+			if !f.installed.IsZero() {
+				out.OsInstalled = timestamppb.New(f.installed)
+			}
+			if !f.lastLogon.IsZero() {
+				out.LastRemoteLogon = timestamppb.New(f.lastLogon)
+			}
+			return out
 		}
 	default:
 	}
 	return localInfo()
+}
+
+// remoteLogonTimes finds the TimeCreated of remote desktop logons and
+// reconnects in wevtutil's XML output (newest first).
+var systemTimeRE = regexp.MustCompile(`SystemTime=['"]([0-9T:.\-]+Z?)['"]`)
+
+// LastRemoteLogon picks the newest event time after installed from
+// wevtutil's XML (events before it come with the image: the machine it was
+// captured from).
+func LastRemoteLogon(xml string, installed time.Time) time.Time {
+	var last time.Time
+	for _, m := range systemTimeRE.FindAllStringSubmatch(xml, -1) {
+		t, err := time.Parse(time.RFC3339Nano, m[1])
+		if err != nil {
+			continue
+		}
+		if t.After(installed) && t.After(last) {
+			last = t
+		}
+	}
+	return last
 }

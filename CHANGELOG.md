@@ -4,6 +4,13 @@
 
 ### Changed
 
+- `longarm desktop` tells which of your Dev Boxes a worker is by itself: the
+  worker reports when Windows was installed on it and its last remote
+  desktop logon, and the Dev Box created minutes before that install - or, of
+  several created together, the one last connected then - is picked without
+  asking. It only asks when that doesn't settle it, the likeliest first.
+  The Dev Center API is called with api-version 2025-02-01.
+
 - Tray: only Claude Code / Copilot CLI sessions notify when they end (done,
   failed, killed, lost); plain commands - the many `longarm exec` / `run`
   calls an agent makes - no longer pop a toast each.

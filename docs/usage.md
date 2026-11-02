@@ -1365,9 +1365,13 @@ What the worker is decides how its desktop opens (longarmd reports it in
   Dev Center it was made by); `longarm desktop` then asks that Dev Center
   for your Dev Boxes with your Azure CLI sign-in (`az login --tenant
   <tenant>`; Longarm stores no Azure tokens) and for the chosen one's
-  `ms-avd:` link. Which Dev Box a worker is can't be told from either side,
-  so the first time it takes the only Dev Box no other worker has, or asks
-  (`--devbox` without a terminal). The choice, the link and the Dev Center's
+  `ms-avd:` link. The Dev Center API knows no host names, so the worker says
+  when Windows was installed on it and when someone last connected to it
+  remotely: the Dev Box created minutes before that install (of the
+  worker's size) is the one, and of several created together, the one whose
+  last connection matches. It only asks (`--devbox` without a terminal) when
+  that doesn't settle it, the likeliest first; a worker older than this
+  release can't tell, then it takes the only Dev Box no other worker has. The choice, the link and the Dev Center's
   endpoint are kept in `<config>/desktop.json`; after that the link opens
   without reaching the worker, so a stopped or hibernated Dev Box starts as
   Windows App connects. Without the Azure CLI it opens
