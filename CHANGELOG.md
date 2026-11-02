@@ -28,6 +28,12 @@
 
 ### Added
 
+- The Microsoft-internal copy gim-home/longarm gets every release - the same
+  tags and files - from a workflow there that copies them every 30 minutes
+  with its own token (`.github/gim-home/sync-releases.yml`, committed in
+  gim-home once; `gim-sync-releases.sh`), instead of a push from here that
+  needed a gim-home token. docs/ci-cd.md "6.2 Releases".
+
 - **Feedback link per hub**: `[web] feedback_url` (`LONGARM_HUB_WEB_FEEDBACK_URL`;
   Azure `--feedback-url` / `-FeedbackUrl`, kept on re-runs) is where the
   hub's front page, the panel's top bar and longarm-tray (version details,

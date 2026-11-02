@@ -455,58 +455,61 @@ func TestMirrorGimScript(t *testing.T) {
 // same tag at the same commit with the given files, created once and
 // re-uploaded after; a commit the mirror hasn't carried over yet fails
 // with what to do; no token is a notice.
-func TestGimReleaseScript(t *testing.T) {
+func TestGimSyncReleasesScript(t *testing.T) {
 	t.Parallel()
 	bash := findBash(t)
 	root := t.TempDir()
 	bin := filepath.Join(root, "bin")
 	os.MkdirAll(bin, 0o755)
 	logPath := filepath.Join(root, "gh.log")
+	// the public releases: v0.1.30-rc.1 (missing there), v0.1.29 (1 of 3
+	// files there), v0.1.28 (complete there); v0.1.27 only by SYNC_TAG
 	os.WriteFile(filepath.Join(bin, "gh"), []byte(`#!/usr/bin/env bash
 echo "$*" >>"$FAKE_LOG"
-case "$1 $2" in
-"api repos/"*) [[ -z ${FAKE_NO_COMMIT:-} ]] ;;
-"release view") [[ -n ${FAKE_HAS_RELEASE:-} ]] ;;
-*) exit 0 ;;
+case "$*" in
+"api repos/example/longarm/releases?per_page=5 "*) printf 'v0.1.30-rc.1\ttrue\t3\nv0.1.29\tfalse\t3\nv0.1.28\tfalse\t3\nnightly\tfalse\t1\n' ;;
+"api repos/example/longarm/releases/tags/v0.1.27 "*) printf 'v0.1.27\tfalse\t3\n' ;;
+"api repos/example/longarm/releases/latest "*) echo v0.1.29 ;;
+"api repos/gim-home/longarm/releases?per_page=100 "*) printf 'v0.1.28\t3\nv0.1.29\t1\n' ;;
+"api repos/gim-home/longarm/commits/HEAD "*) [[ -z ${FAKE_EMPTY:-} ]] && echo cafe ;;
+"release download "*) a="$*"; d=${a##*--dir }; touch "$d/longarm-windows-amd64.msi" "$d/SHA256SUMS" "$d/longarm-linux-amd64.deb" ;;
 esac
 `), 0o755)
-	for _, f := range []string{"longarm-windows-amd64.msi", "SHA256SUMS"} {
-		os.WriteFile(filepath.Join(root, f), []byte(f), 0o644)
-	}
-	script, _ := filepath.Abs("../.github/scripts/gim-release.sh")
-	sha := strings.Repeat("ab", 20)
-	run := func(env []string, args ...string) (string, int) {
+	script, _ := filepath.Abs("../.github/scripts/gim-sync-releases.sh")
+	run := func(env ...string) (string, int) {
 		t.Helper()
 		os.Remove(logPath)
-		cmd := exec.Command(bash, append([]string{filepath.ToSlash(script)}, args...)...)
+		cmd := exec.Command(bash, filepath.ToSlash(script))
 		cmd.Dir = root
 		cmd.Env = append(os.Environ(), append([]string{"PATH=" + filepath.ToSlash(bin) + string(os.PathListSeparator) + os.Getenv("PATH"),
-			"FAKE_LOG=" + filepath.ToSlash(logPath), "SHA=" + sha, "SRC_REPO=example/longarm", "GIM_WAIT_SECONDS=0", "GITHUB_STEP_SUMMARY="}, env...)...)
+			"FAKE_LOG=" + filepath.ToSlash(logPath), "SRC_REPO=github.com/example/longarm", "DST_REPO=gim-home/longarm", "GITHUB_STEP_SUMMARY="}, env...)...)
 		out, _ := cmd.CombinedOutput()
 		log, _ := os.ReadFile(logPath)
 		return string(out) + "\n--log--\n" + string(log), cmd.ProcessState.ExitCode()
 	}
-	files := []string{"--", "longarm-windows-amd64.msi", "SHA256SUMS"}
-	if out, code := run(nil, append([]string{"v0.1.29"}, files...)...); code != 0 || !strings.Contains(out, "GIM_MIRROR_TOKEN is not set") || strings.Contains(out, "release create") {
-		t.Fatalf("no token: %d %s", code, out)
+	out, code := run()
+	creates := regexp.MustCompile(`(?m)^release create .*$`).FindAllString(out, -1)
+	if code != 0 || len(creates) != 1 ||
+		!strings.Contains(creates[0], "release create v0.1.30-rc.1 --repo gim-home/longarm --target cafe --title Longarm 0.1.30-rc.1") ||
+		!strings.Contains(creates[0], "https://github.com/example/longarm/releases/tag/v0.1.30-rc.1") ||
+		!strings.Contains(creates[0], "--prerelease") || !strings.Contains(creates[0], "SHA256SUMS") ||
+		!regexp.MustCompile(`(?m)^release upload v0.1.29 --repo gim-home/longarm --clobber .*longarm-windows-amd64.msi`).MatchString(out) ||
+		strings.Contains(out, "release download v0.1.28") || !strings.Contains(out, "skipping nightly") ||
+		!strings.Contains(out, "2 release(s) synced") {
+		t.Fatalf("sync: %d %s", code, out)
 	}
-	tok := []string{"GIM_MIRROR_TOKEN=t0k"}
-	if out, code := run(tok, append([]string{"0.1.29"}, files...)...); code != 2 {
+	// oldest first: v0.1.29 is handled before v0.1.30-rc.1
+	if strings.Index(out, "release upload v0.1.29") > strings.Index(out, "release create v0.1.30-rc.1") {
+		t.Fatalf("order: %s", out)
+	}
+	// an older release by hand: not the latest
+	if out, code := run("SYNC_TAG=v0.1.27"); code != 0 || !strings.Contains(out, "release create v0.1.27 ") || !strings.Contains(out, "--latest=false") {
+		t.Fatalf("SYNC_TAG: %d %s", code, out)
+	}
+	if out, code := run("SYNC_TAG=0.1.27"); code != 2 {
 		t.Fatalf("bad tag: %d %s", code, out)
 	}
-	out, code := run(tok, append([]string{"v0.1.29-rc.1", "--prerelease"}, files...)...)
-	if code != 0 || !strings.Contains(out, "api repos/gim-home/longarm/commits/"+sha) ||
-		!strings.Contains(out, "release create v0.1.29-rc.1 --repo gim-home/longarm --target "+sha+" --title Longarm 0.1.29-rc.1") ||
-		!strings.Contains(out, "https://github.com/example/longarm/releases/tag/v0.1.29-rc.1") || !strings.Contains(out, "--prerelease") ||
-		!strings.Contains(out, "release upload v0.1.29-rc.1 --repo gim-home/longarm --clobber longarm-windows-amd64.msi SHA256SUMS") {
-		t.Fatalf("new release: %d %s", code, out)
-	}
-	out, code = run(append(tok, "FAKE_HAS_RELEASE=1"), append([]string{"v0.1.29"}, files...)...)
-	if code != 0 || strings.Contains(out, "release create") || !strings.Contains(out, "release upload v0.1.29") {
-		t.Fatalf("existing release: %d %s", code, out)
-	}
-	out, code = run(append(tok, "FAKE_NO_COMMIT=1"), append([]string{"v0.1.29"}, files...)...)
-	if code != 1 || !strings.Contains(out, "is not in gim-home/longarm") || strings.Contains(out, "release create") {
-		t.Fatalf("commit not mirrored: %d %s", code, out)
+	if out, code := run("FAKE_EMPTY=1"); code != 1 || !strings.Contains(out, "has no commits") || strings.Contains(out, "release create") {
+		t.Fatalf("empty repo: %d %s", code, out)
 	}
 }

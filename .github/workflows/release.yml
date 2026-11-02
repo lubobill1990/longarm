@@ -613,18 +613,6 @@ jobs:
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber hub/* extra/* SHA256SUMS
-      - name: gim-home release (the internal copy, the same files)
-        # the Microsoft-internal copy (gim-home/longarm) gets the release with
-        # the same signed files, at the same commit and tag; without the
-        # secret GIM_MIRROR_TOKEN a notice (docs/ci-cd.md "Internal mirror")
-        if: needs.meta.outputs.dev == 'false'
-        env:
-          GIM_MIRROR_TOKEN: ${{ secrets.GIM_MIRROR_TOKEN }}
-        run: |
-          cd "$RUNNER_TEMP/release"
-          args=()
-          if [ "$PRERELEASE" = true ]; then args+=(--prerelease); fi
-          "$GITHUB_WORKSPACE/.github/scripts/gim-release.sh" "$TAG" "${args[@]}" -- hub/* extra/* SHA256SUMS
 
   hub:
     name: hub (longarm-hub over SSH forced command)

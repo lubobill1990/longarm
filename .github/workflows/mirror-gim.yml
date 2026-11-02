@@ -3,7 +3,8 @@
 # mirror (gim-home)"): branches as they are, main merged into gim-home's main
 # (which carries its governance commits), one PR there per open PR here,
 # closed there when closed or merged here, branches deleted here deleted
-# there. Tags are not mirrored: gim-home never releases.
+# there. Tags are not mirrored: gim-home copies the releases itself
+# (.github/gim-home/sync-releases.yml, docs/ci-cd.md 6.2).
 #
 # Every run reconciles the whole state, whatever event started it, so runs
 # that were skipped, cancelled or ran out of order heal on the next one; the
@@ -18,7 +19,7 @@ name: mirror-gim
 
 on:
   push:
-    branches: ["**"] # branches only: release tags come with the releases (gim-release.sh)
+    branches: ["**"] # branches only: gim-home copies the releases itself (.github/gim-home/sync-releases.yml)
   delete:
   pull_request:
     types: [opened, edited, reopened, synchronize, closed]
