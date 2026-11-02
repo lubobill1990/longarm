@@ -66,10 +66,12 @@ describe('PanelApp', () => {
     mockFetch({
       '/api/me': () => [401, { error: 'login required' }],
       '/releases/latest.json': () => [200, { version: 'v1.2.3', files: [{ name: 'longarm-windows-amd64.msi' }] }],
-      '/auth/info': () => [200, { providers: [{ id: 'entra', label: 'Microsoft' }] }],
+      '/auth/info': () => [200, { providers: [{ id: 'entra', label: 'Microsoft' }], feedback_url: 'https://chat.example.com/team' }],
     })
     render(<PanelApp />)
     const out = await screen.findByTestId('landing-signed-out')
+    // the hub's feedback channel
+    await waitFor(() => expect(screen.getByTestId('landing-feedback').getAttribute('href')).toBe('https://chat.example.com/team'))
     expect(out.querySelector('a[href="/login"]')?.textContent).toBe('Sign in')
     fireEvent.click(screen.getByRole('tab', { name: 'Windows' }))
     expect((await screen.findByTestId('landing-msi')).getAttribute('href')).toBe('/releases/v1.2.3/longarm-windows-amd64.msi')
@@ -90,8 +92,11 @@ describe('PanelApp', () => {
     expect(signedIn.textContent).toContain('alice')
     const open = signedIn.querySelector('a.primary')!
     expect(open.getAttribute('href')).toBe('/jobs')
+    // a hub without feedback_url (older): the project's issues
+    expect(screen.getByTestId('landing-feedback').getAttribute('href')).toBe('https://github.com/lubobill1990/longarm/issues')
     fireEvent.click(open)
     expect(await screen.findByRole('heading', { name: 'My jobs' })).toBeTruthy()
+    expect(screen.getByTestId('panel-feedback').getAttribute('href')).toBe('https://github.com/lubobill1990/longarm/issues')
   })
 
   it('moves a signed-in visitor from /login into their hub', async () => {

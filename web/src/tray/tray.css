@@ -2086,4 +2086,9 @@
     align-self: flex-start;
     margin-top: var(--sp-2);
   }
+  & .ver-pop button.ver-feedback {
+    align-self: flex-start;
+    margin-top: var(--sp-2);
+    padding: 0;
+  }
 }

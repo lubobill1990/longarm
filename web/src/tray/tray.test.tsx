@@ -193,7 +193,8 @@ describe('version chip', () => {
   it('shows the tray version in the title bar; the details mark the old daemon and offer the update', async () => {
     const calls = mockFetch({
       '/trayapi/update/install': () => [200, { state: 'downloading' }],
-      '/trayapi/update': () => [200, { current: '0.1.21', latest: '0.1.22', available: true, hub: '0.1.22' }],
+      '/trayapi/update': () => [200, { current: '0.1.21', latest: '0.1.22', available: true, hub: '0.1.22', feedback_url: 'https://chat.example.com/team' }],
+      '/trayapi/open': () => [200, {}],
       '/local/longarm/v1/status': () => [200, { version: '0.1.20' }],
       '/local/longarmd/v1/status': () => [200, { name: 'box', version: '0.1.21' }],
     })
@@ -220,6 +221,10 @@ describe('version chip', () => {
     fireEvent.click(screen.getByTestId('version-update'))
     await waitFor(() => expect(calls.some((c) => c.url === '/trayapi/update/install')).toBe(true))
     expect(JSON.parse(String(calls.find((c) => c.url === '/trayapi/update/install')!.init?.body))).toEqual({ version: '0.1.22' })
+    // Feedback opens the hub's channel in the browser
+    fireEvent.click(screen.getByTestId('version-feedback'))
+    await waitFor(() => expect(calls.some((c) => c.url === '/trayapi/open')).toBe(true))
+    expect(JSON.parse(String(calls.find((c) => c.url === '/trayapi/open')!.init?.body))).toEqual({ url: 'https://chat.example.com/team' })
     // a click elsewhere in the title bar closes the details; so does Escape
     fireEvent.mouseDown(document.body)
     expect(screen.queryByTestId('version-details')).toBeNull()
