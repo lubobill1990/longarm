@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -169,21 +170,32 @@ func TestMatch(t *testing.T) {
 		box("arm4", "2026-10-30T14:19:10Z", "2026-11-01T02:46:12Z"),
 	}
 	for _, c := range []struct {
-		worker, installed, lastLogon, want string
+		worker, installed string
+		logons            []string // every remote logon / reconnect since install, as the workers logged them
+		want              string
 	}{
-		{"cpc-alice-252m5", "2026-10-27T06:51:55Z", "2026-10-29T05:24:36Z", "arm3"},
-		{"cpc-alice-hucaa", "2026-10-30T14:28:59Z", "", "arm4"},
-		{"cpc-alice-nyg7h", "2026-10-26T06:14:59Z", "2026-10-29T03:52:51Z", "arm1"},
-		{"cpc-alice-xefcn", "2026-10-26T06:17:07Z", "2026-10-27T05:07:01Z", "arm2"},
+		// a reconnect after an update today, and none matching arm3's last connection: told by creation alone
+		{"cpc-alice-252m5", "2026-10-27T06:51:55Z", []string{"2026-11-02T05:50:14Z", "2026-10-29T05:24:36Z"}, "arm3"},
+		{"cpc-alice-hucaa", "2026-10-30T14:28:59Z", []string{"2026-11-01T02:37:40Z"}, "arm4"},
+		// logons near both arm1's (10-29 03:56) and arm2's (10-27 05:12) last
+		// connection - but six more after arm2's: arm1
+		{"cpc-alice-nyg7h", "2026-10-26T06:14:59Z", []string{"2026-10-29T03:52:51Z", "2026-10-28T13:57:50Z",
+			"2026-10-28T08:46:58Z", "2026-10-28T08:41:33Z", "2026-10-28T07:31:14Z", "2026-10-28T02:54:40Z", "2026-10-27T05:10:16Z"}, "arm1"},
+		// the newest is a reconnect without a user; the logon matches arm2
+		{"cpc-alice-xefcn", "2026-10-26T06:17:07Z", []string{"2026-10-29T05:24:11Z", "2026-10-27T05:07:01Z"}, "arm2"},
 	} {
 		f := Facts{Installed: ts(t, c.installed), CPUs: 32}
-		if c.lastLogon != "" {
-			f.LastLogon = ts(t, c.lastLogon)
+		for _, l := range c.logons {
+			f.Logons = append(f.Logons, ts(t, l))
 		}
 		ranked, sure, why := Match(boxes, f)
 		if !sure || ranked[0].Name != c.want {
 			t.Errorf("%s: got %s (sure %v, %q), want %s", c.worker, ranked[0].Name, sure, why, c.want)
 		}
+	}
+	// a worker reporting only its last logon (0.1.30-dev): still told when it matches
+	if r, sure, _ := Match(boxes, Facts{Installed: ts(t, "2026-10-26T06:14:59Z"), LastLogon: ts(t, "2026-10-29T03:52:51Z")}); !sure || r[0].Name != "arm1" {
+		t.Errorf("last logon only: %s %v", r[0].Name, sure)
 	}
 	// arm1 / arm2 without a remote logon: not sure, but the two rank first
 	// (created 15 s apart: either may be the closer one)
@@ -217,3 +229,44 @@ func TestDevBoxJSON(t *testing.T) {
 		t.Fatalf("got %+v", b)
 	}
 }
+
+// TestRetry: a 500 now and then (the Dev Center, 2026-11-02) is retried;
+// a 404 is not.
+func TestRetry(t *testing.T) {
+	defer func(d []time.Duration) { retryDelays = d }(retryDelays)
+	retryDelays = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+	c, srv := devCenter(t)
+	defer srv.Close()
+	calls := 0
+	tr := c.HTTP.Transport
+	c.HTTP.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if calls <= 2 {
+			return &http.Response{StatusCode: 500, Status: "500 Internal Server Error", Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
+		}
+		return tr.RoundTrip(r)
+	})
+	if boxes, err := c.DevBoxes(context.Background()); err != nil || len(boxes) != 2 || calls != 3 {
+		t.Fatalf("after two 500s: %v, %d calls, %d boxes", err, calls, len(boxes))
+	}
+	calls = 0
+	c.HTTP.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 404, Status: "404 Not Found", Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
+	})
+	if _, err := c.DevBoxes(context.Background()); err == nil || calls != 1 {
+		t.Fatalf("404: %v after %d calls", err, calls)
+	}
+	calls = 0
+	c.HTTP.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 503, Status: "503 Service Unavailable", Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
+	})
+	if _, err := c.DevBoxes(context.Background()); err == nil || !strings.Contains(err.Error(), "503") || calls != 4 {
+		t.Fatalf("always 503: %v after %d calls", err, calls)
+	}
+}
+
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

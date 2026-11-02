@@ -138,7 +138,33 @@ type Client struct {
 	HTTP     *http.Client // nil = a default one
 }
 
+// retryDelays: the Dev Center API answers 500 now and then for a Dev Box
+// that works a moment later (seen 2026-11-02): server errors, throttling
+// and network errors are retried after these pauses.
+var retryDelays = []time.Duration{time.Second, 3 * time.Second, 7 * time.Second}
+
+// retryable is an error worth another try.
+type retryable struct{ error }
+
+func (e retryable) Unwrap() error { return e.error }
+
 func (c *Client) get(ctx context.Context, path string, out any) error {
+	var err error
+	for i := 0; ; i++ {
+		err = c.getOnce(ctx, path, out)
+		var r retryable
+		if err == nil || !errors.As(err, &r) || i == len(retryDelays) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(retryDelays[i]):
+		}
+	}
+}
+
+func (c *Client) getOnce(ctx context.Context, path string, out any) error {
 	if !ValidEndpoint(c.Endpoint) {
 		return fmt.Errorf("not a Dev Center endpoint: %q", c.Endpoint)
 	}
@@ -155,21 +181,25 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return err
+		return retryable{err}
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return err
+		return retryable{err}
 	}
 	if resp.StatusCode != http.StatusOK {
 		var e struct {
 			Error struct{ Code, Message string } `json:"error"`
 		}
+		err := fmt.Errorf("Dev Center: %s", resp.Status)
 		if json.Unmarshal(body, &e) == nil && e.Error.Message != "" {
-			return fmt.Errorf("Dev Center: %s: %s", e.Error.Code, e.Error.Message)
+			err = fmt.Errorf("Dev Center: %s: %s", e.Error.Code, e.Error.Message)
 		}
-		return fmt.Errorf("Dev Center: %s", resp.Status)
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			return retryable{err}
+		}
+		return err
 	}
 	return json.Unmarshal(body, out)
 }
@@ -258,8 +288,23 @@ const CloudPCPortalURL = "https://windows365.microsoft.com"
 // knows no host names (DesktopInfo.os_installed, last_remote_logon;
 // InfoResponse.num_cpu).
 type Facts struct {
-	Installed, LastLogon time.Time
-	CPUs                 int
+	Installed time.Time
+	// Logons: the remote desktop logons and reconnects since Windows was
+	// installed (any order); LastLogon: the newest, from a worker that
+	// reports only that.
+	Logons    []time.Time
+	LastLogon time.Time
+	CPUs      int
+}
+
+func (f Facts) logons() []time.Time {
+	if len(f.Logons) > 0 {
+		return f.Logons
+	}
+	if !f.LastLogon.IsZero() {
+		return []time.Time{f.LastLogon}
+	}
+	return nil
 }
 
 // What Match accepts: Windows is installed within ProvisionWindow after a
@@ -282,8 +327,11 @@ func abs(d time.Duration) time.Duration {
 // Match ranks boxes by how well they fit f (the best first) and names the
 // one f identifies, if any (sure): the only box of the right size created
 // shortly before Windows was installed on the worker, or - several created
-// together - the only one of them whose last connection matches the
-// worker's last remote logon. why says how it was told.
+// together - the one whose last connection matches one of the worker's
+// remote logons and after which the worker saw the fewest more (a Dev
+// Box's lastConnectedTime is its last connection: a worker logged on to
+// again days later is another box; reconnects without a user, after an
+// update, are why it is "fewest", not "none"). why says how it was told.
 func Match(boxes []DevBox, f Facts) (ranked []DevBox, sure bool, why string) {
 	ranked = append([]DevBox(nil), boxes...)
 	if f.Installed.IsZero() {
@@ -320,15 +368,30 @@ func Match(boxes []DevBox, f Facts) (ranked []DevBox, sure bool, why string) {
 	switch {
 	case len(cands) == 1:
 		return ranked, true, created(cands[0])
-	case len(cands) > 1 && !f.LastLogon.IsZero():
-		var hit []int
+	case len(cands) > 1 && len(f.logons()) > 0:
+		best, bestLater, tie := -1, 0, false
 		for i, b := range cands {
-			if !b.LastConnectedTime.IsZero() && abs(b.LastConnectedTime.Sub(f.LastLogon)) <= LogonWindow {
-				hit = append(hit, i)
+			if b.LastConnectedTime.IsZero() {
+				continue
+			}
+			hit, later := false, 0
+			for _, l := range f.logons() {
+				if abs(b.LastConnectedTime.Sub(l)) <= LogonWindow {
+					hit = true
+				} else if l.After(b.LastConnectedTime.Add(LogonWindow)) {
+					later++
+				}
+			}
+			switch {
+			case !hit:
+			case best < 0 || later < bestLater:
+				best, bestLater, tie = i, later, false
+			case later == bestLater:
+				tie = true
 			}
 		}
-		if len(hit) == 1 {
-			b := cands[hit[0]]
+		if best >= 0 && !tie {
+			b := cands[best]
 			// the identified one first
 			for i := range ranked {
 				if ranked[i].ProjectName == b.ProjectName && ranked[i].Name == b.Name {

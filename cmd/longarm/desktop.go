@@ -246,6 +246,9 @@ func resolveDevBox(ctx context.Context, st *desktopStore, worker string, d *pb.D
 		return desktopLink{}, errors.New("you have no Dev Boxes in this Dev Center")
 	}
 	facts := devbox.Facts{Installed: tsTime(d.GetOsInstalled()), LastLogon: tsTime(d.GetLastRemoteLogon()), CPUs: cpus}
+	for _, l := range d.GetRemoteLogons() {
+		facts.Logons = append(facts.Logons, l.AsTime())
+	}
 	box, err := chooseDevBox(boxes, st, worker, d.DevCenter, want, pick, facts, os.Stdin, os.Stderr, stdinIsTerminal())
 	if err != nil {
 		return desktopLink{}, err
