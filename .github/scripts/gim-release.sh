@@ -43,7 +43,7 @@ done
 }
 
 dst=${DST_REPO:-gim-home/longarm}
-src=${SRC_REPO:-${GITHUB_REPOSITORY:-lubobill1990/longarm}}
+src=${SRC_REPO:-${GITHUB_REPOSITORY:?gim-release.sh: set SRC_REPO (owner/repo)}}
 sha=${SHA:-${GITHUB_SHA:-}}
 [[ $sha =~ ^[0-9a-f]{40}$ ]] || {
 	echo "gim-release.sh: SHA '$sha' is not a commit id" >&2
