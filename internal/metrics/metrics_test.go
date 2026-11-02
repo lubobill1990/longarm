@@ -122,3 +122,30 @@ func TestLiveSample(t *testing.T) {
 	t.Logf("cpu=%.1f%% mem=%.1f/%.1f GB nproc=%d agents=%+v topcpu=%+v", snap.CPUPercent,
 		float64(snap.MemUsed)/GB, float64(snap.MemTotal)/GB, snap.NProc, snap.Agents, snap.TopCPU)
 }
+
+// TestNetRates: bytes per second between two samples; a counter that went
+// back (an interface restarted) or a missing reading gives 0, not a spike.
+func TestNetRates(t *testing.T) {
+	t0 := time.Now()
+	prev := &Sample{Wall: t0, NetRx: 1_000_000, NetTx: 500_000, NetOK: true}
+	cur := &Sample{Wall: t0.Add(2 * time.Second), NetRx: 3_000_000, NetTx: 500_400, NetOK: true}
+	if s := Compute(prev, cur); s.NetRxBps != 1_000_000 || s.NetTxBps != 200 {
+		t.Fatalf("rates: rx %d tx %d", s.NetRxBps, s.NetTxBps)
+	}
+	cur.NetRx = 10 // restarted
+	if s := Compute(prev, cur); s.NetRxBps != 0 || s.NetTxBps != 200 {
+		t.Fatalf("restart: rx %d tx %d", s.NetRxBps, s.NetTxBps)
+	}
+	cur.NetOK = false
+	if s := Compute(prev, cur); s.NetRxBps != 0 || s.NetTxBps != 0 {
+		t.Fatalf("no reading: rx %d tx %d", s.NetRxBps, s.NetTxBps)
+	}
+	if s := Compute(nil, cur); s.NetRxBps != 0 {
+		t.Fatalf("first sample: %d", s.NetRxBps)
+	}
+	for name, want := range map[string]bool{"lo": true, "lo0": true, "Loopback Pseudo-Interface 1": true, "eth0": false, "Ethernet": false, "en0": false, "local-net": false} {
+		if Loopback(name) != want {
+			t.Errorf("Loopback(%q) = %v", name, !want)
+		}
+	}
+}

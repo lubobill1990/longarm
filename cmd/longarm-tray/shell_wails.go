@@ -142,7 +142,7 @@ func (s *wailsShell) Notify(title, body string) {
 // loads.
 func popupOptions(url string, bg tray.RGB) application.WebviewWindowOptions {
 	return application.WebviewWindowOptions{
-		Name: "popup", Title: "Remote Workers", Width: 460, Height: 780, MinWidth: 360, MinHeight: 300,
+		Name: "popup", Title: "Longarm", Width: 460, Height: 780, MinWidth: 360, MinHeight: 300,
 		Frameless: true, AlwaysOnTop: true, Hidden: true, URL: url,
 		BackgroundColour: rgba(bg),
 		Windows:          application.WindowsWindow{HiddenOnTaskbar: true},
@@ -263,7 +263,7 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 	t := app.SystemTray.New()
 	d.tray = t
 	t.SetIcon(tray.IconPNG(nil))
-	t.SetTooltip("Remote Workers")
+	t.SetTooltip("Longarm")
 	t.OnClick(d.toggle)
 	menu := app.NewMenu()
 	menu.Add("Show panel").OnClick(func(*application.Context) { d.show() })

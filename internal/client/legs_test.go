@@ -102,3 +102,22 @@ func writeClientBundle(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 }
+
+func TestLegVia(t *testing.T) {
+	hub := "longarm.southeastasia.azurecontainer.io:7443"
+	for _, c := range []struct{ transport, addr, want string }{
+		{"longnet", "longarm.southeastasia.azurecontainer.io:7445", "hub"},
+		{"longnet", "longarm-relay.southeastasia.azurecontainer.io:7445", "relay"},
+		{"longnet", "edge-tokyo.example.com:7445", "edge-tokyo"},
+		{"longnet", "20.1.2.3:7445", "20.1.2.3"},
+		{"tcp", "10.0.0.5:7701", ""},
+		{"tailscale", "longarm-w1:7701", ""},
+	} {
+		if got := LegVia(c.transport, c.addr, hub); got != c.want {
+			t.Errorf("LegVia(%s, %s) = %q, want %q", c.transport, c.addr, got, c.want)
+		}
+	}
+	if got := LegVia("longnet", "relay.example.com:7445", ""); got != "relay" {
+		t.Errorf("no hub: %q", got)
+	}
+}

@@ -4,6 +4,12 @@
 
 ### Changed
 
+- Tray: the window and the tray icon are "Longarm" (not "Remote Workers"). A
+  worker card's link row shows the leg in use; "N paths" opens every leg with
+  its endpoint and RTT (they were all listed as chips). longnet legs are named
+  after the relay they met through ("longnet direct · hub", "· relay"), so two
+  direct paths can be told apart.
+
 - `longarm desktop` tells which of your Dev Boxes a worker is by itself: the
   worker reports when Windows was installed on it and its last remote
   desktop logon, and the Dev Box created minutes before that install - or, of
@@ -21,6 +27,13 @@
   docs/ci-cd.md "Release channels".
 
 ### Added
+
+- Disk space and network traffic in the charts: workers report their
+  interfaces' bytes per second in and out (loopback excluded;
+  `MetricsSnapshot.net_rx/tx_bytes_per_sec`, `MetricsPoint.disk/net_rx/net_tx`),
+  and the tray's and panel's worker cards add a DISK bar and line and a network
+  chart from the chart's legend (off by default, remembered). Hovering any chart
+  shows every series' value at that moment.
 
 - **Steerable agent runs**: `longarm run --steerable -- claude -p "task"`
   (or `copilot -p`) runs the agent interactively on a terminal on the

@@ -374,6 +374,10 @@ message MetricsSnapshot {
   repeated ProcGroup top_mem = 11;
   uint64 disk_free_bytes = 12; // volume holding the data dir
   uint64 disk_total_bytes = 13;
+  // Network traffic of the machine's interfaces (loopback excluded), bytes
+  // per second over the last sampling interval.
+  uint64 net_rx_bytes_per_sec = 14;
+  uint64 net_tx_bytes_per_sec = 15;
 }
 
 // ---------------------------------------------------------------- Admin
