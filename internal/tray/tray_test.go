@@ -118,7 +118,7 @@ func TestTooltip(t *testing.T) {
 	if n := len([]rune(tip)); n > 127 {
 		t.Fatalf("tooltip too long: %d", n)
 	}
-	if Tooltip(&pb.PoolView{}) != "Remote Workers" {
+	if Tooltip(&pb.PoolView{}) != "Longarm" {
 		t.Fatal("empty tooltip")
 	}
 }

@@ -255,6 +255,7 @@ func SnapshotToPB(m metrics.Snapshot) *pb.MetricsSnapshot {
 		UptimeSeconds: int64(m.Uptime / time.Second), Nproc: int32(m.NProc),
 		Agents:        map[string]*pb.AgentStat{},
 		DiskFreeBytes: m.DiskFree, DiskTotalBytes: m.DiskTotal,
+		NetRxBytesPerSec: m.NetRxBps, NetTxBytesPerSec: m.NetTxBps,
 	}
 	for k, v := range m.Agents {
 		out.Agents[k] = &pb.AgentStat{Sessions: int32(v.Sessions), Processes: int32(v.Processes), MemBytes: v.MemBytes}

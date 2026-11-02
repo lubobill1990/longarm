@@ -224,6 +224,42 @@ func LegLabel(p transport.PathInfo) string {
 	return p.Transport
 }
 
+// LegVia names the relay a longnet leg rendezvoused through, so that legs
+// with the same path ("longnet direct") through different relays can be
+// told apart: "hub" for the hub's own relay (hubAddr's host), else the
+// relay host's first label without the hub's name ("longarm-relay" on hub
+// "longarm..." is "relay"). "" for other transports.
+func LegVia(transport, address, hubAddr string) string {
+	if transport != "longnet" {
+		return ""
+	}
+	host := hostOf(address)
+	if host == "" {
+		return ""
+	}
+	hub := hostOf(hubAddr)
+	if hub != "" && strings.EqualFold(host, hub) {
+		return "hub"
+	}
+	if net.ParseIP(host) != nil {
+		return host
+	}
+	first, _, _ := strings.Cut(host, ".")
+	if hubFirst, _, _ := strings.Cut(hub, "."); hubFirst != "" && len(first) > len(hubFirst)+1 &&
+		strings.EqualFold(first[:len(hubFirst)+1], hubFirst+"-") {
+		return first[len(hubFirst)+1:]
+	}
+	return first
+}
+
+// hostOf is the host of "host:port" (or of a bare host).
+func hostOf(addr string) string {
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		return h
+	}
+	return strings.Trim(addr, "[]")
+}
+
 // NATOf extracts "easy/hard" from a longnet path detail ("..., nat easy/hard").
 func NATOf(detail string) string {
 	if i := strings.LastIndex(detail, "nat "); i >= 0 {

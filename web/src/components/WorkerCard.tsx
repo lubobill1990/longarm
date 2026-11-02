@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { LegStatus, MetricsSnapshot, PoolWorker, ProcGroup } from '../api/types'
 import { useDismiss } from '../lib/dismiss'
 import type { WorkerUpdateJob } from '../api/local'
@@ -6,8 +6,10 @@ import {
   AMBER,
   CPU_C,
   cssColor,
+  DISK_C,
   fmtAgo,
   fmtBytes,
+  fmtRate,
   fmtRTT,
   fmtUptime,
   gb,
@@ -15,6 +17,8 @@ import {
   isRelayed,
   MEM_C,
   memPct,
+  NET_RX_C,
+  NET_TX_C,
   num,
   RED,
   RTT_C,
@@ -347,6 +351,7 @@ export function isLocalOnly(endpoint?: string): boolean {
 }
 
 function LinkRows({ w, now }: { w: PoolWorker; now: number }) {
+  const [showLegs, setShowLegs] = useState(false)
   const legs = w.link?.legs ?? []
   if (!legs.length) {
     // The worker advertises only endpoints of its own machine (loopback):
@@ -386,25 +391,48 @@ function LinkRows({ w, now }: { w: PoolWorker; now: number }) {
         </span>
         {active.nat && <span className="pill">nat {active.nat}</span>}
         {relayed && relayFor > 0 && <span className="small amber">relayed {fmtAgo(relayFor)}</span>}
+        {legs.length > 1 && (
+          <button
+            type="button"
+            className="link-more"
+            aria-expanded={showLegs}
+            data-testid="legs-toggle"
+            title="every way this computer reaches the worker, and its latency"
+            onClick={() => setShowLegs((v) => !v)}
+          >
+            {legs.length} paths {showLegs ? '▴' : '▾'}
+          </button>
+        )}
         <span className="spacer" />
         <span className="mono" data-testid="link-rtt">
           {active.up ? fmtRTT(active.rtt_ms) : 'down'}
         </span>
       </div>
-      <Legs legs={legs} />
-      <Sparkline series={[{ values: hist, color: RTT_C, label: 'RTT' }]} max="auto" height={30} legend right="5 min" marks={fails} />
+      {showLegs && <Legs legs={legs} />}
+      <Sparkline
+        series={[{ values: hist, color: RTT_C, label: 'RTT', fmt: (v) => fmtRTT(v) }]}
+        max="auto"
+        height={30}
+        legend
+        right="5 min"
+        marks={fails}
+        fmtMax={(v) => `${Math.round(v)} ms`}
+      />
     </div>
   )
 }
 
+/** Every leg to the worker (the link row's dropdown): path, endpoint, latency; the one in use marked. */
 function Legs({ legs }: { legs: LegStatus[] }) {
-  if (legs.length < 2) return null
   return (
-    <div className="legs">
+    <div className="legs-list" data-testid="legs">
       {legs.map((l, i) => (
-        <span key={i} className={`leg ${l.active ? 'active' : ''} ${l.up ? '' : 'down'}`} title={l.error || l.detail || l.endpoint}>
-          {l.label || l.transport} {l.up ? fmtRTT(l.rtt_ms) : ''}
-        </span>
+        <div key={i} className={`leg-row ${l.active ? 'active' : ''} ${l.up ? '' : 'down'}`} title={l.error || l.detail || l.endpoint}>
+          <span className="leg-mark">{l.active ? '✓' : ''}</span>
+          <span className="leg-name">{l.label || l.transport}</span>
+          <span className="leg-ep">{l.endpoint}</span>
+          <span className="leg-rtt mono">{l.up ? fmtRTT(l.rtt_ms) : l.error ? 'down' : '…'}</span>
+        </div>
       ))}
     </div>
   )
@@ -424,11 +452,52 @@ export function metricsSource(w: PoolWorker, m: MetricsSnapshot, now: number): {
   }
 }
 
+/** Which extra series the charts show (off by default; remembered on this computer). */
+const EXTRA_KEY = 'longarm.metrics.extra'
+type Extra = { disk: boolean; net: boolean }
+function loadExtra(): Extra {
+  try {
+    const v = JSON.parse(localStorage.getItem(EXTRA_KEY) ?? '{}') as Partial<Extra>
+    return { disk: !!v.disk, net: !!v.net }
+  } catch {
+    return { disk: false, net: false }
+  }
+}
+/** The extra series, shared by every card (one toggle shows disk everywhere). */
+function useExtra(): [Extra, (k: keyof Extra) => void] {
+  const [extra, setExtra] = useState<Extra>(loadExtra)
+  useEffect(() => {
+    const on = (e: StorageEvent | Event) => {
+      if (!(e instanceof StorageEvent) || e.key === EXTRA_KEY) setExtra(loadExtra())
+    }
+    window.addEventListener('storage', on)
+    window.addEventListener('longarm-metrics-extra', on)
+    return () => {
+      window.removeEventListener('storage', on)
+      window.removeEventListener('longarm-metrics-extra', on)
+    }
+  }, [])
+  const toggle = (k: keyof Extra) => {
+    const next = { ...loadExtra(), [k]: !extra[k] }
+    try {
+      localStorage.setItem(EXTRA_KEY, JSON.stringify(next))
+    } catch {
+      /* private mode: this card only */
+    }
+    setExtra(next)
+    window.dispatchEvent(new Event('longarm-metrics-extra'))
+  }
+  return [extra, toggle]
+}
+
 function Metrics({ m, w, now, onAgent }: { m: MetricsSnapshot; w: PoolWorker; now: number; onAgent?: (agent: string) => void }) {
   const cpu = m.cpu_percent ?? 0
   const mp = memPct(m)
   const hist = w.history ?? []
   const diskFree = gb(m.disk_free_bytes)
+  const diskTotal = gb(m.disk_total_bytes)
+  const diskPct = diskTotal > 0 ? (100 * (diskTotal - diskFree)) / diskTotal : 0
+  const [extra, toggle] = useExtra()
   const src = metricsSource(w, m, now)
   return (
     <div style={{ marginTop: 6, opacity: src.stale ? 0.45 : undefined }} data-stale={src.stale ? 'true' : undefined}>
@@ -437,15 +506,44 @@ function Metrics({ m, w, now, onAgent }: { m: MetricsSnapshot; w: PoolWorker; no
       </div>
       <Bar label="CPU" pct={cpu} value={`${cpu.toFixed(0)}%`} />
       <Bar label="MEM" pct={mp} value={`${gb(m.mem_used_bytes).toFixed(1)} / ${gb(m.mem_total_bytes).toFixed(0)} GB`} />
+      {extra.disk && diskTotal > 0 && (
+        <Bar label="DISK" pct={diskPct} value={`${(diskTotal - diskFree).toFixed(0)} / ${diskTotal.toFixed(0)} GB`} />
+      )}
+      {extra.net && (
+        <div className="netrow small" data-testid="net-now" title="network traffic of the worker's interfaces (loopback excluded)">
+          <span className="label">NET</span>
+          <span style={{ color: cssColor(NET_RX_C) }}>↓ {fmtRate(num(m.net_rx_bytes_per_sec))}</span>
+          <span style={{ color: cssColor(NET_TX_C) }}>↑ {fmtRate(num(m.net_tx_bytes_per_sec))}</span>
+        </div>
+      )}
       <div style={{ marginTop: 4 }}>
         <Sparkline
           series={[
             { values: hist.map((p) => p.mem ?? 0), color: MEM_C, label: 'MEM' },
             { values: hist.map((p) => p.cpu ?? 0), color: CPU_C, label: 'CPU' },
+            ...(extra.disk ? [{ values: hist.map((p) => p.disk ?? null), color: DISK_C, label: 'DISK' }] : []),
           ]}
           legend
           right="5 min"
+          toggles={[
+            { label: 'Disk', color: DISK_C, on: extra.disk, onToggle: () => toggle('disk'), title: 'disk space used (the data dir\'s volume)' },
+            { label: 'Net', color: NET_RX_C, on: extra.net, onToggle: () => toggle('net'), title: 'network traffic, bytes per second' },
+          ]}
         />
+        {extra.net && (
+          <div style={{ marginTop: 4 }} data-testid="net-chart">
+            <Sparkline
+              series={[
+                { values: hist.map((p) => p.net_rx ?? null), color: NET_RX_C, label: '↓ in', fmt: fmtRate },
+                { values: hist.map((p) => p.net_tx ?? null), color: NET_TX_C, label: '↑ out', fmt: fmtRate },
+              ]}
+              max="auto"
+              height={34}
+              legend
+              fmtMax={fmtRate}
+            />
+          </div>
+        )}
       </div>
       <div className="agents">
         {AGENTS.map(([key, label, color]) => {

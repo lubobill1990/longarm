@@ -110,8 +110,9 @@ func (d *daemon) newMonitor() *pool.Monitor {
 			}
 			return &legProber{conn: c}, nil
 		},
-		Policy: d.s.dialer.Policy,
-		Sticky: d.s.dialer.StickyLeg,
+		Policy:  d.s.dialer.Policy,
+		Sticky:  d.s.dialer.StickyLeg,
+		HubAddr: d.s.cfg.Hub.Address,
 	})
 }
 

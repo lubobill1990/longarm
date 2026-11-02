@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	psnet "github.com/shirou/gopsutil/v4/net"
+
 	"github.com/lubobill1990/longarm/internal/platform"
 )
 
@@ -58,6 +60,9 @@ type Snapshot struct {
 	TopMem      []ProcGroup
 	DiskFree    uint64
 	DiskTotal   uint64
+	// NetRxBps / NetTxBps: bytes per second received / sent over the
+	// interval since the previous sample (loopback excluded).
+	NetRxBps, NetTxBps uint64
 }
 
 // Sample is one raw reading.
@@ -65,6 +70,9 @@ type Sample struct {
 	Wall  time.Time
 	Sys   platform.SysSample
 	Procs []platform.ProcSample
+	// Net: the interfaces' byte counters (cumulative), when NetOK.
+	NetRx, NetTx uint64
+	NetOK        bool
 }
 
 type procKey struct {
@@ -94,6 +102,14 @@ func Compute(prev, cur *Sample) Snapshot {
 			s.CPUPercent = round1(math.Max(0, 100*(dTotal-dIdle)/dTotal))
 		}
 		wall = cur.Wall.Sub(prev.Wall)
+		if secs := wall.Seconds(); secs > 0 && prev.NetOK && cur.NetOK {
+			if cur.NetRx >= prev.NetRx {
+				s.NetRxBps = uint64(float64(cur.NetRx-prev.NetRx) / secs)
+			}
+			if cur.NetTx >= prev.NetTx { // counters restart with an interface
+				s.NetTxBps = uint64(float64(cur.NetTx-prev.NetTx) / secs)
+			}
+		}
 		prevCPU = make(map[procKey]time.Duration, len(prev.Procs))
 		for _, p := range prev.Procs {
 			prevCPU[procKey{p.PID, p.StartTime}] = p.CPUTime
@@ -184,7 +200,33 @@ func TakeSample() (*Sample, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Sample{Wall: time.Now(), Sys: sys, Procs: procs}, nil
+	s := &Sample{Wall: time.Now(), Sys: sys, Procs: procs}
+	s.NetRx, s.NetTx, s.NetOK = netCounters()
+	return s, nil
+}
+
+// netCounters sums the byte counters of the machine's network interfaces,
+// loopback left out (Longarm's own forwards run over it).
+func netCounters() (rx, tx uint64, ok bool) {
+	ifs, err := psnet.IOCounters(true)
+	if err != nil {
+		return 0, 0, false
+	}
+	for _, c := range ifs {
+		if Loopback(c.Name) {
+			continue
+		}
+		rx += c.BytesRecv
+		tx += c.BytesSent
+	}
+	return rx, tx, true
+}
+
+// Loopback reports whether an interface name is a loopback interface
+// (Linux lo, macOS lo0, Windows "Loopback Pseudo-Interface 1").
+func Loopback(name string) bool {
+	n := strings.ToLower(name)
+	return n == "lo" || strings.HasPrefix(n, "lo0") || strings.Contains(n, "loopback")
 }
 
 // Sampler samples periodically and keeps the latest snapshot.
