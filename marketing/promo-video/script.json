@@ -1,0 +1,114 @@
+{
+  "title": "Longarm - give your coding agents a long arm",
+  "voice": "en-US-AndrewMultilingualNeural",
+  "bpm": 120,
+  "size": [1920, 1080],
+  "sections": [
+    {
+      "id": "hook",
+      "music": false,
+      "lines": [
+        "Your coding agent just kicked off a full build.",
+        "Then a test suite. Then three more agents.",
+        "And your laptop is melting."
+      ]
+    },
+    {
+      "id": "drop",
+      "bars": 2,
+      "grid": 4,
+      "downbeat": true,
+      "lines": [
+        "Meet Longarm.",
+        "Give your coding agents a long arm."
+      ]
+    },
+    {
+      "id": "idea",
+      "grid": 4,
+      "lines": [
+        "Agents are great at starting work, and terrible at waiting for it.",
+        "Meanwhile, there's a thirty-two core box under your desk, an old laptop, and a cloud VM, all doing nothing.",
+        "Longarm turns every one of them into a single pool of workers."
+      ]
+    },
+    {
+      "id": "how",
+      "grid": 4,
+      "lines": [
+        "Install it on every machine you have.",
+        "Sign in once, with a single code.",
+        "Now each machine is a worker, and your laptop can hand it anything."
+      ]
+    },
+    {
+      "id": "run",
+      "grid": 4,
+      "lines": [
+        "Type longarm run, and your command.",
+        "The scheduler picks a machine with free memory and CPU to spare, gives the job a fresh worktree of your checkout, and streams the output back.",
+        "Your fans stay quiet."
+      ]
+    },
+    {
+      "id": "agents",
+      "grid": 4,
+      "bars": 1,
+      "lines": [
+        "And it's built for agents.",
+        "One command installs the Longarm skill into Claude Code, Copilot CLI, Codex and Gemini.",
+        "Now you just say: run the tests on a worker.",
+        "Fan out five sub-agents, each on its own worker, in its own worktree.",
+        "Steer a remote agent while it runs, or hand off a whole conversation, uncommitted code and all, to another machine."
+      ]
+    },
+    {
+      "id": "survive",
+      "grid": 4,
+      "bars": 1,
+      "lines": [
+        "Jobs run detached.",
+        "Close the lid. Switch networks. Restart the daemon.",
+        "The job keeps running, and you re-attach right where you left off."
+      ]
+    },
+    {
+      "id": "reach",
+      "grid": 4,
+      "lines": [
+        "Workers behind home routers, or carrier-grade NAT?",
+        "Longarm races three transports at once: plain TCP, Tailscale, and its own QUIC with hole punching, with a relay as the fallback.",
+        "Everything is mutual TLS, end to end. The hub only coordinates, and even relayed traffic stays encrypted."
+      ]
+    },
+    {
+      "id": "toolbox",
+      "grid": 4,
+      "bars": 1,
+      "lines": [
+        "Attach to a remote terminal, tmux style.",
+        "Forward a dev server to localhost.",
+        "Sync your checkout. Use SSH and VS Code Remote, with no keys to manage.",
+        "And watch the whole fleet from the tray, or from the hub's web panel."
+      ]
+    },
+    {
+      "id": "cta",
+      "grid": 4,
+      "bars": 1,
+      "lines": [
+        "Getting started takes about three minutes.",
+        "Open your hub. Download the installer, or paste one line.",
+        "Approve the code in your browser. That's it."
+      ]
+    },
+    {
+      "id": "outro",
+      "grid": 4,
+      "lines": [
+        "Longarm. Give your coding agents a long arm."
+      ],
+      "tail_bars": 2
+    }
+  ]
+}
