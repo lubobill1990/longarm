@@ -90,7 +90,8 @@ type Server struct {
 	// OpenSessions (the shell): show the Sessions window at the location
 	// hash (sessions.go); nil: open it in the default browser.
 	OpenSessions func(hash string)
-	upd          trayUpdate // the update banner (update.go)
+	upd          trayUpdate      // the update banner (update.go)
+	addMachine   addMachineCache // the "Add a machine" page's hub facts (addmachine.go)
 	// the firewall card's Allow (firewall.go); checkFirewall: a hook for tests
 	fwBusy        sync.Mutex
 	checkFirewall func(program string) (platform.FirewallStatus, error)
@@ -226,6 +227,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("POST /trayapi/attach", s.attach)
 	mux.HandleFunc("POST /trayapi/ssh", s.ssh)
+	mux.HandleFunc("GET /trayapi/addmachine", s.addMachineHandler)
 	mux.HandleFunc("POST /trayapi/desktop", s.desktop)
 	mux.HandleFunc("POST /trayapi/open", s.open)
 	mux.HandleFunc("POST /trayapi/panel", s.panel)
