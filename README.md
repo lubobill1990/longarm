@@ -170,9 +170,14 @@ Or one line - the hub serves the scripts with its address and CA pinned:
 
 ```sh
 curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --role both          # Linux / macOS
-$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex   # Windows (elevated: the MSI)
+$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex   # Windows (asks to elevate: the MSI)
 msiexec /i longarm-windows-amd64.msi /qn MODE=custom ROLES=both HUB=hub.example.com LOGIN=1   # MSI, another hub
+irm https://hub.example.com/uninstall.ps1 | iex                                                # Windows: remove it again
 ```
+
+On Windows the one-liner asks for administrator rights and installs the MSI;
+`$env:LONGARM_PER_USER=1` first installs for your account only, without them.
+Either way the tray starts and comes back at every logon.
 
 Linux from the signed package repositories (updates with `apt upgrade` /
 `dnf upgrade`; key fingerprint, the one-line apt format, key rotation:

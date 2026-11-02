@@ -4,6 +4,18 @@
 
 ### Added
 
+- **`install.ps1` installs for the machine by default; `uninstall.ps1`**: from
+  a PowerShell that isn't elevated, the hub's one-liner asks Windows to
+  elevate and installs the MSI in that window (its settings travel in a file
+  only that account reads; an elevation as another account is refused).
+  `-PerUser` (`$env:LONGARM_PER_USER=1`) installs for this account only,
+  without administrator rights - and now, like the MSI, starts the tray and
+  sets it to start at every logon (HKCU Run, a Start menu entry; `-NoTray`:
+  not); the tray is downloaded for clients too. `irm https://<hub>/uninstall.ps1
+  | iex` removes either install (the MSI elevated; per-user: the tray, its
+  autostart, the logon task or service, `longarmd leave --kill-jobs
+  --purge`, `longarm leave`, the firewall rule, Path, files;
+  `$env:LONGARM_KEEP_DATA=1` keeps the data).
 - Third-party notices: Longarm stays MIT, and everything it includes is under
   permissive licenses (no copyleft). Their license texts, which those
   licenses ask to travel with the binaries, are now in

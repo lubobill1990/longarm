@@ -51,7 +51,9 @@ no hub at all: [Advanced: self-hosted without sign-in](#advanced-self-hosted-wit
 #    Default (recommended), "This machine runs jobs"; the tray starts the sign-in and shows the code.
 #    Or one line (worker + client; the scripts carry the hub's address and CA):
 curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --role both           # Linux / macOS
-$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex   # Windows (elevated: the MSI)
+$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex   # Windows: asks to elevate, the MSI
+#    For this Windows account only, without administrator rights: $env:LONGARM_PER_USER=1 first.
+#    Either way the tray starts and comes back at every logon. Remove: irm https://hub.example.com/uninstall.ps1 | iex
 
 # 2. sign in - the one-liners and the tray do it; already installed:
 longarmd login hub.example.com --role both     # worker + client: one code, one approval
@@ -3099,6 +3101,16 @@ afterwards.
 
 ### Uninstall
 
+**Windows, one line** - install.ps1's counterpart, whichever way it (or the
+MSI) installed Longarm:
+
+```powershell
+irm https://hub.example.com/uninstall.ps1 | iex     # $env:LONGARM_KEEP_DATA=1 keeps the data dirs; -Prefix / -DataDir as installed
+```
+
+It removes the MSI (asking Windows to elevate) or an install without it (in
+the order below), and signs the client out (`longarm leave`). By hand:
+
 No uninstaller removes the **client** enrollment (`~/.config/longarm`,
 `%USERPROFILE%\.config\longarm` on Windows): run `longarm leave` first (the
 hub revokes the client's certificate, its credentials are removed), then
@@ -3128,17 +3140,21 @@ mirrors; the enrollment goes either way). It also removes the scheduled task
 firewall rules, the PATH entry, the tray's autostart, the settings in
 `HKLM\Software\Longarm` and `C:\Program Files\Longarm`.
 
-**`install.ps1` without the MSI** (not elevated, `-NoMsi`, `-Prefix`, or a
-release without an MSI). What it installed: `longarm.exe`, `longarmd.exe`
-(and `longarm-tray.exe`, the logon task's host) in `-Prefix` - default
-`%LOCALAPPDATA%\Programs\Longarm`, elevated `C:\Program Files\Longarm`; the
-prefix on the user's `Path` (machine `Path` when elevated; not with
-`-NoPath`); elevated, a firewall rule for `longarm.exe` (`longarm firewall
-allow`); for a worker the scheduled task `LongarmWorker-<SID>` (`-Run
-session`, the default) or the service `longarmd` (`-Run service`); the data
-dir `~\.longarm` (or `-DataDir`). Remove in this order:
+**`install.ps1` without the MSI** (`-PerUser`, `-NoMsi`, `-Prefix`, or a
+release without an MSI; without them `install.ps1` elevates and installs the
+MSI). What it installed: `longarm.exe`, `longarmd.exe` and
+`longarm-tray.exe` in `-Prefix` - default `%LOCALAPPDATA%\Programs\Longarm`,
+elevated without `-PerUser` `C:\Program Files\Longarm`; the prefix on the
+user's `Path` (machine `Path` when for the machine; not with `-NoPath`); the
+tray's autostart (`longarm-tray` under `HKCU\...\CurrentVersion\Run`, `HKLM`
+for the machine) and Start menu entry "Longarm" (not with `-NoTray`);
+elevated, a firewall rule for `longarm.exe` (`longarm firewall allow`); for a
+worker the scheduled task `LongarmWorker-<SID>` (`-Run session`, the default)
+or the service `longarmd` (`-Run service`); the data dir `~\.longarm` (or
+`-DataDir`). Remove in this order:
 
 ```powershell
+Get-Process longarm-tray | Stop-Process   # the tray hosts the worker; and its Run value, Start menu entry
 longarmd session-mode uninstall            # the logon task; stops the worker (else the host restarts it)
 #   -Run service, elevated: longarmd service uninstall
 longarmd leave --kill-jobs --purge         # hub revokes the worker; --purge deletes the data dir (-DataDir: --data-dir D)

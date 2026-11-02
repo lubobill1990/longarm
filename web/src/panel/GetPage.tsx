@@ -8,7 +8,10 @@ import { Link } from '../lib/router'
 export function installLines(base: string) {
   const b = base.replace(/\/+$/, '')
   return {
+    // asks Windows to elevate (the MSI, for this machine); $env:LONGARM_PER_USER=1: this account only
     windows: `$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm ${b}/install.ps1 | iex`,
+    windowsPerUser: `$env:LONGARM_PER_USER=1; $env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm ${b}/install.ps1 | iex`,
+    windowsUninstall: `irm ${b}/uninstall.ps1 | iex`,
     unix: `curl -fsSL ${b}/install.sh | sudo sh -s -- --login --role both`,
   }
 }
@@ -57,6 +60,13 @@ export function GetPage({ me }: { me: Me }) {
             Or one line - Windows (PowerShell):
             <div className="codebox" data-testid="get-ps1">
               {lines.windows}
+            </div>
+            <div className="muted small">
+              It asks for administrator rights (the MSI, for this machine). For your account only, without them:{' '}
+              <span className="mono">$env:LONGARM_PER_USER=1;</span> first. Remove it again:{' '}
+              <span className="mono" data-testid="get-uninstall">
+                {lines.windowsUninstall}
+              </span>
             </div>
             Linux / macOS:
             <div className="codebox" data-testid="get-sh">

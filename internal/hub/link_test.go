@@ -592,7 +592,7 @@ func TestEntraJoinWorker(t *testing.T) {
 func TestInstallScriptsLogin(t *testing.T) {
 	th := newTenancyHub(t)
 	base := "http://" + th.h.Addr("http")
-	sh, ps1 := "", ""
+	sh, ps1, uninstall := "", "", ""
 	for _, s := range []struct {
 		path string
 		out  *string
@@ -606,7 +606,15 @@ func TestInstallScriptsLogin(t *testing.T) {
 		{"/install.ps1", &ps1, []string{`[switch]$Login = ($env:LONGARM_LOGIN -eq '1')`, `'longarmd.exe') login $HubAddr --ca-fingerprint $CaFp`,
 			`'longarm.exe') login $HubAddr`, `-not $Login)`, `'longarmd.exe') join $HubAddr $Join`, `--ca-fingerprint $CaFp --role $Role`,
 			`[string]$Label = $env:LONGARM_LABELS`, `"LABELS=$Label"`, `@nameArgs @ddArgs @labelArgs`,
-			`if (-not $Role) { $Role = if ($Login) { 'both' } else { 'worker' } }`}},
+			`if (-not $Role) { $Role = if ($Login) { 'both' } else { 'worker' } }`,
+			// elevated by default (the MSI), per-user only when asked; the tray afterwards and at logon
+			`$perUserInstall = $PerUser -or $Prefix -or $NoMsi -or -not $Hashes[$msi]`, `Invoke-Elevated 'install.ps1'`,
+			`-Verb RunAs -Wait`, `LONGARM_JOIN = $Join; LONGARM_LOGIN = $(if ($Login) { '1' })`,
+			`CurrentVersion\Run') -Name 'longarm-tray'`, "Install-Tray\nif (-not $Join -and -not $Login) {\n  Start-Tray",
+			`irm ` + base + `/uninstall.ps1 | iex`}},
+		{"/uninstall.ps1", &uninstall, []string{`[switch]$KeepData = ($env:LONGARM_KEEP_DATA -eq '1')`, `Invoke-Elevated 'uninstall.ps1'`,
+			`'/x ' + $product.PSChildName`, `& $d session-mode uninstall @ddArgs`, `@('leave', '--kill-jobs', '--force')`, `$leave += '--purge'`,
+			`& $exe leave`, `Remove-ItemProperty -Path $run -Name 'longarm-tray'`, `[Environment]::SetEnvironmentVariable('Path', $kept, $scope)`}},
 	} {
 		code, body := plainGet(t, base+s.path)
 		if code != 200 {
@@ -627,12 +635,14 @@ func TestInstallScriptsLogin(t *testing.T) {
 		}
 	}
 	if p, err := exec.LookPath("pwsh"); err == nil {
-		f := filepath.Join(t.TempDir(), "install.ps1")
-		os.WriteFile(f, []byte(ps1), 0o600)
-		cmd := exec.Command(p, "-NoProfile", "-NonInteractive", "-Command",
-			"$e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('"+f+"', [ref]$null, [ref]$e); if ($e) { $e; exit 1 }")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Errorf("install.ps1: %v %s", err, out)
+		for name, script := range map[string]string{"install.ps1": ps1, "uninstall.ps1": uninstall} {
+			f := filepath.Join(t.TempDir(), name)
+			os.WriteFile(f, []byte(script), 0o600)
+			cmd := exec.Command(p, "-NoProfile", "-NonInteractive", "-Command",
+				"$e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('"+f+"', [ref]$null, [ref]$e); if ($e) { $e; exit 1 }")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Errorf("%s: %v %s", name, err, out)
+			}
 		}
 	}
 }
