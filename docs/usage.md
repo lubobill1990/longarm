@@ -2875,6 +2875,47 @@ longarm worker update cpc-alice-1 --auto on [--hours 6]   # automatic updates (M
   `longarm worker update <name>` next to an outdated version (the panel
   itself can't start an update: the hub has no way to).
 
+**While a worker updates** everybody who may see it sees the update, not
+"offline, reconnecting": the hub keeps an update state per worker
+(`NodeInfo.update`), set only by the worker itself (its update reports and
+the hello it reconnects with) and by the hub's own rollouts. The tray's
+card says **Updating to v0.1.30…** with the phase - checking,
+downloading 12/42 MB, verifying, installing, restarting, checking the new
+version, waiting for the worker to come back - the time it takes and who
+started it (its owner, a rollout, automatic updates, someone on the
+machine), with an amber dot; the link's red "down", its RTT failures and
+rpc errors are left out (the gap in the RTT chart is "updating"). A
+session worker and its admin worker restart together in one MSI update:
+one updating machine. `longarm ls` says `updating 0.1.29→0.1.30
+(installing)` in STATE, `longarm ls --json` / `admin nodes --json` carry
+the `update` object, the panel's Nodes page the same text. Then:
+
+- back on the new version: online, the state is gone;
+- back on the old version with a reason (bad signature, sha256 mismatch,
+  disk full, the installer failed, a downgrade refused): **Update to X
+  failed: ...**, a badge you can dismiss (on that computer; the hub drops
+  it after a day or with the next update) - other users see the reason
+  as a short code, not the worker's message;
+- not back by the deadline (10 min after it went away to restart, 15
+  without progress in a phase, 60 at most; hub.toml `[updates]`):
+  **Offline: update to X didn't finish (last phase: installing, started
+  7m ago)**, and its owner's tray notifies; a later hello still resolves
+  it;
+- msiexec 3010 (a restart of the machine is needed): **Restart pending**,
+  not a failure, until the machine booted again;
+- back on another version: said so.
+
+Running jobs and sessions keep running with both update methods (the
+confirmation and the card say so). A second update while one runs is
+refused (`longarm worker update`: exit 75, "already updating to X
+(downloading, started 2m ago)"). Workers before 0.1.30 report no phases:
+an update a rollout asked for shows as "requested" / "updating" with the
+time it takes, one the tray started as "updating" in that tray; the hub
+restarting meanwhile keeps the state (or rebuilds it from the worker's
+hello). After an MSI update the Longarm Update service checks that the
+worker services that ran before it run again, and starts the ones the
+installer left stopped (docs/security.md "Update service").
+
 **Automatic updates** are off by default. The machine's owner (the user
 the MSI was installed for) or a local administrator turns them on: the
 tray's Settings tab ("install new releases automatically"),

@@ -46,6 +46,9 @@ import (
 // and reconnects with backoff. Nothing here is on the data plane: the hub
 // being away changes nothing for clients talking to this worker.
 type hubAgent struct {
+	// svcUpdate: the Longarm Update service's install or last result (MSI
+	// installs; machineUpdater.serviceUpdate) for the hello; nil = none.
+	svcUpdate func() *pb.UpdateStatus
 	// welcomes counts sessions the hub accepted (Run's reconnect backoff
 	// starts over after one).
 	welcomes  atomic.Int64
@@ -344,6 +347,12 @@ func (a *hubAgent) hello() *pb.NodeHello {
 	if a.upd != nil {
 		h.UpdateEnabled = a.upd.enabled()
 		h.Update = a.upd.Status()
+	}
+	if a.svcUpdate != nil {
+		// an MSI install: the Longarm Update service's install or result
+		if s := a.svcUpdate(); s != nil {
+			h.Update = s
+		}
 	}
 	h.Mirrors, h.WarmRepos = a.mirrors()
 	h.Tailnet = a.tailnet.state()

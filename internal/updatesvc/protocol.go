@@ -102,7 +102,8 @@ type Request struct {
 	Requester string `json:"requester,omitempty"`
 }
 
-// Result of a finished install.
+// Result of a finished install (or of one that failed before msiexec
+// ran: a download, a package that fails verification, a downgrade).
 type Result struct {
 	From  string    `json:"from"`
 	To    string    `json:"to"`
@@ -111,7 +112,28 @@ type Result struct {
 	Code  int       `json:"exit_code,omitempty"` // msiexec's
 	At    time.Time `json:"at"`
 	By    string    `json:"by,omitempty"`
+	// Since 0.1.30 (older services leave them out; clients decode
+	// leniently): the request's code when it failed before the installer
+	// ran (Code* constants), the attempt and who started it (Initiator*),
+	// and the worker services the watchdog had to start again.
+	Reason    string   `json:"reason,omitempty"`
+	Attempt   string   `json:"attempt,omitempty"`
+	Initiator string   `json:"initiator,omitempty"`
+	Recovered []string `json:"recovered,omitempty"`
+	// RecoverError: the watchdog could not start a worker service again.
+	RecoverError string `json:"recover_error,omitempty"`
 }
+
+// RebootRequired: msiexec finished with "a restart is required to
+// complete the install" (3010) or started that restart (1641).
+func (r *Result) RebootRequired() bool { return r != nil && r.OK && (r.Code == 3010 || r.Code == 1641) }
+
+// Initiators of an install (Status.Initiator, Result.Initiator).
+const (
+	InitiatorOwner = "owner" // longarm worker update (through longarmd)
+	InitiatorAuto  = "auto"  // automatic updates
+	InitiatorLocal = "local" // a program on the machine: the tray's banner, longarm-update install
+)
 
 // Status of the service.
 type Status struct {
@@ -128,7 +150,13 @@ type Status struct {
 	Target  string    `json:"target,omitempty"`
 	Started time.Time `json:"started,omitempty"`
 	Message string    `json:"message,omitempty"`
-	Last    *Result   `json:"last,omitempty"`
+	// The install in progress (since 0.1.30): its attempt, who started it,
+	// and the download's progress.
+	Attempt    string  `json:"attempt,omitempty"`
+	Initiator  string  `json:"initiator,omitempty"`
+	BytesDone  int64   `json:"bytes_done,omitempty"`
+	BytesTotal int64   `json:"bytes_total,omitempty"`
+	Last       *Result `json:"last,omitempty"`
 	// Auto: automatic updates (off by default), every AutoIntervalHours.
 	Auto              bool      `json:"auto"`
 	AutoIntervalHours int       `json:"auto_interval_hours"`

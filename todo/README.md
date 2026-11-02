@@ -13,5 +13,6 @@ pull request description.
 |---|---|
 | [agent-sessions-ui.md](agent-sessions-ui.md) | the tray's Sessions window (docs/agent-sessions-ui.md) |
 | [steerable-runs.md](steerable-runs.md) | `longarm run --steerable` (docs/steerable-runs.md) |
+| [updates.md](updates.md) | a worker's update as the hub shows it (docs/usage.md "While a worker updates") |
 | [remote-desktop.md](remote-desktop.md) | `longarm desktop` (docs/usage.md "Remote desktop") |
 | [release-channels.md](release-channels.md) | release channels and updates (docs/ci-cd.md "Release channels") |

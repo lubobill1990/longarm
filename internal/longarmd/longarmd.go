@@ -833,6 +833,15 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		go func() { defer wg.Done(); agent.upd.Run(ctx) }()
 	}
 	srv.MachineUpdate = mupd
+	if hubOn {
+		mupd.report = func(s *pb.UpdateStatus, lossy bool) {
+			agent.send(&pb.NodeReport{Msg: &pb.NodeReport_Update{Update: s}}, lossy)
+		}
+		agent.svcUpdate = mupd.serviceUpdate
+		mupd.pollService(ctx, new(time.Time)) // before the first hello: an update that just restarted us
+		wg.Add(1)
+		go func() { defer wg.Done(); mupd.watchService(ctx) }()
+	}
 	wg.Add(1)
 	go func() { defer wg.Done(); mupd.reportActivity(ctx, st.spaces) }()
 	legs.start(cfg.Listen, hubFile.Tailnet)

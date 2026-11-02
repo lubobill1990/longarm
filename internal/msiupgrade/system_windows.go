@@ -106,6 +106,10 @@ func workerServices() []string {
 	return names
 }
 
+// WorkerServices are the machine's Longarm services (workerServices): the
+// update service's watchdog starts those an update left stopped.
+func WorkerServices() []string { return workerServices() }
+
 // WindowsSystem is System on Windows.
 type WindowsSystem struct{}
 

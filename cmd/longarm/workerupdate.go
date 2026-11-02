@@ -77,6 +77,15 @@ func runWorkerUpdate(ctx context.Context, s *session, worker string, req *pb.Mac
 	if c := s.companionOf(worker); c != "" {
 		out.Companion = c
 	}
+	// one update at a time: the hub shows the one in progress (its
+	// worker, or its companion on the same machine, reports it)
+	if nodes, ok := s.hubNodes(ctx, false); ok {
+		if err := updateBusyError(worker, nodes, time.Now()); err != nil {
+			out.Phase, out.Code, out.Error = "failed", "busy", err.Error()
+			out.Summary = err.Error()
+			return out, err
+		}
+	}
 	conn, err := s.conn(worker)
 	if err != nil {
 		return out, err

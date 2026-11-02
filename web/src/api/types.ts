@@ -90,6 +90,39 @@ export interface NodeInfo {
   shares?: WorkerShares
   /** workers: a newer release they can't install themselves (MSI installs, user-session workers) */
   update_available?: UpdateAvailable
+  /** workers: an update of the machine in progress, or how the last one ended (lib/update.ts) */
+  update?: NodeUpdate
+}
+
+/** The hub's view of an update of a worker's machine (internal/hub/updatestate.go). */
+export interface NodeUpdate {
+  /** requested | updating | timed_out | failed | mismatch | restart_pending */
+  state?: string
+  from?: string
+  to?: string
+  /** owner | rollout | auto | local */
+  initiator?: string
+  /** checking | downloading | verifying | installing | restarting | health_check */
+  phase?: string
+  bytes_done?: Int64
+  bytes_total?: Int64
+  started_at?: string
+  deadline?: string
+  updated_at?: string
+  /** msi | self */
+  method?: string
+  /** the worker's words (its owner and admins only) */
+  error?: string
+  code?: string
+  /** false: the hub only knows it asked (an older worker) */
+  reported?: boolean
+  offline_since?: string
+  /** the companion whose update this is (one MSI updates both workers of a machine) */
+  via?: string
+  jobs_keep_running?: boolean
+  finished_at?: string
+  attempt?: string
+  message?: string
 }
 
 export interface WorkerShares {

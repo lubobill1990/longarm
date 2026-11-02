@@ -248,6 +248,9 @@ export interface WorkerUpdateOutcome {
 /** An update the daemon runs for the tray (GET /v1/workers/{name}/update). */
 export interface WorkerUpdateJob {
   state: 'idle' | 'running' | 'done' | 'failed'
+  /** the tray's own: when it started the update and to which version (an older worker's card shows "updating" from them) */
+  started?: number
+  to?: string
   progress?: string[]
   outcome?: WorkerUpdateOutcome
   error?: string

@@ -134,7 +134,8 @@ type node struct {
 	maxJobs     int32               // local limits (NodeState)
 	updateAvail *pb.UpdateAvailable // a release the worker can't install itself (NodeState)
 	reservedGB  float64
-	caps        []string // NodeHello.capabilities of the current session
+	caps        []string       // NodeHello.capabilities of the current session
+	upd         *pb.NodeUpdate // an update of its machine (updatestate.go); nil = none
 }
 
 type nodeSession struct {
@@ -246,6 +247,7 @@ func (h *Hub) load() error {
 				n.tailnet = ts
 			}
 		}
+		h.loadUpdateState(n, time.Now())
 		h.nodes[r.ID] = n
 	}
 	if h.knownSerials, err = h.store.CertNodes(time.Now()); err != nil {
@@ -758,6 +760,7 @@ func (h *Hub) sweep() {
 	h.sweepHandoffPairsLocked(now)
 	h.advanceRolloutsLocked()
 	h.advanceReleaseLocked()
+	h.sweepUpdatesLocked(now)
 }
 
 // kickQueue asks the maintenance loop to re-run the queue soon.

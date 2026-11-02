@@ -9,9 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/lubobill1990/longarm/internal/jobs"
+	"github.com/lubobill1990/longarm/internal/update"
 	"github.com/lubobill1990/longarm/internal/updatesvc"
 	"github.com/lubobill1990/longarm/internal/userspace"
 	"github.com/lubobill1990/longarm/internal/version"
@@ -40,8 +42,18 @@ type machineUpdater struct {
 	// failed; the client checks the pipe's server is the real service).
 	probe func() serviceClient
 
+	// report sends an update's state to the hub (NodeReport.update: the
+	// hub's NodeInfo.update, what every viewer of this worker sees); nil
+	// = no hub. lossy: progress, which may be dropped.
+	report func(s *pb.UpdateStatus, lossy bool)
+
 	mu   sync.Mutex
 	busy bool
+
+	// the update service as watchService last saw it (for the hello)
+	svcMu     sync.Mutex
+	svcStatus *pb.UpdateStatus
+	svcLastAt time.Time // the last result reported
 }
 
 // serviceClient is updatesvc.Client (tests fake it).
@@ -105,11 +117,31 @@ func (m *machineUpdater) method() string {
 	return "self"
 }
 
-func (m *machineUpdater) Start(ctx context.Context, by string, req *pb.MachineUpdateRequest, send func(*pb.MachineUpdateEvent) error) error {
+func (m *machineUpdater) Start(ctx context.Context, by string, req *pb.MachineUpdateRequest, send0 func(*pb.MachineUpdateEvent) error) error {
 	m.mu.Lock()
 	if m.busy {
 		m.mu.Unlock()
-		return send(failedEvent(m.method(), "busy", "an update of this machine is in progress"))
+		return send0(failedEvent(m.method(), "busy", "an update of this machine is in progress"))
+	}
+	// A failure the update path doesn't report itself goes to the hub too
+	// ("Update to X failed: ..." for every viewer): refusals before
+	// anything ran (a downgrade, a version the hub lacks, no service).
+	// The self-updater and the update service report what happens once
+	// they work on it (their own failures included). Never "busy": the
+	// update that runs stays shown.
+	started := time.Now()
+	send := func(e *pb.MachineUpdateEvent) error {
+		if e.Phase == "failed" && e.Code != "busy" && m.report != nil && !(e.Method == "self" && e.Code == "failed") {
+			to := e.To
+			if to == "" {
+				to = req.Version
+			}
+			if to != "" && update.ValidVersion(to) {
+				m.report(&pb.UpdateStatus{State: "error", From: version.Version, To: to, Error: e.Error, Code: e.Code, Method: e.Method,
+					Initiator: "owner", Attempt: fmt.Sprintf("owner-%d", started.UnixNano()), Started: timestamppb.New(started)}, false)
+			}
+		}
+		return send0(e)
 	}
 	m.busy = true
 	m.mu.Unlock()
@@ -315,4 +347,138 @@ func (m *machineUpdater) reportActivity(ctx context.Context, spaces *userspace.S
 		m.service().Do(cctx, &updatesvc.Request{Op: updatesvc.OpActivity})
 		cancel()
 	}
+}
+
+// watchService follows the Longarm Update service for the hub: an install
+// in progress (whoever started it - this worker's owner, automatic
+// updates, the tray's banner on the machine) and how it ended, as
+// NodeReport.update. Every few seconds while it installs, every 30 s
+// otherwise. The admin worker and the session worker of a machine both
+// report it (one MSI updates both).
+func (m *machineUpdater) watchService(ctx context.Context) {
+	if m.service == nil || m.report == nil {
+		return
+	}
+	since := time.Now().Add(-time.Hour) // a result from before this start: an update that restarted longarmd
+	for {
+		busy := m.pollService(ctx, &since)
+		wait := 30 * time.Second
+		if busy {
+			wait = 3 * time.Second
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+	}
+}
+
+// pollService reads the service's status once and reports changes;
+// busy: an install is in progress.
+func (m *machineUpdater) pollService(ctx context.Context, since *time.Time) (busy bool) {
+	if m.service == nil || m.report == nil {
+		return false
+	}
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	r, err := m.service().Do(cctx, &updatesvc.Request{Op: updatesvc.OpStatus})
+	cancel()
+	if err != nil || !r.OK || r.Status == nil {
+		return false
+	}
+	st := r.Status
+	if s := serviceProgress(st); s != nil {
+		m.svcMu.Lock()
+		prev := m.svcStatus
+		m.svcStatus = s
+		m.svcMu.Unlock()
+		if prev == nil || prev.Phase != s.Phase || prev.BytesDone != s.BytesDone || prev.Attempt != s.Attempt {
+			m.report(s, prev != nil && prev.Phase == s.Phase && prev.Attempt == s.Attempt)
+		}
+		return true
+	}
+	l := st.Last
+	if l == nil || !l.At.After(*since) {
+		m.svcMu.Lock()
+		if m.svcStatus != nil && m.svcStatus.State == "applying" {
+			m.svcStatus = nil // the install went away without a result (a new service lost it)
+		}
+		m.svcMu.Unlock()
+		return false
+	}
+	*since = l.At
+	s := serviceResult(st.Installed, l)
+	m.svcMu.Lock()
+	m.svcStatus = s
+	m.svcMu.Unlock()
+	// The owner's refusals before anything ran were reported by Start.
+	if !l.OK && l.Initiator == updatesvc.InitiatorOwner && l.Reason != "" && l.Reason != updatesvc.CodeFailed {
+		return false
+	}
+	m.report(s, false)
+	return false
+}
+
+// serviceProgress is an install in progress as an UpdateStatus (nil: none).
+func serviceProgress(st *updatesvc.Status) *pb.UpdateStatus {
+	switch st.State {
+	case updatesvc.PhaseChecking, updatesvc.PhaseDownloading, updatesvc.PhaseVerifying, updatesvc.PhaseInstalling:
+	default:
+		return nil
+	}
+	if st.Target == "" || !update.ValidVersion(st.Target) {
+		return nil
+	}
+	s := &pb.UpdateStatus{State: "applying", Phase: st.State, From: st.Installed, To: st.Target, Method: "msi",
+		BytesDone: st.BytesDone, BytesTotal: st.BytesTotal, Initiator: st.Initiator, Attempt: st.Attempt, Message: st.Message, At: timestamppb.Now()}
+	if st.State == updatesvc.PhaseInstalling {
+		s.State = "restarting" // Longarm restarts while msiexec runs
+	}
+	if !st.Started.IsZero() {
+		s.Started = timestamppb.New(st.Started)
+		if s.Attempt == "" { // an older service
+			s.Attempt = fmt.Sprintf("svc-%d", st.Started.UnixNano())
+		}
+	}
+	return s
+}
+
+// serviceResult is a finished install as an UpdateStatus: "ok" (a 3010:
+// the machine must restart), else "error" (MSI workers are in no rollout:
+// it halts none).
+func serviceResult(installed string, l *updatesvc.Result) *pb.UpdateStatus {
+	s := &pb.UpdateStatus{State: "ok", From: l.From, To: l.To, Method: "msi", Initiator: l.Initiator, Attempt: l.Attempt,
+		RebootRequired: l.RebootRequired(), At: timestamppb.New(l.At)}
+	if !l.OK {
+		s.State, s.Error = "error", l.Error
+		switch l.Reason {
+		case updatesvc.CodeFailed, "":
+			s.Code = "msi"
+		case updatesvc.CodeInvalid:
+			s.Code = "" // the hub reads signature / sha256 from the message
+		default:
+			s.Code = l.Reason
+		}
+	}
+	if s.Attempt == "" && !l.At.IsZero() {
+		s.Attempt = "to:" + l.To // an older service: matched by the version
+	}
+	return s
+}
+
+// serviceUpdate is the update service's last status for the hello: an
+// install in progress or a result of the last hour (nil: none).
+func (m *machineUpdater) serviceUpdate() *pb.UpdateStatus {
+	if m == nil {
+		return nil
+	}
+	m.svcMu.Lock()
+	defer m.svcMu.Unlock()
+	if m.svcStatus == nil {
+		return nil
+	}
+	if at := m.svcStatus.At; m.svcStatus.State != "applying" && m.svcStatus.State != "restarting" && at != nil && time.Since(at.AsTime()) > time.Hour {
+		return nil
+	}
+	return proto.Clone(m.svcStatus).(*pb.UpdateStatus)
 }
