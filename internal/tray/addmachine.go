@@ -22,7 +22,7 @@ import (
 //
 // Machines of a hub that signs in with Microsoft's own tenant download from
 // the Microsoft-internal copy of the repository, which carries the same
-// releases (.github/scripts/gim-release.sh).
+// releases (.github/gim-home/sync-releases.yml copies them).
 const (
 	PublicRepo   = "github.com/lubobill1990/longarm"
 	InternalRepo = "github.com/gim-home/longarm"
