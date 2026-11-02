@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -120,6 +121,7 @@ type Detector struct {
 // (DesktopInfo.os_installed, last_remote_logon).
 type devBoxFacts struct {
 	installed, lastLogon time.Time
+	logons               []time.Time // newest first
 }
 
 // factsTTL: the last remote logon is read from the event log at most this often.
@@ -170,6 +172,9 @@ func (d *Detector) Info(ctx context.Context) *pb.DesktopInfo {
 			if !f.lastLogon.IsZero() {
 				out.LastRemoteLogon = timestamppb.New(f.lastLogon)
 			}
+			for _, l := range f.logons {
+				out.RemoteLogons = append(out.RemoteLogons, timestamppb.New(l))
+			}
 			return out
 		}
 	default:
@@ -181,19 +186,32 @@ func (d *Detector) Info(ctx context.Context) *pb.DesktopInfo {
 // reconnects in wevtutil's XML output (newest first).
 var systemTimeRE = regexp.MustCompile(`SystemTime=['"]([0-9T:.\-]+Z?)['"]`)
 
-// LastRemoteLogon picks the newest event time after installed from
-// wevtutil's XML (events before it come with the image: the machine it was
-// captured from).
-func LastRemoteLogon(xml string, installed time.Time) time.Time {
-	var last time.Time
+// RemoteLogons are the event times after installed in wevtutil's XML,
+// newest first, at most maxLogons (events before it come with the image:
+// the machine it was captured from).
+func RemoteLogons(xml string, installed time.Time) []time.Time {
+	var out []time.Time
 	for _, m := range systemTimeRE.FindAllStringSubmatch(xml, -1) {
 		t, err := time.Parse(time.RFC3339Nano, m[1])
-		if err != nil {
+		if err != nil || !t.After(installed) {
 			continue
 		}
-		if t.After(installed) && t.After(last) {
-			last = t
-		}
+		out = append(out, t)
 	}
-	return last
+	sort.Slice(out, func(i, j int) bool { return out[i].After(out[j]) })
+	if len(out) > maxLogons {
+		out = out[:maxLogons]
+	}
+	return out
+}
+
+// maxLogons bounds DesktopInfo.remote_logons.
+const maxLogons = 50
+
+// LastRemoteLogon is the newest of RemoteLogons (zero: none).
+func LastRemoteLogon(xml string, installed time.Time) time.Time {
+	if l := RemoteLogons(xml, installed); len(l) > 0 {
+		return l[0]
+	}
+	return time.Time{}
 }

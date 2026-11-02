@@ -73,3 +73,15 @@ func TestLastRemoteLogon(t *testing.T) {
 		t.Fatalf("an image event counted: %v", got)
 	}
 }
+
+// TestRemoteLogons: every logon after the install, newest first.
+func TestRemoteLogons(t *testing.T) {
+	installed := time.Date(2026, 10, 26, 6, 17, 7, 0, time.UTC)
+	xml := `<Event><TimeCreated SystemTime='2026-10-27T05:07:01.0000000Z'/></Event>` +
+		`<Event><TimeCreated SystemTime='2026-10-29T05:24:11.0000000Z'/></Event>` +
+		`<Event><TimeCreated SystemTime='2026-10-25T10:22:55.0000000Z'/></Event>`
+	got := RemoteLogons(xml, installed)
+	if len(got) != 2 || !got[0].Equal(time.Date(2026, 10, 29, 5, 24, 11, 0, time.UTC)) || !got[1].Equal(time.Date(2026, 10, 27, 5, 7, 1, 0, time.UTC)) {
+		t.Fatalf("got %v", got)
+	}
+}

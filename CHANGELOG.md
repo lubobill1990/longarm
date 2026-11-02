@@ -211,6 +211,14 @@
 
 ### Fixed
 
+- `longarm desktop` told one of two Dev Boxes created together wrong or not at
+  all: it compared their last connection with the worker's newest remote
+  logon only, which can be a reconnect without a user (after an update).
+  Workers report every logon since Windows was installed now
+  (`DesktopInfo.remote_logons`); the box whose last connection matches one
+  of them, with the fewest logons after it, is the one. The Dev Center API's
+  occasional 500 (and throttling, network errors) are retried.
+
 - **Workers with a certificate from before node IDs, while the hub is
   unreachable (#45).** The client's cache of the hub's node list
   (`hub-cache.json`) kept each worker's node ID but not its legacy serials

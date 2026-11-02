@@ -70,10 +70,13 @@ func readDevBoxFacts() devBoxFacts {
 		k.Close()
 	}
 	cmd := exec.Command("wevtutil", "qe", "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational",
-		"/q:*[System[(EventID=21 or EventID=25)]]", "/c:20", "/rd:true", "/f:xml")
+		"/q:*[System[(EventID=21 or EventID=25)]]", "/c:200", "/rd:true", "/f:xml")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if out, err := cmd.Output(); err == nil && !f.installed.IsZero() {
-		f.lastLogon = LastRemoteLogon(string(out), f.installed)
+		f.logons = RemoteLogons(string(out), f.installed)
+		if len(f.logons) > 0 {
+			f.lastLogon = f.logons[0]
+		}
 	}
 	return f
 }

@@ -84,6 +84,10 @@ message DesktopInfo {
   // longarm desktop tells which of the user's Dev Boxes the worker is.
   google.protobuf.Timestamp os_installed = 6;
   google.protobuf.Timestamp last_remote_logon = 7;
+  // devbox: every remote desktop logon or reconnect since os_installed,
+  // newest first (at most 50): the one matching a Dev Box's last
+  // connection, and how many came after it, tell boxes created together apart.
+  repeated google.protobuf.Timestamp remote_logons = 8;
 }
 
 // AgentAuth says which coding agents' credentials the client forwarded
