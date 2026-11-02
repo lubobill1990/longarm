@@ -28,6 +28,12 @@
 
 ### Added
 
+- The Microsoft-internal copy gim-home/longarm gets every release - the same
+  tags and files - from a workflow there that copies them every 30 minutes
+  with its own token (`.github/gim-home/sync-releases.yml`, committed in
+  gim-home once; `gim-sync-releases.sh`), instead of a push from here that
+  needed a gim-home token. docs/ci-cd.md "6.2 Releases".
+
 - **Hub front page**: `/` is a public page that explains Longarm (what it is
   for, three steps, agents, disconnects, NAT traversal, the toolbox) and
   how to install it on this hub - its MSI, the one-line installs and its
