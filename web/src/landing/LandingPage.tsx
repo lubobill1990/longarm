@@ -475,7 +475,8 @@ function AgentChat() {
         <span className="lp-chat-logo">✳</span> Claude Code <span className="faint">· longarm skill</span>
       </div>
       {CHAT.slice(0, shown).map((m, i) => (
-        <div key={i} className={`lp-msg ${m.who}`}>
+        // lp-from-*: the panel's styles.css already has an .agent
+        <div key={i} className={`lp-msg lp-from-${m.who}`}>
           {m.who === 'tool' ? (
             <>
               <span className="lp-tool-tag">Bash</span> <code>{m.text}</code>

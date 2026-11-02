@@ -15,6 +15,14 @@
 
 ### Added
 
+- **Hub front page**: `/` is a public page that explains Longarm (what it is
+  for, three steps, agents, disconnects, NAT traversal, the toolbox) and
+  how to install it on this hub - its MSI, the one-line installs and its
+  sign-in providers. Top right: Sign in, or who you are and "Open my hub"
+  (`/nodes` for administrators, `/jobs` for users); `/login` moves
+  signed-in visitors on into the panel.
+- A promo film's sources (`marketing/promo-video`): script, voice-over and
+  music pipeline and a HyperFrames generator.
 - **Steerable agent runs**: `longarm run --steerable -- claude -p "task"`
   (or `copilot -p`) runs the agent interactively on a terminal on the
   worker, as a job: `longarm attach --job <id>` / the tray's Sessions

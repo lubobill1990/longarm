@@ -310,10 +310,10 @@ html.lp-root #root { height: auto; }
 .lp-chat-head { font: 600 14px/1 var(--code); color: #d8d9ff; padding-bottom: 12px; border-bottom: 1px solid #2a2b5c; }
 .lp-chat-logo { color: #ff8a5c; font-size: 17px; }
 .lp-msg { max-width: 92%; padding: 12px 15px; border-radius: 16px; font-size: 15px; animation: lp-pop 0.45s var(--spring); }
-.lp-msg.you { align-self: flex-end; background: var(--blue); color: #fff; border-bottom-right-radius: 5px; }
-.lp-msg.agent { background: #23245a; border-bottom-left-radius: 5px; }
-.lp-msg.tool { background: transparent; border: 1px dashed #3a3b78; font-size: 13px; color: #b3b4e0; }
-.lp-msg.tool code { color: #7cf3b0; }
+.lp-msg.lp-from-you { align-self: flex-end; background: var(--blue); color: #fff; border-bottom-right-radius: 5px; }
+.lp-msg.lp-from-agent { background: #23245a; border-bottom-left-radius: 5px; }
+.lp-msg.lp-from-tool { background: transparent; border: 1px dashed #3a3b78; font-size: 13px; color: #b3b4e0; }
+.lp-msg.lp-from-tool code { color: #7cf3b0; }
 .lp-tool-tag { display: inline-block; padding: 2px 7px; border-radius: 6px; background: #2a2b5c; font: 600 11px/1.4 var(--code); color: #d8d9ff; }
 .lp-typing { display: flex; gap: 5px; padding: 8px 4px; }
 .lp-typing i { width: 7px; height: 7px; border-radius: 50%; background: #6b6ca8; animation: lp-bounce 1s infinite; }
