@@ -89,7 +89,7 @@ type Server struct {
 	// OpenSessions (the shell): show the Sessions window at the location
 	// hash (sessions.go); nil: open it in the default browser.
 	OpenSessions func(hash string)
-	upd          trayUpdate // the update banner (update.go)
+	upd          trayUpdate      // the update banner (update.go)
 	addMachine   addMachineCache // the "Add a machine" page's hub facts (addmachine.go)
 	// the firewall card's Allow (firewall.go); checkFirewall: a hook for tests
 	fwBusy        sync.Mutex
