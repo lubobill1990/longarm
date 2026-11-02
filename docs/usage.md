@@ -2560,6 +2560,16 @@ the certificates issued so far ([Fleet with longarm-hub](#fleet-with-longarm-hub
 | macOS | `longarm-darwin-<arch>.pkg` (longarm, longarmd in `/usr/local/bin`; Developer ID signed and notarized: [macOS installer and MDM](#macos-installer-pkg-and-mdm)); Homebrew cask | a configuration profile (domain `com.longarm`) or `defaults write /Library/Preferences/com.longarm ...`, then `installer -pkg` |
 | hub | `ghcr.io/<owner>/longarm-hub` image, `longarm-hub_<v>_<arch>.deb` | `docker compose up -d` (deploy/hub) |
 
+**From the tray.** The Workers tab's + button (bottom right; "Add a
+machine" on an empty tab) shows these commands for another machine, with
+this machine's hub filled in: pick what the machine does (run jobs, admin
+commands - Windows only -, send jobs) and its system, copy, run them there.
+The installer is the one of the hub's newest stable version, from its
+GitHub Release; a hub whose sign-in is Microsoft's own Entra tenant (its
+`/auth/info` names the tenant) points at the Microsoft-internal copy
+`github.com/gim-home/longarm`, which carries the same releases and needs a
+GitHub sign-in that can read it (`gh release download`).
+
 **Default or Custom.** The MSI's first page offers **Default
 (recommended)**: the hub built into the release, a sign-in with Microsoft
 after the install, and only the role to pick, each with what it installs:

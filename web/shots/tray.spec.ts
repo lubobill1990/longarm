@@ -43,6 +43,7 @@ async function serve(page: Page, sc: Scenario = {}) {
       if (p === '/trayapi/skills') return json(r, mock.skills)
       if (p === '/trayapi/signin/state') return json(r, mock.signinState(sc.signin ?? 'idle'))
       if (p === '/trayapi/update') return sc.update ? json(r, mock.update) : json(r, { error: 'no' }, 404)
+      if (p === '/trayapi/addmachine') return json(r, mock.addMachine)
       if (p === '/trayapi/pin') return json(r, { pinned: true })
       if (p.startsWith('/trayapi/')) return json(r, { ok: true })
       if (p === '/local/longarm/v1/pool') return json(r, mock.pool({ empty: sc.emptyPool }))
@@ -140,6 +141,15 @@ for (const scheme of ['light', 'dark'] as const) {
         await page.getByTestId('online-count').click()
         await expect(card.getByRole('menu')).toBeHidden()
         await shot(page, `tray-menu-outside-click-${scheme}-${size}`)
+      })
+
+      test('workers: add a machine', async ({ page }) => {
+        await open(page, 'pool')
+        await page.getByTestId('add-machine-fab').click()
+        await page.getByRole('radiogroup', { name: 'Operating system' }).getByText('Windows', { exact: true }).click()
+        await page.getByTestId('addm-client').check()
+        await expect(page.getByTestId('addm-cmd-0')).toContainText('ROLES=both')
+        await shot(page, `tray-add-machine-${scheme}-${size}`)
       })
 
       test('sign-in: start', async ({ page }) => {

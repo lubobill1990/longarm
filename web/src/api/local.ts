@@ -150,6 +150,24 @@ export const trayApi = {
   // the update banner: the hub's newest release; install = download, verify (sha256 + signature), run the MSI
   update: (refresh = false) => get<TrayUpdate>(`/trayapi/update${refresh ? '?refresh=1' : ''}`),
   installUpdate: (version: string) => post<{ state: string }>('/trayapi/update/install', { version }),
+  /** "Add a machine": the hub, its newest stable release, where to download from */
+  addMachine: () => get<AddMachineInfo>('/trayapi/addmachine'),
+}
+
+/** GET /trayapi/addmachine */
+export interface AddMachineInfo {
+  /** the hub's domain ("" = no hub configured) */
+  hub_host: string
+  /** the hub's newest stable release ("" = unknown: the latest GitHub Release) */
+  version?: string
+  /** the hub's Entra tenant (an older hub: absent) */
+  tenant?: string
+  /** a Microsoft-internal hub: downloads from internal_repo */
+  internal: boolean
+  /** github.com/OWNER/REPO */
+  repo: string
+  public_repo: string
+  internal_repo: string
 }
 
 /** GET /trayapi/update */

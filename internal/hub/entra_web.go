@@ -41,7 +41,9 @@ import (
 // itself (signature, issuer, audience, tenant, expiry, nonce) before it
 // opens a panel session.
 //
-//	GET  /auth/info          {"entra": bool, "mode": ..., "providers": [{id, label}]} (the login page's buttons)
+//	GET  /auth/info          {"entra": bool, "mode": ..., "providers": [{id, label}], "tenant": ...} (the login
+//	                         page's buttons; tenant: the Entra directory, which tells clients where this
+//	                         fleet downloads Longarm from - the tray's "Add a machine")
 //	GET  /auth/login         ?provider=entra&next=/path: to Microsoft (top-level navigations only; idp.go)
 //	GET  /auth/callback      confidential: code -> ID token -> session
 //	GET  /auth/spa-callback  spa: the page redeeming the code in the browser
@@ -73,7 +75,11 @@ func (h *Hub) entraWeb() string {
 
 func (h *Hub) entraRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/info", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, map[string]any{"entra": h.entraWeb() != "", "mode": h.entraWeb(), "providers": h.webProviders(), "feedback_url": h.feedbackURL()})
+		info := map[string]any{"entra": h.entraWeb() != "", "mode": h.entraWeb(), "providers": h.webProviders(), "feedback_url": h.feedbackURL()}
+		if e := h.cfg.Auth.Entra; e.Enabled() {
+			info["tenant"] = e.TenantID
+		}
+		writeJSON(w, info)
 	})
 	mux.HandleFunc("GET /auth/login", h.signInStart)
 	h.idpRoutes(mux)
