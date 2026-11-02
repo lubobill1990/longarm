@@ -645,7 +645,8 @@ func TestLaunchFailureAndReconcile(t *testing.T) {
 
 	// the new service after a successful upgrade
 	n := newRig(t, "0.1.9")
-	n.store.st = &State{Pending: &Pending{From: "0.1.8", To: "0.1.9", Dir: filepath.Join(n.ws.root, "0.1.9"), Log: "l", Started: time.Now()}}
+	n.launcher.outcomes["l"] = 0
+	n.store.st =&State{Pending: &Pending{From: "0.1.8", To: "0.1.9", Dir: filepath.Join(n.ws.root, "0.1.9"), Log: "l", Started: time.Now()}}
 	n.renew()
 	if st := n.svc.Status(); st.Last == nil || !st.Last.OK || st.Last.To != "0.1.9" || n.store.st.Pending != nil {
 		t.Fatalf("reconciled %+v", st.Last)
