@@ -18,7 +18,7 @@ name: mirror-gim
 
 on:
   push:
-    branches: ["**"] # branches only: tags are not mirrored
+    branches: ["**"] # branches only: release tags come with the releases (gim-release.sh)
   delete:
   pull_request:
     types: [opened, edited, reopened, synchronize, closed]
