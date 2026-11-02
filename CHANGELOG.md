@@ -204,6 +204,15 @@
 
 ### Fixed
 
+- **Workers with a certificate from before node IDs, while the hub is
+  unreachable (#45).** The client's cache of the hub's node list
+  (`hub-cache.json`) kept each worker's node ID but not its legacy serials
+  (`NodeInfo.legacy_serials`), so a `longarm` on the cache - the hub slow or
+  down - demanded the ID and refused every worker not yet renewed since node
+  IDs ("a certificate without a node id answered ... not one the hub
+  reports for the node"), for up to ~30 days per worker. The cache now keeps
+  them next to the ID: exactly the certificates the hub last reported are
+  accepted, any other without an ID is still refused.
 - The tray's title bar and the Sessions window still showed the old
   gradient square, and the hub panel's top bar no mark at all: all three show
   the Longarm icon now.

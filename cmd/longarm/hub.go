@@ -265,12 +265,19 @@ func (s *session) hubNodes(ctx context.Context, all bool) ([]*pb.NodeInfo, bool)
 	return resp.Nodes, true
 }
 
+// saveCache keeps the hub's worker list for when the hub is unreachable.
+// With a node's ID it keeps the node's legacy serials (certificates without
+// an ID the hub reported, pki.CheckNodeID): without them a client on the
+// cache demands the ID and refuses every worker not yet renewed since node
+// IDs. They need no more trust in this file than the ID itself does - whoever
+// can write it can already change the ID (or the endpoints) a worker is held
+// to - and they only ever name certificates the hub reported for that node.
 func (s *session) saveCache(nodes []*pb.NodeInfo) {
 	c := hubCache{Updated: time.Now()}
 	for _, n := range nodes {
 		slim := &pb.NodeInfo{Name: n.Name, Endpoints: n.Endpoints, Labels: n.Labels, Os: n.Os, Arch: n.Arch,
 			Mirrors: n.Mirrors, WarmRepos: n.WarmRepos, State: n.State, Id: n.Id, CertName: n.CertName, Owner: n.Owner,
-			CompanionId: n.CompanionId, AdminWorker: n.AdminWorker, Companion: n.Companion}
+			CompanionId: n.CompanionId, AdminWorker: n.AdminWorker, Companion: n.Companion, LegacySerials: n.LegacySerials}
 		b, err := protojson.Marshal(slim)
 		if err == nil {
 			c.Nodes = append(c.Nodes, b)

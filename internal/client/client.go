@@ -96,7 +96,9 @@ type Worker struct {
 	TrustAny bool `toml:"-"`
 	// LegacySerials: serials of the node's certificates without a node ID
 	// that the hub reports (issued before IDs, not yet renewed); with ID
-	// set, the only ID-less certificates accepted (pki.CheckNodeID).
+	// set, the only ID-less certificates accepted (pki.CheckNodeID). Not a
+	// workers.toml key (only the hub reports them); the hub's cached node
+	// list (longarm's hub-cache.json) keeps them next to the ID.
 	LegacySerials []string `toml:"-"`
 }
 
