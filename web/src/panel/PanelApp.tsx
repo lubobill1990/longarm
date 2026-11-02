@@ -3,6 +3,7 @@ import { hubApi, isAdmin } from '../api/hub'
 import { ApiError } from '../api/http'
 import type { Me } from '../api/types'
 import { Toasts } from '../components/common'
+import { feedbackURL } from '../lib/feedback'
 import { Link, navigate, usePath } from '../lib/router'
 import { AuditPage } from './AuditPage'
 import { GetPage } from './GetPage'
@@ -111,6 +112,9 @@ export function PanelApp() {
             ))}
           </nav>
           <span className="spacer" />
+          <a href={feedbackURL(me.feedback_url)} target="_blank" rel="noreferrer" className="muted" data-testid="panel-feedback">
+            Feedback
+          </a>
           <Link to="/me" className="muted">
             {me.user}
             {!admin && me.tenant && me.tenant !== me.user ? ` (${me.tenant})` : ''}

@@ -12,6 +12,7 @@ import {
 } from '../api/local'
 import { ErrorBox, useAction } from '../components/common'
 import { IconUser } from '../components/icons'
+import { feedbackURL } from '../lib/feedback'
 import { Banner } from './ui'
 
 /**
@@ -342,6 +343,14 @@ function AccountCard({
   onStarted?: (s: SignInState) => void
 }) {
   const { run, busy } = useAction()
+  // the signed-in hub's feedback link (its /healthz, via the update check)
+  const [feedback, setFeedback] = useState<string>()
+  useEffect(() => {
+    trayApi.update().then(
+      (u) => setFeedback(u.feedback_url),
+      () => {},
+    )
+  }, [acct.hub])
   return (
     <section className="wcard" data-testid="account-card">
       <div className="account-head">
@@ -369,6 +378,9 @@ function AccountCard({
       )}
       <p className="button-row">
         {info.hub_url && <button onClick={() => trayApi.openPanel('/')}>Open panel</button>}
+        <button data-testid="account-feedback" title="Feedback and bug reports" onClick={() => trayApi.open(feedbackURL(feedback)).catch(() => {})}>
+          Feedback
+        </button>
         {acct.signed_in && acct.hub && (
           <button
             data-testid="signin-again"

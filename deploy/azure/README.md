@@ -66,6 +66,7 @@ restarts the hub) prints everything too.
 | `--entra-web spa\|confidential\|off` | `-EntraWeb` | panel sign-in mode (default spa) |
 | `--gate-free-gb N` | `-GateFreeGb` | scheduler memory gate: free GB a worker needs for scheduled jobs (default 20); lower it for small workers (containers, laptops); a re-run keeps it |
 | `--release-public-key KEY` | `-ReleasePublicKey` | the minisign public key line (`RW…`) releases are signed with, e.g. `"$(tail -1 longarm-release.pub)"` ([CI/CD 2.1](../../docs/ci-cd.md#21-release-key-and-update-public-key)): the hub refuses uploaded releases whose signature doesn't verify, so its install scripts only hand out signed files; a re-run keeps it |
+| `--feedback-url URL` | `-FeedbackUrl` | where the hub's front page, its panel and longarm-tray send feedback and bug reports (a team channel, a form; `[web] feedback_url`); default the project's GitHub issues; a re-run keeps it |
 | `--entra-apps LIST` | `-EntraApps` | app-only sign-in (CI): `<app id>=<user>`, comma-separated |
 | `--log-analytics` | `-LogAnalytics` | container logs to Log Analytics (with `--telemetry` its workspace, else one of their own): they keep the [logs of crashed starts](#logs-of-crashed-starts) |
 | `--storage-auth key\|identity` | `-StorageAuth` | `identity`: no storage account keys, panel served by the hub ([below](#without-storage-account-keys)); a re-run keeps the mode (switching needs a new deployment) |

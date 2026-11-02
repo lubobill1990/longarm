@@ -3,6 +3,7 @@ import { longarmApi, longarmdApi, trayApi, type TrayInfo, type TrayUpdate } from
 import type { PoolView } from '../api/types'
 import { useAction } from '../components/common'
 import { useDismiss } from '../lib/dismiss'
+import { feedbackURL } from '../lib/feedback'
 import { compareVersions } from '../lib/release'
 
 /** One line of the version details. */
@@ -157,6 +158,10 @@ export function VersionChip({ info, pool }: { info?: TrayInfo; pool?: PoolView }
               {upd.state === 'downloading' ? 'Downloading…' : `Update to ${latest}`}
             </button>
           )}
+          {/* the hub's feedback channel (or the project's issues) */}
+          <button className="link ver-feedback" data-testid="version-feedback" onClick={() => trayApi.open(feedbackURL(upd?.feedback_url)).catch(() => {})}>
+            Feedback / report a bug ↗
+          </button>
         </span>
       )}
     </span>
