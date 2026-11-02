@@ -48,6 +48,15 @@
   and the tray's and panel's worker cards add a DISK bar and line and a network
   chart from the chart's legend (off by default, remembered). Hovering any chart
   shows every series' value at that moment.
+- Tray: **Add a machine** - the + button at the bottom right of the Workers
+  tab shows the commands that install Longarm on another machine and sign it
+  in to this machine's hub: pick what it does (run jobs, admin commands,
+  send jobs) and its system (Windows, macOS, Linux deb / rpm; x64 or ARM64),
+  copy, run there. The installer comes from the GitHub Release of the hub's
+  newest stable version; a hub that signs in with Microsoft's own tenant
+  downloads from the Microsoft-internal copy (github.com/gim-home/longarm,
+  `gh release download`). The hub's `/auth/info` names its Entra tenant.
+
 - **Steerable agent runs**: `longarm run --steerable -- claude -p "task"`
   (or `copilot -p`) runs the agent interactively on a terminal on the
   worker, as a job: `longarm attach --job <id>` / the tray's Sessions
