@@ -77,9 +77,9 @@ type updateInfo struct {
 	// FeedbackURL: the hub's [web] feedback_url (the Feedback link)
 	FeedbackURL string `json:"feedback_url,omitempty"`
 	Available   bool   `json:"available"`
-	MSI       string `json:"msi,omitempty"`
-	State     string `json:"state,omitempty"`
-	Error     string `json:"error,omitempty"`
+	MSI         string `json:"msi,omitempty"`
+	State       string `json:"state,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 var releaseVersionRE = regexp.MustCompile(`^v?[0-9]+\.[0-9]+`)
