@@ -22,7 +22,8 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
   }, [])
   if (providers === undefined) return <div className="notice">loading…</div>
   if (!providers.length) return <PasswordForm onLogin={onLogin} autoFocus />
-  const next = encodeURIComponent(location.pathname === '/login' ? '/' : location.pathname + location.search)
+  // back on /login, PanelApp moves on to the visitor's hub home
+  const next = encodeURIComponent(location.pathname + location.search)
   return (
     <div className="login card" data-testid="login-entra">
       <h1>longarm-hub</h1>
