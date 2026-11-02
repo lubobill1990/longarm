@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/lubobill1990/longarm/internal/client"
+	"github.com/lubobill1990/longarm/internal/notices"
 	"github.com/lubobill1990/longarm/internal/version"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -70,7 +71,7 @@ func newRootCmd() *cobra.Command {
 	group("sessions", attachCmd(), sessionCmd(), sessionsCmd(), handoffCmd(), agentSessionsCmd())
 	group("files", putCmd(), getCmd(), syncCmd(), tailCmd(), forwardCmd(), linkCmd(), sshCmd(), sshConfigCmd())
 	group("workers", workerCmd(), infoCmd(), desktopCmd())
-	group("account", whoamiCmd(), joinCmd(), leaveCmd(), logoutCmd(), versionCmd(), skillCmd())
+	group("account", whoamiCmd(), joinCmd(), leaveCmd(), logoutCmd(), versionCmd(), notices.Cmd(), skillCmd())
 	group("admin", adminCmd(), diagCmd(), mcpCmd())
 	// Plumbing: usable, not listed.
 	for _, c := range []*cobra.Command{daemonCmd(), poolCmd(), proxyCmd(), transportCmd(), firewallCmd(), trustCmd(), telemetryCmd()} {

@@ -102,6 +102,7 @@ New-Item -ItemType Directory -Force (Split-Path -Parent ([IO.Path]::GetFullPath(
   -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext `
   -d "Version=$msiVersion" -d "BinDir=$((Resolve-Path $BinDir).Path)" -d "HasTray=$hasTray" `
   -d "DefaultHub=$DefaultHub" -d "DefaultHubCA=$DefaultHubCA" `
+  -d "RepoDir=$((Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path)" `
   -o $Out $src
 if ($LASTEXITCODE -ne 0) { throw "wix build failed ($LASTEXITCODE)" }
 Remove-Item ([IO.Path]::ChangeExtension($Out, ".wixpdb")) -ErrorAction SilentlyContinue

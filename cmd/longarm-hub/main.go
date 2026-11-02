@@ -42,6 +42,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/hub"
 	"github.com/lubobill1990/longarm/internal/hub/store"
 	"github.com/lubobill1990/longarm/internal/nodeid"
+	"github.com/lubobill1990/longarm/internal/notices"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/update"
@@ -91,7 +92,7 @@ func newRoot() *cobra.Command {
 	}
 	root.PersistentFlags().StringVar(&configPath, "config", os.Getenv("LONGARM_HUB_CONFIG"), "hub.toml (env LONGARM_HUB_CONFIG)")
 	root.PersistentFlags().StringVar(&dataDir, "data-dir", "", "data directory (overrides hub.toml data_dir; env LONGARM_HUB_DATA_DIR)")
-	root.AddCommand(serveCmd(), caCmd(), userCmd(), joinCodeCmd(), releaseCmd(), issueCmd(), healthcheckCmd(), bootstrapCmd(), containerCmd(), auditCmd())
+	root.AddCommand(serveCmd(), caCmd(), userCmd(), joinCodeCmd(), releaseCmd(), issueCmd(), healthcheckCmd(), bootstrapCmd(), containerCmd(), auditCmd(), notices.Cmd())
 	return root
 }
 

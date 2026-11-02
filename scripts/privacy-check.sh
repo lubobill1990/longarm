@@ -63,9 +63,10 @@ fi
 # ghcr.io/<owner>/longarm-mirror), the "Deploy to Azure"
 # link (its URL-encoded raw.githubusercontent.com path), the project's GitHub
 # Pages site (<owner>.github.io/longarm: the apt/yum repositories,
-# docs/linux-repos.md), the noreply e-mail address and the LICENSE.
+# docs/linux-repos.md), the noreply e-mail address and the LICENSE (also
+# reproduced in internal/notices/THIRD_PARTY_NOTICES.txt).
 owner=$(sed -n -E 's#^module github\.com/([^/]+)/.*#\1#p' go.mod)
-if out=$(git grep -n -I -F "$owner" -- . ':!LICENSE' |
+if out=$(git grep -n -I -F "$owner" -- . ':!LICENSE' ':!internal/notices/THIRD_PARTY_NOTICES.txt' |
 	sed -E "s#github\.com/$owner/longarm##g; s#ghcr\.io/$owner/longarm-(hub|mirror)##g; s#githubusercontent\.com%2F$owner%2Flongarm%2F##g; s#$owner\.github\.io/longarm##g; s#$owner@users\.noreply\.github\.com##g" |
 	grep -F "$owner"); then
 	report "account name outside the module path / repository URLs" "$out"

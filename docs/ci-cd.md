@@ -737,7 +737,7 @@ What is mirrored:
 | an open pull request #N | a pull request with the same head branch, base, title and body, plus the footer `Mirrored from <owner>/longarm#N` (this repository); title, body and base kept in sync; closed there when #N is closed or merged here (reopened with it). Nothing is merged in gim-home: the commits arrive through `main` |
 | an open pull request from a fork | its head (`refs/pull/N/head`) as branch `pr-N` and a pull request from it - by the schedule, as fork events get no secrets; git objects only, the fork's code is never checked out or run here. Not mirrored when it changes `.github/` (there it would be a same-repository branch whose workflows run with gim-home's token): it gets a notice, review it here |
 | a deleted branch | deleted there |
-| releases | every release and release candidate: release.yml's publish job creates the same release in gim-home - the same tag at the same commit (it waits for the mirror to carry the commit over) and the same files (signed binaries, packages, `SHA256SUMS`), so the internal links match the public ones version for version ([`gim-release.sh`](../.github/scripts/gim-release.sh)). By hand, for an older release or a failed run: Actions → **gim-release** (a tag, or the latest release). Dev builds have no GitHub Release here, so none there either. Other tags are not mirrored |
+| releases | not pushed from here: gim-home copies them itself (6.2) |
 
 gim-home's own things are never touched: pull requests without the footer
 (e.g. its own Dependabot's) are never edited or closed, and their head
@@ -795,3 +795,32 @@ it passes, then delete the old token (Settings → Developer settings →
 Fine-grained tokens). A token that expired or was revoked fails the runs
 with 401 - nothing is lost meanwhile: the next run after the new secret
 mirrors everything.
+
+### 6.2 Releases: gim-home copies them (`sync-releases.yml`)
+
+gim-home/longarm carries the same releases as this repository - the same
+tags (`v0.1.28` ...) and files (signed binaries, packages, `SHA256SUMS`) -
+so the internal download links match the public ones version for version
+(the tray's "Add a machine" points the machines of a hub signing in with
+Microsoft's tenant there). They are not pushed from here, which would need
+a token of a gim-home account: a workflow in gim-home pulls them, with
+gim-home's own `GITHUB_TOKEN` (the public releases need no token to read).
+
+- The workflow: [`.github/gim-home/sync-releases.yml`](../.github/gim-home/sync-releases.yml),
+  committed **in gim-home** as `.github/workflows/sync-releases.yml` (once;
+  through a pull request there if its `main` requires one). It is kept
+  here outside `.github/workflows`, so it never runs in this repository.
+- Every 30 minutes (and by hand: Actions → sync-releases, optionally one
+  tag, e.g. an older release) it runs this repository's
+  [`gim-sync-releases.sh`](../.github/scripts/gim-sync-releases.sh), fetched
+  from `main` at each run: of the 5 newest releases, one missing in gim-home
+  is created with all its files, one with fewer files (an interrupted run)
+  gets them uploaded again; release candidates stay prereleases, the newest
+  stable release is "latest".
+- The tags point at gim-home's default branch, not at this repository's
+  commits: the built-in token may not push history whose workflow files
+  change (that takes the Workflows permission), and the release notes name
+  the public tag.
+- gim-home's Settings → Actions → General → Workflow permissions must allow
+  "Read and write" (or at least not cap `contents: write`), and Actions must
+  be enabled there.
