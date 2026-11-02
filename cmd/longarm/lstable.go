@@ -218,6 +218,11 @@ func lsVersion(n *pb.NodeInfo) string {
 // lsState is a row's state; an offline worker says when the hub last saw
 // it ("offline 3d").
 func lsState(r lsRow, now time.Time) string {
+	if u := r.node.GetUpdate(); u != nil && (r.state == "online" || r.state == "offline" || r.state == "draining") {
+		if t := updateStateText(u, r.state != "offline", now); t != "" {
+			return t // "updating 0.1.29→0.1.30 (installing)" instead of "offline"
+		}
+	}
 	if r.state == "offline" {
 		if seen := r.node.GetLastSeen(); seen != nil && seen.AsTime().Before(now) {
 			return "offline " + humanAgo(now.Sub(seen.AsTime()))
