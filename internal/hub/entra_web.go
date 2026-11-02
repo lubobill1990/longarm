@@ -73,7 +73,7 @@ func (h *Hub) entraWeb() string {
 
 func (h *Hub) entraRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/info", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, map[string]any{"entra": h.entraWeb() != "", "mode": h.entraWeb(), "providers": h.webProviders()})
+		writeJSON(w, map[string]any{"entra": h.entraWeb() != "", "mode": h.entraWeb(), "providers": h.webProviders(), "feedback_url": h.feedbackURL()})
 	})
 	mux.HandleFunc("GET /auth/login", h.signInStart)
 	h.idpRoutes(mux)

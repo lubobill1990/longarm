@@ -417,6 +417,9 @@ html.lp-root #root { height: auto; }
 .lp-final .lp-btn.primary { background: #fff; color: var(--blue); box-shadow: 0 6px 0 #c9cbff; }
 .lp-final .lp-btn.ghost { background: transparent; border-color: rgba(255, 255, 255, 0.4); color: #fff; }
 .lp-final .lp-btn.ghost:hover { border-color: #fff; color: #fff; }
+.lp .lp-feedback { margin-top: 22px; color: #dcdcff; font-size: 16px; }
+.lp .lp-feedback a { color: #fff; font-weight: 600; border-bottom: 2px solid rgba(255, 255, 255, 0.45); transition: border-color 0.2s; }
+.lp .lp-feedback a:hover { border-color: #fff; }
 
 /* ---- footer ---- */
 .lp-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 22px; max-width: 1220px; margin: 0 auto; padding: 30px clamp(18px, 4vw, 56px) 46px; border-top: 1px solid var(--line); font-size: 14px; }

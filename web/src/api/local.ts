@@ -158,6 +158,8 @@ export interface TrayUpdate {
   latest?: string
   /** the hub's own version (its /healthz) */
   hub?: string
+  /** where the hub sends feedback and bug reports (its /healthz; missing: an older hub) */
+  feedback_url?: string
   /** a newer release with an MSI for this machine */
   available: boolean
   msi?: string

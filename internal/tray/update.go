@@ -50,6 +50,9 @@ type trayUpdate struct {
 	msi     latestFile // its MSI for this architecture (Name "" = none)
 	state   string     // "" | downloading | installing | failed
 	err     string
+	// feedback: where the hub sends feedback and bug reports (its /healthz;
+	// "" = an older hub: the UI falls back to the project's issues)
+	feedback string
 	// hooks for tests
 	client  *http.Client
 	pubKey  *string
@@ -70,8 +73,10 @@ type updateInfo struct {
 	Latest  string `json:"latest,omitempty"`
 	Channel string `json:"channel,omitempty"`
 	// Hub: the hub's own version (the tray's version details)
-	Hub       string `json:"hub,omitempty"`
-	Available bool   `json:"available"`
+	Hub string `json:"hub,omitempty"`
+	// FeedbackURL: the hub's [web] feedback_url (the Feedback link)
+	FeedbackURL string `json:"feedback_url,omitempty"`
+	Available   bool   `json:"available"`
 	MSI       string `json:"msi,omitempty"`
 	State     string `json:"state,omitempty"`
 	Error     string `json:"error,omitempty"`
@@ -123,7 +128,10 @@ func (s *Server) refreshUpdate(ctx context.Context, force bool) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	hubVersion := s.hubVersion(cctx, base)
+	hubVersion, feedback := s.hubHealth(cctx, base)
+	u.mu.Lock()
+	u.feedback = feedback // also when the release check below fails
+	u.mu.Unlock()
 	q := ""
 	if channel != update.ChannelStable {
 		q = "?channel=" + channel // an older hub ignores it: its latest stable
@@ -156,25 +164,33 @@ func (s *Server) refreshUpdate(ctx context.Context, force bool) {
 	u.mu.Unlock()
 }
 
-// hubVersion is the hub's version from its public /healthz ("" when it
-// can't be had).
-func (s *Server) hubVersion(ctx context.Context, base string) string {
+// hubHealth is the hub's version and feedback link from its public
+// /healthz ("" when they can't be had).
+func (s *Server) hubHealth(ctx context.Context, base string) (version, feedback string) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/healthz", nil)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	resp, err := s.upd.httpClient().Do(req)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	defer resp.Body.Close()
 	var hz struct {
-		Version string `json:"version"`
+		Version  string `json:"version"`
+		Feedback string `json:"feedback_url"`
 	}
-	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&hz) != nil || len(hz.Version) > 64 {
-		return ""
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&hz) != nil {
+		return "", ""
 	}
-	return hz.Version
+	if len(hz.Version) <= 64 {
+		version = hz.Version
+	}
+	// only a web link: the tray opens it in the browser
+	if len(hz.Feedback) <= 2048 && (strings.HasPrefix(hz.Feedback, "https://") || strings.HasPrefix(hz.Feedback, "http://")) {
+		feedback = hz.Feedback
+	}
+	return version, feedback
 }
 
 func (s *Server) updateInfo() updateInfo {
@@ -185,7 +201,7 @@ func (s *Server) updateInfo() updateInfo {
 	if goos == "" {
 		goos = runtime.GOOS
 	}
-	info := updateInfo{Current: s.opts.Version, Latest: u.latest, Channel: u.channel, Hub: u.hub, MSI: u.msi.Name, State: u.state, Error: u.err}
+	info := updateInfo{Current: s.opts.Version, Latest: u.latest, Channel: u.channel, Hub: u.hub, FeedbackURL: u.feedback, MSI: u.msi.Name, State: u.state, Error: u.err}
 	info.Available = goos == "windows" && u.msi.Name != "" && releaseVersionRE.MatchString(s.opts.Version) &&
 		update.ValidVersion(u.latest) && update.Compare(u.latest, s.opts.Version) > 0
 	return info

@@ -274,6 +274,14 @@ func withCSP(next http.Handler) http.Handler {
 	})
 }
 
+// feedbackURL is [web] feedback_url (GET /auth/info, /healthz, /api/me).
+func (h *Hub) feedbackURL() string {
+	if h.cfg.Web.FeedbackURL != "" {
+		return h.cfg.Web.FeedbackURL
+	}
+	return DefaultFeedbackURL
+}
+
 // meInfo is GET /api/me (+ role: admin | user; for users their Longarm
 // user, teams, quota and usage).
 func (h *Hub) meInfo(r *http.Request, user string) map[string]any {
@@ -284,7 +292,7 @@ func (h *Hub) meInfo(r *http.Request, user string) map[string]any {
 	}
 	m := map[string]any{"user": user, "hub": h.cfg.Name, "version": version.Version,
 		"hub_address": h.hubAddr(r), "ca_fingerprint": pki.Fingerprint(h.ca.Cert), "base_url": h.baseURL(r),
-		"role": role, "tenant": v.User, "teams": v.Teams}
+		"role": role, "tenant": v.User, "teams": v.Teams, "feedback_url": h.feedbackURL()}
 	h.mu.Lock()
 	m["tenancy"] = h.tenancyOnLocked()
 	if q := h.quotaLocked(v.User); !tenancy.QuotaEmpty(q) {
