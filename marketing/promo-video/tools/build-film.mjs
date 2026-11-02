@@ -12,6 +12,9 @@ const film = process.env.FILM ?? join(root, 'film')
 const web = join(root, '..', '..', 'web')
 const T = JSON.parse(readFileSync(process.env.TIMELINE ?? join(root, 'timeline.json'), 'utf8'))
 const SFX = existsSync(join(root, 'audio/sfx/index.json')) ? JSON.parse(readFileSync(join(root, 'audio/sfx/index.json'), 'utf8')) : null
+// where viewers open the hub (a short link to its front page); the site stills
+// come from tools/capture-site.mjs run against the hub it points to
+const HUB_LINK = 'aka.ms/longarm'
 const W = 1920
 const H = 1080
 const BEAT = T.beat ?? 60 / T.bpm
@@ -305,7 +308,7 @@ scenes.how = (s) => {
   <div class="card abs h" id="hw-code" style="left:1010px;top:200px;width:760px;padding:36px">
     <div class="mono" style="font-size:24px;color:${C.ink3}">tray · sign-in code</div>
     <div class="mono" style="font-size:84px;font-weight:800;letter-spacing:.12em;margin:14px 0 26px">BCDF-GHJK</div>
-    <div class="mono" style="font-size:24px;color:${C.ink3}">browser · hub.example.com/link</div>
+    <div class="mono" style="font-size:24px;color:${C.ink3}">browser · ${HUB_LINK}</div>
     <div style="display:flex;gap:16px;align-items:center;margin-top:14px">
       <div class="mono" style="flex:1;padding:16px 20px;border-radius:14px;border:3px solid ${C.blue};font-size:36px;letter-spacing:.1em" id="hw-in">${chars('BCDF-GHJK')}</div>
       <div class="chip" id="hw-approve" style="background:${C.blue};color:#fff;border:0;font-size:28px">Approve</div>
@@ -615,25 +618,35 @@ scenes.cta = (s) => {
     <div class="disp h" id="ct-mt" style="font-size:80px;margin-top:10px">minutes to your first job</div>
   </div>
   <div class="abs h" id="ct-site" style="left:160px;top:100px;width:1600px;height:880px;border-radius:28px;overflow:hidden;box-shadow:0 50px 90px -40px rgba(19,19,59,.55);border:2px solid ${C.line};background:${C.paper}">
+    <div class="abs" style="left:0;right:0;top:0;height:72px;z-index:2;display:flex;align-items:center;gap:12px;padding:0 26px;background:#fff;border-bottom:2px solid ${C.line}">
+      <i class="dot" style="background:#ff5f57"></i><i class="dot" style="background:#febc2e"></i><i class="dot" style="background:#28c840"></i>
+      <span class="mono" style="margin-left:24px;padding:10px 26px;border-radius:999px;background:${C.paper};font-size:28px;color:${C.ink}">🔒 <span id="ct-url">${chars(HUB_LINK)}</span></span>
+    </div>
+    <div class="abs" style="left:0;right:0;top:72px;bottom:0;overflow:hidden">
     <div id="ct-cam" style="position:absolute;left:0;top:0;transform-origin:0 0;width:${r3(1440 * k)}px">
       <img class="img" src="assets/site-full.png" style="width:${r3(1440 * k)}px;height:${r3(rects.page.h * k)}px">
       <div class="abs h" id="ct-hl1" style="left:${r3(rects.msi.x * k - 10)}px;top:${r3(rects.msi.y * k - 10)}px;width:${r3(rects.msi.w * k + 20)}px;height:${r3(rects.msi.h * k + 20)}px;border:5px solid ${C.orange};border-radius:999px"></div>
       <div class="abs h" id="ct-hl2" style="left:${r3(rects.ps1.x * k - 10)}px;top:${r3(rects.ps1.y * k - 10)}px;width:${r3(rects.ps1.w * k + 20)}px;height:${r3(rects.ps1.h * k + 20)}px;border:5px solid ${C.orange};border-radius:18px"></div>
     </div>
+    </div>
   </div>
   <div class="card abs h" id="ct-code" style="left:560px;top:300px;width:800px;padding:44px;text-align:center">
-    <div class="mono" style="font-size:26px;color:${C.ink3}">hub.example.com/link</div>
+    <div class="mono" style="font-size:26px;color:${C.ink3}">${HUB_LINK}</div>
     <div class="mono" style="font-size:96px;font-weight:800;letter-spacing:.12em;margin:18px 0">BCDF-GHJK</div>
     <div class="chip" id="ct-ap" style="background:${C.blue};color:#fff;border:0;font-size:34px;padding:18px 40px">Approve</div>
   </div>
   <div class="abs disp h" id="ct-that" style="left:0;right:0;top:760px;text-align:center;font-size:110px;color:${C.green}">That's it.</div>`
   const top = cam({ x: 0, y: 40 }, 1)
-  const inst = cam({ x: rects.install.x - 20, y: rects.install.y - 30 }, 1.45)
+  // push in on the install card: the MSI button to the end of the one-liner, centred in the 808 px view
+  const z = 1.2
+  const mid = (rects.msi.y + rects.ps1.y + rects.ps1.h) / 2
+  const inst = { x: r3(-(rects.install.x - 30) * k * z + 160), y: r3(404 - mid * k * z), scale: z }
   let js = steps('ct-min', ['0:00', '1:00', '2:00', '3:00'], [0, tThree - 0.3, tThree - 0.1, tThree + 0.1]).js
   js += ft('#ct-clock', { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.5, ease: 'back.out(1.7)' }, Math.max(0, l0.a - 0.3))
   js += blurIn('#ct-mt', tThree + 0.3)
   js += to('#ct-clock', { opacity: 0, y: -80, filter: 'blur(12px)', duration: 0.35, ease: 'power2.in' }, tHub - 0.35)
   js += ft('#ct-site', { opacity: 0, y: 100, rotationX: 12, transformPerspective: 2000 }, { opacity: 1, y: 0, rotationX: 0, duration: 0.7, ease: 'power3.out' }, tHub - 0.15)
+  js += `tl.fromTo('#ct-url .ch',{opacity:0},{opacity:1,duration:0.01,stagger:0.045,ease:'none'},${r3(tHub)});\n`
   js += set('#ct-cam', top, 0)
   js += to('#ct-cam', { ...inst, duration: 1.1, ease: 'power3.inOut' }, tHub + 0.7)
   js += pop('#ct-hl1', tInst, 0.35)
@@ -667,7 +680,8 @@ scenes.outro = (s) => {
   <img class="abs img h" id="ou-icon" src="assets/icon.png" style="left:810px;top:150px;width:300px;height:300px">
   <div class="abs disp h" id="ou-word" style="left:0;right:0;top:470px;text-align:center;font-size:190px;color:${C.ink}">Longarm</div>
   <div class="abs disp h" id="ou-tag" style="left:0;right:0;top:690px;text-align:center;font-size:64px;color:${C.ink2}">Give your coding agents a <span style="color:${C.blue}">long arm</span>.</div>
-  <div class="abs h" id="ou-url" style="left:0;right:0;top:830px;text-align:center"><span class="chip mono" style="font-size:36px;padding:20px 34px;border-color:${C.blue};color:${C.blue}">github.com/lubobill1990/longarm</span></div>`
+  <div class="abs h" id="ou-url" style="left:0;right:0;top:830px;text-align:center"><span class="chip mono" style="font-size:44px;padding:20px 40px;background:${C.blue};border-color:${C.blue};color:#fff">${HUB_LINK}</span>
+    <div class="mono" style="margin-top:22px;font-size:24px;color:${C.ink3}">github.com/lubobill1990/longarm</div></div>`
   let js = ft('#ou-icon', { opacity: 0, scale: 0.3, rotation: -20 }, { opacity: 1, scale: 1, rotation: 0, duration: 0.7, ease: 'back.out(1.8)' }, Math.max(0, tLong - 0.35))
   js += slam('#ou-word', tLong)
   tiles.forEach(([, , x, y], i) => {

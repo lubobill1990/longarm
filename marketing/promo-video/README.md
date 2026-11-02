@@ -19,7 +19,8 @@ everything here rebuilds it.
 npm install                                    # gsap (vendored into film/)
 sh tools/build-audio.sh                        # voice-over, timeline, music, sfx, mix (uv, ffmpeg, network for edge-tts)
 (cd ../../web && npx vite --port 5288) &       # then:
-node tools/capture-site.mjs                    # the front page stills
+node tools/capture-site.mjs https://<the hub aka.ms/longarm leads to>   # the front page stills, as that hub
+                                               # (its release and sign-in providers; the film shows HUB_LINK)
 node tools/build-film.mjs                      # film/
 cd film && npx --yes hyperframes@0.8.200 check
 npx --yes hyperframes@0.8.200 snapshot --at 5,20,60 --no-end   # look before rendering
