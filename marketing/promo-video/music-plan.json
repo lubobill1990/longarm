@@ -1,0 +1,442 @@
+{
+ "bpm": 120,
+ "beat": 0.5,
+ "bar": 2.0,
+ "musicStart": 9.095,
+ "total": 171.095,
+ "note": "bar n starts at musicStart + 2n s; bar 0 is the lead-in, bar 1 the drop downbeat; negative bars = hook (no music)",
+ "endCue": {
+  "t": 167.095,
+  "bar": 79.0,
+  "what": "final resolving chord, rings to total"
+ },
+ "sections": [
+  {
+   "id": "hook",
+   "energy": "drone",
+   "music": false,
+   "start": 0.0,
+   "end": 9.095,
+   "startBar": null,
+   "endBar": 0.0,
+   "speech": [
+    [
+     0.4,
+     2.88
+    ],
+    [
+     3.23,
+     6.565
+    ],
+    [
+     6.915,
+     8.645
+    ]
+   ],
+   "musicOnly": []
+  },
+  {
+   "id": "drop",
+   "energy": "full",
+   "music": true,
+   "start": 9.095,
+   "end": 19.095,
+   "startBar": 0.0,
+   "endBar": 5.0,
+   "speech": [
+    [
+     11.095,
+     11.98
+    ],
+    [
+     12.595,
+     14.44
+    ]
+   ],
+   "musicOnly": [
+    {
+     "start": 15.095,
+     "end": 19.095,
+     "startBar": 3.0,
+     "endBar": 5.0
+    }
+   ]
+  },
+  {
+   "id": "idea",
+   "energy": "verse",
+   "music": true,
+   "start": 19.095,
+   "end": 37.095,
+   "startBar": 5.0,
+   "endBar": 14.0,
+   "speech": [
+    [
+     19.095,
+     23.165
+    ],
+    [
+     23.595,
+     30.97
+    ],
+    [
+     31.595,
+     36.2
+    ]
+   ],
+   "musicOnly": []
+  },
+  {
+   "id": "how",
+   "energy": "verse",
+   "music": true,
+   "start": 37.095,
+   "end": 49.095,
+   "startBar": 14.0,
+   "endBar": 20.0,
+   "speech": [
+    [
+     37.095,
+     39.345
+    ],
+    [
+     40.095,
+     42.325
+    ],
+    [
+     43.095,
+     47.425
+    ]
+   ],
+   "musicOnly": []
+  },
+  {
+   "id": "run",
+   "energy": "verse+",
+   "music": true,
+   "start": 49.095,
+   "end": 65.095,
+   "startBar": 20.0,
+   "endBar": 28.0,
+   "speech": [
+    [
+     49.095,
+     51.32
+    ],
+    [
+     52.095,
+     60.825
+    ],
+    [
+     61.595,
+     62.945
+    ]
+   ],
+   "musicOnly": []
+  },
+  {
+   "id": "agents",
+   "energy": "verse+",
+   "music": true,
+   "start": 65.095,
+   "end": 95.095,
+   "startBar": 28.0,
+   "endBar": 43.0,
+   "speech": [
+    [
+     65.095,
+     66.49
+    ],
+    [
+     67.095,
+     74.125
+    ],
+    [
+     74.595,
+     77.12
+    ],
+    [
+     77.595,
+     82.255
+    ],
+    [
+     83.095,
+     91.14
+    ]
+   ],
+   "musicOnly": [
+    {
+     "start": 93.095,
+     "end": 95.095,
+     "startBar": 42.0,
+     "endBar": 43.0
+    }
+   ]
+  },
+  {
+   "id": "survive",
+   "energy": "half",
+   "music": true,
+   "start": 95.095,
+   "end": 107.095,
+   "startBar": 43.0,
+   "endBar": 49.0,
+   "speech": [
+    [
+     95.095,
+     96.37
+    ],
+    [
+     97.095,
+     100.525
+    ],
+    [
+     101.095,
+     104.62
+    ]
+   ],
+   "musicOnly": [
+    {
+     "start": 105.095,
+     "end": 107.095,
+     "startBar": 48.0,
+     "endBar": 49.0
+    }
+   ]
+  },
+  {
+   "id": "reach",
+   "energy": "verse",
+   "music": true,
+   "start": 107.095,
+   "end": 131.095,
+   "startBar": 49.0,
+   "endBar": 61.0,
+   "speech": [
+    [
+     107.095,
+     110.24
+    ],
+    [
+     110.595,
+     120.615
+    ],
+    [
+     121.095,
+     129.07
+    ]
+   ],
+   "musicOnly": []
+  },
+  {
+   "id": "toolbox",
+   "energy": "full",
+   "music": true,
+   "start": 131.095,
+   "end": 151.095,
+   "startBar": 61.0,
+   "endBar": 71.0,
+   "speech": [
+    [
+     131.095,
+     133.8
+    ],
+    [
+     134.595,
+     136.975
+    ],
+    [
+     137.595,
+     143.145
+    ],
+    [
+     143.595,
+     147.465
+    ]
+   ],
+   "musicOnly": [
+    {
+     "start": 149.095,
+     "end": 151.095,
+     "startBar": 70.0,
+     "endBar": 71.0
+    }
+   ]
+  },
+  {
+   "id": "cta",
+   "energy": "breakdown",
+   "music": true,
+   "start": 151.095,
+   "end": 163.095,
+   "startBar": 71.0,
+   "endBar": 77.0,
+   "speech": [
+    [
+     151.095,
+     153.27
+    ],
+    [
+     154.095,
+     157.625
+    ],
+    [
+     158.095,
+     160.745
+    ]
+   ],
+   "musicOnly": [
+    {
+     "start": 161.095,
+     "end": 163.095,
+     "startBar": 76.0,
+     "endBar": 77.0
+    }
+   ]
+  },
+  {
+   "id": "outro",
+   "energy": "full",
+   "music": true,
+   "start": 163.095,
+   "end": 171.095,
+   "startBar": 77.0,
+   "endBar": 81.0,
+   "speech": [
+    [
+     163.095,
+     166.13
+    ]
+   ],
+   "musicOnly": [
+    {
+     "start": 167.095,
+     "end": 171.095,
+     "startBar": 79.0,
+     "endBar": 81.0
+    }
+   ]
+  }
+ ],
+ "cues": [
+  {
+   "t": 9.095,
+   "bar": 0,
+   "type": "riser",
+   "len_bars": 1,
+   "section": "drop"
+  },
+  {
+   "t": 11.095,
+   "bar": 1.0,
+   "type": "impact",
+   "section": "drop"
+  },
+  {
+   "t": 18.595,
+   "bar": 4.75,
+   "type": "fill",
+   "section": "idea"
+  },
+  {
+   "t": 36.595,
+   "bar": 13.75,
+   "type": "fill",
+   "section": "how"
+  },
+  {
+   "t": 48.595,
+   "bar": 19.75,
+   "type": "fill",
+   "section": "run"
+  },
+  {
+   "t": 64.595,
+   "bar": 27.75,
+   "type": "fill",
+   "section": "agents"
+  },
+  {
+   "t": 91.095,
+   "bar": 41.0,
+   "type": "riser",
+   "len_bars": 2,
+   "section": "survive"
+  },
+  {
+   "t": 94.595,
+   "bar": 42.75,
+   "type": "fill",
+   "section": "survive"
+  },
+  {
+   "t": 95.095,
+   "bar": 43.0,
+   "type": "impact",
+   "section": "survive"
+  },
+  {
+   "t": 106.595,
+   "bar": 48.75,
+   "type": "fill",
+   "section": "reach"
+  },
+  {
+   "t": 127.095,
+   "bar": 59.0,
+   "type": "riser",
+   "len_bars": 2,
+   "section": "toolbox"
+  },
+  {
+   "t": 130.595,
+   "bar": 60.75,
+   "type": "fill",
+   "section": "toolbox"
+  },
+  {
+   "t": 131.095,
+   "bar": 61.0,
+   "type": "impact",
+   "section": "toolbox"
+  },
+  {
+   "t": 150.595,
+   "bar": 70.75,
+   "type": "fill",
+   "section": "cta"
+  },
+  {
+   "t": 151.095,
+   "bar": 71.0,
+   "type": "downlifter",
+   "len_bars": 1,
+   "section": "cta"
+  },
+  {
+   "t": 159.095,
+   "bar": 75.0,
+   "type": "riser",
+   "len_bars": 2,
+   "section": "outro"
+  },
+  {
+   "t": 162.595,
+   "bar": 76.75,
+   "type": "fill",
+   "section": "outro"
+  },
+  {
+   "t": 163.095,
+   "bar": 77.0,
+   "type": "impact",
+   "section": "outro"
+  },
+  {
+   "t": 167.095,
+   "bar": 79.0,
+   "type": "final",
+   "section": "outro"
+  }
+ ]
+}

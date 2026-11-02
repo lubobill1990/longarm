@@ -1,0 +1,14 @@
+{
+  "name": "longarm-promo-video",
+  "private": true,
+  "type": "module",
+  "description": "The Longarm promo film: voice-over, music and a HyperFrames project generated from script.json (see README.md)",
+  "scripts": {
+    "film": "node tools/build-film.mjs",
+    "check": "cd film && npx --yes hyperframes@0.8.200 check",
+    "render": "cd film && npx --yes hyperframes@0.8.200 render -o ../renders/longarm-promo.mp4 --quality delivery --video-frame-format png"
+  },
+  "dependencies": {
+    "gsap": "3.14.2"
+  }
+}
