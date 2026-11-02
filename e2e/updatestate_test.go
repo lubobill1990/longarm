@@ -78,11 +78,12 @@ func (f *fakeWorker) connect(version string, st *pb.UpdateStatus, updateEnabled 
 	if err != nil {
 		f.t.Fatal(err)
 	}
+	host, _ := os.Hostname() // the pairing's (a session worker and its admin worker: one host)
 	ctx, cancel := context.WithCancel(context.Background())
 	stream, err := conn.Node().Connect(ctx)
 	if err == nil {
 		err = stream.Send(&pb.NodeReport{Msg: &pb.NodeReport_Hello{Hello: &pb.NodeHello{Version: version, Os: runtime.GOOS, Arch: runtime.GOARCH,
-			Hostname: "fakehost-" + f.name, Channel: "stable", UpdateEnabled: updateEnabled, Update: st, Capabilities: []string{"node-id"}}}})
+			Hostname: host, Channel: "stable", UpdateEnabled: updateEnabled, Update: st, Capabilities: []string{"node-id"}}}})
 	}
 	var first *pb.HubCommand
 	if err == nil {
@@ -205,6 +206,7 @@ func TestUpdateStateE2ESuccess(t *testing.T) {
 	}
 	f.report("applying", "verifying", "1.0.0", "2.0.0", nil)
 	f.report("restarting", "installing", "1.0.0", "2.0.0", nil)
+	h.waitNode(t, "uw", "installing", func(n map[string]any) bool { return nodeUpd(n)["phase"] == "installing" })
 	f.disconnect()
 	n := h.waitNode(t, "uw", "away, updating", func(n map[string]any) bool {
 		u := nodeUpd(n)
@@ -388,6 +390,7 @@ func TestUpdateStateE2EPair(t *testing.T) {
 	erin.waitNode("box", "paired, online", func(n map[string]any) bool { return isTrue(n["online"]) && n["companion"] == "box-admin" })
 	// the admin worker (SYSTEM) reports the machine's MSI update; both restart
 	aw.report("restarting", "installing", "1.0.0", "2.0.0", nil)
+	erin.waitNode("box-admin", "installing", func(n map[string]any) bool { return nodeUpd(n)["phase"] == "installing" })
 	sw.disconnect()
 	aw.disconnect()
 	n := erin.waitNode("box", "updating through its admin worker", func(n map[string]any) bool {
