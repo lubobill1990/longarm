@@ -28,6 +28,14 @@
 
 ### Added
 
+- **Hub front page**: `/` is a public page that explains Longarm (what it is
+  for, three steps, agents, disconnects, NAT traversal, the toolbox) and
+  how to install it on this hub - its MSI, the one-line installs and its
+  sign-in providers. Top right: Sign in, or who you are and "Open my hub"
+  (`/nodes` for administrators, `/jobs` for users); `/login` moves
+  signed-in visitors on into the panel.
+- A promo film's sources (`marketing/promo-video`): script, voice-over and
+  music pipeline and a HyperFrames generator.
 - Disk space and network traffic in the charts: workers report their
   interfaces' bytes per second in and out (loopback excluded;
   `MetricsSnapshot.net_rx/tx_bytes_per_sec`, `MetricsPoint.disk/net_rx/net_tx`),

@@ -35,7 +35,10 @@ test('hub panel: TOTP login, approve, live metrics, jobs, logs, kill, every page
   const pending = env('LONGARM_TEST_PENDING')
 
   // Login with password + TOTP.
+  // The front page: signed out, the way in is Sign in.
   await page.goto(hub + '/')
+  await expect(page.getByTestId('landing-signed-out')).toBeVisible()
+  await page.getByTestId('landing-signed-out').getByRole('link', { name: 'Sign in' }).click()
   await expect(page.getByRole('button', { name: 'Log in' })).toBeVisible()
   await page.getByLabel('user').fill(env('LONGARM_TEST_USER'))
   await page.getByLabel('password').fill(env('LONGARM_TEST_PASS'))

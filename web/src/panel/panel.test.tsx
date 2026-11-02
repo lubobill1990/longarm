@@ -55,9 +55,57 @@ describe('LoginPage', () => {
 
 describe('PanelApp', () => {
   it('shows the login page when /api/me is 401', async () => {
+    history.pushState(null, '', '/login')
     mockFetch({ '/api/me': () => [401, { error: 'login required' }] })
     render(<PanelApp />)
     expect(await screen.findByText('Log in')).toBeTruthy()
+  })
+
+  it('shows the front page at / signed out, with Sign in and this hub\'s installers', async () => {
+    history.pushState(null, '', '/')
+    mockFetch({
+      '/api/me': () => [401, { error: 'login required' }],
+      '/releases/latest.json': () => [200, { version: 'v1.2.3', files: [{ name: 'longarm-windows-amd64.msi' }] }],
+      '/auth/info': () => [200, { providers: [{ id: 'entra', label: 'Microsoft' }] }],
+    })
+    render(<PanelApp />)
+    const out = await screen.findByTestId('landing-signed-out')
+    expect(out.querySelector('a[href="/login"]')?.textContent).toBe('Sign in')
+    fireEvent.click(screen.getByRole('tab', { name: 'Windows' }))
+    expect((await screen.findByTestId('landing-msi')).getAttribute('href')).toBe('/releases/v1.2.3/longarm-windows-amd64.msi')
+    expect(screen.getByTestId('landing-ps1').textContent).toContain(`irm ${location.origin}/install.ps1 | iex`)
+    expect(screen.queryByText('Log in')).toBeNull()
+  })
+
+  it('shows the front page at / signed in, with the way into the hub', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    history.pushState(null, '', '/')
+    mockFetch({
+      '/api/me': () => [200, { user: 'alice', hub: 'hub1', version: 'dev', role: 'user', tenant: 'alice' }],
+      '/releases/latest.json': () => [200, { version: '' }],
+      '/auth/info': () => [200, {}],
+    })
+    render(<PanelApp />)
+    const signedIn = await screen.findByTestId('landing-signed-in')
+    expect(signedIn.textContent).toContain('alice')
+    const open = signedIn.querySelector('a.primary')!
+    expect(open.getAttribute('href')).toBe('/jobs')
+    fireEvent.click(open)
+    expect(await screen.findByRole('heading', { name: 'My jobs' })).toBeTruthy()
+  })
+
+  it('moves a signed-in visitor from /login into their hub', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    history.pushState(null, '', '/login')
+    mockFetch({
+      '/api/me': () => [200, { user: 'ops', hub: 'hub1', version: 'dev' }],
+      '/api/nodes': () => [200, { nodes: [] }],
+      '/api/history': () => [200, { nodes: [] }],
+      '/api/links': () => [200, { reports: [] }],
+      '/api/profiles': () => [200, { profiles: [] }],
+    })
+    render(<PanelApp />)
+    await waitFor(() => expect(location.pathname).toBe('/nodes'))
   })
 
   it('lists pending nodes with an approve button and workers', async () => {
@@ -143,7 +191,7 @@ describe('multi-tenancy', () => {
 
   it('shows user-role logins only My jobs, My machines, Nodes, Port links, Get Longarm and Me (with quota and usage)', async () => {
     vi.stubGlobal('EventSource', FakeEventSource)
-    history.pushState(null, '', '/')
+    history.pushState(null, '', '/login')
     const calls = mockFetch({
       '/api/me': () => [200, userMe],
       '/api/jobs': () => [200, { jobs: [] }],

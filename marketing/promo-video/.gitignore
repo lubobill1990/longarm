@@ -1,0 +1,7 @@
+audio/
+renders/
+.hyperframes/
+node_modules/
+film/
+assets/site-*
+assets/icon.png
