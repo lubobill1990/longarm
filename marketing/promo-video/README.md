@@ -17,7 +17,7 @@ everything here rebuilds it.
 
 ```sh
 npm install                                    # gsap (vendored into film/)
-# audio: see the header of each script in tools/ (needs uv, ffmpeg, network for edge-tts)
+sh tools/build-audio.sh                        # voice-over, timeline, music, sfx, mix (uv, ffmpeg, network for edge-tts)
 (cd ../../web && npx vite --port 5288) &       # then:
 node tools/capture-site.mjs                    # the front page stills
 node tools/build-film.mjs                      # film/
