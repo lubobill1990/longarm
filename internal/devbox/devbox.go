@@ -26,6 +26,7 @@ import (
 	"os/exec"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -34,7 +35,9 @@ import (
 // Resource is the token audience of the Dev Center data plane.
 const Resource = "https://devcenter.azure.com"
 
-const apiVersion = "2024-02-01"
+// apiVersion: 2025-02-01 has lastConnectedTime (Match); 2024-02-01 began
+// answering 500 for single Dev Boxes.
+const apiVersion = "2025-02-01"
 
 // Regions are the Azure regions a Dev Center may live in.
 var Regions = []string{
@@ -110,6 +113,14 @@ type DevBox struct {
 	Location          string `json:"location"`
 	UniqueID          string `json:"uniqueId"`
 	ProvisioningState string `json:"provisioningState"`
+	// CreatedTime: when the Dev Box was created (Windows is installed on it
+	// minutes later); LastConnectedTime: its last remote connection.
+	CreatedTime       time.Time `json:"createdTime"`
+	LastConnectedTime time.Time `json:"lastConnectedTime"`
+	HardwareProfile   struct {
+		VCPUs    int `json:"vCPUs"`
+		MemoryGB int `json:"memoryGB"`
+	} `json:"hardwareProfile"`
 }
 
 // RemoteConnection is how a Dev Box is opened.
@@ -242,3 +253,91 @@ const PortalURL = "https://devbox.microsoft.com"
 
 // CloudPCPortalURL is the Windows 365 portal.
 const CloudPCPortalURL = "https://windows365.microsoft.com"
+
+// Facts about a worker that tell which Dev Box it is: the Dev Center API
+// knows no host names (DesktopInfo.os_installed, last_remote_logon;
+// InfoResponse.num_cpu).
+type Facts struct {
+	Installed, LastLogon time.Time
+	CPUs                 int
+}
+
+// What Match accepts: Windows is installed within ProvisionWindow after a
+// Dev Box is created (seen: 7-10 minutes), with clocks up to ClockSkew
+// apart; a remote logon on the worker and the Dev Box's lastConnectedTime
+// are within LogonWindow (seen: 4-9 minutes).
+const (
+	ProvisionWindow = 3 * time.Hour
+	ClockSkew       = 15 * time.Minute
+	LogonWindow     = 30 * time.Minute
+)
+
+func abs(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
+}
+
+// Match ranks boxes by how well they fit f (the best first) and names the
+// one f identifies, if any (sure): the only box of the right size created
+// shortly before Windows was installed on the worker, or - several created
+// together - the only one of them whose last connection matches the
+// worker's last remote logon. why says how it was told.
+func Match(boxes []DevBox, f Facts) (ranked []DevBox, sure bool, why string) {
+	ranked = append([]DevBox(nil), boxes...)
+	if f.Installed.IsZero() {
+		return ranked, false, ""
+	}
+	fits := func(b DevBox) bool {
+		if f.CPUs > 0 && b.HardwareProfile.VCPUs > 0 && b.HardwareProfile.VCPUs != f.CPUs {
+			return false
+		}
+		d := f.Installed.Sub(b.CreatedTime)
+		return !b.CreatedTime.IsZero() && d >= -ClockSkew && d <= ProvisionWindow
+	}
+	gap := func(b DevBox) time.Duration {
+		if b.CreatedTime.IsZero() {
+			return 1 << 62
+		}
+		return abs(f.Installed.Sub(b.CreatedTime))
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if fi, fj := fits(ranked[i]), fits(ranked[j]); fi != fj {
+			return fi
+		}
+		return gap(ranked[i]) < gap(ranked[j])
+	})
+	var cands []DevBox
+	for _, b := range ranked {
+		if fits(b) {
+			cands = append(cands, b)
+		}
+	}
+	created := func(b DevBox) string {
+		return fmt.Sprintf("created %s before Windows was installed on it", f.Installed.Sub(b.CreatedTime).Round(time.Minute))
+	}
+	switch {
+	case len(cands) == 1:
+		return ranked, true, created(cands[0])
+	case len(cands) > 1 && !f.LastLogon.IsZero():
+		var hit []int
+		for i, b := range cands {
+			if !b.LastConnectedTime.IsZero() && abs(b.LastConnectedTime.Sub(f.LastLogon)) <= LogonWindow {
+				hit = append(hit, i)
+			}
+		}
+		if len(hit) == 1 {
+			b := cands[hit[0]]
+			// the identified one first
+			for i := range ranked {
+				if ranked[i].ProjectName == b.ProjectName && ranked[i].Name == b.Name {
+					ranked = append([]DevBox{b}, append(ranked[:i:i], ranked[i+1:]...)...)
+					break
+				}
+			}
+			return ranked, true, created(b) + ", last connected when it was"
+		}
+	}
+	return ranked, false, ""
+}
