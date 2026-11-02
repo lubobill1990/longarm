@@ -291,7 +291,9 @@ func TestUpdateStateE2EHubRestart(t *testing.T) {
 		t.Fatalf("after the hub restart: %v", u)
 	}
 	f.connect("2.0.0", nil, false)
-	h.waitNode(t, "rw", "online on 2.0.0", func(n map[string]any) bool { return isTrue(n["online"]) && n["version"] == "2.0.0" && nodeUpd(n) == nil })
+	h.waitNode(t, "rw", "online on 2.0.0", func(n map[string]any) bool {
+		return isTrue(n["online"]) && n["version"] == "2.0.0" && nodeUpd(n) == nil
+	})
 }
 
 // Edge case 9: an older worker (no phases, no attempt IDs) updated by a
@@ -336,7 +338,9 @@ func TestUpdateStateE2EOldWorker(t *testing.T) {
 	f.send(&pb.NodeReport{Msg: &pb.NodeReport_Update{Update: &pb.UpdateStatus{State: "restarting", From: "1.0.0", To: "9.0.0"}}})
 	f.disconnect()
 	f.connect("9.0.0", &pb.UpdateStatus{State: "ok", From: "1.0.0", To: "9.0.0"}, true)
-	h.waitNode(t, "ow", "online on 9.0.0", func(n map[string]any) bool { return isTrue(n["online"]) && n["version"] == "9.0.0" && nodeUpd(n) == nil })
+	h.waitNode(t, "ow", "online on 9.0.0", func(n map[string]any) bool {
+		return isTrue(n["online"]) && n["version"] == "9.0.0" && nodeUpd(n) == nil
+	})
 }
 
 // Edge case 7: a network blip without an update: offline, as ever.
@@ -404,5 +408,7 @@ func TestUpdateStateE2EPair(t *testing.T) {
 	// both back on the new version: one machine online, no update
 	aw.connect("2.0.0", nil, false)
 	sw.connect("2.0.0", nil, false)
-	erin.waitNode("box", "online on 2.0.0", func(n map[string]any) bool { return isTrue(n["online"]) && n["version"] == "2.0.0" && nodeUpd(n) == nil })
+	erin.waitNode("box", "online on 2.0.0", func(n map[string]any) bool {
+		return isTrue(n["online"]) && n["version"] == "2.0.0" && nodeUpd(n) == nil
+	})
 }

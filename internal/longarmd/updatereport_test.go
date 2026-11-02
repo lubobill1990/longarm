@@ -15,7 +15,11 @@ type reports struct {
 	got []*pb.UpdateStatus
 }
 
-func (r *reports) add(s *pb.UpdateStatus, _ bool) { r.mu.Lock(); r.got = append(r.got, s); r.mu.Unlock() }
+func (r *reports) add(s *pb.UpdateStatus, _ bool) {
+	r.mu.Lock()
+	r.got = append(r.got, s)
+	r.mu.Unlock()
+}
 func (r *reports) list() []*pb.UpdateStatus {
 	r.mu.Lock()
 	defer r.mu.Unlock()

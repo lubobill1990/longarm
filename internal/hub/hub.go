@@ -134,8 +134,8 @@ type node struct {
 	maxJobs     int32               // local limits (NodeState)
 	updateAvail *pb.UpdateAvailable // a release the worker can't install itself (NodeState)
 	reservedGB  float64
-	caps        []string // NodeHello.capabilities of the current session
-	upd         *pb.NodeUpdate      // an update of its machine (updatestate.go); nil = none
+	caps        []string       // NodeHello.capabilities of the current session
+	upd         *pb.NodeUpdate // an update of its machine (updatestate.go); nil = none
 }
 
 type nodeSession struct {
