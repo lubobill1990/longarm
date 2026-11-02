@@ -1685,6 +1685,21 @@
     font-size: 15px;
   }
 
+  /* Settings > Licenses */
+  & .licenses-text {
+    max-height: 320px;
+    margin: var(--sp-2) 0 0;
+    padding: 8px 10px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--surface-2);
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    white-space: pre-wrap;
+    user-select: text;
+  }
+
   /* ------------------------------------------------------------ toasts, the context menu */
 
   & .toasts {

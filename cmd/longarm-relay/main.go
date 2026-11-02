@@ -40,6 +40,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/lubobill1990/longarm/internal/notices"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/relay"
 	"github.com/lubobill1990/longarm/internal/relay/hubsync"
@@ -299,7 +300,7 @@ func main() {
 	f.StringVar(&advUDP, "advertise-udp", "", "with --hub: the public UDP host:port (overrides --advertise for UDP)")
 	f.StringVar(&advTCP, "advertise-tcp", "", "with --hub: the public TLS/TCP host:port (overrides --advertise for TCP)")
 	f.StringVar(&stateDir, "state-dir", defaultStateDir(), "with --hub: where the last hub policy is kept (used while the hub is down); env LONGARM_RELAY_STATE_DIR")
-	root.AddCommand(healthcheckCmd())
+	root.AddCommand(healthcheckCmd(), notices.Cmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "longarm-relay:", err)
 		os.Exit(1)

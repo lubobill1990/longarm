@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"slices"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/lubobill1990/longarm/internal/hub/store"
+	"github.com/lubobill1990/longarm/internal/notices"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	"github.com/lubobill1990/longarm/internal/version"
@@ -37,6 +39,15 @@ import (
 //	DELETE /api/users/{name}               longarm-hub user rm   {current_password}
 //	(account changes need the caller's current password and are audited as node "hub")
 
+// serveLicenses: Longarm's license and the third-party notices
+// (internal/notices), for the front page's footer; no sign-in needed.
+func serveLicenses(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	io.WriteString(w, notices.Text)
+}
+
 // panelCSP: everything from this origin; inline styles for the charts.
 const panelCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
@@ -50,6 +61,7 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 	}
 	mux.Handle("GET /favicon.png", withCSP(spa))
 	mux.HandleFunc("GET /status", h.statusPage)
+	mux.HandleFunc("GET /licenses.txt", serveLicenses)
 
 	api("POST /api/jobs", func(w http.ResponseWriter, r *http.Request, user string) {
 		var body struct {

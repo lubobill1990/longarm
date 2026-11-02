@@ -147,6 +147,8 @@ archives:
     files:
       - README.md
       - LICENSE*
+      - src: internal/notices/THIRD_PARTY_NOTICES.txt
+        strip_parent: true
   - id: longarm-hub
     ids: [longarm-hub, longarm-hub-windows, longarm-relay, longarm-relay-windows]
     name_template: "longarm-hub_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
@@ -157,6 +159,9 @@ archives:
     files:
       - deploy/hub/hub.toml.example
       - deploy/hub/README.md
+      - LICENSE*
+      - src: internal/notices/THIRD_PARTY_NOTICES.txt
+        strip_parent: true
 
 nfpms:
   - id: longarm
@@ -182,6 +187,11 @@ nfpms:
       - src: packaging/linux/join.env.example
         dst: /etc/longarm/join.env.example
         type: config|noreplace
+      # the license and the third-party notices (internal/notices)
+      - src: LICENSE
+        dst: /usr/share/doc/longarm/LICENSE
+      - src: internal/notices/THIRD_PARTY_NOTICES.txt
+        dst: /usr/share/doc/longarm/THIRD_PARTY_NOTICES.txt
     scripts:
       postinstall: packaging/linux/postinst.sh
       preremove: packaging/linux/prerm.sh
@@ -207,6 +217,10 @@ nfpms:
         dst: /lib/systemd/system/longarm-hub.service
       - src: deploy/hub/hub.toml.example
         dst: /etc/longarm-hub/hub.toml.example
+      - src: LICENSE
+        dst: /usr/share/doc/longarm-hub/LICENSE
+      - src: internal/notices/THIRD_PARTY_NOTICES.txt
+        dst: /usr/share/doc/longarm-hub/THIRD_PARTY_NOTICES.txt
     scripts:
       postinstall: packaging/linux/hub-postinst.sh
 

@@ -182,6 +182,13 @@ jobs:
         run: pnpm typecheck
       - name: unit tests
         run: pnpm test
+      # internal/notices/THIRD_PARTY_NOTICES.txt (the license texts of what
+      # the releases include, go run ./packaging/notices) is current, and every
+      # dependency's license a known permissive one (docs/licenses.md)
+      - uses: ./.github/actions/go-setup
+      - name: third-party notices
+        working-directory: .
+        run: go run ./packaging/notices -check
       # internal/webui/dist (the embedded panel) is built by `node web/build.mjs`
       # and checked in; this only proves the toolchain still builds it
       - name: build

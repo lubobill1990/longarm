@@ -236,7 +236,7 @@ function Invoke-Uninstall {
   # leaving the hub fails with the dummy hub (the uninstall goes on: Return="ignore")
   $null = Invoke-Msi 'uninstall' "/x $code" -allow @('returned actual error code')
   if ((Get-Products).Count) { Fail 'Longarm is still registered after the uninstall' }
-  foreach ($f in 'longarm.exe', 'longarmd.exe', 'longarm-tray.exe', 'longarm-update.exe') {
+  foreach ($f in 'longarm.exe', 'longarmd.exe', 'longarm-tray.exe', 'longarm-update.exe', 'LICENSE.txt', 'THIRD_PARTY_NOTICES.txt') {
     if (Test-Path (Join-Path $installDir $f)) { Fail "$f is left after the uninstall" }
   }
   if (Get-Service LongarmUpdate -ErrorAction SilentlyContinue) { Fail 'the LongarmUpdate service is left' }
@@ -260,6 +260,10 @@ switch ($Scenario) {
   'fresh' {
     $null = Invoke-Msi 'install' "/i `"$default`" ROLES=both"
     Assert-Installed '0.250.0' (Join-Path $MsiDir 'hashes-default.txt')
+    # the license and the third-party notices (internal/notices)
+    foreach ($f in 'LICENSE.txt', 'THIRD_PARTY_NOTICES.txt') {
+      if (-not (Test-Path (Join-Path $installDir $f))) { Fail "$f is not installed" }
+    }
     Start-Running $true $true
     # a repair (as Windows' "Repair", which the MSI hides: msiexec /fomus)
     $code = (Get-Products)[0].PSChildName

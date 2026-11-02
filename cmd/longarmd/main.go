@@ -33,6 +33,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/gc"
 	"github.com/lubobill1990/longarm/internal/longarmd"
+	"github.com/lubobill1990/longarm/internal/notices"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/server"
 	"github.com/lubobill1990/longarm/internal/shim"
@@ -74,7 +75,7 @@ func main() {
 	root.AddCommand(localCmds()...)
 	root.AddCommand(updateCmd(), updateWatchCmd(), installHelperCmd())
 	root.AddCommand(uiCmds()...)
-	root.AddCommand(userHelperCmd(), sftpServerCmd(), trustCmd(), diagCmd(), doctorCmd())
+	root.AddCommand(userHelperCmd(), sftpServerCmd(), trustCmd(), diagCmd(), doctorCmd(), notices.Cmd())
 	root.AddCommand(runCmd(), joinCmd(), loginCmd(), shimCmd(), conhostCmd(), serviceCmd(), sessionModeCmd(), adminWorkerCmd(), gcCmd(), auditCmd(), &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",

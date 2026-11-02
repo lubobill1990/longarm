@@ -454,6 +454,12 @@
              ran: a Start here would fail on a machine without it) -->
       </Component>
 
+      <!-- the license and the third-party notices (internal/notices) -->
+      <Component Id="Licenses">
+        <File Id="LICENSE.txt" Name="LICENSE.txt" Source="$(var.RepoDir)\LICENSE" KeyPath="yes" />
+        <File Id="THIRD_PARTY_NOTICES.txt" Name="THIRD_PARTY_NOTICES.txt" Source="$(var.RepoDir)\internal\notices\THIRD_PARTY_NOTICES.txt" />
+      </Component>
+
       <?if $(var.HasTray) = 1 ?>
       <Component Id="Tray">
         <File Id="longarm_tray.exe" Name="longarm-tray.exe" Source="$(var.BinDir)\longarm-tray.exe" KeyPath="yes">

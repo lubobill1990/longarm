@@ -23,6 +23,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/localapi"
 	"github.com/lubobill1990/longarm/internal/longarmd"
+	"github.com/lubobill1990/longarm/internal/notices"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/signin"
 	"github.com/lubobill1990/longarm/internal/webui"
@@ -219,6 +220,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/local/longarm/", s.proxy("/local/longarm", func() string { return filepath.Join(s.opts.LongarmConfigDir, "daemon.addr") }))
 	mux.Handle("/local/longarmd/", s.proxy("/local/longarmd", func() string { return filepath.Join(s.opts.LongarmdDataDir, "longarmd.local") }))
 	mux.HandleFunc("GET /trayapi/info", s.info)
+	mux.HandleFunc("GET /trayapi/licenses", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, notices.Text) // Settings > Licenses
+	})
 	mux.HandleFunc("POST /trayapi/attach", s.attach)
 	mux.HandleFunc("POST /trayapi/ssh", s.ssh)
 	mux.HandleFunc("POST /trayapi/desktop", s.desktop)
