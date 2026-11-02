@@ -5,8 +5,9 @@
 // companion / machine are their names); only with an older hub (nodes
 // without an id) does an admin worker named <worker>-admin with the same
 // owner and host name pair with <worker>.
-import type { NodeInfo, PoolWorker } from '../api/types'
+import type { NodeInfo, NodeUpdate, PoolWorker } from '../api/types'
 import { since } from './format'
+import { machineUpdate, updateRunning } from './update'
 
 export const ADMIN_LABEL = 'longarm.io/admin'
 export const ADMIN_SUFFIX = '-admin'
@@ -89,8 +90,10 @@ export function groupMachines<T>(items: T[], name: (t: T) => string, node: (t: T
 export interface PoolMachine extends Group<PoolWorker> {
   /** the worker whose metrics the card shows: the session worker, else (offline) the admin worker */
   primary: PoolWorker
-  /** online | connecting | offline: the best of its workers */
+  /** online | connecting | updating | offline: the best of its workers (updating: away for its update) */
   state: string
+  /** the machine's update (NodeInfo.update of either worker) */
+  update?: NodeUpdate
   /** seconds since a worker of it was last seen (offline machines) */
   offlineFor: number
   /** offline for more than LONG_OFFLINE_S: the collapsed section */
@@ -99,7 +102,7 @@ export interface PoolMachine extends Group<PoolWorker> {
   labels: [string, string][]
 }
 
-const RANK: Record<string, number> = { online: 0, connecting: 1, offline: 2 }
+const RANK: Record<string, number> = { online: 0, connecting: 1, updating: 1, offline: 2 }
 
 function workerState(w: PoolWorker): string {
   return w.state ?? 'connecting'
@@ -127,7 +130,9 @@ export function poolMachines(workers: PoolWorker[], now = Date.now()): { active:
   )
   const machines: PoolMachine[] = groups.map((g) => {
     const members = [g.session, g.admin].filter((w): w is PoolWorker => !!w)
-    const state = members.map(workerState).sort((a, b) => (RANK[a] ?? 1) - (RANK[b] ?? 1))[0]
+    const update = machineUpdate(members.map((w) => w.node))
+    let state = members.map(workerState).sort((a, b) => (RANK[a] ?? 1) - (RANK[b] ?? 1))[0]
+    if (state !== 'online' && updateRunning(update)) state = 'updating' // away for its update, not offline
     const offlineFor = state === 'offline' ? Math.min(...members.map((w) => offlineSeconds(w, now))) : 0
     const s = g.session
     const primary = s && (workerState(s) === 'online' || !g.admin || workerState(g.admin) !== 'online') ? s : (g.admin ?? s)!
@@ -139,6 +144,7 @@ export function poolMachines(workers: PoolWorker[], now = Date.now()): { active:
       ...g,
       primary,
       state,
+      update,
       offlineFor,
       longOffline: state === 'offline' && offlineFor > LONG_OFFLINE_S,
       labels: [...labels.entries()].sort(([a], [b]) => a.localeCompare(b)),

@@ -113,7 +113,11 @@ describe('PoolTab', () => {
     expect(btn.closest('.actions')).toBeNull()
     expect(within(card).getByTestId('version').nextElementSibling).toBe(btn)
     expect(btn.getAttribute('aria-label')).toBe('Update to 0.1.9')
+    // edge case 4: the confirmation says what happens to the jobs and sessions (and the admin worker)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     fireEvent.click(within(card).getByTestId('update-btn'))
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('running jobs and sessions keep running'))
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Its admin worker cpc-alice-x7k2q-admin restarts too'))
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/update') && c.init?.method === 'POST')).toBe(true))
     await waitFor(() => expect(within(card).getByTestId('update-line').textContent).toContain('2 jobs and 1 session kept running'), {
       timeout: 5000,

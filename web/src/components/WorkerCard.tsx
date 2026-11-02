@@ -25,6 +25,8 @@ import {
   since,
 } from '../lib/format'
 import { ADMIN_LABEL, fmtLastSeen, isAdminNode, offlineSeconds, type PoolMachine } from '../lib/machines'
+import { dismissedUpdates, dismissUpdate, jobsNote, machineUpdate, updateRunning, updateView, type UpdateView } from '../lib/update'
+import type { NodeUpdate } from '../api/types'
 import { Bar, Sparkline } from './charts'
 import { IconExternal, IconMore } from './icons'
 
@@ -108,8 +110,9 @@ function statusText(w: PoolWorker, now: number): string {
   return 'connecting…'
 }
 
-function capText(label: string, w: PoolWorker, now: number): string {
+function capText(label: string, w: PoolWorker, now: number, updating = false): string {
   const st = stateOf(w)
+  if (updating && st !== 'online') return `${label} updating`
   if (st === 'offline') return `${label} offline ${fmtLastSeen(offlineSeconds(w, now))}`
   return `${label} ${st === 'online' ? 'online' : 'connecting'}`
 }
@@ -138,14 +141,51 @@ export function machineOf(w: PoolWorker): PoolMachine {
  * attach / ssh go to the session worker; admin actions name the admin
  * worker explicitly (the ⋯ menu). Pass a machine (m) or a lone worker (w).
  */
+/** The badges dismissed on this computer, kept current across cards and windows. */
+function useDismissedUpdates(): [Set<string>, (key: string) => void] {
+  const [set, setSet] = useState(dismissedUpdates)
+  useEffect(() => {
+    const on = () => setSet(dismissedUpdates())
+    window.addEventListener('longarm-update-dismissed', on)
+    window.addEventListener('storage', on)
+    return () => {
+      window.removeEventListener('longarm-update-dismissed', on)
+      window.removeEventListener('storage', on)
+    }
+  }, [])
+  return [set, dismissUpdate]
+}
+
+/**
+ * The update of a machine the card shows: the hub's (NodeInfo.update of
+ * its session or admin worker - one MSI updates both), else, for a worker
+ * too old to report one, the update this tray started (a generic
+ * "updating" with the time it takes).
+ */
+function cardUpdate(session?: PoolWorker, admin?: PoolWorker, job?: WorkerUpdateJob): NodeUpdate | undefined {
+  const u = machineUpdate([session?.node, admin?.node])
+  if (u) return u
+  if (job?.state === 'running')
+    return { state: 'updating', to: job.to, started_at: job.started ? new Date(job.started).toISOString() : undefined, reported: false }
+  return undefined
+}
+
 export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker; m?: PoolMachine; actions?: CardActions; now?: number }) {
   const [menu, setMenu] = useState(false)
   const menuRef = useDismiss<HTMLSpanElement>(menu, () => setMenu(false))
+  const [dismissed, dismiss] = useDismissedUpdates()
   const mm = m ?? machineOf(w!)
   const session = mm.session
   const admin = mm.admin
   const p = mm.primary
-  const state = mm.state
+  const target0 = updateTarget(session, admin)
+  const u = cardUpdate(session, admin, target0 ? actions?.updates?.[target0.name] : undefined)
+  // while it updates the machine is "updating", not offline: no red dot,
+  // no "offline, reconnecting", no link errors (the restart is expected)
+  const updating = updateRunning(u)
+  const state = updating && mm.state !== 'online' ? 'updating' : mm.state
+  const view = u ? updateView(u, mm.state === 'online', now, p.node?.id || mm.key) : undefined
+  const badge = view?.badge && !dismissed.has(view.key) ? view : undefined
   const dot = cssColor(state === 'online' ? GREEN : state === 'offline' ? RED : AMBER)
   const metrics = p.state === 'online' || p.source === 'hub' ? p.metrics : undefined
   const draining = session?.node?.draining
@@ -159,7 +199,7 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
   const ua = target?.node?.update_available
   const avail = ua?.version ?? ''
   const job = target ? actions?.updates?.[target.name] : undefined
-  const running = job?.state === 'running'
+  const running = job?.state === 'running' || updating
   // "none": longarm worker update can't install it there (no Longarm Update
   // service, no self-update): no button, the version pill says why
   const remote = ua?.method !== 'none'
@@ -195,7 +235,9 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
             {running ? 'Updating…' : 'Update'}
           </button>
         )}
-        <span className="sub">{statusText(session ?? admin ?? p, now)}</span>
+        <span className="sub" data-testid="status">
+          {updating && view ? view.title : statusText(session ?? admin ?? p, now)}
+        </span>
         {draining && (
           <span className="pill warn" title={session?.node?.drain_reason}>
             draining
@@ -267,7 +309,9 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
           {admin && <AdminBadge admin={admin} />}
           {admin && (
             <span className="small muted" data-testid="cap-state">
-              {session ? `${capText('worker', session, now)} · ${capText('admin', admin, now)}` : `admin only · ${capText('admin', admin, now)}`}
+              {session
+                ? `${capText('worker', session, now, updating)} · ${capText('admin', admin, now, updating)}`
+                : `admin only · ${capText('admin', admin, now, updating)}`}
             </span>
           )}
           {mm.labels.map(([k, v]) => (
@@ -277,15 +321,56 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
           ))}
         </div>
       )}
-      {job && job.state !== 'idle' && <UpdateLine job={job} />}
-      <LinkRows w={p} now={now} />
+      {updating && view && <UpdateStatus view={view} u={u!} />}
+      {!updating && badge && <UpdateBadge view={badge} onDismiss={() => dismiss(badge.key)} />}
+      {!u && job && job.state !== 'idle' && <UpdateLine job={job} />}
+      <LinkRows w={p} now={now} updating={updating} />
       {!metrics ? (
-        <div className={`msg ${state === 'offline' ? 'red' : 'muted'}`}>
-          {(p.error || (state === 'connecting' ? 'waiting for the first sample…' : 'unreachable')).slice(0, 120)}
-        </div>
+        updating ? (
+          <div className="msg muted" data-testid="update-wait">
+            metrics resume when the worker is back
+          </div>
+        ) : (
+          <div className={`msg ${state === 'offline' ? 'red' : 'muted'}`}>
+            {(p.error || (state === 'connecting' ? 'waiting for the first sample…' : 'unreachable')).slice(0, 120)}
+          </div>
+        )
       ) : (
         <Metrics m={metrics} w={p} now={now} onAgent={actions?.sessions && ((a) => actions.sessions!((session ?? p).name, a))} />
       )}
+    </div>
+  )
+}
+
+/** An update in progress: "Updating to v0.1.30…", the phase, a progress bar, what happens to the jobs. */
+export function UpdateStatus({ view, u }: { view: UpdateView; u: NodeUpdate }) {
+  return (
+    <div className="upd-status" data-testid="update-status" data-kind={view.kind}>
+      <div className="upd-head">
+        <span className="upd-title">{view.title}</span>
+        <span className="upd-detail" data-testid="update-detail">
+          {view.detail}
+        </span>
+      </div>
+      {view.progress !== undefined && (
+        <div className="upd-bar" role="progressbar" aria-valuenow={Math.round(view.progress * 100)} aria-valuemin={0} aria-valuemax={100}>
+          <span style={{ width: `${Math.round(view.progress * 100)}%` }} />
+        </div>
+      )}
+      <div className="upd-note">{jobsNote(u)}</div>
+    </div>
+  )
+}
+
+/** How an update ended badly (failed, didn't finish, another version, restart pending): dismissible. */
+export function UpdateBadge({ view, onDismiss }: { view: UpdateView; onDismiss: () => void }) {
+  return (
+    <div className={`upd-badge is-${view.kind}`} data-testid="update-badge" data-kind={view.kind} role="status">
+      <span className="upd-title">{view.title}</span>
+      {view.detail && <span className="upd-detail">{view.detail}</span>}
+      <button type="button" className="upd-x" aria-label="dismiss" title="dismiss (on this computer)" onClick={onDismiss}>
+        ×
+      </button>
     </div>
   )
 }
@@ -326,6 +411,11 @@ export function OfflineRow({ m, actions }: { m: PoolMachine; actions?: CardActio
         <span className="oname">{m.key}</span>
         {m.admin && <AdminBadge admin={m.admin} compact />}
         <span className="muted small">last seen {fmtLastSeen(m.offlineFor)} ago</span>
+        {m.update?.state === 'timed_out' && (
+          <span className="small amber" data-testid="offline-update">
+            update to v{(m.update.to ?? '').replace(/^v/, '')} didn't finish
+          </span>
+        )}
         <span className="spacer" />
         {errors.length > 0 && (
           <button className="link small" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
@@ -350,14 +440,14 @@ export function isLocalOnly(endpoint?: string): boolean {
   return h === 'localhost' || h.startsWith('127.') || h === '::1' || h === '0.0.0.0' || h === '::'
 }
 
-function LinkRows({ w, now }: { w: PoolWorker; now: number }) {
+function LinkRows({ w, now, updating }: { w: PoolWorker; now: number; updating?: boolean }) {
   const [showLegs, setShowLegs] = useState(false)
   const legs = w.link?.legs ?? []
   if (!legs.length) {
     // The worker advertises only endpoints of its own machine (loopback):
     // nothing this client can dial - say so instead of a bare "down".
     const eps = w.node?.endpoints ?? []
-    if (!eps.length || !eps.every(isLocalOnly)) return null
+    if (updating || !eps.length || !eps.every(isLocalOnly)) return null
     return (
       <div data-testid="link">
         <div className="linkrow">
@@ -374,10 +464,13 @@ function LinkRows({ w, now }: { w: PoolWorker; now: number }) {
   }
   const active = legs.find((l) => l.active) ?? legs[0]
   const hist = (active.history ?? []).map((s) => (s.rtt_ms !== undefined && s.rtt_ms >= 0 ? s.rtt_ms : null))
+  // failed probes: red bands - amber while the machine updates (its
+  // restart is expected: the gap is "updating", not an outage)
   const fails = (active.history ?? [])
     .map((s, i, a) => ({ i: a.length - 1 - i, bad: (s.rtt_ms ?? 0) < 0 }))
     .filter((x) => x.bad)
-    .map((x) => ({ at: x.i, color: RED }))
+    .map((x) => ({ at: x.i, color: updating ? AMBER : RED }))
+  const down = !active.up && !updating
   const relayed = active.up && isRelayed(active.kind)
   const relayFor = relayed && active.relay_since ? since(active.relay_since, now) : 0
   return (
@@ -386,7 +479,12 @@ function LinkRows({ w, now }: { w: PoolWorker; now: number }) {
         <span className="muted small linklabel">
           LINK
         </span>
-        <span className={`path ${!active.up ? 'is-down' : relayed ? 'is-relayed' : 'is-up'}`} style={{ color: cssColor(!active.up ? RED : relayed ? AMBER : GREEN) }} data-testid="link-path">
+        <span
+          className={`path ${down ? 'is-down' : !active.up ? 'is-updating' : relayed ? 'is-relayed' : 'is-up'}`}
+          style={{ color: cssColor(down ? RED : !active.up || relayed ? AMBER : GREEN) }}
+          data-testid="link-path"
+          title={!active.up && updating ? 'the worker restarts for its update' : undefined}
+        >
           {active.label || active.transport}
         </span>
         {active.nat && <span className="pill">nat {active.nat}</span>}
@@ -405,16 +503,16 @@ function LinkRows({ w, now }: { w: PoolWorker; now: number }) {
         )}
         <span className="spacer" />
         <span className="mono" data-testid="link-rtt">
-          {active.up ? fmtRTT(active.rtt_ms) : 'down'}
+          {active.up ? fmtRTT(active.rtt_ms) : updating ? 'updating' : 'down'}
         </span>
       </div>
-      {showLegs && <Legs legs={legs} />}
+      {showLegs && <Legs legs={legs} updating={updating} />}
       <Sparkline
         series={[{ values: hist, color: RTT_C, label: 'RTT', fmt: (v) => fmtRTT(v) }]}
         max="auto"
         height={30}
         legend
-        right="5 min"
+        right={updating && fails.length ? 'gap: updating · 5 min' : '5 min'}
         marks={fails}
         fmtMax={(v) => `${Math.round(v)} ms`}
       />
@@ -423,15 +521,19 @@ function LinkRows({ w, now }: { w: PoolWorker; now: number }) {
 }
 
 /** Every leg to the worker (the link row's dropdown): path, endpoint, latency; the one in use marked. */
-function Legs({ legs }: { legs: LegStatus[] }) {
+function Legs({ legs, updating }: { legs: LegStatus[]; updating?: boolean }) {
   return (
     <div className="legs-list" data-testid="legs">
       {legs.map((l, i) => (
-        <div key={i} className={`leg-row ${l.active ? 'active' : ''} ${l.up ? '' : 'down'}`} title={l.error || l.detail || l.endpoint}>
+        <div
+          key={i}
+          className={`leg-row ${l.active ? 'active' : ''} ${l.up || updating ? '' : 'down'}`}
+          title={updating && !l.up ? 'the worker restarts for its update' : l.error || l.detail || l.endpoint}
+        >
           <span className="leg-mark">{l.active ? '✓' : ''}</span>
           <span className="leg-name">{l.label || l.transport}</span>
           <span className="leg-ep">{l.endpoint}</span>
-          <span className="leg-rtt mono">{l.up ? fmtRTT(l.rtt_ms) : l.error ? 'down' : '…'}</span>
+          <span className="leg-rtt mono">{l.up ? fmtRTT(l.rtt_ms) : updating ? '—' : l.error ? 'down' : '…'}</span>
         </div>
       ))}
     </div>

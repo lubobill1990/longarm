@@ -464,6 +464,10 @@
   & .dot.is-connecting {
     box-shadow: 0 0 0 3px var(--amber-soft);
   }
+  & .dot.is-updating {
+    box-shadow: 0 0 0 3px var(--amber-soft);
+    animation: tray-pulse 1.6s var(--ease) infinite;
+  }
   & .dot.is-gone {
     background: transparent !important;
     box-shadow: inset 0 0 0 1.5px var(--gray-dot);
@@ -1998,6 +2002,89 @@
   }
   & .wcard .msg.ok {
     color: var(--green-ink);
+  }
+  /* an update in progress (lib/update.ts): amber, never the red of an outage */
+  & .wcard[data-state='updating'] {
+    background: var(--surface);
+  }
+  & .wcard .upd-status,
+  & .wcard .upd-badge {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0 0 var(--sp-2);
+    padding: 8px 10px;
+    border-radius: var(--r-md);
+    background: var(--amber-soft);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+  }
+  & .wcard .upd-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px var(--sp-2);
+  }
+  & .wcard .upd-title {
+    color: var(--amber-ink);
+    font-weight: var(--fw-semibold);
+  }
+  & .wcard .upd-detail {
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+  & .wcard .upd-note {
+    color: var(--text-3);
+  }
+  & .wcard .upd-bar {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--hover);
+    overflow: hidden;
+    & span {
+      display: block;
+      height: 100%;
+      background: var(--amber);
+      transition: width var(--dur) var(--ease);
+    }
+  }
+  & .wcard .upd-badge {
+    position: relative;
+    padding-right: 28px;
+    &.is-failed,
+    &.is-mismatch,
+    &.is-timed_out {
+      background: var(--red-soft);
+      & .upd-title {
+        color: var(--red-ink);
+      }
+    }
+  }
+  & .wcard .upd-x {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--text-3);
+    cursor: pointer;
+    &:hover {
+      background: var(--hover);
+      color: var(--text);
+    }
+  }
+  & .path.is-updating {
+    font-style: italic;
+  }
+}
+
+@keyframes tray-pulse {
+  50% {
+    opacity: 0.45;
   }
 }
 

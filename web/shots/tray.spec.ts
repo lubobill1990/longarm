@@ -21,6 +21,8 @@ interface Scenario {
   signin?: 'idle' | 'running' | 'confirm'
   daemonDown?: boolean
   emptyPool?: boolean
+  /** machines updating, and how updates ended (mock.pool updating) */
+  updating?: boolean
   /** never answer the pool and jobs: the loading skeletons */
   loading?: boolean
   update?: boolean
@@ -46,7 +48,7 @@ async function serve(page: Page, sc: Scenario = {}) {
       if (p === '/trayapi/addmachine') return json(r, mock.addMachine)
       if (p === '/trayapi/pin') return json(r, { pinned: true })
       if (p.startsWith('/trayapi/')) return json(r, { ok: true })
-      if (p === '/local/longarm/v1/pool') return json(r, mock.pool({ empty: sc.emptyPool }))
+      if (p === '/local/longarm/v1/pool') return json(r, mock.pool({ empty: sc.emptyPool, updating: sc.updating }))
       if (p === '/local/longarm/v1/jobs') return json(r, { jobs: sc.manyJobs ? mock.manyJobs : mock.jobs })
       if (p.startsWith('/local/longarm/v1/jobs/') && p.endsWith('/logs'))
         return r.fulfill({
@@ -141,6 +143,19 @@ for (const scheme of ['light', 'dark'] as const) {
         await page.getByTestId('online-count').click()
         await expect(card.getByRole('menu')).toBeHidden()
         await shot(page, `tray-menu-outside-click-${scheme}-${size}`)
+      })
+
+      test('workers: updating, and how updates ended', async ({ page }) => {
+        await open(page, 'pool', { updating: true })
+        const card = page.getByTestId('worker-cpc-alice-x7k2q')
+        await expect(card.getByTestId('update-status')).toContainText('Updating to v0.9.3')
+        await expect(page.getByTestId('worker-build-linux-02').getByTestId('update-detail')).toContainText('downloading 12/42 MB')
+        await expect(page.getByTestId('worker-mac-mini').getByTestId('update-badge')).toContainText('failed')
+        await shot(page, `tray-workers-updating-${scheme}-${size}`)
+        // the cards themselves: restarting for an MSI update (both workers), a failed one
+        await card.scrollIntoViewIfNeeded()
+        await card.screenshot({ path: join(out, `tray-update-restarting-${scheme}-${size}.png`) })
+        await page.getByTestId('worker-mac-mini').screenshot({ path: join(out, `tray-update-failed-${scheme}-${size}.png`) })
       })
 
       test('workers: add a machine', async ({ page }) => {

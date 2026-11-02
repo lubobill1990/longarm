@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"sync"
@@ -55,6 +57,12 @@ type updater struct {
 	busy   bool // an update is being applied, or this version is on probation
 	missed bool // a check was skipped while busy: run it when the probation ends
 	status *pb.UpdateStatus
+	// the update being applied (the hub's NodeInfo.update): its attempt,
+	// who asked (rollout | owner) and when it started
+	attempt   string
+	initiator string
+	started   time.Time
+	lastProg  time.Time // the last progress report
 }
 
 func (u *updater) enabled() bool { return u.canApply == nil }
@@ -80,11 +88,78 @@ func (u *updater) Status() *pb.UpdateStatus {
 func (u *updater) setStatus(s *pb.UpdateStatus) {
 	s.At = timestamppb.Now()
 	u.mu.Lock()
+	if u.attempt != "" && s.To != "" {
+		s.Attempt, s.Initiator, s.Started, s.Method = u.attempt, u.initiator, timestamppb.New(u.started), "self"
+	}
 	u.status = s
 	u.mu.Unlock()
 	u.agent.send(&pb.NodeReport{Msg: &pb.NodeReport_Update{Update: s}}, false)
 	u.agent.notify(&pb.LocalEvent{Kind: "update", Message: fmt.Sprintf("%s %s -> %s %s", s.State, s.From, s.To, s.Error)})
 	u.agent.tel.event("update.status", map[string]string{"state": s.State, "from": s.From, "to": s.To, "error": s.Error})
+}
+
+// begin starts an update attempt (initiator: rollout | owner).
+func (u *updater) begin(initiator string) {
+	u.mu.Lock()
+	u.started = time.Now()
+	u.attempt, u.initiator = fmt.Sprintf("self-%d", u.started.UnixNano()), initiator
+	u.mu.Unlock()
+}
+
+// progressFetch is fetch reporting the download's progress to the hub
+// (every 2 s at most); total: what the files to download weigh.
+func (u *updater) progressFetch(fetch update.Fetch, from, to string, total int64) update.Fetch {
+	var done int64
+	var mu sync.Mutex
+	return func(ctx context.Context, ver, name string, w io.Writer) error {
+		return fetch(ctx, ver, name, writerFunc(func(b []byte) (int, error) {
+			n, err := w.Write(b)
+			mu.Lock()
+			done += int64(n)
+			d := done
+			mu.Unlock()
+			u.mu.Lock()
+			due := time.Since(u.lastProg) >= 2*time.Second
+			if due {
+				u.lastProg = time.Now()
+			}
+			u.mu.Unlock()
+			if due {
+				u.setStatus(&pb.UpdateStatus{State: "applying", Phase: "downloading", From: from, To: to, BytesDone: min(d, total), BytesTotal: total,
+					Message: "downloading and verifying " + to})
+			}
+			return n, err
+		}))
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(b []byte) (int, error) { return f(b) }
+
+// plannedBytes is what Apply downloads of files: the binaries this
+// installation has (update.Binaries next to longarmd).
+func plannedBytes(exe string, files []update.File) int64 {
+	var total int64
+	for _, f := range files {
+		for _, bin := range update.Binaries {
+			if f.Name != update.ReleaseName(bin, runtime.GOOS, runtime.GOARCH) {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(exe), exeFile(bin))); bin != "longarmd" && err != nil {
+				continue // not installed here: not updated
+			}
+			total += f.Size
+		}
+	}
+	return total
+}
+
+func exeFile(bin string) string {
+	if runtime.GOOS == "windows" {
+		return bin + ".exe"
+	}
+	return bin
 }
 
 func (u *updater) Run(ctx context.Context) {
@@ -149,9 +224,11 @@ func (u *updater) check(ctx context.Context) error {
 	u.busy = true
 	u.mu.Unlock()
 	u.cfg.Log.Info("update: applying", "from", version.Version, "to", target)
-	u.setStatus(&pb.UpdateStatus{State: "applying", From: version.Version, To: target})
+	u.begin("rollout")
+	files := releaseFiles(resp.Files)
+	u.setStatus(&pb.UpdateStatus{State: "applying", Phase: "downloading", From: version.Version, To: target, BytesTotal: plannedBytes(u.cfg.Exe, files)})
 	dctx, dcancel := context.WithTimeout(ctx, 15*time.Minute)
-	err = update.Apply(dctx, u.cfg, target, releaseFiles(resp.Files), hubFetch(conn))
+	err = update.Apply(dctx, u.cfg, target, files, u.progressFetch(hubFetch(conn), version.Version, target, plannedBytes(u.cfg.Exe, files)))
 	dcancel()
 	if err != nil {
 		u.mu.Lock()
@@ -162,7 +239,7 @@ func (u *updater) check(ctx context.Context) error {
 		u.setStatus(&pb.UpdateStatus{State: "error", From: version.Version, To: target, Error: err.Error()})
 		return err
 	}
-	u.setStatus(&pb.UpdateStatus{State: update.PhaseRestarting, From: version.Version, To: target})
+	u.setStatus(&pb.UpdateStatus{State: update.PhaseRestarting, Phase: "restarting", From: version.Version, To: target})
 	time.Sleep(500 * time.Millisecond) // let the report reach the hub
 	u.restart()
 	return nil
@@ -368,16 +445,20 @@ func (u *updater) applyWanted(ctx context.Context, want string, progress func(ph
 	}
 	progress("downloading", "downloading and verifying "+to)
 	u.cfg.Log.Info("update: applying (asked by the owner)", "from", version.Version, "to", to)
-	u.setStatus(&pb.UpdateStatus{State: "applying", From: version.Version, To: to})
+	u.begin("owner")
+	files := releaseFiles(resp.Files)
+	total := plannedBytes(u.cfg.Exe, files)
+	u.setStatus(&pb.UpdateStatus{State: "applying", Phase: "downloading", From: version.Version, To: to, BytesTotal: total})
 	dctx, dcancel := context.WithTimeout(ctx, 15*time.Minute)
-	err = update.Apply(dctx, u.cfg, to, releaseFiles(resp.Files), hubFetch(conn))
+	err = update.Apply(dctx, u.cfg, to, files, u.progressFetch(hubFetch(conn), version.Version, to, total))
 	dcancel()
 	if err != nil {
+		// "error": the owner's attempt failed; it doesn't halt a rollout
 		u.setStatus(&pb.UpdateStatus{State: "error", From: version.Version, To: to, Error: err.Error()})
 		return "", "", coded("failed", "%v", err)
 	}
 	keepBusy = true
-	u.setStatus(&pb.UpdateStatus{State: update.PhaseRestarting, From: version.Version, To: to})
+	u.setStatus(&pb.UpdateStatus{State: update.PhaseRestarting, Phase: "restarting", From: version.Version, To: to})
 	go func() {
 		time.Sleep(1500 * time.Millisecond) // the answer and the report go out first
 		u.restart()

@@ -6,6 +6,7 @@ import { ErrorBox, StatePill, useAction, usePoll } from '../components/common'
 import { VersionTag } from '../components/VersionTag'
 import { AMBER, CPU_C, fmtAgo, fmtRTT, gb, GREEN, isRelayed, MEM_C, memPct, nodeKey, RED, shortIds, since } from '../lib/format'
 import { nodeMachines } from '../lib/machines'
+import { machineUpdate, updateRunning, updateStateText } from '../lib/update'
 
 const HIST = 150
 
@@ -212,6 +213,10 @@ function NodeRow({
   const { run, busy } = useAction()
   const m = n.online ? n.metrics : undefined
   const revoked = n.state === 'revoked'
+  // an update of the machine (its own, or its admin worker's: one MSI updates both)
+  const upd = revoked ? undefined : machineUpdate([n, adminWorker])
+  const updating = updateRunning(upd)
+  const updText = updateStateText(upd, n.online ?? false)
   const target = nodeKey(n) // actions name the node by ID
   const pairs = links.flatMap((r) => (r.links ?? []).filter((l) => l.worker === n.name).map((l) => ({ client: r.client, l })))
   const editLabels = () => {
@@ -234,7 +239,7 @@ function NodeRow({
       <td className="nowrap">
         <div className="row" style={sub ? { paddingLeft: 14 } : undefined}>
           {sub && <span className="faint" title="the admin worker of the machine above">↳</span>}
-          <span className="dot" style={{ background: revoked ? RED : n.online ? GREEN : RED }} />
+          <span className="dot" style={{ background: revoked ? RED : n.online ? GREEN : updating ? AMBER : RED }} />
           <b>{n.name}</b>
           <NodeId n={n} short={short} />
           {adminWorker && (
@@ -243,7 +248,7 @@ function NodeRow({
               data-testid={`admin-cap-${n.name}`}
               title={`this machine also runs an admin worker, ${adminWorker.name}: commands as SYSTEM, its owner only, named explicitly`}
             >
-              admin commands: {adminWorker.state === 'revoked' ? 'revoked' : adminWorker.online ? 'online' : 'offline'}
+              admin commands: {adminWorker.state === 'revoked' ? 'revoked' : adminWorker.online ? 'online' : updating ? 'updating' : 'offline'}
             </span>
           )}
           {n.admin_worker && (
@@ -259,7 +264,22 @@ function NodeRow({
           {revoked && <StatePill state="revoked" />}
         </div>
         <div className="muted small">
-          {n.online ? 'online' : `offline ${fmtAgo(since(n.last_seen))}`} · {n.os}/{n.arch} ·{' '}
+          {updating ? (
+            <span className="state-updating" data-testid={`update-${n.name}`}>
+              {updText}
+            </span>
+          ) : (
+            <>
+              {n.online ? 'online' : `offline ${fmtAgo(since(n.last_seen))}`}
+              {updText && (
+                <span className={upd?.state === 'restart_pending' ? 'amber' : 'red'} data-testid={`update-${n.name}`} title={upd?.error}>
+                  {' '}
+                  · {updText}
+                </span>
+              )}
+            </>
+          )}{' '}
+          · {n.os}/{n.arch} ·{' '}
           <VersionTag version={n.version} latest={latest} ua={n.update_available} testId={`outdated-${n.name}`} />
           {n.isolation === 'per-user' && <span title="jobs run under per-user OS accounts"> · per-user</span>}
         </div>
@@ -296,10 +316,12 @@ function NodeRow({
           {pairs.length === 0 && <span className="faint">no client reports</span>}
           {pairs.map(({ client, l }) => {
             const act = (l.legs ?? []).find((x) => x.active)
-            const color = l.state !== 'online' ? RED : act && isRelayed(act.kind) ? AMBER : GREEN
+            // the restart of an update is no outage: amber, "updating"
+            const color = l.state !== 'online' ? (updating ? AMBER : RED) : act && isRelayed(act.kind) ? AMBER : GREEN
             return (
               <div key={client} className="nowrap">
-                {client}: <span style={{ color }}>{l.active || l.state}</span> <span className="mono">{fmtRTT(l.rtt_ms)}</span>
+                {client}: <span style={{ color }}>{l.state !== 'online' && updating ? 'updating' : l.active || l.state}</span>{' '}
+                <span className="mono">{l.state !== 'online' && updating ? '—' : fmtRTT(l.rtt_ms)}</span>
                 {act?.nat && <span className="faint"> nat {act.nat}</span>}
               </div>
             )

@@ -178,6 +178,9 @@ func nodeView(v tenancy.Caller, n *pb.NodeInfo) *pb.NodeInfo {
 	}
 	if n.Owner != v.User { // whom else a worker is shared with is its owner's business
 		n.Shares = nil
+		// its update: the state and phase, not the worker's words nor its
+		// admin worker's name
+		updateView(n.Update)
 		// so is its admin worker (owner-only): the machine is the worker's
 		if n.Companion != "" && !n.AdminWorker {
 			n.Companion, n.CompanionId, n.Machine = "", "", n.Name

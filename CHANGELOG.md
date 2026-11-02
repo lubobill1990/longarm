@@ -41,6 +41,19 @@
 
 ### Added
 
+- A worker that updates shows as **updating**, not offline, for everyone
+  who may see it: the hub keeps an update state per worker
+  (`NodeInfo.update`) from the worker's own reports - phase, download
+  progress, who started it - and its rollouts. The tray's card says
+  "Updating to v0.1.30…" (downloading 12/42 MB, installing, waiting for the
+  worker to come back) without the red link and rpc errors; then online on
+  the new version, or "Update to X failed: <reason>", "didn't finish (last
+  phase: installing)", "restart pending" (msiexec 3010), as dismissible
+  badges with tray notifications. `longarm ls` STATE: `updating
+  0.1.29→0.1.30 (installing)`; a second `longarm worker update` while one
+  runs is refused. The Longarm Update service starts the worker services an
+  MSI update left stopped. docs/usage.md "While a worker updates".
+
 - The Microsoft-internal copy gim-home/longarm gets every release - the same
   tags and files - from a workflow there that copies them every 30 minutes
   with its own token (`.github/gim-home/sync-releases.yml`, committed in

@@ -286,6 +286,18 @@ type Node struct {
 	Channel       string          `json:"channel,omitempty"`
 	UpdateEnabled bool            `json:"update_enabled,omitempty"`
 	Update        json.RawMessage `json:"update,omitempty"`
+	// UpdateState is the update of the node's machine the hub shows
+	// (protojson NodeUpdate; internal/hub/updatestate.go); UpdateResolved
+	// the last attempt that ended (a replayed report of it is ignored),
+	// UpdateHintDropped a rollout version the worker didn't take up (not
+	// asked again), UpdateBootAt the machine's boot time when it needed a
+	// restart (restart_pending ends with a later boot).
+	UpdateState       json.RawMessage `json:"update_state,omitempty"`
+	UpdateResolved    string          `json:"update_resolved,omitempty"`
+	UpdateHintDropped string          `json:"update_hint_dropped,omitempty"`
+	UpdateBootAt      time.Time       `json:"update_boot_at,omitzero"`
+	// UpdateRestarted: the attempt whose restart pending ended with a reboot.
+	UpdateRestarted string `json:"update_restarted,omitempty"`
 	// Tailnet: the worker's last reported embedded tailscale node
 	// (protojson TailnetState), the last key the hub minted for the node
 	// (when, for which control server, why) and a pending admin re-key.

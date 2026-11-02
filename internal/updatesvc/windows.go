@@ -518,6 +518,8 @@ func WindowsConfig(version, publicKey string, log *slog.Logger) (Config, string,
 		NewSource: func(hub string) (Source, error) { return NewHTTPSource(hub) },
 		Workspace: ws, Launcher: TaskLauncher{}, Store: FileStore{Path: filepath.Join(up, "state.json")},
 		Log: log,
+		// the watchdog: worker services an update left stopped
+		Services: msiupgrade.SCM{}, WorkerServices: msiupgrade.WorkerServices,
 	}, up, nil
 }
 

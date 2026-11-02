@@ -29,10 +29,12 @@ type Rules struct {
 	relayed map[string]bool
 	jobs    map[string]pb.JobState // worker/id
 	jobsSet bool
+	upd     map[string]*pb.NodeUpdate // the hub's update state, by worker
 }
 
 func NewRules() *Rules {
-	return &Rules{status: map[string]string{}, memHigh: map[string]bool{}, relayed: map[string]bool{}, jobs: map[string]pb.JobState{}}
+	return &Rules{status: map[string]string{}, memHigh: map[string]bool{}, relayed: map[string]bool{}, jobs: map[string]pb.JobState{},
+		upd: map[string]*pb.NodeUpdate{}}
 }
 
 // Pool compares a pool view with the previous one. Only the user's own
@@ -46,7 +48,17 @@ func (r *Rules) Pool(v *pb.PoolView, now time.Time) []Notification {
 			continue
 		}
 		prev, seen := r.status[w.Name]
+		u := w.GetNode().GetUpdate()
+		pu, seenU := r.upd[w.Name]
+		r.upd[w.Name] = u
+		updating := u.GetState() == "updating" || u.GetState() == "requested"
+		if n, ok := updateNote(w, pu, u, seenU); ok {
+			out = append(out, n)
+		}
+		finished := pu != nil && u == nil && w.GetNode().GetVersion() == pu.GetTo()
 		switch {
+		case updating && w.State == "offline", finished && w.State == "online":
+			// restarting for its update, or back from it ("updated" said it)
 		case w.State == "offline" && seen && (prev == "online" || prev == "connecting"):
 			msg := w.Error
 			if msg == "" {
@@ -151,4 +163,33 @@ func nonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// updateNote: a change of the worker's update worth a notification - it
+// finished, failed, didn't finish, needs a restart of the machine.
+func updateNote(w *pb.PoolWorker, prev, cur *pb.NodeUpdate, seen bool) (Notification, bool) {
+	if !seen || prev.GetState() == cur.GetState() && prev.GetTo() == cur.GetTo() {
+		return Notification{}, false
+	}
+	to := strings.TrimPrefix(cur.GetTo(), "v")
+	switch cur.GetState() {
+	case "":
+		if prev.GetState() == "updating" && w.GetNode().GetVersion() == prev.GetTo() {
+			return Notification{w.Name + " updated", "now on Longarm " + strings.TrimPrefix(prev.GetTo(), "v")}, true
+		}
+	case "failed":
+		why := cur.GetError()
+		if why == "" {
+			why = cur.GetCode()
+		}
+		return Notification{w.Name + " update failed", fmt.Sprintf("the update to %s failed: %s", to, why)}, true
+	case "timed_out":
+		return Notification{w.Name + " update didn't finish", fmt.Sprintf("the update to %s didn't finish (last phase: %s); the worker is not back", to,
+			nonEmpty(strings.ReplaceAll(cur.GetPhase(), "_", " "), "unknown"))}, true
+	case "mismatch":
+		return Notification{w.Name + " came back on another version", fmt.Sprintf("expected %s, runs %s", to, strings.TrimPrefix(w.GetNode().GetVersion(), "v"))}, true
+	case "restart_pending":
+		return Notification{w.Name + " needs a restart", "restart the machine to finish installing Longarm " + to}, true
+	}
+	return Notification{}, false
 }
