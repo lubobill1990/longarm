@@ -567,7 +567,7 @@ func TestEntraNoConfig(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("/auth/login: %d", resp.StatusCode)
 	}
-	if _, body := plainGet(t, "http://"+th.h.Addr("http")+"/auth/info"); !strings.Contains(body, `"entra": false`) {
+	if _, body := plainGet(t, "http://"+th.h.Addr("http")+"/auth/info"); !strings.Contains(body, `"entra": false`) || strings.Contains(body, `"tenant"`) {
 		t.Fatalf("/auth/info without Entra: %s", body)
 	}
 }

@@ -81,6 +81,13 @@ export const IconClose = (p: P) => (
   </Svg>
 )
 
+/** Add: a plus. */
+export const IconPlus = (p: P) => (
+  <Svg {...p}>
+    <path d="M8 3v10M3 8h10" />
+  </Svg>
+)
+
 export const IconMore = (p: P) => (
   <Svg {...p}>
     <path d="M3.5 8h.01M8 8h.01M12.5 8h.01" strokeWidth={2.4} />
