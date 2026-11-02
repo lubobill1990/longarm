@@ -41,13 +41,20 @@
   runs is refused. The Longarm Update service starts the worker services an
   MSI update left stopped. docs/usage.md "While a worker updates".
 
+- **Hub front page**: `/` is a public page that explains Longarm (what it is
+  for, three steps, agents, disconnects, NAT traversal, the toolbox) and
+  how to install it on this hub - its MSI, the one-line installs and its
+  sign-in providers. Top right: Sign in, or who you are and "Open my hub"
+  (`/nodes` for administrators, `/jobs` for users); `/login` moves
+  signed-in visitors on into the panel.
+- A promo film's sources (`marketing/promo-video`): script, voice-over and
+  music pipeline and a HyperFrames generator.
 - Disk space and network traffic in the charts: workers report their
   interfaces' bytes per second in and out (loopback excluded;
   `MetricsSnapshot.net_rx/tx_bytes_per_sec`, `MetricsPoint.disk/net_rx/net_tx`),
   and the tray's and panel's worker cards add a DISK bar and line and a network
   chart from the chart's legend (off by default, remembered). Hovering any chart
   shows every series' value at that moment.
-
 - **Steerable agent runs**: `longarm run --steerable -- claude -p "task"`
   (or `copilot -p`) runs the agent interactively on a terminal on the
   worker, as a job: `longarm attach --job <id>` / the tray's Sessions

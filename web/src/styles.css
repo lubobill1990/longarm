@@ -72,6 +72,8 @@ textarea { font-family: var(--mono); }
 .topbar .brand { font-weight: 600; font-size: 15px; }
 /* the Longarm icon (packaging/icons; favicon.png is its 16-32 px version) */
 .brand-mark { flex: none; display: block; width: 20px; height: 20px; }
+.topbar .brand-link { display: flex; align-items: center; gap: 8px; color: var(--fg); }
+.topbar .brand-link:hover { text-decoration: none; }
 .topbar nav { display: flex; gap: 4px; }
 .topbar nav a { color: var(--muted); padding: 4px 10px; border-radius: 6px; }
 .topbar nav a.active, .topbar nav a:hover { color: var(--fg); background: var(--track); text-decoration: none; }

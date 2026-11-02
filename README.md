@@ -82,7 +82,9 @@ Longarm lets the agent (or you) say *"run this over there"*:
     punching and a relay fallback (UDP or TLS over TCP) built into the hub.
 - **Tray app and web panel** - `longarm-tray` shows live CPU/memory per worker,
   your link to each (direct or relayed, RTT), your jobs and forwards; the hub's
-  web panel (login with TOTP) manages nodes, jobs, join codes and users.
+  web panel (login with TOTP) manages nodes, jobs, join codes and users. The
+  hub's front page (`/`) explains Longarm to newcomers and carries that hub's
+  installers; signed in, its top right leads into your part of the panel.
 - **Signed self-updates** - releases are minisign-signed; workers update canary
   first, health-check the new version and roll back by themselves; MSI
   installs and clients get an update notice instead.

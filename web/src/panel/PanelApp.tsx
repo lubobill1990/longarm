@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { hubApi, isAdmin } from '../api/hub'
 import { ApiError } from '../api/http'
 import type { Me } from '../api/types'
@@ -18,6 +18,9 @@ import { PortLinksPage } from './PortLinksPage'
 import { ProfilesPage } from './ProfilesPage'
 import { TenantsPage } from './TenantsPage'
 import { UsersPage } from './UsersPage'
+
+// its own chunk (fonts, illustrations): the panel pages and the tray don't load it
+const LandingPage = lazy(() => import('../landing/LandingPage'))
 
 // Administrators see machines and jobs as their user does (Nodes, Jobs);
 // the fleet as a whole only as counts (Fleet).
@@ -58,6 +61,18 @@ export function PanelApp() {
       .then(setMe)
       .catch((e) => setMe(e instanceof ApiError && e.status === 401 ? null : null))
   }, [])
+  // signed in on /login (back from a provider's sign-in): into the hub
+  useEffect(() => {
+    if (me && path === '/login') navigate(home(me), { replace: true })
+  }, [me, path])
+  // the front page, signed in or not
+  if (path === '/') {
+    return (
+      <Suspense fallback={null}>
+        <LandingPage me={me} hubHome={me ? home(me) : '/login'} />
+      </Suspense>
+    )
+  }
   if (me === undefined) return <div className="notice">loading…</div>
   if (me === null) {
     return (
@@ -66,7 +81,7 @@ export function PanelApp() {
           onLogin={() =>
             hubApi.me().then((m) => {
               setMe(m)
-              if (path === '/' || path === '/login') navigate(home(m))
+              if (path === '/login') navigate(home(m), { replace: true })
             })
           }
         />
@@ -75,14 +90,16 @@ export function PanelApp() {
   }
   const admin = isAdmin(me)
   const nav = admin ? ADMIN_NAV : USER_NAV
-  const page = path === '/' || path === '/login' ? home(me) : '/' + path.split('/')[1]
+  const page = path === '/login' ? home(me) : '/' + path.split('/')[1]
   const allowed = page === '/me' || page === '/get' || nav.some(([to]) => to === page)
   return (
     <Toasts>
       <div className="shell">
         <header className="topbar">
-          <img className="brand-mark" src="/favicon.png" alt="" aria-hidden="true" />
-          <span className="brand">Longarm</span>
+          <Link to="/" className="brand-link">
+            <img className="brand-mark" src="/favicon.png" alt="" aria-hidden="true" />
+            <span className="brand">Longarm</span>
+          </Link>
           <span className="muted small">
             {me.hub} · {me.version}
           </span>

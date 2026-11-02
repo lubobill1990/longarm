@@ -4,9 +4,10 @@ import { useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 
 const listeners = new Set<() => void>()
 
-export function navigate(to: string) {
+export function navigate(to: string, { replace = false } = {}) {
   if (to === location.pathname + location.search) return
-  history.pushState(null, '', to)
+  if (replace) history.replaceState(null, '', to)
+  else history.pushState(null, '', to)
   listeners.forEach((l) => l())
 }
 
