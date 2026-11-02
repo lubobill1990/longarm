@@ -221,7 +221,7 @@ function TitleBar({ info, pool, online, total }: { info?: TrayInfo; pool?: PoolV
         if (e.button === 0 && !(e.target as HTMLElement).closest('button, .ver-pop')) wailsMessage('wails:drag')
       }}
     >
-      <span className="brand-mark" aria-hidden="true" />
+      <img className="brand-mark" src="/favicon.png" alt="" aria-hidden="true" />
       <span className="title">Remote Workers</span>
       <VersionChip info={info} pool={pool} />
       <span className={`count-pill ${total === 0 ? '' : allUp ? 'ok' : online ? 'warn' : 'bad'}`}>

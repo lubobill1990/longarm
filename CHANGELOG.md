@@ -213,6 +213,9 @@
   reports for the node"), for up to ~30 days per worker. The cache now keeps
   them next to the ID: exactly the certificates the hub last reported are
   accepted, any other without an ID is still refused.
+- The tray's title bar and the Sessions window still showed the old
+  gradient square, and the hub panel's top bar no mark at all: all three show
+  the Longarm icon now.
 
 - **External relay upgrades on hubs with node IDs (#45).** `longarm-hub
   issue` - and with it `longarm-hub-relay-cert` (`deploy.sh --relay`,
