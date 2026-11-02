@@ -291,3 +291,14 @@ export const skills = {
     { agent: 'gemini', name: 'Gemini CLI', detected: false, dir: 'C:\\Users\\alice\\.gemini\\skills\\longarm', state: 'modified', installed_version: '0.9.1', bundled_version: '0.9.2', modified: ['SKILL.md'] },
   ],
 }
+
+/** GET /trayapi/addmachine: a Microsoft-internal hub */
+export const addMachine = {
+  hub_host: 'hub.example.com',
+  version: '0.9.2',
+  tenant: '72f988bf-86f1-41af-91ab-2d7cd011db47',
+  internal: true,
+  repo: 'github.com/gim-home/longarm',
+  public_repo: 'github.com/example/longarm',
+  internal_repo: 'github.com/gim-home/longarm',
+}

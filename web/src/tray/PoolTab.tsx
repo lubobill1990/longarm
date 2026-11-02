@@ -6,7 +6,8 @@ import { OfflineRow, WorkerCard, type CardActions } from '../components/WorkerCa
 import { updateRunning } from '../lib/update'
 import { fmtAgo, since } from '../lib/format'
 import { poolMachines } from '../lib/machines'
-import { IconServers, IconUser } from '../components/icons'
+import { IconPlus, IconServers, IconUser } from '../components/icons'
+import { AddMachine } from './AddMachine'
 import { EmptyState, Skeleton } from './ui'
 
 /** Where to read how to add a machine (the README's install steps). */
@@ -100,6 +101,8 @@ export function PoolTab({ pool, error, info, onNavigate }: { pool?: PoolView; er
   const { run } = useAction()
   const now = useNow()
   const [updates, startUpdate] = useWorkerUpdates()
+  const [adding, setAdding] = useState(false)
+  if (adding) return <AddMachine onClose={() => setAdding(false)} />
   if (!pool)
     return error ? (
       <ErrorBox error={error} />
@@ -149,7 +152,7 @@ export function PoolTab({ pool, error, info, onNavigate }: { pool?: PoolView; er
   return (
     <div>
       <ErrorBox error={error} />
-      {empty && <EmptyPool needSignIn={!!info?.account?.needed} onNavigate={onNavigate} />}
+      {empty && <EmptyPool needSignIn={!!info?.account?.needed} onNavigate={onNavigate} onAdd={() => setAdding(true)} />}
       {active.length > 0 && (
         <div className="cards">
           {active.map((m) => (
@@ -167,11 +170,17 @@ export function PoolTab({ pool, error, info, onNavigate }: { pool?: PoolView; er
           ))}
         </details>
       )}
+      {!empty && (
+        <button className="fab" aria-label="Add a machine" title="Add a machine" data-testid="add-machine-fab" onClick={() => setAdding(true)}>
+          <IconPlus size={20} />
+        </button>
+      )}
+      {!empty && <div className="fab-spacer" aria-hidden="true" />}
     </div>
   )
 }
 
-function EmptyPool({ needSignIn, onNavigate }: { needSignIn: boolean; onNavigate?: (tab: string) => void }) {
+function EmptyPool({ needSignIn, onNavigate, onAdd }: { needSignIn: boolean; onNavigate?: (tab: string) => void; onAdd: () => void }) {
   if (needSignIn)
     return (
       <EmptyState
@@ -194,7 +203,14 @@ function EmptyPool({ needSignIn, onNavigate }: { needSignIn: boolean; onNavigate
       testId="empty-pool"
       icon={<IconServers size={20} />}
       title="No workers yet"
-      action={<button onClick={() => trayApi.open(INSTALL_URL)}>How to install</button>}
+      action={
+        <>
+          <button className="primary" data-testid="empty-add-machine" onClick={onAdd}>
+            Add a machine
+          </button>{' '}
+          <button onClick={() => trayApi.open(INSTALL_URL)}>How to install</button>
+        </>
+      }
     >
       Install Longarm on a Dev Box (or any machine) and sign in there.
     </EmptyState>
