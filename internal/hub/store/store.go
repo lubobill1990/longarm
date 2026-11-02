@@ -296,6 +296,8 @@ type Node struct {
 	UpdateResolved    string          `json:"update_resolved,omitempty"`
 	UpdateHintDropped string          `json:"update_hint_dropped,omitempty"`
 	UpdateBootAt      time.Time       `json:"update_boot_at,omitzero"`
+	// UpdateRestarted: the attempt whose restart pending ended with a reboot.
+	UpdateRestarted string `json:"update_restarted,omitempty"`
 	// Tailnet: the worker's last reported embedded tailscale node
 	// (protojson TailnetState), the last key the hub minted for the node
 	// (when, for which control server, why) and a pending admin re-key.

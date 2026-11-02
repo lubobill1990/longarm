@@ -274,6 +274,23 @@ func (h *Hub) updateReportLocked(n *node, s *pb.UpdateStatus, now time.Time) (ch
 	}
 	att := attemptOf(s)
 	cur := n.upd
+	if s.State == update.PhaseOK && s.RebootRequired {
+		// msiexec 3010: the result may come after the new version said
+		// hello (the update looked done): a restart is still pending -
+		// unless the machine restarted since (UpdateRestarted).
+		switch {
+		case att == n.rec.UpdateRestarted, cur != nil && cur.State == updRestartPending:
+			return false
+		case cur != nil && sameAttempt(cur, s):
+		case activeUpdate(cur), s.At == nil || now.Sub(s.At.AsTime()) > time.Hour:
+			return false
+		default:
+			cur = &pb.NodeUpdate{From: s.From, To: s.To, Attempt: att, StartedAt: s.Started, Reported: true, Method: s.Method}
+			n.upd = cur
+		}
+		h.restartPendingLocked(n, cur, now)
+		return true
+	}
 	// A replay of an update that ended (and was resolved) already: an older
 	// worker's reports carry no attempt ID - its in-progress report of the
 	// same target counts as new unless it runs that version already.
@@ -552,6 +569,7 @@ func (h *Hub) updateMetricsLocked(n *node, m *pb.MetricsSnapshot, now time.Time)
 	}
 	boot := now.Add(-time.Duration(m.UptimeSeconds) * time.Second)
 	if boot.After(n.rec.UpdateBootAt.Add(2 * time.Minute)) {
+		n.rec.UpdateRestarted = u.Attempt // its 3010 result, reported again, is done
 		n.upd = nil
 		n.rec.UpdateBootAt = time.Time{}
 		h.saveUpdateLocked(n)

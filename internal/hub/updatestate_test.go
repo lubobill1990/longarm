@@ -322,6 +322,26 @@ func TestUpdateStateRestartPending(t *testing.T) {
 	if i := u.info(n).Update; i != nil {
 		t.Fatalf("after the reboot: %v", i)
 	}
+	// the result reported again after the reboot (the service keeps it): done
+	s = u.connect(n, "0.1.30", ok)
+	if i := u.info(n).Update; i != nil {
+		t.Fatalf("the 3010 came back after the reboot: %v", i)
+	}
+
+	// the order of an MSI update: the new version says hello (done), the
+	// service reports msiexec's 3010 a moment later
+	m := u.worker("w2", "alice", "0.1.29", nil)
+	s = u.connect(m, "0.1.29", nil)
+	u.report(m, s, st("restarting", "installing", "0.1.29", "0.1.30"))
+	u.disconnect(m)
+	s = u.connect(m, "0.1.30", nil)
+	if i := u.info(m).Update; i != nil {
+		t.Fatalf("hello on the new version: %v", i)
+	}
+	u.report(m, s, ok)
+	if i := u.info(m).Update; i.GetState() != updRestartPending {
+		t.Fatalf("3010 after the hello: %v", i)
+	}
 }
 
 // Edge case 4: running jobs and sessions keep running with both update
