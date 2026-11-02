@@ -2372,6 +2372,13 @@ user sees (its own and shared machines, fleet workers; its own jobs) and
 the "Fleet" page the whole fleet as counts per user, worker versions and,
 optionally, each user's versions (`GET /api/admin/summary`; aggregates
 only, no names, audited).
+**Feedback**: the front page, the panel's top bar and longarm-tray (the
+version details in its title bar, the Account tab) link to where the hub
+collects feedback and bug reports - `[web] feedback_url` in hub.toml
+(`LONGARM_HUB_WEB_FEEDBACK_URL`; Azure: `--feedback-url`), e.g. a team
+channel for a company hub; without it (and with a hub from before it) the
+project's GitHub issues. The hub publishes it in `/auth/info`, `/healthz`
+and `/api/me`; the tray takes its signed-in hub's.
 Pages: nodes (online state, CPU and
 memory sparklines, Claude/Copilot sessions, each client's path and RTT to the
 worker, labels, approve pending, drain/resume, revoke, toolchain profile and

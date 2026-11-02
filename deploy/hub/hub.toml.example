@@ -37,6 +37,9 @@ default = 2.0
 [web]
 session_ttl = "12h"
 trusted_proxies = ["127.0.0.0/8", "172.16.0.0/12"]   # Caddy on the host -> docker bridge
+# where the front page, the panel and longarm-tray send feedback and bug reports
+# (LONGARM_HUB_WEB_FEEDBACK_URL; default the project's GitHub issues)
+# feedback_url = "https://forms.example.com/longarm"
 
 [heartbeat]
 interval = "2s"                    # metrics period asked from workers

@@ -140,6 +140,9 @@ param schedulerGateFreeGb string = ''
 @description('Minisign public key line (RW...) releases are signed with: the hub refuses uploaded releases whose signature does not verify (empty = no check).')
 param releasePublicKey string = ''
 
+@description('Where the front page, the panel and longarm-tray send feedback and bug reports, an http(s) link (empty = the project\'s GitHub issues).')
+param feedbackUrl string = ''
+
 @description('Entra sign-in for the web panel: spa (no credential; SPA redirect URI https://<fqdn>/auth/spa-callback), confidential (storageAuth identity: the managed identity as a federated credential; Web redirect URI https://<fqdn>/auth/callback) or off.')
 @allowed([
   'spa'
@@ -588,7 +591,8 @@ var hubEnv = concat(
   // reads it back on a re-run.
   [{ name: 'LONGARM_HUB_RELAY_STUN_ADVERTISE', value: empty(stunServers) ? 'self' : 'self,${stunServers}' }],
   empty(schedulerGateFreeGb) ? [] : [{ name: 'LONGARM_HUB_SCHED_GATE_FREE_GB', value: schedulerGateFreeGb }],
-  empty(releasePublicKey) ? [] : [{ name: 'LONGARM_HUB_RELEASES_PUBLIC_KEY', value: releasePublicKey }]
+  empty(releasePublicKey) ? [] : [{ name: 'LONGARM_HUB_RELEASES_PUBLIC_KEY', value: releasePublicKey }],
+  empty(feedbackUrl) ? [] : [{ name: 'LONGARM_HUB_WEB_FEEDBACK_URL', value: feedbackUrl }]
 )
 
 var hubPorts = [

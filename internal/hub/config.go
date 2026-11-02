@@ -316,7 +316,14 @@ type WebConfig struct {
 	// -Host / -Proto headers are believed (default loopback; with docker add
 	// the bridge network, e.g. "172.16.0.0/12").
 	TrustedProxies []string `toml:"trusted_proxies"`
+	// FeedbackURL is where the front page, the panel and longarm-tray send
+	// people with feedback and bug reports (a team channel, a form);
+	// default the project's GitHub issues.
+	FeedbackURL string `toml:"feedback_url"`
 }
+
+// DefaultFeedbackURL is [web] feedback_url when the hub sets none.
+const DefaultFeedbackURL = "https://github.com/lubobill1990/longarm/issues"
 
 // HeartbeatConfig is [heartbeat].
 type HeartbeatConfig struct {
@@ -459,6 +466,12 @@ func (c *Config) applyDefaults() error {
 	c.PublicURL = strings.TrimRight(c.PublicURL, "/")
 	if c.PublicURL != "" && !strings.HasPrefix(c.PublicURL, "http://") && !strings.HasPrefix(c.PublicURL, "https://") {
 		return errors.New("public_url must start with http:// or https://")
+	}
+	if c.Web.FeedbackURL == "" {
+		c.Web.FeedbackURL = DefaultFeedbackURL
+	}
+	if !strings.HasPrefix(c.Web.FeedbackURL, "http://") && !strings.HasPrefix(c.Web.FeedbackURL, "https://") {
+		return errors.New("[web] feedback_url must start with http:// or https://")
 	}
 	if c.HTTPS == "off" {
 		c.HTTPS = ""
