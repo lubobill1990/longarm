@@ -171,10 +171,10 @@ func TestMatch(t *testing.T) {
 	for _, c := range []struct {
 		worker, installed, lastLogon, want string
 	}{
-		{"cpc-bolu1-252m5", "2026-10-27T06:51:55Z", "2026-10-29T05:24:36Z", "arm3"},
-		{"cpc-bolu1-hucaa", "2026-10-30T14:28:59Z", "", "arm4"},
-		{"cpc-bolu1-nyg7h", "2026-10-26T06:14:59Z", "2026-10-29T03:52:51Z", "arm1"},
-		{"cpc-bolu1-xefcn", "2026-10-26T06:17:07Z", "2026-10-27T05:07:01Z", "arm2"},
+		{"cpc-alice-252m5", "2026-10-27T06:51:55Z", "2026-10-29T05:24:36Z", "arm3"},
+		{"cpc-alice-hucaa", "2026-10-30T14:28:59Z", "", "arm4"},
+		{"cpc-alice-nyg7h", "2026-10-26T06:14:59Z", "2026-10-29T03:52:51Z", "arm1"},
+		{"cpc-alice-xefcn", "2026-10-26T06:17:07Z", "2026-10-27T05:07:01Z", "arm2"},
 	} {
 		f := Facts{Installed: ts(t, c.installed), CPUs: 32}
 		if c.lastLogon != "" {

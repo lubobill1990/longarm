@@ -96,12 +96,12 @@ func TestChooseDevBoxMatched(t *testing.T) {
 	st := &desktopStore{Workers: map[string]desktopLink{}}
 	facts := devbox.Facts{Installed: at("2026-10-27T06:51:55Z")}
 	var out strings.Builder
-	b, err := chooseDevBox(boxes, st, "cpc-bolu1-252m5", "dc1", "", false, facts, strings.NewReader(""), &out, false)
+	b, err := chooseDevBox(boxes, st, "cpc-alice-252m5", "dc1", "", false, facts, strings.NewReader(""), &out, false)
 	if err != nil || b.Name != "arm3" || !strings.Contains(out.String(), "created 8m0s before Windows was installed on it") {
 		t.Fatalf("matched: %+v %v %q", b, err, out.String())
 	}
 	out.Reset()
-	b, err = chooseDevBox(boxes, st, "cpc-bolu1-252m5", "dc1", "", true, facts, strings.NewReader("1\n"), &out, true)
+	b, err = chooseDevBox(boxes, st, "cpc-alice-252m5", "dc1", "", true, facts, strings.NewReader("1\n"), &out, true)
 	if err != nil || b.Name != "arm3" || !strings.Contains(out.String(), "1) ODSP/arm3  -, ? (likely)") {
 		t.Fatalf("--pick: %+v %v %q", b, err, out.String())
 	}
