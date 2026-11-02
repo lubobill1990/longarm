@@ -145,7 +145,27 @@ a.button:hover { text-decoration: none; border-color: var(--muted); }
 .bar .value { text-align: right; font-family: var(--mono); font-size: 12px; }
 
 .spark { display: block; width: 100%; background: var(--bg); border: 1px solid var(--track); }
-.spark-legend { display: flex; gap: 10px; font-size: 10px; padding: 0 4px; }
+.spark-legend { display: flex; gap: 10px; font-size: 10px; padding: 0 4px; align-items: center; }
+/* hover: the values at one moment (charts.tsx Sparkline) */
+.spark-wrap { position: relative; }
+.spark-tip {
+  position: absolute; top: 2px; z-index: 5; pointer-events: none; white-space: nowrap;
+  padding: 4px 7px; font-size: 10.5px; font-variant-numeric: tabular-nums; border-radius: 6px;
+  background: var(--surface, var(--bg)); border: 1px solid var(--border, var(--track));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); transform: translateX(6px);
+}
+.spark-tip.left { transform: translateX(-6px); }
+.spark-tip-when { color: var(--text-3, var(--muted)); margin-bottom: 2px; }
+.spark-tip-row { display: flex; justify-content: space-between; gap: 12px; }
+.spark-tip-row .v { color: var(--text, var(--fg)); }
+/* legend entries that add a series (disk, network): off until clicked */
+.spark-toggle {
+  font: inherit; font-size: inherit; line-height: 1.4; padding: 0 6px; cursor: pointer;
+  background: transparent; color: var(--text-3, var(--muted));
+  border: 1px dashed var(--border, var(--track)); border-radius: 999px;
+}
+.spark-toggle:hover { color: var(--c); border-color: var(--c); }
+.spark-toggle.on { color: var(--c); border-style: solid; border-color: color-mix(in srgb, var(--c) 45%, transparent); }
 
 .minibar { display: inline-block; width: 60px; height: 6px; background: var(--track); vertical-align: middle; border-radius: 1px; overflow: hidden; }
 .minibar > span { display: block; height: 100%; }
@@ -201,3 +221,13 @@ table.grid tr.subrow td { border-top: none; }
 .tops .p .v { font-family: var(--mono); color: var(--muted); }
 
 /* the tray popup: tray/tokens.css and tray/tray.css */
+
+/* the link row's dropdown (WorkerCard: every leg, the one in use marked) */
+.link-more { font: inherit; font-size: 10.5px; padding: 0 6px; cursor: pointer; color: var(--muted); background: transparent; border: 1px solid var(--track); border-radius: 999px; }
+.link-more:hover, .link-more[aria-expanded='true'] { color: var(--fg); }
+.legs-list { display: grid; gap: 2px; margin: 4px 0 6px; padding: 4px 6px; border: 1px solid var(--track); border-radius: 6px; font-size: 10.5px; }
+.leg-row { display: grid; grid-template-columns: 12px auto 1fr auto; gap: 8px; align-items: baseline; color: var(--muted); }
+.leg-row.active { color: var(--fg); }
+.leg-row .leg-ep { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.netrow { display: flex; gap: 12px; align-items: baseline; margin: 2px 0; font-variant-numeric: tabular-nums; }
+.netrow .label { color: var(--muted); width: 34px; }

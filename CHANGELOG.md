@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Tray: the window and the tray icon are "Longarm" (not "Remote Workers"). A
+  worker card's link row shows the leg in use; "N paths" opens every leg with
+  its endpoint and RTT (they were all listed as chips). longnet legs are named
+  after the relay they met through ("longnet direct · hub", "· relay"), so two
+  direct paths can be told apart.
+
+- `longarm desktop` tells which of your Dev Boxes a worker is by itself: the
+  worker reports when Windows was installed on it and its last remote
+  desktop logon, and the Dev Box created minutes before that install - or, of
+  several created together, the one last connected then - is picked without
+  asking. It only asks when that doesn't settle it, the likeliest first.
+  The Dev Center API is called with api-version 2025-02-01.
+
 - Tray: only Claude Code / Copilot CLI sessions notify when they end (done,
   failed, killed, lost); plain commands - the many `longarm exec` / `run`
   calls an agent makes - no longer pop a toast each.
@@ -23,6 +36,12 @@
   signed-in visitors on into the panel.
 - A promo film's sources (`marketing/promo-video`): script, voice-over and
   music pipeline and a HyperFrames generator.
+- Disk space and network traffic in the charts: workers report their
+  interfaces' bytes per second in and out (loopback excluded;
+  `MetricsSnapshot.net_rx/tx_bytes_per_sec`, `MetricsPoint.disk/net_rx/net_tx`),
+  and the tray's and panel's worker cards add a DISK bar and line and a network
+  chart from the chart's legend (off by default, remembered). Hovering any chart
+  shows every series' value at that moment.
 - **Steerable agent runs**: `longarm run --steerable -- claude -p "task"`
   (or `copilot -p`) runs the agent interactively on a terminal on the
   worker, as a job: `longarm attach --job <id>` / the tray's Sessions
@@ -212,6 +231,23 @@
 
 ### Fixed
 
+- `longarm desktop` told one of two Dev Boxes created together wrong or not at
+  all: it compared their last connection with the worker's newest remote
+  logon only, which can be a reconnect without a user (after an update).
+  Workers report every logon since Windows was installed now
+  (`DesktopInfo.remote_logons`); the box whose last connection matches one
+  of them, with the fewest logons after it, is the one. The Dev Center API's
+  occasional 500 (and throttling, network errors) are retried.
+
+- **Workers with a certificate from before node IDs, while the hub is
+  unreachable (#45).** The client's cache of the hub's node list
+  (`hub-cache.json`) kept each worker's node ID but not its legacy serials
+  (`NodeInfo.legacy_serials`), so a `longarm` on the cache - the hub slow or
+  down - demanded the ID and refused every worker not yet renewed since node
+  IDs ("a certificate without a node id answered ... not one the hub
+  reports for the node"), for up to ~30 days per worker. The cache now keeps
+  them next to the ID: exactly the certificates the hub last reported are
+  accepted, any other without an ID is still refused.
 - The tray's title bar and the Sessions window still showed the old
   gradient square, and the hub panel's top bar no mark at all: all three show
   the Longarm icon now.

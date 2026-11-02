@@ -4,6 +4,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lubobill1990/longarm/internal/devbox"
 )
@@ -20,7 +21,7 @@ func TestChooseDevBox(t *testing.T) {
 		"w-b": {DevCenter: "dc1", Project: "Other", DevBox: "arm1", URL: "ms-avd:connect?b"},
 	}}
 	pick := func(worker, want string, pick bool, input string, tty bool) (devbox.DevBox, error) {
-		return chooseDevBox(testBoxes, st, worker, "dc1", want, pick, strings.NewReader(input), io.Discard, tty)
+		return chooseDevBox(testBoxes, st, worker, "dc1", want, pick, devbox.Facts{}, strings.NewReader(input), io.Discard, tty)
 	}
 	// The only Dev Box no other worker has.
 	if b, err := pick("w-c", "", false, "", false); err != nil || b.Name != "arm2" {
@@ -81,5 +82,27 @@ func TestDesktopStore(t *testing.T) {
 	got := loadDesktopStore()
 	if got.Workers["w1"].DevBox != "arm1" || got.Endpoints["t/dc"] == "" {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+// TestChooseDevBoxMatched: with the worker's facts the Dev Box is picked
+// without a question; --pick asks, the likeliest first and marked.
+func TestChooseDevBoxMatched(t *testing.T) {
+	at := func(s string) time.Time { v, _ := time.Parse(time.RFC3339, s); return v }
+	box := func(name, created string) devbox.DevBox {
+		return devbox.DevBox{Name: name, ProjectName: "ODSP", CreatedTime: at(created)}
+	}
+	boxes := []devbox.DevBox{box("bot1", "2026-07-09T03:03:57Z"), box("arm3", "2026-10-27T06:43:42Z"), box("arm4", "2026-10-30T14:19:10Z")}
+	st := &desktopStore{Workers: map[string]desktopLink{}}
+	facts := devbox.Facts{Installed: at("2026-10-27T06:51:55Z")}
+	var out strings.Builder
+	b, err := chooseDevBox(boxes, st, "cpc-alice-252m5", "dc1", "", false, facts, strings.NewReader(""), &out, false)
+	if err != nil || b.Name != "arm3" || !strings.Contains(out.String(), "created 8m0s before Windows was installed on it") {
+		t.Fatalf("matched: %+v %v %q", b, err, out.String())
+	}
+	out.Reset()
+	b, err = chooseDevBox(boxes, st, "cpc-alice-252m5", "dc1", "", true, facts, strings.NewReader("1\n"), &out, true)
+	if err != nil || b.Name != "arm3" || !strings.Contains(out.String(), "1) ODSP/arm3  -, ? (likely)") {
+		t.Fatalf("--pick: %+v %v %q", b, err, out.String())
 	}
 }

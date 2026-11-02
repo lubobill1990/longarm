@@ -53,7 +53,7 @@ func (c *Controller) Last() (*pb.PoolView, error) {
 func (c *Controller) Run(ctx context.Context) {
 	addrFile := filepath.Join(c.opts.LongarmConfigDir, "daemon.addr")
 	c.shell.SetIcon(IconPNG(nil))
-	c.shell.SetTooltip("Remote Workers: starting")
+	c.shell.SetTooltip("Longarm: starting")
 	var lastStart time.Time
 	go c.jobsLoop(ctx, addrFile)
 	for ctx.Err() == nil {
@@ -64,7 +64,7 @@ func (c *Controller) Run(ctx context.Context) {
 		c.mu.Lock()
 		c.err = err
 		c.mu.Unlock()
-		c.shell.SetTooltip("Remote Workers: longarm daemon unreachable")
+		c.shell.SetTooltip("Longarm: longarm daemon unreachable")
 		if c.start != nil && time.Since(lastStart) > 30*time.Second {
 			lastStart = time.Now()
 			if err := c.start(); err != nil {

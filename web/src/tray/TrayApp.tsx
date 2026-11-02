@@ -222,7 +222,7 @@ function TitleBar({ info, pool, online, total }: { info?: TrayInfo; pool?: PoolV
       }}
     >
       <img className="brand-mark" src="/favicon.png" alt="" aria-hidden="true" />
-      <span className="title">Remote Workers</span>
+      <span className="title">Longarm</span>
       <VersionChip info={info} pool={pool} />
       <span className={`count-pill ${total === 0 ? '' : allUp ? 'ok' : online ? 'warn' : 'bad'}`}>
         <span className="count-dot" aria-hidden="true" />

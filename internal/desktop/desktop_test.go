@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // devBoxTags are the IMDS tags of a real Dev Box (ids shortened).
@@ -55,5 +56,32 @@ func TestQueryIMDS(t *testing.T) {
 	srv.Close()
 	if _, ok := queryIMDS(context.Background()); ok {
 		t.Fatal("queryIMDS succeeded without a server")
+	}
+}
+
+// TestLastRemoteLogon: the newest logon / reconnect after Windows was
+// installed; the image's own events (before it) don't count.
+func TestLastRemoteLogon(t *testing.T) {
+	installed := time.Date(2026, 10, 26, 6, 17, 7, 0, time.UTC)
+	xml := `<Event><System><EventID>25</EventID><TimeCreated SystemTime='2026-10-29T05:24:11.1234567Z'/></System></Event>` +
+		`<Event><System><EventID>21</EventID><TimeCreated SystemTime='2026-10-27T05:07:01.0000000Z'/></System></Event>` +
+		`<Event><System><EventID>21</EventID><TimeCreated SystemTime='2026-10-25T10:22:55.0000000Z'/></System></Event>`
+	if got := LastRemoteLogon(xml, installed); !got.Equal(time.Date(2026, 10, 29, 5, 24, 11, 123456700, time.UTC)) {
+		t.Fatalf("got %v", got)
+	}
+	if got := LastRemoteLogon(`<Event><System><TimeCreated SystemTime='2026-10-25T10:22:55.0000000Z'/></System></Event>`, installed); !got.IsZero() {
+		t.Fatalf("an image event counted: %v", got)
+	}
+}
+
+// TestRemoteLogons: every logon after the install, newest first.
+func TestRemoteLogons(t *testing.T) {
+	installed := time.Date(2026, 10, 26, 6, 17, 7, 0, time.UTC)
+	xml := `<Event><TimeCreated SystemTime='2026-10-27T05:07:01.0000000Z'/></Event>` +
+		`<Event><TimeCreated SystemTime='2026-10-29T05:24:11.0000000Z'/></Event>` +
+		`<Event><TimeCreated SystemTime='2026-10-25T10:22:55.0000000Z'/></Event>`
+	got := RemoteLogons(xml, installed)
+	if len(got) != 2 || !got[0].Equal(time.Date(2026, 10, 29, 5, 24, 11, 0, time.UTC)) || !got[1].Equal(time.Date(2026, 10, 27, 5, 7, 1, 0, time.UTC)) {
+		t.Fatalf("got %v", got)
 	}
 }

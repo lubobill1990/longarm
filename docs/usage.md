@@ -1365,9 +1365,13 @@ What the worker is decides how its desktop opens (longarmd reports it in
   Dev Center it was made by); `longarm desktop` then asks that Dev Center
   for your Dev Boxes with your Azure CLI sign-in (`az login --tenant
   <tenant>`; Longarm stores no Azure tokens) and for the chosen one's
-  `ms-avd:` link. Which Dev Box a worker is can't be told from either side,
-  so the first time it takes the only Dev Box no other worker has, or asks
-  (`--devbox` without a terminal). The choice, the link and the Dev Center's
+  `ms-avd:` link. The Dev Center API knows no host names, so the worker says
+  when Windows was installed on it and when someone last connected to it
+  remotely: the Dev Box created minutes before that install (of the
+  worker's size) is the one, and of several created together, the one whose
+  last connection matches. It only asks (`--devbox` without a terminal) when
+  that doesn't settle it, the likeliest first; a worker older than this
+  release can't tell, then it takes the only Dev Box no other worker has. The choice, the link and the Dev Center's
   endpoint are kept in `<config>/desktop.json`; after that the link opens
   without reaching the worker, so a stopped or hibernated Dev Box starts as
   Windows App connects. Without the Azure CLI it opens
@@ -2388,7 +2392,11 @@ next to it (left click; hides on focus loss unless pinned; drag it by the
 title bar). The popup shows the load of every worker you may see (your own,
 shared with you, the fleet's - admins too, there is no "all workers" switch)
 plus this client's link to each: active leg and path (tcp, tailscale direct/peer-relay/DERP, longnet
-direct/relay-udp/relay-tcp), NAT types, RTT with a 5-minute sparkline. Data
+direct/relay-udp/relay-tcp, longnet legs named after the relay they met through: "longnet direct · hub",
+"· relay"), NAT types, RTT with a 5-minute sparkline; "N paths" opens every leg with its endpoint and
+RTT. The charts' legend adds disk space used and network traffic (bytes per second in and out,
+loopback excluded) on request, remembered on this computer; hovering a chart shows every series'
+value at that moment. Data
 comes from `longarm daemon` (hub events when the hub is reachable, otherwise
 streamed from the workers; the popup shows which). Tabs: workers, my jobs
 (the jobs started from this computer, like `longarm jobs --mine`: a click

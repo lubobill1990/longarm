@@ -77,6 +77,17 @@ message DesktopInfo {
   int32 rdp_port = 3; // rdp: the port Remote Desktop listens on
   string dev_center = 4; // devbox: the Dev Center's name
   string dev_center_tenant = 5; // devbox: its Entra tenant id
+  // devbox: when Windows was installed here - the Dev Box was provisioned
+  // minutes before, so its createdTime is just before this - and the last
+  // remote desktop logon or reconnect since then (its lastConnectedTime is
+  // just after). The Dev Center API knows no host names: this is how
+  // longarm desktop tells which of the user's Dev Boxes the worker is.
+  google.protobuf.Timestamp os_installed = 6;
+  google.protobuf.Timestamp last_remote_logon = 7;
+  // devbox: every remote desktop logon or reconnect since os_installed,
+  // newest first (at most 50): the one matching a Dev Box's last
+  // connection, and how many came after it, tell boxes created together apart.
+  repeated google.protobuf.Timestamp remote_logons = 8;
 }
 
 // AgentAuth says which coding agents' credentials the client forwarded
@@ -363,6 +374,10 @@ message MetricsSnapshot {
   repeated ProcGroup top_mem = 11;
   uint64 disk_free_bytes = 12; // volume holding the data dir
   uint64 disk_total_bytes = 13;
+  // Network traffic of the machine's interfaces (loopback excluded), bytes
+  // per second over the last sampling interval.
+  uint64 net_rx_bytes_per_sec = 14;
+  uint64 net_tx_bytes_per_sec = 15;
 }
 
 // ---------------------------------------------------------------- Admin

@@ -67,6 +67,10 @@ type Config struct {
 	// a worker (client.Dialer.StickyLeg), "" = none.
 	Sticky func(worker string) string
 	Now    func() time.Time
+	// HubAddr is the hub's address: a longnet leg through its relay is
+	// labeled "... · hub", one through another relay "... · <relay>"
+	// (client.LegVia).
+	HubAddr string
 }
 
 // Monitor keeps the pool view.
@@ -100,6 +104,7 @@ type worker struct {
 type leg struct {
 	w        client.Worker
 	label    string
+	via      string // the relay a longnet leg goes through (client.LegVia)
 	prober   Prober
 	dialErr  string
 	inflight bool
@@ -107,6 +112,14 @@ type leg struct {
 	hist     []*pb.LinkSample
 	probed   bool
 	lastAt   time.Time // last probe start
+}
+
+// labeled appends the leg's relay to a path label: "longnet direct · hub".
+func (l *leg) labeled(label string) string {
+	if l.via == "" {
+		return label
+	}
+	return label + " · " + l.via
 }
 
 // New returns a monitor; Run drives it.
@@ -244,8 +257,8 @@ func (m *Monitor) refresh(ctx context.Context) {
 
 // newLeg opens a leg's connection (lazily connecting: cheap).
 func (m *Monitor) newLeg(tl client.Worker) *leg {
-	l := &leg{w: tl, label: tl.Transport}
-	l.st = pb.LegStatus{Transport: tl.Transport, Endpoint: tl.Transport + "://" + tl.Address, Label: tl.Transport}
+	l := &leg{w: tl, label: tl.Transport, via: client.LegVia(tl.Transport, tl.Address, m.cfg.HubAddr)}
+	l.st = pb.LegStatus{Transport: tl.Transport, Endpoint: tl.Transport + "://" + tl.Address, Label: l.labeled(tl.Transport)}
 	p, err := m.cfg.Dial(tl)
 	if err != nil {
 		l.dialErr = err.Error()
@@ -401,7 +414,7 @@ func (m *Monitor) observeLocked(l *leg, now time.Time, rtt time.Duration, pi tra
 			st.Kind, st.Detail = string(pi.Kind), pi.Detail
 			st.Nat = client.NATOf(pi.Detail)
 			if lb := client.LegLabel(pi); lb != "" {
-				st.Label = lb
+				st.Label = l.labeled(lb)
 			}
 		}
 	}
@@ -453,6 +466,10 @@ func (m *Monitor) setMetricsLocked(w *worker, s *pb.MetricsSnapshot, source stri
 	if s.MemTotalBytes > 0 {
 		p.Mem = 100 * float64(s.MemUsedBytes) / float64(s.MemTotalBytes)
 	}
+	if s.DiskTotalBytes > 0 && s.DiskTotalBytes >= s.DiskFreeBytes {
+		p.Disk = 100 * float64(s.DiskTotalBytes-s.DiskFreeBytes) / float64(s.DiskTotalBytes)
+	}
+	p.NetRx, p.NetTx = float64(s.NetRxBytesPerSec), float64(s.NetTxBytesPerSec)
 	w.hist = append(w.hist, p)
 	if len(w.hist) > HistoryLen {
 		w.hist = append(w.hist[:0:0], w.hist[len(w.hist)-HistoryLen:]...)

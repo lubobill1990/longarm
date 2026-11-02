@@ -31,6 +31,9 @@ export interface MetricsSnapshot {
   top_mem?: ProcGroup[]
   disk_free_bytes?: Int64
   disk_total_bytes?: Int64
+  /** bytes per second over the last interval, loopback excluded */
+  net_rx_bytes_per_sec?: Int64
+  net_tx_bytes_per_sec?: Int64
 }
 
 export interface ToolchainReport {
@@ -210,6 +213,11 @@ export interface MetricsPoint {
   time?: string
   cpu?: number
   mem?: number
+  /** percent of the data dir's volume used */
+  disk?: number
+  /** bytes per second */
+  net_rx?: number
+  net_tx?: number
 }
 
 export interface LinkSample {

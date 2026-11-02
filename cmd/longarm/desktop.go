@@ -19,6 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/desktop"
@@ -151,7 +152,7 @@ that needs an admin certificate (the port is the system's, not yours).
 			}
 			switch d.Kind {
 			case desktop.KindDevBox:
-				l, err := resolveDevBox(ctx, st, worker, d, devBoxName, pick)
+				l, err := resolveDevBox(ctx, st, worker, d, int(info.GetNumCpu()), devBoxName, pick)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "longarm: %s is a Dev Box (Dev Center %s), but its link could not be found: %s\n", worker, d.DevCenter, oneLine(err))
 					fmt.Fprintf(os.Stderr, "longarm: open it from the Dev Box portal instead: %s\n", devbox.PortalURL)
@@ -220,7 +221,7 @@ func launchDesktopLink(worker string, l desktopLink, web, printOnly bool) error 
 
 // resolveDevBox finds which of the user's Dev Boxes worker is and its link,
 // and remembers both.
-func resolveDevBox(ctx context.Context, st *desktopStore, worker string, d *pb.DesktopInfo, want string, pick bool) (desktopLink, error) {
+func resolveDevBox(ctx context.Context, st *desktopStore, worker string, d *pb.DesktopInfo, cpus int, want string, pick bool) (desktopLink, error) {
 	key := d.DevCenterTenant + "/" + d.DevCenter
 	endpoint := st.Endpoints[key]
 	if !devbox.ValidEndpoint(endpoint) {
@@ -244,7 +245,11 @@ func resolveDevBox(ctx context.Context, st *desktopStore, worker string, d *pb.D
 	if len(boxes) == 0 {
 		return desktopLink{}, errors.New("you have no Dev Boxes in this Dev Center")
 	}
-	box, err := chooseDevBox(boxes, st, worker, d.DevCenter, want, pick, os.Stdin, os.Stderr, stdinIsTerminal())
+	facts := devbox.Facts{Installed: tsTime(d.GetOsInstalled()), LastLogon: tsTime(d.GetLastRemoteLogon()), CPUs: cpus}
+	for _, l := range d.GetRemoteLogons() {
+		facts.Logons = append(facts.Logons, l.AsTime())
+	}
+	box, err := chooseDevBox(boxes, st, worker, d.DevCenter, want, pick, facts, os.Stdin, os.Stderr, stdinIsTerminal())
 	if err != nil {
 		return desktopLink{}, err
 	}
@@ -272,7 +277,7 @@ var stdinIsTerminal = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 // chooseDevBox picks worker's Dev Box: the one named by want; else the only
 // one not already taken by another worker of the same Dev Center; else the
 // user's choice (on a terminal).
-func chooseDevBox(boxes []devbox.DevBox, st *desktopStore, worker, devCenter, want string, pick bool, in io.Reader, out io.Writer, tty bool) (devbox.DevBox, error) {
+func chooseDevBox(boxes []devbox.DevBox, st *desktopStore, worker, devCenter, want string, pick bool, facts devbox.Facts, in io.Reader, out io.Writer, tty bool) (devbox.DevBox, error) {
 	if want != "" {
 		project, name, ok := strings.Cut(want, "/")
 		if !ok {
@@ -308,14 +313,38 @@ func chooseDevBox(boxes []devbox.DevBox, st *desktopStore, worker, devCenter, wa
 		fmt.Fprintf(out, "longarm: %s is Dev Box %s/%s (your only one not linked to another worker)\n", worker, free[0].ProjectName, free[0].Name)
 		return free[0], nil
 	}
+	// The worker's install time and last remote logon tell which Dev Box
+	// it is (devbox.Match): no question when they do.
+	rankedFree, sure, why := devbox.Match(free, facts)
+	if sure && !pick {
+		b := rankedFree[0]
+		fmt.Fprintf(out, "longarm: %s is Dev Box %s/%s (%s)\n", worker, b.ProjectName, b.Name, why)
+		return b, nil
+	}
 	if !tty {
 		return devbox.DevBox{}, fmt.Errorf("which Dev Box is %s? say it with --devbox (yours: %s)", worker, devBoxNames(boxes))
+	}
+	// the likeliest first, the ones other workers have last
+	likely := ""
+	if r, _, _ := devbox.Match(free, facts); len(r) > 0 && !facts.Installed.IsZero() {
+		likely = strings.ToLower(r[0].ProjectName + "/" + r[0].Name)
+		boxes = append(r, func() []devbox.DevBox {
+			var taken []devbox.DevBox
+			for _, b := range boxes {
+				if takenBy[strings.ToLower(b.ProjectName+"/"+b.Name)] != "" {
+					taken = append(taken, b)
+				}
+			}
+			return taken
+		}()...)
 	}
 	fmt.Fprintf(out, "Which Dev Box is %s?\n", worker)
 	for i, b := range boxes {
 		note := ""
 		if w := takenBy[strings.ToLower(b.ProjectName+"/"+b.Name)]; w != "" {
 			note = " (worker " + w + ")"
+		} else if strings.ToLower(b.ProjectName+"/"+b.Name) == likely {
+			note = " (likely)"
 		}
 		fmt.Fprintf(out, "  %d) %s/%s  %s, %s%s\n", i+1, b.ProjectName, b.Name, nonEmptyStr(b.PoolName, "-"), nonEmptyStr(b.PowerState, "?"), note)
 	}
@@ -329,6 +358,14 @@ func chooseDevBox(boxes []devbox.DevBox, st *desktopStore, worker, devCenter, wa
 		return devbox.DevBox{}, fmt.Errorf("no Dev Box chosen (want 1-%d)", len(boxes))
 	}
 	return boxes[n-1], nil
+}
+
+// tsTime is ts as a time; zero when unset (an older worker).
+func tsTime(ts *timestamppb.Timestamp) time.Time {
+	if ts == nil {
+		return time.Time{}
+	}
+	return ts.AsTime()
 }
 
 func devBoxNames(boxes []devbox.DevBox) string {
