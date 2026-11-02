@@ -3,14 +3,21 @@ import { longarmApi, trayApi, type TrayInfo, type WorkerUpdateJob } from '../api
 import type { PoolView, PoolWorker } from '../api/types'
 import { ErrorBox, useAction } from '../components/common'
 import { OfflineRow, WorkerCard, type CardActions } from '../components/WorkerCard'
+import { docsURL, repoURL } from '../lib/feedback'
 import { fmtAgo, since } from '../lib/format'
 import { poolMachines } from '../lib/machines'
 import { IconPlus, IconServers, IconUser } from '../components/icons'
 import { AddMachine } from './AddMachine'
 import { EmptyState, Skeleton } from './ui'
 
-/** Where to read how to add a machine (the README's install steps). */
-export const INSTALL_URL = 'https://github.com/lubobill1990/longarm/blob/main/docs/usage.md#install'
+/** Opens how to add a machine (the docs' install steps) in the repository the hub points at. */
+function openInstallDocs() {
+  const open = (repo?: string) => trayApi.open(docsURL(repoURL(repo), 'usage.md', 'install')).catch(() => {})
+  trayApi.update().then(
+    (u) => open(u.repo_url),
+    () => open(),
+  )
+}
 
 /** Whether this client's certificate is an admin's (longarm admin ...). */
 export function isAdminClient(pool?: PoolView): boolean {
@@ -187,7 +194,9 @@ function EmptyPool({ needSignIn, onNavigate, onAdd }: { needSignIn: boolean; onN
           <button className="primary" data-testid="empty-add-machine" onClick={onAdd}>
             Add a machine
           </button>{' '}
-          <button onClick={() => trayApi.open(INSTALL_URL)}>How to install</button>
+          <button data-testid="install-docs" onClick={openInstallDocs}>
+            How to install
+          </button>
         </>
       }
     >

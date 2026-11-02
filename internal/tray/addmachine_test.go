@@ -11,13 +11,17 @@ import (
 
 func TestAddMachineInfo(t *testing.T) {
 	for _, c := range []struct {
-		name, tenant string
-		internal     bool
-		repo         string
+		name, tenant, repoURL string
+		internal              bool
+		repo                  string
 	}{
-		{"microsoft", "72F988BF-86F1-41AF-91AB-2D7CD011DB47", true, InternalRepo},
-		{"other tenant", "11111111-2222-3333-4444-555555555555", false, PublicRepo},
-		{"no entra", "", false, PublicRepo},
+		{"microsoft", "72F988BF-86F1-41AF-91AB-2D7CD011DB47", "", true, InternalRepo},
+		{"other tenant", "11111111-2222-3333-4444-555555555555", "", false, PublicRepo},
+		{"no entra", "", "", false, PublicRepo},
+		// the hub's [web] repo_url wins over the tenant
+		{"repo_url internal", "", "https://github.com/gim-home/longarm/", true, InternalRepo},
+		{"repo_url public", "72f988bf-86f1-41af-91ab-2d7cd011db47", "https://github.com/lubobill1990/longarm", false, PublicRepo},
+		{"repo_url not GitHub", "", "https://git.example.com/team/longarm", false, PublicRepo},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			calls := 0
@@ -28,6 +32,9 @@ func TestAddMachineInfo(t *testing.T) {
 					m := map[string]any{"entra": c.tenant != ""}
 					if c.tenant != "" {
 						m["tenant"] = c.tenant
+					}
+					if c.repoURL != "" {
+						m["repo_url"] = c.repoURL
 					}
 					_ = json.NewEncoder(w).Encode(m)
 				case "/releases/latest.json":

@@ -36,7 +36,7 @@ func (f *fakeReleaseHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			{"name": "longarmd-linux-amd64", "sha256": "00", "size": 1},
 		}})
 	case "/healthz":
-		json.NewEncoder(w).Encode(map[string]any{"ok": true, "version": "1.1.5", "feedback_url": "https://chat.example.com/team"})
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "version": "1.1.5", "feedback_url": "https://chat.example.com/team", "repo_url": "https://git.example.com/team/longarm/"})
 	case "/releases/" + f.version + "/" + name:
 		w.Write(f.msi)
 	case "/releases/" + f.version + "/" + name + update.SigExt:
@@ -144,20 +144,21 @@ func TestTrayUpdateInfo(t *testing.T) {
 		s := &Server{opts: Options{Version: c.current, HubURL: hub.URL, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 		s.upd.goos = c.goos
 		s.refreshUpdate(context.Background(), false)
-		if got := s.updateInfo(); got.Available != c.want || got.Hub != "1.1.5" || got.Latest != "1.2.0" || got.FeedbackURL != "https://chat.example.com/team" {
+		if got := s.updateInfo(); got.Available != c.want || got.Hub != "1.1.5" || got.Latest != "1.2.0" || got.FeedbackURL != "https://chat.example.com/team" ||
+			got.RepoURL != "https://git.example.com/team/longarm" {
 			t.Errorf("%s on %s: %+v", c.current, c.goos, got)
 		}
 	}
 	// no hub configured: no request, no banner
 	s := &Server{opts: Options{Version: "1.0.0", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 	s.refreshUpdate(context.Background(), true)
-	if got := s.updateInfo(); got.Available || got.FeedbackURL != "" {
+	if got := s.updateInfo(); got.Available || got.FeedbackURL != "" || got.RepoURL != "" {
 		t.Fatalf("banner or a hub's feedback link without a hub: %+v", got)
 	}
 }
 
-// TestTrayHubFeedbackLink: only a web link from the hub becomes the
-// Feedback link (the tray opens it in the browser).
+// TestTrayHubFeedbackLink: only web links from the hub become the
+// Feedback and repository links (the tray opens them in the browser).
 func TestTrayHubFeedbackLink(t *testing.T) {
 	for _, c := range []struct{ sent, want string }{
 		{"https://chat.example.com/team", "https://chat.example.com/team"},
@@ -165,11 +166,11 @@ func TestTrayHubFeedbackLink(t *testing.T) {
 		{"", ""}, // an older hub
 	} {
 		hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			json.NewEncoder(w).Encode(map[string]any{"ok": true, "version": "1.1.5", "feedback_url": c.sent})
+			json.NewEncoder(w).Encode(map[string]any{"ok": true, "version": "1.1.5", "feedback_url": c.sent, "repo_url": c.sent})
 		}))
 		s := &Server{opts: Options{Version: "1.0.0", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
-		if _, got := s.hubHealth(context.Background(), hub.URL); got != c.want {
-			t.Errorf("%q: %q", c.sent, got)
+		if got := s.hubHealth(context.Background(), hub.URL); got.feedback != c.want || got.repo != c.want {
+			t.Errorf("%q: %+v", c.sent, got)
 		}
 		hub.Close()
 	}

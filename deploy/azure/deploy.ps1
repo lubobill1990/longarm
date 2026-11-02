@@ -71,6 +71,9 @@ param(
     # where the front page, the panel and longarm-tray send feedback and bug reports (hub.toml
     # [web] feedback_url; empty = the project's GitHub issues), e.g. -FeedbackUrl https://forms.example.com/longarm
     [string]$FeedbackUrl = '',
+    # the source repository the front page links to (hub.toml [web] repo_url; empty = the public
+    # GitHub repository), e.g. a company's internal copy
+    [string]$RepoUrl = '',
     # send container logs to Log Analytics (with -Telemetry its workspace, else one of their own):
     # they keep the logs of crashed starts, which ACI drops
     [switch]$LogAnalytics,
@@ -458,6 +461,7 @@ if ($GateFreeGb -and $GateFreeGb -notmatch '^[0-9]+([.][0-9]+)?$') { throw '-Gat
 # the key line of a minisign .pub file, not the file or its comment line
 if ($ReleasePublicKey -and $ReleasePublicKey -cnotmatch '^RW[A-Za-z0-9+/=]{40,}$') { throw '-ReleasePublicKey: the minisign public key line (RW...), e.g. (Get-Content longarm-release.pub)[-1]' }
 if ($FeedbackUrl -and $FeedbackUrl -notmatch '^https?://[^\s]+$') { throw '-FeedbackUrl: an http(s) link' }
+if ($RepoUrl -and $RepoUrl -notmatch '^https?://[^\s]+$') { throw '-RepoUrl: an http(s) link' }
 $StorageAuth = $StorageAuth.ToLowerInvariant()
 $rg = $ResourceGroup
 $template = Join-Path $PSScriptRoot 'azuredeploy.json'
@@ -543,7 +547,7 @@ try {
     # the identity (seen on a real run: a retry after a failed recreate fell
     # back to storage keys, which the subscription's policy denies). Secrets
     # can't be read back from any of them: a hub that has them needs them again.
-    $prevKeys = 'image', 'size', 'panel', 'auth', 'acr', 'logs', 'telemetry', 'diagnostics', 'stun', 'gate', 'relkey', 'feedback',
+    $prevKeys = 'image', 'size', 'panel', 'auth', 'acr', 'logs', 'telemetry', 'diagnostics', 'stun', 'gate', 'relkey', 'feedback', 'repo',
         'entra_tenant', 'entra_client', 'entra_admins', 'entra_web', 'entra_apps', 'headscale', 'public_derp', 'registry', 'registry_user', 'tailscale'
     function Get-EmptyPrev { $h = [ordered]@{}; foreach ($k in $prevKeys) { $h[$k] = '' }; $h }
     function ConvertTo-Flag($b) { if ($b) { 'true' } else { 'false' } }
@@ -572,7 +576,7 @@ try {
         # the template sets self[,<stunServers>]; absent = a hub from before (template default)
         if ($f[6] -eq 'self') { $p.stun = 'none' } elseif ($f[6] -like 'self,*') { $p.stun = $f[6].Substring(5) }
         # plain environment values: the scheduler gate, the release key, Entra
-        $vq = "containers[0].environmentVariables[?starts_with(name, 'LONGARM_HUB_ENTRA_') || name=='LONGARM_HUB_SCHED_GATE_FREE_GB' || name=='LONGARM_HUB_RELEASES_PUBLIC_KEY' || name=='LONGARM_HUB_WEB_FEEDBACK_URL'].[name, value]"
+        $vq = "containers[0].environmentVariables[?starts_with(name, 'LONGARM_HUB_ENTRA_') || name=='LONGARM_HUB_SCHED_GATE_FREE_GB' || name=='LONGARM_HUB_RELEASES_PUBLIC_KEY' || name=='LONGARM_HUB_WEB_FEEDBACK_URL' || name=='LONGARM_HUB_WEB_REPO_URL'].[name, value]"
         foreach ($l in @(Invoke-AzQuiet container show -g $rg -n $Name -o tsv --query $vq)) {
             $kv = "$l".TrimEnd("`r", "`n") -split "`t", 2
             if ($kv.Count -lt 2) { continue }
@@ -581,6 +585,7 @@ try {
                 'LONGARM_HUB_SCHED_GATE_FREE_GB' { $p.gate = $v }
                 'LONGARM_HUB_RELEASES_PUBLIC_KEY' { $p.relkey = $v }
                 'LONGARM_HUB_WEB_FEEDBACK_URL' { $p.feedback = $v }
+                'LONGARM_HUB_WEB_REPO_URL' { $p.repo = $v }
                 'LONGARM_HUB_ENTRA_TENANT_ID' { $p.entra_tenant = $v }
                 'LONGARM_HUB_ENTRA_CLIENT_ID' { $p.entra_client = $v }
                 'LONGARM_HUB_ENTRA_ADMINS' { $p.entra_admins = $v }
@@ -632,7 +637,7 @@ try {
     $histMap = [ordered]@{
         image = 'image'; size = 'size'; panel = 'enablePanel'; auth = 'storageAuth'; acr = 'acrName'; logs = 'enableLogAnalytics'
         telemetry = 'enableTelemetry'; diagnostics = 'enableDiagnostics'; stun = 'stunServers'; gate = 'schedulerGateFreeGb'
-        relkey = 'releasePublicKey'; feedback = 'feedbackUrl'; entra_tenant = 'entraTenantId'; entra_client = 'entraClientId'; entra_admins = 'entraAdmins'
+        relkey = 'releasePublicKey'; feedback = 'feedbackUrl'; repo = 'repoUrl'; entra_tenant = 'entraTenantId'; entra_client = 'entraClientId'; entra_admins = 'entraAdmins'
         entra_web = 'entraWeb'; entra_apps = 'entraApps'; headscale = 'enableHeadscale'; public_derp = 'headscalePublicDerp'
         registry = 'registryServer'; registry_user = 'registryUsername'
     }
@@ -675,12 +680,12 @@ try {
     # compare them with, unless the operator gives them explicitly.
     $secOption = [ordered]@{
         image = '-Image'; auth = '-StorageAuth'; acr = '-Acr'; registry_user = '-RegistryUser'
-        relkey = '-ReleasePublicKey'; feedback = '-FeedbackUrl'; entra_tenant = '-EntraTenant'; entra_client = '-EntraClient'; entra_admins = '-EntraAdmins'
+        relkey = '-ReleasePublicKey'; feedback = '-FeedbackUrl'; repo = '-RepoUrl'; entra_tenant = '-EntraTenant'; entra_client = '-EntraClient'; entra_admins = '-EntraAdmins'
         entra_web = '-EntraWeb'; entra_apps = '-EntraApps'
     }
     $given = @{
         image = [bool]$Image; auth = [bool]$StorageAuth; acr = [bool]$Acr; registry_user = [bool]$RegistryUser
-        relkey = [bool]$ReleasePublicKey; feedback = [bool]$FeedbackUrl; entra_tenant = [bool]$EntraTenant; entra_client = [bool]$EntraClient; entra_admins = [bool]$EntraAdmins
+        relkey = [bool]$ReleasePublicKey; feedback = [bool]$FeedbackUrl; repo = [bool]$RepoUrl; entra_tenant = [bool]$EntraTenant; entra_client = [bool]$EntraClient; entra_admins = [bool]$EntraAdmins
         entra_web = [bool]$EntraWeb; entra_apps = [bool]$EntraApps
     }
     $tplDefaults = (Get-Content -Raw $template | ConvertFrom-Json).parameters
@@ -735,7 +740,7 @@ try {
             $prev.auth = $StorageAuth
             $prevSrc = 'snapshot'
         } elseif (-not $StorageAuth -and (@(Invoke-AzQuiet storage account list -g $rg --query "[?starts_with(name, 'lahub')].name" -o tsv) -join '')) {
-            throw "the resource group $rg has a hub's storage, but neither a container group, a successful deployment nor a settings snapshot to read its settings from: pass them (at least -StorageAuth key|identity; and -Image, -Entra*, -Telemetry, -Diagnostics, -Headscale, -ReleasePublicKey, -FeedbackUrl, -GateFreeGb, -StunServers as the hub had them)"
+            throw "the resource group $rg has a hub's storage, but neither a container group, a successful deployment nor a settings snapshot to read its settings from: pass them (at least -StorageAuth key|identity; and -Image, -Entra*, -Telemetry, -Diagnostics, -Headscale, -ReleasePublicKey, -FeedbackUrl, -RepoUrl, -GateFreeGb, -StunServers as the hub had them)"
         }
     }
 
@@ -769,6 +774,7 @@ try {
         if (-not $GateFreeGb) { $GateFreeGb = $prev.gate }
         if (-not $ReleasePublicKey) { $ReleasePublicKey = $prev.relkey }
         if (-not $FeedbackUrl) { $FeedbackUrl = $prev.feedback }
+        if (-not $RepoUrl) { $RepoUrl = $prev.repo }
         if (-not $EntraTenant) {
             $EntraTenant = $prev.entra_tenant
             if (-not $EntraClient) { $EntraClient = $prev.entra_client }
@@ -862,7 +868,7 @@ try {
     $cfg = @{
         Name = $Name; Size = $Size; Panel = [bool]$panelOn; Logs = [bool]$logsOn; StorageAuth = $StorageAuth
         Telemetry = [bool]$telemetryOn; Diagnostics = [bool]$diagnosticsOn; Headscale = [bool]$headscaleOn; PublicDerp = [bool]$publicDerpOn
-        Acr = $Acr; Image = $Image; AcmeEmail = $AcmeEmail; Gate = $GateFreeGb; RelKey = $ReleasePublicKey; Feedback = $FeedbackUrl
+        Acr = $Acr; Image = $Image; AcmeEmail = $AcmeEmail; Gate = $GateFreeGb; RelKey = $ReleasePublicKey; Feedback = $FeedbackUrl; Repo = $RepoUrl
         EntraTenant = $EntraTenant; EntraClient = $EntraClient; EntraAdmins = $EntraAdmins; EntraWeb = $EntraWeb; EntraApps = $EntraApps
         RegistryUser = $RegistryUser; RegistryPassword = $registryPassword; RegHost = $regHost; Stun = $StunServers; TailscaleSecretFile = $TailscaleSecretFile
     }
@@ -897,6 +903,7 @@ try {
         if ($c.Gate) { $p.schedulerGateFreeGb = @{ value = $c.Gate } }
         if ($c.RelKey) { $p.releasePublicKey = @{ value = $c.RelKey } }
         if ($c.Feedback) { $p.feedbackUrl = @{ value = $c.Feedback } }
+        if ($c.Repo) { $p.repoUrl = @{ value = $c.Repo } }
         if ($c.EntraTenant) {
             $p.entraTenantId = @{ value = $c.EntraTenant }
             $p.entraClientId = @{ value = $c.EntraClient }
@@ -1060,7 +1067,7 @@ try {
         $rcfg.Image = $prev.image; $rcfg.Size = $prev.size; $rcfg.Panel = $prev.panel -eq 'true'; $rcfg.Acr = $prev.acr
         $rcfg.Headscale = $prev.headscale -eq 'true'; $rcfg.PublicDerp = $prev.public_derp -eq 'true'; $rcfg.Logs = $prev.logs -eq 'true'
         $rcfg.Telemetry = $prev.telemetry -eq 'true'; $rcfg.Diagnostics = $prev.diagnostics -eq 'true'; $rcfg.Stun = $prev.stun
-        $rcfg.Gate = $prev.gate; $rcfg.RelKey = $prev.relkey; $rcfg.Feedback = $prev.feedback; $rcfg.EntraTenant = $prev.entra_tenant; $rcfg.EntraClient = $prev.entra_client
+        $rcfg.Gate = $prev.gate; $rcfg.RelKey = $prev.relkey; $rcfg.Feedback = $prev.feedback; $rcfg.Repo = $prev.repo; $rcfg.EntraTenant = $prev.entra_tenant; $rcfg.EntraClient = $prev.entra_client
         $rcfg.EntraAdmins = $prev.entra_admins; $rcfg.EntraWeb = $prev.entra_web; $rcfg.EntraApps = $prev.entra_apps
         $rcfg.RegHost = Get-RegistryHost $prev.image
         if ($prev.tailscale -ne 'true') { $rcfg.TailscaleSecretFile = '' }

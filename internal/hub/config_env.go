@@ -44,6 +44,8 @@ const (
 	EnvReleasePublicKey = "LONGARM_HUB_RELEASES_PUBLIC_KEY"
 	// EnvFeedbackURL is [web] feedback_url.
 	EnvFeedbackURL = "LONGARM_HUB_WEB_FEEDBACK_URL"
+	// EnvRepoURL is [web] repo_url.
+	EnvRepoURL = "LONGARM_HUB_WEB_REPO_URL"
 	// [auth.entra]; the lists are comma-separated.
 	EnvEntraTenant          = "LONGARM_HUB_ENTRA_TENANT_ID"
 	EnvEntraClient          = "LONGARM_HUB_ENTRA_CLIENT_ID"
@@ -87,7 +89,7 @@ func (c *Config) applyEnv() error {
 		{EnvEntraTenant, &c.Auth.Entra.TenantID}, {EnvEntraClient, &c.Auth.Entra.ClientID}, {EnvEntraScope, &c.Auth.Entra.Scope},
 		{EnvEntraClientAssertion, &c.Auth.Entra.ClientAssertion}, {EnvEntraSecretFile, &c.Auth.Entra.ClientSecretFile},
 		{EnvEntraWeb, &c.Auth.Entra.Web}, {EnvAppInsights, &c.Telemetry.ConnectionString},
-		{EnvReleasePublicKey, &c.Releases.PublicKey}, {EnvFeedbackURL, &c.Web.FeedbackURL},
+		{EnvReleasePublicKey, &c.Releases.PublicKey}, {EnvFeedbackURL, &c.Web.FeedbackURL}, {EnvRepoURL, &c.Web.RepoURL},
 		{EnvTailnetProvider, &c.Tailnet.Provider}, {EnvHeadscaleURL, &c.Tailnet.Headscale.URL},
 		{EnvHeadscaleAPIURL, &c.Tailnet.Headscale.APIURL}, {EnvHeadscaleAPIKeyFile, &c.Tailnet.Headscale.APIKeyFile},
 		{EnvHeadscaleDir, &c.Tailnet.Headscale.SidecarDir}} {

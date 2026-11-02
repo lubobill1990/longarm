@@ -180,6 +180,8 @@ export interface TrayUpdate {
   hub?: string
   /** where the hub sends feedback and bug reports (its /healthz; missing: an older hub) */
   feedback_url?: string
+  /** the source repository the hub points at (its /healthz; missing: no hub or an older one) */
+  repo_url?: string
   /** a newer release with an MSI for this machine */
   available: boolean
   msi?: string

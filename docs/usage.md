@@ -2372,13 +2372,20 @@ user sees (its own and shared machines, fleet workers; its own jobs) and
 the "Fleet" page the whole fleet as counts per user, worker versions and,
 optionally, each user's versions (`GET /api/admin/summary`; aggregates
 only, no names, audited).
-**Feedback**: the front page, the panel's top bar and longarm-tray (the
-version details in its title bar, the Account tab) link to where the hub
-collects feedback and bug reports - `[web] feedback_url` in hub.toml
-(`LONGARM_HUB_WEB_FEEDBACK_URL`; Azure: `--feedback-url`), e.g. a team
-channel for a company hub; without it (and with a hub from before it) the
-project's GitHub issues. The hub publishes it in `/auth/info`, `/healthz`
-and `/api/me`; the tray takes its signed-in hub's.
+**The hub's links**: every link to the source repository and to feedback
+on the hub's pages and in longarm-tray follows the hub. `[web] repo_url`
+(`LONGARM_HUB_WEB_REPO_URL`; Azure: `--repo-url`) is the repository - the
+front page's GitHub and docs links, the tray's "How to install" and the
+release downloads of its "Add a machine" (a GitHub repository; a hub that
+sends none: its Entra tenant decides, as before) - e.g. a company's
+internal copy; default the public one. `[web] feedback_url`
+(`LONGARM_HUB_WEB_FEEDBACK_URL`; Azure: `--feedback-url`) is where feedback
+and bug reports go - the front page, the panel's top bar, the tray's
+version details and Account tab - e.g. a team channel; default that
+repository's issues. The hub publishes both in `/auth/info`, `/healthz`
+and `/api/me`; the tray takes its signed-in hub's. Without a hub, or with
+a hub from before them: the public repository and its issues. (The film on
+the front page always streams from the public repository's release.)
 Pages: nodes (online state, CPU and
 memory sparklines, Claude/Copilot sessions, each client's path and RTT to the
 worker, labels, approve pending, drain/resume, revoke, toolchain profile and

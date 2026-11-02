@@ -66,10 +66,24 @@ describe('PanelApp', () => {
     mockFetch({
       '/api/me': () => [401, { error: 'login required' }],
       '/releases/latest.json': () => [200, { version: 'v1.2.3', files: [{ name: 'longarm-windows-amd64.msi' }] }],
-      '/auth/info': () => [200, { providers: [{ id: 'entra', label: 'Microsoft' }], feedback_url: 'https://chat.example.com/team' }],
+      '/auth/info': () => [
+        200,
+        { providers: [{ id: 'entra', label: 'Microsoft' }], feedback_url: 'https://chat.example.com/team', repo_url: 'https://git.example.com/team/longarm' },
+      ],
     })
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
     render(<PanelApp />)
     const out = await screen.findByTestId('landing-signed-out')
+    // the hub's repository copy in the footer
+    await waitFor(() => expect(screen.getByTestId('landing-repo').getAttribute('href')).toBe('https://git.example.com/team/longarm'))
+    // the hero's "Watch the film" plays it at once
+    fireEvent.click(screen.getByTestId('hero-film'))
+    expect(play).toHaveBeenCalled()
+    expect(screen.getByTestId('landing-film').hasAttribute('controls')).toBe(true)
+    // the film streams from its release asset, only once it is played
+    const film = screen.getByTestId('landing-film')
+    expect(film.getAttribute('src')).toBe('https://github.com/lubobill1990/longarm/releases/download/promo-film/longarm-promo.mp4')
+    expect(film.getAttribute('preload')).toBe('none')
     // the hub's feedback channel
     await waitFor(() => expect(screen.getByTestId('landing-feedback').getAttribute('href')).toBe('https://chat.example.com/team'))
     expect(out.querySelector('a[href="/login"]')?.textContent).toBe('Sign in')

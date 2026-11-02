@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { hubApi, type AuthProvider } from '../api/hub'
 import type { LatestRelease, Me } from '../api/types'
-import { feedbackURL } from '../lib/feedback'
+import { docsURL, feedbackURL, PUBLIC_REPO, repoURL } from '../lib/feedback'
 import { msiFile } from '../lib/release'
 import { Link } from '../lib/router'
 import { installLines } from '../panel/GetPage'
 import cool from './img/cool.webp'
+import poster from './img/film-poster.webp'
 import hero from './img/hero.webp'
 import melting from './img/melting.webp'
 import sleep from './img/sleep.webp'
@@ -18,8 +19,11 @@ import './landing.css'
 // Public: it only reads /api/me (401 = signed out), /auth/info and
 // /releases/latest.json.
 
-const GITHUB = 'https://github.com/lubobill1990/longarm'
-const DOCS = `${GITHUB}/blob/main/docs/usage.md`
+const docs = (repo: string) => docsURL(repo)
+// the promo film (marketing/promo-video), a release asset: too big for the
+// bundle every hub, tray and MSI carries; loaded only when played.
+// VITE_FILM_URL (pnpm dev): another copy, e.g. a local one
+const FILM = (import.meta.env.VITE_FILM_URL as string | undefined) || `${PUBLIC_REPO}/releases/download/promo-film/longarm-promo.mp4`
 
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
@@ -136,6 +140,7 @@ function TopBar({ me, hubHome }: { me: Me | null | undefined; hubHome: string })
         <span>Longarm</span>
       </a>
       <nav className="lp-nav">
+        <a href="#film">Film</a>
         <a href="#how">How it works</a>
         <a href="#agents">For agents</a>
         <a href="#features">Features</a>
@@ -188,8 +193,16 @@ function Hero({ me, hubHome }: { me: Me | null | undefined; hubHome: string }) {
               Open my hub
             </Link>
           ) : (
-            <a href="#how" className="lp-btn ghost lg">
-              See how it works
+            <a
+              href="#film"
+              className="lp-btn ghost lg"
+              data-testid="hero-film"
+              onClick={(e) => {
+                e.preventDefault()
+                playFilm()
+              }}
+            >
+              ▶ Watch the film
             </a>
           )}
         </div>
@@ -235,6 +248,59 @@ function Meter({ label, value, unit, hot }: { label: string; value: number; unit
         {unit}
       </span>
     </div>
+  )
+}
+
+// ---- the film ---------------------------------------------------------------
+
+/** The hero's "Watch the film": scroll to it and play (in the click, so with sound). */
+const PLAY_FILM = 'lp-play-film'
+function playFilm() {
+  window.dispatchEvent(new Event(PLAY_FILM))
+  document.getElementById('film')?.scrollIntoView?.({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' })
+}
+
+function Film() {
+  const video = useRef<HTMLVideoElement>(null)
+  const [started, setStarted] = useState(false)
+  useEffect(() => {
+    const play = () => {
+      setStarted(true)
+      video.current?.play()?.catch(() => {})
+    }
+    window.addEventListener(PLAY_FILM, play)
+    return () => window.removeEventListener(PLAY_FILM, play)
+  }, [])
+  return (
+    <section className="lp-sec lp-film" id="film">
+      <Reveal className="lp-sec-head center">
+        <p className="lp-kicker">The film</p>
+        <h2>Longarm in under three minutes.</h2>
+      </Reveal>
+      <Reveal className={`lp-player ${started ? 'playing' : ''}`}>
+        <video
+          ref={video}
+          src={FILM}
+          poster={poster}
+          preload="none"
+          playsInline
+          controls={started}
+          onPlay={() => setStarted(true)}
+          data-testid="landing-film"
+        />
+        {!started && (
+          <button
+            type="button"
+            className="lp-play"
+            aria-label="Play the film"
+            onClick={playFilm}
+          >
+            <span className="lp-play-i">▶</span>
+            <span className="lp-play-t">Watch the film · 2:51</span>
+          </button>
+        )}
+      </Reveal>
+    </section>
   )
 }
 
@@ -661,7 +727,19 @@ function Features() {
 
 type OS = 'windows' | 'unix' | 'installed'
 
-function GetStarted({ me, hubHome, providers, feedback }: { me: Me | null | undefined; hubHome: string; providers?: AuthProvider[]; feedback: string }) {
+function GetStarted({
+  me,
+  hubHome,
+  providers,
+  feedback,
+  repo,
+}: {
+  me: Me | null | undefined
+  hubHome: string
+  providers?: AuthProvider[]
+  feedback: string
+  repo: string
+}) {
   const [rel, setRel] = useState<LatestRelease>()
   const [os, setOS] = useState<OS>(() => (/Windows/i.test(navigator.userAgent) ? 'windows' : 'unix'))
   useEffect(() => {
@@ -729,7 +807,7 @@ function GetStarted({ me, hubHome, providers, feedback }: { me: Me | null | unde
               <p className="small">One line - the hub serves the script with its address and CA pinned:</p>
               <CopyLine text={lines.unix} testId="landing-sh" />
               <p className="small faint">
-                Linux packages (apt / dnf) and Homebrew: <a href={`${GITHUB}#quick-start`}>the README</a>.
+                Linux packages (apt / dnf) and Homebrew: <a href={`${repo}#quick-start`}>the README</a>.
               </p>
             </div>
           )}
@@ -776,7 +854,7 @@ function GetStarted({ me, hubHome, providers, feedback }: { me: Me | null | unde
                 Sign in to {location.host}
               </Link>
             )}
-            <a className="lp-btn ghost lg" href={DOCS}>
+            <a className="lp-btn ghost lg" href={docs(repo)}>
               Read the docs
             </a>
           </div>
@@ -792,7 +870,7 @@ function GetStarted({ me, hubHome, providers, feedback }: { me: Me | null | unde
   )
 }
 
-function Footer({ version, feedback }: { version?: string; feedback: string }) {
+function Footer({ version, feedback, repo }: { version?: string; feedback: string; repo: string }) {
   return (
     <footer className="lp-foot">
       <span className="lp-logo">
@@ -804,11 +882,13 @@ function Footer({ version, feedback }: { version?: string; feedback: string }) {
       <a href={feedback} target="_blank" rel="noreferrer">
         Feedback
       </a>
-      <a href={GITHUB}>GitHub</a>
-      <a href={DOCS}>Usage</a>
-      <a href={`${GITHUB}/blob/main/docs/design.md`}>Design</a>
-      <a href={`${GITHUB}/blob/main/docs/security.md`}>Security</a>
-      <a href={`${GITHUB}#run-your-own-hub`}>Run your own hub</a>
+      <a href={repo} data-testid="landing-repo">
+        GitHub
+      </a>
+      <a href={docs(repo)}>Usage</a>
+      <a href={docsURL(repo, 'design.md')}>Design</a>
+      <a href={docsURL(repo, 'security.md')}>Security</a>
+      <a href={`${repo}#run-your-own-hub`}>Run your own hub</a>
       <a href="/status">Status</a>
       <a href="/licenses.txt">Licenses</a>
     </footer>
@@ -818,14 +898,15 @@ function Footer({ version, feedback }: { version?: string; feedback: string }) {
 /** The front page; `me`: undefined while loading, null when signed out. */
 export default function LandingPage({ me, hubHome }: { me: Me | null | undefined; hubHome: string }) {
   // the hub's sign-in providers (the install steps) and feedback link, public
-  const [auth, setAuth] = useState<{ providers?: AuthProvider[]; feedback_url?: string }>()
+  const [auth, setAuth] = useState<{ providers?: AuthProvider[]; feedback_url?: string; repo_url?: string }>()
   useEffect(() => {
     hubApi.authInfo().then(
       (i) => setAuth({ ...i, providers: i.providers ?? (i.entra ? [{ id: '', label: 'Microsoft' }] : []) }),
       () => setAuth({}),
     )
   }, [])
-  const feedback = feedbackURL(auth?.feedback_url ?? me?.feedback_url)
+  const repo = repoURL(auth?.repo_url ?? me?.repo_url)
+  const feedback = feedbackURL(auth?.feedback_url ?? me?.feedback_url, repo)
   useEffect(() => {
     document.title = 'Longarm - give your coding agents a long arm'
     document.documentElement.classList.add('lp-root')
@@ -841,15 +922,16 @@ export default function LandingPage({ me, hubHome }: { me: Me | null | undefined
       <TopBar me={me} hubHome={hubHome} />
       <main>
         <Hero me={me} hubHome={hubHome} />
+        <Film />
         <BeforeAfter />
         <HowItWorks />
         <Agents />
         <Survive />
         <Reach />
         <Features />
-        <GetStarted me={me} hubHome={hubHome} providers={auth?.providers} feedback={feedback} />
+        <GetStarted me={me} hubHome={hubHome} providers={auth?.providers} feedback={feedback} repo={repo} />
       </main>
-      <Footer version={me?.version} feedback={feedback} />
+      <Footer version={me?.version} feedback={feedback} repo={repo} />
     </div>
   )
 }
