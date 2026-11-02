@@ -8,7 +8,22 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
+
+// longName expands the 8.3 short names in an existing path.
+func longName(p string) string {
+	u, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		return p
+	}
+	buf := make([]uint16, 1024)
+	if n, err := windows.GetLongPathName(u, &buf[0], uint32(len(buf))); err == nil && n > 0 && int(n) <= len(buf) {
+		return windows.UTF16ToString(buf[:n])
+	}
+	return p
+}
 
 // TestInstallPs1AccountOnlyAndUninstall: the hub's install.ps1 with -PerUser
 // installs for this account only and, like the MSI, sets the tray to start
@@ -34,9 +49,12 @@ func TestInstallPs1AccountOnlyAndUninstall(t *testing.T) {
 	if out := h.hubCmd(t, "release", "add", rel, "--version", "1.2.3"); !strings.Contains(out, "1.2.3") {
 		t.Fatalf("release add: %s", out)
 	}
-	prefix := filepath.Join(h.root, "pu-bin")
+	// the temp dir by its long name (CI's is C:\Users\RUNNER~1\...): what
+	// shortcuts store and what %LOCALAPPDATA% looks like
+	root := longName(h.root)
+	prefix := filepath.Join(root, "pu-bin")
 	env := fmt.Sprintf("$env:LONGARM_PREFIX='%s'; $env:LONGARM_DATA_DIR='%s'; $env:LONGARM_CONFIG_DIR='%s'; ",
-		prefix, filepath.Join(h.root, "pu-data"), filepath.Join(h.root, "pu-cfg"))
+		prefix, filepath.Join(root, "pu-data"), filepath.Join(root, "pu-cfg"))
 	run := func(script string) string {
 		t.Helper()
 		out, err := exec.Command(pwsh, "-NoProfile", "-NonInteractive", "-Command", env+script).CombinedOutput()
