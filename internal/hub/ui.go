@@ -47,6 +47,10 @@ func recordMetricsLocked(n *node, m *pb.MetricsSnapshot) {
 	if m.MemTotalBytes > 0 {
 		p.Mem = 100 * float64(m.MemUsedBytes) / float64(m.MemTotalBytes)
 	}
+	if m.DiskTotalBytes > 0 && m.DiskTotalBytes >= m.DiskFreeBytes {
+		p.Disk = 100 * float64(m.DiskTotalBytes-m.DiskFreeBytes) / float64(m.DiskTotalBytes)
+	}
+	p.NetRx, p.NetTx = float64(m.NetRxBytesPerSec), float64(m.NetTxBytesPerSec)
 	n.history = append(n.history, p)
 	if len(n.history) > historyLen {
 		n.history = append(n.history[:0:0], n.history[len(n.history)-historyLen:]...)

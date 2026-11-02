@@ -77,8 +77,59 @@ describe('WorkerCard', () => {
     expect(screen.getByText('relayed 6m')).toBeTruthy()
     expect(screen.getByText(/mine 1/)).toBeTruthy()
     expect(screen.getByText(/300 GB free/)).toBeTruthy()
-    // the failed leg is struck through
-    expect(document.querySelector('.leg.down')?.textContent).toContain('tcp')
+    // every leg only on request: the one in use outside, all of them in the dropdown
+    expect(screen.queryByTestId('legs')).toBeNull()
+    fireEvent.click(screen.getByTestId('legs-toggle'))
+    const legs = screen.getByTestId('legs')
+    expect(legs.querySelector('.leg-row.active')?.textContent).toContain('longnet relay-udp')
+    expect(legs.querySelector('.leg-row.active')?.textContent).toContain('✓')
+    expect(legs.querySelector('.leg-row.down')?.textContent).toContain('tcp')
+    fireEvent.click(screen.getByTestId('legs-toggle'))
+    expect(screen.queryByTestId('legs')).toBeNull()
+  })
+
+  it('disk and network are off until toggled in the chart, and stay on for every card', () => {
+    localStorage.removeItem('longarm.metrics.extra')
+    const w = onlineWorker()
+    w.metrics = { ...w.metrics, net_rx_bytes_per_sec: '1572864', net_tx_bytes_per_sec: '2048' }
+    w.history = [
+      { cpu: 10, mem: 50, disk: 40, net_rx: 1000, net_tx: 10 },
+      { cpu: 20, mem: 60, disk: 41, net_rx: 1572864, net_tx: 2048 },
+    ]
+    render(<WorkerCard w={w} now={now} />)
+    expect(screen.queryByLabelText('DISK')).toBeNull()
+    expect(screen.queryByTestId('net-chart')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Disk/ }))
+    expect(screen.getByLabelText('DISK')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /Net/ }))
+    expect(screen.getByTestId('net-now').textContent).toContain('↓ 1.5 MB/s')
+    expect(screen.getByTestId('net-now').textContent).toContain('↑ 2 KB/s')
+    expect(screen.getByTestId('net-chart')).toBeTruthy()
+    expect(JSON.parse(localStorage.getItem('longarm.metrics.extra') ?? '{}')).toEqual({ disk: true, net: true })
+    cleanup()
+    render(<WorkerCard w={w} now={now} />) // another card, later: still on
+    expect(screen.getByLabelText('DISK')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Net/ }).getAttribute('aria-pressed')).toBe('true')
+    localStorage.removeItem('longarm.metrics.extra')
+  })
+
+  it('hovering a chart shows every series at that moment', () => {
+    const w = onlineWorker()
+    w.history = [
+      { cpu: 10, mem: 50 },
+      { cpu: 22, mem: 61 },
+    ]
+    render(<WorkerCard w={w} now={now} />)
+    const svg = screen.getAllByRole('img', { name: 'sparkline' }).find((el) => el.closest('[data-testid="link"]') === null)!
+    svg.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 46, right: 400, bottom: 46, x: 0, y: 0, toJSON: () => ({}) })
+    fireEvent.mouseMove(svg, { clientX: 400 })
+    const tip = screen.getByTestId('spark-tip')
+    expect(tip.textContent).toContain('now')
+    expect(tip.textContent).toContain('CPU')
+    expect(tip.textContent).toContain('22%')
+    expect(tip.textContent).toContain('61%')
+    fireEvent.mouseLeave(svg)
+    expect(screen.queryByTestId('spark-tip')).toBeNull()
   })
 
   it('says where the metrics come from and grays them out when stale', () => {

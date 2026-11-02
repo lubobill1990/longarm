@@ -3976,8 +3976,11 @@ func (x *HistoryRequest) GetNode() string {
 type MetricsPoint struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Time          *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=time,proto3" json:"time,omitempty"`
-	Cpu           float64                `protobuf:"fixed64,2,opt,name=cpu,proto3" json:"cpu,omitempty"` // percent
-	Mem           float64                `protobuf:"fixed64,3,opt,name=mem,proto3" json:"mem,omitempty"` // percent of total
+	Cpu           float64                `protobuf:"fixed64,2,opt,name=cpu,proto3" json:"cpu,omitempty"`                  // percent
+	Mem           float64                `protobuf:"fixed64,3,opt,name=mem,proto3" json:"mem,omitempty"`                  // percent of total
+	Disk          float64                `protobuf:"fixed64,4,opt,name=disk,proto3" json:"disk,omitempty"`                // percent of the data dir's volume used
+	NetRx         float64                `protobuf:"fixed64,5,opt,name=net_rx,json=netRx,proto3" json:"net_rx,omitempty"` // bytes per second (loopback excluded)
+	NetTx         float64                `protobuf:"fixed64,6,opt,name=net_tx,json=netTx,proto3" json:"net_tx,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4029,6 +4032,27 @@ func (x *MetricsPoint) GetCpu() float64 {
 func (x *MetricsPoint) GetMem() float64 {
 	if x != nil {
 		return x.Mem
+	}
+	return 0
+}
+
+func (x *MetricsPoint) GetDisk() float64 {
+	if x != nil {
+		return x.Disk
+	}
+	return 0
+}
+
+func (x *MetricsPoint) GetNetRx() float64 {
+	if x != nil {
+		return x.NetRx
+	}
+	return 0
+}
+
+func (x *MetricsPoint) GetNetTx() float64 {
+	if x != nil {
+		return x.NetTx
 	}
 	return 0
 }
@@ -11553,11 +11577,14 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\rLinksResponse\x120\n" +
 	"\areports\x18\x01 \x03(\v2\x16.longarm.v1.LinkReportR\areports\"$\n" +
 	"\x0eHistoryRequest\x12\x12\n" +
-	"\x04node\x18\x01 \x01(\tR\x04node\"b\n" +
+	"\x04node\x18\x01 \x01(\tR\x04node\"\xa4\x01\n" +
 	"\fMetricsPoint\x12.\n" +
 	"\x04time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x04time\x12\x10\n" +
 	"\x03cpu\x18\x02 \x01(\x01R\x03cpu\x12\x10\n" +
-	"\x03mem\x18\x03 \x01(\x01R\x03mem\"l\n" +
+	"\x03mem\x18\x03 \x01(\x01R\x03mem\x12\x12\n" +
+	"\x04disk\x18\x04 \x01(\x01R\x04disk\x12\x15\n" +
+	"\x06net_rx\x18\x05 \x01(\x01R\x05netRx\x12\x15\n" +
+	"\x06net_tx\x18\x06 \x01(\x01R\x05netTx\"l\n" +
 	"\vNodeHistory\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x120\n" +
 	"\x06points\x18\x02 \x03(\v2\x18.longarm.v1.MetricsPointR\x06points\x12\x17\n" +

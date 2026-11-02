@@ -665,6 +665,9 @@ message MetricsPoint {
   google.protobuf.Timestamp time = 1;
   double cpu = 2; // percent
   double mem = 3; // percent of total
+  double disk = 4; // percent of the data dir's volume used
+  double net_rx = 5; // bytes per second (loopback excluded)
+  double net_tx = 6;
 }
 
 message NodeHistory {

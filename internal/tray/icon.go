@@ -166,7 +166,7 @@ func Tooltip(v *pb.PoolView) string {
 	}
 	t := strings.Join(parts, "\n")
 	if t == "" {
-		t = "Remote Workers"
+		t = "Longarm"
 	}
 	if r := []rune(t); len(r) > 127 {
 		t = string(r[:127])

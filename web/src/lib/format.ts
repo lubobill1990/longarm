@@ -12,6 +12,9 @@ export const RED = LEVELS[LEVELS.length - 1].color
 export const CPU_C = '#58a6ff'
 export const MEM_C = '#bc8cff'
 export const RTT_C = '#39c5cf'
+export const DISK_C = '#d29922'
+export const NET_RX_C = '#3fb950'
+export const NET_TX_C = '#f778ba'
 
 /** The key of a node: its ID (names can be reused once a node is revoked), else its name (an older hub). */
 export function nodeKey(n: { id?: string; name: string }): string {
@@ -105,6 +108,15 @@ export function fmtBytes(v: Int64 | undefined): string {
   if (b >= 1024 ** 2) return `${Math.round(b / 1024 ** 2)}M`
   if (b >= 1024) return `${Math.round(b / 1024)}K`
   return `${b}B`
+}
+
+/** A rate in bytes per second: "0 B/s", "340 KB/s", "1.2 MB/s". */
+export function fmtRate(bps?: number): string {
+  const b = bps ?? 0
+  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(1)} GB/s`
+  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(1)} MB/s`
+  if (b >= 1024) return `${Math.round(b / 1024)} KB/s`
+  return `${Math.round(b)} B/s`
 }
 
 export function fmtRTT(ms?: number): string {

@@ -1195,11 +1195,65 @@
     color: var(--text-2);
     font-variant-numeric: tabular-nums;
   }
-  & .legs {
+  /* the link row's dropdown: every leg, the one in use marked */
+  & .link-more {
+    font: inherit;
+    font-size: 10.5px;
+    padding: 0 6px;
+    height: 18px;
+    cursor: pointer;
+    color: var(--text-3);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--r-pill);
+  }
+  & .link-more:hover,
+  & .link-more[aria-expanded='true'] {
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  }
+  & .legs-list {
+    display: grid;
+    gap: 2px;
+    margin: 4px 0 6px;
+    padding: 4px 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--chart-bg);
+    font-size: 10.5px;
+  }
+  & .leg-row {
+    display: grid;
+    grid-template-columns: 12px auto 1fr auto;
+    gap: 8px;
+    align-items: baseline;
+    color: var(--text-3);
+  }
+  & .leg-row.active {
+    color: var(--text);
+  }
+  & .leg-row .leg-mark {
+    color: var(--accent);
+  }
+  & .leg-row .leg-name {
+    font-family: var(--mono);
+  }
+  & .leg-row .leg-ep {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-3);
+  }
+  & .netrow {
     display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-bottom: 6px;
+    gap: 12px;
+    align-items: baseline;
+    font-variant-numeric: tabular-nums;
+    margin: 2px 0;
+  }
+  & .netrow .label {
+    color: var(--text-3);
+    width: 34px;
   }
   & .leg {
     font-size: 10.5px;

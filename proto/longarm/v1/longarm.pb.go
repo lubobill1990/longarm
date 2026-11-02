@@ -2137,8 +2137,12 @@ type MetricsSnapshot struct {
 	TopMem         []*ProcGroup           `protobuf:"bytes,11,rep,name=top_mem,json=topMem,proto3" json:"top_mem,omitempty"`
 	DiskFreeBytes  uint64                 `protobuf:"varint,12,opt,name=disk_free_bytes,json=diskFreeBytes,proto3" json:"disk_free_bytes,omitempty"` // volume holding the data dir
 	DiskTotalBytes uint64                 `protobuf:"varint,13,opt,name=disk_total_bytes,json=diskTotalBytes,proto3" json:"disk_total_bytes,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Network traffic of the machine's interfaces (loopback excluded), bytes
+	// per second over the last sampling interval.
+	NetRxBytesPerSec uint64 `protobuf:"varint,14,opt,name=net_rx_bytes_per_sec,json=netRxBytesPerSec,proto3" json:"net_rx_bytes_per_sec,omitempty"`
+	NetTxBytesPerSec uint64 `protobuf:"varint,15,opt,name=net_tx_bytes_per_sec,json=netTxBytesPerSec,proto3" json:"net_tx_bytes_per_sec,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *MetricsSnapshot) Reset() {
@@ -2258,6 +2262,20 @@ func (x *MetricsSnapshot) GetDiskFreeBytes() uint64 {
 func (x *MetricsSnapshot) GetDiskTotalBytes() uint64 {
 	if x != nil {
 		return x.DiskTotalBytes
+	}
+	return 0
+}
+
+func (x *MetricsSnapshot) GetNetRxBytesPerSec() uint64 {
+	if x != nil {
+		return x.NetRxBytesPerSec
+	}
+	return 0
+}
+
+func (x *MetricsSnapshot) GetNetTxBytesPerSec() uint64 {
+	if x != nil {
+		return x.NetTxBytesPerSec
 	}
 	return 0
 }
@@ -6271,7 +6289,7 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\tAgentStat\x12\x1a\n" +
 	"\bsessions\x18\x01 \x01(\x05R\bsessions\x12\x1c\n" +
 	"\tprocesses\x18\x02 \x01(\x05R\tprocesses\x12\x1b\n" +
-	"\tmem_bytes\x18\x03 \x01(\x04R\bmemBytes\"\xef\x04\n" +
+	"\tmem_bytes\x18\x03 \x01(\x04R\bmemBytes\"\xcf\x05\n" +
 	"\x0fMetricsSnapshot\x12.\n" +
 	"\x04time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x04time\x12\x1f\n" +
 	"\vcpu_percent\x18\x02 \x01(\x01R\n" +
@@ -6287,7 +6305,9 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	" \x03(\v2\x15.longarm.v1.ProcGroupR\x06topCpu\x12.\n" +
 	"\atop_mem\x18\v \x03(\v2\x15.longarm.v1.ProcGroupR\x06topMem\x12&\n" +
 	"\x0fdisk_free_bytes\x18\f \x01(\x04R\rdiskFreeBytes\x12(\n" +
-	"\x10disk_total_bytes\x18\r \x01(\x04R\x0ediskTotalBytes\x1aP\n" +
+	"\x10disk_total_bytes\x18\r \x01(\x04R\x0ediskTotalBytes\x12.\n" +
+	"\x14net_rx_bytes_per_sec\x18\x0e \x01(\x04R\x10netRxBytesPerSec\x12.\n" +
+	"\x14net_tx_bytes_per_sec\x18\x0f \x01(\x04R\x10netTxBytesPerSec\x1aP\n" +
 	"\vAgentsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12+\n" +
 	"\x05value\x18\x02 \x01(\v2\x15.longarm.v1.AgentStatR\x05value:\x028\x01\"\x11\n" +

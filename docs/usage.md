@@ -2392,7 +2392,11 @@ next to it (left click; hides on focus loss unless pinned; drag it by the
 title bar). The popup shows the load of every worker you may see (your own,
 shared with you, the fleet's - admins too, there is no "all workers" switch)
 plus this client's link to each: active leg and path (tcp, tailscale direct/peer-relay/DERP, longnet
-direct/relay-udp/relay-tcp), NAT types, RTT with a 5-minute sparkline. Data
+direct/relay-udp/relay-tcp, longnet legs named after the relay they met through: "longnet direct · hub",
+"· relay"), NAT types, RTT with a 5-minute sparkline; "N paths" opens every leg with its endpoint and
+RTT. The charts' legend adds disk space used and network traffic (bytes per second in and out,
+loopback excluded) on request, remembered on this computer; hovering a chart shows every series'
+value at that moment. Data
 comes from `longarm daemon` (hub events when the hub is reachable, otherwise
 streamed from the workers; the popup shows which). Tabs: workers, my jobs
 (the jobs started from this computer, like `longarm jobs --mine`: a click

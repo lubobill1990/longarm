@@ -450,3 +450,63 @@ func TestMirrorGimScript(t *testing.T) {
 		t.Fatalf("no secret: %+v", r)
 	}
 }
+
+// TestGimReleaseScript: the internal copy's release (gim-release.sh) - the
+// same tag at the same commit with the given files, created once and
+// re-uploaded after; a commit the mirror hasn't carried over yet fails
+// with what to do; no token is a notice.
+func TestGimReleaseScript(t *testing.T) {
+	t.Parallel()
+	bash := findBash(t)
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	os.MkdirAll(bin, 0o755)
+	logPath := filepath.Join(root, "gh.log")
+	os.WriteFile(filepath.Join(bin, "gh"), []byte(`#!/usr/bin/env bash
+echo "$*" >>"$FAKE_LOG"
+case "$1 $2" in
+"api repos/"*) [[ -z ${FAKE_NO_COMMIT:-} ]] ;;
+"release view") [[ -n ${FAKE_HAS_RELEASE:-} ]] ;;
+*) exit 0 ;;
+esac
+`), 0o755)
+	for _, f := range []string{"longarm-windows-amd64.msi", "SHA256SUMS"} {
+		os.WriteFile(filepath.Join(root, f), []byte(f), 0o644)
+	}
+	script, _ := filepath.Abs("../.github/scripts/gim-release.sh")
+	sha := strings.Repeat("ab", 20)
+	run := func(env []string, args ...string) (string, int) {
+		t.Helper()
+		os.Remove(logPath)
+		cmd := exec.Command(bash, append([]string{filepath.ToSlash(script)}, args...)...)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), append([]string{"PATH=" + filepath.ToSlash(bin) + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"FAKE_LOG=" + filepath.ToSlash(logPath), "SHA=" + sha, "SRC_REPO=example/longarm", "GIM_WAIT_SECONDS=0", "GITHUB_STEP_SUMMARY="}, env...)...)
+		out, _ := cmd.CombinedOutput()
+		log, _ := os.ReadFile(logPath)
+		return string(out) + "\n--log--\n" + string(log), cmd.ProcessState.ExitCode()
+	}
+	files := []string{"--", "longarm-windows-amd64.msi", "SHA256SUMS"}
+	if out, code := run(nil, append([]string{"v0.1.29"}, files...)...); code != 0 || !strings.Contains(out, "GIM_MIRROR_TOKEN is not set") || strings.Contains(out, "release create") {
+		t.Fatalf("no token: %d %s", code, out)
+	}
+	tok := []string{"GIM_MIRROR_TOKEN=t0k"}
+	if out, code := run(tok, append([]string{"0.1.29"}, files...)...); code != 2 {
+		t.Fatalf("bad tag: %d %s", code, out)
+	}
+	out, code := run(tok, append([]string{"v0.1.29-rc.1", "--prerelease"}, files...)...)
+	if code != 0 || !strings.Contains(out, "api repos/gim-home/longarm/commits/"+sha) ||
+		!strings.Contains(out, "release create v0.1.29-rc.1 --repo gim-home/longarm --target "+sha+" --title Longarm 0.1.29-rc.1") ||
+		!strings.Contains(out, "https://github.com/example/longarm/releases/tag/v0.1.29-rc.1") || !strings.Contains(out, "--prerelease") ||
+		!strings.Contains(out, "release upload v0.1.29-rc.1 --repo gim-home/longarm --clobber longarm-windows-amd64.msi SHA256SUMS") {
+		t.Fatalf("new release: %d %s", code, out)
+	}
+	out, code = run(append(tok, "FAKE_HAS_RELEASE=1"), append([]string{"v0.1.29"}, files...)...)
+	if code != 0 || strings.Contains(out, "release create") || !strings.Contains(out, "release upload v0.1.29") {
+		t.Fatalf("existing release: %d %s", code, out)
+	}
+	out, code = run(append(tok, "FAKE_NO_COMMIT=1"), append([]string{"v0.1.29"}, files...)...)
+	if code != 1 || !strings.Contains(out, "is not in gim-home/longarm") || strings.Contains(out, "release create") {
+		t.Fatalf("commit not mirrored: %d %s", code, out)
+	}
+}

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { cssColor, levelColor } from '../lib/format'
 
 /** Labelled bar: label, track coloured by level, value text. */
@@ -28,12 +29,36 @@ export interface Series {
   values: (number | null)[] // null = gap (failed sample)
   color: string
   label?: string
+  /** the value as text (the hover tooltip): default a percent */
+  fmt?: (v: number) => string
+}
+
+/** A legend entry that shows or hides a series (off by default: disk, network). */
+export interface SeriesToggle {
+  label: string
+  color: string
+  on: boolean
+  onToggle: () => void
+  title?: string
+}
+
+const pctFmt = (v: number) => `${v.toFixed(v < 10 ? 1 : 0)}%`
+
+/** "now" / "20s ago" / "1m 40s ago": how far back a slot is. */
+export function slotAgo(slotsFromRight: number, stepSeconds: number): string {
+  const s = Math.round(slotsFromRight * stepSeconds)
+  if (s <= 0) return 'now'
+  if (s < 60) return `${s}s ago`
+  return `${Math.floor(s / 60)}m ${s % 60 ? `${s % 60}s ` : ''}ago`
 }
 
 /**
  * Sparkline of series over a fixed number of slots (newest right), like
  * a 5-minute chart. max: the y range top (percent charts: 100;
- * "auto" scales to the data). Gridlines at 25/50/75 %.
+ * "auto" scales to the data). Gridlines at 25/50/75 %. Hovering shows
+ * every series' value at that moment (Series.fmt) and how long ago it was
+ * (stepSeconds per slot); toggles add legend entries that show or hide
+ * series.
  */
 export function Sparkline({
   series,
@@ -43,6 +68,9 @@ export function Sparkline({
   legend,
   right,
   marks,
+  toggles,
+  stepSeconds = 2,
+  fmtMax,
 }: {
   series: Series[]
   slots?: number
@@ -51,7 +79,11 @@ export function Sparkline({
   legend?: boolean
   right?: string
   marks?: { at: number; color: string }[] // vertical marks (failed probes), slot index from the right
+  toggles?: SeriesToggle[]
+  stepSeconds?: number
+  fmtMax?: (v: number) => string
 }) {
+  const [hover, setHover] = useState<number | null>(null)
   const W = 400
   const H = height
   let top = typeof max === 'number' ? max : 0
@@ -76,9 +108,31 @@ export function Sparkline({
     })
     return { d, color: s.color }
   })
+  const longest = Math.max(0, ...series.map((s) => s.values.length))
+  const firstSlot = slots - longest // no data left of it
+  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    if (!r.width || !longest) return
+    const slot = Math.round(((e.clientX - r.left) / r.width) * (slots - 1))
+    setHover(Math.min(slots - 1, Math.max(firstSlot, slot)))
+  }
+  const at = (s: Series, slot: number) => {
+    const v = s.values[slot - (slots - s.values.length)]
+    return v === null || v === undefined ? '—' : (s.fmt ?? pctFmt)(v)
+  }
+  const tipLeft = hover === null ? 0 : (hover / Math.max(1, slots - 1)) * 100
   return (
-    <div>
-      <svg className="spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" height={H} role="img" aria-label="sparkline">
+    <div className="spark-wrap">
+      <svg
+        className="spark"
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        height={H}
+        role="img"
+        aria-label="sparkline"
+        onMouseMove={onMove}
+        onMouseLeave={() => setHover(null)}
+      >
         {[25, 50, 75].map((g) => (
           <line key={g} x1={1} x2={W - 1} y1={H - (H * g) / 100} y2={H - (H * g) / 100} style={{ stroke: 'var(--chart-grid, #21262d)' }} strokeDasharray="2 4" />
         ))}
@@ -88,8 +142,22 @@ export function Sparkline({
         {paths.map((p, i) => (
           <path key={i} d={p.d} fill="none" style={{ stroke: cssColor(p.color) }} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
         ))}
+        {hover !== null && (
+          <line x1={hover * step} x2={hover * step} y1={0} y2={H} style={{ stroke: 'var(--text-3, #8b949e)' }} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        )}
       </svg>
-      {(legend || right) && (
+      {hover !== null && (
+        <div className={`spark-tip ${tipLeft > 55 ? 'left' : ''}`} style={tipLeft > 55 ? { right: `${100 - tipLeft}%` } : { left: `${tipLeft}%` }} data-testid="spark-tip">
+          <div className="spark-tip-when">{slotAgo(slots - 1 - hover, stepSeconds)}</div>
+          {series.map((s, i) => (
+            <div key={i} className="spark-tip-row">
+              <span style={{ color: cssColor(s.color) }}>● {s.label ?? ''}</span>
+              <span className="v">{at(s, hover)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {(legend || right || toggles?.length) && (
         <div className="spark-legend">
           {legend &&
             series.map((s, i) =>
@@ -99,8 +167,21 @@ export function Sparkline({
                 </span>
               ) : null,
             )}
+          {(toggles ?? []).map((t) => (
+            <button
+              key={t.label}
+              type="button"
+              className={`spark-toggle ${t.on ? 'on' : ''}`}
+              style={{ ['--c' as string]: cssColor(t.color) }}
+              aria-pressed={t.on}
+              title={t.title ?? `${t.on ? 'hide' : 'show'} ${t.label}`}
+              onClick={t.onToggle}
+            >
+              {t.on ? '●' : '+'} {t.label}
+            </button>
+          ))}
           <span className="spacer" />
-          {max === 'auto' && <span className="faint">max {Math.round(top)}</span>}
+          {max === 'auto' && <span className="faint">max {fmtMax ? fmtMax(top) : Math.round(top)}</span>}
           {right && <span className="faint">{right}</span>}
         </div>
       )}
@@ -111,7 +192,8 @@ export function Sparkline({
 /** A round upper bound for auto-scaled charts (RTT ms). */
 export function niceMax(v: number): number {
   if (v <= 0) return 10
-  const steps = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]
-  for (const s of steps) if (v <= s) return s
-  return Math.ceil(v / 10000) * 10000
+  // 1-2-5 steps at every power of ten (RTT ms; network bytes/s)
+  for (let p = 10; ; p *= 10) {
+    for (const m of [1, 2, 5]) if (v <= m * p) return m * p
+  }
 }

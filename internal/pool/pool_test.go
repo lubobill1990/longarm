@@ -118,7 +118,7 @@ func TestMonitorLegsPathsAndMetricsSource(t *testing.T) {
 	if l.Legs[0].Transport != "tcp" || !l.Legs[0].Active || l.Active != "tcp" || l.RttMs != 3 {
 		t.Fatalf("race: the faster tcp leg first and active: %v", l)
 	}
-	if rl := l.Legs[1]; rl.Label != "longnet relay-udp" || rl.Nat != "easy/hard" || rl.RelaySince == nil || rl.Kind != "relay" {
+	if rl := l.Legs[1]; rl.Label != "longnet relay-udp · relay" || rl.Nat != "easy/hard" || rl.RelaySince == nil || rl.Kind != "relay" {
 		t.Fatalf("longnet leg: %v", rl)
 	}
 	// No hub: metrics stream directly from the active leg.
@@ -143,7 +143,7 @@ func TestMonitorLegsPathsAndMetricsSource(t *testing.T) {
 	// clears relay_since.
 	tcp.set(10*time.Millisecond, transport.PathDirect, "10.0.0.2:7701", nil)
 	longarm.set(1*time.Millisecond, transport.PathDirect, "1.2.3.4:5000, nat easy/easy", nil)
-	v = waitView(t, m, "race picks longnet", func(v *pb.PoolView) bool { return v.Workers[0].Link.Active == "longnet direct" })
+	v = waitView(t, m, "race picks longnet", func(v *pb.PoolView) bool { return v.Workers[0].Link.Active == "longnet direct · relay" })
 	if v.Workers[0].Link.Legs[1].RelaySince != nil || v.Transport != "race" {
 		t.Fatalf("after direct: %v", v.Workers[0].Link.Legs[1])
 	}
@@ -156,7 +156,7 @@ func TestMonitorLegsPathsAndMetricsSource(t *testing.T) {
 	waitView(t, m, "sticky tcp", func(v *pb.PoolView) bool { return v.Workers[0].Link.Active == "tcp" })
 	// ... unless another leg clearly beats it (the dialer drops it too).
 	tcp.set(100*time.Millisecond, transport.PathDirect, "10.0.0.2:7701", nil)
-	waitView(t, m, "degraded sticky tcp loses", func(v *pb.PoolView) bool { return v.Workers[0].Link.Active == "longnet direct" })
+	waitView(t, m, "degraded sticky tcp loses", func(v *pb.PoolView) bool { return v.Workers[0].Link.Active == "longnet direct · relay" })
 	live := m.LiveLegs("w1", time.Minute)
 	if len(live) != 2 || live[0] != (client.LiveLeg{Leg: "tcp://10.0.0.2:7701", Up: true, Kind: "direct", RTTMs: 100}) ||
 		live[1] != (client.LiveLeg{Leg: "longnet://relay:7443", Up: true, Kind: "direct", RTTMs: 1}) {
