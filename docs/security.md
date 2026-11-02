@@ -805,6 +805,29 @@ in case an install failed before it could. One install at a time; the
 directory is removed afterwards. Its log is
 `C:\ProgramData\Longarm\updates\longarm-update.log` (SYSTEM only).
 
+**Watchdog.** When an install starts, the service records which worker
+services run (`longarmd-admin`, a `RUN=service` longarmd; not itself).
+Two minutes after msiexec ended - its exit code read from the log; never
+after a timeout, when it may still run - it starts those of them that are
+stopped (the installer or its rollback left them so), up to three times,
+and adds what it did to the result (`recovered`, `recover_error`). A
+service that was stopped before the install stays stopped; nothing is
+rolled back and no installer is touched; a newer install stops it.
+User-session workers are not services: their host restarts them.
+
+**Reporting to the hub.** The service's status (an install in progress,
+its phase and download progress, who started it, the last result with its
+code) is read by the machine's longarmd, which reports it over its own
+hub session (`NodeReport.update`); the hub shows it as `NodeInfo.update`
+to whoever may see the worker. Nothing in the service changes for this:
+no request carries a hub, user or version beyond the existing install
+request, and the status is read-only. The hub accepts update reports only
+from the node's own current session, and creates "requested" states only
+for its own rollouts; no client can set or clear a node's update state.
+Users who are not the worker's owner (shared and fleet workers) see the
+state, phase and a short code, not the worker's error text or message
+(paths, hub addresses), nor the admin worker's name.
+
 **The local API** is the named pipe `\\.\pipe\LongarmUpdate`: created as
 the pipe's first instance (go-winio's `FILE_CREATE`, the NT form of
 `FILE_FLAG_FIRST_PIPE_INSTANCE`: if another program holds the name, the
