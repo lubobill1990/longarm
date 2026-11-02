@@ -229,7 +229,7 @@ function Sessions() {
     <div className="sessions" data-testid="sessions">
       <aside className="sessions-side">
         <div className="sessions-head">
-          <span className="brand-mark" aria-hidden="true" />
+          <img className="brand-mark" src="/favicon.png" alt="" aria-hidden="true" />
           <span className="title">Sessions</span>
           <span className="spacer" />
           <button className="sm primary" onClick={() => setDialog(true)}>

@@ -81,6 +81,7 @@ export function PanelApp() {
     <Toasts>
       <div className="shell">
         <header className="topbar">
+          <img className="brand-mark" src="/favicon.png" alt="" aria-hidden="true" />
           <span className="brand">Longarm</span>
           <span className="muted small">
             {me.hub} · {me.version}
