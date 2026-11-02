@@ -790,6 +790,8 @@ func TestMSIMajorUpgradeInPlace(t *testing.T) {
 		"Settings":        {"165786a7-faa0-43e1-9643-f87e8ab45911", ""},
 		"Tray":            {"", "longarm_tray.exe"},
 		"TrayShortcut":    {"936cbf15-9d7c-4e3d-8b7a-173b2bb11b9d", ""},
+		"License":         {"", "LicenseTxt"}, // since the third-party notices
+		"Notices":         {"", "NoticesTxt"},
 	}
 	got := map[string]component{}
 	for _, c := range p.Components {
