@@ -30,7 +30,7 @@ mirror_list=$here/mirror-images.txt
 # empty = not given (a re-run keeps the running hub's value)
 name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=false yes=false
 recreate=false admin_code=false subscription='' acme_email='' registry_user='' tailscale_secret_file=''
-entra_tenant='' entra_client='' entra_admins='' entra_web='' entra_apps='' gate_free_gb='' release_public_key=''
+entra_tenant='' entra_client='' entra_admins='' entra_web='' entra_apps='' gate_free_gb='' release_public_key='' feedback_url=''
 build_in_acr=false stun_servers='' storage_auth='' acr='' timeout=1200 stuck_timeout=600 restore_timeout=1200
 telemetry='' diagnostics='' headscale='' public_derp='' skip_image_check=false relay=false relay_remove=false
 # seconds between status polls (tests make it short; each az call takes a
@@ -66,6 +66,8 @@ usage: deploy.sh --name NAME [--location REGION] [options]
                            (default 20; lower it for small workers such as containers or laptops)
   --release-public-key KEY the minisign public key line (RW...) releases are signed with: the hub
                            refuses uploads whose signature doesn't verify (tail -1 longarm-release.pub)
+  --feedback-url URL       where the front page, the panel and longarm-tray send feedback and bug
+                           reports (hub.toml [web] feedback_url; default the project's GitHub issues)
   --stun-servers LIST      external STUN servers the hub advertises (host:port,...; "none" = only the
                            hub's own; default: the template's public ones, see README "Direct connections")
   --log-analytics          send container logs to Log Analytics (with --telemetry its workspace, else
@@ -127,6 +129,7 @@ while [[ $# -gt 0 ]]; do
 	--entra-apps) entra_apps=${2:?}; shift ;;
 	--gate-free-gb) gate_free_gb=${2:?}; shift ;;
 	--release-public-key) release_public_key=${2:?}; shift ;;
+	--feedback-url) feedback_url=${2:?}; shift ;;
 	--log-analytics) log_analytics=true ;;
 	--storage-auth) storage_auth=${2:?}; shift ;;
 	--acr) acr=${2:?}; shift ;;
@@ -172,6 +175,7 @@ fi
 # the key line of a minisign .pub file, not the file or its comment line
 [[ -z $release_public_key || $release_public_key =~ ^RW[A-Za-z0-9+/=]{40,}$ ]] ||
 	die "--release-public-key: the minisign public key line (RW...), e.g. \"\$(tail -1 longarm-release.pub)\""
+[[ -z $feedback_url || $feedback_url =~ ^https?://[^[:space:]]+$ ]] || die "--feedback-url: an http(s) link"
 [[ -z $tailscale_secret_file || -r $tailscale_secret_file ]] || die "--tailscale-secret-file: can't read $tailscale_secret_file"
 case $public_derp in
 '') ;;
@@ -440,10 +444,10 @@ ensure_providers Microsoft.ContainerInstance Microsoft.Storage
 # Secrets can't be read back from any of them: a hub that has them needs
 # them again.
 prev_src='' prev_image='' prev_size='' prev_panel='' prev_auth='' prev_acr='' prev_logs='' prev_telemetry=''
-prev_diagnostics='' prev_stun='' prev_gate='' prev_relkey='' prev_entra_tenant='' prev_entra_client=''
+prev_diagnostics='' prev_stun='' prev_gate='' prev_relkey='' prev_feedback='' prev_entra_tenant='' prev_entra_client=''
 prev_entra_admins='' prev_entra_web='' prev_entra_apps='' prev_headscale='' prev_public_derp=''
 prev_registry='' prev_registry_user='' prev_tailscale=''
-prev_keys='image size panel auth acr logs telemetry diagnostics stun gate relkey entra_tenant entra_client entra_admins entra_web entra_apps headscale public_derp registry registry_user tailscale'
+prev_keys='image size panel auth acr logs telemetry diagnostics stun gate relkey feedback entra_tenant entra_client entra_admins entra_web entra_apps headscale public_derp registry registry_user tailscale'
 
 # load_prev_group: prev_* from the container group (1 = there is none)
 load_prev_group() {
@@ -489,6 +493,7 @@ load_prev_group() {
 		case $k in
 		LONGARM_HUB_SCHED_GATE_FREE_GB) prev_gate=$v ;;
 		LONGARM_HUB_RELEASES_PUBLIC_KEY) prev_relkey=$v ;;
+		LONGARM_HUB_WEB_FEEDBACK_URL) prev_feedback=$v ;;
 		LONGARM_HUB_ENTRA_TENANT_ID) prev_entra_tenant=$v ;;
 		LONGARM_HUB_ENTRA_CLIENT_ID) prev_entra_client=$v ;;
 		LONGARM_HUB_ENTRA_ADMINS) prev_entra_admins=$v ;;
@@ -496,7 +501,7 @@ load_prev_group() {
 		LONGARM_HUB_ENTRA_APPS) prev_entra_apps=$v ;;
 		esac
 	done < <(az container show -g "$rg" -n "$name" -o tsv \
-		--query "containers[0].environmentVariables[?starts_with(name, 'LONGARM_HUB_ENTRA_') || name=='LONGARM_HUB_SCHED_GATE_FREE_GB' || name=='LONGARM_HUB_RELEASES_PUBLIC_KEY'].[name, value]" 2>/dev/null | tr -d '\r' || true)
+		--query "containers[0].environmentVariables[?starts_with(name, 'LONGARM_HUB_ENTRA_') || name=='LONGARM_HUB_SCHED_GATE_FREE_GB' || name=='LONGARM_HUB_RELEASES_PUBLIC_KEY' || name=='LONGARM_HUB_WEB_FEEDBACK_URL'].[name, value]" 2>/dev/null | tr -d '\r' || true)
 	prev_src=group
 }
 
@@ -526,12 +531,12 @@ prev_parse() {
 # security-relevant settings (sec_keys) are refused when they differ from
 # that deployment's or there is no deployment to compare them with, unless
 # the operator gives them explicitly.
-sec_keys='image auth acr registry_user relkey entra_tenant entra_client entra_admins entra_web entra_apps'
+sec_keys='image auth acr registry_user relkey feedback entra_tenant entra_client entra_admins entra_web entra_apps'
 # the option that gives each security-relevant setting explicitly
 sec_option() {
 	case $1 in
 	image) echo "--image" ;; auth) echo "--storage-auth" ;; acr) echo "--acr" ;;
-	registry | registry_user) echo "--registry-user" ;; relkey) echo "--release-public-key" ;;
+	registry | registry_user) echo "--registry-user" ;; relkey) echo "--release-public-key" ;; feedback) echo "--feedback-url" ;;
 	entra_tenant) echo "--entra-tenant" ;; entra_client) echo "--entra-client" ;; entra_admins) echo "--entra-admins" ;;
 	entra_web) echo "--entra-web" ;; entra_apps) echo "--entra-apps" ;; stun) echo "--stun-servers" ;;
 	esac
@@ -540,7 +545,7 @@ sec_option() {
 sec_given() {
 	case $1 in
 	image) [[ -n $image ]] ;; auth) [[ -n $storage_auth ]] ;; acr) [[ -n $acr ]] ;;
-	registry | registry_user) [[ -n $registry_user ]] ;; relkey) [[ -n $release_public_key ]] ;;
+	registry | registry_user) [[ -n $registry_user ]] ;; relkey) [[ -n $release_public_key ]] ;; feedback) [[ -n $feedback_url ]] ;;
 	entra_tenant) [[ -n $entra_tenant ]] ;; entra_client) [[ -n $entra_client ]] ;; entra_admins) [[ -n $entra_admins ]] ;;
 	entra_web) [[ -n $entra_web ]] ;; entra_apps) [[ -n $entra_apps ]] ;; stun) [[ -n $stun_servers ]] ;;
 	esac
@@ -593,7 +598,7 @@ load_prev_deployment() {
 		tr -d '\r' | sort | tail -n 1 || true)
 	[[ -n $dep ]] || return 1
 	# key:parameter:kind
-	local list='image:image:s size:size:s panel:enablePanel:b auth:storageAuth:s acr:acrName:s logs:enableLogAnalytics:b telemetry:enableTelemetry:b diagnostics:enableDiagnostics:b stun:stunServers:stun gate:schedulerGateFreeGb:s relkey:releasePublicKey:s entra_tenant:entraTenantId:s entra_client:entraClientId:s entra_admins:entraAdmins:s entra_web:entraWeb:s entra_apps:entraApps:s headscale:enableHeadscale:b public_derp:headscalePublicDerp:b registry:registryServer:s registry_user:registryUsername:s'
+	local list='image:image:s size:size:s panel:enablePanel:b auth:storageAuth:s acr:acrName:s logs:enableLogAnalytics:b telemetry:enableTelemetry:b diagnostics:enableDiagnostics:b stun:stunServers:stun gate:schedulerGateFreeGb:s relkey:releasePublicKey:s feedback:feedbackUrl:s entra_tenant:entraTenantId:s entra_client:entraClientId:s entra_admins:entraAdmins:s entra_web:entraWeb:s entra_apps:entraApps:s headscale:enableHeadscale:b public_derp:headscalePublicDerp:b registry:registryServer:s registry_user:registryUsername:s'
 	for k in $list; do
 		p=${k#*:}
 		p=${p%%:*}
@@ -677,7 +682,7 @@ else
 		prev_auth=$storage_auth
 		prev_src=snapshot
 	elif [[ -z $storage_auth ]] && [[ -n $(az storage account list -g "$rg" --query "[?starts_with(name, 'lahub')].name" -o tsv 2>/dev/null | tr -d '\r') ]]; then
-		die "the resource group $rg has a hub's storage, but neither a container group, a successful deployment nor a settings snapshot to read its settings from: pass them (at least --storage-auth key|identity; and --image, --entra-*, --telemetry, --diagnostics, --headscale, --release-public-key, --gate-free-gb, --stun-servers as the hub had them)"
+		die "the resource group $rg has a hub's storage, but neither a container group, a successful deployment nor a settings snapshot to read its settings from: pass them (at least --storage-auth key|identity; and --image, --entra-*, --telemetry, --diagnostics, --headscale, --release-public-key, --feedback-url, --gate-free-gb, --stun-servers as the hub had them)"
 	fi
 fi
 
@@ -709,6 +714,7 @@ if [[ -n $prev_src ]]; then
 	stun_servers=${stun_servers:-$prev_stun}
 	gate_free_gb=${gate_free_gb:-$prev_gate}
 	release_public_key=${release_public_key:-$prev_relkey}
+	feedback_url=${feedback_url:-$prev_feedback}
 	if [[ -z $entra_tenant ]]; then
 		entra_tenant=$prev_entra_tenant
 		entra_client=${entra_client:-$prev_entra_client}
@@ -814,6 +820,7 @@ write_params() {
 		printf ',"enableLogAnalytics":{"value":%s}' "$log_analytics"
 		[[ -z $gate_free_gb ]] || printf ',"schedulerGateFreeGb":{"value":%s}' "$(json_str "$gate_free_gb")"
 		[[ -z $release_public_key ]] || printf ',"releasePublicKey":{"value":%s}' "$(json_str "$release_public_key")"
+		[[ -z $feedback_url ]] || printf ',"feedbackUrl":{"value":%s}' "$(json_str "$feedback_url")"
 		printf ',"storageAuth":{"value":%s}' "$(json_str "$storage_auth")"
 		printf ',"enableTelemetry":{"value":%s},"enableDiagnostics":{"value":%s}' "$telemetry" "$diagnostics"
 		printf ',"enableHeadscale":{"value":%s},"headscalePublicDerp":{"value":%s}' "$headscale" "$public_derp"
@@ -1042,7 +1049,7 @@ deleted=false rollback=false
 if [[ -n $cur_image ]]; then
 	# the previous configuration, for a rollback if the new one fails: the
 	# settings swapped for the previous ones while its parameters are written
-	swap='image:prev_image size:prev_size panel:prev_panel acr:prev_acr headscale:prev_headscale public_derp:prev_public_derp log_analytics:prev_logs telemetry:prev_telemetry diagnostics:prev_diagnostics stun_servers:prev_stun gate_free_gb:prev_gate release_public_key:prev_relkey entra_tenant:prev_entra_tenant entra_client:prev_entra_client entra_admins:prev_entra_admins entra_web:prev_entra_web entra_apps:prev_entra_apps'
+	swap='image:prev_image size:prev_size panel:prev_panel acr:prev_acr headscale:prev_headscale public_derp:prev_public_derp log_analytics:prev_logs telemetry:prev_telemetry diagnostics:prev_diagnostics stun_servers:prev_stun gate_free_gb:prev_gate release_public_key:prev_relkey feedback_url:prev_feedback entra_tenant:prev_entra_tenant entra_client:prev_entra_client entra_admins:prev_entra_admins entra_web:prev_entra_web entra_apps:prev_entra_apps'
 	for kv in $swap; do
 		v=${kv%%:*}
 		printf -v "saved_$v" '%s' "${!v}"

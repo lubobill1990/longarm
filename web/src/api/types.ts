@@ -358,6 +358,7 @@ export interface Me {
   tenancy?: boolean // users are separated
   quota?: Quota // effective quota (normalized from protojson camelCase)
   usage?: QuotaUsage
+  feedback_url?: string // the hub's [web] feedback_url (missing: an older hub)
 }
 
 // ---------------------------------------------------------------- tenancy

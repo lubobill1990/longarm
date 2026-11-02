@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { hubApi, type AuthProvider } from '../api/hub'
 import type { LatestRelease, Me } from '../api/types'
+import { feedbackURL } from '../lib/feedback'
 import { msiFile } from '../lib/release'
 import { Link } from '../lib/router'
 import { installLines } from '../panel/GetPage'
@@ -660,13 +661,11 @@ function Features() {
 
 type OS = 'windows' | 'unix' | 'installed'
 
-function GetStarted({ me, hubHome }: { me: Me | null | undefined; hubHome: string }) {
+function GetStarted({ me, hubHome, providers, feedback }: { me: Me | null | undefined; hubHome: string; providers?: AuthProvider[]; feedback: string }) {
   const [rel, setRel] = useState<LatestRelease>()
-  const [providers, setProviders] = useState<AuthProvider[]>()
   const [os, setOS] = useState<OS>(() => (/Windows/i.test(navigator.userAgent) ? 'windows' : 'unix'))
   useEffect(() => {
     hubApi.latestRelease().then(setRel, () => {})
-    hubApi.authInfo().then((i) => setProviders(i.providers ?? (i.entra ? [{ id: '', label: 'Microsoft' }] : [])), () => {})
   }, [])
   const base = me?.base_url || location.origin
   const lines = installLines(base)
@@ -781,13 +780,19 @@ function GetStarted({ me, hubHome }: { me: Me | null | undefined; hubHome: strin
               Read the docs
             </a>
           </div>
+          <p className="lp-feedback">
+            Questions, ideas, a bug?{' '}
+            <a href={feedback} target="_blank" rel="noreferrer" data-testid="landing-feedback">
+              Tell us →
+            </a>
+          </p>
         </div>
       </Reveal>
     </section>
   )
 }
 
-function Footer({ version }: { version?: string }) {
+function Footer({ version, feedback }: { version?: string; feedback: string }) {
   return (
     <footer className="lp-foot">
       <span className="lp-logo">
@@ -796,6 +801,9 @@ function Footer({ version }: { version?: string }) {
       </span>
       <span className="faint">Give your coding agents a long arm.{version ? ` · hub ${version}` : ''}</span>
       <span className="spacer" />
+      <a href={feedback} target="_blank" rel="noreferrer">
+        Feedback
+      </a>
       <a href={GITHUB}>GitHub</a>
       <a href={DOCS}>Usage</a>
       <a href={`${GITHUB}/blob/main/docs/design.md`}>Design</a>
@@ -809,6 +817,15 @@ function Footer({ version }: { version?: string }) {
 
 /** The front page; `me`: undefined while loading, null when signed out. */
 export default function LandingPage({ me, hubHome }: { me: Me | null | undefined; hubHome: string }) {
+  // the hub's sign-in providers (the install steps) and feedback link, public
+  const [auth, setAuth] = useState<{ providers?: AuthProvider[]; feedback_url?: string }>()
+  useEffect(() => {
+    hubApi.authInfo().then(
+      (i) => setAuth({ ...i, providers: i.providers ?? (i.entra ? [{ id: '', label: 'Microsoft' }] : []) }),
+      () => setAuth({}),
+    )
+  }, [])
+  const feedback = feedbackURL(auth?.feedback_url ?? me?.feedback_url)
   useEffect(() => {
     document.title = 'Longarm - give your coding agents a long arm'
     document.documentElement.classList.add('lp-root')
@@ -830,9 +847,9 @@ export default function LandingPage({ me, hubHome }: { me: Me | null | undefined
         <Survive />
         <Reach />
         <Features />
-        <GetStarted me={me} hubHome={hubHome} />
+        <GetStarted me={me} hubHome={hubHome} providers={auth?.providers} feedback={feedback} />
       </main>
-      <Footer version={me?.version} />
+      <Footer version={me?.version} feedback={feedback} />
     </div>
   )
 }

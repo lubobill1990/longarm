@@ -221,7 +221,8 @@ func (h *Hub) healthz(w http.ResponseWriter, _ *http.Request) {
 	}
 	h.mu.Unlock()
 	resp := map[string]any{"ok": true, "version": version.Version, "workers": workers, "online": online,
-		"uptime_seconds": int(time.Since(h.started).Seconds()), "schema": h.store.SchemaVersion()}
+		"uptime_seconds": int(time.Since(h.started).Seconds()), "schema": h.store.SchemaVersion(),
+		"feedback_url": h.feedbackURL()} // longarm-tray's Feedback link
 	// Headscale's state (ok, starting, down; the detail is in longarm admin
 	// tailnet status): "ok" stays the hub's own, a container probe must not
 	// restart the hub for its sidecar

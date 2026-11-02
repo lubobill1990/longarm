@@ -131,7 +131,7 @@ export const hubApi = {
     post<NodeInfo>(`/api/nodes/${enc(name)}/share`, req),
   removeWorker: (name: string) => post<NodeInfo>(`/api/nodes/${enc(name)}/remove`),
   // public: the login page's sign-in buttons, the newest release
-  authInfo: () => get<{ entra?: boolean; mode?: string; providers?: AuthProvider[] }>('/auth/info'),
+  authInfo: () => get<{ entra?: boolean; mode?: string; providers?: AuthProvider[]; feedback_url?: string }>('/auth/info'),
   latestRelease: () => get<LatestRelease>('/releases/latest.json'),
   jobs: (q: { worker?: string; states?: string[]; limit?: number } = {}) => {
     const p = new URLSearchParams()

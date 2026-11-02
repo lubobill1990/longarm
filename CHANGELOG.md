@@ -41,6 +41,11 @@
 
 ### Added
 
+- **Feedback link per hub**: `[web] feedback_url` (`LONGARM_HUB_WEB_FEEDBACK_URL`;
+  Azure `--feedback-url` / `-FeedbackUrl`, kept on re-runs) is where the
+  hub's front page, the panel's top bar and longarm-tray (version details,
+  Account tab) send feedback and bug reports; default, and with older hubs,
+  the project's GitHub issues. In `/auth/info`, `/healthz` and `/api/me`.
 - **Hub front page**: `/` is a public page that explains Longarm (what it is
   for, three steps, agents, disconnects, NAT traversal, the toolbox) and
   how to install it on this hub - its MSI, the one-line installs and its
