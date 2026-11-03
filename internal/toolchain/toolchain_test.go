@@ -2,6 +2,8 @@ package toolchain
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -37,11 +39,133 @@ func TestInventoryWithoutProfile(t *testing.T) {
 		t.Fatal(r.Status())
 	}
 	r.Disabled = true
+	before := r.Status()
 	r.SetDesired(&pb.ToolchainDesired{Tools: []*pb.ToolSpec{{Name: "node", Version: "22"}}})
 	r.reconcile(context.Background())
-	if r.Status().State != "failed" || r.Status().Error == "" || r.Status().Versions["node"] != "" {
-		t.Fatal("disabled reconciler installed tools")
+	if rep := r.Status(); rep.State != before.State || rep.OwnerRevision != before.OwnerRevision {
+		t.Fatal("disabled reconciler changed status")
 	}
+}
+
+type probeBackend struct {
+	version func(context.Context, string) (string, error)
+	install func(context.Context, string, string, *slog.Logger) error
+}
+
+func (b probeBackend) Version(ctx context.Context, tool string) (string, error) {
+	return b.version(ctx, tool)
+}
+
+func (b probeBackend) Install(ctx context.Context, tool, version string, log *slog.Logger) error {
+	return b.install(ctx, tool, version, log)
+}
+
+func TestProbeErrorsDoNotInstallOrEraseInventory(t *testing.T) {
+	for _, probeErr := range []error{errors.New("probe failed"), context.DeadlineExceeded} {
+		for _, cached := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%v/cached=%v", probeErr, cached), func(t *testing.T) {
+				r := &Reconciler{Log: slog.Default(), Backend: probeBackend{
+					version: func(context.Context, string) (string, error) { return "", probeErr },
+					install: func(context.Context, string, string, *slog.Logger) error {
+						t.Fatal("installed a tool with an unknown version")
+						return nil
+					},
+				}, Drain: func(bool, string) { t.Fatal("drained for a failed probe") }}
+				if cached {
+					r.setReport(&pb.ToolchainReport{Versions: map[string]string{"copilot": "1.2.3"}})
+				}
+				r.SetDesired(&pb.ToolchainDesired{Tools: []*pb.ToolSpec{{Name: "copilot", Version: "latest"}}})
+				r.reconcile(context.Background())
+				rep := r.Status()
+				if rep.State != "failed" || !strings.Contains(rep.Error, "version unknown") {
+					t.Fatalf("probe failure hidden: %v", rep)
+				}
+				r.refreshInventory(context.Background())
+				v, found := r.Status().Versions["copilot"]
+				if found != cached || (cached && v != "1.2.3") {
+					t.Fatalf("unknown became missing: %v", r.Status())
+				}
+			})
+		}
+	}
+}
+
+func TestReconcileUsesLongProbeDeadline(t *testing.T) {
+	r := &Reconciler{Log: slog.Default(), Backend: probeBackend{
+		version: func(ctx context.Context, tool string) (string, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok || time.Until(deadline) < 20*time.Second {
+				return "", context.DeadlineExceeded
+			}
+			return "1.2.3", nil
+		},
+		install: func(context.Context, string, string, *slog.Logger) error {
+			t.Fatal("reinstalled a slow installed tool")
+			return nil
+		},
+	}}
+	r.SetDesired(&pb.ToolchainDesired{Tools: []*pb.ToolSpec{{Name: "copilot", Version: "latest"}}})
+	r.reconcile(context.Background())
+	if rep := r.Status(); rep.State != "ok" || rep.Versions["copilot"] != "1.2.3" {
+		t.Fatalf("slow probe: %v", rep)
+	}
+	// A short inventory timeout preserves the last successful version.
+	r.refreshInventory(context.Background())
+	if r.Status().Versions["copilot"] != "1.2.3" {
+		t.Fatal(r.Status())
+	}
+}
+
+func TestInventoryOnlyReportsChanges(t *testing.T) {
+	var reports int
+	r := &Reconciler{Log: slog.Default(), Backend: &Fake{Path: filepath.Join(t.TempDir(), "fake.json")},
+		Report: func(*pb.ToolchainReport) { reports++ }}
+	r.reconcile(context.Background())
+	first := r.Status().UpdatedAt
+	r.refreshInventory(context.Background())
+	r.reconcile(context.Background())
+	if reports != 1 || !r.Status().UpdatedAt.AsTime().Equal(first.AsTime()) {
+		t.Fatalf("unchanged inventory emitted %d reports", reports)
+	}
+}
+
+func TestInventorySkipsInstall(t *testing.T) {
+	started, finish, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var probes atomic.Int32
+	r := &Reconciler{Log: slog.Default(), Running: func() int { return 0 }, Drain: func(bool, string) {},
+		Backend: probeBackend{
+			version: func(context.Context, string) (string, error) {
+				probes.Add(1)
+				return "", nil
+			},
+			install: func(context.Context, string, string, *slog.Logger) error {
+				close(started)
+				<-finish
+				return errors.New("install failed")
+			},
+		}}
+	r.SetDesired(&pb.ToolchainDesired{Tools: []*pb.ToolSpec{{Name: "copilot", Version: "latest"}}})
+	go func() { defer close(done); r.reconcile(context.Background()) }()
+	<-started
+	n := probes.Load()
+	r.refreshInventory(context.Background())
+	if probes.Load() != n || r.Status().State != "applying" {
+		t.Error("inventory probed a half-installed tool")
+	}
+	close(finish)
+	<-done
+}
+
+func TestDisabledDoesNotProbe(t *testing.T) {
+	r := &Reconciler{Disabled: true, Backend: probeBackend{
+		version: func(context.Context, string) (string, error) {
+			t.Fatal("disabled toolchain ran a probe")
+			return "", nil
+		},
+	}}
+	r.reconcile(context.Background())
+	r.refreshInventory(context.Background())
+	r.Run(context.Background())
 }
 
 func TestOwnerToolsWithoutProfile(t *testing.T) {

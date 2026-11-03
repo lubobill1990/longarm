@@ -72,9 +72,10 @@ type Reconciler struct {
 	Report func(*pb.ToolchainReport)
 	// Interval between re-checks of an applied profile (default 30m).
 	Interval time.Duration
-	// Disabled keeps inventory reporting on but forbids installations.
+	// Disabled forbids both probes and installations.
 	Disabled bool
 
+	probeMu sync.Mutex
 	mu      sync.Mutex
 	desired *pb.ToolchainDesired
 	report  *pb.ToolchainReport
@@ -117,14 +118,8 @@ func (r *Reconciler) Status() *pb.ToolchainReport {
 }
 
 func (r *Reconciler) setReport(rep *pb.ToolchainReport) bool {
-	rep.UpdatedAt = timestamppb.Now()
 	r.mu.Lock()
-	if rep.Versions == nil && r.report != nil {
-		rep.Versions = maps.Clone(r.report.Versions)
-	}
-	changed := r.report == nil || r.report.Profile != rep.Profile || r.report.State != rep.State || r.report.Revision != rep.Revision ||
-		r.report.OwnerRevision != rep.OwnerRevision || r.report.Error != rep.Error || !maps.Equal(r.report.Versions, rep.Versions)
-	r.report = rep
+	changed := r.setReportLocked(rep)
 	r.mu.Unlock()
 	if changed && r.Report != nil {
 		r.Report(proto.Clone(rep).(*pb.ToolchainReport))
@@ -132,8 +127,24 @@ func (r *Reconciler) setReport(rep *pb.ToolchainReport) bool {
 	return changed
 }
 
+func (r *Reconciler) setReportLocked(rep *pb.ToolchainReport) bool {
+	if rep.Versions == nil && r.report != nil {
+		rep.Versions = maps.Clone(r.report.Versions)
+	}
+	changed := r.report == nil || r.report.Profile != rep.Profile || r.report.State != rep.State || r.report.Revision != rep.Revision ||
+		r.report.OwnerRevision != rep.OwnerRevision || r.report.Error != rep.Error || !maps.Equal(r.report.Versions, rep.Versions)
+	if changed {
+		rep.UpdatedAt = timestamppb.Now()
+		r.report = rep
+	}
+	return changed
+}
+
 // Run reconciles until ctx is done.
 func (r *Reconciler) Run(ctx context.Context) {
+	if r.Disabled {
+		return
+	}
 	r.Kick()
 	if r.Interval <= 0 {
 		r.Interval = 30 * time.Minute
@@ -172,10 +183,14 @@ func (r *Reconciler) Run(ctx context.Context) {
 	}
 }
 
-// Inventory must keep refreshing while reconciliation waits for jobs or
-// an installer. Merge under the lock so it cannot roll back a state change.
+// Inventory keeps refreshing while waiting for jobs, but not during installs.
+// Merge under the lock so it cannot roll back a state change.
 func (r *Reconciler) refreshInventory(ctx context.Context) {
-	versions, _ := r.check(ctx, &pb.ToolchainDesired{})
+	if r.Disabled || !r.probeMu.TryLock() {
+		return
+	}
+	defer r.probeMu.Unlock()
+	versions, _, _ := r.check(ctx, &pb.ToolchainDesired{}, 3*time.Second)
 	if ctx.Err() != nil {
 		return
 	}
@@ -184,10 +199,10 @@ func (r *Reconciler) refreshInventory(ctx context.Context) {
 	if r.report != nil {
 		rep = proto.Clone(r.report).(*pb.ToolchainReport)
 	}
-	rep.Versions, rep.UpdatedAt = versions, timestamppb.Now()
-	r.report = rep
+	rep.Versions = versions
+	changed := r.setReportLocked(rep)
 	r.mu.Unlock()
-	if r.Report != nil {
+	if changed && r.Report != nil {
 		r.Report(proto.Clone(rep).(*pb.ToolchainReport))
 	}
 }
@@ -202,46 +217,59 @@ func (r *Reconciler) current() *pb.ToolchainDesired {
 }
 
 // check returns the installed versions and the tools needing an install.
-func (r *Reconciler) check(ctx context.Context, d *pb.ToolchainDesired) (map[string]string, []*pb.ToolSpec) {
-	versions := map[string]string{}
+func (r *Reconciler) check(ctx context.Context, d *pb.ToolchainDesired, timeout time.Duration) (map[string]string, []*pb.ToolSpec, []string) {
+	versions := r.Status().Versions
+	if versions == nil {
+		versions = map[string]string{}
+	}
+	unknown := map[string]error{}
 	var todo []*pb.ToolSpec
+	var errs []string
 	for _, name := range KnownTools {
-		cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		cctx, cancel := context.WithTimeout(ctx, timeout)
 		v, err := r.Backend.Version(cctx, name)
 		cancel()
 		if err != nil {
 			r.Log.Warn("toolchain: version check", "tool", name, "err", err)
+			unknown[name] = err
+			continue
 		}
 		versions[name] = v
 	}
 	for _, t := range d.Tools {
+		if err := unknown[t.Name]; err != nil {
+			errs = append(errs, fmt.Sprintf("%s: version unknown: %v", t.Name, err))
+			continue
+		}
 		if !Satisfies(versions[t.Name], t.Version) {
 			todo = append(todo, t)
 		}
 	}
-	return versions, todo
+	return versions, todo, errs
 }
 
 func (r *Reconciler) reconcile(ctx context.Context) {
+	if r.Disabled {
+		return
+	}
+	r.probeMu.Lock()
 	d := r.current()
 	if d == nil {
 		d = &pb.ToolchainDesired{}
 	}
-	versions, todo := r.check(ctx, d)
+	versions, todo, probeErrs := r.check(ctx, d, 30*time.Second)
+	r.probeMu.Unlock()
 	report := func(state, message string) {
-		changed := r.setReport(&pb.ToolchainReport{Profile: d.Profile, Revision: d.Revision, OwnerRevision: d.OwnerRevision,
+		r.setReport(&pb.ToolchainReport{Profile: d.Profile, Revision: d.Revision, OwnerRevision: d.OwnerRevision,
 			State: state, Error: message, Versions: versions})
-		if !changed && state != "pending" && r.Report != nil {
-			r.Report(r.Status())
-		}
 	}
-	if r.Disabled && len(d.Tools) > 0 {
-		report("failed", "toolchain installation is disabled on this worker")
+	if len(probeErrs) > 0 {
+		report("failed", strings.Join(probeErrs, "; "))
 		return
 	}
-	if r.Disabled || len(d.Tools) == 0 {
+	if len(d.Tools) == 0 {
 		state := "none"
-		if !r.Disabled && d.Revision > 0 {
+		if d.Revision > 0 {
 			state = "ok"
 		}
 		report(state, "")
@@ -271,6 +299,8 @@ func (r *Reconciler) reconcile(ctx context.Context) {
 			return
 		}
 	}
+	r.probeMu.Lock()
+	defer r.probeMu.Unlock()
 	report("applying", "")
 	r.Log.Info("toolchain: installing", "tools", names)
 	var errs []string
@@ -287,7 +317,8 @@ func (r *Reconciler) reconcile(ctx context.Context) {
 			errs = append(errs, fmt.Sprintf("%s: %v", t.Name, err))
 		}
 	}
-	versions, todo = r.check(ctx, d)
+	versions, todo, probeErrs = r.check(ctx, d, 30*time.Second)
+	errs = append(errs, probeErrs...)
 	for _, t := range todo {
 		if !slicesContainsPrefix(errs, t.Name+":") {
 			errs = append(errs, fmt.Sprintf("%s: installed %q does not satisfy %q", t.Name, versions[t.Name], t.Version))

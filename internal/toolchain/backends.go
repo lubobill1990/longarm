@@ -148,7 +148,10 @@ func (s *System) Version(ctx context.Context, tool string) (string, error) {
 	}
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
-		return "", nil // not installed
+		if errors.Is(err, exec.ErrNotFound) {
+			return "", nil // not installed
+		}
+		return "", err
 	}
 	cmd, err := systemCommand(ctx, append([]string{path}, argv[1:]...)...)
 	if err != nil {
@@ -159,7 +162,11 @@ func (s *System) Version(ctx context.Context, tool string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", strings.Join(argv, " "), err)
 	}
-	return ParseVersion(string(out)), nil
+	version := ParseVersion(string(out))
+	if version == "" {
+		return "", fmt.Errorf("%s: no version in output", strings.Join(argv, " "))
+	}
+	return version, nil
 }
 
 func run(ctx context.Context, log *slog.Logger, argv ...string) error {
