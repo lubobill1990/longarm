@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  longarmApi,
   trayApi,
   type Account,
   type AccountRoles,
@@ -345,6 +346,15 @@ function AccountCard({
   const { run, busy } = useAction()
   // the signed-in hub's links (its /healthz, via the update check)
   const [links, setLinks] = useState<{ feedback?: string; repo?: string }>({})
+  // this computer as a device of the hub ("admin/bolu1-lubo-work": its role and name)
+  const [device, setDevice] = useState<string>()
+  useEffect(() => {
+    if (!acct.signed_in || !info.client.running) return
+    longarmApi.status().then(
+      (s) => setDevice(s.identity),
+      () => {},
+    )
+  }, [acct.signed_in, acct.hub, info.client.running])
   useEffect(() => {
     trayApi.update().then(
       (u) => setLinks({ feedback: u.feedback_url, repo: u.repo_url }),
@@ -385,6 +395,11 @@ function AccountCard({
           <IconFeedback />
         </button>
       </div>
+      {acct.signed_in && device && (
+        <div className="small muted" data-testid="account-device">
+          This device: <span className="mono">{device}</span>
+        </div>
+      )}
       {acct.signed_in && acct.expires && <div className="small muted">Sign-in valid until {when(acct.expires)} (renews by itself)</div>}
       <p className="button-row">
         {acct.signed_in && acct.hub && (

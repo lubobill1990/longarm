@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { localUpdateApi, longarmApi, trayApi, traySettingsApi } from '../api/local'
-import type { Job, PoolView } from '../api/types'
+import type { Job } from '../api/types'
 import { ask } from '../components/confirm'
 import { ErrorBox, LogView, StatePill, useAction, usePoll } from '../components/common'
 import { IconForward, IconTerminal } from '../components/icons'
@@ -289,14 +289,12 @@ const POLICIES: [string, string][] = [
   ['tcp', 'Prefer plain tcp'],
 ]
 
-/** Settings: appearance, transport policy (longarm transport), notifications, this client (version, logs, telemetry, diagnostics). */
+/** Settings: appearance, transport policy (longarm transport), notifications, updates, the agent skill, diagnostics (logs, telemetry). */
 export function Settings({
-  pool,
   clientUp = true,
   theme,
   onTheme,
 }: {
-  pool?: PoolView
   clientUp?: boolean
   theme?: ThemePref
   onTheme?: (t: ThemePref) => Promise<void>
@@ -305,7 +303,7 @@ export function Settings({
     <div className="settings">
       {theme && onTheme && <Appearance theme={theme} onTheme={onTheme} />}
       {clientUp && <TransportPolicy />}
-      <TraySettingsView pool={pool} clientUp={clientUp} />
+      <TraySettingsView />
       <AgentSkill />
       <AutoUpdate />
       <Licenses />
@@ -489,9 +487,8 @@ function TransportPolicy() {
   )
 }
 
-function TraySettingsView({ pool, clientUp }: { pool?: PoolView; clientUp: boolean }) {
+function TraySettingsView() {
   const st = usePoll(traySettingsApi.get, 0)
-  const daemon = usePoll(() => (clientUp ? longarmApi.status() : Promise.resolve(undefined)), 0, [clientUp])
   const { run, busy } = useAction()
   const s = st.data
   const set = (v: Parameters<typeof traySettingsApi.set>[0], ok: string) => run(() => traySettingsApi.set(v), ok).then((r) => r && st.setData(r))
@@ -529,28 +526,8 @@ function TraySettingsView({ pool, clientUp }: { pool?: PoolView; clientUp: boole
         </label>
         <p className="muted small">Only your own workers and the jobs you started notify; other people&apos;s machines never do.</p>
       </Section>
-      <Section card title="This client" testId="this-client">
-        <dl className="facts small" data-testid="client-info">
-          <dt>longarm-tray</dt>
-          <dd className="mono">
-            {s?.version ?? '…'}
-            {daemon.data?.version ? ` · longarm daemon ${daemon.data.version}` : ''}
-          </dd>
-          <dt>identity</dt>
-          <dd className="mono">{pool?.identity ?? daemon.data?.identity ?? '—'}</dd>
-          <dt>hub</dt>
-          <dd>
-            <span className="mono">{pool?.hub?.address || '—'}</span>{' '}
-            {pool?.hub?.address &&
-              (pool.hub.connected ? (
-                <span className="pill ok">connected</span>
-              ) : (
-                <span className="pill bad" title={pool.hub.error}>
-                  down{pool.hub.error ? `: ${pool.hub.error}` : ''}
-                </span>
-              ))}
-          </dd>
-        </dl>
+      {/* versions: the Updates card and the title bar; the hub and this device: the Account tab */}
+      <Section card title="Diagnostics" testId="this-client">
         <label className="switch-row">
           <input
             type="checkbox"

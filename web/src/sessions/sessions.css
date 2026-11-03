@@ -378,6 +378,32 @@
       border-left: 3px solid var(--border-strong);
       color: var(--text-muted, inherit);
     }
+    /* GFM tables: a wide one scrolls sideways in its own box */
+    & .md-table-wrap {
+      max-width: 100%;
+      overflow-x: auto;
+      margin: var(--sp-2) 0;
+    }
+    & .md-table {
+      border-collapse: collapse;
+      font-size: var(--fs-sm);
+      font-variant-numeric: tabular-nums;
+    }
+    & .md-table th,
+    & .md-table td {
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+    & .md-table th {
+      background: var(--surface-2, rgba(127, 127, 127, 0.08));
+      font-weight: var(--fw-semibold, 600);
+      white-space: nowrap;
+    }
+    & .md-table tbody tr:nth-child(even) td {
+      background: color-mix(in srgb, var(--surface-2, #888) 45%, transparent);
+    }
     & a {
       color: var(--accent);
     }

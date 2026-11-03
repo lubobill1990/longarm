@@ -2,17 +2,55 @@ import { Fragment, type ReactNode } from 'react'
 import { trayApi } from '../api/local'
 
 // A small Markdown renderer for the conversation view: what agents write -
-// paragraphs, headings, lists, quotes, fenced code, inline code, bold,
-// italics and links. It builds React elements (never HTML strings), so a
-// transcript can't inject markup; links open in the default browser
-// through the tray (the window itself never navigates away).
+// paragraphs, headings, lists, quotes, tables (GFM), fenced code, inline
+// code, bold, italics and links. It builds React elements (never HTML
+// strings), so a transcript can't inject markup; links open in the default
+// browser through the tray (the window itself never navigates away).
+
+type Align = 'left' | 'center' | 'right' | undefined
 
 type Block =
   | { kind: 'code'; lang: string; text: string }
   | { kind: 'heading'; level: number; text: string }
   | { kind: 'list'; ordered: boolean; items: string[] }
   | { kind: 'quote'; text: string }
+  | { kind: 'table'; head: string[]; align: Align[]; rows: string[][] }
   | { kind: 'para'; text: string }
+
+// a table's second line: | --- | :--: | ---: |
+const tableSepRE = /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/
+
+/** A table row's cells: split on "|" - not an escaped one, not one in `code` (exported for tests). */
+export function cells(line: string): string[] {
+  let s = line.trim()
+  if (s.startsWith('|')) s = s.slice(1)
+  if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1)
+  const out: string[] = []
+  let cur = ''
+  let tick = false
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (c === '\\' && s[i + 1] === '|') {
+      cur += '|'
+      i++
+    } else if (c === '`') {
+      tick = !tick
+      cur += c
+    } else if (c === '|' && !tick) {
+      out.push(cur.trim())
+      cur = ''
+    } else cur += c
+  }
+  out.push(cur.trim())
+  return out
+}
+
+function alignOf(sep: string): Align {
+  const t = sep.trim()
+  const l = t.startsWith(':')
+  const r = t.endsWith(':')
+  return l && r ? 'center' : r ? 'right' : l ? 'left' : undefined
+}
 
 const fenceRE = /^\s*(```|~~~)\s*([\w+#.-]*)\s*$/
 const headingRE = /^(#{1,6})\s+(.*)$/
@@ -37,6 +75,17 @@ export function blocks(text: string): Block[] {
       const body: string[] = []
       for (i++; i < lines.length && !lines[i].trim().startsWith(fence[1]); i++) body.push(lines[i])
       out.push({ kind: 'code', lang: fence[2], text: body.join('\n') })
+      continue
+    }
+    // a table: a row with "|", then the separator line
+    if (l.includes('|') && i + 1 < lines.length && tableSepRE.test(lines[i + 1]) && lines[i + 1].includes('-')) {
+      flush()
+      const head = cells(l)
+      const align = cells(lines[i + 1]).map(alignOf)
+      const rows: string[][] = []
+      for (i += 2; i < lines.length && lines[i].trim() !== '' && lines[i].includes('|'); i++) rows.push(cells(lines[i]))
+      i--
+      out.push({ kind: 'table', head, align, rows })
       continue
     }
     const h = headingRE.exec(l)
@@ -150,6 +199,34 @@ export function Markdown({ text }: { text: string }) {
           }
           case 'quote':
             return <blockquote key={i}>{lines(b.text)}</blockquote>
+          case 'table':
+            // wide tables scroll sideways in their own box, not the conversation
+            return (
+              <div key={i} className="md-table-wrap">
+                <table className="md-table">
+                  <thead>
+                    <tr>
+                      {b.head.map((c, j) => (
+                        <th key={j} style={{ textAlign: b.align[j] }}>
+                          {inline(c)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {b.rows.map((r, ri) => (
+                      <tr key={ri}>
+                        {b.head.map((_, j) => (
+                          <td key={j} style={{ textAlign: b.align[j] }}>
+                            {inline(r[j] ?? '')}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
           default:
             return <p key={i}>{lines(b.text)}</p>
         }

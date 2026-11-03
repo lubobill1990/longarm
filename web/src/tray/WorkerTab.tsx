@@ -263,21 +263,29 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
           </tbody>
         </table>
       </Section>
-      <Section card title="Fleet membership">
-        <div className="field-inline">
-          <div className="field-help">The hub revokes this worker and longarmd stops. Running jobs keep running.</div>
-          <button
-            className="danger"
-            disabled={busy}
-            onClick={async () =>
-              (await ask('Leave the fleet? The hub revokes this worker and longarmd stops. Running jobs keep running.', { ok: 'Leave', danger: true })) &&
-              run(() => longarmdApi.leave('left in longarm-tray'), (r) => r.message ?? 'left')
-            }
-          >
-            Leave the fleet
-          </button>
-        </div>
-      </Section>
+      {/* where the Account tab can change this computer's roles ("Run jobs"), that is the place; here only otherwise */}
+      {!info.account?.roles_editable && (
+        <Section card title="Remove this worker">
+          <div className="field-inline">
+            <div className="field-help">
+              The hub revokes this worker and longarmd stops; running jobs keep running. Your sign-in on this computer stays - Sign out (Account) removes
+              both.
+            </div>
+            <button
+              className="danger"
+              disabled={busy}
+              onClick={async () =>
+                (await ask('Remove this worker from the hub? The hub revokes it and longarmd stops. Running jobs keep running; your sign-in here stays.', {
+                  ok: 'Remove',
+                  danger: true,
+                })) && run(() => longarmdApi.leave('left in longarm-tray'), (r) => r.message ?? 'removed')
+              }
+            >
+              Remove from the hub
+            </button>
+          </div>
+        </Section>
+      )}
     </div>
   )
 }

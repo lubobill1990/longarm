@@ -172,7 +172,7 @@ export function TrayApp() {
               {cur === 'pool' && <PoolTab pool={pool} error={poolErr} info={info} onNavigate={(t) => setTab(t as Tab)} />}
               {cur === 'jobs' && clientUp && <ClientJobs />}
               {cur === 'forwards' && clientUp && <Forwards workers={(pool?.workers ?? []).map((w) => w.name)} />}
-              {cur === 'settings' && <Settings pool={pool} clientUp={clientUp} theme={theme} onTheme={setTheme} />}
+              {cur === 'settings' && <Settings clientUp={clientUp} theme={theme} onTheme={setTheme} />}
               {cur === 'worker' && info && <WorkerTab info={info} onNavigate={(t) => setTab(t as Tab)} />}
               {cur === 'account' && info && <AccountTab info={info} onChange={() => setReload((n) => n + 1)} />}
             </div>
