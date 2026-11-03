@@ -1,0 +1,102 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "createdAt": "2026-11-03T09:00:00Z",
+        "pid": 22588,
+        "shimPid": 27972,
+        "spec": {
+          "argv": [
+            "claude",
+            "sleep",
+            "120"
+          ],
+          "id": "01JC8ZK3T5W9QX4M2N6P7R8S0A",
+          "labels": {
+            "longarm.mem_gb": "2"
+          },
+          "name": "test",
+          "owner": "alice",
+          "submittedBy": "client/alice"
+        },
+        "startedAt": "2026-11-03T09:00:00Z",
+        "state": "JOB_STATE_RUNNING"
+      },
+      "updatedAt": "2026-11-03T09:00:00Z",
+      "worker": "worker-1",
+      "workerId": "3f2a9c1e-8b7d-4c5e-9f1a-2b3c4d5e6f70",
+      "workerOnline": true
+    },
+    {
+      "job": {
+        "createdAt": "2026-11-03T09:00:00Z",
+        "endedAt": "2026-11-03T09:00:00Z",
+        "exitCode": 137,
+        "hasExitCode": true,
+        "pid": 39164,
+        "reason": "killed by request",
+        "shimPid": 34424,
+        "spec": {
+          "argv": [
+            "claude",
+            "sleep",
+            "120"
+          ],
+          "id": "01JC8ZK3T5W9QX4M2N6P7R8S0A",
+          "labels": {
+            "longarm.mem_gb": "2"
+          },
+          "name": "stuck",
+          "owner": "alice",
+          "submittedBy": "client/alice"
+        },
+        "startedAt": "2026-11-03T09:00:00Z",
+        "state": "JOB_STATE_KILLED"
+      },
+      "updatedAt": "2026-11-03T09:00:00Z",
+      "worker": "worker-1",
+      "workerId": "3f2a9c1e-8b7d-4c5e-9f1a-2b3c4d5e6f70",
+      "workerOnline": true
+    },
+    {
+      "job": {
+        "createdAt": "2026-11-03T09:00:00Z",
+        "endedAt": "2026-11-03T09:00:00Z",
+        "hasExitCode": true,
+        "logSize": "187",
+        "pid": 31544,
+        "shimPid": 44404,
+        "spec": {
+          "argv": [
+            "claude",
+            "print",
+            "1",
+            "0",
+            "0"
+          ],
+          "id": "01JC8ZK3T5W9QX4M2N6P7R8S0A",
+          "labels": {
+            "longarm.mem_gb": "2",
+            "longarm.repo": "repo"
+          },
+          "name": "build",
+          "owner": "alice",
+          "submittedBy": "client/alice",
+          "workspace": {
+            "commit": "5f3cbd0a9e2d4c71b8a6f0e3d2c1b0a99f8e7d6c5b4a39281706f5e4d3c2b1a0",
+            "repo": "repo",
+            "stagingId": "01JC8ZK3T5W9QX4M2N6P7R8S0A"
+          }
+        },
+        "startedAt": "2026-11-03T09:00:00Z",
+        "state": "JOB_STATE_DONE",
+        "workdir": "/var/lib/longarmd/worktrees/01JC8ZK3T5W9QX4M2N6P7R8S0A"
+      },
+      "updatedAt": "2026-11-03T09:00:00Z",
+      "worker": "worker-1",
+      "workerId": "3f2a9c1e-8b7d-4c5e-9f1a-2b3c4d5e6f70",
+      "workerOnline": true
+    }
+  ],
+  "source": "hub"
+}

@@ -2870,6 +2870,16 @@ msiexec /i longarm-windows-amd64.msi /qn MODE=custom ROLES=worker HUB=hub.exampl
 msiexec /i longarm-windows-amd64.msi /qn MODE=custom ROLES=worker RUN=service HUB=hub.example.com LOGIN=1 SERVICE_USER=.\me SERVICE_PASSWORD=...
 ```
 
+**A join that fails doesn't fail the install.** When the worker's join with
+`JOIN_CODE` fails - the code expired (an unattended install that ran late,
+e.g. a Dev Box customization), it is unknown, or the hub can't be reached -
+the MSI installs all the same: the binaries, the service or logon task, the
+tray and the recorded `HUB` / `CA_FINGERPRINT` stay, and the worker waits
+for a sign-in like `LOGIN=1`'s - the Longarm tray, `longarmd login <hub>
+--role both`, or `longarmd join <hub> <new code>`. Why the join failed is in
+the install log (`/l*v`) and in the data dir's `install-join-failed`. (The
+client's `CLIENT_JOIN_CODE` never failed the install.)
+
 The MSI adds inbound UDP+TCP firewall rules for longarm, longarmd and
 longarm-tray, puts them on PATH, starts the tray at logon, records `HUB`
 (the bare domain will do), `CA_FINGERPRINT`, `LOGIN`, `LABELS`, `MODE` and
