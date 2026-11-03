@@ -141,8 +141,16 @@ func TestGitHubReleases(t *testing.T) {
 	gh.release("v1.1.0", false, false, map[string]string{"longarmd-linux-amd64": "daemon-1.1.0"}, map[string]string{"longarmd-linux-amd64": "tampered"})
 	gh.release("v9.9.9", false, true, map[string]string{"longarmd-linux-amd64": "draft"}, nil)
 	h := newGHHub(t, gh)
+	// asked before the first poll (a hub just started): nothing - and not
+	// cached past the poll
+	if v, _ := h.latestNotice(); v != "" {
+		t.Fatalf("latest before the poll: %s", v)
+	}
 	if err := h.gh.poll(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if v, _ := h.latestNotice(); v != "1.2.0" {
+		t.Fatalf("latest right after the poll: %q", v)
 	}
 	latest := func(q string) (v string, files []string) {
 		expireLatest(h)

@@ -206,6 +206,9 @@ func Open(cfg *Config, log *slog.Logger) (*Hub, error) {
 		st.Close()
 		return nil, err
 	}
+	if h.gh != nil {
+		h.gh.changed = h.latest.forget
+	}
 	if err := h.load(); err != nil {
 		st.Close()
 		return nil, err
