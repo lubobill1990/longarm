@@ -1748,10 +1748,14 @@ macOS), only while no job runs (it drains meanwhile), and reports versions. A
 changed profile goes to one canary worker first; the rest follow when it
 reports ok, a failure halts the rollout.
 
-Every updated worker also inventories **git, gh, node, pnpm, uv, pwsh, claude,
-copilot and go**, whether or not it has a profile (also when installation is
-disabled). Version probes have short timeouts; the cached inventory is refreshed
-at connect and every five minutes. `longarm worker ls --json` includes it in
+Updated non-admin workers with toolchains enabled also inventory **git, gh, node,
+pnpm, uv, pwsh, claude, copilot and go**, whether or not they have a profile.
+Admin workers and `[toolchain] disabled = true` workers run neither probes nor
+installers, and the toolchain backend does not change their PATH. Version probes
+have short timeouts for periodic inventory and longer timeouts for reconciliation;
+the cached inventory is refreshed at connect and every five minutes, except
+during installation. Unchanged inventories do not emit reports.
+`longarm worker ls --json` includes it in
 each node's `toolchain`:
 
 ```json
@@ -1773,12 +1777,16 @@ each node's `toolchain`:
 ```
 
 Other node fields are omitted from this example. An empty version means missing;
+a failed or timed-out probe keeps the last cached version, or omits that tool's
+key if no successful probe is available (unknown, not missing). Failed probes
+never trigger installation of that tool.
 an **absent `toolchain`** means no report, not that every tool is missing (for
 example an older worker). Offline workers may have a cached report: check the
 node's `online` and the report's `updated_at`. `state` is `none` with no desired
 tools, `ok` when satisfied, `pending` while waiting for jobs, `applying` during
 installation, or `failed` with an `error`. Version strings are detected versions,
 not requested version prefixes.
+`updated_at` is the last report change, not a periodic heartbeat timestamp.
 
 ### Users, teams and quotas (sharing a hub)
 
@@ -1957,8 +1965,8 @@ longarm ls                                # an OWNER column appears once a worke
 **Tools on your worker.** `worker toolchain` lets its owner manage tools without
 an admin certificate; admins can also manage fleet workers (those with no owner),
 not somebody else's private machine. Sharing a worker does not grant toolchain
-management. Admin workers accept inventory queries but refuse hub-initiated package
-operations; use explicit commands on them instead.
+management. Admin workers accept status queries but do not probe tools or accept
+hub-initiated package operations; use explicit commands on them instead.
 
 `--tools` replaces your whole desired list, accepts comma-separated names and
 repeatable flags, and defaults an omitted `@VERSION` to `latest` (any installed
@@ -1973,7 +1981,9 @@ Reconciliation uses the same backend as profiles and installs only while idle,
 draining until jobs finish. `--apply` asks an online worker to recheck now; it
 acknowledges the request, **not installation success**. Read status again to
 observe `pending` / `applying` / `ok` / `failed`. Desired changes persist even if
-`--apply` fails because the worker is offline or remote control is disabled.
+`--apply` fails because the worker is offline (exit 255) or remote control is
+disabled (exit 77). These non-zero exits occur **after the desired list was
+saved**: programs should retry the apply, not assume the set failed.
 On Windows the backend refreshes the daemon's PATH after package installation;
 the version check and the next job use the same lookup, including per-user npm
 tools, without restarting the worker.
@@ -2461,6 +2471,7 @@ labels = { region = "eu" }           # scheduler constraints (longarm run --requ
 [toolchain]
 # backend = "system"                 # or "fake" (tests): fake_state = "path.json"
 # interval = "30m"
+# disabled = true                  # no version probes, installs or toolchain PATH changes
 ```
 
 ### Web UI: hub panel and longarm-tray

@@ -86,7 +86,7 @@ Modules:
 | `jobs` | Job directory `<data dir>\jobs\<id>\{job.json,state,out.log,result.md,exit}` | Simple, script-readable layout. On startup it **reconciles**: state=running but the pid is gone / the process start time does not match → `lost`; the job's retry policy decides whether to resume (claude `--resume <session-id>` / copilot `--continue`) |
 | `workspace` | One bare mirror per repository: `<data dir>\mirrors\<repo>.git`; jobs use `git worktree` | New workspaces in seconds; shared pnpm store / uv cache; LRU disk GC (threshold e.g. C: free < 15%) |
 | `metrics` | CPU / memory / top processes / number of agent sessions (kernel32 sampling + leaf-process counting) | Sampled every 2 s and pushed to the hub (piggybacked on heartbeats); also exposes `/metrics` for Prometheus |
-| `toolchain` | Inventories baseline tools (git/gh/node/pnpm/uv/pwsh/claude/copilot/go), with or without a profile; reconciles a hub profile plus per-worker owner desired tools | Declarative and idempotent; admin profile wins conflicts; profiles upgrade one worker at a time as a canary |
+| `toolchain` | Inventories baseline tools (git/gh/node/pnpm/uv/pwsh/claude/copilot/go), with or without a profile; reconciles a hub profile plus per-worker owner desired tools | No probes or installs on admin/disabled workers; admin profile wins conflicts; profiles upgrade one worker at a time as a canary, judged only on profile tool versions |
 | `sshd` | gliderlabs/ssh, bound to the overlay address only | Compatibility layer: existing scripts, VS Code Remote-SSH, scp |
 | `update` | Self-update | Download → verify signature (minisign) → keep old and new binaries side by side → restart the service → automatic rollback if the 60 s health check fails |
 
