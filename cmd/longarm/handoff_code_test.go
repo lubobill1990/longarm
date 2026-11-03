@@ -34,6 +34,40 @@ func TestTempBranchName(t *testing.T) {
 	}
 }
 
+// The per-user namespaces a repository may limit branches to (Azure DevOps
+// at Microsoft) first, longarm/handoff/ last; all of them pushable by a
+// worker; a refusal for the name tries the next.
+func TestTempBranchNames(t *testing.T) {
+	at := time.Date(2026, 10, 28, 9, 5, 0, 0, time.UTC)
+	leaf := "5e55a7c1-202610280905-0a1b2c"
+	got := tempBranchNames("Alice", "5e55a7c1", at, "0a1b2c")
+	want := []string{"users/alice/longarm-handoff/" + leaf, "user/alice/longarm-handoff/" + leaf, "longarm/handoff/alice/" + leaf}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("names %v, want %v", got, want)
+	}
+	for _, b := range got {
+		if !workspace.HandoffBranchRE.MatchString(b) {
+			t.Errorf("%q is outside what a worker pushes", b)
+		}
+	}
+	for _, bad := range []string{"users/alice/other/x", "user/alice/x", "main", "users/alice/longarm-handoff/../x"} {
+		if workspace.HandoffBranchRE.MatchString(bad) && !strings.Contains(bad, "..") {
+			t.Errorf("a worker would push %q", bad)
+		}
+	}
+	for msg, name := range map[string]bool{
+		"! [remote rejected] (VS403660: You do not have permission to create ref 'refs/heads/longarm/handoff/a/b'. Please ensure the ref naming convention being used is allowed in this repository.)": true,
+		"remote: error: GH013: Repository rule violations found for refs/heads/longarm/handoff/a/b.":                                                                                                   true,
+		`bad branch "users/a/longarm-handoff/x" (want longarm/handoff/<user>/<id>)`:                                                                                                                    true,
+		"fatal: Authentication failed for 'https://example.com/r.git/'":                                                                                                                                false,
+		"! [rejected] longarm/handoff/a/b (non-fast-forward)":                                                                                                                                          false,
+	} {
+		if got := nameRefusedRE.MatchString(msg); got != name {
+			t.Errorf("refused for the name %v, want %v: %s", got, name, msg)
+		}
+	}
+}
+
 func TestResolveVia(t *testing.T) {
 	dir := t.TempDir()
 	old := configDir

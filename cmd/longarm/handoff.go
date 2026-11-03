@@ -159,7 +159,7 @@ carried over: the agent starts them anew on the target.`,
 	f.StringVar(&viaThreshold, "via-threshold", defaultViaThreshold, "--via auto: objects the target lacks from this size on go through the remote; [handoff] via_threshold")
 	f.BoolVar(&o.allowSecrets, "allow-secrets", false, "--via remote: push even when the secret check finds credentials in changed or untracked files")
 	f.BoolVar(&o.keepBranch, "keep-branch", false, "--via remote: keep the temporary branch on the remote")
-	f.BoolVar(&o.cleanup, "cleanup", false, "list and delete your stale temporary branches (longarm/handoff/<you>/*) of the current checkout's remote")
+	f.BoolVar(&o.cleanup, "cleanup", false, "list and delete your stale temporary branches (users/<you>/longarm-handoff/*, user/<you>/longarm-handoff/*, longarm/handoff/<you>/*) of the current checkout's remote")
 	return c
 }
 

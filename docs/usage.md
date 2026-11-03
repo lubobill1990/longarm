@@ -986,8 +986,13 @@ would carry, after the remote-first fetch with `--git-auth forward`) decides
   `relay`, `bundle`, `remote`) and `"relayedBytes"` (what this machine
   relayed between workers).
 - **remote** pushes the snapshot commit to a temporary branch
-  `longarm/handoff/<user>/<id8>-<yyyymmddhhmm>-<random>` of the repository's https
-  remote (Azure DevOps, GitHub, ...) - `git push <remote>
+  `users/<user>/longarm-handoff/<id8>-<yyyymmddhhmm>-<random>` of the
+  repository's https remote (Azure DevOps, GitHub, ...) - under your alias,
+  as repositories that let you create branches there only want it (Azure
+  DevOps at Microsoft: `VS403660 ... ref naming convention` for any other
+  name); refused for the name, `user/<user>/longarm-handoff/...`, then
+  `longarm/handoff/<user>/...` (`<user>` is your Longarm user, your alias
+  on a hub with Microsoft sign-in) - `git push <remote>
   <snapshot>:refs/heads/<branch>`: your branch, index and upstream are not
   touched - and the target fetches it from there (a worker with the
   forwarded credential, as `--repo <url> --git-auth forward`; locally with
@@ -999,14 +1004,15 @@ would carry, after the remote-first fetch with `--git-auth forward`) decides
   that one ref (`--no-follow-tags`, `push.followTags`, push options and
   submodule recursion off, to the URL rather than a remote name, no forced
   update; the same for a local push and every delete), with the
-  repository's hooks off, only to `longarm/handoff/` branches, never stored
+  repository's hooks off, only to `longarm/handoff/` and
+  `users/<user>/longarm-handoff/` / `user/<user>/longarm-handoff/` branches, never stored
   in a config file. Workers need `--git-auth forward` for this path
   (without it, relay). The branch is deleted once the target has the code
   (by this machine with your git when it has a checkout of the repository,
   else by the source worker with the forwarded credential); if that fails
   longarm prints the `git push <url> --delete <branch>` that does it.
   `--keep-branch` keeps it; `longarm handoff --cleanup [--json]` (in your
-  checkout) lists your `longarm/handoff/<user>/*` branches and deletes
+  checkout) lists your temporary branches (all three namespaces) and deletes
   those older than an hour.
 
   Before pushing, a **secret check** scans the changed and untracked files

@@ -8,8 +8,9 @@ package main
 //                 offer only the target may fetch), else relayed by this
 //                 client; worker -> local as a bundle.
 //   --via remote  the snapshot is pushed to a temporary branch
-//                 longarm/handoff/<user>/<id>-<time> of the repository's
-//                 https remote and the target fetches it from there; the
+//                 users/<user>/longarm-handoff/<id>-<time> of the repository's
+//                 https remote (refused for the name: user/<user>/..., then
+//                 longarm/handoff/<user>/...) and the target fetches it from there; the
 //                 branch is deleted once the target has it (--keep-branch).
 //                 Refused (back to relay, with a note) without an https
 //                 remote or a credential, when the secret check finds
@@ -23,6 +24,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -180,6 +182,32 @@ func tempBranchName(user, short string, t time.Time, nonce string) string {
 	return "longarm/handoff/" + sanitizeRefPart(user) + "/" + sanitizeRefPart(short) + "-" + t.UTC().Format("200601021504") + "-" + sanitizeRefPart(nonce)
 }
 
+// tempBranchPrefixes are the namespaces a handoff's temporary branch may
+// go to, in the order tried: the per-user namespaces repositories limit
+// branches to (Azure DevOps at Microsoft: users/<alias>/ or user/<alias>/,
+// the hub user being the alias there), then longarm/handoff/<user>/.
+func tempBranchPrefixes(user string) []string {
+	u := sanitizeRefPart(user)
+	return []string{"users/" + u + "/longarm-handoff/", "user/" + u + "/longarm-handoff/", "longarm/handoff/" + u + "/"}
+}
+
+// tempBranchNames: the temporary branch's name in each namespace
+// (tempBranchPrefixes), the leaf as tempBranchName's.
+func tempBranchNames(user, short string, t time.Time, nonce string) []string {
+	leaf := strings.TrimPrefix(tempBranchName(user, short, t, nonce), "longarm/handoff/"+sanitizeRefPart(user)+"/")
+	var names []string
+	for _, p := range tempBranchPrefixes(user) {
+		names = append(names, p+leaf)
+	}
+	return names
+}
+
+// nameRefusedRE: a push refused for the branch's name (a namespace the
+// pusher may not create branches in), not for the credential: another
+// name may go through. "bad branch": an older worker's check (it knows
+// longarm/handoff/ only).
+var nameRefusedRE = regexp.MustCompile(`(?i)VS403660|permission to create ref|ref naming convention|GH013|bad branch`)
+
 // openLocalRepo is the user's checkout for --to local from a worker.
 func (c *coder) openLocalRepo(ctx context.Context) (*hoRepo, error) {
 	dir := c.o.localRepo
@@ -334,21 +362,38 @@ func (c *coder) remote(ctx context.Context) (res *codeResult, why string, err er
 	}
 	nonce := make([]byte, 3)
 	rand.Read(nonce)
-	branch := tempBranchName(c.user, c.short, time.Now(), hex.EncodeToString(nonce))
-	tb := &tempBranch{url: u, branch: branch, keep: c.o.keepBranch}
-	// push
-	if c.src.local() {
-		if _, err := c.srcRepo.pushExact(ctx, u, c.snap+":refs/heads/"+branch); err != nil {
-			return nil, "the remote refused the push: " + oneLine(err), nil
+	// push: to the first namespace the remote lets us create a branch in
+	var branch string
+	var perr error
+	for _, b := range tempBranchNames(c.user, c.short, time.Now(), hex.EncodeToString(nonce)) {
+		branch = b
+		if c.src.local() {
+			if _, err := c.srcRepo.pushExact(ctx, u, c.snap+":refs/heads/"+branch); err != nil {
+				perr = errors.New(oneLine(err))
+			} else {
+				perr = nil
+			}
+		} else {
+			pctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+			_, err := c.src.conn.Workspace().PushHandoff(pctx, &pb.PushHandoffRequest{Dir: c.srcRepo.top, Url: u, Commit: c.snap, Branch: branch, GitAuth: g.pb()})
+			cancel()
+			if err != nil {
+				perr = errors.New(grpcMessage(err))
+			} else {
+				perr = nil
+			}
 		}
+		if perr == nil || !nameRefusedRE.MatchString(perr.Error()) {
+			break
+		}
+	}
+	if perr != nil {
+		return nil, "the remote refused the push: " + perr.Error(), nil
+	}
+	tb := &tempBranch{url: u, branch: branch, keep: c.o.keepBranch}
+	if c.src.local() {
 		tb.local = c.srcRepo
 	} else {
-		pctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-		_, err := c.src.conn.Workspace().PushHandoff(pctx, &pb.PushHandoffRequest{Dir: c.srcRepo.top, Url: u, Commit: c.snap, Branch: branch, GitAuth: g.pb()})
-		cancel()
-		if err != nil {
-			return nil, "the remote refused the push: " + grpcMessage(err), nil
-		}
 		switch {
 		case c.localRepo != nil:
 			tb.local = c.localRepo
@@ -702,8 +747,13 @@ func runHandoffCleanup(ctx context.Context, o handoffOpts) error {
 		return usagef("%s has no remote", r.top)
 	}
 	user := handoffUser()
-	prefix := "refs/heads/longarm/handoff/" + user + "/"
-	out, err := r.git(ctx, nil, nil, "ls-remote", "--heads", "--", r.remote, prefix+"*")
+	args := []string{"ls-remote", "--heads", "--", r.remote}
+	var prefixes []string
+	for _, p := range tempBranchPrefixes(user) {
+		prefixes = append(prefixes, "refs/heads/"+p)
+		args = append(args, "refs/heads/"+p+"*")
+	}
+	out, err := r.git(ctx, nil, nil, args...)
 	if err != nil {
 		return err
 	}
@@ -716,7 +766,7 @@ func runHandoffCleanup(ctx context.Context, o handoffOpts) error {
 	stampRE := regexp.MustCompile(`-(\d{12})(?:-[0-9a-f]{1,16})?$`)
 	for _, l := range strings.Split(out, "\n") {
 		f := strings.Fields(l)
-		if len(f) != 2 || !strings.HasPrefix(f[1], prefix) {
+		if len(f) != 2 || !slices.ContainsFunc(prefixes, func(p string) bool { return strings.HasPrefix(f[1], p) }) {
 			continue
 		}
 		b := branch{Name: strings.TrimPrefix(f[1], "refs/heads/")}
