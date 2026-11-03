@@ -153,12 +153,7 @@ func (s *System) Version(ctx context.Context, tool string) (string, error) {
 		}
 		return "", err
 	}
-	cmd, err := systemCommand(ctx, append([]string{path}, argv[1:]...)...)
-	if err != nil {
-		return "", err
-	}
-	cmd.WaitDelay = 250 * time.Millisecond
-	out, err := cmd.Output()
+	out, err := probeOutput(ctx, append([]string{path}, argv[1:]...)...)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", strings.Join(argv, " "), err)
 	}
@@ -223,13 +218,7 @@ func (s *System) Install(ctx context.Context, tool, version string, log *slog.Lo
 			args = append(args, "--prefix", filepath.Dir(node))
 		} else if runtime.GOOS == "windows" {
 			pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			cmd, err := systemCommand(pctx, npm, "prefix", "-g")
-			if err != nil {
-				cancel()
-				return fmt.Errorf("npm prefix: %w", err)
-			}
-			cmd.WaitDelay = 250 * time.Millisecond
-			out, err := cmd.Output()
+			out, err := probeOutput(pctx, npm, "prefix", "-g")
 			cancel()
 			if err != nil {
 				return fmt.Errorf("npm prefix: %w", err)

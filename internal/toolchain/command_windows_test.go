@@ -4,12 +4,17 @@ package toolchain
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestWindowsVersionUsesJobPathAndBatchShim(t *testing.T) {
@@ -83,5 +88,87 @@ func TestWindowsUnparseableVersionIsUnknown(t *testing.T) {
 	}
 	if _, err := (&System{}).Version(context.Background(), "copilot"); err == nil {
 		t.Fatal("unparseable probe output reported as missing")
+	}
+}
+
+func TestWindowsDisabledLeavesPathAndToolsAlone(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("LOCALAPPDATA", dir)
+	t.Setenv("PATH", os.Getenv("PATH"))
+	before := os.Getenv("PATH")
+	r := &Reconciler{Backend: &System{}, Disabled: true}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	r.Run(ctx)
+	r.refreshInventory(context.Background())
+	if os.Getenv("PATH") != before || len(r.Status().Versions) != 0 {
+		t.Fatal("disabled reconciler ran probes or changed the job PATH")
+	}
+}
+
+func TestToolchainProbeHelper(t *testing.T) {
+	if os.Getenv("LONGARM_TOOLCHAIN_PROBE_HELPER") != "1" {
+		t.Skip("subprocess helper")
+	}
+	if err := os.WriteFile(os.Getenv("LONGARM_TOOLCHAIN_PROBE_PID"), []byte(fmt.Sprint(os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Minute)
+}
+
+func TestWindowsProbeCancellationKillsDescendants(t *testing.T) {
+	dir := t.TempDir()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pidFile := filepath.Join(dir, "pid")
+	t.Setenv("LONGARM_TOOLCHAIN_PROBE_HELPER", "1")
+	t.Setenv("LONGARM_TOOLCHAIN_PROBE_PID", pidFile)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	shim := "@echo off\r\n\"" + exe + "\" \"-test.run=^TestToolchainProbeHelper$\"\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "copilot.cmd"), []byte(shim), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := (&System{}).Version(ctx, "copilot")
+		done <- err
+	}()
+	deadline := time.Now().Add(20 * time.Second)
+	var pid uint32
+	for {
+		b, err := os.ReadFile(pidFile)
+		if err == nil && len(b) > 0 {
+			if _, err := fmt.Sscan(string(b), &pid); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+		if (err != nil && !errors.Is(err, os.ErrNotExist)) || time.Now().After(deadline) {
+			t.Fatalf("probe child did not start: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	process, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_TERMINATE, false, pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(process)
+	defer windows.TerminateProcess(process, 1)
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("cancelled probe succeeded")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("probe did not return after cancellation")
+	}
+	if state, err := windows.WaitForSingleObject(process, 5000); err != nil || state != windows.WAIT_OBJECT_0 {
+		t.Fatalf("orphaned probe child: wait=%d, err=%v", state, err)
 	}
 }

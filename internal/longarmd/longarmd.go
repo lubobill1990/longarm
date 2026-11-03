@@ -874,6 +874,8 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 			log.Warn("toolchain disabled", "err", err)
 		} else {
 			agent.tc = &toolchain.Reconciler{Backend: backend, Log: log.With("component", "toolchain"),
+				// Neither version probes nor PATH changes may execute user
+				// tools with an admin worker's elevated privileges.
 				Disabled: cfg.Toolchain.Disabled || adminWorker,
 				Running:  st.spaces.RunningJobs, Drain: agent.setToolDrain, Interval: cfg.Toolchain.Interval.Duration,
 				Report: func(r *pb.ToolchainReport) {

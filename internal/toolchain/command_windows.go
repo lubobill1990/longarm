@@ -3,6 +3,7 @@
 package toolchain
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,11 +13,36 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows/registry"
+
+	"github.com/lubobill1990/longarm/internal/platform/ptypes"
+	platformwindows "github.com/lubobill1990/longarm/internal/platform/windows"
 )
 
 var pathMu sync.Mutex
+
+func probeOutput(ctx context.Context, argv ...string) ([]byte, error) {
+	cmd, err := systemCommand(ctx, argv...)
+	if err != nil {
+		return nil, err
+	}
+	container, err := platformwindows.NewContainer(ptypes.ContainerOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer container.Close()
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.WaitDelay = 250 * time.Millisecond
+	// Suspended start assigns the shim before it can spawn a child.
+	if err := container.Start(cmd); err != nil {
+		return nil, err
+	}
+	err = cmd.Wait()
+	return out.Bytes(), err
+}
 
 // Keep the daemon environment in sync with installers, not just version
 // probes: its next shim/job inherits the same executable lookup.

@@ -194,7 +194,9 @@ func TestDisabledDoesNotProbe(t *testing.T) {
 	}}
 	r.reconcile(context.Background())
 	r.refreshInventory(context.Background())
-	r.Run(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	r.Run(ctx)
 }
 
 func TestOwnerToolsWithoutProfile(t *testing.T) {
