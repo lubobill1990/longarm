@@ -7,7 +7,7 @@ import (
 	"os/exec"
 )
 
-func refreshPath() error { return nil }
+func refreshPath(_ ...string) error { return nil }
 
 func systemCommand(ctx context.Context, argv ...string) (*exec.Cmd, error) {
 	return exec.CommandContext(ctx, argv[0], argv[1:]...), nil

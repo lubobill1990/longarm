@@ -222,13 +222,26 @@ func (s *System) Install(ctx context.Context, tool, version string, log *slog.Lo
 			}
 			args = append(args, "--prefix", filepath.Dir(node))
 		} else if runtime.GOOS == "windows" {
-			// A fixed prefix, also added to the daemon's PATH by refreshPath,
-			// makes npm tools available to the next job without a restart.
-			appdata := os.Getenv("APPDATA")
-			if appdata == "" {
-				return errors.New("per-user npm install needs APPDATA")
+			pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			cmd, err := systemCommand(pctx, npm, "prefix", "-g")
+			if err != nil {
+				cancel()
+				return fmt.Errorf("npm prefix: %w", err)
 			}
-			args = append(args, "--prefix", filepath.Join(appdata, "npm"))
+			cmd.WaitDelay = 250 * time.Millisecond
+			out, err := cmd.Output()
+			cancel()
+			if err != nil {
+				return fmt.Errorf("npm prefix: %w", err)
+			}
+			prefix := strings.TrimSpace(string(out))
+			if !filepath.IsAbs(prefix) || strings.ContainsAny(prefix, "\r\n") {
+				return fmt.Errorf("npm prefix: invalid path %q", prefix)
+			}
+			if err := refreshPath(prefix); err != nil {
+				return err
+			}
+			args = append(args, "--prefix", prefix)
 		}
 		return run(ctx, log, args...)
 	}

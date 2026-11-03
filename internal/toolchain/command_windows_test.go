@@ -4,6 +4,7 @@ package toolchain
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,5 +48,40 @@ func TestWindowsRefreshAddsNpmForNextJob(t *testing.T) {
 	first := os.Getenv("PATH")
 	if err := refreshPath(); err != nil || os.Getenv("PATH") != first {
 		t.Fatalf("refresh is not idempotent: %v", err)
+	}
+}
+
+func TestWindowsInstallUsesConfiguredNpmPrefix(t *testing.T) {
+	dir, prefix, appdata := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("APPDATA", appdata)
+	t.Setenv("PATH", strings.Join([]string{prefix, dir, os.Getenv("PATH")}, string(os.PathListSeparator)))
+	argsFile := filepath.Join(dir, "args.txt")
+	shim := "@echo off\r\nif \"%~1\"==\"prefix\" (\r\n echo " + prefix + "\r\n exit /b 0\r\n)\r\n" +
+		"echo %* > \"" + argsFile + "\"\r\n" +
+		"echo @echo 9.8.7 > \"" + filepath.Join(prefix, "copilot.cmd") + "\"\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "npm.cmd"), []byte(shim), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &System{}
+	if err := s.Install(context.Background(), "copilot", "9.8.7", slog.Default()); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil || !strings.Contains(string(args), `"--prefix" "`+prefix+`"`) {
+		t.Fatalf("npm ignored configured prefix: %q, %v", args, err)
+	}
+	if v, err := s.Version(context.Background(), "copilot"); err != nil || v != "9.8.7" {
+		t.Fatalf("installed tool not visible: %q, %v", v, err)
+	}
+}
+
+func TestWindowsUnparseableVersionIsUnknown(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := os.WriteFile(filepath.Join(dir, "copilot.cmd"), []byte("@echo starting up\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&System{}).Version(context.Background(), "copilot"); err == nil {
+		t.Fatal("unparseable probe output reported as missing")
 	}
 }

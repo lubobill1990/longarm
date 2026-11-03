@@ -20,10 +20,12 @@ var pathMu sync.Mutex
 
 // Keep the daemon environment in sync with installers, not just version
 // probes: its next shim/job inherits the same executable lookup.
-func refreshPath() error {
+// Preserve inherited entries (including custom installer paths); registry
+// removals take effect only after a restart. Job PATH refresh must retain them.
+func refreshPath(extra ...string) error {
 	pathMu.Lock()
 	defer pathMu.Unlock()
-	paths := []string{os.Getenv("PATH")}
+	paths := append([]string{os.Getenv("PATH")}, extra...)
 	for _, entry := range []struct {
 		key registry.Key
 		sub string
