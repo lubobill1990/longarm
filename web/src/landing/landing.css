@@ -333,6 +333,9 @@ html.lp-root #root { height: auto; }
 .lp-msg.lp-from-tool { background: transparent; border: 1px dashed #3a3b78; font-size: 13px; color: #b3b4e0; }
 .lp-msg.lp-from-tool code { color: #7cf3b0; }
 .lp-tool-tag { display: inline-block; padding: 2px 7px; border-radius: 6px; background: #2a2b5c; font: 600 11px/1.4 var(--code); color: #d8d9ff; }
+/* not shown yet: keeps its space (a steady height), the typing dots show in the next one's place */
+.lp-msg.lp-pending { visibility: hidden; animation: none; position: relative; }
+.lp-msg.lp-pending .lp-typing { visibility: visible; position: absolute; left: 0; top: 0; }
 .lp-typing { display: flex; gap: 5px; padding: 8px 4px; }
 .lp-typing i { width: 7px; height: 7px; border-radius: 50%; background: #6b6ca8; animation: lp-bounce 1s infinite; }
 .lp-typing i:nth-child(2) { animation-delay: 0.15s; }
