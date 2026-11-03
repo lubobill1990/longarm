@@ -251,16 +251,46 @@ func TestMSIStepKeysHavePatterns(t *testing.T) {
 		}
 	}
 	raw := `"C:\Program Files\Longarm\longarmd.exe" install-helper msi settings ` + MSIDataMarker +
-		`hub=longarm.example.com|ca=|login=1|labels=|mode=default|usersid=S-1-12-1-1000000001-1000000002-1000000003-1000000004`
+		`hub=longarm.example.com|ca=|login=1|labels=|mode=default|autoupdate=1|channel=rc|usersid=S-1-12-1-1000000001-1000000002-1000000003-1000000004`
 	d, err := MSIData(raw, MSISteps["settings"]...)
 	if err != nil {
 		t.Fatalf("settings: %v", err)
 	}
-	if d["mode"] != "default" || d["hub"] != "longarm.example.com" {
+	if d["mode"] != "default" || d["hub"] != "longarm.example.com" || d["autoupdate"] != "1" || d["channel"] != "rc" {
 		t.Fatalf("settings: %v", d)
 	}
-	if _, err := MSIData(strings.Replace(raw, "mode=default", "mode=evil", 1), MSISteps["settings"]...); err == nil {
-		t.Fatal("mode=evil accepted")
+	for _, bad := range [][2]string{{"mode=default", "mode=evil"}, {"autoupdate=1", "autoupdate=yes"}, {"channel=rc", "channel=nightly"}} {
+		if _, err := MSIData(strings.Replace(raw, bad[0], bad[1], 1), MSISteps["settings"]...); err == nil {
+			t.Fatalf("%s accepted", bad[1])
+		}
+	}
+}
+
+// TestApplyMSIUpdatePrefs: AUTO_UPDATE / UPDATE_CHANNEL are recorded (rc:
+// preview), unset ones leave the machine's, and - as the sign-in defaults -
+// changing a recorded one needs an administrator.
+func TestApplyMSIUpdatePrefs(t *testing.T) {
+	isAdmin := func(sid string) (bool, error) { return sid == "S-1-5-21-1-2-3-500", nil }
+	user := MSIRequester{SID: "S-1-5-21-1-2-3-1001", IsAdmin: isAdmin}
+	admin := MSIRequester{SID: "S-1-5-21-1-2-3-500", IsAdmin: isAdmin}
+	p := &MemUpdatePrefs{}
+	if err := ApplyMSIUpdatePrefs(p, "", "", user); err != nil || p.Auto != "" || p.Channel != "" {
+		t.Fatalf("nothing asked: %v %+v", err, p)
+	}
+	if err := ApplyMSIUpdatePrefs(p, "1", "rc", user); err != nil || p.Auto != "1" || p.Channel != "preview" {
+		t.Fatalf("first install: %v %+v", err, p)
+	}
+	if err := ApplyMSIUpdatePrefs(p, "1", "preview", user); err != nil {
+		t.Fatalf("a repair that changes nothing: %v", err)
+	}
+	if err := ApplyMSIUpdatePrefs(p, "", "dev", user); err == nil || !strings.Contains(err.Error(), "administrator") || p.Channel != "preview" {
+		t.Fatalf("a non-admin's change: %v %+v", err, p)
+	}
+	if err := ApplyMSIUpdatePrefs(p, "0", "", admin); err != nil || p.Auto != "0" || p.Channel != "preview" {
+		t.Fatalf("an administrator's change: %v %+v", err, p)
+	}
+	if err := ApplyMSIUpdatePrefs(p, "", "nightly", admin); err == nil {
+		t.Fatal("UPDATE_CHANNEL=nightly accepted")
 	}
 }
 

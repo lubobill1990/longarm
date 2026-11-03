@@ -57,6 +57,7 @@ type msiEnv struct {
 	sched       longarmd.TaskScheduler
 	services    msiupgrade.Services
 	settings    longarmd.SettingsStore
+	updates     longarmd.UpdatePrefsStore
 	out         io.Writer
 }
 
@@ -87,6 +88,9 @@ func (e msiEnv) fill() msiEnv {
 	}
 	if e.settings == nil {
 		e.settings = longarmd.MachineSettings()
+	}
+	if e.updates == nil {
+		e.updates = updatesvc.MachinePrefs()
 	}
 	return e
 }
@@ -341,7 +345,11 @@ func msiStep(ctx context.Context, step, raw string, keys []string, env msiEnv, o
 	case "settings":
 		// the sign-in defaults reach HKLM only validated, and changed only
 		// by an administrator
-		return longarmd.ApplyMSISettings(env.settings, d, req)
+		if err := longarmd.ApplyMSISettings(env.settings, d, req); err != nil {
+			return err
+		}
+		// AUTO_UPDATE / UPDATE_CHANNEL: how the machine updates from now on
+		return longarmd.ApplyMSIUpdatePrefs(env.updates, d["autoupdate"], d["channel"], req)
 
 	case "settings-remove":
 		longarmd.RemoveMSISettings(env.settings)

@@ -263,6 +263,37 @@ func (RegistrySettings) Auto() (bool, int) {
 
 func (RegistrySettings) Channel() string { return MachineChannel() }
 
+// MachinePrefs: how this machine updates (the installer records its
+// AUTO_UPDATE and UPDATE_CHANNEL here).
+func MachinePrefs() InstallerPrefs { return InstallerPrefs{} }
+
+// InstallerPrefs: Auto and Channel as the installer sees them (Recorded:
+// "" for a value not recorded yet).
+type InstallerPrefs struct{}
+
+func (InstallerPrefs) Recorded() (auto, channel string) {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, regUpdateKey, registry.QUERY_VALUE|registry.WOW64_64KEY)
+	if err != nil {
+		return "", ""
+	}
+	defer k.Close()
+	if v, _, err := k.GetIntegerValue("Auto"); err == nil {
+		auto = "0"
+		if v == 1 {
+			auto = "1"
+		}
+	}
+	channel, _, _ = k.GetStringValue("Channel")
+	return auto, channel
+}
+
+func (InstallerPrefs) SetAuto(on bool) error {
+	_, hours := RegistrySettings{}.Auto() // keeps the interval
+	return RegistrySettings{}.SetAuto(on, hours)
+}
+
+func (InstallerPrefs) SetChannel(channel string) error { return RegistrySettings{}.SetChannel(channel) }
+
 func (RegistrySettings) SetChannel(channel string) error {
 	k, _, err := registry.CreateKey(registry.LOCAL_MACHINE, regUpdateKey, registry.SET_VALUE|registry.WOW64_64KEY)
 	if err != nil {

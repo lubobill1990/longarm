@@ -70,6 +70,10 @@
                           remembered.
     [LAUNCH_TRAY=0]       don't start the tray at the end (it starts in the installing user's session,
                           not elevated, through a scheduled task, and shows "Sign in with Microsoft")
+    [AUTO_UPDATE=1|0]     the Longarm Update service installs new releases by itself (a new machine: off)
+    [UPDATE_CHANNEL=stable|preview|dev]   the releases it follows (default stable); both unset: as
+                          recorded (HKLM\Software\Longarm\Update; the tray's Settings > Updates). The
+                          wizard's Updates page sets them.
   Remove: msiexec /x longarm.msi /qn [KEEP_DATA=1]   (the workers leave the hub first)
   Migrating a service install to RUN=session: uninstall, then install with RUN=session (an upgrade keeps
   the service).
@@ -212,6 +216,19 @@
     <Property Id="SAVED_LOGIN" Secure="yes">
       <RegistrySearch Id="RegLogin" Root="HKLM" Key="Software\Longarm" Name="Login" Type="raw" />
     </Property>
+    <!-- AUTO_UPDATE=1|0: the Longarm Update service installs new releases by itself (default: off);
+         UPDATE_CHANNEL=stable|preview|dev: the releases it follows (default: stable). Unset: the
+         machine's stay as they are (HKLM\Software\Longarm\Update, the tray's Settings > Updates).
+         The wizard's Updates page sets both, starting from the recorded ones. -->
+    <Property Id="AUTO_UPDATE" Secure="yes" />
+    <Property Id="UPDATE_CHANNEL" Secure="yes" />
+    <Property Id="SAVED_UPDATE_AUTO" Secure="yes">
+      <RegistrySearch Id="RegUpdateAuto" Root="HKLM" Key="Software\Longarm\Update" Name="Auto" Type="raw" />
+    </Property>
+    <Property Id="SAVED_UPDATE_CHANNEL" Secure="yes">
+      <RegistrySearch Id="RegUpdateChannel" Root="HKLM" Key="Software\Longarm\Update" Name="Channel" Type="raw" />
+    </Property>
+    <Property Id="CHANNEL_UI" Value="stable" />
     <!-- LABELS: worker labels for the sign-in (LOGIN=1), read by longarmd login and the tray
          (signin.InstalledLabels); remembered like HUB. -->
     <Property Id="LABELS" Secure="yes" />
@@ -271,6 +288,13 @@
                  Condition="NOT SESSION_SID AND SAVED_SESSION_SID" />
     <SetProperty Id="SESSION_SID" Action="SetSessionSidUser" Value="[UserSID]" Before="SetModeSaved" Sequence="both"
                  Condition="NOT SESSION_SID AND UserSID" />
+    <!-- The Updates page starts from the command line's, else the recorded ones (a DWORD reads "#1"). -->
+    <SetProperty Id="UPDATES_UI" Action="SetUpdatesUI" Value="1" Before="SetModeSaved" Sequence="ui"
+                 Condition='AUTO_UPDATE="1" OR (NOT AUTO_UPDATE AND SAVED_UPDATE_AUTO="#1")' />
+    <SetProperty Id="CHANNEL_UI" Action="SetChannelUISaved" Value="[SAVED_UPDATE_CHANNEL]" Before="SetChannelUI" Sequence="ui"
+                 Condition='SAVED_UPDATE_CHANNEL="stable" OR SAVED_UPDATE_CHANNEL="preview" OR SAVED_UPDATE_CHANNEL="dev"' />
+    <SetProperty Id="CHANNEL_UI" Action="SetChannelUI" Value="[UPDATE_CHANNEL]" Before="SetModeSaved" Sequence="ui"
+                 Condition='UPDATE_CHANNEL="stable" OR UPDATE_CHANNEL="preview" OR UPDATE_CHANNEL="dev"' />
     <!-- MODE: remembered, else custom when a hub or a code is given (or there is no built-in hub),
          else default. -->
     <SetProperty Id="MODE" Action="SetModeSaved" Value="[SAVED_MODE]" Before="SetModeCustom" Sequence="both"
@@ -493,9 +517,10 @@
          helper refuse a non-administrator's repair or change, a service, the admin worker, and
          a task for another user. -->
     <!-- The sign-in defaults in HKLM (Hub, CaFingerprint, Login, Labels, Mode): validated, and a change
-         of recorded values only for an administrator (longarmd.ApplyMSISettings). -->
+         of recorded values only for an administrator (longarmd.ApplyMSISettings); AUTO_UPDATE and
+         UPDATE_CHANNEL the same way, in Software\Longarm\Update (longarmd.ApplyMSIUpdatePrefs). -->
     <CustomAction Id="LongarmdSettings" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
-                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi settings #LONGARM-MSI#hub=[HUB]|ca=[CA_FINGERPRINT]|login=[LOGIN]|labels=[LABELS]|mode=[MODE]|usersid=[UserSID]' />
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi settings #LONGARM-MSI#hub=[HUB]|ca=[CA_FINGERPRINT]|login=[LOGIN]|labels=[LABELS]|mode=[MODE]|autoupdate=[AUTO_UPDATE]|channel=[UPDATE_CHANNEL]|usersid=[UserSID]' />
     <CustomAction Id="LongarmdSettingsRemove" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
                   ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi settings-remove #LONGARM-MSI#' />
     <CustomAction Id="LongarmdCheck" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="check"
@@ -762,6 +787,42 @@
         </Control>
       </Dialog>
 
+      <!-- Updates: automatic or not (default: not), and the release channel (default: stable). -->
+      <Dialog Id="UpdatesDlg" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Updates" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Whether Longarm installs new releases by itself, and which ones." />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="Auto" Type="CheckBox" X="15" Y="54" Width="340" Height="17" Property="UPDATES_UI" CheckBoxValue="1"
+                 Text="Install new releases &amp;automatically" />
+        <Control Id="AutoText" Type="Text" X="29" Y="72" Width="326" Height="22" NoPrefix="yes"
+                 Text="The Longarm Update service checks in the background and installs them. Off: the tray shows when a new release is out, and you install it from there." />
+        <Control Id="ChannelLabel" Type="Text" X="29" Y="102" Width="326" Height="10" NoPrefix="yes"
+                 DisableCondition="NOT UPDATES_UI" EnableCondition="UPDATES_UI" Text="Release channel:" />
+        <Control Id="Channel" Type="RadioButtonGroup" X="29" Y="116" Width="326" Height="84" Property="CHANNEL_UI"
+                 DisableCondition="NOT UPDATES_UI" EnableCondition="UPDATES_UI">
+          <RadioButtonGroup Property="CHANNEL_UI">
+            <RadioButton Value="stable" X="0" Y="0" Width="326" Height="14" Text="&amp;Stable (recommended)" />
+            <RadioButton Value="preview" X="0" Y="28" Width="326" Height="14" Text="&amp;Preview" />
+            <RadioButton Value="dev" X="0" Y="56" Width="326" Height="14" Text="&amp;Dev" />
+          </RadioButtonGroup>
+        </Control>
+        <Control Id="StableText" Type="Text" X="43" Y="130" Width="312" Height="12" NoPrefix="yes"
+                 DisableCondition="NOT UPDATES_UI" EnableCondition="UPDATES_UI" Text="Tested releases - for everyone." />
+        <Control Id="PreviewText" Type="Text" X="43" Y="158" Width="312" Height="12" NoPrefix="yes"
+                 DisableCondition="NOT UPDATES_UI" EnableCondition="UPDATES_UI" Text="Release candidates: the next release, a few days early." />
+        <Control Id="DevText" Type="Text" X="43" Y="186" Width="312" Height="12" NoPrefix="yes"
+                 DisableCondition="NOT UPDATES_UI" EnableCondition="UPDATES_UI" Text="Every change merged: the newest, least tested." />
+        <Control Id="Later" Type="Text" X="15" Y="210" Width="340" Height="20" NoPrefix="yes"
+                 Text="The tray changes both later: Settings &gt; Updates." />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
       <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
       <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="ModeDlg" Condition="NOT Installed AND DEFAULT_HUB" />
       <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="RolesDlg" Condition="NOT Installed AND NOT DEFAULT_HUB" />
@@ -779,7 +840,7 @@
       <Publish Dialog="ModeDlg" Control="Next" Property="HUB" Value="[DEFAULT_HUB]" Order="5" Condition='MODE="default"' />
       <Publish Dialog="ModeDlg" Control="Next" Event="NewDialog" Value="RolesDlg" Order="6" Condition='MODE="custom"' />
       <Publish Dialog="ModeDlg" Control="Next" Event="NewDialog" Value="ServiceAccountDlg" Order="7" Condition='MODE="default" AND ROLES="both" AND RUN="service"' />
-      <Publish Dialog="ModeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="8" Condition='MODE="default" AND NOT (ROLES="both" AND RUN="service")' />
+      <Publish Dialog="ModeDlg" Control="Next" Event="NewDialog" Value="UpdatesDlg" Order="8" Condition='MODE="default" AND NOT (ROLES="both" AND RUN="service")' />
 
       <!-- Custom: the run mode from the service option; a sign-in or a code. -->
       <Publish Dialog="RolesDlg" Control="Back" Event="NewDialog" Value="ModeDlg" Condition="DEFAULT_HUB" />
@@ -793,7 +854,7 @@
       <Publish Dialog="RolesDlg" Control="Next" Event="SpawnDialog" Value="NeedCodeDlg" Order="6" Condition='CUSTOM_AUTH="code" AND (NOT JOIN_CODE OR NOT HUB)' />
       <Publish Dialog="RolesDlg" Control="Next" Event="NewDialog" Value="ServiceAccountDlg" Order="7"
                Condition='RUN="service" AND ROLES&lt;&gt;"client" AND NOT (CUSTOM_AUTH="code" AND (NOT JOIN_CODE OR NOT HUB))' />
-      <Publish Dialog="RolesDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="8"
+      <Publish Dialog="RolesDlg" Control="Next" Event="NewDialog" Value="UpdatesDlg" Order="8"
                Condition='NOT (RUN="service" AND ROLES&lt;&gt;"client") AND NOT (CUSTOM_AUTH="code" AND (NOT JOIN_CODE OR NOT HUB))' />
 
       <Publish Dialog="ServiceAccountDlg" Control="Back" Event="NewDialog" Value="RolesDlg" Condition='MODE="custom"' />
@@ -802,15 +863,23 @@
       <Publish Dialog="ServiceAccountDlg" Control="Next" Property="SERVICE_ACCOUNT" Value="{}" Order="2" Condition="NOT SVC_LOCALSYSTEM" />
       <Publish Dialog="ServiceAccountDlg" Control="Next" Event="SpawnDialog" Value="NeedPasswordDlg" Order="3"
                Condition="NOT SVC_LOCALSYSTEM AND (NOT SERVICE_USER OR NOT SERVICE_PASSWORD)" />
-      <Publish Dialog="ServiceAccountDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4"
+      <Publish Dialog="ServiceAccountDlg" Control="Next" Event="NewDialog" Value="UpdatesDlg" Order="4"
                Condition="SVC_LOCALSYSTEM OR (SERVICE_USER AND SERVICE_PASSWORD)" />
 
-      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ServiceAccountDlg" Order="1"
+      <!-- Updates: AUTO_UPDATE 1/0, UPDATE_CHANNEL only with automatic updates (else the recorded one stays) -->
+      <Publish Dialog="UpdatesDlg" Control="Back" Event="NewDialog" Value="ServiceAccountDlg" Order="1"
                Condition='NOT Installed AND RUN="service" AND (ROLES="worker" OR ROLES="both")' />
-      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="RolesDlg" Order="1"
+      <Publish Dialog="UpdatesDlg" Control="Back" Event="NewDialog" Value="RolesDlg" Order="1"
                Condition='NOT Installed AND MODE="custom" AND NOT (RUN="service" AND (ROLES="worker" OR ROLES="both"))' />
-      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ModeDlg" Order="1"
+      <Publish Dialog="UpdatesDlg" Control="Back" Event="NewDialog" Value="ModeDlg" Order="1"
                Condition='NOT Installed AND MODE="default" AND NOT (RUN="service" AND (ROLES="worker" OR ROLES="both"))' />
+      <Publish Dialog="UpdatesDlg" Control="Next" Property="AUTO_UPDATE" Value="1" Order="1" Condition="UPDATES_UI" />
+      <Publish Dialog="UpdatesDlg" Control="Next" Property="AUTO_UPDATE" Value="0" Order="1" Condition="NOT UPDATES_UI" />
+      <Publish Dialog="UpdatesDlg" Control="Next" Property="UPDATE_CHANNEL" Value="[CHANNEL_UI]" Order="2" Condition="UPDATES_UI" />
+      <Publish Dialog="UpdatesDlg" Control="Next" Property="UPDATE_CHANNEL" Value="{}" Order="2" Condition="NOT UPDATES_UI" />
+      <Publish Dialog="UpdatesDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="3" />
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="UpdatesDlg" Order="1" Condition="NOT Installed" />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3" Condition="Installed AND PATCH" />
       <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />

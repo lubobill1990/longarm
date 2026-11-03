@@ -4,6 +4,23 @@
 
 ### Added
 
+- **Automatic updates are a choice at install.** The MSI wizard has an
+  Updates page before Install: "Install new releases automatically" (off
+  unless the machine had it on) and, with it, the release channel (Stable
+  preselected, Preview, Dev); silent installs take `AUTO_UPDATE=1|0` and
+  `UPDATE_CHANNEL=stable|preview|dev` (unset: as recorded; changing a
+  recorded one needs an administrator, as the sign-in defaults). `install.ps1`
+  passes them: `-AutoUpdate` / `$env:LONGARM_AUTO_UPDATE=1` /
+  `?autoupdate=1`, and the channel it installed from. The front page's
+  Windows install has an "Update automatically" switch (off).
+- **Install a release channel.** The hub's `install.ps1` / `install.sh` take
+  `?channel=preview` (or `rc`) / `?channel=dev`: that channel's newest
+  release, and on Windows the machine then follows the channel (its update
+  setting, as the tray's Settings > Updates); without one: stable, as before.
+  The hub's front page has the choice next to the system in its Install step
+  (and asks the hub for that channel's MSI and version). The Install step
+  spans the page now, its installer and one-liners side by side; steps 2 and
+  3 below. Step 2's sample code says it is an example.
 - **`longarm ui open [page]`** opens Longarm's own UI at a page - `workers`,
   `add-machine`, `jobs` (`--job`), `this-worker`, `settings`, `account`,
   `sessions` (`--worker`, `--job`, `--session`, `--agent`) - starting
