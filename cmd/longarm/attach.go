@@ -30,6 +30,7 @@ func attachCmd() *cobra.Command {
 	var env, secrets []string
 	var kill, noReplay, noCreate bool
 	var aa agentAuthOpts
+	var ae agentEnvOpts
 	c := &cobra.Command{
 		Use:   "attach <worker> [--session NAME] [-- command [args...]]  |  attach [<worker>] --job ID",
 		Short: "Attach to a named interactive session (created if missing); detach with Ctrl-] d",
@@ -109,6 +110,9 @@ the agent is done.`,
 				if agentAuth, envM, sec, err = forwardAgentAuth(cmd.Context(), s, conn, worker, argv, aa, envM, sec); err != nil {
 					return err
 				}
+				if argv, envM, err = forwardAgentEnv(cmd.Context(), s, conn, worker, argv, ae, agentAuth, envM, false); err != nil {
+					return err
+				}
 			}
 			open := &pb.AttachOpen{Name: session, Argv: argv, Cwd: cwd, Env: envM, SecretEnv: sec,
 				NoCreate: noCreate, NoReplay: noReplay, Owner: owner, AgentAuth: agentAuth}
@@ -123,6 +127,7 @@ the agent is done.`,
 	c.Flags().BoolVar(&noReplay, "no-replay", false, "do not replay recent output")
 	c.Flags().BoolVar(&noCreate, "no-create", false, "fail if the session does not exist")
 	aa.register(c)
+	ae.register(c)
 	c.Flags().StringVar(&owner, "owner", "", "admins: another user's session (multi-tenancy)")
 	c.Flags().StringVar(&job, "job", "", "attach to this steerable run's terminal (longarm run --steerable); the worker may be omitted")
 	return c

@@ -383,7 +383,7 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 	out.Files, out.Bytes = nfiles, nbytes
 	var envArgv []string
 	if pms, dstProject, err := sessionPathMaps(ad, src, dst, dstCfg, sess, srcRepo, dstTop, dstCwd); err == nil {
-		t := envTarget{cfg: dstCfg, project: dstProject, cwd: dstCwd, shared: !dst.local() && !filesAreMine(dst, nodeOf(dst.name)),
+		t := envTarget{cfg: dstCfg, has: dstCfg, project: dstProject, cwd: dstCwd, shared: !dst.local() && !filesAreMine(dst, nodeOf(dst.name)),
 			settings: o.carrySettings, limit: o.maxBytes}
 		if out.Environment = carryEnv(ctx, ad, src, dst, t, sess, pms, use, &warn); out.Environment != nil {
 			envArgv, out.ResumeEnv = out.Environment.args, out.Environment.env

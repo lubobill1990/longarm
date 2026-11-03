@@ -54,7 +54,7 @@ longarm handoff --from <w1> --to <w2> --session <id> --no-attach --git-auth forw
 longarm handoff --from <w> --to local --session <id>  # new worktree next to your checkout; agent runs here
 ```
 
-Moves the HEAD plus uncommitted and untracked files (a snapshot commit; your branch, index and files are untouched) and the transcript, then resumes with `--resume <id>`. Running processes are not carried over. Exit 75 means the agent still has the session open locally (exit it first) or the source session did not go idle. Only your own machines. For `--via remote` (a temporary branch on the git remote) and the safety rules, see [reference/handoff.md](reference/handoff.md).
+Moves the HEAD plus uncommitted and untracked files (a snapshot commit; your branch, index and files are untouched) and the transcript, plus the MCP servers, skills, plugins and memory the session used that the target lacks (session-scoped; hooks/settings only with `--carry-settings`), then resumes with `--resume <id>`. Running processes are not carried over. Exit 75 means the agent still has the session open locally (exit it first) or the source session did not go idle. Only your own machines. For `--via remote` (a temporary branch on the git remote) and the safety rules, see [reference/handoff.md](reference/handoff.md).
 
 ## Ports between workers / to localhost
 
@@ -69,6 +69,7 @@ Jobs started on `wa` afterwards get `LONGARM_LINKS` and `LONGARM_LINK_<WORKER>_<
 ## Credentials for remote agents and git
 
 - `--agent-auth auto|claude|copilot|gh|none` (run/exec/session start/attach): forwards this machine's agent credentials, memory-only. `auto` only looks at `argv[0]`. For `pwsh -c "claude ..."`, set `--agent-auth claude`.
+- `--agent-env all|mcp,skills,plugins,memory,settings`, `--mcp NAME`, `--skill NAME`, `--plugin NAME` (same commands): give the remote agent this machine's MCP servers / skills / plugins / memory / hooks+settings, for that run only, what the worker lacks. Off unless asked; `argv[0]` is `claude`/`copilot`, or a wrapper with `--agent-auth claude|copilot` that appends `LONGARM_AGENT_ARGS` (JSON array) to the agent's command; MCP configs and settings are refused to someone else's shared-isolation worker.
 - `--git-auth forward` (run/session start `--repo`, sync, handoff): the worker fetches from the https remote with your short-lived credential. Then only the unpushed delta is shipped.
 - Unattended agents need permission flags (`claude -p --dangerously-skip-permissions`, `copilot -p ... --yolo --no-ask-user`). longarm doesn't add them.
 

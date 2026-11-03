@@ -22,9 +22,13 @@ func agentAuthName(argv0 string) string {
 // fakeAgentAuth prints which agent variables it got - names and a hash of
 // each value, never a value - then "echo <credential>" (the credential
 // itself, which the worker must redact from the log), "copilot_home <dir>",
-// and writes a token cache into COPILOT_HOME, as Copilot CLI may do.
-func fakeAgentAuth(name string) {
+// "args <arguments>", "instructions_dirs <COPILOT_CUSTOM_INSTRUCTIONS_DIRS>"
+// (run --agent-env), and writes a token cache into COPILOT_HOME, as Copilot
+// CLI may do.
+func fakeAgentAuth(name string, args []string) {
 	fmt.Println("agent " + name)
+	fmt.Println("args " + strings.Join(args, " "))
+	fmt.Println("instructions_dirs " + os.Getenv("COPILOT_CUSTOM_INSTRUCTIONS_DIRS"))
 	var keys []string
 	for _, k := range []string{"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL",
 		"CLAUDE_CODE_OAUTH_TOKEN", "COPILOT_GITHUB_TOKEN", "GH_TOKEN"} {

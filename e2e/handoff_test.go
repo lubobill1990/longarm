@@ -478,6 +478,59 @@ func TestAgentHandoff(t *testing.T) {
 		}
 	})
 
+	// run --agent-env / --mcp / --skill: this machine's MCP server and skill
+	// go to <agent dir>/longarm-env/<key>/ on the worker, once, and the agent
+	// gets the options that load them
+	t.Run("run_agent_env", func(t *testing.T) {
+		jobLog := func(r result) string {
+			t.Helper()
+			if r.code != 0 {
+				t.Fatalf("run: %+v", r)
+			}
+			return e.mustLongarm(e.client, "logs", "w1", strings.TrimSpace(strings.SplitN(r.stdout, "\n", 2)[0]))
+		}
+		r := client(repo, "run", "w1", "--wait", "--mcp", "github", "--skill", "pdf", "--", "claude", "-p", "hi")
+		dirs, _ := filepath.Glob(filepath.Join(w1home, ".claude", "longarm-env", "*"))
+		if len(dirs) != 1 {
+			t.Fatalf("longarm-env on w1: %v (%+v)", dirs, r)
+		}
+		logs := jobLog(r)
+		if !strings.Contains(logs, "args --mcp-config "+filepath.Join(dirs[0], "mcp.json")+" --add-dir "+dirs[0]+" -p hi") {
+			t.Errorf("the agent's arguments:\n%s", logs)
+		}
+		if mj := readText(t, filepath.Join(dirs[0], "mcp.json")); !strings.Contains(mj, "e2e-secret") || strings.Contains(mj, "unused") {
+			t.Errorf("mcp.json:\n%s", mj)
+		}
+		if _, err := os.Stat(filepath.Join(dirs[0], ".claude", "skills", "pdf", "SKILL.md")); err != nil {
+			t.Errorf("skill: %v", err)
+		}
+		// the same again: written once
+		r = client(repo, "run", "w1", "--wait", "--mcp", "github", "--skill", "pdf", "--", "claude", "-p", "again")
+		if again, _ := filepath.Glob(filepath.Join(w1home, ".claude", "longarm-env", "*")); len(again) != 1 || !strings.Contains(r.stderr, "on w1 already") {
+			t.Errorf("second run: %v\n%s", again, r.stderr)
+		}
+		jobLog(r)
+		// Copilot: the user's instructions through COPILOT_CUSTOM_INSTRUCTIONS_DIRS
+		logs = jobLog(client(repo, "run", "w1", "--wait", "--agent-env", "memory", "--", "copilot", "-p", "hi"))
+		if !strings.Contains(logs, "instructions_dirs "+filepath.Join(w1home, ".copilot", "longarm-env")) {
+			t.Errorf("copilot job:\n%s", logs)
+		}
+		// refused before anything runs
+		if r := client(repo, "run", "w1", "--mcp", "nope", "--", "claude", "-p", "hi"); r.code != 2 || !strings.Contains(r.stderr, "no MCP server of that name") {
+			t.Errorf("--mcp nope: %+v", r)
+		}
+		if r := client(repo, "run", "w1", "--agent-env", "skills", "--", "sh", "-c", "claude -p hi"); r.code != 2 || !strings.Contains(r.stderr, "not claude or copilot") {
+			t.Errorf("a wrapped agent without --agent-auth: %+v", r)
+		}
+		// a wrapper with the agent named: the options in LONGARM_AGENT_ARGS
+		h.extra = []string{"ANTHROPIC_API_KEY=e2e-key"}
+		logs = jobLog(client(repo, "run", "w1", "--wait", "--agent-auth", "claude", "--skill", "pdf", "--", bins.helper, "env", "LONGARM_AGENT_ARGS"))
+		h.extra = nil
+		if !strings.Contains(logs, `LONGARM_AGENT_ARGS=["--add-dir",`) {
+			t.Errorf("the wrapper's environment:\n%s", logs)
+		}
+	})
+
 	t.Run("refusals", func(t *testing.T) {
 		if r := client(repo, "handoff", "--to", "local", "--session", id); r.code != 2 {
 			t.Errorf("--from local --to local: %+v", r)

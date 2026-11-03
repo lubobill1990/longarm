@@ -43,6 +43,7 @@ func execCmd() *cobra.Command {
 	var maxOut int64
 	var on, inSession string
 	var aa agentAuthOpts
+	var ae agentEnvOpts
 	c := &cobra.Command{
 		Use:   "exec [<worker>] -- command [args...]",
 		Short: "Run a short command synchronously (no job); exit code is mirrored. Without a worker (or --on auto) the least loaded passing worker is used",
@@ -79,6 +80,9 @@ func execCmd() *cobra.Command {
 			defer conn.Close()
 			agentAuth, envM, sec, err := forwardAgentAuth(cmd.Context(), s, conn, worker, argv, aa, envM, sec)
 			if err != nil {
+				return err
+			}
+			if argv, envM, err = forwardAgentEnv(cmd.Context(), s, conn, worker, argv, ae, agentAuth, envM, false); err != nil {
 				return err
 			}
 			mode := pb.OutputMode_OUTPUT_MODE_SEPARATE
@@ -129,6 +133,7 @@ func execCmd() *cobra.Command {
 	c.Flags().StringVar(&on, "on", "", "worker name or \"auto\" (default when no worker is given)")
 	c.Flags().StringVarP(&inSession, "session", "s", "", "run on the worker of this session, in its working directory (--cwd: relative to it)")
 	aa.register(c)
+	ae.register(c)
 	return c
 }
 
@@ -153,6 +158,7 @@ func runCmd() *cobra.Command {
 	var memLimit string
 	var memGB, cpus float64
 	var aa agentAuthOpts
+	var ae agentEnvOpts
 	c := &cobra.Command{
 		Use:   "run [<worker>] -- command [args...]",
 		Short: "Submit a job; prints the job id (with --wait/--follow, exits with the job's code). Without a worker (or --on auto) the scheduler places it",
@@ -284,6 +290,9 @@ exits. docs/steerable-runs.md`,
 			if err != nil {
 				return err
 			}
+			if argv, envM, err = forwardAgentEnv(cmd.Context(), s, conn, worker, argv, ae, agentAuth, envM, steerSpec != nil); err != nil {
+				return err
+			}
 			if steerSpec != nil {
 				// an older worker would drop the field and run the agent headless without a terminal
 				if err := needFeature(cmd.Context(), conn, jobs.FeatureSteer, "--steerable"); err != nil {
@@ -375,6 +384,7 @@ exits. docs/steerable-runs.md`,
 	c.Flags().BoolVar(&untilExit, "until-exit", false, "with --steerable: end the job only when the agent exits, not when it is done")
 	c.Flags().StringVar(&stdinFile, "stdin-file", "", "send this local file (- = longarm's stdin; at most 1 MiB) as the job's stdin: memory-only on the worker, never in job metadata, the hub or logs")
 	aa.register(c)
+	ae.register(c)
 	return c
 }
 

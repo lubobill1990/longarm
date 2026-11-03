@@ -144,12 +144,21 @@ func openEndpoint(ctx context.Context, s *session, name string) (*hoEndpoint, er
 	if err != nil {
 		return nil, err
 	}
+	ep, err := endpointOf(ctx, conn, name)
+	if err != nil {
+		conn.Close()
+	}
+	return ep, err
+}
+
+// endpointOf is the endpoint of a worker over an open connection (its
+// caller closes it).
+func endpointOf(ctx context.Context, conn *client.Conn, name string) (*hoEndpoint, error) {
 	c, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var pr peer.Peer // the worker's certificate, as this connection verified it
 	info, err := conn.Node().Info(c, &pb.InfoRequest{}, grpc.Peer(&pr))
 	if err != nil {
-		conn.Close()
 		return nil, err
 	}
 	nodeID := ""
@@ -160,7 +169,6 @@ func openEndpoint(ctx context.Context, s *session, name string) (*hoEndpoint, er
 	}
 	home, err := conn.Files().Stat(c, &pb.FileStatRequest{Path: "~"})
 	if err != nil {
-		conn.Close()
 		return nil, err
 	}
 	return &hoEndpoint{name: name, cert: info.Name, id: nodeID, conn: conn, goos: info.Os, home: home.AbsPath, callerUser: info.CallerUser,

@@ -4,6 +4,13 @@
 
 ### Added
 
+- **`--agent-env`, `--mcp`, `--skill`, `--plugin`** on `run`, `exec`,
+  `session start` and `attach`: an agent started on a worker gets this
+  machine's MCP servers, skills, plugins, memory or (by name) hooks and
+  settings, for that run only, what the worker's agent lacks - stored once
+  per content under `<agent dir>/longarm-env/` and loaded by options
+  longarm adds after the command's program (a wrapper with `--agent-auth
+  claude|copilot` gets them in `LONGARM_AGENT_ARGS`). Nothing unless asked.
 - **`longarm handoff` carries the session's environment**: the MCP servers,
   skills and plugins the session used (read from its transcripts) that the
   target lacks, and Claude Code's project memory and `CLAUDE.md`, go to the

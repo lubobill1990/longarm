@@ -54,7 +54,7 @@ func fakeAgent(agent string, args []string) {
 		}
 	}
 	if id == "" {
-		fakeAgentAuth(agent) // the agent credential tests (agentauth.go)
+		fakeAgentAuth(agent, args) // the agent credential tests (agentauth.go), run --agent-env
 		return
 	}
 	cwd, _ := os.Getwd()

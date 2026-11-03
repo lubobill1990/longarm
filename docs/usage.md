@@ -618,6 +618,50 @@ longarm run w1 --repo . --wait -e COPILOT_AUTO_UPDATE=false -- \
 - `--model` picks a model for either agent.
 - Give parallel agents separate worktrees (`--repo`) or directories.
 
+### Agent environment (`--agent-env`)
+
+An agent started on a worker has the worker's MCP servers, skills and
+plugins (a Copilot job with forwarded credentials, in its private
+`COPILOT_HOME`: none). `run`, `exec`, `session start` and `attach` can
+give it this machine's for that run only - nothing unless asked:
+
+```sh
+longarm run w1 --wait --mcp github --skill pdf -- claude -p "triage the open issues"
+longarm run w1 --wait --agent-env all -- copilot -p "..." --yolo
+longarm session start w1 -s fix --agent-env skills,plugins,memory -- claude
+```
+
+| flag | |
+|---|---|
+| `--agent-env all\|mcp\|skills\|plugins\|memory\|settings\|none` | Repeatable or comma-separated. `all` is `mcp,skills,plugins,memory`; `settings` (Claude Code's `settings.json` with its hooks, Copilot's hooks) only by name, as hooks run commands. |
+| `--mcp NAME` | One MCP server of this machine's configuration (Claude Code: `~/.claude.json`, user and this directory's project; Copilot: `mcp-config.json`). Unknown: exit 2. |
+| `--skill NAME` | One personal skill, or Claude Code's `plugin:skill` (its plugin goes). |
+| `--plugin NAME` | One installed plugin. Unknown: exit 2. |
+
+`mcp` / `skills` / `plugins` mean all of them (plugins: the enabled ones);
+`memory` is `~/.claude/CLAUDE.md` or Copilot's user instructions. Only what
+the worker's agent lacks goes, as in a handoff ([the session's
+environment](#hand-off-an-agent-session)): to
+`<agent dir>/longarm-env/<hash of the content>/` on the worker, written once
+and reused by the runs that carry the same (stderr says which), loaded by
+options longarm puts right after the command's program (`--mcp-config`,
+`--plugin-dir`, `--add-dir`, `--append-system-prompt-file`, `--settings`;
+Copilot: `--additional-mcp-config`, `--plugin-dir`, `--add-dir`, and
+`COPILOT_CUSTOM_INSTRUCTIONS_DIRS` in the job's environment unless you set
+it). MCP configurations go as they are, credentials included, in files
+only the worker account reads.
+
+- The command's program is `claude` or `copilot`, or a wrapper (`pwsh -c
+  "claude ..."`, a script) with the agent named by `--agent-auth claude`
+  (or `copilot`): the wrapper gets the options as a JSON array in
+  `LONGARM_AGENT_ARGS` and adds them to the agent's command. Otherwise
+  exit 2.
+- A steerable Claude run refuses `settings` (it passes its own).
+- MCP configurations and settings are refused (exit 2) to somebody else's
+  worker with shared isolation; skills, plugins and memory go.
+- `longarm handoff --cleanup [--from <worker>]` removes the directories no
+  run used for 7 days.
+
 ### Interactive sessions (tmux-like)
 
 ```sh
