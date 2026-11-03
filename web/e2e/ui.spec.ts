@@ -139,7 +139,8 @@ test('longarm-tray popup: pool with latency, my jobs, forwards, worker tab, sett
   await expect(wa).toHaveAttribute('data-state', 'online')
   await expect(wa.getByTestId('link-path')).toHaveText('tcp')
   await expect(wa.getByTestId('link-rtt')).toHaveText(/ms$/)
-  await expect(page.getByTestId('source-text')).toHaveText(/live from|hub \+ direct/)
+  // the hub's state in the title bar; the source row only shows a problem
+  await expect(page.getByTestId('count-hub')).toHaveAttribute('data-state', 'connected')
   // no horizontal overflow in the narrow popup
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(460)
   await shot(page, 'tray-workers')

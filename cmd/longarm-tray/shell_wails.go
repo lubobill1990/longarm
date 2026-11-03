@@ -273,10 +273,12 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 	t.OnClick(d.toggle)
 	menu := app.NewMenu()
 	menu.Add("Show panel").OnClick(func(*application.Context) { d.show() })
-	menu.Add("Sign in…").OnClick(func(*application.Context) {
+	signIn := menu.Add("Sign in…")
+	signIn.OnClick(func(*application.Context) {
 		srv.AutoSignIn() // when one is needed: the code at once
 		d.show()
 	})
+	signIn.SetHidden(!srv.SignInNeeded()) // signed in: nothing to offer (another account: the Account tab)
 	menu.Add("Open hub panel").OnClick(func(*application.Context) {
 		if u := tray.HubURL(o); u != "" {
 			tray.OpenURL(u)
@@ -307,6 +309,7 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 		st := srv.MachineState(cctx)
 		pause.SetHidden(!st.Worker)
 		pause.SetLabel(pauseLabel(st.Draining))
+		signIn.SetHidden(!srv.SignInNeeded())
 		menu.Update()
 		return st
 	}

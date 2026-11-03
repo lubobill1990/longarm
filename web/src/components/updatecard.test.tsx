@@ -78,7 +78,7 @@ describe('WorkerCard while its machine updates', () => {
     expect(c.textContent).not.toContain('DeadlineExceeded')
     expect(within(c).getByTestId('link-rtt').textContent).toBe('updating')
     expect(within(c).getByTestId('link-path').className).toContain('is-updating')
-    expect(c.querySelector('.dot')?.className).toContain('is-updating')
+    expect(c.querySelector('.shield')?.className).toContain('is-updating')
   })
 
   it('session worker and admin worker updating together are one machine (edge case 6)', () => {
@@ -87,14 +87,14 @@ describe('WorkerCard while its machine updates', () => {
       worker('box-admin', 'offline', { admin_worker: true, companion: 'box', companion_id: 'box-0000-4000-8000-000000000000', update: updating() }),
     ])
     expect(screen.getAllByTestId(/^worker-/)).toHaveLength(1)
-    expect(within(c).getByTestId('cap-state').textContent).toBe('worker updating · admin updating')
+    expect(within(c).getByTestId('cap-state').textContent).toBe('Worker updating · admin updating')
     expect(c.textContent).not.toContain('offline')
   })
 
   it('a plain network blip without an update is offline, as ever (edge case 7)', () => {
     const c = card([worker('box', 'offline')])
     expect(c.getAttribute('data-state')).toBe('offline')
-    expect(c.textContent).toContain('offline 34s, reconnecting')
+    expect(c.textContent).toContain('Offline 34s, reconnecting')
     expect(within(c).getByTestId('link-rtt').textContent).toBe('down')
     expect(within(c).queryByTestId('update-status')).toBeNull()
   })
@@ -124,7 +124,7 @@ describe('WorkerCard while its machine updates', () => {
     render(<WorkerCard m={active[0]} now={now} actions={{ update: () => {}, canUpdate: () => true }} />)
     const btn = screen.getByTestId('update-btn') as HTMLButtonElement
     expect(btn.disabled).toBe(true)
-    expect(btn.textContent).toBe('Updating…')
+    expect(btn.textContent).toContain('updating…')
   })
 })
 

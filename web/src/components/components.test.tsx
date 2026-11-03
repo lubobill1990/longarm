@@ -63,20 +63,26 @@ describe('WorkerCard', () => {
   it('shows metrics, agents, top processes and the link (path, NAT, RTT, relayed time)', () => {
     render(<WorkerCard w={onlineWorker()} now={now} />)
     expect(screen.getByText('w1')).toBeTruthy()
-    expect(screen.getByText('online 10m')).toBeTruthy()
+    expect(screen.getByText('Online 10m')).toBeTruthy()
     expect(screen.getByLabelText('MEM').getAttribute('aria-valuenow')).toBe('94')
     expect(screen.getByText('120.0 / 128 GB')).toBeTruthy()
     expect(screen.getByTestId('agent-claude').textContent).toContain('3')
     expect(screen.getByTestId('agent-claude').textContent).toContain('4.5G')
     expect(screen.getByTestId('agent-copilot').textContent).toContain('—')
+    // the top processes: folded until "top processes" is clicked; uptime: in the shield's tooltip
+    expect(screen.queryByText('node ×21')).toBeNull()
+    expect(screen.getByTestId('machine-info').textContent).toContain('Uptime1d 1h')
+    fireEvent.click(screen.getByTestId('tops-toggle'))
     expect(screen.getAllByText('node ×21').length).toBe(2)
     expect(screen.getByText('5.5G')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('tops-toggle'))
+    localStorage.removeItem('longarm.metrics.extra')
     expect(screen.getByTestId('link-path').textContent).toBe('longnet relay-udp')
     expect(screen.getByTestId('link-rtt').textContent).toBe('351 ms')
     expect(screen.getByText('nat hard/hard')).toBeTruthy()
     expect(screen.getByText('relayed 6m')).toBeTruthy()
     expect(screen.getByText(/mine 1/)).toBeTruthy()
-    expect(screen.getByText(/300 GB free/)).toBeTruthy()
+    expect(screen.queryByText(/GB free/)).toBeNull() // the DISK toggle shows the disk
     // every leg only on request: the one in use outside, all of them in the dropdown
     expect(screen.queryByTestId('legs')).toBeNull()
     fireEvent.click(screen.getByTestId('legs-toggle'))
@@ -101,16 +107,16 @@ describe('WorkerCard', () => {
     // the metrics chart: the one with the MEM key
     const lines = () => screen.getByText(/MEM/, { selector: '.spark-key' }).closest('.spark-wrap')!.querySelectorAll('path').length
     expect(screen.queryByLabelText('DISK')).toBeNull()
-    expect(lines()).toBe(2)
+    expect(lines()).toBe(3) // MEM, CPU and the link's RTT
     const before = charts()
     fireEvent.click(screen.getByRole('button', { name: /disk/i }))
     expect(screen.getByLabelText('DISK')).toBeTruthy()
-    expect(lines()).toBe(3)
+    expect(lines()).toBe(4)
     fireEvent.click(screen.getByRole('button', { name: /net/i }))
     expect(screen.getByTestId('net-now').textContent).toContain('↓ 1.5 MB/s')
     expect(screen.getByTestId('net-now').textContent).toContain('↑ 2 KB/s')
     // in and out join the same chart (on their own scale), no second chart
-    expect(lines()).toBe(5)
+    expect(lines()).toBe(6)
     expect(charts()).toBe(before)
     expect(JSON.parse(localStorage.getItem('longarm.metrics.extra') ?? '{}')).toEqual({ disk: true, net: true })
     cleanup()
@@ -141,11 +147,11 @@ describe('WorkerCard', () => {
 
   it('says where the metrics come from and grays them out when stale', () => {
     render(<WorkerCard w={onlineWorker({ metrics: { ...onlineWorker().metrics, time: ago(3) } })} now={now} />)
-    expect(screen.getByTestId('metrics-source').textContent).toBe('metrics via hub · updated 3s ago')
+    expect(screen.getByTestId('metrics-source').textContent).toBe('updated 3s ago')
     expect(document.querySelector('[data-stale]')).toBeNull()
     cleanup()
     render(<WorkerCard w={onlineWorker({ source: 'none', metrics: { ...onlineWorker().metrics, time: ago(120) } })} now={now} />)
-    expect(screen.getByTestId('metrics-source').textContent).toBe('last known metrics · updated 2m ago')
+    expect(screen.getByTestId('metrics-source').textContent).toBe('last known · 2m ago')
     expect(document.querySelector('[data-stale="true"]')).not.toBeNull()
   })
 
@@ -157,7 +163,7 @@ describe('WorkerCard', () => {
 
   it('offline: red status line with the error instead of metrics', () => {
     render(<WorkerCard w={onlineWorker({ state: 'offline', source: 'none', since: ago(120), error: 'connection refused', link: undefined })} now={now} />)
-    expect(screen.getByText('offline 2m, reconnecting')).toBeTruthy()
+    expect(screen.getByText('Offline 2m, reconnecting')).toBeTruthy()
     expect(screen.getByText('connection refused')).toBeTruthy()
     expect(screen.queryByLabelText('CPU')).toBeNull()
     expect(screen.getByTestId('worker-w1').getAttribute('data-state')).toBe('offline')
@@ -167,8 +173,9 @@ describe('WorkerCard', () => {
     const attach = vi.fn()
     const drain = vi.fn()
     render(<WorkerCard w={onlineWorker({ node: { name: 'w1', draining: true, admin_drain: true } })} now={now} actions={{ attach, drain }} />)
-    fireEvent.click(screen.getByText('attach'))
-    fireEvent.click(screen.getByText('resume'))
+    fireEvent.click(screen.getByText('Attach'))
+    fireEvent.click(screen.getByLabelText('more actions')) // drain / resume: in the menu
+    fireEvent.click(screen.getByText('Resume (take jobs again)'))
     expect(attach).toHaveBeenCalledWith('w1')
     expect(drain).toHaveBeenCalledWith('w1', false)
     expect(screen.getByText('draining')).toBeTruthy()

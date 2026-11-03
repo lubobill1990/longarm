@@ -28,7 +28,7 @@ import { ADMIN_LABEL, fmtLastSeen, isAdminNode, offlineSeconds, type PoolMachine
 import { dismissedUpdates, dismissUpdate, jobsNote, machineUpdate, updateRunning, updateView, type UpdateView } from '../lib/update'
 import type { NodeUpdate } from '../api/types'
 import { Bar, niceMax, Sparkline } from './charts'
-import { IconExternal, IconMore } from './icons'
+import { IconMore, IconShield, IconTerminal } from './icons'
 
 const AGENTS: [string, string, string][] = [
   ['claude', 'Claude Code', 'var(--claude)'],
@@ -40,7 +40,6 @@ export interface CardActions {
   ssh?: (w: string) => void
   /** longarm desktop: Windows App for a Dev Box, Remote Desktop otherwise (Windows workers) */
   desktop?: (w: string) => void
-  panel?: (w: string) => void
   /** longarm admin drain / undrain: admins only (leave it unset for others) */
   drain?: (w: string, on: boolean) => void
   /** remove (revoke) workers on the hub; the caller confirms */
@@ -94,6 +93,47 @@ export function AdminBadge({ admin, compact }: { admin: PoolWorker; compact?: bo
   return (
     <span className="pill admin" data-testid="admin-badge" title={adminTip(admin.name)}>
       <ShieldIcon /> {compact ? 'admin' : 'admin commands: on'}
+    </span>
+  )
+}
+
+/** The text with a capital first letter (a hover card value). */
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+/**
+ * The state shield and, on hover or focus, the machine's facts in a card of
+ * ours (not the webview's title tooltip): state, the end-to-end encryption,
+ * the worker and admin worker, labels, uptime, node ID.
+ */
+function MachineInfo({
+  state,
+  color,
+  name,
+  rows,
+}: {
+  state: string
+  color: string
+  name: string
+  rows: [string, React.ReactNode][]
+}) {
+  return (
+    // the shield and the name: hovering either shows the card
+    <span className={`shield is-${state}`} data-testid="state-shield" tabIndex={0} aria-label={`${name}: ${state}, end-to-end encrypted`}>
+      <IconShield size={14} aria-hidden="true" style={{ color }} />
+      <span className="name">{name}</span>
+      <span className="hovercard" role="tooltip" data-testid="machine-info">
+        <span className="hovercard-title">
+          <span className="hovercard-dot" style={{ background: color }} /> {name} · {state}
+        </span>
+        <span className="hovercard-rows">
+          {rows.map(([k, v]) => (
+            <span key={k} className="hovercard-row">
+              <span className="k">{k}</span>
+              <span className="v">{v}</span>
+            </span>
+          ))}
+        </span>
+      </span>
     </span>
   )
 }
@@ -191,9 +231,16 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
   const draining = session?.node?.draining
   const canRemove = (x?: PoolWorker) => !!x && !!actions?.remove && (actions.canRemove?.(x) ?? false)
   const menuItems: [string, () => void][] = []
-  if (admin && actions?.attach) menuItems.push([`run as admin (attach ${admin.name})`, () => actions.attach!(admin.name)])
-  if (admin && actions?.ssh) menuItems.push([`ssh as admin (${admin.name})`, () => actions.ssh!(admin.name)])
-  for (const x of [session, admin]) if (x && canRemove(x)) menuItems.push([`remove ${x.name}…`, () => actions!.remove!([x.name])])
+  // attach is the terminal (a session that outlives its window); ssh - a plain
+  // login for scp, port forwards, editors' remote - is in the menu
+  if (session && actions?.ssh) menuItems.push([`SSH ${session.name} (a plain SSH login)`, () => actions.ssh!(session.name)])
+  if (session && actions?.desktop && (session.node?.os ?? 'windows') === 'windows')
+    menuItems.push(['Desktop (Remote Desktop / Windows App)', () => actions.desktop!(session.name)])
+  if (session && actions?.drain)
+    menuItems.push([session.node?.admin_drain ? 'Resume (take jobs again)' : 'Drain (no new jobs)', () => actions.drain!(session.name, !session.node?.admin_drain)])
+  if (admin && actions?.attach) menuItems.push([`Run as admin (attach ${admin.name})`, () => actions.attach!(admin.name)])
+  if (admin && actions?.ssh) menuItems.push([`SSH as admin (${admin.name})`, () => actions.ssh!(admin.name)])
+  for (const x of [session, admin]) if (x && canRemove(x)) menuItems.push([`Remove ${x.name}…`, () => actions!.remove!([x.name])])
   const version = machineVersion(session, admin)
   const target = updateTarget(session, admin)
   const ua = target?.node?.update_available
@@ -205,39 +252,66 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
   const remote = ua?.method !== 'none'
   const canUpdate =
     !!target && !!avail && remote && !!actions?.update && (actions.canUpdate?.(target) ?? false) && target.state === 'online'
+  const uptime = num(metrics?.uptime_seconds)
+  const infoRows: [string, React.ReactNode][] = [
+    ['Status', <span data-testid="status">{cap(updating && view ? view.title : statusText(session ?? admin ?? p, now))}</span>],
+    ['Encryption', state === 'offline' ? 'Not connected' : 'End-to-end: mutual TLS between this computer and the machine; relays and the hub only pass ciphertext'],
+  ]
+  if (admin)
+    infoRows.push([
+      'Workers',
+      <>
+        <span data-testid="cap-state">
+          {cap(session ? `${capText('worker', session, now, updating)} · ${capText('admin', admin, now, updating)}` : `admin only · ${capText('admin', admin, now, updating)}`)}
+        </span>{' '}
+        <AdminBadge admin={admin} />
+      </>,
+    ])
+  if (mm.labels.length)
+    infoRows.push([
+      'Labels',
+      mm.labels.map(([k, v]) => (
+        <span key={k} className="pill chip" data-testid="label-chip">
+          {k}={v}
+        </span>
+      )),
+    ])
+  if (uptime > 0) infoRows.push(['Uptime', fmtUptime(uptime)])
+  if (p.node?.id) infoRows.push(['Node ID', <span className="mono">{p.node.id}</span>])
   return (
     <div className="wcard" data-testid={`worker-${mm.key}`} data-state={state}>
       <div className="head">
-        <span className={`dot is-${state}`} style={{ background: dot }} />
-        <span className="name">{mm.key}</span>
-        {p.node?.id && (
-          <span className="mono faint small" title={`node ID ${p.node.id}`} data-testid={`id-${mm.key}`}>
-            {p.node.id.slice(0, 8)}
-          </span>
-        )}
-        {version && (
-          <span className={`pill ${avail ? 'warn' : 'chip'} ver`} data-testid="version" title={avail ? `Longarm ${avail} is available${remote ? '' : ` - it can't be updated from here: ${ua?.reason ?? ''}`}` : 'Longarm version'}
-          >
-            {version}
-            {avail ? ' ↑' : ''}
-          </span>
-        )}
-        {canUpdate && (
-          // next to the version it updates (the action row has no room for it)
-          <button
-            className="pill warn upd"
-            data-testid="update-btn"
-            disabled={running}
-            aria-label={`Update to ${avail}`}
-            title={`Update to ${avail}: longarm worker update ${target!.name} --version ${avail} installs the signed release; running jobs and sessions keep running`}
-            onClick={() => actions!.update!(target!.name, avail)}
-          >
-            {running ? 'Updating…' : 'Update'}
-          </button>
-        )}
-        <span className="sub" data-testid="status">
-          {updating && view ? view.title : statusText(session ?? admin ?? p, now)}
-        </span>
+        {/* the state's color as a shield (the connection is end-to-end encrypted); the machine's facts on hover */}
+        <MachineInfo state={state} color={dot} name={mm.key} rows={infoRows} />
+        {version &&
+          (canUpdate ? (
+            // the version is the update button: one control, the arrow says there is a newer one
+            <button
+              className="pill warn ver upd"
+              data-testid="update-btn"
+              disabled={running}
+              aria-label={`Update to ${avail}`}
+              title={`${avail} is available: click to update (longarm worker update ${target!.name} --version ${avail} installs the signed release; running jobs and sessions keep running)`}
+              onClick={() => actions!.update!(target!.name, avail)}
+            >
+              <span data-testid="version">
+                {version}
+                {running ? '' : ' ↑'}
+              </span>
+              {running && <span> · updating…</span>}
+            </button>
+          ) : (
+            <span
+              className={`pill ${avail ? 'warn' : 'chip'} ver`}
+              data-testid="version"
+              title={avail ? `Longarm ${avail} is available${remote ? '' : ` - it can't be updated from here: ${ua?.reason ?? ''}`}` : 'Longarm version'}
+            >
+              <span>
+                {version}
+                {avail ? ' ↑' : ''}
+              </span>
+            </span>
+          ))}
         {draining && (
           <span className="pill warn" title={session?.node?.drain_reason}>
             draining
@@ -245,32 +319,13 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
         )}
         <span className="actions">
           {session && actions?.attach && (
-            <button className="act" title={`open a terminal: longarm attach ${session.name}`} onClick={() => actions.attach!(session.name)}>
-              attach
-            </button>
-          )}
-          {session && actions?.ssh && (
-            <button className="act" title={`longarm ssh ${session.name} (a new window)`} onClick={() => actions.ssh!(session.name)}>
-              ssh <IconExternal aria-hidden="true" />
-            </button>
-          )}
-          {session && actions?.desktop && (session.node?.os ?? 'windows') === 'windows' && (
             <button
               className="act"
-              title={`longarm desktop ${session.name}: a Dev Box opens in Windows App, other workers in Remote Desktop`}
-              onClick={() => actions.desktop!(session.name)}
+              title={`a terminal on ${session.name} in a session that keeps running when you close it - attach again to go on (longarm attach ${session.name}; ssh: in the … menu)`}
+              onClick={() => actions.attach!(session.name)}
             >
-              desktop <IconExternal aria-hidden="true" />
-            </button>
-          )}
-          {actions?.panel && (
-            <button className="act" title="open this machine in the hub panel" onClick={() => actions.panel!(mm.key)}>
-              hub <IconExternal aria-hidden="true" />
-            </button>
-          )}
-          {session && actions?.drain && (
-            <button className="act" title="longarm admin drain / undrain (admin certificate)" onClick={() => actions.drain!(session.name, !session.node?.admin_drain)}>
-              {session.node?.admin_drain ? 'resume' : 'drain'}
+              <IconTerminal size={14} aria-hidden="true" />
+              <span>Attach</span>
             </button>
           )}
           {menuItems.length > 0 && (
@@ -304,27 +359,10 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
           )}
         </span>
       </div>
-      {(admin || mm.labels.length > 0) && (
-        <div className="caps" data-testid="caps">
-          {admin && <AdminBadge admin={admin} />}
-          {admin && (
-            <span className="small muted" data-testid="cap-state">
-              {session
-                ? `${capText('worker', session, now, updating)} · ${capText('admin', admin, now, updating)}`
-                : `admin only · ${capText('admin', admin, now, updating)}`}
-            </span>
-          )}
-          {mm.labels.map(([k, v]) => (
-            <span key={k} className="pill chip" data-testid="label-chip">
-              {k}={v}
-            </span>
-          ))}
-        </div>
-      )}
       {updating && view && <UpdateStatus view={view} u={u!} />}
       {!updating && badge && <UpdateBadge view={badge} onDismiss={() => dismiss(badge.key)} />}
       {!u && job && job.state !== 'idle' && <UpdateLine job={job} />}
-      <LinkRows w={p} now={now} updating={updating} />
+      <LinkRows w={p} now={now} updating={updating} chart={!metrics} />
       {!metrics ? (
         updating ? (
           <div className="msg muted" data-testid="update-wait">
@@ -336,7 +374,7 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
           </div>
         )
       ) : (
-        <Metrics m={metrics} w={p} now={now} onAgent={actions?.sessions && ((a) => actions.sessions!((session ?? p).name, a))} />
+        <Metrics m={metrics} w={p} now={now} rtt={rttOf(p, updating)} onAgent={actions?.sessions && ((a) => actions.sessions!((session ?? p).name, a))} />
       )}
     </div>
   )
@@ -410,7 +448,7 @@ export function OfflineRow({ m, actions }: { m: PoolMachine; actions?: CardActio
         <span className="dot is-gone" style={{ width: 8, height: 8, background: 'var(--faint)' }} />
         <span className="oname">{m.key}</span>
         {m.admin && <AdminBadge admin={m.admin} compact />}
-        <span className="muted small">last seen {fmtLastSeen(m.offlineFor)} ago</span>
+        <span className="muted small">Last seen {fmtLastSeen(m.offlineFor)} ago</span>
         {m.update?.state === 'timed_out' && (
           <span className="small amber" data-testid="offline-update">
             update to v{(m.update.to ?? '').replace(/^v/, '')} didn't finish
@@ -419,12 +457,12 @@ export function OfflineRow({ m, actions }: { m: PoolMachine; actions?: CardActio
         <span className="spacer" />
         {errors.length > 0 && (
           <button className="link small" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-            {open ? 'hide details' : 'details'}
+            {open ? 'Hide details' : 'Details'}
           </button>
         )}
         {removable.length > 0 && (
           <button className="link small danger" onClick={() => actions!.remove!(removable)}>
-            remove
+            Remove
           </button>
         )}
       </div>
@@ -440,7 +478,23 @@ export function isLocalOnly(endpoint?: string): boolean {
   return h === 'localhost' || h.startsWith('127.') || h === '::1' || h === '0.0.0.0' || h === '::'
 }
 
-function LinkRows({ w, now, updating }: { w: PoolWorker; now: number; updating?: boolean }) {
+/** The link's latency over the last minutes (the active leg) and its failed probes - red bands, amber while the machine updates. */
+function rttOf(w: PoolWorker, updating?: boolean): { values: (number | null)[]; marks: { at: number; color: string }[] } | undefined {
+  const legs = w.link?.legs ?? []
+  if (!legs.length) return undefined
+  const active = legs.find((l) => l.active) ?? legs[0]
+  const h = active.history ?? []
+  return {
+    values: h.map((s) => (s.rtt_ms !== undefined && s.rtt_ms >= 0 ? s.rtt_ms : null)),
+    marks: h
+      .map((s, i, a) => ({ i: a.length - 1 - i, bad: (s.rtt_ms ?? 0) < 0 }))
+      .filter((x) => x.bad)
+      .map((x) => ({ at: x.i, color: updating ? AMBER : RED })),
+  }
+}
+
+/** The LINK line (path, NAT, paths, latency); chart: its own RTT chart (when no metrics chart takes the RTT line). */
+function LinkRows({ w, now, updating, chart }: { w: PoolWorker; now: number; updating?: boolean; chart?: boolean }) {
   const [showLegs, setShowLegs] = useState(false)
   const legs = w.link?.legs ?? []
   if (!legs.length) {
@@ -458,18 +512,12 @@ function LinkRows({ w, now, updating }: { w: PoolWorker; now: number; updating?:
             tcp (loopback only): unreachable from here
           </span>
         </div>
-        <div className="small muted">the worker listens on its own machine only; a current longarmd also listens on the hub's relay</div>
+        <div className="small muted">The worker listens on its own machine only; a current longarmd also listens on the hub's relay</div>
       </div>
     )
   }
   const active = legs.find((l) => l.active) ?? legs[0]
-  const hist = (active.history ?? []).map((s) => (s.rtt_ms !== undefined && s.rtt_ms >= 0 ? s.rtt_ms : null))
-  // failed probes: red bands - amber while the machine updates (its
-  // restart is expected: the gap is "updating", not an outage)
-  const fails = (active.history ?? [])
-    .map((s, i, a) => ({ i: a.length - 1 - i, bad: (s.rtt_ms ?? 0) < 0 }))
-    .filter((x) => x.bad)
-    .map((x) => ({ at: x.i, color: updating ? AMBER : RED }))
+  const rtt = rttOf(w, updating)!
   const down = !active.up && !updating
   const relayed = active.up && isRelayed(active.kind)
   const relayFor = relayed && active.relay_since ? since(active.relay_since, now) : 0
@@ -507,15 +555,17 @@ function LinkRows({ w, now, updating }: { w: PoolWorker; now: number; updating?:
         </span>
       </div>
       {showLegs && <Legs legs={legs} updating={updating} />}
-      <Sparkline
-        series={[{ values: hist, color: RTT_C, label: 'RTT', fmt: (v) => fmtRTT(v) }]}
-        max="auto"
-        height={30}
-        legend
-        right={updating && fails.length ? 'gap: updating · 5 min' : '5 min'}
-        marks={fails}
-        fmtMax={(v) => `${Math.round(v)} ms`}
-      />
+      {chart && (
+        <Sparkline
+          series={[{ values: rtt.values, color: RTT_C, label: 'RTT', fmt: (v) => fmtRTT(v) }]}
+          max="auto"
+          height={30}
+          legend
+          right={updating && rtt.marks.length ? 'gap: updating · 5 min' : '5 min'}
+          marks={rtt.marks}
+          fmtMax={(v) => `${Math.round(v)} ms`}
+        />
+      )}
     </div>
   )
 }
@@ -544,12 +594,14 @@ function Legs({ legs, updating }: { legs: LegStatus[]; updating?: boolean }) {
 export const METRICS_STALE_S = 10
 
 /** Where the metrics come from and how old they are; stale ones are grayed out. */
-export function metricsSource(w: PoolWorker, m: MetricsSnapshot, now: number): { text: string; stale: boolean } {
+export function metricsSource(w: PoolWorker, m: MetricsSnapshot, now: number): { text: string; short: string; stale: boolean } {
   const age = m.time ? since(m.time, now) : undefined
   const fresh = w.source === 'hub' || w.source === 'direct'
   const via = w.source === 'hub' ? 'metrics via hub' : w.source === 'direct' ? 'metrics direct' : 'last known metrics'
   return {
     text: age === undefined ? via : `${via} · updated ${fmtAgo(age)} ago`,
+    // the chart's corner: how old they are (where from: text, its title)
+    short: fresh ? (age === undefined ? 'live' : `updated ${fmtAgo(age)} ago`) : age === undefined ? 'last known' : `last known · ${fmtAgo(age)} ago`,
     stale: !fresh || (age !== undefined && age > METRICS_STALE_S),
   }
 }
@@ -592,7 +644,20 @@ function useExtra(): [Extra, (k: keyof Extra) => void] {
   return [extra, toggle]
 }
 
-function Metrics({ m, w, now, onAgent }: { m: MetricsSnapshot; w: PoolWorker; now: number; onAgent?: (agent: string) => void }) {
+function Metrics({
+  m,
+  w,
+  now,
+  rtt,
+  onAgent,
+}: {
+  m: MetricsSnapshot
+  w: PoolWorker
+  now: number
+  /** the link's latency: a line of the same chart, on its own scale */
+  rtt?: ReturnType<typeof rttOf>
+  onAgent?: (agent: string) => void
+}) {
   const cpu = m.cpu_percent ?? 0
   const mp = memPct(m)
   const hist = w.history ?? []
@@ -600,35 +665,14 @@ function Metrics({ m, w, now, onAgent }: { m: MetricsSnapshot; w: PoolWorker; no
   const diskTotal = gb(m.disk_total_bytes)
   const diskPct = diskTotal > 0 ? (100 * (diskTotal - diskFree)) / diskTotal : 0
   const [extra, toggle] = useExtra()
+  // this card's top processes only: opening them doesn't move the cards below the pointer
+  const [tops, setTops] = useState(false)
   const src = metricsSource(w, m, now)
   // the network lines' scale: a round top over both directions in the window
   const netPeak = niceMax(Math.max(0, ...hist.map((p) => Math.max(p.net_rx ?? 0, p.net_tx ?? 0))))
   return (
     <div style={{ marginTop: 6, opacity: src.stale ? 0.45 : undefined }} data-stale={src.stale ? 'true' : undefined}>
-      <div className="small muted" data-testid="metrics-source" title="where these metrics come from">
-        {src.text}
-      </div>
-      <Bar label="CPU" pct={cpu} value={`${cpu.toFixed(0)}%`} />
-      <Bar label="MEM" pct={mp} value={`${gb(m.mem_used_bytes).toFixed(1)} / ${gb(m.mem_total_bytes).toFixed(0)} GB`} />
-      {extra.disk && diskTotal > 0 && (
-        <Bar label="DISK" pct={diskPct} value={`${(diskTotal - diskFree).toFixed(0)} / ${diskTotal.toFixed(0)} GB`} />
-      )}
-      {extra.net && (
-        // a row like the bars (no track: bytes/s have no 100 %); the chart
-        // draws in and out against netPeak, its top
-        <div
-          className="bar net"
-          data-testid="net-now"
-          title={`network traffic of the worker's interfaces (loopback excluded); the chart's top is ${fmtRate(netPeak)}`}
-        >
-          <span className="label">NET</span>
-          <span />
-          <span className="value">
-            <span style={{ color: cssColor(NET_RX_C) }}>↓ {fmtRate(num(m.net_rx_bytes_per_sec))}</span>{' '}
-            <span style={{ color: cssColor(NET_TX_C) }}>↑ {fmtRate(num(m.net_tx_bytes_per_sec))}</span>
-          </span>
-        </div>
-      )}
+      {/* the chart (its legend and toggles on top), then the bars: a toggle adds a bar below, nothing above it moves */}
       <div style={{ marginTop: 4 }}>
         <Sparkline
           series={[
@@ -642,14 +686,46 @@ function Metrics({ m, w, now, onAgent }: { m: MetricsSnapshot; w: PoolWorker; no
                   { values: hist.map((p) => p.net_tx ?? null), color: NET_TX_C, label: '↑ out', fmt: fmtRate, peak: netPeak, key: false },
                 ]
               : []),
+            // the link's latency, on its own scale (the LINK line above says it now)
+            ...(rtt ? [{ values: rtt.values, color: RTT_C, label: 'RTT', fmt: (v: number) => fmtRTT(v), peak: niceMax(Math.max(10, ...rtt.values.map((v) => v ?? 0))) }] : []),
           ]}
           legend
-          right="5 min"
+          legendTop
+          right={
+            // how fresh they are
+            <span data-testid="metrics-source">
+              {src.short}
+            </span>
+          }
+          marks={rtt?.marks}
           toggles={[
             { label: 'DISK', color: DISK_C, on: extra.disk, onToggle: () => toggle('disk'), title: 'disk space used (the data dir\'s volume)' },
             { label: 'NET', color: NET_RX_C, on: extra.net, onToggle: () => toggle('net'), title: 'network traffic, bytes per second' },
           ]}
         />
+      </div>
+      <div className="bars">
+        <Bar label="CPU" pct={cpu} value={`${cpu.toFixed(0)}%`} />
+        <Bar label="MEM" pct={mp} value={`${gb(m.mem_used_bytes).toFixed(1)} / ${gb(m.mem_total_bytes).toFixed(0)} GB`} />
+        {extra.disk && diskTotal > 0 && (
+          <Bar label="DISK" pct={diskPct} value={`${(diskTotal - diskFree).toFixed(0)} / ${diskTotal.toFixed(0)} GB`} />
+        )}
+        {extra.net && (
+          // a row like the bars (no track: bytes/s have no 100 %); the chart
+          // draws in and out against netPeak, its top
+          <div
+            className="bar net"
+            data-testid="net-now"
+            title={`network traffic of the worker's interfaces (loopback excluded); the chart's top is ${fmtRate(netPeak)}`}
+          >
+            <span className="label">NET</span>
+            <span />
+            <span className="value">
+              <span style={{ color: cssColor(NET_RX_C) }}>↓ {fmtRate(num(m.net_rx_bytes_per_sec))}</span>{' '}
+              <span style={{ color: cssColor(NET_TX_C) }}>↑ {fmtRate(num(m.net_tx_bytes_per_sec))}</span>
+            </span>
+          </div>
+        )}
       </div>
       <div className="agents">
         {AGENTS.map(([key, label, color]) => {
@@ -677,12 +753,17 @@ function Metrics({ m, w, now, onAgent }: { m: MetricsSnapshot; w: PoolWorker; no
           )
         })}
       </div>
+      {/* uptime: in the state shield's tooltip; free disk: the DISK toggle */}
       <div className="info">
-        {m.threads ?? '?'} threads · {m.nproc ?? '?'} procs · longarm jobs {m.jobs_running ?? 0}
-        {w.my_jobs ? ` (mine ${w.my_jobs})` : ''} · up {fmtUptime(num(m.uptime_seconds))}
-        {num(m.disk_total_bytes) > 0 && ` · disk ${diskFree.toFixed(0)} GB free`}
+        <span>
+          {m.threads ?? '?'} threads · {m.nproc ?? '?'} procs · longarm jobs {m.jobs_running ?? 0}
+          {w.my_jobs ? ` (mine ${w.my_jobs})` : ''}
+        </span>
+        <button type="button" className="link tops-toggle" aria-expanded={tops} data-testid="tops-toggle" onClick={() => setTops((v) => !v)}>
+          Top processes {tops ? '▴' : '▾'}
+        </button>
       </div>
-      <TopProcs m={m} />
+      {tops && <TopProcs m={m} />}
     </div>
   )
 }

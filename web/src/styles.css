@@ -204,7 +204,8 @@ a.button:hover { text-decoration: none; border-color: var(--muted); }
 .orow .odetail { white-space: pre-wrap; word-break: break-all; padding: 2px 0 2px 16px; }
 table.grid tr.subrow td { border-top: none; }
 .wcard .msg { font-size: 12px; padding: 4px 0; }
-.wcard .info { color: var(--muted); font-size: 11px; margin: 6px 0; }
+.wcard .info { display: flex; align-items: baseline; gap: 8px; color: var(--muted); font-size: 11px; margin: 6px 0; }
+.wcard .info .tops-toggle { margin-left: auto; flex: none; color: var(--muted); font-size: inherit; }
 
 .linkrow { display: flex; align-items: center; gap: 8px; font-size: 12px; margin: 2px 0 4px; }
 .linkrow .path { font-family: var(--mono); }
@@ -250,3 +251,36 @@ table.grid tr.subrow td { border-top: none; }
 .wcard .upd-bar span { display: block; height: 100%; background: var(--amber); }
 .wcard .upd-x { position: absolute; top: 2px; right: 2px; background: none; border: none; color: var(--muted); cursor: pointer; }
 .state-updating { color: var(--amber); }
+
+/* a worker card's state: a shield in the state's color (WorkerCard) */
+.shield { display: inline-flex; align-items: center; gap: 6px; flex: none; cursor: default; min-width: 0; }
+.shield { position: relative; }
+/* MachineInfo: the machine's facts in a card of ours, on hover or keyboard focus */
+.hovercard {
+  position: absolute; left: -8px; top: calc(100% + 6px); z-index: 30; width: 300px; max-width: calc(100vw - 40px);
+  padding: 10px 12px; border-radius: 10px; text-align: left; white-space: normal;
+  background: var(--surface, var(--bg)); border: 1px solid var(--border, var(--track)); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  color: var(--text, var(--fg)); font-size: 12px; font-weight: 400; line-height: 1.45; letter-spacing: 0;
+  opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.12s, visibility 0.12s;
+}
+.shield:hover .hovercard, .shield:focus-visible .hovercard { opacity: 1; visibility: visible; pointer-events: auto; }
+.shield:focus-visible { outline: 2px solid var(--accent, var(--cpu)); outline-offset: 2px; border-radius: 4px; }
+.hovercard-title { display: flex; align-items: center; gap: 6px; font-weight: 600; margin-bottom: 8px; }
+.hovercard-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.hovercard-rows { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; }
+.hovercard-row { display: contents; }
+.hovercard-row .k { color: var(--text-3, var(--muted)); }
+.hovercard-row .v { min-width: 0; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+
+/* a chart with its legend on top: the legend sits above the plot */
+.spark-wrap.legend-top .spark-legend { padding: 0 4px 3px; }
+.spark-wrap.legend-top .spark-tip { top: 22px; }
+.wcard .bars { margin-top: 6px; }
+/* TooltipHost (components/Tooltip.tsx): every title, in the hover card's style */
+.ui-tip {
+  position: fixed; z-index: 1000; max-width: min(300px, calc(100vw - 12px)); padding: 6px 9px; border-radius: 7px; pointer-events: none;
+  background: var(--surface, var(--bg)); border: 1px solid var(--border, var(--track)); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  color: var(--text, var(--fg)); font: 400 12px / 1.45 var(--font, inherit); letter-spacing: 0; white-space: pre-line; overflow-wrap: anywhere;
+  animation: ui-tip-in 0.12s ease-out;
+}
+@keyframes ui-tip-in { from { opacity: 0; transform: translateY(-2px); } }

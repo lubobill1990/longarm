@@ -406,6 +406,10 @@ func (s *Server) Busy() bool {
 // the hub is known (the tray the installer starts, the first start after
 // an install): the code shows at once, no click on "Sign in". It reports
 // whether it started one.
+// SignInNeeded reports whether this machine still needs a sign-in (the
+// tray icon's menu offers "Sign in…" then only).
+func (s *Server) SignInNeeded() bool { return s.account().Needed }
+
 func (s *Server) AutoSignIn() bool {
 	a := s.account()
 	if !a.Needed || a.Hub == "" {

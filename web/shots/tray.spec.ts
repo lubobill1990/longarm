@@ -104,7 +104,7 @@ for (const scheme of ['light', 'dark'] as const) {
           }
           if (tab === 'forwards') await expect(page.getByTestId('forwards')).toContainText('127.0.0.1:53000')
           if (tab === 'worker') await expect(page.getByTestId('worker-state')).toContainText('accepting work')
-          if (tab === 'settings') await expect(page.getByTestId('client-info')).toContainText('0.9.2')
+          if (tab === 'settings') await expect(page.getByTestId('this-client')).toContainText('Collect diagnostics')
           if (tab === 'account') await expect(page.getByTestId('account-card')).toBeVisible()
           // the popup never scrolls sideways
           expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width)
@@ -163,7 +163,7 @@ for (const scheme of ['light', 'dark'] as const) {
         await page.getByTestId('add-machine-fab').click()
         await page.getByRole('radiogroup', { name: 'Operating system' }).getByText('Windows', { exact: true }).click()
         await page.getByTestId('addm-client').check()
-        await expect(page.getByTestId('addm-cmd-0')).toContainText('ROLES=both')
+        await expect(page.getByTestId('addm-cmd-0')).toContainText("LONGARM_ROLE='both'")
         await shot(page, `tray-add-machine-${scheme}-${size}`)
       })
 

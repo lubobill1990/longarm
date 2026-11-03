@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  longarmApi,
   trayApi,
   type Account,
   type AccountRoles,
@@ -10,8 +11,9 @@ import {
   type SignInTargets,
   type TrayInfo,
 } from '../api/local'
+import { ask } from '../components/confirm'
 import { ErrorBox, useAction } from '../components/common'
-import { IconUser } from '../components/icons'
+import { IconExternal, IconFeedback, IconUser } from '../components/icons'
 import { feedbackURL } from '../lib/feedback'
 import { Banner } from './ui'
 
@@ -75,8 +77,7 @@ export function AccountTab({ info, onChange }: { info: TrayInfo; onChange?: () =
           )}
         </>
       )}
-      {acct.roles && <RolesCard acct={acct} cur={acct.roles} busy={running} onChange={onChange} />}
-      {acct.admin && <AdminCard admin={acct.admin} onChange={onChange} />}
+      {acct.roles && <RolesCard acct={acct} info={info} cur={acct.roles} busy={running} onChange={onChange} />}
     </div>
   )
 }
@@ -148,7 +149,7 @@ function SignInCard({ acct, onStarted }: { acct: Account; onStarted: (s: SignInS
         </button>
         {!needHub && !more && (
           <button className="link" onClick={() => setMore(true)}>
-            another hub, labels…
+            Another hub, labels…
           </button>
         )}
       </p>
@@ -345,6 +346,15 @@ function AccountCard({
   const { run, busy } = useAction()
   // the signed-in hub's links (its /healthz, via the update check)
   const [links, setLinks] = useState<{ feedback?: string; repo?: string }>({})
+  // this computer as a device of the hub ("user/alice-laptop": its role and name)
+  const [device, setDevice] = useState<string>()
+  useEffect(() => {
+    if (!acct.signed_in || !info.client.running) return
+    longarmApi.status().then(
+      (s) => setDevice(s.identity),
+      () => {},
+    )
+  }, [acct.signed_in, acct.hub, info.client.running])
   useEffect(() => {
     trayApi.update().then(
       (u) => setLinks({ feedback: u.feedback_url, repo: u.repo_url }),
@@ -359,47 +369,60 @@ function AccountCard({
         </span>
         <div className="account-who">
           <div className="name">{acct.signed_in ? `Signed in${acct.user ? ` as ${acct.user}` : ''}` : 'Not signed in'}</div>
-          {acct.hub && <div className="small muted">hub {acct.hub}</div>}
+          {acct.hub && (
+            // one line: a long address ends in "…" (the whole one on hover); the icon opens the hub's home page
+            <div className="hub-line small muted" data-testid="account-hub">
+              <span>hub</span>
+              <span className="mono hub-addr" title={acct.hub}>
+                {acct.hub}
+              </span>
+              {info.hub_url && (
+                <button className="icon-btn hub-open" aria-label="open the hub" title="open the hub's home page" onClick={() => trayApi.openPanel('/')}>
+                  <IconExternal />
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <span className={`pill ${acct.signed_in ? 'ok' : 'warn'}`}>{acct.signed_in ? 'signed in' : 'signed out'}</span>
+        <button
+          className="icon-btn"
+          data-testid="account-feedback"
+          aria-label="feedback"
+          title="Feedback and bug reports"
+          onClick={() => trayApi.open(feedbackURL(links.feedback, links.repo)).catch(() => {})}
+        >
+          <IconFeedback />
+        </button>
       </div>
-      {acct.signed_in && acct.expires && <div className="small muted">sign-in valid until {when(acct.expires)} (renews by itself)</div>}
-      {info.roles.worker && (
-        <div className="small" data-testid="worker-online">
-          worker:{' '}
-          {info.worker.running ? (
-            <span className="pill ok">running</span>
-          ) : (
-            <span className="pill warn">not running{info.worker.error ? ` (${info.worker.error})` : ''}</span>
-          )}
-          {acct.run_mode === 'session' && <span className="muted"> · runs as you while you are logged on</span>}
-          {acct.run_mode === 'service' && <span className="muted"> · Windows service</span>}
+      {acct.signed_in && device && (
+        <div className="small muted" data-testid="account-device">
+          This device: <span className="mono">{device}</span>
         </div>
       )}
+      {acct.signed_in && acct.expires && <div className="small muted">Sign-in valid until {when(acct.expires)} (renews by itself)</div>}
       <p className="button-row">
-        {info.hub_url && <button onClick={() => trayApi.openPanel('/')}>Open panel</button>}
-        <button data-testid="account-feedback" title="Feedback and bug reports" onClick={() => trayApi.open(feedbackURL(links.feedback, links.repo)).catch(() => {})}>
-          Feedback
-        </button>
         {acct.signed_in && acct.hub && (
+          // signed in already: signing in again is switching to another account
           <button
             data-testid="signin-again"
             disabled={busy}
-            title="Sign in with your account (Microsoft, Google or Apple): this machine becomes that account's"
+            title="Sign in again as another account (Microsoft, Google or Apple): this machine becomes that account's"
             onClick={async () => {
               const r = await run(() => trayApi.signinStart())
               if (r) onStarted?.(r)
             }}
           >
-            Sign in with an account…
+            Switch account…
           </button>
         )}
         {acct.signed_in && (
           <button
             className="danger"
             disabled={busy}
-            onClick={() => {
-              if (!confirm('Sign out? This device and your worker here leave the hub (running jobs keep running). The admin worker stays.')) return
+            onClick={async () => {
+              const q = 'Sign out? This device and your worker here leave the hub (running jobs keep running). The admin worker stays.'
+              if (!(await ask(q, { ok: 'Sign out', danger: true }))) return
               run(() => trayApi.signout(), 'signed out').then(() => onChange?.())
             }}
           >
@@ -429,7 +452,7 @@ export function rolesChangeText(cur: AccountRoles, want: AccountRoles) {
  * so uninstall and upgrades keep up), then one approval signs the added
  * roles in.
  */
-function RolesCard({ acct, cur, busy, onChange }: { acct: Account; cur: AccountRoles; busy: boolean; onChange?: () => void }) {
+function RolesCard({ acct, info, cur, busy, onChange }: { acct: Account; info: TrayInfo; cur: AccountRoles; busy: boolean; onChange?: () => void }) {
   const [want, setWant] = useState<AccountRoles>(cur)
   const [st, setSt] = useState<RolesState>()
   const { run, busy: posting } = useAction()
@@ -468,12 +491,17 @@ function RolesCard({ acct, cur, busy, onChange }: { acct: Account; cur: AccountR
         <span>
           <b>Send jobs</b> (client): run commands on your workers from here
         </span>
+        {cur.client && <RoleState ok={info.client.running} text={info.client.running ? 'running' : 'not running'} />}
       </label>
       <label className="check">
         <input type="checkbox" data-testid="role-worker" checked={want.worker} disabled={!editable} onChange={(e) => set('worker', e.target.checked)} />
         <span>
           <b>Run jobs</b> (worker): this computer runs your jobs, as you, from your logon (no password)
+          {acct.run_mode === 'service' ? <span className="muted"> · a Windows service here</span> : null}
         </span>
+        {cur.worker && (
+          <RoleState ok={info.worker.running} text={info.worker.running ? 'running' : `not running${info.worker.error ? ` (${info.worker.error})` : ''}`} />
+        )}
       </label>
       <label className="check">
         <input
@@ -486,7 +514,14 @@ function RolesCard({ acct, cur, busy, onChange }: { acct: Account; cur: AccountR
           <b>Admin commands</b> (admin worker): run administrator commands remotely, even before anyone logs on (as SYSTEM, only you)
           {!want.worker && !legacyAdmin ? <span className="muted"> · needs "run jobs"</span> : null}
         </span>
+        {cur.admin_worker && acct.admin?.enabled && <RoleState ok={!!acct.admin.signed_in} text={acct.admin.state ?? 'unknown'} />}
       </label>
+      {cur.admin_worker && acct.admin?.enabled && (acct.admin.pending || acct.admin.error) && (
+        <div className="small muted" data-testid="admin-card">
+          {acct.admin.pending ? 'The admin worker waits for your sign-in. ' : ''}
+          <ErrorBox error={acct.admin.error} />
+        </div>
+      )}
       {acct.cloud_pc && !cur.worker && (
         <div className="small muted" data-testid="cloud-pc-hint">
           This looks like a Cloud PC or Dev Box ({acct.cloud_pc}): such machines usually run jobs.
@@ -520,35 +555,8 @@ function RolesCard({ acct, cur, busy, onChange }: { acct: Account; cur: AccountR
   )
 }
 
-function AdminCard({ admin, onChange }: { admin: NonNullable<Account['admin']>; onChange?: () => void }) {
-  const { run, busy } = useAction()
-  if (!admin.enabled) return null
-  return (
-    <section className="wcard" data-testid="admin-card">
-      <div className="head">
-        <span className={`dot ${admin.signed_in ? 'is-online' : 'is-connecting'}`} style={{ background: admin.signed_in ? 'var(--green)' : 'var(--amber)' }} />
-        <span className="name">Admin worker</span>
-        <span className="sub">
-          {admin.service} · {admin.state ?? 'unknown'}
-        </span>
-      </div>
-      <div className="small muted">
-        Runs as SYSTEM, also with nobody logged on. Only you can use it, by its name; it is never chosen automatically.
-        {admin.pending ? ' Waiting for your sign-in.' : ''}
-      </div>
-      <ErrorBox error={admin.error} />
-      <p className="button-row">
-        <button
-          className="danger"
-          disabled={busy}
-          onClick={() => {
-            if (!confirm('Disable the admin worker? The hub revokes it and its service is removed (an administrator prompt follows).')) return
-            run(() => trayApi.adminDisable(), (r) => r.output).then(() => onChange?.())
-          }}
-        >
-          Disable admin worker
-        </button>
-      </p>
-    </section>
-  )
+/** A role's state on its row's right: running, not running, the admin worker's service state. */
+function RoleState({ ok, text }: { ok: boolean; text: string }) {
+  return <span className={`pill ${ok ? 'ok' : 'warn'} role-state`}>{text}</span>
 }
+

@@ -1,4 +1,5 @@
 import { useState, type KeyboardEvent } from 'react'
+import { ask } from '../components/confirm'
 import { ApiError } from '../api/http'
 import { sessionsApi, type SendInput } from '../api/sessions'
 
@@ -66,7 +67,7 @@ export function SteerBox({ worker, session, job, disabled }: { worker: string; s
           className="sm danger"
           disabled={off}
           title="Ctrl-C (stops the running command; twice quits the agent)"
-          onClick={() => confirm(`Send Ctrl-C to ${session}?`) && send({ keys: ['ctrl-c'] })}
+          onClick={async () => (await ask(`Send Ctrl-C to ${session}?`, { ok: 'Send Ctrl-C', danger: true })) && send({ keys: ['ctrl-c'] })}
         >
           Ctrl-C
         </button>

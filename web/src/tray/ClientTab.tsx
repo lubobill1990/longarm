@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { localUpdateApi, longarmApi, trayApi, traySettingsApi } from '../api/local'
-import type { FleetJob, Job, PoolView } from '../api/types'
+import type { FleetJob, Job } from '../api/types'
+import { ask } from '../components/confirm'
 import { ErrorBox, LogView, StatePill, useAction, usePoll } from '../components/common'
 import { IconForward, IconTerminal } from '../components/icons'
 import { fmtTime, isActive } from '../lib/format'
@@ -32,6 +33,8 @@ export function ClientJobs({ openJob, onOpenedJob }: { openJob?: string; onOpene
   const [wide, setWide] = useState(false) // the whole list, not the last 50
   const jobs = usePoll(() => longarmApi.jobs({ mine: true, limit: wide ? 0 : SHOWN }), 3000, [wide])
   const [open, setOpen] = useState<string>()
+  // "": every worker; else the jobs that run on that one
+  const [only, setOnly] = useState('')
   const [pinned, setPinned] = useState<string>() // an older job's key, shown after the 50
   const [missing, setMissing] = useState<string>()
   useEffect(() => {
@@ -52,6 +55,9 @@ export function ClientJobs({ openJob, onOpenedJob }: { openJob?: string; onOpene
   }, [openJob, jobs.data]) // eslint-disable-line react-hooks/exhaustive-deps
   const rows = (jobs.data ?? []).filter((j, i) => i < SHOWN || `${j.worker}/${j.job.spec.id}` === pinned)
   const { run, busy } = useAction()
+  const workers = [...new Set([...(jobs.data ?? []).map((j) => j.worker), ...(only ? [only] : [])])].sort()
+  // the worker filter on top of the last 50 (and a pinned older job)
+  const shown = rows.filter((j) => !only || j.worker === only)
   return (
     <div>
       <div className="toolbar">
@@ -59,9 +65,16 @@ export function ClientJobs({ openJob, onOpenedJob }: { openJob?: string; onOpene
           Started from this computer
         </span>
         <span className="spacer" />
-        <span className="muted small mono" title="longarm jobs --all: every job you may see, from all your computers">
-          longarm jobs · logs · kill
-        </span>
+        {workers.length > 1 || only ? (
+          <select className="sm" aria-label="worker" data-testid="jobs-worker" value={only} onChange={(e) => setOnly(e.target.value)}>
+            <option value="">All workers</option>
+            {workers.map((w) => (
+              <option key={w} value={w}>
+                {w}
+              </option>
+            ))}
+          </select>
+        ) : null}
       </div>
       <ErrorBox error={jobs.error} />
       {missing && (
@@ -71,7 +84,7 @@ export function ClientJobs({ openJob, onOpenedJob }: { openJob?: string; onOpene
       )}
       <table className="grid list small" data-testid="my-jobs">
         <tbody>
-          {rows.map((j) => {
+          {shown.map((j) => {
             const key = `${j.worker}/${j.job.spec.id}`
             const name = j.job.spec.name || j.job.spec.id.slice(-8)
             const isOpen = open === key
@@ -92,10 +105,15 @@ export function ClientJobs({ openJob, onOpenedJob }: { openJob?: string; onOpene
                   }}
                 >
                   <td className="mono strong">{name}</td>
-                  <td className="muted">{j.worker}</td>
+                  <td className="muted">
+                    {/* one line: a long name ends in "…", the whole one on hover */}
+                    <span className="clip" title={j.worker}>
+                      {j.worker}
+                    </span>
+                  </td>
                   <td className="nowrap">
                     <StatePill state={j.job.state} />
-                    {j.job.has_exit_code ? <span className="mono muted"> {j.job.exit_code ?? 0}</span> : ''}
+                    {/* a code only when it says something: "done" is 0 */ j.job.has_exit_code && (j.job.exit_code ?? 0) !== 0 ? <span className="mono muted"> exit {j.job.exit_code}</span> : ''}
                   </td>
                   <td className="muted nowrap hide-narrow">{fmtTime(j.job.created_at)}</td>
                   <td className="actions-cell">
@@ -103,13 +121,13 @@ export function ClientJobs({ openJob, onOpenedJob }: { openJob?: string; onOpene
                       <button
                         className="danger sm"
                         disabled={busy}
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation()
-                          if (!confirm(killQuestion(j.job, j.worker))) return
+                          if (!(await ask(killQuestion(j.job, j.worker), { ok: 'Kill', danger: true }))) return
                           run(() => longarmApi.kill(j.job.spec.id, j.worker), 'killed').then(jobs.reload)
                         }}
                       >
-                        kill
+                        Kill
                       </button>
                     )}
                   </td>
@@ -126,6 +144,13 @@ export function ClientJobs({ openJob, onOpenedJob }: { openJob?: string; onOpene
             <tr className="placeholder">
               <td colSpan={5}>
                 <Skeleton lines={3} label="loading jobs…" />
+              </td>
+            </tr>
+          )}
+          {jobs.data !== undefined && jobs.data.length > 0 && shown.length === 0 && (
+            <tr className="placeholder">
+              <td colSpan={5}>
+                <EmptyState compact icon={<IconTerminal size={20} />} title={`No jobs on ${only}`} />
               </td>
             </tr>
           )}
@@ -249,7 +274,7 @@ export function Forwards({ workers }: { workers: string[] }) {
             <option key={w}>{w}</option>
           ))}
         </select>
-        <input aria-label="target port" placeholder="port or host:port on the worker" value={target} onChange={(e) => setTarget(e.target.value)} />
+        <input aria-label="target port" placeholder="Port, e.g. 3000" value={target} onChange={(e) => setTarget(e.target.value)} />
         <button className="primary" disabled={busy || !target || !workers.length}>
           Forward
         </button>
@@ -282,7 +307,7 @@ export function Forwards({ workers }: { workers: string[] }) {
               </td>
               <td className="actions-cell">
                 <button className="sm" disabled={busy} onClick={() => run(() => longarmApi.stopForward(f.local_addr ?? ''), 'stopped').then(fw.reload)}>
-                  stop
+                  Stop
                 </button>
               </td>
             </tr>
@@ -310,31 +335,36 @@ export function Forwards({ workers }: { workers: string[] }) {
 }
 
 const POLICIES: [string, string][] = [
-  ['race', 'race: dial every leg, first mTLS handshake wins (sticky winner)'],
-  ['tailscale', 'prefer tailscale'],
-  ['longnet', 'prefer longnet (hub relay + hole punching)'],
-  ['tcp', 'prefer plain tcp'],
+  ['race', 'Automatic (recommended): try every way at once, keep the first that connects'],
+  ['tailscale', 'Prefer Tailscale'],
+  ['longnet', "Prefer Longarm's network: direct when possible, else through the hub's relay"],
+  ['tcp', 'Prefer a plain TCP connection'],
 ]
 
-/** Settings: appearance, transport policy (longarm transport), notifications, this client (version, logs, telemetry, diagnostics). */
+/** A transport policy in a few words ("automatic"): the title bar's tooltip, the source row. */
+export function transportLabel(t?: string): string {
+  return { race: 'automatic', tailscale: 'Tailscale first', longnet: "Longarm's network first", tcp: 'plain TCP first' }[t ?? ''] ?? t ?? ''
+}
+
+/** Settings: appearance, transport policy (longarm transport), notifications, updates, the agent skill, diagnostics (logs, telemetry). */
 export function Settings({
-  pool,
   clientUp = true,
   theme,
   onTheme,
 }: {
-  pool?: PoolView
   clientUp?: boolean
   theme?: ThemePref
   onTheme?: (t: ThemePref) => Promise<void>
 }) {
   return (
+    // what people change most first; the technical ones (transport, diagnostics) last
     <div className="settings">
+      <AutoUpdate />
+      <TraySettingsView part="notifications" />
+      <AgentSkill />
       {theme && onTheme && <Appearance theme={theme} onTheme={onTheme} />}
       {clientUp && <TransportPolicy />}
-      <TraySettingsView pool={pool} clientUp={clientUp} />
-      <AgentSkill />
-      <AutoUpdate />
+      <TraySettingsView part="diagnostics" />
       <Licenses />
     </div>
   )
@@ -373,9 +403,9 @@ export function Licenses() {
 
 /** Release channels, most tested first (docs/ci-cd.md "Release channels"). */
 export const CHANNELS: [string, string, string][] = [
-  ['stable', 'Stable', 'releases only'],
-  ['preview', 'Preview', 'release candidates too, before everybody gets them'],
-  ['dev', 'Dev', 'every change merged to main: the newest, least tested'],
+  ['stable', 'Stable', 'Releases only'],
+  ['preview', 'Preview', 'Release candidates too, before everybody gets them'],
+  ['dev', 'Dev', 'Every change merged to main: the newest, least tested'],
 ]
 
 /**
@@ -394,9 +424,22 @@ export function AutoUpdate() {
   const owner = u.can_set_auto ? '' : " (only this machine's owner or an administrator can change this)"
   return (
     <Section card title="Updates" testId="auto-update">
-      <div className="field-help">
-        Longarm {u.installed ?? '…'}
-        {newer}
+      <div className="field-inline">
+        <div className="field-help">
+          Longarm {u.installed ?? '…'}
+          {newer}
+        </div>
+        {newer && (
+          // the newer release of this channel, now (the service installs it; running jobs keep running)
+          <button
+            className="primary sm"
+            data-testid="update-now"
+            disabled={busy || !u.can_set_auto}
+            onClick={() => run(() => trayApi.installUpdate(u.available!), `installing Longarm ${u.available}`).then(() => st.reload())}
+          >
+            Update now
+          </button>
+        )}
       </div>
       <div className="field-inline">
         <div>
@@ -441,14 +484,14 @@ export function AutoUpdate() {
         <span>
           <span className="field-label">Install new releases automatically</span>
           <span className="field-help">
-            every {u.auto_interval_hours ?? 6} h, once no job started for 5 minutes, from the {channel} channel
+            Every {u.auto_interval_hours ?? 6} h, once no job started for 5 minutes, from the {channel} channel
             {owner}
           </span>
         </span>
       </label>
       {u.last && (
         <p className="field-help" data-testid="last-update">
-          last update: {u.last.from} → {u.last.to}: {u.last.ok ? 'installed' : `failed (${u.last.error ?? ''})`}
+          Last update: {u.last.from} → {u.last.to}: {u.last.ok ? 'installed' : `failed (${u.last.error ?? ''})`}
         </p>
       )}
     </Section>
@@ -492,7 +535,8 @@ function TransportPolicy() {
   const [choice, setChoice] = useState<string>()
   const current = choice ?? s.data?.transport ?? 'race'
   return (
-    <Section card title="Transport policy" testId="transport">
+    <Section card title="Connection to workers" testId="transport">
+      <div className="field-help">How this computer reaches your workers. Automatic suits almost everyone.</div>
       <div className="radio-list">
         {POLICIES.map(([b, label]) => (
           <label key={b} className={`radio-row ${current === b ? 'is-checked' : ''}`}>
@@ -511,19 +555,22 @@ function TransportPolicy() {
           </label>
         ))}
       </div>
-      <p className="muted small mono">CLI: longarm transport {current}</p>
+      <p className="muted small">
+        Same as <span className="mono">longarm transport {current}</span>
+      </p>
     </Section>
   )
 }
 
-function TraySettingsView({ pool, clientUp }: { pool?: PoolView; clientUp: boolean }) {
+/** The tray's own settings, one card: notifications (near the top) or diagnostics (near the end). */
+function TraySettingsView({ part }: { part: 'notifications' | 'diagnostics' }) {
   const st = usePoll(traySettingsApi.get, 0)
-  const daemon = usePoll(() => (clientUp ? longarmApi.status() : Promise.resolve(undefined)), 0, [clientUp])
   const { run, busy } = useAction()
   const s = st.data
   const set = (v: Parameters<typeof traySettingsApi.set>[0], ok: string) => run(() => traySettingsApi.set(v), ok).then((r) => r && st.setData(r))
   return (
     <>
+      {part === 'notifications' && (
       <Section card title="Notifications" testId="notifications">
         <ErrorBox error={st.error} />
         <label className="switch-row">
@@ -537,7 +584,7 @@ function TraySettingsView({ pool, clientUp }: { pool?: PoolView; clientUp: boole
           />
           <span>
             <span className="field-label">My workers</span>
-            <span className="field-help">offline / back online, memory low, link relayed</span>
+            <span className="field-help">Offline / back online, memory low, link relayed</span>
           </span>
         </label>
         <label className="switch-row">
@@ -551,33 +598,15 @@ function TraySettingsView({ pool, clientUp }: { pool?: PoolView; clientUp: boole
           />
           <span>
             <span className="field-label">My jobs</span>
-            <span className="field-help">done, failed, killed, lost</span>
+            <span className="field-help">Done, failed, killed, lost</span>
           </span>
         </label>
         <p className="muted small">Only your own workers and the jobs you started notify; other people&apos;s machines never do.</p>
       </Section>
-      <Section card title="This client" testId="this-client">
-        <dl className="facts small" data-testid="client-info">
-          <dt>longarm-tray</dt>
-          <dd className="mono">
-            {s?.version ?? '…'}
-            {daemon.data?.version ? ` · longarm daemon ${daemon.data.version}` : ''}
-          </dd>
-          <dt>identity</dt>
-          <dd className="mono">{pool?.identity ?? daemon.data?.identity ?? '—'}</dd>
-          <dt>hub</dt>
-          <dd>
-            <span className="mono">{pool?.hub?.address || '—'}</span>{' '}
-            {pool?.hub?.address &&
-              (pool.hub.connected ? (
-                <span className="pill ok">connected</span>
-              ) : (
-                <span className="pill bad" title={pool.hub.error}>
-                  down{pool.hub.error ? `: ${pool.hub.error}` : ''}
-                </span>
-              ))}
-          </dd>
-        </dl>
+      )}
+      {/* versions: the Updates card and the title bar; the hub and this device: the Account tab */}
+      {part === 'diagnostics' && (
+      <Section card title="Diagnostics" testId="this-client">
         <label className="switch-row">
           <input
             type="checkbox"
@@ -590,7 +619,7 @@ function TraySettingsView({ pool, clientUp }: { pool?: PoolView; clientUp: boole
           <span>
             <span className="field-label">Send anonymous telemetry</span>
             <span className="field-help">
-              errors, timings; no names, commands or output{s?.telemetry_env_off ? ' - off: LONGARM_TELEMETRY=0' : ''}
+              Errors, timings; no names, commands or output{s?.telemetry_env_off ? ' - off: LONGARM_TELEMETRY=0' : ''}
             </span>
           </span>
         </label>
@@ -609,6 +638,7 @@ function TraySettingsView({ pool, clientUp }: { pool?: PoolView; clientUp: boole
           </button>
         </div>
       </Section>
+      )}
     </>
   )
 }

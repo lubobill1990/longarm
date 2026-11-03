@@ -263,7 +263,7 @@ export function FirewallWarning({
               else toast(r.message ?? 'still blocked', true)
             }}
           >
-            {busy ? 'waiting for the administrator prompt…' : 'Allow'}
+            {busy ? 'Waiting for the administrator prompt…' : 'Allow'}
           </button>{' '}
           inbound connections to {copy ? 'that copy' : 'it'} (an administrator prompt).
         </div>
@@ -279,7 +279,7 @@ export function FirewallWarning({
               )
             }
           >
-            copy
+            Copy
           </button>
         </div>
       )}

@@ -121,7 +121,7 @@ function OlderSentinel({ older }: { older: { loading: boolean; load: () => void 
   }, [])
   return (
     <button ref={ref} type="button" className="link small slist-older" data-testid="load-older" disabled={older.loading} onClick={older.load}>
-      {older.loading ? 'loading older sessions…' : 'Load older sessions'}
+      {older.loading ? 'Loading older sessions…' : 'Load older sessions'}
     </button>
   )
 }
