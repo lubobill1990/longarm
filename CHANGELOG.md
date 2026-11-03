@@ -32,6 +32,18 @@
   also removes the session directories of sessions that moved on from that
   machine; outside a checkout with a remote it skips the branches instead
   of failing.
+
+- **Hubs without releases of their own offer GitHub's.** A hub nobody
+  publishes to (no CI, no `longarm-hub release add`) reads the releases of
+  its source repository from GitHub - the public one by default,
+  `[releases] github = "owner/repo" | "off"` - so the front page's
+  installers, the install scripts, `/releases/latest.json`, update notices
+  and worker self-updates work with no setup. The hub keeps no files: HTTP
+  downloads redirect to GitHub, worker self-updates are fetched once into
+  its cache and checked against GitHub's sha256 digests; workers verify the
+  signatures as always. Stable releases are the stable channel,
+  pre-releases preview. The hub's first own release turns it off.
+
 - **Automatic updates are a choice at install.** The MSI wizard has an
   Updates page before Install: "Install new releases automatically" (off
   unless the machine had it on) and, with it, the release channel (Stable

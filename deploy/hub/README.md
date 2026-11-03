@@ -88,6 +88,22 @@ longarm admin join-code                      # worker codes from now on
 longarm-hub release add ./dist --version 0.2.0   # binaries for install.ps1 / install.sh (longarm-*, longarmd-*)
 ```
 
+**Releases without publishing anything.** A hub with no releases of its own
+offers the releases of its source repository on GitHub (`[releases] github`,
+default: the repository of `[web] repo_url`, the public one unless you
+changed it): the front page's installers, `install.sh` / `install.ps1`,
+`/releases/latest.json`, the tray's update notice and worker self-updates
+all work out of the box. The hub reads the index (names, sizes, sha256
+digests, signatures) from the GitHub API every 15 minutes and keeps no
+files: downloads are redirected to GitHub, a worker's self-update makes the
+hub fetch the file once into its cache (checked against the digest).
+Stable releases go to the stable channel, pre-releases (`-rc`) to preview;
+dev builds are not GitHub releases. The first release you add yourself
+(`release add`, `admin release publish`, CI) turns this off for good.
+`github = "off"` turns it off; the hub needs outbound HTTPS to
+api.github.com and github.com (`LONGARM_HUB_GITHUB_TOKEN`: an optional
+token for a higher API rate limit).
+
 Existing workers keep their hand-issued certificates (same CA): add
 `[hub] address = "203.0.113.10:7443"` to their longarmd.toml and restart longarmd; they
 register themselves as approved. (longarmd.toml lives in the worker's data dir:

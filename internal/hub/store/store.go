@@ -1056,6 +1056,9 @@ type Release struct {
 	Channel string // stable (default), beta ...
 	Kind    string // binary | package (msi, deb, rpm, pkg, tar.gz, zip)
 	Sig     []byte // the .minisig file, if signed
+	// URL is where the file is downloaded from when the hub has no copy
+	// (releases read from GitHub, ghreleases.go); never stored.
+	URL string `json:",omitempty"`
 }
 
 // AddRelease records a release file (replacing a same-named one).
