@@ -43,6 +43,9 @@
   its cache and checked against GitHub's sha256 digests; workers verify the
   signatures as always. Stable releases are the stable channel,
   pre-releases preview. The hub's first own release turns it off.
+  The front page offers only the release channels the hub has releases
+  of: preview and dev appear only with a release of their own, so a hub on
+  GitHub's releases shows no channel choice (stable).
 
 - **Automatic updates are a choice at install.** The MSI wizard has an
   Updates page before Install: "Install new releases automatically" (off
