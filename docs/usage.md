@@ -267,6 +267,8 @@ exit 255) has none of these features.
 | `lfs` | `run` / `sync --lfs skip\|ship` |
 | `ref-sha` | `run --repo <path> --ref <full commit id>` |
 | `worker-label` | `longarm worker label` for owners |
+| `toolchain-report` | `worker ls --json` includes baseline installed tools in each worker's `toolchain.versions` (requires an updated worker) |
+| `worker-toolchain` | `worker toolchain <worker>`: owner desired tools, admin-profile precedence, idle-only reconciliation and JSON status (requires an updated hub and worker) |
 | `git-auth-forward` | `run` / `sync --git-auth forward`, `run --repo <url> --lfs fetch`; the worker must also support it (`git-auth-forward` in its `Node.Info` features), see [Fetching with your credential](#fetching-with-your-credential---git-auth-forward) |
 | `session-start` | `longarm session start` (detached, idempotent by name, `--repo` worktree, auto placement) |
 | `session-send` | `longarm session send` (`--text`, `--stdin-file`, `--key`, `--raw`) |
@@ -1746,6 +1748,38 @@ macOS), only while no job runs (it drains meanwhile), and reports versions. A
 changed profile goes to one canary worker first; the rest follow when it
 reports ok, a failure halts the rollout.
 
+Every updated worker also inventories **git, gh, node, pnpm, uv, pwsh, claude,
+copilot and go**, whether or not it has a profile (also when installation is
+disabled). Version probes have short timeouts; the cached inventory is refreshed
+at connect and every five minutes. `longarm worker ls --json` includes it in
+each node's `toolchain`:
+
+```json
+{
+  "nodes": [{
+    "name": "worker-1",
+    "role": "worker",
+    "toolchain": {
+      "state": "none",
+      "versions": {
+        "git": "2.45.0", "gh": "2.60.0", "node": "22.0.0",
+        "pnpm": "", "uv": "", "pwsh": "7.4.0", "claude": "",
+        "copilot": "", "go": "1.27.3"
+      },
+      "updated_at": "2026-11-03T00:00:00Z"
+    }
+  }]
+}
+```
+
+Other node fields are omitted from this example. An empty version means missing;
+an **absent `toolchain`** means no report, not that every tool is missing (for
+example an older worker). Offline workers may have a cached report: check the
+node's `online` and the report's `updated_at`. `state` is `none` with no desired
+tools, `ok` when satisfied, `pending` while waiting for jobs, `applying` during
+installation, or `failed` with an `error`. Version strings are detected versions,
+not requested version prefixes.
+
 ### Users, teams and quotas (sharing a hub)
 
 Several people can share the hub and its workers; [security.md](security.md)
@@ -1909,6 +1943,9 @@ longarm worker add [<name>] [--ttl 24h] [--label k=v]...   # prints a join code 
 longarm worker ls [--json]                # your workers, workers shared with you, the fleet (owner, shares, load)
 longarm worker label <worker> pool=devbox [gpu-]...   # set (KEY=VALUE) / delete (KEY- or KEY=) labels
                                           # of your worker (admins: any worker); audited by the hub
+longarm worker toolchain <worker> [--json] # desired tools and installed versions
+longarm worker toolchain <worker> --tools claude,copilot,uv,node@22 --apply --json
+longarm worker toolchain <worker> --clear # clear your desired tools, not installed software
 longarm worker share <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker unshare <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker remove <worker>            # revoke it (owner or admin); also: worker rm
@@ -1916,6 +1953,60 @@ longarm worker rename <worker> <new-name> # rename it (owner or admin; it keeps 
 longarm ls                                # an OWNER column appears once a worker has an owner; ADMIN: the machine's admin worker
                                           # ("-" = fleet, "+shared" = shared by its owner)
 ```
+
+**Tools on your worker.** `worker toolchain` lets its owner manage tools without
+an admin certificate; admins can also manage fleet workers (those with no owner),
+not somebody else's private machine. Sharing a worker does not grant toolchain
+management. Admin workers accept inventory queries but refuse hub-initiated package
+operations; use explicit commands on them instead.
+
+`--tools` replaces your whole desired list, accepts comma-separated names and
+repeatable flags, and defaults an omitted `@VERSION` to `latest` (any installed
+version satisfies it). Versions are prefixes at dot boundaries, as for profiles.
+Your tools are stored per worker at the hub, independently of its name, and merged
+with the assigned admin profile: **the admin profile wins conflicts**, including
+while its new revision waits for the canary. `--clear` removes only your desired
+list, retaining the profile and all installed software. Neither operation uninstalls
+tools. Changes are sent immediately to online workers and otherwise at reconnect.
+
+Reconciliation uses the same backend as profiles and installs only while idle,
+draining until jobs finish. `--apply` asks an online worker to recheck now; it
+acknowledges the request, **not installation success**. Read status again to
+observe `pending` / `applying` / `ok` / `failed`. Desired changes persist even if
+`--apply` fails because the worker is offline or remote control is disabled.
+On Windows the backend refreshes the daemon's PATH after package installation;
+the version check and the next job use the same lookup, including per-user npm
+tools, without restarting the worker.
+
+`worker toolchain --json` returns `worker`, `worker_id`, `owner_tools` (your
+list), `desired` (the effective profile plus your tools) and `toolchain` (the
+worker's last report). For example, with only `node@22` requested:
+
+```json
+{
+  "worker": "worker-1",
+  "worker_id": "11111111-1111-4111-8111-111111111111",
+  "owner_tools": [{"name": "node", "version": "22"}],
+  "desired": {
+    "tools": [{"name": "node", "version": "22"}],
+    "owner_revision": "1"
+  },
+  "toolchain": {
+    "state": "ok",
+    "owner_revision": "1",
+    "versions": {"node": "22.0.0", "git": "2.45.0", "gh": "", "pnpm": "",
+      "uv": "", "pwsh": "", "claude": "", "copilot": "", "go": ""},
+    "updated_at": "2026-11-03T00:00:00Z"
+  }
+}
+```
+
+Empty fields/lists are omitted (protobuf JSON; revision integers are strings).
+With an admin profile, `desired.profile` / `desired.revision` identify the
+profile revision selected by its rollout. `owner_revision` identifies your
+desired list; the report echoes it once reconciled. A missing `toolchain` is
+unknown inventory. An older hub returns `Unimplemented` (update it); an older
+worker might not report inventory or support owner-only reconciliation.
 
 **Labels** (scheduler constraints: `longarm run --require pool=devbox`) of
 your own worker are yours to set: at registration (`longarm worker add
