@@ -30,3 +30,16 @@ script, so a prompt would have to read `/dev/tty` (and `longarmd login`
 opens the browser at once for the same reason - its stdin isn't a
 terminal). Ask through `/dev/tty` when there is one; keep the sign-in
 without.
+
+## An unattended install without a code in its parameters
+
+The MSI no longer rolls back when its `JOIN_CODE` fails (an expired code:
+the worker waits for a sign-in). An unattended install still has to carry
+the code in its parameters, though - a Dev Box customization's parameters
+can be read by everyone who can read the customization group, and the task
+may run days later, after a short-lived code expired. A way without a code
+there: a `JOIN_URL` / one-time token the task exchanges for a code when it
+runs, or a longer-lived, single-use "pre-approved node name" enrollment the
+hub accepts once (`longarm worker add <name> --preapprove --ttl 7d`).
+Start from `longarmd.JoinFailed` (internal/longarmd/leave.go) and the
+hub's join codes (internal/hub/enroll.go).
