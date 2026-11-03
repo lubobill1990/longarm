@@ -48,3 +48,14 @@ The agent API of `longarm daemon` (`POST
 sends. It could use `SendSessionRequest.after` (paste, then Enter,
 atomically) and take an `if_input_seq` from the Sessions window like the
 CLI.
+
+## e2e tests depend on the machine's global git config
+
+On a worker whose global git config sets `core.autocrlf` / `core.safecrlf`,
+`TestSync`, `TestSyncShallowClone`, `TestGitAuthForward`,
+`TestSessionsForPrograms` and others fail at their own `git add` with
+"LF would be replaced by CRLF" (seen on cpc workers, 2026-11-03), so a full
+`go test ./...` there reports failures unrelated to the change. The e2e
+helpers that run git (`e2e/data_test.go` and friends) should run it with an
+isolated config: `GIT_CONFIG_GLOBAL` pointing at an empty file in the
+test's temp dir and `GIT_CONFIG_NOSYSTEM=1`.
