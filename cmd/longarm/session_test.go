@@ -101,3 +101,13 @@ func TestWin32InputFilter(t *testing.T) {
 		t.Fatalf("a different sequence: %q", got)
 	}
 }
+
+func TestBracketedPaste(t *testing.T) {
+	if got := string(bracketedPaste([]byte("a\rb"))); got != "\x1b[200~a\rb\x1b[201~" {
+		t.Fatalf("%q", got)
+	}
+	// an end marker in the text cannot end the paste early
+	if got := string(bracketedPaste([]byte("x\x1b[201~\rrm -rf /\r"))); got != "\x1b[200~x\rrm -rf /\r\x1b[201~" {
+		t.Fatalf("%q", got)
+	}
+}

@@ -207,7 +207,7 @@ Programs driving longarm can rely on these exit codes:
 | 2 | usage error or a request that can't succeed as given, so nothing was submitted: unknown flag or command, wrong arguments, a short job id that matches several jobs, local validation (`--env` without `=`, a missing or too large `--stdin-file`, `--ref` a short commit id / a ref that isn't HEAD, a branch, a tag or a full commit id / a commit not in the checkout, `--lfs` other than skip/ship/fetch, `--lfs fetch` with a local checkout, `--git-auth` other than forward/none, `--git-auth forward` without `--repo` or with a URL that isn't https), and the hub's / worker's `InvalidArgument`, `FailedPrecondition`, `AlreadyExists` (a job id in use with another spec), `OutOfRange`, `Unimplemented`, a worker too old for a flag or command; `session send` to a session that has ended | fix the request; retrying it unchanged fails again |
 | 3 | not found: the hub or the worker answered that the job / file / session does not exist, an unknown worker name, a job that every known worker answered it doesn't have (when some did not answer: 255), `jobs --id` of an unknown job, `sessions -s` / `session send` / `session stop` of an unknown session, `tail` of a missing file (without `-f`), `last` when you have no jobs | |
 | 69 | `jobs --hub-only`: no hub configured, or it did not answer | retry later, or ask the workers (without `--hub-only`) |
-| 75 | refused for capacity, quota or rate (`ResourceExhausted`): no worker passes the gate with `--no-queue`, a quota, too many attempts; `session send --if-idle-ms`: input arrived within the window (nothing sent); too many `tail`s open on the worker | retry later |
+| 75 | refused for capacity, quota or rate (`ResourceExhausted`): no worker passes the gate with `--no-queue`, a quota, too many attempts; `session send --if-idle-ms`: input arrived within the window, `--if-input-seq`: the session's `inputSeq` moved on (nothing sent); too many `tail`s open on the worker | retry later |
 | 77 | not allowed: `PermissionDenied`, `Unauthenticated`, a refusal of end-to-end trust, an expired sign-in (`your sign-in expired on <date>: run longarm login`); `--git-auth forward` with `--repo <url>` (`run`, `session start`): no credential for the URL could be obtained on this machine (nothing was submitted) | fix the credentials or the rights |
 | 79 | `admin release push --allow-none`: no worker of the channel can update itself (MSI installs, user-session workers), nothing was rolled out; the message lists them | nothing to do: they update with the MSI (the tray's banner) or the install script |
 | 137 | `wait` / `run --wait`: the job was killed; `session start`: the session was killed before it ran | |
@@ -250,13 +250,16 @@ The job's own outcome comes from `jobs --json` (`state`, `exitCode`,
 {"version": "v1.8.0", "features": ["exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label", "git-auth-forward",
   "session-start", "session-send", "session-send-if-idle", "session-stop", "sessions-json-v2", "tail", "run-session",
   "job-id-short", "jobs-mine", "doctor-json", "worker-update", "ls-version", "agent-auth",
-  "agent-handoff", "agent-sessions", "agent-skill", "steerable-run"]}
+  "agent-handoff", "agent-sessions", "agent-skill", "steerable-run",
+  "session-send-if-input-seq", "session-send-paste-enter", "input-seq-human"]}
 ```
 
 (indented in the real output). A program checks `features` instead of
 comparing versions; names are lowercase-hyphenated and keep their meaning.
 A longarm without the `version` command (older releases: "unknown command",
-exit 255) has none of these features.
+exit 255) has none of these features. [programs.md](programs.md) is the
+guide for programs driving Longarm: what is stable, and golden outputs to
+test against.
 
 | feature | what it means |
 |---|---|
@@ -288,10 +291,14 @@ exit 255) has none of these features.
 | `agent-sessions` | `longarm agent-sessions` |
 | `agent-skill` | `longarm skill status\|install\|update\|remove` (see [Agent skill](#agent-skill-for-claude-code-copilot-cli-codex)) |
 | `steerable-run` | `run --steerable [--until-exit]`, `attach --job`, `session send --job` (the worker must also support it: `steerable-run` in its `Node.Info` features), see [Steerable agent runs](#steerable-agent-runs---steerable) |
+| `session-send-if-input-seq` | `session send --if-input-seq N`: written only if the session's `inputSeq` is still N (exit 75) |
+| `session-send-paste-enter` | `session send --paste [--key KEY]...`: a bracketed paste, then the keys a moment later, one atomic send |
+| `input-seq-human` | terminal replies of attached clients (device attributes, cursor position, colours, focus) are no input: they don't move `inputSeq` / `lastInput*`; `sessions --json` has `humanInputSeq` |
 
 The session and tail features also need the worker's (`session-start`,
 `session-send`, `session-send-if-idle`, `session-stop`, `session-info`,
-`file-tail` in `Node.Info` features; see "Sessions for programs").
+`file-tail`, `session-send-if-input-seq`, `session-send-paste-enter`,
+`input-seq-human` in `Node.Info` features; see "Sessions for programs").
 
 ### `jobs --json`
 
@@ -642,6 +649,7 @@ longarm session start -s agent1 --require os=windows -- claude    # no worker / 
 longarm session send w1 -s agent1 --text "fix the tests" --key enter
 longarm session send w1 -s agent1 --key esc                      # keys: enter tab shift-tab esc backspace space up down left right home end pageup pagedown delete ctrl-<letter>
 longarm session send w1 -s agent1 --text "y" --if-idle-ms 2000   # only if nobody typed in the last 2 s (else exit 75)
+longarm session send w1 -s agent1 --text "$PROMPT" --paste --key enter --if-input-seq 57   # paste, then Enter; only if nothing came since inputSeq 57
 longarm sessions --json                                           # all your workers; sessions w1 -s agent1 --json: one session
 longarm run --session agent1 -f -- git status                    # one-shot command in the session's worktree
 longarm tail w1 agent1-worktree/.tmia/agent-events.jsonl -f --json  # (any path get may read)
@@ -692,7 +700,7 @@ longarm session stop w1 -s agent1 --grace 10s                    # Ctrl-C, then 
   transcript (as for `attach`); `--env` is stored in the session's metadata.
   Sessions take no stdin payload: input goes through `session send`.
 
-**`longarm session send [<worker>] -s NAME (--text TEXT | --stdin-file FILE|-) [--key KEY]... [--raw] [--if-idle-ms N] [--json]`**
+**`longarm session send [<worker>] -s NAME (--text TEXT | --stdin-file FILE|-) [--key KEY]... [--raw] [--paste] [--if-idle-ms N] [--if-input-seq N] [--json]`**
 
 - Types the bytes into the session's terminal: `--text` / `--stdin-file`
   first, then the `--key`s in order. A newline (LF or CRLF) becomes Enter
@@ -704,13 +712,28 @@ longarm session stop w1 -s agent1 --grace 10s                    # Ctrl-C, then 
   keystrokes (each read from its terminal), other sends, `session stop`'s
   Ctrl-C - so a send never interleaves with a human typing; writes reach the
   terminal in the order the shim receives them. Note that a TUI may treat
-  one large write as a paste (bracketed paste): send the Enter as a separate
-  `--key enter` send if the program should submit.
+  one large write as a paste, Enter included: to submit text, use
+  `--paste --key enter`.
+- `--paste`: the text goes as a bracketed paste (`ESC [200~` ... `ESC
+  [201~`; an end marker inside the text is dropped). With `--key`, the keys
+  follow 100 ms later - long enough for the program to take the paste as a
+  paste and the Enter as Enter - and the shim admits no other input in
+  between (an attached client's keystrokes wait). It is one send: one
+  `inputSeq`, one audit record. For programs that turn bracketed paste on
+  (Claude Code, Copilot CLI, shells with readline); others see the markers.
 - `--if-idle-ms N`: written only if no input (from any attached client or
   any send) reached the terminal in the last N ms - checked and written
   atomically by the shim; otherwise nothing is written and longarm exits
   **75** (retry later). Sessions started by a longarmd before this feature
   (its shim lives on across updates) refuse `--if-idle-ms` with exit 2.
+- `--if-input-seq N`: written only if the session's `inputSeq` is still N -
+  nobody typed or sent since the controller read it (`sessions --json`, the
+  previous `send --json`) - checked and written atomically by the shim;
+  otherwise nothing is written and longarm exits **75** (the message has
+  the current value). Terminal replies don't move `inputSeq` (see
+  `sessions --json`). Sessions started by a longarmd before this feature
+  refuse `--if-input-seq` and `--paste --key` with exit 2; a worker without
+  it: exit 2 before anything is sent.
 - `--json` prints `{"worker", "session", "inputSeq"}` (the session's input
   sequence number after this write).
 - The input is never stored by longarm: not in the session's metadata
@@ -720,7 +743,7 @@ longarm session stop w1 -s agent1 --grace 10s                    # Ctrl-C, then 
   shells do.
 - Exit codes: 0 written (all of it); 2 the session has ended (or usage,
   or a worker without `session-send`); 3 no such session; 75
-  `--if-idle-ms` refused. A terminal write that fails or is short (the
+  `--if-idle-ms` / `--if-input-seq` refused. A terminal write that fails or is short (the
   program is exiting) is never reported as written: exit 2 when the
   session has ended meanwhile, else 255 (some bytes may have arrived).
 - In shared isolation with users separated, session names are one
@@ -756,7 +779,7 @@ asked in parallel. <a id="sessions---json"></a>`--json` prints:
      "workdir": "C:\\longarm\\worktrees\\s.agent1", "workspace": {"repo": "app", "url": "", "ref": "HEAD", "commit": "4f3c...", "stagingId": ""},
      "pid": 4242, "attached": 1, "hasExitCode": false, "exitCode": 0, "reason": "",
      "createdAt": "...", "startedAt": "...", "endedAt": null, "logSize": "18231",
-     "lastOutput": "...", "lastInput": "...", "inputSeq": "57", "lastInputSource": "attach", "lastActivity": "...",
+     "lastOutput": "...", "lastInput": "...", "inputSeq": "57", "humanInputSeq": "12", "lastInputSource": "attach", "lastActivity": "...",
      "createdBy": "client/alice", "owner": "alice"}
   ],
   "source": "workers",
@@ -773,7 +796,17 @@ or `null`), plus `worker`. `exitCode` counts only with `hasExitCode`.
 `lastInputSource` (`"attach"`: a human's keystrokes, `"send"`: `session
 send`, `"stop"`), `inputSeq` (writes to the terminal so far; it only grows
 while the session lives, so a controller that remembers it sees whether a
-human typed since), `lastActivity` = the later of the two. Ended sessions
+human typed since; `send --if-input-seq` acts on it), `humanInputSeq`
+(only an attached client's keystrokes; left out for sessions whose shim
+predates it), `lastActivity` = the later of the two. Terminal replies are
+not input: what an attached client's terminal (xterm.js, a ConPTY, a
+terminal emulator) answers by itself to the program's queries - device
+attributes (`ESC [?…c`, `ESC [>…c`), device status (`ESC [0n`), the cursor
+position (`ESC [r;cR`), the colours (`ESC ]10/11/12;rgb:…`), focus in /
+out (`ESC [I`, `ESC [O`) - is written to the terminal but moves none of
+these fields, when an input read is nothing but such replies. A read that
+mixes them with keys counts as keystrokes, and so does `ESC [1;2..16R`
+(also Shift/Ctrl/Alt-F3). Ended sessions
 and sessions whose shim predates this have `lastOutput` from the
 transcript's modification time and no input fields. `-s NAME`: that session
 only (running; with `--all` in any state); none: exit 3 with the empty list.
@@ -837,11 +870,13 @@ pressure) or until a new session takes the name; a running session is never
 collected.
 
 Capabilities (`longarm version --json`): `session-start`, `session-send`,
-`session-send-if-idle`, `session-stop`, `sessions-json-v2`, `tail`,
+`session-send-if-idle`, `session-send-if-input-seq`, `session-send-paste-enter`,
+`input-seq-human`, `session-stop`, `sessions-json-v2`, `tail`,
 `run-session`. Workers announce theirs in `Node.Info` (`longarm info
 <worker>`): `session-start`, `session-send`, `session-send-if-idle`,
 `session-stop`, `session-info` (the activity and worktree fields),
-`file-tail`, `session-env` (sessions get `LONGARM_WORKER` and `LONGARM_SESSION`);
+`file-tail`, `session-env` (sessions get `LONGARM_WORKER` and `LONGARM_SESSION`),
+`session-send-if-input-seq`, `session-send-paste-enter`, `input-seq-human`;
 for `longarm handoff`: `file-lstat`, `handoff-direct`, `handoff-push`.
 Against a longarmd without them `session start|send|stop` and
 `tail` exit 2 ("does not support it; update longarmd") before doing

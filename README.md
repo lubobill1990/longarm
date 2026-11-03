@@ -7,7 +7,7 @@ test suites and whole agent sessions on - from any laptop, through any NAT.
 
 [中文说明](README.zh-CN.md) · [Usage reference](docs/usage.md) ·
 [Design](docs/design.md) · [CI/CD](docs/ci-cd.md) · [Security](docs/security.md) ·
-[Telemetry](docs/telemetry.md)
+[Telemetry](docs/telemetry.md) · [For programs](docs/programs.md)
 
 ## Why
 

@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -184,6 +185,78 @@ func TestSessionsForPrograms(t *testing.T) {
 		}
 		a.detach()
 		e.mustLongarm(e.client, "session", "stop", "w1", "-s", "c1", "--grace", "0")
+	})
+
+	t.Run("if_input_seq_and_paste_enter", func(t *testing.T) {
+		e.sessionStart(t, "w1", "-s", "q1", "--", bins.helper, "repl")
+		logs := func() string { return e.mustLongarm(e.client, "logs", "w1", "q1", "--session") }
+		waitOutput(t, logs, "repl ready", 30*time.Second)
+		seqOf := func(out string) uint64 {
+			var v struct{ InputSeq uint64 }
+			if err := json.Unmarshal([]byte(out), &v); err != nil {
+				t.Fatalf("send --json: %v %q", err, out)
+			}
+			return v.InputSeq
+		}
+		seq := seqOf(e.mustLongarm(e.client, "session", "send", "w1", "-s", "q1", "--text", "one\n", "--json"))
+		// a stale sequence number: 75, nothing written
+		if r := e.longarm(e.client, "session", "send", "w1", "-s", "q1", "--text", "stale\n", "--if-input-seq", fmt.Sprint(seq-1)); r.code != 75 || !strings.Contains(r.stderr, "input_seq") {
+			t.Fatalf("stale --if-input-seq: %+v", r)
+		}
+		// paste, then Enter: one input, the line arrives whole
+		out := e.mustLongarm(e.client, "session", "send", "w1", "-s", "q1", "--text", "pasted line", "--paste", "--key", "enter",
+			"--if-input-seq", fmt.Sprint(seq), "--json")
+		if got := seqOf(out); got != seq+1 {
+			t.Fatalf("inputSeq after paste+enter: %d, want %d", got, seq+1)
+		}
+		waitFor(t, "the pasted line echoed", 15*time.Second, func() bool {
+			for _, l := range strings.Split(plain(logs()), "\n") {
+				if strings.Contains(l, "echo: ") && strings.Contains(l, "pasted line") {
+					return true
+				}
+			}
+			return false
+		})
+		waitOutput(t, logs, "echo: one", 5*time.Second)
+		if strings.Contains(plain(logs()), "stale") {
+			t.Fatal("a refused --if-input-seq send was written")
+		}
+		if rows, _ := e.sessionJSON(t, "w1", "-s", "q1"); rows[0]["inputSeq"] != fmt.Sprint(seq+1) {
+			t.Fatalf("sessions --json inputSeq: %v", rows[0])
+		}
+		e.mustLongarm(e.client, "session", "stop", "w1", "-s", "q1", "--grace", "0")
+	})
+
+	t.Run("terminal_replies_are_not_input", func(t *testing.T) {
+		e.sessionStart(t, "w1", "-s", "r1", "--", bins.helper, "repl")
+		a := attachGo(t, conn, &pb.AttachOpen{Name: "r1", NoCreate: true, Size: &pb.TermSize{Cols: 100, Rows: 30}})
+		a.waitFor("repl ready")
+		e.mustLongarm(e.client, "session", "send", "w1", "-s", "r1", "--text", "x")
+		row := func() map[string]any { rows, _ := e.sessionJSON(t, "w1", "-s", "r1"); return rows[0] }
+		before := row()
+		if before["humanInputSeq"] != "0" || before["lastInputSource"] != "send" {
+			t.Fatalf("before: %v", before)
+		}
+		// what xterm.js answers Claude Code's start-up queries with, and focus
+		for _, r := range []string{"\x1b]10;rgb:cccc/cccc/cccc\x1b\\\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\", "\x1b[?1;2c", "\x1b[>0;276;0c", "\x1b[12;1R", "\x1b[I", "\x1b[O"} {
+			a.send(r)
+		}
+		time.Sleep(time.Second) // the replies reach the shim
+		after := row()
+		if after["inputSeq"] != before["inputSeq"] || after["humanInputSeq"] != "0" || after["lastInputSource"] != "send" || after["lastInput"] != before["lastInput"] {
+			t.Fatalf("terminal replies counted as input:\nbefore %v\nafter  %v", before, after)
+		}
+		seq := before["inputSeq"].(string)
+		if r := e.longarm(e.client, "session", "send", "w1", "-s", "r1", "--text", "y", "--if-input-seq", seq); r.code != 0 {
+			t.Fatalf("--if-input-seq after replies: %+v", r)
+		}
+		a.send("k") // a keystroke is
+		waitFor(t, "a keystroke counted", 10*time.Second, func() bool {
+			r := row()
+			return r["humanInputSeq"] == "1" && r["lastInputSource"] == "attach"
+		})
+		a.detach()
+		e.mustLongarm(e.client, "session", "stop", "w1", "-s", "r1", "--grace", "0")
 	})
 
 	t.Run("repo_worktree_and_run_session", func(t *testing.T) {

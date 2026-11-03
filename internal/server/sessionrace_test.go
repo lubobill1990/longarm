@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lubobill1990/longarm/internal/attach"
 	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/supervisor"
@@ -87,7 +88,7 @@ func TestSessionRaces(t *testing.T) {
 		if _, err := sp.Sessions.KillGen(context.Background(), "gen", old.Spec.CreatedAt); !errors.Is(err, supervisor.ErrReplaced) {
 			t.Fatalf("KillGen of the old generation: %v", err)
 		}
-		if _, err := ss.send(context.Background(), sp.Sessions, "gen", old.Spec.CreatedAt, []byte{3}, 0, "stop"); !errors.Is(err, errReplaced) {
+		if _, err := ss.send(context.Background(), sp.Sessions, "gen", old.Spec.CreatedAt, attach.SendOpts{Source: attach.SourceStop}, []byte{3}, nil); !errors.Is(err, errReplaced) {
 			t.Fatalf("send to the old generation: %v", err)
 		}
 		if _, err := ss.waitTerminalGen(context.Background(), sp.Sessions, "gen", old.Spec.CreatedAt, time.Second); !errors.Is(err, errReplaced) {

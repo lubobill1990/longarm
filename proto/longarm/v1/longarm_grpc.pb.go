@@ -898,7 +898,8 @@ type SessionsClient interface {
 	// write (InfoResponse feature "session-send"). The bytes are never
 	// persisted (audit: their count only). NOT_FOUND: no such session;
 	// FAILED_PRECONDITION: it has ended; RESOURCE_EXHAUSTED: if_idle_ms was
-	// set and input arrived within that window (nothing was written).
+	// set and input arrived within that window, or if_input_seq was set and
+	// the session's input_seq is another (nothing was written).
 	Send(ctx context.Context, in *SendSessionRequest, opts ...grpc.CallOption) (*SendSessionResponse, error)
 	// Stop ends a session gracefully: Ctrl-C keystrokes to its terminal, then,
 	// if it still runs after grace, Kill (InfoResponse feature "session-stop").
@@ -1038,7 +1039,8 @@ type SessionsServer interface {
 	// write (InfoResponse feature "session-send"). The bytes are never
 	// persisted (audit: their count only). NOT_FOUND: no such session;
 	// FAILED_PRECONDITION: it has ended; RESOURCE_EXHAUSTED: if_idle_ms was
-	// set and input arrived within that window (nothing was written).
+	// set and input arrived within that window, or if_input_seq was set and
+	// the session's input_seq is another (nothing was written).
 	Send(context.Context, *SendSessionRequest) (*SendSessionResponse, error)
 	// Stop ends a session gracefully: Ctrl-C keystrokes to its terminal, then,
 	// if it still runs after grace, Kill (InfoResponse feature "session-stop").
