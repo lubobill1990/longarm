@@ -541,9 +541,11 @@ function AgentChat() {
       <div className="lp-chat-head">
         <span className="lp-chat-logo">✳</span> Claude Code <span className="faint">· longarm skill</span>
       </div>
-      {CHAT.slice(0, shown).map((m, i) => (
+      {CHAT.map((m, i) => (
+        // every message keeps its place (hidden until shown): the chat's height never changes,
+        // so what's below doesn't jump; a new key replays the pop when it shows.
         // lp-from-*: the panel's styles.css already has an .agent
-        <div key={i} className={`lp-msg lp-from-${m.who}`}>
+        <div key={`${i}-${i < shown}`} className={`lp-msg lp-from-${m.who}${i < shown ? '' : ' lp-pending'}`}>
           {m.who === 'tool' ? (
             <>
               <span className="lp-tool-tag">Bash</span> <code>{m.text}</code>
@@ -551,9 +553,9 @@ function AgentChat() {
           ) : (
             m.text
           )}
+          {i === shown && <div className="lp-typing" aria-hidden="true"><i /><i /><i /></div>}
         </div>
       ))}
-      {shown < CHAT.length && <div className="lp-typing" aria-hidden="true"><i /><i /><i /></div>}
     </div>
   )
 }
