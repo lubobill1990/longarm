@@ -36,6 +36,9 @@ func TestIsReply(t *testing.T) {
 		"\x1b[200~text\x1b[201~", "\x1b[c", "\x1b[5n", "\x1b[;5R", "\x1b[24R",
 		"\x1b]11;?\x07", "\x1b]2;title\x07", "\x1b]11;rgb:zz/zz/zz\x07",
 		"\x1b[1234567;1R",
+		"\x1b]10;rgb:/\x07", "\x1b]11;rgb:deadbeef\x07", "\x1b]11;rgb:1e1e/1e1e\x07", // malformed colours
+		"\x1b]11;rgb:1e1e/1e1e/1e1e/1e1e\x07", "\x1b]11;rgba:1/2/3\x07", "\x1b]11;rgb:12345/1/1\x07",
+		"\x1b]11;rgb:1e//1e\x1b\\",
 	} {
 		if IsReply([]byte(s)) {
 			t.Errorf("%q: a reply", s)
