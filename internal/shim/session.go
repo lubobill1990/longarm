@@ -212,7 +212,8 @@ type observer interface {
 // ifIdle > 0 it writes only if no input arrived within ifIdle (false, nil).
 // A failed or short write is (false, err): never reported as sent.
 func (h *hub) input(w io.Writer, p []byte, source string, ifIdle time.Duration) (bool, error) {
-	return h.send(w, p, nil, source, sendCond{ifIdle: ifIdle})
+	st, err := h.send(w, p, nil, source, sendCond{ifIdle: ifIdle})
+	return st.Sent, err
 }
 
 // sendCond is when (and how) send writes.
@@ -227,9 +228,24 @@ type sendCond struct {
 // send is input with conditions and an after part: p, then after
 // c.afterGap later, as one input (inSeq counts one). Terminal replies
 // (attach.SourceReply) are written but not recorded as input.
-func (h *hub) send(w io.Writer, p, after []byte, source string, c sendCond) (bool, error) {
+//
+// The state returned (Sent set) is the terminal's activity right after
+// this send, taken before any other writer gets in: its InputSeq is the
+// token a following --if-input-seq send chains on.
+func (h *hub) send(w io.Writer, p, after []byte, source string, c sendCond) (attach.InfoState, error) {
 	h.in.Lock()
-	defer h.in.Unlock()
+	sent, err := h.sendLocked(w, p, after, source, c)
+	st := h.inputState()
+	h.in.Unlock()
+	st.Sent = sent
+	h.mu.Lock()
+	st.LastOutput = h.lastOut
+	h.mu.Unlock()
+	return st, err
+}
+
+// sendLocked is send's write; h.in is held.
+func (h *hub) sendLocked(w io.Writer, p, after []byte, source string, c sendCond) (bool, error) {
 	if c.ifIdle > 0 && !h.lastIn.IsZero() && time.Since(h.lastIn) < c.ifIdle {
 		return false, nil
 	}
@@ -282,12 +298,17 @@ const maxAfterGap = 2 * time.Second
 // info is the terminal's activity.
 func (h *hub) info() attach.InfoState {
 	h.in.Lock()
-	st := attach.InfoState{InputSeq: h.inSeq, HumanInputSeq: h.humanSeq, LastInput: h.lastIn, LastInputSource: h.lastFrom, Features: shimFeatures}
+	st := h.inputState()
 	h.in.Unlock()
 	h.mu.Lock()
 	st.LastOutput = h.lastOut
 	h.mu.Unlock()
 	return st
+}
+
+// inputState is the input half of info; h.in is held.
+func (h *hub) inputState() attach.InfoState {
+	return attach.InfoState{InputSeq: h.inSeq, HumanInputSeq: h.humanSeq, LastInput: h.lastIn, LastInputSource: h.lastFrom, Features: shimFeatures}
 }
 
 func (h *hub) output(p []byte) {
@@ -451,8 +472,8 @@ func (h *hub) control(conn *attach.Conn, p platform.PTY, j *job) {
 			if err != nil {
 				return
 			}
-			sent, err := h.input(p, data, source, time.Duration(ifIdle)*time.Millisecond)
-			if !h.answerSend(conn, j, sent, err) {
+			st, err := h.send(p, data, nil, source, sendCond{ifIdle: time.Duration(ifIdle) * time.Millisecond})
+			if !h.answerSend(conn, j, st, err) {
 				return
 			}
 			continue
@@ -461,11 +482,11 @@ func (h *hub) control(conn *attach.Conn, p platform.PTY, j *job) {
 			if err != nil {
 				return
 			}
-			sent, err := h.send(p, data, after, o.Source, sendCond{
+			st, err := h.send(p, data, after, o.Source, sendCond{
 				ifIdle: time.Duration(o.IfIdleMs) * time.Millisecond, ifSeq: o.IfInputSeq,
 				afterGap: min(time.Duration(o.AfterMs)*time.Millisecond, maxAfterGap),
 			})
-			if !h.answerSend(conn, j, sent, err) {
+			if !h.answerSend(conn, j, st, err) {
 				return
 			}
 			continue
@@ -478,10 +499,9 @@ func (h *hub) control(conn *attach.Conn, p platform.PTY, j *job) {
 	}
 }
 
-// answerSend answers a Send / SendX with Info; false: the connection broke.
-func (h *hub) answerSend(conn *attach.Conn, j *job, sent bool, err error) bool {
-	st := h.info()
-	st.Sent = sent
+// answerSend answers a Send / SendX with Info: st, the state send
+// returned. false: the connection broke.
+func (h *hub) answerSend(conn *attach.Conn, j *job, st attach.InfoState, err error) bool {
 	if err != nil {
 		j.log.Warn("terminal input", "err", err)
 		st.Error = err.Error()
