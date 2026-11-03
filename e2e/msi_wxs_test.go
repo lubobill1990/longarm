@@ -521,6 +521,7 @@ func TestMSIUpgradeRunning(t *testing.T) {
 		Name        string `xml:"Name,attr"`
 		Stop        string `xml:"Stop,attr"`
 		Wait        string `xml:"Wait,attr"`
+		OnExit      string `xml:"OnExit,attr"`
 	}
 	var doc struct {
 		Package struct {
@@ -573,7 +574,10 @@ func TestMSIUpgradeRunning(t *testing.T) {
 		seq[c.Action] = c
 	}
 	for id, want := range map[string]struct{ step, execute, before string }{
-		"LongarmStopTray":            {"stop-tray", "immediate", "InstallValidate"},
+		"LongarmStopEarly":           {"stop-early", "immediate", "LongarmStopEarlyRemove"},
+		"LongarmStopEarlyRemove":     {"stop-early-remove", "immediate", "InstallValidate"},
+		"LongarmEarlyUndoError":      {"rollback", "immediate", ""},
+		"LongarmEarlyUndoCancel":     {"rollback", "immediate", ""},
 		"LongarmUpgradeStop":         {"stop", "deferred", "StopServices"},
 		"LongarmUpgradeStopRollback": {"rollback", "rollback", "LongarmUpgradeStop"},
 		"LongarmRemoveStop":          {"stop-remove", "deferred", "StopServices"},
@@ -613,8 +617,24 @@ func TestMSIUpgradeRunning(t *testing.T) {
 			t.Errorf("%s: condition %q runs as the old product of an upgrade", id, s.Condition)
 		}
 	}
-	if c := seq["LongarmStopTray"].Condition; !strings.Contains(c, "UserSID=SESSION_SID") || !strings.Contains(c, "WIX_UPGRADE_DETECTED") {
-		t.Errorf("LongarmStopTray condition %q", c)
+	// before InstallValidate's files-in-use check (~40 s for every process holding a file): the
+	// upgrade's and the uninstall's; an install that ends before its script ran starts again what they stopped
+	if c := seq["LongarmStopEarly"].Condition; !strings.Contains(c, "WIX_UPGRADE_DETECTED") || !strings.Contains(c, `NOT REMOVE="ALL"`) {
+		t.Errorf("LongarmStopEarly condition %q", c)
+	}
+	if c := seq["LongarmStopEarlyRemove"].Condition; !strings.Contains(c, `REMOVE="ALL"`) || strings.Contains(c, "NOT REMOVE") {
+		t.Errorf("LongarmStopEarlyRemove condition %q", c)
+	}
+	for id, on := range map[string]string{"LongarmEarlyUndoError": "error", "LongarmEarlyUndoCancel": "cancel"} {
+		if c := seq[id]; c.OnExit != on || !strings.Contains(c.Condition, "WIX_UPGRADE_DETECTED") || !strings.Contains(c.Condition, `REMOVE="ALL"`) {
+			t.Errorf("%s: %+v, want OnExit %s", id, c, on)
+		}
+	}
+	// every check that refuses the install runs before anything is stopped
+	for _, c := range p.Sequence {
+		if strings.HasPrefix(c.Action, "Check") && c.Before != "LongarmStopEarly" {
+			t.Errorf("%s is scheduled %+v: a refused install would have stopped Longarm (want before LongarmStopEarly)", c.Action, c)
+		}
 	}
 	for _, id := range []string{"LongarmUpgradeStop", "LongarmUpgradeStopRollback", "LongarmdUpgradeRestart"} {
 		if c := seq[id].Condition; !strings.Contains(c, "WIX_UPGRADE_DETECTED") || !strings.Contains(c, `NOT REMOVE="ALL"`) {
@@ -840,7 +860,7 @@ func TestMSIMajorUpgradeInPlace(t *testing.T) {
 			sw = &p.Sequence[i]
 		}
 	}
-	if sw == nil || sw.Before != "LongarmStopTray" { // before anything is stopped
+	if sw == nil || sw.Before != "LongarmStopEarly" { // before anything is stopped
 		t.Fatalf("CheckLongarmdSwitch: %+v", sw)
 	}
 	for _, s := range []string{"WIX_UPGRADE_DETECTED", `NOT REMOVE="ALL"`, `PREV_LONGARMD_SERVICE AND NOT (IsWorker AND RUN="service")`, `PREV_LONGARMD_PLAIN AND IsWorker AND RUN="service"`} {

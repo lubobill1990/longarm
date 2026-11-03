@@ -120,14 +120,21 @@ function Seq([string] $action) {
 if ((Prop $default 'MSIRESTARTMANAGERCONTROL') -ne 'Disable') { throw 'default.msi: MSIRESTARTMANAGERCONTROL is not Disable' }
 $binaries = Query $default 'SELECT `Name` FROM `Binary`'
 if ($binaries -notcontains 'LongarmMsiHelper') { throw 'default.msi: no LongarmMsiHelper in the Binary table' }
-foreach ($a in @{ LongarmStopTray = 'stop-tray'; LongarmUpgradeStop = 'stop'; LongarmUpgradeStopRollback = 'rollback'; LongarmRemoveStop = 'stop-remove' }.GetEnumerator()) {
+foreach ($a in @{ LongarmStopEarly = 'stop-early'; LongarmStopEarlyRemove = 'stop-early-remove'; LongarmEarlyUndoError = 'rollback'
+    LongarmEarlyUndoCancel = 'rollback'; LongarmUpgradeStop = 'stop'; LongarmUpgradeStopRollback = 'rollback'; LongarmRemoveStop = 'stop-remove' }.GetEnumerator()) {
   $src = Query $default "SELECT ``Source`` FROM ``CustomAction`` WHERE ``Action`` = '$($a.Key)'"
   $tgt = Query $default "SELECT ``Target`` FROM ``CustomAction`` WHERE ``Action`` = '$($a.Key)'"
   if ($src[0] -ne 'LongarmMsiHelper') { throw "default.msi: $($a.Key) does not run the upgrade helper ($($src[0]))" }
   if ($tgt[0] -ne "$($a.Value) #LONGARM-MSI#usersid=[UserSID]") { throw "default.msi: $($a.Key) target '$($tgt[0])'" }
 }
 $order = @(
-  @('LongarmStopTray', 'InstallValidate'),
+  # before InstallValidate's files-in-use check (~40 s for every process holding a file), after every check
+  @('CheckLongarmdSwitch', 'LongarmStopEarly'),
+  @('CheckRun', 'LongarmStopEarly'),
+  @('CheckServiceAccount', 'LongarmStopEarly'),
+  @('CheckAdminWorker', 'LongarmStopEarly'),
+  @('LongarmStopEarly', 'InstallValidate'),
+  @('LongarmStopEarlyRemove', 'InstallValidate'),
   @('InstallInitialize', 'LongarmUpgradeStopRollback'),
   @('LongarmUpgradeStopRollback', 'LongarmUpgradeStop'),
   @('LongarmUpgradeStop', 'StopServices'),
@@ -154,7 +161,8 @@ foreach ($m in $default, $custom) {
 }
 # an upgrade can't move longarmd.exe between its components (the old product's uninstall would delete it)
 if ($actions -notcontains 'CheckLongarmdSwitch' -or $exec -notcontains 'CheckLongarmdSwitch') { throw 'default.msi: CheckLongarmdSwitch is not scheduled' }
-if ((Seq 'CheckLongarmdSwitch') -ge (Seq 'LongarmStopTray')) { throw 'default.msi: CheckLongarmdSwitch runs after LongarmStopTray (a refused upgrade would have stopped the tray)' }
+# the exit actions: an install that fails (-3) or is cancelled (-2) before its script ran starts again what stopped
+if ((Seq 'LongarmEarlyUndoError') -ne -3 -or (Seq 'LongarmEarlyUndoCancel') -ne -2) { throw 'default.msi: LongarmEarlyUndoError / LongarmEarlyUndoCancel are not the fatal-error / user-exit actions' }
 foreach ($p in 'PREV_LONGARMD_SERVICE', 'PREV_LONGARMD_PLAIN') {
   if ($searches -notcontains $p) { throw "default.msi: no AppSearch for $p" }
 }

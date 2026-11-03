@@ -23,10 +23,14 @@ type Aside struct {
 	To   string `json:"to"`
 }
 
-// Files is the file system as moving aside needs it (tests replace InUse).
+// Files is the file system as moving aside needs it (tests replace InUse
+// and DeleteAtReboot).
 type Files struct {
 	// InUse reports whether a running process holds path (its image).
 	InUse func(path string) bool
+	// DeleteAtReboot has Windows delete path at the next start (a file
+	// still in use; a dir once empty).
+	DeleteAtReboot func(path string) error
 }
 
 func (f Files) inUse(p string) bool {
@@ -34,6 +38,37 @@ func (f Files) inUse(p string) bool {
 		return InUse(p)
 	}
 	return f.InUse(p)
+}
+
+func (f Files) deleteAtReboot(p string) error {
+	if f.DeleteAtReboot == nil {
+		return DeleteAtReboot(p)
+	}
+	return f.DeleteAtReboot(p)
+}
+
+// RemoveAside is CleanAside for an uninstall: what still runs from
+// dir\old (a `longarm` client, a job) is deleted at the next start, then
+// the dir.
+func (f Files) RemoveAside(dir string, log io.Writer) {
+	CleanAside(dir, log)
+	od := filepath.Join(dir, AsideDir)
+	fi, err := os.Lstat(od)
+	if err != nil || !fi.IsDir() || fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+		return
+	}
+	ents, _ := os.ReadDir(od)
+	for _, e := range ents {
+		p := filepath.Join(od, e.Name())
+		if err := f.deleteAtReboot(p); err != nil {
+			fmt.Fprintf(log, "delete %s at the next start: %v\n", p, err)
+			continue
+		}
+		fmt.Fprintf(log, "%s (in use) goes at the next start\n", p)
+	}
+	if err := f.deleteAtReboot(od); err != nil {
+		fmt.Fprintf(log, "delete %s at the next start: %v\n", od, err)
+	}
 }
 
 // MoveAside moves the binaries of dir that are still in use (job shims,

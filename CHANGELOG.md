@@ -65,6 +65,21 @@
 
 ### Changed
 
+- **Updates and uninstalls no longer hang at "Gathering required
+  information".** With Restart Manager off, Windows Installer's own
+  files-in-use check (`InstallValidate`) took about 40 s for every Longarm
+  process that held a file - 4 to 5 minutes for every update from the tray
+  and every uninstall with Longarm running, before anything was copied.
+  When the installer has an administrator's token (the tray's "Update" and
+  automatic updates run it as SYSTEM; an elevated `msiexec`;
+  `uninstall.ps1`) the upgrade helper now stops Longarm and moves the files
+  still in use aside before that check (`stop-early`, after every check
+  that could refuse the install; the later stop adds to its record), so it
+  finds nothing in use. An install that fails or is cancelled before its
+  script runs starts again what was stopped. Binaries an uninstall moved
+  aside and that still run (a `longarm` client) are deleted at the next
+  start. A double-clicked MSI and an uninstall from Settings still stop only
+  your tray (and, uninstalling, your worker) early (todo/updates.md).
 - **Tray, a calmer machine card.** One header line: a shield in the
   machine's state color and its name - hovering them shows a card with the
   state, the end-to-end encryption, the worker and admin worker, labels,
