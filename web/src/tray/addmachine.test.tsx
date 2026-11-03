@@ -52,6 +52,11 @@ describe('installSteps', () => {
     expect(text(opts({ channel: 'stable' }))).toContain('/install.ps1 | iex')
   })
 
+  it('automatic updates: only when asked (Windows: the MSI updates itself)', () => {
+    expect(text(opts())).not.toContain('LONGARM_AUTO_UPDATE')
+    expect(text(opts({ autoUpdate: true, channel: 'preview' }))).toContain("$env:LONGARM_AUTO_UPDATE=1; irm https://hub.example.com/install.ps1?channel=preview | iex")
+  })
+
   it('no role or no hub: nothing', () => {
     expect(installSteps(opts({ worker: false }), PUBLIC)).toEqual([])
     expect(installSteps(opts(), { ...PUBLIC, hub_host: '' })).toEqual([])
@@ -78,9 +83,15 @@ describe('AddMachine', () => {
     fireEvent.click(screen.getByTestId('addm-client'))
     fireEvent.click(screen.getByTestId('addm-admin'))
     expect(screen.getByTestId('addm-cmd-0').textContent).toContain("LONGARM_ROLE='both'; $env:LONGARM_MSI_PROPS='ADMIN_WORKER=1'")
-    // the admin worker: Windows only
+    // automatic updates: off, and Stable, unless picked
+    expect((screen.getByTestId('addm-auto') as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByRole('radio', { name: 'Stable' }) as HTMLInputElement).checked).toBe(true)
+    fireEvent.click(screen.getByTestId('addm-auto'))
+    expect(screen.getByTestId('addm-cmd-0').textContent).toContain("$env:LONGARM_AUTO_UPDATE=1; irm https://hub.example.com/install.ps1 | iex")
+    // the admin worker and automatic updates: Windows only
     fireEvent.click(screen.getByRole('radio', { name: 'macOS / Linux' }))
     expect((screen.getByTestId('addm-admin') as HTMLInputElement).disabled).toBe(true)
+    expect((screen.getByTestId('addm-auto') as HTMLInputElement).disabled).toBe(true)
     expect(screen.getByTestId('addm-cmd-0').textContent).toBe('curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --role both')
     // nothing picked
     fireEvent.click(screen.getByTestId('addm-worker'))

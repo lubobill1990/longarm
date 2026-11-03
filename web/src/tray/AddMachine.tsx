@@ -24,6 +24,8 @@ export interface AddOptions {
   platform: Platform
   /** the release channel (?channel= of the installer; stable: none) */
   channel?: 'stable' | 'preview' | 'dev'
+  /** Windows: the machine installs new releases of the channel by itself (default: not) */
+  autoUpdate?: boolean
 }
 
 const CHANNELS: ['stable' | 'preview' | 'dev', string, string][] = [
@@ -63,6 +65,7 @@ export function installSteps(o: AddOptions, info: AddMachineInfo): Step[] {
   if (o.platform === 'windows') {
     const env = ['$env:LONGARM_LOGIN=1', `$env:LONGARM_ROLE='${roles}'`]
     if (o.admin && o.worker) env.push("$env:LONGARM_MSI_PROPS='ADMIN_WORKER=1'")
+    if (o.autoUpdate) env.push('$env:LONGARM_AUTO_UPDATE=1')
     return [
       {
         title: 'In PowerShell: it asks for administrator rights, installs, and shows a code to approve in any browser',
@@ -96,6 +99,7 @@ export function AddMachine({ onClose }: { onClose: () => void }) {
     setOpts((o) => {
       const r = { ...o, ...n }
       if (!r.worker || r.platform !== 'windows') r.admin = false // the admin worker: Windows, with a worker
+      if (r.platform !== 'windows') r.autoUpdate = false // the Longarm Update service: Windows
       return r
     })
   const steps = info ? installSteps(opts, info) : []
@@ -157,7 +161,24 @@ export function AddMachine({ onClose }: { onClose: () => void }) {
               ))}
             </div>
           </Section>
-          <Section card title="Release channel">
+          <Section card title="Updates">
+            <label className="check">
+              <input
+                type="checkbox"
+                data-testid="addm-auto"
+                checked={!!opts.autoUpdate}
+                disabled={opts.platform !== 'windows'}
+                onChange={(e) => set({ autoUpdate: e.target.checked })}
+              />
+              <span>
+                <b>Update automatically</b>: it installs new releases of the channel below by itself
+                {opts.platform !== 'windows' ? (
+                  <span className="muted"> · Windows only (macOS and Linux workers update when the hub rolls a release out)</span>
+                ) : !opts.autoUpdate ? (
+                  <span className="muted"> · off: its tray shows when a new release is out</span>
+                ) : null}
+              </span>
+            </label>
             <div className="segmented" role="radiogroup" aria-label="Release channel" data-testid="addm-channel">
               {CHANNELS.map(([c, label]) => (
                 <label key={c} className={opts.channel === c ? 'is-active' : ''}>
