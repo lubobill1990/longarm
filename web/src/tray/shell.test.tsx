@@ -2,7 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TrayInfo } from '../api/local'
 import { Toasts } from '../components/common'
-import { Settings } from './ClientTab'
+import type { FleetJob } from '../api/types'
+import { findJob, Settings } from './ClientTab'
 import { applyTheme, parseTheme, resolveTheme } from './theme'
 import { TrayApp } from './TrayApp'
 import { Banner, EmptyState, Skeleton } from './ui'
@@ -119,5 +120,58 @@ describe('TrayApp', () => {
     render(<TrayApp />)
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe('dark'))
     expect(localStorage.getItem('longarm.tray.theme')).toBe('dark')
+  })
+})
+
+class FakeEventSource {
+  addEventListener() {}
+  close() {}
+}
+
+const fleetJob = (id: string, name = ''): FleetJob => ({
+  worker: 'w1',
+  job: { spec: { id, name, argv: ['pnpm', 'test'] }, state: 'JOB_STATE_RUNNING' } as FleetJob['job'],
+})
+
+describe('longarm ui open pages', () => {
+  afterEach(() => history.replaceState(null, '', '/'))
+
+  it('?tab=pool&add=1 opens Add a machine, once', async () => {
+    mockFetch({ '/trayapi/info': () => [200, info({ client: { running: false } })], '/trayapi/addmachine': () => [200, { hub_host: '' }] })
+    history.replaceState(null, '', '/tray?tab=pool&add=1')
+    render(<TrayApp />)
+    expect(await screen.findByTestId('add-machine')).toBeTruthy()
+    // back on the tab later: the workers, not Add a machine again
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Settings' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('tab', { name: 'Settings' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Workers' }))
+    expect(screen.queryByTestId('add-machine')).toBeNull()
+  })
+
+  it('?tab=jobs&job=ID opens that job in My jobs; ?tab=worker selects This worker', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    mockFetch({
+      '/trayapi/info': () => [200, info({ client: { running: true } })],
+      '/local/longarm/v1/jobs': () => [200, { jobs: [fleetJob('01JZAAAAAAAAAAAAAAAAAAAAAA', 'build'), fleetJob('01JZBBBBBBBBBBBBBBBBBBX7K2')] }],
+    })
+    history.replaceState(null, '', '/tray?tab=jobs&job=x7k2')
+    render(<TrayApp />)
+    const row = await screen.findByRole('row', { name: /BBX7K2 on w1/ })
+    await waitFor(() => expect(row.getAttribute('aria-expanded')).toBe('true'))
+    expect(screen.getByRole('row', { name: /build on w1/ }).getAttribute('aria-expanded')).toBe('false')
+    cleanup()
+    history.replaceState(null, '', '/tray?tab=worker')
+    render(<TrayApp />)
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'This worker' }).getAttribute('aria-selected')).toBe('true'))
+  })
+
+  it('findJob: the id, a unique start or end of it, else the name', () => {
+    const jobs = [fleetJob('01JZAAAAAAAAAAAAAAAAAAX7K2', 'build'), fleetJob('01JZBBBBBBBBBBBBBBBBBBBBB1', 'test'), fleetJob('01JZBBBBBBBBBBBBBBBBBBBBB2')]
+    expect(findJob(jobs, '01JZBBBBBBBBBBBBBBBBBBBBB1')?.job.spec.name).toBe('test')
+    expect(findJob(jobs, 'x7k2')?.job.spec.name).toBe('build')
+    expect(findJob(jobs, '01JZA')?.job.spec.name).toBe('build')
+    expect(findJob(jobs, '01JZB')).toBeUndefined() // two of them
+    expect(findJob(jobs, 'test')?.job.spec.id).toBe('01JZBBBBBBBBBBBBBBBBBBBBB1')
+    expect(findJob(jobs, 'nope')).toBeUndefined()
   })
 })

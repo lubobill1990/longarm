@@ -7,7 +7,7 @@ import type { PoolWorker } from '../api/types'
 import { PoolTab } from '../tray/PoolTab'
 import { ConversationView, entries } from './ConversationView'
 import { groupByWorker, matches, SessionList, stateMark } from './SessionList'
-import { connectedTabs, continueBlocked, parseHash, sameSession, SessionsApp, terminalOf } from './SessionsApp'
+import { connectedTabs, continueBlocked, findTarget, parseHash, sameSession, SessionsApp, terminalOf } from './SessionsApp'
 import { shortcutTarget } from './SessionTabs'
 import { SteerBox } from './SteerBox'
 import { BACKOFF, TerminalView } from './TerminalView'
@@ -229,6 +229,23 @@ describe('tabs', () => {
   it('reads the hash', () => {
     expect(parseHash('#worker=cpc-a&agent=claude&key=cpc-a%2Fclaude%2Fabc')).toEqual({ worker: 'cpc-a', agent: 'claude', key: 'cpc-a/claude/abc' })
     expect(parseHash('#agent=vim')).toEqual({ worker: undefined, agent: undefined, key: undefined })
+    expect(parseHash('#worker=cpc-a&job=01JOB&session=dev')).toEqual({ worker: 'cpc-a', job: '01JOB', session: 'dev' })
+  })
+
+  it('finds what the hash names: a key, a job (or the end of its id), a Longarm session', () => {
+    const a = item({})
+    const j1 = item({ key: 'cpc-a/job/01JZAAAAX7K2', where: 'job', session: undefined, job: '01JZAAAAX7K2', id: '' })
+    const j2 = item({ key: 'cpc-b/job/01JZBBBB0001', worker: 'cpc-b', where: 'job', session: undefined, job: '01JZBBBB0001', id: '' })
+    const items = [a, j1, j2]
+    expect(findTarget(items, { key: 'cpc-a/claude/abc' })).toBe(a)
+    expect(findTarget(items, { key: 'cpc-a/claude/zzz' })).toBeUndefined()
+    expect(findTarget(items, { job: '01JZBBBB0001' })).toBe(j2)
+    expect(findTarget(items, { job: 'x7k2' })).toBe(j1)
+    expect(findTarget(items, { job: '01JZ' })).toBeUndefined() // two jobs
+    expect(findTarget(items, { job: '01JZ', worker: 'cpc-b' })).toBe(j2)
+    expect(findTarget(items, { session: 'agent1' })).toBe(a)
+    expect(findTarget(items, { session: 'agent1', worker: 'cpc-b' })).toBeUndefined()
+    expect(findTarget(items, { worker: 'cpc-a' })).toBeUndefined()
   })
 })
 
@@ -616,6 +633,14 @@ describe('steerable jobs', () => {
     fireEvent.keyDown(box, { key: 'Enter' })
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/workers/cpc-a/jobs/01JOB/send'))).toBe(true))
     expect(within(panel).queryByTestId('continue-here')).toBeNull()
+  })
+
+  it('longarm ui open sessions --job: the hash names the job by the end of its id', async () => {
+    location.hash = '#worker=cpc-a&job=1JOB'
+    mockFetch({ '/local/longarm/v1/agent-sessions': () => [200, { items: [item({}), job] }] })
+    render(<SessionsApp />)
+    await screen.findByTestId(`panel-${job.key}`)
+    expect(screen.queryByTestId('tab-cpc-a/claude/abc')).toBeNull()
   })
 
   it('stays one tab when its transcript appears; read-only once it ended', () => {
