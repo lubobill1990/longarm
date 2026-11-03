@@ -298,6 +298,13 @@
 
 ### Fixed
 
+- `longarm handoff --via remote` (and `auto` above the threshold) on a
+  repository that limits branches to your alias - Azure DevOps at
+  Microsoft refuses `longarm/handoff/...` with `VS403660 ... ref naming
+  convention` - always fell back to the relay. Refused for the name, the
+  temporary branch now goes to `users/<user>/longarm-handoff/...`, then
+  `user/<user>/longarm-handoff/...` (on Azure DevOps those first); a worker
+  pushes to those namespaces too, and `handoff --cleanup` lists them.
 - `longarm run --repo .` / `longarm sync` / a handoff from a **shallow clone**
   (`git clone --depth`) failed on the worker with "bundle did not send all
   necessary objects" (Could not read ..., Failed to traverse parents): the

@@ -387,8 +387,10 @@ func CredentialHelperMain(args []string, stdin io.Reader, stdout io.Writer) int 
 }
 
 // HandoffBranchRE is the only namespace PushHandoff writes: the temporary
-// branches of longarm handoff (longarm/handoff/<user>/<id>-<time>).
-var HandoffBranchRE = regexp.MustCompile(`^longarm/handoff/[a-z0-9._-]{1,64}/[A-Za-z0-9._-]{1,80}$`)
+// branches of longarm handoff (longarm/handoff/<user>/<id>-<time>, or in a
+// repository that limits branches to per-user namespaces
+// users/<user>/longarm-handoff/<id>-<time> or user/<user>/longarm-handoff/...).
+var HandoffBranchRE = regexp.MustCompile(`^(longarm/handoff/[a-z0-9._-]{1,64}|users?/[a-z0-9._-]{1,64}/longarm-handoff)/[A-Za-z0-9._-]{1,80}$`)
 
 // PushHandoff pushes commit from the checkout at dir to refs/heads/<branch>
 // of u (or deletes that branch: commit ""), with the forwarded credential
@@ -402,7 +404,7 @@ func (s *Store) PushHandoff(ctx context.Context, dir, u, commit, branch string, 
 		return fmt.Errorf("a push needs a forwarded credential")
 	}
 	if !HandoffBranchRE.MatchString(branch) || strings.Contains(branch, "..") {
-		return fmt.Errorf("bad branch %q (want longarm/handoff/<user>/<id>)", branch)
+		return fmt.Errorf("bad branch %q (want longarm/handoff/<user>/<id> or users/<user>/longarm-handoff/<id>)", branch)
 	}
 	if commit != "" && !shaRE.MatchString(commit) {
 		return fmt.Errorf("bad commit %q", commit)
