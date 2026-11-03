@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -144,7 +145,8 @@ func TestImportBundleShallow(t *testing.T) {
 	if got := s.shallowCommits(m); len(got) != 0 {
 		t.Fatalf("still shallow with the history in: %v", got)
 	}
-	if _, commits, _ := s.Refs(ctx, "proj"); len(commits) == 0 || commits[0] != c4 {
+	// c3 and c4 may share a commit time: the order of the tips is not the point
+	if _, commits, _ := s.Refs(ctx, "proj"); !slices.Contains(commits, c4) {
 		t.Fatalf("refs %v", commits)
 	}
 }
