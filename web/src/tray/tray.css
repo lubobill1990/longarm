@@ -962,7 +962,8 @@
     box-shadow: var(--shadow-1);
     min-width: 0;
   }
-  & .group.card + .group.card {
+  & .group.card + .group.card,
+  & .wcard + .group.card {
     margin-top: var(--sp-3);
   }
   & .group.card .group-head h3 {
