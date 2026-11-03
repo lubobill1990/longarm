@@ -70,6 +70,7 @@ var hubMethodRoles = map[string][]pki.Role{
 	pb.Fleet_ShareWorker_FullMethodName:       users,
 	pb.Fleet_RemoveWorker_FullMethodName:      users,
 	pb.Fleet_SetWorkerLabels_FullMethodName:   users,
+	pb.Fleet_WorkerToolchain_FullMethodName:   users,
 	pb.Fleet_RenameWorker_FullMethodName:      users,
 	pb.HubAdmin_RenameNode_FullMethodName:     adminOnly,
 	pb.HubAdmin_CreateJoinCode_FullMethodName: adminOnly,

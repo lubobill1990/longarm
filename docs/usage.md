@@ -251,7 +251,7 @@ The job's own outcome comes from `jobs --json` (`state`, `exitCode`,
   "session-start", "session-send", "session-send-if-idle", "session-stop", "sessions-json-v2", "tail", "run-session",
   "job-id-short", "jobs-mine", "doctor-json", "worker-update", "ls-version", "agent-auth",
   "agent-handoff", "agent-sessions", "agent-skill", "steerable-run",
-  "session-send-if-input-seq", "session-send-paste-enter", "input-seq-human"]}
+  "session-send-if-input-seq", "session-send-paste-enter", "input-seq-human", "ui-open"]}
 ```
 
 (indented in the real output). A program checks `features` instead of
@@ -270,6 +270,8 @@ test against.
 | `lfs` | `run` / `sync --lfs skip\|ship` |
 | `ref-sha` | `run --repo <path> --ref <full commit id>` |
 | `worker-label` | `longarm worker label` for owners |
+| `toolchain-report` | `worker ls --json` includes baseline installed tools in each worker's `toolchain.versions` (requires an updated worker) |
+| `worker-toolchain` | `worker toolchain <worker>`: owner desired tools, admin-profile precedence, idle-only reconciliation and JSON status (requires an updated hub and worker) |
 | `git-auth-forward` | `run` / `sync --git-auth forward`, `run --repo <url> --lfs fetch`; the worker must also support it (`git-auth-forward` in its `Node.Info` features), see [Fetching with your credential](#fetching-with-your-credential---git-auth-forward) |
 | `session-start` | `longarm session start` (detached, idempotent by name, `--repo` worktree, auto placement) |
 | `session-send` | `longarm session send` (`--text`, `--stdin-file`, `--key`, `--raw`) |
@@ -292,6 +294,7 @@ test against.
 | `session-send-if-input-seq` | `session send --if-input-seq N`: written only if the session's `inputSeq` is still N (exit 75) |
 | `session-send-paste-enter` | `session send --paste [--key KEY]...`: a bracketed paste, then the keys a moment later, one atomic send |
 | `input-seq-human` | terminal replies of attached clients (device attributes, cursor position, colours, focus) are no input: they don't move `inputSeq` / `lastInput*`; `sessions --json` has `humanInputSeq` |
+| `ui-open` | `longarm ui open [page]` with the pages `workers`, `add-machine`, `jobs`, `this-worker`, `settings`, `account`, `sessions`; `--worker`, `--job`, `--session`, `--agent`, `--print-url`, `--json` (see [Opening Longarm's UI](#opening-longarms-ui)) |
 
 The session and tail features also need the worker's (`session-start`,
 `session-send`, `session-send-if-idle`, `session-stop`, `session-info`,
@@ -1491,6 +1494,19 @@ longarmd audit verify [--file PATH]                # check audit.log's hash chai
 longarmd reloads `<data>/tls` (ca.crt, node.crt, node.key) within ~5 s when the
 files change: re-issue the worker certificate in place, no restart needed.
 
+**PATH of jobs (Windows).** A tool installed after longarmd started
+(winget, `npm -g`, a Go zip and its PATH entry) is on the PATH of the next
+job, exec, session or ssh shell without a restart: before starting one,
+longarmd rebuilds its PATH as Explorer does for a new process - the
+registry's Machine and then User `Path` (`%VAR%` expanded), followed by
+the entries of its own PATH the registry doesn't have (entries put in
+front of longarmd's PATH when it started stay in front; a directory an
+update removed from the registry goes after the registry's). Workers
+that do it announce `fresh-path` in `Node.Info` features (`longarm info <worker>`).
+`LONGARM_FRESH_PATH=0` in longarmd's environment turns it off. Jobs that
+run as the user's own account ([users](#users-teams-and-quotas-sharing-a-hub)
+with OS accounts) always got that account's fresh environment.
+
 Telemetry ([docs/telemetry.md](telemetry.md)): only when the hub has
 `[telemetry] connection_string`; scrubbed on the machine before it is queued.
 
@@ -1781,6 +1797,46 @@ macOS), only while no job runs (it drains meanwhile), and reports versions. A
 changed profile goes to one canary worker first; the rest follow when it
 reports ok, a failure halts the rollout.
 
+Updated non-admin workers with toolchains enabled also inventory **git, gh, node,
+pnpm, uv, pwsh, claude, copilot and go**, whether or not they have a profile.
+Admin workers and `[toolchain] disabled = true` workers run neither probes nor
+installers, and the toolchain backend does not change their PATH. Version probes
+have short timeouts for periodic inventory and longer timeouts for reconciliation;
+the cached inventory is refreshed at connect and every five minutes, except
+during installation. Unchanged inventories do not emit reports.
+`longarm worker ls --json` includes it in
+each node's `toolchain`:
+
+```json
+{
+  "nodes": [{
+    "name": "worker-1",
+    "role": "worker",
+    "toolchain": {
+      "state": "none",
+      "versions": {
+        "git": "2.45.0", "gh": "2.60.0", "node": "22.0.0",
+        "pnpm": "", "uv": "", "pwsh": "7.4.0", "claude": "",
+        "copilot": "", "go": "1.27.3"
+      },
+      "updated_at": "2026-11-03T00:00:00Z"
+    }
+  }]
+}
+```
+
+Other node fields are omitted from this example. An empty version means missing;
+a failed or timed-out probe keeps the last cached version, or omits that tool's
+key if no successful probe is available (unknown, not missing). Failed probes
+never trigger installation of that tool.
+an **absent `toolchain`** means no report, not that every tool is missing (for
+example an older worker). Offline workers may have a cached report: check the
+node's `online` and the report's `updated_at`. `state` is `none` with no desired
+tools, `ok` when satisfied, `pending` while waiting for jobs, `applying` during
+installation, or `failed` with an `error`. Version strings are detected versions,
+not requested version prefixes.
+`updated_at` is the last report change, not a periodic heartbeat timestamp.
+
 ### Users, teams and quotas (sharing a hub)
 
 Several people can share the hub and its workers; [security.md](security.md)
@@ -1944,6 +2000,9 @@ longarm worker add [<name>] [--ttl 24h] [--label k=v]...   # prints a join code 
 longarm worker ls [--json]                # your workers, workers shared with you, the fleet (owner, shares, load)
 longarm worker label <worker> pool=devbox [gpu-]...   # set (KEY=VALUE) / delete (KEY- or KEY=) labels
                                           # of your worker (admins: any worker); audited by the hub
+longarm worker toolchain <worker> [--json] # desired tools and installed versions
+longarm worker toolchain <worker> --tools claude,copilot,uv,node@22 --apply --json
+longarm worker toolchain <worker> --clear # clear your desired tools, not installed software
 longarm worker share <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker unshare <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker remove <worker>            # revoke it (owner or admin); also: worker rm
@@ -1951,6 +2010,62 @@ longarm worker rename <worker> <new-name> # rename it (owner or admin; it keeps 
 longarm ls                                # an OWNER column appears once a worker has an owner; ADMIN: the machine's admin worker
                                           # ("-" = fleet, "+shared" = shared by its owner)
 ```
+
+**Tools on your worker.** `worker toolchain` lets its owner manage tools without
+an admin certificate; admins can also manage fleet workers (those with no owner),
+not somebody else's private machine. Sharing a worker does not grant toolchain
+management. Admin workers accept status queries but do not probe tools or accept
+hub-initiated package operations; use explicit commands on them instead.
+
+`--tools` replaces your whole desired list, accepts comma-separated names and
+repeatable flags, and defaults an omitted `@VERSION` to `latest` (any installed
+version satisfies it). Versions are prefixes at dot boundaries, as for profiles.
+Your tools are stored per worker at the hub, independently of its name, and merged
+with the assigned admin profile: **the admin profile wins conflicts**, including
+while its new revision waits for the canary. `--clear` removes only your desired
+list, retaining the profile and all installed software. Neither operation uninstalls
+tools. Changes are sent immediately to online workers and otherwise at reconnect.
+
+Reconciliation uses the same backend as profiles and installs only while idle,
+draining until jobs finish. `--apply` asks an online worker to recheck now; it
+acknowledges the request, **not installation success**. Read status again to
+observe `pending` / `applying` / `ok` / `failed`. Desired changes persist even if
+`--apply` fails because the worker is offline (exit 255) or remote control is
+disabled (exit 77). These non-zero exits occur **after the desired list was
+saved**: programs should retry the apply, not assume the set failed.
+On Windows the backend refreshes the daemon's PATH after package installation;
+the version check and the next job use the same lookup, including per-user npm
+tools, without restarting the worker.
+
+`worker toolchain --json` returns `worker`, `worker_id`, `owner_tools` (your
+list), `desired` (the effective profile plus your tools) and `toolchain` (the
+worker's last report). For example, with only `node@22` requested:
+
+```json
+{
+  "worker": "worker-1",
+  "worker_id": "11111111-1111-4111-8111-111111111111",
+  "owner_tools": [{"name": "node", "version": "22"}],
+  "desired": {
+    "tools": [{"name": "node", "version": "22"}],
+    "owner_revision": "1"
+  },
+  "toolchain": {
+    "state": "ok",
+    "owner_revision": "1",
+    "versions": {"node": "22.0.0", "git": "2.45.0", "gh": "", "pnpm": "",
+      "uv": "", "pwsh": "", "claude": "", "copilot": "", "go": ""},
+    "updated_at": "2026-11-03T00:00:00Z"
+  }
+}
+```
+
+Empty fields/lists are omitted (protobuf JSON; revision integers are strings).
+With an admin profile, `desired.profile` / `desired.revision` identify the
+profile revision selected by its rollout. `owner_revision` identifies your
+desired list; the report echoes it once reconciled. A missing `toolchain` is
+unknown inventory. An older hub returns `Unimplemented` (update it); an older
+worker might not report inventory or support owner-only reconciliation.
 
 **Labels** (scheduler constraints: `longarm run --require pool=devbox`) of
 your own worker are yours to set: at registration (`longarm worker add
@@ -2405,6 +2520,7 @@ labels = { region = "eu" }           # scheduler constraints (longarm run --requ
 [toolchain]
 # backend = "system"                 # or "fake" (tests): fake_state = "path.json"
 # interval = "30m"
+# disabled = true                  # no version probes, installs or toolchain PATH changes
 ```
 
 ### Web UI: hub panel and longarm-tray
@@ -2500,6 +2616,50 @@ the user-session worker until the next sign-in (`longarmd session-mode
 stop`), the client daemon (`longarm daemon stop`) and the tray; a worker
 installed as a Windows service and the update service keep running.
 
+### Opening Longarm's UI
+
+`longarm ui open [page]` shows longarm-tray's window at a page - the popup
+at a tab, or the Sessions window - starting longarm-tray when it is not
+running. Programs (TMIA Desktop) link to these pages instead of re-building
+them. The page names are stable:
+
+| page | shows | flags |
+|---|---|---|
+| `workers` (default) | the Workers tab | |
+| `add-machine` | the Workers tab's "Add a machine", opened | |
+| `jobs` | My jobs | `--job ID`: that job's output opened (its id, a unique start or end of it, or its name; older than the 50 listed: shown after them; none: a note says so) |
+| `this-worker` | This worker | |
+| `settings` | Settings | |
+| `account` | Account | |
+| `sessions` | the Sessions window | `--worker W` (its sessions only), `--agent claude\|copilot`, `--job ID` (that job's session: a steerable run's terminal, an agent job's conversation), `--session NAME` (that Longarm session's terminal) |
+
+```sh
+longarm ui open add-machine
+longarm ui open sessions --worker worker-1 --job 01JZ8K
+longarm ui open jobs --print-url --json
+# {"url":"http://127.0.0.1:52011/tray?tab=jobs&token=6c1f...","opened":false}
+```
+
+- `--print-url` opens nothing and prints a loopback URL with a one-time
+  code, for a program that shows the page in its own webview: the code
+  works once, within 10 minutes, and signs that webview in (a session
+  cookie) - mint a new URL for each webview. Not in an `<iframe>`: the
+  pages refuse framing.
+- `--json` prints `{"url": "...", "opened": true|false}`; without
+  `--print-url` the URL is the page's address (no code: a browser without
+  the tray's cookie gets 401).
+- Exit codes: an unknown page, a flag the page doesn't take or a bad value:
+  2 (the message lists the pages); longarm-tray not installed (not next to
+  longarm, not on PATH): 3; a tray that doesn't answer within 30 s (an
+  older tray still running: quit it from its menu): 255.
+- How: the running tray serves a local channel only this user can reach
+  (a named pipe / unix socket; its address in `<config dir>/tray.addr`)
+  with `POST /ui/open`; `ui open` asks it, or starts `longarm-tray
+  --config-dir <dir>` and asks once it answers. In `--browser` mode (no
+  window) the page opens in the default browser.
+- The feature is `ui-open` (`longarm version --json`); the page names
+  above keep their meaning, new pages get new names. MCP: `fleet_ui_open`.
+
 ### Agent skill for Claude Code, Copilot CLI, Codex
 
 Longarm ships an agent skill - `skills/longarm/` in this repository:
@@ -2565,7 +2725,8 @@ large output comes back as head + tail with a job handle), `fleet_job_submit`,
 `fleet_job_wait`, `fleet_job_logs`, `fleet_job_kill`, `fleet_read`,
 `fleet_write`, `fleet_sync` (local checkout → worktree on a worker),
 `fleet_forward` (via longarm daemon, returns the local URL), `fleet_link`
-(port links between workers: create / list / remove). Secrets are passed by
+(port links between workers: create / list / remove), `fleet_ui_open`
+(Longarm's UI on this desktop at a page, as [`longarm ui open`](#opening-longarms-ui)). Secrets are passed by
 name (`secret_env`) from the environment of `longarm mcp`, never through the model,
 and only names the operator allows: `claude mcp add longarm -e LONGARM_MCP_SECRETS=GH_TOKEN -- longarm mcp`.
 

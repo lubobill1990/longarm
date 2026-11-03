@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { localUpdateApi, longarmApi, trayApi, traySettingsApi } from '../api/local'
-import type { Job } from '../api/types'
+import type { FleetJob, Job } from '../api/types'
 import { ask } from '../components/confirm'
 import { ErrorBox, LogView, StatePill, useAction, usePoll } from '../components/common'
 import { IconForward, IconTerminal } from '../components/icons'
@@ -8,6 +8,9 @@ import { fmtTime, isActive } from '../lib/format'
 import { AgentSkill } from './AgentSkill'
 import type { ThemePref } from './theme'
 import { EmptyState, Section, Skeleton } from './ui'
+
+/** My jobs lists the last SHOWN. */
+const SHOWN = 50
 
 /**
  * My jobs: the jobs this computer started (longarm jobs --mine, what the
@@ -19,15 +22,42 @@ import { EmptyState, Section, Skeleton } from './ui'
  *
  * A job's details (command, times, output) open right under its row, so a
  * long list never sends you to the bottom for them; a second click closes.
+ *
+ * openJob (longarm ui open jobs --job ID): that job's details open once
+ * the list has it (its id, or a unique start or end of it, or its name);
+ * onOpenedJob says it did. Not among the last 50: the whole list is asked
+ * for, and the job shown after the 50 (pinned); not there either: a note
+ * says so, and it opens if it turns up (a job just submitted).
  */
-export function ClientJobs() {
-  const jobs = usePoll(() => longarmApi.jobs({ mine: true, limit: 50 }), 3000)
+export function ClientJobs({ openJob, onOpenedJob }: { openJob?: string; onOpenedJob?: () => void } = {}) {
+  const [wide, setWide] = useState(false) // the whole list, not the last 50
+  const jobs = usePoll(() => longarmApi.jobs({ mine: true, limit: wide ? 0 : SHOWN }), 3000, [wide])
   const [open, setOpen] = useState<string>()
   // "": every worker; else the jobs that run on that one
   const [only, setOnly] = useState('')
+  const [pinned, setPinned] = useState<string>() // an older job's key, shown after the 50
+  const [missing, setMissing] = useState<string>()
+  useEffect(() => {
+    if (!openJob || !jobs.data) return
+    const j = findJob(jobs.data, openJob)
+    if (j) {
+      const key = `${j.worker}/${j.job.spec.id}`
+      setOpen(key)
+      if (jobs.data.indexOf(j) >= SHOWN) setPinned(key)
+      else setWide(false)
+      setMissing(undefined)
+      onOpenedJob?.()
+    } else if (!wide) {
+      setWide(true)
+    } else {
+      setMissing(openJob)
+    }
+  }, [openJob, jobs.data]) // eslint-disable-line react-hooks/exhaustive-deps
+  const rows = (jobs.data ?? []).filter((j, i) => i < SHOWN || `${j.worker}/${j.job.spec.id}` === pinned)
   const { run, busy } = useAction()
   const workers = [...new Set([...(jobs.data ?? []).map((j) => j.worker), ...(only ? [only] : [])])].sort()
-  const shown = (jobs.data ?? []).filter((j) => !only || j.worker === only)
+  // the worker filter on top of the last 50 (and a pinned older job)
+  const shown = rows.filter((j) => !only || j.worker === only)
   return (
     <div>
       <div className="toolbar">
@@ -47,6 +77,11 @@ export function ClientJobs() {
         ) : null}
       </div>
       <ErrorBox error={jobs.error} />
+      {missing && (
+        <p className="muted small" data-testid="job-missing">
+          No job <span className="mono">{missing}</span> among this computer&apos;s jobs (yet).
+        </p>
+      )}
       <table className="grid list small" data-testid="my-jobs">
         <tbody>
           {shown.map((j) => {
@@ -132,6 +167,23 @@ export function ClientJobs() {
       </table>
     </div>
   )
+}
+
+/**
+ * The job want names in jobs: the same id, else the only one whose id
+ * starts or ends with want (case-insensitively; the tray shows the last 8
+ * characters), else the first with that name.
+ */
+export function findJob(jobs: FleetJob[], want: string): FleetJob | undefined {
+  const w = want.toLowerCase()
+  const exact = jobs.find((j) => j.job.spec.id === want)
+  if (exact) return exact
+  const partial = jobs.filter((j) => {
+    const id = j.job.spec.id.toLowerCase()
+    return id.startsWith(w) || id.endsWith(w)
+  })
+  if (partial.length === 1) return partial[0]
+  return jobs.find((j) => j.job.spec.name === want)
 }
 
 /** "Kill job build (alice) on box?": what a kill confirmation names. */

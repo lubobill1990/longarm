@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/toolchain"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -28,7 +30,7 @@ import (
 // that passed its canary ("stable"), which non-canary nodes get meanwhile.
 
 // KnownTools are the tools the reconciler knows how to install.
-var KnownTools = []string{"git", "gh", "node", "pnpm", "uv", "pwsh", "claude", "copilot", "go"}
+var KnownTools = toolchain.KnownTools
 
 type profileRecord struct {
 	Latest json.RawMessage `json:"latest"`
@@ -72,6 +74,9 @@ func (h *Hub) decodeProfile(d []byte) (latest, stable *pb.Profile, err error) {
 func validateTools(tools []*pb.ToolSpec) error {
 	seen := map[string]bool{}
 	for _, t := range tools {
+		if t == nil {
+			return fmt.Errorf("nil tool")
+		}
 		if !slices.Contains(KnownTools, t.Name) {
 			return fmt.Errorf("unknown tool %q (known: %s)", t.Name, strings.Join(KnownTools, ", "))
 		}
@@ -82,7 +87,7 @@ func validateTools(tools []*pb.ToolSpec) error {
 		if t.Version == "" {
 			t.Version = "latest"
 		}
-		if strings.ContainsAny(t.Version, " \t\r\n;&|`$<>\"'") {
+		if !toolchain.ValidVersion(t.Version) {
 			return fmt.Errorf("tool %s: bad version %q", t.Name, t.Version)
 		}
 	}
@@ -166,16 +171,40 @@ func (h *Hub) desiredToolchainLocked(n *node) *pb.ToolchainDesired {
 	}
 	name := n.rec.Profile
 	p := h.profiles[name]
-	if name == "" || p == nil {
-		return &pb.ToolchainDesired{}
+	d := &pb.ToolchainDesired{OwnerRevision: n.rec.OwnerToolRevision}
+	if name != "" && p != nil {
+		d.Profile = name
+		if p.Rollout == "rolling" || p.Rollout == "done" || p.Canary == n.rec.Name {
+			d.Revision, d.Tools = p.Revision, p.Tools
+		} else if s := h.stable[name]; s != nil {
+			d.Revision, d.Tools = s.Revision, s.Tools
+		}
 	}
-	if p.Rollout == "rolling" || p.Rollout == "done" || p.Canary == n.rec.Name {
-		return &pb.ToolchainDesired{Profile: name, Revision: p.Revision, Tools: p.Tools}
+	tools := maps.Clone(n.rec.OwnerTools)
+	if tools == nil {
+		tools = map[string]string{}
 	}
-	if s := h.stable[name]; s != nil {
-		return &pb.ToolchainDesired{Profile: name, Revision: s.Revision, Tools: s.Tools}
+	// Reserve even not-yet-rolled-out profile names: an owner may not
+	// install a conflicting version while waiting for the admin's canary.
+	if p != nil {
+		for _, t := range p.Tools {
+			delete(tools, t.Name)
+		}
 	}
-	return &pb.ToolchainDesired{Profile: name} // revision 0: wait for the canary
+	for _, t := range d.Tools {
+		tools[t.Name] = t.Version
+	}
+	d.Tools = toolSpecs(tools)
+	return d
+}
+
+func toolSpecs(tools map[string]string) []*pb.ToolSpec {
+	var out []*pb.ToolSpec
+	for name, version := range tools {
+		out = append(out, &pb.ToolSpec{Name: name, Version: version})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 func reportOK(n *node, p *pb.Profile) (ok, failed bool, msg string) {
@@ -183,7 +212,17 @@ func reportOK(n *node, p *pb.Profile) (ok, failed bool, msg string) {
 	if tc == nil || tc.Profile != p.Name || tc.Revision != p.Revision {
 		return false, false, ""
 	}
-	return tc.State == "ok", tc.State == "failed", tc.Error
+	// Owner tools share this report, but cannot gate an admin rollout.
+	for _, tool := range p.Tools {
+		version, known := tc.Versions[tool.Name]
+		if !known {
+			return false, false, ""
+		}
+		if !toolchain.Satisfies(version, tool.Version) {
+			return false, tc.State == "failed", tc.Error
+		}
+	}
+	return true, false, ""
 }
 
 // advanceRolloutsLocked moves every profile's rollout forward.

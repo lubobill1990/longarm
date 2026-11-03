@@ -243,6 +243,12 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 	d.app = app
 	sessions := &sessionsWindow{app: app, srv: srv, prefsDir: o.LongarmConfigDir}
 	srv.OpenSessions = sessions.open
+	// `longarm ui open`: the popup at a page (a fresh code: the page loads
+	// anew at its tab)
+	srv.ShowPopup = func(path string) {
+		d.win.SetURL(srv.URL(path))
+		d.show()
+	}
 	d.win = app.Window.NewWithOptions(popupOptions(srv.URL("/tray"), tray.CurrentPopupBackground(o.LongarmConfigDir)))
 	d.win.OnWindowEvent(events.Common.WindowLostFocus, func(*application.WindowEvent) {
 		// a short delay: focus can bounce while the window is being shown
@@ -350,6 +356,11 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 	ctrl := tray.NewController(o, shell, startDaemon)
 	go ctrl.Run(cctx)
 	go srv.WatchSignIn(cctx, shell.Notify)
+	go func() {
+		if err := srv.ServeControl(cctx); err != nil {
+			o.Log.Warn("longarm ui open: no control channel", "err", err)
+		}
+	}()
 	// a sign-in's code: the popup up (it stays: Busy), the code on the
 	// clipboard, and a notification with it (when the popup is hidden
 	// behind something after all)

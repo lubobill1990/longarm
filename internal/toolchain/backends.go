@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // New returns the backend named by longarmd.toml [toolchain] backend:
@@ -142,20 +143,36 @@ func (s *System) Version(ctx context.Context, tool string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("unknown tool %s", tool)
 	}
+	if err := refreshPath(); err != nil {
+		return "", err
+	}
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
-		return "", nil // not installed
+		if errors.Is(err, exec.ErrNotFound) {
+			return "", nil // not installed
+		}
+		return "", err
 	}
-	out, err := exec.CommandContext(ctx, path, argv[1:]...).Output()
+	out, err := probeOutput(ctx, append([]string{path}, argv[1:]...)...)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", strings.Join(argv, " "), err)
 	}
-	return ParseVersion(string(out)), nil
+	version := ParseVersion(string(out))
+	if version == "" {
+		return "", fmt.Errorf("%s: no version in output", strings.Join(argv, " "))
+	}
+	return version, nil
 }
 
 func run(ctx context.Context, log *slog.Logger, argv ...string) error {
 	log.Info("toolchain: run", "cmd", strings.Join(argv, " "))
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	if err := refreshPath(); err != nil {
+		return err
+	}
+	cmd, err := systemCommand(ctx, argv...)
+	if err != nil {
+		return err
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		tail := string(out)
@@ -176,8 +193,11 @@ func exact(version string) string {
 
 // Install implements Backend.
 func (s *System) Install(ctx context.Context, tool, version string, log *slog.Logger) error {
-	if !safeVersion.MatchString(version) { // versions end up in command lines
+	if !ValidVersion(version) { // versions end up in command lines
 		return fmt.Errorf("refusing version %q", version)
+	}
+	if err := refreshPath(); err != nil {
+		return err
 	}
 	if pkg, ok := npmPackages[tool]; ok {
 		npm := "npm"
@@ -191,9 +211,26 @@ func (s *System) Install(ctx context.Context, tool, version string, log *slog.Lo
 		args := []string{npm, "install", "-g", spec}
 		if s.MachineWide && runtime.GOOS == "windows" {
 			// LocalSystem's own npm prefix is in its profile, on nobody's PATH
-			if node, err := exec.LookPath("node.exe"); err == nil {
-				args = append(args, "--prefix", filepath.Dir(node))
+			node, err := exec.LookPath("node.exe")
+			if err != nil {
+				return fmt.Errorf("machine-wide npm install needs node: %w", err)
 			}
+			args = append(args, "--prefix", filepath.Dir(node))
+		} else if runtime.GOOS == "windows" {
+			pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			out, err := probeOutput(pctx, npm, "prefix", "-g")
+			cancel()
+			if err != nil {
+				return fmt.Errorf("npm prefix: %w", err)
+			}
+			prefix := strings.TrimSpace(string(out))
+			if !filepath.IsAbs(prefix) || strings.ContainsAny(prefix, "\r\n") {
+				return fmt.Errorf("npm prefix: invalid path %q", prefix)
+			}
+			if err := refreshPath(prefix); err != nil {
+				return err
+			}
+			args = append(args, "--prefix", prefix)
 		}
 		return run(ctx, log, args...)
 	}
@@ -275,6 +312,9 @@ func (s *System) linux(ctx context.Context, tool, version string, log *slog.Logg
 }
 
 var safeVersion = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$`)
+
+// ValidVersion checks a version before it reaches a package manager.
+func ValidVersion(version string) bool { return safeVersion.MatchString(version) }
 
 // wingetExe finds winget: LocalSystem has no App Installer alias on its
 // PATH, but the package's winget.exe runs for it.

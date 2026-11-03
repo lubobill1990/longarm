@@ -141,6 +141,8 @@ var cliFeatures = []string{
 	"lfs",              // run / sync --lfs skip|ship
 	"ref-sha",          // run --repo <path> --ref <full commit id>
 	"worker-label",     // longarm worker label
+	"toolchain-report", // baseline installed versions in worker ls --json
+	"worker-toolchain", // owner desired tools and idle-only reconciliation
 	"git-auth-forward", // run / sync --git-auth forward, run --lfs fetch
 	// sessions for programs (docs/usage.md#sessions-for-programs)
 	"session-start",        // session start
@@ -167,6 +169,7 @@ var cliFeatures = []string{
 	"session-send-if-input-seq", // session send --if-input-seq N (exit 75 when inputSeq moved on)
 	"session-send-paste-enter",  // session send --paste [--key ...]: bracketed paste, a gap, the keys, one atomic send
 	"input-seq-human",           // terminal replies are no input; sessions --json humanInputSeq
+	"ui-open",                   // ui open [page] [--worker|--job|--session|--agent] [--print-url] [--json] (docs/usage.md#opening-longarms-ui)
 }
 
 func versionCmd() *cobra.Command {

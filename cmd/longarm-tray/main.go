@@ -197,6 +197,11 @@ func serveOnly(ctx context.Context, o tray.Options, addr string, open bool, star
 	}
 	ctrl := tray.NewController(o, logShell{o.Log}, startDaemon)
 	go ctrl.Run(ctx)
+	go func() {
+		if err := srv.ServeControl(ctx); err != nil {
+			o.Log.Warn("longarm ui open: no control channel", "err", err)
+		}
+	}()
 	<-ctx.Done()
 	time.Sleep(50 * time.Millisecond)
 	return nil

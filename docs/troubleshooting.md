@@ -99,6 +99,29 @@ and says it is a copy. The copy's folder changes with every TMIA Desktop
 version, and the new path needs a rule again (or stop that daemon,
 `longarm daemon stop`, and let the tray start the installed one).
 
+### A tool I just installed is "not recognized" in jobs (Windows)
+
+`claude`, `copilot`, `uv`, `go`… installed on the worker after longarmd
+started, and jobs say `'claude' is not recognized` or `executable file not
+found in %PATH%`. A process's environment is fixed when it starts, and
+longarmd used to hand its own to every job. Workers with the `fresh-path`
+feature (`longarm info <worker>`) rebuild PATH from the registry before
+each job, exec, session and ssh shell ([usage.md](usage.md#operations)),
+so the next job finds the tool. Still missing:
+
+- the installer didn't add the directory to the **registry** `Path`
+  (it only changed the PATH of the console it ran in): check with
+  `[Environment]::GetEnvironmentVariable('Path', 'User')` (and
+  `'Machine'`) on the worker, and add it there;
+- longarmd's log says `fresh-path: can't read the registry's Path`: its
+  account can't read that key (the error names it);
+- the worker is older (no `fresh-path`), or longarmd runs with
+  `LONGARM_FRESH_PATH=0`: restart it (`longarmd session-mode stop`, then
+  `start`; a service: `longarmd service stop`, then `start`, elevated) or
+  update it;
+- a running `longarm session` keeps the PATH it started with: stop it and
+  start it again.
+
 ### "A newer version is available"
 
 The hub tells every machine about its newest release:
