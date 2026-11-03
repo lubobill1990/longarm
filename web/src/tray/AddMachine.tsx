@@ -108,7 +108,7 @@ export function AddMachine({ onClose }: { onClose: () => void }) {
       )}
       {info?.hub_host && (
         <>
-          <Section title="The machine will">
+          <Section card title="The machine will">
             <label className="check">
               <input type="checkbox" data-testid="addm-worker" checked={opts.worker} onChange={(e) => set({ worker: e.target.checked })} />
               <span>
@@ -135,7 +135,7 @@ export function AddMachine({ onClose }: { onClose: () => void }) {
               </span>
             </label>
           </Section>
-          <Section title="Its system">
+          <Section card title="Its system">
             <div className="segmented" role="radiogroup" aria-label="Operating system">
               {PLATFORMS.map(([p, label]) => (
                 <label key={p} className={opts.platform === p ? 'is-active' : ''}>
@@ -145,7 +145,7 @@ export function AddMachine({ onClose }: { onClose: () => void }) {
               ))}
             </div>
           </Section>
-          <Section title="Command">
+          <Section card title="Command">
             {steps.length === 0 ? (
               <div className="muted small" data-testid="addm-none">
                 Pick what the machine will do.
