@@ -5,9 +5,9 @@
         "createdAt": "2026-11-03T09:00:00Z",
         "endedAt": "2026-11-03T09:00:00Z",
         "hasExitCode": true,
-        "logSize": "7",
-        "pid": 79592,
-        "shimPid": 74756,
+        "logSize": "187",
+        "pid": 31544,
+        "shimPid": 44404,
         "spec": {
           "argv": [
             "claude",
@@ -18,14 +18,21 @@
           ],
           "id": "01JC8ZK3T5W9QX4M2N6P7R8S0A",
           "labels": {
-            "longarm.mem_gb": "2"
+            "longarm.mem_gb": "2",
+            "longarm.repo": "repo"
           },
           "name": "build",
           "owner": "alice",
-          "submittedBy": "client/alice"
+          "submittedBy": "client/alice",
+          "workspace": {
+            "commit": "5f3cbd0a9e2d4c71b8a6f0e3d2c1b0a99f8e7d6c5b4a39281706f5e4d3c2b1a0",
+            "repo": "repo",
+            "stagingId": "01JC8ZK3T5W9QX4M2N6P7R8S0A"
+          }
         },
         "startedAt": "2026-11-03T09:00:00Z",
-        "state": "JOB_STATE_DONE"
+        "state": "JOB_STATE_DONE",
+        "workdir": "/var/lib/longarmd/worktrees/01JC8ZK3T5W9QX4M2N6P7R8S0A"
       },
       "updatedAt": "2026-11-03T09:00:00Z",
       "worker": "worker-1",

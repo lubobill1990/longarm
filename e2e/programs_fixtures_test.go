@@ -22,15 +22,24 @@ var updateFixtures = flag.Bool("update", false, "TestProgramsFixtures: rewrite d
 var fixturesDir = filepath.Join("..", "docs", "programs", "fixtures")
 
 // programFixtures: fixture file -> the longarm command that produces it.
-// %s is the job id.
+// {job} is the finished job's id, {repo} a git checkout, {file} a file to
+// tail, {helper} the test's agent. They run in the order of their names.
 var programFixtures = map[string][]string{
-	"version.json":   {"version", "--json"},
-	"worker-ls.json": {"worker", "ls", "--json"},
-	"whoami.json":    {"whoami", "--json"},
-	"jobs-id.json":   {"jobs", "--json", "--id", "%s"},
-	"sessions.json":  {"sessions", "--json"},
-	"doctor.json":    {"doctor", "--json"},
+	"version.json":       {"version", "--json"},
+	"worker-ls.json":     {"worker", "ls", "--json"},
+	"whoami.json":        {"whoami", "--json"},
+	"jobs.json":          {"jobs", "--json"},
+	"jobs-id.json":       {"jobs", "--json", "--id", "{job}"},
+	"session-send.json":  {"session", "send", "worker-1", "-s", "agent1", "--text", "hello again\n", "--json"},
+	"session-start.json": {"session", "start", "worker-1", "-s", "agent2", "--repo", "{repo}", "--json", "--", "{helper}", "repl"},
+	"sessions.json":      {"sessions", "--json"},
+	"tail.json":          {"tail", "worker-1", "{file}", "--json"},
+	"doctor.json":        {"doctor", "--json"},
 }
+
+// jsonLines are the fixtures of commands that print JSON lines: the
+// fixture is the array of the lines.
+var jsonLines = []string{"tail.json"}
 
 // opaque are the fixture paths whose content is not part of the contract
 // (only that they exist with their type): doctor's per-check data differs
@@ -55,25 +64,69 @@ func TestProgramsFixtures(t *testing.T) {
 	h := newHubEnv(t, "")
 	alice := h.client
 	os.WriteFile(filepath.Join(alice, "workers.toml"), nil, 0o644) // the hub's workers only
-	w := h.newWorkerDir(t, "worker-1", "")
-	h.joinWorker(t, w, true)
+	// worker-1 is alice's own (owner) with a job running while the
+	// fixtures are taken (jobs_active), worker-2 a fleet worker with a
+	// toolchain profile (admins assign profiles to fleet workers only):
+	// fields left out at their zero value show. Their toolchains are fake
+	// (nothing is installed, the inventory is there at once).
+	h.mustLongarm(h.admin, "admin", "user", "add", "alice", "--no-code")
+	fakeToolchain := func(name string) string {
+		fake := filepath.Join(h.root, name+"-toolchain.json")
+		tools := `{"tools":{"git":"2.56.0","node":"26.13.0","pnpm":"10.32.1","claude":"2.1.310","pwsh":"7.6.9"}}`
+		if err := os.WriteFile(fake, []byte(tools), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Sprintf("[toolchain]\nbackend = \"fake\"\nfake_state = %q\n", filepath.ToSlash(fake))
+	}
+	w := h.newWorkerDir(t, "worker-1", fakeToolchain("worker-1"))
+	code := strings.TrimSpace(h.mustLongarm(alice, "worker", "add", "worker-1"))
+	if r := longarmdCmd(t, "join", h.addr(), code, "--data-dir", w.dataDir, "--ca-fingerprint", h.fp); r.code != 0 {
+		t.Fatalf("join: %+v", r)
+	}
 	w.start(t, true)
-	h.waitNode(t, "worker-1", "online", func(n map[string]any) bool { return isTrue(n["online"]) })
-	// worker-ls.json shows a worker with its tool inventory: the report the
-	// worker sends at connect has no updated_at until the inventory is in
-	// (seen on CI: "nodes[].toolchain.updated_at is missing").
-	h.waitNode(t, "worker-1", "a tool inventory", func(n map[string]any) bool {
-		tc, _ := n["toolchain"].(map[string]any)
-		return tc != nil && tc["updated_at"] != nil
-	})
+	w2 := h.newWorkerDir(t, "worker-2", fakeToolchain("worker-2"))
+	h.joinWorker(t, w2, true)
+	w2.start(t, true)
+	h.mustLongarm(h.admin, "admin", "profile", "set", "base", "git=2.56", "node=26")
+	h.mustLongarm(h.admin, "admin", "profile", "assign", "worker-2", "base")
+	// worker-ls.json shows the workers with their tool inventory (the
+	// report sent at connect has no updated_at yet) and the profile applied.
+	for _, name := range []string{"worker-1", "worker-2"} {
+		h.waitNode(t, name, "online with its tools", func(n map[string]any) bool {
+			tc, _ := n["toolchain"].(map[string]any)
+			return isTrue(n["online"]) && tc != nil && tc["updated_at"] != nil &&
+				(name == "worker-1" && n["owner"] == "alice" || tc["profile"] == "base" && tc["state"] == "ok")
+		})
+	}
 
-	id := strings.TrimSpace(h.mustLongarm(alice, "run", "worker-1", "--name", "build", "--", bins.helper, "print", "1", "0", "0"))
+	repo := filepath.Join(h.root, "repo")
+	os.MkdirAll(repo, 0o755)
+	os.WriteFile(filepath.Join(repo, "README.md"), []byte("example\n"), 0o644)
+	for _, args := range [][]string{{"init", "-q"}, {"add", "."},
+		{"-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "example"}} {
+		cmd := exec.Command("git", append([]string{"-c", "core.autocrlf=false", "-c", "core.safecrlf=false"}, args...)...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	// jobs: one done in a worktree (workdir), one killed (reason), one running
+	id := strings.TrimSpace(h.mustLongarm(alice, "run", "worker-1", "--name", "build", "--repo", repo, "--", bins.helper, "print", "1", "0", "0"))
 	h.mustLongarm(alice, "wait", "worker-1", id)
-	waitFor(t, "the job in the hub's index", 20*time.Second, func() bool {
-		return h.longarm(alice, "jobs", "--hub-only", "--json", "--id", id).code == 0
+	killed := strings.TrimSpace(h.mustLongarm(alice, "run", "worker-1", "--name", "stuck", "--", bins.helper, "sleep", "120"))
+	h.mustLongarm(alice, "kill", "worker-1", killed)
+	h.longarm(alice, "wait", "worker-1", killed)
+	h.mustLongarm(alice, "run", "worker-1", "--name", "test", "--", bins.helper, "sleep", "120")
+	h.waitNode(t, "worker-1", "a job running", func(n map[string]any) bool { a, _ := n["jobs_active"].(float64); return a > 0 })
+	waitFor(t, "the jobs in the hub's index", 20*time.Second, func() bool {
+		return h.longarm(alice, "jobs", "--hub-only", "--json", "--id", id).code == 0 &&
+			h.longarm(alice, "jobs", "--hub-only", "--json", "--id", killed).code == 0
 	})
 	h.mustLongarm(alice, "session", "start", "worker-1", "-s", "agent1", "--", bins.helper, "repl")
 	h.mustLongarm(alice, "session", "send", "worker-1", "-s", "agent1", "--text", "hello\n")
+	// a file a program follows: JSON lines, the last one not complete yet
+	file := filepath.Join(h.root, "agent-events.jsonl")
+	os.WriteFile(file, []byte("{\"event\":\"start\"}\n{\"event\":\"turn\"}\n{\"event\":\"tu"), 0o644)
 
 	anon := newAnonymiser(t, map[string]string{
 		w.dataDir:     "/var/lib/longarmd",
@@ -86,14 +139,13 @@ func TestProgramsFixtures(t *testing.T) {
 	})
 	for _, name := range sortedKeys(programFixtures) {
 		args := slices.Clone(programFixtures[name])
+		vars := strings.NewReplacer("{job}", id, "{repo}", repo, "{file}", file, "{helper}", bins.helper)
 		for i, a := range args {
-			if strings.Contains(a, "%s") {
-				args[i] = fmt.Sprintf(a, id)
-			}
+			args[i] = vars.Replace(a)
 		}
 		r := h.longarm(alice, args...)
 		var got any
-		if err := json.Unmarshal([]byte(r.stdout), &got); err != nil {
+		if err := unmarshalOutput(name, r.stdout, &got); err != nil {
 			t.Errorf("longarm %v (exit %d): not JSON: %v\n%s\n%s", args, r.code, err, r.stdout, r.stderr)
 			continue
 		}
@@ -129,6 +181,24 @@ func TestProgramsFixtures(t *testing.T) {
 			t.Errorf("%s: no command produces it (programFixtures)", f)
 		}
 	}
+}
+
+// unmarshalOutput reads a command's output: one JSON value, or for
+// jsonLines the array of its lines.
+func unmarshalOutput(name, out string, v *any) error {
+	if !slices.Contains(jsonLines, name) {
+		return json.Unmarshal([]byte(out), v)
+	}
+	lines := []any{}
+	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
+		var e any
+		if err := json.Unmarshal([]byte(l), &e); err != nil {
+			return err
+		}
+		lines = append(lines, e)
+	}
+	*v = lines
+	return nil
 }
 
 // schemaDiff lists what of want (a fixture) is missing from got or has
