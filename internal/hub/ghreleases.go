@@ -80,6 +80,9 @@ type ghReleases struct {
 	api    string // https://api.github.com (tests: a fake)
 	client *http.Client
 	log    *slog.Logger
+	// changed is called after a poll changed the index (the hub drops its
+	// cached latest release)
+	changed func()
 
 	mu     sync.Mutex
 	rels   []store.Release
@@ -197,6 +200,9 @@ func (g *ghReleases) poll(ctx context.Context) error {
 	changed := !g.polled || len(rels) != len(g.rels) || latest != g.latest
 	g.rels, g.latest, g.polled = rels, latest, true
 	g.mu.Unlock()
+	if changed && g.changed != nil {
+		g.changed()
+	}
 	if changed {
 		g.log.Info("releases from GitHub", "repo", g.repo, "latest", latest, "files", len(rels), "releases", n)
 	}

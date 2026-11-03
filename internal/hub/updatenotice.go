@@ -31,6 +31,13 @@ type latestEntry struct {
 	files   map[string]store.Release
 }
 
+// forget drops the cached answers (the release index changed).
+func (c *latestCache) forget() {
+	c.mu.Lock()
+	clear(c.byCh)
+	c.mu.Unlock()
+}
+
 // latestNotice is the newest stable release (latestRelease), cached for
 // latestTTL.
 func (h *Hub) latestNotice() (string, map[string]store.Release) {
