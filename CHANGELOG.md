@@ -32,7 +32,23 @@
   also removes the session directories of sessions that moved on from that
   machine; outside a checkout with a remote it skips the branches instead
   of failing.
-
+- **Automatic updates are a choice at install.** The MSI wizard has an
+  Updates page before Install: "Install new releases automatically" (off
+  unless the machine had it on) and, with it, the release channel (Stable
+  preselected, Preview, Dev); silent installs take `AUTO_UPDATE=1|0` and
+  `UPDATE_CHANNEL=stable|preview|dev` (unset: as recorded; changing a
+  recorded one needs an administrator, as the sign-in defaults). `install.ps1`
+  passes them: `-AutoUpdate` / `$env:LONGARM_AUTO_UPDATE=1` /
+  `?autoupdate=1`, and the channel it installed from. The front page's
+  Windows install has an "Update automatically" switch (off).
+- **Install a release channel.** The hub's `install.ps1` / `install.sh` take
+  `?channel=preview` (or `rc`) / `?channel=dev`: that channel's newest
+  release, and on Windows the machine then follows the channel (its update
+  setting, as the tray's Settings > Updates); without one: stable, as before.
+  The hub's front page has the choice next to the system in its Install step
+  (and asks the hub for that channel's MSI and version). The Install step
+  spans the page now, its installer and one-liners side by side; steps 2 and
+  3 below. Step 2's sample code says it is an example.
 - **`longarm ui open [page]`** opens Longarm's own UI at a page - `workers`,
   `add-machine`, `jobs` (`--job`), `this-worker`, `settings`, `account`,
   `sessions` (`--worker`, `--job`, `--session`, `--agent`) - starting
@@ -346,6 +362,15 @@
 
 ### Fixed
 
+- **The MSI no longer rolls back when the worker's join fails.** A
+  `JOIN_CODE` that expired (an unattended install that ran late, e.g. a Dev
+  Box customization days after it was queued), an unknown code or an
+  unreachable hub failed `LongarmdSessionJoin` / `LongarmdSetup`, and with it
+  the whole install (1603: nothing installed, nothing to retry). Now the
+  install goes on: the binaries, the service or logon task, the tray and the
+  recorded hub stay, the worker waits for a sign-in (the tray, `longarmd
+  login`, or `longarmd join` with a new code), and why the join failed is in
+  the install log and the data dir's `install-join-failed`.
 - `longarm handoff --via remote` (and `auto` above the threshold) on a
   repository that limits branches to your alias - Azure DevOps at
   Microsoft refuses `longarm/handoff/...` with `VS403660 ... ref naming

@@ -46,11 +46,11 @@ foreach ($p in @{ ROLES = 'client'; LAUNCH_TRAY = '1' }.GetEnumerator()) {
   if ($v -ne $p.Value) { throw "default.msi: $($p.Key) is '$v', want '$($p.Value)'" }
 }
 # MODE / RUN / ADMIN_WORKER have no default value in the table: SetProperty actions decide
-foreach ($p in 'MODE', 'RUN', 'ADMIN_WORKER', 'HUB', 'LOGIN') {
+foreach ($p in 'MODE', 'RUN', 'ADMIN_WORKER', 'HUB', 'LOGIN', 'AUTO_UPDATE', 'UPDATE_CHANNEL') {
   if ($null -ne (Prop $default $p)) { throw "default.msi: $p has a fixed value (it must stay overridable)" }
 }
 $secure = (Prop $default 'SecureCustomProperties') -split ';'
-foreach ($p in 'MODE', 'RUN', 'ADMIN_WORKER', 'SESSION_SID', 'HUB', 'LOGIN', 'LABELS', 'JOIN_CODE', 'CA_FINGERPRINT') {
+foreach ($p in 'MODE', 'RUN', 'ADMIN_WORKER', 'SESSION_SID', 'HUB', 'LOGIN', 'LABELS', 'JOIN_CODE', 'CA_FINGERPRINT', 'AUTO_UPDATE', 'UPDATE_CHANNEL') {
   if ($secure -notcontains $p) { throw "default.msi: $p is not a secure property (it would not reach the elevated install)" }
 }
 $actions = Query $default 'SELECT `Action` FROM `CustomAction`'
@@ -59,7 +59,7 @@ foreach ($a in 'LongarmdCheck', 'LongarmdSettings', 'LongarmdSettingsRemove', 'L
   if ($actions -notcontains $a) { throw "default.msi: no custom action $a" }
 }
 $dialogs = Query $default 'SELECT `Dialog` FROM `Dialog`'
-foreach ($d in 'ModeDlg', 'RolesDlg', 'ServiceAccountDlg') {
+foreach ($d in 'ModeDlg', 'RolesDlg', 'ServiceAccountDlg', 'UpdatesDlg') {
   if ($dialogs -notcontains $d) { throw "default.msi: no dialog $d" }
 }
 # every install-helper custom action passes its values as data after the marker (parsed strictly by the

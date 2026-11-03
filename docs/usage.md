@@ -54,6 +54,10 @@ curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --role bot
 $env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex   # Windows: asks to elevate, the MSI
 #    For this Windows account only, without administrator rights: $env:LONGARM_PER_USER=1 first.
 #    Either way the tray starts and comes back at every logon. Remove: irm https://hub.example.com/uninstall.ps1 | iex
+#    A release channel (stable without): install.ps1?channel=preview (or rc) / ?channel=dev - that channel's
+#    newest release; on Windows the machine then follows the channel (the tray: Settings > Updates).
+#    Windows updates itself only when asked: $env:LONGARM_AUTO_UPDATE=1 (or install.ps1?autoupdate=1).
+#    In a POSIX shell quote the URL: curl -fsSL 'https://hub.example.com/install.sh?channel=dev' | sudo sh ...
 
 # 2. sign in - the one-liners and the tray do it; already installed:
 longarmd login hub.example.com --role both     # worker + client: one code, one approval
@@ -2927,7 +2931,10 @@ tray, uninstall and install again with the new `ROLES` / `ADMIN_WORKER`. **Custo
 install" (`LOGIN=1`) or a join code, an optional CA fingerprint, the roles
 client / worker / both, and under Advanced the worker as a Windows service.
 An MSI built without a default hub ([Built-in default hub](#built-in-default-hub))
-offers Custom only. Silent properties (all in the comment at the top of
+offers Custom only. Either way the last page before Install is **Updates**:
+"Install new releases automatically" (off unless the machine had it on)
+and, with it, the release channel - Stable (preselected), Preview or Dev;
+the tray's Settings > Updates changes both later. Silent properties (all in the comment at the top of
 `packaging/windows/longarm.wxs`):
 
 | property | values |
@@ -2935,6 +2942,8 @@ offers Custom only. Silent properties (all in the comment at the top of
 | `MODE` | `default` (the built-in hub, `LOGIN=1`; `JOIN_CODE` refused) or `custom`; default: `custom` when `HUB` or a join code is given or there is no built-in hub, else `default`; remembered |
 | `ROLES` | `client`, `both`, `worker` (Custom) |
 | `RUN` | `session` (default) or `service`; remembered - an install from before `RUN` that has a service keeps it |
+| `AUTO_UPDATE` | `1`: the Longarm Update service installs new releases by itself; `0`: not (the default of a new machine); unset: as recorded |
+| `UPDATE_CHANNEL` | `stable` (default), `preview` (`rc`, `beta`) or `dev`: the releases it follows; unset: as recorded |
 | `HUB`, `LOGIN=1`, `JOIN_CODE`, `CA_FINGERPRINT`, `LABELS`, `NODE_NAME` | as before (`MODE=custom`) |
 | `SERVICE_USER`, `SERVICE_PASSWORD`, `SERVICE_ACCOUNT`, `SERVICE_NAME`, `DATADIR`, `LISTEN`, `ISOLATION` | `RUN=service` only (`ISOLATION=per-user` implies it; `DATADIR` below `%ProgramData%\Longarm`) |
 | `ADMIN_WORKER=1` | the admin worker (off by default; needs `ROLES=both` or `worker`; remembered, `ADMIN_WORKER=0` on an upgrade removes it) |
@@ -2952,6 +2961,16 @@ msiexec /i longarm-windows-amd64.msi /qn ROLES=both ADMIN_WORKER=1              
 msiexec /i longarm-windows-amd64.msi /qn MODE=custom ROLES=worker HUB=hub.example.com JOIN_CODE=K7P-Q2M
 msiexec /i longarm-windows-amd64.msi /qn MODE=custom ROLES=worker RUN=service HUB=hub.example.com LOGIN=1 SERVICE_USER=.\me SERVICE_PASSWORD=...
 ```
+
+**A join that fails doesn't fail the install.** When the worker's join with
+`JOIN_CODE` fails - the code expired (an unattended install that ran late,
+e.g. a Dev Box customization), it is unknown, or the hub can't be reached -
+the MSI installs all the same: the binaries, the service or logon task, the
+tray and the recorded `HUB` / `CA_FINGERPRINT` stay, and the worker waits
+for a sign-in like `LOGIN=1`'s - the Longarm tray, `longarmd login <hub>
+--role both`, or `longarmd join <hub> <new code>`. Why the join failed is in
+the install log (`/l*v`) and in the data dir's `install-join-failed`. (The
+client's `CLIENT_JOIN_CODE` never failed the install.)
 
 The MSI adds inbound UDP+TCP firewall rules for longarm, longarmd and
 longarm-tray, puts them on PATH, starts the tray at logon, records `HUB`

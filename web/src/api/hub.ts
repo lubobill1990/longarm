@@ -132,7 +132,8 @@ export const hubApi = {
   removeWorker: (name: string) => post<NodeInfo>(`/api/nodes/${enc(name)}/remove`),
   // public: the login page's sign-in buttons, the newest release
   authInfo: () => get<{ entra?: boolean; mode?: string; providers?: AuthProvider[]; feedback_url?: string; repo_url?: string }>('/auth/info'),
-  latestRelease: () => get<LatestRelease>('/releases/latest.json'),
+  /** the newest release of a channel (stable when none: preview, dev) */
+  latestRelease: (channel?: string) => get<LatestRelease>(`/releases/latest.json${channel && channel !== 'stable' ? `?channel=${channel}` : ''}`),
   jobs: (q: { worker?: string; states?: string[]; limit?: number } = {}) => {
     const p = new URLSearchParams()
     if (q.worker) p.set('worker', q.worker)

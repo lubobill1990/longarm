@@ -132,3 +132,28 @@ func TestReloadHubFile(t *testing.T) {
 		t.Fatalf("code config: %+v %v", c.Hub, err)
 	}
 }
+
+// An installer's join that fails (here: the hub unreachable; an expired
+// code alike) doesn't fail the install: the hub is recorded for a sign-in
+// to come and the reason kept (JoinFailed).
+func TestJoinFailedKeepsTheInstall(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	const hub = "127.0.0.1:1"
+	const fp = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+	jerr := Join(ctx, dir, hub, "K7P-Q2M", JoinOptions{Fingerprint: fp, NoWait: true, Out: io.Discard})
+	if jerr == nil {
+		t.Fatal("a join to nowhere succeeded")
+	}
+	if err := JoinFailed(dir, hub, fp, jerr, io.Discard); err != nil {
+		t.Fatalf("JoinFailed: %v", err)
+	}
+	hf, err := hubclient.LoadFile(dir)
+	if err != nil || !hf.SignIn || hf.Address != hub {
+		t.Fatalf("hub.toml %+v %v: want the hub, waiting for a sign-in", hf, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, JoinFailedFile)); err != nil || len(b) == 0 {
+		t.Fatalf("%s: %q %v", JoinFailedFile, b, err)
+	}
+}

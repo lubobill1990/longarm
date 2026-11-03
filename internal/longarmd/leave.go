@@ -269,11 +269,41 @@ func InstallSetup(ctx context.Context, dataDir string, o SetupOptions) error {
 		return nil
 	}
 	if err := Join(ctx, dataDir, o.Hub, o.Code, JoinOptions{Name: o.Name, Fingerprint: o.Fingerprint, NoWait: true, Out: o.Out}); err != nil {
-		return err
+		// not the install's failure: the service is set up, the worker waits
+		// for a sign-in (JoinFailed)
+		return JoinFailed(dataDir, o.Hub, o.Fingerprint, err, o.Out)
 	}
 	// This install enrolled the node: if the install fails later (e.g. the
 	// service account can't log on), InstallRollback takes it back.
 	return os.WriteFile(filepath.Join(dataDir, InstallEnrolledFile), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
+}
+
+// JoinFailedFile records in a data dir why the installer's join failed
+// (JoinFailed); a later enrollment makes it stale.
+const JoinFailedFile = "install-join-failed"
+
+// JoinFailed handles an installer's failed join (an expired or unknown
+// code, the hub unreachable): the install goes on - the binaries, the
+// service or logon task and the tray stay - and the worker waits
+// unenrolled. The hub and its CA are recorded as for a sign-in to come
+// (SetUpSignIn), so the Longarm tray or `longarmd login` signs it in later
+// (or `longarmd join` with a new code); why is in JoinFailedFile and the
+// install log. An unattended install (Dev Box customization) that ran
+// after its code expired so still installs.
+func JoinFailed(dataDir, hub, fingerprint string, joinErr error, out io.Writer) error {
+	fmt.Fprintf(out, "join failed: %v\n", joinErr)
+	fmt.Fprintf(out, "the install goes on without enrolling: sign in later from the Longarm tray or with `longarmd login %s --role both`, or `longarmd join %s <new code> --data-dir %s`\n",
+		hub, hub, dataDir)
+	note := fmt.Sprintf("%s join with the installer's code failed: %v\n", time.Now().UTC().Format(time.RFC3339), joinErr)
+	if err := os.WriteFile(filepath.Join(dataDir, JoinFailedFile), []byte(note), 0o600); err != nil {
+		fmt.Fprintf(out, "warning: %v\n", err)
+	}
+	if err := SetUpSignIn(dataDir, hub, fingerprint); err != nil {
+		// the binaries and the service are in place all the same; the hub
+		// is given again at the sign-in
+		fmt.Fprintf(out, "warning: recording the hub for a later sign-in: %v\n", err)
+	}
+	return nil
 }
 
 // InstallEnrolledFile marks a data dir whose enrollment the running
