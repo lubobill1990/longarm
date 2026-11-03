@@ -96,15 +96,22 @@ describe('WorkerCard', () => {
       { cpu: 10, mem: 50, disk: 40, net_rx: 1000, net_tx: 10 },
       { cpu: 20, mem: 60, disk: 41, net_rx: 1572864, net_tx: 2048 },
     ]
-    render(<WorkerCard w={w} now={now} />)
+    const { container } = render(<WorkerCard w={w} now={now} />)
+    const charts = () => container.querySelectorAll('svg.spark').length
+    // the metrics chart: the one with the MEM key
+    const lines = () => screen.getByText(/MEM/, { selector: '.spark-key' }).closest('.spark-wrap')!.querySelectorAll('path').length
     expect(screen.queryByLabelText('DISK')).toBeNull()
-    expect(screen.queryByTestId('net-chart')).toBeNull()
+    expect(lines()).toBe(2)
+    const before = charts()
     fireEvent.click(screen.getByRole('button', { name: /disk/i }))
     expect(screen.getByLabelText('DISK')).toBeTruthy()
+    expect(lines()).toBe(3)
     fireEvent.click(screen.getByRole('button', { name: /net/i }))
     expect(screen.getByTestId('net-now').textContent).toContain('↓ 1.5 MB/s')
     expect(screen.getByTestId('net-now').textContent).toContain('↑ 2 KB/s')
-    expect(screen.getByTestId('net-chart')).toBeTruthy()
+    // in and out join the same chart (on their own scale), no second chart
+    expect(lines()).toBe(5)
+    expect(charts()).toBe(before)
     expect(JSON.parse(localStorage.getItem('longarm.metrics.extra') ?? '{}')).toEqual({ disk: true, net: true })
     cleanup()
     render(<WorkerCard w={w} now={now} />) // another card, later: still on

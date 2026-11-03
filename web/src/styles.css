@@ -220,6 +220,8 @@ table.grid tr.subrow td { border-top: none; }
 .agent::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--c, var(--faint)); }
 .agent .n { margin-left: auto; font-family: var(--mono); font-weight: 700; font-size: 15px; }
 .agent .m { font-family: var(--mono); font-size: 11px; color: var(--muted); min-width: 42px; text-align: right; }
+/* the letters centered in the box, not their line box: cap height to baseline */
+.agent > span { text-box: trim-both cap alphabetic; }
 
 .tops { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .tops .title { color: var(--faint); font-size: 10px; font-weight: 700; margin-bottom: 2px; }
@@ -235,8 +237,8 @@ table.grid tr.subrow td { border-top: none; }
 .leg-row { display: grid; grid-template-columns: 12px auto 1fr auto; gap: 8px; align-items: baseline; color: var(--muted); }
 .leg-row.active { color: var(--fg); }
 .leg-row .leg-ep { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.netrow { display: flex; gap: 12px; align-items: baseline; margin: 2px 0; font-variant-numeric: tabular-nums; }
-.netrow .label { color: var(--muted); width: 34px; }
+/* the NET row: a bar row without a track, its value two rates wide */
+.bar.net { grid-template-columns: 36px 1fr auto; }
 
 /* an update of a machine (lib/update.ts; the tray styles it in tray.css) */
 .wcard .upd-status, .wcard .upd-badge { position: relative; display: flex; flex-direction: column; gap: 3px; margin: 0 0 6px; padding: 6px 28px 6px 8px; border-radius: 6px; background: #2b2111; font-size: 12px; }

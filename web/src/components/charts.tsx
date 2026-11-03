@@ -31,6 +31,11 @@ export interface Series {
   label?: string
   /** the value as text (the hover tooltip): default a percent */
   fmt?: (v: number) => string
+  /** drawn relative to this value (its own scale in a percent chart:
+   *  network bytes/s), the tooltip still showing the value itself */
+  peak?: number
+  /** false: no legend key (a toggle stands for it) */
+  key?: boolean
 }
 
 /** A legend entry that shows or hides a series (off by default: disk, network). */
@@ -88,13 +93,14 @@ export function Sparkline({
   const H = height
   let top = typeof max === 'number' ? max : 0
   if (max === 'auto') {
-    for (const s of series) for (const v of s.values) if (v !== null && v > top) top = v
+    for (const s of series) if (!s.peak) for (const v of s.values) if (v !== null && v > top) top = v
     top = niceMax(top)
   }
   const step = W / Math.max(1, slots - 1)
   const y = (v: number) => H - 2 - ((H - 4) * Math.min(Math.max(v, 0), top)) / (top || 1)
   const paths = series.map((s) => {
     const off = slots - s.values.length
+    const k = s.peak ? top / s.peak : 1
     let d = ''
     let pen = false
     s.values.forEach((v, i) => {
@@ -103,7 +109,7 @@ export function Sparkline({
         return
       }
       const x = (off + i) * step
-      d += `${pen ? 'L' : 'M'}${x.toFixed(1)},${y(v).toFixed(1)}`
+      d += `${pen ? 'L' : 'M'}${x.toFixed(1)},${y(v * k).toFixed(1)}`
       pen = true
     })
     return { d, color: s.color }
@@ -162,7 +168,7 @@ export function Sparkline({
           {legend &&
             series.map((s, i) =>
               // a series a toggle shows has the toggle as its key
-              s.label && !toggles?.some((t) => t.on && t.label === s.label) ? (
+              s.label && s.key !== false && !toggles?.some((t) => t.on && t.label === s.label) ? (
                 <span key={i} className="spark-key" style={{ color: cssColor(s.color) }}>
                   ● {s.label}
                 </span>

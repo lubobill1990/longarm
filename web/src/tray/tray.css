@@ -892,10 +892,16 @@
   & .srcbar .sep {
     color: var(--border-strong);
   }
+  /* the text's letters centered, not its line box (the UI font sits low in
+     it): trimmed to cap height and baseline */
+  & .srcbar > span:not(.dot),
+  & .agent > span {
+    text-box: trim-both cap alphabetic;
+  }
   & .srcbar-chip {
     font-family: var(--mono);
     font-size: var(--fs-xs);
-    padding: 1px 8px;
+    padding: 4px 8px;
     border-radius: var(--r-pill);
     background: var(--surface-2);
     color: var(--text-2);
@@ -1267,17 +1273,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--text-3);
-  }
-  & .netrow {
-    display: flex;
-    gap: 12px;
-    align-items: baseline;
-    font-variant-numeric: tabular-nums;
-    margin: 2px 0;
-  }
-  & .netrow .label {
-    color: var(--text-3);
-    width: 34px;
   }
   & .leg {
     font-size: 10.5px;
