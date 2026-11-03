@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/toolchain"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -28,7 +29,7 @@ import (
 // that passed its canary ("stable"), which non-canary nodes get meanwhile.
 
 // KnownTools are the tools the reconciler knows how to install.
-var KnownTools = []string{"git", "gh", "node", "pnpm", "uv", "pwsh", "claude", "copilot", "go"}
+var KnownTools = toolchain.KnownTools
 
 type profileRecord struct {
 	Latest json.RawMessage `json:"latest"`

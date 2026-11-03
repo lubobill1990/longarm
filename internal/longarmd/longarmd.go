@@ -865,7 +865,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		wg.Add(1)
 		go func() { defer wg.Done(); <-ctx.Done(); agent.relay.wait() }()
 	}
-	if hubOn && !cfg.Toolchain.Disabled && !adminWorker { // no package operations as SYSTEM on the hub's say
+	if hubOn {
 		backend, err := toolchain.New(cfg.Toolchain.Backend, cfg.Toolchain.FakeState)
 		if sys, ok := backend.(*toolchain.System); ok {
 			sys.MachineWide = perUser
@@ -874,7 +874,8 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 			log.Warn("toolchain disabled", "err", err)
 		} else {
 			agent.tc = &toolchain.Reconciler{Backend: backend, Log: log.With("component", "toolchain"),
-				Running: st.spaces.RunningJobs, Drain: agent.setToolDrain, Interval: cfg.Toolchain.Interval.Duration,
+				Disabled: cfg.Toolchain.Disabled || adminWorker,
+				Running:  st.spaces.RunningJobs, Drain: agent.setToolDrain, Interval: cfg.Toolchain.Interval.Duration,
 				Report: func(r *pb.ToolchainReport) {
 					wtel.event("toolchain.reconcile", map[string]string{"state": r.State, "error": r.Error, "profile": r.Profile})
 					agent.send(&pb.NodeReport{Msg: &pb.NodeReport_Toolchain{Toolchain: r}}, false)

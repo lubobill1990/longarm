@@ -38,6 +38,9 @@ type Backend interface {
 	Install(ctx context.Context, tool, version string, log *slog.Logger) error
 }
 
+// KnownTools is the baseline inventory, even on workers without a profile.
+var KnownTools = []string{"git", "gh", "node", "pnpm", "uv", "pwsh", "claude", "copilot", "go"}
+
 var versionRE = regexp.MustCompile(`\d+(\.\d+)+`)
 
 // ParseVersion extracts the first dotted version from a --version output.
@@ -69,6 +72,8 @@ type Reconciler struct {
 	Report func(*pb.ToolchainReport)
 	// Interval between re-checks of an applied profile (default 30m).
 	Interval time.Duration
+	// Disabled keeps inventory reporting on but forbids installations.
+	Disabled bool
 
 	mu      sync.Mutex
 	desired *pb.ToolchainDesired
@@ -114,7 +119,7 @@ func (r *Reconciler) Status() *pb.ToolchainReport {
 func (r *Reconciler) setReport(rep *pb.ToolchainReport) {
 	rep.UpdatedAt = timestamppb.Now()
 	r.mu.Lock()
-	changed := r.report == nil || r.report.State != rep.State || r.report.Revision != rep.Revision ||
+	changed := r.report == nil || r.report.Profile != rep.Profile || r.report.State != rep.State || r.report.Revision != rep.Revision ||
 		r.report.Error != rep.Error || !maps.Equal(r.report.Versions, rep.Versions)
 	r.report = rep
 	r.mu.Unlock()
@@ -137,12 +142,19 @@ func (r *Reconciler) Run(ctx context.Context) {
 	r.mu.Unlock()
 	t := time.NewTicker(r.Interval)
 	defer t.Stop()
+	inventory := time.NewTicker(5 * time.Minute)
+	defer inventory.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-wake:
 		case <-t.C:
+		case <-inventory.C:
+			rep := r.Status()
+			rep.Versions, _ = r.check(ctx, &pb.ToolchainDesired{})
+			r.setReport(rep)
+			continue
 		}
 		r.reconcile(ctx)
 	}
@@ -161,15 +173,23 @@ func (r *Reconciler) current() *pb.ToolchainDesired {
 func (r *Reconciler) check(ctx context.Context, d *pb.ToolchainDesired) (map[string]string, []*pb.ToolSpec) {
 	versions := map[string]string{}
 	var todo []*pb.ToolSpec
+	names := append([]string{}, KnownTools...)
 	for _, t := range d.Tools {
-		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		v, err := r.Backend.Version(cctx, t.Name)
+		if _, ok := versionArgs[t.Name]; !ok {
+			names = append(names, t.Name)
+		}
+	}
+	for _, name := range names {
+		cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		v, err := r.Backend.Version(cctx, name)
 		cancel()
 		if err != nil {
-			r.Log.Warn("toolchain: version check", "tool", t.Name, "err", err)
+			r.Log.Warn("toolchain: version check", "tool", name, "err", err)
 		}
-		versions[t.Name] = v
-		if !Satisfies(v, t.Version) {
+		versions[name] = v
+	}
+	for _, t := range d.Tools {
+		if !Satisfies(versions[t.Name], t.Version) {
 			todo = append(todo, t)
 		}
 	}
@@ -179,13 +199,13 @@ func (r *Reconciler) check(ctx context.Context, d *pb.ToolchainDesired) (map[str
 func (r *Reconciler) reconcile(ctx context.Context) {
 	d := r.current()
 	if d == nil {
-		return
-	}
-	if d.Profile == "" || d.Revision == 0 {
-		r.setReport(&pb.ToolchainReport{Profile: d.Profile, Revision: d.Revision, State: "none"})
-		return
+		d = &pb.ToolchainDesired{}
 	}
 	versions, todo := r.check(ctx, d)
+	if r.Disabled || len(d.Tools) == 0 {
+		r.setReport(&pb.ToolchainReport{Profile: d.Profile, Revision: d.Revision, State: "none", Versions: versions})
+		return
+	}
 	if len(todo) == 0 {
 		r.setReport(&pb.ToolchainReport{Profile: d.Profile, Revision: d.Revision, State: "ok", Versions: versions})
 		return

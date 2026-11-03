@@ -2,6 +2,7 @@ package toolchain
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,36 @@ import (
 
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
+
+func TestInventoryWithoutProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fake.json")
+	if err := os.WriteFile(path, []byte(`{"tools":{"git":"2.45.0","copilot":"0.1.0"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := &Reconciler{Backend: &Fake{Path: path}, Log: slog.Default()}
+	r.reconcile(context.Background())
+	rep := r.Status()
+	if rep.State != "none" || len(rep.Versions) != len(KnownTools) || rep.Versions["git"] != "2.45.0" || rep.Versions["copilot"] != "0.1.0" {
+		t.Fatalf("inventory: %v", rep)
+	}
+	if v, ok := rep.Versions["claude"]; !ok || v != "" {
+		t.Fatalf("missing tool: %v", rep.Versions)
+	}
+	// A reconnect kick rechecks external installs without installing anything.
+	if err := os.WriteFile(path, []byte(`{"tools":{"claude":"2.0.0"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.reconcile(context.Background())
+	if r.Status().Versions["claude"] != "2.0.0" {
+		t.Fatal(r.Status())
+	}
+	r.Disabled = true
+	r.SetDesired(&pb.ToolchainDesired{Tools: []*pb.ToolSpec{{Name: "node", Version: "22"}}})
+	r.reconcile(context.Background())
+	if r.Status().State != "none" || r.Status().Versions["node"] != "" {
+		t.Fatal("disabled reconciler installed tools")
+	}
+}
 
 func TestSatisfies(t *testing.T) {
 	for _, c := range []struct {

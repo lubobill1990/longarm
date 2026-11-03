@@ -502,6 +502,7 @@ func (a *hubAgent) session(ctx context.Context) error {
 	}
 	a.send(&pb.NodeReport{Msg: &pb.NodeReport_Jobs{Jobs: full}}, false)
 	if a.tc != nil {
+		a.tc.Kick() // refresh inventory on reconnect, even without a profile
 		a.send(&pb.NodeReport{Msg: &pb.NodeReport_Toolchain{Toolchain: a.tc.Status()}}, false)
 	}
 	if a.links != nil {
