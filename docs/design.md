@@ -280,10 +280,15 @@ What `join` does: generate the node key → exchange for a certificate → join 
 The hub also persists an owner's desired tool list per worker. `longarm worker
 toolchain` reads or replaces it and can request immediate reconciliation; the
 admin profile takes precedence on conflicts, retaining its canary rollout.
+Rollout progress checks only the profile's installed tool versions, not owner
+revisions or failures of owner-only tools.
 Owner changes need no fleet-admin privileges and do not uninstall tools when
-cleared. Workers report all nine baseline versions at connect and every five
-minutes even without desired tools; `worker ls --json` exposes this cached
-inventory (`""` means missing, no report means unknown). Windows installers
+cleared. Non-admin workers with toolchains enabled probe all nine baseline
+versions at connect and every five minutes even without desired tools, except
+during installation; only changed inventories are reported. Admin and disabled
+workers run no probes. `worker ls --json` exposes this cached inventory (`""`
+means missing; probe errors retain cached versions or omit unknown keys).
+Windows installers
 refresh the daemon's executable lookup so version checks and subsequent jobs
 see newly installed tools without a worker restart.
 
