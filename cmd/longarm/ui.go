@@ -79,8 +79,9 @@ exits 2 with the list.`,
 			}
 			switch {
 			case asJSON:
-				b, _ := json.Marshal(res)
-				fmt.Fprintln(cmd.OutOrStdout(), string(b))
+				e := json.NewEncoder(cmd.OutOrStdout())
+				e.SetEscapeHTML(false) // the URL's & as is
+				e.Encode(res)
 			case printURL:
 				fmt.Fprintln(cmd.OutOrStdout(), res.URL)
 			}

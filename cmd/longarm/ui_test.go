@@ -81,7 +81,7 @@ func TestUIOpenCLI(t *testing.T) {
 	}
 	out, code := uiCLI(t, "--config-dir", dir, "sessions", "--worker", "worker-1", "--job", "01JZ8K", "--json")
 	var res uipage.Result
-	if code != 0 || json.Unmarshal([]byte(out), &res) != nil || !res.Opened || res.URL != "http://127.0.0.1:1/sessions#job=01JZ8K&worker=worker-1" {
+	if code != 0 || json.Unmarshal([]byte(out), &res) != nil || !res.Opened || res.URL != "http://127.0.0.1:1/sessions#job=01JZ8K&worker=worker-1" || !strings.Contains(out, "#job=01JZ8K&worker") {
 		t.Fatalf("sessions --json: %d %s", code, out)
 	}
 	if out, code := uiCLI(t, "--config-dir", dir, "jobs", "--print-url"); code != 0 || out != "http://127.0.0.1:1/tray?tab=jobs?token=abc\n" {
