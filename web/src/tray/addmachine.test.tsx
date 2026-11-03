@@ -46,6 +46,12 @@ describe('installSteps', () => {
     expect(t).not.toMatch(/github|gh release/)
   })
 
+  it('a release channel: the installer of that channel (quoted for the shell); stable: as ever', () => {
+    expect(text(opts({ channel: 'dev' }))).toContain('irm https://hub.example.com/install.ps1?channel=dev | iex')
+    expect(text(opts({ platform: 'unix', channel: 'preview' }))).toBe("curl -fsSL 'https://hub.example.com/install.sh?channel=preview' | sudo sh -s -- --login --role worker")
+    expect(text(opts({ channel: 'stable' }))).toContain('/install.ps1 | iex')
+  })
+
   it('no role or no hub: nothing', () => {
     expect(installSteps(opts({ worker: false }), PUBLIC)).toEqual([])
     expect(installSteps(opts(), { ...PUBLIC, hub_host: '' })).toEqual([])

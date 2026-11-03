@@ -22,7 +22,15 @@ export interface AddOptions {
   admin: boolean
   client: boolean
   platform: Platform
+  /** the release channel (?channel= of the installer; stable: none) */
+  channel?: 'stable' | 'preview' | 'dev'
 }
+
+const CHANNELS: ['stable' | 'preview' | 'dev', string, string][] = [
+  ['stable', 'Stable', 'Tested releases'],
+  ['preview', 'Preview', 'Release candidates, a few days early'],
+  ['dev', 'Dev', 'Every change merged: the newest, least tested'],
+]
 
 export interface Step {
   title: string
@@ -50,6 +58,8 @@ export function installSteps(o: AddOptions, info: AddMachineInfo): Step[] {
   const hub = info.hub_host
   if (!roles || !hub) return []
   const base = `https://${hub}`
+  // a channel: its newest release, the machine following it (the hub's install scripts)
+  const q = o.channel && o.channel !== 'stable' ? `?channel=${o.channel}` : ''
   if (o.platform === 'windows') {
     const env = ['$env:LONGARM_LOGIN=1', `$env:LONGARM_ROLE='${roles}'`]
     if (o.admin && o.worker) env.push("$env:LONGARM_MSI_PROPS='ADMIN_WORKER=1'")
@@ -57,15 +67,17 @@ export function installSteps(o: AddOptions, info: AddMachineInfo): Step[] {
       {
         title: 'In PowerShell: it asks for administrator rights, installs, and shows a code to approve in any browser',
         shell: 'powershell',
-        cmd: `${env.join('; ')}; irm ${base}/install.ps1 | iex`,
+        cmd: `${env.join('; ')}; irm ${base}/install.ps1${q} | iex`,
       },
     ]
   }
+  // quoted with a channel: "?" is a glob character to the shell
+  const sh = q ? `'${base}/install.sh${q}'` : `${base}/install.sh`
   return [
     {
       title: 'In a terminal: it asks for your password, installs, and shows a code to approve in any browser',
       shell: 'sh',
-      cmd: `curl -fsSL ${base}/install.sh | sudo sh -s -- --login --role ${roles}`,
+      cmd: `curl -fsSL ${sh} | sudo sh -s -- --login --role ${roles}`,
     },
   ]
 }
@@ -79,7 +91,7 @@ function guessPlatform(): Platform {
 export function AddMachine({ onClose }: { onClose: () => void }) {
   const st = usePoll(() => trayApi.addMachine(), 5 * 60_000)
   const info = st.data
-  const [opts, setOpts] = useState<AddOptions>({ worker: true, admin: false, client: false, platform: guessPlatform() })
+  const [opts, setOpts] = useState<AddOptions>({ worker: true, admin: false, client: false, platform: guessPlatform(), channel: 'stable' })
   const set = (n: Partial<AddOptions>) =>
     setOpts((o) => {
       const r = { ...o, ...n }
@@ -143,6 +155,20 @@ export function AddMachine({ onClose }: { onClose: () => void }) {
                   {label}
                 </label>
               ))}
+            </div>
+          </Section>
+          <Section card title="Release channel">
+            <div className="segmented" role="radiogroup" aria-label="Release channel" data-testid="addm-channel">
+              {CHANNELS.map(([c, label]) => (
+                <label key={c} className={opts.channel === c ? 'is-active' : ''}>
+                  <input type="radio" name="addm-channel" className="sr-only" value={c} checked={opts.channel === c} onChange={() => set({ channel: c })} />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <div className="field-help">
+              {CHANNELS.find(([c]) => c === opts.channel)?.[2]}
+              {opts.channel !== 'stable' ? '; the machine keeps following it (its Settings > Updates).' : '.'}
             </div>
           </Section>
           <Section card title="Command">
