@@ -163,7 +163,7 @@ describe('PoolTab', () => {
     expect(off.tagName).toBe('DETAILS')
     expect(off.hasAttribute('open')).toBe(false)
     expect(off.querySelector('summary')?.textContent).toContain('Offline (3)')
-    expect(within(off).getByTestId('offline-old-pair').textContent).toContain('last seen 20h ago')
+    expect(within(off).getByTestId('offline-old-pair').textContent).toContain('Last seen 20h ago')
     expect(within(off).queryByText(/rpc error/)).toBeNull()
     fireEvent.click(within(within(off).getByTestId('offline-old-pair')).getByText('Details'))
     expect(within(off).getByText(/rpc error/)).toBeTruthy()

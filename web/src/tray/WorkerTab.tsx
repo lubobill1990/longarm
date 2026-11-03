@@ -156,11 +156,11 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
           }}
         >
           <label className="field">
-            <span className="field-label">max jobs</span>
+            <span className="field-label">Max jobs</span>
             <input aria-label="max jobs" type="number" min={0} value={maxJobs} onChange={(e) => setMaxJobs(e.target.value)} />
           </label>
           <label className="field">
-            <span className="field-label">keep free (GB)</span>
+            <span className="field-label">Keep free (GB)</span>
             <input aria-label="reserved memory" type="number" min={0} step="0.5" value={reserve} onChange={(e) => setReserve(e.target.value)} />
           </label>
           <button disabled={busy}>Save</button>

@@ -52,7 +52,7 @@ describe('release channel', () => {
     const posts = calls.filter((c) => c.url === '/trayapi/update/channel')
     expect(posts.map((c) => JSON.parse(String(c.init?.body)))).toEqual([{ channel: 'dev' }])
     expect(section.textContent).toContain('0.1.22-dev.7 available')
-    expect(screen.getByTestId('channel-help').textContent).toContain('every change merged to main')
+    expect(screen.getByTestId('channel-help').textContent).toContain('Every change merged to main')
   })
 
   it("only the machine's owner or an administrator may change it", async () => {

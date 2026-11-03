@@ -448,7 +448,7 @@ export function OfflineRow({ m, actions }: { m: PoolMachine; actions?: CardActio
         <span className="dot is-gone" style={{ width: 8, height: 8, background: 'var(--faint)' }} />
         <span className="oname">{m.key}</span>
         {m.admin && <AdminBadge admin={m.admin} compact />}
-        <span className="muted small">last seen {fmtLastSeen(m.offlineFor)} ago</span>
+        <span className="muted small">Last seen {fmtLastSeen(m.offlineFor)} ago</span>
         {m.update?.state === 'timed_out' && (
           <span className="small amber" data-testid="offline-update">
             update to v{(m.update.to ?? '').replace(/^v/, '')} didn't finish
@@ -512,7 +512,7 @@ function LinkRows({ w, now, updating, chart }: { w: PoolWorker; now: number; upd
             tcp (loopback only): unreachable from here
           </span>
         </div>
-        <div className="small muted">the worker listens on its own machine only; a current longarmd also listens on the hub's relay</div>
+        <div className="small muted">The worker listens on its own machine only; a current longarmd also listens on the hub's relay</div>
       </div>
     )
   }

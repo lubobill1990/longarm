@@ -385,7 +385,7 @@ function AccountCard({
           <IconFeedback />
         </button>
       </div>
-      {acct.signed_in && acct.expires && <div className="small muted">sign-in valid until {when(acct.expires)} (renews by itself)</div>}
+      {acct.signed_in && acct.expires && <div className="small muted">Sign-in valid until {when(acct.expires)} (renews by itself)</div>}
       <p className="button-row">
         {acct.signed_in && acct.hub && (
           // signed in already: signing in again is switching to another account

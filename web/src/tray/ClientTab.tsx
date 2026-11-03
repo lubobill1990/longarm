@@ -346,9 +346,9 @@ export function Licenses() {
 
 /** Release channels, most tested first (docs/ci-cd.md "Release channels"). */
 export const CHANNELS: [string, string, string][] = [
-  ['stable', 'Stable', 'releases only'],
-  ['preview', 'Preview', 'release candidates too, before everybody gets them'],
-  ['dev', 'Dev', 'every change merged to main: the newest, least tested'],
+  ['stable', 'Stable', 'Releases only'],
+  ['preview', 'Preview', 'Release candidates too, before everybody gets them'],
+  ['dev', 'Dev', 'Every change merged to main: the newest, least tested'],
 ]
 
 /**
@@ -414,14 +414,14 @@ export function AutoUpdate() {
         <span>
           <span className="field-label">Install new releases automatically</span>
           <span className="field-help">
-            every {u.auto_interval_hours ?? 6} h, once no job started for 5 minutes, from the {channel} channel
+            Every {u.auto_interval_hours ?? 6} h, once no job started for 5 minutes, from the {channel} channel
             {owner}
           </span>
         </span>
       </label>
       {u.last && (
         <p className="field-help" data-testid="last-update">
-          last update: {u.last.from} → {u.last.to}: {u.last.ok ? 'installed' : `failed (${u.last.error ?? ''})`}
+          Last update: {u.last.from} → {u.last.to}: {u.last.ok ? 'installed' : `failed (${u.last.error ?? ''})`}
         </p>
       )}
     </Section>
@@ -510,7 +510,7 @@ function TraySettingsView({ pool, clientUp }: { pool?: PoolView; clientUp: boole
           />
           <span>
             <span className="field-label">My workers</span>
-            <span className="field-help">offline / back online, memory low, link relayed</span>
+            <span className="field-help">Offline / back online, memory low, link relayed</span>
           </span>
         </label>
         <label className="switch-row">
@@ -524,7 +524,7 @@ function TraySettingsView({ pool, clientUp }: { pool?: PoolView; clientUp: boole
           />
           <span>
             <span className="field-label">My jobs</span>
-            <span className="field-help">done, failed, killed, lost</span>
+            <span className="field-help">Done, failed, killed, lost</span>
           </span>
         </label>
         <p className="muted small">Only your own workers and the jobs you started notify; other people&apos;s machines never do.</p>
@@ -563,7 +563,7 @@ function TraySettingsView({ pool, clientUp }: { pool?: PoolView; clientUp: boole
           <span>
             <span className="field-label">Send anonymous telemetry</span>
             <span className="field-help">
-              errors, timings; no names, commands or output{s?.telemetry_env_off ? ' - off: LONGARM_TELEMETRY=0' : ''}
+              Errors, timings; no names, commands or output{s?.telemetry_env_off ? ' - off: LONGARM_TELEMETRY=0' : ''}
             </span>
           </span>
         </label>

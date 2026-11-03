@@ -178,7 +178,7 @@ export function PoolTab({ pool, error, info, onNavigate }: { pool?: PoolView; er
       {offline.length > 0 && (
         <details className="offline-section" data-testid="offline-section">
           <summary>
-            <span className="summary-title">Offline ({offline.length})</span> <span className="muted small">not seen for over an hour</span>
+            <span className="summary-title">Offline ({offline.length})</span> <span className="muted small">Not seen for over an hour</span>
           </summary>
           {offline.map((m) => (
             <OfflineRow key={m.key} m={m} actions={actions} />
