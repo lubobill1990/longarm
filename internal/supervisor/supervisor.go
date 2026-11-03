@@ -604,6 +604,7 @@ func (m *Manager) spawnShim(e *entry, secrets map[string]string, stdin []byte) e
 	if err != nil {
 		return err
 	}
+	platform.RefreshPath() // tools installed since longarmd started (Windows)
 	cmd, err := platform.StartDetached(func() *exec.Cmd {
 		c := m.opts.ShimCommand(string(e.dir))
 		c.Stdin = &zeroingReader{b: payload} // memory only, never on disk

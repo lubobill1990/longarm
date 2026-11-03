@@ -36,6 +36,10 @@ export function TrayApp() {
   const [info, setInfo] = useState<TrayInfo>()
   const [infoErr, setInfoErr] = useState<string>()
   const [tab, setTab] = useState<Tab>(() => (new URLSearchParams(location.search).get('tab') as Tab) || 'pool')
+  // longarm ui open (internal/uipage): ?add=1 opens "Add a machine", ?job=ID
+  // that job in My jobs - once, not on every visit of the tab
+  const [startAdding, setStartAdding] = useState(() => new URLSearchParams(location.search).get('add') === '1')
+  const [openJob, setOpenJob] = useState(() => new URLSearchParams(location.search).get('job') || undefined)
   const [pool, setPool] = useState<PoolView>()
   const [poolErr, setPoolErr] = useState<string>()
   const [reload, setReload] = useState(0)
@@ -166,8 +170,17 @@ export function TrayApp() {
                 {info && info.roles.client && !info.client.running && cur !== 'worker' && cur !== 'account' && !needSignIn && <DaemonDown info={info} />}
                 {cur !== 'worker' && <ClientFirewall pool={pool} info={info} />}
               </div>
-              {cur === 'pool' && <PoolTab pool={pool} error={poolErr} info={info} onNavigate={(t) => setTab(t as Tab)} />}
-              {cur === 'jobs' && clientUp && <ClientJobs />}
+              {cur === 'pool' && (
+                <PoolTab
+                  pool={pool}
+                  error={poolErr}
+                  info={info}
+                  onNavigate={(t) => setTab(t as Tab)}
+                  startAdding={startAdding}
+                  onStartedAdding={() => setStartAdding(false)}
+                />
+              )}
+              {cur === 'jobs' && clientUp && <ClientJobs openJob={openJob} onOpenedJob={() => setOpenJob(undefined)} />}
               {cur === 'forwards' && clientUp && <Forwards workers={(pool?.workers ?? []).map((w) => w.name)} />}
               {cur === 'settings' && <Settings pool={pool} clientUp={clientUp} theme={theme} onTheme={setTheme} />}
               {cur === 'worker' && info && <WorkerTab info={info} onNavigate={(t) => setTab(t as Tab)} />}

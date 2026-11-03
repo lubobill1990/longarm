@@ -30,6 +30,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/metrics"
 	"github.com/lubobill1990/longarm/internal/pki"
+	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/supervisor"
 	"github.com/lubobill1990/longarm/internal/telemetry"
@@ -212,6 +213,9 @@ func (n *nodeServer) Info(ctx context.Context, _ *pb.InfoRequest) (*pb.InfoRespo
 	}
 	if n.s.MachineUpdate != nil {
 		out.Features = append(slices.Clip(out.Features), FeatureMachineUpdate)
+	}
+	if platform.FreshPath && !platform.FreshPathOff() {
+		out.Features = append(slices.Clip(out.Features), jobs.FeatureFreshPath)
 	}
 	if n.s.perUser() {
 		out.Account = n.s.Spaces.AccountName(id.Owner())

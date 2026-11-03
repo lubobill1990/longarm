@@ -23,9 +23,13 @@ export interface HashTarget {
   worker?: string
   agent?: Agent
   key?: string
+  /** a job (its id or a unique start or end of it; longarm ui open sessions --job) */
+  job?: string
+  /** a Longarm session's name (longarm ui open sessions --session) */
+  session?: string
 }
 
-/** #worker=..&agent=..&key=.. (the tray's /trayapi/sessions/open). */
+/** #worker=..&agent=..&key=..&job=..&session=.. (the tray's /trayapi/sessions/open, longarm ui open sessions). */
 export function parseHash(hash: string): HashTarget {
   const p = new URLSearchParams(hash.replace(/^#/, ''))
   const agent = p.get('agent')
@@ -33,7 +37,28 @@ export function parseHash(hash: string): HashTarget {
     worker: p.get('worker') || undefined,
     agent: agent === 'claude' || agent === 'copilot' ? agent : undefined,
     key: p.get('key') || undefined,
+    job: p.get('job') || undefined,
+    session: p.get('session') || undefined,
   }
+}
+
+/**
+ * The listed session a hash names: by its key, else the job's (a unique
+ * start or end of its id will do), else the Longarm session of that name -
+ * on the hash's worker when it names one. undefined: not (yet) listed.
+ */
+export function findTarget(items: AgentSession[], t: HashTarget): AgentSession | undefined {
+  if (t.key) return items.find((x) => x.key === t.key)
+  const here = items.filter((x) => !t.worker || x.worker === t.worker)
+  if (t.job) {
+    const exact = here.find((x) => x.job === t.job)
+    if (exact) return exact
+    const w = t.job.toLowerCase()
+    const partial = here.filter((x) => x.job && (x.job.toLowerCase().startsWith(w) || x.job.toLowerCase().endsWith(w)))
+    return new Set(partial.map((x) => x.job)).size === 1 ? partial[0] : undefined
+  }
+  if (t.session) return here.find((x) => x.where === 'longarm' && x.session === t.session)
+  return undefined
 }
 
 /**
@@ -111,7 +136,7 @@ function Sessions() {
   const [active, setActive] = useState<string>()
   const [recent, setRecent] = useState<string[]>([])
   const [dialog, setDialog] = useState(false)
-  const pendingKey = useRef(target.key)
+  const pending = useRef<HashTarget | undefined>(target)
   const activeRef = useRef(active)
   activeRef.current = active
   const tabsRef = useRef(tabs)
@@ -120,7 +145,7 @@ function Sessions() {
   // a new hash: its filter, and the session it names once the list has it
   useEffect(() => {
     setScope({ worker: target.worker, agent: target.agent })
-    pendingKey.current = target.key
+    pending.current = target
   }, [target.seq]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -186,10 +211,10 @@ function Sessions() {
         return { ...t, item: s, badge }
       }),
     )
-    const want = pendingKey.current
-    const hit = want && items.find((x) => x.key === want)
+    const want = pending.current
+    const hit = want && findTarget(items, want)
     if (hit) {
-      pendingKey.current = undefined
+      pending.current = undefined
       open(hit)
     }
   }, [list, open])
