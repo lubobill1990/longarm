@@ -59,6 +59,13 @@ func TestProgramsFixtures(t *testing.T) {
 	h.joinWorker(t, w, true)
 	w.start(t, true)
 	h.waitNode(t, "worker-1", "online", func(n map[string]any) bool { return isTrue(n["online"]) })
+	// worker-ls.json shows a worker with its tool inventory: the report the
+	// worker sends at connect has no updated_at until the inventory is in
+	// (seen on CI: "nodes[].toolchain.updated_at is missing").
+	h.waitNode(t, "worker-1", "a tool inventory", func(n map[string]any) bool {
+		tc, _ := n["toolchain"].(map[string]any)
+		return tc != nil && tc["updated_at"] != nil
+	})
 
 	id := strings.TrimSpace(h.mustLongarm(alice, "run", "worker-1", "--name", "build", "--", bins.helper, "print", "1", "0", "0"))
 	h.mustLongarm(alice, "wait", "worker-1", id)

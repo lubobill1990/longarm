@@ -23,80 +23,85 @@
       "metrics": {
         "agents": {
           "claude": {
-            "mem_bytes": "440754176",
-            "processes": 1,
-            "sessions": 1
+            "mem_bytes": "6067900416",
+            "processes": 24,
+            "sessions": 15
           },
           "copilot": {}
         },
-        "cpu_percent": 12.5,
-        "disk_free_bytes": "1926367186944",
-        "disk_total_bytes": "2198427660288",
-        "mem_total_bytes": "137380974592",
-        "mem_used_bytes": "33908072448",
-        "net_rx_bytes_per_sec": "110564",
-        "net_tx_bytes_per_sec": "75587",
-        "nproc": 316,
-        "threads": 32,
+        "cpu_percent": 34.1,
+        "disk_free_bytes": "34748502016",
+        "disk_total_bytes": "1022559776768",
+        "mem_total_bytes": "68412596224",
+        "mem_used_bytes": "39544262656",
+        "net_rx_bytes_per_sec": "74370",
+        "net_tx_bytes_per_sec": "42596",
+        "nproc": 718,
+        "threads": 20,
         "time": "2026-11-03T09:00:00Z",
         "top_cpu": [
           {
-            "count": 1,
-            "cpu_percent": 0.3,
-            "mem_bytes": "500191232",
+            "count": 5,
+            "cpu_percent": 3.8,
+            "mem_bytes": "202346496",
             "name": "node"
           },
           {
-            "count": 2,
-            "cpu_percent": 0.1,
-            "mem_bytes": "66674688",
+            "count": 75,
+            "cpu_percent": 3.6,
+            "mem_bytes": "3313934336",
             "name": "claude"
           },
           {
-            "count": 4,
-            "cpu_percent": 0.1,
-            "mem_bytes": "212406272",
+            "count": 24,
+            "cpu_percent": 2.5,
+            "mem_bytes": "6067900416",
             "name": "longarmd"
           },
           {
             "count": 1,
+            "cpu_percent": 0.3,
+            "mem_bytes": "234459136",
             "name": "git"
           },
           {
-            "count": 1,
-            "mem_bytes": "50012160",
+            "count": 12,
+            "cpu_percent": 0.2,
+            "mem_bytes": "1539510272",
             "name": "pwsh"
           }
         ],
         "top_mem": [
           {
-            "count": 8,
-            "mem_bytes": "1409290240",
+            "count": 24,
+            "cpu_percent": 2.5,
+            "mem_bytes": "6067900416",
             "name": "node"
           },
           {
-            "count": 16,
-            "mem_bytes": "1093402624",
+            "count": 75,
+            "cpu_percent": 3.6,
+            "mem_bytes": "3313934336",
             "name": "claude"
           },
           {
-            "count": 18,
-            "mem_bytes": "582336512",
+            "count": 10,
+            "mem_bytes": "2628894720",
             "name": "longarmd"
           },
           {
-            "count": 1,
-            "mem_bytes": "572395520",
+            "count": 29,
+            "mem_bytes": "2282745856",
             "name": "git"
           },
           {
-            "count": 1,
-            "cpu_percent": 0.3,
-            "mem_bytes": "500191232",
+            "count": 35,
+            "cpu_percent": 0.1,
+            "mem_bytes": "1777348608",
             "name": "pwsh"
           }
         ],
-        "uptime_seconds": "692809"
+        "uptime_seconds": "193216"
       },
       "name": "worker-1",
       "online": true,
@@ -105,7 +110,18 @@
       "state": "approved",
       "toolchain": {
         "state": "none",
-        "updated_at": "2026-11-03T09:00:00Z"
+        "updated_at": "2026-11-03T09:00:00Z",
+        "versions": {
+          "claude": "2.1.310",
+          "copilot": "1.0.105",
+          "gh": "2.103.3",
+          "git": "2.56.0",
+          "go": "1.27.3",
+          "node": "26.13.0",
+          "pnpm": "10.32.1",
+          "pwsh": "7.6.9",
+          "uv": "0.9.8"
+        }
       },
       "version": "v1.9.0"
     }

@@ -6,8 +6,8 @@
         "endedAt": "2026-11-03T09:00:00Z",
         "hasExitCode": true,
         "logSize": "7",
-        "pid": 42296,
-        "shimPid": 19732,
+        "pid": 79592,
+        "shimPid": 74756,
         "spec": {
           "argv": [
             "claude",
