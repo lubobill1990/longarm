@@ -305,6 +305,15 @@
 
 ### Fixed
 
+- `longarm run --repo .` / `longarm sync` / a handoff from a **shallow clone**
+  (`git clone --depth`) failed on the worker with "bundle did not send all
+  necessary objects" (Could not read ..., Failed to traverse parents): the
+  bundle stops at the clone's shallow commits. The client now sends them
+  (`SyncHeader.shallow`), the worker's mirror records them as its own and
+  drops them once a later bundle brings their history, and `Refs` no longer
+  offers tips beyond them (a full clone syncing to the same mirror would
+  leave out what lies beyond). An older longarmd fails as before; the client
+  then says to update it or `git fetch --unshallow`.
 - `longarm desktop` told one of two Dev Boxes created together wrong or not at
   all: it compared their last connection with the worker's newest remote
   logon only, which can be a reconnect without a user (after an update).

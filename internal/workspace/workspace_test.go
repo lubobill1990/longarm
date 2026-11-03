@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +95,62 @@ func run(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// A shallow clone's bundle: the mirror takes its shallow commit as its own,
+// Refs doesn't offer tips past it, and a later bundle with the history
+// makes the mirror whole again.
+func TestImportBundleShallow(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	s := &Store{Root: filepath.Join(root, "data")}
+	ctx := context.Background()
+	up := filepath.Join(root, "up")
+	os.MkdirAll(up, 0o755)
+	run(t, up, "init", "-q", "-b", "main")
+	for _, c := range []string{"c1", "c2", "c3"} {
+		os.WriteFile(filepath.Join(up, "a.txt"), []byte(c), 0o644)
+		run(t, up, "add", ".")
+		run(t, up, "commit", "-qm", c)
+	}
+	c3 := run(t, up, "rev-parse", "HEAD")
+	shallow := filepath.Join(root, "shallow")
+	run(t, root, "clone", "-q", "--depth", "1", "file:///"+strings.TrimPrefix(filepath.ToSlash(up), "/"), shallow)
+	b1 := filepath.Join(root, "b1")
+	run(t, shallow, "bundle", "create", "-q", b1, "HEAD")
+
+	if err := s.ImportBundle(ctx, "proj", b1, "main", c3, nil); err == nil {
+		t.Fatal("a shallow bundle imported without its shallow commits")
+	}
+	if err := s.ImportBundle(ctx, "proj", b1, "main", c3, []string{c3}); err != nil {
+		t.Fatal(err)
+	}
+	m := s.Mirror("proj")
+	if got := s.shallowCommits(m); len(got) != 1 || got[0] != c3 {
+		t.Fatalf("shallow %v, want [%s]", got, c3)
+	}
+	if _, commits, _ := s.Refs(ctx, "proj"); len(commits) != 0 {
+		t.Fatalf("refs offer tips past the shallow commit: %v", commits)
+	}
+
+	// a full clone's next commit, bundled whole (Refs offered nothing)
+	os.WriteFile(filepath.Join(up, "a.txt"), []byte("c4"), 0o644)
+	run(t, up, "commit", "-qam", "c4")
+	c4 := run(t, up, "rev-parse", "HEAD")
+	b2 := filepath.Join(root, "b2")
+	run(t, up, "bundle", "create", "-q", b2, "HEAD")
+	if err := s.ImportBundle(ctx, "proj", b2, "full", c4, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.shallowCommits(m); len(got) != 0 {
+		t.Fatalf("still shallow with the history in: %v", got)
+	}
+	// c3 and c4 may share a commit time: the order of the tips is not the point
+	if _, commits, _ := s.Refs(ctx, "proj"); !slices.Contains(commits, c4) {
+		t.Fatalf("refs %v", commits)
+	}
+}
+
 // TestMirrorBundleWorktree exercises the store end to end with real git:
 // bundle import, Refs, Checkout (create + reset), FetchURL and PrepareJob.
 func TestMirrorBundleWorktree(t *testing.T) {
@@ -121,13 +178,13 @@ func TestMirrorBundleWorktree(t *testing.T) {
 	}
 	bundle := filepath.Join(root, "b1")
 	run(t, src, "bundle", "create", "-q", bundle, "HEAD")
-	if err := s.ImportBundle(ctx, "proj", bundle, "main", c1); err != nil {
+	if err := s.ImportBundle(ctx, "proj", bundle, "main", c1, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, commits, _ := s.Refs(ctx, "proj"); len(commits) == 0 || commits[0] != c1 {
 		t.Fatalf("refs %v", commits)
 	}
-	if err := s.ImportBundle(ctx, "proj", "", "", strings.Repeat("ab", 20)); err == nil {
+	if err := s.ImportBundle(ctx, "proj", "", "", strings.Repeat("ab", 20), nil); err == nil {
 		t.Fatal("unknown commit accepted")
 	}
 

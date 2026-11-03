@@ -176,7 +176,7 @@ func (w *workspaceServer) Sync(st pb.Workspace_SyncServer) error {
 		PatchBytes: sizes[pb.SyncPart_SYNC_PART_PATCH], UntrackedBytes: sizes[pb.SyncPart_SYNC_PART_UNTRACKED_TAR],
 		LfsBytes: sizes[pb.SyncPart_SYNC_PART_LFS_TAR],
 	}
-	err = w.s.ws().ImportBundle(ctx, h.Repo, path(pb.SyncPart_SYNC_PART_BUNDLE), h.Branch, h.Commit)
+	err = w.s.ws().ImportBundle(ctx, h.Repo, path(pb.SyncPart_SYNC_PART_BUNDLE), h.Branch, h.Commit, h.Shallow)
 	if err == nil && res.LfsBytes > 0 {
 		_, err = w.s.ws().ImportLFS(ctx, h.Repo, path(pb.SyncPart_SYNC_PART_LFS_TAR))
 	}

@@ -224,6 +224,20 @@ func (r *hoRepo) bundle(ctx context.Context, ref, hid string, have []string) (st
 	return p, nil
 }
 
+// shallow lists the checkout's shallow commits (a shallow clone's, or a
+// worker mirror's that took one: localRepo.shallow); nil: none.
+func (r *hoRepo) shallow(ctx context.Context) []string {
+	p, err := r.git(ctx, nil, nil, "rev-parse", "--path-format=absolute", "--git-path", "shallow")
+	if err != nil {
+		return nil
+	}
+	b, err := r.ep.readSmall(ctx, strings.TrimSpace(p), 1<<20)
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(string(b))
+}
+
 // fetchBundle brings a bundle's ref into this (local) checkout.
 func (r *hoRepo) fetchBundle(ctx context.Context, bundle, ref string) error {
 	_, err := r.git(ctx, nil, nil, "fetch", "-q", "--no-tags", bundle, "+"+ref+":"+ref)
@@ -267,13 +281,14 @@ func (r *hoRepo) addLocalWorktree(ctx context.Context, dir, branch, snap, base s
 
 // sendBundle ships a bundle (made on another machine) to a worker as a
 // Workspace.Sync into path: the worker imports it into its mirror of key
-// and makes path a worktree at commit.
-func sendBundle(ctx context.Context, conn *client.Conn, key, commit, branch, dst, bundle string) (*pb.SyncResult, error) {
+// and makes path a worktree at commit. shallow: the source's shallow
+// commits (SyncHeader.shallow).
+func sendBundle(ctx context.Context, conn *client.Conn, key, commit, branch, dst, bundle string, shallow []string) (*pb.SyncResult, error) {
 	st, err := conn.Workspace().Sync(ctx)
 	if err != nil {
 		return nil, err
 	}
-	h := &pb.SyncHeader{Repo: key, Commit: commit, Branch: branch, Path: dst}
+	h := &pb.SyncHeader{Repo: key, Commit: commit, Branch: branch, Path: dst, Shallow: shallow}
 	if err := st.Send(&pb.SyncChunk{Msg: &pb.SyncChunk_Header{Header: h}}); err != nil {
 		_, rerr := st.CloseAndRecv()
 		return nil, firstErr(rerr, err)

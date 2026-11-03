@@ -785,6 +785,11 @@ message SyncHeader {
   string branch = 3; // informational, e.g. "main"
   string path = 4; // worktree path on the worker (ignored with stage_only)
   bool stage_only = 5; // keep for a job (JobWorkspace.staging_id)
+  // shallow: the sender's shallow boundary (a shallow clone's
+  // .git/shallow): commits whose parents the bundle doesn't carry. The
+  // mirror records them as its own shallow commits before fetching the
+  // bundle (an older worker ignores them, and the fetch fails as before).
+  repeated string shallow = 6;
 }
 
 enum SyncPart {

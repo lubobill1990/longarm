@@ -250,6 +250,9 @@ func (lr *localRepo) upload(ctx context.Context, conn *client.Conn, ref, lfs str
 	}
 
 	h.Repo, h.Commit, h.Branch = lr.key, commit, branch
+	if bundle != "" {
+		h.Shallow = lr.shallow()
+	}
 	st, err := conn.Workspace().Sync(ctx)
 	if err != nil {
 		return nil, err
@@ -274,6 +277,9 @@ func (lr *localRepo) upload(ctx context.Context, conn *client.Conn, ref, lfs str
 	res, err := st.CloseAndRecv()
 	if err != nil && lfsTar != "" && strings.Contains(err.Error(), "unknown part") {
 		return nil, usagef("the worker's longarmd is too old for --lfs ship (update it): %w", err)
+	}
+	if err != nil && len(h.Shallow) > 0 && strings.Contains(err.Error(), "did not send all necessary objects") {
+		return nil, fmt.Errorf("%w\n(this checkout is shallow: the worker's longarmd is too old for that - update it, or run git fetch --unshallow here)", err)
 	}
 	return res, err
 }
@@ -318,6 +324,18 @@ func notArgs(have []string) []string {
 		have = have[:200]
 	}
 	return append([]string{"--not"}, have...)
+}
+
+// shallow lists a shallow clone's shallow commits (git clone --depth):
+// a bundle from here stops at them, so the worker has to know they have
+// no parents there (SyncHeader.shallow). nil: not shallow.
+func (lr *localRepo) shallow() []string {
+	p, err := gitOut(lr.top, nil, "rev-parse", "--path-format=absolute", "--git-path", "shallow")
+	if err != nil {
+		return nil
+	}
+	b, _ := os.ReadFile(strings.TrimSpace(string(p)))
+	return strings.Fields(string(b))
 }
 
 // existing filters commits to those present locally (bundle prerequisites
