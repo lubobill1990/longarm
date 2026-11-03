@@ -78,8 +78,12 @@
   finds nothing in use. An install that fails or is cancelled before its
   script runs starts again what was stopped. Binaries an uninstall moved
   aside and that still run (a `longarm` client) are deleted at the next
-  start. A double-clicked MSI and an uninstall from Settings still stop only
-  your tray (and, uninstalling, your worker) early (todo/updates.md).
+  start. For a double-clicked MSI and an uninstall from Settings (no
+  administrator's token for that step: only your tray, and uninstalling your
+  worker, stop early) Restart Manager now detects what is in use - in
+  seconds - instead of being off (`MSIRESTARTMANAGERCONTROL=DisableShutdown`),
+  and the installer has no files-in-use dialog, so it still never asks to
+  close anything: the elevated stop step ends what it found.
 - **Tray, a calmer machine card.** One header line: a shield in the
   machine's state color and its name - hovering them shows a card with the
   state, the end-to-end encryption, the worker and admin worker, labels,

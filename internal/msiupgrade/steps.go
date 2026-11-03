@@ -63,10 +63,11 @@ func RunStep(step, raw string, env Env) error {
 	}
 	switch step {
 	case "stop-early", "stop-early-remove":
-		// immediate, before InstallValidate: with Restart Manager off, its
-		// own files-in-use check takes ~40 s for every process that holds a
-		// file it replaces or removes - minutes for an upgrade or uninstall
-		// with Longarm running. With an administrator's token (the update
+		// immediate, before InstallValidate looks for files in use (with
+		// Restart Manager off altogether its own check took ~40 s for every
+		// process that holds a file it replaces or removes - minutes for an
+		// upgrade or uninstall with Longarm running; Restart Manager's
+		// detection is fast). With an administrator's token (the update
 		// service's install as SYSTEM, an elevated msiexec), everything is
 		// stopped and moved aside here, as the deferred stop would, and
 		// recorded; the deferred stop then adds what it still finds.

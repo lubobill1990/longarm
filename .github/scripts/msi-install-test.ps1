@@ -140,8 +140,8 @@ function Invoke-Msi([string] $what, [string] $arguments, [int[]] $ok = @(0), [st
   Write-Host "exit $($p.ExitCode) after $([int]((Get-Date) - $t).TotalSeconds)s; log $log"
   $text = Get-Content $log -Raw # UTF-16 with a BOM, or ANSI
   $bad = @()
-  # InstallValidate lists the processes holding files ("Info 1603. The file ... is being held in use"); with
-  # Restart Manager off its check takes ~40 s for each. Elevated (as here) the early stop step ends and moves
+  # InstallValidate lists the processes holding files ("Info 1603. The file ... is being held in use"; with
+  # Restart Manager off altogether its check took ~40 s for each). Elevated (as here) the early stop step ends and moves
   # aside everything before it (-NothingInUse: the upgrade's and the uninstall's own InstallValidate, the
   # first one in the log, lists nothing). A file still in use when InstallFiles replaces it is a reboot:
   # ReplacedInUseFiles, exit code 3010.

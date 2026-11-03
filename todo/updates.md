@@ -19,17 +19,19 @@ exactly the update's window needs the update's started_at against each
 sample's time (web/src/components/WorkerCard.tsx LinkRows; the pool's
 history points have no timestamps yet).
 
-## The files-in-use wait without an administrator's token
+## The unelevated MSI path is tested by hand only
 
-The MSI's early stop (internal/msiupgrade stop-early) needs an
-administrator's token to stop the services and move binaries aside before
-InstallValidate. A double-clicked MSI and an uninstall from Settings > Apps
-run their immediate steps with the user's filtered token, so only the
-user's own tray (and, uninstalling, their worker) goes early: the services
-(LongarmUpdate, longarmd-admin) and a `longarm` client still cost
-InstallValidate ~40 s each. Options: the Longarm Update service doing the
-early stop when an install of its own product asks (it runs as SYSTEM;
-the request must be bound to a running msiexec of the Longarm product, or
-any user could stop the machine's Longarm), or Restart Manager for
-detection only (MSIRESTARTMANAGERCONTROL=DisableShutdown) if it lists
-windowless processes without the dialog #47 removed - to be tried on CI.
+A double-clicked MSI and an uninstall from Settings > Apps run the early
+stop (internal/msiupgrade stop-early) with the user's filtered token: only
+their tray (and, uninstalling, their worker) goes before InstallValidate,
+and the services and a `longarm` client are still running there. That
+check is Restart Manager's detection (MSIRESTARTMANAGERCONTROL=
+DisableShutdown, seconds) with no files-in-use dialog in the UI, instead of
+Windows Installer's own (~40 s a process). CI installs elevated and silent
+(msi-install-test.ps1), so it never takes this path: check by hand that a
+double-clicked upgrade and a Settings uninstall with Longarm running pass
+"Gathering required information" in seconds, show no dialog and need no
+reboot. Should Restart Manager ask after all, the fallback is the Longarm
+Update service doing the early stop when an install of its own product asks
+(it runs as SYSTEM; the request must be bound to a running msiexec of the
+Longarm product, or any user could stop the machine's Longarm).

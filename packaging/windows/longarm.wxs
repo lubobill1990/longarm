@@ -79,19 +79,21 @@
   the service).
 
   Upgrades with Longarm running (the tray, the user-session worker, the admin worker) show no "files in
-  use" dialog and need no reboot (internal/msiupgrade, docs/usage.md "Upgrading"): Restart Manager is off
-  (MSIRESTARTMANAGERCONTROL=Disable: it can't close windowless processes and would ask); instead the
+  use" dialog and need no reboot (internal/msiupgrade, docs/usage.md "Upgrading"): Restart Manager only
+  detects (MSIRESTARTMANAGERCONTROL=DisableShutdown: it can't close windowless processes and would ask;
+  the UI has no files-in-use dialog, so it never asks); instead the
   upgrade helper (longarm-msihelper, carried in the Binary table: it must run before the installed
   version's files go, and an older installed longarmd knows nothing of it) asks Longarm's processes to
   stop - their stop events - and ends them by pid only when they can't (an older version) or don't in
   time: the worker services and every user's tray, worker host and longarmd run, elevated and before
-  StopServices / InstallFiles. With Restart Manager off, InstallValidate's own files-in-use check takes
-  ~40 s for every process holding a file (5 minutes for a desktop with Longarm running), so with an
-  administrator's token - the update service's install, an elevated msiexec - that stop already runs
-  before InstallValidate (LongarmStopEarly, immediate; the deferred stop adds to its record), after every
-  check that refuses the install; without one, only the installing user's tray (and, uninstalling, their
-  worker) goes early. An install that ends before its script ran starts again what was recorded (exit
-  actions LongarmEarlyUndoError / LongarmEarlyUndoCancel).
+  StopServices / InstallFiles. With Restart Manager off altogether (Disable), InstallValidate's own
+  files-in-use check takes ~40 s for every process holding a file (5 minutes for a desktop with Longarm
+  running); Restart Manager's detection takes seconds. With an administrator's token - the update
+  service's install, an elevated msiexec - that stop already runs before InstallValidate (LongarmStopEarly,
+  immediate; the deferred stop adds to its record), after every check that refuses the install, so
+  nothing is in use there at all; without one (a double-clicked MSI, an uninstall from Settings), only
+  the installing user's tray (and, uninstalling, their worker) goes early. An install that ends before its
+  script ran starts again what was recorded (exit actions LongarmEarlyUndoError / LongarmEarlyUndoCancel).
   Running jobs and sessions keep running: their shims are longarmd.exe processes too, so binaries still in
   use move to <install dir>\old (a running image may be renamed) and the new ones go in beside them. At the
   end the restart step starts again what ran: the services, the users' worker tasks, the trays (unelevated,
@@ -262,10 +264,12 @@
     <Property Id="DEFAULT_ADMIN" Secure="yes" />
     <Property Id="RUN_AS_SERVICE" Secure="yes" />
     <Property Id="ARPNOMODIFY" Value="1" />
-    <!-- No Restart Manager: Longarm's own processes are stopped and started again by the upgrade
-         helper (below); Restart Manager can't close the windowless ones and would show its "unable to
-         close" dialog. -->
-    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+    <!-- Restart Manager detects files in use only: Longarm's own processes are stopped and started
+         again by the upgrade helper (below) - Restart Manager can't close the windowless ones and would
+         show its "unable to close" dialog. Not Disable: Windows Installer's built-in check then takes
+         ~40 s for every process holding a file. Neither files-in-use dialog is in the UI (LongarmUI), so
+         nothing is shown for what it detects. -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="DisableShutdown" />
     <!-- Repair would re-create the service and needs the account password again (msiexec /fa ... SERVICE_PASSWORD=...). -->
     <Property Id="ARPNOREPAIR" Value="1" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/lubobill1990/longarm" />
@@ -676,8 +680,8 @@
 
       <DialogRef Id="ErrorDlg" />
       <DialogRef Id="FatalError" />
-      <DialogRef Id="FilesInUse" />
-      <DialogRef Id="MsiRMFilesInUse" />
+      <!-- no FilesInUse / MsiRMFilesInUse: the upgrade helper stops Longarm's processes before the files
+           are replaced; a dialog would only ask to close what it closes anyway -->
       <DialogRef Id="PrepareDlg" />
       <DialogRef Id="ProgressDlg" />
       <DialogRef Id="ResumeDlg" />

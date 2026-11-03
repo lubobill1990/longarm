@@ -2984,17 +2984,19 @@ sessions keep running. What happens (`internal/msiupgrade`;
 `packaging/windows/longarm.wxs`):
 
 1. **Before the in-use check** (before `InstallValidate`): Restart Manager
-   is off (`MSIRESTARTMANAGERCONTROL=Disable`: it can't close windowless
-   processes, which is what showed the dialog), and Windows Installer's own
-   in-use check then takes about 40 s for every process that holds one of
-   Longarm's files - minutes with the tray, the worker and the services
-   running. So when the installer runs with an administrator's token - the
+   only detects files in use (`MSIRESTARTMANAGERCONTROL=DisableShutdown`:
+   it can't close windowless processes, which is what showed the dialog),
+   and the installer has no files-in-use dialog, so nothing asks; step 2
+   stops what it finds. (With Restart Manager off altogether, Windows
+   Installer's own check took about 40 s for every process that holds one
+   of Longarm's files - minutes with the tray, the worker and the services
+   running.) When the installer runs with an administrator's token - the
    update service's install (as SYSTEM: the tray's "Update", automatic
    updates), `msiexec` from an elevated prompt, `uninstall.ps1` - step 2
-   runs here already, after every check that could refuse the install, and
-   the check finds nothing in use (seconds). Otherwise (a double-clicked MSI,
-   an uninstall from Settings: Windows gives these steps your unelevated
-   token) only your tray is stopped here - and, for an uninstall, your
+   runs here already, after every check that could refuse the install, so
+   nothing is in use at all. Otherwise (a double-clicked MSI, an uninstall
+   from Settings: Windows gives these steps your unelevated token) only
+   your tray is stopped here - and, for an uninstall, your
    worker: asked to exit through its stop event, a named kernel event
    `Global\LongarmStop-<pid>` that only its user, SYSTEM and Administrators
    may set, and ended by its process id after 10 s, or at once when it has

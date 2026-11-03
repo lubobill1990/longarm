@@ -6,14 +6,13 @@
 // The pieces, in the order the MSI runs them:
 //
 //   - stop-early / stop-early-remove (immediate, before InstallValidate,
-//     where Windows Installer looks for files in use): with Restart Manager
-//     off (MSIRESTARTMANAGERCONTROL=Disable), its own check takes ~40 s for
-//     every process that holds a file it replaces or removes - minutes for
-//     an upgrade or uninstall with Longarm running (the tray, the worker
-//     host and its longarmd, the services, a `longarm` client). With an
-//     administrator's token - the update service's install runs as SYSTEM,
-//     an elevated msiexec - it does what stop does below, here; the check
-//     then finds nothing in use. Without one (an uninstall from Settings,
+//     where Windows Installer looks for files in use - Restart Manager's
+//     detection, MSIRESTARTMANAGERCONTROL=DisableShutdown, with no dialog to
+//     show; with Restart Manager off altogether its own check took ~40 s for
+//     every process holding a file). With an administrator's token - the
+//     update service's install runs as SYSTEM, an elevated msiexec - it does
+//     what stop does below, here; the check then finds nothing in use.
+//     Without one (an uninstall from Settings,
 //     a double-clicked upgrade: immediate steps get the user's filtered
 //     token) only the installing user's own processes: their tray (the
 //     installer starts it again: LongarmTrayLaunch) and, for an uninstall,

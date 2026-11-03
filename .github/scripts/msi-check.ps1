@@ -62,6 +62,10 @@ $dialogs = Query $default 'SELECT `Dialog` FROM `Dialog`'
 foreach ($d in 'ModeDlg', 'RolesDlg', 'ServiceAccountDlg', 'UpdatesDlg') {
   if ($dialogs -notcontains $d) { throw "default.msi: no dialog $d" }
 }
+# Restart Manager detects files in use (MSIRESTARTMANAGERCONTROL=DisableShutdown) and the UI never asks about them
+foreach ($d in 'FilesInUse', 'MsiRMFilesInUse') {
+  if ($dialogs -contains $d) { throw "default.msi: has the $d dialog (it would ask to close Longarm's processes)" }
+}
 # every install-helper custom action passes its values as data after the marker (parsed strictly by the
 # helper), never as options, and names no program or path of its own (security.md "Installer")
 # (MSI SQL has no LIKE: filter here)
@@ -117,7 +121,7 @@ function Seq([string] $action) {
   if (-not $r.Count) { throw "default.msi: $action is not in InstallExecuteSequence" }
   return [int]$r[0]
 }
-if ((Prop $default 'MSIRESTARTMANAGERCONTROL') -ne 'Disable') { throw 'default.msi: MSIRESTARTMANAGERCONTROL is not Disable' }
+if ((Prop $default 'MSIRESTARTMANAGERCONTROL') -ne 'DisableShutdown') { throw 'default.msi: MSIRESTARTMANAGERCONTROL is not DisableShutdown' }
 $binaries = Query $default 'SELECT `Name` FROM `Binary`'
 if ($binaries -notcontains 'LongarmMsiHelper') { throw 'default.msi: no LongarmMsiHelper in the Binary table' }
 foreach ($a in @{ LongarmStopEarly = 'stop-early'; LongarmStopEarlyRemove = 'stop-early-remove'; LongarmEarlyUndoError = 'rollback'

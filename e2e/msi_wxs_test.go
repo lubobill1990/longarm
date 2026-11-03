@@ -553,14 +553,19 @@ func TestMSIUpgradeRunning(t *testing.T) {
 			t.Errorf("%s is scheduled relative to RemoveExistingProducts (a deferred action before it is error 2613)", c.Action)
 		}
 	}
+	// Restart Manager detects only (fast; Disable makes InstallValidate's own check take ~40 s for every
+	// process holding a file) and shuts nothing down; with no files-in-use dialog it never asks
 	rm := false
 	for _, pr := range p.Properties {
-		if pr.ID == "MSIRESTARTMANAGERCONTROL" && pr.Value == "Disable" {
+		if pr.ID == "MSIRESTARTMANAGERCONTROL" && pr.Value == "DisableShutdown" {
 			rm = true
 		}
 	}
 	if !rm {
-		t.Error("MSIRESTARTMANAGERCONTROL is not Disable")
+		t.Error("MSIRESTARTMANAGERCONTROL is not DisableShutdown")
+	}
+	if regexp.MustCompile(`<DialogRef Id="(MsiRM)?FilesInUse"`).Match(src) {
+		t.Error("the UI has a files-in-use dialog: Restart Manager's detection would ask to close Longarm's processes")
 	}
 	if len(p.Binaries) != 1 || p.Binaries[0].ID != "LongarmMsiHelper" || !strings.HasSuffix(p.Binaries[0].SourceFile, `\longarm-msihelper.exe`) {
 		t.Errorf("Binary table: %+v", p.Binaries)
