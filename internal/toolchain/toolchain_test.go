@@ -109,6 +109,15 @@ func TestReconcileWaitsForJobsAndDrains(t *testing.T) {
 		t.Fatalf("not drained while pending: %v", drains)
 	}
 	mu.Unlock()
+	// Inventory still refreshes during a long wait, without installing or
+	// replacing the pending state with an idle/old-profile report.
+	if err := os.WriteFile(path, []byte(`{"tools":{"git":"2.45.0","gh":"2.60.0"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.refreshInventory(ctx)
+	if rep := r.Status(); rep.State != "pending" || rep.Versions["gh"] != "2.60.0" {
+		t.Fatalf("inventory while pending: %v", rep)
+	}
 	running.Store(0)
 	wait("ok")
 	st := r.Status()

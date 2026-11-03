@@ -119,6 +119,9 @@ func (r *Reconciler) Status() *pb.ToolchainReport {
 func (r *Reconciler) setReport(rep *pb.ToolchainReport) bool {
 	rep.UpdatedAt = timestamppb.Now()
 	r.mu.Lock()
+	if rep.Versions == nil && r.report != nil {
+		rep.Versions = maps.Clone(r.report.Versions)
+	}
 	changed := r.report == nil || r.report.Profile != rep.Profile || r.report.State != rep.State || r.report.Revision != rep.Revision ||
 		r.report.OwnerRevision != rep.OwnerRevision || r.report.Error != rep.Error || !maps.Equal(r.report.Versions, rep.Versions)
 	r.report = rep
@@ -143,23 +146,49 @@ func (r *Reconciler) Run(ctx context.Context) {
 	r.mu.Unlock()
 	t := time.NewTicker(r.Interval)
 	defer t.Stop()
-	inventory := time.NewTicker(5 * time.Minute)
-	defer inventory.Stop()
+	inventoryDone := make(chan struct{})
+	go func() {
+		defer close(inventoryDone)
+		inventory := time.NewTicker(5 * time.Minute)
+		defer inventory.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-inventory.C:
+				r.refreshInventory(ctx)
+			}
+		}
+	}()
+	defer func() { <-inventoryDone }()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-wake:
 		case <-t.C:
-		case <-inventory.C:
-			rep := r.Status()
-			rep.Versions, _ = r.check(ctx, &pb.ToolchainDesired{})
-			if !r.setReport(rep) && r.Report != nil {
-				r.Report(r.Status())
-			}
-			continue
 		}
 		r.reconcile(ctx)
+	}
+}
+
+// Inventory must keep refreshing while reconciliation waits for jobs or
+// an installer. Merge under the lock so it cannot roll back a state change.
+func (r *Reconciler) refreshInventory(ctx context.Context) {
+	versions, _ := r.check(ctx, &pb.ToolchainDesired{})
+	if ctx.Err() != nil {
+		return
+	}
+	r.mu.Lock()
+	rep := &pb.ToolchainReport{State: "none"}
+	if r.report != nil {
+		rep = proto.Clone(r.report).(*pb.ToolchainReport)
+	}
+	rep.Versions, rep.UpdatedAt = versions, timestamppb.Now()
+	r.report = rep
+	r.mu.Unlock()
+	if r.Report != nil {
+		r.Report(proto.Clone(rep).(*pb.ToolchainReport))
 	}
 }
 
@@ -231,6 +260,7 @@ func (r *Reconciler) reconcile(ctx context.Context) {
 	defer r.Drain(false, "")
 	for r.Running() > 0 {
 		report("pending", fmt.Sprintf("waiting for %d running job(s) to finish", r.Running()))
+		versions = nil // subsequent progress reports keep the refreshed inventory
 		select {
 		case <-ctx.Done():
 			return
