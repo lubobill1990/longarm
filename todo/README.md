@@ -21,4 +21,3 @@ pull request description.
 | [toolchains.md](toolchains.md) | older-worker owner-tool compatibility |
 | [ci-flakes.md](ci-flakes.md) | tests that failed once and passed on a rerun |
 | [programs.md](programs.md) | programs driving Longarm: features, fixtures, session input (docs/programs.md) |
-| [handoff-env.md](handoff-env.md) | the session's environment in `longarm handoff` (docs/usage.md "Hand off an agent session") |

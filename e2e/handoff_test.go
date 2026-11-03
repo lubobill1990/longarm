@@ -17,21 +17,22 @@ import (
 
 // handoffOut is handoff --json.
 type handoffOut struct {
-	Agent     string   `json:"agent"`
-	SessionID string   `json:"sessionId"`
-	From      string   `json:"from"`
-	To        string   `json:"to"`
-	Worktree  string   `json:"worktree"`
-	Cwd       string   `json:"cwd"`
-	Branch    string   `json:"branch"`
-	Session   string   `json:"session"`
-	Snapshot  string   `json:"snapshot"`
-	Base      string   `json:"base"`
-	Files     int      `json:"files"`
-	Resume    []string `json:"resume"`
-	Transfer  string   `json:"transfer"`
-	Relayed   int64    `json:"relayedBytes"`
-	Temp      string   `json:"tempBranch"`
+	Agent     string            `json:"agent"`
+	SessionID string            `json:"sessionId"`
+	From      string            `json:"from"`
+	To        string            `json:"to"`
+	Worktree  string            `json:"worktree"`
+	Cwd       string            `json:"cwd"`
+	Branch    string            `json:"branch"`
+	Session   string            `json:"session"`
+	Snapshot  string            `json:"snapshot"`
+	Base      string            `json:"base"`
+	Files     int               `json:"files"`
+	Resume    []string          `json:"resume"`
+	ResumeEnv map[string]string `json:"resumeEnv"`
+	Transfer  string            `json:"transfer"`
+	Relayed   int64             `json:"relayedBytes"`
+	Temp      string            `json:"tempBranch"`
 	Env       *struct {
 		Dir         string   `json:"dir"`
 		MCPServers  []string `json:"mcpServers"`
@@ -420,6 +421,8 @@ func TestAgentHandoff(t *testing.T) {
 		mustWrite(t, filepath.Join(sd, "events.jsonl"), fmt.Sprintf(`{"type":"session.start","data":{"sessionId":%q,"copilotVersion":"1.0.0","context":{"cwd":%s,"gitRoot":%s}},"id":"e1"}`+"\n"+
 			`{"type":"user.message","data":{"content":"add a flag"},"id":"e2"}`+"\n", cid, jsonQ(repo), jsonQ(repo)))
 		mustWrite(t, filepath.Join(sd, "workspace.yaml"), "id: "+cid+"\ncwd: "+repo+"\ngit_root: "+repo+"\nname: flag work\n")
+		// the user's instructions go along, loaded through COPILOT_CUSTOM_INSTRUCTIONS_DIRS
+		mustWrite(t, filepath.Join(chome, ".copilot", "copilot-instructions.md"), "Be brief.\n")
 		// --via remote without a remote: relayed (uploaded), with a note
 		out, rr := h.handoff(repo, "--to", "w1", "--agent", "copilot", "--session", cid, "--no-attach", "--name", "cop1", "--via", "remote")
 		if out.Transfer != "upload" || !strings.Contains(rr.stderr, "not through the remote (the checkout has no remote)") {
@@ -440,8 +443,15 @@ func TestAgentHandoff(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(sd, "longarm-handoff.json")); err != nil {
 			t.Errorf("source marker: %v", err)
 		}
-		if rec := agentRecord(t, w1home, cid); rec["cwd"] != wantTop || rec["recordedCwd"] != wantTop || rec["session"] != "cop1" {
+		instr := filepath.Join(w1home, ".copilot", "longarm-handoff", cid, "instructions")
+		if rec := agentRecord(t, w1home, cid); rec["cwd"] != wantTop || rec["recordedCwd"] != wantTop || rec["session"] != "cop1" || rec["instructionsDirs"] != instr {
 			t.Errorf("the agent on w1: %v", rec)
+		}
+		if out.ResumeEnv["COPILOT_CUSTOM_INSTRUCTIONS_DIRS"] != instr {
+			t.Errorf("resumeEnv: %v", out.ResumeEnv)
+		}
+		if got := readText(t, filepath.Join(instr, ".github", "instructions", "copilot-instructions.instructions.md")); !strings.HasSuffix(got, "Be brief.\n") {
+			t.Errorf("instructions on w1: %q", got)
 		}
 		// w1 -> w2 when w2 can't reach w1: relayed through the client
 		h.extra = []string{"LONGARM_TEST_HANDOFF_ENDPOINTS=tcp://127.0.0.1:1"}
@@ -453,7 +463,19 @@ func TestAgentHandoff(t *testing.T) {
 		if ws := readText(t, filepath.Join(w2home, ".copilot", "session-state", cid, "workspace.yaml")); !strings.Contains(ws, "cwd: "+jsonQ(out2.Worktree)) {
 			t.Errorf("workspace.yaml on w2:\n%s", ws)
 		}
+		// the instructions went on from w1's directory of the session
+		if rec := agentRecord(t, w2home, cid); rec["instructionsDirs"] != filepath.Join(w2home, ".copilot", "longarm-handoff", cid, "instructions") {
+			t.Errorf("the agent on w2: %v", rec)
+		}
 		e.mustLongarm(e.client, "session", "stop", "w2", "-s", "cop2", "--grace", "0")
+		// the session moved on from w1: --cleanup removes its directory there (no remote here: no branches)
+		c := client(repo, "handoff", "--cleanup", "--from", "w1", "--json")
+		if c.code != 0 || !strings.Contains(c.stdout, `"session": "`+cid+`"`) || !strings.Contains(c.stdout, `"removed": true`) {
+			t.Errorf("cleanup on w1: %+v", c)
+		}
+		if _, err := os.Stat(filepath.Join(w1home, ".copilot", "longarm-handoff", cid)); err == nil {
+			t.Error("w1's directory of the session is still there")
+		}
 	})
 
 	t.Run("refusals", func(t *testing.T) {

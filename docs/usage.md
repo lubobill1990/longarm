@@ -939,7 +939,7 @@ longarm handoff --from w1 --to w2 --session <id> --no-attach
 longarm handoff --from w2 --to local --session <id>   # a new worktree next to your checkout; the agent runs here
 ```
 
-**`longarm handoff --to <worker|local> [--from <worker|local>] [--agent claude|copilot] (--session ID | --latest) [--name NAME] [--via relay|remote|auto] [--via-threshold 20M] [--git-auth forward] [--allow-secrets] [--keep-branch] [--no-attach] [--json]`**, `longarm handoff --cleanup`
+**`longarm handoff --to <worker|local> [--from <worker|local>] [--agent claude|copilot] (--session ID | --latest) [--name NAME] [--via relay|remote|auto] [--via-threshold 20M] [--git-auth forward] [--allow-secrets] [--keep-branch] [--carry-settings] [--no-attach] [--json]`**, `longarm handoff --cleanup [--from <worker>]`
 
 1. **Locate.** `--session ID` (an id `agent-sessions` lists), or `--latest`:
    the most recently modified session whose project directory is in the
@@ -1051,7 +1051,9 @@ would carry, after the remote-first fetch with `--git-auth forward`) decides
   longarm prints the `git push <url> --delete <branch>` that does it.
   `--keep-branch` keeps it; `longarm handoff --cleanup [--json]` (in your
   checkout) lists your temporary branches (all three namespaces) and deletes
-  those older than an hour.
+  those older than an hour - and removes the session directories of
+  sessions that moved on (below); `--json`: `branches`, `environments`
+  (outside a checkout with a remote, `branchesError`).
 
   Before pushing, a **secret check** scans the changed and untracked files
   (built-in rules: private keys, AWS / GitHub / GitLab / Slack / Google /
@@ -1100,15 +1102,28 @@ changed:
 |---|---|---|
 | MCP servers | of `~/.claude.json` (user and the project's; `.mcp.json` travels with the code) -> `mcp.json`, `--mcp-config` | of `~/.copilot/mcp-config.json` -> `mcp.json`, `--additional-mcp-config @...` |
 | skills | personal (`~/.claude/skills/<name>`; a project's travel with the code) -> `.claude/skills/<name>`, `--add-dir` | personal (`~/.copilot/skills`, `~/.agents/skills`) -> `.github/skills/<name>`, `--add-dir` |
-| plugins | those of the plugin skills (`plugin:skill`) and plugin MCP servers used (`plugins/installed_plugins.json`) -> `plugins/<name>`, `--plugin-dir` | those the used skills and MCP servers came from (`installed-plugins/<marketplace>/<plugin>`) -> `plugins/<name>`, `--plugin-dir` |
-| memory | the project's auto memory (`projects/<project>/memory/`) -> the new worktree's project directory; `~/.claude/CLAUDE.md`, when the target's differs -> `CLAUDE.md`, `--append-system-prompt-file` | - |
+| plugins | those of the plugin skills (`plugin:skill`) and plugin MCP servers used (`plugins/installed_plugins.json`) -> `plugins/<name>`, `--plugin-dir` | those the used skills and MCP servers came from (`installed-plugins/<marketplace>/<plugin>`; the target has one by its name from any marketplace, `config.json`) -> `plugins/<name>`, `--plugin-dir` |
+| memory | the project's auto memory (`projects/<project>/memory/`) -> the new worktree's project directory; `~/.claude/CLAUDE.md`, when the target's differs -> `CLAUDE.md`, `--append-system-prompt-file` | the user's instructions (`~/.copilot/copilot-instructions.md`, `instructions/**/*.instructions.md`) the target has otherwise -> `instructions/.github/instructions/`, `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` |
+| with `--carry-settings` | `settings.json` - the keys whose value differs from the target's and the hooks it lacks (plugins as above) -> `settings.json`, `--settings`; the project's `.claude/settings.local.json` (your answers to its permission prompts; git ignores it) -> the new worktree, unless one came with the code | the hooks of `~/.copilot/hooks/*.json` the target lacks -> a plugin `plugins/longarm-handoff-hooks`, `--plugin-dir` |
+
+Hooks and settings go only with `--carry-settings`: hooks run commands on
+the target (often tools only the source has), and settings may hold
+credentials in `env`. Without it, the output (and `--json`
+`environment.notCarried`) names what it would carry, e.g.
+`settings.json (hooks: Stop; env, permissions)`. With it, a hook or status
+line that names a file in your home the target lacks is a warning.
 
 They land in the session's own directory on the target,
 `<agent dir>/longarm-handoff/<id>/` (an earlier one, and a project memory
 the target had, go to `longarm-handoff-backup/` first), with `env.json`
 recording what came; `--json` reports it as `environment` (`dir`,
-`mcpServers`, `mcpCredentials`, `skills`, `plugins`, `memory`). The next
-handoff of the session takes them on from there. An MCP server's
+`mcpServers`, `mcpCredentials`, `skills`, `plugins`, `memory`, `settings`,
+`notCarried`), and the resume command's environment as `resumeEnv`. Files
+keep an executable bit of the source (from Windows: files starting with
+`#!`), so a plugin's scripts run on a Unix target. The next handoff of the
+session takes them on from there; `longarm handoff --cleanup [--from
+<worker>]` removes the directories of sessions handed off from that
+machine (default this one), or gone from it. An MCP server's
 configuration goes as it is - credentials in its `env` and `headers`
 included - in a file only your account there can read, paths in it
 mapped to the target (your home, the worktree); the output names the
@@ -1117,9 +1132,8 @@ isolation: its users' jobs can read them), and warns when a server's
 command is an absolute path the target lacks. Each part may be at most
 `--max-size`; one that is larger, or has an unsafe file name, is left
 out with a warning, as is anything that fails: the session moved already.
-Not carried: hooks, `settings.json` (permissions, environment), Copilot's
-user instructions, plugins whose marketplace the target has under another
-name.
+Copilot's `settings.json` (preferences, enabled plugins) has no per-run
+form and stays.
 
 Not carried over: running processes - tool calls in flight, background
 shells, MCP server processes, dev servers. The agent starts what it needs

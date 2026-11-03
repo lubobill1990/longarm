@@ -70,8 +70,9 @@ type handoffJSON struct {
 	Transfer     string   `json:"transfer"`
 	RelayedBytes int64    `json:"relayedBytes"` // commit bytes this client relayed between workers
 	TempBranch   string   `json:"tempBranch,omitempty"`
-	Resume       []string `json:"resume"`
-	Warnings     []string `json:"warnings"`
+	Resume       []string          `json:"resume"`
+	ResumeEnv    map[string]string `json:"resumeEnv,omitempty"` // the resume command's environment
+	Warnings     []string          `json:"warnings"`
 	// the MCP servers, skills, plugins and memory carried for this session only
 	Environment *handoffEnv `json:"environment,omitempty"`
 }
@@ -83,7 +84,7 @@ type handoffOpts struct {
 	maxBytes                                                                            int64
 	via                                                                                 string // remote | relay | auto
 	viaThreshold                                                                        int64
-	allowSecrets, keepBranch, cleanup                                                   bool
+	allowSecrets, keepBranch, cleanup, carrySettings                                    bool
 }
 
 func handoffCmd() *cobra.Command {
@@ -116,7 +117,8 @@ machine ("local") and workers - local -> worker, worker -> worker, worker
     and mark the source copy "handed off" (a sidecar file; the original
     stays as a backup);
  5. carry what the session used of its agent's environment that the
-    target lacks - MCP servers, skills, plugins, Claude Code's memory - to
+    target lacks - MCP servers, skills, plugins, Claude Code's memory,
+    Copilot's instructions; hooks and settings with --carry-settings - to
     <agent dir>/longarm-handoff/<id>/ there, for this session only (the
     target's own configuration is not changed; MCP configurations go with
     their credentials, readable by your account only);
@@ -166,7 +168,8 @@ carried over: the agent starts them anew on the target.`,
 	f.StringVar(&viaThreshold, "via-threshold", defaultViaThreshold, "--via auto: objects the target lacks from this size on go through the remote; [handoff] via_threshold")
 	f.BoolVar(&o.allowSecrets, "allow-secrets", false, "--via remote: push even when the secret check finds credentials in changed or untracked files")
 	f.BoolVar(&o.keepBranch, "keep-branch", false, "--via remote: keep the temporary branch on the remote")
-	f.BoolVar(&o.cleanup, "cleanup", false, "list and delete your stale temporary branches (users/<you>/longarm-handoff/*, user/<you>/longarm-handoff/*, longarm/handoff/<you>/*) of the current checkout's remote")
+	f.BoolVar(&o.carrySettings, "carry-settings", false, "also carry the agent's hooks and settings the target lacks, for this session only (Claude Code settings.json and the project's settings.local.json; Copilot CLI hooks): hooks run commands there")
+	f.BoolVar(&o.cleanup, "cleanup", false, "list and delete your stale temporary branches (users/<you>/longarm-handoff/*, user/<you>/longarm-handoff/*, longarm/handoff/<you>/*) of the current checkout's remote, and remove the session directories (<agent dir>/longarm-handoff/<id>) of sessions that moved on from --from (default this machine)")
 	return c
 }
 
@@ -380,9 +383,10 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 	out.Files, out.Bytes = nfiles, nbytes
 	var envArgv []string
 	if pms, dstProject, err := sessionPathMaps(ad, src, dst, dstCfg, sess, srcRepo, dstTop, dstCwd); err == nil {
-		shared := !dst.local() && !filesAreMine(dst, nodeOf(dst.name))
-		if out.Environment = carryEnv(ctx, ad, src, dst, dstCfg, dstProject, sess, pms, use, shared, o.maxBytes, &warn); out.Environment != nil {
-			envArgv = out.Environment.args
+		t := envTarget{cfg: dstCfg, project: dstProject, cwd: dstCwd, shared: !dst.local() && !filesAreMine(dst, nodeOf(dst.name)),
+			settings: o.carrySettings, limit: o.maxBytes}
+		if out.Environment = carryEnv(ctx, ad, src, dst, t, sess, pms, use, &warn); out.Environment != nil {
+			envArgv, out.ResumeEnv = out.Environment.args, out.Environment.env
 		}
 	}
 	if o.name == "" && !dst.local() {
@@ -403,14 +407,22 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 	if out.Warnings == nil {
 		out.Warnings = []string{}
 	}
+	var envKV, envFlags []string // KEY=VALUE; session start -e KEY=VALUE
+	for _, k := range sortedKeys(out.ResumeEnv) {
+		kv := k + "=" + out.ResumeEnv[k]
+		envKV, envFlags = append(envKV, kv), append(envFlags, "-e", kv)
+	}
 	if dst.local() {
 		if o.noAttach {
-			return printHandoff(o, out, fmt.Sprintf("cd %s && %s", quoteArg(dstCwd), joinArgv(argv)))
+			return printHandoff(o, out, fmt.Sprintf("cd %s && %s", quoteArg(dstCwd), joinArgv(append(envKV, argv...))))
 		}
 		code.temp.cleanup(ctx) // the target has the code
 		printHandoff(o, out, "")
 		c := exec.CommandContext(ctx, argv[0], argv[1:]...)
 		c.Dir, c.Stdin, c.Stdout, c.Stderr = dstCwd, os.Stdin, os.Stdout, os.Stderr
+		if len(envKV) > 0 {
+			c.Env = append(os.Environ(), envKV...)
+		}
 		err := c.Run()
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
@@ -422,12 +434,16 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 		return err
 	}
 	sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	resp, err := dst.conn.Sessions().Start(sctx, &pb.StartSessionRequest{Name: o.name, Argv: argv, Cwd: dstCwd})
+	resp, err := dst.conn.Sessions().Start(sctx, &pb.StartSessionRequest{Name: o.name, Argv: argv, Cwd: dstCwd, Env: out.ResumeEnv})
 	cancel()
 	if err != nil {
 		if status.Code(err) == codes.AlreadyExists {
-			return usagef("a session named %s runs on %s already: give another --name (the code and transcript are in place; resume with: longarm session start %s -s <name> --cwd %s -- %s)",
-				o.name, dst.name, dst.name, quoteArg(dstCwd), joinArgv(argv))
+			envOpt := ""
+			if len(envFlags) > 0 {
+				envOpt = joinArgv(envFlags) + " "
+			}
+			return usagef("a session named %s runs on %s already: give another --name (the code and transcript are in place; resume with: longarm session start %s -s <name> --cwd %s %s-- %s)",
+				o.name, dst.name, dst.name, quoteArg(dstCwd), envOpt, joinArgv(argv))
 		}
 		return tooOld(err, dst.conn, "session start")
 	}

@@ -14,7 +14,17 @@
   configuration, skills and plugins are not touched. MCP configurations go
   as they are, credentials included, readable by your account only; the
   output names the servers with credentials. `--json`: `environment`. The
-  preflight warning about MCP servers the target lacks is gone.
+  preflight warning about MCP servers the target lacks is gone. Copilot's
+  user instructions go too (`COPILOT_CUSTOM_INSTRUCTIONS_DIRS` for the
+  resumed session; `--json` `resumeEnv`); files keep their executable bit;
+  a Copilot plugin the target has from another marketplace isn't carried.
+  **`--carry-settings`** also carries hooks and settings the target lacks
+  (Claude Code: `settings.json` via `--settings`, the project's
+  `settings.local.json`; Copilot: `~/.copilot/hooks` as a plugin) - without
+  it they are named as not carried. **`handoff --cleanup [--from <worker>]`**
+  also removes the session directories of sessions that moved on from that
+  machine; outside a checkout with a remote it skips the branches instead
+  of failing.
 
 - **`longarm ui open [page]`** opens Longarm's own UI at a page - `workers`,
   `add-machine`, `jobs` (`--job`), `this-worker`, `settings`, `account`,

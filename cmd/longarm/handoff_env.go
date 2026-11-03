@@ -19,9 +19,12 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -141,8 +144,14 @@ type handoffEnv struct {
 	Credentials []string `json:"mcpCredentials,omitempty"`
 	Skills      []string `json:"skills,omitempty"`
 	Plugins     []string `json:"plugins,omitempty"`
-	Memory      []string `json:"memory,omitempty"` // "project memory", "CLAUDE.md"
-	args        []string // the resume command's options that load them
+	// "project memory", "CLAUDE.md", Copilot's "copilot-instructions.md" / "<name>.instructions.md"
+	Memory []string `json:"memory,omitempty"`
+	// with --carry-settings: "settings.json", "settings.local.json" (Claude Code), "hooks"
+	Settings []string `json:"settings,omitempty"`
+	// what --carry-settings would have carried
+	NotCarried []string          `json:"notCarried,omitempty"`
+	args       []string          // the resume command's options that load them
+	env        map[string]string // and its environment
 }
 
 // envTree is a directory of the source copied to the target.
@@ -152,11 +161,23 @@ type envTree struct {
 	files      []hoFile // nil: listed when copied
 }
 
+// envFile is a file made for the target (a configuration, merged or
+// converted from the source's).
+type envFile struct {
+	what, name string // "memory" / "settings" / "hooks", for the output
+	dst        string
+	data       []byte
+	rewrite    bool   // the source's paths become the target's
+	root       string // the directory it may land in (default: the agent's)
+	optIn      bool   // only with --carry-settings: hooks and settings
+	detail     string // for "not carried": what is in it
+}
+
 // envPlan is what goes to the target.
 type envPlan struct {
-	mcp      map[string]json.RawMessage // MCP server configurations, by name
-	trees    []envTree
-	claudeMD []byte // Claude Code's user memory (CLAUDE.md)
+	mcp   map[string]json.RawMessage // MCP server configurations, by name
+	trees []envTree
+	files []envFile
 }
 
 // envPack is the session's own directory on the target.
@@ -237,7 +258,8 @@ func claudePlugins(ctx context.Context, ep *hoEndpoint, cfg, projectDir string) 
 // its plugin skills and plugin MCP servers, its project memory and the
 // user's CLAUDE.md - what the target lacks of them. srcPack is the
 // session's own directory on the source, from an earlier handoff.
-func planClaudeEnv(ctx context.Context, src, dst *hoEndpoint, dstCfg, dstProject, pack, srcPack string, sess *agentSession, use *envUse, warn *warnings) *envPlan {
+func planClaudeEnv(ctx context.Context, src, dst *hoEndpoint, t envTarget, pack, srcPack string, sess *agentSession, use *envUse, warn *warnings) *envPlan {
+	dstCfg, dstProject, dstCwd := t.cfg, t.project, t.cwd
 	p := &envPlan{mcp: map[string]json.RawMessage{}}
 	type conf struct {
 		name string
@@ -275,8 +297,8 @@ func planClaudeEnv(ctx context.Context, src, dst *hoEndpoint, dstCfg, dstProject
 		skip[claudeToolName(n)] = true
 	}
 	plugins := claudePlugins(ctx, src, sess.cfg, sess.ProjectDir)
-	if fs, err := src.list(ctx, src.join(srcPack, "plugins")); err == nil {
-		for _, f := range fs {
+	if ls, err := src.list(ctx, src.join(srcPack, "plugins")); err == nil {
+		for _, f := range ls {
 			if f.isDir && !strings.Contains(f.rel, "/") {
 				if _, ok := plugins[f.rel]; !ok {
 					plugins[f.rel] = src.join(srcPack, "plugins", f.rel)
@@ -341,11 +363,143 @@ func planClaudeEnv(ctx context.Context, src, dst *hoEndpoint, dstCfg, dstProject
 			continue
 		}
 		if have, err := dst.readSmall(ctx, dst.join(dstCfg, "CLAUDE.md"), 1<<20); err != nil || !bytes.Equal(bytes.TrimSpace(have), bytes.TrimSpace(b)) {
-			p.claudeMD = b
+			p.files = append(p.files, envFile{what: "memory", name: "CLAUDE.md", dst: dst.join(pack, "CLAUDE.md"), data: b})
 		}
 		break
 	}
+
+	// settings.json (hooks, permissions, env, ...): what differs from the
+	// target's, loaded with --settings (over the target's own)
+	set := jsonObject(ctx, src, src.join(sess.cfg, "settings.json"))
+	for k, v := range jsonObject(ctx, src, src.join(srcPack, "settings.json")) { // an earlier hop's
+		if k == "hooks" {
+			v = mergeHooks(set[k], v)
+		}
+		set[k] = v
+	}
+	delete(set, "enabledPlugins") // plugins go as above
+	delete(set, "extraKnownMarketplaces")
+	if diff := settingsDiff(set, jsonObject(ctx, dst, dst.join(dstCfg, "settings.json"))); len(diff) > 0 {
+		b, _ := json.MarshalIndent(diff, "", "  ")
+		p.files = append(p.files, envFile{what: "settings", name: "settings.json", dst: dst.join(pack, "settings.json"), data: b,
+			rewrite: true, optIn: true, detail: settingsDetail(diff)})
+	}
+	// the project's settings.local.json (your answers to its permission
+	// prompts): git ignores it, so it does not travel with the code
+	local := src.join(sess.ProjectDir, ".claude", "settings.local.json")
+	if b, err := src.readSmall(ctx, local, 1<<20); err == nil && dstCwd != "" {
+		if target := dst.join(dstCwd, ".claude", "settings.local.json"); !epExists(ctx, dst, target) {
+			var m map[string]json.RawMessage
+			json.Unmarshal(b, &m)
+			p.files = append(p.files, envFile{what: "settings", name: "settings.local.json", dst: target, data: b, rewrite: true,
+				root: dstCwd, optIn: true, detail: settingsDetail(m)})
+		}
+	}
 	return p
+}
+
+// jsonObject reads a JSON object (empty when missing or not one).
+func jsonObject(ctx context.Context, ep *hoEndpoint, p string) map[string]json.RawMessage {
+	m := map[string]json.RawMessage{}
+	if b, err := ep.readSmall(ctx, p, 4<<20); err == nil {
+		json.Unmarshal(stripJSONComments(b), &m)
+		clear(b)
+	}
+	if m == nil {
+		m = map[string]json.RawMessage{}
+	}
+	return m
+}
+
+// stripJSONComments drops whole-line // comments (Copilot's config.json has them).
+func stripJSONComments(b []byte) []byte {
+	if !bytes.Contains(b, []byte("//")) {
+		return b
+	}
+	var out [][]byte
+	for _, l := range bytes.Split(b, []byte("\n")) {
+		if !bytes.HasPrefix(bytes.TrimSpace(l), []byte("//")) {
+			out = append(out, l)
+		}
+	}
+	return bytes.Join(out, []byte("\n"))
+}
+
+func jsonEqual(a, b json.RawMessage) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return bytes.Equal(a, b)
+	}
+	return reflect.DeepEqual(x, y)
+}
+
+// hookEntries are the entries of a hooks object (event -> entries).
+func hookEntries(raw json.RawMessage) map[string][]json.RawMessage {
+	m := map[string][]json.RawMessage{}
+	json.Unmarshal(raw, &m)
+	return m
+}
+
+// mergeHooks is the entries of a and those of b that a lacks.
+func mergeHooks(a, b json.RawMessage) json.RawMessage {
+	m := hookEntries(a)
+	for ev, es := range hookEntries(b) {
+		for _, e := range es {
+			if !slices.ContainsFunc(m[ev], func(x json.RawMessage) bool { return jsonEqual(x, e) }) {
+				m[ev] = append(m[ev], e)
+			}
+		}
+	}
+	out, _ := json.Marshal(m)
+	return out
+}
+
+// hooksDiff is the entries of src the target's hooks lack.
+func hooksDiff(src, dst json.RawMessage) map[string][]json.RawMessage {
+	have := hookEntries(dst)
+	out := map[string][]json.RawMessage{}
+	for ev, es := range hookEntries(src) {
+		for _, e := range es {
+			if !slices.ContainsFunc(have[ev], func(x json.RawMessage) bool { return jsonEqual(x, e) }) {
+				out[ev] = append(out[ev], e)
+			}
+		}
+	}
+	return out
+}
+
+// settingsDiff is what of the source's settings the target's lack or has
+// otherwise: the keys with another value, and the hooks it doesn't have.
+func settingsDiff(src, dst map[string]json.RawMessage) map[string]json.RawMessage {
+	out := map[string]json.RawMessage{}
+	for k, v := range src {
+		if k == "hooks" {
+			if h := hooksDiff(v, dst[k]); len(h) > 0 {
+				out[k], _ = json.Marshal(h)
+			}
+		} else if d, ok := dst[k]; !ok || !jsonEqual(v, d) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// settingsDetail names what settings hold: "hooks: PreToolUse, Stop; permissions, env".
+func settingsDetail(m map[string]json.RawMessage) string {
+	var parts []string
+	if h := hookEntries(m["hooks"]); len(h) > 0 {
+		parts = append(parts, "hooks: "+strings.Join(sortedKeys(h), ", "))
+	}
+	var keys []string
+	for _, k := range sortedKeys(m) {
+		if k != "hooks" && k != "$schema" {
+			keys = append(keys, k)
+		}
+	}
+	if len(keys) > 0 {
+		parts = append(parts, strings.Join(keys, ", "))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // planCopilotEnv: the session's MCP servers of ~/.copilot/mcp-config.json,
@@ -368,16 +522,16 @@ func planCopilotEnv(ctx context.Context, src, dst *hoEndpoint, dstCfg, pack, src
 	var plugins []plugin
 	skillOf := map[string]int{}
 	scan := func(root string, depth int, mk func(parts []string) plugin) {
-		fs, _ := src.list(ctx, root)
+		ls, _ := src.list(ctx, root)
 		at := map[string]int{}
-		for _, f := range fs {
+		for _, f := range ls {
 			parts := strings.Split(f.rel, "/")
 			if f.isDir && len(parts) == depth {
 				at[f.rel] = len(plugins)
 				plugins = append(plugins, mk(parts))
 			}
 		}
-		for _, f := range fs { // <plugin>/skills/<name>/SKILL.md
+		for _, f := range ls { // <plugin>/skills/<name>/SKILL.md
 			parts := strings.Split(f.rel, "/")
 			if n := len(parts); !f.isDir && n == depth+3 && parts[depth] == "skills" && parts[n-1] == "SKILL.md" {
 				if i, ok := at[strings.Join(parts[:depth], "/")]; ok {
@@ -450,9 +604,10 @@ func planCopilotEnv(ctx context.Context, src, dst *hoEndpoint, dstCfg, pack, src
 		}
 	}
 	seen := map[string]bool{}
+	dstPlugins := copilotPlugins(ctx, dst, dstCfg) // from any marketplace
 	for _, i := range sortedKeys(used) {
 		pl := plugins[i]
-		if seen[pl.name] || (pl.target != "" && epExists(ctx, dst, pl.target)) {
+		if seen[pl.name] || dstPlugins[pl.name] || (pl.target != "" && epExists(ctx, dst, pl.target)) {
 			continue
 		}
 		seen[pl.name] = true
@@ -462,7 +617,94 @@ func planCopilotEnv(ctx context.Context, src, dst *hoEndpoint, dstCfg, pack, src
 		}
 		p.trees = append(p.trees, envTree{what: "plugin", name: pl.name, src: pl.dir, dst: dst.join(pack, "plugins", pl.name)})
 	}
+
+	// the user's instructions (copilot-instructions.md, instructions/**/*.instructions.md)
+	// the target has otherwise: Copilot loads .github/instructions/ of the
+	// directories in COPILOT_CUSTOM_INSTRUCTIONS_DIRS
+	instr := map[string][]byte{} // .instructions.md name -> content
+	pi := src.join(srcPack, "instructions", ".github", "instructions")
+	ls, _ := src.list(ctx, pi)
+	for _, f := range ls {
+		if !f.isDir && strings.HasSuffix(f.rel, ".instructions.md") {
+			if b, err := src.readSmall(ctx, src.join(pi, f.rel), 1<<20); err == nil {
+				instr[f.rel] = b
+			}
+		}
+	}
+	ls, _ = src.list(ctx, src.join(sess.cfg, "instructions"))
+	for _, f := range ls {
+		if !f.isDir && strings.HasSuffix(f.rel, ".instructions.md") {
+			if b, err := src.readSmall(ctx, src.join(sess.cfg, "instructions", f.rel), 1<<20); err == nil {
+				instr[f.rel] = b
+			}
+		}
+	}
+	if b, err := src.readSmall(ctx, src.join(sess.cfg, "copilot-instructions.md"), 1<<20); err == nil {
+		instr[copilotHomeInstructions] = append([]byte(copilotApplyAll), b...)
+	}
+	for _, rel := range sortedKeys(instr) {
+		b := instr[rel]
+		name, have := rel, dst.join(dstCfg, "instructions", rel)
+		body := b
+		if rel == copilotHomeInstructions {
+			name, have = "copilot-instructions.md", dst.join(dstCfg, "copilot-instructions.md")
+			body = bytes.TrimPrefix(b, []byte(copilotApplyAll))
+		}
+		if len(bytes.TrimSpace(body)) == 0 || checkRel(rel, dst.windows()) != nil {
+			continue
+		}
+		if h, err := dst.readSmall(ctx, have, 1<<20); err == nil && bytes.Equal(bytes.TrimSpace(h), bytes.TrimSpace(body)) {
+			continue
+		}
+		p.files = append(p.files, envFile{what: "memory", name: name, dst: dst.join(pack, "instructions", ".github", "instructions", rel), data: b})
+	}
+
+	// the user's hooks (hooks/*.json) the target lacks, as a plugin of their own
+	hooks := jsonObject(ctx, src, src.join(srcPack, "plugins", copilotHooksPlugin, "hooks.json"))["hooks"]
+	hookFiles := func(ep *hoEndpoint, cfg string) (all json.RawMessage) {
+		ls, _ := ep.list(ctx, ep.join(cfg, "hooks"))
+		for _, f := range ls {
+			if !f.isDir && !strings.Contains(f.rel, "/") && strings.HasSuffix(f.rel, ".json") {
+				all = mergeHooks(all, jsonObject(ctx, ep, ep.join(cfg, "hooks", f.rel))["hooks"])
+			}
+		}
+		return all
+	}
+	hooks = mergeHooks(hooks, hookFiles(src, sess.cfg))
+	if d := hooksDiff(hooks, hookFiles(dst, dstCfg)); len(d) > 0 {
+		dir := dst.join(pack, "plugins", copilotHooksPlugin)
+		pj, _ := json.MarshalIndent(map[string]any{"name": copilotHooksPlugin, "version": "1.0.0",
+			"description": "the hooks of a session handed off by longarm", "hooks": "hooks.json"}, "", "  ")
+		hb, _ := json.MarshalIndent(map[string]any{"version": 1, "hooks": d}, "", "  ")
+		p.files = append(p.files,
+			envFile{what: "hooks", name: "plugin.json", dst: dst.join(dir, "plugin.json"), data: pj, optIn: true},
+			envFile{what: "hooks", name: "hooks.json", dst: dst.join(dir, "hooks.json"), data: hb, rewrite: true, optIn: true,
+				detail: "hooks: " + strings.Join(sortedKeys(d), ", ")})
+	}
 	return p
+}
+
+const (
+	// copilotHooksPlugin is the plugin of the user's hooks carried for a Copilot session.
+	copilotHooksPlugin = "longarm-handoff-hooks"
+	// copilotHomeInstructions is ~/.copilot/copilot-instructions.md as an
+	// instructions file for every path.
+	copilotHomeInstructions = "copilot-instructions.instructions.md"
+	copilotApplyAll         = "---\napplyTo: \"**\"\n---\n"
+)
+
+// copilotPlugins are the names of the plugins Copilot CLI has installed
+// (config.json installedPlugins), from whichever marketplace.
+func copilotPlugins(ctx context.Context, ep *hoEndpoint, cfg string) map[string]bool {
+	var ps []struct {
+		Name string `json:"name"`
+	}
+	json.Unmarshal(jsonObject(ctx, ep, ep.join(cfg, "config.json"))["installedPlugins"], &ps)
+	out := map[string]bool{}
+	for _, p := range ps {
+		out[p.Name] = true
+	}
+	return out
 }
 
 func sortedKeys[K cmp.Ordered, V any](m map[K]V) []K {
@@ -477,25 +719,43 @@ func sortedKeys[K cmp.Ordered, V any](m map[K]V) []K {
 // carryEnv puts what the session used of its agent's environment on the
 // target (see the top of this file) and returns it with the resume
 // command's options that load it; nil when there is nothing to carry.
-func carryEnv(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint, dstCfg, dstProject string, sess *agentSession,
-	pms []pathMap, use *envUse, shared bool, limit int64, warn *warnings) *handoffEnv {
+func carryEnv(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint, t envTarget, sess *agentSession,
+	pms []pathMap, use *envUse, warn *warnings) *handoffEnv {
+	dstCfg, limit := t.cfg, t.limit
 	pack := envPack(dst, dstCfg, sess.ID)
 	srcPack := envPack(src, sess.cfg, sess.ID)
 	var p *envPlan
 	if ad.name() == "claude" {
-		p = planClaudeEnv(ctx, src, dst, dstCfg, dstProject, pack, srcPack, sess, use, warn)
+		p = planClaudeEnv(ctx, src, dst, t, pack, srcPack, sess, use, warn)
 	} else {
 		p = planCopilotEnv(ctx, src, dst, dstCfg, pack, srcPack, sess, use, warn)
+	}
+	// hooks and settings only when asked for: hooks run commands there
+	var notCarried []string
+	p.files = slices.DeleteFunc(p.files, func(f envFile) bool {
+		if f.optIn && !t.settings {
+			if label := f.name; f.detail != "" {
+				if f.what == "hooks" {
+					label = "hooks"
+				}
+				notCarried = append(notCarried, fmt.Sprintf("%s (%s)", label, f.detail))
+			}
+			return true
+		}
+		return false
+	})
+	if len(notCarried) > 0 {
+		notef("not carried: %s - --carry-settings carries them for this session (hooks run commands on %s)", strings.Join(notCarried, "; "), dst.name)
 	}
 	// list the trees; an empty one (no project memory) is no tree
 	trees := p.trees[:0]
 	for _, t := range p.trees {
-		fs, err := src.list(ctx, t.src)
+		ls, err := src.list(ctx, t.src)
 		if err != nil {
 			warn.add("%s %s: list %s on %s: %v", t.what, t.name, t.src, src.name, err)
 			continue
 		}
-		for _, f := range fs {
+		for _, f := range ls {
 			if !f.isDir && !slices.Contains(strings.Split(f.rel, "/"), ".git") {
 				t.files = append(t.files, f)
 			}
@@ -505,7 +765,10 @@ func carryEnv(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint, dstCfg
 		}
 	}
 	p.trees = trees
-	if len(p.mcp) == 0 && len(p.trees) == 0 && p.claudeMD == nil {
+	if len(p.mcp) == 0 && len(p.trees) == 0 && len(p.files) == 0 {
+		if len(notCarried) > 0 {
+			return &handoffEnv{NotCarried: notCarried}
+		}
 		return nil
 	}
 
@@ -526,8 +789,10 @@ func carryEnv(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint, dstCfg
 	if !backup(pack, "env") {
 		return nil
 	}
-	env := &handoffEnv{Dir: pack}
+	env := &handoffEnv{Dir: pack, NotCarried: notCarried}
 	links := newLinkChecker(dst, dstCfg)
+	// paths of the source (its home, the worktree, the agent's config) become the target's
+	rw := newPathRewriter(append(slices.Clone(pms), pathMap{from: src.home, to: dst.home, fromWin: src.windows(), toWin: dst.windows()}))
 	tmp, err := os.MkdirTemp("", "longarm-handoff-env-")
 	if err != nil {
 		warn.add("the session's environment: %v", err)
@@ -576,7 +841,7 @@ func carryEnv(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint, dstCfg
 				break
 			}
 			budget -= n
-			if err = dst.upload(ctx, local, target); err != nil {
+			if err = dst.uploadMode(ctx, local, target, envFileMode(src, f, local)); err != nil {
 				break
 			}
 			os.Remove(local)
@@ -597,8 +862,6 @@ func carryEnv(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint, dstCfg
 	}
 
 	if len(p.mcp) > 0 {
-		// paths of the source (its home, the worktree, the agent's config) become the target's
-		rw := newPathRewriter(append(slices.Clone(pms), pathMap{from: src.home, to: dst.home, fromWin: src.windows(), toWin: dst.windows()}))
 		b, _ := json.MarshalIndent(map[string]any{"mcpServers": p.mcp}, "", "  ")
 		nb, _ := rw.rewriteJSON(b)
 		clear(b)
@@ -626,34 +889,78 @@ func carryEnv(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint, dstCfg
 		}
 		clear(nb)
 	}
-	if p.claudeMD != nil {
-		if err := put(dst.join(pack, "CLAUDE.md"), p.claudeMD); err != nil {
-			warn.add("CLAUDE.md: %v; not carried", err)
-		} else {
-			env.Memory = append(env.Memory, "CLAUDE.md")
+	hooksOK := true // the hooks plugin is two files: both or none
+	for _, f := range p.files {
+		if f.what == "hooks" && !hooksOK {
+			continue
+		}
+		data := f.data
+		if f.rewrite {
+			data, _ = rw.rewriteJSON(data)
+		}
+		lc := links
+		if f.root != "" {
+			lc = newLinkChecker(dst, f.root)
+		}
+		err := lc.check(ctx, f.dst)
+		if err == nil {
+			err = dst.writeFile(ctx, f.dst, data)
+		}
+		if err != nil {
+			warn.add("%s %s: %v; not carried", f.what, f.name, err)
+			hooksOK = hooksOK && f.what != "hooks"
+			continue
+		}
+		switch {
+		case f.what == "memory":
+			env.Memory = append(env.Memory, f.name)
+		case f.what == "settings":
+			env.Settings = append(env.Settings, f.name)
+		case f.name == "hooks.json":
+			env.Settings = append(env.Settings, "hooks")
+		}
+		if f.what != "memory" {
+			for _, m := range missingPaths(ctx, dst, data) {
+				warn.add("%s %s runs %s, which %s does not have", f.what, f.name, m, dst.name)
+			}
 		}
 	}
-	if len(env.MCPServers)+len(env.Skills)+len(env.Plugins)+len(env.Memory) == 0 {
+	if len(env.MCPServers)+len(env.Skills)+len(env.Plugins)+len(env.Memory)+len(env.Settings) == 0 {
+		if len(notCarried) > 0 {
+			return &handoffEnv{NotCarried: notCarried}
+		}
 		return nil
 	}
 	rec, _ := json.MarshalIndent(env, "", "  ")
 	if err := put(dst.join(pack, "env.json"), rec); err != nil {
 		warn.add("record of the session's environment: %v", err)
 	}
-	env.args = envArgs(ad, dst, pack, env)
+	env.args, env.env = envArgs(ad, dst, pack, env)
 	notef("carried for this session only (%s on %s): %s", pack, dst.name, env.summary())
 	if len(env.Credentials) > 0 {
-		if shared {
+		if t.shared {
 			warn.add("MCP servers with credentials in their configuration went to %s as they are: %s - other users' jobs there can read them", dst.name, strings.Join(env.Credentials, ", "))
 		} else {
 			notef("MCP servers with credentials in their configuration went as they are (readable by your account on %s only): %s", dst.name, strings.Join(env.Credentials, ", "))
 		}
 	}
+	if t.shared && len(env.Settings) > 0 {
+		warn.add("your %s (their env may hold credentials) went to %s - other users' jobs there can read them", strings.Join(env.Settings, ", "), dst.name)
+	}
 	return env
 }
 
-// envArgs are the resume command's options that load the session's environment.
-func envArgs(ad agentAdapter, dst *hoEndpoint, pack string, env *handoffEnv) []string {
+// envTarget is where the session goes on the target, and how.
+type envTarget struct {
+	cfg, project, cwd string // the agent's config and project directories, the session's working directory
+	shared            bool   // the target keeps every user's agent state in one account
+	settings          bool   // --carry-settings
+	limit             int64  // --max-size, for each part
+}
+
+// envArgs are the resume command's options and environment that load the
+// session's environment.
+func envArgs(ad agentAdapter, dst *hoEndpoint, pack string, env *handoffEnv) ([]string, map[string]string) {
 	var a []string
 	mcp := dst.join(pack, "mcp.json")
 	if ad.name() == "claude" {
@@ -669,7 +976,10 @@ func envArgs(ad agentAdapter, dst *hoEndpoint, pack string, env *handoffEnv) []s
 		if slices.Contains(env.Memory, "CLAUDE.md") {
 			a = append(a, "--append-system-prompt-file", dst.join(pack, "CLAUDE.md"))
 		}
-		return a
+		if slices.Contains(env.Settings, "settings.json") {
+			a = append(a, "--settings", dst.join(pack, "settings.json"))
+		}
+		return a, nil
 	}
 	if len(env.MCPServers) > 0 {
 		a = append(a, "--additional-mcp-config", "@"+mcp)
@@ -677,10 +987,59 @@ func envArgs(ad agentAdapter, dst *hoEndpoint, pack string, env *handoffEnv) []s
 	for _, pl := range env.Plugins {
 		a = append(a, "--plugin-dir", dst.join(pack, "plugins", pl))
 	}
+	if slices.Contains(env.Settings, "hooks") {
+		a = append(a, "--plugin-dir", dst.join(pack, "plugins", copilotHooksPlugin))
+	}
 	if len(env.Skills) > 0 { // <pack>/.github/skills
 		a = append(a, "--add-dir", pack)
 	}
-	return a
+	if len(env.Memory) > 0 { // <pack>/instructions/.github/instructions
+		return a, map[string]string{"COPILOT_CUSTOM_INSTRUCTIONS_DIRS": dst.join(pack, "instructions")}
+	}
+	return a, nil
+}
+
+// missingPaths are the absolute paths in the home directory of dst that a
+// carried configuration names (hook commands, a status line) and dst lacks.
+func missingPaths(ctx context.Context, dst *hoEndpoint, data []byte) []string {
+	var v any
+	if json.Unmarshal(data, &v) != nil || dst.home == "" {
+		return nil
+	}
+	homes := []string{dst.home, strings.ReplaceAll(dst.home, `\`, "/")}
+	var out []string
+	var walk func(any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			for _, k := range sortedKeys(x) {
+				walk(x[k])
+			}
+		case []any:
+			for _, e := range x {
+				walk(e)
+			}
+		case string:
+			for _, h := range homes {
+				for rest := x; len(out) < 10; {
+					i := strings.Index(rest, h)
+					if i < 0 {
+						break
+					}
+					p := rest[i:]
+					if j := strings.IndexAny(p, " \t\"'`;|&<>"); j >= 0 {
+						p = p[:j]
+					}
+					rest = rest[i+len(h):]
+					if p != h && !slices.Contains(out, p) && !epExists(ctx, dst, p) {
+						out = append(out, p)
+					}
+				}
+			}
+		}
+	}
+	walk(v)
+	return out
 }
 
 func (e *handoffEnv) summary() string {
@@ -688,12 +1047,83 @@ func (e *handoffEnv) summary() string {
 	for _, x := range []struct {
 		what  string
 		names []string
-	}{{"MCP servers", e.MCPServers}, {"skills", e.Skills}, {"plugins", e.Plugins}, {"memory", e.Memory}} {
+	}{{"MCP servers", e.MCPServers}, {"skills", e.Skills}, {"plugins", e.Plugins}, {"memory", e.Memory}, {"settings", e.Settings}} {
 		if len(x.names) > 0 {
 			parts = append(parts, x.what+" "+strings.Join(x.names, ", "))
 		}
 	}
 	return strings.Join(parts, "; ")
+}
+
+// envDirState is a session's own directory handoff --cleanup found.
+type envDirState struct {
+	Agent   string `json:"agent"`
+	Session string `json:"session"`
+	Dir     string `json:"dir"`
+	Removed bool   `json:"removed"`
+	Reason  string `json:"reason"` // why removed or kept, or what failed
+}
+
+// pruneEnvDirs removes the session directories (<agent dir>/longarm-handoff/<id>/)
+// of the sessions that moved on from ep (handed off) or are gone; those of
+// sessions that are here stay.
+func pruneEnvDirs(ctx context.Context, ep *hoEndpoint) []envDirState {
+	var out []envDirState
+	for _, ad := range allAdapters {
+		cfg := ad.configDir(ctx, ep)
+		root := ep.join(cfg, "longarm-handoff")
+		ls, err := ep.list(ctx, root)
+		if err != nil {
+			out = append(out, envDirState{Agent: ad.name(), Dir: root, Reason: oneLine(err)})
+			continue
+		}
+		for _, f := range ls {
+			if !f.isDir || strings.Contains(f.rel, "/") || !envNameRE.MatchString(f.rel) {
+				continue
+			}
+			st := envDirState{Agent: ad.name(), Session: f.rel, Dir: ep.join(root, f.rel)}
+			sessions, err := ad.list(ctx, ep, cfg, f.rel, false, nil)
+			switch {
+			case err != nil:
+				st.Reason = oneLine(err)
+			case slices.ContainsFunc(sessions, func(s *agentSession) bool { return s.HandedOff == nil }):
+				st.Reason = "the session is here"
+			default:
+				st.Reason = "no such session here"
+				if len(sessions) > 0 {
+					st.Reason = "handed off to " + sessions[0].HandedOff.To
+				}
+				if err := ep.removeTree(ctx, st.Dir); err != nil {
+					st.Reason = oneLine(err)
+				} else {
+					st.Removed = true
+				}
+			}
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
+// envFileMode is the mode of a carried file on the target: 0700 when it is
+// executable on the source - or, from Windows (no executable bit), starts
+// with "#!" - so that a plugin's hook or server script still runs on a
+// Unix target; else 0600.
+func envFileMode(src *hoEndpoint, f hoFile, local string) fs.FileMode {
+	if f.mode&0o111 != 0 {
+		return 0o700
+	}
+	if src.windows() {
+		if h, err := os.Open(local); err == nil {
+			b := make([]byte, 2)
+			n, _ := h.Read(b)
+			h.Close()
+			if n == 2 && string(b) == "#!" {
+				return 0o700
+			}
+		}
+	}
+	return 0o600
 }
 
 // isAbsAny: an absolute path of any OS.
