@@ -99,6 +99,11 @@ func ReadCurrent(kind, dir, tlsDir string) (*Current, error) {
 	return cur, nil
 }
 
+// ExitSignedIn is the exit code of `longarm login` and `longarmd login`
+// for a SignedInError: install.ps1 asks the user then and signs in again
+// with --force.
+const ExitSignedIn = 80
+
 // SignedInError: the machine holds enrollments a sign-in would replace -
 // valid ones of the same hub, any of another hub - and Options.Replace
 // was not set. A GUI shows Current and asks; a CLI says how to confirm.

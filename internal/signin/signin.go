@@ -5,6 +5,7 @@
 package signin
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -206,4 +207,21 @@ func OpenBrowser(u string) error {
 	}
 	go cmd.Wait()
 	return nil
+}
+
+// EnterPresses reads lines from r (a terminal) and sends a value for each
+// one while somebody waits for it (Options.Enter); presses nobody waits
+// for are dropped. It reads until r ends.
+func EnterPresses(r io.Reader) <-chan struct{} {
+	ch := make(chan struct{})
+	go func() {
+		sc := bufio.NewScanner(r)
+		for sc.Scan() {
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	return ch
 }

@@ -14,12 +14,14 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/localapi"
 	"github.com/lubobill1990/longarm/internal/longarmd"
 	"github.com/lubobill1990/longarm/internal/sched"
+	"github.com/lubobill1990/longarm/internal/signin"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -81,7 +83,8 @@ By default longarmd login prints the hub's /link address and a code: open
 the page in any browser (your laptop or phone will do - this machine needs
 none), sign in with your account (Microsoft, Google or Apple, as the hub
 offers), type the code, check the details and approve. The page is opened here when this machine has a desktop
-(--no-browser: never).
+(--no-browser: never) - in a terminal when you press Enter, so the browser
+doesn't cover the code.
 
 --role both also signs this machine in as your client device (longarm's
 config dir, --config-dir) with the same code and the same approval: the
@@ -126,8 +129,12 @@ moved to you. An expired sign-in of the same hub is replaced without
 			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			var enter <-chan struct{}
+			if term.IsTerminal(int(os.Stdin.Fd())) {
+				enter = signin.EnterPresses(os.Stdin)
+			}
 			return longarmd.Login(ctx, dataDir, hub, longarmd.LoginOptions{Name: name, Fingerprint: fp, Force: force,
-				Az: az, Scope: scope, Browser: !noBrowser, Out: os.Stdout, Labels: lm,
+				Az: az, Scope: scope, Browser: !noBrowser, Enter: enter, Out: os.Stdout, Labels: lm,
 				Client: role == "both", ConfigDir: configDir, DeviceName: deviceName, WorkerKind: longarmd.WorkerKind(dataDir)})
 		},
 	}

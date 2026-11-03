@@ -3,11 +3,13 @@ package signin
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -111,5 +113,26 @@ func TestAzServicePrincipalNoFallback(t *testing.T) {
 	_, err := AzToken(context.Background(), &pb.AuthInfoResponse{EntraTenantId: "tttt", EntraClientId: "cccc"}, "")
 	if err == nil || Fallback(err) || !strings.Contains(err.Error(), "service principal") {
 		t.Fatalf("service principal failure: %v", err)
+	}
+}
+
+// EnterPresses sends a press to whoever waits for it; one nobody waits for
+// is dropped (it must not open a later code's page).
+func TestEnterPresses(t *testing.T) {
+	r, w := io.Pipe()
+	defer w.Close()
+	ch := EnterPresses(r)
+	w.Write([]byte("\n")) // read now (a pipe); nobody waits: dropped
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-ch:
+		t.Fatal("a press nobody waited for was kept")
+	case <-time.After(100 * time.Millisecond):
+	}
+	go w.Write([]byte("\n"))
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no press delivered")
 	}
 }

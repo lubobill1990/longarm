@@ -603,9 +603,12 @@ func TestInstallScriptsLogin(t *testing.T) {
 			`--ca-fingerprint "$CA_FP" --role "$R"`, `--role "$ROLE" $NAMEARG`,
 			`LABELARGS="$LABELARGS --label $2"`, `--role "$R" $NAMEARG $DD $LABELARGS`, `--role "$ROLE" $NAMEARG $LABELARGS`,
 			`if [ "$LOGIN" = 1 ]; then ROLE=both; else ROLE=worker; fi`}},
-		{"/install.ps1", &ps1, []string{`[switch]$Login = ($env:LONGARM_LOGIN -eq '1')`, `'longarmd.exe') login $HubAddr --ca-fingerprint $CaFp`,
+		{"/install.ps1", &ps1, []string{`[switch]$Login = ($env:LONGARM_LOGIN -eq '1')`, `& $exe login $HubAddr --ca-fingerprint $CaFp`,
 			`'longarm.exe') login $HubAddr`, `-not $Login)`, `'longarmd.exe') join $HubAddr $Join`, `--ca-fingerprint $CaFp --role $Role`,
-			`[string]$Label = $env:LONGARM_LABELS`, `"LABELS=$Label"`, `@nameArgs @ddArgs @labelArgs`,
+			`[string]$Label = $env:LONGARM_LABELS`, `"LABELS=$Label"`, `@nameArgs @dd @labelArgs`,
+			`Invoke-WorkerLogin (Join-Path $Prefix 'longarmd.exe') $ddArgs`, `Invoke-WorkerLogin (Join-Path $bin 'longarmd.exe') $dd`,
+			// signed in already (longarmd login exits signin.ExitSignedIn): ask, then --force
+			`if ($LASTEXITCODE -eq 80) {`, `@nameArgs @dd @labelArgs --force`,
 			`if (-not $Role) { $Role = if ($Login) { 'both' } else { 'worker' } }`,
 			// elevated by default (the MSI), per-user only when asked; the tray afterwards and at logon
 			`$perUserInstall = $PerUser -or $Prefix -or $NoMsi -or -not $Hashes[$msi]`, `Invoke-Elevated 'install.ps1'`,

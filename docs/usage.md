@@ -2078,8 +2078,12 @@ of your user (an admin certificate for the hub's Entra admins), a worker
 joins approved and owned by you - usable by you only until you share it,
 never with admin rights (as with `longarm worker add`). The page opens by
 itself when the machine has a desktop (not over SSH; `--no-browser` or
-`LONGARM_NO_BROWSER=1`: never); it never carries the code - you always type
-it. Codes last 10 minutes and work once; Ctrl-C gives up. On a hub without
+`LONGARM_NO_BROWSER=1`: never) - from a terminal when you press Enter, so
+the browser doesn't cover the code (the approval counts either way); it
+never carries the code - you always type it. Signed in already,
+`longarmd login` says as what and exits 80 (`--force` signs in again);
+install.ps1 then asks whether to replace that sign-in, and keeps it on no
+(or with nobody to ask). Codes last 10 minutes and work once; Ctrl-C gives up. On a hub without
 `[auth.entra]` the same works with a panel login of a Longarm user
 (`longarm admin user add <name> --panel`); with `[auth.entra]` only a
 Microsoft sign-in may approve (and its `web` must not be `off`).

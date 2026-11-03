@@ -16,6 +16,13 @@
   autostart, the logon task or service, `longarmd leave --kill-jobs
   --purge`, `longarm leave`, the firewall rule, Path, files;
   `$env:LONGARM_KEEP_DATA=1` keeps the data).
+- **install.ps1 on a machine signed in already** asks whether to replace
+  that sign-in (and then signs in again with `--force`) instead of failing;
+  no (or nobody to ask) keeps it and finishes the install. `longarmd login`
+  exits 80 when the machine is signed in already.
+- **`longarm login` / `longarmd login` in a terminal open the browser when
+  you press Enter**, not at once: the page no longer covers the code. The
+  approval is waited for meanwhile; the tray still opens it right away.
 - Third-party notices: Longarm stays MIT, and everything it includes is under
   permissive licenses (no copyleft). Their license texts, which those
   licenses ask to travel with the binaries, are now in
