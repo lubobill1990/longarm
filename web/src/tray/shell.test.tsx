@@ -165,6 +165,27 @@ describe('longarm ui open pages', () => {
     await waitFor(() => expect(screen.getByRole('tab', { name: 'This worker' }).getAttribute('aria-selected')).toBe('true'))
   })
 
+  it('?tab=jobs&job=ID of a job older than the last 50: shown after them and opened; an unknown one: a note', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const newer = Array.from({ length: 50 }, (_, i) => fleetJob(`01JZC${String(i).padStart(21, '0')}`, `new${i}`))
+    const calls = mockFetch({
+      '/trayapi/info': () => [200, info({ client: { running: true } })],
+      '/local/longarm/v1/jobs?mine=1&limit=50': () => [200, { jobs: newer }],
+      '/local/longarm/v1/jobs?mine=1': () => [200, { jobs: [...newer, fleetJob('01JZAAAAAAAAAAAAAAAAAAOLD1', 'old')] }],
+    })
+    history.replaceState(null, '', '/tray?tab=jobs&job=01JZAAAAAAAAAAAAAAAAAAOLD1')
+    render(<TrayApp />)
+    const row = await screen.findByRole('row', { name: /old on w1/ })
+    await waitFor(() => expect(row.getAttribute('aria-expanded')).toBe('true'))
+    expect(calls.some((c) => c.url === '/local/longarm/v1/jobs?mine=1')).toBe(true)
+    expect(screen.queryByTestId('job-missing')).toBeNull()
+    cleanup()
+    history.replaceState(null, '', '/tray?tab=jobs&job=nope')
+    render(<TrayApp />)
+    expect((await screen.findByTestId('job-missing')).textContent).toContain('nope')
+    expect(screen.getAllByRole('row', { name: /^new\d+ on w1/ })).toHaveLength(50)
+  })
+
   it('findJob: the id, a unique start or end of it, else the name', () => {
     const jobs = [fleetJob('01JZAAAAAAAAAAAAAAAAAAX7K2', 'build'), fleetJob('01JZBBBBBBBBBBBBBBBBBBBBB1', 'test'), fleetJob('01JZBBBBBBBBBBBBBBBBBBBBB2')]
     expect(findJob(jobs, '01JZBBBBBBBBBBBBBBBBBBBBB1')?.job.spec.name).toBe('test')

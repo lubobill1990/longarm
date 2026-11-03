@@ -8,6 +8,9 @@ import { AgentSkill } from './AgentSkill'
 import type { ThemePref } from './theme'
 import { EmptyState, Section, Skeleton } from './ui'
 
+/** My jobs lists the last SHOWN. */
+const SHOWN = 50
+
 /**
  * My jobs: the jobs this computer started (longarm jobs --mine, what the
  * job notifications are about), with their output and kill. There is no
@@ -21,19 +24,33 @@ import { EmptyState, Section, Skeleton } from './ui'
  *
  * openJob (longarm ui open jobs --job ID): that job's details open once
  * the list has it (its id, or a unique start or end of it, or its name);
- * onOpenedJob says it did.
+ * onOpenedJob says it did. Not among the last 50: the whole list is asked
+ * for, and the job shown after the 50 (pinned); not there either: a note
+ * says so, and it opens if it turns up (a job just submitted).
  */
 export function ClientJobs({ openJob, onOpenedJob }: { openJob?: string; onOpenedJob?: () => void } = {}) {
-  const jobs = usePoll(() => longarmApi.jobs({ mine: true, limit: 50 }), 3000)
+  const [wide, setWide] = useState(false) // the whole list, not the last 50
+  const jobs = usePoll(() => longarmApi.jobs({ mine: true, limit: wide ? 0 : SHOWN }), 3000, [wide])
   const [open, setOpen] = useState<string>()
+  const [pinned, setPinned] = useState<string>() // an older job's key, shown after the 50
+  const [missing, setMissing] = useState<string>()
   useEffect(() => {
     if (!openJob || !jobs.data) return
     const j = findJob(jobs.data, openJob)
     if (j) {
-      setOpen(`${j.worker}/${j.job.spec.id}`)
+      const key = `${j.worker}/${j.job.spec.id}`
+      setOpen(key)
+      if (jobs.data.indexOf(j) >= SHOWN) setPinned(key)
+      else setWide(false)
+      setMissing(undefined)
       onOpenedJob?.()
+    } else if (!wide) {
+      setWide(true)
+    } else {
+      setMissing(openJob)
     }
   }, [openJob, jobs.data]) // eslint-disable-line react-hooks/exhaustive-deps
+  const rows = (jobs.data ?? []).filter((j, i) => i < SHOWN || `${j.worker}/${j.job.spec.id}` === pinned)
   const { run, busy } = useAction()
   return (
     <div>
@@ -47,9 +64,14 @@ export function ClientJobs({ openJob, onOpenedJob }: { openJob?: string; onOpene
         </span>
       </div>
       <ErrorBox error={jobs.error} />
+      {missing && (
+        <p className="muted small" data-testid="job-missing">
+          No job <span className="mono">{missing}</span> among this computer&apos;s jobs (yet).
+        </p>
+      )}
       <table className="grid list small" data-testid="my-jobs">
         <tbody>
-          {(jobs.data ?? []).map((j) => {
+          {rows.map((j) => {
             const key = `${j.worker}/${j.job.spec.id}`
             const name = j.job.spec.name || j.job.spec.id.slice(-8)
             const isOpen = open === key

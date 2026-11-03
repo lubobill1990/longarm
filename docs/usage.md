@@ -2488,7 +2488,7 @@ them. The page names are stable:
 |---|---|---|
 | `workers` (default) | the Workers tab | |
 | `add-machine` | the Workers tab's "Add a machine", opened | |
-| `jobs` | My jobs | `--job ID`: that job's output opened (its id, a unique start or end of it, or its name) |
+| `jobs` | My jobs | `--job ID`: that job's output opened (its id, a unique start or end of it, or its name; older than the 50 listed: shown after them; none: a note says so) |
 | `this-worker` | This worker | |
 | `settings` | Settings | |
 | `account` | Account | |
