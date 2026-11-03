@@ -125,80 +125,125 @@ func TestProgramsFixtures(t *testing.T) {
 }
 
 // schemaDiff lists what of want (a fixture) is missing from got or has
-// another JSON type there. null on either side matches any type (fields
-// that are null until set); an empty array on either side says nothing
-// about its elements. Array elements are compared merged: the fields of
-// all of want's elements against those of all of got's.
+// another JSON type there. Every value of got is checked, each element of
+// an array too; a field need only be in one of an array's elements (the
+// others may leave it out at its zero value). null in got is fine where
+// the fixture has null or the path is in nullable; where the fixture has
+// null, any type is. An empty array in the fixture says nothing about its
+// elements.
 func schemaDiff(path string, want, got any) []string {
-	if want == nil || got == nil {
+	return newShape(want).diff(path, []any{got})
+}
+
+// nullable are the paths that are null when not set although the fixture
+// shows them set: sessions --json has every field, unset times and
+// objects as null.
+var nullable = []string{
+	"sessions.json: sessions[].createdAt", "sessions.json: sessions[].startedAt",
+	"sessions.json: sessions[].endedAt", "sessions.json: sessions[].lastOutput",
+	"sessions.json: sessions[].lastInput", "sessions.json: sessions[].lastActivity",
+	"sessions.json: sessions[].workspace",
+}
+
+// shape is what a fixture says about a path: the JSON types seen there,
+// whether null was, and those of its fields and array elements (all of
+// the fixture's elements together).
+type shape struct {
+	types  map[string]bool
+	null   bool
+	fields map[string]*shape
+	elem   *shape // nil: no elements seen
+}
+
+func newShape(v any) *shape {
+	s := &shape{types: map[string]bool{}}
+	s.add(v)
+	return s
+}
+
+func (s *shape) add(v any) {
+	if v == nil {
+		s.null = true
+		return
+	}
+	s.types[jsonType(v)] = true
+	switch x := v.(type) {
+	case map[string]any:
+		if s.fields == nil {
+			s.fields = map[string]*shape{}
+		}
+		for k, e := range x {
+			if s.fields[k] == nil {
+				s.fields[k] = &shape{types: map[string]bool{}}
+			}
+			s.fields[k].add(e)
+		}
+	case []any:
+		for _, e := range x {
+			if s.elem == nil {
+				s.elem = &shape{types: map[string]bool{}}
+			}
+			s.elem.add(e)
+		}
+	}
+}
+
+// diff checks the values gots found at path (one per array element above)
+// against s.
+func (s *shape) diff(path string, gots []any) []string {
+	name := strings.TrimSuffix(path, ".")
+	if len(s.types) == 0 { // the fixture has only null here
 		return nil
 	}
-	if jsonType(want) != jsonType(got) {
-		return []string{fmt.Sprintf("%s is %s, was %s", strings.TrimSuffix(path, "."), jsonType(got), jsonType(want))}
-	}
 	var out []string
-	switch w := want.(type) {
-	case map[string]any:
-		g := got.(map[string]any)
-		for _, k := range sortedKeys(w) {
-			v, ok := g[k]
-			if !ok && !slices.Contains(mayBeZero, path+k) {
-				out = append(out, fmt.Sprintf("%s%s is missing", path, k))
-				continue
+	var objs []map[string]any
+	var elems []any
+	for _, g := range gots {
+		switch x := g.(type) {
+		case nil:
+			if !s.null && !slices.Contains(nullable, name) {
+				out = append(out, fmt.Sprintf("%s is null, was %s", name, s.typeNames()))
 			}
-			if slices.Contains(opaque, path+k) {
-				if jsonType(v) != jsonType(w[k]) && v != nil && w[k] != nil {
-					out = append(out, fmt.Sprintf("%s%s is %s, was %s", path, k, jsonType(v), jsonType(w[k])))
+			continue
+		case map[string]any:
+			objs = append(objs, x)
+		case []any:
+			elems = append(elems, x...)
+		}
+		if !s.types[jsonType(g)] {
+			out = append(out, fmt.Sprintf("%s is %s, was %s", name, jsonType(g), s.typeNames()))
+		}
+	}
+	if s.types["an object"] && len(objs) > 0 {
+		for _, k := range sortedKeys(s.fields) {
+			var vs []any
+			for _, o := range objs {
+				if v, ok := o[k]; ok {
+					vs = append(vs, v)
+				}
+			}
+			if len(vs) == 0 {
+				if !slices.Contains(mayBeZero, path+k) {
+					out = append(out, fmt.Sprintf("%s%s is missing", path, k))
 				}
 				continue
 			}
-			out = append(out, schemaDiff(path+k+".", w[k], v)...)
+			f := s.fields[k]
+			if slices.Contains(opaque, path+k) { // its type only
+				f = &shape{types: f.types, null: f.null}
+			}
+			out = append(out, f.diff(path+k+".", vs)...)
 		}
-	case []any:
-		g := got.([]any)
-		if len(w) == 0 || len(g) == 0 {
-			return nil
-		}
-		out = append(out, schemaDiff(strings.TrimSuffix(path, ".")+"[].", merged(w), merged(g))...)
+	}
+	if s.elem != nil && len(elems) > 0 {
+		out = append(out, s.elem.diff(name+"[].", elems)...)
 	}
 	return out
 }
 
-// merged folds array elements into one: objects by key (recursively),
-// arrays concatenated, otherwise the first non-null.
-func merged(xs []any) any {
-	var first any
-	objs := map[string][]any{}
-	var arr []any
-	isObj, isArr := false, false
-	for _, x := range xs {
-		switch v := x.(type) {
-		case map[string]any:
-			isObj = true
-			for k, e := range v {
-				objs[k] = append(objs[k], e)
-			}
-		case []any:
-			isArr = true
-			arr = append(arr, v...)
-		case nil:
-		default:
-			if first == nil {
-				first = v
-			}
-		}
-	}
-	switch {
-	case isObj:
-		m := map[string]any{}
-		for k, es := range objs {
-			m[k] = merged(es)
-		}
-		return m
-	case isArr:
-		return arr
-	}
-	return first
+func (s *shape) typeNames() string {
+	ts := sortedKeys(s.types)
+	return strings.Join(ts, " or ")
 }
 
 func jsonType(v any) string {
@@ -353,6 +398,39 @@ func TestSchemaDiff(t *testing.T) {
 		}
 		if d := strings.Join(schemaDiff("t: ", fixture, got), "; "); d != want {
 			t.Errorf("%s: %q, want %q", in, d, want)
+		}
+	}
+}
+
+// The fixture check sees every value: a null or a retyped value in any
+// array element fails, the allowances (nullable, opaque, mayBeZero) still
+// hold.
+func TestSchemaDiffEveryValue(t *testing.T) {
+	for _, c := range []struct{ name, fixture, in, want string }{
+		{"version.json", `{"version": "v1"}`, `{"version": null}`, "version.json: version is null, was a string"},
+		{"version.json", `{"features": ["a", "b"]}`, `{"features": ["one", 123]}`, "version.json: features[] is a number, was a string"},
+		{"worker-ls.json", `{"nodes": [{"id": "x", "online": true}]}`,
+			`{"nodes": [{"id": "y", "online": true}, {"id": 7, "online": "yes"}]}`,
+			"worker-ls.json: nodes[].id is a number, was a string; worker-ls.json: nodes[].online is a string, was a boolean"},
+		{"worker-ls.json", `{"nodes": [{"id": "x"}, {"id": "y"}]}`, `{"nodes": [{"id": "y"}, null]}`, "worker-ls.json: nodes[] is null, was an object"},
+		// fine: a field in one element only, added fields, the allowances
+		{"worker-ls.json", `{"nodes": [{"id": "x", "metrics": {"cpu_percent": 1, "agents": {"claude": 1}}}]}`,
+			`{"nodes": [{"id": "x", "new": 1}, {"id": "y", "metrics": {"agents": {"codex": "z"}}}]}`, ""},
+		{"worker-ls.json", `{"nodes": [{"metrics": {"agents": {"claude": 1}}}]}`,
+			`{"nodes": [{"metrics": {"agents": []}}]}`, "worker-ls.json: nodes[].metrics.agents is an array, was an object"},
+		{"sessions.json", `{"sessions": [{"lastInput": "2026-11-03T09:00:00Z", "endedAt": null, "argv": ["a"]}]}`,
+			`{"sessions": [{"lastInput": null, "endedAt": "2026-11-03T09:00:00Z", "argv": ["b"]}]}`, ""},
+		{"sessions.json", `{"sessions": [{"argv": ["a"]}]}`, `{"sessions": [{"argv": null}]}`, "sessions.json: sessions[].argv is null, was an array"},
+	} {
+		var fixture, got any
+		if err := json.Unmarshal([]byte(c.fixture), &fixture); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal([]byte(c.in), &got); err != nil {
+			t.Fatal(err)
+		}
+		if d := strings.Join(schemaDiff(c.name+": ", fixture, got), "; "); d != c.want {
+			t.Errorf("%s against %s: %q, want %q", c.in, c.fixture, d, c.want)
 		}
 	}
 }

@@ -174,8 +174,9 @@ Conventions of the `--json` outputs:
 
 produced by an end-to-end test from a hub and a worker and anonymised
 (example names, ids, addresses and times). Copy them into your tests. CI
-checks that every field in them still exists with the same JSON type: a
-field removed or retyped fails Longarm's build, a field added does not
-(`go test ./e2e -run TestProgramsFixtures`; `-update` rewrites them).
+checks that every field in them still exists with the same JSON type, in
+every element of a list, and is null only where it may be: a field
+removed, retyped or turned null fails Longarm's build, a field added does
+not (`go test ./e2e -run TestProgramsFixtures`; `-update` rewrites them).
 Values are examples; `doctor.json`'s checks and each check's `data`, and a
 worker's `metrics`, differ by machine.
