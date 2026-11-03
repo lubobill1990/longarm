@@ -18,3 +18,5 @@ pull request description.
 | [release-channels.md](release-channels.md) | release channels and updates (docs/ci-cd.md "Release channels") |
 | [install-scripts.md](install-scripts.md) | the hub's install.ps1 / install.sh / uninstall.ps1 (docs/usage.md "Uninstall") |
 | [ui-open.md](ui-open.md) | `longarm ui open` and the worker's fresh PATH (docs/usage.md "Opening Longarm's UI", "Operations") |
+| [toolchains.md](toolchains.md) | older-worker owner-tool compatibility |
+| [programs.md](programs.md) | programs driving Longarm: features, fixtures, session input (docs/programs.md) |

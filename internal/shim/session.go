@@ -188,9 +188,11 @@ type hub struct {
 	lastOut time.Time
 
 	// in serializes writes to the terminal: each Input / Send frame is one
-	// contiguous write, never interleaved with another client's.
+	// contiguous write, never interleaved with another client's. Terminal
+	// replies of attached clients are not counted.
 	in       sync.Mutex
 	inSeq    uint64
+	humanSeq uint64 // attached clients' keystrokes only
 	lastIn   time.Time
 	lastFrom string
 
@@ -210,20 +212,63 @@ type observer interface {
 // ifIdle > 0 it writes only if no input arrived within ifIdle (false, nil).
 // A failed or short write is (false, err): never reported as sent.
 func (h *hub) input(w io.Writer, p []byte, source string, ifIdle time.Duration) (bool, error) {
+	st, err := h.send(w, p, nil, source, sendCond{ifIdle: ifIdle})
+	return st.Sent, err
+}
+
+// sendCond is when (and how) send writes.
+type sendCond struct {
+	ifIdle time.Duration // no input within it
+	ifSeq  *uint64       // inSeq is still this
+	// afterGap: the after part follows this long after p, nobody else
+	// writing in between
+	afterGap time.Duration
+}
+
+// send is input with conditions and an after part: p, then after
+// c.afterGap later, as one input (inSeq counts one). Terminal replies
+// (attach.SourceReply) are written but not recorded as input.
+//
+// The state returned (Sent set) is the terminal's activity right after
+// this send, taken before any other writer gets in: its InputSeq is the
+// token a following --if-input-seq send chains on.
+func (h *hub) send(w io.Writer, p, after []byte, source string, c sendCond) (attach.InfoState, error) {
 	h.in.Lock()
-	defer h.in.Unlock()
-	if ifIdle > 0 && !h.lastIn.IsZero() && time.Since(h.lastIn) < ifIdle {
+	sent, err := h.sendLocked(w, p, after, source, c)
+	st := h.inputState()
+	h.in.Unlock()
+	st.Sent = sent
+	h.mu.Lock()
+	st.LastOutput = h.lastOut
+	h.mu.Unlock()
+	return st, err
+}
+
+// sendLocked is send's write; h.in is held.
+func (h *hub) sendLocked(w io.Writer, p, after []byte, source string, c sendCond) (bool, error) {
+	if c.ifIdle > 0 && !h.lastIn.IsZero() && time.Since(h.lastIn) < c.ifIdle {
 		return false, nil
 	}
-	if len(p) == 0 {
+	if c.ifSeq != nil && *c.ifSeq != h.inSeq {
+		return false, nil
+	}
+	if len(p) == 0 && len(after) == 0 {
 		return true, nil
 	}
-	n, err := w.Write(p)
-	if err == nil && n < len(p) {
-		err = io.ErrShortWrite
+	n, err := writeAll(w, p)
+	if err == nil && len(after) > 0 {
+		if len(p) > 0 {
+			time.Sleep(c.afterGap)
+		}
+		var m int
+		m, err = writeAll(w, after)
+		n += m
 	}
-	if n > 0 { // the terminal got (some of) it
+	if n > 0 && source != attach.SourceReply { // the terminal got (some of) it
 		h.inSeq++
+		if source == attach.SourceAttach {
+			h.humanSeq++
+		}
 		h.lastIn, h.lastFrom = time.Now().UTC(), source
 		if h.obs != nil {
 			h.obs.input(source, h.lastIn)
@@ -232,15 +277,38 @@ func (h *hub) input(w io.Writer, p []byte, source string, ifIdle time.Duration) 
 	return err == nil, err
 }
 
+// writeAll is one write of p; a short one is io.ErrShortWrite.
+func writeAll(w io.Writer, p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	n, err := w.Write(p)
+	if err == nil && n < len(p) {
+		err = io.ErrShortWrite
+	}
+	return n, err
+}
+
+// shimFeatures are listed in every Info frame (attach.InfoState.Features).
+var shimFeatures = []string{attach.FeatureSendX, attach.FeatureReplies}
+
+// maxAfterGap bounds a SendX's gap before its after part.
+const maxAfterGap = 2 * time.Second
+
 // info is the terminal's activity.
 func (h *hub) info() attach.InfoState {
 	h.in.Lock()
-	st := attach.InfoState{InputSeq: h.inSeq, LastInput: h.lastIn, LastInputSource: h.lastFrom}
+	st := h.inputState()
 	h.in.Unlock()
 	h.mu.Lock()
 	st.LastOutput = h.lastOut
 	h.mu.Unlock()
 	return st
+}
+
+// inputState is the input half of info; h.in is held.
+func (h *hub) inputState() attach.InfoState {
+	return attach.InfoState{InputSeq: h.inSeq, HumanInputSeq: h.humanSeq, LastInput: h.lastIn, LastInputSource: h.lastFrom, Features: shimFeatures}
 }
 
 func (h *hub) output(p []byte) {
@@ -363,7 +431,11 @@ func (h *hub) handle(nc net.Conn, p platform.PTY, j *job) {
 		}
 		switch typ {
 		case attach.Input:
-			if _, err := h.input(p, payload, attach.SourceAttach, 0); err != nil {
+			source := attach.SourceAttach
+			if attach.IsReply(payload) { // the client's terminal answering the program
+				source = attach.SourceReply
+			}
+			if _, err := h.input(p, payload, source, 0); err != nil {
 				j.log.Warn("terminal input", "err", err)
 			}
 		case attach.Resize:
@@ -400,14 +472,21 @@ func (h *hub) control(conn *attach.Conn, p platform.PTY, j *job) {
 			if err != nil {
 				return
 			}
-			sent, err := h.input(p, data, source, time.Duration(ifIdle)*time.Millisecond)
-			st := h.info()
-			st.Sent = sent
-			if err != nil {
-				j.log.Warn("terminal input", "err", err)
-				st.Error = err.Error()
+			st, err := h.send(p, data, nil, source, sendCond{ifIdle: time.Duration(ifIdle) * time.Millisecond})
+			if !h.answerSend(conn, j, st, err) {
+				return
 			}
-			if conn.WriteFrame(attach.Info, attach.EncodeInfo(st)) != nil {
+			continue
+		case attach.SendX:
+			o, data, after, err := attach.ParseSendX(payload)
+			if err != nil {
+				return
+			}
+			st, err := h.send(p, data, after, o.Source, sendCond{
+				ifIdle: time.Duration(o.IfIdleMs) * time.Millisecond, ifSeq: o.IfInputSeq,
+				afterGap: min(time.Duration(o.AfterMs)*time.Millisecond, maxAfterGap),
+			})
+			if !h.answerSend(conn, j, st, err) {
 				return
 			}
 			continue
@@ -418,4 +497,14 @@ func (h *hub) control(conn *attach.Conn, p platform.PTY, j *job) {
 			return
 		}
 	}
+}
+
+// answerSend answers a Send / SendX with Info: st, the state send
+// returned. false: the connection broke.
+func (h *hub) answerSend(conn *attach.Conn, j *job, st attach.InfoState, err error) bool {
+	if err != nil {
+		j.log.Warn("terminal input", "err", err)
+		st.Error = err.Error()
+	}
+	return conn.WriteFrame(attach.Info, attach.EncodeInfo(st)) == nil
 }

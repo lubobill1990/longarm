@@ -184,18 +184,21 @@ const FeatureGitAuth = "git-auth-forward"
 
 // InfoResponse.features of workers with the programmable sessions API.
 const (
-	FeatureSessionStart      = "session-start"        // Sessions.Start (with a workspace), Sessions.Get
-	FeatureSessionSend       = "session-send"         // Sessions.Send
-	FeatureSessionSendIfIdle = "session-send-if-idle" // SendSessionRequest.if_idle_ms
-	FeatureSessionStop       = "session-stop"         // Sessions.Stop
-	FeatureSessionInfo       = "session-info"         // Session workdir, dir, reason and activity fields
-	FeatureFileTail          = "file-tail"            // Files.Tail
-	FeatureMachineUpdate     = "machine-update"       // MachineUpdate (longarm worker update; the owner's)
-	FeatureSessionEnv        = "session-env"          // sessions get LONGARM_WORKER and LONGARM_SESSION
-	FeatureFileLstat         = "file-lstat"           // FileStatRequest.no_follow
-	FeatureHandoffDirect     = "handoff-direct"       // Handoff service: worker-to-worker transfer of handoff bundles
-	FeatureHandoffPush       = "handoff-push"         // Workspace.PushHandoff: push a handoff snapshot with a forwarded credential
-	FeatureFreshPath         = "fresh-path"           // jobs, exec and ssh sessions get PATH as the registry has it now (Windows: tools installed since longarmd started)
+	FeatureSessionStart      = "session-start"             // Sessions.Start (with a workspace), Sessions.Get
+	FeatureSessionSend       = "session-send"              // Sessions.Send
+	FeatureSessionSendIfIdle = "session-send-if-idle"      // SendSessionRequest.if_idle_ms
+	FeatureSessionStop       = "session-stop"              // Sessions.Stop
+	FeatureSessionInfo       = "session-info"              // Session workdir, dir, reason and activity fields
+	FeatureFileTail          = "file-tail"                 // Files.Tail
+	FeatureMachineUpdate     = "machine-update"            // MachineUpdate (longarm worker update; the owner's)
+	FeatureSessionEnv        = "session-env"               // sessions get LONGARM_WORKER and LONGARM_SESSION
+	FeatureFileLstat         = "file-lstat"                // FileStatRequest.no_follow
+	FeatureHandoffDirect     = "handoff-direct"            // Handoff service: worker-to-worker transfer of handoff bundles
+	FeatureHandoffPush       = "handoff-push"              // Workspace.PushHandoff: push a handoff snapshot with a forwarded credential
+	FeatureSessionIfInputSeq = "session-send-if-input-seq" // SendSessionRequest.if_input_seq
+	FeatureSessionPasteEnter = "session-send-paste-enter"  // SendSessionRequest.after / after_ms
+	FeatureSessionHuman      = "input-seq-human"           // Session.human_input_seq; terminal replies are no input
+	FeatureFreshPath         = "fresh-path"                // jobs, exec and ssh sessions get PATH as the registry has it now (Windows: tools installed since longarmd started)
 )
 
 // SessionWorktreeKey names the worktree of one generation of session name

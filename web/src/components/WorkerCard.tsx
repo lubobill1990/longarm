@@ -27,7 +27,7 @@ import {
 import { ADMIN_LABEL, fmtLastSeen, isAdminNode, offlineSeconds, type PoolMachine } from '../lib/machines'
 import { dismissedUpdates, dismissUpdate, jobsNote, machineUpdate, updateRunning, updateView, type UpdateView } from '../lib/update'
 import type { NodeUpdate } from '../api/types'
-import { Bar, Sparkline } from './charts'
+import { Bar, niceMax, Sparkline } from './charts'
 import { IconExternal, IconMore } from './icons'
 
 const AGENTS: [string, string, string][] = [
@@ -601,6 +601,8 @@ function Metrics({ m, w, now, onAgent }: { m: MetricsSnapshot; w: PoolWorker; no
   const diskPct = diskTotal > 0 ? (100 * (diskTotal - diskFree)) / diskTotal : 0
   const [extra, toggle] = useExtra()
   const src = metricsSource(w, m, now)
+  // the network lines' scale: a round top over both directions in the window
+  const netPeak = niceMax(Math.max(0, ...hist.map((p) => Math.max(p.net_rx ?? 0, p.net_tx ?? 0))))
   return (
     <div style={{ marginTop: 6, opacity: src.stale ? 0.45 : undefined }} data-stale={src.stale ? 'true' : undefined}>
       <div className="small muted" data-testid="metrics-source" title="where these metrics come from">
@@ -612,10 +614,19 @@ function Metrics({ m, w, now, onAgent }: { m: MetricsSnapshot; w: PoolWorker; no
         <Bar label="DISK" pct={diskPct} value={`${(diskTotal - diskFree).toFixed(0)} / ${diskTotal.toFixed(0)} GB`} />
       )}
       {extra.net && (
-        <div className="netrow small" data-testid="net-now" title="network traffic of the worker's interfaces (loopback excluded)">
+        // a row like the bars (no track: bytes/s have no 100 %); the chart
+        // draws in and out against netPeak, its top
+        <div
+          className="bar net"
+          data-testid="net-now"
+          title={`network traffic of the worker's interfaces (loopback excluded); the chart's top is ${fmtRate(netPeak)}`}
+        >
           <span className="label">NET</span>
-          <span style={{ color: cssColor(NET_RX_C) }}>↓ {fmtRate(num(m.net_rx_bytes_per_sec))}</span>
-          <span style={{ color: cssColor(NET_TX_C) }}>↑ {fmtRate(num(m.net_tx_bytes_per_sec))}</span>
+          <span />
+          <span className="value">
+            <span style={{ color: cssColor(NET_RX_C) }}>↓ {fmtRate(num(m.net_rx_bytes_per_sec))}</span>{' '}
+            <span style={{ color: cssColor(NET_TX_C) }}>↑ {fmtRate(num(m.net_tx_bytes_per_sec))}</span>
+          </span>
         </div>
       )}
       <div style={{ marginTop: 4 }}>
@@ -624,28 +635,21 @@ function Metrics({ m, w, now, onAgent }: { m: MetricsSnapshot; w: PoolWorker; no
             { values: hist.map((p) => p.mem ?? 0), color: MEM_C, label: 'MEM' },
             { values: hist.map((p) => p.cpu ?? 0), color: CPU_C, label: 'CPU' },
             ...(extra.disk ? [{ values: hist.map((p) => p.disk ?? null), color: DISK_C, label: 'DISK' }] : []),
+            // network in the same chart, on its own scale (the NET toggle is its key)
+            ...(extra.net
+              ? [
+                  { values: hist.map((p) => p.net_rx ?? null), color: NET_RX_C, label: '↓ in', fmt: fmtRate, peak: netPeak, key: false },
+                  { values: hist.map((p) => p.net_tx ?? null), color: NET_TX_C, label: '↑ out', fmt: fmtRate, peak: netPeak, key: false },
+                ]
+              : []),
           ]}
           legend
           right="5 min"
           toggles={[
-            { label: 'Disk', color: DISK_C, on: extra.disk, onToggle: () => toggle('disk'), title: 'disk space used (the data dir\'s volume)' },
-            { label: 'Net', color: NET_RX_C, on: extra.net, onToggle: () => toggle('net'), title: 'network traffic, bytes per second' },
+            { label: 'DISK', color: DISK_C, on: extra.disk, onToggle: () => toggle('disk'), title: 'disk space used (the data dir\'s volume)' },
+            { label: 'NET', color: NET_RX_C, on: extra.net, onToggle: () => toggle('net'), title: 'network traffic, bytes per second' },
           ]}
         />
-        {extra.net && (
-          <div style={{ marginTop: 4 }} data-testid="net-chart">
-            <Sparkline
-              series={[
-                { values: hist.map((p) => p.net_rx ?? null), color: NET_RX_C, label: '↓ in', fmt: fmtRate },
-                { values: hist.map((p) => p.net_tx ?? null), color: NET_TX_C, label: '↑ out', fmt: fmtRate },
-              ]}
-              max="auto"
-              height={34}
-              legend
-              fmtMax={fmtRate}
-            />
-          </div>
-        )}
       </div>
       <div className="agents">
         {AGENTS.map(([key, label, color]) => {

@@ -362,11 +362,12 @@ message ToolchainReport {
   string profile = 1;
   int64 revision = 2;
   // "ok" | "pending" (waiting for running jobs to finish) | "applying" |
-  // "failed" | "none" (no profile)
+  // "failed" | "none" (no desired tools)
   string state = 3;
   string error = 4;
   map<string, string> versions = 5; // installed versions ("" = missing)
   google.protobuf.Timestamp updated_at = 6;
+  int64 owner_revision = 7;
 }
 
 message HubCommand {
@@ -522,6 +523,7 @@ message ToolchainDesired {
   string profile = 1; // "" = none assigned
   int64 revision = 2;
   repeated ToolSpec tools = 3;
+  int64 owner_revision = 4; // per-worker desired tools revision
 }
 
 message AuditAck {
@@ -592,6 +594,9 @@ service Fleet {
   // SetWorkerLabels merges labels into a worker's labels ("" deletes), as
   // HubAdmin.SetLabels: the worker's owner, or an admin (any worker).
   rpc SetWorkerLabels(SetLabelsRequest) returns (NodeInfo);
+  // WorkerToolchain reads/sets desired tools for the owner (admins: fleet
+  // workers too). Admin profile tools take precedence. Apply is idle-only.
+  rpc WorkerToolchain(WorkerToolchainRequest) returns (WorkerToolchainResponse);
   // RenameWorker changes the display name of a worker of the caller's user
   // (owner or admin); the worker keeps its ID. Audited.
   rpc RenameWorker(RenameNodeRequest) returns (NodeInfo);
@@ -1679,4 +1684,20 @@ message HandoffPairRequest {
 
 message HandoffPairResponse {
   google.protobuf.Timestamp expires_at = 1; // unset after release
+}
+
+message WorkerToolchainRequest {
+  string worker = 1;
+  repeated ToolSpec tools = 2;
+  bool set_tools = 3; // replace owner tools, including an empty list
+  bool clear = 4;
+  bool apply = 5;
+}
+
+message WorkerToolchainResponse {
+  string worker = 1;
+  string worker_id = 2;
+  repeated ToolSpec owner_tools = 3;
+  ToolchainDesired desired = 4; // effective tools, admin profile wins
+  ToolchainReport toolchain = 5; // absent on older workers
 }

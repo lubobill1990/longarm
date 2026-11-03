@@ -158,14 +158,20 @@ a.button:hover { text-decoration: none; border-color: var(--muted); }
 .spark-tip-when { color: var(--text-3, var(--muted)); margin-bottom: 2px; }
 .spark-tip-row { display: flex; justify-content: space-between; gap: 12px; }
 .spark-tip-row .v { color: var(--text, var(--fg)); }
-/* legend entries that add a series (disk, network): off until clicked */
+/* legend entries that add a series (disk, network): read as legend keys -
+   a hollow dot while off, the series' color once on */
 .spark-toggle {
-  font: inherit; font-size: inherit; line-height: 1.4; padding: 0 6px; cursor: pointer;
-  background: transparent; color: var(--text-3, var(--muted));
-  border: 1px dashed var(--border, var(--track)); border-radius: 999px;
+  font: inherit; font-size: inherit; line-height: inherit; padding: 0 3px; margin: 0 -1px; cursor: pointer;
+  background: none; border: none; border-radius: 4px; color: var(--text-3, var(--muted));
 }
-.spark-toggle:hover { color: var(--c); border-color: var(--c); }
-.spark-toggle.on { color: var(--c); border-style: solid; border-color: color-mix(in srgb, var(--c) 45%, transparent); }
+.spark-toggle:hover:not(:disabled) { color: var(--c); background: color-mix(in srgb, var(--c) 12%, transparent); }
+.spark-toggle.on { color: var(--c); }
+/* the key's dot, the size of the legend's "●": a ring while off, filled once on */
+.spark-dot {
+  display: inline-block; width: 0.5em; height: 0.5em; margin-right: 0.15em; vertical-align: 0.08em;
+  border: 1.5px solid currentColor; border-radius: 50%; box-sizing: border-box;
+}
+.spark-toggle.on .spark-dot { background: currentColor; }
 
 .minibar { display: inline-block; width: 60px; height: 6px; background: var(--track); vertical-align: middle; border-radius: 1px; overflow: hidden; }
 .minibar > span { display: block; height: 100%; }
@@ -214,6 +220,8 @@ table.grid tr.subrow td { border-top: none; }
 .agent::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--c, var(--faint)); }
 .agent .n { margin-left: auto; font-family: var(--mono); font-weight: 700; font-size: 15px; }
 .agent .m { font-family: var(--mono); font-size: 11px; color: var(--muted); min-width: 42px; text-align: right; }
+/* the letters centered in the box, not their line box: cap height to baseline */
+.agent > span { text-box: trim-both cap alphabetic; }
 
 .tops { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .tops .title { color: var(--faint); font-size: 10px; font-weight: 700; margin-bottom: 2px; }
@@ -229,8 +237,8 @@ table.grid tr.subrow td { border-top: none; }
 .leg-row { display: grid; grid-template-columns: 12px auto 1fr auto; gap: 8px; align-items: baseline; color: var(--muted); }
 .leg-row.active { color: var(--fg); }
 .leg-row .leg-ep { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.netrow { display: flex; gap: 12px; align-items: baseline; margin: 2px 0; font-variant-numeric: tabular-nums; }
-.netrow .label { color: var(--muted); width: 34px; }
+/* the NET row: a bar row without a track, its value two rates wide */
+.bar.net { grid-template-columns: 36px 1fr auto; }
 
 /* an update of a machine (lib/update.ts; the tray styles it in tray.css) */
 .wcard .upd-status, .wcard .upd-badge { position: relative; display: flex; flex-direction: column; gap: 3px; margin: 0 0 6px; padding: 6px 28px 6px 8px; border-radius: 6px; background: #2b2111; font-size: 12px; }

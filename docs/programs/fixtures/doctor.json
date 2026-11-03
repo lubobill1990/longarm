@@ -1,0 +1,59 @@
+{
+  "checks": [
+    {
+      "data": {
+        "device": "alice",
+        "role": "client",
+        "user": "alice"
+      },
+      "detail": "as alice (device alice, client certificate)",
+      "id": "signed-in",
+      "status": "ok",
+      "title": "signed in"
+    },
+    {
+      "data": {
+        "not_after": "2026-11-03T09:00:00Z"
+      },
+      "detail": "valid until 2026-12-03 15:04 (29d left)",
+      "id": "certificate",
+      "status": "ok",
+      "title": "certificate"
+    },
+    {
+      "data": {
+        "address": "100.64.0.11:7701",
+        "version": "v1.9.0"
+      },
+      "detail": "100.64.0.11:7701 reachable, version dev",
+      "id": "hub",
+      "status": "ok",
+      "title": "hub"
+    },
+    {
+      "detail": "not running (background port forwards, faster connections)",
+      "fix": "longarm daemon start",
+      "id": "daemon",
+      "status": "warn",
+      "title": "client daemon"
+    },
+    {
+      "detail": "Windows Firewall has no inbound allow rule for /usr/local/bin/longarm: hole punching fails, connections stay on relays",
+      "fix": "/usr/local/bin/longarm firewall allow  # elevated",
+      "id": "firewall",
+      "status": "warn",
+      "title": "firewall"
+    },
+    {
+      "detail": "none (make a machine yours: longarm worker add)",
+      "id": "workers",
+      "status": "info",
+      "title": "your workers"
+    }
+  ],
+  "ok": true,
+  "schema": 1,
+  "time": "2026-11-03T09:00:00Z",
+  "tool": "longarm",
+  "version": "v1.9.0"
+}

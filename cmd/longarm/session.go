@@ -5,6 +5,7 @@ package main
 // --session lookups of run and exec.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -313,8 +314,9 @@ func typed(b []byte) []byte {
 func sessionSendCmd() *cobra.Command {
 	var name, job, text, file string
 	var keys []string
-	var raw, asJSON bool
+	var raw, paste, asJSON bool
 	var ifIdle uint32
+	var ifSeq uint64
 	c := &cobra.Command{
 		Use:   "send [<worker>] (-s NAME | --job ID) (--text TEXT | --stdin-file FILE | --key KEY...)",
 		Short: "Type input into a running session without attaching (one contiguous write)",
@@ -327,7 +329,14 @@ another send; sends are written in the order the worker receives them.
 
 --if-idle-ms N writes only when no input (from an attached client or a
 send) reached the terminal in the last N ms; otherwise nothing is written
-and longarm exits 75 (retry later).
+and longarm exits 75 (retry later). --if-input-seq N writes only if the
+session's inputSeq (sessions --json, send --json) is still N - nobody typed
+or sent since - else exit 75, nothing written.
+
+--paste sends the text as a bracketed paste; with --key, the keys follow
+a moment later (--paste --key enter: paste, then Enter, so the program
+takes the text as a paste and then submits it), with no other input in
+between.
 
 The input is not stored in the session's metadata or the audit log (its
 size only). The session transcript (longarm logs --session) holds what the
@@ -338,7 +347,7 @@ counts as a human steering the run (the run waits a minute after its next
 answer before it ends).
 
 Exit codes: 0 written, 2 the session has ended (or a usage error), 3 no such
-session, 75 --if-idle-ms: input arrived within the window.`,
+session, 75 --if-idle-ms / --if-input-seq: input arrived (nothing written).`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if (name == "") == (job == "") {
@@ -347,7 +356,7 @@ session, 75 --if-idle-ms: input arrived within the window.`,
 			if text != "" && file != "" {
 				return usagef("give --text or --stdin-file, not both")
 			}
-			var data []byte
+			var data, after []byte
 			switch {
 			case file != "":
 				b, err := readStdinFile(file)
@@ -361,18 +370,31 @@ session, 75 --if-idle-ms: input arrived within the window.`,
 			if !raw {
 				data = typed(data)
 			}
+			if paste {
+				if len(data) == 0 {
+					return usagef("--paste needs --text or --stdin-file")
+				}
+				data = bracketedPaste(data)
+			}
 			for _, k := range keys {
 				b, err := keyBytes(k)
 				if err != nil {
 					return err
 				}
-				data = append(data, b...)
+				after = append(after, b...)
 			}
-			if len(data) == 0 {
+			if !paste { // the keys are part of the one write
+				data, after = append(data, after...), nil
+			}
+			if len(data)+len(after) == 0 {
 				return usagef("nothing to send: give --text, --stdin-file or --key")
 			}
-			if len(data) > attach.MaxSend {
+			if len(data)+len(after) > attach.MaxSend {
 				return usagef("at most %d bytes per send", attach.MaxSend)
+			}
+			req := &pb.SendSessionRequest{Name: name, Job: job != "", Data: data, IfIdleMs: ifIdle, After: after}
+			if cmd.Flags().Changed("if-input-seq") {
+				req.IfInputSeq = &ifSeq
 			}
 			s, err := openSession()
 			if err != nil {
@@ -382,6 +404,7 @@ session, 75 --if-idle-ms: input arrived within the window.`,
 			var worker string
 			if job != "" {
 				worker, name, err = jobTarget(cmd.Context(), s, append(args, job))
+				req.Name = name
 			} else {
 				worker, err = sessionWorker(cmd.Context(), s, args, name)
 			}
@@ -393,14 +416,20 @@ session, 75 --if-idle-ms: input arrived within the window.`,
 				return err
 			}
 			defer conn.Close()
-			if job != "" {
-				if err := needFeature(cmd.Context(), conn, jobs.FeatureSteer, "--job"); err != nil {
-					return err
+			for _, need := range []struct {
+				on            bool
+				feature, flag string
+			}{{job != "", jobs.FeatureSteer, "--job"}, {req.IfInputSeq != nil, jobs.FeatureSessionIfInputSeq, "--if-input-seq"},
+				{len(after) > 0, jobs.FeatureSessionPasteEnter, "--paste with --key"}} {
+				if need.on {
+					if err := needFeature(cmd.Context(), conn, need.feature, need.flag); err != nil {
+						return err
+					}
 				}
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), time.Minute)
 			defer cancel()
-			resp, err := conn.Sessions().Send(ctx, &pb.SendSessionRequest{Name: name, Job: job != "", Data: data, IfIdleMs: ifIdle})
+			resp, err := conn.Sessions().Send(ctx, req)
 			clear(data)
 			if err != nil {
 				return tooOld(err, conn, "session send")
@@ -422,9 +451,21 @@ session, 75 --if-idle-ms: input arrived within the window.`,
 	c.Flags().StringVar(&file, "stdin-file", "", "send this file's content (- = longarm's stdin; at most 256 KiB)")
 	c.Flags().StringArrayVar(&keys, "key", nil, "a key after the text (repeatable): enter, tab, shift-tab, esc, backspace, space, up, down, left, right, home, end, pageup, pagedown, delete, ctrl-<letter>")
 	c.Flags().BoolVar(&raw, "raw", false, "send the bytes unchanged (no newline to Enter conversion)")
+	c.Flags().BoolVar(&paste, "paste", false, "send the text as a bracketed paste; --key keys follow it a moment later, nothing in between")
 	c.Flags().Uint32Var(&ifIdle, "if-idle-ms", 0, "send only if no input reached the terminal in the last N ms (else exit 75, nothing sent)")
+	c.Flags().Uint64Var(&ifSeq, "if-input-seq", 0, "send only if the session's inputSeq is still N (else exit 75, nothing sent)")
 	c.Flags().BoolVar(&asJSON, "json", false, `print {"worker","session","inputSeq"}`)
 	return c
+}
+
+// bracketedPaste wraps p in bracketed-paste markers; an end marker inside
+// p is dropped so the text cannot end the paste early.
+func bracketedPaste(p []byte) []byte {
+	p = bytes.ReplaceAll(p, []byte("\x1b[201~"), nil)
+	out := make([]byte, 0, len(p)+12)
+	out = append(out, "\x1b[200~"...)
+	out = append(out, p...)
+	return append(out, "\x1b[201~"...)
 }
 
 func sessionStopCmd() *cobra.Command {

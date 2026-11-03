@@ -146,7 +146,7 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
           </div>
         )}
       </section>
-      <Section title="Local limits">
+      <Section card title="Local limits">
         <form
           className="limits-form"
           onSubmit={(e) => {
@@ -167,6 +167,7 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
         <div className="field-help">0 = no limit. The hub&apos;s scheduler honours them (longarmd limits).</div>
       </Section>
       <Section
+        card
         title="Toolchain"
         aside={
           <button className="sm" disabled={busy} onClick={() => run(() => longarmdApi.toolchainApply(), 'toolchain update requested')}>
@@ -193,7 +194,7 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
             .join(' · ')}
         </div>
       </Section>
-      <Section title="Jobs on this worker">
+      <Section card title="Jobs on this worker">
         <ErrorBox error={jobs.error} />
         <table className="grid list small" data-testid="worker-jobs">
           <tbody>
@@ -261,7 +262,7 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
           </tbody>
         </table>
       </Section>
-      <Section title="Fleet membership">
+      <Section card title="Fleet membership">
         <div className="field-inline">
           <div className="field-help">The hub revokes this worker and longarmd stops. Running jobs keep running.</div>
           <button

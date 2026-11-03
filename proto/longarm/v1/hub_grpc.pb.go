@@ -639,6 +639,7 @@ const (
 	Fleet_ShareWorker_FullMethodName      = "/longarm.v1.Fleet/ShareWorker"
 	Fleet_RemoveWorker_FullMethodName     = "/longarm.v1.Fleet/RemoveWorker"
 	Fleet_SetWorkerLabels_FullMethodName  = "/longarm.v1.Fleet/SetWorkerLabels"
+	Fleet_WorkerToolchain_FullMethodName  = "/longarm.v1.Fleet/WorkerToolchain"
 	Fleet_RenameWorker_FullMethodName     = "/longarm.v1.Fleet/RenameWorker"
 	Fleet_CreatePortLink_FullMethodName   = "/longarm.v1.Fleet/CreatePortLink"
 	Fleet_ListPortLinks_FullMethodName    = "/longarm.v1.Fleet/ListPortLinks"
@@ -698,6 +699,9 @@ type FleetClient interface {
 	// SetWorkerLabels merges labels into a worker's labels ("" deletes), as
 	// HubAdmin.SetLabels: the worker's owner, or an admin (any worker).
 	SetWorkerLabels(ctx context.Context, in *SetLabelsRequest, opts ...grpc.CallOption) (*NodeInfo, error)
+	// WorkerToolchain reads/sets desired tools for the owner (admins: fleet
+	// workers too). Admin profile tools take precedence. Apply is idle-only.
+	WorkerToolchain(ctx context.Context, in *WorkerToolchainRequest, opts ...grpc.CallOption) (*WorkerToolchainResponse, error)
 	// RenameWorker changes the display name of a worker of the caller's user
 	// (owner or admin); the worker keeps its ID. Audited.
 	RenameWorker(ctx context.Context, in *RenameNodeRequest, opts ...grpc.CallOption) (*NodeInfo, error)
@@ -940,6 +944,16 @@ func (c *fleetClient) SetWorkerLabels(ctx context.Context, in *SetLabelsRequest,
 	return out, nil
 }
 
+func (c *fleetClient) WorkerToolchain(ctx context.Context, in *WorkerToolchainRequest, opts ...grpc.CallOption) (*WorkerToolchainResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkerToolchainResponse)
+	err := c.cc.Invoke(ctx, Fleet_WorkerToolchain_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *fleetClient) RenameWorker(ctx context.Context, in *RenameNodeRequest, opts ...grpc.CallOption) (*NodeInfo, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(NodeInfo)
@@ -1042,6 +1056,9 @@ type FleetServer interface {
 	// SetWorkerLabels merges labels into a worker's labels ("" deletes), as
 	// HubAdmin.SetLabels: the worker's owner, or an admin (any worker).
 	SetWorkerLabels(context.Context, *SetLabelsRequest) (*NodeInfo, error)
+	// WorkerToolchain reads/sets desired tools for the owner (admins: fleet
+	// workers too). Admin profile tools take precedence. Apply is idle-only.
+	WorkerToolchain(context.Context, *WorkerToolchainRequest) (*WorkerToolchainResponse, error)
 	// RenameWorker changes the display name of a worker of the caller's user
 	// (owner or admin); the worker keeps its ID. Audited.
 	RenameWorker(context.Context, *RenameNodeRequest) (*NodeInfo, error)
@@ -1121,6 +1138,9 @@ func (UnimplementedFleetServer) RemoveWorker(context.Context, *NodeRequest) (*No
 }
 func (UnimplementedFleetServer) SetWorkerLabels(context.Context, *SetLabelsRequest) (*NodeInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetWorkerLabels not implemented")
+}
+func (UnimplementedFleetServer) WorkerToolchain(context.Context, *WorkerToolchainRequest) (*WorkerToolchainResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method WorkerToolchain not implemented")
 }
 func (UnimplementedFleetServer) RenameWorker(context.Context, *RenameNodeRequest) (*NodeInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method RenameWorker not implemented")
@@ -1454,6 +1474,24 @@ func _Fleet_SetWorkerLabels_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Fleet_WorkerToolchain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WorkerToolchainRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).WorkerToolchain(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_WorkerToolchain_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).WorkerToolchain(ctx, req.(*WorkerToolchainRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Fleet_RenameWorker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RenameNodeRequest)
 	if err := dec(in); err != nil {
@@ -1606,6 +1644,10 @@ var Fleet_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetWorkerLabels",
 			Handler:    _Fleet_SetWorkerLabels_Handler,
+		},
+		{
+			MethodName: "WorkerToolchain",
+			Handler:    _Fleet_WorkerToolchain_Handler,
 		},
 		{
 			MethodName: "RenameWorker",

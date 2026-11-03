@@ -7,7 +7,7 @@ worker 池，Claude Code、Copilot CLI 或者你自己都可以在上面运行�
 
 [English](README.md) · [使用参考](docs/usage.md) ·
 [设计文档](docs/design.md) · [CI/CD](docs/ci-cd.md) · [安全](docs/security.md) ·
-[遥测](docs/telemetry.md)
+[遥测](docs/telemetry.md) · [程序接口](docs/programs.md)
 
 ## 为什么需要它
 

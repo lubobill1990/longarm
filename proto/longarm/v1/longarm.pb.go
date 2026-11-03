@@ -2947,7 +2947,13 @@ type Session struct {
 	LastInputSource string                 `protobuf:"bytes,22,opt,name=last_input_source,json=lastInputSource,proto3" json:"last_input_source,omitempty"` // "attach" | "send" | "stop"
 	LastActivity    *timestamppb.Timestamp `protobuf:"bytes,23,opt,name=last_activity,json=lastActivity,proto3" json:"last_activity,omitempty"`            // max(last_output, last_input)
 	// The agents whose credentials were forwarded (names, never values).
-	AgentAuth     []string `protobuf:"bytes,24,rep,name=agent_auth,json=agentAuth,proto3" json:"agent_auth,omitempty"`
+	AgentAuth []string `protobuf:"bytes,24,rep,name=agent_auth,json=agentAuth,proto3" json:"agent_auth,omitempty"`
+	// The attached clients' keystrokes so far (InfoResponse feature
+	// "input-seq-human"; unset for sessions whose shim predates it).
+	// Neither it nor input_seq counts the terminal replies an attached
+	// client's terminal sends by itself (device attributes, cursor position,
+	// colours, focus).
+	HumanInputSeq *uint64 `protobuf:"varint,25,opt,name=human_input_seq,json=humanInputSeq,proto3,oneof" json:"human_input_seq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3150,6 +3156,13 @@ func (x *Session) GetAgentAuth() []string {
 	return nil
 }
 
+func (x *Session) GetHumanInputSeq() uint64 {
+	if x != nil && x.HumanInputSeq != nil {
+		return *x.HumanInputSeq
+	}
+	return 0
+}
+
 type StartSessionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // [0-9A-Za-z_-]{1,64}
@@ -3323,9 +3336,17 @@ type SendSessionRequest struct {
 	Data  []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"` // at most 256 KiB, written as is
 	// Write only if no input reached the terminal within this many
 	// milliseconds (0 = always write).
-	IfIdleMs      uint32 `protobuf:"varint,3,opt,name=if_idle_ms,json=ifIdleMs,proto3" json:"if_idle_ms,omitempty"`
-	Owner         string `protobuf:"bytes,4,opt,name=owner,proto3" json:"owner,omitempty"` // admins only: another user's session
-	Job           bool   `protobuf:"varint,5,opt,name=job,proto3" json:"job,omitempty"`    // name is a steerable job's id (as AttachOpen.job)
+	IfIdleMs uint32 `protobuf:"varint,3,opt,name=if_idle_ms,json=ifIdleMs,proto3" json:"if_idle_ms,omitempty"`
+	Owner    string `protobuf:"bytes,4,opt,name=owner,proto3" json:"owner,omitempty"` // admins only: another user's session
+	Job      bool   `protobuf:"varint,5,opt,name=job,proto3" json:"job,omitempty"`    // name is a steerable job's id (as AttachOpen.job)
+	// Write only if the session's input_seq is still this value (InfoResponse
+	// feature "session-send-if-input-seq"); checked and written atomically.
+	IfInputSeq *uint64 `protobuf:"varint,6,opt,name=if_input_seq,json=ifInputSeq,proto3,oneof" json:"if_input_seq,omitempty"`
+	// Written after data, after_ms later (default 100, at most 2000), with no
+	// other input in between; data and after count as one input (feature
+	// "session-send-paste-enter": a bracketed paste, then Enter).
+	After         []byte `protobuf:"bytes,7,opt,name=after,proto3" json:"after,omitempty"`
+	AfterMs       uint32 `protobuf:"varint,8,opt,name=after_ms,json=afterMs,proto3" json:"after_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3393,6 +3414,27 @@ func (x *SendSessionRequest) GetJob() bool {
 		return x.Job
 	}
 	return false
+}
+
+func (x *SendSessionRequest) GetIfInputSeq() uint64 {
+	if x != nil && x.IfInputSeq != nil {
+		return *x.IfInputSeq
+	}
+	return 0
+}
+
+func (x *SendSessionRequest) GetAfter() []byte {
+	if x != nil {
+		return x.After
+	}
+	return nil
+}
+
+func (x *SendSessionRequest) GetAfterMs() uint32 {
+	if x != nil {
+		return x.AfterMs
+	}
+	return 0
 }
 
 type SendSessionResponse struct {
@@ -6372,7 +6414,7 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x03msg\"X\n" +
 	"\rAttachStarted\x12-\n" +
 	"\asession\x18\x01 \x01(\v2\x13.longarm.v1.SessionR\asession\x12\x18\n" +
-	"\acreated\x18\x02 \x01(\bR\acreated\"\xf8\x06\n" +
+	"\acreated\x18\x02 \x01(\bR\acreated\"\xb9\a\n" +
 	"\aSession\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12*\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x14.longarm.v1.JobStateR\x05state\x12\x12\n" +
@@ -6404,7 +6446,9 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x11last_input_source\x18\x16 \x01(\tR\x0flastInputSource\x12?\n" +
 	"\rlast_activity\x18\x17 \x01(\v2\x1a.google.protobuf.TimestampR\flastActivity\x12\x1d\n" +
 	"\n" +
-	"agent_auth\x18\x18 \x03(\tR\tagentAuth\"\x98\x04\n" +
+	"agent_auth\x18\x18 \x03(\tR\tagentAuth\x12+\n" +
+	"\x0fhuman_input_seq\x18\x19 \x01(\x04H\x00R\rhumanInputSeq\x88\x01\x01B\x12\n" +
+	"\x10_human_input_seq\"\x98\x04\n" +
 	"\x13StartSessionRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04argv\x18\x02 \x03(\tR\x04argv\x12\x10\n" +
@@ -6425,14 +6469,19 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"=\n" +
 	"\x11GetSessionRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
-	"\x05owner\x18\x02 \x01(\tR\x05owner\"\x82\x01\n" +
+	"\x05owner\x18\x02 \x01(\tR\x05owner\"\xeb\x01\n" +
 	"\x12SendSessionRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04data\x18\x02 \x01(\fR\x04data\x12\x1c\n" +
 	"\n" +
 	"if_idle_ms\x18\x03 \x01(\rR\bifIdleMs\x12\x14\n" +
 	"\x05owner\x18\x04 \x01(\tR\x05owner\x12\x10\n" +
-	"\x03job\x18\x05 \x01(\bR\x03job\"2\n" +
+	"\x03job\x18\x05 \x01(\bR\x03job\x12%\n" +
+	"\fif_input_seq\x18\x06 \x01(\x04H\x00R\n" +
+	"ifInputSeq\x88\x01\x01\x12\x14\n" +
+	"\x05after\x18\a \x01(\fR\x05after\x12\x19\n" +
+	"\bafter_ms\x18\b \x01(\rR\aafterMsB\x0f\n" +
+	"\r_if_input_seq\"2\n" +
 	"\x13SendSessionResponse\x12\x1b\n" +
 	"\tinput_seq\x18\x01 \x01(\x04R\binputSeq\"o\n" +
 	"\x12StopSessionRequest\x12\x12\n" +
@@ -7012,6 +7061,8 @@ func file_longarm_v1_longarm_proto_init() {
 		(*AttachOutput_Data)(nil),
 		(*AttachOutput_ExitCode)(nil),
 	}
+	file_longarm_v1_longarm_proto_msgTypes[34].OneofWrappers = []any{}
+	file_longarm_v1_longarm_proto_msgTypes[37].OneofWrappers = []any{}
 	file_longarm_v1_longarm_proto_msgTypes[51].OneofWrappers = []any{
 		(*FileWriteRequest_Header)(nil),
 		(*FileWriteRequest_Data)(nil),
