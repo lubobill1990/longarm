@@ -305,6 +305,15 @@
 
 ### Fixed
 
+- **The MSI no longer rolls back when the worker's join fails.** A
+  `JOIN_CODE` that expired (an unattended install that ran late, e.g. a Dev
+  Box customization days after it was queued), an unknown code or an
+  unreachable hub failed `LongarmdSessionJoin` / `LongarmdSetup`, and with it
+  the whole install (1603: nothing installed, nothing to retry). Now the
+  install goes on: the binaries, the service or logon task, the tray and the
+  recorded hub stay, the worker waits for a sign-in (the tray, `longarmd
+  login`, or `longarmd join` with a new code), and why the join failed is in
+  the install log and the data dir's `install-join-failed`.
 - `longarm handoff --via remote` (and `auto` above the threshold) on a
   repository that limits branches to your alias - Azure DevOps at
   Microsoft refuses `longarm/handoff/...` with `VS403660 ... ref naming
