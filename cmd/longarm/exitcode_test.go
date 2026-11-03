@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -141,6 +144,19 @@ func TestCLIFeatures(t *testing.T) {
 	for _, f := range []string{"exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label"} {
 		if !seen[f] {
 			t.Errorf("missing feature %s", f)
+		}
+	}
+}
+
+// Every feature is documented for programs (docs/usage.md#capabilities).
+func TestCLIFeaturesDocumented(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "docs", "usage.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range cliFeatures {
+		if !strings.Contains(string(b), "| `"+f+"` |") {
+			t.Errorf("feature %s: no row in docs/usage.md's feature table", f)
 		}
 	}
 }
