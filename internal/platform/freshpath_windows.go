@@ -13,24 +13,50 @@ import (
 // FreshPath: this platform rebuilds PATH before a job starts (RefreshPath).
 const FreshPath = true
 
-var freshMu sync.Mutex
+var (
+	freshMu      sync.Mutex
+	startNoted   bool
+	startPrefix  []string
+	registryPath = RegistryPath // tests replace it
+)
+
+// NoteStartPath remembers what longarmd's PATH has in front of the
+// registry's entries (StartPrefix), for RefreshPath to keep in front.
+// longarmd calls it as it starts; else the first RefreshPath does.
+func NoteStartPath() {
+	freshMu.Lock()
+	defer freshMu.Unlock()
+	noteStartPath()
+}
+
+func noteStartPath() {
+	if startNoted {
+		return
+	}
+	startNoted = true
+	if reg, err := registryPath(); err == nil {
+		startPrefix = StartPrefix(os.Getenv("PATH"), reg, ";")
+	}
+}
 
 // RefreshPath sets this process's PATH to MergePath of it and the
 // registry's (RegistryPath): what a process started now from Explorer
-// would get, plus what longarmd's PATH has beyond it. Processes started
+// would get, after what was put in front of longarmd's PATH when it
+// started and followed by the rest of longarmd's PATH. Processes started
 // afterwards (shims, exec, ssh sessions) inherit it.
 func RefreshPath() {
 	if FreshPathOff() {
 		return
 	}
-	reg, err := RegistryPath()
+	freshMu.Lock()
+	defer freshMu.Unlock()
+	noteStartPath()
+	reg, err := registryPath()
 	if err != nil || len(reg) == 0 {
 		return
 	}
-	freshMu.Lock()
-	defer freshMu.Unlock()
 	cur := os.Getenv("PATH")
-	if p := MergePath(cur, reg, ";"); p != cur {
+	if p := MergePath(cur, startPrefix, reg, ";"); p != cur {
 		os.Setenv("PATH", p)
 	}
 }

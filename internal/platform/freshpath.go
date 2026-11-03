@@ -10,48 +10,78 @@ import (
 // zip) would be missing from every job's PATH until it restarts. Before a
 // job, exec or ssh session starts, longarmd rebuilds its PATH from the
 // registry (Machine, then User, as Explorer does for a new process) merged
-// with the PATH it has. RefreshPath does it (a no-op elsewhere).
+// with the PATH it has. RefreshPath does it (a no-op elsewhere); NoteStartPath,
+// as longarmd starts, remembers what was put in front of its PATH.
 
 // FreshPathOff (LONGARM_FRESH_PATH=0 in longarmd's environment) keeps
 // longarmd's PATH as it started.
 func FreshPathOff() bool { return os.Getenv("LONGARM_FRESH_PATH") == "0" }
 
-// MergePath is the PATH of a new process: the registry's entries first,
-// then the rest of current (the daemon's PATH), each directory once
-// (case-insensitively, a trailing separator ignored), empty entries
-// dropped. Entries in front of current that the registry does not have
-// (a PATH set up as "C:\mine;%PATH%" for the daemon) stay in front.
-// Applying it again to its own result changes nothing.
-func MergePath(current string, registry []string, sep string) string {
-	key := func(p string) string {
-		return strings.ToLower(strings.TrimRight(strings.TrimSpace(p), `\/`))
-	}
-	inRegistry := map[string]bool{}
-	for _, p := range registry {
-		inRegistry[key(p)] = true
+// MergePath is the PATH of a new process: prefix (those of its entries
+// still in current), then the registry's entries, then the rest of current
+// (the daemon's PATH), each directory once (case-insensitively, a trailing
+// separator ignored), empty entries dropped. Applying it again to its own
+// result changes nothing.
+//
+// prefix is what was in front of the registry's entries on longarmd's PATH
+// when it started (StartPrefix: a PATH set up as "C:\mine;%PATH%" for the
+// daemon). It is not inferred from current: a directory the registry had
+// then and has dropped since (an upgrade replacing C:\old-go\bin by
+// C:\new-go\bin) must not stay ahead of what replaced it.
+func MergePath(current string, prefix, registry []string, sep string) string {
+	cur := strings.Split(current, sep)
+	inCurrent := map[string]bool{}
+	for _, p := range cur {
+		inCurrent[pathKey(p)] = true
 	}
 	var out []string
 	seen := map[string]bool{}
 	add := func(p string) {
-		k := key(p)
+		k := pathKey(p)
 		if k == "" || seen[k] {
 			return
 		}
 		seen[k] = true
 		out = append(out, strings.TrimSpace(p))
 	}
-	cur := strings.Split(current, sep)
-	i := 0
-	for ; i < len(cur) && (key(cur[i]) == "" || !inRegistry[key(cur[i])]); i++ {
-		add(cur[i])
+	for _, p := range prefix {
+		if inCurrent[pathKey(p)] {
+			add(p)
+		}
 	}
 	for _, p := range registry {
 		add(p)
 	}
-	for _, p := range cur[i:] {
+	for _, p := range cur {
 		add(p)
 	}
 	return strings.Join(out, sep)
+}
+
+// StartPrefix is the leading entries of current that registry doesn't
+// have: what was put in front of the daemon's PATH (MergePath's prefix).
+func StartPrefix(current string, registry []string, sep string) []string {
+	inRegistry := map[string]bool{}
+	for _, p := range registry {
+		inRegistry[pathKey(p)] = true
+	}
+	var prefix []string
+	for _, p := range strings.Split(current, sep) {
+		k := pathKey(p)
+		if k == "" {
+			continue
+		}
+		if inRegistry[k] {
+			break
+		}
+		prefix = append(prefix, strings.TrimSpace(p))
+	}
+	return prefix
+}
+
+// pathKey is the directory p names, for comparing PATH entries.
+func pathKey(p string) string {
+	return strings.ToLower(strings.TrimRight(strings.TrimSpace(p), `\/`))
 }
 
 // ExpandWindowsEnv expands %NAME% references in s (REG_EXPAND_SZ) with

@@ -1463,8 +1463,9 @@ job, exec, session or ssh shell without a restart: before starting one,
 longarmd rebuilds its PATH as Explorer does for a new process - the
 registry's Machine and then User `Path` (`%VAR%` expanded), followed by
 the entries of its own PATH the registry doesn't have (entries put in
-front of longarmd's PATH stay in front). Workers that do it announce
-`fresh-path` in `Node.Info` features (`longarm info <worker>`).
+front of longarmd's PATH when it started stay in front; a directory an
+update removed from the registry goes after the registry's). Workers
+that do it announce `fresh-path` in `Node.Info` features (`longarm info <worker>`).
 `LONGARM_FRESH_PATH=0` in longarmd's environment turns it off. Jobs that
 run as the user's own account ([users](#users-teams-and-quotas-sharing-a-hub)
 with OS accounts) always got that account's fresh environment.

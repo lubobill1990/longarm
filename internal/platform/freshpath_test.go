@@ -7,34 +7,54 @@ import (
 
 func TestMergePath(t *testing.T) {
 	for _, c := range []struct {
-		name, current string
-		registry      []string
-		want          string
+		name, current    string
+		prefix, registry []string
+		want             string
 	}{
 		{"registry first, then what only the daemon has",
-			`C:\Windows;C:\old\tool;C:\Windows\System32`, []string{`C:\Windows\System32`, `C:\Windows`, `C:\Users\a\AppData\Local\Microsoft\WinGet\Links`},
+			`C:\Windows;C:\old\tool;C:\Windows\System32`, nil, []string{`C:\Windows\System32`, `C:\Windows`, `C:\Users\a\AppData\Local\Microsoft\WinGet\Links`},
 			`C:\Windows\System32;C:\Windows;C:\Users\a\AppData\Local\Microsoft\WinGet\Links;C:\old\tool`},
 		{"case and a trailing backslash: the same directory",
-			`c:\windows\;C:\Go\bin`, []string{`C:\Windows`, `C:\GO\BIN\`},
+			`c:\windows\;C:\Go\bin`, nil, []string{`C:\Windows`, `C:\GO\BIN\`},
 			`C:\Windows;C:\GO\BIN\`},
 		{"empty entries dropped, duplicates in the registry once",
-			`;C:\a;;`, []string{`C:\b`, ``, `C:\b`, `C:\a`},
+			`;C:\a;;`, nil, []string{`C:\b`, ``, `C:\b`, `C:\a`},
 			`C:\b;C:\a`},
-		{"a prefix the registry does not have stays in front",
-			`C:\fake\bin;C:\Windows;C:\x`, []string{`C:\Windows`, `C:\new`},
+		{"the prefix longarmd started with stays in front",
+			`C:\fake\bin;C:\Windows;C:\x`, []string{`C:\fake\bin`}, []string{`C:\Windows`, `C:\new`},
 			`C:\fake\bin;C:\Windows;C:\new;C:\x`},
+		{"a prefix no longer on PATH isn't added back",
+			`C:\Windows`, []string{`C:\gone`}, []string{`C:\Windows`},
+			`C:\Windows`},
+		{"an upgrade replaced the registry's first entry: the new one first",
+			`C:\old-go\bin;C:\Windows`, StartPrefix(`C:\old-go\bin;C:\Windows`, []string{`C:\old-go\bin`, `C:\Windows`}, ";"), []string{`C:\new-go\bin`, `C:\Windows`},
+			`C:\new-go\bin;C:\Windows;C:\old-go\bin`},
 		{"no registry entries: the daemon's PATH, cleaned",
-			`C:\a;C:\a;C:\b`, nil, `C:\a;C:\b`},
+			`C:\a;C:\a;C:\b`, nil, nil, `C:\a;C:\b`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := MergePath(c.current, c.registry, ";")
+			got := MergePath(c.current, c.prefix, c.registry, ";")
 			if got != c.want {
 				t.Fatalf("MergePath\n got %s\nwant %s", got, c.want)
 			}
-			if again := MergePath(got, c.registry, ";"); again != got {
+			if again := MergePath(got, c.prefix, c.registry, ";"); again != got {
 				t.Fatalf("not idempotent:\n%s\n%s", got, again)
 			}
 		})
+	}
+}
+
+func TestStartPrefix(t *testing.T) {
+	reg := []string{`C:\Windows\System32`, `C:\Windows`}
+	for current, want := range map[string]string{
+		`C:\fake\bin;;C:\mine;c:\windows\;C:\x`: `C:\fake\bin|C:\mine`,
+		`C:\Windows;C:\x`:                       ``,
+		`C:\x;C:\y`:                             `C:\x|C:\y`,
+		``:                                      ``,
+	} {
+		if got := strings.Join(StartPrefix(current, reg, ";"), "|"); got != want {
+			t.Errorf("StartPrefix(%q) = %q, want %q", current, got, want)
+		}
 	}
 }
 
