@@ -22,7 +22,10 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
+	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/localapi"
 )
 
@@ -67,9 +70,6 @@ func (e *UnknownPageError) Error() string {
 	return fmt.Sprintf("unknown page %q; pages: %s", e.Name, strings.Join(Pages, ", "))
 }
 
-// name: worker, job and session names (they go into URLs).
-var name = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
-
 // Resolve is the page called page ("" = Default) showing t; an error for
 // an unknown page, a flag the page does not take or a malformed value.
 func Resolve(page string, t Target) (Page, error) {
@@ -99,7 +99,7 @@ func Resolve(page string, t Target) (Page, error) {
 			if f[1] != "claude" && f[1] != "copilot" {
 				return Page{}, fmt.Errorf("--agent: claude or copilot, not %q", f[1])
 			}
-		} else if !name.MatchString(f[1]) {
+		} else if !validTarget(f[0], f[1]) {
 			return Page{}, fmt.Errorf("--%s: not a valid name: %q", f[0], f[1])
 		}
 	}
@@ -121,6 +121,23 @@ func Resolve(page string, t Target) (Page, error) {
 	}
 	return Page{Path: "/tray?" + q.Encode()}, nil
 }
+
+// validTarget says whether v is a well-formed value of the target field f:
+// a worker's name; a session name as the worker takes it (jobs.ValidID);
+// a job's ID, part of it or its name (free text: no control characters).
+// They go into the URL encoded (url.Values), so this is only about what
+// can name one.
+func validTarget(f, v string) bool {
+	switch f {
+	case "worker":
+		return workerName.MatchString(v)
+	case "session":
+		return jobs.ValidID(v)
+	}
+	return v != "" && len(v) <= 256 && utf8.ValidString(v) && !strings.ContainsFunc(v, unicode.IsControl)
+}
+
+var workerName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 // ---------------------------------------------------------------- the channel
 

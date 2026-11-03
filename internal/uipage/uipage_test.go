@@ -25,6 +25,11 @@ func TestResolve(t *testing.T) {
 		{"sessions", Target{}, "/sessions"},
 		{"sessions", Target{Worker: "worker-1"}, "/sessions#worker=worker-1"},
 		{"sessions", Target{Worker: "worker-1", Job: "x7k2", Session: "dev", Agent: "copilot"}, "/sessions#agent=copilot&job=x7k2&session=dev&worker=worker-1"},
+		// what names a session or job elsewhere names it here (encoded)
+		{"sessions", Target{Session: "_dev"}, "/sessions#session=_dev"},
+		{"sessions", Target{Session: "-x"}, "/sessions#session=-x"},
+		{"jobs", Target{Job: "nightly build & test"}, "/tray?job=nightly+build+%26+test&tab=jobs"},
+		{"sessions", Target{Job: "a/b#c"}, "/sessions#job=a%2Fb%23c"},
 	} {
 		pg, err := Resolve(c.page, c.t)
 		if err != nil || pg.String() != c.want {
@@ -54,8 +59,10 @@ func TestResolveRefuses(t *testing.T) {
 		{"settings", Target{Session: "s"}, "--session is not for"},
 		{"sessions", Target{Agent: "aider"}, "--agent"},
 		{"sessions", Target{Worker: "w1&key=x"}, "--worker: not a valid name"},
-		{"sessions", Target{Session: "-x"}, "--session: not a valid name"},
-		{"jobs", Target{Job: "a/b"}, "--job: not a valid name"},
+		{"sessions", Target{Session: "a.b"}, "--session: not a valid name"},
+		{"sessions", Target{Session: "con"}, "--session: not a valid name"},
+		{"jobs", Target{Job: "a\nb"}, "--job: not a valid name"},
+		{"jobs", Target{Job: strings.Repeat("j", 257)}, "--job: not a valid name"},
 		{"sessions", Target{Worker: strings.Repeat("w", 129)}, "not a valid name"},
 	} {
 		_, err := Resolve(c.page, c.t)
