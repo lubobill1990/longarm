@@ -14,9 +14,10 @@
    - worker: `<home>/longarm-handoff/<repo>-<id8>`. It is never garbage-collected. Remove it later with `longarm exec <w> -- git -C <dir> worktree remove --force .`.
    - local: `<checkout>-handoff-<id8>` next to your checkout, or under `--worktree-dir` / `LONGARM_HANDOFF_DIR`. `--local-repo` names the checkout when cwd isn't one.
 4. **Transcript**: copied, with absolute paths rewritten to the target worktree. The session id is kept. The source copy stays, marked "handed off".
-5. **Resume**: on a worker, a longarm session `--name` (default `handoff-<id8>`) runs `claude --resume <id>` / `copilot --resume=<id>`, then attaches. `--no-attach` or `--json` prints the command instead. Locally, the agent runs in this terminal.
+5. **Environment**: what the session used (from its transcript) and the target lacks goes to `<agent dir>/longarm-handoff/<id>/`, loaded by per-run options; the target's own config is untouched. MCP server configs (credentials included, 0600), personal skills, plugins, Claude's project memory and `CLAUDE.md`, Copilot's instructions. `--carry-settings` adds hooks and settings (else named in `environment.notCarried`). Failures are warnings.
+6. **Resume**: on a worker, a longarm session `--name` (default `handoff-<id8>`) runs `claude --resume <id>` / `copilot --resume=<id>` plus those options (`--json`: `resume`, `resumeEnv`, `environment`), then attaches. `--no-attach` or `--json` prints the command instead. Locally, the agent runs in this terminal.
 
-Running processes are not carried over: tool calls, background shells, MCP servers, dev servers. Claude Code may ask to trust the new directory.
+Running processes are not carried over: tool calls, background shells, MCP server processes, dev servers. Claude Code may ask to trust the new directory.
 
 ## How the code travels: `--via relay|remote|auto` (default auto)
 
@@ -29,14 +30,14 @@ Running processes are not carried over: tool calls, background shells, MCP serve
   - A worker source needs `--git-auth forward`. The forwarded credential then gets write access for that one push of that one ref.
   - A secret scan runs over the changed and untracked files first. A hit falls back to relay and names the file and rule. `--allow-secrets` pushes anyway.
   - Changed files over 50 MB, no https remote, no credential, or a refused push also fall back to relay, with a note.
-  - `--keep-branch` keeps the branch. `longarm handoff --cleanup [--json]` (run in your checkout) lists your stale handoff branches and deletes those older than 1 h.
+  - `--keep-branch` keeps the branch. `longarm handoff --cleanup [--from <w>] [--json]` deletes your handoff branches older than 1 h (run in your checkout) and the environment directories of sessions that moved on from that machine, and of runs unused for 7 days.
 
 `--git-auth forward` also lets a worker target fetch the base commits from the remote first, so only the delta is shipped.
 
 ## Preflight and safety
 
 - The agent must be installed on the target and be no older than the one that last wrote the session; otherwise exit 2 (`--force` turns the version check into a warning).
-- Warnings: the agent looks logged out on the target; MCP servers configured on the source are missing on the target.
+- Warning: the agent looks logged out on the target.
 - The session's files may total at most `--max-size 64M` (else exit 2).
 - Only your own workers: a worker owned by someone else, even if shared, is refused with exit 77. Only your own sessions.
 - Admin workers (`-admin`) are used only when named explicitly.

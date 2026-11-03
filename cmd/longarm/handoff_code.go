@@ -20,6 +20,7 @@ package main
 //                 remote above (the default: defaultHandoffVia).
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -730,10 +731,101 @@ func resolveVia(o *handoffOpts, viaSet bool, threshold string, thresholdSet bool
 	return nil
 }
 
-// runHandoffCleanup lists the caller's temporary branches on the current
-// checkout's remote and deletes those older than an hour (newer ones may
-// belong to a handoff in progress).
+// runHandoffCleanup removes the per-session directories of sessions that
+// moved on from --from (default this machine; pruneEnvDirs), and lists the
+// caller's temporary branches on the current checkout's remote and deletes
+// those older than an hour (newer ones may belong to a handoff in progress).
 func runHandoffCleanup(ctx context.Context, o handoffOpts) error {
+	envs, err := cleanupEnvDirs(ctx, cmp.Or(o.from, localMachine))
+	if err != nil {
+		return err
+	}
+	remote, list, berr := cleanupBranches(ctx, o)
+	if o.asJSON {
+		if list == nil {
+			list = []tempBranchState{}
+		}
+		if envs == nil {
+			envs = []envDirState{}
+		}
+		out := map[string]any{"remote": remote, "branches": list, "environments": envs}
+		if berr != nil {
+			out["branchesError"] = oneLine(berr)
+		}
+		b, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(b))
+		return nil
+	}
+	for _, e := range envs {
+		state := "removed"
+		if !e.Removed {
+			state = "kept"
+		}
+		fmt.Printf("%s\t%s (%s: %s)\n", e.Dir, state, e.Agent, e.Reason)
+	}
+	if berr != nil {
+		notef("temporary branches: %v", berr)
+		return nil
+	}
+	if len(list) == 0 {
+		fmt.Printf("no temporary handoff branches of %s on %s\n", handoffUser(), remote)
+	}
+	for _, b := range list {
+		state := "deleted"
+		if !b.Deleted {
+			state = b.Error
+		}
+		fmt.Printf("%s\t%s\n", b.Name, state)
+	}
+	return nil
+}
+
+// cleanupEnvDirs is pruneEnvDirs on a machine of the caller's whose agent
+// state is the caller's own.
+func cleanupEnvDirs(ctx context.Context, machine string) ([]envDirState, error) {
+	if machine == localMachine {
+		ep, err := openEndpoint(ctx, nil, localMachine)
+		if err != nil {
+			return nil, err
+		}
+		return pruneEnvDirs(ctx, ep), nil
+	}
+	s, err := openSession()
+	if err != nil {
+		return nil, err
+	}
+	defer s.close()
+	ep, err := openEndpoint(ctx, s, machine)
+	if err != nil {
+		return nil, err
+	}
+	defer ep.close()
+	nodes, _ := s.hubNodes(ctx, false)
+	var node *pb.NodeInfo
+	for _, n := range nodes {
+		if n.Name == machine {
+			node = n
+		}
+	}
+	if err := ownMachine(ep, node); err != nil {
+		return nil, err
+	}
+	if !filesAreMine(ep, node) {
+		return nil, noPermf("%s keeps every user's agent state in one account (shared isolation): its handoff directories are not only yours", machine)
+	}
+	return pruneEnvDirs(ctx, ep), nil
+}
+
+// tempBranchState is a temporary branch handoff --cleanup found.
+type tempBranchState struct {
+	Name    string `json:"branch"`
+	Deleted bool   `json:"deleted"`
+	Error   string `json:"error,omitempty"`
+}
+
+// cleanupBranches deletes the caller's temporary branches older than an
+// hour on the remote of the current checkout (or --local-repo).
+func cleanupBranches(ctx context.Context, o handoffOpts) (string, []tempBranchState, error) {
 	dir := o.localRepo
 	if dir == "" {
 		dir, _ = os.Getwd()
@@ -741,10 +833,10 @@ func runHandoffCleanup(ctx context.Context, o handoffOpts) error {
 	ep := &hoEndpoint{name: localMachine, goos: goosLocal()}
 	r, err := openHoRepo(ctx, ep, dir)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 	if r.remote == "" {
-		return usagef("%s has no remote", r.top)
+		return "", nil, usagef("%s has no remote", r.top)
 	}
 	user := handoffUser()
 	args := []string{"ls-remote", "--heads", "--", r.remote}
@@ -755,13 +847,9 @@ func runHandoffCleanup(ctx context.Context, o handoffOpts) error {
 	}
 	out, err := r.git(ctx, nil, nil, args...)
 	if err != nil {
-		return err
+		return r.remote, nil, err
 	}
-	type branch struct {
-		Name    string `json:"branch"`
-		Deleted bool   `json:"deleted"`
-		Error   string `json:"error,omitempty"`
-	}
+	type branch = tempBranchState
 	var list []branch
 	stampRE := regexp.MustCompile(`-(\d{12})(?:-[0-9a-f]{1,16})?$`)
 	for _, l := range strings.Split(out, "\n") {
@@ -784,23 +872,5 @@ func runHandoffCleanup(ctx context.Context, o handoffOpts) error {
 		}
 		list = append(list, b)
 	}
-	if o.asJSON {
-		if list == nil {
-			list = []branch{}
-		}
-		b, _ := json.MarshalIndent(map[string]any{"remote": r.remote, "branches": list}, "", "  ")
-		fmt.Println(string(b))
-		return nil
-	}
-	if len(list) == 0 {
-		fmt.Printf("no temporary handoff branches of %s on %s\n", user, r.remote)
-	}
-	for _, b := range list {
-		state := "deleted"
-		if !b.Deleted {
-			state = b.Error
-		}
-		fmt.Printf("%s\t%s\n", b.Name, state)
-	}
-	return nil
+	return r.remote, list, nil
 }

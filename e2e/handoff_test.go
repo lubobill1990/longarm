@@ -17,21 +17,28 @@ import (
 
 // handoffOut is handoff --json.
 type handoffOut struct {
-	Agent     string   `json:"agent"`
-	SessionID string   `json:"sessionId"`
-	From      string   `json:"from"`
-	To        string   `json:"to"`
-	Worktree  string   `json:"worktree"`
-	Cwd       string   `json:"cwd"`
-	Branch    string   `json:"branch"`
-	Session   string   `json:"session"`
-	Snapshot  string   `json:"snapshot"`
-	Base      string   `json:"base"`
-	Files     int      `json:"files"`
-	Resume    []string `json:"resume"`
-	Transfer  string   `json:"transfer"`
-	Relayed   int64    `json:"relayedBytes"`
-	Temp      string   `json:"tempBranch"`
+	Agent     string            `json:"agent"`
+	SessionID string            `json:"sessionId"`
+	From      string            `json:"from"`
+	To        string            `json:"to"`
+	Worktree  string            `json:"worktree"`
+	Cwd       string            `json:"cwd"`
+	Branch    string            `json:"branch"`
+	Session   string            `json:"session"`
+	Snapshot  string            `json:"snapshot"`
+	Base      string            `json:"base"`
+	Files     int               `json:"files"`
+	Resume    []string          `json:"resume"`
+	ResumeEnv map[string]string `json:"resumeEnv"`
+	Transfer  string            `json:"transfer"`
+	Relayed   int64             `json:"relayedBytes"`
+	Temp      string            `json:"tempBranch"`
+	Env       *struct {
+		Dir         string   `json:"dir"`
+		MCPServers  []string `json:"mcpServers"`
+		Credentials []string `json:"mcpCredentials"`
+		Skills      []string `json:"skills"`
+	} `json:"environment"`
 }
 
 // claudeDir is Claude Code's project directory name of a path.
@@ -231,9 +238,13 @@ func TestAgentHandoff(t *testing.T) {
 	mustWrite(t, filepath.Join(srcProj, id+".jsonl"), strings.Join([]string{
 		fmt.Sprintf(`{"type":"user","cwd":%s,"sessionId":%q,"version":"1.0.0","message":{"role":"user","content":"please fix tracked.txt"}}`, jsonQ(repo), id),
 		fmt.Sprintf(`{"type":"assistant","cwd":%s,"message":{"role":"assistant","content":[{"type":"tool_use","input":{"file_path":%s}}]}}`, jsonQ(repo), jsonQ(filepath.Join(repo, "tracked.txt"))),
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"mcp__github__get_me","input":{}},{"type":"tool_use","name":"Skill","input":{"skill":"pdf"}}]}}`,
 	}, "\n")+"\n")
 	mustWrite(t, filepath.Join(srcProj, id, "tool-results", "r1.txt"), "tool output\n")
 	mustWrite(t, filepath.Join(chome, ".claude", "file-history", id, "f1@v1"), "before\n")
+	// what the session used of the environment: an MCP server and a skill of this machine
+	mustWrite(t, filepath.Join(chome, ".claude.json"), `{"mcpServers":{"github":{"command":"gh-mcp","env":{"TOKEN":"e2e-secret"}},"unused":{"command":"x"}}}`)
+	mustWrite(t, filepath.Join(chome, ".claude", "skills", "pdf", "SKILL.md"), "---\nname: pdf\n---\n")
 
 	t.Run("agent_sessions_local", func(t *testing.T) {
 		r := client(repo, "agent-sessions", "--json", "--repo-path", repo)
@@ -285,6 +296,23 @@ func TestAgentHandoff(t *testing.T) {
 		if rec["cwd"] != wantTop || rec["transcript"] != true || rec["recordedCwd"] != wantTop || rec["worker"] != "w1" || rec["session"] != "handoff-"+short {
 			t.Errorf("the agent on w1: %v", rec)
 		}
+		// the MCP server and skill it used went for this session only, loaded by the resume command
+		pack := filepath.Join(w1home, ".claude", "longarm-handoff", id)
+		if h1.Env == nil || h1.Env.Dir != pack || fmt.Sprint(h1.Env.MCPServers) != "[github]" || fmt.Sprint(h1.Env.Credentials) != "[github]" || fmt.Sprint(h1.Env.Skills) != "[pdf]" {
+			t.Errorf("environment: %+v", h1.Env)
+		}
+		if args := fmt.Sprint(rec["args"]); !strings.Contains(args, "--mcp-config "+filepath.Join(pack, "mcp.json")) || !strings.Contains(args, "--add-dir "+pack) {
+			t.Errorf("the agent's arguments on w1: %s", args)
+		}
+		if mj := readText(t, filepath.Join(pack, "mcp.json")); !strings.Contains(mj, "e2e-secret") || strings.Contains(mj, "unused") {
+			t.Errorf("mcp.json on w1:\n%s", mj)
+		}
+		if _, err := os.Stat(filepath.Join(pack, ".claude", "skills", "pdf", "SKILL.md")); err != nil {
+			t.Errorf("skill on w1: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(w1home, ".claude.json")); err == nil {
+			t.Error("w1's own configuration was written")
+		}
 		// listed on w1; the handed-off local copy is no longer listed locally
 		if r := client(repo, "agent-sessions", "w1", "--json"); r.code != 0 || !strings.Contains(r.stdout, id) {
 			t.Errorf("agent-sessions w1: %+v", r)
@@ -332,6 +360,10 @@ func TestAgentHandoff(t *testing.T) {
 		if rec := agentRecord(t, w2home, id); rec["cwd"] != wantTop || rec["recordedCwd"] != wantTop || rec["worker"] != "w2" {
 			t.Errorf("the agent on w2: %v", rec)
 		}
+		// w1 had them for this session only: they go on from there
+		if h2.Env == nil || fmt.Sprint(h2.Env.MCPServers) != "[github]" || fmt.Sprint(h2.Env.Skills) != "[pdf]" {
+			t.Errorf("environment w1 -> w2: %+v", h2.Env)
+		}
 	})
 
 	t.Run("w2_to_local", func(t *testing.T) {
@@ -366,6 +398,8 @@ func TestAgentHandoff(t *testing.T) {
 		}
 		if rec := agentRecord(t, chome, id); rec["cwd"] != wantTop || rec["recordedCwd"] != wantTop {
 			t.Errorf("the agent here: %v", rec)
+		} else if args := fmt.Sprint(rec["args"]); strings.Contains(args, "--mcp-config") || strings.Contains(args, "--add-dir") {
+			t.Errorf("this machine has the MCP server and skill: nothing to carry back (%s)", args)
 		}
 		// the original local copy stays where it was, marked; the id-keyed
 		// state it had was kept as a backup, not overwritten
@@ -387,6 +421,8 @@ func TestAgentHandoff(t *testing.T) {
 		mustWrite(t, filepath.Join(sd, "events.jsonl"), fmt.Sprintf(`{"type":"session.start","data":{"sessionId":%q,"copilotVersion":"1.0.0","context":{"cwd":%s,"gitRoot":%s}},"id":"e1"}`+"\n"+
 			`{"type":"user.message","data":{"content":"add a flag"},"id":"e2"}`+"\n", cid, jsonQ(repo), jsonQ(repo)))
 		mustWrite(t, filepath.Join(sd, "workspace.yaml"), "id: "+cid+"\ncwd: "+repo+"\ngit_root: "+repo+"\nname: flag work\n")
+		// the user's instructions go along, loaded through COPILOT_CUSTOM_INSTRUCTIONS_DIRS
+		mustWrite(t, filepath.Join(chome, ".copilot", "copilot-instructions.md"), "Be brief.\n")
 		// --via remote without a remote: relayed (uploaded), with a note
 		out, rr := h.handoff(repo, "--to", "w1", "--agent", "copilot", "--session", cid, "--no-attach", "--name", "cop1", "--via", "remote")
 		if out.Transfer != "upload" || !strings.Contains(rr.stderr, "not through the remote (the checkout has no remote)") {
@@ -407,8 +443,15 @@ func TestAgentHandoff(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(sd, "longarm-handoff.json")); err != nil {
 			t.Errorf("source marker: %v", err)
 		}
-		if rec := agentRecord(t, w1home, cid); rec["cwd"] != wantTop || rec["recordedCwd"] != wantTop || rec["session"] != "cop1" {
+		instr := filepath.Join(w1home, ".copilot", "longarm-handoff", cid, "instructions")
+		if rec := agentRecord(t, w1home, cid); rec["cwd"] != wantTop || rec["recordedCwd"] != wantTop || rec["session"] != "cop1" || rec["instructionsDirs"] != instr {
 			t.Errorf("the agent on w1: %v", rec)
+		}
+		if out.ResumeEnv["COPILOT_CUSTOM_INSTRUCTIONS_DIRS"] != instr {
+			t.Errorf("resumeEnv: %v", out.ResumeEnv)
+		}
+		if got := readText(t, filepath.Join(instr, ".github", "instructions", "copilot-instructions.instructions.md")); !strings.HasSuffix(got, "Be brief.\n") {
+			t.Errorf("instructions on w1: %q", got)
 		}
 		// w1 -> w2 when w2 can't reach w1: relayed through the client
 		h.extra = []string{"LONGARM_TEST_HANDOFF_ENDPOINTS=tcp://127.0.0.1:1"}
@@ -420,7 +463,72 @@ func TestAgentHandoff(t *testing.T) {
 		if ws := readText(t, filepath.Join(w2home, ".copilot", "session-state", cid, "workspace.yaml")); !strings.Contains(ws, "cwd: "+jsonQ(out2.Worktree)) {
 			t.Errorf("workspace.yaml on w2:\n%s", ws)
 		}
+		// the instructions went on from w1's directory of the session
+		if rec := agentRecord(t, w2home, cid); rec["instructionsDirs"] != filepath.Join(w2home, ".copilot", "longarm-handoff", cid, "instructions") {
+			t.Errorf("the agent on w2: %v", rec)
+		}
 		e.mustLongarm(e.client, "session", "stop", "w2", "-s", "cop2", "--grace", "0")
+		// the session moved on from w1: --cleanup removes its directory there (no remote here: no branches)
+		c := client(repo, "handoff", "--cleanup", "--from", "w1", "--json")
+		if c.code != 0 || !strings.Contains(c.stdout, `"session": "`+cid+`"`) || !strings.Contains(c.stdout, `"removed": true`) {
+			t.Errorf("cleanup on w1: %+v", c)
+		}
+		if _, err := os.Stat(filepath.Join(w1home, ".copilot", "longarm-handoff", cid)); err == nil {
+			t.Error("w1's directory of the session is still there")
+		}
+	})
+
+	// run --agent-env / --mcp / --skill: this machine's MCP server and skill
+	// go to <agent dir>/longarm-env/<key>/ on the worker, once, and the agent
+	// gets the options that load them
+	t.Run("run_agent_env", func(t *testing.T) {
+		jobLog := func(r result) string {
+			t.Helper()
+			if r.code != 0 {
+				t.Fatalf("run: %+v", r)
+			}
+			return e.mustLongarm(e.client, "logs", "w1", strings.TrimSpace(strings.SplitN(r.stdout, "\n", 2)[0]))
+		}
+		r := client(repo, "run", "w1", "--wait", "--mcp", "github", "--skill", "pdf", "--", "claude", "-p", "hi")
+		dirs, _ := filepath.Glob(filepath.Join(w1home, ".claude", "longarm-env", "*"))
+		if len(dirs) != 1 {
+			t.Fatalf("longarm-env on w1: %v (%+v)", dirs, r)
+		}
+		logs := jobLog(r)
+		if !strings.Contains(logs, "args --mcp-config "+filepath.Join(dirs[0], "mcp.json")+" --add-dir "+dirs[0]+" -p hi") {
+			t.Errorf("the agent's arguments:\n%s", logs)
+		}
+		if mj := readText(t, filepath.Join(dirs[0], "mcp.json")); !strings.Contains(mj, "e2e-secret") || strings.Contains(mj, "unused") {
+			t.Errorf("mcp.json:\n%s", mj)
+		}
+		if _, err := os.Stat(filepath.Join(dirs[0], ".claude", "skills", "pdf", "SKILL.md")); err != nil {
+			t.Errorf("skill: %v", err)
+		}
+		// the same again: written once
+		r = client(repo, "run", "w1", "--wait", "--mcp", "github", "--skill", "pdf", "--", "claude", "-p", "again")
+		if again, _ := filepath.Glob(filepath.Join(w1home, ".claude", "longarm-env", "*")); len(again) != 1 || !strings.Contains(r.stderr, "on w1 already") {
+			t.Errorf("second run: %v\n%s", again, r.stderr)
+		}
+		jobLog(r)
+		// Copilot: the user's instructions through COPILOT_CUSTOM_INSTRUCTIONS_DIRS
+		logs = jobLog(client(repo, "run", "w1", "--wait", "--agent-env", "memory", "--", "copilot", "-p", "hi"))
+		if !strings.Contains(logs, "instructions_dirs "+filepath.Join(w1home, ".copilot", "longarm-env")) {
+			t.Errorf("copilot job:\n%s", logs)
+		}
+		// refused before anything runs
+		if r := client(repo, "run", "w1", "--mcp", "nope", "--", "claude", "-p", "hi"); r.code != 2 || !strings.Contains(r.stderr, "no MCP server of that name") {
+			t.Errorf("--mcp nope: %+v", r)
+		}
+		if r := client(repo, "run", "w1", "--agent-env", "skills", "--", "sh", "-c", "claude -p hi"); r.code != 2 || !strings.Contains(r.stderr, "not claude or copilot") {
+			t.Errorf("a wrapped agent without --agent-auth: %+v", r)
+		}
+		// a wrapper with the agent named: the options in LONGARM_AGENT_ARGS
+		h.extra = []string{"ANTHROPIC_API_KEY=e2e-key"}
+		logs = jobLog(client(repo, "run", "w1", "--wait", "--agent-auth", "claude", "--skill", "pdf", "--", bins.helper, "env", "LONGARM_AGENT_ARGS"))
+		h.extra = nil
+		if !strings.Contains(logs, `LONGARM_AGENT_ARGS=["--add-dir",`) {
+			t.Errorf("the wrapper's environment:\n%s", logs)
+		}
 	})
 
 	t.Run("refusals", func(t *testing.T) {

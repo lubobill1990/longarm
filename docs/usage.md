@@ -622,6 +622,50 @@ longarm run w1 --repo . --wait -e COPILOT_AUTO_UPDATE=false -- \
 - `--model` picks a model for either agent.
 - Give parallel agents separate worktrees (`--repo`) or directories.
 
+### Agent environment (`--agent-env`)
+
+An agent started on a worker has the worker's MCP servers, skills and
+plugins (a Copilot job with forwarded credentials, in its private
+`COPILOT_HOME`: none). `run`, `exec`, `session start` and `attach` can
+give it this machine's for that run only - nothing unless asked:
+
+```sh
+longarm run w1 --wait --mcp github --skill pdf -- claude -p "triage the open issues"
+longarm run w1 --wait --agent-env all -- copilot -p "..." --yolo
+longarm session start w1 -s fix --agent-env skills,plugins,memory -- claude
+```
+
+| flag | |
+|---|---|
+| `--agent-env all\|mcp\|skills\|plugins\|memory\|settings\|none` | Repeatable or comma-separated. `all` is `mcp,skills,plugins,memory`; `settings` (Claude Code's `settings.json` with its hooks, Copilot's hooks) only by name, as hooks run commands. |
+| `--mcp NAME` | One MCP server of this machine's configuration (Claude Code: `~/.claude.json`, user and this directory's project; Copilot: `mcp-config.json`). Unknown: exit 2. |
+| `--skill NAME` | One personal skill, or Claude Code's `plugin:skill` (its plugin goes). |
+| `--plugin NAME` | One installed plugin. Unknown: exit 2. |
+
+`mcp` / `skills` / `plugins` mean all of them (plugins: the enabled ones);
+`memory` is `~/.claude/CLAUDE.md` or Copilot's user instructions. Only what
+the worker's agent lacks goes, as in a handoff ([the session's
+environment](#hand-off-an-agent-session)): to
+`<agent dir>/longarm-env/<hash of the content>/` on the worker, written once
+and reused by the runs that carry the same (stderr says which), loaded by
+options longarm puts right after the command's program (`--mcp-config`,
+`--plugin-dir`, `--add-dir`, `--append-system-prompt-file`, `--settings`;
+Copilot: `--additional-mcp-config`, `--plugin-dir`, `--add-dir`, and
+`COPILOT_CUSTOM_INSTRUCTIONS_DIRS` in the job's environment unless you set
+it). MCP configurations go as they are, credentials included, in files
+only the worker account reads.
+
+- The command's program is `claude` or `copilot`, or a wrapper (`pwsh -c
+  "claude ..."`, a script) with the agent named by `--agent-auth claude`
+  (or `copilot`): the wrapper gets the options as a JSON array in
+  `LONGARM_AGENT_ARGS` and adds them to the agent's command. Otherwise
+  exit 2.
+- A steerable Claude run refuses `settings` (it passes its own).
+- MCP configurations and settings are refused (exit 2) to somebody else's
+  worker with shared isolation; skills, plugins and memory go.
+- `longarm handoff --cleanup [--from <worker>]` removes the directories no
+  run used for 7 days.
+
 ### Interactive sessions (tmux-like)
 
 ```sh
@@ -943,7 +987,7 @@ longarm handoff --from w1 --to w2 --session <id> --no-attach
 longarm handoff --from w2 --to local --session <id>   # a new worktree next to your checkout; the agent runs here
 ```
 
-**`longarm handoff --to <worker|local> [--from <worker|local>] [--agent claude|copilot] (--session ID | --latest) [--name NAME] [--via relay|remote|auto] [--via-threshold 20M] [--git-auth forward] [--allow-secrets] [--keep-branch] [--no-attach] [--json]`**, `longarm handoff --cleanup`
+**`longarm handoff --to <worker|local> [--from <worker|local>] [--agent claude|copilot] (--session ID | --latest) [--name NAME] [--via relay|remote|auto] [--via-threshold 20M] [--git-auth forward] [--allow-secrets] [--keep-branch] [--carry-settings] [--no-attach] [--json]`**, `longarm handoff --cleanup [--from <worker>]`
 
 1. **Locate.** `--session ID` (an id `agent-sessions` lists), or `--latest`:
    the most recently modified session whose project directory is in the
@@ -1055,7 +1099,9 @@ would carry, after the remote-first fetch with `--git-auth forward`) decides
   longarm prints the `git push <url> --delete <branch>` that does it.
   `--keep-branch` keeps it; `longarm handoff --cleanup [--json]` (in your
   checkout) lists your temporary branches (all three namespaces) and deletes
-  those older than an hour.
+  those older than an hour - and removes the session directories of
+  sessions that moved on (below); `--json`: `branches`, `environments`
+  (outside a checkout with a remote, `branchesError`).
 
   Before pushing, a **secret check** scans the changed and untracked files
   (built-in rules: private keys, AWS / GitHub / GitLab / Slack / Google /
@@ -1082,11 +1128,60 @@ would carry, after the remote-first fetch with `--git-auth forward`) decides
    (`<id>.handoff.json` next to a Claude transcript, `longarm-handoff.json`
    in a Copilot session directory: target, time, worktree, snapshot);
    `agent-sessions` lists such copies only with `--all`.
-5. **Resume.** A worker: a longarm session (`--name`, default
+5. **Carry the session's environment** (below): the MCP servers, skills
+   and plugins it used that the target lacks, and Claude Code's memory -
+   for this session only.
+6. **Resume.** A worker: a longarm session (`--name`, default
    `handoff-<id8>`) in the target worktree running `claude --resume <id>` /
-   `copilot --resume=<id>`, then `longarm attach` (`--no-attach` / `--json`:
-   printed instead). Local: the agent runs in this terminal (`--no-attach`:
-   the command is printed).
+   `copilot --resume=<id>` (with the options that load the carried
+   environment), then `longarm attach` (`--no-attach` / `--json`: printed
+   instead). Local: the agent runs in this terminal (`--no-attach`: the
+   command is printed).
+
+**The session's environment.** While the transcripts are copied, longarm
+reads which MCP servers the session called (Claude Code's
+`mcp__<server>__<tool>` tool calls, Copilot's `tool.execution_start`
+events) and which skills it loaded (the Skill tool, slash commands, the
+`skill` tool). Of those, what the source has and the target lacks goes
+along - nothing the session didn't use, and nothing of the target is
+changed:
+
+| | Claude Code | Copilot CLI |
+|---|---|---|
+| MCP servers | of `~/.claude.json` (user and the project's; `.mcp.json` travels with the code) -> `mcp.json`, `--mcp-config` | of `~/.copilot/mcp-config.json` -> `mcp.json`, `--additional-mcp-config @...` |
+| skills | personal (`~/.claude/skills/<name>`; a project's travel with the code) -> `.claude/skills/<name>`, `--add-dir` | personal (`~/.copilot/skills`, `~/.agents/skills`) -> `.github/skills/<name>`, `--add-dir` |
+| plugins | those of the plugin skills (`plugin:skill`) and plugin MCP servers used (`plugins/installed_plugins.json`) -> `plugins/<name>`, `--plugin-dir` | those the used skills and MCP servers came from (`installed-plugins/<marketplace>/<plugin>`; the target has one by its name from any marketplace, `config.json`) -> `plugins/<name>`, `--plugin-dir` |
+| memory | the project's auto memory (`projects/<project>/memory/`) -> the new worktree's project directory; `~/.claude/CLAUDE.md`, when the target's differs -> `CLAUDE.md`, `--append-system-prompt-file` | the user's instructions (`~/.copilot/copilot-instructions.md`, `instructions/**/*.instructions.md`) the target has otherwise -> `instructions/.github/instructions/`, `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` |
+| with `--carry-settings` | `settings.json` - the keys whose value differs from the target's and the hooks it lacks (plugins as above) -> `settings.json`, `--settings`; the project's `.claude/settings.local.json` (your answers to its permission prompts; git ignores it) -> the new worktree, unless one came with the code | the hooks of `~/.copilot/hooks/*.json` the target lacks -> a plugin `plugins/longarm-handoff-hooks`, `--plugin-dir` |
+
+Hooks and settings go only with `--carry-settings`: hooks run commands on
+the target (often tools only the source has), and settings may hold
+credentials in `env`. Without it, the output (and `--json`
+`environment.notCarried`) names what it would carry, e.g.
+`settings.json (hooks: Stop; env, permissions)`. With it, a hook or status
+line that names a file in your home the target lacks is a warning.
+
+They land in the session's own directory on the target,
+`<agent dir>/longarm-handoff/<id>/` (an earlier one, and a project memory
+the target had, go to `longarm-handoff-backup/` first), with `env.json`
+recording what came; `--json` reports it as `environment` (`dir`,
+`mcpServers`, `mcpCredentials`, `skills`, `plugins`, `memory`, `settings`,
+`notCarried`), and the resume command's environment as `resumeEnv`. Files
+keep an executable bit of the source (from Windows: files starting with
+`#!`), so a plugin's scripts run on a Unix target. The next handoff of the
+session takes them on from there; `longarm handoff --cleanup [--from
+<worker>]` removes the directories of sessions handed off from that
+machine (default this one), or gone from it. An MCP server's
+configuration goes as it is - credentials in its `env` and `headers`
+included - in a file only your account there can read, paths in it
+mapped to the target (your home, the worktree); the output names the
+servers that have credentials (a warning when the target is in shared
+isolation: its users' jobs can read them), and warns when a server's
+command is an absolute path the target lacks. Each part may be at most
+`--max-size`; one that is larger, or has an unsafe file name, is left
+out with a warning, as is anything that fails: the session moved already.
+Copilot's `settings.json` (preferences, enabled plugins) has no per-run
+form and stays.
 
 Not carried over: running processes - tool calls in flight, background
 shells, MCP server processes, dev servers. The agent starts what it needs
@@ -1094,12 +1189,9 @@ anew on the target. Claude Code may ask to trust the new directory.
 
 **Preflight** (before anything changes): the agent is installed on the
 target (else exit 2) and not older than the version that last wrote the
-session (else exit 2; `--force` makes it a warning); warnings when it does
-not look logged in there (`claude auth status`; Copilot's `config.json`)
-and for MCP servers configured on the source (user-level and
-project-level; Claude's `.mcp.json` travels with the code) that the target
-lacks - server names only, read in memory. The session's files may be at
-most `--max-size` (default 64M; else exit 2).
+session (else exit 2; `--force` makes it a warning); a warning when it does
+not look logged in there (`claude auth status`; Copilot's `config.json`).
+The session's files may be at most `--max-size` (default 64M; else exit 2).
 
 **Safety.** Only your own machines: a worker with an owner other than you
 (as the worker says, or as the hub lists it) is refused as `--from` and as

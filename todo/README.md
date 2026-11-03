@@ -20,4 +20,5 @@ pull request description.
 | [ui-open.md](ui-open.md) | `longarm ui open` and the worker's fresh PATH (docs/usage.md "Opening Longarm's UI", "Operations") |
 | [toolchains.md](toolchains.md) | older-worker owner-tool compatibility |
 | [ci-flakes.md](ci-flakes.md) | tests that failed once and passed on a rerun |
+| [agent-env.md](agent-env.md) | `--agent-env` of runs: the tray, the MCP tools, a default (docs/usage.md "Agent environment") |
 | [programs.md](programs.md) | programs driving Longarm: features, fixtures, session input (docs/programs.md) |

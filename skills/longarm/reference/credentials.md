@@ -23,6 +23,15 @@ All forwarded values travel worker-direct over mTLS (never through the hub). The
 - Defaults live in workers.toml `[agent_auth] default = "none"|"auto"|"claude,copilot"`, `copilot_gh_user`, `gh_user`.
 - MCP: `agent_auth` on `fleet_exec` / `fleet_job_submit`, limited to the agents in `LONGARM_MCP_AGENT_AUTH` (default `claude,copilot`).
 
+## `--agent-env` (run, exec, session start, attach-that-creates)
+
+Gives the remote agent this machine's agent environment for that run only; nothing unless asked.
+
+- `--agent-env all` = `mcp,skills,plugins,memory`; `settings` (hooks, `settings.json`) only by name; `none`. Single items: `--mcp NAME`, `--skill NAME` (or Claude's `plugin:skill`), `--plugin NAME`; an unknown `--mcp`/`--plugin` is exit 2.
+- Only what the worker's agent lacks; a Copilot job with forwarded credentials (private `COPILOT_HOME`) gets all of it.
+- Stored once per content at `<agent dir>/longarm-env/<hash>/` on the worker (MCP configs with credentials, 0600) and loaded by options inserted after `argv[0]` (`--mcp-config`, `--plugin-dir`, `--add-dir`, `--append-system-prompt-file`, `--settings`; Copilot: `--additional-mcp-config`, `--plugin-dir`, `--add-dir`, `COPILOT_CUSTOM_INSTRUCTIONS_DIRS`).
+- `argv[0]` is the agent, or a wrapper with `--agent-auth claude|copilot`: it gets the options as a JSON array in `LONGARM_AGENT_ARGS` and must append them to the agent's command. Neither: exit 2. Steerable Claude refuses `settings`. MCP configs and settings are refused to someone else's shared-isolation worker.
+
 ## `--git-auth forward` (run/session start `--repo`, sync, handoff)
 
 The worker fetches from the https remote with a short-lived credential obtained on this machine. The credential is used for that fetch only and is never visible to the job.

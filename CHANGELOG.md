@@ -4,6 +4,34 @@
 
 ### Added
 
+- **`--agent-env`, `--mcp`, `--skill`, `--plugin`** on `run`, `exec`,
+  `session start` and `attach`: an agent started on a worker gets this
+  machine's MCP servers, skills, plugins, memory or (by name) hooks and
+  settings, for that run only, what the worker's agent lacks - stored once
+  per content under `<agent dir>/longarm-env/` and loaded by options
+  longarm adds after the command's program (a wrapper with `--agent-auth
+  claude|copilot` gets them in `LONGARM_AGENT_ARGS`). Nothing unless asked.
+- **`longarm handoff` carries the session's environment**: the MCP servers,
+  skills and plugins the session used (read from its transcripts) that the
+  target lacks, and Claude Code's project memory and `CLAUDE.md`, go to the
+  session's own directory on the target (`<agent dir>/longarm-handoff/<id>/`)
+  and are loaded for that session only (Claude Code: `--mcp-config`,
+  `--plugin-dir`, `--add-dir`, `--append-system-prompt-file`; Copilot CLI:
+  `--additional-mcp-config`, `--plugin-dir`, `--add-dir`) - the target's own
+  configuration, skills and plugins are not touched. MCP configurations go
+  as they are, credentials included, readable by your account only; the
+  output names the servers with credentials. `--json`: `environment`. The
+  preflight warning about MCP servers the target lacks is gone. Copilot's
+  user instructions go too (`COPILOT_CUSTOM_INSTRUCTIONS_DIRS` for the
+  resumed session; `--json` `resumeEnv`); files keep their executable bit;
+  a Copilot plugin the target has from another marketplace isn't carried.
+  **`--carry-settings`** also carries hooks and settings the target lacks
+  (Claude Code: `settings.json` via `--settings`, the project's
+  `settings.local.json`; Copilot: `~/.copilot/hooks` as a plugin) - without
+  it they are named as not carried. **`handoff --cleanup [--from <worker>]`**
+  also removes the session directories of sessions that moved on from that
+  machine; outside a checkout with a remote it skips the branches instead
+  of failing.
 - **Automatic updates are a choice at install.** The MSI wizard has an
   Updates page before Install: "Install new releases automatically" (off
   unless the machine had it on) and, with it, the release channel (Stable

@@ -144,12 +144,21 @@ func openEndpoint(ctx context.Context, s *session, name string) (*hoEndpoint, er
 	if err != nil {
 		return nil, err
 	}
+	ep, err := endpointOf(ctx, conn, name)
+	if err != nil {
+		conn.Close()
+	}
+	return ep, err
+}
+
+// endpointOf is the endpoint of a worker over an open connection (its
+// caller closes it).
+func endpointOf(ctx context.Context, conn *client.Conn, name string) (*hoEndpoint, error) {
 	c, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var pr peer.Peer // the worker's certificate, as this connection verified it
 	info, err := conn.Node().Info(c, &pb.InfoRequest{}, grpc.Peer(&pr))
 	if err != nil {
-		conn.Close()
 		return nil, err
 	}
 	nodeID := ""
@@ -160,7 +169,6 @@ func openEndpoint(ctx context.Context, s *session, name string) (*hoEndpoint, er
 	}
 	home, err := conn.Files().Stat(c, &pb.FileStatRequest{Path: "~"})
 	if err != nil {
-		conn.Close()
 		return nil, err
 	}
 	return &hoEndpoint{name: name, cert: info.Name, id: nodeID, conn: conn, goos: info.Os, home: home.AbsPath, callerUser: info.CallerUser,
@@ -180,6 +188,7 @@ type hoFile struct {
 	isDir bool
 	size  int64
 	mtime time.Time
+	mode  fs.FileMode // permission bits (none on Windows)
 }
 
 // list walks dir recursively (symlinks are skipped); a missing dir is empty.
@@ -216,7 +225,7 @@ func (e *hoEndpoint) list(ctx context.Context, dir string) ([]hoFile, error) {
 				return nil // vanished meanwhile
 			}
 			rel, _ := filepath.Rel(dir, p)
-			out = append(out, hoFile{rel: filepath.ToSlash(rel), isDir: d.IsDir(), size: fi.Size(), mtime: fi.ModTime()})
+			out = append(out, hoFile{rel: filepath.ToSlash(rel), isDir: d.IsDir(), size: fi.Size(), mtime: fi.ModTime(), mode: fi.Mode().Perm()})
 			return nil
 		})
 		return out, err
@@ -234,7 +243,7 @@ func (e *hoEndpoint) list(ctx context.Context, dir string) ([]hoFile, error) {
 		if f.IsSymlink {
 			continue
 		}
-		out = append(out, hoFile{rel: f.Path, isDir: f.IsDir, size: f.Size, mtime: f.Mtime.AsTime()})
+		out = append(out, hoFile{rel: f.Path, isDir: f.IsDir, size: f.Size, mtime: f.Mtime.AsTime(), mode: fs.FileMode(f.Mode).Perm()})
 	}
 	return out, nil
 }
@@ -402,22 +411,37 @@ func (e *hoEndpoint) download(ctx context.Context, p, dst string, limit int64) (
 	return n, nil
 }
 
-// upload copies the local file src to p on the endpoint (parents created;
-// the mode of src, 0600 for the copies handoff makes).
+// upload copies the local file src to p on the endpoint (parents created)
+// with mode 0600.
 func (e *hoEndpoint) upload(ctx context.Context, src, p string) error {
+	return e.uploadMode(ctx, src, p, 0o600)
+}
+
+// uploadMode is upload with the given permission bits (0700: an
+// executable; Windows targets ignore them).
+func (e *hoEndpoint) uploadMode(ctx context.Context, src, p string, mode fs.FileMode) error {
 	if e.local() {
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 			return err
 		}
-		_, err := copyLocalFile(src, p, 0o600, math.MaxInt64)
+		_, err := copyLocalFile(src, p, mode, math.MaxInt64)
 		return err
 	}
 	fi, err := os.Stat(src)
 	if err != nil {
 		return err
 	}
-	return putFile(ctx, e.conn, src, filepath.ToSlash(p), fi, &transferStats{})
+	// the mode given, not the local copy's (a Windows client has no executable bit)
+	return putFile(ctx, e.conn, src, filepath.ToSlash(p), modeInfo{fi, mode}, &transferStats{})
 }
+
+// modeInfo is a FileInfo with other permission bits.
+type modeInfo struct {
+	fs.FileInfo
+	mode fs.FileMode
+}
+
+func (m modeInfo) Mode() fs.FileMode { return m.FileInfo.Mode()&^fs.ModePerm | m.mode }
 
 // writeFile writes a small file (the hand-off marker).
 func (e *hoEndpoint) writeFile(ctx context.Context, p string, data []byte) error {
@@ -484,6 +508,20 @@ func (e *hoEndpoint) removeFile(ctx context.Context, p string) error {
 		return err
 	}
 	_, err := e.run(ctx, "", nil, nil, time.Minute, "rm", "-f", "--", p)
+	return err
+}
+
+// removeTree removes a directory and what is in it (a symlink: the link).
+func (e *hoEndpoint) removeTree(ctx context.Context, p string) error {
+	if e.local() {
+		return os.RemoveAll(p)
+	}
+	if e.windows() {
+		_, err := e.run(ctx, "", map[string]string{"LONGARM_HO_PATH": p}, nil, 5*time.Minute,
+			winPS("if (Test-Path -LiteralPath $env:LONGARM_HO_PATH) { Remove-Item -LiteralPath $env:LONGARM_HO_PATH -Recurse -Force }")...)
+		return err
+	}
+	_, err := e.run(ctx, "", nil, nil, 5*time.Minute, "rm", "-rf", "--", p)
 	return err
 }
 

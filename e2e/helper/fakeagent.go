@@ -18,7 +18,7 @@ import (
 //	                           appends a record to $HOME/fake-agent.log - the arguments,
 //	                           the working directory, whether the transcript is where the
 //	                           agent looks for it and the cwd recorded in it, LONGARM_WORKER /
-//	                           LONGARM_SESSION - then appends a "continued on <home>" line to
+//	                           LONGARM_SESSION / COPILOT_CUSTOM_INSTRUCTIONS_DIRS - then appends a "continued on <home>" line to
 //	                           the transcript, prints "fake agent ready" and reads stdin until
 //	                           it ends (or Ctrl-C ends the process). Claude: while it runs,
 //	                           <config>/sessions/<pid>.json names the session, as Claude
@@ -54,11 +54,12 @@ func fakeAgent(agent string, args []string) {
 		}
 	}
 	if id == "" {
-		fakeAgentAuth(agent) // the agent credential tests (agentauth.go)
+		fakeAgentAuth(agent, args) // the agent credential tests (agentauth.go), run --agent-env
 		return
 	}
 	cwd, _ := os.Getwd()
-	rec := map[string]any{"agent": agent, "args": args, "cwd": cwd, "worker": os.Getenv("LONGARM_WORKER"), "session": os.Getenv("LONGARM_SESSION")}
+	rec := map[string]any{"agent": agent, "args": args, "cwd": cwd, "worker": os.Getenv("LONGARM_WORKER"), "session": os.Getenv("LONGARM_SESSION"),
+		"instructionsDirs": os.Getenv("COPILOT_CUSTOM_INSTRUCTIONS_DIRS")}
 	var transcript string
 	if agent == "claude" {
 		transcript = filepath.Join(cfg, "projects", claudeDirName(cwd), id+".jsonl")

@@ -67,11 +67,14 @@ type handoffJSON struct {
 	// how the code went: upload (local -> worker), direct (worker -> worker),
 	// relay (worker -> worker through this client), bundle (worker -> local),
 	// remote (a temporary branch of the remote)
-	Transfer     string   `json:"transfer"`
-	RelayedBytes int64    `json:"relayedBytes"` // commit bytes this client relayed between workers
-	TempBranch   string   `json:"tempBranch,omitempty"`
-	Resume       []string `json:"resume"`
-	Warnings     []string `json:"warnings"`
+	Transfer     string            `json:"transfer"`
+	RelayedBytes int64             `json:"relayedBytes"` // commit bytes this client relayed between workers
+	TempBranch   string            `json:"tempBranch,omitempty"`
+	Resume       []string          `json:"resume"`
+	ResumeEnv    map[string]string `json:"resumeEnv,omitempty"` // the resume command's environment
+	Warnings     []string          `json:"warnings"`
+	// the MCP servers, skills, plugins and memory carried for this session only
+	Environment *handoffEnv `json:"environment,omitempty"`
 }
 
 type handoffOpts struct {
@@ -81,7 +84,7 @@ type handoffOpts struct {
 	maxBytes                                                                            int64
 	via                                                                                 string // remote | relay | auto
 	viaThreshold                                                                        int64
-	allowSecrets, keepBranch, cleanup                                                   bool
+	allowSecrets, keepBranch, cleanup, carrySettings                                    bool
 }
 
 func handoffCmd() *cobra.Command {
@@ -113,10 +116,16 @@ machine ("local") and workers - local -> worker, worker -> worker, worker
     rewritten from the source worktree to the target's (same session id),
     and mark the source copy "handed off" (a sidecar file; the original
     stays as a backup);
- 5. resume: on a worker in a longarm session (--name, default
-    handoff-<id>) running "claude --resume <id>" / "copilot --resume=<id>",
-    then attach (--no-attach: don't); locally the agent runs in this
-    terminal.
+ 5. carry what the session used of its agent's environment that the
+    target lacks - MCP servers, skills, plugins, Claude Code's memory,
+    Copilot's instructions; hooks and settings with --carry-settings - to
+    <agent dir>/longarm-handoff/<id>/ there, for this session only (the
+    target's own configuration is not changed; MCP configurations go with
+    their credentials, readable by your account only);
+ 6. resume: on a worker in a longarm session (--name, default
+    handoff-<id>) running "claude --resume <id>" / "copilot --resume=<id>"
+    with the options that load that environment, then attach (--no-attach:
+    don't); locally the agent runs in this terminal.
 
 Running processes (tool calls, background shells, MCP servers) are not
 carried over: the agent starts them anew on the target.`,
@@ -159,7 +168,8 @@ carried over: the agent starts them anew on the target.`,
 	f.StringVar(&viaThreshold, "via-threshold", defaultViaThreshold, "--via auto: objects the target lacks from this size on go through the remote; [handoff] via_threshold")
 	f.BoolVar(&o.allowSecrets, "allow-secrets", false, "--via remote: push even when the secret check finds credentials in changed or untracked files")
 	f.BoolVar(&o.keepBranch, "keep-branch", false, "--via remote: keep the temporary branch on the remote")
-	f.BoolVar(&o.cleanup, "cleanup", false, "list and delete your stale temporary branches (users/<you>/longarm-handoff/*, user/<you>/longarm-handoff/*, longarm/handoff/<you>/*) of the current checkout's remote")
+	f.BoolVar(&o.carrySettings, "carry-settings", false, "also carry the agent's hooks and settings the target lacks, for this session only (Claude Code settings.json and the project's settings.local.json; Copilot CLI hooks): hooks run commands there")
+	f.BoolVar(&o.cleanup, "cleanup", false, "list and delete your stale temporary branches (users/<you>/longarm-handoff/*, user/<you>/longarm-handoff/*, longarm/handoff/<you>/*) of the current checkout's remote, and remove the session directories (<agent dir>/longarm-handoff/<id>) of sessions that moved on from --from (default this machine)")
 	return c
 }
 
@@ -304,7 +314,7 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 		warn.add("%s keeps the agent state of all its users in one account (shared isolation): other users' jobs there can read the transcript", dst.name)
 	}
 	dstCfg := ad.configDir(ctx, dst)
-	if err := preflight(ctx, ad, src, dst, dstCfg, sess, srcRepo, o.force, &warn); err != nil {
+	if err := preflight(ctx, ad, dst, dstCfg, sess, o.force, &warn); err != nil {
 		return err
 	}
 	if total := sessionBytes(sess); total > o.maxBytes {
@@ -364,12 +374,21 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 	out.Cwd = dstCwd
 	notef("code at %s:%s (branch %s)", dst.name, dstTop, branch)
 
-	// 5. the session
-	nfiles, nbytes, err := moveSessionFiles(ctx, ad, src, dst, dstCfg, sess, srcRepo, dstTop, dstCwd, o.maxBytes)
+	// 5. the session, and what it used of its agent's environment
+	use := newEnvUse()
+	nfiles, nbytes, err := moveSessionFiles(ctx, ad, src, dst, dstCfg, sess, srcRepo, dstTop, dstCwd, o.maxBytes, use)
 	if err != nil {
 		return err
 	}
 	out.Files, out.Bytes = nfiles, nbytes
+	var envArgv []string
+	if pms, dstProject, err := sessionPathMaps(ad, src, dst, dstCfg, sess, srcRepo, dstTop, dstCwd); err == nil {
+		t := envTarget{cfg: dstCfg, has: dstCfg, project: dstProject, cwd: dstCwd, shared: !dst.local() && !filesAreMine(dst, nodeOf(dst.name)),
+			settings: o.carrySettings, limit: o.maxBytes}
+		if out.Environment = carryEnv(ctx, ad, src, dst, t, sess, pms, use, &warn); out.Environment != nil {
+			envArgv, out.ResumeEnv = out.Environment.args, out.Environment.env
+		}
+	}
 	if o.name == "" && !dst.local() {
 		o.name = "handoff-" + short
 	}
@@ -382,20 +401,28 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 	}
 
 	// 6. resume
-	argv := ad.resumeArgv(sess.ID)
+	argv := append(ad.resumeArgv(sess.ID), envArgv...)
 	out.Resume = argv
 	out.Warnings = warn
 	if out.Warnings == nil {
 		out.Warnings = []string{}
 	}
+	var envKV, envFlags []string // KEY=VALUE; session start -e KEY=VALUE
+	for _, k := range sortedKeys(out.ResumeEnv) {
+		kv := k + "=" + out.ResumeEnv[k]
+		envKV, envFlags = append(envKV, kv), append(envFlags, "-e", kv)
+	}
 	if dst.local() {
 		if o.noAttach {
-			return printHandoff(o, out, fmt.Sprintf("cd %s && %s", quoteArg(dstCwd), strings.Join(argv, " ")))
+			return printHandoff(o, out, fmt.Sprintf("cd %s && %s", quoteArg(dstCwd), joinArgv(append(envKV, argv...))))
 		}
 		code.temp.cleanup(ctx) // the target has the code
 		printHandoff(o, out, "")
 		c := exec.CommandContext(ctx, argv[0], argv[1:]...)
 		c.Dir, c.Stdin, c.Stdout, c.Stderr = dstCwd, os.Stdin, os.Stdout, os.Stderr
+		if len(envKV) > 0 {
+			c.Env = append(os.Environ(), envKV...)
+		}
 		err := c.Run()
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
@@ -407,12 +434,16 @@ func runHandoff(ctx context.Context, o handoffOpts) error {
 		return err
 	}
 	sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	resp, err := dst.conn.Sessions().Start(sctx, &pb.StartSessionRequest{Name: o.name, Argv: argv, Cwd: dstCwd})
+	resp, err := dst.conn.Sessions().Start(sctx, &pb.StartSessionRequest{Name: o.name, Argv: argv, Cwd: dstCwd, Env: out.ResumeEnv})
 	cancel()
 	if err != nil {
 		if status.Code(err) == codes.AlreadyExists {
-			return usagef("a session named %s runs on %s already: give another --name (the code and transcript are in place; resume with: longarm session start %s -s <name> --cwd %s -- %s)",
-				o.name, dst.name, dst.name, quoteArg(dstCwd), strings.Join(argv, " "))
+			envOpt := ""
+			if len(envFlags) > 0 {
+				envOpt = joinArgv(envFlags) + " "
+			}
+			return usagef("a session named %s runs on %s already: give another --name (the code and transcript are in place; resume with: longarm session start %s -s <name> --cwd %s %s-- %s)",
+				o.name, dst.name, dst.name, quoteArg(dstCwd), envOpt, joinArgv(argv))
 		}
 		return tooOld(err, dst.conn, "session start")
 	}
@@ -450,6 +481,14 @@ func quoteArg(s string) string {
 		return strconv.Quote(s)
 	}
 	return s
+}
+
+func joinArgv(argv []string) string {
+	q := make([]string, len(argv))
+	for i, a := range argv {
+		q[i] = quoteArg(a)
+	}
+	return strings.Join(q, " ")
 }
 
 func shortID(id string) string {
@@ -672,8 +711,9 @@ func quiesce(ctx context.Context, ep *hoEndpoint, host *pb.Session, o handoffOpt
 
 // preflight checks the target before anything changes: the agent is
 // installed (exit 2) and not older than the source's (exit 2 unless
-// --force), logged in, and has the MCP servers the session used (warnings).
-func preflight(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint, dstCfg string, sess *agentSession, srcRepo *hoRepo, force bool, warn *warnings) error {
+// --force), and logged in (a warning). The MCP servers, skills and plugins
+// the session used go with it (carryEnv).
+func preflight(ctx context.Context, ad agentAdapter, dst *hoEndpoint, dstCfg string, sess *agentSession, force bool, warn *warnings) error {
 	out, err := dst.run(ctx, "", nil, nil, 45*time.Second, ad.name(), "--version")
 	switch {
 	case errors.Is(err, errNoProgram):
@@ -691,32 +731,6 @@ func preflight(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint, dstCf
 	}
 	if in, known := ad.loggedIn(ctx, dst, dstCfg); known && !in {
 		warn.add("%s on %s does not look logged in: log in there before resuming", ad.name(), dst.name)
-	}
-	srcM := ad.mcpServers(ctx, src, sess.cfg, sess.ProjectDir)
-	have := map[string]bool{}
-	for _, n := range ad.mcpServers(ctx, dst, dstCfg, "") {
-		have[n] = true
-	}
-	if ad.name() == "claude" { // .mcp.json travels with the code
-		if b, err := src.readSmall(ctx, src.join(srcRepo.top, ".mcp.json"), 4<<20); err == nil {
-			var mj struct {
-				MCPServers map[string]json.RawMessage `json:"mcpServers"`
-			}
-			if json.Unmarshal(b, &mj) == nil {
-				for n := range mj.MCPServers {
-					have[n] = true
-				}
-			}
-		}
-	}
-	var missing []string
-	for _, n := range srcM {
-		if !have[n] {
-			missing = append(missing, n)
-		}
-	}
-	if len(missing) > 0 {
-		warn.add("MCP servers configured on %s but not on %s: %s (add them there for the same tools)", src.name, dst.name, strings.Join(missing, ", "))
 	}
 	if !dst.local() && !strings.Contains(strings.Join(dst.features, ","), jobs.FeatureSessionStart) {
 		return usagef("handoff: worker %s (longarmd %s) does not support session start; update longarmd", dst.name, dst.version)
@@ -741,15 +755,14 @@ func freeWorkerDir(ctx context.Context, ep *hoEndpoint, key, short string) (stri
 	}
 }
 
-// moveSessionFiles copies the session's files to the target (through a
-// private temporary directory here, removed afterwards), with the paths
-// rewritten; what the target has of the session already is moved to
-// <config>/longarm-handoff-backup/ first, never overwritten.
-func moveSessionFiles(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint, dstCfg string, sess *agentSession, srcRepo *hoRepo,
-	dstTop, dstCwd string, limit int64) (int, int64, error) {
+// sessionPathMaps are the source's paths of a session and the target's
+// (the worktree, the agent's project and config directories), with the
+// agent's project directory on the target ("" for Copilot CLI).
+func sessionPathMaps(ad agentAdapter, src, dst *hoEndpoint, dstCfg string, sess *agentSession, srcRepo *hoRepo,
+	dstTop, dstCwd string) ([]pathMap, string, error) {
 	dstProject, err := ad.projectBase(dst, dstCfg, dstCwd)
 	if err != nil {
-		return 0, 0, err
+		return nil, "", err
 	}
 	maps := []pathMap{{from: srcRepo.top, to: dstTop, fromWin: src.windows(), toWin: dst.windows()}}
 	// the project directory as the agent recorded it (may differ from git's spelling: symlinks, case)
@@ -765,6 +778,20 @@ func moveSessionFiles(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint
 		maps = append(maps, pathMap{from: src.dir(sess.transcript), to: dstProject, fromWin: src.windows(), toWin: dst.windows()})
 	}
 	maps = append(maps, pathMap{from: sess.cfg, to: dstCfg, fromWin: src.windows(), toWin: dst.windows()})
+	return maps, dstProject, nil
+}
+
+// moveSessionFiles copies the session's files to the target (through a
+// private temporary directory here, removed afterwards), with the paths
+// rewritten; what the target has of the session already is moved to
+// <config>/longarm-handoff-backup/ first, never overwritten. use learns
+// from the transcripts what of its environment the session used.
+func moveSessionFiles(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint, dstCfg string, sess *agentSession, srcRepo *hoRepo,
+	dstTop, dstCwd string, limit int64, use *envUse) (int, int64, error) {
+	maps, dstProject, err := sessionPathMaps(ad, src, dst, dstCfg, sess, srcRepo, dstTop, dstCwd)
+	if err != nil {
+		return 0, 0, err
+	}
 	rw := newPathRewriter(maps)
 	baseDir := func(b string) string {
 		if b == "project" {
@@ -841,6 +868,7 @@ func moveSessionFiles(ctx context.Context, ad agentAdapter, src, dst *hoEndpoint
 			if f.rewrite == "yaml" {
 				nb, n = rw.rewriteYAMLPaths(b)
 			} else {
+				use.scan(ad.name(), b)
 				nb, n = rw.rewriteJSON(b)
 			}
 			clear(b)

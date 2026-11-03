@@ -86,6 +86,7 @@ func sessionStartCmd() *cobra.Command {
 	var noQueue, asJSON bool
 	var cols, rows uint32
 	var aa agentAuthOpts
+	var ae agentEnvOpts
 	c := &cobra.Command{
 		Use:   "start [<worker>|auto] -s NAME [--cwd DIR | --repo PATH|URL [--ref REF] [--lfs skip|ship|fetch] [--git-auth forward]] [-- command [args...]]",
 		Short: "Create a session without attaching (idempotent by name); prints the session and its worker",
@@ -182,6 +183,9 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 			if err != nil {
 				return err
 			}
+			if argv, envM, err = forwardAgentEnv(ctx, s, conn, worker, argv, ae, agentAuth, envM, false); err != nil {
+				return err
+			}
 			// the same workspace path as run (a local checkout: remote first
 			// with --git-auth forward, then the unpushed delta)
 			ws, err := jobWorkspace(ctx, conn, repo, ref, lfs, g)
@@ -258,6 +262,7 @@ program did not start: 127, or it exited at once), it exits with that code.`,
 	c.Flags().Uint32Var(&cols, "cols", 0, "initial terminal width (with --rows; default the worker's)")
 	c.Flags().Uint32Var(&rows, "rows", 0, "initial terminal height")
 	aa.register(c)
+	ae.register(c)
 	return c
 }
 
