@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -42,7 +42,7 @@ Desired tools are stored even when the worker is offline.`,
 			return withHub(cmd, func(ctx context.Context, _ *session, h *hubclient.Conn) error {
 				resp, err := h.Fleet().WorkerToolchain(ctx, req)
 				if status.Code(err) == codes.Unimplemented {
-					return errors.New("this hub is too old for longarm worker toolchain (update it)")
+					return usagef("this hub is too old for longarm worker toolchain (update it)")
 				}
 				if err != nil {
 					return err
@@ -50,26 +50,7 @@ Desired tools are stored even when the worker is offline.`,
 				if asJSON {
 					return printJSON(resp)
 				}
-				fmt.Printf("%s: %s\n", resp.Worker, resp.Toolchain.GetState())
-				if resp.Toolchain == nil {
-					fmt.Println("No toolchain report (worker may be offline or too old).")
-				}
-				if msg := resp.Toolchain.GetError(); msg != "" {
-					fmt.Println(msg)
-				}
-				tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-				fmt.Fprintln(tw, "TOOL\tOWNER DESIRED\tEFFECTIVE\tINSTALLED")
-				owner, desired := map[string]string{}, map[string]string{}
-				for _, t := range resp.OwnerTools {
-					owner[t.Name] = t.Version
-				}
-				for _, t := range resp.Desired.GetTools() {
-					desired[t.Name] = t.Version
-				}
-				for _, name := range toolchain.KnownTools {
-					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, dash(owner[name]), dash(desired[name]), dash(resp.Toolchain.GetVersions()[name]))
-				}
-				return tw.Flush()
+				return writeWorkerToolchain(cmd.OutOrStdout(), resp)
 			})
 		},
 	}
@@ -78,6 +59,33 @@ Desired tools are stored even when the worker is offline.`,
 	c.Flags().BoolVar(&apply, "apply", false, "ask the worker to reconcile now (installs only when idle)")
 	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 	return c
+}
+
+func writeWorkerToolchain(out io.Writer, resp *pb.WorkerToolchainResponse) error {
+	state := resp.Toolchain.GetState()
+	if state == "" {
+		state = "unknown"
+	}
+	fmt.Fprintf(out, "%s: %s\n", resp.Worker, state)
+	if resp.Toolchain == nil {
+		fmt.Fprintln(out, "No toolchain report (worker may be offline or too old).")
+	}
+	if msg := resp.Toolchain.GetError(); msg != "" {
+		fmt.Fprintln(out, msg)
+	}
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "TOOL\tOWNER DESIRED\tEFFECTIVE\tINSTALLED")
+	owner, desired := map[string]string{}, map[string]string{}
+	for _, t := range resp.OwnerTools {
+		owner[t.Name] = t.Version
+	}
+	for _, t := range resp.Desired.GetTools() {
+		desired[t.Name] = t.Version
+	}
+	for _, name := range toolchain.KnownTools {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, dash(owner[name]), dash(desired[name]), dash(resp.Toolchain.GetVersions()[name]))
+	}
+	return tw.Flush()
 }
 
 func parseWorkerTools(items []string) ([]*pb.ToolSpec, error) {
