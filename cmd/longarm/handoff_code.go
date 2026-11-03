@@ -8,9 +8,9 @@ package main
 //                 offer only the target may fetch), else relayed by this
 //                 client; worker -> local as a bundle.
 //   --via remote  the snapshot is pushed to a temporary branch
-//                 longarm/handoff/<user>/<id>-<time> of the repository's
-//                 https remote (users/<user>/longarm-handoff/... where the
-//                 remote limits branch names) and the target fetches it from there; the
+//                 users/<user>/longarm-handoff/<id>-<time> of the repository's
+//                 https remote (refused for the name: user/<user>/..., then
+//                 longarm/handoff/<user>/...) and the target fetches it from there; the
 //                 branch is deleted once the target has it (--keep-branch).
 //                 Refused (back to relay, with a note) without an https
 //                 remote or a credential, when the secret check finds
@@ -183,31 +183,20 @@ func tempBranchName(user, short string, t time.Time, nonce string) string {
 }
 
 // tempBranchPrefixes are the namespaces a handoff's temporary branch may
-// go to, in the order tried: longarm/handoff/<user>/, then the per-user
-// namespaces repositories limit branches to (Azure DevOps at Microsoft:
-// users/<alias>/ or user/<alias>/, the hub user being the alias there) -
-// those first on Azure DevOps.
-func tempBranchPrefixes(host, user string) []string {
+// go to, in the order tried: the per-user namespaces repositories limit
+// branches to (Azure DevOps at Microsoft: users/<alias>/ or user/<alias>/,
+// the hub user being the alias there), then longarm/handoff/<user>/.
+func tempBranchPrefixes(user string) []string {
 	u := sanitizeRefPart(user)
-	own := "longarm/handoff/" + u + "/"
-	alias := []string{"users/" + u + "/longarm-handoff/", "user/" + u + "/longarm-handoff/"}
-	if adoHost(host) {
-		return append(alias, own)
-	}
-	return append([]string{own}, alias...)
-}
-
-func adoHost(host string) bool {
-	host = strings.ToLower(host)
-	return host == "dev.azure.com" || host == "ssh.dev.azure.com" || strings.HasSuffix(host, ".visualstudio.com")
+	return []string{"users/" + u + "/longarm-handoff/", "user/" + u + "/longarm-handoff/", "longarm/handoff/" + u + "/"}
 }
 
 // tempBranchNames: the temporary branch's name in each namespace
 // (tempBranchPrefixes), the leaf as tempBranchName's.
-func tempBranchNames(host, user, short string, t time.Time, nonce string) []string {
+func tempBranchNames(user, short string, t time.Time, nonce string) []string {
 	leaf := strings.TrimPrefix(tempBranchName(user, short, t, nonce), "longarm/handoff/"+sanitizeRefPart(user)+"/")
 	var names []string
-	for _, p := range tempBranchPrefixes(host, user) {
+	for _, p := range tempBranchPrefixes(user) {
 		names = append(names, p+leaf)
 	}
 	return names
@@ -376,7 +365,7 @@ func (c *coder) remote(ctx context.Context) (res *codeResult, why string, err er
 	// push: to the first namespace the remote lets us create a branch in
 	var branch string
 	var perr error
-	for _, b := range tempBranchNames(remoteHost(u), c.user, c.short, time.Now(), hex.EncodeToString(nonce)) {
+	for _, b := range tempBranchNames(c.user, c.short, time.Now(), hex.EncodeToString(nonce)) {
 		branch = b
 		if c.src.local() {
 			if _, err := c.srcRepo.pushExact(ctx, u, c.snap+":refs/heads/"+branch); err != nil {
@@ -760,7 +749,7 @@ func runHandoffCleanup(ctx context.Context, o handoffOpts) error {
 	user := handoffUser()
 	args := []string{"ls-remote", "--heads", "--", r.remote}
 	var prefixes []string
-	for _, p := range tempBranchPrefixes("", user) {
+	for _, p := range tempBranchPrefixes(user) {
 		prefixes = append(prefixes, "refs/heads/"+p)
 		args = append(args, "refs/heads/"+p+"*")
 	}

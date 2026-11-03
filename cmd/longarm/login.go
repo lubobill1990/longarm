@@ -42,7 +42,8 @@ nothing else is asked. Without az, or when az has no token (and without
 --az), or with --link: login prints the hub's /link address and a code;
 open the page in any browser (another machine works too: phone, laptop),
 sign in (Microsoft, Google or Apple), type the code and approve. The page is opened
-here when this machine has a desktop (--no-browser: never).
+here when this machine has a desktop (--no-browser: never) - in a terminal
+when you press Enter, so the browser doesn't cover the code.
 
 To make this machine your worker too, with the same single approval:
 longarmd login <hub> --role both.
@@ -75,6 +76,9 @@ in its [auth.entra] apps. Such a sign-in never falls back to the browser.`,
 				// running login again is how a device signs in again (another
 				// account, an expired certificate); another hub's needs --force
 				Replace: true}
+			if stdinIsTerminal() {
+				o.Enter = signin.EnterPresses(os.Stdin)
+			}
 			switch {
 			case useAz:
 				o.Method = signin.MethodAz

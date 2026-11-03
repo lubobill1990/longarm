@@ -335,6 +335,11 @@ type Options struct {
 	Scope string
 	// OpenBrowser: open the /link page here (when there is a desktop).
 	OpenBrowser bool
+	// Enter, with OpenBrowser: open the page only when a value arrives
+	// (the user pressed Enter: EnterPresses), not right away - a browser
+	// window would cover the code in the terminal. Approval is waited for
+	// meanwhile. nil: open it at once.
+	Enter <-chan struct{}
 	// Roots verify the hub panel's HTTPS certificate (nil: the system's;
 	// tests).
 	Roots *x509.CertPool
@@ -503,6 +508,8 @@ func pair(ctx context.Context, addr string, o Options, ev Events, cjo, wjo hubcl
 				}
 			}
 		}
+		done := make(chan struct{}) // the code is used up: Enter no longer opens its page
+		defer close(done)
 		return hubclient.Link(ctx, addr, hubclient.LinkOptions{JoinOptions: jo, Kind: kind, Worker: w, AdminWorker: a, Replace: replace,
 			Show: func(st *pb.StartLinkResponse) {
 				c := Code{URL: st.VerificationUrl, Code: st.UserCode, Expires: st.ExpiresAt.AsTime(), Kind: kind, Host: hostname(),
@@ -511,7 +518,20 @@ func pair(ctx context.Context, addr string, o Options, ev Events, cjo, wjo hubcl
 				if ev.Code != nil {
 					ev.Code(c)
 				}
-				if o.OpenBrowser && OpenBrowser(st.VerificationUrl) == nil {
+				switch {
+				case !o.OpenBrowser || !Desktop():
+				case o.Enter != nil:
+					ev.progress(StepNote, "Press Enter to open the page in your browser here.")
+					go func() {
+						select {
+						case <-o.Enter:
+							if OpenBrowser(c.URL) == nil {
+								ev.progress(StepBrowser, "opened the page in your browser")
+							}
+						case <-done:
+						}
+					}()
+				case OpenBrowser(c.URL) == nil:
 					ev.progress(StepBrowser, "opened the page in your browser")
 				}
 				ev.progress(StepWaiting, "waiting for approval ...")

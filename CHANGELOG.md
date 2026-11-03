@@ -16,6 +16,13 @@
   autostart, the logon task or service, `longarmd leave --kill-jobs
   --purge`, `longarm leave`, the firewall rule, Path, files;
   `$env:LONGARM_KEEP_DATA=1` keeps the data).
+- **install.ps1 on a machine signed in already** asks whether to replace
+  that sign-in (and then signs in again with `--force`) instead of failing;
+  no (or nobody to ask) keeps it and finishes the install. `longarmd login`
+  exits 80 when the machine is signed in already.
+- **`longarm login` / `longarmd login` in a terminal open the browser when
+  you press Enter**, not at once: the page no longer covers the code. The
+  approval is waited for meanwhile; the tray still opens it right away.
 - Third-party notices: Longarm stays MIT, and everything it includes is under
   permissive licenses (no copyleft). Their license texts, which those
   licenses ask to travel with the binaries, are now in
@@ -301,10 +308,11 @@
 - `longarm handoff --via remote` (and `auto` above the threshold) on a
   repository that limits branches to your alias - Azure DevOps at
   Microsoft refuses `longarm/handoff/...` with `VS403660 ... ref naming
-  convention` - always fell back to the relay. Refused for the name, the
-  temporary branch now goes to `users/<user>/longarm-handoff/...`, then
-  `user/<user>/longarm-handoff/...` (on Azure DevOps those first); a worker
-  pushes to those namespaces too, and `handoff --cleanup` lists them.
+  convention` - always fell back to the relay. The temporary branch now
+  goes to `users/<user>/longarm-handoff/...` first, then
+  `user/<user>/longarm-handoff/...`, and `longarm/handoff/<user>/...` only
+  when the remote refuses both names; a worker pushes to those namespaces
+  too, and `handoff --cleanup` lists all three.
 - `longarm run --repo .` / `longarm sync` / a handoff from a **shallow clone**
   (`git clone --depth`) failed on the worker with "bundle did not send all
   necessary objects" (Could not read ..., Failed to traverse parents): the

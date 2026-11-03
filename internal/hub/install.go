@@ -426,6 +426,17 @@ function Get-ServicePassword {
   }
   return [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
 }
+# Invoke-WorkerLogin runs longarmd login. Signed in already (exit 80; it said as what): asks, and
+# signs in again with --force - or keeps that sign-in (no answer, or nobody to ask).
+function Invoke-WorkerLogin([string]$exe, [string[]]$dd) {
+  & $exe login $HubAddr --ca-fingerprint $CaFp --role $Role @nameArgs @dd @labelArgs
+  if ($LASTEXITCODE -eq 80) {
+    $answer = try { Read-Host 'Sign in again, replacing that sign-in? [y/N]' } catch { '' }
+    if ($answer -notmatch '^\s*y(es)?\s*$') { Write-Host 'kept the sign-in this machine has'; return }
+    & $exe login $HubAddr --ca-fingerprint $CaFp --role $Role @nameArgs @dd @labelArgs --force
+  }
+  if ($LASTEXITCODE) { throw "longarmd login failed ($LASTEXITCODE)" }
+}
 $asSystem = $ServiceAccount -eq 'LocalSystem'
 if ($ServiceAccount -and -not $asSystem) { throw "-ServiceAccount takes only LocalSystem (use -ServiceUser for an account)" }
 if ($Login -and $Join) { throw '-Login and -Join exclude each other' }
@@ -502,8 +513,7 @@ if ($admin -and $Hashes[$msi] -and -not $NoMsi -and -not $Prefix -and -not $PerU
     if ($Role -ne 'client') {
       # the user-session worker's data dir is yours (~\.longarm); a service's is the MSI's
       $dd = if ($Run -eq 'session') { @('--data-dir', (Join-Path $env:USERPROFILE '.longarm')) } else { @() }
-      & (Join-Path $bin 'longarmd.exe') login $HubAddr --ca-fingerprint $CaFp --role $Role @nameArgs @dd @labelArgs
-      if ($LASTEXITCODE) { throw "longarmd login failed ($LASTEXITCODE)" }
+      Invoke-WorkerLogin (Join-Path $bin 'longarmd.exe') $dd
     } else {
       & (Join-Path $bin 'longarm.exe') login $HubAddr --ca-fingerprint $CaFp @nameArgs
       if ($LASTEXITCODE) { throw "longarm login failed ($LASTEXITCODE)" }
@@ -596,8 +606,7 @@ function Install-Worker([string]$note) {
 if ($Login) {
   if ($Role -ne 'client') {
     # both: one code, one approval for the worker and your longarm
-    & (Join-Path $Prefix 'longarmd.exe') login $HubAddr --ca-fingerprint $CaFp --role $Role @nameArgs @ddArgs @labelArgs
-    if ($LASTEXITCODE) { throw "longarmd login failed ($LASTEXITCODE)" }
+    Invoke-WorkerLogin (Join-Path $Prefix 'longarmd.exe') $ddArgs
     Install-Worker ''
   } else {
     & (Join-Path $Prefix 'longarm.exe') login $HubAddr --ca-fingerprint $CaFp @nameArgs

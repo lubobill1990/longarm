@@ -35,23 +35,17 @@ func TestTempBranchName(t *testing.T) {
 }
 
 // The per-user namespaces a repository may limit branches to (Azure DevOps
-// at Microsoft): tried after longarm/handoff/, first on Azure DevOps; all
-// of them pushable by a worker; a refusal for the name tries the next.
+// at Microsoft) first, longarm/handoff/ last; all of them pushable by a
+// worker; a refusal for the name tries the next.
 func TestTempBranchNames(t *testing.T) {
 	at := time.Date(2026, 10, 28, 9, 5, 0, 0, time.UTC)
 	leaf := "5e55a7c1-202610280905-0a1b2c"
-	gh := tempBranchNames("github.com", "Alice", "5e55a7c1", at, "0a1b2c")
-	want := []string{"longarm/handoff/alice/" + leaf, "users/alice/longarm-handoff/" + leaf, "user/alice/longarm-handoff/" + leaf}
-	if strings.Join(gh, " ") != strings.Join(want, " ") {
-		t.Errorf("github.com: %v, want %v", gh, want)
+	got := tempBranchNames("Alice", "5e55a7c1", at, "0a1b2c")
+	want := []string{"users/alice/longarm-handoff/" + leaf, "user/alice/longarm-handoff/" + leaf, "longarm/handoff/alice/" + leaf}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("names %v, want %v", got, want)
 	}
-	for _, host := range []string{"dev.azure.com", "domoreexp.visualstudio.com"} {
-		ado := tempBranchNames(host, "alice", "5e55a7c1", at, "0a1b2c")
-		if len(ado) != 3 || ado[0] != want[1] || ado[1] != want[2] || ado[2] != want[0] {
-			t.Errorf("%s: %v", host, ado)
-		}
-	}
-	for _, b := range gh {
+	for _, b := range got {
 		if !workspace.HandoffBranchRE.MatchString(b) {
 			t.Errorf("%q is outside what a worker pushes", b)
 		}

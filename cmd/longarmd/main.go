@@ -37,6 +37,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/server"
 	"github.com/lubobill1990/longarm/internal/shim"
+	"github.com/lubobill1990/longarm/internal/signin"
 	"github.com/lubobill1990/longarm/internal/steer"
 	"github.com/lubobill1990/longarm/internal/stopsignal"
 	"github.com/lubobill1990/longarm/internal/update"
@@ -83,6 +84,10 @@ func main() {
 	})
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "longarmd:", err)
+		var signedIn *signin.SignedInError
+		if errors.As(err, &signedIn) {
+			os.Exit(signin.ExitSignedIn)
+		}
 		os.Exit(1)
 	}
 }

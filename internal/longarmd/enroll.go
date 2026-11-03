@@ -232,6 +232,9 @@ type LoginOptions struct {
 	Az      bool
 	Scope   string
 	Browser bool // pairing: open the /link page here if there is a desktop
+	// Enter, with Browser: open it when the user presses Enter
+	// (signin.Options.Enter; nil: at once).
+	Enter <-chan struct{}
 	// Client: also sign in the user's client device (role both) - one
 	// code, one approval for both - into ConfigDir (longarm's config dir)
 	// as DeviceName (default <user>-<hostname>).
@@ -253,7 +256,7 @@ type LoginOptions struct {
 // the same approval also makes this machine the user's client device.
 func Login(ctx context.Context, dataDir, hub string, o LoginOptions) error {
 	so := signin.Options{Hub: hub, Fingerprint: o.Fingerprint, WorkerName: o.Name, DeviceName: o.DeviceName,
-		Worker: WorkerTarget{DataDir: dataDir}, Scope: o.Scope, OpenBrowser: o.Browser, WorkerLabels: o.Labels,
+		Worker: WorkerTarget{DataDir: dataDir}, Scope: o.Scope, OpenBrowser: o.Browser, Enter: o.Enter, WorkerLabels: o.Labels,
 		WorkerKind: o.WorkerKind, Replace: o.Force}
 	if o.Client {
 		so.Client = client.DeviceTarget{ConfigDir: o.ConfigDir, Force: o.Force}

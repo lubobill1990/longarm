@@ -20,3 +20,13 @@ unattended, so CI runs the account-only install and the uninstall
 the relaunch: try it by hand on a machine that may lose its Longarm
 (`irm https://<hub>/install.ps1 | iex` from a normal PowerShell, approve,
 then `irm https://<hub>/uninstall.ps1 | iex`).
+
+## install.sh on a machine signed in already
+
+install.ps1 asks whether to replace the sign-in when `longarmd login`
+exits 80 (`signin.ExitSignedIn`), then signs in again with `--force`.
+install.sh still stops there: run as `curl ... | sh` its stdin is the
+script, so a prompt would have to read `/dev/tty` (and `longarmd login`
+opens the browser at once for the same reason - its stdin isn't a
+terminal). Ask through `/dev/tty` when there is one; keep the sign-in
+without.

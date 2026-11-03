@@ -986,13 +986,13 @@ would carry, after the remote-first fetch with `--git-auth forward`) decides
   `relay`, `bundle`, `remote`) and `"relayedBytes"` (what this machine
   relayed between workers).
 - **remote** pushes the snapshot commit to a temporary branch
-  `longarm/handoff/<user>/<id8>-<yyyymmddhhmm>-<random>` of the repository's https
-  remote (Azure DevOps, GitHub, ...). A repository that lets you create
-  branches under your alias only (Azure DevOps at Microsoft: `VS403660 ...
-  ref naming convention`) refuses that name; longarm then pushes to
-  `users/<user>/longarm-handoff/...`, else `user/<user>/longarm-handoff/...`
-  (on Azure DevOps those come first; `<user>` is your Longarm user, your
-  alias on a hub with Microsoft sign-in) - `git push <remote>
+  `users/<user>/longarm-handoff/<id8>-<yyyymmddhhmm>-<random>` of the
+  repository's https remote (Azure DevOps, GitHub, ...) - under your alias,
+  as repositories that let you create branches there only want it (Azure
+  DevOps at Microsoft: `VS403660 ... ref naming convention` for any other
+  name); refused for the name, `user/<user>/longarm-handoff/...`, then
+  `longarm/handoff/<user>/...` (`<user>` is your Longarm user, your alias
+  on a hub with Microsoft sign-in) - `git push <remote>
   <snapshot>:refs/heads/<branch>`: your branch, index and upstream are not
   touched - and the target fetches it from there (a worker with the
   forwarded credential, as `--repo <url> --git-auth forward`; locally with
@@ -2084,8 +2084,12 @@ of your user (an admin certificate for the hub's Entra admins), a worker
 joins approved and owned by you - usable by you only until you share it,
 never with admin rights (as with `longarm worker add`). The page opens by
 itself when the machine has a desktop (not over SSH; `--no-browser` or
-`LONGARM_NO_BROWSER=1`: never); it never carries the code - you always type
-it. Codes last 10 minutes and work once; Ctrl-C gives up. On a hub without
+`LONGARM_NO_BROWSER=1`: never) - from a terminal when you press Enter, so
+the browser doesn't cover the code (the approval counts either way); it
+never carries the code - you always type it. Signed in already,
+`longarmd login` says as what and exits 80 (`--force` signs in again);
+install.ps1 then asks whether to replace that sign-in, and keeps it on no
+(or with nobody to ask). Codes last 10 minutes and work once; Ctrl-C gives up. On a hub without
 `[auth.entra]` the same works with a panel login of a Longarm user
 (`longarm admin user add <name> --panel`); with `[auth.entra]` only a
 Microsoft sign-in may approve (and its `web` must not be `off`).

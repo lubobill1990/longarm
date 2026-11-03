@@ -84,7 +84,7 @@ func TestAgentHandoffRemote(t *testing.T) {
 	t.Run("auto_above_threshold_local_to_w1", func(t *testing.T) {
 		var r result
 		w1, r = h.handoff(repo, "--to", "w1", "--session", id, "--no-attach", "--git-auth", "forward", "--via", "auto", "--via-threshold", "1")
-		if w1.Transfer != "remote" || !strings.HasPrefix(w1.Temp, "longarm/handoff/alice/7e57a7c1-") {
+		if w1.Transfer != "remote" || !strings.HasPrefix(w1.Temp, "users/alice/longarm-handoff/7e57a7c1-") {
 			t.Fatalf("handoff: %+v\n%s", w1, r.stderr)
 		}
 		if !strings.Contains(r.stderr, "deleted the temporary branch "+w1.Temp) || tempBranches() != "" {
@@ -177,25 +177,25 @@ func TestAgentHandoffRemote(t *testing.T) {
 		back = out
 	})
 
-	t.Run("remote_limits_branches_to_users_namespace", func(t *testing.T) {
-		// as Azure DevOps at Microsoft: branches only under users/<alias>/
-		// (VS403660 for any other name); the push goes to
-		// users/alice/longarm-handoff/... instead, from here and from a worker
+	t.Run("remote_refuses_alias_namespaces_falls_back", func(t *testing.T) {
+		// a remote that refuses users/<alias>/ and user/<alias>/ branches
+		// (VS403660, as Azure DevOps for a name outside the allowed ones): the
+		// push falls back to longarm/handoff/..., from here and from a worker
 		hook := filepath.Join(bare, "hooks", "pre-receive")
-		mustWrite(t, hook, "#!/bin/sh\nwhile read old new ref; do\n  case \"$ref\" in\n    refs/heads/main|refs/heads/users/*) ;;\n"+
+		mustWrite(t, hook, "#!/bin/sh\nwhile read old new ref; do\n  case \"$ref\" in\n    refs/heads/main|refs/heads/longarm/handoff/*) ;;\n"+
 			"    *) echo \"VS403660: You do not have permission to create ref '$ref'. Please ensure the ref naming convention being used is allowed in this repository.\" >&2; exit 1 ;;\n  esac\ndone\n")
 		os.Chmod(hook, 0o755)
 		defer os.Remove(hook)
 		os.Remove(filepath.Join(back.Worktree, "deploy.env"))
 		kept := tempBranches()
 		out, r := h.handoff(back.Worktree, "--to", "w1", "--session", id, "--no-attach", "--git-auth", "forward", "--via", "remote", "--name", "ns1")
-		if out.Transfer != "remote" || !strings.HasPrefix(out.Temp, "users/alice/longarm-handoff/7e57a7c1-") {
+		if out.Transfer != "remote" || !strings.HasPrefix(out.Temp, "longarm/handoff/alice/7e57a7c1-") {
 			t.Fatalf("local -> w1: %+v\n%s", out, r.stderr)
 		}
 		assertCode(out.Worktree)
 		out, r = h.handoff(repo, "--from", "w1", "--to", "w2", "--session", id, "--no-attach", "--idle", "1s", "--grace", "5s",
 			"--git-auth", "forward", "--via", "remote", "--name", "ns2")
-		if out.Transfer != "remote" || !strings.HasPrefix(out.Temp, "users/alice/longarm-handoff/7e57a7c1-") {
+		if out.Transfer != "remote" || !strings.HasPrefix(out.Temp, "longarm/handoff/alice/7e57a7c1-") {
 			t.Fatalf("w1 -> w2: %+v\n%s", out, r.stderr)
 		}
 		assertCode(out.Worktree)
