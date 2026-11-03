@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { cssColor, levelColor } from '../lib/format'
 
 /** Labelled bar: label, track coloured by level, value text. */
@@ -76,17 +76,20 @@ export function Sparkline({
   toggles,
   stepSeconds = 2,
   fmtMax,
+  legendTop,
 }: {
   series: Series[]
   slots?: number
   max?: number | 'auto'
   height?: number
   legend?: boolean
-  right?: string
+  right?: ReactNode
   marks?: { at: number; color: string }[] // vertical marks (failed probes), slot index from the right
   toggles?: SeriesToggle[]
   stepSeconds?: number
   fmtMax?: (v: number) => string
+  /** the legend above the chart (its toggles stay where they are when they add rows below) */
+  legendTop?: boolean
 }) {
   const [hover, setHover] = useState<number | null>(null)
   const W = 400
@@ -127,8 +130,10 @@ export function Sparkline({
     return v === null || v === undefined ? '—' : (s.fmt ?? pctFmt)(v)
   }
   const tipLeft = hover === null ? 0 : (hover / Math.max(1, slots - 1)) * 100
+  const legendEl = <SparkLegend series={series} toggles={toggles} legend={legend} right={right} top={top} max={max} fmtMax={fmtMax} />
   return (
-    <div className="spark-wrap">
+    <div className={`spark-wrap ${legendTop ? 'legend-top' : ''}`}>
+      {legendTop && legendEl}
       <svg
         className="spark"
         viewBox={`0 0 ${W} ${H}`}
@@ -163,6 +168,31 @@ export function Sparkline({
           ))}
         </div>
       )}
+      {!legendTop && legendEl}
+    </div>
+  )
+}
+
+/** The legend row of a Sparkline (Sparkline only). */
+function SparkLegend({
+  series,
+  toggles,
+  legend,
+  right,
+  top,
+  max,
+  fmtMax,
+}: {
+  series: Series[]
+  toggles?: SeriesToggle[]
+  legend?: boolean
+  right?: ReactNode
+  top: number
+  max: number | 'auto'
+  fmtMax?: (v: number) => string
+}) {
+  return (
+    <>
       {(legend || right || toggles?.length) && (
         <div className="spark-legend">
           {legend &&
@@ -192,7 +222,7 @@ export function Sparkline({
           {right && <span className="faint">{right}</span>}
         </div>
       )}
-    </div>
+    </>
   )
 }
 

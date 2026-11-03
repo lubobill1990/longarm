@@ -139,7 +139,7 @@ export function ConversationView({ item, onState }: { item: AgentSession; onStat
     >
       {truncated && (
         <button type="button" className="btn small conv-earlier" data-testid="load-earlier" disabled={earlier} onClick={loadEarlier}>
-          {earlier ? 'loading earlier messages…' : 'Load earlier messages'}
+          {earlier ? 'Loading earlier messages…' : 'Load earlier messages'}
         </button>
       )}
       {error && <div className="error-box">{error}</div>}

@@ -2,6 +2,8 @@ import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { longarmApi, trayApi, type TrayInfo } from '../api/local'
 import type { PoolView } from '../api/types'
 import { ErrorBox, FirewallWarning, Toasts, useAction } from '../components/common'
+import { ConfirmHost } from '../components/confirm'
+import { OverlayScroll } from '../components/OverlayScroll'
 import { ClientJobs, Forwards, Settings } from './ClientTab'
 import { PoolTab, SourceBar, useNow } from './PoolTab'
 import { poolMachines } from '../lib/machines'
@@ -11,7 +13,7 @@ import { UpdateBanner } from './UpdateBanner'
 import { VersionChip } from './VersionInfo'
 import { wailsMessage } from '../lib/wails'
 import { ContextMenu, installAppBehaviour } from './appShell'
-import { IconChip, IconClose, IconForward, IconPin, IconServers, IconSettings, IconTerminal, IconUser } from '../components/icons'
+import { IconChip, IconClose, IconForward, IconLink, IconLinkBroken, IconPin, IconServers, IconSettings, IconTerminal, IconUser } from '../components/icons'
 import { useTheme } from './theme'
 import { Banner } from './ui'
 import './tokens.css'
@@ -113,6 +115,7 @@ export function TrayApp() {
   }, [cur])
   return (
     <Toasts>
+      <ConfirmHost />
       <ContextMenu />
       <div className="tray">
         {/* fixed: the title bar, the tabs (a rail in a wide window) and the pool's source line; only .body scrolls */}
@@ -144,7 +147,7 @@ export function TrayApp() {
         </nav>
         <main className="tray-main">
           {cur === 'pool' && pool && <SourceBar pool={pool} now={now} />}
-          <div className="body" id="tray-panel" role="tabpanel" aria-labelledby={`tab-${cur}`}>
+          <OverlayScroll className="body" id="tray-panel" role="tabpanel" aria-labelledby={`tab-${cur}`}>
             <div className="page">
               <h1 className="page-title">{curLabel}</h1>
               <div className="banners">
@@ -173,7 +176,7 @@ export function TrayApp() {
               {cur === 'worker' && info && <WorkerTab info={info} onNavigate={(t) => setTab(t as Tab)} />}
               {cur === 'account' && info && <AccountTab info={info} onChange={() => setReload((n) => n + 1)} />}
             </div>
-          </div>
+          </OverlayScroll>
         </main>
       </div>
     </Toasts>
@@ -213,6 +216,18 @@ function TitleBar({ info, pool, online, total }: { info?: TrayInfo; pool?: PoolV
     if (info) setPinned(info.pinned)
   }, [info?.pinned]) // eslint-disable-line react-hooks/exhaustive-deps
   const allUp = total > 0 && online === total
+  // the hub's state next to the count; where the live data comes from and
+  // the transport policy in its tooltip (SourceBar shows a problem)
+  const hub = pool?.hub
+  const src = pool?.source ?? 'none'
+  const tip = [
+    `${online} of ${total} workers online`,
+    hub?.address ? `Hub ${hub.address} ${hub.connected ? 'connected' : 'unavailable'}` : 'No hub',
+    src === 'hub' ? 'Live data through the hub' : src === 'direct' ? 'Live data straight from the workers' : src === 'mixed' ? 'Live data through the hub and straight from workers' : 'No live data',
+    pool?.transport ? `Transport ${pool.transport} (Settings)` : '',
+  ]
+    .filter(Boolean)
+    .join('\n') // one fact a line (TooltipHost keeps the breaks)
   return (
     <div
       className="titlebar"
@@ -224,11 +239,17 @@ function TitleBar({ info, pool, online, total }: { info?: TrayInfo; pool?: PoolV
       <img className="brand-mark" src="/favicon.png" alt="" aria-hidden="true" />
       <span className="title">Longarm</span>
       <VersionChip info={info} pool={pool} />
-      <span className={`count-pill ${total === 0 ? '' : allUp ? 'ok' : online ? 'warn' : 'bad'}`}>
+      <span className={`count-pill ${total === 0 ? '' : allUp ? 'ok' : online ? 'warn' : 'bad'}`} title={tip} data-testid="count-pill">
         <span className="count-dot" aria-hidden="true" />
         <span data-testid="online-count">
           {online}/{total} online
         </span>
+        {hub?.address && (
+          // a chain link to the hub: whole and green while connected, parted and red when not
+          <span className={`count-hub ${hub.connected ? 'up' : 'down'}`} data-testid="count-hub" data-state={hub.connected ? 'connected' : 'unavailable'}>
+            · hub {hub.connected ? <IconLink aria-label="connected" /> : <IconLinkBroken aria-label="unavailable" />}
+          </span>
+        )}
       </span>
       <span className="spacer" />
       <button

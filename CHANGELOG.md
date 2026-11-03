@@ -36,6 +36,26 @@
 
 ### Changed
 
+- **Tray, a calmer machine card.** One header line: a shield in the
+  machine's state color and its name - hovering them shows a card with the
+  state, the end-to-end encryption, the worker and admin worker, labels,
+  uptime and node ID - the version (with "↑" it is the update button), then
+  Attach and "…" (SSH, Desktop, Drain, admin actions, Remove). One chart: RTT
+  and the DISK / NET toggles join CPU and MEM, the legend on top and the bars
+  below (a toggle adds a bar, nothing moves); "updated 6s ago" in its corner;
+  the top processes fold per card. The title bar's count says the hub's
+  state ("· hub" and a chain link, parted when it is unreachable); the source
+  row shows only a problem.
+- **Tray, everywhere:** our own scrollbar (no room taken: the same margin on
+  both sides of every tab), our own confirmation dialog instead of
+  WebView2's, one tooltip for every `title` (TooltipHost, also in the panel
+  and the Sessions window), button and menu labels capitalized, sections of
+  This worker as cards. My jobs: no command hint, a worker filter, worker
+  names on one line. Account: the hub address on one line with a link to
+  it, a feedback icon, Switch account; "This computer" shows each role's
+  state on its row (the admin worker's switch is its checkbox - no second
+  Disable button). The tray icon's menu offers "Sign in…" only while a
+  sign-in is needed.
 - Tray: the window and the tray icon are "Longarm" (not "Remote Workers"). A
   worker card's link row shows the leg in use; "N paths" opens every leg with
   its endpoint and RTT (they were all listed as chips). longnet legs are named

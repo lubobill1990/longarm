@@ -1,5 +1,6 @@
 import { lazy, StrictMode, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
+import { TooltipHost } from './components/Tooltip'
 import { PanelApp } from './panel/PanelApp'
 import './styles.css'
 import { TrayApp } from './tray/TrayApp'
@@ -20,8 +21,9 @@ if (tray || sessions) {
   applyTheme(loadTheme())
 }
 
+// TooltipHost: every title="..." in any of the three shows in our tooltip
 createRoot(document.getElementById('root')!).render(<StrictMode>{sessions ? (
       <Suspense fallback={null}>
         <SessionsApp />
       </Suspense>
-    ) : tray ? <TrayApp /> : <PanelApp />}</StrictMode>)
+    ) : tray ? <TrayApp /> : <PanelApp />}<TooltipHost /></StrictMode>)

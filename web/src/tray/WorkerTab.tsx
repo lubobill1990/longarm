@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import { longarmdApi, trayApi, traySettingsApi, type TrayInfo } from '../api/local'
 import { Bar } from '../components/charts'
+import { ask } from '../components/confirm'
 import { ErrorBox, FirewallWarning, LogView, StatePill, useAction, usePoll } from '../components/common'
 import { IconChip, IconTerminal } from '../components/icons'
 import { fmtAgo, fmtTime, gb, isActive, memPct, since } from '../lib/format'
@@ -110,7 +111,7 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
               disabled={busy}
               onClick={() => run(() => longarmdApi.drain(!draining, draining ? '' : 'paused in longarm-tray'), draining ? 'accepting work' : 'draining').then(st.reload)}
             >
-              {draining ? 'resume' : 'pause (drain)'}
+              {draining ? 'Resume' : 'Pause (drain)'}
             </button>
           </span>
         </div>
@@ -121,7 +122,7 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
           </span>
         </div>
         <dl className="facts small">
-          <dt>hub</dt>
+          <dt>Hub</dt>
           <dd>
             <span className="mono">{s.hub?.address || 'not configured'}</span>{' '}
             {s.hub?.address && (
@@ -130,11 +131,11 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
               </span>
             )}
           </dd>
-          <dt>listening</dt>
+          <dt>Listening</dt>
           <dd className="mono">{(s.endpoints ?? []).join(' ')}</dd>
           {s.cert_not_after && (
             <>
-              <dt>certificate</dt>
+              <dt>Certificate</dt>
               <dd>valid until {fmtTime(s.cert_not_after)}</dd>
             </>
           )}
@@ -226,13 +227,13 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
                         <button
                           className="danger sm"
                           disabled={busy}
-                          onClick={(e) => {
+                          onClick={async (e) => {
                             e.stopPropagation()
-                            if (!confirm(killQuestion(j, s.name))) return
+                            if (!(await ask(killQuestion(j, s.name), { ok: 'Kill', danger: true }))) return
                             run(() => longarmdApi.kill(j.spec.id), 'killed').then(jobs.reload)
                           }}
                         >
-                          kill
+                          Kill
                         </button>
                       )}
                     </td>
@@ -268,8 +269,8 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
           <button
             className="danger"
             disabled={busy}
-            onClick={() =>
-              confirm('Leave the fleet? The hub revokes this worker and longarmd stops. Running jobs keep running.') &&
+            onClick={async () =>
+              (await ask('Leave the fleet? The hub revokes this worker and longarmd stops. Running jobs keep running.', { ok: 'Leave', danger: true })) &&
               run(() => longarmdApi.leave('left in longarm-tray'), (r) => r.message ?? 'left')
             }
           >

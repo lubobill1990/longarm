@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { sessionsApi, type Agent, type AgentSession, type AgentSessionList, type AgentState } from '../api/sessions'
 import { ErrorBox, Toasts, useAction } from '../components/common'
+import { ConfirmHost } from '../components/confirm'
 import { installAppBehaviour } from '../tray/appShell'
 import { useTheme } from '../tray/theme'
 import { useNow } from '../tray/PoolTab'
@@ -89,6 +90,7 @@ export function SessionsApp() {
   useEffect(() => installAppBehaviour(), [])
   return (
     <Toasts>
+      <ConfirmHost />
       <Sessions />
     </Toasts>
   )
@@ -254,7 +256,7 @@ function Sessions() {
             </span>
           )}
           <label className="small muted sessions-all">
-            <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> ended too
+            <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> Ended too
           </label>
         </div>
         <ErrorBox error={error} />

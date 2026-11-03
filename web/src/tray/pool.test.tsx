@@ -4,7 +4,7 @@ import type { NodeInfo, PoolView, PoolWorker } from '../api/types'
 import { Toasts } from '../components/common'
 import { longarmApi } from '../api/local'
 import { ClientJobs } from './ClientTab'
-import { PoolTab } from './PoolTab'
+import { PoolTab, SourceBar } from './PoolTab'
 
 afterEach(() => {
   cleanup()
@@ -108,10 +108,10 @@ describe('PoolTab', () => {
     expect(within(card).getByTestId('version').textContent).toBe('v0.1.8 · admin v0.1.7 ↑')
     // a fleet worker (no owner) gets no button: its updates are the hub's rollouts
     expect(within(screen.getByTestId('worker-fleet-1')).queryByTestId('update-btn')).toBeNull()
-    // in the first row, right after the version (not in the action row, where it pushed drain out of view)
+    // the version is the button (one control in the first row, not in the action row)
     const btn = within(card).getByTestId('update-btn')
     expect(btn.closest('.actions')).toBeNull()
-    expect(within(card).getByTestId('version').nextElementSibling).toBe(btn)
+    expect(btn.contains(within(card).getByTestId('version'))).toBe(true)
     expect(btn.getAttribute('aria-label')).toBe('Update to 0.1.9')
     // edge case 4: the confirmation says what happens to the jobs and sessions (and the admin worker)
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
@@ -151,7 +151,7 @@ describe('PoolTab', () => {
     const card = screen.getByTestId('worker-cpc-alice-x7k2q')
     expect(within(card).getByTestId('admin-badge').textContent).toContain('admin commands: on')
     expect(within(card).getByTestId('admin-badge').getAttribute('title')).toMatch(/SYSTEM.*owner.*explicitly/)
-    expect(within(card).getByTestId('cap-state').textContent).toBe('worker online · admin online')
+    expect(within(card).getByTestId('cap-state').textContent).toBe('Worker online · admin online')
     expect(within(card).getByTestId('label-chip').textContent).toBe('pool=devbox')
     // the session worker's counts, once
     expect(within(card).getByTestId('agent-claude').textContent).toContain('2')
@@ -165,7 +165,7 @@ describe('PoolTab', () => {
     expect(off.querySelector('summary')?.textContent).toContain('Offline (3)')
     expect(within(off).getByTestId('offline-old-pair').textContent).toContain('last seen 20h ago')
     expect(within(off).queryByText(/rpc error/)).toBeNull()
-    fireEvent.click(within(within(off).getByTestId('offline-old-pair')).getByText('details'))
+    fireEvent.click(within(within(off).getByTestId('offline-old-pair')).getByText('Details'))
     expect(within(off).getByText(/rpc error/)).toBeTruthy()
     expect(document.querySelector('.msg.red')).toBeNull()
   })
@@ -183,20 +183,26 @@ describe('PoolTab', () => {
       </Toasts>,
     )
     const card = screen.getByTestId('worker-cpc-alice-x7k2q')
-    fireEvent.click(within(card).getByText('attach'))
+    fireEvent.click(within(card).getByText('Attach'))
+    // ssh is in the menu, not a button of its own
+    expect(within(card).queryByRole('button', { name: /^ssh/ })).toBeNull()
     fireEvent.click(within(card).getByLabelText('more actions'))
-    fireEvent.click(within(card).getByText('run as admin (attach cpc-alice-x7k2q-admin)'))
+    expect(within(card).getByText('SSH cpc-alice-x7k2q (a plain SSH login)')).toBeTruthy()
+    fireEvent.click(within(card).getByText('Run as admin (attach cpc-alice-x7k2q-admin)'))
     await waitFor(() => expect(calls.filter((c) => c.url === '/trayapi/attach')).toHaveLength(2))
     const bodies = calls.filter((c) => c.url === '/trayapi/attach').map((c) => JSON.parse(String(c.init?.body)).worker)
     expect(bodies).toEqual(['cpc-alice-x7k2q', 'cpc-alice-x7k2q-admin'])
     // desktop: the session worker (longarm desktop picks Windows App for a Dev Box)
-    fireEvent.click(within(card).getByText('desktop'))
+    fireEvent.click(within(card).getByLabelText('more actions')) // desktop: in the menu
+    fireEvent.click(within(card).getByText('Desktop (Remote Desktop / Windows App)'))
     await waitFor(() => expect(calls.filter((c) => c.url === '/trayapi/desktop').map((c) => JSON.parse(String(c.init?.body)).worker)).toEqual(['cpc-alice-x7k2q']))
-    // not an admin: no drain; the fleet worker isn't hers to remove
+    // not an admin: no drain; the fleet worker isn't hers to remove (its menu: ssh only)
     expect(within(card).queryByText('drain')).toBeNull()
-    expect(within(screen.getByTestId('worker-fleet-1')).queryByLabelText('more actions')).toBeNull()
+    const fleet = screen.getByTestId('worker-fleet-1')
+    fireEvent.click(within(fleet).getByLabelText('more actions'))
+    expect(within(fleet).getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['SSH fleet-1 (a plain SSH login)', 'Desktop (Remote Desktop / Windows App)'])
     // remove an old registration of hers from the collapsed section
-    fireEvent.click(within(screen.getByTestId('offline-old-pc')).getByText('remove'))
+    fireEvent.click(within(screen.getByTestId('offline-old-pc')).getByText('Remove'))
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Remove old-pc from the hub?'))
     await waitFor(() => expect(calls.some((c) => c.url === '/local/longarm/v1/workers/old-pc/remove' && c.init?.method === 'POST')).toBe(true))
   })
@@ -205,17 +211,19 @@ describe('PoolTab', () => {
     const calls = mockFetch({})
     vi.spyOn(window, 'confirm').mockReturnValue(false)
     render(<PoolTab pool={devboxPool('admin/root-laptop')} />)
-    expect(within(screen.getByTestId('worker-cpc-alice-x7k2q')).getByText('drain')).toBeTruthy()
+    const own = screen.getByTestId('worker-cpc-alice-x7k2q')
+    fireEvent.click(within(own).getByLabelText('more actions')) // drain: in the menu
+    expect(within(own).getByText('Drain (no new jobs)')).toBeTruthy()
     const fleet = screen.getByTestId('worker-fleet-1')
     fireEvent.click(within(fleet).getByLabelText('more actions'))
-    fireEvent.click(within(fleet).getByText('remove fleet-1…'))
+    fireEvent.click(within(fleet).getByText('Remove fleet-1…'))
     expect(calls).toHaveLength(0)
   })
 
   it('an admin-only machine: one card, admin capability only, no default attach', () => {
     render(<PoolTab pool={{ ...devboxPool(), workers: [w('box-admin', {}, { admin_worker: true })] }} />)
     const card = screen.getByTestId('worker-box-admin')
-    expect(within(card).getByTestId('cap-state').textContent).toBe('admin only · admin online')
+    expect(within(card).getByTestId('cap-state').textContent).toBe('Admin only · admin online')
     expect(within(card).queryByText('attach')).toBeNull()
   })
 
@@ -259,7 +267,7 @@ describe('ClientJobs', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     render(<ClientJobs />)
     expect(screen.getByText('loading jobs…')).toBeTruthy()
-    fireEvent.click(await screen.findByText('kill'))
+    fireEvent.click(await screen.findByText('Kill'))
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Kill job build (alice) on cpc-alice-x7k2q?'))
     expect(calls.some((c) => c.url.includes('/kill'))).toBe(false)
   })
@@ -303,5 +311,40 @@ describe('ClientJobs', () => {
     // the same row again (or Enter on it): closed
     fireEvent.keyDown(screen.getByText('job-c').closest('tr')!, { key: 'Enter' })
     expect(screen.queryByTestId('job-detail')).toBeNull()
+  })
+
+  it('filters by worker; a worker name stays on one line with the whole name on hover', async () => {
+    const long = 'cpc-bolu1-hucaa-with-a-long-name'
+    const jobs = [
+      ['a', long],
+      ['b', 'box'],
+      ['c', long],
+    ].map(([n, worker]) => ({ worker, job: { spec: { id: `j-${n}`, name: `job-${n}` }, state: 'JOB_STATE_DONE' } }))
+    mockFetch({ '/local/longarm/v1/jobs?': () => [200, { jobs }] })
+    render(<ClientJobs />)
+    await screen.findByText('job-a')
+    expect(screen.queryByText(/longarm jobs · logs/)).toBeNull() // no command hint
+    const cell = screen.getAllByTitle(long)[0]
+    expect(cell.className).toBe('clip')
+    const filter = screen.getByTestId('jobs-worker') as HTMLSelectElement
+    expect(Array.from(filter.options).map((o) => o.value)).toEqual(['', 'box', long])
+    fireEvent.change(filter, { target: { value: 'box' } })
+    expect(screen.queryByText('job-a')).toBeNull()
+    expect(screen.getByText('job-b')).toBeTruthy()
+    fireEvent.change(filter, { target: { value: '' } })
+    expect(screen.getByText('job-a')).toBeTruthy()
+  })
+})
+
+describe('SourceBar', () => {
+  const view = (over: object) =>
+    ({ source: 'direct', transport: 'race', hub: { address: 'hub:7443', connected: true }, workers: [{ name: 'w1' }], ...over }) as unknown as PoolView
+  it('is only there when something is off', () => {
+    const { container, rerender } = render(<SourceBar pool={view({})} now={Date.now()} />)
+    expect(container.textContent).toBe('') // all well: the title bar's "hub ✓" says it
+    rerender(<SourceBar pool={view({ hub: { address: 'hub:7443', connected: false } })} now={Date.now()} />)
+    expect(screen.getByTestId('hub-state').textContent).toContain('hub unavailable')
+    rerender(<SourceBar pool={view({ source: 'none' })} now={Date.now()} />)
+    expect(screen.getByTestId('source-text').textContent).toBe('no live data')
   })
 })

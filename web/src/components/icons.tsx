@@ -100,6 +100,39 @@ export const IconExternal = (p: P) => (
   </Svg>
 )
 
+/** A filled shield with a check (a worker card's state, end-to-end encrypted). */
+export const IconShield = (p: P) => (
+  <Svg {...p}>
+    <path d="M8 1.5 13.25 3.4v3.9c0 3.15-2.15 5.75-5.25 6.95C4.9 13.05 2.75 10.45 2.75 7.3V3.4L8 1.5z" fill="currentColor" />
+    <path d="M5.6 7.9 7.3 9.55 10.5 6.3" stroke="var(--surface, #fff)" strokeWidth={1.6} />
+  </Svg>
+)
+
+/** A chain link (the hub connected); IconLinkBroken: the link parted. */
+export const IconLink = (p: P) => (
+  <Svg {...p} size={p.size ?? 13}>
+    <path d="M6.6 9.4 9.4 6.6" />
+    <path d="M7.6 4.6 8.9 3.3a2.6 2.6 0 0 1 3.8 3.8L11.4 8.4" />
+    <path d="M8.4 11.4 7.1 12.7a2.6 2.6 0 0 1-3.8-3.8L4.6 7.6" />
+  </Svg>
+)
+
+export const IconLinkBroken = (p: P) => (
+  <Svg {...p} size={p.size ?? 13}>
+    <path d="M7.6 4.6 8.9 3.3a2.6 2.6 0 0 1 3.8 3.8L11.4 8.4" />
+    <path d="M8.4 11.4 7.1 12.7a2.6 2.6 0 0 1-3.8-3.8L4.6 7.6" />
+    <path d="M10.5 10.5l1.6 1.6M5.5 5.5 3.9 3.9" />
+  </Svg>
+)
+
+/** A speech bubble: user voice (feedback, bug reports). */
+export const IconFeedback = (p: P) => (
+  <Svg {...p}>
+    <path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8.2L5 14v-2.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z" />
+    <path d="M5 6.5h6M5 8.75h4" />
+  </Svg>
+)
+
 export const IconAlert = (p: P) => (
   <Svg {...p}>
     <path d="M8 2.5 14 13H2L8 2.5z" />

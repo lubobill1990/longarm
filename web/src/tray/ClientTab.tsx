@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { localUpdateApi, longarmApi, trayApi, traySettingsApi } from '../api/local'
 import type { Job, PoolView } from '../api/types'
+import { ask } from '../components/confirm'
 import { ErrorBox, LogView, StatePill, useAction, usePoll } from '../components/common'
 import { IconForward, IconTerminal } from '../components/icons'
 import { fmtTime, isActive } from '../lib/format'
@@ -22,7 +23,11 @@ import { EmptyState, Section, Skeleton } from './ui'
 export function ClientJobs() {
   const jobs = usePoll(() => longarmApi.jobs({ mine: true, limit: 50 }), 3000)
   const [open, setOpen] = useState<string>()
+  // "": every worker; else the jobs that run on that one
+  const [only, setOnly] = useState('')
   const { run, busy } = useAction()
+  const workers = [...new Set([...(jobs.data ?? []).map((j) => j.worker), ...(only ? [only] : [])])].sort()
+  const shown = (jobs.data ?? []).filter((j) => !only || j.worker === only)
   return (
     <div>
       <div className="toolbar">
@@ -30,14 +35,21 @@ export function ClientJobs() {
           Started from this computer
         </span>
         <span className="spacer" />
-        <span className="muted small mono" title="longarm jobs --all: every job you may see, from all your computers">
-          longarm jobs · logs · kill
-        </span>
+        {workers.length > 1 || only ? (
+          <select className="sm" aria-label="worker" data-testid="jobs-worker" value={only} onChange={(e) => setOnly(e.target.value)}>
+            <option value="">All workers</option>
+            {workers.map((w) => (
+              <option key={w} value={w}>
+                {w}
+              </option>
+            ))}
+          </select>
+        ) : null}
       </div>
       <ErrorBox error={jobs.error} />
       <table className="grid list small" data-testid="my-jobs">
         <tbody>
-          {(jobs.data ?? []).map((j) => {
+          {shown.map((j) => {
             const key = `${j.worker}/${j.job.spec.id}`
             const name = j.job.spec.name || j.job.spec.id.slice(-8)
             const isOpen = open === key
@@ -58,7 +70,12 @@ export function ClientJobs() {
                   }}
                 >
                   <td className="mono strong">{name}</td>
-                  <td className="muted">{j.worker}</td>
+                  <td className="muted">
+                    {/* one line: a long name ends in "…", the whole one on hover */}
+                    <span className="clip" title={j.worker}>
+                      {j.worker}
+                    </span>
+                  </td>
                   <td className="nowrap">
                     <StatePill state={j.job.state} />
                     {j.job.has_exit_code ? <span className="mono muted"> {j.job.exit_code ?? 0}</span> : ''}
@@ -69,13 +86,13 @@ export function ClientJobs() {
                       <button
                         className="danger sm"
                         disabled={busy}
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation()
-                          if (!confirm(killQuestion(j.job, j.worker))) return
+                          if (!(await ask(killQuestion(j.job, j.worker), { ok: 'Kill', danger: true }))) return
                           run(() => longarmApi.kill(j.job.spec.id, j.worker), 'killed').then(jobs.reload)
                         }}
                       >
-                        kill
+                        Kill
                       </button>
                     )}
                   </td>
@@ -92,6 +109,13 @@ export function ClientJobs() {
             <tr className="placeholder">
               <td colSpan={5}>
                 <Skeleton lines={3} label="loading jobs…" />
+              </td>
+            </tr>
+          )}
+          {jobs.data !== undefined && jobs.data.length > 0 && shown.length === 0 && (
+            <tr className="placeholder">
+              <td colSpan={5}>
+                <EmptyState compact icon={<IconTerminal size={20} />} title={`No jobs on ${only}`} />
               </td>
             </tr>
           )}
@@ -231,7 +255,7 @@ export function Forwards({ workers }: { workers: string[] }) {
               </td>
               <td className="actions-cell">
                 <button className="sm" disabled={busy} onClick={() => run(() => longarmApi.stopForward(f.local_addr ?? ''), 'stopped').then(fw.reload)}>
-                  stop
+                  Stop
                 </button>
               </td>
             </tr>
@@ -259,10 +283,10 @@ export function Forwards({ workers }: { workers: string[] }) {
 }
 
 const POLICIES: [string, string][] = [
-  ['race', 'race: dial every leg, first mTLS handshake wins (sticky winner)'],
-  ['tailscale', 'prefer tailscale'],
-  ['longnet', 'prefer longnet (hub relay + hole punching)'],
-  ['tcp', 'prefer plain tcp'],
+  ['race', 'Race: dial every leg, first mTLS handshake wins (sticky winner)'],
+  ['tailscale', 'Prefer tailscale'],
+  ['longnet', 'Prefer longnet (hub relay + hole punching)'],
+  ['tcp', 'Prefer plain tcp'],
 ]
 
 /** Settings: appearance, transport policy (longarm transport), notifications, this client (version, logs, telemetry, diagnostics). */

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { longarmApi, trayApi, type TrayInfo, type WorkerUpdateJob } from '../api/local'
 import type { PoolView, PoolWorker } from '../api/types'
+import { ask } from '../components/confirm'
 import { ErrorBox, useAction } from '../components/common'
 import { OfflineRow, WorkerCard, type CardActions } from '../components/WorkerCard'
 import { docsURL, repoURL } from '../lib/feedback'
@@ -25,10 +26,17 @@ export function isAdminClient(pool?: PoolView): boolean {
   return (pool?.identity ?? '').startsWith('admin/')
 }
 
-/** The pool's source line ("live from the hub · hub connected"): in the fixed header. */
+/**
+ * The pool's source line ("hub unavailable ... direct connections still
+ * work"), in the fixed header - only when something is off: the hub
+ * unreachable or no live data. All well, the title bar's count says
+ * "hub ✓" and its tooltip where the data comes from.
+ */
 export function SourceBar({ pool, now }: { pool: PoolView; now: number }) {
   const hub = pool.hub
   const src = pool.source ?? 'none'
+  const hubDown = !!hub?.address && !hub.connected
+  if (!hubDown && (src !== 'none' || !(pool.workers ?? []).length)) return null
   const srcText =
     src === 'hub' ? 'live from the hub' : src === 'direct' ? 'live from the workers (direct)' : src === 'mixed' ? 'hub + direct' : 'no live data'
   return (
@@ -127,12 +135,12 @@ export function PoolTab({ pool, error, info, onNavigate }: { pool?: PoolView; er
     attach: (name) => run(() => trayApi.attach(name), `opening a terminal: longarm attach ${name}`),
     ssh: (name) => run(() => trayApi.ssh(name), `opening longarm ssh ${name}`),
     desktop: (name) => run(() => trayApi.desktop(name), `opening the desktop of ${name}`),
-    panel: info?.hub_url ? (name) => run(() => trayApi.openPanel(`/nodes#${name}`)) : undefined,
     // drain needs an admin certificate (the hub's Admin API)
     drain: hubUp && admin ? (name, on) => run(() => longarmApi.drainWorker(name, on), `${name} ${on ? 'drained' : 'resumed'}`) : undefined,
     remove: hubUp
-      ? (names) => {
-          if (!confirm(`Remove ${names.join(' and ')} from the hub? This revokes ${names.length > 1 ? 'their' : 'its'} certificates; the machine must sign in again to come back.`)) return
+      ? async (names) => {
+          const q = `Remove ${names.join(' and ')} from the hub? This revokes ${names.length > 1 ? 'their' : 'its'} certificates; the machine must sign in again to come back.`
+          if (!(await ask(q, { ok: 'Remove', danger: true }))) return
           run(
             async () => {
               for (const n of names) await longarmApi.removeWorker(n)
@@ -144,10 +152,10 @@ export function PoolTab({ pool, error, info, onNavigate }: { pool?: PoolView; er
     canRemove: (w: PoolWorker) => admin || (!!me && !!w.node?.owner && w.node.owner === me),
     // the owner only (an admin certificate is no exception): longarm worker update
     update: hubUp
-      ? (name, version) => {
+      ? async (name, version) => {
           const w = (pool.workers ?? []).find((x) => x.name === name)
           const m = [...active, ...offline].find((x) => x.session?.name === name)
-          if (!confirm(updateConfirmText(name, version, w, m?.admin?.name))) return
+          if (!(await ask(updateConfirmText(name, version, w, m?.admin?.name), { ok: 'Update' }))) return
           run(() => startUpdate(name, version), `updating ${name} to ${version}`)
         }
       : undefined,

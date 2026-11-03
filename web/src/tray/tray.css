@@ -20,9 +20,29 @@
     overflow: hidden;
   }
 
-  & * {
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--text-3) 45%, transparent) transparent;
+  /* scrollbars: our own, 6 px, a rounded thumb on no track (WebView2 and
+     WebKit draw ::-webkit-scrollbar; Chromium ignores it where the standard
+     scrollbar-width / scrollbar-color are set, so those only elsewhere) */
+  & ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  & ::-webkit-scrollbar-track,
+  & ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  & ::-webkit-scrollbar-thumb {
+    border-radius: var(--r-pill);
+    background: color-mix(in srgb, var(--text-3) 40%, transparent);
+  }
+  & ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--text-3) 65%, transparent);
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    & * {
+      scrollbar-width: thin;
+      scrollbar-color: color-mix(in srgb, var(--text-3) 45%, transparent) transparent;
+    }
   }
 
   & ::selection {
@@ -216,6 +236,59 @@
   & input,
   & select {
     height: var(--ctl-h);
+  }
+  /* ask(): our confirmation dialog (components/confirm.tsx), in the window */
+  & .ask-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: grid;
+    place-items: center;
+    padding: var(--sp-4);
+    background: color-mix(in srgb, var(--text) 28%, transparent);
+  }
+  & .ask {
+    width: min(360px, 100%);
+    max-height: 100%;
+    overflow: auto;
+    padding: var(--sp-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+  }
+  & .ask-message {
+    margin: 0 0 var(--sp-4);
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+  }
+  & .ask-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--sp-2);
+  }
+  & .ask button.danger-solid {
+    background: var(--red);
+    border-color: var(--red);
+    color: #fff;
+  }
+  & .ask button.danger-solid:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--red) 88%, black);
+    border-color: color-mix(in srgb, var(--red) 88%, black);
+  }
+  & select.sm {
+    height: var(--ctl-h-sm);
+    max-width: 50%;
+    padding: 0 6px;
+    font-size: 12.5px;
+  }
+  /* one line, cut with "…" (the whole text in its title) */
+  & .clip {
+    display: block;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   & input::placeholder {
     color: var(--text-3);
@@ -815,6 +888,21 @@
   & .count-pill.bad .count-dot {
     background: var(--red);
   }
+  /* "· hub ✓" after the count (✗, red: the hub is unreachable) */
+  & .count-hub {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: var(--text-3);
+    font-weight: var(--fw-medium);
+  }
+  & .count-hub.up svg {
+    color: var(--green);
+  }
+  & .count-hub.down,
+  & .count-hub.down svg {
+    color: var(--red-ink);
+  }
 
   /* narrow: a segmented tab bar */
   & .tray-nav {
@@ -895,7 +983,10 @@
   /* the text's letters centered, not its line box (the UI font sits low in
      it): trimmed to cap height and baseline */
   & .srcbar > span:not(.dot),
-  & .agent > span {
+  & .agent > span,
+  & .wcard .head .name,
+  & .wcard .head .pill > span,
+  & .wcard .actions button > span {
     text-box: trim-both cap alphabetic;
   }
   & .srcbar-chip {
@@ -906,12 +997,47 @@
     background: var(--surface-2);
     color: var(--text-2);
   }
+  /* the tab's scroll area (OverlayScroll): no room for a scrollbar - our
+     thumb is drawn over the right edge - so the cards keep the same margin
+     on both sides, scrolling or not */
+  & .tray .oscroll {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
   & .tray .body {
     flex: 1;
     min-height: 0;
     padding: 0;
     overflow: auto;
-    scrollbar-gutter: stable;
+    scrollbar-width: none;
+  }
+  & .tray .body::-webkit-scrollbar {
+    display: none;
+  }
+  /* in the middle of the cards' right margin (.page's padding) */
+  & .oscroll-thumb {
+    position: absolute;
+    right: calc((var(--sp-3) - 4px) / 2);
+    width: 4px;
+    border-radius: var(--r-pill);
+    background: color-mix(in srgb, var(--text-3) 45%, transparent);
+    opacity: 0;
+    transition: opacity 0.2s;
+    cursor: default;
+  }
+  & .oscroll:hover .oscroll-thumb,
+  & .oscroll.active .oscroll-thumb,
+  & .oscroll-thumb:active {
+    opacity: 1;
+  }
+  & .oscroll-thumb:hover,
+  & .oscroll-thumb:active {
+    right: calc((var(--sp-3) - 6px) / 2);
+    width: 6px;
+    background: color-mix(in srgb, var(--text-3) 70%, transparent);
   }
   & .page {
     max-width: 1180px;
@@ -1172,9 +1298,24 @@
     }
   }
   & .wcard .info {
+    display: flex;
+    align-items: baseline;
+    gap: var(--sp-2);
     color: var(--text-3);
     font-size: var(--fs-sm);
     margin: var(--sp-2) 0;
+  }
+  /* "top processes ▾", at the info line's right end */
+  & .wcard .info button.tops-toggle {
+    margin-left: auto;
+    flex: none;
+    color: var(--text-3);
+    font-size: inherit;
+    font-weight: var(--fw-medium);
+  }
+  & .wcard .info button.tops-toggle:hover:not(:disabled) {
+    color: var(--text);
+    text-decoration: none;
   }
   & .state-line {
     display: flex;
@@ -1366,15 +1507,9 @@
     font-size: var(--fs-sm);
     position: relative;
   }
+  /* no dot: the count's color says it (styles.css draws a stripe) */
   & .agent::before {
-    content: '';
-    position: static;
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--c, transparent);
-    box-shadow: inset 0 0 0 1.5px var(--c, var(--gray-dot));
+    display: none;
   }
   & .agent .n {
     margin-left: auto;
@@ -1691,6 +1826,29 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* This computer: a role's state on its row's right */
+  & label.check .role-state {
+    margin-left: auto;
+    flex: none;
+  }
+  /* "hub <address> ↗" on one line: the address gives way ("…") */
+  & .hub-line {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+  }
+  & .hub-line .hub-addr {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  & .hub-line button.hub-open {
+    flex: none;
+    width: 20px;
+    height: 20px;
   }
   & .avatar {
     display: grid;
