@@ -33,7 +33,10 @@ $custom = Join-Path $Dir 'custom.msi'
 foreach ($m in $default, $custom) {
   if (-not (Test-Path $m)) { throw "missing $m" }
   Write-Host "== ICE validation: $m"
-  wix msi validate $m
+  # ICE20 wants the FilesInUse dialog in every MSI with a UI; Longarm's has none on purpose (Restart Manager
+  # detects files in use, MSIRESTARTMANAGERCONTROL=DisableShutdown, and the upgrade helper stops what holds them:
+  # the dialog would only ask to close what it closes anyway)
+  wix msi validate -sice ICE20 $m
   if ($LASTEXITCODE) { throw "wix msi validate $m failed ($LASTEXITCODE)" }
 }
 
