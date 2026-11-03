@@ -753,6 +753,25 @@ function GetStarted({
   const [rel, setRel] = useState<LatestRelease>()
   const [os, setOS] = useState<OS>(() => (/Windows/i.test(navigator.userAgent) ? 'windows' : 'unix'))
   const [channel, setChannel] = useState<Channel>('stable')
+  // the channels this hub has releases of: stable, and preview / dev only
+  // when the hub has a release of that channel newer than the more tested
+  // ones (a hub serving GitHub's releases has no dev builds)
+  const [offered, setOffered] = useState<Channel[]>(['stable'])
+  useEffect(() => {
+    let alive = true
+    const own = (c: Channel) =>
+      hubApi.latestRelease(c).then(
+        (r) => (r?.version && r.channel === c ? c : null),
+        () => null,
+      )
+    Promise.all([own('preview'), own('dev')]).then((cs) => alive && setOffered(['stable', ...cs.filter((c): c is Channel => c !== null)]))
+    return () => {
+      alive = false
+    }
+  }, [])
+  useEffect(() => {
+    if (!offered.includes(channel)) setChannel('stable')
+  }, [offered, channel])
   // Windows: the MSI updates itself only when asked (default: not)
   const [auto, setAuto] = useState(false)
   useEffect(() => {
@@ -793,9 +812,9 @@ function GetStarted({
                 </button>
               ))}
             </div>
-            {os !== 'installed' && (
+            {os !== 'installed' && offered.length > 1 && (
               <div className="lp-tabs lp-chan" role="radiogroup" aria-label="Release channel" data-testid="landing-channel">
-                {CHANNELS.map(([c, label]) => (
+                {CHANNELS.filter(([c]) => offered.includes(c)).map(([c, label]) => (
                   <button key={c} role="radio" aria-checked={channel === c} className={channel === c ? 'on' : ''} onClick={() => setChannel(c)}>
                     {label}
                   </button>

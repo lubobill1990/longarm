@@ -81,7 +81,7 @@ func (h *Hub) latestReleaseIn(channel string) (string, map[string]store.Release,
 	if err != nil || normChannel(channel) == update.ChannelStable {
 		return stableV, stableFiles, err
 	}
-	rels, err := h.store.Releases()
+	rels, err := h.releases()
 	if err != nil {
 		return "", nil, err
 	}

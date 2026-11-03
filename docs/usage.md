@@ -3671,6 +3671,11 @@ api_key_file = "/etc/longarm-hub/headscale-api.key"
 
 ### Self-update
 
+A hub that publishes nothing itself offers the releases of its source
+repository on GitHub (`[releases] github`; deploy/hub/README.md "Releases
+without publishing anything"), signed by the project; the rest of this
+section is for hubs that publish their own builds.
+
 Releases are signed with minisign; longarmd only installs binaries whose
 signature verifies against the public key built into it
 (`-X .../internal/update.PublicKey=RW...`) and whose trusted comment names the

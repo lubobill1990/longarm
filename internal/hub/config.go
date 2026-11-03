@@ -201,6 +201,13 @@ type ReleaseConfig struct {
 	// is then a cache. Empty: the data dir only. Env
 	// LONGARM_HUB_RELEASES_BLOB_URL.
 	BlobURL string `toml:"blob_url"`
+	// GitHub offers the releases of a GitHub repository while the hub has
+	// none of its own (ghreleases.go): "" = [web] repo_url's (the public
+	// repository by default), "owner/repo", or "off". Env
+	// LONGARM_HUB_RELEASES_GITHUB.
+	GitHub string `toml:"github"`
+
+	githubAPI string // the GitHub API's base URL (tests)
 }
 
 // HeadscaleConfig is [headscale]: the self-hosted Tailscale control plane

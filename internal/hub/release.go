@@ -148,6 +148,18 @@ func addRelease(ctx context.Context, rs *releaseStore, st *store.Store, dir, ver
 // errReleaseDiffers: a re-publish of a known version with other files.
 var errReleaseDiffers = errors.New("different files")
 
+// releaseFileKind tells a release file's OS, architecture and kind
+// ("binary", "package") by its name; false: not a release file.
+func releaseFileKind(name string) (goos, arch, kind string, ok bool) {
+	if m := binaryFileRE.FindStringSubmatch(name); m != nil {
+		return m[2], m[3], "binary", true
+	}
+	if m := packageFileRE.FindStringSubmatch(name); m != nil {
+		return m[1], m[2], "package", true
+	}
+	return "", "", "", false
+}
+
 type releaseItem struct {
 	r   store.Release
 	src string
@@ -163,11 +175,8 @@ func readRelease(dir, version, channel string) ([]releaseItem, error) {
 	for _, e := range ents {
 		name := e.Name()
 		r := store.Release{Version: version, File: name, Channel: channel, AddedAt: time.Now()}
-		if m := binaryFileRE.FindStringSubmatch(name); m != nil {
-			r.OS, r.Arch, r.Kind = m[2], m[3], "binary"
-		} else if m := packageFileRE.FindStringSubmatch(name); m != nil {
-			r.OS, r.Arch, r.Kind = m[1], m[2], "package"
-		} else {
+		var ok bool
+		if r.OS, r.Arch, r.Kind, ok = releaseFileKind(name); !ok {
 			continue
 		}
 		if e.IsDir() {
@@ -221,7 +230,7 @@ func SignRelease(dir, version, keyFile, password string) ([]string, error) {
 
 // releaseFiles returns the files of version (all kinds).
 func (h *Hub) releaseFiles(version string) ([]store.Release, error) {
-	rels, err := h.store.Releases()
+	rels, err := h.releases()
 	if err != nil {
 		return nil, err
 	}
@@ -756,7 +765,7 @@ func (s *fleetServer) DownloadRelease(req *pb.ReleaseFileRequest, stream pb.Flee
 }
 
 func (s *hubAdminServer) ListReleases(ctx context.Context, req *pb.ListReleasesRequest) (*pb.ListReleasesResponse, error) {
-	rels, err := s.h.store.Releases()
+	rels, err := s.h.releases()
 	if err != nil {
 		return nil, err
 	}

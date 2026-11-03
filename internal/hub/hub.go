@@ -77,6 +77,7 @@ type Hub struct {
 	kick          chan struct{}   // re-run the queue
 	rollout       *pb.Rollout     // the current / last release rollout
 	rel           *releaseStore   // release files (relstore.go)
+	gh            *ghReleases     // GitHub's releases while the hub has none (ghreleases.go); nil = off
 	latest        latestCache     // the newest complete release, for update notices (updatenotice.go)
 	tailnet       tailnetProvider // nil = no tailnet enrollment
 	// TailnetKey calls per node: workers 5, then one per hour; clients
@@ -198,6 +199,10 @@ func Open(cfg *Config, log *slog.Logger) (*Hub, error) {
 		return nil, err
 	}
 	if h.rel, err = openReleaseStore(cfg, nil, log); err != nil {
+		st.Close()
+		return nil, err
+	}
+	if h.gh, err = newGHReleases(cfg, log); err != nil {
 		st.Close()
 		return nil, err
 	}
@@ -579,6 +584,9 @@ func (h *Hub) Serve(ctx context.Context) error {
 	h.mu.Unlock()
 	h.startTelemetry(ctx, run)
 	run("releases", func() error { h.rel.reconcile(ctx, h.store); return nil })
+	if h.gh != nil {
+		run("github releases", func() error { h.gh.run(ctx, h.ghWanted); return nil })
+	}
 	run("mux", mux.Serve)
 	run("grpc", func() error { return g.Serve(grpcLn) })
 

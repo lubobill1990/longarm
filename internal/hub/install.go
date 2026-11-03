@@ -36,6 +36,11 @@ func hashFile(p string) (string, int64, error) {
 }
 
 func (h *Hub) releaseFile(w http.ResponseWriter, r *http.Request) {
+	// a GitHub release file the hub has no copy of: from GitHub
+	if u := h.remoteReleaseURL(r.PathValue("version"), r.PathValue("file")); u != "" {
+		http.Redirect(w, r, u, http.StatusFound)
+		return
+	}
 	p, err := h.releasePath(r.Context(), r.PathValue("version"), r.PathValue("file"))
 	if errors.Is(err, errReleaseMissing) {
 		http.NotFound(w, r)
@@ -89,11 +94,11 @@ func (h *Hub) releasePath(ctx context.Context, version, name string) (string, er
 // by name: latest_release, unless the hub lost some of its files (then the
 // newest stable version it has all files of; "" = none).
 func (h *Hub) latestRelease() (string, map[string]store.Release, error) {
-	latest, err := h.store.Meta("latest_release")
+	latest, err := h.latestStable()
 	if err != nil || latest == "" {
 		return "", nil, err
 	}
-	rels, err := h.store.Releases()
+	rels, err := h.releases()
 	if err != nil {
 		return "", nil, err
 	}

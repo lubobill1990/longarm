@@ -178,7 +178,7 @@ func (h *Hub) httpHandler() http.Handler {
 		writeResult(w, h.projector(h.panelViewer(user)).profile(res), err)
 	})
 	admin("GET /api/releases", func(w http.ResponseWriter, _ *http.Request, _ string) {
-		rels, err := h.store.Releases()
+		rels, err := h.releases()
 		if err != nil {
 			httpError(w, 500, err.Error())
 			return

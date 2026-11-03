@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -46,7 +47,11 @@ func (c *Config) releasesEnvDefaults() error {
 			return fmt.Errorf("[releases] %w", err)
 		}
 	}
-	return nil
+	if v, ok := os.LookupEnv(EnvReleasesGitHub); ok {
+		c.Releases.GitHub = strings.TrimSpace(v)
+	}
+	_, err := ghRepo(c)
+	return err
 }
 
 // errReleaseMissing: no copy of a release file anywhere.
@@ -268,7 +273,7 @@ func (s *releaseStore) markBlob(name string) {
 // has reports whether r's file can be served: a local copy, or a blob (as
 // far as the hub knows; before the first listing it assumes so).
 func (s *releaseStore) has(r store.Release) bool {
-	if regularFile(s.localPath(r.Version, r.File)) {
+	if regularFile(s.localPath(r.Version, r.File)) || r.URL != "" {
 		return true
 	}
 	if s.blob == nil {
@@ -299,7 +304,7 @@ func (s *releaseStore) file(ctx context.Context, r store.Release, sig bool) (str
 		}
 		return p, installFile(p, bytes.NewReader(r.Sig), int64(len(r.Sig)), sha256Hex(r.Sig), 0o644)
 	}
-	if s.blob == nil {
+	if s.blob == nil && r.URL == "" {
 		return "", errReleaseMissing
 	}
 	bn := blobName(r.Version, r.File)
@@ -385,6 +390,9 @@ func (s *releaseStore) fetchLimited(ctx context.Context, r store.Release, p stri
 // one, at most that many bytes (+1) are read, and only content with the
 // recorded sha256 reaches p.
 func (s *releaseStore) fetch(ctx context.Context, r store.Release, p string) error {
+	if r.URL != "" {
+		return s.fetchURL(ctx, r, p)
+	}
 	bn := blobName(r.Version, r.File)
 	rc, bi, err := s.blob.Get(ctx, bn)
 	if errors.Is(err, diag.ErrNotFound) {
@@ -412,6 +420,36 @@ func (s *releaseStore) fetch(ctx context.Context, r store.Release, p string) err
 		return fmt.Errorf("download %s: %w", bn, err)
 	}
 	s.log.Info("release file restored from the blob container", "version", r.Version, "file", r.File)
+	return nil
+}
+
+// fetchURL downloads a release file the hub doesn't keep (GitHub's) to p,
+// checked like a blob: the advertised size, the recorded sha256.
+func (s *releaseStore) fetchURL(ctx context.Context, r store.Release, p string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.URL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "longarm-hub")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		s.log.Error("release file missing at its source", "version", r.Version, "file", r.File, "url", r.URL)
+		return errReleaseMissing
+	case resp.StatusCode != http.StatusOK:
+		return fmt.Errorf("download %s: %s", r.URL, resp.Status)
+	case resp.ContentLength >= 0 && resp.ContentLength != r.Size:
+		return fmt.Errorf("download %s: %d bytes, want %d", r.URL, resp.ContentLength, r.Size)
+	}
+	if err := installFile(p, resp.Body, r.Size, r.SHA256, 0o755); err != nil {
+		s.log.Error("release file doesn't match its sha256", "version", r.Version, "file", r.File, "url", r.URL, "err", err)
+		return fmt.Errorf("download %s: %w", r.URL, err)
+	}
+	s.log.Info("release file fetched", "version", r.Version, "file", r.File, "url", r.URL)
 	return nil
 }
 

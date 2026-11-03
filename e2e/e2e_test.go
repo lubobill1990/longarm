@@ -43,6 +43,8 @@ func TestMain(m *testing.M) {
 	// Client-side placement must not depend on this machine's load.
 	os.Setenv("LONGARM_GATE_CPU", "101")
 	os.Setenv("LONGARM_GATE_FREE_GB", "0")
+	// Hubs started here never offer the public repository's releases.
+	os.Setenv("LONGARM_HUB_RELEASES_GITHUB", "off")
 	// LONGARM_E2E_BIN_DIR: prebuilt longarmd, longarm, helper and longarm-hub
 	// (CI runs the per-user tests as root from a test binary and must not
 	// build with root's - empty - Go caches).
