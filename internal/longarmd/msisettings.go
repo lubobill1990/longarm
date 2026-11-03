@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/lubobill1990/longarm/internal/update"
 )
 
 // The sign-in defaults the MSI records in HKLM\Software\Longarm - Hub,
@@ -59,6 +61,73 @@ func ApplyMSISettings(s SettingsStore, d map[string]string, req MSIRequester) er
 	}
 	return nil
 }
+
+// UpdatePrefsStore holds how the machine updates - the Longarm Update
+// service's Auto and Channel (HKLM\Software\Longarm\Update, which the
+// tray's Settings > Updates changes too).
+type UpdatePrefsStore interface {
+	// Recorded: Auto ("1", "0") and Channel as recorded, "" when not
+	Recorded() (auto, channel string)
+	SetAuto(on bool) error
+	SetChannel(channel string) error
+}
+
+// ApplyMSIUpdatePrefs records the MSI's AUTO_UPDATE (1/0) and
+// UPDATE_CHANNEL (stable, preview - rc, beta - or dev); either empty: the
+// machine's stays as it is (an upgrade without them). As with the sign-in
+// defaults, a change of a recorded value needs an administrator.
+func ApplyMSIUpdatePrefs(s UpdatePrefsStore, auto, channel string, req MSIRequester) error {
+	if channel != "" {
+		if strings.EqualFold(channel, "rc") {
+			channel = update.ChannelPreview // release candidates
+		}
+		n, ok := update.NormalizeChannel(channel)
+		if !ok {
+			return fmt.Errorf("UPDATE_CHANNEL %q: want stable, preview (rc) or dev", channel)
+		}
+		channel = n
+	}
+	oldAuto, oldChannel := s.Recorded()
+	if oldChannel != "" {
+		oldChannel, _ = update.NormalizeChannel(oldChannel)
+	}
+	var changed []string
+	if auto != "" && oldAuto != "" && auto != oldAuto {
+		changed = append(changed, "automatic updates")
+	}
+	if channel != "" && oldChannel != "" && channel != oldChannel {
+		changed = append(changed, "the update channel")
+	}
+	if len(changed) > 0 {
+		if err := req.RequireAdmin("changing " + strings.Join(changed, " and ")); err != nil {
+			return err
+		}
+	}
+	if channel != "" {
+		if err := s.SetChannel(channel); err != nil {
+			return fmt.Errorf("record the update channel: %w", err)
+		}
+	}
+	if auto != "" {
+		if err := s.SetAuto(auto == "1"); err != nil {
+			return fmt.Errorf("record automatic updates: %w", err)
+		}
+	}
+	return nil
+}
+
+// MemUpdatePrefs keeps update preferences in memory (tests).
+type MemUpdatePrefs struct{ Auto, Channel string }
+
+func (p *MemUpdatePrefs) Recorded() (string, string) { return p.Auto, p.Channel }
+func (p *MemUpdatePrefs) SetAuto(on bool) error {
+	p.Auto = "0"
+	if on {
+		p.Auto = "1"
+	}
+	return nil
+}
+func (p *MemUpdatePrefs) SetChannel(c string) error { p.Channel = c; return nil }
 
 // RemoveMSISettings deletes the sign-in defaults (uninstall).
 func RemoveMSISettings(s SettingsStore) {

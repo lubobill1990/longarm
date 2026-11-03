@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Automatic updates are a choice at install.** The MSI wizard has an
+  Updates page before Install: "Install new releases automatically" (off
+  unless the machine had it on) and, with it, the release channel (Stable
+  preselected, Preview, Dev); silent installs take `AUTO_UPDATE=1|0` and
+  `UPDATE_CHANNEL=stable|preview|dev` (unset: as recorded; changing a
+  recorded one needs an administrator, as the sign-in defaults). `install.ps1`
+  passes them: `-AutoUpdate` / `$env:LONGARM_AUTO_UPDATE=1` /
+  `?autoupdate=1`, and the channel it installed from. The front page's
+  Windows install has an "Update automatically" switch (off).
 - **Install a release channel.** The hub's `install.ps1` / `install.sh` take
   `?channel=preview` (or `rc`) / `?channel=dev`: that channel's newest
   release, and on Windows the machine then follows the channel (its update

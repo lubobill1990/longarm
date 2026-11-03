@@ -12,8 +12,10 @@ import (
 
 // TestInstallScriptChannel: GET /install.ps1?channel=dev (and preview, rc;
 // install.sh alike) hands out that channel's newest release, and install.ps1
-// has the machine follow the channel - also through its elevated relaunch;
-// without a channel: the stable release, no channel set; an unknown one: 400.
+// has the MSI record the channel (UPDATE_CHANNEL) - also through its
+// elevated relaunch; without a channel: the stable release, the channel
+// recorded only with automatic updates; an unknown one: 400. Automatic
+// updates (AUTO_UPDATE=1) only with ?autoupdate=1 or LONGARM_AUTO_UPDATE=1.
 func TestInstallScriptChannel(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -46,19 +48,30 @@ func TestInstallScriptChannel(t *testing.T) {
 			t.Errorf("install.ps1%s: %d, want version %s", q, code, want)
 			continue
 		}
-		follows := strings.Contains(body, "-Name Channel -Value")
+		follows := !strings.Contains(body, "if ($AutoUpdate -or '') { $props += 'UPDATE_CHANNEL=stable' }")
 		if stable := want == "0.1.20"; follows == stable {
-			t.Errorf("install.ps1%s: sets the machine's channel %v, want %v", q, follows, !stable)
+			t.Errorf("install.ps1%s: always records the machine's channel %v, want %v", q, follows, !stable)
+		}
+		if !strings.Contains(body, "[switch]$AutoUpdate = ($env:LONGARM_AUTO_UPDATE -eq '1')") {
+			t.Errorf("install.ps1%s: automatic updates not off by default", q)
 		}
 		if _, sh := get("sh", q); !strings.Contains(sh, want) {
 			t.Errorf("install.sh%s: want version %s", q, want)
 		}
 	}
 	_, dev := get("ps1", "?channel=dev")
-	if !strings.Contains(dev, "-Value 'dev'") || !strings.Contains(dev, "Invoke-Elevated 'install.ps1?channel=dev'") {
+	if !strings.Contains(dev, "$props += 'UPDATE_CHANNEL=dev'") || !strings.Contains(dev, "Invoke-Elevated 'install.ps1?channel=dev'") {
 		t.Errorf("install.ps1?channel=dev: the channel or the elevated relaunch's channel missing")
 	}
 	if code, _ := get("ps1", "?channel=nightly"); code != 400 {
 		t.Errorf("an unknown channel: %d, want 400", code)
+	}
+	_, auto := get("ps1", "?channel=preview&autoupdate=1")
+	if !strings.Contains(auto, "[switch]$AutoUpdate = ($true)") || !strings.Contains(auto, "$props += 'AUTO_UPDATE=1'") ||
+		!strings.Contains(auto, "LONGARM_AUTO_UPDATE = $(if ($AutoUpdate)") || !strings.Contains(auto, "UPDATE_CHANNEL=preview") {
+		t.Errorf("install.ps1?autoupdate=1: automatic updates not asked for (or not through the elevated relaunch)")
+	}
+	if code, _ := get("ps1", "?autoupdate=yes"); code != 400 {
+		t.Errorf("autoupdate=yes: %d, want 400", code)
 	}
 }

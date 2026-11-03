@@ -753,12 +753,14 @@ function GetStarted({
   const [rel, setRel] = useState<LatestRelease>()
   const [os, setOS] = useState<OS>(() => (/Windows/i.test(navigator.userAgent) ? 'windows' : 'unix'))
   const [channel, setChannel] = useState<Channel>('stable')
+  // Windows: the MSI updates itself only when asked (default: not)
+  const [auto, setAuto] = useState(false)
   useEffect(() => {
     setRel(undefined)
     hubApi.latestRelease(channel).then(setRel, () => {})
   }, [channel])
   const base = me?.base_url || location.origin
-  const lines = installLines(base, channel)
+  const lines = installLines(base, channel, auto)
   const msi = msiFile(rel, 'amd64')
   const msiArm = msiFile(rel, 'arm64')
   const names = (providers ?? []).map((p) => p.label)
@@ -808,6 +810,21 @@ function GetStarted({
             </p>
           )}
           {os === 'windows' && (
+            <label className="lp-auto" data-testid="landing-auto">
+              <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
+              <span className="lp-switch" aria-hidden="true" />
+              <span>
+                <b>Update automatically</b>{' '}
+                <span className="faint">
+                  {auto
+                    ? `- Windows installs new ${CHANNELS.find(([c]) => c === channel)?.[1]} releases by itself.`
+                    : '- off: the tray shows when a new release is out, and you install it.'}{' '}
+                  The tray changes it later (Settings &gt; Updates).
+                </span>
+              </span>
+            </label>
+          )}
+          {os === 'windows' && (
             <div className="lp-install-cols lp-tab-body">
               <div className="lp-install-col">
                 <p className="lp-col-title">The installer</p>
@@ -829,7 +846,7 @@ function GetStarted({
                   Run it, click Next, keep <b>Default</b> and pick what this computer does: send jobs to workers, run jobs, or both. The tray then starts the sign-in by
                   itself.
                 </p>
-                {channel !== 'stable' && <p className="small faint">The MSI installs this version; to keep getting {channel} releases, pick {channel} in the tray&apos;s Settings &gt; Updates.</p>}
+                <p className="small faint">Its Updates page asks whether to update automatically, and to which channel (Stable unless you pick another).</p>
               </div>
               <div className="lp-install-col">
                 <p className="lp-col-title">Or one line in PowerShell</p>
