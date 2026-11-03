@@ -173,15 +173,40 @@ Conventions of the `--json` outputs:
 | `version.json` | `longarm version --json` |
 | `worker-ls.json` | `longarm worker ls --json` |
 | `whoami.json` | `longarm whoami --json` |
+| `jobs.json` | `longarm jobs --json` |
 | `jobs-id.json` | `longarm jobs --json --id <job>` |
+| `session-start.json` | `longarm session start <worker> -s <name> --repo <dir> --json -- <command>` |
+| `session-send.json` | `longarm session send <worker> -s <name> --text <text> --json` |
 | `sessions.json` | `longarm sessions --json` |
+| `tail.json` | `longarm tail <worker> <path> --json` |
 | `doctor.json` | `longarm doctor --json` |
 
-produced by an end-to-end test from a hub and a worker and anonymised
-(example names, ids, addresses and times). Copy them into your tests. CI
-checks that every field in them still exists with the same JSON type, in
-every element of a list, and is null only where it may be: a field
-removed, retyped or turned null fails Longarm's build, a field added does
-not (`go test ./e2e -run TestProgramsFixtures`; `-update` rewrites them).
-Values are examples; `doctor.json`'s checks and each check's `data`, and a
-worker's `metrics`, differ by machine.
+produced by an end-to-end test from a hub and two workers and anonymised
+(example names, ids, addresses and times). Copy them into your tests.
+`tail --json` prints JSON lines, one object per line of the file;
+`tail.json` is the array of them. CI checks that every field in them still
+exists with the same JSON type, in every element of a list, and is null
+only where it may be: a field removed, retyped or turned null fails
+Longarm's build, a field added does not (`go test ./e2e -run
+TestProgramsFixtures`; `-update` rewrites them). Values are examples;
+`doctor.json`'s checks and each check's `data`, and a worker's `metrics`,
+differ by machine.
+
+The test sets things up so that fields left out at their zero value are
+in the fixtures at least once: `worker-ls.json` has a worker of alice's
+(`owner`) running a job (`jobs_active`, `reserved_gb`) and a fleet worker
+with a toolchain profile (`profile`, `toolchain.profile`); `jobs.json` a
+running, a killed (`reason`) and a finished job in a worktree (`workdir`,
+`spec.workspace`); `sessions.json` a session with a workspace. Not in
+them, as they need a bigger setup - read them as left out when zero:
+
+- `jobs --json`: `unreachable` (only with `"source": "workers"`, when
+  the hub did not answer and some workers did not either);
+- `tail --json`: `truncated` (with `-f`, when the file shrank or was
+  replaced);
+- `session start --json`: `reason` (a session that failed to start);
+- `worker ls --json`: `metrics.top_cpu` / `metrics.top_mem` (the process
+  lists: only a hub with a single user shows them, and a worker with an
+  owner makes the hub multi-user), `draining` /
+  `drain_reason`, `shares`, `update`, and the other fields of
+  `NodeInfo` (proto/longarm/v1/hub.proto) not shown.

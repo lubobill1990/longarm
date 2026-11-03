@@ -7,5 +7,10 @@
   "renew_before": "864000s",
   "role": "client",
   "tailnet": {},
+  "tenancy": true,
+  "usage": {
+    "jobs": 1,
+    "mem_gb": 2
+  },
   "user": "alice"
 }

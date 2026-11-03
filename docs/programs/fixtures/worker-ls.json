@@ -11,6 +11,71 @@
       "hostname": "pc-1",
       "id": "3f2a9c1e-8b7d-4c5e-9f1a-2b3c4d5e6f70",
       "isolation": "shared",
+      "jobs_active": 1,
+      "joined_at": "2026-11-03T09:00:00Z",
+      "labels": {
+        "arch": "amd64",
+        "os": "windows"
+      },
+      "last_seen": "2026-11-03T09:00:00Z",
+      "machine": "worker-1",
+      "metrics": {
+        "agents": {
+          "claude": {
+            "mem_bytes": "340848640",
+            "processes": 1,
+            "sessions": 1
+          },
+          "copilot": {}
+        },
+        "cpu_percent": 15.6,
+        "disk_free_bytes": "703490949120",
+        "disk_total_bytes": "992617689088",
+        "jobs_running": 1,
+        "mem_total_bytes": "137385308160",
+        "mem_used_bytes": "41944735744",
+        "net_rx_bytes_per_sec": "49149",
+        "net_tx_bytes_per_sec": "45130",
+        "nproc": 311,
+        "threads": 32,
+        "time": "2026-11-03T09:00:00Z",
+        "uptime_seconds": "619143"
+      },
+      "name": "worker-1",
+      "online": true,
+      "os": "windows",
+      "owner": "alice",
+      "reserved_gb": 2,
+      "role": "worker",
+      "state": "approved",
+      "toolchain": {
+        "state": "none",
+        "updated_at": "2026-11-03T09:00:00Z",
+        "versions": {
+          "claude": "2.1.310",
+          "copilot": "",
+          "gh": "",
+          "git": "2.56.0",
+          "go": "",
+          "node": "26.13.0",
+          "pnpm": "10.32.1",
+          "pwsh": "7.6.9",
+          "uv": ""
+        }
+      },
+      "version": "v1.9.0"
+    },
+    {
+      "arch": "amd64",
+      "cert_name": "worker-2",
+      "cert_not_after": "2026-11-03T09:00:00Z",
+      "endpoints": [
+        "longnet://100.64.0.11:7701?name=worker-2",
+        "tcp://100.64.0.11:7701"
+      ],
+      "hostname": "pc-1",
+      "id": "3f2a9c1e-8b7d-4c5e-9f1a-2b3c4d5e6f70",
+      "isolation": "shared",
       "joined_at": "2026-11-03T09:00:00Z",
       "labels": {
         "arch": "amd64",
@@ -19,108 +84,49 @@
         "tier": "test"
       },
       "last_seen": "2026-11-03T09:00:00Z",
-      "machine": "worker-1",
+      "machine": "worker-2",
       "metrics": {
         "agents": {
           "claude": {
-            "mem_bytes": "6067900416",
-            "processes": 24,
-            "sessions": 15
+            "mem_bytes": "340848640",
+            "processes": 1,
+            "sessions": 1
           },
           "copilot": {}
         },
-        "cpu_percent": 34.1,
-        "disk_free_bytes": "34748502016",
-        "disk_total_bytes": "1022559776768",
-        "mem_total_bytes": "68412596224",
-        "mem_used_bytes": "39544262656",
-        "net_rx_bytes_per_sec": "74370",
-        "net_tx_bytes_per_sec": "42596",
-        "nproc": 718,
-        "threads": 20,
+        "cpu_percent": 16.1,
+        "disk_free_bytes": "703490945024",
+        "disk_total_bytes": "992617689088",
+        "mem_total_bytes": "137385308160",
+        "mem_used_bytes": "41944268800",
+        "net_rx_bytes_per_sec": "63500",
+        "net_tx_bytes_per_sec": "47570",
+        "nproc": 311,
+        "threads": 32,
         "time": "2026-11-03T09:00:00Z",
-        "top_cpu": [
-          {
-            "count": 5,
-            "cpu_percent": 3.8,
-            "mem_bytes": "202346496",
-            "name": "node"
-          },
-          {
-            "count": 75,
-            "cpu_percent": 3.6,
-            "mem_bytes": "3313934336",
-            "name": "claude"
-          },
-          {
-            "count": 24,
-            "cpu_percent": 2.5,
-            "mem_bytes": "6067900416",
-            "name": "longarmd"
-          },
-          {
-            "count": 1,
-            "cpu_percent": 0.3,
-            "mem_bytes": "234459136",
-            "name": "git"
-          },
-          {
-            "count": 12,
-            "cpu_percent": 0.2,
-            "mem_bytes": "1539510272",
-            "name": "pwsh"
-          }
-        ],
-        "top_mem": [
-          {
-            "count": 24,
-            "cpu_percent": 2.5,
-            "mem_bytes": "6067900416",
-            "name": "node"
-          },
-          {
-            "count": 75,
-            "cpu_percent": 3.6,
-            "mem_bytes": "3313934336",
-            "name": "claude"
-          },
-          {
-            "count": 10,
-            "mem_bytes": "2628894720",
-            "name": "longarmd"
-          },
-          {
-            "count": 29,
-            "mem_bytes": "2282745856",
-            "name": "git"
-          },
-          {
-            "count": 35,
-            "cpu_percent": 0.1,
-            "mem_bytes": "1777348608",
-            "name": "pwsh"
-          }
-        ],
-        "uptime_seconds": "193216"
+        "uptime_seconds": "619143"
       },
-      "name": "worker-1",
+      "name": "worker-2",
       "online": true,
       "os": "windows",
+      "profile": "base",
       "role": "worker",
       "state": "approved",
       "toolchain": {
-        "state": "none",
+        "profile": "base",
+        "revision": "1",
+        "state": "ok",
         "updated_at": "2026-11-03T09:00:00Z",
         "versions": {
           "claude": "2.1.310",
-          "copilot": "1.0.105",
-          "gh": "2.103.3",
+          "copilot": "",
+          "gh": "",
           "git": "2.56.0",
-          "go": "1.27.3",
+          "go": "",
           "node": "26.13.0",
           "pnpm": "10.32.1",
           "pwsh": "7.6.9",
-          "uv": "0.9.8"
+          "uv": ""
         }
       },
       "version": "v1.9.0"
