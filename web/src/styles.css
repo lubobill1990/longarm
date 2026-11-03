@@ -158,14 +158,20 @@ a.button:hover { text-decoration: none; border-color: var(--muted); }
 .spark-tip-when { color: var(--text-3, var(--muted)); margin-bottom: 2px; }
 .spark-tip-row { display: flex; justify-content: space-between; gap: 12px; }
 .spark-tip-row .v { color: var(--text, var(--fg)); }
-/* legend entries that add a series (disk, network): off until clicked */
+/* legend entries that add a series (disk, network): read as legend keys -
+   a hollow dot while off, the series' color once on */
 .spark-toggle {
-  font: inherit; font-size: inherit; line-height: 1.4; padding: 0 6px; cursor: pointer;
-  background: transparent; color: var(--text-3, var(--muted));
-  border: 1px dashed var(--border, var(--track)); border-radius: 999px;
+  font: inherit; font-size: inherit; line-height: inherit; padding: 0 3px; margin: 0 -1px; cursor: pointer;
+  background: none; border: none; border-radius: 4px; color: var(--text-3, var(--muted));
 }
-.spark-toggle:hover { color: var(--c); border-color: var(--c); }
-.spark-toggle.on { color: var(--c); border-style: solid; border-color: color-mix(in srgb, var(--c) 45%, transparent); }
+.spark-toggle:hover:not(:disabled) { color: var(--c); background: color-mix(in srgb, var(--c) 12%, transparent); }
+.spark-toggle.on { color: var(--c); }
+/* the key's dot, the size of the legend's "●": a ring while off, filled once on */
+.spark-dot {
+  display: inline-block; width: 0.5em; height: 0.5em; margin-right: 0.15em; vertical-align: 0.08em;
+  border: 1.5px solid currentColor; border-radius: 50%; box-sizing: border-box;
+}
+.spark-toggle.on .spark-dot { background: currentColor; }
 
 .minibar { display: inline-block; width: 60px; height: 6px; background: var(--track); vertical-align: middle; border-radius: 1px; overflow: hidden; }
 .minibar > span { display: block; height: 100%; }

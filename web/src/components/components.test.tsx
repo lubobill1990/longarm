@@ -99,9 +99,9 @@ describe('WorkerCard', () => {
     render(<WorkerCard w={w} now={now} />)
     expect(screen.queryByLabelText('DISK')).toBeNull()
     expect(screen.queryByTestId('net-chart')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /Disk/ }))
+    fireEvent.click(screen.getByRole('button', { name: /disk/i }))
     expect(screen.getByLabelText('DISK')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: /Net/ }))
+    fireEvent.click(screen.getByRole('button', { name: /net/i }))
     expect(screen.getByTestId('net-now').textContent).toContain('↓ 1.5 MB/s')
     expect(screen.getByTestId('net-now').textContent).toContain('↑ 2 KB/s')
     expect(screen.getByTestId('net-chart')).toBeTruthy()
@@ -109,7 +109,7 @@ describe('WorkerCard', () => {
     cleanup()
     render(<WorkerCard w={w} now={now} />) // another card, later: still on
     expect(screen.getByLabelText('DISK')).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Net/ }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: /net/i }).getAttribute('aria-pressed')).toBe('true')
     localStorage.removeItem('longarm.metrics.extra')
   })
 

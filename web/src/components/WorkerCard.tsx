@@ -628,8 +628,8 @@ function Metrics({ m, w, now, onAgent }: { m: MetricsSnapshot; w: PoolWorker; no
           legend
           right="5 min"
           toggles={[
-            { label: 'Disk', color: DISK_C, on: extra.disk, onToggle: () => toggle('disk'), title: 'disk space used (the data dir\'s volume)' },
-            { label: 'Net', color: NET_RX_C, on: extra.net, onToggle: () => toggle('net'), title: 'network traffic, bytes per second' },
+            { label: 'DISK', color: DISK_C, on: extra.disk, onToggle: () => toggle('disk'), title: 'disk space used (the data dir\'s volume)' },
+            { label: 'NET', color: NET_RX_C, on: extra.net, onToggle: () => toggle('net'), title: 'network traffic, bytes per second' },
           ]}
         />
         {extra.net && (

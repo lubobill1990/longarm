@@ -163,6 +163,26 @@
   & button.link.danger {
     color: var(--red-ink);
   }
+  /* a chart's legend toggles (+ disk, net): legend keys, not buttons
+     (styles.css .spark-toggle) */
+  & button.spark-toggle {
+    display: inline;
+    height: auto;
+    padding: 0 3px;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    color: var(--text-3);
+    font-size: inherit;
+    font-weight: inherit;
+  }
+  & button.spark-toggle:hover:not(:disabled) {
+    color: var(--c);
+    background: color-mix(in srgb, var(--c) 12%, transparent);
+  }
+  & button.spark-toggle.on {
+    color: var(--c);
+  }
   & .icon-btn {
     width: 30px;
     height: 30px;

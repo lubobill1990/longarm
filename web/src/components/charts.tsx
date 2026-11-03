@@ -161,7 +161,8 @@ export function Sparkline({
         <div className="spark-legend">
           {legend &&
             series.map((s, i) =>
-              s.label ? (
+              // a series a toggle shows has the toggle as its key
+              s.label && !toggles?.some((t) => t.on && t.label === s.label) ? (
                 <span key={i} className="spark-key" style={{ color: cssColor(s.color) }}>
                   ● {s.label}
                 </span>
@@ -177,7 +178,7 @@ export function Sparkline({
               title={t.title ?? `${t.on ? 'hide' : 'show'} ${t.label}`}
               onClick={t.onToggle}
             >
-              {t.on ? '●' : '+'} {t.label}
+              <i className="spark-dot" aria-hidden="true" /> {t.label}
             </button>
           ))}
           <span className="spacer" />
