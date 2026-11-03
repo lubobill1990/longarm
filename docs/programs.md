@@ -43,7 +43,7 @@ contract; the message on stderr is for people. In short:
 | code | | the program |
 |---|---|---|
 | 0 | done | |
-| 2 | the request can't succeed as given; nothing was done | fix the request; don't retry it unchanged |
+| 2 | the request can't succeed as given; nothing was done (except: `session send` to a session that ended while being written to may have delivered some bytes) | fix the request; don't retry it unchanged |
 | 3 | not found (job, session, worker, file) | |
 | 69 | `jobs --hub-only`: no hub, or it did not answer | retry later, or ask the workers |
 | 75 | refused for now: capacity, quota, rate; `session send --if-idle-ms` / `--if-input-seq` | retry later |
@@ -133,7 +133,10 @@ longarm session stop w1 -s agent1 --grace 10s
   then Enter, with no other input in between - so the program takes the
   text as a paste and the Enter as a submit.
 - `--json` outputs: `session start --json`, `session send --json`,
-  `sessions --json` (every field present, also at its zero value).
+  `sessions --json` (every field present, also at its zero value). Note
+  that `sessions --json` has `inputSeq` as a string (protojson, 64-bit)
+  but `session send --json` as a number: `{"worker": "w1", "session":
+  "agent1", "inputSeq": 58}`; read both as integers.
 
 ## 7. What is stable
 
@@ -158,6 +161,8 @@ Conventions of the `--json` outputs:
 - Fields at their zero value are left out (read a missing field as zero /
   empty / false), except `sessions --json`, which has every field.
   `null` is a time or an object that is not set.
+- Outputs not built from the API are plain JSON: numbers are numbers
+  (`session send --json`'s `inputSeq`, `doctor --json`'s `schema`).
 
 ### Golden fixtures
 
