@@ -3,6 +3,9 @@
 package platform
 
 import (
+	"bytes"
+	"errors"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -21,7 +24,7 @@ func restartFresh(t *testing.T, registry func() ([]string, error)) {
 	freshMu.Unlock()
 	t.Cleanup(func() {
 		freshMu.Lock()
-		startNoted, startPrefix, registryPath = false, nil, RegistryPath
+		startNoted, startPrefix, registryPath, freshWarned = false, nil, RegistryPath, ""
 		freshMu.Unlock()
 	})
 }
@@ -62,5 +65,26 @@ func TestRefreshPathUpgrade(t *testing.T) {
 	RefreshPath()
 	if got, want := os.Getenv("PATH"), `C:\fake\bin;C:\new-go\bin;C:\Windows;C:\old-go\bin`; got != want {
 		t.Fatalf("PATH\n got %s\nwant %s", got, want)
+	}
+}
+
+// TestRefreshPathRegistryError: a key that can't be read is logged (once),
+// what could be read is still used.
+func TestRefreshPathRegistryError(t *testing.T) {
+	var logged bytes.Buffer
+	defer slog.SetDefault(slog.Default())
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Setenv("LONGARM_FRESH_PATH", "")
+	t.Setenv("PATH", `C:\Windows`)
+	restartFresh(t, func() ([]string, error) {
+		return []string{`C:\Windows`, `C:\new`}, errors.New("the user's environment: Access is denied.")
+	})
+	RefreshPath()
+	RefreshPath()
+	if got := os.Getenv("PATH"); got != `C:\Windows;C:\new` {
+		t.Fatalf("PATH = %s", got)
+	}
+	if n := strings.Count(logged.String(), "Access is denied"); n != 1 {
+		t.Fatalf("logged %d times:\n%s", n, logged.String())
 	}
 }

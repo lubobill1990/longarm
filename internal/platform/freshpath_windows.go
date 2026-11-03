@@ -3,6 +3,9 @@
 package platform
 
 import (
+	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -18,6 +21,7 @@ var (
 	startNoted   bool
 	startPrefix  []string
 	registryPath = RegistryPath // tests replace it
+	freshWarned  string         // the registry error last logged
 )
 
 // NoteStartPath remembers what longarmd's PATH has in front of the
@@ -52,7 +56,12 @@ func RefreshPath() {
 	defer freshMu.Unlock()
 	noteStartPath()
 	reg, err := registryPath()
-	if err != nil || len(reg) == 0 {
+	if msg := fmt.Sprint(err); err != nil && msg != freshWarned {
+		// once per error; what could be read is still used
+		freshWarned = msg
+		slog.Warn("fresh-path: can't read the registry's Path; jobs may miss tools installed since longarmd started", "err", err)
+	}
+	if len(reg) == 0 {
 		return
 	}
 	cur := os.Getenv("PATH")
@@ -64,7 +73,9 @@ func RefreshPath() {
 // RegistryPath is the Machine and then the User Path of the registry
 // (HKLM\...\Session Manager\Environment, HKCU\Environment), REG_EXPAND_SZ
 // expanded with the process's variables overlaid with the registry's own
-// (a variable an installer added since, like %PNPM_HOME%).
+// (a variable an installer added since, like %PNPM_HOME%). With an error
+// (a key it could not read; a missing user environment is not one), what
+// it could read.
 func RegistryPath() ([]string, error) {
 	vars := map[string]string{}
 	for _, kv := range os.Environ() {
@@ -77,6 +88,7 @@ func RegistryPath() ([]string, error) {
 		return v, ok
 	}
 	var out []string
+	var errs []error
 	for i, at := range []struct {
 		root registry.Key
 		path string
@@ -87,11 +99,17 @@ func RegistryPath() ([]string, error) {
 		k, err := registry.OpenKey(at.root, at.path, registry.QUERY_VALUE)
 		if err != nil {
 			if i == 0 {
-				return nil, err
+				return nil, fmt.Errorf("the machine's environment (HKLM\\%s): %w", at.path, err)
 			}
-			continue // no user environment (a service account without a profile)
+			if !errors.Is(err, registry.ErrNotExist) { // else no user environment (a service account without a profile)
+				errs = append(errs, fmt.Errorf("the user's environment (HKCU\\%s): %w", at.path, err))
+			}
+			continue
 		}
-		names, _ := k.ReadValueNames(0)
+		names, err := k.ReadValueNames(0)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("listing %s: %w", at.path, err))
+		}
 		var path string
 		var pathExpand bool
 		for _, n := range names {
@@ -118,5 +136,5 @@ func RegistryPath() ([]string, error) {
 			}
 		}
 	}
-	return out, nil
+	return out, errors.Join(errs...)
 }

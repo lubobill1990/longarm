@@ -113,6 +113,8 @@ so the next job finds the tool. Still missing:
   (it only changed the PATH of the console it ran in): check with
   `[Environment]::GetEnvironmentVariable('Path', 'User')` (and
   `'Machine'`) on the worker, and add it there;
+- longarmd's log says `fresh-path: can't read the registry's Path`: its
+  account can't read that key (the error names it);
 - the worker is older (no `fresh-path`), or longarmd runs with
   `LONGARM_FRESH_PATH=0`: restart it (`longarmd session-mode stop`, then
   `start`; a service: `longarmd service stop`, then `start`, elevated) or
