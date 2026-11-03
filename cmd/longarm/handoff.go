@@ -67,9 +67,9 @@ type handoffJSON struct {
 	// how the code went: upload (local -> worker), direct (worker -> worker),
 	// relay (worker -> worker through this client), bundle (worker -> local),
 	// remote (a temporary branch of the remote)
-	Transfer     string   `json:"transfer"`
-	RelayedBytes int64    `json:"relayedBytes"` // commit bytes this client relayed between workers
-	TempBranch   string   `json:"tempBranch,omitempty"`
+	Transfer     string            `json:"transfer"`
+	RelayedBytes int64             `json:"relayedBytes"` // commit bytes this client relayed between workers
+	TempBranch   string            `json:"tempBranch,omitempty"`
 	Resume       []string          `json:"resume"`
 	ResumeEnv    map[string]string `json:"resumeEnv,omitempty"` // the resume command's environment
 	Warnings     []string          `json:"warnings"`
