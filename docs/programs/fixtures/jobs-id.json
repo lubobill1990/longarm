@@ -1,0 +1,37 @@
+{
+  "jobs": [
+    {
+      "job": {
+        "createdAt": "2026-11-03T09:00:00Z",
+        "endedAt": "2026-11-03T09:00:00Z",
+        "hasExitCode": true,
+        "logSize": "7",
+        "pid": 42296,
+        "shimPid": 19732,
+        "spec": {
+          "argv": [
+            "claude",
+            "print",
+            "1",
+            "0",
+            "0"
+          ],
+          "id": "01JC8ZK3T5W9QX4M2N6P7R8S0A",
+          "labels": {
+            "longarm.mem_gb": "2"
+          },
+          "name": "build",
+          "owner": "alice",
+          "submittedBy": "client/alice"
+        },
+        "startedAt": "2026-11-03T09:00:00Z",
+        "state": "JOB_STATE_DONE"
+      },
+      "updatedAt": "2026-11-03T09:00:00Z",
+      "worker": "worker-1",
+      "workerId": "3f2a9c1e-8b7d-4c5e-9f1a-2b3c4d5e6f70",
+      "workerOnline": true
+    }
+  ],
+  "source": "hub"
+}

@@ -526,6 +526,41 @@ func TestE2E(t *testing.T) {
 		}
 	})
 
+	// A retry of run --id with a local --repo uploads the checkout anew:
+	// the same content is the same job (exit 0, its id), other uncommitted
+	// content another (exit 2). The worker side - a job whose payload was
+	// lost is replaced by the retry - is TestResubmitWorkspaceStdin.
+	t.Run("stdin_resubmit_with_local_repo", func(t *testing.T) {
+		if _, err := exec.LookPath("git"); err != nil {
+			t.Skip("git not installed")
+		}
+		repo := filepath.Join(e.root, "stdinrepo")
+		os.MkdirAll(repo, 0o755)
+		git(t, repo, "init", "-q", "-b", "main")
+		os.WriteFile(filepath.Join(repo, "a.txt"), []byte("committed\n"), 0o644)
+		git(t, repo, "add", ".")
+		git(t, repo, "commit", "-qm", "c1")
+		os.WriteFile(filepath.Join(repo, "a.txt"), []byte("uncommitted\n"), 0o644)
+		os.WriteFile(filepath.Join(repo, "new.txt"), []byte("untracked\n"), 0o644)
+		payload := filepath.Join(e.root, "resubmit.txt")
+		os.WriteFile(payload, []byte("the prompt\n"), 0o600)
+		const id = "01JRESUBMITSTDIN0000000000"
+		run := func() result {
+			return e.longarm(e.client, "run", "w1", "--id", id, "--repo", repo, "--stdin-file", payload, "--", bins.helper, "stdin-sha")
+		}
+		if r := run(); r.code != 0 || strings.TrimSpace(r.stdout) != id {
+			t.Fatalf("run: %+v", r)
+		}
+		e.mustLongarm(e.client, "wait", "w1", id)
+		if r := run(); r.code != 0 || strings.TrimSpace(r.stdout) != id {
+			t.Fatalf("retry with the same content: %+v", r)
+		}
+		os.WriteFile(filepath.Join(repo, "new.txt"), []byte("other\n"), 0o644)
+		if r := run(); r.code != 2 || r.stdout != "" || !strings.Contains(r.stderr, "AlreadyExists") {
+			t.Fatalf("retry with other uncommitted content: %+v", r)
+		}
+	})
+
 	t.Run("exit_codes_and_jobs_json", func(t *testing.T) {
 		for _, c := range []struct {
 			args []string

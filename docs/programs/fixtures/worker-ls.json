@@ -1,0 +1,113 @@
+{
+  "nodes": [
+    {
+      "arch": "amd64",
+      "cert_name": "worker-1",
+      "cert_not_after": "2026-11-03T09:00:00Z",
+      "endpoints": [
+        "longnet://100.64.0.11:7701?name=worker-1",
+        "tcp://100.64.0.11:7701"
+      ],
+      "hostname": "pc-1",
+      "id": "3f2a9c1e-8b7d-4c5e-9f1a-2b3c4d5e6f70",
+      "isolation": "shared",
+      "joined_at": "2026-11-03T09:00:00Z",
+      "labels": {
+        "arch": "amd64",
+        "os": "windows",
+        "pool": "e2e",
+        "tier": "test"
+      },
+      "last_seen": "2026-11-03T09:00:00Z",
+      "machine": "worker-1",
+      "metrics": {
+        "agents": {
+          "claude": {
+            "mem_bytes": "440754176",
+            "processes": 1,
+            "sessions": 1
+          },
+          "copilot": {}
+        },
+        "cpu_percent": 12.5,
+        "disk_free_bytes": "1926367186944",
+        "disk_total_bytes": "2198427660288",
+        "mem_total_bytes": "137380974592",
+        "mem_used_bytes": "33908072448",
+        "net_rx_bytes_per_sec": "110564",
+        "net_tx_bytes_per_sec": "75587",
+        "nproc": 316,
+        "threads": 32,
+        "time": "2026-11-03T09:00:00Z",
+        "top_cpu": [
+          {
+            "count": 1,
+            "cpu_percent": 0.3,
+            "mem_bytes": "500191232",
+            "name": "node"
+          },
+          {
+            "count": 2,
+            "cpu_percent": 0.1,
+            "mem_bytes": "66674688",
+            "name": "claude"
+          },
+          {
+            "count": 4,
+            "cpu_percent": 0.1,
+            "mem_bytes": "212406272",
+            "name": "longarmd"
+          },
+          {
+            "count": 1,
+            "name": "git"
+          },
+          {
+            "count": 1,
+            "mem_bytes": "50012160",
+            "name": "pwsh"
+          }
+        ],
+        "top_mem": [
+          {
+            "count": 8,
+            "mem_bytes": "1409290240",
+            "name": "node"
+          },
+          {
+            "count": 16,
+            "mem_bytes": "1093402624",
+            "name": "claude"
+          },
+          {
+            "count": 18,
+            "mem_bytes": "582336512",
+            "name": "longarmd"
+          },
+          {
+            "count": 1,
+            "mem_bytes": "572395520",
+            "name": "git"
+          },
+          {
+            "count": 1,
+            "cpu_percent": 0.3,
+            "mem_bytes": "500191232",
+            "name": "pwsh"
+          }
+        ],
+        "uptime_seconds": "692809"
+      },
+      "name": "worker-1",
+      "online": true,
+      "os": "windows",
+      "role": "worker",
+      "state": "approved",
+      "toolchain": {
+        "state": "none",
+        "updated_at": "2026-11-03T09:00:00Z"
+      },
+      "version": "v1.9.0"
+    }
+  ]
+}

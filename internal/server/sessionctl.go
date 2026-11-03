@@ -124,7 +124,7 @@ func (ss *sessionsServer) Get(ctx context.Context, req *pb.GetSessionRequest) (*
 }
 
 func (ss *sessionsServer) Send(ctx context.Context, req *pb.SendSessionRequest) (*pb.SendSessionResponse, error) {
-	if len(req.Data) > attach.MaxSend {
+	if len(req.Data)+len(req.After) > attach.MaxSend {
 		return nil, status.Errorf(codes.InvalidArgument, "at most %d bytes per send", attach.MaxSend)
 	}
 	var sp *userspace.Space
@@ -138,11 +138,16 @@ func (ss *sessionsServer) Send(ctx context.Context, req *pb.SendSessionRequest) 
 	}
 	var seq uint64
 	if err == nil {
-		seq, err = ss.send(ctx, mgr(), req.Name, time.Time{}, req.Data, req.IfIdleMs, attach.SourceSend)
+		o := attach.SendOpts{IfIdleMs: req.IfIdleMs, Source: attach.SourceSend, IfInputSeq: req.IfInputSeq, AfterMs: req.AfterMs}
+		if len(req.After) > 0 && o.AfterMs == 0 {
+			o.AfterMs = defaultAfterMs
+		}
+		seq, err = ss.send(ctx, mgr(), req.Name, time.Time{}, o, req.Data, req.After)
 	}
 	// the input is like a payload: its size only, never its bytes
 	ss.s.Audit.Log(IdentityFrom(ctx), pb.Sessions_Send_FullMethodName, map[string]any{
-		"session": req.Name, "job": req.Job, "owner": req.Owner, "bytes": len(req.Data), "if_idle_ms": req.IfIdleMs, "error": errString(err),
+		"session": req.Name, "job": req.Job, "owner": req.Owner, "bytes": len(req.Data) + len(req.After), "if_idle_ms": req.IfIdleMs,
+		"if_input_seq": req.IfInputSeq, "error": errString(err),
 	})
 	if err != nil {
 		return nil, err
@@ -150,9 +155,15 @@ func (ss *sessionsServer) Send(ctx context.Context, req *pb.SendSessionRequest) 
 	return &pb.SendSessionResponse{InputSeq: seq}, nil
 }
 
-// send writes data to the session's terminal in one write; gen binds it
-// to one generation of the name (zero: the current one).
-func (ss *sessionsServer) send(ctx context.Context, mgr *supervisor.Manager, name string, gen time.Time, data []byte, ifIdleMs uint32, source string) (uint64, error) {
+// defaultAfterMs is the gap before SendSessionRequest.after: long enough
+// for a TUI to take the bracketed paste before it as a paste, not with
+// the Enter.
+const defaultAfterMs = 100
+
+// send writes data to the session's terminal in one write (then after,
+// o.AfterMs later); gen binds it to one generation of the name (zero: the
+// current one).
+func (ss *sessionsServer) send(ctx context.Context, mgr *supervisor.Manager, name string, gen time.Time, o attach.SendOpts, data, after []byte) (uint64, error) {
 	j, err := getGen(mgr, name, gen)
 	if err != nil {
 		return 0, err
@@ -178,8 +189,9 @@ func (ss *sessionsServer) send(ctx context.Context, mgr *supervisor.Manager, nam
 		return 0, ended(err)
 	}
 	defer c.Close()
+	extended := o.IfInputSeq != nil || len(after) > 0
 	if info == nil { // a shim from before control connections
-		if ifIdleMs > 0 {
+		if o.IfIdleMs > 0 || extended {
 			return 0, status.Errorf(codes.FailedPrecondition,
 				"session %q runs in a shim from an older longarmd without if_idle_ms; start the session again to use it", name)
 		}
@@ -188,7 +200,15 @@ func (ss *sessionsServer) send(ctx context.Context, mgr *supervisor.Manager, nam
 		}
 		return 0, nil
 	}
-	if err := c.WriteFrame(attach.Send, attach.SendPayload(ifIdleMs, source, data)); err != nil {
+	typ, frame := attach.Send, attach.SendPayload(o.IfIdleMs, o.Source, data)
+	if extended {
+		if !info.Has(attach.FeatureSendX) {
+			return 0, status.Errorf(codes.FailedPrecondition,
+				"session %q runs in a shim from an older longarmd without if_input_seq / after; start the session again to use them", name)
+		}
+		typ, frame = attach.SendX, attach.SendXPayload(o, data, after)
+	}
+	if err := c.WriteFrame(typ, frame); err != nil {
 		return 0, ended(err)
 	}
 	st, err := c.info(30 * time.Second)
@@ -199,9 +219,13 @@ func (ss *sessionsServer) send(ctx context.Context, mgr *supervisor.Manager, nam
 		return st.InputSeq, ended(errors.New("terminal write: " + st.Error))
 	}
 	if !st.Sent {
+		if o.IfInputSeq != nil && st.InputSeq != *o.IfInputSeq {
+			return st.InputSeq, status.Errorf(codes.ResourceExhausted,
+				"session %q: its input_seq is %d, not %d (input arrived); nothing sent", name, st.InputSeq, *o.IfInputSeq)
+		}
 		ago := time.Since(st.LastInput).Round(time.Millisecond)
 		return st.InputSeq, status.Errorf(codes.ResourceExhausted,
-			"session %q: input arrived %s ago (if_idle_ms %d); nothing sent, retry later", name, ago, ifIdleMs)
+			"session %q: input arrived %s ago (if_idle_ms %d); nothing sent, retry later", name, ago, o.IfIdleMs)
 	}
 	return st.InputSeq, nil
 }
@@ -250,7 +274,7 @@ func (ss *sessionsServer) stop(ctx context.Context, sp *userspace.Space, name st
 	if grace > 0 {
 		deadline := time.Now().Add(grace)
 		for i := 0; i < 2; i++ {
-			if _, err := ss.send(ctx, sp.Sessions, name, gen, []byte{0x03}, 0, attach.SourceStop); err != nil {
+			if _, err := ss.send(ctx, sp.Sessions, name, gen, attach.SendOpts{Source: attach.SourceStop}, []byte{0x03}, nil); err != nil {
 				break
 			}
 			wait := min(time.Second, time.Until(deadline))
@@ -375,6 +399,9 @@ func (ss *sessionsServer) addActivity(ctx context.Context, found []listed, out [
 			o := out[i]
 			if st != nil {
 				o.InputSeq, o.LastInputSource = st.InputSeq, st.LastInputSource
+				if st.Has(attach.FeatureReplies) {
+					o.HumanInputSeq = &st.HumanInputSeq
+				}
 				o.LastInput, o.LastOutput = ts(st.LastInput), ts(st.LastOutput)
 			} else if d, err := f.sp.Sessions.Dir(f.j.Spec.ID); err == nil {
 				if fi, err := os.Stat(d.Path(jobs.LogFile)); err == nil && fi.Size() > 0 {
