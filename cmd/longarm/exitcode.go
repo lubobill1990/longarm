@@ -160,10 +160,13 @@ var cliFeatures = []string{
 	// id prefix, id:/name:; worker rename / admin rename; ids in listings
 	// and JSON (worker_id / workerId / id)
 	"node-ids",
-	"agent-handoff",  // handoff --to/--from: move a Claude Code / Copilot CLI session and its code
-	"agent-sessions", // agent-sessions [<worker>|local] [--json]
-	"agent-skill",    // skill status|install|update|remove [--agent ID] [--json]
-	"steerable-run",  // run --steerable [--until-exit], attach --job, session send --job (docs/steerable-runs.md)
+	"agent-handoff",             // handoff --to/--from: move a Claude Code / Copilot CLI session and its code
+	"agent-sessions",            // agent-sessions [<worker>|local] [--json]
+	"agent-skill",               // skill status|install|update|remove [--agent ID] [--json]
+	"steerable-run",             // run --steerable [--until-exit], attach --job, session send --job (docs/steerable-runs.md)
+	"session-send-if-input-seq", // session send --if-input-seq N (exit 75 when inputSeq moved on)
+	"session-send-paste-enter",  // session send --paste [--key ...]: bracketed paste, a gap, the keys, one atomic send
+	"input-seq-human",           // terminal replies are no input; sessions --json humanInputSeq
 }
 
 func versionCmd() *cobra.Command {

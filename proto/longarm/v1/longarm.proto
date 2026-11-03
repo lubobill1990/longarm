@@ -441,7 +441,8 @@ service Sessions {
   // write (InfoResponse feature "session-send"). The bytes are never
   // persisted (audit: their count only). NOT_FOUND: no such session;
   // FAILED_PRECONDITION: it has ended; RESOURCE_EXHAUSTED: if_idle_ms was
-  // set and input arrived within that window (nothing was written).
+  // set and input arrived within that window, or if_input_seq was set and
+  // the session's input_seq is another (nothing was written).
   rpc Send(SendSessionRequest) returns (SendSessionResponse);
   // Stop ends a session gracefully: Ctrl-C keystrokes to its terminal, then,
   // if it still runs after grace, Kill (InfoResponse feature "session-stop").
@@ -528,6 +529,12 @@ message Session {
   google.protobuf.Timestamp last_activity = 23; // max(last_output, last_input)
   // The agents whose credentials were forwarded (names, never values).
   repeated string agent_auth = 24;
+  // The attached clients' keystrokes so far (InfoResponse feature
+  // "input-seq-human"; unset for sessions whose shim predates it).
+  // Neither it nor input_seq counts the terminal replies an attached
+  // client's terminal sends by itself (device attributes, cursor position,
+  // colours, focus).
+  optional uint64 human_input_seq = 25;
 }
 
 message StartSessionRequest {
@@ -562,6 +569,14 @@ message SendSessionRequest {
   uint32 if_idle_ms = 3;
   string owner = 4; // admins only: another user's session
   bool job = 5; // name is a steerable job's id (as AttachOpen.job)
+  // Write only if the session's input_seq is still this value (InfoResponse
+  // feature "session-send-if-input-seq"); checked and written atomically.
+  optional uint64 if_input_seq = 6;
+  // Written after data, after_ms later (default 100, at most 2000), with no
+  // other input in between; data and after count as one input (feature
+  // "session-send-paste-enter": a bracketed paste, then Enter).
+  bytes after = 7;
+  uint32 after_ms = 8;
 }
 
 message SendSessionResponse {
