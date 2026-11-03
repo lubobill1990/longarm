@@ -65,7 +65,10 @@ describe('PanelApp', () => {
     history.pushState(null, '', '/')
     mockFetch({
       '/api/me': () => [401, { error: 'login required' }],
-      '/releases/latest.json': () => [200, { version: 'v1.2.3', files: [{ name: 'longarm-windows-amd64.msi' }] }],
+      // dev builds, no release candidate newer than the stable release
+      '/releases/latest.json?channel=dev': () => [200, { version: 'v1.2.4-dev.7', channel: 'dev', files: [{ name: 'longarm-windows-amd64.msi' }] }],
+      '/releases/latest.json?channel=preview': () => [200, { version: 'v1.2.3', channel: 'stable', files: [{ name: 'longarm-windows-amd64.msi' }] }],
+      '/releases/latest.json': () => [200, { version: 'v1.2.3', channel: 'stable', files: [{ name: 'longarm-windows-amd64.msi' }] }],
       '/auth/info': () => [
         200,
         { providers: [{ id: 'entra', label: 'Microsoft' }], feedback_url: 'https://chat.example.com/team', repo_url: 'https://git.example.com/team/longarm' },
@@ -92,8 +95,11 @@ describe('PanelApp', () => {
     expect(screen.getByTestId('landing-ps1').textContent).toContain(`irm ${location.origin}/install.ps1 | iex`)
     expect(screen.getByTestId('landing-ps1-user').textContent).toContain('$env:LONGARM_PER_USER=1;')
     expect(screen.getByTestId('landing-uninstall').textContent).toContain(`irm ${location.origin}/uninstall.ps1 | iex`)
-    // a release channel: its one-liners (the machine follows it), the version asked of that channel
-    fireEvent.click(screen.getByRole('radio', { name: 'Dev' }))
+    // a release channel: its one-liners (the machine follows it), the version asked of that channel;
+    // only the channels the hub has releases of (no preview here)
+    fireEvent.click(await screen.findByRole('radio', { name: 'Dev' }))
+    expect(screen.queryByRole('radio', { name: 'Preview' })).toBeNull()
+    await waitFor(() => expect(screen.getByTestId('landing-channel-help').textContent).toContain('v1.2.4-dev.7'))
     expect(screen.getByTestId('landing-ps1').textContent).toContain(`irm ${location.origin}/install.ps1?channel=dev | iex`)
     await waitFor(() => expect(screen.getByTestId('landing-channel-help').textContent).toContain('least tested'))
     // automatic updates: off unless asked for (Windows; the one-liner asks the MSI)
@@ -109,6 +115,24 @@ describe('PanelApp', () => {
     // step 2's code is an example, said so
     expect(screen.getByTestId('landing-code-example').textContent).toContain('Example')
     expect(screen.queryByText('Log in')).toBeNull()
+  })
+
+  it('shows no channel choice on a hub with stable releases only (e.g. GitHub releases)', async () => {
+    history.pushState(null, '', '/')
+    mockFetch({
+      '/api/me': () => [401, { error: 'login required' }],
+      // nothing newer in preview / dev: the stable release comes back
+      '/releases/latest.json': () => [200, { version: '0.1.31', channel: 'stable', files: [{ name: 'longarm-windows-amd64.msi' }] }],
+      '/auth/info': () => [200, {}],
+    })
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    render(<PanelApp />)
+    await screen.findByTestId('landing-signed-out')
+    fireEvent.click(screen.getByRole('tab', { name: 'Windows' }))
+    expect((await screen.findByTestId('landing-msi')).getAttribute('href')).toBe('/releases/0.1.31/longarm-windows-amd64.msi')
+    await waitFor(() => expect(screen.getByTestId('landing-channel-help').textContent).toContain('0.1.31'))
+    expect(screen.queryByTestId('landing-channel')).toBeNull()
+    expect(screen.getByTestId('landing-ps1').textContent).not.toContain('channel=')
   })
 
   it('shows the front page at / signed in, with the way into the hub', async () => {

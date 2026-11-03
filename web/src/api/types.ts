@@ -146,6 +146,8 @@ export interface UpdateAvailable {
 /** GET /releases/latest.json: the hub's newest complete stable release ("" = none). */
 export interface LatestRelease {
   version: string
+  /** the channel of the release returned (a more tested one when the asked channel has nothing newer) */
+  channel?: string
   files?: { name: string; sha256: string; size: number; os?: string; arch?: string; kind?: string; signed?: boolean }[]
 }
 
