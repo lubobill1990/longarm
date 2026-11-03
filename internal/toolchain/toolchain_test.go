@@ -116,6 +116,35 @@ func TestReconcileUsesLongProbeDeadline(t *testing.T) {
 	}
 }
 
+func TestOwnerProbeFailureDoesNotBlockOtherTools(t *testing.T) {
+	installed := false
+	r := &Reconciler{Log: slog.Default(), Running: func() int { return 0 }, Drain: func(bool, string) {},
+		Backend: probeBackend{
+			version: func(_ context.Context, tool string) (string, error) {
+				if tool == "copilot" {
+					return "", context.DeadlineExceeded
+				}
+				if tool == "node" && installed {
+					return "22.0.0", nil
+				}
+				return "", nil
+			},
+			install: func(_ context.Context, tool, _ string, _ *slog.Logger) error {
+				if tool != "node" {
+					t.Fatalf("installed unknown tool %s", tool)
+				}
+				installed = true
+				return nil
+			},
+		}}
+	r.SetDesired(&pb.ToolchainDesired{Profile: "dev", Revision: 1, OwnerRevision: 1,
+		Tools: []*pb.ToolSpec{{Name: "node", Version: "22"}, {Name: "copilot", Version: "latest"}}})
+	r.reconcile(context.Background())
+	if rep := r.Status(); !installed || rep.Versions["node"] != "22.0.0" || rep.State != "failed" {
+		t.Fatalf("owner probe blocked profile tool: %v", rep)
+	}
+}
+
 func TestInventoryOnlyReportsChanges(t *testing.T) {
 	var reports int
 	r := &Reconciler{Log: slog.Default(), Backend: &Fake{Path: filepath.Join(t.TempDir(), "fake.json")},

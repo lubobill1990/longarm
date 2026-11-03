@@ -137,9 +137,51 @@ func TestOwnerToolsRespectProfileCanary(t *testing.T) {
 	if d.Revision != 1 || len(d.Tools) != 2 || d.Tools[0].Name != "node" || d.Tools[0].Version != "22" {
 		t.Fatalf("owner bypassed stable profile: %v", d)
 	}
+
 	delete(h.stable, "dev")
 	d = h.desiredToolchainLocked(n)
 	if d.Revision != 0 || len(d.Tools) != 1 || d.Tools[0].Name != "uv" {
 		t.Fatalf("owner bypassed pending canary: %v", d)
+	}
+}
+
+func TestProfileRolloutIgnoresOwnerToolFailures(t *testing.T) {
+	th, _ := ownedHub(t)
+	h := th.h
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := h.nodeLocked("aw")
+	n.rec.Profile = "dev"
+	n.rec.OwnerTools = map[string]string{"copilot": "99"}
+	n.rec.OwnerToolRevision = 42
+	p := &pb.Profile{Name: "dev", Revision: 2, Rollout: "canary", Canary: n.rec.Name,
+		Tools: []*pb.ToolSpec{{Name: "node", Version: "22"}}}
+	h.profiles[p.Name] = p
+	// An older worker echoes no owner revision; a newer worker may report
+	// failure for an owner's tool even though the profile is satisfied.
+	n.toolchain = &pb.ToolchainReport{Profile: p.Name, Revision: p.Revision, State: "failed",
+		Error: "copilot: install failed", Versions: map[string]string{"node": "22.1.0", "copilot": ""}}
+	h.advanceRolloutsLocked()
+	if p.Rollout != "rolling" {
+		t.Fatalf("owner halted canary: %v", p)
+	}
+	n.rec.OwnerToolRevision++
+	h.advanceRolloutsLocked()
+	if p.Rollout != "done" {
+		t.Fatalf("owner revision stalled rolling: %v", p)
+	}
+	// Conversely, an overall ok report cannot substitute for profile versions.
+	n.toolchain.State = "ok"
+	n.toolchain.Versions["node"] = "20.0.0"
+	if ok, _, _ := reportOK(n, p); ok {
+		t.Fatal("accepted unsatisfied profile")
+	}
+	n.toolchain.State = "failed"
+	if _, failed, _ := reportOK(n, p); !failed {
+		t.Fatal("ignored profile failure")
+	}
+	delete(n.toolchain.Versions, "node")
+	if ok, failed, _ := reportOK(n, p); ok || failed {
+		t.Fatal("unknown version decided rollout")
 	}
 }

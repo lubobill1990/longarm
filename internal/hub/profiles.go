@@ -209,10 +209,20 @@ func toolSpecs(tools map[string]string) []*pb.ToolSpec {
 
 func reportOK(n *node, p *pb.Profile) (ok, failed bool, msg string) {
 	tc := n.toolchain
-	if tc == nil || tc.Profile != p.Name || tc.Revision != p.Revision || tc.OwnerRevision != n.rec.OwnerToolRevision {
+	if tc == nil || tc.Profile != p.Name || tc.Revision != p.Revision {
 		return false, false, ""
 	}
-	return tc.State == "ok", tc.State == "failed", tc.Error
+	// Owner tools share this report, but cannot gate an admin rollout.
+	for _, tool := range p.Tools {
+		version, known := tc.Versions[tool.Name]
+		if !known {
+			return false, false, ""
+		}
+		if !toolchain.Satisfies(version, tool.Version) {
+			return false, tc.State == "failed", tc.Error
+		}
+	}
+	return true, false, ""
 }
 
 // advanceRolloutsLocked moves every profile's rollout forward.

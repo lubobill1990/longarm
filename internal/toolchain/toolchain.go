@@ -263,10 +263,6 @@ func (r *Reconciler) reconcile(ctx context.Context) {
 		r.setReport(&pb.ToolchainReport{Profile: d.Profile, Revision: d.Revision, OwnerRevision: d.OwnerRevision,
 			State: state, Error: message, Versions: versions})
 	}
-	if len(probeErrs) > 0 {
-		report("failed", strings.Join(probeErrs, "; "))
-		return
-	}
 	if len(d.Tools) == 0 {
 		state := "none"
 		if d.Revision > 0 {
@@ -276,7 +272,11 @@ func (r *Reconciler) reconcile(ctx context.Context) {
 		return
 	}
 	if len(todo) == 0 {
-		report("ok", "")
+		if len(probeErrs) > 0 {
+			report("failed", strings.Join(probeErrs, "; "))
+		} else {
+			report("ok", "")
+		}
 		return
 	}
 	names := make([]string, len(todo))
