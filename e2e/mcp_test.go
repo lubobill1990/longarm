@@ -52,7 +52,7 @@ func TestMCP(t *testing.T) {
 		names = append(names, tl.Name)
 	}
 	sort.Strings(names)
-	want := "fleet_exec fleet_forward fleet_job_kill fleet_job_logs fleet_job_submit fleet_job_wait fleet_link fleet_read fleet_status fleet_sync fleet_write"
+	want := "fleet_exec fleet_forward fleet_job_kill fleet_job_logs fleet_job_submit fleet_job_wait fleet_link fleet_read fleet_status fleet_sync fleet_ui_open fleet_write"
 	if strings.Join(names, " ") != want {
 		t.Fatalf("tools: %v", names)
 	}
@@ -197,5 +197,11 @@ func TestMCP(t *testing.T) {
 	res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "fleet_link", Arguments: map[string]any{"on": "wa", "target": "wa:8080"}})
 	if err != nil || !res.IsError || !strings.Contains(fmt.Sprint(res.Content[0]), "same worker") {
 		t.Fatalf("fleet_link to itself: %v %+v", err, res)
+	}
+
+	// fleet_ui_open refuses an unknown page before starting a tray
+	res, err = sess.CallTool(ctx, &mcp.CallToolParams{Name: "fleet_ui_open", Arguments: map[string]any{"page": "pool"}})
+	if err != nil || !res.IsError || !strings.Contains(fmt.Sprint(res.Content[0]), "pages: workers") {
+		t.Fatalf("fleet_ui_open pool: %v %+v", err, res)
 	}
 }

@@ -164,6 +164,7 @@ var cliFeatures = []string{
 	"agent-sessions", // agent-sessions [<worker>|local] [--json]
 	"agent-skill",    // skill status|install|update|remove [--agent ID] [--json]
 	"steerable-run",  // run --steerable [--until-exit], attach --job, session send --job (docs/steerable-runs.md)
+	"ui-open",        // ui open [page] [--worker|--job|--session|--agent] [--print-url] [--json] (docs/usage.md#opening-longarms-ui)
 }
 
 func versionCmd() *cobra.Command {
