@@ -14,6 +14,8 @@ import (
 
 	"golang.org/x/sys/windows/registry"
 
+	"github.com/lubobill1990/longarm/internal/hubclient"
+	"github.com/lubobill1990/longarm/internal/longarmd"
 	"github.com/lubobill1990/longarm/internal/platform"
 )
 
@@ -137,6 +139,26 @@ func TestMSI(t *testing.T) {
 			t.Fatalf("%s left in the data dir after the rollback", f)
 		}
 	}
+
+	// A join code that fails (unknown here, as an expired one of an unattended
+	// install that ran late) doesn't fail the install: the service comes up
+	// waiting for a sign-in, the hub recorded, the reason kept.
+	args[8] = "JOIN_CODE=NOPE-NOPE-NOPE"
+	if err := msiexec("SERVICE_USER=.\\"+user, "SERVICE_PASSWORD="+pass); err != nil {
+		b, _ := os.ReadFile(msiLog)
+		t.Fatalf("install with a failing join code rolled back: %v\n%s", err, tail(utf16ToString(b), 4000))
+	}
+	waitFor(t, "service running after a failed join", 30*time.Second, func() bool {
+		st, err := platform.QueryService(svc)
+		return err == nil && st == platform.ServiceRunning
+	})
+	if hf, err := hubclient.LoadFile(dataDir); err != nil || !hf.SignIn || hf.Address == "" {
+		t.Fatalf("hub.toml after a failed join: %+v %v (want the hub, waiting for a sign-in)", hf, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dataDir, longarmd.JoinFailedFile)); err != nil || len(b) == 0 {
+		t.Fatalf("%s: %q %v", longarmd.JoinFailedFile, b, err)
+	}
+	uninstall()
 
 	// 1. The worker, running as the temporary user.
 	args[8] = "JOIN_CODE=" + code

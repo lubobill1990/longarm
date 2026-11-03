@@ -43,7 +43,7 @@ var MSISteps = map[string][]string{
 	"admin-remove":   {"keep"},
 	"admin-drop":     {"usersid"},
 	// the sign-in defaults in HKLM (ApplyMSISettings)
-	"settings":        {"hub", "ca", "login", "labels", "mode", "usersid"},
+	"settings":        {"hub", "ca", "login", "labels", "mode", "autoupdate", "channel", "usersid"},
 	"settings-remove": {},
 	// after an upgrade: what internal/msiupgrade stopped, started again
 	// (sid: the user whose tray LongarmTrayLaunch starts when launch isn't 0)
@@ -71,9 +71,12 @@ var msiValue = map[string]*regexp.Regexp{
 	"isolation": regexp.MustCompile(`^(per-user)?$`),
 	"login":     regexp.MustCompile(`^1?$`),
 	"mode":      regexp.MustCompile(`^(default|custom)?$`),
-	"keep":      regexp.MustCompile(`^1?$`),
-	"launch":    regexp.MustCompile(`^[01]?$`),
-	"leave":     regexp.MustCompile(`^(1|keep)?$`),
+	// AUTO_UPDATE / UPDATE_CHANNEL ("": leave the machine's as they are)
+	"autoupdate": regexp.MustCompile(`^[01]?$`),
+	"channel":    regexp.MustCompile(`^(stable|preview|beta|rc|dev)?$`),
+	"keep":       regexp.MustCompile(`^1?$`),
+	"launch":     regexp.MustCompile(`^[01]?$`),
+	"leave":      regexp.MustCompile(`^(1|keep)?$`),
 	// a service account: DOMAIN\name, .\name, name@domain, LocalSystem
 	"user": regexp.MustCompile(`^[A-Za-z0-9._@\\ -]{0,104}$`),
 	// a data dir: checked further by MSIDataDir

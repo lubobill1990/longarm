@@ -15,7 +15,7 @@
       "data": {
         "not_after": "2026-11-03T09:00:00Z"
       },
-      "detail": "valid until 2026-12-03 15:04 (29d left)",
+      "detail": "valid until 2026-12-03 19:07 (29d left)",
       "id": "certificate",
       "status": "ok",
       "title": "certificate"
@@ -45,10 +45,15 @@
       "title": "firewall"
     },
     {
-      "detail": "none (make a machine yours: longarm worker add)",
-      "id": "workers",
-      "status": "info",
-      "title": "your workers"
+      "data": {
+        "last_seen": "2026-11-03T09:00:00Z",
+        "legs": "tcp 2.2ms won, longnet: not tried",
+        "online": true
+      },
+      "detail": "online, via tcp/direct 1.1ms (100.64.0.11:7701) [tcp 2.2ms won, longnet: not tried]",
+      "id": "worker:worker-1",
+      "status": "ok",
+      "title": "worker worker-1"
     }
   ],
   "ok": true,

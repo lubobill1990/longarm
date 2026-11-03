@@ -155,19 +155,49 @@ func (h *Hub) hubAddr(r *http.Request) string {
 
 type scriptData struct {
 	BaseURL, HubAddr, Fingerprint, Version string
-	Hashes                                 []fileHash
+	// Channel: the release channel asked for (?channel=; "" = stable)
+	Channel string
+	// AutoUpdate: ?autoupdate=1 - install.ps1 turns on automatic updates
+	// (the Longarm Update service; default: off)
+	AutoUpdate bool
+	Hashes     []fileHash
 }
 
 type fileHash struct{ File, SHA256 string }
 
 func (h *Hub) installScript(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		v, files, err := h.latestRelease()
+		// ?channel=preview|dev (rc, beta): that channel's newest release, and
+		// install.ps1 has the machine follow the channel; none: stable
+		channel := update.ChannelStable
+		if c := r.URL.Query().Get("channel"); c != "" {
+			if strings.EqualFold(c, "rc") {
+				c = update.ChannelPreview // release candidates
+			}
+			n, ok := update.NormalizeChannel(c)
+			if !ok {
+				httpError(w, 400, "channel: want stable, preview (rc) or dev")
+				return
+			}
+			channel = n
+		}
+		v, files, err := h.latestReleaseIn(channel)
 		if err != nil {
 			httpError(w, 500, err.Error())
 			return
 		}
 		d := scriptData{BaseURL: h.baseURL(r), HubAddr: h.hubAddr(r), Fingerprint: pki.Fingerprint(h.ca.Cert), Version: v}
+		if channel != update.ChannelStable {
+			d.Channel = channel
+		}
+		switch r.URL.Query().Get("autoupdate") {
+		case "", "0":
+		case "1":
+			d.AutoUpdate = true
+		default:
+			httpError(w, 400, "autoupdate: want 1 or 0")
+			return
+		}
 		for _, f := range files {
 			d.Hashes = append(d.Hashes, fileHash{f.File, f.SHA256})
 		}
@@ -384,6 +414,8 @@ var ps1Tmpl = template.Must(template.Must(template.New("ps1").Parse(psElevate)).
 # Elevated and with an MSI in the release: installs the MSI {{.Version}} silently (sha256-verified;
 # firewall rules, PATH, the tray; MODE=custom HUB=this hub RUN=session|service, LOGIN=1 or JOIN_CODE;
 # extra MSI properties in $env:LONGARM_MSI_PROPS, e.g. ADMIN_WORKER=1); -Login then signs in here.
+# -AutoUpdate ($env:LONGARM_AUTO_UPDATE=1, install.ps1?autoupdate=1): the MSI install updates itself to
+# new releases of its channel (install.ps1?channel=preview|dev; default stable); without it: no automatic updates.
 # Otherwise (or with -Prefix / -NoMsi): downloads longarm.exe and longarmd.exe (and longarm-tray.exe,
 # the worker's windowless host, when the release has it), verifies their sha256, installs them, joins
 # the fleet (pinning the hub CA {{.Fingerprint}}) and, for workers, registers the logon task (or the service).
@@ -409,7 +441,8 @@ param(
   [switch]$NoTray = ($env:LONGARM_NO_TRAY -eq '1'),
   [string]$ServiceUser = $env:LONGARM_SERVICE_USER,
   [string]$ServiceAccount = $env:LONGARM_SERVICE_ACCOUNT,
-  [string]$Label = $env:LONGARM_LABELS
+  [string]$Label = $env:LONGARM_LABELS,
+  [switch]$AutoUpdate = ({{if .AutoUpdate}}$true{{else}}$env:LONGARM_AUTO_UPDATE -eq '1'{{end}})
 )
 # a service account (or LocalSystem) asks for a service
 if (-not $Run) { $Run = if ($ServiceUser -or $ServiceAccount) { 'service' } else { 'session' } }
@@ -466,13 +499,14 @@ if ($Role -notin 'worker', 'client', 'both') { throw "unknown role $Role" }
 # for this machine, as an administrator (the MSI) - unless this account only was asked for
 $perUserInstall = $PerUser -or $Prefix -or $NoMsi -or -not $Hashes[$msi]
 if (-not $admin -and -not $perUserInstall) {
-  Invoke-Elevated 'install.ps1' @{
+  Invoke-Elevated 'install.ps1{{if .Channel}}?channel={{.Channel}}{{end}}' @{
     LONGARM_JOIN = $Join; LONGARM_LOGIN = $(if ($Login) { '1' }); LONGARM_ROLE = $Role; LONGARM_NAME = $Name
     LONGARM_DATA_DIR = $DataDir; LONGARM_LISTEN = $Listen; LONGARM_RUN = $Run; LONGARM_LABELS = $Label
     LONGARM_NO_SERVICE = $(if ($NoService) { '1' }); LONGARM_NO_PATH = $(if ($NoPath) { '1' })
     LONGARM_NO_FIREWALL = $(if ($NoFirewall) { '1' }); LONGARM_NO_TRAY = $(if ($NoTray) { '1' })
     LONGARM_SERVICE_USER = $ServiceUser; LONGARM_SERVICE_ACCOUNT = $ServiceAccount; LONGARM_MSI_PROPS = $env:LONGARM_MSI_PROPS
-  } 'Longarm installs for this machine as an administrator: approve the Windows prompt; the install goes on in that window. (For this account only, without administrator rights: -PerUser, or $env:LONGARM_PER_USER=1.)' 'not elevated (the Windows prompt was declined): run it in an administrator PowerShell, or for this account only with -PerUser ($env:LONGARM_PER_USER=1)'
+    LONGARM_AUTO_UPDATE = $(if ($AutoUpdate) { '1' })
+  }'Longarm installs for this machine as an administrator: approve the Windows prompt; the install goes on in that window. (For this account only, without administrator rights: -PerUser, or $env:LONGARM_PER_USER=1.)' 'not elevated (the Windows prompt was declined): run it in an administrator PowerShell, or for this account only with -PerUser ($env:LONGARM_PER_USER=1)'
   return
 }
 $machineWide = $admin -and -not $PerUser
@@ -499,6 +533,10 @@ if ($admin -and $Hashes[$msi] -and -not $NoMsi -and -not $Prefix -and -not $PerU
       $props += "SERVICE_USER=$ServiceUser"; $props += "SERVICE_PASSWORD=$(Get-ServicePassword)"
     }
   }
+  # updates: automatic only when asked (-AutoUpdate); the machine follows the channel installed from
+  # (the tray's Settings > Updates changes both later)
+  if ($AutoUpdate) { $props += 'AUTO_UPDATE=1' }
+  if ($AutoUpdate -or '{{.Channel}}') { $props += 'UPDATE_CHANNEL={{or .Channel "stable"}}' }
   if ($env:LONGARM_MSI_PROPS) { $props += ($env:LONGARM_MSI_PROPS -split '\s+' | Where-Object { $_ }) }
   $log = Join-Path ([IO.Path]::GetTempPath()) 'longarm-msi.log'
   # Each property as PROP="value" (quotes doubled): spaces or quotes in a value can't add properties.
@@ -508,6 +546,7 @@ if ($admin -and $Hashes[$msi] -and -not $NoMsi -and -not $Prefix -and -not $PerU
   Remove-Item $tmp -ErrorAction SilentlyContinue
   if ($p.ExitCode -notin 0, 3010) { throw "msiexec failed ($($p.ExitCode)); log: $log" }
   Write-Host "installed longarm $Version ($Role, worker: $Run) with the MSI; uninstall from Apps or: msiexec /x $msi"
+  if ($AutoUpdate) { Write-Host 'updates: automatic, the {{or .Channel "stable"}} release channel' }
   $bin = Join-Path $env:ProgramFiles 'Longarm'
   if ($Login) {
     if ($Role -ne 'client') {

@@ -1,0 +1,18 @@
+[
+  {
+    "line": "{\"event\":\"start\"}",
+    "next": 18,
+    "offset": 0
+  },
+  {
+    "line": "{\"event\":\"turn\"}",
+    "next": 35,
+    "offset": 18
+  },
+  {
+    "line": "{\"event\":\"tu",
+    "next": 47,
+    "offset": 35,
+    "partial": true
+  }
+]
