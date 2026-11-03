@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Install a release channel.** The hub's `install.ps1` / `install.sh` take
+  `?channel=preview` (or `rc`) / `?channel=dev`: that channel's newest
+  release, and on Windows the machine then follows the channel (its update
+  setting, as the tray's Settings > Updates); without one: stable, as before.
+  The hub's front page has the choice next to the system in its Install step
+  (and asks the hub for that channel's MSI and version). The Install step
+  spans the page now, its installer and one-liners side by side; steps 2 and
+  3 below. Step 2's sample code says it is an example.
+
 - **`install.ps1` installs for the machine by default; `uninstall.ps1`**: from
   a PowerShell that isn't elevated, the hub's one-liner asks Windows to
   elevate and installs the MSI in that window (its settings travel in a file

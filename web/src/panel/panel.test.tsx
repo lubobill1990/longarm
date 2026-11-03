@@ -92,6 +92,14 @@ describe('PanelApp', () => {
     expect(screen.getByTestId('landing-ps1').textContent).toContain(`irm ${location.origin}/install.ps1 | iex`)
     expect(screen.getByTestId('landing-ps1-user').textContent).toContain('$env:LONGARM_PER_USER=1;')
     expect(screen.getByTestId('landing-uninstall').textContent).toContain(`irm ${location.origin}/uninstall.ps1 | iex`)
+    // a release channel: its one-liners (the machine follows it), the version asked of that channel
+    fireEvent.click(screen.getByRole('radio', { name: 'Dev' }))
+    expect(screen.getByTestId('landing-ps1').textContent).toContain(`irm ${location.origin}/install.ps1?channel=dev | iex`)
+    await waitFor(() => expect(screen.getByTestId('landing-channel-help').textContent).toContain('least tested'))
+    fireEvent.click(screen.getByRole('tab', { name: 'macOS · Linux' }))
+    expect(screen.getByTestId('landing-sh').textContent).toContain(`curl -fsSL '${location.origin}/install.sh?channel=dev' |`)
+    // step 2's code is an example, said so
+    expect(screen.getByTestId('landing-code-example').textContent).toContain('Example')
     expect(screen.queryByText('Log in')).toBeNull()
   })
 

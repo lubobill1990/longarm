@@ -54,6 +54,9 @@ curl -fsSL https://hub.example.com/install.sh | sudo sh -s -- --login --role bot
 $env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/install.ps1 | iex   # Windows: asks to elevate, the MSI
 #    For this Windows account only, without administrator rights: $env:LONGARM_PER_USER=1 first.
 #    Either way the tray starts and comes back at every logon. Remove: irm https://hub.example.com/uninstall.ps1 | iex
+#    A release channel (stable without): install.ps1?channel=preview (or rc) / ?channel=dev - that channel's
+#    newest release; on Windows the machine then follows the channel (the tray: Settings > Updates).
+#    In a POSIX shell quote the URL: curl -fsSL 'https://hub.example.com/install.sh?channel=dev' | sudo sh ...
 
 # 2. sign in - the one-liners and the tray do it; already installed:
 longarmd login hub.example.com --role both     # worker + client: one code, one approval

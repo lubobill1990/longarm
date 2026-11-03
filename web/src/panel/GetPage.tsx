@@ -5,14 +5,17 @@ import { msiFile } from '../lib/release'
 import { Link } from '../lib/router'
 
 /** The one-line installs for this hub (the hub serves the scripts with its address and CA pinned). */
-export function installLines(base: string) {
+/** The hub's one-liners; channel preview / dev: that channel's release, the machine following it (stable: none). */
+export function installLines(base: string, channel?: string) {
   const b = base.replace(/\/+$/, '')
+  const q = channel && channel !== 'stable' ? `?channel=${channel}` : ''
   return {
     // asks Windows to elevate (the MSI, for this machine); $env:LONGARM_PER_USER=1: this account only
-    windows: `$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm ${b}/install.ps1 | iex`,
-    windowsPerUser: `$env:LONGARM_PER_USER=1; $env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm ${b}/install.ps1 | iex`,
+    windows: `$env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm ${b}/install.ps1${q} | iex`,
+    windowsPerUser: `$env:LONGARM_PER_USER=1; $env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm ${b}/install.ps1${q} | iex`,
     windowsUninstall: `irm ${b}/uninstall.ps1 | iex`,
-    unix: `curl -fsSL ${b}/install.sh | sudo sh -s -- --login --role both`,
+    // quoted: "?" is a glob character to the shell
+    unix: `curl -fsSL ${q ? `'${b}/install.sh${q}'` : `${b}/install.sh`} | sudo sh -s -- --login --role both`,
   }
 }
 

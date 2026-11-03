@@ -155,19 +155,38 @@ func (h *Hub) hubAddr(r *http.Request) string {
 
 type scriptData struct {
 	BaseURL, HubAddr, Fingerprint, Version string
-	Hashes                                 []fileHash
+	// Channel: the release channel asked for (?channel=; "" = stable)
+	Channel string
+	Hashes  []fileHash
 }
 
 type fileHash struct{ File, SHA256 string }
 
 func (h *Hub) installScript(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		v, files, err := h.latestRelease()
+		// ?channel=preview|dev (rc, beta): that channel's newest release, and
+		// install.ps1 has the machine follow the channel; none: stable
+		channel := update.ChannelStable
+		if c := r.URL.Query().Get("channel"); c != "" {
+			if strings.EqualFold(c, "rc") {
+				c = update.ChannelPreview // release candidates
+			}
+			n, ok := update.NormalizeChannel(c)
+			if !ok {
+				httpError(w, 400, "channel: want stable, preview (rc) or dev")
+				return
+			}
+			channel = n
+		}
+		v, files, err := h.latestReleaseIn(channel)
 		if err != nil {
 			httpError(w, 500, err.Error())
 			return
 		}
 		d := scriptData{BaseURL: h.baseURL(r), HubAddr: h.hubAddr(r), Fingerprint: pki.Fingerprint(h.ca.Cert), Version: v}
+		if channel != update.ChannelStable {
+			d.Channel = channel
+		}
 		for _, f := range files {
 			d.Hashes = append(d.Hashes, fileHash{f.File, f.SHA256})
 		}
@@ -466,7 +485,7 @@ if ($Role -notin 'worker', 'client', 'both') { throw "unknown role $Role" }
 # for this machine, as an administrator (the MSI) - unless this account only was asked for
 $perUserInstall = $PerUser -or $Prefix -or $NoMsi -or -not $Hashes[$msi]
 if (-not $admin -and -not $perUserInstall) {
-  Invoke-Elevated 'install.ps1' @{
+  Invoke-Elevated 'install.ps1{{if .Channel}}?channel={{.Channel}}{{end}}' @{
     LONGARM_JOIN = $Join; LONGARM_LOGIN = $(if ($Login) { '1' }); LONGARM_ROLE = $Role; LONGARM_NAME = $Name
     LONGARM_DATA_DIR = $DataDir; LONGARM_LISTEN = $Listen; LONGARM_RUN = $Run; LONGARM_LABELS = $Label
     LONGARM_NO_SERVICE = $(if ($NoService) { '1' }); LONGARM_NO_PATH = $(if ($NoPath) { '1' })
@@ -508,6 +527,12 @@ if ($admin -and $Hashes[$msi] -and -not $NoMsi -and -not $Prefix -and -not $PerU
   Remove-Item $tmp -ErrorAction SilentlyContinue
   if ($p.ExitCode -notin 0, 3010) { throw "msiexec failed ($($p.ExitCode)); log: $log" }
   Write-Host "installed longarm $Version ($Role, worker: $Run) with the MSI; uninstall from Apps or: msiexec /x $msi"
+{{- if .Channel}}
+  # this machine follows the {{.Channel}} channel from now on (the tray's Settings > Updates; the Longarm Update service reads it)
+  New-Item -Path 'HKLM:\Software\Longarm\Update' -Force | Out-Null
+  Set-ItemProperty -Path 'HKLM:\Software\Longarm\Update' -Name Channel -Value '{{.Channel}}'
+  Write-Host 'updates: the {{.Channel}} release channel'
+{{- end}}
   $bin = Join-Path $env:ProgramFiles 'Longarm'
   if ($Login) {
     if ($Role -ne 'client') {

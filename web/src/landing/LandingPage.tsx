@@ -728,6 +728,14 @@ function Features() {
 // ---- get started -------------------------------------------------------------
 
 type OS = 'windows' | 'unix' | 'installed'
+type Channel = 'stable' | 'preview' | 'dev'
+
+/** The release channels, most tested first (docs/ci-cd.md "Release channels"). */
+const CHANNELS: [Channel, string, string][] = [
+  ['stable', 'Stable', 'Tested releases - for everyone.'],
+  ['preview', 'Preview', 'Release candidates: the next release, a few days early.'],
+  ['dev', 'Dev', 'Every change merged to main: the newest, least tested.'],
+]
 
 function GetStarted({
   me,
@@ -744,11 +752,13 @@ function GetStarted({
 }) {
   const [rel, setRel] = useState<LatestRelease>()
   const [os, setOS] = useState<OS>(() => (/Windows/i.test(navigator.userAgent) ? 'windows' : 'unix'))
+  const [channel, setChannel] = useState<Channel>('stable')
   useEffect(() => {
-    hubApi.latestRelease().then(setRel, () => {})
-  }, [])
+    setRel(undefined)
+    hubApi.latestRelease(channel).then(setRel, () => {})
+  }, [channel])
   const base = me?.base_url || location.origin
-  const lines = installLines(base)
+  const lines = installLines(base, channel)
   const msi = msiFile(rel, 'amd64')
   const msiArm = msiFile(rel, 'arm64')
   const names = (providers ?? []).map((p) => p.label)
@@ -763,60 +773,87 @@ function GetStarted({
         </p>
       </Reveal>
       <div className="lp-start-grid">
-        <Reveal className="lp-install">
+        {/* step 1 across the page (it has the most to say), steps 2 and 3 side by side below */}
+        <Reveal className="lp-install lp-install-main">
           <div className="lp-install-n">1</div>
-          <h3>Install</h3>
-          <div className="lp-tabs" role="tablist">
-            {(
-              [
-                ['windows', 'Windows'],
-                ['unix', 'macOS · Linux'],
-                ['installed', 'Installed'],
-              ] as [OS, string][]
-            ).map(([k, label]) => (
-              <button key={k} role="tab" aria-selected={os === k} className={os === k ? 'on' : ''} onClick={() => setOS(k)}>
-                {label}
-              </button>
-            ))}
-          </div>
-          {os === 'windows' && (
-            <div className="lp-tab-body">
-              <div className="row wrap">
-                {msi ? (
-                  <a className="lp-btn primary" href={msi} data-testid="landing-msi">
-                    ⬇ Download the MSI (x64)
-                  </a>
-                ) : (
-                  <span className="faint">No MSI on this hub yet - use the one-liner.</span>
-                )}
-                {msiArm && (
-                  <a className="lp-btn ghost" href={msiArm}>
-                    ARM64
-                  </a>
-                )}
-                {rel?.version && <span className="faint small">version {rel.version}</span>}
+          <div className="lp-install-top">
+            <h3>Install</h3>
+            <div className="lp-tabs" role="tablist" aria-label="Your system">
+              {(
+                [
+                  ['windows', 'Windows'],
+                  ['unix', 'macOS · Linux'],
+                  ['installed', 'Already installed'],
+                ] as [OS, string][]
+              ).map(([k, label]) => (
+                <button key={k} role="tab" aria-selected={os === k} className={os === k ? 'on' : ''} onClick={() => setOS(k)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {os !== 'installed' && (
+              <div className="lp-tabs lp-chan" role="radiogroup" aria-label="Release channel" data-testid="landing-channel">
+                {CHANNELS.map(([c, label]) => (
+                  <button key={c} role="radio" aria-checked={channel === c} className={channel === c ? 'on' : ''} onClick={() => setChannel(c)}>
+                    {label}
+                  </button>
+                ))}
               </div>
-              <p className="small">
-                Run it, click Next, keep <b>Default</b> and pick what this computer does: send jobs to workers, run jobs, or both. The tray then starts the sign-in by
-                itself.
-              </p>
-              <p className="small faint">Or one line in PowerShell:</p>
-              <CopyLine text={lines.windows} testId="landing-ps1" />
-              <p className="small faint">
-                It asks for administrator rights and installs the MSI. For your account only, without them:
-              </p>
-              <CopyLine text={lines.windowsPerUser} testId="landing-ps1-user" />
-              <p className="small faint">Remove it again (either way):</p>
-              <CopyLine text={lines.windowsUninstall} testId="landing-uninstall" />
+            )}
+          </div>
+          {os !== 'installed' && (
+            <p className="small faint lp-chan-help" data-testid="landing-channel-help">
+              {CHANNELS.find(([c]) => c === channel)?.[2]} {rel?.version ? <b>Version {rel.version}.</b> : null}
+              {channel !== 'stable' ? ' The one-liners keep this machine on that channel (the tray changes it later: Settings > Updates).' : null}
+            </p>
+          )}
+          {os === 'windows' && (
+            <div className="lp-install-cols lp-tab-body">
+              <div className="lp-install-col">
+                <p className="lp-col-title">The installer</p>
+                <div className="row wrap">
+                  {msi ? (
+                    <a className="lp-btn primary" href={msi} data-testid="landing-msi">
+                      ⬇ Download the MSI (x64)
+                    </a>
+                  ) : (
+                    <span className="faint">No MSI of this channel on this hub yet - use the one-liner.</span>
+                  )}
+                  {msiArm && (
+                    <a className="lp-btn ghost" href={msiArm}>
+                      ARM64
+                    </a>
+                  )}
+                </div>
+                <p className="small">
+                  Run it, click Next, keep <b>Default</b> and pick what this computer does: send jobs to workers, run jobs, or both. The tray then starts the sign-in by
+                  itself.
+                </p>
+                {channel !== 'stable' && <p className="small faint">The MSI installs this version; to keep getting {channel} releases, pick {channel} in the tray&apos;s Settings &gt; Updates.</p>}
+              </div>
+              <div className="lp-install-col">
+                <p className="lp-col-title">Or one line in PowerShell</p>
+                <CopyLine text={lines.windows} testId="landing-ps1" />
+                <p className="small faint">It asks for administrator rights and installs the MSI. For your account only, without them:</p>
+                <CopyLine text={lines.windowsPerUser} testId="landing-ps1-user" />
+                <p className="small faint">Remove it again (either way):</p>
+                <CopyLine text={lines.windowsUninstall} testId="landing-uninstall" />
+              </div>
             </div>
           )}
           {os === 'unix' && (
-            <div className="lp-tab-body">
-              <p className="small">One line - the hub serves the script with its address and CA pinned:</p>
-              <CopyLine text={lines.unix} testId="landing-sh" />
-              <p className="small faint">
-                Linux packages (apt / dnf) and Homebrew: <a href={`${repo}#quick-start`}>the README</a>.
-              </p>
+            <div className="lp-install-cols lp-tab-body">
+              <div className="lp-install-col">
+                <p className="lp-col-title">One line in a terminal</p>
+                <CopyLine text={lines.unix} testId="landing-sh" />
+                <p className="small faint">The hub serves the script with its address and CA pinned; it asks for your password, installs and shows the code.</p>
+              </div>
+              <div className="lp-install-col">
+                <p className="lp-col-title">Packages</p>
+                <p className="small">
+                  Linux packages (apt / dnf) and Homebrew: <a href={`${repo}#quick-start`}>the README</a>.
+                </p>
+              </div>
             </div>
           )}
           {os === 'installed' && (
@@ -833,7 +870,9 @@ function GetStarted({
             The tray (or the script) shows a code. Open the link in any browser, sign in with {signIn}, enter the code and approve - once, for both the device and the
             worker.
           </p>
-          <div className="lp-mini-code">
+          {/* an example of what the tray shows - not a code to type */}
+          <div className="lp-mini-code" data-testid="landing-code-example">
+            <span className="lp-example">Example · yours is in the tray</span>
             <span>{location.host}/link</span>
             <b>BCDF-GHJK</b>
           </div>
