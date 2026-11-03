@@ -44,6 +44,7 @@ const (
 	ghRetryEvery   = 2 * time.Minute // after a failed poll
 	ghKeepReleases = 5               // newest releases (stable and preview) offered
 	ghMaxSig       = 4 << 10
+	ghSigFetches   = 8 // signature downloads at once
 	ghMaxIndex     = 8 << 20
 )
 
@@ -145,6 +146,9 @@ func (g *ghReleases) poll(ctx context.Context) error {
 	if err := g.getJSON(ctx, g.api+"/repos/"+g.repo+"/releases?per_page=20", &list); err != nil {
 		return err
 	}
+	if err := g.prefetchSigs(ctx, list); err != nil {
+		return err
+	}
 	var rels []store.Release
 	latest, n := "", 0
 	for _, gr := range list {
@@ -218,6 +222,44 @@ func (g *ghReleases) getJSON(ctx context.Context, u string, v any) error {
 		return fmt.Errorf("GitHub API: %s", resp.Status)
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, ghMaxIndex)).Decode(v)
+}
+
+// prefetchSigs downloads the signatures of the releases a poll offers,
+// ghSigFetches at a time (a release has some 40; the first poll would
+// take minutes one by one).
+func (g *ghReleases) prefetchSigs(ctx context.Context, list []ghRelease) error {
+	var urls []string
+	n := 0
+	for _, gr := range list {
+		if gr.Draft || !versionRE.MatchString(strings.TrimPrefix(gr.Tag, "v")) || n >= ghKeepReleases {
+			continue
+		}
+		n++
+		for _, a := range gr.Assets {
+			if base, ok := strings.CutSuffix(a.Name, update.SigExt); ok {
+				if _, _, _, ok := releaseFileKind(base); ok {
+					urls = append(urls, a.URL)
+				}
+			}
+		}
+	}
+	sem := make(chan struct{}, ghSigFetches)
+	errs := make(chan error, len(urls))
+	var wg sync.WaitGroup
+	for _, u := range urls {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if _, err := g.sig(ctx, u); err != nil {
+				errs <- fmt.Errorf("%s: %w", u, err)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	return <-errs // nil when none failed
 }
 
 // sig downloads a .minisig (once per URL: release assets don't change).
