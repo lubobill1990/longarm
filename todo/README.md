@@ -17,4 +17,5 @@ pull request description.
 | [remote-desktop.md](remote-desktop.md) | `longarm desktop` (docs/usage.md "Remote desktop") |
 | [release-channels.md](release-channels.md) | release channels and updates (docs/ci-cd.md "Release channels") |
 | [install-scripts.md](install-scripts.md) | the hub's install.ps1 / install.sh / uninstall.ps1 (docs/usage.md "Uninstall") |
+| [toolchains.md](toolchains.md) | older-worker owner-tool compatibility |
 | [programs.md](programs.md) | programs driving Longarm: features, fixtures, session input (docs/programs.md) |

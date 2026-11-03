@@ -255,30 +255,32 @@ type Node struct {
 	// ID is the node's immutable ID (a UUID); Name its display name,
 	// unique among non-revoked nodes, which can change (rename) and be
 	// reused once the node is revoked.
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	Role          string            `json:"role"`
-	State         string            `json:"state"`                  // pending | approved | revoked
-	Labels        map[string]string `json:"labels,omitempty"`       // admin-set (join code, SetLabels)
-	HelloLabels   map[string]string `json:"hello_labels,omitempty"` // from the worker's longarmd.toml
-	Profile       string            `json:"profile,omitempty"`
-	Hostname      string            `json:"hostname,omitempty"`
-	OS            string            `json:"os,omitempty"`
-	Arch          string            `json:"arch,omitempty"`
-	Version       string            `json:"version,omitempty"`
-	Endpoints     []string          `json:"endpoints,omitempty"`
-	CSR           string            `json:"csr,omitempty"`         // pending enrollment
-	PollTokenHash string            `json:"poll_token,omitempty"`  // pending enrollment
-	IssuedCert    string            `json:"issued_cert,omitempty"` // approved, not yet collected (JoinStatus)
-	JoinedAt      time.Time         `json:"joined_at"`
-	ApprovedAt    time.Time         `json:"approved_at,omitzero"`
-	LastSeen      time.Time         `json:"last_seen,omitzero"`
-	CertSerial    string            `json:"cert_serial,omitempty"`
-	CertNotAfter  time.Time         `json:"cert_not_after,omitzero"`
-	AdminDrain    bool              `json:"admin_drain,omitempty"`
-	AuditOffset   int64             `json:"audit_offset,omitempty"`
-	Mirrors       []string          `json:"mirrors,omitempty"`
-	WarmRepos     []string          `json:"warm_repos,omitempty"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	Role              string            `json:"role"`
+	State             string            `json:"state"`                  // pending | approved | revoked
+	Labels            map[string]string `json:"labels,omitempty"`       // admin-set (join code, SetLabels)
+	HelloLabels       map[string]string `json:"hello_labels,omitempty"` // from the worker's longarmd.toml
+	Profile           string            `json:"profile,omitempty"`
+	OwnerTools        map[string]string `json:"owner_tools,omitempty"`
+	OwnerToolRevision int64             `json:"owner_tool_revision,omitempty"`
+	Hostname          string            `json:"hostname,omitempty"`
+	OS                string            `json:"os,omitempty"`
+	Arch              string            `json:"arch,omitempty"`
+	Version           string            `json:"version,omitempty"`
+	Endpoints         []string          `json:"endpoints,omitempty"`
+	CSR               string            `json:"csr,omitempty"`         // pending enrollment
+	PollTokenHash     string            `json:"poll_token,omitempty"`  // pending enrollment
+	IssuedCert        string            `json:"issued_cert,omitempty"` // approved, not yet collected (JoinStatus)
+	JoinedAt          time.Time         `json:"joined_at"`
+	ApprovedAt        time.Time         `json:"approved_at,omitzero"`
+	LastSeen          time.Time         `json:"last_seen,omitzero"`
+	CertSerial        string            `json:"cert_serial,omitempty"`
+	CertNotAfter      time.Time         `json:"cert_not_after,omitzero"`
+	AdminDrain        bool              `json:"admin_drain,omitempty"`
+	AuditOffset       int64             `json:"audit_offset,omitempty"`
+	Mirrors           []string          `json:"mirrors,omitempty"`
+	WarmRepos         []string          `json:"warm_repos,omitempty"`
 	// Toolchain is the last ToolchainReport (protojson).
 	Toolchain json.RawMessage `json:"toolchain,omitempty"`
 	// Self-update (P2): release channel, whether the build can update, and

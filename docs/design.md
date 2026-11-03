@@ -86,7 +86,7 @@ Modules:
 | `jobs` | Job directory `<data dir>\jobs\<id>\{job.json,state,out.log,result.md,exit}` | Simple, script-readable layout. On startup it **reconciles**: state=running but the pid is gone / the process start time does not match → `lost`; the job's retry policy decides whether to resume (claude `--resume <session-id>` / copilot `--continue`) |
 | `workspace` | One bare mirror per repository: `<data dir>\mirrors\<repo>.git`; jobs use `git worktree` | New workspaces in seconds; shared pnpm store / uv cache; LRU disk GC (threshold e.g. C: free < 15%) |
 | `metrics` | CPU / memory / top processes / number of agent sessions (kernel32 sampling + leaf-process counting) | Sampled every 2 s and pushed to the hub (piggybacked on heartbeats); also exposes `/metrics` for Prometheus |
-| `toolchain` | Aligns tool versions (git/gh/node/pnpm/uv/pwsh/claude/copilot) according to a **profile** pushed by the hub | Declarative and idempotent; upgrades one worker at a time as a canary |
+| `toolchain` | Inventories baseline tools (git/gh/node/pnpm/uv/pwsh/claude/copilot/go), with or without a profile; reconciles a hub profile plus per-worker owner desired tools | No probes or installs on admin/disabled workers; admin profile wins conflicts; profiles upgrade one worker at a time as a canary, judged only on profile tool versions |
 | `sshd` | gliderlabs/ssh, bound to the overlay address only | Compatibility layer: existing scripts, VS Code Remote-SSH, scp |
 | `update` | Self-update | Download → verify signature (minisign) → keep old and new binaries side by side → restart the service → automatic rollback if the 60 s health check fails |
 
@@ -276,6 +276,21 @@ What `join` does: generate the node key → exchange for a certificate → join 
 - The hub hosts releases (a mirror of GitHub Releases, signed with minisign).
 - Rolling: 1 canary first → healthy for 30 min → the rest in batches. `longarmd` itself can restart at any time (jobs live in shims and are unaffected).
 - Toolchain profiles work the same way (e.g. upgrading the claude CLI), but a toolchain upgrade **waits until that worker has zero jobs** (replacing a running exe fails on Windows); meanwhile the scheduler marks it as draining and assigns no new work.
+
+The hub also persists an owner's desired tool list per worker. `longarm worker
+toolchain` reads or replaces it and can request immediate reconciliation; the
+admin profile takes precedence on conflicts, retaining its canary rollout.
+Rollout progress checks only the profile's installed tool versions, not owner
+revisions or failures of owner-only tools.
+Owner changes need no fleet-admin privileges and do not uninstall tools when
+cleared. Non-admin workers with toolchains enabled probe all nine baseline
+versions at connect and every five minutes even without desired tools, except
+during installation; only changed inventories are reported. Admin and disabled
+workers run no probes. `worker ls --json` exposes this cached inventory (`""`
+means missing; probe errors retain cached versions or omit unknown keys).
+Windows installers
+refresh the daemon's executable lookup so version checks and subsequent jobs
+see newly installed tools without a worker restart.
 
 ### 7.3 Observability
 

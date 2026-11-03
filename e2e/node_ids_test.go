@@ -61,6 +61,12 @@ func TestNodeIDs(t *testing.T) {
 			n := h.nodeByID(t, id)
 			return n != nil && n["name"] == "idbox2" && (n["cert_name"] == nil || n["cert_name"] == "idbox2") && isTrue(n["online"])
 		})
+		// The hub records the renewal before the worker's restart has its
+		// listeners serving the new certificate; until then a direct leg still
+		// presents "idbox" ("certificate is valid for idbox, not idbox2").
+		waitFor(t, "the worker's listeners to serve the new name", 30*time.Second, func() bool {
+			return exec("idbox2").code == 0
+		})
 		for _, target := range []string{id, id[:8], "id:" + id[:6], "idbox2", "name:idbox2"} {
 			if r := exec(target); r.code != 0 || !strings.Contains(r.stdout, "line 1") {
 				t.Fatalf("exec %s: %+v", target, r)

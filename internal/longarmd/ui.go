@@ -188,7 +188,7 @@ func (a *hubAgent) hubRequest(cmd *pb.HubCommand) {
 			fail(denied("toolchain apply"))
 			break
 		}
-		if a.tc == nil {
+		if a.tc == nil || a.tc.Disabled {
 			fail(status.Error(codes.FailedPrecondition, "no toolchain reconciler on this worker"))
 			break
 		}

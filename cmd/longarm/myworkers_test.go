@@ -1,16 +1,83 @@
 package main
 
 import (
+	"encoding/json"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/lubobill1990/longarm/internal/toolchain"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
+
+func TestWorkerToolchainOutput(t *testing.T) {
+	var out strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	if err := writeWorkerToolchain(cmd.OutOrStdout(), &pb.WorkerToolchainResponse{Worker: "worker-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out.String(), "worker-1: unknown\nNo toolchain report") ||
+		!strings.Contains(out.String(), "OWNER DESIRED") || !strings.Contains(out.String(), "copilot") {
+		t.Fatalf("missing report output: %q", out.String())
+	}
+	out.Reset()
+	if err := writeWorkerToolchain(&out, &pb.WorkerToolchainResponse{Worker: "worker-1",
+		Toolchain: &pb.ToolchainReport{State: "failed", Error: "node: failed"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out.String(), "worker-1: failed\nnode: failed\n") {
+		t.Fatalf("failure output: %q", out.String())
+	}
+}
+
+func TestWorkerToolchainJSON(t *testing.T) {
+	versions := map[string]string{}
+	for _, name := range toolchain.KnownTools {
+		versions[name] = ""
+	}
+	versions["node"] = "22.0.0"
+	resp := &pb.WorkerToolchainResponse{Worker: "worker-1",
+		Desired:   &pb.ToolchainDesired{OwnerRevision: 7},
+		Toolchain: &pb.ToolchainReport{OwnerRevision: 7, Versions: versions}}
+	out, err := os.CreateTemp(t.TempDir(), "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	saved := os.Stdout
+	os.Stdout = out
+	defer func() { os.Stdout = saved }()
+	if err := printJSON(resp); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(out.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Desired struct {
+			OwnerRevision string `json:"owner_revision"`
+		} `json:"desired"`
+		Toolchain struct {
+			OwnerRevision string            `json:"owner_revision"`
+			Versions      map[string]string `json:"versions"`
+		} `json:"toolchain"`
+	}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("JSON: %v\n%s", err, b)
+	}
+	if got.Desired.OwnerRevision != "7" || got.Toolchain.OwnerRevision != "7" ||
+		len(got.Toolchain.Versions) != 9 || got.Toolchain.Versions["node"] != "22.0.0" {
+		t.Fatalf("JSON shape: %s", b)
+	}
+}
 
 func TestParseLabelEdits(t *testing.T) {
 	m, err := parseLabelEdits([]string{"pool=devbox", "gpu-", "zone=a,old-", "x="})
@@ -24,6 +91,23 @@ func TestParseLabelEdits(t *testing.T) {
 		if _, err := parseLabelEdits([]string{bad}); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+}
+
+func TestParseWorkerTools(t *testing.T) {
+	tools, err := parseWorkerTools([]string{"claude", "copilot", "uv", "node@22"})
+	if err != nil || len(tools) != 4 || tools[0].Version != "latest" || tools[3].Version != "22" {
+		t.Fatalf("tools %v: %v", tools, err)
+	}
+	for _, items := range [][]string{{""}, {"nope"}, {"git", "git@2"}, {"node@"}, {"node@22;bad"}, {"node@--bad"}} {
+		if _, err := parseWorkerTools(items); err == nil {
+			t.Errorf("accepted %v", items)
+		}
+	}
+	c := workerToolchainCmd()
+	c.SetArgs([]string{"worker-1", "--clear", "--tools", "node"})
+	if err := c.Execute(); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("conflicting flags: %v", err)
 	}
 }
 

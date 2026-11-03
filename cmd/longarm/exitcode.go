@@ -141,6 +141,8 @@ var cliFeatures = []string{
 	"lfs",              // run / sync --lfs skip|ship
 	"ref-sha",          // run --repo <path> --ref <full commit id>
 	"worker-label",     // longarm worker label
+	"toolchain-report", // baseline installed versions in worker ls --json
+	"worker-toolchain", // owner desired tools and idle-only reconciliation
 	"git-auth-forward", // run / sync --git-auth forward, run --lfs fetch
 	// sessions for programs (docs/usage.md#sessions-for-programs)
 	"session-start",        // session start
