@@ -20,9 +20,29 @@
     overflow: hidden;
   }
 
-  & * {
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--text-3) 45%, transparent) transparent;
+  /* scrollbars: our own, 6 px, a rounded thumb on no track (WebView2 and
+     WebKit draw ::-webkit-scrollbar; Chromium ignores it where the standard
+     scrollbar-width / scrollbar-color are set, so those only elsewhere) */
+  & ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  & ::-webkit-scrollbar-track,
+  & ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  & ::-webkit-scrollbar-thumb {
+    border-radius: var(--r-pill);
+    background: color-mix(in srgb, var(--text-3) 40%, transparent);
+  }
+  & ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--text-3) 65%, transparent);
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    & * {
+      scrollbar-width: thin;
+      scrollbar-color: color-mix(in srgb, var(--text-3) 45%, transparent) transparent;
+    }
   }
 
   & ::selection {
@@ -911,7 +931,9 @@
     min-height: 0;
     padding: 0;
     overflow: auto;
-    scrollbar-gutter: stable;
+    /* the scrollbar's room on both sides, on every tab (scrolling or not):
+       the cards keep the same left and right margin */
+    scrollbar-gutter: stable both-edges;
   }
   & .page {
     max-width: 1180px;
