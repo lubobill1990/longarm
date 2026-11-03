@@ -13,13 +13,26 @@ fixture and a row in docs/usage.md. Start at `infoCmd` in
 
 ## More fixtures
 
-`docs/programs/fixtures` covers the six outputs TMIA reads first. Not yet:
-`ls --json`, `session start --json`, `session send --json`, `session stop
---json`, `tail --json`, `agent-sessions --json`, `worker update --json`.
-Add a command to `programFixtures` in `e2e/programs_fixtures_test.go` (set
-up what it needs there) and run it with `-update`. The fixtures were
-generated on Windows; `doctor.json`'s checks differ per platform, which is
-why `checks[].data` is opaque to the check.
+`docs/programs/fixtures` covers the outputs TMIA reads. Not yet: `ls
+--json`, `session stop --json`, `agent-sessions --json`, `worker update
+--json`. Add a command to `programFixtures` in
+`e2e/programs_fixtures_test.go` (set up what it needs there) and run it
+with `-update`. The fixtures were generated on Windows; `doctor.json`'s
+checks differ per platform, which is why `checks[].data` is opaque to the
+check. Fields still left out at zero are listed in docs/programs.md
+("Golden fixtures"); `worker-ls.json` lost `metrics.top_cpu` / `top_mem`
+when its worker got an owner (a multi-user hub hides them) - a second
+capture on a single-user hub would bring them back.
+
+## `sessions --json` and steerable runs
+
+A program wanted `job` on a `sessions --json` entry of a steerable run
+(`run --steerable`), but `Session` (proto/longarm/v1/longarm.proto) has no
+such field: only the tray's agent API (`cmd/longarm/daemon_agents.go`) says
+which job a session belongs to. Add `job` to `Session` (set by the worker
+for a steerable run's terminal), with a feature name and a steerable run
+in the fixtures test - which needs a fake `claude` that speaks the hooks
+(internal/steer).
 
 ## Bracketed paste the program did not ask for
 
