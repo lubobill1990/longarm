@@ -1456,6 +1456,18 @@ longarmd audit verify [--file PATH]                # check audit.log's hash chai
 longarmd reloads `<data>/tls` (ca.crt, node.crt, node.key) within ~5 s when the
 files change: re-issue the worker certificate in place, no restart needed.
 
+**PATH of jobs (Windows).** A tool installed after longarmd started
+(winget, `npm -g`, a Go zip and its PATH entry) is on the PATH of the next
+job, exec, session or ssh shell without a restart: before starting one,
+longarmd rebuilds its PATH as Explorer does for a new process - the
+registry's Machine and then User `Path` (`%VAR%` expanded), followed by
+the entries of its own PATH the registry doesn't have (entries put in
+front of longarmd's PATH stay in front). Workers that do it announce
+`fresh-path` in `Node.Info` features (`longarm info <worker>`).
+`LONGARM_FRESH_PATH=0` in longarmd's environment turns it off. Jobs that
+run as the user's own account ([users](#users-teams-and-quotas-sharing-a-hub)
+with OS accounts) always got that account's fresh environment.
+
 Telemetry ([docs/telemetry.md](telemetry.md)): only when the hub has
 `[telemetry] connection_string`; scrubbed on the machine before it is queued.
 

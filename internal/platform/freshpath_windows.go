@@ -1,0 +1,96 @@
+//go:build windows
+
+package platform
+
+import (
+	"os"
+	"strings"
+	"sync"
+
+	"golang.org/x/sys/windows/registry"
+)
+
+// FreshPath: this platform rebuilds PATH before a job starts (RefreshPath).
+const FreshPath = true
+
+var freshMu sync.Mutex
+
+// RefreshPath sets this process's PATH to MergePath of it and the
+// registry's (RegistryPath): what a process started now from Explorer
+// would get, plus what longarmd's PATH has beyond it. Processes started
+// afterwards (shims, exec, ssh sessions) inherit it.
+func RefreshPath() {
+	if FreshPathOff() {
+		return
+	}
+	reg, err := RegistryPath()
+	if err != nil || len(reg) == 0 {
+		return
+	}
+	freshMu.Lock()
+	defer freshMu.Unlock()
+	cur := os.Getenv("PATH")
+	if p := MergePath(cur, reg, ";"); p != cur {
+		os.Setenv("PATH", p)
+	}
+}
+
+// RegistryPath is the Machine and then the User Path of the registry
+// (HKLM\...\Session Manager\Environment, HKCU\Environment), REG_EXPAND_SZ
+// expanded with the process's variables overlaid with the registry's own
+// (a variable an installer added since, like %PNPM_HOME%).
+func RegistryPath() ([]string, error) {
+	vars := map[string]string{}
+	for _, kv := range os.Environ() {
+		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
+			vars[strings.ToUpper(k)] = v
+		}
+	}
+	lookup := func(name string) (string, bool) {
+		v, ok := vars[strings.ToUpper(name)]
+		return v, ok
+	}
+	var out []string
+	for i, at := range []struct {
+		root registry.Key
+		path string
+	}{
+		{registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Control\Session Manager\Environment`},
+		{registry.CURRENT_USER, `Environment`},
+	} {
+		k, err := registry.OpenKey(at.root, at.path, registry.QUERY_VALUE)
+		if err != nil {
+			if i == 0 {
+				return nil, err
+			}
+			continue // no user environment (a service account without a profile)
+		}
+		names, _ := k.ReadValueNames(0)
+		var path string
+		var pathExpand bool
+		for _, n := range names {
+			v, typ, err := k.GetStringValue(n)
+			if err != nil {
+				continue // not a string
+			}
+			if strings.EqualFold(n, "Path") {
+				path, pathExpand = v, typ == registry.EXPAND_SZ
+				continue
+			}
+			if typ == registry.EXPAND_SZ {
+				v = ExpandWindowsEnv(v, lookup)
+			}
+			vars[strings.ToUpper(n)] = v
+		}
+		k.Close()
+		if pathExpand {
+			path = ExpandWindowsEnv(path, lookup)
+		}
+		for _, p := range strings.Split(path, ";") {
+			if p = strings.TrimSpace(p); p != "" {
+				out = append(out, p)
+			}
+		}
+	}
+	return out, nil
+}

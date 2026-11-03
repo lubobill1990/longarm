@@ -195,6 +195,7 @@ const (
 	FeatureFileLstat         = "file-lstat"           // FileStatRequest.no_follow
 	FeatureHandoffDirect     = "handoff-direct"       // Handoff service: worker-to-worker transfer of handoff bundles
 	FeatureHandoffPush       = "handoff-push"         // Workspace.PushHandoff: push a handoff snapshot with a forwarded credential
+	FeatureFreshPath         = "fresh-path"           // jobs, exec and ssh sessions get PATH as the registry has it now (Windows: tools installed since longarmd started)
 )
 
 // SessionWorktreeKey names the worktree of one generation of session name
