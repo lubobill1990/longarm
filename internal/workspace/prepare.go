@@ -42,7 +42,7 @@ func (s *Store) prepareJob(ctx context.Context, spec jobs.Spec, secrets map[stri
 			return "", err
 		}
 		if commit != "" && commit != c {
-			if err := s.ImportBundle(ctx, w.Repo, "", "", commit); err != nil {
+			if err := s.ImportBundle(ctx, w.Repo, "", "", commit, nil); err != nil {
 				return "", err
 			}
 		} else {
@@ -52,7 +52,7 @@ func (s *Store) prepareJob(ctx context.Context, spec jobs.Spec, secrets map[stri
 	if commit == "" {
 		return "", errors.New("workspace needs a url or a commit")
 	}
-	if err := s.ImportBundle(ctx, w.Repo, "", "", commit); err != nil { // verify + pin
+	if err := s.ImportBundle(ctx, w.Repo, "", "", commit, nil); err != nil { // verify + pin
 		fmt.Fprintf(log, "longarmd: %v\n", err)
 		return "", err
 	}

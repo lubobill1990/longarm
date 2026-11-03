@@ -404,7 +404,7 @@ func (c *coder) remote(ctx context.Context) (res *codeResult, why string, err er
 		tb.cleanup(ctx)
 		return nil, "", err
 	}
-	sres, err := sendBundle(ctx, c.dst.conn, c.srcRepo.key, c.snap, "handoff-"+c.hid, dstPath, "")
+	sres, err := sendBundle(ctx, c.dst.conn, c.srcRepo.key, c.snap, "handoff-"+c.hid, dstPath, "", nil)
 	if err != nil {
 		tb.cleanup(ctx)
 		return nil, "", err
@@ -544,7 +544,7 @@ func (c *coder) workerToWorker(ctx context.Context) (*codeResult, error) {
 		return nil, err
 	}
 	if b == "" { // the target has the commits already
-		res, err := sendBundle(ctx, c.dst.conn, c.srcRepo.key, c.snap, "handoff-"+c.hid, dstPath, "")
+		res, err := sendBundle(ctx, c.dst.conn, c.srcRepo.key, c.snap, "handoff-"+c.hid, dstPath, "", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -563,7 +563,7 @@ func (c *coder) workerToWorker(ctx context.Context) (*codeResult, error) {
 		return nil, err
 	}
 	notef("relaying %s of commits from %s to %s", humanSize(n), c.src.name, c.dst.name)
-	res, err := sendBundle(ctx, c.dst.conn, c.srcRepo.key, c.snap, "handoff-"+c.hid, dstPath, local)
+	res, err := sendBundle(ctx, c.dst.conn, c.srcRepo.key, c.snap, "handoff-"+c.hid, dstPath, local, c.srcRepo.shallow(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -595,7 +595,8 @@ func (c *coder) direct(ctx context.Context, bundle, dstPath string) (*codeResult
 		return nil, c.src.name + ": " + grpcMessage(err)
 	}
 	pull := &pb.HandoffPullRequest{From: c.src.cert, FromId: c.src.id, FromEndpoints: endpoints, TransferId: tid, Token: token,
-		Size: off.Size, Sha256: off.Sha256, Header: &pb.SyncHeader{Repo: c.srcRepo.key, Commit: c.snap, Branch: "handoff-" + c.hid, Path: dstPath}}
+		Size: off.Size, Sha256: off.Sha256, Header: &pb.SyncHeader{Repo: c.srcRepo.key, Commit: c.snap, Branch: "handoff-" + c.hid, Path: dstPath,
+			Shallow: c.srcRepo.shallow(ctx)}}
 	res, err := c.dst.conn.Handoff().Pull(octx, pull)
 	if status.Code(err) == codes.Unavailable { // once more: a relay may learn the pair a moment after the hub listed it
 		select {

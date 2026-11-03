@@ -4868,12 +4868,17 @@ func (*SyncChunk_Header) isSyncChunk_Msg() {}
 func (*SyncChunk_Data) isSyncChunk_Msg() {}
 
 type SyncHeader struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Repo          string                 `protobuf:"bytes,1,opt,name=repo,proto3" json:"repo,omitempty"`
-	Commit        string                 `protobuf:"bytes,2,opt,name=commit,proto3" json:"commit,omitempty"`                         // HEAD of the client checkout
-	Branch        string                 `protobuf:"bytes,3,opt,name=branch,proto3" json:"branch,omitempty"`                         // informational, e.g. "main"
-	Path          string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`                             // worktree path on the worker (ignored with stage_only)
-	StageOnly     bool                   `protobuf:"varint,5,opt,name=stage_only,json=stageOnly,proto3" json:"stage_only,omitempty"` // keep for a job (JobWorkspace.staging_id)
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Repo      string                 `protobuf:"bytes,1,opt,name=repo,proto3" json:"repo,omitempty"`
+	Commit    string                 `protobuf:"bytes,2,opt,name=commit,proto3" json:"commit,omitempty"`                         // HEAD of the client checkout
+	Branch    string                 `protobuf:"bytes,3,opt,name=branch,proto3" json:"branch,omitempty"`                         // informational, e.g. "main"
+	Path      string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`                             // worktree path on the worker (ignored with stage_only)
+	StageOnly bool                   `protobuf:"varint,5,opt,name=stage_only,json=stageOnly,proto3" json:"stage_only,omitempty"` // keep for a job (JobWorkspace.staging_id)
+	// shallow: the sender's shallow boundary (a shallow clone's
+	// .git/shallow): commits whose parents the bundle doesn't carry. The
+	// mirror records them as its own shallow commits before fetching the
+	// bundle (an older worker ignores them, and the fetch fails as before).
+	Shallow       []string `protobuf:"bytes,6,rep,name=shallow,proto3" json:"shallow,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4941,6 +4946,13 @@ func (x *SyncHeader) GetStageOnly() bool {
 		return x.StageOnly
 	}
 	return false
+}
+
+func (x *SyncHeader) GetShallow() []string {
+	if x != nil {
+		return x.Shallow
+	}
+	return nil
 }
 
 type SyncData struct {
@@ -6517,7 +6529,7 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\tSyncChunk\x120\n" +
 	"\x06header\x18\x01 \x01(\v2\x16.longarm.v1.SyncHeaderH\x00R\x06header\x12*\n" +
 	"\x04data\x18\x02 \x01(\v2\x14.longarm.v1.SyncDataH\x00R\x04dataB\x05\n" +
-	"\x03msg\"\x83\x01\n" +
+	"\x03msg\"\x9d\x01\n" +
 	"\n" +
 	"SyncHeader\x12\x12\n" +
 	"\x04repo\x18\x01 \x01(\tR\x04repo\x12\x16\n" +
@@ -6525,7 +6537,8 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x06branch\x18\x03 \x01(\tR\x06branch\x12\x12\n" +
 	"\x04path\x18\x04 \x01(\tR\x04path\x12\x1d\n" +
 	"\n" +
-	"stage_only\x18\x05 \x01(\bR\tstageOnly\"H\n" +
+	"stage_only\x18\x05 \x01(\bR\tstageOnly\x12\x18\n" +
+	"\ashallow\x18\x06 \x03(\tR\ashallow\"H\n" +
 	"\bSyncData\x12(\n" +
 	"\x04part\x18\x01 \x01(\x0e2\x14.longarm.v1.SyncPartR\x04part\x12\x12\n" +
 	"\x04data\x18\x02 \x01(\fR\x04data\"\xe1\x01\n" +

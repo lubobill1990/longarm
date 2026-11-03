@@ -358,6 +358,68 @@ func TestSync(t *testing.T) {
 	}
 }
 
+// TestSyncShallowClone: longarm run --repo / sync from a shallow clone (git
+// clone --depth): its bundle stops at the shallow commits, so the worker's
+// mirror takes them as its own ("did not send all necessary objects"
+// before). A full clone of the same remote (the same mirror) syncing after
+// it must not trust the shallow tips: its commit branches off below the
+// shallow boundary.
+func TestSyncShallowClone(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	e := newEnv(t)
+	e.startLongarmd()
+	up := filepath.Join(e.root, "up")
+	os.MkdirAll(up, 0o755)
+	git(t, up, "init", "-q", "-b", "main")
+	for i := 1; i <= 4; i++ {
+		os.WriteFile(filepath.Join(up, "tracked.txt"), []byte(fmt.Sprintf("v%d\n", i)), 0o644)
+		git(t, up, "add", ".")
+		git(t, up, "commit", "-qm", fmt.Sprintf("c%d", i))
+	}
+	upURL := "file:///" + strings.TrimPrefix(filepath.ToSlash(up), "/")
+	shallow := filepath.Join(e.root, "shallow")
+	git(t, e.root, "clone", "-q", "--depth", "1", upURL, shallow)
+	if got := git(t, shallow, "rev-parse", "--is-shallow-repository"); got != "true" {
+		t.Fatalf("not a shallow clone: %s", got)
+	}
+	wt := filepath.Join(e.root, "wt")
+	// c4 itself (the shallow commit): the mirror's tip is upstream's then
+	if r := e.longarm(e.client, "sync", shallow, "w1:"+filepath.ToSlash(wt)); r.code != 0 {
+		t.Fatalf("sync <shallow clone>: %+v", r)
+	}
+	os.WriteFile(filepath.Join(shallow, "tracked.txt"), []byte("shallow commit\n"), 0o644)
+	git(t, shallow, "commit", "-qam", "local")
+
+	out := e.longarm(e.client, "run", "w1", "--repo", shallow, "-f", "--", bins.helper, "cat", "tracked.txt")
+	if out.code != 0 || !strings.Contains(out.stdout, "shallow commit") {
+		t.Fatalf("run --repo <shallow clone>: %+v", out)
+	}
+	// again, a commit later: an incremental bundle on top of the shallow history
+	os.WriteFile(filepath.Join(shallow, "tracked.txt"), []byte("shallow commit 2\n"), 0o644)
+	git(t, shallow, "commit", "-qam", "local 2")
+	if r := e.longarm(e.client, "sync", shallow, "w1:"+filepath.ToSlash(wt)); r.code != 0 {
+		t.Fatalf("sync <shallow clone>: %+v", r)
+	}
+	if got, err := os.ReadFile(filepath.Join(wt, "tracked.txt")); err != nil || string(got) != "shallow commit 2\n" {
+		t.Fatalf("worktree tracked.txt = %q (%v)", got, err)
+	}
+
+	// a full clone, a branch off c2 (below the shallow boundary c4): it has
+	// c4, the mirror's tip, but that tip must not count as "the worker has
+	// c4 and all before it"
+	full := filepath.Join(e.root, "full")
+	git(t, e.root, "clone", "-q", upURL, full)
+	git(t, full, "checkout", "-q", "-b", "old", "HEAD~2")
+	os.WriteFile(filepath.Join(full, "tracked.txt"), []byte("from c2\n"), 0o644)
+	git(t, full, "commit", "-qam", "off c2")
+	out = e.longarm(e.client, "run", "w1", "--repo", full, "-f", "--", bins.helper, "cat", "tracked.txt")
+	if out.code != 0 || !strings.Contains(out.stdout, "from c2") {
+		t.Fatalf("run --repo <full clone> after a shallow one: %+v", out)
+	}
+}
+
 // TestSyncLFS: longarm run --repo <checkout with Git LFS files>: by default
 // the job's worktree has the pointer files (and the client says so); with
 // --lfs ship the commit's LFS objects travel and the files have their

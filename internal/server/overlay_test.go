@@ -50,7 +50,7 @@ func TestResubmitOverlay(t *testing.T) {
 	c1 := gitT(t, src, "rev-parse", "HEAD")
 	bundle := filepath.Join(t.TempDir(), "b.bundle")
 	gitT(t, src, "bundle", "create", "-q", bundle, "main")
-	if err := store.ImportBundle(cctx(t), "ov", bundle, "main", c1); err != nil {
+	if err := store.ImportBundle(cctx(t), "ov", bundle, "main", c1, nil); err != nil {
 		t.Fatal(err)
 	}
 	stage := func(id, content string) {

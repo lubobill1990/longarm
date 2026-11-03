@@ -282,16 +282,87 @@ func (s *Store) Refs(ctx context.Context, repo string) (bool, []string, error) {
 	if err != nil {
 		return true, nil, err
 	}
+	// a tip with a shallow commit in its history lacks what lies beyond:
+	// a client would leave that out of its bundle (--not tip)
+	partial := map[string]bool{}
+	for _, c := range s.shallowCommits(m) {
+		in, _ := s.run(ctx, m, nil, nil, "for-each-ref", "--contains", c, "--format=%(objectname)", "refs/")
+		for _, t := range strings.Fields(in) {
+			partial[t] = true
+		}
+	}
 	seen := map[string]bool{}
 	var commits []string
 	for _, l := range strings.Split(out, "\n") {
 		sha, typ, _ := strings.Cut(strings.TrimSpace(l), " ")
-		if typ == "commit" && !seen[sha] {
+		if typ == "commit" && !seen[sha] && !partial[sha] {
 			seen[sha] = true
 			commits = append(commits, sha)
 		}
 	}
 	return true, commits, nil
+}
+
+// shallowCommits lists the mirror's shallow commits (from shallow clients:
+// ImportBundle), those whose parents it lacks.
+func (s *Store) shallowCommits(m string) []string {
+	b, _ := os.ReadFile(filepath.Join(m, "shallow"))
+	return strings.Fields(string(b))
+}
+
+// addShallow records commits as the mirror's shallow commits (git then
+// doesn't look for their parents). Called with the mirror lock held.
+func (s *Store) addShallow(m string, commits []string) error {
+	seen := map[string]bool{}
+	var b strings.Builder
+	for _, c := range append(s.shallowCommits(m), commits...) {
+		if !seen[c] {
+			seen[c] = true
+			b.WriteString(c + "\n")
+		}
+	}
+	return os.WriteFile(filepath.Join(m, "shallow"), []byte(b.String()), 0o644)
+}
+
+// pruneShallow drops the shallow commits whose parents the mirror has now
+// (a later bundle brought them), and the shallow file when none is left.
+// Called with the mirror lock held.
+func (s *Store) pruneShallow(ctx context.Context, m string) {
+	cur := s.shallowCommits(m)
+	if len(cur) == 0 {
+		return
+	}
+	var keep []string
+	for _, c := range cur {
+		// cat-file shows the commit's own parents (rev-parse c^@ would
+		// honor the shallow file and show none)
+		raw, err := s.run(ctx, m, nil, nil, "cat-file", "commit", c)
+		if err != nil {
+			continue // not in the mirror (a failed fetch): not shallow
+		}
+		complete := true
+		for _, l := range strings.Split(raw, "\n") {
+			if l == "" {
+				break // the end of the header
+			}
+			if p, ok := strings.CutPrefix(l, "parent "); ok {
+				if _, err := s.run(ctx, m, nil, nil, "cat-file", "-e", p+"^{commit}"); err != nil {
+					complete = false
+				}
+			}
+		}
+		if !complete {
+			keep = append(keep, c)
+		}
+	}
+	if len(keep) == len(cur) {
+		return
+	}
+	if len(keep) == 0 {
+		os.Remove(filepath.Join(m, "shallow"))
+		return
+	}
+	os.WriteFile(filepath.Join(m, "shallow"), []byte(strings.Join(keep, "\n")+"\n"), 0o644)
 }
 
 var shaRE = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
@@ -306,10 +377,17 @@ func refSuffix(s string) string {
 
 // ImportBundle fetches the (single) ref of a bundle into the mirror under
 // refs/longarm/sync/<name> and checks that commit is present afterwards. An empty
-// bundle path only checks for commit.
-func (s *Store) ImportBundle(ctx context.Context, repo, bundle, name, commit string) error {
+// bundle path only checks for commit. shallow: the sender's shallow commits
+// (a shallow clone's: the bundle lacks their parents), recorded as the
+// mirror's own before the fetch.
+func (s *Store) ImportBundle(ctx context.Context, repo, bundle, name, commit string, shallow []string) error {
 	if !shaRE.MatchString(commit) {
 		return fmt.Errorf("bad commit %q", commit)
+	}
+	for _, c := range shallow {
+		if !shaRE.MatchString(c) {
+			return fmt.Errorf("bad shallow commit %q", c)
+		}
 	}
 	m, err := s.ensureMirror(ctx, repo)
 	if err != nil {
@@ -332,8 +410,15 @@ func (s *Store) ImportBundle(ctx context.Context, repo, bundle, name, commit str
 		if src == "" {
 			return errors.New("bundle has no refs")
 		}
-		if _, err := s.run(ctx, m, nil, nil, "fetch", "-q", "--no-tags", "--force", bundle,
-			"+"+src+":refs/longarm/sync/"+refSuffix(name)); err != nil {
+		if len(shallow) > 0 {
+			if err := s.addShallow(m, shallow); err != nil {
+				return err
+			}
+		}
+		_, err = s.run(ctx, m, nil, nil, "fetch", "-q", "--no-tags", "--force", bundle,
+			"+"+src+":refs/longarm/sync/"+refSuffix(name))
+		s.pruneShallow(ctx, m)
+		if err != nil {
 			return err
 		}
 	}

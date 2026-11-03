@@ -467,7 +467,7 @@ func (h *handoffServer) importBundle(ctx context.Context, hdr *pb.SyncHeader, bu
 	}
 	// the bundle's prerequisites must be in the mirror and it must carry
 	// the commit (git fetch from the bundle checks both)
-	if err := h.s.ws().ImportBundle(ctx, hdr.Repo, bundle, hdr.Branch, hdr.Commit); err != nil {
+	if err := h.s.ws().ImportBundle(ctx, hdr.Repo, bundle, hdr.Branch, hdr.Commit, hdr.Shallow); err != nil {
 		return nil, status.Error(codes.Aborted, err.Error())
 	}
 	if err := h.s.ws().Checkout(ctx, hdr.Repo, hdr.Commit, dst, "", "", nil); err != nil {

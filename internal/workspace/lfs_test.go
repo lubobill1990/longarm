@@ -71,7 +71,7 @@ func TestLFSWorktree(t *testing.T) {
 	}
 	bundle := filepath.Join(root, "b1")
 	run(t, src, "bundle", "create", "-q", bundle, "HEAD")
-	if err := s.ImportBundle(ctx, "proj", bundle, "main", c1); err != nil {
+	if err := s.ImportBundle(ctx, "proj", bundle, "main", c1, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -384,7 +384,7 @@ func TestLFSWorktreeNested(t *testing.T) {
 	}
 	bundle := filepath.Join(root, "b1")
 	run(t, src, "bundle", "create", "-q", bundle, "HEAD")
-	if err := s.ImportBundle(ctx, "proj", bundle, "main", c1); err != nil {
+	if err := s.ImportBundle(ctx, "proj", bundle, "main", c1, nil); err != nil {
 		t.Fatal(err)
 	}
 	var log bytes.Buffer
