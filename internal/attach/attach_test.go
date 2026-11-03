@@ -56,3 +56,24 @@ func TestSendPayloadAndInfo(t *testing.T) {
 		t.Fatal(st, err)
 	}
 }
+
+func TestSendXPayload(t *testing.T) {
+	seq := uint64(0)
+	p := SendXPayload(SendOpts{Source: SourceSend, IfInputSeq: &seq, AfterMs: 100}, []byte("\x1b[200~hi\x1b[201~"), []byte("\r"))
+	o, data, after, err := ParseSendX(p)
+	if err != nil || o.Source != SourceSend || o.IfInputSeq == nil || *o.IfInputSeq != 0 || o.AfterMs != 100 ||
+		string(data) != "\x1b[200~hi\x1b[201~" || string(after) != "\r" {
+		t.Fatal(o, data, after, err)
+	}
+	if o, data, after, err = ParseSendX(SendXPayload(SendOpts{Source: SourceSend}, []byte("x"), nil)); err != nil || o.IfInputSeq != nil || string(data) != "x" || len(after) != 0 {
+		t.Fatal(o, data, after, err)
+	}
+	for _, bad := range [][]byte{nil, {0, 0, 0, 9, '{'}, append([]byte{0, 0, 0, 11}, `{"after":5}x`...)} {
+		if _, _, _, err := ParseSendX(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	if st := (InfoState{Features: []string{FeatureSendX}}); !st.Has(FeatureSendX) || st.Has(FeatureReplies) {
+		t.Fatal(st)
+	}
+}

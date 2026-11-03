@@ -85,3 +85,52 @@ func TestHubInputWriteErrors(t *testing.T) {
 		t.Fatalf("short write: sent=%v err=%v seq=%d", sent, err, h.info().InputSeq)
 	}
 }
+
+// if-input-seq: written only while inSeq is unchanged; the after part
+// follows the gap with no other writer in between, and counts as one input.
+func TestHubSendIfSeqAndAfter(t *testing.T) {
+	h := &hub{clients: map[*client]struct{}{}}
+	w := &slowWriter{}
+	h.input(w, []byte("a"), attach.SourceAttach, 0)
+	stale, cur := uint64(0), uint64(1)
+	if sent, _ := h.send(w, []byte("p"), nil, attach.SourceSend, sendCond{ifSeq: &stale}); sent || w.buf.String() != "a" {
+		t.Fatalf("if-seq stale: sent=%v %q", sent, w.buf.String())
+	}
+	done := make(chan struct{})
+	go func() {
+		time.Sleep(20 * time.Millisecond) // within the gap
+		h.input(w, []byte("k"), attach.SourceAttach, 0)
+		close(done)
+	}()
+	if sent, err := h.send(w, []byte("[paste]"), []byte("\r"), attach.SourceSend, sendCond{ifSeq: &cur, afterGap: 100 * time.Millisecond}); !sent || err != nil {
+		t.Fatalf("if-seq current: sent=%v err=%v", sent, err)
+	}
+	<-done
+	if got := w.buf.String(); got != "a[paste]\rk" {
+		t.Fatalf("writes %q", got)
+	}
+	if st := h.info(); st.InputSeq != 3 || st.HumanInputSeq != 2 || !st.Has(attach.FeatureSendX) {
+		t.Fatalf("info %+v", st)
+	}
+}
+
+// Terminal replies of an attached client are written but are no input.
+func TestHubRepliesNotInput(t *testing.T) {
+	h := &hub{clients: map[*client]struct{}{}}
+	w := &slowWriter{}
+	h.input(w, []byte("x"), attach.SourceSend, 0)
+	before := h.info()
+	time.Sleep(5 * time.Millisecond)
+	if sent, _ := h.input(w, []byte("\x1b[?1;2c"), attach.SourceReply, 0); !sent {
+		t.Fatal("reply not written")
+	}
+	st := h.info()
+	if w.buf.String() != "x\x1b[?1;2c" || st.InputSeq != 1 || st.HumanInputSeq != 0 || st.LastInputSource != attach.SourceSend || !st.LastInput.Equal(before.LastInput) {
+		t.Fatalf("after a reply: %q %+v", w.buf.String(), st)
+	}
+	// an if-input-seq send taken after the reply still matches
+	seq := st.InputSeq
+	if sent, _ := h.send(w, []byte("y"), nil, attach.SourceSend, sendCond{ifSeq: &seq}); !sent {
+		t.Fatal("a reply moved inputSeq")
+	}
+}
