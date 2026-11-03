@@ -39,8 +39,24 @@ func TestInventoryWithoutProfile(t *testing.T) {
 	r.Disabled = true
 	r.SetDesired(&pb.ToolchainDesired{Tools: []*pb.ToolSpec{{Name: "node", Version: "22"}}})
 	r.reconcile(context.Background())
-	if r.Status().State != "none" || r.Status().Versions["node"] != "" {
+	if r.Status().State != "failed" || r.Status().Error == "" || r.Status().Versions["node"] != "" {
 		t.Fatal("disabled reconciler installed tools")
+	}
+}
+
+func TestOwnerToolsWithoutProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fake.json")
+	r := &Reconciler{Backend: &Fake{Path: path}, Log: slog.Default(),
+		Running: func() int { return 0 }, Drain: func(bool, string) {}}
+	r.SetDesired(&pb.ToolchainDesired{OwnerRevision: 3, Tools: []*pb.ToolSpec{{Name: "node", Version: "22"}}})
+	r.reconcile(context.Background())
+	if rep := r.Status(); rep.State != "ok" || rep.OwnerRevision != 3 || rep.Versions["node"] != "22.0.0" {
+		t.Fatalf("owner tools: %v", rep)
+	}
+	r.SetDesired(&pb.ToolchainDesired{OwnerRevision: 4})
+	r.reconcile(context.Background())
+	if rep := r.Status(); rep.State != "none" || rep.OwnerRevision != 4 || rep.Versions["node"] != "22.0.0" {
+		t.Fatalf("clear uninstalled tools: %v", rep)
 	}
 }
 

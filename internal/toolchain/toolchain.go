@@ -116,16 +116,17 @@ func (r *Reconciler) Status() *pb.ToolchainReport {
 	return proto.Clone(r.report).(*pb.ToolchainReport)
 }
 
-func (r *Reconciler) setReport(rep *pb.ToolchainReport) {
+func (r *Reconciler) setReport(rep *pb.ToolchainReport) bool {
 	rep.UpdatedAt = timestamppb.Now()
 	r.mu.Lock()
 	changed := r.report == nil || r.report.Profile != rep.Profile || r.report.State != rep.State || r.report.Revision != rep.Revision ||
-		r.report.Error != rep.Error || !maps.Equal(r.report.Versions, rep.Versions)
+		r.report.OwnerRevision != rep.OwnerRevision || r.report.Error != rep.Error || !maps.Equal(r.report.Versions, rep.Versions)
 	r.report = rep
 	r.mu.Unlock()
 	if changed && r.Report != nil {
 		r.Report(proto.Clone(rep).(*pb.ToolchainReport))
 	}
+	return changed
 }
 
 // Run reconciles until ctx is done.
@@ -153,7 +154,9 @@ func (r *Reconciler) Run(ctx context.Context) {
 		case <-inventory.C:
 			rep := r.Status()
 			rep.Versions, _ = r.check(ctx, &pb.ToolchainDesired{})
-			r.setReport(rep)
+			if !r.setReport(rep) && r.Report != nil {
+				r.Report(r.Status())
+			}
 			continue
 		}
 		r.reconcile(ctx)
@@ -173,13 +176,7 @@ func (r *Reconciler) current() *pb.ToolchainDesired {
 func (r *Reconciler) check(ctx context.Context, d *pb.ToolchainDesired) (map[string]string, []*pb.ToolSpec) {
 	versions := map[string]string{}
 	var todo []*pb.ToolSpec
-	names := append([]string{}, KnownTools...)
-	for _, t := range d.Tools {
-		if _, ok := versionArgs[t.Name]; !ok {
-			names = append(names, t.Name)
-		}
-	}
-	for _, name := range names {
+	for _, name := range KnownTools {
 		cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		v, err := r.Backend.Version(cctx, name)
 		cancel()
@@ -202,12 +199,27 @@ func (r *Reconciler) reconcile(ctx context.Context) {
 		d = &pb.ToolchainDesired{}
 	}
 	versions, todo := r.check(ctx, d)
+	report := func(state, message string) {
+		changed := r.setReport(&pb.ToolchainReport{Profile: d.Profile, Revision: d.Revision, OwnerRevision: d.OwnerRevision,
+			State: state, Error: message, Versions: versions})
+		if !changed && state != "pending" && r.Report != nil {
+			r.Report(r.Status())
+		}
+	}
+	if r.Disabled && len(d.Tools) > 0 {
+		report("failed", "toolchain installation is disabled on this worker")
+		return
+	}
 	if r.Disabled || len(d.Tools) == 0 {
-		r.setReport(&pb.ToolchainReport{Profile: d.Profile, Revision: d.Revision, State: "none", Versions: versions})
+		state := "none"
+		if !r.Disabled && d.Revision > 0 {
+			state = "ok"
+		}
+		report(state, "")
 		return
 	}
 	if len(todo) == 0 {
-		r.setReport(&pb.ToolchainReport{Profile: d.Profile, Revision: d.Revision, State: "ok", Versions: versions})
+		report("ok", "")
 		return
 	}
 	names := make([]string, len(todo))
@@ -218,8 +230,7 @@ func (r *Reconciler) reconcile(ctx context.Context) {
 	r.Drain(true, reason)
 	defer r.Drain(false, "")
 	for r.Running() > 0 {
-		r.setReport(&pb.ToolchainReport{Profile: d.Profile, Revision: d.Revision, State: "pending", Versions: versions,
-			Error: fmt.Sprintf("waiting for %d running job(s) to finish", r.Running())})
+		report("pending", fmt.Sprintf("waiting for %d running job(s) to finish", r.Running()))
 		select {
 		case <-ctx.Done():
 			return
@@ -230,11 +241,15 @@ func (r *Reconciler) reconcile(ctx context.Context) {
 			return
 		}
 	}
-	r.setReport(&pb.ToolchainReport{Profile: d.Profile, Revision: d.Revision, State: "applying", Versions: versions})
+	report("applying", "")
 	r.Log.Info("toolchain: installing", "tools", names)
 	var errs []string
 	sort.Slice(todo, func(i, j int) bool { return installOrder(todo[i].Name) < installOrder(todo[j].Name) })
 	for _, t := range todo {
+		if !proto.Equal(r.current(), d) {
+			r.Kick()
+			return
+		}
 		ictx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 		err := r.Backend.Install(ictx, t.Name, t.Version, r.Log)
 		cancel()
@@ -250,12 +265,11 @@ func (r *Reconciler) reconcile(ctx context.Context) {
 	}
 	if len(errs) > 0 {
 		r.Log.Warn("toolchain: failed", "errors", errs)
-		r.setReport(&pb.ToolchainReport{Profile: d.Profile, Revision: d.Revision, State: "failed", Versions: versions,
-			Error: strings.Join(errs, "; ")})
+		report("failed", strings.Join(errs, "; "))
 		return
 	}
 	r.Log.Info("toolchain: ok", "profile", d.Profile, "revision", d.Revision, "versions", versions)
-	r.setReport(&pb.ToolchainReport{Profile: d.Profile, Revision: d.Revision, State: "ok", Versions: versions})
+	report("ok", "")
 }
 
 func slicesContainsPrefix(s []string, p string) bool {

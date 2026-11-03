@@ -138,7 +138,7 @@ func TestCLIFeatures(t *testing.T) {
 		}
 		seen[f] = true
 	}
-	for _, f := range []string{"exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label"} {
+	for _, f := range []string{"exit-codes", "jobs-source", "jobs-hub-only", "stdin-file", "lfs", "ref-sha", "worker-label", "toolchain-report", "worker-toolchain"} {
 		if !seen[f] {
 			t.Errorf("missing feature %s", f)
 		}

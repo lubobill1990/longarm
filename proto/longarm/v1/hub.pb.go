@@ -2011,11 +2011,12 @@ type ToolchainReport struct {
 	Profile  string                 `protobuf:"bytes,1,opt,name=profile,proto3" json:"profile,omitempty"`
 	Revision int64                  `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
 	// "ok" | "pending" (waiting for running jobs to finish) | "applying" |
-	// "failed" | "none" (no profile)
+	// "failed" | "none" (no desired tools)
 	State         string                 `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`
 	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
 	Versions      map[string]string      `protobuf:"bytes,5,rep,name=versions,proto3" json:"versions,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // installed versions ("" = missing)
 	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	OwnerRevision int64                  `protobuf:"varint,7,opt,name=owner_revision,json=ownerRevision,proto3" json:"owner_revision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2090,6 +2091,13 @@ func (x *ToolchainReport) GetUpdatedAt() *timestamppb.Timestamp {
 		return x.UpdatedAt
 	}
 	return nil
+}
+
+func (x *ToolchainReport) GetOwnerRevision() int64 {
+	if x != nil {
+		return x.OwnerRevision
+	}
+	return 0
 }
 
 type HubCommand struct {
@@ -3228,6 +3236,7 @@ type ToolchainDesired struct {
 	Profile       string                 `protobuf:"bytes,1,opt,name=profile,proto3" json:"profile,omitempty"` // "" = none assigned
 	Revision      int64                  `protobuf:"varint,2,opt,name=revision,proto3" json:"revision,omitempty"`
 	Tools         []*ToolSpec            `protobuf:"bytes,3,rep,name=tools,proto3" json:"tools,omitempty"`
+	OwnerRevision int64                  `protobuf:"varint,4,opt,name=owner_revision,json=ownerRevision,proto3" json:"owner_revision,omitempty"` // per-worker desired tools revision
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3281,6 +3290,13 @@ func (x *ToolchainDesired) GetTools() []*ToolSpec {
 		return x.Tools
 	}
 	return nil
+}
+
+func (x *ToolchainDesired) GetOwnerRevision() int64 {
+	if x != nil {
+		return x.OwnerRevision
+	}
+	return 0
 }
 
 type AuditAck struct {
@@ -11569,6 +11585,158 @@ func (x *HandoffPairResponse) GetExpiresAt() *timestamppb.Timestamp {
 	return nil
 }
 
+type WorkerToolchainRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Worker        string                 `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"`
+	Tools         []*ToolSpec            `protobuf:"bytes,2,rep,name=tools,proto3" json:"tools,omitempty"`
+	SetTools      bool                   `protobuf:"varint,3,opt,name=set_tools,json=setTools,proto3" json:"set_tools,omitempty"` // replace owner tools, including an empty list
+	Clear         bool                   `protobuf:"varint,4,opt,name=clear,proto3" json:"clear,omitempty"`
+	Apply         bool                   `protobuf:"varint,5,opt,name=apply,proto3" json:"apply,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkerToolchainRequest) Reset() {
+	*x = WorkerToolchainRequest{}
+	mi := &file_longarm_v1_hub_proto_msgTypes[147]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkerToolchainRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkerToolchainRequest) ProtoMessage() {}
+
+func (x *WorkerToolchainRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_hub_proto_msgTypes[147]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkerToolchainRequest.ProtoReflect.Descriptor instead.
+func (*WorkerToolchainRequest) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{147}
+}
+
+func (x *WorkerToolchainRequest) GetWorker() string {
+	if x != nil {
+		return x.Worker
+	}
+	return ""
+}
+
+func (x *WorkerToolchainRequest) GetTools() []*ToolSpec {
+	if x != nil {
+		return x.Tools
+	}
+	return nil
+}
+
+func (x *WorkerToolchainRequest) GetSetTools() bool {
+	if x != nil {
+		return x.SetTools
+	}
+	return false
+}
+
+func (x *WorkerToolchainRequest) GetClear() bool {
+	if x != nil {
+		return x.Clear
+	}
+	return false
+}
+
+func (x *WorkerToolchainRequest) GetApply() bool {
+	if x != nil {
+		return x.Apply
+	}
+	return false
+}
+
+type WorkerToolchainResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Worker        string                 `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"`
+	WorkerId      string                 `protobuf:"bytes,2,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	OwnerTools    []*ToolSpec            `protobuf:"bytes,3,rep,name=owner_tools,json=ownerTools,proto3" json:"owner_tools,omitempty"`
+	Desired       *ToolchainDesired      `protobuf:"bytes,4,opt,name=desired,proto3" json:"desired,omitempty"`     // effective tools, admin profile wins
+	Toolchain     *ToolchainReport       `protobuf:"bytes,5,opt,name=toolchain,proto3" json:"toolchain,omitempty"` // absent on older workers
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkerToolchainResponse) Reset() {
+	*x = WorkerToolchainResponse{}
+	mi := &file_longarm_v1_hub_proto_msgTypes[148]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkerToolchainResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkerToolchainResponse) ProtoMessage() {}
+
+func (x *WorkerToolchainResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_hub_proto_msgTypes[148]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkerToolchainResponse.ProtoReflect.Descriptor instead.
+func (*WorkerToolchainResponse) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_hub_proto_rawDescGZIP(), []int{148}
+}
+
+func (x *WorkerToolchainResponse) GetWorker() string {
+	if x != nil {
+		return x.Worker
+	}
+	return ""
+}
+
+func (x *WorkerToolchainResponse) GetWorkerId() string {
+	if x != nil {
+		return x.WorkerId
+	}
+	return ""
+}
+
+func (x *WorkerToolchainResponse) GetOwnerTools() []*ToolSpec {
+	if x != nil {
+		return x.OwnerTools
+	}
+	return nil
+}
+
+func (x *WorkerToolchainResponse) GetDesired() *ToolchainDesired {
+	if x != nil {
+		return x.Desired
+	}
+	return nil
+}
+
+func (x *WorkerToolchainResponse) GetToolchain() *ToolchainReport {
+	if x != nil {
+		return x.Toolchain
+	}
+	return nil
+}
+
 var File_longarm_v1_hub_proto protoreflect.FileDescriptor
 
 const file_longarm_v1_hub_proto_rawDesc = "" +
@@ -11749,7 +11917,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"nextOffset\"8\n" +
 	"\bToolSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\tR\aversion\"\xb2\x02\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\"\xd9\x02\n" +
 	"\x0fToolchainReport\x12\x18\n" +
 	"\aprofile\x18\x01 \x01(\tR\aprofile\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\x03R\brevision\x12\x14\n" +
@@ -11757,7 +11925,8 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12E\n" +
 	"\bversions\x18\x05 \x03(\v2).longarm.v1.ToolchainReport.VersionsEntryR\bversions\x129\n" +
 	"\n" +
-	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x1a;\n" +
+	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12%\n" +
+	"\x0eowner_revision\x18\a \x01(\x03R\rownerRevision\x1a;\n" +
 	"\rVersionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa5\a\n" +
@@ -11848,11 +12017,12 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\vRevokedCert\x12\x16\n" +
 	"\x06serial\x18\x01 \x01(\tR\x06serial\x127\n" +
 	"\tnot_after\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\bnotAfter\x12\x12\n" +
-	"\x04node\x18\x03 \x01(\tR\x04node\"t\n" +
+	"\x04node\x18\x03 \x01(\tR\x04node\"\x9b\x01\n" +
 	"\x10ToolchainDesired\x12\x18\n" +
 	"\aprofile\x18\x01 \x01(\tR\aprofile\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\x03R\brevision\x12*\n" +
-	"\x05tools\x18\x03 \x03(\v2\x14.longarm.v1.ToolSpecR\x05tools\"\"\n" +
+	"\x05tools\x18\x03 \x03(\v2\x14.longarm.v1.ToolSpecR\x05tools\x12%\n" +
+	"\x0eowner_revision\x18\x04 \x01(\x03R\rownerRevision\"\"\n" +
 	"\bAuditAck\x12\x16\n" +
 	"\x06offset\x18\x01 \x01(\x03R\x06offset\"*\n" +
 	"\fDrainCommand\x12\x1a\n" +
@@ -12581,7 +12751,20 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x04b_id\x18\x06 \x01(\tR\x03bId\"P\n" +
 	"\x13HandoffPairResponse\x129\n" +
 	"\n" +
-	"expires_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt2\xa3\x03\n" +
+	"expires_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"\xa5\x01\n" +
+	"\x16WorkerToolchainRequest\x12\x16\n" +
+	"\x06worker\x18\x01 \x01(\tR\x06worker\x12*\n" +
+	"\x05tools\x18\x02 \x03(\v2\x14.longarm.v1.ToolSpecR\x05tools\x12\x1b\n" +
+	"\tset_tools\x18\x03 \x01(\bR\bsetTools\x12\x14\n" +
+	"\x05clear\x18\x04 \x01(\bR\x05clear\x12\x14\n" +
+	"\x05apply\x18\x05 \x01(\bR\x05apply\"\xf8\x01\n" +
+	"\x17WorkerToolchainResponse\x12\x16\n" +
+	"\x06worker\x18\x01 \x01(\tR\x06worker\x12\x1b\n" +
+	"\tworker_id\x18\x02 \x01(\tR\bworkerId\x125\n" +
+	"\vowner_tools\x18\x03 \x03(\v2\x14.longarm.v1.ToolSpecR\n" +
+	"ownerTools\x126\n" +
+	"\adesired\x18\x04 \x01(\v2\x1c.longarm.v1.ToolchainDesiredR\adesired\x129\n" +
+	"\ttoolchain\x18\x05 \x01(\v2\x1b.longarm.v1.ToolchainReportR\ttoolchain2\xa3\x03\n" +
 	"\x06Enroll\x129\n" +
 	"\x04Join\x12\x17.longarm.v1.JoinRequest\x1a\x18.longarm.v1.JoinResponse\x12E\n" +
 	"\n" +
@@ -12594,7 +12777,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\aConnect\x12\x16.longarm.v1.NodeReport\x1a\x16.longarm.v1.HubCommand(\x010\x01\x12<\n" +
 	"\x05Renew\x12\x18.longarm.v1.RenewRequest\x1a\x19.longarm.v1.RenewResponse\x12<\n" +
 	"\x05Leave\x12\x18.longarm.v1.LeaveRequest\x1a\x19.longarm.v1.LeaveResponse\x12D\n" +
-	"\tRelaySync\x12\x1c.longarm.v1.RelaySyncRequest\x1a\x17.longarm.v1.RelayPolicy0\x012\xda\f\n" +
+	"\tRelaySync\x12\x1c.longarm.v1.RelaySyncRequest\x1a\x17.longarm.v1.RelayPolicy0\x012\xb6\r\n" +
 	"\x05Fleet\x12H\n" +
 	"\tListNodes\x12\x1c.longarm.v1.ListNodesRequest\x1a\x1d.longarm.v1.ListNodesResponse\x12G\n" +
 	"\bListJobs\x12\x1c.longarm.v1.FleetJobsRequest\x1a\x1d.longarm.v1.FleetJobsResponse\x12;\n" +
@@ -12614,7 +12797,8 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x10CreateWorkerCode\x12#.longarm.v1.CreateWorkerCodeRequest\x1a\x14.longarm.v1.JoinCode\x12C\n" +
 	"\vShareWorker\x12\x1e.longarm.v1.ShareWorkerRequest\x1a\x14.longarm.v1.NodeInfo\x12=\n" +
 	"\fRemoveWorker\x12\x17.longarm.v1.NodeRequest\x1a\x14.longarm.v1.NodeInfo\x12E\n" +
-	"\x0fSetWorkerLabels\x12\x1c.longarm.v1.SetLabelsRequest\x1a\x14.longarm.v1.NodeInfo\x12C\n" +
+	"\x0fSetWorkerLabels\x12\x1c.longarm.v1.SetLabelsRequest\x1a\x14.longarm.v1.NodeInfo\x12Z\n" +
+	"\x0fWorkerToolchain\x12\".longarm.v1.WorkerToolchainRequest\x1a#.longarm.v1.WorkerToolchainResponse\x12C\n" +
 	"\fRenameWorker\x12\x1d.longarm.v1.RenameNodeRequest\x1a\x14.longarm.v1.NodeInfo\x12I\n" +
 	"\x0eCreatePortLink\x12!.longarm.v1.CreatePortLinkRequest\x1a\x14.longarm.v1.PortLink\x12T\n" +
 	"\rListPortLinks\x12 .longarm.v1.ListPortLinksRequest\x1a!.longarm.v1.ListPortLinksResponse\x12I\n" +
@@ -12666,7 +12850,7 @@ func file_longarm_v1_hub_proto_rawDescGZIP() []byte {
 	return file_longarm_v1_hub_proto_rawDescData
 }
 
-var file_longarm_v1_hub_proto_msgTypes = make([]protoimpl.MessageInfo, 162)
+var file_longarm_v1_hub_proto_msgTypes = make([]protoimpl.MessageInfo, 164)
 var file_longarm_v1_hub_proto_goTypes = []any{
 	(*AuthInfoRequest)(nil),         // 0: longarm.v1.AuthInfoRequest
 	(*AuthInfoResponse)(nil),        // 1: longarm.v1.AuthInfoResponse
@@ -12815,49 +12999,51 @@ var file_longarm_v1_hub_proto_goTypes = []any{
 	(*RelaysResponse)(nil),          // 144: longarm.v1.RelaysResponse
 	(*HandoffPairRequest)(nil),      // 145: longarm.v1.HandoffPairRequest
 	(*HandoffPairResponse)(nil),     // 146: longarm.v1.HandoffPairResponse
-	nil,                             // 147: longarm.v1.EntraJoinRequest.LabelsEntry
-	nil,                             // 148: longarm.v1.StartLinkRequest.WorkerLabelsEntry
-	nil,                             // 149: longarm.v1.JoinResponse.LabelsEntry
-	nil,                             // 150: longarm.v1.NodeHello.LabelsEntry
-	nil,                             // 151: longarm.v1.ToolchainReport.VersionsEntry
-	nil,                             // 152: longarm.v1.NodeInfo.LabelsEntry
-	nil,                             // 153: longarm.v1.PlaceRequest.RequireEntry
-	nil,                             // 154: longarm.v1.CreateWorkerCodeRequest.LabelsEntry
-	nil,                             // 155: longarm.v1.HubSubmitRequest.EnvEntry
-	nil,                             // 156: longarm.v1.HubSubmitRequest.LabelsEntry
-	nil,                             // 157: longarm.v1.HubSubmitRequest.RequireEntry
-	nil,                             // 158: longarm.v1.CreateJoinCodeRequest.LabelsEntry
-	nil,                             // 159: longarm.v1.JoinCode.LabelsEntry
-	nil,                             // 160: longarm.v1.SetLabelsRequest.LabelsEntry
-	nil,                             // 161: longarm.v1.RelaysResponse.LegacyVersionsEntry
-	(*timestamppb.Timestamp)(nil),   // 162: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),     // 163: google.protobuf.Duration
-	(*MetricsSnapshot)(nil),         // 164: longarm.v1.MetricsSnapshot
-	(*Job)(nil),                     // 165: longarm.v1.Job
-	(*LogChunk)(nil),                // 166: longarm.v1.LogChunk
-	(*JobSpec)(nil),                 // 167: longarm.v1.JobSpec
-	(JobState)(0),                   // 168: longarm.v1.JobState
-	(*SignedPortLinkGrant)(nil),     // 169: longarm.v1.SignedPortLinkGrant
-	(*FileChunk)(nil),               // 170: longarm.v1.FileChunk
+	(*WorkerToolchainRequest)(nil),  // 147: longarm.v1.WorkerToolchainRequest
+	(*WorkerToolchainResponse)(nil), // 148: longarm.v1.WorkerToolchainResponse
+	nil,                             // 149: longarm.v1.EntraJoinRequest.LabelsEntry
+	nil,                             // 150: longarm.v1.StartLinkRequest.WorkerLabelsEntry
+	nil,                             // 151: longarm.v1.JoinResponse.LabelsEntry
+	nil,                             // 152: longarm.v1.NodeHello.LabelsEntry
+	nil,                             // 153: longarm.v1.ToolchainReport.VersionsEntry
+	nil,                             // 154: longarm.v1.NodeInfo.LabelsEntry
+	nil,                             // 155: longarm.v1.PlaceRequest.RequireEntry
+	nil,                             // 156: longarm.v1.CreateWorkerCodeRequest.LabelsEntry
+	nil,                             // 157: longarm.v1.HubSubmitRequest.EnvEntry
+	nil,                             // 158: longarm.v1.HubSubmitRequest.LabelsEntry
+	nil,                             // 159: longarm.v1.HubSubmitRequest.RequireEntry
+	nil,                             // 160: longarm.v1.CreateJoinCodeRequest.LabelsEntry
+	nil,                             // 161: longarm.v1.JoinCode.LabelsEntry
+	nil,                             // 162: longarm.v1.SetLabelsRequest.LabelsEntry
+	nil,                             // 163: longarm.v1.RelaysResponse.LegacyVersionsEntry
+	(*timestamppb.Timestamp)(nil),   // 164: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),     // 165: google.protobuf.Duration
+	(*MetricsSnapshot)(nil),         // 166: longarm.v1.MetricsSnapshot
+	(*Job)(nil),                     // 167: longarm.v1.Job
+	(*LogChunk)(nil),                // 168: longarm.v1.LogChunk
+	(*JobSpec)(nil),                 // 169: longarm.v1.JobSpec
+	(JobState)(0),                   // 170: longarm.v1.JobState
+	(*SignedPortLinkGrant)(nil),     // 171: longarm.v1.SignedPortLinkGrant
+	(*FileChunk)(nil),               // 172: longarm.v1.FileChunk
 }
 var file_longarm_v1_hub_proto_depIdxs = []int32{
-	147, // 0: longarm.v1.EntraJoinRequest.labels:type_name -> longarm.v1.EntraJoinRequest.LabelsEntry
-	148, // 1: longarm.v1.StartLinkRequest.worker_labels:type_name -> longarm.v1.StartLinkRequest.WorkerLabelsEntry
+	149, // 0: longarm.v1.EntraJoinRequest.labels:type_name -> longarm.v1.EntraJoinRequest.LabelsEntry
+	150, // 1: longarm.v1.StartLinkRequest.worker_labels:type_name -> longarm.v1.StartLinkRequest.WorkerLabelsEntry
 	4,   // 2: longarm.v1.StartLinkRequest.replaces:type_name -> longarm.v1.LinkReplace
-	162, // 3: longarm.v1.StartLinkResponse.expires_at:type_name -> google.protobuf.Timestamp
-	163, // 4: longarm.v1.StartLinkResponse.interval:type_name -> google.protobuf.Duration
+	164, // 3: longarm.v1.StartLinkResponse.expires_at:type_name -> google.protobuf.Timestamp
+	165, // 4: longarm.v1.StartLinkResponse.interval:type_name -> google.protobuf.Duration
 	107, // 5: longarm.v1.JoinResponse.tailnet:type_name -> longarm.v1.TailnetAuth
 	8,   // 6: longarm.v1.JoinResponse.worker:type_name -> longarm.v1.JoinResponse
-	149, // 7: longarm.v1.JoinResponse.labels:type_name -> longarm.v1.JoinResponse.LabelsEntry
+	151, // 7: longarm.v1.JoinResponse.labels:type_name -> longarm.v1.JoinResponse.LabelsEntry
 	8,   // 8: longarm.v1.JoinResponse.admin_worker:type_name -> longarm.v1.JoinResponse
-	162, // 9: longarm.v1.RelayPolicy.time:type_name -> google.protobuf.Timestamp
-	163, // 10: longarm.v1.RelayPolicy.ttl:type_name -> google.protobuf.Duration
+	164, // 9: longarm.v1.RelayPolicy.time:type_name -> google.protobuf.Timestamp
+	165, // 10: longarm.v1.RelayPolicy.ttl:type_name -> google.protobuf.Duration
 	33,  // 11: longarm.v1.RelayPolicy.revocations:type_name -> longarm.v1.Revocations
 	12,  // 12: longarm.v1.RelayPolicy.worker_pairs:type_name -> longarm.v1.WorkerPair
-	163, // 13: longarm.v1.RelayPolicy.renew_before:type_name -> google.protobuf.Duration
+	165, // 13: longarm.v1.RelayPolicy.renew_before:type_name -> google.protobuf.Duration
 	13,  // 14: longarm.v1.RelaySet.relays:type_name -> longarm.v1.RelayEndpoint
 	17,  // 15: longarm.v1.NodeReport.hello:type_name -> longarm.v1.NodeHello
-	164, // 16: longarm.v1.NodeReport.metrics:type_name -> longarm.v1.MetricsSnapshot
+	166, // 16: longarm.v1.NodeReport.metrics:type_name -> longarm.v1.MetricsSnapshot
 	20,  // 17: longarm.v1.NodeReport.jobs:type_name -> longarm.v1.JobsReport
 	21,  // 18: longarm.v1.NodeReport.audit:type_name -> longarm.v1.AuditBatch
 	23,  // 19: longarm.v1.NodeReport.toolchain:type_name -> longarm.v1.ToolchainReport
@@ -12865,16 +13051,16 @@ var file_longarm_v1_hub_proto_depIdxs = []int32{
 	114, // 21: longarm.v1.NodeReport.update:type_name -> longarm.v1.UpdateStatus
 	16,  // 22: longarm.v1.NodeReport.reply:type_name -> longarm.v1.HubReply
 	133, // 23: longarm.v1.NodeReport.port_links:type_name -> longarm.v1.PortLinkReport
-	165, // 24: longarm.v1.HubReply.job:type_name -> longarm.v1.Job
-	166, // 25: longarm.v1.HubReply.log:type_name -> longarm.v1.LogChunk
-	150, // 26: longarm.v1.NodeHello.labels:type_name -> longarm.v1.NodeHello.LabelsEntry
+	167, // 24: longarm.v1.HubReply.job:type_name -> longarm.v1.Job
+	168, // 25: longarm.v1.HubReply.log:type_name -> longarm.v1.LogChunk
+	152, // 26: longarm.v1.NodeHello.labels:type_name -> longarm.v1.NodeHello.LabelsEntry
 	18,  // 27: longarm.v1.NodeHello.state:type_name -> longarm.v1.NodeState
 	114, // 28: longarm.v1.NodeHello.update:type_name -> longarm.v1.UpdateStatus
 	110, // 29: longarm.v1.NodeHello.tailnet:type_name -> longarm.v1.TailnetState
 	19,  // 30: longarm.v1.NodeState.update_available:type_name -> longarm.v1.UpdateAvailable
-	165, // 31: longarm.v1.JobsReport.jobs:type_name -> longarm.v1.Job
-	151, // 32: longarm.v1.ToolchainReport.versions:type_name -> longarm.v1.ToolchainReport.VersionsEntry
-	162, // 33: longarm.v1.ToolchainReport.updated_at:type_name -> google.protobuf.Timestamp
+	167, // 31: longarm.v1.JobsReport.jobs:type_name -> longarm.v1.Job
+	153, // 32: longarm.v1.ToolchainReport.versions:type_name -> longarm.v1.ToolchainReport.VersionsEntry
+	164, // 33: longarm.v1.ToolchainReport.updated_at:type_name -> google.protobuf.Timestamp
 	32,  // 34: longarm.v1.HubCommand.welcome:type_name -> longarm.v1.HubWelcome
 	33,  // 35: longarm.v1.HubCommand.revocations:type_name -> longarm.v1.Revocations
 	37,  // 36: longarm.v1.HubCommand.toolchain:type_name -> longarm.v1.ToolchainDesired
@@ -12891,267 +13077,273 @@ var file_longarm_v1_hub_proto_depIdxs = []int32{
 	134, // 47: longarm.v1.HubCommand.port_links:type_name -> longarm.v1.PortLinks
 	25,  // 48: longarm.v1.HubCommand.restarting:type_name -> longarm.v1.HubRestarting
 	14,  // 49: longarm.v1.HubCommand.relays:type_name -> longarm.v1.RelaySet
-	163, // 50: longarm.v1.HubRestarting.reconnect_after:type_name -> google.protobuf.Duration
+	165, // 50: longarm.v1.HubRestarting.reconnect_after:type_name -> google.protobuf.Duration
 	27,  // 51: longarm.v1.WorkerAccess.shares:type_name -> longarm.v1.WorkerShares
-	167, // 52: longarm.v1.HubJobSubmit.spec:type_name -> longarm.v1.JobSpec
-	163, // 53: longarm.v1.HubWelcome.metrics_interval:type_name -> google.protobuf.Duration
-	163, // 54: longarm.v1.HubWelcome.renew_before:type_name -> google.protobuf.Duration
+	169, // 52: longarm.v1.HubJobSubmit.spec:type_name -> longarm.v1.JobSpec
+	165, // 53: longarm.v1.HubWelcome.metrics_interval:type_name -> google.protobuf.Duration
+	165, // 54: longarm.v1.HubWelcome.renew_before:type_name -> google.protobuf.Duration
 	109, // 55: longarm.v1.HubWelcome.tailnet:type_name -> longarm.v1.TailnetInfo
 	13,  // 56: longarm.v1.HubWelcome.relays:type_name -> longarm.v1.RelayEndpoint
 	36,  // 57: longarm.v1.Revocations.certs:type_name -> longarm.v1.RevokedCert
 	35,  // 58: longarm.v1.Revocations.nodes:type_name -> longarm.v1.RevokedNode
 	34,  // 59: longarm.v1.Revocations.names:type_name -> longarm.v1.RevokedName
-	162, // 60: longarm.v1.RevokedName.not_after:type_name -> google.protobuf.Timestamp
-	162, // 61: longarm.v1.RevokedNode.not_after:type_name -> google.protobuf.Timestamp
-	162, // 62: longarm.v1.RevokedCert.not_after:type_name -> google.protobuf.Timestamp
+	164, // 60: longarm.v1.RevokedName.not_after:type_name -> google.protobuf.Timestamp
+	164, // 61: longarm.v1.RevokedNode.not_after:type_name -> google.protobuf.Timestamp
+	164, // 62: longarm.v1.RevokedCert.not_after:type_name -> google.protobuf.Timestamp
 	22,  // 63: longarm.v1.ToolchainDesired.tools:type_name -> longarm.v1.ToolSpec
-	162, // 64: longarm.v1.LinkSample.time:type_name -> google.protobuf.Timestamp
-	162, // 65: longarm.v1.LegStatus.since:type_name -> google.protobuf.Timestamp
+	164, // 64: longarm.v1.LinkSample.time:type_name -> google.protobuf.Timestamp
+	164, // 65: longarm.v1.LegStatus.since:type_name -> google.protobuf.Timestamp
 	42,  // 66: longarm.v1.LegStatus.history:type_name -> longarm.v1.LinkSample
-	162, // 67: longarm.v1.LegStatus.relay_since:type_name -> google.protobuf.Timestamp
+	164, // 67: longarm.v1.LegStatus.relay_since:type_name -> google.protobuf.Timestamp
 	43,  // 68: longarm.v1.WorkerLink.legs:type_name -> longarm.v1.LegStatus
-	162, // 69: longarm.v1.WorkerLink.since:type_name -> google.protobuf.Timestamp
-	162, // 70: longarm.v1.LinkReport.time:type_name -> google.protobuf.Timestamp
+	164, // 69: longarm.v1.WorkerLink.since:type_name -> google.protobuf.Timestamp
+	164, // 70: longarm.v1.LinkReport.time:type_name -> google.protobuf.Timestamp
 	44,  // 71: longarm.v1.LinkReport.links:type_name -> longarm.v1.WorkerLink
 	45,  // 72: longarm.v1.LinksResponse.reports:type_name -> longarm.v1.LinkReport
-	162, // 73: longarm.v1.MetricsPoint.time:type_name -> google.protobuf.Timestamp
+	164, // 73: longarm.v1.MetricsPoint.time:type_name -> google.protobuf.Timestamp
 	50,  // 74: longarm.v1.NodeHistory.points:type_name -> longarm.v1.MetricsPoint
 	51,  // 75: longarm.v1.HistoryResponse.nodes:type_name -> longarm.v1.NodeHistory
-	152, // 76: longarm.v1.NodeInfo.labels:type_name -> longarm.v1.NodeInfo.LabelsEntry
-	164, // 77: longarm.v1.NodeInfo.metrics:type_name -> longarm.v1.MetricsSnapshot
-	162, // 78: longarm.v1.NodeInfo.last_seen:type_name -> google.protobuf.Timestamp
-	162, // 79: longarm.v1.NodeInfo.joined_at:type_name -> google.protobuf.Timestamp
-	162, // 80: longarm.v1.NodeInfo.cert_not_after:type_name -> google.protobuf.Timestamp
+	154, // 76: longarm.v1.NodeInfo.labels:type_name -> longarm.v1.NodeInfo.LabelsEntry
+	166, // 77: longarm.v1.NodeInfo.metrics:type_name -> longarm.v1.MetricsSnapshot
+	164, // 78: longarm.v1.NodeInfo.last_seen:type_name -> google.protobuf.Timestamp
+	164, // 79: longarm.v1.NodeInfo.joined_at:type_name -> google.protobuf.Timestamp
+	164, // 80: longarm.v1.NodeInfo.cert_not_after:type_name -> google.protobuf.Timestamp
 	23,  // 81: longarm.v1.NodeInfo.toolchain:type_name -> longarm.v1.ToolchainReport
 	110, // 82: longarm.v1.NodeInfo.tailnet:type_name -> longarm.v1.TailnetState
 	27,  // 83: longarm.v1.NodeInfo.shares:type_name -> longarm.v1.WorkerShares
 	19,  // 84: longarm.v1.NodeInfo.update_available:type_name -> longarm.v1.UpdateAvailable
 	54,  // 85: longarm.v1.NodeInfo.update:type_name -> longarm.v1.NodeUpdate
-	162, // 86: longarm.v1.NodeUpdate.started_at:type_name -> google.protobuf.Timestamp
-	162, // 87: longarm.v1.NodeUpdate.deadline:type_name -> google.protobuf.Timestamp
-	162, // 88: longarm.v1.NodeUpdate.updated_at:type_name -> google.protobuf.Timestamp
-	162, // 89: longarm.v1.NodeUpdate.offline_since:type_name -> google.protobuf.Timestamp
-	162, // 90: longarm.v1.NodeUpdate.finished_at:type_name -> google.protobuf.Timestamp
+	164, // 86: longarm.v1.NodeUpdate.started_at:type_name -> google.protobuf.Timestamp
+	164, // 87: longarm.v1.NodeUpdate.deadline:type_name -> google.protobuf.Timestamp
+	164, // 88: longarm.v1.NodeUpdate.updated_at:type_name -> google.protobuf.Timestamp
+	164, // 89: longarm.v1.NodeUpdate.offline_since:type_name -> google.protobuf.Timestamp
+	164, // 90: longarm.v1.NodeUpdate.finished_at:type_name -> google.protobuf.Timestamp
 	53,  // 91: longarm.v1.ListNodesResponse.nodes:type_name -> longarm.v1.NodeInfo
-	165, // 92: longarm.v1.FleetJob.job:type_name -> longarm.v1.Job
-	162, // 93: longarm.v1.FleetJob.updated_at:type_name -> google.protobuf.Timestamp
-	168, // 94: longarm.v1.FleetJobsRequest.states:type_name -> longarm.v1.JobState
+	167, // 92: longarm.v1.FleetJob.job:type_name -> longarm.v1.Job
+	164, // 93: longarm.v1.FleetJob.updated_at:type_name -> google.protobuf.Timestamp
+	170, // 94: longarm.v1.FleetJobsRequest.states:type_name -> longarm.v1.JobState
 	57,  // 95: longarm.v1.FleetJobsResponse.jobs:type_name -> longarm.v1.FleetJob
-	162, // 96: longarm.v1.FleetEvent.time:type_name -> google.protobuf.Timestamp
+	164, // 96: longarm.v1.FleetEvent.time:type_name -> google.protobuf.Timestamp
 	57,  // 97: longarm.v1.FleetEvent.job:type_name -> longarm.v1.FleetJob
 	53,  // 98: longarm.v1.FleetEvent.node_info:type_name -> longarm.v1.NodeInfo
-	153, // 99: longarm.v1.PlaceRequest.require:type_name -> longarm.v1.PlaceRequest.RequireEntry
+	155, // 99: longarm.v1.PlaceRequest.require:type_name -> longarm.v1.PlaceRequest.RequireEntry
 	53,  // 100: longarm.v1.PlaceUpdate.node:type_name -> longarm.v1.NodeInfo
-	162, // 101: longarm.v1.AuditRequest.since:type_name -> google.protobuf.Timestamp
-	162, // 102: longarm.v1.AuditRecord.time:type_name -> google.protobuf.Timestamp
+	164, // 101: longarm.v1.AuditRequest.since:type_name -> google.protobuf.Timestamp
+	164, // 102: longarm.v1.AuditRecord.time:type_name -> google.protobuf.Timestamp
 	66,  // 103: longarm.v1.AuditResponse.records:type_name -> longarm.v1.AuditRecord
 	68,  // 104: longarm.v1.AuditResponse.hidden:type_name -> longarm.v1.AuditCount
-	163, // 105: longarm.v1.CreateWorkerCodeRequest.ttl:type_name -> google.protobuf.Duration
-	154, // 106: longarm.v1.CreateWorkerCodeRequest.labels:type_name -> longarm.v1.CreateWorkerCodeRequest.LabelsEntry
-	162, // 107: longarm.v1.WhoamiResponse.cert_not_after:type_name -> google.protobuf.Timestamp
-	163, // 108: longarm.v1.WhoamiResponse.renew_before:type_name -> google.protobuf.Duration
+	165, // 105: longarm.v1.CreateWorkerCodeRequest.ttl:type_name -> google.protobuf.Duration
+	156, // 106: longarm.v1.CreateWorkerCodeRequest.labels:type_name -> longarm.v1.CreateWorkerCodeRequest.LabelsEntry
+	164, // 107: longarm.v1.WhoamiResponse.cert_not_after:type_name -> google.protobuf.Timestamp
+	165, // 108: longarm.v1.WhoamiResponse.renew_before:type_name -> google.protobuf.Duration
 	109, // 109: longarm.v1.WhoamiResponse.tailnet:type_name -> longarm.v1.TailnetInfo
 	73,  // 110: longarm.v1.WhoamiResponse.quota:type_name -> longarm.v1.Quota
 	74,  // 111: longarm.v1.WhoamiResponse.usage:type_name -> longarm.v1.QuotaUsage
 	73,  // 112: longarm.v1.TenantUser.quota:type_name -> longarm.v1.Quota
-	162, // 113: longarm.v1.TenantUser.created_at:type_name -> google.protobuf.Timestamp
+	164, // 113: longarm.v1.TenantUser.created_at:type_name -> google.protobuf.Timestamp
 	74,  // 114: longarm.v1.TenantUser.usage:type_name -> longarm.v1.QuotaUsage
 	75,  // 115: longarm.v1.TenancyPolicy.users:type_name -> longarm.v1.TenantUser
 	73,  // 116: longarm.v1.TenancyPolicy.default_quota:type_name -> longarm.v1.Quota
 	73,  // 117: longarm.v1.PutUserRequest.quota:type_name -> longarm.v1.Quota
-	163, // 118: longarm.v1.PutUserRequest.ttl:type_name -> google.protobuf.Duration
+	165, // 118: longarm.v1.PutUserRequest.ttl:type_name -> google.protobuf.Duration
 	75,  // 119: longarm.v1.PutUserResponse.user:type_name -> longarm.v1.TenantUser
 	96,  // 120: longarm.v1.PutUserResponse.join_code:type_name -> longarm.v1.JoinCode
 	75,  // 121: longarm.v1.ListUsersResponse.users:type_name -> longarm.v1.TenantUser
 	73,  // 122: longarm.v1.ListUsersResponse.default_quota:type_name -> longarm.v1.Quota
 	84,  // 123: longarm.v1.ListTeamsResponse.teams:type_name -> longarm.v1.Team
-	162, // 124: longarm.v1.FleetMachine.last_seen:type_name -> google.protobuf.Timestamp
+	164, // 124: longarm.v1.FleetMachine.last_seen:type_name -> google.protobuf.Timestamp
 	88,  // 125: longarm.v1.UserFleetSummary.counts:type_name -> longarm.v1.FleetCounts
-	162, // 126: longarm.v1.UserFleetSummary.last_seen:type_name -> google.protobuf.Timestamp
+	164, // 126: longarm.v1.UserFleetSummary.last_seen:type_name -> google.protobuf.Timestamp
 	89,  // 127: longarm.v1.UserFleetSummary.machines:type_name -> longarm.v1.FleetMachine
 	91,  // 128: longarm.v1.UserFleetSummary.versions:type_name -> longarm.v1.VersionCount
-	162, // 129: longarm.v1.FleetSummaryResponse.time:type_name -> google.protobuf.Timestamp
+	164, // 129: longarm.v1.FleetSummaryResponse.time:type_name -> google.protobuf.Timestamp
 	90,  // 130: longarm.v1.FleetSummaryResponse.users:type_name -> longarm.v1.UserFleetSummary
 	88,  // 131: longarm.v1.FleetSummaryResponse.totals:type_name -> longarm.v1.FleetCounts
 	91,  // 132: longarm.v1.FleetSummaryResponse.worker_versions:type_name -> longarm.v1.VersionCount
-	155, // 133: longarm.v1.HubSubmitRequest.env:type_name -> longarm.v1.HubSubmitRequest.EnvEntry
-	156, // 134: longarm.v1.HubSubmitRequest.labels:type_name -> longarm.v1.HubSubmitRequest.LabelsEntry
-	157, // 135: longarm.v1.HubSubmitRequest.require:type_name -> longarm.v1.HubSubmitRequest.RequireEntry
-	163, // 136: longarm.v1.CreateJoinCodeRequest.ttl:type_name -> google.protobuf.Duration
-	158, // 137: longarm.v1.CreateJoinCodeRequest.labels:type_name -> longarm.v1.CreateJoinCodeRequest.LabelsEntry
-	162, // 138: longarm.v1.JoinCode.expires_at:type_name -> google.protobuf.Timestamp
-	159, // 139: longarm.v1.JoinCode.labels:type_name -> longarm.v1.JoinCode.LabelsEntry
+	157, // 133: longarm.v1.HubSubmitRequest.env:type_name -> longarm.v1.HubSubmitRequest.EnvEntry
+	158, // 134: longarm.v1.HubSubmitRequest.labels:type_name -> longarm.v1.HubSubmitRequest.LabelsEntry
+	159, // 135: longarm.v1.HubSubmitRequest.require:type_name -> longarm.v1.HubSubmitRequest.RequireEntry
+	165, // 136: longarm.v1.CreateJoinCodeRequest.ttl:type_name -> google.protobuf.Duration
+	160, // 137: longarm.v1.CreateJoinCodeRequest.labels:type_name -> longarm.v1.CreateJoinCodeRequest.LabelsEntry
+	164, // 138: longarm.v1.JoinCode.expires_at:type_name -> google.protobuf.Timestamp
+	161, // 139: longarm.v1.JoinCode.labels:type_name -> longarm.v1.JoinCode.LabelsEntry
 	96,  // 140: longarm.v1.ListJoinCodesResponse.codes:type_name -> longarm.v1.JoinCode
-	160, // 141: longarm.v1.SetLabelsRequest.labels:type_name -> longarm.v1.SetLabelsRequest.LabelsEntry
+	162, // 141: longarm.v1.SetLabelsRequest.labels:type_name -> longarm.v1.SetLabelsRequest.LabelsEntry
 	22,  // 142: longarm.v1.Profile.tools:type_name -> longarm.v1.ToolSpec
-	162, // 143: longarm.v1.Profile.updated_at:type_name -> google.protobuf.Timestamp
+	164, // 143: longarm.v1.Profile.updated_at:type_name -> google.protobuf.Timestamp
 	103, // 144: longarm.v1.ListProfilesResponse.profiles:type_name -> longarm.v1.Profile
-	162, // 145: longarm.v1.TailnetState.since:type_name -> google.protobuf.Timestamp
+	164, // 145: longarm.v1.TailnetState.since:type_name -> google.protobuf.Timestamp
 	110, // 146: longarm.v1.TailnetNodeStatus.state:type_name -> longarm.v1.TailnetState
-	162, // 147: longarm.v1.TailnetNodeStatus.key_minted_at:type_name -> google.protobuf.Timestamp
-	163, // 148: longarm.v1.TailnetStatusResponse.key_ttl:type_name -> google.protobuf.Duration
+	164, // 147: longarm.v1.TailnetNodeStatus.key_minted_at:type_name -> google.protobuf.Timestamp
+	165, // 148: longarm.v1.TailnetStatusResponse.key_ttl:type_name -> google.protobuf.Duration
 	112, // 149: longarm.v1.TailnetStatusResponse.nodes:type_name -> longarm.v1.TailnetNodeStatus
-	162, // 150: longarm.v1.TailnetStatusResponse.last_mint_error_at:type_name -> google.protobuf.Timestamp
-	162, // 151: longarm.v1.UpdateStatus.at:type_name -> google.protobuf.Timestamp
-	162, // 152: longarm.v1.UpdateStatus.started:type_name -> google.protobuf.Timestamp
+	164, // 150: longarm.v1.TailnetStatusResponse.last_mint_error_at:type_name -> google.protobuf.Timestamp
+	164, // 151: longarm.v1.UpdateStatus.at:type_name -> google.protobuf.Timestamp
+	164, // 152: longarm.v1.UpdateStatus.started:type_name -> google.protobuf.Timestamp
 	118, // 153: longarm.v1.UpdateCheckResponse.files:type_name -> longarm.v1.ReleaseFile
-	162, // 154: longarm.v1.ReleaseVersion.added_at:type_name -> google.protobuf.Timestamp
+	164, // 154: longarm.v1.ReleaseVersion.added_at:type_name -> google.protobuf.Timestamp
 	118, // 155: longarm.v1.ReleaseVersion.files:type_name -> longarm.v1.ReleaseFile
 	122, // 156: longarm.v1.ReleaseUpload.header:type_name -> longarm.v1.ReleaseUploadHeader
 	123, // 157: longarm.v1.ReleaseUpload.chunk:type_name -> longarm.v1.ReleaseUploadChunk
 	120, // 158: longarm.v1.ListReleasesResponse.releases:type_name -> longarm.v1.ReleaseVersion
 	128, // 159: longarm.v1.ListReleasesResponse.rollout:type_name -> longarm.v1.Rollout
-	163, // 160: longarm.v1.PushReleaseRequest.wait:type_name -> google.protobuf.Duration
-	163, // 161: longarm.v1.PushReleaseRequest.batch_wait:type_name -> google.protobuf.Duration
-	162, // 162: longarm.v1.Rollout.started_at:type_name -> google.protobuf.Timestamp
-	162, // 163: longarm.v1.Rollout.phase_since:type_name -> google.protobuf.Timestamp
-	163, // 164: longarm.v1.Rollout.wait:type_name -> google.protobuf.Duration
-	163, // 165: longarm.v1.Rollout.batch_wait:type_name -> google.protobuf.Duration
-	162, // 166: longarm.v1.PortLink.created_at:type_name -> google.protobuf.Timestamp
-	162, // 167: longarm.v1.PortLink.expires_at:type_name -> google.protobuf.Timestamp
+	165, // 160: longarm.v1.PushReleaseRequest.wait:type_name -> google.protobuf.Duration
+	165, // 161: longarm.v1.PushReleaseRequest.batch_wait:type_name -> google.protobuf.Duration
+	164, // 162: longarm.v1.Rollout.started_at:type_name -> google.protobuf.Timestamp
+	164, // 163: longarm.v1.Rollout.phase_since:type_name -> google.protobuf.Timestamp
+	165, // 164: longarm.v1.Rollout.wait:type_name -> google.protobuf.Duration
+	165, // 165: longarm.v1.Rollout.batch_wait:type_name -> google.protobuf.Duration
+	164, // 166: longarm.v1.PortLink.created_at:type_name -> google.protobuf.Timestamp
+	164, // 167: longarm.v1.PortLink.expires_at:type_name -> google.protobuf.Timestamp
 	132, // 168: longarm.v1.PortLink.status:type_name -> longarm.v1.PortLinkStatus
 	140, // 169: longarm.v1.PortLink.consent:type_name -> longarm.v1.PortLinkConsent
-	162, // 170: longarm.v1.PortLinkStatus.updated_at:type_name -> google.protobuf.Timestamp
+	164, // 170: longarm.v1.PortLinkStatus.updated_at:type_name -> google.protobuf.Timestamp
 	132, // 171: longarm.v1.PortLinkReport.links:type_name -> longarm.v1.PortLinkStatus
 	135, // 172: longarm.v1.PortLinks.links:type_name -> longarm.v1.PortLinkAssignment
 	131, // 173: longarm.v1.PortLinkAssignment.link:type_name -> longarm.v1.PortLink
-	169, // 174: longarm.v1.PortLinkAssignment.grant:type_name -> longarm.v1.SignedPortLinkGrant
-	163, // 175: longarm.v1.CreatePortLinkRequest.ttl:type_name -> google.protobuf.Duration
+	171, // 174: longarm.v1.PortLinkAssignment.grant:type_name -> longarm.v1.SignedPortLinkGrant
+	165, // 175: longarm.v1.CreatePortLinkRequest.ttl:type_name -> google.protobuf.Duration
 	140, // 176: longarm.v1.CreatePortLinkRequest.consent:type_name -> longarm.v1.PortLinkConsent
 	131, // 177: longarm.v1.ListPortLinksResponse.links:type_name -> longarm.v1.PortLink
 	13,  // 178: longarm.v1.RelayStatus.endpoint:type_name -> longarm.v1.RelayEndpoint
-	162, // 179: longarm.v1.RelayStatus.last_seen:type_name -> google.protobuf.Timestamp
+	164, // 179: longarm.v1.RelayStatus.last_seen:type_name -> google.protobuf.Timestamp
 	143, // 180: longarm.v1.RelaysResponse.relays:type_name -> longarm.v1.RelayStatus
-	161, // 181: longarm.v1.RelaysResponse.legacy_versions:type_name -> longarm.v1.RelaysResponse.LegacyVersionsEntry
-	163, // 182: longarm.v1.HandoffPairRequest.ttl:type_name -> google.protobuf.Duration
-	162, // 183: longarm.v1.HandoffPairResponse.expires_at:type_name -> google.protobuf.Timestamp
-	7,   // 184: longarm.v1.Enroll.Join:input_type -> longarm.v1.JoinRequest
-	9,   // 185: longarm.v1.Enroll.JoinStatus:input_type -> longarm.v1.JoinStatusRequest
-	0,   // 186: longarm.v1.Enroll.AuthInfo:input_type -> longarm.v1.AuthInfoRequest
-	2,   // 187: longarm.v1.Enroll.EntraJoin:input_type -> longarm.v1.EntraJoinRequest
-	3,   // 188: longarm.v1.Enroll.StartLink:input_type -> longarm.v1.StartLinkRequest
-	6,   // 189: longarm.v1.Enroll.PollLink:input_type -> longarm.v1.PollLinkRequest
-	15,  // 190: longarm.v1.HubNode.Connect:input_type -> longarm.v1.NodeReport
-	40,  // 191: longarm.v1.HubNode.Renew:input_type -> longarm.v1.RenewRequest
-	129, // 192: longarm.v1.HubNode.Leave:input_type -> longarm.v1.LeaveRequest
-	10,  // 193: longarm.v1.HubNode.RelaySync:input_type -> longarm.v1.RelaySyncRequest
-	55,  // 194: longarm.v1.Fleet.ListNodes:input_type -> longarm.v1.ListNodesRequest
-	58,  // 195: longarm.v1.Fleet.ListJobs:input_type -> longarm.v1.FleetJobsRequest
-	60,  // 196: longarm.v1.Fleet.GetJob:input_type -> longarm.v1.FleetJobRequest
-	60,  // 197: longarm.v1.Fleet.WaitJob:input_type -> longarm.v1.FleetJobRequest
-	61,  // 198: longarm.v1.Fleet.Events:input_type -> longarm.v1.EventsRequest
-	63,  // 199: longarm.v1.Fleet.Place:input_type -> longarm.v1.PlaceRequest
-	65,  // 200: longarm.v1.Fleet.Audit:input_type -> longarm.v1.AuditRequest
-	69,  // 201: longarm.v1.Fleet.Whoami:input_type -> longarm.v1.WhoamiRequest
-	108, // 202: longarm.v1.Fleet.TailnetKey:input_type -> longarm.v1.TailnetKeyRequest
-	116, // 203: longarm.v1.Fleet.CheckUpdate:input_type -> longarm.v1.UpdateCheckRequest
-	119, // 204: longarm.v1.Fleet.DownloadRelease:input_type -> longarm.v1.ReleaseFileRequest
-	45,  // 205: longarm.v1.Fleet.ReportLinks:input_type -> longarm.v1.LinkReport
-	47,  // 206: longarm.v1.Fleet.Links:input_type -> longarm.v1.LinksRequest
-	49,  // 207: longarm.v1.Fleet.History:input_type -> longarm.v1.HistoryRequest
-	70,  // 208: longarm.v1.Fleet.CreateWorkerCode:input_type -> longarm.v1.CreateWorkerCodeRequest
-	71,  // 209: longarm.v1.Fleet.ShareWorker:input_type -> longarm.v1.ShareWorkerRequest
-	99,  // 210: longarm.v1.Fleet.RemoveWorker:input_type -> longarm.v1.NodeRequest
-	102, // 211: longarm.v1.Fleet.SetWorkerLabels:input_type -> longarm.v1.SetLabelsRequest
-	100, // 212: longarm.v1.Fleet.RenameWorker:input_type -> longarm.v1.RenameNodeRequest
-	136, // 213: longarm.v1.Fleet.CreatePortLink:input_type -> longarm.v1.CreatePortLinkRequest
-	137, // 214: longarm.v1.Fleet.ListPortLinks:input_type -> longarm.v1.ListPortLinksRequest
-	139, // 215: longarm.v1.Fleet.RemovePortLink:input_type -> longarm.v1.RemovePortLinkRequest
-	145, // 216: longarm.v1.Fleet.HandoffPair:input_type -> longarm.v1.HandoffPairRequest
-	95,  // 217: longarm.v1.HubAdmin.CreateJoinCode:input_type -> longarm.v1.CreateJoinCodeRequest
-	97,  // 218: longarm.v1.HubAdmin.ListJoinCodes:input_type -> longarm.v1.ListJoinCodesRequest
-	99,  // 219: longarm.v1.HubAdmin.Approve:input_type -> longarm.v1.NodeRequest
-	99,  // 220: longarm.v1.HubAdmin.Revoke:input_type -> longarm.v1.NodeRequest
-	101, // 221: longarm.v1.HubAdmin.SetDrain:input_type -> longarm.v1.SetDrainRequest
-	102, // 222: longarm.v1.HubAdmin.SetLabels:input_type -> longarm.v1.SetLabelsRequest
-	103, // 223: longarm.v1.HubAdmin.PutProfile:input_type -> longarm.v1.Profile
-	104, // 224: longarm.v1.HubAdmin.ListProfiles:input_type -> longarm.v1.ListProfilesRequest
-	106, // 225: longarm.v1.HubAdmin.AssignProfile:input_type -> longarm.v1.AssignProfileRequest
-	124, // 226: longarm.v1.HubAdmin.ListReleases:input_type -> longarm.v1.ListReleasesRequest
-	126, // 227: longarm.v1.HubAdmin.PushRelease:input_type -> longarm.v1.PushReleaseRequest
-	121, // 228: longarm.v1.HubAdmin.PublishRelease:input_type -> longarm.v1.ReleaseUpload
-	127, // 229: longarm.v1.HubAdmin.GetRollout:input_type -> longarm.v1.GetRolloutRequest
-	127, // 230: longarm.v1.HubAdmin.AbortRollout:input_type -> longarm.v1.GetRolloutRequest
-	60,  // 231: longarm.v1.HubAdmin.KillJob:input_type -> longarm.v1.FleetJobRequest
-	93,  // 232: longarm.v1.HubAdmin.JobLogs:input_type -> longarm.v1.HubLogsRequest
-	94,  // 233: longarm.v1.HubAdmin.SubmitJob:input_type -> longarm.v1.HubSubmitRequest
-	99,  // 234: longarm.v1.HubAdmin.ToolchainApply:input_type -> longarm.v1.NodeRequest
-	111, // 235: longarm.v1.HubAdmin.TailnetStatus:input_type -> longarm.v1.TailnetStatusRequest
-	99,  // 236: longarm.v1.HubAdmin.TailnetRekey:input_type -> longarm.v1.NodeRequest
-	142, // 237: longarm.v1.HubAdmin.Relays:input_type -> longarm.v1.RelaysRequest
-	77,  // 238: longarm.v1.HubAdmin.PutUser:input_type -> longarm.v1.PutUserRequest
-	79,  // 239: longarm.v1.HubAdmin.ListUsers:input_type -> longarm.v1.ListUsersRequest
-	81,  // 240: longarm.v1.HubAdmin.RemoveUser:input_type -> longarm.v1.RemoveUserRequest
-	83,  // 241: longarm.v1.HubAdmin.SetTeam:input_type -> longarm.v1.SetTeamRequest
-	85,  // 242: longarm.v1.HubAdmin.ListTeams:input_type -> longarm.v1.ListTeamsRequest
-	87,  // 243: longarm.v1.HubAdmin.FleetSummary:input_type -> longarm.v1.FleetSummaryRequest
-	100, // 244: longarm.v1.HubAdmin.RenameNode:input_type -> longarm.v1.RenameNodeRequest
-	8,   // 245: longarm.v1.Enroll.Join:output_type -> longarm.v1.JoinResponse
-	8,   // 246: longarm.v1.Enroll.JoinStatus:output_type -> longarm.v1.JoinResponse
-	1,   // 247: longarm.v1.Enroll.AuthInfo:output_type -> longarm.v1.AuthInfoResponse
-	8,   // 248: longarm.v1.Enroll.EntraJoin:output_type -> longarm.v1.JoinResponse
-	5,   // 249: longarm.v1.Enroll.StartLink:output_type -> longarm.v1.StartLinkResponse
-	8,   // 250: longarm.v1.Enroll.PollLink:output_type -> longarm.v1.JoinResponse
-	24,  // 251: longarm.v1.HubNode.Connect:output_type -> longarm.v1.HubCommand
-	41,  // 252: longarm.v1.HubNode.Renew:output_type -> longarm.v1.RenewResponse
-	130, // 253: longarm.v1.HubNode.Leave:output_type -> longarm.v1.LeaveResponse
-	11,  // 254: longarm.v1.HubNode.RelaySync:output_type -> longarm.v1.RelayPolicy
-	56,  // 255: longarm.v1.Fleet.ListNodes:output_type -> longarm.v1.ListNodesResponse
-	59,  // 256: longarm.v1.Fleet.ListJobs:output_type -> longarm.v1.FleetJobsResponse
-	57,  // 257: longarm.v1.Fleet.GetJob:output_type -> longarm.v1.FleetJob
-	57,  // 258: longarm.v1.Fleet.WaitJob:output_type -> longarm.v1.FleetJob
-	62,  // 259: longarm.v1.Fleet.Events:output_type -> longarm.v1.FleetEvent
-	64,  // 260: longarm.v1.Fleet.Place:output_type -> longarm.v1.PlaceUpdate
-	67,  // 261: longarm.v1.Fleet.Audit:output_type -> longarm.v1.AuditResponse
-	72,  // 262: longarm.v1.Fleet.Whoami:output_type -> longarm.v1.WhoamiResponse
-	107, // 263: longarm.v1.Fleet.TailnetKey:output_type -> longarm.v1.TailnetAuth
-	117, // 264: longarm.v1.Fleet.CheckUpdate:output_type -> longarm.v1.UpdateCheckResponse
-	170, // 265: longarm.v1.Fleet.DownloadRelease:output_type -> longarm.v1.FileChunk
-	46,  // 266: longarm.v1.Fleet.ReportLinks:output_type -> longarm.v1.ReportLinksResponse
-	48,  // 267: longarm.v1.Fleet.Links:output_type -> longarm.v1.LinksResponse
-	52,  // 268: longarm.v1.Fleet.History:output_type -> longarm.v1.HistoryResponse
-	96,  // 269: longarm.v1.Fleet.CreateWorkerCode:output_type -> longarm.v1.JoinCode
-	53,  // 270: longarm.v1.Fleet.ShareWorker:output_type -> longarm.v1.NodeInfo
-	53,  // 271: longarm.v1.Fleet.RemoveWorker:output_type -> longarm.v1.NodeInfo
-	53,  // 272: longarm.v1.Fleet.SetWorkerLabels:output_type -> longarm.v1.NodeInfo
-	53,  // 273: longarm.v1.Fleet.RenameWorker:output_type -> longarm.v1.NodeInfo
-	131, // 274: longarm.v1.Fleet.CreatePortLink:output_type -> longarm.v1.PortLink
-	138, // 275: longarm.v1.Fleet.ListPortLinks:output_type -> longarm.v1.ListPortLinksResponse
-	131, // 276: longarm.v1.Fleet.RemovePortLink:output_type -> longarm.v1.PortLink
-	146, // 277: longarm.v1.Fleet.HandoffPair:output_type -> longarm.v1.HandoffPairResponse
-	96,  // 278: longarm.v1.HubAdmin.CreateJoinCode:output_type -> longarm.v1.JoinCode
-	98,  // 279: longarm.v1.HubAdmin.ListJoinCodes:output_type -> longarm.v1.ListJoinCodesResponse
-	53,  // 280: longarm.v1.HubAdmin.Approve:output_type -> longarm.v1.NodeInfo
-	53,  // 281: longarm.v1.HubAdmin.Revoke:output_type -> longarm.v1.NodeInfo
-	53,  // 282: longarm.v1.HubAdmin.SetDrain:output_type -> longarm.v1.NodeInfo
-	53,  // 283: longarm.v1.HubAdmin.SetLabels:output_type -> longarm.v1.NodeInfo
-	103, // 284: longarm.v1.HubAdmin.PutProfile:output_type -> longarm.v1.Profile
-	105, // 285: longarm.v1.HubAdmin.ListProfiles:output_type -> longarm.v1.ListProfilesResponse
-	53,  // 286: longarm.v1.HubAdmin.AssignProfile:output_type -> longarm.v1.NodeInfo
-	125, // 287: longarm.v1.HubAdmin.ListReleases:output_type -> longarm.v1.ListReleasesResponse
-	128, // 288: longarm.v1.HubAdmin.PushRelease:output_type -> longarm.v1.Rollout
-	120, // 289: longarm.v1.HubAdmin.PublishRelease:output_type -> longarm.v1.ReleaseVersion
-	128, // 290: longarm.v1.HubAdmin.GetRollout:output_type -> longarm.v1.Rollout
-	128, // 291: longarm.v1.HubAdmin.AbortRollout:output_type -> longarm.v1.Rollout
-	57,  // 292: longarm.v1.HubAdmin.KillJob:output_type -> longarm.v1.FleetJob
-	166, // 293: longarm.v1.HubAdmin.JobLogs:output_type -> longarm.v1.LogChunk
-	57,  // 294: longarm.v1.HubAdmin.SubmitJob:output_type -> longarm.v1.FleetJob
-	53,  // 295: longarm.v1.HubAdmin.ToolchainApply:output_type -> longarm.v1.NodeInfo
-	113, // 296: longarm.v1.HubAdmin.TailnetStatus:output_type -> longarm.v1.TailnetStatusResponse
-	112, // 297: longarm.v1.HubAdmin.TailnetRekey:output_type -> longarm.v1.TailnetNodeStatus
-	144, // 298: longarm.v1.HubAdmin.Relays:output_type -> longarm.v1.RelaysResponse
-	78,  // 299: longarm.v1.HubAdmin.PutUser:output_type -> longarm.v1.PutUserResponse
-	80,  // 300: longarm.v1.HubAdmin.ListUsers:output_type -> longarm.v1.ListUsersResponse
-	82,  // 301: longarm.v1.HubAdmin.RemoveUser:output_type -> longarm.v1.RemoveUserResponse
-	86,  // 302: longarm.v1.HubAdmin.SetTeam:output_type -> longarm.v1.ListTeamsResponse
-	86,  // 303: longarm.v1.HubAdmin.ListTeams:output_type -> longarm.v1.ListTeamsResponse
-	92,  // 304: longarm.v1.HubAdmin.FleetSummary:output_type -> longarm.v1.FleetSummaryResponse
-	53,  // 305: longarm.v1.HubAdmin.RenameNode:output_type -> longarm.v1.NodeInfo
-	245, // [245:306] is the sub-list for method output_type
-	184, // [184:245] is the sub-list for method input_type
-	184, // [184:184] is the sub-list for extension type_name
-	184, // [184:184] is the sub-list for extension extendee
-	0,   // [0:184] is the sub-list for field type_name
+	163, // 181: longarm.v1.RelaysResponse.legacy_versions:type_name -> longarm.v1.RelaysResponse.LegacyVersionsEntry
+	165, // 182: longarm.v1.HandoffPairRequest.ttl:type_name -> google.protobuf.Duration
+	164, // 183: longarm.v1.HandoffPairResponse.expires_at:type_name -> google.protobuf.Timestamp
+	22,  // 184: longarm.v1.WorkerToolchainRequest.tools:type_name -> longarm.v1.ToolSpec
+	22,  // 185: longarm.v1.WorkerToolchainResponse.owner_tools:type_name -> longarm.v1.ToolSpec
+	37,  // 186: longarm.v1.WorkerToolchainResponse.desired:type_name -> longarm.v1.ToolchainDesired
+	23,  // 187: longarm.v1.WorkerToolchainResponse.toolchain:type_name -> longarm.v1.ToolchainReport
+	7,   // 188: longarm.v1.Enroll.Join:input_type -> longarm.v1.JoinRequest
+	9,   // 189: longarm.v1.Enroll.JoinStatus:input_type -> longarm.v1.JoinStatusRequest
+	0,   // 190: longarm.v1.Enroll.AuthInfo:input_type -> longarm.v1.AuthInfoRequest
+	2,   // 191: longarm.v1.Enroll.EntraJoin:input_type -> longarm.v1.EntraJoinRequest
+	3,   // 192: longarm.v1.Enroll.StartLink:input_type -> longarm.v1.StartLinkRequest
+	6,   // 193: longarm.v1.Enroll.PollLink:input_type -> longarm.v1.PollLinkRequest
+	15,  // 194: longarm.v1.HubNode.Connect:input_type -> longarm.v1.NodeReport
+	40,  // 195: longarm.v1.HubNode.Renew:input_type -> longarm.v1.RenewRequest
+	129, // 196: longarm.v1.HubNode.Leave:input_type -> longarm.v1.LeaveRequest
+	10,  // 197: longarm.v1.HubNode.RelaySync:input_type -> longarm.v1.RelaySyncRequest
+	55,  // 198: longarm.v1.Fleet.ListNodes:input_type -> longarm.v1.ListNodesRequest
+	58,  // 199: longarm.v1.Fleet.ListJobs:input_type -> longarm.v1.FleetJobsRequest
+	60,  // 200: longarm.v1.Fleet.GetJob:input_type -> longarm.v1.FleetJobRequest
+	60,  // 201: longarm.v1.Fleet.WaitJob:input_type -> longarm.v1.FleetJobRequest
+	61,  // 202: longarm.v1.Fleet.Events:input_type -> longarm.v1.EventsRequest
+	63,  // 203: longarm.v1.Fleet.Place:input_type -> longarm.v1.PlaceRequest
+	65,  // 204: longarm.v1.Fleet.Audit:input_type -> longarm.v1.AuditRequest
+	69,  // 205: longarm.v1.Fleet.Whoami:input_type -> longarm.v1.WhoamiRequest
+	108, // 206: longarm.v1.Fleet.TailnetKey:input_type -> longarm.v1.TailnetKeyRequest
+	116, // 207: longarm.v1.Fleet.CheckUpdate:input_type -> longarm.v1.UpdateCheckRequest
+	119, // 208: longarm.v1.Fleet.DownloadRelease:input_type -> longarm.v1.ReleaseFileRequest
+	45,  // 209: longarm.v1.Fleet.ReportLinks:input_type -> longarm.v1.LinkReport
+	47,  // 210: longarm.v1.Fleet.Links:input_type -> longarm.v1.LinksRequest
+	49,  // 211: longarm.v1.Fleet.History:input_type -> longarm.v1.HistoryRequest
+	70,  // 212: longarm.v1.Fleet.CreateWorkerCode:input_type -> longarm.v1.CreateWorkerCodeRequest
+	71,  // 213: longarm.v1.Fleet.ShareWorker:input_type -> longarm.v1.ShareWorkerRequest
+	99,  // 214: longarm.v1.Fleet.RemoveWorker:input_type -> longarm.v1.NodeRequest
+	102, // 215: longarm.v1.Fleet.SetWorkerLabels:input_type -> longarm.v1.SetLabelsRequest
+	147, // 216: longarm.v1.Fleet.WorkerToolchain:input_type -> longarm.v1.WorkerToolchainRequest
+	100, // 217: longarm.v1.Fleet.RenameWorker:input_type -> longarm.v1.RenameNodeRequest
+	136, // 218: longarm.v1.Fleet.CreatePortLink:input_type -> longarm.v1.CreatePortLinkRequest
+	137, // 219: longarm.v1.Fleet.ListPortLinks:input_type -> longarm.v1.ListPortLinksRequest
+	139, // 220: longarm.v1.Fleet.RemovePortLink:input_type -> longarm.v1.RemovePortLinkRequest
+	145, // 221: longarm.v1.Fleet.HandoffPair:input_type -> longarm.v1.HandoffPairRequest
+	95,  // 222: longarm.v1.HubAdmin.CreateJoinCode:input_type -> longarm.v1.CreateJoinCodeRequest
+	97,  // 223: longarm.v1.HubAdmin.ListJoinCodes:input_type -> longarm.v1.ListJoinCodesRequest
+	99,  // 224: longarm.v1.HubAdmin.Approve:input_type -> longarm.v1.NodeRequest
+	99,  // 225: longarm.v1.HubAdmin.Revoke:input_type -> longarm.v1.NodeRequest
+	101, // 226: longarm.v1.HubAdmin.SetDrain:input_type -> longarm.v1.SetDrainRequest
+	102, // 227: longarm.v1.HubAdmin.SetLabels:input_type -> longarm.v1.SetLabelsRequest
+	103, // 228: longarm.v1.HubAdmin.PutProfile:input_type -> longarm.v1.Profile
+	104, // 229: longarm.v1.HubAdmin.ListProfiles:input_type -> longarm.v1.ListProfilesRequest
+	106, // 230: longarm.v1.HubAdmin.AssignProfile:input_type -> longarm.v1.AssignProfileRequest
+	124, // 231: longarm.v1.HubAdmin.ListReleases:input_type -> longarm.v1.ListReleasesRequest
+	126, // 232: longarm.v1.HubAdmin.PushRelease:input_type -> longarm.v1.PushReleaseRequest
+	121, // 233: longarm.v1.HubAdmin.PublishRelease:input_type -> longarm.v1.ReleaseUpload
+	127, // 234: longarm.v1.HubAdmin.GetRollout:input_type -> longarm.v1.GetRolloutRequest
+	127, // 235: longarm.v1.HubAdmin.AbortRollout:input_type -> longarm.v1.GetRolloutRequest
+	60,  // 236: longarm.v1.HubAdmin.KillJob:input_type -> longarm.v1.FleetJobRequest
+	93,  // 237: longarm.v1.HubAdmin.JobLogs:input_type -> longarm.v1.HubLogsRequest
+	94,  // 238: longarm.v1.HubAdmin.SubmitJob:input_type -> longarm.v1.HubSubmitRequest
+	99,  // 239: longarm.v1.HubAdmin.ToolchainApply:input_type -> longarm.v1.NodeRequest
+	111, // 240: longarm.v1.HubAdmin.TailnetStatus:input_type -> longarm.v1.TailnetStatusRequest
+	99,  // 241: longarm.v1.HubAdmin.TailnetRekey:input_type -> longarm.v1.NodeRequest
+	142, // 242: longarm.v1.HubAdmin.Relays:input_type -> longarm.v1.RelaysRequest
+	77,  // 243: longarm.v1.HubAdmin.PutUser:input_type -> longarm.v1.PutUserRequest
+	79,  // 244: longarm.v1.HubAdmin.ListUsers:input_type -> longarm.v1.ListUsersRequest
+	81,  // 245: longarm.v1.HubAdmin.RemoveUser:input_type -> longarm.v1.RemoveUserRequest
+	83,  // 246: longarm.v1.HubAdmin.SetTeam:input_type -> longarm.v1.SetTeamRequest
+	85,  // 247: longarm.v1.HubAdmin.ListTeams:input_type -> longarm.v1.ListTeamsRequest
+	87,  // 248: longarm.v1.HubAdmin.FleetSummary:input_type -> longarm.v1.FleetSummaryRequest
+	100, // 249: longarm.v1.HubAdmin.RenameNode:input_type -> longarm.v1.RenameNodeRequest
+	8,   // 250: longarm.v1.Enroll.Join:output_type -> longarm.v1.JoinResponse
+	8,   // 251: longarm.v1.Enroll.JoinStatus:output_type -> longarm.v1.JoinResponse
+	1,   // 252: longarm.v1.Enroll.AuthInfo:output_type -> longarm.v1.AuthInfoResponse
+	8,   // 253: longarm.v1.Enroll.EntraJoin:output_type -> longarm.v1.JoinResponse
+	5,   // 254: longarm.v1.Enroll.StartLink:output_type -> longarm.v1.StartLinkResponse
+	8,   // 255: longarm.v1.Enroll.PollLink:output_type -> longarm.v1.JoinResponse
+	24,  // 256: longarm.v1.HubNode.Connect:output_type -> longarm.v1.HubCommand
+	41,  // 257: longarm.v1.HubNode.Renew:output_type -> longarm.v1.RenewResponse
+	130, // 258: longarm.v1.HubNode.Leave:output_type -> longarm.v1.LeaveResponse
+	11,  // 259: longarm.v1.HubNode.RelaySync:output_type -> longarm.v1.RelayPolicy
+	56,  // 260: longarm.v1.Fleet.ListNodes:output_type -> longarm.v1.ListNodesResponse
+	59,  // 261: longarm.v1.Fleet.ListJobs:output_type -> longarm.v1.FleetJobsResponse
+	57,  // 262: longarm.v1.Fleet.GetJob:output_type -> longarm.v1.FleetJob
+	57,  // 263: longarm.v1.Fleet.WaitJob:output_type -> longarm.v1.FleetJob
+	62,  // 264: longarm.v1.Fleet.Events:output_type -> longarm.v1.FleetEvent
+	64,  // 265: longarm.v1.Fleet.Place:output_type -> longarm.v1.PlaceUpdate
+	67,  // 266: longarm.v1.Fleet.Audit:output_type -> longarm.v1.AuditResponse
+	72,  // 267: longarm.v1.Fleet.Whoami:output_type -> longarm.v1.WhoamiResponse
+	107, // 268: longarm.v1.Fleet.TailnetKey:output_type -> longarm.v1.TailnetAuth
+	117, // 269: longarm.v1.Fleet.CheckUpdate:output_type -> longarm.v1.UpdateCheckResponse
+	172, // 270: longarm.v1.Fleet.DownloadRelease:output_type -> longarm.v1.FileChunk
+	46,  // 271: longarm.v1.Fleet.ReportLinks:output_type -> longarm.v1.ReportLinksResponse
+	48,  // 272: longarm.v1.Fleet.Links:output_type -> longarm.v1.LinksResponse
+	52,  // 273: longarm.v1.Fleet.History:output_type -> longarm.v1.HistoryResponse
+	96,  // 274: longarm.v1.Fleet.CreateWorkerCode:output_type -> longarm.v1.JoinCode
+	53,  // 275: longarm.v1.Fleet.ShareWorker:output_type -> longarm.v1.NodeInfo
+	53,  // 276: longarm.v1.Fleet.RemoveWorker:output_type -> longarm.v1.NodeInfo
+	53,  // 277: longarm.v1.Fleet.SetWorkerLabels:output_type -> longarm.v1.NodeInfo
+	148, // 278: longarm.v1.Fleet.WorkerToolchain:output_type -> longarm.v1.WorkerToolchainResponse
+	53,  // 279: longarm.v1.Fleet.RenameWorker:output_type -> longarm.v1.NodeInfo
+	131, // 280: longarm.v1.Fleet.CreatePortLink:output_type -> longarm.v1.PortLink
+	138, // 281: longarm.v1.Fleet.ListPortLinks:output_type -> longarm.v1.ListPortLinksResponse
+	131, // 282: longarm.v1.Fleet.RemovePortLink:output_type -> longarm.v1.PortLink
+	146, // 283: longarm.v1.Fleet.HandoffPair:output_type -> longarm.v1.HandoffPairResponse
+	96,  // 284: longarm.v1.HubAdmin.CreateJoinCode:output_type -> longarm.v1.JoinCode
+	98,  // 285: longarm.v1.HubAdmin.ListJoinCodes:output_type -> longarm.v1.ListJoinCodesResponse
+	53,  // 286: longarm.v1.HubAdmin.Approve:output_type -> longarm.v1.NodeInfo
+	53,  // 287: longarm.v1.HubAdmin.Revoke:output_type -> longarm.v1.NodeInfo
+	53,  // 288: longarm.v1.HubAdmin.SetDrain:output_type -> longarm.v1.NodeInfo
+	53,  // 289: longarm.v1.HubAdmin.SetLabels:output_type -> longarm.v1.NodeInfo
+	103, // 290: longarm.v1.HubAdmin.PutProfile:output_type -> longarm.v1.Profile
+	105, // 291: longarm.v1.HubAdmin.ListProfiles:output_type -> longarm.v1.ListProfilesResponse
+	53,  // 292: longarm.v1.HubAdmin.AssignProfile:output_type -> longarm.v1.NodeInfo
+	125, // 293: longarm.v1.HubAdmin.ListReleases:output_type -> longarm.v1.ListReleasesResponse
+	128, // 294: longarm.v1.HubAdmin.PushRelease:output_type -> longarm.v1.Rollout
+	120, // 295: longarm.v1.HubAdmin.PublishRelease:output_type -> longarm.v1.ReleaseVersion
+	128, // 296: longarm.v1.HubAdmin.GetRollout:output_type -> longarm.v1.Rollout
+	128, // 297: longarm.v1.HubAdmin.AbortRollout:output_type -> longarm.v1.Rollout
+	57,  // 298: longarm.v1.HubAdmin.KillJob:output_type -> longarm.v1.FleetJob
+	168, // 299: longarm.v1.HubAdmin.JobLogs:output_type -> longarm.v1.LogChunk
+	57,  // 300: longarm.v1.HubAdmin.SubmitJob:output_type -> longarm.v1.FleetJob
+	53,  // 301: longarm.v1.HubAdmin.ToolchainApply:output_type -> longarm.v1.NodeInfo
+	113, // 302: longarm.v1.HubAdmin.TailnetStatus:output_type -> longarm.v1.TailnetStatusResponse
+	112, // 303: longarm.v1.HubAdmin.TailnetRekey:output_type -> longarm.v1.TailnetNodeStatus
+	144, // 304: longarm.v1.HubAdmin.Relays:output_type -> longarm.v1.RelaysResponse
+	78,  // 305: longarm.v1.HubAdmin.PutUser:output_type -> longarm.v1.PutUserResponse
+	80,  // 306: longarm.v1.HubAdmin.ListUsers:output_type -> longarm.v1.ListUsersResponse
+	82,  // 307: longarm.v1.HubAdmin.RemoveUser:output_type -> longarm.v1.RemoveUserResponse
+	86,  // 308: longarm.v1.HubAdmin.SetTeam:output_type -> longarm.v1.ListTeamsResponse
+	86,  // 309: longarm.v1.HubAdmin.ListTeams:output_type -> longarm.v1.ListTeamsResponse
+	92,  // 310: longarm.v1.HubAdmin.FleetSummary:output_type -> longarm.v1.FleetSummaryResponse
+	53,  // 311: longarm.v1.HubAdmin.RenameNode:output_type -> longarm.v1.NodeInfo
+	250, // [250:312] is the sub-list for method output_type
+	188, // [188:250] is the sub-list for method input_type
+	188, // [188:188] is the sub-list for extension type_name
+	188, // [188:188] is the sub-list for extension extendee
+	0,   // [0:188] is the sub-list for field type_name
 }
 
 func init() { file_longarm_v1_hub_proto_init() }
@@ -13199,7 +13391,7 @@ func file_longarm_v1_hub_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_longarm_v1_hub_proto_rawDesc), len(file_longarm_v1_hub_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   162,
+			NumMessages:   164,
 			NumExtensions: 0,
 			NumServices:   4,
 		},

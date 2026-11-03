@@ -27,6 +27,23 @@ func TestParseLabelEdits(t *testing.T) {
 	}
 }
 
+func TestParseWorkerTools(t *testing.T) {
+	tools, err := parseWorkerTools([]string{"claude", "copilot", "uv", "node@22"})
+	if err != nil || len(tools) != 4 || tools[0].Version != "latest" || tools[3].Version != "22" {
+		t.Fatalf("tools %v: %v", tools, err)
+	}
+	for _, items := range [][]string{{""}, {"nope"}, {"git", "git@2"}, {"node@"}, {"node@22;bad"}, {"node@--bad"}} {
+		if _, err := parseWorkerTools(items); err == nil {
+			t.Errorf("accepted %v", items)
+		}
+	}
+	c := workerToolchainCmd()
+	c.SetArgs([]string{"worker-1", "--clear", "--tools", "node"})
+	if err := c.Execute(); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("conflicting flags: %v", err)
+	}
+}
+
 // TestFoldMachines: longarm ls shows a session worker and its admin worker
 // as one row (ADMIN), an admin worker alone keeps its row.
 func TestFoldMachines(t *testing.T) {
