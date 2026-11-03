@@ -198,6 +198,7 @@ const (
 	FeatureSessionIfInputSeq = "session-send-if-input-seq" // SendSessionRequest.if_input_seq
 	FeatureSessionPasteEnter = "session-send-paste-enter"  // SendSessionRequest.after / after_ms
 	FeatureSessionHuman      = "input-seq-human"           // Session.human_input_seq; terminal replies are no input
+	FeatureFreshPath         = "fresh-path"                // jobs, exec and ssh sessions get PATH as the registry has it now (Windows: tools installed since longarmd started)
 )
 
 // SessionWorktreeKey names the worktree of one generation of session name

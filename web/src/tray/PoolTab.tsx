@@ -104,11 +104,33 @@ export function updateConfirmText(name: string, version: string, w?: PoolWorker,
   return `Update ${name} to ${version}?\n\nLongarm on the machine restarts for a minute or two; running jobs and sessions keep running.${companion}`
 }
 
-export function PoolTab({ pool, error, info, onNavigate }: { pool?: PoolView; error?: string; info?: TrayInfo; onNavigate?: (tab: string) => void }) {
+/**
+ * The Workers tab. startAdding (longarm ui open add-machine): "Add a
+ * machine" opens at once; onStartedAdding says it did (once, not on every
+ * visit of the tab).
+ */
+export function PoolTab({
+  pool,
+  error,
+  info,
+  onNavigate,
+  startAdding,
+  onStartedAdding,
+}: {
+  pool?: PoolView
+  error?: string
+  info?: TrayInfo
+  onNavigate?: (tab: string) => void
+  startAdding?: boolean
+  onStartedAdding?: () => void
+}) {
   const { run } = useAction()
   const now = useNow()
   const [updates, startUpdate] = useWorkerUpdates()
-  const [adding, setAdding] = useState(false)
+  const [adding, setAdding] = useState(!!startAdding)
+  useEffect(() => {
+    if (startAdding) onStartedAdding?.()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   if (adding) return <AddMachine onClose={() => setAdding(false)} />
   if (!pool)
     return error ? (

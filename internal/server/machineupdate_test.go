@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"io"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
+	"github.com/lubobill1990/longarm/internal/jobs"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/tenancy"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -136,6 +138,17 @@ func TestMachineUpdateOwnerOnly(t *testing.T) {
 	info, _ = pb.NewNodeClient(e.carol).Info(cctx(t), &pb.InfoRequest{})
 	if slices.Contains(info.Features, FeatureMachineUpdate) {
 		t.Fatal("feature without an updater")
+	}
+	// fresh-path: where longarmd rebuilds PATH (Windows), unless turned off
+	if got := slices.Contains(info.Features, jobs.FeatureFreshPath); got != (runtime.GOOS == "windows") {
+		t.Fatalf("fresh-path announced %v on %s", got, runtime.GOOS)
+	}
+	if runtime.GOOS == "windows" {
+		t.Setenv("LONGARM_FRESH_PATH", "0")
+		info, _ = pb.NewNodeClient(e.carol).Info(cctx(t), &pb.InfoRequest{})
+		if slices.Contains(info.Features, jobs.FeatureFreshPath) {
+			t.Fatal("fresh-path announced with LONGARM_FRESH_PATH=0")
+		}
 	}
 	if slices.Contains(WorkerFeatures, FeatureMachineUpdate) {
 		t.Fatal("WorkerFeatures was changed in place")

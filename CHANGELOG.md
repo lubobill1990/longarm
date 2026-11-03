@@ -12,7 +12,18 @@
   (and asks the hub for that channel's MSI and version). The Install step
   spans the page now, its installer and one-liners side by side; steps 2 and
   3 below. Step 2's sample code says it is an example.
-
+- **`longarm ui open [page]`** opens Longarm's own UI at a page - `workers`,
+  `add-machine`, `jobs` (`--job`), `this-worker`, `settings`, `account`,
+  `sessions` (`--worker`, `--job`, `--session`, `--agent`) - starting
+  longarm-tray when it isn't running; `--print-url` mints a one-time URL
+  for a program's own webview, `--json` prints `{"url", "opened"}`. For
+  programs that link to Longarm's machine and session views instead of
+  re-building them (feature `ui-open`; MCP `fleet_ui_open`).
+- **Jobs on Windows find tools installed after longarmd started** (winget,
+  `npm -g`, a Go zip): before each job, exec, session and ssh shell,
+  longarmd rebuilds PATH from the registry (Machine, then User) followed by
+  the rest of its own, as Explorer does for a new process. Worker feature
+  `fresh-path`; `LONGARM_FRESH_PATH=0` turns it off.
 - **`install.ps1` installs for the machine by default; `uninstall.ps1`**: from
   a PowerShell that isn't elevated, the hub's one-liner asks Windows to
   elevate and installs the MSI in that window (its settings travel in a file

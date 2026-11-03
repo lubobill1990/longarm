@@ -4,14 +4,17 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+
+	"github.com/lubobill1990/longarm/internal/uipage"
 )
 
 // The Sessions window (docs/agent-sessions-ui.md section 5): the web UI's
 // /sessions page, told what to show by its location hash
-// (worker=..&agent=..&key=..).
+// (worker=..&agent=..&key=..; `longarm ui open sessions` also job=.. and
+// session=..).
 
 // SessionsPath is the Sessions window's page.
-const SessionsPath = "/sessions"
+const SessionsPath = uipage.SessionsPath
 
 // validKey: a session key (<worker>/<agent>/<id>, <worker>/session/<name>).
 var validKey = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,200}$`)

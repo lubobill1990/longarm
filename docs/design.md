@@ -118,6 +118,7 @@ MCP tools (for the agent on the interactive machine):
 | `fleet_read / fleet_write / fleet_sync` | Read/write remote files, sync the local workspace over |
 | `fleet_forward` | Open a port forward, returns a local URL |
 | `fleet_link` | Port links between workers (create / list / remove) |
+| `fleet_ui_open` | Open Longarm's UI (longarm-tray) on the user's desktop at a page, e.g. a job's live terminal (`longarm ui open`) |
 
 This lets a local Claude Code have "its brain local and its hands remote": heavy `tsc`, `next build`, and test matrices are dispatched to workers; or 8 sub-agents fan out to 8 machines at once.
 

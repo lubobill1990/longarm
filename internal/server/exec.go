@@ -108,6 +108,7 @@ func (e *execServer) Run(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResp
 		errW = redact.NewWriter(errBuf, red)
 	}
 
+	platform.RefreshPath() // tools installed since longarmd started (Windows); before the lookup
 	argv := append(append([]string(nil), e.s.ExecWrapper...), req.Argv...)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = req.Cwd

@@ -303,6 +303,7 @@ func (s *Server) handleSession(sess ssh.Session) {
 		what = "ssh exec"
 	}
 	s.cfg.Audit(who(ctx), what, map[string]any{"command": raw, "pty": isPty, "user": sess.User()})
+	platform.RefreshPath() // tools installed since longarmd started (Windows)
 	base, home := os.Environ(), ""
 	if us := sessionOf(ctx); us != nil && us.Account != nil {
 		base, home = us.Env, us.Home

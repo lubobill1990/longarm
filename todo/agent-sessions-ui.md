@@ -32,3 +32,13 @@ callers and the homes live in the user's space
 aren't listed there; Claude Code ones are, but not as the job's. Needs the
 user's space root from the worker (an `InfoResponse` field, or a path the
 caller may resolve).
+
+## `longarm ui open sessions --job` for a job without an agent session
+
+The Sessions window selects the job named in its hash (`job=`,
+`findTarget` in `web/src/sessions/SessionsApp.tsx`) only when the list has
+it: steerable runs and agent jobs. A plain job (`longarm run -- pnpm
+test`) never shows up, so the window opens without a selection and says
+nothing. Either say "job X has no session; see My jobs" when the list has
+loaded without it, or have `ui open sessions --job` fall back to the `jobs`
+page (it would need to know the job's kind: `longarm jobs --id`).

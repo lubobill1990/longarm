@@ -70,7 +70,7 @@ func newRootCmd() *cobra.Command {
 	group("jobs", jobsCmd(), logsCmd(), waitCmd(), killCmd())
 	group("sessions", attachCmd(), sessionCmd(), sessionsCmd(), handoffCmd(), agentSessionsCmd())
 	group("files", putCmd(), getCmd(), syncCmd(), tailCmd(), forwardCmd(), linkCmd(), sshCmd(), sshConfigCmd())
-	group("workers", workerCmd(), infoCmd(), desktopCmd())
+	group("workers", workerCmd(), infoCmd(), desktopCmd(), uiCmd())
 	group("account", whoamiCmd(), joinCmd(), leaveCmd(), logoutCmd(), versionCmd(), notices.Cmd(), skillCmd())
 	group("admin", adminCmd(), diagCmd(), mcpCmd())
 	// Plumbing: usable, not listed.

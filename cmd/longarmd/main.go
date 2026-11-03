@@ -100,6 +100,7 @@ func runCmd() *cobra.Command {
 		Short: "Run the daemon in the foreground (also the service entry point)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			platform.NoteStartPath() // what is in front of our PATH stays there (Windows, fresh-path)
 			dataDir, err := filepath.Abs(dataDir)
 			if err != nil {
 				return err

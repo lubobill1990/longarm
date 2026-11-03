@@ -254,7 +254,7 @@ The job's own outcome comes from `jobs --json` (`state`, `exitCode`,
   "session-start", "session-send", "session-send-if-idle", "session-stop", "sessions-json-v2", "tail", "run-session",
   "job-id-short", "jobs-mine", "doctor-json", "worker-update", "ls-version", "agent-auth",
   "agent-handoff", "agent-sessions", "agent-skill", "steerable-run",
-  "session-send-if-input-seq", "session-send-paste-enter", "input-seq-human"]}
+  "session-send-if-input-seq", "session-send-paste-enter", "input-seq-human", "ui-open"]}
 ```
 
 (indented in the real output). A program checks `features` instead of
@@ -297,6 +297,7 @@ test against.
 | `session-send-if-input-seq` | `session send --if-input-seq N`: written only if the session's `inputSeq` is still N (exit 75) |
 | `session-send-paste-enter` | `session send --paste [--key KEY]...`: a bracketed paste, then the keys a moment later, one atomic send |
 | `input-seq-human` | terminal replies of attached clients (device attributes, cursor position, colours, focus) are no input: they don't move `inputSeq` / `lastInput*`; `sessions --json` has `humanInputSeq` |
+| `ui-open` | `longarm ui open [page]` with the pages `workers`, `add-machine`, `jobs`, `this-worker`, `settings`, `account`, `sessions`; `--worker`, `--job`, `--session`, `--agent`, `--print-url`, `--json` (see [Opening Longarm's UI](#opening-longarms-ui)) |
 
 The session and tail features also need the worker's (`session-start`,
 `session-send`, `session-send-if-idle`, `session-stop`, `session-info`,
@@ -1496,6 +1497,19 @@ longarmd audit verify [--file PATH]                # check audit.log's hash chai
 longarmd reloads `<data>/tls` (ca.crt, node.crt, node.key) within ~5 s when the
 files change: re-issue the worker certificate in place, no restart needed.
 
+**PATH of jobs (Windows).** A tool installed after longarmd started
+(winget, `npm -g`, a Go zip and its PATH entry) is on the PATH of the next
+job, exec, session or ssh shell without a restart: before starting one,
+longarmd rebuilds its PATH as Explorer does for a new process - the
+registry's Machine and then User `Path` (`%VAR%` expanded), followed by
+the entries of its own PATH the registry doesn't have (entries put in
+front of longarmd's PATH when it started stay in front; a directory an
+update removed from the registry goes after the registry's). Workers
+that do it announce `fresh-path` in `Node.Info` features (`longarm info <worker>`).
+`LONGARM_FRESH_PATH=0` in longarmd's environment turns it off. Jobs that
+run as the user's own account ([users](#users-teams-and-quotas-sharing-a-hub)
+with OS accounts) always got that account's fresh environment.
+
 Telemetry ([docs/telemetry.md](telemetry.md)): only when the hub has
 `[telemetry] connection_string`; scrubbed on the machine before it is queued.
 
@@ -2603,6 +2617,50 @@ the user-session worker until the next sign-in (`longarmd session-mode
 stop`), the client daemon (`longarm daemon stop`) and the tray; a worker
 installed as a Windows service and the update service keep running.
 
+### Opening Longarm's UI
+
+`longarm ui open [page]` shows longarm-tray's window at a page - the popup
+at a tab, or the Sessions window - starting longarm-tray when it is not
+running. Programs (TMIA Desktop) link to these pages instead of re-building
+them. The page names are stable:
+
+| page | shows | flags |
+|---|---|---|
+| `workers` (default) | the Workers tab | |
+| `add-machine` | the Workers tab's "Add a machine", opened | |
+| `jobs` | My jobs | `--job ID`: that job's output opened (its id, a unique start or end of it, or its name; older than the 50 listed: shown after them; none: a note says so) |
+| `this-worker` | This worker | |
+| `settings` | Settings | |
+| `account` | Account | |
+| `sessions` | the Sessions window | `--worker W` (its sessions only), `--agent claude\|copilot`, `--job ID` (that job's session: a steerable run's terminal, an agent job's conversation), `--session NAME` (that Longarm session's terminal) |
+
+```sh
+longarm ui open add-machine
+longarm ui open sessions --worker worker-1 --job 01JZ8K
+longarm ui open jobs --print-url --json
+# {"url":"http://127.0.0.1:52011/tray?tab=jobs&token=6c1f...","opened":false}
+```
+
+- `--print-url` opens nothing and prints a loopback URL with a one-time
+  code, for a program that shows the page in its own webview: the code
+  works once, within 10 minutes, and signs that webview in (a session
+  cookie) - mint a new URL for each webview. Not in an `<iframe>`: the
+  pages refuse framing.
+- `--json` prints `{"url": "...", "opened": true|false}`; without
+  `--print-url` the URL is the page's address (no code: a browser without
+  the tray's cookie gets 401).
+- Exit codes: an unknown page, a flag the page doesn't take or a bad value:
+  2 (the message lists the pages); longarm-tray not installed (not next to
+  longarm, not on PATH): 3; a tray that doesn't answer within 30 s (an
+  older tray still running: quit it from its menu): 255.
+- How: the running tray serves a local channel only this user can reach
+  (a named pipe / unix socket; its address in `<config dir>/tray.addr`)
+  with `POST /ui/open`; `ui open` asks it, or starts `longarm-tray
+  --config-dir <dir>` and asks once it answers. In `--browser` mode (no
+  window) the page opens in the default browser.
+- The feature is `ui-open` (`longarm version --json`); the page names
+  above keep their meaning, new pages get new names. MCP: `fleet_ui_open`.
+
 ### Agent skill for Claude Code, Copilot CLI, Codex
 
 Longarm ships an agent skill - `skills/longarm/` in this repository:
@@ -2668,7 +2726,8 @@ large output comes back as head + tail with a job handle), `fleet_job_submit`,
 `fleet_job_wait`, `fleet_job_logs`, `fleet_job_kill`, `fleet_read`,
 `fleet_write`, `fleet_sync` (local checkout → worktree on a worker),
 `fleet_forward` (via longarm daemon, returns the local URL), `fleet_link`
-(port links between workers: create / list / remove). Secrets are passed by
+(port links between workers: create / list / remove), `fleet_ui_open`
+(Longarm's UI on this desktop at a page, as [`longarm ui open`](#opening-longarms-ui)). Secrets are passed by
 name (`secret_env`) from the environment of `longarm mcp`, never through the model,
 and only names the operator allows: `claude mcp add longarm -e LONGARM_MCP_SECRETS=GH_TOKEN -- longarm mcp`.
 
