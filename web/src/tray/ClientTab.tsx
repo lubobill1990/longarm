@@ -78,7 +78,7 @@ export function ClientJobs() {
                   </td>
                   <td className="nowrap">
                     <StatePill state={j.job.state} />
-                    {j.job.has_exit_code ? <span className="mono muted"> {j.job.exit_code ?? 0}</span> : ''}
+                    {/* a code only when it says something: "done" is 0 */ j.job.has_exit_code && (j.job.exit_code ?? 0) !== 0 ? <span className="mono muted"> exit {j.job.exit_code}</span> : ''}
                   </td>
                   <td className="muted nowrap hide-narrow">{fmtTime(j.job.created_at)}</td>
                   <td className="actions-cell">
@@ -222,7 +222,7 @@ export function Forwards({ workers }: { workers: string[] }) {
             <option key={w}>{w}</option>
           ))}
         </select>
-        <input aria-label="target port" placeholder="port or host:port on the worker" value={target} onChange={(e) => setTarget(e.target.value)} />
+        <input aria-label="target port" placeholder="Port, e.g. 3000" value={target} onChange={(e) => setTarget(e.target.value)} />
         <button className="primary" disabled={busy || !target || !workers.length}>
           Forward
         </button>
@@ -283,11 +283,16 @@ export function Forwards({ workers }: { workers: string[] }) {
 }
 
 const POLICIES: [string, string][] = [
-  ['race', 'Race: dial every leg, first mTLS handshake wins (sticky winner)'],
-  ['tailscale', 'Prefer tailscale'],
-  ['longnet', 'Prefer longnet (hub relay + hole punching)'],
-  ['tcp', 'Prefer plain tcp'],
+  ['race', 'Automatic (recommended): try every way at once, keep the first that connects'],
+  ['tailscale', 'Prefer Tailscale'],
+  ['longnet', "Prefer Longarm's network: direct when possible, else through the hub's relay"],
+  ['tcp', 'Prefer a plain TCP connection'],
 ]
+
+/** A transport policy in a few words ("automatic"): the title bar's tooltip, the source row. */
+export function transportLabel(t?: string): string {
+  return { race: 'automatic', tailscale: 'Tailscale first', longnet: "Longarm's network first", tcp: 'plain TCP first' }[t ?? ''] ?? t ?? ''
+}
 
 /** Settings: appearance, transport policy (longarm transport), notifications, updates, the agent skill, diagnostics (logs, telemetry). */
 export function Settings({
@@ -300,12 +305,14 @@ export function Settings({
   onTheme?: (t: ThemePref) => Promise<void>
 }) {
   return (
+    // what people change most first; the technical ones (transport, diagnostics) last
     <div className="settings">
+      <AutoUpdate />
+      <TraySettingsView part="notifications" />
+      <AgentSkill />
       {theme && onTheme && <Appearance theme={theme} onTheme={onTheme} />}
       {clientUp && <TransportPolicy />}
-      <TraySettingsView />
-      <AgentSkill />
-      <AutoUpdate />
+      <TraySettingsView part="diagnostics" />
       <Licenses />
     </div>
   )
@@ -365,9 +372,22 @@ export function AutoUpdate() {
   const owner = u.can_set_auto ? '' : " (only this machine's owner or an administrator can change this)"
   return (
     <Section card title="Updates" testId="auto-update">
-      <div className="field-help">
-        Longarm {u.installed ?? '…'}
-        {newer}
+      <div className="field-inline">
+        <div className="field-help">
+          Longarm {u.installed ?? '…'}
+          {newer}
+        </div>
+        {newer && (
+          // the newer release of this channel, now (the service installs it; running jobs keep running)
+          <button
+            className="primary sm"
+            data-testid="update-now"
+            disabled={busy || !u.can_set_auto}
+            onClick={() => run(() => trayApi.installUpdate(u.available!), `installing Longarm ${u.available}`).then(() => st.reload())}
+          >
+            Update now
+          </button>
+        )}
       </div>
       <div className="field-inline">
         <div>
@@ -463,7 +483,8 @@ function TransportPolicy() {
   const [choice, setChoice] = useState<string>()
   const current = choice ?? s.data?.transport ?? 'race'
   return (
-    <Section card title="Transport policy" testId="transport">
+    <Section card title="Connection to workers" testId="transport">
+      <div className="field-help">How this computer reaches your workers. Automatic suits almost everyone.</div>
       <div className="radio-list">
         {POLICIES.map(([b, label]) => (
           <label key={b} className={`radio-row ${current === b ? 'is-checked' : ''}`}>
@@ -482,18 +503,22 @@ function TransportPolicy() {
           </label>
         ))}
       </div>
-      <p className="muted small mono">CLI: longarm transport {current}</p>
+      <p className="muted small">
+        Same as <span className="mono">longarm transport {current}</span>
+      </p>
     </Section>
   )
 }
 
-function TraySettingsView() {
+/** The tray's own settings, one card: notifications (near the top) or diagnostics (near the end). */
+function TraySettingsView({ part }: { part: 'notifications' | 'diagnostics' }) {
   const st = usePoll(traySettingsApi.get, 0)
   const { run, busy } = useAction()
   const s = st.data
   const set = (v: Parameters<typeof traySettingsApi.set>[0], ok: string) => run(() => traySettingsApi.set(v), ok).then((r) => r && st.setData(r))
   return (
     <>
+      {part === 'notifications' && (
       <Section card title="Notifications" testId="notifications">
         <ErrorBox error={st.error} />
         <label className="switch-row">
@@ -526,7 +551,9 @@ function TraySettingsView() {
         </label>
         <p className="muted small">Only your own workers and the jobs you started notify; other people&apos;s machines never do.</p>
       </Section>
+      )}
       {/* versions: the Updates card and the title bar; the hub and this device: the Account tab */}
+      {part === 'diagnostics' && (
       <Section card title="Diagnostics" testId="this-client">
         <label className="switch-row">
           <input
@@ -559,6 +586,7 @@ function TraySettingsView() {
           </button>
         </div>
       </Section>
+      )}
     </>
   )
 }

@@ -346,7 +346,7 @@ function AccountCard({
   const { run, busy } = useAction()
   // the signed-in hub's links (its /healthz, via the update check)
   const [links, setLinks] = useState<{ feedback?: string; repo?: string }>({})
-  // this computer as a device of the hub ("admin/bolu1-lubo-work": its role and name)
+  // this computer as a device of the hub ("user/alice-laptop": its role and name)
   const [device, setDevice] = useState<string>()
   useEffect(() => {
     if (!acct.signed_in || !info.client.running) return

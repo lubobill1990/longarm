@@ -3,7 +3,7 @@ import { longarmdApi, trayApi, traySettingsApi, type TrayInfo } from '../api/loc
 import { Bar } from '../components/charts'
 import { ask } from '../components/confirm'
 import { ErrorBox, FirewallWarning, LogView, StatePill, useAction, usePoll } from '../components/common'
-import { IconChip, IconTerminal } from '../components/icons'
+import { IconChip, IconShield, IconTerminal } from '../components/icons'
 import { fmtAgo, fmtTime, gb, isActive, memPct, since } from '../lib/format'
 import { JobDetailRow, killQuestion } from './ClientTab'
 import { Banner, EmptyState, Section, Skeleton } from './ui'
@@ -76,6 +76,7 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
   const jobs = usePoll(() => longarmdApi.jobs(30), 3000)
   const { run, busy } = useAction()
   const [open, setOpen] = useState<string>()
+  const [details, setDetails] = useState(false) // version, endpoints, certificate: on request
   const [maxJobs, setMaxJobs] = useState('')
   const [reserve, setReserve] = useState('')
   const s = st.data
@@ -98,11 +99,11 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
         onAllow={info.firewall_fix ? () => trayApi.firewallAllow('worker') : undefined}
       />
       <section className="wcard">
+        {/* as a machine card: the state's shield and the name, the action on the right; versions under Details */}
         <div className="head">
-          <span className={`dot ${hubOk ? 'is-online' : 'is-offline'}`} style={{ background: hubOk ? 'var(--green)' : 'var(--red)' }} />
-          <span className="name">{s.name}</span>
-          <span className="sub">
-            longarmd {s.version} · {s.os}/{s.arch}
+          <span className="shield" style={{ color: hubOk ? 'var(--green)' : 'var(--red)' }} title={hubOk ? 'connected to the hub' : 'not connected to the hub'}>
+            <IconShield size={14} aria-hidden="true" />
+            <span className="name">{s.name}</span>
           </span>
           <span className="actions">
             <button
@@ -131,15 +132,26 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
               </span>
             )}
           </dd>
-          <dt>Listening</dt>
-          <dd className="mono">{(s.endpoints ?? []).join(' ')}</dd>
-          {s.cert_not_after && (
+          {details && (
             <>
-              <dt>Certificate</dt>
-              <dd>valid until {fmtTime(s.cert_not_after)}</dd>
+              <dt>Version</dt>
+              <dd>
+                longarmd {s.version} · {s.os}/{s.arch}
+              </dd>
+              <dt>Listening</dt>
+              <dd className="mono">{(s.endpoints ?? []).join(' ')}</dd>
+              {s.cert_not_after && (
+                <>
+                  <dt>Certificate</dt>
+                  <dd>Valid until {fmtTime(s.cert_not_after)}</dd>
+                </>
+              )}
             </>
           )}
         </dl>
+        <button type="button" className="link small" aria-expanded={details} data-testid="worker-details" onClick={() => setDetails((v) => !v)}>
+          {details ? 'Hide details ▴' : 'Details ▾'}
+        </button>
         {m && (
           <div style={{ marginTop: 6 }}>
             <Bar label="CPU" pct={m.cpu_percent ?? 0} value={`${(m.cpu_percent ?? 0).toFixed(0)}%`} />
@@ -171,9 +183,12 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
         card
         title="Toolchain"
         aside={
-          <button className="sm" disabled={busy} onClick={() => run(() => longarmdApi.toolchainApply(), 'toolchain update requested')}>
-            Update now
-          </button>
+          // only with a profile: without one there is nothing to update
+          s.toolchain && s.toolchain.state !== 'none' ? (
+            <button className="sm" disabled={busy} onClick={() => run(() => longarmdApi.toolchainApply(), 'toolchain update requested')}>
+              Update now
+            </button>
+          ) : undefined
         }
       >
         <div className="row small">
@@ -186,7 +201,10 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
               {s.toolchain.error && <span className="pill bad">{s.toolchain.error}</span>}
             </>
           ) : (
-            <span className="muted">no profile assigned</span>
+            <span className="muted" data-testid="toolchain-none">
+              No toolchain profile: the tools on this machine are yours to manage. A hub admin can assign one (
+              <span className="mono">longarm admin profile assign</span>) to have Longarm install and update them.
+            </span>
           )}
         </div>
         <div className="small mono muted">

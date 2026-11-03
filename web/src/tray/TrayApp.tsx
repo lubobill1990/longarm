@@ -4,7 +4,7 @@ import type { PoolView } from '../api/types'
 import { ErrorBox, FirewallWarning, Toasts, useAction } from '../components/common'
 import { ConfirmHost } from '../components/confirm'
 import { OverlayScroll } from '../components/OverlayScroll'
-import { ClientJobs, Forwards, Settings } from './ClientTab'
+import { ClientJobs, Forwards, Settings, transportLabel } from './ClientTab'
 import { PoolTab, SourceBar, useNow } from './PoolTab'
 import { poolMachines } from '../lib/machines'
 import { WorkerTab } from './WorkerTab'
@@ -224,7 +224,7 @@ function TitleBar({ info, pool, online, total }: { info?: TrayInfo; pool?: PoolV
     `${online} of ${total} workers online`,
     hub?.address ? `Hub ${hub.address} ${hub.connected ? 'connected' : 'unavailable'}` : 'No hub',
     src === 'hub' ? 'Live data through the hub' : src === 'direct' ? 'Live data straight from the workers' : src === 'mixed' ? 'Live data through the hub and straight from workers' : 'No live data',
-    pool?.transport ? `Transport ${pool.transport} (Settings)` : '',
+    pool?.transport ? `Connection to workers: ${transportLabel(pool.transport)} (Settings)` : '',
   ]
     .filter(Boolean)
     .join('\n') // one fact a line (TooltipHost keeps the breaks)

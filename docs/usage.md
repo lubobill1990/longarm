@@ -2422,10 +2422,12 @@ only, no names, audited).
 **The hub's links**: every link to the source repository and to feedback
 on the hub's pages and in longarm-tray follows the hub. `[web] repo_url`
 (`LONGARM_HUB_WEB_REPO_URL`; Azure: `--repo-url`) is the repository - the
-front page's GitHub and docs links, the tray's "How to install" and the
-release downloads of its "Add a machine" (a GitHub repository; a hub that
-sends none: its Entra tenant decides, as before) - e.g. a company's
-internal copy; default the public one. `[web] feedback_url`
+front page's GitHub and docs links and the tray's "How to install" (a
+GitHub repository; a hub that sends none: its Entra tenant decides, as
+before) - e.g. a company's internal copy; default the public one. The
+tray's "Add a machine" shows the hub's own one-line installer (as its
+front page: `install.ps1` / `install.sh`, the release from the hub
+itself), for the roles and the system picked. `[web] feedback_url`
 (`LONGARM_HUB_WEB_FEEDBACK_URL`; Azure: `--feedback-url`) is where feedback
 and bug reports go - the front page, the panel's top bar, the tray's
 version details and Account tab - e.g. a team channel; default that

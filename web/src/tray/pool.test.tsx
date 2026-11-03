@@ -314,7 +314,7 @@ describe('ClientJobs', () => {
   })
 
   it('filters by worker; a worker name stays on one line with the whole name on hover', async () => {
-    const long = 'cpc-bolu1-hucaa-with-a-long-name'
+    const long = 'cpc-alice-x7k2q-with-a-long-name'
     const jobs = [
       ['a', long],
       ['b', 'box'],

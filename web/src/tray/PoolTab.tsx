@@ -10,6 +10,7 @@ import { fmtAgo, since } from '../lib/format'
 import { poolMachines } from '../lib/machines'
 import { IconPlus, IconServers, IconUser } from '../components/icons'
 import { AddMachine } from './AddMachine'
+import { transportLabel } from './ClientTab'
 import { EmptyState, Skeleton } from './ui'
 
 /** Opens how to add a machine (the docs' install steps) in the repository the hub points at. */
@@ -52,8 +53,8 @@ export function SourceBar({ pool, now }: { pool: PoolView; now: number }) {
           : 'no hub'}
       </span>
       <span className="spacer" />
-      <span className="srcbar-chip" title="transport policy (Settings)">
-        transport {pool.transport}
+      <span className="srcbar-chip" title="Connection to workers (Settings)">
+        Connection: {transportLabel(pool.transport)}
       </span>
     </div>
   )
