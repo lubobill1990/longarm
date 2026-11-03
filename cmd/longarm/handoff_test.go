@@ -416,12 +416,11 @@ func TestHandoffPreflight(t *testing.T) {
 	os.MkdirAll(proj, 0o755)
 	ep := localEP(t)
 	sess := &agentSession{ID: "s", cfg: srcCfg, ProjectDir: proj, Version: "2.1.310"}
-	repo := &hoRepo{ep: ep, top: proj}
 
 	// not installed: exit 2
 	t.Setenv("PATH", bin)
 	var w warnings
-	err := preflight(ctx, claudeAdapter{}, ep, ep, dstCfg, sess, repo, false, &w)
+	err := preflight(ctx, claudeAdapter{}, ep, dstCfg, sess, false, &w)
 	var ce *codedError
 	if !errors.As(err, &ce) || ce.code != exitUsage || !strings.Contains(err.Error(), "not installed") {
 		t.Fatalf("missing agent: %v", err)
@@ -430,31 +429,24 @@ func TestHandoffPreflight(t *testing.T) {
 	fakeAgentBin(t, bin, "claude")
 	t.Setenv("LONGARM_TEST_FAKE_AGENT", "2.1.300")
 	t.Setenv("LONGARM_TEST_FAKE_LOGGEDIN", "false")
-	if err := preflight(ctx, claudeAdapter{}, ep, ep, dstCfg, sess, repo, false, &w); !errors.As(err, &ce) || ce.code != exitUsage || !strings.Contains(err.Error(), "older") {
+	if err := preflight(ctx, claudeAdapter{}, ep, dstCfg, sess, false, &w); !errors.As(err, &ce) || ce.code != exitUsage || !strings.Contains(err.Error(), "older") {
 		t.Fatalf("older agent: %v", err)
 	}
-	// --force: a warning; not logged in and missing MCP servers: warnings
-	writeFileT(t, filepath.Join(srcCfg, ".claude.json"), fmt.Sprintf(`{"mcpServers":{"github":{"env":{"TOKEN":"secret-value"}},"jira":{}},"projects":{%q:{"mcpServers":{"local-db":{}}}}}`, proj))
-	writeFileT(t, filepath.Join(dstCfg, ".claude.json"), `{"mcpServers":{"github":{}}}`)
-	writeFileT(t, filepath.Join(proj, ".mcp.json"), `{"mcpServers":{"jira":{}}}`)
+	// --force: a warning; not logged in: a warning
 	w = nil
-	if err := preflight(ctx, claudeAdapter{}, ep, ep, dstCfg, sess, repo, true, &w); err != nil {
+	if err := preflight(ctx, claudeAdapter{}, ep, dstCfg, sess, true, &w); err != nil {
 		t.Fatal(err)
 	}
 	all := strings.Join(w, "\n")
-	for _, want := range []string{"older than the session's 2.1.310", "does not look logged in", "MCP servers configured on local but not on local: local-db"} {
+	for _, want := range []string{"older than the session's 2.1.310", "does not look logged in"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("warnings lack %q:\n%s", want, all)
 		}
 	}
-	if strings.Contains(all, "secret-value") {
-		t.Error("an MCP server's configuration leaked into a warning")
-	}
 	t.Setenv("LONGARM_TEST_FAKE_AGENT", "2.1.311")
 	t.Setenv("LONGARM_TEST_FAKE_LOGGEDIN", "true")
-	writeFileT(t, filepath.Join(dstCfg, ".claude.json"), `{"mcpServers":{"github":{},"local-db":{}}}`)
 	w = nil
-	if err := preflight(ctx, claudeAdapter{}, ep, ep, dstCfg, sess, repo, false, &w); err != nil || len(w) != 0 {
+	if err := preflight(ctx, claudeAdapter{}, ep, dstCfg, sess, false, &w); err != nil || len(w) != 0 {
 		t.Errorf("all good: %v %v", err, w)
 	}
 }

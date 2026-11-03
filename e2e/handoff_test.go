@@ -32,6 +32,12 @@ type handoffOut struct {
 	Transfer  string   `json:"transfer"`
 	Relayed   int64    `json:"relayedBytes"`
 	Temp      string   `json:"tempBranch"`
+	Env       *struct {
+		Dir         string   `json:"dir"`
+		MCPServers  []string `json:"mcpServers"`
+		Credentials []string `json:"mcpCredentials"`
+		Skills      []string `json:"skills"`
+	} `json:"environment"`
 }
 
 // claudeDir is Claude Code's project directory name of a path.
@@ -231,9 +237,13 @@ func TestAgentHandoff(t *testing.T) {
 	mustWrite(t, filepath.Join(srcProj, id+".jsonl"), strings.Join([]string{
 		fmt.Sprintf(`{"type":"user","cwd":%s,"sessionId":%q,"version":"1.0.0","message":{"role":"user","content":"please fix tracked.txt"}}`, jsonQ(repo), id),
 		fmt.Sprintf(`{"type":"assistant","cwd":%s,"message":{"role":"assistant","content":[{"type":"tool_use","input":{"file_path":%s}}]}}`, jsonQ(repo), jsonQ(filepath.Join(repo, "tracked.txt"))),
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"mcp__github__get_me","input":{}},{"type":"tool_use","name":"Skill","input":{"skill":"pdf"}}]}}`,
 	}, "\n")+"\n")
 	mustWrite(t, filepath.Join(srcProj, id, "tool-results", "r1.txt"), "tool output\n")
 	mustWrite(t, filepath.Join(chome, ".claude", "file-history", id, "f1@v1"), "before\n")
+	// what the session used of the environment: an MCP server and a skill of this machine
+	mustWrite(t, filepath.Join(chome, ".claude.json"), `{"mcpServers":{"github":{"command":"gh-mcp","env":{"TOKEN":"e2e-secret"}},"unused":{"command":"x"}}}`)
+	mustWrite(t, filepath.Join(chome, ".claude", "skills", "pdf", "SKILL.md"), "---\nname: pdf\n---\n")
 
 	t.Run("agent_sessions_local", func(t *testing.T) {
 		r := client(repo, "agent-sessions", "--json", "--repo-path", repo)
@@ -285,6 +295,23 @@ func TestAgentHandoff(t *testing.T) {
 		if rec["cwd"] != wantTop || rec["transcript"] != true || rec["recordedCwd"] != wantTop || rec["worker"] != "w1" || rec["session"] != "handoff-"+short {
 			t.Errorf("the agent on w1: %v", rec)
 		}
+		// the MCP server and skill it used went for this session only, loaded by the resume command
+		pack := filepath.Join(w1home, ".claude", "longarm-handoff", id)
+		if h1.Env == nil || h1.Env.Dir != pack || fmt.Sprint(h1.Env.MCPServers) != "[github]" || fmt.Sprint(h1.Env.Credentials) != "[github]" || fmt.Sprint(h1.Env.Skills) != "[pdf]" {
+			t.Errorf("environment: %+v", h1.Env)
+		}
+		if args := fmt.Sprint(rec["args"]); !strings.Contains(args, "--mcp-config "+filepath.Join(pack, "mcp.json")) || !strings.Contains(args, "--add-dir "+pack) {
+			t.Errorf("the agent's arguments on w1: %s", args)
+		}
+		if mj := readText(t, filepath.Join(pack, "mcp.json")); !strings.Contains(mj, "e2e-secret") || strings.Contains(mj, "unused") {
+			t.Errorf("mcp.json on w1:\n%s", mj)
+		}
+		if _, err := os.Stat(filepath.Join(pack, ".claude", "skills", "pdf", "SKILL.md")); err != nil {
+			t.Errorf("skill on w1: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(w1home, ".claude.json")); err == nil {
+			t.Error("w1's own configuration was written")
+		}
 		// listed on w1; the handed-off local copy is no longer listed locally
 		if r := client(repo, "agent-sessions", "w1", "--json"); r.code != 0 || !strings.Contains(r.stdout, id) {
 			t.Errorf("agent-sessions w1: %+v", r)
@@ -332,6 +359,10 @@ func TestAgentHandoff(t *testing.T) {
 		if rec := agentRecord(t, w2home, id); rec["cwd"] != wantTop || rec["recordedCwd"] != wantTop || rec["worker"] != "w2" {
 			t.Errorf("the agent on w2: %v", rec)
 		}
+		// w1 had them for this session only: they go on from there
+		if h2.Env == nil || fmt.Sprint(h2.Env.MCPServers) != "[github]" || fmt.Sprint(h2.Env.Skills) != "[pdf]" {
+			t.Errorf("environment w1 -> w2: %+v", h2.Env)
+		}
 	})
 
 	t.Run("w2_to_local", func(t *testing.T) {
@@ -366,6 +397,8 @@ func TestAgentHandoff(t *testing.T) {
 		}
 		if rec := agentRecord(t, chome, id); rec["cwd"] != wantTop || rec["recordedCwd"] != wantTop {
 			t.Errorf("the agent here: %v", rec)
+		} else if args := fmt.Sprint(rec["args"]); strings.Contains(args, "--mcp-config") || strings.Contains(args, "--add-dir") {
+			t.Errorf("this machine has the MCP server and skill: nothing to carry back (%s)", args)
 		}
 		// the original local copy stays where it was, marked; the id-keyed
 		// state it had was kept as a backup, not overwritten

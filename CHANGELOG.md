@@ -4,6 +4,18 @@
 
 ### Added
 
+- **`longarm handoff` carries the session's environment**: the MCP servers,
+  skills and plugins the session used (read from its transcripts) that the
+  target lacks, and Claude Code's project memory and `CLAUDE.md`, go to the
+  session's own directory on the target (`<agent dir>/longarm-handoff/<id>/`)
+  and are loaded for that session only (Claude Code: `--mcp-config`,
+  `--plugin-dir`, `--add-dir`, `--append-system-prompt-file`; Copilot CLI:
+  `--additional-mcp-config`, `--plugin-dir`, `--add-dir`) - the target's own
+  configuration, skills and plugins are not touched. MCP configurations go
+  as they are, credentials included, readable by your account only; the
+  output names the servers with credentials. `--json`: `environment`. The
+  preflight warning about MCP servers the target lacks is gone.
+
 - **`longarm ui open [page]`** opens Longarm's own UI at a page - `workers`,
   `add-machine`, `jobs` (`--job`), `this-worker`, `settings`, `account`,
   `sessions` (`--worker`, `--job`, `--session`, `--agent`) - starting

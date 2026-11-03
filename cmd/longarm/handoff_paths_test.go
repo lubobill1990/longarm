@@ -123,7 +123,7 @@ func TestHandoffMoveRefusesForged(t *testing.T) {
 	// forged: a name that climbs out of the session's files
 	s := list()
 	s.files = append(s.files, agentFile{src: tr, base: "project", rel: id + "/../../../../outside.txt", size: 1, rewrite: ""})
-	if _, _, err := moveSessionFiles(ctx, ca, ep, ep, dstCfg, s, repo, dstTop, dstTop, 1<<30); !isUsage(err) {
+	if _, _, err := moveSessionFiles(ctx, ca, ep, ep, dstCfg, s, repo, dstTop, dstTop, 1<<30, newEnvUse()); !isUsage(err) {
 		t.Fatalf("forged name: %v", err)
 	}
 	if _, err := os.Stat(outside); err == nil {
@@ -138,7 +138,7 @@ func TestHandoffMoveRefusesForged(t *testing.T) {
 	for i := range s.files {
 		s.files[i].size = 1
 	}
-	if _, _, err := moveSessionFiles(ctx, ca, ep, ep, dstCfg, s, repo, dstTop, dstTop, 1<<30); !isUsage(err) || !strings.Contains(err.Error(), "more than") {
+	if _, _, err := moveSessionFiles(ctx, ca, ep, ep, dstCfg, s, repo, dstTop, dstTop, 1<<30, newEnvUse()); !isUsage(err) || !strings.Contains(err.Error(), "more than") {
 		t.Fatalf("oversized file: %v", err)
 	}
 	os.RemoveAll(dstCfg)
@@ -158,7 +158,7 @@ func TestHandoffMoveRefusesForged(t *testing.T) {
 			t.Fatal(err)
 		}
 	} else {
-		if _, _, err := moveSessionFiles(ctx, ca, ep, ep, dstCfg, list(), repo, dstTop, dstTop, 1<<30); !isUsage(err) || !strings.Contains(err.Error(), "symlink") {
+		if _, _, err := moveSessionFiles(ctx, ca, ep, ep, dstCfg, list(), repo, dstTop, dstTop, 1<<30, newEnvUse()); !isUsage(err) || !strings.Contains(err.Error(), "symlink") {
 			t.Fatalf("symlink in the destination: %v", err)
 		}
 		if ents, _ := os.ReadDir(evil); len(ents) != 0 {
@@ -168,7 +168,7 @@ func TestHandoffMoveRefusesForged(t *testing.T) {
 	}
 
 	// legitimate: nested files arrive, rewritten
-	n, _, err := moveSessionFiles(ctx, ca, ep, ep, dstCfg, list(), repo, dstTop, dstTop, 1<<30)
+	n, _, err := moveSessionFiles(ctx, ca, ep, ep, dstCfg, list(), repo, dstTop, dstTop, 1<<30, newEnvUse())
 	if err != nil || n != 5 {
 		t.Fatalf("legitimate move: %d %v", n, err)
 	}
@@ -178,7 +178,7 @@ func TestHandoffMoveRefusesForged(t *testing.T) {
 		t.Fatalf("nested file: %v %s", err, b)
 	}
 	// moving again: what is there is backed up, never overwritten
-	if _, _, err := moveSessionFiles(ctx, ca, ep, ep, dstCfg, list(), repo, dstTop, dstTop, 1<<30); err != nil {
+	if _, _, err := moveSessionFiles(ctx, ca, ep, ep, dstCfg, list(), repo, dstTop, dstTop, 1<<30, newEnvUse()); err != nil {
 		t.Fatalf("second move: %v", err)
 	}
 	if bk, _ := filepath.Glob(filepath.Join(dstCfg, "longarm-handoff-backup", id+"-*", "project", id+".jsonl")); len(bk) != 1 {
