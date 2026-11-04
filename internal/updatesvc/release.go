@@ -119,7 +119,8 @@ func NewHTTPSource(hub string) (*HTTPSource, error) {
 	return &HTTPSource{Base: base, Client: httpClient(base)}, nil
 }
 
-// httpClient: TLS 1.2+, HTTPS redirects on the same host only.
+// httpClient: TLS 1.2+, HTTPS redirects to the hub or GitHub's release
+// hosts only. Signatures and the release record still bind the bytes.
 func httpClient(base string) *http.Client {
 	u, _ := url.Parse(base)
 	tr := &http.Transport{
@@ -131,10 +132,17 @@ func httpClient(base string) *http.Client {
 	}
 	return &http.Client{Transport: tr, CheckRedirect: func(r *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
-			return errors.New("too many redirects")
+			return fmt.Errorf("too many redirects: refusing a redirect to %s (host %q)", r.URL.Redacted(), r.URL.Hostname())
 		}
-		if r.URL.Scheme != "https" || u == nil || !strings.EqualFold(r.URL.Hostname(), u.Hostname()) {
-			return fmt.Errorf("refusing a redirect to %s", r.URL.Redacted())
+		host := strings.ToLower(r.URL.Hostname())
+		allowed := u != nil && strings.EqualFold(host, u.Hostname())
+		switch host {
+		case "github.com", "objects.githubusercontent.com", "objects-origin.githubusercontent.com",
+			"release-assets.githubusercontent.com", "github-releases.githubusercontent.com":
+			allowed = true
+		}
+		if r.URL.Scheme != "https" || r.URL.User != nil || !allowed {
+			return fmt.Errorf("refusing a redirect to %s (host %q): want HTTPS on the hub or a GitHub release host without userinfo", r.URL.Redacted(), r.URL.Hostname())
 		}
 		return nil
 	}}

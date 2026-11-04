@@ -780,11 +780,22 @@ target, so its only capability is installing a **Longarm MSI that is**
 
 | Check | How |
 |---|---|
-| **from the recorded hub** | the hub in `HKLM\Software\Longarm` (`Hub`, written by the elevated installer helper: administrators only). No request names a hub, URL, file or key: the pipe protocol has no such field and refuses unknown fields. Downloads are HTTPS (system roots, same-host redirects only) from `GET /releases/latest.json`, `/releases/<v>/release.json` and `/releases/<v>/<file>` |
+| **from the recorded hub** | the hub in `HKLM\Software\Longarm` (`Hub`, written by the elevated installer helper: administrators only). No request names a hub, URL, file or key: the pipe protocol has no such field and refuses unknown fields. Downloads start at `GET /releases/latest.json`, `/releases/<v>/release.json` and `/releases/<v>/<file>` over HTTPS (system roots, TLS 1.2+); redirects must stay on the hub or the exact GitHub release hosts listed below, with no userinfo, at most four redirects |
 | **signed** | minisign signature verified against the release key **built into** `longarm-update.exe` (`-X .../update.PublicKey`; a build without one installs nothing), the trusted comment naming exactly `longarm-windows-<arch>.msi` and that version: an older release's signature can't be replayed, another file's (another architecture's MSI) can't be swapped in |
 | **matching the hub's record** | size and sha256 of the release record, before the signature (`update.VerifyPackage`; the tray's own update banner checks the same, `verifyMSI`) |
 | **strictly newer** | `update.CheckNewer`: a downgrade is refused, the installed version again is "up to date" - a reinstall only for an elevated local administrator (`--reinstall`), never over the network |
 | **for this machine** | the MSI of the service binary's architecture only |
+
+Allowed GitHub redirect hosts: `github.com`, `objects.githubusercontent.com`,
+`objects-origin.githubusercontent.com`, `github-releases.githubusercontent.com`
+and `release-assets.githubusercontent.com` (GitHub's
+[download endpoints](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#communication-requirements-for-github-hosted-runners)).
+No wildcard subdomains or HTTP downgrades are accepted. The host list is a
+download constraint, not proof of authenticity: the built-in release key,
+file/version-bound signature, sha256 and size checks still apply to every
+MSI. For old update services (including 0.1.31), the hub fetches GitHub-backed
+MSIs into its size/sha256-checked cache and serves the bytes without a
+cross-host redirect; signatures remain checked by the service.
 
 **Installing.** Downloads go to `C:\ProgramData\Longarm\updates\<version>\`:
 `ProgramData\Longarm` must be owned and writable by SYSTEM /

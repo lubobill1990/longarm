@@ -36,7 +36,8 @@ func hashFile(p string) (string, int64, error) {
 }
 
 func (h *Hub) releaseFile(w http.ResponseWriter, r *http.Request) {
-	// a GitHub release file the hub has no copy of: from GitHub
+	// GitHub files without a cached copy redirect, except MSIs: old update
+	// services need the bytes served by the recorded hub itself.
 	if u := h.remoteReleaseURL(r.PathValue("version"), r.PathValue("file")); u != "" {
 		http.Redirect(w, r, u, http.StatusFound)
 		return

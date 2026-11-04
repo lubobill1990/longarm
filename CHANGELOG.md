@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Windows worker updates on GitHub-backed hubs**, including workers
+  already on 0.1.31: the hub serves MSIs through its size/sha256-checked
+  cache instead of redirecting to GitHub, which old update services
+  refused. Redeploy the hub, then retry `longarm worker update`; no manual
+  worker upgrade is needed. New update services also follow HTTPS
+  redirects to the exact GitHub release asset hosts, keeping the redirect
+  limit and all signature, file/version, sha256 and size checks. Redirect
+  errors identify the actual refused URL and host.
+
 ### Added
 
 - **`longarm cp <worker>:<path> <worker>:<path>`**: a file or a directory
@@ -52,10 +63,10 @@
   its source repository from GitHub - the public one by default,
   `[releases] github = "owner/repo" | "off"` - so the front page's
   installers, the install scripts, `/releases/latest.json`, update notices
-  and worker self-updates work with no setup. The hub keeps no files: HTTP
-  downloads redirect to GitHub, worker self-updates are fetched once into
-  its cache and checked against GitHub's sha256 digests; workers verify the
-  signatures as always. Stable releases are the stable channel,
+  and worker self-updates work with no setup. HTTP downloads redirect to
+  GitHub except MSIs: these and worker self-updates are fetched once into
+  its cache and checked against GitHub's sha256 digests and sizes; workers
+  verify the signatures as always. Stable releases are the stable channel,
   pre-releases preview. The hub's first own release turns it off.
   The front page offers only the release channels the hub has releases
   of: preview and dev appear only with a release of their own, so a hub on

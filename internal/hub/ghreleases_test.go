@@ -6,16 +6,20 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/lubobill1990/longarm/internal/update"
+	"github.com/lubobill1990/longarm/internal/updatesvc"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -129,7 +133,7 @@ func TestGitHubReleasesConfig(t *testing.T) {
 
 // TestGitHubReleases: a hub without releases of its own offers GitHub's:
 // latest.json, install scripts and channels see them, HTTP downloads go to
-// GitHub, a worker's download (gRPC path) is fetched once, checked and
+// GitHub except MSIs, a worker's download (gRPC path) is fetched once, checked and
 // cached, signatures come along; drafts and files without digests are
 // left out; the hub's first own release turns GitHub's off.
 func TestGitHubReleases(t *testing.T) {
@@ -185,9 +189,13 @@ func TestGitHubReleases(t *testing.T) {
 		h.releaseFile(w, r)
 		return w
 	}
-	// HTTP downloads: to GitHub; the signature from the index
-	if w := get("1.2.0", "longarm-windows-amd64.msi"); w.Code != http.StatusFound || w.Header().Get("Location") != gh.srv.URL+"/download/v1.2.0/longarm-windows-amd64.msi" {
-		t.Fatalf("msi: %d %s", w.Code, w.Header().Get("Location"))
+	// MSIs stay on the hub for old update services; other uncached files
+	// still redirect, and signatures come from the index.
+	if w := get("1.2.0", "longarm-windows-amd64.msi"); w.Code != http.StatusOK || w.Body.String() != "msi-1.2.0" || w.Header().Get("Location") != "" {
+		t.Fatalf("msi: %d %q %s", w.Code, w.Body.String(), w.Header().Get("Location"))
+	}
+	if w := get("1.2.0", "longarmd-linux-amd64"); w.Code != http.StatusFound || w.Header().Get("Location") != gh.srv.URL+"/download/v1.2.0/longarmd-linux-amd64" {
+		t.Fatalf("binary: %d %s", w.Code, w.Header().Get("Location"))
 	}
 	if w := get("1.2.0", "longarmd-linux-amd64.minisig"); w.Code != 200 || w.Body.String() != "sig-1.2.0" {
 		t.Fatalf("signature: %d %q", w.Code, w.Body.String())
@@ -203,7 +211,7 @@ func TestGitHubReleases(t *testing.T) {
 	if err != nil || readAll(t, p) != "daemon-1.2.0" {
 		t.Fatalf("worker download: %v", err)
 	}
-	if _, err := h.releasePath(ctx, "1.2.0", "longarmd-linux-amd64"); err != nil || gh.downloads.Load() != 2 { // + the .minisig at poll
+	if _, err := h.releasePath(ctx, "1.2.0", "longarmd-linux-amd64"); err != nil || gh.downloads.Load() != 3 { // + MSI, .minisig at poll
 		t.Fatalf("second download: %v, %d downloads", err, gh.downloads.Load())
 	}
 	if w := get("1.2.0", "longarmd-linux-amd64"); w.Code != 200 || w.Body.String() != "daemon-1.2.0" {
@@ -230,6 +238,99 @@ func TestGitHubReleases(t *testing.T) {
 	}
 	if h.ghWanted() {
 		t.Fatal("still polling GitHub")
+	}
+}
+
+// A 0.1.31-style HTTPS client can fetch and verify a GitHub-backed MSI
+// end to end without leaving its recorded hub. No installer is launched.
+func TestGitHubMSILegacyUpdateEndToEnd(t *testing.T) {
+	const version = "0.1.32"
+	pub, priv, err := update.GenerateKey("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(t.TempDir(), "release.key")
+	if err := os.WriteFile(key, priv, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sk, err := update.LoadPrivateKey(key, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh := newFakeGitHub(t)
+	files := map[string]string{}
+	for _, arch := range []string{"amd64", "arm64"} {
+		name := update.MSIName(arch)
+		data := []byte("MSI " + arch)
+		files[name] = string(data)
+		files[name+update.SigExt] = string(update.Sign(sk, data, name, version))
+	}
+	// Same size, wrong digest: the hub must never serve or cache it.
+	badName := update.MSIName("amd64")
+	gh.release("v"+version, false, false, files, nil)
+	gh.release("v0.1.33", false, false, map[string]string{badName: "tampered"}, map[string]string{badName: "original"})
+	h := newGHHub(t, gh)
+	if err := h.gh.poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /releases/{version}/release.json", h.releaseVersionJSON)
+	mux.HandleFunc("GET /releases/{version}/{file}", h.releaseFile)
+	srv := httptest.NewTLSServer(mux)
+	defer srv.Close()
+	src, err := updatesvc.NewHTTPSource(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Client = srv.Client()
+	redirects := 0
+	src.Client.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+		redirects++
+		if len(via) >= 5 || r.URL.Scheme != "https" || r.URL.Hostname() != via[0].URL.Hostname() {
+			return fmt.Errorf("legacy updater: refusing a redirect to %s", r.URL)
+		}
+		return nil
+	}
+	ctx := context.Background()
+	record, err := src.Get(ctx, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, arch := range []string{"amd64", "arm64"} {
+		name := update.MSIName(arch)
+		f := record.File(name)
+		if f == nil || !f.Signed {
+			t.Fatalf("no signed MSI in release record: %s", name)
+		}
+		var data, sig bytes.Buffer
+		if err := src.Download(ctx, version, name, &data, f.Size); err != nil {
+			t.Fatal(err)
+		}
+		if err := src.Download(ctx, version, name+update.SigExt, &sig, update.MaxSignatureSize); err != nil {
+			t.Fatal(err)
+		}
+		if err := update.VerifyPackage(pub, data.Bytes(), sig.Bytes(), name, version, f.SHA256, f.Size); err != nil {
+			t.Fatal(err)
+		}
+		if err := update.VerifyPackage(pub, []byte("tampered"), sig.Bytes(), name, version, f.SHA256, f.Size); err == nil {
+			t.Fatal("tampered MSI verified")
+		}
+		if err := update.VerifyPackage(pub, data.Bytes(), []byte("invalid signature"), name, version, f.SHA256, f.Size); err == nil {
+			t.Fatal("invalid signature verified")
+		}
+		before := gh.downloads.Load()
+		if err := src.Download(ctx, version, name, io.Discard, f.Size); err != nil || gh.downloads.Load() != before {
+			t.Fatalf("MSI not cached: %v", err)
+		}
+	}
+	if err := src.Download(ctx, "0.1.33", badName, io.Discard, 100); err == nil || !strings.Contains(err.Error(), "503") {
+		t.Fatalf("bad upstream digest not refused: %v", err)
+	}
+	if regularFile(h.rel.localPath("0.1.33", badName)) {
+		t.Fatal("bad upstream MSI cached")
+	}
+	if redirects != 0 {
+		t.Fatalf("old updater encountered %d redirects", redirects)
 	}
 }
 
