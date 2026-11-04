@@ -69,7 +69,10 @@ function Get-LongarmProcs {
         default { 'other' }
       }
     }
-    [pscustomobject]@{ ProcessId = $_.ProcessId; Kind = $kind; Name = $name; SessionId = $_.SessionId; CommandLine = $cmd; Exe = $_.ExecutablePath }
+    # Key: the process, not its id - Windows reuses ids at once (a new process may get the id of one an
+    # upgrade just ended)
+    [pscustomobject]@{ ProcessId = $_.ProcessId; Key = "$($_.ProcessId)/$($_.CreationDate.Ticks)"; Kind = $kind; Name = $name; SessionId = $_.SessionId
+      CommandLine = $cmd; Exe = $_.ExecutablePath }
   }
 }
 
@@ -208,12 +211,12 @@ function Invoke-Upgrade([string] $what, [string] $msi, [string] $arguments, [str
   if ($text -notmatch 'Disallowing uninstallation of component') { Write-Host '::warning::no component was shared with the old product' }
   Assert-Installed $version $hashes
   # stopped: none of the old processes of those kinds is left
-  $old = @($before | Where-Object { $restartKinds -contains $_.Kind } | ForEach-Object ProcessId)
-  $left = @(Get-LongarmProcs | Where-Object { $old -contains $_.ProcessId })
+  $old = @($before | Where-Object { $restartKinds -contains $_.Kind } | ForEach-Object Key)
+  $left = @(Get-LongarmProcs | Where-Object { $old -contains $_.Key })
   if ($left.Count) { Fail "still running after the upgrade (not stopped): $($left.CommandLine -join '; ')" }
   # started again: each kind, as a new process
   foreach ($k in $kinds) {
-    if (-not (Wait-Until { @(Get-LongarmProcs | Where-Object { $_.Kind -eq $k -and $old -notcontains $_.ProcessId }).Count } 90 "a new $k")) {
+    if (-not (Wait-Until { @(Get-LongarmProcs | Where-Object { $_.Kind -eq $k -and $old -notcontains $_.Key }).Count } 90 "a new $k")) {
       Fail "$k was running before the upgrade and was not started again"
     }
   }
@@ -281,10 +284,11 @@ switch ($Scenario) {
     Assert-Installed '0.250.0' (Join-Path $MsiDir 'hashes-default.txt')
     Start-Running $true $true
     # an upgrade can't switch the worker to a service: refused before anything changes or stops
-    $running = @(Get-LongarmProcs | Where-Object { $restartKinds -contains $_.Kind } | ForEach-Object ProcessId)
+    $running = @(Get-LongarmProcs | Where-Object { $restartKinds -contains $_.Kind } | ForEach-Object Key)
     $text = Invoke-Msi 'refused-switch' "/i `"$next`" RUN=service SERVICE_ACCOUNT=LocalSystem" -ok @(1603) -allow @('1603', 'Return value 3', 'Installation failed', 'MainEngineThread is returning 1603')
     if ($text -notmatch 'switch the worker between a Windows service and the user-session worker') { Fail 'the refused upgrade did not say why' }
-    $gone = @($running | Where-Object { -not (Get-Process -Id $_ -ErrorAction SilentlyContinue) })
+    $now = @(Get-LongarmProcs | ForEach-Object Key)
+    $gone = @($running | Where-Object { $now -notcontains $_ })
     if ($gone.Count) { Fail "the refused upgrade ended processes $($gone -join ', ')" }
     Assert-Installed '0.250.0' (Join-Path $MsiDir 'hashes-default.txt')
     Start-Running $true $true
