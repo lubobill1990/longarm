@@ -50,15 +50,18 @@ func cpCmd() *cobra.Command {
 		Long: `Copy a file or a directory (recursively) from one worker to another. The data
 goes worker to worker - directly, else through the hub's relay - never
 through this machine. Like cp -r: if the target is an existing directory (or
-ends with /), the source goes inside it. Relative paths are relative to the
-worker account's home. Files whose size and sha256 already match are
+ends with /), the source goes inside it. Paths are in each worker's OS:
+absolute (/srv/out, C:/data/out) or relative to the worker account's home
+(out, ~/out); / works on Windows workers too (C:\data\out needs quotes in
+bash/zsh: 'w2:C:\data\out'). Files whose size and sha256 already match are
 skipped; a copy that broke off resumes from the verified prefix of
 <file>.lapart on the target - automatically after a lost connection, else
 when you run it again. Symlinks are not copied. Both workers must be yours
 (or fleet workers you may use) and have the "copy" feature. With one side
 on this machine it is longarm put / longarm get.`,
-		Example: `  longarm cp w1:build/out w2:in/          # w2:in/out
-  longarm cp w1:C:/data/model.bin w2:/models/model.bin`,
+		Example: `  longarm cp w1:build/out w2:in/                  # home-relative, into in/: w2:in/out
+  longarm cp win1:C:/data/model.bin mac1:/Users/alice/models/model.bin
+  longarm cp 'win1:C:\data\out' lin1:/srv/in/     # bash/zsh: quote backslashes`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := openSession()

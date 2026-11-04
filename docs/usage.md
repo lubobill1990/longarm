@@ -1422,7 +1422,12 @@ The data goes from one worker to the other - directly, else through the
 hub's relay - never through your machine (one side on your machine: that
 is `put` / `get`, which `cp` runs then). Like `cp -r`: a target that is an
 existing directory, or ends with `/`, gets the source inside it by its
-name; relative paths are the worker account's home. Files whose size and
+name. Each path is in its worker's OS: absolute (`/srv/out`,
+`/Users/alice/out`, `C:/data/out`) or relative to the worker account's home
+(`out`, `~/out`); `/` works on Windows workers too, so `C:/data/out` needs
+no quoting anywhere, while `C:\data\out` needs quotes in bash and zsh
+(`'w2:C:\data\out'`). Names with `:` or `\` (possible on Linux and macOS)
+can't be written on a Windows worker. Files whose size and
 sha256 already match are skipped (run it again: only what changed goes);
 every file is sha256-verified and appears at its path only when complete.
 A copy that broke off keeps its partial files on the target

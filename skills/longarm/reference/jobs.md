@@ -20,7 +20,11 @@
 
 `longarm sync . <w>:<path>` (or `<w>:` = `<home>/longarm-sync/<repo>`) mirrors the checkout into a persistent worktree. It resets tracked changes and untracked files there and keeps ignored files (node_modules, build output).
 
-Files: `longarm put <local>... <w>:<path>`, `longarm get <w>:<path> <local>` (both resumable and sha256-verified). Worker to worker: `longarm cp <w1>:<path> <w2>:<path>` (file or directory; data goes w1 -> w2 directly or via the hub relay, never through you; skips identical files; rerun to resume; symlinks not copied; both workers yours or ownerless fleet, both with the `copy` feature; `-q`: summary only). Use it to hand one job's output to the next job on another worker. `longarm tail <w> <path> -f --json` streams a growing file (one `{"offset","next","line"}` per line).
+Files: `longarm put <local>... <w>:<path>`, `longarm get <w>:<path> <local>` (both resumable and sha256-verified). Worker to worker: `longarm cp <w1>:<path> <w2>:<path>` (file or directory; data goes w1 -> w2 directly or via the hub relay, never through you; skips identical files; rerun to resume; symlinks not copied; both workers yours or ownerless fleet, both with the `copy` feature; `-q`: summary only). Use it to hand one job's output to the next job on another worker.
+
+Worker paths (`<w>:<path>`) are in the worker's OS: absolute (`/srv/out`, `/Users/a/out`, `C:/data/out` or `C:\data\out`) or relative to the worker account's home (`out`, `~/out`; per-user isolation: your `la-<you>` account's home). `/` works on Windows workers too - prefer `C:/...`; with `\` quote the argument in bash/zsh (`'w2:C:\data'`). A target that is an existing directory or ends with `/` receives the source by its name (`cp w1:out w2:in/` -> `w2:in/out`); otherwise the target is the final path. Linux/macOS names containing `:` or `\` can't be written on Windows.
+
+`longarm tail <w> <path> -f --json` streams a growing file (one `{"offset","next","line"}` per line).
 
 ## Output and state
 
