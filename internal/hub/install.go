@@ -609,7 +609,10 @@ function Install-Tray {
   $tray = Join-Path $Prefix 'longarm-tray.exe'
   if ($NoTray -or -not (Test-Path -LiteralPath $tray)) { return }
   $hive = if ($machineWide) { 'HKLM' } else { 'HKCU' }
-  New-ItemProperty -Path ($hive + ':\Software\Microsoft\Windows\CurrentVersion\Run') -Name 'longarm-tray' -Value ('"' + $tray + '"') -PropertyType String -Force | Out-Null
+  $run = $hive + ':\Software\Microsoft\Windows\CurrentVersion\Run'
+  # a profile may not have the key yet (New-ItemProperty doesn't create it)
+  if (-not (Test-Path $run)) { New-Item -Path $run -Force | Out-Null }
+  New-ItemProperty -Path $run -Name 'longarm-tray' -Value ('"' + $tray + '"') -PropertyType String -Force | Out-Null
   $menu = [Environment]::GetFolderPath($(if ($machineWide) { 'CommonPrograms' } else { 'Programs' }))
   $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $menu 'Longarm.lnk'))
   $lnk.TargetPath = $tray; $lnk.WorkingDirectory = $Prefix; $lnk.Description = 'Longarm tray'; $lnk.Save()

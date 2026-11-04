@@ -397,6 +397,11 @@
 
 ### Fixed
 
+- **`install.ps1` for one account, on a profile without a Run key.** It
+  registered the tray at logon with `New-ItemProperty` under
+  `HKCU:\...\CurrentVersion\Run`, which fails when the key doesn't exist
+  yet ("Cannot find path"): the install stopped after copying the
+  binaries. The key is created first now.
 - **The MSI no longer rolls back when the worker's join fails.** A
   `JOIN_CODE` that expired (an unattended install that ran late, e.g. a Dev
   Box customization days after it was queued), an unknown code or an
