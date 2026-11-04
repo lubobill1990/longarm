@@ -1013,8 +1013,9 @@ their choosing. So the installer treats every property as untrusted input:
 
 Port links (`longarm link`, [usage](usage.md#port-links-worker-to-worker))
 let a user's processes on worker A reach a loopback port of worker B. They
-are the only way one worker talks to another; workers get **no control
-rights** on each other.
+are, with the owner's own transfers (a handoff's commits, `longarm cp`:
+[below](#worker-to-worker-copies)), the only way one worker talks to
+another; workers get **no control rights** on each other.
 
 **How a link is authorized.**
 
@@ -1031,8 +1032,9 @@ rights** on each other.
    worker's own hub session (no new RPC for workers on the hub). The list
    is authoritative: a link that is not in it is revoked.
 4. For each accepted local connection A calls `LinkTunnel.Dial` on B with
-   its worker certificate and the grant. This is the **only** RPC a worker
-   certificate may call on a worker. B accepts it only if the grant's
+   its worker certificate and the grant. Besides the reads of an owner's
+   transfer offers ([below](#worker-to-worker-copies)) this is the **only**
+   RPC a worker certificate may call on a worker. B accepts it only if the grant's
    signature chains to the fleet CA with the `hub` role, the grant names
    the calling worker (mTLS identity) as A and B itself as the target, it
    has not expired, and the link is still in B's list with the same owner,
@@ -1115,7 +1117,7 @@ connection:
   "no owner's consent". Workers without trust keep accepting the hub's
   grant alone - there the hub is trusted by design.
 - A worker certificate is not a user: on B it passes the role table only
-  for `LinkTunnel.Dial`, and `[access]` and the owner/shares rule are then
+  for `LinkTunnel.Dial` (and the transfer reads), and `[access]` and the owner/shares rule are then
   applied to the grant's owner instead of the calling worker. With
   end-to-end trust the TLS handshake already refuses a calling worker that
   no trusted user endorsed (`pki.TrustPolicy.Check` for a worker
@@ -1201,6 +1203,46 @@ certificates. What that means while the hub is away:
   keys). Pulling from an ACR, the relay has its own managed identity with
   AcrPull only: never the hub's, which can read the database replica (and
   with it the CA in identity mode).
+
+## Worker-to-worker copies
+
+`longarm cp w1:src w2:dst` ([usage](usage.md#copy-between-workers-longarm-cp))
+and a handoff's direct transfer of commits move a user's data from one
+worker straight to another. The grant is the **owner's own word**, given
+over the owner's end-to-end mTLS connections to both workers; the hub never
+carries it, so it can neither forge nor widen it.
+
+- **Offer** (the owner's client, on the source): this path and what is
+  below it, read **as the owner** (per-user isolation: through the owner's
+  helper), for **one peer worker** - its certificate name and, from newer
+  clients, its node ID as the client verified it - for whoever presents a
+  **32-byte random token** the client gives only to the two workers, until
+  an expiry (a copy: at most 24 h, revoked by the client when it ends; a
+  handoff: 10 minutes, one read). At most 64 copy offers per worker.
+- **Reads** (`Copy.List` / `Stat` / `Read`, `Handoff.Fetch`): the only
+  RPCs besides `LinkTunnel.Dial` a worker certificate may call. Each one
+  checks the offer, the peer's name and ID, the token (constant time) and
+  the expiry; paths are relative to the offered path - no `..`, no
+  absolute paths, on Windows no `\` or `:` - and a read takes regular files
+  only, never a symlink (symlinks in the tree are not copied: they may point
+  anywhere).
+- **Pull** (the owner's client, on the target): the target dials the source
+  with its worker certificate over the port-link legs, checks that the
+  source is the node the client named (node ID) before a byte is taken,
+  and writes **as the owner**; the source's listing is checked again
+  (relative paths only). Data is sha256-verified per file before it
+  appears at its path.
+- **On every call, on both workers**: a worker with an owner takes part for
+  its owner only - not for a user it is shared with, not for an admin of
+  another user - and the port-link rules for the owner apply (a user of
+  the worker, disabled users, pinned key); with end-to-end trust the other
+  worker must be **endorsed by the owner's key**. A worker that changed
+  hands or trust after the offer refuses its next read.
+- **Relays** carry the pair only while the client holds a temporary,
+  per-user pair on the hub (`Fleet.HandoffPair`: the caller's own workers,
+  or fleet workers the caller may use; at most 10 minutes, renewed while a
+  copy runs).
+- Offers, refusals, reads and pulls are **audited** on both workers.
 
 ## Forwarded git credentials
 

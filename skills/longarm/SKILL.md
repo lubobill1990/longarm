@@ -96,4 +96,4 @@ Details: [reference/credentials.md](reference/credentials.md).
 
 ## MCP equivalents
 
-`longarm mcp` exposes `fleet_status`, `fleet_exec`, `fleet_job_submit|wait|logs|kill`, `fleet_read`, `fleet_write`, `fleet_sync`, `fleet_forward`, `fleet_link` and `fleet_ui_open` (show the user Longarm's UI, e.g. `longarm ui open sessions --job <id>`: a job's live terminal). Prefer them when they are registered. The CLI is needed for sessions, handoff, attach, `doctor`, and `agent-sessions`. `secret_env` names only work if they are allowed in `LONGARM_MCP_SECRETS`.
+`longarm mcp` exposes `fleet_status`, `fleet_exec`, `fleet_job_submit|wait|logs|kill`, `fleet_read`, `fleet_write`, `fleet_sync`, `fleet_forward`, `fleet_link` and `fleet_ui_open` (show the user Longarm's UI, e.g. `longarm ui open sessions --job <id>`: a job's live terminal). Prefer them when they are registered. The CLI is needed for sessions, handoff, attach, `cp` (worker to worker), `doctor`, and `agent-sessions`. `secret_env` names only work if they are allowed in `LONGARM_MCP_SECRETS`.

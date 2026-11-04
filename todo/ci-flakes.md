@@ -15,6 +15,9 @@ failing assertion.
 | `e2e TestUITraySmoke` | macos-latest | (#113) |
 | `e2e TestNodeIDs/rename_and_dispatch` | ubuntu-latest | the hub recorded the rename before the worker's listeners served the new certificate; fixed in #113 by waiting for the new name to answer |
 | `e2e TestProgramsFixtures` | ubuntu-latest | `worker-ls.json: nodes[].toolchain.updated_at is missing`: captured before the worker's first inventory; fixed by waiting for it |
+| `e2e TestExternalRelay` | ubuntu-latest (#118), windows-latest (#127) | `timed out waiting for wa online on both relays` (ext_relay_test.go:158) |
+| `e2e TestOldWorkerPortLinks/direct` | macos-latest (#115), ubuntu-latest (#127) | `timed out waiting for ow -> nw (direct): the path in link ls` (compat_old_test.go:775); the relayed links of the same test were up |
+| `.github/scripts/msi-install-test.ps1` "still running after the upgrade" | windows-latest (#127) | a new process got the pid of one the upgrade ended; fixed in #128 (processes compared by id and start time) |
 
 ## Seen on Windows workers under load (cpc, several jobs at once)
 

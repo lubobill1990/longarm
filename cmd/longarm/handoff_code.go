@@ -664,32 +664,63 @@ func (c *coder) direct(ctx context.Context, bundle, dstPath string) (*codeResult
 // it. Without a hub, or with a hub that predates it, the transfer needs a
 // direct path between the workers (else: relayed through this client).
 func (c *coder) relayPair(ctx context.Context) func() {
-	h := c.s.optionalHub(ctx)
+	return relayPair(ctx, c.s, c.src, c.dst, false, c.note)
+}
+
+// relayPair asks the hub to let its relays carry dst's connection to src
+// for a direct transfer (Fleet.HandoffPair, the pair's ttl:
+// directOfferTTL) - with keep, again before it runs out until the returned
+// func releases it. Without a hub, or with a hub that predates it, the
+// transfer needs a direct path between the workers.
+func relayPair(ctx context.Context, s *session, src, dst *hoEndpoint, keep bool, note func(string, ...any)) func() {
+	h := s.optionalHub(ctx)
 	if h == nil {
 		return func() {}
 	}
-	req := &pb.HandoffPairRequest{A: c.src.cert, B: c.dst.cert, AId: c.src.id, BId: c.dst.id, Ttl: durationpb.New(directOfferTTL)}
-	hctx, cancel := context.WithTimeout(ctx, hubTimeout)
-	defer cancel()
-	if _, err := h.Fleet().HandoffPair(hctx, req); err != nil {
+	pair := func(ctx context.Context, release bool) error {
+		req := &pb.HandoffPairRequest{A: src.cert, B: dst.cert, AId: src.id, BId: dst.id, Ttl: durationpb.New(directOfferTTL), Release: release}
+		hctx, cancel := context.WithTimeout(ctx, hubTimeout)
+		defer cancel()
+		_, err := h.Fleet().HandoffPair(hctx, req)
+		return err
+	}
+	if err := pair(ctx, false); err != nil {
 		if status.Code(err) != codes.Unimplemented {
-			c.note("note: the hub's relays won't carry %s -> %s (%s): a direct transfer needs a direct path", c.dst.name, c.src.name, grpcMessage(err))
+			note("note: the hub's relays won't carry %s -> %s (%s): a direct transfer needs a direct path", dst.name, src.name, grpcMessage(err))
 		}
 		return func() {}
 	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for keep {
+			select {
+			case <-stop:
+				return
+			case <-time.After(directOfferTTL / 2):
+				pair(ctx, false)
+			}
+		}
+	}()
 	return func() {
-		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), hubTimeout)
-		defer cancel()
-		h.Fleet().HandoffPair(rctx, &pb.HandoffPairRequest{A: c.src.cert, B: c.dst.cert, AId: c.src.id, BId: c.dst.id, Release: true})
+		close(stop)
+		<-done
+		pair(context.WithoutCancel(ctx), true)
 	}
 }
 
 // endpointsOf are a worker's endpoints as this client knows them.
 func (c *coder) endpointsOf(name string) []string {
+	return workerEndpoints(c.s, name)
+}
+
+// workerEndpoints are a worker's endpoints as this client knows them.
+func workerEndpoints(s *session, name string) []string {
 	if v := os.Getenv("LONGARM_TEST_HANDOFF_ENDPOINTS"); v != "" { // tests: an unreachable source
 		return strings.Split(v, ",")
 	}
-	w, err := c.s.worker(name)
+	w, err := s.worker(name)
 	if err != nil {
 		return nil
 	}

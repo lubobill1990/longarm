@@ -180,6 +180,7 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 	pb.RegisterLinkTunnelServer(g, &linkTunnelServer{s: s})
 	pb.RegisterMachineUpdateServer(g, &machineUpdateServer{s: s})
 	pb.RegisterHandoffServer(g, &handoffServer{s: s})
+	pb.RegisterCopyServer(g, &copyServer{s: s})
 	return g
 }
 
@@ -190,7 +191,7 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 var WorkerFeatures = []string{jobs.FeatureStdin, jobs.FeatureGitAuth, jobs.FeatureSessionStart, jobs.FeatureSessionSend,
 	jobs.FeatureSessionSendIfIdle, jobs.FeatureSessionStop, jobs.FeatureSessionInfo, jobs.FeatureFileTail, jobs.FeatureAgentAuth,
 	jobs.FeatureSessionEnv, jobs.FeatureFileLstat, jobs.FeatureHandoffDirect, jobs.FeatureHandoffPush, jobs.FeatureSteer,
-	jobs.FeatureSessionIfInputSeq, jobs.FeatureSessionPasteEnter, jobs.FeatureSessionHuman}
+	jobs.FeatureSessionIfInputSeq, jobs.FeatureSessionPasteEnter, jobs.FeatureSessionHuman, jobs.FeatureCopy}
 
 type nodeServer struct {
 	pb.UnimplementedNodeServer

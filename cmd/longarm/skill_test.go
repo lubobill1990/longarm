@@ -9,7 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/lubobill1990/longarm/internal/agentskill"
+	"github.com/lubobill1990/longarm/internal/version"
 )
 
 func skillCLI(t *testing.T, args ...string) (string, int) {
@@ -26,6 +29,50 @@ func skillCLI(t *testing.T, args ...string) (string, int) {
 		out.WriteString(err.Error())
 	}
 	return out.String(), exitCodeFor(err, validated)
+}
+
+// TestRefreshSkillsOnce: the first command of a release refreshes the skill
+// copies, once per version (written to the config dir); local builds,
+// completion and skill's own commands never.
+func TestRefreshSkillsOnce(t *testing.T) {
+	calls := 0
+	oldFn, oldVer, oldDir := refreshSkillsFn, version.Version, configDir
+	refreshSkillsFn = func() { calls++ }
+	t.Cleanup(func() { refreshSkillsFn, version.Version, configDir = oldFn, oldVer, oldDir })
+	root := newRootCmd()            // (its --config-dir default sets configDir: set it after)
+	root.InitDefaultCompletionCmd() // (Execute adds it)
+	configDir = t.TempDir()
+	cmd := func(path ...string) *cobra.Command {
+		c, _, err := root.Find(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	version.Version = "dev"
+	refreshSkillsOnce(cmd("ls"))
+	version.Version = "1.2.3"
+	refreshSkillsOnce(cmd("skill", "status"))
+	refreshSkillsOnce(cmd("completion"))
+	if calls != 0 {
+		t.Fatalf("%d refreshes for dev, skill and completion", calls)
+	}
+	refreshSkillsOnce(cmd("ls"))
+	refreshSkillsOnce(cmd("jobs"))
+	if calls != 1 {
+		t.Fatalf("%d refreshes of 1.2.3, want 1", calls)
+	}
+	version.Version = "1.2.4"
+	refreshSkillsOnce(cmd("ls"))
+	if calls != 2 {
+		t.Fatalf("%d refreshes after an update, want 2", calls)
+	}
+	// no config dir: refreshed, the dir not created
+	configDir = filepath.Join(t.TempDir(), "none")
+	refreshSkillsOnce(cmd("ls"))
+	if _, err := os.Stat(configDir); calls != 3 || err == nil {
+		t.Fatalf("no config dir: %d calls, %v", calls, err)
+	}
 }
 
 func TestSkillCLI(t *testing.T) {

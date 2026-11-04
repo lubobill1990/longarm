@@ -888,6 +888,97 @@ message HandoffPullRequest {
   string from_id = 8;
 }
 
+// ---------------------------------------------------------------- Copy
+
+// Copy copies a file or a directory tree from one worker to another
+// directly (`longarm cp w1:src w2:dst`, worker feature "copy"), like
+// Handoff: the owner's client offers the path on the source worker to the
+// target worker's certificate with a random token (Offer), and has the
+// target pull it (Pull); the target reads the offered tree from the source
+// with its worker certificate (List, Stat, Read) and writes it as the
+// owner, resuming partial files (<file>.lapart, as Files.Write). An offer
+// may be read any number of times until it expires or is revoked: a Pull
+// that broke off is run again.
+service Copy {
+  // Offer (the owner's client, on the source): let worker peer read path - a
+  // file or a directory and everything below it, read as the caller.
+  rpc Offer(CopyOfferRequest) returns (CopyOfferResponse);
+  // Revoke (the owner's client): end an offer before its expiry.
+  rpc Revoke(CopyRevokeRequest) returns (CopyRevokeResponse);
+  // List, Stat, Read (the peer's worker certificate, with the offer's
+  // token): the offered tree; paths are relative to the offered path, '/'
+  // separated ("" = the offered path itself).
+  rpc List(CopyListRequest) returns (FileListResponse);
+  rpc Stat(CopyStatRequest) returns (FileInfo);
+  rpc Read(CopyReadRequest) returns (stream FileChunk);
+  // Pull (the owner's client, on the target): copy an offer of worker
+  // `from` to path; progress while it runs, done = true last.
+  rpc Pull(CopyPullRequest) returns (stream CopyProgress);
+}
+
+message CopyOfferRequest {
+  string path = 1; // a file or a directory on this worker
+  string peer = 2; // the worker (certificate name) that may read it
+  string peer_id = 3; // its node ID, from the certificate the client verified
+  string transfer_id = 4; // [A-Za-z0-9_-]{8,64}
+  bytes token = 5; // 32 random bytes, the client's
+  google.protobuf.Duration ttl = 6; // at most 24 hours
+}
+
+message CopyOfferResponse {
+  FileInfo root = 1; // the offered path (abs_path, is_dir, size)
+}
+
+message CopyRevokeRequest {
+  string transfer_id = 1;
+}
+
+message CopyRevokeResponse {}
+
+message CopyGrant {
+  string transfer_id = 1;
+  bytes token = 2;
+}
+
+message CopyListRequest {
+  CopyGrant grant = 1;
+}
+
+message CopyStatRequest {
+  CopyGrant grant = 1;
+  string path = 2;
+  bool hash = 3; // sha256 of the file
+  int64 hash_limit = 4; // of its first N bytes only (0 = all)
+}
+
+message CopyReadRequest {
+  CopyGrant grant = 1;
+  string path = 2;
+  int64 offset = 3;
+}
+
+message CopyPullRequest {
+  string from = 1; // the source worker (certificate name)
+  string from_id = 2; // its node ID: the source must present it
+  repeated string from_endpoints = 3; // how to reach it ("tcp://host:port", ...)
+  CopyGrant grant = 4;
+  string path = 5; // where the offered file or directory goes (exactly)
+}
+
+message CopyProgress {
+  string file = 1; // the file being copied (relative to path; "" = path)
+  int64 files = 2; // files done (copied or up to date)
+  int64 files_total = 3;
+  int64 bytes = 4; // bytes done (sent, resumed or up to date)
+  int64 bytes_total = 5;
+  int64 sent = 6; // bytes that crossed between the workers
+  int64 resumed = 7; // bytes kept from partial files
+  int64 up_to_date = 8; // files skipped: same size and sha256
+  int64 links = 9; // symlinks in the tree: not copied
+  bool done = 10;
+  string abs_path = 11; // done: where it went
+}
+
 // ---------------------------------------------------------------- UserHelper
 
 // UserHelper is internal to longarmd with per-user isolation: for every

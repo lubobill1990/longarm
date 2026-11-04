@@ -2185,6 +2185,341 @@ var Handoff_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	Copy_Offer_FullMethodName  = "/longarm.v1.Copy/Offer"
+	Copy_Revoke_FullMethodName = "/longarm.v1.Copy/Revoke"
+	Copy_List_FullMethodName   = "/longarm.v1.Copy/List"
+	Copy_Stat_FullMethodName   = "/longarm.v1.Copy/Stat"
+	Copy_Read_FullMethodName   = "/longarm.v1.Copy/Read"
+	Copy_Pull_FullMethodName   = "/longarm.v1.Copy/Pull"
+)
+
+// CopyClient is the client API for Copy service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Copy copies a file or a directory tree from one worker to another
+// directly (`longarm cp w1:src w2:dst`, worker feature "copy"), like
+// Handoff: the owner's client offers the path on the source worker to the
+// target worker's certificate with a random token (Offer), and has the
+// target pull it (Pull); the target reads the offered tree from the source
+// with its worker certificate (List, Stat, Read) and writes it as the
+// owner, resuming partial files (<file>.lapart, as Files.Write). An offer
+// may be read any number of times until it expires or is revoked: a Pull
+// that broke off is run again.
+type CopyClient interface {
+	// Offer (the owner's client, on the source): let worker peer read path - a
+	// file or a directory and everything below it, read as the caller.
+	Offer(ctx context.Context, in *CopyOfferRequest, opts ...grpc.CallOption) (*CopyOfferResponse, error)
+	// Revoke (the owner's client): end an offer before its expiry.
+	Revoke(ctx context.Context, in *CopyRevokeRequest, opts ...grpc.CallOption) (*CopyRevokeResponse, error)
+	// List, Stat, Read (the peer's worker certificate, with the offer's
+	// token): the offered tree; paths are relative to the offered path, '/'
+	// separated ("" = the offered path itself).
+	List(ctx context.Context, in *CopyListRequest, opts ...grpc.CallOption) (*FileListResponse, error)
+	Stat(ctx context.Context, in *CopyStatRequest, opts ...grpc.CallOption) (*FileInfo, error)
+	Read(ctx context.Context, in *CopyReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FileChunk], error)
+	// Pull (the owner's client, on the target): copy an offer of worker
+	// `from` to path; progress while it runs, done = true last.
+	Pull(ctx context.Context, in *CopyPullRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CopyProgress], error)
+}
+
+type copyClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewCopyClient(cc grpc.ClientConnInterface) CopyClient {
+	return &copyClient{cc}
+}
+
+func (c *copyClient) Offer(ctx context.Context, in *CopyOfferRequest, opts ...grpc.CallOption) (*CopyOfferResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CopyOfferResponse)
+	err := c.cc.Invoke(ctx, Copy_Offer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *copyClient) Revoke(ctx context.Context, in *CopyRevokeRequest, opts ...grpc.CallOption) (*CopyRevokeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CopyRevokeResponse)
+	err := c.cc.Invoke(ctx, Copy_Revoke_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *copyClient) List(ctx context.Context, in *CopyListRequest, opts ...grpc.CallOption) (*FileListResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FileListResponse)
+	err := c.cc.Invoke(ctx, Copy_List_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *copyClient) Stat(ctx context.Context, in *CopyStatRequest, opts ...grpc.CallOption) (*FileInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FileInfo)
+	err := c.cc.Invoke(ctx, Copy_Stat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *copyClient) Read(ctx context.Context, in *CopyReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FileChunk], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Copy_ServiceDesc.Streams[0], Copy_Read_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[CopyReadRequest, FileChunk]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Copy_ReadClient = grpc.ServerStreamingClient[FileChunk]
+
+func (c *copyClient) Pull(ctx context.Context, in *CopyPullRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CopyProgress], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Copy_ServiceDesc.Streams[1], Copy_Pull_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[CopyPullRequest, CopyProgress]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Copy_PullClient = grpc.ServerStreamingClient[CopyProgress]
+
+// CopyServer is the server API for Copy service.
+// All implementations must embed UnimplementedCopyServer
+// for forward compatibility.
+//
+// Copy copies a file or a directory tree from one worker to another
+// directly (`longarm cp w1:src w2:dst`, worker feature "copy"), like
+// Handoff: the owner's client offers the path on the source worker to the
+// target worker's certificate with a random token (Offer), and has the
+// target pull it (Pull); the target reads the offered tree from the source
+// with its worker certificate (List, Stat, Read) and writes it as the
+// owner, resuming partial files (<file>.lapart, as Files.Write). An offer
+// may be read any number of times until it expires or is revoked: a Pull
+// that broke off is run again.
+type CopyServer interface {
+	// Offer (the owner's client, on the source): let worker peer read path - a
+	// file or a directory and everything below it, read as the caller.
+	Offer(context.Context, *CopyOfferRequest) (*CopyOfferResponse, error)
+	// Revoke (the owner's client): end an offer before its expiry.
+	Revoke(context.Context, *CopyRevokeRequest) (*CopyRevokeResponse, error)
+	// List, Stat, Read (the peer's worker certificate, with the offer's
+	// token): the offered tree; paths are relative to the offered path, '/'
+	// separated ("" = the offered path itself).
+	List(context.Context, *CopyListRequest) (*FileListResponse, error)
+	Stat(context.Context, *CopyStatRequest) (*FileInfo, error)
+	Read(*CopyReadRequest, grpc.ServerStreamingServer[FileChunk]) error
+	// Pull (the owner's client, on the target): copy an offer of worker
+	// `from` to path; progress while it runs, done = true last.
+	Pull(*CopyPullRequest, grpc.ServerStreamingServer[CopyProgress]) error
+	mustEmbedUnimplementedCopyServer()
+}
+
+// UnimplementedCopyServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedCopyServer struct{}
+
+func (UnimplementedCopyServer) Offer(context.Context, *CopyOfferRequest) (*CopyOfferResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Offer not implemented")
+}
+func (UnimplementedCopyServer) Revoke(context.Context, *CopyRevokeRequest) (*CopyRevokeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Revoke not implemented")
+}
+func (UnimplementedCopyServer) List(context.Context, *CopyListRequest) (*FileListResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method List not implemented")
+}
+func (UnimplementedCopyServer) Stat(context.Context, *CopyStatRequest) (*FileInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method Stat not implemented")
+}
+func (UnimplementedCopyServer) Read(*CopyReadRequest, grpc.ServerStreamingServer[FileChunk]) error {
+	return status.Error(codes.Unimplemented, "method Read not implemented")
+}
+func (UnimplementedCopyServer) Pull(*CopyPullRequest, grpc.ServerStreamingServer[CopyProgress]) error {
+	return status.Error(codes.Unimplemented, "method Pull not implemented")
+}
+func (UnimplementedCopyServer) mustEmbedUnimplementedCopyServer() {}
+func (UnimplementedCopyServer) testEmbeddedByValue()              {}
+
+// UnsafeCopyServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to CopyServer will
+// result in compilation errors.
+type UnsafeCopyServer interface {
+	mustEmbedUnimplementedCopyServer()
+}
+
+func RegisterCopyServer(s grpc.ServiceRegistrar, srv CopyServer) {
+	// If the following call panics, it indicates UnimplementedCopyServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&Copy_ServiceDesc, srv)
+}
+
+func _Copy_Offer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CopyOfferRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CopyServer).Offer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Copy_Offer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CopyServer).Offer(ctx, req.(*CopyOfferRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Copy_Revoke_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CopyRevokeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CopyServer).Revoke(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Copy_Revoke_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CopyServer).Revoke(ctx, req.(*CopyRevokeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Copy_List_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CopyListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CopyServer).List(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Copy_List_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CopyServer).List(ctx, req.(*CopyListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Copy_Stat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CopyStatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CopyServer).Stat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Copy_Stat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CopyServer).Stat(ctx, req.(*CopyStatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Copy_Read_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(CopyReadRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(CopyServer).Read(m, &grpc.GenericServerStream[CopyReadRequest, FileChunk]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Copy_ReadServer = grpc.ServerStreamingServer[FileChunk]
+
+func _Copy_Pull_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(CopyPullRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(CopyServer).Pull(m, &grpc.GenericServerStream[CopyPullRequest, CopyProgress]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Copy_PullServer = grpc.ServerStreamingServer[CopyProgress]
+
+// Copy_ServiceDesc is the grpc.ServiceDesc for Copy service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Copy_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "longarm.v1.Copy",
+	HandlerType: (*CopyServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Offer",
+			Handler:    _Copy_Offer_Handler,
+		},
+		{
+			MethodName: "Revoke",
+			Handler:    _Copy_Revoke_Handler,
+		},
+		{
+			MethodName: "List",
+			Handler:    _Copy_List_Handler,
+		},
+		{
+			MethodName: "Stat",
+			Handler:    _Copy_Stat_Handler,
+		},
+	},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Read",
+			Handler:       _Copy_Read_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "Pull",
+			Handler:       _Copy_Pull_Handler,
+			ServerStreams: true,
+		},
+	},
+	Metadata: "longarm/v1/longarm.proto",
+}
+
+const (
 	UserHelper_PrepareJob_FullMethodName = "/longarm.v1.UserHelper/PrepareJob"
 	UserHelper_Prune_FullMethodName      = "/longarm.v1.UserHelper/Prune"
 )

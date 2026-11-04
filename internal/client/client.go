@@ -638,6 +638,7 @@ func (c *Conn) Forward() pb.ForwardClient     { return pb.NewForwardClient(c.Cli
 func (c *Conn) Files() pb.FilesClient         { return pb.NewFilesClient(c.ClientConn) }
 func (c *Conn) Workspace() pb.WorkspaceClient { return pb.NewWorkspaceClient(c.ClientConn) }
 func (c *Conn) Handoff() pb.HandoffClient     { return pb.NewHandoffClient(c.ClientConn) }
+func (c *Conn) Copy() pb.CopyClient           { return pb.NewCopyClient(c.ClientConn) }
 
 // MachineUpdate: the owner's update of the worker's machine.
 func (c *Conn) MachineUpdate() pb.MachineUpdateClient { return pb.NewMachineUpdateClient(c.ClientConn) }

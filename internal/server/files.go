@@ -177,12 +177,16 @@ func (f *filesServer) Read(req *pb.FileReadRequest, st pb.Files_ReadServer) erro
 		return status.Errorf(codes.InvalidArgument, "%s is a directory", abs)
 	}
 	f.s.Audit.Log(IdentityFrom(st.Context()), pb.Files_Read_FullMethodName, map[string]any{"path": abs, "offset": req.Offset})
-	off := req.Offset
+	return readFile(fh, req.Offset, st.Send)
+}
+
+// readFile sends fh from off to its end, chunk by chunk.
+func readFile(fh *os.File, off int64, send func(*pb.FileChunk) error) error {
 	buf := make([]byte, fileChunk)
 	for {
 		n, err := fh.ReadAt(buf, off)
 		if n > 0 {
-			if err := st.Send(&pb.FileChunk{Offset: off, Data: buf[:n]}); err != nil {
+			if err := send(&pb.FileChunk{Offset: off, Data: buf[:n]}); err != nil {
 				return err
 			}
 			off += int64(n)
@@ -213,7 +217,10 @@ func (f *filesServer) Write(st pb.Files_WriteServer) error {
 	if err != nil {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
-	res, err := f.write(st, h, abs)
+	res, err := f.write(func() ([]byte, error) {
+		msg, err := st.Recv()
+		return msg.GetData(), err
+	}, h, abs)
 	f.s.Audit.Log(IdentityFrom(ctx), pb.Files_Write_FullMethodName, map[string]any{
 		"path": abs, "offset": h.Offset, "size": h.Size, "error": errString(err),
 	})
@@ -223,7 +230,9 @@ func (f *filesServer) Write(st pb.Files_WriteServer) error {
 	return st.SendAndClose(res)
 }
 
-func (f *filesServer) write(st pb.Files_WriteServer, h *pb.FileWriteHeader, abs string) (*pb.FileWriteResult, error) {
+// write writes the file at abs from h.offset with the data recv returns
+// until io.EOF.
+func (f *filesServer) write(recv func() ([]byte, error), h *pb.FileWriteHeader, abs string) (*pb.FileWriteResult, error) {
 	if h.Offset < 0 || h.Size < 0 || h.Offset > h.Size {
 		return nil, status.Error(codes.InvalidArgument, "bad offset/size")
 	}
@@ -268,7 +277,7 @@ func (f *filesServer) write(st pb.Files_WriteServer, h *pb.FileWriteHeader, abs 
 	}
 	size := h.Offset
 	for {
-		msg, err := st.Recv()
+		data, err := recv()
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -276,7 +285,6 @@ func (f *filesServer) write(st pb.Files_WriteServer, h *pb.FileWriteHeader, abs 
 			fh.Sync()
 			return nil, err
 		}
-		data := msg.GetData()
 		if size+int64(len(data)) > h.Size {
 			return nil, status.Error(codes.InvalidArgument, "more data than announced")
 		}

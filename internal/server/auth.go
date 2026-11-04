@@ -69,6 +69,14 @@ var MethodRoles = map[string][]pki.Role{
 	pb.Handoff_Offer_FullMethodName: anyUser,
 	pb.Handoff_Pull_FullMethodName:  anyUser,
 	pb.Handoff_Fetch_FullMethodName: {pki.RoleWorker},
+	// Worker-to-worker copies: the owner offers, revokes and pulls; the
+	// peer worker reads the offered tree with the offer's token (copy.go).
+	pb.Copy_Offer_FullMethodName:  anyUser,
+	pb.Copy_Revoke_FullMethodName: anyUser,
+	pb.Copy_Pull_FullMethodName:   anyUser,
+	pb.Copy_List_FullMethodName:   {pki.RoleWorker},
+	pb.Copy_Stat_FullMethodName:   {pki.RoleWorker},
+	pb.Copy_Read_FullMethodName:   {pki.RoleWorker},
 }
 
 type idKey struct{}

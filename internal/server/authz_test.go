@@ -460,6 +460,28 @@ func TestAuthzTable(t *testing.T) {
 			_, err := pb.NewHandoffClient(c).Pull(ctx, &pb.HandoffPullRequest{})
 			return err
 		}, [4]codes.Code{codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument}},
+		pb.Copy_List_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := pb.NewCopyClient(c).List(ctx, &pb.CopyListRequest{}) // workers only (TestCopyOfferScope)
+			return err
+		}, [4]codes.Code{pd, pd, pd, pd}},
+		pb.Copy_Stat_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := pb.NewCopyClient(c).Stat(ctx, &pb.CopyStatRequest{})
+			return err
+		}, [4]codes.Code{pd, pd, pd, pd}},
+		pb.Copy_Read_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			return recvErr(pb.NewCopyClient(c).Read(ctx, &pb.CopyReadRequest{}))
+		}, [4]codes.Code{pd, pd, pd, pd}},
+		pb.Copy_Offer_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := pb.NewCopyClient(c).Offer(ctx, &pb.CopyOfferRequest{TransferId: "x"})
+			return err
+		}, [4]codes.Code{codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument}},
+		pb.Copy_Revoke_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := pb.NewCopyClient(c).Revoke(ctx, &pb.CopyRevokeRequest{TransferId: "none-0000"})
+			return err
+		}, [4]codes.Code{nf, nf, nf, nf}},
+		pb.Copy_Pull_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			return recvErr(pb.NewCopyClient(c).Pull(ctx, &pb.CopyPullRequest{}))
+		}, [4]codes.Code{codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument}},
 		pb.Workspace_PushHandoff_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
 			_, err := pb.NewWorkspaceClient(c).PushHandoff(ctx, &pb.PushHandoffRequest{Branch: "main"})
 			return err

@@ -4,6 +4,20 @@
 
 ### Added
 
+- **`longarm cp <worker>:<path> <worker>:<path>`**: a file or a directory
+  (recursively) from one worker to another, directly - or through the hub's
+  relay - never through this machine. Files whose size and sha256 match are
+  skipped, every file is sha256-verified, and a copy that broke off resumes
+  from its partial files: by itself after a lost connection, else when run
+  again. Symlinks are not copied. Both workers must be yours (or fleet
+  workers you may use) and updated (worker feature `copy`, the Copy
+  service); with one side on this machine `cp` is `put` / `get`. Client
+  feature `cp`.
+- **The agent skill follows updates without the tray or daemon too**: the
+  first `longarm` command of a new release updates the skill copies Longarm
+  installed (unmodified ones, for the agents they were installed for), once
+  per version - as the tray and `longarm daemon` already did when they
+  start.
 - **`--agent-env`, `--mcp`, `--skill`, `--plugin`** on `run`, `exec`,
   `session start` and `attach`: an agent started on a worker gets this
   machine's MCP servers, skills, plugins, memory or (by name) hooks and

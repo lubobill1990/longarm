@@ -80,7 +80,8 @@ func putCmd() *cobra.Command {
 		Short: "Upload files/directories (streamed, resumable, sha256-verified)",
 		Long: `Upload files or directories to the worker. Like cp -r: if <path> is an existing
 directory (or ends with /), sources go inside it. Relative worker paths are
-relative to the worker account's home. Files whose size and sha256 already
+relative to the worker account's home; / works on Windows workers too
+(w2:C:/data; C:\data needs quotes in bash/zsh). Files whose size and sha256 already
 match are skipped; an interrupted upload resumes from the verified prefix of
 <path>.lapart on the next run (and automatically after a connection loss).`,
 		Args: cobra.MinimumNArgs(2),
@@ -145,7 +146,9 @@ func getCmd() *cobra.Command {
 		Use:   "get <worker>:<path> <local>",
 		Short: "Download a file/directory (streamed, resumable, sha256-verified)",
 		Long: `Download a file or directory from the worker. Like cp -r: if <local> is an
-existing directory, the source goes inside it. Files whose size and sha256
+existing directory, the source goes inside it. Relative worker paths are
+relative to the worker account's home; / works on Windows workers too
+(w1:C:/logs/app.log). Files whose size and sha256
 already match are skipped; an interrupted download resumes from the verified
 prefix of <local>.lapart.`,
 		Args: cobra.ExactArgs(2),

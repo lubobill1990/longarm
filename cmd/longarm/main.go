@@ -39,6 +39,7 @@ func main() {
 	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
 		noticeOK = allowUpdateNotice(cmd)
 		startTelemetry(cmd)
+		refreshSkillsOnce(cmd) // after an update: the skill copies Longarm installed follow
 	}
 	defer telemetry.Guard()
 	var validated bool
