@@ -38,10 +38,10 @@ func TestRefreshSkillsOnce(t *testing.T) {
 	calls := 0
 	oldFn, oldVer, oldDir := refreshSkillsFn, version.Version, configDir
 	refreshSkillsFn = func() { calls++ }
-	configDir = t.TempDir()
 	t.Cleanup(func() { refreshSkillsFn, version.Version, configDir = oldFn, oldVer, oldDir })
-	root := newRootCmd()
+	root := newRootCmd()            // (its --config-dir default sets configDir: set it after)
 	root.InitDefaultCompletionCmd() // (Execute adds it)
+	configDir = t.TempDir()
 	cmd := func(path ...string) *cobra.Command {
 		c, _, err := root.Find(path)
 		if err != nil {
