@@ -21,4 +21,5 @@ pull request description.
 | [toolchains.md](toolchains.md) | older-worker owner-tool compatibility |
 | [ci-flakes.md](ci-flakes.md) | tests that failed once and passed on a rerun |
 | [agent-env.md](agent-env.md) | `--agent-env` of runs: the tray, the MCP tools, a default (docs/usage.md "Agent environment") |
+| [tray.md](tray.md) | the tray's popup window (`cmd/longarm-tray`) |
 | [programs.md](programs.md) | programs driving Longarm: features, fixtures, session input (docs/programs.md) |
