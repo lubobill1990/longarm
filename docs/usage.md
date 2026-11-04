@@ -2838,8 +2838,11 @@ lists the skill twice there.
   on Windows (symlinks) or break across volumes (junctions), and some
   agents don't follow them.
 - **Updated with Longarm.** When the tray or `longarm daemon` starts with
-  a new release, copies Longarm installed that are older and unmodified
-  are rewritten (`longarm skill update` does it by hand).
+  a new release - or, on machines with neither, at the first `longarm`
+  command of the new release (once per version: `skill-refreshed` in the
+  config dir) - copies Longarm installed that are older and unmodified are
+  rewritten, for the agents you installed them for only (`longarm skill
+  update` does it by hand). Local builds (`dev`) leave them alone.
 - **Your changes win.** A copy whose files no longer match the manifest
   (changed, deleted, or a file added where the new version puts one) is
   never updated or removed: status shows `modified` with the files, and

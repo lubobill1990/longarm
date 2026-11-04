@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 
@@ -31,7 +32,10 @@ Agents: %s.
 A copy carries a manifest (.longarm-skill.json: version, sha256 per file).
 Longarm updates or removes only copies it installed that nobody changed
 since; a changed copy, or a "longarm" skill Longarm did not install, is left
-alone and the command exits 2 naming the files. Files you added are kept.`
+alone and the command exits 2 naming the files. Files you added are kept.
+After an update of Longarm the copies it installed follow by themselves:
+when the tray or longarm daemon starts, else at the first longarm command of
+the new version.`
 
 func skillCmd() *cobra.Command {
 	c := &cobra.Command{
@@ -219,8 +223,38 @@ func printSkillStatus(w io.Writer, sts []agentskill.Status, asJSON bool) error {
 	return nil
 }
 
+// skillRefreshedFile (config dir) holds the longarm version that last
+// refreshed the skill copies: the first command of a newer longarm does it
+// once - on machines without the tray or longarm daemon too.
+const skillRefreshedFile = "skill-refreshed"
+
+// refreshSkillsFn is refreshSkills (tests count the calls).
+var refreshSkillsFn = refreshSkills
+
+// refreshSkillsOnce refreshes the skill copies when this longarm's version
+// hasn't yet (every command but completion and skill's own).
+func refreshSkillsOnce(cmd *cobra.Command) {
+	if version.Version == "dev" || version.Version == "" {
+		return
+	}
+	for c := cmd; c != nil; c = c.Parent() {
+		switch c.Name() {
+		case "skill", "completion", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+			return
+		}
+	}
+	p := filepath.Join(configDir, skillRefreshedFile)
+	if b, err := os.ReadFile(p); err == nil && strings.TrimSpace(string(b)) == version.Version {
+		return
+	}
+	refreshSkillsFn()
+	if fi, err := os.Stat(configDir); err == nil && fi.IsDir() { // never creates the config dir
+		os.WriteFile(p, []byte(version.Version+"\n"), 0o600)
+	}
+}
+
 // refreshSkills updates the copies of the skill Longarm installed after
-// longarm itself was updated (best effort; called by longarm daemon).
+// longarm itself was updated (best effort; longarm daemon, refreshSkillsOnce).
 func refreshSkills() {
 	if version.Version == "dev" { // a local build: leave the installed copies to releases
 		return
