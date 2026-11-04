@@ -20,7 +20,7 @@
 
 `longarm sync . <w>:<path>` (or `<w>:` = `<home>/longarm-sync/<repo>`) mirrors the checkout into a persistent worktree. It resets tracked changes and untracked files there and keeps ignored files (node_modules, build output).
 
-Files: `longarm put <local>... <w>:<path>`, `longarm get <w>:<path> <local>` (both resumable and sha256-verified). `longarm tail <w> <path> -f --json` streams a growing file (one `{"offset","next","line"}` per line).
+Files: `longarm put <local>... <w>:<path>`, `longarm get <w>:<path> <local>` (both resumable and sha256-verified). Worker to worker: `longarm cp <w1>:<path> <w2>:<path>` (file or directory; data goes w1 -> w2 directly or via the hub relay, never through you; skips identical files; rerun to resume; symlinks not copied; both workers yours or ownerless fleet, both with the `copy` feature; `-q`: summary only). Use it to hand one job's output to the next job on another worker. `longarm tail <w> <path> -f --json` streams a growing file (one `{"offset","next","line"}` per line).
 
 ## Output and state
 

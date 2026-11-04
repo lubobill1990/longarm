@@ -255,7 +255,7 @@ The job's own outcome comes from `jobs --json` (`state`, `exitCode`,
   "session-start", "session-send", "session-send-if-idle", "session-stop", "sessions-json-v2", "tail", "run-session",
   "job-id-short", "jobs-mine", "doctor-json", "worker-update", "ls-version", "agent-auth",
   "agent-handoff", "agent-sessions", "agent-skill", "steerable-run",
-  "session-send-if-input-seq", "session-send-paste-enter", "input-seq-human", "ui-open"]}
+  "session-send-if-input-seq", "session-send-paste-enter", "input-seq-human", "ui-open", "cp"]}
 ```
 
 (indented in the real output). A program checks `features` instead of
@@ -299,6 +299,7 @@ test against.
 | `session-send-paste-enter` | `session send --paste [--key KEY]...`: a bracketed paste, then the keys a moment later, one atomic send |
 | `input-seq-human` | terminal replies of attached clients (device attributes, cursor position, colours, focus) are no input: they don't move `inputSeq` / `lastInput*`; `sessions --json` has `humanInputSeq` |
 | `ui-open` | `longarm ui open [page]` with the pages `workers`, `add-machine`, `jobs`, `this-worker`, `settings`, `account`, `sessions`; `--worker`, `--job`, `--session`, `--agent`, `--print-url`, `--json` (see [Opening Longarm's UI](#opening-longarms-ui)) |
+| `cp` | `longarm cp <worker>:<path> <worker>:<path>`: files and directories worker to worker, resumable (both workers must also support it: `copy` in their `Node.Info` features), see [Copy between workers](#copy-between-workers-longarm-cp) |
 
 The session and tail features also need the worker's (`session-start`,
 `session-send`, `session-send-if-idle`, `session-stop`, `session-info`,
@@ -1257,6 +1258,7 @@ longarm forward --list ; longarm forward --stop 15432   # (or --stop all)
 
 longarm put ./dist w1:C:/www/                      # files/dirs; resumable, sha256-verified, skips identical
 longarm get w1:logs/app.log .                      # relative worker paths = worker account's home
+longarm cp w1:build/out w2:in/                     # worker to worker, directly (below)
 
 longarm sync . w1:C:/work/proj                     # commits (bundle of what the worker lacks) +
                                               # uncommitted diff + untracked files -> git worktree
@@ -1408,6 +1410,43 @@ output). Job records (`job.json`,
 shipped in full (with a note). Security:
 [docs/security.md](security.md#forwarded-git-credentials).
 
+### Copy between workers: `longarm cp`
+
+```sh
+longarm cp w1:build/out w2:in/                 # w2:in/out (a directory, recursively)
+longarm cp w1:C:/data/model.bin w2:/models/m.bin   # a file, to an exact path
+longarm cp -q w1:out w2:in/                    # no progress line, only the summary
+```
+
+The data goes from one worker to the other - directly, else through the
+hub's relay - never through your machine (one side on your machine: that
+is `put` / `get`, which `cp` runs then). Like `cp -r`: a target that is an
+existing directory, or ends with `/`, gets the source inside it by its
+name; relative paths are the worker account's home. Files whose size and
+sha256 already match are skipped (run it again: only what changed goes);
+every file is sha256-verified and appears at its path only when complete.
+A copy that broke off keeps its partial files on the target
+(`<file>.lapart`): after a lost connection longarm resumes by itself (a few
+times), else running the same command again resumes from the verified
+prefix of each partial file. Symlinks are not followed and not copied (the
+summary counts them); empty directories are. Files go one by one; the
+summary says how many, how much crossed between the workers, how many were
+up to date and how much was resumed.
+
+How it works (the Copy service, worker feature `copy`, as `longarm
+handoff`'s direct transfer): longarm offers the source path on the source
+worker to the target worker's certificate and node ID with a random token
+only the two workers get, for at most 24 hours (revoked when the copy
+ends); the target dials the source with its worker certificate over the
+port-link legs and reads the offered tree - nothing outside it, no symlink
+- as you, and writes as you (per-user isolation: through each side's user
+helper). When the workers have no direct path, longarm asks the hub to let
+its relays carry the pair for the copy (as for a handoff; renewed while it
+runs). Both workers must be **yours** (or fleet workers without an owner
+that you may use): a worker shared with you takes no part, as for handoff
+([security](security.md#worker-to-worker-copies)). Offers, reads and pulls
+are audited on both workers.
+
 ### Port links: worker to worker
 
 For joint debugging across workers - frontend and tests on worker A, backend
@@ -1478,8 +1517,8 @@ longarm link rm lk-0123456789ab                       # cuts open connections at
 How it is authorized: the hub signs a grant per link (link id, owner, A, B,
 ports, expiry) with the key of its hub certificate, which the fleet CA issued,
 and pushes every worker the full list of links naming it. A presents the
-grant to B in `LinkTunnel.Dial` - the one RPC a worker certificate may call
-on another worker; B accepts only a grant for its own name from the worker
+grant to B in `LinkTunnel.Dial` - one of the few RPCs a worker certificate may call
+on another worker (the others: a handoff's and a copy's transfers, with the owner's token); B accepts only a grant for its own name from the worker
 it names, unexpired, for a link still in B's list, and checks the target port
 for the owner like `Forward.Open`. Creation, removal (with the reason) and
 every connection B accepts or refuses are audited (`longarm admin audit

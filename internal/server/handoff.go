@@ -66,11 +66,19 @@ type PeerDialer func(worker string, endpoints []string) (conn grpc.ClientConnInt
 // agent sessions and their code in or out; admin certificates are no
 // exception (they act as their user).
 func (s *Server) handoffDeny(user string) string {
+	return s.ownMachineDeny(user, "this worker is another user's: handoff moves sessions only between your own machines")
+}
+
+// ownMachineDeny: the port-link rules (LinkOwnerDeny), and a worker with an
+// owner (the hub's WorkerAccess, or [access] owners) serves its owner only
+// (theirs: why) - for transfers between a user's own machines (handoff,
+// copy).
+func (s *Server) ownMachineDeny(user, theirs string) string {
 	if why := s.LinkOwnerDeny(user); why != "" {
 		return why
 	}
 	if (s.WorkerAccess.Owner() != "" || (s.Access != nil && len(s.Access.Owners) > 0)) && !s.machineOwner(user) {
-		return "this worker is another user's: handoff moves sessions only between your own machines"
+		return theirs
 	}
 	return ""
 }

@@ -170,6 +170,7 @@ var cliFeatures = []string{
 	"session-send-paste-enter",  // session send --paste [--key ...]: bracketed paste, a gap, the keys, one atomic send
 	"input-seq-human",           // terminal replies are no input; sessions --json humanInputSeq
 	"ui-open",                   // ui open [page] [--worker|--job|--session|--agent] [--print-url] [--json] (docs/usage.md#opening-longarms-ui)
+	"cp",                        // cp <worker>:<path> <worker>:<path>: worker to worker, resumable (docs/usage.md#copy-between-workers-longarm-cp)
 }
 
 func versionCmd() *cobra.Command {
