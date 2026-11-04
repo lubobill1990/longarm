@@ -131,7 +131,7 @@ function Get-ServicePids {
 
 # --- msiexec ---------------------------------------------------------------------------------------------
 
-function Invoke-Msi([string] $what, [string] $arguments, [int[]] $ok = @(0), [string[]] $allow = @()) {
+function Invoke-Msi([string] $what, [string] $arguments, [int[]] $ok = @(0), [string[]] $allow = @(), [switch] $NothingInUse) {
   $script:step++
   $log = Join-Path $LogDir ('{0:d2}-{1}.log' -f $script:step, ($what -replace '[^A-Za-z0-9.-]+', '-'))
   Write-Host "== $what`: msiexec $arguments"
@@ -140,10 +140,20 @@ function Invoke-Msi([string] $what, [string] $arguments, [int[]] $ok = @(0), [st
   Write-Host "exit $($p.ExitCode) after $([int]((Get-Date) - $t).TotalSeconds)s; log $log"
   $text = Get-Content $log -Raw # UTF-16 with a BOM, or ANSI
   $bad = @()
-  # InstallValidate lists the processes holding files ("Info 1603. The file ... is being held in use") before
-  # the elevated stop step ends them: informational, silent installs show no dialog. A file still in use when
-  # InstallFiles replaces it is a reboot: ReplacedInUseFiles, exit code 3010.
-  foreach ($m in [regex]::Matches($text, '(?m)^.*is being held in use.*$')) { Write-Host "  (InstallValidate) $($m.Value.Trim())" }
+  # InstallValidate lists the processes holding files ("Info 1603. The file ... is being held in use"); with
+  # Restart Manager off its check takes ~40 s for each. Elevated (as here) the early stop step ends and moves
+  # aside everything before it (-NothingInUse: the upgrade's and the uninstall's own InstallValidate, the
+  # first one in the log, lists nothing). A file still in use when InstallFiles replaces it is a reboot:
+  # ReplacedInUseFiles, exit code 3010.
+  $iv = [regex]::Match($text, '(?s)Action start (\d+):(\d+):(\d+): InstallValidate\.(.*?)Action ended (\d+):(\d+):(\d+): InstallValidate\.')
+  if ($iv.Success) {
+    $g = $iv.Groups
+    $secs = (([int]$g[5].Value * 3600 + [int]$g[6].Value * 60 + [int]$g[7].Value) - ([int]$g[1].Value * 3600 + [int]$g[2].Value * 60 + [int]$g[3].Value) + 86400) % 86400
+    $held = @([regex]::Matches($g[4].Value, '(?m)^.*is being held in use.*$') | ForEach-Object { $_.Value.Trim() })
+    Write-Host "  InstallValidate: ${secs}s, $($held.Count) file(s) held in use"
+    foreach ($h in $held) { Write-Host "  (InstallValidate) $h" }
+    if ($NothingInUse -and $held.Count) { Fail "$what`: InstallValidate found files in use (the early stop step did not stop or move them aside):`n  $($held -join "`n  ")" }
+  } elseif ($NothingInUse) { Fail "$what`: no InstallValidate in the log" }
   foreach ($pat in '\b(?:Error|Note: 1: |error code )(2613|1722|1603)\b', 'Return value 3\.', 'ReplacedInUseFiles = 1',
     'returned actual error code','MainEngineThread is returning (?!0\b)\d+', 'Product: Longarm -- (?:Installation|Removal|Configuration) failed') {
     foreach ($m in [regex]::Matches($text, "(?m)^.*$pat.*$")) {
@@ -194,7 +204,7 @@ function Invoke-Upgrade([string] $what, [string] $msi, [string] $arguments, [str
     Get-Content (Join-Path $LogDir 'job.out'), (Join-Path $LogDir 'job.out.err') -ErrorAction SilentlyContinue | Write-Host
     Fail "the job (longarmd conhost and its command) does not run: $($job -join ', ')" }
   if (-not $kinds.Count) { Fail 'nothing runs before the upgrade: the test would prove nothing' }
-  $text = Invoke-Msi $what "/i `"$msi`" $arguments"
+  $text = Invoke-Msi $what "/i `"$msi`" $arguments" -NothingInUse
   if ($text -notmatch 'Disallowing uninstallation of component') { Write-Host '::warning::no component was shared with the old product' }
   Assert-Installed $version $hashes
   # stopped: none of the old processes of those kinds is left
@@ -234,7 +244,7 @@ function Invoke-Uninstall {
   }
   $code = (Get-Products)[0].PSChildName
   # leaving the hub fails with the dummy hub (the uninstall goes on: Return="ignore")
-  $null = Invoke-Msi 'uninstall' "/x $code" -allow @('returned actual error code')
+  $null = Invoke-Msi 'uninstall' "/x $code" -allow @('returned actual error code') -NothingInUse
   if ((Get-Products).Count) { Fail 'Longarm is still registered after the uninstall' }
   foreach ($f in 'longarm.exe', 'longarmd.exe', 'longarm-tray.exe', 'longarm-update.exe', 'LICENSE.txt', 'THIRD_PARTY_NOTICES.txt') {
     if (Test-Path (Join-Path $installDir $f)) { Fail "$f is left after the uninstall" }

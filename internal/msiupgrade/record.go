@@ -30,6 +30,33 @@ type Record struct {
 	Trays   []string `json:"trays,omitempty"`
 	// Aside: binaries moved aside (still in use).
 	Aside []Aside `json:"aside,omitempty"`
+	// Early: written by stop-early (before InstallValidate); the deferred
+	// stop of the same install adds to it.
+	Early bool `json:"early,omitempty"`
+}
+
+// Add merges what a later stop found into r.
+func (r *Record) Add(services, workers, trays []string, aside []Aside) {
+	r.Services = union(r.Services, services)
+	r.Workers = union(r.Workers, workers)
+	r.Trays = union(r.Trays, trays)
+	r.Aside = append(r.Aside, aside...)
+}
+
+func union(a, b []string) []string {
+	for _, s := range b {
+		found := false
+		for _, x := range a {
+			if strings.EqualFold(x, s) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			a = append(a, s)
+		}
+	}
+	return a
 }
 
 // Save writes the record to dir\RecordFile (replacing it).

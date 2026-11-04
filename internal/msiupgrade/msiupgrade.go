@@ -5,13 +5,22 @@
 //
 // The pieces, in the order the MSI runs them:
 //
-//   - stop-tray (immediate, as the installing user, before InstallValidate,
-//     where Windows Installer looks for files in use): the user's own tray
-//     is asked to exit (its stop event, internal/stopsignal), else ended by
-//     its pid. The tray is the only Longarm process with a window, the only
-//     one the in-use check would list (Restart Manager is off:
-//     MSIRESTARTMANAGERCONTROL=Disable); the installer starts it again
-//     (LongarmTrayLaunch).
+//   - stop-early / stop-early-remove (immediate, before InstallValidate,
+//     where Windows Installer looks for files in use): with Restart Manager
+//     off (MSIRESTARTMANAGERCONTROL=Disable), its own check takes ~40 s for
+//     every process that holds a file it replaces or removes - minutes for
+//     an upgrade or uninstall with Longarm running (the tray, the worker
+//     host and its longarmd, the services, a `longarm` client). With an
+//     administrator's token - the update service's install runs as SYSTEM,
+//     an elevated msiexec - it does what stop does below, here; the check
+//     then finds nothing in use. Without one (an uninstall from Settings,
+//     a double-clicked upgrade: immediate steps get the user's filtered
+//     token) only the installing user's own processes: their tray (the
+//     installer starts it again: LongarmTrayLaunch) and, for an uninstall,
+//     their worker. A process is asked to exit (its stop event,
+//     internal/stopsignal), else ended by its pid. Should the install end
+//     before its script runs, rollback (the MSI's exit actions) starts
+//     again what was recorded.
 //   - stop (deferred, elevated, before RemoveExistingProducts): records and
 //     stops the services (longarmd-admin, LongarmUpdate, a RUN=service longarmd),
 //     then every user's tray, user-session worker host and `longarmd run`
@@ -21,7 +30,9 @@
 //     terminal is longarm.exe: running jobs and sessions must survive) aside
 //     into <install dir>\old, which Windows allows for running images: the
 //     new files go in without a reboot. What ran is recorded in
-//     ProgramData\Longarm (Record).
+//     ProgramData\Longarm (Record) - added to stop-early's record.
+//   - stop-remove (deferred, elevated, an uninstall): what is left of the
+//     worker; binaries moved aside and still running go at the next start.
 //   - rollback: the moved files back, then the recorded services, workers
 //     and trays started again.
 //   - restart (`longarmd install-helper msi restart`, the new longarmd, at
@@ -158,10 +169,11 @@ const DataMarker = "#LONGARM-MSI#"
 // Steps of longarm-msihelper and the fields each gets (longarm.wxs passes
 // exactly these; a test checks it).
 var Steps = map[string][]string{
-	"stop-tray":   {"usersid"},
-	"stop":        {"usersid"},
-	"stop-remove": {"usersid"},
-	"rollback":    {"usersid"},
+	"stop-early":        {"usersid"},
+	"stop-early-remove": {"usersid"},
+	"stop":              {"usersid"},
+	"stop-remove":       {"usersid"},
+	"rollback":          {"usersid"},
 }
 
 var values = map[string]*regexp.Regexp{

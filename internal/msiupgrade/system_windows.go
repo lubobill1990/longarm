@@ -25,6 +25,7 @@ func WindowsEnv() Env {
 	return Env{
 		InstallDir:   RecordedInstallDir,
 		CurrentSID:   currentSID,
+		Elevated:     platform.Elevated,
 		IsAdmin:      platform.IsLocalAdmin,
 		ServiceNames: workerServices,
 		StateDir:     StateDir,
@@ -266,6 +267,16 @@ func InUse(path string) bool {
 	}
 	windows.CloseHandle(h)
 	return false
+}
+
+// DeleteAtReboot has Windows delete path at the next start
+// (MOVEFILE_DELAY_UNTIL_REBOOT; administrators only).
+func DeleteAtReboot(path string) error {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	return windows.MoveFileEx(p, nil, windows.MOVEFILE_DELAY_UNTIL_REBOOT)
 }
 
 func readOnly(path string) bool {

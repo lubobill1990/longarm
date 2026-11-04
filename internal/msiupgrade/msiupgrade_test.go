@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -388,6 +389,44 @@ func TestMoveAside(t *testing.T) {
 	}
 }
 
+// TestRemoveAside: an uninstall removes what nothing holds from dir\old and
+// has the rest (a client that still runs) deleted at the next start, then
+// the dir.
+func TestRemoveAside(t *testing.T) {
+	d := t.TempDir()
+	od := filepath.Join(d, AsideDir)
+	os.MkdirAll(od, 0o755)
+	held, free := filepath.Join(od, "longarm-1.exe"), filepath.Join(od, "longarmd-2.exe")
+	os.WriteFile(held, []byte("x"), 0o644)
+	os.WriteFile(free, []byte("x"), 0o644)
+	// a file in use can't be deleted: on Windows keep it open (no FILE_SHARE_DELETE); elsewhere a
+	// read-only dir stands in once the free file is gone
+	if runtime.GOOS == "windows" {
+		h, err := os.Open(held)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Close()
+	} else {
+		if os.Geteuid() == 0 {
+			t.Skip("root deletes from read-only dirs")
+		}
+		os.Remove(free)
+		os.Chmod(od, 0o555)
+		defer os.Chmod(od, 0o755)
+	}
+	var atReboot []string
+	f := Files{DeleteAtReboot: func(p string) error { atReboot = append(atReboot, p); return nil }}
+	var log bytes.Buffer
+	f.RemoveAside(d, &log)
+	if _, err := os.Stat(free); err == nil {
+		t.Error("a binary nothing holds was left")
+	}
+	if !reflect.DeepEqual(atReboot, []string{held, od}) {
+		t.Errorf("deleted at the next start: %v (want %s, then the dir)\n%s", atReboot, held, log.String())
+	}
+}
+
 func TestRunStep(t *testing.T) {
 	state := t.TempDir()
 	newEnv := func(me string, admin bool) (Env, *fakeSystem, *fakeServices, *fakeTasks) {
@@ -407,33 +446,114 @@ func TestRunStep(t *testing.T) {
 	}
 	data := func(sid string) string { return `"x.tmp" step ` + DataMarker + "usersid=" + sid }
 
-	// stop-tray: the installing user's own trays, nothing else
+	// stop-early without an administrator's token: the installing user's own trays, nothing else
 	env, f, _, _ := newEnv(alice, false)
 	at := f.add(&fakeProc{Proc: Proc{Exe: dir + `\longarm-tray.exe`, Args: []string{}, SID: alice}})
 	bt := f.add(&fakeProc{Proc: Proc{Exe: dir + `\longarm-tray.exe`, Args: []string{}, SID: bob}})
 	ah := f.add(&fakeProc{Proc: Proc{Exe: dir + `\longarm-tray.exe`, Args: []string{"--worker-host"}, SID: alice}})
-	if err := RunStep("stop-tray", data(alice), env); err != nil {
+	if err := RunStep("stop-early", data(alice), env); err != nil {
 		t.Fatal(err)
 	}
 	if at.alive || !bt.alive || !ah.alive {
-		t.Errorf("stop-tray: alice's tray %v, bob's %v, alice's host %v", at.alive, bt.alive, ah.alive)
+		t.Errorf("stop-early: alice's tray %v, bob's %v, alice's host %v", at.alive, bt.alive, ah.alive)
 	}
-	// ... and nothing when it doesn't run as the user it was asked for
+	if r, _ := LoadRecord(state, time.Now()); r != nil {
+		t.Errorf("stop-early unelevated recorded %+v", r)
+	}
+	// ... uninstalling: their worker too
+	RunStep("stop-early-remove", data(alice), env)
+	if ah.alive || !bt.alive {
+		t.Errorf("stop-early-remove: alice's host %v, bob's tray %v", ah.alive, bt.alive)
+	}
+	// ... and nothing when it runs neither as the user it was asked for nor elevated
+	env, f, _, _ = newEnv("S-1-5-21-1-2-3-1003", false)
+	other := f.add(&fakeProc{Proc: Proc{Exe: dir + `\longarm-tray.exe`, Args: []string{}, SID: alice}})
+	RunStep("stop-early", data(alice), env)
+	if !other.alive {
+		t.Error("stop-early as another user stopped a tray")
+	}
+
+	// stop-early elevated (the update service's install as SYSTEM): what stop does, before
+	// InstallValidate; the deferred stop then adds to its record, and the rollback starts it all
+	env, f, svc, tasks := newEnv("S-1-5-18", true)
+	env.Elevated = func() bool { return true }
+	inUse := map[string]bool{}
+	env.Files.InUse = func(p string) bool { return inUse[p] }
+	inst := t.TempDir()
+	env.InstallDir = func() (string, error) { return inst, nil }
+	for _, n := range Binaries {
+		os.WriteFile(filepath.Join(inst, n), []byte(n), 0o644)
+	}
+	inUse[filepath.Join(inst, "longarm.exe")] = true // a `longarm` client in a terminal
+	f.add(&fakeProc{Proc: Proc{Exe: inst + `\longarm-tray.exe`, Args: []string{}, SID: bob}})
+	eh := f.add(&fakeProc{Proc: Proc{Exe: inst + `\longarm-tray.exe`, Args: []string{"--worker-host"}, SID: alice}})
+	if err := RunStep("stop-early", data("S-1-5-18"), env); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := LoadRecord(state, time.Now())
+	if err != nil || rec == nil || !rec.Early || eh.alive || svc.running["longarmd-admin"] || len(rec.Aside) != 1 {
+		t.Fatalf("stop-early elevated: record %+v %v, host alive %v, services %v", rec, err, eh.alive, svc.running)
+	}
+	delete(inUse, filepath.Join(inst, "longarm.exe"))
+	inUse[filepath.Join(inst, "longarmd.exe")] = true // a job's shim, started meanwhile
+	f.add(&fakeProc{Proc: Proc{Exe: inst + `\longarm-tray.exe`, Args: []string{}, SID: alice}})
+	if err := RunStep("stop", data("S-1-5-18"), env); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ = LoadRecord(state, time.Now())
+	if rec == nil || !reflect.DeepEqual(rec.Services, []string{"longarmd-admin"}) || !reflect.DeepEqual(rec.Workers, []string{alice}) ||
+		!reflect.DeepEqual(rec.Trays, []string{bob, alice}) || len(rec.Aside) != 2 {
+		t.Fatalf("the deferred stop did not add to stop-early's record: %+v", rec)
+	}
+	if _, err := os.Stat(rec.Aside[0].To); err != nil {
+		t.Errorf("the deferred stop cleaned what stop-early moved aside: %v", err)
+	}
+	if err := RunStep("rollback", data("S-1-5-18"), env); err != nil {
+		t.Fatal(err)
+	}
+	if !svc.running["longarmd-admin"] || !reflect.DeepEqual(tasks.ran, []string{WorkerTaskName(alice), TrayTaskName(bob), TrayTaskName(alice)}) {
+		t.Errorf("rollback after stop-early: services %v, tasks %v", svc.calls, tasks.ran)
+	}
+	for _, n := range []string{"longarm.exe", "longarmd.exe"} {
+		if _, err := os.Stat(filepath.Join(inst, n)); err != nil {
+			t.Errorf("%s not moved back: %v", n, err)
+		}
+	}
+
+	// an uninstall elevated: stop-early-remove moves the client's binary aside; stop-remove has
+	// what still runs from there deleted at the next start, and drops the record
 	env, f, _, _ = newEnv("S-1-5-18", true)
-	sys := f.add(&fakeProc{Proc: Proc{Exe: dir + `\longarm-tray.exe`, Args: []string{}, SID: alice}})
-	RunStep("stop-tray", data(alice), env)
-	if !sys.alive {
-		t.Error("stop-tray as SYSTEM stopped a tray")
+	env.Elevated = func() bool { return true }
+	env.InstallDir = func() (string, error) { return inst, nil }
+	inUse = map[string]bool{filepath.Join(inst, "longarm.exe"): true}
+	var atReboot []string
+	env.Files = Files{InUse: func(p string) bool { return inUse[p] }, DeleteAtReboot: func(p string) error { atReboot = append(atReboot, p); return nil }}
+	if err := RunStep("stop-early-remove", data("S-1-5-18"), env); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := LoadRecord(state, time.Now())
+	if r == nil || len(r.Aside) != 1 {
+		t.Fatalf("stop-early-remove: record %+v", r)
+	}
+	if err := RunStep("stop-remove", data("S-1-5-18"), env); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := LoadRecord(state, time.Now()); r != nil {
+		t.Error("stop-remove kept the record")
+	}
+	// (nothing holds the fake client's file: removed at once; TestRemoveAside: one still in use)
+	if _, err := os.Stat(r.Aside[0].To); err == nil && len(atReboot) == 0 {
+		t.Errorf("%s left without being deleted at the next start", r.Aside[0].To)
 	}
 
 	// stop (an administrator's upgrade): services, every user, a record
-	env, f, svc, tasks := newEnv(alice, true)
+	env, f, svc, tasks = newEnv(alice, true)
 	f.add(&fakeProc{Proc: Proc{Exe: dir + `\longarm-tray.exe`, Args: []string{}, SID: bob}})
 	f.add(&fakeProc{Proc: Proc{Exe: dir + `\longarm-tray.exe`, Args: []string{"--worker-host"}, SID: alice}})
 	if err := RunStep("stop", data(alice), env); err != nil {
 		t.Fatal(err)
 	}
-	rec, err := LoadRecord(state, time.Now())
+	rec, err = LoadRecord(state, time.Now())
 	if err != nil || rec == nil {
 		t.Fatalf("record: %v %v", rec, err)
 	}

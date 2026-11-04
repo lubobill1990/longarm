@@ -3075,16 +3075,25 @@ all requested applications" dialog and no reboot, and running jobs and
 sessions keep running. What happens (`internal/msiupgrade`;
 `packaging/windows/longarm.wxs`):
 
-1. **Before the in-use check** (as you, before `InstallValidate`): your
-   tray is asked to exit - its stop event, a named kernel event
+1. **Before the in-use check** (before `InstallValidate`): Restart Manager
+   is off (`MSIRESTARTMANAGERCONTROL=Disable`: it can't close windowless
+   processes, which is what showed the dialog), and Windows Installer's own
+   in-use check then takes about 40 s for every process that holds one of
+   Longarm's files - minutes with the tray, the worker and the services
+   running. So when the installer runs with an administrator's token - the
+   update service's install (as SYSTEM: the tray's "Update", automatic
+   updates), `msiexec` from an elevated prompt, `uninstall.ps1` - step 2
+   runs here already, after every check that could refuse the install, and
+   the check finds nothing in use (seconds). Otherwise (a double-clicked MSI,
+   an uninstall from Settings: Windows gives these steps your unelevated
+   token) only your tray is stopped here - and, for an uninstall, your
+   worker: asked to exit through its stop event, a named kernel event
    `Global\LongarmStop-<pid>` that only its user, SYSTEM and Administrators
-   may set - and ended by its process id after 10 s, or at once when it
-   has none (an older version). The tray is Longarm's only process with a
-   window, the only one Windows Installer's in-use check would list.
-   Restart Manager is off (`MSIRESTARTMANAGERCONTROL=Disable`): it can't
-   close windowless processes, which is what showed the dialog.
+   may set, and ended by its process id after 10 s, or at once when it has
+   none (an older version). Should the install fail or be cancelled before
+   its script runs, what was stopped starts again.
 2. **Before the files are replaced** (elevated, before `StopServices` and
-   `InstallFiles`): the services that run (`longarmd-admin`, `LongarmUpdate`,
+   `InstallFiles`; what step 1 did not stop already): the services that run (`longarmd-admin`, `LongarmUpdate`,
    a `RUN=service` `longarmd`) are stopped and waited for, then every user's
    tray, worker host (`longarm-tray --worker-host`, `longarmd session-mode
    run`) and `longarmd run` whose image is in the install dir - asked
