@@ -25,10 +25,11 @@ import (
 // scripts, the front page's installers, /releases/latest.json, the tray's
 // update notice and worker self-updates all see them. The hub reads the
 // release index (names, sizes, sha256 digests, the .minisig signatures)
-// from the GitHub API and never stores the files: downloads over HTTP are
-// redirected to GitHub; a worker's self-update (gRPC) makes the hub fetch
-// the file once into its cache, checked against the digest. Workers verify
-// the signatures against the key built into them, as always.
+// from the GitHub API. Downloads over HTTP are redirected to GitHub,
+// except MSIs: older Windows update services only follow same-host
+// redirects. MSIs and worker self-updates (gRPC) use the hub's cache,
+// checked against the digest. Workers verify the signatures against the
+// key built into them, as always.
 //
 // [releases] github: "" = the repository of [web] repo_url when that is on
 // github.com (the default: the public repository), "owner/repo", or "off".
@@ -337,7 +338,7 @@ func (h *Hub) ghWanted() bool {
 // instead of the hub (a GitHub release file the hub has no copy of); ""
 // = served by the hub.
 func (h *Hub) remoteReleaseURL(version, name string) string {
-	if h.gh == nil || !versionRE.MatchString(version) || !servableFile(name) || strings.HasSuffix(name, update.SigExt) {
+	if h.gh == nil || !versionRE.MatchString(version) || !servableFile(name) || strings.HasSuffix(name, update.SigExt) || strings.HasSuffix(name, ".msi") {
 		return ""
 	}
 	files, err := h.releaseFiles(version)

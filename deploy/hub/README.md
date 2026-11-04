@@ -94,14 +94,19 @@ default: the repository of `[web] repo_url`, the public one unless you
 changed it): the front page's installers, `install.sh` / `install.ps1`,
 `/releases/latest.json`, the tray's update notice and worker self-updates
 all work out of the box. The hub reads the index (names, sizes, sha256
-digests, signatures) from the GitHub API every 15 minutes and keeps no
-files: downloads are redirected to GitHub, a worker's self-update makes the
-hub fetch the file once into its cache (checked against the digest).
+digests, signatures) from the GitHub API every 15 minutes. Downloads are
+redirected to GitHub except MSIs: these and worker self-updates make the
+hub fetch the file once into its cache (checked against its size and
+digest). MSIs and their signatures are served by the hub itself so older
+Windows update services (including 0.1.31, same-host redirects only) can
+update without a manual installation. This compatibility fix requires a
+hub redeploy; the old service still verifies the release signature.
 Stable releases go to the stable channel, pre-releases (`-rc`) to preview;
 dev builds are not GitHub releases. The first release you add yourself
 (`release add`, `admin release publish`, CI) turns this off for good.
 `github = "off"` turns it off; the hub needs outbound HTTPS to
-api.github.com and github.com (`LONGARM_HUB_GITHUB_TOKEN`: an optional
+api.github.com, github.com and GitHub's release asset hosts
+(`LONGARM_HUB_GITHUB_TOKEN`: an optional
 token for a higher API rate limit).
 
 Existing workers keep their hand-issued certificates (same CA): add

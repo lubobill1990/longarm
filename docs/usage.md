@@ -3205,6 +3205,21 @@ upgrade above - which stops and replaces LongarmUpdate too - completes;
 the installed product's remembered properties (hub, roles, run mode, admin
 worker) carry over. Running jobs and sessions keep running.
 
+**GitHub-backed hubs and 0.1.31 workers.** The update service in 0.1.31
+only follows HTTPS redirects on the recorded hub's host. A hub redirecting
+an uncached MSI to GitHub therefore fails with "refusing a redirect to
+https://github.com/...": that is the actual refused target, not a CDN URL
+printed incorrectly. Updated hubs serve GitHub-backed MSIs themselves,
+fetching once into their existing size/sha256-checked cache; `.minisig`
+files also stay on the hub. **Redeploy the hub with this fix**, then retry
+`longarm worker update <worker> --version 0.1.32 --wait` (or a newer signed
+release). No one-time manual installation or worker configuration change
+is needed, provided the MSI and its signature use the release key already
+built into the installed update service. Updating only the client does
+not fix an old service. New update services also accept HTTPS redirects
+to GitHub's exact release hosts (see [security checks](security.md#update-service-windows));
+signature verification is unchanged.
+
 From your client, for a worker you own:
 
 ```sh
