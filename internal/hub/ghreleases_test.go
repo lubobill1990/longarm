@@ -189,6 +189,20 @@ func TestGitHubReleases(t *testing.T) {
 	if w := get("1.2.0", "longarm-windows-amd64.msi"); w.Code != http.StatusFound || w.Header().Get("Location") != gh.srv.URL+"/download/v1.2.0/longarm-windows-amd64.msi" {
 		t.Fatalf("msi: %d %s", w.Code, w.Header().Get("Location"))
 	}
+	// the Windows update service follows no redirect off the hub: the hub
+	// fetches the file (checked against the digest) and serves it
+	{
+		r := httptest.NewRequest(http.MethodGet, "/releases/1.2.0/longarm-windows-amd64.msi", nil)
+		r.SetPathValue("version", "1.2.0")
+		r.SetPathValue("file", "longarm-windows-amd64.msi")
+		r.Header.Set("User-Agent", "longarm-update")
+		w := httptest.NewRecorder()
+		h.releaseFile(w, r)
+		if w.Code != 200 || w.Body.String() != "msi-1.2.0" {
+			t.Fatalf("update service msi: %d %q %s", w.Code, w.Body.String(), w.Header().Get("Location"))
+		}
+		gh.downloads.Add(-1) // the counts below are the worker's
+	}
 	if w := get("1.2.0", "longarmd-linux-amd64.minisig"); w.Code != 200 || w.Body.String() != "sig-1.2.0" {
 		t.Fatalf("signature: %d %q", w.Code, w.Body.String())
 	}
