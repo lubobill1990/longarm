@@ -15,7 +15,14 @@ import (
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/update"
+	"github.com/lubobill1990/longarm/internal/version"
 )
+
+// UserAgent of the update service's HTTP requests. With the version, the
+// hub may redirect downloads to GitHub; a bare "longarm-update" (0.1.32
+// and older, which refuse redirects off the hub) gets the file from the
+// hub itself.
+var UserAgent = "longarm-update/" + version.Version
 
 // ReleaseFile is a file of the hub's release record.
 type ReleaseFile struct {
@@ -119,7 +126,21 @@ func NewHTTPSource(hub string) (*HTTPSource, error) {
 	return &HTTPSource{Base: base, Client: httpClient(base)}, nil
 }
 
-// httpClient: TLS 1.2+, HTTPS redirects on the same host only.
+// redirectAllowed: an HTTPS redirect to the hub's own host, or to GitHub's
+// release download hosts (a hub without releases of its own sends its
+// downloads there). Packages are verified by signature and sha256 either
+// way.
+func redirectAllowed(to *url.URL, hub *url.URL) bool {
+	if to.Scheme != "https" || hub == nil {
+		return false
+	}
+	host := strings.ToLower(to.Hostname())
+	return host == strings.ToLower(hub.Hostname()) || host == "github.com" ||
+		host == "objects.githubusercontent.com" || host == "release-assets.githubusercontent.com"
+}
+
+// httpClient: TLS 1.2+, HTTPS redirects on the same host (or to GitHub's
+// release downloads) only.
 func httpClient(base string) *http.Client {
 	u, _ := url.Parse(base)
 	tr := &http.Transport{
@@ -133,7 +154,7 @@ func httpClient(base string) *http.Client {
 		if len(via) >= 5 {
 			return errors.New("too many redirects")
 		}
-		if r.URL.Scheme != "https" || u == nil || !strings.EqualFold(r.URL.Hostname(), u.Hostname()) {
+		if !redirectAllowed(r.URL, u) {
 			return fmt.Errorf("refusing a redirect to %s", r.URL.Redacted())
 		}
 		return nil
@@ -145,7 +166,7 @@ func (s *HTTPSource) get(ctx context.Context, path string) (*http.Response, erro
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "longarm-update")
+	req.Header.Set("User-Agent", UserAgent)
 	resp, err := s.Client.Do(req)
 	if err != nil {
 		return nil, err

@@ -36,8 +36,11 @@ func hashFile(p string) (string, int64, error) {
 }
 
 func (h *Hub) releaseFile(w http.ResponseWriter, r *http.Request) {
-	// a GitHub release file the hub has no copy of: from GitHub
-	if u := h.remoteReleaseURL(r.PathValue("version"), r.PathValue("file")); u != "" {
+	// a GitHub release file the hub has no copy of: from GitHub - except
+	// for old Windows update services, which follow redirects on the hub's
+	// host only: the hub fetches it into its cache, checked against the
+	// digest, and serves it
+	if u := h.remoteReleaseURL(r.PathValue("version"), r.PathValue("file")); u != "" && !oldUpdateService(r) {
 		http.Redirect(w, r, u, http.StatusFound)
 		return
 	}
@@ -68,6 +71,14 @@ func (h *Hub) releaseFile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
+}
+
+// oldUpdateService: the request is a Windows update service of 0.1.32 or
+// older (User-Agent "longarm-update", no version), which refuses redirects
+// off the hub's host. Newer ones send "longarm-update/<version>" and
+// follow redirects to GitHub.
+func oldUpdateService(r *http.Request) bool {
+	return r.UserAgent() == "longarm-update"
 }
 
 // releasePath is a local path with version's file name (a release file of
