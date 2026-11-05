@@ -15,7 +15,14 @@ import (
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/update"
+	"github.com/lubobill1990/longarm/internal/version"
 )
+
+// UserAgent of the update service's HTTP requests. With the version, the
+// hub may redirect downloads to GitHub; a bare "longarm-update" (0.1.32
+// and older, which refuse redirects off the hub) gets the file from the
+// hub itself.
+var UserAgent = "longarm-update/" + version.Version
 
 // ReleaseFile is a file of the hub's release record.
 type ReleaseFile struct {
@@ -159,7 +166,7 @@ func (s *HTTPSource) get(ctx context.Context, path string) (*http.Response, erro
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "longarm-update")
+	req.Header.Set("User-Agent", UserAgent)
 	resp, err := s.Client.Do(req)
 	if err != nil {
 		return nil, err
