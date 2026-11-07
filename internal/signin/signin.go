@@ -147,11 +147,17 @@ func Console(w io.Writer) Events {
 	return Events{
 		Code: func(c Code) {
 			what := "this device"
-			switch c.Kind {
-			case "worker":
-				what = "this worker as yours"
-			case "both":
+			switch {
+			case c.Kind == "admin":
+				what = "this machine's admin worker as yours (it runs as SYSTEM)"
+			case c.Kind == "both" && c.AdminWorker:
+				what = "this machine as your device, your worker and your admin worker (it runs as SYSTEM; one approval for all three)"
+			case c.Kind == "both":
 				what = "this machine as your device and your worker (one approval for both)"
+			case c.Kind == "worker" && c.AdminWorker:
+				what = "this worker and its admin worker as yours (the admin worker runs as SYSTEM; one approval for both)"
+			case c.Kind == "worker":
+				what = "this worker as yours"
 			}
 			fmt.Fprintf(w, "To link %s, sign in with your account (Microsoft, Google or Apple, as the hub offers) in a browser:\n\n", what)
 			fmt.Fprintf(w, "  Open %s and enter code %s\n\n", c.URL, c.Code)

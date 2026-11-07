@@ -103,7 +103,13 @@ pairing proves the old worker's (and device's) key and the hub removes
 them at the approval. The worker keeps its name; its sharing stays only
 when you approve as its owner - another user's worker is removed, never
 moved to you. An expired sign-in of the same hub is replaced without
---force.`,
+--force.
+
+The admin worker (Windows, the MSI's ADMIN_WORKER=1) waiting for its
+sign-in to the same hub comes along: the same code and approval enroll
+it, and the page says so. It runs as SYSTEM, so only an account that can
+read its sign-in request takes it along: an elevated administrator, or
+the user who installed it.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dataDir, err := filepath.Abs(dataDir)
@@ -127,6 +133,13 @@ moved to you. An expired sign-in of the same hub is replaced without
 			if w := longarmd.ProtectedDataDirWarning(dataDir); w != "" {
 				fmt.Fprintln(os.Stderr, "warning: "+w)
 			}
+			admin, note := longarmd.PendingAdminWorker(hub)
+			if admin != nil && az {
+				admin, note = nil, "the admin worker waits for its sign-in, which takes the browser: run longarmd login without --az"
+			}
+			if note != "" {
+				fmt.Fprintln(os.Stderr, "note: "+note)
+			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			var enter <-chan struct{}
@@ -135,7 +148,8 @@ moved to you. An expired sign-in of the same hub is replaced without
 			}
 			return longarmd.Login(ctx, dataDir, hub, longarmd.LoginOptions{Name: name, Fingerprint: fp, Force: force,
 				Az: az, Scope: scope, Browser: !noBrowser, Enter: enter, Out: os.Stdout, Labels: lm,
-				Client: role == "both", ConfigDir: configDir, DeviceName: deviceName, WorkerKind: longarmd.WorkerKind(dataDir)})
+				Client: role == "both", ConfigDir: configDir, DeviceName: deviceName, WorkerKind: longarmd.WorkerKind(dataDir),
+				AdminWorker: admin})
 		},
 	}
 	c.Flags().StringVar(&dataDir, "data-dir", longarmd.DefaultDataDir(), "data directory (root: /var/lib/longarmd, LocalSystem: C:\\ProgramData\\Longarm\\longarmd, else ~/.longarm); env LONGARM_DATA_DIR")

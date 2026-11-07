@@ -23,3 +23,4 @@ pull request description.
 | [agent-env.md](agent-env.md) | `--agent-env` of runs: the tray, the MCP tools, a default (docs/usage.md "Agent environment") |
 | [copy.md](copy.md) | `longarm cp` between workers (docs/usage.md "Copy between workers") |
 | [programs.md](programs.md) | programs driving Longarm: features, fixtures, session input (docs/programs.md) |
+| [admin-worker.md](admin-worker.md) | the Windows admin worker's sign-in and pairing (docs/usage.md "Admin worker (Windows)") |
