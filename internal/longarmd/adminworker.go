@@ -402,6 +402,43 @@ func (a AdminWorkerTarget) Install(hub string, r *hubclient.JoinResult, note fun
 // (tests: the service acting in that window).
 var installCheckHook func()
 
+// PendingAdminWorker is this machine's admin worker as a target of a
+// `longarmd login` to hub - the tray's sign-in does the same (its
+// targets): the MSI recorded one (HKLM, administrators only) and its
+// service waits for a sign-in to that hub. Who may sign it in is the
+// hand-off dir's ACL (SYSTEM, Administrators and the installing
+// administrator; platform.SecureDir): an account that can't read the
+// request gets no target and why in note, its own sign-in goes on without
+// the admin worker. nil and "": there is no admin worker waiting.
+func PendingAdminWorker(hub string) (*AdminWorkerTarget, string) {
+	_, adm := InstalledWorker()
+	return pendingAdminWorker(adm, hub)
+}
+
+func pendingAdminWorker(adm AdminInstall, hub string) (*AdminWorkerTarget, string) {
+	if !adm.Enabled || adm.Handoff == "" {
+		return nil, ""
+	}
+	b, err := os.ReadFile(filepath.Join(adm.Handoff, AdminRequestFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, "" // signed in already, or its service isn't waiting
+	}
+	if err != nil {
+		return nil, fmt.Sprintf("the admin worker waits for its sign-in, but this account can't hand it over (%v): "+
+			"run longarmd login elevated, or as the user who installed it, or sign in with the tray", err)
+	}
+	var req AdminRequest
+	if err := json.Unmarshal(b, &req); err != nil || req.CSR == "" || req.Hub == "" {
+		return nil, fmt.Sprintf("the admin worker's sign-in request is unusable (%s): restart the %s service", AdminRequestFile, AdminServiceName)
+	}
+	// its service pinned that hub's CA: an enrollment from another hub
+	// would only be refused after the approval
+	if hubclient.NormalizeAddr(req.Hub) != hubclient.NormalizeAddr(hub) {
+		return nil, fmt.Sprintf("the admin worker waits for a sign-in to %s, not %s: it stays out of this one", req.Hub, hub)
+	}
+	return &AdminWorkerTarget{Handoff: adm.Handoff, DataDir: adm.DataDir}, ""
+}
+
 // AdminInstall is what the MSI recorded about the admin worker
 // (InstalledAdmin).
 type AdminInstall struct {

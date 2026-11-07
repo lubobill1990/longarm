@@ -246,7 +246,10 @@ type LoginOptions struct {
 	Labels map[string]string
 	// WorkerKind for the summary ("user session", "service"; "": unsaid).
 	WorkerKind string
-	Out        io.Writer
+	// AdminWorker: this machine's admin worker, waiting for its sign-in,
+	// enrolls with the same approval (PendingAdminWorker; nil: none).
+	AdminWorker *AdminWorkerTarget
+	Out         io.Writer
 }
 
 // Login enrolls this worker as its user's own worker with the user's
@@ -264,12 +267,18 @@ func Login(ctx context.Context, dataDir, hub string, o LoginOptions) error {
 	if o.Az {
 		so.Method = signin.MethodAz
 	}
+	if o.AdminWorker != nil {
+		so.AdminWorker = *o.AdminWorker
+	}
 	r, err := signin.SignIn(ctx, so, signin.Console(o.Out))
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(o.Out, "hub CA verified (%s)\n", r.CAFingerprint)
 	fmt.Fprintf(o.Out, "joined as worker %s\n", r.Worker.Name)
+	if r.AdminWorker != nil {
+		fmt.Fprintf(o.Out, "joined as admin worker %s (runs as SYSTEM, only %s can use it)\n", r.AdminWorker.Name, r.User)
+	}
 	if len(r.Worker.Labels) > 0 {
 		fmt.Fprintf(o.Out, "worker labels: %s (change them: longarm worker label %s KEY=VALUE KEY-)\n", labelString(r.Worker.Labels), r.Worker.Name)
 	}
@@ -331,6 +340,11 @@ func SetUpSignIn(dataDir, hub, fp string) error {
 // re-reads hub.toml afterwards (Config.reloadHubFile).
 func waitSignIn(ctx context.Context, dataDir string, log *slog.Logger) error {
 	cert := filepath.Join(dataDir, TLSDir, pki.NodeCertFile)
+	signInWith := "the Longarm tray, or: longarmd login --role both (as the service's account, or elevated)"
+	if AdminHandoff(dataDir) != "" {
+		// the admin worker rides on the user's sign-in (PendingAdminWorker)
+		signInWith = "the Longarm tray, or: longarmd login (elevated, or as the user who installed it)"
+	}
 	var last time.Time
 	for {
 		hf, _ := hubclient.LoadFile(dataDir)
@@ -341,8 +355,7 @@ func waitSignIn(ctx context.Context, dataDir string, log *slog.Logger) error {
 			return nil
 		}
 		if _, err := os.Stat(cert); err != nil && time.Since(last) > 10*time.Minute {
-			log.Info("waiting for this worker's sign-in", "hub", hf.Address,
-				"sign_in_with", "the Longarm tray, or: longarmd login --role both (as the service's account, or elevated)")
+			log.Info("waiting for this worker's sign-in", "hub", hf.Address, "sign_in_with", signInWith)
 			last = time.Now()
 		}
 		// the admin worker: its CSR to the tray, the approved enrollment back

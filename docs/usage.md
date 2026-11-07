@@ -2280,7 +2280,11 @@ Install it with the MSI's checkbox "Allow remote administrator commands on
 this computer" (Default and Custom) or `ADMIN_WORKER=1` - off by default.
 The MSI adds the service `longarmd-admin` (LocalSystem, no password; data
 dir `C:\ProgramData\Longarm\longarmd-admin`); the tray's sign-in enrolls it
-with the same code and approval as your worker. The tray's Account tab shows
+with the same code and approval as your worker, and so does `longarmd
+login` to the same hub - for a machine nobody signs in to (`RUN=service`,
+a script) - run elevated or as the user who installed it (who else runs it
+gets a note and signs in without the admin worker); the hub pairs the two
+as one machine. The tray's Account tab shows
 its state and offers **Disable admin worker** (an administrator prompt:
 `longarmd admin-worker disable`) - it leaves the hub, its service and data
 go, and upgrades keep it off; `longarmd admin-worker status` shows it. The
@@ -3097,7 +3101,8 @@ SYSTEM/Administrators/the service account only; `JOIN_CODE` = the worker's,
 `LOGIN=1` the MSI writes the data dir's `hub.toml` and starts the service,
 which waits for its sign-in: `longarmd login --role both` as the service's
 account (or elevated) signs it in (the tray signs in only data dirs it can
-write).
+write) - with `ADMIN_WORKER=1` the admin worker too, with the same code
+(elevated, or as the installing user).
 
 **The worker service runs as a user account** (DESIGN §3.1: jobs then find
 that user's git / npm / claude settings), never silently as SYSTEM. The

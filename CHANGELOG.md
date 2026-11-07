@@ -426,6 +426,16 @@
 
 ### Fixed
 
+- **`longarmd login` signs in the admin worker too.** An admin worker
+  (`ADMIN_WORKER=1`) waiting for its sign-in was enrolled only by the
+  tray's sign-in, although its log and the `RUN=service` docs pointed to
+  `longarmd login --role both`: a machine nobody signs in to (`RUN=service`,
+  a script, a VM) kept it waiting for good. Now `longarmd login` to the
+  same hub takes it along like the tray - one code, the prompt and the
+  `/link` page name it, the hub pairs it with the worker as one machine -
+  when it runs elevated or as the user who installed it (the hand-off
+  dir's ACL); anybody else gets a note and signs in without it, and so
+  does `--az`. Its log now names that command.
 - **The MSI no longer rolls back when the worker's join fails.** A
   `JOIN_CODE` that expired (an unattended install that ran late, e.g. a Dev
   Box customization days after it was queued), an unknown code or an

@@ -718,8 +718,11 @@ in. It is enrolled only through a pairing (`/link`) that carries its CSR
 (`StartLinkRequest.admin_worker_csr_pem`, or kind `admin` alone) - with the
 owner's Microsoft sign-in and approval; az sign-ins and join codes can't
 make one. Its private key never leaves the LocalSystem longarmd: the
-signed-in user's tray sends a CSR that longarmd made and hands the
-certificate back. The `/link` page says, in a warning box, that the
+signed-in user's tray - or `longarmd login` to the same hub - sends a CSR
+that longarmd made and hands the certificate back; both only through the
+hand-off dir, so only who can read and write that (below) can carry the
+admin worker's CSR, and `longarmd login` run by anybody else signs in
+without it. The `/link` page says, in a warning box, that the
 pairing includes an **administrator** worker running commands as SYSTEM on
 that machine, with its name (default `<worker>-admin`).
 
