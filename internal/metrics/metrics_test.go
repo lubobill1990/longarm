@@ -154,3 +154,16 @@ func TestNetRates(t *testing.T) {
 		}
 	}
 }
+
+// TestMemMaxOverrideTagged: LONGARM_TEST_MEM_MAX_GB sets the ceiling only in
+// a "testhooks" build; a default build (what releases ship) ignores it.
+func TestMemMaxOverrideTagged(t *testing.T) {
+	t.Setenv("LONGARM_TEST_MEM_MAX_GB", "65536")
+	s, err := TakeSample()
+	if err != nil {
+		t.Skipf("no sample here: %v", err)
+	}
+	if got := s.Sys.MemMax == 65536<<30; got != testHooks {
+		t.Fatalf("MemMax %d with LONGARM_TEST_MEM_MAX_GB=65536 (testhooks build: %v)", s.Sys.MemMax, testHooks)
+	}
+}

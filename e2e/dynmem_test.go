@@ -10,7 +10,8 @@ import (
 )
 
 // TestDynamicMemory: a worker that is a Hyper-V Dynamic Memory guest
-// (simulated: LONGARM_TEST_MEM_MAX_GB) reports its ceiling - in longarm ls
+// (simulated: LONGARM_TEST_MEM_MAX_GB, honoured by the "testhooks" longarmd
+// TestMain builds) reports its ceiling - in longarm ls
 // (table and --json) - and the hub places a job by it that fits in no
 // machine's physical memory.
 func TestDynamicMemory(t *testing.T) {

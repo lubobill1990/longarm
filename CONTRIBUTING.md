@@ -26,6 +26,12 @@ services or MSIs, change firewall rules, use a live tailnet or a browser are
 opt-in (`LONGARM_SERVICE_TEST=1`, `LONGARM_MSI_TEST=1`,
 `LONGARM_PLAYWRIGHT=1`, … - see the test files) and never run in CI.
 
+Overrides that must never work in a shipped binary sit behind the
+`testhooks` build tag: the e2e harness builds the `longarmd` it starts with
+`-tags testhooks`, releases and `go build` don't (so far
+`LONGARM_TEST_MEM_MAX_GB`, a simulated Hyper-V Dynamic Memory ceiling).
+Prebuilt binaries for `LONGARM_E2E_BIN_DIR` need the tag too.
+
 After changing:
 
 - `proto/`: `buf generate` and commit the generated code;

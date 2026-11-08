@@ -16,9 +16,7 @@ package metrics
 import (
 	"context"
 	"math"
-	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -206,8 +204,8 @@ func TakeSample() (*Sample, error) {
 	if err != nil {
 		return nil, err
 	}
-	if v, err := strconv.ParseUint(os.Getenv("LONGARM_TEST_MEM_MAX_GB"), 10, 64); err == nil { // tests: a Dynamic Memory guest
-		sys.MemMax = v << 30
+	if v, ok := testMemMax(); ok { // e2e ("testhooks" builds only): a Dynamic Memory guest
+		sys.MemMax = v
 	}
 	s := &Sample{Wall: time.Now(), Sys: sys, Procs: procs}
 	s.NetRx, s.NetTx, s.NetOK = netCounters()
