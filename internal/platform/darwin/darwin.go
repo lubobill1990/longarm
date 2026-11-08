@@ -102,7 +102,8 @@ func ProcessAlive(pid int, start uint64) bool {
 	return uint64(tv.Sec)*1e6+uint64(tv.Usec) == start
 }
 
-// SampleSystem uses gopsutil (host_statistics / sysctl underneath).
+// SampleSystem uses gopsutil (host_statistics / sysctl underneath). MemMax
+// stays 0: macOS has no Hyper-V Dynamic Memory guests.
 func SampleSystem() (ptypes.SysSample, error) {
 	var s ptypes.SysSample
 	ts, err := cpu.Times(false)

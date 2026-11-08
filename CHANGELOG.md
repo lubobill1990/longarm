@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Hyper-V Dynamic Memory workers get work**: a Windows worker that is a
+  Hyper-V guest with Dynamic Memory (Windows shows 4 GB, the host grows it
+  to, say, 88 GB) reports its ceiling (`mem_max_bytes`, read from the
+  guest's Dynamic Memory counter), and placement - the hub's, the
+  client-side pick, the MCP views - counts free memory against it instead
+  of failing every "free ≥ N GB" gate. `longarm ls` and the other tables
+  show `2.0/4.0 (max 88G)`, the web UI and tray use the ceiling for the
+  memory %, `ls --json` carries `memMaxBytes`. Growing is best effort (an
+  overcommitted host); the CPU gate and reservations still apply. Older
+  workers and hubs: no ceiling, as before.
 - **`longarm cp <worker>:<path> <worker>:<path>`**: a file or a directory
   (recursively) from one worker to another, directly - or through the hub's
   relay - never through this machine. Files whose size and sha256 match are

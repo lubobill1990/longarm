@@ -23,6 +23,8 @@ export interface MetricsSnapshot {
   threads?: number
   mem_total_bytes?: Int64
   mem_used_bytes?: Int64
+  /** a Hyper-V Dynamic Memory guest: the ceiling it can grow to (0 = static) */
+  mem_max_bytes?: Int64
   jobs_running?: number
   uptime_seconds?: Int64
   nproc?: number

@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/lubobill1990/longarm/internal/hubclient"
+	"github.com/lubobill1990/longarm/internal/memcap"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/version"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -544,7 +545,8 @@ func atoiDefault(s string, d int) int {
 // ---------------------------------------------------------------- page
 
 var pageTmpl = template.Must(template.New("page").Funcs(template.FuncMap{
-	"gb": func(b uint64) string { return fmt.Sprintf("%.1f", float64(b)/(1<<30)) },
+	"gb":     func(b uint64) string { return fmt.Sprintf("%.1f", float64(b)/(1<<30)) },
+	"memmax": memcap.MaxSuffix, // " (max 88G)": a Dynamic Memory guest
 	"state": func(s pb.JobState) string {
 		return strings.ToLower(strings.TrimPrefix(s.String(), "JOB_STATE_"))
 	},
@@ -565,7 +567,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(template.FuncMap{
 {{else}}<form method="post" action="/logout" style="float:right"><button>Log out {{.User}}</button></form>
 <h1>longarm-hub {{.Version}}</h1><h2>Workers</h2><table><tr><th>name</th><th>state</th><th>online</th><th>cpu%</th><th>mem GB</th><th>jobs</th><th>reserved GB</th><th>labels</th><th>version</th></tr>
 {{range .Nodes}}<tr{{if not .Online}} class="off"{{end}}><td>{{.Name}}</td><td>{{.State}}{{if .Draining}} (draining){{end}}</td><td>{{.Online}}</td>
-<td>{{with .Metrics}}{{printf "%.0f" .CpuPercent}}{{end}}</td><td>{{with .Metrics}}{{gb .MemUsedBytes}}/{{gb .MemTotalBytes}}{{end}}</td>
+<td>{{with .Metrics}}{{printf "%.0f" .CpuPercent}}{{end}}</td><td>{{with .Metrics}}{{gb .MemUsedBytes}}/{{gb .MemTotalBytes}}{{memmax .}}{{end}}</td>
 <td>{{.JobsActive}}</td><td>{{printf "%.1f" .ReservedGb}}</td><td>{{range $k, $v := .Labels}}{{$k}}={{$v}} {{end}}</td><td>{{.Version}}</td></tr>{{end}}</table>
 <h2>Recent jobs</h2><table><tr><th>worker</th><th>id</th><th>name</th><th>state</th><th>exit</th><th>created</th></tr>
 {{range .Jobs}}<tr><td>{{.Worker}}</td><td>{{.Job.Spec.Id}}</td><td>{{.Job.Spec.Name}}</td><td>{{state .Job.State}}</td><td>{{if .Job.HasExitCode}}{{.Job.ExitCode}}{{end}}</td><td>{{ago .Job.CreatedAt}} ago</td></tr>{{end}}</table>

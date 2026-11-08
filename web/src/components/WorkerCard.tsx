@@ -16,6 +16,7 @@ import {
   GREEN,
   isRelayed,
   MEM_C,
+  memMax,
   memPct,
   NET_RX_C,
   NET_TX_C,
@@ -706,7 +707,7 @@ function Metrics({
       </div>
       <div className="bars">
         <Bar label="CPU" pct={cpu} value={`${cpu.toFixed(0)}%`} />
-        <Bar label="MEM" pct={mp} value={`${gb(m.mem_used_bytes).toFixed(1)} / ${gb(m.mem_total_bytes).toFixed(0)} GB`} />
+        <Bar label="MEM" pct={mp} value={`${gb(m.mem_used_bytes).toFixed(1)} / ${gb(m.mem_total_bytes).toFixed(0)} GB${memMax(m)}`} />
         {extra.disk && diskTotal > 0 && (
           <Bar label="DISK" pct={diskPct} value={`${(diskTotal - diskFree).toFixed(0)} / ${diskTotal.toFixed(0)} GB`} />
         )}

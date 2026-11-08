@@ -257,7 +257,7 @@ type metricsServer struct {
 func SnapshotToPB(m metrics.Snapshot) *pb.MetricsSnapshot {
 	out := &pb.MetricsSnapshot{
 		Time: timestamppb.New(m.Time), CpuPercent: m.CPUPercent, Threads: int32(m.Threads),
-		MemTotalBytes: m.MemTotal, MemUsedBytes: m.MemUsed, JobsRunning: int32(m.JobsRunning),
+		MemTotalBytes: m.MemTotal, MemUsedBytes: m.MemUsed, MemMaxBytes: m.MemMax, JobsRunning: int32(m.JobsRunning),
 		UptimeSeconds: int64(m.Uptime / time.Second), Nproc: int32(m.NProc),
 		Agents:        map[string]*pb.AgentStat{},
 		DiskFreeBytes: m.DiskFree, DiskTotalBytes: m.DiskTotal,

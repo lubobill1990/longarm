@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/machine"
+	"github.com/lubobill1990/longarm/internal/memcap"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
@@ -78,8 +79,8 @@ func IconWorkers(v *pb.PoolView) []IconWorker {
 		iw := IconWorker{State: w.State}
 		if m := w.Metrics; m != nil && (w.State == "online" || w.Source == "hub") {
 			iw.Valid, iw.CPU = true, m.CpuPercent
-			if m.MemTotalBytes > 0 {
-				iw.Mem = 100 * float64(m.MemUsedBytes) / float64(m.MemTotalBytes)
+			if total := memcap.TotalBytes(m); total > 0 { // a Dynamic Memory guest: of its ceiling
+				iw.Mem = 100 * float64(m.MemUsedBytes) / float64(total)
 			}
 		}
 		out = append(out, iw)
@@ -154,7 +155,7 @@ func Tooltip(v *pb.PoolView) string {
 		if m := w.Metrics; m != nil {
 			cc := m.Agents["claude"].GetSessions()
 			cp := m.Agents["copilot"].GetSessions()
-			s += fmt.Sprintf(" CPU %.0f%% MEM %.0f/%.0fG CC%d CP%d", m.CpuPercent, gib(m.MemUsedBytes), gib(m.MemTotalBytes), cc, cp)
+			s += fmt.Sprintf(" CPU %.0f%% MEM %.0f/%.0fG%s CC%d CP%d", m.CpuPercent, gib(m.MemUsedBytes), gib(m.MemTotalBytes), memcap.MaxSuffix(m), cc, cp)
 		}
 		if l := w.Link; l != nil && l.RttMs > 0 {
 			s += fmt.Sprintf(" %.0fms", l.RttMs)

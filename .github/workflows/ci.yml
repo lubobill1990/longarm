@@ -272,7 +272,7 @@ jobs:
         run: |
           bin="$RUNNER_TEMP/e2e-bin"
           mkdir -p "$bin"
-          for c in longarmd longarm longarm-hub; do go build -o "$bin/$c" "./cmd/$c"; done
+          for c in longarmd longarm longarm-hub; do go build -tags testhooks -o "$bin/$c" "./cmd/$c"; done
           go build -o "$bin/helper" ./e2e/helper
           go test -c -o "$bin/e2e.test" ./e2e
           # loopback isolation between the accounts needs nft (the tests

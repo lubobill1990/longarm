@@ -45,7 +45,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("LONGARM_GATE_FREE_GB", "0")
 	// Hubs started here never offer the public repository's releases.
 	os.Setenv("LONGARM_HUB_RELEASES_GITHUB", "off")
-	// LONGARM_E2E_BIN_DIR: prebuilt longarmd, longarm, helper and longarm-hub
+	// LONGARM_E2E_BIN_DIR: prebuilt longarmd (-tags testhooks), longarm, helper and longarm-hub
 	// (CI runs the per-user tests as root from a test binary and must not
 	// build with root's - empty - Go caches).
 	prebuilt := os.Getenv("LONGARM_E2E_BIN_DIR")
@@ -69,7 +69,9 @@ func TestMain(m *testing.M) {
 			}
 			continue
 		}
-		if b, err := exec.Command(goBin, "build", "-o", out, pkg).CombinedOutput(); err != nil {
+		// testhooks: longarmd honours LONGARM_TEST_MEM_MAX_GB, which
+		// every other build (releases included) ignores
+		if b, err := exec.Command(goBin, "build", "-tags", "testhooks", "-o", out, pkg).CombinedOutput(); err != nil {
 			bins.buildErr = fmt.Errorf("build %s: %v\n%s", pkg, err, b)
 			break
 		}

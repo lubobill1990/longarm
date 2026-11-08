@@ -174,4 +174,15 @@ func TestLsTable(t *testing.T) {
 	if out := b.String(); !strings.Contains(out, "CLAUDE") || !strings.Contains(out, "PATH") || strings.Contains(out, "sys  ") {
 		t.Fatalf("wide:\n%s", out)
 	}
+
+	// a Hyper-V Dynamic Memory guest: its ceiling next to what it has now
+	dyn := &pb.MetricsSnapshot{MemUsedBytes: 2 << 30, MemTotalBytes: 4 << 30, MemMaxBytes: 90112 << 20}
+	rows = []lsRow{{name: "vm", state: "online", snap: dyn, path: "hub", node: &pb.NodeInfo{Name: "vm", Role: "worker", State: "approved"}}}
+	for _, wide := range []bool{false, true} {
+		b.Reset()
+		writeLsTable(&b, rows, wide, now)
+		if out := b.String(); !strings.Contains(out, "2.0/4.0 (max 88G)") {
+			t.Errorf("dynamic memory (wide %v):\n%s", wide, out)
+		}
+	}
 }

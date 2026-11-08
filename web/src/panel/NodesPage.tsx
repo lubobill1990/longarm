@@ -4,7 +4,7 @@ import type { LinkReport, MetricsPoint, NodeInfo, Profile } from '../api/types'
 import { MiniBar, Sparkline } from '../components/charts'
 import { ErrorBox, StatePill, useAction, usePoll } from '../components/common'
 import { VersionTag } from '../components/VersionTag'
-import { AMBER, CPU_C, fmtAgo, fmtRTT, gb, GREEN, isRelayed, MEM_C, memPct, nodeKey, RED, shortIds, since } from '../lib/format'
+import { AMBER, CPU_C, fmtAgo, fmtRTT, gb, GREEN, isRelayed, MEM_C, memMax, memPct, nodeKey, RED, shortIds, since } from '../lib/format'
 import { nodeMachines } from '../lib/machines'
 import { machineUpdate, updateRunning, updateStateText } from '../lib/update'
 
@@ -295,7 +295,7 @@ function NodeRow({
         <div className="small mono">
           {m ? (
             <>
-              <MiniBar pct={memPct(m)} /> {gb(m.mem_used_bytes).toFixed(1)}/{gb(m.mem_total_bytes).toFixed(0)} GB
+              <MiniBar pct={memPct(m)} /> {gb(m.mem_used_bytes).toFixed(1)}/{gb(m.mem_total_bytes).toFixed(0)} GB{memMax(m)}
             </>
           ) : (
             '—'

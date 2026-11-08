@@ -18,6 +18,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/machine"
+	"github.com/lubobill1990/longarm/internal/memcap"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -112,7 +113,7 @@ you are logged on; no password), elsewhere longarmd service install.`,
 						cpu, mem := "-", "-"
 						if m := n.Metrics; m != nil && n.Online {
 							cpu = fmt.Sprintf("%.1f", m.CpuPercent)
-							mem = humanBytes(m.MemUsedBytes) + "/" + humanBytes(m.MemTotalBytes)
+							mem = humanBytes(m.MemUsedBytes) + "/" + humanBytes(m.MemTotalBytes) + memcap.MaxSuffix(m)
 						}
 						k := kind
 						if n.AdminWorker {

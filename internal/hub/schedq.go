@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lubobill1990/longarm/internal/jobs"
+	"github.com/lubobill1990/longarm/internal/memcap"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/telemetry"
@@ -229,8 +230,7 @@ func (h *Hub) candidatesLocked(repo, owner string) []sched.Candidate {
 			c.Eligible, c.Why = false, "draining: "+n.localReason
 		}
 		if m := n.metrics; m != nil {
-			c.FreeGB = float64(m.MemTotalBytes-min(m.MemUsedBytes, m.MemTotalBytes)) / (1 << 30)
-			c.TotalGB = float64(m.MemTotalBytes) / (1 << 30)
+			c.TotalGB, c.FreeGB = memcap.GB(m) // a Dynamic Memory guest: against its ceiling
 			c.CPU = m.CpuPercent
 		}
 		active, reserved := h.loadLocked(n.rec.ID)
