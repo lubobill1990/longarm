@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cssColor, decodeB64, fmtAgo, fmtBytes, fmtRTT, fmtUptime, isActive, isRelayed, levelColor, logDecoder, memPct, nodeKey, num, shortIds, stateName, stripAnsi, until } from './format'
+import { cssColor, decodeB64, fmtAgo, fmtBytes, fmtRTT, fmtUptime, GiB, isActive, isRelayed, levelColor, logDecoder, memMax, memPct, nodeKey, num, shortIds, stateName, stripAnsi, until } from './format'
 import { niceMax } from '../components/charts'
 import { formatTools, parseTools } from '../panel/ProfilesPage'
 
@@ -49,6 +49,10 @@ describe('format', () => {
     expect(num(undefined)).toBe(0)
     expect(memPct({ mem_total_bytes: '200', mem_used_bytes: '50' })).toBe(25)
     expect(memPct({})).toBe(0)
+    expect(memPct({ mem_total_bytes: String(4 * GiB), mem_used_bytes: String(22 * GiB), mem_max_bytes: String(88 * GiB) })).toBe(25)
+    expect(memMax({ mem_total_bytes: String(4 * GiB), mem_max_bytes: String(90112 * 1024 ** 2) })).toBe(' (max 88G)')
+    expect(memMax({ mem_total_bytes: String(64 * GiB) })).toBe('')
+    expect(memMax({ mem_total_bytes: '115962957824', mem_max_bytes: '115964116992' })).toBe('') // at the ceiling
     expect(fmtBytes('5905580032')).toBe('5.5G')
   })
   it('RTT and path helpers', () => {

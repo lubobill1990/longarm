@@ -16,7 +16,9 @@ import (
 // clkTck is USER_HZ; 100 on every mainstream Linux (sysconf needs cgo).
 const clkTck = 100
 
-// SampleSystem reads /proc/stat, /proc/meminfo and /proc/uptime.
+// SampleSystem reads /proc/stat, /proc/meminfo and /proc/uptime. MemMax stays
+// 0: a Hyper-V guest balloons through hv_balloon, which exposes no reliable
+// ceiling inside the guest (MemTotal is the memory it has right now).
 func SampleSystem() (ptypes.SysSample, error) {
 	var s ptypes.SysSample
 	s.NumCPU = runtime.NumCPU()

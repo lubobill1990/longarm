@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/machine"
+	"github.com/lubobill1990/longarm/internal/memcap"
 	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -161,7 +162,7 @@ func writeLsTable(w io.Writer, rows []lsRow, wide bool, now time.Time) (failed i
 			cpu, mem := "-", "-"
 			if m != nil {
 				cpu = fmt.Sprintf("%.0f", m.CpuPercent)
-				mem = humanBytes(m.MemUsedBytes) + "/" + humanBytes(m.MemTotalBytes)
+				mem = humanBytes(m.MemUsedBytes) + "/" + humanBytes(m.MemTotalBytes) + memcap.MaxSuffix(m)
 			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", r.name, idCol(r), lsState(r, now), dash(r.node.GetOs()), lsVersion(r.node),
 				cpu, mem, jobs, lsLabels(r.node.GetLabels()), tail(r))
@@ -186,7 +187,7 @@ func writeLsTable(w io.Writer, rows []lsRow, wide bool, now time.Time) (failed i
 			top = append(top, fmt.Sprintf("%s %.0f%%", g.Name, g.CpuPercent))
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%.1f\t%s/%s\t%s\t%s\t%s\t%s G\t%s\t%s\t%s\t%s\t%s%s\n", r.name, idCol(r), lsState(r, now), m.CpuPercent,
-			humanBytes(m.MemUsedBytes), humanBytes(m.MemTotalBytes), jobs, agent("claude"),
+			humanBytes(m.MemUsedBytes), humanBytes(m.MemTotalBytes)+memcap.MaxSuffix(m), jobs, agent("claude"),
 			agent("copilot"), humanBytes(m.DiskFreeBytes), humanDuration(time.Duration(m.UptimeSeconds)*time.Second),
 			strings.Join(top, ", "), lsSource(r, now), r.path, lsVersion(r.node), tail(r))
 	}

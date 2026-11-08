@@ -69,8 +69,13 @@ func TestComputeCPUAndTop(t *testing.T) {
 	if s.CPUPercent != 70 {
 		t.Errorf("cpu = %v, want 70", s.CPUPercent)
 	}
-	if s.MemUsed != 12*GB || s.MemTotal != 16*GB || s.NProc != 5 || s.Threads != 4 {
+	if s.MemUsed != 12*GB || s.MemTotal != 16*GB || s.MemMax != 0 || s.NProc != 5 || s.Threads != 4 {
 		t.Errorf("mem/nproc: %+v", s)
+	}
+	// a Hyper-V Dynamic Memory guest: the ceiling is carried as is
+	cur.Sys.MemMax = 88 * GB
+	if s := Compute(prev, cur); s.MemMax != 88*GB || s.MemTotal != 16*GB {
+		t.Errorf("dynamic memory: total %d max %d", s.MemTotal, s.MemMax)
 	}
 	if s.TopCPU[0].Name != "build" || s.TopCPU[0].CPUPercent != 50 || s.TopCPU[0].Count != 2 {
 		t.Errorf("topcpu = %+v", s.TopCPU)

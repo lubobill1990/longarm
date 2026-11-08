@@ -378,6 +378,10 @@ message MetricsSnapshot {
   // per second over the last sampling interval.
   uint64 net_rx_bytes_per_sec = 14;
   uint64 net_tx_bytes_per_sec = 15;
+  // A Hyper-V guest with Dynamic Memory: the ceiling it can grow to (bytes;
+  // mem_total_bytes is what it has now). 0 = static memory or unknown (and
+  // older workers). Placement counts free memory against it.
+  uint64 mem_max_bytes = 16;
 }
 
 // ---------------------------------------------------------------- Admin

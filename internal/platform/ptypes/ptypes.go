@@ -15,6 +15,7 @@ type SysSample struct {
 	NumCPU     int
 	MemTotal   uint64 // bytes
 	MemAvail   uint64 // bytes
+	MemMax     uint64 // bytes; dynamic-memory ceiling, 0 = static
 	Uptime     time.Duration
 }
 

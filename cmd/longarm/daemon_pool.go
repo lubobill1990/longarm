@@ -24,6 +24,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/localapi"
+	"github.com/lubobill1990/longarm/internal/memcap"
 	"github.com/lubobill1990/longarm/internal/pool"
 	"github.com/lubobill1990/longarm/internal/transport"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
@@ -526,7 +527,7 @@ func printPool(w io.Writer, v *pb.PoolView) {
 		cpu, mem, cc, cp := "-", "-", "-", "-"
 		if m := p.Metrics; m != nil {
 			cpu = fmt.Sprintf("%.0f%%", m.CpuPercent)
-			mem = fmt.Sprintf("%.1f/%.0fG", float64(m.MemUsedBytes)/(1<<30), float64(m.MemTotalBytes)/(1<<30))
+			mem = fmt.Sprintf("%.1f/%.0fG", float64(m.MemUsedBytes)/(1<<30), float64(m.MemTotalBytes)/(1<<30)) + memcap.MaxSuffix(m)
 			cc = fmt.Sprint(m.Agents["claude"].GetSessions())
 			cp = fmt.Sprint(m.Agents["copilot"].GetSessions())
 		}

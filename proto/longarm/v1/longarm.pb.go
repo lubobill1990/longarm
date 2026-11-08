@@ -2141,8 +2141,12 @@ type MetricsSnapshot struct {
 	// per second over the last sampling interval.
 	NetRxBytesPerSec uint64 `protobuf:"varint,14,opt,name=net_rx_bytes_per_sec,json=netRxBytesPerSec,proto3" json:"net_rx_bytes_per_sec,omitempty"`
 	NetTxBytesPerSec uint64 `protobuf:"varint,15,opt,name=net_tx_bytes_per_sec,json=netTxBytesPerSec,proto3" json:"net_tx_bytes_per_sec,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// A Hyper-V guest with Dynamic Memory: the ceiling it can grow to (bytes;
+	// mem_total_bytes is what it has now). 0 = static memory or unknown (and
+	// older workers). Placement counts free memory against it.
+	MemMaxBytes   uint64 `protobuf:"varint,16,opt,name=mem_max_bytes,json=memMaxBytes,proto3" json:"mem_max_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *MetricsSnapshot) Reset() {
@@ -2276,6 +2280,13 @@ func (x *MetricsSnapshot) GetNetRxBytesPerSec() uint64 {
 func (x *MetricsSnapshot) GetNetTxBytesPerSec() uint64 {
 	if x != nil {
 		return x.NetTxBytesPerSec
+	}
+	return 0
+}
+
+func (x *MetricsSnapshot) GetMemMaxBytes() uint64 {
+	if x != nil {
+		return x.MemMaxBytes
 	}
 	return 0
 }
@@ -6975,7 +6986,7 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\tAgentStat\x12\x1a\n" +
 	"\bsessions\x18\x01 \x01(\x05R\bsessions\x12\x1c\n" +
 	"\tprocesses\x18\x02 \x01(\x05R\tprocesses\x12\x1b\n" +
-	"\tmem_bytes\x18\x03 \x01(\x04R\bmemBytes\"\xcf\x05\n" +
+	"\tmem_bytes\x18\x03 \x01(\x04R\bmemBytes\"\xf3\x05\n" +
 	"\x0fMetricsSnapshot\x12.\n" +
 	"\x04time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x04time\x12\x1f\n" +
 	"\vcpu_percent\x18\x02 \x01(\x01R\n" +
@@ -6993,7 +7004,8 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x0fdisk_free_bytes\x18\f \x01(\x04R\rdiskFreeBytes\x12(\n" +
 	"\x10disk_total_bytes\x18\r \x01(\x04R\x0ediskTotalBytes\x12.\n" +
 	"\x14net_rx_bytes_per_sec\x18\x0e \x01(\x04R\x10netRxBytesPerSec\x12.\n" +
-	"\x14net_tx_bytes_per_sec\x18\x0f \x01(\x04R\x10netTxBytesPerSec\x1aP\n" +
+	"\x14net_tx_bytes_per_sec\x18\x0f \x01(\x04R\x10netTxBytesPerSec\x12\"\n" +
+	"\rmem_max_bytes\x18\x10 \x01(\x04R\vmemMaxBytes\x1aP\n" +
 	"\vAgentsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12+\n" +
 	"\x05value\x18\x02 \x01(\v2\x15.longarm.v1.AgentStatR\x05value:\x028\x01\"\x11\n" +

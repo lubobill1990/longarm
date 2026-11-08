@@ -51,8 +51,9 @@ type processMemoryCounters struct {
 
 func ft(f windows.Filetime) uint64 { return uint64(f.HighDateTime)<<32 | uint64(f.LowDateTime) }
 
-// SampleSystem reads GetSystemTimes + GlobalMemoryStatusEx. Kernel time
-// includes idle time, so total = kernel + user.
+// SampleSystem reads GetSystemTimes + GlobalMemoryStatusEx (and the cached
+// Hyper-V Dynamic Memory ceiling). Kernel time includes idle time, so
+// total = kernel + user.
 func SampleSystem() (ptypes.SysSample, error) {
 	var idle, kern, user windows.Filetime
 	r, _, e := procGetSystemTimes.Call(uintptr(unsafe.Pointer(&idle)), uintptr(unsafe.Pointer(&kern)), uintptr(unsafe.Pointer(&user)))
@@ -70,6 +71,7 @@ func SampleSystem() (ptypes.SysSample, error) {
 		NumCPU:     runtime.NumCPU(),
 		MemTotal:   m.TotalPhys,
 		MemAvail:   m.AvailPhys,
+		MemMax:     cachedDynamicMemoryMax(),
 		Uptime:     windows.DurationSinceBoot(),
 	}, nil
 }

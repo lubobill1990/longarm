@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/lubobill1990/longarm/internal/memcap"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/tenancy"
@@ -44,8 +45,8 @@ func recordMetricsLocked(n *node, m *pb.MetricsSnapshot) {
 	if p.Time == nil {
 		p.Time = timestamppb.Now()
 	}
-	if m.MemTotalBytes > 0 {
-		p.Mem = 100 * float64(m.MemUsedBytes) / float64(m.MemTotalBytes)
+	if total := memcap.TotalBytes(m); total > 0 { // a Dynamic Memory guest: of its ceiling
+		p.Mem = 100 * float64(m.MemUsedBytes) / float64(total)
 	}
 	if m.DiskTotalBytes > 0 && m.DiskTotalBytes >= m.DiskFreeBytes {
 		p.Disk = 100 * float64(m.DiskTotalBytes-m.DiskFreeBytes) / float64(m.DiskTotalBytes)

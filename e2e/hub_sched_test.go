@@ -13,12 +13,15 @@ import (
 
 var placedRE = regexp.MustCompile(`placed on (\S+)`)
 
-// freeGB is a worker's free memory as the hub sees it.
+// freeGB is a worker's free memory as the hub sees it (a Hyper-V Dynamic
+// Memory guest: against its ceiling).
 func (h *hubEnv) freeGB(t *testing.T, name string) float64 {
 	t.Helper()
 	n := h.waitNode(t, name, "metrics", func(n map[string]any) bool { return n["metrics"] != nil })
 	m := n["metrics"].(map[string]any)
 	total, _ := strconv.ParseFloat(fmt.Sprint(m["mem_total_bytes"]), 64)
+	maxB, _ := strconv.ParseFloat(fmt.Sprint(m["mem_max_bytes"]), 64)
+	total = max(total, maxB)
 	used, _ := strconv.ParseFloat(fmt.Sprint(m["mem_used_bytes"]), 64)
 	return (total - used) / (1 << 30)
 }

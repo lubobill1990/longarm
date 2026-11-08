@@ -1897,6 +1897,22 @@ job type (claude/copilot 2 GB, build 8, test 4; `--mem-gb` overrides);
 nobody passes → the job waits in the hub's queue (`longarm` shows the position).
 Without a reachable hub, `longarm` picks among the known workers itself.
 
+**Hyper-V Dynamic Memory.** A Windows worker that is a Hyper-V guest with
+Dynamic Memory sees only what the host has given it so far (say 4 GB),
+and the host grows it on demand up to a configured maximum. longarmd reads
+that maximum (the guest's `Hyper-V Dynamic Memory Integration Service`
+counter, every 5 minutes) and reports it next to the memory: `longarm ls`,
+`worker ls` and `daemon pool` show `2.0/4.0 (max 88G)`, the web UI and the
+tray too; `ls --json` carries `memMaxBytes` (the hub's JSON
+`mem_max_bytes`). Placement - the hub's, the client-side pick and the MCP
+`fleet_status` (`total_gb`, `free_gb`, `mem_max_gb`) - counts such a worker's
+memory against the maximum: free = maximum − used, so it passes a 20 GB gate
+it would never pass at 4 GB. Growing is best effort - an overcommitted host
+may not hand the memory out - while the CPU gate and the reservations of
+placed jobs still apply. A guest at its maximum, static memory, Linux (no
+reliable ceiling inside a guest) and macOS report no maximum: the memory
+as it is.
+
 The hub is never in the way: `longarm` gives it 1.5 s to connect
 (`LONGARM_HUB_TIMEOUT`) while `longarm ls` already asks the known workers (workers.toml
 plus the hub cache `hub-cache.json`) in parallel. A hub that didn't answer is

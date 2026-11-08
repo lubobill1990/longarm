@@ -2,7 +2,9 @@
 // by `longarm ls` (and later the hub / tray). The logic:
 //
 //   - machine CPU% from idle/total counter deltas (GetSystemTimes on Windows)
-//   - memory from GlobalMemoryStatusEx (/proc/meminfo, sysctl elsewhere)
+//   - memory from GlobalMemoryStatusEx (/proc/meminfo, sysctl elsewhere);
+//     on a Hyper-V guest with Dynamic Memory also the ceiling it can grow
+//     to (Windows only)
 //   - per-process CPU% from CPU-time deltas, aggregated by process name,
 //     top 5 by CPU and by memory
 //   - agent sessions: Claude Code / Copilot CLI launchers nest (bg daemon ->
@@ -14,7 +16,9 @@ package metrics
 import (
 	"context"
 	"math"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +56,7 @@ type Snapshot struct {
 	Threads     int
 	MemTotal    uint64
 	MemUsed     uint64
+	MemMax      uint64 // Hyper-V Dynamic Memory ceiling, 0 = static memory
 	JobsRunning int
 	Uptime      time.Duration
 	NProc       int
@@ -87,6 +92,7 @@ func Compute(prev, cur *Sample) Snapshot {
 		Time:     cur.Wall,
 		Threads:  cur.Sys.NumCPU,
 		MemTotal: cur.Sys.MemTotal,
+		MemMax:   cur.Sys.MemMax,
 		Uptime:   cur.Sys.Uptime,
 		NProc:    len(cur.Procs),
 	}
@@ -199,6 +205,9 @@ func TakeSample() (*Sample, error) {
 	procs, err := platform.ListProcesses()
 	if err != nil {
 		return nil, err
+	}
+	if v, err := strconv.ParseUint(os.Getenv("LONGARM_TEST_MEM_MAX_GB"), 10, 64); err == nil { // tests: a Dynamic Memory guest
+		sys.MemMax = v << 30
 	}
 	s := &Sample{Wall: time.Now(), Sys: sys, Procs: procs}
 	s.NetRx, s.NetTx, s.NetOK = netCounters()

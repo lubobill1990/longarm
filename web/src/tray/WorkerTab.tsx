@@ -4,7 +4,7 @@ import { Bar } from '../components/charts'
 import { ask } from '../components/confirm'
 import { ErrorBox, FirewallWarning, LogView, StatePill, useAction, usePoll } from '../components/common'
 import { IconChip, IconShield, IconTerminal } from '../components/icons'
-import { fmtAgo, fmtTime, gb, isActive, memPct, since } from '../lib/format'
+import { fmtAgo, fmtTime, gb, isActive, memMax, memPct, since } from '../lib/format'
 import { JobDetailRow, killQuestion } from './ClientTab'
 import { Banner, EmptyState, Section, Skeleton } from './ui'
 
@@ -155,7 +155,7 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
         {m && (
           <div style={{ marginTop: 6 }}>
             <Bar label="CPU" pct={m.cpu_percent ?? 0} value={`${(m.cpu_percent ?? 0).toFixed(0)}%`} />
-            <Bar label="MEM" pct={memPct(m)} value={`${gb(m.mem_used_bytes).toFixed(1)} / ${gb(m.mem_total_bytes).toFixed(0)} GB`} />
+            <Bar label="MEM" pct={memPct(m)} value={`${gb(m.mem_used_bytes).toFixed(1)} / ${gb(m.mem_total_bytes).toFixed(0)} GB${memMax(m)}`} />
           </div>
         )}
       </section>

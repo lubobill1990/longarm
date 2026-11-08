@@ -24,6 +24,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
+	"github.com/lubobill1990/longarm/internal/memcap"
 	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/pki"
 	"github.com/lubobill1990/longarm/internal/platform"
@@ -763,8 +764,7 @@ func (s *session) candidates(ctx context.Context, repo string) []sched.Candidate
 				c.Labels["os"], c.Labels["arch"] = info.Os, info.Arch
 			}
 			c.Online = true
-			c.FreeGB = float64(m.MemTotalBytes-min(m.MemUsedBytes, m.MemTotalBytes)) / (1 << 30)
-			c.TotalGB = float64(m.MemTotalBytes) / (1 << 30)
+			c.TotalGB, c.FreeGB = memcap.GB(m) // a Dynamic Memory guest: against its ceiling
 			c.CPU, c.Running = m.CpuPercent, int(m.JobsRunning)
 			out[i] = c
 		}()
@@ -808,8 +808,7 @@ func (s *session) pickNow(ctx context.Context, require map[string]string) (strin
 			c := sched.Candidate{Name: n.Name, Labels: n.Labels, Online: n.Online && n.Metrics != nil,
 				Eligible: n.State == "approved" && !n.Draining, Why: n.DrainReason, ReservedGB: n.ReservedGb, Running: int(n.JobsActive)}
 			if m := n.Metrics; m != nil {
-				c.FreeGB = float64(m.MemTotalBytes-min(m.MemUsedBytes, m.MemTotalBytes)) / (1 << 30)
-				c.TotalGB = float64(m.MemTotalBytes) / (1 << 30)
+				c.TotalGB, c.FreeGB = memcap.GB(m) // a Dynamic Memory guest: against its ceiling
 				c.CPU = m.CpuPercent
 			}
 			cands = append(cands, c)

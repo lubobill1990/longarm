@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lubobill1990/longarm/internal/memcap"
 	"github.com/lubobill1990/longarm/internal/sched"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -69,10 +70,10 @@ func (r *Rules) Pool(v *pb.PoolView, now time.Time) []Notification {
 			out = append(out, Notification{w.Name + " online", "reconnected"})
 		}
 		r.status[w.Name] = w.State
-		if m := w.Metrics; w.State == "online" && m != nil && m.MemTotalBytes > 0 {
-			high := float64(m.MemUsedBytes)/float64(m.MemTotalBytes) >= 0.9
+		if m, total := w.Metrics, memcap.TotalBytes(w.Metrics); w.State == "online" && total > 0 { // a Dynamic Memory guest: of its ceiling
+			high := float64(m.MemUsedBytes)/float64(total) >= 0.9
 			if high && !r.memHigh[w.Name] {
-				out = append(out, Notification{w.Name + " memory low", fmt.Sprintf("memory %.0f/%.0f GB", gib(m.MemUsedBytes), gib(m.MemTotalBytes))})
+				out = append(out, Notification{w.Name + " memory low", fmt.Sprintf("memory %.0f/%.0f GB", gib(m.MemUsedBytes), gib(total))})
 			}
 			r.memHigh[w.Name] = high
 		}

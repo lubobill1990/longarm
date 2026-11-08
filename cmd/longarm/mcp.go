@@ -26,6 +26,7 @@ import (
 
 	"github.com/lubobill1990/longarm/internal/agentauth"
 	"github.com/lubobill1990/longarm/internal/client"
+	"github.com/lubobill1990/longarm/internal/memcap"
 	"github.com/lubobill1990/longarm/internal/nodeid"
 	"github.com/lubobill1990/longarm/internal/sched"
 	"github.com/lubobill1990/longarm/internal/telemetry"
@@ -153,6 +154,7 @@ type workerStatus struct {
 	CPUPercent float64           `json:"cpu_percent"`
 	FreeGB     float64           `json:"free_gb"`
 	TotalGB    float64           `json:"total_gb"`
+	MemMaxGB   float64           `json:"mem_max_gb,omitempty"` // a Hyper-V Dynamic Memory guest's ceiling: total_gb/free_gb count against it
 	Jobs       int32             `json:"jobs"`
 	ReservedGB float64           `json:"reserved_gb,omitempty"`
 	Claude     int32             `json:"claude_sessions"`
@@ -174,8 +176,11 @@ func fillMetrics(w *workerStatus, m *pb.MetricsSnapshot) {
 		return
 	}
 	const gb = 1 << 30
-	w.CPUPercent, w.TotalGB = m.CpuPercent, float64(m.MemTotalBytes)/gb
-	w.FreeGB = float64(m.MemTotalBytes-min(m.MemUsedBytes, m.MemTotalBytes)) / gb
+	w.CPUPercent = m.CpuPercent
+	w.TotalGB, w.FreeGB = memcap.GB(m)
+	if memcap.Dynamic(m) {
+		w.MemMaxGB = float64(m.MemMaxBytes) / gb
+	}
 	w.Jobs, w.DiskFreeGB = m.JobsRunning, float64(m.DiskFreeBytes)/gb
 	if a := m.Agents["claude"]; a != nil {
 		w.Claude = a.Sessions

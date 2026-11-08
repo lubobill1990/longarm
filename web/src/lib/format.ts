@@ -96,10 +96,29 @@ export function gb(v: Int64 | undefined): number {
   return num(v) / GiB
 }
 
+/** A Hyper-V Dynamic Memory guest below its ceiling. At its ceiling (or with
+ * static memory) the ceiling is a little above the physical memory, which
+ * leaves out what the firmware reserves: within 1/32 that counts as static
+ * (internal/memcap). */
+function dynamicMem(m?: MetricsSnapshot): boolean {
+  const ceil = num(m?.mem_max_bytes)
+  return ceil - num(m?.mem_total_bytes) > ceil / 32
+}
+
+/** Total memory: a Dynamic Memory guest's ceiling (placement counts
+ * against it too), else the physical memory. */
+export function memTotal(m?: MetricsSnapshot): number {
+  return dynamicMem(m) ? num(m?.mem_max_bytes) : num(m?.mem_total_bytes)
+}
+
+/** " (max 88G)" for a Dynamic Memory guest below its ceiling, else "". */
+export function memMax(m?: MetricsSnapshot): string {
+  return dynamicMem(m) ? ` (max ${gb(m?.mem_max_bytes).toFixed(0)}G)` : ''
+}
+
 export function memPct(m?: MetricsSnapshot): number {
-  if (!m) return 0
-  const total = num(m.mem_total_bytes)
-  return total > 0 ? (100 * num(m.mem_used_bytes)) / total : 0
+  const total = memTotal(m)
+  return total > 0 ? (100 * num(m?.mem_used_bytes)) / total : 0
 }
 
 export function fmtBytes(v: Int64 | undefined): string {

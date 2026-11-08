@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/lubobill1990/longarm/internal/client"
+	"github.com/lubobill1990/longarm/internal/memcap"
 	"github.com/lubobill1990/longarm/internal/transport"
 	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
@@ -463,8 +464,8 @@ func (m *Monitor) setMetricsLocked(w *worker, s *pb.MetricsSnapshot, source stri
 	if p.Time == nil {
 		p.Time = timestamppb.New(m.now())
 	}
-	if s.MemTotalBytes > 0 {
-		p.Mem = 100 * float64(s.MemUsedBytes) / float64(s.MemTotalBytes)
+	if total := memcap.TotalBytes(s); total > 0 { // a Dynamic Memory guest: of its ceiling
+		p.Mem = 100 * float64(s.MemUsedBytes) / float64(total)
 	}
 	if s.DiskTotalBytes > 0 && s.DiskTotalBytes >= s.DiskFreeBytes {
 		p.Disk = 100 * float64(s.DiskTotalBytes-s.DiskFreeBytes) / float64(s.DiskTotalBytes)
