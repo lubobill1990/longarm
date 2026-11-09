@@ -368,9 +368,9 @@ switch ($Scenario) {
     $null = Invoke-Msi 'install-service' "/i `"$default`" $svcArgs"
     Assert-Installed '0.250.0' (Join-Path $MsiDir 'hashes-default.txt')
     Assert-ServiceAccount $svcUser 'after the install'
-    # a repair configures the service again: with the password
+    # a repair configures the service again: with the password (/fomus takes no properties: /i with REINSTALL)
     $code = (Get-Products)[0].PSChildName
-    $null = Invoke-Msi 'repair' "/fomus $code SERVICE_PASSWORD=$pw"
+    $null = Invoke-Msi 'repair' "/i $code REINSTALL=ALL REINSTALLMODE=omus SERVICE_PASSWORD=$pw"
     Assert-ServiceAccount $svcUser 'after the repair'
     # an upgrade without the password (as the update service's): the account and password stay
     Start-Running $true $false
