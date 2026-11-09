@@ -47,11 +47,12 @@ needs a reboot.
 
 ## Changing the worker service's configuration in an upgrade
 
-An upgrade of a service worker keeps the service as it is (longarm.wxs
-KeepServiceLogon: no ServiceInstall without a password), so a later MSI
-that changes the service's arguments, description or failure actions
-(ServiceInstall LongarmdSvc, util:ServiceConfig) reaches only fresh
-installs and upgrades given a password. When such a change comes, the
-install helper must apply it to the existing service without touching its
-account (ChangeServiceConfig with SERVICE_NO_CHANGE and no password, e.g.
-in install-helper msi setup), and the msi-install CI job check it.
+An upgrade of a service worker without a password keeps the services as
+they are (longarm.wxs KeepServiceLogon: InstallServices doesn't run), so a
+later MSI that changes a ServiceInstall - longarmd's or LongarmUpdate's
+arguments, name, start type - reaches only fresh installs, repairs and
+upgrades given a password (TestMSIModeRun pins them). When such a change
+comes, the install helper must apply it to the existing service without
+touching its account (ChangeServiceConfig with SERVICE_NO_CHANGE and no
+password, e.g. in install-helper msi setup), and the msi-install CI job
+check it. (util:ServiceConfig, the failure actions, still applies.)

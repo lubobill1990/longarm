@@ -15,16 +15,18 @@ import (
 // worker service. An upgrade of a service worker with no SERVICE_PASSWORD -
 // the update service's msiexec /i /qn (longarm worker update, --auto, the
 // tray's banner), or a double-clicked MSI - keeps the service's logon (no
-// ServiceInstall, no account check: every such update failed with 1603); an
-// upgrade given another account, a password or LocalSystem re-creates it as
-// before; a fresh install still needs an account.
+// InstallServices, no account check: every such update failed with 1603); an
+// upgrade given another account, a password or LocalSystem configures it as
+// before; a fresh install still needs an account. (What really happens:
+// msi-install-test.ps1's service scenarios.)
 func TestMSIServiceLogonOnUpgrade(t *testing.T) {
 	w := loadWxsConditions(t)
 	const user = `.\alice`
 	// what AppSearch / FindRelatedProducts find on a machine with a service worker
 	upgrade := func(saved string, extra map[string]string) map[string]string {
 		p := map[string]string{"WIX_UPGRADE_DETECTED": "{OLD}", "PREV_LONGARMD_SERVICE": `C:\Program Files\Longarm\longarmd.exe`,
-			"ROLES": "both", "SAVED_RUN": "service", "SAVED_SERVICE_ACCOUNT": saved, "SERVICE_NAME": "longarmd"}
+			"PREV_UPDATE_SERVICE": "longarm-update.exe run", "ROLES": "both", "SAVED_RUN": "service", "SAVED_SERVICE_ACCOUNT": saved,
+			"SERVICE_NAME": "longarmd"}
 		for k, v := range extra {
 			p[k] = v
 		}
@@ -33,9 +35,10 @@ func TestMSIServiceLogonOnUpgrade(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		props map[string]string
-		// want: KeepServiceLogon, the service (re)created, CheckServiceAccount refuses, the account recorded
-		keep, create, refuse bool
-		account              string
+		// want: KeepServiceLogon, InstallServices (creates or configures the service), CheckServiceAccount
+		// refuses, the account recorded
+		keep, install, refuse bool
+		account               string
 	}{
 		{"update service: no properties", upgrade(user, nil), true, false, false, user},
 		{"another spelling of the same account", upgrade(user, map[string]string{"SERVICE_USER": `.\ALICE`}), true, false, false, `.\ALICE`},
@@ -48,6 +51,9 @@ func TestMSIServiceLogonOnUpgrade(t *testing.T) {
 		{"to LocalSystem", upgrade(user, map[string]string{"SERVICE_ACCOUNT": "LocalSystem"}), false, true, false, "LocalSystem"},
 		{"to per-user isolation", upgrade(user, map[string]string{"ISOLATION": "per-user"}), false, true, false, "LocalSystem"},
 		{"no account recorded", upgrade("", map[string]string{"RUN": "service"}), false, true, true, ""},
+		{"no Longarm Update service (before 0.1.13)", upgrade(user, map[string]string{"PREV_UPDATE_SERVICE": ""}), false, true, true, user},
+		{"a repair", map[string]string{"Installed": "1", "REINSTALL": "ALL", "ROLES": "both", "SAVED_RUN": "service", "SAVED_SERVICE_ACCOUNT": user,
+			"PREV_UPDATE_SERVICE": "x", "PREV_LONGARMD_SERVICE": "x"}, false, true, true, user},
 		{"fresh install without an account", map[string]string{"ROLES": "worker", "RUN": "service"}, false, true, true, ""},
 		{"fresh install with an account", map[string]string{"ROLES": "worker", "RUN": "service", "SERVICE_USER": user, "SERVICE_PASSWORD": "pw"}, false, true, false, user},
 		{"fresh LocalSystem install", map[string]string{"ROLES": "worker", "RUN": "service", "SERVICE_ACCOUNT": "LocalSystem"}, false, true, false, "LocalSystem"},
@@ -57,11 +63,11 @@ func TestMSIServiceLogonOnUpgrade(t *testing.T) {
 			if got := p["KeepServiceLogon"] != ""; got != tc.keep {
 				t.Errorf("KeepServiceLogon = %v, want %v", got, tc.keep)
 			}
-			if got := w.component(t, "LongarmdServiceInstall", p); got != tc.create {
-				t.Errorf("LongarmdServiceInstall (the ServiceInstall) = %v, want %v", got, tc.create)
+			if got := w.custom(t, "InstallServices", p); got != tc.install {
+				t.Errorf("InstallServices = %v, want %v", got, tc.install)
 			}
 			if !w.component(t, "LongarmdService", p) {
-				t.Error("LongarmdService (longarmd.exe, the service's stop and removal) not installed")
+				t.Error("LongarmdService (longarmd.exe and its service) not installed")
 			}
 			if got := w.custom(t, "CheckServiceAccount", p); got != tc.refuse {
 				t.Errorf("CheckServiceAccount refuses = %v, want %v", got, tc.refuse)
@@ -143,6 +149,7 @@ func loadWxsConditions(t *testing.T) *wxsConditions {
 			Sets       []wxsSet `xml:"SetProperty"`
 			Components []cond   `xml:"ComponentGroup>Component"`
 			Sequence   []cond   `xml:"InstallExecuteSequence>Custom"`
+			Standard   []cond   `xml:"InstallExecuteSequence>InstallServices"`
 		} `xml:"Package"`
 	}
 	if err := xml.Unmarshal(src, &doc); err != nil {
@@ -174,6 +181,9 @@ func loadWxsConditions(t *testing.T) *wxsConditions {
 	}
 	for _, c := range doc.Package.Sequence {
 		w.customs[c.Action] = c.Condition
+	}
+	for _, c := range doc.Package.Standard {
+		w.customs["InstallServices"] = c.Condition
 	}
 	return w
 }

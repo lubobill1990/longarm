@@ -445,7 +445,7 @@
   An upgrade now keeps the service as it is - account, password, "Log on as
   a service" - and asks for nothing; the wizard's service page goes on
   without a password too. An upgrade that names another account, gives the
-  password again or switches to `SERVICE_ACCOUNT=LocalSystem` re-creates the
+  password again or switches to `SERVICE_ACCOUNT=LocalSystem` configures the
   service with those, as before; a fresh install still needs the account.
   The check is the new MSI's: affected workers update to it as they are.
 - **The MSI no longer rolls back when the worker's join fails.** A

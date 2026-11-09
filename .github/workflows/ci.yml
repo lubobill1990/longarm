@@ -355,13 +355,18 @@ jobs:
             if ($LASTEXITCODE) { throw 'go build longarm-tray' }
             & "$bin\longarm.exe" version --json
           }
-      - name: build the MSIs (default hub / custom only / the next version)
+      - name: build the MSIs (default hub / custom only / without the tray / the next version)
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'msi'
           $bin = Join-Path $env:RUNNER_TEMP 'msi-bin-0.250.0'
           ./packaging/windows/build-msi.ps1 -BinDir $bin -Version 0.250.0 -Arch x64 -Out "$out\default.msi" `
             -DefaultHub longarm.example.com -DefaultHubCA ('ab' * 32)
           ./packaging/windows/build-msi.ps1 -BinDir $bin -Version 0.250.0 -Arch x64 -Out "$out\custom.msi" -DefaultHub ''
+          # (validated only: build-msi.ps1 leaves the tray out when BinDir has no longarm-tray.exe)
+          $noTray = Join-Path $env:RUNNER_TEMP 'msi-bin-notray'
+          New-Item -ItemType Directory -Force $noTray | Out-Null
+          Get-ChildItem $bin -File -Filter *.exe | Where-Object Name -NE 'longarm-tray.exe' | Copy-Item -Destination $noTray
+          ./packaging/windows/build-msi.ps1 -BinDir $noTray -Version 0.250.0 -Arch x64 -Out "$out\notray.msi" -DefaultHub longarm.example.com
           $next = Join-Path $env:RUNNER_TEMP 'msi-bin-0.250.1'
           ./packaging/windows/build-msi.ps1 -BinDir $next -Version 0.250.1 -Arch x64 -Out "$out\next.msi" `
             -DefaultHub longarm.example.com -DefaultHubCA ('ab' * 32)
@@ -396,7 +401,9 @@ jobs:
   # administrator; .github/scripts/msi-install-test.ps1): a fresh install of
   # this build (Default mode, LOGIN=1 with the dummy hub: nobody signs in), a
   # repair, a refused service switch, an upgrade to the next build, the
-  # uninstall; and upgrades from released versions - 0.1.6 and the latest
+  # uninstall; the same for a service worker under a user account (its
+  # binary, account and logon after the install, a repair, an upgrade without
+  # the password, an upgrade to LocalSystem); and upgrades from released versions - 0.1.6 and the latest
   # (with the admin worker; as a LocalSystem service; as a service under a
   # user account, upgraded without its password - as the update service does -
   # and on to the next build, the account kept) - with the tray and
@@ -407,7 +414,7 @@ jobs:
     name: msi install (${{ matrix.name }})
     needs: msi
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -432,6 +439,10 @@ jobs:
             scenario: upgrade
             old: latest
             args: MODE=custom HUB=longarm.example.com LOGIN=1 ROLES=both RUN=service SERVICE_USER=@TEMPUSER@
+          # this build creating the service (as a user), a repair, an upgrade without a password, and one
+          # that changes the account
+          - name: service worker as a user - install, repair, upgrades, uninstall
+            scenario: service
     defaults:
       run:
         shell: pwsh

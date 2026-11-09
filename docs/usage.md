@@ -3128,7 +3128,7 @@ it is: its account, its password and "Log on as a service" stay, and it
 needs no `SERVICE_PASSWORD` (the wizard's service page can be left without
 one). Only an upgrade that names another account (`SERVICE_USER` +
 `SERVICE_PASSWORD`), gives the password again, or switches to
-`SERVICE_ACCOUNT=LocalSystem` creates the service again with those.
+`SERVICE_ACCOUNT=LocalSystem` configures the service with those.
 (Earlier MSIs needed `SERVICE_PASSWORD` for every upgrade of such a
 service, so its remote and automatic updates failed with msiexec 1603;
 the check is the new MSI's, so these workers update to this one as they

@@ -113,10 +113,22 @@ func TestMSIModeRun(t *testing.T) {
 			Actions    []attrs `xml:"CustomAction"`
 			Components []struct {
 				attrs
-				Services []attrs `xml:"ServiceInstall"`
-				Env      []attrs `xml:"Environment"`
+				Files []struct {
+					Name    string `xml:"Name,attr"`
+					Source  string `xml:"Source,attr"`
+					KeyPath string `xml:"KeyPath,attr"`
+				} `xml:"File"`
+				Services []struct {
+					attrs
+					Name      string `xml:"Name,attr"`
+					Account   string `xml:"Account,attr"`
+					Password  string `xml:"Password,attr"`
+					Arguments string `xml:"Arguments,attr"`
+				} `xml:"ServiceInstall"`
+				Env []attrs `xml:"Environment"`
 			} `xml:"ComponentGroup>Component"`
-			Sequence []attrs `xml:"InstallExecuteSequence>Custom"`
+			Sequence        []attrs `xml:"InstallExecuteSequence>Custom"`
+			InstallServices []attrs `xml:"InstallExecuteSequence>InstallServices"`
 		} `xml:"Package"`
 	}
 	if err := xml.Unmarshal(src, &doc); err != nil {
@@ -186,9 +198,30 @@ func TestMSIModeRun(t *testing.T) {
 				t.Errorf("component %s (service) condition %q", comp.ID, comp.Condition)
 			}
 		}
-		// the worker service is created apart from longarmd.exe: an upgrade keeping its logon leaves it out
-		if comp.ID != "UpdateService" && len(comp.Services) > 0 && (comp.ID != "LongarmdServiceInstall" || !strings.Contains(comp.Condition, "NOT KeepServiceLogon")) {
-			t.Errorf("component %s (%q) creates a service", comp.ID, comp.Condition)
+		// Windows Installer takes a service's binary from its component's key path: the exe
+		if len(comp.Services) > 0 {
+			var exe string
+			for _, f := range comp.Files {
+				if f.KeyPath == "yes" {
+					exe = f.Source
+				}
+			}
+			if !strings.HasSuffix(exe, ".exe") {
+				t.Errorf("component %s has a ServiceInstall but its key path is not an exe (%+v)", comp.ID, comp.Files)
+			}
+		}
+		// An upgrade keeping the worker service's logon (KeepServiceLogon) skips InstallServices: a
+		// change here doesn't reach those machines (the update service's upgrades) - configure the
+		// existing services in a custom action too, then change these.
+		for _, svc := range comp.Services {
+			got := strings.Join([]string{svc.Name, svc.Account, svc.Password, svc.Arguments}, " | ")
+			want := map[string]string{
+				"LongarmdSvc": `[SERVICE_NAME] | [SERVICE_ACCOUNT] | [SERVICE_PASSWORD] | run --data-dir "[DATADIR]" --service-name [SERVICE_NAME] --log-file "[DATADIR]\longarmd.log"`,
+				"UpdateSvc":   "LongarmUpdate | LocalSystem |  | run",
+			}[svc.ID]
+			if got != want || (svc.ID == "LongarmdSvc") != (comp.ID == "LongarmdService") {
+				t.Errorf("ServiceInstall %s (component %s): %s, want %s", svc.ID, comp.ID, got, want)
+			}
 		}
 		if comp.ID == "LongarmdStart" && !strings.Contains(comp.Condition, `RUN="service"`) {
 			t.Errorf("LongarmdStart condition %q", comp.Condition)
@@ -200,6 +233,9 @@ func TestMSIModeRun(t *testing.T) {
 	seq := map[string]string{}
 	for _, c := range p.Sequence {
 		seq[c.Action] = c.Condition
+	}
+	if len(p.InstallServices) != 1 || p.InstallServices[0].Condition != "NOT KeepServiceLogon" {
+		t.Errorf("InstallServices: %+v, want the condition NOT KeepServiceLogon", p.InstallServices)
 	}
 	for action, must := range map[string][]string{
 		"LongarmdSetup":          {`RUN="service"`},
@@ -806,17 +842,16 @@ func TestMSIMajorUpgradeInPlace(t *testing.T) {
 	// must keep its Id, Name and directory) and key file, as released
 	// (v0.1.2 to v0.1.13; UpdateService since v0.1.13).
 	want := map[string][2]string{
-		"LongarmExe":             {"", "longarm.exe"},
-		"UpdateService":          {"24b9f1c6-dc48-4bbc-8624-db45f8e3cee6", "longarm_update.exe"},
-		"LongarmdService":        {"3e96d676-1a38-455f-a841-7b7642e651c8", "longarmd.exe"},
-		"LongarmdServiceInstall": {"b7d0e2a4-6c1f-4f0e-9a53-2e8c4d71f6a9", ""}, // the service apart from longarmd.exe (released versions: in LongarmdService)
-		"LongarmdPlain":          {"0afe2b69-cb68-4395-a6fb-5a51b76aef5b", "longarmd.plain.exe"},
-		"LongarmdStart":          {"5380e22b-7c1c-4756-8c00-1616ee2b4647", ""},
-		"Settings":               {"165786a7-faa0-43e1-9643-f87e8ab45911", ""},
-		"Tray":                   {"", "longarm_tray.exe"},
-		"TrayShortcut":           {"936cbf15-9d7c-4e3d-8b7a-173b2bb11b9d", ""},
-		"License":                {"", "LicenseTxt"}, // since the third-party notices
-		"Notices":                {"", "NoticesTxt"},
+		"LongarmExe":      {"", "longarm.exe"},
+		"UpdateService":   {"24b9f1c6-dc48-4bbc-8624-db45f8e3cee6", "longarm_update.exe"},
+		"LongarmdService": {"3e96d676-1a38-455f-a841-7b7642e651c8", "longarmd.exe"},
+		"LongarmdPlain":   {"0afe2b69-cb68-4395-a6fb-5a51b76aef5b", "longarmd.plain.exe"},
+		"LongarmdStart":   {"5380e22b-7c1c-4756-8c00-1616ee2b4647", ""},
+		"Settings":        {"165786a7-faa0-43e1-9643-f87e8ab45911", ""},
+		"Tray":            {"", "longarm_tray.exe"},
+		"TrayShortcut":    {"936cbf15-9d7c-4e3d-8b7a-173b2bb11b9d", ""},
+		"License":         {"", "LicenseTxt"}, // since the third-party notices
+		"Notices":         {"", "NoticesTxt"},
 	}
 	got := map[string]component{}
 	for _, c := range p.Components {
