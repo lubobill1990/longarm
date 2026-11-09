@@ -132,6 +132,13 @@ $order = @(
   @('CheckLongarmdSwitch', 'LongarmStopEarly'),
   @('CheckRun', 'LongarmStopEarly'),
   @('CheckServiceAccount', 'LongarmStopEarly'),
+  # an upgrade keeping the service's logon: decided from what AppSearch / FindRelatedProducts found, before
+  # CostFinalize evaluates the component conditions (LongarmdServiceInstall) and the account check
+  @('AppSearch', 'SetServiceToKeep'),
+  @('FindRelatedProducts', 'SetServiceToKeep'),
+  @('SetServiceToKeep', 'SetKeepServiceLogon'),
+  @('SetKeepServiceLogon', 'CostFinalize'),
+  @('SetKeepServiceLogon', 'CheckServiceAccount'),
   @('CheckAdminWorker', 'LongarmStopEarly'),
   @('LongarmStopEarly', 'InstallValidate'),
   @('LongarmStopEarlyRemove', 'InstallValidate'),
@@ -165,6 +172,13 @@ if ($actions -notcontains 'CheckLongarmdSwitch' -or $exec -notcontains 'CheckLon
 if ((Seq 'LongarmEarlyUndoError') -ne -3 -or (Seq 'LongarmEarlyUndoCancel') -ne -2) { throw 'default.msi: LongarmEarlyUndoError / LongarmEarlyUndoCancel are not the fatal-error / user-exit actions' }
 foreach ($p in 'PREV_LONGARMD_SERVICE', 'PREV_LONGARMD_PLAIN') {
   if ($searches -notcontains $p) { throw "default.msi: no AppSearch for $p" }
+}
+# the worker service is created apart from longarmd.exe (its stop and removal), only without KeepServiceLogon
+$comp = Query $default "SELECT ``Component_`` FROM ``ServiceInstall`` WHERE ``ServiceInstall`` = 'LongarmdSvc'"
+$cond = Query $default "SELECT ``Condition`` FROM ``Component`` WHERE ``Component`` = 'LongarmdServiceInstall'"
+$ctl = Query $default "SELECT ``Component_`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = 'LongarmdSvcCtl'"
+if ($comp[0] -ne 'LongarmdServiceInstall' -or $cond[0] -notlike '*NOT KeepServiceLogon*' -or $ctl[0] -ne 'LongarmdService') {
+  throw "default.msi: the longarmd ServiceInstall is in '$($comp[0])' ('$($cond[0])'), its ServiceControl in '$($ctl[0])'"
 }
 foreach ($id in 'AdminSvcStop', 'LongarmdSvcCtl') {
   $ev = Query $default "SELECT ``Event`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = '$id'"

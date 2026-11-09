@@ -397,7 +397,9 @@ jobs:
   # this build (Default mode, LOGIN=1 with the dummy hub: nobody signs in), a
   # repair, a refused service switch, an upgrade to the next build, the
   # uninstall; and upgrades from released versions - 0.1.6 and the latest
-  # (with the admin worker; and as a LocalSystem service) - with the tray and
+  # (with the admin worker; as a LocalSystem service; as a service under a
+  # user account, upgraded without its password - as the update service does -
+  # and on to the next build, the account kept) - with the tray and
   # the user-session worker running: they must stop and start again, the
   # job (longarmd conhost + its command) keep running, the new files be in place, the
   # verbose log be free of errors 2613 / 1722 / 1603 and failed custom actions.
@@ -424,6 +426,12 @@ jobs:
             scenario: upgrade
             old: latest
             args: MODE=custom HUB=longarm.example.com LOGIN=1 ROLES=both RUN=service SERVICE_ACCOUNT=LocalSystem
+          # a service as a user account, its password given only to the old install: the upgrades get none
+          # (as the update service's) and must keep the account
+          - name: upgrade from the latest, service worker as a user
+            scenario: upgrade
+            old: latest
+            args: MODE=custom HUB=longarm.example.com LOGIN=1 ROLES=both RUN=service SERVICE_USER=@TEMPUSER@
     defaults:
       run:
         shell: pwsh

@@ -3122,8 +3122,17 @@ grants it "Log on as a service". A silent service install
 needs `SERVICE_USER` + `SERVICE_PASSWORD`; `SERVICE_ACCOUNT=LocalSystem`
 instead runs it as SYSTEM (warned about in the install log and in longarmd.log).
 A wrong password fails the install (the service can't start) and rolls it
-back. Upgrading with a newer MSI keeps the account but needs
-`SERVICE_PASSWORD` again. `install.ps1` does the same with `-Run service`:
+back. An upgrade with a newer MSI - double-clicked, the tray's update
+banner, `longarm worker update`, automatic updates - keeps the service as
+it is: its account, its password and "Log on as a service" stay, and it
+needs no `SERVICE_PASSWORD` (the wizard's service page can be left without
+one). Only an upgrade that names another account (`SERVICE_USER` +
+`SERVICE_PASSWORD`), gives the password again, or switches to
+`SERVICE_ACCOUNT=LocalSystem` creates the service again with those.
+(Earlier MSIs needed `SERVICE_PASSWORD` for every upgrade of such a
+service, so its remote and automatic updates failed with msiexec 1603;
+the check is the new MSI's, so these workers update to this one as they
+are.) `install.ps1` does the same with `-Run service`:
 `-ServiceUser` (default you) with `$env:LONGARM_SERVICE_PASSWORD` or a prompt,
 or `-ServiceAccount LocalSystem` / `$env:LONGARM_SERVICE_ACCOUNT`. By default
 (`-Run session`) it installs the user-session worker, and `-Login` runs the
@@ -3219,7 +3228,9 @@ installed version, and for this machine's architecture
 as a one-shot SYSTEM scheduled task (`LongarmUpdate-Install`), so the
 upgrade above - which stops and replaces LongarmUpdate too - completes;
 the installed product's remembered properties (hub, roles, run mode, admin
-worker) carry over. Running jobs and sessions keep running.
+worker) carry over, and a worker service keeps its account and password
+(no `SERVICE_PASSWORD`: "The worker as a service" above). Running jobs and
+sessions keep running.
 
 From your client, for a worker you own:
 

@@ -10,7 +10,10 @@
                    service (refused, nothing changes), an upgrade to the PR's next build with the tray and the
                    worker running, the uninstall
     upgrade        -OldMsi (a released version) installed with -OldArgs, the tray and the worker running, then
-                   the PR's MSI over it, then the uninstall
+                   the PR's MSI over it (a service worker: then the PR's next build over that), then the
+                   uninstall. SERVICE_USER=@TEMPUSER@ in -OldArgs: a local user created here, with its
+                   SERVICE_PASSWORD; the upgrades get no password (as the update service's) and must keep the
+                   service's account, running
   Every msiexec run is logged verbosely and the log is checked: no error 2613 / 1722 / 1603, no failed
   custom action, no file held in use (a reboot), exit code 0. An upgrade must stop every Longarm process
   that ran (tray, worker host, longarmd run, the services) and start each kind again (new processes), leave
@@ -239,12 +242,28 @@ function Invoke-Upgrade([string] $what, [string] $msi, [string] $arguments, [str
   Write-Host "$what`: OK - stopped and started again: $($kinds + @($svcBefore.Keys) -join ', ')"
 }
 
-function Invoke-Uninstall {
-  # the job is ours (a real one keeps its moved-aside binary until it ends): end it and its command by pid
+# the worker service after an upgrade without SERVICE_PASSWORD: the account it had (a local user, or
+# LocalSystem), and running (a password the upgrade wiped would fail its logon)
+function Assert-ServiceAccount([string] $user) {
+  $want = if ($user) { ".\$user" } else { 'LocalSystem' }
+  if (-not (Wait-Until { (Get-CimInstance Win32_Service -Filter "Name='longarmd'").State -eq 'Running' } 60 'the longarmd service')) {
+    Fail 'the longarmd service does not run after the upgrade'
+  }
+  $got = (Get-CimInstance Win32_Service -Filter "Name='longarmd'").StartName
+  if ($got -ne $want) { Fail "the longarmd service runs as '$got' after the upgrade, want '$want'" }
+  Write-Host "longarmd: running as $got"
+}
+
+# the job is ours (a real one keeps its moved-aside binary until it ends): end it and its command by pid
+function Stop-TestJob {
   foreach ($j in @(Get-LongarmProcs | Where-Object Kind -EQ 'job')) {
     Get-CimInstance Win32_Process | Where-Object ParentProcessId -EQ $j.ProcessId | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Stop-Process -Id $j.ProcessId -Force -ErrorAction SilentlyContinue
   }
+}
+
+function Invoke-Uninstall {
+  Stop-TestJob
   $code = (Get-Products)[0].PSChildName
   # leaving the hub fails with the dummy hub (the uninstall goes on: Return="ignore")
   $null = Invoke-Msi 'uninstall' "/x $code" -allow @('returned actual error code') -NothingInUse
@@ -253,6 +272,7 @@ function Invoke-Uninstall {
     if (Test-Path (Join-Path $installDir $f)) { Fail "$f is left after the uninstall" }
   }
   if (Get-Service LongarmUpdate -ErrorAction SilentlyContinue) { Fail 'the LongarmUpdate service is left' }
+  if (Get-Service longarmd -ErrorAction SilentlyContinue) { Fail 'the longarmd service is left' }
   if (Get-ScheduledTask -TaskName "LongarmWorker-$sid" -ErrorAction SilentlyContinue) { Fail 'the worker task is left' }
   # (the tray's `longarm daemon start`, a client waiting up to 30 s for the daemon, may outlive the tray: as
   # any `longarm` client it is left to end by itself)
@@ -297,6 +317,15 @@ switch ($Scenario) {
   }
   'upgrade' {
     if (-not $OldMsi -or -not (Test-Path $OldMsi)) { Fail "no -OldMsi ($OldMsi)" }
+    # the service as a user account: a throwaway local user (the runner is disposable); its password only here
+    $svcUser = ''
+    if ($OldArgs -match '@TEMPUSER@') {
+      $svcUser = 'lamsiupg'
+      $pw = 'La1!' + [guid]::NewGuid().ToString('N')
+      Write-Host "::add-mask::$pw"
+      $null = New-LocalUser -Name $svcUser -Password (ConvertTo-SecureString $pw -AsPlainText -Force) -PasswordNeverExpires -AccountNeverExpires
+      $OldArgs = ($OldArgs -replace '@TEMPUSER@', ".\$svcUser") + " SERVICE_PASSWORD=$pw"
+    }
     # (an older version's Return="ignore" steps may fail here, e.g. starting the tray: not what is tested)
     $null = Invoke-Msi 'install-old' "/i `"$OldMsi`" $OldArgs" -allow @('returned actual error code')
     $old = Get-Products
@@ -305,7 +334,18 @@ switch ($Scenario) {
     Start-Running $true $session
     Invoke-Upgrade "upgrade-from-$($old.DisplayVersion)" $default '' '0.250.0' (Join-Path $MsiDir 'hashes-default.txt')
     if ($OldArgs -match 'ADMIN_WORKER=1' -and -not (Get-Service longarmd-admin -ErrorAction SilentlyContinue)) { Fail 'the admin worker service is gone after the upgrade' }
+    if (-not $session) {
+      Assert-ServiceAccount $svcUser
+      # and this build's next over it: the old product's uninstall then takes its own service component
+      # (LongarmdServiceInstall), which the upgrade left out - the service must stay
+      # (a new job, from the new longarmd.exe: the running one's was moved aside)
+      Stop-TestJob
+      Start-Running $true $false
+      Invoke-Upgrade 'upgrade-to-next' $next '' '0.250.1' (Join-Path $MsiDir 'hashes-next.txt')
+      Assert-ServiceAccount $svcUser
+    }
     Invoke-Uninstall
+    if ($svcUser) { Remove-LocalUser -Name $svcUser -ErrorAction SilentlyContinue }
   }
 }
 Write-Host "scenario $Scenario passed"

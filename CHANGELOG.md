@@ -436,6 +436,18 @@
 
 ### Fixed
 
+- **Updates of a worker service running as a user account no longer
+  fail.** `longarm worker update`, automatic updates and the tray's update
+  banner install the MSI without a password, and every MSI so far demanded
+  `SERVICE_PASSWORD` again for a service installed with `SERVICE_USER`:
+  1603, rolled back, the worker stayed on its version ("A worker running as
+  a Windows service (RUN=service) needs the account ..." in the event log).
+  An upgrade now keeps the service as it is - account, password, "Log on as
+  a service" - and asks for nothing; the wizard's service page goes on
+  without a password too. An upgrade that names another account, gives the
+  password again or switches to `SERVICE_ACCOUNT=LocalSystem` re-creates the
+  service with those, as before; a fresh install still needs the account.
+  The check is the new MSI's: affected workers update to it as they are.
 - **The MSI no longer rolls back when the worker's join fails.** A
   `JOIN_CODE` that expired (an unattended install that ran late, e.g. a Dev
   Box customization days after it was queued), an unknown code or an

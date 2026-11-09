@@ -120,10 +120,13 @@
   "Updating", docs/security.md "Update service").
 
   The data dir of the service is protected (SYSTEM, Administrators and the service account only).
-  Upgrades with a newer MSI keep the service account (remembered) but need SERVICE_PASSWORD again for
-  a user account. Inbound UDP+TCP allow rules for longarm.exe, longarmd.exe and longarm-tray.exe (all
-  profiles) are added and removed with the product: Windows Firewall otherwise drops unsolicited
-  inbound UDP, which breaks hole punching (longnet) and Tailscale's direct paths.
+  Upgrades with a newer MSI keep the service as it is - its account, password and "Log on as a service" -
+  and need no SERVICE_PASSWORD (the update service can't know it): the service is created
+  (ServiceInstall, component LongarmdServiceInstall) only by a fresh install or an upgrade that changes
+  the account (SERVICE_USER + SERVICE_PASSWORD, or SERVICE_ACCOUNT=LocalSystem). Inbound UDP+TCP
+  allow rules for longarm.exe, longarmd.exe and longarm-tray.exe (all profiles) are added and removed
+  with the product: Windows Firewall otherwise drops unsolicited inbound UDP, which breaks hole
+  punching (longnet) and Tailscale's direct paths.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
@@ -250,6 +253,18 @@
     <Property Id="SAVED_SERVICE_ACCOUNT" Secure="yes">
       <RegistrySearch Id="RegSvcAccount" Root="HKLM" Key="Software\Longarm" Name="ServiceAccount" Type="raw" />
     </Property>
+    <!-- An upgrade of a service worker keeps the service's logon (account, password, "Log on as a
+         service") unless it is given another account: ServiceToKeep = the installed version has the
+         service (PREV_LONGARMD_SERVICE) and its account is recorded; KeepServiceLogon = and this
+         install names no other account and no password, so the service is not created again
+         (component LongarmdServiceInstall) and needs no SERVICE_PASSWORD (CheckServiceAccount).
+         Before CostFinalize, which evaluates the component conditions. -->
+    <SetProperty Id="ServiceToKeep" Value="1" Before="SetKeepServiceLogon" Sequence="execute"
+                 Condition="WIX_UPGRADE_DETECTED AND PREV_LONGARMD_SERVICE AND SAVED_SERVICE_ACCOUNT" />
+    <SetProperty Id="ServiceToKeep" Action="SetServiceToKeepUI" Value="1" Before="CostFinalize" Sequence="ui"
+                 Condition="WIX_UPGRADE_DETECTED AND PREV_LONGARMD_SERVICE AND SAVED_SERVICE_ACCOUNT" />
+    <SetProperty Id="KeepServiceLogon" Value="1" Before="CostFinalize" Sequence="execute"
+                 Condition='ServiceToKeep AND NOT SERVICE_PASSWORD AND (NOT SERVICE_USER OR SERVICE_USER~=SAVED_SERVICE_ACCOUNT) AND (NOT SERVICE_ACCOUNT OR SERVICE_ACCOUNT~=SAVED_SERVICE_ACCOUNT) AND (ISOLATION&lt;&gt;"per-user" OR SAVED_SERVICE_ACCOUNT~="LocalSystem")' />
     <Property Id="KEEP_DATA" Secure="yes" />
     <!-- per-user = multi-tenancy with OS isolation (LocalSystem service); "" = shared -->
     <Property Id="ISOLATION" Secure="yes" />
@@ -428,12 +443,23 @@
         <RemoveRegistryKey Id="UpdateSettingsRemove" Root="HKLM" Key="Software\Longarm\Update" Action="removeOnUninstall" />
       </Component>
 
-      <!-- longarmd: with the service for service workers, without it otherwise (exclusive conditions). -->
+      <!-- longarmd: with the service for service workers, without it otherwise (exclusive conditions).
+           The service's stop and removal come with longarmd.exe, its creation with LongarmdServiceInstall,
+           which an upgrade keeping the service's logon leaves out (KeepServiceLogon): Windows Installer
+           configures an existing service with the account and password it is given, and the update
+           service has no password to give. (Up to 0.1.35 the ServiceInstall was here: the old product's
+           uninstall leaves this shared component alone, and removing a ServiceInstall deletes nothing.) -->
       <Component Id="LongarmdService" Condition='IsWorker AND RUN="service"' Guid="3e96d676-1a38-455f-a841-7b7642e651c8">
         <File Id="longarmd.exe" Source="$(var.BinDir)\longarmd.exe" KeyPath="yes">
           <fw:FirewallException Id="FwLongarmdUdp" Name="Longarm longarmd (UDP)" Protocol="udp" Scope="any" Profile="all" Description="Longarm worker: direct connections (longnet, tailscale)" />
           <fw:FirewallException Id="FwLongarmdTcp" Name="Longarm longarmd (TCP)" Protocol="tcp" Scope="any" Profile="all" Description="Longarm worker: listeners" />
         </File>
+        <ServiceControl Id="LongarmdSvcCtl" Name="[SERVICE_NAME]" Stop="both" Remove="uninstall" Wait="yes" />
+        <Environment Id="EnvLongarmdData" Name="LONGARM_DATA_DIR" Value="[DATADIR]" System="yes" Action="set" Permanent="no" />
+      </Component>
+      <Component Id="LongarmdServiceInstall" Condition='IsWorker AND RUN="service" AND NOT KeepServiceLogon' Guid="b7d0e2a4-6c1f-4f0e-9a53-2e8c4d71f6a9">
+        <!-- a key path only (an upgrade keeping the logon removes it with the old product) -->
+        <RegistryValue Root="HKLM" Key="Software\Longarm" Name="ServiceCreated" Type="integer" Value="1" KeyPath="yes" />
         <ServiceInstall Id="LongarmdSvc" Name="[SERVICE_NAME]" DisplayName="Longarm worker ([SERVICE_NAME])"
                         Description="Longarm worker daemon: runs remote jobs for longarm clients"
                         Type="ownProcess" Start="auto" ErrorControl="normal" Vital="yes"
@@ -442,8 +468,6 @@
           <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
                               RestartServiceDelayInSeconds="5" ResetPeriodInDays="1" />
         </ServiceInstall>
-        <ServiceControl Id="LongarmdSvcCtl" Name="[SERVICE_NAME]" Stop="both" Remove="uninstall" Wait="yes" />
-        <Environment Id="EnvLongarmdData" Name="LONGARM_DATA_DIR" Value="[DATADIR]" System="yes" Action="set" Permanent="no" />
       </Component>
       <Component Id="LongarmdPlain" Condition='NOT (IsWorker AND RUN="service")' Guid="0afe2b69-cb68-4395-a6fb-5a51b76aef5b">
         <File Id="longarmd.plain.exe" Name="longarmd.exe" Source="$(var.BinDir)\longarmd.exe" KeyPath="yes">
@@ -624,7 +648,7 @@
               Condition='WIX_UPGRADE_DETECTED AND NOT REMOVE="ALL" AND ((PREV_LONGARMD_SERVICE AND NOT (IsWorker AND RUN="service")) OR (PREV_LONGARMD_PLAIN AND IsWorker AND RUN="service"))' />
       <Custom Action="CheckAdminWorker" Before="LongarmStopEarly" Condition='NOT REMOVE="ALL" AND ADMIN_WORKER="1" AND (NOT HUB OR NOT SESSION_SID OR SESSION_SID="S-1-5-18")' />
       <Custom Action="CheckServiceAccount" Before="LongarmStopEarly"
-              Condition='IsWorker AND RUN="service" AND NOT REMOVE="ALL" AND (NOT Installed OR REINSTALL) AND (NOT SERVICE_ACCOUNT OR (SERVICE_ACCOUNT~&lt;&gt;"LocalSystem" AND NOT SERVICE_PASSWORD))' />
+              Condition='IsWorker AND RUN="service" AND NOT REMOVE="ALL" AND (NOT Installed OR REINSTALL) AND NOT KeepServiceLogon AND (NOT SERVICE_ACCOUNT OR (SERVICE_ACCOUNT~&lt;&gt;"LocalSystem" AND NOT SERVICE_PASSWORD))' />
       <!-- a repair or change (which Windows runs elevated for a non-administrator of a per-machine
            product): only an administrator, checked by the helper before anything else runs -->
       <!-- not by the public REMOVE property: REMOVE=ALL REINSTALL=ALL reinstalls everything. Only a
@@ -791,7 +815,11 @@
         <Control Id="LocalSystem" Type="CheckBox" X="20" Y="168" Width="330" Height="17" Property="SVC_LOCALSYSTEM" CheckBoxValue="1"
                  Text="Run as LocalSystem instead (jobs run as SYSTEM; not recommended)" />
         <Control Id="NoPassword" Type="Text" X="20" Y="190" Width="330" Height="30" NoPrefix="yes"
+                 HideCondition="ServiceToKeep" ShowCondition="NOT ServiceToKeep"
                  Text="No password (Windows Hello, a security key)? Go back and clear the Windows service option: the worker then runs as you while you are signed in." />
+        <Control Id="KeepNote" Type="Text" X="20" Y="190" Width="330" Height="30" NoPrefix="yes"
+                 HideCondition="NOT ServiceToKeep" ShowCondition="ServiceToKeep"
+                 Text="Upgrading: leave the password empty to keep the account and password the service runs as now. Another account (with its password) or LocalSystem changes them." />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
@@ -881,10 +909,11 @@
       <Publish Dialog="ServiceAccountDlg" Control="Back" Event="NewDialog" Value="ModeDlg" Condition='MODE="default"' />
       <Publish Dialog="ServiceAccountDlg" Control="Next" Property="SERVICE_ACCOUNT" Value="LocalSystem" Order="1" Condition="SVC_LOCALSYSTEM" />
       <Publish Dialog="ServiceAccountDlg" Control="Next" Property="SERVICE_ACCOUNT" Value="{}" Order="2" Condition="NOT SVC_LOCALSYSTEM" />
+      <!-- an upgrade keeps the service's account without a password (KeepServiceLogon) -->
       <Publish Dialog="ServiceAccountDlg" Control="Next" Event="SpawnDialog" Value="NeedPasswordDlg" Order="3"
-               Condition="NOT SVC_LOCALSYSTEM AND (NOT SERVICE_USER OR NOT SERVICE_PASSWORD)" />
+               Condition="NOT SVC_LOCALSYSTEM AND (NOT SERVICE_USER OR NOT SERVICE_PASSWORD) AND NOT (ServiceToKeep AND SERVICE_USER~=SAVED_SERVICE_ACCOUNT)" />
       <Publish Dialog="ServiceAccountDlg" Control="Next" Event="NewDialog" Value="UpdatesDlg" Order="4"
-               Condition="SVC_LOCALSYSTEM OR (SERVICE_USER AND SERVICE_PASSWORD)" />
+               Condition="SVC_LOCALSYSTEM OR (SERVICE_USER AND SERVICE_PASSWORD) OR (ServiceToKeep AND SERVICE_USER~=SAVED_SERVICE_ACCOUNT)" />
 
       <!-- Updates: AUTO_UPDATE 1/0, UPDATE_CHANNEL only with automatic updates (else the recorded one stays) -->
       <Publish Dialog="UpdatesDlg" Control="Back" Event="NewDialog" Value="ServiceAccountDlg" Order="1"
