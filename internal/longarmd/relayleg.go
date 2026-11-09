@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/server"
 	"github.com/lubobill1990/longarm/internal/transport"
@@ -79,10 +80,15 @@ func autoRelayLeg(cfg Config) bool {
 
 // relayListenURL is the listen URL on the hub's relay: relay is the
 // welcome's "host:port" (empty host: the hub's), the TLS fallback the hub's
-// own port.
+// own port. hubAddr is hub.toml's address as written - "host:port", or as
+// typed for the installer ("longarm.example.com", "https://..."), which
+// the admin worker's sign-in keeps: normalized like the hub session's.
 func relayListenURL(hubAddr, relay, node string) string {
-	host, port, err := net.SplitHostPort(hubAddr)
-	if err != nil || relay == "" {
+	if strings.TrimSpace(hubAddr) == "" {
+		return ""
+	}
+	host, port, err := net.SplitHostPort(hubclient.NormalizeAddr(hubAddr))
+	if err != nil || host == "" || relay == "" {
 		return ""
 	}
 	rh, rp, err := net.SplitHostPort(relay)
@@ -178,7 +184,14 @@ func (r *relayLeg) start(hubAddr string, set []*pb.RelayEndpoint) {
 	var order []string
 	for _, e := range set {
 		u := relaySetURL(hubAddr, e, r.node)
-		if _, dup := want[u]; u == "" || dup {
+		if u == "" {
+			// never silent: a worker with only loopback listeners is
+			// unreachable from other machines without its relay legs
+			r.log.Warn("hub relay leg: no listen URL for a relay of the set; not listening on it",
+				"relay", e.GetUdp(), "tcp", e.GetTcp(), "embedded", e.GetEmbedded(), "hub", hubAddr)
+			continue
+		}
+		if _, dup := want[u]; dup {
 			continue
 		}
 		hint := ""
@@ -296,6 +309,7 @@ func (r *relayLeg) listen(ctx context.Context, u, tcpHint string) bool {
 	}
 	lt, ok := tr.(*longnet.Transport)
 	if !ok {
+		r.log.Warn("hub relay leg: not a longnet transport", "url", u, "transport", tr.Name())
 		return false
 	}
 	defer lt.Close()

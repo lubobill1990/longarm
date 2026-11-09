@@ -1,6 +1,7 @@
 package longarmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -42,7 +43,53 @@ func ProvDataDir(dir string) string {
 }
 
 // provenance is the store (registry on Windows; tests replace it).
-var provenance ProvenanceStore = newProvenance()
+var provenance ProvenanceStore = provenanceStore()
+
+// ProvenanceFileEnv (tests only) keeps the provenance values in a JSON
+// file instead: end-to-end tests run an admin worker as an ordinary
+// process, which can't write HKLM (Windows) and whose memory store starts
+// empty (other systems). Ignored as LocalSystem: the admin worker service
+// and the installer never take it.
+const ProvenanceFileEnv = "LONGARM_TEST_PROVENANCE_FILE"
+
+func provenanceStore() ProvenanceStore {
+	if f := os.Getenv(ProvenanceFileEnv); f != "" && !provenanceSystem() {
+		return &fileProvenance{path: f}
+	}
+	return newProvenance()
+}
+
+// fileProvenance is ProvenanceFileEnv's store.
+type fileProvenance struct {
+	mu   sync.Mutex
+	path string
+}
+
+func (p *fileProvenance) load() map[string]string {
+	m := map[string]string{}
+	if b, err := os.ReadFile(p.path); err == nil {
+		json.Unmarshal(b, &m)
+	}
+	return m
+}
+
+func (p *fileProvenance) Get(n string) string { p.mu.Lock(); defer p.mu.Unlock(); return p.load()[n] }
+func (p *fileProvenance) Set(n, v string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	m := p.load()
+	m[n] = v
+	b, _ := json.Marshal(m)
+	return os.WriteFile(p.path, b, 0o600)
+}
+func (p *fileProvenance) Delete(n string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	m := p.load()
+	delete(m, n)
+	b, _ := json.Marshal(m)
+	return os.WriteFile(p.path, b, 0o600)
+}
 
 // memProvenance keeps values in memory (other systems, tests).
 type memProvenance struct {
