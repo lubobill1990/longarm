@@ -113,10 +113,22 @@ func TestMSIModeRun(t *testing.T) {
 			Actions    []attrs `xml:"CustomAction"`
 			Components []struct {
 				attrs
-				Services []attrs `xml:"ServiceInstall"`
-				Env      []attrs `xml:"Environment"`
+				Files []struct {
+					Name    string `xml:"Name,attr"`
+					Source  string `xml:"Source,attr"`
+					KeyPath string `xml:"KeyPath,attr"`
+				} `xml:"File"`
+				Services []struct {
+					attrs
+					Name      string `xml:"Name,attr"`
+					Account   string `xml:"Account,attr"`
+					Password  string `xml:"Password,attr"`
+					Arguments string `xml:"Arguments,attr"`
+				} `xml:"ServiceInstall"`
+				Env []attrs `xml:"Environment"`
 			} `xml:"ComponentGroup>Component"`
-			Sequence []attrs `xml:"InstallExecuteSequence>Custom"`
+			Sequence        []attrs `xml:"InstallExecuteSequence>Custom"`
+			InstallServices []attrs `xml:"InstallExecuteSequence>InstallServices"`
 		} `xml:"Package"`
 	}
 	if err := xml.Unmarshal(src, &doc); err != nil {
@@ -186,6 +198,31 @@ func TestMSIModeRun(t *testing.T) {
 				t.Errorf("component %s (service) condition %q", comp.ID, comp.Condition)
 			}
 		}
+		// Windows Installer takes a service's binary from its component's key path: the exe
+		if len(comp.Services) > 0 {
+			var exe string
+			for _, f := range comp.Files {
+				if f.KeyPath == "yes" {
+					exe = f.Source
+				}
+			}
+			if !strings.HasSuffix(exe, ".exe") {
+				t.Errorf("component %s has a ServiceInstall but its key path is not an exe (%+v)", comp.ID, comp.Files)
+			}
+		}
+		// An upgrade keeping the worker service's logon (KeepServiceLogon) skips InstallServices: a
+		// change here doesn't reach those machines (the update service's upgrades) - configure the
+		// existing services in a custom action too, then change these.
+		for _, svc := range comp.Services {
+			got := strings.Join([]string{svc.Name, svc.Account, svc.Password, svc.Arguments}, " | ")
+			want := map[string]string{
+				"LongarmdSvc": `[SERVICE_NAME] | [SERVICE_ACCOUNT] | [SERVICE_PASSWORD] | run --data-dir "[DATADIR]" --service-name [SERVICE_NAME] --log-file "[DATADIR]\longarmd.log"`,
+				"UpdateSvc":   "LongarmUpdate | LocalSystem |  | run",
+			}[svc.ID]
+			if got != want || (svc.ID == "LongarmdSvc") != (comp.ID == "LongarmdService") {
+				t.Errorf("ServiceInstall %s (component %s): %s, want %s", svc.ID, comp.ID, got, want)
+			}
+		}
 		if comp.ID == "LongarmdStart" && !strings.Contains(comp.Condition, `RUN="service"`) {
 			t.Errorf("LongarmdStart condition %q", comp.Condition)
 		}
@@ -197,9 +234,12 @@ func TestMSIModeRun(t *testing.T) {
 	for _, c := range p.Sequence {
 		seq[c.Action] = c.Condition
 	}
+	if len(p.InstallServices) != 1 || p.InstallServices[0].Condition != "NOT KeepServiceLogon" {
+		t.Errorf("InstallServices: %+v, want the condition NOT KeepServiceLogon", p.InstallServices)
+	}
 	for action, must := range map[string][]string{
 		"LongarmdSetup":          {`RUN="service"`},
-		"CheckServiceAccount":    {`RUN="service"`},
+		"CheckServiceAccount":    {`RUN="service"`, "NOT KeepServiceLogon"},
 		"LongarmdSessionTask":    {`RUN="session"`, "IsWorker"},
 		"LongarmdSessionJoin":    {`RUN="session"`, "JOIN_CODE"},
 		"CheckSessionUser":       {`RUN="session"`, "S-1-5-18"},

@@ -120,10 +120,14 @@
   "Updating", docs/security.md "Update service").
 
   The data dir of the service is protected (SYSTEM, Administrators and the service account only).
-  Upgrades with a newer MSI keep the service account (remembered) but need SERVICE_PASSWORD again for
-  a user account. Inbound UDP+TCP allow rules for longarm.exe, longarmd.exe and longarm-tray.exe (all
-  profiles) are added and removed with the product: Windows Firewall otherwise drops unsolicited
-  inbound UDP, which breaks hole punching (longnet) and Tailscale's direct paths.
+  Upgrades with a newer MSI keep the service as it is - its account, password and "Log on as a service" -
+  and need no SERVICE_PASSWORD (the update service can't know it): InstallServices, which creates the
+  services or configures the existing ones with the account and password it is given, runs only for a
+  fresh install, a repair or an upgrade that changes the account (SERVICE_USER + SERVICE_PASSWORD, or
+  SERVICE_ACCOUNT=LocalSystem); KeepServiceLogon skips it. Inbound UDP+TCP
+  allow rules for longarm.exe, longarmd.exe and longarm-tray.exe (all profiles) are added and removed
+  with the product: Windows Firewall otherwise drops unsolicited inbound UDP, which breaks hole
+  punching (longnet) and Tailscale's direct paths.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
@@ -250,6 +254,23 @@
     <Property Id="SAVED_SERVICE_ACCOUNT" Secure="yes">
       <RegistrySearch Id="RegSvcAccount" Root="HKLM" Key="Software\Longarm" Name="ServiceAccount" Type="raw" />
     </Property>
+    <!-- An upgrade of a service worker keeps the service's logon (account, password, "Log on as a
+         service") unless it is given another account: ServiceToKeep = the installed version has the
+         service (PREV_LONGARMD_SERVICE), its account is recorded and the Longarm Update service is
+         there (PREV_UPDATE_SERVICE, since 0.1.13); KeepServiceLogon = and this install names no other
+         account and no password, so InstallServices doesn't run (it would configure the existing
+         longarmd service with an empty password) and no SERVICE_PASSWORD is needed
+         (CheckServiceAccount). Both services then stay as they are: a change to a ServiceInstall
+         below doesn't reach such an upgrade (e2e TestMSIModeRun). -->
+    <Property Id="PREV_UPDATE_SERVICE">
+      <RegistrySearch Id="RegUpdateService" Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\LongarmUpdate" Name="ImagePath" Type="raw" />
+    </Property>
+    <SetProperty Id="ServiceToKeep" Value="1" Before="SetKeepServiceLogon" Sequence="execute"
+                 Condition="WIX_UPGRADE_DETECTED AND PREV_LONGARMD_SERVICE AND SAVED_SERVICE_ACCOUNT AND PREV_UPDATE_SERVICE" />
+    <SetProperty Id="ServiceToKeep" Action="SetServiceToKeepUI" Value="1" Before="CostFinalize" Sequence="ui"
+                 Condition="WIX_UPGRADE_DETECTED AND PREV_LONGARMD_SERVICE AND SAVED_SERVICE_ACCOUNT AND PREV_UPDATE_SERVICE" />
+    <SetProperty Id="KeepServiceLogon" Value="1" Before="CostFinalize" Sequence="execute"
+                 Condition='ServiceToKeep AND NOT SERVICE_PASSWORD AND (NOT SERVICE_USER OR SERVICE_USER~=SAVED_SERVICE_ACCOUNT) AND (NOT SERVICE_ACCOUNT OR SERVICE_ACCOUNT~=SAVED_SERVICE_ACCOUNT) AND (ISOLATION&lt;&gt;"per-user" OR SAVED_SERVICE_ACCOUNT~="LocalSystem")' />
     <Property Id="KEEP_DATA" Secure="yes" />
     <!-- per-user = multi-tenancy with OS isolation (LocalSystem service); "" = shared -->
     <Property Id="ISOLATION" Secure="yes" />
@@ -395,9 +416,11 @@
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="Longarm" />
     </StandardDirectory>
+    <?if $(var.HasTray) = 1 ?>
     <StandardDirectory Id="ProgramMenuFolder">
       <Directory Id="MenuFolder" Name="Longarm" />
     </StandardDirectory>
+    <?endif?>
 
     <ComponentGroup Id="Product" Directory="INSTALLFOLDER">
       <Component Id="LongarmExe">
@@ -428,7 +451,10 @@
         <RemoveRegistryKey Id="UpdateSettingsRemove" Root="HKLM" Key="Software\Longarm\Update" Action="removeOnUninstall" />
       </Component>
 
-      <!-- longarmd: with the service for service workers, without it otherwise (exclusive conditions). -->
+      <!-- longarmd: with the service for service workers, without it otherwise (exclusive conditions).
+           The ServiceInstall stays with its executable, the component's key path (Windows Installer
+           takes the service's binary from it); an upgrade keeping the service's logon skips
+           InstallServices (KeepServiceLogon), not this component, which the old product shares. -->
       <Component Id="LongarmdService" Condition='IsWorker AND RUN="service"' Guid="3e96d676-1a38-455f-a841-7b7642e651c8">
         <File Id="longarmd.exe" Source="$(var.BinDir)\longarmd.exe" KeyPath="yes">
           <fw:FirewallException Id="FwLongarmdUdp" Name="Longarm longarmd (UDP)" Protocol="udp" Scope="any" Profile="all" Description="Longarm worker: direct connections (longnet, tailscale)" />
@@ -611,6 +637,8 @@
     <SetProperty Id="SessionLeave" Action="SetSessionLeaveKeep" Value="keep" Before="CostFinalize" Sequence="execute" Condition='IsWorker AND SAVED_RUN="session" AND KEEP_DATA' />
 
     <InstallExecuteSequence>
+      <!-- an upgrade keeping the service's logon: both services stay as they are (KeepServiceLogon) -->
+      <InstallServices Condition="NOT KeepServiceLogon" />
       <Custom Action="CheckMode" Before="LongarmStopEarly" Condition='NOT REMOVE="ALL" AND MODE&lt;&gt;"default" AND MODE&lt;&gt;"custom"' />
       <Custom Action="CheckDefaultHub" Before="LongarmStopEarly" Condition='NOT REMOVE="ALL" AND MODE="default" AND NOT DEFAULT_HUB' />
       <Custom Action="CheckDefaultCode" Before="LongarmStopEarly" Condition='NOT REMOVE="ALL" AND MODE="default" AND (JOIN_CODE OR CLIENT_JOIN_CODE)' />
@@ -624,7 +652,7 @@
               Condition='WIX_UPGRADE_DETECTED AND NOT REMOVE="ALL" AND ((PREV_LONGARMD_SERVICE AND NOT (IsWorker AND RUN="service")) OR (PREV_LONGARMD_PLAIN AND IsWorker AND RUN="service"))' />
       <Custom Action="CheckAdminWorker" Before="LongarmStopEarly" Condition='NOT REMOVE="ALL" AND ADMIN_WORKER="1" AND (NOT HUB OR NOT SESSION_SID OR SESSION_SID="S-1-5-18")' />
       <Custom Action="CheckServiceAccount" Before="LongarmStopEarly"
-              Condition='IsWorker AND RUN="service" AND NOT REMOVE="ALL" AND (NOT Installed OR REINSTALL) AND (NOT SERVICE_ACCOUNT OR (SERVICE_ACCOUNT~&lt;&gt;"LocalSystem" AND NOT SERVICE_PASSWORD))' />
+              Condition='IsWorker AND RUN="service" AND NOT REMOVE="ALL" AND (NOT Installed OR REINSTALL) AND NOT KeepServiceLogon AND (NOT SERVICE_ACCOUNT OR (SERVICE_ACCOUNT~&lt;&gt;"LocalSystem" AND NOT SERVICE_PASSWORD))' />
       <!-- a repair or change (which Windows runs elevated for a non-administrator of a per-machine
            product): only an administrator, checked by the helper before anything else runs -->
       <!-- not by the public REMOVE property: REMOVE=ALL REINSTALL=ALL reinstalls everything. Only a
@@ -791,7 +819,11 @@
         <Control Id="LocalSystem" Type="CheckBox" X="20" Y="168" Width="330" Height="17" Property="SVC_LOCALSYSTEM" CheckBoxValue="1"
                  Text="Run as LocalSystem instead (jobs run as SYSTEM; not recommended)" />
         <Control Id="NoPassword" Type="Text" X="20" Y="190" Width="330" Height="30" NoPrefix="yes"
+                 HideCondition="ServiceToKeep" ShowCondition="NOT ServiceToKeep"
                  Text="No password (Windows Hello, a security key)? Go back and clear the Windows service option: the worker then runs as you while you are signed in." />
+        <Control Id="KeepNote" Type="Text" X="20" Y="190" Width="330" Height="30" NoPrefix="yes"
+                 HideCondition="NOT ServiceToKeep" ShowCondition="ServiceToKeep"
+                 Text="Upgrading: leave the password empty to keep the account and password the service runs as now. Another account (with its password) or LocalSystem changes them." />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
@@ -881,10 +913,11 @@
       <Publish Dialog="ServiceAccountDlg" Control="Back" Event="NewDialog" Value="ModeDlg" Condition='MODE="default"' />
       <Publish Dialog="ServiceAccountDlg" Control="Next" Property="SERVICE_ACCOUNT" Value="LocalSystem" Order="1" Condition="SVC_LOCALSYSTEM" />
       <Publish Dialog="ServiceAccountDlg" Control="Next" Property="SERVICE_ACCOUNT" Value="{}" Order="2" Condition="NOT SVC_LOCALSYSTEM" />
+      <!-- an upgrade keeps the service's account without a password (KeepServiceLogon) -->
       <Publish Dialog="ServiceAccountDlg" Control="Next" Event="SpawnDialog" Value="NeedPasswordDlg" Order="3"
-               Condition="NOT SVC_LOCALSYSTEM AND (NOT SERVICE_USER OR NOT SERVICE_PASSWORD)" />
+               Condition="NOT SVC_LOCALSYSTEM AND (NOT SERVICE_USER OR NOT SERVICE_PASSWORD) AND NOT (ServiceToKeep AND SERVICE_USER~=SAVED_SERVICE_ACCOUNT)" />
       <Publish Dialog="ServiceAccountDlg" Control="Next" Event="NewDialog" Value="UpdatesDlg" Order="4"
-               Condition="SVC_LOCALSYSTEM OR (SERVICE_USER AND SERVICE_PASSWORD)" />
+               Condition="SVC_LOCALSYSTEM OR (SERVICE_USER AND SERVICE_PASSWORD) OR (ServiceToKeep AND SERVICE_USER~=SAVED_SERVICE_ACCOUNT)" />
 
       <!-- Updates: AUTO_UPDATE 1/0, UPDATE_CHANNEL only with automatic updates (else the recorded one stays) -->
       <Publish Dialog="UpdatesDlg" Control="Back" Event="NewDialog" Value="ServiceAccountDlg" Order="1"

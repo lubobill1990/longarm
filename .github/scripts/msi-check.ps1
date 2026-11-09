@@ -4,7 +4,8 @@
   ICE validation (wix msi validate), an administrative install (extracts the files; no
   custom action runs), and the Property / CustomAction / Dialog tables.
 .PARAMETER Dir
-  Holds default.msi (built with -DefaultHub longarm.example.com) and custom.msi (no built-in hub).
+  Holds default.msi (built with -DefaultHub longarm.example.com), custom.msi (no built-in hub) and
+  notray.msi (as default.msi, without longarm-tray.exe).
 #>
 param([Parameter(Mandatory)] [string] $Dir)
 $ErrorActionPreference = 'Stop'
@@ -30,12 +31,16 @@ function Prop([string] $msi, [string] $name) {
 
 $default = Join-Path $Dir 'default.msi'
 $custom = Join-Path $Dir 'custom.msi'
-foreach ($m in $default, $custom) {
+$notray = Join-Path $Dir 'notray.msi'
+foreach ($m in $default, $custom, $notray) {
   if (-not (Test-Path $m)) { throw "missing $m" }
   Write-Host "== ICE validation: $m"
   wix msi validate $m
   if ($LASTEXITCODE) { throw "wix msi validate $m failed ($LASTEXITCODE)" }
 }
+# without the tray: no Start menu folder either (ICE64: a user-profile dir without RemoveFile)
+$dirs = Query $notray 'SELECT `Directory` FROM `Directory`'
+if ($dirs -contains 'MenuFolder') { throw 'notray.msi: has the Start menu folder without the tray shortcut' }
 
 Write-Host '== tables'
 if ((Prop $default 'DEFAULT_HUB') -ne 'longarm.example.com') { throw "default.msi: DEFAULT_HUB is '$(Prop $default 'DEFAULT_HUB')'" }
@@ -132,6 +137,14 @@ $order = @(
   @('CheckLongarmdSwitch', 'LongarmStopEarly'),
   @('CheckRun', 'LongarmStopEarly'),
   @('CheckServiceAccount', 'LongarmStopEarly'),
+  # an upgrade keeping the service's logon: decided from what AppSearch / FindRelatedProducts found, before
+  # the account check and InstallServices (which it skips)
+  @('AppSearch', 'SetServiceToKeep'),
+  @('FindRelatedProducts', 'SetServiceToKeep'),
+  @('SetServiceToKeep', 'SetKeepServiceLogon'),
+  @('SetKeepServiceLogon', 'CostFinalize'),
+  @('SetKeepServiceLogon', 'CheckServiceAccount'),
+  @('SetKeepServiceLogon', 'InstallServices'),
   @('CheckAdminWorker', 'LongarmStopEarly'),
   @('LongarmStopEarly', 'InstallValidate'),
   @('LongarmStopEarlyRemove', 'InstallValidate'),
@@ -163,8 +176,23 @@ foreach ($m in $default, $custom) {
 if ($actions -notcontains 'CheckLongarmdSwitch' -or $exec -notcontains 'CheckLongarmdSwitch') { throw 'default.msi: CheckLongarmdSwitch is not scheduled' }
 # the exit actions: an install that fails (-3) or is cancelled (-2) before its script ran starts again what stopped
 if ((Seq 'LongarmEarlyUndoError') -ne -3 -or (Seq 'LongarmEarlyUndoCancel') -ne -2) { throw 'default.msi: LongarmEarlyUndoError / LongarmEarlyUndoCancel are not the fatal-error / user-exit actions' }
-foreach ($p in 'PREV_LONGARMD_SERVICE', 'PREV_LONGARMD_PLAIN') {
+foreach ($p in 'PREV_LONGARMD_SERVICE', 'PREV_LONGARMD_PLAIN', 'PREV_UPDATE_SERVICE') {
   if ($searches -notcontains $p) { throw "default.msi: no AppSearch for $p" }
+}
+# the worker service: its ServiceInstall in the component whose key path is longarmd.exe (Windows Installer
+# takes the service's binary from it), with its stop and removal; an upgrade keeping the service's logon
+# skips InstallServices, nothing else
+$comp = Query $default "SELECT ``Component_`` FROM ``ServiceInstall`` WHERE ``ServiceInstall`` = 'LongarmdSvc'"
+$ctl = Query $default "SELECT ``Component_`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = 'LongarmdSvcCtl'"
+$cond = Query $default "SELECT ``Condition`` FROM ``InstallExecuteSequence`` WHERE ``Action`` = 'InstallServices'"
+if ($comp[0] -ne 'LongarmdService' -or $ctl[0] -ne 'LongarmdService' -or $cond[0] -ne 'NOT KeepServiceLogon') {
+  throw "default.msi: the longarmd ServiceInstall is in '$($comp[0])', its ServiceControl in '$($ctl[0])', InstallServices runs if '$($cond[0])'"
+}
+foreach ($c in (Query $default 'SELECT `Component_` FROM `ServiceInstall`')) {
+  $key = Query $default "SELECT ``KeyPath`` FROM ``Component`` WHERE ``Component`` = '$c'"
+  $attr = Query $default "SELECT ``Attributes`` FROM ``Component`` WHERE ``Component`` = '$c'"
+  $file = Query $default "SELECT ``FileName`` FROM ``File`` WHERE ``File`` = '$($key[0])'"
+  if (([int]$attr[0] -band 0x4) -or $file[0] -notlike '*.exe') { throw "default.msi: component $c has a ServiceInstall but its key path is '$($key[0])', not the service's exe" }
 }
 foreach ($id in 'AdminSvcStop', 'LongarmdSvcCtl') {
   $ev = Query $default "SELECT ``Event`` FROM ``ServiceControl`` WHERE ``ServiceControl`` = '$id'"

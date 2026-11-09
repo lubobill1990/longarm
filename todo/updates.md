@@ -44,3 +44,15 @@ A program that starts Longarm's binaries itself while the install runs
 (e.g. an app running `longarm-tray --serve` from the install dir) starts
 after the stop and still holds its file at InstallFiles: that install
 needs a reboot.
+
+## Changing the worker service's configuration in an upgrade
+
+An upgrade of a service worker without a password keeps the services as
+they are (longarm.wxs KeepServiceLogon: InstallServices doesn't run), so a
+later MSI that changes a ServiceInstall - longarmd's or LongarmUpdate's
+arguments, name, start type - reaches only fresh installs, repairs and
+upgrades given a password (TestMSIModeRun pins them). When such a change
+comes, the install helper must apply it to the existing service without
+touching its account (ChangeServiceConfig with SERVICE_NO_CHANGE and no
+password, e.g. in install-helper msi setup), and the msi-install CI job
+check it. (util:ServiceConfig, the failure actions, still applies.)
