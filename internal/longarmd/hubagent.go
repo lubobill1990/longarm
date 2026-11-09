@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -108,6 +109,11 @@ type hubAgent struct {
 	updAvail    *pb.UpdateAvailable // a release this worker can't install itself
 	renewBefore time.Duration
 	watchers    map[chan *pb.LocalEvent]struct{}
+
+	// the endpoints the last hello reported (noteEndpoints)
+	epMu     sync.Mutex
+	reported []string
+	epKnown  bool
 }
 
 type drainState struct {
@@ -341,7 +347,7 @@ func (a *hubAgent) releaseChannel() string {
 func (a *hubAgent) hello() *pb.NodeHello {
 	host, _ := os.Hostname()
 	h := &pb.NodeHello{Version: version.Version, Os: runtime.GOOS, Arch: runtime.GOARCH, Hostname: host,
-		NumCpu: int32(runtime.NumCPU()), Endpoints: a.endpoints(), Labels: a.labels, State: a.State(),
+		NumCpu: int32(runtime.NumCPU()), Endpoints: a.noteEndpoints(a.endpoints()), Labels: a.labels, State: a.State(),
 		RevocationVersion: a.revoked.Version()}
 	h.Channel = a.releaseChannel()
 	if a.upd != nil {
@@ -364,6 +370,31 @@ func (a *hubAgent) hello() *pb.NodeHello {
 		h.Capabilities = append(h.Capabilities, capRelaySet)
 	}
 	return h
+}
+
+// noteEndpoints logs the endpoints a hello reports to the hub - what other
+// machines can reach this worker on: the first ones and every change, at
+// WARN when one went away (a relay leg that stopped). One that never came
+// up shows as its absence here, and relayLeg warns about it.
+func (a *hubAgent) noteEndpoints(eps []string) []string {
+	a.epMu.Lock()
+	defer a.epMu.Unlock()
+	if a.epKnown && slices.Equal(a.reported, eps) {
+		return eps
+	}
+	if a.log != nil {
+		gone := slices.DeleteFunc(slices.Clone(a.reported), func(e string) bool { return slices.Contains(eps, e) })
+		switch {
+		case !a.epKnown:
+			a.log.Info("hub: endpoints reported to the hub", "endpoints", eps)
+		case len(gone) > 0:
+			a.log.Warn("hub: the endpoints reported to the hub changed", "endpoints", eps, "gone", gone)
+		default:
+			a.log.Info("hub: the endpoints reported to the hub changed", "endpoints", eps, "before", a.reported)
+		}
+	}
+	a.reported, a.epKnown = slices.Clone(eps), true
+	return eps
 }
 
 // mirrors lists repo keys with a mirror and those used in the last day.

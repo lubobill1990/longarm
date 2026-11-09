@@ -53,3 +53,7 @@ func (regProvenance) Delete(n string) error {
 func trustedSystemPath(dir string, also ...string) error {
 	return platform.TrustedSystemPath(dir, also...)
 }
+
+// provenanceSystem: running as LocalSystem (the admin worker service, the
+// installer), which only ever uses the registry.
+func provenanceSystem() bool { return isLocalSystem() }

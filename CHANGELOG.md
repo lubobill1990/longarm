@@ -436,6 +436,19 @@
 
 ### Fixed
 
+- **The admin worker is reachable through the hub's relay.** The MSI's
+  admin worker (`longarmd-admin`) listens on loopback only, like the
+  session worker, and should also listen on the hub's relay - but its
+  sign-in keeps the hub in `hub.toml` as typed for the installer
+  (`longarm.example.com`, without the port), and the relay legs built no
+  listen URL from that: no relay leg, no word in the log, and every other
+  machine got "listens only on its own machine". The relay legs now
+  normalize the hub address as the hub session does; the admin worker
+  still ignores hub-initiated actions and serves its owner only, over the
+  relay as directly. A relay of the set longarmd can't listen on is now
+  logged (WARN), and so are the endpoints reported to the hub and every
+  change of them (WARN when one goes away). Admin workers pick the fix up
+  with an MSI update.
 - **Updates of a worker service running as a user account no longer
   fail.** `longarm worker update`, automatic updates and the tray's update
   banner install the MSI without a password, and every MSI so far demanded
