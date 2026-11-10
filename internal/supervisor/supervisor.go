@@ -91,10 +91,11 @@ type Manager struct {
 	opts Options
 	log  *slog.Logger
 
-	mu      sync.Mutex
-	jobs    map[string]*entry
-	changed chan struct{} // closed (and replaced) on any change
-	submit  sync.Mutex    // serializes Submit (idempotency check + create)
+	mu       sync.Mutex
+	jobs     map[string]*entry
+	changed  chan struct{} // closed (and replaced) on any change
+	submit   sync.Mutex    // serializes Submit (idempotency check + create)
+	stdinKey []byte        // protected by submit; never exported in a job
 }
 
 // New loads every job directory and reconciles it (re-adopt / lost).
@@ -415,7 +416,7 @@ func sameSpec(a, b *jobs.Spec) bool {
 		maps.Equal(a.Env, b.Env) && slices.Equal(a.SecretEnvNames, b.SecretEnvNames) &&
 		a.MemLimitBytes == b.MemLimitBytes && maps.Equal(a.Labels, b.Labels) &&
 		a.Pty == b.Pty && sameWorkspace(a.Workspace, b.Workspace) && a.Owner == b.Owner &&
-		slices.Equal(a.ShareTeams, b.ShareTeams) && a.CPULimit == b.CPULimit && a.StdinBytes == b.StdinBytes &&
+		slices.Equal(a.ShareTeams, b.ShareTeams) && a.CPULimit == b.CPULimit && a.StdinBytes == b.StdinBytes && a.StdinMAC == b.StdinMAC &&
 		slices.Equal(a.AgentAuth, b.AgentAuth) && // not AgentHome: each submit makes its own
 		(a.Steer == nil) == (b.Steer == nil) && (a.Steer == nil || *a.Steer == *b.Steer)
 }
@@ -511,6 +512,17 @@ func (m *Manager) SubmitCreated(ctx context.Context, spec jobs.Spec, secrets map
 	m.mu.Lock()
 	existing, ok := m.jobs[spec.ID]
 	m.mu.Unlock()
+	spec.StdinMAC = ""
+	if len(stdin) > 0 {
+		if ok && existing.spec.StdinBytes > 0 && existing.spec.StdinMAC == "" {
+			return Job{}, false, fmt.Errorf("%w: existing stdin job predates content binding; use a new job id", ErrInvalid)
+		}
+		var err error
+		spec.StdinMAC, err = m.bindStdin(spec.ID, stdin)
+		if err != nil {
+			return Job{}, false, err
+		}
+	}
 	if ok {
 		if !sameSpec(&existing.spec, &spec) {
 			return Job{}, false, ErrAlreadyExists
@@ -666,20 +678,25 @@ var ErrReplaced = errors.New("replaced by a newer job of the same id")
 // KillGen is Kill bound to one generation of id (its spec's CreatedAt;
 // zero = whichever there is): a job that replaced it is never touched.
 func (m *Manager) KillGen(ctx context.Context, id string, created time.Time) (Job, error) {
+	m.submit.Lock()
 	m.mu.Lock()
 	e, ok := m.jobs[id]
 	if ok && !created.IsZero() && !e.spec.CreatedAt.Equal(created) {
 		m.mu.Unlock()
+		m.submit.Unlock()
 		return Job{}, ErrReplaced
 	}
 	m.mu.Unlock()
 	if !ok {
+		m.submit.Unlock()
 		return Job{}, ErrNotFound
 	}
 	if j := m.snapshot(e); j.Status.State.Terminal() {
+		m.submit.Unlock()
 		return j, nil
 	}
 	if err := e.dir.RequestKill("longarm kill"); err != nil {
+		m.submit.Unlock()
 		return Job{}, err
 	}
 	m.mu.Lock()
@@ -687,6 +704,7 @@ func (m *Manager) KillGen(ctx context.Context, id string, created time.Time) (Jo
 		e.cancelPrep() // still preparing: abort; prepareAndStart records "killed"
 	}
 	m.mu.Unlock()
+	m.submit.Unlock()
 	m.log.Info("kill requested", "job", id)
 	// The grace period and escalation must not be cut short by the caller
 	// going away (that would force-kill the shim before it flushed the log);

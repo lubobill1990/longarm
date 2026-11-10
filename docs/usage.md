@@ -271,6 +271,8 @@ test against.
 | `jobs-source` | `jobs --json` has `source` (and `unreachable`) |
 | `jobs-hub-only` | `jobs --hub-only` and `jobs --id` |
 | `stdin-file` | `run --stdin-file` (the worker must also support it, see below) |
+| `info-json` | `info <worker> --json`: pure JSON worker info, including its supported features |
+| `job-kill-if-created-at` | `kill --if-created-at <RFC3339 timestamp>`: cancel only the observed generation (the worker must also support it) |
 | `lfs` | `run` / `sync --lfs skip\|ship` |
 | `ref-sha` | `run --repo <path> --ref <full commit id>` |
 | `worker-label` | `longarm worker label` for owners |
@@ -406,8 +408,8 @@ the payload is never written anywhere by longarm:
   longarm's after the submit, longarmd's once the shim has it, the shim's
   once the job's pipe took it (best effort: the Go runtime and gRPC may hold
   transient buffers until they are reused).
-- Job records (`job.json`, the API, `jobs --json`), the hub's index and the
-  audit log carry only its size (`stdinBytes` / `stdin_bytes`); telemetry
+- The API, `jobs --json`, the hub's index and the audit log carry only its
+  size (`stdinBytes` / `stdin_bytes`); telemetry
   only whether there was one. It is never in a log, a diagnostic bundle or a
   crash report (those hold stacks, not data). What the job does with it
   (prints it, writes it to a file) is the job's business: the job's output
@@ -426,18 +428,40 @@ Failure and retries (same `--id`):
   never runs - not with an empty or partial stdin. It ends `failed`, exit
   code 127, reason `stdin payload lost before start; resubmit`.
 - **Resubmitting the same `--id` with `--stdin-file`** (same command, same
-  payload size):
+  payload content):
   - the job exists and has started, or is still preparing / running: `run`
     prints its id (exit 0); the new payload is dropped, the job keeps the
     one it got;
   - the job took a payload and ended without starting (the case above, or
     its program didn't start): the new submit replaces it - a new attempt
     with the new payload, same id;
-  - another command, or a payload of another size: `AlreadyExists`, exit 2.
+  - another command, or different payload content (even of the same size):
+    `AlreadyExists`, exit 2.
 - Resubmitting without `--stdin-file` a job that had one: another spec,
   exit 2.
 
 Detached jobs work as usual: `run` returns once the job was submitted.
+
+Workers announcing `job-stdin-binding` enforce the content comparison
+across worker restarts. A local job record stores a keyed content binding;
+the random key stays in a worker-private directory outside individual
+job directories. Neither binding nor key is exposed through the job API,
+hub index or audit. Retrying an older stdin record without a binding is
+refused (exit 2): use a new id only after checking the old job's outcome.
+A missing or corrupt binding key is an explicit error, never a reason
+to accept or replace an unverifiable job. Preserve it when restoring jobs.
+Older workers announcing only `job-stdin` compare payload size, not content.
+Programs needing content-bound retries should check `info <worker> --json`.
+
+### Conditional cancellation (`kill --if-created-at`)
+
+`longarm kill <worker> <job-id> --if-created-at <createdAt>` cancels only
+the generation identified by `createdAt` from `jobs --json`, preserving
+the timestamp's full precision. A replaced generation is refused with
+exit 2 without writing a kill request to the current job. Invalid or zero
+timestamps are refused too. The worker must announce
+`job-kill-if-created-at`; an older worker is refused before cancellation.
+Without the flag, `kill` retains its existing unconditional behavior.
 
 ### Agent credentials (`--agent-auth`)
 

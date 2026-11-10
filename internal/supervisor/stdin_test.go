@@ -70,6 +70,11 @@ func TestSubmitStdin(t *testing.T) {
 	if _, err := m.SubmitStdin(ctx, spec, map[string]string{"TOKEN": "tok"}, bytes.Clone(payload)); err != nil {
 		t.Fatalf("idempotent resubmit: %v", err)
 	}
+	changed := bytes.Clone(payload)
+	changed[0] ^= 1
+	if _, err := m.SubmitStdin(ctx, spec, map[string]string{"TOKEN": "tok"}, changed); !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("same-length different payload: %v", err)
+	}
 	if _, err := m.Submit(ctx, spec, map[string]string{"TOKEN": "tok"}); !errors.Is(err, ErrAlreadyExists) {
 		t.Fatalf("resubmit without the payload: %v", err)
 	}
@@ -129,6 +134,84 @@ func waitState(t *testing.T, m *Manager, id string, want jobs.State) {
 			t.Fatalf("%s: state %s, want %s", id, j.Status.State, want)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestStdinBindingAfterRestart(t *testing.T) {
+	for _, mode := range []string{"intact", "missing", "corrupt", "legacy"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			opts := Options{JobsDir: root, Logger: quiet(), ShimCommand: func(string) *exec.Cmd {
+				t.Fatal("retry must not launch another shim")
+				return nil
+			}}
+			m, err := New(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload := []byte("the original prompt")
+			mac, err := m.bindStdin("s1", payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			created := time.Now().UTC()
+			spec := jobs.Spec{ID: "s1", Argv: []string{"agent"}, CreatedAt: created,
+				StdinBytes: int64(len(payload)), StdinMAC: mac}
+			if mode == "legacy" {
+				spec.StdinMAC = ""
+			}
+			dir := jobs.Dir(filepath.Join(root, spec.ID))
+			if err := os.Mkdir(string(dir), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := dir.WriteSpec(&spec); err != nil {
+				t.Fatal(err)
+			}
+			if err := dir.WriteStatus(&jobs.Status{State: jobs.Done, CreatedAt: created, StartedAt: created}); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(dir.Path(jobs.SpecFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := filepath.Join(root, ".stdin", "key")
+			if mode == "missing" {
+				if err := os.Remove(key); err != nil {
+					t.Fatal(err)
+				}
+			} else if mode == "corrupt" {
+				if err := os.WriteFile(key, []byte("invalid"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			restarted, err := New(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retry := jobs.Spec{ID: spec.ID, Argv: spec.Argv}
+			j, err := restarted.SubmitStdin(t.Context(), retry, nil, bytes.Clone(payload))
+			if mode == "intact" {
+				if err != nil || !j.Spec.CreatedAt.Equal(created) {
+					t.Fatalf("identical retry after restart: %+v %v", j, err)
+				}
+				changed := bytes.Clone(payload)
+				changed[0] ^= 1
+				if _, err := restarted.SubmitStdin(t.Context(), retry, nil, changed); !errors.Is(err, ErrAlreadyExists) {
+					t.Fatalf("changed retry after restart: %v", err)
+				}
+			} else if !errors.Is(err, ErrInvalid) {
+				t.Fatalf("unverifiable %s retry: %v", mode, err)
+			}
+			after, err := os.ReadFile(dir.Path(jobs.SpecFile))
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("retry changed stored job: %v", err)
+			}
+			if mode == "missing" {
+				if _, err := os.Stat(key); !os.IsNotExist(err) {
+					t.Fatalf("missing key was recreated: %v", err)
+				}
+			}
+		})
 	}
 }
 

@@ -332,6 +332,10 @@ message WaitRequest {
 
 message KillRequest {
   string id = 1;
+  // Optional generation precondition: the job's created_at from Get/List.
+  // A mismatch fails without touching its replacement. Check worker feature
+  // "job-kill-if-created-at" before using it (older workers ignore fields).
+  google.protobuf.Timestamp if_created_at = 2;
 }
 
 // ---------------------------------------------------------------- Metrics

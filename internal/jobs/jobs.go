@@ -130,6 +130,9 @@ type Spec struct {
 	// StdinBytes is the size of the job's stdin payload (its content is
 	// memory-only: longarmd -> shim -> the job, never on disk).
 	StdinBytes int64 `json:"stdin_bytes,omitempty"`
+	// StdinMAC binds retries to the content without storing stdin or exposing
+	// a guessable content hash through the API. Its key is private to the manager.
+	StdinMAC string `json:"stdin_mac,omitempty"`
 	// AgentAuth names the agents whose credentials the client forwarded
 	// (in the secrets: never their values).
 	AgentAuth []string `json:"agent_auth,omitempty"`
@@ -177,6 +180,8 @@ const StdinLostReason = "stdin payload lost before start; resubmit"
 // FeatureStdin is the InfoResponse.features entry of workers that accept
 // SubmitRequest.stdin.
 const FeatureStdin = "job-stdin"
+const FeatureStdinBinding = "job-stdin-binding"
+const FeatureKillIfCreatedAt = "job-kill-if-created-at"
 
 // FeatureGitAuth is the InfoResponse.features entry of workers that accept
 // a forwarded fetch credential (SubmitRequest.git_auth, Workspace.Fetch).
