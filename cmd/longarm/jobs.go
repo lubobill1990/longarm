@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/lubobill1990/longarm/internal/client"
 	"github.com/lubobill1990/longarm/internal/hubclient"
@@ -744,11 +745,23 @@ func terminalState(s pb.JobState) bool {
 }
 
 func killCmd() *cobra.Command {
-	return &cobra.Command{
+	var ifCreatedAt string
+	c := &cobra.Command{
 		Use:   "kill [<worker>] <job-id>",
 		Short: "Kill a job's whole process tree (job: its id, a unique prefix or suffix, or \"last\")",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var created *timestamppb.Timestamp
+			if cmd.Flags().Changed("if-created-at") {
+				value, err := time.Parse(time.RFC3339Nano, ifCreatedAt)
+				if err != nil || value.IsZero() {
+					return usagef("--if-created-at must be a nonzero RFC3339 timestamp from jobs --json")
+				}
+				created = timestamppb.New(value)
+				if err := created.CheckValid(); err != nil {
+					return usageErr(err)
+				}
+			}
 			s, err := openSession()
 			if err != nil {
 				return err
@@ -765,7 +778,12 @@ func killCmd() *cobra.Command {
 			defer conn.Close()
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
-			j, err := conn.Jobs().Kill(ctx, &pb.KillRequest{Id: id})
+			if created != nil {
+				if err := needFeature(ctx, conn, jobs.FeatureKillIfCreatedAt, "--if-created-at"); err != nil {
+					return err
+				}
+			}
+			j, err := conn.Jobs().Kill(ctx, &pb.KillRequest{Id: id, IfCreatedAt: created})
 			if err != nil {
 				return err
 			}
@@ -773,6 +791,8 @@ func killCmd() *cobra.Command {
 			return nil
 		},
 	}
+	c.Flags().StringVar(&ifCreatedAt, "if-created-at", "", "kill only the generation with this createdAt (RFC3339 timestamp from jobs --json)")
+	return c
 }
 
 func stateName(s pb.JobState) string {

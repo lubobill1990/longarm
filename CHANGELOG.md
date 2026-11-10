@@ -4,6 +4,13 @@
 
 ### Added
 
+- **Program-facing execution contracts**: `info <worker> --json` returns
+  pure worker-info JSON and supported features; `kill --if-created-at`
+  refuses to cancel a replacement generation. Updated workers also bind
+  stdin retries to private keyed content, rejecting different payloads of
+  the same size and unverifiable legacy records rather than reusing them.
+  Normal `info` output and unconditional `kill` remain unchanged.
+
 - **Hyper-V Dynamic Memory workers get work**: a Windows worker that is a
   Hyper-V guest with Dynamic Memory (Windows shows 4 GB, the host grows it
   to, say, 88 GB) reports its ceiling (`mem_max_bytes`, read from the

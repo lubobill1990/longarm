@@ -22,7 +22,7 @@ import (
 func TestSubmitStdinPayload(t *testing.T) {
 	e := newAuthzEnv(t)
 	info, err := pb.NewNodeClient(e.alice).Info(cctx(t), &pb.InfoRequest{})
-	if err != nil || !slices.Contains(info.Features, jobs.FeatureStdin) {
+	if err != nil || !slices.Contains(info.GetFeatures(), jobs.FeatureStdin) || !slices.Contains(info.GetFeatures(), jobs.FeatureStdinBinding) {
 		t.Fatalf("features %v: %v", info.GetFeatures(), err)
 	}
 	const marker = "PAYLOAD-0xC0FFEE-secret"
@@ -70,8 +70,18 @@ func TestSubmitStdinPayload(t *testing.T) {
 	if strings.Contains(j.String(), marker) {
 		t.Fatal("payload in the job's API record")
 	}
+	local, err := e.srv.Spaces.Shared().Jobs.Get("STDIN1")
+	if err != nil || local.Spec.StdinMAC == "" {
+		t.Fatalf("missing local content binding: %v", err)
+	}
+	if strings.Contains(j.String(), local.Spec.StdinMAC) {
+		t.Fatal("private content binding in API")
+	}
 	time.Sleep(100 * time.Millisecond) // the audit line follows the reply
 	audit, _ := os.ReadFile(e.srv.Audit.path)
+	if bytes.Contains(audit, []byte(local.Spec.StdinMAC)) {
+		t.Fatal("private content binding in audit")
+	}
 	if !strings.Contains(string(audit), fmt.Sprintf(`"stdin_bytes":%d`, len(payload))) {
 		t.Errorf("submit not audited with the payload size:\n%s", audit)
 	}

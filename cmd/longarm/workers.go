@@ -317,7 +317,8 @@ func oneLine(err error) string {
 }
 
 func infoCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	c := &cobra.Command{
 		Use:   "info <worker>",
 		Short: "Show worker info and the caller identity it sees",
 		Args:  cobra.ExactArgs(1),
@@ -338,14 +339,22 @@ func infoCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, _ := protojson.MarshalOptions{Multiline: true, Indent: "  "}.Marshal(info)
+			b, err := protojson.MarshalOptions{Multiline: true, Indent: "  "}.Marshal(info)
+			if err != nil {
+				return err
+			}
 			fmt.Println(string(b))
+			if asJSON {
+				return nil
+			}
 			fmt.Println("path:", conn.Path())
 			fmt.Println("policy:", s.dialer.Policy())
 			fmt.Println("legs:", client.RaceSummary(conn.Legs()))
 			return nil
 		},
 	}
+	c.Flags().BoolVar(&asJSON, "json", false, "JSON worker info and supported features, without human-readable connection details")
+	return c
 }
 
 // relayedPathRE finds a relayed path in longarm ls' PATH column

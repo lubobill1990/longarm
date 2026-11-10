@@ -369,6 +369,33 @@ func TestE2E(t *testing.T) {
 			ni["callerRole"] != "client" || ni["name"] != "w1" {
 			t.Fatalf("info (%v):\n%s", err, info)
 		}
+		if !strings.Contains(info, "\npath:") || !strings.Contains(info, "\npolicy:") || !strings.Contains(info, "\nlegs:") {
+			t.Fatalf("info lost human-readable connection details:\n%s", info)
+		}
+		pure := e.mustLongarm(e.client, "info", "w1", "--json")
+		if err := json.Unmarshal([]byte(pure), &ni); err != nil || ni["name"] != "w1" || ni["features"] == nil {
+			t.Fatalf("info --json (%v):\n%s", err, pure)
+		}
+	})
+
+	t.Run("conditional_kill", func(t *testing.T) {
+		id := strings.TrimSpace(e.mustLongarm(e.client, "run", "w1", "--", bins.helper, "sleep", "120"))
+		spec, err := jobs.Dir(filepath.Join(e.dataDir, "jobs", id)).ReadSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, at := range []string{"", "not-a-time", "0001-01-01T00:00:00Z", "10000-01-01T00:00:00Z", spec.CreatedAt.Add(-time.Second).Format(time.RFC3339Nano)} {
+			if r := e.longarm(e.client, "kill", "w1", id, "--if-created-at", at); r.code != 2 || r.stdout != "" {
+				t.Fatalf("refused conditional kill %q: %+v", at, r)
+			}
+			if jobs.Dir(filepath.Join(e.dataDir, "jobs", id)).KillRequested() {
+				t.Fatalf("refused conditional kill %q wrote a marker", at)
+			}
+		}
+		e.mustLongarm(e.client, "kill", "w1", id, "--if-created-at", spec.CreatedAt.Format(time.RFC3339Nano))
+		if r := e.longarm(e.client, "wait", "w1", id); r.code != platform.KilledExitCode {
+			t.Fatalf("matching conditional kill: %+v", r)
+		}
 	})
 
 	t.Run("exec", func(t *testing.T) {
@@ -559,6 +586,11 @@ func TestE2E(t *testing.T) {
 		if r := run(); r.code != 0 || strings.TrimSpace(r.stdout) != id {
 			t.Fatalf("retry with the same content: %+v", r)
 		}
+		os.WriteFile(payload, []byte("new prompt\n"), 0o600) // same length, different content
+		if r := run(); r.code != 2 || r.stdout != "" || !strings.Contains(r.stderr, "AlreadyExists") {
+			t.Fatalf("retry with different stdin of the same size: %+v", r)
+		}
+		os.WriteFile(payload, []byte("the prompt\n"), 0o600)
 		os.WriteFile(filepath.Join(repo, "new.txt"), []byte("other\n"), 0o644)
 		if r := run(); r.code != 2 || r.stdout != "" || !strings.Contains(r.stderr, "AlreadyExists") {
 			t.Fatalf("retry with other uncommitted content: %+v", r)

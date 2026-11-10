@@ -1,16 +1,5 @@
 # Programs driving Longarm (docs/programs.md)
 
-## Worker features as JSON
-
-A program can't ask which features a worker has: `longarm info <worker>`
-prints the `Node.Info` JSON followed by plain-text lines (`path:`,
-`policy:`, `legs:`), so it isn't parseable as a whole. Today programs rely
-on longarm refusing a flag the worker lacks (exit 2, nothing sent). Add
-`longarm info <worker> --json` (or worker features in `worker ls --json`,
-which the hub would have to keep from heartbeats) with a feature name, a
-fixture and a row in docs/usage.md. Start at `infoCmd` in
-`cmd/longarm/workers.go`.
-
 ## More fixtures
 
 `docs/programs/fixtures` covers the outputs TMIA reads. Not yet: `ls

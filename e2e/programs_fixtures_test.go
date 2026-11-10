@@ -25,6 +25,7 @@ var fixturesDir = filepath.Join("..", "docs", "programs", "fixtures")
 // {job} is the finished job's id, {repo} a git checkout, {file} a file to
 // tail, {helper} the test's agent. They run in the order of their names.
 var programFixtures = map[string][]string{
+	"info.json":          {"info", "worker-1", "--json"},
 	"version.json":       {"version", "--json"},
 	"worker-ls.json":     {"worker", "ls", "--json"},
 	"whoami.json":        {"whoami", "--json"},
@@ -44,11 +45,12 @@ var jsonLines = []string{"tail.json"}
 // opaque are the fixture paths whose content is not part of the contract
 // (only that they exist with their type): doctor's per-check data differs
 // by platform and check, a worker's agents by what runs on it.
-var opaque = []string{"doctor.json: checks[].data", "worker-ls.json: nodes[].metrics.agents"}
+var opaque = []string{"doctor.json: checks[].data", "worker-ls.json: nodes[].metrics.agents", "info.json: desktop"}
 
 // mayBeZero are fields left out at their zero value (protojson) that the
 // test can't keep from being zero: missing is fine.
 var mayBeZero = []string{
+	"info.json: desktop",
 	"worker-ls.json: nodes[].metrics.cpu_percent", "worker-ls.json: nodes[].metrics.net_rx_bytes_per_sec",
 	"worker-ls.json: nodes[].metrics.net_tx_bytes_per_sec", "worker-ls.json: nodes[].metrics.top_cpu[].cpu_percent",
 	"worker-ls.json: nodes[].metrics.top_mem[].cpu_percent",
@@ -420,6 +422,9 @@ func (a *anonymiser) value(v any) any {
 		out := map[string]any{}
 		for k, e := range x {
 			out[k] = a.value(e)
+			if k == "devCenter" {
+				out[k] = "example-dc"
+			}
 			if procs, ok := out[k].([]any); ok && (k == "top_cpu" || k == "top_mem") {
 				for i, p := range procs { // this machine's processes: examples
 					if m, ok := p.(map[string]any); ok {

@@ -71,6 +71,9 @@ without `--wait` and read the outcome from `jobs --json`.
   the payload was lost before the job started, the job ends `failed` with
   reason `stdin payload lost before start; resubmit`: resubmit with the
   same `--id` (and the same `--repo` content) and it starts again.
+  Workers announcing `job-stdin-binding` also require identical payload
+  content, not merely the same byte count. Older records without a binding
+  are refused explicitly; inspect their outcome before choosing a new id.
   ([Job stdin payload](usage.md#job-stdin-payload---stdin-file))
 - **Agent credentials: `--agent-auth`** (feature `agent-auth`). When the
   command is `claude` or `copilot` longarm forwards that agent's
@@ -88,6 +91,13 @@ hub: exit 3 is "no such job", exit 69 "the hub didn't answer" - never
 confused. A job submitted a moment ago can be missing from the index for
 that moment. ([`jobs --json`](usage.md#jobs---json))
 
+To cancel the observed job rather than a replacement, pass its exact
+`createdAt` to `longarm kill <worker> <id> --if-created-at <createdAt>`
+(client and worker feature `job-kill-if-created-at`). A stale timestamp
+fails with exit 2 and leaves the replacement untouched. Keep the worker
+identity, job id and generation together; an uncertain result needs
+readback, not a new job id.
+
 ## 5. Workers: `worker ls --json`, `whoami --json`, `doctor --json`
 
 - `longarm worker ls --json` lists the workers you may use - your own,
@@ -98,6 +108,11 @@ that moment. ([`jobs --json`](usage.md#jobs---json))
   `longarm worker add`, `longarm worker label`, `longarm worker update`).
 - `longarm whoami --json`: the certificate's `name`, `role`, `user` and
   the hub.
+- `longarm info <worker> --json` (client feature `info-json`) returns the
+  worker's info and `features` as one JSON value, without the normal
+  connection-detail text. Check worker features when retry guarantees
+  matter, for example `job-stdin-binding`. Like `jobs --json`, field names
+  are camelCase and 64-bit integers are strings.
 - `longarm doctor --json` (feature `doctor-json`): a checklist with stable
   `id`s, a `status` per check and a `fix` for people to run. Show it; don't
   run the fixes. ([`doctor --json`](usage.md#doctor---json))
@@ -171,6 +186,7 @@ Conventions of the `--json` outputs:
 | file | command |
 |---|---|
 | `version.json` | `longarm version --json` |
+| `info.json` | `longarm info <worker> --json` |
 | `worker-ls.json` | `longarm worker ls --json` |
 | `whoami.json` | `longarm whoami --json` |
 | `jobs.json` | `longarm jobs --json` |
@@ -190,7 +206,8 @@ only where it may be: a field removed, retyped or turned null fails
 Longarm's build, a field added does not (`go test ./e2e -run
 TestProgramsFixtures`; `-update` rewrites them). Values are examples;
 `doctor.json`'s checks and each check's `data`, and a worker's `metrics`,
-differ by machine.
+differ by machine. `info.json`'s `desktop` is optional and its fields
+depend on the worker platform; the fixture checks its object type only.
 
 The test sets things up so that fields left out at their zero value are
 in the fixtures at least once: `worker-ls.json` has a worker of alice's

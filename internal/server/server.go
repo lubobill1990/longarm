@@ -188,7 +188,7 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 
 // WorkerFeatures are the optional features of this longarmd
 // (InfoResponse.features).
-var WorkerFeatures = []string{jobs.FeatureStdin, jobs.FeatureGitAuth, jobs.FeatureSessionStart, jobs.FeatureSessionSend,
+var WorkerFeatures = []string{jobs.FeatureStdin, jobs.FeatureStdinBinding, jobs.FeatureKillIfCreatedAt, jobs.FeatureGitAuth, jobs.FeatureSessionStart, jobs.FeatureSessionSend,
 	jobs.FeatureSessionSendIfIdle, jobs.FeatureSessionStop, jobs.FeatureSessionInfo, jobs.FeatureFileTail, jobs.FeatureAgentAuth,
 	jobs.FeatureSessionEnv, jobs.FeatureFileLstat, jobs.FeatureHandoffDirect, jobs.FeatureHandoffPush, jobs.FeatureSteer,
 	jobs.FeatureSessionIfInputSeq, jobs.FeatureSessionPasteEnter, jobs.FeatureSessionHuman, jobs.FeatureCopy}
@@ -391,6 +391,8 @@ func MgrErr(err error) error {
 		return status.Error(codes.AlreadyExists, err.Error())
 	case errors.Is(err, supervisor.ErrInvalid):
 		return status.Error(codes.InvalidArgument, err.Error())
+	case errors.Is(err, supervisor.ErrReplaced):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return status.FromContextError(err).Err()
 	}
@@ -653,10 +655,17 @@ func (j *jobsServer) Wait(req *pb.WaitRequest, st pb.Jobs_WaitServer) error {
 }
 
 func (j *jobsServer) Kill(ctx context.Context, req *pb.KillRequest) (*pb.Job, error) {
+	var created time.Time
+	if req.IfCreatedAt != nil {
+		if err := req.IfCreatedAt.CheckValid(); err != nil || req.IfCreatedAt.AsTime().IsZero() {
+			return nil, status.Error(codes.InvalidArgument, "if_created_at must be a valid nonzero timestamp")
+		}
+		created = req.IfCreatedAt.AsTime()
+	}
 	sp, _, err := j.s.findJob(ctx, req.Id, true)
 	var job supervisor.Job
 	if err == nil {
-		job, err = sp.Jobs.Kill(ctx, req.Id)
+		job, err = sp.Jobs.KillGen(ctx, req.Id, created)
 		err = MgrErr(err)
 	}
 	j.s.Audit.Log(IdentityFrom(ctx), pb.Jobs_Kill_FullMethodName, map[string]any{"job": req.Id, "error": errString(err)})
