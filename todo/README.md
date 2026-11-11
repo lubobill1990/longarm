@@ -22,4 +22,5 @@ pull request description.
 | [ci-flakes.md](ci-flakes.md) | tests that failed once and passed on a rerun |
 | [agent-env.md](agent-env.md) | `--agent-env` of runs: the tray, the MCP tools, a default (docs/usage.md "Agent environment") |
 | [copy.md](copy.md) | `longarm cp` between workers (docs/usage.md "Copy between workers") |
+| [tray-signin.md](tray-signin.md) | the tray's sign-in state: refused admin workers, per-part expiry, reconnects |
 | [programs.md](programs.md) | programs driving Longarm: features, fixtures, session input (docs/programs.md) |

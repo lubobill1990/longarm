@@ -187,8 +187,10 @@ type Account struct {
 	// HubFrom: where the hub to sign in to comes from: "config" (this
 	// machine's hub.toml), "installer", "built-in" or "" (none: ask).
 	HubFrom string `json:"hub_from,omitempty"`
-	// Needed: a sign-in would enroll something (Targets).
+	// Needed: a sign-in would enroll something (Targets); Need: what of it
+	// is not signed in (the banner names it: "the admin worker waits ...").
 	Needed  bool         `json:"needed"`
+	Need    SignInTarget `json:"need"`
 	Targets SignInTarget `json:"targets"`
 	// RunMode of the worker: "session", "service" or "".
 	RunMode string                `json:"run_mode,omitempty"`
@@ -198,6 +200,10 @@ type Account struct {
 	// then false and a sign-in is Needed).
 	Expires *time.Time `json:"expires,omitempty"`
 	Expired bool       `json:"expired,omitempty"`
+	// ClientRefused / WorkerRefused: that certificate is valid here but the
+	// hub refuses it (revoked, removed): it needs a sign-in, not a replace
+	ClientRefused bool `json:"client_refused,omitempty"`
+	WorkerRefused bool `json:"worker_refused,omitempty"`
 	// Roles: what this computer is (the installer's record, changed in the
 	// Account tab when RolesEditable); RolesNote says why a role can't
 	// change.
@@ -222,20 +228,29 @@ func (s *Server) account() Account {
 	cfgDir, dataDir := s.opts.LongarmConfigDir, s.opts.LongarmdDataDir
 	now := s.now()
 	clientValid, workerValid := false, false
-	if c := readCert(filepath.Join(cfgDir, client.TLSDir, pki.NodeCertFile)); c != nil {
+	// a certificate the hub refuses (revoked, removed) is no sign-in, valid
+	// as it looks here: the daemons say so (HubLink.refused)
+	cpath, wpath := filepath.Join(cfgDir, client.TLSDir, pki.NodeCertFile), filepath.Join(dataDir, longarmd.TLSDir, pki.NodeCertFile)
+	if c := readCert(cpath); c != nil {
 		na := c.NotAfter
 		a.Expires = &na
 		clientValid = now.Before(na)
+		if clientValid && s.refused(cpath, s.clientLink) {
+			clientValid, a.ClientRefused = false, true
+		}
 		if id, err := pki.IdentityFromCert(c); err == nil && clientValid {
 			a.SignedIn, a.User = true, id.Owner()
 		}
 	}
-	if c := readCert(filepath.Join(dataDir, longarmd.TLSDir, pki.NodeCertFile)); c != nil {
+	if c := readCert(wpath); c != nil {
 		if a.Expires == nil {
 			na := c.NotAfter
 			a.Expires = &na
 		}
 		workerValid = now.Before(c.NotAfter)
+		if workerValid && s.refused(wpath, s.workerLink) {
+			workerValid, a.WorkerRefused = false, true
+		}
 		if hf, err := hubclient.LoadFile(dataDir); err == nil && workerValid {
 			a.SignedIn = true
 			if a.User == "" {
@@ -248,7 +263,8 @@ func (s *Server) account() Account {
 	wantClient, _ := s.installedRoles()
 	t := s.targets(nil)
 	a.Targets = t
-	a.Needed = (wantClient && t.Client && !clientValid) || (t.Worker && !workerValid) || t.AdminWorker
+	a.Need = SignInTarget{Client: wantClient && t.Client && !clientValid, Worker: t.Worker && !workerValid, AdminWorker: t.AdminWorker}
+	a.Needed = a.Need.Client || a.Need.Worker || a.Need.AdminWorker
 	s.accountRoles(&a)
 	if s.installedWorker != nil {
 		mode, adm := s.installedWorker()
@@ -319,11 +335,17 @@ func (s *Server) signinStart(w http.ResponseWriter, r *http.Request) {
 		// Replace: the user confirmed replacing what this machine is
 		// signed in as (state "confirm")
 		Replace bool `json:"replace"`
+		// Needed: only what is not signed in (the "Sign in" card; "Switch
+		// account" signs in everything)
+		Needed bool `json:"needed"`
 	}
 	if !readBody(w, r, &body) {
 		return
 	}
 	var only *SignInTarget
+	if a := s.account(); body.Needed && a.Needed {
+		only = &a.Need
+	}
 	if body.Replace {
 		s.signin.mu.Lock()
 		if s.signin.st.State == "confirm" { // the role change it came from, if any
@@ -367,6 +389,15 @@ func (s *Server) startSignIn(hubIn, labelsIn string, only *SignInTarget, replace
 		return SignInState{}, http.StatusConflict, errors.New("nothing to sign in")
 	}
 	so := signin.Options{Hub: hub, Fingerprint: fp, OpenBrowser: true, WorkerLabels: labels, Replace: replace}
+	// certificates the hub refuses: nothing to ask about or replace
+	if a := s.account(); a.ClientRefused || a.WorkerRefused {
+		if a.ClientRefused {
+			so.Refused = append(so.Refused, "device")
+		}
+		if a.WorkerRefused {
+			so.Refused = append(so.Refused, "worker")
+		}
+	}
 	if t.Client {
 		// replace: confirmed, also another hub's certificate
 		so.Client = client.DeviceTarget{ConfigDir: s.opts.LongarmConfigDir, Force: replace}
@@ -425,7 +456,9 @@ func (s *Server) AutoSignIn() bool {
 	if !a.Needed || a.Hub == "" {
 		return false
 	}
-	_, _, err := s.startSignIn("", "", nil, false)
+	// only what needs it: a valid worker or device is not offered for
+	// replacing because the admin worker waits
+	_, _, err := s.startSignIn("", "", &a.Need, false)
 	return err == nil
 }
 

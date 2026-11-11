@@ -4,6 +4,7 @@ import {
   trayApi,
   type Account,
   type AccountRoles,
+  type AdminStatus,
   type RolesState,
   type SignInConfirm,
   type SignInHeld,
@@ -105,18 +106,27 @@ function SignInCard({ acct, onStarted }: { acct: Account; onStarted: (s: SignInS
   const [labels, setLabels] = useState('')
   const [more, setMore] = useState(false)
   const needHub = !acct.hub
+  // what is not signed in (a valid device or worker is left as it is); another hub: everything
+  const onlyNeeded = !hub && acct.needed && !!acct.need
+  const what = onlyNeeded && acct.need ? acct.need : acct.targets
+  const refused = [acct.client_refused && 'this device', acct.worker_refused && 'your worker here'].filter(Boolean).join(' and ')
   return (
     <section className="wcard signin-card" data-testid="signin-card">
       <div className="signin-hero">
-        <h2 className="card-title">{acct.expired ? 'Sign in again' : 'Sign in'}</h2>
+        <h2 className="card-title">{acct.expired || refused ? 'Sign in again' : 'Sign in'}</h2>
       </div>
-      {acct.expired && (
+      {acct.expired && !refused && (
         <Banner tone="warn">
           <span data-testid="signin-expired">Your sign-in expired on {when(acct.expires)}: sign in again.</span>
         </Banner>
       )}
+      {refused && (
+        <Banner tone="warn">
+          <span data-testid="signin-refused">The hub no longer accepts {refused} (removed, or its certificate revoked): sign in again.</span>
+        </Banner>
+      )}
       <p className="lead">
-        One code and one approval in your browser sign in {targetText(acct.targets)}
+        One code and one approval in your browser sign in {targetText(what)}
         {acct.hub ? (
           <>
             {' '}
@@ -143,7 +153,7 @@ function SignInCard({ acct, onStarted }: { acct: Account; onStarted: (s: SignInS
           data-testid="signin-start"
           disabled={busy || (needHub && !hub)}
           onClick={async () => {
-            const r = await run(() => trayApi.signinStart(hub, labels))
+            const r = await run(() => trayApi.signinStart(hub, labels, false, onlyNeeded))
             if (r) onStarted(r)
           }}
         >
@@ -518,7 +528,7 @@ function RolesCard({ acct, info, cur, busy, onChange }: { acct: Account; info: T
           <b>Admin commands</b> (admin worker): run administrator commands remotely, even before anyone logs on (as SYSTEM, only you)
           {!want.worker && !legacyAdmin ? <span className="muted"> · needs "run jobs"</span> : null}
         </span>
-        {cur.admin_worker && acct.admin?.enabled && <RoleState ok={!!acct.admin.signed_in} text={acct.admin.state ?? 'unknown'} />}
+        {cur.admin_worker && acct.admin?.enabled && <RoleState ok={!!acct.admin.signed_in} text={adminStateText(acct.admin)} />}
       </label>
       {cur.admin_worker && acct.admin?.enabled && (acct.admin.pending || acct.admin.error) && (
         <div className="small muted" data-testid="admin-card">
@@ -560,6 +570,13 @@ function RolesCard({ acct, info, cur, busy, onChange }: { acct: Account; info: T
 }
 
 /** A role's state on its row's right: running, not running, the admin worker's service state. */
+/** The admin worker's row: its sign-in first (a running service waiting for one is not "running"). */
+export function adminStateText(a: AdminStatus): string {
+  if (a.pending) return 'waits for sign-in'
+  if (a.error) return 'sign-in failed'
+  return a.state ?? 'unknown'
+}
+
 function RoleState({ ok, text }: { ok: boolean; text: string }) {
   return <span className={`pill ${ok ? 'ok' : 'warn'} role-state`}>{text}</span>
 }

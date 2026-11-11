@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -117,6 +118,9 @@ func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
 	var proofs []held1
 	for _, h := range held {
 		same := h.cur.SameHub(tg.Fingerprint)
+		if same && slices.Contains(o.Refused, h.cur.Kind) {
+			continue // gone from the hub: this sign-in just replaces the files
+		}
 		if !same || !h.cur.Expired(time.Now()) {
 			ask = append(ask, h.cur)
 		}
@@ -300,6 +304,10 @@ type Options struct {
 	// Hub as the user typed it: "longarm.example.com",
 	// "https://longarm.example.com", "host:port".
 	Hub string
+	// Refused: kinds ("device", "worker") whose certificate held here the
+	// hub refuses (revoked, removed: the daemon's HubLink.refused). Such an
+	// enrollment is gone: not asked about, not proven for a replace.
+	Refused []string
 	// Fingerprint pins the hub CA explicitly (sha256 hex, longarm-hub ca
 	// show); empty: bootstrapped over HTTPS.
 	Fingerprint string
@@ -493,6 +501,7 @@ func azJoin(ctx context.Context, addr string, o Options, cjo, wjo hubclient.Join
 // An admin worker (ajo) goes with the one code (alone: kind "admin");
 // older hubs without "both" can't have one (hubclient.ErrNoAdminLink).
 func pair(ctx context.Context, addr string, o Options, ev Events, cjo, wjo hubclient.JoinOptions, ajo *hubclient.JoinOptions, proofs []held1) (cr, wr, ar *hubclient.JoinResult, err error) {
+	var linkOpts func(jo hubclient.JoinOptions, kind string, w hubclient.JoinOptions, a *hubclient.JoinOptions, replace []hubclient.ReplaceKey, done chan struct{}) hubclient.LinkOptions
 	link := func(kind string, jo hubclient.JoinOptions, w hubclient.JoinOptions, a *hubclient.JoinOptions) (*hubclient.JoinResult, error) {
 		// the enrollments this pairing replaces: the device's (kinds
 		// client, both), the worker's (worker, both)
@@ -510,7 +519,18 @@ func pair(ctx context.Context, addr string, o Options, ev Events, cjo, wjo hubcl
 		}
 		done := make(chan struct{}) // the code is used up: Enter no longer opens its page
 		defer close(done)
-		return hubclient.Link(ctx, addr, hubclient.LinkOptions{JoinOptions: jo, Kind: kind, Worker: w, AdminWorker: a, Replace: replace,
+		r, err := hubclient.Link(ctx, addr, linkOpts(jo, kind, w, a, replace, done))
+		if len(replace) > 0 && hubclient.ReplacedGone(err) {
+			// what it would replace is gone from the hub already (removed,
+			// its certificate revoked): nothing to replace - a fresh
+			// sign-in (else every "Replace and sign in" fails the same way)
+			ev.progress(StepNote, "this machine's old enrollment is no longer on the hub (removed or revoked): signing in afresh")
+			r, err = hubclient.Link(ctx, addr, linkOpts(jo, kind, w, a, nil, done))
+		}
+		return r, err
+	}
+	linkOpts = func(jo hubclient.JoinOptions, kind string, w hubclient.JoinOptions, a *hubclient.JoinOptions, replace []hubclient.ReplaceKey, done chan struct{}) hubclient.LinkOptions {
+		return hubclient.LinkOptions{JoinOptions: jo, Kind: kind, Worker: w, AdminWorker: a, Replace: replace,
 			Show: func(st *pb.StartLinkResponse) {
 				c := Code{URL: st.VerificationUrl, Code: st.UserCode, Expires: st.ExpiresAt.AsTime(), Kind: kind, Host: hostname(),
 					AdminWorker: ajo != nil}
@@ -535,7 +555,7 @@ func pair(ctx context.Context, addr string, o Options, ev Events, cjo, wjo hubcl
 					ev.progress(StepBrowser, "opened the page in your browser")
 				}
 				ev.progress(StepWaiting, "waiting for approval ...")
-			}})
+			}}
 	}
 	switch {
 	case o.Client == nil && o.Worker == nil: // the admin worker alone

@@ -28,6 +28,7 @@ import (
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/signin"
 	"github.com/lubobill1990/longarm/internal/webui"
+	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
 // Desktop is what the shell (window, tray, OS) does for the server.
@@ -75,8 +76,10 @@ type Server struct {
 	signIn           func(context.Context, signin.Options, signin.Events) (*signin.Result, error)
 	installedRolesFn func() string
 	installedWorker  func() (string, longarmd.AdminInstall)
-	runElevated      func(exe string, args ...string) error
-	afterSignIn      func()
+	// the daemons' hub links (nil: not running), for a refused certificate
+	workerLink, clientLink func() *pb.HubLink
+	runElevated            func(exe string, args ...string) error
+	afterSignIn            func()
 	// role changes (roles.go); hooks for tests
 	roleRun         rolesRun
 	machineRoles    func() longarmd.MachineRoles
@@ -166,6 +169,7 @@ func NewServer(opts Options, desk Desktop, addr string) (*Server, error) {
 		},
 		openURL: OpenURL, term: OpenTerminal,
 		installedRolesFn: signin.InstalledRoles, installedWorker: longarmd.InstalledWorker, runElevated: RunElevated}
+	s.workerLink, s.clientLink = s.localWorkerLink, s.localClientLink
 	if runtime.GOOS == "windows" {
 		s.machineRoles = func() longarmd.MachineRoles { return longarmd.LoadMachineRoles(longarmd.MachineSettings()) }
 		s.currentSID = longarmd.CurrentUserSID

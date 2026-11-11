@@ -403,3 +403,64 @@ func TestMachineCompanion(t *testing.T) {
 		t.Errorf("after revoke: %q/%q", i.Machine, i.Companion)
 	}
 }
+
+// TestOrphanAdminWorkerTakenOver: a machine signing in again after its
+// worker was revoked finds its old admin worker still holding the name
+// ("win11-admin is taken"): the same owner's admin worker of that host,
+// with no live companion, is revoked and the name reused; anything else
+// keeps the name taken.
+func TestOrphanAdminWorkerTakenOver(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	ids := map[string]string{}
+	for _, name := range []string{"win", "win-admin", "box", "box-admin", "lab-admin"} {
+		ids[name] = nodeid.New()
+	}
+	put := func(r *store.Node, state string) {
+		r.ID, r.Role, r.State = ids[r.Name], string(pki.RoleWorker), state
+		h.mu.Lock()
+		h.nodes[r.ID] = &node{rec: r}
+		h.mu.Unlock()
+		if err := h.store.PutNode(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(&store.Node{Name: "win", Owner: "alice", Hostname: "WIN", Companion: ids["win-admin"]}, stateRevoked)
+	put(&store.Node{Name: "win-admin", Owner: "alice", Hostname: "win", Admin: true}, stateApproved) // unpaired at the revocation
+	put(&store.Node{Name: "box", Owner: "alice", Hostname: "box", Companion: ids["box-admin"]}, stateApproved)
+	put(&store.Node{Name: "box-admin", Owner: "alice", Hostname: "box", Admin: true, Companion: ids["box"]}, stateApproved)
+	put(&store.Node{Name: "lab-admin", Owner: "bob", Hostname: "lab", Admin: true}, stateApproved)
+	orphan := func(name, owner string, d deviceRequest) bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.orphanAdminLocked(h.nodes[ids[name]], owner, d)
+	}
+	for _, c := range []struct {
+		name, owner string
+		d           deviceRequest
+		want        bool
+	}{
+		{"win-admin", "alice", deviceRequest{admin: true, hostname: "win"}, true},
+		{"win-admin", "alice", deviceRequest{admin: false, hostname: "win"}, false},  // a worker, not an admin worker
+		{"win-admin", "alice", deviceRequest{admin: true, hostname: "other"}, false}, // another machine
+		{"win-admin", "bob", deviceRequest{admin: true, hostname: "win"}, false},     // another owner
+		{"box-admin", "alice", deviceRequest{admin: true, hostname: "box"}, false},   // its worker is live
+		{"lab-admin", "alice", deviceRequest{admin: true, hostname: "lab"}, false},
+	} {
+		if got := orphan(c.name, c.owner, c.d); got != c.want {
+			t.Errorf("%s for %s %+v: %v, want %v", c.name, c.owner, c.d, got, c.want)
+		}
+	}
+	// enrolling the machine's new admin worker removes the old one (no CSR
+	// here: the issuance after it fails, the removal is what is checked)
+	h.enrollOwnedWorker("test", "alice", deviceRequest{name: "win-admin", hostname: "win", admin: true})
+	h.mu.Lock()
+	st := h.nodes[ids["win-admin"]].rec.State
+	h.mu.Unlock()
+	if st != stateRevoked {
+		t.Errorf("old win-admin: %s", st)
+	}
+	if _, err := h.enrollOwnedWorker("test", "alice", deviceRequest{name: "box-admin", hostname: "box", admin: true}); status.Code(err) != codes.AlreadyExists {
+		t.Errorf("box-admin with a live worker: %v", err)
+	}
+}

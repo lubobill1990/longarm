@@ -120,12 +120,18 @@ func (x *LocalLimits) GetReservedMemGb() float64 {
 }
 
 type HubLink struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Address       string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"` // "" = no hub configured
-	Connected     bool                   `protobuf:"varint,2,opt,name=connected,proto3" json:"connected,omitempty"`
-	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"` // last connection error
-	Since         *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=since,proto3" json:"since,omitempty"` // connected / disconnected since
-	NodeState     string                 `protobuf:"bytes,5,opt,name=node_state,json=nodeState,proto3" json:"node_state,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Address   string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"` // "" = no hub configured
+	Connected bool                   `protobuf:"varint,2,opt,name=connected,proto3" json:"connected,omitempty"`
+	Error     string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"` // last connection error
+	Since     *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=since,proto3" json:"since,omitempty"` // connected / disconnected since
+	NodeState string                 `protobuf:"bytes,5,opt,name=node_state,json=nodeState,proto3" json:"node_state,omitempty"`
+	// refused: the hub refused this node's certificate (revoked, removed,
+	// unknown): only signing in again brings it back (hubclient.CertRefused)
+	Refused bool `protobuf:"varint,6,opt,name=refused,proto3" json:"refused,omitempty"`
+	// cert_not_after: of the certificate it uses (a refusal is of that one;
+	// a newer certificate on disk is a sign-in since)
+	CertNotAfter  *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=cert_not_after,json=certNotAfter,proto3" json:"cert_not_after,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -193,6 +199,20 @@ func (x *HubLink) GetNodeState() string {
 		return x.NodeState
 	}
 	return ""
+}
+
+func (x *HubLink) GetRefused() bool {
+	if x != nil {
+		return x.Refused
+	}
+	return false
+}
+
+func (x *HubLink) GetCertNotAfter() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CertNotAfter
+	}
+	return nil
 }
 
 type WorkerStatus struct {
@@ -1527,14 +1547,16 @@ const file_longarm_v1_local_proto_rawDesc = "" +
 	"\x12LocalStatusRequest\"P\n" +
 	"\vLocalLimits\x12\x19\n" +
 	"\bmax_jobs\x18\x01 \x01(\x05R\amaxJobs\x12&\n" +
-	"\x0freserved_mem_gb\x18\x02 \x01(\x01R\rreservedMemGb\"\xa8\x01\n" +
+	"\x0freserved_mem_gb\x18\x02 \x01(\x01R\rreservedMemGb\"\x84\x02\n" +
 	"\aHubLink\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x1c\n" +
 	"\tconnected\x18\x02 \x01(\bR\tconnected\x12\x14\n" +
 	"\x05error\x18\x03 \x01(\tR\x05error\x120\n" +
 	"\x05since\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x12\x1d\n" +
 	"\n" +
-	"node_state\x18\x05 \x01(\tR\tnodeState\"\x8f\x05\n" +
+	"node_state\x18\x05 \x01(\tR\tnodeState\x12\x18\n" +
+	"\arefused\x18\x06 \x01(\bR\arefused\x12@\n" +
+	"\x0ecert_not_after\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\fcertNotAfter\"\x8f\x05\n" +
 	"\fWorkerStatus\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x19\n" +
@@ -1732,82 +1754,83 @@ var file_longarm_v1_local_proto_goTypes = []any{
 }
 var file_longarm_v1_local_proto_depIdxs = []int32{
 	22, // 0: longarm.v1.HubLink.since:type_name -> google.protobuf.Timestamp
-	2,  // 1: longarm.v1.WorkerStatus.hub:type_name -> longarm.v1.HubLink
-	23, // 2: longarm.v1.WorkerStatus.state:type_name -> longarm.v1.NodeState
-	24, // 3: longarm.v1.WorkerStatus.toolchain:type_name -> longarm.v1.ToolchainReport
-	22, // 4: longarm.v1.WorkerStatus.cert_not_after:type_name -> google.protobuf.Timestamp
-	25, // 5: longarm.v1.WorkerStatus.metrics:type_name -> longarm.v1.MetricsSnapshot
-	1,  // 6: longarm.v1.WorkerStatus.limits:type_name -> longarm.v1.LocalLimits
-	4,  // 7: longarm.v1.WorkerStatus.firewall:type_name -> longarm.v1.FirewallStatus
-	22, // 8: longarm.v1.LocalEvent.time:type_name -> google.protobuf.Timestamp
-	26, // 9: longarm.v1.LocalEvent.job:type_name -> longarm.v1.Job
-	2,  // 10: longarm.v1.ClientStatus.hub:type_name -> longarm.v1.HubLink
-	22, // 11: longarm.v1.ClientStatus.started_at:type_name -> google.protobuf.Timestamp
-	4,  // 12: longarm.v1.ClientStatus.firewall:type_name -> longarm.v1.FirewallStatus
-	22, // 13: longarm.v1.PoolView.time:type_name -> google.protobuf.Timestamp
-	2,  // 14: longarm.v1.PoolView.hub:type_name -> longarm.v1.HubLink
-	12, // 15: longarm.v1.PoolView.workers:type_name -> longarm.v1.PoolWorker
-	4,  // 16: longarm.v1.PoolView.firewall:type_name -> longarm.v1.FirewallStatus
-	22, // 17: longarm.v1.PoolWorker.since:type_name -> google.protobuf.Timestamp
-	25, // 18: longarm.v1.PoolWorker.metrics:type_name -> longarm.v1.MetricsSnapshot
-	27, // 19: longarm.v1.PoolWorker.history:type_name -> longarm.v1.MetricsPoint
-	28, // 20: longarm.v1.PoolWorker.link:type_name -> longarm.v1.WorkerLink
-	29, // 21: longarm.v1.PoolWorker.node:type_name -> longarm.v1.NodeInfo
-	22, // 22: longarm.v1.ForwardInfo.started_at:type_name -> google.protobuf.Timestamp
-	18, // 23: longarm.v1.ListForwardsResponse.forwards:type_name -> longarm.v1.ForwardInfo
-	0,  // 24: longarm.v1.LocalWorker.Status:input_type -> longarm.v1.LocalStatusRequest
-	5,  // 25: longarm.v1.LocalWorker.SetDrain:input_type -> longarm.v1.LocalDrainRequest
-	6,  // 26: longarm.v1.LocalWorker.ToolchainApply:input_type -> longarm.v1.ToolchainApplyRequest
-	7,  // 27: longarm.v1.LocalWorker.Events:input_type -> longarm.v1.LocalEventsRequest
-	30, // 28: longarm.v1.LocalWorker.ListJobs:input_type -> longarm.v1.ListJobsRequest
-	31, // 29: longarm.v1.LocalWorker.JobLogs:input_type -> longarm.v1.LogsRequest
-	32, // 30: longarm.v1.LocalWorker.KillJob:input_type -> longarm.v1.KillRequest
-	1,  // 31: longarm.v1.LocalWorker.SetLimits:input_type -> longarm.v1.LocalLimits
-	33, // 32: longarm.v1.LocalWorker.Leave:input_type -> longarm.v1.LeaveRequest
-	0,  // 33: longarm.v1.LocalClient.Status:input_type -> longarm.v1.LocalStatusRequest
-	17, // 34: longarm.v1.LocalClient.StartForward:input_type -> longarm.v1.StartForwardRequest
-	19, // 35: longarm.v1.LocalClient.ListForwards:input_type -> longarm.v1.ListForwardsRequest
-	21, // 36: longarm.v1.LocalClient.StopForward:input_type -> longarm.v1.StopForwardRequest
-	34, // 37: longarm.v1.LocalClient.Events:input_type -> longarm.v1.EventsRequest
-	10, // 38: longarm.v1.LocalClient.Pool:input_type -> longarm.v1.PoolRequest
-	10, // 39: longarm.v1.LocalClient.WatchPool:input_type -> longarm.v1.PoolRequest
-	13, // 40: longarm.v1.LocalClient.ListJobs:input_type -> longarm.v1.ClientJobsRequest
-	14, // 41: longarm.v1.LocalClient.JobLogs:input_type -> longarm.v1.ClientLogsRequest
-	35, // 42: longarm.v1.LocalClient.KillJob:input_type -> longarm.v1.FleetJobRequest
-	15, // 43: longarm.v1.LocalClient.GetSettings:input_type -> longarm.v1.GetSettingsRequest
-	16, // 44: longarm.v1.LocalClient.SetSettings:input_type -> longarm.v1.ClientSettings
-	36, // 45: longarm.v1.LocalClient.DrainWorker:input_type -> longarm.v1.SetDrainRequest
-	37, // 46: longarm.v1.LocalClient.RemoveWorker:input_type -> longarm.v1.NodeRequest
-	38, // 47: longarm.v1.LocalClient.Shutdown:input_type -> longarm.v1.ShutdownRequest
-	3,  // 48: longarm.v1.LocalWorker.Status:output_type -> longarm.v1.WorkerStatus
-	3,  // 49: longarm.v1.LocalWorker.SetDrain:output_type -> longarm.v1.WorkerStatus
-	24, // 50: longarm.v1.LocalWorker.ToolchainApply:output_type -> longarm.v1.ToolchainReport
-	8,  // 51: longarm.v1.LocalWorker.Events:output_type -> longarm.v1.LocalEvent
-	39, // 52: longarm.v1.LocalWorker.ListJobs:output_type -> longarm.v1.ListJobsResponse
-	40, // 53: longarm.v1.LocalWorker.JobLogs:output_type -> longarm.v1.LogChunk
-	26, // 54: longarm.v1.LocalWorker.KillJob:output_type -> longarm.v1.Job
-	3,  // 55: longarm.v1.LocalWorker.SetLimits:output_type -> longarm.v1.WorkerStatus
-	41, // 56: longarm.v1.LocalWorker.Leave:output_type -> longarm.v1.LeaveResponse
-	9,  // 57: longarm.v1.LocalClient.Status:output_type -> longarm.v1.ClientStatus
-	18, // 58: longarm.v1.LocalClient.StartForward:output_type -> longarm.v1.ForwardInfo
-	20, // 59: longarm.v1.LocalClient.ListForwards:output_type -> longarm.v1.ListForwardsResponse
-	20, // 60: longarm.v1.LocalClient.StopForward:output_type -> longarm.v1.ListForwardsResponse
-	42, // 61: longarm.v1.LocalClient.Events:output_type -> longarm.v1.FleetEvent
-	11, // 62: longarm.v1.LocalClient.Pool:output_type -> longarm.v1.PoolView
-	11, // 63: longarm.v1.LocalClient.WatchPool:output_type -> longarm.v1.PoolView
-	43, // 64: longarm.v1.LocalClient.ListJobs:output_type -> longarm.v1.FleetJobsResponse
-	40, // 65: longarm.v1.LocalClient.JobLogs:output_type -> longarm.v1.LogChunk
-	26, // 66: longarm.v1.LocalClient.KillJob:output_type -> longarm.v1.Job
-	16, // 67: longarm.v1.LocalClient.GetSettings:output_type -> longarm.v1.ClientSettings
-	16, // 68: longarm.v1.LocalClient.SetSettings:output_type -> longarm.v1.ClientSettings
-	29, // 69: longarm.v1.LocalClient.DrainWorker:output_type -> longarm.v1.NodeInfo
-	29, // 70: longarm.v1.LocalClient.RemoveWorker:output_type -> longarm.v1.NodeInfo
-	44, // 71: longarm.v1.LocalClient.Shutdown:output_type -> longarm.v1.ShutdownResponse
-	48, // [48:72] is the sub-list for method output_type
-	24, // [24:48] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	22, // 1: longarm.v1.HubLink.cert_not_after:type_name -> google.protobuf.Timestamp
+	2,  // 2: longarm.v1.WorkerStatus.hub:type_name -> longarm.v1.HubLink
+	23, // 3: longarm.v1.WorkerStatus.state:type_name -> longarm.v1.NodeState
+	24, // 4: longarm.v1.WorkerStatus.toolchain:type_name -> longarm.v1.ToolchainReport
+	22, // 5: longarm.v1.WorkerStatus.cert_not_after:type_name -> google.protobuf.Timestamp
+	25, // 6: longarm.v1.WorkerStatus.metrics:type_name -> longarm.v1.MetricsSnapshot
+	1,  // 7: longarm.v1.WorkerStatus.limits:type_name -> longarm.v1.LocalLimits
+	4,  // 8: longarm.v1.WorkerStatus.firewall:type_name -> longarm.v1.FirewallStatus
+	22, // 9: longarm.v1.LocalEvent.time:type_name -> google.protobuf.Timestamp
+	26, // 10: longarm.v1.LocalEvent.job:type_name -> longarm.v1.Job
+	2,  // 11: longarm.v1.ClientStatus.hub:type_name -> longarm.v1.HubLink
+	22, // 12: longarm.v1.ClientStatus.started_at:type_name -> google.protobuf.Timestamp
+	4,  // 13: longarm.v1.ClientStatus.firewall:type_name -> longarm.v1.FirewallStatus
+	22, // 14: longarm.v1.PoolView.time:type_name -> google.protobuf.Timestamp
+	2,  // 15: longarm.v1.PoolView.hub:type_name -> longarm.v1.HubLink
+	12, // 16: longarm.v1.PoolView.workers:type_name -> longarm.v1.PoolWorker
+	4,  // 17: longarm.v1.PoolView.firewall:type_name -> longarm.v1.FirewallStatus
+	22, // 18: longarm.v1.PoolWorker.since:type_name -> google.protobuf.Timestamp
+	25, // 19: longarm.v1.PoolWorker.metrics:type_name -> longarm.v1.MetricsSnapshot
+	27, // 20: longarm.v1.PoolWorker.history:type_name -> longarm.v1.MetricsPoint
+	28, // 21: longarm.v1.PoolWorker.link:type_name -> longarm.v1.WorkerLink
+	29, // 22: longarm.v1.PoolWorker.node:type_name -> longarm.v1.NodeInfo
+	22, // 23: longarm.v1.ForwardInfo.started_at:type_name -> google.protobuf.Timestamp
+	18, // 24: longarm.v1.ListForwardsResponse.forwards:type_name -> longarm.v1.ForwardInfo
+	0,  // 25: longarm.v1.LocalWorker.Status:input_type -> longarm.v1.LocalStatusRequest
+	5,  // 26: longarm.v1.LocalWorker.SetDrain:input_type -> longarm.v1.LocalDrainRequest
+	6,  // 27: longarm.v1.LocalWorker.ToolchainApply:input_type -> longarm.v1.ToolchainApplyRequest
+	7,  // 28: longarm.v1.LocalWorker.Events:input_type -> longarm.v1.LocalEventsRequest
+	30, // 29: longarm.v1.LocalWorker.ListJobs:input_type -> longarm.v1.ListJobsRequest
+	31, // 30: longarm.v1.LocalWorker.JobLogs:input_type -> longarm.v1.LogsRequest
+	32, // 31: longarm.v1.LocalWorker.KillJob:input_type -> longarm.v1.KillRequest
+	1,  // 32: longarm.v1.LocalWorker.SetLimits:input_type -> longarm.v1.LocalLimits
+	33, // 33: longarm.v1.LocalWorker.Leave:input_type -> longarm.v1.LeaveRequest
+	0,  // 34: longarm.v1.LocalClient.Status:input_type -> longarm.v1.LocalStatusRequest
+	17, // 35: longarm.v1.LocalClient.StartForward:input_type -> longarm.v1.StartForwardRequest
+	19, // 36: longarm.v1.LocalClient.ListForwards:input_type -> longarm.v1.ListForwardsRequest
+	21, // 37: longarm.v1.LocalClient.StopForward:input_type -> longarm.v1.StopForwardRequest
+	34, // 38: longarm.v1.LocalClient.Events:input_type -> longarm.v1.EventsRequest
+	10, // 39: longarm.v1.LocalClient.Pool:input_type -> longarm.v1.PoolRequest
+	10, // 40: longarm.v1.LocalClient.WatchPool:input_type -> longarm.v1.PoolRequest
+	13, // 41: longarm.v1.LocalClient.ListJobs:input_type -> longarm.v1.ClientJobsRequest
+	14, // 42: longarm.v1.LocalClient.JobLogs:input_type -> longarm.v1.ClientLogsRequest
+	35, // 43: longarm.v1.LocalClient.KillJob:input_type -> longarm.v1.FleetJobRequest
+	15, // 44: longarm.v1.LocalClient.GetSettings:input_type -> longarm.v1.GetSettingsRequest
+	16, // 45: longarm.v1.LocalClient.SetSettings:input_type -> longarm.v1.ClientSettings
+	36, // 46: longarm.v1.LocalClient.DrainWorker:input_type -> longarm.v1.SetDrainRequest
+	37, // 47: longarm.v1.LocalClient.RemoveWorker:input_type -> longarm.v1.NodeRequest
+	38, // 48: longarm.v1.LocalClient.Shutdown:input_type -> longarm.v1.ShutdownRequest
+	3,  // 49: longarm.v1.LocalWorker.Status:output_type -> longarm.v1.WorkerStatus
+	3,  // 50: longarm.v1.LocalWorker.SetDrain:output_type -> longarm.v1.WorkerStatus
+	24, // 51: longarm.v1.LocalWorker.ToolchainApply:output_type -> longarm.v1.ToolchainReport
+	8,  // 52: longarm.v1.LocalWorker.Events:output_type -> longarm.v1.LocalEvent
+	39, // 53: longarm.v1.LocalWorker.ListJobs:output_type -> longarm.v1.ListJobsResponse
+	40, // 54: longarm.v1.LocalWorker.JobLogs:output_type -> longarm.v1.LogChunk
+	26, // 55: longarm.v1.LocalWorker.KillJob:output_type -> longarm.v1.Job
+	3,  // 56: longarm.v1.LocalWorker.SetLimits:output_type -> longarm.v1.WorkerStatus
+	41, // 57: longarm.v1.LocalWorker.Leave:output_type -> longarm.v1.LeaveResponse
+	9,  // 58: longarm.v1.LocalClient.Status:output_type -> longarm.v1.ClientStatus
+	18, // 59: longarm.v1.LocalClient.StartForward:output_type -> longarm.v1.ForwardInfo
+	20, // 60: longarm.v1.LocalClient.ListForwards:output_type -> longarm.v1.ListForwardsResponse
+	20, // 61: longarm.v1.LocalClient.StopForward:output_type -> longarm.v1.ListForwardsResponse
+	42, // 62: longarm.v1.LocalClient.Events:output_type -> longarm.v1.FleetEvent
+	11, // 63: longarm.v1.LocalClient.Pool:output_type -> longarm.v1.PoolView
+	11, // 64: longarm.v1.LocalClient.WatchPool:output_type -> longarm.v1.PoolView
+	43, // 65: longarm.v1.LocalClient.ListJobs:output_type -> longarm.v1.FleetJobsResponse
+	40, // 66: longarm.v1.LocalClient.JobLogs:output_type -> longarm.v1.LogChunk
+	26, // 67: longarm.v1.LocalClient.KillJob:output_type -> longarm.v1.Job
+	16, // 68: longarm.v1.LocalClient.GetSettings:output_type -> longarm.v1.ClientSettings
+	16, // 69: longarm.v1.LocalClient.SetSettings:output_type -> longarm.v1.ClientSettings
+	29, // 70: longarm.v1.LocalClient.DrainWorker:output_type -> longarm.v1.NodeInfo
+	29, // 71: longarm.v1.LocalClient.RemoveWorker:output_type -> longarm.v1.NodeInfo
+	44, // 72: longarm.v1.LocalClient.Shutdown:output_type -> longarm.v1.ShutdownResponse
+	49, // [49:73] is the sub-list for method output_type
+	25, // [25:49] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_longarm_v1_local_proto_init() }

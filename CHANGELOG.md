@@ -483,6 +483,23 @@
   says it isn't signed in yet (not "not running") while the worker waits
   for its sign-in; and a stopped daemon is "not running", not "not
   running (not running)".
+- **Signing a machine in again after the hub revoked it no longer loops.**
+  "Replace and sign in" proved the old, revoked certificate to the hub,
+  which refused the whole sign-in ("replaces win11: no such enrolled
+  node"), and the next sign-in asked to replace it again. The sign-in now
+  signs in afresh when what it would replace is gone, and the tray knows
+  a certificate the hub refuses: longarmd and `longarm daemon` report it
+  (`HubLink.refused`, in their local status), and the tray then counts it
+  as not signed in ("The hub no longer accepts your worker here: sign in
+  again"), never asks to replace it, and the worker card says "refused by
+  the hub" instead of "accepting work". The hub lets the machine's old
+  admin worker go when that machine signs in again - same owner, same
+  host, its worker gone - instead of "node name win11-admin is taken".
+  Sign-ins (the automatic one, the Sign in card) enroll only what needs
+  it, so a valid device or worker is no longer offered for replacing
+  because the admin worker waits; the banner names what waits ("The admin
+  worker waits for your sign-in", not "Not signed in yet"), and the admin
+  worker's row says "waits for sign-in" instead of "running".
 - **The admin worker is reachable through the hub's relay.** The MSI's
   admin worker (`longarmd-admin`) listens on loopback only, like the
   session worker, and should also listen on the hub's relay - but its
