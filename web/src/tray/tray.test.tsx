@@ -2,7 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Account, TrayInfo } from '../api/local'
 import { Toasts } from '../components/common'
-import { AccountTab, rolesChangeText } from './AccountTab'
+import { AccountTab, adminStateText, rolesChangeText } from './AccountTab'
+import { signInNeedText } from './TrayApp'
 import { externalHref, installAppBehaviour, menuItems } from './appShell'
 import { VersionChip, versionRows } from './VersionInfo'
 
@@ -110,6 +111,41 @@ describe('AccountTab roles', () => {
       timeout: 3000,
     })
   })
+
+  it("the result banner's × forgets it in the tray; signed out, it is not shown", async () => {
+    const done = {
+      state: 'done',
+      targets: { client: true, worker: false, admin_worker: false },
+      result: { hub: 'h', user: 'alice', summary: 'Signed in as alice: client device alice-box' },
+    }
+    let state: unknown = done
+    const calls = mockFetch({
+      '/trayapi/signin/state': () => [200, state],
+      '/trayapi/signin/dismiss': () => {
+        state = { state: 'idle', targets: done.targets }
+        return [200, state]
+      },
+    })
+    render(
+      <Toasts>
+        <AccountTab info={info({})} />
+      </Toasts>,
+    )
+    await waitFor(() => expect(screen.getByTestId('signin-done')).toBeTruthy())
+    fireEvent.click(screen.getByLabelText('dismiss'))
+    await waitFor(() => expect(screen.queryByTestId('signin-done')).toBeNull())
+    expect(calls.some((c) => c.url.startsWith('/trayapi/signin/dismiss') && c.init?.method === 'POST')).toBe(true)
+    cleanup()
+    // signed out (the tray keeps no result then, an older one might): no "Signed in as"
+    state = done
+    render(
+      <Toasts>
+        <AccountTab info={info({ signed_in: false, needed: true })} />
+      </Toasts>,
+    )
+    await waitFor(() => expect(screen.getByTestId('signin-start')).toBeTruthy())
+    expect(screen.queryByTestId('signin-done')).toBeNull()
+  })
 })
 
 describe('AccountTab signed in already', () => {
@@ -146,7 +182,7 @@ describe('AccountTab signed in already', () => {
     fireEvent.click(screen.getByTestId('signin-replace'))
     await waitFor(() => expect(calls.some((c) => c.url === '/trayapi/signin/start')).toBe(true))
     const post = calls.find((c) => c.url === '/trayapi/signin/start')!
-    expect(JSON.parse(String(post.init?.body))).toEqual({ hub: '', labels: '', replace: true })
+    expect(JSON.parse(String(post.init?.body))).toEqual({ hub: '', labels: '', replace: true, needed: false })
   })
 
   it('offers signing in with an account when signed in', async () => {
@@ -232,6 +268,50 @@ describe('version chip', () => {
     expect(screen.getByTestId('version-details')).toBeTruthy()
     fireEvent.keyDown(document.body, { key: 'Escape' })
     expect(screen.queryByTestId('version-details')).toBeNull()
+  })
+})
+
+describe('what needs a sign-in', () => {
+  const none = { client: false, worker: false, admin_worker: false }
+  it('the banner names it; "Not signed in yet" only when nothing is', () => {
+    expect(signInNeedText(info({ signed_in: false, needed: true, need: { ...none, client: true } }).account)).toBe('Not signed in yet.')
+    expect(signInNeedText(info({ needed: true, need: { ...none, admin_worker: true } }).account)).toBe('The admin worker waits for your sign-in.')
+    expect(signInNeedText(info({ needed: true, need: { client: true, worker: true, admin_worker: true } }).account)).toBe(
+      'This device, the worker and the admin worker wait for your sign-in.',
+    )
+    expect(signInNeedText(info({ needed: true, worker_refused: true, need: { ...none, worker: true } }).account)).toBe(
+      'The hub no longer accepts this machine: sign in again.',
+    )
+  })
+
+  it("the admin row: waiting for its sign-in is not 'running'", () => {
+    expect(adminStateText({ enabled: true, state: 'running', signed_in: false, pending: true })).toBe('waits for sign-in')
+    expect(adminStateText({ enabled: true, state: 'running', signed_in: false, pending: false, error: 'x' })).toBe('sign-in failed')
+    expect(adminStateText({ enabled: true, state: 'running', signed_in: true, pending: false })).toBe('running')
+  })
+
+  it('a refused worker: "sign in again", only what is needed, and the start asks for only that', async () => {
+    const calls = mockFetch({ '/trayapi/signin/state': () => [200, { state: 'idle', targets: { ...none, worker: true } }] })
+    render(
+      <Toasts>
+        <AccountTab
+          info={info({
+            signed_in: false,
+            needed: true,
+            worker_refused: true,
+            targets: { client: true, worker: true, admin_worker: false },
+            need: { ...none, worker: true },
+          })}
+        />
+      </Toasts>,
+    )
+    await waitFor(() => expect(screen.getByTestId('signin-refused').textContent).toContain('no longer accepts your worker here'))
+    expect(screen.getByTestId('signin-card').textContent).toContain('sign in your worker on this machine at')
+    expect(screen.getByTestId('signin-card').textContent).not.toContain('this device')
+    fireEvent.click(screen.getByTestId('signin-start'))
+    await waitFor(() => expect(calls.some((c) => c.url.startsWith('/trayapi/signin/start'))).toBe(true))
+    const start = calls.find((c) => c.url.startsWith('/trayapi/signin/start'))
+    expect(JSON.parse(String(start?.init?.body))).toMatchObject({ needed: true, replace: false })
   })
 })
 

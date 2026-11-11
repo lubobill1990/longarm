@@ -1,5 +1,5 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { longarmApi, trayApi, type TrayInfo } from '../api/local'
+import { longarmApi, trayApi, type Account, type TrayInfo } from '../api/local'
 import type { PoolView } from '../api/types'
 import { ErrorBox, FirewallWarning, Toasts, useAction } from '../components/common'
 import { ConfirmHost } from '../components/confirm'
@@ -64,7 +64,12 @@ export function TrayApp() {
   const clientUp = !!info?.client.running
   const polling = new URLSearchParams(location.search).has('poll')
   useEffect(() => {
-    if (!clientUp) return
+    if (!clientUp) {
+      // the daemon stopped (Sign out, "Send jobs" removed): its workers are not shown any more
+      setPool(undefined)
+      setPoolErr(undefined)
+      return
+    }
     if (polling) {
       // ?poll=1: plain requests instead of a stream (headless screenshots)
       const load = () =>
@@ -91,7 +96,8 @@ export function TrayApp() {
   const tabs: [Tab, string][] = []
   if (!info || info.roles.client) tabs.push(['pool', 'Workers'], ['jobs', 'My jobs'], ['forwards', 'Forwards'])
   if (info?.roles.worker) tabs.push(['worker', 'This worker'])
-  if (!info || info.roles.client) tabs.push(['settings', 'Settings'])
+  // every machine: updates, appearance, diagnostics (the client's own cards hide without it)
+  tabs.push(['settings', 'Settings'])
   if (info?.account) tabs.push(['account', 'Account'])
   // not signed in yet: the account tab (Sign in) first
   const needSignIn = !!info?.account?.needed
@@ -167,7 +173,7 @@ export function TrayApp() {
                       </button>
                     }
                   >
-                    Not signed in yet.
+                    {signInNeedText(info?.account)}
                   </Banner>
                 )}
                 {info && info.roles.client && !info.client.running && cur !== 'worker' && cur !== 'account' && !needSignIn && <DaemonDown info={info} />}
@@ -185,7 +191,7 @@ export function TrayApp() {
               )}
               {cur === 'jobs' && clientUp && <ClientJobs openJob={openJob} onOpenedJob={() => setOpenJob(undefined)} />}
               {cur === 'forwards' && clientUp && <Forwards workers={(pool?.workers ?? []).map((w) => w.name)} />}
-              {cur === 'settings' && <Settings clientUp={clientUp} theme={theme} onTheme={setTheme} />}
+              {cur === 'settings' && <Settings client={!info || info.roles.client} clientUp={clientUp} theme={theme} onTheme={setTheme} />}
               {cur === 'worker' && info && <WorkerTab info={info} onNavigate={(t) => setTab(t as Tab)} />}
               {cur === 'account' && info && <AccountTab info={info} onChange={() => setReload((n) => n + 1)} />}
             </div>
@@ -200,6 +206,17 @@ export function TrayApp() {
  * The daemon's firewall problem: a Block rule always (it defeats every
  * direct path), a missing allow rule once legs are relayed (as longarm pool).
  */
+/** The sign-in banner: what waits for a sign-in ("Not signed in yet" only when nothing is). */
+export function signInNeedText(acct?: Account): string {
+  const n = acct?.need
+  if (!acct?.signed_in || !n) return 'Not signed in yet.'
+  if (acct.client_refused || acct.worker_refused) return 'The hub no longer accepts this machine: sign in again.'
+  const parts = [n.client && 'this device', n.worker && 'the worker', n.admin_worker && 'the admin worker'].filter(Boolean) as string[]
+  if (!parts.length) return 'Not signed in yet.'
+  const list = parts.length > 1 ? parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1] : parts[0]
+  return `${list[0].toUpperCase()}${list.slice(1)} ${parts.length > 1 ? 'wait' : 'waits'} for your sign-in.`
+}
+
 function ClientFirewall({ pool, info }: { pool?: PoolView; info?: TrayInfo }) {
   const fw = pool?.firewall
   const relayed = relayedWorkers(pool)

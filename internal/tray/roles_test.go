@@ -9,19 +9,24 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/cookiejar"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/longarmd"
 	"github.com/lubobill1990/longarm/internal/signin"
+	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
 // TestRolesAPI: the Account tab's role change - "Also run jobs on this
@@ -166,6 +171,21 @@ func TestRolesAPI(t *testing.T) {
 	if ss.Result == nil || ss.Result.Summary != "Signed in as alice: worker box (user session)" {
 		t.Fatalf("summary %+v", ss.Result)
 	}
+
+	// "Send jobs" unticked: the tabs follow the installer's record, not a
+	// client file left behind (a daemon's address)
+	if err := os.WriteFile(filepath.Join(cfg, "daemon.addr"), []byte("127.0.0.1:1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	call("POST", "/trayapi/roles", `{"worker":true}`, nil)
+	wait("done")
+	var roles struct {
+		Roles struct{ Client, Worker bool }
+	}
+	call("GET", "/trayapi/info", "", &roles)
+	if roles.Roles.Client || !roles.Roles.Worker {
+		t.Fatalf("info roles after removing the client: %+v", roles.Roles)
+	}
 }
 
 func (s *Server) SigningIn() bool { return s.signin.snapshot().State == "running" }
@@ -215,6 +235,57 @@ func TestExpiredSignIn(t *testing.T) {
 	}
 	if _, _, ok := ExpiryNotice(a, now.Add(-10*24*time.Hour)); ok {
 		t.Fatal("notice ten days early")
+	}
+}
+
+// TestRefusedSignIn: a worker certificate valid here that the hub refuses
+// (revoked: longarmd's HubLink.refused) is no sign-in - the worker needs
+// one, and the sign-in neither asks to replace it nor proves it (else
+// "replaces win11: no such enrolled node" forever); a certificate written
+// after the refusal (a sign-in since) counts again.
+func TestRefusedSignIn(t *testing.T) {
+	cfg, data := t.TempDir(), t.TempDir()
+	s, err := NewServer(Options{LongarmConfigDir: cfg, LongarmdDataDir: data, LongarmExe: "longarm", LongarmdExe: "longarmd"}, &fakeDesk{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.installedRolesFn = func() string { return "worker" }
+	s.installedWorker = func() (string, longarmd.AdminInstall) { return "session", longarmd.AdminInstall{} }
+	s.clientLink = func() *pb.HubLink { return nil }
+	writeTestCert(t, filepath.Join(data, "tls", "node.crt"), time.Now().Add(30*24*time.Hour))
+	if err := hubclient.SaveFile(data, hubclient.Config{Address: "longarm.example.com:7443", Owner: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	link := &pb.HubLink{Address: "longarm.example.com:7443", Error: "remote error: tls: bad certificate", Refused: true,
+		Since: timestamppb.New(time.Now().Add(time.Minute))}
+	s.workerLink = func() *pb.HubLink { return link }
+	a := s.account()
+	if a.SignedIn || !a.WorkerRefused || !a.Need.Worker || !a.Needed || a.User != "" {
+		t.Fatalf("refused: %+v", a)
+	}
+	var got signin.Options
+	gotc := make(chan struct{}, 1)
+	s.signIn = func(ctx context.Context, o signin.Options, ev signin.Events) (*signin.Result, error) {
+		got = o
+		gotc <- struct{}{}
+		return nil, errors.New("stop here")
+	}
+	if _, _, err := s.startSignIn("longarm.example.com", "", nil, false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-gotc:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no sign-in")
+	}
+	if !slices.Contains(got.Refused, "worker") || slices.Contains(got.Refused, "device") {
+		t.Errorf("refused kinds %q", got.Refused)
+	}
+	// a refusal from before the certificate: a sign-in since replaced it
+	link.Since = timestamppb.New(time.Now().Add(-time.Hour))
+	if a := s.account(); !a.SignedIn || a.WorkerRefused {
+		t.Fatalf("new certificate: %+v", a)
 	}
 }
 

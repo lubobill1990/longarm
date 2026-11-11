@@ -190,7 +190,7 @@ export function PoolTab({
   return (
     <div>
       <ErrorBox error={error} />
-      {empty && <EmptyPool needSignIn={!!info?.account?.needed} onNavigate={onNavigate} onAdd={() => setAdding(true)} />}
+      {empty && <EmptyPool needSignIn={!!(info?.account?.need ? info.account.need.client : info?.account?.needed)} onNavigate={onNavigate} onAdd={() => setAdding(true)} />}
       {active.length > 0 && (
         <div className="cards">
           {active.map((m) => (

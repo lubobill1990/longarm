@@ -153,6 +153,11 @@ func (a *hubAgent) setLink(connected bool, err error, nodeState string) {
 	} else if connected {
 		a.link.Error = ""
 	}
+	// the tray: a certificate the hub refuses is no sign-in
+	a.link.Refused = !connected && hubclient.CertRefused(err)
+	if a.live != nil && a.live.Leaf() != nil {
+		a.link.CertNotAfter = timestamppb.New(a.live.Leaf().NotAfter)
+	}
 	if nodeState != "" {
 		a.link.NodeState = nodeState
 	}

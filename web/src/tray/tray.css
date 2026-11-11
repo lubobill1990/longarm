@@ -670,6 +670,28 @@
     display: flex;
     gap: var(--sp-2);
   }
+  & .banner-x {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    margin: -1px -4px 0 auto;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: inherit;
+    opacity: 0.7;
+    cursor: pointer;
+    &:hover {
+      background: var(--hover);
+      opacity: 1;
+    }
+  }
+  & .banner-action + .banner-x {
+    margin-left: 0;
+  }
   & .banner-info,
   & .update-banner {
     background: var(--accent-soft);

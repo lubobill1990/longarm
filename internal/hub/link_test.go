@@ -613,7 +613,8 @@ func TestInstallScriptsLogin(t *testing.T) {
 			// elevated by default (the MSI), per-user only when asked; the tray afterwards and at logon
 			`$perUserInstall = $PerUser -or $Prefix -or $NoMsi -or -not $Hashes[$msi]`, `Invoke-Elevated 'install.ps1'`,
 			`-Verb RunAs -Wait`, `LONGARM_JOIN = $Join; LONGARM_LOGIN = $(if ($Login) { '1' })`,
-			`CurrentVersion\Run') -Name 'longarm-tray'`, "Install-Tray\nif (-not $Join -and -not $Login) {\n  Start-Tray",
+			`$run = $hive + ':\Software\Microsoft\Windows\CurrentVersion\Run'`, `if (-not (Test-Path -LiteralPath $run)) { New-Item -Path $run -Force`,
+			`New-ItemProperty -Path $run -Name 'longarm-tray'`, "Install-Tray\nif (-not $Join -and -not $Login) {\n  Start-Tray",
 			`irm ` + base + `/uninstall.ps1 | iex`}},
 		{"/uninstall.ps1", &uninstall, []string{`[switch]$KeepData = ($env:LONGARM_KEEP_DATA -eq '1')`, `Invoke-Elevated 'uninstall.ps1'`,
 			`'/x ' + $product.PSChildName`, `& $d session-mode uninstall @ddArgs`, `@('leave', '--kill-jobs', '--force')`, `$leave += '--purge'`,

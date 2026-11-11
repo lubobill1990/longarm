@@ -55,7 +55,7 @@ func Smoke(ctx context.Context, opts Options, outDir string, startDaemon func() 
 	go s.Serve()
 	defer s.Close()
 	res := &SmokeResult{URL: "http://" + s.Addr() + "/tray"}
-	res.Client, res.Worker = s.Roles()
+	res.Client, res.Worker = s.installedRoles()
 	problem := func(f string, a ...any) { res.Problems = append(res.Problems, fmt.Sprintf(f, a...)) }
 
 	if res.Client {

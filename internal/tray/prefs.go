@@ -116,7 +116,7 @@ func (s *Server) currentSettings() traySettings {
 	t, _ := telemetry.LoadSettings(s.telemetryDir())
 	out := traySettings{Prefs: LoadPrefs(s.opts.LongarmConfigDir), Version: s.opts.Version, TelemetryDisabled: t.Disabled,
 		TelemetryEnvOff: telemetry.EnvDisabled()}
-	client, worker := s.Roles()
+	client, worker := s.installedRoles()
 	if client {
 		out.ClientLogs = s.opts.LongarmConfigDir
 	}

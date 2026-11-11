@@ -52,6 +52,12 @@ message HubLink {
   string error = 3; // last connection error
   google.protobuf.Timestamp since = 4; // connected / disconnected since
   string node_state = 5;
+  // refused: the hub refused this node's certificate (revoked, removed,
+  // unknown): only signing in again brings it back (hubclient.CertRefused)
+  bool refused = 6;
+  // cert_not_after: of the certificate it uses (a refusal is of that one;
+  // a newer certificate on disk is a sign-in since)
+  google.protobuf.Timestamp cert_not_after = 7;
 }
 
 message WorkerStatus {
