@@ -2763,11 +2763,19 @@ opens a job's command, times and output right under it; kill; there is no
 "everyone" switch - `longarm jobs --all` lists your jobs from other
 computers and team-shared ones), forwards, this worker (longarmd: drain, limits, toolchain, jobs,
 leave; join with a code when not enrolled), settings (transport policy).
-Notifications: worker offline/back, memory ≥ 90 %, link relayed > 5 min, one
+Notifications: worker offline (once it stayed down 2 min - a worker that
+drops and reconnects within that says nothing) and back (only after an
+offline one), memory ≥ 90 %, link relayed > 5 min, one
 of my Claude Code / Copilot CLI sessions finished or failed (a job whose command
 is claude or copilot, typed so with `longarm run --type`, or run with their
 credentials forwarded). Plain commands (`longarm exec`, `run`) don't notify:
 agents run many and read their results themselves.
+
+The tray logs to `tray.log` in longarm's config dir (`longarm diag`
+collects it). A popup that shows nothing (its WebView2 restarted and lost
+the page) loads the page again by itself, then, if that doesn't help,
+gets a new window; started by the installer, the tray waits for the
+install to finish before it creates its window.
 
 ```sh
 longarm-tray                         # tray + popup (starts longarm daemon if needed)

@@ -2,6 +2,7 @@ package longnet
 
 import (
 	"crypto/rand"
+	mrand "math/rand/v2"
 	"net/netip"
 	"time"
 
@@ -119,10 +120,20 @@ type pendingPing struct {
 //	  │      (BackoffMin, doubling up to BackoffMax)          │ pong
 //	  │                                                       ▼
 //	  └──────── no pong for DirectTimeout ─────────────── direct (keepalive every Keepalive)
-//	            (next attempt after BackoffMin)
+//	            (next attempt after the backoff: BackoffMin
+//	             if the path held for BackoffMax)
 //
 // Hard × hard NAT (both sides' STUN say the mapping varies by destination):
 // no probing; a real attempt only every BackoffMax (see pointless).
+//
+// The backoff is what keeps a fleet from flooding the network: only the
+// scheduled attempts (and joining an attempt the peer started) probe. A new
+// connection to a peer waiting out its backoff, a peer reconnecting (the
+// backoff outlives its connections: pathManager.retired), a direct path
+// that keeps dropping (the backoff resets only once a path held), our NAT
+// changing (at most every BackoffMin) don't start one early, and every
+// scheduled delay is spread (pathManager.jitter) so that peers that lost
+// their paths together (a relay or network restart) don't retry together.
 type peerPath struct {
 	keys  []discoKey // newest last
 	cands map[netip.AddrPort]*candidate
@@ -130,6 +141,7 @@ type peerPath struct {
 	direct         bool
 	directAddr     netip.AddrPort
 	directRTT      time.Duration
+	directSince    time.Time
 	lastDirectPong time.Time
 	nextKeepalive  time.Time
 
@@ -157,10 +169,49 @@ type pathManager struct {
 	t        Timing
 	disabled bool // LONGARM_NET_DISABLE_DIRECT: never probe, always relay
 	peers    map[relay.ID]*peerPath
-	selfNAT  string // our NAT type (relay.NAT*), from STUN
+	retired  map[relay.ID]retiredPath // the backoff of peers whose connections all ended
+	selfNAT  string                   // our NAT type (relay.NAT*), from STUN
+	// jitter spreads a scheduled delay (nil: none, for tests; the node
+	// uses spread)
+	jitter func(time.Duration) time.Duration
 
 	selfPublic []netip.AddrPort // our STUN-mapped addresses
 	selfV6     bool             // we have a global IPv6 address
+}
+
+// retiredPath is the punch schedule of a peer without connections: a peer
+// that reconnects (a flapping link, a process restarting over and over)
+// resumes its backoff instead of starting over with an attempt at once.
+type retiredPath struct {
+	backoff        time.Duration
+	nextPunch      time.Time
+	lastPunchStart time.Time
+}
+
+// stale: a retired schedule is forgotten once nothing happened for two
+// BackoffMax.
+func (r retiredPath) stale(now time.Time, max time.Duration) bool {
+	last := r.lastPunchStart
+	if r.nextPunch.After(last) {
+		last = r.nextPunch
+	}
+	return now.Sub(last) > 2*max
+}
+
+// spread is the node's jitter: ±20 %.
+func spread(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	return d*8/10 + time.Duration(mrand.Int64N(int64(d*4/10)+1))
+}
+
+// after is now plus a scheduled delay, spread.
+func (pm *pathManager) after(now time.Time, d time.Duration) time.Time {
+	if pm.jitter != nil {
+		d = pm.jitter(d)
+	}
+	return now.Add(d)
 }
 
 // pointless reports hard × hard NAT: both mappings vary by destination, so
@@ -192,17 +243,29 @@ func (pm *pathManager) pointless(p *peerPath) bool {
 func (pm *pathManager) hardRetry() time.Duration { return pm.t.BackoffMax }
 
 func newPathManager(t Timing, disabled bool) *pathManager {
-	return &pathManager{t: t.withDefaults(), disabled: disabled, peers: map[relay.ID]*peerPath{}}
+	return &pathManager{t: t.withDefaults(), disabled: disabled, peers: map[relay.ID]*peerPath{}, retired: map[relay.ID]retiredPath{}}
 }
 
-func (pm *pathManager) peer(id relay.ID) *peerPath {
+func (pm *pathManager) peer(id relay.ID, now time.Time) *peerPath {
 	p := pm.peers[id]
 	if p == nil {
 		p = &peerPath{cands: map[netip.AddrPort]*candidate{}, pending: map[txid]pendingPing{}, backoff: pm.t.BackoffMin,
 			recvSeq: map[[8]byte]uint64{}}
+		if r, ok := pm.retired[id]; ok {
+			if !r.stale(now, pm.t.BackoffMax) {
+				p.backoff, p.nextPunch, p.lastPunchStart = r.backoff, r.nextPunch, r.lastPunchStart
+			}
+			delete(pm.retired, id)
+		}
 		pm.peers[id] = p
 	}
 	return p
+}
+
+// deferred: an attempt is scheduled for later (the backoff after a failed
+// one): nothing but that attempt, or the peer's, probes before.
+func (p *peerPath) deferred(now time.Time) bool {
+	return !p.nextPunch.IsZero() && now.Before(p.nextPunch)
 }
 
 // keys lists the disco keys of a peer (for verifying its messages).
@@ -214,9 +277,10 @@ func (pm *pathManager) keys(id relay.ID) []discoKey {
 }
 
 // addKey registers the disco key of a new QUIC connection with id and starts
-// punching if we're not direct yet.
+// punching if we're not direct yet - unless an attempt is scheduled for
+// later (the backoff after failed ones, also of an earlier connection).
 func (pm *pathManager) addKey(id relay.ID, k discoKey, now time.Time) []action {
-	p := pm.peer(id)
+	p := pm.peer(id, now)
 	for _, e := range p.keys {
 		if e.id == k.id {
 			return nil
@@ -228,15 +292,19 @@ func (pm *pathManager) addKey(id relay.ID, k discoKey, now time.Time) []action {
 	}
 	if pm.pointless(p) { // known from an earlier connection: just exchange candidates
 		if p.nextPunch.IsZero() {
-			p.nextPunch = now.Add(pm.hardRetry())
+			p.nextPunch = pm.after(now, pm.hardRetry())
 		}
 		return []action{{kind: actCallMeMaybe, peer: id, reply: true}}
+	}
+	if p.deferred(now) {
+		return nil
 	}
 	return pm.startPunch(id, p, now, true, true)
 }
 
 // removeKey drops a key when its connection ends; a peer without keys is
-// forgotten (packets to it go via the relay).
+// forgotten (packets to it go via the relay), its punch schedule kept
+// (retired) for when it connects again.
 func (pm *pathManager) removeKey(id relay.ID, kid [8]byte) {
 	p := pm.peers[id]
 	if p == nil {
@@ -251,6 +319,14 @@ func (pm *pathManager) removeKey(id relay.ID, kid [8]byte) {
 	delete(p.recvSeq, kid)
 	if len(p.keys) == 0 {
 		delete(pm.peers, id)
+		if !p.lastPunchStart.IsZero() {
+			r := retiredPath{backoff: p.backoff, nextPunch: p.nextPunch, lastPunchStart: p.lastPunchStart}
+			if !p.punchUntil.IsZero() { // cut short: a failed attempt, as if its window ended
+				r.nextPunch = pm.after(p.punchUntil, p.backoff)
+				r.backoff = min(2*p.backoff, pm.t.BackoffMax)
+			}
+			pm.retired[id] = r
+		}
 	}
 }
 
@@ -275,7 +351,8 @@ func (pm *pathManager) startPunch(id relay.ID, p *peerPath, now time.Time, cmm, 
 
 // setSelfNAT records our NAT type and candidates changing (STUN): peers we
 // aren't direct with get our new candidates, and an attempt unless one ran
-// recently or the pair is hard × hard.
+// recently (within BackoffMin: a NAT that keeps changing can't make us
+// punch faster than that) or the pair is hard × hard.
 func (pm *pathManager) setSelfNAT(nat string, now time.Time) []action {
 	pm.selfNAT = nat
 	if pm.disabled {
@@ -292,7 +369,7 @@ func (pm *pathManager) setSelfNAT(nat string, now time.Time) []action {
 				pm.abortPunch(p, now)
 			}
 			acts = append(acts, action{kind: actCallMeMaybe, peer: id})
-		case pm.punching(p, now) || !pm.peerMayTrigger(p, now):
+		case pm.punching(p, now) || (!p.lastPunchStart.IsZero() && now.Sub(p.lastPunchStart) < pm.t.BackoffMin):
 			acts = append(acts, action{kind: actCallMeMaybe, peer: id})
 		default:
 			acts = append(acts, pm.startPunch(id, p, now, true, true)...)
@@ -306,7 +383,7 @@ func (pm *pathManager) setSelfNAT(nat string, now time.Time) []action {
 func (pm *pathManager) abortPunch(p *peerPath, now time.Time) {
 	p.punchUntil = time.Time{}
 	if p.nextPunch.IsZero() || p.nextPunch.Before(now.Add(pm.hardRetry())) {
-		p.nextPunch = now.Add(pm.hardRetry())
+		p.nextPunch = pm.after(now, pm.hardRetry())
 	}
 }
 
@@ -319,7 +396,7 @@ func (pm *pathManager) onCallMeMaybe(id relay.ID, cands []netip.AddrPort, reply 
 		}
 		return nil
 	}
-	p := pm.peer(id)
+	p := pm.peer(id, now)
 	p.touched = now
 	if relay.ValidNAT(nat) {
 		p.peerNAT = nat
@@ -457,10 +534,15 @@ func (pm *pathManager) onPong(id relay.ID, tx txid, now time.Time) []action {
 	c.lastPong, c.rtt = now, rtt
 	switch {
 	case !p.direct, pp.addr != p.directAddr && rtt < p.directRTT*7/10:
+		if !p.direct {
+			p.directSince = now
+		}
 		p.direct, p.directAddr, p.directRTT = true, pp.addr, rtt
 		p.lastDirectPong = now
 		p.nextKeepalive = now.Add(pm.t.Keepalive)
-		p.punchUntil, p.nextPunch, p.backoff = time.Time{}, time.Time{}, pm.t.BackoffMin
+		// the backoff stays until the path held (see tick): a path that
+		// works for a moment and drops must not make us punch more often
+		p.punchUntil, p.nextPunch = time.Time{}, time.Time{}
 		return []action{{kind: actPathChange, peer: id, direct: true, addr: pp.addr, rtt: rtt}}
 	case pp.addr == p.directAddr:
 		p.lastDirectPong = now
@@ -504,6 +586,11 @@ func (pm *pathManager) tick(now time.Time) []action {
 	}
 	var acts []action
 	expire := max(pm.t.PunchWindow, pm.t.DirectTimeout)
+	for id, r := range pm.retired {
+		if r.stale(now, pm.t.BackoffMax) {
+			delete(pm.retired, id)
+		}
+	}
 	for id, p := range pm.peers {
 		for t, pp := range p.pending {
 			if now.Sub(pp.sent) > expire {
@@ -526,10 +613,16 @@ func (pm *pathManager) tick(now time.Time) []action {
 			if now.Sub(p.lastDirectPong) > pm.t.DirectTimeout {
 				// Direct path lost: back to the relay; retry later.
 				// Losing the path counts as a failed attempt: retry after
-				// BackoffMin, then 2×, 4× … up to BackoffMax.
+				// BackoffMin when it held for BackoffMax (a fresh
+				// failure), otherwise after the backoff so far (a path
+				// that keeps dropping), then 2×, 4× … up to BackoffMax.
+				delay := p.backoff
+				if now.Sub(p.directSince) >= pm.t.BackoffMax {
+					delay = pm.t.BackoffMin
+				}
 				p.direct = false
-				p.nextPunch = now.Add(pm.t.BackoffMin)
-				p.backoff = min(2*pm.t.BackoffMin, pm.t.BackoffMax)
+				p.nextPunch = pm.after(now, delay)
+				p.backoff = min(2*delay, pm.t.BackoffMax)
 				p.punchUntil = time.Time{}
 				acts = append(acts, action{kind: actPathChange, peer: id, direct: false, addr: p.directAddr})
 				continue
@@ -548,7 +641,7 @@ func (pm *pathManager) tick(now time.Time) []action {
 			if pm.pointless(p) {
 				delay = max(delay, pm.hardRetry())
 			}
-			p.nextPunch = now.Add(delay)
+			p.nextPunch = pm.after(now, delay)
 			p.backoff = min(2*p.backoff, pm.t.BackoffMax)
 			st := p.stats
 			st.selfNAT, st.peerNAT = pm.selfNAT, p.peerNAT

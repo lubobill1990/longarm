@@ -24,6 +24,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -35,6 +36,7 @@ import (
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/client"
+	"github.com/lubobill1990/longarm/internal/logfile"
 	"github.com/lubobill1990/longarm/internal/longarmd"
 	"github.com/lubobill1990/longarm/internal/stopsignal"
 	"github.com/lubobill1990/longarm/internal/telemetry"
@@ -68,7 +70,7 @@ func main() {
 	}
 	o.Version = version.Version
 	o.LongarmExe, o.LongarmdExe = sibling("longarm"), sibling("longarmd")
-	o.Log = slog.New(telemetry.NewHandler(slog.NewTextHandler(os.Stderr, nil)))
+	o.Log = slog.New(telemetry.NewHandler(slog.NewTextHandler(trayLog(o.LongarmConfigDir), nil)))
 	// Telemetry goes to longarm's queue; longarm daemon sends it.
 	tcfg, _ := client.TelemetryConfig(o.LongarmConfigDir, "longarm-tray")
 	tel := telemetry.Start(tcfg)
@@ -116,6 +118,11 @@ func main() {
 		}
 	default:
 		defer watchEndSession(stopEv)()
+		waitForInstaller(ctx, o.Log, 3*time.Minute)
+		if ctx.Err() != nil {
+			return
+		}
+		o.Log.Info("longarm-tray starting", "version", o.Version, "signin", o.ShowSignIn)
 		go tray.RefreshSkills(o.Log, o.Version) // the skill copies Longarm installed follow its updates
 		if err := runGUI(ctx, o, startDaemon); err != nil {
 			fmt.Fprintln(os.Stderr, "longarm-tray:", err)
@@ -145,6 +152,21 @@ func runWorkerHost(dataDir string) int {
 		return 1
 	}
 	return 0
+}
+
+// trayLog is where the tray logs: tray.log in longarm's config dir (1 MiB,
+// rotated; `longarm diag` collects it) and stderr - which a GUI app on
+// Windows doesn't have, so without the file nothing it logged (WebView2
+// failures, a popup that had to be healed) was ever seen.
+func trayLog(dir string) io.Writer {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return os.Stderr
+	}
+	lw, err := logfile.OpenWriter(filepath.Join(dir, "tray.log"), 1<<20)
+	if err != nil {
+		return os.Stderr
+	}
+	return io.MultiWriter(lw, os.Stderr) // the file first: stderr may be invalid
 }
 
 // sibling finds longarm / longarmd next to longarm-tray, else on PATH.

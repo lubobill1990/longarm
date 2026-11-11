@@ -35,8 +35,9 @@ func TestRulesMine(t *testing.T) {
 	for _, w := range v.Workers {
 		w.State = "offline"
 	}
+	r.Pool(v, now)
 	var titles []string
-	for _, n := range r.Pool(v, now) {
+	for _, n := range r.Pool(v, now.Add(OfflineAlertAfter)) {
 		titles = append(titles, n.Title)
 	}
 	if !slices.Equal(titles, []string{"box offline"}) {

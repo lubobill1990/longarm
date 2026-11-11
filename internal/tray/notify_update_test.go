@@ -60,7 +60,9 @@ func TestRulesUpdate(t *testing.T) {
 	w.Node.Update = nil
 	titles()
 	w.State, w.Error = "offline", "connection reset"
-	if n := titles(); len(n) != 1 || n[0] != "box offline: connection reset" {
+	titles()
+	now = now.Add(OfflineAlertAfter)
+	if n := titles(); len(n) != 1 || n[0] != "box offline: connection reset (down 2m0s)" {
 		t.Fatalf("blip: %v", n)
 	}
 }

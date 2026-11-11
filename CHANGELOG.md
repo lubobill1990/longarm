@@ -139,6 +139,29 @@
 
 ### Changed
 
+- **The tray's popup no longer stays blank (all white).** Started by the
+  installer, the tray now waits for Windows Installer to finish before it
+  creates its window (a WebView2 created mid-install came up empty for
+  good). A popup whose page is gone - WebView2 restarted its processes and
+  came back blank, or on a spent one-time link without its session cookie -
+  is noticed (the page makes no requests for a minute) and loads the page
+  again with a fresh link, then gets a new window; also checked each time
+  the popup opens. The tray now logs to `tray.log` in longarm's config dir
+  (with Wails' own WebView2 messages), which `longarm diag` already
+  collected but nothing wrote.
+- **Quieter offline notifications**: a worker notifies "offline" only once
+  it stayed down 2 minutes; one that drops and reconnects within that (a
+  network blip, a relay or hub restart) says nothing, and "online" follows
+  only an "offline" that was shown (with how long it was down).
+- **Hole punching can't flood the network**: only the scheduled attempts
+  (30 s backing off to 5 min) and joining an attempt the peer started
+  probe. A new or re-established connection to a peer waiting out its
+  backoff no longer starts one at once (the backoff outlives the peer's
+  connections, and an attempt cut short counts as failed), our NAT
+  changing starts one at most every 30 s, a direct path that keeps
+  dropping keeps backing off (the backoff resets only after a path held for
+  5 min), and every delay is spread ±20 % so peers that lost their paths
+  together don't retry in lockstep.
 - **Updates and uninstalls no longer hang at "Gathering required
   information".** With Restart Manager off, Windows Installer's own
   files-in-use check (`InstallValidate`) took about 40 s for every Longarm
