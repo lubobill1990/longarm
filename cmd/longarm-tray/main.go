@@ -59,9 +59,21 @@ func main() {
 	flag.BoolVar(&showVersion, "version", false, "print the version")
 	flag.BoolVar(&o.ShowSignIn, "signin", false, "open the popup at once when this machine still needs a sign-in")
 	flag.BoolVar(&workerHost, "worker-host", false, "no UI: host the user-session worker (run longarmd, restart it when it exits)")
+	var progressTo, theme string
+	flag.StringVar(&progressTo, "update-progress", "", "only a window following this machine's update to `VERSION` (the tray starts it from a copy)")
+	flag.StringVar(&theme, "theme", "", "--update-progress: light or dark")
 	flag.Parse()
 	if showVersion {
 		fmt.Println("longarm-tray", version.Version)
+		return
+	}
+	if progressTo != "" {
+		// no stop event, no waiting for the installer: it runs during the install
+		log := slog.New(slog.NewTextHandler(logWriter(o.LongarmConfigDir, "update-progress.log"), nil))
+		if err := runUpdateProgress(progressTo, theme, filepath.Join(progressDir(), "webview"), log); err != nil {
+			log.Error("update progress window", "err", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if workerHost {
@@ -158,11 +170,14 @@ func runWorkerHost(dataDir string) int {
 // rotated; `longarm diag` collects it) and stderr - which a GUI app on
 // Windows doesn't have, so without the file nothing it logged (WebView2
 // failures, a popup that had to be healed) was ever seen.
-func trayLog(dir string) io.Writer {
+func trayLog(dir string) io.Writer { return logWriter(dir, "tray.log") }
+
+// logWriter is dir's log file name (1 MiB, rotated) and stderr.
+func logWriter(dir, name string) io.Writer {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return os.Stderr
 	}
-	lw, err := logfile.OpenWriter(filepath.Join(dir, "tray.log"), 1<<20)
+	lw, err := logfile.OpenWriter(filepath.Join(dir, name), 1<<20)
 	if err != nil {
 		return os.Stderr
 	}

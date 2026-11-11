@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lubobill1990/longarm/internal/localapi"
@@ -92,8 +93,12 @@ type Server struct {
 	OpenSessions func(hash string)
 	// ShowPopup (the shell): show the popup at path (/tray?tab=..; uiopen.go);
 	// nil: open the page in the default browser.
-	ShowPopup  func(path string)
-	upd        trayUpdate      // the update banner (update.go)
+	ShowPopup func(path string)
+	// UpdateProgress (the shell, Windows): start the progress window for
+	// an install of version on this machine (updateprogress.go); nil: none.
+	UpdateProgress   func(version string)
+	progressWatching atomic.Bool // a watchForInstall runs
+	upd              trayUpdate  // the update banner (update.go)
 	addMachine addMachineCache // the "Add a machine" page's hub facts (addmachine.go)
 	// the firewall card's Allow (firewall.go); checkFirewall: a hook for tests
 	fwBusy        sync.Mutex
@@ -243,7 +248,17 @@ func (s *Server) SetHeadless(v bool) {
 // Handler is the full handler (with the access checks).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/local/longarm/", s.proxy("/local/longarm", func() string { return filepath.Join(s.opts.LongarmConfigDir, "daemon.addr") }))
+	daemon := s.proxy("/local/longarm", func() string { return filepath.Join(s.opts.LongarmConfigDir, "daemon.addr") })
+	mux.Handle("/local/longarm/", daemon)
+	// a machine card's Update: when it is this machine, its progress window
+	// (updateprogress.go)
+	mux.HandleFunc("POST /local/longarm/v1/workers/{name}/update", func(w http.ResponseWriter, r *http.Request) {
+		sw := &statusWriter{ResponseWriter: w}
+		daemon.ServeHTTP(sw, r)
+		if sw.code < 300 {
+			s.watchForInstall("")
+		}
+	})
 	mux.Handle("/local/longarmd/", s.proxy("/local/longarmd", func() string { return filepath.Join(s.opts.LongarmdDataDir, "longarmd.local") }))
 	mux.HandleFunc("GET /trayapi/info", s.info)
 	mux.HandleFunc("GET /trayapi/licenses", func(w http.ResponseWriter, _ *http.Request) {

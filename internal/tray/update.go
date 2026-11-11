@@ -252,6 +252,9 @@ func (s *Server) updateInstall(w http.ResponseWriter, r *http.Request) {
 	rec, version := u.msi, u.latest
 	u.mu.Unlock()
 	base := strings.TrimRight(s.hubURL(), "/")
+	// the service's install stops this tray: a window of its own shows how
+	// it goes (updateprogress.go); msiexec's /qb below has its own
+	s.watchForInstall(version)
 	go func() {
 		// the Longarm Update service when the machine has it (no UAC
 		// prompt; updatesvc.go), else download, verify and run msiexec here

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -438,6 +439,16 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 		})
 		dlg.Show()
 	})
+	if runtime.GOOS == "windows" {
+		// an update of this machine that the tray started: its own window,
+		// which outlives this tray (internal/tray/updateprogress.go)
+		srv.UpdateProgress = func(version string) {
+			if err := launchUpdateProgress(o, version); err != nil {
+				o.Log.Warn("update progress window", "err", err)
+				shell.Notify("Updating Longarm to "+version, "Longarm stops and starts again in a minute or two; the tray comes back by itself.")
+			}
+		}
+	}
 	ctrl := tray.NewController(o, shell, startDaemon)
 	go ctrl.Run(cctx)
 	go srv.WatchSignIn(cctx, shell.Notify)

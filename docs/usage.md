@@ -3396,6 +3396,14 @@ The tray's own update banner installs through the service when the machine
 has it (no UAC prompt; the Settings tab shows the service's status) and
 otherwise downloads and checks the MSI itself and runs `msiexec` with a UAC
 prompt.
+An install through the service runs silently and stops the tray with the
+rest of Longarm, so an update of this machine started from the tray - the
+banner, or the machine's own card's **Update** - opens an **Updating
+Longarm** window: the download, the verification, the install while Longarm
+restarts, and how it ended. It runs from a copy of the tray in
+`%LOCALAPPDATA%\Longarm\update-progress` (the installer leaves it running),
+closes itself a few seconds after the new version is in, and logs to
+`update-progress.log` next to `tray.log`. Automatic updates open no window.
 The service's downloads, state and log are in
 `C:\ProgramData\Longarm\updates` (SYSTEM only; the installer's verbose log
 is `install-<version>.log` there, the service's `longarm-update.log`); an

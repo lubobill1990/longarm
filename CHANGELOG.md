@@ -4,6 +4,12 @@
 
 ### Added
 
+- **An update window when the tray updates this machine** (Windows): an
+  update of this machine started from the tray (its banner, or the
+  machine's own card) used to show nothing while the installer stopped and
+  restarted Longarm. Now an **Updating Longarm** window follows it -
+  download, verification, install and restart - says how it ended, and
+  closes itself once the new version runs. Automatic updates open none.
 - **Program-facing execution contracts**: `info <worker> --json` returns
   pure worker-info JSON and supported features; `kill --if-created-at`
   refuses to cancel a replacement generation. Updated workers also bind
@@ -466,6 +472,8 @@
 
 ### Fixed
 
+- The tray's machine cards no longer cut off the machine's name at the top
+  and bottom (descenders such as "p" and "q", the tops of "b" and "l").
 - **The admin worker is reachable through the hub's relay.** The MSI's
   admin worker (`longarmd-admin`) listens on loopback only, like the
   session worker, and should also listen on the hub's relay - but its

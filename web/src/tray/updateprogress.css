@@ -1,0 +1,141 @@
+/* the update progress window (UpdateProgress.tsx): ~440x220, not resizable */
+:root[data-app='tray'] {
+  & .upw {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    height: 100vh;
+    padding: var(--sp-4) var(--sp-4) var(--sp-3);
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+  & .upw header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--sp-2);
+  }
+  & .upw h1 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: var(--fs-xl);
+    font-weight: var(--fw-semibold);
+    color: var(--text);
+  }
+  & .upw-ver {
+    color: var(--text-3);
+    font-size: var(--fs-sm);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  & .upw-steps {
+    display: flex;
+    gap: var(--sp-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--fs-sm);
+    color: var(--text-3);
+    & li {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    & li[data-state='now'] {
+      color: var(--text);
+      font-weight: var(--fw-medium);
+    }
+    & li[data-state='done'] {
+      color: var(--text-2);
+    }
+    & li[data-state='failed'] {
+      color: var(--red-ink);
+    }
+  }
+  & .upw-mark {
+    display: inline-grid;
+    place-items: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1.5px var(--gray-dot);
+    font-size: 9px;
+    font-weight: var(--fw-bold);
+    line-height: 1;
+  }
+  & li[data-state='now'] .upw-mark {
+    box-shadow: inset 0 0 0 4px var(--amber);
+  }
+  & li[data-state='done'] .upw-mark {
+    box-shadow: none;
+    background: var(--green);
+    color: #fff;
+  }
+  & li[data-state='failed'] .upw-mark {
+    box-shadow: none;
+    background: var(--red);
+    color: #fff;
+  }
+  & .upw-bar {
+    position: relative;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--hover);
+    overflow: hidden;
+    & span {
+      display: block;
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--amber);
+      transition: width var(--dur) var(--ease);
+    }
+    &.busy span {
+      position: absolute;
+      width: 30%;
+      animation: upw-busy 1.4s var(--ease) infinite;
+    }
+  }
+  & .upw[data-phase='done'] .upw-bar span {
+    background: var(--green);
+  }
+  & .upw-detail {
+    flex: 1;
+    margin: 0;
+    font-size: var(--fs-md);
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+    &.bad {
+      color: var(--red-ink);
+      overflow-wrap: anywhere;
+    }
+  }
+  & .upw footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+  }
+  & .upw-note {
+    font-size: var(--fs-sm);
+    color: var(--text-3);
+  }
+}
+
+@keyframes upw-busy {
+  from {
+    left: -30%;
+  }
+  to {
+    left: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-app='tray'] .upw-bar.busy span {
+    animation: none;
+    left: 0;
+    width: 100%;
+    opacity: 0.5;
+  }
+}
