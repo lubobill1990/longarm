@@ -218,6 +218,7 @@ func serveOnly(ctx context.Context, o tray.Options, addr string, open bool, star
 		}
 	}
 	ctrl := tray.NewController(o, logShell{o.Log}, startDaemon)
+	ctrl.Want = srv.WantDaemon
 	go ctrl.Run(ctx)
 	go func() {
 		if err := srv.ServeControl(ctx); err != nil {

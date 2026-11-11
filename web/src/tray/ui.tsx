@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { IconAlert, IconCheck, IconInfo } from '../components/icons'
+import { IconAlert, IconCheck, IconClose, IconInfo } from '../components/icons'
 
 /**
  * The tray's small building blocks (tray.css): banners, empty states,
@@ -15,8 +15,20 @@ const TONE_ICON: Record<Tone, (p: { size?: number }) => ReactNode> = {
   ok: IconCheck,
 }
 
-/** A calm, tinted message across the content: an icon, the text, an action on the right. */
-export function Banner({ tone = 'info', children, action, testId }: { tone?: Tone; children: ReactNode; action?: ReactNode; testId?: string }) {
+/** A calm, tinted message across the content: an icon, the text, an action on the right; onClose: an × that dismisses it. */
+export function Banner({
+  tone = 'info',
+  children,
+  action,
+  testId,
+  onClose,
+}: {
+  tone?: Tone
+  children: ReactNode
+  action?: ReactNode
+  testId?: string
+  onClose?: () => void
+}) {
   const Icon = TONE_ICON[tone]
   return (
     <div className={`banner banner-${tone}`} data-testid={testId} role={tone === 'error' ? 'alert' : undefined}>
@@ -25,6 +37,11 @@ export function Banner({ tone = 'info', children, action, testId }: { tone?: Ton
       </span>
       <div className="banner-text">{children}</div>
       {action && <div className="banner-action">{action}</div>}
+      {onClose && (
+        <button type="button" className="banner-x" aria-label="dismiss" title="dismiss" onClick={onClose}>
+          <IconClose size={14} />
+        </button>
+      )}
     </div>
   )
 }

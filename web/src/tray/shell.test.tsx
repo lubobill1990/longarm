@@ -57,6 +57,20 @@ describe('theme', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Dark' }))
     await waitFor(() => expect(onTheme).toHaveBeenCalledWith('dark'))
   })
+
+  it("Settings of a worker-only machine: no client cards (notifications, agent skill, transport)", async () => {
+    mockFetch({ '/trayapi/settings': () => [200, { version: '1', telemetry_disabled: false }], '/local/longarm/v1/': () => [200, {}] })
+    render(
+      <Toasts>
+        <Settings client={false} clientUp theme="system" onTheme={async () => {}} />
+      </Toasts>,
+    )
+    expect(screen.getByTestId('appearance')).toBeTruthy()
+    expect(screen.getByTestId('this-client')).toBeTruthy()
+    expect(screen.queryByTestId('notifications')).toBeNull()
+    expect(screen.queryByTestId('agent-skill')).toBeNull()
+    expect(screen.queryByTestId('transport')).toBeNull()
+  })
 })
 
 describe('ui', () => {
@@ -77,6 +91,17 @@ describe('ui', () => {
     expect(screen.getByText('Fix')).toBeTruthy()
     expect(screen.getByTestId('e').textContent).toBe('No forwardsnone yet')
     expect(screen.getByText('loading jobs…')).toBeTruthy()
+  })
+
+  it('a banner with onClose has a dismiss ×', () => {
+    const onClose = vi.fn()
+    render(
+      <Banner tone="ok" onClose={onClose}>
+        done
+      </Banner>,
+    )
+    fireEvent.click(screen.getByLabelText('dismiss'))
+    expect(onClose).toHaveBeenCalled()
   })
 })
 
@@ -113,6 +138,16 @@ describe('TrayApp', () => {
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' }) // wraps
     expect(screen.getByRole('tab', { name: 'Workers' }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe('tab-pool')
+  })
+
+  it('a worker-only machine: This worker and Settings (no client tabs)', async () => {
+    mockFetch({
+      '/trayapi/info': () => [200, info({ roles: { client: false, worker: true } })],
+      '/trayapi/settings': () => [200, { version: '1', telemetry_disabled: false }],
+    })
+    render(<TrayApp />)
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'This worker' })).toBeTruthy())
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['This worker', 'Settings'])
   })
 
   it("applies the theme saved in the tray's settings", async () => {

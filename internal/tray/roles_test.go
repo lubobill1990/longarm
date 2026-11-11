@@ -166,6 +166,21 @@ func TestRolesAPI(t *testing.T) {
 	if ss.Result == nil || ss.Result.Summary != "Signed in as alice: worker box (user session)" {
 		t.Fatalf("summary %+v", ss.Result)
 	}
+
+	// "Send jobs" unticked: the tabs follow the installer's record, not a
+	// client file left behind (a daemon's address)
+	if err := os.WriteFile(filepath.Join(cfg, "daemon.addr"), []byte("127.0.0.1:1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	call("POST", "/trayapi/roles", `{"worker":true}`, nil)
+	wait("done")
+	var roles struct {
+		Roles struct{ Client, Worker bool }
+	}
+	call("GET", "/trayapi/info", "", &roles)
+	if roles.Roles.Client || !roles.Roles.Worker {
+		t.Fatalf("info roles after removing the client: %+v", roles.Roles)
+	}
 }
 
 func (s *Server) SigningIn() bool { return s.signin.snapshot().State == "running" }

@@ -64,7 +64,12 @@ export function TrayApp() {
   const clientUp = !!info?.client.running
   const polling = new URLSearchParams(location.search).has('poll')
   useEffect(() => {
-    if (!clientUp) return
+    if (!clientUp) {
+      // the daemon stopped (Sign out, "Send jobs" removed): its workers are not shown any more
+      setPool(undefined)
+      setPoolErr(undefined)
+      return
+    }
     if (polling) {
       // ?poll=1: plain requests instead of a stream (headless screenshots)
       const load = () =>
@@ -91,7 +96,8 @@ export function TrayApp() {
   const tabs: [Tab, string][] = []
   if (!info || info.roles.client) tabs.push(['pool', 'Workers'], ['jobs', 'My jobs'], ['forwards', 'Forwards'])
   if (info?.roles.worker) tabs.push(['worker', 'This worker'])
-  if (!info || info.roles.client) tabs.push(['settings', 'Settings'])
+  // every machine: updates, appearance, diagnostics (the client's own cards hide without it)
+  tabs.push(['settings', 'Settings'])
   if (info?.account) tabs.push(['account', 'Account'])
   // not signed in yet: the account tab (Sign in) first
   const needSignIn = !!info?.account?.needed
@@ -185,7 +191,7 @@ export function TrayApp() {
               )}
               {cur === 'jobs' && clientUp && <ClientJobs openJob={openJob} onOpenedJob={() => setOpenJob(undefined)} />}
               {cur === 'forwards' && clientUp && <Forwards workers={(pool?.workers ?? []).map((w) => w.name)} />}
-              {cur === 'settings' && <Settings clientUp={clientUp} theme={theme} onTheme={setTheme} />}
+              {cur === 'settings' && <Settings client={!info || info.roles.client} clientUp={clientUp} theme={theme} onTheme={setTheme} />}
               {cur === 'worker' && info && <WorkerTab info={info} onNavigate={(t) => setTab(t as Tab)} />}
               {cur === 'account' && info && <AccountTab info={info} onChange={() => setReload((n) => n + 1)} />}
             </div>

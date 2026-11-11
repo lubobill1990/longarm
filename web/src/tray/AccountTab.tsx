@@ -50,6 +50,8 @@ export function AccountTab({ info, onChange }: { info: TrayInfo; onChange?: () =
       clearInterval(t)
     }
   }, [running]) // eslint-disable-line react-hooks/exhaustive-deps
+  // the result banners' ×: forgotten by the tray too (else the next poll brings it back)
+  const dismiss = () => trayApi.signinDismiss().then(setSt, (e) => setErr(String(e.message ?? e)))
   if (!acct) return <div className="muted">This longarm-tray has no sign-in (update it).</div>
   return (
     <div data-testid="account-tab">
@@ -58,13 +60,13 @@ export function AccountTab({ info, onChange }: { info: TrayInfo; onChange?: () =
         <SignInProgress st={st} />
       ) : (
         <>
-          {st?.state === 'done' && st.result && (
-            <Banner tone="ok">
+          {st?.state === 'done' && st.result && acct.signed_in && (
+            <Banner tone="ok" onClose={dismiss}>
               <span data-testid="signin-done">{st.result.summary}</span>
             </Banner>
           )}
           {(st?.state === 'error' || st?.state === 'canceled') && (
-            <Banner tone={st.state === 'canceled' ? 'info' : 'error'}>
+            <Banner tone={st.state === 'canceled' ? 'info' : 'error'} onClose={dismiss}>
               <span data-testid="signin-error">{st.state === 'canceled' ? 'Sign-in canceled.' : `Sign-in failed: ${st.error ?? ''}`}</span>
             </Banner>
           )}
@@ -349,12 +351,14 @@ function AccountCard({
   // this computer as a device of the hub ("user/alice-laptop": its role and name)
   const [device, setDevice] = useState<string>()
   useEffect(() => {
+    // another account (Switch account) or a new certificate: not the old device's name
+    setDevice(undefined)
     if (!acct.signed_in || !info.client.running) return
     longarmApi.status().then(
       (s) => setDevice(s.identity),
       () => {},
     )
-  }, [acct.signed_in, acct.hub, info.client.running])
+  }, [acct.signed_in, acct.hub, acct.user, acct.expires, info.client.running])
   useEffect(() => {
     trayApi.update().then(
       (u) => setLinks({ feedback: u.feedback_url, repo: u.repo_url }),

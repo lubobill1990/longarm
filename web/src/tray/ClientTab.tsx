@@ -346,12 +346,17 @@ export function transportLabel(t?: string): string {
   return { race: 'automatic', tailscale: 'Tailscale first', longnet: "Longarm's network first", tcp: 'plain TCP first' }[t ?? ''] ?? t ?? ''
 }
 
-/** Settings: appearance, transport policy (longarm transport), notifications, updates, the agent skill, diagnostics (logs, telemetry). */
+/**
+ * Settings: appearance, transport policy (longarm transport), notifications, updates, the agent skill, diagnostics (logs, telemetry).
+ * client: this computer sends jobs (without: no notifications, agent skill or transport - a worker-only machine).
+ */
 export function Settings({
+  client = true,
   clientUp = true,
   theme,
   onTheme,
 }: {
+  client?: boolean
   clientUp?: boolean
   theme?: ThemePref
   onTheme?: (t: ThemePref) => Promise<void>
@@ -360,10 +365,10 @@ export function Settings({
     // what people change most first; the technical ones (transport, diagnostics) last
     <div className="settings">
       <AutoUpdate />
-      <TraySettingsView part="notifications" />
-      <AgentSkill />
+      {client && <TraySettingsView part="notifications" />}
+      {client && <AgentSkill />}
       {theme && onTheme && <Appearance theme={theme} onTheme={onTheme} />}
-      {clientUp && <TransportPolicy />}
+      {client && clientUp && <TransportPolicy />}
       <TraySettingsView part="diagnostics" />
       <Licenses />
     </div>

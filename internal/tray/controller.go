@@ -31,6 +31,9 @@ type Controller struct {
 	// replaced once (longarm daemon start replaces an older daemon)
 	version string
 	tried   map[int32]bool // daemon pids it tried to replace
+	// Want (nil: always): whether the daemon should run now - not after a
+	// sign-out or with the client role removed (Server.WantDaemon)
+	Want func() bool
 
 	mu   sync.Mutex
 	last *pb.PoolView
@@ -62,10 +65,16 @@ func (c *Controller) Run(ctx context.Context) {
 			return
 		}
 		c.mu.Lock()
-		c.err = err
+		c.err, c.last = err, nil // the pool it showed is gone with the daemon
 		c.mu.Unlock()
-		c.shell.SetTooltip("Longarm: longarm daemon unreachable")
-		if c.start != nil && time.Since(lastStart) > 30*time.Second {
+		want := c.Want == nil || c.Want()
+		if want {
+			c.shell.SetTooltip("Longarm: longarm daemon unreachable")
+		} else {
+			c.shell.SetIcon(IconPNG(nil))
+			c.shell.SetTooltip("Longarm")
+		}
+		if want && c.start != nil && time.Since(lastStart) > 30*time.Second {
 			lastStart = time.Now()
 			if err := c.start(); err != nil {
 				c.opts.Log.Warn("longarm daemon start", "err", err)

@@ -110,6 +110,41 @@ describe('AccountTab roles', () => {
       timeout: 3000,
     })
   })
+
+  it("the result banner's × forgets it in the tray; signed out, it is not shown", async () => {
+    const done = {
+      state: 'done',
+      targets: { client: true, worker: false, admin_worker: false },
+      result: { hub: 'h', user: 'alice', summary: 'Signed in as alice: client device alice-box' },
+    }
+    let state: unknown = done
+    const calls = mockFetch({
+      '/trayapi/signin/state': () => [200, state],
+      '/trayapi/signin/dismiss': () => {
+        state = { state: 'idle', targets: done.targets }
+        return [200, state]
+      },
+    })
+    render(
+      <Toasts>
+        <AccountTab info={info({})} />
+      </Toasts>,
+    )
+    await waitFor(() => expect(screen.getByTestId('signin-done')).toBeTruthy())
+    fireEvent.click(screen.getByLabelText('dismiss'))
+    await waitFor(() => expect(screen.queryByTestId('signin-done')).toBeNull())
+    expect(calls.some((c) => c.url.startsWith('/trayapi/signin/dismiss') && c.init?.method === 'POST')).toBe(true)
+    cleanup()
+    // signed out (the tray keeps no result then, an older one might): no "Signed in as"
+    state = done
+    render(
+      <Toasts>
+        <AccountTab info={info({ signed_in: false, needed: true })} />
+      </Toasts>,
+    )
+    await waitFor(() => expect(screen.getByTestId('signin-start')).toBeTruthy())
+    expect(screen.queryByTestId('signin-done')).toBeNull()
+  })
 })
 
 describe('AccountTab signed in already', () => {

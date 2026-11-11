@@ -90,16 +90,19 @@ export function VersionChip({ info, pool }: { info?: TrayInfo; pool?: PoolView }
         .update()
         .then((u) => alive && setUpd(u))
         .catch(() => {})
+      // a stopped daemon's version is not shown any more
       if (clientUp)
         longarmApi
           .status()
           .then((s) => alive && setDaemon(s.version))
           .catch(() => alive && setDaemon(undefined))
+      else setDaemon(undefined)
       if (workerRole)
         longarmdApi
           .status()
           .then((s) => alive && setWorker({ name: s.name, version: s.version }))
           .catch(() => alive && setWorker(undefined))
+      else setWorker(undefined)
     }
     load()
     const t = setInterval(load, open ? 5000 : 60000)

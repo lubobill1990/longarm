@@ -143,6 +143,8 @@ export const trayApi = {
   signinState: () => get<SignInState>('/trayapi/signin/state'),
   signinStart: (hub = '', labels = '', replace = false) => post<SignInState>('/trayapi/signin/start', { hub, labels, replace }),
   signinCancel: () => post('/trayapi/signin/cancel'),
+  /** forget a finished sign-in's result (its banner's ×) */
+  signinDismiss: () => post<SignInState>('/trayapi/signin/dismiss'),
   signout: () => post<{ output: string }>('/trayapi/signout'),
   adminDisable: () => post<{ output: string }>('/trayapi/admin/disable'),
   rolesChange: (want: AccountRoles) => post<RolesState>('/trayapi/roles', want),

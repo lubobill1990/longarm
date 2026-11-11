@@ -466,6 +466,23 @@
 
 ### Fixed
 
+- **The tray shows what this computer is now, after Sign out or a role
+  change.** The tabs follow the roles the installer recorded (what the
+  Account tab shows and changes), not a client file left behind: with
+  "Send jobs" unticked, Workers / My jobs / Forwards go away. Settings is
+  there on every machine (updates and the release channel, appearance,
+  diagnostics; notifications, the agent skill and the connection policy
+  only with the client). The tray no longer starts `longarm daemon` again
+  after Sign out or with the client role removed (that daemon wrote
+  `daemon.addr` again, and with it the client tabs); removing the client
+  also stops a daemon left from a sign-out. "Signed in as ..." goes away on
+  Sign out and on a role change, and its banner - and a failed or
+  canceled sign-in's - has a × to dismiss it. The workers, the title
+  bar's count and the version popup no longer show a stopped daemon's
+  last state; "This device" refreshes after Switch account; "This worker"
+  says it isn't signed in yet (not "not running") while the worker waits
+  for its sign-in; and a stopped daemon is "not running", not "not
+  running (not running)".
 - **The admin worker is reachable through the hub's relay.** The MSI's
   admin worker (`longarmd-admin`) listens on loopback only, like the
   session worker, and should also listen on the hub's relay - but its

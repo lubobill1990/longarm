@@ -126,6 +126,19 @@ func TestSignInAPI(t *testing.T) {
 	if st.Result == nil || st.Result.User != "alice" || st.Result.Worker != "box" || st.Code != nil {
 		t.Fatalf("done %+v", st)
 	}
+	// the result banner's ×: forgotten
+	st = SignInState{}
+	call("POST", "/trayapi/signin/dismiss", `{}`, &st)
+	if st.State != "idle" || st.Result != nil {
+		t.Fatalf("dismissed %+v", st)
+	}
+	// sign out: "Signed in as ..." is no longer shown
+	call("POST", "/trayapi/signin/start", `{"hub":"longarm.example.com"}`, nil)
+	waitState(func() bool { return st.Code != nil })
+	release <- nil
+	waitState(func() bool { return st.State == "done" })
+	call("POST", "/trayapi/signout", `{}`, nil)
+	waitState(func() bool { return st.State == "idle" && st.Result == nil })
 
 	// an error, then a cancel
 	call("POST", "/trayapi/signin/start", `{"hub":"longarm.example.com"}`, nil)

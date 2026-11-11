@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -402,6 +403,15 @@ func (s *Server) Busy() bool {
 	return s.signin.snapshot().State == "running" || s.rolesBusy()
 }
 
+// WantDaemon: the tray keeps longarm daemon running only for a signed-in
+// client - not after Sign out or with "Send jobs" removed (a daemon it
+// started then would write daemon.addr again), nor while a sign-in or a
+// role change stops and starts it itself.
+func (s *Server) WantDaemon() bool {
+	c, _ := s.installedRoles()
+	return c && exists(s.opts.LongarmConfigDir, client.TLSDir, pki.NodeCertFile) && !s.Busy()
+}
+
 // AutoSignIn starts the sign-in by itself when this machine needs one and
 // the hub is known (the tray the installer starts, the first start after
 // an install): the code shows at once, no click on "Sign in". It reports
@@ -510,6 +520,22 @@ func (s *Server) signinCancel(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+// signinDismiss forgets a finished sign-in's result (the banner's ×); a
+// running sign-in or a pending confirmation stays.
+func (s *Server) signinDismiss(w http.ResponseWriter, _ *http.Request) {
+	s.forgetSignIn("done", "error", "canceled")
+	writeJSON(w, s.signin.snapshot())
+}
+
+// forgetSignIn sets the sign-in state back to idle when it is one of states.
+func (s *Server) forgetSignIn(states ...string) {
+	s.signin.mu.Lock()
+	if slices.Contains(states, s.signin.st.State) {
+		s.signin.st = SignInState{State: "idle"}
+	}
+	s.signin.mu.Unlock()
+}
+
 // signout leaves the hub: the client (longarm leave) and the user-session
 // worker (longarmd leave: its host then waits for the next sign-in). The
 // admin worker stays (disable it separately).
@@ -531,6 +557,8 @@ func (s *Server) signout(w http.ResponseWriter, _ *http.Request) {
 			errs = append(errs, "longarmd leave: "+err.Error())
 		}
 	}
+	// the last sign-in's result ("Signed in as ...") is no longer true
+	s.forgetSignIn("done", "error", "canceled", "confirm")
 	if len(errs) > 0 {
 		httpError(w, http.StatusInternalServerError, strings.Join(append(errs, out...), "\n"))
 		return

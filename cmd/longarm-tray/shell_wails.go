@@ -439,6 +439,7 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 		dlg.Show()
 	})
 	ctrl := tray.NewController(o, shell, startDaemon)
+	ctrl.Want = srv.WantDaemon
 	go ctrl.Run(cctx)
 	go srv.WatchSignIn(cctx, shell.Notify)
 	go func() {
