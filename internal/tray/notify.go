@@ -19,13 +19,23 @@ type Notification struct {
 // DERP, peer relay) this long gets a notification.
 var RelayAlertAfter = 5 * time.Minute
 
+// OfflineAlertAfter: a worker that went offline notifies only once it has
+// stayed down (offline or reconnecting) this long. Workers drop for a few
+// seconds all the time (a network blip, a relay or hub restart, a laptop
+// changing networks) and come back by themselves; a toast for each, and
+// another for its return, was noise. "Online" follows only an "offline"
+// that was shown.
+var OfflineAlertAfter = 2 * time.Minute
+
 // Rules turns successive pool views and job lists into notifications: a
-// worker going offline / back online, memory crossing 90 %, the link falling
-// back to a relay for more than 5 minutes, and this client's coding-agent
-// sessions ending (agentJob; plain commands don't notify). The first
-// observation of anything only records state.
+// worker staying offline (OfflineAlertAfter) / back online, memory crossing
+// 90 %, the link falling back to a relay for more than 5 minutes, and this
+// client's coding-agent sessions ending (agentJob; plain commands don't
+// notify). The first observation of anything only records state.
 type Rules struct {
 	status  map[string]string
+	down    map[string]time.Time // went down at (seen online before): the offline notification is pending
+	noted   map[string]time.Time // its offline notification was shown; went down at
 	memHigh map[string]bool
 	relayed map[string]bool
 	jobs    map[string]pb.JobState // worker/id
@@ -34,8 +44,8 @@ type Rules struct {
 }
 
 func NewRules() *Rules {
-	return &Rules{status: map[string]string{}, memHigh: map[string]bool{}, relayed: map[string]bool{}, jobs: map[string]pb.JobState{},
-		upd: map[string]*pb.NodeUpdate{}}
+	return &Rules{status: map[string]string{}, down: map[string]time.Time{}, noted: map[string]time.Time{},
+		memHigh: map[string]bool{}, relayed: map[string]bool{}, jobs: map[string]pb.JobState{}, upd: map[string]*pb.NodeUpdate{}}
 }
 
 // Pool compares a pool view with the previous one. Only the user's own
@@ -57,17 +67,8 @@ func (r *Rules) Pool(v *pb.PoolView, now time.Time) []Notification {
 			out = append(out, n)
 		}
 		finished := pu != nil && u == nil && w.GetNode().GetVersion() == pu.GetTo()
-		switch {
-		case updating && w.State == "offline", finished && w.State == "online":
-			// restarting for its update, or back from it ("updated" said it)
-		case w.State == "offline" && seen && (prev == "online" || prev == "connecting"):
-			msg := w.Error
-			if msg == "" {
-				msg = "connection lost; reconnecting"
-			}
-			out = append(out, Notification{w.Name + " offline", msg})
-		case w.State == "online" && prev == "offline":
-			out = append(out, Notification{w.Name + " online", "reconnected"})
+		if n, ok := r.availability(w, prev, seen, updating, finished, now); ok {
+			out = append(out, n)
 		}
 		r.status[w.Name] = w.State
 		if m, total := w.Metrics, memcap.TotalBytes(w.Metrics); w.State == "online" && total > 0 { // a Dynamic Memory guest: of its ceiling
@@ -90,6 +91,59 @@ func (r *Rules) Pool(v *pb.PoolView, now time.Time) []Notification {
 		}
 	}
 	return out
+}
+
+// availability: a worker's offline / online notification. Going down (from
+// online or connecting) only starts the clock; "offline" once it stayed down
+// OfflineAlertAfter, "online" when it comes back after that (or after the
+// tray first saw it offline). Down while restarting for its update says
+// nothing ("updated" or the update's failure says it).
+func (r *Rules) availability(w *pb.PoolWorker, prev string, seen, updating, finished bool, now time.Time) (Notification, bool) {
+	name := w.Name
+	switch {
+	case updating && w.State != "online", finished && w.State == "online":
+		delete(r.down, name)
+		delete(r.noted, name)
+		return Notification{}, false
+	case w.State == "online":
+		since, wasNoted := r.noted[name]
+		_, pending := r.down[name]
+		delete(r.down, name)
+		delete(r.noted, name)
+		switch {
+		case wasNoted:
+			return Notification{name + " online", "reconnected after " + downFor(now.Sub(since))}, true
+		case seen && prev == "offline" && !pending: // offline when the tray started
+			return Notification{name + " online", "reconnected"}, true
+		}
+		return Notification{}, false // a blip: never said offline, so no "online" either
+	}
+	if seen && (prev == "online" || prev == "connecting") && w.State == "offline" {
+		if _, ok := r.down[name]; !ok {
+			if _, ok := r.noted[name]; !ok {
+				r.down[name] = now
+			}
+		}
+	}
+	since, pending := r.down[name]
+	if !pending || w.State != "offline" || now.Sub(since) < OfflineAlertAfter {
+		return Notification{}, false
+	}
+	delete(r.down, name)
+	r.noted[name] = since
+	msg := w.Error
+	if msg == "" {
+		msg = "connection lost; reconnecting"
+	}
+	return Notification{name + " offline", fmt.Sprintf("%s (down %s)", msg, downFor(now.Sub(since)))}, true
+}
+
+// downFor: how long a worker was down, for a notification.
+func downFor(d time.Duration) string {
+	if d < time.Minute {
+		return d.Round(time.Second).String()
+	}
+	return d.Round(time.Minute).String()
 }
 
 // Jobs compares this client's jobs with the previous list: agent sessions

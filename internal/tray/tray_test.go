@@ -135,17 +135,46 @@ func TestRules(t *testing.T) {
 	if n := r.Pool(v, now); len(n) != 0 {
 		t.Fatalf("repeat: %+v", n)
 	}
+	// w1 goes down: nothing until it stayed down OfflineAlertAfter; w3
+	// (offline when the tray started) comes back at once
 	v.Workers[0].State, v.Workers[0].Error = "offline", "worker went away"
 	v.Workers[2].State = "online"
 	notes = r.Pool(v, now)
-	if len(notes) != 2 || notes[0].Title != "w1 offline" || notes[0].Body != "worker went away" || notes[1].Title != "w3 online" {
+	if len(notes) != 1 || notes[0].Title != "w3 online" {
+		t.Fatalf("down: %+v", notes)
+	}
+	if n := r.Pool(v, now.Add(OfflineAlertAfter-time.Second)); len(n) != 0 {
+		t.Fatalf("within the grace: %+v", n)
+	}
+	notes = r.Pool(v, now.Add(OfflineAlertAfter))
+	if len(notes) != 1 || notes[0].Title != "w1 offline" || notes[0].Body != "worker went away (down 2m0s)" {
 		t.Fatalf("offline: %+v", notes)
 	}
+	if n := r.Pool(v, now.Add(OfflineAlertAfter+time.Minute)); len(n) != 0 {
+		t.Fatalf("offline once: %+v", n)
+	}
+	// w1 back (it said offline: it says online); w3 drops for a moment (a
+	// blip: nothing, neither offline nor online)
 	v.Workers[0].State = "online"
 	v.Workers[2].State = "offline"
-	notes = r.Pool(v, now)
-	if len(notes) != 2 || notes[0].Title != "w1 online" || notes[1].Title != "w3 offline" {
+	notes = r.Pool(v, now.Add(5*time.Minute))
+	if len(notes) != 1 || notes[0].Title != "w1 online" || notes[0].Body != "reconnected after 5m0s" {
 		t.Fatalf("back: %+v", notes)
+	}
+	v.Workers[2].State = "connecting"
+	r.Pool(v, now.Add(5*time.Minute+10*time.Second))
+	v.Workers[2].State = "online"
+	if n := r.Pool(v, now.Add(5*time.Minute+20*time.Second)); len(n) != 0 {
+		t.Fatalf("blip: %+v", n)
+	}
+	// down for good, reconnecting all the while: one offline after the grace
+	v.Workers[2].State = "offline"
+	r.Pool(v, now.Add(6*time.Minute))
+	v.Workers[2].State = "connecting"
+	r.Pool(v, now.Add(7*time.Minute))
+	v.Workers[2].State = "offline"
+	if n := r.Pool(v, now.Add(8*time.Minute)); len(n) != 1 || n[0].Title != "w3 offline" {
+		t.Fatalf("down for good: %+v", n)
 	}
 	// memory recovers and crosses again; the relay ends and comes back
 	v.Workers[1].Metrics.MemUsedBytes = 10 * giB

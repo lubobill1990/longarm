@@ -186,7 +186,7 @@ The QUIC connection is **end-to-end** (the certificate is the node identity); `p
 2. When `longarm` wants to reach worker W, it **immediately establishes a QUIC connection through the relay** (first-packet latency = RTT via the relay, so the user can start right away).
 3. Meanwhile the hub sends `CallMeMaybe{candidates}` to both sides, and both sides send disco probes to all of the other's candidates (signed to prevent spoofing, resent every ~200 ms for ~5 s).
 4. Once a probe succeeds in either direction → `pathConn` marks that address as direct and subsequent packets go direct; the relay stays as a hot standby.
-5. The direct path gets keepalive/RTT measurements every ~2 s; on sustained loss → fall back to the relay and periodically retry hole punching in the background (30 s, backing off exponentially to 5 min).
+5. The direct path gets keepalive/RTT measurements every ~2 s; on sustained loss → fall back to the relay and periodically retry hole punching in the background (30 s, backing off exponentially to 5 min, each delay spread ±20 % so peers that lost their paths together don't retry together). Only the scheduled attempts (and joining one the peer started) probe: a new or re-established connection to a peer waiting out its backoff doesn't (the backoff outlives the peer's connections), our NAT changing starts one at most every 30 s, and the backoff resets only once a direct path held for 5 min (a path that keeps dropping keeps backing off).
 6. If both sides are behind symmetric NAT → stay on the relay (consistent with Tailscale's default behavior; no port spraying, the payoff is low).
 
 **Relay carriers**

@@ -155,6 +155,7 @@ func NewNode(opts Options) (*Node, error) {
 		waiters:  map[relay.ID][]*dialWaiter{},
 		stunKick: make(chan struct{}, 1),
 	}
+	n.pm.jitter = spread // peers that lost their paths together retry apart
 	n.self = relay.NodeID(opts.Bundle.Identity, n.instance)
 	n.relayPC = newVConn(pc.LocalAddr(), 512, n.writeRelayUDP)
 	n.pathPC = newVConn(peerAddr{n.self}, 2048, n.writePath)

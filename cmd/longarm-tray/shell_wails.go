@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -34,19 +35,99 @@ import (
 // stay), no zoom, no status bar, no file drops; devtools only in
 // development builds (release builds use the "production" tag); links
 // open in the system browser (the page sends them to /trayapi/open).
+//
+// A popup that shows nothing heals itself (heal): the page makes requests
+// all the time (its pool stream), so a webview that makes none for a while
+// lost it - WebView2 restarted its processes and came back blank, or on
+// the URL whose one-time code is spent and without the session cookie
+// (which lived in the old process). It gets the page again with a fresh
+// code, then, if that doesn't bring it back, a new window.
 
 type desktop struct {
 	app  *application.App
-	win  *application.WebviewWindow
 	tray *application.SystemTray
+	srv  *tray.Server
+	log  *slog.Logger
 
 	mu        sync.Mutex
+	win       *application.WebviewWindow // the popup (replaced by heal)
 	prefsDir  string
 	busy      func() bool // a sign-in or a role change runs: never hide
 	pinned    bool
 	placed    bool      // dragged by the user: keep the position
 	movedByUs time.Time // programmatic positioning (not a user drag)
 	hiddenAt  time.Time
+	loadedAt  time.Time // the popup was (re)created or sent to the page
+	heals     int       // heal steps taken since the page was last alive
+}
+
+// pageGrace: how long a popup may be without a request of its page before
+// it counts as blank (the page's stream reconnects within seconds).
+const pageGrace = 60 * time.Second
+
+func (d *desktop) popup() *application.WebviewWindow {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.win
+}
+
+// newPopup creates the popup window at url (hidden) with its handlers.
+func (d *desktop) newPopup(url string) *application.WebviewWindow {
+	w := d.app.Window.NewWithOptions(popupOptions(url, tray.CurrentPopupBackground(d.prefsDir)))
+	w.OnWindowEvent(events.Common.WindowLostFocus, func(*application.WindowEvent) {
+		// a short delay: focus can bounce while the window is being shown
+		time.AfterFunc(150*time.Millisecond, func() {
+			if d.popup() == w && d.autoHide() && w.IsVisible() && !w.IsFocused() {
+				d.Hide()
+			}
+		})
+	})
+	w.OnWindowEvent(events.Common.WindowDidMove, func(*application.WindowEvent) {
+		d.mu.Lock()
+		if time.Since(d.movedByUs) > 500*time.Millisecond && w.IsVisible() {
+			d.placed = true
+		}
+		d.mu.Unlock()
+	})
+	d.mu.Lock()
+	d.win, d.loadedAt = w, time.Now()
+	d.mu.Unlock()
+	return w
+}
+
+// heal gets a blank popup its page back (see desktop): the page again with
+// a fresh code, then a new window - one step per pageGrace, so a page that
+// is just slow to load gets the time to.
+func (d *desktop) heal(why string) {
+	if d.srv.PageLive(pageGrace) {
+		d.mu.Lock()
+		d.heals = 0
+		d.mu.Unlock()
+		return
+	}
+	d.mu.Lock()
+	if time.Since(d.loadedAt) < pageGrace {
+		d.mu.Unlock()
+		return
+	}
+	step := d.heals
+	d.heals++
+	old := d.win
+	d.loadedAt = time.Now()
+	d.mu.Unlock()
+	url := d.srv.URL("/tray")
+	if step%2 == 0 {
+		d.log.Warn("tray popup: the page is not loaded; loading it again", "why", why, "attempt", step+1)
+		old.SetURL(url)
+		return
+	}
+	d.log.Warn("tray popup: still no page; replacing the window", "why", why, "attempt", step+1)
+	visible := old.IsVisible()
+	d.newPopup(url) // before closing the old one: the app never runs out of windows
+	old.Close()
+	if visible {
+		d.show()
+	}
 }
 
 func (d *desktop) Pinned() bool {
@@ -74,28 +155,31 @@ func (d *desktop) autoHide() bool {
 func (d *desktop) Hide() {
 	d.mu.Lock()
 	d.hiddenAt = time.Now()
+	w := d.win
 	d.mu.Unlock()
-	d.win.Hide()
+	w.Hide()
 }
 
 func (d *desktop) show() {
+	d.heal("shown") // blank since: the page first
 	d.mu.Lock()
 	placed := d.placed
 	if !placed {
 		d.movedByUs = time.Now()
 	}
+	w := d.win
 	d.mu.Unlock()
 	if !placed {
-		d.tray.PositionWindow(d.win, 8)
+		d.tray.PositionWindow(w, 8)
 	}
 	d.applyTheme() // the system's app mode may have changed meanwhile
-	d.win.Show().Focus()
+	w.Show().Focus()
 }
 
 // applyTheme sets the window's background (what shows before and around
 // the page) to the effective theme's: no dark flash for light themes.
 func (d *desktop) applyTheme() {
-	d.win.SetBackgroundColour(rgba(tray.CurrentPopupBackground(d.prefsDir)))
+	d.popup().SetBackgroundColour(rgba(tray.CurrentPopupBackground(d.prefsDir)))
 }
 
 // ThemeChanged: Settings > Appearance changed (tray.ThemeListener).
@@ -110,7 +194,7 @@ func (d *desktop) toggle() {
 	d.mu.Lock()
 	recent := time.Since(d.hiddenAt) < 400*time.Millisecond
 	d.mu.Unlock()
-	if d.win.IsVisible() || recent {
+	if d.popup().IsVisible() || recent {
 		d.Hide()
 		return
 	}
@@ -219,12 +303,12 @@ func pauseLabel(paused bool) string {
 
 func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error {
 	prefs := tray.LoadWindowPrefs(o.LongarmConfigDir)
-	d := &desktop{prefsDir: o.LongarmConfigDir, pinned: !prefs.AutoHide}
+	d := &desktop{prefsDir: o.LongarmConfigDir, pinned: !prefs.AutoHide, log: o.Log}
 	srv, err := tray.NewServer(o, d, "")
 	if err != nil {
 		return err
 	}
-	d.busy = srv.Busy
+	d.srv, d.busy = srv, srv.Busy
 	go srv.Serve()
 	defer srv.Close()
 
@@ -232,6 +316,7 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 	app := application.New(application.Options{
 		Name:        "longarm-tray",
 		Description: "Longarm tray: worker pool, latency, jobs",
+		Logger:      o.Log, // Wails' own (WebView2 failures and recovery) into tray.log
 		Assets:      application.AssetOptions{Handler: http.NotFoundHandler()},
 		Services:    []application.Service{application.NewService(notes)},
 		SingleInstance: &application.SingleInstanceOptions{
@@ -246,25 +331,13 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 	// `longarm ui open`: the popup at a page (a fresh code: the page loads
 	// anew at its tab)
 	srv.ShowPopup = func(path string) {
-		d.win.SetURL(srv.URL(path))
+		d.popup().SetURL(srv.URL(path))
+		d.mu.Lock()
+		d.loadedAt = time.Now()
+		d.mu.Unlock()
 		d.show()
 	}
-	d.win = app.Window.NewWithOptions(popupOptions(srv.URL("/tray"), tray.CurrentPopupBackground(o.LongarmConfigDir)))
-	d.win.OnWindowEvent(events.Common.WindowLostFocus, func(*application.WindowEvent) {
-		// a short delay: focus can bounce while the window is being shown
-		time.AfterFunc(150*time.Millisecond, func() {
-			if d.autoHide() && d.win.IsVisible() && !d.win.IsFocused() {
-				d.Hide()
-			}
-		})
-	})
-	d.win.OnWindowEvent(events.Common.WindowDidMove, func(*application.WindowEvent) {
-		d.mu.Lock()
-		if time.Since(d.movedByUs) > 500*time.Millisecond && d.win.IsVisible() {
-			d.placed = true
-		}
-		d.mu.Unlock()
-	})
+	d.newPopup(srv.URL("/tray"))
 
 	t := app.SystemTray.New()
 	d.tray = t
@@ -320,6 +393,18 @@ func runGUI(ctx context.Context, o tray.Options, startDaemon func() error) error
 			case <-cctx.Done():
 				return
 			case <-time.After(10 * time.Second):
+			}
+		}
+	}()
+	go func() { // a blank popup heals before it is opened
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-cctx.Done():
+				return
+			case <-t.C:
+				d.heal("no page requests")
 			}
 		}
 	}()

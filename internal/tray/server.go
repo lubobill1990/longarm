@@ -102,6 +102,28 @@ type Server struct {
 	mu       sync.Mutex
 	headless bool
 	codes    map[string]time.Time // bootstrap codes -> expiry
+	// the page's requests (signed in: the session cookie): in flight
+	// (its event streams) and the last one's start - PageLive
+	pageOpen int
+	pageSeen time.Time
+}
+
+// PageLive reports whether a page of this server is alive: a request of it
+// in flight (the pool's event stream stays open; when it breaks the page
+// reconnects within seconds) or one within the last window. A webview that
+// shows nothing - it never loaded the page, it shows an error, its
+// renderer is gone - makes none.
+func (s *Server) PageLive(window time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pageOpen > 0 || (!s.pageSeen.IsZero() && time.Since(s.pageSeen) < window)
+}
+
+func (s *Server) pageRequest(delta int) {
+	s.mu.Lock()
+	s.pageOpen += delta
+	s.pageSeen = time.Now()
+	s.mu.Unlock()
 }
 
 // BootstrapTTL is how long a URL from URL() can be opened (once).
@@ -294,6 +316,8 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			http.Error(w, "open longarm-tray from its tray icon (missing token)", http.StatusUnauthorized)
 			return
 		}
+		s.pageRequest(1)
+		defer s.pageRequest(-1)
 		// A WebSocket handshake is a GET, and a page on another localhost
 		// port is same-site (its requests carry the SameSite=Strict
 		// cookie): upgrades (the Sessions window's terminal) need our own

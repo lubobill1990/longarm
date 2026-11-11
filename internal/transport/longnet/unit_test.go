@@ -296,11 +296,127 @@ func TestPathFallbackAndBackoff(t *testing.T) {
 	if kinds(acts)[actCallMeMaybe] != 1 || !pm.punching(pm.peers[peer], now.Add(time.Second)) {
 		t.Fatalf("cmm from peer: %+v", acts)
 	}
-	// Success resets the backoff.
-	p = pings(pm.tick(now.Add(time.Second)))
-	pm.onPong(peer, p[0].tx, now.Add(time.Second+time.Millisecond))
-	if pm.peers[peer].backoff != tm.BackoffMin {
-		t.Fatal("backoff not reset")
+	// A path that works for a moment doesn't reset the backoff: lost again
+	// at once, the next attempt waits BackoffMax.
+	at := now.Add(time.Second)
+	p = pings(pm.tick(at))
+	pm.onPong(peer, p[0].tx, at.Add(time.Millisecond))
+	lost := lose(t, pm, peer, at)
+	if next := pm.peers[peer].nextPunch; next.Sub(lost) != tm.BackoffMax {
+		t.Fatalf("flapping path retries after %v", next.Sub(lost))
+	}
+	// One that held for BackoffMax does: lost, it's a fresh failure.
+	at = pm.peers[peer].nextPunch
+	p = pings(pm.tick(at))
+	pm.onPong(peer, p[0].tx, at.Add(time.Millisecond))
+	for now = at; now.Before(at.Add(tm.BackoffMax)); now = now.Add(tm.Keepalive) {
+		for _, a := range pings(pm.tick(now)) {
+			pm.onPong(peer, a.tx, now.Add(time.Millisecond))
+		}
+	}
+	lost = lose(t, pm, peer, now)
+	if next := pm.peers[peer].nextPunch; next.Sub(lost) != tm.BackoffMin {
+		t.Fatalf("path that held retries after %v", next.Sub(lost))
+	}
+}
+
+// lose lets the direct path to peer time out (no pongs) from at; returns
+// when it fell back to the relay.
+func lose(t *testing.T, pm *pathManager, peer relay.ID, at time.Time) time.Time {
+	t.Helper()
+	for now := at; now.Before(at.Add(time.Minute)); now = now.Add(100 * time.Millisecond) {
+		for _, a := range pm.tick(now) {
+			if a.kind == actPathChange && !a.direct {
+				return now
+			}
+		}
+	}
+	t.Fatal("direct path not lost")
+	return time.Time{}
+}
+
+// TestPathBackoffSurvivesReconnects: connections to a peer coming and going
+// (a flapping link, a process restarting) don't punch past the backoff.
+func TestPathBackoffSurvivesReconnects(t *testing.T) {
+	pm := newPathManager(tm, false)
+	t0 := time.Unix(1000, 0)
+	const peer relay.ID = 7
+	pm.onCallMeMaybe(peer, []netip.AddrPort{candA}, false, "", t0)
+	pm.addKey(peer, testKey(1), t0)
+	pm.tick(t0)
+	pm.tick(t0.Add(tm.PunchWindow)) // the attempt fails: the next after BackoffMin
+	next := pm.peers[peer].nextPunch
+	// a second connection meanwhile: no attempt of its own
+	if acts := pm.addKey(peer, testKey(2), t0.Add(10*time.Second)); len(acts) != 0 {
+		t.Fatalf("second connection punched: %+v", acts)
+	}
+	// every connection ends and a new one comes: still the same schedule
+	pm.removeKey(peer, testKey(1).id)
+	pm.removeKey(peer, testKey(2).id)
+	if acts := pm.addKey(peer, testKey(3), t0.Add(15*time.Second)); len(acts) != 0 {
+		t.Fatalf("reconnect punched: %+v", acts)
+	}
+	if got := pm.peers[peer].nextPunch; !got.Equal(next) {
+		t.Fatalf("schedule %v, want %v", got, next)
+	}
+	// probes per hour with a reconnect every 20 s: the backoff's, not 180
+	attempts := 0
+	key := byte(3)
+	for now := t0.Add(20 * time.Second); now.Before(t0.Add(time.Hour)); now = now.Add(time.Second) {
+		if now.Sub(t0)%(20*time.Second) == 0 {
+			pm.removeKey(peer, testKey(key).id)
+			key++
+			attempts += kinds(pm.addKey(peer, testKey(key), now))[actCallMeMaybe]
+		}
+		attempts += kinds(pm.tick(now))[actCallMeMaybe]
+	}
+	if attempts > 15 {
+		t.Fatalf("%d attempts in an hour", attempts)
+	}
+	// a peer gone for long starts over
+	pm.removeKey(peer, testKey(key).id)
+	later := t0.Add(2*time.Hour + 2*tm.BackoffMax)
+	pm.tick(later)
+	if acts := pm.addKey(peer, testKey(99), later); kinds(acts)[actCallMeMaybe] != 1 {
+		t.Fatalf("fresh peer: %+v", acts)
+	}
+}
+
+// TestPathNATChangeRateLimited: our NAT changing over and over (STUN)
+// starts an attempt at most every BackoffMin.
+func TestPathNATChangeRateLimited(t *testing.T) {
+	pm := newPathManager(tm, false)
+	t0 := time.Unix(1000, 0)
+	const peer relay.ID = 7
+	pm.onCallMeMaybe(peer, []netip.AddrPort{candA}, false, "", t0)
+	pm.addKey(peer, testKey(1), t0)
+	starts := 0
+	for now := t0.Add(time.Second); now.Before(t0.Add(5 * time.Minute)); now = now.Add(time.Second) {
+		if now.Sub(t0)%(10*time.Second) == 0 {
+			before := pm.peers[peer].lastPunchStart
+			pm.setSelfNAT(relay.NATEasy, now)
+			if !pm.peers[peer].lastPunchStart.Equal(before) {
+				starts++
+			}
+		}
+		pm.tick(now)
+	}
+	if starts == 0 || starts > int(5*time.Minute/tm.BackoffMin) {
+		t.Fatalf("%d attempts from NAT changes in 5 minutes", starts)
+	}
+}
+
+func TestSpread(t *testing.T) {
+	seen := map[time.Duration]bool{}
+	for range 200 {
+		d := spread(time.Minute)
+		if d < 48*time.Second || d > 72*time.Second {
+			t.Fatalf("spread %v", d)
+		}
+		seen[d] = true
+	}
+	if len(seen) < 10 {
+		t.Fatal("no spread")
 	}
 }
 
