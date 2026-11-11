@@ -660,6 +660,19 @@ func (h *Hub) enrollDevice(who, user string, admin bool, d deviceRequest) (resp 
 		HubName: h.cfg.Name, Message: "signed in as " + user, Id: rec.ID}, replaced, nil
 }
 
+// orphanAdminLocked: n, holding the name an admin worker d asks for, is the
+// same machine's admin worker from an earlier sign-in whose worker is gone
+// (revoked, the link dropped: unpairLocked) - same owner, same host name,
+// no live companion. Its key is SYSTEM's on that machine, which signs in
+// again now: the old record would otherwise block the name for good.
+func (h *Hub) orphanAdminLocked(n *node, owner string, d deviceRequest) bool {
+	if !d.admin || !n.rec.Admin || n.rec.Owner != owner || d.hostname == "" || !strings.EqualFold(n.rec.Hostname, d.hostname) {
+		return false
+	}
+	c := h.nodes[n.rec.Companion]
+	return n.rec.Companion == "" || c == nil || c.rec.State == stateRevoked || c.rec.Companion != n.rec.ID
+}
+
 // enrollOwnedWorker issues a worker certificate for a machine its owner
 // registers (`longarmd login`): like a worker joining with the owner's
 // worker code - approved right away, usable by the owner only until
@@ -678,15 +691,26 @@ func (h *Hub) enrollOwnedWorker(who, owner string, d deviceRequest) (*pb.JoinRes
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled or unknown", owner)
 	}
+	stale := ""
 	if n := h.nameTakenLocked(name, ""); n != nil {
-		h.mu.Unlock()
-		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name, or remove the old worker)", name)
+		if !h.orphanAdminLocked(n, owner, d) {
+			h.mu.Unlock()
+			return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name, or remove the old worker)", name)
+		}
+		stale = n.rec.ID
 	}
 	if h.nodeNameReservedLocked(name, string(pki.RoleWorker), owner) {
 		h.mu.Unlock()
 		return nil, errNameReserved(name)
 	}
 	h.mu.Unlock()
+	if stale != "" {
+		// this machine's admin worker from before, its worker gone (the
+		// machine signs in again): it goes, the new one takes its name
+		if _, err := h.Revoke(who+" (its machine signed in again)", "id:"+stale); err != nil {
+			return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken by this machine's old admin worker, which could not be removed: %v", name, err)
+		}
+	}
 	now := time.Now().UTC()
 	rec := &store.Node{ID: nodeid.New(), Name: name, Role: string(pki.RoleWorker), Hostname: d.hostname, OS: d.os, Arch: d.arch,
 		Version: d.version, JoinedAt: now, Owner: owner, AccessVersion: 1, Labels: maps.Clone(d.labels), Admin: d.admin,

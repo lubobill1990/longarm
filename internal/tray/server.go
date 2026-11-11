@@ -21,12 +21,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lubobill1990/longarm/internal/hubclient"
 	"github.com/lubobill1990/longarm/internal/localapi"
 	"github.com/lubobill1990/longarm/internal/longarmd"
 	"github.com/lubobill1990/longarm/internal/notices"
 	"github.com/lubobill1990/longarm/internal/platform"
 	"github.com/lubobill1990/longarm/internal/signin"
 	"github.com/lubobill1990/longarm/internal/webui"
+	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 )
 
 // Desktop is what the shell (window, tray, OS) does for the server.
@@ -74,8 +76,10 @@ type Server struct {
 	signIn           func(context.Context, signin.Options, signin.Events) (*signin.Result, error)
 	installedRolesFn func() string
 	installedWorker  func() (string, longarmd.AdminInstall)
-	runElevated      func(exe string, args ...string) error
-	afterSignIn      func()
+	// the daemons' hub links (nil: not running), for a refused certificate
+	workerLink, clientLink func() *pb.HubLink
+	runElevated            func(exe string, args ...string) error
+	afterSignIn            func()
 	// role changes (roles.go); hooks for tests
 	roleRun         rolesRun
 	machineRoles    func() longarmd.MachineRoles
@@ -165,6 +169,7 @@ func NewServer(opts Options, desk Desktop, addr string) (*Server, error) {
 		},
 		openURL: OpenURL, term: OpenTerminal,
 		installedRolesFn: signin.InstalledRoles, installedWorker: longarmd.InstalledWorker, runElevated: RunElevated}
+	s.workerLink, s.clientLink = s.localWorkerLink, s.localClientLink
 	if runtime.GOOS == "windows" {
 		s.machineRoles = func() longarmd.MachineRoles { return longarmd.LoadMachineRoles(longarmd.MachineSettings()) }
 		s.currentSID = longarmd.CurrentUserSID
@@ -269,6 +274,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /trayapi/signin/state", s.signinState)
 	mux.HandleFunc("POST /trayapi/signin/start", s.signinStart)
 	mux.HandleFunc("POST /trayapi/signin/cancel", s.signinCancel)
+	mux.HandleFunc("POST /trayapi/signin/dismiss", s.signinDismiss)
 	mux.HandleFunc("POST /trayapi/signout", s.signout)
 	mux.HandleFunc("POST /trayapi/admin/disable", s.adminDisable)
 	mux.HandleFunc("POST /trayapi/roles", s.rolesChange)
@@ -408,20 +414,26 @@ func (s *Server) localUp(addrFile string) error {
 }
 
 func (s *Server) info(w http.ResponseWriter, _ *http.Request) {
-	client, worker := s.Roles()
+	// the installer's record (what the Account tab shows and changes), else detected
+	client, worker := s.installedRoles()
 	errText := func(err error) string {
 		if err == nil {
 			return ""
 		}
 		if errors.Is(err, os.ErrNotExist) {
-			return "not running"
+			return "" // no address file: just not running (the page says so)
 		}
 		return err.Error()
 	}
 	cerr := s.localUp(filepath.Join(s.opts.LongarmConfigDir, "daemon.addr"))
 	werr := s.localUp(filepath.Join(s.opts.LongarmdDataDir, "longarmd.local"))
 	_, terr := os.Stat(filepath.Join(s.opts.LongarmdDataDir, "tls", "node.crt"))
-	_, herr := os.Stat(filepath.Join(s.opts.LongarmdDataDir, "hub.toml"))
+	// a hub.toml waiting for a sign-in (an install, Sign out, "Run jobs"
+	// added) is not enrolled yet: the worker tab then says to sign in
+	_, herr := os.Stat(filepath.Join(s.opts.LongarmdDataDir, hubclient.File))
+	if hf, err := hubclient.LoadFile(s.opts.LongarmdDataDir); herr == nil && err == nil && hf.SignIn {
+		herr = os.ErrNotExist
+	}
 	pinned := false
 	if s.desk != nil {
 		pinned = s.desk.Pinned()

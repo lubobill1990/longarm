@@ -51,7 +51,7 @@ function WorkerDown({ info }: { info: TrayInfo }) {
         {session ? (
           <>
             It starts at your logon (<span className="mono">longarmd session-mode start</span>)
-            {info.account?.needed ? '; it waits for your sign-in (Account tab)' : ''}.
+            {info.account?.need?.worker ? '; it waits for your sign-in (Account tab)' : ''}.
           </>
         ) : (
           <>
@@ -117,7 +117,18 @@ function WorkerStatusView({ info }: { info: TrayInfo }) {
           </span>
         </div>
         <div className="small state-line" data-testid="worker-state">
-          {draining ? <span className="pill warn">draining: {s.state?.reason}</span> : <span className="pill ok">accepting work</span>}{' '}
+          {s.hub?.refused ? (
+            // the hub won't take work to it: no "accepting work"
+            <span className="pill bad" data-testid="worker-refused">
+              refused by the hub: sign in again (Account tab)
+            </span>
+          ) : !hubOk ? (
+            <span className="pill warn">not connected to the hub</span>
+          ) : draining ? (
+            <span className="pill warn">draining: {s.state?.reason}</span>
+          ) : (
+            <span className="pill ok">accepting work</span>
+          )}{' '}
           <span className="muted">
             · {s.jobs_running ?? 0} jobs, {s.sessions_running ?? 0} sessions
           </span>

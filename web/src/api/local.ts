@@ -58,6 +58,8 @@ export interface Account {
   hub_from?: string
   /** a sign-in would enroll something */
   needed: boolean
+  /** what of it is not signed in (older trays: absent) */
+  need?: SignInTargets
   targets: SignInTargets
   /** the worker: session (runs as you, at logon) or service */
   run_mode?: string
@@ -65,6 +67,9 @@ export interface Account {
   /** when the sign-in (certificate) ends; expired: it has */
   expires?: string
   expired?: boolean
+  /** valid here, but the hub refuses that certificate (removed, revoked): sign in again */
+  client_refused?: boolean
+  worker_refused?: boolean
   /** what this computer does (older trays: absent) */
   roles?: AccountRoles
   /** the roles can be changed here (Windows, installed with the MSI) */
@@ -141,8 +146,12 @@ export const trayApi = {
   join: (hub: string, code: string, fingerprint: string, name: string) =>
     post<{ output: string }>('/trayapi/join', { hub, code, fingerprint, name }),
   signinState: () => get<SignInState>('/trayapi/signin/state'),
-  signinStart: (hub = '', labels = '', replace = false) => post<SignInState>('/trayapi/signin/start', { hub, labels, replace }),
+  /** needed: only what is not signed in (the Sign in card), else everything (Switch account) */
+  signinStart: (hub = '', labels = '', replace = false, needed = false) =>
+    post<SignInState>('/trayapi/signin/start', { hub, labels, replace, needed }),
   signinCancel: () => post('/trayapi/signin/cancel'),
+  /** forget a finished sign-in's result (its banner's ×) */
+  signinDismiss: () => post<SignInState>('/trayapi/signin/dismiss'),
   signout: () => post<{ output: string }>('/trayapi/signout'),
   adminDisable: () => post<{ output: string }>('/trayapi/admin/disable'),
   rolesChange: (want: AccountRoles) => post<RolesState>('/trayapi/roles', want),

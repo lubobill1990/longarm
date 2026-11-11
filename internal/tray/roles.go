@@ -164,15 +164,20 @@ func (s *Server) applyRoles(cur longarmd.MachineRoles, want longarmd.RoleChange,
 	if r := strings.TrimPrefix(result, "ok"); strings.HasPrefix(r, "; ") {
 		notes = append(notes, strings.TrimPrefix(r, "; "))
 	}
-	if cur.Client && !want.Client && exists(s.opts.LongarmConfigDir, "tls", "node.crt") {
-		// the client's credentials are this user's: leave as this user
-		// (a hub that can't be reached: removed here, a warning)
+	if cur.Client && !want.Client {
+		// no client: no daemon (one left from a sign-out too)
 		s.runCmd(s.opts.LongarmExe, s.longarmArgs("daemon", "stop")[1:]...)
-		o, err := s.runCmd(s.opts.LongarmExe, s.longarmArgs("leave")[1:]...)
-		if err != nil {
-			notes = append(notes, "longarm leave: "+err.Error()+" "+strings.TrimSpace(string(o)))
+		if exists(s.opts.LongarmConfigDir, "tls", "node.crt") {
+			// the client's credentials are this user's: leave as this user
+			// (a hub that can't be reached: removed here, a warning)
+			o, err := s.runCmd(s.opts.LongarmExe, s.longarmArgs("leave")[1:]...)
+			if err != nil {
+				notes = append(notes, "longarm leave: "+err.Error()+" "+strings.TrimSpace(string(o)))
+			}
 		}
 	}
+	// the last sign-in's "Signed in as ..." named the roles before the change
+	s.forgetSignIn("done", "error", "canceled")
 	only := SignInTarget{Client: want.Client && !cur.Client, Worker: plan.AddWorker, AdminWorker: plan.AddAdmin}
 	if plan.AddWorker {
 		// the worker waits for this sign-in (its host does the same)

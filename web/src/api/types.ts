@@ -299,6 +299,9 @@ export interface HubLink {
   error?: string
   since?: string
   node_state?: string
+  /** the hub refuses this node's certificate (revoked, removed): sign in again */
+  refused?: boolean
+  cert_not_after?: string
 }
 
 export interface PoolWorker {

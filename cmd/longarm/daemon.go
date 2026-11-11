@@ -297,6 +297,8 @@ func (d *daemon) setLink(connected bool, err error) {
 	if err != nil {
 		d.link.Error = oneLine(err)
 	}
+	// the tray: a certificate the hub refuses is no sign-in
+	d.link.Refused = !connected && hubclient.CertRefused(err)
 }
 
 // maintain renews the client certificate when due and picks up a renewed
