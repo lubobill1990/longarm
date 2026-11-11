@@ -1219,6 +1219,10 @@ carries it, so it can neither forge nor widen it.
   **32-byte random token** the client gives only to the two workers, until
   an expiry (a copy: at most 24 h, revoked by the client when it ends; a
   handoff: 10 minutes, one read). At most 64 copy offers per worker.
+  A speed test's offer (`longarm speedtest w1 w2`, at most 2 minutes) has
+  no path: it lets the peer send and receive filler (`Copy.Source`,
+  `Copy.Sink`; at most 10 s and 1 GiB a direction, two tests at a time)
+  and serves no file; a file offer serves no speed test.
 - **Reads** (`Copy.List` / `Stat` / `Read`, `Handoff.Fetch`): the only
   RPCs besides `LinkTunnel.Dial` a worker certificate may call. Each one
   checks the offer, the peer's name and ID, the token (constant time) and

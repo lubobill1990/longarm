@@ -2191,6 +2191,9 @@ const (
 	Copy_Stat_FullMethodName   = "/longarm.v1.Copy/Stat"
 	Copy_Read_FullMethodName   = "/longarm.v1.Copy/Read"
 	Copy_Pull_FullMethodName   = "/longarm.v1.Copy/Pull"
+	Copy_Source_FullMethodName = "/longarm.v1.Copy/Source"
+	Copy_Sink_FullMethodName   = "/longarm.v1.Copy/Sink"
+	Copy_Speed_FullMethodName  = "/longarm.v1.Copy/Speed"
 )
 
 // CopyClient is the client API for Copy service.
@@ -2221,6 +2224,14 @@ type CopyClient interface {
 	// Pull (the owner's client, on the target): copy an offer of worker
 	// `from` to path; progress while it runs, done = true last.
 	Pull(ctx context.Context, in *CopyPullRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CopyProgress], error)
+	// Speed tests (worker feature "speedtest", longarm speedtest): Source
+	// sends filler for a while, Sink takes what comes - the owner's client
+	// calls them directly, a peer worker with a speed offer's grant (Offer
+	// with speed = true: no files). Speed (the owner's client, on the
+	// target): dial worker `from` as Pull does and measure both ways.
+	Source(ctx context.Context, in *SpeedSourceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FileChunk], error)
+	Sink(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[SpeedSinkChunk, SpeedSinkResponse], error)
+	Speed(ctx context.Context, in *CopySpeedRequest, opts ...grpc.CallOption) (*SpeedResult, error)
 }
 
 type copyClient struct {
@@ -2309,6 +2320,48 @@ func (c *copyClient) Pull(ctx context.Context, in *CopyPullRequest, opts ...grpc
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Copy_PullClient = grpc.ServerStreamingClient[CopyProgress]
 
+func (c *copyClient) Source(ctx context.Context, in *SpeedSourceRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FileChunk], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Copy_ServiceDesc.Streams[2], Copy_Source_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SpeedSourceRequest, FileChunk]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Copy_SourceClient = grpc.ServerStreamingClient[FileChunk]
+
+func (c *copyClient) Sink(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[SpeedSinkChunk, SpeedSinkResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Copy_ServiceDesc.Streams[3], Copy_Sink_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SpeedSinkChunk, SpeedSinkResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Copy_SinkClient = grpc.ClientStreamingClient[SpeedSinkChunk, SpeedSinkResponse]
+
+func (c *copyClient) Speed(ctx context.Context, in *CopySpeedRequest, opts ...grpc.CallOption) (*SpeedResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SpeedResult)
+	err := c.cc.Invoke(ctx, Copy_Speed_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CopyServer is the server API for Copy service.
 // All implementations must embed UnimplementedCopyServer
 // for forward compatibility.
@@ -2337,6 +2390,14 @@ type CopyServer interface {
 	// Pull (the owner's client, on the target): copy an offer of worker
 	// `from` to path; progress while it runs, done = true last.
 	Pull(*CopyPullRequest, grpc.ServerStreamingServer[CopyProgress]) error
+	// Speed tests (worker feature "speedtest", longarm speedtest): Source
+	// sends filler for a while, Sink takes what comes - the owner's client
+	// calls them directly, a peer worker with a speed offer's grant (Offer
+	// with speed = true: no files). Speed (the owner's client, on the
+	// target): dial worker `from` as Pull does and measure both ways.
+	Source(*SpeedSourceRequest, grpc.ServerStreamingServer[FileChunk]) error
+	Sink(grpc.ClientStreamingServer[SpeedSinkChunk, SpeedSinkResponse]) error
+	Speed(context.Context, *CopySpeedRequest) (*SpeedResult, error)
 	mustEmbedUnimplementedCopyServer()
 }
 
@@ -2364,6 +2425,15 @@ func (UnimplementedCopyServer) Read(*CopyReadRequest, grpc.ServerStreamingServer
 }
 func (UnimplementedCopyServer) Pull(*CopyPullRequest, grpc.ServerStreamingServer[CopyProgress]) error {
 	return status.Error(codes.Unimplemented, "method Pull not implemented")
+}
+func (UnimplementedCopyServer) Source(*SpeedSourceRequest, grpc.ServerStreamingServer[FileChunk]) error {
+	return status.Error(codes.Unimplemented, "method Source not implemented")
+}
+func (UnimplementedCopyServer) Sink(grpc.ClientStreamingServer[SpeedSinkChunk, SpeedSinkResponse]) error {
+	return status.Error(codes.Unimplemented, "method Sink not implemented")
+}
+func (UnimplementedCopyServer) Speed(context.Context, *CopySpeedRequest) (*SpeedResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method Speed not implemented")
 }
 func (UnimplementedCopyServer) mustEmbedUnimplementedCopyServer() {}
 func (UnimplementedCopyServer) testEmbeddedByValue()              {}
@@ -2480,6 +2550,42 @@ func _Copy_Pull_Handler(srv interface{}, stream grpc.ServerStream) error {
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Copy_PullServer = grpc.ServerStreamingServer[CopyProgress]
 
+func _Copy_Source_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(SpeedSourceRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(CopyServer).Source(m, &grpc.GenericServerStream[SpeedSourceRequest, FileChunk]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Copy_SourceServer = grpc.ServerStreamingServer[FileChunk]
+
+func _Copy_Sink_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(CopyServer).Sink(&grpc.GenericServerStream[SpeedSinkChunk, SpeedSinkResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Copy_SinkServer = grpc.ClientStreamingServer[SpeedSinkChunk, SpeedSinkResponse]
+
+func _Copy_Speed_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CopySpeedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CopyServer).Speed(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Copy_Speed_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CopyServer).Speed(ctx, req.(*CopySpeedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Copy_ServiceDesc is the grpc.ServiceDesc for Copy service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2503,6 +2609,10 @@ var Copy_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Stat",
 			Handler:    _Copy_Stat_Handler,
 		},
+		{
+			MethodName: "Speed",
+			Handler:    _Copy_Speed_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -2514,6 +2624,16 @@ var Copy_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "Pull",
 			Handler:       _Copy_Pull_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "Source",
+			Handler:       _Copy_Source_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "Sink",
+			Handler:       _Copy_Sink_Handler,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "longarm/v1/longarm.proto",

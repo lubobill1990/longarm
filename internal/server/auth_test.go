@@ -27,6 +27,11 @@ func TestReleaseRoleDeniedOnWorkers(t *testing.T) {
 				}
 				continue
 			}
+			// speed tests: the owner's client, or a peer worker with a speed
+			// offer's token (TestSpeedGrants)
+			if r == pki.RoleWorker && slices.Contains([]string{pb.Copy_Source_FullMethodName, pb.Copy_Sink_FullMethodName}, m) {
+				continue
+			}
 			if slices.Contains(roles, r) {
 				t.Errorf("%s may call %s", r, m)
 			}

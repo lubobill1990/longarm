@@ -4,6 +4,17 @@
 
 ### Added
 
+- **`longarm speedtest <worker> [<worker2>]`** (MCP `fleet_speedtest`):
+  throughput both ways between this machine and a worker, or between two
+  workers over the path `longarm cp` takes, with the transport path
+  (direct, relay, derp) and the RTT. The result is kept 10 minutes, and
+  `put`, `get`, `cp` and `sync` refuse (exit 75, `--force` overrides) a
+  transfer over 1 MiB that it says would take more than 30 s on a path
+  that is not direct - or, unmeasured, more than 100 MiB over a relayed
+  path - before a byte goes. Workers need the `speedtest` feature
+  (`Copy.Source`, `Copy.Sink`, `Copy.Speed`; a speed offer serves no file).
+  The agent skill says when to measure and what to use instead of Longarm
+  for large data.
 - **Program-facing execution contracts**: `info <worker> --json` returns
   pure worker-info JSON and supported features; `kill --if-created-at`
   refuses to cancel a replacement generation. Updated workers also bind

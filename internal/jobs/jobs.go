@@ -201,6 +201,7 @@ const (
 	FeatureHandoffDirect     = "handoff-direct"            // Handoff service: worker-to-worker transfer of handoff bundles
 	FeatureHandoffPush       = "handoff-push"              // Workspace.PushHandoff: push a handoff snapshot with a forwarded credential
 	FeatureCopy              = "copy"                      // Copy service: worker-to-worker copies of files and directories (longarm cp)
+	FeatureSpeedtest         = "speedtest"                 // Copy.Source/Sink/Speed: throughput to this worker and between workers (longarm speedtest)
 	FeatureSessionIfInputSeq = "session-send-if-input-seq" // SendSessionRequest.if_input_seq
 	FeatureSessionPasteEnter = "session-send-paste-enter"  // SendSessionRequest.after / after_ms
 	FeatureSessionHuman      = "input-seq-human"           // Session.human_input_seq; terminal replies are no input

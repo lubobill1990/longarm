@@ -211,7 +211,7 @@ Programs driving longarm can rely on these exit codes:
 | 2 | usage error or a request that can't succeed as given, so nothing was submitted: unknown flag or command, wrong arguments, a short job id that matches several jobs, local validation (`--env` without `=`, a missing or too large `--stdin-file`, `--ref` a short commit id / a ref that isn't HEAD, a branch, a tag or a full commit id / a commit not in the checkout, `--lfs` other than skip/ship/fetch, `--lfs fetch` with a local checkout, `--git-auth` other than forward/none, `--git-auth forward` without `--repo` or with a URL that isn't https), and the hub's / worker's `InvalidArgument`, `FailedPrecondition`, `AlreadyExists` (a job id in use with another spec), `OutOfRange`, `Unimplemented`, a worker too old for a flag or command; `session send` to a session that has ended | fix the request; retrying it unchanged fails again |
 | 3 | not found: the hub or the worker answered that the job / file / session does not exist, an unknown worker name, a job that every known worker answered it doesn't have (when some did not answer: 255), `jobs --id` of an unknown job, `sessions -s` / `session send` / `session stop` of an unknown session, `tail` of a missing file (without `-f`), `last` when you have no jobs | |
 | 69 | `jobs --hub-only`: no hub configured, or it did not answer | retry later, or ask the workers (without `--hub-only`) |
-| 75 | refused for capacity, quota or rate (`ResourceExhausted`): no worker passes the gate with `--no-queue`, a quota, too many attempts; `session send --if-idle-ms`: input arrived within the window, `--if-input-seq`: the session's `inputSeq` moved on (nothing sent); too many `tail`s open on the worker | retry later |
+| 75 | refused for capacity, quota or rate (`ResourceExhausted`): no worker passes the gate with `--no-queue`, a quota, too many attempts; `session send --if-idle-ms`: input arrived within the window, `--if-input-seq`: the session's `inputSeq` moved on (nothing sent); too many `tail`s open on the worker; `put` / `get` / `cp` / `sync` of a large transfer a slow relayed path would take long ([speed tests](#speed-tests-and-large-files-longarm-speedtest)) | retry later, `--force`, or move it another way |
 | 77 | not allowed: `PermissionDenied`, `Unauthenticated`, a refusal of end-to-end trust, an expired sign-in (`your sign-in expired on <date>: run longarm login`); `--git-auth forward` with `--repo <url>` (`run`, `session start`): no credential for the URL could be obtained on this machine (nothing was submitted) | fix the credentials or the rights |
 | 79 | `admin release push --allow-none`: no worker of the channel can update itself (MSI installs, user-session workers), nothing was rolled out; the message lists them | nothing to do: they update with the MSI (the tray's banner) or the install script |
 | 137 | `wait` / `run --wait`: the job was killed; `session start`: the session was killed before it ran | |
@@ -302,6 +302,7 @@ test against.
 | `input-seq-human` | terminal replies of attached clients (device attributes, cursor position, colours, focus) are no input: they don't move `inputSeq` / `lastInput*`; `sessions --json` has `humanInputSeq` |
 | `ui-open` | `longarm ui open [page]` with the pages `workers`, `add-machine`, `jobs`, `this-worker`, `settings`, `account`, `sessions`; `--worker`, `--job`, `--session`, `--agent`, `--print-url`, `--json` (see [Opening Longarm's UI](#opening-longarms-ui)) |
 | `cp` | `longarm cp <worker>:<path> <worker>:<path>`: files and directories worker to worker, resumable (both workers must also support it: `copy` in their `Node.Info` features), see [Copy between workers](#copy-between-workers-longarm-cp) |
+| `speedtest` | `longarm speedtest <worker> [<worker2>]`: throughput both ways, to a worker or between two, kept 10 minutes for the large-transfer guard of put / get / cp / sync, see [Speed tests](#speed-tests-and-large-files-longarm-speedtest) |
 
 The session and tail features also need the worker's (`session-start`,
 `session-send`, `session-send-if-idle`, `session-stop`, `session-info`,
@@ -1475,6 +1476,31 @@ runs). Both workers must be **yours** (or fleet workers without an owner
 that you may use): a worker shared with you takes no part, as for handoff
 ([security](security.md#worker-to-worker-copies)). Offers, reads and pulls
 are audited on both workers.
+
+### Speed tests and large files: `longarm speedtest`
+
+```sh
+longarm speedtest w1             # this machine <-> w1, both ways, ~3 s each
+longarm speedtest w1 w2 --json   # w1 <-> w2, over the path longarm cp takes
+```
+
+Each direction sends filler (nothing on disk) for `--duration` (default
+3 s, at most 10 s) or `--max-bytes` and reports Mbit/s, the transport path
+(`direct`, `relay` - the hub's longnet relay, `derp`, `peer-relay`) and the
+RTT. Between two workers the second one dials the first, as for `cp` (a
+token-bound offer that serves the test and no file), so the result is the
+path a copy would take. Both workers need the `speedtest` feature.
+
+The result is kept for 10 minutes (`speed-cache.json` in the client's
+config dir), and `put`, `get`, `cp` and `sync` use it: a transfer over
+1 MiB that a fresh measurement says would take more than 30 s, on a path
+that is not direct, is refused with exit 75 before a byte goes; without a
+measurement, more than 100 MiB over a path known to be relayed is. `--force`
+sends it anyway. Large data usually has a better way: a git remote the
+worker fetches from (`--git-auth forward`), the original download URL, or
+cloud storage both sides already use (an Azure blob with a SAS URL and
+`azcopy`, a OneDrive both machines sync) - pack and encrypt it first, and
+send only the key through Longarm.
 
 ### Port links: worker to worker
 
@@ -2915,6 +2941,7 @@ Tools: `fleet_status`, `fleet_exec` (command on a chosen or `auto` worker;
 large output comes back as head + tail with a job handle), `fleet_job_submit`,
 `fleet_job_wait`, `fleet_job_logs`, `fleet_job_kill`, `fleet_read`,
 `fleet_write`, `fleet_sync` (local checkout → worktree on a worker),
+`fleet_speedtest` (as [`longarm speedtest`](#speed-tests-and-large-files-longarm-speedtest)),
 `fleet_forward` (via longarm daemon, returns the local URL), `fleet_link`
 (port links between workers: create / list / remove), `fleet_ui_open`
 (Longarm's UI on this desktop at a page, as [`longarm ui open`](#opening-longarms-ui)). Secrets are passed by

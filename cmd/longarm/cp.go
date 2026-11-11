@@ -81,15 +81,17 @@ on this machine it is longarm put / longarm get.`,
 			case sw == dw:
 				return usagef("both paths are on %s: longarm exec %s -- cp -r (or Copy-Item -Recurse) ...", sw, sw)
 			}
-			return copyBetween(cmd.Context(), s, sw, sp, dw, dp, quiet)
+			force, _ := cmd.Flags().GetBool("force")
+			return copyBetween(cmd.Context(), s, sw, sp, dw, dp, quiet, force)
 		},
 	}
 	c.Flags().BoolVarP(&quiet, "quiet", "q", false, "no progress, only the summary")
+	c.Flags().Bool("force", false, forceTransferHelp)
 	return c
 }
 
 // copyBetween copies srcPath of worker sw to dstPath of worker dw.
-func copyBetween(ctx context.Context, s *session, sw, srcPath, dw, dstPath string, quiet bool) error {
+func copyBetween(ctx context.Context, s *session, sw, srcPath, dw, dstPath string, quiet, force bool) error {
 	src, err := openEndpoint(ctx, s, sw)
 	if err != nil {
 		return err
@@ -126,6 +128,14 @@ func copyBetween(ctx context.Context, s *session, sw, srcPath, dw, dstPath strin
 		defer cancel()
 		src.conn.Copy().Revoke(rctx, &pb.CopyRevokeRequest{TransferId: grant.TransferId})
 	}()
+	size := off.Root.Size
+	if off.Root.IsDir {
+		size = remoteTreeSize(ctx, src.conn.Files(), off.Root.AbsPath)
+	}
+	// the path between the workers is the target's to find: only a measured one guards
+	if err := guardTransfer(s.cfg.Dir, "cp", sw, dw, size, "", force); err != nil {
+		return err
+	}
 	target, err := copyTarget(ctx, dst, dstPath, off.Root.AbsPath)
 	if err != nil {
 		return err

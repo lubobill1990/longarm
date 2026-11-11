@@ -1,6 +1,6 @@
 ---
 name: longarm
-description: Run work on remote machines with the Longarm CLI (`longarm`) or its MCP server (`fleet_*` tools) - offload builds, tests and `claude -p` / `copilot -p` agents to workers, attach to or steer remote terminal sessions, move (hand off) a Claude Code / Copilot CLI conversation and its uncommitted code to another machine, connect workers' ports to each other or to localhost, and diagnose sign-in, hub or worker problems. Trigger on "longarm", "worker", "run it on <machine>", "dev box", "offload", "hand off / migrate this session", "port link", "forward a port from a worker". Not for local-only commands or for developing Longarm itself.
+description: Run work on remote machines with the Longarm CLI (`longarm`) or its MCP server (`fleet_*` tools) - offload builds, tests and `claude -p` / `copilot -p` agents to workers, attach to or steer remote terminal sessions, move (hand off) a Claude Code / Copilot CLI conversation and its uncommitted code to another machine, connect workers' ports to each other or to localhost, move files between machines, and diagnose sign-in, hub or worker problems. Trigger on "longarm", "worker", "run it on <machine>", "dev box", "offload", "hand off / migrate this session", "port link", "forward a port from a worker". Not for local-only commands or for developing Longarm itself.
 ---
 
 # longarm
@@ -66,6 +66,16 @@ longarm link ls --json ; longarm link rm <link-id>
 
 Jobs started on `wa` afterwards get `LONGARM_LINKS` and `LONGARM_LINK_<WORKER>_<PORT>`. E2E recipes: [reference/ports.md](reference/ports.md).
 
+## Move files
+
+```sh
+longarm put <local>... <w>:<path> ; longarm get <w>:<path> <local>   # resumable, sha256-verified
+longarm cp <w1>:<path> <w2>:<path>     # worker to worker, never through this machine
+longarm speedtest <w> [<w2>] --json    # Mbit/s both ways and the path (direct, relay, derp); kept 10 min
+```
+
+Longarm suits commands and small files. Above about 1 MB it is only a good carrier over a direct, fast path: a relayed path is slow and shares the hub's relay with everyone. `put`/`get`/`cp`/`sync` refuse (exit 75) a transfer a fresh speedtest says would take over 30 s on a relayed path; `--force` overrides. For large data, use a route both ends already have instead - see [reference/files.md](reference/files.md).
+
 ## Credentials for remote agents and git
 
 - `--agent-auth auto|claude|copilot|gh|none` (run/exec/session start/attach): forwards this machine's agent credentials, memory-only. `auto` only looks at `argv[0]`. For `pwsh -c "claude ..."`, set `--agent-auth claude`.
@@ -83,7 +93,7 @@ Details: [reference/credentials.md](reference/credentials.md).
 | 2 | usage / invalid request / worker too old; nothing submitted | fix, don't retry |
 | 3 | not found (job, session, file, worker) | |
 | 69 | `jobs --hub-only`: no hub answer | retry / drop `--hub-only` |
-| 75 | capacity, quota, rate; `--if-idle-ms` refused; handoff source busy | retry later |
+| 75 | capacity, quota, rate; `--if-idle-ms` refused; handoff source busy; a large transfer over a slow relayed path | retry later; for a transfer, another route or `--force` |
 | 77 | not allowed, sign-in expired, no credential for `--git-auth` | `longarm login` / fix rights |
 | 137 / 254 | job killed / lost (`wait`, `--wait`) | |
 | 255 | unreachable, timeout, internal | outcome may be unknown: `jobs --id`, or rerun with the same `--id` |
@@ -96,4 +106,4 @@ Details: [reference/credentials.md](reference/credentials.md).
 
 ## MCP equivalents
 
-`longarm mcp` exposes `fleet_status`, `fleet_exec`, `fleet_job_submit|wait|logs|kill`, `fleet_read`, `fleet_write`, `fleet_sync`, `fleet_forward`, `fleet_link` and `fleet_ui_open` (show the user Longarm's UI, e.g. `longarm ui open sessions --job <id>`: a job's live terminal). Prefer them when they are registered. The CLI is needed for sessions, handoff, attach, `cp` (worker to worker), `doctor`, and `agent-sessions`. `secret_env` names only work if they are allowed in `LONGARM_MCP_SECRETS`.
+`longarm mcp` exposes `fleet_status`, `fleet_exec`, `fleet_job_submit|wait|logs|kill`, `fleet_read`, `fleet_write`, `fleet_sync`, `fleet_speedtest`, `fleet_forward`, `fleet_link` and `fleet_ui_open` (show the user Longarm's UI, e.g. `longarm ui open sessions --job <id>`: a job's live terminal). Prefer them when they are registered. The CLI is needed for sessions, handoff, attach, `cp` (worker to worker), `doctor`, and `agent-sessions`. `secret_env` names only work if they are allowed in `LONGARM_MCP_SECRETS`.

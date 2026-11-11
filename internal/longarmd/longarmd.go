@@ -654,7 +654,7 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		if err != nil {
 			return nil, nil, err
 		}
-		return conn.ClientConn, func() { conn.Close() }, nil
+		return conn, func() { conn.Close() }, nil // a server.PathConn: speed tests report the path
 	}
 	defer func() {
 		closersMu.Lock()

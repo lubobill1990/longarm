@@ -922,6 +922,52 @@ service Copy {
   // Pull (the owner's client, on the target): copy an offer of worker
   // `from` to path; progress while it runs, done = true last.
   rpc Pull(CopyPullRequest) returns (stream CopyProgress);
+  // Speed tests (worker feature "speedtest", longarm speedtest): Source
+  // sends filler for a while, Sink takes what comes - the owner's client
+  // calls them directly, a peer worker with a speed offer's grant (Offer
+  // with speed = true: no files). Speed (the owner's client, on the
+  // target): dial worker `from` as Pull does and measure both ways.
+  rpc Source(SpeedSourceRequest) returns (stream FileChunk);
+  rpc Sink(stream SpeedSinkChunk) returns (SpeedSinkResponse);
+  rpc Speed(CopySpeedRequest) returns (SpeedResult);
+}
+
+message SpeedSourceRequest {
+  CopyGrant grant = 1; // a peer worker's (none: the owner's client)
+  google.protobuf.Duration duration = 2; // at most 10 s
+  int64 max_bytes = 3; // stop after this many (0 = the duration only; at most 1 GiB)
+}
+
+message SpeedSinkChunk {
+  CopyGrant grant = 1; // the first chunk's, a peer worker's
+  bytes data = 2;
+}
+
+message SpeedSinkResponse {
+  int64 bytes = 1;
+  google.protobuf.Duration took = 2; // from the first byte to the end, as the sink saw it
+}
+
+message CopySpeedRequest {
+  string from = 1; // the other worker (certificate name), with a speed offer for this one
+  string from_id = 2;
+  repeated string from_endpoints = 3;
+  CopyGrant grant = 4;
+  google.protobuf.Duration duration = 5; // per direction
+  int64 max_bytes = 6; // per direction
+}
+
+// SpeedResult: one measurement between two ends ("up": from the caller's
+// side - the client, or the target worker of Speed - to the other).
+message SpeedResult {
+  double up_mbps = 1;
+  double down_mbps = 2;
+  int64 up_bytes = 3;
+  int64 down_bytes = 4;
+  string transport = 5; // tcp, longnet, tailscale
+  string path = 6; // direct, relay, derp, peer-relay, unknown
+  google.protobuf.Duration rtt = 7; // connect latency
+  string detail = 8;
 }
 
 message CopyOfferRequest {
@@ -931,6 +977,9 @@ message CopyOfferRequest {
   string transfer_id = 4; // [A-Za-z0-9_-]{8,64}
   bytes token = 5; // 32 random bytes, the client's
   google.protobuf.Duration ttl = 6; // at most 24 hours
+  // speed: a speed test's offer (no path): the peer may call Source and
+  // Sink only, never read a file
+  bool speed = 7;
 }
 
 message CopyOfferResponse {

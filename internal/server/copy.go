@@ -59,6 +59,7 @@ type copyOffer struct {
 	token           []byte
 	root            string // absolute, on this worker
 	isDir           bool
+	speed           bool // a speed test's: Source and Sink only, no files
 	expires         time.Time
 	timer           *time.Timer
 }
@@ -129,12 +130,15 @@ func (c *copyServer) Offer(ctx context.Context, req *pb.CopyOfferRequest) (*pb.C
 		return deny(status.Errorf(codes.InvalidArgument, "bad peer %q", req.Peer))
 	case ttl <= 0 || ttl > copyMaxTTL:
 		return deny(status.Errorf(codes.InvalidArgument, "ttl must be in (0, %s]", copyMaxTTL))
-	case req.Path == "":
+	case req.Speed && req.Path != "":
+		return deny(status.Error(codes.InvalidArgument, "a speed test's offer has no path"))
+	case req.Path == "" && !req.Speed:
 		return deny(status.Error(codes.InvalidArgument, "no path"))
 	}
 	if why := c.s.copyDeny(owner); why != "" {
 		return deny(status.Error(codes.PermissionDenied, why))
 	}
+	fields["speed"] = req.Speed
 	c.mu.Lock()
 	_, taken := c.offers[req.TransferId]
 	n := len(c.offers)
@@ -145,22 +149,25 @@ func (c *copyServer) Offer(ctx context.Context, req *pb.CopyOfferRequest) (*pb.C
 	case n >= copyMaxOffers:
 		return deny(status.Errorf(codes.ResourceExhausted, "%d copies are offered already (max %d)", n, copyMaxOffers))
 	}
-	fs, err := c.s.filesAs(ctx, owner)
-	if err != nil {
-		return deny(err)
-	}
-	defer fs.Close()
-	root, err := fs.Stat(ctx, &pb.FileStatRequest{Path: req.Path, NoFollow: true})
-	switch {
-	case err != nil:
-		return deny(err)
-	case !root.Exists:
-		return deny(status.Errorf(codes.NotFound, "%s does not exist", root.AbsPath))
-	case root.IsSymlink:
-		return deny(status.Errorf(codes.InvalidArgument, "%s is a symlink", root.AbsPath))
+	root := &pb.FileInfo{}
+	if !req.Speed {
+		fs, err := c.s.filesAs(ctx, owner)
+		if err != nil {
+			return deny(err)
+		}
+		defer fs.Close()
+		root, err = fs.Stat(ctx, &pb.FileStatRequest{Path: req.Path, NoFollow: true})
+		switch {
+		case err != nil:
+			return deny(err)
+		case !root.Exists:
+			return deny(status.Errorf(codes.NotFound, "%s does not exist", root.AbsPath))
+		case root.IsSymlink:
+			return deny(status.Errorf(codes.InvalidArgument, "%s is a symlink", root.AbsPath))
+		}
 	}
 	o := &copyOffer{id: req.TransferId, owner: owner, peer: req.Peer, peerID: strings.ToLower(req.PeerId), token: bytes.Clone(req.Token),
-		root: root.AbsPath, isDir: root.IsDir, expires: time.Now().Add(ttl)}
+		root: root.AbsPath, isDir: root.IsDir, speed: req.Speed, expires: time.Now().Add(ttl)}
 	o.timer = time.AfterFunc(ttl, func() { c.drop(o.id) })
 	c.mu.Lock()
 	if c.offers == nil {
@@ -193,8 +200,10 @@ func (c *copyServer) Revoke(ctx context.Context, req *pb.CopyRevokeRequest) (*pb
 
 // grant is the offer g names for the calling peer worker, checked as Fetch
 // checks a handoff offer - on every call, so a revoked offer, a changed
-// owner or trust ends a copy at its next read.
-func (c *copyServer) grant(ctx context.Context, g *pb.CopyGrant, method string, fields map[string]any) (*copyOffer, error) {
+// owner or trust ends a copy at its next read. speed: the call is a speed
+// test's (Source, Sink) - a file offer never serves one, a speed offer never
+// a file.
+func (c *copyServer) grant(ctx context.Context, g *pb.CopyGrant, method string, fields map[string]any, speed bool) (*copyOffer, error) {
 	id := IdentityFrom(ctx)
 	fields["transfer"] = g.GetTransferId()
 	deny := func(code codes.Code, format string, a ...any) (*copyOffer, error) {
@@ -207,7 +216,7 @@ func (c *copyServer) grant(ctx context.Context, g *pb.CopyGrant, method string, 
 	o := c.offers[g.GetTransferId()]
 	c.mu.Unlock()
 	switch {
-	case o == nil:
+	case o == nil || o.speed != speed:
 		return deny(codes.NotFound, "no transfer %s (expired, revoked or never offered)", g.GetTransferId())
 	case o.peer != id.Name || o.peerID != "" && !strings.EqualFold(o.peerID, id.ID):
 		return deny(codes.PermissionDenied, "transfer %s is not for %s", o.id, id.Name)
@@ -229,7 +238,7 @@ func (c *copyServer) grant(ctx context.Context, g *pb.CopyGrant, method string, 
 
 func (c *copyServer) List(ctx context.Context, req *pb.CopyListRequest) (*pb.FileListResponse, error) {
 	fields := map[string]any{}
-	o, err := c.grant(ctx, req.Grant, pb.Copy_List_FullMethodName, fields)
+	o, err := c.grant(ctx, req.Grant, pb.Copy_List_FullMethodName, fields, false)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +255,7 @@ func (c *copyServer) List(ctx context.Context, req *pb.CopyListRequest) (*pb.Fil
 }
 
 func (c *copyServer) Stat(ctx context.Context, req *pb.CopyStatRequest) (*pb.FileInfo, error) {
-	o, err := c.grant(ctx, req.Grant, pb.Copy_Stat_FullMethodName, map[string]any{"path": req.Path})
+	o, err := c.grant(ctx, req.Grant, pb.Copy_Stat_FullMethodName, map[string]any{"path": req.Path}, false)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +279,7 @@ func (c *copyServer) Stat(ctx context.Context, req *pb.CopyStatRequest) (*pb.Fil
 func (c *copyServer) Read(req *pb.CopyReadRequest, st pb.Copy_ReadServer) error {
 	ctx := st.Context()
 	fields := map[string]any{"path": req.Path, "offset": req.Offset}
-	o, err := c.grant(ctx, req.Grant, pb.Copy_Read_FullMethodName, fields)
+	o, err := c.grant(ctx, req.Grant, pb.Copy_Read_FullMethodName, fields, false)
 	if err != nil {
 		return err
 	}
