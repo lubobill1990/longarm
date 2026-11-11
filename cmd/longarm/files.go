@@ -110,6 +110,10 @@ match are skipped; an interrupted upload resumes from the verified prefix of
 			if len(srcs) > 1 && !intoDir {
 				return usagef("%s:%s is not a directory", worker, dst)
 			}
+			force, _ := cmd.Flags().GetBool("force")
+			if err := guardTransfer(s.cfg.Dir, "put", "local", worker, localSize(srcs), string(conn.Path().Kind), force); err != nil {
+				return err
+			}
 			var st transferStats
 			start := time.Now()
 			for _, src := range srcs {
@@ -138,7 +142,44 @@ match are skipped; an interrupted upload resumes from the verified prefix of
 			return nil
 		},
 	}
+	c.Flags().Bool("force", false, forceTransferHelp)
 	return c
+}
+
+// forceTransferHelp: put, get, cp, sync (guardTransfer)
+const forceTransferHelp = "send it although it would be slow over a relayed path (longarm speedtest)"
+
+// localSize is what put would send of paths (files below directories
+// included; unreadable ones count nothing).
+func localSize(paths []string) int64 {
+	var n int64
+	for _, p := range paths {
+		filepath.WalkDir(p, func(_ string, d fs.DirEntry, err error) error {
+			if err == nil && d.Type().IsRegular() {
+				if fi, err := d.Info(); err == nil {
+					n += fi.Size()
+				}
+			}
+			return nil
+		})
+	}
+	return n
+}
+
+// remoteTreeSize is the size of the files below a worker's directory (0
+// when it can't be listed: no guard then).
+func remoteTreeSize(ctx context.Context, files pb.FilesClient, dir string) int64 {
+	l, err := files.List(ctx, &pb.FileListRequest{Path: dir})
+	if err != nil {
+		return 0
+	}
+	var n int64
+	for _, e := range l.Entries {
+		if !e.IsDir && !e.IsSymlink {
+			n += e.Size
+		}
+	}
+	return n
 }
 
 func getCmd() *cobra.Command {
@@ -175,6 +216,14 @@ prefix of <local>.lapart.`,
 			if !info.Exists {
 				return notFoundf("%s:%s does not exist", worker, src)
 			}
+			size := info.Size
+			if info.IsDir {
+				size = remoteTreeSize(ctx, conn.Files(), info.AbsPath)
+			}
+			force, _ := cmd.Flags().GetBool("force")
+			if err := guardTransfer(s.cfg.Dir, "get", worker, "local", size, string(conn.Path().Kind), force); err != nil {
+				return err
+			}
 			dst := args[1]
 			if fi, err := os.Stat(dst); err == nil && fi.IsDir() {
 				base := path.Base(strings.ReplaceAll(info.AbsPath, `\`, "/"))
@@ -197,6 +246,7 @@ prefix of <local>.lapart.`,
 			return nil
 		},
 	}
+	c.Flags().Bool("force", false, forceTransferHelp)
 	return c
 }
 

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,7 +26,7 @@ import (
 
 func syncCmd() *cobra.Command {
 	var repoName, ref, lfs, gitAuth string
-	var noLocal bool
+	var noLocal, force bool
 	c := &cobra.Command{
 		Use:   "sync <dir> <worker>:<path>",
 		Short: "Mirror a local git checkout (commits + uncommitted + untracked files) into a worktree on the worker",
@@ -69,6 +70,9 @@ are discarded, ignored files (node_modules, build output) are kept.
 			if dst == "" {
 				dst = "longarm-sync/" + lr.key
 			}
+			lr.guard = func(n int64) error { // after the worker said what it has: connected, the path known
+				return guardTransfer(s.cfg.Dir, "sync", "local", worker, n, string(conn.Path().Kind), force)
+			}
 			start := time.Now()
 			res, err := lr.upload(cmd.Context(), conn, ref, lfs, !noLocal, &pb.SyncHeader{Path: dst}, g)
 			if err != nil {
@@ -89,6 +93,7 @@ are discarded, ignored files (node_modules, build output) are kept.
 	c.Flags().StringVar(&lfs, "lfs", lfsSkip, lfsFlagHelp)
 	c.Flags().BoolVar(&noLocal, "committed-only", false, "do not include uncommitted changes and untracked files")
 	c.Flags().StringVar(&gitAuth, "git-auth", gitAuthNone, gitAuthFlagHelp)
+	c.Flags().BoolVar(&force, "force", false, forceTransferHelp)
 	return c
 }
 
@@ -96,6 +101,9 @@ are discarded, ignored files (node_modules, build output) are kept.
 type localRepo struct {
 	top string
 	key string
+	// guard (longarm sync): the bytes upload is about to send, refused
+	// before a byte goes (guardTransfer); nil = no guard
+	guard func(n int64) error
 }
 
 func gitOut(dir string, stdin io.Reader, args ...string) ([]byte, error) {
@@ -252,6 +260,11 @@ func (lr *localRepo) upload(ctx context.Context, conn *client.Conn, ref, lfs str
 	h.Repo, h.Commit, h.Branch = lr.key, commit, branch
 	if bundle != "" {
 		h.Shallow = lr.shallow()
+	}
+	if lr.guard != nil {
+		if err := lr.guard(localSize(slices.DeleteFunc([]string{bundle, patch, untracked, lfsTar}, func(p string) bool { return p == "" }))); err != nil {
+			return nil, err
+		}
 	}
 	st, err := conn.Workspace().Sync(ctx)
 	if err != nil {

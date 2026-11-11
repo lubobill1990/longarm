@@ -77,6 +77,11 @@ var MethodRoles = map[string][]pki.Role{
 	pb.Copy_List_FullMethodName:   {pki.RoleWorker},
 	pb.Copy_Stat_FullMethodName:   {pki.RoleWorker},
 	pb.Copy_Read_FullMethodName:   {pki.RoleWorker},
+	// Speed tests (speed.go): the owner's client, or the peer worker with a
+	// speed offer's token; Speed is the owner's, on the target.
+	pb.Copy_Source_FullMethodName: {pki.RoleClient, pki.RoleAdmin, pki.RoleWorker},
+	pb.Copy_Sink_FullMethodName:   {pki.RoleClient, pki.RoleAdmin, pki.RoleWorker},
+	pb.Copy_Speed_FullMethodName:  anyUser,
 }
 
 type idKey struct{}

@@ -63,7 +63,7 @@ with Copilot CLI (~/.copilot/mcp-config.json):
 
 Tools: fleet_status, fleet_exec, fleet_job_submit, fleet_job_wait,
 fleet_job_logs, fleet_job_kill, fleet_read, fleet_write, fleet_sync,
-fleet_forward, fleet_link, fleet_ui_open. Secrets for jobs are taken by name from this process's
+fleet_speedtest, fleet_forward, fleet_link, fleet_ui_open. Secrets for jobs are taken by name from this process's
 environment (secret_env); only names listed in LONGARM_MCP_SECRETS may be used:
   claude mcp add longarm -e LONGARM_MCP_SECRETS=GH_TOKEN -- longarm mcp
 Agent credentials (agent_auth, docs/usage.md#agent-credentials) are
@@ -123,7 +123,7 @@ func newMCPServer(s *session) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "longarm", Version: version.Version}, &mcp.ServerOptions{
 		Instructions: "Remote execution on the Longarm worker pool. Use fleet_status to see workers, fleet_exec for " +
 			"commands (worker \"auto\" picks one), fleet_job_submit/wait/logs/kill for long jobs (e.g. whole claude " +
-			"sessions), fleet_read/fleet_write/fleet_sync for files and code, fleet_forward to reach a worker port, fleet_link to let one worker reach another's port, fleet_ui_open to show the user Longarm's UI (a job's or session's live terminal).",
+			"sessions), fleet_read/fleet_write/fleet_sync for files and code, fleet_speedtest before moving large files, fleet_forward to reach a worker port, fleet_link to let one worker reach another's port, fleet_ui_open to show the user Longarm's UI (a job's or session's live terminal).",
 	})
 	t := &mcpTools{s: s}
 	addTool(srv, &mcp.Tool{Name: "fleet_status", Description: "Overview of the worker pool: who is online, load, free memory, running jobs, repo caches, labels, owner (user-owned workers)."}, t.status)
@@ -137,6 +137,7 @@ func newMCPServer(s *session) *mcp.Server {
 	addTool(srv, &mcp.Tool{Name: "fleet_sync", Description: "Mirror a local git checkout (commits, uncommitted and untracked files) into a worktree on a worker; only missing objects are sent."}, t.sync)
 	addTool(srv, &mcp.Tool{Name: "fleet_forward", Description: "Forward a worker port to localhost (hosted by the longarm daemon, so it outlives this call) and return the local URL; action list/stop manages forwards."}, t.forward)
 	addTool(srv, &mcp.Tool{Name: "fleet_link", Description: "Port links between workers (joint debugging: frontend + tests on worker A, backend on worker B): create makes target <worker>:<port> reachable as 127.0.0.1:<listen_port> on worker 'on' for your processes there - traffic goes worker to worker, not through this machine; jobs you start there get LONGARM_LINKS and LONGARM_LINK_<WORKER>_<PORT>. list shows your links with state and bytes; remove ends one."}, t.link)
+	addTool(srv, &mcp.Tool{Name: "fleet_speedtest", Description: "Measure throughput both ways between this machine and a worker (worker only), or between two workers (worker and worker2: the path longarm cp takes), for about duration_seconds each way. Returns Mbit/s up (worker -> worker2, or this machine -> worker) and down, the transport path (direct, relay, derp, peer-relay) and the RTT. The result is cached for 10 minutes; longarm put/get/cp/sync then refuse a large transfer estimated at over 30 s on a relayed path. Needs workers with the speedtest feature."}, t.speedtest)
 	addTool(srv, &mcp.Tool{Name: "fleet_ui_open", Description: "Open Longarm's own UI (longarm-tray) on this machine's desktop at a page, for the user: workers, add-machine, jobs (job), this-worker, settings, account, or sessions (worker, job, session, agent) - e.g. to show a job's or session's live terminal. print_url: open nothing, return a one-time URL instead."}, t.uiOpen)
 	return srv
 }

@@ -191,7 +191,7 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 var WorkerFeatures = []string{jobs.FeatureStdin, jobs.FeatureStdinBinding, jobs.FeatureKillIfCreatedAt, jobs.FeatureGitAuth, jobs.FeatureSessionStart, jobs.FeatureSessionSend,
 	jobs.FeatureSessionSendIfIdle, jobs.FeatureSessionStop, jobs.FeatureSessionInfo, jobs.FeatureFileTail, jobs.FeatureAgentAuth,
 	jobs.FeatureSessionEnv, jobs.FeatureFileLstat, jobs.FeatureHandoffDirect, jobs.FeatureHandoffPush, jobs.FeatureSteer,
-	jobs.FeatureSessionIfInputSeq, jobs.FeatureSessionPasteEnter, jobs.FeatureSessionHuman, jobs.FeatureCopy}
+	jobs.FeatureSessionIfInputSeq, jobs.FeatureSessionPasteEnter, jobs.FeatureSessionHuman, jobs.FeatureCopy, jobs.FeatureSpeedtest}
 
 type nodeServer struct {
 	pb.UnimplementedNodeServer

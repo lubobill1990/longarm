@@ -482,6 +482,23 @@ func TestAuthzTable(t *testing.T) {
 		pb.Copy_Pull_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
 			return recvErr(pb.NewCopyClient(c).Pull(ctx, &pb.CopyPullRequest{}))
 		}, [4]codes.Code{codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument}},
+		// speed tests: filler only (TestSpeedGrants: a worker needs a speed offer)
+		pb.Copy_Source_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			return recvErr(pb.NewCopyClient(c).Source(ctx, &pb.SpeedSourceRequest{MaxBytes: 1}))
+		}, [4]codes.Code{codes.OK, codes.OK, codes.OK, codes.OK}},
+		pb.Copy_Sink_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			st, err := pb.NewCopyClient(c).Sink(ctx)
+			if err != nil {
+				return err
+			}
+			st.Send(&pb.SpeedSinkChunk{Data: []byte{1}})
+			_, err = st.CloseAndRecv()
+			return err
+		}, [4]codes.Code{codes.OK, codes.OK, codes.OK, codes.OK}},
+		pb.Copy_Speed_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := pb.NewCopyClient(c).Speed(ctx, &pb.CopySpeedRequest{})
+			return err
+		}, [4]codes.Code{codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument, codes.InvalidArgument}},
 		pb.Workspace_PushHandoff_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
 			_, err := pb.NewWorkspaceClient(c).PushHandoff(ctx, &pb.PushHandoffRequest{Branch: "main"})
 			return err
