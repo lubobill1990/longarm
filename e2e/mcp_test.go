@@ -52,7 +52,7 @@ func TestMCP(t *testing.T) {
 		names = append(names, tl.Name)
 	}
 	sort.Strings(names)
-	want := "fleet_exec fleet_forward fleet_job_kill fleet_job_logs fleet_job_submit fleet_job_wait fleet_link fleet_read fleet_status fleet_sync fleet_ui_open fleet_write"
+	want := "fleet_exec fleet_forward fleet_job_kill fleet_job_logs fleet_job_submit fleet_job_wait fleet_link fleet_read fleet_speedtest fleet_status fleet_sync fleet_ui_open fleet_write"
 	if strings.Join(names, " ") != want {
 		t.Fatalf("tools: %v", names)
 	}
