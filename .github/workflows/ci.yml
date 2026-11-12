@@ -36,6 +36,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # a repository whose GitHub Releases don't carry the old versions the compatibility
+  # and MSI upgrade tests use (v0.1.6, v0.1.13, v0.1.21): the repository variable
+  # LONGARM_E2E_OLD_RELEASES=skip skips those tests there
+  LONGARM_E2E_OLD_RELEASES: ${{ vars.LONGARM_E2E_OLD_RELEASES }}
   # Opt-in tests (services, MSI, live tailnets, browsers) stay off in CI.
   LONGARM_SERVICE_TEST: ""
   LONGARM_PERUSER_TEST: "" # set in the per-user steps below
@@ -381,6 +385,7 @@ jobs:
       # the sequencing check is not vacuous: 0.1.13 (a deferred stop step before RemoveExistingProducts,
       # error 2613 on every upgrade) fails it
       - name: the sequencing check catches the 0.1.13 MSI (error 2613)
+        if: vars.LONGARM_E2E_OLD_RELEASES != 'skip'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -455,7 +460,7 @@ jobs:
           name: msi
           path: ${{ runner.temp }}/msi
       - name: the released MSI
-        if: matrix.old != ''
+        if: matrix.old != '' && vars.LONGARM_E2E_OLD_RELEASES != 'skip'
         env:
           GH_TOKEN: ${{ github.token }}
           OLD: ${{ matrix.old }}
@@ -467,6 +472,7 @@ jobs:
           if ($LASTEXITCODE) { throw "gh release download $tag failed" }
           Write-Host "old: $tag"
       - name: install, upgrade, uninstall
+        if: matrix.old == '' || vars.LONGARM_E2E_OLD_RELEASES != 'skip'
         env:
           SCENARIO: ${{ matrix.scenario }}
           OLD_ARGS: ${{ matrix.args }}
