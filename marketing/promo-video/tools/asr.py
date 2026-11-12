@@ -18,7 +18,8 @@ except ImportError:
 import numpy as np
 from faster_whisper import WhisperModel
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# FILM_ROOT: a language's folder (lang/zh: its script.json; its audio/ and timeline.json go there)
+ROOT = os.environ.get("FILM_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.stdout.reconfigure(encoding="utf-8")
 
 
