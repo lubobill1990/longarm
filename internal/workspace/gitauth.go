@@ -19,8 +19,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/redact"
+	"longarm/internal/jobs"
+	"longarm/internal/redact"
 )
 
 // Fetch credentials (longarm run / sync --git-auth forward, docs/usage.md

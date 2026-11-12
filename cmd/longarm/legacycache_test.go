@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/pki"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/hubclient"
+	"longarm/internal/nodeid"
+	"longarm/internal/pki"
+	pb "longarm/proto/longarm/v1"
 )
 
 // TestCachedLegacySerials: the hub's cached node list keeps a node's legacy

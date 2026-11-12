@@ -21,7 +21,7 @@ import (
 // PublicKey is the minisign public key ("RW..." base64 line) that release
 // signatures must verify against. Set at build time:
 //
-//	-ldflags "-X github.com/lubobill1990/longarm/internal/update.PublicKey=RWQ..."
+//	-ldflags "-X longarm/internal/update.PublicKey=RWQ..."
 //
 // Without it, self-update is disabled (dev builds).
 var PublicKey = ""

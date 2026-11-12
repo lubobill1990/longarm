@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/hub/store"
+	"longarm/internal/nodeid"
+	"longarm/internal/pki"
 )
 
 func TestTOTPVectors(t *testing.T) {

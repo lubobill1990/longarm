@@ -3,7 +3,7 @@ package update
 import (
 	"os/exec"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 // Relaunch starts exe detached (exec mode restart after an update); the

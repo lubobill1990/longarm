@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 // oldRel is a released version's binaries for this OS/arch.
@@ -41,14 +41,14 @@ var oldRels struct {
 	m  map[string]*oldRel
 }
 
-const releaseDownload = "https://github.com/lubobill1990/longarm/releases/download/"
-
 // oldRelease downloads (once; cached across runs in
 // LONGARM_E2E_RELEASE_CACHE, default the user cache dir) longarm, longarmd,
 // longarm-hub and longarm-relay of version for this OS/arch and checks
 // each against the release's SHA256SUMS (the per-binary list; the
-// release's checksums.txt covers the package archives). Unreachable
-// GitHub: a failure in CI, a skip elsewhere.
+// release's checksums.txt covers the package archives). The releases are
+// those of LONGARM_E2E_RELEASE_REPO (owner/repo), else of the CI run's
+// GITHUB_REPOSITORY; neither set: a skip. Unreachable GitHub: a failure
+// in CI, a skip elsewhere.
 func oldRelease(t *testing.T, version string) *oldRel {
 	t.Helper()
 	oldRels.mu.Lock()
@@ -75,6 +75,14 @@ func oldRelease(t *testing.T, version string) *oldRel {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	repo := os.Getenv("LONGARM_E2E_RELEASE_REPO")
+	if repo == "" {
+		repo = os.Getenv("GITHUB_REPOSITORY")
+	}
+	if repo == "" {
+		t.Skip("no repository to download the released versions from (LONGARM_E2E_RELEASE_REPO / GITHUB_REPOSITORY)")
+	}
+	releaseDownload := "https://github.com/" + repo + "/releases/download/"
 	client := &http.Client{Timeout: 10 * time.Minute}
 	get := func(asset string) ([]byte, error) {
 		resp, err := client.Get(releaseDownload + version + "/" + asset)

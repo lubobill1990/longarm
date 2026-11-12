@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/signin"
+	"longarm/internal/hubclient"
+	"longarm/internal/pki"
+	"longarm/internal/signin"
 )
 
 // DeviceTarget is the user's client device as a sign-in target

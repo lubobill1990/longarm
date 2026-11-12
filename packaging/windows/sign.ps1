@@ -48,7 +48,8 @@ $DlibVersion = '1.0.146'
 $DlibSha256 = '7761e5d8f31e54b764da21d33cd8b0a2940e1b05526c7dfcb5e94b0431426f70'
 $Timestamp = 'http://timestamp.acs.microsoft.com'
 $Description = 'Longarm'
-$Url = 'https://github.com/lubobill1990/longarm'
+# the signature's "more information" link: the repository the build came from
+$Url = "$env:LONGARM_REPO_URL"
 
 function Find-SignTool {
   $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'

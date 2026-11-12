@@ -33,7 +33,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
+	"longarm/internal/jobs"
 )
 
 // Layout under the data dir.

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/msiupgrade"
+	"longarm/internal/longarmd"
+	"longarm/internal/msiupgrade"
 )
 
 type nopSched struct{ calls []string }

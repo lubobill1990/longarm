@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/tenancy"
-	"github.com/lubobill1990/longarm/internal/trust"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/jobs"
+	"longarm/internal/pki"
+	"longarm/internal/tenancy"
+	"longarm/internal/trust"
+	pb "longarm/proto/longarm/v1"
 )
 
 // agentHome is a fake home of the client for agent credential tests: Claude

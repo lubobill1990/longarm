@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 // Signing in with nothing but the hub's domain (docs/security.md "First

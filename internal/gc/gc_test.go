@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/supervisor"
-	"github.com/lubobill1990/longarm/internal/workspace"
+	"longarm/internal/jobs"
+	"longarm/internal/supervisor"
+	"longarm/internal/workspace"
 )
 
 // mkJob writes a job dir in a given state, ended at the given time.

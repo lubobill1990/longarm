@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pii"
+	"longarm/internal/pii"
 )
 
 // leaks fails the test when any of words occurs in s.

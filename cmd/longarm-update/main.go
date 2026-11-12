@@ -21,9 +21,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/update"
-	"github.com/lubobill1990/longarm/internal/updatesvc"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/update"
+	"longarm/internal/updatesvc"
+	"longarm/internal/version"
 )
 
 func main() {

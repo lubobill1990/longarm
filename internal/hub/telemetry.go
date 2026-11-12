@@ -9,15 +9,15 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/lubobill1990/longarm/internal/azauth"
-	"github.com/lubobill1990/longarm/internal/pii"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/relay"
-	"github.com/lubobill1990/longarm/internal/telemetry"
-	"github.com/lubobill1990/longarm/internal/telemetry/appinsights"
-	"github.com/lubobill1990/longarm/internal/telemetry/tgrpc"
-	"github.com/lubobill1990/longarm/internal/version"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/azauth"
+	"longarm/internal/pii"
+	"longarm/internal/pki"
+	"longarm/internal/relay"
+	"longarm/internal/telemetry"
+	"longarm/internal/telemetry/appinsights"
+	"longarm/internal/telemetry/tgrpc"
+	"longarm/internal/version"
+	pb "longarm/proto/longarm/v1"
 )
 
 // TelemetryConfig is [telemetry] in hub.toml: where the fleet's telemetry

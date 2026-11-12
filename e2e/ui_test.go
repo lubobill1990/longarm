@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hub"
-	"github.com/lubobill1990/longarm/internal/localapi"
+	"longarm/internal/hub"
+	"longarm/internal/localapi"
 )
 
 // uiStack is a hub with two enrolled workers (wa accepts jobs submitted

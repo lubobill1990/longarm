@@ -13,14 +13,14 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/lubobill1990/longarm/internal/diag"
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/pii"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/tenancy"
-	"github.com/lubobill1990/longarm/internal/update"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/diag"
+	"longarm/internal/hubclient"
+	"longarm/internal/longarmd"
+	"longarm/internal/pii"
+	"longarm/internal/pki"
+	"longarm/internal/tenancy"
+	"longarm/internal/update"
+	pb "longarm/proto/longarm/v1"
 )
 
 func diagCmd() *cobra.Command {

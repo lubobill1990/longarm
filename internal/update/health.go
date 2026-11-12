@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 // failHealthForTest makes the health check fail (set with -ldflags -X in

@@ -19,10 +19,10 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/memcap"
-	"github.com/lubobill1990/longarm/internal/transport"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/memcap"
+	"longarm/internal/transport"
+	pb "longarm/proto/longarm/v1"
 )
 
 // HistoryLen is ~5 min of samples at the 2 s interval.

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/lubobill1990/longarm/internal/sched"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/sched"
+	pb "longarm/proto/longarm/v1"
 )
 
 // [access] hub_job_details = false: what this worker tells the hub about its

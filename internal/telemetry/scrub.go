@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/lubobill1990/longarm/internal/pii"
+	"longarm/internal/pii"
 )
 
 // Size caps of an item.

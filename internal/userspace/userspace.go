@@ -35,12 +35,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/loopguard"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/supervisor"
-	"github.com/lubobill1990/longarm/internal/tenancy"
-	"github.com/lubobill1990/longarm/internal/workspace"
+	"longarm/internal/jobs"
+	"longarm/internal/loopguard"
+	"longarm/internal/platform"
+	"longarm/internal/supervisor"
+	"longarm/internal/tenancy"
+	"longarm/internal/workspace"
 )
 
 // Layout names.

@@ -399,15 +399,17 @@ function AccountCard({
           )}
         </div>
         <span className={`pill ${acct.signed_in ? 'ok' : 'warn'}`}>{acct.signed_in ? 'signed in' : 'signed out'}</span>
-        <button
-          className="icon-btn"
-          data-testid="account-feedback"
-          aria-label="feedback"
-          title="Feedback and bug reports"
-          onClick={() => trayApi.open(feedbackURL(links.feedback, links.repo)).catch(() => {})}
-        >
-          <IconFeedback />
-        </button>
+        {feedbackURL(links.feedback, links.repo) && (
+          <button
+            className="icon-btn"
+            data-testid="account-feedback"
+            aria-label="feedback"
+            title="Feedback and bug reports"
+            onClick={() => trayApi.open(feedbackURL(links.feedback, links.repo)).catch(() => {})}
+          >
+            <IconFeedback />
+          </button>
+        )}
       </div>
       {acct.signed_in && device && (
         <div className="small muted" data-testid="account-device">

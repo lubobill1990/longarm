@@ -29,9 +29,9 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/agentlog"
-	"github.com/lubobill1990/longarm/internal/client"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/agentlog"
+	"longarm/internal/client"
+	pb "longarm/proto/longarm/v1"
 )
 
 // ---------------------------------------------------------------- fake worker

@@ -12,13 +12,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/sched"
-	"github.com/lubobill1990/longarm/internal/signin"
+	"longarm/internal/client"
+	"longarm/internal/hubclient"
+	"longarm/internal/longarmd"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
+	"longarm/internal/sched"
+	"longarm/internal/signin"
 )
 
 // The tray's "Sign in with Microsoft" (/trayapi/signin/...): signin.SignIn

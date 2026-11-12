@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/signin"
+	"longarm/internal/client"
+	"longarm/internal/hubclient"
+	"longarm/internal/pki"
+	"longarm/internal/signin"
 )
 
 func loginCmd() *cobra.Command {

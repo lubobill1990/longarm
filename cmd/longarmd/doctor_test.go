@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/doctor"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/doctor"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
+	pb "longarm/proto/longarm/v1"
 )
 
 type fakeWorkerEnv struct {

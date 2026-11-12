@@ -22,16 +22,16 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/memcap"
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/sched"
-	"github.com/lubobill1990/longarm/internal/telemetry"
-	"github.com/lubobill1990/longarm/internal/trust"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/hubclient"
+	"longarm/internal/memcap"
+	"longarm/internal/nodeid"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
+	"longarm/internal/sched"
+	"longarm/internal/telemetry"
+	"longarm/internal/trust"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The hub is optional everywhere: with a hub (hub.toml / [hub] in

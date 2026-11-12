@@ -19,9 +19,9 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/update"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hubclient"
+	"longarm/internal/update"
+	pb "longarm/proto/longarm/v1"
 )
 
 // releaseCmd is `longarm admin release`: the hub's releases and the rollout of

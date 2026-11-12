@@ -19,7 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"tailscale.com/types/key"
 
-	"github.com/lubobill1990/longarm/internal/relay"
+	"longarm/internal/relay"
 )
 
 // A Headscale sidecar ([tailnet.headscale] sidecar_dir; deploy/azure

@@ -13,9 +13,9 @@ import (
 
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/pki"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hub/store"
+	"longarm/internal/pki"
+	pb "longarm/proto/longarm/v1"
 )
 
 // BootstrapFile in the data dir records the first-start state for the

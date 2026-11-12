@@ -11,8 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/agentskill"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/agentskill"
+	"longarm/internal/version"
 )
 
 func skillCLI(t *testing.T, args ...string) (string, int) {

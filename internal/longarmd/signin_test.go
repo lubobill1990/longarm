@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/hubclient"
+	"longarm/internal/pki"
 )
 
 // TestSetUpSignIn: the MSI's LOGIN=1 records the hub for a sign-in to

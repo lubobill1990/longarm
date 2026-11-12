@@ -3,7 +3,7 @@
   Render the winget manifests for a release (then `winget validate` and
   submit to a private source or microsoft/winget-pkgs).
 .EXAMPLE
-  pwsh packaging/winget/render.ps1 -Version 1.2.3 -BaseUrl https://github.com/lubobill1990/longarm/releases/download/v1.2.3 -Dist dist
+  pwsh packaging/winget/render.ps1 -Version 1.2.3 -BaseUrl https://github.com/<owner>/longarm/releases/download/v1.2.3 -Dist dist
 #>
 param(
   [Parameter(Mandatory)] [string] $Version,

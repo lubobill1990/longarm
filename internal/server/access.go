@@ -5,8 +5,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/pki"
+	pb "longarm/proto/longarm/v1"
 )
 
 // What admin certificates of non-owners may do on a worker ([access] admins).

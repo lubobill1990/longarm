@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/updatesvc"
+	"longarm/internal/updatesvc"
 )
 
 type fakeUpdateService struct {

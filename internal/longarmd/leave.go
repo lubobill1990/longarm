@@ -11,14 +11,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/tenancy"
-	"github.com/lubobill1990/longarm/internal/transport"
-	"github.com/lubobill1990/longarm/internal/userspace"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hubclient"
+	"longarm/internal/jobs"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
+	"longarm/internal/tenancy"
+	"longarm/internal/transport"
+	"longarm/internal/userspace"
+	pb "longarm/proto/longarm/v1"
 )
 
 // LeaveOptions for Leave.

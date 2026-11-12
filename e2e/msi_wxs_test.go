@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/msiupgrade"
-	"github.com/lubobill1990/longarm/internal/updatesvc"
+	"longarm/internal/longarmd"
+	"longarm/internal/msiupgrade"
+	"longarm/internal/updatesvc"
 )
 
 // TestMSIPropertiesOverridable (static, every platform): a property given

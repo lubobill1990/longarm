@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	win "github.com/lubobill1990/longarm/internal/platform/windows"
+	win "longarm/internal/platform/windows"
 )
 
 // KilledExitCode is the exit code recorded for killed jobs.

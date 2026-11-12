@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/lubobill1990/longarm/internal/platform/ptypes"
+	"longarm/internal/platform/ptypes"
 )
 
 // kernel32 directly, which is

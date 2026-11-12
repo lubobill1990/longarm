@@ -18,9 +18,9 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/pki"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hubclient"
+	"longarm/internal/pki"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The admin worker (Windows, the MSI's ADMIN_WORKER=1; off by default): a

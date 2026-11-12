@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lubobill1990/longarm/internal/tray"
+	"longarm/internal/tray"
 )
 
 // runGUI without the native shell (Linux without -tags traynative, macOS

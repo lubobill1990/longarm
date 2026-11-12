@@ -214,9 +214,11 @@ func TestAzureDeployScripts(t *testing.T) {
 			}
 			restarts := func() int { return strings.Count(calls(), "container restart") }
 
-			// the first run: az on PATH, a new subscription
+			// the first run: az on PATH, a new subscription; the image given
+			// (the template has no default, the scripts' default comes from
+			// the checkout's GitHub origin)
 			res := run(append([]string{azOnPath, "HELPER_AZ_UNREGISTERED=Microsoft.ContainerInstance,Microsoft.Storage"}, pw...),
-				name, "myhub", loc, "East Asia", noPanel, regUser, "bot", r.flag("--timeout", "-TimeoutSeconds"), "60")
+				name, "myhub", loc, "East Asia", noPanel, regUser, "bot", image, "ghcr.io/example/longarm-hub:latest", r.flag("--timeout", "-TimeoutSeconds"), "60")
 			ok(res, "deploy")
 			for _, ns := range []string{"Microsoft.ContainerInstance", "Microsoft.Storage"} {
 				if !strings.Contains(calls(), "provider register -n "+ns) || !strings.Contains(res.stdout, "registering the resource provider "+ns) {
@@ -248,8 +250,8 @@ func TestAzureDeployScripts(t *testing.T) {
 			// the location is the resource group's, not a template parameter
 			// ("East Asia" would make a broken DNS name)
 			p := params()
-			// the template's image (ghcr.io): the template's registryServer
-			if _, has := p["location"]; has || p["name"] != "myhub" || p["size"] != "small" || p["enablePanel"] != false || p["registryPassword"] != "s3cret-pw" || p["registryServer"] != nil ||
+			// an image on ghcr.io: the login is for ghcr.io
+			if _, has := p["location"]; has || p["name"] != "myhub" || p["size"] != "small" || p["enablePanel"] != false || p["registryPassword"] != "s3cret-pw" || p["registryServer"] != "ghcr.io" ||
 				p["storageAuth"] != "key" || p["enableTelemetry"] != false || p["enableDiagnostics"] != false || p["acrName"] != nil || p["entraTenantId"] != nil {
 				t.Fatalf("parameters %+v", p)
 			}
@@ -486,7 +488,7 @@ func TestAzureDeployScripts(t *testing.T) {
 			// admin code from --admin-code, the panel from the hub (no Caddy)
 			sa := r.flag("--storage-auth", "-StorageAuth")
 			from := len(calls())
-			res = run(nil, name, "idhub", loc, "eastasia", sa, "identity", telemetry, diagnostics,
+			res = run(nil, name, "idhub", loc, "eastasia", image, "ghcr.io/example/longarm-hub:latest", sa, "identity", telemetry, diagnostics,
 				entraTenant, "tid", entraClient, "cid", entraAdmins, "alice@example.com", entraWeb, "confidential")
 			ok(res, "identity")
 			if p := params(); p["storageAuth"] != "identity" || p["enablePanel"] != true || p["enableTelemetry"] != true || p["enableDiagnostics"] != true ||

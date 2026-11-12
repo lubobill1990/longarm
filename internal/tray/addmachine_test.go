@@ -7,21 +7,25 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"longarm/internal/version"
 )
 
+// TestAddMachineInfo: the installers come from the GitHub repository the
+// hub names, else the one this tray was built from.
 func TestAddMachineInfo(t *testing.T) {
+	old := version.RepoURL
+	version.RepoURL = "https://github.com/example/longarm"
+	t.Cleanup(func() { version.RepoURL = old })
+	const built = "github.com/example/longarm"
 	for _, c := range []struct {
 		name, tenant, repoURL string
-		internal              bool
 		repo                  string
 	}{
-		{"microsoft", "72F988BF-86F1-41AF-91AB-2D7CD011DB47", "", true, InternalRepo},
-		{"other tenant", "11111111-2222-3333-4444-555555555555", "", false, PublicRepo},
-		{"no entra", "", "", false, PublicRepo},
-		// the hub's [web] repo_url wins over the tenant
-		{"repo_url internal", "", "https://github.com/gim-home/longarm/", true, InternalRepo},
-		{"repo_url public", "72f988bf-86f1-41af-91ab-2d7cd011db47", "https://github.com/lubobill1990/longarm", false, PublicRepo},
-		{"repo_url not GitHub", "", "https://git.example.com/team/longarm", false, PublicRepo},
+		{"no repo_url", "11111111-2222-3333-4444-555555555555", "", built},
+		{"no entra", "", "", built},
+		{"repo_url", "", "https://github.com/acme/longarm-copy/", "github.com/acme/longarm-copy"},
+		{"repo_url not GitHub", "", "https://git.example.com/team/longarm", built},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			calls := 0
@@ -54,8 +58,7 @@ func TestAddMachineInfo(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 				t.Fatal(err)
 			}
-			if got.HubHost != "127.0.0.1" || got.Version != "0.1.28" || got.Internal != c.internal || got.Repo != c.repo ||
-				got.PublicRepo != PublicRepo || got.InternalRepo != InternalRepo {
+			if got.HubHost != "127.0.0.1" || got.Version != "0.1.28" || got.Repo != c.repo || got.Tenant != c.tenant {
 				t.Fatalf("got %+v", got)
 			}
 			s.addMachineInfo(t.Context()) // cached: no more hub calls
@@ -67,9 +70,12 @@ func TestAddMachineInfo(t *testing.T) {
 }
 
 func TestAddMachineInfoNoHub(t *testing.T) {
+	old := version.RepoURL
+	version.RepoURL = ""
+	t.Cleanup(func() { version.RepoURL = old })
 	s := &Server{opts: Options{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 	got := s.addMachineInfo(t.Context())
-	if got.HubHost != "" || got.Version != "" || got.Repo != PublicRepo {
+	if got.HubHost != "" || got.Version != "" || got.Repo != "" {
 		t.Fatalf("got %+v", got)
 	}
 }

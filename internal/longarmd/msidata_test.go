@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/pki"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The tests never touch HKLM: provenance lives in memory.

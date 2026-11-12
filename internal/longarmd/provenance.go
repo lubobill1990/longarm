@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 // Provenance: what the installer (install-helper, as SYSTEM) and the admin

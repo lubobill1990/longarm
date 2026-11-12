@@ -6,11 +6,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/steer"
-	"github.com/lubobill1990/longarm/internal/supervisor"
-	"github.com/lubobill1990/longarm/internal/userspace"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/jobs"
+	"longarm/internal/steer"
+	"longarm/internal/supervisor"
+	"longarm/internal/userspace"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The terminal a steerable run starts with (attached clients resize it).

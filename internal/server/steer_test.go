@@ -19,8 +19,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/steer"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/steer"
+	pb "longarm/proto/longarm/v1"
 )
 
 // fastSteer shortens a steerable run's timings in the test shim.

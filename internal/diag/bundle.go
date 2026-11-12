@@ -29,8 +29,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/lubobill1990/longarm/internal/pii"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/pii"
+	"longarm/internal/version"
 )
 
 // Format of manifest.json.

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/uipage"
+	"longarm/internal/uipage"
 )
 
 // TestUIOpen: `longarm ui open` over the control channel - the page in the

@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	traypkg "github.com/lubobill1990/longarm/internal/tray"
+	traypkg "longarm/internal/tray"
 )
 
 var trayBin struct {

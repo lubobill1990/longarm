@@ -22,9 +22,9 @@ import (
 
 	"tailscale.com/tsnet"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/client"
+	"longarm/internal/hubclient"
+	"longarm/internal/pki"
 )
 
 func main() {

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 const GB = 1 << 30

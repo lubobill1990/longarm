@@ -6,7 +6,7 @@ import (
 	"errors"
 	"net"
 
-	win "github.com/lubobill1990/longarm/internal/platform/windows"
+	win "longarm/internal/platform/windows"
 )
 
 // CanIsolate reports whether this process can run workloads as other OS

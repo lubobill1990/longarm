@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/relay"
+	"longarm/internal/relay"
 )
 
 // A relay behind its hosting platform's source NAT (like a hub in Azure

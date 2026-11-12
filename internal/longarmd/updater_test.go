@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"testing"
 
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	pb "longarm/proto/longarm/v1"
 )
 
 func TestAvailableUpdate(t *testing.T) {

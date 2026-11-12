@@ -13,10 +13,10 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/telemetry"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/longarmd"
+	"longarm/internal/telemetry"
+	pb "longarm/proto/longarm/v1"
 )
 
 // TestRulesMine: only the user's own workers notify, and a session

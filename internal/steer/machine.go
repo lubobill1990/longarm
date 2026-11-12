@@ -3,7 +3,7 @@ package steer
 import (
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
+	"longarm/internal/jobs"
 )
 
 // Config tunes a Machine; Defaults has the values of the spec.

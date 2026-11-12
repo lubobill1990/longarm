@@ -26,6 +26,9 @@ template=$here/azuredeploy.json
 # the third-party images (sidecars), pinned by digest; with --acr copied into
 # the registry as mirror/<repository>:<digest hex>
 mirror_list=$here/mirror-images.txt
+# owner/repo of this checkout's GitHub origin ('' without one): the default
+# image and the releases link printed at the end
+repo_slug=$(git -C "$here" config --get remote.origin.url 2>/dev/null | sed -n -E 's#^.*github\.com[:/]([^/]+/[^/]+)$#\1#p' | sed 's/\.git$//' || true)
 
 # empty = not given (a re-run keeps the running hub's value)
 name='' location='' size='' panel='' log_analytics='' rg='' image='' teardown=false yes=false
@@ -47,7 +50,8 @@ usage: deploy.sh --name NAME [--location REGION] [options]
                            "Replica size and memory")
   --no-panel / --panel     without / with the HTTPS panel (Caddy sidecar on 80/443; default with)
   --resource-group RG      default: NAME-rg
-  --image IMAGE            longarm-hub image (first run: the template's :latest; re-run: the running one)
+  --image IMAGE            longarm-hub image (first run: ghcr.io/<owner>/longarm-hub:latest of this
+                           checkout's GitHub origin; re-run: the running one)
   --registry-user USER     private image: registry login, password in $LONGARM_REGISTRY_PASSWORD
   --build-in-acr           build the image from this checkout with az acr build in an Azure Container
                            Registry in the resource group (created once; no docker needed) and deploy it
@@ -69,7 +73,7 @@ usage: deploy.sh --name NAME [--location REGION] [options]
   --feedback-url URL       where the front page, the panel and longarm-tray send feedback and bug
                            reports (hub.toml [web] feedback_url; default the project's GitHub issues)
   --repo-url URL           the source repository the front page links to (hub.toml [web] repo_url;
-                           default the public GitHub repository)
+                           default the repository the hub image was built from)
   --stun-servers LIST      external STUN servers the hub advertises (host:port,...; "none" = only the
                            hub's own; default: the template's public ones, see README "Direct connections")
   --log-analytics          send container logs to Log Analytics (with --telemetry its workspace, else
@@ -767,6 +771,13 @@ public_derp=${public_derp:-false}
 # Application Insights on its Log Analytics workspace
 ! $telemetry || ensure_providers Microsoft.OperationalInsights Microsoft.Insights
 
+# the first run's image: the newest release of the repository this checkout
+# comes from (the template has no default)
+if [[ -z $image ]] && ! $build_in_acr; then
+	[[ -n $repo_slug ]] || die "no image: pass --image ghcr.io/<owner>/longarm-hub:<version> (this checkout has no GitHub origin to take <owner> from)"
+	image=ghcr.io/$(printf '%s' "${repo_slug%%/*}" | tr '[:upper:]' '[:lower:]')/longarm-hub:latest
+fi
+
 if $build_in_acr; then
 	# the image from this checkout, built by ACR Tasks (no docker here); a
 	# registry in the hub's resource group, created on the first use
@@ -1389,16 +1400,19 @@ longarm-hub is up.
   cost            about $(cost) USD/month (compute; plus egress over 100 GB/month, relay traffic counts)
 
 EOF
+# where to get longarm: the hub's --repo-url, else this checkout's origin
+releases=${repo_url:-https://github.com/${repo_slug:-<owner>/<repo>}}
+releases=${releases%/}/releases
 if [[ -n $code ]]; then
 	cat <<EOF
-1. Your laptop (admin): install longarm (https://github.com/lubobill1990/longarm/releases), then
+1. Your laptop (admin): install longarm ($releases), then
      longarm join $hub_addr $code --ca-fingerprint $fp
    The code is one-time and valid until $expires (a new one: ./deploy.sh --name $name --admin-code).
 EOF
 elif [[ $admin_joined == false ]]; then
 	# storage-auth identity: the code is only in the container's bootstrap.env
 	cat <<EOF
-1. Your laptop (admin): install longarm (https://github.com/lubobill1990/longarm/releases), then
+1. Your laptop (admin): install longarm ($releases), then
      ./deploy.sh --name $name --resource-group $rg --admin-code      # a one-time admin join code (24 h)
      longarm join $hub_addr <code> --ca-fingerprint $fp
 EOF

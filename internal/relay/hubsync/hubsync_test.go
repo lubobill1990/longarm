@@ -10,9 +10,9 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/relay"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/pki"
+	"longarm/internal/relay"
+	pb "longarm/proto/longarm/v1"
 )
 
 func issue(t *testing.T, ca *pki.CA, role pki.Role, name string) *pki.Bundle {

@@ -14,11 +14,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/testutil/gitserver"
-	"github.com/lubobill1990/longarm/internal/userspace"
-	"github.com/lubobill1990/longarm/internal/workspace"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/jobs"
+	"longarm/internal/testutil/gitserver"
+	"longarm/internal/userspace"
+	"longarm/internal/workspace"
+	pb "longarm/proto/longarm/v1"
 )
 
 func gitT(t *testing.T, dir string, args ...string) string {

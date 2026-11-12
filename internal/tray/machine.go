@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/localapi"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/localapi"
+	pb "longarm/proto/longarm/v1"
 )
 
 // MachineState is what the tray menu shows of this machine.

@@ -16,8 +16,8 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/longarmd"
+	pb "longarm/proto/longarm/v1"
 )
 
 // uiCmds are the CLI equivalents of longarm-tray's worker tab (local control

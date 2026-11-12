@@ -19,9 +19,9 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/workspace"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/workspace"
+	pb "longarm/proto/longarm/v1"
 )
 
 func syncCmd() *cobra.Command {

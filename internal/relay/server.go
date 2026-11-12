@@ -23,7 +23,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"golang.org/x/time/rate"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 // Protocol timings (shared with the client).

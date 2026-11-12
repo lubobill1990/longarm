@@ -18,8 +18,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/version"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/version"
+	pb "longarm/proto/longarm/v1"
 )
 
 // ChunkSize of uploads and downloads.

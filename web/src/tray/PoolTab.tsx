@@ -15,7 +15,10 @@ import { EmptyState, Skeleton } from './ui'
 
 /** Opens how to add a machine (the docs' install steps) in the repository the hub points at. */
 function openInstallDocs() {
-  const open = (repo?: string) => trayApi.open(docsURL(repoURL(repo), 'usage.md', 'install')).catch(() => {})
+  const open = (repo?: string) => {
+    const u = docsURL(repoURL(repo), 'usage.md', 'install')
+    if (u) trayApi.open(u).catch(() => {})
+  }
   trayApi.update().then(
     (u) => open(u.repo_url),
     () => open(),

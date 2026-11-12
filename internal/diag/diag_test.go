@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/azauth"
-	"github.com/lubobill1990/longarm/internal/pii"
+	"longarm/internal/azauth"
+	"longarm/internal/pii"
 )
 
 func scrubber() *pii.Scrubber {

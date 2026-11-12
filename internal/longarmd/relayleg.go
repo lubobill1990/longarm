@@ -12,12 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/server"
-	"github.com/lubobill1990/longarm/internal/transport"
-	"github.com/lubobill1990/longarm/internal/transport/longnet"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hubclient"
+	"longarm/internal/platform"
+	"longarm/internal/server"
+	"longarm/internal/transport"
+	"longarm/internal/transport/longnet"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The hub relay legs: a worker whose listeners are all loopback (the

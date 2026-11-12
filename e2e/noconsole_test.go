@@ -11,7 +11,7 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	pb "longarm/proto/longarm/v1"
 )
 
 // stdioConn is a net.Conn over a child process's stdin/stdout (`longarm proxy`).

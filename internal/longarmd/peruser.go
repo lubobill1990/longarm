@@ -9,13 +9,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/lubobill1990/longarm/internal/loopguard"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/server"
-	"github.com/lubobill1990/longarm/internal/sshd"
-	"github.com/lubobill1990/longarm/internal/tenancy"
-	"github.com/lubobill1990/longarm/internal/userspace"
+	"longarm/internal/loopguard"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
+	"longarm/internal/server"
+	"longarm/internal/sshd"
+	"longarm/internal/tenancy"
+	"longarm/internal/userspace"
 )
 
 // SFTPCommand is longarmd's subcommand serving sftp on stdin/stdout (run as

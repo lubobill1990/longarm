@@ -16,7 +16,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/lubobill1990/longarm/internal/platform/ptypes"
+	"longarm/internal/platform/ptypes"
 )
 
 // KilledExitCode is the exit code given to processes terminated through Kill,

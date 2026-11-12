@@ -23,10 +23,10 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/signin"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hubclient"
+	"longarm/internal/longarmd"
+	"longarm/internal/signin"
+	pb "longarm/proto/longarm/v1"
 )
 
 // TestRolesAPI: the Account tab's role change - "Also run jobs on this

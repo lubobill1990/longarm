@@ -13,10 +13,10 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/update"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hubclient"
+	"longarm/internal/pki"
+	"longarm/internal/update"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The hub's view of a worker's update (NodeInfo.update; docs/usage.md

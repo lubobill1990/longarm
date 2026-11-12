@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/signin"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/hubclient"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
+	"longarm/internal/signin"
+	"longarm/internal/version"
 )
 
 const testSID = "S-1-12-1-111-222-333-444"

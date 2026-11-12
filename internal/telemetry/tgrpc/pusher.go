@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/telemetry"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/telemetry"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Pusher hands a node's telemetry queue to the hub (Telemetry.Push): every

@@ -29,7 +29,7 @@ import (
 	"io"
 	"net/netip"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 // ALPN of the relay protocol (QUIC and TLS/TCP).

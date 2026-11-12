@@ -15,11 +15,11 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/memcap"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/sched"
-	"github.com/lubobill1990/longarm/internal/tenancy"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/memcap"
+	"longarm/internal/pki"
+	"longarm/internal/sched"
+	"longarm/internal/tenancy"
+	pb "longarm/proto/longarm/v1"
 )
 
 // UI additions (P1.5): job requests relayed to workers over their hub

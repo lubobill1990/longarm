@@ -7,7 +7,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"github.com/lubobill1990/longarm/internal/tray"
+	"longarm/internal/tray"
 )
 
 // TestPopupIsAnApp: the popup's WebView2 settings make it an app, not a

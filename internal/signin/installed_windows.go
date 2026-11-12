@@ -5,7 +5,7 @@ package signin
 import (
 	"golang.org/x/sys/windows/registry"
 
-	"github.com/lubobill1990/longarm/internal/sched"
+	"longarm/internal/sched"
 )
 
 // InstalledHub is the hub the MSI recorded (HKLM\Software\Longarm: Hub,

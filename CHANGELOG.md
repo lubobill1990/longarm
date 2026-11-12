@@ -245,12 +245,6 @@
   runs is refused. The Longarm Update service starts the worker services an
   MSI update left stopped. docs/usage.md "While a worker updates".
 
-- The Microsoft-internal copy gim-home/longarm gets every release - the same
-  tags and files - from a workflow there that copies them every 30 minutes
-  with its own token (`.github/gim-home/sync-releases.yml`, committed in
-  gim-home once; `gim-sync-releases.sh`), instead of a push from here that
-  needed a gim-home token. docs/ci-cd.md "6.2 Releases".
-
 - **Feedback link per hub**: `[web] feedback_url` (`LONGARM_HUB_WEB_FEEDBACK_URL`;
   Azure `--feedback-url` / `-FeedbackUrl`, kept on re-runs) is where the
   hub's front page, the panel's top bar and longarm-tray (version details,
@@ -260,10 +254,10 @@
   Azure `--repo-url` / `-RepoUrl`) is the repository every link on the
   hub's pages and in longarm-tray points at - the front page's GitHub and
   docs links, the tray's "How to install" and its "Add a machine" downloads
-  (over the Entra-tenant rule) - e.g. a company's internal copy; default the
-  public one. `feedback_url` now defaults to that repository's issues.
+  - e.g. another copy of the repository; default the one the build came
+  from. `feedback_url` now defaults to that repository's issues.
 - **The film on the front page**: "Watch the film" scrolls to it and plays
-  it; it streams from the public repository's `promo-film` release only
+  it; it streams from the repository's `promo-film` release only
   when played (the panel's CSP allows GitHub's release asset hosts).
 - **Hub front page**: `/` is a public page that explains Longarm (what it is
   for, three steps, agents, disconnects, NAT traversal, the toolbox) and
@@ -284,8 +278,7 @@
   in to this machine's hub: pick what it does (run jobs, admin commands,
   send jobs) and its system (Windows, macOS, Linux deb / rpm; x64 or ARM64),
   copy, run there. The installer comes from the GitHub Release of the hub's
-  newest stable version; a hub that signs in with Microsoft's own tenant
-  downloads from the Microsoft-internal copy (github.com/gim-home/longarm,
+  newest stable version, in the repository the hub names (a private one:
   `gh release download`). The hub's `/auth/info` names its Entra tenant.
 
 - **Steerable agent runs**: `longarm run --steerable -- claude -p "task"`
@@ -358,7 +351,7 @@
   updated) and "Update to X" when the hub has a newer release. The hub's
   version comes from its public `/healthz`.
 - **Signed apt and dnf/yum repositories** on GitHub Pages
-  (`https://lubobill1990.github.io/longarm/`): `apt install longarm` /
+  (`https://<owner>.github.io/longarm/`): `apt install longarm` /
   `dnf install longarm`, updates through the package manager. The rpm is
   GPG-signed (nfpm), the apt Release file (InRelease, Release.gpg) and the
   yum repomd.xml too, with the key "Longarm Release Signing" (secret
@@ -759,7 +752,7 @@
   and roll back to the previous configuration when the new one fails after
   the delete.
 - deploy/azure pulls nothing from Docker Hub: the Caddy and Headscale images
-  are mirrored by digest to `ghcr.io/lubobill1990/longarm-mirror` (a
+  are mirrored by digest to `ghcr.io/<owner>/longarm-mirror` (a
   separate package, which must be made public once), as tags derived from
   the source and digest (`deploy/azure/mirror-images.txt`,
   `.github/workflows/mirror.yml`: allow-listed sources, pins verified

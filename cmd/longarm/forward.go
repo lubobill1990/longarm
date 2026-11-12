@@ -20,9 +20,9 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/platform"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/platform"
+	pb "longarm/proto/longarm/v1"
 )
 
 // forwardsDir holds one JSON file per running `longarm forward` process, so

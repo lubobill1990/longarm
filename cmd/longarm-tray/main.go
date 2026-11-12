@@ -35,13 +35,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/logfile"
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/stopsignal"
-	"github.com/lubobill1990/longarm/internal/telemetry"
-	"github.com/lubobill1990/longarm/internal/tray"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/client"
+	"longarm/internal/logfile"
+	"longarm/internal/longarmd"
+	"longarm/internal/stopsignal"
+	"longarm/internal/telemetry"
+	"longarm/internal/tray"
+	"longarm/internal/version"
 )
 
 func main() {

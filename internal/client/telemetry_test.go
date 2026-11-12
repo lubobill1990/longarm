@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/telemetry"
+	"longarm/internal/telemetry"
 )
 
 func TestTelemetryConfigOptOut(t *testing.T) {

@@ -15,10 +15,10 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/hub/store"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
+	"longarm/internal/update"
 )
 
 func hashFile(p string) (string, int64, error) {

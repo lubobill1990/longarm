@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/telemetry"
-	"github.com/lubobill1990/longarm/internal/transport"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/pki"
+	"longarm/internal/telemetry"
+	"longarm/internal/transport"
+	"longarm/internal/version"
 )
 
 // recordDial reports a worker dial (the transport race) to telemetry:

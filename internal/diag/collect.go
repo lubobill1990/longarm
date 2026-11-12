@@ -21,11 +21,11 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/lubobill1990/longarm/internal/pii"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/trust"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/pii"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
+	"longarm/internal/trust"
+	"longarm/internal/version"
 )
 
 // Defaults of the collectors.

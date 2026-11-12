@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"longarm/internal/jobs"
+	pb "longarm/proto/longarm/v1"
 )
 
 func TestKillIfCreatedAt(t *testing.T) {

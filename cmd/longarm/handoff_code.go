@@ -39,10 +39,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/gitauth"
-	"github.com/lubobill1990/longarm/internal/jobs"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/gitauth"
+	"longarm/internal/jobs"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The defaults of --via and --via-threshold (overridden by [handoff] via /

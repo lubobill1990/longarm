@@ -12,8 +12,8 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/toolchain"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/toolchain"
+	pb "longarm/proto/longarm/v1"
 )
 
 func TestWorkerToolchainOutput(t *testing.T) {

@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/agentlog"
-	"github.com/lubobill1990/longarm/internal/attach"
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/steer"
+	"longarm/internal/agentlog"
+	"longarm/internal/attach"
+	"longarm/internal/jobs"
+	"longarm/internal/platform"
+	"longarm/internal/steer"
 )
 
 // steerTick is how often a steerable run reads its hook events and asks

@@ -7,7 +7,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	pb "longarm/proto/longarm/v1"
 )
 
 // A stopping hub (SIGTERM: a redeploy, an upgrade) tells every connected

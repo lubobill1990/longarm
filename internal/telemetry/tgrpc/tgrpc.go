@@ -22,9 +22,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/telemetry"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/pki"
+	"longarm/internal/telemetry"
+	pb "longarm/proto/longarm/v1"
 )
 
 // MethodName shortens "/longarm.v1.Jobs/Submit" to "Jobs/Submit".

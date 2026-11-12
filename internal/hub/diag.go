@@ -19,9 +19,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/diag"
-	"github.com/lubobill1990/longarm/internal/pii"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/diag"
+	"longarm/internal/pii"
+	pb "longarm/proto/longarm/v1"
 )
 
 // DiagConfig is [diagnostics]: where uploaded diagnostic bundles

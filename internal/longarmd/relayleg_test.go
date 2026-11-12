@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	pb "longarm/proto/longarm/v1"
 )
 
 func TestRelayListenURL(t *testing.T) {

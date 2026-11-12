@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/localapi"
-	"github.com/lubobill1990/longarm/internal/uipage"
+	"longarm/internal/localapi"
+	"longarm/internal/uipage"
 )
 
 // `longarm ui open` (internal/uipage): the tray serves a control channel

@@ -13,8 +13,8 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hubclient"
+	pb "longarm/proto/longarm/v1"
 )
 
 // relaysAdminCmd: longarm admin relays - the hub's relay set and how many

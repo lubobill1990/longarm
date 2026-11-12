@@ -41,10 +41,11 @@ builds:
     flags: [-trimpath]
     ldflags: &ldflags
       - -s -w
-      - -X github.com/lubobill1990/longarm/internal/version.Version={{ .Version }}
-      - -X github.com/lubobill1990/longarm/internal/update.PublicKey={{ envOrDefault "LONGARM_UPDATE_PUBKEY" "" }}
-      - -X github.com/lubobill1990/longarm/internal/version.DefaultHub={{ envOrDefault "LONGARM_DEFAULT_HUB" "" }}
-      - -X github.com/lubobill1990/longarm/internal/version.DefaultHubCA={{ envOrDefault "LONGARM_DEFAULT_HUB_CA" "" }}
+      - -X longarm/internal/version.Version={{ .Version }}
+      - -X longarm/internal/update.PublicKey={{ envOrDefault "LONGARM_UPDATE_PUBKEY" "" }}
+      - -X longarm/internal/version.DefaultHub={{ envOrDefault "LONGARM_DEFAULT_HUB" "" }}
+      - -X longarm/internal/version.DefaultHubCA={{ envOrDefault "LONGARM_DEFAULT_HUB_CA" "" }}
+      - -X longarm/internal/version.RepoURL={{ envOrDefault "LONGARM_REPO_URL" "" }}
   - id: longarm-windows
     main: ./cmd/longarm
     binary: longarm
@@ -126,11 +127,12 @@ builds:
     tags: [production]
     ldflags:
       - -s -w -H windowsgui
-      - -X github.com/lubobill1990/longarm/internal/version.Version={{ .Version }}
-      - -X github.com/lubobill1990/longarm/internal/version.DefaultHub={{ envOrDefault "LONGARM_DEFAULT_HUB" "" }}
-      - -X github.com/lubobill1990/longarm/internal/version.DefaultHubCA={{ envOrDefault "LONGARM_DEFAULT_HUB_CA" "" }}
+      - -X longarm/internal/version.Version={{ .Version }}
+      - -X longarm/internal/version.DefaultHub={{ envOrDefault "LONGARM_DEFAULT_HUB" "" }}
+      - -X longarm/internal/version.DefaultHubCA={{ envOrDefault "LONGARM_DEFAULT_HUB_CA" "" }}
+      - -X longarm/internal/version.RepoURL={{ envOrDefault "LONGARM_REPO_URL" "" }}
       # the tray's "Update to X" verifies the MSI's signature with it
-      - -X github.com/lubobill1990/longarm/internal/update.PublicKey={{ envOrDefault "LONGARM_UPDATE_PUBKEY" "" }}
+      - -X longarm/internal/update.PublicKey={{ envOrDefault "LONGARM_UPDATE_PUBKEY" "" }}
     hooks: *winsign
 
 archives:
@@ -169,8 +171,8 @@ nfpms:
     ids: [longarm, longarmd]
     formats: [deb, rpm]
     vendor: Longarm
-    homepage: https://github.com/lubobill1990/longarm
-    maintainer: Longarm contributors <lubobill1990@users.noreply.github.com>
+    homepage: '{{ envOrDefault "LONGARM_REPO_URL" "https://example.com/longarm" }}'
+    maintainer: '{{ envOrDefault "LONGARM_MAINTAINER" "Longarm contributors <noreply@example.com>" }}'
     description: |-
       Longarm client and worker: run Claude Code / Copilot CLI sessions,
       commands and jobs on a pool of remote workers (longarm, longarmd).
@@ -206,8 +208,8 @@ nfpms:
     ids: [longarm-hub, longarm-relay]
     formats: [deb]
     vendor: Longarm
-    homepage: https://github.com/lubobill1990/longarm
-    maintainer: Longarm contributors <lubobill1990@users.noreply.github.com>
+    homepage: '{{ envOrDefault "LONGARM_REPO_URL" "https://example.com/longarm" }}'
+    maintainer: '{{ envOrDefault "LONGARM_MAINTAINER" "Longarm contributors <noreply@example.com>" }}'
     description: Longarm hub (control plane, CA, scheduler, relay).
     license: MIT
     bindir: /usr/bin
@@ -234,7 +236,7 @@ homebrew_casks:
   - name: longarm
     ids: [longarm]
     binaries: [longarm, longarmd]
-    homepage: https://github.com/lubobill1990/longarm
+    homepage: '{{ envOrDefault "LONGARM_REPO_URL" "https://example.com/longarm" }}'
     description: Longarm client and worker (longarm, longarmd)
     skip_upload: true   # template only: packaging/homebrew/README.md
     repository:

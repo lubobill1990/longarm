@@ -1,18 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { docsURL, feedbackURL, PROJECT_ISSUES, PUBLIC_REPO, repoURL } from './feedback'
+import { docsURL, feedbackURL, filmURL, repoURL } from './feedback'
 
 describe('hub links', () => {
-  it('uses the hub repository and channel, else the public repository and its issues', () => {
-    // a company hub: its copy of the repository, its feedback channel
-    expect(repoURL('https://github.com/gim-home/longarm/')).toBe('https://github.com/gim-home/longarm')
-    expect(feedbackURL('https://aka.ms/longarmteams', 'https://github.com/gim-home/longarm')).toBe('https://aka.ms/longarmteams')
+  it('uses the hub repository and channel; none without them', () => {
+    // a hub naming its repository and feedback channel
+    expect(repoURL('https://git.example.com/team/longarm/')).toBe('https://git.example.com/team/longarm')
+    expect(feedbackURL('https://chat.example.com/longarm', 'https://git.example.com/team/longarm')).toBe('https://chat.example.com/longarm')
     // a repository without a feedback link: that repository's issues
-    expect(feedbackURL(undefined, 'https://github.com/gim-home/longarm')).toBe('https://github.com/gim-home/longarm/issues')
-    // no hub, an older hub, or something that isn't a web link
-    expect(repoURL()).toBe(PUBLIC_REPO)
-    expect(repoURL('javascript:alert(1)')).toBe(PUBLIC_REPO)
-    expect(feedbackURL()).toBe(PROJECT_ISSUES)
-    expect(feedbackURL('file:///etc/passwd')).toBe(PROJECT_ISSUES)
-    expect(docsURL('https://github.com/gim-home/longarm', 'usage.md', 'install')).toBe('https://github.com/gim-home/longarm/blob/main/docs/usage.md#install')
+    expect(feedbackURL(undefined, 'https://git.example.com/team/longarm')).toBe('https://git.example.com/team/longarm/issues')
+    // no hub, an older hub, or something that isn't a web link: no link
+    expect(repoURL()).toBe('')
+    expect(repoURL('javascript:alert(1)')).toBe('')
+    expect(feedbackURL()).toBe('')
+    expect(feedbackURL('file:///etc/passwd')).toBe('')
+    expect(docsURL('https://git.example.com/team/longarm', 'usage.md', 'install')).toBe('https://git.example.com/team/longarm/blob/main/docs/usage.md#install')
+    expect(docsURL('')).toBe('')
+    expect(filmURL('https://git.example.com/team/longarm')).toBe('https://git.example.com/team/longarm/releases/download/promo-film/longarm-promo.mp4')
+    expect(filmURL('')).toBe('')
   })
 })

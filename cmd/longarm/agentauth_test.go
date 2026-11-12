@@ -13,8 +13,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	pb "longarm/proto/longarm/v1"
 )
 
 // fakeAttach records every open; the first stream breaks after "started"

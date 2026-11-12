@@ -30,10 +30,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/localapi"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/transport"
-	"github.com/lubobill1990/longarm/internal/transport/longnet"
+	"longarm/internal/localapi"
+	"longarm/internal/platform"
+	"longarm/internal/transport"
+	"longarm/internal/transport/longnet"
 )
 
 // LegProxy dials single transport legs on behalf of this process.

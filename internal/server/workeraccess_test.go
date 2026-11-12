@@ -10,9 +10,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/tenancy"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/jobs"
+	"longarm/internal/tenancy"
+	pb "longarm/proto/longarm/v1"
 )
 
 // TestWorkerOwner: a user-owned worker (owner and shares from the hub)

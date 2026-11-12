@@ -40,11 +40,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/notices"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/relay"
-	"github.com/lubobill1990/longarm/internal/relay/hubsync"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/notices"
+	"longarm/internal/pki"
+	"longarm/internal/relay"
+	"longarm/internal/relay/hubsync"
+	"longarm/internal/version"
 )
 
 func defaultTLSDir() string {

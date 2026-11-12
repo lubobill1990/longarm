@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/platform"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/platform"
+	pb "longarm/proto/longarm/v1"
 )
 
 // tailPoll is how often Files.Tail looks for appended bytes.

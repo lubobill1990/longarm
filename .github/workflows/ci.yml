@@ -346,7 +346,7 @@ jobs:
           foreach ($v in '0.250.0', '0.250.1') {
             $bin = Join-Path $env:RUNNER_TEMP "msi-bin-$v"
             New-Item -ItemType Directory -Force $bin | Out-Null
-            $ld = "-X github.com/lubobill1990/longarm/internal/version.DefaultHub=longarm.example.com -X github.com/lubobill1990/longarm/internal/version.Version=$v"
+            $ld = "-X longarm/internal/version.DefaultHub=longarm.example.com -X longarm/internal/version.Version=$v"
             go build -trimpath -ldflags $ld -o "$bin\longarm.exe" ./cmd/longarm
             if ($LASTEXITCODE) { throw 'go build longarm' }
             go build -trimpath -ldflags $ld -o "$bin\longarmd.exe" ./cmd/longarmd

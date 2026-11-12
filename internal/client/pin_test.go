@@ -16,8 +16,8 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/pki"
+	pb "longarm/proto/longarm/v1"
 )
 
 // pinWorker is a fake worker "w1" whose node can be swapped: A, then A'

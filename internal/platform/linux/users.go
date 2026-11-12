@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/platform/ptypes"
+	"longarm/internal/platform/ptypes"
 )
 
 // Per-user isolation on Linux: one system account per Longarm user

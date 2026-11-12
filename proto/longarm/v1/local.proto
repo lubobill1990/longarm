@@ -14,7 +14,7 @@ import "google/protobuf/timestamp.proto";
 import "longarm/v1/hub.proto";
 import "longarm/v1/longarm.proto";
 
-option go_package = "github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1";
+option go_package = "longarm/proto/longarm/v1;longarmv1";
 
 // ---------------------------------------------------------------- longarmd
 

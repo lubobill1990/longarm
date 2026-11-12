@@ -8,8 +8,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/pki"
+	pb "longarm/proto/longarm/v1"
 )
 
 func (h *Hub) WorkerToolchain(ctx context.Context, by, user string, admin bool, req *pb.WorkerToolchainRequest) (*pb.WorkerToolchainResponse, error) {

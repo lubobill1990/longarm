@@ -15,9 +15,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/trust"
+	"longarm/internal/client"
+	"longarm/internal/pki"
+	"longarm/internal/trust"
 )
 
 // End-to-end trust, the client side (docs/usage.md, docs/security.md): a

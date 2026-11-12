@@ -14,9 +14,9 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/relay"
-	"github.com/lubobill1990/longarm/internal/relay/relaytest"
+	"longarm/internal/pki"
+	"longarm/internal/relay"
+	"longarm/internal/relay/relaytest"
 )
 
 func TestFrameCodec(t *testing.T) {

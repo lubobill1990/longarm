@@ -12,8 +12,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/testutil/gitserver"
+	"longarm/internal/jobs"
+	"longarm/internal/testutil/gitserver"
 )
 
 // The test binary is git's credential helper too (longarmd's role).

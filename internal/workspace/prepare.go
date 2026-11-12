@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
+	"longarm/internal/jobs"
 )
 
 // PrepareJob is the supervisor's Prepare hook: it gets the job's commit into

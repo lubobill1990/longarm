@@ -21,11 +21,11 @@ import (
 	"golang.org/x/term"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/desktop"
-	"github.com/lubobill1990/longarm/internal/devbox"
-	"github.com/lubobill1990/longarm/internal/platform"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/desktop"
+	"longarm/internal/devbox"
+	"longarm/internal/platform"
+	pb "longarm/proto/longarm/v1"
 )
 
 // desktopFile remembers which Dev Box each worker is and the Dev Center

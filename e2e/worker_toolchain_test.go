@@ -10,7 +10,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	pb "longarm/proto/longarm/v1"
 )
 
 func TestWorkerToolchain(t *testing.T) {

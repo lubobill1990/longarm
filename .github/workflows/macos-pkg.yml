@@ -20,6 +20,11 @@ on:
       - .github/workflows/release.yml
   workflow_dispatch:
 
+# the repository the builds come from (version.RepoURL: the hub's and the tray's
+# project links, the packages' homepage; each repository's builds name their own)
+env:
+  LONGARM_REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+
 permissions:
   contents: read
 
@@ -49,7 +54,7 @@ jobs:
           for a in amd64 arm64; do
             for t in longarm longarmd; do
               GOOS=darwin GOARCH=$a CGO_ENABLED=0 go build -trimpath \
-                -ldflags "-s -w -X github.com/lubobill1990/longarm/internal/version.Version=$V" \
+                -ldflags "-s -w -X longarm/internal/version.Version=$V -X longarm/internal/version.RepoURL=$LONGARM_REPO_URL" \
                 -o "$d/hub/$t-darwin-$a" "./cmd/$t"
             done
             x=$(mktemp -d)

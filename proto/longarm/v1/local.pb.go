@@ -1690,7 +1690,7 @@ const file_longarm_v1_local_proto_rawDesc = "" +
 	"\vSetSettings\x12\x1a.longarm.v1.ClientSettings\x1a\x1a.longarm.v1.ClientSettings\x12@\n" +
 	"\vDrainWorker\x12\x1b.longarm.v1.SetDrainRequest\x1a\x14.longarm.v1.NodeInfo\x12=\n" +
 	"\fRemoveWorker\x12\x17.longarm.v1.NodeRequest\x1a\x14.longarm.v1.NodeInfo\x12E\n" +
-	"\bShutdown\x12\x1b.longarm.v1.ShutdownRequest\x1a\x1c.longarm.v1.ShutdownResponseB<Z:github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1b\x06proto3"
+	"\bShutdown\x12\x1b.longarm.v1.ShutdownRequest\x1a\x1c.longarm.v1.ShutdownResponseB$Z\"longarm/proto/longarm/v1;longarmv1b\x06proto3"
 
 var (
 	file_longarm_v1_local_proto_rawDescOnce sync.Once

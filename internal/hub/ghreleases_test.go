@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	pb "longarm/proto/longarm/v1"
 )
 
 // fakeGitHub serves a repository's releases API and its download URLs.
@@ -100,7 +100,7 @@ func TestGitHubReleasesConfig(t *testing.T) {
 		env, repoURL, want string
 		bad                bool
 	}{
-		{"", "", strings.TrimPrefix(DefaultRepoURL, "https://github.com/"), false}, // the public repository
+		{"", "", "", false}, // no repo_url (a local build): off
 		{"", "https://github.com/acme/longarm-fork", "acme/longarm-fork", false},
 		{"", "https://git.example.com/acme/longarm", "", false}, // not GitHub: off
 		{"off", "", "", false},

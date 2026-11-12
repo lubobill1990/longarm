@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/trust"
+	"longarm/internal/nodeid"
+	"longarm/internal/pki"
+	"longarm/internal/trust"
 )
 
 // TestEndToEndTrustWorker: a worker whose owner pinned alice's user key

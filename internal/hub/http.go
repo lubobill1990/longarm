@@ -19,11 +19,11 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/memcap"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/version"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hubclient"
+	"longarm/internal/memcap"
+	"longarm/internal/pki"
+	"longarm/internal/version"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The HTTP listener (127.0.0.1:7480 behind Caddy) serves:

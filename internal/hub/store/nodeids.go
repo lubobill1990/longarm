@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/nodeid"
+	"longarm/internal/pki"
 )
 
 // LegacyNameTombstoneTTL is the shortest life of a legacy name revocation

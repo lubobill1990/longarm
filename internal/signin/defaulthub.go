@@ -3,8 +3,8 @@ package signin
 import (
 	"strings"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/pki"
+	"longarm/internal/version"
 )
 
 // Where a hub to sign in to came from (FallbackHub).

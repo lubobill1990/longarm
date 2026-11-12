@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/server"
+	"longarm/internal/longarmd"
+	"longarm/internal/server"
 )
 
 func auditCmd() *cobra.Command {

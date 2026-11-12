@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 // NodeID addresses a node within a transport: "host:port" for tcp,

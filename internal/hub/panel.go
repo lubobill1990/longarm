@@ -12,13 +12,13 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/notices"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/tenancy"
-	"github.com/lubobill1990/longarm/internal/version"
-	"github.com/lubobill1990/longarm/internal/webui"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hub/store"
+	"longarm/internal/notices"
+	"longarm/internal/pki"
+	"longarm/internal/tenancy"
+	"longarm/internal/version"
+	"longarm/internal/webui"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The web panel (P1.5): the shared frontend (internal/webui) is served at /
@@ -290,20 +290,22 @@ func withCSP(next http.Handler) http.Handler {
 	})
 }
 
-// feedbackURL is [web] feedback_url (GET /auth/info, /healthz, /api/me).
+// feedbackURL is [web] feedback_url (GET /auth/info, /healthz, /api/me;
+// "" = none: no feedback link).
 func (h *Hub) feedbackURL() string {
-	if h.cfg.Web.FeedbackURL != "" {
+	if h.cfg.Web.FeedbackURL != "" || h.repoURL() == "" {
 		return h.cfg.Web.FeedbackURL
 	}
 	return h.repoURL() + "/issues"
 }
 
-// repoURL is [web] repo_url (GET /auth/info, /healthz, /api/me).
+// repoURL is [web] repo_url (GET /auth/info, /healthz, /api/me; "" = none:
+// no project links), default the repository this hub was built from.
 func (h *Hub) repoURL() string {
 	if h.cfg.Web.RepoURL != "" {
 		return h.cfg.Web.RepoURL
 	}
-	return DefaultRepoURL
+	return strings.TrimRight(version.RepoURL, "/")
 }
 
 // meInfo is GET /api/me (+ role: admin | user; for users their Longarm

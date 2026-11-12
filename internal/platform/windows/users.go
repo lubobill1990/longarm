@@ -15,7 +15,7 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 
-	"github.com/lubobill1990/longarm/internal/platform/ptypes"
+	"longarm/internal/platform/ptypes"
 )
 
 // Per-user isolation (docs/security.md): every Longarm user gets a local

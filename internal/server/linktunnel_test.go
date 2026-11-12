@@ -23,11 +23,11 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/portlink"
-	"github.com/lubobill1990/longarm/internal/tenancy"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/nodeid"
+	"longarm/internal/pki"
+	"longarm/internal/portlink"
+	"longarm/internal/tenancy"
+	pb "longarm/proto/longarm/v1"
 )
 
 // fakeLinks is a LinkRegistry with links set by the test.

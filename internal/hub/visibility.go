@@ -16,11 +16,11 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/tenancy"
-	"github.com/lubobill1990/longarm/internal/update"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hub/store"
+	"longarm/internal/pki"
+	"longarm/internal/tenancy"
+	"longarm/internal/update"
+	pb "longarm/proto/longarm/v1"
 )
 
 // What admins see (docs/security.md "What admins see"). With multi-tenancy

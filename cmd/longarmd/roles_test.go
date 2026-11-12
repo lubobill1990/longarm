@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/longarmd"
+	"longarm/internal/longarmd"
 )
 
 type mapSettings map[string]string

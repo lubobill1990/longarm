@@ -7,9 +7,9 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/transport/longnet"
+	"longarm/internal/longarmd"
+	"longarm/internal/platform"
+	"longarm/internal/transport/longnet"
 )
 
 // serviceFirewall: longarmd.ServiceFirewall on the console.

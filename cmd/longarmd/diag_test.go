@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/diag"
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/diag"
+	"longarm/internal/jobs"
+	"longarm/internal/pki"
 )
 
 // fakeWorker builds a worker data dir full of things a bundle must not

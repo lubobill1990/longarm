@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/relay"
+	"longarm/internal/relay"
 )
 
 func TestClassifyNAT(t *testing.T) {

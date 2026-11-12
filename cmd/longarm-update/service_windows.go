@@ -8,10 +8,10 @@ import (
 	"log/slog"
 	"path/filepath"
 
-	"github.com/lubobill1990/longarm/internal/logfile"
-	"github.com/lubobill1990/longarm/internal/update"
-	"github.com/lubobill1990/longarm/internal/updatesvc"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/logfile"
+	"longarm/internal/update"
+	"longarm/internal/updatesvc"
+	"longarm/internal/version"
 )
 
 func runService() error {

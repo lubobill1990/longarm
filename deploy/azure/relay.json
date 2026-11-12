@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.48.1.52935",
-      "templateHash": "4084103609039882751"
+      "templateHash": "1274729674532745116"
     }
   },
   "parameters": {
@@ -26,9 +26,8 @@
     },
     "image": {
       "type": "string",
-      "defaultValue": "ghcr.io/lubobill1990/longarm-hub:latest",
       "metadata": {
-        "description": "Image with longarm-relay: the hub's image (deploy.sh uses the running hub's)."
+        "description": "Image with longarm-relay: the hub's image, ghcr.io/<owner>/longarm-hub:<version> (deploy.sh uses the running hub's)."
       }
     },
     "hubAddress": {

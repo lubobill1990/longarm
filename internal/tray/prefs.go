@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/telemetry"
+	"longarm/internal/client"
+	"longarm/internal/telemetry"
 )
 
 // PrefsFile holds the tray's own settings in longarm's config dir.

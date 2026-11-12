@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 // DefaultServiceName is the longarmd service's name (SCM / systemd /

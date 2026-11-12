@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/update"
 )
 
 // TestReleaseBlobStore: a hub with [releases] blob_url (deploy/azure with

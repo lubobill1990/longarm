@@ -17,11 +17,11 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/telemetry"
-	"github.com/lubobill1990/longarm/internal/telemetry/tgrpc"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/hubclient"
+	"longarm/internal/telemetry"
+	"longarm/internal/telemetry/tgrpc"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Telemetry of longarm (docs/telemetry.md). A CLI run is one operation:

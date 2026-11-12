@@ -16,9 +16,9 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/relay"
-	"github.com/lubobill1990/longarm/internal/transport"
+	"longarm/internal/pki"
+	"longarm/internal/relay"
+	"longarm/internal/transport"
 )
 
 // ALPN of the end-to-end QUIC connection between longarm and longarmd.

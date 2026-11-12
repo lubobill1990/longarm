@@ -4,16 +4,17 @@
 #   OUT/bin/longarm-hub (+ argument-free aliases), OUT/bin/longarm-relay, OUT/litestream,
 #   OUT/data and OUT/var/lib/longarm-hub (owned by the image's nonroot user)
 # Target: $TARGETARCH (BuildKit sets it), else the Go image's own
-# architecture (ACR Tasks, the legacy builder). Version: $VERSION.
+# architecture (ACR Tasks, the legacy builder). Version: $VERSION; the repository it
+# comes from (the hub's default [web] repo_url): $REPO_URL.
 set -eu
 out=${1:?usage: image-build.sh OUT}
 arch=${TARGETARCH:-$(go env GOARCH)}
 
 CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
-	-ldflags "-s -w -X github.com/lubobill1990/longarm/internal/version.Version=${VERSION:-dev}" \
+	-ldflags "-s -w -X longarm/internal/version.Version=${VERSION:-dev} -X longarm/internal/version.RepoURL=${REPO_URL:-}" \
 	-o "$out/bin/longarm-hub" ./cmd/longarm-hub
 # the external relay (deploy/azure deploy.sh --relay runs this image with it)
-CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath 	-ldflags "-s -w -X github.com/lubobill1990/longarm/internal/version.Version=${VERSION:-dev}" 	-o "$out/bin/longarm-relay" ./cmd/longarm-relay
+CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath 	-ldflags "-s -w -X longarm/internal/version.Version=${VERSION:-dev} -X longarm/internal/version.RepoURL=${REPO_URL:-}" 	-o "$out/bin/longarm-relay" ./cmd/longarm-relay
 # https = ":443" (hub.toml, LONGARM_HUB_HTTPS) as user nonroot: only the
 # right to bind ports below 1024 (deploy/azure without Caddy)
 apt-get update -qq

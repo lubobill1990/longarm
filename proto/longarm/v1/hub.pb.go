@@ -12836,7 +12836,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\tListTeams\x12\x1c.longarm.v1.ListTeamsRequest\x1a\x1d.longarm.v1.ListTeamsResponse\x12Q\n" +
 	"\fFleetSummary\x12\x1f.longarm.v1.FleetSummaryRequest\x1a .longarm.v1.FleetSummaryResponse\x12A\n" +
 	"\n" +
-	"RenameNode\x12\x1d.longarm.v1.RenameNodeRequest\x1a\x14.longarm.v1.NodeInfoB<Z:github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1b\x06proto3"
+	"RenameNode\x12\x1d.longarm.v1.RenameNodeRequest\x1a\x14.longarm.v1.NodeInfoB$Z\"longarm/proto/longarm/v1;longarmv1b\x06proto3"
 
 var (
 	file_longarm_v1_hub_proto_rawDescOnce sync.Once

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hub"
+	"longarm/internal/hub"
 )
 
 func TestLiveCheck(t *testing.T) {

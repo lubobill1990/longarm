@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
+	"longarm/internal/hub/store"
 )
 
 // Web panel sign-in with Microsoft Entra ID: OpenID Connect authorization

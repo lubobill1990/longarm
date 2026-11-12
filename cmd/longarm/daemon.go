@@ -28,15 +28,15 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/fwcheck"
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/localapi"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/pool"
-	"github.com/lubobill1990/longarm/internal/update"
-	"github.com/lubobill1990/longarm/internal/version"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/fwcheck"
+	"longarm/internal/hubclient"
+	"longarm/internal/localapi"
+	"longarm/internal/platform"
+	"longarm/internal/pool"
+	"longarm/internal/update"
+	"longarm/internal/version"
+	pb "longarm/proto/longarm/v1"
 )
 
 // longarm daemon is the client-side session daemon (DESIGN §11.3): it hosts

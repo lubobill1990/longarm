@@ -279,7 +279,7 @@ longarm admin diag get LAR-20261027-7F3K9Q       # downloads the zip
 4. If telemetry didn't show the cause, add the missing event or property
    (docs/telemetry.md lists them; scrubbing applies automatically).
 5. Ship: PR (squash), CI, `edge` image; the hub upgrade
-   (`./deploy.sh --name <hub> --image ghcr.io/lubobill1990/longarm-hub:sha-<commit>`);
+   (`./deploy.sh --name <hub> --image ghcr.io/<owner>/longarm-hub:sha-<commit>`);
    once the release is in the hub's store, workers that can self-update
    follow the hub's rollout (`longarm admin release push`); MSI installs and clients
    get a notice (CLI, tray banner, the panel's Nodes page) and update by

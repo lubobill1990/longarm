@@ -13,8 +13,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/stopsignal"
+	"longarm/internal/longarmd"
+	"longarm/internal/stopsignal"
 )
 
 // sessionModeCmd manages the user-session worker (Windows): longarmd as the

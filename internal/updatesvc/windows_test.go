@@ -18,7 +18,7 @@ import (
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
 
-	win "github.com/lubobill1990/longarm/internal/platform/windows"
+	win "longarm/internal/platform/windows"
 )
 
 func testPipeName(t *testing.T) string {

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 // longarm-hub is built on first use (TestMain builds longarmd/longarm/helper).

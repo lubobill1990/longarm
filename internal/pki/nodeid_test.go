@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/nodeid"
+	"longarm/internal/nodeid"
 )
 
 // TestNodeIDInCertificate: the ID rides in a urn:longarm:node: URI SAN next

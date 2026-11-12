@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 func testCA(t *testing.T) *pki.CA {

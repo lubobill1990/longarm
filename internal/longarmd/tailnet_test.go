@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/transport"
+	"longarm/internal/hubclient"
+	"longarm/internal/transport"
 )
 
 // TestMigrateTailnetState: the pre-per-control "tsnet" dir goes to the

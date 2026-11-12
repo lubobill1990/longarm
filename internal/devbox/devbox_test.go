@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const tenant = "72f988bf-86f1-41af-91ab-2d7cd011db47"
+const tenant = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
 
 type fakeResolver map[string]bool
 
@@ -86,12 +86,12 @@ func devCenter(t *testing.T) (*Client, *httptest.Server) {
 			http.Error(w, `{"error":{"code":"Unauthorized","message":"no token"}}`, http.StatusUnauthorized)
 			return
 		}
-		w.Write([]byte(`{"value":[{"name":"arm1","projectName":"ODSP","poolName":"SPO_southeastasia","powerState":"Running","osType":"Windows","uniqueId":"fa6b35f7-a922-44ba-a34d-fc6091b3399d"},{"name":"bot1","projectName":"ODSP","powerState":"Stopped","osType":"Windows"}]}`))
+		w.Write([]byte(`{"value":[{"name":"arm1","projectName":"Proj1","poolName":"Pool_westus3","powerState":"Running","osType":"Windows","uniqueId":"fa6b35f7-a922-44ba-a34d-fc6091b3399d"},{"name":"bot1","projectName":"Proj1","powerState":"Stopped","osType":"Windows"}]}`))
 	})
-	mux.HandleFunc("GET /projects/ODSP/users/me/devboxes/arm1/remoteConnection", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"webUrl":"https://deschutes.microsoft.com/webclient/ent/86698800","rdpConnectionUrl":"ms-avd:connect?env=avdarm&resourceid=186b00f0&username=a%40b.com&version=0&workspaceId=3be7469e"}`))
+	mux.HandleFunc("GET /projects/Proj1/users/me/devboxes/arm1/remoteConnection", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"webUrl":"https://client.example.com/webclient/ent/86698800","rdpConnectionUrl":"ms-avd:connect?env=avdarm&resourceid=186b00f0&username=a%40b.com&version=0&workspaceId=3be7469e"}`))
 	})
-	mux.HandleFunc("GET /projects/ODSP/users/me/devboxes/bot1/remoteConnection", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /projects/Proj1/users/me/devboxes/bot1/remoteConnection", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"webUrl":"javascript:alert(1)","rdpConnectionUrl":"file:///x"}`))
 	})
 	srv := httptest.NewTLSServer(mux)
@@ -109,14 +109,14 @@ func TestClient(t *testing.T) {
 	defer srv.Close()
 	ctx := context.Background()
 	boxes, err := c.DevBoxes(ctx)
-	if err != nil || len(boxes) != 2 || boxes[0].Name != "arm1" || boxes[0].ProjectName != "ODSP" || boxes[1].PowerState != "Stopped" {
+	if err != nil || len(boxes) != 2 || boxes[0].Name != "arm1" || boxes[0].ProjectName != "Proj1" || boxes[1].PowerState != "Stopped" {
 		t.Fatalf("DevBoxes: %+v, %v", boxes, err)
 	}
-	rc, err := c.RemoteConnection(ctx, "ODSP", "arm1")
+	rc, err := c.RemoteConnection(ctx, "Proj1", "arm1")
 	if err != nil || !strings.HasPrefix(rc.RDPConnectionURL, "ms-avd:connect?") || !ValidLaunchURL(rc.WebURL) {
 		t.Fatalf("RemoteConnection: %+v, %v", rc, err)
 	}
-	if _, err := c.RemoteConnection(ctx, "ODSP", "bot1"); err == nil {
+	if _, err := c.RemoteConnection(ctx, "Proj1", "bot1"); err == nil {
 		t.Fatal("unusable links accepted")
 	}
 	bad := *c
@@ -151,7 +151,7 @@ func ts(t *testing.T, s string) time.Time {
 // created 15 s apart, so their workers are told by the last remote logon.
 func TestMatch(t *testing.T) {
 	box := func(name, created, lastConn string) DevBox {
-		b := DevBox{Name: name, ProjectName: "ODSP", CreatedTime: ts(t, created)}
+		b := DevBox{Name: name, ProjectName: "Proj1", CreatedTime: ts(t, created)}
 		if lastConn != "" {
 			b.LastConnectedTime = ts(t, lastConn)
 		}

@@ -16,9 +16,9 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/localapi"
-	"github.com/lubobill1990/longarm/internal/sched"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/localapi"
+	"longarm/internal/sched"
+	pb "longarm/proto/longarm/v1"
 )
 
 const giB = 1 << 30

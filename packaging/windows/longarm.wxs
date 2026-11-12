@@ -7,14 +7,14 @@
                 the repository variables LONGARM_DEFAULT_HUB / LONGARM_DEFAULT_HUB_CA; without: Custom only)
 
   Interactive: Welcome -> "Default (recommended)" or "Custom" -> Install. Default signs in to the
-  built-in hub with a Microsoft account: pick "This is my everyday computer: send jobs to workers"
+  built-in hub with your account: pick "This is my everyday computer: send jobs to workers"
   (ROLES=client: longarm + the tray) or "This machine runs jobs (Dev Box, build machine)" (ROLES=both:
   the client + your user-session worker, which starts at your logon, no password), click Install;
   the tray opens and starts the sign-in by itself: approve its code in the browser. A machine that
   looks like a Windows 365 Cloud PC / Dev Box (computer name CPC-..., or the Dev Box agent service
   Microsoft.DevCenter.DevBoxAgent / DevBoxAgent) gets "runs jobs" preselected (interactive installs
   only, and not when roles are already recorded). Custom asks for the roles, a hub, a join code or
-  "Sign in with Microsoft", an optional CA fingerprint, and offers the worker as a Windows service
+  "Sign in", an optional CA fingerprint, and offers the worker as a Windows service
   (Advanced). Both offer "Allow remote administrator commands" (the admin worker, below) with a worker
   role only. The Finish page lists what was installed.
 
@@ -32,7 +32,7 @@
     msiexec /i longarm.msi /qn MODE=custom ROLES=worker HUB=hub.example.com JOIN_CODE=K7P-Q2M [CA_FINGERPRINT=...]
     msiexec /i longarm.msi /qn MODE=custom ROLES=worker RUN=service HUB=... JOIN_CODE=... SERVICE_USER=.\alice SERVICE_PASSWORD=...
   Properties:
-    MODE=default|custom   default: the built-in hub (DEFAULT_HUB) and Microsoft sign-in (LOGIN=1; JOIN_CODE is
+    MODE=default|custom   default: the built-in hub (DEFAULT_HUB) and a browser sign-in (LOGIN=1; JOIN_CODE is
                           refused); custom: HUB, JOIN_CODE or LOGIN=1, CA_FINGERPRINT. Default: custom when HUB
                           or JOIN_CODE is given or there is no built-in hub, else default. Remembered.
     ROLES=client|both|worker   client = longarm (+ tray); worker = + longarmd running jobs; both = the two
@@ -52,7 +52,7 @@
                             [LISTEN=tcp://100.64.0.11:7701,longnet://hub:7443?name=w1] (longarmd.toml when
                             the data dir has none)
     HUB, LOGIN=1, JOIN_CODE, CA_FINGERPRINT   the hub (the bare domain will do: the CA then comes from
-                          https://HUB/ca.crt at sign-in), a sign-in with Microsoft after the install (the tray,
+                          https://HUB/ca.crt at sign-in), a sign-in through the browser after the install (the tray,
                           or longarmd / longarm login - HUB and CA_FINGERPRINT are recorded in
                           HKLM\Software\Longarm, so neither asks), or a join code. HUB / CA_FINGERPRINT / LOGIN
                           are remembered.
@@ -69,7 +69,7 @@
                           an installing user (SESSION_SID). ADMIN_WORKER=0 on an upgrade removes it;
                           remembered.
     [LAUNCH_TRAY=0]       don't start the tray at the end (it starts in the installing user's session,
-                          not elevated, through a scheduled task, and shows "Sign in with Microsoft")
+                          not elevated, through a scheduled task, and shows "Sign in")
     [AUTO_UPDATE=1|0]     the Longarm Update service installs new releases by itself (a new machine: off)
     [UPDATE_CHANNEL=stable|preview|dev]   the releases it follows (default stable); both unset: as
                           recorded (HKLM\Software\Longarm\Update; the tray's Settings > Updates). The
@@ -220,7 +220,7 @@
     <Property Id="SAVED_CA_FINGERPRINT" Secure="yes">
       <RegistrySearch Id="RegCaFp" Root="HKLM" Key="Software\Longarm" Name="CaFingerprint" Type="raw" />
     </Property>
-    <!-- LOGIN=1: no join code; the machine signs in with Microsoft after the install (the tray, or
+    <!-- LOGIN=1: no join code; the machine signs in through the browser after the install (the tray, or
          longarmd login - HUB and CA_FINGERPRINT are recorded, so neither asks for them). -->
     <Property Id="LOGIN" Secure="yes" />
     <Property Id="SAVED_LOGIN" Secure="yes">
@@ -289,7 +289,9 @@
     <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
     <!-- Repair would re-create the service and needs the account password again (msiexec /fa ... SERVICE_PASSWORD=...). -->
     <Property Id="ARPNOREPAIR" Value="1" />
-    <Property Id="ARPURLINFOABOUT" Value="https://github.com/lubobill1990/longarm" />
+    <?if $(var.RepoUrl) != "" ?>
+    <Property Id="ARPURLINFOABOUT" Value="$(var.RepoUrl)" />
+    <?endif?>
     <!-- The Longarm icon (packaging/icons, go run ./packaging/icons): Add/Remove Programs and the
          Start menu shortcut. The exes carry it too (cmd/<tool>/rsrc_windows_<arch>.syso). -->
     <Icon Id="LongarmIcon" SourceFile="$(sys.SOURCEFILEDIR)..\icons\longarm.ico" />
@@ -330,7 +332,7 @@
                  Condition="NOT MODE AND (HUB OR JOIN_CODE OR CLIENT_JOIN_CODE OR NOT DEFAULT_HUB)" />
     <SetProperty Id="MODE" Action="SetModeDefault" Value="default" Before="SetHubDefault" Sequence="both"
                  Condition="NOT MODE" />
-    <!-- Default: the built-in hub, its pin, a sign-in with Microsoft. -->
+    <!-- Default: the built-in hub, its pin, a sign-in through the browser. -->
     <SetProperty Id="HUB" Action="SetHubDefault" Value="[DEFAULT_HUB]" Before="SetCaFpDefault" Sequence="both"
                  Condition='MODE="default" AND DEFAULT_HUB' />
     <SetProperty Id="CA_FINGERPRINT" Action="SetCaFpDefault" Value="[DEFAULT_HUB_CA]" Before="SetLoginDefault" Sequence="both"
@@ -399,12 +401,12 @@
     <CustomAction Id="CheckServiceAccount" Error="A worker running as a Windows service (RUN=service) needs the account the longarmd service runs jobs as: SERVICE_USER=.\you SERVICE_PASSWORD=... (it gets 'Log on as a service'). To run it as LocalSystem instead (jobs run as SYSTEM, not recommended) pass SERVICE_ACCOUNT=LocalSystem. Without a password: RUN=session (the default; the worker runs as you while you are logged on)." />
     <CustomAction Id="CheckMode" Error="MODE must be default or custom." />
     <CustomAction Id="CheckDefaultHub" Error="This MSI has no built-in hub (it was built without -DefaultHub): use MODE=custom HUB=your.hub.example.com." />
-    <CustomAction Id="CheckDefaultCode" Error="MODE=default signs in with a Microsoft account: drop JOIN_CODE / CLIENT_JOIN_CODE, or use MODE=custom HUB=... JOIN_CODE=..." />
+    <CustomAction Id="CheckDefaultCode" Error="MODE=default signs in through the browser: drop JOIN_CODE / CLIENT_JOIN_CODE, or use MODE=custom HUB=... JOIN_CODE=..." />
     <CustomAction Id="CheckRun" Error="RUN must be session or service (ISOLATION=per-user needs RUN=service)." />
     <CustomAction Id="CheckSessionUser" Error="RUN=session runs the worker as the user who logs on, but this install runs as SYSTEM (UserSID S-1-5-18): install as that user (elevated), pass SESSION_SID=&lt;the user's SID&gt;, or use RUN=service." />
     <CustomAction Id="CheckAdminRole" Error="ADMIN_WORKER=1 adds the admin worker, which comes with the worker role: use ROLES=both (or ROLES=worker), or leave ADMIN_WORKER out." />
     <CustomAction Id="CheckLongarmdSwitch" Error="This upgrade would switch the worker between a Windows service and the user-session worker (RUN, or ROLES=client on a service worker), which an upgrade can't do: leave RUN and ROLES out to keep the installed ones, or uninstall first (msiexec /x, KEEP_DATA=1 keeps the jobs) and install again." />
-    <CustomAction Id="CheckAdminWorker" Error="ADMIN_WORKER=1 signs the admin worker in with Microsoft at the hub, as the user who installs it: it needs a hub (MODE=default or HUB=...) and an installing user (not SYSTEM, or SESSION_SID=...)." />
+    <CustomAction Id="CheckAdminWorker" Error="ADMIN_WORKER=1 signs the admin worker in at the hub, as the user who installs it: it needs a hub (MODE=default or HUB=...) and an installing user (not SYSTEM, or SESSION_SID=...)." />
     <!-- Secrets (JOIN_CODE, CLIENT_JOIN_CODE, CLIENT_CODE, SERVICE_PASSWORD) stay out of verbose
          logs (msiexec /l*v): the properties are Hidden (masked in property dumps and changes), and
          every custom action whose target contains one has HideTarget="yes". Hidden alone does not
@@ -588,7 +590,7 @@
                   ExeCommand='join "[HUB]" "[CLIENT_CODE]" --ca-fingerprint "[CA_FINGERPRINT]" --name "[NODE_NAME]"' />
     <?if $(var.HasTray) = 1 ?>
     <!-- The tray, started in the installing user's session (not elevated: through a task), shows
-         "Sign in with Microsoft". -->
+         "Sign in". -->
     <CustomAction Id="LongarmTrayLaunch" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
                   ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi launch-tray #LONGARM-MSI#sid=[SESSION_SID]|usersid=[UserSID]' />
     <?endif?>
@@ -719,11 +721,11 @@
       <Dialog Id="ModeDlg" Width="370" Height="270" Title="[ProductName] Setup">
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
         <Control Id="Title" Type="Text" X="15" Y="6" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Set up Longarm" />
-        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Choose what this computer does. Default signs you in with your Microsoft account." />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Choose what this computer does. Default signs you in at the built-in hub." />
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
         <Control Id="Mode" Type="RadioButtonGroup" X="15" Y="50" Width="340" Height="34" Property="MODE_UI">
           <RadioButtonGroup Property="MODE_UI">
-            <RadioButton Value="default" X="0" Y="0" Width="340" Height="16" Text="&amp;Default (recommended): sign in with Microsoft at [DEFAULT_HUB]" />
+            <RadioButton Value="default" X="0" Y="0" Width="340" Height="16" Text="&amp;Default (recommended): sign in at [DEFAULT_HUB]" />
             <RadioButton Value="custom" X="0" Y="18" Width="340" Height="16" Text="&amp;Custom: another hub, a join code, the worker as a Windows service" />
           </RadioButtonGroup>
         </Control>
@@ -759,7 +761,7 @@
         </Control>
       </Dialog>
 
-      <!-- Custom: roles, hub, a sign-in with Microsoft or a join code, CA pin, admin worker, service. -->
+      <!-- Custom: roles, hub, a sign-in through the browser or a join code, CA pin, admin worker, service. -->
       <Dialog Id="RolesDlg" Width="370" Height="270" Title="[ProductName] Setup">
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)" />
         <Control Id="Title" Type="Text" X="15" Y="6" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Custom setup" />
@@ -776,7 +778,7 @@
         <Control Id="HubEdit" Type="Edit" X="15" Y="79" Width="340" Height="15" Property="HUB" />
         <Control Id="Auth" Type="RadioButtonGroup" X="15" Y="98" Width="200" Height="34" Property="CUSTOM_AUTH">
           <RadioButtonGroup Property="CUSTOM_AUTH">
-            <RadioButton Value="login" X="0" Y="0" Width="200" Height="16" Text="&amp;Sign in with Microsoft after the install" />
+            <RadioButton Value="login" X="0" Y="0" Width="200" Height="16" Text="&amp;Sign in through the browser after the install" />
             <RadioButton Value="code" X="0" Y="17" Width="200" Height="16" Text="&amp;Join code (from the hub's admin):" />
           </RadioButtonGroup>
         </Control>
@@ -799,7 +801,7 @@
       </Dialog>
       <Dialog Id="NeedCodeDlg" Width="260" Height="85" Title="[ProductName] Setup" NoMinimize="yes">
         <Control Id="Text" Type="Text" X="15" Y="12" Width="230" Height="40" NoPrefix="yes"
-                 Text="Enter the hub address and the join code, or choose to sign in with Microsoft." />
+                 Text="Enter the hub address and the join code, or choose to sign in through the browser." />
         <Control Id="OK" Type="PushButton" X="102" Y="58" Width="56" Height="17" Default="yes" Cancel="yes" Text="!(loc.WixUIOK)">
           <Publish Event="EndDialog" Value="Return" />
         </Control>

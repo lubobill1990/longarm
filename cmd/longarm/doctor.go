@@ -13,13 +13,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/doctor"
-	"github.com/lubobill1990/longarm/internal/fwcheck"
-	"github.com/lubobill1990/longarm/internal/localapi"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/version"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/doctor"
+	"longarm/internal/fwcheck"
+	"longarm/internal/localapi"
+	"longarm/internal/pki"
+	"longarm/internal/version"
+	pb "longarm/proto/longarm/v1"
 )
 
 func doctorCmd() *cobra.Command {

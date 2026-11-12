@@ -12,9 +12,9 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/sched"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hubclient"
+	"longarm/internal/sched"
+	pb "longarm/proto/longarm/v1"
 )
 
 // hubUICmds are the CLI equivalents of the web panel's job actions, which

@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 // ConsoleHost implements `longarmd conhost [--pty] [--raw] -- argv...` (Windows).

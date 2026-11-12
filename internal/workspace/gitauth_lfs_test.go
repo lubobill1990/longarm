@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/testutil/gitserver"
+	"longarm/internal/jobs"
+	"longarm/internal/testutil/gitserver"
 )
 
 // noSecret fails when secret is in any file under the roots.

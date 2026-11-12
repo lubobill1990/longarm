@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 // TestLongarmFirewall: longarm firewall status/allow/remove manage the inbound rule

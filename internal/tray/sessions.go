@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"regexp"
 
-	"github.com/lubobill1990/longarm/internal/uipage"
+	"longarm/internal/uipage"
 )
 
 // The Sessions window (docs/agent-sessions-ui.md section 5): the web UI's

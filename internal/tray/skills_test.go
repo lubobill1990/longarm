@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/agentskill"
+	"longarm/internal/agentskill"
 )
 
 // TestSkillsAPI: the Settings section's API behind the tray's guard: the

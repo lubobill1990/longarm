@@ -11,9 +11,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/userspace"
-	"github.com/lubobill1990/longarm/internal/workspace"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/userspace"
+	"longarm/internal/workspace"
+	pb "longarm/proto/longarm/v1"
 )
 
 func untrackedTar(t *testing.T, name, content string) string {

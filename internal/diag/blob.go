@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/azauth"
+	"longarm/internal/azauth"
 )
 
 // BlobAPIVersion is the x-ms-version of the Blob Storage REST calls.

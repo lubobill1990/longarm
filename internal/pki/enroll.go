@@ -19,8 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/nodeid"
+	"longarm/internal/platform"
 )
 
 // Enrollment with longarm-hub (DESIGN §6.3, §11.2): a joining node generates its

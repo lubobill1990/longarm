@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { hubApi, type AuthProvider } from '../api/hub'
 import type { LatestRelease, Me } from '../api/types'
-import { docsURL, feedbackURL, PUBLIC_REPO, repoURL } from '../lib/feedback'
+import { docsURL, feedbackURL, filmURL, repoURL } from '../lib/feedback'
 import { msiFile } from '../lib/release'
 import { Link } from '../lib/router'
 import { installLines } from '../panel/GetPage'
@@ -20,10 +20,9 @@ import './landing.css'
 // /releases/latest.json.
 
 const docs = (repo: string) => docsURL(repo)
-// the promo film (marketing/promo-video), a release asset: too big for the
-// bundle every hub, tray and MSI carries; loaded only when played.
-// VITE_FILM_URL (pnpm dev): another copy, e.g. a local one
-const FILM = (import.meta.env.VITE_FILM_URL as string | undefined) || `${PUBLIC_REPO}/releases/download/promo-film/longarm-promo.mp4`
+// the promo film (marketing/promo-video), a release asset of the hub's
+// repository (filmURL): too big for the bundle every hub, tray and MSI
+// carries; loaded only when played. No repository: no film.
 
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
@@ -161,7 +160,7 @@ const DISPATCH = [
   { cmd: 'npx playwright test', worker: 'devbox-02', note: '18 GB free', tint: 'green' },
 ]
 
-function Hero({ me, hubHome }: { me: Me | null | undefined; hubHome: string }) {
+function Hero({ me, hubHome, film }: { me: Me | null | undefined; hubHome: string; film: boolean }) {
   const tick = useTicker(2200)
   const shown = [0, 1, 2].map((i) => DISPATCH[(tick + i) % DISPATCH.length])
   return (
@@ -192,7 +191,7 @@ function Hero({ me, hubHome }: { me: Me | null | undefined; hubHome: string }) {
             <Link to={hubHome} className="lp-btn ghost lg">
               Open my hub
             </Link>
-          ) : (
+          ) : film && (
             <a
               href="#film"
               className="lp-btn ghost lg"
@@ -260,7 +259,7 @@ function playFilm() {
   document.getElementById('film')?.scrollIntoView?.({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' })
 }
 
-function Film() {
+function Film({ src }: { src: string }) {
   const video = useRef<HTMLVideoElement>(null)
   const [started, setStarted] = useState(false)
   useEffect(() => {
@@ -271,6 +270,7 @@ function Film() {
     window.addEventListener(PLAY_FILM, play)
     return () => window.removeEventListener(PLAY_FILM, play)
   }, [])
+  if (!src) return null
   return (
     <section className="lp-sec lp-film" id="film">
       <Reveal className="lp-sec-head center">
@@ -280,7 +280,7 @@ function Film() {
       <Reveal className={`lp-player ${started ? 'playing' : ''}`}>
         <video
           ref={video}
-          src={FILM}
+          src={src}
           poster={poster}
           preload="none"
           playsInline
@@ -887,7 +887,7 @@ function GetStarted({
               <div className="lp-install-col">
                 <p className="lp-col-title">Packages</p>
                 <p className="small">
-                  Linux packages (apt / dnf) and Homebrew: <a href={`${repo}#quick-start`}>the README</a>.
+                  Linux packages (apt / dnf) and Homebrew: {repo ? <a href={`${repo}#quick-start`}>the README</a> : 'the README'}.
                 </p>
               </div>
             </div>
@@ -937,16 +937,20 @@ function GetStarted({
                 Sign in to {location.host}
               </Link>
             )}
-            <a className="lp-btn ghost lg" href={docs(repo)}>
-              Read the docs
-            </a>
+            {repo && (
+              <a className="lp-btn ghost lg" href={docs(repo)}>
+                Read the docs
+              </a>
+            )}
           </div>
-          <p className="lp-feedback">
-            Questions, ideas, a bug?{' '}
-            <a href={feedback} target="_blank" rel="noreferrer" data-testid="landing-feedback">
-              Tell us →
-            </a>
-          </p>
+          {feedback && (
+            <p className="lp-feedback">
+              Questions, ideas, a bug?{' '}
+              <a href={feedback} target="_blank" rel="noreferrer" data-testid="landing-feedback">
+                Tell us →
+              </a>
+            </p>
+          )}
         </div>
       </Reveal>
     </section>
@@ -962,16 +966,22 @@ function Footer({ version, feedback, repo }: { version?: string; feedback: strin
       </span>
       <span className="faint">Give your coding agents a long arm.{version ? ` · hub ${version}` : ''}</span>
       <span className="spacer" />
-      <a href={feedback} target="_blank" rel="noreferrer">
-        Feedback
-      </a>
-      <a href={repo} data-testid="landing-repo">
-        GitHub
-      </a>
-      <a href={docs(repo)}>Usage</a>
-      <a href={docsURL(repo, 'design.md')}>Design</a>
-      <a href={docsURL(repo, 'security.md')}>Security</a>
-      <a href={`${repo}#run-your-own-hub`}>Run your own hub</a>
+      {feedback && (
+        <a href={feedback} target="_blank" rel="noreferrer">
+          Feedback
+        </a>
+      )}
+      {repo && (
+        <>
+          <a href={repo} data-testid="landing-repo">
+            GitHub
+          </a>
+          <a href={docs(repo)}>Usage</a>
+          <a href={docsURL(repo, 'design.md')}>Design</a>
+          <a href={docsURL(repo, 'security.md')}>Security</a>
+          <a href={`${repo}#run-your-own-hub`}>Run your own hub</a>
+        </>
+      )}
       <a href="/status">Status</a>
       <a href="/licenses.txt">Licenses</a>
     </footer>
@@ -1004,8 +1014,8 @@ export default function LandingPage({ me, hubHome }: { me: Me | null | undefined
       </div>
       <TopBar me={me} hubHome={hubHome} />
       <main>
-        <Hero me={me} hubHome={hubHome} />
-        <Film />
+        <Hero me={me} hubHome={hubHome} film={!!filmURL(repo)} />
+        <Film src={filmURL(repo)} />
         <BeforeAfter />
         <HowItWorks />
         <Agents />

@@ -23,8 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/azauth"
-	"github.com/lubobill1990/longarm/internal/telemetry"
+	"longarm/internal/azauth"
+	"longarm/internal/telemetry"
 )
 
 // DefaultEndpoint is the global ingestion endpoint (connection strings

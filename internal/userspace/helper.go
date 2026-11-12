@@ -16,9 +16,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/platform"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/jobs"
+	"longarm/internal/platform"
+	pb "longarm/proto/longarm/v1"
 )
 
 // HelperCommand is longarmd's subcommand that serves a user's file and git

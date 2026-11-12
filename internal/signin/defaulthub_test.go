@@ -3,7 +3,7 @@ package signin
 import (
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/version"
 )
 
 // TestFallbackHubOrder: the installer's hub wins over the build's default;

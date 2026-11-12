@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/nodeid"
+	"longarm/internal/nodeid"
 )
 
 // End-to-end trust (docs/security.md "End-to-end trust"): the hub's CA

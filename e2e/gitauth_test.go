@@ -18,7 +18,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"github.com/lubobill1990/longarm/internal/testutil/gitserver"
+	"longarm/internal/testutil/gitserver"
 )
 
 // credEnv is the environment of a client whose git credential helper

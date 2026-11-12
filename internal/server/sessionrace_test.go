@@ -12,11 +12,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/attach"
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/supervisor"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/attach"
+	"longarm/internal/jobs"
+	"longarm/internal/pki"
+	"longarm/internal/supervisor"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The races of the security review of programmable sessions.

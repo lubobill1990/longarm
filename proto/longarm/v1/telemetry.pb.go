@@ -593,7 +593,7 @@ const file_longarm_v1_telemetry_proto_rawDesc = "" +
 	"\x04user\x18\b \x01(\tR\x04user\x12\x12\n" +
 	"\x04role\x18\t \x01(\tR\x04role2I\n" +
 	"\tTelemetry\x12<\n" +
-	"\x04Push\x12\x1a.longarm.v1.TelemetryBatch\x1a\x18.longarm.v1.TelemetryAckB<Z:github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1b\x06proto3"
+	"\x04Push\x12\x1a.longarm.v1.TelemetryBatch\x1a\x18.longarm.v1.TelemetryAckB$Z\"longarm/proto/longarm/v1;longarmv1b\x06proto3"
 
 var (
 	file_longarm_v1_telemetry_proto_rawDescOnce sync.Once

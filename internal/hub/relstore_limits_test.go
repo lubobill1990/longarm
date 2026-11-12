@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/hub/store"
+	"longarm/internal/platform"
 )
 
 func testRelease(version, file, content string) store.Release {

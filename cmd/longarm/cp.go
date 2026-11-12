@@ -28,8 +28,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/jobs"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Copies (variables for tests).

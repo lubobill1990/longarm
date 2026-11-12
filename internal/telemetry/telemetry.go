@@ -29,7 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pii"
+	"longarm/internal/pii"
 )
 
 // Item kinds (Application Insights base types).

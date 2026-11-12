@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/attach"
+	"longarm/internal/attach"
 )
 
 // slowWriter records writes; each write is slow so that unserialized

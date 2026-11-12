@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/localapi"
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/localapi"
+	"longarm/internal/platform"
 )
 
 // The firewall card's "Allow" button (/trayapi/firewall/allow): Windows

@@ -17,11 +17,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/azauth"
-	"github.com/lubobill1990/longarm/internal/diag"
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/azauth"
+	"longarm/internal/diag"
+	"longarm/internal/hub/store"
+	"longarm/internal/platform"
+	"longarm/internal/update"
 )
 
 // Release file storage.

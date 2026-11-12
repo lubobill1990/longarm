@@ -97,6 +97,11 @@ on:
         type: boolean
         default: true
 
+# the repository the builds come from (version.RepoURL: the hub's and the tray's
+# project links, the packages' homepage; each repository's builds name their own)
+env:
+  LONGARM_REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+
 permissions:
   contents: read
 
@@ -619,7 +624,8 @@ jobs:
 
   hub:
     name: hub (longarm-hub over SSH forced command)
-    needs: [meta, publish]
+    # image: a hub that runs the container (deploy/hub/longarm-hub-deploy-docker) pulls it
+    needs: [meta, publish, image]
     # the hub follows preview: release candidates and releases, never dev builds
     if: needs.meta.outputs.dev == 'false' && needs.meta.outputs.dry_run == 'false' && vars.LONGARM_HUB != '' && vars.HUB_SSH != ''
     runs-on: ubuntu-latest

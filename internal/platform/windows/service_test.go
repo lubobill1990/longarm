@@ -5,7 +5,7 @@ package windows
 import (
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/platform/ptypes"
+	"longarm/internal/platform/ptypes"
 )
 
 // TestQueryServiceAnyAccount: QueryService works without elevation (the

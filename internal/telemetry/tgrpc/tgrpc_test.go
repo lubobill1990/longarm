@@ -10,8 +10,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/lubobill1990/longarm/internal/telemetry"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/telemetry"
+	pb "longarm/proto/longarm/v1"
 )
 
 type sink struct {

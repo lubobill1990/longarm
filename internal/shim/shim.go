@@ -42,10 +42,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/logfile"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/redact"
+	"longarm/internal/jobs"
+	"longarm/internal/logfile"
+	"longarm/internal/platform"
+	"longarm/internal/redact"
 )
 
 // KillPollInterval is how often the shim checks for the kill marker.

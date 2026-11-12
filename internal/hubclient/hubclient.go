@@ -28,12 +28,12 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/telemetry/tgrpc"
-	"github.com/lubobill1990/longarm/internal/transport"
-	"github.com/lubobill1990/longarm/internal/version"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
+	"longarm/internal/telemetry/tgrpc"
+	"longarm/internal/transport"
+	"longarm/internal/version"
+	pb "longarm/proto/longarm/v1"
 )
 
 // DefaultPort of longarm-hub.

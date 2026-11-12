@@ -26,6 +26,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG VERSION=dev
+# the repository the image is built from (the hub's default [web] repo_url)
+ARG REPO_URL=
 ARG TARGETARCH
 RUN tr -d '\r' < deploy/hub/image-build.sh | sh -s /out
 
@@ -66,6 +68,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG VERSION=dev
+# the repository the image is built from (the hub's default [web] repo_url)
+ARG REPO_URL=
 ARG TARGETARCH
 RUN tr -d '\r' < deploy/hub/image-build.sh | sh -s /out
 

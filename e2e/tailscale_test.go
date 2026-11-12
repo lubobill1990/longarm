@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/testutil/fakets"
+	"longarm/internal/testutil/fakets"
 )
 
 // TestHubTailscaleProvider: [tailnet] provider = "tailscale" against a fake

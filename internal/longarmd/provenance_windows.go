@@ -5,7 +5,7 @@ package longarmd
 import (
 	"golang.org/x/sys/windows/registry"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 // ProvenanceLocation is where the provenance values live.

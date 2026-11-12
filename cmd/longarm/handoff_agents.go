@@ -36,7 +36,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 // keepSession picks sessions by id and modification time (the Sessions

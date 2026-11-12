@@ -16,10 +16,10 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/portlink"
-	"github.com/lubobill1990/longarm/internal/telemetry"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/pki"
+	"longarm/internal/portlink"
+	"longarm/internal/telemetry"
+	pb "longarm/proto/longarm/v1"
 )
 
 // LinkRegistry is what the server needs of longarmd's port links

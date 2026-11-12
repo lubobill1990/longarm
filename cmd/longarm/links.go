@@ -17,12 +17,12 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/portlink"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/hubclient"
+	"longarm/internal/nodeid"
+	"longarm/internal/pki"
+	"longarm/internal/portlink"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Port links (docs/usage.md "Port links"): processes on worker A reach a

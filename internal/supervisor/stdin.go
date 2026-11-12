@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
+	"longarm/internal/jobs"
 )
 
 // bindStdin runs with submit held. The key stays outside job directories:

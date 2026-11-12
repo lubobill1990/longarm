@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 func secureStdinDir(dir string) error {

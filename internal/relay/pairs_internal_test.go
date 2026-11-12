@@ -3,7 +3,7 @@ package relay
 import (
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 // TestWorkerPairsByNodeID: a worker whose certificate carries a node ID

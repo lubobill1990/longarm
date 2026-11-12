@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/update"
 )
 
 // A failure after the version is known (here: a package that fails

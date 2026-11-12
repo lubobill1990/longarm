@@ -6,7 +6,7 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/relay"
+	"longarm/internal/relay"
 )
 
 // Timing are the path-selection timings (DESIGN §4.3 defaults).

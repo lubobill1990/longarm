@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 func TestPublicAddr(t *testing.T) {

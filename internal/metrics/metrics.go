@@ -23,7 +23,7 @@ import (
 
 	psnet "github.com/shirou/gopsutil/v4/net"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 // AgentNames are the agent CLIs whose sessions are counted.

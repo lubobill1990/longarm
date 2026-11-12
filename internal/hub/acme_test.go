@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/crypto/acme/autocert"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
+	"longarm/internal/hub/store"
 )
 
 func TestConfigHTTPS(t *testing.T) {

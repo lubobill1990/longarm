@@ -10,7 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/update"
+	"longarm/internal/version"
 )
 
 // The Workers tab's "Add a machine" page (web/src/tray/AddMachine.tsx)
@@ -18,30 +19,19 @@ import (
 // it to this machine's hub: the installer from the GitHub Release of the
 // hub's newest stable version, then a sign-in to the hub.
 //
-//	GET /trayapi/addmachine   {hub_host, version, tenant, internal, repo, public_repo, internal_repo}
+//	GET /trayapi/addmachine   {hub_host, version, tenant, repo}
 //
-// Machines of a hub that signs in with Microsoft's own tenant download from
-// the Microsoft-internal copy of the repository, which carries the same
-// releases (.github/gim-home/sync-releases.yml copies them).
-const (
-	PublicRepo   = "github.com/lubobill1990/longarm"
-	InternalRepo = "github.com/gim-home/longarm"
-	// MicrosoftTenant is Microsoft's own Entra directory (public knowledge:
-	// its sign-in pages name it).
-	MicrosoftTenant = "72f988bf-86f1-41af-91ab-2d7cd011db47"
-)
+// The installers come from the GitHub repository the hub names ([web]
+// repo_url), else the one this tray was built from (version.RepoURL).
 
 // addMachineTTL: how long the hub's answers are reused.
 const addMachineTTL = 5 * time.Minute
 
 type addMachineInfo struct {
-	HubHost      string `json:"hub_host"`          // the hub's domain ("" = no hub configured)
-	Version      string `json:"version,omitempty"` // the hub's newest stable release ("" = unknown)
-	Tenant       string `json:"tenant,omitempty"`  // the hub's Entra tenant (an older hub: "")
-	Internal     bool   `json:"internal"`          // a Microsoft-internal hub: download from InternalRepo
-	Repo         string `json:"repo"`              // where to download from: github.com/OWNER/REPO (gh -R takes it too)
-	PublicRepo   string `json:"public_repo"`
-	InternalRepo string `json:"internal_repo"`
+	HubHost string `json:"hub_host"`          // the hub's domain ("" = no hub configured)
+	Version string `json:"version,omitempty"` // the hub's newest stable release ("" = unknown)
+	Tenant  string `json:"tenant,omitempty"`  // the hub's Entra tenant (an older hub: "")
+	Repo    string `json:"repo"`              // where to download from: github.com/OWNER/REPO (gh -R takes it too; "" = unknown)
 }
 
 type addMachineCache struct {
@@ -76,7 +66,7 @@ func (s *Server) addMachineInfo(ctx context.Context) addMachineInfo {
 	if c.base == base && !c.at.IsZero() && time.Since(c.at) < addMachineTTL {
 		return c.info
 	}
-	info := addMachineInfo{Repo: PublicRepo, PublicRepo: PublicRepo, InternalRepo: InternalRepo}
+	info := addMachineInfo{Repo: githubRepo(version.RepoURL)}
 	if u, err := url.Parse(base); err == nil {
 		info.HubHost = u.Hostname()
 	}
@@ -98,11 +88,9 @@ func (s *Server) addMachineInfo(ctx context.Context) addMachineInfo {
 	if s.hubGetJSON(cctx, base, "/releases/latest.json", &latest) == nil && update.ValidVersion(latest.Version) {
 		info.Version = latest.Version // stable: the channels' builds have no GitHub Release
 	}
-	// the hub's repository when it names a GitHub one; an older hub: its tenant decides
+	// the hub's repository when it names a GitHub one
 	if r := githubRepo(auth.RepoURL); r != "" {
-		info.Repo, info.Internal = r, r != PublicRepo
-	} else if info.Tenant == MicrosoftTenant {
-		info.Internal, info.Repo = true, InternalRepo
+		info.Repo = r
 	}
 	c.base, c.at, c.info = base, time.Now(), info
 	return info

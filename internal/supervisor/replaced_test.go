@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/jobs"
+	"longarm/internal/platform"
 )
 
 // TestReconcileReplacedEntry: a reconcile of a job that was removed and

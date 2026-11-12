@@ -17,11 +17,11 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/trust"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/nodeid"
+	"longarm/internal/pki"
+	"longarm/internal/trust"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Port links end to end (docs/usage.md "Port links"): a hub, two workers

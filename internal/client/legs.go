@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/transport"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/platform"
+	"longarm/internal/transport"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The transport policy (DESIGN §4.1 "prefer=tailscale|longnet, race") is the

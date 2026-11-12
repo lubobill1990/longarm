@@ -24,8 +24,8 @@ param name string
 @description('Azure region (default: the resource group\'s).')
 param location string = resourceGroup().location
 
-@description('longarm-hub image. Pin a version (ghcr.io/<owner>/longarm-hub:X.Y.Z) for reproducible upgrades; :latest is the newest release, :edge the main branch.')
-param image string = 'ghcr.io/lubobill1990/longarm-hub:latest'
+@description('longarm-hub image: ghcr.io/<owner>/longarm-hub:<version> (pin a version for reproducible upgrades; :latest is the newest release, :edge the main branch).')
+param image string
 
 @description('The hub\'s liveness probe. live: `longarm-hub healthcheck --live`, which also passes while the container start (Litestream restore, bootstrap) is still running and alive, so a long restore is not killed and a dead hub is restarted within minutes. legacy: plain `healthcheck` after 30 minutes, for images without --live (releases up to 0.1.17). auto: legacy for an image pinned to such a release, else live.')
 @allowed([

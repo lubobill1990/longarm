@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/sched"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/sched"
+	pb "longarm/proto/longarm/v1"
 )
 
 func TestRedactJob(t *testing.T) {

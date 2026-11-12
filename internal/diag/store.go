@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/azauth"
+	"longarm/internal/azauth"
 )
 
 // ---------------------------------------------------------------- report ids

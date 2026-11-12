@@ -12,12 +12,12 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/fwcheck"
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/localapi"
-	"github.com/lubobill1990/longarm/internal/server"
-	"github.com/lubobill1990/longarm/internal/version"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/fwcheck"
+	"longarm/internal/jobs"
+	"longarm/internal/localapi"
+	"longarm/internal/server"
+	"longarm/internal/version"
+	pb "longarm/proto/longarm/v1"
 )
 
 // LocalAddrFile records the local control API's channel address (named

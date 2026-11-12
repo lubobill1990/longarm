@@ -8,17 +8,17 @@ import (
 	"time"
 )
 
-// devBoxTags are the IMDS tags of a real Dev Box (ids shortened).
+// devBoxTags have the shape of a Dev Box's IMDS tags (made-up ids).
 var devBoxTags = []Tag{
-	{"ms.inv.v0.backedby.origin.sourcearmid.0", "/subscriptions/5e044d2b-6148-41d6-9da7-276cad95d203/resourceGroups/devcenter-2615-34/providers/Microsoft.DevCenter/devcenters/devcenter-sgimoplppxaka-dc"},
-	{"ms.inv.v0.backedby.origin.tenantid", "72f988bf-86f1-41af-91ab-2d7cd011db47"},
-	{"ms.inv.v0.backedby.resourceattributes", "companyname: Microsoft"},
+	{"ms.inv.v0.backedby.origin.sourcearmid.0", "/subscriptions/11111111-2222-4333-8444-555555555555/resourceGroups/devcenter-rg-1/providers/Microsoft.DevCenter/devcenters/devcenter-example-dc"},
+	{"ms.inv.v0.backedby.origin.tenantid", "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"},
+	{"ms.inv.v0.backedby.resourceattributes", "companyname: Contoso"},
 	{"platformsettings.host_environment", "false"},
 }
 
 func TestParseTags(t *testing.T) {
 	dc, ok := ParseTags(devBoxTags)
-	if !ok || dc.Name != "devcenter-sgimoplppxaka-dc" || dc.Tenant != "72f988bf-86f1-41af-91ab-2d7cd011db47" {
+	if !ok || dc.Name != "devcenter-example-dc" || dc.Tenant != "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d" {
 		t.Fatalf("got %+v %v", dc, ok)
 	}
 	for name, tags := range map[string][]Tag{
@@ -41,7 +41,7 @@ func TestQueryIMDS(t *testing.T) {
 			http.Error(w, "no metadata header", http.StatusBadRequest)
 			return
 		}
-		w.Write([]byte(`{"name":"CPC_x","tagsList":[{"name":"ms.inv.v0.backedby.origin.sourcearmid.0","value":"/subscriptions/s/resourceGroups/g/providers/Microsoft.DevCenter/devcenters/dc1"},{"name":"ms.inv.v0.backedby.origin.tenantid","value":"72f988bf-86f1-41af-91ab-2d7cd011db47"}]}`))
+		w.Write([]byte(`{"name":"CPC_x","tagsList":[{"name":"ms.inv.v0.backedby.origin.sourcearmid.0","value":"/subscriptions/s/resourceGroups/g/providers/Microsoft.DevCenter/devcenters/dc1"},{"name":"ms.inv.v0.backedby.origin.tenantid","value":"0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"}]}`))
 	}))
 	defer srv.Close()
 	defer func(u string) { imdsURL = u }(imdsURL)

@@ -25,15 +25,15 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/sched"
-	"github.com/lubobill1990/longarm/internal/steer"
-	"github.com/lubobill1990/longarm/internal/workspace"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/hubclient"
+	"longarm/internal/jobs"
+	"longarm/internal/nodeid"
+	"longarm/internal/pki"
+	"longarm/internal/sched"
+	"longarm/internal/steer"
+	"longarm/internal/workspace"
+	pb "longarm/proto/longarm/v1"
 )
 
 func execCmd() *cobra.Command {

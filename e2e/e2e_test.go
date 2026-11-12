@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/jobs"
+	"longarm/internal/platform"
 )
 
 var bins struct {

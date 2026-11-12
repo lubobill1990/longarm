@@ -24,14 +24,14 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/lubobill1990/longarm/internal/agentauth"
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/memcap"
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/sched"
-	"github.com/lubobill1990/longarm/internal/telemetry"
-	"github.com/lubobill1990/longarm/internal/version"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/agentauth"
+	"longarm/internal/client"
+	"longarm/internal/memcap"
+	"longarm/internal/nodeid"
+	"longarm/internal/sched"
+	"longarm/internal/telemetry"
+	"longarm/internal/version"
+	pb "longarm/proto/longarm/v1"
 )
 
 // longarm mcp: a stdio MCP server for Claude Code / Copilot CLI (DESIGN §3.2):

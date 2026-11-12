@@ -21,14 +21,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/localapi"
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/notices"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/signin"
-	"github.com/lubobill1990/longarm/internal/webui"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hubclient"
+	"longarm/internal/localapi"
+	"longarm/internal/longarmd"
+	"longarm/internal/notices"
+	"longarm/internal/platform"
+	"longarm/internal/signin"
+	"longarm/internal/webui"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Desktop is what the shell (window, tray, OS) does for the server.

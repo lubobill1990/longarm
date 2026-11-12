@@ -22,12 +22,12 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/localapi"
-	"github.com/lubobill1990/longarm/internal/memcap"
-	"github.com/lubobill1990/longarm/internal/pool"
-	"github.com/lubobill1990/longarm/internal/transport"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/localapi"
+	"longarm/internal/memcap"
+	"longarm/internal/pool"
+	"longarm/internal/transport"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The daemon's pool view (longarm pool; the tray's client popup): a latency

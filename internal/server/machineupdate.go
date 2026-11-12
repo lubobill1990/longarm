@@ -6,8 +6,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/jobs"
+	pb "longarm/proto/longarm/v1"
 )
 
 // FeatureMachineUpdate: the worker serves MachineUpdate (longarm worker

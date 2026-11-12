@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/transport"
-	"github.com/lubobill1990/longarm/internal/transport/longnet"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/platform"
+	"longarm/internal/transport"
+	"longarm/internal/transport/longnet"
+	pb "longarm/proto/longarm/v1"
 )
 
 var punchHintOnce sync.Once

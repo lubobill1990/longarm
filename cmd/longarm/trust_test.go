@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/trust"
+	"longarm/internal/pki"
+	"longarm/internal/trust"
 )
 
 func TestTrustDeviceFlows(t *testing.T) {

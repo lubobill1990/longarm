@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/loopguard"
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/loopguard"
+	"longarm/internal/platform"
 )
 
 // TestLoopbackLockedExtra: an account about to be used is in the rules

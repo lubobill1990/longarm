@@ -11,8 +11,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hub/store"
+	pb "longarm/proto/longarm/v1"
 )
 
 // TestHandoffPair: a handoff pair lets the relays carry traffic between two

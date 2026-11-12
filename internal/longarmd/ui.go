@@ -13,10 +13,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/server"
-	"github.com/lubobill1990/longarm/internal/supervisor"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/jobs"
+	"longarm/internal/server"
+	"longarm/internal/supervisor"
+	pb "longarm/proto/longarm/v1"
 )
 
 // This file holds what the UI (longarm-tray's worker tab, the hub's web panel)

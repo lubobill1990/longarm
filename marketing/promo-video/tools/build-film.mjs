@@ -12,9 +12,11 @@ const film = process.env.FILM ?? join(root, 'film')
 const web = join(root, '..', '..', 'web')
 const T = JSON.parse(readFileSync(process.env.TIMELINE ?? join(root, 'timeline.json'), 'utf8'))
 const SFX = existsSync(join(root, 'audio/sfx/index.json')) ? JSON.parse(readFileSync(join(root, 'audio/sfx/index.json'), 'utf8')) : null
-// where viewers open the hub (a short link to its front page); the site stills
-// come from tools/capture-site.mjs run against the hub it points to
-const HUB_LINK = 'aka.ms/longarm'
+// where viewers open the hub (a short link to its front page; FILM_HUB_LINK)
+// and the repository shown under it (FILM_REPO); the site stills come from
+// tools/capture-site.mjs run against the hub the link points to
+const HUB_LINK = process.env.FILM_HUB_LINK ?? 'longarm.example.com'
+const REPO = process.env.FILM_REPO ?? 'github.com/<owner>/longarm'
 const W = 1920
 const H = 1080
 const BEAT = T.beat ?? 60 / T.bpm
@@ -681,7 +683,7 @@ scenes.outro = (s) => {
   <div class="abs disp h" id="ou-word" style="left:0;right:0;top:470px;text-align:center;font-size:190px;color:${C.ink}">Longarm</div>
   <div class="abs disp h" id="ou-tag" style="left:0;right:0;top:690px;text-align:center;font-size:64px;color:${C.ink2}">Give your coding agents a <span style="color:${C.blue}">long arm</span>.</div>
   <div class="abs h" id="ou-url" style="left:0;right:0;top:830px;text-align:center"><span class="chip mono" style="font-size:44px;padding:20px 40px;background:${C.blue};border-color:${C.blue};color:#fff">${HUB_LINK}</span>
-    <div class="mono" style="margin-top:22px;font-size:24px;color:${C.ink3}">github.com/gim-home/longarm</div></div>`
+    <div class="mono" style="margin-top:22px;font-size:24px;color:${C.ink3}">${esc(REPO)}</div></div>`
   let js = ft('#ou-icon', { opacity: 0, scale: 0.3, rotation: -20 }, { opacity: 1, scale: 1, rotation: 0, duration: 0.7, ease: 'back.out(1.8)' }, Math.max(0, tLong - 0.35))
   js += slam('#ou-word', tLong)
   tiles.forEach(([, , x, y], i) => {

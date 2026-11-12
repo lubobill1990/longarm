@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/update"
 )
 
 // TestReleasePublish: the release key is created on the admin's machine

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/tenancy"
+	"longarm/internal/tenancy"
 )
 
 // TestOwnedWorkers: alice registers a worker of her own (longarm worker

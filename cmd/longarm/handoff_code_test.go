@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/workspace"
+	"longarm/internal/workspace"
 )
 
 func TestTempBranchName(t *testing.T) {

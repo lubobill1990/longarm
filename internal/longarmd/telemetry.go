@@ -12,13 +12,13 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/pii"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/supervisor"
-	"github.com/lubobill1990/longarm/internal/telemetry"
-	"github.com/lubobill1990/longarm/internal/telemetry/tgrpc"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/hubclient"
+	"longarm/internal/pii"
+	"longarm/internal/pki"
+	"longarm/internal/supervisor"
+	"longarm/internal/telemetry"
+	"longarm/internal/telemetry/tgrpc"
+	"longarm/internal/version"
 )
 
 // TelemetryConfig is [telemetry] in longarmd.toml: the worker owner's

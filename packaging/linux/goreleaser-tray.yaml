@@ -18,9 +18,10 @@ builds:
     flags: [-trimpath, "-tags=traynative,production"]
     ldflags:
       - -s -w
-      - -X github.com/lubobill1990/longarm/internal/version.Version={{ .Version }}
-      - -X github.com/lubobill1990/longarm/internal/version.DefaultHub={{ envOrDefault "LONGARM_DEFAULT_HUB" "" }}
-      - -X github.com/lubobill1990/longarm/internal/version.DefaultHubCA={{ envOrDefault "LONGARM_DEFAULT_HUB_CA" "" }}
+      - -X longarm/internal/version.Version={{ .Version }}
+      - -X longarm/internal/version.DefaultHub={{ envOrDefault "LONGARM_DEFAULT_HUB" "" }}
+      - -X longarm/internal/version.DefaultHubCA={{ envOrDefault "LONGARM_DEFAULT_HUB_CA" "" }}
+      - -X longarm/internal/version.RepoURL={{ envOrDefault "LONGARM_REPO_URL" "" }}
 
 archives:
   - id: longarm-tray
@@ -38,8 +39,8 @@ nfpms:
     ids: [longarm-tray-linux]
     formats: [deb]
     vendor: Longarm
-    homepage: https://github.com/lubobill1990/longarm
-    maintainer: Longarm contributors <lubobill1990@users.noreply.github.com>
+    homepage: '{{ envOrDefault "LONGARM_REPO_URL" "https://example.com/longarm" }}'
+    maintainer: '{{ envOrDefault "LONGARM_MAINTAINER" "Longarm contributors <noreply@example.com>" }}'
     description: Longarm tray app (worker load, latency, jobs; popup UI).
     license: MIT
     bindir: /usr/bin

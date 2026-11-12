@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/update"
 )
 
 // releaseBuild builds longarmd and longarm with an update key and a version stamp
@@ -21,7 +21,7 @@ import (
 func releaseBuild(t *testing.T, dir, version, pubKey, extraLD string, releaseNames bool) {
 	t.Helper()
 	os.MkdirAll(dir, 0o755)
-	ld := fmt.Sprintf("-X github.com/lubobill1990/longarm/internal/version.Version=%s -X github.com/lubobill1990/longarm/internal/update.PublicKey=%s %s",
+	ld := fmt.Sprintf("-X longarm/internal/version.Version=%s -X longarm/internal/update.PublicKey=%s %s",
 		version, pubKey, extraLD)
 	goBin := filepath.Join(runtime.GOROOT(), "bin", exeName("go"))
 	if _, err := os.Stat(goBin); err != nil {
@@ -91,7 +91,7 @@ func TestSelfUpdate(t *testing.T) {
 	}{
 		{install, "1.0.0", "", false},
 		{rel2, "2.0.0", "", true},
-		{rel3, "3.0.0", "-X github.com/lubobill1990/longarm/internal/update.failHealthForTest=e2e-broken-build", true},
+		{rel3, "3.0.0", "-X longarm/internal/update.failHealthForTest=e2e-broken-build", true},
 	} {
 		wg.Add(1)
 		go func() { defer wg.Done(); releaseBuild(t, b.dir, b.ver, pub, b.ld, b.rel) }()

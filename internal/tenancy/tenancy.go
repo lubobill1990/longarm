@@ -25,9 +25,9 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Worker isolation modes (longarmd.toml [isolation] mode).

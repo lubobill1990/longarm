@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/lubobill1990/longarm/internal/logfile"
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/logfile"
+	"longarm/internal/platform"
 )
 
 // File names inside a job directory.

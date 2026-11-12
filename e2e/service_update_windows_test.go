@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/platform"
+	"longarm/internal/update"
 )
 
 // TestWindowsServiceUpdate (opt-in: LONGARM_SERVICE_TEST=1, elevated): longarmd
@@ -47,7 +47,7 @@ func TestWindowsServiceUpdate(t *testing.T) {
 	for _, b := range []struct{ dir, ver, ld string }{
 		{install, "1.0.0", ""},
 		{rels["2.0.0"], "2.0.0", ""},
-		{rels["3.0.0"], "3.0.0", "-X github.com/lubobill1990/longarm/internal/update.failHealthForTest=svc-broken-build"},
+		{rels["3.0.0"], "3.0.0", "-X longarm/internal/update.failHealthForTest=svc-broken-build"},
 	} {
 		wg.Add(1)
 		go func() { defer wg.Done(); releaseBuild(t, b.dir, b.ver, pub, b.ld, b.dir != install) }()

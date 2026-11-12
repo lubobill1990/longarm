@@ -39,8 +39,8 @@ import (
 
 	"google.golang.org/grpc/credentials"
 
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/transport"
+	"longarm/internal/platform"
+	"longarm/internal/transport"
 )
 
 // Policies.

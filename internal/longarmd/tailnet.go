@@ -16,11 +16,11 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/server"
-	"github.com/lubobill1990/longarm/internal/transport"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hubclient"
+	"longarm/internal/pki"
+	"longarm/internal/server"
+	"longarm/internal/transport"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The tailscale legs (DESIGN §4.2/§4.4) run in the background: a slow or

@@ -18,8 +18,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/update"
-	"github.com/lubobill1990/longarm/internal/updatesvc"
+	"longarm/internal/update"
+	"longarm/internal/updatesvc"
+	"longarm/internal/version"
 )
 
 // Update banner: the tray asks the hub for the newest complete release of
@@ -221,6 +222,11 @@ func (s *Server) updateInfo() updateInfo {
 		goos = runtime.GOOS
 	}
 	info := updateInfo{Current: s.opts.Version, Latest: u.latest, Channel: u.channel, Hub: u.hub, FeedbackURL: u.feedback, RepoURL: u.repo, MSI: u.msi.Name, State: u.state, Error: u.err}
+	if info.RepoURL == "" && info.FeedbackURL == "" { // no hub (or an older one): the repository this tray came from
+		if info.RepoURL = strings.TrimRight(version.RepoURL, "/"); info.RepoURL != "" {
+			info.FeedbackURL = info.RepoURL + "/issues"
+		}
+	}
 	info.Available = goos == "windows" && u.msi.Name != "" && releaseVersionRE.MatchString(s.opts.Version) &&
 		update.ValidVersion(u.latest) && update.Compare(u.latest, s.opts.Version) > 0
 	return info

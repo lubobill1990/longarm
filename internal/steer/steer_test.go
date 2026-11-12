@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
+	"longarm/internal/jobs"
 )
 
 func TestAgentOf(t *testing.T) {

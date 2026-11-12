@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 // fakeHeadscaleAPI answers POST /api/v1/preauthkey like Headscale.

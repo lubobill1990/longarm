@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/sched"
+	"longarm/internal/pki"
+	"longarm/internal/sched"
 )
 
 // The MSI's elevated custom actions (`longarmd install-helper msi <step>`)

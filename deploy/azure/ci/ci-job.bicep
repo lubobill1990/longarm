@@ -6,7 +6,7 @@
 // runs the default branch's code (never a pull request's).
 //
 //   az deployment group create -g longarm-ci --template-file deploy/azure/ci/ci-job.bicep \
-//     -p entraTenantId=<tenant> entraClientId=<test app id>
+//     -p repoUrl=https://github.com/<owner>/<repo> entraTenantId=<tenant> entraClientId=<test app id>
 //   az containerapp job start -g longarm-ci -n longarm-e2e        # a run now
 //
 // The identity is Owner of this resource group only (azure-e2e.sh deploys a
@@ -16,8 +16,8 @@
 @description('Region (default: the resource group\'s).')
 param location string = resourceGroup().location
 
-@description('GitHub repository whose branch is tested.')
-param repoUrl string = 'https://github.com/lubobill1990/longarm'
+@description('GitHub repository whose branch is tested: https://github.com/<owner>/<repo>.')
+param repoUrl string
 
 var repo = replace(replace(repoUrl, 'https://github.com/', ''), '.git', '')
 
