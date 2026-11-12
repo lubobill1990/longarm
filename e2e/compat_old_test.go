@@ -48,13 +48,17 @@ var oldRels struct {
 // release's checksums.txt covers the package archives). The releases are
 // those of LONGARM_E2E_RELEASE_REPO (owner/repo), else of the CI run's
 // GITHUB_REPOSITORY; neither set: a skip. Unreachable GitHub: a failure
-// in CI, a skip elsewhere.
+// in CI, a skip elsewhere. LONGARM_E2E_OLD_RELEASES=skip: a repository
+// whose releases don't carry the old versions (ci.yml).
 func oldRelease(t *testing.T, version string) *oldRel {
 	t.Helper()
 	oldRels.mu.Lock()
 	defer oldRels.mu.Unlock()
 	if r := oldRels.m[version]; r != nil {
 		return r
+	}
+	if os.Getenv("LONGARM_E2E_OLD_RELEASES") == "skip" {
+		t.Skipf("%s: this repository's releases don't carry it (LONGARM_E2E_OLD_RELEASES=skip)", version)
 	}
 	fail := func(format string, a ...any) {
 		t.Helper()

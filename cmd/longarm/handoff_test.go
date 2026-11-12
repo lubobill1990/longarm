@@ -49,8 +49,8 @@ func localEP(t *testing.T) *hoEndpoint {
 
 func TestClaudeProjectDirName(t *testing.T) {
 	for in, want := range map[string]string{
-		`C:\Users\bolu1`:                         "C--Users-bolu1",
-		`C:\Users\bolu1\.claude\jobs\d6f2`:       "C--Users-bolu1--claude-jobs-d6f2",
+		`C:\Users\alice`:                         "C--Users-alice",
+		`C:\Users\alice\.claude\jobs\d6f2`:       "C--Users-alice--claude-jobs-d6f2",
 		"/home/u/src/app":                        "-home-u-src-app",
 		"/home/u/worktrees/s.agent1.dmg0_x":      "-home-u-worktrees-s-agent1-dmg0-x",
 		`C:\src\teams-media\.claude\worktrees\x`: "C--src-teams-media--claude-worktrees-x",
