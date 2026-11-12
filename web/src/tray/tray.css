@@ -1209,7 +1209,11 @@
     font-weight: var(--fw-semibold);
     color: var(--text);
     min-width: 0;
-    overflow: hidden;
+    /* the ellipsis needs the inline axis clipped, only it: the box is
+       trimmed to cap height and baseline (text-box above), so a vertical
+       clip would cut ascenders and descenders (b, l, p, y, g) */
+    overflow-x: clip;
+    overflow-y: visible;
     text-overflow: ellipsis;
   }
   & .wcard .head button.upd {

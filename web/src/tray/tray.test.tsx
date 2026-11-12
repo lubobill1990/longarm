@@ -219,7 +219,11 @@ describe('version chip', () => {
     expect(by.daemon.behind && by.daemon.note).toContain('older than this tray')
     expect(by.worker.behind).toBeFalsy()
     expect(by.admin.behind && by.admin.note).toContain('newer than this tray')
-    expect(by.hub.behind).toBe(true)
+    // an older hub is its admins' to update: noted, no warning on this machine
+    expect(!by.hub.behind && by.hub.note).toContain('its admins update it')
+    // no workers list here: the admin worker's state stands in for its version
+    const wo = versionRows({ tray: '0.1.21', hub: '0.1.21', client: false, workerRole: true, adminWorker: true, adminState: 'waits for sign-in' })
+    expect(wo.find((r) => r.key === 'admin')?.note).toBe('waits for sign-in')
     // development builds compare with nothing; parts this machine lacks have no row
     const dev = versionRows({ tray: 'dev', latest: '0.1.22', daemon: 'dev', client: true, workerRole: false, adminWorker: false })
     expect(dev.some((r) => r.behind)).toBe(false)

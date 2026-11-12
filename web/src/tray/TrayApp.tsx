@@ -1,7 +1,7 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { longarmApi, trayApi, type Account, type TrayInfo } from '../api/local'
-import type { PoolView } from '../api/types'
-import { ErrorBox, FirewallWarning, Toasts, useAction } from '../components/common'
+import { longarmApi, longarmdApi, trayApi, type Account, type TrayInfo } from '../api/local'
+import type { HubLink, PoolView } from '../api/types'
+import { ErrorBox, FirewallWarning, Toasts, useAction, usePoll } from '../components/common'
 import { ConfirmHost } from '../components/confirm'
 import { OverlayScroll } from '../components/OverlayScroll'
 import { ClientJobs, Forwards, Settings, transportLabel } from './ClientTab'
@@ -93,6 +93,11 @@ export function TrayApp() {
     )
     return () => s.close()
   }, [clientUp])
+  // a worker-only machine has no workers list: the title bar shows this
+  // worker's own link to the hub instead (longarmd's status)
+  const workerOnly = !!info && !info.roles.client && info.roles.worker
+  const ws = usePoll(() => (workerOnly ? longarmdApi.status() : Promise.resolve(undefined)), workerOnly ? 5000 : 0, [workerOnly])
+  const workerHub = workerOnly && !ws.error ? (ws.data?.hub ?? {}) : undefined
   const tabs: [Tab, string][] = []
   if (!info || info.roles.client) tabs.push(['pool', 'Workers'], ['jobs', 'My jobs'], ['forwards', 'Forwards'])
   if (info?.roles.worker) tabs.push(['worker', 'This worker'])
@@ -130,7 +135,7 @@ export function TrayApp() {
       <div className="tray">
         {/* fixed: the title bar, the tabs (a rail in a wide window) and the pool's source line; only .body scrolls */}
         <header className="tray-head" data-testid="tray-head">
-          <TitleBar info={info} pool={pool} online={online} total={machines.active.length + machines.offline.length} />
+          <TitleBar info={info} pool={pool} online={online} total={machines.active.length + machines.offline.length} workerHub={workerHub} />
         </header>
         <nav className="tray-nav" aria-label="Sections">
           <div className="tabs" role="tablist">
@@ -240,7 +245,53 @@ function relayedWorkers(pool?: PoolView): string[] {
   })
 }
 
-function TitleBar({ info, pool, online, total }: { info?: TrayInfo; pool?: PoolView; online: number; total: number }) {
+/**
+ * A worker-only machine's title bar pill: this worker's own link to the hub
+ * (no workers list to count without a client).
+ */
+function WorkerHubPill({ link }: { link: HubLink }) {
+  const [cls, text, state] = !link.address
+    ? ['', 'not signed in', 'none']
+    : link.connected
+      ? ['ok', 'connected', 'connected']
+      : link.refused
+        ? ['bad', 'refused', 'refused']
+        : ['bad', 'unavailable', 'unavailable']
+  const tip = [
+    link.address ? `This worker's hub ${link.address}: ${text}` : 'This worker is not signed in to a hub',
+    link.error && !link.connected ? link.error : '',
+    link.refused ? 'The hub no longer accepts this worker: sign in again (Account tab)' : '',
+    'Turn on "Send jobs" (Account tab) to see your other workers here',
+  ]
+    .filter(Boolean)
+    .join('\n')
+  return (
+    <span className={`count-pill ${cls}`} title={tip} data-testid="worker-hub-pill" data-state={state}>
+      <span className="count-dot" aria-hidden="true" />
+      <span>this worker</span>
+      {link.address && (
+        <span className={`count-hub ${link.connected ? 'up' : 'down'}`}>
+          · hub {link.connected ? <IconLink aria-label="connected" /> : <IconLinkBroken aria-label={text} />}
+        </span>
+      )}
+    </span>
+  )
+}
+
+function TitleBar({
+  info,
+  pool,
+  online,
+  total,
+  workerHub,
+}: {
+  info?: TrayInfo
+  pool?: PoolView
+  online: number
+  total: number
+  /** a worker-only machine: its worker's hub link instead of the workers count */
+  workerHub?: HubLink
+}) {
   const [pinned, setPinned] = useState(false)
   useEffect(() => {
     if (info) setPinned(info.pinned)
@@ -269,18 +320,22 @@ function TitleBar({ info, pool, online, total }: { info?: TrayInfo; pool?: PoolV
       <img className="brand-mark" src="/favicon.png" alt="" aria-hidden="true" />
       <span className="title">Longarm</span>
       <VersionChip info={info} pool={pool} />
-      <span className={`count-pill ${total === 0 ? '' : allUp ? 'ok' : online ? 'warn' : 'bad'}`} title={tip} data-testid="count-pill">
-        <span className="count-dot" aria-hidden="true" />
-        <span data-testid="online-count">
-          {online}/{total} online
-        </span>
-        {hub?.address && (
-          // a chain link to the hub: whole and green while connected, parted and red when not
-          <span className={`count-hub ${hub.connected ? 'up' : 'down'}`} data-testid="count-hub" data-state={hub.connected ? 'connected' : 'unavailable'}>
-            · hub {hub.connected ? <IconLink aria-label="connected" /> : <IconLinkBroken aria-label="unavailable" />}
+      {workerHub ? (
+        <WorkerHubPill link={workerHub} />
+      ) : (
+        <span className={`count-pill ${total === 0 ? '' : allUp ? 'ok' : online ? 'warn' : 'bad'}`} title={tip} data-testid="count-pill">
+          <span className="count-dot" aria-hidden="true" />
+          <span data-testid="online-count">
+            {online}/{total} online
           </span>
-        )}
-      </span>
+          {hub?.address && (
+            // a chain link to the hub: whole and green while connected, parted and red when not
+            <span className={`count-hub ${hub.connected ? 'up' : 'down'}`} data-testid="count-hub" data-state={hub.connected ? 'connected' : 'unavailable'}>
+              · hub {hub.connected ? <IconLink aria-label="connected" /> : <IconLinkBroken aria-label="unavailable" />}
+            </span>
+          )}
+        </span>
+      )}
       <span className="spacer" />
       <button
         className={`icon-btn ${pinned ? 'on' : ''}`}

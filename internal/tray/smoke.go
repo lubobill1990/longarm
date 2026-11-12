@@ -65,6 +65,12 @@ func Smoke(ctx context.Context, opts Options, outDir string, startDaemon func() 
 				v, err = smokePool(ctx, opts)
 			}
 		}
+		// a daemon that just started has no view of the pool yet (source
+		// none): its first one within seconds
+		for end := time.Now().Add(10 * time.Second); err == nil && v.Source == "none" && time.Now().Before(end); {
+			time.Sleep(250 * time.Millisecond)
+			v, err = smokePool(ctx, opts)
+		}
 		if err != nil {
 			res.Daemon = "unreachable: " + err.Error()
 			problem("longarm daemon: %v", err)
