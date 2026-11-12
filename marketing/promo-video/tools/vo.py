@@ -6,7 +6,8 @@ import argparse, asyncio, hashlib, json, os, re, subprocess, time
 import numpy as np, soundfile as sf, pyloudnorm as pyln
 import edge_tts
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# FILM_ROOT: a language's folder (lang/zh: its script.json; its audio/ and timeline.json go there)
+ROOT = os.environ.get("FILM_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SR = 48000
 TARGET_LUFS = -17.0
 PRE = 0.03  # seconds kept before the first sound of each line (its onset inside the file)
@@ -22,8 +23,9 @@ SUBS = [
 ]
 
 
-def tts_text(text):
-    for pat, rep in SUBS:
+def tts_text(text, lang="en"):
+    # another language's voice reads the English terms its own way: only the brand keeps its spelling fix
+    for pat, rep in SUBS if lang == "en" else SUBS[:1]:
         text = re.sub(pat, rep, text)
     return text
 
@@ -71,13 +73,15 @@ def main():
     args = ap.parse_args()
     script = json.load(open(os.path.join(ROOT, "script.json"), encoding="utf-8"))
     voice = script["voice"]
+    # "lang": a script in a language written without spaces (zh) keeps the voice's own word segments
+    lang = script.get("lang", "en")
     raw = os.path.join(ROOT, "audio", "vo", "raw")
     os.makedirs(raw, exist_ok=True)
     meter = pyln.Meter(SR)
     out = []
     for sec in script["sections"]:
         for i, text in enumerate(sec["lines"]):
-            spoken = tts_text(text)
+            spoken = tts_text(text, lang)
             key = hashlib.sha1(f"{voice}|{args.rate}|{spoken}".encode()).hexdigest()[:12]
             mp3, meta = os.path.join(raw, key + ".mp3"), os.path.join(raw, key + ".json")
             for attempt in range(8):  # the service drops a request now and then
@@ -102,7 +106,7 @@ def main():
             sf.write(os.path.join(ROOT, "audio", "vo", name + ".wav"), x, SR, subtype="FLOAT")
             dur = len(x) / SR
             tw = json.load(open(meta, encoding="utf-8"))
-            ow = orig_words(text)
+            ow = orig_words(text) if lang == "en" else [w["w"] for w in tw]
             if len(tw) != len(ow):
                 raise SystemExit(f"{name}: {len(tw)} TTS words vs {len(ow)} script words: {[w['w'] for w in tw]}")
             off = a / SR

@@ -1,0 +1,442 @@
+{
+ "bpm": 120,
+ "beat": 0.5,
+ "bar": 2.0,
+ "musicStart": 9.495,
+ "total": 181.495,
+ "note": "bar n starts at musicStart + 2n s; bar 0 is the lead-in, bar 1 the drop downbeat; negative bars = hook (no music)",
+ "endCue": {
+  "t": 177.495,
+  "bar": 84.0,
+  "what": "final resolving chord, rings to total"
+ },
+ "sections": [
+  {
+   "id": "hook",
+   "energy": "drone",
+   "music": false,
+   "start": 0.0,
+   "end": 9.495,
+   "startBar": null,
+   "endBar": 0.0,
+   "speech": [
+    [
+     0.4,
+     3.41
+    ],
+    [
+     3.76,
+     6.76
+    ],
+    [
+     7.11,
+     9.045
+    ]
+   ],
+   "musicOnly": []
+  },
+  {
+   "id": "drop",
+   "energy": "full",
+   "music": true,
+   "start": 9.495,
+   "end": 21.495,
+   "startBar": 0.0,
+   "endBar": 6.0,
+   "speech": [
+    [
+     11.495,
+     13.27
+    ],
+    [
+     13.995,
+     16.69
+    ]
+   ],
+   "musicOnly": [
+    {
+     "start": 17.495,
+     "end": 21.495,
+     "startBar": 4.0,
+     "endBar": 6.0
+    }
+   ]
+  },
+  {
+   "id": "idea",
+   "energy": "verse",
+   "music": true,
+   "start": 21.495,
+   "end": 39.495,
+   "startBar": 6.0,
+   "endBar": 15.0,
+   "speech": [
+    [
+     21.495,
+     25.03
+    ],
+    [
+     25.495,
+     33.96
+    ],
+    [
+     34.495,
+     37.845
+    ]
+   ],
+   "musicOnly": []
+  },
+  {
+   "id": "how",
+   "energy": "verse",
+   "music": true,
+   "start": 39.495,
+   "end": 51.495,
+   "startBar": 15.0,
+   "endBar": 21.0,
+   "speech": [
+    [
+     39.495,
+     41.36
+    ],
+    [
+     41.995,
+     44.0
+    ],
+    [
+     44.495,
+     50.055
+    ]
+   ],
+   "musicOnly": []
+  },
+  {
+   "id": "run",
+   "energy": "verse+",
+   "music": true,
+   "start": 51.495,
+   "end": 65.495,
+   "startBar": 21.0,
+   "endBar": 28.0,
+   "speech": [
+    [
+     51.495,
+     54.1
+    ],
+    [
+     54.495,
+     62.57
+    ],
+    [
+     62.995,
+     64.39
+    ]
+   ],
+   "musicOnly": []
+  },
+  {
+   "id": "agents",
+   "energy": "verse+",
+   "music": true,
+   "start": 65.495,
+   "end": 97.495,
+   "startBar": 28.0,
+   "endBar": 44.0,
+   "speech": [
+    [
+     65.495,
+     67.765
+    ],
+    [
+     68.495,
+     75.75
+    ],
+    [
+     76.495,
+     79.42
+    ],
+    [
+     79.995,
+     85.21
+    ],
+    [
+     85.995,
+     94.18
+    ]
+   ],
+   "musicOnly": [
+    {
+     "start": 95.495,
+     "end": 97.495,
+     "startBar": 43.0,
+     "endBar": 44.0
+    }
+   ]
+  },
+  {
+   "id": "survive",
+   "energy": "half",
+   "music": true,
+   "start": 97.495,
+   "end": 111.495,
+   "startBar": 44.0,
+   "endBar": 51.0,
+   "speech": [
+    [
+     97.495,
+     99.095
+    ],
+    [
+     99.495,
+     104.245
+    ],
+    [
+     104.995,
+     109.435
+    ]
+   ],
+   "musicOnly": [
+    {
+     "start": 109.495,
+     "end": 111.495,
+     "startBar": 50.0,
+     "endBar": 51.0
+    }
+   ]
+  },
+  {
+   "id": "reach",
+   "energy": "verse",
+   "music": true,
+   "start": 111.495,
+   "end": 135.495,
+   "startBar": 51.0,
+   "endBar": 63.0,
+   "speech": [
+    [
+     111.495,
+     115.415
+    ],
+    [
+     115.995,
+     124.675
+    ],
+    [
+     125.495,
+     134.05
+    ]
+   ],
+   "musicOnly": []
+  },
+  {
+   "id": "toolbox",
+   "energy": "full",
+   "music": true,
+   "start": 135.495,
+   "end": 157.495,
+   "startBar": 63.0,
+   "endBar": 74.0,
+   "speech": [
+    [
+     135.495,
+     138.12
+    ],
+    [
+     138.495,
+     140.98
+    ],
+    [
+     141.495,
+     148.82
+    ],
+    [
+     149.495,
+     154.215
+    ]
+   ],
+   "musicOnly": [
+    {
+     "start": 155.495,
+     "end": 157.495,
+     "startBar": 73.0,
+     "endBar": 74.0
+    }
+   ]
+  },
+  {
+   "id": "cta",
+   "energy": "breakdown",
+   "music": true,
+   "start": 157.495,
+   "end": 171.495,
+   "startBar": 74.0,
+   "endBar": 81.0,
+   "speech": [
+    [
+     157.495,
+     159.42
+    ],
+    [
+     159.995,
+     164.42
+    ],
+    [
+     164.995,
+     168.02
+    ]
+   ],
+   "musicOnly": [
+    {
+     "start": 169.495,
+     "end": 171.495,
+     "startBar": 80.0,
+     "endBar": 81.0
+    }
+   ]
+  },
+  {
+   "id": "outro",
+   "energy": "full",
+   "music": true,
+   "start": 171.495,
+   "end": 181.495,
+   "startBar": 81.0,
+   "endBar": 86.0,
+   "speech": [
+    [
+     171.495,
+     175.65
+    ]
+   ],
+   "musicOnly": [
+    {
+     "start": 177.495,
+     "end": 181.495,
+     "startBar": 84.0,
+     "endBar": 86.0
+    }
+   ]
+  }
+ ],
+ "cues": [
+  {
+   "t": 9.495,
+   "bar": 0,
+   "type": "riser",
+   "len_bars": 1,
+   "section": "drop"
+  },
+  {
+   "t": 11.495,
+   "bar": 1.0,
+   "type": "impact",
+   "section": "drop"
+  },
+  {
+   "t": 20.995,
+   "bar": 5.75,
+   "type": "fill",
+   "section": "idea"
+  },
+  {
+   "t": 38.995,
+   "bar": 14.75,
+   "type": "fill",
+   "section": "how"
+  },
+  {
+   "t": 50.995,
+   "bar": 20.75,
+   "type": "fill",
+   "section": "run"
+  },
+  {
+   "t": 64.995,
+   "bar": 27.75,
+   "type": "fill",
+   "section": "agents"
+  },
+  {
+   "t": 93.495,
+   "bar": 42.0,
+   "type": "riser",
+   "len_bars": 2,
+   "section": "survive"
+  },
+  {
+   "t": 96.995,
+   "bar": 43.75,
+   "type": "fill",
+   "section": "survive"
+  },
+  {
+   "t": 97.495,
+   "bar": 44.0,
+   "type": "impact",
+   "section": "survive"
+  },
+  {
+   "t": 110.995,
+   "bar": 50.75,
+   "type": "fill",
+   "section": "reach"
+  },
+  {
+   "t": 131.495,
+   "bar": 61.0,
+   "type": "riser",
+   "len_bars": 2,
+   "section": "toolbox"
+  },
+  {
+   "t": 134.995,
+   "bar": 62.75,
+   "type": "fill",
+   "section": "toolbox"
+  },
+  {
+   "t": 135.495,
+   "bar": 63.0,
+   "type": "impact",
+   "section": "toolbox"
+  },
+  {
+   "t": 156.995,
+   "bar": 73.75,
+   "type": "fill",
+   "section": "cta"
+  },
+  {
+   "t": 157.495,
+   "bar": 74.0,
+   "type": "downlifter",
+   "len_bars": 1,
+   "section": "cta"
+  },
+  {
+   "t": 167.495,
+   "bar": 79.0,
+   "type": "riser",
+   "len_bars": 2,
+   "section": "outro"
+  },
+  {
+   "t": 170.995,
+   "bar": 80.75,
+   "type": "fill",
+   "section": "outro"
+  },
+  {
+   "t": 171.495,
+   "bar": 81.0,
+   "type": "impact",
+   "section": "outro"
+  },
+  {
+   "t": 177.495,
+   "bar": 84.0,
+   "type": "final",
+   "section": "outro"
+  }
+ ]
+}
