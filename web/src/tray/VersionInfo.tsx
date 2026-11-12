@@ -3,6 +3,7 @@ import { longarmApi, longarmdApi, trayApi, type TrayInfo, type TrayUpdate } from
 import type { PoolView } from '../api/types'
 import { useAction } from '../components/common'
 import { useDismiss } from '../lib/dismiss'
+import { adminStateText } from './AccountTab'
 import { feedbackURL } from '../lib/feedback'
 import { compareVersions } from '../lib/release'
 
@@ -23,6 +24,8 @@ export interface Versions {
   daemon?: string
   worker?: string
   admin?: string
+  /** the admin worker's state when its version is not known (no workers list: no client here) */
+  adminState?: string
   hub?: string
   /** which parts this machine has (a row each) */
   client: boolean
@@ -55,10 +58,11 @@ export function versionRows(v: Versions): VersionRow[] {
   }
   if (v.client) part('daemon', 'longarm daemon', v.daemon, 'restart it, or update')
   if (v.workerRole) part('worker', 'worker (longarmd)', v.worker, 'restart it, or update')
-  if (v.adminWorker) part('admin', 'admin worker', v.admin, 'update this machine', 'unknown: not in your workers list')
+  if (v.adminWorker) part('admin', 'admin worker', v.admin, 'update this machine', v.adminState ?? 'unknown: not in your workers list')
+  // the hub is its admins' to update: an older one is noted, not a warning on this machine
   const hub: VersionRow = { key: 'hub', label: 'hub', version: v.hub }
   if (!v.hub) hub.note = 'unknown'
-  else if (older(v.hub, v.tray)) Object.assign(hub, { behind: true, note: 'older than this machine (its admins update it)' })
+  else if (older(v.hub, v.tray)) hub.note = 'older than this machine (its admins update it)'
   rows.push(hub)
   return rows
 }
@@ -118,6 +122,8 @@ export function VersionChip({ info, pool }: { info?: TrayInfo; pool?: PoolView }
     daemon,
     worker: worker?.version,
     admin: adminVersion(pool, worker?.name),
+    // no workers list here (no client): what the admin worker's service says
+    adminState: pool || !info.account?.admin ? undefined : info.account.admin.signed_in ? 'running, signed in' : adminStateText(info.account.admin),
     hub: upd?.hub,
     client: info.roles.client,
     workerRole,

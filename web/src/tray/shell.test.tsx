@@ -140,14 +140,23 @@ describe('TrayApp', () => {
     expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe('tab-pool')
   })
 
-  it('a worker-only machine: This worker and Settings (no client tabs)', async () => {
+  it("a worker-only machine: This worker and Settings (no client tabs); the title bar shows this worker's hub link", async () => {
+    let hub: unknown = { address: 'hub.example.com:7443', connected: true }
     mockFetch({
       '/trayapi/info': () => [200, info({ roles: { client: false, worker: true } })],
       '/trayapi/settings': () => [200, { version: '1', telemetry_disabled: false }],
+      '/local/longarmd/v1/status': () => [200, { name: 'win11', version: '1', hub }],
     })
     render(<TrayApp />)
     await waitFor(() => expect(screen.getByRole('tab', { name: 'This worker' })).toBeTruthy())
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['This worker', 'Settings'])
+    await waitFor(() => expect(screen.getByTestId('worker-hub-pill').getAttribute('data-state')).toBe('connected'))
+    expect(screen.queryByTestId('online-count')).toBeNull() // no "0/0 online"
+    cleanup()
+    hub = { address: 'hub.example.com:7443', connected: false, refused: true, error: 'remote error: tls: bad certificate' }
+    render(<TrayApp />)
+    await waitFor(() => expect(screen.getByTestId('worker-hub-pill').getAttribute('data-state')).toBe('refused'))
+    expect(screen.getByTestId('worker-hub-pill').getAttribute('title')).toContain('sign in again')
   })
 
   it("applies the theme saved in the tray's settings", async () => {

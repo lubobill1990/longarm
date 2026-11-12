@@ -494,6 +494,14 @@
   says it isn't signed in yet (not "not running") while the worker waits
   for its sign-in; and a stopped daemon is "not running", not "not
   running (not running)".
+- **The tray of a worker-only machine shows its worker's hub link.** Without
+  "Send jobs" there is no workers list, so the title bar said "0/0 online"
+  with no hub: it now says "this worker · hub" - connected, unavailable or
+  refused (sign in again) - and its tooltip says how to see the other
+  workers. The version details show the admin worker's state ("running,
+  signed in", "waits for sign-in") instead of "not in your workers list",
+  and a hub older than this machine is noted without marking the version
+  chip (the hub's admins update it).
 - **Signing a machine in again after the hub revoked it no longer loops.**
   "Replace and sign in" proved the old, revoked certificate to the hub,
   which refused the whole sign-in ("replaces win11: no such enrolled
