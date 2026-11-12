@@ -143,6 +143,9 @@ jobs:
           TAG: ${{ github.ref_name }}
           DRY_RUN: ${{ inputs.dry_run }}
           PUBKEY: ${{ vars.LONGARM_UPDATE_PUBKEY }}
+          # added to the run number of dev builds (a repository whose hub already has
+          # higher dev numbers of the same version, e.g. after moving the repository)
+          DEV_OFFSET: ${{ vars.LONGARM_DEV_NUMBER_OFFSET }}
           DEFAULT_HUB: ${{ vars.LONGARM_DEFAULT_HUB }}
         run: |
           dry=false
@@ -154,7 +157,8 @@ jobs:
             top=$(git tag -l 'v[0-9]*' | sed -E 's/^v//; s/[-+].*$//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' |
               sort -t. -k1,1n -k2,2n -k3,3n | tail -1 || true)
             IFS=. read -r major minor patch <<<"${top:-0.0.0}"
-            TAG="v$major.$minor.$((patch + 1))-dev.$GITHUB_RUN_NUMBER"
+            [[ ${DEV_OFFSET:-0} =~ ^[0-9]+$ ]] || { echo "::error::LONGARM_DEV_NUMBER_OFFSET must be a number"; exit 1; }
+            TAG="v$major.$minor.$((patch + 1))-dev.$((GITHUB_RUN_NUMBER + ${DEV_OFFSET:-0}))"
             echo "dev build $TAG of $(git rev-parse --short HEAD) (a local tag of the build jobs, never pushed)"
           elif [ "$EVENT" = workflow_dispatch ]; then
             if [ "$DRY_RUN" != true ]; then

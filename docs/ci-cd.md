@@ -260,6 +260,7 @@ Try it from your machine: `ssh -i hub-deploy deploy@hub.example.com status`.
 | `HUB_SSH` | `deploy@hub.example.com`; enables the `hub` job |
 | `LONGARM_DEFAULT_HUB` | the hub built into the release (a domain, e.g. `longarm.example.com`): `longarm login` / `longarmd login` / the tray without a hub, and the MSI's "Default" choice ([usage](usage.md#built-in-default-hub)); unset: no default (the release warns; the MSI offers Custom only) |
 | `LONGARM_DEFAULT_HUB_CA` | optional: that hub's CA fingerprint (`longarm-hub ca show`), pinned instead of trusting `https://<hub>/ca.crt` |
+| `LONGARM_DEV_NUMBER_OFFSET` | optional: added to the run number of dev builds (`X.Y.Z-dev.<run + offset>`), for a repository whose hub already has higher dev numbers of that version (a moved repository: dev machines only move forward) |
 | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | the Entra app that signs (GitHub OIDC, no secret; 2.7) |
 | `TRUSTED_SIGNING_ENDPOINT`, `TRUSTED_SIGNING_ACCOUNT`, `TRUSTED_SIGNING_PROFILE` | the Trusted Signing account's endpoint (`https://<region>.codesigning.azure.net`), its name and the certificate profile; all six set: Authenticode signing on (2.7) |
 | `TRUSTED_SIGNING_SUBJECT` | optional: the certificate's CN (the validated name); every signed file is checked against it |
