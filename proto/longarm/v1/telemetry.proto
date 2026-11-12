@@ -11,7 +11,7 @@ package longarm.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1";
+option go_package = "longarm/proto/longarm/v1;longarmv1";
 
 service Telemetry {
   // Push hands the hub a batch of items. An empty batch only asks whether

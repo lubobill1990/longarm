@@ -12,9 +12,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/signin"
+	"longarm/internal/longarmd"
+	"longarm/internal/platform"
+	"longarm/internal/signin"
 )
 
 // rolesHelperCmd: `longarmd install-helper roles #LONGARM-MSI#client=1|worker=1|admin=|sid=S-...`,

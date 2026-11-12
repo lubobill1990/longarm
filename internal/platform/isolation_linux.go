@@ -7,7 +7,7 @@ import (
 	"net"
 	"os"
 
-	impl "github.com/lubobill1990/longarm/internal/platform/linux"
+	impl "longarm/internal/platform/linux"
 )
 
 // CanIsolate reports whether this process can run workloads as other OS

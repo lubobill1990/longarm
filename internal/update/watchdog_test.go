@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 // A child process that just waits (a stand-in for a watchdog).

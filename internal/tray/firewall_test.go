@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/localapi"
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/localapi"
+	"longarm/internal/platform"
 )
 
 // TestFirewallAllow: the firewall card's Allow runs the installed

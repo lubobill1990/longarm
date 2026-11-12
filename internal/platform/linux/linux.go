@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/lubobill1990/longarm/internal/platform/ptypes"
-	"github.com/lubobill1990/longarm/internal/platform/unix"
+	"longarm/internal/platform/ptypes"
+	"longarm/internal/platform/unix"
 )
 
 // NewContainer returns a process-group container. With KillOnOwnerDeath the

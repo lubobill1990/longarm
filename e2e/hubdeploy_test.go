@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/update"
 )
 
 // findBash returns a bash for the deploy script tests: the system one on

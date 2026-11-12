@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	pb "longarm/proto/longarm/v1"
 )
 
 // fakeAz installs a fake Azure CLI ($LONGARM_AZ): `account show` prints

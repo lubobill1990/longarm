@@ -15,7 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	pb "longarm/proto/longarm/v1"
 )
 
 // knownHostsFile (in the config dir) holds the workers' sshd host keys as

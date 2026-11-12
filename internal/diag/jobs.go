@@ -6,8 +6,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/pii"
+	"longarm/internal/jobs"
+	"longarm/internal/pii"
 )
 
 // JobRoot is a directory of job or session directories.

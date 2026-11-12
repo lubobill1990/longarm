@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	pb "longarm/proto/longarm/v1"
 )
 
 // dial returns a gRPC connection to w1 with the client certificate.

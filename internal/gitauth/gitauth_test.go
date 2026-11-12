@@ -95,7 +95,7 @@ func readLog(t *testing.T, p string) string {
 	return string(b)
 }
 
-const tenant = "72f988bf-86f1-41af-91ab-2d7cd011db47"
+const tenant = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
 
 // adoServer answers like an Azure DevOps organization URL to an
 // anonymous request: 401 (or a redirect) naming the tenant.

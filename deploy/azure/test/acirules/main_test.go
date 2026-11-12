@@ -136,16 +136,16 @@ func TestLivenessProbe(t *testing.T) {
 		image, mode string
 		legacy      bool
 	}{
-		{"ghcr.io/lubobill1990/longarm-hub:latest", "auto", false},
-		{"ghcr.io/lubobill1990/longarm-hub:edge", "auto", false},
-		{"ghcr.io/lubobill1990/longarm-hub:0.1.18", "auto", false},
-		{"ghcr.io/lubobill1990/longarm-hub:0.1.17", "auto", true},
-		{"ghcr.io/lubobill1990/longarm-hub:v0.1.16", "auto", true},
+		{"ghcr.io/example/longarm-hub:latest", "auto", false},
+		{"ghcr.io/example/longarm-hub:edge", "auto", false},
+		{"ghcr.io/example/longarm-hub:0.1.18", "auto", false},
+		{"ghcr.io/example/longarm-hub:0.1.17", "auto", true},
+		{"ghcr.io/example/longarm-hub:v0.1.16", "auto", true},
 		{"myacr.azurecr.io/longarm-hub:0.1.3", "auto", true},
 		{"localhost:5000/longarm-hub", "auto", false},
-		{"ghcr.io/lubobill1990/longarm-hub@sha256:0123", "auto", false},
-		{"ghcr.io/lubobill1990/longarm-hub:0.1.16", "live", false},
-		{"ghcr.io/lubobill1990/longarm-hub:latest", "legacy", true},
+		{"ghcr.io/example/longarm-hub@sha256:0123", "auto", false},
+		{"ghcr.io/example/longarm-hub:0.1.16", "live", false},
+		{"ghcr.io/example/longarm-hub:latest", "legacy", true},
 	} {
 		t.Run(tc.image+" "+tc.mode, func(t *testing.T) {
 			ov := map[string]any{"image": tc.image, "hubLivenessProbe": tc.mode,

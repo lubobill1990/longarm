@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/lubobill1990/longarm/internal/agentskill"
+	"longarm/internal/agentskill"
 )
 
 // The Longarm agent skill (internal/agentskill) in Settings: per coding

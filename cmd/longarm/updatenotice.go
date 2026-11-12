@@ -13,9 +13,9 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/lubobill1990/longarm/internal/update"
-	"github.com/lubobill1990/longarm/internal/version"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/update"
+	"longarm/internal/version"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Update notices: when the hub has a newer release than this longarm, the

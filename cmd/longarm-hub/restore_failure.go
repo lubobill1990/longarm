@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/diag"
-	"github.com/lubobill1990/longarm/internal/hub"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/diag"
+	"longarm/internal/hub"
+	"longarm/internal/version"
 )
 
 // restoreFailure is a failed `litestream restore`, described for the log

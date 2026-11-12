@@ -18,11 +18,11 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/machine"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/sched"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hub/store"
+	"longarm/internal/machine"
+	"longarm/internal/pki"
+	"longarm/internal/sched"
+	pb "longarm/proto/longarm/v1"
 )
 
 type hubNodeServer struct {

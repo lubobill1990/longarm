@@ -8,7 +8,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/relay"
+	"longarm/internal/relay"
 )
 
 // NAT discovery. The node sends STUN binding requests from its one UDP

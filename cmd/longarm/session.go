@@ -25,12 +25,12 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/lubobill1990/longarm/internal/attach"
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/sched"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/attach"
+	"longarm/internal/client"
+	"longarm/internal/jobs"
+	"longarm/internal/nodeid"
+	"longarm/internal/sched"
+	pb "longarm/proto/longarm/v1"
 )
 
 func sessionCmd() *cobra.Command {

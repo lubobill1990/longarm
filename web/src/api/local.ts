@@ -173,12 +173,8 @@ export interface AddMachineInfo {
   version?: string
   /** the hub's Entra tenant (an older hub: absent) */
   tenant?: string
-  /** a Microsoft-internal hub: downloads from internal_repo */
-  internal: boolean
-  /** github.com/OWNER/REPO */
+  /** where the installers come from: github.com/OWNER/REPO (the hub's repository, else this tray's; '' = unknown) */
   repo: string
-  public_repo: string
-  internal_repo: string
 }
 
 /** GET /trayapi/update */

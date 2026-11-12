@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/platform"
-	win "github.com/lubobill1990/longarm/internal/platform/windows"
+	"longarm/internal/platform"
+	win "longarm/internal/platform/windows"
 )
 
 const lockedSDDL = "O:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"

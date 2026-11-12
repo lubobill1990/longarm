@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 // TestAzureDeployRelay: deploy.sh / deploy.ps1 --relay against the fake az

@@ -37,7 +37,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/nodeid"
+	"longarm/internal/nodeid"
 )
 
 // Role of a certificate holder.

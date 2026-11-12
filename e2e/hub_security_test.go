@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hub"
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/hub"
+	"longarm/internal/pki"
 )
 
 func certSerial(t *testing.T, path string) string {

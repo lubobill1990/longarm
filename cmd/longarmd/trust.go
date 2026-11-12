@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/trust"
+	"longarm/internal/longarmd"
+	"longarm/internal/pki"
+	"longarm/internal/trust"
 )
 
 // trustCmd: end-to-end trust on the worker (docs/security.md "End-to-end

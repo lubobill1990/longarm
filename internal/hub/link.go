@@ -23,9 +23,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/lubobill1990/longarm/internal/machine"
-	"github.com/lubobill1990/longarm/internal/pki"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/machine"
+	"longarm/internal/pki"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Pairing (docs/usage.md "Sign in with your Microsoft account",

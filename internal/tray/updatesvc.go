@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/update"
-	"github.com/lubobill1990/longarm/internal/updatesvc"
+	"longarm/internal/update"
+	"longarm/internal/updatesvc"
 )
 
 // This machine's Longarm Update service (Windows MSI installs;

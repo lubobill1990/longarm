@@ -23,8 +23,8 @@ param name string
 @description('Azure region (default: the resource group\'s).')
 param location string = resourceGroup().location
 
-@description('Image with longarm-relay: the hub\'s image (deploy.sh uses the running hub\'s).')
-param image string = 'ghcr.io/lubobill1990/longarm-hub:latest'
+@description('Image with longarm-relay: the hub\'s image, ghcr.io/<owner>/longarm-hub:<version> (deploy.sh uses the running hub\'s).')
+param image string
 
 @description('The hub the relay registers with (host:port).')
 param hubAddress string = '${name}.${location}.azurecontainer.io:7443'

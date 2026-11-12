@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/testutil/gitserver"
+	"longarm/internal/testutil/gitserver"
 )
 
 // TestAgentHandoffRemote: --via remote (and auto above the threshold)

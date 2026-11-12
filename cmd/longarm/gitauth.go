@@ -9,11 +9,11 @@ import (
 
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/gitauth"
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/workspace"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/gitauth"
+	"longarm/internal/jobs"
+	"longarm/internal/workspace"
+	pb "longarm/proto/longarm/v1"
 )
 
 // --git-auth: how the worker authenticates to the repository's remote.

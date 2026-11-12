@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/localapi"
+	"longarm/internal/localapi"
 )
 
 // TestLocalAPI: longarmd's and longarm daemon's local control API: CLI (gRPC) and the

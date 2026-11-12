@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/updatesvc"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/updatesvc"
+	pb "longarm/proto/longarm/v1"
 )
 
 type fakeService struct {

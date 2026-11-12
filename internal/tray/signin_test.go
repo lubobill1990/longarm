@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/signin"
+	"longarm/internal/client"
+	"longarm/internal/longarmd"
+	"longarm/internal/signin"
 )
 
 // TestSignInAPI: the tray's "Sign in with Microsoft" signs in what this

@@ -12,8 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/agentskill"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/agentskill"
+	"longarm/internal/version"
 )
 
 // skillEnv is the machine the skill commands act on (tests replace it).

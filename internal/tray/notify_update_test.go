@@ -5,7 +5,7 @@ import (
 
 	"time"
 
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The owner's notifications of an update: no "offline" while it restarts

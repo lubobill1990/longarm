@@ -16,7 +16,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/update"
 )
 
 // Caller is who sent a request over the pipe (from its token).

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 
-	"github.com/lubobill1990/longarm/internal/transport"
+	"longarm/internal/transport"
 )
 
 func TestNodeLegs(t *testing.T) {
@@ -104,10 +104,10 @@ func writeClientBundle(t *testing.T, dir string) {
 }
 
 func TestLegVia(t *testing.T) {
-	hub := "longarm.southeastasia.azurecontainer.io:7443"
+	hub := "longarm.region1.example.net:7443"
 	for _, c := range []struct{ transport, addr, want string }{
-		{"longnet", "longarm.southeastasia.azurecontainer.io:7445", "hub"},
-		{"longnet", "longarm-relay.southeastasia.azurecontainer.io:7445", "relay"},
+		{"longnet", "longarm.region1.example.net:7445", "hub"},
+		{"longnet", "longarm-relay.region1.example.net:7445", "relay"},
 		{"longnet", "edge-tokyo.example.com:7445", "edge-tokyo"},
 		{"longnet", "20.1.2.3:7445", "20.1.2.3"},
 		{"tcp", "10.0.0.5:7701", ""},

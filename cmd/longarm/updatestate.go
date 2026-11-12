@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	pb "longarm/proto/longarm/v1"
 )
 
 // An update of a worker's machine as the hub shows it (NodeInfo.update;

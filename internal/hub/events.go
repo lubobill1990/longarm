@@ -9,7 +9,7 @@ import (
 	"golang.org/x/time/rate"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	pb "longarm/proto/longarm/v1"
 )
 
 // bus fans fleet events out to subscribers (Fleet.Events, WaitJob, SSE).

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/update"
 )
 
 // fakeReleaseHub serves /releases/latest.json and the MSI with its

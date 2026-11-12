@@ -23,9 +23,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/agentlog"
-	"github.com/lubobill1990/longarm/internal/jobs"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/agentlog"
+	"longarm/internal/jobs"
+	pb "longarm/proto/longarm/v1"
 )
 
 // whereJob: the agent runs (or ran) in a Longarm job: read-only, no terminal.

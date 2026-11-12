@@ -14,9 +14,9 @@ import (
 
 	"golang.org/x/sys/windows/registry"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/hubclient"
+	"longarm/internal/longarmd"
+	"longarm/internal/platform"
 )
 
 // TestMSI (opt-in: LONGARM_MSI_TEST=1, elevated, WiX v5 installed): build

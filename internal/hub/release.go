@@ -19,12 +19,12 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/tenancy"
-	"github.com/lubobill1990/longarm/internal/update"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hub/store"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
+	"longarm/internal/tenancy"
+	"longarm/internal/update"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Release store and rollouts (DESIGN §7.2).

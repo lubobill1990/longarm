@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/msiupgrade"
+	"longarm/internal/msiupgrade"
 )
 
 func main() {

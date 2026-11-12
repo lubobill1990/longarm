@@ -17,12 +17,12 @@ import (
 	"golang.org/x/term"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/localapi"
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/sched"
-	"github.com/lubobill1990/longarm/internal/signin"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/localapi"
+	"longarm/internal/longarmd"
+	"longarm/internal/sched"
+	"longarm/internal/signin"
+	pb "longarm/proto/longarm/v1"
 )
 
 func joinCmd() *cobra.Command {

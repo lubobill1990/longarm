@@ -295,13 +295,9 @@ export const skills = {
   ],
 }
 
-/** GET /trayapi/addmachine: a Microsoft-internal hub */
+/** GET /trayapi/addmachine */
 export const addMachine = {
   hub_host: 'hub.example.com',
   version: '0.9.2',
-  tenant: '72f988bf-86f1-41af-91ab-2d7cd011db47',
-  internal: true,
-  repo: 'github.com/gim-home/longarm',
-  public_repo: 'github.com/example/longarm',
-  internal_repo: 'github.com/gim-home/longarm',
+  repo: 'github.com/example/longarm',
 }

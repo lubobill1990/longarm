@@ -2745,9 +2745,8 @@ only, no names, audited).
 on the hub's pages and in longarm-tray follows the hub. `[web] repo_url`
 (`LONGARM_HUB_WEB_REPO_URL`; Azure: `--repo-url`) is the repository - the
 front page's GitHub and docs links and the tray's "How to install" (a
-GitHub repository; a hub that sends none: its Entra tenant decides, as
-before) - e.g. a company's internal copy; default the public one. The
-tray's "Add a machine" shows the hub's own one-line installer (as its
+GitHub repository) - e.g. another copy of the repository; default the
+repository the build came from. The tray's "Add a machine" shows the hub's own one-line installer (as its
 front page: `install.ps1` / `install.sh`, the release from the hub
 itself), for the roles and the system picked. `[web] feedback_url`
 (`LONGARM_HUB_WEB_FEEDBACK_URL`; Azure: `--feedback-url`) is where feedback
@@ -2755,8 +2754,9 @@ and bug reports go - the front page, the panel's top bar, the tray's
 version details and Account tab - e.g. a team channel; default that
 repository's issues. The hub publishes both in `/auth/info`, `/healthz`
 and `/api/me`; the tray takes its signed-in hub's. Without a hub, or with
-a hub from before them: the public repository and its issues. (The film on
-the front page always streams from the public repository's release.)
+a hub from before them: the repository the build came from and its
+issues. (The film on the front page streams from that repository's
+release.)
 Pages: nodes (online state, CPU and
 memory sparklines, Claude/Copilot sessions, each client's path and RTT to the
 worker, labels, approve pending, drain/resume, revoke, toolchain profile and
@@ -3000,10 +3000,9 @@ machine" on an empty tab) shows these commands for another machine, with
 this machine's hub filled in: pick what the machine does (run jobs, admin
 commands - Windows only -, send jobs) and its system, copy, run them there.
 The installer is the one of the hub's newest stable version, from its
-GitHub Release; a hub whose sign-in is Microsoft's own Entra tenant (its
-`/auth/info` names the tenant) points at the Microsoft-internal copy
-`github.com/gim-home/longarm`, which carries the same releases and needs a
-GitHub sign-in that can read it (`gh release download`).
+GitHub Release in the hub's repository (`[web] repo_url`, see "The hub's
+links"; default the repository the build came from); a private repository
+needs a GitHub sign-in that can read it (`gh release download`).
 
 **Default or Custom.** The MSI's first page offers **Default
 (recommended)**: the hub built into the release, a sign-in with Microsoft

@@ -70,7 +70,9 @@ jobs:
           load: true
           push: false
           tags: longarm-hub:smoke
-          build-args: VERSION=${{ inputs.version || format('0.0.0-ci+{0}', github.sha) }}
+          build-args: |
+            VERSION=${{ inputs.version || format('0.0.0-ci+{0}', github.sha) }}
+            REPO_URL=${{ github.server_url }}/${{ github.repository }}
       - name: container smoke test
         run: deploy/azure/test/container-smoke.sh longarm-hub:smoke "$RUNNER_TEMP/longarm" "$RUNNER_TEMP/tsprobe"
       # what az acr build --target acr builds (deploy.sh --build-in-acr): ACR Tasks
@@ -85,7 +87,9 @@ jobs:
           load: true
           push: false
           tags: longarm-hub:acr
-          build-args: VERSION=${{ inputs.version || format('0.0.0-ci+{0}', github.sha) }}
+          build-args: |
+            VERSION=${{ inputs.version || format('0.0.0-ci+{0}', github.sha) }}
+            REPO_URL=${{ github.server_url }}/${{ github.repository }}
       - name: the ACR stage starts (healthcheck command, Litestream)
         run: |
           docker run --rm --entrypoint /usr/local/bin/litestream longarm-hub:acr version
@@ -142,7 +146,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          build-args: VERSION=${{ steps.meta.outputs.version }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            REPO_URL=${{ github.server_url }}/${{ github.repository }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

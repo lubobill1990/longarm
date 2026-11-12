@@ -9,8 +9,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/client"
+	"longarm/internal/version"
 )
 
 // Exit codes of longarm itself (docs/usage.md#exit-codes). Commands that

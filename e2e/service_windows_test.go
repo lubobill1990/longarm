@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/platform"
-	win "github.com/lubobill1990/longarm/internal/platform/windows"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/jobs"
+	"longarm/internal/platform"
+	win "longarm/internal/platform/windows"
+	pb "longarm/proto/longarm/v1"
 )
 
 func randHex(n int) string {

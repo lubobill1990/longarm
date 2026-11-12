@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/jobs"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The stdin payload reaches the job and nothing else: not job.json, the

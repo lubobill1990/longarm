@@ -25,15 +25,15 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/lubobill1990/longarm/internal/conntrack"
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/relay"
-	"github.com/lubobill1990/longarm/internal/sched"
-	"github.com/lubobill1990/longarm/internal/telemetry"
-	"github.com/lubobill1990/longarm/internal/telemetry/tgrpc"
-	"github.com/lubobill1990/longarm/internal/version"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/conntrack"
+	"longarm/internal/hub/store"
+	"longarm/internal/pki"
+	"longarm/internal/relay"
+	"longarm/internal/sched"
+	"longarm/internal/telemetry"
+	"longarm/internal/telemetry/tgrpc"
+	"longarm/internal/version"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Hub is a running longarm-hub.

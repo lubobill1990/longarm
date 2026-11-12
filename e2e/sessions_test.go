@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/platform"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/jobs"
+	"longarm/internal/platform"
+	pb "longarm/proto/longarm/v1"
 )
 
 func (e *env) sessionStatus(t *testing.T, name string) *jobs.Status {

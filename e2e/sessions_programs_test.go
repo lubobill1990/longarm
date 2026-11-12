@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/platform"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/platform"
+	pb "longarm/proto/longarm/v1"
 )
 
 type startOut struct {

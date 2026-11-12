@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/relay"
+	"longarm/internal/pki"
+	"longarm/internal/relay"
 )
 
 // PKI is a test CA.

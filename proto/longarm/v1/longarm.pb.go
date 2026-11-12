@@ -7872,7 +7872,7 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\rMachineUpdate\x12K\n" +
 	"\x05Start\x12 .longarm.v1.MachineUpdateRequest\x1a\x1e.longarm.v1.MachineUpdateEvent0\x01\x12P\n" +
 	"\x06Status\x12&.longarm.v1.MachineUpdateStatusRequest\x1a\x1e.longarm.v1.MachineUpdateEvent\x12O\n" +
-	"\aSetAuto\x12$.longarm.v1.MachineUpdateAutoRequest\x1a\x1e.longarm.v1.MachineUpdateEventB<Z:github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1b\x06proto3"
+	"\aSetAuto\x12$.longarm.v1.MachineUpdateAutoRequest\x1a\x1e.longarm.v1.MachineUpdateEventB$Z\"longarm/proto/longarm/v1;longarmv1b\x06proto3"
 
 var (
 	file_longarm_v1_longarm_proto_rawDescOnce sync.Once

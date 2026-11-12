@@ -14,9 +14,9 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/toolchain"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/pki"
+	"longarm/internal/toolchain"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Toolchain profiles (DESIGN §3.1 toolchain, §7.2): a named, declarative

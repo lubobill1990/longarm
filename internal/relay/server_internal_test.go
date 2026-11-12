@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 // A different identity that maps to an id already in use (a collision, or a

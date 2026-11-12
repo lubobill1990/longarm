@@ -30,8 +30,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
 )
 
 // Files in a trust directory.

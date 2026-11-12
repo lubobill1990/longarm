@@ -14,8 +14,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/userspace"
+	"longarm/internal/hubclient"
+	"longarm/internal/userspace"
 )
 
 // Default data directories (docs/usage.md "Data directory"):

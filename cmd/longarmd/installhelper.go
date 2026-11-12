@@ -13,10 +13,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/msiupgrade"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/updatesvc"
+	"longarm/internal/longarmd"
+	"longarm/internal/msiupgrade"
+	"longarm/internal/platform"
+	"longarm/internal/updatesvc"
 )
 
 // installHelperCmd is run by the MSI's custom actions:

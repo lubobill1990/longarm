@@ -12,9 +12,9 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/lubobill1990/longarm/internal/platform"
-	win "github.com/lubobill1990/longarm/internal/platform/windows"
-	"github.com/lubobill1990/longarm/internal/userspace"
+	"longarm/internal/platform"
+	win "longarm/internal/platform/windows"
+	"longarm/internal/userspace"
 )
 
 func currentDataDirEnv() dataDirEnv {

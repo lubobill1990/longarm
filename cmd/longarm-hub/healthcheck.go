@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/hub"
+	"longarm/internal/hub"
 )
 
 func healthcheckCmd() *cobra.Command {

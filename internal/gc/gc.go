@@ -15,10 +15,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/supervisor"
-	"github.com/lubobill1990/longarm/internal/workspace"
+	"longarm/internal/jobs"
+	"longarm/internal/platform"
+	"longarm/internal/supervisor"
+	"longarm/internal/workspace"
 )
 
 // StagingMaxAge is how long an uploaded-but-unused staging dir is kept.

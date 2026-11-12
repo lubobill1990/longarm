@@ -6,15 +6,33 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"longarm/internal/version"
 )
 
-// [web] feedback_url: the project's issues by default, hub.toml, the
-// environment winning over it, and only http(s) links.
+// testRepo is the repository a test build "came from" (version.RepoURL).
+const testRepo = "https://github.com/example/longarm"
+
+// buildRepo sets version.RepoURL for the test.
+func buildRepo(t *testing.T, u string) {
+	t.Helper()
+	old := version.RepoURL
+	version.RepoURL = u
+	t.Cleanup(func() { version.RepoURL = old })
+}
+
+// [web] feedback_url: the build's repository's issues by default (none
+// without one), hub.toml, the environment winning over it, only http(s).
 func TestConfigFeedbackURL(t *testing.T) {
+	buildRepo(t, "")
 	p := filepath.Join(t.TempDir(), "hub.toml")
 	os.WriteFile(p, []byte(""), 0o600)
+	if c, err := LoadConfig(p); err != nil || c.Web.FeedbackURL != "" || c.Web.RepoURL != "" {
+		t.Fatalf("a local build: %q %q %v", c.Web.FeedbackURL, c.Web.RepoURL, err)
+	}
+	buildRepo(t, testRepo)
 	c, err := LoadConfig(p)
-	if err != nil || c.Web.FeedbackURL != DefaultFeedbackURL {
+	if err != nil || c.Web.FeedbackURL != testRepo+"/issues" {
 		t.Fatalf("default: %q %v", c.Web.FeedbackURL, err)
 	}
 	os.WriteFile(p, []byte("[web]\nfeedback_url = \"https://forms.example.com/longarm\"\n"), 0o600)
@@ -34,10 +52,11 @@ func TestConfigFeedbackURL(t *testing.T) {
 // The feedback link is public (/auth/info for the front page, /healthz for
 // longarm-tray) and in /api/me.
 func TestFeedbackURLEndpoints(t *testing.T) {
+	buildRepo(t, testRepo)
 	th := newTenancyHub(t)
 	base := "http://" + th.h.Addr("http")
 	for _, path := range []string{"/auth/info", "/healthz"} {
-		if code, body := plainGet(t, base+path); code != 200 || !strings.Contains(body, `"feedback_url": "`+DefaultFeedbackURL+`"`) {
+		if code, body := plainGet(t, base+path); code != 200 || !strings.Contains(body, `"feedback_url": "`+testRepo+`/issues"`) {
 			t.Fatalf("%s default: %d %s", path, code, body)
 		}
 	}
@@ -52,12 +71,13 @@ func TestFeedbackURLEndpoints(t *testing.T) {
 	}
 }
 
-// [web] repo_url: the public repository by default, a company's copy when
-// set (trailing slash dropped), only http(s); in /auth/info and /api/me.
+// [web] repo_url: the build's repository by default, another when set
+// (trailing slash dropped), only http(s); in /auth/info and /api/me.
 func TestRepoURL(t *testing.T) {
+	buildRepo(t, testRepo)
 	p := filepath.Join(t.TempDir(), "hub.toml")
 	os.WriteFile(p, []byte(""), 0o600)
-	if c, err := LoadConfig(p); err != nil || c.Web.RepoURL != DefaultRepoURL {
+	if c, err := LoadConfig(p); err != nil || c.Web.RepoURL != testRepo {
 		t.Fatalf("default: %q %v", c.Web.RepoURL, err)
 	}
 	t.Setenv(EnvRepoURL, "https://git.example.com/team/longarm/")
@@ -72,7 +92,7 @@ func TestRepoURL(t *testing.T) {
 
 	th := newTenancyHub(t)
 	base := "http://" + th.h.Addr("http")
-	if _, body := plainGet(t, base+"/auth/info"); !strings.Contains(body, `"repo_url": "`+DefaultRepoURL+`"`) {
+	if _, body := plainGet(t, base+"/auth/info"); !strings.Contains(body, `"repo_url": "`+testRepo+`"`) {
 		t.Fatalf("/auth/info default: %s", body)
 	}
 	th.h.cfg.Web.RepoURL, th.h.cfg.Web.FeedbackURL = "https://git.example.com/team/longarm", "" // a repo, no feedback_url

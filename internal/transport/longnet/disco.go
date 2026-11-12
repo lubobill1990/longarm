@@ -7,7 +7,7 @@ import (
 	"errors"
 	"net/netip"
 
-	"github.com/lubobill1990/longarm/internal/relay"
+	"longarm/internal/relay"
 )
 
 // Direct-path packet format (UDP between nodes). Every packet starts with

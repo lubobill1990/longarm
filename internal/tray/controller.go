@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/localapi"
-	"github.com/lubobill1990/longarm/internal/update"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/localapi"
+	"longarm/internal/update"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Shell is what the controller drives: the tray icon and notifications.

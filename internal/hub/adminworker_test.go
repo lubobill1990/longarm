@@ -11,13 +11,13 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/sched"
-	"github.com/lubobill1990/longarm/internal/tenancy"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hub/store"
+	"longarm/internal/hubclient"
+	"longarm/internal/nodeid"
+	"longarm/internal/pki"
+	"longarm/internal/sched"
+	"longarm/internal/tenancy"
+	pb "longarm/proto/longarm/v1"
 )
 
 // TestLinkAdminWorker: a pairing that carries an admin worker's pre-made

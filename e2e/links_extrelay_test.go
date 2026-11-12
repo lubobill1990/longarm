@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/relay"
+	"longarm/internal/nodeid"
+	"longarm/internal/pki"
+	"longarm/internal/relay"
 )
 
 // Port links through an external relay (longarm-relay --hub, docs/usage.md

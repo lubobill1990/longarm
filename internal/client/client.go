@@ -26,14 +26,14 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/agentauth"
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/telemetry/tgrpc"
-	"github.com/lubobill1990/longarm/internal/transport"
-	"github.com/lubobill1990/longarm/internal/transport/longnet"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/agentauth"
+	"longarm/internal/hubclient"
+	"longarm/internal/nodeid"
+	"longarm/internal/pki"
+	"longarm/internal/telemetry/tgrpc"
+	"longarm/internal/transport"
+	"longarm/internal/transport/longnet"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Config-dir layout.

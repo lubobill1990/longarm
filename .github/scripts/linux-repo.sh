@@ -17,6 +17,7 @@
 #       (longarm.asc, longarm.gpg), longarm.repo, longarm.sources, index.html.
 #       Signs with the key of <public key> from $GNUPGHOME (`key` above); rpms that
 #       are not signed by that key (releases before the rpm signing) are left out.
+#       The pages link to $GITHUB_SERVER_URL/$GITHUB_REPOSITORY (set in Actions).
 #
 # Needs: gpg, gpgv, curl, dpkg-deb, apt-ftparchive (apt-utils), rpm, createrepo_c.
 set -euo pipefail
@@ -142,7 +143,7 @@ cmd_previous() {
 	echo "previous: $(find "$dir" -type f | wc -l) packages"
 }
 
-write_index() { # <site> <base> <fpr>
+write_index() { # <site> <base> <fpr> (and cmd_build's $repo_url)
 	local site=$1 base=$2 fpr=$3
 	cat >"$site/index.html" <<EOF
 <!doctype html>
@@ -150,7 +151,7 @@ write_index() { # <site> <base> <fpr>
 <style>body{font-family:system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;line-height:1.5}pre{background:#f4f4f4;padding:.8rem;overflow-x:auto}</style>
 </head><body>
 <h1>Longarm package repositories</h1>
-<p>Signed apt and dnf/yum repositories for <a href="https://github.com/lubobill1990/longarm">Longarm</a>
+<p>Signed apt and dnf/yum repositories for <a href="$repo_url">Longarm</a>
 (packages <code>longarm</code> and <code>longarm-hub</code>; amd64/x86_64 and arm64/aarch64).</p>
 <p>Signing key: <a href="longarm.asc">longarm.asc</a> (binary keyring: <a href="longarm.gpg">longarm.gpg</a>),
 "Longarm Release Signing", fingerprint <code>$fpr</code>.
@@ -164,7 +165,7 @@ sudo apt-get update &amp;&amp; sudo apt-get install longarm</pre>
 <pre>sudo curl -fsSL -o /etc/yum.repos.d/longarm.repo $base/longarm.repo
 sudo dnf install longarm</pre>
 <p>Updates come with <code>apt upgrade</code> / <code>dnf upgrade</code>.
-More: <a href="https://github.com/lubobill1990/longarm/blob/main/docs/linux-repos.md">docs/linux-repos.md</a>.</p>
+More: <a href="$repo_url/blob/main/docs/linux-repos.md">docs/linux-repos.md</a>.</p>
 </body></html>
 EOF
 }
@@ -173,6 +174,8 @@ cmd_build() {
 	local pkg=${1:?usage: linux-repo.sh build <pkgdir> <site> <base url> <public key>}
 	local site=${2:?} base=${3:?} pub=${4:?}
 	base=${base%/}
+	# the repository the packages come from (write_index too)
+	local repo_url=${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY (owner/repo) is not set}
 	local fpr
 	fpr=$(fpr_of "$pub")
 	[[ -n $fpr ]] || die "$pub: no public key"
@@ -217,7 +220,7 @@ cmd_build() {
 			-o APT::FTPArchive::Release::Codename=stable \
 			-o APT::FTPArchive::Release::Architectures="amd64 arm64" \
 			-o APT::FTPArchive::Release::Components=main \
-			-o APT::FTPArchive::Release::Description="Longarm (https://github.com/lubobill1990/longarm)" \
+			-o APT::FTPArchive::Release::Description="Longarm ($repo_url)" \
 			release dists/stable >"$site/Release.tmp"
 		mv "$site/Release.tmp" dists/stable/Release
 		gpgsign "$fpr" --clearsign -o dists/stable/InRelease dists/stable/Release

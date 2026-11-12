@@ -5,7 +5,7 @@ package platform
 import (
 	"context"
 
-	impl "github.com/lubobill1990/longarm/internal/platform/linux"
+	impl "longarm/internal/platform/linux"
 )
 
 func NewContainer(opts ContainerOptions) (Container, error) { return impl.NewContainer(opts) }

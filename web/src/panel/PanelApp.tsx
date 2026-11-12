@@ -112,9 +112,11 @@ export function PanelApp() {
             ))}
           </nav>
           <span className="spacer" />
-          <a href={feedbackURL(me.feedback_url, me.repo_url)} target="_blank" rel="noreferrer" className="muted" data-testid="panel-feedback">
-            Feedback
-          </a>
+          {feedbackURL(me.feedback_url, me.repo_url) && (
+            <a href={feedbackURL(me.feedback_url, me.repo_url)} target="_blank" rel="noreferrer" className="muted" data-testid="panel-feedback">
+              Feedback
+            </a>
+          )}
           <Link to="/me" className="muted">
             {me.user}
             {!admin && me.tenant && me.tenant !== me.user ? ` (${me.tenant})` : ''}

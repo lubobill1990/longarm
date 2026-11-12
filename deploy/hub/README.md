@@ -76,6 +76,8 @@ Updates from CI: the `deploy` user with the SSH forced command
 [`longarm-hub-deploy`](longarm-hub-deploy) (verifies the release signature with the installed
 longarm-hub, keeps `longarm-hub.prev`, health-checks `/healthz`, rolls back) - setup in
 [docs/ci-cd.md](../../docs/ci-cd.md#23-hub-deploy-user-ssh-forced-command-no-shell).
+A hub that runs the image as a container: [`longarm-hub-deploy-docker`](longarm-hub-deploy-docker)
+(the same commands; pulls the image, snapshots the data volume, keeps `<name>-prev`).
 
 ## First steps
 
@@ -90,7 +92,7 @@ longarm-hub release add ./dist --version 0.2.0   # binaries for install.ps1 / in
 
 **Releases without publishing anything.** A hub with no releases of its own
 offers the releases of its source repository on GitHub (`[releases] github`,
-default: the repository of `[web] repo_url`, the public one unless you
+default: the repository of `[web] repo_url`, the one the hub was built from unless you
 changed it): the front page's installers, `install.sh` / `install.ps1`,
 `/releases/latest.json`, the tray's update notice and worker self-updates
 all work out of the box. The hub reads the index (names, sizes, sha256

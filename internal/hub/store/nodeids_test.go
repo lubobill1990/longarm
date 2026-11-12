@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/nodeid"
+	"longarm/internal/nodeid"
 )
 
 // liveWorkers is how many plain workers schema5 adds (the live hub's

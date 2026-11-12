@@ -22,9 +22,10 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/lubobill1990/longarm/internal/relay"
-	"github.com/lubobill1990/longarm/internal/sched"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/relay"
+	"longarm/internal/sched"
+	"longarm/internal/version"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Duration is a TOML string like "10m".
@@ -328,16 +329,11 @@ type WebConfig struct {
 	// default RepoURL's issues.
 	FeedbackURL string `toml:"feedback_url"`
 	// RepoURL is the source repository the front page, the panel and
-	// longarm-tray link to (GitHub, the docs, downloads; a company's
-	// internal copy); default the public one.
+	// longarm-tray link to (GitHub, the docs, downloads); default the
+	// repository the hub was built from (version.RepoURL; a local build:
+	// none, and no project links).
 	RepoURL string `toml:"repo_url"`
 }
-
-// DefaultFeedbackURL is [web] feedback_url when the hub sets neither it nor repo_url.
-const DefaultFeedbackURL = DefaultRepoURL + "/issues"
-
-// DefaultRepoURL is [web] repo_url when the hub sets none.
-const DefaultRepoURL = "https://github.com/lubobill1990/longarm"
 
 // HeartbeatConfig is [heartbeat].
 type HeartbeatConfig struct {
@@ -483,15 +479,15 @@ func (c *Config) applyDefaults() error {
 	}
 	c.Web.RepoURL = strings.TrimRight(c.Web.RepoURL, "/")
 	if c.Web.RepoURL == "" {
-		c.Web.RepoURL = DefaultRepoURL
+		c.Web.RepoURL = strings.TrimRight(version.RepoURL, "/")
 	}
-	if !strings.HasPrefix(c.Web.RepoURL, "http://") && !strings.HasPrefix(c.Web.RepoURL, "https://") {
+	if c.Web.RepoURL != "" && !strings.HasPrefix(c.Web.RepoURL, "http://") && !strings.HasPrefix(c.Web.RepoURL, "https://") {
 		return errors.New("[web] repo_url must start with http:// or https://")
 	}
-	if c.Web.FeedbackURL == "" {
+	if c.Web.FeedbackURL == "" && c.Web.RepoURL != "" {
 		c.Web.FeedbackURL = c.Web.RepoURL + "/issues" // that repository's issues
 	}
-	if !strings.HasPrefix(c.Web.FeedbackURL, "http://") && !strings.HasPrefix(c.Web.FeedbackURL, "https://") {
+	if c.Web.FeedbackURL != "" && !strings.HasPrefix(c.Web.FeedbackURL, "http://") && !strings.HasPrefix(c.Web.FeedbackURL, "https://") {
 		return errors.New("[web] feedback_url must start with http:// or https://")
 	}
 	if c.HTTPS == "off" {

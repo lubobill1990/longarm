@@ -38,8 +38,8 @@ import (
 	"github.com/pkg/sftp"
 	gossh "golang.org/x/crypto/ssh"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
 )
 
 // Config configures the server.

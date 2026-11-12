@@ -10,8 +10,8 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Messages that tell the user what to do next (golden strings in

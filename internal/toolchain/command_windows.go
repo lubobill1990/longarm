@@ -17,8 +17,8 @@ import (
 
 	"golang.org/x/sys/windows/registry"
 
-	"github.com/lubobill1990/longarm/internal/platform/ptypes"
-	platformwindows "github.com/lubobill1990/longarm/internal/platform/windows"
+	"longarm/internal/platform/ptypes"
+	platformwindows "longarm/internal/platform/windows"
 )
 
 var pathMu sync.Mutex

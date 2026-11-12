@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
+	"longarm/internal/hub/store"
 )
 
 // The release records, public like the files they describe

@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/update"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/update"
+	"longarm/internal/version"
 )
 
 // UserAgent of the update service's HTTP requests. With the version, the

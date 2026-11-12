@@ -458,14 +458,16 @@ func TestSyncLFS(t *testing.T) {
 }
 
 // TestGitHubFetch fetches this repository from GitHub with GH_TOKEN as a
-// job secret (opt-in: LONGARM_GITHUB_TEST=1 and GH_TOKEN set).
+// job secret (opt-in: LONGARM_GITHUB_TEST=1, GH_TOKEN and GITHUB_REPOSITORY,
+// owner/repo, set).
 func TestGitHubFetch(t *testing.T) {
-	if os.Getenv("LONGARM_GITHUB_TEST") == "" || os.Getenv("GH_TOKEN") == "" {
-		t.Skip("set LONGARM_GITHUB_TEST=1 and GH_TOKEN")
+	repo := os.Getenv("GITHUB_REPOSITORY")
+	if os.Getenv("LONGARM_GITHUB_TEST") == "" || os.Getenv("GH_TOKEN") == "" || repo == "" {
+		t.Skip("set LONGARM_GITHUB_TEST=1, GH_TOKEN and GITHUB_REPOSITORY")
 	}
 	e := newEnv(t)
 	e.startLongarmd()
-	out := e.longarm(e.client, "run", "w1", "--repo", "https://github.com/lubobill1990/longarm", "--ref", "master",
+	out := e.longarm(e.client, "run", "w1", "--repo", "https://github.com/"+repo, "--ref", "main",
 		"--secret-env", "GH_TOKEN", "-f", "--", "git", "log", "--oneline", "-1")
 	if out.code != 0 || !strings.Contains(out.stdout, "longarmd: fetching") {
 		t.Fatalf("%+v", out)

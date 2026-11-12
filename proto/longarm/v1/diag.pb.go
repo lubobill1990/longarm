@@ -475,7 +475,7 @@ const file_longarm_v1_diag_proto_rawDesc = "" +
 	"\vDiagnostics\x12:\n" +
 	"\x06Upload\x12\x15.longarm.v1.DiagChunk\x1a\x17.longarm.v1.DiagReceipt(\x01\x12A\n" +
 	"\x04List\x12\x1b.longarm.v1.DiagListRequest\x1a\x1c.longarm.v1.DiagListResponse\x12D\n" +
-	"\bDownload\x12\x1f.longarm.v1.DiagDownloadRequest\x1a\x15.longarm.v1.DiagChunk0\x01B<Z:github.com/lubobill1990/longarm/proto/longarm/v1;longarmv1b\x06proto3"
+	"\bDownload\x12\x1f.longarm.v1.DiagDownloadRequest\x1a\x15.longarm.v1.DiagChunk0\x01B$Z\"longarm/proto/longarm/v1;longarmv1b\x06proto3"
 
 var (
 	file_longarm_v1_diag_proto_rawDescOnce sync.Once

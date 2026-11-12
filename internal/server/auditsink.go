@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/telemetry"
+	"longarm/internal/telemetry"
 )
 
 // AuditSinks is the [audit] section of longarmd.toml: copies of every audit

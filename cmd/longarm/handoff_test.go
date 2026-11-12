@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The test binary doubles as a fake agent CLI (copied to claude[.exe] /

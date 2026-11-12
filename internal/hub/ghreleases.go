@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/hub/store"
+	"longarm/internal/update"
 )
 
 // Releases from GitHub: a hub that publishes nothing itself - no CI

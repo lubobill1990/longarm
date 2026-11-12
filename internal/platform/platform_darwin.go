@@ -5,7 +5,7 @@ package platform
 import (
 	"context"
 
-	impl "github.com/lubobill1990/longarm/internal/platform/darwin"
+	impl "longarm/internal/platform/darwin"
 )
 
 func NewContainer(opts ContainerOptions) (Container, error) { return impl.NewContainer(opts) }

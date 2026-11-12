@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/localapi"
-	"github.com/lubobill1990/longarm/internal/uipage"
+	"longarm/internal/localapi"
+	"longarm/internal/uipage"
 )
 
 func uiCLI(t *testing.T, args ...string) (string, int) {

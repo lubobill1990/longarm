@@ -38,7 +38,7 @@ default = 2.0
 session_ttl = "12h"
 trusted_proxies = ["127.0.0.0/8", "172.16.0.0/12"]   # Caddy on the host -> docker bridge
 # the source repository the front page, the panel and longarm-tray link to
-# (LONGARM_HUB_WEB_REPO_URL; default the public GitHub repository)
+# (LONGARM_HUB_WEB_REPO_URL; default the GitHub repository the hub was built from)
 # repo_url = "https://github.com/example/longarm"
 # where they send feedback and bug reports (LONGARM_HUB_WEB_FEEDBACK_URL;
 # default repo_url's issues)
@@ -53,7 +53,7 @@ offline = "10s"                    # no report for this long = offline
 # blob_url = "https://<account>.blob.core.windows.net/releases"  # also keep the files in Blob Storage (managed identity,
 #                                  # Storage Blob Data Contributor) or file:///<dir>; <data_dir>/releases is then a cache
 # github = ""                      # while the hub has no releases of its own: offer the GitHub releases of [web] repo_url
-#                                  # (default: the public repository), "owner/repo", or "off". Env LONGARM_HUB_RELEASES_GITHUB
+#                                  # (default: the one the hub was built from), "owner/repo", or "off". Env LONGARM_HUB_RELEASES_GITHUB
 
 # The tailscale leg: the embedded tsnet node of longarmd / longarm (no tailscaled needed).
 # The hub mints one-time, pre-authorized, tagged keys (tag:longarm-worker / tag:longarm-client)

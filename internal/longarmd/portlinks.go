@@ -24,15 +24,15 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/portlink"
-	"github.com/lubobill1990/longarm/internal/server"
-	"github.com/lubobill1990/longarm/internal/supervisor"
-	"github.com/lubobill1990/longarm/internal/telemetry"
-	"github.com/lubobill1990/longarm/internal/userspace"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
+	"longarm/internal/portlink"
+	"longarm/internal/server"
+	"longarm/internal/supervisor"
+	"longarm/internal/telemetry"
+	"longarm/internal/userspace"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Port links on a worker (docs/usage.md "Port links"). The hub pushes the

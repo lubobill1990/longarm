@@ -20,8 +20,8 @@ import (
 
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/trust"
+	"longarm/internal/pki"
+	"longarm/internal/trust"
 )
 
 // TrustDir is the client's trust directory (node key, endorsement, user

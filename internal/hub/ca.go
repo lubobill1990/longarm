@@ -13,8 +13,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
 )
 
 // ImportCA copies an existing CA (ca.crt + ca.key, e.g. the

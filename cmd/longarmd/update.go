@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/update"
-	"github.com/lubobill1990/longarm/internal/version"
+	"longarm/internal/longarmd"
+	"longarm/internal/update"
+	"longarm/internal/version"
 )
 
 func updateCmd() *cobra.Command {

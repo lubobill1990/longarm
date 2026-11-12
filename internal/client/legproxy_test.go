@@ -14,8 +14,8 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/lubobill1990/longarm/internal/localapi"
-	"github.com/lubobill1990/longarm/internal/transport"
+	"longarm/internal/localapi"
+	"longarm/internal/transport"
 )
 
 // serveLegProxy serves the leg proxy with dial on a real local channel (as

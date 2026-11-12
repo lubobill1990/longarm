@@ -14,12 +14,9 @@ afterEach(() => {
 const PUBLIC: AddMachineInfo = {
   hub_host: 'hub.example.com',
   version: '0.1.28',
-  internal: false,
-  repo: 'github.com/lubobill1990/longarm',
-  public_repo: 'github.com/lubobill1990/longarm',
-  internal_repo: 'github.com/gim-home/longarm',
+  repo: 'github.com/example/longarm',
 }
-const INTERNAL: AddMachineInfo = { ...PUBLIC, tenant: '72f988bf-86f1-41af-91ab-2d7cd011db47', internal: true, repo: 'github.com/gim-home/longarm' }
+const ENTRA: AddMachineInfo = { ...PUBLIC, tenant: '11111111-2222-3333-4444-555555555555', repo: 'github.com/acme/longarm' }
 
 const opts = (o: Partial<AddOptions> = {}): AddOptions => ({ worker: true, admin: false, client: false, platform: 'windows', ...o })
 const text = (o: AddOptions, info = PUBLIC) =>
@@ -40,8 +37,8 @@ describe('installSteps', () => {
     expect(text(opts({ platform: 'unix' }))).toContain('--role worker')
   })
 
-  it('the same on a Microsoft hub: from the hub, never GitHub', () => {
-    const t = text(opts(), INTERNAL)
+  it('the same on a hub with Entra sign-in: from the hub, never GitHub', () => {
+    const t = text(opts(), ENTRA)
     expect(t).toContain('https://hub.example.com/install.ps1')
     expect(t).not.toMatch(/github|gh release/)
   })
@@ -75,7 +72,7 @@ function mockAddMachine(info: AddMachineInfo) {
 
 describe('AddMachine', () => {
   it('one command, no source to pick; the options change it', async () => {
-    mockAddMachine(INTERNAL)
+    mockAddMachine(ENTRA)
     render(<AddMachine onClose={() => {}} />)
     fireEvent.click(await screen.findByRole('radio', { name: 'Windows' }))
     expect(screen.queryByTestId('addm-source')).toBeNull()

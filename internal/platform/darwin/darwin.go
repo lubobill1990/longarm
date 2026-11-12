@@ -20,8 +20,8 @@ import (
 	"github.com/shirou/gopsutil/v4/process"
 	xunix "golang.org/x/sys/unix"
 
-	"github.com/lubobill1990/longarm/internal/platform/ptypes"
-	"github.com/lubobill1990/longarm/internal/platform/unix"
+	"longarm/internal/platform/ptypes"
+	"longarm/internal/platform/unix"
 )
 
 // NewContainer returns a process-group container. macOS has no reliable

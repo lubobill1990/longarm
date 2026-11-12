@@ -3,7 +3,7 @@ package supervisor
 import (
 	"os/user"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 func secureStdinDir(dir string) error {

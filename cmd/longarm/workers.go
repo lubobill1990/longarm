@@ -13,10 +13,10 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/fwcheck"
-	"github.com/lubobill1990/longarm/internal/machine"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/fwcheck"
+	"longarm/internal/machine"
+	pb "longarm/proto/longarm/v1"
 )
 
 // lsHubGrace: longarm ls asks the hub first; workers known only from the hub

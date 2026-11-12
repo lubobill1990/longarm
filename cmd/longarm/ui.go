@@ -15,8 +15,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/uipage"
+	"longarm/internal/platform"
+	"longarm/internal/uipage"
 )
 
 // `longarm ui open`: Longarm's own UI (longarm-tray) at a page, for people

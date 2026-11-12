@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/pii"
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/client"
+	"longarm/internal/pii"
+	"longarm/internal/pki"
 )
 
 // pseudonymCmd prints the pseudonyms telemetry and diagnostic bundles use

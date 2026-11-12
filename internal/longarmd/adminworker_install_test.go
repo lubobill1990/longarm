@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hubclient"
+	pb "longarm/proto/longarm/v1"
 )
 
 // TestAdminInstallRefusedBetweenChecks: the service refuses the enrollment

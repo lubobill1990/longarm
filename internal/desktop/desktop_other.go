@@ -2,7 +2,7 @@
 
 package desktop
 
-import pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+import pb "longarm/proto/longarm/v1"
 
 func mayBeCloudVM() bool { return false }
 

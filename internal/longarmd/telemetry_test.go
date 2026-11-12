@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/supervisor"
-	"github.com/lubobill1990/longarm/internal/telemetry"
+	"longarm/internal/pki"
+	"longarm/internal/supervisor"
+	"longarm/internal/telemetry"
 )
 
 func TestTelemetryOptOut(t *testing.T) {

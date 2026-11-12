@@ -14,12 +14,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/lubobill1990/longarm/internal/doctor"
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/version"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/doctor"
+	"longarm/internal/longarmd"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
+	"longarm/internal/version"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Run modes of the local worker.

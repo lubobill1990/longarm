@@ -168,9 +168,11 @@ export function VersionChip({ info, pool }: { info?: TrayInfo; pool?: PoolView }
             </button>
           )}
           {/* the hub's feedback channel (or the project's issues) */}
-          <button className="link ver-feedback" data-testid="version-feedback" onClick={() => trayApi.open(feedbackURL(upd?.feedback_url, upd?.repo_url)).catch(() => {})}>
-            Feedback / report a bug ↗
-          </button>
+          {feedbackURL(upd?.feedback_url, upd?.repo_url) && (
+            <button className="link ver-feedback" data-testid="version-feedback" onClick={() => trayApi.open(feedbackURL(upd?.feedback_url, upd?.repo_url)).catch(() => {})}>
+              Feedback / report a bug ↗
+            </button>
+          )}
         </span>
       )}
     </span>

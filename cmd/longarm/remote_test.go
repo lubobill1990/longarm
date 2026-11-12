@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/client"
+	"longarm/internal/client"
 )
 
 func TestSplitRemote(t *testing.T) {

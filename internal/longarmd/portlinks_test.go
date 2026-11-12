@@ -19,11 +19,11 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/portlink"
-	"github.com/lubobill1990/longarm/internal/server"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/pki"
+	"longarm/internal/portlink"
+	"longarm/internal/server"
+	pb "longarm/proto/longarm/v1"
 )
 
 // linkPair is worker "wa" (listens for links) and worker "wb" (their

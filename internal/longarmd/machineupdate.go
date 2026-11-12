@@ -12,12 +12,12 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/update"
-	"github.com/lubobill1990/longarm/internal/updatesvc"
-	"github.com/lubobill1990/longarm/internal/userspace"
-	"github.com/lubobill1990/longarm/internal/version"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/jobs"
+	"longarm/internal/update"
+	"longarm/internal/updatesvc"
+	"longarm/internal/userspace"
+	"longarm/internal/version"
+	pb "longarm/proto/longarm/v1"
 )
 
 // machineUpdater serves MachineUpdate (server.MachineUpdater): an owner's

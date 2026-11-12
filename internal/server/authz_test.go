@@ -23,15 +23,15 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/lubobill1990/longarm/internal/metrics"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/shim"
-	"github.com/lubobill1990/longarm/internal/steer"
-	"github.com/lubobill1990/longarm/internal/tenancy"
-	"github.com/lubobill1990/longarm/internal/userspace"
-	"github.com/lubobill1990/longarm/internal/workspace"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/metrics"
+	"longarm/internal/pki"
+	"longarm/internal/platform"
+	"longarm/internal/shim"
+	"longarm/internal/steer"
+	"longarm/internal/tenancy"
+	"longarm/internal/userspace"
+	"longarm/internal/workspace"
+	pb "longarm/proto/longarm/v1"
 )
 
 // The test binary doubles as the job shim and as a sleeping job.

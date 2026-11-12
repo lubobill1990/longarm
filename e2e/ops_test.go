@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 // serverCertNotAfter does a fresh TLS handshake with longarmd and returns the

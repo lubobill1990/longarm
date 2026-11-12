@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/update"
 )
 
 // The sign-in defaults the MSI records in HKLM\Software\Longarm - Hub,

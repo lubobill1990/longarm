@@ -21,13 +21,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/hub"
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/signin"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/hub"
+	"longarm/internal/hubclient"
+	"longarm/internal/longarmd"
+	"longarm/internal/pki"
+	"longarm/internal/signin"
+	pb "longarm/proto/longarm/v1"
 )
 
 // testHub runs a longarm-hub in-process (no Entra: panel passwords

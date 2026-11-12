@@ -25,8 +25,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/localapi"
+	"longarm/internal/jobs"
+	"longarm/internal/localapi"
 )
 
 // Pages are the names `longarm ui open` takes, in the order of its help.

@@ -47,9 +47,9 @@ else
 		else
 			args=(-i -E -e "$p")
 		fi
-		# don't echo the pattern: CI logs are public. The governed repository
-		# files (Start Right: owners, access and inventory of the internal
-		# copy) name their maintainers by design.
+		# don't echo the pattern: CI logs are public. Repository governance
+		# files (owners, access, inventory), where a copy has them, name
+		# their maintainers by design.
 		if out=$(git grep -n -I "${args[@]}" -- . ':!.privacy-patterns' \
 			':!.github/acl/' ':!.github/compliance/' ':!.github/policies/' ':!.github/ISSUE_TEMPLATE/JitAccess.yml'); then
 			report "deny-list entry #$n" "$out"
@@ -58,18 +58,21 @@ else
 	echo "privacy-check: $n deny-list entries checked"
 fi
 
-# The repository owner's account name only in the module path / repository
-# URLs, the hub image and the deploy mirrors (ghcr.io/<owner>/longarm-hub,
-# ghcr.io/<owner>/longarm-mirror), the "Deploy to Azure"
-# link (its URL-encoded raw.githubusercontent.com path), the project's GitHub
-# Pages site (<owner>.github.io/longarm: the apt/yum repositories,
-# docs/linux-repos.md), the noreply e-mail address and the LICENSE (also
-# reproduced in internal/notices/THIRD_PARTY_NOTICES.txt).
-owner=$(sed -n -E 's#^module github\.com/([^/]+)/.*#\1#p' go.mod)
-if out=$(git grep -n -I -F "$owner" -- . ':!LICENSE' ':!internal/notices/THIRD_PARTY_NOTICES.txt' |
-	sed -E "s#github\.com/$owner/longarm##g; s#ghcr\.io/$owner/longarm-(hub|mirror)##g; s#githubusercontent\.com%2F$owner%2Flongarm%2F##g; s#$owner\.github\.io/longarm##g; s#$owner@users\.noreply\.github\.com##g" |
-	grep -F "$owner"); then
-	report "account name outside the module path / repository URLs" "$out"
+# The repository owner's account name ($PRIVACY_OWNER, else the CI run's
+# $GITHUB_REPOSITORY_OWNER), in any case, nowhere but in the distribution
+# files - the ones each published copy of the repository keeps in its own
+# version (README, security policy, issue links, the Azure deploy guide with
+# its "Deploy to Azure" link, the apt/yum repository page) - and the LICENSE
+# (also reproduced in internal/notices/THIRD_PARTY_NOTICES.txt). Everything
+# else gets the repository, image and links from the build, the CI
+# variables or the hub's config.
+owner=${PRIVACY_OWNER:-${GITHUB_REPOSITORY_OWNER:-}}
+if [[ -z $owner ]]; then
+	echo "privacy-check: no owner (PRIVACY_OWNER / GITHUB_REPOSITORY_OWNER), owner check skipped"
+elif out=$(git grep -n -I -i -F -e "$owner" -- . ':!LICENSE' ':!internal/notices/THIRD_PARTY_NOTICES.txt' \
+	':!README.md' ':!README.zh-CN.md' ':!SECURITY.md' ':!.github/ISSUE_TEMPLATE/config.yml' \
+	':!deploy/azure/README.md' ':!deploy/azure/E2E.md' ':!docs/linux-repos.md'); then
+	report "account name outside the distribution files" "$out"
 fi
 
 if [[ $fail -ne 0 ]]; then

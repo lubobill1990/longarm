@@ -15,10 +15,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/platform"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/jobs"
+	"longarm/internal/platform"
+	pb "longarm/proto/longarm/v1"
 )
 
 // detachPrefix (Ctrl-]) followed by 'd' detaches; Ctrl-] Ctrl-] sends one

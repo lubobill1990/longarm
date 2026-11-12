@@ -18,8 +18,8 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/hub/store"
+	"longarm/internal/pki"
 )
 
 // Panel accounts (the hub's HTTP API sits behind a reverse proxy, so client

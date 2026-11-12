@@ -16,7 +16,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
-	"github.com/lubobill1990/longarm/internal/tray"
+	"longarm/internal/tray"
 )
 
 // The Wails v3 shell: a system tray icon and a frameless, always-on-top

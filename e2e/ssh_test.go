@@ -16,7 +16,7 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 // opensshTool finds an OpenSSH client tool: on Windows the system's

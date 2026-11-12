@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 // ErrRestart is returned by longarmd's Run after an update was applied: the

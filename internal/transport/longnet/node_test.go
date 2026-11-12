@@ -19,11 +19,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/relay"
-	"github.com/lubobill1990/longarm/internal/relay/relaytest"
-	"github.com/lubobill1990/longarm/internal/transport"
-	"github.com/lubobill1990/longarm/internal/transport/longnet"
+	"longarm/internal/pki"
+	"longarm/internal/relay"
+	"longarm/internal/relay/relaytest"
+	"longarm/internal/transport"
+	"longarm/internal/transport/longnet"
 )
 
 // fastTiming makes path changes observable in a test's time budget.

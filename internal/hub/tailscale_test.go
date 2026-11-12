@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/testutil/fakets"
+	"longarm/internal/testutil/fakets"
 )
 
 func writeSecret(t *testing.T, secret string) string {

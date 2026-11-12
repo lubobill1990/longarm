@@ -71,8 +71,8 @@ param(
     # where the front page, the panel and longarm-tray send feedback and bug reports (hub.toml
     # [web] feedback_url; empty = the project's GitHub issues), e.g. -FeedbackUrl https://forms.example.com/longarm
     [string]$FeedbackUrl = '',
-    # the source repository the front page links to (hub.toml [web] repo_url; empty = the public
-    # GitHub repository), e.g. a company's internal copy
+    # the source repository the front page links to (hub.toml [web] repo_url; empty = the
+    # repository the hub image was built from), e.g. another copy of the repository
     [string]$RepoUrl = '',
     # send container logs to Log Analytics (with -Telemetry its workspace, else one of their own):
     # they keep the logs of crashed starts, which ACI drops
@@ -120,6 +120,18 @@ if ($env:LONGARM_DEPLOY_AZ) { $script:AzCli = $env:LONGARM_DEPLOY_AZ }
 # seconds between status polls (tests make it short)
 $script:Poll = 5
 if ($env:LONGARM_DEPLOY_POLL_SECONDS) { $script:Poll = [int]$env:LONGARM_DEPLOY_POLL_SECONDS }
+# owner/repo of this checkout's GitHub origin ('' without one): the default
+# image and the releases link printed at the end
+$script:RepoSlug = ''
+try {
+    $ErrorActionPreference = 'Continue'
+    $origin = & git -C $PSScriptRoot config --get remote.origin.url 2>$null
+    if ($origin -match 'github\.com[:/]([^/]+/[^/]+?)(\.git)?/?$') { $script:RepoSlug = $Matches[1] }
+} catch {
+    $script:RepoSlug = ''
+} finally {
+    $ErrorActionPreference = 'Stop'
+}
 
 function Invoke-Az {
     # az with its exit status checked; returns stdout lines
@@ -709,7 +721,8 @@ try {
                     if ($prev.has -notcontains $k) {
                         # the deployment had the template's default
                         $def = ''
-                        if ($histMap.Contains($k) -and $tplDefaults.PSObject.Properties[$histMap[$k]]) { $def = [string]$tplDefaults.($histMap[$k]).defaultValue }
+                        if ($histMap.Contains($k) -and $tplDefaults.PSObject.Properties[$histMap[$k]] -and
+                            $tplDefaults.($histMap[$k]).PSObject.Properties['defaultValue']) { $def = [string]$tplDefaults.($histMap[$k]).defaultValue }
                         if ($sec) {
                             if ($snap[$k] -and $snap[$k] -ne $def -and -not $given[$k]) { $refused += "$($secOption[$k]) (deployment: the template's default, snapshot: $($snap[$k]))" }
                         } else {
@@ -811,6 +824,13 @@ try {
     if ($logsOn) { Register-Provider 'Microsoft.OperationalInsights' }
     # Application Insights on its Log Analytics workspace
     if ($telemetryOn) { Register-Provider 'Microsoft.OperationalInsights', 'Microsoft.Insights' }
+
+    # the first run's image: the newest release of the repository this
+    # checkout comes from (the template has no default)
+    if (-not $Image -and -not $BuildInAcr) {
+        if (-not $script:RepoSlug) { throw 'no image: pass -Image ghcr.io/<owner>/longarm-hub:<version> (this checkout has no GitHub origin to take <owner> from)' }
+        $Image = "ghcr.io/$(($script:RepoSlug -split '/')[0].ToLowerInvariant())/longarm-hub:latest"
+    }
 
     $buildAcr = ''
     $registryPassword = $env:LONGARM_REGISTRY_PASSWORD
@@ -1375,16 +1395,19 @@ longarm-hub is up.
   cost            about $cost USD/month (compute; plus egress over 100 GB/month, relay traffic counts)
 
 "@
+# where to get longarm: the hub's -RepoUrl, else this checkout's origin
+$releases = if ($RepoUrl) { $RepoUrl } elseif ($script:RepoSlug) { "https://github.com/$($script:RepoSlug)" } else { 'https://github.com/<owner>/<repo>' }
+$releases = $releases.TrimEnd('/') + '/releases'
 if ($code) {
     Write-Host @"
-1. Your laptop (admin): install longarm (https://github.com/lubobill1990/longarm/releases), then
+1. Your laptop (admin): install longarm ($releases), then
      longarm join $hubAddr $code --ca-fingerprint $fp
    The code is one-time and valid until $expires (a new one: ./deploy.ps1 -Name $Name -AdminCode).
 "@
 } elseif ($adminJoined -eq 'false') {
     # storage-auth identity: the code is only in the container's bootstrap.env
     Write-Host @"
-1. Your laptop (admin): install longarm (https://github.com/lubobill1990/longarm/releases), then
+1. Your laptop (admin): install longarm ($releases), then
      ./deploy.ps1 -Name $Name -ResourceGroup $rg -AdminCode      # a one-time admin join code (24 h)
      longarm join $hubAddr <code> --ca-fingerprint $fp
 "@

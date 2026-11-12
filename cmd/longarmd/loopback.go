@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/lubobill1990/longarm/internal/longarmd"
-	"github.com/lubobill1990/longarm/internal/loopguard"
-	"github.com/lubobill1990/longarm/internal/tenancy"
+	"longarm/internal/longarmd"
+	"longarm/internal/loopguard"
+	"longarm/internal/tenancy"
 )
 
 // perUserLoopbackCleanup returns what `longarmd service uninstall` does

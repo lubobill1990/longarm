@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/hubclient"
+	"longarm/internal/pki"
 )
 
 // Current is an enrollment a sign-in target holds already (a client

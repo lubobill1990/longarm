@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/pki"
+	"longarm/internal/update"
 )
 
 // TestReleaseRole: the CI credential (`longarm admin issue --role release`, or

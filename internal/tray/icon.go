@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/machine"
-	"github.com/lubobill1990/longarm/internal/memcap"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/machine"
+	"longarm/internal/memcap"
+	pb "longarm/proto/longarm/v1"
 )
 
 // LongOffline: a worker offline (by the hub's last_seen) for longer is an

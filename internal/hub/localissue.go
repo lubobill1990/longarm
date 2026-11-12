@@ -8,9 +8,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/hub/store"
+	"longarm/internal/nodeid"
+	"longarm/internal/pki"
 )
 
 // LocalIssueOptions is a certificate issued from the hub's data directory

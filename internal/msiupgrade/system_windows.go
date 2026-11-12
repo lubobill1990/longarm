@@ -16,8 +16,8 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/stopsignal"
+	"longarm/internal/platform"
+	"longarm/internal/stopsignal"
 )
 
 // WindowsEnv is the helper's Env on Windows.

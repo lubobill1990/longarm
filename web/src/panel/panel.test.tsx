@@ -85,7 +85,7 @@ describe('PanelApp', () => {
     expect(screen.getByTestId('landing-film').hasAttribute('controls')).toBe(true)
     // the film streams from its release asset, only once it is played
     const film = screen.getByTestId('landing-film')
-    expect(film.getAttribute('src')).toBe('https://github.com/lubobill1990/longarm/releases/download/promo-film/longarm-promo.mp4')
+    expect(film.getAttribute('src')).toBe('https://git.example.com/team/longarm/releases/download/promo-film/longarm-promo.mp4')
     expect(film.getAttribute('preload')).toBe('none')
     // the hub's feedback channel
     await waitFor(() => expect(screen.getByTestId('landing-feedback').getAttribute('href')).toBe('https://chat.example.com/team'))
@@ -148,11 +148,13 @@ describe('PanelApp', () => {
     expect(signedIn.textContent).toContain('alice')
     const open = signedIn.querySelector('a.primary')!
     expect(open.getAttribute('href')).toBe('/jobs')
-    // a hub without feedback_url (older): the project's issues
-    expect(screen.getByTestId('landing-feedback').getAttribute('href')).toBe('https://github.com/lubobill1990/longarm/issues')
+    // a hub naming no repository nor feedback channel: no such links
+    expect(screen.queryByTestId('landing-feedback')).toBeNull()
+    expect(screen.queryByTestId('landing-repo')).toBeNull()
+    expect(screen.queryByTestId('hero-film')).toBeNull()
     fireEvent.click(open)
     expect(await screen.findByRole('heading', { name: 'My jobs' })).toBeTruthy()
-    expect(screen.getByTestId('panel-feedback').getAttribute('href')).toBe('https://github.com/lubobill1990/longarm/issues')
+    expect(screen.queryByTestId('panel-feedback')).toBeNull()
   })
 
   it('moves a signed-in visitor from /login into their hub', async () => {

@@ -14,10 +14,10 @@
   built into BinDir with Go when they aren't there).
   The MSI's worker data dir defaults to C:\ProgramData\Longarm\longarmd (DATADIR), the same dir
   longarmd itself uses as LocalSystem and for `service install --isolation per-user`.
-  Install modes (longarm.wxs): MODE=default (the built-in hub, -DefaultHub) signs in with Microsoft
+  Install modes (longarm.wxs): MODE=default (the built-in hub, -DefaultHub) signs in through the browser
   after the install; MODE=custom takes HUB with JOIN_CODE=... (enrolls during the install) or LOGIN=1
   (the bare domain will do: records the hub, so the tray or `longarmd login` signs the machine in
-  afterwards with one Microsoft approval and no further input). The worker runs as the signed-in user
+  afterwards with one approval in the browser and no further input). The worker runs as the signed-in user
   (RUN=session, default) or as a Windows service (RUN=service).
   -DefaultHub: the hub of the "Default" choice (a domain; release.yml passes the repository variable
   LONGARM_DEFAULT_HUB); without it the MSI offers Custom only. -DefaultHubCA optionally pins its CA
@@ -30,7 +30,9 @@ param(
   [ValidateSet('x64', 'arm64')] [string] $Arch = 'x64',
   [Parameter(Mandatory)] [string] $Out,
   [string] $DefaultHub = $env:LONGARM_DEFAULT_HUB,
-  [string] $DefaultHubCA = $env:LONGARM_DEFAULT_HUB_CA
+  [string] $DefaultHubCA = $env:LONGARM_DEFAULT_HUB_CA,
+  # the repository the build came from (Add/Remove Programs' link; release.yml: LONGARM_REPO_URL)
+  [string] $RepoUrl = $env:LONGARM_REPO_URL
 )
 $ErrorActionPreference = 'Stop'
 # MSI versions are numeric a.b.c: 1.2.3-rc.1 / 1.2.4-SNAPSHOT-abc -> 1.2.3 / 1.2.4
@@ -74,8 +76,8 @@ if (-not (Test-Path $updater)) {
   $env:GOOS, $env:GOARCH, $env:CGO_ENABLED = 'windows', $goArch, '0'
   $pub = "$env:LONGARM_UPDATE_PUBKEY".Trim()
   if ($pub -and $pub -notmatch '^[A-Za-z0-9+/=]+$') { throw 'LONGARM_UPDATE_PUBKEY is not a minisign public key line' }
-  $ld = "-s -w -X github.com/lubobill1990/longarm/internal/version.Version=$($Version -replace '^v', '') " +
-    "-X github.com/lubobill1990/longarm/internal/update.PublicKey=$pub"
+  $ld = "-s -w -X longarm/internal/version.Version=$($Version -replace '^v', '') " +
+    "-X longarm/internal/update.PublicKey=$pub -X longarm/internal/version.RepoURL=$RepoUrl"
   Push-Location (Join-Path $PSScriptRoot '..\..')
   try {
     & go build -trimpath -ldflags $ld -o $updater ./cmd/longarm-update
@@ -101,7 +103,7 @@ New-Item -ItemType Directory -Force (Split-Path -Parent ([IO.Path]::GetFullPath(
 & $wix build -nologo -arch $Arch `
   -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext `
   -d "Version=$msiVersion" -d "BinDir=$((Resolve-Path $BinDir).Path)" -d "HasTray=$hasTray" `
-  -d "DefaultHub=$DefaultHub" -d "DefaultHubCA=$DefaultHubCA" `
+  -d "DefaultHub=$DefaultHub" -d "DefaultHubCA=$DefaultHubCA" -d "RepoUrl=$RepoUrl" `
   -d "RepoDir=$((Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path)" `
   -o $Out $src
 if ($LASTEXITCODE -ne 0) { throw "wix build failed ($LASTEXITCODE)" }

@@ -9,7 +9,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/lubobill1990/longarm/internal/platform/unix"
+	"longarm/internal/platform/unix"
 )
 
 // KilledExitCode is the exit code recorded for killed jobs.

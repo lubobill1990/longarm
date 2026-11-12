@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/platform/ptypes"
+	"longarm/internal/platform/ptypes"
 )
 
 // clkTck is USER_HZ; 100 on every mainstream Linux (sysconf needs cgo).

@@ -18,7 +18,7 @@ import (
 	"slices"
 	"strings"
 
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	pb "longarm/proto/longarm/v1"
 )
 
 // maxHandoffFiles caps the files of one session a handoff moves.

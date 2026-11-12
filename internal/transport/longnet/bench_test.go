@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/relay"
-	"github.com/lubobill1990/longarm/internal/transport"
-	"github.com/lubobill1990/longarm/internal/transport/longnet"
+	"longarm/internal/pki"
+	"longarm/internal/relay"
+	"longarm/internal/transport"
+	"longarm/internal/transport/longnet"
 )
 
 // Micro-benchmarks of one end-to-end QUIC stream over loopback, per path:

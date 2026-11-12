@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/update"
 )
 
 // UpdatesDirName: below ProgramData\Longarm, SYSTEM only.

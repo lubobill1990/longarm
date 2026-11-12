@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/localapi"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/localapi"
+	pb "longarm/proto/longarm/v1"
 )
 
 // refused reports whether the hub refuses the certificate at certPath: the

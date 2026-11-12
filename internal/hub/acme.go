@@ -7,7 +7,7 @@ import (
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
+	"longarm/internal/hub/store"
 )
 
 // acmeMetaPrefix starts the meta keys of the https listener's ACME state

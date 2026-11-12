@@ -12,8 +12,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/lubobill1990/longarm/internal/platform"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/platform"
+	pb "longarm/proto/longarm/v1"
 )
 
 // Status checks program; longarmExe is the longarm.exe for the fix command ("" =

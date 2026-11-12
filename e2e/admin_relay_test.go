@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/longarmd"
+	"longarm/internal/longarmd"
 )
 
 // TestHubAdminWorkerRelay: the admin worker (the MSI's longarmd-admin

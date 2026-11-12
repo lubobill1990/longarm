@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 // fakeIdP is a personal-account provider stand-in (Google, Apple,

@@ -29,8 +29,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/version"
-	"github.com/lubobill1990/longarm/skills"
+	"longarm/internal/version"
+	"longarm/skills"
 )
 
 // SkillName is the skill's directory name in a skills directory.

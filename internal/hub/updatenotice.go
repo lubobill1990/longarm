@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/hub/store"
+	"longarm/internal/update"
 )
 
 // Update notices: nodes that can't update themselves (MSI installs, clients)

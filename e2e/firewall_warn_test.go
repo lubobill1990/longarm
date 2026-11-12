@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/platform"
+	"longarm/internal/platform"
 )
 
 // TestFirewallWarning: a Windows Firewall Block rule for longarm.exe / longarmd.exe

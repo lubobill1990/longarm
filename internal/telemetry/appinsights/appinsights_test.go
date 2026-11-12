@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/azauth"
-	"github.com/lubobill1990/longarm/internal/telemetry"
+	"longarm/internal/azauth"
+	"longarm/internal/telemetry"
 )
 
 func TestParseConnectionString(t *testing.T) {

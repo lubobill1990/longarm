@@ -15,9 +15,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/diag"
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/diag"
+	"longarm/internal/hub/store"
+	pb "longarm/proto/longarm/v1"
 )
 
 // memBlob is an in-memory blob container.

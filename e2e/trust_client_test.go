@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/trust"
+	"longarm/internal/pki"
+	"longarm/internal/trust"
 )
 
 // TestTrustClient: end-to-end trust on the client. longarm trust init makes

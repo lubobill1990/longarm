@@ -16,10 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/client"
-	"github.com/lubobill1990/longarm/internal/gitauth"
-	"github.com/lubobill1990/longarm/internal/workspace"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/client"
+	"longarm/internal/gitauth"
+	"longarm/internal/workspace"
+	pb "longarm/proto/longarm/v1"
 )
 
 // hoRepo is a git checkout on an endpoint.

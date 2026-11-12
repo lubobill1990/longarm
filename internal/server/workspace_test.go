@@ -7,8 +7,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/lubobill1990/longarm/internal/workspace"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/workspace"
+	pb "longarm/proto/longarm/v1"
 )
 
 // TestSyncLFSUploadBounded: the uploaded LFS tar of a Workspace.Sync is cut

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/transport"
+	"longarm/internal/pki"
+	"longarm/internal/transport"
 )
 
 // raceEnv: a CA, a client dialer and helpers for TLS "workers" whose

@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
+	"longarm/internal/jobs"
 )
 
 // lfsEnv configures git-lfs's filter as `git lfs install` does (globally,

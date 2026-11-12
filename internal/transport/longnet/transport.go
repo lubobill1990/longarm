@@ -25,9 +25,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/relay"
-	"github.com/lubobill1990/longarm/internal/transport"
+	"longarm/internal/pki"
+	"longarm/internal/relay"
+	"longarm/internal/transport"
 )
 
 func init() {

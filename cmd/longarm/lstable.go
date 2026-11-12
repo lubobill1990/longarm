@@ -9,11 +9,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/machine"
-	"github.com/lubobill1990/longarm/internal/memcap"
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/sched"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/machine"
+	"longarm/internal/memcap"
+	"longarm/internal/nodeid"
+	"longarm/internal/sched"
+	pb "longarm/proto/longarm/v1"
 )
 
 // lsRow is one worker in longarm ls: from the hub (node) or probed directly.

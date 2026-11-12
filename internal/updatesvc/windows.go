@@ -23,10 +23,10 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 
-	"github.com/lubobill1990/longarm/internal/msiupgrade"
-	"github.com/lubobill1990/longarm/internal/platform/ptypes"
-	win "github.com/lubobill1990/longarm/internal/platform/windows"
-	"github.com/lubobill1990/longarm/internal/update"
+	"longarm/internal/msiupgrade"
+	"longarm/internal/platform/ptypes"
+	win "longarm/internal/platform/windows"
+	"longarm/internal/update"
 )
 
 const (

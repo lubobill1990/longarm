@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/hubclient"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hubclient"
+	pb "longarm/proto/longarm/v1"
 )
 
 // EnvAz overrides where the Azure CLI is found (tests, odd installs).

@@ -1,4 +1,4 @@
-module github.com/lubobill1990/longarm
+module longarm
 
 go 1.27.3
 

@@ -20,10 +20,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/jobs"
-	"github.com/lubobill1990/longarm/internal/logfile"
-	"github.com/lubobill1990/longarm/internal/platform"
-	"github.com/lubobill1990/longarm/internal/redact"
+	"longarm/internal/jobs"
+	"longarm/internal/logfile"
+	"longarm/internal/platform"
+	"longarm/internal/redact"
 )
 
 // Errors returned by Manager methods.

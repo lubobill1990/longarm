@@ -2,7 +2,7 @@
 
 package platform
 
-import win "github.com/lubobill1990/longarm/internal/platform/windows"
+import win "longarm/internal/platform/windows"
 
 // TrustedSystemPath checks that only SYSTEM, Administrators and
 // TrustedInstaller (and the SIDs in also) can change path (see

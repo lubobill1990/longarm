@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lubobill1990/longarm/internal/longarmd"
+	"longarm/internal/longarmd"
 )
 
 // The Account tab's "This computer: [x] send jobs (client) [x] run jobs

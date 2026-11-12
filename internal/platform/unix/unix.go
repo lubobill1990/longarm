@@ -13,7 +13,7 @@ import (
 
 	xunix "golang.org/x/sys/unix"
 
-	"github.com/lubobill1990/longarm/internal/platform/ptypes"
+	"longarm/internal/platform/ptypes"
 )
 
 // KilledExitCode is recorded for jobs terminated through Kill (128+SIGKILL).

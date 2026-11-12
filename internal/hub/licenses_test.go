@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/notices"
+	"longarm/internal/notices"
 )
 
 // /licenses.txt: the front page's footer link, no sign-in.

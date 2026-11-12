@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/lubobill1990/longarm/internal/hub"
+	"longarm/internal/hub"
 )
 
 type artifact struct {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lubobill1990/longarm/internal/pki"
+	"longarm/internal/pki"
 )
 
 func TestStoreKeysAndEndorsement(t *testing.T) {

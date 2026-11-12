@@ -1,5 +1,5 @@
 // Package version carries the build version (set with
-// -ldflags "-X github.com/lubobill1990/longarm/internal/version.Version=v0.1.0")
+// -ldflags "-X longarm/internal/version.Version=v0.1.0")
 // and the built-in default hub.
 package version
 
@@ -13,10 +13,18 @@ var Version = "dev"
 // local builds). Set at release time from the repository variable
 // LONGARM_DEFAULT_HUB:
 //
-//	-ldflags "-X github.com/lubobill1990/longarm/internal/version.DefaultHub=longarm.example.com"
+//	-ldflags "-X longarm/internal/version.DefaultHub=longarm.example.com"
 var DefaultHub = ""
 
 // DefaultHubCA optionally pins DefaultHub's CA (sha256 hex of its
 // certificate, longarm-hub ca show; repository variable
 // LONGARM_DEFAULT_HUB_CA). Empty: the CA fetched over HTTPS is trusted.
 var DefaultHubCA = ""
+
+// RepoURL is the repository this build came from (https://github.com/OWNER/REPO;
+// the release workflows set it from github.server_url and github.repository):
+// a hub's [web] repo_url and feedback_url default to it, the tray's links and
+// "Add a machine" downloads too. Empty: local builds (no project links).
+//
+//	-ldflags "-X longarm/internal/version.RepoURL=https://github.com/OWNER/REPO"
+var RepoURL = ""

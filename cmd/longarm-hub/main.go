@@ -39,15 +39,15 @@ import (
 	"golang.org/x/term"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/lubobill1990/longarm/internal/hub"
-	"github.com/lubobill1990/longarm/internal/hub/store"
-	"github.com/lubobill1990/longarm/internal/nodeid"
-	"github.com/lubobill1990/longarm/internal/notices"
-	"github.com/lubobill1990/longarm/internal/pki"
-	"github.com/lubobill1990/longarm/internal/sched"
-	"github.com/lubobill1990/longarm/internal/update"
-	"github.com/lubobill1990/longarm/internal/version"
-	pb "github.com/lubobill1990/longarm/proto/longarm/v1"
+	"longarm/internal/hub"
+	"longarm/internal/hub/store"
+	"longarm/internal/nodeid"
+	"longarm/internal/notices"
+	"longarm/internal/pki"
+	"longarm/internal/sched"
+	"longarm/internal/update"
+	"longarm/internal/version"
+	pb "longarm/proto/longarm/v1"
 )
 
 var configPath, dataDir string
@@ -451,7 +451,7 @@ hub.toml [releases] public_key; the private key never leaves this machine.`,
 				return err
 			}
 			fmt.Println(pub)
-			fmt.Fprintf(os.Stderr, "private key: %s (keep it off the hub)\nbuild with: -ldflags \"-X github.com/lubobill1990/longarm/internal/update.PublicKey=%s\"\n", kf, pub)
+			fmt.Fprintf(os.Stderr, "private key: %s (keep it off the hub)\nbuild with: -ldflags \"-X longarm/internal/update.PublicKey=%s\"\n", kf, pub)
 			return nil
 		},
 	}
