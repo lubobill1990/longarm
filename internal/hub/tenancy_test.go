@@ -454,3 +454,32 @@ func TestListJobsSubmittedBy(t *testing.T) {
 		t.Fatalf("bob asking for alice-pc's: %v %+v", err, r)
 	}
 }
+
+// ListJobs with summary: no argv, env, cwd, workspace or steer (an agent's
+// prompt is in argv); the cached job keeps them (GetJob has them all).
+func TestListJobsSummary(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	h.mu.Lock()
+	n := h.nodeLocked("w1")
+	h.applyJobsLocked(n, &pb.JobsReport{Jobs: []*pb.Job{
+		{Spec: &pb.JobSpec{Id: "JP", Name: "review", Owner: "alice", SubmittedBy: "client/alice-pc",
+			Argv: []string{"claude", "-p", strings.Repeat("a long prompt ", 1000)}, Env: map[string]string{"K": "v"}, Cwd: "C:/work"},
+			State: pb.JobState_JOB_STATE_DONE, HasExitCode: true, ExitCode: 3, Reason: "exit 3"},
+	}})
+	h.mu.Unlock()
+	fleet := pb.NewFleetClient(th.alice)
+	r, err := fleet.ListJobs(tctx(t), &pb.FleetJobsRequest{SubmittedBy: "client/alice-pc", Summary: true})
+	if err != nil || len(r.Jobs) != 1 {
+		t.Fatalf("%v %+v", err, r)
+	}
+	j := r.Jobs[0].Job
+	if len(j.Spec.Argv) != 0 || len(j.Spec.Env) != 0 || j.Spec.Cwd != "" ||
+		j.Spec.Id != "JP" || j.Spec.Name != "review" || j.Spec.SubmittedBy != "client/alice-pc" || j.ExitCode != 3 || j.Reason != "exit 3" || r.Jobs[0].Worker == "" {
+		t.Fatalf("summary %+v", r.Jobs[0])
+	}
+	full, err := fleet.GetJob(tctx(t), &pb.FleetJobRequest{Id: "JP"})
+	if err != nil || len(full.Job.Spec.Argv) != 3 || full.Job.Spec.Env["K"] != "v" {
+		t.Fatalf("the cached job lost its details: %v %+v", err, full)
+	}
+}

@@ -1041,6 +1041,7 @@ type ClientJobsRequest struct {
 	Mine          bool                   `protobuf:"varint,2,opt,name=mine,proto3" json:"mine,omitempty"`
 	Active        bool                   `protobuf:"varint,3,opt,name=active,proto3" json:"active,omitempty"` // only non-terminal jobs
 	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Summary       bool                   `protobuf:"varint,5,opt,name=summary,proto3" json:"summary,omitempty"` // FleetJobsRequest.summary: details by GET /v1/jobs/{id}
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1101,6 +1102,13 @@ func (x *ClientJobsRequest) GetLimit() int32 {
 		return x.Limit
 	}
 	return 0
+}
+
+func (x *ClientJobsRequest) GetSummary() bool {
+	if x != nil {
+		return x.Summary
+	}
+	return false
 }
 
 type ClientLogsRequest struct {
@@ -1629,12 +1637,13 @@ const file_longarm_v1_local_proto_rawDesc = "" +
 	"\x04node\x18\b \x01(\v2\x14.longarm.v1.NodeInfoR\x04node\x12\x14\n" +
 	"\x05error\x18\t \x01(\tR\x05error\x12\x17\n" +
 	"\amy_jobs\x18\n" +
-	" \x01(\x05R\x06myJobs\"m\n" +
+	" \x01(\x05R\x06myJobs\"\x87\x01\n" +
 	"\x11ClientJobsRequest\x12\x16\n" +
 	"\x06worker\x18\x01 \x01(\tR\x06worker\x12\x12\n" +
 	"\x04mine\x18\x02 \x01(\bR\x04mine\x12\x16\n" +
 	"\x06active\x18\x03 \x01(\bR\x06active\x12\x14\n" +
-	"\x05limit\x18\x04 \x01(\x05R\x05limit\"k\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x18\n" +
+	"\asummary\x18\x05 \x01(\bR\asummary\"k\n" +
 	"\x11ClientLogsRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06worker\x18\x02 \x01(\tR\x06worker\x12\x16\n" +

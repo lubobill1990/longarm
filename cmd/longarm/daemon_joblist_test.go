@@ -48,6 +48,12 @@ func TestHubJobsFilterAndOldHubFallback(t *testing.T) {
 		t.Fatalf("old hub: %v, asked %v, got %d jobs", err, asked, len(r.Jobs))
 	}
 
+	// summary goes to the hub
+	asked = nil
+	if _, err := myHubJobs(context.Background(), serve(true, &asked), &pb.ClientJobsRequest{Mine: true, Summary: true}, nil, me); err != nil || len(asked) != 1 || !asked[0].Summary {
+		t.Fatalf("summary: %v, asked %v", err, asked)
+	}
+
 	// not "mine": the limit goes to the hub, no submitter, one call
 	asked = nil
 	if _, err := myHubJobs(context.Background(), serve(false, &asked), &pb.ClientJobsRequest{Limit: 3}, nil, me); err != nil || len(asked) != 1 || asked[0].SubmittedBy != "" || asked[0].Limit != 3 {

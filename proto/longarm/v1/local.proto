@@ -189,6 +189,7 @@ message ClientJobsRequest {
   bool mine = 2;
   bool active = 3; // only non-terminal jobs
   int32 limit = 4;
+  bool summary = 5; // FleetJobsRequest.summary: details by GET /v1/jobs/{id}
 }
 
 message ClientLogsRequest {
