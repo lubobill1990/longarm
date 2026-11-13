@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/stats"
@@ -50,12 +51,32 @@ type trafficCounter struct {
 type trafficKey struct {
 	method string
 	node   string // the caller's identity ("worker/w1", "client/alice-laptop"; "" = no certificate)
+	nodeID string // its node ID (certificates before node IDs: "")
 }
+
+// unknownMethod is the row of every path the server doesn't serve: they
+// come before authentication (anyone may send any path), so they never
+// get rows of their own.
+const unknownMethod = "(unknown)"
 
 // trafficStats is the hub's grpc stats.Handler.
 type trafficStats struct {
 	mu   sync.Mutex
 	rows map[trafficKey]*trafficCounter
+	// known: the methods the server serves (setKnown; nil = not set yet,
+	// every path is unknown)
+	known atomic.Pointer[map[string]bool]
+}
+
+// setKnown records the methods g serves (after their registration).
+func (t *trafficStats) setKnown(g *grpc.Server) {
+	m := map[string]bool{}
+	for svc, info := range g.GetServiceInfo() {
+		for _, md := range info.Methods {
+			m["/"+svc+"/"+md.Name] = true
+		}
+	}
+	t.known.Store(&m)
 }
 
 func newTrafficStats() *trafficStats {
@@ -77,8 +98,15 @@ func (t *trafficStats) counter(k trafficKey) *trafficCounter {
 
 // TagRPC finds the row of an RPC once: the peer (and its TLS state) is in
 // the context the server hands to stats handlers.
+// The rows are bounded: methods by the served set, nodes by the hub's
+// certificates (a presented certificate is verified against the CA).
 func (t *trafficStats) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
-	c := t.counter(trafficKey{method: info.FullMethodName, node: peerNode(ctx)})
+	method := info.FullMethodName
+	if k := t.known.Load(); k == nil || !(*k)[method] {
+		method = unknownMethod
+	}
+	node, nodeID := peerNode(ctx)
+	c := t.counter(trafficKey{method: method, node: node, nodeID: nodeID})
 	return context.WithValue(ctx, trafficCtxKey{}, c)
 }
 
@@ -108,34 +136,35 @@ func (t *trafficStats) TagConn(ctx context.Context, _ *stats.ConnTagInfo) contex
 
 func (t *trafficStats) HandleConn(context.Context, stats.ConnStats) {}
 
-// peerNode is the identity of the certificate the peer presented ("" if
-// none: enrollment, open methods).
-func peerNode(ctx context.Context) string {
+// peerNode is the identity of the certificate the peer presented and its
+// node ID ("" if none: enrollment, open methods).
+func peerNode(ctx context.Context) (string, string) {
 	p, ok := peer.FromContext(ctx)
 	if !ok {
-		return ""
+		return "", ""
 	}
 	ti, ok := p.AuthInfo.(credentials.TLSInfo)
 	if !ok || len(ti.State.PeerCertificates) == 0 {
-		return ""
+		return "", ""
 	}
 	return certNode(ti.State.PeerCertificates[0])
 }
 
-func certNode(c *x509.Certificate) string {
+func certNode(c *x509.Certificate) (string, string) {
 	id, err := pki.IdentityFromCert(c)
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	return id.String()
+	return id.String(), id.ID
 }
 
 // TrafficRow is one row of GET /api/traffic.
 type TrafficRow struct {
 	Method   string `json:"method,omitempty"`
 	Node     string `json:"node,omitempty"`
-	BytesIn  uint64 `json:"bytes_in"`  // to the hub
-	BytesOut uint64 `json:"bytes_out"` // from the hub: what egress costs
+	NodeID   string `json:"node_id,omitempty"` // which node the row is (names get reused)
+	BytesIn  uint64 `json:"bytes_in"`          // to the hub
+	BytesOut uint64 `json:"bytes_out"`         // from the hub: what egress costs
 	MsgsIn   uint64 `json:"msgs_in,omitempty"`
 	MsgsOut  uint64 `json:"msgs_out,omitempty"`
 	Calls    uint64 `json:"calls,omitempty"`
@@ -161,7 +190,7 @@ func (t *trafficStats) snapshot() []TrafficRow {
 	t.mu.Lock()
 	rows := make([]TrafficRow, 0, len(t.rows))
 	for k, c := range t.rows {
-		rows = append(rows, TrafficRow{Method: k.method, Node: k.node,
+		rows = append(rows, TrafficRow{Method: k.method, Node: k.node, NodeID: k.nodeID,
 			BytesIn: c.in.Load(), BytesOut: c.out.Load(), MsgsIn: c.msgsIn.Load(), MsgsOut: c.msgsO.Load(),
 			Calls: c.calls.Load(), Active: c.active.Load()})
 	}
@@ -178,7 +207,7 @@ func fold(rows []TrafficRow, key func(TrafficRow) TrafficRow) []TrafficRow {
 		k := key(r)
 		a := m[k]
 		if a == nil {
-			a = &TrafficRow{Method: k.Method, Node: k.Node}
+			a = &TrafficRow{Method: k.Method, Node: k.Node, NodeID: k.NodeID}
 			m[k] = a
 			order = append(order, k)
 		}
@@ -232,10 +261,11 @@ func (r *relayEnded) add(s relay.SessionStats) {
 	if r.rows == nil {
 		r.rows = map[string]*TrafficRow{}
 	}
-	a := r.rows[s.Node]
+	k := s.NodeID + "\x00" + s.Node
+	a := r.rows[k]
 	if a == nil {
-		a = &TrafficRow{Node: s.Node}
-		r.rows[s.Node] = a
+		a = &TrafficRow{Node: s.Node, NodeID: s.NodeID}
+		r.rows[k] = a
 	}
 	a.BytesIn += s.BytesIn
 	a.BytesOut += s.BytesOut
@@ -256,14 +286,14 @@ func (h *Hub) trafficReport() TrafficReport {
 	g := h.traffic.snapshot()
 	rep := TrafficReport{Since: h.started, GRPC: g,
 		ByMethod: fold(g, func(r TrafficRow) TrafficRow { return TrafficRow{Method: r.Method} }),
-		ByNode:   fold(g, func(r TrafficRow) TrafficRow { return TrafficRow{Node: r.Node} })}
+		ByNode:   fold(g, byNode)}
 	if h.relay != nil {
 		st := h.relay.Stats()
 		rows := h.relayEnded.snapshot()
 		for _, s := range st.Sessions {
-			rows = append(rows, TrafficRow{Node: s.Node, BytesIn: s.BytesIn, BytesOut: s.BytesOut, Sessions: 1})
+			rows = append(rows, TrafficRow{Node: s.Node, NodeID: s.NodeID, BytesIn: s.BytesIn, BytesOut: s.BytesOut, Sessions: 1})
 		}
-		rep.Relay = fold(rows, func(r TrafficRow) TrafficRow { return TrafficRow{Node: r.Node} })
+		rep.Relay = fold(rows, byNode)
 		rep.RelayTotal = st.BytesRelayed
 	}
 	return rep
@@ -281,29 +311,35 @@ func (h *Hub) trafficReportFor(v tenancy.Caller) TrafficReport {
 		return rep
 	}
 	h.mu.Lock()
-	seen := map[string]bool{}
-	visible := func(node string) bool {
-		if ok, done := seen[node]; done {
+	seen := map[[2]string]bool{}
+	// visible: the row's node by its ID (a name may have been another
+	// node's: revoked, renamed), by name only for certificates without one
+	visible := func(r TrafficRow) bool {
+		key := [2]string{r.NodeID, r.Node}
+		if ok, done := seen[key]; done {
 			return ok
 		}
-		_, name, _ := strings.Cut(node, "/")
-		n := h.nodeLocked(name)
+		var n *node
+		if r.NodeID != "" {
+			n = h.nodes[r.NodeID]
+		} else {
+			_, name, _ := strings.Cut(r.Node, "/")
+			n = h.nodeLocked(name)
+		}
 		ok := n != nil && h.visibleNodeLocked(v, n)
-		seen[node] = ok
+		seen[key] = ok
 		return ok
 	}
 	cut := func(rows []TrafficRow, byMethod bool) []TrafficRow {
 		for i := range rows {
-			if rows[i].Node != "" && !visible(rows[i].Node) {
-				rows[i].Node = otherUsers
+			if rows[i].Node != "" && !visible(rows[i]) {
+				rows[i].Node, rows[i].NodeID = otherUsers, ""
 			}
 		}
-		return fold(rows, func(r TrafficRow) TrafficRow {
-			if byMethod {
-				return TrafficRow{Method: r.Method, Node: r.Node}
-			}
-			return TrafficRow{Node: r.Node}
-		})
+		if byMethod {
+			return fold(rows, func(r TrafficRow) TrafficRow { return TrafficRow{Method: r.Method, Node: r.Node, NodeID: r.NodeID} })
+		}
+		return fold(rows, byNode)
 	}
 	rep.GRPC = cut(rep.GRPC, true)
 	rep.ByNode = cut(rep.ByNode, false)
@@ -337,29 +373,31 @@ func (h *Hub) runTrafficLog(ctx context.Context) {
 	}
 }
 
-// delta is cur minus prev, row by row (same method+node); a row whose
-// counters went down (relay sessions that ended between ticks are moved
-// to relayEnded, so a node's sum can only grow) counts from zero.
+// byNode is fold's key for per-node totals.
+func byNode(r TrafficRow) TrafficRow { return TrafficRow{Node: r.Node, NodeID: r.NodeID} }
+
+// delta is cur minus prev, row by row (same method and node), each counter
+// at least 0: a relay node's sum can dip for a moment (a session that
+// ends between the live and the ended snapshot counts twice once), and
+// that must not log its whole total as one period's.
 func delta(cur, prev []TrafficRow) []TrafficRow {
-	type k struct{ m, n string }
+	type k struct{ m, n, id string }
 	p := map[k]TrafficRow{}
 	for _, r := range prev {
-		p[k{r.Method, r.Node}] = r
+		p[k{r.Method, r.Node, r.NodeID}] = r
+	}
+	sub := func(a, b uint64) uint64 {
+		if a < b {
+			return 0
+		}
+		return a - b
 	}
 	out := make([]TrafficRow, 0, len(cur))
 	for _, r := range cur {
-		o := p[k{r.Method, r.Node}]
+		o := p[k{r.Method, r.Node, r.NodeID}]
 		d := r
-		if r.BytesOut >= o.BytesOut && r.BytesIn >= o.BytesIn {
-			d.BytesOut -= o.BytesOut
-			d.BytesIn -= o.BytesIn
-		}
-		if r.Calls >= o.Calls {
-			d.Calls -= o.Calls
-		}
-		if r.MsgsOut >= o.MsgsOut {
-			d.MsgsOut -= o.MsgsOut
-		}
+		d.BytesOut, d.BytesIn = sub(r.BytesOut, o.BytesOut), sub(r.BytesIn, o.BytesIn)
+		d.MsgsOut, d.MsgsIn, d.Calls = sub(r.MsgsOut, o.MsgsOut), sub(r.MsgsIn, o.MsgsIn), sub(r.Calls, o.Calls)
 		if d.BytesOut == 0 && d.BytesIn == 0 {
 			continue
 		}

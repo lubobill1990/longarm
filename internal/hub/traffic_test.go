@@ -19,6 +19,7 @@ func TestTrafficStatsCountsMethods(t *testing.T) {
 	ts := newTrafficStats()
 	g := grpc.NewServer(grpc.StatsHandler(ts))
 	healthpb.RegisterHealthServer(g, health.NewServer())
+	ts.setKnown(g)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -39,8 +40,14 @@ func TestTrafficStatsCountsMethods(t *testing.T) {
 	if _, err := c.Check(context.Background(), &healthpb.HealthCheckRequest{}); err != nil {
 		t.Fatal(err)
 	}
+	// paths the server doesn't serve (anyone may send any): one row
+	for _, p := range []string{"/x.Y/A", "/x.Y/B", "/nothing"} {
+		if err := cc.Invoke(context.Background(), p, &healthpb.HealthCheckRequest{}, &healthpb.HealthCheckResponse{}); err == nil {
+			t.Fatalf("%s: want an error", p)
+		}
+	}
 	rows := ts.snapshot()
-	if len(rows) != 1 {
+	if len(rows) != 2 || rows[1].Method != unknownMethod { // (no Begin for an unknown method: no calls counted)
 		t.Fatalf("rows %+v", rows)
 	}
 	r := rows[0]
@@ -68,10 +75,17 @@ func TestTrafficDeltaAndFold(t *testing.T) {
 	if len(byNode) != 2 || byNode[0].Node != "client/c" || byNode[1].BytesOut != 157 || byNode[1].Calls != 2 {
 		t.Errorf("by node %+v", byNode)
 	}
-	// counters that went down (a restart, a relay session moved to the
-	// ended ones) count from zero rather than wrap
-	if d := delta([]TrafficRow{{Node: "n", BytesOut: 5}}, []TrafficRow{{Node: "n", BytesOut: 9}}); len(d) != 1 || d[0].BytesOut != 5 {
-		t.Errorf("reset delta %+v", d)
+	// a counter that dipped (a relay session counted twice for a moment)
+	// is 0 for the period, never its whole total; each counter on its own
+	if d := delta([]TrafficRow{{Node: "n", BytesOut: 5}}, []TrafficRow{{Node: "n", BytesOut: 9}}); len(d) != 0 {
+		t.Errorf("dip delta %+v", d)
+	}
+	if d := delta([]TrafficRow{{Node: "n", BytesOut: 20, BytesIn: 1}}, []TrafficRow{{Node: "n", BytesOut: 9, BytesIn: 3}}); len(d) != 1 || d[0].BytesOut != 11 || d[0].BytesIn != 0 {
+		t.Errorf("one counter dipped %+v", d)
+	}
+	// rows of different nodes that had the same name stay apart
+	if d := delta([]TrafficRow{{Node: "client/laptop", NodeID: "B", BytesOut: 3}}, []TrafficRow{{Node: "client/laptop", NodeID: "A", BytesOut: 9}}); len(d) != 1 || d[0].BytesOut != 3 {
+		t.Errorf("reused name %+v", d)
 	}
 }
 

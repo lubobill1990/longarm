@@ -576,7 +576,7 @@ func (s *Server) unregister(ss *session) {
 	s.Logger.Info("relay: session down", "node", ss.ident, "id", ss.id, "transport", ss.kind,
 		"bytes_in", ss.bytesIn.Load(), "bytes_out", ss.bytesOut.Load(), "duration", time.Since(ss.since).Round(time.Second))
 	if s.OnSessionEnd != nil {
-		s.OnSessionEnd(SessionStats{ID: ss.id.String(), Node: ss.ident.String(), Transport: ss.kind, Since: ss.since,
+		s.OnSessionEnd(SessionStats{ID: ss.id.String(), Node: ss.ident.String(), NodeID: ss.ident.ID, Transport: ss.kind, Since: ss.since,
 			BytesIn: ss.bytesIn.Load(), BytesOut: ss.bytesOut.Load(), PacketsIn: ss.pktsIn.Load(), PacketsOut: ss.pktsOut.Load()})
 	}
 }
@@ -969,6 +969,7 @@ func (s *Server) handleTCP(raw net.Conn) {
 type SessionStats struct {
 	ID         string           `json:"id"`
 	Node       string           `json:"node"`
+	NodeID     string           `json:"node_id,omitempty"` // the node's ID ("" for certificates before node IDs)
 	Transport  string           `json:"transport"`
 	Remote     string           `json:"remote"`              // current source address of the session
 	Reflexive  string           `json:"reflexive,omitempty"` // UDP sessions: the node's public UDP address
@@ -1018,7 +1019,7 @@ func (s *Server) Stats() Stats {
 		cands, nat, mapped := ss.cands, ss.nat, ss.mapped
 		ss.infoMu.Unlock()
 		e := SessionStats{
-			ID: ss.id.String(), Node: ss.ident.String(), Transport: ss.kind, Remote: remote.String(),
+			ID: ss.id.String(), Node: ss.ident.String(), NodeID: ss.ident.ID, Transport: ss.kind, Remote: remote.String(),
 			NAT: nat, Mapped: mapped, Candidates: cands, Since: ss.since,
 			BytesIn: ss.bytesIn.Load(), BytesOut: ss.bytesOut.Load(), PacketsIn: ss.pktsIn.Load(), PacketsOut: ss.pktsOut.Load(),
 		}

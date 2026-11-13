@@ -499,6 +499,7 @@ func (h *Hub) Serve(ctx context.Context) error {
 		return err
 	}
 	pb.RegisterDiagnosticsServer(g, ds)
+	h.traffic.setKnown(g) // every service is registered: unknown paths fold into one row
 
 	tcp, err := net.Listen("tcp", h.cfg.Listen)
 	if err != nil {
