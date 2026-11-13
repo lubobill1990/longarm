@@ -77,6 +77,7 @@ type Hub struct {
 	kick          chan struct{}   // re-run the queue
 	rollout       *pb.Rollout     // the current / last release rollout
 	rel           *releaseStore   // release files (relstore.go)
+	pruneMu       sync.Mutex      // one release retention pass at a time (release_prune.go)
 	gh            *ghReleases     // GitHub's releases while the hub has none (ghreleases.go); nil = off
 	latest        latestCache     // the newest complete release, for update notices (updatenotice.go)
 	tailnet       tailnetProvider // nil = no tailnet enrollment
@@ -596,7 +597,7 @@ func (h *Hub) Serve(ctx context.Context) error {
 	h.relaySetChangedLocked() // the embedded relay's port is known now
 	h.mu.Unlock()
 	h.startTelemetry(ctx, run)
-	run("releases", func() error { h.rel.reconcile(ctx, h.store); return nil })
+	run("releases", func() error { h.rel.reconcile(ctx, h.store); h.pruneReleasesOnce(ctx); return nil })
 	if h.gh != nil {
 		run("github releases", func() error { h.gh.run(ctx, h.ghWanted); return nil })
 	}

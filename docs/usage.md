@@ -3826,6 +3826,21 @@ repository on GitHub (`[releases] github`; deploy/hub/README.md "Releases
 without publishing anything"), signed by the project; the rest of this
 section is for hubs that publish their own builds.
 
+**Retention.** A hub that CI publishes to gets a full release on every
+merge (a dev build is over a GB of files). It keeps the newest
+`[releases] keep_dev` / `keep_preview` / `keep_stable` versions of each
+channel (default 3, 3, 5; 0 = every version) and deletes older ones - the
+index, the files in `<data_dir>/releases` and the blobs - after each
+publish and when it starts (log: "releases: deleted an old version
+(retention)"). The current rollout's version and the latest stable
+release always stay (a rollout started meanwhile is checked again under
+the version's lock). Each pass also deletes files in the data dir and the
+blob container of versions the index no longer lists - left by a
+deletion that failed half way. Env: `LONGARM_HUB_RELEASES_KEEP_DEV`,
+`_KEEP_PREVIEW`, `_KEEP_STABLE`; a negative value is refused. Machines
+keep running what they have; a deleted version just can't be installed
+or rolled out any more.
+
 Releases are signed with minisign; longarmd only installs binaries whose
 signature verifies against the public key built into it
 (`-X .../internal/update.PublicKey=RW...`) and whose trusted comment names the

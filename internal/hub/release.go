@@ -358,6 +358,10 @@ func (h *Hub) pushRelease(req *pb.PushReleaseRequest, by string) (*pb.Rollout, e
 
 // pushReleaseAs is pushRelease for a caller who sees the fleet as v.
 func (h *Hub) pushReleaseAs(v tenancy.Caller, req *pb.PushReleaseRequest, by string) (*pb.Rollout, error) {
+	// the version's lock from the file check until the rollout is set:
+	// release retention deletes a version under it and checks the rollout
+	// there (release_prune.go), so it can't delete what this rolls out
+	defer h.rel.lockVersion(req.Version)()
 	files, err := h.releaseFiles(req.Version)
 	if err != nil {
 		return nil, err
@@ -984,6 +988,10 @@ func (s *hubAdminServer) PublishRelease(st pb.HubAdmin_PublishReleaseServer) err
 		v.AddedAt = timestamppb.New(rels[0].AddedAt)
 	}
 	s.h.log.Info("release published", "version", hdr.Version, "channel", v.Channel, "files", len(rels), "signed", v.Signed, "restored", restore, "by", who)
+	if !restore {
+		// retention, in the background: the publisher needn't wait
+		go s.h.pruneReleasesOnce(context.WithoutCancel(st.Context()))
+	}
 	s.h.auditHub(who, "HubAdmin.PublishRelease", map[string]any{"version": hdr.Version, "channel": v.Channel, "files": names, "signed": v.Signed, "restored": restore})
 	return st.SendAndClose(v)
 }

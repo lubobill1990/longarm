@@ -337,6 +337,15 @@ RequestId:1</Message></Error>`)
 	}
 	name := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/diag"), "/")
 	switch {
+	case r.Method == http.MethodDelete:
+		if _, ok := f.blobs[name]; !ok {
+			w.Header().Set("x-ms-error-code", "BlobNotFound")
+			w.WriteHeader(404)
+			return
+		}
+		delete(f.blobs, name)
+		delete(f.meta, name)
+		w.WriteHeader(202)
 	case r.Method == http.MethodPut:
 		if r.Header.Get("x-ms-blob-type") != "BlockBlob" || r.ContentLength < 0 {
 			w.WriteHeader(400)
@@ -488,5 +497,34 @@ func TestBlobStore(t *testing.T) {
 	}
 	if _, ok := f.blobs["short.zip"]; ok {
 		t.Fatal("partial blob")
+	}
+}
+
+// Both stores delete blobs; a missing one is no error.
+func TestStoreDelete(t *testing.T) {
+	ctx := context.Background()
+	f := &fakeBlob{blobs: map[string][]byte{}, meta: map[string]map[string]string{}}
+	srv := httptest.NewServer(f)
+	defer srv.Close()
+	for _, s := range []interface {
+		Store
+		Deleter
+	}{&DirStore{Dir: t.TempDir()}, &BlobStore{Container: srv.URL + "/diag", Tokens: azauth.Static("tok-1")}} {
+		data := []byte("x")
+		if err := s.Put(ctx, "v/a", bytes.NewReader(data), 1, map[string]string{"k": "v"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Delete(ctx, "v/a"); err != nil {
+			t.Fatalf("%s: %v", s.Location(), err)
+		}
+		if _, _, err := s.Get(ctx, "v/a"); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s: get after delete: %v", s.Location(), err)
+		}
+		if err := s.Delete(ctx, "v/a"); err != nil {
+			t.Fatalf("%s: deleting a missing blob: %v", s.Location(), err)
+		}
+	}
+	if err := (&DirStore{Dir: t.TempDir()}).Delete(ctx, "../x"); err == nil {
+		t.Fatal("path escape")
 	}
 }
