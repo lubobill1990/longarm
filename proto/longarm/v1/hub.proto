@@ -831,6 +831,11 @@ message FleetJobsRequest {
   // Only jobs whose spec.submitted_by is this ("" = all) - "my jobs"
   // without the hub sending everyone else's (limit counts these only).
   string submitted_by = 4;
+  // Summaries: each job without what a list doesn't show - the spec's
+  // argv, env, cwd, workspace, steer, agent auth (agents' prompts are in
+  // argv) - for lists polled every few seconds; Fleet.GetJob has it all.
+  // Older hubs ignore it and send everything.
+  bool summary = 5;
 }
 
 message FleetJobsResponse {

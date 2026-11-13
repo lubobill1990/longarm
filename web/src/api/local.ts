@@ -200,14 +200,17 @@ export const longarmApi = {
   pool: (history = true) => get<PoolView>(`/local/longarm/v1/pool?history=${history ? 1 : 0}`),
   watchPool: (onView: (v: PoolView) => void, onDone?: (err?: string) => void) =>
     sse('/local/longarm/v1/pool/watch?history=1', { pool: (d) => onView(d as PoolView) }, onDone),
-  jobs: (q: { mine?: boolean; active?: boolean; worker?: string; limit?: number } = {}) => {
+  /** summary: without the command, env and workspace (a list's columns); job() has them */
+  jobs: (q: { mine?: boolean; active?: boolean; worker?: string; limit?: number; summary?: boolean } = {}) => {
     const p = new URLSearchParams()
     if (q.mine) p.set('mine', '1')
+    if (q.summary) p.set('summary', '1')
     if (q.active) p.set('active', '1')
     if (q.worker) p.set('worker', q.worker)
     if (q.limit) p.set('limit', String(q.limit))
     return get<{ jobs?: FleetJob[] }>(`/local/longarm/v1/jobs?${p}`).then((r) => r.jobs ?? [])
   },
+  job: (id: string, worker?: string) => get<FleetJob>(`/local/longarm/v1/jobs/${enc(id)}${worker ? `?worker=${enc(worker)}` : ''}`),
   kill: (id: string, worker?: string) => post<Job>(`/local/longarm/v1/jobs/${enc(id)}/kill${worker ? `?worker=${enc(worker)}` : ''}`),
   logs: (id: string, worker: string | undefined, onChunk: (c: LogChunk) => void, onDone: (err?: string) => void) =>
     sse(

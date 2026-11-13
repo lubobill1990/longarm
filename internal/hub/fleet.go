@@ -112,6 +112,9 @@ func (h *Hub) ListJobsFor(v tenancy.Caller, req *pb.FleetJobsRequest) []*pb.Flee
 			if req.SubmittedBy != "" && fj.GetJob().GetSpec().GetSubmittedBy() != req.SubmittedBy {
 				continue
 			}
+			if req.Summary {
+				fj = jobSummary(fj)
+			}
 			out = append(out, fj)
 		}
 	}
@@ -126,6 +129,20 @@ func (h *Hub) ListJobsFor(v tenancy.Caller, req *pb.FleetJobsRequest) []*pb.Flee
 		out = out[:req.Limit]
 	}
 	return out
+}
+
+// jobSummary is fj without what a job list doesn't show
+// (FleetJobsRequest.summary): new messages, the cached job is untouched.
+func jobSummary(fj *pb.FleetJob) *pb.FleetJob {
+	j, sp := fj.GetJob(), fj.GetJob().GetSpec()
+	return &pb.FleetJob{Worker: fj.Worker, UpdatedAt: fj.UpdatedAt, WorkerOnline: fj.WorkerOnline, WorkerId: fj.WorkerId,
+		Job: &pb.Job{
+			Spec: &pb.JobSpec{Id: sp.GetId(), Name: sp.GetName(), SubmittedBy: sp.GetSubmittedBy(), Owner: sp.GetOwner(),
+				ShareTeams: sp.GetShareTeams(), Labels: sp.GetLabels()},
+			State: j.GetState(), HasExitCode: j.GetHasExitCode(), ExitCode: j.GetExitCode(),
+			CreatedAt: j.GetCreatedAt(), StartedAt: j.GetStartedAt(), EndedAt: j.GetEndedAt(),
+			LogSize: j.GetLogSize(), Reason: j.GetReason(), Orphaned: j.GetOrphaned(),
+		}}
 }
 
 func (s *fleetServer) ListJobs(ctx context.Context, req *pb.FleetJobsRequest) (*pb.FleetJobsResponse, error) {

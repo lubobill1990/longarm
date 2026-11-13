@@ -326,7 +326,7 @@ func (d *daemon) ListJobs(ctx context.Context, req *pb.ClientJobsRequest) (*pb.F
 // the limit (the caller filters and limits what comes back either way).
 func myHubJobs(ctx context.Context, list func(context.Context, *pb.FleetJobsRequest, ...grpc.CallOption) (*pb.FleetJobsResponse, error),
 	req *pb.ClientJobsRequest, states []pb.JobState, me string) (*pb.FleetJobsResponse, error) {
-	fr := &pb.FleetJobsRequest{Worker: req.Worker, States: states, Limit: req.Limit}
+	fr := &pb.FleetJobsRequest{Worker: req.Worker, States: states, Limit: req.Limit, Summary: req.Summary}
 	if req.Mine {
 		fr.SubmittedBy = me
 	}
@@ -382,6 +382,38 @@ func (d *daemon) jobLogs(ctx context.Context, req *pb.ClientLogsRequest, send fu
 			return err
 		}
 	}
+}
+
+// GetJob is one job in full: from the hub's index, else from its worker.
+func (d *daemon) GetJob(ctx context.Context, req *pb.FleetJobRequest) (*pb.FleetJob, error) {
+	if h := d.s.optionalHub(ctx); h != nil {
+		cctx, cancel := context.WithTimeout(ctx, hubTimeout)
+		fj, err := h.Fleet().GetJob(cctx, req)
+		cancel()
+		if err == nil {
+			return fj, nil
+		}
+		if hubUnavailable(err) {
+			d.s.hubDown(err)
+		} else if status.Code(err) != codes.NotFound {
+			return nil, err
+		}
+	}
+	w, err := d.jobWorker(ctx, req.Id, req.Worker)
+	if err != nil {
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	c, err := d.conn(w)
+	if err != nil {
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	j, err := c.Jobs().Get(cctx, &pb.GetJobRequest{Id: req.Id})
+	if err != nil {
+		return nil, err
+	}
+	return &pb.FleetJob{Worker: w, Job: j, UpdatedAt: timestamppb.Now(), WorkerOnline: true}, nil
 }
 
 func (d *daemon) KillJob(ctx context.Context, req *pb.FleetJobRequest) (*pb.Job, error) {
@@ -440,8 +472,13 @@ func (d *daemon) poolGateway(mux *http.ServeMux) {
 		q := r.URL.Query()
 		limit, _ := strconv.Atoi(q.Get("limit"))
 		res, err := d.ListJobs(r.Context(), &pb.ClientJobsRequest{Worker: q.Get("worker"), Mine: flag(r, "mine"),
-			Active: flag(r, "active"), Limit: int32(limit)})
+			Active: flag(r, "active"), Limit: int32(limit), Summary: flag(r, "summary")})
 		localapi.WriteProto(w, res, err)
+	})
+	// one job in full: what a summary list (summary=1) leaves out
+	mux.HandleFunc("GET /v1/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		fj, err := d.GetJob(r.Context(), &pb.FleetJobRequest{Id: r.PathValue("id"), Worker: r.URL.Query().Get("worker")})
+		localapi.WriteProto(w, fj, err)
 	})
 	mux.HandleFunc("GET /v1/jobs/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()

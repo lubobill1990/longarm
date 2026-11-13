@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Job lists as summaries**: `FleetJobsRequest.summary` (and the daemon's
+  `GET /v1/jobs?summary=1`) answers each job without the spec's argv, env,
+  cwd, workspace, steer and agent auth - an agent job's prompt is in argv -
+  and the tray's "My jobs" polls that; an open job's details come from the
+  new `GET /v1/jobs/{id}` (the hub's `Fleet.GetJob`, else its worker).
+  Older hubs ignore it and send everything.
 - **Release retention on the hub**: a hub keeps the newest `[releases]
   keep_dev` / `keep_preview` / `keep_stable` versions per channel
   (default 3, 3, 5; 0 = all) and deletes older ones - index, data-dir files

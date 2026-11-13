@@ -4957,7 +4957,12 @@ type FleetJobsRequest struct {
 	Limit  int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"` // applied after every filter
 	// Only jobs whose spec.submitted_by is this ("" = all) - "my jobs"
 	// without the hub sending everyone else's (limit counts these only).
-	SubmittedBy   string `protobuf:"bytes,4,opt,name=submitted_by,json=submittedBy,proto3" json:"submitted_by,omitempty"`
+	SubmittedBy string `protobuf:"bytes,4,opt,name=submitted_by,json=submittedBy,proto3" json:"submitted_by,omitempty"`
+	// Summaries: each job without what a list doesn't show - the spec's
+	// argv, env, cwd, workspace, steer, agent auth (agents' prompts are in
+	// argv) - for lists polled every few seconds; Fleet.GetJob has it all.
+	// Older hubs ignore it and send everything.
+	Summary       bool `protobuf:"varint,5,opt,name=summary,proto3" json:"summary,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5018,6 +5023,13 @@ func (x *FleetJobsRequest) GetSubmittedBy() string {
 		return x.SubmittedBy
 	}
 	return ""
+}
+
+func (x *FleetJobsRequest) GetSummary() bool {
+	if x != nil {
+		return x.Summary
+	}
+	return false
 }
 
 type FleetJobsResponse struct {
@@ -12192,12 +12204,13 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\n" +
 	"updated_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12#\n" +
 	"\rworker_online\x18\x04 \x01(\bR\fworkerOnline\x12\x1b\n" +
-	"\tworker_id\x18\x05 \x01(\tR\bworkerId\"\x91\x01\n" +
+	"\tworker_id\x18\x05 \x01(\tR\bworkerId\"\xab\x01\n" +
 	"\x10FleetJobsRequest\x12\x16\n" +
 	"\x06worker\x18\x01 \x01(\tR\x06worker\x12,\n" +
 	"\x06states\x18\x02 \x03(\x0e2\x14.longarm.v1.JobStateR\x06states\x12\x14\n" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12!\n" +
-	"\fsubmitted_by\x18\x04 \x01(\tR\vsubmittedBy\"o\n" +
+	"\fsubmitted_by\x18\x04 \x01(\tR\vsubmittedBy\x12\x18\n" +
+	"\asummary\x18\x05 \x01(\bR\asummary\"o\n" +
 	"\x11FleetJobsResponse\x12(\n" +
 	"\x04jobs\x18\x01 \x03(\v2\x14.longarm.v1.FleetJobR\x04jobs\x120\n" +
 	"\x14submitted_by_applied\x18\x02 \x01(\bR\x12submittedByApplied\"9\n" +

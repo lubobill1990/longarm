@@ -31,7 +31,8 @@ const SHOWN = 50
  */
 export function ClientJobs({ openJob, onOpenedJob }: { openJob?: string; onOpenedJob?: () => void } = {}) {
   const [wide, setWide] = useState(false) // the whole list, not the last 50
-  const jobs = usePoll(() => longarmApi.jobs({ mine: true, limit: wide ? 0 : SHOWN }), 3000, [wide])
+  // summaries: the rows need no command or env; an open job's details come by itself
+  const jobs = usePoll(() => longarmApi.jobs({ mine: true, limit: wide ? 0 : SHOWN, summary: true }), 3000, [wide])
   const [open, setOpen] = useState<string>()
   // "": every worker; else the jobs that run on that one
   const [only, setOnly] = useState('')
@@ -132,11 +133,7 @@ export function ClientJobs({ openJob, onOpenedJob }: { openJob?: string; onOpene
                     )}
                   </td>
                 </tr>
-                {isOpen && (
-                  <JobDetailRow colSpan={5} job={j.job} worker={j.worker}>
-                    <ClientJobLogs id={j.job.spec.id} worker={j.worker} />
-                  </JobDetailRow>
-                )}
+                {isOpen && <ClientJobDetail summary={j.job} worker={j.worker} />}
               </Fragment>
             )
           })}
@@ -239,6 +236,20 @@ export function JobDetailRow({ job, worker, colSpan, children }: { job: Job; wor
         {children}
       </td>
     </tr>
+  )
+}
+
+/**
+ * An open job of My jobs: the list has its summary, the details (command,
+ * owner) come from GET /v1/jobs/{id}, polled while it is open; the summary
+ * shows until they arrive (or when an older daemon has no such route).
+ */
+function ClientJobDetail({ summary, worker }: { summary: Job; worker: string }) {
+  const full = usePoll(() => longarmApi.job(summary.spec.id, worker), 3000, [summary.spec.id, worker])
+  return (
+    <JobDetailRow colSpan={5} job={full.data?.job ?? summary} worker={worker}>
+      <ClientJobLogs id={summary.spec.id} worker={worker} />
+    </JobDetailRow>
   )
 }
 
