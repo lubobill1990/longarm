@@ -22,10 +22,14 @@ die() {
 
 # go_dirs CMD...: the main module's package directories CMD... build from
 go_dirs() {
-	local root
-	root=$(go list -m -f '{{.Dir}}' | tr '\\' '/')
+	local root d
+	root=$(go list -m -f '{{.Dir}}')
+	root=${root//\\//} # Windows: forward slashes, as git's paths
 	go list -deps -f '{{if .Module}}{{if .Module.Main}}{{.Dir}}{{end}}{{end}}' "$@" |
-		tr '\\' '/' | while IFS= read -r d; do printf '%s\n' "${d#"$root"/}"; done | sort -u
+		while IFS= read -r d; do
+			d=${d//\\//}
+			printf '%s\n' "${d#"$root"/}"
+		done | sort -u
 }
 
 paths() {
@@ -56,7 +60,8 @@ changed)
 		echo "affected.sh: $from is not known here: $comp counts as changed" >&2
 		exit 0
 	fi
-	mapfile -t specs < <(paths "$comp")
+	specs=() # (no mapfile: macOS has bash 3.2)
+	while IFS= read -r s; do specs+=("$s"); done < <(paths "$comp")
 	files=$(git diff --name-only "$from" "$to" -- "${specs[@]}")
 	if [[ -z $files ]]; then
 		echo "affected.sh: $comp unchanged since $from" >&2
