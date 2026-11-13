@@ -82,6 +82,25 @@ type Store interface {
 	Location() string
 }
 
+// Deleter is a Store that can remove blobs (both stores here can; the
+// hub's release retention needs it). Deleting a missing blob is no error.
+type Deleter interface {
+	Delete(ctx context.Context, name string) error
+}
+
+// Delete implements Deleter.
+func (d *DirStore) Delete(_ context.Context, name string) error {
+	p, err := d.path(name)
+	if err != nil {
+		return err
+	}
+	os.Remove(p + metaSuffix)
+	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // OpenStore opens the store at rawURL: https://<account>.blob.core.windows.net/<container>
 // (Azure Blob Storage with tokens from ts; http:// only for emulators on
 // the loopback) or file:///<dir> (a local directory: tests, self-hosted

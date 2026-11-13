@@ -142,6 +142,19 @@ func (s *BlobStore) Put(ctx context.Context, name string, r io.Reader, size int6
 	return resp.Body.Close()
 }
 
+// Delete implements Deleter (Delete Blob; a missing blob is no error).
+func (s *BlobStore) Delete(ctx context.Context, name string) error {
+	resp, err := s.do(ctx, "delete", http.MethodDelete, s.blobURL(name), nil, 0, nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	io.Copy(io.Discard, resp.Body)
+	return resp.Body.Close()
+}
+
 // Get implements Store (Get Blob).
 func (s *BlobStore) Get(ctx context.Context, name string) (io.ReadCloser, BlobInfo, error) {
 	resp, err := s.do(ctx, "get", http.MethodGet, s.blobURL(name), nil, 0, nil)

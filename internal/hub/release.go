@@ -984,6 +984,10 @@ func (s *hubAdminServer) PublishRelease(st pb.HubAdmin_PublishReleaseServer) err
 		v.AddedAt = timestamppb.New(rels[0].AddedAt)
 	}
 	s.h.log.Info("release published", "version", hdr.Version, "channel", v.Channel, "files", len(rels), "signed", v.Signed, "restored", restore, "by", who)
+	if !restore {
+		// retention, in the background: the publisher needn't wait
+		go s.h.pruneReleasesOnce(context.WithoutCancel(st.Context()))
+	}
 	s.h.auditHub(who, "HubAdmin.PublishRelease", map[string]any{"version": hdr.Version, "channel": v.Channel, "files": names, "signed": v.Signed, "restored": restore})
 	return st.SendAndClose(v)
 }

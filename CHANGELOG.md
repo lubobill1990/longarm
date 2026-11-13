@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Release retention on the hub**: a hub keeps the newest `[releases]
+  keep_dev` / `keep_preview` / `keep_stable` versions per channel
+  (default 3, 3, 5; 0 = all) and deletes older ones - index, data-dir files
+  and blobs - after each publish and at start; the current rollout's
+  version and the latest stable release always stay. A hub CI publishes
+  to grew by over a GB per merge until its disk filled.
 - **Hub traffic accounting**: `GET /api/traffic` (panel administrators)
   shows the hub's bytes each way per gRPC method and calling node, and per
   node through the embedded relay (live and ended sessions; other users'

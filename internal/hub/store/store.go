@@ -1070,6 +1070,12 @@ func (s *Store) AddRelease(r Release) error {
 	return err
 }
 
+// DeleteReleaseVersion forgets every file of version.
+func (s *Store) DeleteReleaseVersion(version string) error {
+	_, err := s.db.Exec(`DELETE FROM releases WHERE version=?`, version)
+	return err
+}
+
 // Releases lists release files, newest version first.
 func (s *Store) Releases() ([]Release, error) {
 	rows, err := s.db.Query(`SELECT version,file,os,arch,sha256,size,added_at,channel,kind,sig FROM releases ORDER BY added_at DESC, file`)

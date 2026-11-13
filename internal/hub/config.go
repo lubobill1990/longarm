@@ -207,6 +207,14 @@ type ReleaseConfig struct {
 	// repository by default), "owner/repo", or "off". Env
 	// LONGARM_HUB_RELEASES_GITHUB.
 	GitHub string `toml:"github"`
+	// KeepDev, KeepPreview, KeepStable: how many versions of each channel
+	// the hub keeps (release_prune.go); older ones are deleted - index,
+	// files and blobs - after each publish and at start. Unset: 3, 3, 5;
+	// 0 keeps every version. The version of the current rollout and the
+	// latest stable release are always kept.
+	KeepDev     *int `toml:"keep_dev"`
+	KeepPreview *int `toml:"keep_preview"`
+	KeepStable  *int `toml:"keep_stable"`
 
 	githubAPI string // the GitHub API's base URL (tests)
 }
