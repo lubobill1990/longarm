@@ -110,12 +110,15 @@ type traySettings struct {
 	TelemetryEnvOff   bool   `json:"telemetry_env_off,omitempty"` // LONGARM_TELEMETRY=0: the switch can't turn it on
 	ClientLogs        string `json:"client_logs,omitempty"`
 	WorkerLogs        string `json:"worker_logs,omitempty"`
+	// "Start Longarm at login" as the OS has it (autostart.go)
+	Autostart *AutostartState `json:"autostart,omitempty"`
 }
 
 func (s *Server) currentSettings() traySettings {
 	t, _ := telemetry.LoadSettings(s.telemetryDir())
 	out := traySettings{Prefs: LoadPrefs(s.opts.LongarmConfigDir), Version: s.opts.Version, TelemetryDisabled: t.Disabled,
 		TelemetryEnvOff: telemetry.EnvDisabled()}
+	out.Autostart = autostartState(s.autostart)
 	client, worker := s.installedRoles()
 	if client {
 		out.ClientLogs = s.opts.LongarmConfigDir
@@ -137,6 +140,7 @@ func (s *Server) setSettings(w http.ResponseWriter, r *http.Request) {
 		MuteJobs          *bool   `json:"mute_jobs"`
 		Theme             *string `json:"theme"`
 		TelemetryDisabled *bool   `json:"telemetry_disabled"`
+		Autostart         *bool   `json:"autostart"`
 	}
 	if !readBody(w, r, &body) {
 		return
@@ -173,6 +177,21 @@ func (s *Server) setSettings(w http.ResponseWriter, r *http.Request) {
 		// as `longarm telemetry off|on`: off also drops the queue
 		if err := telemetry.SaveSettings(s.telemetryDir(), telemetry.Settings{Disabled: *body.TelemetryDisabled}); err != nil {
 			httpError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if body.Autostart != nil {
+		if s.autostart == nil {
+			httpError(w, http.StatusNotImplemented, "starting at login isn't supported on this system")
+			return
+		}
+		// off with the MSI's entry for every user asks for an administrator (UAC)
+		if err := s.autostart.Set(*body.Autostart); err != nil {
+			code := http.StatusInternalServerError
+			if errors.Is(err, ErrElevationCanceled) {
+				code = http.StatusConflict
+			}
+			httpError(w, code, "start at login: "+err.Error())
 			return
 		}
 	}

@@ -10,6 +10,20 @@
   and the tray's "My jobs" polls that; an open job's details come from the
   new `GET /v1/jobs/{id}` (the hub's `Fleet.GetJob`, else its worker).
   Older hubs ignore it and send everything.
+- **Start Longarm at login, in the tray**: Settings > Startup switches the
+  tray's own login item - Windows the `longarm-tray` Run value (HKCU, no
+  administrator), macOS a LaunchAgent (`com.longarm.tray`), Linux an XDG
+  autostart `.desktop` file - and shows what the system has, not a saved
+  preference. An MSI install stays on by default (its HKLM value for every
+  user); turning that off asks for an administrator and turns it off for
+  everybody. The user-session worker's logon task is not affected.
+- **Rename workers from the tray**: a worker card's … menu (and an
+  offline machine's line) has Rename… for your own workers (admins: every
+  worker), through `longarm daemon` (`POST /v1/workers/{name}/rename`,
+  `LocalClient.RenameWorker`) to the hub's `Fleet.RenameWorker`, as
+  `longarm worker rename`. The name is checked as the hub checks it before
+  it is sent; the worker keeps its ID. The tray's dialogs gained a text
+  field (no WebView2 prompt window).
 - **Release retention on the hub**: a hub keeps the newest `[releases]
   keep_dev` / `keep_preview` / `keep_stable` versions per channel
   (default 3, 3, 5; 0 = all) and deletes older ones - index, data-dir files

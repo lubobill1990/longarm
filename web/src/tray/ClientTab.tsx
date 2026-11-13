@@ -6,6 +6,7 @@ import { ErrorBox, LogView, StatePill, useAction, usePoll } from '../components/
 import { IconForward, IconTerminal } from '../components/icons'
 import { fmtTime, isActive } from '../lib/format'
 import { AgentSkill } from './AgentSkill'
+import { StartAtLogin } from './StartAtLogin'
 import type { ThemePref } from './theme'
 import { EmptyState, Section, Skeleton } from './ui'
 
@@ -358,7 +359,7 @@ export function transportLabel(t?: string): string {
 }
 
 /**
- * Settings: appearance, transport policy (longarm transport), notifications, updates, the agent skill, diagnostics (logs, telemetry).
+ * Settings: appearance, transport policy (longarm transport), notifications, updates, start at login, the agent skill, diagnostics (logs, telemetry).
  * client: this computer sends jobs (without: no notifications, agent skill or transport - a worker-only machine).
  */
 export function Settings({
@@ -376,6 +377,7 @@ export function Settings({
     // what people change most first; the technical ones (transport, diagnostics) last
     <div className="settings">
       <AutoUpdate />
+      <StartAtLogin />
       {client && <TraySettingsView part="notifications" />}
       {client && <AgentSkill />}
       {theme && onTheme && <Appearance theme={theme} onTheme={onTheme} />}

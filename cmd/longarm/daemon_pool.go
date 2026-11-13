@@ -26,6 +26,8 @@ import (
 	"longarm/internal/client"
 	"longarm/internal/localapi"
 	"longarm/internal/memcap"
+	"longarm/internal/nodeid"
+	"longarm/internal/pki"
 	"longarm/internal/pool"
 	"longarm/internal/transport"
 	pb "longarm/proto/longarm/v1"
@@ -456,6 +458,7 @@ func (d *daemon) SetSettings(ctx context.Context, req *pb.ClientSettings) (*pb.C
 //	GET  /v1/settings ; POST /v1/settings {"transport": "race"}
 //	POST /v1/workers/{name}/drain {"draining": true}   (longarm admin drain; admin role)
 //	POST /v1/workers/{name}/remove                     (longarm worker remove: the owner; admins: fleet workers)
+//	POST /v1/workers/{name}/rename {"new_name": "x"}  (longarm worker rename: the owner; admins: fleet workers)
 func (d *daemon) poolGateway(mux *http.ServeMux) {
 	flag := func(r *http.Request, k string) bool { v := r.URL.Query().Get(k); return v == "1" || v == "true" }
 	mux.HandleFunc("GET /v1/pool", func(w http.ResponseWriter, r *http.Request) {
@@ -504,6 +507,16 @@ func (d *daemon) poolGateway(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("POST /v1/workers/{name}/remove", func(w http.ResponseWriter, r *http.Request) {
 		n, err := d.RemoveWorker(r.Context(), &pb.NodeRequest{Name: r.PathValue("name")})
+		localapi.WriteProto(w, n, err)
+	})
+	mux.HandleFunc("POST /v1/workers/{name}/rename", func(w http.ResponseWriter, r *http.Request) {
+		req := &pb.RenameNodeRequest{}
+		if err := localapi.ReadProto(r, req); err != nil {
+			localapi.WriteProto(w, nil, err)
+			return
+		}
+		req.Target = r.PathValue("name")
+		n, err := d.RenameWorker(r.Context(), req)
 		localapi.WriteProto(w, n, err)
 	})
 	mux.HandleFunc("GET /v1/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -707,6 +720,37 @@ func (d *daemon) RemoveWorker(ctx context.Context, req *pb.NodeRequest) (*pb.Nod
 	n, err := h.Fleet().RemoveWorker(cctx, req)
 	if err == nil {
 		d.mon.HubNode(n) // revoked: gone from the pool view at once
+	}
+	return n, err
+}
+
+// RenameWorker renames a worker through the hub (longarm worker rename): the
+// owner's own worker, admins also fleet workers; it keeps its ID. The new
+// name is checked here as the hub does, so a typo is no round trip.
+func (d *daemon) RenameWorker(ctx context.Context, req *pb.RenameNodeRequest) (*pb.NodeInfo, error) {
+	if req.GetTarget() == "" {
+		return nil, status.Error(codes.InvalidArgument, "no worker named")
+	}
+	if err := nodeid.CheckName(req.GetNewName(), pki.ValidName); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	h := d.s.hub()
+	if h == nil {
+		return nil, status.Error(codes.FailedPrecondition, "no hub configured")
+	}
+	cctx, cancel := context.WithTimeout(ctx, hubTimeout)
+	defer cancel()
+	n, err := h.Fleet().RenameWorker(cctx, req)
+	if status.Code(err) == codes.Unimplemented {
+		return nil, status.Error(codes.Unimplemented, "this hub is too old to rename workers (update it)")
+	}
+	if err == nil && d.mon != nil {
+		// the pool view: the new name now, not at the next refresh
+		go func() {
+			rctx, cancel := context.WithTimeout(context.Background(), hubTimeout)
+			defer cancel()
+			d.mon.Refresh(rctx)
+		}()
 	}
 	return n, err
 }
