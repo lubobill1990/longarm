@@ -31,6 +31,10 @@ local admin) or with `[update] channel` in longarmd.toml. `beta` = `preview`.
   the **hub deploy** (the hub follows preview; no fleet rollout).
 - **`vX.Y.Z` tag** (must be on main) → channel stable, GitHub Release, hub
   deploy (SSH forced command, auto rollback), canary rollout, image `:latest`.
+- Hub deploy and rollout run only for what changed (job `affected`,
+  `.github/scripts/affected.sh`): the hub since the version its `/healthz`
+  reports, workers since the previous stable. The run summary says why;
+  repo variable `LONGARM_AFFECTED=all` forces both.
 
 ## Cutting a release candidate / release
 

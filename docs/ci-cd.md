@@ -261,6 +261,7 @@ Try it from your machine: `ssh -i hub-deploy deploy@hub.example.com status`.
 | `LONGARM_DEFAULT_HUB` | the hub built into the release (a domain, e.g. `longarm.example.com`): `longarm login` / `longarmd login` / the tray without a hub, and the MSI's "Default" choice ([usage](usage.md#built-in-default-hub)); unset: no default (the release warns; the MSI offers Custom only) |
 | `LONGARM_DEFAULT_HUB_CA` | optional: that hub's CA fingerprint (`longarm-hub ca show`), pinned instead of trusting `https://<hub>/ca.crt` |
 | `LONGARM_DEV_NUMBER_OFFSET` | optional: added to the run number of dev builds (`X.Y.Z-dev.<run + offset>`), for a repository whose hub already has higher dev numbers of that version (a moved repository: dev machines only move forward) |
+| `LONGARM_AFFECTED` | optional: `all` deploys the hub and rolls out every release, changed or not (job `affected`, [Release channels](#release-channels)) |
 | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | the Entra app that signs (GitHub OIDC, no secret; 2.7) |
 | `TRUSTED_SIGNING_ENDPOINT`, `TRUSTED_SIGNING_ACCOUNT`, `TRUSTED_SIGNING_PROFILE` | the Trusted Signing account's endpoint (`https://<region>.codesigning.azure.net`), its name and the certificate profile; all six set: Authenticode signing on (2.7) |
 | `TRUSTED_SIGNING_SUBJECT` | optional: the certificate's CN (the validated name); every signed file is checked against it |
@@ -664,6 +665,27 @@ the newest release of its channel *or of a more tested one*
   where `az` is signed in. To try something hub-side before an rc, deploy
   main's image `ghcr.io/<owner>/longarm-hub:sha-<12 hex>` (image.yml) the
   same way, briefly.
+- **One version, deployed where it changed.** Every component carries the
+  release's version, but a release deploys only what it changes (job
+  `affected`, `.github/scripts/affected.sh`): the hub (`hub` / `hub-manual`)
+  when the Go packages `longarm-hub` and `longarm-relay` build from,
+  `deploy/hub` or the web UI it serves (not the tray's pages) changed since
+  the version the hub's `/healthz` reports; the worker rollout of a stable
+  release when what it installs (`longarmd`, `longarm`, the tray, the
+  updater, the MSI, the web UI) changed since the previous stable release.
+  A release of tray changes leaves the hub running the older version; a hub
+  fix doesn't restart the fleet. The run's summary says why; the
+  repository variable `LONGARM_AFFECTED=all` deploys and rolls out
+  regardless. Tests and docs never count.
+- **Version skew.** That works because the versions may differ: the gRPC
+  API only grows (new fields are ignored by older ends), and what needs the
+  other side is a feature (`features` of `Node.Info`, the hub's hello)
+  checked before use, with a message naming the side to update. Supported:
+  clients and workers of any version since the hub's, against that hub, and
+  a hub up to two minor versions newer than the oldest clients and workers
+  it serves (older ones keep working until a feature they lack is used). A
+  change that can't follow this needs both sides in one release and
+  `LONGARM_AFFECTED=all`.
 - **The hub** answers `GET /releases/latest.json?channel=preview|dev` with
   the newest complete release for that channel; an older hub ignores the
   parameter and answers its latest stable, so machines fall back to stable
