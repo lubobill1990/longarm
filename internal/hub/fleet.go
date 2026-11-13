@@ -107,7 +107,12 @@ func (h *Hub) ListJobsFor(v tenancy.Caller, req *pb.FleetJobsRequest) []*pb.Flee
 			if !canSeeJob(v, e.job) {
 				continue
 			}
-			out = append(out, p.fleetJob(h.fleetJobLocked(w, e)))
+			fj := p.fleetJob(h.fleetJobLocked(w, e))
+			// as the caller sees it: the daemon compares the same field
+			if req.SubmittedBy != "" && fj.GetJob().GetSpec().GetSubmittedBy() != req.SubmittedBy {
+				continue
+			}
+			out = append(out, fj)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -124,7 +129,7 @@ func (h *Hub) ListJobsFor(v tenancy.Caller, req *pb.FleetJobsRequest) []*pb.Flee
 }
 
 func (s *fleetServer) ListJobs(ctx context.Context, req *pb.FleetJobsRequest) (*pb.FleetJobsResponse, error) {
-	return &pb.FleetJobsResponse{Jobs: s.h.ListJobsFor(s.h.viewer(callerFrom(ctx)), req)}, nil
+	return &pb.FleetJobsResponse{Jobs: s.h.ListJobsFor(s.h.viewer(callerFrom(ctx)), req), SubmittedByApplied: req.SubmittedBy != ""}, nil
 }
 
 // GetJob finds a job.

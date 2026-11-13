@@ -150,6 +150,16 @@
 
 ### Changed
 
+- **"My jobs" no longer downloads the fleet's whole job list**: the tray's
+  "My jobs" tab (every 3 s) and the daemon's job count (every 10 s) asked
+  the hub for every job the caller may see - up to 500 per worker, full
+  specs - and filtered and cut them locally; one tray left on that tab
+  made a hub send ~60 GB a day. The hub now filters by submitter and
+  limits (`FleetJobsRequest.submitted_by`, answered with
+  `submitted_by_applied`); with an older hub the daemon asks again without
+  the limit when it may have cut its jobs off. The web UI's polls also
+  pause while the page is hidden (a hidden tray popup, a background tab)
+  and reload when it is shown.
 - **The tray's popup no longer stays blank (all white).** Started by the
   installer, the tray now waits for Windows Installer to finish before it
   creates its window (a WebView2 created mid-install came up empty for
