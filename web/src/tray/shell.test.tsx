@@ -214,14 +214,17 @@ describe('longarm ui open pages', () => {
     const newer = Array.from({ length: 50 }, (_, i) => fleetJob(`01JZC${String(i).padStart(21, '0')}`, `new${i}`))
     const calls = mockFetch({
       '/trayapi/info': () => [200, info({ client: { running: true } })],
-      '/local/longarm/v1/jobs?mine=1&limit=50': () => [200, { jobs: newer }],
-      '/local/longarm/v1/jobs?mine=1': () => [200, { jobs: [...newer, fleetJob('01JZAAAAAAAAAAAAAAAAAAOLD1', 'old')] }],
+      // summaries (no command); an open job's details come by themselves
+      '/local/longarm/v1/jobs?mine=1&summary=1&limit=50': () => [200, { jobs: newer }],
+      '/local/longarm/v1/jobs?mine=1&summary=1': () => [200, { jobs: [...newer, fleetJob('01JZAAAAAAAAAAAAAAAAAAOLD1', 'old')] }],
+      '/local/longarm/v1/jobs/01JZAAAAAAAAAAAAAAAAAAOLD1?worker=w1': () => [200, fleetJob('01JZAAAAAAAAAAAAAAAAAAOLD1', 'old')],
     })
     history.replaceState(null, '', '/tray?tab=jobs&job=01JZAAAAAAAAAAAAAAAAAAOLD1')
     render(<TrayApp />)
     const row = await screen.findByRole('row', { name: /old on w1/ })
     await waitFor(() => expect(row.getAttribute('aria-expanded')).toBe('true'))
-    expect(calls.some((c) => c.url === '/local/longarm/v1/jobs?mine=1')).toBe(true)
+    expect(calls.some((c) => c.url === '/local/longarm/v1/jobs?mine=1&summary=1')).toBe(true)
+    await waitFor(() => expect(calls.some((c) => c.url === '/local/longarm/v1/jobs/01JZAAAAAAAAAAAAAAAAAAOLD1?worker=w1')).toBe(true))
     expect(screen.queryByTestId('job-missing')).toBeNull()
     cleanup()
     history.replaceState(null, '', '/tray?tab=jobs&job=nope')
