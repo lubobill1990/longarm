@@ -139,6 +139,10 @@ service LocalClient {
   // RemoveWorker removes (revokes) a worker through the hub, as longarm
   // worker remove: the owner's own worker, or any worker for an admin.
   rpc RemoveWorker(NodeRequest) returns (NodeInfo);
+  // RenameWorker renames a worker through the hub, as longarm worker
+  // rename: the owner's own worker, admins also fleet workers. It keeps its
+  // ID.
+  rpc RenameWorker(RenameNodeRequest) returns (NodeInfo);
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
 }
 

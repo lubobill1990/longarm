@@ -2798,6 +2798,24 @@ opens a job's command, times and output right under it; kill; there is no
 "everyone" switch - `longarm jobs --all` lists your jobs from other
 computers and team-shared ones), forwards, this worker (longarmd: drain, limits, toolchain, jobs,
 leave; join with a code when not enrolled), settings (transport policy).
+A card's … menu has **Rename…** for the workers you may rename (your own;
+admins: every worker - the hub decides, as for `longarm worker rename`):
+the new name is checked as the hub checks it (letters, digits, `. _ -`, at
+most 63, not hex digits and dashes only), the worker keeps its ID, and the
+card shows the new name with the next pool update. The hub panel's Nodes
+page has Rename too.
+**Settings > Startup > Start Longarm at login** is the tray's own login
+item, read from the system each time (Task Manager's Startup apps or a
+deleted file change it too): Windows the Run key value `longarm-tray`
+(`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, no administrator),
+macOS `~/Library/LaunchAgents/com.longarm.tray.plist`, Linux
+`~/.config/autostart/longarm-tray.desktop`. The MSI (and an elevated
+`install.ps1`) starts the tray at every user's logon (`HKLM\...\Run`):
+on by default there, and turning it off asks for an administrator and
+turns it off for every user of the computer (StartupApproved, as Task
+Manager does); on again is this user's own value. Elsewhere it is off
+until you turn it on. It is not the user-session worker: that starts at
+your logon by its own task (`LongarmWorker-<SID>`) either way.
 Notifications: worker offline (once it stayed down 2 min - a worker that
 drops and reconnects within that says nothing) and back (only after an
 offline one), memory ≥ 90 %, link relayed > 5 min, one
