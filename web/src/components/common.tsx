@@ -3,7 +3,9 @@ import type { Stream } from '../api/http'
 import type { FirewallStatus, LogChunk } from '../api/types'
 import { logDecoder } from '../lib/format'
 
-/** Calls fn now and every ms; returns the latest value / error and a reload. */
+/** Calls fn now and every ms while the page is visible (a hidden tray
+ * popup or panel tab polls nothing; it reloads when shown again); returns
+ * the latest value / error and a reload. */
 export function usePoll<T>(fn: () => Promise<T>, ms: number, deps: unknown[] = []) {
   const [data, setData] = useState<T | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -20,8 +22,17 @@ export function usePoll<T>(fn: () => Promise<T>, ms: number, deps: unknown[] = [
   useEffect(() => {
     load()
     if (ms <= 0) return
-    const t = setInterval(load, ms)
-    return () => clearInterval(t)
+    const t = setInterval(() => {
+      if (!document.hidden) load()
+    }, ms)
+    const onVisible = () => {
+      if (!document.hidden) load()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, ms, ...deps])
   return { data, error, reload: load, setData }

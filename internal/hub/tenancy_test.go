@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"longarm/internal/hub/store"
 	"longarm/internal/hubclient"
@@ -419,5 +420,37 @@ func TestTenancyPanelRoles(t *testing.T) {
 	}
 	if code, body := get(admin, "/api/tenants"); code != 200 || !strings.Contains(body, `"carol"`) {
 		t.Errorf("admin's tenants: %d %s", code, body)
+	}
+}
+
+// ListJobs with submitted_by: only that submitter's jobs, the limit
+// counting those only, and the answer says the filter was applied.
+func TestListJobsSubmittedBy(t *testing.T) {
+	th := newTenancyHub(t)
+	h := th.h
+	h.mu.Lock()
+	n := h.nodeLocked("w1")
+	h.applyJobsLocked(n, &pb.JobsReport{Jobs: []*pb.Job{
+		{Spec: &pb.JobSpec{Id: "J1", Owner: "alice", SubmittedBy: "client/alice-pc"}, State: pb.JobState_JOB_STATE_RUNNING, CreatedAt: timestamppb.New(time.Unix(100, 0))},
+		{Spec: &pb.JobSpec{Id: "J2", Owner: "alice", SubmittedBy: "client/alice-laptop"}, State: pb.JobState_JOB_STATE_RUNNING, CreatedAt: timestamppb.New(time.Unix(300, 0))},
+		{Spec: &pb.JobSpec{Id: "J3", Owner: "alice", SubmittedBy: "client/alice-pc"}, State: pb.JobState_JOB_STATE_DONE, CreatedAt: timestamppb.New(time.Unix(200, 0))},
+		{Spec: &pb.JobSpec{Id: "J4", Owner: "alice", SubmittedBy: "client/alice-laptop"}, State: pb.JobState_JOB_STATE_DONE, CreatedAt: timestamppb.New(time.Unix(400, 0))},
+	}})
+	h.mu.Unlock()
+	fleet := pb.NewFleetClient(th.alice)
+	r, err := fleet.ListJobs(tctx(t), &pb.FleetJobsRequest{SubmittedBy: "client/alice-pc", Limit: 1})
+	if err != nil || !r.SubmittedByApplied || len(r.Jobs) != 1 || r.Jobs[0].Job.Spec.Id != "J3" {
+		t.Fatalf("alice-pc's newest: %v %+v", err, r)
+	}
+	r, err = fleet.ListJobs(tctx(t), &pb.FleetJobsRequest{SubmittedBy: "client/alice-pc"})
+	if err != nil || len(r.Jobs) != 2 {
+		t.Fatalf("alice-pc's: %v %d jobs", err, len(r.Jobs))
+	}
+	if r, err := fleet.ListJobs(tctx(t), &pb.FleetJobsRequest{}); err != nil || r.SubmittedByApplied || len(r.Jobs) != 6 { // and JA, JS
+		t.Fatalf("all of alice's: %v %+v", err, r)
+	}
+	// another user's submitter name gives nothing of theirs
+	if r, err := pb.NewFleetClient(th.bob).ListJobs(tctx(t), &pb.FleetJobsRequest{SubmittedBy: "client/alice-pc"}); err != nil || len(r.Jobs) != 0 {
+		t.Fatalf("bob asking for alice-pc's: %v %+v", err, r)
 	}
 }

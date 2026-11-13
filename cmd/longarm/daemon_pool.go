@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -267,7 +268,7 @@ func (d *daemon) ListJobs(ctx context.Context, req *pb.ClientJobsRequest) (*pb.F
 	out := &pb.FleetJobsResponse{}
 	if h := d.s.optionalHub(ctx); h != nil {
 		cctx, cancel := context.WithTimeout(ctx, hubTimeout)
-		r, err := h.Fleet().ListJobs(cctx, &pb.FleetJobsRequest{Worker: req.Worker, States: states})
+		r, err := myHubJobs(cctx, h.Fleet().ListJobs, req, states, me)
 		cancel()
 		if err == nil {
 			for _, j := range r.Jobs {
@@ -316,6 +317,25 @@ func (d *daemon) ListJobs(ctx context.Context, req *pb.ClientJobsRequest) (*pb.F
 		return out.Jobs[i].Job.GetCreatedAt().AsTime().After(out.Jobs[j].Job.GetCreatedAt().AsTime())
 	})
 	return limitJobs(out, req.Limit), nil
+}
+
+// myHubJobs asks the hub for the jobs of req, letting it filter and limit:
+// "my jobs" (the tray polls it every few seconds) must not fetch every job
+// the caller may see. A hub without submitted_by limited the whole list
+// instead: when that may have cut some of ours off, it asks again without
+// the limit (the caller filters and limits what comes back either way).
+func myHubJobs(ctx context.Context, list func(context.Context, *pb.FleetJobsRequest, ...grpc.CallOption) (*pb.FleetJobsResponse, error),
+	req *pb.ClientJobsRequest, states []pb.JobState, me string) (*pb.FleetJobsResponse, error) {
+	fr := &pb.FleetJobsRequest{Worker: req.Worker, States: states, Limit: req.Limit}
+	if req.Mine {
+		fr.SubmittedBy = me
+	}
+	r, err := list(ctx, fr)
+	if err == nil && req.Mine && !r.SubmittedByApplied && fr.Limit > 0 && len(r.Jobs) >= int(fr.Limit) {
+		fr.Limit = 0
+		r, err = list(ctx, fr)
+	}
+	return r, err
 }
 
 func limitJobs(r *pb.FleetJobsResponse, limit int32) *pb.FleetJobsResponse {

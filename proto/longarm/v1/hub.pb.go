@@ -4951,10 +4951,13 @@ func (x *FleetJob) GetWorkerId() string {
 }
 
 type FleetJobsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Worker        string                 `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"` // "" = all; a target: name, ID, ID prefix, id:<prefix>, name:<name>
-	States        []JobState             `protobuf:"varint,2,rep,packed,name=states,proto3,enum=longarm.v1.JobState" json:"states,omitempty"`
-	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Worker string                 `protobuf:"bytes,1,opt,name=worker,proto3" json:"worker,omitempty"` // "" = all; a target: name, ID, ID prefix, id:<prefix>, name:<name>
+	States []JobState             `protobuf:"varint,2,rep,packed,name=states,proto3,enum=longarm.v1.JobState" json:"states,omitempty"`
+	Limit  int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"` // applied after every filter
+	// Only jobs whose spec.submitted_by is this ("" = all) - "my jobs"
+	// without the hub sending everyone else's (limit counts these only).
+	SubmittedBy   string `protobuf:"bytes,4,opt,name=submitted_by,json=submittedBy,proto3" json:"submitted_by,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5010,11 +5013,21 @@ func (x *FleetJobsRequest) GetLimit() int32 {
 	return 0
 }
 
+func (x *FleetJobsRequest) GetSubmittedBy() string {
+	if x != nil {
+		return x.SubmittedBy
+	}
+	return ""
+}
+
 type FleetJobsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Jobs          []*FleetJob            `protobuf:"bytes,1,rep,name=jobs,proto3" json:"jobs,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Jobs  []*FleetJob            `protobuf:"bytes,1,rep,name=jobs,proto3" json:"jobs,omitempty"`
+	// The hub applied submitted_by (older hubs ignore it, and their limit
+	// then counts other submitters' jobs too).
+	SubmittedByApplied bool `protobuf:"varint,2,opt,name=submitted_by_applied,json=submittedByApplied,proto3" json:"submitted_by_applied,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *FleetJobsResponse) Reset() {
@@ -5052,6 +5065,13 @@ func (x *FleetJobsResponse) GetJobs() []*FleetJob {
 		return x.Jobs
 	}
 	return nil
+}
+
+func (x *FleetJobsResponse) GetSubmittedByApplied() bool {
+	if x != nil {
+		return x.SubmittedByApplied
+	}
+	return false
 }
 
 type FleetJobRequest struct {
@@ -12172,13 +12192,15 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\n" +
 	"updated_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12#\n" +
 	"\rworker_online\x18\x04 \x01(\bR\fworkerOnline\x12\x1b\n" +
-	"\tworker_id\x18\x05 \x01(\tR\bworkerId\"n\n" +
+	"\tworker_id\x18\x05 \x01(\tR\bworkerId\"\x91\x01\n" +
 	"\x10FleetJobsRequest\x12\x16\n" +
 	"\x06worker\x18\x01 \x01(\tR\x06worker\x12,\n" +
 	"\x06states\x18\x02 \x03(\x0e2\x14.longarm.v1.JobStateR\x06states\x12\x14\n" +
-	"\x05limit\x18\x03 \x01(\x05R\x05limit\"=\n" +
+	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12!\n" +
+	"\fsubmitted_by\x18\x04 \x01(\tR\vsubmittedBy\"o\n" +
 	"\x11FleetJobsResponse\x12(\n" +
-	"\x04jobs\x18\x01 \x03(\v2\x14.longarm.v1.FleetJobR\x04jobs\"9\n" +
+	"\x04jobs\x18\x01 \x03(\v2\x14.longarm.v1.FleetJobR\x04jobs\x120\n" +
+	"\x14submitted_by_applied\x18\x02 \x01(\bR\x12submittedByApplied\"9\n" +
 	"\x0fFleetJobRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06worker\x18\x02 \x01(\tR\x06worker\"<\n" +

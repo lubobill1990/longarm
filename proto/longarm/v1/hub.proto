@@ -827,11 +827,17 @@ message FleetJob {
 message FleetJobsRequest {
   string worker = 1; // "" = all; a target: name, ID, ID prefix, id:<prefix>, name:<name>
   repeated JobState states = 2;
-  int32 limit = 3;
+  int32 limit = 3; // applied after every filter
+  // Only jobs whose spec.submitted_by is this ("" = all) - "my jobs"
+  // without the hub sending everyone else's (limit counts these only).
+  string submitted_by = 4;
 }
 
 message FleetJobsResponse {
   repeated FleetJob jobs = 1;
+  // The hub applied submitted_by (older hubs ignore it, and their limit
+  // then counts other submitters' jobs too).
+  bool submitted_by_applied = 2;
 }
 
 message FleetJobRequest {
