@@ -62,8 +62,7 @@ func servableFile(name string) bool {
 // AddRelease imports the release files in dir as version on channel (the
 // CLI's `longarm-hub release add`): into the data dir and, with [releases]
 // blob_url, the blob container. With [releases] public_key set, every
-// signature present must verify and update binaries (longarmd, longarm,
-// longarm-tray) must be signed.
+// release file must carry a signature that verifies.
 func AddRelease(ctx context.Context, cfg *Config, st *store.Store, dir, version, channel string) ([]store.Release, error) {
 	rs, err := openReleaseStore(cfg, nil, nil)
 	if err != nil {
@@ -198,24 +197,24 @@ func readRelease(dir, version, channel string) ([]releaseItem, error) {
 }
 
 // verifyRelease checks the signatures against publicKey ("" = no checks):
-// every signature present must verify, and update binaries must be signed.
+// every release file must be signed, packages too: the install scripts run
+// them as root / an administrator on the hub's sha256 alone, so an unsigned
+// package would let a stolen release certificate ship code.
 func verifyRelease(items []releaseItem, version, publicKey string) error {
 	if publicKey == "" {
 		return nil
 	}
 	for _, it := range items {
 		r, name := it.r, it.r.File
-		switch {
-		case r.Sig != nil:
-			data, err := os.ReadFile(it.src)
-			if err != nil {
-				return err
-			}
-			if err := update.Verify(publicKey, data, r.Sig, name, version); err != nil {
-				return fmt.Errorf("refusing %s: %w", name, err)
-			}
-		case r.Kind == "binary" && isUpdateBinary(name):
+		if r.Sig == nil {
 			return fmt.Errorf("refusing %s: no %s signature (sign with `longarm admin release sign` or `longarm-hub release sign`)", name, update.SigExt)
+		}
+		data, err := os.ReadFile(it.src)
+		if err != nil {
+			return err
+		}
+		if err := update.Verify(publicKey, data, r.Sig, name, version); err != nil {
+			return fmt.Errorf("refusing %s: %w", name, err)
 		}
 	}
 	return nil

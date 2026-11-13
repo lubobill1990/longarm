@@ -55,6 +55,9 @@ var azNeedsLogin = regexp.MustCompile(`(?i)az login|MSAL cache|AADSTS|not logged
 // sign-in (a service principal's failures are neither: CI shouldn't fall
 // back to a flow that waits for a person).
 func AzToken(ctx context.Context, info *pb.AuthInfoResponse, scope string) (string, error) {
+	if err := checkAuthInfo(info); err != nil {
+		return "", err
+	}
 	tenant := info.EntraTenantId
 	hint := fmt.Sprintf("sign in to Azure first:\n  az login --tenant %s --scope %s\nthen run login again", tenant, info.EntraScope)
 	az, err := FindAz()
@@ -96,6 +99,30 @@ func AzToken(ctx context.Context, info *pb.AuthInfoResponse, scope string) (stri
 		return "", fmt.Errorf("az account get-access-token: %v: %s\n(%s)", err, msg, hint)
 	}
 	return "", fmt.Errorf("az account get-access-token: %v (%s)", err, hint)
+}
+
+var (
+	guidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	// scopeNameRE: the hub's [auth.entra] scope (hub entraScopeRE), or .default
+	scopeNameRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+)
+
+// checkAuthInfo refuses a hub's sign-in parameters that are not what a
+// hub sends (hub.EntraConfig: GUIDs, api://<client id>/<scope>): az
+// would hand a token for any resource - Azure management, say - to
+// whichever hub asked.
+func checkAuthInfo(info *pb.AuthInfoResponse) error {
+	if !guidRE.MatchString(info.EntraTenantId) || !guidRE.MatchString(info.EntraClientId) {
+		return fmt.Errorf("the hub's Entra sign-in settings are invalid (tenant %q, client id %q: want GUIDs)", info.EntraTenantId, info.EntraClientId)
+	}
+	if info.EntraScope == "" {
+		return nil
+	}
+	name, ok := strings.CutPrefix(info.EntraScope, "api://"+info.EntraClientId+"/")
+	if !ok || !scopeNameRE.MatchString(name) {
+		return fmt.Errorf("the hub asks for a token for %q, not for its own app (api://%s/<scope>): refused", info.EntraScope, info.EntraClientId)
+	}
+	return nil
 }
 
 // azRun runs az and returns its trimmed output ("" on failure).

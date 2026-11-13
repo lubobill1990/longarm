@@ -191,7 +191,8 @@ const EnvTailscaleSecret = "LONGARM_HUB_TAILSCALE_OAUTH_SECRET"
 // ReleaseConfig is [releases] (self-update, P2).
 type ReleaseConfig struct {
 	// PublicKey is the minisign public key releases are signed with. When
-	// set, `release add` refuses binaries whose signature doesn't verify
+	// set, `release add` refuses files (binaries and packages) without a
+	// signature that verifies
 	// (workers always verify against the key built into them).
 	PublicKey string `toml:"public_key"`
 	// BlobURL keeps the release files in an Azure Blob Storage container

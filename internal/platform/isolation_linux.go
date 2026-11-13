@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 
+	"golang.org/x/sys/unix"
+
 	impl "longarm/internal/platform/linux"
 )
 
@@ -28,31 +30,33 @@ func DeleteAccount(name string) error { return impl.DeleteAccount(name) }
 func AccountEnv(a *Account) ([]string, error) { return impl.AccountEnv(a) }
 
 // SecureUserDir creates dir owned by a with mode 0700.
-func SecureUserDir(dir string, a *Account) error {
-	if err := secureDirNoLinks(dir); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	if err := os.Lchown(dir, a.UID, a.GID); err != nil {
-		return err
-	}
-	return os.Chmod(dir, 0o700)
-}
+func SecureUserDir(dir string, a *Account) error { return secureDirOwner(dir, a.UID, a.GID) }
 
 // SecurePrivateDir creates dir accessible to root only (0700).
-func SecurePrivateDir(dir string) error {
+func SecurePrivateDir(dir string) error { return secureDirOwner(dir, 0, 0) }
+
+// secureDirOwner creates dir owned by uid:gid with mode 0700 - through an
+// fd of the dir itself: a symlink a user swapped in after the check (in a
+// parent the user owns) is refused, not followed to what it points at.
+func secureDirOwner(dir string, uid, gid int) error {
 	if err := secureDirNoLinks(dir); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if err := os.Lchown(dir, 0, 0); err != nil {
-		return err
+	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return &os.PathError{Op: "open", Path: dir, Err: err}
 	}
-	return os.Chmod(dir, 0o700)
+	defer unix.Close(fd)
+	if err := unix.Fchown(fd, uid, gid); err != nil {
+		return &os.PathError{Op: "chown", Path: dir, Err: err}
+	}
+	if err := unix.Fchmod(fd, 0o700); err != nil {
+		return &os.PathError{Op: "chmod", Path: dir, Err: err}
+	}
+	return nil
 }
 
 // PortOwners reports who listens on TCP port: whether a process of a does

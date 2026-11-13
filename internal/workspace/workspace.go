@@ -31,6 +31,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"longarm/internal/jobs"
@@ -783,9 +784,11 @@ func removeAll(p string) error {
 	return err
 }
 
+// makeWritable chmods the regular files below root only: a symlink there
+// may point anywhere (/etc/shadow, for root under per-user isolation).
 func makeWritable(root string) {
 	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
+		if err == nil && d.Type().IsRegular() {
 			os.Chmod(p, 0o644)
 		}
 		return nil
@@ -845,22 +848,30 @@ func (s *Store) Stage(id, patch, untracked string) error {
 // uncommitted changes and the tar of untracked files - so that two uploads
 // of the same content compare equal whatever their staging ids: "sha256:"
 // and the hash of both parts, each with its length. A missing staging dir
-// hashes like empty parts; a bad id is "".
+// hashes like empty parts; a bad id is "". Only regular files count, and
+// a link can't point out of the staging dir: the parts may be a user's.
 func (s *Store) StagingDigest(id string) string {
 	if !jobs.ValidID(id) {
 		return ""
 	}
 	h := sha256.New()
-	patch, untracked := s.StagedFiles(id)
-	for _, p := range []string{patch, untracked} {
+	root, _ := os.OpenRoot(filepath.Join(s.Root, StagingDir))
+	for _, name := range []string{patchFile, untrackedTar} {
 		var n int64
-		if p != "" {
-			if f, err := os.Open(p); err == nil {
-				n, _ = io.Copy(h, f)
+		if root != nil {
+			// non-blocking: a FIFO doesn't hang the open (ignored on Windows)
+			f, err := root.OpenFile(filepath.Join(id, name), os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
+			if err == nil {
+				if fi, err := f.Stat(); err == nil && fi.Mode().IsRegular() {
+					n, _ = io.Copy(h, f)
+				}
 				f.Close()
 			}
 		}
 		fmt.Fprintf(h, "\x00%d\x00", n)
+	}
+	if root != nil {
+		root.Close()
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }

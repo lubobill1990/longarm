@@ -258,6 +258,49 @@
   the command to run in the release run's summary (`hub-manual`).
   docs/ci-cd.md "Release channels".
 
+### Security
+
+Fixes from a security review that change nothing for legitimate use
+(the rest: todo/security.md).
+
+- Per-user isolation: longarmd (root / SYSTEM) no longer follows a link a
+  user planted in their own directories. Windows: a user's directories get
+  their ACL at creation and through a handle on the directory itself, so a
+  junction swapped in can't hand the user ownership of another directory
+  (e.g. the install folder); Linux: the same through an fd (`fchown`,
+  `fchmod`); cleaning up a worktree makes only regular files writable
+  (it chmodded a symlink's target, e.g. /etc/shadow, 0644); a staging
+  digest reads only regular files inside the staging dir.
+- With `[releases] public_key`, the hub refuses every unsigned release
+  file, packages (MSI, deb, rpm, pkg, archives) too: the install scripts
+  run those as root / an administrator on the hub's sha256 alone, so a
+  stolen release certificate could ship code through them.
+- Handoff to this machine: commit ids from the source worker must be full
+  SHAs (a crafted one reached `git fetch` as an option, e.g.
+  `--upload-pack`), and its directory prefix must stay inside the
+  checkout.
+- Entra sign-in with az: the client asks only for the hub app's own scope
+  (`api://<client id>/<name>`, GUID tenant and client); a hub could ask for
+  an Azure Resource Manager or Graph token and receive it.
+- The hub ignores jobs a user's own worker reports for another user who
+  may not use it (they counted against that user's quota and showed in
+  their lists), and a report drops only reservations placed on that
+  worker; a worker's job index is capped.
+- Join codes, pairing codes and panel passwords are rate-limited per IPv6
+  /64, not per address.
+- The relay sends PeerGone to a worker only about workers it is paired
+  with (it told any node whether another user's worker was online), and
+  rate-limits NodeInfo and Ping frames.
+- Git credentials: a URL with a newline or NUL in its host, path or user
+  is refused before `git credential fill`.
+- Diagnostic and log scrubbing also catches credentials in any
+  `scheme://user:pass@` URL, `Authorization` headers printed by Go
+  (`map[Authorization:[Bearer …]]`), more token formats (GitLab, AWS,
+  Google API, Stripe, npm, Hugging Face, Slack) and config keys like
+  `database_url` or `*_key`.
+- Linux toolchain: Go is downloaded into a private temp dir and checked
+  against its published sha256 before it is installed.
+
 ### Added
 
 - A worker that updates shows as **updating**, not offline, for everyone

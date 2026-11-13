@@ -530,8 +530,12 @@ func (c *coder) upload(ctx context.Context) (*codeResult, error) {
 // relayToLocal brings a worker's snapshot here as a bundle.
 func (c *coder) relayToLocal(ctx context.Context) (*codeResult, error) {
 	lr := c.localRepo
-	// the base from the remote with your own git, when it is there (best effort)
-	if len(lr.existing(ctx, []string{c.base})) == 0 && lr.remote != "" {
+	// the base from the remote with your own git, when it is there (best effort);
+	// no "--" possible between remote and refspec: both must not look like options
+	if !fullSHA(c.base) || !fullSHA(c.snap) {
+		return nil, fmt.Errorf("%s sent %q / %q as the snapshot's commits", c.src.name, firstLines(c.snap, 1), firstLines(c.base, 1))
+	}
+	if len(lr.existing(ctx, []string{c.base})) == 0 && lr.remote != "" && !strings.HasPrefix(lr.remote, "-") {
 		lr.git(ctx, nil, nil, "fetch", "-q", "--no-tags", lr.remote, c.base)
 		c.refsLoaded = false
 	}

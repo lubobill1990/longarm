@@ -305,8 +305,14 @@ func (s *System) linux(ctx context.Context, tool, version string, log *slog.Logg
 		if v == "" {
 			return errors.New("go needs an explicit version (e.g. 1.24.3) on Linux")
 		}
-		arch := runtime.GOARCH
-		return sh(fmt.Sprintf("curl -fsSL https://go.dev/dl/go%s.linux-%s.tar.gz -o /tmp/go.tgz && rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && ln -sf /usr/local/go/bin/go /usr/local/bin/go", v, arch))
+		// a private temp dir (not a fixed /tmp name a local user could
+		// plant), and the tarball checked against Go's published sha256
+		f := fmt.Sprintf("go%s.linux-%s.tar.gz", v, runtime.GOARCH)
+		return sh(`d=$(mktemp -d) && trap 'rm -rf "$d"' EXIT && ` +
+			`curl -fsSL https://go.dev/dl/` + f + ` -o "$d/go.tgz" && ` +
+			`sum=$(curl -fsSL https://dl.google.com/go/` + f + `.sha256) && ` +
+			`echo "$sum  $d/go.tgz" | sha256sum -c - && ` +
+			`rm -rf /usr/local/go && tar -C /usr/local -xzf "$d/go.tgz" && ln -sf /usr/local/go/bin/go /usr/local/bin/go`)
 	}
 	return fmt.Errorf("don't know how to install %s on Linux", tool)
 }

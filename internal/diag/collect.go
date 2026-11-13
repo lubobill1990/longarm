@@ -372,8 +372,13 @@ func RotatedGlob(pattern string) []string {
 // ---------------------------------------------------------------- config
 
 // secretKeyRE matches TOML keys whose values are secrets (or name where
-// one is kept): their values are replaced by "<removed>".
-var secretKeyRE = regexp.MustCompile(`(?i)(pass(word|wd|phrase)?|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|account[_-]?key|credential|cookie|sas|signature|conn(ection)?[_-]?string|auth[_-]?key|instrumentation[_-]?key|webhook)`)
+// one is kept): their values are replaced by "<removed>". Also any
+// "*_key" (openai_key) but public_key: see secretKey.
+var secretKeyRE = regexp.MustCompile(`(?i)(pass(word|wd|phrase)?|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|account[_-]?key|credential|cookie|sas|signature|conn(ection)?[_-]?string|auth[_-]?key|instrumentation[_-]?key|webhook|dsn|database[_-]?url)|(^|[_-])key$`)
+
+func secretKey(k string) bool {
+	return secretKeyRE.MatchString(k) && !strings.EqualFold(k, "public_key")
+}
 
 // RemovedValue replaces secret values in configuration files.
 const RemovedValue = "<removed>"
@@ -400,7 +405,7 @@ func sanitizeValue(v any) int {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, val := range t {
-			if secretKeyRE.MatchString(k) {
+			if secretKey(k) {
 				if s, ok := val.(string); ok && s == "" {
 					continue
 				}

@@ -157,6 +157,22 @@ func TestOlderVersion(t *testing.T) {
 	}
 }
 
+// TestHandoffValidPrefix: a source's --show-prefix must not leave the
+// target's worktree.
+func TestHandoffValidPrefix(t *testing.T) {
+	for _, p := range []string{"", "sub/", "a/b c/", "über/x/", "a..b/", ".github/"} {
+		if !validPrefix(p) {
+			t.Errorf("validPrefix(%q) = false", p)
+		}
+	}
+	for _, p := range []string{"sub", "/", "../", "../../x/", "a/../b/", "./a/", "a//b/", "/etc/", "C:/x/", "c:x/",
+		`a\b/`, `\\host\share/`, "a\x00b/", "a/./"} {
+		if validPrefix(p) {
+			t.Errorf("validPrefix(%q) = true", p)
+		}
+	}
+}
+
 func writeFileT(t *testing.T, p, s string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {

@@ -284,6 +284,19 @@ func TestAcquireGeneric(t *testing.T) {
 			t.Errorf("%s: accepted", bad)
 		}
 	}
+	// no keys smuggled into git's credential protocol
+	t.Setenv("FAKE_GIT_FAIL", "")
+	t.Setenv("FAKE_GIT_OUT", "username=u\npassword="+fakeToken+"\n")
+	os.Remove(log)
+	for _, bad := range []string{"https://git.example.com/r%0Ahost=evil.example.com", "https://git.example.com/r%0D%0Aurl=x",
+		"https://a%0Ahost=evil.example.com@git.example.com/r", "https://git.example.com/r%00"} {
+		if _, err := a.Acquire(ctx, bad); err == nil {
+			t.Errorf("%s: accepted", bad)
+		}
+	}
+	if calls := readLog(t, log); strings.Contains(calls, "evil") || strings.Contains(calls, "credential") {
+		t.Fatalf("calls:\n%s", calls)
+	}
 }
 
 func TestHTTPSURL(t *testing.T) {

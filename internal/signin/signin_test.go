@@ -60,7 +60,7 @@ func (f *fakeAz) lastCall(t *testing.T) string {
 
 func TestAzAccessToken(t *testing.T) {
 	az := newFakeAz(t)
-	info := &pb.AuthInfoResponse{EntraTenantId: "tttt", EntraClientId: "cccc", EntraScope: "api://cccc/longarm.connect"}
+	info := &pb.AuthInfoResponse{EntraTenantId: "11111111-2222-4333-8444-555555555555", EntraClientId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", EntraScope: "api://aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/longarm.connect"}
 	ctx := context.Background()
 
 	// a user: the delegated scope, in the hub's tenant
@@ -68,14 +68,14 @@ func TestAzAccessToken(t *testing.T) {
 	if err != nil || tok != "fake-access-token" {
 		t.Fatalf("token %q %v", tok, err)
 	}
-	if call := az.lastCall(t); !strings.Contains(call, "get-access-token --scope api://cccc/longarm.connect") || !strings.Contains(call, "--tenant tttt") {
+	if call := az.lastCall(t); !strings.Contains(call, "get-access-token --scope api://aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/longarm.connect") || !strings.Contains(call, "--tenant 11111111-2222-4333-8444-555555555555") {
 		t.Fatalf("az %s", call)
 	}
 	// --scope overrides
-	if _, err := AzToken(ctx, info, "api://cccc/other"); err != nil {
+	if _, err := AzToken(ctx, info, "api://aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/other"); err != nil {
 		t.Fatal(err)
 	}
-	if call := az.lastCall(t); !strings.Contains(call, "--scope api://cccc/other") {
+	if call := az.lastCall(t); !strings.Contains(call, "--scope api://aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/other") {
 		t.Fatalf("az %s", call)
 	}
 	// a service principal (CI): app-only token for .default, no --tenant
@@ -83,14 +83,14 @@ func TestAzAccessToken(t *testing.T) {
 	if _, err := AzToken(ctx, info, ""); err != nil {
 		t.Fatal(err)
 	}
-	if call := az.lastCall(t); !strings.Contains(call, "--scope api://cccc/.default") || strings.Contains(call, "--tenant") {
+	if call := az.lastCall(t); !strings.Contains(call, "--scope api://aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/.default") || strings.Contains(call, "--tenant") {
 		t.Fatalf("az %s", call)
 	}
 	// not signed in: the exact az login to run
 	az.set("type.txt", "user")
 	az.set("fail.txt", "ERROR: AADSTS70043: The refresh token has expired. Please run 'az login' to setup account.")
 	_, err = AzToken(ctx, info, "")
-	if err == nil || !strings.Contains(err.Error(), "az login --tenant tttt --scope api://cccc/longarm.connect") || !Fallback(err) {
+	if err == nil || !strings.Contains(err.Error(), "az login --tenant 11111111-2222-4333-8444-555555555555 --scope api://aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/longarm.connect") || !Fallback(err) {
 		t.Fatalf("not signed in: %v", err)
 	}
 	// other failures keep az's message
@@ -100,8 +100,37 @@ func TestAzAccessToken(t *testing.T) {
 	}
 	// no az at all
 	t.Setenv(EnvAz, filepath.Join(az.dir, "missing"))
-	if _, err = AzToken(ctx, info, ""); err == nil || !strings.Contains(err.Error(), "az login --tenant tttt") || !errors.Is(err, ErrNoAz) {
+	if _, err = AzToken(ctx, info, ""); err == nil || !strings.Contains(err.Error(), "az login --tenant 11111111-2222-4333-8444-555555555555") || !errors.Is(err, ErrNoAz) {
 		t.Fatalf("missing az: %v", err)
+	}
+}
+
+// A hub gets tokens for its own app only: az is not even asked for another
+// resource's (Azure management, Graph, another app's).
+func TestAzRefusesForeignScope(t *testing.T) {
+	az := newFakeAz(t)
+	const tenant, client = "11111111-2222-4333-8444-555555555555", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	for _, info := range []*pb.AuthInfoResponse{
+		{EntraTenantId: tenant, EntraClientId: client, EntraScope: "https://management.azure.com/.default"},
+		{EntraTenantId: tenant, EntraClientId: client, EntraScope: "https://graph.microsoft.com/Mail.Read"},
+		{EntraTenantId: tenant, EntraClientId: client, EntraScope: "api://bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee/longarm.connect"},
+		{EntraTenantId: tenant, EntraClientId: client, EntraScope: "api://" + client + "/a/b"},
+		{EntraTenantId: tenant, EntraClientId: client, EntraScope: "api://" + client + "/x --scope https://management.azure.com/.default"},
+		{EntraTenantId: tenant, EntraClientId: "https://management.azure.com", EntraScope: "api://https://management.azure.com/.default"},
+		{EntraTenantId: "common --allow-no-subscriptions", EntraClientId: client, EntraScope: "api://" + client + "/longarm.connect"},
+	} {
+		if _, err := AzToken(context.Background(), info, ""); err == nil || Fallback(err) {
+			t.Errorf("%v: %v", info, err)
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(az.dir, "args.txt")); len(b) != 0 {
+		t.Fatalf("az was run: %s", b)
+	}
+	for _, s := range []string{"longarm.connect", ".default"} {
+		info := &pb.AuthInfoResponse{EntraTenantId: tenant, EntraClientId: client, EntraScope: "api://" + client + "/" + s}
+		if _, err := AzToken(context.Background(), info, ""); err != nil {
+			t.Errorf("%s: %v", s, err)
+		}
 	}
 }
 
@@ -110,7 +139,7 @@ func TestAzServicePrincipalNoFallback(t *testing.T) {
 	az := newFakeAz(t)
 	az.set("type.txt", "servicePrincipal")
 	az.set("fail.txt", "ERROR: AADSTS7000215: Invalid client secret provided. Please run 'az login'.")
-	_, err := AzToken(context.Background(), &pb.AuthInfoResponse{EntraTenantId: "tttt", EntraClientId: "cccc"}, "")
+	_, err := AzToken(context.Background(), &pb.AuthInfoResponse{EntraTenantId: "11111111-2222-4333-8444-555555555555", EntraClientId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}, "")
 	if err == nil || Fallback(err) || !strings.Contains(err.Error(), "service principal") {
 		t.Fatalf("service principal failure: %v", err)
 	}

@@ -22,6 +22,7 @@ import (
 	"longarm/internal/machine"
 	"longarm/internal/pki"
 	"longarm/internal/sched"
+	"longarm/internal/tenancy"
 	pb "longarm/proto/longarm/v1"
 )
 
@@ -286,6 +287,27 @@ func (h *Hub) handleReport(n *node, sess *nodeSession, m *pb.NodeReport) {
 	}
 }
 
+// maxWorkerJobs caps one worker's entries in the job index.
+const maxWorkerJobs = 20000
+
+// jobOwnerFitsLocked reports whether a job new to the index may enter it.
+// A user's own worker is that user's machine: it may not report jobs of
+// another hub user who can't use it (they would count against that user's
+// quota and show in their lists); jobs already indexed stay (a share taken
+// back doesn't hide what still runs).
+func (h *Hub) jobOwnerFitsLocked(n *node, j *pb.Job, indexed int) bool {
+	if indexed >= maxWorkerJobs {
+		h.log.Debug("job index full: job ignored", "node", n.rec.Name, "job", j.GetSpec().GetId())
+		return false
+	}
+	o := tenancy.OwnerOf(j.GetSpec())
+	if n.rec.Owner == "" || o == "" || o == n.rec.Owner || h.tenants[o] == nil || h.mayUseLocked(o, n) {
+		return true
+	}
+	h.log.Debug("job of a user who may not use the worker: ignored", "node", n.rec.Name, "job", j.GetSpec().GetId(), "owner", o)
+	return false
+}
+
 // applyJobsLocked merges a jobs report into the index (worker = source of
 // truth) and publishes changes.
 func (h *Hub) applyJobsLocked(n *node, rep *pb.JobsReport) {
@@ -300,10 +322,14 @@ func (h *Hub) applyJobsLocked(n *node, rep *pb.JobsReport) {
 			continue
 		}
 		seen[id] = true
-		if r := h.reservations[id]; r != nil { // the placement turned into a job
+		old := jm[id]
+		if old == nil && !h.jobOwnerFitsLocked(n, j, len(jm)) {
+			continue
+		}
+		if r := h.reservations[id]; r != nil && r.worker == worker { // the placement turned into a job
 			delete(h.reservations, id)
 		}
-		if old := jm[id]; old != nil && proto.Equal(old.job, j) {
+		if old != nil && proto.Equal(old.job, j) {
 			continue
 		}
 		jm[id] = &jobEntry{job: j, updated: now}

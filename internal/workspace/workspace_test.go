@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -266,4 +268,64 @@ func TestExtractTarRefusesSymlinkedParents(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(outside, "x")); err == nil {
 		t.Fatal("file written outside the destination")
 	}
+}
+
+// TestMakeWritableSkipsSymlinks: a link's target keeps its mode.
+func TestMakeWritableSkipsSymlinks(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	target := filepath.Join(outside, "secret")
+	if err := os.WriteFile(target, nil, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(target, 0o600) })
+	if err := os.Symlink(target, filepath.Join(dir, "link")); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	ro := filepath.Join(dir, "pack")
+	if err := os.WriteFile(ro, nil, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	makeWritable(dir)
+	if fi, err := os.Stat(target); err != nil || fi.Mode().Perm()&0o200 != 0 {
+		t.Fatalf("link target: %v %v", fi.Mode(), err)
+	}
+	if fi, err := os.Stat(ro); err != nil || fi.Mode().Perm()&0o200 == 0 {
+		t.Fatalf("regular file not made writable: %v %v", fi.Mode(), err)
+	}
+}
+
+// TestStagingDigestRegularOnly: the digest hashes the staged regular
+// files; a link out of the staging dir hashes like a missing part.
+func TestStagingDigestRegularOnly(t *testing.T) {
+	s := &Store{Root: t.TempDir()}
+	a, b := "01STAGEAAAAAAAAAAAAAAAAAAA", "01STAGEBBBBBBBBBBBBBBBBBBB"
+	empty := s.StagingDigest(a)
+	if err := os.MkdirAll(s.StagingPath(a), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.StagingPath(a), patchFile), []byte("diff"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// sha256 of "diff" \0 4 \0 + "\0" 0 "\0"
+	if got := s.StagingDigest(a); got != "sha256:"+sha256Hex("diff\x004\x00\x000\x00") {
+		t.Errorf("digest %s", got)
+	}
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(s.StagingPath(b), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(s.StagingPath(b), patchFile)); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	if got := s.StagingDigest(b); got != empty {
+		t.Errorf("a link out of staging was hashed: %s", got)
+	}
+}
+
+func sha256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
 }

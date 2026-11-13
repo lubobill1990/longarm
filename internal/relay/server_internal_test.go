@@ -141,3 +141,93 @@ func TestRegisterAdmit(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// PeerGone never tells a worker whether a worker it may not reach is
+// online: offline and online look the same (silence) unless the two are
+// paired. Clients hear PeerGone for every id they can't reach, worker or
+// not, so a dial to a missing worker still fails fast.
+func TestPeerGonePolicy(t *testing.T) {
+	s := &Server{}
+	s.init()
+	defer s.Close()
+	mk := func(id pki.Identity) *session {
+		ss := s.newSession(id, nil, "tcp", netip.MustParseAddrPort("198.51.100.1:1"), Hello{})
+		ss.kick = func(string) {}
+		if err := s.register(ss); err != nil {
+			t.Fatal(err)
+		}
+		return ss
+	}
+	w := mk(pki.Identity{Role: pki.RoleWorker, Name: "w1"})
+	other := mk(pki.Identity{Role: pki.RoleWorker, Name: "other"}) // online, not paired
+	c := mk(pki.Identity{Role: pki.RoleClient, Name: "alice"})
+	c2 := mk(pki.Identity{Role: pki.RoleClient, Name: "bob"})
+	s.SetWorkerPairs([]WorkerPair{{A: "w1", B: "peer"}})
+	gone := func(ss *session) bool {
+		t.Helper()
+		for {
+			select {
+			case f := <-ss.ctrl:
+				if f[0] == FramePeerGone {
+					return true
+				}
+			default:
+				return false
+			}
+		}
+	}
+	try := func(name string, from *session, dst ID, want bool) {
+		t.Helper()
+		from.goneAt = map[ID]time.Time{}
+		s.forward(from, dst, []byte("x"))
+		if got := gone(from); got != want {
+			t.Errorf("%s: packet: PeerGone %v, want %v", name, got, want)
+		}
+		from.goneAt = map[ID]time.Time{}
+		p, _ := json.Marshal(CallMeMaybe{Peer: dst.String()})
+		if err := s.handleCtrl(from, FrameCallMeMaybe, p); err != nil {
+			t.Fatal(err)
+		}
+		if got := gone(from); got != want {
+			t.Errorf("%s: CallMeMaybe: PeerGone %v, want %v", name, got, want)
+		}
+	}
+	try("worker -> paired offline worker", w, WorkerID("peer"), true)
+	try("worker -> unpaired offline worker", w, WorkerID("stranger"), false)
+	try("worker -> unpaired online worker", w, other.id, false)
+	try("worker -> offline client", w, NodeID(pki.Identity{Role: pki.RoleClient, Name: "x"}, "i"), false)
+	try("client -> offline worker", c, WorkerID("nobody"), true)
+	try("client -> online client", c, c2.id, true) // like an offline one
+	try("paired worker -> worker", mk(pki.Identity{Role: pki.RoleWorker, Name: "peer"}), w.id, false)
+	if len(w.data) != 1 {
+		t.Fatalf("paired packet not forwarded: %d", len(w.data))
+	}
+}
+
+// NodeInfo and Ping are rate-limited per session: each NodeInfo rescans
+// every session (updateSNAT).
+func TestCtrlRateLimit(t *testing.T) {
+	s := &Server{}
+	s.init()
+	defer s.Close()
+	ss := s.newSession(pki.Identity{Role: pki.RoleClient, Name: "c"}, nil, "tcp", netip.AddrPort{}, Hello{})
+	ss.kick = func(string) {}
+	if err := s.register(ss); err != nil {
+		t.Fatal(err)
+	}
+	ni, _ := json.Marshal(NodeInfo{NAT: NATEasy})
+	for range 100 {
+		if err := s.handleCtrl(ss, FrameNodeInfo, ni); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.handleCtrl(ss, FramePing, make([]byte, 8)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if d := s.dropRate.Load(); d < 150 {
+		t.Fatalf("dropped %d of 200", d)
+	}
+	if n := len(ss.ctrl); n == 0 || n > ctrlBurst+2 {
+		t.Fatalf("%d pongs", n)
+	}
+}

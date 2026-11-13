@@ -133,22 +133,46 @@ func pairKeys(name, id string) []string {
 	return ks
 }
 
+// workerPolicy is what SetWorkerPairs keeps: the pairs, and per worker key
+// the routing ids of its peers (by their pair names) - the offline ids a
+// worker may hear PeerGone about.
+type workerPolicy struct {
+	pairs map[pairKey]struct{}
+	peers map[string]map[ID]struct{}
+}
+
 // SetWorkerPairs replaces the worker pairs that may talk to each other
 // through the relay (both directions): the hub passes the pairs of its
 // active port links and handoffs and updates them on every change.
 // Default: none - a standalone longarm-relay never relays between workers.
 func (s *Server) SetWorkerPairs(pairs []WorkerPair) {
-	m := make(map[pairKey]struct{}, len(pairs))
+	wp := &workerPolicy{pairs: make(map[pairKey]struct{}, len(pairs)), peers: map[string]map[ID]struct{}{}}
+	addPeer := func(keys []string, name string) {
+		if name == "" {
+			return
+		}
+		for _, k := range keys {
+			if wp.peers[k] == nil {
+				wp.peers[k] = map[ID]struct{}{}
+			}
+			wp.peers[k][WorkerID(name)] = struct{}{}
+		}
+	}
 	for _, p := range pairs {
-		for _, a := range pairKeys(p.A, p.AID) {
-			for _, b := range pairKeys(p.B, p.BID) {
+		ka, kb := pairKeys(p.A, p.AID), pairKeys(p.B, p.BID)
+		for _, a := range ka {
+			for _, b := range kb {
 				if a != b {
-					m[newPairKey(a, b)] = struct{}{}
+					wp.pairs[newPairKey(a, b)] = struct{}{}
 				}
 			}
 		}
+		if p.A != p.B {
+			addPeer(ka, p.B)
+			addPeer(kb, p.A)
+		}
 	}
-	s.workerPairs.Store(&m)
+	s.workerPairs.Store(wp)
 }
 
 // allowed is the forwarding policy between two authenticated nodes.
@@ -160,10 +184,29 @@ func (s *Server) allowed(a, b pki.Identity) bool {
 	if a.Role != pki.RoleWorker || b.Role != pki.RoleWorker || ka == kb || a.Name == b.Name {
 		return false
 	}
-	m := s.workerPairs.Load()
-	if m == nil {
+	wp := s.workerPairs.Load()
+	if wp == nil {
 		return false
 	}
-	_, ok := (*m)[newPairKey(ka, kb)]
+	_, ok := wp.pairs[newPairKey(ka, kb)]
+	return ok
+}
+
+// mayHearGone reports whether src may be told that dst is not connected
+// (PeerGone), without the relay knowing who dst would be. A worker only
+// about its paired workers: any other answer would tell it whether a worker
+// it may not reach (another user's) is online. Everything else may reach
+// every worker, whose ids it can't tell from other ids, so it hears PeerGone
+// for every id it can't reach: an unknown, an offline and a forbidden id
+// look the same (a client dialing a worker that isn't there fails fast).
+func (s *Server) mayHearGone(src pki.Identity, dst ID) bool {
+	if src.Role != pki.RoleWorker {
+		return true
+	}
+	wp := s.workerPairs.Load()
+	if wp == nil {
+		return false
+	}
+	_, ok := wp.peers[nodeKey(src)][dst]
 	return ok
 }
