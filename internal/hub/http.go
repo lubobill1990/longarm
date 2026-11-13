@@ -75,6 +75,7 @@ func (h *Hub) httpHandler() http.Handler {
 		mux.HandleFunc(pattern, h.requireUser(h.adminOnly(fn)))
 	}
 	api("POST /api/logout", h.apiLogout)
+	admin("GET /api/traffic", h.apiTraffic)
 	api("GET /api/me", func(w http.ResponseWriter, r *http.Request, user string) {
 		writeJSON(w, h.meInfo(r, user))
 	})
