@@ -76,6 +76,9 @@ type Server struct {
 	// that differ in port (better: in IP) let nodes detect whether their NAT
 	// mapping varies by destination.
 	STUN []string
+	// OnSessionEnd, if set, gets each session's final counters when it
+	// ends (traffic accounting that outlives the session).
+	OnSessionEnd func(SessionStats)
 
 	initOnce sync.Once
 	ctx      context.Context
@@ -572,6 +575,10 @@ func (s *Server) unregister(ss *session) {
 	s.updateSNAT()
 	s.Logger.Info("relay: session down", "node", ss.ident, "id", ss.id, "transport", ss.kind,
 		"bytes_in", ss.bytesIn.Load(), "bytes_out", ss.bytesOut.Load(), "duration", time.Since(ss.since).Round(time.Second))
+	if s.OnSessionEnd != nil {
+		s.OnSessionEnd(SessionStats{ID: ss.id.String(), Node: ss.ident.String(), Transport: ss.kind, Since: ss.since,
+			BytesIn: ss.bytesIn.Load(), BytesOut: ss.bytesOut.Load(), PacketsIn: ss.pktsIn.Load(), PacketsOut: ss.pktsOut.Load()})
+	}
 }
 
 func (s *Server) lookup(id ID) *session {

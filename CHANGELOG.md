@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Hub traffic accounting**: `GET /api/traffic` (panel administrators)
+  shows the hub's bytes each way per gRPC method and calling node, and per
+  node through the embedded relay (live and ended sessions; other users'
+  machines as one anonymous row); every 10 minutes the hub logs the
+  period's top talkers (`traffic: period` / `traffic: top`). For finding
+  what a cloud hub's egress bill is made of.
 - **`longarm speedtest <worker> [<worker2>]`** (MCP `fleet_speedtest`):
   throughput both ways between this machine and a worker, or between two
   workers over the path `longarm cp` takes, with the transport path

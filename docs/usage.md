@@ -2741,6 +2741,15 @@ user sees (its own and shared machines, fleet workers; its own jobs) and
 the "Fleet" page the whole fleet as counts per user, worker versions and,
 optionally, each user's versions (`GET /api/admin/summary`; aggregates
 only, no names, audited).
+**Hub traffic** (what the hub's egress is made of - a cloud hub pays for
+every byte it sends): `GET /api/traffic` (administrators) has the bytes
+each way since the hub started, per gRPC method and calling node (payload
+bytes, counted while streams flow) and per node through the embedded relay
+(live and ended sessions); machines the administrator's user may not see
+are folded into `(other users)`. Every 10 minutes the hub also logs the
+period's top talkers (`traffic: period` / `traffic: top`, with names), so
+`docker logs longarm-hub | grep traffic:` answers "who sends what" on the
+host.
 **The hub's links**: every link to the source repository and to feedback
 on the hub's pages and in longarm-tray follows the hub. `[web] repo_url`
 (`LONGARM_HUB_WEB_REPO_URL`; Azure: `--repo-url`) is the repository - the

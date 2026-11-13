@@ -136,12 +136,16 @@ func TestIdPAccountsScope(t *testing.T) {
 			t.Errorf("%s's certificate lists %v", a.user, mine)
 		}
 		// the panel session
-		for _, path := range []string{"/api/nodes?all=1", "/api/history", "/api/audit?limit=2000", "/api/links", "/api/joincodes", "/api/admin/summary?rows=1", "/api/users", "/api/tenants", "/api/me"} {
+		for _, path := range []string{"/api/nodes?all=1", "/api/history", "/api/audit?limit=2000", "/api/links", "/api/joincodes", "/api/admin/summary?rows=1", "/api/users", "/api/tenants", "/api/me", "/api/traffic"} {
 			resp, body := a.web.do("GET", path, nil, nil)
 			if bad := others(a, body); len(bad) > 0 {
 				t.Errorf("%s's panel %s (%d) names %v", a.user, path, resp.StatusCode, bad)
 			}
-			if path == "/api/admin/summary?rows=1" && (resp.StatusCode == http.StatusOK) != a.admin {
+			// traffic: the admin's own device shows by name (it just called ListNodes)
+			if path == "/api/traffic" && a.admin && !strings.Contains(body, a.pc) {
+				t.Errorf("%s's traffic lacks its device %s: %s", a.user, a.pc, body)
+			}
+			if (path == "/api/admin/summary?rows=1" || path == "/api/traffic") && (resp.StatusCode == http.StatusOK) != a.admin {
 				t.Errorf("%s's panel %s: %d", a.user, path, resp.StatusCode)
 			}
 		}

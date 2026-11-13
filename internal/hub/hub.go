@@ -114,6 +114,9 @@ type Hub struct {
 	started time.Time
 	relay   *relay.Server
 	telem   *hubTelemetry // nil = telemetry off (telemetry.go)
+	// traffic accounting (traffic.go)
+	traffic    *trafficStats
+	relayEnded relayEnded
 
 	addrMu sync.Mutex
 	addrs  map[string]string // "grpc", "http", "udp" -> bound address
@@ -192,6 +195,7 @@ func Open(cfg *Config, log *slog.Logger) (*Hub, error) {
 		pending: map[string]*pendingReq{}, links: map[string]*linkEntry{}, tenants: map[string]*tenant{}, portLinks: map[string]*portLinkEntry{},
 		started: time.Now(), addrs: map[string]string{}, entra: newEntraState(&cfg.Auth.Entra), pair: newPairing(),
 		idps: newIdProviders(&cfg.Auth), oidc: &oidcWeb{usedState: map[string]time.Time{}},
+		traffic: newTrafficStats(),
 	}
 	st.OnNodePut = h.indexNode
 	if h.tailnet, err = newTailnetProvider(cfg.Tailnet); err != nil {
@@ -474,8 +478,12 @@ func (h *Hub) Serve(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	if h.traffic == nil {
+		h.traffic = newTrafficStats()
+	}
 	g := grpc.NewServer(
 		grpc.Creds(h.conns.Wrap(credentials.NewTLS(h.apiTLS()))),
+		grpc.StatsHandler(h.traffic),
 		grpc.ChainUnaryInterceptor(tgrpc.UnaryServer(h.tel), h.unaryAuth),
 		grpc.ChainStreamInterceptor(tgrpc.StreamServer(h.tel), h.streamAuth),
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 30 * time.Second, Timeout: 20 * time.Second}),
@@ -533,7 +541,7 @@ func (h *Hub) Serve(ctx context.Context) error {
 					return fmt.Errorf("certificate %s is revoked", pki.Serial(c))
 				}
 				return nil
-			}}
+			}, OnSessionEnd: h.relayEnded.add}
 		if rate > 0 && rate < 64<<10 {
 			h.relay.Burst = 64 << 10
 		}
@@ -582,6 +590,7 @@ func (h *Hub) Serve(ctx context.Context) error {
 		h.mu.Unlock()
 	}
 	run("relay forget", func() error { h.runRelayForget(ctx); return nil })
+	run("traffic log", func() error { h.runTrafficLog(ctx); return nil })
 	h.mu.Lock()
 	h.relaySetChangedLocked() // the embedded relay's port is known now
 	h.mu.Unlock()
