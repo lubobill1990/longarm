@@ -626,12 +626,80 @@ jobs:
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber hub/* extra/* SHA256SUMS
 
+  # What this release changes of what runs (.github/scripts/affected.sh): the
+  # hub since the version its /healthz reports, the workers since the previous
+  # stable release. Unchanged: no hub deploy, no rollout - a release of tray UI
+  # changes doesn't restart the hub, a hub fix doesn't restart the fleet. The
+  # repository variable LONGARM_AFFECTED=all deploys and rolls out regardless.
+  affected:
+    name: affected (hub, workers)
+    needs: [meta]
+    if: needs.meta.outputs.dev == 'false' && needs.meta.outputs.dry_run == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      hub: ${{ steps.a.outputs.hub }}
+      workers: ${{ steps.a.outputs.workers }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the tags to compare with
+      - uses: ./.github/actions/go-setup
+        with:
+          cache: "false"
+      - id: a
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          LONGARM_HUB: ${{ vars.LONGARM_HUB }}
+          FORCE: ${{ vars.LONGARM_AFFECTED }}
+        run: |
+          hub=true workers=true why_hub="" why_workers=""
+          if [ "$FORCE" = all ]; then
+            why_hub="LONGARM_AFFECTED=all" why_workers="LONGARM_AFFECTED=all"
+          else
+            running=""
+            if [ -n "$LONGARM_HUB" ]; then
+              running=$(curl -fsS -m 15 "https://${LONGARM_HUB%:*}/healthz" | sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' | head -1) || true
+            fi
+            if [ -z "$running" ]; then
+              why_hub="the hub's version is not known"
+            elif ! .github/scripts/affected.sh changed hub "v$running" HEAD; then
+              hub=false why_hub="unchanged since v$running (what the hub runs)"
+            else
+              why_hub="changed since v$running (what the hub runs)"
+            fi
+            # the previous stable release (the fleet's), below this version
+            prev=$(git tag -l 'v[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' |
+              { cat; echo "$VERSION"; } | sort -V | awk -v v="$VERSION" '$0 == v { print p; exit } { p = $0 }')
+            if [ -z "$prev" ]; then
+              why_workers="no previous stable release"
+            elif ! .github/scripts/affected.sh changed workers "v$prev" HEAD; then
+              workers=false why_workers="unchanged since v$prev"
+            else
+              why_workers="changed since v$prev"
+            fi
+          fi
+          echo "hub=$hub" >>"$GITHUB_OUTPUT"
+          echo "workers=$workers" >>"$GITHUB_OUTPUT"
+          {
+            echo "### Affected ($VERSION)"
+            echo
+            echo "- hub deploy: $hub ($why_hub)"
+            echo "- worker rollout (stable releases): $workers ($why_workers)"
+          } >>"$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Affected::hub $hub ($why_hub); workers $workers ($why_workers)"
+
   hub:
     name: hub (longarm-hub over SSH forced command)
     # image: a hub that runs the container (deploy/hub/longarm-hub-deploy-docker) pulls it
-    needs: [meta, publish, image]
-    # the hub follows preview: release candidates and releases, never dev builds
-    if: needs.meta.outputs.dev == 'false' && needs.meta.outputs.dry_run == 'false' && vars.LONGARM_HUB != '' && vars.HUB_SSH != ''
+    needs: [meta, publish, image, affected]
+    # the hub follows preview: release candidates and releases, never dev builds;
+    # and only when the release changes it (affected)
+    if: needs.meta.outputs.dev == 'false' && needs.meta.outputs.dry_run == 'false' && vars.LONGARM_HUB != '' && vars.HUB_SSH != '' && needs.affected.outputs.hub == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -661,8 +729,8 @@ jobs:
   # to deploy it, with the image the image job pushed for this version.
   hub-manual:
     name: hub (deploy by hand)
-    needs: [meta, publish, image]
-    if: needs.meta.outputs.dev == 'false' && needs.meta.outputs.dry_run == 'false' && vars.HUB_SSH == ''
+    needs: [meta, publish, image, affected]
+    if: needs.meta.outputs.dev == 'false' && needs.meta.outputs.dry_run == 'false' && vars.HUB_SSH == '' && needs.affected.outputs.hub == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:
@@ -690,9 +758,10 @@ jobs:
 
   rollout:
     name: rollout (canary, then the fleet)
-    needs: [meta, publish, hub]
-    # after the hub deploy (or without one when HUB_SSH isn't set)
-    if: ${{ !cancelled() && needs.meta.outputs.prerelease == 'false' && needs.meta.outputs.dry_run == 'false' && vars.LONGARM_HUB != '' && needs.publish.result == 'success' && (needs.hub.result == 'success' || needs.hub.result == 'skipped') }}
+    needs: [meta, publish, hub, affected]
+    # after the hub deploy (or without one: no HUB_SSH, or the hub unchanged);
+    # only when the release changes what the workers run (affected)
+    if: ${{ !cancelled() && needs.meta.outputs.prerelease == 'false' && needs.meta.outputs.dry_run == 'false' && vars.LONGARM_HUB != '' && needs.publish.result == 'success' && (needs.hub.result == 'success' || needs.hub.result == 'skipped') && needs.affected.outputs.workers == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     defaults:
