@@ -121,3 +121,72 @@ func TestPruneReleases(t *testing.T) {
 		t.Error("re-publish after retention")
 	}
 }
+
+func TestReleaseKeepConfigLoad(t *testing.T) {
+	t.Setenv(EnvReleasesKeepDev, "7")
+	cfg := &Config{DataDir: t.TempDir()}
+	if err := cfg.applyDefaults(); err != nil || cfg.Releases.releaseKeep("dev") != 7 || cfg.Releases.releaseKeep("stable") != defaultKeepStable {
+		t.Fatalf("env: %v %v", cfg.Releases.KeepDev, err)
+	}
+	t.Setenv(EnvReleasesKeepDev, "")
+	neg := -1
+	cfg = &Config{DataDir: t.TempDir(), Releases: ReleaseConfig{KeepStable: &neg}}
+	if err := cfg.applyDefaults(); err == nil || !strings.Contains(err.Error(), "keep_stable") {
+		t.Fatalf("negative: %v", err)
+	}
+	t.Setenv(EnvReleasesKeepPreview, "many")
+	if err := (&Config{DataDir: t.TempDir()}).applyDefaults(); err == nil || !strings.Contains(err.Error(), EnvReleasesKeepPreview) {
+		t.Fatalf("not a number: %v", err)
+	}
+}
+
+// The files of versions the index doesn't list (a deletion that failed
+// half way, a cache download that ended after it) go in the next pass;
+// indexed versions' files stay. A version a rollout took meanwhile isn't
+// deleted.
+func TestPruneSweepAndRolloutRecheck(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	blob := newMemBlob()
+	data := t.TempDir()
+	rs, _ := testReleaseStore(t, data, blob)
+	files := map[string]string{"longarmd-linux-amd64": "x", "longarmd-linux-amd64.minisig": "sig"}
+	if _, err := addRelease(ctx, rs, st, releaseDir(t, files), "1.0.0-dev.1", "dev", "", false); err != nil {
+		t.Fatal(err)
+	}
+	// orphans: a data-dir copy and a blob of 0.9.0, nothing indexed
+	if err := os.MkdirAll(filepath.Join(data, ReleasesDir, "0.9.0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(data, ReleasesDir, "0.9.0", "longarmd-linux-amd64"), []byte("old"), 0o644)
+	blob.Put(ctx, "0.9.0/longarmd-linux-amd64", strings.NewReader("old"), 3, nil)
+	os.MkdirAll(filepath.Join(data, ReleasesDir, ".upload-123"), 0o755) // a publish staging its upload
+
+	h := &Hub{cfg: &Config{DataDir: data}, store: st, rel: rs, log: slog.New(slog.NewTextHandler(os.Stderr, nil))}
+	h.pruneReleasesOnce(ctx)
+	if _, err := os.Stat(filepath.Join(data, ReleasesDir, "0.9.0")); err == nil {
+		t.Error("orphan dir stays")
+	}
+	if slices.ContainsFunc(blob.names(), func(n string) bool { return strings.HasPrefix(n, "0.9.0/") }) {
+		t.Error("orphan blob stays")
+	}
+	if _, err := os.Stat(filepath.Join(data, ReleasesDir, "1.0.0-dev.1", "longarmd-linux-amd64")); err != nil {
+		t.Error("an indexed version's file went")
+	}
+	if _, err := os.Stat(filepath.Join(data, ReleasesDir, ".upload-123")); err != nil {
+		t.Error("a publish's staging dir went")
+	}
+
+	// the rollout check under the version's lock
+	h.rollout = &pb.Rollout{Version: "1.0.0-dev.1"}
+	if deleted, err := h.pruneVersion("1.0.0-dev.1"); deleted || err != nil {
+		t.Fatalf("deleted the rollout's version: %v %v", deleted, err)
+	}
+	if rels, _ := st.Releases(); len(rels) == 0 {
+		t.Fatal("index emptied")
+	}
+}

@@ -3833,8 +3833,13 @@ channel (default 3, 3, 5; 0 = every version) and deletes older ones - the
 index, the files in `<data_dir>/releases` and the blobs - after each
 publish and when it starts (log: "releases: deleted an old version
 (retention)"). The current rollout's version and the latest stable
-release always stay. Machines keep running what they have; a deleted
-version just can't be installed or rolled out any more.
+release always stay (a rollout started meanwhile is checked again under
+the version's lock). Each pass also deletes files in the data dir and the
+blob container of versions the index no longer lists - left by a
+deletion that failed half way. Env: `LONGARM_HUB_RELEASES_KEEP_DEV`,
+`_KEEP_PREVIEW`, `_KEEP_STABLE`; a negative value is refused. Machines
+keep running what they have; a deleted version just can't be installed
+or rolled out any more.
 
 Releases are signed with minisign; longarmd only installs binaries whose
 signature verifies against the public key built into it

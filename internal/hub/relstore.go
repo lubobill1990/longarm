@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,9 +51,33 @@ func (c *Config) releasesEnvDefaults() error {
 	if v, ok := os.LookupEnv(EnvReleasesGitHub); ok {
 		c.Releases.GitHub = strings.TrimSpace(v)
 	}
+	// retention (release_prune.go): env overrides, then >= 0
+	for _, k := range []struct {
+		env, key string
+		p        **int
+	}{{EnvReleasesKeepDev, "keep_dev", &c.Releases.KeepDev}, {EnvReleasesKeepPreview, "keep_preview", &c.Releases.KeepPreview},
+		{EnvReleasesKeepStable, "keep_stable", &c.Releases.KeepStable}} {
+		if v := strings.TrimSpace(os.Getenv(k.env)); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("%s %q: want a number (0 = keep every version)", k.env, v)
+			}
+			*k.p = &n
+		}
+		if *k.p != nil && **k.p < 0 {
+			return fmt.Errorf("[releases] %s = %d: want >= 0 (0 = keep every version)", k.key, **k.p)
+		}
+	}
 	_, err := ghRepo(c)
 	return err
 }
+
+// Env overrides of [releases] keep_dev / keep_preview / keep_stable.
+const (
+	EnvReleasesKeepDev     = "LONGARM_HUB_RELEASES_KEEP_DEV"
+	EnvReleasesKeepPreview = "LONGARM_HUB_RELEASES_KEEP_PREVIEW"
+	EnvReleasesKeepStable  = "LONGARM_HUB_RELEASES_KEEP_STABLE"
+)
 
 // errReleaseMissing: no copy of a release file anywhere.
 var errReleaseMissing = errors.New("release file missing")

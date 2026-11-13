@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"longarm/internal/diag"
 	"longarm/internal/hub/store"
@@ -87,7 +88,21 @@ func (h *Hub) pruneReleasesOnce(ctx context.Context) {
 	h.pruneReleases(ctx)
 }
 
-// pruneReleases deletes the versions past the retention (see the top).
+// protectedRelease reports whether version must stay: the current
+// rollout's (workers are told to fetch it) or the latest stable release.
+func (h *Hub) protectedRelease(version string) bool {
+	h.mu.Lock()
+	r := h.rollout
+	h.mu.Unlock()
+	if r != nil && r.Version == version {
+		return true
+	}
+	v, err := h.store.Meta("latest_release")
+	return err == nil && v == version
+}
+
+// pruneReleases deletes the versions past the retention (see the top),
+// then the files of versions the index doesn't have (sweepOrphans).
 func (h *Hub) pruneReleases(ctx context.Context) {
 	rels, err := h.store.Releases()
 	if err != nil {
@@ -95,41 +110,126 @@ func (h *Hub) pruneReleases(ctx context.Context) {
 		return
 	}
 	protect := map[string]bool{}
-	h.mu.Lock()
-	if h.rollout != nil && h.rollout.Version != "" {
-		protect[h.rollout.Version] = true
-	}
-	h.mu.Unlock()
-	if v, err := h.store.Meta("latest_release"); err == nil && v != "" {
-		protect[v] = true
+	for _, r := range rels {
+		if !protect[r.Version] && h.protectedRelease(r.Version) {
+			protect[r.Version] = true
+		}
 	}
 	for _, v := range releasesToPrune(rels, h.cfg.Releases.releaseKeep, protect) {
-		var files []string
 		var size int64
+		n := 0
 		for _, r := range rels {
 			if r.Version == v {
-				files = append(files, r.File)
 				size += r.Size
+				n++
 			}
 		}
-		if err := h.rel.removeVersion(ctx, h.store, v, files); err != nil {
+		deleted, err := h.pruneVersion(v)
+		if err != nil {
 			h.log.Warn("releases: retention: deleting a version", "version", v, "err", err)
-			continue
 		}
-		h.log.Info("releases: deleted an old version (retention)", "version", v, "files", len(files), "bytes", size)
+		if deleted {
+			h.log.Info("releases: deleted an old version (retention)", "version", v, "files", n, "bytes", size)
+		}
+	}
+	if len(rels) > 0 { // an empty index: GitHub releases mode, whose cache is in the data dir
+		h.sweepOrphans(ctx)
 	}
 }
 
-// removeVersion deletes version: its index rows, then its files in the
-// data dir and (with blob_url) the container. Holds the version's lock,
-// so a publish of the same version can't interleave.
-func (s *releaseStore) removeVersion(ctx context.Context, st *store.Store, version string, files []string) error {
+// pruneVersion forgets version under its lock - unless a rollout of it
+// began meanwhile (pushReleaseAs holds the same lock) - and deletes its
+// files; false: it stays.
+func (h *Hub) pruneVersion(version string) (bool, error) {
+	if !versionRE.MatchString(version) {
+		return false, errors.New("invalid version")
+	}
+	defer h.rel.lockVersion(version)()
+	if h.protectedRelease(version) {
+		return false, nil
+	}
+	if err := h.store.DeleteReleaseVersion(version); err != nil {
+		return false, err
+	}
+	// the files: what fails here stays an orphan, which the sweep at the
+	// end of this pass and of the next ones retries
+	return true, h.rel.deleteFiles(context.Background(), version, nil)
+}
+
+// sweepOrphans deletes release files - in the data dir and the blob
+// container - of versions the index doesn't list: left by a deletion
+// that failed half way, or a cache download that ended after it. Each
+// under the version's lock, checked against the index again there (a
+// publish stores its files before it indexes them, under that lock).
+func (h *Hub) sweepOrphans(ctx context.Context) {
+	cands := map[string]bool{}
+	if ents, err := os.ReadDir(h.rel.dir); err == nil {
+		for _, e := range ents {
+			if e.IsDir() && versionRE.MatchString(e.Name()) {
+				cands[e.Name()] = true
+			}
+		}
+	}
+	var blobs map[string][]string // version -> blob names
+	if h.rel.blob != nil {
+		if _, ok := h.rel.blob.(diag.Deleter); ok {
+			list, err := h.rel.blob.List(ctx, "")
+			if err != nil {
+				h.log.Warn("releases: retention: listing the blob container", "err", err)
+			}
+			blobs = map[string][]string{}
+			for _, b := range list {
+				v, _, ok := strings.Cut(b.Name, "/")
+				if ok && versionRE.MatchString(v) {
+					blobs[v] = append(blobs[v], b.Name)
+					cands[v] = true
+				}
+			}
+		}
+	}
+	if len(cands) == 0 {
+		return
+	}
+	indexed := func() map[string]bool {
+		rels, err := h.store.Releases()
+		if err != nil {
+			return nil
+		}
+		m := map[string]bool{}
+		for _, r := range rels {
+			m[r.Version] = true
+		}
+		return m
+	}
+	if idx := indexed(); idx == nil {
+		return
+	} else {
+		for v := range idx {
+			delete(cands, v)
+		}
+	}
+	for v := range cands {
+		func() {
+			defer h.rel.lockVersion(v)()
+			idx := indexed()
+			if idx == nil || idx[v] {
+				return // published meanwhile (or the index can't be read)
+			}
+			if err := h.rel.deleteFiles(ctx, v, blobs[v]); err != nil {
+				h.log.Warn("releases: retention: deleting the files of an unindexed version", "version", v, "err", err)
+				return
+			}
+			h.log.Info("releases: deleted the files of an unindexed version (retention)", "version", v)
+		}()
+	}
+}
+
+// deleteFiles deletes <data_dir>/releases/<version> and, with blob_url,
+// the version's blobs (names: as listed; nil = list them). The caller holds
+// the version's lock and has removed it from the index.
+func (s *releaseStore) deleteFiles(ctx context.Context, version string, names []string) error {
 	if !versionRE.MatchString(version) {
 		return errors.New("invalid version")
-	}
-	defer s.lockVersion(version)()
-	if err := st.DeleteReleaseVersion(version); err != nil {
-		return err
 	}
 	var errs []error
 	if err := os.RemoveAll(filepath.Join(s.dir, version)); err != nil {
@@ -140,16 +240,23 @@ func (s *releaseStore) removeVersion(ctx context.Context, st *store.Store, versi
 		if !ok {
 			return errors.Join(append(errs, errors.New("the blob container can't delete; its blobs stay"))...)
 		}
-		for _, f := range files {
-			for _, name := range []string{blobName(version, f), blobName(version, f+update.SigExt)} {
-				if err := d.Delete(ctx, name); err != nil {
-					errs = append(errs, err)
-					continue
-				}
-				s.mu.Lock()
-				delete(s.inBlob, name)
-				s.mu.Unlock()
+		if names == nil {
+			list, err := s.blob.List(ctx, version+"/")
+			if err != nil {
+				return errors.Join(append(errs, err)...)
 			}
+			for _, b := range list {
+				names = append(names, b.Name)
+			}
+		}
+		for _, name := range names {
+			if err := d.Delete(ctx, name); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			s.mu.Lock()
+			delete(s.inBlob, name)
+			s.mu.Unlock()
 		}
 	}
 	return errors.Join(errs...)

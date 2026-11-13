@@ -56,7 +56,7 @@ offline = "10s"                    # no report for this long = offline
 #                                  # (default: the one the hub was built from), "owner/repo", or "off". Env LONGARM_HUB_RELEASES_GITHUB
 # keep_dev = 3                     # versions kept per channel; older ones (index, files, blobs) are deleted after each
 # keep_preview = 3                 # publish and at start. 0 = keep every version. The current rollout's version and
-# keep_stable = 5                  # the latest stable release always stay
+# keep_stable = 5                  # the latest stable release always stay. Env LONGARM_HUB_RELEASES_KEEP_DEV / _PREVIEW / _STABLE
 
 # The tailscale leg: the embedded tsnet node of longarmd / longarm (no tailscaled needed).
 # The hub mints one-time, pre-authorized, tagged keys (tag:longarm-worker / tag:longarm-client)
