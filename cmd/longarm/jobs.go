@@ -166,11 +166,13 @@ func runCmd() *cobra.Command {
 		Long: `Submit a job; longarm prints its id (follow it: longarm logs <id> -f).
 
 Without a worker (or with --on auto) the hub places the job on a worker
-that passes the gate - free memory at least min(20 GB, 25 % of its RAM)
-and CPU below 70 % - with the best score (free memory minus reserved,
-fewer running jobs, a mirror of --repo and warm dependencies count), and
+that passes the gate - 4 GB still free after the job's reservation and
+an idle core - with the most headroom left: the scarcer of free memory
+and idle cores (a core counts as 4 GB) after the job, less reservations
+and running jobs, plus a mirror of --repo and warm dependencies. It
 reserves --mem-gb there (default by --type: claude/copilot 2, build 8,
-test 4, else 2). When no worker passes, the job waits in the hub's queue
+test 4, else 2) and, for a minute, the job's cores (claude/copilot 1,
+build 4, test 2, else 1). When no worker passes, the job waits in the hub's queue
 (--no-queue: fail instead). Without a reachable hub longarm picks among
 the known workers itself.
 

@@ -34,10 +34,12 @@ const (
 	// cloud container: public_addr = host:<listen port>, and host joins the
 	// certificate's SANs (hosts).
 	EnvAdvertise = "LONGARM_HUB_ADVERTISE"
-	// [scheduler] gate_free_gb / gate_cpu: a hub whose workers are small
-	// (containers, laptops) needs a lower memory gate than the default 20 GB
-	EnvGateFreeGB = "LONGARM_HUB_SCHED_GATE_FREE_GB"
-	EnvGateCPU    = "LONGARM_HUB_SCHED_GATE_CPU"
+	// [scheduler] gate_free_gb / gate_free_cores / gate_cpu: a hub whose
+	// workers are small (containers, CI runners) may lower the gates (0 =
+	// the job only has to fit / no CPU gate)
+	EnvGateFreeGB    = "LONGARM_HUB_SCHED_GATE_FREE_GB"
+	EnvGateFreeCores = "LONGARM_HUB_SCHED_GATE_FREE_CORES"
+	EnvGateCPU       = "LONGARM_HUB_SCHED_GATE_CPU"
 	// EnvReleasePublicKey is [releases] public_key, the minisign public key
 	// line (RW...): with it the hub refuses uploaded releases whose
 	// signature doesn't verify.
@@ -71,7 +73,7 @@ func (c *Config) applyEnv() error {
 	for _, kv := range []struct {
 		env string
 		dst **float64
-	}{{EnvGateFreeGB, &c.Scheduler.GateFreeGB}, {EnvGateCPU, &c.Scheduler.GateCPU}} {
+	}{{EnvGateFreeGB, &c.Scheduler.GateFreeGB}, {EnvGateFreeCores, &c.Scheduler.GateFreeCores}, {EnvGateCPU, &c.Scheduler.GateCPU}} {
 		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
 			f, err := strconv.ParseFloat(v, 64)
 			if err != nil || f < 0 {

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Changed
+
+- **Scheduling balances memory and CPU, in absolute terms.** The gate is
+  4 GB left after the job's reservation (`[scheduler] gate_free_gb`, now
+  meaning the margin after the job; default 4 instead of min(20 GB, 25 %
+  of the worker's memory)) and an idle core (`gate_free_cores`, cores ×
+  idle share; `LONGARM_HUB_SCHED_GATE_FREE_CORES`). The score is the
+  harmonic mean of the memory and the CPU a worker has left with the job
+  (an idle core counts as `core_gb` = 4 GB), so the scarcer one decides
+  and placements keep both even across workers - a big-memory worker
+  whose CPU is spent no longer wins. Jobs reserve cores by type
+  (`[scheduler.cores]`: claude/copilot 1, build 4, test 2, else 1; a
+  job's `--cpus` once reported) for `cpu_warmup` (60 s), until their load
+  shows in the worker's CPU %. `gate_cpu` is now an optional ceiling
+  (default none) and `gate_free_fraction` is ignored. A hub with
+  `gate_free_gb` set explicitly (e.g. `deploy --gate-free-gb 20`) keeps
+  that much free after each job: lower it or drop it.
+
 ### Added
 
 - **Job lists as summaries**: `FleetJobsRequest.summary` (and the daemon's

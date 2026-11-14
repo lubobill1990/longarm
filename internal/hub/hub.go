@@ -158,6 +158,7 @@ type reservation struct {
 	jobID  string
 	worker string // node ID
 	memGB  float64
+	cores  float64 // CPU of the job's type (sched.Params.CoresFor)
 	at     time.Time
 	owner  string // the user who placed it (quotas)
 }

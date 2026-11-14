@@ -66,8 +66,8 @@ usage: deploy.sh --name NAME [--location REGION] [options]
   --entra-admins LIST      Entra admins: UPNs, *@domain or object IDs, comma-separated
   --entra-web MODE         panel sign-in: spa (default) | confidential | off
   --entra-apps LIST        app-only sign-in (CI): "<app id>=<user>", comma-separated
-  --gate-free-gb N         scheduler memory gate: free GB a worker needs for scheduled jobs
-                           (default 20; lower it for small workers such as containers or laptops)
+  --gate-free-gb N         scheduler memory gate: GB a worker must still have free after a
+                           scheduled job's reservation (default 4; 0 = the job only has to fit)
   --release-public-key KEY the minisign public key line (RW...) releases are signed with: the hub
                            refuses uploads whose signature doesn't verify (tail -1 longarm-release.pub)
   --feedback-url URL       where the front page, the panel and longarm-tray send feedback and bug

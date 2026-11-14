@@ -23,9 +23,11 @@ client_ttl = "720h"                # 30 days (client and admin)
 # renew_before = "240h"            # default: a third of each TTL; must be shorter than both
 
 [scheduler]
-gate_free_gb = 20.0                # DESIGN §5.2 gate: free memory >= 20 GB ...
-gate_free_fraction = 0.25          # ... or this share of the worker's memory if lower (16 GB laptop: 4 GB); 0 = fixed
-gate_cpu = 70.0                    # and CPU < 70 %
+gate_free_gb = 4.0                 # DESIGN §5.2 gate: 4 GB still free after the job's reservation (0: the job only has to fit) ...
+gate_free_cores = 1.0              # ... and an idle core (0: no CPU gate)
+# gate_cpu = 90.0                  # optional CPU % ceiling (default: none)
+core_gb = 4.0                      # score: an idle core counts as 4 GB of free memory
+cpu_warmup = "60s"                 # a placed job's cores count until its load shows in the worker's CPU %
 reservation_ttl = "2m"             # placements never submitted are released
 [scheduler.mem_gb]                 # reservations by job type (longarm run --type / --mem-gb)
 claude = 2.0
@@ -33,6 +35,12 @@ copilot = 2.0
 build = 8.0
 test = 4.0
 default = 2.0
+[scheduler.cores]                  # CPU by job type, cores (a job's --cpus wins once the worker reports it)
+claude = 1.0
+copilot = 1.0
+build = 4.0
+test = 2.0
+default = 1.0
 
 [web]
 session_ttl = "12h"

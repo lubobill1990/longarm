@@ -314,12 +314,24 @@ type CertConfig struct {
 
 // SchedConfig is [scheduler].
 type SchedConfig struct {
+	// GateFreeGB: memory a worker must still have free after the job's
+	// reservation, GB (default 4)
 	GateFreeGB *float64 `toml:"gate_free_gb"`
-	// GateFreeFraction: small workers need only this share of their memory
-	// free when it is below gate_free_gb (default 0.25; 0 = fixed gate)
-	GateFreeFraction *float64           `toml:"gate_free_fraction"`
-	GateCPU          *float64           `toml:"gate_cpu"`
-	MemGB            map[string]float64 `toml:"mem_gb"` // per job type
+	// GateFreeFraction is no longer used (the memory gate is absolute);
+	// still read so older hub.toml files load.
+	GateFreeFraction *float64 `toml:"gate_free_fraction"`
+	// GateFreeCores: idle cores a worker needs to take a job (default 1)
+	GateFreeCores *float64 `toml:"gate_free_cores"`
+	// GateCPU: optional CPU% ceiling (default 0 = none)
+	GateCPU *float64 `toml:"gate_cpu"`
+	// CoreGB: what an idle core weighs against a free GB in the score
+	// (default 4)
+	CoreGB *float64 `toml:"core_gb"`
+	// CPUWarmup: how long a started job's cores stay reserved, until its
+	// load shows in the worker's CPU% (default 60s)
+	CPUWarmup Duration           `toml:"cpu_warmup"`
+	MemGB     map[string]float64 `toml:"mem_gb"` // per job type
+	Cores     map[string]float64 `toml:"cores"`  // CPU per job type, cores
 	// ReservationTTL: a placement nobody submitted is released after this.
 	ReservationTTL Duration `toml:"reservation_ttl"`
 }
@@ -550,11 +562,20 @@ func (c *Config) SchedParams() sched.Params {
 	if c.Scheduler.GateCPU != nil {
 		p.GateCPU = *c.Scheduler.GateCPU
 	}
-	if c.Scheduler.GateFreeFraction != nil {
-		p.GateFreeFraction = *c.Scheduler.GateFreeFraction
+	if c.Scheduler.GateFreeCores != nil {
+		p.GateFreeCores = *c.Scheduler.GateFreeCores
+	}
+	if c.Scheduler.CoreGB != nil {
+		p.CoreGB = *c.Scheduler.CoreGB
+	}
+	if d := c.Scheduler.CPUWarmup.Duration; d > 0 {
+		p.CPUWarmup = d.Seconds()
 	}
 	for k, v := range c.Scheduler.MemGB {
 		p.MemGB[k] = v
+	}
+	for k, v := range c.Scheduler.Cores {
+		p.Cores[k] = v
 	}
 	return p
 }

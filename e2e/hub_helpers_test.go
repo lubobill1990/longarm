@@ -101,6 +101,7 @@ offline = "4s"
 [scheduler]
 gate_free_gb = 0.0
 gate_cpu = 101.0
+gate_free_cores = 0.0
 [web]
 insecure_cookie = true
 `, filepath.ToSlash(h.hubDir), h.port, h.port, h.httpPort) + extra

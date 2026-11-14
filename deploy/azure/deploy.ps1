@@ -63,7 +63,7 @@ param(
     [string]$EntraWeb = '',
     # app-only sign-in (CI): "<app id>=<user>", comma-separated
     [string]$EntraApps = '',
-    # scheduler memory gate: free GB a worker needs for scheduled jobs (default 20; lower it for small workers)
+    # scheduler memory gate: GB a worker must still have free after a scheduled job's reservation (default 4; 0 = the job only has to fit)
     [string]$GateFreeGb = '',
     # the minisign public key line (RW...) releases are signed with: the hub refuses uploads whose
     # signature doesn't verify, e.g. -ReleasePublicKey (Get-Content longarm-release.pub)[-1]

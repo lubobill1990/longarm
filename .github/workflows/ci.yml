@@ -289,7 +289,7 @@ jobs:
           go test -c -o "$bin/longarmd.test" ./internal/longarmd
           sudo "$bin/longarmd.test" -test.run 'DataDir|Migrate|RootHome' -test.v 2>&1 | tee -a "$RUNNER_TEMP/go-test.log"
           cd e2e
-          sudo env LONGARM_PERUSER_TEST=1 LONGARM_E2E_BIN_DIR="$bin" LONGARM_GATE_CPU=101 LONGARM_GATE_FREE_GB=0 \
+          sudo env LONGARM_PERUSER_TEST=1 LONGARM_E2E_BIN_DIR="$bin" LONGARM_GATE_CPU=101 LONGARM_GATE_FREE_GB=0 LONGARM_GATE_FREE_CORES=0 \
             "$bin/e2e.test" -test.run 'PerUser' -test.v -test.timeout 15m 2>&1 | tee -a "$RUNNER_TEMP/go-test.log"
       - name: per-user isolation (administrator)
         if: runner.os == 'Windows' && matrix.part == 'unit'

@@ -64,7 +64,7 @@ restarts the hub) prints everything too.
 | `--entra-tenant ID --entra-client ID` | `-EntraTenant -EntraClient` | Sign in with Microsoft Entra ID (`longarm login`, panel); a re-run keeps them ([usage](../../docs/usage.md)) |
 | `--entra-admins LIST` | `-EntraAdmins` | Entra admins: UPNs, `*@domain` or object IDs, comma-separated |
 | `--entra-web spa\|confidential\|off` | `-EntraWeb` | panel sign-in mode (default spa) |
-| `--gate-free-gb N` | `-GateFreeGb` | scheduler memory gate: free GB a worker needs for scheduled jobs (default 20); lower it for small workers (containers, laptops); a re-run keeps it |
+| `--gate-free-gb N` | `-GateFreeGb` | scheduler memory gate: GB a worker must still have free after a scheduled job's reservation (default 4; 0 = the job only has to fit); a re-run keeps it |
 | `--release-public-key KEY` | `-ReleasePublicKey` | the minisign public key line (`RW…`) releases are signed with, e.g. `"$(tail -1 longarm-release.pub)"` ([CI/CD 2.1](../../docs/ci-cd.md#21-release-key-and-update-public-key)): the hub refuses uploaded releases whose signature doesn't verify, so its install scripts only hand out signed files; a re-run keeps it |
 | `--feedback-url URL` | `-FeedbackUrl` | where the hub's front page, its panel and longarm-tray send feedback and bug reports (a team channel, a form; `[web] feedback_url`); default `--repo-url`'s issues; a re-run keeps it |
 | `--repo-url URL` | `-RepoUrl` | the source repository the hub's pages and longarm-tray link to - GitHub, docs, the tray's release downloads (`[web] repo_url`, e.g. a company's internal copy); default the public GitHub repository; a re-run keeps it |

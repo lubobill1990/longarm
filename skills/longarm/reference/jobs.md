@@ -2,7 +2,7 @@
 
 ## Placement
 
-- No worker (or `--on auto`): the hub picks the best-scoring worker that passes the gate. The gate needs free memory of at least min(20 GB, 25% of RAM) and CPU below 70%. The score counts free memory minus reservations, fewer jobs, an existing mirror of `--repo`, and warm dependencies. When no worker passes, the job queues; with `--no-queue` it fails with exit 75. Without a reachable hub, longarm picks from the known workers itself.
+- No worker (or `--on auto`): the hub picks the best-scoring worker that passes the gate. The gate needs 4 GB still free after the job's memory reservation and at least one idle core. The score is the memory and CPU headroom left after the job (a core counts as 4 GB; the scarcer of the two dominates), minus running jobs, plus an existing mirror of `--repo` and warm dependencies. So jobs spread over workers by absolute free GB and idle cores, not percentages. When no worker passes, the job queues; with `--no-queue` it fails with exit 75. Without a reachable hub, longarm picks from the known workers itself.
 - `--mem-gb` reserves memory; the default depends on `--type`: claude/copilot 2, build 8, test 4, otherwise 2. `--cpus` and `--mem-limit 8G` cap the process tree (Windows; Linux with per-user isolation).
 - `--require k=v[,k=v]`: labels (`longarm ls` LABELS, `longarm worker label <w> k=v` on your own workers).
 - A worker the hub has seen offline for more than 2 minutes fails at once with exit 255. `--force-dial` dials it anyway. A user-session Windows worker runs only while its owner is logged on.
