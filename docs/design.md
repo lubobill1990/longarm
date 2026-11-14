@@ -33,7 +33,7 @@ Implementation phases: **P0 builds `longarmd`/`longarm` on the Tailscale backend
    - (B) **Remote tools**: the local agent uses MCP to run commands, read/write files, and run builds/tests on a worker;
    - (C) **Interactive attach**: a human on the interactive machine runs `longarm attach` into a PTY on the worker, runs an interactive `claude`, and can reconnect after a disconnect (tmux-style);
    - (D) **Port forwarding**: e.g. a `next dev :3131` on the worker is forwarded to a local browser.
-3. Automatic worker selection (admission gate: free memory ≥ 20 GB and CPU < 70%; score `free − 6×jobs`, plus repository cache affinity).
+3. Automatic worker selection (admission gate: 4 GB left after the job and an idle core; score: the memory and CPU headroom left, the scarcer one dominating, plus repository cache affinity).
 4. The network can be Tailscale or the self-built tunnel; the self-built tunnel relays through a self-hosted public server and prefers P2P.
 
 **Environmental facts that shape the design**
@@ -227,7 +227,17 @@ queued ──schedule──► assigned ──longarmd accepts──► preparin
 
 ### 5.2 Scheduling
 
-`score = free_gb − reserved_gb − 6×running + 10×has_mirror(repo) + 5×has_warm_deps`; among workers that pass the gate (free ≥ 20 GB, CPU < 70%) the highest score wins; if none pass → the job is queued (not failed) with an estimated wait. Label constraints can be added (`os=linux`, `region=eu`).
+All figures are absolute (GB and cores, not shares of a machine), so a big worker's spare capacity counts in full; a Hyper-V Dynamic Memory guest counts against its ceiling.
+
+```
+mem_left = free_gb − reserved_gb − job.mem_gb
+idle     = cores × (100 − cpu%)/100 − warming_cores      # cores of jobs placed < cpu_warmup (60 s) ago
+cpu_left = core_gb × (idle − job.cores)                  # core_gb = 4
+gate:  mem_left ≥ gate_free_gb (4)  and  idle ≥ gate_free_cores (1)  [and cpu% < gate_cpu, if set]
+score: harmonic_mean(mem_left, cpu_left) − 2×running + 10×has_mirror(repo) + 5×has_warm_deps
+```
+
+The harmonic mean is dominated by the scarcer resource: a worker with plenty of memory and few idle cores doesn't win on its memory, so successive placements keep both kinds of headroom even across workers (in proportion to what each has of its scarcer one). A job's CPU (by type, or its `--cpus`) is reserved only until its load shows in the worker's CPU %; its memory stays reserved while it runs. Among workers that pass the gate the highest score wins; if none pass → the job is queued (not failed) with an estimated wait. Label constraints can be added (`os=linux`, `region=eu`).
 
 ### 5.3 Code and artifacts
 

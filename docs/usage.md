@@ -1941,11 +1941,33 @@ longarm admin profile set dev git=latest node=22 pnpm=latest claude=latest pwsh=
 longarm admin profile assign w1 dev; longarm admin profile ls   # canary first, then the rest
 ```
 
-Scheduling (DESIGN §5.2): gate free memory ≥ 20 GB and CPU < 70 %, score
-`free − reserved − 6×running + 10×has_mirror + 5×warm`, memory reserved per
-job type (claude/copilot 2 GB, build 8, test 4; `--mem-gb` overrides);
-nobody passes → the job waits in the hub's queue (`longarm` shows the position).
-Without a reachable hub, `longarm` picks among the known workers itself.
+Scheduling (DESIGN §5.2) counts absolute headroom - GB and cores, not
+shares of a machine - so a big worker's spare capacity counts in full:
+
+- **What a job takes.** Memory by job type (claude/copilot 2 GB, build 8,
+  test 4, else 2; `--mem-gb` overrides), reserved until the job ends. CPU
+  by type (claude/copilot 1 core, build 4, test 2, else 1; a job's
+  `--cpus` once the worker reports it), reserved for `cpu_warmup` (1
+  minute) after placement - until the job's load shows in the worker's
+  CPU %.
+- **Gate.** After the job's reservation a worker must still have 4 GB free
+  (`gate_free_gb`), and it needs an idle core (`gate_free_cores`: cores ×
+  idle share, less the cores of jobs still warming up). `gate_cpu` adds an
+  optional CPU % ceiling (none by default).
+- **Score.** What the worker has left with the job: free − reserved −
+  job memory in GB, and idle − warming − job cores, at 4 GB a core
+  (`core_gb`). The harmonic mean of the two decides - the scarcer one
+  dominates, so a worker with lots of memory but few idle cores doesn't
+  win on its memory - then −2 per running job, +10 for a mirror of the
+  repo, +5 for warm dependencies.
+
+Placing one job after another so spreads them in proportion to each
+worker's scarcer resource: claude jobs on idle 16-core/64 GB, 8-core/32 GB
+and 4-core/100 GB workers go 14 : 7 : 3. Nobody passes → the job waits in
+the hub's queue (`longarm` shows the position). Without a reachable hub,
+`longarm` picks among the known workers itself (no reservations;
+`LONGARM_GATE_FREE_GB`, `LONGARM_GATE_FREE_CORES`, `LONGARM_GATE_CPU`
+override its gate).
 
 **Hyper-V Dynamic Memory.** A Windows worker that is a Hyper-V guest with
 Dynamic Memory sees only what the host has given it so far (say 4 GB),
@@ -1956,10 +1978,10 @@ counter, every 5 minutes) and reports it next to the memory: `longarm ls`,
 tray too; `ls --json` carries `memMaxBytes` (the hub's JSON
 `mem_max_bytes`). Placement - the hub's, the client-side pick and the MCP
 `fleet_status` (`total_gb`, `free_gb`, `mem_max_gb`) - counts such a worker's
-memory against the maximum: free = maximum − used, so it passes a 20 GB gate
-it would never pass at 4 GB. Growing is best effort - an overcommitted host
-may not hand the memory out - while the CPU gate and the reservations of
-placed jobs still apply. A guest at its maximum, static memory, Linux (no
+memory against the maximum: free = maximum − used, so it takes the jobs
+that fit there and scores by that headroom, not by the 4 GB it has now.
+Growing is best effort - an overcommitted host may not hand the memory
+out - while the CPU gate and the reservations of placed jobs still apply. A guest at its maximum, static memory, Linux (no
 reliable ceiling inside a guest) and macOS report no maximum: the memory
 as it is.
 

@@ -134,7 +134,7 @@ param entraAdmins string = ''
 @description('Entra sign-in: applications whose app-only tokens may sign in as a Longarm user (CI through GitHub OIDC), comma-separated "<app id>=<user>". Never admins, never the panel.')
 param entraApps string = ''
 
-@description('Scheduler memory gate: free GB a worker needs for scheduled jobs (empty = the hub\'s default, 20). Lower it for small workers (containers, laptops).')
+@description('Scheduler memory gate: GB a worker must still have free after a scheduled job\'s reservation (empty = the hub\'s default, 4; 0 = the job only has to fit).')
 param schedulerGateFreeGb string = ''
 
 @description('Minisign public key line (RW...) releases are signed with: the hub refuses uploaded releases whose signature does not verify (empty = no check).')

@@ -7,7 +7,7 @@ import (
 )
 
 // TestDynamicMemoryPlacement: a Hyper-V Dynamic Memory guest showing 4 GB
-// (2 GB used) that can grow to 88 GB passes a 20 GB gate - placement counts
+// (2 GB used) that can grow to 88 GB takes a 20 GB job - placement counts
 // against the ceiling; the same worker without the ceiling does not.
 func TestDynamicMemoryPlacement(t *testing.T) {
 	th, _ := ownedHub(t)

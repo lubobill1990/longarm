@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.48.1.52935",
-      "templateHash": "3883078985130291251"
+      "templateHash": "16398414039102284647"
     }
   },
   "parameters": {
@@ -247,7 +247,7 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Scheduler memory gate: free GB a worker needs for scheduled jobs (empty = the hub's default, 20). Lower it for small workers (containers, laptops)."
+        "description": "Scheduler memory gate: GB a worker must still have free after a scheduled job's reservation (empty = the hub's default, 4; 0 = the job only has to fit)."
       }
     },
     "releasePublicKey": {

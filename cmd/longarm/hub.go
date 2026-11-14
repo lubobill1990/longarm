@@ -765,7 +765,7 @@ func (s *session) candidates(ctx context.Context, repo string) []sched.Candidate
 			}
 			c.Online = true
 			c.TotalGB, c.FreeGB = memcap.GB(m) // a Dynamic Memory guest: against its ceiling
-			c.CPU, c.Running = m.CpuPercent, int(m.JobsRunning)
+			c.CPU, c.Cores, c.Running = m.CpuPercent, float64(m.Threads), int(m.JobsRunning)
 			out[i] = c
 		}()
 	}
@@ -782,7 +782,7 @@ func (s *session) placeLocally(ctx context.Context, o placeOpts) (string, error)
 	p := clientParams()
 	mem := p.MemFor(o.typ, o.memGB)
 	for {
-		res := sched.Pick(p, s.candidates(ctx, o.repo), sched.Request{MemGB: mem, Require: o.require, Exclude: o.exclude})
+		res := sched.Pick(p, s.candidates(ctx, o.repo), sched.Request{MemGB: mem, Cores: p.CoresFor(o.typ, 0), Require: o.require, Exclude: o.exclude})
 		if res.Worker != "" {
 			fmt.Fprintf(os.Stderr, "longarm: picked %s (score %.1f; client-side, no hub)\n", res.Worker, res.Score)
 			return res.Worker, nil
@@ -809,7 +809,7 @@ func (s *session) pickNow(ctx context.Context, require map[string]string) (strin
 				Eligible: n.State == "approved" && !n.Draining, Why: n.DrainReason, ReservedGB: n.ReservedGb, Running: int(n.JobsActive)}
 			if m := n.Metrics; m != nil {
 				c.TotalGB, c.FreeGB = memcap.GB(m) // a Dynamic Memory guest: against its ceiling
-				c.CPU = m.CpuPercent
+				c.CPU, c.Cores = m.CpuPercent, float64(m.Threads)
 			}
 			cands = append(cands, c)
 		}
@@ -836,12 +836,15 @@ func (s *session) resolveTarget(ctx context.Context, w string, o *placeOpts) (st
 }
 
 // clientParams are the scheduler parameters of client-side picks (exec
-// --on auto, and run without a hub); LONGARM_GATE_FREE_GB / LONGARM_GATE_CPU
-// override the gate.
+// --on auto, and run without a hub); LONGARM_GATE_FREE_GB /
+// LONGARM_GATE_FREE_CORES / LONGARM_GATE_CPU override the gate.
 func clientParams() sched.Params {
 	p := sched.Defaults()
 	if v, err := strconv.ParseFloat(os.Getenv("LONGARM_GATE_FREE_GB"), 64); err == nil {
 		p.GateFreeGB = v
+	}
+	if v, err := strconv.ParseFloat(os.Getenv("LONGARM_GATE_FREE_CORES"), 64); err == nil {
+		p.GateFreeCores = v
 	}
 	if v, err := strconv.ParseFloat(os.Getenv("LONGARM_GATE_CPU"), 64); err == nil {
 		p.GateCPU = v

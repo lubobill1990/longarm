@@ -72,7 +72,7 @@ func (h *Hub) PlaceFor(ctx context.Context, by, owner string, req *pb.PlaceReque
 		res = sched.Result{}
 	}
 	if res.Worker != "" {
-		r := h.reserveLocked(req.JobId, res.WorkerID, mem, owner)
+		r := h.reserveLocked(req, res.WorkerID, mem, owner)
 		u := h.assignedLocked(r, res.Score)
 		h.log.InfoContext(ctx, "placed", "job", req.JobId, "worker", res.Worker, "score", res.Score, "mem_gb", mem, "by", by)
 		h.tel().Event(ctx, "scheduler.placement", map[string]string{"outcome": "placed", "type": req.Type}, map[string]float64{"mem_gb": mem})
@@ -174,7 +174,7 @@ func (h *Hub) runQueue() {
 			kept = append(kept, q)
 			continue
 		}
-		r := h.reserveLocked(q.req.JobId, res.WorkerID, q.memGB, q.owner)
+		r := h.reserveLocked(q.req, res.WorkerID, q.memGB, q.owner)
 		h.log.Info("placed from queue", "job", q.req.JobId, "worker", res.Worker, "waited", time.Since(q.at).Round(time.Millisecond))
 		h.tel().Event(telemetry.WithSpan(context.Background(), q.span), "scheduler.placement", map[string]string{"outcome": "placed_from_queue", "type": q.req.Type},
 			map[string]float64{"mem_gb": q.memGB, "waited_s": time.Since(q.at).Seconds()})
@@ -193,10 +193,11 @@ func (h *Hub) runQueue() {
 	h.renumberLocked()
 }
 
-// reserveLocked reserves mem on worker (an ID) for a job.
-func (h *Hub) reserveLocked(jobID, worker string, mem float64, owner string) *reservation {
-	r := &reservation{jobID: jobID, worker: worker, memGB: mem, at: time.Now(), owner: owner}
-	h.reservations[jobID] = r
+// reserveLocked reserves mem, and the cores of the job's type, on worker
+// (an ID) for the job of req.
+func (h *Hub) reserveLocked(req *pb.PlaceRequest, worker string, mem float64, owner string) *reservation {
+	r := &reservation{jobID: req.JobId, worker: worker, memGB: mem, cores: h.params.CoresFor(req.Type, 0), at: time.Now(), owner: owner}
+	h.reservations[req.JobId] = r
 	return r
 }
 
@@ -231,10 +232,11 @@ func (h *Hub) candidatesLocked(repo, owner string) []sched.Candidate {
 		}
 		if m := n.metrics; m != nil {
 			c.TotalGB, c.FreeGB = memcap.GB(m) // a Dynamic Memory guest: against its ceiling
-			c.CPU = m.CpuPercent
+			c.CPU, c.Cores = m.CpuPercent, float64(m.Threads)
 		}
 		active, reserved := h.loadLocked(n.rec.ID)
 		c.Running, c.ReservedGB = int(active), reserved
+		c.ReservedCores = h.warmingCoresLocked(n.rec.ID, time.Now())
 		// Local limits (longarmd limits): memory kept free for the desktop user,
 		// and a cap on active jobs.
 		c.FreeGB = max(0, c.FreeGB-n.reservedGB)
@@ -252,5 +254,43 @@ func (h *Hub) candidatesLocked(repo, owner string) []sched.Candidate {
 }
 
 func (h *Hub) pickLocked(req *pb.PlaceRequest, mem float64, owner string) sched.Result {
-	return sched.Pick(h.params, h.candidatesLocked(req.Repo, owner), sched.Request{MemGB: mem, Require: req.Require, Exclude: req.Exclude})
+	return sched.Pick(h.params, h.candidatesLocked(req.Repo, owner), sched.Request{MemGB: mem, Cores: h.params.CoresFor(req.Type, 0),
+		Require: req.Require, Exclude: req.Exclude})
+}
+
+// warmingCoresLocked is the CPU, in cores, of worker's jobs whose load may
+// not show in its CPU% yet: placements not submitted yet and jobs that
+// started (or, not started yet, were created) within the CPU warm-up.
+// Older jobs' load is in the CPU% they report.
+func (h *Hub) warmingCoresLocked(worker string, now time.Time) float64 {
+	warm := time.Duration(h.params.CPUWarmup * float64(time.Second))
+	var cores float64
+	for _, r := range h.reservations {
+		if r.worker == worker {
+			cores += r.cores
+		}
+	}
+	for _, e := range h.jobs[worker] {
+		if terminal(e.job.State) {
+			continue
+		}
+		at := e.job.GetStartedAt()
+		if at == nil {
+			at = e.job.GetCreatedAt()
+		}
+		if at == nil || now.Sub(at.AsTime()) < warm {
+			cores += jobCores(e.job, h.params)
+		}
+	}
+	return cores
+}
+
+// jobCores is the CPU of a job in cores: its CPU limit (--cpus), else by
+// type.
+func jobCores(j *pb.Job, p sched.Params) float64 {
+	typ := j.GetSpec().GetLabels()[sched.LabelType]
+	if typ == "" {
+		typ = sched.TypeOf(j.GetSpec().GetArgv())
+	}
+	return p.CoresFor(typ, j.GetSpec().GetCpuLimit())
 }
