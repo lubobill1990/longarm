@@ -84,12 +84,15 @@ func TestGatesAbsolute(t *testing.T) {
 		ok   bool
 		want string
 	}{
-		{w("laptop16", 16, 7, 8, 10), true, ""},                   // 7 - 2 leaves 5 GB
-		{w("laptop16-busy", 16, 5, 8, 10), false, "leaves 3.0 GB"}, // < 4 GB
-		{w("box128", 128, 7, 32, 10), true, ""},                   // no 25 % margin
-		{w("box64-hot", 64, 40, 64, 80), true, ""},                // 80 % of 64 cores: 12.8 idle
+		// 7 - 2 leaves 5 GB; 5 - 2 leaves 3 GB < 4; a 128 GB box needs no
+		// 25 % margin; 80 % of 64 cores leaves 12.8 idle, of 4 cores 0.8; no
+		// core count: no core gate
+		{w("laptop16", 16, 7, 8, 10), true, ""},
+		{w("laptop16-busy", 16, 5, 8, 10), false, "leaves 3.0 GB"},
+		{w("box128", 128, 7, 32, 10), true, ""},
+		{w("box64-hot", 64, 40, 64, 80), true, ""},
 		{w("box4-hot", 16, 10, 4, 80), false, "idle 0.8 of 4 cores"},
-		{w("unknown-cores", 16, 7, 0, 99), true, ""}, // no core count: no core gate
+		{w("unknown-cores", 16, 7, 0, 99), true, ""},
 	}
 	for _, tc := range cases {
 		r := Pick(p, []Candidate{tc.c}, Request{MemGB: 2, Cores: 1})

@@ -25,10 +25,11 @@ func TestPlacementCountsCPU(t *testing.T) {
 	running := func(spec *pb.JobSpec, started time.Duration) *jobEntry {
 		return &jobEntry{job: &pb.Job{Spec: spec, State: pb.JobState_JOB_STATE_RUNNING, StartedAt: timestamppb.New(now.Add(-started))}}
 	}
+	// j1: 1 core, warming; j2: a build long running, in the CPU%; j3: --cpus 3, warming
 	h.jobs[id] = map[string]*jobEntry{
-		"j1": running(&pb.JobSpec{Argv: []string{"claude", "-p"}}, 10*time.Second),                      // 1 core, warming
-		"j2": running(&pb.JobSpec{Argv: []string{"make"}, Labels: map[string]string{"longarm.type": "build"}}, 5*time.Minute), // in the CPU%
-		"j3": running(&pb.JobSpec{Argv: []string{"make"}, CpuLimit: 3}, 0),                               // --cpus 3, warming
+		"j1": running(&pb.JobSpec{Argv: []string{"claude", "-p"}}, 10*time.Second),
+		"j2": running(&pb.JobSpec{Argv: []string{"make"}, Labels: map[string]string{"longarm.type": "build"}}, 5*time.Minute),
+		"j3": running(&pb.JobSpec{Argv: []string{"make"}, CpuLimit: 3}, 0),
 	}
 	defer delete(h.jobs, id)
 	if got := h.warmingCoresLocked(id, now); got != 4 {
