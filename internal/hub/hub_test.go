@@ -219,7 +219,8 @@ func TestExampleConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Listen != ":7443" || c.RelayUDP != ":7443" || c.SchedParams().GateFreeGB != 20 || c.SchedParams().MemGB["build"] != 8 ||
+	if c.Listen != ":7443" || c.RelayUDP != ":7443" || c.SchedParams().GateFreeGB != 4 || c.SchedParams().MemGB["build"] != 8 ||
+		c.SchedParams().Cores["build"] != 4 || c.SchedParams().CPUWarmup != 60 || c.SchedParams().GateFreeCores != 1 ||
 		c.TTL("worker") != 90*24*time.Hour || c.RenewBefore("client") != 10*24*time.Hour || len(c.Web.TrustedProxies) != 2 {
 		t.Fatalf("%+v", c)
 	}
