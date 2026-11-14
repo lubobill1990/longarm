@@ -151,16 +151,18 @@ type rule struct {
 
 // rules run in order; secrets first (a token may contain an '@').
 var rules = []rule{
-	// key=value / "key": "value" pairs whose key says secret
-	{regexp.MustCompile(`(?i)((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|account[_-]?key|sharedaccesskey|client[_-]?secret|authorization|cookie|sig|instrumentationkey)["']?\s*[:=]\s*["']?)((?i:bearer|basic)\s+)?([^\s"'&;,]{3,})`), "${1}<secret>"},
+	// key=value / "key": "value" pairs whose key says secret (also Go's
+	// %v of an http.Header: map[Authorization:[Bearer ...]])
+	{regexp.MustCompile(`(?i)((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|account[_-]?key|sharedaccesskey|client[_-]?secret|authorization|cookie|sig|instrumentationkey)["']?\s*[:=]\s*["'\[]?)((?i:bearer|basic)\s+)?([^\s"'&;,\]]{3,})`), "${1}<secret>"},
 	{regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}`), "${1} <secret>"},
 	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`), "<jwt>"},
-	{regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|tskey-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}|xox[abpr]-[A-Za-z0-9-]{10,})`), "<secret>"},
+	{regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|tskey-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}|xox[abepr]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|` +
+		`glpat-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}\b|AIza[0-9A-Za-z_-]{35}|[sr]k_live_[A-Za-z0-9]{16,}|npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30,})`), "<secret>"},
 	{regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`), "<private-key>"},
 	// Longarm one-time join codes (H62-ZQV; the hub's alphabet has no I L O U)
 	{regexp.MustCompile(`\b[0-9A-HJKMNP-TV-Z]{3}-[0-9A-HJKMNP-TV-Z]{3}\b`), "\x00code"},
 	// URL query strings (SAS tokens, codes) and user info
-	{regexp.MustCompile(`(https?://)[^/\s@]+@`), "${1}<userinfo>@"},
+	{regexp.MustCompile(`\b([A-Za-z][A-Za-z0-9+.-]*://)[^/\s@]+@`), "${1}<userinfo>@"},
 	{regexp.MustCompile(`(https?://[^\s?#"']+)\?[^\s"'#]*`), "${1}?<query>"},
 	// URL paths: a repository, a webhook or an API path can be the
 	// credential itself (opaque tokens in the path) or name a person's work

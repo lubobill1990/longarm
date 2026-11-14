@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -66,6 +67,9 @@ func openHoRepo(ctx context.Context, ep *hoEndpoint, dir string) (*hoRepo, error
 	if len(ls) > 1 {
 		r.prefix = strings.TrimSpace(ls[1])
 	}
+	if !validPrefix(r.prefix) { // it becomes a path under the target's worktree
+		return nil, usagef("%s on %s: git reported an unusable directory prefix %q", dir, ep.name, r.prefix)
+	}
 	if b, err := r.git(ctx, nil, nil, "symbolic-ref", "-q", "--short", "HEAD"); err == nil && b != "" {
 		if rm, err := r.git(ctx, nil, nil, "config", "--get", "branch."+b+".remote"); err == nil && rm != "" && rm != "." {
 			r.remote = rm
@@ -95,6 +99,25 @@ func openHoRepo(ctx context.Context, ep *hoEndpoint, dir string) (*hoRepo, error
 		}
 	}
 	return r, nil
+}
+
+// validPrefix: "" or a relative '/'-separated path ending in "/" that
+// stays inside the worktree (no "" / "." / ".." segments, no absolute,
+// drive, backslash or NUL forms).
+func validPrefix(p string) bool {
+	if p == "" {
+		return true
+	}
+	rel, ok := strings.CutSuffix(p, "/")
+	if !ok || rel == "" || strings.ContainsAny(rel, "\\\x00") {
+		return false
+	}
+	for i, seg := range strings.Split(rel, "/") {
+		if seg == "" || seg == "." || seg == ".." || i == 0 && len(seg) >= 2 && seg[1] == ':' {
+			return false
+		}
+	}
+	return true
 }
 
 func pathSplit(p string) (dir, base string) {
@@ -142,6 +165,10 @@ func (r *hoRepo) snapshot(ctx context.Context, ref string) (snap, base string, e
 	if err != nil {
 		return "", "", err
 	}
+	// both end up on git command lines here and on the target: a worker's answer is not trusted
+	if !fullSHA(base) || !fullSHA(snap) {
+		return "", "", fmt.Errorf("%s on %s: git returned %q / %q, not commit ids", r.top, r.ep.name, firstLines(base, 1), firstLines(snap, 1))
+	}
 	if _, err := r.git(ctx, nil, nil, "update-ref", ref, snap); err != nil {
 		return "", "", err
 	}
@@ -159,7 +186,7 @@ func (r *hoRepo) existing(ctx context.Context, commits []string) []string {
 	}
 	var have []string
 	for _, l := range strings.Split(out, "\n") {
-		if f := strings.Fields(l); len(f) == 2 && f[1] == "commit" {
+		if f := strings.Fields(l); len(f) == 2 && f[1] == "commit" && fullSHA(f[0]) {
 			have = append(have, f[0])
 		}
 	}
@@ -177,7 +204,7 @@ func (r *hoRepo) tips(ctx context.Context) []string {
 	var tips []string
 	seen := map[string]bool{}
 	for _, l := range strings.Split(out, "\n") {
-		if f := strings.Fields(l); len(f) == 2 && f[1] == "commit" && !seen[f[0]] {
+		if f := strings.Fields(l); len(f) == 2 && f[1] == "commit" && fullSHA(f[0]) && !seen[f[0]] {
 			seen[f[0]] = true
 			tips = append(tips, f[0])
 		}
@@ -235,7 +262,7 @@ func (r *hoRepo) shallow(ctx context.Context) []string {
 	if err != nil {
 		return nil
 	}
-	return strings.Fields(string(b))
+	return slices.DeleteFunc(strings.Fields(string(b)), func(c string) bool { return !fullSHA(c) })
 }
 
 // fetchBundle brings a bundle's ref into this (local) checkout.

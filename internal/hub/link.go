@@ -157,7 +157,7 @@ type pairing struct {
 
 func newPairing() *pairing {
 	return &pairing{byCode: map[string]*pairLink{}, byPoll: map[string]*pairLink{},
-		pollLimit: newIPLimiter(1, 20), codeLimit: newIPLimiter(0.1, 10)}
+		pollLimit: newIPLimiter(1, 20), codeLimit: newGuessLimiter(0.1, 10)}
 }
 
 // sweepLocked expires overdue pairings (returned, for the audit) and

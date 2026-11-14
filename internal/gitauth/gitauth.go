@@ -234,6 +234,10 @@ func ghToken(ctx context.Context, host string) (*Cred, error) {
 // credentialFill asks git's credential helpers (git credential fill;
 // terminal prompts off, a helper's own sign-in window is fine).
 func credentialFill(ctx context.Context, u *url.URL) (*Cred, error) {
+	// a line break or NUL would add keys of the caller's choosing to git's protocol
+	if strings.ContainsAny(u.Host+u.Path+u.User.Username(), "\n\r\x00") {
+		return nil, fmt.Errorf("--git-auth forward: refusing a URL with control characters (%q)", u.Redacted())
+	}
 	var in strings.Builder
 	fmt.Fprintf(&in, "protocol=https\nhost=%s\n", u.Host)
 	if p := strings.TrimPrefix(u.Path, "/"); p != "" {

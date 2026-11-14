@@ -102,6 +102,13 @@ func TestReleasePublish(t *testing.T) {
 	if r := h.longarm(h.admin, "admin", "release", "publish", bad, "--version", "1.3.0", "--no-sign"); r.code == 0 || !strings.Contains(r.stderr, "no .minisig signature") {
 		t.Fatalf("unsigned release published: %+v", r)
 	}
+	// An unsigned package alone (the install scripts run it as root): refused.
+	pkgOnly := filepath.Join(h.root, "pkgonly")
+	os.MkdirAll(pkgOnly, 0o755)
+	os.WriteFile(filepath.Join(pkgOnly, "longarm-windows-amd64.msi"), []byte("not an msi"), 0o644)
+	if r := h.longarm(h.admin, "admin", "release", "publish", pkgOnly, "--version", "1.3.0", "--no-sign"); r.code == 0 || !strings.Contains(r.stderr, "no .minisig signature") {
+		t.Fatalf("unsigned package published: %+v", r)
+	}
 	// Signing needs the key on this machine.
 	if r := h.longarm(h.client, "admin", "release", "publish", rel, "--version", "1.4.0"); r.code == 0 || !strings.Contains(r.stderr, "sign:") {
 		t.Fatalf("publish without a key: %+v", r)

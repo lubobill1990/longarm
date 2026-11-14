@@ -36,6 +36,8 @@ const (
 	peerGoneEvery   = time.Second // at most one PeerGone per (session, dst) per interval
 	cmmRate         = 2           // CallMeMaybe frames per second per session (burst cmmBurst)
 	cmmBurst        = 10
+	ctrlRate        = 2   // NodeInfo and Ping frames per second per session (burst ctrlBurst): nodes send
+	ctrlBurst       = 10  // NodeInfo when their NAT changes and a TCP Ping every 5 s
 	stunRate        = 50  // STUN answers per second per source IP (nodes send a few per 25 s; the reply is
 	stunBurst       = 100 // barely bigger than the request, but an unthrottled reflector is still a reflector)
 )
@@ -110,7 +112,7 @@ type Server struct {
 	snat     atomic.Bool
 	fakeSNAT netip.Addr
 	// workerPairs: worker pairs allowed to talk (SetWorkerPairs).
-	workerPairs atomic.Pointer[map[pairKey]struct{}]
+	workerPairs atomic.Pointer[workerPolicy]
 	// Admit, if set, is asked again when a session registers (under the
 	// lock KickCerts sweeps with): a certificate revoked between the TLS
 	// handshake and the node's Hello is refused, never registered.
@@ -463,8 +465,9 @@ type session struct {
 	nat    string
 	mapped []netip.AddrPort
 
-	lim    *rate.Limiter // data bytes (nil = unlimited)
-	cmmLim *rate.Limiter // CallMeMaybe frames
+	lim     *rate.Limiter // data bytes (nil = unlimited)
+	cmmLim  *rate.Limiter // CallMeMaybe frames
+	ctrlLim *rate.Limiter // NodeInfo and Ping frames
 
 	ctrl chan []byte // encoded frames
 	data chan []byte // id-prefixed packets (src id)
@@ -516,7 +519,7 @@ func (s *Server) newSession(ident pki.Identity, cert *x509.Certificate, kind str
 		srv: s, id: NodeID(ident, h.Instance), ident: ident, cert: cert, kind: kind, remote: remote,
 		cands: cleanCandidates(h.Candidates), since: time.Now(),
 		ctrl: make(chan []byte, 64), data: make(chan []byte, 1024), done: make(chan struct{}),
-		goneAt: map[ID]time.Time{}, cmmLim: rate.NewLimiter(cmmRate, cmmBurst),
+		goneAt: map[ID]time.Time{}, cmmLim: rate.NewLimiter(cmmRate, cmmBurst), ctrlLim: rate.NewLimiter(ctrlRate, ctrlBurst),
 	}
 	if s.Rate > 0 {
 		burst := s.Burst
@@ -603,11 +606,12 @@ func (s *Server) forward(src *session, dst ID, pkt []byte) {
 	d := s.lookup(dst)
 	if d == nil {
 		s.dropNoPeer.Add(1)
-		src.peerGone(dst)
+		s.peerGone(src, dst)
 		return
 	}
 	if !s.allowed(src.ident, d.ident) {
 		s.dropPolicy.Add(1)
+		s.peerGone(src, dst) // like an offline id (mayHearGone)
 		return
 	}
 	if src.lim != nil && !src.lim.AllowN(time.Now(), len(pkt)) {
@@ -624,7 +628,12 @@ func (s *Server) forward(src *session, dst ID, pkt []byte) {
 	}
 }
 
-func (ss *session) peerGone(dst ID) {
+// peerGone tells ss that dst is not connected, if it may hear so
+// (mayHearGone); otherwise the packet is dropped silently.
+func (s *Server) peerGone(ss *session, dst ID) {
+	if !s.mayHearGone(ss.ident, dst) {
+		return
+	}
 	now := time.Now()
 	ss.goneMu.Lock()
 	if t, ok := ss.goneAt[dst]; ok && now.Sub(t) < peerGoneEvery {
@@ -658,11 +667,12 @@ func (s *Server) handleCtrl(ss *session, typ byte, p []byte) error {
 		}
 		d := s.lookup(dst)
 		if d == nil {
-			ss.peerGone(dst)
+			s.peerGone(ss, dst)
 			return nil
 		}
 		if !s.allowed(ss.ident, d.ident) {
 			s.dropPolicy.Add(1)
+			s.peerGone(ss, dst)
 			return nil
 		}
 		ss.infoMu.Lock()
@@ -705,6 +715,10 @@ func (s *Server) handleCtrl(ss *session, typ byte, p []byte) error {
 		s.callMeMaybes.Add(1)
 		d.sendCtrl(f)
 	case FrameNodeInfo:
+		if !ss.ctrlLim.Allow() { // each one rescans all sessions (updateSNAT)
+			s.dropRate.Add(1)
+			return nil
+		}
 		var ni NodeInfo
 		if err := json.Unmarshal(p, &ni); err != nil {
 			return fmt.Errorf("bad NodeInfo: %w", err)
@@ -717,6 +731,10 @@ func (s *Server) handleCtrl(ss *session, typ byte, p []byte) error {
 		ss.infoMu.Unlock()
 		s.updateSNAT()
 	case FramePing:
+		if !ss.ctrlLim.Allow() {
+			s.dropRate.Add(1)
+			return nil
+		}
 		f, _ := AppendFrame(nil, FramePong, p)
 		ss.sendCtrl(f)
 	case FramePong:

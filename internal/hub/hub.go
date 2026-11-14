@@ -189,7 +189,7 @@ func Open(cfg *Config, log *slog.Logger) (*Hub, error) {
 	}
 	h := &Hub{
 		cfg: cfg, log: log, store: st, ca: ca, params: cfg.SchedParams(), bus: newBus(),
-		joinLimit: newIPLimiter(0.2, 10), loginLimit: newIPLimiter(0.1, 5), renewLimit: newIPLimiter(0.5, 10), conns: conntrack.New(),
+		joinLimit: newGuessLimiter(0.2, 10), loginLimit: newGuessLimiter(0.1, 5), renewLimit: newIPLimiter(0.5, 10), conns: conntrack.New(),
 		tailnetWorkerLimit: newIPLimiter(1.0/3600, 5), tailnetClientLimit: newIPLimiter(1.0/600, 10), nodes: map[string]*node{},
 		jobs: map[string]map[string]*jobEntry{}, reservations: map[string]*reservation{},
 		profiles: map[string]*pb.Profile{}, stable: map[string]*pb.Profile{}, knownSerials: map[string]string{}, kick: make(chan struct{}, 1),

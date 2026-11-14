@@ -62,24 +62,28 @@ name = "w1"
 password = "hunter22"
 [releases]
 public_key = "RWQ..."
+key_id = "k1"
+[x]
+openai_key = "oai-123456"
+database_url = "postgres://u@db/x"
 `
 	out, n, err := SanitizeTOML([]byte(in))
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(out)
-	for _, bad := range []string{"pt-123456", "hooks.example.com", "/etc/tok", "/etc/s", "hunter22"} {
+	for _, bad := range []string{"pt-123456", "hooks.example.com", "/etc/tok", "/etc/s", "hunter22", "oai-123456", "postgres:"} {
 		if strings.Contains(s, bad) {
 			t.Errorf("%q left in\n%s", bad, s)
 		}
 	}
-	for _, keep := range []string{"hub.example.com:7443", `public_key = "RWQ..."`, `name = "w1"`, "tcp://192.0.2.3:7701"} {
+	for _, keep := range []string{"hub.example.com:7443", `public_key = "RWQ..."`, `name = "w1"`, `key_id = "k1"`, "tcp://192.0.2.3:7701"} {
 		if !strings.Contains(s, keep) {
 			t.Errorf("%q missing\n%s", keep, s)
 		}
 	}
-	if n != 5 {
-		t.Errorf("removed %d values, want 5\n%s", n, s)
+	if n != 7 {
+		t.Errorf("removed %d values, want 7\n%s", n, s)
 	}
 	if _, _, err := SanitizeTOML([]byte("password = \"x\n")); err == nil {
 		t.Fatal("broken TOML accepted")

@@ -2,6 +2,7 @@ package hub
 
 import (
 	"net"
+	"net/netip"
 	"slices"
 	"sync"
 	"time"
@@ -106,6 +107,7 @@ type ipLimiter struct {
 	mu    sync.Mutex
 	r     rate.Limit
 	burst int
+	net64 bool // IPv6: one bucket per /64
 	m     map[string]*limEntry
 }
 
@@ -118,12 +120,38 @@ func newIPLimiter(perSec float64, burst int) *ipLimiter {
 	return &ipLimiter{r: rate.Limit(perSec), burst: burst, m: map[string]*limEntry{}}
 }
 
-// allow takes a token for addr's IP.
-func (l *ipLimiter) allow(addr string) bool {
+// newGuessLimiter is an ipLimiter against guessing secrets (join and
+// pairing codes, passwords): IPv6 by /64, as one host commonly holds a
+// whole /64 and per address would be no limit.
+func newGuessLimiter(perSec float64, burst int) *ipLimiter {
+	l := newIPLimiter(perSec, burst)
+	l.net64 = true
+	return l
+}
+
+// key is addr's bucket.
+func (l *ipLimiter) key(addr string) string {
 	ip := addr
 	if h, _, err := net.SplitHostPort(addr); err == nil {
 		ip = h
 	}
+	if !l.net64 {
+		return ip
+	}
+	a, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	if a = a.Unmap(); a.Is6() {
+		p, _ := a.Prefix(64)
+		return p.String()
+	}
+	return a.String()
+}
+
+// allow takes a token for addr's IP.
+func (l *ipLimiter) allow(addr string) bool {
+	ip := l.key(addr)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
@@ -152,10 +180,7 @@ func tspb(t time.Time) *timestamppb.Timestamp {
 
 // blocked reports whether addr's IP has no token left (without taking one).
 func (l *ipLimiter) blocked(addr string) bool {
-	ip := addr
-	if h, _, err := net.SplitHostPort(addr); err == nil {
-		ip = h
-	}
+	ip := l.key(addr)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := l.m[ip]

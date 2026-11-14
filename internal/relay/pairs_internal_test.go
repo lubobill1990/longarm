@@ -34,6 +34,23 @@ func TestWorkerPairsByNodeID(t *testing.T) {
 			t.Errorf("%s/%s <-> %s/%s: %v, want %v", c.a.Name, c.a.ID, c.b.Name, c.b.ID, got, c.want)
 		}
 	}
+	// PeerGone about the paired peer's routing id only, matched like allowed
+	for _, c := range []struct {
+		src  pki.Identity
+		dst  ID
+		want bool
+	}{
+		{w("wa", idA), WorkerID("wb"), true},
+		{w("wb", idB), WorkerID("wa"), true},
+		{w("wa", ""), WorkerID("wb"), true},
+		{w("wa", idX), WorkerID("wb"), false},
+		{w("wa", idA), WorkerID("wc"), false},
+		{pki.Identity{Role: pki.RoleClient, Name: "c"}, WorkerID("wc"), true},
+	} {
+		if got := s.mayHearGone(c.src, c.dst); got != c.want {
+			t.Errorf("PeerGone %s/%s -> %s: %v, want %v", c.src.Name, c.src.ID, c.dst, got, c.want)
+		}
+	}
 	// an older hub's pairs: names only
 	s.SetWorkerPairs([]WorkerPair{{A: "wa", B: "wb"}})
 	if !s.allowed(w("wa", ""), w("wb", "")) {
