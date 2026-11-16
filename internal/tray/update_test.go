@@ -12,7 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"longarm/internal/update"
 )
@@ -154,6 +156,66 @@ func TestTrayUpdateInfo(t *testing.T) {
 	s.refreshUpdate(context.Background(), true)
 	if got := s.updateInfo(); got.Available || got.FeedbackURL != "" || got.RepoURL != "" {
 		t.Fatalf("banner or a hub's feedback link without a hub: %+v", got)
+	}
+}
+
+// TestTrayHubVersionRefresh: the version details (refresh=hub) show the hub
+// as it runs now, not as of the hourly check; asked at most every
+// hubCheckEvery, and a hub that doesn't answer keeps what was known.
+func TestTrayHubVersionRefresh(t *testing.T) {
+	var ver atomic.Value
+	ver.Store("1.1.5")
+	var asks atomic.Int32
+	down := atomic.Bool{}
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/releases/latest.json" {
+			json.NewEncoder(w).Encode(map[string]any{"version": "1.2.0"})
+			return
+		}
+		if r.URL.Path != "/healthz" {
+			http.NotFound(w, r)
+			return
+		}
+		asks.Add(1)
+		if down.Load() {
+			http.Error(w, "down", http.StatusBadGateway)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "version": ver.Load()})
+	}))
+	defer hub.Close()
+	s := &Server{opts: Options{Version: "1.1.5", HubURL: hub.URL, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	get := func(q string) updateInfo {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.updateState(w, httptest.NewRequest(http.MethodGet, "/trayapi/update"+q, nil))
+		var info updateInfo
+		if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+			t.Fatal(err)
+		}
+		return info
+	}
+	if got := get(""); got.Hub != "1.1.5" {
+		t.Fatalf("first check: %+v", got)
+	}
+	ver.Store("1.2.0") // the hub was upgraded
+	if got := get(""); got.Hub != "1.1.5" {
+		t.Fatalf("the hourly check asked again: %+v", got)
+	}
+	if got := get("?refresh=hub"); got.Hub != "1.2.0" {
+		t.Fatalf("refresh=hub: %+v", got)
+	}
+	n := asks.Load()
+	get("?refresh=hub")
+	if asks.Load() != n {
+		t.Fatal("asked again within hubCheckEvery")
+	}
+	s.upd.mu.Lock()
+	s.upd.hubChecked = time.Time{}
+	s.upd.mu.Unlock()
+	down.Store(true)
+	if got := get("?refresh=hub"); got.Hub != "1.2.0" {
+		t.Fatalf("a hub that didn't answer lost the known version: %+v", got)
 	}
 }
 

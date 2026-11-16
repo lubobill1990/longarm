@@ -20,6 +20,14 @@
   `gate_free_gb` set explicitly (e.g. `deploy --gate-free-gb 20`) keeps
   that much free after each job: lower it or drop it.
 
+### Fixed
+
+- The tray's version details show the hub's version as it runs: while
+  they are open the tray asks the hub's `/healthz` (at most every 10 s;
+  `GET /trayapi/update?refresh=hub`) instead of showing what the hourly
+  release check saw - after an upgrade the hub row said the old version
+  for up to an hour.
+
 ### Added
 
 - **Job lists as summaries**: `FleetJobsRequest.summary` (and the daemon's
