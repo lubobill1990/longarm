@@ -807,6 +807,9 @@ func (s *session) pickNow(ctx context.Context, require map[string]string) (strin
 		for _, n := range nodes {
 			c := sched.Candidate{Name: n.Name, Labels: n.Labels, Online: n.Online && n.Metrics != nil,
 				Eligible: n.State == "approved" && !n.Draining, Why: n.DrainReason, ReservedGB: n.ReservedGb, Running: int(n.JobsActive)}
+			if c.Eligible && n.MaxJobs > 0 && n.JobsActive >= n.MaxJobs { // the hub's candidatesLocked too
+				c.Eligible, c.Why = false, fmt.Sprintf("at its job limit (%d)", n.MaxJobs)
+			}
 			if m := n.Metrics; m != nil {
 				c.TotalGB, c.FreeGB = memcap.GB(m) // a Dynamic Memory guest: against its ceiling
 				c.CPU, c.Cores = m.CpuPercent, float64(m.Threads)
