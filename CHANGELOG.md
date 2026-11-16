@@ -20,6 +20,13 @@
   `gate_free_gb` set explicitly (e.g. `deploy --gate-free-gb 20`) keeps
   that much free after each job: lower it or drop it.
 
+### Fixed
+
+- `exec --on auto` (and other short-command picks) honours a worker's
+  local job limit (`longarmd limits --max-jobs`) as the hub's placement
+  does: a worker at its limit is skipped ("at its job limit"), not only
+  scored lower - with the balanced score it could still win.
+
 ### Added
 
 - **Job lists as summaries**: `FleetJobsRequest.summary` (and the daemon's
