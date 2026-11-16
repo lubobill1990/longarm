@@ -46,14 +46,14 @@ const maxMSISize = 1 << 30
 type trayUpdate struct {
 	mu      sync.Mutex
 	checked time.Time
-	latest  string     // the hub's newest complete release ("" = none / unknown)
-	channel string     // the channel latest is of
-	hub     string     // the hub's own version (its /healthz; "" = unknown)
+	latest  string // the hub's newest complete release ("" = none / unknown)
+	channel string // the channel latest is of
+	hub     string // the hub's own version (its /healthz; "" = unknown)
 	// hubChecked: when refreshHub last asked /healthz (refresh=hub)
 	hubChecked time.Time
-	msi     latestFile // its MSI for this architecture (Name "" = none)
-	state   string     // "" | downloading | installing | failed
-	err     string
+	msi        latestFile // its MSI for this architecture (Name "" = none)
+	state      string     // "" | downloading | installing | failed
+	err        string
 	// feedback, repo: where the hub sends feedback and bug reports and the
 	// source repository it links to (its /healthz; "" = no hub or an older
 	// one: the UI falls back to the public repository and its issues)
