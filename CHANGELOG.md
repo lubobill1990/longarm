@@ -26,6 +26,11 @@
   local job limit (`longarmd limits --max-jobs`) as the hub's placement
   does: a worker at its limit is skipped ("at its job limit"), not only
   scored lower - with the balanced score it could still win.
+- The tray's version details show the hub's version as it runs: while
+  they are open the tray asks the hub's `/healthz` (at most every 10 s;
+  `GET /trayapi/update?refresh=hub`) instead of showing what the hourly
+  release check saw - after an upgrade the hub row said the old version
+  for up to an hour.
 
 ### Added
 

@@ -159,7 +159,9 @@ export const trayApi = {
   /** allow the program the daemon (client) or longarmd (worker) runs from, elevated */
   firewallAllow: (target: 'client' | 'worker') => post<FirewallFixResult>('/trayapi/firewall/allow', { for: target }),
   // the update banner: the hub's newest release; install = download, verify (sha256 + signature), run the MSI
-  update: (refresh = false) => get<TrayUpdate>(`/trayapi/update${refresh ? '?refresh=1' : ''}`),
+  // refresh: true = ask the hub now; 'hub' = the hub's own version now (the open version details)
+  update: (refresh: boolean | 'hub' = false) =>
+    get<TrayUpdate>(`/trayapi/update${refresh === 'hub' ? '?refresh=hub' : refresh ? '?refresh=1' : ''}`),
   installUpdate: (version: string) => post<{ state: string }>('/trayapi/update/install', { version }),
   /** "Add a machine": the hub, its newest stable release, where to download from */
   addMachine: () => get<AddMachineInfo>('/trayapi/addmachine'),

@@ -90,8 +90,9 @@ export function VersionChip({ info, pool }: { info?: TrayInfo; pool?: PoolView }
   useEffect(() => {
     let alive = true
     const load = () => {
+      // open: the hub as it runs now (the hourly release check may predate its upgrade)
       trayApi
-        .update()
+        .update(open ? 'hub' : false)
         .then((u) => alive && setUpd(u))
         .catch(() => {})
       // a stopped daemon's version is not shown any more

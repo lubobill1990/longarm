@@ -33,7 +33,8 @@ import (
 // the remembered MSI properties and asks for elevation itself). An MSI that
 // fails a check never runs.
 //
-//	GET  /trayapi/update          {current, latest, channel, available, msi, state, error}
+//	GET  /trayapi/update          {current, latest, channel, hub, available, msi, state, error}
+//	                              (?refresh=1: ask the hub now; ?refresh=hub: its version now)
 //	POST /trayapi/update/install  {"version"}: download, verify, run
 
 // updateCheckEvery: how often the tray asks the hub.
@@ -45,12 +46,14 @@ const maxMSISize = 1 << 30
 type trayUpdate struct {
 	mu      sync.Mutex
 	checked time.Time
-	latest  string     // the hub's newest complete release ("" = none / unknown)
-	channel string     // the channel latest is of
-	hub     string     // the hub's own version (its /healthz; "" = unknown)
-	msi     latestFile // its MSI for this architecture (Name "" = none)
-	state   string     // "" | downloading | installing | failed
-	err     string
+	latest  string // the hub's newest complete release ("" = none / unknown)
+	channel string // the channel latest is of
+	hub     string // the hub's own version (its /healthz; "" = unknown)
+	// hubChecked: when refreshHub last asked /healthz (refresh=hub)
+	hubChecked time.Time
+	msi        latestFile // its MSI for this architecture (Name "" = none)
+	state      string     // "" | downloading | installing | failed
+	err        string
 	// feedback, repo: where the hub sends feedback and bug reports and the
 	// source repository it links to (its /healthz; "" = no hub or an older
 	// one: the UI falls back to the public repository and its issues)
@@ -232,8 +235,45 @@ func (s *Server) updateInfo() updateInfo {
 	return info
 }
 
+// hubCheckEvery: how often an open version details panel asks the hub's
+// /healthz for its version (refresh=hub).
+const hubCheckEvery = 10 * time.Second
+
+// refreshHub asks the hub's /healthz for its version and links now (at
+// most once per hubCheckEvery): the version details show the hub as it
+// runs, not as of the last hourly release check. A failed ask keeps what
+// was known.
+func (s *Server) refreshHub(ctx context.Context) {
+	u := &s.upd
+	base := strings.TrimRight(s.hubURL(), "/")
+	u.mu.Lock()
+	recent := time.Since(u.hubChecked) < hubCheckEvery
+	if !recent {
+		u.hubChecked = time.Now()
+	}
+	u.mu.Unlock()
+	if recent || base == "" {
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	hz := s.hubHealth(cctx, base)
+	if hz.version == "" {
+		return
+	}
+	u.mu.Lock()
+	u.hub, u.feedback, u.repo = hz.version, hz.feedback, hz.repo
+	u.mu.Unlock()
+}
+
+// updateState answers GET /trayapi/update; refresh=1: ask the hub now,
+// refresh=hub: its version now (the open version details).
 func (s *Server) updateState(w http.ResponseWriter, r *http.Request) {
-	s.refreshUpdate(r.Context(), r.URL.Query().Get("refresh") == "1")
+	refresh := r.URL.Query().Get("refresh")
+	s.refreshUpdate(r.Context(), refresh == "1")
+	if refresh == "hub" {
+		s.refreshHub(r.Context())
+	}
 	writeJSON(w, s.updateInfo())
 }
 
