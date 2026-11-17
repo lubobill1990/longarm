@@ -22,6 +22,13 @@
 
 ### Fixed
 
+- **A deb/rpm upgrade restarts the running worker.** `apt upgrade` /
+  `dnf upgrade` replaced `/usr/bin/longarmd` but left the running
+  `longarmd@<user>` (and `longarmd-peruser`) on the old binary, so the
+  worker kept reporting the old version until someone restarted it. The
+  postinstall now `try-restart`s the active instances on an upgrade (jobs
+  and sessions keep running, `KillMode=process`) and no longer prints the
+  first-install join hints on an upgrade.
 - `exec --on auto` (and other short-command picks) honours a worker's
   local job limit (`longarmd limits --max-jobs`) as the hub's placement
   does: a worker at its limit is skipped ("at its job limit"), not only
