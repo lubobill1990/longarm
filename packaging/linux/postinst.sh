@@ -1,7 +1,11 @@
 #!/bin/sh
-# Longarm postinst: optional join + service (see /etc/longarm/join.env.example).
+# Longarm postinst: optional join + service (see /etc/longarm/join.env.example);
+# on an upgrade, restarts the running longarmd instances.
 set -e
 [ "$1" = "configure" ] || [ "$1" = "1" ] || [ "$1" = "2" ] || exit 0
+# An upgrade: deb "configure <old version>", rpm "2" (1 = a first install).
+UPGRADE=""
+if { [ "$1" = "configure" ] && [ -n "${2:-}" ]; } || [ "$1" = "2" ]; then UPGRADE=1; fi
 
 if [ -f /etc/longarm/join.env ]; then
   # shellcheck disable=SC1091
@@ -15,6 +19,18 @@ USR="${LONGARM_USER:-}"
 ISOLATION="${LONGARM_ISOLATION:-}"
 
 if command -v systemctl >/dev/null 2>&1; then systemctl daemon-reload || true; fi
+
+# The running longarmd instances (longarmd@<user>, longarmd-peruser) keep the
+# old binary until restarted - a package-managed worker doesn't update itself,
+# so without this it reports the old version after apt/dnf upgraded it.
+# KillMode=process: jobs and sessions keep running in their shims, and so does
+# an apt run from a Longarm session on this worker. try-restart leaves stopped
+# instances stopped; --no-block doesn't wait for longarmd's graceful stop.
+if [ -n "$UPGRADE" ] && command -v systemctl >/dev/null 2>&1; then
+  for unit in $(systemctl list-units --plain --no-legend --state=active 'longarmd@*.service' 'longarmd-peruser.service' 2>/dev/null | awk '{print $1}'); do
+    systemctl --no-block try-restart "$unit" || true
+  done
+fi
 
 # Per-user isolation: longarmd as root with its own data dir.
 if [ "$ISOLATION" = "per-user" ] && [ -n "$HUB" ] && [ -n "$CODE" ] && { [ "$ROLES" = "worker" ] || [ "$ROLES" = "both" ]; }; then
@@ -33,6 +49,7 @@ if [ "$ISOLATION" = "per-user" ] && [ -n "$HUB" ] && [ -n "$CODE" ] && { [ "$ROL
 fi
 
 if [ -z "$ROLES" ] || [ -z "$HUB" ] || [ -z "$CODE" ] || [ -z "$USR" ]; then
+  [ -z "$UPGRADE" ] || exit 0 # the join hints are for a first install
   echo "Longarm installed. Join a hub with:"
   echo "  worker: sudo -u <user> longarmd join <hub> <code> && sudo systemctl enable --now longarmd@<user>"
   echo "          (data in ~<user>/.longarm)"

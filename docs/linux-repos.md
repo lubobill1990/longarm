@@ -67,7 +67,11 @@ it with the one above. `gpgcheck=1` checks every rpm's own signature,
 
 Updates then come with `apt upgrade` / `dnf upgrade`. The package installs
 into `/usr/bin` (root-owned), so longarmd running as a user doesn't
-self-update it: the package manager does. The postinstall script's join
+self-update it: the package manager does. An upgrade restarts the running
+`longarmd@<user>` and `longarmd-peruser` instances (`systemctl try-restart`;
+stopped ones stay stopped), so the worker runs the new version right away;
+jobs and sessions keep running in their shims (`KillMode=process`). The
+postinstall script's join
 options (`/etc/longarm/join.env`) work as with the downloaded packages
 ([README](../README.md#join-a-hub)).
 
