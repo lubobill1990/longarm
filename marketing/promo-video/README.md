@@ -28,6 +28,25 @@ npx --yes hyperframes@0.8.200 snapshot --at 5,20,60 --no-end   # look before ren
 npx --yes hyperframes@0.8.200 render -o ../renders/longarm-promo.mp4 --quality delivery --video-frame-format png
 ```
 
+## Other languages
+
+`lang/<code>/script.json` is the film in another language (`lang/zh`: Chinese, voice
+`zh-CN-YunxiNeural`): the same sections and as many lines in each, `"lang"` set. The
+same tools build it with `FILM_ROOT` pointing there - its `audio/`, `timeline.json`,
+`music-plan.json` and `film/` are written next to its script; the assets are shared:
+
+```sh
+FILM_ROOT=lang/zh sh tools/build-audio.sh      # (the ASR listen-check is English only)
+FILM_ROOT=lang/zh FILM_HUB_LINK=... FILM_REPO=... node tools/build-film.mjs
+cd lang/zh/film && npx --yes hyperframes@0.8.200 render -o ../../../renders/longarm-promo.zh.mp4 --quality delivery --video-frame-format png
+```
+
+In `tools/build-film.mjs`, `tr(en, zh)` gives each anchor and on-screen line its
+translation (the product's own UI, commands and names stay as they are); a
+language written without spaces is anchored on the run of the voice's
+segments (`atChars`). Its CJK text renders in the system's font (Microsoft
+YaHei on Windows, where the film is rendered).
+
 Changing a line in `script.json` means regenerating the audio first: the film
 reads every time from `timeline.json`, and `build-film.mjs` fails loudly when a
 word it anchors to is no longer spoken.

@@ -2,11 +2,11 @@
  "bpm": 120,
  "beat": 0.5,
  "bar": 2.0,
- "musicStart": 9.095,
- "total": 171.095,
+ "musicStart": 8.845,
+ "total": 170.845,
  "note": "bar n starts at musicStart + 2n s; bar 0 is the lead-in, bar 1 the drop downbeat; negative bars = hook (no music)",
  "endCue": {
-  "t": 167.095,
+  "t": 166.845,
   "bar": 79.0,
   "what": "final resolving chord, rings to total"
  },
@@ -16,21 +16,21 @@
    "energy": "drone",
    "music": false,
    "start": 0.0,
-   "end": 9.095,
+   "end": 8.845,
    "startBar": null,
    "endBar": 0.0,
    "speech": [
     [
      0.4,
-     2.88
+     2.75
     ],
     [
-     3.23,
-     6.565
+     3.1,
+     6.29
     ],
     [
-     6.915,
-     8.645
+     6.64,
+     8.395
     ]
    ],
    "musicOnly": []
@@ -39,24 +39,24 @@
    "id": "drop",
    "energy": "full",
    "music": true,
-   "start": 9.095,
-   "end": 19.095,
+   "start": 8.845,
+   "end": 18.845,
    "startBar": 0.0,
    "endBar": 5.0,
    "speech": [
     [
-     11.095,
-     11.98
+     10.845,
+     11.76
     ],
     [
-     12.595,
-     14.44
+     12.345,
+     14.245
     ]
    ],
    "musicOnly": [
     {
-     "start": 15.095,
-     "end": 19.095,
+     "start": 14.845,
+     "end": 18.845,
      "startBar": 3.0,
      "endBar": 5.0
     }
@@ -66,22 +66,22 @@
    "id": "idea",
    "energy": "verse",
    "music": true,
-   "start": 19.095,
-   "end": 37.095,
+   "start": 18.845,
+   "end": 36.845,
    "startBar": 5.0,
    "endBar": 14.0,
    "speech": [
     [
-     19.095,
-     23.165
+     18.845,
+     22.895
     ],
     [
-     23.595,
-     30.97
+     23.345,
+     30.75
     ],
     [
-     31.595,
-     36.2
+     31.345,
+     35.705
     ]
    ],
    "musicOnly": []
@@ -90,22 +90,22 @@
    "id": "how",
    "energy": "verse",
    "music": true,
-   "start": 37.095,
-   "end": 49.095,
+   "start": 36.845,
+   "end": 48.845,
    "startBar": 14.0,
    "endBar": 20.0,
    "speech": [
     [
-     37.095,
-     39.345
+     36.845,
+     39.29
     ],
     [
-     40.095,
-     42.325
+     39.845,
+     42.045
     ],
     [
-     43.095,
-     47.425
+     42.845,
+     47.055
     ]
    ],
    "musicOnly": []
@@ -114,22 +114,22 @@
    "id": "run",
    "energy": "verse+",
    "music": true,
-   "start": 49.095,
-   "end": 65.095,
+   "start": 48.845,
+   "end": 64.845,
    "startBar": 20.0,
    "endBar": 28.0,
    "speech": [
     [
-     49.095,
-     51.32
+     48.845,
+     51.005
     ],
     [
-     52.095,
-     60.825
+     51.845,
+     60.72
     ],
     [
-     61.595,
-     62.945
+     61.345,
+     62.735
     ]
    ],
    "musicOnly": []
@@ -138,36 +138,36 @@
    "id": "agents",
    "energy": "verse+",
    "music": true,
-   "start": 65.095,
-   "end": 95.095,
+   "start": 64.845,
+   "end": 94.845,
    "startBar": 28.0,
    "endBar": 43.0,
    "speech": [
     [
-     65.095,
-     66.49
+     64.845,
+     66.2
     ],
     [
-     67.095,
-     74.125
+     66.845,
+     73.905
     ],
     [
-     74.595,
-     77.12
+     74.345,
+     77.005
     ],
     [
-     77.595,
-     82.255
+     77.845,
+     82.495
     ],
     [
-     83.095,
-     91.14
+     82.845,
+     90.81
     ]
    ],
    "musicOnly": [
     {
-     "start": 93.095,
-     "end": 95.095,
+     "start": 92.845,
+     "end": 94.845,
      "startBar": 42.0,
      "endBar": 43.0
     }
@@ -177,28 +177,28 @@
    "id": "survive",
    "energy": "half",
    "music": true,
-   "start": 95.095,
-   "end": 107.095,
+   "start": 94.845,
+   "end": 106.845,
    "startBar": 43.0,
    "endBar": 49.0,
    "speech": [
     [
-     95.095,
-     96.37
+     94.845,
+     96.165
     ],
     [
-     97.095,
-     100.525
+     96.845,
+     100.295
     ],
     [
-     101.095,
-     104.62
+     100.845,
+     104.41
     ]
    ],
    "musicOnly": [
     {
-     "start": 105.095,
-     "end": 107.095,
+     "start": 104.845,
+     "end": 106.845,
      "startBar": 48.0,
      "endBar": 49.0
     }
@@ -208,22 +208,22 @@
    "id": "reach",
    "energy": "verse",
    "music": true,
-   "start": 107.095,
-   "end": 131.095,
+   "start": 106.845,
+   "end": 130.845,
    "startBar": 49.0,
    "endBar": 61.0,
    "speech": [
     [
-     107.095,
-     110.24
+     106.845,
+     110.005
     ],
     [
-     110.595,
-     120.615
+     110.845,
+     121.165
     ],
     [
-     121.095,
-     129.07
+     121.845,
+     129.775
     ]
    ],
    "musicOnly": []
@@ -232,32 +232,32 @@
    "id": "toolbox",
    "energy": "full",
    "music": true,
-   "start": 131.095,
-   "end": 151.095,
+   "start": 130.845,
+   "end": 150.845,
    "startBar": 61.0,
    "endBar": 71.0,
    "speech": [
     [
-     131.095,
-     133.8
+     130.845,
+     133.715
     ],
     [
-     134.595,
-     136.975
+     134.345,
+     136.89
     ],
     [
-     137.595,
-     143.145
+     137.345,
+     142.84
     ],
     [
-     143.595,
-     147.465
+     143.345,
+     147.06
     ]
    ],
    "musicOnly": [
     {
-     "start": 149.095,
-     "end": 151.095,
+     "start": 148.845,
+     "end": 150.845,
      "startBar": 70.0,
      "endBar": 71.0
     }
@@ -267,28 +267,28 @@
    "id": "cta",
    "energy": "breakdown",
    "music": true,
-   "start": 151.095,
-   "end": 163.095,
+   "start": 150.845,
+   "end": 162.845,
    "startBar": 71.0,
    "endBar": 77.0,
    "speech": [
     [
-     151.095,
-     153.27
+     150.845,
+     153.045
     ],
     [
-     154.095,
-     157.625
+     153.845,
+     157.595
     ],
     [
-     158.095,
-     160.745
+     158.345,
+     160.77
     ]
    ],
    "musicOnly": [
     {
-     "start": 161.095,
-     "end": 163.095,
+     "start": 160.845,
+     "end": 162.845,
      "startBar": 76.0,
      "endBar": 77.0
     }
@@ -298,20 +298,20 @@
    "id": "outro",
    "energy": "full",
    "music": true,
-   "start": 163.095,
-   "end": 171.095,
+   "start": 162.845,
+   "end": 170.845,
    "startBar": 77.0,
    "endBar": 81.0,
    "speech": [
     [
-     163.095,
-     166.13
+     162.845,
+     165.805
     ]
    ],
    "musicOnly": [
     {
-     "start": 167.095,
-     "end": 171.095,
+     "start": 166.845,
+     "end": 170.845,
      "startBar": 79.0,
      "endBar": 81.0
     }
@@ -320,120 +320,120 @@
  ],
  "cues": [
   {
-   "t": 9.095,
+   "t": 8.845,
    "bar": 0,
    "type": "riser",
    "len_bars": 1,
    "section": "drop"
   },
   {
-   "t": 11.095,
+   "t": 10.845,
    "bar": 1.0,
    "type": "impact",
    "section": "drop"
   },
   {
-   "t": 18.595,
+   "t": 18.345,
    "bar": 4.75,
    "type": "fill",
    "section": "idea"
   },
   {
-   "t": 36.595,
+   "t": 36.345,
    "bar": 13.75,
    "type": "fill",
    "section": "how"
   },
   {
-   "t": 48.595,
+   "t": 48.345,
    "bar": 19.75,
    "type": "fill",
    "section": "run"
   },
   {
-   "t": 64.595,
+   "t": 64.345,
    "bar": 27.75,
    "type": "fill",
    "section": "agents"
   },
   {
-   "t": 91.095,
+   "t": 90.845,
    "bar": 41.0,
    "type": "riser",
    "len_bars": 2,
    "section": "survive"
   },
   {
-   "t": 94.595,
+   "t": 94.345,
    "bar": 42.75,
    "type": "fill",
    "section": "survive"
   },
   {
-   "t": 95.095,
+   "t": 94.845,
    "bar": 43.0,
    "type": "impact",
    "section": "survive"
   },
   {
-   "t": 106.595,
+   "t": 106.345,
    "bar": 48.75,
    "type": "fill",
    "section": "reach"
   },
   {
-   "t": 127.095,
+   "t": 126.845,
    "bar": 59.0,
    "type": "riser",
    "len_bars": 2,
    "section": "toolbox"
   },
   {
-   "t": 130.595,
+   "t": 130.345,
    "bar": 60.75,
    "type": "fill",
    "section": "toolbox"
   },
   {
-   "t": 131.095,
+   "t": 130.845,
    "bar": 61.0,
    "type": "impact",
    "section": "toolbox"
   },
   {
-   "t": 150.595,
+   "t": 150.345,
    "bar": 70.75,
    "type": "fill",
    "section": "cta"
   },
   {
-   "t": 151.095,
+   "t": 150.845,
    "bar": 71.0,
    "type": "downlifter",
    "len_bars": 1,
    "section": "cta"
   },
   {
-   "t": 159.095,
+   "t": 158.845,
    "bar": 75.0,
    "type": "riser",
    "len_bars": 2,
    "section": "outro"
   },
   {
-   "t": 162.595,
+   "t": 162.345,
    "bar": 76.75,
    "type": "fill",
    "section": "outro"
   },
   {
-   "t": 163.095,
+   "t": 162.845,
    "bar": 77.0,
    "type": "impact",
    "section": "outro"
   },
   {
-   "t": 167.095,
+   "t": 166.845,
    "bar": 79.0,
    "type": "final",
    "section": "outro"

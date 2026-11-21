@@ -2,147 +2,147 @@
  "bpm": 120,
  "beat": 0.5,
  "bar": 2.0,
- "musicStart": 9.095,
- "dropDownbeat": 11.095,
- "endCue": 167.095,
- "total": 171.095,
+ "musicStart": 8.845,
+ "dropDownbeat": 10.845,
+ "endCue": 166.845,
+ "total": 170.845,
  "voice": "en-US-AndrewMultilingualNeural",
  "rate": "-5%",
  "sections": [
   {
    "id": "hook",
    "start": 0.0,
-   "end": 9.095,
+   "end": 8.845,
    "musicOnly": [],
    "lines": [
     {
      "text": "Your coding agent just kicked off a full build.",
      "start": 0.4,
-     "end": 2.88,
+     "end": 2.75,
      "words": [
       {
        "w": "Your",
        "start": 0.4,
-       "end": 0.449
+       "end": 0.444
       },
       {
        "w": "coding",
-       "start": 0.449,
-       "end": 0.791
+       "start": 0.457,
+       "end": 0.799
       },
       {
        "w": "agent",
-       "start": 0.804,
-       "end": 1.173
+       "start": 0.799,
+       "end": 1.168
       },
       {
        "w": "just",
-       "start": 1.186,
-       "end": 1.397
+       "start": 1.181,
+       "end": 1.405
       },
       {
        "w": "kicked",
-       "start": 1.397,
-       "end": 1.712
+       "start": 1.405,
+       "end": 1.694
       },
       {
        "w": "off",
-       "start": 1.712,
-       "end": 1.962
+       "start": 1.694,
+       "end": 1.878
       },
       {
        "w": "a",
-       "start": 1.976,
-       "end": 2.015
+       "start": 1.878,
+       "end": 1.918
       },
       {
        "w": "full",
-       "start": 2.015,
-       "end": 2.357
+       "start": 1.931,
+       "end": 2.247
       },
       {
        "w": "build",
-       "start": 2.37,
-       "end": 2.765
+       "start": 2.247,
+       "end": 2.642
       }
      ]
     },
     {
      "text": "Then a test suite. Then three more agents.",
-     "start": 3.23,
-     "end": 6.565,
+     "start": 3.1,
+     "end": 6.29,
      "words": [
       {
        "w": "Then",
-       "start": 3.23,
-       "end": 3.294
+       "start": 3.1,
+       "end": 3.142
       },
       {
        "w": "a",
-       "start": 3.294,
-       "end": 3.346
+       "start": 3.142,
+       "end": 3.195
       },
       {
        "w": "test",
-       "start": 3.359,
-       "end": 3.741
+       "start": 3.208,
+       "end": 3.511
       },
       {
        "w": "suite",
-       "start": 3.754,
-       "end": 4.281
+       "start": 3.524,
+       "end": 3.984
       },
       {
        "w": "Then",
-       "start": 4.702,
-       "end": 4.952
+       "start": 4.419,
+       "end": 4.655
       },
       {
        "w": "three",
-       "start": 5.162,
-       "end": 5.517
+       "start": 4.866,
+       "end": 5.221
       },
       {
        "w": "more",
-       "start": 5.517,
-       "end": 5.82
+       "start": 5.221,
+       "end": 5.498
       },
       {
        "w": "agents",
-       "start": 5.82,
-       "end": 6.452
+       "start": 5.511,
+       "end": 6.182
       }
      ]
     },
     {
      "text": "And your laptop is melting.",
-     "start": 6.915,
-     "end": 8.645,
+     "start": 6.64,
+     "end": 8.395,
      "words": [
       {
        "w": "And",
-       "start": 6.915,
-       "end": 6.923
+       "start": 6.64,
+       "end": 6.656
       },
       {
        "w": "your",
-       "start": 6.936,
-       "end": 7.041
+       "start": 6.656,
+       "end": 6.761
       },
       {
        "w": "laptop",
-       "start": 7.041,
-       "end": 7.62
+       "start": 6.761,
+       "end": 7.353
       },
       {
        "w": "is",
-       "start": 7.739,
-       "end": 7.857
+       "start": 7.498,
+       "end": 7.63
       },
       {
        "w": "melting",
-       "start": 7.857,
-       "end": 8.515
+       "start": 7.63,
+       "end": 8.261
       }
      ]
     }
@@ -150,71 +150,71 @@
   },
   {
    "id": "drop",
-   "start": 9.095,
-   "end": 19.095,
+   "start": 8.845,
+   "end": 18.845,
    "musicOnly": [
     {
-     "start": 15.095,
-     "end": 19.095
+     "start": 14.845,
+     "end": 18.845
     }
    ],
    "lines": [
     {
      "text": "Meet Longarm.",
-     "start": 11.095,
-     "end": 11.98,
+     "start": 10.845,
+     "end": 11.76,
      "words": [
       {
        "w": "Meet",
-       "start": 11.095,
-       "end": 11.287
+       "start": 10.845,
+       "end": 11.037
       },
       {
        "w": "Longarm",
-       "start": 11.3,
-       "end": 11.853
+       "start": 11.037,
+       "end": 11.629
       }
      ]
     },
     {
      "text": "Give your coding agents a long arm.",
-     "start": 12.595,
-     "end": 14.44,
+     "start": 12.345,
+     "end": 14.245,
      "words": [
       {
        "w": "Give",
-       "start": 12.595,
-       "end": 12.708
+       "start": 12.345,
+       "end": 12.45
       },
       {
        "w": "your",
-       "start": 12.708,
-       "end": 12.813
+       "start": 12.45,
+       "end": 12.542
       },
       {
        "w": "coding",
-       "start": 12.813,
-       "end": 13.234
+       "start": 12.555,
+       "end": 12.963
       },
       {
        "w": "agents",
-       "start": 13.234,
-       "end": 13.577
+       "start": 12.976,
+       "end": 13.318
       },
       {
        "w": "a",
-       "start": 13.577,
-       "end": 13.616
+       "start": 13.318,
+       "end": 13.358
       },
       {
        "w": "long",
-       "start": 13.629,
-       "end": 14.024
+       "start": 13.371,
+       "end": 13.792
       },
       {
        "w": "arm",
-       "start": 14.024,
-       "end": 14.327
+       "start": 13.792,
+       "end": 14.121
       }
      ]
     }
@@ -222,243 +222,243 @@
   },
   {
    "id": "idea",
-   "start": 19.095,
-   "end": 37.095,
+   "start": 18.845,
+   "end": 36.845,
    "musicOnly": [],
    "lines": [
     {
      "text": "Agents are great at starting work, and terrible at waiting for it.",
-     "start": 19.095,
-     "end": 23.165,
+     "start": 18.845,
+     "end": 22.895,
      "words": [
       {
        "w": "Agents",
-       "start": 19.095,
-       "end": 19.407
+       "start": 18.845,
+       "end": 19.139
       },
       {
        "w": "are",
-       "start": 19.421,
-       "end": 19.526
+       "start": 19.139,
+       "end": 19.218
       },
       {
        "w": "great",
-       "start": 19.539,
-       "end": 19.999
+       "start": 19.218,
+       "end": 19.718
       },
       {
        "w": "at",
-       "start": 20.013,
-       "end": 20.092
+       "start": 19.85,
+       "end": 19.916
       },
       {
        "w": "starting",
-       "start": 20.092,
-       "end": 20.539
+       "start": 19.916,
+       "end": 20.402
       },
       {
        "w": "work",
-       "start": 20.552,
-       "end": 20.934
+       "start": 20.416,
+       "end": 20.823
       },
       {
        "w": "and",
-       "start": 21.381,
-       "end": 21.539
+       "start": 21.231,
+       "end": 21.376
       },
       {
        "w": "terrible",
-       "start": 21.671,
-       "end": 22.197
+       "start": 21.389,
+       "end": 21.929
       },
       {
        "w": "at",
-       "start": 22.197,
-       "end": 22.302
+       "start": 21.929,
+       "end": 22.034
       },
       {
        "w": "waiting",
-       "start": 22.302,
-       "end": 22.644
+       "start": 22.034,
+       "end": 22.376
       },
       {
        "w": "for",
-       "start": 22.644,
-       "end": 22.894
+       "start": 22.376,
+       "end": 22.626
       },
       {
        "w": "it",
-       "start": 22.894,
-       "end": 23.052
+       "start": 22.626,
+       "end": 22.784
       }
      ]
     },
     {
      "text": "Meanwhile, there's a thirty-two core box under your desk, an old laptop, and a cloud VM, all doing nothing.",
-     "start": 23.595,
-     "end": 30.97,
+     "start": 23.345,
+     "end": 30.75,
      "words": [
       {
        "w": "Meanwhile",
-       "start": 23.595,
-       "end": 24.226
+       "start": 23.345,
+       "end": 23.966
       },
       {
        "w": "there's",
-       "start": 24.411,
-       "end": 24.568
+       "start": 24.151,
+       "end": 24.308
       },
       {
        "w": "a",
-       "start": 24.568,
-       "end": 24.634
+       "start": 24.308,
+       "end": 24.361
       },
       {
        "w": "thirty-two",
-       "start": 24.647,
-       "end": 25.384
+       "start": 24.361,
+       "end": 25.124
       },
       {
        "w": "core",
-       "start": 25.384,
-       "end": 25.674
+       "start": 25.124,
+       "end": 25.427
       },
       {
        "w": "box",
-       "start": 25.674,
-       "end": 26.016
+       "start": 25.44,
+       "end": 25.835
       },
       {
        "w": "under",
-       "start": 26.016,
-       "end": 26.161
+       "start": 25.835,
+       "end": 25.993
       },
       {
        "w": "your",
-       "start": 26.161,
-       "end": 26.253
+       "start": 25.993,
+       "end": 26.085
       },
       {
        "w": "desk",
-       "start": 26.253,
-       "end": 26.779
+       "start": 26.098,
+       "end": 26.637
       },
       {
        "w": "an",
-       "start": 27.187,
-       "end": 27.305
+       "start": 26.874,
+       "end": 26.966
       },
       {
        "w": "old",
-       "start": 27.371,
-       "end": 27.582
+       "start": 26.979,
+       "end": 27.19
       },
       {
        "w": "laptop",
-       "start": 27.582,
-       "end": 28.2
+       "start": 27.19,
+       "end": 27.822
       },
       {
        "w": "and",
-       "start": 28.503,
-       "end": 28.555
+       "start": 28.124,
+       "end": 28.177
       },
       {
        "w": "a",
-       "start": 28.555,
-       "end": 28.608
+       "start": 28.19,
+       "end": 28.243
       },
       {
        "w": "cloud",
-       "start": 28.608,
-       "end": 28.976
+       "start": 28.256,
+       "end": 28.624
       },
       {
        "w": "VM",
-       "start": 28.989,
-       "end": 29.463
+       "start": 28.637,
+       "end": 29.177
       },
       {
        "w": "all",
-       "start": 30.016,
-       "end": 30.174
+       "start": 29.729,
+       "end": 29.887
       },
       {
        "w": "doing",
-       "start": 30.187,
-       "end": 30.476
+       "start": 29.901,
+       "end": 30.216
       },
       {
        "w": "nothing",
-       "start": 30.476,
-       "end": 30.858
+       "start": 30.229,
+       "end": 30.624
       }
      ]
     },
     {
      "text": "Longarm turns every one of them into a single pool of workers.",
-     "start": 31.595,
-     "end": 36.2,
+     "start": 31.345,
+     "end": 35.705,
      "words": [
       {
        "w": "Longarm",
-       "start": 31.595,
-       "end": 32.361
+       "start": 31.345,
+       "end": 32.082
       },
       {
        "w": "turns",
-       "start": 32.479,
-       "end": 32.914
+       "start": 32.095,
+       "end": 32.542
       },
       {
        "w": "every",
-       "start": 33.058,
-       "end": 33.387
+       "start": 32.687,
+       "end": 33.042
       },
       {
        "w": "one",
-       "start": 33.387,
-       "end": 33.598
+       "start": 33.055,
+       "end": 33.279
       },
       {
        "w": "of",
-       "start": 33.598,
-       "end": 33.664
+       "start": 33.279,
+       "end": 33.345
       },
       {
        "w": "them",
-       "start": 33.677,
-       "end": 33.94
+       "start": 33.345,
+       "end": 33.608
       },
       {
        "w": "into",
-       "start": 34.072,
-       "end": 34.348
+       "start": 33.753,
+       "end": 33.989
       },
       {
        "w": "a",
-       "start": 34.361,
-       "end": 34.414
+       "start": 33.989,
+       "end": 34.042
       },
       {
        "w": "single",
-       "start": 34.427,
-       "end": 34.887
+       "start": 34.042,
+       "end": 34.476
       },
       {
        "w": "pool",
-       "start": 34.901,
-       "end": 35.295
+       "start": 34.476,
+       "end": 34.871
       },
       {
        "w": "of",
-       "start": 35.308,
-       "end": 35.387
+       "start": 34.871,
+       "end": 34.95
       },
       {
        "w": "workers",
-       "start": 35.401,
-       "end": 36.098
+       "start": 34.95,
+       "end": 35.608
       }
      ]
     }
@@ -466,163 +466,163 @@
   },
   {
    "id": "how",
-   "start": 37.095,
-   "end": 49.095,
+   "start": 36.845,
+   "end": 48.845,
    "musicOnly": [],
    "lines": [
     {
      "text": "Install it on every machine you have.",
-     "start": 37.095,
-     "end": 39.345,
+     "start": 36.845,
+     "end": 39.29,
      "words": [
       {
        "w": "Install",
-       "start": 37.095,
-       "end": 37.537
+       "start": 36.845,
+       "end": 37.327
       },
       {
        "w": "it",
-       "start": 37.537,
-       "end": 37.59
+       "start": 37.34,
+       "end": 37.432
       },
       {
        "w": "on",
-       "start": 37.603,
-       "end": 37.8
+       "start": 37.577,
+       "end": 37.774
       },
       {
        "w": "every",
-       "start": 37.945,
-       "end": 38.208
+       "start": 37.919,
+       "end": 38.155
       },
       {
        "w": "machine",
-       "start": 38.221,
-       "end": 38.629
+       "start": 38.169,
+       "end": 38.59
       },
       {
        "w": "you",
-       "start": 38.642,
-       "end": 38.761
+       "start": 38.59,
+       "end": 38.695
       },
       {
        "w": "have",
-       "start": 38.761,
-       "end": 39.234
+       "start": 38.695,
+       "end": 39.182
       }
      ]
     },
     {
      "text": "Sign in once, with a single code.",
-     "start": 40.095,
-     "end": 42.325,
+     "start": 39.845,
+     "end": 42.045,
      "words": [
       {
        "w": "Sign",
-       "start": 40.095,
-       "end": 40.322
+       "start": 39.845,
+       "end": 40.077
       },
       {
        "w": "in",
-       "start": 40.322,
-       "end": 40.44
+       "start": 40.077,
+       "end": 40.208
       },
       {
        "w": "once",
-       "start": 40.453,
-       "end": 41.032
+       "start": 40.208,
+       "end": 40.748
       },
       {
        "w": "with",
-       "start": 41.256,
-       "end": 41.401
+       "start": 40.984,
+       "end": 41.129
       },
       {
        "w": "a",
-       "start": 41.401,
-       "end": 41.44
+       "start": 41.129,
+       "end": 41.182
       },
       {
        "w": "single",
-       "start": 41.44,
-       "end": 41.795
+       "start": 41.182,
+       "end": 41.55
       },
       {
        "w": "code",
-       "start": 41.795,
-       "end": 42.216
+       "start": 41.55,
+       "end": 41.932
       }
      ]
     },
     {
      "text": "Now each machine is a worker, and your laptop can hand it anything.",
-     "start": 43.095,
-     "end": 47.425,
+     "start": 42.845,
+     "end": 47.055,
      "words": [
       {
        "w": "Now",
-       "start": 43.095,
-       "end": 43.282
+       "start": 42.845,
+       "end": 43.024
       },
       {
        "w": "each",
-       "start": 43.295,
-       "end": 43.479
+       "start": 43.037,
+       "end": 43.221
       },
       {
        "w": "machine",
-       "start": 43.479,
-       "end": 44.072
+       "start": 43.234,
+       "end": 43.813
       },
       {
        "w": "is",
-       "start": 44.137,
-       "end": 44.308
+       "start": 43.892,
+       "end": 44.05
       },
       {
        "w": "a",
-       "start": 44.308,
-       "end": 44.374
+       "start": 44.05,
+       "end": 44.103
       },
       {
        "w": "worker",
-       "start": 44.374,
-       "end": 44.979
+       "start": 44.116,
+       "end": 44.682
       },
       {
        "w": "and",
-       "start": 45.414,
-       "end": 45.466
+       "start": 44.971,
+       "end": 45.037
       },
       {
        "w": "your",
-       "start": 45.466,
-       "end": 45.585
+       "start": 45.05,
+       "end": 45.182
       },
       {
        "w": "laptop",
-       "start": 45.598,
-       "end": 46.229
+       "start": 45.182,
+       "end": 45.84
       },
       {
        "w": "can",
-       "start": 46.322,
-       "end": 46.479
+       "start": 45.958,
+       "end": 46.103
       },
       {
        "w": "hand",
-       "start": 46.479,
-       "end": 46.782
+       "start": 46.103,
+       "end": 46.379
       },
       {
        "w": "it",
-       "start": 46.782,
-       "end": 46.835
+       "start": 46.379,
+       "end": 46.432
       },
       {
        "w": "anything",
-       "start": 46.835,
-       "end": 47.308
+       "start": 46.432,
+       "end": 46.932
       }
      ]
     }
@@ -630,208 +630,208 @@
   },
   {
    "id": "run",
-   "start": 49.095,
-   "end": 65.095,
+   "start": 48.845,
+   "end": 64.845,
    "musicOnly": [],
    "lines": [
     {
      "text": "Type longarm run, and your command.",
-     "start": 49.095,
-     "end": 51.32,
+     "start": 48.845,
+     "end": 51.005,
      "words": [
       {
        "w": "Type",
-       "start": 49.095,
-       "end": 49.238
+       "start": 48.845,
+       "end": 49.006
       },
       {
        "w": "longarm",
-       "start": 49.238,
-       "end": 49.751
+       "start": 49.006,
+       "end": 49.558
       },
       {
        "w": "run",
-       "start": 49.751,
-       "end": 50.067
+       "start": 49.558,
+       "end": 49.874
       },
       {
        "w": "and",
-       "start": 50.488,
-       "end": 50.553
+       "start": 50.151,
+       "end": 50.243
       },
       {
        "w": "your",
-       "start": 50.553,
-       "end": 50.646
+       "start": 50.243,
+       "end": 50.348
       },
       {
        "w": "command",
-       "start": 50.646,
-       "end": 51.211
+       "start": 50.361,
+       "end": 50.9
       }
      ]
     },
     {
      "text": "The scheduler picks a machine with free memory and CPU to spare, gives the job a fresh worktree of your checkout, and streams the output back.",
-     "start": 52.095,
-     "end": 60.825,
+     "start": 51.845,
+     "end": 60.72,
      "words": [
       {
        "w": "The",
-       "start": 52.095,
-       "end": 52.108
+       "start": 51.845,
+       "end": 51.866
       },
       {
        "w": "scheduler",
-       "start": 52.108,
-       "end": 52.555
+       "start": 51.866,
+       "end": 52.327
       },
       {
        "w": "picks",
-       "start": 52.555,
-       "end": 52.805
+       "start": 52.327,
+       "end": 52.603
       },
       {
        "w": "a",
-       "start": 52.805,
-       "end": 52.845
+       "start": 52.616,
+       "end": 52.655
       },
       {
        "w": "machine",
-       "start": 52.845,
-       "end": 53.371
+       "start": 52.656,
+       "end": 53.208
       },
       {
        "w": "with",
-       "start": 53.647,
-       "end": 53.805
+       "start": 53.511,
+       "end": 53.656
       },
       {
        "w": "free",
-       "start": 53.805,
-       "end": 54.2
+       "start": 53.656,
+       "end": 54.05
       },
       {
        "w": "memory",
-       "start": 54.213,
-       "end": 54.7
+       "start": 54.05,
+       "end": 54.577
       },
       {
        "w": "and",
-       "start": 54.7,
-       "end": 54.779
+       "start": 54.577,
+       "end": 54.669
       },
       {
        "w": "CPU",
-       "start": 54.792,
-       "end": 55.384
+       "start": 54.682,
+       "end": 55.274
       },
       {
        "w": "to",
-       "start": 55.384,
-       "end": 55.45
+       "start": 55.274,
+       "end": 55.34
       },
       {
        "w": "spare",
-       "start": 55.45,
-       "end": 55.989
+       "start": 55.34,
+       "end": 55.84
       },
       {
        "w": "gives",
-       "start": 56.424,
-       "end": 56.634
+       "start": 56.3,
+       "end": 56.498
       },
       {
        "w": "the",
-       "start": 56.634,
-       "end": 56.753
+       "start": 56.498,
+       "end": 56.603
       },
       {
        "w": "job",
-       "start": 56.766,
-       "end": 57.187
+       "start": 56.616,
+       "end": 57.037
       },
       {
        "w": "a",
-       "start": 57.332,
-       "end": 57.371
+       "start": 57.169,
+       "end": 57.208
       },
       {
        "w": "fresh",
-       "start": 57.371,
-       "end": 57.779
+       "start": 57.221,
+       "end": 57.629
       },
       {
        "w": "worktree",
-       "start": 57.792,
-       "end": 58.226
+       "start": 57.642,
+       "end": 57.998
       },
       {
        "w": "of",
-       "start": 58.226,
-       "end": 58.266
+       "start": 57.998,
+       "end": 58.037
       },
       {
        "w": "your",
-       "start": 58.266,
-       "end": 58.358
+       "start": 58.037,
+       "end": 58.116
       },
       {
        "w": "checkout",
-       "start": 58.358,
-       "end": 58.924
+       "start": 58.116,
+       "end": 58.682
       },
       {
        "w": "and",
-       "start": 59.332,
-       "end": 59.397
+       "start": 59.116,
+       "end": 59.182
       },
       {
        "w": "streams",
-       "start": 59.411,
-       "end": 59.779
+       "start": 59.182,
+       "end": 59.642
       },
       {
        "w": "the",
-       "start": 59.779,
-       "end": 59.884
+       "start": 59.642,
+       "end": 59.748
       },
       {
        "w": "output",
-       "start": 59.897,
-       "end": 60.292
+       "start": 59.761,
+       "end": 60.169
       },
       {
        "w": "back",
-       "start": 60.305,
-       "end": 60.726
+       "start": 60.182,
+       "end": 60.616
       }
      ]
     },
     {
      "text": "Your fans stay quiet.",
-     "start": 61.595,
-     "end": 62.945,
+     "start": 61.345,
+     "end": 62.735,
      "words": [
       {
        "w": "Your",
-       "start": 61.595,
-       "end": 61.642
+       "start": 61.345,
+       "end": 61.387
       },
       {
        "w": "fans",
-       "start": 61.656,
-       "end": 62.037
+       "start": 61.387,
+       "end": 61.769
       },
       {
        "w": "stay",
-       "start": 62.05,
-       "end": 62.313
+       "start": 61.769,
+       "end": 62.085
       },
       {
        "w": "quiet",
-       "start": 62.327,
-       "end": 62.84
+       "start": 62.085,
+       "end": 62.624
       }
      ]
     }
@@ -839,357 +839,357 @@
   },
   {
    "id": "agents",
-   "start": 65.095,
-   "end": 95.095,
+   "start": 64.845,
+   "end": 94.845,
    "musicOnly": [
     {
-     "start": 93.095,
-     "end": 95.095
+     "start": 92.845,
+     "end": 94.845
     }
    ],
    "lines": [
     {
      "text": "And it's built for agents.",
-     "start": 65.095,
-     "end": 66.49,
+     "start": 64.845,
+     "end": 66.2,
      "words": [
       {
        "w": "And",
-       "start": 65.095,
-       "end": 65.116
+       "start": 64.845,
+       "end": 64.848
       },
       {
        "w": "it's",
-       "start": 65.116,
-       "end": 65.248
+       "start": 64.848,
+       "end": 64.966
       },
       {
        "w": "built",
-       "start": 65.248,
-       "end": 65.511
+       "start": 64.979,
+       "end": 65.256
       },
       {
        "w": "for",
-       "start": 65.524,
-       "end": 65.695
+       "start": 65.256,
+       "end": 65.427
       },
       {
        "w": "agents",
-       "start": 65.708,
-       "end": 66.379
+       "start": 65.44,
+       "end": 66.098
       }
      ]
     },
     {
      "text": "One command installs the Longarm skill into Claude Code, Copilot CLI, Codex and Gemini.",
-     "start": 67.095,
-     "end": 74.125,
+     "start": 66.845,
+     "end": 73.905,
      "words": [
       {
        "w": "One",
-       "start": 67.095,
-       "end": 67.277
+       "start": 66.845,
+       "end": 67.019
       },
       {
        "w": "command",
-       "start": 67.29,
-       "end": 67.724
+       "start": 67.019,
+       "end": 67.493
       },
       {
        "w": "installs",
-       "start": 67.724,
-       "end": 68.185
+       "start": 67.493,
+       "end": 68.019
       },
       {
        "w": "the",
-       "start": 68.185,
-       "end": 68.29
+       "start": 68.032,
+       "end": 68.137
       },
       {
        "w": "Longarm",
-       "start": 68.29,
-       "end": 69.001
+       "start": 68.137,
+       "end": 68.795
       },
       {
        "w": "skill",
-       "start": 69.014,
-       "end": 69.501
+       "start": 68.795,
+       "end": 69.164
       },
       {
        "w": "into",
-       "start": 69.593,
-       "end": 69.764
+       "start": 69.177,
+       "end": 69.322
       },
       {
        "w": "Claude",
-       "start": 69.764,
-       "end": 70.172
+       "start": 69.335,
+       "end": 69.756
       },
       {
        "w": "Code",
-       "start": 70.185,
-       "end": 70.58
+       "start": 69.756,
+       "end": 70.137
       },
       {
        "w": "Copilot",
-       "start": 70.882,
-       "end": 71.435
+       "start": 70.611,
+       "end": 71.137
       },
       {
        "w": "CLI",
-       "start": 71.435,
-       "end": 72.159
+       "start": 71.137,
+       "end": 71.835
       },
       {
        "w": "Codex",
-       "start": 72.409,
-       "end": 73.053
+       "start": 72.243,
+       "end": 72.874
       },
       {
        "w": "and",
-       "start": 73.251,
-       "end": 73.396
+       "start": 73.032,
+       "end": 73.164
       },
       {
        "w": "Gemini",
-       "start": 73.396,
-       "end": 74.001
+       "start": 73.164,
+       "end": 73.782
       }
      ]
     },
     {
      "text": "Now you just say: run the tests on a worker.",
-     "start": 74.595,
-     "end": 77.12,
+     "start": 74.345,
+     "end": 77.005,
      "words": [
       {
        "w": "Now",
-       "start": 74.595,
-       "end": 74.669
+       "start": 74.345,
+       "end": 74.405
       },
       {
        "w": "you",
-       "start": 74.669,
-       "end": 74.748
+       "start": 74.406,
+       "end": 74.484
       },
       {
        "w": "just",
-       "start": 74.748,
-       "end": 74.971
+       "start": 74.484,
+       "end": 74.695
       },
       {
        "w": "say",
-       "start": 74.971,
-       "end": 75.3
+       "start": 74.708,
+       "end": 75.024
       },
       {
        "w": "run",
-       "start": 75.84,
-       "end": 75.971
+       "start": 75.629,
+       "end": 75.761
       },
       {
        "w": "the",
-       "start": 75.971,
-       "end": 76.05
+       "start": 75.761,
+       "end": 75.84
       },
       {
        "w": "tests",
-       "start": 76.05,
-       "end": 76.405
+       "start": 75.84,
+       "end": 76.234
       },
       {
        "w": "on",
-       "start": 76.406,
-       "end": 76.484
+       "start": 76.248,
+       "end": 76.327
       },
       {
        "w": "a",
-       "start": 76.484,
-       "end": 76.524
+       "start": 76.34,
+       "end": 76.379
       },
       {
        "w": "worker",
-       "start": 76.537,
-       "end": 77.024
+       "start": 76.392,
+       "end": 76.919
       }
      ]
     },
     {
      "text": "Fan out five sub-agents, each on its own worker, in its own worktree.",
-     "start": 77.595,
-     "end": 82.255,
+     "start": 77.845,
+     "end": 82.495,
      "words": [
       {
        "w": "Fan",
-       "start": 77.595,
-       "end": 77.777
+       "start": 77.845,
+       "end": 78.058
       },
       {
        "w": "out",
-       "start": 77.777,
-       "end": 77.935
+       "start": 78.058,
+       "end": 78.203
       },
       {
        "w": "five",
-       "start": 77.935,
-       "end": 78.343
+       "start": 78.203,
+       "end": 78.664
       },
       {
        "w": "sub-agents",
-       "start": 78.356,
-       "end": 79.145
+       "start": 78.677,
+       "end": 79.493
       },
       {
        "w": "each",
-       "start": 79.58,
-       "end": 79.79
+       "start": 79.914,
+       "end": 80.111
       },
       {
        "w": "on",
-       "start": 79.79,
-       "end": 79.882
+       "start": 80.111,
+       "end": 80.203
       },
       {
        "w": "its",
-       "start": 79.896,
-       "end": 80.027
+       "start": 80.203,
+       "end": 80.322
       },
       {
        "w": "own",
-       "start": 80.027,
-       "end": 80.264
+       "start": 80.322,
+       "end": 80.572
       },
       {
        "w": "worker",
-       "start": 80.264,
-       "end": 80.738
+       "start": 80.572,
+       "end": 81.072
       },
       {
        "w": "in",
-       "start": 81.132,
-       "end": 81.198
+       "start": 81.361,
+       "end": 81.427
       },
       {
        "w": "its",
-       "start": 81.198,
-       "end": 81.33
+       "start": 81.427,
+       "end": 81.545
       },
       {
        "w": "own",
-       "start": 81.343,
-       "end": 81.527
+       "start": 81.558,
+       "end": 81.756
       },
       {
        "w": "worktree",
-       "start": 81.527,
-       "end": 82.159
+       "start": 81.756,
+       "end": 82.387
       }
      ]
     },
     {
      "text": "Steer a remote agent while it runs, or hand off a whole conversation, uncommitted code and all, to another machine.",
-     "start": 83.095,
-     "end": 91.14,
+     "start": 82.845,
+     "end": 90.81,
      "words": [
       {
        "w": "Steer",
-       "start": 83.095,
-       "end": 83.429
+       "start": 82.845,
+       "end": 83.126
       },
       {
        "w": "a",
-       "start": 83.429,
-       "end": 83.508
+       "start": 83.126,
+       "end": 83.205
       },
       {
        "w": "remote",
-       "start": 83.508,
-       "end": 83.994
+       "start": 83.218,
+       "end": 83.639
       },
       {
        "w": "agent",
-       "start": 84.087,
-       "end": 84.521
+       "start": 83.731,
+       "end": 84.166
       },
       {
        "w": "while",
-       "start": 84.534,
-       "end": 84.771
+       "start": 84.179,
+       "end": 84.402
       },
       {
        "w": "it",
-       "start": 84.771,
-       "end": 84.902
+       "start": 84.402,
+       "end": 84.508
       },
       {
        "w": "runs",
-       "start": 84.902,
-       "end": 85.481
+       "start": 84.508,
+       "end": 85.113
       },
       {
        "w": "or",
-       "start": 85.692,
-       "end": 85.823
+       "start": 85.337,
+       "end": 85.468
       },
       {
        "w": "hand",
-       "start": 85.823,
-       "end": 86.218
+       "start": 85.468,
+       "end": 85.955
       },
       {
        "w": "off",
-       "start": 86.297,
-       "end": 86.429
+       "start": 86.073,
+       "end": 86.205
       },
       {
        "w": "a",
-       "start": 86.429,
-       "end": 86.481
+       "start": 86.205,
+       "end": 86.258
       },
       {
        "w": "whole",
-       "start": 86.481,
-       "end": 86.823
+       "start": 86.258,
+       "end": 86.534
       },
       {
        "w": "conversation",
-       "start": 86.837,
-       "end": 87.639
+       "start": 86.547,
+       "end": 87.337
       },
       {
        "w": "uncommitted",
-       "start": 88.113,
-       "end": 88.705
+       "start": 87.797,
+       "end": 88.402
       },
       {
        "w": "code",
-       "start": 88.705,
-       "end": 89.139
+       "start": 88.416,
+       "end": 88.837
       },
       {
        "w": "and",
-       "start": 89.271,
-       "end": 89.389
+       "start": 89.008,
+       "end": 89.165
       },
       {
        "w": "all",
-       "start": 89.389,
-       "end": 89.784
+       "start": 89.166,
+       "end": 89.521
       },
       {
        "w": "to",
-       "start": 90.06,
-       "end": 90.179
+       "start": 89.771,
+       "end": 89.889
       },
       {
        "w": "another",
-       "start": 90.179,
-       "end": 90.508
+       "start": 89.889,
+       "end": 90.205
       },
       {
        "w": "machine",
-       "start": 90.521,
-       "end": 91.008
+       "start": 90.218,
+       "end": 90.679
       }
      ]
     }
@@ -1197,148 +1197,148 @@
   },
   {
    "id": "survive",
-   "start": 95.095,
-   "end": 107.095,
+   "start": 94.845,
+   "end": 106.845,
    "musicOnly": [
     {
-     "start": 105.095,
-     "end": 107.095
+     "start": 104.845,
+     "end": 106.845
     }
    ],
    "lines": [
     {
      "text": "Jobs run detached.",
-     "start": 95.095,
-     "end": 96.37,
+     "start": 94.845,
+     "end": 96.165,
      "words": [
       {
        "w": "Jobs",
-       "start": 95.095,
-       "end": 95.361
+       "start": 94.845,
+       "end": 95.137
       },
       {
        "w": "run",
-       "start": 95.361,
-       "end": 95.572
+       "start": 95.137,
+       "end": 95.361
       },
       {
        "w": "detached",
-       "start": 95.585,
-       "end": 96.243
+       "start": 95.361,
+       "end": 96.045
       }
      ]
     },
     {
      "text": "Close the lid. Switch networks. Restart the daemon.",
-     "start": 97.095,
-     "end": 100.525,
+     "start": 96.845,
+     "end": 100.295,
      "words": [
       {
        "w": "Close",
-       "start": 97.095,
-       "end": 97.332
+       "start": 96.845,
+       "end": 97.129
       },
       {
        "w": "the",
-       "start": 97.332,
-       "end": 97.411
+       "start": 97.129,
+       "end": 97.221
       },
       {
        "w": "lid",
-       "start": 97.424,
-       "end": 97.766
+       "start": 97.221,
+       "end": 97.55
       },
       {
        "w": "Switch",
-       "start": 98.2,
-       "end": 98.45
+       "start": 97.998,
+       "end": 98.248
       },
       {
        "w": "networks",
-       "start": 98.45,
-       "end": 99.095
+       "start": 98.248,
+       "end": 98.853
       },
       {
        "w": "Restart",
-       "start": 99.489,
-       "end": 99.937
+       "start": 99.261,
+       "end": 99.695
       },
       {
        "w": "the",
-       "start": 99.95,
-       "end": 100.029
+       "start": 99.695,
+       "end": 99.774
       },
       {
        "w": "daemon",
-       "start": 100.029,
-       "end": 100.397
+       "start": 99.774,
+       "end": 100.169
       }
      ]
     },
     {
      "text": "The job keeps running, and you re-attach right where you left off.",
-     "start": 101.095,
-     "end": 104.62,
+     "start": 100.845,
+     "end": 104.41,
      "words": [
       {
        "w": "The",
-       "start": 101.095,
-       "end": 101.111
+       "start": 100.845,
+       "end": 100.861
       },
       {
        "w": "job",
-       "start": 101.124,
-       "end": 101.44
+       "start": 100.874,
+       "end": 101.216
       },
       {
        "w": "keeps",
-       "start": 101.44,
-       "end": 101.756
+       "start": 101.216,
+       "end": 101.532
       },
       {
        "w": "running",
-       "start": 101.756,
-       "end": 102.124
+       "start": 101.532,
+       "end": 101.901
       },
       {
        "w": "and",
-       "start": 102.558,
-       "end": 102.637
+       "start": 102.308,
+       "end": 102.387
       },
       {
        "w": "you",
-       "start": 102.637,
-       "end": 102.808
+       "start": 102.387,
+       "end": 102.585
       },
       {
        "w": "re-attach",
-       "start": 102.822,
-       "end": 103.427
+       "start": 102.598,
+       "end": 103.243
       },
       {
        "w": "right",
-       "start": 103.427,
-       "end": 103.624
+       "start": 103.256,
+       "end": 103.427
       },
       {
        "w": "where",
-       "start": 103.624,
-       "end": 103.716
+       "start": 103.44,
+       "end": 103.519
       },
       {
        "w": "you",
-       "start": 103.729,
-       "end": 103.822
+       "start": 103.532,
+       "end": 103.611
       },
       {
        "w": "left",
-       "start": 103.835,
-       "end": 104.124
+       "start": 103.624,
+       "end": 103.927
       },
       {
        "w": "off",
-       "start": 104.124,
-       "end": 104.506
+       "start": 103.927,
+       "end": 104.308
       }
      ]
     }
@@ -1346,258 +1346,258 @@
   },
   {
    "id": "reach",
-   "start": 107.095,
-   "end": 131.095,
+   "start": 106.845,
+   "end": 130.845,
    "musicOnly": [],
    "lines": [
     {
      "text": "Workers behind home routers, or carrier-grade NAT?",
-     "start": 107.095,
-     "end": 110.24,
+     "start": 106.845,
+     "end": 110.005,
      "words": [
       {
        "w": "Workers",
-       "start": 107.095,
-       "end": 107.479
+       "start": 106.845,
+       "end": 107.229
       },
       {
        "w": "behind",
-       "start": 107.493,
-       "end": 107.874
+       "start": 107.229,
+       "end": 107.637
       },
       {
        "w": "home",
-       "start": 107.874,
-       "end": 108.151
+       "start": 107.637,
+       "end": 107.887
       },
       {
        "w": "routers",
-       "start": 108.151,
-       "end": 108.69
+       "start": 107.887,
+       "end": 108.453
       },
       {
        "w": "or",
-       "start": 108.979,
-       "end": 109.124
+       "start": 108.729,
+       "end": 108.874
       },
       {
        "w": "carrier-grade",
-       "start": 109.124,
-       "end": 109.782
+       "start": 108.887,
+       "end": 109.532
       },
       {
        "w": "NAT",
-       "start": 109.782,
-       "end": 110.137
+       "start": 109.545,
+       "end": 109.901
       }
      ]
     },
     {
      "text": "Longarm races three transports at once: plain TCP, Tailscale, and its own QUIC with hole punching, with a relay as the fallback.",
-     "start": 110.595,
-     "end": 120.615,
+     "start": 110.845,
+     "end": 121.165,
      "words": [
       {
        "w": "Longarm",
-       "start": 110.595,
-       "end": 111.116
+       "start": 110.845,
+       "end": 111.374
       },
       {
        "w": "races",
-       "start": 111.129,
-       "end": 111.629
+       "start": 111.374,
+       "end": 111.861
       },
       {
        "w": "three",
-       "start": 111.642,
-       "end": 112.116
+       "start": 111.887,
+       "end": 112.308
       },
       {
        "w": "transports",
-       "start": 112.116,
-       "end": 112.748
+       "start": 112.308,
+       "end": 112.979
       },
       {
        "w": "at",
-       "start": 112.748,
-       "end": 112.827
+       "start": 112.979,
+       "end": 113.072
       },
       {
        "w": "once",
-       "start": 112.827,
-       "end": 113.353
+       "start": 113.072,
+       "end": 113.664
       },
       {
        "w": "plain",
-       "start": 113.787,
-       "end": 114.182
+       "start": 113.94,
+       "end": 114.335
       },
       {
        "w": "TCP",
-       "start": 114.195,
-       "end": 115.09
+       "start": 114.348,
+       "end": 115.269
       },
       {
        "w": "Tailscale",
-       "start": 115.484,
-       "end": 116.248
+       "start": 115.677,
+       "end": 116.414
       },
       {
        "w": "and",
-       "start": 116.537,
-       "end": 116.59
+       "start": 116.861,
+       "end": 116.9
       },
       {
        "w": "its",
-       "start": 116.59,
-       "end": 116.695
+       "start": 116.901,
+       "end": 117.006
       },
       {
        "w": "own",
-       "start": 116.84,
-       "end": 117.05
+       "start": 117.124,
+       "end": 117.348
       },
       {
        "w": "QUIC",
-       "start": 117.063,
-       "end": 117.432
+       "start": 117.348,
+       "end": 117.703
       },
       {
        "w": "with",
-       "start": 117.445,
-       "end": 117.59
+       "start": 117.716,
+       "end": 117.861
       },
       {
        "w": "hole",
-       "start": 117.603,
-       "end": 117.866
+       "start": 117.874,
+       "end": 118.19
       },
       {
        "w": "punching",
-       "start": 117.866,
-       "end": 118.353
+       "start": 118.203,
+       "end": 118.69
       },
       {
        "w": "with",
-       "start": 118.656,
-       "end": 118.8
+       "start": 119.111,
+       "end": 119.256
       },
       {
        "w": "a",
-       "start": 118.8,
-       "end": 118.853
+       "start": 119.256,
+       "end": 119.295
       },
       {
        "w": "relay",
-       "start": 118.853,
-       "end": 119.498
+       "start": 119.295,
+       "end": 119.94
       },
       {
        "w": "as",
-       "start": 119.616,
-       "end": 119.761
+       "start": 120.111,
+       "end": 120.269
       },
       {
        "w": "the",
-       "start": 119.761,
-       "end": 119.827
+       "start": 120.282,
+       "end": 120.348
       },
       {
        "w": "fallback",
-       "start": 119.827,
-       "end": 120.511
+       "start": 120.348,
+       "end": 121.058
       }
      ]
     },
     {
      "text": "Everything is mutual TLS, end to end. The hub only coordinates, and even relayed traffic stays encrypted.",
-     "start": 121.095,
-     "end": 129.07,
+     "start": 121.845,
+     "end": 129.775,
      "words": [
       {
        "w": "Everything",
-       "start": 121.095,
-       "end": 121.657
+       "start": 121.845,
+       "end": 122.407
       },
       {
        "w": "is",
-       "start": 121.671,
-       "end": 121.815
+       "start": 122.421,
+       "end": 122.565
       },
       {
        "w": "mutual",
-       "start": 121.828,
-       "end": 122.355
+       "start": 122.565,
+       "end": 123.092
       },
       {
        "w": "TLS",
-       "start": 122.355,
-       "end": 123.157
+       "start": 123.105,
+       "end": 123.973
       },
       {
        "w": "end",
-       "start": 123.644,
-       "end": 123.723
+       "start": 124.249,
+       "end": 124.328
       },
       {
        "w": "to",
-       "start": 123.723,
-       "end": 123.789
+       "start": 124.328,
+       "end": 124.394
       },
       {
        "w": "end",
-       "start": 123.802,
-       "end": 124.21
+       "start": 124.394,
+       "end": 124.776
       },
       {
        "w": "The",
-       "start": 124.644,
-       "end": 124.71
+       "start": 125.197,
+       "end": 125.263
       },
       {
        "w": "hub",
-       "start": 124.71,
-       "end": 125.026
-      },
-      {
-       "w": "only",
-       "start": 125.21,
+       "start": 125.263,
        "end": 125.578
       },
       {
+       "w": "only",
+       "start": 125.749,
+       "end": 126.105
+      },
+      {
        "w": "coordinates",
-       "start": 125.578,
-       "end": 126.342
+       "start": 126.118,
+       "end": 126.907
       },
       {
        "w": "and",
-       "start": 126.565,
-       "end": 126.736
+       "start": 127.276,
+       "end": 127.513
       },
       {
        "w": "even",
-       "start": 126.855,
-       "end": 127.092
+       "start": 127.578,
+       "end": 127.815
       },
       {
        "w": "relayed",
-       "start": 127.092,
-       "end": 127.486
+       "start": 127.815,
+       "end": 128.157
       },
       {
        "w": "traffic",
-       "start": 127.499,
-       "end": 128.013
+       "start": 128.157,
+       "end": 128.657
       },
       {
        "w": "stays",
-       "start": 128.013,
-       "end": 128.394
+       "start": 128.657,
+       "end": 129.065
       },
       {
        "w": "encrypted",
-       "start": 128.394,
-       "end": 128.96
+       "start": 129.065,
+       "end": 129.67
       }
      ]
     }
@@ -1605,245 +1605,245 @@
   },
   {
    "id": "toolbox",
-   "start": 131.095,
-   "end": 151.095,
+   "start": 130.845,
+   "end": 150.845,
    "musicOnly": [
     {
-     "start": 149.095,
-     "end": 151.095
+     "start": 148.845,
+     "end": 150.845
     }
    ],
    "lines": [
     {
      "text": "Attach to a remote terminal, tmux style.",
-     "start": 131.095,
-     "end": 133.8,
+     "start": 130.845,
+     "end": 133.715,
      "words": [
       {
        "w": "Attach",
-       "start": 131.095,
-       "end": 131.397
+       "start": 130.845,
+       "end": 131.161
       },
       {
        "w": "to",
-       "start": 131.397,
-       "end": 131.529
+       "start": 131.161,
+       "end": 131.305
       },
       {
        "w": "a",
-       "start": 131.529,
-       "end": 131.608
+       "start": 131.305,
+       "end": 131.397
       },
       {
        "w": "remote",
-       "start": 131.608,
-       "end": 132.082
+       "start": 131.397,
+       "end": 131.884
       },
       {
        "w": "terminal",
-       "start": 132.082,
-       "end": 132.608
+       "start": 131.897,
+       "end": 132.437
       },
       {
        "w": "tmux",
-       "start": 132.779,
-       "end": 133.213
+       "start": 132.661,
+       "end": 133.095
       },
       {
        "w": "style",
-       "start": 133.213,
-       "end": 133.7
+       "start": 133.095,
+       "end": 133.608
       }
      ]
     },
     {
      "text": "Forward a dev server to localhost.",
-     "start": 134.595,
-     "end": 136.975,
+     "start": 134.345,
+     "end": 136.89,
      "words": [
       {
        "w": "Forward",
-       "start": 134.601,
-       "end": 134.864
+       "start": 134.345,
+       "end": 134.614
       },
       {
        "w": "a",
-       "start": 134.877,
-       "end": 134.969
+       "start": 134.614,
+       "end": 134.693
       },
       {
        "w": "dev",
-       "start": 135.075,
-       "end": 135.404
+       "start": 134.825,
+       "end": 135.127
       },
       {
        "w": "server",
-       "start": 135.404,
-       "end": 135.89
+       "start": 135.127,
+       "end": 135.667
       },
       {
        "w": "to",
-       "start": 135.904,
-       "end": 136.022
+       "start": 135.825,
+       "end": 135.943
       },
       {
        "w": "localhost",
-       "start": 136.022,
-       "end": 136.851
+       "start": 135.943,
+       "end": 136.772
       }
      ]
     },
     {
      "text": "Sync your checkout. Use SSH and VS Code Remote, with no keys to manage.",
-     "start": 137.595,
-     "end": 143.145,
+     "start": 137.345,
+     "end": 142.84,
      "words": [
       {
        "w": "Sync",
-       "start": 137.595,
-       "end": 137.758
+       "start": 137.345,
+       "end": 137.484
       },
       {
        "w": "your",
-       "start": 137.758,
-       "end": 137.85
+       "start": 137.484,
+       "end": 137.577
       },
       {
        "w": "checkout",
-       "start": 137.85,
-       "end": 138.389
+       "start": 137.577,
+       "end": 138.09
       },
       {
        "w": "Use",
-       "start": 138.823,
-       "end": 139.166
+       "start": 138.511,
+       "end": 138.813
       },
       {
        "w": "SSH",
-       "start": 139.179,
-       "end": 139.837
+       "start": 138.827,
+       "end": 139.537
       },
       {
        "w": "and",
-       "start": 139.837,
-       "end": 139.955
+       "start": 139.537,
+       "end": 139.669
       },
       {
        "w": "VS",
-       "start": 139.955,
-       "end": 140.455
+       "start": 139.669,
+       "end": 140.182
       },
       {
        "w": "Code",
-       "start": 140.468,
-       "end": 140.718
+       "start": 140.182,
+       "end": 140.471
       },
       {
        "w": "Remote",
-       "start": 140.731,
-       "end": 141.218
+       "start": 140.484,
+       "end": 140.932
       },
       {
        "w": "with",
-       "start": 141.481,
-       "end": 141.639
+       "start": 141.195,
+       "end": 141.34
       },
       {
        "w": "no",
-       "start": 141.639,
-       "end": 141.942
+       "start": 141.34,
+       "end": 141.629
       },
       {
        "w": "keys",
-       "start": 141.955,
-       "end": 142.35
+       "start": 141.629,
+       "end": 142.024
       },
       {
        "w": "to",
-       "start": 142.363,
-       "end": 142.442
+       "start": 142.037,
+       "end": 142.129
       },
       {
        "w": "manage",
-       "start": 142.442,
-       "end": 143.034
+       "start": 142.129,
+       "end": 142.721
       }
      ]
     },
     {
      "text": "And watch the whole fleet from the tray, or from the hub's web panel.",
-     "start": 143.595,
-     "end": 147.465,
+     "start": 143.345,
+     "end": 147.06,
      "words": [
       {
        "w": "And",
-       "start": 143.595,
-       "end": 143.669
+       "start": 143.345,
+       "end": 143.419
       },
       {
        "w": "watch",
-       "start": 143.682,
-       "end": 143.971
+       "start": 143.419,
+       "end": 143.748
       },
       {
        "w": "the",
-       "start": 143.984,
-       "end": 144.09
+       "start": 143.748,
+       "end": 143.866
       },
       {
        "w": "whole",
-       "start": 144.103,
-       "end": 144.471
+       "start": 143.866,
+       "end": 144.234
       },
       {
        "w": "fleet",
-       "start": 144.484,
-       "end": 144.892
+       "start": 144.234,
+       "end": 144.577
       },
       {
        "w": "from",
-       "start": 144.892,
-       "end": 145.09
+       "start": 144.577,
+       "end": 144.748
       },
       {
        "w": "the",
-       "start": 145.103,
-       "end": 145.155
+       "start": 144.761,
+       "end": 144.827
       },
       {
        "w": "tray",
-       "start": 145.169,
-       "end": 145.669
+       "start": 144.827,
+       "end": 145.274
       },
       {
        "w": "or",
-       "start": 146.116,
-       "end": 146.261
+       "start": 145.748,
+       "end": 145.84
       },
       {
        "w": "from",
-       "start": 146.261,
-       "end": 146.392
+       "start": 145.84,
+       "end": 145.971
       },
       {
        "w": "the",
-       "start": 146.406,
-       "end": 146.458
+       "start": 145.984,
+       "end": 146.05
       },
       {
        "w": "hub's",
-       "start": 146.471,
-       "end": 146.721
+       "start": 146.05,
+       "end": 146.313
       },
       {
        "w": "web",
-       "start": 146.721,
-       "end": 146.958
+       "start": 146.313,
+       "end": 146.55
       },
       {
        "w": "panel",
-       "start": 146.958,
-       "end": 147.353
+       "start": 146.55,
+       "end": 146.958
       }
      ]
     }
@@ -1851,153 +1851,153 @@
   },
   {
    "id": "cta",
-   "start": 151.095,
-   "end": 163.095,
+   "start": 150.845,
+   "end": 162.845,
    "musicOnly": [
     {
-     "start": 161.095,
-     "end": 163.095
+     "start": 160.845,
+     "end": 162.845
     }
    ],
    "lines": [
     {
      "text": "Getting started takes about three minutes.",
-     "start": 151.095,
-     "end": 153.27,
+     "start": 150.845,
+     "end": 153.045,
      "words": [
       {
        "w": "Getting",
-       "start": 151.095,
-       "end": 151.211
+       "start": 150.845,
+       "end": 151.024
       },
       {
        "w": "started",
-       "start": 151.224,
-       "end": 151.553
+       "start": 151.037,
+       "end": 151.366
       },
       {
        "w": "takes",
-       "start": 151.553,
-       "end": 151.843
+       "start": 151.366,
+       "end": 151.629
       },
       {
        "w": "about",
-       "start": 151.843,
-       "end": 152.172
+       "start": 151.642,
+       "end": 151.985
       },
       {
        "w": "three",
-       "start": 152.185,
-       "end": 152.58
+       "start": 151.998,
+       "end": 152.34
       },
       {
        "w": "minutes",
-       "start": 152.58,
-       "end": 153.159
+       "start": 152.34,
+       "end": 152.932
       }
      ]
     },
     {
      "text": "Open your hub. Download the installer, or paste one line.",
-     "start": 154.095,
-     "end": 157.625,
+     "start": 153.845,
+     "end": 157.595,
      "words": [
       {
        "w": "Open",
-       "start": 154.095,
-       "end": 154.231
+       "start": 153.845,
+       "end": 153.989
       },
       {
        "w": "your",
-       "start": 154.231,
-       "end": 154.35
+       "start": 153.989,
+       "end": 154.095
       },
       {
        "w": "hub",
-       "start": 154.35,
-       "end": 154.613
+       "start": 154.095,
+       "end": 154.384
       },
       {
        "w": "Download",
-       "start": 155.06,
-       "end": 155.429
+       "start": 154.832,
+       "end": 155.266
       },
       {
        "w": "the",
-       "start": 155.429,
-       "end": 155.494
+       "start": 155.279,
+       "end": 155.345
       },
       {
        "w": "installer",
-       "start": 155.494,
-       "end": 156.126
+       "start": 155.358,
+       "end": 156.055
       },
       {
        "w": "or",
-       "start": 156.547,
-       "end": 156.639
+       "start": 156.555,
+       "end": 156.647
       },
       {
        "w": "paste",
-       "start": 156.639,
-       "end": 156.968
+       "start": 156.647,
+       "end": 156.937
       },
       {
        "w": "one",
-       "start": 156.981,
-       "end": 157.152
+       "start": 156.95,
+       "end": 157.134
       },
       {
        "w": "line",
-       "start": 157.152,
-       "end": 157.481
+       "start": 157.134,
+       "end": 157.463
       }
      ]
     },
     {
      "text": "Approve the code in your browser. That's it.",
-     "start": 158.095,
-     "end": 160.745,
+     "start": 158.345,
+     "end": 160.77,
      "words": [
       {
        "w": "Approve",
-       "start": 158.095,
-       "end": 158.427
+       "start": 158.345,
+       "end": 158.682
       },
       {
        "w": "the",
-       "start": 158.427,
-       "end": 158.506
+       "start": 158.682,
+       "end": 158.761
       },
       {
        "w": "code",
-       "start": 158.506,
-       "end": 158.927
+       "start": 158.774,
+       "end": 159.142
       },
       {
        "w": "in",
-       "start": 159.098,
-       "end": 159.203
+       "start": 159.208,
+       "end": 159.274
       },
       {
        "w": "your",
-       "start": 159.216,
-       "end": 159.322
+       "start": 159.274,
+       "end": 159.366
       },
       {
        "w": "browser",
-       "start": 159.322,
-       "end": 159.861
+       "start": 159.366,
+       "end": 159.879
       },
       {
        "w": "That's",
-       "start": 160.269,
-       "end": 160.479
+       "start": 160.313,
+       "end": 160.524
       },
       {
        "w": "it",
-       "start": 160.493,
-       "end": 160.677
+       "start": 160.524,
+       "end": 160.695
       }
      ]
     }
@@ -2005,59 +2005,59 @@
   },
   {
    "id": "outro",
-   "start": 163.095,
-   "end": 171.095,
+   "start": 162.845,
+   "end": 170.845,
    "musicOnly": [
     {
-     "start": 167.095,
-     "end": 171.095
+     "start": 166.845,
+     "end": 170.845
     }
    ],
    "lines": [
     {
      "text": "Longarm. Give your coding agents a long arm.",
-     "start": 163.095,
-     "end": 166.13,
+     "start": 162.845,
+     "end": 165.805,
      "words": [
       {
        "w": "Longarm",
-       "start": 163.095,
-       "end": 163.642
+       "start": 162.845,
+       "end": 163.392
       },
       {
        "w": "Give",
-       "start": 164.077,
-       "end": 164.208
+       "start": 163.827,
+       "end": 163.998
       },
       {
        "w": "your",
-       "start": 164.208,
-       "end": 164.3
+       "start": 163.998,
+       "end": 164.09
       },
       {
        "w": "coding",
-       "start": 164.3,
-       "end": 164.708
+       "start": 164.09,
+       "end": 164.524
       },
       {
        "w": "agents",
-       "start": 164.708,
-       "end": 165.077
+       "start": 164.524,
+       "end": 164.879
       },
       {
        "w": "a",
-       "start": 165.09,
-       "end": 165.142
+       "start": 164.892,
+       "end": 164.932
       },
       {
        "w": "long",
-       "start": 165.156,
-       "end": 165.669
+       "start": 164.932,
+       "end": 165.379
       },
       {
        "w": "arm",
-       "start": 165.669,
-       "end": 165.998
+       "start": 165.379,
+       "end": 165.682
       }
      ]
     }

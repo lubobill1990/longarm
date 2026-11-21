@@ -6,7 +6,8 @@ import json, os
 import numpy as np, soundfile as sf
 from scipy import signal
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# FILM_ROOT: a language's folder (lang/zh: its script.json; its audio/ and timeline.json go there)
+ROOT = os.environ.get("FILM_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "audio", "sfx")
 SR = 48000
 rng = np.random.default_rng(11)

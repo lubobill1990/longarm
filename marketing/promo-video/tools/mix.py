@@ -8,7 +8,8 @@ import numpy as np, soundfile as sf, pyloudnorm as pyln
 from scipy import signal
 from scipy.ndimage import maximum_filter1d, minimum_filter1d
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# FILM_ROOT: a language's folder (lang/zh: its script.json; its audio/ and timeline.json go there)
+ROOT = os.environ.get("FILM_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SR = 48000
 TARGET = -14.0
 CEILING_DBTP = -1.3          # limiter ceiling; leaves margin to the -1 dBTP spec

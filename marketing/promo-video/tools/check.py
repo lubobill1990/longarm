@@ -5,7 +5,8 @@
 import json, os, subprocess
 import numpy as np, soundfile as sf
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# FILM_ROOT: a language's folder (lang/zh: its script.json; its audio/ and timeline.json go there)
+ROOT = os.environ.get("FILM_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 tl = json.load(open(os.path.join(ROOT, "timeline.json"), encoding="utf-8"))
 script = {s["id"]: s for s in json.load(open(os.path.join(ROOT, "script.json"), encoding="utf-8"))["sections"]}
 vo, sr = sf.read(os.path.join(ROOT, "audio", "vo.wav"))

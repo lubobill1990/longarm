@@ -9,7 +9,8 @@ import numpy as np, soundfile as sf, pyloudnorm as pyln
 from scipy import signal
 from scipy.ndimage import uniform_filter1d
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# FILM_ROOT: a language's folder (lang/zh: its script.json; its audio/ and timeline.json go there)
+ROOT = os.environ.get("FILM_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SR = 48000
 rng = np.random.default_rng(20261102)
 
