@@ -228,6 +228,7 @@ func TestAutomaticDeviceOfferAndInstall(t *testing.T) {
 	k := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{4}, 32))
 	who := &pb.WhoamiResponse{User: "alice", UserKey: k.Public().(ed25519.PublicKey)}
 	fleet := &automaticFleet{}
+	expiry := time.Now().Add(time.Hour)
 	fleet.onOffer = func(remote *pb.TrustPairing) {
 		t.Helper()
 		ps, err := ListPairings(dir)
@@ -239,6 +240,7 @@ func TestAutomaticDeviceOfferAndInstall(t *testing.T) {
 		if err := pair.CheckNodeProof(remote.NodeProof, pki.KindDevice, remote.NodeKey); err != nil {
 			t.Fatal(err)
 		}
+		remote.ExpiresAt = timestamppb.New(expiry)
 	}
 	var notes []string
 	note := func(s string) { notes = append(notes, s) }
@@ -257,9 +259,12 @@ func TestAutomaticDeviceOfferAndInstall(t *testing.T) {
 	remote := proto.Clone(fleet.offers[0]).(*pb.TrustPairing)
 	ps, _ := ListPairings(dir)
 	p := ps[remote.Id]
+	if !p.ExpiresAt.After(expiry) {
+		t.Fatalf("hub's one-hour expiry %s must shorten the local deadline %s", expiry, p.ExpiresAt)
+	}
 	pair, _ := pki.DerivePairing(p.Secret)
 	remote.UserKey = k.Public().(ed25519.PublicKey)
-	remote.UserTag = pair.UserTag(pki.KindDevice, "alice", remote.UserKey, p.ExpiresAt)
+	remote.UserTag = pair.UserTag(pki.KindDevice, "alice", remote.UserKey, remote.ExpiresAt.AsTime())
 	e, _ := pki.EndorseID(k, "alice", pki.KindDevice, id.Name, id.ID, remote.NodeKey)
 	remote.Endorsement = e.String()
 	fleet.list = []*pb.TrustPairing{remote}
@@ -379,6 +384,10 @@ func TestDeviceRejectsAlteredCompletion(t *testing.T) {
 		"node":   func(p *pb.TrustPairing) { p.NodeId = nodeid.New() },
 		"kind":   func(p *pb.TrustPairing) { p.Kind = pki.KindWorker },
 		"expiry": func(p *pb.TrustPairing) { p.ExpiresAt = timestamppb.New(time.Now().Add(-time.Hour)) },
+		"extended expiry": func(remote *pb.TrustPairing) {
+			remote.ExpiresAt = timestamppb.New(p.ExpiresAt.Add(time.Hour))
+			remote.UserTag = pair.UserTag(remote.Kind, remote.User, remote.UserKey, remote.ExpiresAt.AsTime())
+		},
 		"endorsement": func(p *pb.TrustPairing) {
 			wrong, _ := pki.EndorseID(k, "bob", pki.KindDevice, id.Name, id.ID, e.NodeKey)
 			p.Endorsement = wrong.String()
