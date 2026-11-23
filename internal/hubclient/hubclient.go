@@ -284,6 +284,9 @@ type JoinOptions struct {
 	// Trust (optional): the node key whose binding the certificate carries
 	// (end-to-end trust, pki/trust.go).
 	Trust *pki.CSRTrust
+	// PairSecret (Join only) authenticates automatic worker trust. Only its
+	// derived pairing id and a proof over the CSR's node key reach the hub.
+	PairSecret string
 	// Labels: an owned worker's sign-in (Login kind worker, Link kind
 	// worker / both: the Worker options') asks the hub to record these
 	// labels for it, as a worker code's (JoinResponse.labels says what was
@@ -346,9 +349,38 @@ func enrollTLS(fingerprint string, caOut **x509.Certificate) *tls.Config {
 // Join redeems a join code: it creates the node key and a CSR and asks the
 // hub for a certificate (or a pending enrollment).
 func Join(ctx context.Context, addr, code string, o JoinOptions) (*JoinResult, error) {
+	code, secret, err := SplitPairCode(code, o.PairSecret)
+	if err != nil {
+		return nil, err
+	}
+	var pairing *pki.Pairing
+	if secret != "" {
+		pairing, err = pki.DerivePairing(secret)
+		if err != nil {
+			return nil, err
+		}
+	}
 	keyPEM, csrPEM, err := pki.NewKeyAndCSR(o.Name, o.Trust)
 	if err != nil {
 		return nil, err
+	}
+	host, _ := os.Hostname()
+	req := &pb.JoinRequest{Code: code, CsrPem: csrPEM, Name: o.Name, Hostname: host,
+		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version}
+	if pairing != nil {
+		csr, err := pki.ParseCSR(csrPEM)
+		if err != nil {
+			return nil, err
+		}
+		tr, err := pki.TrustOfCSR(csr)
+		if err != nil {
+			return nil, err
+		}
+		if tr == nil {
+			return nil, errors.New("automatic trust pairing needs a CSR node key")
+		}
+		req.PairingId = pairing.ID
+		req.NodeProof = pairing.NodeProof(pki.KindWorker, tr.NodeKey)
 	}
 	var ca *x509.Certificate
 	c, err := dial(NormalizeAddr(addr), enrollTLS(o.Fingerprint, &ca))
@@ -356,13 +388,43 @@ func Join(ctx context.Context, addr, code string, o JoinOptions) (*JoinResult, e
 		return nil, err
 	}
 	defer c.Close()
-	host, _ := os.Hostname()
-	resp, err := c.Enroll().Join(ctx, &pb.JoinRequest{Code: code, CsrPem: csrPEM, Name: o.Name, Hostname: host,
-		Os: runtime.GOOS, Arch: runtime.GOARCH, Version: version.Version})
+	resp, err := c.Enroll().Join(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	return checkResult(resp, ca, keyPEM, csrPEM, o.Fingerprint)
+}
+
+// SplitPairCode separates CODE#SECRET before any request can reach the hub.
+// Supplying both forms is allowed only when they name the same secret.
+func SplitPairCode(code, secret string) (string, string, error) {
+	if c, s, ok := strings.Cut(code, "#"); ok {
+		if c == "" || s == "" || strings.Contains(s, "#") {
+			return "", "", errors.New("pairing code: want CODE#SECRET")
+		}
+		if secret != "" {
+			a, err := pki.ParsePairSecret(secret)
+			if err != nil {
+				return "", "", err
+			}
+			b, err := pki.ParsePairSecret(s)
+			if err != nil {
+				return "", "", err
+			}
+			if a != b {
+				return "", "", errors.New("--pair and CODE#SECRET name different pairing secrets")
+			}
+		}
+		code, secret = c, s
+	}
+	if secret != "" {
+		var err error
+		secret, err = pki.ParsePairSecret(secret)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	return code, secret, nil
 }
 
 // ErrNoEntra: the hub has no Microsoft Entra sign-in.

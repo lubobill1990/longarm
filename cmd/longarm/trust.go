@@ -59,7 +59,7 @@ State: <config dir>/trust (node key, endorsement, user key, trust.toml).`,
 	}
 	c.AddCommand(trustInitCmd(), trustShowCmd(), trustRequestCmd(), trustEndorseCmd(), trustAcceptCmd(),
 		trustExportKeyCmd(), trustImportKeyCmd(), trustAddUserCmd(), trustRemoveUserCmd(), trustRequireCmd(),
-		trustDenyNodeCmd())
+		trustDenyNodeCmd(), trustRecoverCmd())
 	return c
 }
 
@@ -239,12 +239,56 @@ Prints the user key line to give to the owners of workers you want to use
 }
 
 func trustShowCmd() *cobra.Command {
-	return &cobra.Command{
+	var recovery bool
+	c := &cobra.Command{
 		Use:   "show",
 		Short: "Show this device's user key, node key, endorsement and trust policy",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if recovery {
+				key, _, err := ownUserKey(trustStore())
+				if err != nil {
+					return err
+				}
+				code, err := trust.EncodeRecovery(key.Seed())
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), code)
+				return nil
+			}
 			return trustShow(os.Stdout, trustStore())
+		},
+	}
+	c.Flags().BoolVar(&recovery, "recovery", false, "show the secret recovery code (keep it safe)")
+	return c
+}
+
+func trustRecoverCmd() *cobra.Command {
+	return &cobra.Command{
+		Use: "recover <code>", Short: "Restore your user key from its recovery code", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			b, err := deviceBundle()
+			if err != nil {
+				return err
+			}
+			ts := trustStore()
+			if err := ts.ImportRecovery(args[0], b.Identity.Owner()); err != nil {
+				return err
+			}
+			key, user, err := ts.UserKey()
+			if err != nil {
+				return err
+			}
+			if err := endorseSelf(ts, key, user, b.Identity); err != nil {
+				return err
+			}
+			if err := ts.AddUser(pki.UserKeyLine{User: user, Key: key.Public().(ed25519.PublicKey)}); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "restored your user key and endorsed this device")
+			renewForTrust(cmd.Context())
+			return nil
 		},
 	}
 }

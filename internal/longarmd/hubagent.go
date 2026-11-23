@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -739,6 +740,8 @@ func (a *hubAgent) handle(cmd *pb.HubCommand) {
 		}
 	case *pb.HubCommand_WorkerAccess:
 		a.applyWorkerAccess(x.WorkerAccess)
+	case *pb.HubCommand_TrustEndorsement:
+		a.applyTrustEndorsement(x.TrustEndorsement)
 	case *pb.HubCommand_Tenancy:
 		a.applyTenancy(x.Tenancy)
 	case *pb.HubCommand_PortLinks:
@@ -749,6 +752,37 @@ func (a *hubAgent) handle(cmd *pb.HubCommand) {
 	case *pb.HubCommand_KillJob, *pb.HubCommand_LogRequest, *pb.HubCommand_SubmitJob, *pb.HubCommand_ToolchainApply:
 		go a.hubRequest(cmd) // may take a while (kill waits for the tree); never block the session
 	}
+}
+
+func (a *hubAgent) applyTrustEndorsement(p *pb.TrustEndorsement) {
+	if p == nil {
+		return
+	}
+	if err := a.installTrustEndorsement(p.Endorsement); err != nil {
+		a.log.Warn("hub: automatic trust endorsement rejected; continuing without it", "err", err)
+		a.audit.LogAs("hub", "trust/pair-failed", map[string]any{"pairing_id": p.PairingId, "error": err.Error()})
+	}
+}
+
+func (a *hubAgent) installTrustEndorsement(line string) error {
+	e, err := pki.ParseEndorsement(line)
+	if err != nil {
+		return err
+	}
+	user, err := trust.ReadPinnedUser(a.dataDir)
+	if err != nil {
+		return fmt.Errorf("automatic trust needs a locally pinned user: %w", err)
+	}
+	if e.User != user.User || !ed25519.PublicKey(e.UserKey).Equal(ed25519.PublicKey(user.Key)) {
+		return errors.New("the endorsement is not by the locally pinned user")
+	}
+	id := a.live.CurrentIdentity()
+	if e.Name != id.Name {
+		return errors.New("the endorsement is for another worker name")
+	}
+	// SetEndorsementFor checks the signature, kind, node key and certificate
+	// ID, then requests renewal; the session's maybeRenew picks it up.
+	return a.trustStore.SetEndorsementFor(e, pki.KindWorker, id)
 }
 
 // everConnected reports whether a hub session got as far as the welcome.

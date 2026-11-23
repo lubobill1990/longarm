@@ -26,7 +26,7 @@ import (
 )
 
 func joinCmd() *cobra.Command {
-	var dataDir, name, fp string
+	var dataDir, name, fp, pairSecret string
 	var noWait, force bool
 	c := &cobra.Command{
 		Use:   "join <hub[:port]> <code>",
@@ -35,7 +35,11 @@ func joinCmd() *cobra.Command {
 a certificate. New workers stay pending until an admin runs
 "longarm admin approve <name>" (unless the hub auto-approves); longarmd join waits
 for that unless --no-wait is given, in which case longarmd run (the service)
-finishes the enrollment once approved.`,
+finishes the enrollment once approved.
+
+--pair carries the automatic-trust secret locally, never to the hub.
+CODE#SECRET is also accepted and split locally. Older longarmd versions do
+not support --pair; omit it to enroll without automatic trust.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dataDir, err := filepath.Abs(dataDir)
@@ -48,12 +52,13 @@ finishes the enrollment once approved.`,
 			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			return longarmd.Join(ctx, dataDir, args[0], args[1], longarmd.JoinOptions{Name: name, Fingerprint: fp, NoWait: noWait, Force: force, Out: os.Stdout})
+			return longarmd.Join(ctx, dataDir, args[0], args[1], longarmd.JoinOptions{Name: name, Fingerprint: fp, PairSecret: pairSecret, NoWait: noWait, Force: force, Out: os.Stdout})
 		},
 	}
 	c.Flags().StringVar(&dataDir, "data-dir", longarmd.DefaultDataDir(), "data directory (root: /var/lib/longarmd, LocalSystem: C:\\ProgramData\\Longarm\\longarmd, else ~/.longarm); env LONGARM_DATA_DIR")
 	c.Flags().StringVar(&name, "name", "", "worker name (default: hostname)")
 	c.Flags().StringVar(&fp, "ca-fingerprint", "", "expected sha256 fingerprint of the hub CA (printed by longarm-hub ca show)")
+	c.Flags().StringVar(&pairSecret, "pair", "", "automatic-trust pairing secret (never sent to the hub)")
 	c.Flags().BoolVar(&noWait, "no-wait", false, "don't wait for approval")
 	c.Flags().BoolVar(&force, "force", false, "enroll again although a certificate exists")
 	return c

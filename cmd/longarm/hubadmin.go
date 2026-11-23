@@ -83,6 +83,7 @@ func installEnrollment(addr string, r *hubclient.JoinResult, tr *pki.CSRTrust, v
 			fmt.Println(n)
 		}
 	}
+	refreshJoinedTrust()
 	return nil
 }
 

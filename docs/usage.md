@@ -2293,7 +2293,8 @@ longarmd login <hub> [--name <name>] [--label k=v]...   # on the new worker, no 
                                           # "Sign in with Microsoft Entra ID"); --label as worker add's
 # where nobody can sign in with a browser (a headless box): a join code
 longarm worker add [<name>] [--ttl 24h] [--label k=v]...   # prints a join code (stdout) and the commands:
-#   longarmd join <hub> <code> --ca-fingerprint <fp> --name <name>   # on the new worker, then
+#   longarmd join <hub> <code> --ca-fingerprint <fp> --name <name> --pair <secret>
+#   # on the new worker, then:
 #   longarmd session-mode install    (Windows: runs while you are logged on, no password)
 #   or longarmd service install ...  (runs with nobody logged on; see "Install a worker")
 #   the worker joins approved (no admin needed) and owned by you; at most 10 unused codes per user
@@ -2310,6 +2311,15 @@ longarm worker rename <worker> <new-name> # rename it (owner or admin; it keeps 
 longarm ls                                # an OWNER column appears once a worker has an owner; ADMIN: the machine's admin worker
                                           # ("-" = fleet, "+shared" = shared by its owner)
 ```
+
+On hubs supporting automatic trust, `worker add` includes `--pair <secret>`
+in the printed `longarmd join` command. Copy the whole command privately:
+the secret stays on the two machines, never on the hub. New workers also
+accept `<code>#<secret>` (split locally). Older hubs fall back to the
+ordinary join command; older workers reject `--pair` locally (drop the flag
+to join without automatic trust). Run Longarm on the originating device
+after the worker joins to finish its endorsement. Pairing failures warn
+but do not prevent joining in v1.
 
 **Tools on your worker.** `worker toolchain` lets its owner manage tools without
 an admin certificate; admins can also manage fleet workers (those with no owner),
@@ -2792,6 +2802,25 @@ With trusted users the hub session's `[hub] remote_jobs` defaults to
 `"none"`.
 
 ### End-to-end trust (client)
+
+Sign-in and subsequent hub sessions automatically create your first user
+key when the hub has none recorded. Save the `LAR1-...` recovery code:
+keep it safe; it restores your user key if you lose all devices. The hub
+never stores the secret key or recovery code.
+
+If the hub already knows your user key, a new device instead shows a
+pairing secret (at most once a day). On a device holding your user key:
+
+```sh
+longarm device approve <secret> [--yes]  # check the displayed device name, host and OS
+longarm trust show --recovery           # show your secret recovery code again
+longarm trust recover <LAR1-code>        # restore the key on a signed-in device
+```
+
+Run Longarm on the new device again to install its endorsement and renew
+its certificate. Approval endorses that device; it does not copy your
+secret user key to it. Recovery imports the key and endorses this device.
+Neither automatic pairing nor recovery enables `require_workers`.
 
 The hub's CA can issue a certificate for any name. With end-to-end trust a
 certificate must also carry an endorsement by a **user key** that stays on

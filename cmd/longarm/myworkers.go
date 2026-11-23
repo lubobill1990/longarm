@@ -22,6 +22,7 @@ import (
 	"longarm/internal/memcap"
 	"longarm/internal/pki"
 	"longarm/internal/sched"
+	"longarm/internal/trust"
 	pb "longarm/proto/longarm/v1"
 )
 
@@ -67,13 +68,43 @@ you are logged on; no password), elsewhere longarmd service install.`,
 				req.Name = args[0]
 			}
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
+				pctx, cancel := context.WithTimeout(ctx, hubTimeout)
+				who, whoErr := h.Fleet().Whoami(pctx, &pb.WhoamiRequest{})
+				if whoErr == nil {
+					whoErr = trust.Automatic(pctx, s.cfg.Dir, s.dialer.Bundle().Identity, h.Fleet(), who,
+						func(msg string) { fmt.Fprintln(os.Stderr, "longarm: "+msg) })
+				}
+				cancel()
+				if whoErr != nil {
+					pairingWarning(s.cfg.Dir, os.Stderr, whoErr)
+				}
+				pair, secret, pairErr := prepareWorkerPairing(s.cfg.Dir, client.TrustStore(s.cfg.Dir), req.Name, ttl)
+				if pairErr != nil {
+					pairingWarning(s.cfg.Dir, os.Stderr, pairErr)
+				} else {
+					req.Pairing = pair
+					if pair.User != s.dialer.Bundle().Identity.Owner() {
+						pairingWarning(s.cfg.Dir, os.Stderr, errors.New("this device holds another user's key; skipping automatic worker trust"))
+						if err := trust.DeletePairing(s.cfg.Dir, pair.Id); err != nil {
+							pairingWarning(s.cfg.Dir, os.Stderr, err)
+						}
+						req.Pairing, pair, secret = nil, nil, ""
+					}
+				}
 				jc, err := h.Fleet().CreateWorkerCode(ctx, req)
 				if err != nil {
 					return err
 				}
+				if pair != nil && jc.PairingId != pair.Id {
+					pairingWarning(s.cfg.Dir, os.Stderr, errors.New("the hub doesn't support automatic trust yet"))
+					if err := trust.DeletePairing(s.cfg.Dir, pair.Id); err != nil {
+						pairingWarning(s.cfg.Dir, os.Stderr, err)
+					}
+					secret = ""
+				}
 				fmt.Println(jc.Code)
 				fmt.Fprint(os.Stderr, workerAddHelp(h.Addr, jc.Code, caFingerprint(s), jc.Name, jc.Owner,
-					jc.ExpiresAt.AsTime().Local().Format("01-02 15:04")))
+					jc.ExpiresAt.AsTime().Local().Format("01-02 15:04"), secret))
 				return nil
 			})
 		},
@@ -273,12 +304,15 @@ func shareCmd(share bool) *cobra.Command {
 
 // workerAddHelp is what worker add prints on stderr: the sign-in way
 // first, then the join code's.
-func workerAddHelp(hub, code, fp, name, owner, expires string) string {
+func workerAddHelp(hub, code, fp, name, owner, expires string, pairing ...string) string {
 	join := fmt.Sprintf("longarmd join %s %s --ca-fingerprint %s", hub, code, fp)
 	what := "a worker"
 	if name != "" {
 		join += " --name " + name
 		what = "worker " + name
+	}
+	if len(pairing) > 0 && pairing[0] != "" {
+		join += " --pair " + pairing[0]
 	}
 	return fmt.Sprintf(`The easy way, on the new machine (signs in with your account):
   Windows: install the Longarm MSI and choose "This machine runs jobs", or run: longarmd login %s
