@@ -128,6 +128,8 @@ func TestSecurityModeRPC(t *testing.T) {
 	if _, err := admin.PutUser(tctx(t), &pb.PutUserRequest{Name: "bob", SetDisabled: true, Disabled: true}); err != nil {
 		t.Fatal(err)
 	}
+	// disabling ends bob's open connections: ask on a new one
+	bob = pb.NewFleetClient(th.dial(pki.IssueOptions{Role: pki.RoleClient, Name: "bob-laptop", User: "bob"}))
 	if _, err := bob.SetSecurityMode(tctx(t), &pb.SetSecurityModeRequest{Mode: "e2e"}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("disabled: %v", err)
 	}
