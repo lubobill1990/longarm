@@ -133,6 +133,14 @@ message StartLinkResponse {
   string verification_url = 3; // <hub panel>/link (never with the code in it)
   google.protobuf.Timestamp expires_at = 4;
   google.protobuf.Duration interval = 5; // poll no faster than this
+  // sign_in: how /link approves on this hub: the account providers it
+  // offers ("Microsoft", "Google", "Apple", ...); empty: a panel login
+  // (password + TOTP).
+  repeated string sign_in = 6;
+  // verification_hint: set when verification_url may not be reachable from
+  // the device (no public_url, the panel listens on loopback only): how to
+  // get to the panel's /link instead.
+  string verification_hint = 7;
 }
 
 message PollLinkRequest {
@@ -586,6 +594,14 @@ service Fleet {
   // (`longarm worker add`): the worker joins approved, usable by that user
   // only until shared.
   rpc CreateWorkerCode(CreateWorkerCodeRequest) returns (JoinCode);
+  // PanelLogin creates (reset: replaces) the web panel login of the
+  // caller's own user, role user (never admin, even from an admin
+  // certificate), authenticated by the device's certificate (`longarm
+  // panel-login`): how a user of a hub without an identity provider gets
+  // the login that approves /link for further devices. Refused for
+  // workers, certificates without a user, and hubs with an identity
+  // provider (those users sign in with it).
+  rpc PanelLogin(PanelLoginRequest) returns (PanelLoginResponse);
   // ShareWorker changes who may use a worker: its owner, if an admin let
   // the owner share (TenantUser.can_share), or an admin.
   rpc ShareWorker(ShareWorkerRequest) returns (NodeInfo);
@@ -930,6 +946,17 @@ message CreateWorkerCodeRequest {
   string name = 1; // the worker's name (default: its hostname)
   google.protobuf.Duration ttl = 2; // default 24h
   map<string, string> labels = 3;
+}
+
+message PanelLoginRequest {
+  bool reset = 1; // replace an existing login (its panel sessions end)
+}
+
+message PanelLoginResponse {
+  string login = 1; // the panel login name (the user's)
+  string password = 2; // generated, shown once
+  string totp_secret = 3;
+  string otpauth = 4; // otpauth:// URI of totp_secret
 }
 
 message ShareWorkerRequest {
