@@ -81,11 +81,11 @@ func Join(ctx context.Context, dataDir, hubAddr, code string, o JoinOptions) err
 }
 
 func acceptJoinPairing(out io.Writer, dataDir, secret string, resp *pb.JoinResponse) {
-	if resp.Pairing == nil {
-		fmt.Fprintln(out, "warning: hub doesn't support automatic trust yet; enrolled without automatic trust")
+	if secret == "" {
 		return
 	}
-	if secret == "" {
+	if resp.Pairing == nil {
+		fmt.Fprintln(out, "warning: hub doesn't support automatic trust yet; enrolled without automatic trust")
 		return
 	}
 	if err := pinJoinPairing(dataDir, secret, resp); err != nil {

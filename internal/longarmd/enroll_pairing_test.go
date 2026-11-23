@@ -84,9 +84,13 @@ func TestJoinPairingPinsOnlyAuthenticatedUser(t *testing.T) {
 				if !errors.Is(auditErr, os.ErrNotExist) {
 					t.Fatalf("successful pairing audited as a failure: %s, %v", audit, auditErr)
 				}
-			case "old hub", "old hub without secret":
+			case "old hub":
 				if !strings.Contains(out.String(), "doesn't support automatic trust yet") {
 					t.Fatalf("missing compatibility warning: %s", out.String())
+				}
+			case "old hub without secret": // a plain join: nothing to say
+				if out.Len() != 0 {
+					t.Fatalf("warning on a join without --pair: %s", out.String())
 				}
 			default:
 				if !strings.Contains(out.String(), "warning:") || !strings.Contains(string(audit), `"method":"trust/pair-failed"`) {
