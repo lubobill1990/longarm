@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
+	"longarm/internal/hub"
 	"longarm/internal/pki"
 	pb "longarm/proto/longarm/v1"
 )
@@ -293,6 +294,82 @@ func TestHubPairingLoopbackGuidance(t *testing.T) {
 		!strings.Contains(out, "sign in at the hub's panel (with an account or your panel login)") ||
 		strings.Contains(out, "panel listens on") {
 		t.Fatalf("local pairing guidance: %s", out)
+	}
+}
+
+func TestPanelLogin(t *testing.T) {
+	t.Parallel()
+	h := newHubEnv(t, "")
+	h.mustLongarm(h.admin, "admin", "user", "add", "alice", "--no-code")
+	h.mustLongarm(h.client, "whoami")
+	if r := h.longarm(h.admin, "admin", "user", "set", "alice", "--panel"); r.code == 0 {
+		t.Fatal("admin minted alice's panel login after she had a device")
+	}
+	r := h.longarm(h.client, "panel-login")
+	creds := regexp.MustCompile(`web panel login alice \(shown once\): password (\S+)\nTOTP secret (\S+)\n(otpauth://\S+)`).FindStringSubmatch(r.stderr)
+	if r.code != 0 || r.stdout != "" || creds == nil || !strings.Contains(r.stderr, "/link") {
+		t.Fatalf("panel-login: %+v", r)
+	}
+	if r := h.longarm(h.client, "panel-login"); r.code == 0 || !strings.Contains(r.stderr, "--reset") {
+		t.Fatalf("existing panel login: %+v", r)
+	}
+	jar, _ := cookiejar.New(nil)
+	browser := &panel{t: t, base: h.httpURL(), c: &http.Client{Jar: jar, Timeout: 30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	signIn := func(password, secret string) {
+		t.Helper()
+		code, err := hub.TOTP(secret, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, body := browser.post("/login", "application/x-www-form-urlencoded",
+			url.Values{"user": {"alice"}, "password": {password}, "totp": {code}}.Encode())
+		if status != http.StatusSeeOther {
+			t.Fatalf("password sign-in: %d %s", status, body)
+		}
+	}
+	signIn(creds[1], creds[2])
+	r = h.longarm(h.client, "panel-login", "--reset", "--json")
+	var next struct {
+		Login      string `json:"login"`
+		Password   string `json:"password"`
+		TotpSecret string `json:"totp_secret"`
+		Otpauth    string `json:"otpauth"`
+	}
+	if r.code != 0 || json.Unmarshal([]byte(r.stdout), &next) != nil || next.Login != "alice" ||
+		next.Password == "" || next.Password == creds[1] || next.TotpSecret == "" || next.TotpSecret == creds[2] ||
+		!strings.HasPrefix(next.Otpauth, "otpauth://") {
+		t.Fatalf("panel-login --reset --json: %+v", r)
+	}
+	resp, err := browser.c.Get(browser.base + "/api/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("old session survived reset: %d", resp.StatusCode)
+	}
+	signIn(next.Password, next.TotpSecret)
+	second := filepath.Join(h.root, "cfg-alice-2")
+	cmd := exec.Command(bins.longarm, "login", h.addr(), "--link", "--name", "alice-2", "--ca-fingerprint", h.fp)
+	cmd.Env = append(os.Environ(), "LONGARM_CONFIG_DIR="+second)
+	p := startProc(t, cmd)
+	_, code := p.code(t)
+	if out := browser.decide(code, "approve", "client device"); !strings.Contains(out, "signed in as alice (client)") {
+		t.Fatalf("approve second device: %s", out)
+	}
+	if c := p.wait(t); c != 0 {
+		t.Fatalf("second device login: %d\n%s", c, p.out.String())
+	}
+	bundle, err := pki.LoadBundle(filepath.Join(second, "tls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Identity.Role != pki.RoleClient || bundle.Identity.User != "alice" {
+		t.Fatalf("second device identity: %v", bundle.Identity)
+	}
+	if out := h.mustLongarm(second, "whoami"); !strings.Contains(out, "user alice ") {
+		t.Fatalf("second device: %s", out)
 	}
 }
 

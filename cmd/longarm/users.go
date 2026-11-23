@@ -106,6 +106,36 @@ func printPanel(r *pb.PutUserResponse) {
 		r.TotpSecret, r.Otpauth)
 }
 
+func panelLoginCmd() *cobra.Command {
+	var reset, asJSON bool
+	c := &cobra.Command{
+		Use:   "panel-login",
+		Short: "Create your panel login to approve another device (without an identity provider)",
+		Args:  cobra.NoArgs,
+		ValidArgsFunction: func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return withHub(cmd, func(ctx context.Context, _ *session, h *hubclient.Conn) error {
+				r, err := h.Fleet().PanelLogin(ctx, &pb.PanelLoginRequest{Reset_: reset})
+				if err != nil {
+					return err
+				}
+				if asJSON {
+					return printJSON(r)
+				}
+				printPanel(&pb.PutUserResponse{User: &pb.TenantUser{Name: r.Login}, PanelPassword: r.Password,
+					TotpSecret: r.TotpSecret, Otpauth: r.Otpauth})
+				fmt.Fprintln(os.Stderr, "open the <hub panel>/link address shown by the new device's pairing; sign in with this login")
+				return nil
+			})
+		},
+	}
+	c.Flags().BoolVar(&reset, "reset", false, "replace your password and TOTP secret and end existing panel sessions")
+	c.Flags().BoolVar(&asJSON, "json", false, "print the login, password, TOTP secret and otpauth URI once as JSON")
+	return c
+}
+
 func userAdminCmd() *cobra.Command {
 	c := &cobra.Command{Use: "user", Short: "Longarm users: devices (join codes), teams, quotas, disable, remove (multi-tenancy)"}
 

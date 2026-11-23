@@ -169,8 +169,7 @@ func (h *Hub) panelRoutes(mux *http.ServeMux, api, admin func(string, func(http.
 		if !readJSON(w, r, &body) || !h.reauth(w, r, user, body.Current) {
 			return
 		}
-		// an administrator login named like a Longarm user would act as that
-		// user (panelViewer): never
+		// Keep administrator logins separate from Longarm users.
 		h.mu.Lock()
 		isUser := h.userNameLocked(body.Name)
 		h.mu.Unlock()
@@ -260,8 +259,7 @@ func (h *Hub) auditHub(who, method string, fields map[string]any) {
 // userNameLocked reports whether name is (or was) a Longarm user's: a user
 // record, a purged user, an identity-provider binding, the user of a
 // client/admin certificate (an old one's name is its user: userOfLocked)
-// or a worker's owner - revoked machines too. An administrator's panel
-// login of that name would act as that user (panelViewer).
+// or a worker's owner - revoked machines too.
 func (h *Hub) userNameLocked(name string) bool {
 	if h.tenants[name] != nil || slices.Contains(h.purged, name) {
 		return true

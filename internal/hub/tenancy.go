@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -384,6 +385,17 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "%s is a worker's name", req.Name)
 	}
+	if t == nil {
+		pu, err := h.store.GetUser(req.Name)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.mu.Unlock()
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		if err == nil && pu.Admin() {
+			h.mu.Unlock()
+			return nil, status.Errorf(codes.AlreadyExists, "%s is a panel administrator's login (pick another user name)", req.Name)
+		}
+	}
 	// credentials for a user who has machines, its own sign-in or workers
 	// shared with it are the user's own business: with a device code or a
 	// panel login of the user an admin could act as the user
@@ -464,18 +476,71 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 		resp.JoinCode = jc
 	}
 	if req.Panel {
-		pw := randomPassword()
-		secret, err := AddPanelUser(h.store, u.Name, pw, "user", u.Name, true)
-		if err != nil {
-			return nil, status.Error(codes.FailedPrecondition, err.Error())
+		h.mu.Lock()
+		err := h.adminCredentialsRefusedLocked(u.Name)
+		var login *pb.PanelLoginResponse
+		if err == nil {
+			login, err = h.panelLoginLocked(u.Name, true)
 		}
-		h.store.DeleteUserSessions(u.Name)
-		resp.PanelPassword, resp.TotpSecret, resp.Otpauth = pw, secret, TOTPURI(u.Name, secret)
+		h.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		resp.PanelPassword, resp.TotpSecret, resp.Otpauth = login.Password, login.TotpSecret, login.Otpauth
 		h.auditHub(by, "users/panel", map[string]any{"user": u.Name})
 	}
 	h.mu.Lock()
 	resp.User = h.userInfoLocked(h.tenants[u.Name])
 	h.mu.Unlock()
+	return resp, nil
+}
+
+// panelLoginLocked is shared by admin bootstrapping and the user's own
+// certificate-authenticated path; each caller checks its authority first.
+func (h *Hub) panelLoginLocked(user string, reset bool) (*pb.PanelLoginResponse, error) {
+	h.loginMu.Lock() // a concurrent password login must not restore the old credentials
+	defer h.loginMu.Unlock()
+	if _, err := h.store.GetUser(user); err == nil {
+		if !reset {
+			return nil, status.Error(codes.AlreadyExists, "panel login exists (use --reset to replace it)")
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	pw := randomPassword()
+	secret, err := AddPanelUser(h.store, user, pw, "user", user, reset)
+	if err != nil {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+	if err := h.store.DeleteUserSessions(user); err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	h.tenancyChangedLocked()
+	return &pb.PanelLoginResponse{Login: user, Password: pw, TotpSecret: secret, Otpauth: TOTPURI(user, secret)}, nil
+}
+
+func (s *fleetServer) PanelLogin(ctx context.Context, req *pb.PanelLoginRequest) (*pb.PanelLoginResponse, error) {
+	c := callerFrom(ctx)
+	h := s.h
+	h.mu.Lock()
+	if c.user == "" || h.tenants[c.user] == nil || (c.id.Role != pki.RoleClient && c.id.Role != pki.RoleAdmin) {
+		h.mu.Unlock()
+		return nil, status.Error(codes.PermissionDenied, "panel login needs a client or admin certificate with a Longarm user")
+	}
+	if h.idpOn() {
+		h.mu.Unlock()
+		return nil, status.Error(codes.FailedPrecondition, "this hub has an identity provider: sign in with the provider instead")
+	}
+	if h.userDisabledLocked(c.user) {
+		h.mu.Unlock()
+		return nil, status.Errorf(codes.PermissionDenied, "user %s is disabled", c.user)
+	}
+	resp, err := h.panelLoginLocked(c.user, req.GetReset_())
+	h.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	h.auditHub(c.id.String(), "users/panel-login", map[string]any{"user": c.user, "reset": req.GetReset_()})
 	return resp, nil
 }
 
@@ -761,21 +826,17 @@ func (h *Hub) panelAdmin(user string) bool {
 
 // panelViewer is how the hub sees a panel account: what its Longarm user
 // may see. Administrators are no exception (with multi-tenancy): they see
-// their own user's machines and jobs (the login's tenant, else the login
-// name), and the fleet only through the anonymous summary (/api/admin/summary).
+// their own user's machines and jobs (the login's tenant, never its name),
+// and the fleet only through the anonymous summary (/api/admin/summary).
 func (h *Hub) panelViewer(user string) tenancy.Caller {
 	u, err := h.store.GetUser(user)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if err != nil {
-		return tenancy.Caller{User: user} // vanished meanwhile: nothing
+		return tenancy.Caller{} // vanished meanwhile: nothing
 	}
 	if u.Admin() {
-		name := user
-		if u.Tenant != "" {
-			name = u.Tenant
-		}
-		return h.viewerLocked(name, false)
+		return h.viewerLocked(u.Tenant, false)
 	}
 	v := h.viewerLocked(u.Tenant, false)
 	v.Admin = false // a user login never sees others' jobs, tenancy or not
