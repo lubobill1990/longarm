@@ -59,7 +59,7 @@ func TestWorkerToolchainOwnershipAndMerge(t *testing.T) {
 		t.Fatalf("admin did not win: %v", effective)
 	}
 	// Shared access permits jobs, not package operations (including apply).
-	if _, err := h.ShareWorker("test", "alice", true, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); err != nil {
+	if _, err := seedWorkerShares(t, h, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, req := range []*pb.WorkerToolchainRequest{

@@ -63,6 +63,10 @@ func randomToken() string {
 
 // CreateJoinCode makes a join code (by = who asked).
 func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.JoinCode, error) {
+	return h.createJoinCode(by, req, nil)
+}
+
+func (h *Hub) createJoinCode(by string, req *pb.CreateJoinCodeRequest, pairing *store.TrustPairing) (*pb.JoinCode, error) {
 	role := req.Role
 	if role == "" {
 		role = string(pki.RoleWorker)
@@ -128,6 +132,9 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 	if err := sched.CheckUserLabels(req.Labels); err != nil {
 		return nil, status.Error(codes.PermissionDenied, err.Error())
 	}
+	if r == pki.RoleWorker && req.Owner == "" && h.TenancyOn() {
+		return nil, status.Error(codes.FailedPrecondition, "worker codes require --owner <user> when users exist (longarm worker add)")
+	}
 	if req.Profile != "" {
 		h.mu.Lock()
 		_, ok := h.profiles[req.Profile]
@@ -140,13 +147,25 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 	hash := codeHash(code)
 	now := time.Now().UTC()
 	jc := &store.JoinCode{ID: hash[:8], Role: role, Name: req.Name, Labels: req.Labels, Profile: req.Profile,
-		CreatedBy: by, CreatedAt: now, ExpiresAt: now.Add(ttl), User: req.User, Owner: req.Owner}
-	if err := h.store.AddJoinCode(hash, jc); err != nil {
+		CreatedBy: by, CreatedAt: now, ExpiresAt: now.Add(ttl), User: req.User, Owner: req.Owner, Pairing: pairing}
+	h.mu.Lock()
+	if pairing != nil {
+		if err := h.checkPairingSlotLocked(pairing.User, pairing.ID, "", now); err != nil {
+			h.mu.Unlock()
+			return nil, err
+		}
+	}
+	err = h.store.AddJoinCode(hash, jc)
+	h.mu.Unlock()
+	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	h.log.Info("join code created", "id", jc.ID, "role", role, "owner", jc.Owner, "by", by, "expires", jc.ExpiresAt)
 	if jc.Owner != "" {
 		h.auditHub(by, "workers/code", map[string]any{"id": jc.ID, "owner": jc.Owner, "name": jc.Name, "expires": jc.ExpiresAt})
+	}
+	if pairing != nil {
+		h.auditPairing(by, "created", pairing)
 	}
 	out := joinCodePB(jc)
 	out.Code = code
@@ -154,8 +173,12 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 }
 
 func joinCodePB(c *store.JoinCode) *pb.JoinCode {
-	return &pb.JoinCode{Id: c.ID, Role: c.Role, ExpiresAt: tspb(c.ExpiresAt), Labels: c.Labels, Profile: c.Profile,
+	out := &pb.JoinCode{Id: c.ID, Role: c.Role, ExpiresAt: tspb(c.ExpiresAt), Labels: c.Labels, Profile: c.Profile,
 		CreatedBy: c.CreatedBy, Used: !c.UsedAt.IsZero(), UsedBy: c.UsedBy, Name: c.Name, User: c.User, Owner: c.Owner}
+	if c.Pairing != nil {
+		out.PairingId = c.Pairing.ID
+	}
+	return out
 }
 
 type enrollServer struct {
@@ -168,6 +191,9 @@ var errBadCode = status.Error(codes.PermissionDenied, "invalid, used or expired 
 func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinResponse, error) {
 	h := s.h
 	c := callerFrom(ctx)
+	if strings.Contains(req.Code, "#") {
+		return nil, status.Error(codes.InvalidArgument, "the part after # is a local secret: pass it as --pair")
+	}
 	if !h.joinLimit.allow(c.addr) {
 		return nil, status.Error(codes.ResourceExhausted, "too many join attempts; wait a minute")
 	}
@@ -178,7 +204,8 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 	if err := checkDevice(req.Hostname, req.Os, req.Arch, req.Version); err != nil {
 		return nil, err
 	}
-	if _, err := pki.ParseCSR(req.CsrPem); err != nil {
+	csr, err := pki.ParseCSR(req.CsrPem)
+	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "csr: %v", err)
 	}
 	hash := codeHash(code)
@@ -203,6 +230,14 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 		return nil, status.Errorf(codes.InvalidArgument, "%s (use --name)", status.Convert(err).Message())
 	}
 	h.mu.Lock()
+	if err := h.syncAdoptionLocked(); err != nil {
+		h.mu.Unlock()
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if jc.Role == string(pki.RoleWorker) && jc.Owner == "" && h.tenancyOnLocked() {
+		h.mu.Unlock()
+		return nil, status.Error(codes.FailedPrecondition, "ownerless worker codes cannot enroll new workers after users exist; use longarm worker add")
+	}
 	if n := h.nameTakenLocked(name, ""); n != nil {
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name, or revoke the old node)", name)
@@ -235,6 +270,16 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 		rec.User = name // pinned: whom the device acts as never follows a later name
 	}
 	resp := &pb.JoinResponse{Name: name, Role: jc.Role, CaPem: h.ca.CertPEM, HubName: h.cfg.Name, Labels: maps.Clone(jc.Labels), Id: rec.ID}
+	if p := jc.Pairing; p != nil && req.PairingId == p.ID && len(req.NodeProof) == 32 && p.ExpiresAt.After(now) {
+		if trust, err := pki.TrustOfCSR(csr); err == nil && trust != nil {
+			paired := *p
+			paired.NodeKey, paired.NodeProof = slices.Clone(trust.NodeKey), slices.Clone(req.NodeProof)
+			paired.NodeID, paired.NodeName = rec.ID, name
+			paired.Hostname, paired.OS, paired.State = req.Hostname, req.Os, "joined"
+			rec.Pairing = &paired
+			resp.Pairing = pairingPB(p)
+		}
+	}
 	if jc.Role == string(pki.RoleWorker) && jc.Owner != "" {
 		// A user's own machine: nobody else may use it (until shared), so
 		// there is nothing for an admin to approve.
@@ -258,6 +303,18 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken", name)
 	}
+	if rec.Pairing != nil {
+		// Code consumption and certificate issuance release the lock; a new
+		// offer may have taken the last slot meanwhile. Enrollment still works.
+		if err := h.checkPairingSlotLocked(rec.Pairing.User, rec.Pairing.ID, "", time.Now()); err != nil {
+			if status.Code(err) != codes.ResourceExhausted && status.Code(err) != codes.AlreadyExists {
+				h.mu.Unlock()
+				return nil, err
+			}
+			h.auditPairing("node/"+name, "skipped", rec.Pairing)
+			rec.Pairing, resp.Pairing = nil, nil
+		}
+	}
 	if err := h.store.PutNode(rec); err != nil {
 		h.mu.Unlock()
 		return nil, putNodeErr(err)
@@ -271,6 +328,9 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 		h.checkTenancyFlipLocked() // an owned worker separates users
 	}
 	h.mu.Unlock()
+	if rec.Pairing != nil {
+		h.auditPairing("node/"+name, "joined", rec.Pairing)
+	}
 	if rec.Owner != "" {
 		h.auditHub("node/"+name, "workers/join", map[string]any{"worker": name, "id": rec.ID, "owner": rec.Owner, "code": jc.ID, "remote": c.addr})
 	}

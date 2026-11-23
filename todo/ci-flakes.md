@@ -19,6 +19,8 @@ failing assertion.
 | `e2e TestOldWorkerPortLinks/direct` | macos-latest (#115), ubuntu-latest (#127) | `timed out waiting for ow -> nw (direct): the path in link ls` (compat_old_test.go:775); the relayed links of the same test were up |
 | `e2e TestUIPanelAPI` | macos-latest (main after #142) | `auto submit 429 … wa: free 1.8 GB - reserved 0.0 GB < 2.0 GB needed`: the runner's free memory under the job's 2 GB gate; the test could ask for less |
 | `e2e TestUITraySmoke` | windows-latest (#142) | the daemon answered `0 workers, source none` before its first pool view; fixed in #142 (the smoke check waits for it) |
+| `e2e TestPortLinks/hub_restart_and_down` | windows-latest, ubuntu-latest (#174) | `the 1m link closed before its TTL`: the test's deadline was taken before `link create`, the grant expires on a whole second from the request; fixed in #174 with a few seconds' slack (`job_bound` then failed only because the hub was left down) |
+| `e2e TestLocalAPI` | windows-latest (#174) | `security info of \\.\pipe\longarm-longarmd-…: All pipe instances are busy` (localapi_test.go:27): the test reads the pipe's ACL while the daemon serves a client |
 | `.github/scripts/msi-install-test.ps1` "still running after the upgrade" | windows-latest (#127) | a new process got the pid of one the upgrade ended; fixed in #128 (processes compared by id and start time) |
 
 ## Seen on Windows workers under load (cpc, several jobs at once)

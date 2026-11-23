@@ -662,12 +662,15 @@ visibility of what the worker's users run.
 A user can register their own machine as a worker (`longarm worker add`,
 [usage](usage.md#your-own-workers)). The worker code names the user as the
 worker's **owner**; the worker joins approved and is usable by its owner
-only, until shared - by user, team or everyone. Only users an admin
-granted `can_share` (`longarm admin user set <u> --can-share`) may share
-their workers; only a worker's owner shares it - an admin never shares
-another user's worker, with itself or anybody. Workers without owner
-(admins' join codes) are the shared fleet as before; admins label, drain and
-remove those. An owned worker turns user
+only. In the first rollout of #173,
+**new shares are refused**, including user/team additions and enabling everyone,
+regardless of `can_share`; existing shares remain effective and their owner can
+remove them without that permission. An admin never shares another user's worker.
+Existing workers without an owner remain fleet workers; admins label, drain and
+remove those. New worker codes and host-issued bundles require an existing
+owner when users exist. Admin API codes default to the caller's own user and
+refuse another owner; host operators can explicitly choose the owner.
+An owned worker turns user
 separation on (like the first user). A worker's name is never a user: a
 worker certificate acts as no user on the hub (whatever its name), and no
 machine may be named after a user other than that user's own devices
@@ -688,7 +691,8 @@ the worker audits every change it receives (`worker/access`).
 **Enforced twice, decided once.** The hub applies the rule when it lists
 and places, and pushes owner and shares to the worker
 (`HubCommand.worker_access` at every connect and change; kept in
-`<data>/worker-access.json` across restarts and hub outages). The owner
+`<data>/worker-access.json` across restarts and hub outages). Every owner push
+also persists the fallback owner in `hub.toml`. The owner
 holds from enrollment on: `longarmd join` writes it (and remembers the owned
 code in the data dir's `hub.toml`), so a worker started before it ever
 reached the hub - or without its file - serves its owner only; an
@@ -698,6 +702,20 @@ worker refuses everybody else on every call, and closes the connections -
 with their sessions, forwards, ssh and log streams - of users who lose
 access, whether by an unshare or by leaving a team the worker is shared
 with. Followed log streams through the hub are re-checked on every poll.
+`longarm worker claim` makes a visible ownerless, non-revoked, non-admin worker
+the caller's own without changing its node ID. It cuts other users' connections
+and port links and is audited as `workers/claim`; offline workers receive the
+access rule on reconnect. Nothing automatically claims existing fleet workers.
+
+For hubs without users, the host operator can run `longarm-hub adopt --user
+alice [--map device-or-worker=bob]...`. This one-time, audited (`workers/adopt`)
+plan creates tenants, pins non-revoked client/admin devices and claims ownerless
+non-admin workers under the running hub's lock (or when it next starts).
+The pinned device record wins over its old certificate **on the hub**; direct
+worker access changes only after renewal issues a certificate with the pinned
+user. Renew devices before using claimed workers. Existing jobs retain their
+original owners. See [adoption and claiming](usage.md#your-own-workers).
+
 Disabling or removing a user drops the user's unused worker codes; a code
 whose owner is no longer a user does not join. But the worker's copy **comes from the hub**:
 whoever controls the hub (its admins, its database, the CA key) can change
@@ -1971,6 +1989,81 @@ web sign-in only (the panel, and `/link` for devices and workers):
 
 ## End-to-end trust (the hub is not trusted with access)
 
+**Security-mode rollout (#173, v1).** The hub records each user's
+`legacy`, `shadow` or `e2e` mode (an absent mode is legacy), and reports it
+with its `[security] stage` through `whoami` / `security status`.
+See [usage](usage.md#security-modes-173) for config and upgrade commands.
+These modes are **not enforced in v1**: they do not enable the manual
+trust checks below or cut off any existing user. Enforcement comes with
+the next release and will live on the machines, not on the hub.
+
+The hub and admins may only move a user **up** (`legacy < shadow < e2e`),
+at stage 1 or 2, or for pilot users at stage 0. A user's own
+`Fleet.SetSecurityMode` call has the same restrictions; workers cannot
+call it. Both it and admin mode updates are audited as
+`users/security-mode`. Downgrades are refused with `FailedPrecondition`:
+only the user (later, with the user key) or someone with local access to
+the workers can authorize a downgrade. V1 exposes no such downgrade
+path. Otherwise a compromised hub could remove the trust requirement it
+is meant to be unable to bypass. Stage 2 applies `new_users` only when
+creating users; it never upgrades existing accounts automatically.
+
+**Automatic key exchange (hub protocol, v1).** A user's client/admin
+certificate may publish its 32-byte public user key (`Fleet.PublishUserKey`).
+The hub persists it as a discovery hint, not a trust root, and reports it
+with the count of unexpired, open pairings in `Whoami`. No private key or
+pairing secret is sent to or escrowed by the hub.
+
+For a worker, `CreateWorkerCode` stores a pairing ID, user, public user key,
+user tag and expiry in the one-use code's record; the response echoes
+`pairing_id` so clients can detect support. The expiry must be in the future
+and no later than the code's TTL plus one minute of clock slack. At join,
+a matching pairing ID and 32-byte node proof attach the CSR's verified
+trust node key, node ID, name, hostname and OS to the persistent node
+record (`joined`). The join response carries the user key and tag back.
+Missing or odd worker pairing fields fall back to ordinary enrollment:
+automatic pairing is not an enrollment requirement in v1. A code
+containing `#` is rejected without consuming it, with guidance to pass
+the local secret as `--pair` instead.
+
+For a device, `OfferDevicePairing` takes its node key from the authenticated
+certificate, never the request, and records the caller's node ID, name and
+user (`offered`, one hour). A new offer replaces that device's old offer;
+retrying the same offer preserves its expiry and any completed exchange.
+`ListTrustPairings` returns only the caller's user's records, even for
+admins: requested IDs, or all unexpired `joined` / `offered` records.
+`CompleteTrustPairing` checks the endorsement's signature with its own
+public user key and matches the pairing's node key, ID, kind, name and
+user. Worker endorsements must use the user key stored with the code;
+device completions carry the public user key and user tag for the new
+device to fetch. These checks are sanity checks, not hub-side proof of
+possession of the pairing secret.
+
+The hub saves the endorsement (`endorsed`) before pushing it to an online
+worker. It repeats the push on every connect until the worker presents a
+certificate carrying a valid endorsement of the paired identity and node
+key by that user key (`installed`).
+Endorsed records survive expiry and hub restarts; expired unfinished
+pairings are removed by the maintenance sweep. A user may have at most 20
+open exchanges, including unused paired worker codes; pairing RPCs are
+rate-limited per user. If concurrent offers fill the budget during
+enrollment, the worker still joins without a pairing. Steps are audited as
+`trust/pairing-*`, without keys, tags or node proofs.
+
+The pairing ID and the two MACs derive from a 100-bit local secret
+(`internal/pki/pair.go`). Only the two endpoints can check the MACs: the
+worker/device checks the user tag before pinning the user key, and the
+endorsing device checks the node proof before signing. Substituting either
+key therefore fails at an endpoint, not at the hub. An endorsement binds
+the node key, ID, kind, user and name; the recipient checks its target
+before installation. Withholding messages can deny pairing, not forge
+trust. Leaking only a hub-side join code permits enrollment without an
+endorsement; leaking both the code and local secret can permit an
+attacker's worker to be endorsed. One use, expiry and the endpoint's
+confirmation of the worker's name/host/OS limit that exposure.
+Automatic exchange does not enable access enforcement or change an
+existing user's security mode.
+
 Everything above trusts the hub: its CA decides who a certificate belongs
 to, so whoever holds the CA key - the hub's operators, an admin with access
 to its host or storage, a thief of its database replica - can mint a
@@ -2002,6 +2095,54 @@ the proof and can't produce one.
   `"none"` (logs are users' data); set it explicitly to allow more.
 
 **Setting it up**
+
+**Automatic key exchange (#173, v1).** A first signed-in device creates a
+user key if neither it nor the hub has one recorded, endorses itself and
+publishes only the public key. The hub's recorded key is a discovery hint,
+not authority. The `LAR1-...` recovery code encodes the 32-byte Ed25519 seed
+with a checksum; it is as sensitive as the secret key, is printed once
+(again with `longarm trust show --recovery`) and is never escrowed at the
+hub. `longarm trust recover <code>` imports it without replacing a
+different local key.
+
+`worker add` makes a 100-bit local secret and sends the hub only a derived
+pairing ID and MACs. The printed `longarmd join ... --pair <secret>` passes
+the secret locally; new workers also split `CODE#secret` before contacting
+the hub. A worker checks the user's key tag before saving
+`<data>/trust/pinned-user`. This is deliberately **not** a `trust.toml`
+entry: automatic pairing must not enable worker enforcement in v1.
+The originating device checks the worker's node-key proof, requested
+name and expiry, then endorses its node key and ID. The worker installs
+the endorsement only for its pinned user, certificate name and node
+key/ID, and renews its certificate.
+
+A second device uses its own secret and node-key proof. An existing device
+holding the user key runs `longarm device approve <secret>`, checks the
+proof and account, and asks for confirmation of the displayed name,
+hostname and OS (`--yes` skips the question). Those display fields are
+hub-reported, not independent identity evidence. The new device checks
+the returned user-key tag and endorsement before installing and pinning
+its own user in its client policy. The secret user key is not transferred.
+The client accepts the hub's shorter one-hour offer expiry within its local
+deadline; the user-key tag authenticates that expiry. An extended, expired,
+missing or invalid expiry is refused.
+
+Substituting a user key fails the tag; substituting a node key fails the
+proof. Two different node keys reported for one pairing are not endorsed
+and produce a leaked-code warning. Endorsements bind the node ID and key;
+worker installation also checks the certificate name. A hub can withhold
+pairings, but cannot forge their MACs. Leaking only the hub's join code
+does not yield an endorsement; leaking the **whole command/secret** can
+endorse an attacker's worker. Single use, expiry, the "endorsed your worker"
+notice and local `trust deny-node` limit that risk. Keep copied commands
+and recovery codes out of logs and shared shell history.
+
+All automatic-pairing failures warn and audit locally as
+`trust/pair-failed`; unsupported hubs fall back to ordinary enrollment.
+V1 does not turn on `require_workers`, worker trusted-user enforcement,
+or security-mode enforcement, and does not cut off existing users.
+Pending local pairing secrets are retained until expiry plus 30 days
+(completed worker pairings are removed). Manual setup remains available:
 
 ```sh
 # alice's laptop: a user key, this device endorsed (the certificate is renewed to carry it)

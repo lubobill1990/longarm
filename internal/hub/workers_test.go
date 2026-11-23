@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	"longarm/internal/hub/store"
 	"longarm/internal/hubclient"
 	"longarm/internal/pki"
 	"longarm/internal/tenancy"
@@ -176,9 +177,9 @@ func TestOwnedWorkers(t *testing.T) {
 	share := func(c *grpc.ClientConn, req *pb.ShareWorkerRequest) (*pb.NodeInfo, error) {
 		return pb.NewFleetClient(c).ShareWorker(tctx(t), req)
 	}
-	if _, err := share(th.alice, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); status.Code(err) != codes.PermissionDenied ||
-		!strings.Contains(err.Error(), "can-share") {
-		t.Fatalf("share without can_share: %v", err)
+	if _, err := share(th.alice, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); status.Code(err) != codes.FailedPrecondition ||
+		!strings.Contains(err.Error(), "#173") {
+		t.Fatalf("new share: %v", err)
 	}
 	if _, err := share(th.bob, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); status.Code(err) != codes.NotFound {
 		t.Fatalf("bob shares alice's worker: %v", err)
@@ -192,14 +193,14 @@ func TestOwnedWorkers(t *testing.T) {
 	if me, err := pb.NewFleetClient(th.alice).Whoami(tctx(t), &pb.WhoamiRequest{}); err != nil || !me.CanShare {
 		t.Fatalf("whoami %v %v", me, err)
 	}
-	if _, err := share(th.alice, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"nobody"}}); status.Code(err) != codes.NotFound {
+	if _, err := share(th.alice, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"nobody"}}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("share with an unknown user: %v", err)
 	}
 	if _, err := share(th.alice, &pb.ShareWorkerRequest{Worker: "aw", AddTeams: []string{"Bad Team"}}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("share with a bad team: %v", err)
 	}
 	lastAccess(out)
-	info, err := share(th.alice, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}})
+	info, err := seedWorkerShares(t, h, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}})
 	if err != nil || !slices.Equal(info.Shares.GetUsers(), []string{"bob"}) {
 		t.Fatalf("share with bob: %v %v", info, err)
 	}
@@ -221,7 +222,7 @@ func TestOwnedWorkers(t *testing.T) {
 	}
 
 	// unshare; share with team t1 (alice, carol); then everyone
-	if _, err := share(th.alice, &pb.ShareWorkerRequest{Worker: "aw", RemoveUsers: []string{"bob"}, AddTeams: []string{"t1"}}); err != nil {
+	if _, err := seedWorkerShares(t, h, &pb.ShareWorkerRequest{Worker: "aw", RemoveUsers: []string{"bob"}, AddTeams: []string{"t1"}}); err != nil {
 		t.Fatal(err)
 	}
 	if wa := lastAccess(out); wa == nil || len(wa.Shares.GetUsers()) != 0 || !slices.Equal(wa.Shares.GetTeams(), []string{"t1"}) {
@@ -243,7 +244,7 @@ func TestOwnedWorkers(t *testing.T) {
 			t.Fatalf("admin shares alice's worker %v: %v", req, err)
 		}
 	}
-	if _, err := share(th.alice, &pb.ShareWorkerRequest{Worker: "aw", RemoveTeams: []string{"t1"}, SetEveryone: true, Everyone: true}); err != nil {
+	if _, err := seedWorkerShares(t, h, &pb.ShareWorkerRequest{Worker: "aw", RemoveTeams: []string{"t1"}, SetEveryone: true, Everyone: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := nodeNames(t, th.bob)["aw"]; !ok {
@@ -301,7 +302,10 @@ func TestWorkerCodes(t *testing.T) {
 	if _, err := h.CreateJoinCode("test", &pb.CreateJoinCodeRequest{Role: "worker", Owner: "Not A User"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("bad owner: %v", err)
 	}
-	jc, err := pb.NewHubAdminClient(th.root).CreateJoinCode(tctx(t), &pb.CreateJoinCodeRequest{Role: "worker", Owner: "bob", Ttl: durationpb.New(time.Hour)})
+	if _, err := pb.NewHubAdminClient(th.root).CreateJoinCode(tctx(t), &pb.CreateJoinCodeRequest{Role: "worker", Owner: "bob"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("admin assigns another user's worker: %v", err)
+	}
+	jc, err := h.CreateJoinCode("local", &pb.CreateJoinCodeRequest{Role: "worker", Owner: "bob", Ttl: durationpb.New(time.Hour)})
 	if err != nil || jc.Owner != "bob" {
 		t.Fatalf("admin's code for bob: %v %v", jc, err)
 	}
@@ -369,9 +373,10 @@ func TestCanSeeNode(t *testing.T) {
 func TestFollowedLogsEndOnUnshare(t *testing.T) {
 	th, out := ownedHub(t)
 	h := th.h
-	if _, err := h.ShareWorker("test", "alice", true, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); err != nil {
+	if _, err := seedWorkerShares(t, h, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); err != nil {
 		t.Fatal(err)
 	}
+
 	// the fake worker answers every log request with one more byte, never EOF
 	go func() {
 		for c := range out {
@@ -411,6 +416,30 @@ func TestFollowedLogsEndOnUnshare(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("bob's followed stream survived the unshare")
 	}
+}
+
+// seedWorkerShares models shares saved by an older hub, not a new share.
+func seedWorkerShares(t *testing.T, h *Hub, req *pb.ShareWorkerRequest) (*pb.NodeInfo, error) {
+	t.Helper()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := h.nodeLocked(req.Worker)
+	s := store.WorkerShares{}
+	if n.rec.Shares != nil {
+		s = *n.rec.Shares
+	}
+	s.Users = editList(s.Users, req.AddUsers, req.RemoveUsers)
+	s.Teams = editList(s.Teams, req.AddTeams, req.RemoveTeams)
+	if req.SetEveryone {
+		s.Everyone = req.Everyone
+	}
+	n.rec.Shares = &s
+	n.rec.AccessVersion++
+	if err := h.store.PutNode(n.rec); err != nil {
+		t.Fatal(err)
+	}
+	h.sendLocked(n, workerAccessCmd(workerAccessLocked(n)))
+	return h.nodeInfoLocked(n), nil
 }
 
 // TestWorkerCodesDie: a removed or disabled user's unused worker codes are

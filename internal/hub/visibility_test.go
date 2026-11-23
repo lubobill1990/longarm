@@ -62,7 +62,7 @@ func TestAdminSeesUserView(t *testing.T) {
 	if _, err := h.PutUser("test", &pb.PutUserRequest{Name: "root", Create: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.ShareWorker("test", "bob", true, &pb.ShareWorkerRequest{Worker: "bw", AddUsers: []string{"root"}}); err != nil {
+	if _, err := seedWorkerShares(t, h, &pb.ShareWorkerRequest{Worker: "bw", AddUsers: []string{"root"}}); err != nil {
 		t.Fatal(err)
 	}
 	m := nodeNames(t, th.root)

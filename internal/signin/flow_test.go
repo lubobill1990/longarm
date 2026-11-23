@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -374,12 +373,6 @@ func TestSignInAgain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	share := func(owner, worker, with string) {
-		t.Helper()
-		if _, err := h.ShareWorker("test", owner, false, &pb.ShareWorkerRequest{Worker: worker, AddUsers: []string{with}}); err != nil {
-			t.Fatal(err)
-		}
-	}
 	fp := pki.Fingerprint(h.CA().Cert)
 	cfgDir, dataDir := t.TempDir(), t.TempDir()
 	signIn := func(user string, replace bool, check func(page string)) (*signin.Result, error) {
@@ -419,7 +412,6 @@ func TestSignInAgain(t *testing.T) {
 	}
 	bobWorker := r.Worker.Name
 	bobCert, _ := os.ReadFile(filepath.Join(dataDir, longarmd.TLSDir, pki.NodeCertFile))
-	share("bob", bobWorker, "alice")
 
 	// asked first: nothing changes, the hub is asked nothing
 	_, err = signIn("alice", false, func(string) { t.Fatal("a pairing started before the user agreed") })
@@ -451,7 +443,7 @@ func TestSignInAgain(t *testing.T) {
 		t.Fatalf("bob's device: %+v", n)
 	}
 	if n := nodes[bobWorker]; n == nil || n.State != "approved" || n.Owner != "alice" || n.Shares != nil {
-		t.Fatalf("the worker: %+v (bob's sharing must not move to alice)", n)
+		t.Fatalf("the worker: %+v", n)
 	}
 	if hc, _ := hubclient.LoadFile(dataDir); hc.Owner != "alice" {
 		t.Fatalf("worker hub.toml: %+v", hc)
@@ -463,8 +455,7 @@ func TestSignInAgain(t *testing.T) {
 		t.Fatalf("bob's worker certificate is not revoked: %v", err)
 	}
 
-	// alice again (her worker shared with bob): it keeps its sharing
-	share("alice", bobWorker, "bob")
+	// alice again: her own worker and device, replaced in place
 	r, err = signIn("alice", true, func(page string) {
 		if !strings.Contains(page, "your worker <code>"+bobWorker+"</code>") || !strings.Contains(page, "your device <code>alice-box</code>") {
 			t.Errorf("confirmation page: %s", page)
@@ -474,8 +465,8 @@ func TestSignInAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, n := range h.ListNodes(true) {
-		if n.Name == bobWorker && n.State != "revoked" && (n.Owner != "alice" || n.Shares == nil || !slices.Contains(n.Shares.Users, "bob")) {
-			t.Fatalf("alice's worker lost its sharing: %+v", n)
+		if n.Name == bobWorker && n.State != "revoked" && n.Owner != "alice" {
+			t.Fatalf("alice's worker: %+v", n)
 		}
 	}
 }

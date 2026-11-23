@@ -55,6 +55,7 @@ type Hub struct {
 	loginLimit         *ipLimiter
 	loginMu            sync.Mutex
 	renewLimit         *ipLimiter // keyed by node name
+	trustPairLimit     *ipLimiter // keyed by user
 	// certMu serializes issuing (approve, renew) against revoking, so a
 	// certificate issued during a revocation cannot escape it.
 	certMu sync.Mutex
@@ -112,9 +113,10 @@ type Hub struct {
 	relayPolMu   sync.Mutex
 	relayPolCh   chan struct{}
 
-	started time.Time
-	relay   *relay.Server
-	telem   *hubTelemetry // nil = telemetry off (telemetry.go)
+	started        time.Time
+	adoptionLoaded bool
+	relay          *relay.Server
+	telem          *hubTelemetry // nil = telemetry off (telemetry.go)
 	// traffic accounting (traffic.go)
 	traffic    *trafficStats
 	relayEnded relayEnded
@@ -191,6 +193,7 @@ func Open(cfg *Config, log *slog.Logger) (*Hub, error) {
 	h := &Hub{
 		cfg: cfg, log: log, store: st, ca: ca, params: cfg.SchedParams(), bus: newBus(),
 		joinLimit: newGuessLimiter(0.2, 10), loginLimit: newGuessLimiter(0.1, 5), renewLimit: newIPLimiter(0.5, 10), conns: conntrack.New(),
+		trustPairLimit:     newIPLimiter(1, 30),
 		tailnetWorkerLimit: newIPLimiter(1.0/3600, 5), tailnetClientLimit: newIPLimiter(1.0/600, 10), nodes: map[string]*node{},
 		jobs: map[string]map[string]*jobEntry{}, reservations: map[string]*reservation{},
 		profiles: map[string]*pb.Profile{}, stable: map[string]*pb.Profile{}, knownSerials: map[string]string{}, kick: make(chan struct{}, 1),
@@ -768,8 +771,12 @@ func (h *Hub) maintain(ctx context.Context) {
 
 func (h *Hub) sweep() {
 	now := time.Now()
+	h.sweepTrustPairings(now)
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if err := h.syncAdoptionLocked(); err != nil {
+		h.log.Error("apply adoption", "err", err)
+	}
 	for _, n := range h.nodes {
 		if n.sess != nil && now.Sub(n.lastReport) > h.cfg.Heartbeat.Offline.Duration {
 			h.log.Warn("node silent; marking offline", "node", n.rec.Name, "last_report", n.lastReport)

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"longarm/internal/hub/store"
 	"longarm/internal/tenancy"
 )
 
@@ -23,6 +24,10 @@ func TestOwnedWorkers(t *testing.T) {
 	t.Parallel()
 	h := newHubEnv(t, "")
 	alice, root := h.client, h.admin
+	// Legacy fleet worker: enrolled before the first user exists.
+	wf := h.newWorkerDir(t, "wf", "")
+	h.joinWorker(t, wf, true)
+	wf.start(t, true)
 	// alice's panel login comes with her user, before she has machines (an
 	// admin can't hand itself a login of a user who has them, below)
 	pa := h.longarm(root, "admin", "user", "add", "alice", "--no-code", "--panel")
@@ -36,11 +41,6 @@ func TestOwnedWorkers(t *testing.T) {
 		"--out", filepath.Join(bob, "tls"), "--ca-dir", filepath.Join(alice, "ca"))
 	os.WriteFile(filepath.Join(bob, "workers.toml"), nil, 0o644)
 	os.WriteFile(filepath.Join(bob, "hub.toml"), []byte(fmt.Sprintf("address = %q\n", h.addr())), 0o600)
-
-	// a fleet worker (registered by the admin) for everybody
-	wf := h.newWorkerDir(t, "wf", "")
-	h.joinWorker(t, wf, true)
-	wf.start(t, true)
 
 	// alice's own worker
 	r := h.longarm(alice, "worker", "add", "aw", "--label", "kind=mine")
@@ -174,15 +174,15 @@ func TestOwnedWorkers(t *testing.T) {
 	}
 	adminSeesUserView(t, h, root, bob, print1)
 
-	// sharing needs an admin's permission
-	if r := h.longarm(alice, "worker", "share", "aw", "--user", "bob"); r.code == 0 || !strings.Contains(r.stderr, "can-share") {
-		t.Fatalf("share without permission: %+v", r)
+	// No new shares, even when the old can_share flag is set.
+	if r := h.longarm(alice, "worker", "share", "aw", "--user", "bob"); r.code == 0 || !strings.Contains(r.stderr, "#173") {
+		t.Fatalf("new share: %+v", r)
 	}
 	h.mustLongarm(root, "admin", "user", "set", "alice", "--can-share")
 	if out := h.mustLongarm(alice, "whoami"); !strings.Contains(out, "can share own workers: true") {
 		t.Fatalf("whoami:\n%s", out)
 	}
-	h.mustLongarm(alice, "worker", "share", "aw", "--user", "bob")
+	legacyWorkerShares(t, h, "aw", &store.WorkerShares{Users: []string{"bob"}})
 	waitAccess("shared with bob", func(s string) bool { return strings.Contains(s, `"bob"`) })
 	if r := exec(bob, "aw"); r.code != 0 || !strings.Contains(r.stdout, "line 1") {
 		t.Fatalf("bob exec on the shared worker: %+v", r)
@@ -222,7 +222,7 @@ func TestOwnedWorkers(t *testing.T) {
 	// Shared with a team: bob leaving the team ends what he has open there
 	// (the tenancy policy push re-checks open connections), not just new calls.
 	h.mustLongarm(root, "admin", "team", "add", "t1", "bob")
-	h.mustLongarm(alice, "worker", "share", "aw", "--team", "t1")
+	legacyWorkerShares(t, h, "aw", &store.WorkerShares{Teams: []string{"t1"}})
 	waitAccess("shared with t1", func(s string) bool { return strings.Contains(s, `"t1"`) })
 	waitFor(t, "bob in t1 on the worker", 30*time.Second, func() bool {
 		b, _ := os.ReadFile(filepath.Join(aw.dataDir, tenancy.PolicyFile))
@@ -245,6 +245,36 @@ func TestOwnedWorkers(t *testing.T) {
 	})
 	h.mustLongarm(alice, "worker", "remove", "aw")
 	h.waitNode(t, "aw", "revoked", func(n map[string]any) bool { return n["state"] == "revoked" })
+}
+
+// legacyWorkerShares restores a pre-v1 share while the hub is stopped.
+func legacyWorkerShares(t *testing.T, h *hubEnv, worker string, shares *store.WorkerShares) {
+	t.Helper()
+	h.killHub()
+	st, err := store.Open(filepath.Join(h.hubDir, "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := st.Nodes()
+	if err != nil {
+		st.Close()
+		t.Fatal(err)
+	}
+	found := false
+	for _, n := range nodes {
+		if n.Name == worker && n.State != "revoked" {
+			n.Shares = shares
+			n.AccessVersion++
+			err = st.PutNode(n)
+			found = true
+			break
+		}
+	}
+	st.Close()
+	if err != nil || !found {
+		t.Fatalf("legacy shares of %s: found %v, %v", worker, found, err)
+	}
+	h.startHub(t)
 }
 
 // lineStarts reports whether a line of out starts with prefix.

@@ -388,12 +388,24 @@ func idMismatch(n *node, cert *x509.Certificate) bool {
 	return err == nil && id.ID != "" && !strings.EqualFold(id.ID, n.rec.ID)
 }
 
-// forcedRenewBefore is renameRenewal (clients) and idMismatch (any node)
-// as a renew_before longer than the certificate's remaining life: the node
-// renews now (a client asks once per run; a worker at its next welcome;
-// the renewed certificate has the name and ID: no loop). 0 = no need.
+// userMismatch reports whether a client's or admin's certificate carries
+// another user than the hub pinned for the device (longarm-hub adopt):
+// workers go by the certificate's user, so it must follow at once.
+func userMismatch(n *node, cert *x509.Certificate) bool {
+	if cert == nil || n.rec.Role == string(pki.RoleWorker) || n.rec.User == "" {
+		return false
+	}
+	id, err := pki.IdentityFromCert(cert)
+	return err == nil && id.Owner() != certUser(n.rec)
+}
+
+// forcedRenewBefore is renameRenewal and userMismatch (clients) and
+// idMismatch (any node) as a renew_before longer than the certificate's
+// remaining life: the node renews now (a client asks once per run; a
+// worker at its next welcome; the renewed certificate has the name, user
+// and ID: no loop). 0 = no need.
 func forcedRenewBefore(n *node, cert *x509.Certificate) time.Duration {
-	if !(renameRenewal(n, cert) && n.rec.Role != string(pki.RoleWorker)) && !idMismatch(n, cert) {
+	if !(renameRenewal(n, cert) && n.rec.Role != string(pki.RoleWorker)) && !idMismatch(n, cert) && !userMismatch(n, cert) {
 		return 0
 	}
 	left := time.Until(cert.NotAfter)

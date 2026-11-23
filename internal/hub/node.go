@@ -119,6 +119,9 @@ func (s *hubNodeServer) Connect(stream pb.HubNode_ConnectServer) error {
 	send := func(cmd *pb.HubCommand) { sess.out <- cmd } // fresh channel: cannot block yet
 	send(&pb.HubCommand{Msg: &pb.HubCommand_Welcome{Welcome: welcome}})
 	send(workerAccessCmd(workerAccessLocked(n)))
+	if cmd := h.pairingConnectLocked(n, c.cert); cmd != nil {
+		send(cmd)
+	}
 	if hello.RevocationVersion != revs.GetRevocations().GetVersion() {
 		send(revs)
 	}

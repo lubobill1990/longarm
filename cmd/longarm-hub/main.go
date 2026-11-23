@@ -92,7 +92,7 @@ func newRoot() *cobra.Command {
 	}
 	root.PersistentFlags().StringVar(&configPath, "config", os.Getenv("LONGARM_HUB_CONFIG"), "hub.toml (env LONGARM_HUB_CONFIG)")
 	root.PersistentFlags().StringVar(&dataDir, "data-dir", "", "data directory (overrides hub.toml data_dir; env LONGARM_HUB_DATA_DIR)")
-	root.AddCommand(serveCmd(), caCmd(), userCmd(), joinCodeCmd(), releaseCmd(), issueCmd(), healthcheckCmd(), bootstrapCmd(), containerCmd(), auditCmd(), notices.Cmd())
+	root.AddCommand(serveCmd(), caCmd(), userCmd(), joinCodeCmd(), adoptCmd(), releaseCmd(), issueCmd(), healthcheckCmd(), bootstrapCmd(), containerCmd(), auditCmd(), notices.Cmd())
 	return root
 }
 
@@ -325,7 +325,7 @@ func parseKV(kvs []string) (map[string]string, error) {
 }
 
 func joinCodeCmd() *cobra.Command {
-	var role, profile, name string
+	var role, profile, name, owner string
 	var ttl time.Duration
 	var labels []string
 	c := &cobra.Command{
@@ -342,11 +342,14 @@ func joinCodeCmd() *cobra.Command {
 				return err
 			}
 			defer h.Close()
-			jc, err := h.CreateJoinCode("local", &pb.CreateJoinCodeRequest{Role: role, Ttl: durationpb.New(ttl), Labels: lm, Profile: profile, Name: name})
+			jc, err := h.CreateJoinCode("local", &pb.CreateJoinCodeRequest{Role: role, Ttl: durationpb.New(ttl), Labels: lm, Profile: profile, Name: name, Owner: owner})
 			if err != nil {
 				return err
 			}
 			fmt.Printf("%s\n", jc.Code)
+			if jc.Role == "worker" && jc.Owner == "" {
+				fmt.Fprintln(os.Stderr, "ownerless worker: run longarm-hub adopt --user <you> (see #173)")
+			}
 			fmt.Fprintf(os.Stderr, "role %s, expires %s, CA fingerprint %s\n", jc.Role, jc.ExpiresAt.AsTime().Local().Format(time.RFC3339), pki.Fingerprint(h.CA().Cert))
 			return nil
 		},
@@ -358,6 +361,45 @@ func joinCodeCmd() *cobra.Command {
 	c.Flags().MarkHidden("label")
 	c.Flags().StringVar(&profile, "profile", "", "toolchain profile for the worker")
 	c.Flags().StringVar(&name, "name", "", "fixed node name")
+	c.Flags().StringVar(&owner, "owner", "", "worker owner (required when users exist)")
+	return c
+}
+
+func adoptCmd() *cobra.Command {
+	var user string
+	var mappings []string
+	var yes bool
+	c := &cobra.Command{
+		Use: "adopt --user <name> [--map <device-or-worker>=<user>]...", Short: "Adopt a hub without users into user ownership", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			fmt.Fprintln(cmd.ErrOrStderr(), "Adoption pins existing devices to users and claims ownerless workers. Other users' connections and port links will be cut; devices use their new user on workers after certificate renewal.")
+			if !yes {
+				fmt.Fprint(cmd.ErrOrStderr(), "Adopt these machines? [y/N] ")
+				line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+				if err != nil && line == "" {
+					return err
+				}
+				if answer := strings.ToLower(strings.TrimSpace(line)); answer != "y" && answer != "yes" {
+					return errors.New("adoption cancelled")
+				}
+			}
+			st, _, err := openStore()
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			plan, err := hub.Adopt(st, user, mappings)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Adoption saved: %d devices pinned, %d workers claimed. The running hub applies it within a heartbeat; otherwise it applies at its next start. Renew device certificates before using the claimed workers.\n", len(plan.Devices), len(plan.Workers))
+			return nil
+		},
+	}
+	c.Flags().StringVar(&user, "user", "", "default owner and device user (created by adoption)")
+	c.Flags().StringArrayVar(&mappings, "map", nil, "assign a device or worker to another new user (repeatable)")
+	c.Flags().BoolVar(&yes, "yes", false, "confirm adoption without prompting")
+	c.MarkFlagRequired("user")
 	return c
 }
 
@@ -530,7 +572,7 @@ it installs a new one.`,
 }
 
 func issueCmd() *cobra.Command {
-	var role, name, out string
+	var role, name, out, owner string
 	var hosts []string
 	var days int
 	var b64 bool
@@ -564,9 +606,12 @@ approved node is created. A revoked node's name gets a new node.`,
 			// for the node of that name (its ID in the certificate, the
 			// serial recorded against it) or a new one: a running hub maps
 			// the certificate by ID (hub.IssueLocal)
-			iss, err := hub.IssueLocal(cfg, hub.LocalIssueOptions{Role: r, Name: name, Hosts: hosts, Validity: time.Duration(days) * 24 * time.Hour})
+			iss, err := hub.IssueLocal(cfg, hub.LocalIssueOptions{Role: r, Name: name, Owner: owner, Hosts: hosts, Validity: time.Duration(days) * 24 * time.Hour})
 			if err != nil {
 				return err
+			}
+			if r == pki.RoleWorker && owner == "" {
+				fmt.Fprintln(os.Stderr, "ownerless worker: run longarm-hub adopt --user <you> (see #173)")
 			}
 			which := "node"
 			if iss.NewNode {
@@ -595,6 +640,7 @@ approved node is created. A revoked node's name gets a new node.`,
 	c.Flags().StringArrayVar(&hosts, "host", nil, "DNS name / IP SAN for workers and relays (repeatable)")
 	c.Flags().StringVar(&name, "name", "", "node name (release: default ci-<date>)")
 	c.Flags().StringVar(&out, "out", "", "output dir (ca.crt, node.crt, node.key)")
+	c.Flags().StringVar(&owner, "owner", "", "worker owner (required when users exist)")
 	c.Flags().BoolVar(&b64, "b64", false, "print the bundle as base64 of a tar.gz instead of writing files (CI secrets; az container exec)")
 	c.Flags().IntVar(&days, "days", 0, "validity in days (default by role)")
 	return c

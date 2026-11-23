@@ -83,6 +83,7 @@ func installEnrollment(addr string, r *hubclient.JoinResult, tr *pki.CSRTrust, v
 			fmt.Println(n)
 		}
 	}
+	refreshJoinedTrust()
 	return nil
 }
 
@@ -131,7 +132,7 @@ func hubAdminCmds() []*cobra.Command {
 	var all, asJSON bool
 	nodes := &cobra.Command{
 		Use:   "nodes",
-		Short: "List your nodes as the hub shows them to your user (pending ones too); --all includes clients and revoked nodes",
+		Short: "List your workers as the hub shows them to your user (pending and revoked ones too); --all includes clients and admins",
 		Long: `List the nodes your user may see: your own workers and devices, the
 workers shared with you and the fleet workers (no owner), pending ones too.
 With multi-tenancy an admin sees no more than any user here: other users'
@@ -180,7 +181,7 @@ machines are only counted, anonymously, by "longarm admin summary".`,
 			})
 		},
 	}
-	nodes.Flags().BoolVar(&all, "all", false, "include clients, admins and revoked nodes")
+	nodes.Flags().BoolVar(&all, "all", false, "include clients and admins (revoked workers are always listed)")
 	nodes.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 
 	var role, profile, codeName, codeUser, codeOwner string
@@ -223,7 +224,7 @@ machines are only counted, anonymously, by "longarm admin summary".`,
 	joinCode.Flags().StringVar(&profile, "profile", "", "toolchain profile for a worker")
 	joinCode.Flags().StringVar(&codeName, "name", "", "fixed node name")
 	joinCode.Flags().StringVar(&codeUser, "user", "", "client/admin: the Longarm user the certificate belongs to (see longarm admin user)")
-	joinCode.Flags().StringVar(&codeOwner, "owner", "", "worker: the user who owns it (it joins approved, usable by that user only; see longarm worker)")
+	joinCode.Flags().StringVar(&codeOwner, "owner", "", "worker: your own user only (defaults to you when users exist; other users run longarm worker add)")
 
 	codes := &cobra.Command{
 		Use: "join-codes", Short: "List recent join codes (not the codes themselves)", Args: cobra.NoArgs,

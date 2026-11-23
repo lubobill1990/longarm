@@ -8,9 +8,12 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"longarm/internal/client"
+	"longarm/internal/hubclient"
 	"longarm/internal/nodeid"
 	"longarm/internal/pki"
 	pb "longarm/proto/longarm/v1"
@@ -44,7 +47,7 @@ func adminCmd() *cobra.Command {
 	caInit.Flags().IntVar(&caYears, "years", 10, "validity in years")
 	ca.AddCommand(caInit)
 
-	var role, name, out, issueUser, issueID string
+	var role, name, out, issueUser, issueID, issueOwner string
 	var hosts []string
 	var days int
 	var install bool
@@ -59,7 +62,7 @@ func adminCmd() *cobra.Command {
   release: the CI credential (docs/ci-cd.md): only longarm admin release publish|ls|status|push|abort
            on the hub; nothing on workers. 180 days by default.`,
 		Args: cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			r, err := pki.ParseRole(role)
 			if err != nil {
 				return err
@@ -84,6 +87,75 @@ func adminCmd() *cobra.Command {
 				id = nodeid.New()
 			} else if id = nodeid.Canonical(id); id == "" {
 				return fmt.Errorf("--id %q: not a node id (longarm admin nodes shows them)", issueID)
+			}
+			if r == pki.RoleWorker {
+				if install {
+					return fmt.Errorf("--install is for client/admin bundles; use --out for workers, relays and release (CI) bundles")
+				}
+				if out == "" {
+					return fmt.Errorf("need --out DIR or --install")
+				}
+				cfg, err := client.LoadConfig(configDir)
+				if err != nil {
+					return err
+				}
+				if !cfg.Hub.Enabled() {
+					if issueOwner != "" {
+						return fmt.Errorf("--owner requires a configured hub to record ownership")
+					}
+					fmt.Fprintln(os.Stderr, "ownerless worker: run longarm-hub adopt --user <you> (see #173)")
+				} else if err := withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
+					me, err := h.Fleet().Whoami(ctx, &pb.WhoamiRequest{})
+					if err != nil {
+						return err
+					}
+					if !me.Tenancy {
+						// no users on the hub: the CA's holder issues offline, as before
+						if issueOwner != "" {
+							return fmt.Errorf("--owner needs Longarm users on the hub")
+						}
+						fmt.Fprintln(os.Stderr, "ownerless worker: run longarm-hub adopt --user <you> (see #173)")
+						return nil
+					}
+					if issueOwner != "" && issueOwner != me.User {
+						return fmt.Errorf("PermissionDenied: an admin cannot assign a worker to another user; that user runs longarm worker add")
+					}
+					if issueID != "" {
+						nodes, err := h.Fleet().ListNodes(ctx, &pb.ListNodesRequest{NodeIds: true})
+						if err != nil {
+							return err
+						}
+						for _, n := range nodes.Nodes {
+							if n.Id == id && n.Role == "worker" && n.State != "revoked" && (n.Owner == me.User || n.Owner == "" && !me.Tenancy) {
+								return nil
+							}
+						}
+						return fmt.Errorf("worker %s is not yours; use longarm worker claim for an ownerless worker", id)
+					}
+					jc, err := h.Admin().CreateJoinCode(ctx, &pb.CreateJoinCodeRequest{Role: "worker", Name: name, Owner: issueOwner})
+					if status.Code(err) == codes.PermissionDenied && issueOwner == "" {
+						// the CA's holder without an admin certificate: the hub
+						// records no owner for it; issue offline, as before
+						fmt.Fprintln(os.Stderr, "ownerless worker (the hub records owners for admin certificates only): its user runs longarm worker claim (see #173)")
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+					joined, err := hubclient.Join(ctx, h.Addr, jc.Code, hubclient.JoinOptions{Name: name, Fingerprint: caFingerprint(s)})
+					if err != nil {
+						return err
+					}
+					id = joined.Resp.Id
+					if joined.Resp.State == "pending" {
+						_, err = h.Admin().Approve(ctx, &pb.NodeRequest{Name: "id:" + id})
+					}
+					return err
+				}); err != nil {
+					return err
+				}
+			} else if issueOwner != "" {
+				return fmt.Errorf("--owner is only for workers")
 			}
 			certPEM, keyPEM, err := ca.Issue(pki.IssueOptions{Role: r, Name: name, Hosts: hosts, Validity: validity, User: issueUser, ID: id})
 			if err != nil {
@@ -117,6 +189,7 @@ func adminCmd() *cobra.Command {
 	issue.Flags().StringVar(&caDir, "ca-dir", "", "CA directory (default <config-dir>/ca)")
 	issue.Flags().StringVar(&issueUser, "user", "", "client/admin: the Longarm user the certificate belongs to (multi-tenancy; default: the name)")
 	issue.Flags().StringVar(&issueID, "id", "", "re-issue for an existing node: its node ID (default: a new node, a fresh ID); a hub refuses an unknown certificate of a name it knows")
+	issue.Flags().StringVar(&issueOwner, "owner", "", "worker: your own user only (defaults to you when users exist; requires a running hub)")
 	issue.MarkFlagRequired("role")
 	issue.MarkFlagRequired("name")
 

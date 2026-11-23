@@ -416,9 +416,18 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 	}
 	created := t == nil
 	if created {
-		t = &tenant{u: &pb.TenantUser{Name: req.Name, CreatedAt: tspb(time.Now().UTC()), CreatedBy: by}}
+		t = &tenant{u: &pb.TenantUser{Name: req.Name, CreatedAt: tspb(time.Now().UTC()), CreatedBy: by,
+			SecurityMode: h.newUserSecurityMode()}}
 	}
 	u := proto.Clone(t.u).(*pb.TenantUser)
+	previousMode := u.SecurityMode
+	if req.SetSecurityMode {
+		if err := h.checkSecurityMode(req.Name, u.SecurityMode, req.SecurityMode); err != nil {
+			h.mu.Unlock()
+			return nil, err
+		}
+		u.SecurityMode = req.SecurityMode
+	}
 	if req.SetTeams || created {
 		teams := slices.Clone(req.Teams)
 		sort.Strings(teams)
@@ -447,6 +456,9 @@ func (h *Hub) PutUser(by string, req *pb.PutUserRequest) (*pb.PutUserResponse, e
 	h.savePurgeLocked()
 	h.tenancyChangedLocked()
 	h.mu.Unlock()
+	if req.SetSecurityMode {
+		h.auditHub(by, "users/security-mode", map[string]any{"user": u.Name, "from": previousMode, "to": u.SecurityMode})
+	}
 	h.auditHub(by, map[bool]string{true: "users/add", false: "users/update"}[created], map[string]any{
 		"user": u.Name, "teams": u.Teams, "disabled": u.Disabled, "quota": protoJSON(u.Quota), "can_share": u.CanShare})
 	h.log.Info("user saved", "user", u.Name, "by", by, "created", created)

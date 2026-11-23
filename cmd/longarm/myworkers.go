@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"longarm/internal/memcap"
 	"longarm/internal/pki"
 	"longarm/internal/sched"
+	"longarm/internal/trust"
 	pb "longarm/proto/longarm/v1"
 )
 
@@ -43,8 +45,8 @@ func workerCmd() *cobra.Command {
 		Use:   "add [<name>]",
 		Short: "Make a machine your worker: install Longarm there and sign in (or use a join code this prints)",
 		Long: `Make a machine your own worker: usable by you only (hidden from other
-users, never placed for them) until you share it - which needs an admin's
-permission (longarm admin user set <you> --can-share).
+users, never placed for them). New worker shares are being removed (#173);
+existing shares remain until their owner removes them.
 
 The easy way, on that machine - it signs in with your account:
   Windows: install the Longarm MSI and choose "This machine runs jobs"
@@ -66,19 +68,76 @@ you are logged on; no password), elsewhere longarmd service install.`,
 				req.Name = args[0]
 			}
 			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
+				pctx, cancel := context.WithTimeout(ctx, hubTimeout)
+				who, whoErr := h.Fleet().Whoami(pctx, &pb.WhoamiRequest{})
+				if whoErr == nil {
+					whoErr = trust.Automatic(pctx, s.cfg.Dir, s.dialer.Bundle().Identity, h.Fleet(), who,
+						func(msg string) { fmt.Fprintln(os.Stderr, "longarm: "+msg) })
+				}
+				cancel()
+				if whoErr != nil {
+					pairingWarning(s.cfg.Dir, os.Stderr, whoErr)
+				}
+				pair, secret, pairErr := prepareWorkerPairing(s.cfg.Dir, client.TrustStore(s.cfg.Dir), req.Name, ttl)
+				if pairErr != nil {
+					pairingWarning(s.cfg.Dir, os.Stderr, pairErr)
+				} else {
+					req.Pairing = pair
+					if pair.User != s.dialer.Bundle().Identity.Owner() {
+						pairingWarning(s.cfg.Dir, os.Stderr, errors.New("this device holds another user's key; skipping automatic worker trust"))
+						if err := trust.DeletePairing(s.cfg.Dir, pair.Id); err != nil {
+							pairingWarning(s.cfg.Dir, os.Stderr, err)
+						}
+						req.Pairing, pair, secret = nil, nil, ""
+					}
+				}
 				jc, err := h.Fleet().CreateWorkerCode(ctx, req)
 				if err != nil {
 					return err
 				}
+				if pair != nil && jc.PairingId != pair.Id {
+					pairingWarning(s.cfg.Dir, os.Stderr, errors.New("the hub doesn't support automatic trust yet"))
+					if err := trust.DeletePairing(s.cfg.Dir, pair.Id); err != nil {
+						pairingWarning(s.cfg.Dir, os.Stderr, err)
+					}
+					secret = ""
+				}
 				fmt.Println(jc.Code)
 				fmt.Fprint(os.Stderr, workerAddHelp(h.Addr, jc.Code, caFingerprint(s), jc.Name, jc.Owner,
-					jc.ExpiresAt.AsTime().Local().Format("01-02 15:04")))
+					jc.ExpiresAt.AsTime().Local().Format("01-02 15:04"), secret))
 				return nil
 			})
 		},
 	}
 	add.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, "validity of the code")
 	add.Flags().StringArrayVar(&labels, "label", nil, "label for the worker: KEY=VALUE[,KEY=VALUE...] (repeatable)")
+
+	var yes bool
+	claim := &cobra.Command{
+		Use: "claim <worker>", Short: "Make an ownerless worker yours in place (keeps its node ID)", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintln(cmd.ErrOrStderr(), "Claiming makes this worker yours. Other users' connections and port links will be cut.")
+			if !yes {
+				fmt.Fprint(cmd.ErrOrStderr(), "Claim this worker? [y/N] ")
+				line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+				if err != nil && line == "" {
+					return err
+				}
+				if answer := strings.ToLower(strings.TrimSpace(line)); answer != "y" && answer != "yes" {
+					return errors.New("claim cancelled")
+				}
+			}
+			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
+				n, err := h.Fleet().ClaimWorker(ctx, &pb.ClaimWorkerRequest{Worker: args[0]})
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s: owned by %s (node ID %s)\n", n.Name, n.Owner, n.Id)
+				return nil
+			})
+		},
+	}
+	claim.Flags().BoolVar(&yes, "yes", false, "confirm claiming without prompting")
 
 	var asJSON bool
 	ls := &cobra.Command{
@@ -129,7 +188,7 @@ you are logged on; no password), elsewhere longarmd service install.`,
 	}
 	ls.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 
-	c.AddCommand(add, ls, shareCmd(true), shareCmd(false), workerUpdateCmd(), workerToolchainCmd())
+	c.AddCommand(add, ls, claim, shareCmd(true), shareCmd(false), workerUpdateCmd(), workerToolchainCmd())
 	c.AddCommand(&cobra.Command{
 		Use:   "label <worker> KEY=VALUE[,KEY=VALUE...]... [KEY-]...",
 		Short: "Set labels of a worker of yours (KEY- or KEY= deletes; admins: fleet workers too)",
@@ -208,7 +267,7 @@ endorse), or target it by ID.`,
 func shareCmd(share bool) *cobra.Command {
 	var users, teams []string
 	var everyone bool
-	use, short := "share", "Let users, teams or everyone use a worker of yours (needs an admin's permission: can_share)"
+	use, short := "share", "Deprecated: new worker shares are refused (#173); existing shares stay until removed"
 	if !share {
 		use, short = "unshare", "Stop sharing a worker with users, teams or everyone"
 	}
@@ -245,12 +304,15 @@ func shareCmd(share bool) *cobra.Command {
 
 // workerAddHelp is what worker add prints on stderr: the sign-in way
 // first, then the join code's.
-func workerAddHelp(hub, code, fp, name, owner, expires string) string {
+func workerAddHelp(hub, code, fp, name, owner, expires string, pairing ...string) string {
 	join := fmt.Sprintf("longarmd join %s %s --ca-fingerprint %s", hub, code, fp)
 	what := "a worker"
 	if name != "" {
 		join += " --name " + name
 		what = "worker " + name
+	}
+	if len(pairing) > 0 && pairing[0] != "" {
+		join += " --pair " + pairing[0]
 	}
 	return fmt.Sprintf(`The easy way, on the new machine (signs in with your account):
   Windows: install the Longarm MSI and choose "This machine runs jobs", or run: longarmd login %s

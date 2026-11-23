@@ -464,6 +464,20 @@ func (s *session) refreshNodes(force bool) {
 	s.hubMu.Unlock()
 }
 
+func refreshJoinedTrust() {
+	s, err := openSession()
+	if err != nil {
+		pairingWarning(configDir, os.Stderr, err)
+		return
+	}
+	defer s.close()
+	if h := s.hub(); h != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), hubTimeout)
+		defer cancel()
+		s.maybeRenew(ctx, h)
+	}
+}
+
 // maybeRenew renews this client's certificate through the hub when it
 // expires within the hub's renew window or a new endorsement waits for it
 // (longarm trust init|accept|import-key), and follows the hub's tailnet.
@@ -476,10 +490,21 @@ func (s *session) maybeRenew(ctx context.Context, h *hubclient.Conn) *pb.WhoamiR
 		return nil
 	}
 	s.syncTailnet(ctx, h, who.Tailnet)
+	note := func(msg string) { fmt.Fprintln(os.Stderr, "longarm: "+msg) }
+	pctx, pcancel := context.WithTimeout(ctx, hubTimeout)
+	defer pcancel()
+	if err := trust.Automatic(pctx, s.cfg.Dir, b.Identity, h.Fleet(), who, note); err != nil {
+		pairingWarning(s.cfg.Dir, os.Stderr, err)
+	}
+	if err := pollWorkerPairings(pctx, s.cfg.Dir, h.Fleet(), who.PendingPairings, note); err != nil {
+		pairingWarning(s.cfg.Dir, os.Stderr, err)
+	}
 	if !hubclient.NeedsRenewal(b.Leaf(), who.RenewBefore.AsDuration()) && !client.TrustStore(s.cfg.Dir).RenewalRequested() {
 		return who
 	}
-	leaf, err := s.renewCert(cctx, h)
+	rctx, rcancel := context.WithTimeout(ctx, hubTimeout)
+	defer rcancel()
+	leaf, err := s.renewCert(rctx, h)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, renewFailedNote(b.Leaf().NotAfter, time.Now(), oneLine(err)))
 		return who

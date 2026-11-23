@@ -124,7 +124,7 @@ func TestEndToEndTrustWorker(t *testing.T) {
 	}
 	waitFor(t, "trust/denied in the audit log", 10*time.Second, func() bool {
 		b, _ := os.ReadFile(filepath.Join(wa.dataDir, "audit.log"))
-		return strings.Contains(string(b), "trust/denied") && strings.Contains(string(b), "not endorsed")
+		return strings.Contains(string(b), "trust/denied")
 	})
 
 	// the hub session can't reach jobs (remote_jobs defaults to none)

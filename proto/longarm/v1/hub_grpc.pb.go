@@ -621,31 +621,37 @@ var HubNode_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Fleet_ListNodes_FullMethodName        = "/longarm.v1.Fleet/ListNodes"
-	Fleet_ListJobs_FullMethodName         = "/longarm.v1.Fleet/ListJobs"
-	Fleet_GetJob_FullMethodName           = "/longarm.v1.Fleet/GetJob"
-	Fleet_WaitJob_FullMethodName          = "/longarm.v1.Fleet/WaitJob"
-	Fleet_Events_FullMethodName           = "/longarm.v1.Fleet/Events"
-	Fleet_Place_FullMethodName            = "/longarm.v1.Fleet/Place"
-	Fleet_Audit_FullMethodName            = "/longarm.v1.Fleet/Audit"
-	Fleet_Whoami_FullMethodName           = "/longarm.v1.Fleet/Whoami"
-	Fleet_TailnetKey_FullMethodName       = "/longarm.v1.Fleet/TailnetKey"
-	Fleet_CheckUpdate_FullMethodName      = "/longarm.v1.Fleet/CheckUpdate"
-	Fleet_DownloadRelease_FullMethodName  = "/longarm.v1.Fleet/DownloadRelease"
-	Fleet_ReportLinks_FullMethodName      = "/longarm.v1.Fleet/ReportLinks"
-	Fleet_Links_FullMethodName            = "/longarm.v1.Fleet/Links"
-	Fleet_History_FullMethodName          = "/longarm.v1.Fleet/History"
-	Fleet_CreateWorkerCode_FullMethodName = "/longarm.v1.Fleet/CreateWorkerCode"
-	Fleet_PanelLogin_FullMethodName       = "/longarm.v1.Fleet/PanelLogin"
-	Fleet_ShareWorker_FullMethodName      = "/longarm.v1.Fleet/ShareWorker"
-	Fleet_RemoveWorker_FullMethodName     = "/longarm.v1.Fleet/RemoveWorker"
-	Fleet_SetWorkerLabels_FullMethodName  = "/longarm.v1.Fleet/SetWorkerLabels"
-	Fleet_WorkerToolchain_FullMethodName  = "/longarm.v1.Fleet/WorkerToolchain"
-	Fleet_RenameWorker_FullMethodName     = "/longarm.v1.Fleet/RenameWorker"
-	Fleet_CreatePortLink_FullMethodName   = "/longarm.v1.Fleet/CreatePortLink"
-	Fleet_ListPortLinks_FullMethodName    = "/longarm.v1.Fleet/ListPortLinks"
-	Fleet_RemovePortLink_FullMethodName   = "/longarm.v1.Fleet/RemovePortLink"
-	Fleet_HandoffPair_FullMethodName      = "/longarm.v1.Fleet/HandoffPair"
+	Fleet_ListNodes_FullMethodName            = "/longarm.v1.Fleet/ListNodes"
+	Fleet_ListJobs_FullMethodName             = "/longarm.v1.Fleet/ListJobs"
+	Fleet_GetJob_FullMethodName               = "/longarm.v1.Fleet/GetJob"
+	Fleet_WaitJob_FullMethodName              = "/longarm.v1.Fleet/WaitJob"
+	Fleet_Events_FullMethodName               = "/longarm.v1.Fleet/Events"
+	Fleet_Place_FullMethodName                = "/longarm.v1.Fleet/Place"
+	Fleet_Audit_FullMethodName                = "/longarm.v1.Fleet/Audit"
+	Fleet_Whoami_FullMethodName               = "/longarm.v1.Fleet/Whoami"
+	Fleet_TailnetKey_FullMethodName           = "/longarm.v1.Fleet/TailnetKey"
+	Fleet_CheckUpdate_FullMethodName          = "/longarm.v1.Fleet/CheckUpdate"
+	Fleet_DownloadRelease_FullMethodName      = "/longarm.v1.Fleet/DownloadRelease"
+	Fleet_ReportLinks_FullMethodName          = "/longarm.v1.Fleet/ReportLinks"
+	Fleet_Links_FullMethodName                = "/longarm.v1.Fleet/Links"
+	Fleet_History_FullMethodName              = "/longarm.v1.Fleet/History"
+	Fleet_CreateWorkerCode_FullMethodName     = "/longarm.v1.Fleet/CreateWorkerCode"
+	Fleet_PanelLogin_FullMethodName           = "/longarm.v1.Fleet/PanelLogin"
+	Fleet_ClaimWorker_FullMethodName          = "/longarm.v1.Fleet/ClaimWorker"
+	Fleet_SetSecurityMode_FullMethodName      = "/longarm.v1.Fleet/SetSecurityMode"
+	Fleet_ListTrustPairings_FullMethodName    = "/longarm.v1.Fleet/ListTrustPairings"
+	Fleet_CompleteTrustPairing_FullMethodName = "/longarm.v1.Fleet/CompleteTrustPairing"
+	Fleet_OfferDevicePairing_FullMethodName   = "/longarm.v1.Fleet/OfferDevicePairing"
+	Fleet_PublishUserKey_FullMethodName       = "/longarm.v1.Fleet/PublishUserKey"
+	Fleet_ShareWorker_FullMethodName          = "/longarm.v1.Fleet/ShareWorker"
+	Fleet_RemoveWorker_FullMethodName         = "/longarm.v1.Fleet/RemoveWorker"
+	Fleet_SetWorkerLabels_FullMethodName      = "/longarm.v1.Fleet/SetWorkerLabels"
+	Fleet_WorkerToolchain_FullMethodName      = "/longarm.v1.Fleet/WorkerToolchain"
+	Fleet_RenameWorker_FullMethodName         = "/longarm.v1.Fleet/RenameWorker"
+	Fleet_CreatePortLink_FullMethodName       = "/longarm.v1.Fleet/CreatePortLink"
+	Fleet_ListPortLinks_FullMethodName        = "/longarm.v1.Fleet/ListPortLinks"
+	Fleet_RemovePortLink_FullMethodName       = "/longarm.v1.Fleet/RemovePortLink"
+	Fleet_HandoffPair_FullMethodName          = "/longarm.v1.Fleet/HandoffPair"
 )
 
 // FleetClient is the client API for Fleet service.
@@ -700,6 +706,32 @@ type FleetClient interface {
 	// workers, certificates without a user, and hubs with an identity
 	// provider (those users sign in with it).
 	PanelLogin(ctx context.Context, in *PanelLoginRequest, opts ...grpc.CallOption) (*PanelLoginResponse, error)
+	// ClaimWorker makes an ownerless (fleet) worker the caller's own, in
+	// place (`longarm worker claim`): same node ID, port links and history.
+	// Only fleet -> owned, only for the caller's own user (an admin never
+	// pushes a machine onto someone); admin workers and owned workers are
+	// refused (#173).
+	ClaimWorker(ctx context.Context, in *ClaimWorkerRequest, opts ...grpc.CallOption) (*NodeInfo, error)
+	// SetSecurityMode moves the caller's own user to a stricter security
+	// mode ("shadow", "e2e"; `longarm security upgrade`), as the hub's
+	// [security] stage allows. Never down: a downgrade needs the user key
+	// (later) or local access to the workers (#173).
+	SetSecurityMode(ctx context.Context, in *SetSecurityModeRequest, opts ...grpc.CallOption) (*TenantUser, error)
+	// Automatic end-to-end key exchange (#173, docs/security.md "End-to-end
+	// trust"): pairings carry MACs keyed by a secret the hub never sees, so
+	// the hub routes them but can't forge or swap keys. All for the caller's
+	// own user only.
+	// ListTrustPairings: the caller's user's pairings by id (none: all open).
+	ListTrustPairings(ctx context.Context, in *ListTrustPairingsRequest, opts ...grpc.CallOption) (*ListTrustPairingsResponse, error)
+	// CompleteTrustPairing: an endorsing device hands in the endorsement
+	// (and, for a device pairing, its user key and user_tag).
+	CompleteTrustPairing(ctx context.Context, in *CompleteTrustPairingRequest, opts ...grpc.CallOption) (*TrustPairing, error)
+	// OfferDevicePairing: a new device of the user asks to be endorsed; the
+	// hub fills node_key, node_id and node_name from the caller's certificate.
+	OfferDevicePairing(ctx context.Context, in *TrustPairing, opts ...grpc.CallOption) (*TrustPairing, error)
+	// PublishUserKey records the caller's user's public user key (a hint for
+	// new devices; never trusted for verification).
+	PublishUserKey(ctx context.Context, in *PublishUserKeyRequest, opts ...grpc.CallOption) (*TenantUser, error)
 	// ShareWorker changes who may use a worker: its owner, if an admin let
 	// the owner share (TenantUser.can_share), or an admin.
 	ShareWorker(ctx context.Context, in *ShareWorkerRequest, opts ...grpc.CallOption) (*NodeInfo, error)
@@ -933,6 +965,66 @@ func (c *fleetClient) PanelLogin(ctx context.Context, in *PanelLoginRequest, opt
 	return out, nil
 }
 
+func (c *fleetClient) ClaimWorker(ctx context.Context, in *ClaimWorkerRequest, opts ...grpc.CallOption) (*NodeInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NodeInfo)
+	err := c.cc.Invoke(ctx, Fleet_ClaimWorker_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *fleetClient) SetSecurityMode(ctx context.Context, in *SetSecurityModeRequest, opts ...grpc.CallOption) (*TenantUser, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TenantUser)
+	err := c.cc.Invoke(ctx, Fleet_SetSecurityMode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *fleetClient) ListTrustPairings(ctx context.Context, in *ListTrustPairingsRequest, opts ...grpc.CallOption) (*ListTrustPairingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListTrustPairingsResponse)
+	err := c.cc.Invoke(ctx, Fleet_ListTrustPairings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *fleetClient) CompleteTrustPairing(ctx context.Context, in *CompleteTrustPairingRequest, opts ...grpc.CallOption) (*TrustPairing, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TrustPairing)
+	err := c.cc.Invoke(ctx, Fleet_CompleteTrustPairing_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *fleetClient) OfferDevicePairing(ctx context.Context, in *TrustPairing, opts ...grpc.CallOption) (*TrustPairing, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TrustPairing)
+	err := c.cc.Invoke(ctx, Fleet_OfferDevicePairing_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *fleetClient) PublishUserKey(ctx context.Context, in *PublishUserKeyRequest, opts ...grpc.CallOption) (*TenantUser, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TenantUser)
+	err := c.cc.Invoke(ctx, Fleet_PublishUserKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *fleetClient) ShareWorker(ctx context.Context, in *ShareWorkerRequest, opts ...grpc.CallOption) (*NodeInfo, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(NodeInfo)
@@ -1075,6 +1167,32 @@ type FleetServer interface {
 	// workers, certificates without a user, and hubs with an identity
 	// provider (those users sign in with it).
 	PanelLogin(context.Context, *PanelLoginRequest) (*PanelLoginResponse, error)
+	// ClaimWorker makes an ownerless (fleet) worker the caller's own, in
+	// place (`longarm worker claim`): same node ID, port links and history.
+	// Only fleet -> owned, only for the caller's own user (an admin never
+	// pushes a machine onto someone); admin workers and owned workers are
+	// refused (#173).
+	ClaimWorker(context.Context, *ClaimWorkerRequest) (*NodeInfo, error)
+	// SetSecurityMode moves the caller's own user to a stricter security
+	// mode ("shadow", "e2e"; `longarm security upgrade`), as the hub's
+	// [security] stage allows. Never down: a downgrade needs the user key
+	// (later) or local access to the workers (#173).
+	SetSecurityMode(context.Context, *SetSecurityModeRequest) (*TenantUser, error)
+	// Automatic end-to-end key exchange (#173, docs/security.md "End-to-end
+	// trust"): pairings carry MACs keyed by a secret the hub never sees, so
+	// the hub routes them but can't forge or swap keys. All for the caller's
+	// own user only.
+	// ListTrustPairings: the caller's user's pairings by id (none: all open).
+	ListTrustPairings(context.Context, *ListTrustPairingsRequest) (*ListTrustPairingsResponse, error)
+	// CompleteTrustPairing: an endorsing device hands in the endorsement
+	// (and, for a device pairing, its user key and user_tag).
+	CompleteTrustPairing(context.Context, *CompleteTrustPairingRequest) (*TrustPairing, error)
+	// OfferDevicePairing: a new device of the user asks to be endorsed; the
+	// hub fills node_key, node_id and node_name from the caller's certificate.
+	OfferDevicePairing(context.Context, *TrustPairing) (*TrustPairing, error)
+	// PublishUserKey records the caller's user's public user key (a hint for
+	// new devices; never trusted for verification).
+	PublishUserKey(context.Context, *PublishUserKeyRequest) (*TenantUser, error)
 	// ShareWorker changes who may use a worker: its owner, if an admin let
 	// the owner share (TenantUser.can_share), or an admin.
 	ShareWorker(context.Context, *ShareWorkerRequest) (*NodeInfo, error)
@@ -1159,6 +1277,24 @@ func (UnimplementedFleetServer) CreateWorkerCode(context.Context, *CreateWorkerC
 }
 func (UnimplementedFleetServer) PanelLogin(context.Context, *PanelLoginRequest) (*PanelLoginResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PanelLogin not implemented")
+}
+func (UnimplementedFleetServer) ClaimWorker(context.Context, *ClaimWorkerRequest) (*NodeInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClaimWorker not implemented")
+}
+func (UnimplementedFleetServer) SetSecurityMode(context.Context, *SetSecurityModeRequest) (*TenantUser, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetSecurityMode not implemented")
+}
+func (UnimplementedFleetServer) ListTrustPairings(context.Context, *ListTrustPairingsRequest) (*ListTrustPairingsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListTrustPairings not implemented")
+}
+func (UnimplementedFleetServer) CompleteTrustPairing(context.Context, *CompleteTrustPairingRequest) (*TrustPairing, error) {
+	return nil, status.Error(codes.Unimplemented, "method CompleteTrustPairing not implemented")
+}
+func (UnimplementedFleetServer) OfferDevicePairing(context.Context, *TrustPairing) (*TrustPairing, error) {
+	return nil, status.Error(codes.Unimplemented, "method OfferDevicePairing not implemented")
+}
+func (UnimplementedFleetServer) PublishUserKey(context.Context, *PublishUserKeyRequest) (*TenantUser, error) {
+	return nil, status.Error(codes.Unimplemented, "method PublishUserKey not implemented")
 }
 func (UnimplementedFleetServer) ShareWorker(context.Context, *ShareWorkerRequest) (*NodeInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method ShareWorker not implemented")
@@ -1468,6 +1604,114 @@ func _Fleet_PanelLogin_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Fleet_ClaimWorker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClaimWorkerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).ClaimWorker(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_ClaimWorker_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).ClaimWorker(ctx, req.(*ClaimWorkerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Fleet_SetSecurityMode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetSecurityModeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).SetSecurityMode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_SetSecurityMode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).SetSecurityMode(ctx, req.(*SetSecurityModeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Fleet_ListTrustPairings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListTrustPairingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).ListTrustPairings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_ListTrustPairings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).ListTrustPairings(ctx, req.(*ListTrustPairingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Fleet_CompleteTrustPairing_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompleteTrustPairingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).CompleteTrustPairing(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_CompleteTrustPairing_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).CompleteTrustPairing(ctx, req.(*CompleteTrustPairingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Fleet_OfferDevicePairing_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TrustPairing)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).OfferDevicePairing(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_OfferDevicePairing_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).OfferDevicePairing(ctx, req.(*TrustPairing))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Fleet_PublishUserKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PublishUserKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).PublishUserKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_PublishUserKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).PublishUserKey(ctx, req.(*PublishUserKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Fleet_ShareWorker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ShareWorkerRequest)
 	if err := dec(in); err != nil {
@@ -1684,6 +1928,30 @@ var Fleet_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PanelLogin",
 			Handler:    _Fleet_PanelLogin_Handler,
+		},
+		{
+			MethodName: "ClaimWorker",
+			Handler:    _Fleet_ClaimWorker_Handler,
+		},
+		{
+			MethodName: "SetSecurityMode",
+			Handler:    _Fleet_SetSecurityMode_Handler,
+		},
+		{
+			MethodName: "ListTrustPairings",
+			Handler:    _Fleet_ListTrustPairings_Handler,
+		},
+		{
+			MethodName: "CompleteTrustPairing",
+			Handler:    _Fleet_CompleteTrustPairing_Handler,
+		},
+		{
+			MethodName: "OfferDevicePairing",
+			Handler:    _Fleet_OfferDevicePairing_Handler,
+		},
+		{
+			MethodName: "PublishUserKey",
+			Handler:    _Fleet_PublishUserKey_Handler,
 		},
 		{
 			MethodName: "ShareWorker",

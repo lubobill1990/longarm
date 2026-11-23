@@ -337,7 +337,8 @@ type Node struct {
 	CertHasID bool   `json:"cert_has_id,omitempty"`
 	// NodeKey is the end-to-end trust node key (base64) of the node's
 	// last certificate: no other non-revoked node gets a certificate for it.
-	NodeKey string `json:"node_key,omitempty"`
+	NodeKey string        `json:"node_key,omitempty"`
+	Pairing *TrustPairing `json:"pairing,omitempty"`
 	// Capabilities the worker reported in its hello (NodeHello).
 	Capabilities []string `json:"capabilities,omitempty"`
 	// RetirePending: the node was renamed and got (or will get) a
@@ -686,6 +687,25 @@ type JoinCode struct {
 	ExpiresAt time.Time         `json:"expires_at"`
 	UsedAt    time.Time         `json:"used_at,omitzero"`
 	UsedBy    string            `json:"used_by,omitempty"`
+	Pairing   *TrustPairing     `json:"pairing,omitempty"`
+}
+
+// TrustPairing is an automatic endorsement carried by a join code or node.
+type TrustPairing struct {
+	ID          string    `json:"id"`
+	Kind        string    `json:"kind"`
+	User        string    `json:"user"`
+	UserKey     []byte    `json:"user_key,omitempty"`
+	UserTag     []byte    `json:"user_tag,omitempty"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	NodeKey     []byte    `json:"node_key,omitempty"`
+	NodeProof   []byte    `json:"node_proof,omitempty"`
+	NodeID      string    `json:"node_id,omitempty"`
+	NodeName    string    `json:"node_name,omitempty"`
+	Hostname    string    `json:"hostname,omitempty"`
+	OS          string    `json:"os,omitempty"`
+	Endorsement string    `json:"endorsement,omitempty"`
+	State       string    `json:"state,omitempty"`
 }
 
 // AddJoinCode stores a code by its hash.

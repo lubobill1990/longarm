@@ -4,6 +4,16 @@ Findings of the November 2026 review left out of the fixes that change
 nothing for legitimate use: each one changes behaviour someone sees, or
 needs a design first.
 
+## Enforce per-user security modes on machines (#173, after v1)
+
+V1 records and reports `legacy < shadow < e2e` on the hub; it deliberately
+does not change access or require keys. The next release must apply
+shadow/e2e checks on clients and workers, preserving existing users'
+access during rollout. Downgrades need the user's key or local worker
+access, never hub/admin authority. Start with `internal/hub/security.go`,
+the existing trust checks in `internal/pki/trust.go`, and
+docs/security.md "End-to-end trust".
+
 ## Handoff to local brings the source's plugins and MCP servers unasked
 
 `handoff --from <worker> --to local` ships the worker's plugin directories

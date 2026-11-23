@@ -2089,6 +2089,7 @@ longarm admin user add alice [--team web]... [--max-jobs 8] [--max-mem-gb 64] [-
 longarm admin user code alice [--device alice-desktop]     # a join code for the first device (user added with --no-code)
 longarm admin user set alice --team web --team infra       # replace teams; quota flags change the quota
 longarm admin user set alice --clear-quota                 # back to the default quota
+longarm admin user set alice --security-mode shadow        # record an upgrade (shadow or e2e; never down)
 longarm admin user ls [--json]                             # number of devices and workers, teams, usage, quotas
 longarm admin user disable|enable alice                    # refused on the hub and every worker
 longarm admin user remove alice [--purge]                  # revoke all of alice's devices and workers; --purge:
@@ -2101,10 +2102,14 @@ longarm admin team add web alice bob; longarm admin team rm web bob; longarm adm
 longarm admin join-code --role client --user alice --name alice-2   # the same, by hand
 longarm admin issue --role client --name alice-pc --user alice --out DIR   # without a hub
 longarm whoami                                             # this device: user, teams, quota, usage
+longarm security status                                    # security mode, hub stage and guidance
 longarm panel-login [--reset] [--json]                      # your own panel login (hubs without an identity provider)
 longarm run --share team -- make test                      # team members may read it (team:<name> = one team)
 longarm run --cpus 4 --mem-limit 8G -- make                # per-job limits (capped by the user's quota)
 ```
+
+Security modes are shown by `whoami` (also `--json`) and the `SECURITY`
+column of `admin user ls`; see [Security modes (#173)](#security-modes-173).
 
 **Adding another device without an identity provider.** On an existing
 signed-in client device, run `longarm panel-login`. It uses that device's
@@ -2213,6 +2218,41 @@ owners, who keep acting on everything as before; with `users` set or
 refuses to start with an unknown `admins` value or an invalid user name and
 logs the effective policy at start (`access policy ...`).
 
+### Security modes (#173)
+
+`longarm security status` shows your mode, the hub stage and guidance.
+`longarm security upgrade shadow|e2e` records an upgrade for your own user
+(client or admin device certificate). Admins can use `longarm admin user
+set alice --security-mode shadow|e2e`. The order is `legacy < shadow < e2e`;
+the hub and admins can never move a user down.
+
+**In v1 modes are recorded and reported only.** Neither `shadow` nor `e2e`
+changes access checks, requires keys, or cuts off existing devices.
+Enforcement comes with the next release; existing
+[manual end-to-end trust](#end-to-end-trust-client) settings are unchanged.
+
+In `hub.toml`:
+
+```toml
+[security]
+stage = 0                 # 0 prepare (default), 1 offer opt-in, 2 new-user defaults
+new_users = "e2e"         # legacy | shadow | e2e; default e2e, used only at stage 2
+pilot = ["alice"]         # users allowed to upgrade even at stage 0; default []
+```
+
+Stage 0 offers no upgrade except to pilot users. At stage 1 or 2 any user
+may upgrade; admins follow the same stage/pilot rule for the target user.
+At stage 2, all newly created users (including first identity-provider
+sign-ins) start at `new_users`. Earlier stages create legacy users.
+Existing rows without a mode remain legacy; changing the stage or
+`new_users` does not change existing users. Environment overrides:
+`LONGARM_HUB_SECURITY_STAGE`, `LONGARM_HUB_SECURITY_NEW_USERS`,
+`LONGARM_HUB_SECURITY_PILOT` (comma-separated names).
+
+Downgrades will require the user's key or local access to the workers,
+not the hub's authority; v1 provides no downgrade command. Successful
+mode-setting calls are audited as `users/security-mode`.
+
 ### Node IDs and targets
 
 Every node has an immutable ID (a UUID) next to its name, which can change
@@ -2241,8 +2281,9 @@ their client devices - by name (`longarm run --on`/`longarm exec <worker>`) or b
 automatic placement, which picks the least loaded worker the user may use.
 A worker a user registers is usable **by that user only**: other users don't
 see it (`longarm ls`, the panel, events, metrics history), can't call it, and
-the scheduler never places their jobs on it. Workers registered by admins
-(join codes without owner) stay the shared fleet, as before.
+the scheduler never places their jobs on it. Existing ownerless fleet workers
+keep working until explicitly claimed or adopted. Once users exist, new
+worker codes require an owner (#173).
 
 ```sh
 # the easy way, on the new machine: install the MSI and choose "This machine runs jobs" (the tray
@@ -2252,7 +2293,8 @@ longarmd login <hub> [--name <name>] [--label k=v]...   # on the new worker, no 
                                           # "Sign in with Microsoft Entra ID"); --label as worker add's
 # where nobody can sign in with a browser (a headless box): a join code
 longarm worker add [<name>] [--ttl 24h] [--label k=v]...   # prints a join code (stdout) and the commands:
-#   longarmd join <hub> <code> --ca-fingerprint <fp> --name <name>   # on the new worker, then
+#   longarmd join <hub> <code> --ca-fingerprint <fp> --name <name> --pair <secret>
+#   # on the new worker, then:
 #   longarmd session-mode install    (Windows: runs while you are logged on, no password)
 #   or longarmd service install ...  (runs with nobody logged on; see "Install a worker")
 #   the worker joins approved (no admin needed) and owned by you; at most 10 unused codes per user
@@ -2262,13 +2304,26 @@ longarm worker label <worker> pool=devbox [gpu-]...   # set (KEY=VALUE) / delete
 longarm worker toolchain <worker> [--json] # desired tools and installed versions
 longarm worker toolchain <worker> --tools claude,copilot,uv,node@22 --apply --json
 longarm worker toolchain <worker> --clear # clear your desired tools, not installed software
-longarm worker share <worker> [--user bob]... [--team web]... [--everyone]
+longarm worker claim <worker> [--yes]      # claim an ownerless worker in place; keeps its node ID
 longarm worker unshare <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker remove <worker>            # revoke it (owner or admin); also: worker rm
 longarm worker rename <worker> <new-name> # rename it (owner or admin; it keeps its ID; audited)
 longarm ls                                # an OWNER column appears once a worker has an owner; ADMIN: the machine's admin worker
                                           # ("-" = fleet, "+shared" = shared by its owner)
 ```
+
+On hubs supporting automatic trust, `worker add` includes `--pair <secret>`
+in the printed `longarmd join` command. Copy the whole command privately:
+the secret stays on the two machines, never on the hub. New workers also
+accept `<code>#<secret>` (split locally). Older hubs fall back to the
+ordinary join command; older workers reject `--pair` locally (drop the flag
+to join without automatic trust). Run Longarm on the originating device
+after the worker joins to finish its endorsement. Pairing failures warn
+but do not prevent joining in v1. A bad user-key tag leaves the worker
+enrolled without a pinned user key. A plain join without `--pair` prints
+no automatic-trust warning. After successful pairing, the worker stores
+`trust/pinned-user` and renews its certificate with your endorsement; it
+does not create `trust/trust.toml` or turn on enforcement.
 
 **Tools on your worker.** `worker toolchain` lets its owner manage tools without
 an admin certificate; admins can also manage fleet workers (those with no owner),
@@ -2336,24 +2391,59 @@ worker reports itself (`longarmd.toml` `[hub] labels`) are changed there;
 the hub's win on a conflict. An older hub ignores sign-in labels
 (`longarmd login` then prints the `longarm worker label` command to run).
 
-**Sharing is off by default**: an admin lets a user share their workers,
-and admins share and unshare any user's worker (`longarm worker share` with
-an admin certificate):
+**Adding machines.** With users on the hub, `longarm admin join-code --role
+worker` defaults the owner to the caller's own user; `--owner` may name only
+that user. An admin cannot push a machine onto another user: that user runs
+`longarm worker add`. The host operator is trusted to name an existing owner:
 
 ```sh
-longarm admin user set alice --can-share          # --can-share=false takes it back (existing shares stay;
-                                                  # an admin unshares them)
-longarm admin join-code --role worker --owner alice [--name alice-box]   # a worker code owned by alice
-longarm whoami                                    # ... can share own workers: true|false
+longarm admin join-code --role worker             # owned by the caller when users exist
+longarm-hub join-code --role worker --owner alice # host operator: owner required when users exist
+longarm-hub issue --role worker --name worker-1 --owner alice --out ./worker-tls
+longarm admin issue --role worker --name worker-1 --out ./worker-tls # requires the hub; records ownership before issuing
+longarm worker claim worker-1 --yes
 ```
 
-Who is shared with is shown to the owner and admins only. Sharing a worker
+Without users, host-issued ownerless codes and bundles still work and print
+an adoption warning. Existing ownerless codes cannot enroll new workers after
+users exist. Client/admin codes are unchanged.
+
+**Claiming** needs an active user and an ownerless, non-revoked, non-admin
+worker visible to that user. It keeps the worker's node ID, certificates and
+jobs. The CLI warns and asks for confirmation (`--yes` skips the prompt):
+other users' connections and port links are cut. Online workers receive the
+change immediately; offline workers receive it at reconnect. The worker saves
+the owner in `hub.toml` as well as `worker-access.json`, so losing the latter
+does not reopen the machine.
+
+**Adopting a hub without users** is a one-time host-operator action:
+
+```sh
+longarm-hub adopt --user alice --map device-2=bob --map worker-2=bob --yes
+```
+
+It creates alice and mapped users, pins every non-revoked client/admin device
+to its assigned user and claims ownerless non-admin workers. Targets accept
+names or node IDs; existing users or a previous adoption cause refusal.
+The command saves an audited plan in SQLite WAL, safe alongside `serve`:
+the running hub applies it within its next maintenance tick (about one second),
+or on its next start/request. A device acts as its pinned user **on the hub
+immediately after application**, even with its old certificate. Direct worker
+calls use the certificate's user **until its next renewal**; renew devices
+before using newly claimed workers. The renewed certificate carries the pinned
+user. Existing jobs are not reassigned.
+
+**Sharing is deprecated** (#173):
+new users, teams and everyone shares are refused, regardless of `can_share`.
+Existing shares keep working; owners can remove them with `worker unshare`
+even without `can_share`. Who is shared with is shown to the owner only.
+Existing sharing of a worker
 shares the machine, not the owner's work: on a shared worker everybody sees
 and controls only their own jobs and sessions (an admin certificate shared
 with gets no admin rights over the owner's jobs). **Admins are not exempt**:
 an admin certificate whose user is neither the owner nor shared with is
 refused on an owned worker like anybody else (`Admin.Shutdown`/`Gc`
-included); admins still see it on the hub, share, unshare and remove it.
+included); an admin cannot manage another user's private worker.
 Removing a user (`longarm admin user remove`) also revokes the user's workers;
 removing or disabling a user drops the user's unused worker codes. Owners
 are users (`longarm admin user add`): codes for anybody else are refused.
@@ -2717,11 +2807,43 @@ With trusted users the hub session's `[hub] remote_jobs` defaults to
 
 ### End-to-end trust (client)
 
+Sign-in and subsequent hub sessions automatically create your first user
+key when the hub has none recorded. Save the `LAR1-...` recovery code:
+keep it safe; it restores your user key if you lose all devices. The hub
+never stores the secret key or recovery code.
+
+If the hub already knows your user key, a new device instead shows a
+pairing secret (at most once a day). On a device holding your user key:
+
+```sh
+longarm device approve <secret> [--yes]  # check the displayed device name, host and OS
+longarm trust show --recovery           # show your secret recovery code again
+longarm trust recover <LAR1-code>        # restore the key on a signed-in device
+```
+
+Run a command that refreshes the fleet (for example `longarm ls`) on the
+new device again to install its endorsement and renew its certificate.
+Device pairing offers expire after one hour; run the command again for a
+fresh offer if needed. Approval endorses that device; it does not copy your
+secret user key to it. Recovery imports the key and endorses this device.
+Neither automatic pairing nor recovery enables `require_workers`.
+
 The hub's CA can issue a certificate for any name. With end-to-end trust a
 certificate must also carry an endorsement by a **user key** that stays on
 the user's devices ([security.md](security.md)): workers can refuse devices
 that aren't endorsed by a user they trust, and a client can refuse workers.
 The hub only copies the endorsement into the certificate when it renews it.
+
+Hubs supporting automatic trust pairing report your public user-key hint
+and pending-pairing count in `Whoami`, and retain worker/device exchanges
+across restarts. Exchanges belong to your user, not to the hub's admins.
+Unfinished exchanges expire (device offers after one hour); completed
+endorsements remain available, and workers receive them again on reconnect
+until installed in their certificate. Pairing is optional in v1: older
+clients and workers still join normally, and recording a key or pairing
+does not turn on trust enforcement. A local pairing secret must never be
+sent as part of the hub's join code; pass it to the worker as `--pair`.
+See [the hub protocol](security.md#end-to-end-trust-the-hub-is-not-trusted-with-access).
 
 ```sh
 longarm trust init                      # first device: user key for this certificate's user, endorses
@@ -2807,6 +2929,13 @@ user sees (its own and shared machines, fleet workers; its own jobs) and
 the "Fleet" page the whole fleet as counts per user, worker versions and,
 optionally, each user's versions (`GET /api/admin/summary`; aggregates
 only, no names, audited).
+The "Nodes" and "My machines" pages hide revoked records by default.
+Select **Show revoked (N)** in the page header to include them; N counts
+revoked records in that page's scope. Records remain on the hub after
+revocation, even when a new enrollment reuses a machine's name. With
+multi-tenancy on, non-admin workers without an owner have a small **no
+owner** badge: they are usable by every user. Its tooltip tells the user
+to run `longarm worker claim <name>` (#173).
 **Hub traffic** (what the hub's egress is made of - a cloud hub pays for
 every byte it sends): `GET /api/traffic` (administrators) has the bytes
 each way since the hub started, per gRPC method and calling node (payload

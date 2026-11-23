@@ -163,8 +163,9 @@ func TestMachineUpdateOwnerOnly(t *testing.T) {
 func TestHubCannotTriggerMachineUpdate(t *testing.T) {
 	known := []string{"welcome", "revocations", "toolchain", "audit_ack", "drain", "update", "kill_job", "log_request",
 		"submit_job", "toolchain_apply", "tailnet", "tenancy", "worker_access", "port_links",
-		"restarting", // restarting: a duration and a reason
-		"relays"}     // relays: the relay endpoints to listen on
+		"restarting",        // restarting: a duration and a reason
+		"relays",            // relays: the relay endpoints to listen on
+		"trust_endorsement"} // the user's endorsement of this worker: installed into the certificate, nothing else
 	md := (&pb.HubCommand{}).ProtoReflect().Descriptor()
 	var forbidden = map[protoreflect.FullName]bool{
 		(&pb.MachineUpdateRequest{}).ProtoReflect().Descriptor().FullName():     true,
