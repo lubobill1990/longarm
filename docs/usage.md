@@ -3530,6 +3530,19 @@ longarmd login hub.example.com --role both            # then, for a worker:
 sudo longarmd service install --user "$USER" && sudo longarmd service start
 ```
 
+The LaunchDaemon sets `ProcessType` = `Interactive`, so jobs and sessions
+run at the priority of a Terminal or SSH session (`ps -o pri= -p $$` prints
+31 in all three); without it launchd throttles a daemon's CPU and I/O, and
+on a busy Mac jobs ran several times slower. `service install` doesn't
+overwrite an existing plist: a LaunchDaemon installed by an earlier release
+keeps running throttled until the key is added and the service reloaded
+(jobs keep running):
+
+```sh
+sudo /usr/libexec/PlistBuddy -c 'Add :ProcessType string Interactive' /Library/LaunchDaemons/com.longarm.longarmd.plist
+sudo longarmd service stop && sudo longarmd service start
+```
+
 What the package's `postinstall` does (as root): adds `longarm` and
 `longarmd` to the application firewall when it is on; on an upgrade,
 restarts an installed `com.longarm.longarmd` LaunchDaemon so it runs the new

@@ -56,3 +56,15 @@ comes, the install helper must apply it to the existing service without
 touching its account (ChangeServiceConfig with SERVICE_NO_CHANGE and no
 password, e.g. in install-helper msi setup), and the msi-install CI job
 check it. (util:ServiceConfig, the failure actions, still applies.)
+
+## ProcessType on macOS LaunchDaemons installed before it
+
+`Plist()` (internal/platform/darwin) sets `ProcessType` = `Interactive`,
+but `InstallService` refuses an existing plist and the pkg's `postinstall`
+only `kickstart -k`s an installed LaunchDaemon, so a worker installed
+earlier keeps running throttled until someone adds the key by hand
+(docs/usage.md, macOS). An upgrade could add it: in
+packaging/macos/scripts/postinstall (`PlistBuddy -c 'Add :ProcessType
+string Interactive'` when the key is missing, then `launchctl bootout` +
+`bootstrap` instead of `kickstart`, which does not reread the plist), and
+in a root LaunchDaemon's self-update.

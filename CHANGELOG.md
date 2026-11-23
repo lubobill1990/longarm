@@ -22,6 +22,14 @@
 
 ### Fixed
 
+- **macOS workers run jobs unthrottled.** The LaunchDaemon that `longarmd
+  service install` writes had no `ProcessType`, so launchd throttled
+  longarmd's CPU and I/O, and every job and session it started ran at a
+  lower priority than in Terminal (PRI 20 instead of 31): on a busy Mac a
+  CPU-bound job took several times as long. The plist now sets
+  `ProcessType` = `Interactive`, like the system sshd. An existing plist
+  is not rewritten: add the key and reload the service (docs/usage.md,
+  macOS).
 - **A deb/rpm upgrade restarts the running worker.** `apt upgrade` /
   `dnf upgrade` replaced `/usr/bin/longarmd` but left the running
   `longarmd@<user>` (and `longarmd-peruser`) on the old binary, so the
