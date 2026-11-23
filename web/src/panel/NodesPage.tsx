@@ -5,7 +5,7 @@ import { MiniBar, Sparkline } from '../components/charts'
 import { ErrorBox, StatePill, useAction, usePoll } from '../components/common'
 import { VersionTag } from '../components/VersionTag'
 import { AMBER, CPU_C, fmtAgo, fmtRTT, gb, GREEN, isRelayed, MEM_C, memMax, memPct, nodeKey, RED, shortIds, since } from '../lib/format'
-import { nodeMachines } from '../lib/machines'
+import { isAdminNode, nodeMachines } from '../lib/machines'
 import { machineUpdate, updateRunning, updateStateText } from '../lib/update'
 
 const HIST = 150
@@ -52,13 +52,16 @@ export function useLiveNodes() {
 }
 
 /** admin=false: a user-role login sees the workers read-only (no links, toolchains or actions). */
-export function NodesPage({ admin = true }: { admin?: boolean }) {
+export function NodesPage({ admin = true, tenancy = false }: { admin?: boolean; tenancy?: boolean }) {
   const { nodes, hist, error, reload } = useLiveNodes()
+  const [showRevoked, setShowRevoked] = useState(false)
   const links = usePoll(() => (admin ? hubApi.links() : Promise.resolve([])), admin ? 10000 : 0, [admin])
   const profiles = usePoll(() => (admin ? hubApi.profiles() : Promise.resolve([])), admin ? 30000 : 0, [admin])
   // the newest complete release: outdated versions are marked
   const latest = usePoll(() => hubApi.latestRelease().catch(() => undefined), 600000)
-  const list = useMemo(() => Object.values(nodes).sort((a, b) => a.name.localeCompare(b.name) || nodeKey(a).localeCompare(nodeKey(b))), [nodes])
+  const all = useMemo(() => Object.values(nodes).sort((a, b) => a.name.localeCompare(b.name) || nodeKey(a).localeCompare(nodeKey(b))), [nodes])
+  const revoked = all.filter((n) => n.state === 'revoked').length
+  const list = all.filter((n) => showRevoked || n.state !== 'revoked')
   const short = useMemo(() => shortIds(list.map((n) => n.id)), [list])
   const pending = list.filter((n) => n.state === 'pending')
   const workers = list.filter((n) => n.role === 'worker' && n.state !== 'pending')
@@ -74,12 +77,15 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
           {online}/{workers.filter((n) => n.state === 'approved').length} workers online
         </span>
         <span className="spacer" />
+        <label className="small">
+          <input type="checkbox" checked={showRevoked} onChange={(e) => setShowRevoked(e.target.checked)} /> Show revoked ({revoked})
+        </label>
         <button onClick={reload}>Refresh</button>
       </div>
       <ErrorBox error={error} />
       {admin && (
         <p className="muted small" data-testid="nodes-scope">
-          Your machines, the workers shared with you and the fleet workers. Other users&apos; machines are only counted, on the Fleet
+          Your machines, the workers shared with you and workers with no owner. Other users&apos; machines are only counted, on the Fleet
           page.
         </p>
       )}
@@ -89,7 +95,7 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
           <table className="grid">
             <tbody>
               {pending.map((n) => (
-                <PendingRow key={nodeKey(n)} n={n} short={short} />
+                <PendingRow key={nodeKey(n)} n={n} short={short} tenancy={tenancy} />
               ))}
             </tbody>
           </table>
@@ -113,10 +119,10 @@ export function NodesPage({ admin = true }: { admin?: boolean }) {
           {machines.flatMap((g) => {
             const main = g.session ?? g.admin!
             const rows = [
-              <NodeRow key={nodeKey(main)} n={main} short={short} adminWorker={g.session ? g.admin : undefined} hist={hist[nodeKey(main)] ?? hist[main.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} latest={latest.data?.version} />,
+              <NodeRow key={nodeKey(main)} n={main} short={short} adminWorker={g.session ? g.admin : undefined} hist={hist[nodeKey(main)] ?? hist[main.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} tenancy={tenancy} latest={latest.data?.version} />,
             ]
             if (g.session && g.admin)
-              rows.push(<NodeRow key={nodeKey(g.admin)} n={g.admin} short={short} sub hist={hist[nodeKey(g.admin)] ?? hist[g.admin.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} latest={latest.data?.version} />)
+              rows.push(<NodeRow key={nodeKey(g.admin)} n={g.admin} short={short} sub hist={hist[nodeKey(g.admin)] ?? hist[g.admin.name] ?? []} links={links.data ?? []} profiles={profiles.data ?? []} admin={admin} tenancy={tenancy} latest={latest.data?.version} />)
             return rows
           })}
           {workers.length === 0 && (
@@ -163,13 +169,23 @@ function renameNode(n: NodeInfo, run: ReturnType<typeof useAction>['run']) {
   run(() => hubApi.rename(nodeKey(n), name), `${n.name} renamed to ${name}`)
 }
 
-function PendingRow({ n, short }: { n: NodeInfo; short: Record<string, string> }) {
+function OwnerlessBadge({ n, tenancy }: { n: NodeInfo; tenancy: boolean }) {
+  if (!tenancy || n.role !== 'worker' || n.owner || n.state === 'revoked' || isAdminNode(n)) return null
+  return (
+    <span className="pill warn" title={`Usable by every user. Its user should run: longarm worker claim ${n.name} (#173)`}>
+      no owner
+    </span>
+  )
+}
+
+function PendingRow({ n, short, tenancy }: { n: NodeInfo; short: Record<string, string>; tenancy: boolean }) {
   const { run, busy } = useAction()
   const target = nodeKey(n)
   return (
     <tr data-testid={`pending-${n.name}`}>
       <td>
         <b>{n.name}</b> <NodeId n={n} short={short} /> <span className="muted">{n.role}</span>
+        {' '}<OwnerlessBadge n={n} tenancy={tenancy} />
       </td>
       <td className="muted">
         {n.hostname} {n.os}/{n.arch} {n.version}
@@ -194,6 +210,7 @@ function NodeRow({
   links,
   profiles,
   admin,
+  tenancy,
   adminWorker,
   sub,
   latest,
@@ -204,6 +221,7 @@ function NodeRow({
   links: LinkReport[]
   profiles: Profile[]
   admin: boolean
+  tenancy: boolean
   /** the machine's admin worker (shown as a capability of this row) */
   adminWorker?: NodeInfo
   /** this is the admin worker of the row above (same machine) */
@@ -242,6 +260,7 @@ function NodeRow({
           <span className="dot" style={{ background: revoked ? RED : n.online ? GREEN : updating ? AMBER : RED }} />
           <b>{n.name}</b>
           <NodeId n={n} short={short} />
+          <OwnerlessBadge n={n} tenancy={tenancy} />
           {adminWorker && (
             <span
               className="pill info"

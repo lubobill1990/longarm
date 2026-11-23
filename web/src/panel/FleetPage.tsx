@@ -53,7 +53,7 @@ export function FleetPage() {
         <tbody>
           {(s?.users ?? []).map((u) => (
             <tr key={u.user || '(fleet)'} data-testid={`fleet-${u.user || 'fleet'}`}>
-              <td>{u.user || <span className="muted">fleet workers (no owner)</span>}</td>
+              <td>{u.user || <span className="muted">workers with no owner</span>}</td>
               {cells(u.counts)}
             </tr>
           ))}
@@ -97,7 +97,7 @@ export function FleetPage() {
           .filter((u) => (u.versions ?? []).length > 0)
           .map((u) => (
             <div key={u.user || '(fleet)'} style={{ marginTop: 16 }}>
-              <h3 className="muted">{u.user || 'fleet workers'}</h3>
+              <h3 className="muted">{u.user || 'workers with no owner'}</h3>
               <table className="grid" data-testid={`fleet-rows-${u.user || 'fleet'}`}>
                 <thead>
                   <tr>

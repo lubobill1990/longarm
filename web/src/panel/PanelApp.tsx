@@ -132,7 +132,7 @@ export function PanelApp() {
         </header>
         <main className="content">
           {!allowed && <div className="notice">This page is for administrators only.</div>}
-          {page === '/nodes' && <NodesPage admin={admin} />}
+          {page === '/nodes' && <NodesPage admin={admin} tenancy={me.tenancy} />}
           {page === '/jobs' && <JobsPage path={path} me={me} />}
           {page === '/port-links' && <PortLinksPage admin={admin} />}
           {page === '/me' && <MePage me={me} />}

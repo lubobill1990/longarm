@@ -1,9 +1,9 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { hubApi } from '../api/hub'
 import type { Me, NodeInfo } from '../api/types'
 import { ErrorBox, StatePill, useAction, usePoll } from '../components/common'
 import { VersionTag } from '../components/VersionTag'
-import { fmtAgo, GREEN, RED, since } from '../lib/format'
+import { fmtAgo, GREEN, nodeKey, RED, since } from '../lib/format'
 import { ADMIN_LABEL, nodeMachines, type Group } from '../lib/machines'
 import { isOutdated } from '../lib/release'
 import { Link } from '../lib/router'
@@ -17,14 +17,14 @@ interface Machine extends Group<NodeInfo> {
 }
 
 /** The login's own workers grouped per machine; a device named like a worker's machine or host joins it. */
-export function myMachines(nodes: NodeInfo[], user: string): Machine[] {
-  const live = nodes.filter((n) => n.state !== 'revoked')
+export function myMachines(nodes: NodeInfo[], user: string, showRevoked = false): Machine[] {
+  const live = nodes.filter((n) => showRevoked || n.state !== 'revoked')
   const workers = live.filter((n) => n.role === 'worker' && n.owner === user)
   const devices = live.filter((n) => n.role !== 'worker' && (n.user === user || (!n.user && n.name === user)))
   const out: Machine[] = nodeMachines(workers).map((g) => ({ ...g, devices: [] }))
   for (const d of devices) {
     const k = d.name.toLowerCase()
-    const m = out.find((g) => [g.session, g.admin].some((w) => !!w && (w.name.toLowerCase() === k || (w.hostname ?? '').split('.')[0].toLowerCase() === k)))
+    const m = d.state === 'revoked' ? undefined : out.find((g) => [g.session, g.admin].some((w) => !!w && w.state !== 'revoked' && (w.name.toLowerCase() === k || (w.hostname ?? '').split('.')[0].toLowerCase() === k)))
     if (m) m.devices.push(d)
     else out.push({ key: d.name, devices: [d] })
   }
@@ -37,14 +37,20 @@ export function myMachines(nodes: NodeInfo[], user: string): Machine[] {
  */
 export function MachinesPage({ me }: { me: Me }) {
   const user = me.tenant || me.user
+  const [showRevoked, setShowRevoked] = useState(false)
   const nodes = usePoll(() => hubApi.nodes(true), 15000)
   const latest = usePoll(() => hubApi.latestRelease().catch(() => undefined), 600000)
-  const machines = useMemo(() => myMachines(nodes.data ?? [], user), [nodes.data, user])
+  const own = useMemo(() => myMachines(nodes.data ?? [], user, true), [nodes.data, user])
+  const revoked = own.flatMap((m) => [m.session, m.admin, ...m.devices]).filter((n) => n?.state === 'revoked').length
+  const machines = useMemo(() => myMachines(nodes.data ?? [], user, showRevoked), [nodes.data, user, showRevoked])
   return (
     <div>
       <div className="page-title">
         <h1>My machines</h1>
         <span className="spacer" />
+        <label className="small">
+          <input type="checkbox" checked={showRevoked} onChange={(e) => setShowRevoked(e.target.checked)} /> Show revoked ({revoked})
+        </label>
         <button onClick={nodes.reload}>Refresh</button>
       </div>
       <ErrorBox error={nodes.error} />
@@ -54,7 +60,7 @@ export function MachinesPage({ me }: { me: Me }) {
         </div>
       )}
       {machines.map((m) => (
-        <MachineCard key={m.key} m={m} latest={latest.data?.version} onChange={nodes.reload} />
+        <MachineCard key={nodeKey(m.session ?? m.admin ?? m.devices[0])} m={m} latest={latest.data?.version} onChange={nodes.reload} />
       ))}
     </div>
   )
@@ -72,9 +78,10 @@ function MachineCard({ m, latest, onChange }: { m: Machine; latest?: string; onC
           {m.session && <WorkerRow n={m.session} latest={latest} onChange={onChange} />}
           {m.admin && <WorkerRow n={m.admin} latest={latest} onChange={onChange} />}
           {m.devices.map((d) => (
-            <tr key={d.name} data-testid={`device-${d.name}`}>
+            <tr key={nodeKey(d)} data-testid={`device-${d.name}`} style={d.state === 'revoked' ? { opacity: 0.5 } : undefined}>
               <td>
                 <b>{d.name}</b> <span className="muted">device ({d.role})</span>
+                {d.state === 'revoked' && <> <StatePill state="revoked" /></>}
               </td>
               <td className="muted small">last seen {d.last_seen ? `${fmtAgo(since(d.last_seen))} ago` : '—'}</td>
               <td className="small">{d.version && <VersionTag version={d.version} latest={latest} />}</td>
@@ -90,6 +97,7 @@ function MachineCard({ m, latest, onChange }: { m: Machine; latest?: string; onC
 
 function WorkerRow({ n, latest, onChange }: { n: NodeInfo; latest?: string; onChange: () => void }) {
   const { run, busy } = useAction()
+  const revoked = n.state === 'revoked'
   const shares = n.shares ?? {}
   const shared = [...(shares.users ?? []), ...(shares.teams ?? []).map((t) => `team ${t}`)]
   const done = <T,>(p: Promise<T>) => p.then((r) => (onChange(), r))
@@ -121,11 +129,12 @@ function WorkerRow({ n, latest, onChange }: { n: NodeInfo; latest?: string; onCh
     run(() => done(hubApi.shareWorker(n.name, req)), `${who} removed`)
   }
   return (
-    <tr data-testid={`worker-${n.name}`}>
+    <tr data-testid={`worker-${n.name}`} style={revoked ? { opacity: 0.5 } : undefined}>
       <td className="nowrap">
         <div className="row">
           <span className="dot" style={{ background: n.online ? GREEN : RED }} />
           <b>{n.name}</b>
+          {revoked && <StatePill state="revoked" />}
           {n.admin_worker ? (
             <span className="pill warn" title="admin worker: runs commands as SYSTEM on this machine; only you can use it, never shared">
               admin
@@ -146,7 +155,7 @@ function WorkerRow({ n, latest, onChange }: { n: NodeInfo; latest?: string; onCh
       <td className="small">
         <VersionTag version={n.version} latest={latest} ua={n.update_available} testId={`outdated-${n.name}`} />
         {n.update_available?.reason && <div className="muted small">{n.update_available.reason}</div>}
-        {(n.update_available?.version || isOutdated(n.version, latest)) && (
+        {!revoked && (n.update_available?.version || isOutdated(n.version, latest)) && (
           // the panel can't start it (the hub has no way to update a machine): the owner's
           // client does, end to end - or the tray's "Update to X"
           <div className="muted small mono" data-testid={`update-hint-${n.name}`} title="update this machine from your client (or the tray's Update button)">
@@ -160,7 +169,7 @@ function WorkerRow({ n, latest, onChange }: { n: NodeInfo; latest?: string; onCh
             {k}={v}
           </span>
         ))}
-        <button className="link small" disabled={busy} onClick={editLabels}>
+        <button className="link small" disabled={revoked || busy} onClick={editLabels}>
           labels
         </button>
       </td>
@@ -174,12 +183,12 @@ function WorkerRow({ n, latest, onChange }: { n: NodeInfo; latest?: string; onCh
             {shared.map((w) => (
               <span key={w} className="pill" style={{ marginRight: 3 }}>
                 {w}{' '}
-                <button className="link small" aria-label={`unshare ${w}`} disabled={busy} onClick={() => unshare(w)}>
+                <button className="link small" aria-label={`unshare ${w}`} disabled={revoked || busy} onClick={() => unshare(w)}>
                   ✕
                 </button>
               </span>
             ))}
-            <button className="link small" disabled={busy} onClick={share}>
+            <button className="link small" disabled={revoked || busy} onClick={share}>
               share
             </button>
           </>
@@ -188,7 +197,7 @@ function WorkerRow({ n, latest, onChange }: { n: NodeInfo; latest?: string; onCh
       <td style={{ textAlign: 'right' }}>
         <button
           className="danger"
-          disabled={busy}
+          disabled={revoked || busy}
           onClick={() =>
             confirm(`Remove ${n.name}? Its certificates are revoked: it stops taking jobs until it signs in again.`) &&
             run(() => done(hubApi.removeWorker(n.name)), `${n.name} removed`)

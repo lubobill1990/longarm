@@ -223,7 +223,10 @@ describe('PanelApp', () => {
       '/api/profiles': () => [200, { profiles: [] }],
     })
     render(<PanelApp />)
-    await waitFor(() => expect(screen.getAllByTestId('node-box')).toHaveLength(2))
+    await screen.findByTestId('node-box')
+    expect(screen.getAllByTestId('node-box')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show revoked (1)' }))
+    expect(screen.getAllByTestId('node-box')).toHaveLength(2)
     const ids = screen.getAllByTestId('id-box').map((e) => e.textContent)
     expect(ids).toContain('3f2a9c1e')
     expect(ids).toContain('77aa0000')
@@ -231,6 +234,32 @@ describe('PanelApp', () => {
     await waitFor(() =>
       expect(calls.some((c) => c.url === `/api/nodes/${live}/rename` && c.init?.method === 'POST' && String(c.init?.body).includes('box2'))).toBe(true),
     )
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show revoked (1)' }))
+    expect(screen.getAllByTestId('node-box')).toHaveLength(1)
+  })
+
+  it.each([true, false])('marks only ownerless non-admin workers when tenancy is %s', async (tenancy) => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    history.pushState(null, '', '/nodes')
+    mockFetch({
+      '/api/me': () => [200, { user: 'alice', hub: 'hub1', version: 'dev', role: 'user', tenancy }],
+      '/api/nodes': () => [200, { nodes: [
+        { name: 'worker-1', role: 'worker', state: 'approved' },
+        { name: 'worker-2', role: 'worker', state: 'approved', owner: 'alice' },
+        { name: 'worker-3', role: 'worker', state: 'approved', admin_worker: true },
+        { name: 'worker-4', role: 'worker', state: 'approved', labels: { 'longarm.io/admin': 'true' } },
+        { name: 'worker-5', role: 'worker', state: 'revoked' },
+        { name: 'alice', role: 'client', state: 'approved' },
+      ] }],
+      '/api/history': () => [200, { nodes: [] }],
+    })
+    render(<PanelApp />)
+    await screen.findByTestId('node-worker-1')
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show revoked (1)' }))
+    expect(screen.queryAllByText('no owner')).toHaveLength(tenancy ? 1 : 0)
+    if (tenancy) {
+      expect(screen.getByText('no owner').getAttribute('title')).toBe('Usable by every user. Its user should run: longarm worker claim worker-1 (#173)')
+    }
   })
 })
 
@@ -411,7 +440,7 @@ describe('multi-tenancy', () => {
     render(<PanelApp />)
     const alice = await screen.findByTestId('fleet-alice')
     expect(Array.from(alice.querySelectorAll('td')).map((td) => td.textContent).slice(0, 7)).toEqual(['alice', '3', '2', '1', '1', '2', '0'])
-    expect(screen.getByTestId('fleet-fleet').textContent).toContain('fleet workers')
+    expect(screen.getByTestId('fleet-fleet').textContent).toContain('workers with no owner')
     expect(screen.getByTestId('fleet-total').textContent).toContain('7')
     expect(screen.getByTestId('fleet-versions').textContent).toContain('0.1.9')
     // only the summary: no node list, jobs or links behind it
@@ -560,6 +589,37 @@ describe('PortLinksPage', () => {
 describe('sign-in, machines, updates', () => {
   const userMe = { user: 'alice', hub: 'hub1', version: '0.1.3', role: 'user', tenant: 'alice', base_url: 'https://hub.example.com' }
   const latest = { version: '0.1.3', files: [{ name: 'longarm-windows-amd64.msi', sha256: 'ab', size: 10, signed: true }] }
+
+  it('My machines toggles only its own revoked workers and devices, keeping reused names distinct', async () => {
+    history.pushState(null, '', '/machines')
+    mockFetch({
+      '/api/me': () => [200, userMe],
+      '/api/nodes': () => [200, { nodes: [
+        { id: 'old', name: 'worker-1', role: 'worker', state: 'revoked', owner: 'alice' },
+        { id: 'live', name: 'worker-1', role: 'worker', state: 'approved', owner: 'alice' },
+        { id: 'device-old', name: 'alice', role: 'client', state: 'revoked', user: 'alice' },
+        { id: 'device-live', name: 'alice', role: 'client', state: 'approved', user: 'alice' },
+        { id: 'other', name: 'worker-2', role: 'worker', state: 'revoked', owner: 'bob' },
+        { id: 'ownerless', name: 'worker-3', role: 'worker', state: 'revoked' },
+      ] }],
+    })
+    render(<PanelApp />)
+    await screen.findByTestId('worker-worker-1')
+    expect(screen.getAllByTestId('worker-worker-1')).toHaveLength(1)
+    expect(screen.getAllByTestId('device-alice')).toHaveLength(1)
+    const toggle = screen.getByRole('checkbox', { name: 'Show revoked (2)' })
+    fireEvent.click(toggle)
+    const workers = screen.getAllByTestId('worker-worker-1')
+    expect(workers).toHaveLength(2)
+    const revoked = workers.find((w) => w.textContent?.includes('revoked'))!
+    expect(Array.from(revoked.querySelectorAll('button')).every((b) => b.disabled)).toBe(true)
+    expect(screen.getAllByTestId('device-alice')).toHaveLength(2)
+    expect(screen.queryByTestId('worker-worker-2')).toBeNull()
+    expect(screen.queryByTestId('worker-worker-3')).toBeNull()
+    fireEvent.click(toggle)
+    expect(screen.getAllByTestId('worker-worker-1')).toHaveLength(1)
+    expect(screen.getAllByTestId('device-alice')).toHaveLength(1)
+  })
 
   it('LoginPage: "Sign in with Microsoft" first when the hub has Entra, the panel account folded', async () => {
     mockFetch({ '/auth/info': () => [200, { entra: true, mode: 'spa' }] })

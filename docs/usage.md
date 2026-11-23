@@ -2883,6 +2883,13 @@ user sees (its own and shared machines, fleet workers; its own jobs) and
 the "Fleet" page the whole fleet as counts per user, worker versions and,
 optionally, each user's versions (`GET /api/admin/summary`; aggregates
 only, no names, audited).
+The "Nodes" and "My machines" pages hide revoked records by default.
+Select **Show revoked (N)** in the page header to include them; N counts
+revoked records in that page's scope. Records remain on the hub after
+revocation, even when a new enrollment reuses a machine's name. With
+multi-tenancy on, non-admin workers without an owner have a small **no
+owner** badge: they are usable by every user. Its tooltip tells the user
+to run `longarm worker claim <name>` (#173).
 **Hub traffic** (what the hub's egress is made of - a cloud hub pays for
 every byte it sends): `GET /api/traffic` (administrators) has the bytes
 each way since the hub started, per gRPC method and calling node (payload

@@ -75,7 +75,7 @@ export interface NodeInfo {
   reserved_mem_gb?: number
   isolation?: string // workers: "shared" | "per-user"
   user?: string // clients/admins: the user the node's certificates belong to
-  owner?: string // workers: the user who registered it ("" = shared fleet worker)
+  owner?: string // workers: the user who registered it ("" = no owner)
   /** an admin worker: runs commands as SYSTEM on its machine; owner-only, never shared, never placed */
   admin_worker?: boolean
   /** the node's immutable ID (docs/security.md "Node identity"); name is its display name */
@@ -455,7 +455,7 @@ export interface VersionCount {
 }
 
 export interface UserFleetSummary {
-  user?: string // "" / absent = fleet workers (no owner)
+  user?: string // "" / absent = workers with no owner
   counts?: FleetCounts
   versions?: VersionCount[] // with rows: the user's machines by version - aggregates only
 }
