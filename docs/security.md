@@ -2040,6 +2040,51 @@ the proof and can't produce one.
 
 **Setting it up**
 
+**Automatic key exchange (#173, v1).** A first signed-in device creates a
+user key if neither it nor the hub has one recorded, endorses itself and
+publishes only the public key. The hub's recorded key is a discovery hint,
+not authority. The `LAR1-...` recovery code encodes the 32-byte Ed25519 seed
+with a checksum; it is as sensitive as the secret key, is printed once
+(again with `longarm trust show --recovery`) and is never escrowed at the
+hub. `longarm trust recover <code>` imports it without replacing a
+different local key.
+
+`worker add` makes a 100-bit local secret and sends the hub only a derived
+pairing ID and MACs. The printed `longarmd join ... --pair <secret>` passes
+the secret locally; new workers also split `CODE#secret` before contacting
+the hub. A worker checks the user's key tag before saving
+`<data>/trust/pinned-user`. This is deliberately **not** a `trust.toml`
+entry: automatic pairing must not enable worker enforcement in v1.
+The originating device checks the worker's node-key proof, requested
+name and expiry, then endorses its node key and ID. The worker installs
+the endorsement only for its pinned user, certificate name and node
+key/ID, and renews its certificate.
+
+A second device uses its own secret and node-key proof. An existing device
+holding the user key runs `longarm device approve <secret>`, checks the
+proof and account, and asks for confirmation of the displayed name,
+hostname and OS (`--yes` skips the question). Those display fields are
+hub-reported, not independent identity evidence. The new device checks
+the returned user-key tag and endorsement before installing and pinning
+its own user in its client policy. The secret user key is not transferred.
+
+Substituting a user key fails the tag; substituting a node key fails the
+proof. Two different node keys reported for one pairing are not endorsed
+and produce a leaked-code warning. Endorsements bind the node ID and key;
+worker installation also checks the certificate name. A hub can withhold
+pairings, but cannot forge their MACs. Leaking only the hub's join code
+does not yield an endorsement; leaking the **whole command/secret** can
+endorse an attacker's worker. Single use, expiry, the "endorsed your worker"
+notice and local `trust deny-node` limit that risk. Keep copied commands
+and recovery codes out of logs and shared shell history.
+
+All automatic-pairing failures warn and audit locally as
+`trust/pair-failed`; unsupported hubs fall back to ordinary enrollment.
+V1 does not turn on `require_workers`, worker trusted-user enforcement,
+or security-mode enforcement, and does not cut off existing users.
+Pending local pairing secrets are retained until expiry plus 30 days
+(completed worker pairings are removed). Manual setup remains available:
+
 ```sh
 # alice's laptop: a user key, this device endorsed (the certificate is renewed to carry it)
 longarm trust init                        # prints alice's user key line

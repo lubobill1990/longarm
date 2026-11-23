@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"longarm/internal/hubclient"
 	"longarm/internal/pki"
 	"longarm/internal/sched"
+	"longarm/internal/trust"
 	pb "longarm/proto/longarm/v1"
 )
 
@@ -237,6 +239,9 @@ func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
 			return nil, fmt.Errorf("installing the device's certificate: %w", err)
 		}
 		res.Device = enrolled(cr, dir)
+		if err := automaticTrust(ctx, tg.Address, dir, note); err != nil {
+			note("automatic trust: " + err.Error())
+		}
 		if c, err := pki.ParseCertPEM(cr.Resp.CertPem); err == nil {
 			if id, err := pki.IdentityFromCert(c); err == nil && id.User != "" {
 				res.User = id.User
@@ -255,6 +260,25 @@ func SignIn(ctx context.Context, o Options, ev Events) (*Result, error) {
 	}
 	ev.progress(StepDone, res.summary())
 	return res, nil
+}
+
+func automaticTrust(ctx context.Context, hub, dir string, note func(string)) error {
+	b, err := pki.LoadBundle(filepath.Join(dir, "tls"))
+	if err != nil {
+		return err
+	}
+	conn, err := hubclient.Dial(hub, b)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	who, err := conn.Fleet().Whoami(ctx, &pb.WhoamiRequest{})
+	if err != nil {
+		return err
+	}
+	return trust.Automatic(ctx, dir, b.Identity, conn.Fleet(), who, note)
 }
 
 // Target is one enrollment SignIn makes: client.DeviceTarget (the

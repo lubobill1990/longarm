@@ -15,6 +15,7 @@ import (
 	"longarm/internal/client"
 	"longarm/internal/hubclient"
 	"longarm/internal/pki"
+	"longarm/internal/server"
 	"longarm/internal/signin"
 	"longarm/internal/tenancy"
 	"longarm/internal/trust"
@@ -28,6 +29,7 @@ const RevokedFile = "revoked.json"
 type JoinOptions struct {
 	Name        string
 	Fingerprint string // pin the hub CA (sha256 hex); empty = trust on first use
+	PairSecret  string // automatic trust secret; never sent to the hub
 	NoWait      bool   // return while pending; longarmd run finishes the enrollment
 	Force       bool   // replace an existing certificate
 	Out         io.Writer
@@ -35,16 +37,21 @@ type JoinOptions struct {
 
 // Join enrolls this worker with a hub using a join code (`longarmd join`).
 func Join(ctx context.Context, dataDir, hubAddr, code string, o JoinOptions) error {
+	code, secret, err := hubclient.SplitPairCode(code, o.PairSecret)
+	if err != nil {
+		return err
+	}
 	tlsDir := filepath.Join(dataDir, TLSDir)
 	tr, err := prepareEnroll(dataDir, o.Force)
 	if err != nil {
 		return err
 	}
 	hubAddr = hubclient.NormalizeAddr(hubAddr)
-	r, err := hubclient.Join(ctx, hubAddr, code, hubclient.JoinOptions{Name: o.Name, Fingerprint: o.Fingerprint, Trust: tr})
+	r, err := hubclient.Join(ctx, hubAddr, code, hubclient.JoinOptions{Name: o.Name, Fingerprint: o.Fingerprint, Trust: tr, PairSecret: secret})
 	if err != nil {
 		return err
 	}
+	acceptJoinPairing(o.Out, dataDir, secret, r.Resp)
 	if r.Resp.State == "approved" {
 		return finishEnroll(o.Out, dataDir, hubAddr, r)
 	}
@@ -71,6 +78,38 @@ func Join(ctx context.Context, dataDir, hubAddr, code string, o JoinOptions) err
 	}
 	fmt.Fprintf(o.Out, "approved; joined as worker %s%s\n", r.Resp.Name, idNote(r.Resp.Id))
 	return nil
+}
+
+func acceptJoinPairing(out io.Writer, dataDir, secret string, resp *pb.JoinResponse) {
+	if resp.Pairing == nil {
+		fmt.Fprintln(out, "warning: hub doesn't support automatic trust yet; enrolled without automatic trust")
+		return
+	}
+	if secret == "" {
+		return
+	}
+	if err := pinJoinPairing(dataDir, secret, resp); err != nil {
+		fmt.Fprintf(out, "warning: automatic trust pairing failed: %v; enrollment continues without automatic trust\n", err)
+		server.NewAudit(filepath.Join(dataDir, AuditFile)).LogAs("local", "trust/pair-failed", map[string]any{"error": err.Error()})
+	}
+}
+
+func pinJoinPairing(dataDir, secret string, resp *pb.JoinResponse) error {
+	pairing, err := pki.DerivePairing(secret)
+	if err != nil {
+		return err
+	}
+	p := resp.Pairing
+	if p.Id != pairing.ID || p.Kind != pki.KindWorker || !pki.ValidUser(p.User) || p.User != resp.Owner {
+		return errors.New("the hub returned a different pairing, kind or owner")
+	}
+	if p.ExpiresAt == nil || p.ExpiresAt.CheckValid() != nil || !time.Now().Before(p.ExpiresAt.AsTime()) {
+		return errors.New("the trust pairing expired or has no valid expiry")
+	}
+	if err := pairing.CheckUserTag(p.UserTag, pki.KindWorker, p.User, p.UserKey, p.ExpiresAt.AsTime()); err != nil {
+		return err
+	}
+	return trust.WritePinnedUser(dataDir, pki.UserKeyLine{User: p.User, Key: p.UserKey})
 }
 
 func installEnrollment(dataDir, hubAddr string, r *hubclient.JoinResult) error {
