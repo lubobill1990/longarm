@@ -603,7 +603,15 @@ func TestPortLinksTrust(t *testing.T) {
 	// hub accepts its link, the workers don't
 	other := linkUser(t, h, "alice-2", "alice")
 	fid := linkCreate(t, h, other, "wb:"+port, "--on", "wa", "--port", strconv.Itoa(freePort(t)))
+	// Automatic trust gives that device a node key (to offer a pairing), so
+	// its consent may be signed - by a device alice's key never endorsed.
 	waitFor(t, "wa refusing the unsigned link", 30*time.Second, func() bool {
-		return strings.Contains(linkStatus(t, h, alice, fid), "no owner's consent")
+		st := linkStatus(t, h, alice, fid)
+		return strings.Contains(st, "no owner's consent") || strings.Contains(st, "not signed by a device endorsed by alice's pinned key")
 	})
+	// and it didn't make a user key of its own for alice (a hub without
+	// Longarm users has no automatic trust)
+	if k, _, _ := (trust.Store{Dir: filepath.Join(other, "trust")}).UserKey(); k != nil {
+		t.Fatal("a device the hub enrolled on its own made a user key for alice")
+	}
 }

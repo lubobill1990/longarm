@@ -100,6 +100,19 @@ func (s *fleetServer) PublishUserKey(ctx context.Context, req *pb.PublishUserKey
 		h.mu.Unlock()
 		return nil, status.Error(codes.PermissionDenied, "trust pairing needs an active user")
 	}
+	if len(t.u.UserKey) > 0 {
+		if bytes.Equal(t.u.UserKey, req.UserKey) {
+			out := h.userInfoLocked(t)
+			h.mu.Unlock()
+			return out, nil
+		}
+		h.mu.Unlock()
+		// First key wins: another device (a second key made by mistake, or
+		// a device the hub enrolled on its own) can't replace the hint the
+		// user's devices go by. A deliberate new key is later work (#173).
+		h.auditHub(c.id.String(), "trust/pairing-publish-key", map[string]any{"user": c.user, "error": "another key is recorded"})
+		return nil, status.Error(codes.FailedPrecondition, "another user key is already recorded for this user")
+	}
 	u := proto.Clone(t.u).(*pb.TenantUser)
 	u.UserKey = slices.Clone(req.UserKey)
 	if err := h.saveTenantLocked(u); err != nil {

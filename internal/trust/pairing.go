@@ -273,6 +273,11 @@ func Automatic(ctx context.Context, dir string, id pki.Identity, fleet pb.FleetC
 	if who == nil || fleet == nil {
 		return errors.New("automatic trust needs an authenticated hub")
 	}
+	if !who.Tenancy {
+		// No Longarm users on this hub: nowhere to record the user key, and
+		// every device would take itself for the first and make its own.
+		return nil
+	}
 	user := id.Owner()
 	if (id.Role != pki.RoleClient && id.Role != pki.RoleAdmin) || !pki.ValidUser(user) || (who.User != "" && who.User != user) {
 		return errors.New("automatic trust identity does not match the signed-in user")
@@ -342,7 +347,18 @@ func Automatic(ctx context.Context, dir string, id pki.Identity, fleet pb.FleetC
 		return nil
 	}
 	if e != nil {
-		return pinSelf(s, pki.UserKeyLine{User: user, Key: e.UserKey})
+		if err := pinSelf(s, pki.UserKeyLine{User: user, Key: e.UserKey}); err != nil {
+			return err
+		}
+		// An endorsed device without the key (set up by hand, or the key
+		// lives on another device) still knows the user's real key: publish
+		// it, so the user's next device doesn't take itself for the first
+		// and make a second key.
+		if len(who.UserKey) == 0 {
+			_, err := fleet.PublishUserKey(ctx, &pb.PublishUserKeyRequest{UserKey: e.UserKey})
+			return err
+		}
+		return nil
 	}
 	return automaticDevice(ctx, dir, s, id, fleet, note)
 }

@@ -186,7 +186,7 @@ func TestAutomaticBootstrapRetryAndConflict(t *testing.T) {
 	fleet := &automaticFleet{publishErr: errors.New("offline")}
 	var notes []string
 	note := func(s string) { notes = append(notes, s) }
-	who := &pb.WhoamiResponse{User: "alice"}
+	who := &pb.WhoamiResponse{Tenancy: true, User: "alice"}
 	if err := Automatic(context.Background(), dir, id, fleet, who, note); err == nil {
 		t.Fatal("publish failure lost")
 	}
@@ -226,7 +226,7 @@ func TestAutomaticDeviceOfferAndInstall(t *testing.T) {
 	dir := pairingTestDir(t)
 	id := automaticIdentity()
 	k := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{4}, 32))
-	who := &pb.WhoamiResponse{User: "alice", UserKey: k.Public().(ed25519.PublicKey)}
+	who := &pb.WhoamiResponse{Tenancy: true, User: "alice", UserKey: k.Public().(ed25519.PublicKey)}
 	fleet := &automaticFleet{}
 	fleet.onOffer = func(remote *pb.TrustPairing) {
 		t.Helper()
@@ -275,12 +275,58 @@ func TestAutomaticDeviceOfferAndInstall(t *testing.T) {
 	}
 }
 
+// TestAutomaticNeedsUsers: on a hub without Longarm users there is nowhere
+// to record a user key, so no device makes one.
+func TestAutomaticNeedsUsers(t *testing.T) {
+	dir := pairingTestDir(t)
+	fleet := &automaticFleet{}
+	if err := Automatic(context.Background(), dir, automaticIdentity(), fleet, &pb.WhoamiResponse{User: "alice"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if k, _, _ := (Store{Dir: filepath.Join(dir, "trust")}).UserKey(); k != nil || fleet.published != nil || fleet.offers != nil {
+		t.Fatal("automatic trust ran on a hub without users")
+	}
+}
+
+// TestAutomaticEndorsedDeviceWithoutKey: a device endorsed by hand, whose
+// user key lives elsewhere, publishes that key instead of making a second.
+func TestAutomaticEndorsedDeviceWithoutKey(t *testing.T) {
+	dir := pairingTestDir(t)
+	s := Store{Dir: filepath.Join(dir, "trust")}
+	id := automaticIdentity()
+	userPub, userKey, _ := ed25519.GenerateKey(nil)
+	nk, err := s.NodeKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := pki.EndorseID(userKey, "alice", pki.KindDevice, id.Name, id.ID, nk.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetEndorsementFor(e, pki.KindDevice, id); err != nil {
+		t.Fatal(err)
+	}
+	fleet := &automaticFleet{}
+	if err := Automatic(context.Background(), dir, id, fleet, &pb.WhoamiResponse{Tenancy: true, User: "alice"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(fleet.published, userPub) {
+		t.Fatalf("published %x, want the endorsing key %x", fleet.published, userPub)
+	}
+	if k, _, err := s.UserKey(); k != nil || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("made a second user key: %v %v", k, err)
+	}
+	if got, _ := s.Endorsement(); got == nil || !bytes.Equal(got.UserKey, userPub) {
+		t.Fatal("replaced the endorsement")
+	}
+}
+
 func TestAutomaticPreservesExistingPolicyAndOwner(t *testing.T) {
 	dir := pairingTestDir(t)
 	s := Store{Dir: filepath.Join(dir, "trust")}
 	id := automaticIdentity()
 	fleet := &automaticFleet{}
-	who := &pb.WhoamiResponse{User: "alice"}
+	who := &pb.WhoamiResponse{Tenancy: true, User: "alice"}
 	if err := s.SavePolicyFile(&PolicyFileData{Users: map[string]string{}, RequireWorkers: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +367,7 @@ func TestAutomaticConcurrentBootstrap(t *testing.T) {
 			<-start
 			fleet := &automaticFleet{}
 			var notes []string
-			err := Automatic(context.Background(), dir, id, fleet, &pb.WhoamiResponse{User: "alice"},
+			err := Automatic(context.Background(), dir, id, fleet, &pb.WhoamiResponse{Tenancy: true, User: "alice"},
 				func(note string) { notes = append(notes, note) })
 			results <- result{key: fleet.published, notes: notes, err: err}
 		}()

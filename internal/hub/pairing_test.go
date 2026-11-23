@@ -77,6 +77,14 @@ func TestTrustPairingWorker(t *testing.T) {
 	}
 	pairingWhoami(t, alice, 0, p.UserKey)
 	pairingWhoami(t, bob, 0, nil)
+	// first key wins: the same key again is fine, another one is refused
+	if _, err := alice.PublishUserKey(tctx(t), &pb.PublishUserKeyRequest{UserKey: p.UserKey}); err != nil {
+		t.Fatalf("republish: %v", err)
+	}
+	if _, err := alice.PublishUserKey(tctx(t), &pb.PublishUserKeyRequest{UserKey: bytes.Repeat([]byte{7}, 32)}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("replaced the user key: %v", err)
+	}
+	pairingWhoami(t, alice, 0, p.UserKey)
 	code, err := alice.CreateWorkerCode(tctx(t), &pb.CreateWorkerCodeRequest{Name: "worker-1", Pairing: p})
 	if err != nil || code.PairingId != p.Id {
 		t.Fatalf("create code: %v, %v", code, err)
