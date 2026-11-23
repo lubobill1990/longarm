@@ -201,6 +201,35 @@ func TestProjectionHidesIDs(t *testing.T) {
 	}
 }
 
+// TestAdoptedDeviceRenewsIntoItsUser: a device the hub pinned to another
+// user (longarm-hub adopt) renews at once, since workers go by the
+// certificate's user; one already carrying it, and workers, don't.
+func TestAdoptedDeviceRenewsIntoItsUser(t *testing.T) {
+	th := idHub(t)
+	issue := func(role pki.Role, name, user string) *x509.Certificate {
+		certPEM, _, err := th.ca.Issue(pki.IssueOptions{Role: role, Name: name, User: user})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := pki.ParseCertPEM(certPEM)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	laptop := &node{rec: &store.Node{ID: "eeee0000-0000-4000-8000-00000000000b", Name: "laptop", Role: "client", User: "alice"}}
+	if c := issue(pki.RoleClient, "laptop", ""); !userMismatch(laptop, c) || forcedRenewBefore(laptop, c) <= time.Until(c.NotAfter) {
+		t.Fatal("an adopted device keeps its old user until its certificate expires")
+	}
+	if c := issue(pki.RoleClient, "laptop", "alice"); userMismatch(laptop, c) || forcedRenewBefore(laptop, c) != 0 {
+		t.Fatal("a device already carrying its user renews again")
+	}
+	w := &node{rec: &store.Node{ID: "eeee0000-0000-4000-8000-00000000000c", Name: "w", Role: "worker", Owner: "alice"}}
+	if c := issue(pki.RoleWorker, "w", ""); userMismatch(w, c) {
+		t.Fatal("a worker renews for a user")
+	}
+}
+
 // TestCertWithAnIDAnOlderHubRecorded: a certificate carrying a node ID this
 // hub never assigned (issued by a newer longarm admin issue while an older
 // hub ran) maps to the node the older hub recorded its serial for - as a
