@@ -1772,6 +1772,13 @@ client is the approver's device (admin certificate only for `admins`,
 rules re-checked at approval: `allowed`, disabled users), a worker the
 approver's own worker, never admin.
 
+The hub reports the panel's configured account providers with the code;
+without an identity provider, approval uses a panel login (password + TOTP).
+`public_url` is the panel URL advertised to devices. Without it, a
+loopback-only HTTP panel stays loopback-only: remote devices get a local
+URL and a routing hint (for example an SSH tunnel), not a newly exposed
+listener. This does not change CA pinning or the approval checks.
+
 The danger is phishing: an attacker starts a pairing on *their* machine
 and gets a victim to approve it - then the attacker's machine holds the
 victim's client certificate, or (worse, and quieter) the victim's jobs get

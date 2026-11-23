@@ -375,12 +375,14 @@ type Progress struct {
 	Message string // one line for the user
 }
 
-// Code is a pairing code to show: "open URL, sign in with Microsoft,
+// Code is a pairing code to show: "open URL, sign in,
 // enter Code".
 type Code struct {
-	URL     string    // the hub's /link page (never with the code in it)
-	Code    string    // "BCDF-GHJK"
-	Expires time.Time // when the code stops working (10 minutes)
+	URL              string    // the hub's /link page (never with the code in it)
+	Code             string    // "BCDF-GHJK"
+	Expires          time.Time // when the code stops working (10 minutes)
+	SignIn           []string  // account provider labels; empty also on older hubs
+	VerificationHint string    // how to reach a loopback-only panel
 	// What the approval enrolls: "client", "worker" or "both".
 	Kind string
 	// Host: this machine's name, which the /link page shows to check.
@@ -533,7 +535,7 @@ func pair(ctx context.Context, addr string, o Options, ev Events, cjo, wjo hubcl
 		return hubclient.LinkOptions{JoinOptions: jo, Kind: kind, Worker: w, AdminWorker: a, Replace: replace,
 			Show: func(st *pb.StartLinkResponse) {
 				c := Code{URL: st.VerificationUrl, Code: st.UserCode, Expires: st.ExpiresAt.AsTime(), Kind: kind, Host: hostname(),
-					AdminWorker: ajo != nil}
+					SignIn: st.SignIn, VerificationHint: st.VerificationHint, AdminWorker: ajo != nil}
 				ev.progress(StepCode, fmt.Sprintf("open %s and enter code %s", c.URL, c.Code))
 				if ev.Code != nil {
 					ev.Code(c)

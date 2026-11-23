@@ -62,8 +62,8 @@ $env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/inst
 # 2. sign in - the one-liners and the tray do it; already installed:
 longarmd login hub.example.com --role both     # worker + client: one code, one approval
 longarm login hub.example.com                  # a client only
-#   Open https://hub.example.com/link and enter code BCDF-GHJK  - in any browser: sign in (Microsoft,
-#   Google or Apple account, as the hub offers), type the code, approve
+#   Open https://hub.example.com/link and enter code BCDF-GHJK - in any browser: sign in with an
+#   account the hub offers, or your panel login (password + authenticator code), type the code, approve
 
 # 3. run something
 longarm ls                                     # your workers (this machine too)
@@ -2425,10 +2425,22 @@ Each prints the hub's `/link` address and a code:
 
 ```
 hub hub.example.com:7443: CA 3f9a...c1 pinned (from https://hub.example.com/ca.crt, checked with this system's HTTPS roots)
-To link this machine as your device and your worker (one approval for both), sign in with your Microsoft account (or the hub's panel login) in a browser:
+To link this machine as your device and your worker (one approval for both), sign in with your account (Microsoft (work or school)) in a browser:
 
   Open https://hub.example.com/link and enter code BCDF-GHJK
 ```
+
+The sign-in instructions list the account providers the hub offers. Without
+providers, use your panel login (password + authenticator code); older hubs
+also get neutral panel sign-in wording. The hub's `public_url` decides the
+printed URL. Without it, the HTTP listener's port and the host the device
+dialed are used, except that a loopback-only panel keeps its loopback URL.
+Devices dialing a non-loopback host then also print a routing hint, for example
+`ssh -L 7480:127.0.0.1:7480 -- hub.example.com`, then open
+`http://127.0.0.1:7480/link`. Use your existing route to the panel, or ask the
+hub's admin to set `public_url` to its reachable URL. The hint is printed
+with or without `--no-browser`; automatic browser opening still works when
+you already have a tunnel.
 
 **The hub's domain is enough.** `longarm login` / `longarmd login` take
 `hub.example.com`, `https://hub.example.com` or `host:port` (the gRPC port;

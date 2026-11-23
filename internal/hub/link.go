@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"html/template"
 	"net"
 	"net/http"
@@ -237,14 +238,15 @@ func (h *Hub) linkUnavailable() error {
 }
 
 // linkURL is the /link page as the device should open it: public_url,
-// else the HTTP listener on the host the device dialed.
-func (h *Hub) linkURL(ctx context.Context) string {
+// else the HTTP listener, with a routing hint when it is loopback-only.
+func (h *Hub) linkURL(ctx context.Context) (string, string) {
 	if h.cfg.PublicURL != "" {
-		return h.cfg.PublicURL + "/link"
+		return h.cfg.PublicURL + "/link", ""
 	}
-	_, port, err := net.SplitHostPort(h.Addr("http"))
+	addr := h.Addr("http")
+	panelHost, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	host := "localhost"
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
@@ -252,7 +254,17 @@ func (h *Hub) linkURL(ctx context.Context) string {
 			host = ipOnly(a[0])
 		}
 	}
-	return "http://" + net.JoinHostPort(strings.Trim(host, "[]"), port) + "/link"
+	host = strings.Trim(host, "[]")
+	if isLoopbackHost(panelHost) && !isLoopbackHost(host) {
+		u := "http://" + net.JoinHostPort(panelHost, port) + "/link"
+		return u, fmt.Sprintf("the hub's panel listens on %s only: open /link through your route to it, e.g. `ssh -L %s:%s -- %s` then %s (the hub's admin can set public_url)", addr, port, addr, host, u)
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/link", ""
+}
+
+func loopbackListener(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	return err == nil && isLoopbackHost(host)
 }
 
 // ---------------------------------------------------------------- gRPC
@@ -331,7 +343,7 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 	if err != nil {
 		return nil, err
 	}
-	u := h.linkURL(ctx)
+	u, hint := h.linkURL(ctx)
 	if u == "" {
 		return nil, status.Error(codes.FailedPrecondition, "this hub has no web panel (http) to approve pairings at")
 	}
@@ -384,8 +396,12 @@ func (s *enrollServer) StartLink(ctx context.Context, req *pb.StartLinkRequest) 
 	h.auditExpired(expired)
 	h.log.Info("pairing started", "id", l.id, "kind", l.kind, "name", l.name, "hostname", l.hostname, "admin_worker", l.admin, "remote", l.ip)
 	h.auditHub("link/"+l.ip, "link/start", l.fields())
+	var signIn []string
+	for _, p := range h.webProviders() {
+		signIn = append(signIn, p.Label)
+	}
 	return &pb.StartLinkResponse{UserCode: formatLinkCode(l.code), PollToken: tok, VerificationUrl: u,
-		ExpiresAt: tspb(l.expires), Interval: durationpb.New(linkInterval)}, nil
+		VerificationHint: hint, SignIn: signIn, ExpiresAt: tspb(l.expires), Interval: durationpb.New(linkInterval)}, nil
 }
 
 func (s *enrollServer) PollLink(ctx context.Context, req *pb.PollLinkRequest) (*pb.JoinResponse, error) {

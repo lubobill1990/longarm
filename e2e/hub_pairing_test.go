@@ -1,10 +1,12 @@
 package e2e
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -22,6 +24,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+
+	"longarm/internal/pki"
+	pb "longarm/proto/longarm/v1"
 )
 
 const (
@@ -252,6 +260,42 @@ func (p *proc) wait(t *testing.T) int {
 	return p.cmd.ProcessState.ExitCode()
 }
 
+func TestHubPairingLoopbackGuidance(t *testing.T) {
+	t.Parallel()
+	h := newHubEnv(t, "")
+	conn, err := grpc.NewClient(h.addr(), grpc.WithAuthority("hub.example.com:7443"),
+		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, csr, err := pki.NewKeyAndCSR("worker-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	st, err := pb.NewEnrollClient(conn).StartLink(ctx, &pb.StartLinkRequest{Kind: "client", CsrPem: csr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.VerificationUrl != h.httpURL()+"/link" || len(st.SignIn) != 0 ||
+		!strings.Contains(st.VerificationHint, fmt.Sprintf("ssh -L %d:127.0.0.1:%d -- hub.example.com", h.httpPort, h.httpPort)) {
+		t.Fatalf("remote pairing guidance: %v", st)
+	}
+
+	cfg := filepath.Join(h.root, "cfg-login")
+	cmd := exec.Command(bins.longarm, "login", h.addr(), "--link", "--no-browser", "--ca-fingerprint", h.fp)
+	cmd.Env = append(os.Environ(), "LONGARM_CONFIG_DIR="+cfg)
+	p := startProc(t, cmd)
+	u, _ := p.code(t)
+	if out := p.out.String(); u != h.httpURL()+"/link" ||
+		!strings.Contains(out, "sign in at the hub's panel (with an account or your panel login)") ||
+		strings.Contains(out, "panel listens on") {
+		t.Fatalf("local pairing guidance: %s", out)
+	}
+}
+
 // TestHubPairing: enrolling with a Microsoft account without az - longarmd
 // login and longarm login (no az: falls back) print a code; the user,
 // signed in to the panel with Microsoft, approves it at /link; the worker
@@ -271,6 +315,10 @@ func TestHubPairing(t *testing.T) {
 	u, code := p.code(t)
 	if u != h.httpURL()+"/link" {
 		t.Fatalf("link URL %s", u)
+	}
+	if out := p.out.String(); !strings.Contains(out, "sign in with your account (Microsoft (work or school))") ||
+		strings.Contains(out, "Google") || strings.Contains(out, "panel listens on") {
+		t.Fatalf("sign-in guidance: %s", out)
 	}
 	if out := erinWeb.decide(code, "approve", "Only confirm if this is your machine", "<code>pw</code>", "127.0.0.1"); !strings.Contains(out, "worker pw is yours") {
 		t.Fatalf("approve worker: %s", out)
