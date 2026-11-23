@@ -929,6 +929,16 @@ func (a *hubAgent) applyWorkerAccess(wa *pb.WorkerAccess) {
 	if err != nil {
 		a.log.Warn("hub: save worker access", "err", err)
 	}
+	if wa.Owner != "" && a.srv.WorkerAccess.Owner() == wa.Owner {
+		hc, err := hubclient.LoadFile(a.dataDir)
+		if err == nil && hc.Owner != wa.Owner {
+			hc.Owner = wa.Owner
+			err = hubclient.SaveFile(a.dataDir, hc)
+		}
+		if err != nil {
+			a.log.Warn("hub: save worker owner", "err", err)
+		}
+	}
 	if !applied { // older than (or as old as) what this worker has: a stale push
 		return
 	}

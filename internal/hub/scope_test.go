@@ -220,14 +220,14 @@ func TestAdminCantShareOthersWorker(t *testing.T) {
 		t.Fatal("root may use aw")
 	}
 	// alice shares it with bob; root still can't add itself
-	if _, err := pb.NewFleetClient(th.alice).ShareWorker(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); err != nil {
+	if _, err := seedWorkerShares(t, h, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"bob"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := share(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"root"}}); status.Code(err) != codes.NotFound {
 		t.Fatalf("admin adds itself to a worker shared with bob: %v", err)
 	}
 	// shared with root by alice: root uses it, and still can't re-share it
-	if _, err := pb.NewFleetClient(th.alice).ShareWorker(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"root"}}); err != nil {
+	if _, err := seedWorkerShares(t, h, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"root"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := nodeNames(t, th.root)["aw"]; !ok {
@@ -544,7 +544,7 @@ func TestAdminCantJoinTeams(t *testing.T) {
 	if _, err := h.PutUser("test", &pb.PutUserRequest{Name: "alice", SetCanShare: true, CanShare: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pb.NewFleetClient(th.alice).ShareWorker(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddTeams: []string{"t1"}}); err != nil {
+	if _, err := seedWorkerShares(t, h, &pb.ShareWorkerRequest{Worker: "aw", AddTeams: []string{"t1"}}); err != nil {
 		t.Fatal(err)
 	}
 	adm := pb.NewHubAdminClient(th.root)
@@ -594,7 +594,7 @@ func TestAdminCredentialsForUsersWithAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pb.NewFleetClient(th.alice).ShareWorker(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"frank", "ivy"}}); err != nil {
+	if _, err := seedWorkerShares(t, h, &pb.ShareWorkerRequest{Worker: "aw", AddUsers: []string{"frank", "ivy"}}); err != nil {
 		t.Fatal(err)
 	}
 	h.mu.Lock()
@@ -630,7 +630,7 @@ func TestEventStreamFollowsTeams(t *testing.T) {
 	if _, err := h.PutUser("test", &pb.PutUserRequest{Name: "alice", SetCanShare: true, CanShare: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pb.NewFleetClient(th.alice).ShareWorker(tctx(t), &pb.ShareWorkerRequest{Worker: "aw", AddTeams: []string{"t1"}}); err != nil {
+	if _, err := seedWorkerShares(t, h, &pb.ShareWorkerRequest{Worker: "aw", AddTeams: []string{"t1"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.SetTeam("test", &pb.SetTeamRequest{Team: "t1", Add: []string{"bob"}}); err != nil {

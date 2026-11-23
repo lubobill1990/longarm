@@ -158,7 +158,7 @@ func TestAdminLearnsNothingOfAnotherUsersMachines(t *testing.T) {
 	h.bus.publish(&pb.FleetEvent{Kind: "event", Node: "xavlap-q9", Message: "xavlap-q9 did something"})
 	h.mu.Unlock()
 	// a join code his admin device created for the fleet, one for his laptop
-	if _, err := h.CreateJoinCode("admin/xavadm-q9", &pb.CreateJoinCodeRequest{Role: "worker"}); err != nil {
+	if _, err := h.CreateJoinCode("admin/xavadm-q9", &pb.CreateJoinCodeRequest{Role: "worker", Owner: "xavier"}); err != nil {
 		t.Fatal(err)
 	}
 	// (stored directly: made before his machines - once a user has

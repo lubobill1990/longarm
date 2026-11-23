@@ -223,7 +223,7 @@ machines are only counted, anonymously, by "longarm admin summary".`,
 	joinCode.Flags().StringVar(&profile, "profile", "", "toolchain profile for a worker")
 	joinCode.Flags().StringVar(&codeName, "name", "", "fixed node name")
 	joinCode.Flags().StringVar(&codeUser, "user", "", "client/admin: the Longarm user the certificate belongs to (see longarm admin user)")
-	joinCode.Flags().StringVar(&codeOwner, "owner", "", "worker: the user who owns it (it joins approved, usable by that user only; see longarm worker)")
+	joinCode.Flags().StringVar(&codeOwner, "owner", "", "worker: your own user only (defaults to you when users exist; other users run longarm worker add)")
 
 	codes := &cobra.Command{
 		Use: "join-codes", Short: "List recent join codes (not the codes themselves)", Args: cobra.NoArgs,

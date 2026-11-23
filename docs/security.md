@@ -662,12 +662,15 @@ visibility of what the worker's users run.
 A user can register their own machine as a worker (`longarm worker add`,
 [usage](usage.md#your-own-workers)). The worker code names the user as the
 worker's **owner**; the worker joins approved and is usable by its owner
-only, until shared - by user, team or everyone. Only users an admin
-granted `can_share` (`longarm admin user set <u> --can-share`) may share
-their workers; only a worker's owner shares it - an admin never shares
-another user's worker, with itself or anybody. Workers without owner
-(admins' join codes) are the shared fleet as before; admins label, drain and
-remove those. An owned worker turns user
+only. In the first rollout of [#173](https://github.com/lubobill1990/longarm/issues/173),
+**new shares are refused**, including user/team additions and enabling everyone,
+regardless of `can_share`; existing shares remain effective and their owner can
+remove them without that permission. An admin never shares another user's worker.
+Existing workers without an owner remain fleet workers; admins label, drain and
+remove those. New worker codes and host-issued bundles require an existing
+owner when users exist. Admin API codes default to the caller's own user and
+refuse another owner; host operators can explicitly choose the owner.
+An owned worker turns user
 separation on (like the first user). A worker's name is never a user: a
 worker certificate acts as no user on the hub (whatever its name), and no
 machine may be named after a user other than that user's own devices
@@ -688,7 +691,8 @@ the worker audits every change it receives (`worker/access`).
 **Enforced twice, decided once.** The hub applies the rule when it lists
 and places, and pushes owner and shares to the worker
 (`HubCommand.worker_access` at every connect and change; kept in
-`<data>/worker-access.json` across restarts and hub outages). The owner
+`<data>/worker-access.json` across restarts and hub outages). Every owner push
+also persists the fallback owner in `hub.toml`. The owner
 holds from enrollment on: `longarmd join` writes it (and remembers the owned
 code in the data dir's `hub.toml`), so a worker started before it ever
 reached the hub - or without its file - serves its owner only; an
@@ -698,6 +702,20 @@ worker refuses everybody else on every call, and closes the connections -
 with their sessions, forwards, ssh and log streams - of users who lose
 access, whether by an unshare or by leaving a team the worker is shared
 with. Followed log streams through the hub are re-checked on every poll.
+`longarm worker claim` makes a visible ownerless, non-revoked, non-admin worker
+the caller's own without changing its node ID. It cuts other users' connections
+and port links and is audited as `workers/claim`; offline workers receive the
+access rule on reconnect. Nothing automatically claims existing fleet workers.
+
+For hubs without users, the host operator can run `longarm-hub adopt --user
+alice [--map device-or-worker=bob]...`. This one-time, audited (`workers/adopt`)
+plan creates tenants, pins non-revoked client/admin devices and claims ownerless
+non-admin workers under the running hub's lock (or when it next starts).
+The pinned device record wins over its old certificate **on the hub**; direct
+worker access changes only after renewal issues a certificate with the pinned
+user. Renew devices before using claimed workers. Existing jobs retain their
+original owners. See [adoption and claiming](usage.md#your-own-workers).
+
 Disabling or removing a user drops the user's unused worker codes; a code
 whose owner is no longer a user does not join. But the worker's copy **comes from the hub**:
 whoever controls the hub (its admins, its database, the CA key) can change

@@ -19,6 +19,7 @@ import (
 type LocalIssueOptions struct {
 	Role     pki.Role
 	Name     string
+	Owner    string
 	Hosts    []string
 	Validity time.Duration // 0: by role (pki)
 }
@@ -72,6 +73,21 @@ func IssueLocal(cfg *Config, o LocalIssueOptions) (*LocalIssued, error) {
 		return nil, err
 	}
 	defer st.Close()
+	if o.Owner != "" && o.Role != pki.RoleWorker {
+		return nil, errors.New("--owner is only for workers")
+	}
+	tenants, err := st.Tenants()
+	if err != nil {
+		return nil, err
+	}
+	if o.Role == pki.RoleWorker {
+		if o.Owner == "" && (len(tenants) > 0 || cfg.Tenancy.Enabled) {
+			return nil, errors.New("worker certificates require --owner <user> when users exist")
+		}
+		if o.Owner != "" && !slices.ContainsFunc(tenants, func(t store.Tenant) bool { return t.Name == o.Owner }) {
+			return nil, fmt.Errorf("no user %q", o.Owner)
+		}
+	}
 	recs, err := st.Nodes()
 	if err != nil {
 		return nil, err
@@ -92,6 +108,9 @@ func IssueLocal(cfg *Config, o LocalIssueOptions) (*LocalIssued, error) {
 			return nil, fmt.Errorf("the name %s is an older name of node %s (now %s): issue for %s", o.Name, nodeid.Short(r.ID), r.Name, r.Name)
 		}
 		rec = r
+		if o.Owner != "" && rec.Owner != o.Owner {
+			return nil, errors.New("existing worker has a different owner; use longarm worker claim for an ownerless worker")
+		}
 		break
 	}
 	res := &LocalIssued{CAPEM: ca.CertPEM}
@@ -102,6 +121,12 @@ func IssueLocal(cfg *Config, o LocalIssueOptions) (*LocalIssued, error) {
 		now := time.Now().UTC()
 		rec = &store.Node{ID: nodeid.New(), Name: o.Name, Role: string(o.Role), State: stateApproved, JoinedAt: now, ApprovedAt: now, CertHasID: true}
 		res.NewNode = true
+		if o.Role == pki.RoleWorker {
+			rec.Owner = o.Owner
+			if rec.Owner != "" {
+				rec.AccessVersion++
+			}
+		}
 	}
 	if res.NewNode && o.Role != pki.RoleWorker {
 		rec.User = o.Name // pinned, as checkNode does for a certificate it registers

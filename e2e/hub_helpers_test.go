@@ -14,7 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"longarm/internal/hub/store"
+	"longarm/internal/hubclient"
+	"longarm/internal/nodeid"
 	"longarm/internal/pki"
+	pb "longarm/proto/longarm/v1"
 )
 
 // longarm-hub is built on first use (TestMain builds longarmd/longarm/helper).
@@ -324,6 +328,48 @@ func longarmdCmd(t *testing.T, args ...string) result {
 // approved by root) without starting it.
 func (h *hubEnv) joinWorker(t *testing.T, w *hubWorker, approve bool) {
 	t.Helper()
+	st, err := store.Open(filepath.Join(h.hubDir, "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenants, err := st.Tenants()
+	st.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approve && len(tenants) > 0 {
+		// Multi-user scenarios still exercise legacy fleet workers. Model
+		// a certificate issued before ownership was required, not a new code.
+		ca, err := pki.LoadCA(filepath.Join(h.client, "ca"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, key, err := ca.Issue(pki.IssueOptions{Role: pki.RoleWorker, Name: w.name, ID: nodeid.New()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := pki.WriteBundle(filepath.Join(w.dataDir, "tls"), ca.CertPEM, cert, key); err != nil {
+			t.Fatal(err)
+		}
+		if err := hubclient.SaveFile(w.dataDir, hubclient.Config{Address: h.addr()}); err != nil {
+			t.Fatal(err)
+		}
+		bundle, err := pki.ParseBundle(ca.CertPEM, cert, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conn, err := hubclient.Dial(h.addr(), bundle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if _, err := conn.Fleet().Whoami(ctx, &pb.WhoamiRequest{}); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
 	code := strings.TrimSpace(h.mustLongarm(h.admin, "admin", "join-code", "--role", "worker", "--labels", "pool=e2e,tier=test"))
 	r := longarmdCmd(t, "join", h.addr(), code, "--data-dir", w.dataDir, "--name", w.name, "--ca-fingerprint", h.fp, "--no-wait")
 	if r.code != 0 || !strings.Contains(r.stdout, "pending approval") || !strings.Contains(r.stdout, "hub CA verified") {

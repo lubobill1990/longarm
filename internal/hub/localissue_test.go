@@ -88,7 +88,7 @@ func TestIssueLocal(t *testing.T) {
 	}
 
 	// the name is a relay's: no worker certificate for it
-	if _, err := IssueLocal(h.cfg, LocalIssueOptions{Role: pki.RoleWorker, Name: "xrelay"}); err == nil || !strings.Contains(err.Error(), "a relay") {
+	if _, err := IssueLocal(h.cfg, LocalIssueOptions{Role: pki.RoleWorker, Name: "xrelay", Owner: "alice"}); err == nil || !strings.Contains(err.Error(), "a relay") {
 		t.Fatalf("a worker certificate for the relay's name: %v", err)
 	}
 

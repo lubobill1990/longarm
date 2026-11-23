@@ -23,11 +23,9 @@ import (
 
 // User-owned workers (docs/usage.md "Your own workers"): a user registers a
 // machine with a worker code of its own (longarm worker add); the worker
-// joins approved and is usable by that user only - hidden from everybody
-// else, never placed for them - until shared. Sharing needs an admin's
-// permission (TenantUser.can_share); admins share and unshare any worker.
-// Workers without owner (registered by admins) are the shared fleet, as
-// before. The hub pushes owner and shares to the worker
+// joins approved and is usable by that user only. Existing shares and
+// ownerless fleet workers remain usable; new shares are refused (#173).
+// The hub pushes owner and shares to the worker
 // (HubCommand.worker_access), which enforces them on every call.
 
 // maxWorkerCodes caps a user's active (unused, unexpired) worker codes.
@@ -119,10 +117,8 @@ func (h *Hub) activeWorkerCodes(owner string) (int, error) {
 	return n, nil
 }
 
-// ShareWorker changes who may use a worker: only its owner - if an admin
-// granted the owner can_share, or the owner is an admin (admin = the
-// caller has an admin certificate). Admins never share other users'
-// workers (with themselves or anybody): that would hand them the machine.
+// ShareWorker removes existing shares; new grants are refused (#173).
+// Only the owner may change shares, including with an admin certificate.
 func (h *Hub) ShareWorker(by, user string, admin bool, req *pb.ShareWorkerRequest) (*pb.NodeInfo, error) {
 	for _, u := range append(slices.Clone(req.AddUsers), req.RemoveUsers...) {
 		if !pki.ValidUser(u) {
@@ -149,17 +145,9 @@ func (h *Hub) ShareWorker(by, user string, admin bool, req *pb.ShareWorkerReques
 		h.auditHub(by, "workers/share", map[string]any{"worker": req.Worker, "owner": n.rec.Owner, "error": "admin worker"})
 		return nil, status.Errorf(codes.PermissionDenied, "worker %s is an admin worker (it runs commands as an administrator of its machine): only its owner %s may use it, it can't be shared", req.Worker, n.rec.Owner)
 	}
-	if !admin {
-		if t := h.tenants[user]; t == nil || !t.u.CanShare {
-			h.mu.Unlock()
-			return nil, status.Errorf(codes.PermissionDenied, "sharing workers needs an admin's permission (longarm admin user set %s --can-share)", user)
-		}
-	}
-	for _, u := range req.AddUsers {
-		if h.tenants[u] == nil {
-			h.mu.Unlock()
-			return nil, status.Errorf(codes.NotFound, "no user %q", u)
-		}
+	if len(req.AddUsers) > 0 || len(req.AddTeams) > 0 || req.SetEveryone && req.Everyone {
+		h.mu.Unlock()
+		return nil, status.Error(codes.FailedPrecondition, "worker sharing is being removed (#173); existing shares stay for now")
 	}
 	s := store.WorkerShares{}
 	if n.rec.Shares != nil {
@@ -191,6 +179,44 @@ func (h *Hub) ShareWorker(by, user string, admin bool, req *pb.ShareWorkerReques
 		"set_everyone": req.SetEveryone, "everyone": req.Everyone, "shares": sharesPB(rec.Shares)})
 	h.log.Info("worker shares changed", "worker", req.Worker, "by", by, "access_version", rec.AccessVersion)
 	h.kickQueue() // queued jobs of the new users may fit now
+	return info, nil
+}
+
+// ClaimWorker gives an existing fleet worker to the caller without re-enrollment.
+func (h *Hub) ClaimWorker(by, user, target string) (*pb.NodeInfo, error) {
+	if user == "" {
+		return nil, status.Error(codes.PermissionDenied, "claiming a worker requires a user")
+	}
+	h.mu.Lock()
+	n, err := h.resolveLocked(target, h.workerVisibleLocked(h.viewerLocked(user, false)), "worker")
+	if err != nil {
+		h.mu.Unlock()
+		return nil, err
+	}
+	if n.rec.State == stateRevoked || n.rec.Owner != "" || n.rec.Admin {
+		h.mu.Unlock()
+		return nil, status.Error(codes.FailedPrecondition, "only an ownerless, non-revoked, non-admin worker can be claimed")
+	}
+	if h.tenants[user] == nil || h.userDisabledLocked(user) {
+		h.mu.Unlock()
+		return nil, status.Error(codes.PermissionDenied, "claiming a worker requires an active user")
+	}
+	rec := *n.rec
+	rec.Owner = user
+	rec.AccessVersion++
+	if err := h.store.PutNode(&rec); err != nil {
+		h.mu.Unlock()
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	n.rec = &rec
+	h.sendLocked(n, workerAccessCmd(workerAccessLocked(n)))
+	h.publishNodeLocked(n, "claimed by "+by)
+	h.recheckPortLinksLocked()
+	h.checkTenancyFlipLocked()
+	info := h.nodeInfoLocked(n)
+	h.mu.Unlock()
+	h.kickQueue()
+	h.auditHub(by, "workers/claim", map[string]any{"worker": rec.Name, "id": rec.ID, "owner": user})
 	return info, nil
 }
 
@@ -296,6 +322,11 @@ func errString(err error) string {
 func (s *fleetServer) CreateWorkerCode(ctx context.Context, req *pb.CreateWorkerCodeRequest) (*pb.JoinCode, error) {
 	c := callerFrom(ctx)
 	return s.h.CreateWorkerCode(c.id.String(), c.user, req)
+}
+
+func (s *fleetServer) ClaimWorker(ctx context.Context, req *pb.ClaimWorkerRequest) (*pb.NodeInfo, error) {
+	c := callerFrom(ctx)
+	return s.h.ClaimWorker(c.id.String(), c.user, req.Worker)
 }
 
 func (s *fleetServer) ShareWorker(ctx context.Context, req *pb.ShareWorkerRequest) (*pb.NodeInfo, error) {

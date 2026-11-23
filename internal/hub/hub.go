@@ -112,9 +112,10 @@ type Hub struct {
 	relayPolMu   sync.Mutex
 	relayPolCh   chan struct{}
 
-	started time.Time
-	relay   *relay.Server
-	telem   *hubTelemetry // nil = telemetry off (telemetry.go)
+	started        time.Time
+	adoptionLoaded bool
+	relay          *relay.Server
+	telem          *hubTelemetry // nil = telemetry off (telemetry.go)
 	// traffic accounting (traffic.go)
 	traffic    *trafficStats
 	relayEnded relayEnded
@@ -770,6 +771,9 @@ func (h *Hub) sweep() {
 	now := time.Now()
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if err := h.syncAdoptionLocked(); err != nil {
+		h.log.Error("apply adoption", "err", err)
+	}
 	for _, n := range h.nodes {
 		if n.sess != nil && now.Sub(n.lastReport) > h.cfg.Heartbeat.Offline.Duration {
 			h.log.Warn("node silent; marking offline", "node", n.rec.Name, "last_report", n.lastReport)

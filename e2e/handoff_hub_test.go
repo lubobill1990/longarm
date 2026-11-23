@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"longarm/internal/hub/store"
 )
 
 // TestAgentHandoffHub: handoff between the workers of one user of a hub,
@@ -205,8 +207,7 @@ func TestAgentHandoffHub(t *testing.T) {
 	t.Run("another_users_worker", func(t *testing.T) {
 		// aw1 is shared with bob and with carol (whose admin certificate
 		// this is): they may run jobs there, never move sessions in or out
-		h.mustLongarm(alice, "worker", "share", "aw1", "--user", "bob")
-		h.mustLongarm(alice, "worker", "share", "aw1", "--user", "carol")
+		legacyWorkerShares(t, h, "aw1", &store.WorkerShares{Users: []string{"bob", "carol"}})
 		bid := "9e55a7c1-0000-4000-8000-00000000c1a0"
 		for _, who := range []struct{ name, cfg string }{{"bob", bob}, {"carol", carol}} {
 			home := homes[who.name]

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -43,8 +44,8 @@ func workerCmd() *cobra.Command {
 		Use:   "add [<name>]",
 		Short: "Make a machine your worker: install Longarm there and sign in (or use a join code this prints)",
 		Long: `Make a machine your own worker: usable by you only (hidden from other
-users, never placed for them) until you share it - which needs an admin's
-permission (longarm admin user set <you> --can-share).
+users, never placed for them). New worker shares are being removed (#173);
+existing shares remain until their owner removes them.
 
 The easy way, on that machine - it signs in with your account:
   Windows: install the Longarm MSI and choose "This machine runs jobs"
@@ -79,6 +80,33 @@ you are logged on; no password), elsewhere longarmd service install.`,
 	}
 	add.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, "validity of the code")
 	add.Flags().StringArrayVar(&labels, "label", nil, "label for the worker: KEY=VALUE[,KEY=VALUE...] (repeatable)")
+
+	var yes bool
+	claim := &cobra.Command{
+		Use: "claim <worker>", Short: "Make an ownerless worker yours in place (keeps its node ID)", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintln(cmd.ErrOrStderr(), "Claiming makes this worker yours. Other users' connections and port links will be cut.")
+			if !yes {
+				fmt.Fprint(cmd.ErrOrStderr(), "Claim this worker? [y/N] ")
+				line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+				if err != nil && line == "" {
+					return err
+				}
+				if answer := strings.ToLower(strings.TrimSpace(line)); answer != "y" && answer != "yes" {
+					return errors.New("claim cancelled")
+				}
+			}
+			return withHub(cmd, func(ctx context.Context, s *session, h *hubclient.Conn) error {
+				n, err := h.Fleet().ClaimWorker(ctx, &pb.ClaimWorkerRequest{Worker: args[0]})
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s: owned by %s (node ID %s)\n", n.Name, n.Owner, n.Id)
+				return nil
+			})
+		},
+	}
+	claim.Flags().BoolVar(&yes, "yes", false, "confirm claiming without prompting")
 
 	var asJSON bool
 	ls := &cobra.Command{
@@ -129,7 +157,7 @@ you are logged on; no password), elsewhere longarmd service install.`,
 	}
 	ls.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 
-	c.AddCommand(add, ls, shareCmd(true), shareCmd(false), workerUpdateCmd(), workerToolchainCmd())
+	c.AddCommand(add, ls, claim, shareCmd(true), shareCmd(false), workerUpdateCmd(), workerToolchainCmd())
 	c.AddCommand(&cobra.Command{
 		Use:   "label <worker> KEY=VALUE[,KEY=VALUE...]... [KEY-]...",
 		Short: "Set labels of a worker of yours (KEY- or KEY= deletes; admins: fleet workers too)",
@@ -208,7 +236,7 @@ endorse), or target it by ID.`,
 func shareCmd(share bool) *cobra.Command {
 	var users, teams []string
 	var everyone bool
-	use, short := "share", "Let users, teams or everyone use a worker of yours (needs an admin's permission: can_share)"
+	use, short := "share", "Deprecated: new worker shares are refused (#173); existing shares stay until removed"
 	if !share {
 		use, short = "unshare", "Stop sharing a worker with users, teams or everyone"
 	}

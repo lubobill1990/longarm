@@ -7,6 +7,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"longarm/internal/pki"
 	"longarm/internal/sched"
@@ -22,6 +23,16 @@ type hubAdminServer struct {
 func by(ctx context.Context) string { return callerFrom(ctx).id.String() }
 
 func (s *hubAdminServer) CreateJoinCode(ctx context.Context, req *pb.CreateJoinCodeRequest) (*pb.JoinCode, error) {
+	if req.Role == "" || req.Role == string(pki.RoleWorker) {
+		c := callerFrom(ctx)
+		if req.Owner != "" && req.Owner != c.user {
+			return nil, status.Error(codes.PermissionDenied, "an admin cannot assign a worker to another user; that user runs longarm worker add")
+		}
+		if req.Owner == "" && s.h.TenancyOn() {
+			req = proto.Clone(req).(*pb.CreateJoinCodeRequest)
+			req.Owner = c.user
+		}
+	}
 	return s.h.CreateJoinCode(by(ctx), req)
 }
 

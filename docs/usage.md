@@ -2241,8 +2241,9 @@ their client devices - by name (`longarm run --on`/`longarm exec <worker>`) or b
 automatic placement, which picks the least loaded worker the user may use.
 A worker a user registers is usable **by that user only**: other users don't
 see it (`longarm ls`, the panel, events, metrics history), can't call it, and
-the scheduler never places their jobs on it. Workers registered by admins
-(join codes without owner) stay the shared fleet, as before.
+the scheduler never places their jobs on it. Existing ownerless fleet workers
+keep working until explicitly claimed or adopted. Once users exist, new
+worker codes require an owner ([#173](https://github.com/lubobill1990/longarm/issues/173)).
 
 ```sh
 # the easy way, on the new machine: install the MSI and choose "This machine runs jobs" (the tray
@@ -2262,7 +2263,7 @@ longarm worker label <worker> pool=devbox [gpu-]...   # set (KEY=VALUE) / delete
 longarm worker toolchain <worker> [--json] # desired tools and installed versions
 longarm worker toolchain <worker> --tools claude,copilot,uv,node@22 --apply --json
 longarm worker toolchain <worker> --clear # clear your desired tools, not installed software
-longarm worker share <worker> [--user bob]... [--team web]... [--everyone]
+longarm worker claim <worker> [--yes]      # claim an ownerless worker in place; keeps its node ID
 longarm worker unshare <worker> [--user bob]... [--team web]... [--everyone]
 longarm worker remove <worker>            # revoke it (owner or admin); also: worker rm
 longarm worker rename <worker> <new-name> # rename it (owner or admin; it keeps its ID; audited)
@@ -2336,24 +2337,59 @@ worker reports itself (`longarmd.toml` `[hub] labels`) are changed there;
 the hub's win on a conflict. An older hub ignores sign-in labels
 (`longarmd login` then prints the `longarm worker label` command to run).
 
-**Sharing is off by default**: an admin lets a user share their workers,
-and admins share and unshare any user's worker (`longarm worker share` with
-an admin certificate):
+**Adding machines.** With users on the hub, `longarm admin join-code --role
+worker` defaults the owner to the caller's own user; `--owner` may name only
+that user. An admin cannot push a machine onto another user: that user runs
+`longarm worker add`. The host operator is trusted to name an existing owner:
 
 ```sh
-longarm admin user set alice --can-share          # --can-share=false takes it back (existing shares stay;
-                                                  # an admin unshares them)
-longarm admin join-code --role worker --owner alice [--name alice-box]   # a worker code owned by alice
-longarm whoami                                    # ... can share own workers: true|false
+longarm admin join-code --role worker             # owned by the caller when users exist
+longarm-hub join-code --role worker --owner alice # host operator: owner required when users exist
+longarm-hub issue --role worker --name worker-1 --owner alice --out ./worker-tls
+longarm admin issue --role worker --name worker-1 --out ./worker-tls # requires the hub; records ownership before issuing
+longarm worker claim worker-1 --yes
 ```
 
-Who is shared with is shown to the owner and admins only. Sharing a worker
+Without users, host-issued ownerless codes and bundles still work and print
+an adoption warning. Existing ownerless codes cannot enroll new workers after
+users exist. Client/admin codes are unchanged.
+
+**Claiming** needs an active user and an ownerless, non-revoked, non-admin
+worker visible to that user. It keeps the worker's node ID, certificates and
+jobs. The CLI warns and asks for confirmation (`--yes` skips the prompt):
+other users' connections and port links are cut. Online workers receive the
+change immediately; offline workers receive it at reconnect. The worker saves
+the owner in `hub.toml` as well as `worker-access.json`, so losing the latter
+does not reopen the machine.
+
+**Adopting a hub without users** is a one-time host-operator action:
+
+```sh
+longarm-hub adopt --user alice --map device-2=bob --map worker-2=bob --yes
+```
+
+It creates alice and mapped users, pins every non-revoked client/admin device
+to its assigned user and claims ownerless non-admin workers. Targets accept
+names or node IDs; existing users or a previous adoption cause refusal.
+The command saves an audited plan in SQLite WAL, safe alongside `serve`:
+the running hub applies it within its next maintenance tick (about one second),
+or on its next start/request. A device acts as its pinned user **on the hub
+immediately after application**, even with its old certificate. Direct worker
+calls use the certificate's user **until its next renewal**; renew devices
+before using newly claimed workers. The renewed certificate carries the pinned
+user. Existing jobs are not reassigned.
+
+**Sharing is deprecated** ([#173](https://github.com/lubobill1990/longarm/issues/173)):
+new users, teams and everyone shares are refused, regardless of `can_share`.
+Existing shares keep working; owners can remove them with `worker unshare`
+even without `can_share`. Who is shared with is shown to the owner only.
+Existing sharing of a worker
 shares the machine, not the owner's work: on a shared worker everybody sees
 and controls only their own jobs and sessions (an admin certificate shared
 with gets no admin rights over the owner's jobs). **Admins are not exempt**:
 an admin certificate whose user is neither the owner nor shared with is
 refused on an owned worker like anybody else (`Admin.Shutdown`/`Gc`
-included); admins still see it on the hub, share, unshare and remove it.
+included); an admin cannot manage another user's private worker.
 Removing a user (`longarm admin user remove`) also revokes the user's workers;
 removing or disabling a user drops the user's unused worker codes. Owners
 are users (`longarm admin user add`): codes for anybody else are refused.

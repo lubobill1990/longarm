@@ -128,6 +128,9 @@ func (h *Hub) CreateJoinCode(by string, req *pb.CreateJoinCodeRequest) (*pb.Join
 	if err := sched.CheckUserLabels(req.Labels); err != nil {
 		return nil, status.Error(codes.PermissionDenied, err.Error())
 	}
+	if r == pki.RoleWorker && req.Owner == "" && h.TenancyOn() {
+		return nil, status.Error(codes.FailedPrecondition, "worker codes require --owner <user> when users exist (longarm worker add)")
+	}
 	if req.Profile != "" {
 		h.mu.Lock()
 		_, ok := h.profiles[req.Profile]
@@ -203,6 +206,14 @@ func (s *enrollServer) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinR
 		return nil, status.Errorf(codes.InvalidArgument, "%s (use --name)", status.Convert(err).Message())
 	}
 	h.mu.Lock()
+	if err := h.syncAdoptionLocked(); err != nil {
+		h.mu.Unlock()
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if jc.Role == string(pki.RoleWorker) && jc.Owner == "" && h.tenancyOnLocked() {
+		h.mu.Unlock()
+		return nil, status.Error(codes.FailedPrecondition, "ownerless worker codes cannot enroll new workers after users exist; use longarm worker add")
+	}
 	if n := h.nameTakenLocked(name, ""); n != nil {
 		h.mu.Unlock()
 		return nil, status.Errorf(codes.AlreadyExists, "node name %q is taken (pick another with --name, or revoke the old node)", name)

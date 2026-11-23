@@ -65,8 +65,9 @@ var hubMethodRoles = map[string][]pki.Role{
 	pb.Fleet_Events_FullMethodName:            users,
 	pb.Fleet_Place_FullMethodName:             users,
 	pb.Fleet_Audit_FullMethodName:             adminOnly,
-	// own workers: the handlers check owner / can_share / admin
+	// own workers: the handlers check owner / admin
 	pb.Fleet_CreateWorkerCode_FullMethodName:  users,
+	pb.Fleet_ClaimWorker_FullMethodName:       users,
 	pb.Fleet_PanelLogin_FullMethodName:        users,
 	pb.Fleet_ShareWorker_FullMethodName:       users,
 	pb.Fleet_RemoveWorker_FullMethodName:      users,
@@ -117,10 +118,9 @@ type caller struct {
 }
 
 // userOfLocked is the Longarm user a certificate of node nodeID acts as on
-// the hub. Only clients and admins have one: the certificate's user, else
-// the user the hub recorded for that device (pinned at enrollment, by the
-// node ID migration and before a rename: a rename never changes whom a
-// device acts as), else (an old single-user certificate) its name - a
+// the hub. Only clients and admins have one: the pinned device user
+// (enrollment, migration or adoption; renames never change it), else the
+// certificate's user, else its name - a
 // client/admin name the hub never hands to another user's device
 // (nodeNameReservedLocked). A worker's name is never a user: a worker
 // named like a user sees nothing of that user's.
@@ -128,11 +128,11 @@ func (h *Hub) userOfLocked(id pki.Identity, nodeID string) string {
 	if id.Role != pki.RoleClient && id.Role != pki.RoleAdmin {
 		return ""
 	}
-	if id.User != "" {
-		return id.User
-	}
 	if n := h.nodes[nodeID]; n != nil && n.rec.Role == string(id.Role) && n.rec.User != "" {
 		return n.rec.User
+	}
+	if id.User != "" {
+		return id.User
 	}
 	return id.Name
 }
@@ -217,6 +217,9 @@ func (h *Hub) checkNode(id pki.Identity, cert *x509.Certificate) (string, error)
 	serial := pki.Serial(cert)
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if err := h.syncAdoptionLocked(); err != nil {
+		return "", status.Error(codes.Internal, err.Error())
+	}
 	n := h.nodeForCertLocked(id, cert)
 	switch {
 	case n == nil:
