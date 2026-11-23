@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -57,7 +58,8 @@ ok ends with the exact command to run next ("next: ...").
 Checks: enrolled (a worker certificate) and until when it is valid;
 longarmd running (local control API) and its hub link; how it is started
 (user-session scheduled task or service) and whether that is registered;
-its log files; ERROR lines in longarmd.log of the last 24 hours.
+the macOS LaunchDaemon's ProcessType; its log files; ERROR lines in
+longarmd.log of the last 24 hours.
 
 --json prints the report for programs (docs/usage.md#doctor---json). Exit
 code: 0 without failures (warnings allowed), 1 with failures.
@@ -71,6 +73,9 @@ The client side has its own: longarm doctor.`,
 			}
 			r := doctor.New("longarmd", version.Version, time.Now())
 			r.Add(workerChecks(cmd.Context(), &realWorkerEnv{dataDir: dir}, time.Now())...)
+			if runtime.GOOS == "darwin" {
+				r.Add(launchDaemonChecks("/Library/LaunchDaemons/com.longarm.longarmd.plist")...)
+			}
 			if asJSON {
 				err = r.WriteJSON(os.Stdout)
 			} else {
@@ -163,6 +168,29 @@ func workerChecks(ctx context.Context, env workerEnv, now time.Time) []doctor.Ch
 	}
 	out = append(out, ec)
 	return out
+}
+
+func launchDaemonChecks(plist string) []doctor.Check {
+	if _, err := os.ReadFile(plist); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return []doctor.Check{{ID: "launchd-process-type", Title: "launchd", Status: doctor.Warn,
+			Detail: "cannot read plist: " + oneLineErr(err), Fix: "sudo plutil -lint " + plist}}
+	}
+	out, err := exec.Command("/usr/libexec/PlistBuddy", "-c", "Print :ProcessType", plist).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	c := doctor.Check{ID: "launchd-process-type", Title: "launchd", Status: doctor.Warn}
+	if strings.Contains(string(out), "Does Not Exist") {
+		c.Detail = "ProcessType is missing; launchd may throttle jobs and sessions"
+		c.Fix = "sudo /usr/libexec/PlistBuddy -c 'Add :ProcessType string Interactive' " + plist +
+			" && sudo launchctl bootout system/com.longarm.longarmd && sudo launchctl bootstrap system " + plist
+	} else {
+		c.Detail = "cannot check ProcessType: " + oneLineErr(fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out))))
+		c.Fix = "sudo plutil -lint " + plist
+	}
+	return []doctor.Check{c}
 }
 
 func hubLinkCheck(st *pb.WorkerStatus) doctor.Check {

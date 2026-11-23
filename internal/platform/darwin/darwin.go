@@ -167,7 +167,8 @@ func xmlEscape(s string) string {
 }
 
 // Plist renders the LaunchDaemon. AbandonProcessGroup keeps job shims alive
-// when longarmd exits or is restarted by launchd.
+// when longarmd exits or is restarted by launchd. Interactive avoids launchd's
+// default CPU and I/O throttling for the worker and its workloads.
 func Plist(cfg ptypes.ServiceConfig) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
@@ -183,7 +184,7 @@ func Plist(cfg ptypes.ServiceConfig) string {
 	if cfg.User != "" {
 		fmt.Fprintf(&b, "<key>UserName</key><string>%s</string>\n", xmlEscape(cfg.User))
 	}
-	b.WriteString("<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n<key>AbandonProcessGroup</key><true/>\n</dict></plist>\n")
+	b.WriteString("<key>ProcessType</key><string>Interactive</string>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n<key>AbandonProcessGroup</key><true/>\n</dict></plist>\n")
 	return b.String()
 }
 

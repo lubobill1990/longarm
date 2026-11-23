@@ -636,6 +636,7 @@ const (
 	Fleet_Links_FullMethodName            = "/longarm.v1.Fleet/Links"
 	Fleet_History_FullMethodName          = "/longarm.v1.Fleet/History"
 	Fleet_CreateWorkerCode_FullMethodName = "/longarm.v1.Fleet/CreateWorkerCode"
+	Fleet_PanelLogin_FullMethodName       = "/longarm.v1.Fleet/PanelLogin"
 	Fleet_ShareWorker_FullMethodName      = "/longarm.v1.Fleet/ShareWorker"
 	Fleet_RemoveWorker_FullMethodName     = "/longarm.v1.Fleet/RemoveWorker"
 	Fleet_SetWorkerLabels_FullMethodName  = "/longarm.v1.Fleet/SetWorkerLabels"
@@ -691,6 +692,14 @@ type FleetClient interface {
 	// (`longarm worker add`): the worker joins approved, usable by that user
 	// only until shared.
 	CreateWorkerCode(ctx context.Context, in *CreateWorkerCodeRequest, opts ...grpc.CallOption) (*JoinCode, error)
+	// PanelLogin creates (reset: replaces) the web panel login of the
+	// caller's own user, role user (never admin, even from an admin
+	// certificate), authenticated by the device's certificate (`longarm
+	// panel-login`): how a user of a hub without an identity provider gets
+	// the login that approves /link for further devices. Refused for
+	// workers, certificates without a user, and hubs with an identity
+	// provider (those users sign in with it).
+	PanelLogin(ctx context.Context, in *PanelLoginRequest, opts ...grpc.CallOption) (*PanelLoginResponse, error)
 	// ShareWorker changes who may use a worker: its owner, if an admin let
 	// the owner share (TenantUser.can_share), or an admin.
 	ShareWorker(ctx context.Context, in *ShareWorkerRequest, opts ...grpc.CallOption) (*NodeInfo, error)
@@ -914,6 +923,16 @@ func (c *fleetClient) CreateWorkerCode(ctx context.Context, in *CreateWorkerCode
 	return out, nil
 }
 
+func (c *fleetClient) PanelLogin(ctx context.Context, in *PanelLoginRequest, opts ...grpc.CallOption) (*PanelLoginResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PanelLoginResponse)
+	err := c.cc.Invoke(ctx, Fleet_PanelLogin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *fleetClient) ShareWorker(ctx context.Context, in *ShareWorkerRequest, opts ...grpc.CallOption) (*NodeInfo, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(NodeInfo)
@@ -1048,6 +1067,14 @@ type FleetServer interface {
 	// (`longarm worker add`): the worker joins approved, usable by that user
 	// only until shared.
 	CreateWorkerCode(context.Context, *CreateWorkerCodeRequest) (*JoinCode, error)
+	// PanelLogin creates (reset: replaces) the web panel login of the
+	// caller's own user, role user (never admin, even from an admin
+	// certificate), authenticated by the device's certificate (`longarm
+	// panel-login`): how a user of a hub without an identity provider gets
+	// the login that approves /link for further devices. Refused for
+	// workers, certificates without a user, and hubs with an identity
+	// provider (those users sign in with it).
+	PanelLogin(context.Context, *PanelLoginRequest) (*PanelLoginResponse, error)
 	// ShareWorker changes who may use a worker: its owner, if an admin let
 	// the owner share (TenantUser.can_share), or an admin.
 	ShareWorker(context.Context, *ShareWorkerRequest) (*NodeInfo, error)
@@ -1129,6 +1156,9 @@ func (UnimplementedFleetServer) History(context.Context, *HistoryRequest) (*Hist
 }
 func (UnimplementedFleetServer) CreateWorkerCode(context.Context, *CreateWorkerCodeRequest) (*JoinCode, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateWorkerCode not implemented")
+}
+func (UnimplementedFleetServer) PanelLogin(context.Context, *PanelLoginRequest) (*PanelLoginResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PanelLogin not implemented")
 }
 func (UnimplementedFleetServer) ShareWorker(context.Context, *ShareWorkerRequest) (*NodeInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method ShareWorker not implemented")
@@ -1420,6 +1450,24 @@ func _Fleet_CreateWorkerCode_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Fleet_PanelLogin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PanelLoginRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FleetServer).PanelLogin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Fleet_PanelLogin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FleetServer).PanelLogin(ctx, req.(*PanelLoginRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Fleet_ShareWorker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ShareWorkerRequest)
 	if err := dec(in); err != nil {
@@ -1632,6 +1680,10 @@ var Fleet_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateWorkerCode",
 			Handler:    _Fleet_CreateWorkerCode_Handler,
+		},
+		{
+			MethodName: "PanelLogin",
+			Handler:    _Fleet_PanelLogin_Handler,
 		},
 		{
 			MethodName: "ShareWorker",

@@ -56,14 +56,6 @@ them in Entra) doesn't touch certificates they hold: `renew` re-issues
 with the stored role. Re-evaluate the policy on renewal for
 identity-provider users (internal/hub/enroll.go renew, idp.go).
 
-## A panel admin login named like a user acts as that user
-
-`link.go` (`a.user = a.login`) and `panelViewer` treat an admin login with
-the name of a Longarm user as that user; without an identity provider
-`/link` then mints an admin certificate for them, past
-`adminCredentialsRefusedLocked`. Refuse creating a user named like a panel
-account, and drop the fallback.
-
 ## The tray's bootstrap code in a command line
 
 On Linux and macOS the one-time `?token=` URL is in the argv of

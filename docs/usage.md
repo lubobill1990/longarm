@@ -62,8 +62,8 @@ $env:LONGARM_LOGIN=1; $env:LONGARM_ROLE='both'; irm https://hub.example.com/inst
 # 2. sign in - the one-liners and the tray do it; already installed:
 longarmd login hub.example.com --role both     # worker + client: one code, one approval
 longarm login hub.example.com                  # a client only
-#   Open https://hub.example.com/link and enter code BCDF-GHJK  - in any browser: sign in (Microsoft,
-#   Google or Apple account, as the hub offers), type the code, approve
+#   Open https://hub.example.com/link and enter code BCDF-GHJK - in any browser: sign in with an
+#   account the hub offers, or your panel login (password + authenticator code), type the code, approve
 
 # 3. run something
 longarm ls                                     # your workers (this machine too)
@@ -138,6 +138,10 @@ prints it and changes nothing):
   only root's dir holds is refused (the account could not read it). Windows
   keeps the invoking account's default;
 - otherwise the default above.
+
+On macOS, `service install` writes a LaunchDaemon with
+`ProcessType = Interactive` to avoid inherited CPU / I/O throttling.
+For older services, see the [plist migration](#macos-installer-pkg-and-mdm).
 
 Per-user isolation also needs every parent of the users dir (`<data>/users`
 or `[isolation] users_dir`) traversable by the accounts (Unix `o+x`), which a
@@ -276,6 +280,7 @@ test against.
 | `lfs` | `run` / `sync --lfs skip\|ship` |
 | `ref-sha` | `run --repo <path> --ref <full commit id>` |
 | `worker-label` | `longarm worker label` for owners |
+| `panel-login` | `panel-login [--reset] [--json]`: create or replace your own panel login on a hub without an identity provider |
 | `toolchain-report` | `worker ls --json` includes baseline installed tools in each worker's `toolchain.versions` (requires an updated worker) |
 | `worker-toolchain` | `worker toolchain <worker>`: owner desired tools, admin-profile precedence, idle-only reconciliation and JSON status (requires an updated hub and worker) |
 | `git-auth-forward` | `run` / `sync --git-auth forward`, `run --repo <url> --lfs fetch`; the worker must also support it (`git-auth-forward` in its `Node.Info` features), see [Fetching with your credential](#fetching-with-your-credential---git-auth-forward) |
@@ -1736,6 +1741,8 @@ and the certificate's validity, longarmd running (local control API) and
 its hub link, how it starts (the user-session scheduled task or the
 service, and whether that is registered), its log files, and ERROR lines of
 the last 24 hours in longarmd.log.
+On macOS it also warns when the installed LaunchDaemon lacks `ProcessType`,
+with the sudo command to fix it (see [macOS installer](#macos-installer-pkg-and-mdm)).
 
 Both exit 0 without failures (warnings allowed), 1 with failures. When
 longarmd is not running, `longarmd status` (and the other local commands)
@@ -2094,9 +2101,33 @@ longarm admin team add web alice bob; longarm admin team rm web bob; longarm adm
 longarm admin join-code --role client --user alice --name alice-2   # the same, by hand
 longarm admin issue --role client --name alice-pc --user alice --out DIR   # without a hub
 longarm whoami                                             # this device: user, teams, quota, usage
+longarm panel-login [--reset] [--json]                      # your own panel login (hubs without an identity provider)
 longarm run --share team -- make test                      # team members may read it (team:<name> = one team)
 longarm run --cpus 4 --mem-limit 8G -- make                # per-job limits (capped by the user's quota)
 ```
+
+**Adding another device without an identity provider.** On an existing
+signed-in client device, run `longarm panel-login`. It uses that device's
+certificate to create your own panel login, always role `user`, even if
+the device has an admin certificate. The login name, generated password,
+TOTP secret and authenticator (`otpauth://`) URI are printed once to stderr;
+`--json` prints them once as JSON to stdout instead. Save the password and
+enroll the secret in your authenticator. On the new device run `longarm
+login <hub>`, open the panel `/link` address it prints, sign in with this
+login and approve its pairing code.
+
+If you already have a login, use it; if you lost its password or TOTP,
+`longarm panel-login --reset` on a signed-in device replaces both and ends
+that login's existing panel sessions. Disabled users cannot do this.
+With an identity provider configured, sign in with the provider instead.
+Admins can still bootstrap a user without machines with `longarm admin
+user set alice --panel`; they cannot reset a user's login once it has
+machines. `longarm-hub user add alice` is not a substitute: admin panel
+logins cannot take Longarm users' names, even on reset, and a user cannot
+be created with an existing admin panel login's name. **Existing admin
+logins named like users no longer approve `/link` as those users or see
+their machines and jobs.** Remove the conflicting admin panel login
+before the user creates its own login.
 
 `hub.toml`:
 
@@ -2419,10 +2450,22 @@ Each prints the hub's `/link` address and a code:
 
 ```
 hub hub.example.com:7443: CA 3f9a...c1 pinned (from https://hub.example.com/ca.crt, checked with this system's HTTPS roots)
-To link this machine as your device and your worker (one approval for both), sign in with your Microsoft account (or the hub's panel login) in a browser:
+To link this machine as your device and your worker (one approval for both), sign in with your account (Microsoft (work or school)) in a browser:
 
   Open https://hub.example.com/link and enter code BCDF-GHJK
 ```
+
+The sign-in instructions list the account providers the hub offers. Without
+providers, use your panel login (password + authenticator code); older hubs
+also get neutral panel sign-in wording. The hub's `public_url` decides the
+printed URL. Without it, the HTTP listener's port and the host the device
+dialed are used, except that a loopback-only panel keeps its loopback URL.
+Devices dialing a non-loopback host then also print a routing hint, for example
+`ssh -L 7480:127.0.0.1:7480 -- hub.example.com`, then open
+`http://127.0.0.1:7480/link`. Use your existing route to the panel, or ask the
+hub's admin to set `public_url` to its reachable URL. The hint is printed
+with or without `--no-browser`; automatic browser opening still works when
+you already have a tunnel.
 
 **The hub's domain is enough.** `longarm login` / `longarmd login` take
 `hub.example.com`, `https://hub.example.com` or `host:port` (the gRPC port;
@@ -2468,8 +2511,9 @@ never carries the code - you always type it. Signed in already,
 `longarmd login` says as what and exits 80 (`--force` signs in again);
 install.ps1 then asks whether to replace that sign-in, and keeps it on no
 (or with nobody to ask). Codes last 10 minutes and work once; Ctrl-C gives up. On a hub without
-`[auth.entra]` the same works with a panel login of a Longarm user
-(`longarm admin user add <name> --panel`); with `[auth.entra]` only a
+an identity provider the same works with a panel login of a Longarm user
+(`longarm panel-login` on an existing device, or `longarm admin user add
+<name> --panel` when bootstrapping); with `[auth.entra]` only a
 Microsoft sign-in may approve (and its `web` must not be `off`).
 
 `longarm login` asks the Azure CLI first: with `az login` done, it uses its
@@ -3540,6 +3584,30 @@ installs and starts the LaunchDaemon with the data dir `~User/.longarm`.
 The values are validated (a malformed or non-root-owned preferences file is
 ignored); the join code is removed from `/Library/Preferences/com.longarm`
 afterwards.
+
+The LaunchDaemon uses `ProcessType = Interactive` so longarmd and its jobs,
+sessions and built-in sshd shells avoid launchd's default CPU and I/O
+throttling, like an SSH session. This is the default, with no priority
+switch; it does not change the service account or grant extra privileges.
+The pkg adds the key to older plists that lack it and reloads a loaded
+service with `bootout` / `bootstrap` (unloaded services stay unloaded).
+Existing `ProcessType` values are preserved.
+
+**Older installs / binary-only updates.** Replacing the binary (including
+self-update) cannot change a root-owned plist. Run `longarmd doctor`; if it
+warns that `ProcessType` is missing, apply this once:
+
+```sh
+sudo /usr/libexec/PlistBuddy -c 'Add :ProcessType string Interactive' /Library/LaunchDaemons/com.longarm.longarmd.plist
+# For a loaded service (kickstart alone does not re-read the plist):
+sudo launchctl bootout system/com.longarm.longarmd && sudo launchctl bootstrap system /Library/LaunchDaemons/com.longarm.longarmd.plist
+# If it was not loaded, start it when ready instead:
+# sudo longarmd service start
+```
+
+Jobs and sessions survive the daemon reload through `AbandonProcessGroup`,
+but already-running workloads retain their inherited scheduling policy;
+start new jobs / sessions to get the new policy.
 
 **For MDM administrators** (Jamf, Intune, Kandji, Mosyle, …):
 

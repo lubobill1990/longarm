@@ -364,7 +364,7 @@ Everything is Go in a single codebase; GoReleaser builds all targets in one pass
 
 | Capability | Windows | Linux | macOS |
 |---|---|---|---|
-| Resident service | SCM service (logged on as a user account) | systemd unit | launchd (LaunchDaemon, `UserName` set to the user) |
+| Resident service | SCM service (logged on as a user account) | systemd unit | launchd (LaunchDaemon, `UserName` set to the user, `ProcessType = Interactive` to avoid inherited CPU / I/O throttling) |
 | Job process-tree isolation / whole-tree kill | Job Object | cgroup v2 (falls back to process groups) | Process group + `setrlimit` (**no reliable memory limit**; can only monitor and kill when exceeded) |
 | Interactive terminal | ConPTY | pty | pty |
 | Local control API channel | Named pipe (ACL: current user/administrators only) | Unix socket (0600) | Unix socket (0600) |

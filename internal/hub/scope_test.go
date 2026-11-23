@@ -496,11 +496,22 @@ func TestNoAdminCredentialsForUsers(t *testing.T) {
 	if _, err := AddUser(h.store, "erin", "another-password-1", true); err == nil {
 		t.Fatal("erin's user login replaced by an administrator's")
 	}
+	for _, reset := range []bool{false, true} {
+		if _, err := AddUser(h.store, "alice", "another-password-1", reset); err == nil {
+			t.Fatalf("store allowed an administrator login named alice (reset %v)", reset)
+		}
+	}
 	// ... nor the name of a user without a user record: an old certificate's
 	// (its name is its user), a worker's owner
 	h.mu.Lock()
-	h.putTestNode(&node{rec: &store.Node{Name: "lega", Role: "client", State: stateApproved}})
-	h.putTestNode(&node{rec: &store.Node{Name: "gw", Role: "worker", Owner: "ghost", State: stateRevoked}})
+	for _, rec := range []*store.Node{{Name: "lega", Role: "client", State: stateApproved},
+		{Name: "gw", Role: "worker", Owner: "ghost", State: stateRevoked}} {
+		h.putTestNode(&node{rec: rec})
+		if err := h.store.PutNode(rec); err != nil {
+			h.mu.Unlock()
+			t.Fatal(err)
+		}
+	}
 	h.mu.Unlock()
 	for _, name := range []string{"lega", "ghost"} {
 		body := `{"name":"` + name + `","password":"another-password-1","current_password":"admin-password-1"}`
@@ -514,6 +525,9 @@ func TestNoAdminCredentialsForUsers(t *testing.T) {
 		}
 		if _, err := h.store.GetUser(name); err == nil {
 			t.Errorf("a panel login %s exists", name)
+		}
+		if _, err := AddUser(h.store, name, "another-password-1", false); err == nil {
+			t.Errorf("store allowed an administrator login named %s", name)
 		}
 	}
 }
@@ -540,7 +554,7 @@ func TestAdminCantJoinTeams(t *testing.T) {
 	if _, err := adm.PutUser(tctx(t), &pb.PutUserRequest{Name: "root", SetTeams: true, Teams: []string{"t1"}}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("admin sets its own teams: %v", err)
 	}
-	if _, err := AddUser(h.store, "root", "admin-password-1", false); err != nil { // a panel administrator "root"
+	if err := h.store.PutUser(&store.User{Name: "root"}); err != nil { // a legacy panel administrator "root"
 		t.Fatal(err)
 	}
 	if _, err := h.SetTeam("web/root", &pb.SetTeamRequest{Team: "t1", Add: []string{"root"}}); status.Code(err) != codes.PermissionDenied {

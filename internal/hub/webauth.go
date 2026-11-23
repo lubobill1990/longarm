@@ -135,6 +135,11 @@ func AddPanelUser(st *store.Store, name, password, role, tenant string, replace 
 	if len(password) < 10 {
 		return "", errors.New("the password must have at least 10 characters")
 	}
+	if role == "admin" {
+		if err := panelAdminNameRefused(st, name); err != nil {
+			return "", err
+		}
+	}
 	if old, err := st.GetUser(name); err == nil {
 		if !replace {
 			return "", fmt.Errorf("user %s exists (use --reset to replace the password and TOTP secret)", name)
@@ -145,12 +150,40 @@ func AddPanelUser(st *store.Store, name, password, role, tenant string, replace 
 		if role == "admin" && !old.Admin() { // a user's login never becomes an administrator's (who would act as that user)
 			return "", fmt.Errorf("%s is a user's panel login", name)
 		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return "", err
 	}
 	u := &store.User{Name: name, PassHash: hashPassword(password), TOTPSecret: NewTOTPSecret(), CreatedAt: time.Now().UTC()}
 	if role == "user" {
 		u.Role, u.Tenant = role, tenant
 	}
 	return u.TOTPSecret, st.PutUser(u)
+}
+
+// Check the store too: longarm-hub user add runs without the hub's memory.
+func panelAdminNameRefused(st *store.Store, name string) error {
+	refused := func() error {
+		return fmt.Errorf("%s is a Longarm user's name: use longarm panel-login from its device, or longarm admin user set %s --panel for a user without machines", name, name)
+	}
+	tenants, err := st.Tenants()
+	if err != nil {
+		return err
+	}
+	for _, t := range tenants {
+		if t.Name == name {
+			return refused()
+		}
+	}
+	nodes, err := st.Nodes()
+	if err != nil {
+		return err
+	}
+	for _, n := range nodes {
+		if n.Role == string(pki.RoleWorker) && n.Owner == name || userNodeRole(n.Role) && nodeUser(n) == name {
+			return refused()
+		}
+	}
+	return nil
 }
 
 func sessionHash(tok string) string {

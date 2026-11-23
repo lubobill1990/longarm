@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -116,6 +118,54 @@ func TestStartCommandAndNotRunning(t *testing.T) {
 		"  checklist: longarmd doctor"
 	if err.Error() != want {
 		t.Errorf("not running:\n%s\nwant\n%s", err, want)
+	}
+}
+
+func TestLaunchDaemonChecks(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("uses macOS PlistBuddy")
+	}
+	path := filepath.Join(t.TempDir(), "com.longarm.longarmd.plist")
+	if got := launchDaemonChecks(path); len(got) != 0 {
+		t.Fatalf("not installed: %+v", got)
+	}
+	for _, tc := range []struct {
+		name, dict string
+		warn       bool
+	}{
+		{"old install", "<key>Label</key><string>com.longarm.longarmd</string>", true},
+		{"interactive", "<key>ProcessType</key><string>Interactive</string>", false},
+		{"explicit background", "<key>ProcessType</key><string>Background</string>", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte(`<?xml version="1.0"?><plist version="1.0"><dict>`+tc.dict+`</dict></plist>`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got := launchDaemonChecks(path)
+			if !tc.warn {
+				if len(got) != 0 {
+					t.Fatalf("configured: %+v", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0].ID != "launchd-process-type" || got[0].Status != doctor.Warn {
+				t.Fatalf("missing ProcessType: %+v", got)
+			}
+			want := "sudo /usr/libexec/PlistBuddy -c 'Add :ProcessType string Interactive' " + path +
+				" && sudo launchctl bootout system/com.longarm.longarmd && sudo launchctl bootstrap system " + path
+			if got[0].Fix != want {
+				t.Fatalf("next: %q, want %q", got[0].Fix, want)
+			}
+			r := doctor.New("longarmd", "test", time.Now())
+			r.Add(got...)
+			var text strings.Builder
+			if err := r.WriteText(&text); err != nil {
+				t.Fatal(err)
+			}
+			if !r.OK || !strings.Contains(text.String(), "next: "+want) {
+				t.Fatalf("warning output: %s", text.String())
+			}
+		})
 	}
 }
 

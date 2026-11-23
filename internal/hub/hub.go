@@ -712,6 +712,10 @@ func (h *Hub) Serve(ctx context.Context) error {
 	h.logStartup(serveAt)
 	h.log.Info("longarm-hub started", "version", version.Version, "grpc", h.Addr("grpc"), "relay_udp", h.Addr("udp"), "stun2", h.Addr("stun2"),
 		"http", h.Addr("http"), "https", h.Addr("https"), "data", h.cfg.DataDir, "ca", pki.Fingerprint(h.ca.Cert))
+	if h.cfg.PublicURL == "" && loopbackListener(h.Addr("http")) && !loopbackListener(h.Addr("grpc")) {
+		h.log.Warn("panel listens on loopback only: remote devices pairing at /link need a tunnel or another route; set public_url to the reachable panel URL",
+			"http", h.Addr("http"))
+	}
 
 	var runErr error
 	select {

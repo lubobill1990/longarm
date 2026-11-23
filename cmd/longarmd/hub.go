@@ -81,8 +81,10 @@ recorded, else the one built into this release (if any: longarm version --json).
 
 By default longarmd login prints the hub's /link address and a code: open
 the page in any browser (your laptop or phone will do - this machine needs
-none), sign in with your account (Microsoft, Google or Apple, as the hub
-offers), type the code, check the details and approve. The page is opened here when this machine has a desktop
+none), sign in with an account the hub offers or your panel login (password +
+authenticator code), type the code, check the details and approve.
+public_url decides the printed URL; a loopback-only panel without it prints
+a routing hint. The page is opened here when this machine has a desktop
 (--no-browser: never) - in a terminal when you press Enter, so the browser
 doesn't cover the code.
 
