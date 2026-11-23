@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"longarm/internal/client"
@@ -107,6 +109,14 @@ func adminCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
+					if !me.Tenancy {
+						// no users on the hub: the CA's holder issues offline, as before
+						if issueOwner != "" {
+							return fmt.Errorf("--owner needs Longarm users on the hub")
+						}
+						fmt.Fprintln(os.Stderr, "ownerless worker: run longarm-hub adopt --user <you> (see #173)")
+						return nil
+					}
 					if issueOwner != "" && issueOwner != me.User {
 						return fmt.Errorf("PermissionDenied: an admin cannot assign a worker to another user; that user runs longarm worker add")
 					}
@@ -123,6 +133,12 @@ func adminCmd() *cobra.Command {
 						return fmt.Errorf("worker %s is not yours; use longarm worker claim for an ownerless worker", id)
 					}
 					jc, err := h.Admin().CreateJoinCode(ctx, &pb.CreateJoinCodeRequest{Role: "worker", Name: name, Owner: issueOwner})
+					if status.Code(err) == codes.PermissionDenied && issueOwner == "" {
+						// the CA's holder without an admin certificate: the hub
+						// records no owner for it; issue offline, as before
+						fmt.Fprintln(os.Stderr, "ownerless worker (the hub records owners for admin certificates only): its user runs longarm worker claim (see #173)")
+						return nil
+					}
 					if err != nil {
 						return err
 					}

@@ -662,7 +662,7 @@ visibility of what the worker's users run.
 A user can register their own machine as a worker (`longarm worker add`,
 [usage](usage.md#your-own-workers)). The worker code names the user as the
 worker's **owner**; the worker joins approved and is usable by its owner
-only. In the first rollout of [#173](https://github.com/lubobill1990/longarm/issues/173),
+only. In the first rollout of #173,
 **new shares are refused**, including user/team additions and enabling everyone,
 regardless of `can_share`; existing shares remain effective and their owner can
 remove them without that permission. An admin never shares another user's worker.

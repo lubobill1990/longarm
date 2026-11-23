@@ -2283,7 +2283,7 @@ A worker a user registers is usable **by that user only**: other users don't
 see it (`longarm ls`, the panel, events, metrics history), can't call it, and
 the scheduler never places their jobs on it. Existing ownerless fleet workers
 keep working until explicitly claimed or adopted. Once users exist, new
-worker codes require an owner ([#173](https://github.com/lubobill1990/longarm/issues/173)).
+worker codes require an owner (#173).
 
 ```sh
 # the easy way, on the new machine: install the MSI and choose "This machine runs jobs" (the tray
@@ -2433,7 +2433,7 @@ calls use the certificate's user **until its next renewal**; renew devices
 before using newly claimed workers. The renewed certificate carries the pinned
 user. Existing jobs are not reassigned.
 
-**Sharing is deprecated** ([#173](https://github.com/lubobill1990/longarm/issues/173)):
+**Sharing is deprecated** (#173):
 new users, teams and everyone shares are refused, regardless of `can_share`.
 Existing shares keep working; owners can remove them with `worker unshare`
 even without `can_share`. Who is shared with is shown to the owner only.

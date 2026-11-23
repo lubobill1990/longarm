@@ -368,6 +368,8 @@ func (h *hubEnv) joinWorker(t *testing.T, w *hubWorker, approve bool) {
 		if _, err := conn.Fleet().Whoami(ctx, &pb.WhoamiRequest{}); err != nil {
 			t.Fatal(err)
 		}
+		// the labels a join code would have given it
+		h.mustLongarm(h.admin, "admin", "label", w.name, "pool=e2e,tier=test")
 		return
 	}
 	code := strings.TrimSpace(h.mustLongarm(h.admin, "admin", "join-code", "--role", "worker", "--labels", "pool=e2e,tier=test"))
