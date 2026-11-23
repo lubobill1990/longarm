@@ -139,6 +139,10 @@ prints it and changes nothing):
   keeps the invoking account's default;
 - otherwise the default above.
 
+On macOS, `service install` writes a LaunchDaemon with
+`ProcessType = Interactive` to avoid inherited CPU / I/O throttling.
+For older services, see the [plist migration](#macos-installer-pkg-and-mdm).
+
 Per-user isolation also needs every parent of the users dir (`<data>/users`
 or `[isolation] users_dir`) traversable by the accounts (Unix `o+x`), which a
 home like `/root` (0700) is not: `service install` refuses such a dir with a
@@ -1736,6 +1740,8 @@ and the certificate's validity, longarmd running (local control API) and
 its hub link, how it starts (the user-session scheduled task or the
 service, and whether that is registered), its log files, and ERROR lines of
 the last 24 hours in longarmd.log.
+On macOS it also warns when the installed LaunchDaemon lacks `ProcessType`,
+with the sudo command to fix it (see [macOS installer](#macos-installer-pkg-and-mdm)).
 
 Both exit 0 without failures (warnings allowed), 1 with failures. When
 longarmd is not running, `longarmd status` (and the other local commands)
@@ -3540,6 +3546,30 @@ installs and starts the LaunchDaemon with the data dir `~User/.longarm`.
 The values are validated (a malformed or non-root-owned preferences file is
 ignored); the join code is removed from `/Library/Preferences/com.longarm`
 afterwards.
+
+The LaunchDaemon uses `ProcessType = Interactive` so longarmd and its jobs,
+sessions and built-in sshd shells avoid launchd's default CPU and I/O
+throttling, like an SSH session. This is the default, with no priority
+switch; it does not change the service account or grant extra privileges.
+The pkg adds the key to older plists that lack it and reloads a loaded
+service with `bootout` / `bootstrap` (unloaded services stay unloaded).
+Existing `ProcessType` values are preserved.
+
+**Older installs / binary-only updates.** Replacing the binary (including
+self-update) cannot change a root-owned plist. Run `longarmd doctor`; if it
+warns that `ProcessType` is missing, apply this once:
+
+```sh
+sudo /usr/libexec/PlistBuddy -c 'Add :ProcessType string Interactive' /Library/LaunchDaemons/com.longarm.longarmd.plist
+# For a loaded service (kickstart alone does not re-read the plist):
+sudo launchctl bootout system/com.longarm.longarmd && sudo launchctl bootstrap system /Library/LaunchDaemons/com.longarm.longarmd.plist
+# If it was not loaded, start it when ready instead:
+# sudo longarmd service start
+```
+
+Jobs and sessions survive the daemon reload through `AbandonProcessGroup`,
+but already-running workloads retain their inherited scheduling policy;
+start new jobs / sessions to get the new policy.
 
 **For MDM administrators** (Jamf, Intune, Kandji, Mosyle, …):
 

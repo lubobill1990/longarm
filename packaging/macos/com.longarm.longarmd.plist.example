@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Reference only: `longarmd service install --user <name>` writes the real
-     /Library/LaunchDaemons/com.longarm.longarmd.plist (UserName, KeepAlive, AbandonProcessGroup). -->
+     /Library/LaunchDaemons/com.longarm.longarmd.plist (UserName, ProcessType, KeepAlive, AbandonProcessGroup). -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -8,6 +8,7 @@
   <key>ProgramArguments</key>
   <array><string>/usr/local/bin/longarmd</string><string>run</string></array>
   <key>UserName</key><string>alice</string>
+  <key>ProcessType</key><string>Interactive</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>AbandonProcessGroup</key><true/>

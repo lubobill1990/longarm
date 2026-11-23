@@ -34,9 +34,27 @@ if [ -x "$fw" ] && "$fw" --getglobalstate 2>/dev/null | grep -q enabled; then
 	done
 fi
 
-# 2. restart the installed service on an upgrade
+# 2. migrate the plist and restart the installed service on an upgrade
+plist="/Library/LaunchDaemons/$label.plist"
+reload=""
+if [ -f "$plist" ] && ! /usr/libexec/PlistBuddy -c 'Print :ProcessType' "$plist" >/dev/null 2>&1; then
+	if /usr/libexec/PlistBuddy -c 'Add :ProcessType string Interactive' "$plist"; then
+		reload=1
+	else
+		echo "longarm postinstall: could not add ProcessType to $plist; run longarmd doctor" >&2
+	fi
+fi
 if launchctl print "system/$label" 2>/dev/null | grep -q "program = $bin/longarmd\$"; then
-	launchctl kickstart -k "system/$label" >/dev/null 2>&1 || true
+	if [ -n "$reload" ]; then
+		# kickstart doesn't re-read the plist. AbandonProcessGroup keeps shims alive.
+		if launchctl bootout "system/$label" && launchctl bootstrap system "$plist"; then
+			:
+		else
+			echo "longarm postinstall: could not reload $label; run sudo longarmd service start" >&2
+		fi
+	else
+		launchctl kickstart -k "system/$label" >/dev/null 2>&1 || true
+	fi
 fi
 
 # 3. unattended setup: a configuration profile's managed preferences (domain

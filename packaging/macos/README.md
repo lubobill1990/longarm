@@ -38,7 +38,9 @@ xcrun stapler staple longarm-darwin-arm64.pkg
 `postinstall` (as root): adds longarm/longarmd to the application firewall
 when it is on (the macOS equivalent of the Windows inbound rules: without
 it, unsolicited inbound UDP - hole punching, tailscale direct - is dropped);
-restarts an installed `com.longarm.longarmd` LaunchDaemon on an upgrade; and
+adds `ProcessType = Interactive` to older LaunchDaemon plists that lack it
+and reloads the loaded service (`bootout` / `bootstrap`; otherwise upgrades
+use `kickstart`); and
 the optional unattended setup from the preference domain `com.longarm`
 (`Roles`, `Hub`, `JoinCode`, `User`, `CAFingerprint`; a configuration
 profile's managed preferences or a root-owned
