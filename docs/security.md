@@ -61,12 +61,26 @@ compromised admins, hubs or workers; level 3 (untrusted code).
   machines, the hub makes and accepts no more codes bound to the user -
   otherwise an admin could mint itself a certificate of the user. More
   devices come from the user's own sign-in: `longarm login` (Entra ID) or a
-  pairing link the user approves in its panel login (`--panel`). The same holds
-  for a panel login made by an admin (`user add --panel`, `user set --panel`):
+  pairing link the user approves in its panel login (`longarm panel-login`).
+  The same holds for a panel login made by an admin (`user add --panel`, `user set --panel`):
   for a user without machines only. With users separated, client and admin
   codes always name their user (a device bound to no user would act as the
   user its name names), and an administrator's panel login never takes a
   user's name or login.
+- On a hub without an identity provider, a client or admin device
+  certificate can create its own Longarm user's panel login with
+  `longarm panel-login` (`Fleet.PanelLogin`), or replace its password and
+  TOTP with `--reset`, ending that login's panel sessions. This is the
+  same trust level as minting an owned worker code (`Fleet.CreateWorkerCode`):
+  possession of a device certificate lets its holder act as that user.
+  The login is always role `user`, never admin, including when requested
+  with an admin certificate. Workers, relays, certificates without a
+  Longarm user, disabled users and identity-provider hubs are refused.
+  Creation and reset are audited as `users/panel-login`, without secrets.
+  Admin panel logins cannot be created or reset with a user's or worker
+  owner's name; the reverse collision is refused too. Legacy admin
+  logins with a user's name no longer act as that user in `/link` or in
+  panel views: a name match is not a user binding.
 - With Microsoft Entra ID sign-in, `longarm login` and the panel create
   the user on first sign-in and enroll the device without a code (see
   "Sign-in with Microsoft Entra ID").

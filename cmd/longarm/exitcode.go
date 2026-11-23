@@ -134,6 +134,7 @@ func markUsageErrors(root *cobra.Command, validated *bool) {
 // programs driving it (longarm version --json; docs/usage.md#capabilities).
 // Names are lowercase-hyphenated and never reused for something else.
 var cliFeatures = []string{
+	"panel-login",            // panel-login [--reset] [--json]: the caller's own panel credential
 	"info-json",              // info <worker> --json: worker info and features only
 	"job-kill-if-created-at", // kill --if-created-at (worker must support it too)
 	"exit-codes",             // the exit-code contract

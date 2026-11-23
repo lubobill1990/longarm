@@ -45,6 +45,7 @@ func TestTenancyRoleTable(t *testing.T) {
 		pb.Fleet_CreateWorkerCode_FullMethodName, pb.Fleet_ShareWorker_FullMethodName, pb.Fleet_RemoveWorker_FullMethodName,
 		pb.Fleet_SetWorkerLabels_FullMethodName, pb.Fleet_RenameWorker_FullMethodName,
 		pb.Fleet_WorkerToolchain_FullMethodName,
+		pb.Fleet_PanelLogin_FullMethodName,
 		// port links: ownership checked per link (TestPortLinks)
 		pb.Fleet_CreatePortLink_FullMethodName, pb.Fleet_ListPortLinks_FullMethodName, pb.Fleet_RemovePortLink_FullMethodName,
 		// handoff pairs: the caller's own workers only (TestHandoffPair)

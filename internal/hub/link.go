@@ -596,9 +596,6 @@ func (h *Hub) linkApproverOf(r *http.Request) (*linkApprover, error) {
 	}
 	a.user, a.admin = u.Tenant, u.Admin()
 	h.mu.Lock()
-	if a.user == "" && h.tenants[a.login] != nil { // an administrator's login named like a user
-		a.user = a.login
-	}
 	known := h.tenants[a.user] != nil
 	h.mu.Unlock()
 	if a.user == "" || !known {

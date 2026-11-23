@@ -276,6 +276,7 @@ test against.
 | `lfs` | `run` / `sync --lfs skip\|ship` |
 | `ref-sha` | `run --repo <path> --ref <full commit id>` |
 | `worker-label` | `longarm worker label` for owners |
+| `panel-login` | `panel-login [--reset] [--json]`: create or replace your own panel login on a hub without an identity provider |
 | `toolchain-report` | `worker ls --json` includes baseline installed tools in each worker's `toolchain.versions` (requires an updated worker) |
 | `worker-toolchain` | `worker toolchain <worker>`: owner desired tools, admin-profile precedence, idle-only reconciliation and JSON status (requires an updated hub and worker) |
 | `git-auth-forward` | `run` / `sync --git-auth forward`, `run --repo <url> --lfs fetch`; the worker must also support it (`git-auth-forward` in its `Node.Info` features), see [Fetching with your credential](#fetching-with-your-credential---git-auth-forward) |
@@ -2094,9 +2095,33 @@ longarm admin team add web alice bob; longarm admin team rm web bob; longarm adm
 longarm admin join-code --role client --user alice --name alice-2   # the same, by hand
 longarm admin issue --role client --name alice-pc --user alice --out DIR   # without a hub
 longarm whoami                                             # this device: user, teams, quota, usage
+longarm panel-login [--reset] [--json]                      # your own panel login (hubs without an identity provider)
 longarm run --share team -- make test                      # team members may read it (team:<name> = one team)
 longarm run --cpus 4 --mem-limit 8G -- make                # per-job limits (capped by the user's quota)
 ```
+
+**Adding another device without an identity provider.** On an existing
+signed-in client device, run `longarm panel-login`. It uses that device's
+certificate to create your own panel login, always role `user`, even if
+the device has an admin certificate. The login name, generated password,
+TOTP secret and authenticator (`otpauth://`) URI are printed once to stderr;
+`--json` prints them once as JSON to stdout instead. Save the password and
+enroll the secret in your authenticator. On the new device run `longarm
+login <hub>`, open the panel `/link` address it prints, sign in with this
+login and approve its pairing code.
+
+If you already have a login, use it; if you lost its password or TOTP,
+`longarm panel-login --reset` on a signed-in device replaces both and ends
+that login's existing panel sessions. Disabled users cannot do this.
+With an identity provider configured, sign in with the provider instead.
+Admins can still bootstrap a user without machines with `longarm admin
+user set alice --panel`; they cannot reset a user's login once it has
+machines. `longarm-hub user add alice` is not a substitute: admin panel
+logins cannot take Longarm users' names, even on reset, and a user cannot
+be created with an existing admin panel login's name. **Existing admin
+logins named like users no longer approve `/link` as those users or see
+their machines and jobs.** Remove the conflicting admin panel login
+before the user creates its own login.
 
 `hub.toml`:
 
@@ -2468,8 +2493,9 @@ never carries the code - you always type it. Signed in already,
 `longarmd login` says as what and exits 80 (`--force` signs in again);
 install.ps1 then asks whether to replace that sign-in, and keeps it on no
 (or with nobody to ask). Codes last 10 minutes and work once; Ctrl-C gives up. On a hub without
-`[auth.entra]` the same works with a panel login of a Longarm user
-(`longarm admin user add <name> --panel`); with `[auth.entra]` only a
+an identity provider the same works with a panel login of a Longarm user
+(`longarm panel-login` on an existing device, or `longarm admin user add
+<name> --panel` when bootstrapping); with `[auth.entra]` only a
 Microsoft sign-in may approve (and its `web` must not be `off`).
 
 `longarm login` asks the Azure CLI first: with `az login` done, it uses its
