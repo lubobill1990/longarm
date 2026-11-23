@@ -602,6 +602,17 @@ service Fleet {
   // workers, certificates without a user, and hubs with an identity
   // provider (those users sign in with it).
   rpc PanelLogin(PanelLoginRequest) returns (PanelLoginResponse);
+  // ClaimWorker makes an ownerless (fleet) worker the caller's own, in
+  // place (`longarm worker claim`): same node ID, port links and history.
+  // Only fleet -> owned, only for the caller's own user (an admin never
+  // pushes a machine onto someone); admin workers and owned workers are
+  // refused (#173).
+  rpc ClaimWorker(ClaimWorkerRequest) returns (NodeInfo);
+  // SetSecurityMode moves the caller's own user to a stricter security
+  // mode ("shadow", "e2e"; `longarm security upgrade`), as the hub's
+  // [security] stage allows. Never down: a downgrade needs the user key
+  // (later) or local access to the workers (#173).
+  rpc SetSecurityMode(SetSecurityModeRequest) returns (TenantUser);
   // ShareWorker changes who may use a worker: its owner, if an admin let
   // the owner share (TenantUser.can_share), or an admin.
   rpc ShareWorker(ShareWorkerRequest) returns (NodeInfo);
@@ -948,6 +959,14 @@ message CreateWorkerCodeRequest {
   map<string, string> labels = 3;
 }
 
+message ClaimWorkerRequest {
+  string worker = 1; // name, node ID or ID prefix
+}
+
+message SetSecurityModeRequest {
+  string mode = 1; // "shadow" | "e2e"
+}
+
 message PanelLoginRequest {
   bool reset = 1; // replace an existing login (its panel sessions end)
 }
@@ -992,6 +1011,8 @@ message WhoamiResponse {
   string latest_path = 16;
   string public_url = 17; // the hub's [http] public_url ("" = not configured)
   string id = 18; // the caller's node ID
+  string security_mode = 19; // the caller's user's (TenantUser.security_mode)
+  int32 security_stage = 20; // the hub's [security] stage (0 prepare, 1 opt-in, 2 new users e2e)
 }
 
 // ---------------------------------------------------------------- tenancy
@@ -1033,6 +1054,11 @@ message TenantUser {
   bool can_share = 11; // may share own workers (set by an admin)
   int32 device_count = 12; // output: clients/admin devices with certificates of this user
   int32 worker_count = 13; // output: workers this user owns (not revoked)
+  // security_mode: "legacy" (as before; "" reads as legacy), "shadow"
+  // (end-to-end trust checked and reported, not enforced) or "e2e"
+  // (enforced) - #173. Set with PutUserRequest.set_security_mode (admins,
+  // upwards only) or Fleet.SetSecurityMode (the user).
+  string security_mode = 14;
 }
 
 // TenancyPolicy is what workers need to know about users.
@@ -1068,6 +1094,11 @@ message PutUserRequest {
   bool panel = 13;
   bool set_can_share = 14;
   bool can_share = 15;
+  // set_security_mode: move the user to security_mode ("shadow", "e2e");
+  // refused downwards and beyond what the hub's [security] stage allows
+  // for this user (pilot users: any).
+  bool set_security_mode = 16;
+  string security_mode = 17;
 }
 
 message PutUserResponse {
