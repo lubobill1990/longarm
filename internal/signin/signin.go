@@ -180,8 +180,20 @@ func Console(w io.Writer) Events {
 			case "both":
 				what = "this machine as your device and your worker (one approval for both)"
 			}
-			fmt.Fprintf(w, "To link %s, sign in with your account (Microsoft, Google or Apple, as the hub offers) in a browser:\n\n", what)
-			fmt.Fprintf(w, "  Open %s and enter code %s\n\n", c.URL, c.Code)
+			signIn := "sign in at the hub's panel (with an account or your panel login)"
+			if len(c.SignIn) > 0 {
+				providers := c.SignIn[0]
+				if n := len(c.SignIn); n > 1 {
+					providers = strings.Join(c.SignIn[:n-1], ", ") + " or " + c.SignIn[n-1]
+				}
+				signIn = "sign in with your account (" + providers + ")"
+			}
+			fmt.Fprintf(w, "To link %s, %s in a browser:\n\n", what, signIn)
+			fmt.Fprintf(w, "  Open %s and enter code %s\n", c.URL, c.Code)
+			if c.VerificationHint != "" {
+				fmt.Fprintf(w, "  %s\n", c.VerificationHint)
+			}
+			fmt.Fprintln(w)
 			mins := int(time.Until(c.Expires).Round(time.Minute).Minutes())
 			fmt.Fprintf(w, "Check that the page shows this machine (%s) before you approve. The code expires in %d minutes.\n", c.Host, mins)
 		},

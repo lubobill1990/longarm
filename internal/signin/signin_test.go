@@ -1,6 +1,7 @@
 package signin
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -13,6 +14,37 @@ import (
 
 	pb "longarm/proto/longarm/v1"
 )
+
+func TestConsoleCode(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		signIn []string
+		hint   string
+		want   string
+	}{
+		{"panel or older hub", nil, "", "sign in at the hub's panel (with an account or your panel login)"},
+		{"one provider", []string{"Google"}, "", "sign in with your account (Google)"},
+		{"two providers", []string{"Microsoft (work or school)", "Google"}, "", "sign in with your account (Microsoft (work or school) or Google)"},
+		{"three providers", []string{"Microsoft account", "Google", "Apple"}, "open /link through your tunnel", "sign in with your account (Microsoft account, Google or Apple)"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var b bytes.Buffer
+			Console(&b).Code(Code{URL: "http://127.0.0.1:7480/link", Code: "BCDF-GHJK", Kind: "client", Host: "worker-1",
+				Expires: time.Now().Add(10 * time.Minute), SignIn: tt.signIn, VerificationHint: tt.hint})
+			out := b.String()
+			if !strings.Contains(out, "To link this device, "+tt.want+" in a browser:") {
+				t.Fatalf("sign-in instructions: %s", out)
+			}
+			urlLine := "  Open http://127.0.0.1:7480/link and enter code BCDF-GHJK\n"
+			if tt.hint != "" {
+				urlLine += "  " + tt.hint + "\n"
+			}
+			if !strings.Contains(out, urlLine+"\nCheck that the page shows this machine (worker-1)") {
+				t.Fatalf("URL and hint: %s", out)
+			}
+		})
+	}
+}
 
 // fakeAz installs a fake Azure CLI ($LONGARM_AZ): `account show` prints
 // the account type, `account get-access-token` the token or (with fail

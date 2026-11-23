@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"longarm/internal/hubclient"
@@ -30,6 +32,76 @@ import (
 )
 
 var linkCodeRE = regexp.MustCompile(`^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$`)
+
+func TestLinkURL(t *testing.T) {
+	for _, tt := range []struct {
+		name, publicURL, http, authority, want string
+		hint                                   bool
+	}{
+		{"public URL", "https://hub.example.com/panel", "127.0.0.1:7480", "hub.example.com:7443", "https://hub.example.com/panel/link", false},
+		{"remote device", "", "127.0.0.1:7480", "hub.example.com:7443", "http://127.0.0.1:7480/link", true},
+		{"local device", "", "127.0.0.1:7480", "127.0.0.1:7443", "http://127.0.0.1:7480/link", false},
+		{"localhost device", "", "127.0.0.1:7480", "localhost:7443", "http://localhost:7480/link", false},
+		{"IPv6 device", "", "[::1]:7480", "[::1]:7443", "http://[::1]:7480/link", false},
+		{"IPv6 panel", "", "[::1]:7480", "hub.example.com:7443", "http://[::1]:7480/link", true},
+		{"wildcard", "", "0.0.0.0:7480", "hub.example.com:7443", "http://hub.example.com:7480/link", false},
+		{"IPv6 wildcard", "", "[::]:7480", "hub.example.com:7443", "http://hub.example.com:7480/link", false},
+		{"non-loopback", "", "192.0.2.1:7480", "hub.example.com:7443", "http://hub.example.com:7480/link", false},
+		{"no authority", "", "127.0.0.1:7480", "", "http://localhost:7480/link", false},
+		{"no panel", "", "", "hub.example.com:7443", "", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &Hub{cfg: &Config{PublicURL: tt.publicURL}, addrs: map[string]string{"http": tt.http}}
+			ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(":authority", tt.authority))
+			u, hint := h.linkURL(ctx)
+			if u != tt.want || (hint != "") != tt.hint {
+				t.Fatalf("link URL: %q, hint %q", u, hint)
+			}
+			if tt.hint {
+				for _, want := range []string{tt.http + " only", "ssh -L 7480:" + tt.http + " -- hub.example.com", tt.want, "public_url"} {
+					if !strings.Contains(hint, want) {
+						t.Errorf("hint %q missing %q", hint, want)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestStartLinkGuidance(t *testing.T) {
+	f, e := newFakeIdP(t), newFakeEntra(t)
+	keyFile, _ := appleKeyFile(t)
+	for _, tt := range []struct {
+		name string
+		auth func(*AuthConfig)
+		want []string
+	}{
+		{"panel login", func(*AuthConfig) {}, nil},
+		{"Google only", func(a *AuthConfig) { a.Google = f.config(googleClient) }, []string{"Google"}},
+		{"all providers", func(a *AuthConfig) {
+			a.Entra = e.config()
+			a.Microsoft, a.Google = f.config(msaClient), f.config(googleClient)
+			a.Apple = IdPConfig{ClientID: appleClient, TeamID: "ABCDE12345", KeyID: "KEY1234567", PrivateKeyFile: keyFile}
+		}, []string{"Microsoft (work or school)", "Microsoft account", "Google", "Apple"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newIdPHub(t, tt.auth)
+			_, csr, err := pki.NewKeyAndCSR("worker-1", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(":authority", "hub.example.com:7443"))
+			st, err := (&enrollServer{h: h}).StartLink(ctx, &pb.StartLinkRequest{Kind: linkClient, CsrPem: csr})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(st.SignIn, tt.want) || st.VerificationUrl != "http://"+h.Addr("http")+"/link" ||
+				!strings.Contains(st.VerificationHint, "-- hub.example.com") {
+				t.Fatalf("start: %v", st)
+			}
+		})
+	}
+}
 
 func TestLinkCodes(t *testing.T) {
 	seen := map[string]bool{}
