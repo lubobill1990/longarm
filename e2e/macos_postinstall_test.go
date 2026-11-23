@@ -32,8 +32,8 @@ func TestMacOSPostinstall(t *testing.T) {
 		{name: "no service"},
 		{name: "other program", installed: true, loaded: true, otherProgram: true, want: "add\n"},
 		{name: "add failure", installed: true, loaded: true, fail: "add", want: "add\nkickstart\n", warning: "could not add ProcessType"},
-		{name: "bootout failure", installed: true, loaded: true, fail: "bootout", want: "add\nbootout\n", warning: "could not reload"},
-		{name: "bootstrap failure", installed: true, loaded: true, fail: "bootstrap", want: "add\nbootout\nbootstrap\n", warning: "could not reload"},
+		{name: "bootout failure", installed: true, loaded: true, fail: "bootout", want: "add\nbootout\nbootstrap\n"},
+		{name: "bootstrap failure", installed: true, loaded: true, fail: "bootstrap", want: "add\nbootout\n" + strings.Repeat("bootstrap\n", 5), warning: "could not reload"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()

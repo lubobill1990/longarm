@@ -47,9 +47,17 @@ fi
 if launchctl print "system/$label" 2>/dev/null | grep -q "program = $bin/longarmd\$"; then
 	if [ -n "$reload" ]; then
 		# kickstart doesn't re-read the plist. AbandonProcessGroup keeps shims alive.
-		if launchctl bootout "system/$label" && launchctl bootstrap system "$plist"; then
-			:
-		else
+		# bootout returns before the job is gone: bootstrap may fail (5) for a moment.
+		launchctl bootout "system/$label" >/dev/null 2>&1 || true
+		ok=""
+		for _ in 1 2 3 4 5; do
+			if launchctl bootstrap system "$plist" >/dev/null 2>&1; then
+				ok=1
+				break
+			fi
+			sleep 1
+		done
+		if [ -z "$ok" ]; then
 			echo "longarm postinstall: could not reload $label; run sudo longarmd service start" >&2
 		fi
 	else
