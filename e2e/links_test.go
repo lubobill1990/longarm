@@ -227,7 +227,9 @@ func TestPortLinks(t *testing.T) {
 		waitFor(t, "the job's link to close with the hub down", 30*time.Second, func() bool { return closed(jobPort) })
 		// ... and both workers end a link at its TTL
 		waitFor(t, "the 1m link to expire with the hub down", time.Until(ttlExpires)+30*time.Second, func() bool { return closed(ttlPort) })
-		if time.Now().Before(ttlExpires) {
+		// ttlExpires is taken before link create asks; the grant's expiry is
+		// whole seconds from the request: up to a second or two earlier
+		if time.Now().Before(ttlExpires.Add(-3 * time.Second)) {
 			t.Fatal("the 1m link closed before its TTL")
 		}
 		h.startHub(t)
