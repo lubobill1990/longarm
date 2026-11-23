@@ -262,6 +262,15 @@
     white-space: pre-line;
     overflow-wrap: anywhere;
   }
+  /* askText()'s field and why its value won't do */
+  & .ask-field {
+    display: grid;
+    gap: var(--sp-1);
+    margin: calc(-1 * var(--sp-2)) 0 var(--sp-4);
+  }
+  & .ask-field input {
+    width: 100%;
+  }
   & .ask-buttons {
     display: flex;
     justify-content: flex-end;

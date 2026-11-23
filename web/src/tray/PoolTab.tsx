@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { longarmApi, trayApi, type TrayInfo, type WorkerUpdateJob } from '../api/local'
 import type { PoolView, PoolWorker } from '../api/types'
-import { ask } from '../components/confirm'
+import { ask, askText } from '../components/confirm'
 import { ErrorBox, useAction } from '../components/common'
 import { OfflineRow, WorkerCard, type CardActions } from '../components/WorkerCard'
 import { docsURL, repoURL } from '../lib/feedback'
 import { updateRunning } from '../lib/update'
 import { fmtAgo, since } from '../lib/format'
 import { poolMachines } from '../lib/machines'
+import { hubErrorText, nodeNameError } from '../lib/names'
 import { IconPlus, IconServers, IconUser } from '../components/icons'
 import { AddMachine } from './AddMachine'
 import { transportLabel } from './ClientTab'
@@ -117,6 +118,29 @@ export function updateConfirmText(name: string, version: string, w?: PoolWorker,
 }
 
 /**
+ * Asks for a worker's new name (checked as the hub checks it) and renames
+ * it through the daemon (longarm worker rename); the pool view shows the
+ * new name with its next update. It keeps its node ID.
+ */
+export async function renameWorker(name: string, run: ReturnType<typeof useAction>['run']): Promise<boolean> {
+  const to = await askText(`Rename ${name}\n\nThe worker keeps its ID: jobs, links and shares stay with it.`, {
+    value: name,
+    ok: 'Rename',
+    label: 'new name',
+    check: (v) => (v === name ? '' : nodeNameError(v)),
+  })
+  if (!to || to === name) return false
+  const r = await run(
+    () =>
+      longarmApi.renameWorker(name, to).catch((e) => {
+        throw new Error(`Rename ${name}: ${hubErrorText(e)}`)
+      }),
+    `${name} renamed to ${to}`,
+  )
+  return !!r
+}
+
+/**
  * The Workers tab. startAdding (longarm ui open add-machine): "Add a
  * machine" opens at once; onStartedAdding says it did (once, not on every
  * visit of the tab).
@@ -176,6 +200,9 @@ export function PoolTab({
         }
       : undefined,
     canRemove: (w: PoolWorker) => admin || (!!me && !!w.node?.owner && w.node.owner === me),
+    // longarm worker rename: the hub checks the name again and who may
+    rename: hubUp ? (name) => renameWorker(name, run) : undefined,
+    canRename: (w: PoolWorker) => admin || (!!me && !!w.node?.owner && w.node.owner === me),
     // the owner only (an admin certificate is no exception): longarm worker update
     update: hubUp
       ? async (name, version) => {

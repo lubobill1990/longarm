@@ -229,6 +229,8 @@ export const longarmApi = {
   drainWorker: (name: string, draining: boolean) => post(`/local/longarm/v1/workers/${enc(name)}/drain`, { draining }),
   /** longarm worker remove through the daemon: the hub revokes the worker (its owner, or an admin). */
   removeWorker: (name: string) => post<NodeInfo>(`/local/longarm/v1/workers/${enc(name)}/remove`),
+  /** longarm worker rename through the daemon: its owner, admins also fleet workers; it keeps its ID */
+  renameWorker: (name: string, newName: string) => post<NodeInfo>(`/local/longarm/v1/workers/${enc(name)}/rename`, { new_name: newName }),
   /** longarm worker update <name> --wait through the daemon (the worker's owner): starts it */
   updateWorker: (name: string, version = '') =>
     post<WorkerUpdateJob>(`/local/longarm/v1/workers/${enc(name)}/update`, version ? { version } : { latest: true }),
@@ -292,6 +294,19 @@ export interface TraySettings {
   telemetry_env_off?: boolean
   client_logs?: string
   worker_logs?: string
+  /** "Start Longarm at login", as the OS has it (older trays: absent) */
+  autostart?: AutostartState
+}
+
+/** The tray's login item: the Run key (Windows), a LaunchAgent (macOS), an autostart .desktop file (Linux). */
+export interface AutostartState {
+  /** this OS has one (else no switch) */
+  supported: boolean
+  enabled: boolean
+  /** the installer's entry for every user of this computer (Windows MSI): off asks for an administrator */
+  machine_wide?: boolean
+  where?: string
+  error?: string
 }
 
 /** This machine's Longarm Update service (Windows MSI installs), through the tray. */
@@ -323,7 +338,8 @@ export const localUpdateApi = {
 
 export const traySettingsApi = {
   get: () => get<TraySettings>('/trayapi/settings'),
-  set: (s: { mute_workers?: boolean; mute_jobs?: boolean; theme?: 'system' | 'light' | 'dark'; telemetry_disabled?: boolean }) => post<TraySettings>('/trayapi/settings', s),
+  set: (s: { mute_workers?: boolean; mute_jobs?: boolean; theme?: 'system' | 'light' | 'dark'; telemetry_disabled?: boolean; autostart?: boolean }) =>
+    post<TraySettings>('/trayapi/settings', s),
   /** opens a known folder (never a path from the page) in the file manager */
   openFolder: (which: 'client-logs' | 'worker-logs' | 'diag') => post<{ folder: string }>('/trayapi/folder', { which }),
   /** starts this machine's worker the way it runs: the session task or the service */

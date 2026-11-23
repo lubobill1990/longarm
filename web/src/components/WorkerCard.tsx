@@ -47,6 +47,10 @@ export interface CardActions {
   remove?: (names: string[]) => void
   /** whether this user may remove the worker (its owner, or an admin) */
   canRemove?: (w: PoolWorker) => boolean
+  /** longarm worker rename: asks for the new name and renames the worker (it keeps its ID) */
+  rename?: (w: string) => void
+  /** whether this user may rename the worker (its owner, or an admin) */
+  canRename?: (w: PoolWorker) => boolean
   /** "Update to X": longarm worker update (the worker's owner only; the caller runs and tracks it) */
   update?: (w: string, version: string) => void
   /** whether this user may update the worker's machine (its owner) */
@@ -241,6 +245,7 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
     menuItems.push([session.node?.admin_drain ? 'Resume (take jobs again)' : 'Drain (no new jobs)', () => actions.drain!(session.name, !session.node?.admin_drain)])
   if (admin && actions?.attach) menuItems.push([`Run as admin (attach ${admin.name})`, () => actions.attach!(admin.name)])
   if (admin && actions?.ssh) menuItems.push([`SSH as admin (${admin.name})`, () => actions.ssh!(admin.name)])
+  for (const x of [session, admin]) if (x && actions?.rename && actions.canRename?.(x)) menuItems.push([`Rename ${x.name}…`, () => actions.rename!(x.name)])
   for (const x of [session, admin]) if (x && canRemove(x)) menuItems.push([`Remove ${x.name}…`, () => actions!.remove!([x.name])])
   const version = machineVersion(session, admin)
   const target = updateTarget(session, admin)
@@ -442,6 +447,8 @@ export function OfflineRow({ m, actions }: { m: PoolMachine; actions?: CardActio
   const [open, setOpen] = useState(false)
   const members = [m.session, m.admin].filter((x): x is PoolWorker => !!x)
   const removable = members.filter((x) => !!actions?.remove && (actions.canRemove?.(x) ?? false)).map((x) => x.name)
+  // the machine's own worker (an admin-only machine: its admin worker)
+  const renamable = members.find((x) => !!actions?.rename && (actions.canRename?.(x) ?? false))
   const errors = members.filter((x) => x.error).map((x) => `${x.name}: ${x.error}`)
   return (
     <div className="orow" data-testid={`offline-${m.key}`}>
@@ -459,6 +466,11 @@ export function OfflineRow({ m, actions }: { m: PoolMachine; actions?: CardActio
         {errors.length > 0 && (
           <button className="link small" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
             {open ? 'Hide details' : 'Details'}
+          </button>
+        )}
+        {renamable && (
+          <button className="link small" title={`rename ${renamable.name} (it keeps its ID)`} onClick={() => actions!.rename!(renamable.name)}>
+            Rename
           </button>
         )}
         {removable.length > 0 && (

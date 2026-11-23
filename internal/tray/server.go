@@ -102,6 +102,8 @@ type Server struct {
 	// the firewall card's Allow (firewall.go); checkFirewall: a hook for tests
 	fwBusy        sync.Mutex
 	checkFirewall func(program string) (platform.FirewallStatus, error)
+	// Settings' "Start Longarm at login" (autostart.go; nil: not on this OS)
+	autostart autostarter
 
 	mu       sync.Mutex
 	headless bool
@@ -169,6 +171,7 @@ func NewServer(opts Options, desk Desktop, addr string) (*Server, error) {
 		},
 		openURL: OpenURL, term: OpenTerminal,
 		installedRolesFn: signin.InstalledRoles, installedWorker: longarmd.InstalledWorker, runElevated: RunElevated}
+	s.autostart = newAutostart()
 	s.workerLink, s.clientLink = s.localWorkerLink, s.localClientLink
 	if runtime.GOOS == "windows" {
 		s.machineRoles = func() longarmd.MachineRoles { return longarmd.LoadMachineRoles(longarmd.MachineSettings()) }

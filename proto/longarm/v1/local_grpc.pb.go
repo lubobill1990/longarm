@@ -473,6 +473,7 @@ const (
 	LocalClient_SetSettings_FullMethodName  = "/longarm.v1.LocalClient/SetSettings"
 	LocalClient_DrainWorker_FullMethodName  = "/longarm.v1.LocalClient/DrainWorker"
 	LocalClient_RemoveWorker_FullMethodName = "/longarm.v1.LocalClient/RemoveWorker"
+	LocalClient_RenameWorker_FullMethodName = "/longarm.v1.LocalClient/RenameWorker"
 	LocalClient_Shutdown_FullMethodName     = "/longarm.v1.LocalClient/Shutdown"
 )
 
@@ -509,6 +510,10 @@ type LocalClientClient interface {
 	// RemoveWorker removes (revokes) a worker through the hub, as longarm
 	// worker remove: the owner's own worker, or any worker for an admin.
 	RemoveWorker(ctx context.Context, in *NodeRequest, opts ...grpc.CallOption) (*NodeInfo, error)
+	// RenameWorker renames a worker through the hub, as longarm worker
+	// rename: the owner's own worker, admins also fleet workers. It keeps its
+	// ID.
+	RenameWorker(ctx context.Context, in *RenameNodeRequest, opts ...grpc.CallOption) (*NodeInfo, error)
 	Shutdown(ctx context.Context, in *ShutdownRequest, opts ...grpc.CallOption) (*ShutdownResponse, error)
 }
 
@@ -687,6 +692,16 @@ func (c *localClientClient) RemoveWorker(ctx context.Context, in *NodeRequest, o
 	return out, nil
 }
 
+func (c *localClientClient) RenameWorker(ctx context.Context, in *RenameNodeRequest, opts ...grpc.CallOption) (*NodeInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NodeInfo)
+	err := c.cc.Invoke(ctx, LocalClient_RenameWorker_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *localClientClient) Shutdown(ctx context.Context, in *ShutdownRequest, opts ...grpc.CallOption) (*ShutdownResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ShutdownResponse)
@@ -730,6 +745,10 @@ type LocalClientServer interface {
 	// RemoveWorker removes (revokes) a worker through the hub, as longarm
 	// worker remove: the owner's own worker, or any worker for an admin.
 	RemoveWorker(context.Context, *NodeRequest) (*NodeInfo, error)
+	// RenameWorker renames a worker through the hub, as longarm worker
+	// rename: the owner's own worker, admins also fleet workers. It keeps its
+	// ID.
+	RenameWorker(context.Context, *RenameNodeRequest) (*NodeInfo, error)
 	Shutdown(context.Context, *ShutdownRequest) (*ShutdownResponse, error)
 	mustEmbedUnimplementedLocalClientServer()
 }
@@ -782,6 +801,9 @@ func (UnimplementedLocalClientServer) DrainWorker(context.Context, *SetDrainRequ
 }
 func (UnimplementedLocalClientServer) RemoveWorker(context.Context, *NodeRequest) (*NodeInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemoveWorker not implemented")
+}
+func (UnimplementedLocalClientServer) RenameWorker(context.Context, *RenameNodeRequest) (*NodeInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenameWorker not implemented")
 }
 func (UnimplementedLocalClientServer) Shutdown(context.Context, *ShutdownRequest) (*ShutdownResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Shutdown not implemented")
@@ -1038,6 +1060,24 @@ func _LocalClient_RemoveWorker_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LocalClient_RenameWorker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenameNodeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LocalClientServer).RenameWorker(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LocalClient_RenameWorker_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LocalClientServer).RenameWorker(ctx, req.(*RenameNodeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _LocalClient_Shutdown_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ShutdownRequest)
 	if err := dec(in); err != nil {
@@ -1106,6 +1146,10 @@ var LocalClient_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveWorker",
 			Handler:    _LocalClient_RemoveWorker_Handler,
+		},
+		{
+			MethodName: "RenameWorker",
+			Handler:    _LocalClient_RenameWorker_Handler,
 		},
 		{
 			MethodName: "Shutdown",
