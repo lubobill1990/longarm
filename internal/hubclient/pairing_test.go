@@ -18,19 +18,19 @@ import (
 )
 
 func TestSplitPairCode(t *testing.T) {
-	const secret = "01234-56789-ABCDE-FGHJK"
+	const fixture = "01234-56789-ABCDE-FGHJK"
 	for _, tt := range []struct {
 		name, code, secret string
 		wantErr            bool
 	}{
 		{"plain", "ABC-DEF", "", false},
-		{"flag", "ABC-DEF", secret, false},
-		{"combined", "ABC-DEF#" + secret, "", false},
-		{"same", "ABC-DEF#" + secret, strings.ToLower(secret), false},
-		{"different", "ABC-DEF#" + secret, "ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZ", true},
+		{"flag", "ABC-DEF", fixture, false},
+		{"combined", "ABC-DEF#" + fixture, "", false},
+		{"same", "ABC-DEF#" + fixture, strings.ToLower(fixture), false},
+		{"different", "ABC-DEF#" + fixture, "ZZZZZ-ZZZZZ-ZZZZZ-ZZZZZ", true},
 		{"empty secret", "ABC-DEF#", "", true},
-		{"empty code", "#" + secret, "", true},
-		{"extra separator", "ABC-DEF#" + secret + "#", "", true},
+		{"empty code", "#" + fixture, "", true},
+		{"extra separator", "ABC-DEF#" + fixture + "#", "", true},
 		{"invalid flag", "ABC-DEF", "invalid", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -51,7 +51,7 @@ func TestSplitPairCode(t *testing.T) {
 				if s != "" {
 					t.Fatal("unpaired join acquired a secret")
 				}
-			} else if s != strings.ReplaceAll(secret, "-", "") {
+			} else if s != strings.ReplaceAll(fixture, "-", "") {
 				t.Fatalf("secret was not normalized")
 			}
 		})
