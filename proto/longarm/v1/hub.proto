@@ -155,6 +155,10 @@ message JoinRequest {
   string os = 5;
   string arch = 6;
   string version = 7;
+  // trust pairing of the code (longarmd join --pair): the hub stores both
+  // for the endorsing device; it can't check node_proof.
+  string pairing_id = 8;
+  bytes node_proof = 9;
 }
 
 message JoinResponse {
@@ -185,6 +189,9 @@ message JoinResponse {
   // the node's immutable ID (docs/security.md "Node identity"); the
   // certificate carries it as URI SAN urn:longarm:node:<id>
   string id = 14;
+  // the code's trust pairing as the user made it (user, user_key,
+  // user_tag, expires_at): the worker checks user_tag and pins user_key.
+  TrustPairing pairing = 15;
 }
 
 message JoinStatusRequest {
@@ -413,6 +420,10 @@ message HubCommand {
     HubRestarting restarting = 15;
     // The relay set changed (see HubWelcome.relays).
     RelaySet relays = 16;
+    // The worker's user endorsed it (automatic key exchange, #173):
+    // install and renew to carry it. Sent again on every connect until
+    // the certificate carries it.
+    TrustEndorsement trust_endorsement = 17;
   }
 }
 
@@ -613,6 +624,21 @@ service Fleet {
   // [security] stage allows. Never down: a downgrade needs the user key
   // (later) or local access to the workers (#173).
   rpc SetSecurityMode(SetSecurityModeRequest) returns (TenantUser);
+  // Automatic end-to-end key exchange (#173, docs/security.md "End-to-end
+  // trust"): pairings carry MACs keyed by a secret the hub never sees, so
+  // the hub routes them but can't forge or swap keys. All for the caller's
+  // own user only.
+  // ListTrustPairings: the caller's user's pairings by id (none: all open).
+  rpc ListTrustPairings(ListTrustPairingsRequest) returns (ListTrustPairingsResponse);
+  // CompleteTrustPairing: an endorsing device hands in the endorsement
+  // (and, for a device pairing, its user key and user_tag).
+  rpc CompleteTrustPairing(CompleteTrustPairingRequest) returns (TrustPairing);
+  // OfferDevicePairing: a new device of the user asks to be endorsed; the
+  // hub fills node_key, node_id and node_name from the caller's certificate.
+  rpc OfferDevicePairing(TrustPairing) returns (TrustPairing);
+  // PublishUserKey records the caller's user's public user key (a hint for
+  // new devices; never trusted for verification).
+  rpc PublishUserKey(PublishUserKeyRequest) returns (TenantUser);
   // ShareWorker changes who may use a worker: its owner, if an admin let
   // the owner share (TenantUser.can_share), or an admin.
   rpc ShareWorker(ShareWorkerRequest) returns (NodeInfo);
@@ -957,10 +983,58 @@ message CreateWorkerCodeRequest {
   string name = 1; // the worker's name (default: its hostname)
   google.protobuf.Duration ttl = 2; // default 24h
   map<string, string> labels = 3;
+  // pairing: automatic endorsement of the worker (#173): id, user,
+  // user_key, user_tag, expires_at. The hub echoes JoinCode.pairing_id.
+  TrustPairing pairing = 4;
 }
 
 message ClaimWorkerRequest {
   string worker = 1; // name, node ID or ID prefix
+}
+
+// TrustPairing is one automatic endorsement in flight (internal/pki/pair.go).
+// id, user_tag and node_proof derive from a secret only the user's device
+// and the joining node know.
+message TrustPairing {
+  string id = 1; // pairing id (hex), derived from the secret
+  string kind = 2; // "worker" | "device"
+  string user = 3;
+  bytes user_key = 4; // the user's public key (Ed25519)
+  bytes user_tag = 5; // HMAC over kind, id, user, user_key, expires_at
+  google.protobuf.Timestamp expires_at = 6;
+  bytes node_key = 7; // the joining node's public node key
+  bytes node_proof = 8; // HMAC over kind, id, node_key
+  string node_id = 9;
+  string node_name = 10;
+  string hostname = 11;
+  string os = 12;
+  string endorsement = 13; // the user's endorsement line, once made
+  string state = 14; // "offered" | "joined" | "endorsed" | "installed"
+}
+
+// TrustEndorsement: the hub hands a worker its user's endorsement.
+message TrustEndorsement {
+  string pairing_id = 1;
+  string endorsement = 2;
+}
+
+message ListTrustPairingsRequest {
+  repeated string ids = 1;
+}
+
+message ListTrustPairingsResponse {
+  repeated TrustPairing pairings = 1;
+}
+
+message CompleteTrustPairingRequest {
+  string id = 1;
+  string endorsement = 2;
+  bytes user_key = 3; // device pairings
+  bytes user_tag = 4; // device pairings
+}
+
+message PublishUserKeyRequest {
+  bytes user_key = 1;
 }
 
 message SetSecurityModeRequest {
@@ -1013,6 +1087,8 @@ message WhoamiResponse {
   string id = 18; // the caller's node ID
   string security_mode = 19; // the caller's user's (TenantUser.security_mode)
   int32 security_stage = 20; // the hub's [security] stage (0 prepare, 1 opt-in, 2 new users e2e)
+  bytes user_key = 21; // the caller's user's published user key (a hint)
+  int32 pending_pairings = 22; // the caller's user's pairings waiting for an endorsement
 }
 
 // ---------------------------------------------------------------- tenancy
@@ -1059,6 +1135,7 @@ message TenantUser {
   // (enforced) - #173. Set with PutUserRequest.set_security_mode (admins,
   // upwards only) or Fleet.SetSecurityMode (the user).
   string security_mode = 14;
+  bytes user_key = 15; // the user's published public user key (a hint)
 }
 
 // TenancyPolicy is what workers need to know about users.
@@ -1299,6 +1376,7 @@ message JoinCode {
   string name = 10;
   string user = 11;
   string owner = 12; // worker codes: the worker's owner
+  string pairing_id = 13; // set when the code carries a trust pairing
 }
 
 message ListJoinCodesRequest {}
