@@ -12,7 +12,7 @@ import (
 	"longarm/internal/trust"
 )
 
-// TestTrustClient: end-to-end trust on the client. The first hub session makes
+// TestTrustClient: end-to-end trust on the client. longarm trust init makes
 // a user key and renews the certificate through the hub with the device's
 // endorsement; with require on, an unendorsed worker is refused with a
 // message that says how to fix it, and accepted once its certificate
@@ -23,7 +23,10 @@ func TestTrustClient(t *testing.T) {
 	e.startLongarmd()
 	e.mustLongarm(e.client, "info", "w1")
 
-	out := e.mustLongarm(e.client, "trust", "show")
+	out := e.mustLongarm(e.client, "trust", "init")
+	if !strings.Contains(out, "certificate renewed") || !strings.Contains(out, "carries the endorsement") {
+		t.Fatalf("trust init:\n%s", out)
+	}
 	var keyLine string
 	for _, l := range strings.Split(out, "\n") {
 		if l = strings.TrimSpace(l); strings.HasPrefix(l, "longarm-user-key.v1.") {
