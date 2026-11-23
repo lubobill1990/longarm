@@ -24,6 +24,11 @@ const (
 	EnvRedirect  = "LONGARM_HUB_HTTPS_REDIRECT" // https_redirect
 	EnvACMEEmail = "LONGARM_HUB_ACME_EMAIL"     // acme_email
 	EnvACMEDir   = "LONGARM_HUB_ACME_DIRECTORY" // acme_directory
+
+	// [security]; pilot is comma-separated.
+	EnvSecurityStage    = "LONGARM_HUB_SECURITY_STAGE"
+	EnvSecurityNewUsers = "LONGARM_HUB_SECURITY_NEW_USERS"
+	EnvSecurityPilot    = "LONGARM_HUB_SECURITY_PILOT"
 	// EnvSTUNAdvertise is relay_stun_advertise, comma-separated, e.g.
 	// "stun.cloudflare.com:3478,stun.l.google.com:19302" (a hub whose own
 	// STUN answers are useless behind its platform's source NAT, like Azure
@@ -70,6 +75,13 @@ const (
 )
 
 func (c *Config) applyEnv() error {
+	if v := strings.TrimSpace(os.Getenv(EnvSecurityStage)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 || n > 2 {
+			return fmt.Errorf("%s=%q: want an integer 0..2", EnvSecurityStage, v)
+		}
+		c.Security.Stage = n
+	}
 	for _, kv := range []struct {
 		env string
 		dst **float64
@@ -86,6 +98,7 @@ func (c *Config) applyEnv() error {
 		env string
 		dst *string
 	}{{EnvDB, &c.DBPath}, {EnvListen, &c.Listen}, {EnvHTTP, &c.HTTP}, {EnvPublicURL, &c.PublicURL},
+		{EnvSecurityNewUsers, &c.Security.NewUsers},
 		{EnvRelayUDP, &c.RelayUDP}, {EnvSTUN2, &c.RelaySTUN2}, {EnvHTTPS, &c.HTTPS}, {EnvRedirect, &c.HTTPSRedirect},
 		{EnvACMEEmail, &c.ACMEEmail}, {EnvACMEDir, &c.ACMEDirectory},
 		{EnvEntraTenant, &c.Auth.Entra.TenantID}, {EnvEntraClient, &c.Auth.Entra.ClientID}, {EnvEntraScope, &c.Auth.Entra.Scope},
@@ -103,6 +116,7 @@ func (c *Config) applyEnv() error {
 		env string
 		dst *[]string
 	}{{EnvSTUNAdvertise, &c.RelaySTUNAdvertise}, {EnvEntraAdmins, &c.Auth.Entra.Admins}, {EnvEntraAllowed, &c.Auth.Entra.Allowed},
+		{EnvSecurityPilot, &c.Security.Pilot},
 		{EnvEntraApps, &c.Auth.Entra.Apps}} {
 		if v := strings.TrimSpace(os.Getenv(kv.env)); v != "" {
 			*kv.dst = nil

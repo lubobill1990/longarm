@@ -2089,6 +2089,7 @@ longarm admin user add alice [--team web]... [--max-jobs 8] [--max-mem-gb 64] [-
 longarm admin user code alice [--device alice-desktop]     # a join code for the first device (user added with --no-code)
 longarm admin user set alice --team web --team infra       # replace teams; quota flags change the quota
 longarm admin user set alice --clear-quota                 # back to the default quota
+longarm admin user set alice --security-mode shadow        # record an upgrade (shadow or e2e; never down)
 longarm admin user ls [--json]                             # number of devices and workers, teams, usage, quotas
 longarm admin user disable|enable alice                    # refused on the hub and every worker
 longarm admin user remove alice [--purge]                  # revoke all of alice's devices and workers; --purge:
@@ -2101,10 +2102,14 @@ longarm admin team add web alice bob; longarm admin team rm web bob; longarm adm
 longarm admin join-code --role client --user alice --name alice-2   # the same, by hand
 longarm admin issue --role client --name alice-pc --user alice --out DIR   # without a hub
 longarm whoami                                             # this device: user, teams, quota, usage
+longarm security status                                    # security mode, hub stage and guidance
 longarm panel-login [--reset] [--json]                      # your own panel login (hubs without an identity provider)
 longarm run --share team -- make test                      # team members may read it (team:<name> = one team)
 longarm run --cpus 4 --mem-limit 8G -- make                # per-job limits (capped by the user's quota)
 ```
+
+Security modes are shown by `whoami` (also `--json`) and the `SECURITY`
+column of `admin user ls`; see [Security modes (#173)](#security-modes-173).
 
 **Adding another device without an identity provider.** On an existing
 signed-in client device, run `longarm panel-login`. It uses that device's
@@ -2212,6 +2217,41 @@ owners, who keep acting on everything as before; with `users` set or
 `admins` other than full, `[hub] remote_jobs` defaults to `none`. longarmd
 refuses to start with an unknown `admins` value or an invalid user name and
 logs the effective policy at start (`access policy ...`).
+
+### Security modes (#173)
+
+`longarm security status` shows your mode, the hub stage and guidance.
+`longarm security upgrade shadow|e2e` records an upgrade for your own user
+(client or admin device certificate). Admins can use `longarm admin user
+set alice --security-mode shadow|e2e`. The order is `legacy < shadow < e2e`;
+the hub and admins can never move a user down.
+
+**In v1 modes are recorded and reported only.** Neither `shadow` nor `e2e`
+changes access checks, requires keys, or cuts off existing devices.
+Enforcement comes with the next release; existing
+[manual end-to-end trust](#end-to-end-trust-client) settings are unchanged.
+
+In `hub.toml`:
+
+```toml
+[security]
+stage = 0                 # 0 prepare (default), 1 offer opt-in, 2 new-user defaults
+new_users = "e2e"         # legacy | shadow | e2e; default e2e, used only at stage 2
+pilot = ["alice"]         # users allowed to upgrade even at stage 0; default []
+```
+
+Stage 0 offers no upgrade except to pilot users. At stage 1 or 2 any user
+may upgrade; admins follow the same stage/pilot rule for the target user.
+At stage 2, all newly created users (including first identity-provider
+sign-ins) start at `new_users`. Earlier stages create legacy users.
+Existing rows without a mode remain legacy; changing the stage or
+`new_users` does not change existing users. Environment overrides:
+`LONGARM_HUB_SECURITY_STAGE`, `LONGARM_HUB_SECURITY_NEW_USERS`,
+`LONGARM_HUB_SECURITY_PILOT` (comma-separated names).
+
+Downgrades will require the user's key or local access to the workers,
+not the hub's authority; v1 provides no downgrade command. Successful
+mode-setting calls are audited as `users/security-mode`.
 
 ### Node IDs and targets
 

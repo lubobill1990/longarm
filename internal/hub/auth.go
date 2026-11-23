@@ -69,6 +69,7 @@ var hubMethodRoles = map[string][]pki.Role{
 	pb.Fleet_CreateWorkerCode_FullMethodName:  users,
 	pb.Fleet_ClaimWorker_FullMethodName:       users,
 	pb.Fleet_PanelLogin_FullMethodName:        users,
+	pb.Fleet_SetSecurityMode_FullMethodName:   users,
 	pb.Fleet_ShareWorker_FullMethodName:       users,
 	pb.Fleet_RemoveWorker_FullMethodName:      users,
 	pb.Fleet_SetWorkerLabels_FullMethodName:   users,

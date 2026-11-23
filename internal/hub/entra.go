@@ -284,7 +284,8 @@ func (h *Hub) entraAppUser(app, oid string) (string, error) {
 		h.mu.Unlock()
 		return "", status.Errorf(codes.FailedPrecondition, "auth.entra apps: the name %s is taken (a worker, device or panel account)", user)
 	}
-	u := &pb.TenantUser{Name: user, CreatedAt: tspb(time.Now().UTC()), CreatedBy: "entra-app"}
+	u := &pb.TenantUser{Name: user, CreatedAt: tspb(time.Now().UTC()), CreatedBy: "entra-app",
+		SecurityMode: h.newUserSecurityMode()}
 	if err := h.saveTenantLocked(u); err != nil {
 		h.mu.Unlock()
 		return "", status.Error(codes.Internal, err.Error())
@@ -372,7 +373,8 @@ func (h *Hub) entraSignIn(id entraIdentity, by string) (user string, admin bool,
 			base = id.provider // no e-mail address to name it after
 		}
 		user = h.freeUserNameLocked(base)
-		u := &pb.TenantUser{Name: user, CreatedAt: tspb(time.Now().UTC()), CreatedBy: cmpOr(id.provider, "entra"), Upn: id.upn}
+		u := &pb.TenantUser{Name: user, CreatedAt: tspb(time.Now().UTC()), CreatedBy: cmpOr(id.provider, "entra"), Upn: id.upn,
+			SecurityMode: h.newUserSecurityMode()}
 		if err := h.saveTenantLocked(u); err != nil {
 			h.mu.Unlock()
 			return "", false, status.Error(codes.Internal, err.Error())

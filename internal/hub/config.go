@@ -117,6 +117,7 @@ type Config struct {
 	Releases  ReleaseConfig   `toml:"releases"`
 	Tailnet   TailnetConfig   `toml:"tailnet"`
 	Tenancy   TenancyConfig   `toml:"tenancy"`
+	Security  SecurityConfig  `toml:"security"`
 	Telemetry TelemetryConfig `toml:"telemetry"`
 	// Diagnostics: where uploaded diagnostic bundles are stored (diag.go).
 	Diagnostics DiagConfig  `toml:"diagnostics"`
@@ -397,6 +398,9 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() error {
+	if err := c.Security.defaults(); err != nil {
+		return err
+	}
 	if c.DataDir == "" {
 		c.DataDir = DefaultDataDir()
 	}
