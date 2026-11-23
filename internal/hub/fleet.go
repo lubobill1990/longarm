@@ -292,6 +292,12 @@ func (s *fleetServer) Whoami(ctx context.Context, req *pb.WhoamiRequest) (*pb.Wh
 	latest, files := s.h.latestNotice()
 	resp.LatestVersion, resp.LatestPath = latest, latestPath(latest, files, req.GetOs(), req.GetArch())
 	s.h.mu.Lock()
+	resp.SecurityMode, resp.SecurityStage = "legacy", int32(s.h.cfg.Security.Stage)
+	if c.id.Role != pki.RoleWorker {
+		if t := s.h.tenants[c.user]; t != nil && t.u.SecurityMode != "" {
+			resp.SecurityMode = t.u.SecurityMode
+		}
+	}
 	if n := s.h.callerNodeLocked(c); n != nil {
 		if f := forcedRenewBefore(n, c.cert); f > resp.RenewBefore.AsDuration() {
 			// its certificate lacks the node ID or has an old name: renew now

@@ -207,12 +207,19 @@ creates belongs to the user and - on workers with [isolation] mode =
 	var steams []string
 	var sqf quotaFlags
 	var clearQuota, spanel, canShare bool
+	var securityMode string
 	set := &cobra.Command{
 		Use:   "set <name>",
-		Short: "Change a user's teams (--team replaces them), quota (given flags; --clear-quota = the default) or --can-share",
+		Short: "Change a user's teams, quota, --can-share or --security-mode",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req := &pb.PutUserRequest{Name: args[0], Panel: spanel}
+			if cmd.Flags().Changed("security-mode") {
+				if err := validSecurityUpgrade(securityMode); err != nil {
+					return err
+				}
+				req.SetSecurityMode, req.SecurityMode = true, securityMode
+			}
 			if cmd.Flags().Changed("can-share") {
 				req.SetCanShare, req.CanShare = true, canShare
 			}
@@ -231,6 +238,7 @@ creates belongs to the user and - on workers with [isolation] mode =
 				}
 				fmt.Printf("%s: teams %s, quota %s, can share workers: %v\n", r.User.Name, strings.Join(r.User.Teams, ","),
 					quotaString(r.User.Quota), r.User.CanShare)
+				fmt.Printf("security: %s\n", displaySecurityMode(r.User.SecurityMode))
 				printPanel(r)
 				return nil
 			})
@@ -241,6 +249,7 @@ creates belongs to the user and - on workers with [isolation] mode =
 	set.Flags().BoolVar(&clearQuota, "clear-quota", false, "drop the user's quota overrides")
 	set.Flags().BoolVar(&spanel, "panel", false, "create or reset the user's web panel login")
 	set.Flags().BoolVar(&canShare, "can-share", false, "may share own workers with other users, teams or everyone (longarm worker share); --can-share=false revokes")
+	set.Flags().StringVar(&securityMode, "security-mode", "", "record a security upgrade: shadow or e2e (not enforced in v1)")
 
 	var asJSON bool
 	ls := &cobra.Command{
@@ -260,13 +269,13 @@ creates belongs to the user and - on workers with [isolation] mode =
 				}
 				fmt.Printf("multi-tenancy %s; default quota: %s\n", state, quotaString(r.DefaultQuota))
 				tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(tw, "USER\tSTATE\tTEAMS\tDEVICES\tWORKERS\tJOBS\tMEM GB\tQUOTA\tCAN SHARE")
+				fmt.Fprintln(tw, "USER\tSTATE\tSECURITY\tTEAMS\tDEVICES\tWORKERS\tJOBS\tMEM GB\tQUOTA\tCAN SHARE")
 				for _, u := range r.Users {
 					st := "active"
 					if u.Disabled {
 						st = "disabled"
 					}
-					fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%.1f\t%s\t%v\n", u.Name, st, strings.Join(u.Teams, ","),
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%.1f\t%s\t%v\n", u.Name, st, displaySecurityMode(u.SecurityMode), strings.Join(u.Teams, ","),
 						u.DeviceCount, u.WorkerCount, u.Usage.GetJobs(), u.Usage.GetMemGb(), quotaString(u.Quota), u.CanShare)
 				}
 				return tw.Flush()
@@ -380,6 +389,7 @@ func whoamiCmd() *cobra.Command {
 					return printJSON(r)
 				}
 				fmt.Printf("name %s, role %s, user %s on hub %s (%s)\n", r.Name, r.Role, r.User, r.HubName, r.HubVersion)
+				fmt.Printf("security: %s (hub stage %d)\n", displaySecurityMode(r.SecurityMode), r.SecurityStage)
 				if r.Tenancy {
 					fmt.Printf("teams: %s\nquota: %s\nusage: %d active jobs, %.1f GB reserved\n", strings.Join(r.Teams, ","),
 						quotaString(r.Quota), r.Usage.GetJobs(), r.Usage.GetMemGb())

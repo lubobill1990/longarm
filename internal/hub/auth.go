@@ -68,6 +68,7 @@ var hubMethodRoles = map[string][]pki.Role{
 	// own workers: the handlers check owner / can_share / admin
 	pb.Fleet_CreateWorkerCode_FullMethodName:  users,
 	pb.Fleet_PanelLogin_FullMethodName:        users,
+	pb.Fleet_SetSecurityMode_FullMethodName:   users,
 	pb.Fleet_ShareWorker_FullMethodName:       users,
 	pb.Fleet_RemoveWorker_FullMethodName:      users,
 	pb.Fleet_SetWorkerLabels_FullMethodName:   users,

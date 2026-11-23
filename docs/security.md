@@ -1971,6 +1971,25 @@ web sign-in only (the panel, and `/link` for devices and workers):
 
 ## End-to-end trust (the hub is not trusted with access)
 
+**Security-mode rollout (#173, v1).** The hub records each user's
+`legacy`, `shadow` or `e2e` mode (an absent mode is legacy), and reports it
+with its `[security] stage` through `whoami` / `security status`.
+See [usage](usage.md#security-modes-173) for config and upgrade commands.
+These modes are **not enforced in v1**: they do not enable the manual
+trust checks below or cut off any existing user. Enforcement comes with
+the next release and will live on the machines, not on the hub.
+
+The hub and admins may only move a user **up** (`legacy < shadow < e2e`),
+at stage 1 or 2, or for pilot users at stage 0. A user's own
+`Fleet.SetSecurityMode` call has the same restrictions; workers cannot
+call it. Both it and admin mode updates are audited as
+`users/security-mode`. Downgrades are refused with `FailedPrecondition`:
+only the user (later, with the user key) or someone with local access to
+the workers can authorize a downgrade. V1 exposes no such downgrade
+path. Otherwise a compromised hub could remove the trust requirement it
+is meant to be unable to bypass. Stage 2 applies `new_users` only when
+creating users; it never upgrades existing accounts automatically.
+
 Everything above trusts the hub: its CA decides who a certificate belongs
 to, so whoever holds the CA key - the hub's operators, an admin with access
 to its host or storage, a thief of its database replica - can mint a
