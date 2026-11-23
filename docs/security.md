@@ -2008,6 +2008,62 @@ path. Otherwise a compromised hub could remove the trust requirement it
 is meant to be unable to bypass. Stage 2 applies `new_users` only when
 creating users; it never upgrades existing accounts automatically.
 
+**Automatic key exchange (hub protocol, v1).** A user's client/admin
+certificate may publish its 32-byte public user key (`Fleet.PublishUserKey`).
+The hub persists it as a discovery hint, not a trust root, and reports it
+with the count of unexpired, open pairings in `Whoami`. No private key or
+pairing secret is sent to or escrowed by the hub.
+
+For a worker, `CreateWorkerCode` stores a pairing ID, user, public user key,
+user tag and expiry in the one-use code's record; the response echoes
+`pairing_id` so clients can detect support. The expiry must be in the future
+and no later than the code's TTL plus one minute of clock slack. At join,
+a matching pairing ID and 32-byte node proof attach the CSR's verified
+trust node key, node ID, name, hostname and OS to the persistent node
+record (`joined`). The join response carries the user key and tag back.
+Missing or odd worker pairing fields fall back to ordinary enrollment:
+automatic pairing is not an enrollment requirement in v1. A code
+containing `#` is rejected without consuming it, with guidance to pass
+the local secret as `--pair` instead.
+
+For a device, `OfferDevicePairing` takes its node key from the authenticated
+certificate, never the request, and records the caller's node ID, name and
+user (`offered`, one hour). A new offer replaces that device's old offer;
+retrying the same offer preserves its expiry and any completed exchange.
+`ListTrustPairings` returns only the caller's user's records, even for
+admins: requested IDs, or all unexpired `joined` / `offered` records.
+`CompleteTrustPairing` checks the endorsement's signature with its own
+public user key and matches the pairing's node key, ID, kind, name and
+user. Worker endorsements must use the user key stored with the code;
+device completions carry the public user key and user tag for the new
+device to fetch. These checks are sanity checks, not hub-side proof of
+possession of the pairing secret.
+
+The hub saves the endorsement (`endorsed`) before pushing it to an online
+worker. It repeats the push on every connect until the worker presents a
+certificate carrying a valid endorsement of the paired identity and node
+key by that user key (`installed`).
+Endorsed records survive expiry and hub restarts; expired unfinished
+pairings are removed by the maintenance sweep. A user may have at most 20
+open exchanges, including unused paired worker codes; pairing RPCs are
+rate-limited per user. If concurrent offers fill the budget during
+enrollment, the worker still joins without a pairing. Steps are audited as
+`trust/pairing-*`, without keys, tags or node proofs.
+
+The pairing ID and the two MACs derive from a 100-bit local secret
+(`internal/pki/pair.go`). Only the two endpoints can check the MACs: the
+worker/device checks the user tag before pinning the user key, and the
+endorsing device checks the node proof before signing. Substituting either
+key therefore fails at an endpoint, not at the hub. An endorsement binds
+the node key, ID, kind, user and name; the recipient checks its target
+before installation. Withholding messages can deny pairing, not forge
+trust. Leaking only a hub-side join code permits enrollment without an
+endorsement; leaking both the code and local secret can permit an
+attacker's worker to be endorsed. One use, expiry and the endpoint's
+confirmation of the worker's name/host/OS limit that exposure.
+Automatic exchange does not enable access enforcement or change an
+existing user's security mode.
+
 Everything above trusts the hub: its CA decides who a certificate belongs
 to, so whoever holds the CA key - the hub's operators, an admin with access
 to its host or storage, a thief of its database replica - can mint a

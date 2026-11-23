@@ -97,8 +97,22 @@ func (h *Hub) CreateWorkerCode(by, user string, req *pb.CreateWorkerCodeRequest)
 	if ttl == nil {
 		ttl = durationpb.New(24 * time.Hour)
 	}
-	return h.CreateJoinCode(by, &pb.CreateJoinCodeRequest{Role: string(pki.RoleWorker), Ttl: ttl, Labels: req.Labels,
-		Name: req.Name, Owner: user})
+	var pairing *store.TrustPairing
+	if p := req.Pairing; p != nil {
+		if !h.trustPairLimit.allow(user) {
+			return nil, status.Error(codes.ResourceExhausted, "too many pairing requests; slow down")
+		}
+		now := time.Now()
+		if !pki.ValidPairID(p.Id) || p.Kind != pki.KindWorker || p.User != user ||
+			len(p.UserKey) != 32 || len(p.UserTag) != 32 || p.ExpiresAt == nil || p.ExpiresAt.CheckValid() != nil ||
+			!p.ExpiresAt.AsTime().After(now) || p.ExpiresAt.AsTime().After(now.Add(ttl.AsDuration()+time.Minute)) {
+			return nil, status.Error(codes.InvalidArgument, "invalid worker pairing")
+		}
+		pairing = &store.TrustPairing{ID: p.Id, Kind: p.Kind, User: user, UserKey: slices.Clone(p.UserKey),
+			UserTag: slices.Clone(p.UserTag), ExpiresAt: p.ExpiresAt.AsTime()}
+	}
+	return h.createJoinCode(by, &pb.CreateJoinCodeRequest{Role: string(pki.RoleWorker), Ttl: ttl, Labels: req.Labels,
+		Name: req.Name, Owner: user}, pairing)
 }
 
 // activeWorkerCodes counts owner's unused, unexpired worker codes.

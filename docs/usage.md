@@ -2799,6 +2799,17 @@ the user's devices ([security.md](security.md)): workers can refuse devices
 that aren't endorsed by a user they trust, and a client can refuse workers.
 The hub only copies the endorsement into the certificate when it renews it.
 
+Hubs supporting automatic trust pairing report your public user-key hint
+and pending-pairing count in `Whoami`, and retain worker/device exchanges
+across restarts. Exchanges belong to your user, not to the hub's admins.
+Unfinished exchanges expire (device offers after one hour); completed
+endorsements remain available, and workers receive them again on reconnect
+until installed in their certificate. Pairing is optional in v1: older
+clients and workers still join normally, and recording a key or pairing
+does not turn on trust enforcement. A local pairing secret must never be
+sent as part of the hub's join code; pass it to the worker as `--pair`.
+See [the hub protocol](security.md#end-to-end-trust-the-hub-is-not-trusted-with-access).
+
 ```sh
 longarm trust init                      # first device: user key for this certificate's user, endorses
                                         # this device, renews the certificate through the hub; prints
