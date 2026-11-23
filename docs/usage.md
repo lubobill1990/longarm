@@ -2319,7 +2319,11 @@ accept `<code>#<secret>` (split locally). Older hubs fall back to the
 ordinary join command; older workers reject `--pair` locally (drop the flag
 to join without automatic trust). Run Longarm on the originating device
 after the worker joins to finish its endorsement. Pairing failures warn
-but do not prevent joining in v1.
+but do not prevent joining in v1. A bad user-key tag leaves the worker
+enrolled without a pinned user key. A plain join without `--pair` prints
+no automatic-trust warning. After successful pairing, the worker stores
+`trust/pinned-user` and renews its certificate with your endorsement; it
+does not create `trust/trust.toml` or turn on enforcement.
 
 **Tools on your worker.** `worker toolchain` lets its owner manage tools without
 an admin certificate; admins can also manage fleet workers (those with no owner),
@@ -2817,8 +2821,10 @@ longarm trust show --recovery           # show your secret recovery code again
 longarm trust recover <LAR1-code>        # restore the key on a signed-in device
 ```
 
-Run Longarm on the new device again to install its endorsement and renew
-its certificate. Approval endorses that device; it does not copy your
+Run a command that refreshes the fleet (for example `longarm ls`) on the
+new device again to install its endorsement and renew its certificate.
+Device pairing offers expire after one hour; run the command again for a
+fresh offer if needed. Approval endorses that device; it does not copy your
 secret user key to it. Recovery imports the key and endorses this device.
 Neither automatic pairing nor recovery enables `require_workers`.
 

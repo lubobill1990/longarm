@@ -14,14 +14,6 @@ access, never hub/admin authority. Start with `internal/hub/security.go`,
 the existing trust checks in `internal/pki/trust.go`, and
 docs/security.md "End-to-end trust".
 
-## Automatic trust protocol e2e coverage (#173, after both B2 halves land)
-
-The client/worker pairing paths have fake-Fleet and local storage tests;
-full protocol A/B e2e tests are deferred until the hub implementation lands.
-Cover `worker add` through join, endorsement push and renewal, plus device
-offer/approve/install and recovery. Start with `cmd/longarm/device.go`,
-`internal/trust/pairing.go`, and the existing `e2e/trust*_test.go` harness.
-
 ## Handoff to local brings the source's plugins and MCP servers unasked
 
 `handoff --from <worker> --to local` ships the worker's plugin directories

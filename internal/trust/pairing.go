@@ -532,7 +532,7 @@ func installDevice(s Store, id pki.Identity, p Pairing, remote *pb.TrustPairing)
 	expiry := remote.ExpiresAt.AsTime()
 	if pair.ID != remote.Id || remote.Kind != pki.KindDevice || remote.User != id.Owner() ||
 		remote.NodeId != id.ID || remote.NodeName != id.Name || !time.Now().Before(expiry) ||
-		!time.Now().Before(p.ExpiresAt) || expiry.Unix() != p.ExpiresAt.Unix() {
+		!time.Now().Before(p.ExpiresAt) || expiry.After(p.ExpiresAt) {
 		return errors.New("device pairing identity or expiry does not match")
 	}
 	if err := pair.CheckUserTag(remote.UserTag, pki.KindDevice, id.Owner(), remote.UserKey, expiry); err != nil {

@@ -2123,6 +2123,9 @@ hostname and OS (`--yes` skips the question). Those display fields are
 hub-reported, not independent identity evidence. The new device checks
 the returned user-key tag and endorsement before installing and pinning
 its own user in its client policy. The secret user key is not transferred.
+The client accepts the hub's shorter one-hour offer expiry within its local
+deadline; the user-key tag authenticates that expiry. An extended, expired,
+missing or invalid expiry is refused.
 
 Substituting a user key fails the tag; substituting a node key fails the
 proof. Two different node keys reported for one pairing are not endorsed
