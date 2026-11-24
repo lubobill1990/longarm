@@ -8,12 +8,12 @@ All forwarded values travel worker-direct over mTLS (never through the hub). The
 |---|---|
 | `auto` (default) | the agent named by `argv[0]`'s base name (`claude`, `copilot`; `.exe/.cmd/.ps1/.js` stripped). Wrappers such as `pwsh -c`, `sh -c`, `npx` are not detected |
 | `claude` | `env` block of `$CLAUDE_CONFIG_DIR`/`~/.claude/settings.json` (token-like names as secrets), plus `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` from the environment |
-| `copilot` | as `COPILOT_GITHUB_TOKEN`: `--copilot-account NAME` (pool `~/.copilot/accounts/tokens.json`), else `COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`, else `gh auth token` |
+| `copilot` | as `COPILOT_GITHUB_TOKEN`: `--copilot-account NAME` (pool `~/.copilot/accounts/tokens.json`), else `COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`, else `gh auth token --user <copilot_gh_user>`, else a random account of the pool, else `gh auth token` |
 | `gh` | `GH_TOKEN` with the token's full scope (opt-in only) |
 | `none` | nothing |
 
 - A Claude subscription-only login (no API key, proxy token or `CLAUDE_CODE_OAUTH_TOKEN`) forwards nothing. Tell the user to run `claude setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN`.
-- Copilot accepts `gho_` tokens and fine-grained PATs, not classic `ghp_` PATs. Copilot jobs get a private `COPILOT_HOME`. To use the account's `~/.copilot` instead, pass `-e COPILOT_HOME=...`.
+- Copilot accepts `gho_` and `ghu_` tokens and fine-grained PATs, not classic `ghp_` PATs. With a token pool, each job draws an account at random (spreads rate limits); `--copilot-account NAME` pins one. Copilot jobs get a private `COPILOT_HOME`. To use the account's `~/.copilot` instead, pass `-e COPILOT_HOME=...`.
 - Which workers receive credentials:
   - Yours: yes.
   - Someone else's with per-user isolation: yes.

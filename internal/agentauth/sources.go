@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -84,11 +85,8 @@ type Sources struct {
 	LookupEnv func(string) (string, bool)
 	// GH runs gh with args and returns its standard output; nil = gh is
 	// not available.
-	GH func(ctx context.Context, args ...string) ([]byte, error)
-	// StateDir keeps the round-robin position of the Copilot token pool
-	// (an index, never a token); "" = always the first account.
-	StateDir string
-	Config   Config
+	GH     func(ctx context.Context, args ...string) ([]byte, error)
+	Config Config
 	// CopilotAccount picks an account of the Copilot token pool
 	// (--copilot-account); it wins over every other source.
 	CopilotAccount string
@@ -96,9 +94,9 @@ type Sources struct {
 
 // System returns the sources of this machine: the real environment, home
 // directory and gh on PATH.
-func System(stateDir string, cfg Config, copilotAccount string) *Sources {
+func System(cfg Config, copilotAccount string) *Sources {
 	home, _ := os.UserHomeDir()
-	return &Sources{Home: home, LookupEnv: os.LookupEnv, GH: runGH, StateDir: stateDir, Config: cfg, CopilotAccount: copilotAccount}
+	return &Sources{Home: home, LookupEnv: os.LookupEnv, GH: runGH, Config: cfg, CopilotAccount: copilotAccount}
 }
 
 // runGH runs gh (from PATH) with a timeout; stderr is dropped (it may name
@@ -306,8 +304,8 @@ func validEnvName(k string) bool {
 var CopilotPoolFile = filepath.Join(".copilot", "accounts", "tokens.json")
 
 // copilot: --copilot-account (the pool), COPILOT_GITHUB_TOKEN / GH_TOKEN /
-// GITHUB_TOKEN, gh auth token --user <copilot_gh_user>, gh auth token, the
-// pool (round-robin). Forwarded as COPILOT_GITHUB_TOKEN.
+// GITHUB_TOKEN, gh auth token --user <copilot_gh_user>, the pool (an account
+// at random), gh auth token. Forwarded as COPILOT_GITHUB_TOKEN.
 func (s *Sources) copilot(ctx context.Context, b *Bundle) error {
 	set := func(tok, src string) error {
 		b.Secret["COPILOT_GITHUB_TOKEN"] = tok
@@ -333,16 +331,16 @@ func (s *Sources) copilot(ctx context.Context, b *Bundle) error {
 		}
 		return set(tok, "gh auth token --user "+u)
 	}
-	tok, ghErr := s.ghToken(ctx, "")
-	if ghErr == nil {
-		return set(tok, "gh auth token")
-	}
-	acct, tok, err := s.poolNext()
+	acct, tok, err := s.poolPick()
 	if err == nil {
 		return set(tok, "token pool account "+acct)
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	tok, ghErr := s.ghToken(ctx, "")
+	if ghErr == nil {
+		return set(tok, "gh auth token")
 	}
 	return &MissingError{Copilot, "copilot: no GitHub token found on this machine (COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN, " +
 		"gh auth token: " + ghErr.Error() + ", or " + filepath.Join("~", CopilotPoolFile) + ")"}
@@ -419,37 +417,16 @@ func (s *Sources) poolToken(acct string) (string, error) {
 	return tok, nil
 }
 
-// poolStateFile keeps the next round-robin index of the pool.
-const poolStateFile = "agent-auth-pool.json"
-
-// poolNext picks the pool's accounts in turn (sorted by name).
-func (s *Sources) poolNext() (string, string, error) {
+// poolPick picks an account of the pool at random: jobs spread over the
+// accounts, with no state shared between parallel clients.
+func (s *Sources) poolPick() (string, string, error) {
 	pool, err := s.readPool()
 	if err != nil {
 		return "", "", err
 	}
 	accts := sortedKeys(pool)
-	var st struct {
-		Next int `json:"next"`
-	}
-	path := ""
-	if s.StateDir != "" {
-		path = filepath.Join(s.StateDir, poolStateFile)
-		if b, err := os.ReadFile(path); err == nil {
-			_ = json.Unmarshal(b, &st)
-		}
-	}
-	i := st.Next
-	if i < 0 || i >= len(accts) {
-		i = 0
-	}
-	if path != "" {
-		st.Next = (i + 1) % len(accts)
-		if b, err := json.Marshal(st); err == nil {
-			_ = os.WriteFile(path, b, 0o600)
-		}
-	}
-	return accts[i], pool[accts[i]], nil
+	acct := accts[rand.IntN(len(accts))]
+	return acct, pool[acct], nil
 }
 
 func sortedKeys(m map[string]string) []string {

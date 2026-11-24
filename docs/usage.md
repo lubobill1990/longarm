@@ -546,14 +546,15 @@ gh_user = "octocat"           # --agent-auth gh: `gh auth token --user octocat`
   2. `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` from longarm's
      environment.
   3. `[agent_auth] copilot_gh_user`: `gh auth token --user <login>`.
-  4. `gh auth token`: gh's active account.
-  5. The token pool `~/.copilot/accounts/tokens.json`, if there is one:
+  4. The token pool `~/.copilot/accounts/tokens.json`, if there is one:
      `{"<account>": "<token>", ...}` (or `{"<account>": {"token": "..."}}`).
-     Accounts are used in turn, by name. Only the position is kept, in the
-     longarm config dir; tokens are not.
+     Each job gets an account at random, which spreads the load over the
+     accounts; nothing is kept between jobs.
+  5. `gh auth token`: gh's active account.
 
-  Copilot CLI takes gh's OAuth tokens (`gho_...`) and fine-grained PATs
-  with the Copilot permission, not classic PATs (`ghp_...`).
+  Copilot CLI takes gh's OAuth tokens (`gho_...`), GitHub App user tokens
+  (`ghu_...`) and fine-grained PATs with the Copilot permission, not classic
+  PATs (`ghp_...`).
 - **gh** (`--agent-auth gh`, opt-in only, never with `auto`): `GH_TOKEN`
   for agents that use git or gh themselves. It comes from `gh auth token
   --user <gh_user>` if configured, else from `GH_TOKEN` / `GITHUB_TOKEN`,
