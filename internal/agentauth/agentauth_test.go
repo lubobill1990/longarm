@@ -256,7 +256,7 @@ func TestCopilotSources(t *testing.T) {
 	fakeGHOnPath(t)
 	home := t.TempDir()
 	newSrc := func(env map[string]string, cfg Config) *Sources {
-		return &Sources{Home: home, LookupEnv: envOf(env), GH: runGH, Config: cfg, StateDir: t.TempDir()}
+		return &Sources{Home: home, LookupEnv: envOf(env), GH: runGH, Config: cfg}
 	}
 	get := func(s *Sources) (string, string) {
 		t.Helper()
@@ -285,22 +285,29 @@ func TestCopilotSources(t *testing.T) {
 		!strings.Contains(err.Error(), "copilot_gh_user") {
 		t.Fatalf("copilot_gh_user nobody: %v", err)
 	}
-	// 3. gh's active account
+	// 3. gh's active account, when there is no pool
 	if tok, src := get(newSrc(nil, Config{})); tok != "gho_fake_active" || src != "copilot: gh auth token" {
 		t.Fatalf("gh: %q %q", tok, src)
 	}
-	// 4. the pool, round-robin, when gh has nothing
-	t.Setenv("PATH", t.TempDir())
+	// 4. the pool wins over gh's active account: an account at random
 	writeFile(t, filepath.Join(home, CopilotPoolFile), "\xef\xbb\xbf"+`{"zed": "tok-z", "amy": {"token": "tok-a"}, "empty": ""}`)
 	s := newSrc(nil, Config{})
-	var seq []string
-	for i := 0; i < 3; i++ {
-		tok, _ := get(s)
-		seq = append(seq, tok)
+	seen := map[string]bool{}
+	for i := 0; i < 200 && len(seen) < 2; i++ {
+		tok, src := get(s)
+		if (tok != "tok-a" || src != "copilot: token pool account amy") && (tok != "tok-z" || src != "copilot: token pool account zed") {
+			t.Fatalf("pool: %q %q", tok, src)
+		}
+		seen[tok] = true
 	}
-	if !slices.Equal(seq, []string{"tok-a", "tok-z", "tok-a"}) {
-		t.Fatalf("round-robin: %v", seq)
+	if len(seen) != 2 {
+		t.Fatalf("pool: always %v", seen)
 	}
+	// ...but not over the configured gh account
+	if tok, _ := get(newSrc(nil, Config{CopilotGHUser: "octo"})); tok != "gho_fake_octo" {
+		t.Fatalf("copilot_gh_user with a pool: %q", tok)
+	}
+	t.Setenv("PATH", t.TempDir())
 	// --copilot-account wins over everything
 	s = newSrc(map[string]string{"COPILOT_GITHUB_TOKEN": "a"}, Config{})
 	s.CopilotAccount = "zed"

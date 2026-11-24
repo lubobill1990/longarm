@@ -143,7 +143,7 @@ func forwardAgentAuth(ctx context.Context, s *session, conn *client.Conn, worker
 		return nil, env, secrets, fmt.Errorf("agent credentials not forwarded: %w", err)
 	}
 
-	src := agentauth.System(s.cfg.Dir, s.cfg.AgentAuth, o.copilotAccount)
+	src := agentauth.System(s.cfg.AgentAuth, o.copilotAccount)
 	b, err := src.Collect(ctx, agents, explicit)
 	if err != nil {
 		var miss *agentauth.MissingError

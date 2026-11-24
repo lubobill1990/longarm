@@ -19,6 +19,16 @@
   (default none) and `gate_free_fraction` is ignored. A hub with
   `gate_free_gb` set explicitly (e.g. `deploy --gate-free-gb 20`) keeps
   that much free after each job: lower it or drop it.
+- **The Copilot token pool comes before `gh auth token`, and an account
+  is drawn at random.** With `~/.copilot/accounts/tokens.json` present,
+  Copilot jobs used gh's active account whenever gh was signed in, so
+  the pool only served machines without gh. Now the pool wins over
+  `gh auth token` (still not over `--copilot-account`, the
+  `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` environment or
+  `[agent_auth] copilot_gh_user`), and each job gets an account at
+  random instead of in turn: parallel clients spread over the accounts
+  with no shared state, and the `agent-auth-pool.json` position file is
+  no longer written.
 
 ### Fixed
 
