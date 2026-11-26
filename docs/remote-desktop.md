@@ -16,9 +16,20 @@ input) is in `internal/screen`; nothing is wired into longarmd yet.
   agent in the console session is required from the first release, in
   every install mode (session-mode workers too). See "Worker: where
   capture runs".
-- **Viewer: the tray only.** "Desktop" opens a separate window from the
-  tray, which can go full screen (system keys are captured there). There
-  is no hub web panel viewer.
+- **Viewer: a native window, opened from the tray.** "Desktop" in the
+  tray runs `longarm desktop <worker>`, which opens a native window (not
+  a WebView page): on Windows, GPU H.264 decoding (Media Foundation +
+  DXVA), drawn with the D3D11 video processor into a flip-model swap
+  chain, and a low-level keyboard hook so Win, Alt+Tab and Ctrl+Esc reach
+  the worker. It is resizable, and Ctrl+Alt+Enter toggles full screen
+  (Ctrl+Alt+End sends Ctrl+Alt+Del). There is no hub web panel viewer,
+  and no WebSocket bridge in the tray. The CLI already has the client's
+  certificate and connection to workers, so it talks gRPC to longarmd
+  directly. Why native rather than WebView: a page cannot take system
+  keys (Keyboard Lock is not dependable in WebView2), and the spike
+  measured it 10-20 ms slower ("Native viewer" below). The cost is one
+  viewer per OS (macOS: VideoToolbox + Metal/CALayer through purego;
+  Linux: later).
 
 Where the sections below offer alternatives, these decisions take precedence.
 
@@ -78,16 +89,36 @@ uses about 40× less bandwidth than JPEG frames, and about 5× less on an
 ordinary desktop. A still screen costs nothing: frames only come
 when it changes, plus two refresh frames so text sharpens once it stops.
 
+### Native viewer (`internal/screen/{present,window}_windows.go`)
+
+`spike serve -tcp 127.0.0.1:7789` + `spike view [-control] [-snapshot f.png]`.
+A Win32 window, decoding with Media Foundation's H.264 decoder given a
+DXGI device manager (DXVA: NV12 surfaces stay in video memory) and
+drawing with `VideoProcessorBlt` (NV12→RGB, BT.709 studio range, scaled
+and letterboxed) into a flip-discard swap chain. There are no shaders.
+The keyboard hook and full screen are in `Window`. The window's own back
+buffer, read back (`-snapshot`), shows the desktop correctly scaled.
+
+Both viewers on one machine, so one clock; latency is from the capture
+on the worker side to the viewer having the frame:
+
+| Viewer | Capture → | p50 | p95 |
+|---|---|---|---|
+| Native window | `Present` returned | 6.5-8 ms | 12-13 ms |
+| WebView (Edge 157 = WebView2's engine), WebSocket + WebCodecs | `drawImage` to the canvas (the compositor adds up to a frame after this) | 17.5 ms | 18 ms |
+
+Both include the NVENC encode (~6 ms). The native window is 10-20 ms
+quicker end to end, and it is the only one that can take system keys.
+
 ## Architecture
 
 ```
-viewer (tray window /desktop/<worker>, WebView2/WKWebView; later the hub panel)
-   │ WebSocket (loopback, tray session cookie)
-longarm-tray server  ── gRPC Desktop.Stream over the node connection ──►  longarmd (worker)
-   (client side, reuses the client's mTLS / direct / relay paths)            │
-                                                                             ├─ session mode: captures in-process
-                                                                             └─ service mode: desktop agent in the
-                                                                                console session (named pipe)
+longarm desktop <worker>   (native window; the tray's "Desktop" runs it)
+   │ gRPC Desktop.Stream over the client's node connection (mTLS, direct or relay)
+   ▼
+longarmd (worker) ─┬─ session mode: captures in-process (no secure desktop)
+                   └─ the SYSTEM desktop agent in the console session
+                      (named pipe): UAC, lock screen, Ctrl+Alt+Del
 ```
 
 ### Worker: where capture runs
@@ -118,19 +149,14 @@ attached to.
 
 ### Encoding
 
-1. **v0: JPEG dirty tiles** (the spike). Pure Go. Encode the dirty
-   rectangles in parallel strips (1440p full frame: ~41 ms on one core,
-   ~6 ms on 8); a lossless PNG refresh of a region after it has been still
-   for 1 s, so text ends up sharp.
-2. **v1: H.264** through Media Foundation: the hardware encoder MFTs
-   (NVENC/Quick Sync/AMF) and Microsoft's software H.264 encoder are part
-   of Windows, and they are COM like DXGI, so Go needs no cgo. Low-latency mode,
-   CBR at the bandwidth the link measures, a keyframe on request. Decode
-   in the viewer with WebCodecs `VideoDecoder` (WebView2 and Chromium:
-   yes; WKWebView: Safari 16.4+; WebKitGTK: not reliably → JPEG there). No
+1. **H.264** through Media Foundation (the spike): the hardware encoder
+   MFTs (NVENC/Quick Sync/AMF) or Microsoft's software encoder. Both are
+   part of Windows and COM like DXGI, so Go needs no cgo. Low-latency mode,
+   CBR at the bandwidth the link measures, a keyframe on request. The
+   viewer decodes on its GPU (Media Foundation + DXVA). There is no
    openh264: Cisco's patent cover only applies to its own downloaded binary.
-   Media Foundation is missing on N editions without the Media Feature Pack
-   → JPEG there.
+2. **JPEG dirty tiles** (the first spike), only where H.264 is
+   unavailable: N editions without the Media Feature Pack.
 3. **The cursor** is drawn by the viewer (shape from
    `GetFramePointerShape`, position in every frame header). Moving the
    pointer then costs no video and feels local.
@@ -160,46 +186,42 @@ a QUIC datagram path for the direct case can come later.
 
 ### Viewer
 
-A tray page `/desktop/<worker>` in its own window (the tray is Wails, so
-it is WebView2 on Windows and WKWebView on macOS). The tray server bridges
-the page's WebSocket to `Desktop.Stream`, the same way it proxies the
-local APIs today. Then:
+A native window from `longarm desktop <worker>` (the tray's "Desktop"
+button runs it, as its ssh buttons run `longarm ssh`). It has no tray
+page and no WebSocket.
 
-- `longarm desktop <w> --native` (and the tray's "desktop" button when
-  the worker reports `kind: "native"`) opens it.
-- Keys: `KeyboardEvent.code` → scan codes, so the worker's keyboard layout
-  decides the characters, as on a local keyboard. While the canvas has
-  focus, the Keyboard Lock API takes system keys (Win, Alt+Tab) in
-  full screen. Text paste uses `Input{text}` (`KEYEVENTF_UNICODE`) for
-  IMEs and Chinese.
-- Clipboard text both ways (on focus / on change), scaling to fit or 1:1, a display picker,
-  view-only, Ctrl+Alt+Del button, quality/bandwidth readout.
-- The hub web panel can use the same page later, through the hub, the same
-  way it reaches job terminals.
+- **Picture:** `Presenter` (GPU decode, video processor, swap chain).
+  The pointer is drawn by the viewer from the worker's cursor shape and
+  position. The capture leaves it out, so moving it costs no video.
+- **Keys:** scan codes from the low-level keyboard hook while the window
+  is in front, so the worker's keyboard layout decides the characters, as
+  on a local keyboard. Win, Alt+Tab and Ctrl+Esc go to the worker.
+  Ctrl+Alt+Enter toggles full screen. Ctrl+Alt+End sends Ctrl+Alt+Del
+  through the SYSTEM agent's `SendSAS`. When the window loses focus,
+  every key held on the other side is released. Text paste uses
+  `Input{text}` (`KEYEVENTF_UNICODE`) for IMEs and Chinese.
+- **Mouse:** absolute positions mapped through the letterbox, buttons,
+  wheel.
+- Also: clipboard text both ways, a display picker, the bandwidth and
+  latency in the title, and a reconnect that keeps the window.
 
 ## Security
 
-- **Who.** The worker's owner (`WorkerAccess.Owner`), and users it is
-  shared with only if the owner turns on `desktop` for the share. An
-  admin certificate does not get this automatically, because a desktop is
-  more than a shell: it shows other people's screens.
-- **Consent.** An `[desktop] consent = "never" | "when-someone-is-there"
-  | "always"` setting, default `when-someone-is-there`: when the console
-  session has had input in the last N minutes, the agent shows an
-  Allow/Deny prompt on that screen (the UU Remote / Quick Assist model).
-  Owners' unattended machines use `never`.
-- **Visible.** While anyone is watching, there is a coloured border and a
-  tray notice on the worker's screen ("alice is viewing - Stop"). Stop on
-  the worker always wins.
-- **Audit.** Start, end, who, view-only or control, and the consent answer
-  (`longarm admin audit`). No recording in v1.
-- **Per-user isolation.** The console belongs to whoever signed in at it,
-  not to a Longarm space, so only the owner and admins get it there.
+- **Who.** Only the worker's owner (`WorkerAccess.Owner`), from their own
+  devices. Not users it is shared with, and not an admin certificate. A
+  worker that is not owned (an admin's pool machine) refuses the desktop.
+- **No consent prompt** (it is your own machine). There is a visible
+  indicator: while connected, the worker's screen has a thin coloured
+  border and the tray says "Viewed from <device> - Disconnect". Disconnect
+  on the worker always wins.
+- **Audit.** Start, end, and from which device (`longarm admin audit
+  --node <worker>`). No recording.
+- **Per-user isolation workers:** the owner only, as everywhere.
 
-## macOS and Linux (later; same protocol, same viewer)
+## macOS and Linux (later; same protocol)
 
 `internal/screen` keeps one interface (`Displays`, `Open → Next/Frame`,
-input calls) with a file per OS.
+input calls, `Presenter`, `Window`) with a file per OS.
 
 - **macOS:** ScreenCaptureKit (`SCStream`, dirty rects in the frame
   info) + VideoToolbox H.264 + `CGEventPost` for input. Without cgo: through
@@ -218,24 +240,25 @@ input calls) with a file per OS.
   and the restore token keeps it.
 - Codecs there: VideoToolbox (macOS), VA-API/NVENC through
   GStreamer/ffmpeg only with cgo → JPEG tiles first on Linux.
+- **Viewers there:** macOS gets an NSWindow with a CAMetalLayer, and
+  VideoToolbox decoding into IOSurfaces (purego). Taking system keys
+  needs a CGEventTap and Accessibility permission. Linux gets X11/Wayland
+  windows later. Until then, Windows is the viewing side.
 
 ## Plan
 
 | Step | What | Size |
 |---|---|---|
-| 1 | `Desktop` gRPC service + JPEG tiles (parallel encode, PNG refresh) in session-mode longarmd; flow control; cursor overlay; tray viewer page + bridge; `longarm desktop --native`; owner-only; audit | ~2 weeks |
-| 2 | Input polish: Unicode text, clipboard, multi-monitor, Keyboard Lock, view-only; consent prompt + "being viewed" border | ~1 week |
-| 3 | Service mode: `desktop-agent` in the console session, secure desktop (UAC / lock screen / Ctrl+Alt+Del), sign-in with no one logged on | ~1 week |
-| 4 | H.264 through Media Foundation + WebCodecs; bitrate from acks; JPEG fallback | ~1-2 weeks |
-| 5 | macOS (ScreenCaptureKit, CGEvent, TCC onboarding in the tray) | ~2 weeks |
-| 6 | Linux X11; Wayland through the portal (or RDP fallback) | ~2 weeks |
+| 1 | `Desktop` gRPC service in longarmd; H.264 (GPU MFT, software fallback) with flow control (≤3 unacked frames, bitrate from acks, keyframe on request); cursor shape and position; owner-only + audit; `longarm desktop <w>` opens the native window (decode, present, mouse, keys, hook, full screen); the tray's button | ~2 weeks |
+| 2 | The SYSTEM desktop agent: started by the longarmd service, or by the Longarm Update service (LocalSystem, installed by every MSI) for session-mode workers, in the console session; follows the input desktop (UAC prompt, lock screen, sign-in screen); `SendSAS` for Ctrl+Alt+Del; talks to longarmd over a SYSTEM-only named pipe | ~1-2 weeks |
+| 3 | Clipboard, Unicode text, display picker, the "viewed" border, reconnect | ~1 week |
+| 4 | macOS worker (ScreenCaptureKit, VideoToolbox, CGEvent; TCC onboarding in the tray) and macOS viewer (VideoToolbox + Metal/CALayer window) | ~3 weeks |
+| 5 | Linux X11 worker; Wayland through the portal (or the RDP fallback); a Linux viewer | ~3 weeks |
 
 ## Open questions
 
-1. Is unattended control of one's own workers (no prompt) the main use, or
-   helping someone at the screen (consent prompt first)? This decides
-   step 2's default.
-2. Does v1 need the secure desktop (UAC, lock screen), i.e. step 3 before
-   H.264?
-3. Should the viewer live in the tray only, or also in the hub web panel
-   (browser access from a machine without Longarm installed)?
+1. Session-mode workers (the default) need a SYSTEM process for UAC and
+   the lock screen. The Longarm Update service is already one, on every
+   MSI install. Should it start the desktop agent, or should there be a
+   separate small "Longarm Desktop" service (clearer, one more service)?
+   Leaning: a separate service, installed with the worker role.

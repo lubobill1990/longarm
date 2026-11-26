@@ -6,11 +6,13 @@
 //	go run ./internal/screen/spike bench [-display 0] [-seconds 5]          # JPEG tiles
 //	go run ./internal/screen/spike h264bench [-software] [-bitrate 8000]  # H.264 on the live screen
 //	go run ./internal/screen/spike scrollbench [-software] [-fps 60]      # H.264 vs JPEG, synthetic scroll
-//	go run ./internal/screen/spike serve [-codec h264|jpeg] [-addr 127.0.0.1:7788]   # open it in a browser
+//	go run ./internal/screen/spike serve [-codec h264|jpeg] [-addr 127.0.0.1:7788] [-tcp 127.0.0.1:7789]
+//	go run ./internal/screen/spike view [-connect 127.0.0.1:7789] [-control]   # the native viewer window
 //
 // serve streams H.264 (WebCodecs) or changed rectangles as JPEG over a
-// WebSocket to a canvas
-// and injects the browser's mouse and keyboard with SendInput.
+// WebSocket to a canvas (http://<addr>/), and H.264 over plain TCP
+// (length-prefixed messages) to the native viewer; both inject the
+// viewer's mouse and keyboard with SendInput.
 package main
 
 import (
@@ -24,13 +26,9 @@ import (
 	"image"
 	"image/jpeg"
 	"log"
-	"net/http"
 	"os"
 	"sort"
-	"sync"
 	"time"
-
-	"github.com/coder/websocket"
 
 	"longarm/internal/screen"
 )
@@ -46,13 +44,17 @@ func main() {
 	screen.SetDPIAware()
 	fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
 	display := fs.Int("display", 0, "display index")
-	seconds := fs.Int("seconds", 5, "bench: how long")
+	seconds := fs.Int("seconds", 5, "bench: how long; view: close after (0: never)")
 	quality := fs.Int("quality", 70, "JPEG quality")
 	addr := fs.String("addr", "127.0.0.1:7788", "serve: listen address")
 	codec := fs.String("codec", "h264", "serve: h264 or jpeg")
 	fps := fs.Int("fps", 60, "h264: max frames per second")
 	bitrate := fs.Int("bitrate", 8000, "h264: kbit/s")
 	software := fs.Bool("software", false, "h264: the software encoder, not the GPU's")
+	tcpAddr := fs.String("tcp", "127.0.0.1:7789", "serve: native viewers' address (\"\": none)")
+	connect := fs.String("connect", "127.0.0.1:7789", "view: the server")
+	snapshot := fs.String("snapshot", "", "view: save what the window shows after 3 s as this PNG")
+	control := fs.Bool("control", false, "view: send mouse and keyboard (not when viewing this machine itself)")
 	fs.Parse(os.Args[2:])
 	switch os.Args[1] {
 	case "displays":
@@ -70,7 +72,9 @@ func main() {
 	case "h264bench":
 		videoBench(videoOptions{*display, *fps, *bitrate * 1000, *software}, *seconds)
 	case "serve":
-		serve(*addr, *display, *quality, *codec, videoOptions{*display, *fps, *bitrate * 1000, *software})
+		serve(*addr, *tcpAddr, *display, *quality, *codec, videoOptions{*display, *fps, *bitrate * 1000, *software})
+	case "view":
+		view(*connect, *control, *seconds, *snapshot)
 	default:
 		log.Fatalf("unknown mode %q", os.Args[1])
 	}
@@ -165,83 +169,6 @@ type inputMsg struct {
 	D      bool
 	DX, DY int
 	C      uint16
-}
-
-func serve(addr string, display, q int, codec string, vo videoOptions) {
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(viewerHTML)
-	})
-	var one sync.Mutex // one viewer at a time
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		if !one.TryLock() {
-			http.Error(w, "busy", http.StatusConflict)
-			return
-		}
-		defer one.Unlock()
-		ws, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			return
-		}
-		ws.SetReadLimit(1 << 16)
-		ctx, cancel := context.WithCancel(r.Context())
-		defer cancel()
-		frames := make(chan [][]byte, 2)
-		var origin struct{ x, y int }
-		var originMu sync.Mutex
-		go func() { // capture on its own locked thread
-			defer close(frames)
-			setOrigin := func(x, y int) { originMu.Lock(); origin.x, origin.y = x, y; originMu.Unlock() }
-			if codec == "h264" {
-				videoStream(ctx, vo, frames, setOrigin)
-			} else {
-				stream(ctx, display, q, frames, setOrigin)
-			}
-		}()
-		go func() { // input
-			defer cancel()
-			for {
-				_, b, err := ws.Read(ctx)
-				if err != nil {
-					return
-				}
-				var m inputMsg
-				if json.Unmarshal(b, &m) != nil {
-					continue
-				}
-				originMu.Lock()
-				ox, oy := origin.x, origin.y
-				originMu.Unlock()
-				var ierr error
-				switch m.T {
-				case "m":
-					ierr = screen.MouseMove(ox+m.X, oy+m.Y)
-				case "b":
-					ierr = screen.MouseButton(m.B, m.D)
-				case "w":
-					ierr = screen.MouseWheel(m.DX, m.DY)
-				case "k":
-					ierr = screen.Key(m.C, m.D)
-				}
-				if ierr != nil {
-					log.Print(ierr)
-				}
-			}
-		}()
-		sent, start := 0, time.Now()
-		for msgs := range frames {
-			for _, m := range msgs {
-				if err := ws.Write(ctx, websocket.MessageBinary, m); err != nil {
-					return
-				}
-				sent += len(m)
-			}
-		}
-		log.Printf("viewer gone: %.1f MB in %v", float64(sent)/1e6, time.Since(start).Round(time.Second))
-		ws.Close(websocket.StatusNormalClosure, "")
-	})
-	log.Printf("open http://%s/", addr)
-	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
 // stream captures display and sends batches of messages: 'I' + JSON

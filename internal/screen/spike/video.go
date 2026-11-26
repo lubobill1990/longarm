@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -65,7 +66,7 @@ func avcInfo(au []byte) (key bool, codec string) {
 // emit gets every access unit. Frames come when the screen changes (at
 // most fps per second); once it has been still for a moment the last image
 // is encoded twice more so the encoder can sharpen it.
-func videoSession(ctx context.Context, o videoOptions, started func(c *screen.Capturer, e *screen.Encoder), emit func(au []byte, key bool, codec string, encodeTime time.Duration) error) error {
+func videoSession(ctx context.Context, o videoOptions, started func(c *screen.Capturer, e *screen.Encoder), emit func(au []byte, key bool, codec string, captured time.Time, encodeTime time.Duration) error) error {
 	c, err := screen.Open(o.display)
 	if err != nil {
 		return err
@@ -84,6 +85,9 @@ func videoSession(ctx context.Context, o videoOptions, started func(c *screen.Ca
 	refresh := 0
 	have := false
 	for ctx.Err() == nil {
+		if s := time.Since(last); s < interval {
+			time.Sleep(interval - s) // pace before capturing, so the frame is fresh
+		}
 		wait := 100 * time.Millisecond
 		if refresh > 0 {
 			wait = 150 * time.Millisecond
@@ -95,15 +99,12 @@ func videoSession(ctx context.Context, o videoOptions, started func(c *screen.Ca
 		switch {
 		case d != nil:
 			have, refresh = true, 2
-			if s := time.Since(last); s < interval {
-				time.Sleep(interval - s) // pace; DXGI keeps accumulating meanwhile
-			}
 		case have && refresh > 0:
 			refresh--
 		default:
 			continue
 		}
-		t0 := time.Now()
+		t0 := time.Now() // captured
 		if c.W == w {
 			screen.BGRAToNV12(nv12, c.Frame(), w, h)
 		} else {
@@ -118,7 +119,7 @@ func videoSession(ctx context.Context, o videoOptions, started func(c *screen.Ca
 			continue
 		}
 		key, codec := avcInfo(au)
-		if err := emit(au, key, codec, time.Since(t0)); err != nil {
+		if err := emit(au, key, codec, t0, time.Since(t0)); err != nil {
 			return err
 		}
 	}
@@ -142,7 +143,7 @@ func videoBench(o videoOptions, seconds int) {
 	err := videoSession(ctx, o, func(c *screen.Capturer, e *screen.Encoder) {
 		fmt.Printf("display %d: %dx%d, %s encoder, %d fps max, %d kbit/s\n", o.display, c.W, c.H, e.Name, o.fps, o.bitrate/1000)
 		fmt.Printf("capturing for %ds - move windows / scroll / play a video to make changes...\n", seconds)
-	}, func(au []byte, key bool, codec string, t time.Duration) error {
+	}, func(au []byte, key bool, codec string, _ time.Time, t time.Duration) error {
 		frames++
 		total += len(au)
 		if key {
@@ -170,7 +171,8 @@ func videoBench(o videoOptions, seconds int) {
 }
 
 // videoStream is serve's H.264 path: 'C' + JSON {w,h,codec} once the SPS
-// is known, then 'H' + flags (1: key) + Annex B per access unit.
+// is known, then 'H' + flags (1: key) + capture time (Unix ns, int64 BE)
+// + Annex B per access unit.
 func videoStream(ctx context.Context, o videoOptions, out chan<- [][]byte, setOrigin func(x, y int)) {
 	for ctx.Err() == nil {
 		var w, h int
@@ -179,7 +181,7 @@ func videoStream(ctx context.Context, o videoOptions, out chan<- [][]byte, setOr
 			setOrigin(c.Display.X, c.Display.Y)
 			w, h = c.W&^1, c.H&^1
 			log.Printf("streaming %dx%d with the %s encoder", w, h, e.Name)
-		}, func(au []byte, key bool, codec string, _ time.Duration) error {
+		}, func(au []byte, key bool, codec string, captured time.Time, _ time.Duration) error {
 			var batch [][]byte
 			if codec != "" && codec != sentConfig {
 				cfg, _ := json.Marshal(map[string]any{"w": w, "h": h, "codec": codec})
@@ -193,7 +195,10 @@ func videoStream(ctx context.Context, o videoOptions, out chan<- [][]byte, setOr
 			if key {
 				flags = 1
 			}
-			batch = append(batch, append([]byte{'H', flags}, au...))
+			m := make([]byte, 10, 10+len(au))
+			m[0], m[1] = 'H', flags
+			binary.BigEndian.PutUint64(m[2:], uint64(captured.UnixNano()))
+			batch = append(batch, append(m, au...))
 			select {
 			case out <- batch:
 			case <-ctx.Done():
