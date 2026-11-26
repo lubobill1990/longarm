@@ -16,6 +16,14 @@ input) is in `internal/screen`; nothing is wired into longarmd yet.
   agent in the console session is required from the first release, in
   every install mode (session-mode workers too). See "Worker: where
   capture runs".
+- **A separate "Longarm Desktop" service** (`LongarmDesktop`,
+  LocalSystem, installed with the worker role, removed with it). It is
+  not part of the Longarm Update service. It keeps the capturer running
+  as SYSTEM in the console session (`StartInSession`), following session
+  changes, and it calls `SendSAS` itself, because Windows only takes
+  Ctrl+Alt+Del from session 0 (see "Secure desktop" below). The install
+  sets the `SoftwareSASGeneration` policy to 1 (services) and uninstall
+  removes it.
 - **Viewer: a native window, opened from the tray.** "Desktop" in the
   tray runs `longarm desktop <worker>`, which opens a native window (not
   a WebView page): on Windows, GPU H.264 decoding (Media Foundation +
@@ -109,6 +117,30 @@ on the worker side to the viewer having the frame:
 
 Both include the NVENC encode (~6 ms). The native window is 10-20 ms
 quicker end to end, and it is the only one that can take system keys.
+
+### Secure desktop (`internal/screen/session_windows.go`, a Cloud PC)
+
+`spike agent` stood in for the Longarm Desktop service. It ran as SYSTEM
+in session 0 (a one-off scheduled task) and started `spike serve` as
+SYSTEM in the console session. The test machine was a Windows 365 Cloud PC
+worker with no GPU (Hyper-V Video), signed in at the console as a
+standard user. The viewer here was `spike view` through
+`longarm forward`, and `spike poke` sent the test input.
+
+| Test | Result |
+|---|---|
+| Ordinary desktop, 1024×768, software H.264 encoder | shown |
+| Ctrl+Alt+Del (`SendSAS`) from the server in the console session | **nothing**: Windows ignores it there |
+| `SendSAS` from SYSTEM in session 0, with `SoftwareSASGeneration` = 1 | the Ctrl+Alt+Del screen (Winlogon desktop) is shown |
+| A click on its Cancel | back to the desktop: mouse input works on the Winlogon desktop |
+| A UAC prompt (the credential prompt on the secure desktop) | shown |
+| Esc | dismissed: keyboard input works on the secure desktop |
+
+Capture and input follow the input desktop: the capturer reopens on
+ACCESS_LOST, and the input thread calls `FollowInputDesktop` before every
+event. The lock screen is the same Winlogon desktop as the Ctrl+Alt+Del
+screen. It was not locked on purpose, because nobody could have unlocked
+that machine's test user.
 
 ## Architecture
 
@@ -250,15 +282,8 @@ input calls, `Presenter`, `Window`) with a file per OS.
 | Step | What | Size |
 |---|---|---|
 | 1 | `Desktop` gRPC service in longarmd; H.264 (GPU MFT, software fallback) with flow control (≤3 unacked frames, bitrate from acks, keyframe on request); cursor shape and position; owner-only + audit; `longarm desktop <w>` opens the native window (decode, present, mouse, keys, hook, full screen); the tray's button | ~2 weeks |
-| 2 | The SYSTEM desktop agent: started by the longarmd service, or by the Longarm Update service (LocalSystem, installed by every MSI) for session-mode workers, in the console session; follows the input desktop (UAC prompt, lock screen, sign-in screen); `SendSAS` for Ctrl+Alt+Del; talks to longarmd over a SYSTEM-only named pipe | ~1-2 weeks |
+| 2 | The Longarm Desktop service (LocalSystem, installed with the worker role, MSI + `longarmd desktop-service install` / `uninstall`): keeps the capturer running as SYSTEM in the console session and follows session changes; the input desktop (UAC prompt, lock screen, sign-in screen); `SendSAS` from the service for Ctrl+Alt+Del, with the `SoftwareSASGeneration` policy set at install; talks to longarmd over a named pipe only SYSTEM and longarmd's account may open | ~1-2 weeks |
 | 3 | Clipboard, Unicode text, display picker, the "viewed" border, reconnect | ~1 week |
 | 4 | macOS worker (ScreenCaptureKit, VideoToolbox, CGEvent; TCC onboarding in the tray) and macOS viewer (VideoToolbox + Metal/CALayer window) | ~3 weeks |
 | 5 | Linux X11 worker; Wayland through the portal (or the RDP fallback); a Linux viewer | ~3 weeks |
 
-## Open questions
-
-1. Session-mode workers (the default) need a SYSTEM process for UAC and
-   the lock screen. The Longarm Update service is already one, on every
-   MSI install. Should it start the desktop agent, or should there be a
-   separate small "Longarm Desktop" service (clearer, one more service)?
-   Leaning: a separate service, installed with the worker role.

@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"runtime"
 	"sync"
 	"time"
 
@@ -57,13 +58,22 @@ func serve(addr, tcpAddr string, display, q int, codec string, vo videoOptions) 
 				}
 				go func() {
 					defer c.Close()
+					c.(*net.TCPConn).SetNoDelay(true)
+					br := bufio.NewReader(c)
+					// The first message says who connects: "VIEW" or "POKE".
+					hello, err := readFrame(br)
+					if err != nil {
+						return
+					}
+					if string(hello) == "POKE" {
+						poked(br) // input only, next to a viewer
+						return
+					}
 					if !one.TryLock() {
 						return
 					}
 					defer one.Unlock()
-					c.(*net.TCPConn).SetNoDelay(true)
 					bw := bufio.NewWriterSize(c, 1<<20)
-					br := bufio.NewReader(c)
 					session(context.Background(), "h264", display, q, vo,
 						func(m []byte) error {
 							if err := writeFrame(bw, m); err != nil {
@@ -78,6 +88,23 @@ func serve(addr, tcpAddr string, display, q int, codec string, vo videoOptions) 
 	}
 	log.Printf("open http://%s/", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+// poked applies a poke connection's input (spike poke): after the
+// "POKE" message, inputMsg JSON messages, coordinates on display 0.
+func poked(br *bufio.Reader) {
+
+	for {
+		b, err := readFrame(br)
+		if err != nil {
+			return
+		}
+		var m inputMsg
+		if json.Unmarshal(b, &m) == nil {
+			log.Printf("poke: %s", b)
+			applyInput(m, 0, 0)
+		}
+	}
 }
 
 // writeFrame and readFrame: the TCP transport's messages, a uint32 BE
@@ -104,6 +131,46 @@ func readFrame(r io.Reader) ([]byte, error) {
 	b := make([]byte, l)
 	_, err := io.ReadFull(r, b)
 	return b, err
+}
+
+// inputs is the one thread that injects input: it follows the input
+// desktop, so keys and clicks reach UAC prompts and the Winlogon screens
+// when serve runs as SYSTEM in the console session (spike agent).
+var inputs = make(chan func(), 64)
+
+func init() {
+	go func() {
+		runtime.LockOSThread()
+		for f := range inputs {
+			screen.FollowInputDesktop()
+			f()
+		}
+	}()
+}
+
+func applyInput(m inputMsg, ox, oy int) {
+	done := make(chan struct{})
+	inputs <- func() {
+		defer close(done)
+		var err error
+		switch m.T {
+		case "m":
+			err = screen.MouseMove(ox+m.X, oy+m.Y)
+		case "b":
+			err = screen.MouseButton(m.B, m.D)
+		case "w":
+			err = screen.MouseWheel(m.DX, m.DY)
+		case "k":
+			err = screen.Key(m.C, m.D)
+		case "sas":
+			err = screen.SendSAS()
+			log.Print("sent Ctrl+Alt+Del")
+		}
+		if err != nil {
+			log.Print(err)
+		}
+	}
+	<-done
 }
 
 // session streams to one viewer until it goes: frames out through send,
@@ -137,20 +204,7 @@ func session(parent context.Context, codec string, display, q int, vo videoOptio
 			originMu.Lock()
 			ox, oy := origin.x, origin.y
 			originMu.Unlock()
-			var ierr error
-			switch m.T {
-			case "m":
-				ierr = screen.MouseMove(ox+m.X, oy+m.Y)
-			case "b":
-				ierr = screen.MouseButton(m.B, m.D)
-			case "w":
-				ierr = screen.MouseWheel(m.DX, m.DY)
-			case "k":
-				ierr = screen.Key(m.C, m.D)
-			}
-			if ierr != nil {
-				log.Print(ierr)
-			}
+			applyInput(m, ox, oy)
 		}
 	}()
 	sent, start := 0, time.Now()

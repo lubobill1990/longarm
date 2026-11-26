@@ -349,6 +349,14 @@ func (p *Presenter) flushContext() {
 	comCall(p.ctx, slotCtxFlush)
 }
 
+// Redraw shows the last frame again.
+func (p *Presenter) Redraw() error {
+	if p.last == nil {
+		return nil
+	}
+	return p.show()
+}
+
 // Dest is where the picture is in the window's client area (letterboxed).
 func (p *Presenter) Dest() (x, y, w, h int) {
 	d := p.dest

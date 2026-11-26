@@ -174,15 +174,7 @@ func SetDPIAware() {
 // attachInputDesktop puts the calling thread on the desktop that gets
 // input now (Default, or Winlogon for UAC prompts and the lock screen -
 // which only a SYSTEM process in the session may open).
-func attachInputDesktop() {
-	h, _, _ := procOpenInputDesktop.Call(0, 0, genericAll)
-	if h == 0 {
-		return
-	}
-	if r, _, _ := procSetThreadDesktop.Call(h); r == 0 {
-		procCloseDesktop.Call(h)
-	}
-}
+func attachInputDesktop() { FollowInputDesktop() }
 
 // Displays lists the monitors attached to the desktop.
 func Displays() ([]Display, error) {
