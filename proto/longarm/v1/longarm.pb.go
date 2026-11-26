@@ -471,7 +471,12 @@ type DesktopInfo struct {
 	// devbox: every remote desktop logon or reconnect since os_installed,
 	// newest first (at most 50): the one matching a Dev Box's last
 	// connection, and how many came after it, tell boxes created together apart.
-	RemoteLogons  []*timestamppb.Timestamp `protobuf:"bytes,8,rep,name=remote_logons,json=remoteLogons,proto3" json:"remote_logons,omitempty"`
+	RemoteLogons []*timestamppb.Timestamp `protobuf:"bytes,8,rep,name=remote_logons,json=remoteLogons,proto3" json:"remote_logons,omitempty"`
+	// Longarm's own remote desktop (the RemoteDesktop service, feature
+	// "desktop-native"): why it is not available here ("" = it is, or the
+	// worker is older). E.g. no display, or a Windows service worker without
+	// the Longarm Desktop service.
+	NativeReason  string `protobuf:"bytes,9,opt,name=native_reason,json=nativeReason,proto3" json:"native_reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -560,6 +565,13 @@ func (x *DesktopInfo) GetRemoteLogons() []*timestamppb.Timestamp {
 		return x.RemoteLogons
 	}
 	return nil
+}
+
+func (x *DesktopInfo) GetNativeReason() string {
+	if x != nil {
+		return x.NativeReason
+	}
+	return ""
 }
 
 // AgentAuth says which coding agents' credentials the client forwarded
@@ -7167,6 +7179,1170 @@ func (x *MachineUpdateEvent) GetLastAt() *timestamppb.Timestamp {
 	return nil
 }
 
+type DesktopDisplaysRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesktopDisplaysRequest) Reset() {
+	*x = DesktopDisplaysRequest{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[94]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesktopDisplaysRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesktopDisplaysRequest) ProtoMessage() {}
+
+func (x *DesktopDisplaysRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[94]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesktopDisplaysRequest.ProtoReflect.Descriptor instead.
+func (*DesktopDisplaysRequest) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{94}
+}
+
+type DesktopDisplay struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Index int32                  `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
+	Name  string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// desktop coordinates in physical pixels
+	X             int32 `protobuf:"varint,3,opt,name=x,proto3" json:"x,omitempty"`
+	Y             int32 `protobuf:"varint,4,opt,name=y,proto3" json:"y,omitempty"`
+	Width         int32 `protobuf:"varint,5,opt,name=width,proto3" json:"width,omitempty"`
+	Height        int32 `protobuf:"varint,6,opt,name=height,proto3" json:"height,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesktopDisplay) Reset() {
+	*x = DesktopDisplay{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[95]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesktopDisplay) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesktopDisplay) ProtoMessage() {}
+
+func (x *DesktopDisplay) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[95]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesktopDisplay.ProtoReflect.Descriptor instead.
+func (*DesktopDisplay) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{95}
+}
+
+func (x *DesktopDisplay) GetIndex() int32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *DesktopDisplay) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *DesktopDisplay) GetX() int32 {
+	if x != nil {
+		return x.X
+	}
+	return 0
+}
+
+func (x *DesktopDisplay) GetY() int32 {
+	if x != nil {
+		return x.Y
+	}
+	return 0
+}
+
+func (x *DesktopDisplay) GetWidth() int32 {
+	if x != nil {
+		return x.Width
+	}
+	return 0
+}
+
+func (x *DesktopDisplay) GetHeight() int32 {
+	if x != nil {
+		return x.Height
+	}
+	return 0
+}
+
+type DesktopDisplaysResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Displays      []*DesktopDisplay      `protobuf:"bytes,1,rep,name=displays,proto3" json:"displays,omitempty"`
+	NativeReason  string                 `protobuf:"bytes,2,opt,name=native_reason,json=nativeReason,proto3" json:"native_reason,omitempty"` // "" = available
+	Codecs        []string               `protobuf:"bytes,3,rep,name=codecs,proto3" json:"codecs,omitempty"`                                 // what the worker can encode: "h264", "jpeg"
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesktopDisplaysResponse) Reset() {
+	*x = DesktopDisplaysResponse{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[96]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesktopDisplaysResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesktopDisplaysResponse) ProtoMessage() {}
+
+func (x *DesktopDisplaysResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[96]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesktopDisplaysResponse.ProtoReflect.Descriptor instead.
+func (*DesktopDisplaysResponse) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{96}
+}
+
+func (x *DesktopDisplaysResponse) GetDisplays() []*DesktopDisplay {
+	if x != nil {
+		return x.Displays
+	}
+	return nil
+}
+
+func (x *DesktopDisplaysResponse) GetNativeReason() string {
+	if x != nil {
+		return x.NativeReason
+	}
+	return ""
+}
+
+func (x *DesktopDisplaysResponse) GetCodecs() []string {
+	if x != nil {
+		return x.Codecs
+	}
+	return nil
+}
+
+type DesktopClientMessage struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Msg:
+	//
+	//	*DesktopClientMessage_Start
+	//	*DesktopClientMessage_Input
+	//	*DesktopClientMessage_Ack
+	//	*DesktopClientMessage_Keyframe
+	//	*DesktopClientMessage_Clipboard
+	Msg           isDesktopClientMessage_Msg `protobuf_oneof:"msg"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesktopClientMessage) Reset() {
+	*x = DesktopClientMessage{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[97]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesktopClientMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesktopClientMessage) ProtoMessage() {}
+
+func (x *DesktopClientMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[97]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesktopClientMessage.ProtoReflect.Descriptor instead.
+func (*DesktopClientMessage) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{97}
+}
+
+func (x *DesktopClientMessage) GetMsg() isDesktopClientMessage_Msg {
+	if x != nil {
+		return x.Msg
+	}
+	return nil
+}
+
+func (x *DesktopClientMessage) GetStart() *DesktopStart {
+	if x != nil {
+		if x, ok := x.Msg.(*DesktopClientMessage_Start); ok {
+			return x.Start
+		}
+	}
+	return nil
+}
+
+func (x *DesktopClientMessage) GetInput() *DesktopInput {
+	if x != nil {
+		if x, ok := x.Msg.(*DesktopClientMessage_Input); ok {
+			return x.Input
+		}
+	}
+	return nil
+}
+
+func (x *DesktopClientMessage) GetAck() uint64 {
+	if x != nil {
+		if x, ok := x.Msg.(*DesktopClientMessage_Ack); ok {
+			return x.Ack
+		}
+	}
+	return 0
+}
+
+func (x *DesktopClientMessage) GetKeyframe() bool {
+	if x != nil {
+		if x, ok := x.Msg.(*DesktopClientMessage_Keyframe); ok {
+			return x.Keyframe
+		}
+	}
+	return false
+}
+
+func (x *DesktopClientMessage) GetClipboard() string {
+	if x != nil {
+		if x, ok := x.Msg.(*DesktopClientMessage_Clipboard); ok {
+			return x.Clipboard
+		}
+	}
+	return ""
+}
+
+type isDesktopClientMessage_Msg interface {
+	isDesktopClientMessage_Msg()
+}
+
+type DesktopClientMessage_Start struct {
+	Start *DesktopStart `protobuf:"bytes,1,opt,name=start,proto3,oneof"`
+}
+
+type DesktopClientMessage_Input struct {
+	Input *DesktopInput `protobuf:"bytes,2,opt,name=input,proto3,oneof"`
+}
+
+type DesktopClientMessage_Ack struct {
+	Ack uint64 `protobuf:"varint,3,opt,name=ack,proto3,oneof"` // the newest frame seq shown
+}
+
+type DesktopClientMessage_Keyframe struct {
+	Keyframe bool `protobuf:"varint,4,opt,name=keyframe,proto3,oneof"` // send a keyframe (the decoder lost its state)
+}
+
+type DesktopClientMessage_Clipboard struct {
+	Clipboard string `protobuf:"bytes,5,opt,name=clipboard,proto3,oneof"` // text copied on the viewer's side
+}
+
+func (*DesktopClientMessage_Start) isDesktopClientMessage_Msg() {}
+
+func (*DesktopClientMessage_Input) isDesktopClientMessage_Msg() {}
+
+func (*DesktopClientMessage_Ack) isDesktopClientMessage_Msg() {}
+
+func (*DesktopClientMessage_Keyframe) isDesktopClientMessage_Msg() {}
+
+func (*DesktopClientMessage_Clipboard) isDesktopClientMessage_Msg() {}
+
+type DesktopStart struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Display int32                  `protobuf:"varint,1,opt,name=display,proto3" json:"display,omitempty"`
+	// codecs the viewer decodes, preferred first ("h264", "jpeg")
+	Codecs        []string `protobuf:"bytes,2,rep,name=codecs,proto3" json:"codecs,omitempty"`
+	MaxFps        int32    `protobuf:"varint,3,opt,name=max_fps,json=maxFps,proto3" json:"max_fps,omitempty"`                // 0 = 30
+	BitrateKbps   int32    `protobuf:"varint,4,opt,name=bitrate_kbps,json=bitrateKbps,proto3" json:"bitrate_kbps,omitempty"` // 0 = the worker picks
+	ViewOnly      bool     `protobuf:"varint,5,opt,name=view_only,json=viewOnly,proto3" json:"view_only,omitempty"`          // input is refused
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesktopStart) Reset() {
+	*x = DesktopStart{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[98]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesktopStart) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesktopStart) ProtoMessage() {}
+
+func (x *DesktopStart) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[98]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesktopStart.ProtoReflect.Descriptor instead.
+func (*DesktopStart) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{98}
+}
+
+func (x *DesktopStart) GetDisplay() int32 {
+	if x != nil {
+		return x.Display
+	}
+	return 0
+}
+
+func (x *DesktopStart) GetCodecs() []string {
+	if x != nil {
+		return x.Codecs
+	}
+	return nil
+}
+
+func (x *DesktopStart) GetMaxFps() int32 {
+	if x != nil {
+		return x.MaxFps
+	}
+	return 0
+}
+
+func (x *DesktopStart) GetBitrateKbps() int32 {
+	if x != nil {
+		return x.BitrateKbps
+	}
+	return 0
+}
+
+func (x *DesktopStart) GetViewOnly() bool {
+	if x != nil {
+		return x.ViewOnly
+	}
+	return false
+}
+
+type DesktopInput struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Event:
+	//
+	//	*DesktopInput_Mouse
+	//	*DesktopInput_Key
+	//	*DesktopInput_Text
+	//	*DesktopInput_SecureAttention
+	Event         isDesktopInput_Event `protobuf_oneof:"event"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesktopInput) Reset() {
+	*x = DesktopInput{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[99]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesktopInput) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesktopInput) ProtoMessage() {}
+
+func (x *DesktopInput) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[99]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesktopInput.ProtoReflect.Descriptor instead.
+func (*DesktopInput) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{99}
+}
+
+func (x *DesktopInput) GetEvent() isDesktopInput_Event {
+	if x != nil {
+		return x.Event
+	}
+	return nil
+}
+
+func (x *DesktopInput) GetMouse() *DesktopMouse {
+	if x != nil {
+		if x, ok := x.Event.(*DesktopInput_Mouse); ok {
+			return x.Mouse
+		}
+	}
+	return nil
+}
+
+func (x *DesktopInput) GetKey() *DesktopKey {
+	if x != nil {
+		if x, ok := x.Event.(*DesktopInput_Key); ok {
+			return x.Key
+		}
+	}
+	return nil
+}
+
+func (x *DesktopInput) GetText() string {
+	if x != nil {
+		if x, ok := x.Event.(*DesktopInput_Text); ok {
+			return x.Text
+		}
+	}
+	return ""
+}
+
+func (x *DesktopInput) GetSecureAttention() bool {
+	if x != nil {
+		if x, ok := x.Event.(*DesktopInput_SecureAttention); ok {
+			return x.SecureAttention
+		}
+	}
+	return false
+}
+
+type isDesktopInput_Event interface {
+	isDesktopInput_Event()
+}
+
+type DesktopInput_Mouse struct {
+	Mouse *DesktopMouse `protobuf:"bytes,1,opt,name=mouse,proto3,oneof"`
+}
+
+type DesktopInput_Key struct {
+	Key *DesktopKey `protobuf:"bytes,2,opt,name=key,proto3,oneof"`
+}
+
+type DesktopInput_Text struct {
+	Text string `protobuf:"bytes,3,opt,name=text,proto3,oneof"` // typed as Unicode (IMEs, paste)
+}
+
+type DesktopInput_SecureAttention struct {
+	SecureAttention bool `protobuf:"varint,4,opt,name=secure_attention,json=secureAttention,proto3,oneof"` // Ctrl+Alt+Del
+}
+
+func (*DesktopInput_Mouse) isDesktopInput_Event() {}
+
+func (*DesktopInput_Key) isDesktopInput_Event() {}
+
+func (*DesktopInput_Text) isDesktopInput_Event() {}
+
+func (*DesktopInput_SecureAttention) isDesktopInput_Event() {}
+
+type DesktopMouse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// in the display's pixels
+	X int32 `protobuf:"varint,1,opt,name=x,proto3" json:"x,omitempty"`
+	Y int32 `protobuf:"varint,2,opt,name=y,proto3" json:"y,omitempty"`
+	// 0: a move; 1 left, 2 middle, 3 right, pressed (down) or released
+	Button int32 `protobuf:"varint,3,opt,name=button,proto3" json:"button,omitempty"`
+	Down   bool  `protobuf:"varint,4,opt,name=down,proto3" json:"down,omitempty"`
+	// wheel notches * 120 (positive: up / right)
+	WheelX        int32 `protobuf:"varint,5,opt,name=wheel_x,json=wheelX,proto3" json:"wheel_x,omitempty"`
+	WheelY        int32 `protobuf:"varint,6,opt,name=wheel_y,json=wheelY,proto3" json:"wheel_y,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesktopMouse) Reset() {
+	*x = DesktopMouse{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[100]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesktopMouse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesktopMouse) ProtoMessage() {}
+
+func (x *DesktopMouse) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[100]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesktopMouse.ProtoReflect.Descriptor instead.
+func (*DesktopMouse) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{100}
+}
+
+func (x *DesktopMouse) GetX() int32 {
+	if x != nil {
+		return x.X
+	}
+	return 0
+}
+
+func (x *DesktopMouse) GetY() int32 {
+	if x != nil {
+		return x.Y
+	}
+	return 0
+}
+
+func (x *DesktopMouse) GetButton() int32 {
+	if x != nil {
+		return x.Button
+	}
+	return 0
+}
+
+func (x *DesktopMouse) GetDown() bool {
+	if x != nil {
+		return x.Down
+	}
+	return false
+}
+
+func (x *DesktopMouse) GetWheelX() int32 {
+	if x != nil {
+		return x.WheelX
+	}
+	return 0
+}
+
+func (x *DesktopMouse) GetWheelY() int32 {
+	if x != nil {
+		return x.WheelY
+	}
+	return 0
+}
+
+type DesktopKey struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// PC/AT set-1 scan code; extended keys have 0xE0 in the high byte
+	// (0xE04B: left arrow). The worker's keyboard layout decides the character.
+	Scan          uint32 `protobuf:"varint,1,opt,name=scan,proto3" json:"scan,omitempty"`
+	Down          bool   `protobuf:"varint,2,opt,name=down,proto3" json:"down,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesktopKey) Reset() {
+	*x = DesktopKey{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[101]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesktopKey) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesktopKey) ProtoMessage() {}
+
+func (x *DesktopKey) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[101]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesktopKey.ProtoReflect.Descriptor instead.
+func (*DesktopKey) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{101}
+}
+
+func (x *DesktopKey) GetScan() uint32 {
+	if x != nil {
+		return x.Scan
+	}
+	return 0
+}
+
+func (x *DesktopKey) GetDown() bool {
+	if x != nil {
+		return x.Down
+	}
+	return false
+}
+
+type DesktopServerMessage struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Msg:
+	//
+	//	*DesktopServerMessage_Started
+	//	*DesktopServerMessage_Frame
+	//	*DesktopServerMessage_Cursor
+	//	*DesktopServerMessage_Clipboard
+	//	*DesktopServerMessage_State
+	Msg           isDesktopServerMessage_Msg `protobuf_oneof:"msg"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesktopServerMessage) Reset() {
+	*x = DesktopServerMessage{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[102]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesktopServerMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesktopServerMessage) ProtoMessage() {}
+
+func (x *DesktopServerMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[102]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesktopServerMessage.ProtoReflect.Descriptor instead.
+func (*DesktopServerMessage) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{102}
+}
+
+func (x *DesktopServerMessage) GetMsg() isDesktopServerMessage_Msg {
+	if x != nil {
+		return x.Msg
+	}
+	return nil
+}
+
+func (x *DesktopServerMessage) GetStarted() *DesktopStarted {
+	if x != nil {
+		if x, ok := x.Msg.(*DesktopServerMessage_Started); ok {
+			return x.Started
+		}
+	}
+	return nil
+}
+
+func (x *DesktopServerMessage) GetFrame() *DesktopFrame {
+	if x != nil {
+		if x, ok := x.Msg.(*DesktopServerMessage_Frame); ok {
+			return x.Frame
+		}
+	}
+	return nil
+}
+
+func (x *DesktopServerMessage) GetCursor() *DesktopCursor {
+	if x != nil {
+		if x, ok := x.Msg.(*DesktopServerMessage_Cursor); ok {
+			return x.Cursor
+		}
+	}
+	return nil
+}
+
+func (x *DesktopServerMessage) GetClipboard() string {
+	if x != nil {
+		if x, ok := x.Msg.(*DesktopServerMessage_Clipboard); ok {
+			return x.Clipboard
+		}
+	}
+	return ""
+}
+
+func (x *DesktopServerMessage) GetState() *DesktopState {
+	if x != nil {
+		if x, ok := x.Msg.(*DesktopServerMessage_State); ok {
+			return x.State
+		}
+	}
+	return nil
+}
+
+type isDesktopServerMessage_Msg interface {
+	isDesktopServerMessage_Msg()
+}
+
+type DesktopServerMessage_Started struct {
+	Started *DesktopStarted `protobuf:"bytes,1,opt,name=started,proto3,oneof"`
+}
+
+type DesktopServerMessage_Frame struct {
+	Frame *DesktopFrame `protobuf:"bytes,2,opt,name=frame,proto3,oneof"`
+}
+
+type DesktopServerMessage_Cursor struct {
+	Cursor *DesktopCursor `protobuf:"bytes,3,opt,name=cursor,proto3,oneof"`
+}
+
+type DesktopServerMessage_Clipboard struct {
+	Clipboard string `protobuf:"bytes,4,opt,name=clipboard,proto3,oneof"` // text copied on the worker
+}
+
+type DesktopServerMessage_State struct {
+	State *DesktopState `protobuf:"bytes,5,opt,name=state,proto3,oneof"`
+}
+
+func (*DesktopServerMessage_Started) isDesktopServerMessage_Msg() {}
+
+func (*DesktopServerMessage_Frame) isDesktopServerMessage_Msg() {}
+
+func (*DesktopServerMessage_Cursor) isDesktopServerMessage_Msg() {}
+
+func (*DesktopServerMessage_Clipboard) isDesktopServerMessage_Msg() {}
+
+func (*DesktopServerMessage_State) isDesktopServerMessage_Msg() {}
+
+type DesktopStarted struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Width         int32                  `protobuf:"varint,1,opt,name=width,proto3" json:"width,omitempty"`
+	Height        int32                  `protobuf:"varint,2,opt,name=height,proto3" json:"height,omitempty"`
+	Codec         string                 `protobuf:"bytes,3,opt,name=codec,proto3" json:"codec,omitempty"`     // "h264" | "jpeg"
+	Encoder       string                 `protobuf:"bytes,4,opt,name=encoder,proto3" json:"encoder,omitempty"` // e.g. "hardware", "software"
+	Display       *DesktopDisplay        `protobuf:"bytes,5,opt,name=display,proto3" json:"display,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesktopStarted) Reset() {
+	*x = DesktopStarted{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[103]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesktopStarted) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesktopStarted) ProtoMessage() {}
+
+func (x *DesktopStarted) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[103]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesktopStarted.ProtoReflect.Descriptor instead.
+func (*DesktopStarted) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{103}
+}
+
+func (x *DesktopStarted) GetWidth() int32 {
+	if x != nil {
+		return x.Width
+	}
+	return 0
+}
+
+func (x *DesktopStarted) GetHeight() int32 {
+	if x != nil {
+		return x.Height
+	}
+	return 0
+}
+
+func (x *DesktopStarted) GetCodec() string {
+	if x != nil {
+		return x.Codec
+	}
+	return ""
+}
+
+func (x *DesktopStarted) GetEncoder() string {
+	if x != nil {
+		return x.Encoder
+	}
+	return ""
+}
+
+func (x *DesktopStarted) GetDisplay() *DesktopDisplay {
+	if x != nil {
+		return x.Display
+	}
+	return nil
+}
+
+type DesktopFrame struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Seq           uint64                 `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`
+	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"` // h264: one Annex B access unit
+	Key           bool                   `protobuf:"varint,3,opt,name=key,proto3" json:"key,omitempty"`  // h264: an IDR picture; jpeg: tiles cover the whole frame
+	Captured      *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=captured,proto3" json:"captured,omitempty"`
+	Tiles         []*DesktopTile         `protobuf:"bytes,5,rep,name=tiles,proto3" json:"tiles,omitempty"` // jpeg
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesktopFrame) Reset() {
+	*x = DesktopFrame{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[104]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesktopFrame) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesktopFrame) ProtoMessage() {}
+
+func (x *DesktopFrame) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[104]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesktopFrame.ProtoReflect.Descriptor instead.
+func (*DesktopFrame) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{104}
+}
+
+func (x *DesktopFrame) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *DesktopFrame) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *DesktopFrame) GetKey() bool {
+	if x != nil {
+		return x.Key
+	}
+	return false
+}
+
+func (x *DesktopFrame) GetCaptured() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Captured
+	}
+	return nil
+}
+
+func (x *DesktopFrame) GetTiles() []*DesktopTile {
+	if x != nil {
+		return x.Tiles
+	}
+	return nil
+}
+
+type DesktopTile struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	X             int32                  `protobuf:"varint,1,opt,name=x,proto3" json:"x,omitempty"`
+	Y             int32                  `protobuf:"varint,2,opt,name=y,proto3" json:"y,omitempty"`
+	Width         int32                  `protobuf:"varint,3,opt,name=width,proto3" json:"width,omitempty"`
+	Height        int32                  `protobuf:"varint,4,opt,name=height,proto3" json:"height,omitempty"`
+	Jpeg          []byte                 `protobuf:"bytes,5,opt,name=jpeg,proto3" json:"jpeg,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesktopTile) Reset() {
+	*x = DesktopTile{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[105]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesktopTile) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesktopTile) ProtoMessage() {}
+
+func (x *DesktopTile) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[105]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesktopTile.ProtoReflect.Descriptor instead.
+func (*DesktopTile) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{105}
+}
+
+func (x *DesktopTile) GetX() int32 {
+	if x != nil {
+		return x.X
+	}
+	return 0
+}
+
+func (x *DesktopTile) GetY() int32 {
+	if x != nil {
+		return x.Y
+	}
+	return 0
+}
+
+func (x *DesktopTile) GetWidth() int32 {
+	if x != nil {
+		return x.Width
+	}
+	return 0
+}
+
+func (x *DesktopTile) GetHeight() int32 {
+	if x != nil {
+		return x.Height
+	}
+	return 0
+}
+
+func (x *DesktopTile) GetJpeg() []byte {
+	if x != nil {
+		return x.Jpeg
+	}
+	return nil
+}
+
+type DesktopCursor struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	X       int32                  `protobuf:"varint,1,opt,name=x,proto3" json:"x,omitempty"`
+	Y       int32                  `protobuf:"varint,2,opt,name=y,proto3" json:"y,omitempty"`
+	Visible bool                   `protobuf:"varint,3,opt,name=visible,proto3" json:"visible,omitempty"`
+	// a new shape when shape_id changes (straight BGRA, width*height*4)
+	ShapeId       uint64 `protobuf:"varint,4,opt,name=shape_id,json=shapeId,proto3" json:"shape_id,omitempty"`
+	Width         int32  `protobuf:"varint,5,opt,name=width,proto3" json:"width,omitempty"`
+	Height        int32  `protobuf:"varint,6,opt,name=height,proto3" json:"height,omitempty"`
+	HotX          int32  `protobuf:"varint,7,opt,name=hot_x,json=hotX,proto3" json:"hot_x,omitempty"`
+	HotY          int32  `protobuf:"varint,8,opt,name=hot_y,json=hotY,proto3" json:"hot_y,omitempty"`
+	Bgra          []byte `protobuf:"bytes,9,opt,name=bgra,proto3" json:"bgra,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesktopCursor) Reset() {
+	*x = DesktopCursor{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[106]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesktopCursor) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesktopCursor) ProtoMessage() {}
+
+func (x *DesktopCursor) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[106]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesktopCursor.ProtoReflect.Descriptor instead.
+func (*DesktopCursor) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{106}
+}
+
+func (x *DesktopCursor) GetX() int32 {
+	if x != nil {
+		return x.X
+	}
+	return 0
+}
+
+func (x *DesktopCursor) GetY() int32 {
+	if x != nil {
+		return x.Y
+	}
+	return 0
+}
+
+func (x *DesktopCursor) GetVisible() bool {
+	if x != nil {
+		return x.Visible
+	}
+	return false
+}
+
+func (x *DesktopCursor) GetShapeId() uint64 {
+	if x != nil {
+		return x.ShapeId
+	}
+	return 0
+}
+
+func (x *DesktopCursor) GetWidth() int32 {
+	if x != nil {
+		return x.Width
+	}
+	return 0
+}
+
+func (x *DesktopCursor) GetHeight() int32 {
+	if x != nil {
+		return x.Height
+	}
+	return 0
+}
+
+func (x *DesktopCursor) GetHotX() int32 {
+	if x != nil {
+		return x.HotX
+	}
+	return 0
+}
+
+func (x *DesktopCursor) GetHotY() int32 {
+	if x != nil {
+		return x.HotY
+	}
+	return 0
+}
+
+func (x *DesktopCursor) GetBgra() []byte {
+	if x != nil {
+		return x.Bgra
+	}
+	return nil
+}
+
+type DesktopState struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// the worker shows a secure screen (UAC prompt, lock, Ctrl+Alt+Del) that
+	// this capturer cannot see or drive (no Longarm Desktop service)
+	SecureHidden  bool   `protobuf:"varint,1,opt,name=secure_hidden,json=secureHidden,proto3" json:"secure_hidden,omitempty"`
+	Note          string `protobuf:"bytes,2,opt,name=note,proto3" json:"note,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DesktopState) Reset() {
+	*x = DesktopState{}
+	mi := &file_longarm_v1_longarm_proto_msgTypes[107]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DesktopState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DesktopState) ProtoMessage() {}
+
+func (x *DesktopState) ProtoReflect() protoreflect.Message {
+	mi := &file_longarm_v1_longarm_proto_msgTypes[107]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DesktopState.ProtoReflect.Descriptor instead.
+func (*DesktopState) Descriptor() ([]byte, []int) {
+	return file_longarm_v1_longarm_proto_rawDescGZIP(), []int{107}
+}
+
+func (x *DesktopState) GetSecureHidden() bool {
+	if x != nil {
+		return x.SecureHidden
+	}
+	return false
+}
+
+func (x *DesktopState) GetNote() string {
+	if x != nil {
+		return x.Note
+	}
+	return ""
+}
+
 var File_longarm_v1_longarm_proto protoreflect.FileDescriptor
 
 const file_longarm_v1_longarm_proto_rawDesc = "" +
@@ -7199,7 +8375,7 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\bfeatures\x18\x10 \x03(\tR\bfeatures\x12\x14\n" +
 	"\x05owner\x18\x11 \x01(\tR\x05owner\x12!\n" +
 	"\fadmin_worker\x18\x12 \x01(\bR\vadminWorker\x121\n" +
-	"\adesktop\x18\x13 \x01(\v2\x17.longarm.v1.DesktopInfoR\adesktop\"\xe7\x02\n" +
+	"\adesktop\x18\x13 \x01(\v2\x17.longarm.v1.DesktopInfoR\adesktop\"\x8c\x03\n" +
 	"\vDesktopInfo\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x19\n" +
@@ -7209,7 +8385,8 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\x11dev_center_tenant\x18\x05 \x01(\tR\x0fdevCenterTenant\x12=\n" +
 	"\fos_installed\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\vosInstalled\x12F\n" +
 	"\x11last_remote_logon\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\x0flastRemoteLogon\x12?\n" +
-	"\rremote_logons\x18\b \x03(\v2\x1a.google.protobuf.TimestampR\fremoteLogons\"F\n" +
+	"\rremote_logons\x18\b \x03(\v2\x1a.google.protobuf.TimestampR\fremoteLogons\x12#\n" +
+	"\rnative_reason\x18\t \x01(\tR\fnativeReason\"F\n" +
 	"\tAgentAuth\x12\x16\n" +
 	"\x06agents\x18\x01 \x03(\tR\x06agents\x12!\n" +
 	"\fcopilot_home\x18\x02 \x01(\bR\vcopilotHome\"\xff\x03\n" +
@@ -7784,7 +8961,87 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\alast_ok\x18\x11 \x01(\bR\x06lastOk\x12\x1d\n" +
 	"\n" +
 	"last_error\x18\x12 \x01(\tR\tlastError\x123\n" +
-	"\alast_at\x18\x13 \x01(\v2\x1a.google.protobuf.TimestampR\x06lastAt*]\n" +
+	"\alast_at\x18\x13 \x01(\v2\x1a.google.protobuf.TimestampR\x06lastAt\"\x18\n" +
+	"\x16DesktopDisplaysRequest\"\x84\x01\n" +
+	"\x0eDesktopDisplay\x12\x14\n" +
+	"\x05index\x18\x01 \x01(\x05R\x05index\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\f\n" +
+	"\x01x\x18\x03 \x01(\x05R\x01x\x12\f\n" +
+	"\x01y\x18\x04 \x01(\x05R\x01y\x12\x14\n" +
+	"\x05width\x18\x05 \x01(\x05R\x05width\x12\x16\n" +
+	"\x06height\x18\x06 \x01(\x05R\x06height\"\x8e\x01\n" +
+	"\x17DesktopDisplaysResponse\x126\n" +
+	"\bdisplays\x18\x01 \x03(\v2\x1a.longarm.v1.DesktopDisplayR\bdisplays\x12#\n" +
+	"\rnative_reason\x18\x02 \x01(\tR\fnativeReason\x12\x16\n" +
+	"\x06codecs\x18\x03 \x03(\tR\x06codecs\"\xd3\x01\n" +
+	"\x14DesktopClientMessage\x120\n" +
+	"\x05start\x18\x01 \x01(\v2\x18.longarm.v1.DesktopStartH\x00R\x05start\x120\n" +
+	"\x05input\x18\x02 \x01(\v2\x18.longarm.v1.DesktopInputH\x00R\x05input\x12\x12\n" +
+	"\x03ack\x18\x03 \x01(\x04H\x00R\x03ack\x12\x1c\n" +
+	"\bkeyframe\x18\x04 \x01(\bH\x00R\bkeyframe\x12\x1e\n" +
+	"\tclipboard\x18\x05 \x01(\tH\x00R\tclipboardB\x05\n" +
+	"\x03msg\"\x99\x01\n" +
+	"\fDesktopStart\x12\x18\n" +
+	"\adisplay\x18\x01 \x01(\x05R\adisplay\x12\x16\n" +
+	"\x06codecs\x18\x02 \x03(\tR\x06codecs\x12\x17\n" +
+	"\amax_fps\x18\x03 \x01(\x05R\x06maxFps\x12!\n" +
+	"\fbitrate_kbps\x18\x04 \x01(\x05R\vbitrateKbps\x12\x1b\n" +
+	"\tview_only\x18\x05 \x01(\bR\bviewOnly\"\xb8\x01\n" +
+	"\fDesktopInput\x120\n" +
+	"\x05mouse\x18\x01 \x01(\v2\x18.longarm.v1.DesktopMouseH\x00R\x05mouse\x12*\n" +
+	"\x03key\x18\x02 \x01(\v2\x16.longarm.v1.DesktopKeyH\x00R\x03key\x12\x14\n" +
+	"\x04text\x18\x03 \x01(\tH\x00R\x04text\x12+\n" +
+	"\x10secure_attention\x18\x04 \x01(\bH\x00R\x0fsecureAttentionB\a\n" +
+	"\x05event\"\x88\x01\n" +
+	"\fDesktopMouse\x12\f\n" +
+	"\x01x\x18\x01 \x01(\x05R\x01x\x12\f\n" +
+	"\x01y\x18\x02 \x01(\x05R\x01y\x12\x16\n" +
+	"\x06button\x18\x03 \x01(\x05R\x06button\x12\x12\n" +
+	"\x04down\x18\x04 \x01(\bR\x04down\x12\x17\n" +
+	"\awheel_x\x18\x05 \x01(\x05R\x06wheelX\x12\x17\n" +
+	"\awheel_y\x18\x06 \x01(\x05R\x06wheelY\"4\n" +
+	"\n" +
+	"DesktopKey\x12\x12\n" +
+	"\x04scan\x18\x01 \x01(\rR\x04scan\x12\x12\n" +
+	"\x04down\x18\x02 \x01(\bR\x04down\"\x8e\x02\n" +
+	"\x14DesktopServerMessage\x126\n" +
+	"\astarted\x18\x01 \x01(\v2\x1a.longarm.v1.DesktopStartedH\x00R\astarted\x120\n" +
+	"\x05frame\x18\x02 \x01(\v2\x18.longarm.v1.DesktopFrameH\x00R\x05frame\x123\n" +
+	"\x06cursor\x18\x03 \x01(\v2\x19.longarm.v1.DesktopCursorH\x00R\x06cursor\x12\x1e\n" +
+	"\tclipboard\x18\x04 \x01(\tH\x00R\tclipboard\x120\n" +
+	"\x05state\x18\x05 \x01(\v2\x18.longarm.v1.DesktopStateH\x00R\x05stateB\x05\n" +
+	"\x03msg\"\xa4\x01\n" +
+	"\x0eDesktopStarted\x12\x14\n" +
+	"\x05width\x18\x01 \x01(\x05R\x05width\x12\x16\n" +
+	"\x06height\x18\x02 \x01(\x05R\x06height\x12\x14\n" +
+	"\x05codec\x18\x03 \x01(\tR\x05codec\x12\x18\n" +
+	"\aencoder\x18\x04 \x01(\tR\aencoder\x124\n" +
+	"\adisplay\x18\x05 \x01(\v2\x1a.longarm.v1.DesktopDisplayR\adisplay\"\xad\x01\n" +
+	"\fDesktopFrame\x12\x10\n" +
+	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12\x12\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\x12\x10\n" +
+	"\x03key\x18\x03 \x01(\bR\x03key\x126\n" +
+	"\bcaptured\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\bcaptured\x12-\n" +
+	"\x05tiles\x18\x05 \x03(\v2\x17.longarm.v1.DesktopTileR\x05tiles\"k\n" +
+	"\vDesktopTile\x12\f\n" +
+	"\x01x\x18\x01 \x01(\x05R\x01x\x12\f\n" +
+	"\x01y\x18\x02 \x01(\x05R\x01y\x12\x14\n" +
+	"\x05width\x18\x03 \x01(\x05R\x05width\x12\x16\n" +
+	"\x06height\x18\x04 \x01(\x05R\x06height\x12\x12\n" +
+	"\x04jpeg\x18\x05 \x01(\fR\x04jpeg\"\xcc\x01\n" +
+	"\rDesktopCursor\x12\f\n" +
+	"\x01x\x18\x01 \x01(\x05R\x01x\x12\f\n" +
+	"\x01y\x18\x02 \x01(\x05R\x01y\x12\x18\n" +
+	"\avisible\x18\x03 \x01(\bR\avisible\x12\x19\n" +
+	"\bshape_id\x18\x04 \x01(\x04R\ashapeId\x12\x14\n" +
+	"\x05width\x18\x05 \x01(\x05R\x05width\x12\x16\n" +
+	"\x06height\x18\x06 \x01(\x05R\x06height\x12\x13\n" +
+	"\x05hot_x\x18\a \x01(\x05R\x04hotX\x12\x13\n" +
+	"\x05hot_y\x18\b \x01(\x05R\x04hotY\x12\x12\n" +
+	"\x04bgra\x18\t \x01(\fR\x04bgra\"G\n" +
+	"\fDesktopState\x12#\n" +
+	"\rsecure_hidden\x18\x01 \x01(\bR\fsecureHidden\x12\x12\n" +
+	"\x04note\x18\x02 \x01(\tR\x04note*]\n" +
 	"\n" +
 	"OutputMode\x12\x1b\n" +
 	"\x17OUTPUT_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
@@ -7872,7 +9129,10 @@ const file_longarm_v1_longarm_proto_rawDesc = "" +
 	"\rMachineUpdate\x12K\n" +
 	"\x05Start\x12 .longarm.v1.MachineUpdateRequest\x1a\x1e.longarm.v1.MachineUpdateEvent0\x01\x12P\n" +
 	"\x06Status\x12&.longarm.v1.MachineUpdateStatusRequest\x1a\x1e.longarm.v1.MachineUpdateEvent\x12O\n" +
-	"\aSetAuto\x12$.longarm.v1.MachineUpdateAutoRequest\x1a\x1e.longarm.v1.MachineUpdateEventB$Z\"longarm/proto/longarm/v1;longarmv1b\x06proto3"
+	"\aSetAuto\x12$.longarm.v1.MachineUpdateAutoRequest\x1a\x1e.longarm.v1.MachineUpdateEvent2\xb6\x01\n" +
+	"\rRemoteDesktop\x12S\n" +
+	"\bDisplays\x12\".longarm.v1.DesktopDisplaysRequest\x1a#.longarm.v1.DesktopDisplaysResponse\x12P\n" +
+	"\x06Stream\x12 .longarm.v1.DesktopClientMessage\x1a .longarm.v1.DesktopServerMessage(\x010\x01B$Z\"longarm/proto/longarm/v1;longarmv1b\x06proto3"
 
 var (
 	file_longarm_v1_longarm_proto_rawDescOnce sync.Once
@@ -7887,7 +9147,7 @@ func file_longarm_v1_longarm_proto_rawDescGZIP() []byte {
 }
 
 var file_longarm_v1_longarm_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_longarm_v1_longarm_proto_msgTypes = make([]protoimpl.MessageInfo, 105)
+var file_longarm_v1_longarm_proto_msgTypes = make([]protoimpl.MessageInfo, 119)
 var file_longarm_v1_longarm_proto_goTypes = []any{
 	(OutputMode)(0),                    // 0: longarm.v1.OutputMode
 	(JobState)(0),                      // 1: longarm.v1.JobState
@@ -7986,216 +9246,246 @@ var file_longarm_v1_longarm_proto_goTypes = []any{
 	(*MachineUpdateStatusRequest)(nil), // 94: longarm.v1.MachineUpdateStatusRequest
 	(*MachineUpdateAutoRequest)(nil),   // 95: longarm.v1.MachineUpdateAutoRequest
 	(*MachineUpdateEvent)(nil),         // 96: longarm.v1.MachineUpdateEvent
-	nil,                                // 97: longarm.v1.ExecRequest.EnvEntry
-	nil,                                // 98: longarm.v1.ExecRequest.SecretEnvEntry
-	nil,                                // 99: longarm.v1.JobSpec.EnvEntry
-	nil,                                // 100: longarm.v1.JobSpec.LabelsEntry
-	nil,                                // 101: longarm.v1.SubmitRequest.SecretEnvEntry
-	nil,                                // 102: longarm.v1.MetricsSnapshot.AgentsEntry
-	nil,                                // 103: longarm.v1.AttachOpen.EnvEntry
-	nil,                                // 104: longarm.v1.AttachOpen.SecretEnvEntry
-	nil,                                // 105: longarm.v1.StartSessionRequest.EnvEntry
-	nil,                                // 106: longarm.v1.StartSessionRequest.SecretEnvEntry
-	nil,                                // 107: longarm.v1.PrepareJobRequest.SecretEnvEntry
-	(*timestamppb.Timestamp)(nil),      // 108: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),        // 109: google.protobuf.Duration
+	(*DesktopDisplaysRequest)(nil),     // 97: longarm.v1.DesktopDisplaysRequest
+	(*DesktopDisplay)(nil),             // 98: longarm.v1.DesktopDisplay
+	(*DesktopDisplaysResponse)(nil),    // 99: longarm.v1.DesktopDisplaysResponse
+	(*DesktopClientMessage)(nil),       // 100: longarm.v1.DesktopClientMessage
+	(*DesktopStart)(nil),               // 101: longarm.v1.DesktopStart
+	(*DesktopInput)(nil),               // 102: longarm.v1.DesktopInput
+	(*DesktopMouse)(nil),               // 103: longarm.v1.DesktopMouse
+	(*DesktopKey)(nil),                 // 104: longarm.v1.DesktopKey
+	(*DesktopServerMessage)(nil),       // 105: longarm.v1.DesktopServerMessage
+	(*DesktopStarted)(nil),             // 106: longarm.v1.DesktopStarted
+	(*DesktopFrame)(nil),               // 107: longarm.v1.DesktopFrame
+	(*DesktopTile)(nil),                // 108: longarm.v1.DesktopTile
+	(*DesktopCursor)(nil),              // 109: longarm.v1.DesktopCursor
+	(*DesktopState)(nil),               // 110: longarm.v1.DesktopState
+	nil,                                // 111: longarm.v1.ExecRequest.EnvEntry
+	nil,                                // 112: longarm.v1.ExecRequest.SecretEnvEntry
+	nil,                                // 113: longarm.v1.JobSpec.EnvEntry
+	nil,                                // 114: longarm.v1.JobSpec.LabelsEntry
+	nil,                                // 115: longarm.v1.SubmitRequest.SecretEnvEntry
+	nil,                                // 116: longarm.v1.MetricsSnapshot.AgentsEntry
+	nil,                                // 117: longarm.v1.AttachOpen.EnvEntry
+	nil,                                // 118: longarm.v1.AttachOpen.SecretEnvEntry
+	nil,                                // 119: longarm.v1.StartSessionRequest.EnvEntry
+	nil,                                // 120: longarm.v1.StartSessionRequest.SecretEnvEntry
+	nil,                                // 121: longarm.v1.PrepareJobRequest.SecretEnvEntry
+	(*timestamppb.Timestamp)(nil),      // 122: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),        // 123: google.protobuf.Duration
 }
 var file_longarm_v1_longarm_proto_depIdxs = []int32{
-	108, // 0: longarm.v1.InfoResponse.started_at:type_name -> google.protobuf.Timestamp
+	122, // 0: longarm.v1.InfoResponse.started_at:type_name -> google.protobuf.Timestamp
 	5,   // 1: longarm.v1.InfoResponse.desktop:type_name -> longarm.v1.DesktopInfo
-	108, // 2: longarm.v1.DesktopInfo.os_installed:type_name -> google.protobuf.Timestamp
-	108, // 3: longarm.v1.DesktopInfo.last_remote_logon:type_name -> google.protobuf.Timestamp
-	108, // 4: longarm.v1.DesktopInfo.remote_logons:type_name -> google.protobuf.Timestamp
-	97,  // 5: longarm.v1.ExecRequest.env:type_name -> longarm.v1.ExecRequest.EnvEntry
-	98,  // 6: longarm.v1.ExecRequest.secret_env:type_name -> longarm.v1.ExecRequest.SecretEnvEntry
-	109, // 7: longarm.v1.ExecRequest.timeout:type_name -> google.protobuf.Duration
+	122, // 2: longarm.v1.DesktopInfo.os_installed:type_name -> google.protobuf.Timestamp
+	122, // 3: longarm.v1.DesktopInfo.last_remote_logon:type_name -> google.protobuf.Timestamp
+	122, // 4: longarm.v1.DesktopInfo.remote_logons:type_name -> google.protobuf.Timestamp
+	111, // 5: longarm.v1.ExecRequest.env:type_name -> longarm.v1.ExecRequest.EnvEntry
+	112, // 6: longarm.v1.ExecRequest.secret_env:type_name -> longarm.v1.ExecRequest.SecretEnvEntry
+	123, // 7: longarm.v1.ExecRequest.timeout:type_name -> google.protobuf.Duration
 	0,   // 8: longarm.v1.ExecRequest.output:type_name -> longarm.v1.OutputMode
 	6,   // 9: longarm.v1.ExecRequest.agent_auth:type_name -> longarm.v1.AgentAuth
-	109, // 10: longarm.v1.ExecResponse.duration:type_name -> google.protobuf.Duration
-	99,  // 11: longarm.v1.JobSpec.env:type_name -> longarm.v1.JobSpec.EnvEntry
-	100, // 12: longarm.v1.JobSpec.labels:type_name -> longarm.v1.JobSpec.LabelsEntry
+	123, // 10: longarm.v1.ExecResponse.duration:type_name -> google.protobuf.Duration
+	113, // 11: longarm.v1.JobSpec.env:type_name -> longarm.v1.JobSpec.EnvEntry
+	114, // 12: longarm.v1.JobSpec.labels:type_name -> longarm.v1.JobSpec.LabelsEntry
 	12,  // 13: longarm.v1.JobSpec.workspace:type_name -> longarm.v1.JobWorkspace
 	10,  // 14: longarm.v1.JobSpec.steer:type_name -> longarm.v1.SteerSpec
-	108, // 15: longarm.v1.SteerState.updated_at:type_name -> google.protobuf.Timestamp
+	122, // 15: longarm.v1.SteerState.updated_at:type_name -> google.protobuf.Timestamp
 	9,   // 16: longarm.v1.SubmitRequest.spec:type_name -> longarm.v1.JobSpec
-	101, // 17: longarm.v1.SubmitRequest.secret_env:type_name -> longarm.v1.SubmitRequest.SecretEnvEntry
+	115, // 17: longarm.v1.SubmitRequest.secret_env:type_name -> longarm.v1.SubmitRequest.SecretEnvEntry
 	13,  // 18: longarm.v1.SubmitRequest.git_auth:type_name -> longarm.v1.GitAuth
 	6,   // 19: longarm.v1.SubmitRequest.agent_auth:type_name -> longarm.v1.AgentAuth
 	9,   // 20: longarm.v1.Job.spec:type_name -> longarm.v1.JobSpec
 	1,   // 21: longarm.v1.Job.state:type_name -> longarm.v1.JobState
-	108, // 22: longarm.v1.Job.created_at:type_name -> google.protobuf.Timestamp
-	108, // 23: longarm.v1.Job.started_at:type_name -> google.protobuf.Timestamp
-	108, // 24: longarm.v1.Job.ended_at:type_name -> google.protobuf.Timestamp
+	122, // 22: longarm.v1.Job.created_at:type_name -> google.protobuf.Timestamp
+	122, // 23: longarm.v1.Job.started_at:type_name -> google.protobuf.Timestamp
+	122, // 24: longarm.v1.Job.ended_at:type_name -> google.protobuf.Timestamp
 	11,  // 25: longarm.v1.Job.steer:type_name -> longarm.v1.SteerState
 	1,   // 26: longarm.v1.ListJobsRequest.states:type_name -> longarm.v1.JobState
 	15,  // 27: longarm.v1.ListJobsResponse.jobs:type_name -> longarm.v1.Job
-	108, // 28: longarm.v1.KillRequest.if_created_at:type_name -> google.protobuf.Timestamp
-	109, // 29: longarm.v1.MetricsStreamRequest.interval:type_name -> google.protobuf.Duration
-	108, // 30: longarm.v1.MetricsSnapshot.time:type_name -> google.protobuf.Timestamp
-	102, // 31: longarm.v1.MetricsSnapshot.agents:type_name -> longarm.v1.MetricsSnapshot.AgentsEntry
+	122, // 28: longarm.v1.KillRequest.if_created_at:type_name -> google.protobuf.Timestamp
+	123, // 29: longarm.v1.MetricsStreamRequest.interval:type_name -> google.protobuf.Duration
+	122, // 30: longarm.v1.MetricsSnapshot.time:type_name -> google.protobuf.Timestamp
+	116, // 31: longarm.v1.MetricsSnapshot.agents:type_name -> longarm.v1.MetricsSnapshot.AgentsEntry
 	25,  // 32: longarm.v1.MetricsSnapshot.top_cpu:type_name -> longarm.v1.ProcGroup
 	25,  // 33: longarm.v1.MetricsSnapshot.top_mem:type_name -> longarm.v1.ProcGroup
-	109, // 34: longarm.v1.GcRequest.keep:type_name -> google.protobuf.Duration
+	123, // 34: longarm.v1.GcRequest.keep:type_name -> google.protobuf.Duration
 	33,  // 35: longarm.v1.AttachInput.open:type_name -> longarm.v1.AttachOpen
 	34,  // 36: longarm.v1.AttachInput.resize:type_name -> longarm.v1.TermSize
-	103, // 37: longarm.v1.AttachOpen.env:type_name -> longarm.v1.AttachOpen.EnvEntry
-	104, // 38: longarm.v1.AttachOpen.secret_env:type_name -> longarm.v1.AttachOpen.SecretEnvEntry
+	117, // 37: longarm.v1.AttachOpen.env:type_name -> longarm.v1.AttachOpen.EnvEntry
+	118, // 38: longarm.v1.AttachOpen.secret_env:type_name -> longarm.v1.AttachOpen.SecretEnvEntry
 	34,  // 39: longarm.v1.AttachOpen.size:type_name -> longarm.v1.TermSize
 	6,   // 40: longarm.v1.AttachOpen.agent_auth:type_name -> longarm.v1.AgentAuth
 	36,  // 41: longarm.v1.AttachOutput.started:type_name -> longarm.v1.AttachStarted
 	37,  // 42: longarm.v1.AttachStarted.session:type_name -> longarm.v1.Session
 	1,   // 43: longarm.v1.Session.state:type_name -> longarm.v1.JobState
-	108, // 44: longarm.v1.Session.created_at:type_name -> google.protobuf.Timestamp
-	108, // 45: longarm.v1.Session.ended_at:type_name -> google.protobuf.Timestamp
+	122, // 44: longarm.v1.Session.created_at:type_name -> google.protobuf.Timestamp
+	122, // 45: longarm.v1.Session.ended_at:type_name -> google.protobuf.Timestamp
 	12,  // 46: longarm.v1.Session.workspace:type_name -> longarm.v1.JobWorkspace
-	108, // 47: longarm.v1.Session.started_at:type_name -> google.protobuf.Timestamp
-	108, // 48: longarm.v1.Session.last_output:type_name -> google.protobuf.Timestamp
-	108, // 49: longarm.v1.Session.last_input:type_name -> google.protobuf.Timestamp
-	108, // 50: longarm.v1.Session.last_activity:type_name -> google.protobuf.Timestamp
-	105, // 51: longarm.v1.StartSessionRequest.env:type_name -> longarm.v1.StartSessionRequest.EnvEntry
-	106, // 52: longarm.v1.StartSessionRequest.secret_env:type_name -> longarm.v1.StartSessionRequest.SecretEnvEntry
+	122, // 47: longarm.v1.Session.started_at:type_name -> google.protobuf.Timestamp
+	122, // 48: longarm.v1.Session.last_output:type_name -> google.protobuf.Timestamp
+	122, // 49: longarm.v1.Session.last_input:type_name -> google.protobuf.Timestamp
+	122, // 50: longarm.v1.Session.last_activity:type_name -> google.protobuf.Timestamp
+	119, // 51: longarm.v1.StartSessionRequest.env:type_name -> longarm.v1.StartSessionRequest.EnvEntry
+	120, // 52: longarm.v1.StartSessionRequest.secret_env:type_name -> longarm.v1.StartSessionRequest.SecretEnvEntry
 	34,  // 53: longarm.v1.StartSessionRequest.size:type_name -> longarm.v1.TermSize
 	12,  // 54: longarm.v1.StartSessionRequest.workspace:type_name -> longarm.v1.JobWorkspace
 	13,  // 55: longarm.v1.StartSessionRequest.git_auth:type_name -> longarm.v1.GitAuth
 	6,   // 56: longarm.v1.StartSessionRequest.agent_auth:type_name -> longarm.v1.AgentAuth
-	109, // 57: longarm.v1.StopSessionRequest.grace:type_name -> google.protobuf.Duration
+	123, // 57: longarm.v1.StopSessionRequest.grace:type_name -> google.protobuf.Duration
 	37,  // 58: longarm.v1.ListSessionsResponse.sessions:type_name -> longarm.v1.Session
 	92,  // 59: longarm.v1.ForwardFrame.grant:type_name -> longarm.v1.SignedPortLinkGrant
-	108, // 60: longarm.v1.FileInfo.mtime:type_name -> google.protobuf.Timestamp
+	122, // 60: longarm.v1.FileInfo.mtime:type_name -> google.protobuf.Timestamp
 	49,  // 61: longarm.v1.FileListResponse.entries:type_name -> longarm.v1.FileInfo
 	55,  // 62: longarm.v1.FileWriteRequest.header:type_name -> longarm.v1.FileWriteHeader
-	108, // 63: longarm.v1.FileWriteHeader.mtime:type_name -> google.protobuf.Timestamp
+	122, // 63: longarm.v1.FileWriteHeader.mtime:type_name -> google.protobuf.Timestamp
 	13,  // 64: longarm.v1.PushHandoffRequest.git_auth:type_name -> longarm.v1.GitAuth
 	13,  // 65: longarm.v1.FetchRequest.git_auth:type_name -> longarm.v1.GitAuth
 	65,  // 66: longarm.v1.SyncChunk.header:type_name -> longarm.v1.SyncHeader
 	66,  // 67: longarm.v1.SyncChunk.data:type_name -> longarm.v1.SyncData
 	2,   // 68: longarm.v1.SyncData.part:type_name -> longarm.v1.SyncPart
-	109, // 69: longarm.v1.HandoffOfferRequest.ttl:type_name -> google.protobuf.Duration
+	123, // 69: longarm.v1.HandoffOfferRequest.ttl:type_name -> google.protobuf.Duration
 	65,  // 70: longarm.v1.HandoffPullRequest.header:type_name -> longarm.v1.SyncHeader
 	81,  // 71: longarm.v1.SpeedSourceRequest.grant:type_name -> longarm.v1.CopyGrant
-	109, // 72: longarm.v1.SpeedSourceRequest.duration:type_name -> google.protobuf.Duration
+	123, // 72: longarm.v1.SpeedSourceRequest.duration:type_name -> google.protobuf.Duration
 	81,  // 73: longarm.v1.SpeedSinkChunk.grant:type_name -> longarm.v1.CopyGrant
-	109, // 74: longarm.v1.SpeedSinkResponse.took:type_name -> google.protobuf.Duration
+	123, // 74: longarm.v1.SpeedSinkResponse.took:type_name -> google.protobuf.Duration
 	81,  // 75: longarm.v1.CopySpeedRequest.grant:type_name -> longarm.v1.CopyGrant
-	109, // 76: longarm.v1.CopySpeedRequest.duration:type_name -> google.protobuf.Duration
-	109, // 77: longarm.v1.SpeedResult.rtt:type_name -> google.protobuf.Duration
-	109, // 78: longarm.v1.CopyOfferRequest.ttl:type_name -> google.protobuf.Duration
+	123, // 76: longarm.v1.CopySpeedRequest.duration:type_name -> google.protobuf.Duration
+	123, // 77: longarm.v1.SpeedResult.rtt:type_name -> google.protobuf.Duration
+	123, // 78: longarm.v1.CopyOfferRequest.ttl:type_name -> google.protobuf.Duration
 	49,  // 79: longarm.v1.CopyOfferResponse.root:type_name -> longarm.v1.FileInfo
 	81,  // 80: longarm.v1.CopyListRequest.grant:type_name -> longarm.v1.CopyGrant
 	81,  // 81: longarm.v1.CopyStatRequest.grant:type_name -> longarm.v1.CopyGrant
 	81,  // 82: longarm.v1.CopyReadRequest.grant:type_name -> longarm.v1.CopyGrant
 	81,  // 83: longarm.v1.CopyPullRequest.grant:type_name -> longarm.v1.CopyGrant
 	12,  // 84: longarm.v1.PrepareJobRequest.workspace:type_name -> longarm.v1.JobWorkspace
-	107, // 85: longarm.v1.PrepareJobRequest.secret_env:type_name -> longarm.v1.PrepareJobRequest.SecretEnvEntry
+	121, // 85: longarm.v1.PrepareJobRequest.secret_env:type_name -> longarm.v1.PrepareJobRequest.SecretEnvEntry
 	13,  // 86: longarm.v1.PrepareJobRequest.git_auth:type_name -> longarm.v1.GitAuth
-	108, // 87: longarm.v1.MachineUpdateEvent.at:type_name -> google.protobuf.Timestamp
-	108, // 88: longarm.v1.MachineUpdateEvent.last_at:type_name -> google.protobuf.Timestamp
-	26,  // 89: longarm.v1.MetricsSnapshot.AgentsEntry.value:type_name -> longarm.v1.AgentStat
-	3,   // 90: longarm.v1.Node.Info:input_type -> longarm.v1.InfoRequest
-	7,   // 91: longarm.v1.Exec.Run:input_type -> longarm.v1.ExecRequest
-	14,  // 92: longarm.v1.Jobs.Submit:input_type -> longarm.v1.SubmitRequest
-	16,  // 93: longarm.v1.Jobs.Get:input_type -> longarm.v1.GetJobRequest
-	17,  // 94: longarm.v1.Jobs.List:input_type -> longarm.v1.ListJobsRequest
-	19,  // 95: longarm.v1.Jobs.Logs:input_type -> longarm.v1.LogsRequest
-	21,  // 96: longarm.v1.Jobs.Wait:input_type -> longarm.v1.WaitRequest
-	22,  // 97: longarm.v1.Jobs.Kill:input_type -> longarm.v1.KillRequest
-	23,  // 98: longarm.v1.Metrics.Snapshot:input_type -> longarm.v1.MetricsRequest
-	24,  // 99: longarm.v1.Metrics.Stream:input_type -> longarm.v1.MetricsStreamRequest
-	28,  // 100: longarm.v1.Admin.Shutdown:input_type -> longarm.v1.ShutdownRequest
-	30,  // 101: longarm.v1.Admin.Gc:input_type -> longarm.v1.GcRequest
-	32,  // 102: longarm.v1.Sessions.Attach:input_type -> longarm.v1.AttachInput
-	43,  // 103: longarm.v1.Sessions.List:input_type -> longarm.v1.ListSessionsRequest
-	45,  // 104: longarm.v1.Sessions.Kill:input_type -> longarm.v1.KillSessionRequest
-	19,  // 105: longarm.v1.Sessions.Logs:input_type -> longarm.v1.LogsRequest
-	38,  // 106: longarm.v1.Sessions.Start:input_type -> longarm.v1.StartSessionRequest
-	39,  // 107: longarm.v1.Sessions.Get:input_type -> longarm.v1.GetSessionRequest
-	40,  // 108: longarm.v1.Sessions.Send:input_type -> longarm.v1.SendSessionRequest
-	42,  // 109: longarm.v1.Sessions.Stop:input_type -> longarm.v1.StopSessionRequest
-	46,  // 110: longarm.v1.Forward.Open:input_type -> longarm.v1.ForwardFrame
-	46,  // 111: longarm.v1.Forward.Ssh:input_type -> longarm.v1.ForwardFrame
-	48,  // 112: longarm.v1.Files.Stat:input_type -> longarm.v1.FileStatRequest
-	50,  // 113: longarm.v1.Files.List:input_type -> longarm.v1.FileListRequest
-	52,  // 114: longarm.v1.Files.Read:input_type -> longarm.v1.FileReadRequest
-	54,  // 115: longarm.v1.Files.Write:input_type -> longarm.v1.FileWriteRequest
-	57,  // 116: longarm.v1.Files.Mkdir:input_type -> longarm.v1.MkdirRequest
-	47,  // 117: longarm.v1.Files.Tail:input_type -> longarm.v1.FileTailRequest
-	62,  // 118: longarm.v1.Workspace.Refs:input_type -> longarm.v1.RefsRequest
-	64,  // 119: longarm.v1.Workspace.Sync:input_type -> longarm.v1.SyncChunk
-	60,  // 120: longarm.v1.Workspace.Fetch:input_type -> longarm.v1.FetchRequest
-	58,  // 121: longarm.v1.Workspace.PushHandoff:input_type -> longarm.v1.PushHandoffRequest
-	68,  // 122: longarm.v1.Handoff.Offer:input_type -> longarm.v1.HandoffOfferRequest
-	70,  // 123: longarm.v1.Handoff.Fetch:input_type -> longarm.v1.HandoffFetchRequest
-	71,  // 124: longarm.v1.Handoff.Pull:input_type -> longarm.v1.HandoffPullRequest
-	77,  // 125: longarm.v1.Copy.Offer:input_type -> longarm.v1.CopyOfferRequest
-	79,  // 126: longarm.v1.Copy.Revoke:input_type -> longarm.v1.CopyRevokeRequest
-	82,  // 127: longarm.v1.Copy.List:input_type -> longarm.v1.CopyListRequest
-	83,  // 128: longarm.v1.Copy.Stat:input_type -> longarm.v1.CopyStatRequest
-	84,  // 129: longarm.v1.Copy.Read:input_type -> longarm.v1.CopyReadRequest
-	85,  // 130: longarm.v1.Copy.Pull:input_type -> longarm.v1.CopyPullRequest
-	72,  // 131: longarm.v1.Copy.Source:input_type -> longarm.v1.SpeedSourceRequest
-	73,  // 132: longarm.v1.Copy.Sink:input_type -> longarm.v1.SpeedSinkChunk
-	75,  // 133: longarm.v1.Copy.Speed:input_type -> longarm.v1.CopySpeedRequest
-	87,  // 134: longarm.v1.UserHelper.PrepareJob:input_type -> longarm.v1.PrepareJobRequest
-	89,  // 135: longarm.v1.UserHelper.Prune:input_type -> longarm.v1.PruneRequest
-	46,  // 136: longarm.v1.LinkTunnel.Dial:input_type -> longarm.v1.ForwardFrame
-	93,  // 137: longarm.v1.MachineUpdate.Start:input_type -> longarm.v1.MachineUpdateRequest
-	94,  // 138: longarm.v1.MachineUpdate.Status:input_type -> longarm.v1.MachineUpdateStatusRequest
-	95,  // 139: longarm.v1.MachineUpdate.SetAuto:input_type -> longarm.v1.MachineUpdateAutoRequest
-	4,   // 140: longarm.v1.Node.Info:output_type -> longarm.v1.InfoResponse
-	8,   // 141: longarm.v1.Exec.Run:output_type -> longarm.v1.ExecResponse
-	15,  // 142: longarm.v1.Jobs.Submit:output_type -> longarm.v1.Job
-	15,  // 143: longarm.v1.Jobs.Get:output_type -> longarm.v1.Job
-	18,  // 144: longarm.v1.Jobs.List:output_type -> longarm.v1.ListJobsResponse
-	20,  // 145: longarm.v1.Jobs.Logs:output_type -> longarm.v1.LogChunk
-	15,  // 146: longarm.v1.Jobs.Wait:output_type -> longarm.v1.Job
-	15,  // 147: longarm.v1.Jobs.Kill:output_type -> longarm.v1.Job
-	27,  // 148: longarm.v1.Metrics.Snapshot:output_type -> longarm.v1.MetricsSnapshot
-	27,  // 149: longarm.v1.Metrics.Stream:output_type -> longarm.v1.MetricsSnapshot
-	29,  // 150: longarm.v1.Admin.Shutdown:output_type -> longarm.v1.ShutdownResponse
-	31,  // 151: longarm.v1.Admin.Gc:output_type -> longarm.v1.GcResponse
-	35,  // 152: longarm.v1.Sessions.Attach:output_type -> longarm.v1.AttachOutput
-	44,  // 153: longarm.v1.Sessions.List:output_type -> longarm.v1.ListSessionsResponse
-	37,  // 154: longarm.v1.Sessions.Kill:output_type -> longarm.v1.Session
-	20,  // 155: longarm.v1.Sessions.Logs:output_type -> longarm.v1.LogChunk
-	36,  // 156: longarm.v1.Sessions.Start:output_type -> longarm.v1.AttachStarted
-	37,  // 157: longarm.v1.Sessions.Get:output_type -> longarm.v1.Session
-	41,  // 158: longarm.v1.Sessions.Send:output_type -> longarm.v1.SendSessionResponse
-	37,  // 159: longarm.v1.Sessions.Stop:output_type -> longarm.v1.Session
-	46,  // 160: longarm.v1.Forward.Open:output_type -> longarm.v1.ForwardFrame
-	46,  // 161: longarm.v1.Forward.Ssh:output_type -> longarm.v1.ForwardFrame
-	49,  // 162: longarm.v1.Files.Stat:output_type -> longarm.v1.FileInfo
-	51,  // 163: longarm.v1.Files.List:output_type -> longarm.v1.FileListResponse
-	53,  // 164: longarm.v1.Files.Read:output_type -> longarm.v1.FileChunk
-	56,  // 165: longarm.v1.Files.Write:output_type -> longarm.v1.FileWriteResult
-	49,  // 166: longarm.v1.Files.Mkdir:output_type -> longarm.v1.FileInfo
-	53,  // 167: longarm.v1.Files.Tail:output_type -> longarm.v1.FileChunk
-	63,  // 168: longarm.v1.Workspace.Refs:output_type -> longarm.v1.RefsResponse
-	67,  // 169: longarm.v1.Workspace.Sync:output_type -> longarm.v1.SyncResult
-	61,  // 170: longarm.v1.Workspace.Fetch:output_type -> longarm.v1.FetchResponse
-	59,  // 171: longarm.v1.Workspace.PushHandoff:output_type -> longarm.v1.PushHandoffResponse
-	69,  // 172: longarm.v1.Handoff.Offer:output_type -> longarm.v1.HandoffOfferResponse
-	53,  // 173: longarm.v1.Handoff.Fetch:output_type -> longarm.v1.FileChunk
-	67,  // 174: longarm.v1.Handoff.Pull:output_type -> longarm.v1.SyncResult
-	78,  // 175: longarm.v1.Copy.Offer:output_type -> longarm.v1.CopyOfferResponse
-	80,  // 176: longarm.v1.Copy.Revoke:output_type -> longarm.v1.CopyRevokeResponse
-	51,  // 177: longarm.v1.Copy.List:output_type -> longarm.v1.FileListResponse
-	49,  // 178: longarm.v1.Copy.Stat:output_type -> longarm.v1.FileInfo
-	53,  // 179: longarm.v1.Copy.Read:output_type -> longarm.v1.FileChunk
-	86,  // 180: longarm.v1.Copy.Pull:output_type -> longarm.v1.CopyProgress
-	53,  // 181: longarm.v1.Copy.Source:output_type -> longarm.v1.FileChunk
-	74,  // 182: longarm.v1.Copy.Sink:output_type -> longarm.v1.SpeedSinkResponse
-	76,  // 183: longarm.v1.Copy.Speed:output_type -> longarm.v1.SpeedResult
-	88,  // 184: longarm.v1.UserHelper.PrepareJob:output_type -> longarm.v1.PrepareJobOutput
-	90,  // 185: longarm.v1.UserHelper.Prune:output_type -> longarm.v1.PruneResponse
-	46,  // 186: longarm.v1.LinkTunnel.Dial:output_type -> longarm.v1.ForwardFrame
-	96,  // 187: longarm.v1.MachineUpdate.Start:output_type -> longarm.v1.MachineUpdateEvent
-	96,  // 188: longarm.v1.MachineUpdate.Status:output_type -> longarm.v1.MachineUpdateEvent
-	96,  // 189: longarm.v1.MachineUpdate.SetAuto:output_type -> longarm.v1.MachineUpdateEvent
-	140, // [140:190] is the sub-list for method output_type
-	90,  // [90:140] is the sub-list for method input_type
-	90,  // [90:90] is the sub-list for extension type_name
-	90,  // [90:90] is the sub-list for extension extendee
-	0,   // [0:90] is the sub-list for field type_name
+	122, // 87: longarm.v1.MachineUpdateEvent.at:type_name -> google.protobuf.Timestamp
+	122, // 88: longarm.v1.MachineUpdateEvent.last_at:type_name -> google.protobuf.Timestamp
+	98,  // 89: longarm.v1.DesktopDisplaysResponse.displays:type_name -> longarm.v1.DesktopDisplay
+	101, // 90: longarm.v1.DesktopClientMessage.start:type_name -> longarm.v1.DesktopStart
+	102, // 91: longarm.v1.DesktopClientMessage.input:type_name -> longarm.v1.DesktopInput
+	103, // 92: longarm.v1.DesktopInput.mouse:type_name -> longarm.v1.DesktopMouse
+	104, // 93: longarm.v1.DesktopInput.key:type_name -> longarm.v1.DesktopKey
+	106, // 94: longarm.v1.DesktopServerMessage.started:type_name -> longarm.v1.DesktopStarted
+	107, // 95: longarm.v1.DesktopServerMessage.frame:type_name -> longarm.v1.DesktopFrame
+	109, // 96: longarm.v1.DesktopServerMessage.cursor:type_name -> longarm.v1.DesktopCursor
+	110, // 97: longarm.v1.DesktopServerMessage.state:type_name -> longarm.v1.DesktopState
+	98,  // 98: longarm.v1.DesktopStarted.display:type_name -> longarm.v1.DesktopDisplay
+	122, // 99: longarm.v1.DesktopFrame.captured:type_name -> google.protobuf.Timestamp
+	108, // 100: longarm.v1.DesktopFrame.tiles:type_name -> longarm.v1.DesktopTile
+	26,  // 101: longarm.v1.MetricsSnapshot.AgentsEntry.value:type_name -> longarm.v1.AgentStat
+	3,   // 102: longarm.v1.Node.Info:input_type -> longarm.v1.InfoRequest
+	7,   // 103: longarm.v1.Exec.Run:input_type -> longarm.v1.ExecRequest
+	14,  // 104: longarm.v1.Jobs.Submit:input_type -> longarm.v1.SubmitRequest
+	16,  // 105: longarm.v1.Jobs.Get:input_type -> longarm.v1.GetJobRequest
+	17,  // 106: longarm.v1.Jobs.List:input_type -> longarm.v1.ListJobsRequest
+	19,  // 107: longarm.v1.Jobs.Logs:input_type -> longarm.v1.LogsRequest
+	21,  // 108: longarm.v1.Jobs.Wait:input_type -> longarm.v1.WaitRequest
+	22,  // 109: longarm.v1.Jobs.Kill:input_type -> longarm.v1.KillRequest
+	23,  // 110: longarm.v1.Metrics.Snapshot:input_type -> longarm.v1.MetricsRequest
+	24,  // 111: longarm.v1.Metrics.Stream:input_type -> longarm.v1.MetricsStreamRequest
+	28,  // 112: longarm.v1.Admin.Shutdown:input_type -> longarm.v1.ShutdownRequest
+	30,  // 113: longarm.v1.Admin.Gc:input_type -> longarm.v1.GcRequest
+	32,  // 114: longarm.v1.Sessions.Attach:input_type -> longarm.v1.AttachInput
+	43,  // 115: longarm.v1.Sessions.List:input_type -> longarm.v1.ListSessionsRequest
+	45,  // 116: longarm.v1.Sessions.Kill:input_type -> longarm.v1.KillSessionRequest
+	19,  // 117: longarm.v1.Sessions.Logs:input_type -> longarm.v1.LogsRequest
+	38,  // 118: longarm.v1.Sessions.Start:input_type -> longarm.v1.StartSessionRequest
+	39,  // 119: longarm.v1.Sessions.Get:input_type -> longarm.v1.GetSessionRequest
+	40,  // 120: longarm.v1.Sessions.Send:input_type -> longarm.v1.SendSessionRequest
+	42,  // 121: longarm.v1.Sessions.Stop:input_type -> longarm.v1.StopSessionRequest
+	46,  // 122: longarm.v1.Forward.Open:input_type -> longarm.v1.ForwardFrame
+	46,  // 123: longarm.v1.Forward.Ssh:input_type -> longarm.v1.ForwardFrame
+	48,  // 124: longarm.v1.Files.Stat:input_type -> longarm.v1.FileStatRequest
+	50,  // 125: longarm.v1.Files.List:input_type -> longarm.v1.FileListRequest
+	52,  // 126: longarm.v1.Files.Read:input_type -> longarm.v1.FileReadRequest
+	54,  // 127: longarm.v1.Files.Write:input_type -> longarm.v1.FileWriteRequest
+	57,  // 128: longarm.v1.Files.Mkdir:input_type -> longarm.v1.MkdirRequest
+	47,  // 129: longarm.v1.Files.Tail:input_type -> longarm.v1.FileTailRequest
+	62,  // 130: longarm.v1.Workspace.Refs:input_type -> longarm.v1.RefsRequest
+	64,  // 131: longarm.v1.Workspace.Sync:input_type -> longarm.v1.SyncChunk
+	60,  // 132: longarm.v1.Workspace.Fetch:input_type -> longarm.v1.FetchRequest
+	58,  // 133: longarm.v1.Workspace.PushHandoff:input_type -> longarm.v1.PushHandoffRequest
+	68,  // 134: longarm.v1.Handoff.Offer:input_type -> longarm.v1.HandoffOfferRequest
+	70,  // 135: longarm.v1.Handoff.Fetch:input_type -> longarm.v1.HandoffFetchRequest
+	71,  // 136: longarm.v1.Handoff.Pull:input_type -> longarm.v1.HandoffPullRequest
+	77,  // 137: longarm.v1.Copy.Offer:input_type -> longarm.v1.CopyOfferRequest
+	79,  // 138: longarm.v1.Copy.Revoke:input_type -> longarm.v1.CopyRevokeRequest
+	82,  // 139: longarm.v1.Copy.List:input_type -> longarm.v1.CopyListRequest
+	83,  // 140: longarm.v1.Copy.Stat:input_type -> longarm.v1.CopyStatRequest
+	84,  // 141: longarm.v1.Copy.Read:input_type -> longarm.v1.CopyReadRequest
+	85,  // 142: longarm.v1.Copy.Pull:input_type -> longarm.v1.CopyPullRequest
+	72,  // 143: longarm.v1.Copy.Source:input_type -> longarm.v1.SpeedSourceRequest
+	73,  // 144: longarm.v1.Copy.Sink:input_type -> longarm.v1.SpeedSinkChunk
+	75,  // 145: longarm.v1.Copy.Speed:input_type -> longarm.v1.CopySpeedRequest
+	87,  // 146: longarm.v1.UserHelper.PrepareJob:input_type -> longarm.v1.PrepareJobRequest
+	89,  // 147: longarm.v1.UserHelper.Prune:input_type -> longarm.v1.PruneRequest
+	46,  // 148: longarm.v1.LinkTunnel.Dial:input_type -> longarm.v1.ForwardFrame
+	93,  // 149: longarm.v1.MachineUpdate.Start:input_type -> longarm.v1.MachineUpdateRequest
+	94,  // 150: longarm.v1.MachineUpdate.Status:input_type -> longarm.v1.MachineUpdateStatusRequest
+	95,  // 151: longarm.v1.MachineUpdate.SetAuto:input_type -> longarm.v1.MachineUpdateAutoRequest
+	97,  // 152: longarm.v1.RemoteDesktop.Displays:input_type -> longarm.v1.DesktopDisplaysRequest
+	100, // 153: longarm.v1.RemoteDesktop.Stream:input_type -> longarm.v1.DesktopClientMessage
+	4,   // 154: longarm.v1.Node.Info:output_type -> longarm.v1.InfoResponse
+	8,   // 155: longarm.v1.Exec.Run:output_type -> longarm.v1.ExecResponse
+	15,  // 156: longarm.v1.Jobs.Submit:output_type -> longarm.v1.Job
+	15,  // 157: longarm.v1.Jobs.Get:output_type -> longarm.v1.Job
+	18,  // 158: longarm.v1.Jobs.List:output_type -> longarm.v1.ListJobsResponse
+	20,  // 159: longarm.v1.Jobs.Logs:output_type -> longarm.v1.LogChunk
+	15,  // 160: longarm.v1.Jobs.Wait:output_type -> longarm.v1.Job
+	15,  // 161: longarm.v1.Jobs.Kill:output_type -> longarm.v1.Job
+	27,  // 162: longarm.v1.Metrics.Snapshot:output_type -> longarm.v1.MetricsSnapshot
+	27,  // 163: longarm.v1.Metrics.Stream:output_type -> longarm.v1.MetricsSnapshot
+	29,  // 164: longarm.v1.Admin.Shutdown:output_type -> longarm.v1.ShutdownResponse
+	31,  // 165: longarm.v1.Admin.Gc:output_type -> longarm.v1.GcResponse
+	35,  // 166: longarm.v1.Sessions.Attach:output_type -> longarm.v1.AttachOutput
+	44,  // 167: longarm.v1.Sessions.List:output_type -> longarm.v1.ListSessionsResponse
+	37,  // 168: longarm.v1.Sessions.Kill:output_type -> longarm.v1.Session
+	20,  // 169: longarm.v1.Sessions.Logs:output_type -> longarm.v1.LogChunk
+	36,  // 170: longarm.v1.Sessions.Start:output_type -> longarm.v1.AttachStarted
+	37,  // 171: longarm.v1.Sessions.Get:output_type -> longarm.v1.Session
+	41,  // 172: longarm.v1.Sessions.Send:output_type -> longarm.v1.SendSessionResponse
+	37,  // 173: longarm.v1.Sessions.Stop:output_type -> longarm.v1.Session
+	46,  // 174: longarm.v1.Forward.Open:output_type -> longarm.v1.ForwardFrame
+	46,  // 175: longarm.v1.Forward.Ssh:output_type -> longarm.v1.ForwardFrame
+	49,  // 176: longarm.v1.Files.Stat:output_type -> longarm.v1.FileInfo
+	51,  // 177: longarm.v1.Files.List:output_type -> longarm.v1.FileListResponse
+	53,  // 178: longarm.v1.Files.Read:output_type -> longarm.v1.FileChunk
+	56,  // 179: longarm.v1.Files.Write:output_type -> longarm.v1.FileWriteResult
+	49,  // 180: longarm.v1.Files.Mkdir:output_type -> longarm.v1.FileInfo
+	53,  // 181: longarm.v1.Files.Tail:output_type -> longarm.v1.FileChunk
+	63,  // 182: longarm.v1.Workspace.Refs:output_type -> longarm.v1.RefsResponse
+	67,  // 183: longarm.v1.Workspace.Sync:output_type -> longarm.v1.SyncResult
+	61,  // 184: longarm.v1.Workspace.Fetch:output_type -> longarm.v1.FetchResponse
+	59,  // 185: longarm.v1.Workspace.PushHandoff:output_type -> longarm.v1.PushHandoffResponse
+	69,  // 186: longarm.v1.Handoff.Offer:output_type -> longarm.v1.HandoffOfferResponse
+	53,  // 187: longarm.v1.Handoff.Fetch:output_type -> longarm.v1.FileChunk
+	67,  // 188: longarm.v1.Handoff.Pull:output_type -> longarm.v1.SyncResult
+	78,  // 189: longarm.v1.Copy.Offer:output_type -> longarm.v1.CopyOfferResponse
+	80,  // 190: longarm.v1.Copy.Revoke:output_type -> longarm.v1.CopyRevokeResponse
+	51,  // 191: longarm.v1.Copy.List:output_type -> longarm.v1.FileListResponse
+	49,  // 192: longarm.v1.Copy.Stat:output_type -> longarm.v1.FileInfo
+	53,  // 193: longarm.v1.Copy.Read:output_type -> longarm.v1.FileChunk
+	86,  // 194: longarm.v1.Copy.Pull:output_type -> longarm.v1.CopyProgress
+	53,  // 195: longarm.v1.Copy.Source:output_type -> longarm.v1.FileChunk
+	74,  // 196: longarm.v1.Copy.Sink:output_type -> longarm.v1.SpeedSinkResponse
+	76,  // 197: longarm.v1.Copy.Speed:output_type -> longarm.v1.SpeedResult
+	88,  // 198: longarm.v1.UserHelper.PrepareJob:output_type -> longarm.v1.PrepareJobOutput
+	90,  // 199: longarm.v1.UserHelper.Prune:output_type -> longarm.v1.PruneResponse
+	46,  // 200: longarm.v1.LinkTunnel.Dial:output_type -> longarm.v1.ForwardFrame
+	96,  // 201: longarm.v1.MachineUpdate.Start:output_type -> longarm.v1.MachineUpdateEvent
+	96,  // 202: longarm.v1.MachineUpdate.Status:output_type -> longarm.v1.MachineUpdateEvent
+	96,  // 203: longarm.v1.MachineUpdate.SetAuto:output_type -> longarm.v1.MachineUpdateEvent
+	99,  // 204: longarm.v1.RemoteDesktop.Displays:output_type -> longarm.v1.DesktopDisplaysResponse
+	105, // 205: longarm.v1.RemoteDesktop.Stream:output_type -> longarm.v1.DesktopServerMessage
+	154, // [154:206] is the sub-list for method output_type
+	102, // [102:154] is the sub-list for method input_type
+	102, // [102:102] is the sub-list for extension type_name
+	102, // [102:102] is the sub-list for extension extendee
+	0,   // [0:102] is the sub-list for field type_name
 }
 
 func init() { file_longarm_v1_longarm_proto_init() }
@@ -8224,15 +9514,35 @@ func file_longarm_v1_longarm_proto_init() {
 		(*SyncChunk_Header)(nil),
 		(*SyncChunk_Data)(nil),
 	}
+	file_longarm_v1_longarm_proto_msgTypes[97].OneofWrappers = []any{
+		(*DesktopClientMessage_Start)(nil),
+		(*DesktopClientMessage_Input)(nil),
+		(*DesktopClientMessage_Ack)(nil),
+		(*DesktopClientMessage_Keyframe)(nil),
+		(*DesktopClientMessage_Clipboard)(nil),
+	}
+	file_longarm_v1_longarm_proto_msgTypes[99].OneofWrappers = []any{
+		(*DesktopInput_Mouse)(nil),
+		(*DesktopInput_Key)(nil),
+		(*DesktopInput_Text)(nil),
+		(*DesktopInput_SecureAttention)(nil),
+	}
+	file_longarm_v1_longarm_proto_msgTypes[102].OneofWrappers = []any{
+		(*DesktopServerMessage_Started)(nil),
+		(*DesktopServerMessage_Frame)(nil),
+		(*DesktopServerMessage_Cursor)(nil),
+		(*DesktopServerMessage_Clipboard)(nil),
+		(*DesktopServerMessage_State)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_longarm_v1_longarm_proto_rawDesc), len(file_longarm_v1_longarm_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   105,
+			NumMessages:   119,
 			NumExtensions: 0,
-			NumServices:   14,
+			NumServices:   15,
 		},
 		GoTypes:           file_longarm_v1_longarm_proto_goTypes,
 		DependencyIndexes: file_longarm_v1_longarm_proto_depIdxs,

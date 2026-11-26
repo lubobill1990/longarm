@@ -533,6 +533,20 @@ func TestAuthzTable(t *testing.T) {
 			_, err := pb.NewMachineUpdateClient(c).Status(ctx, &pb.MachineUpdateStatusRequest{})
 			return err
 		}, [4]codes.Code{codes.Unimplemented, codes.Unimplemented, codes.Unimplemented, codes.Unimplemented}},
+		// a fleet worker (no owner): nobody sees its desktop (TestRemoteDesktopOwnerOnly)
+		pb.RemoteDesktop_Displays_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			_, err := pb.NewRemoteDesktopClient(c).Displays(ctx, &pb.DesktopDisplaysRequest{})
+			return err
+		}, [4]codes.Code{pd, pd, pd, pd}},
+		pb.RemoteDesktop_Stream_FullMethodName: {func(ctx context.Context, c *grpc.ClientConn) error {
+			st, err := pb.NewRemoteDesktopClient(c).Stream(ctx)
+			if err != nil {
+				return err
+			}
+			st.Send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Start{Start: &pb.DesktopStart{ViewOnly: true}}})
+			_, err = st.Recv()
+			return err
+		}, [4]codes.Code{pd, pd, pd, pd}},
 	}
 	var missing []string
 	for m := range MethodRoles {

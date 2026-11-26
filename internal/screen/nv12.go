@@ -74,3 +74,48 @@ func clamp8(v int32) byte {
 	}
 	return byte(v)
 }
+
+// NV12ToBGRA converts NV12 (BT.709, limited range; Y rows of stride bytes,
+// planeH rows, then the interleaved UV plane) to a w×h BGRA image (stride
+// w*4) in dst, in parallel strips: the decoder's padding is cut off.
+func NV12ToBGRA(dst, src []byte, stride, planeH, w, h int) {
+	strips := min(runtime.GOMAXPROCS(0), max(h/2, 1))
+	rows := (h/2 + strips - 1) / strips
+	var wg sync.WaitGroup
+	for s := 0; s < strips; s++ {
+		y0, y1 := s*rows*2, min((s+1)*rows*2, h)
+		if y0 >= y1 {
+			break
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			bgraRows(dst, src, stride, planeH, w, y0, y1)
+		}()
+	}
+	wg.Wait()
+}
+
+// BT.709 limited range to RGB, 16.16 fixed point.
+const (
+	cY, cRV, cGU, cGV, cBU = 76284, 117489, 13954, 34931, 138438
+)
+
+func bgraRows(dst, src []byte, stride, planeH, w, y0, y1 int) {
+	uv := src[stride*planeH:]
+	for y := y0; y < y1; y++ {
+		yr := src[y*stride:]
+		cr := uv[(y/2)*stride:]
+		d := dst[y*w*4:]
+		for x := 0; x < w; x++ {
+			l := (int32(yr[x]) - 16) * cY
+			u := int32(cr[x&^1]) - 128
+			v := int32(cr[x|1]) - 128
+			o := x * 4
+			d[o] = clamp8((l + cBU*u + 32768) >> 16)
+			d[o+1] = clamp8((l - cGU*u - cGV*v + 32768) >> 16)
+			d[o+2] = clamp8((l + cRV*v + 32768) >> 16)
+			d[o+3] = 255
+		}
+	}
+}

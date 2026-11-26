@@ -42,6 +42,9 @@ var MSISteps = map[string][]string{
 	"admin-setup":    {"hub", "ca", "sid", "usersid"},
 	"admin-remove":   {"keep"},
 	"admin-drop":     {"usersid"},
+	// the Longarm Desktop service (internal/desktopsvc): the worker's accounts may use its agent
+	"desktop-setup":  {"sid", "user", "usersid"},
+	"desktop-remove": {},
 	// the sign-in defaults in HKLM (ApplyMSISettings)
 	"settings":        {"hub", "ca", "login", "labels", "mode", "autoupdate", "channel", "usersid"},
 	"settings-remove": {},

@@ -65,6 +65,9 @@ func main() {
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "pattern": // pattern LOG SECONDS: the remote desktop test's picture (pattern_*.go)
+		secs, _ := strconv.Atoi(os.Args[3])
+		pattern(os.Args[2], secs)
 	case "print":
 		n, _ := strconv.Atoi(os.Args[2])
 		ms, _ := strconv.Atoi(os.Args[3])

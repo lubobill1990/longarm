@@ -88,6 +88,11 @@ message DesktopInfo {
   // newest first (at most 50): the one matching a Dev Box's last
   // connection, and how many came after it, tell boxes created together apart.
   repeated google.protobuf.Timestamp remote_logons = 8;
+  // Longarm's own remote desktop (the RemoteDesktop service, feature
+  // "desktop-native"): why it is not available here ("" = it is, or the
+  // worker is older). E.g. no display, or a Windows service worker without
+  // the Longarm Desktop service.
+  string native_reason = 9;
 }
 
 // AgentAuth says which coding agents' credentials the client forwarded
@@ -1180,4 +1185,142 @@ message MachineUpdateEvent {
   bool last_ok = 17;
   string last_error = 18;
   google.protobuf.Timestamp last_at = 19;
+}
+
+// RemoteDesktop is Longarm's own remote desktop (docs/remote-desktop.md):
+// the worker's screen as H.264 (or JPEG tiles where there is no H.264
+// encoder) and the viewer's mouse and keyboard back. Only the worker's
+// owner may connect (anybody else is refused and audited); there is no
+// consent prompt. Feature "desktop-native".
+service RemoteDesktop {
+  // Displays lists the worker's displays and what it can encode
+  // (native_reason says why the desktop cannot be shown, if it cannot).
+  rpc Displays(DesktopDisplaysRequest) returns (DesktopDisplaysResponse);
+  // Stream: the first client message is start; the worker answers started
+  // (or an error), then frames as the screen changes. The client acks the
+  // frames it has shown: the worker keeps at most a few unacked, so a slow
+  // link gets fewer, current frames. Input, keyframe requests and clipboard
+  // text flow the other way. Ends when either side closes.
+  rpc Stream(stream DesktopClientMessage) returns (stream DesktopServerMessage);
+}
+
+message DesktopDisplaysRequest {}
+
+message DesktopDisplay {
+  int32 index = 1;
+  string name = 2;
+  // desktop coordinates in physical pixels
+  int32 x = 3;
+  int32 y = 4;
+  int32 width = 5;
+  int32 height = 6;
+}
+
+message DesktopDisplaysResponse {
+  repeated DesktopDisplay displays = 1;
+  string native_reason = 2; // "" = available
+  repeated string codecs = 3; // what the worker can encode: "h264", "jpeg"
+}
+
+message DesktopClientMessage {
+  oneof msg {
+    DesktopStart start = 1;
+    DesktopInput input = 2;
+    uint64 ack = 3; // the newest frame seq shown
+    bool keyframe = 4; // send a keyframe (the decoder lost its state)
+    string clipboard = 5; // text copied on the viewer's side
+  }
+}
+
+message DesktopStart {
+  int32 display = 1;
+  // codecs the viewer decodes, preferred first ("h264", "jpeg")
+  repeated string codecs = 2;
+  int32 max_fps = 3; // 0 = 30
+  int32 bitrate_kbps = 4; // 0 = the worker picks
+  bool view_only = 5; // input is refused
+}
+
+message DesktopInput {
+  oneof event {
+    DesktopMouse mouse = 1;
+    DesktopKey key = 2;
+    string text = 3; // typed as Unicode (IMEs, paste)
+    bool secure_attention = 4; // Ctrl+Alt+Del
+  }
+}
+
+message DesktopMouse {
+  // in the display's pixels
+  int32 x = 1;
+  int32 y = 2;
+  // 0: a move; 1 left, 2 middle, 3 right, pressed (down) or released
+  int32 button = 3;
+  bool down = 4;
+  // wheel notches * 120 (positive: up / right)
+  int32 wheel_x = 5;
+  int32 wheel_y = 6;
+}
+
+message DesktopKey {
+  // PC/AT set-1 scan code; extended keys have 0xE0 in the high byte
+  // (0xE04B: left arrow). The worker's keyboard layout decides the character.
+  uint32 scan = 1;
+  bool down = 2;
+}
+
+message DesktopServerMessage {
+  oneof msg {
+    DesktopStarted started = 1;
+    DesktopFrame frame = 2;
+    DesktopCursor cursor = 3;
+    string clipboard = 4; // text copied on the worker
+    DesktopState state = 5;
+  }
+}
+
+message DesktopStarted {
+  int32 width = 1;
+  int32 height = 2;
+  string codec = 3; // "h264" | "jpeg"
+  string encoder = 4; // e.g. "hardware", "software"
+  DesktopDisplay display = 5;
+}
+
+message DesktopFrame {
+  uint64 seq = 1;
+  bytes data = 2; // h264: one Annex B access unit
+  bool key = 3; // h264: an IDR picture; jpeg: tiles cover the whole frame
+  google.protobuf.Timestamp captured = 4;
+  repeated DesktopTile tiles = 5; // jpeg
+  // the display's size changed: a new started message came before this
+  // frame (it is a key frame)
+}
+
+message DesktopTile {
+  int32 x = 1;
+  int32 y = 2;
+  int32 width = 3;
+  int32 height = 4;
+  bytes jpeg = 5;
+}
+
+message DesktopCursor {
+  int32 x = 1;
+  int32 y = 2;
+  bool visible = 3;
+  // a new shape when shape_id changes (straight BGRA, width*height*4)
+  uint64 shape_id = 4;
+  int32 width = 5;
+  int32 height = 6;
+  int32 hot_x = 7;
+  int32 hot_y = 8;
+  bytes bgra = 9;
+}
+
+message DesktopState {
+  // the worker shows a secure screen (UAC prompt, lock, Ctrl+Alt+Del) that
+  // this capturer cannot see or drive (no Longarm Desktop service)
+  bool secure_hidden = 1;
+  string note = 2;
 }

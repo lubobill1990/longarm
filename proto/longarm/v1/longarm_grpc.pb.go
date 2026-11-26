@@ -3148,3 +3148,164 @@ var MachineUpdate_ServiceDesc = grpc.ServiceDesc{
 	},
 	Metadata: "longarm/v1/longarm.proto",
 }
+
+const (
+	RemoteDesktop_Displays_FullMethodName = "/longarm.v1.RemoteDesktop/Displays"
+	RemoteDesktop_Stream_FullMethodName   = "/longarm.v1.RemoteDesktop/Stream"
+)
+
+// RemoteDesktopClient is the client API for RemoteDesktop service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// RemoteDesktop is Longarm's own remote desktop (docs/remote-desktop.md):
+// the worker's screen as H.264 (or JPEG tiles where there is no H.264
+// encoder) and the viewer's mouse and keyboard back. Only the worker's
+// owner may connect (anybody else is refused and audited); there is no
+// consent prompt. Feature "desktop-native".
+type RemoteDesktopClient interface {
+	// Displays lists the worker's displays and what it can encode
+	// (native_reason says why the desktop cannot be shown, if it cannot).
+	Displays(ctx context.Context, in *DesktopDisplaysRequest, opts ...grpc.CallOption) (*DesktopDisplaysResponse, error)
+	// Stream: the first client message is start; the worker answers started
+	// (or an error), then frames as the screen changes. The client acks the
+	// frames it has shown: the worker keeps at most a few unacked, so a slow
+	// link gets fewer, current frames. Input, keyframe requests and clipboard
+	// text flow the other way. Ends when either side closes.
+	Stream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DesktopClientMessage, DesktopServerMessage], error)
+}
+
+type remoteDesktopClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewRemoteDesktopClient(cc grpc.ClientConnInterface) RemoteDesktopClient {
+	return &remoteDesktopClient{cc}
+}
+
+func (c *remoteDesktopClient) Displays(ctx context.Context, in *DesktopDisplaysRequest, opts ...grpc.CallOption) (*DesktopDisplaysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DesktopDisplaysResponse)
+	err := c.cc.Invoke(ctx, RemoteDesktop_Displays_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *remoteDesktopClient) Stream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DesktopClientMessage, DesktopServerMessage], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RemoteDesktop_ServiceDesc.Streams[0], RemoteDesktop_Stream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DesktopClientMessage, DesktopServerMessage]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RemoteDesktop_StreamClient = grpc.BidiStreamingClient[DesktopClientMessage, DesktopServerMessage]
+
+// RemoteDesktopServer is the server API for RemoteDesktop service.
+// All implementations must embed UnimplementedRemoteDesktopServer
+// for forward compatibility.
+//
+// RemoteDesktop is Longarm's own remote desktop (docs/remote-desktop.md):
+// the worker's screen as H.264 (or JPEG tiles where there is no H.264
+// encoder) and the viewer's mouse and keyboard back. Only the worker's
+// owner may connect (anybody else is refused and audited); there is no
+// consent prompt. Feature "desktop-native".
+type RemoteDesktopServer interface {
+	// Displays lists the worker's displays and what it can encode
+	// (native_reason says why the desktop cannot be shown, if it cannot).
+	Displays(context.Context, *DesktopDisplaysRequest) (*DesktopDisplaysResponse, error)
+	// Stream: the first client message is start; the worker answers started
+	// (or an error), then frames as the screen changes. The client acks the
+	// frames it has shown: the worker keeps at most a few unacked, so a slow
+	// link gets fewer, current frames. Input, keyframe requests and clipboard
+	// text flow the other way. Ends when either side closes.
+	Stream(grpc.BidiStreamingServer[DesktopClientMessage, DesktopServerMessage]) error
+	mustEmbedUnimplementedRemoteDesktopServer()
+}
+
+// UnimplementedRemoteDesktopServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedRemoteDesktopServer struct{}
+
+func (UnimplementedRemoteDesktopServer) Displays(context.Context, *DesktopDisplaysRequest) (*DesktopDisplaysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Displays not implemented")
+}
+func (UnimplementedRemoteDesktopServer) Stream(grpc.BidiStreamingServer[DesktopClientMessage, DesktopServerMessage]) error {
+	return status.Error(codes.Unimplemented, "method Stream not implemented")
+}
+func (UnimplementedRemoteDesktopServer) mustEmbedUnimplementedRemoteDesktopServer() {}
+func (UnimplementedRemoteDesktopServer) testEmbeddedByValue()                       {}
+
+// UnsafeRemoteDesktopServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to RemoteDesktopServer will
+// result in compilation errors.
+type UnsafeRemoteDesktopServer interface {
+	mustEmbedUnimplementedRemoteDesktopServer()
+}
+
+func RegisterRemoteDesktopServer(s grpc.ServiceRegistrar, srv RemoteDesktopServer) {
+	// If the following call panics, it indicates UnimplementedRemoteDesktopServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&RemoteDesktop_ServiceDesc, srv)
+}
+
+func _RemoteDesktop_Displays_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DesktopDisplaysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RemoteDesktopServer).Displays(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RemoteDesktop_Displays_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RemoteDesktopServer).Displays(ctx, req.(*DesktopDisplaysRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RemoteDesktop_Stream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RemoteDesktopServer).Stream(&grpc.GenericServerStream[DesktopClientMessage, DesktopServerMessage]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RemoteDesktop_StreamServer = grpc.BidiStreamingServer[DesktopClientMessage, DesktopServerMessage]
+
+// RemoteDesktop_ServiceDesc is the grpc.ServiceDesc for RemoteDesktop service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var RemoteDesktop_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "longarm.v1.RemoteDesktop",
+	HandlerType: (*RemoteDesktopServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Displays",
+			Handler:    _RemoteDesktop_Displays_Handler,
+		},
+	},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Stream",
+			Handler:       _RemoteDesktop_Stream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
+	Metadata: "longarm/v1/longarm.proto",
+}

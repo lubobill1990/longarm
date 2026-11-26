@@ -1597,8 +1597,54 @@ longarm desktop cpc-alice-x7k2q --url 'ms-avd:connect?...'   # remember this lin
 longarm desktop cpc-alice-x7k2q --forget
 ```
 
-What the worker is decides how its desktop opens (longarmd reports it in
-`Node.Info`; workers before this release don't, update them first):
+**Longarm's own remote desktop** comes first where the worker can show it
+(feature `desktop-native`: Windows workers whose longarmd runs in the
+signed-in user's session, the MSI's default; macOS and Linux are coming)
+and this machine has the viewer (Windows): a window of its own showing
+the worker's screen - the one someone sitting there sees - as H.264 (the
+GPU's encoder where there is one; JPEG tiles where H.264 is missing),
+with your mouse and keyboard. Win, Alt+Tab and Ctrl+Esc go to the worker
+while the window is in front; Ctrl+Alt+Enter toggles full screen,
+Ctrl+Alt+End sends Ctrl+Alt+Del. Only the worker's owner may connect
+(an admin certificate of somebody else is refused); every connection is
+audited. One viewer at a time: a second one takes the desktop over.
+
+```
+longarm desktop w1                          # Longarm's remote desktop where it works, else as below
+longarm desktop w1 --view-only              # watch only
+longarm desktop w1 --display 1              # the second display
+longarm desktop w1 --screenshot w1.png      # save a picture of its screen (no window)
+longarm desktop w1 --screenshot after.png --input "click:400,300;text:hello;key:0x1C"
+longarm desktop w1 --rdp                    # Remote Desktop / Windows App instead
+```
+
+`--input` sends events before the picture is taken (`click:X,Y`,
+`move:X,Y`, `key:SCAN[,SCAN]` - PC/AT set-1 scan codes pressed in order
+and released in reverse, `text:TEXT`, `sas`). UAC prompts, the lock
+screen and Ctrl+Alt+Del need the Longarm Desktop service (a SYSTEM
+service on the worker; without it the viewer says the worker shows a
+secure screen it cannot capture). A Windows service worker (session 0)
+has no desktop of its own: it needs that service for any picture.
+
+The MSI installs the Longarm Desktop service (`LongarmDesktop`, LocalSystem)
+with the worker role and removes it with it. It keeps an agent running as
+SYSTEM in the console session; only SYSTEM, administrators and the
+worker's accounts (the installing user, the service account) may use the
+agent, and longarmd still lets only its owner through. Ctrl+Alt+Del needs
+the SoftwareSASGeneration policy, which the install turns on for services
+(and the uninstall turns back off). By hand, elevated:
+
+```
+longarmd desktop-service install [--client .\alice]   # default: you
+longarmd desktop-service status                        # installed? does its agent answer this account?
+longarmd desktop-service uninstall
+```
+
+Its logs: `%ProgramData%\Longarm\desktop\service.log` and `agent.log`.
+
+Otherwise, what the worker is decides how its desktop opens (longarmd
+reports it in `Node.Info`; workers before this release don't, update them
+first):
 
 - **Microsoft Dev Box**: opens in **Windows App**, which connects through
   Azure Virtual Desktop itself - RDP Shortpath, Entra sign-in, the Dev

@@ -24,6 +24,7 @@ import (
 	"longarm/internal/client"
 	"longarm/internal/desktop"
 	"longarm/internal/devbox"
+	"longarm/internal/jobs"
 	"longarm/internal/platform"
 	pb "longarm/proto/longarm/v1"
 )
@@ -79,7 +80,8 @@ func (st *desktopStore) save() error {
 }
 
 func desktopCmd() *cobra.Command {
-	var printOnly, web, pick, forget bool
+	var printOnly, web, pick, forget, rdp, forceNative bool
+	var nopts nativeOpts
 	var devBoxName, setURL string
 	c := &cobra.Command{
 		Use:   "desktop <worker>",
@@ -125,6 +127,17 @@ that needs an admin certificate (the port is the system's, not yours).
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			mustNative := forceNative || nopts.screenshot != "" || nopts.input != ""
+			if mustNative && rdp {
+				return usagef("--rdp opens Remote Desktop: no --native, --screenshot or --input with it")
+			}
+			if !rdp && setURL == "" && !pick && devBoxName == "" && (mustNative || canViewNatively()) {
+				// Longarm's own remote desktop first (docs/remote-desktop.md).
+				done, err := tryNativeDesktop(ctx, worker, nopts, mustNative)
+				if done || err != nil {
+					return err
+				}
+			}
 			if l, ok := st.Workers[worker]; ok && l.URL != "" && !pick && devBoxName == "" {
 				// Known: no need to reach the worker (a sleeping Dev Box
 				// wakes up when Windows App connects).
@@ -182,7 +195,57 @@ that needs an admin certificate (the port is the system's, not yours).
 	c.Flags().StringVar(&devBoxName, "devbox", "", "Dev Box: the worker's Dev Box ([project/]name)")
 	c.Flags().StringVar(&setURL, "url", "", "remember this link (ms-avd:connect?... or https://) for the worker and open it")
 	c.Flags().BoolVar(&forget, "forget", false, "forget the worker's Dev Box and link")
+	c.Flags().BoolVar(&rdp, "rdp", false, "open Remote Desktop / Windows App even where Longarm's own remote desktop works")
+	c.Flags().BoolVar(&forceNative, "native", false, "Longarm's own remote desktop only (an error where the worker can't show it)")
+	c.Flags().BoolVar(&nopts.viewOnly, "view-only", false, "Longarm's remote desktop: watch, don't send mouse and keyboard")
+	c.Flags().IntVar(&nopts.display, "display", 0, "Longarm's remote desktop: the worker's display (0: the primary)")
+	c.Flags().StringVar(&nopts.screenshot, "screenshot", "", "save a picture of the worker's screen as this PNG file and exit (no window)")
+	c.Flags().StringVar(&nopts.input, "input", "", `send input first: "click:X,Y;key:0x1D,0x2E;text:hi" (with --screenshot: the picture is taken after it)`)
+	c.Flags().StringVar(&nopts.codec, "codec", "", "Longarm's remote desktop: h264 or jpeg (default: h264 where the worker can)")
+	c.Flags().MarkHidden("codec")
 	return c
+}
+
+// tryNativeDesktop opens Longarm's own remote desktop when the worker can
+// show it; done false: it can't (and must is false), use Remote Desktop.
+// A worker that can't be reached is not an error unless must: a saved Dev
+// Box link may still wake it up.
+func tryNativeDesktop(ctx context.Context, worker string, o nativeOpts, must bool) (done bool, err error) {
+	s, err := openSession()
+	if err != nil {
+		return must, err
+	}
+	defer s.close()
+	conn, err := s.conn(worker)
+	if err != nil {
+		if must {
+			return true, err
+		}
+		return false, nil
+	}
+	defer conn.Close()
+	ictx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	info, err := conn.Node().Info(ictx, &pb.InfoRequest{})
+	cancel()
+	if err != nil {
+		if must {
+			return true, err
+		}
+		return false, nil
+	}
+	if !hasFeature(info, jobs.FeatureDesktopNative) {
+		if !must {
+			return false, nil
+		}
+		if r := info.GetDesktop().GetNativeReason(); r != "" {
+			return true, fmt.Errorf("%s can't show its desktop: %s", worker, r)
+		}
+		return true, fmt.Errorf("%s runs longarmd %s, which has no remote desktop of its own: update it (longarm worker update %s)", worker, info.Version, worker)
+	}
+	if o.screenshot == "" && !canViewNatively() {
+		return true, fmt.Errorf("this machine has no viewer for Longarm's remote desktop yet (use --screenshot, or --rdp)")
+	}
+	return true, nativeDesktop(ctx, conn, worker, o)
 }
 
 func nonEmptyStr(a, b string) string {

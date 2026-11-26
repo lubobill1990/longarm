@@ -1,11 +1,26 @@
 # Remote desktop (`longarm desktop`, docs/usage.md "Remote desktop")
 
-## Native remote desktop
+## Native remote desktop: the Longarm Desktop service in CI
 
-Longarm streaming the screen itself (same screen, any edition, later
-macOS/Linux): proposal and Windows spike results in
-docs/remote-desktop.md, spike code in `internal/screen`. It would also
-cover "Watching the same screen" and "per-user isolation" below.
+TestDesktopService (e2e/desktop_service_windows_test.go) is opt-in like the
+other service tests (LONGARM_SERVICE_TEST, elevated, in the console
+session); it ran on a Windows 365 Cloud PC worker, not in CI. The MSI's
+desktop-setup / desktop-remove steps are covered by the MSI tests only as
+far as the custom action data goes.
+
+## Native remote desktop: macOS and Linux
+
+`internal/screen/screen_{linux,darwin}.go` are placeholders (no capture,
+no viewer); e2e/desktop_env_{linux,darwin}_test.go skip.
+
+## Native remote desktop: clipboard, displays, tray
+
+The proto carries clipboard text both ways, but neither side uses it yet.
+The viewer has no display picker (`--display` only) and no "being viewed"
+border on the worker. The tray's "Desktop" item still says "Remote
+Desktop / Windows App" and is offered for Windows workers only
+(web/src/components/WorkerCard.tsx): show it for any worker with
+`desktop-native`.
 
 ## macOS and Linux workers
 

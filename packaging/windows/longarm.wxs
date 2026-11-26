@@ -508,6 +508,9 @@
         <!-- the admin worker's service (created by install-helper admin-setup) stops before its files
              are replaced or removed; a machine without it is skipped -->
         <ServiceControl Id="AdminSvcStop" Name="longarmd-admin" Stop="both" Wait="yes" />
+        <!-- the Longarm Desktop service runs longarmd.exe too: stopped before it is replaced or removed
+             (LongarmdDesktopSetup starts it again; skipped where it does not exist) -->
+        <ServiceControl Id="DesktopSvcStop" Name="LongarmDesktop" Stop="both" Wait="yes" />
         <!-- (started again by LongarmdAdminSetup, and on an upgrade by LongarmdUpgradeRestart when it
              ran: a Start here would fail on a machine without it) -->
       </Component>
@@ -584,6 +587,15 @@
                   ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi admin-drop #LONGARM-MSI#usersid=[UserSID]' />
     <CustomAction Id="LongarmdAdminRemoveKeep" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
                   ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi admin-remove #LONGARM-MSI#keep=1' />
+    <!-- The Longarm Desktop service (internal/desktopsvc; docs/remote-desktop.md): every worker. A
+         LocalSystem service whose agent shows the console session to longarmd (UAC prompts, the lock
+         screen, service workers); only the worker's accounts may use the agent: the installing user's
+         and the service account's. Never fails the install (Longarm's remote desktop then works without
+         the secure screens). Removed with the worker role. -->
+    <CustomAction Id="LongarmdDesktopSetup" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi desktop-setup #LONGARM-MSI#sid=[SESSION_SID]|user=[SERVICE_ACCOUNT]|usersid=[UserSID]' />
+    <CustomAction Id="LongarmdDesktopRemove" Directory="INSTALLFOLDER" Execute="deferred" Impersonate="no" Return="ignore"
+                  ExeCommand='"[INSTALLFOLDER]longarmd.exe" install-helper msi desktop-remove #LONGARM-MSI#' />
     <!-- Client enrollment, as the installing user (impersonated, writes ~\.config\longarm): runs
          with the user's own rights only. -->
     <CustomAction Id="LongarmJoin" FileRef="longarm.exe" Execute="deferred" Impersonate="yes" Return="ignore" HideTarget="yes"
@@ -685,6 +697,9 @@
       <!-- an upgrade without the admin worker (ADMIN_WORKER=0, or unchecked): once the new files are there -->
       <Custom Action="LongarmdAdminDrop" After="LongarmdAdminSetup" Condition='SAVED_ADMIN_WORKER="1" AND NOT REMOVE="ALL" AND ADMIN_WORKER&lt;&gt;"1"' />
       <Custom Action="LongarmdAdminRemoveKeep" After="StopServices" Condition='SAVED_ADMIN_WORKER="1" AND REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND KEEP_DATA' />
+      <Custom Action="LongarmdDesktopSetup" After="LongarmdAdminSetup" Condition='IsWorker AND NOT REMOVE="ALL"' />
+      <!-- the uninstall (not the old product's removal in an upgrade), or a change to client only -->
+      <Custom Action="LongarmdDesktopRemove" After="StopServices" Condition='(REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE) OR (NOT IsWorker AND NOT REMOVE="ALL")' />
       <?if $(var.HasTray) = 1 ?>
       <Custom Action="LongarmTrayLaunch" After="LongarmdAdminSetup" Condition='NOT REMOVE="ALL" AND LAUNCH_TRAY&lt;&gt;"0" AND SESSION_SID AND SESSION_SID&lt;&gt;"S-1-5-18"' />
       <?endif?>
