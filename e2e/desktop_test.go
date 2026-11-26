@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -21,10 +20,11 @@ import (
 // through JPEG tiles, its --input must reach the helper's window, and only
 // the worker's owner may connect (audited).
 func TestRemoteDesktop(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("the remote desktop's worker side runs on Windows so far")
-	}
+	// The OS's desktop for the test (desktop_env_*_test.go): Linux starts
+	// Xvfb, for one; the environment goes to longarmd and the helper.
+	denv := desktopTestEnv(t)
 	e := newEnv(t)
+	e.longarmdEnv = denv
 	if err := os.MkdirAll(e.dataDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +41,7 @@ func TestRemoteDesktop(t *testing.T) {
 
 	logPath := filepath.Join(e.root, "pattern.log")
 	helper := exec.Command(bins.helper, "pattern", logPath, "180")
+	helper.Env = append(os.Environ(), denv...)
 	out, err := helper.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
