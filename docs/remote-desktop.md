@@ -2,8 +2,9 @@
 
 Status: Windows workers and viewers are in (`RemoteDesktop` in longarmd,
 `internal/rdesk`, `internal/screen`, `longarm desktop`; e2e/desktop_test.go).
-Not yet: the Longarm Desktop service (UAC, lock screen, service workers),
-macOS and Linux. The spike measurements below are kept for the record (the
+The Longarm Desktop service (UAC, lock screen, service workers:
+`internal/desktopsvc`, `longarmd desktop-service`, the MSI) is in too. Not
+yet: macOS and Linux. The spike measurements below are kept for the record (the
 spike itself is gone; its code became `internal/screen`).
 
 ## Decisions (2026-11-26)

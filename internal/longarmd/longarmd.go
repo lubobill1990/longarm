@@ -27,6 +27,7 @@ import (
 	"longarm/internal/client"
 	"longarm/internal/conntrack"
 	"longarm/internal/desktop"
+	"longarm/internal/desktopsvc"
 	"longarm/internal/gc"
 	"longarm/internal/hubclient"
 	"longarm/internal/localapi"
@@ -553,6 +554,8 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		ForwardTargets: cfg.Forward.Targets, Trust: trustSrc,
 		MaxTails: cfg.Files.MaxTails, MaxTailsPerUser: cfg.Files.MaxTailsPerUser, AdminWorker: adminWorker,
 		Desktop: &desktop.Detector{},
+		// the Longarm Desktop service's agent (Windows): UAC prompts, the lock screen, service workers
+		DesktopAgent: desktopsvc.Agent,
 	}
 	srv.Desktop.Start(ctx)
 	srv.UnaryInterceptors, srv.StreamInterceptors = wtel.interceptors()

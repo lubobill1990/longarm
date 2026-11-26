@@ -1626,6 +1626,22 @@ service on the worker; without it the viewer says the worker shows a
 secure screen it cannot capture). A Windows service worker (session 0)
 has no desktop of its own: it needs that service for any picture.
 
+The MSI installs the Longarm Desktop service (`LongarmDesktop`, LocalSystem)
+with the worker role and removes it with it. It keeps an agent running as
+SYSTEM in the console session; only SYSTEM, administrators and the
+worker's accounts (the installing user, the service account) may use the
+agent, and longarmd still lets only its owner through. Ctrl+Alt+Del needs
+the SoftwareSASGeneration policy, which the install turns on for services
+(and the uninstall turns back off). By hand, elevated:
+
+```
+longarmd desktop-service install [--client .\alice]   # default: you
+longarmd desktop-service status                        # installed? does its agent answer this account?
+longarmd desktop-service uninstall
+```
+
+Its logs: `%ProgramData%\Longarm\desktop\service.log` and `agent.log`.
+
 Otherwise, what the worker is decides how its desktop opens (longarmd
 reports it in `Node.Info`; workers before this release don't, update them
 first):

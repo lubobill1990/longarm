@@ -354,4 +354,3 @@ func parseInputScript(s string) ([]screen.InputEvent, error) {
 	}
 	return out, nil
 }
-

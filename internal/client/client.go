@@ -628,18 +628,18 @@ func (c *Conn) PinPeer(cert *x509.Certificate) error {
 	return nil
 }
 
-func (c *Conn) Node() pb.NodeClient           { return pb.NewNodeClient(c.ClientConn) }
-func (c *Conn) Exec() pb.ExecClient           { return pb.NewExecClient(c.ClientConn) }
-func (c *Conn) Jobs() pb.JobsClient           { return pb.NewJobsClient(c.ClientConn) }
-func (c *Conn) Metrics() pb.MetricsClient     { return pb.NewMetricsClient(c.ClientConn) }
-func (c *Conn) Admin() pb.AdminClient         { return pb.NewAdminClient(c.ClientConn) }
-func (c *Conn) Sessions() pb.SessionsClient   { return pb.NewSessionsClient(c.ClientConn) }
-func (c *Conn) Forward() pb.ForwardClient     { return pb.NewForwardClient(c.ClientConn) }
+func (c *Conn) Node() pb.NodeClient                   { return pb.NewNodeClient(c.ClientConn) }
+func (c *Conn) Exec() pb.ExecClient                   { return pb.NewExecClient(c.ClientConn) }
+func (c *Conn) Jobs() pb.JobsClient                   { return pb.NewJobsClient(c.ClientConn) }
+func (c *Conn) Metrics() pb.MetricsClient             { return pb.NewMetricsClient(c.ClientConn) }
+func (c *Conn) Admin() pb.AdminClient                 { return pb.NewAdminClient(c.ClientConn) }
+func (c *Conn) Sessions() pb.SessionsClient           { return pb.NewSessionsClient(c.ClientConn) }
+func (c *Conn) Forward() pb.ForwardClient             { return pb.NewForwardClient(c.ClientConn) }
 func (c *Conn) RemoteDesktop() pb.RemoteDesktopClient { return pb.NewRemoteDesktopClient(c.ClientConn) }
-func (c *Conn) Files() pb.FilesClient         { return pb.NewFilesClient(c.ClientConn) }
-func (c *Conn) Workspace() pb.WorkspaceClient { return pb.NewWorkspaceClient(c.ClientConn) }
-func (c *Conn) Handoff() pb.HandoffClient     { return pb.NewHandoffClient(c.ClientConn) }
-func (c *Conn) Copy() pb.CopyClient           { return pb.NewCopyClient(c.ClientConn) }
+func (c *Conn) Files() pb.FilesClient                 { return pb.NewFilesClient(c.ClientConn) }
+func (c *Conn) Workspace() pb.WorkspaceClient         { return pb.NewWorkspaceClient(c.ClientConn) }
+func (c *Conn) Handoff() pb.HandoffClient             { return pb.NewHandoffClient(c.ClientConn) }
+func (c *Conn) Copy() pb.CopyClient                   { return pb.NewCopyClient(c.ClientConn) }
 
 // MachineUpdate: the owner's update of the worker's machine.
 func (c *Conn) MachineUpdate() pb.MachineUpdateClient { return pb.NewMachineUpdateClient(c.ClientConn) }

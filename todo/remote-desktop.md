@@ -1,14 +1,12 @@
 # Remote desktop (`longarm desktop`, docs/usage.md "Remote desktop")
 
-## Native remote desktop: the Longarm Desktop service
+## Native remote desktop: the Longarm Desktop service in CI
 
-docs/remote-desktop.md "Decisions": a LocalSystem service (installed with
-the worker role) that runs the capturer as SYSTEM in the console session,
-so UAC prompts, the lock screen and Windows service workers (session 0)
-work; it sends Ctrl+Alt+Del (SendSAS works only from session 0). longarmd
-reaches it through `Server.DesktopAgent` (already wired: the stream is
-proxied). `internal/screen/session_windows.go` has the pieces the spike
-proved.
+TestDesktopService (e2e/desktop_service_windows_test.go) is opt-in like the
+other service tests (LONGARM_SERVICE_TEST, elevated, in the console
+session); it ran on a Windows 365 Cloud PC worker, not in CI. The MSI's
+desktop-setup / desktop-remove steps are covered by the MSI tests only as
+far as the custom action data goes.
 
 ## Native remote desktop: macOS and Linux
 

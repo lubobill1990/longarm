@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"longarm/internal/desktopsvc"
 	"longarm/internal/longarmd"
 	"longarm/internal/msiupgrade"
 	"longarm/internal/platform"
@@ -165,7 +166,7 @@ func runMSIStep(ctx context.Context, step, raw string, env msiEnv) error {
 		fmt.Fprintf(out, "%s install-helper %s: ok\n", time.Now().Format(time.RFC3339), step)
 	}
 	switch step {
-	case "rollback", "remove", "session-remove", "admin-remove", "admin-drop", "settings-remove", "restart":
+	case "rollback", "remove", "session-remove", "admin-remove", "admin-drop", "settings-remove", "restart", "desktop-remove":
 		return nil // never block a rollback or an uninstall
 	}
 	return err
@@ -367,6 +368,38 @@ func msiStep(ctx context.Context, step, raw string, keys []string, env msiEnv, o
 			return err
 		}
 		return adminRemove(ctx, out, base, false)
+
+	case "desktop-setup":
+		// The Longarm Desktop service (UAC prompts, the lock screen, service
+		// workers): its agent shows the console, so only the worker's own
+		// accounts may use it - the installing user's (the session worker)
+		// and the service account's.
+		if err := req.RequireAdmin("the Longarm Desktop service (it runs as SYSTEM)"); err != nil {
+			return err
+		}
+		own, err := env.ownDir()
+		if err != nil {
+			return err
+		}
+		var clients []string
+		if sid := d["sid"]; sid != "" && longarmd.ValidUserSID(sid) == nil {
+			clients = append(clients, sid)
+		}
+		if u := d["user"]; u != "" && !strings.EqualFold(u, "LocalSystem") {
+			if sid, err := desktopsvc.AccountSID(u); err == nil {
+				clients = append(clients, sid)
+			} else {
+				fmt.Fprintf(out, "warning: the service account %s: %v\n", u, err)
+			}
+		}
+		if err := desktopsvc.Install(filepath.Join(own, "longarmd.exe"), clients); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "the Longarm Desktop service runs; its agent is for %v\n", clients)
+		return nil
+
+	case "desktop-remove":
+		return desktopsvc.Uninstall()
 	}
 	return fmt.Errorf("unknown step %q", step)
 }
