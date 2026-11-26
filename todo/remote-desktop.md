@@ -10,8 +10,45 @@ far as the custom action data goes.
 
 ## Native remote desktop: macOS and Linux
 
-`internal/screen/screen_{linux,darwin}.go` are placeholders (no capture,
-no viewer); e2e/desktop_env_{linux,darwin}_test.go skip.
+`internal/screen/screen_darwin.go` is a placeholder (no capture, no
+viewer); e2e/desktop_env_darwin_test.go skips.
+
+## Native remote desktop: Linux binaries link libc (OpenH264)
+
+H.264 on Linux loads Cisco's OpenH264 with purego
+(internal/screen/openh264.go), and importing purego makes every Linux
+binary that links internal/screen dynamically linked against glibc
+(longarm, longarmd, and longarm-hub through internal/server), even with
+CGO_ENABLED=0. The hub image is distroless `static-debian12`, which has
+no libc: deploy/hub/image-build.sh must build longarm-hub with
+`-tags noopenh264` (or internal/server must stop linking the screen
+code) before this ships. Workers on musl (Alpine) need a
+`-tags noopenh264` build too: JPEG tiles only. Check the release
+builds' `file` output.
+
+## Native remote desktop: Linux gaps
+
+What internal/screen/*_linux.go leaves out:
+
+- Wayland sessions are refused ("not supported yet"): the portal
+  (ScreenCast + RemoteDesktop over D-Bus) and a PipeWire client are
+  needed (docs/remote-desktop.md "macOS and Linux").
+- No GPU encoder (VA-API/NVENC need cgo): OpenH264 encodes in software.
+  It is downloaded from Cisco on first use (up to 30 s, then JPEG tiles;
+  a failure is remembered for 10 minutes). The e2e test needs that
+  download, an installed libopenh264.so.8/.7, or $LONGARM_OPENH264.
+  Moving to a newer OpenH264 means new hashes in openh264_fetch.go.
+- longarmd without $DISPLAY tries :0 with $XAUTHORITY, gdm's
+  /run/user/<uid>/gdm/Xauthority or ~/.Xauthority; other display
+  managers' cookies (LightDM, SDDM) are not found.
+- Capture grabs the whole monitor on every DAMAGE report; the damaged
+  rectangles could limit it (matters for remote X displays without
+  MIT-SHM). A monitor layout change without a root size change is not
+  noticed.
+- The viewer: X key auto-repeat arrives as release/press pairs (xgb has
+  no XKB for detectable auto-repeat); no clipboard; the worker's pointer
+  is shown as the local cursor's shape, not drawn at its position, so a
+  view-only window does not show where it is.
 
 ## Native remote desktop: clipboard, displays, tray
 
