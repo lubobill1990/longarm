@@ -160,14 +160,6 @@ func mfStartup() error {
 	return mfErr
 }
 
-// EncoderOptions configure an Encoder.
-type EncoderOptions struct {
-	Width, Height int // even
-	FPS           int // nominal (the encoder's rate control); frames come when the screen changes
-	Bitrate       int // bits/s
-	Software      bool
-}
-
 // Encoder is an H.264 encoder. Use it from one goroutine (it locks the
 // thread: COM's apartment and the async MFT's event loop).
 type Encoder struct {

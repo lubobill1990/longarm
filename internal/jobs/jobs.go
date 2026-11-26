@@ -196,6 +196,7 @@ const (
 	FeatureSessionInfo       = "session-info"              // Session workdir, dir, reason and activity fields
 	FeatureFileTail          = "file-tail"                 // Files.Tail
 	FeatureMachineUpdate     = "machine-update"            // MachineUpdate (longarm worker update; the owner's)
+	FeatureDesktopNative     = "desktop-native"            // RemoteDesktop can show the desktop (the owner's; docs/remote-desktop.md)
 	FeatureSessionEnv        = "session-env"               // sessions get LONGARM_WORKER and LONGARM_SESSION
 	FeatureFileLstat         = "file-lstat"                // FileStatRequest.no_follow
 	FeatureHandoffDirect     = "handoff-direct"            // Handoff service: worker-to-worker transfer of handoff bundles

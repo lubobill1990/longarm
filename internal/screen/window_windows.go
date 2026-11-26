@@ -43,6 +43,7 @@ var (
 	procSetCapture            = modUser32.NewProc("SetCapture")
 	procReleaseCapture        = modUser32.NewProc("ReleaseCapture")
 	procDestroyWindow         = modUser32.NewProc("DestroyWindow")
+	procSetCursor             = modUser32.NewProc("SetCursor")
 )
 
 const (
@@ -51,6 +52,7 @@ const (
 	wmKillFocus    = 0x0008
 	wmClose        = 0x0010
 	wmEraseBkgnd   = 0x0014
+	wmSetCursor    = 0x0020
 	wmQuit         = 0x0012
 	wmKeyDown      = 0x0100
 	wmKeyUp        = 0x0101
@@ -133,6 +135,8 @@ type Window struct {
 	OnKey    func(scan uint16, down bool) // set-1 scan code, 0xE0xx extended
 	OnResize func()
 	OnSAS    func() // Ctrl+Alt+End
+	// OnCursor: the cursor to show over the client area (0: the arrow).
+	OnCursor func() uintptr
 
 	hook       uintptr
 	fullscreen bool
@@ -156,7 +160,7 @@ func NewWindow(title string, w, h int, takeKeys bool) (*Window, error) {
 	cursor, _, _ := procLoadCursorW.Call(0, idcArrow)
 	wc := wndClassEx{Style: 0x3 /* CS_HREDRAW|CS_VREDRAW */, WndProc: windows.NewCallback(wndProc), Cursor: cursor, ClassName: cls}
 	wc.Size = uint32(unsafe.Sizeof(wc))
-	if r, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); r == 0 {
+	if r, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); r == 0 && err != windows.ERROR_CLASS_ALREADY_EXISTS {
 		return nil, err
 	}
 	t, _ := windows.UTF16PtrFromString(title)
@@ -304,6 +308,13 @@ func wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 	case wmDestroy:
 		procPostQuitMessage.Call(0)
 		return 0
+	case wmSetCursor:
+		if lParam&0xFFFF == 1 /* HTCLIENT */ && w.OnCursor != nil {
+			if c := w.OnCursor(); c != 0 {
+				procSetCursor.Call(c)
+				return 1
+			}
+		}
 	case wmEraseBkgnd:
 		return 1
 	case wmSize:
@@ -329,6 +340,8 @@ func wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 			button = ButtonRight
 		case wmMButtonDown, wmMButtonUp:
 			button = ButtonMiddle
+		case wmLButtonDown, wmLButtonUp:
+			button = ButtonLeft
 		}
 		if w.OnMouse != nil {
 			w.OnMouse(kind, x, y, button, 0, 0)

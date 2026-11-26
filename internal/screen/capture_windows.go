@@ -1,13 +1,11 @@
 //go:build windows
 
-// Package screen captures this machine's screen and injects input into it
-// for Longarm's native remote desktop (docs/remote-desktop.md). This is the
-// Windows half of the feasibility spike: DXGI Desktop Duplication through
-// raw COM vtables, no cgo (Longarm builds with CGO_ENABLED=0).
+// Windows capture: DXGI Desktop Duplication through raw COM vtables (no
+// cgo; slots and IIDs from the Windows SDK headers).
+
 package screen
 
 import (
-	"errors"
 	"fmt"
 	"runtime"
 	"syscall"
@@ -73,10 +71,6 @@ const (
 	genericAll           = 0x10000000
 )
 
-// ErrAccessLost: the desktop switched (UAC, lock screen), the mode changed
-// or another app went full screen; Open the capturer again.
-var ErrAccessLost = errors.New("screen: desktop duplication lost (desktop switch or mode change)")
-
 func comCall(obj *comObj, slot int, args ...uintptr) uintptr {
 	r, _, _ := syscall.SyscallN(obj.vtbl[slot], append([]uintptr{uintptr(unsafe.Pointer(obj))}, args...)...)
 	return r
@@ -99,9 +93,6 @@ func hr(name string, r uintptr) error {
 }
 
 type rect struct{ Left, Top, Right, Bottom int32 }
-
-// Rect is a changed area of a frame, in the frame's pixels.
-type Rect struct{ X, Y, W, H int }
 
 type outputDesc struct {
 	DeviceName         [32]uint16
@@ -144,13 +135,6 @@ type mappedSubresource struct {
 	DepthPitch uint32
 }
 
-// Display is one monitor attached to the desktop.
-type Display struct {
-	Index      int
-	Name       string
-	X, Y, W, H int // desktop coordinates
-}
-
 // Capturer duplicates one display. Use it from one goroutine: it locks
 // that goroutine to its OS thread (the thread is attached to the input
 // desktop).
@@ -161,6 +145,73 @@ type Capturer struct {
 	device, ctx, dupl, staging *comObj
 	frame                      []byte // BGRA, W*H*4, the last full image
 	dirtyBuf                   []rect
+	cursor                     Cursor
+	shapeBuf                   []byte
+}
+
+type pointerShapeInfo struct {
+	Type, Width, Height, Pitch uint32
+	HotX, HotY                 int32
+}
+
+const (
+	slotDuplGetPointerShape = 11
+	shapeMonochrome         = 1
+	shapeColor              = 2
+	shapeMaskedColor        = 4
+)
+
+// pointerShape reads a new pointer shape into c.cursor (straight BGRA).
+func (c *Capturer) pointerShape(size uint32) {
+	if uint32(len(c.shapeBuf)) < size {
+		c.shapeBuf = make([]byte, size)
+	}
+	var need uint32
+	var si pointerShapeInfo
+	if comCall(c.dupl, slotDuplGetPointerShape, uintptr(size), uintptr(unsafe.Pointer(&c.shapeBuf[0])), uintptr(unsafe.Pointer(&need)), uintptr(unsafe.Pointer(&si))) != 0 {
+		return
+	}
+	w, h, pitch := int(si.Width), int(si.Height), int(si.Pitch)
+	if si.Type == shapeMonochrome {
+		h /= 2 // AND mask, then XOR mask
+	}
+	if w <= 0 || h <= 0 || w > 256 || h > 256 {
+		return
+	}
+	out := make([]byte, w*h*4)
+	src := c.shapeBuf[:need]
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			o := (y*w + x) * 4
+			switch si.Type {
+			case shapeColor:
+				copy(out[o:o+4], src[y*pitch+x*4:])
+			case shapeMaskedColor:
+				// Alpha 0: replace with the colour; 0xFF: XOR with the screen
+				// (approximated: drawn as is where the colour is not black).
+				p := src[y*pitch+x*4:]
+				out[o], out[o+1], out[o+2] = p[0], p[1], p[2]
+				if p[3] == 0 || p[0]|p[1]|p[2] != 0 {
+					out[o+3] = 255
+				}
+			case shapeMonochrome:
+				bit := byte(0x80 >> (x % 8))
+				and := src[y*pitch+x/8]&bit != 0
+				xor := src[(y+h)*pitch+x/8]&bit != 0
+				switch {
+				case !and && !xor: // black
+					out[o+3] = 255
+				case !and && xor: // white
+					out[o], out[o+1], out[o+2], out[o+3] = 255, 255, 255, 255
+				case and && xor: // inverted: drawn black on a white outline
+					out[o+3] = 255
+				}
+			}
+		}
+	}
+	c.cursor.ShapeID++
+	c.cursor.W, c.cursor.H, c.cursor.HotX, c.cursor.HotY = w, h, int(si.HotX), int(si.HotY)
+	c.cursor.BGRA = out
 }
 
 // SetDPIAware makes the process per-monitor DPI aware, so coordinates are
@@ -318,6 +369,12 @@ func (c *Capturer) Next(timeoutMs int) (dirty []Rect, err error) {
 	}
 	defer comCall(c.dupl, slotDuplReleaseFrame)
 	defer release(res)
+	if fi.LastMouseUpdateTime != 0 {
+		c.cursor.X, c.cursor.Y, c.cursor.Visible = int(fi.PointerX), int(fi.PointerY), fi.PointerVisible != 0
+	}
+	if fi.PointerShapeBufferSize > 0 {
+		c.pointerShape(fi.PointerShapeBufferSize)
+	}
 	if fi.LastPresentTime == 0 {
 		return nil, nil // only the pointer moved
 	}

@@ -61,6 +61,9 @@ var MethodRoles = map[string][]pki.Role{
 	pb.MachineUpdate_Start_FullMethodName:   anyUser,
 	pb.MachineUpdate_Status_FullMethodName:  anyUser,
 	pb.MachineUpdate_SetAuto_FullMethodName: anyUser,
+	// owners only (remotedesktop.go checks)
+	pb.RemoteDesktop_Displays_FullMethodName: anyUser,
+	pb.RemoteDesktop_Stream_FullMethodName:   anyUser,
 	// The one RPC of worker certificates: port link data, with a hub-signed
 	// grant naming the caller (linktunnel.go).
 	pb.LinkTunnel_Dial_FullMethodName: {pki.RoleWorker},

@@ -140,6 +140,9 @@ type Server struct {
 	// Desktop says how this machine's desktop is reached
 	// (InfoResponse.desktop); nil = not reported.
 	Desktop *desktop.Detector
+	// DesktopAgent reaches the Longarm Desktop agent for RemoteDesktop (nil:
+	// capture in this process).
+	DesktopAgent DesktopAgent
 
 	// UnaryInterceptors / StreamInterceptors run before the authorization
 	// (telemetry: they also see refused calls).
@@ -181,6 +184,7 @@ func (s *Server) GRPC(tlsCfg *tls.Config) *grpc.Server {
 	pb.RegisterMachineUpdateServer(g, &machineUpdateServer{s: s})
 	pb.RegisterHandoffServer(g, &handoffServer{s: s})
 	pb.RegisterCopyServer(g, &copyServer{s: s})
+	pb.RegisterRemoteDesktopServer(g, &remoteDesktopServer{s: s})
 	return g
 }
 
@@ -211,6 +215,9 @@ func (n *nodeServer) Info(ctx context.Context, _ *pb.InfoRequest) (*pb.InfoRespo
 	}
 	if n.s.Desktop != nil {
 		out.Desktop = n.s.Desktop.Info(ctx)
+		if out.Desktop.NativeReason = n.s.desktopReason(ctx); out.Desktop.NativeReason == "" {
+			out.Features = append(slices.Clip(out.Features), FeatureDesktopNative)
+		}
 	}
 	if n.s.MachineUpdate != nil {
 		out.Features = append(slices.Clip(out.Features), FeatureMachineUpdate)

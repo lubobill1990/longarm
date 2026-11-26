@@ -635,6 +635,7 @@ func (c *Conn) Metrics() pb.MetricsClient     { return pb.NewMetricsClient(c.Cli
 func (c *Conn) Admin() pb.AdminClient         { return pb.NewAdminClient(c.ClientConn) }
 func (c *Conn) Sessions() pb.SessionsClient   { return pb.NewSessionsClient(c.ClientConn) }
 func (c *Conn) Forward() pb.ForwardClient     { return pb.NewForwardClient(c.ClientConn) }
+func (c *Conn) RemoteDesktop() pb.RemoteDesktopClient { return pb.NewRemoteDesktopClient(c.ClientConn) }
 func (c *Conn) Files() pb.FilesClient         { return pb.NewFilesClient(c.ClientConn) }
 func (c *Conn) Workspace() pb.WorkspaceClient { return pb.NewWorkspaceClient(c.ClientConn) }
 func (c *Conn) Handoff() pb.HandoffClient     { return pb.NewHandoffClient(c.ClientConn) }

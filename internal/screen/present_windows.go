@@ -3,7 +3,6 @@
 package screen
 
 import (
-	"errors"
 	"fmt"
 	"unsafe"
 
@@ -198,100 +197,25 @@ func (p *Presenter) createSwapChain() error {
 		uintptr(unsafe.Pointer(&d)), 0, 0, uintptr(unsafe.Pointer(&p.swap))))
 }
 
-func (p *Presenter) openDecoder() error {
-	in := mftRegisterTypeInfo{mfMediaTypeVideo, mfVideoFormatH264}
-	out := mftRegisterTypeInfo{mfMediaTypeVideo, mfVideoFormatNV12}
-	var acts **comObj
-	var n uint32
-	r, _, _ := procMFTEnumEx.Call(uintptr(unsafe.Pointer(&mftCategoryVideoDecoder)), mftEnumSyncMFT|mftEnumSortAndFilter,
-		uintptr(unsafe.Pointer(&in)), uintptr(unsafe.Pointer(&out)), uintptr(unsafe.Pointer(&acts)), uintptr(unsafe.Pointer(&n)))
-	if err := hr("MFTEnumEx(decoder)", r); err != nil {
+func (p *Presenter) openDecoder() (err error) {
+	if p.dec, err = openH264Decoder(p.frameW, p.frameH, p.mgr); err != nil {
 		return err
 	}
-	if n == 0 {
-		return errors.New("no H.264 decoder")
-	}
-	list := unsafe.Slice(acts, n)
-	defer func() {
-		for _, a := range list {
-			release(a)
-		}
-		procCoTaskMemFree.Call(uintptr(unsafe.Pointer(acts)))
-	}()
-	if err := hr("ActivateObject(decoder)", comCall(list[0], slotActivateObj, uintptr(unsafe.Pointer(&iidIMFTransform)), uintptr(unsafe.Pointer(&p.dec)))); err != nil {
-		return err
-	}
-	var attrs *comObj
-	if comCall(p.dec, slotMFTGetAttributes, uintptr(unsafe.Pointer(&attrs))) == 0 && attrs != nil {
-		comCall(attrs, slotAttrSetUINT32, uintptr(unsafe.Pointer(&mfLowLatency)), 1) // output each frame at once
-		release(attrs)
-	}
-	if err := hr("SET_D3D_MANAGER", comCall(p.dec, slotMFTProcessMessage, mftMsgSetD3DManager, uintptr(unsafe.Pointer(p.mgr)))); err != nil {
-		return fmt.Errorf("the decoder cannot decode on the GPU: %w", err)
-	}
-	t, err := mediaType(func(t *comObj) {
-		comCall(t, slotAttrSetGUID, uintptr(unsafe.Pointer(&mfMTMajorType)), uintptr(unsafe.Pointer(&mfMediaTypeVideo)))
-		comCall(t, slotAttrSetGUID, uintptr(unsafe.Pointer(&mfMTSubtype)), uintptr(unsafe.Pointer(&mfVideoFormatH264)))
-		comCall(t, slotAttrSetUINT64, uintptr(unsafe.Pointer(&mfMTFrameSize)), uintptr(uint64(p.frameW)<<32|uint64(p.frameH)))
-	})
-	if err != nil {
-		return err
-	}
-	defer release(t)
-	if err := hr("SetInputType(decoder)", comCall(p.dec, slotMFTSetInputType, 0, uintptr(unsafe.Pointer(t)), 0)); err != nil {
-		return err
-	}
-	if err := p.pickNV12(); err != nil {
-		return err
-	}
-	comCall(p.dec, slotMFTProcessMessage, mftMsgBeginStreaming, 0)
-	comCall(p.dec, slotMFTProcessMessage, mftMsgStartOfStream, 0)
-	return nil
+	return p.pickNV12()
 }
 
-// pickNV12 sets the decoder's NV12 output type and reads its surface size.
 func (p *Presenter) pickNV12() error {
-	for i := 0; ; i++ {
-		var t *comObj
-		if r := comCall(p.dec, slotMFTGetOutputAvailType, 0, uintptr(i), uintptr(unsafe.Pointer(&t))); int32(r) < 0 {
-			return fmt.Errorf("the decoder offers no NV12 output: HRESULT 0x%08X", uint32(r))
-		}
-		var sub windows.GUID
-		comCall(t, slotAttrGetGUID, uintptr(unsafe.Pointer(&mfMTSubtype)), uintptr(unsafe.Pointer(&sub)))
-		if sub != mfVideoFormatNV12 {
-			release(t)
-			continue
-		}
-		r := comCall(p.dec, slotMFTSetOutputType, 0, uintptr(unsafe.Pointer(t)), 0)
-		var size uint64
-		comCall(t, slotAttrGetUINT64, uintptr(unsafe.Pointer(&mfMTFrameSize)), uintptr(unsafe.Pointer(&size)))
-		release(t)
-		if size != 0 {
-			p.texW, p.texH = int(size>>32), int(uint32(size))
-		}
-		return hr("SetOutputType(decoder)", r)
+	w, h, _, err := pickNV12(p.dec)
+	if w != 0 {
+		p.texW, p.texH = w, h
 	}
+	return err
 }
 
 // Decode feeds one access unit and shows what comes out; shown is false
 // when the decoder needed more input first.
 func (p *Presenter) Decode(au []byte) (shown bool, err error) {
-	s, err := newSample(len(au))
-	if err != nil {
-		return false, err
-	}
-	var b *comObj
-	comCall(s, slotSampleContiguousBuf, uintptr(unsafe.Pointer(&b)))
-	var ptr unsafe.Pointer
-	var maxLen, cur uint32
-	comCall(b, slotBufLock, uintptr(unsafe.Pointer(&ptr)), uintptr(unsafe.Pointer(&maxLen)), uintptr(unsafe.Pointer(&cur)))
-	copy(unsafe.Slice((*byte)(ptr), maxLen), au)
-	comCall(b, slotBufUnlock)
-	comCall(b, slotBufSetCurLn, uintptr(len(au)))
-	release(b)
-	r := comCall(p.dec, slotMFTProcessInput, 0, uintptr(unsafe.Pointer(s)), 0)
-	release(s)
-	if err := hr("ProcessInput(decoder)", r); err != nil {
+	if err := feed(p.dec, au); err != nil {
 		return false, err
 	}
 	for {
