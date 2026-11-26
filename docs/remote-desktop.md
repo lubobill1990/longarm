@@ -1,7 +1,26 @@
-# Native remote desktop (proposal)
+# Native remote desktop (design)
 
 Status: exploration. A Windows spike (capture, encode, browser viewer,
 input) is in `internal/screen`; nothing is wired into longarmd yet.
+
+## Decisions (2026-11-26)
+
+- **Owner only.** It is for controlling your own workers. Nobody else
+  gets it: not shared users, not admins of a per-user isolation worker.
+  There is no consent prompt. The "being viewed" indicator stays,
+  because it is cheap and tells someone at the machine what is happening.
+- **Video, not image tiles.** H.264 (Media Foundation, hardware
+  encoder first) is the main path, for compression and smoothness. JPEG
+  tiles remain only as the fallback where no encoder or decoder exists.
+- **UAC prompts and the lock screen must work.** So a SYSTEM desktop
+  agent in the console session is required from the first release, in
+  every install mode (session-mode workers too). See "Worker: where
+  capture runs".
+- **Viewer: the tray only.** "Desktop" opens a separate window from the
+  tray, which can go full screen (system keys are captured there). There
+  is no hub web panel viewer.
+
+Where the sections below offer alternatives, these decisions take precedence.
 
 ## Why
 
