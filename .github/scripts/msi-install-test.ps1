@@ -134,7 +134,7 @@ function Start-Running([bool] $wantTray, [bool] $wantHost) {
 
 function Get-ServicePids {
   $m = @{}
-  foreach ($s in Get-CimInstance Win32_Service | Where-Object { $_.Name -in 'LongarmUpdate', 'longarmd', 'longarmd-admin' -and $_.State -eq 'Running' }) {
+  foreach ($s in Get-CimInstance Win32_Service | Where-Object { $_.Name -in 'LongarmUpdate', 'LongarmDesktop', 'longarmd', 'longarmd-admin' -and $_.State -eq 'Running' }) {
     $m[$s.Name] = [int]$s.ProcessId
   }
   return $m
@@ -288,6 +288,7 @@ function Invoke-Uninstall {
     if (Test-Path (Join-Path $installDir $f)) { Fail "$f is left after the uninstall" }
   }
   if (Get-Service LongarmUpdate -ErrorAction SilentlyContinue) { Fail 'the LongarmUpdate service is left' }
+  if (Get-Service LongarmDesktop -ErrorAction SilentlyContinue) { Fail 'the LongarmDesktop service is left' }
   if (Get-Service longarmd -ErrorAction SilentlyContinue) { Fail 'the longarmd service is left' }
   if (Get-ScheduledTask -TaskName "LongarmWorker-$sid" -ErrorAction SilentlyContinue) { Fail 'the worker task is left' }
   # (the tray's `longarm daemon start`, a client waiting up to 30 s for the daemon, may outlive the tray: as

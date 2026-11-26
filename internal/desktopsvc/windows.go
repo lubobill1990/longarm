@@ -83,12 +83,12 @@ func watchAgent(ctx context.Context, proc windows.Handle, sid uint32, log *slog.
 			return
 		}
 		if ctx.Err() != nil {
-			windows.TerminateProcess(proc, 0)
+			endAgent(proc) // before the service reports stopped: an installer replaces longarmd.exe next
 			return
 		}
 		if now := screen.ConsoleSession(); now != sid && now != 0xFFFFFFFF {
 			log.Info("console session changed: moving the desktop agent", "from", sid, "to", now)
-			windows.TerminateProcess(proc, 0)
+			endAgent(proc)
 			return
 		}
 	}
@@ -429,4 +429,10 @@ func CurrentUserSID() string {
 		return ""
 	}
 	return u.User.Sid.String()
+}
+
+// endAgent ends the agent and waits until it is gone (its image is free).
+func endAgent(proc windows.Handle) {
+	windows.TerminateProcess(proc, 0)
+	windows.WaitForSingleObject(proc, 10000)
 }
