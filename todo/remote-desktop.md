@@ -8,10 +8,6 @@ session); it ran on a Windows 365 Cloud PC worker, not in CI. The MSI's
 desktop-setup / desktop-remove steps are covered by the MSI tests only as
 far as the custom action data goes.
 
-## Native remote desktop: macOS and Linux
-
-`internal/screen/screen_darwin.go` is a placeholder (no capture, no
-viewer); e2e/desktop_env_darwin_test.go skips.
 
 ## Native remote desktop: Linux binaries link libc (OpenH264)
 
@@ -49,6 +45,29 @@ What internal/screen/*_linux.go leaves out:
   no XKB for detectable auto-repeat); no clipboard; the worker's pointer
   is shown as the local cursor's shape, not drawn at its position, so a
   view-only window does not show where it is.
+## Native remote desktop: macOS follow-ups
+
+The backend (`internal/screen/*_darwin.go`) was written on Linux,
+cross-compiled; its first run on a Mac is CI's e2e (which skips without
+Screen Recording and Accessibility for the runner). Left out:
+
+- **The pointer's shape.** The worker sends the position only; the viewer
+  shows its own arrow. `NSCursor.currentSystemCursor` (macOS 10.15+) gives
+  the shape, but it is AppKit, called off the main thread of a daemon:
+  try it on a Mac first.
+- **Viewer on the GPU.** Pictures are decoded into memory and drawn as a
+  CGImage (a copy per frame). The design's path is VideoToolbox decoding
+  into IOSurfaces given to the layer (or a CAMetalLayer) without copies.
+- **System keys in the viewer.** Cmd+Tab, Cmd+Space, Mission Control stay
+  on the viewing Mac: taking them needs a CGEventTap (Accessibility
+  permission), as the Windows viewer's keyboard hook does.
+- **Dirty rectangles.** SCStream reports them (SCStreamFrameInfoDirtyRects);
+  the JPEG path diffs whole frames instead.
+- **Onboarding.** Screen Recording and Accessibility are granted by hand
+  (or an MDM PPPC profile); the tray should open the right System Settings
+  pane when `NativeReason` says one is missing.
+- **The login window and lock screen** cannot be captured from a
+  LaunchAgent; longarmd as a LaunchDaemon says so (`Available`).
 
 ## Native remote desktop: clipboard, displays, tray
 
