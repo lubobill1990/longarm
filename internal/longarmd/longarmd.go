@@ -36,6 +36,7 @@ import (
 	"longarm/internal/pii"
 	"longarm/internal/pki"
 	"longarm/internal/platform"
+	"longarm/internal/rdesk"
 	"longarm/internal/sched"
 	"longarm/internal/server"
 	"longarm/internal/sshd"
@@ -553,7 +554,8 @@ func run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		Revoked: revoked, Conns: conntrack.New(), Access: cfg.Access, WorkerAccess: workerAccess,
 		ForwardTargets: cfg.Forward.Targets, Trust: trustSrc,
 		MaxTails: cfg.Files.MaxTails, MaxTailsPerUser: cfg.Files.MaxTailsPerUser, AdminWorker: adminWorker,
-		Desktop: &desktop.Detector{},
+		Desktop:     &desktop.Detector{},
+		DesktopHost: rdesk.Host{Log: log},
 		// the Longarm Desktop service's agent (Windows): UAC prompts, the lock screen, service workers
 		DesktopAgent: desktopsvc.Agent,
 	}

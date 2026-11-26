@@ -1599,8 +1599,10 @@ longarm desktop cpc-alice-x7k2q --forget
 
 **Longarm's own remote desktop** comes first where the worker can show it
 (feature `desktop-native`: Windows workers whose longarmd runs in the
-signed-in user's session, the MSI's default; macOS and Linux are coming)
-and this machine has the viewer (Windows): a window of its own showing
+signed-in user's session, the MSI's default, or any Windows worker with
+the Longarm Desktop service; Linux workers on X11 - not Wayland yet - and
+macOS workers allowed to record the screen)
+and this machine has the viewer (Windows, Linux on X11, macOS): a window of its own showing
 the worker's screen - the one someone sitting there sees - as H.264 (the
 GPU's encoder where there is one; JPEG tiles where H.264 is missing),
 with your mouse and keyboard. Win, Alt+Tab and Ctrl+Esc go to the worker
@@ -1608,6 +1610,16 @@ while the window is in front; Ctrl+Alt+Enter toggles full screen,
 Ctrl+Alt+End sends Ctrl+Alt+Del. Only the worker's owner may connect
 (an admin certificate of somebody else is refused); every connection is
 audited. One viewer at a time: a second one takes the desktop over.
+
+On Linux, H.264 uses Cisco's OpenH264, which Longarm does not ship (its
+patent licence covers Cisco's own download): a worker or viewer fetches
+it from Cisco on first use (checked against the SHA-256 of the release it
+pins) into its cache, or uses `$LONGARM_OPENH264` / an installed
+libopenh264; without it, JPEG tiles. Linux workers need an X11 session
+(longarmd without `$DISPLAY` tries `:0`). On macOS, longarmd needs Screen
+Recording (and, for your mouse and keyboard, Accessibility) permission in
+System Settings > Privacy & Security; macOS's UAC-like prompts and its
+login window are not shown.
 
 ```
 longarm desktop w1                          # Longarm's remote desktop where it works, else as below

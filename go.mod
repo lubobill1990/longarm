@@ -8,7 +8,9 @@ require (
 	github.com/Microsoft/go-winio v0.6.4
 	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
+	github.com/ebitengine/purego v0.11.1
 	github.com/gliderlabs/ssh v0.3.8
+	github.com/jezek/xgb v1.3.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/oklog/ulid/v2 v2.1.2
@@ -42,7 +44,6 @@ require (
 	github.com/dblohm7/wingoes v0.0.0-20260526185140-fb298caac7ca // indirect
 	github.com/dgryski/go-metro v0.0.0-20250106013310-edb8663e5e33 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
-	github.com/ebitengine/purego v0.11.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.3 // indirect
 	github.com/gaissmai/bart v0.29.0 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3 // indirect

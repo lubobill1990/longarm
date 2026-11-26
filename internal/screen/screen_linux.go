@@ -1,22 +1,9 @@
 //go:build linux
 
-// Placeholder: the Linux backend replaces this file (docs/remote-desktop.md).
-
 package screen
 
-import "runtime"
+// Linux: X11 (x11_linux.go, capture_linux.go, input_linux.go,
+// viewer_linux.go) and Cisco's OpenH264 (openh264*.go).
 
-func available() string {
-	return "Longarm's remote desktop does not support " + runtime.GOOS + " workers yet"
-}
-
-func openSource(int) (Source, error)                      { return nil, ErrUnsupported }
-func newInjector() (Injector, error)                      { return nil, ErrUnsupported }
-func newH264Encoder(EncoderOptions) (VideoEncoder, error) { return nil, ErrUnsupported }
-func newH264Decoder(int, int) (VideoDecoder, error)       { return nil, ErrUnsupported }
-func runViewer(ViewerOptions) error                       { return ErrUnsupported }
-
-// Displays lists the monitors (none where capture is not supported).
-func Displays() ([]Display, error) { return nil, ErrUnsupported }
-
-const canView = false
+func newH264Encoder(o EncoderOptions) (VideoEncoder, error) { return newOpenH264Encoder(o) }
+func newH264Decoder(w, h int) (VideoDecoder, error)         { return newOpenH264Decoder(w, h) }

@@ -3,8 +3,10 @@
 Status: Windows workers and viewers are in (`RemoteDesktop` in longarmd,
 `internal/rdesk`, `internal/screen`, `longarm desktop`; e2e/desktop_test.go).
 The Longarm Desktop service (UAC, lock screen, service workers:
-`internal/desktopsvc`, `longarmd desktop-service`, the MSI) is in too. Not
-yet: macOS and Linux. The spike measurements below are kept for the record (the
+`internal/desktopsvc`, `longarmd desktop-service`, the MSI) is in too, and so
+are Linux (X11, OpenH264) and macOS (ScreenCaptureKit, VideoToolbox) workers
+and viewers; their gaps are in todo/remote-desktop.md. The spike
+measurements below are kept for the record (the
 spike itself is gone; its code became `internal/screen`).
 
 ## Decisions (2026-11-26)

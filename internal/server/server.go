@@ -143,6 +143,8 @@ type Server struct {
 	// DesktopAgent reaches the Longarm Desktop agent for RemoteDesktop (nil:
 	// capture in this process).
 	DesktopAgent DesktopAgent
+	// DesktopHost shows this process's desktop (rdesk.Host; nil: none).
+	DesktopHost DesktopHost
 
 	// UnaryInterceptors / StreamInterceptors run before the authorization
 	// (telemetry: they also see refused calls).
