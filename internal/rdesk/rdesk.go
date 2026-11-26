@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"longarm/internal/screen"
@@ -24,7 +26,7 @@ import (
 )
 
 // Stream is the worker's side of RemoteDesktop.Stream.
-type Stream interface {
+type Stream = interface {
 	Context() context.Context
 	Send(*pb.DesktopServerMessage) error
 	Recv() (*pb.DesktopClientMessage, error)
@@ -383,4 +385,36 @@ func isIDR(au []byte) bool {
 		}
 	}
 	return false
+}
+
+// Host is this process's desktop for longarmd's RemoteDesktop service
+// (server.DesktopHost).
+type Host struct{ Log *slog.Logger }
+
+func (Host) Available() string { return screen.Available() }
+
+// Displays lists the displays and the codecs (DesktopDisplaysResponse).
+func (Host) Displays() *pb.DesktopDisplaysResponse {
+	out := &pb.DesktopDisplaysResponse{NativeReason: screen.Available(), Codecs: Codecs()}
+	if out.NativeReason != "" {
+		return out
+	}
+	ds, err := screen.Displays()
+	if err != nil {
+		out.NativeReason = err.Error()
+	}
+	for _, d := range ds {
+		out.Displays = append(out.Displays, &pb.DesktopDisplay{Index: int32(d.Index), Name: d.Name,
+			X: int32(d.X), Y: int32(d.Y), Width: int32(d.W), Height: int32(d.H)})
+	}
+	return out
+}
+
+// Serve is Serve with gRPC status errors.
+func (h Host) Serve(st Stream, start *pb.DesktopStart) error {
+	err := Serve(st, start, h.Log)
+	if errors.Is(err, screen.ErrUnsupported) {
+		return status.Error(codes.Unimplemented, err.Error())
+	}
+	return err
 }

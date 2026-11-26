@@ -8,19 +8,17 @@ session); it ran on a Windows 365 Cloud PC worker, not in CI. The MSI's
 desktop-setup / desktop-remove steps are covered by the MSI tests only as
 far as the custom action data goes.
 
-
-## Native remote desktop: Linux binaries link libc (OpenH264)
+## Native remote desktop: Linux longarm and longarmd link glibc
 
 H.264 on Linux loads Cisco's OpenH264 with purego
-(internal/screen/openh264.go), and importing purego makes every Linux
-binary that links internal/screen dynamically linked against glibc
-(longarm, longarmd, and longarm-hub through internal/server), even with
-CGO_ENABLED=0. The hub image is distroless `static-debian12`, which has
-no libc: deploy/hub/image-build.sh must build longarm-hub with
-`-tags noopenh264` (or internal/server must stop linking the screen
-code) before this ships. Workers on musl (Alpine) need a
-`-tags noopenh264` build too: JPEG tiles only. Check the release
-builds' `file` output.
+(internal/screen/openh264.go), and importing purego makes a Linux binary
+dynamically linked against glibc even with CGO_ENABLED=0. longarm-hub and
+longarm-relay stay static: the server is given the screen code
+(server.DesktopHost, set by longarmd) instead of importing it. longarm
+and longarmd need glibc now (every distribution the packages target has
+it); a musl (Alpine) build needs `-tags noopenh264`, which is static and
+encodes JPEG tiles only. A static release flavour, or OpenH264 in a
+separate helper process, would lift that if musl workers matter.
 
 ## Native remote desktop: Linux gaps
 
@@ -77,23 +75,6 @@ border on the worker. The tray's "Desktop" item still says "Remote
 Desktop / Windows App" and is offered for Windows workers only
 (web/src/components/WorkerCard.tsx): show it for any worker with
 `desktop-native`.
-
-## macOS and Linux workers
-
-`internal/desktop/desktop_other.go` reports "Windows workers only". macOS
-has Screen Sharing (VNC on 5900, the same screen: what UU Remote-style help
-needs), GNOME has gnome-remote-desktop (RDP), others xrdp. Report
-`DesktopInfo{kind: "vnc"|"rdp", rdp_port}` when the service listens on
-loopback, and add a VNC launcher next to `launchRDP`
-(`cmd/longarm/desktop_{windows,other}.go`: `open vnc://127.0.0.1:<port>` on
-macOS, a VNC viewer elsewhere).
-
-## Watching the same screen on Windows (VNC)
-
-RDP opens its own session (or takes the console over); helping someone on
-the screen they see needs a VNC server (TightVNC, TigerVNC, UltraVNC: GPL -
-don't bundle them in the MSI). Detect one listening on 127.0.0.1:5900 and
-offer `longarm desktop <w> --mode vnc`; say `winget install ...` when none is.
 
 ## Turning Remote Desktop on for a worker
 

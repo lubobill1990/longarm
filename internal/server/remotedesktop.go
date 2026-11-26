@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+
 	"io"
 	"sync"
 	"time"
@@ -11,14 +12,31 @@ import (
 	"google.golang.org/grpc/status"
 
 	"longarm/internal/jobs"
-	"longarm/internal/rdesk"
-	"longarm/internal/screen"
 	pb "longarm/proto/longarm/v1"
 )
 
 // FeatureDesktopNative: the RemoteDesktop service can show this worker's
 // desktop (Node.Info lists it only when it can).
 const FeatureDesktopNative = jobs.FeatureDesktopNative
+
+// DesktopStream is the worker's side of RemoteDesktop.Stream.
+type DesktopStream = interface {
+	Context() context.Context
+	Send(*pb.DesktopServerMessage) error
+	Recv() (*pb.DesktopClientMessage, error)
+}
+
+// DesktopHost shows this process's desktop (internal/rdesk.Host): the
+// screen code is given to the server rather than imported, so binaries
+// without a desktop (longarm-hub) link none of it - on Linux it makes a
+// binary need the C library (purego, for OpenH264).
+type DesktopHost interface {
+	// Available says why the desktop cannot be shown ("" = it can).
+	Available() string
+	Displays() *pb.DesktopDisplaysResponse
+	// Serve runs one viewer's session after its start message.
+	Serve(st DesktopStream, start *pb.DesktopStart) error
+}
 
 // DesktopAgent reaches the Longarm Desktop agent (SYSTEM in the console
 // session: the UAC prompt and lock screen too). nil, or ok false: capture
@@ -41,7 +59,10 @@ func (s *Server) desktopReason(ctx context.Context) string {
 			return ""
 		}
 	}
-	return screen.Available()
+	if s.DesktopHost == nil {
+		return "this longarmd shows no desktop"
+	}
+	return s.DesktopHost.Available()
 }
 
 // desktopOwner refuses everybody but the worker's owner: an admin
@@ -68,18 +89,10 @@ func (r *remoteDesktopServer) Displays(ctx context.Context, _ *pb.DesktopDisplay
 			return c.Displays(ctx, &pb.DesktopDisplaysRequest{})
 		}
 	}
-	out := &pb.DesktopDisplaysResponse{NativeReason: screen.Available(), Codecs: rdesk.Codecs()}
-	if out.NativeReason == "" {
-		ds, err := screen.Displays()
-		if err != nil {
-			out.NativeReason = err.Error()
-		}
-		for _, d := range ds {
-			out.Displays = append(out.Displays, &pb.DesktopDisplay{Index: int32(d.Index), Name: d.Name,
-				X: int32(d.X), Y: int32(d.Y), Width: int32(d.W), Height: int32(d.H)})
-		}
+	if r.s.DesktopHost == nil {
+		return &pb.DesktopDisplaysResponse{NativeReason: r.s.desktopReason(ctx)}, nil
 	}
-	return out, nil
+	return r.s.DesktopHost.Displays(), nil
 }
 
 func (r *remoteDesktopServer) Stream(st pb.RemoteDesktop_StreamServer) (err error) {
@@ -135,9 +148,9 @@ func (r *remoteDesktopServer) Stream(st pb.RemoteDesktop_StreamServer) (err erro
 			return proxyDesktop(ctx, c, first, st)
 		}
 	}
-	err = rdesk.Serve(ctxStream{st, ctx}, start, r.s.Log)
-	if errors.Is(err, screen.ErrUnsupported) {
-		return status.Error(codes.Unimplemented, err.Error())
+	err = r.s.DesktopHost.Serve(ctxStream{st, ctx}, start) // desktopReason: not nil here
+	if _, ok := status.FromError(err); ok && err != nil {
+		return err
 	}
 	if err != nil && ctx.Err() == nil {
 		return status.Error(codes.Unavailable, err.Error())
