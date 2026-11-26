@@ -35,6 +35,8 @@ func view(addr string, control bool, seconds int, snapPath string) {
 	conn.(*net.TCPConn).SetNoDelay(true)
 	var wmu sync.Mutex
 	bw := bufio.NewWriter(conn)
+	writeFrame(bw, []byte("VIEW"))
+	bw.Flush()
 	sendInput := func(m inputMsg) {
 		if !control {
 			return
@@ -53,6 +55,9 @@ func view(addr string, control bool, seconds int, snapPath string) {
 	ev, err := windows.CreateEvent(nil, 0, 0, nil)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if snapPath != "" {
+		time.AfterFunc(3200*time.Millisecond, func() { windows.SetEvent(ev) }) // take it even on a still screen
 	}
 	var qmu sync.Mutex
 	var queue [][]byte
@@ -167,6 +172,7 @@ func view(addr string, control bool, seconds int, snapPath string) {
 		if snapArmed && p != nil && time.Since(started) > 3*time.Second {
 			snapArmed = false
 			p.Snapshot = func(bgra []byte, w, h int) { saveBGRA(snapPath, bgra, w, h) }
+			p.Redraw()
 		}
 		if s := time.Since(statsAt); s >= 2*time.Second {
 			t := fmt.Sprintf("Longarm desktop (spike) - %s %dx%d - %.1f fps, %.0f KB/s", codec, frameW, frameH, float64(frames)/s.Seconds(), float64(bytes)/1024/s.Seconds())

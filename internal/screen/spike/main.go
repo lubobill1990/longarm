@@ -8,6 +8,8 @@
 //	go run ./internal/screen/spike scrollbench [-software] [-fps 60]      # H.264 vs JPEG, synthetic scroll
 //	go run ./internal/screen/spike serve [-codec h264|jpeg] [-addr 127.0.0.1:7788] [-tcp 127.0.0.1:7789]
 //	go run ./internal/screen/spike view [-connect 127.0.0.1:7789] [-control]   # the native viewer window
+//	spike agent -seconds 1800 -- [serve flags]   # as SYSTEM: serve in the console session (UAC, lock screen)
+//	spike poke [-connect 127.0.0.1:7789] sas key:0x01 click:100,200 sleep:500
 //
 // serve streams H.264 (WebCodecs) or changed rectangles as JPEG over a
 // WebSocket to a canvas (http://<addr>/), and H.264 over plain TCP
@@ -38,7 +40,7 @@ var viewerHTML []byte
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: spike bench|h264bench|serve|displays [flags]")
+		fmt.Fprintln(os.Stderr, "usage: spike bench|h264bench|scrollbench|serve|view|agent|poke|displays [flags]")
 		os.Exit(2)
 	}
 	screen.SetDPIAware()
@@ -55,8 +57,26 @@ func main() {
 	connect := fs.String("connect", "127.0.0.1:7789", "view: the server")
 	snapshot := fs.String("snapshot", "", "view: save what the window shows after 3 s as this PNG")
 	control := fs.Bool("control", false, "view: send mouse and keyboard (not when viewing this machine itself)")
+	logFile := fs.String("log", "", "append the log to this file")
 	fs.Parse(os.Args[2:])
+	if *logFile != "" {
+		f, err := os.OpenFile(*logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.SetOutput(f)
+	}
 	switch os.Args[1] {
+	case "agent":
+		// Everything after the flags goes to serve, e.g. agent -seconds 1800 -- -log C:\x\serve.log
+		agent(fs.Args(), *seconds)
+	case "sas": // as SYSTEM in session 0 (where SendSAS works: the service's side)
+		if err := screen.SendSAS(); err != nil {
+			log.Fatal(err)
+		}
+		log.Print("sent Ctrl+Alt+Del")
+	case "poke":
+		poke(*connect, fs.Args())
 	case "displays":
 		ds, err := screen.Displays()
 		if err != nil {
