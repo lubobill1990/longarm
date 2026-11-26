@@ -1,5 +1,12 @@
 # Remote desktop (`longarm desktop`, docs/usage.md "Remote desktop")
 
+## Native remote desktop
+
+Longarm streaming the screen itself (same screen, any edition, later
+macOS/Linux): proposal and Windows spike results in
+docs/remote-desktop.md, spike code in `internal/screen`. It would also
+cover "Watching the same screen" and "per-user isolation" below.
+
 ## macOS and Linux workers
 
 `internal/desktop/desktop_other.go` reports "Windows workers only". macOS
