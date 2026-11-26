@@ -33,7 +33,7 @@ const cv = document.getElementById('c'), g = cv.getContext('2d');
 const bar = document.getElementById('bar'), stats = document.getElementById('stats');
 const ws = new WebSocket(`ws://${location.host}/ws`);
 ws.binaryType = 'arraybuffer';
-let bytes = 0, tiles = 0, last = performance.now();
+let bytes = 0, tiles = 0, last = performance.now(), dec = null, codec = 'jpeg';
 ws.onopen = () => bar.firstChild.textContent = 'connected ';
 ws.onclose = () => bar.firstChild.textContent = 'disconnected ';
 // Tiles are decoded asynchronously; draw them in arrival order.
@@ -41,6 +41,23 @@ let chain = Promise.resolve();
 ws.onmessage = ev => {
   const b = new Uint8Array(ev.data);
   bytes += b.length;
+  if (b[0] === 67) { // 'C': H.264 config
+    const cfg = JSON.parse(new TextDecoder().decode(b.subarray(1)));
+    cv.width = cfg.w; cv.height = cfg.h;
+    if (dec) dec.close();
+    dec = new VideoDecoder({
+      output: f => { g.drawImage(f, 0, 0); f.close(); tiles++; },
+      error: e => { bar.firstChild.textContent = 'decoder: ' + e.message + ' '; },
+    });
+    dec.configure({codec: cfg.codec, optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware'});
+    codec = cfg.codec;
+    return;
+  }
+  if (b[0] === 72) { // 'H': access unit, Annex B
+    if (!dec || dec.state !== 'configured') return;
+    dec.decode(new EncodedVideoChunk({type: b[1] & 1 ? 'key' : 'delta', timestamp: performance.now() * 1000, data: b.subarray(2)}));
+    return;
+  }
   if (b[0] === 73) { // 'I'
     const info = JSON.parse(new TextDecoder().decode(b.subarray(1)));
     cv.width = info.w; cv.height = info.h;
@@ -53,7 +70,7 @@ ws.onmessage = ev => {
 };
 setInterval(() => {
   const s = (performance.now() - last) / 1000; last = performance.now();
-  stats.textContent = `${cv.width}x${cv.height}  ${(bytes / 1024 / s).toFixed(0)} KB/s  ${(tiles / s).toFixed(1)} tiles/s`;
+  stats.textContent = `${codec} ${cv.width}x${cv.height}  ${(bytes / 1024 / s).toFixed(0)} KB/s  ${(tiles / s).toFixed(1)} frames/s`;
   bytes = tiles = 0;
 }, 1000);
 const send = m => ws.readyState === 1 && ws.send(JSON.stringify(m));

@@ -1,6 +1,6 @@
 # Native remote desktop (design)
 
-Status: exploration. A Windows spike (capture, encode, browser viewer,
+Status: exploration. A Windows spike (capture, H.264 and JPEG encode, browser viewer,
 input) is in `internal/screen`; nothing is wired into longarmd yet.
 
 ## Decisions (2026-11-26)
@@ -57,10 +57,26 @@ to them, and the only kind on macOS/Linux/Home.
 | Browser viewer | WebSocket + `createImageBitmap` + canvas: the live desktop renders correctly at full resolution |
 | Input | `SendInput` (absolute mouse over the virtual desktop, wheel, scan-code keys) builds and is wired to the viewer; not exercised against the developer's live desktop |
 
-So the whole loop needs no cgo and no third-party code. JPEG tiles are
-good enough for an office desktop on a LAN or a good relay. They are not
-good enough for video or scrolling over a slow link: that needs H.264
-(below).
+### H.264 (Media Foundation, `internal/screen/h264_windows.go`)
+
+`spike h264bench`, `spike scrollbench` (the captured screen scrolled
+8 rows a frame: heavy motion without touching the desktop),
+`spike serve -codec h264`.
+
+| | GPU (NVENC, async MFT) | Software MFT |
+|---|---|---|
+| Opens from pure Go | yes, High profile `avc1.640033` | yes |
+| BGRA→NV12 (BT.709, parallel strips, 24 threads) | 1.1 ms | 1.1 ms |
+| Ordinary desktop use | ~8 frames/s, **0.98 Mbit/s** | 0.99 Mbit/s |
+| Scroll at 60 fps, 1440p, 8 Mbit/s CBR target | **5.3 Mbit/s**, NV12 + encode p50 6 ms, p95 12 ms | 7.8 Mbit/s, p50 5 ms |
+| Same scroll as full-frame JPEG q70 | 206 Mbit/s | |
+| First keyframe | 152 KB | 317 KB |
+| Viewer | WebCodecs `VideoDecoder` in Edge 157 (WebView2's engine), Annex B chunks, `optimizeForLatency`: decodes and draws the live desktop with correct colours | |
+
+The whole loop needs no cgo and no third-party code. With motion, H.264
+uses about 40× less bandwidth than JPEG frames, and about 5× less on an
+ordinary desktop. A still screen costs nothing: frames only come
+when it changes, plus two refresh frames so text sharpens once it stops.
 
 ## Architecture
 

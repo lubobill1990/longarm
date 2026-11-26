@@ -3,10 +3,13 @@
 // Command spike is the native remote desktop feasibility spike
 // (docs/remote-desktop.md "Spike"): not shipped, not wired into longarmd.
 //
-//	go run ./internal/screen/spike bench [-display 0] [-seconds 5]
-//	go run ./internal/screen/spike serve [-addr 127.0.0.1:7788]   # open it in a browser
+//	go run ./internal/screen/spike bench [-display 0] [-seconds 5]          # JPEG tiles
+//	go run ./internal/screen/spike h264bench [-software] [-bitrate 8000]  # H.264 on the live screen
+//	go run ./internal/screen/spike scrollbench [-software] [-fps 60]      # H.264 vs JPEG, synthetic scroll
+//	go run ./internal/screen/spike serve [-codec h264|jpeg] [-addr 127.0.0.1:7788]   # open it in a browser
 //
-// serve streams changed rectangles as JPEG over a WebSocket to a canvas
+// serve streams H.264 (WebCodecs) or changed rectangles as JPEG over a
+// WebSocket to a canvas
 // and injects the browser's mouse and keyboard with SendInput.
 package main
 
@@ -37,7 +40,7 @@ var viewerHTML []byte
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: spike bench|serve|displays [flags]")
+		fmt.Fprintln(os.Stderr, "usage: spike bench|h264bench|serve|displays [flags]")
 		os.Exit(2)
 	}
 	screen.SetDPIAware()
@@ -46,6 +49,10 @@ func main() {
 	seconds := fs.Int("seconds", 5, "bench: how long")
 	quality := fs.Int("quality", 70, "JPEG quality")
 	addr := fs.String("addr", "127.0.0.1:7788", "serve: listen address")
+	codec := fs.String("codec", "h264", "serve: h264 or jpeg")
+	fps := fs.Int("fps", 60, "h264: max frames per second")
+	bitrate := fs.Int("bitrate", 8000, "h264: kbit/s")
+	software := fs.Bool("software", false, "h264: the software encoder, not the GPU's")
 	fs.Parse(os.Args[2:])
 	switch os.Args[1] {
 	case "displays":
@@ -58,8 +65,12 @@ func main() {
 		}
 	case "bench":
 		bench(*display, *seconds, *quality)
+	case "scrollbench":
+		scrollBench(videoOptions{*display, *fps, *bitrate * 1000, *software}, *seconds, 8, *quality)
+	case "h264bench":
+		videoBench(videoOptions{*display, *fps, *bitrate * 1000, *software}, *seconds)
 	case "serve":
-		serve(*addr, *display, *quality)
+		serve(*addr, *display, *quality, *codec, videoOptions{*display, *fps, *bitrate * 1000, *software})
 	default:
 		log.Fatalf("unknown mode %q", os.Args[1])
 	}
@@ -156,7 +167,7 @@ type inputMsg struct {
 	C      uint16
 }
 
-func serve(addr string, display, q int) {
+func serve(addr string, display, q int, codec string, vo videoOptions) {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(viewerHTML)
@@ -180,7 +191,12 @@ func serve(addr string, display, q int) {
 		var originMu sync.Mutex
 		go func() { // capture on its own locked thread
 			defer close(frames)
-			stream(ctx, display, q, frames, func(x, y int) { originMu.Lock(); origin.x, origin.y = x, y; originMu.Unlock() })
+			setOrigin := func(x, y int) { originMu.Lock(); origin.x, origin.y = x, y; originMu.Unlock() }
+			if codec == "h264" {
+				videoStream(ctx, vo, frames, setOrigin)
+			} else {
+				stream(ctx, display, q, frames, setOrigin)
+			}
 		}()
 		go func() { // input
 			defer cancel()
