@@ -84,7 +84,8 @@ func TestRemoteDesktop(t *testing.T) {
 	r := e.longarm(e.client, "desktop", "w1", "--native", "--screenshot", filepath.Join(e.root, "after-input.png"),
 		"--input", fmt.Sprintf("click:%d,%d;text:Hi;key:0x1E", w/2, h/2))
 	if r.code != 0 {
-		t.Fatalf("input: exit %d\n%s%s", r.code, r.stdout, r.stderr)
+		b, _ := os.ReadFile(logPath)
+		t.Fatalf("input: exit %d\n%s%s\nthe helper's log:\n%s", r.code, r.stdout, r.stderr, b)
 	}
 	waitFor(t, "the helper to log the click and the keys", 15*time.Second, func() bool {
 		b, _ := os.ReadFile(logPath)
@@ -107,7 +108,7 @@ func TestRemoteDesktop(t *testing.T) {
 		t.Fatalf("root (an admin, not the owner): exit %d\n%s%s", r.code, r.stdout, r.stderr)
 	}
 	audit, _ := os.ReadFile(filepath.Join(e.dataDir, "audit.log"))
-	for _, want := range []string{"/longarm.v1.RemoteDesktop/Stream", `"denied":"not the owner"`, `"user":"alice"`} {
+	for _, want := range []string{"/longarm.v1.RemoteDesktop/Stream", `"denied":"not the owner"`, `"who":"client/alice"`} {
 		if !strings.Contains(string(audit), want) {
 			t.Errorf("audit.log misses %s:\n%s", want, audit)
 		}

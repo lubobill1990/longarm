@@ -128,7 +128,8 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 	}
 
 	if o.screenshot != "" {
-		err := screenshot(ctx, packets, recvErr, ack, input, events, o.screenshot)
+		keyframe := func() { send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Keyframe{Keyframe: true}}) }
+		err := screenshot(ctx, packets, recvErr, ack, keyframe, input, events, o.screenshot)
 		cancel()
 		if err != nil {
 			return err
@@ -180,7 +181,7 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 
 // screenshot decodes the first full picture (after events, when given)
 // and saves it as a PNG.
-func screenshot(ctx context.Context, packets <-chan screen.VideoPacket, recvErr <-chan error, ack func(uint64), input func(screen.InputEvent), events []screen.InputEvent, path string) error {
+func screenshot(ctx context.Context, packets <-chan screen.VideoPacket, recvErr <-chan error, ack func(uint64), keyframe func(), input func(screen.InputEvent), events []screen.InputEvent, path string) error {
 	var cfg screen.VideoPacket
 	var dec screen.VideoDecoder
 	defer func() {
@@ -258,6 +259,8 @@ func screenshot(ctx context.Context, packets <-chan screen.VideoPacket, recvErr 
 				input(e)
 			}
 			sentInput, after = true, time.Now().Add(time.Second)
+			// A still screen sends nothing: ask for a fresh picture then.
+			time.AfterFunc(1100*time.Millisecond, keyframe)
 			continue
 		}
 		if time.Now().Before(after) {

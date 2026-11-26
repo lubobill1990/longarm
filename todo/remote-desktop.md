@@ -1,11 +1,28 @@
 # Remote desktop (`longarm desktop`, docs/usage.md "Remote desktop")
 
-## Native remote desktop
+## Native remote desktop: the Longarm Desktop service
 
-Longarm streaming the screen itself (same screen, any edition, later
-macOS/Linux): proposal and Windows spike results in
-docs/remote-desktop.md, spike code in `internal/screen`. It would also
-cover "Watching the same screen" and "per-user isolation" below.
+docs/remote-desktop.md "Decisions": a LocalSystem service (installed with
+the worker role) that runs the capturer as SYSTEM in the console session,
+so UAC prompts, the lock screen and Windows service workers (session 0)
+work; it sends Ctrl+Alt+Del (SendSAS works only from session 0). longarmd
+reaches it through `Server.DesktopAgent` (already wired: the stream is
+proxied). `internal/screen/session_windows.go` has the pieces the spike
+proved.
+
+## Native remote desktop: macOS and Linux
+
+`internal/screen/screen_{linux,darwin}.go` are placeholders (no capture,
+no viewer); e2e/desktop_env_{linux,darwin}_test.go skip.
+
+## Native remote desktop: clipboard, displays, tray
+
+The proto carries clipboard text both ways, but neither side uses it yet.
+The viewer has no display picker (`--display` only) and no "being viewed"
+border on the worker. The tray's "Desktop" item still says "Remote
+Desktop / Windows App" and is offered for Windows workers only
+(web/src/components/WorkerCard.tsx): show it for any worker with
+`desktop-native`.
 
 ## macOS and Linux workers
 

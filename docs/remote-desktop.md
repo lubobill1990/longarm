@@ -1,7 +1,10 @@
 # Native remote desktop (design)
 
-Status: exploration. A Windows spike (capture, H.264 and JPEG encode, browser viewer,
-input) is in `internal/screen`; nothing is wired into longarmd yet.
+Status: Windows workers and viewers are in (`RemoteDesktop` in longarmd,
+`internal/rdesk`, `internal/screen`, `longarm desktop`; e2e/desktop_test.go).
+Not yet: the Longarm Desktop service (UAC, lock screen, service workers),
+macOS and Linux. The spike measurements below are kept for the record (the
+spike itself is gone; its code became `internal/screen`).
 
 ## Decisions (2026-11-26)
 
