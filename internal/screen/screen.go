@@ -254,4 +254,7 @@ type Chrome struct {
 	// the viewer connects again).
 	Sessions      []Session
 	SwitchSession func(id uint32)
+	// SetVirtualDisplay adds a virtual display of w×h to the worker (can
+	// "virtual_display"; On["virtual_display"] once it is up) or removes it.
+	SetVirtualDisplay func(on bool, w, h int)
 }

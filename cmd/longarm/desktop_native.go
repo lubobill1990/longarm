@@ -31,10 +31,11 @@ type nativeOpts struct {
 	screenshot string // save the screen as this PNG and exit (no window)
 	input      string // --input: events to send first (tests, scripts)
 	fps        int
-	privacy    bool // start in privacy mode (the worker's own screen black)
-	lockLeave  bool // lock the worker when the viewer goes
-	noSound    bool // the worker's sound stays there
-	microphone bool // start with your microphone on the worker
+	privacy    bool   // start in privacy mode (the worker's own screen black)
+	lockLeave  bool   // lock the worker when the viewer goes
+	noSound    bool   // the worker's sound stays there
+	microphone bool   // start with your microphone on the worker
+	virtual    string // --virtual-display WxH: add one and show it
 }
 
 // startOptions: the options asked for on the command line (nil: none).
@@ -101,8 +102,21 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 		return &pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Start{Start: &pb.DesktopStart{
 			Display: int32(o.display), Codecs: codecs, MaxFps: int32(fps), ViewOnly: o.viewOnly, Options: inForce}}}
 	}
+	var vdMode *pb.DesktopVirtualDisplay
+	if o.virtual != "" {
+		var w, h int
+		if _, err := fmt.Sscanf(o.virtual, "%dx%d", &w, &h); err != nil || w <= 0 || h <= 0 {
+			return usagef("--virtual-display: want WIDTHxHEIGHT (1920x1080), not %q", o.virtual)
+		}
+		vdMode = &pb.DesktopVirtualDisplay{On: true, Width: int32(w), Height: int32(h)}
+	}
 	if err := send(startMsg()); err != nil {
 		return err
+	}
+	if vdMode != nil {
+		if err := send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_VirtualDisplay{VirtualDisplay: vdMode}}); err != nil {
+			return err
+		}
 	}
 	// reconnect: a new stream after a session switch (the agent takes a
 	// moment to come up in the new session).
@@ -231,7 +245,7 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 					optMu.Unlock()
 					// The options in force (an answer to ours): nothing else.
 					p.Options = map[string]bool{}
-					for name, on := range map[string]*bool{"privacy": o.Privacy, "lock_on_leave": o.LockOnLeave, "sound": o.Sound, "microphone": o.Microphone} {
+					for name, on := range map[string]*bool{"privacy": o.Privacy, "lock_on_leave": o.LockOnLeave, "sound": o.Sound, "microphone": o.Microphone, "virtual_display": o.VirtualDisplay} {
 						if on != nil {
 							p.Options[name] = *on
 						}
@@ -271,7 +285,7 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 
 	if o.screenshot != "" {
 		keyframe := func() { send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Keyframe{Keyframe: true}}) }
-		err := screenshot(ctx, packets, recvErr, ack, keyframe, input, events, o.screenshot)
+		err := screenshot(ctx, packets, recvErr, ack, keyframe, input, events, o.screenshot, vdMode != nil)
 		cancel()
 		if err != nil {
 			return err
@@ -328,6 +342,9 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 		SwitchSession: func(id uint32) {
 			send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_SwitchSession{SwitchSession: id}})
 		},
+		SetVirtualDisplay: func(on bool, w, h int) {
+			send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_VirtualDisplay{VirtualDisplay: &pb.DesktopVirtualDisplay{On: on, Width: int32(w), Height: int32(h)}}})
+		},
 	}
 	if !o.viewOnly {
 		vo.Input = input
@@ -347,8 +364,9 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 
 // screenshot decodes the first full picture (after events, when given)
 // and saves it as a PNG.
-func screenshot(ctx context.Context, packets <-chan screen.VideoPacket, recvErr <-chan error, ack func(uint64), keyframe func(), input func(screen.InputEvent), events []screen.InputEvent, path string) error {
+func screenshot(ctx context.Context, packets <-chan screen.VideoPacket, recvErr <-chan error, ack func(uint64), keyframe func(), input func(screen.InputEvent), events []screen.InputEvent, path string, waitVirtual bool) error {
 	var cfg screen.VideoPacket
+	var vdOn, ready bool
 	var dec screen.VideoDecoder
 	defer func() {
 		if dec != nil {
@@ -390,8 +408,14 @@ func screenshot(ctx context.Context, packets <-chan screen.VideoPacket, recvErr 
 			}
 			return errors.New("the worker ended the stream before a picture came")
 		}
+		// --virtual-display: the picture is of it, so once the worker says it
+		// is on, from the next start (the capture switched to it)
+		if waitVirtual && p.Options["virtual_display"] {
+			vdOn = true
+		}
 		switch {
 		case p.Config:
+			ready = !waitVirtual || vdOn
 			cfg = p
 			img = make([]byte, p.Width*p.Height*4)
 			if dec != nil {
@@ -409,6 +433,10 @@ func screenshot(ctx context.Context, packets <-chan screen.VideoPacket, recvErr 
 			continue
 		}
 		if img == nil {
+			continue
+		}
+		if !ready {
+			ack(p.Seq) // not the display wanted: on to the next
 			continue
 		}
 		got := false

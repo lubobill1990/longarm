@@ -109,8 +109,12 @@ func generate() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	drvDeps, err := vendoredDrivers()
+	if err != nil {
+		return "", err
+	}
 	var bad []string
-	for _, ds := range [][]dep{goDeps, webDeps, lsDeps} {
+	for _, ds := range [][]dep{goDeps, webDeps, lsDeps, drvDeps} {
 		for _, d := range ds {
 			if _, ok := reviewed[d.name]; ok {
 				continue
@@ -156,6 +160,7 @@ sources are at https://sources.debian.org.
 		{"Go modules (longarm, longarmd, longarm-hub, longarm-relay, longarm-tray, longarm-update)", goDeps},
 		{"Web UI packages (the hub panel and the tray: internal/webui)", webDeps},
 		{"longarm-hub container image: Litestream " + lsVer + " and its Go modules", lsDeps},
+		{"Drivers embedded in longarmd for Windows", drvDeps},
 	}
 	for _, s := range sections {
 		fmt.Fprintf(&b, "%s\n%s\n", s.title, strings.Repeat("-", len(s.title)))
@@ -182,6 +187,23 @@ sources are at https://sources.debian.org.
 		}
 	}
 	return b.String(), nil
+}
+
+// vendoredDrivers: third-party drivers in the repository that a binary
+// embeds (their license files are next to them).
+func vendoredDrivers() ([]dep, error) {
+	var out []dep
+	for _, v := range []struct{ name, version, dir string }{
+		// internal/vdisplay: the virtual display (Virtual-Display-Driver's release)
+		{"Virtual-Display-Driver (github.com/VirtualDrivers)", "25.7.23", "internal/vdisplay/driver"},
+	} {
+		fs, err := licenseFiles(v.dir)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", v.name, err)
+		}
+		out = append(out, dep{name: v.name, version: v.version, license: kinds(fs), files: fs})
+	}
+	return out, nil
 }
 
 // goModules: the modules every cmd/ links on the targets, and Go's

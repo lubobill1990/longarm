@@ -1634,6 +1634,17 @@ bar's sessions button lists them (and the one shown); choosing one moves
 it to the console - one in use over Remote Desktop asks first, since that
 window loses it. The viewer stays open and connects again by itself.
 
+**A virtual display** (Windows workers with the Longarm Desktop service,
+Windows 10 2004 or newer): the bar's display menu adds one of this screen's
+size to the worker and shows it - a screen for a machine without a monitor
+(a VM, a Cloud PC), or a second one at the size you want. It goes when you
+disconnect. `longarm desktop w1 --virtual-display 2560x1600` does the same
+from the start (with `--screenshot`, the picture is of it). The first time,
+the agent installs Virtual-Display-Driver (github.com/VirtualDrivers, MIT;
+embedded in longarmd) - a user-mode display driver, which Windows loads
+with Secure Boot on on its publisher's signature; it stays installed,
+disabled while not used, until Longarm is uninstalled.
+
 On Linux, H.264 uses Cisco's OpenH264, which Longarm does not ship (its
 patent licence covers Cisco's own download): a worker or viewer fetches
 it from Cisco on first use (checked against the SHA-256 of the release it

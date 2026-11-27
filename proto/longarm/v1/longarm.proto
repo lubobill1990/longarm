@@ -1233,6 +1233,7 @@ message DesktopClientMessage {
     int32 switch_display = 7; // show another display (DesktopDisplay.index)
     DesktopAudio microphone = 8; // the viewer's microphone (DesktopOptions.microphone)
     uint32 switch_session = 9; // show this session: move it to the console (DesktopSession.id)
+    DesktopVirtualDisplay virtual_display = 10; // add (or remove) a virtual display
   }
 }
 
@@ -1369,6 +1370,19 @@ message DesktopOptions {
   // the viewer's microphone is the worker's (Longarm's virtual microphone
   // there; DesktopClientMessage.microphone)
   optional bool microphone = 4;
+  // a virtual display on the worker (DesktopClientMessage.virtual_display
+  // turns it on with a size; the worker reports it here; off when the
+  // viewer leaves)
+  optional bool virtual_display = 5;
+}
+
+// DesktopVirtualDisplay: a virtual display on the worker (can
+// "virtual_display": Windows workers with the Longarm Desktop service,
+// internal/vdisplay), shown once it is up.
+message DesktopVirtualDisplay {
+  bool on = 1;
+  int32 width = 2; // physical pixels; 0 = 1920x1080
+  int32 height = 3;
 }
 
 // DesktopAudio is a slice of sound, about 20 ms.
