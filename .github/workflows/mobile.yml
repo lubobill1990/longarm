@@ -82,7 +82,7 @@ jobs:
           dev=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in d.items() if "iOS" in k for x in v if x["name"].startswith("iPhone")))')
           xcrun simctl bootstatus "$dev" -b
           xcrun simctl install "$dev" build/Build/Products/Debug-iphonesimulator/App.app
-          xcrun simctl launch "$dev" com.weavejam.longarm
+          xcrun simctl launch --stdout="$PWD/app-stdout.log" --stderr="$PWD/app-stderr.log" "$dev" com.weavejam.longarm
           for s in 20 60 120; do
             sleep $(( s - ${prev:-0} )); prev=$s
             xcrun simctl io "$dev" screenshot "ios-simulator-${s}s.png"
@@ -90,7 +90,8 @@ jobs:
           xcrun simctl spawn "$dev" launchctl list | grep -i longarm || echo "the app is not running"
           xcrun simctl spawn "$dev" log show --last 4m --style compact \
             --predicate 'process == "App" OR process CONTAINS "WebContent" OR eventMessage CONTAINS "longarm"' > app.log || true
-          grep -iE "error|fail|crash|longarm|capacitor|core" app.log | tail -80
+          grep -iE "LongarmCore|didFail|code=" app.log | tail -40
+          echo "--- stdout"; cat app-stdout.log || true; echo "--- stderr"; tail -50 app-stderr.log || true
           ls ~/Library/Logs/DiagnosticReports 2>/dev/null | tail; cp ~/Library/Logs/DiagnosticReports/App* . 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         if: always()
@@ -100,3 +101,4 @@ jobs:
             mobile/app/ios-simulator-*.png
             mobile/app/app.log
             mobile/app/App*.ips
+            mobile/app/app-std*.log

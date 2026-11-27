@@ -21,9 +21,11 @@ public class LongarmCorePlugin: CAPPlugin, CAPBridgedPlugin {
                 var err: NSError?
                 let url = CoreStart(dir.path, &err)
                 if let err = err {
+                    NSLog("LongarmCore: start: %@", err.localizedDescription)
                     call.reject(err.localizedDescription)
                     return
                 }
+                NSLog("LongarmCore: started at %@", url.components(separatedBy: "?").first ?? "")
                 call.resolve(["url": url])
             } catch {
                 call.reject(error.localizedDescription)
