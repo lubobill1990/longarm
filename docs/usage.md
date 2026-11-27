@@ -1623,6 +1623,17 @@ while only watching). Only the worker's owner may connect
 (an admin certificate of somebody else is refused); every connection is
 audited. One viewer at a time: a second one takes the desktop over.
 
+**Windows sessions** (Windows workers with the Longarm Desktop service): it
+shows the console session - what a monitor on the machine would show. A
+Remote Desktop / Windows App sign-in is a session of its own, which stays
+when its window is closed (disconnected). When nobody is signed in at the
+console and exactly one such session is waiting, connecting shows that
+one: it moves to the console (what `tscon <id> /dest:console` does), with
+everything that was open, without signing in again. With several, the
+bar's sessions button lists them (and the one shown); choosing one moves
+it to the console - one in use over Remote Desktop asks first, since that
+window loses it. The viewer stays open and connects again by itself.
+
 On Linux, H.264 uses Cisco's OpenH264, which Longarm does not ship (its
 patent licence covers Cisco's own download): a worker or viewer fetches
 it from Cisco on first use (checked against the SHA-256 of the release it

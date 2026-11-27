@@ -83,15 +83,46 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 	if fps <= 0 {
 		fps = 60
 	}
+	// The stream is replaced when the worker switches sessions (the agent
+	// moves to the new console session): send goes to the current one.
 	var sendMu sync.Mutex
 	send := func(m *pb.DesktopClientMessage) error {
 		sendMu.Lock()
 		defer sendMu.Unlock()
 		return st.Send(m)
 	}
-	if err := send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Start{Start: &pb.DesktopStart{
-		Display: int32(o.display), Codecs: codecs, MaxFps: int32(fps), ViewOnly: o.viewOnly, Options: startOptions(o)}}}); err != nil {
+	// inForce: the options as the worker last said (a new stream starts
+	// with them).
+	var optMu sync.Mutex
+	inForce := startOptions(o)
+	startMsg := func() *pb.DesktopClientMessage {
+		optMu.Lock()
+		defer optMu.Unlock()
+		return &pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Start{Start: &pb.DesktopStart{
+			Display: int32(o.display), Codecs: codecs, MaxFps: int32(fps), ViewOnly: o.viewOnly, Options: inForce}}}
+	}
+	if err := send(startMsg()); err != nil {
 		return err
+	}
+	// reconnect: a new stream after a session switch (the agent takes a
+	// moment to come up in the new session).
+	var switching atomic.Bool
+	reconnect := func() bool {
+		for i := 0; i < 30 && ctx.Err() == nil; i++ {
+			time.Sleep(time.Second)
+			ns, err := conn.RemoteDesktop().Stream(ctx, grpc.WaitForReady(true))
+			if err != nil {
+				continue
+			}
+			sendMu.Lock()
+			st = ns
+			sendMu.Unlock()
+			if send(startMsg()) == nil {
+				switching.Store(false)
+				return true
+			}
+		}
+		return false
 	}
 	events, err := parseInputScript(o.input)
 	if err != nil {
@@ -130,7 +161,13 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 	go func() {
 		defer close(packets)
 		for {
-			m, err := st.Recv()
+			sendMu.Lock()
+			cur := st
+			sendMu.Unlock()
+			m, err := cur.Recv()
+			if err != nil && switching.Load() && ctx.Err() == nil && reconnect() {
+				continue // the session it switched to
+			}
 			if err != nil {
 				if errors.Is(err, io.EOF) || ctx.Err() != nil {
 					err = nil
@@ -147,6 +184,9 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 					Display: int(s.GetDisplay().GetIndex()), Can: s.Can}
 				for _, d := range s.Displays {
 					p.Displays = append(p.Displays, screen.Display{Index: int(d.Index), Name: d.Name, X: int(d.X), Y: int(d.Y), W: int(d.Width), H: int(d.Height)})
+				}
+				for _, x := range s.Sessions {
+					p.Sessions = append(p.Sessions, screen.Session{ID: x.Id, User: x.User, State: x.State, Station: x.Station, Console: x.Console})
 				}
 				info.Store(fmt.Sprintf("%s (%s) %dx%d", s.Codec, s.Encoder, s.Width, s.Height))
 			case *pb.DesktopServerMessage_Frame:
@@ -175,7 +215,20 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 				}
 				continue
 			case *pb.DesktopServerMessage_State:
+				if v.State.SwitchingSession {
+					// the stream ends in a moment; Recv's error reconnects
+					switching.Store(true)
+					fmt.Fprintf(os.Stderr, "longarm: %s: %s\n", worker, v.State.Note)
+					continue
+				}
+				if v.State.GetOptions() == nil && v.State.Note != "" && !v.State.SecureHidden {
+					fmt.Fprintf(os.Stderr, "longarm: %s: %s\n", worker, v.State.Note)
+					continue
+				}
 				if o := v.State.GetOptions(); o != nil {
+					optMu.Lock()
+					inForce = o
+					optMu.Unlock()
 					// The options in force (an answer to ours): nothing else.
 					p.Options = map[string]bool{}
 					for name, on := range map[string]*bool{"privacy": o.Privacy, "lock_on_leave": o.LockOnLeave, "sound": o.Sound, "microphone": o.Microphone} {
@@ -271,6 +324,9 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 		},
 		SwitchDisplay: func(i int) {
 			send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_SwitchDisplay{SwitchDisplay: int32(i)}})
+		},
+		SwitchSession: func(id uint32) {
+			send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_SwitchSession{SwitchSession: id}})
 		},
 	}
 	if !o.viewOnly {
