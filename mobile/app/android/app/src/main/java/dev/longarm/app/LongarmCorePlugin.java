@@ -1,4 +1,4 @@
-package com.weavejam.longarm;
+package dev.longarm.app;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;

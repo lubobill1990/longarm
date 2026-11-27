@@ -10,7 +10,9 @@ attach to their terminal sessions, see and use their desktops. TestFlight
   (`NodeInfo.owner` = `Whoami.user`); shared fleet workers and other
   people's are not shown. The worker side already allows only the owner a
   desktop (docs/remote-desktop.md).
-- **Distribution: TestFlight first** (Apple Developer team QTKH7M6UMC), an
+- **Distribution: TestFlight first** (the maintainer's Apple Developer
+  team; the app ID in the tree is a placeholder, `dev.longarm.app` - a
+  release sets its own), an
   APK for Android. The App Store and Google Play later, if at all.
 - **The Go core in the app, not a rewrite.** Everything hard - the hub
   sign-in and certificates, longnet (QUIC, NAT traversal, the hub relay),

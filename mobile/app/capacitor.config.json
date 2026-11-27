@@ -1,5 +1,5 @@
 {
-  "appId": "com.weavejam.longarm",
+  "appId": "dev.longarm.app",
   "appName": "Longarm",
   "webDir": "www",
   "server": {

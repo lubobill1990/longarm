@@ -1,4 +1,4 @@
-package com.weavejam.longarm;
+package dev.longarm.app;
 
 import android.os.Bundle;
 
