@@ -187,6 +187,9 @@ func NewWindow(title string, w, h int, takeKeys bool) (*Window, error) {
 		procAppendMenuW.Call(m, 0x0800 /* MF_SEPARATOR */, 0, 0)
 		procAppendMenuW.Call(m, 0, menuFullscreen, uintptr(unsafe.Pointer(label)))
 	}
+	// Twice: the first ShowWindow of a process takes its start-up show state
+	// (a launcher's SW_HIDE, say), the second does what it is asked.
+	procShowWindow.Call(hwnd, swShow)
 	procShowWindow.Call(hwnd, swShow)
 	if takeKeys {
 		win.hook, _, _ = procSetWindowsHookExW.Call(whKeyboardLL, windows.NewCallback(keyboardHook), 0, 0)
