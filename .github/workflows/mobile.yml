@@ -17,17 +17,13 @@ permissions:
 jobs:
   android:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
-          cache-dependency-path: mobile/go.sum
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: actions/setup-node@v4
+          persist-credentials: false
+      - uses: ./.github/actions/go-setup
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
       - name: Go core (gomobile bind)
@@ -35,31 +31,32 @@ jobs:
         run: |
           v=$(go list -m -f "{{.Version}}" golang.org/x/mobile)
           go install golang.org/x/mobile/cmd/gomobile@"$v" golang.org/x/mobile/cmd/gobind@"$v"
-          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          export JAVA_HOME="$JAVA_HOME_21_X64" ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           mkdir -p app/android/app/libs
           gomobile bind -target=android/arm64,android/amd64 -androidapi 24 -ldflags '-s -w' -o app/android/app/libs/longarm.aar ./core
           ls -l app/android/app/libs
       - name: App
         working-directory: mobile/app
         run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
           npm ci
           npx cap sync android
           cd android && ./gradlew assembleDebug --no-daemon -q
           ls -l app/build/outputs/apk/debug
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: longarm-android-debug
           path: mobile/app/android/app/build/outputs/apk/debug/app-debug.apk
 
   ios:
     runs-on: macos-latest
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
-          cache-dependency-path: mobile/go.sum
-      - uses: actions/setup-node@v4
+          persist-credentials: false
+      - uses: ./.github/actions/go-setup
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
       - name: Go core (gomobile bind)
@@ -68,7 +65,7 @@ jobs:
           v=$(go list -m -f "{{.Version}}" golang.org/x/mobile)
           go install golang.org/x/mobile/cmd/gomobile@"$v" golang.org/x/mobile/cmd/gobind@"$v"
           gomobile bind -target=ios,iossimulator -ldflags '-s -w' -o app/plugins/longarm-core/ios/Longarm.xcframework ./core
-          du -sh app/plugins/longarm-core/ios/Longarm.xcframework/*
+          du -sh app/plugins/longarm-core/ios/Longarm.xcframework/*/*
       - name: App (simulator)
         working-directory: mobile/app
         run: |
@@ -92,8 +89,8 @@ jobs:
             --predicate 'process == "App" OR process CONTAINS "WebContent" OR eventMessage CONTAINS "longarm"' > app.log || true
           grep -E "LongarmCore|didFail" app.log | tail -20
           echo "--- stdout"; cat app-stdout.log || true; echo "--- stderr"; tail -50 app-stderr.log || true
-          ls ~/Library/Logs/DiagnosticReports 2>/dev/null | tail; cp ~/Library/Logs/DiagnosticReports/App* . 2>/dev/null || true
-      - uses: actions/upload-artifact@v4
+          cp ~/Library/Logs/DiagnosticReports/App* . 2>/dev/null || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: longarm-ios-simulator
