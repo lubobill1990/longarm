@@ -31,6 +31,23 @@ type nativeOpts struct {
 	screenshot string // save the screen as this PNG and exit (no window)
 	input      string // --input: events to send first (tests, scripts)
 	fps        int
+	privacy    bool // start in privacy mode (the worker's own screen black)
+	lockLeave  bool // lock the worker when the viewer goes
+}
+
+// startOptions: the options asked for on the command line (nil: none).
+func startOptions(o nativeOpts) *pb.DesktopOptions {
+	if !o.privacy && !o.lockLeave {
+		return nil
+	}
+	out := &pb.DesktopOptions{}
+	if o.privacy {
+		out.Privacy = &o.privacy
+	}
+	if o.lockLeave {
+		out.LockOnLeave = &o.lockLeave
+	}
+	return out
 }
 
 // canViewNatively: this client can open the viewer window.
@@ -61,7 +78,7 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 		return st.Send(m)
 	}
 	if err := send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Start{Start: &pb.DesktopStart{
-		Display: int32(o.display), Codecs: codecs, MaxFps: int32(fps), ViewOnly: o.viewOnly}}}); err != nil {
+		Display: int32(o.display), Codecs: codecs, MaxFps: int32(fps), ViewOnly: o.viewOnly, Options: startOptions(o)}}}); err != nil {
 		return err
 	}
 	events, err := parseInputScript(o.input)
@@ -144,6 +161,13 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 						if on != nil {
 							p.Options[name] = *on
 						}
+					}
+					if o.Privacy != nil {
+						state := "off"
+						if *o.Privacy {
+							state = "on"
+						}
+						fmt.Fprintf(os.Stderr, "longarm: %s: privacy mode %s\n", worker, state)
 					}
 					break
 				}
@@ -290,7 +314,7 @@ func screenshot(ctx context.Context, packets <-chan screen.VideoPacket, recvErr 
 				}
 			}
 			continue
-		case p.Cursor != nil || p.SecureHiddenOK:
+		case p.Cursor != nil || p.SecureHiddenOK || p.Options != nil:
 			continue
 		}
 		if img == nil {
