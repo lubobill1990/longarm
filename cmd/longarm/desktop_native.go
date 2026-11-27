@@ -291,11 +291,22 @@ func screenshot(ctx context.Context, packets <-chan screen.VideoPacket, recvErr 
 	sentInput := len(events) == 0
 	var after time.Time // the picture to save is the first one decoded after this
 	deadline := time.After(60 * time.Second)
+	// Until a picture is out, a key frame a second: a still screen sends a
+	// few frames only, and a decoder that holds some back (one without low
+	// latency) would never give one out.
+	nudge := time.NewTicker(time.Second)
+	defer nudge.Stop()
+	pictured := false
 	for {
 		var p screen.VideoPacket
 		var ok bool
 		select {
 		case p, ok = <-packets:
+		case <-nudge.C:
+			if !pictured {
+				keyframe()
+			}
+			continue
 		case <-deadline:
 			return errors.New("no picture from the worker in 60 s")
 		case <-ctx.Done():
@@ -351,6 +362,7 @@ func screenshot(ctx context.Context, packets <-chan screen.VideoPacket, recvErr 
 		if !got {
 			continue
 		}
+		pictured = true
 		if !sentInput {
 			// The screen is up: type and click, then wait for the result.
 			for _, e := range events {

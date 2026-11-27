@@ -588,6 +588,17 @@ func TestMSIUpgradeRunning(t *testing.T) {
 	if p.Upgrade.SameVer != "yes" {
 		t.Errorf("MajorUpgrade AllowSameVersionUpgrades %q: dev builds and release candidates share their MSI version (a.b.c) and must replace each other", p.Upgrade.SameVer)
 	}
+	// Every file written on upgrade: the binaries are unversioned, and one
+	// modified after its creation would otherwise stay as it is.
+	reinstall := ""
+	for _, pr := range p.Properties {
+		if pr.ID == "REINSTALLMODE" {
+			reinstall = pr.Value
+		}
+	}
+	if !strings.HasPrefix(reinstall, "a") {
+		t.Errorf("REINSTALLMODE %q: an upgrade must write every file (\"a\"); Windows Installer keeps an unversioned file that was modified after it was created", reinstall)
+	}
 	for _, c := range p.Sequence {
 		if c.Before == "RemoveExistingProducts" || c.After == "RemoveExistingProducts" {
 			t.Errorf("%s is scheduled relative to RemoveExistingProducts (a deferred action before it is error 2613)", c.Action)

@@ -149,6 +149,12 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of Longarm is already installed." Schedule="afterInstallExecute"
                   AllowSameVersionUpgrades="yes" />
     <MediaTemplate EmbedCab="yes" />
+    <!-- REINSTALLMODE "a": every file is written, whatever is there. The binaries have no version
+         resource, and Windows Installer leaves an unversioned file alone once it was modified after it
+         was created (its "the user changed it" rule): binaries an older in-place update had written
+         stayed at that version through every later MSI upgrade, which reported success (0.1.42's
+         longarm.exe and longarm-tray.exe on workers upgraded to 0.1.43-rc.3). All the files are ours. -->
+    <Property Id="REINSTALLMODE" Value="amus" />
 
     <!-- The built-in hub of this build (-DefaultHub): the "Default" choice. -->
     <?if "$(var.DefaultHub)" != "" ?>

@@ -141,6 +141,9 @@ func runViewer(o ViewerOptions) error {
 		canvas   = &gdiCanvas{hwnd: win.HWND}
 		cursor   uintptr
 		lastTick time.Time
+		// Since the last Config nothing shown: a key frame a second (a
+		// still screen sends a few frames, a decoder may hold some back).
+		waiting bool
 	)
 	closeDecoders := func() {
 		if gpu != nil {
@@ -234,6 +237,7 @@ func runViewer(o ViewerOptions) error {
 		if p.Config {
 			closeDecoders()
 			cfg = p
+			waiting = true
 			canvas.w, canvas.h, canvas.img = p.Width, p.Height, make([]byte, p.Width*p.Height*4)
 			canvas.inset = win.TopInset()
 			if c := o.Chrome; c != nil {
@@ -289,6 +293,9 @@ func runViewer(o ViewerOptions) error {
 			canvas.paint()
 			shown = true
 		}
+		if shown {
+			waiting = false
+		}
 		if shown && o.Shown != nil {
 			o.Shown(p.Seq)
 		}
@@ -305,6 +312,9 @@ func runViewer(o ViewerOptions) error {
 		}
 		if o.Status != nil && time.Since(lastTick) >= time.Second {
 			lastTick = time.Now()
+			if waiting && o.NeedKeyframe != nil {
+				o.NeedKeyframe()
+			}
 			if s := o.Status(); s != "" {
 				win.SetTitle(o.Title + " - " + s + fullscreenHint)
 			}
