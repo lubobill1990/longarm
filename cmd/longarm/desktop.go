@@ -199,6 +199,7 @@ that needs an admin certificate (the port is the system's, not yours).
 	c.Flags().BoolVar(&forceNative, "native", false, "Longarm's own remote desktop only (an error where the worker can't show it)")
 	c.Flags().BoolVar(&nopts.viewOnly, "view-only", false, "Longarm's remote desktop: watch, don't send mouse and keyboard")
 	c.Flags().BoolVar(&nopts.privacy, "privacy", false, "Longarm's remote desktop: privacy mode - the worker's own screen shows black while you work (Windows)")
+	c.Flags().BoolVar(&nopts.noSound, "no-sound", false, "Longarm's remote desktop: don't play the worker's sound here")
 	c.Flags().BoolVar(&nopts.lockLeave, "lock-on-leave", false, "Longarm's remote desktop: lock the worker when you disconnect")
 	c.Flags().IntVar(&nopts.display, "display", 0, "Longarm's remote desktop: the worker's display (0: the primary)")
 	c.Flags().StringVar(&nopts.screenshot, "screenshot", "", "save a picture of the worker's screen as this PNG file and exit (no window)")

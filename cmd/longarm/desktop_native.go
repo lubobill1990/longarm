@@ -33,14 +33,20 @@ type nativeOpts struct {
 	fps        int
 	privacy    bool // start in privacy mode (the worker's own screen black)
 	lockLeave  bool // lock the worker when the viewer goes
+	noSound    bool // the worker's sound stays there
 }
 
 // startOptions: the options asked for on the command line (nil: none).
+// The window plays the worker's sound unless told not to.
 func startOptions(o nativeOpts) *pb.DesktopOptions {
-	if !o.privacy && !o.lockLeave {
+	sound := o.screenshot == "" && !o.noSound
+	if !o.privacy && !o.lockLeave && !sound {
 		return nil
 	}
 	out := &pb.DesktopOptions{}
+	if sound {
+		out.Sound = &sound
+	}
 	if o.privacy {
 		out.Privacy = &o.privacy
 	}
@@ -105,6 +111,8 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 			}
 		}
 	}
+	player := &soundPlayer{}
+	defer player.close()
 	packets := make(chan screen.VideoPacket, 8)
 	var received atomic.Int64
 	var frames atomic.Int64
@@ -145,6 +153,10 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 				c := v.Cursor
 				p.Cursor = &screen.Cursor{X: int(c.X), Y: int(c.Y), Visible: c.Visible, ShapeID: c.ShapeId,
 					W: int(c.Width), H: int(c.Height), HotX: int(c.HotX), HotY: int(c.HotY), BGRA: c.Bgra}
+			case *pb.DesktopServerMessage_Sound:
+				received.Add(int64(len(v.Sound.Data)))
+				player.play(v.Sound)
+				continue
 			case *pb.DesktopServerMessage_Clipboard:
 				// Copied on the worker: paste-able here.
 				if clip != nil {

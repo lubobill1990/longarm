@@ -83,6 +83,12 @@ func Serve(st Stream, start *pb.DesktopStart, log *slog.Logger) error {
 	}
 	s.display.Store(start.GetDisplay())
 	s.switchCh = make(chan struct{}, 1)
+	// Speakers to capture (a machine without any - a Cloud PC nobody is
+	// connected to over RDP, say - offers no sound).
+	if c, err := screen.OpenAudioCapture(); err == nil {
+		c.Close()
+		s.canSound = true
+	}
 	defer s.leave()
 	if o := start.GetOptions(); o != nil {
 		s.setOptions(o)
@@ -118,6 +124,35 @@ type session struct {
 	optMu       sync.Mutex
 	curtain     screen.Curtain // privacy mode on
 	lockOnLeave bool
+	sound       screen.AudioCapture // sound on: this machine's sound to the viewer
+	canSound    bool                // there are speakers to capture
+}
+
+// startSound sends what this machine's speakers play until the capture is
+// closed (sound off, the viewer gone). Under optMu.
+func (s *session) startSound() error {
+	c, err := screen.OpenAudioCapture()
+	if err != nil {
+		return err
+	}
+	s.sound = c
+	go func() {
+		f := c.Format()
+		enc := screen.NewADPCMEncoder(f.Channels)
+		var seq uint64
+		for {
+			pcm, err := c.Read()
+			if err != nil {
+				return // closed
+			}
+			seq++
+			if err := s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_Sound{Sound: &pb.DesktopAudio{
+				Codec: screen.AudioCodec, Rate: int32(f.Rate), Channels: int32(f.Channels), Data: enc.Encode(pcm), Seq: seq}}}); err != nil {
+				return
+			}
+		}
+	}()
+	return nil
 }
 
 // setOptions applies what the viewer switched (unset fields stay) and tells
@@ -141,10 +176,21 @@ func (s *session) setOptions(o *pb.DesktopOptions) {
 	if o.LockOnLeave != nil {
 		s.lockOnLeave = *o.LockOnLeave
 	}
-	privacy, lock := s.curtain != nil, s.lockOnLeave
+	if o.Sound != nil {
+		switch {
+		case *o.Sound && s.sound == nil && s.canSound:
+			if err := s.startSound(); err != nil {
+				s.log.Info("remote desktop: sound", "err", err)
+			}
+		case !*o.Sound && s.sound != nil:
+			s.sound.Close()
+			s.sound = nil
+		}
+	}
+	privacy, lock, sound := s.curtain != nil, s.lockOnLeave, s.sound != nil
 	s.optMu.Unlock()
 	s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_State{State: &pb.DesktopState{
-		Options: &pb.DesktopOptions{Privacy: &privacy, LockOnLeave: &lock}}}})
+		Options: &pb.DesktopOptions{Privacy: &privacy, LockOnLeave: &lock, Sound: &sound}}}})
 }
 
 // leave: the viewer went - privacy mode ends, the session locks if asked.
@@ -154,6 +200,10 @@ func (s *session) leave() {
 	if s.curtain != nil {
 		s.curtain.Close()
 		s.curtain = nil
+	}
+	if s.sound != nil {
+		s.sound.Close()
+		s.sound = nil
 	}
 	if s.lockOnLeave {
 		if err := screen.LockSession(); err != nil {
@@ -170,6 +220,9 @@ func (s *session) can() []string {
 	}
 	if s.clip != nil {
 		out = append(out, "clipboard")
+	}
+	if s.canSound {
+		out = append(out, "sound")
 	}
 	return out
 }
