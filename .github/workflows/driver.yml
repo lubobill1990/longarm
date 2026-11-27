@@ -1,0 +1,44 @@
+# The Longarm virtual audio driver (drivers/windows/audio, docs/remote-desktop.md
+# "Microphone"): built with the WDK from NuGet on a GitHub-hosted runner, its
+# INF checked; the unsigned package is an artifact (test-signing machines only -
+# Windows loads it with Secure Boot on once Microsoft signed it).
+name: driver
+
+on:
+  pull_request:
+    paths: ['drivers/windows/**', '.github/workflows/driver.yml']
+  push:
+    branches: [main]
+    paths: ['drivers/windows/**', '.github/workflows/driver.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: drivers/windows/audio
+    steps:
+      - uses: actions/checkout@v4
+      - name: Visual Studio's driver component
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          "Visual Studio: $vs"
+          Get-ChildItem "$vs\MSBuild\Microsoft\VC\*\Platforms\x64\PlatformToolsets" -Directory | Select-Object -ExpandProperty FullName
+      - uses: microsoft/setup-msbuild@v2
+      - name: WDK (NuGet)
+        run: nuget restore packages.config -PackagesDirectory packages
+      - name: Build
+        run: msbuild VirtualAudioDriver.sln /p:Configuration=Release /p:Platform=x64 /m /nologo /v:m
+      - name: Package
+        run: |
+          Get-ChildItem -Recurse -Include *.sys,*.inf,*.cat -Path x64 | Select-Object FullName, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: longarm-audio-driver-x64-unsigned
+          path: drivers/windows/audio/x64/Release/package/
+          if-no-files-found: error

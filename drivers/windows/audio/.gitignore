@@ -1,0 +1,6 @@
+# nuget restore and msbuild outputs
+packages/
+x64/
+ARM64/
+*.user
+.vs/
