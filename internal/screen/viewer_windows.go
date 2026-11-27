@@ -43,10 +43,11 @@ type iconInfo struct {
 // into the window with StretchDIBits (letterboxed). It works without a
 // GPU (virtual machines, CI) and for JPEG tiles.
 type gdiCanvas struct {
-	hwnd windows.HWND
-	w, h int
-	img  []byte
-	dest rect
+	hwnd  windows.HWND
+	w, h  int
+	img   []byte
+	dest  rect
+	inset int // the title bar's height (no picture there)
 }
 
 func (c *gdiCanvas) paint() {
@@ -57,11 +58,8 @@ func (c *gdiCanvas) paint() {
 	if cw == 0 || ch == 0 {
 		return
 	}
-	w, h := cw, c.h*cw/c.w
-	if h > ch {
-		w, h = c.w*ch/c.h, ch
-	}
-	c.dest = rect{int32((cw - w) / 2), int32((ch - h) / 2), int32((cw-w)/2 + w), int32((ch-h)/2 + h)}
+	c.dest = letterbox(cw, ch, c.inset, c.w, c.h)
+	w, h := c.dest.Right-c.dest.Left, c.dest.Bottom-c.dest.Top
 	dc, _, _ := procGetDC.Call(uintptr(c.hwnd))
 	defer procReleaseDC.Call(uintptr(c.hwnd), dc)
 	const blackness, halftone, srcCopy = 0x00000042, 4, 0x00CC0020
@@ -96,6 +94,7 @@ func runViewer(o ViewerOptions) error {
 	win, err := NewWindow(o.Title+fullscreenHint, 1600, 940, o.Input != nil)
 	if err == nil {
 		win.Name = o.Title
+		win.Chrome = o.Chrome
 	}
 	if err != nil {
 		return err
@@ -167,6 +166,11 @@ func runViewer(o ViewerOptions) error {
 		return int(d.Left), int(d.Top), int(d.Right - d.Left), int(d.Bottom - d.Top)
 	}
 	win.OnResize = func() {
+		inset := win.TopInset()
+		canvas.inset = inset
+		if gpu != nil {
+			gpu.SetInset(inset)
+		}
 		if gpu != nil {
 			if err := gpu.Resize(); err != nil {
 				slog.Debug("desktop viewer: resize", "err", err)
@@ -206,6 +210,18 @@ func runViewer(o ViewerOptions) error {
 	}
 
 	handle := func(p VideoPacket) {
+		if p.Options != nil {
+			if c := o.Chrome; c != nil {
+				if c.On == nil {
+					c.On = map[string]bool{}
+				}
+				for k, v := range p.Options {
+					c.On[k] = v
+				}
+				win.Refresh()
+			}
+			return
+		}
 		if p.Cursor != nil {
 			if p.Cursor.BGRA != nil {
 				if cursor != 0 {
@@ -219,6 +235,20 @@ func runViewer(o ViewerOptions) error {
 			closeDecoders()
 			cfg = p
 			canvas.w, canvas.h, canvas.img = p.Width, p.Height, make([]byte, p.Width*p.Height*4)
+			canvas.inset = win.TopInset()
+			if c := o.Chrome; c != nil {
+				c.Displays, c.Display = p.Displays, p.Display
+				c.Can = map[string]bool{}
+				for _, s := range p.Can {
+					c.Can[s] = true
+				}
+				win.Refresh()
+			}
+			defer func() {
+				if gpu != nil {
+					gpu.Inset = win.TopInset()
+				}
+			}()
 			if p.Codec == "h264" {
 				if gpu, err = NewPresenter(win.HWND, p.Width, p.Height); err != nil {
 					slog.Debug("desktop viewer: no GPU decoding, decoding in software", "err", err)
@@ -277,6 +307,9 @@ func runViewer(o ViewerOptions) error {
 			lastTick = time.Now()
 			if s := o.Status(); s != "" {
 				win.SetTitle(o.Title + " - " + s + fullscreenHint)
+			}
+			if o.Chrome != nil {
+				win.Refresh() // the security (the path may have changed)
 			}
 		}
 		if done {

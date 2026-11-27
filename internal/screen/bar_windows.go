@@ -3,6 +3,7 @@
 package screen
 
 import (
+	"fmt"
 	"syscall"
 	"time"
 	"unsafe"
@@ -10,11 +11,14 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// The full-screen window's connection bar, as Remote Desktop's: a strip at
-// the top of the screen with the worker's name, a pin, minimize, leave
-// full screen and close. Pinned, it stays; unpinned, it hides a moment
-// after the pointer leaves it and comes back when the pointer touches the
-// top edge of the screen. It never takes the keyboard (WS_EX_NOACTIVATE):
+// The viewer's own title bar (Chrome). In a window it is the window's title
+// bar - across the top, the video below it; drag it to move the window,
+// double-click for full screen. In full screen it is Remote Desktop's
+// connection bar: a strip at the top centre with a pin; unpinned it hides a
+// moment after the pointer leaves and comes back at the top edge. Left: the
+// connection's security; right: privacy mode, lock on leave, displays,
+// sound, microphone, then minimize, full screen / window, close. Hovering a
+// button says what it does. It never takes the keyboard (WS_EX_NOACTIVATE):
 // keys keep going to the worker.
 
 var (
@@ -32,29 +36,48 @@ var (
 	procGetDpiForWindow  = modUser32.NewProc("GetDpiForWindow")
 	procSetTimer         = modUser32.NewProc("SetTimer")
 	procKillTimer        = modUser32.NewProc("KillTimer")
+	procSendMessageW     = modUser32.NewProc("SendMessageW")
+	procCreatePopupMenu  = modUser32.NewProc("CreatePopupMenu")
+	procTrackPopupMenu   = modUser32.NewProc("TrackPopupMenu")
+	procDestroyMenu      = modUser32.NewProc("DestroyMenu")
+	procClientToScreen   = modUser32.NewProc("ClientToScreen")
 )
 
 const (
-	wmPaint        = 0x000F
-	wmTimer        = 0x0113
-	wmLButtonUpBar = 0x0202
-	wmMouseMoveBar = 0x0200
-	wsExToolWin    = 0x00000080
-	wsExNoActive   = 0x08000000
-	swHide         = 0
-	swShowNA       = 8 // shown, not activated
-	swMinimize     = 6
+	wmPaint         = 0x000F
+	wmTimer         = 0x0113
+	wmLButtonDblClk = 0x0203
+	wmNCLButtonDown = 0x00A1
+	htCaption       = 2
+	wsExToolWin     = 0x00000080
+	wsExNoActive    = 0x08000000
+	swHide          = 0
+	swShowNA        = 8 // shown, not activated
+	swMinimize      = 6
+	csDblClks       = 0x0008
 
-	barW, barH   = 520, 30 // at 96 DPI
-	barBtnW      = 40
+	barFullW     = 640 // full screen strip, at 96 DPI
+	barH         = 32  // at 96 DPI
+	barBtnW      = 44
 	barHideAfter = 1500 * time.Millisecond
 
-	// Segoe MDL2 Assets glyphs
-	glyphPin      = ""
-	glyphPinned   = ""
-	glyphMinimize = ""
-	glyphRestore  = ""
-	glyphClose    = ""
+	accent = 0xD47800 // BGR of #0078D4
+)
+
+// Segoe MDL2 Assets glyphs.
+const (
+	glyphShield     = ""
+	glyphPrivacy    = ""
+	glyphLock       = ""
+	glyphDisplay    = ""
+	glyphSound      = ""
+	glyphMic        = ""
+	glyphPin        = ""
+	glyphPinned     = ""
+	glyphMinimize   = ""
+	glyphFullscreen = ""
+	glyphWindow     = ""
+	glyphClose      = ""
 )
 
 type paintStruct struct {
@@ -68,27 +91,28 @@ type paintStruct struct {
 
 type point struct{ X, Y int32 }
 
-// bar is the connection bar of the viewer window (one per process).
+// barButton is one button: what it does, its glyph, whether it is on.
+type barButton struct {
+	id    string
+	glyph string
+	on    bool
+	tip   string
+	r     rect
+}
+
 type bar struct {
 	owner       *Window
 	hwnd        uintptr
 	pinned      bool
 	shown       bool
 	lastInside  time.Time
-	hover       int // button under the pointer (-1 none)
+	hover       string // the button under the pointer
+	buttons     []barButton
 	font, icons uintptr
 	fontDPI     uint32
 }
 
 var theBar *bar
-
-// Bar buttons, left to right as hit-tested.
-const (
-	btnPin = iota
-	btnMinimize
-	btnRestore
-	btnClose
-)
 
 func (b *bar) scale() float64 {
 	dpi, _, _ := procGetDpiForWindow.Call(b.hwnd)
@@ -98,52 +122,55 @@ func (b *bar) scale() float64 {
 	return float64(dpi) / 96
 }
 
-// rects: the bar's size and its buttons' places (client coordinates).
-func (b *bar) rects() (w, h int32, btns [4]rect) {
-	s := b.scale()
-	w, h = int32(barW*s), int32(barH*s)
-	bw := int32(barBtnW * s)
-	btns[btnPin] = rect{0, 0, bw, h}
-	btns[btnMinimize] = rect{w - 3*bw, 0, w - 2*bw, h}
-	btns[btnRestore] = rect{w - 2*bw, 0, w - bw, h}
-	btns[btnClose] = rect{w - bw, 0, w, h}
-	return
-}
+// height is the title bar's height in pixels (the video goes below it in a
+// window).
+func (b *bar) height() int32 { return int32(barH * b.scale()) }
 
 func newBar(owner *Window) *bar {
 	if theBar != nil {
 		return theBar
 	}
-	b := &bar{owner: owner, pinned: true, hover: -1}
+	b := &bar{owner: owner, pinned: true}
 	cls, _ := windows.UTF16PtrFromString("LongarmDesktopBar")
 	cursor, _, _ := procLoadCursorW.Call(0, idcArrow)
-	wc := wndClassEx{WndProc: windows.NewCallback(barProc), Cursor: cursor, ClassName: cls}
+	wc := wndClassEx{Style: csDblClks, WndProc: windows.NewCallback(barProc), Cursor: cursor, ClassName: cls}
 	wc.Size = uint32(unsafe.Sizeof(wc))
 	procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
-	// Owned by the viewer: always above it, gone with it.
+	// Owned by the viewer: always above it, minimized and gone with it.
 	b.hwnd, _, _ = procCreateWindowExW.Call(wsExToolWin|wsExNoActive, uintptr(unsafe.Pointer(cls)), 0, wsPopup,
-		0, 0, barW, barH, uintptr(owner.HWND), 0, 0, 0)
+		0, 0, barFullW, barH, uintptr(owner.HWND), 0, 0, 0)
 	theBar = b
 	return b
 }
 
-// show puts the bar at the top centre of the viewer's monitor.
-func (b *bar) show() {
+// place puts the bar where it belongs: across the top of the window's
+// client area, or the top centre of the screen in full screen.
+func (b *bar) place() {
 	if b.hwnd == 0 {
 		return
 	}
 	var r rect
-	procGetWindowRect.Call(uintptr(b.owner.HWND), uintptr(unsafe.Pointer(&r)))
-	w, h, _ := b.rects()
-	x := r.Left + (r.Right-r.Left-w)/2
-	const swpNoActivate, swpShowWindow = 0x0010, 0x0040
-	procSetWindowPos.Call(b.hwnd, 0, uintptr(x), uintptr(r.Top), uintptr(w), uintptr(h), swpNoActivate|swpShowWindow)
-	b.lastInside = time.Now()
-	if !b.shown {
-		b.shown = true
-		procSetTimer.Call(b.hwnd, 1, 200, 0)
+	procGetClientRect.Call(uintptr(b.owner.HWND), uintptr(unsafe.Pointer(&r)))
+	var tl point
+	procClientToScreen.Call(uintptr(b.owner.HWND), uintptr(unsafe.Pointer(&tl)))
+	w, h := r.Right-r.Left, b.height()
+	x := tl.X
+	if b.owner.fullscreen {
+		fw := min(int32(barFullW*b.scale()), w)
+		x, w = tl.X+(w-fw)/2, fw
 	}
+	const swpNoActivate, swpShowWindow = 0x0010, 0x0040
+	procSetWindowPos.Call(b.hwnd, 0, uintptr(x), uintptr(tl.Y), uintptr(w), uintptr(h), swpNoActivate|swpShowWindow)
+	b.shown = true
+	b.layout()
 	procInvalidateRect.Call(b.hwnd, 0, 0)
+}
+
+// show: full screen's "come back" (and the window's bar after a move).
+func (b *bar) show() {
+	b.lastInside = time.Now()
+	b.place()
+	procSetTimer.Call(b.hwnd, 1, 200, 0)
 }
 
 func (b *bar) hide() {
@@ -155,23 +182,79 @@ func (b *bar) hide() {
 	procShowWindow.Call(b.hwnd, swHide)
 }
 
-// tick: unpinned, the bar goes once the pointer has been away a moment.
+// tick: in full screen, unpinned, the bar goes once the pointer has been
+// away a moment.
 func (b *bar) tick() {
 	var p point
 	procGetCursorPos.Call(uintptr(unsafe.Pointer(&p)))
 	var r rect
 	procGetWindowRect.Call(b.hwnd, uintptr(unsafe.Pointer(&r)))
-	if p.X >= r.Left && p.X < r.Right && p.Y >= r.Top && p.Y < r.Bottom+4 {
+	inside := p.X >= r.Left && p.X < r.Right && p.Y >= r.Top && p.Y < r.Bottom+4
+	if inside {
 		b.lastInside = time.Now()
-		return
-	}
-	if b.hover != -1 {
-		b.hover = -1
+	} else if b.hover != "" {
+		b.hover = ""
 		procInvalidateRect.Call(b.hwnd, 0, 0)
 	}
-	if !b.pinned && time.Since(b.lastInside) > barHideAfter {
+	if b.owner.fullscreen && !b.pinned && !inside && time.Since(b.lastInside) > barHideAfter {
 		b.hide()
 	}
+}
+
+// layout decides the buttons and their places, right to left.
+func (b *bar) layout() {
+	c := b.owner.Chrome
+	var r rect
+	procGetClientRect.Call(b.hwnd, uintptr(unsafe.Pointer(&r)))
+	h, bw := r.Bottom, int32(barBtnW*b.scale())
+	var btns []barButton
+	add := func(id, glyph string, on bool, tip string) {
+		btns = append(btns, barButton{id: id, glyph: glyph, on: on, tip: tip})
+	}
+	add("close", glyphClose, false, "Disconnect and close")
+	if b.owner.fullscreen {
+		add("window", glyphWindow, false, "Leave full screen (Ctrl+Alt+Enter)")
+	} else {
+		add("fullscreen", glyphFullscreen, false, "Full screen (Ctrl+Alt+Enter)")
+	}
+	add("minimize", glyphMinimize, false, "Minimize")
+	if b.owner.fullscreen {
+		pin, tip := glyphPin, "Pin the bar (it stays)"
+		if b.pinned {
+			pin, tip = glyphPinned, "Unpin the bar (it hides; the top edge brings it back)"
+		}
+		add("pin", pin, b.pinned, tip)
+	}
+	if c != nil {
+		if c.Can["microphone"] {
+			add("microphone", glyphMic, c.On["microphone"], onOff(c.On["microphone"], "Your microphone is the worker's"))
+		}
+		if c.Can["sound"] {
+			add("sound", glyphSound, c.On["sound"], onOff(c.On["sound"], "The worker's sound plays here"))
+		}
+		if len(c.Displays) > 1 {
+			add("display", glyphDisplay, false, fmt.Sprintf("Display %d of %d: choose another", c.Display+1, len(c.Displays)))
+		}
+		if c.Can["lock_on_leave"] {
+			add("lock_on_leave", glyphLock, c.On["lock_on_leave"], onOff(c.On["lock_on_leave"], "Lock the worker when you disconnect"))
+		}
+		if c.Can["privacy"] {
+			add("privacy", glyphPrivacy, c.On["privacy"], onOff(c.On["privacy"], "Privacy mode: the worker's own screen shows black"))
+		}
+	}
+	x := r.Right
+	for i := range btns {
+		btns[i].r = rect{x - bw, 0, x, h}
+		x -= bw
+	}
+	b.buttons = btns
+}
+
+func onOff(on bool, s string) string {
+	if on {
+		return s + " (on)"
+	}
+	return s + " (off)"
 }
 
 func (b *bar) fonts() {
@@ -190,7 +273,7 @@ func (b *bar) fonts() {
 		f, _, _ := procCreateFontW.Call(uintptr(int32(-px*s)), 0, 0, 0, 400, 0, 0, 0, 1 /* DEFAULT_CHARSET */, 0, 0, 5 /* CLEARTYPE_QUALITY */, 0, uintptr(unsafe.Pointer(n)))
 		return f
 	}
-	b.font, b.icons = face("Segoe UI", 13), face("Segoe MDL2 Assets", 11)
+	b.font, b.icons = face("Segoe UI", 12), face("Segoe MDL2 Assets", 11)
 }
 
 func (b *bar) paint() {
@@ -198,62 +281,129 @@ func (b *bar) paint() {
 	dc, _, _ := procBeginPaint.Call(b.hwnd, uintptr(unsafe.Pointer(&ps)))
 	defer procEndPaint.Call(b.hwnd, uintptr(unsafe.Pointer(&ps)))
 	b.fonts()
-	w, h, btns := b.rects()
+	if b.buttons == nil {
+		b.layout()
+	}
+	var r rect
+	procGetClientRect.Call(b.hwnd, uintptr(unsafe.Pointer(&r)))
 	fill := func(r rect, rgb uint32) {
 		br, _, _ := procCreateSolidBrush.Call(uintptr(rgb))
 		procFillRect.Call(dc, uintptr(unsafe.Pointer(&r)), br)
 		procDeleteObject.Call(br)
 	}
-	fill(rect{0, 0, w, h}, 0x2B2B2B)
-	if b.hover >= 0 {
-		c := uint32(0x404040)
-		if b.hover == btnClose {
-			c = 0x2311E8 // red (BGR)
-		}
-		fill(btns[b.hover], c)
-	}
+	fill(r, 0x202020)
 	procSetBkMode.Call(dc, 1) // TRANSPARENT
-	procSetTextColor.Call(dc, 0xF0F0F0)
-	text := func(s string, r rect, font uintptr) {
+	text := func(s string, r rect, font uintptr, color uint32, flags uintptr) {
 		u, _ := windows.UTF16FromString(s)
 		procSelectObject.Call(dc, font)
-		const dtCenter, dtVCenter, dtSingle, dtEllipsis = 0x1, 0x4, 0x20, 0x8000
-		procDrawTextW.Call(dc, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(&r)), dtCenter|dtVCenter|dtSingle|dtEllipsis)
+		procSetTextColor.Call(dc, uintptr(color))
+		procDrawTextW.Call(dc, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(&r)), flags)
 	}
-	pin := glyphPin
-	if b.pinned {
-		pin = glyphPinned
+	const dtCenter, dtVCenter, dtSingle, dtEllipsis = 0x1, 0x4, 0x20, 0x8000
+	left := r.Right
+	tip := ""
+	for _, btn := range b.buttons {
+		switch {
+		case btn.id == b.hover && btn.id == "close":
+			fill(btn.r, 0x2311E8) // red (BGR)
+		case btn.on:
+			fill(btn.r, accent)
+		case btn.id == b.hover:
+			fill(btn.r, 0x3C3C3C)
+		}
+		text(btn.glyph, btn.r, b.icons, 0xF0F0F0, dtCenter|dtVCenter|dtSingle)
+		if btn.id == b.hover {
+			tip = btn.tip
+		}
+		left = min(left, btn.r.Left)
 	}
-	text(pin, btns[btnPin], b.icons)
-	text(glyphMinimize, btns[btnMinimize], b.icons)
-	text(glyphRestore, btns[btnRestore], b.icons)
-	text(glyphClose, btns[btnClose], b.icons)
-	text(b.owner.Name+"   ·   Ctrl+Alt+Enter", rect{btns[btnPin].Right, 0, btns[btnMinimize].Left, h}, b.font)
+	// Left: the security (or what the hovered button does).
+	pad := int32(10 * b.scale())
+	shieldW := int32(28 * b.scale())
+	text(glyphShield, rect{pad / 2, 0, pad/2 + shieldW, r.Bottom}, b.icons, 0x7AC77A, dtCenter|dtVCenter|dtSingle)
+	label := b.owner.Name
+	if c := b.owner.Chrome; c != nil && c.Security != nil {
+		label += "   ·   " + c.Security()
+	}
+	if tip != "" {
+		label = tip
+	}
+	text(label, rect{pad/2 + shieldW, 0, left - pad, r.Bottom}, b.font, 0xD8D8D8, dtVCenter|dtSingle|dtEllipsis)
 }
 
-func (b *bar) hit(x, y int32) int {
-	_, _, btns := b.rects()
-	for i, r := range btns {
-		if x >= r.Left && x < r.Right && y >= r.Top && y < r.Bottom {
-			return i
+func (b *bar) hit(x, y int32) string {
+	for _, btn := range b.buttons {
+		if x >= btn.r.Left && x < btn.r.Right && y >= btn.r.Top && y < btn.r.Bottom {
+			return btn.id
 		}
 	}
-	return -1
+	return ""
 }
 
-func (b *bar) click(btn int) {
-	switch btn {
-	case btnPin:
+func (b *bar) click(id string) {
+	c := b.owner.Chrome
+	switch id {
+	case "close":
+		b.owner.Close()
+		return
+	case "minimize":
+		procShowWindow.Call(uintptr(b.owner.HWND), swMinimize)
+	case "fullscreen", "window":
+		b.owner.ToggleFullscreen()
+	case "pin":
 		b.pinned = !b.pinned
 		b.lastInside = time.Now()
-		procInvalidateRect.Call(b.hwnd, 0, 0)
-	case btnMinimize:
-		procShowWindow.Call(uintptr(b.owner.HWND), swMinimize)
-	case btnRestore:
-		b.owner.ToggleFullscreen()
-	case btnClose:
-		b.owner.Close()
+	case "privacy", "lock_on_leave", "sound", "microphone":
+		if c != nil && c.SetOption != nil {
+			c.SetOption(id, !c.On[id]) // the worker answers with what is in force (Refresh)
+		}
+	case "display":
+		b.displayMenu()
 	}
+	b.layout()
+	procInvalidateRect.Call(b.hwnd, 0, 0)
+}
+
+// displayMenu offers the worker's displays under the pointer.
+func (b *bar) displayMenu() {
+	c := b.owner.Chrome
+	if c == nil || c.SwitchDisplay == nil {
+		return
+	}
+	m, _, _ := procCreatePopupMenu.Call()
+	defer procDestroyMenu.Call(m)
+	for i, d := range c.Displays {
+		flags := uintptr(0)
+		if i == c.Display {
+			flags = 0x8 // MF_CHECKED
+		}
+		label, _ := windows.UTF16PtrFromString(fmt.Sprintf("Display %d  (%d×%d)", i+1, d.W, d.H))
+		procAppendMenuW.Call(m, flags, uintptr(i+1), uintptr(unsafe.Pointer(label)))
+	}
+	var p point
+	procGetCursorPos.Call(uintptr(unsafe.Pointer(&p)))
+	const tpmReturnCmd, tpmNonotify = 0x0100, 0x0080
+	sel, _, _ := procTrackPopupMenu.Call(m, tpmReturnCmd|tpmNonotify, uintptr(p.X), uintptr(p.Y), 0, b.hwnd, 0)
+	if sel > 0 && int(sel)-1 != c.Display {
+		c.SwitchDisplay(int(sel) - 1)
+	}
+}
+
+// Refresh redraws the title bar after the viewer changed Chrome.
+func (w *Window) Refresh() {
+	if theBar != nil && theBar.shown {
+		theBar.layout()
+		procInvalidateRect.Call(theBar.hwnd, 0, 0)
+	}
+}
+
+// TopInset is how much of the client area the title bar covers (the video
+// goes below it; nothing in full screen).
+func (w *Window) TopInset() int {
+	if w.fullscreen || theBar == nil {
+		return 0
+	}
+	return int(theBar.height())
 }
 
 func barProc(hwnd, message, wParam, lParam uintptr) uintptr {
@@ -268,18 +418,33 @@ func barProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		case wmTimer:
 			b.tick()
 			return 0
-		case wmMouseMoveBar:
+		case wmMouseMove:
 			x, y := lparamXY(lParam)
 			if h := b.hit(int32(x), int32(y)); h != b.hover {
 				b.hover = h
 				procInvalidateRect.Call(b.hwnd, 0, 0)
 			}
 			b.lastInside = time.Now()
+			procSetTimer.Call(b.hwnd, 1, 200, 0) // notices the pointer leaving
 			return 0
-		case wmLButtonUpBar:
+		case wmLButtonDown:
 			x, y := lparamXY(lParam)
-			if h := b.hit(int32(x), int32(y)); h >= 0 {
+			if b.hit(int32(x), int32(y)) == "" && !b.owner.fullscreen {
+				// The bar is the window's title bar: drag the window.
+				procReleaseCapture.Call()
+				procSendMessageW.Call(uintptr(b.owner.HWND), wmNCLButtonDown, htCaption, 0)
+			}
+			return 0
+		case wmLButtonUp:
+			x, y := lparamXY(lParam)
+			if h := b.hit(int32(x), int32(y)); h != "" {
 				b.click(h)
+			}
+			return 0
+		case wmLButtonDblClk:
+			x, y := lparamXY(lParam)
+			if b.hit(int32(x), int32(y)) == "" {
+				b.owner.ToggleFullscreen()
 			}
 			return 0
 		}

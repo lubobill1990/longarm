@@ -127,6 +127,8 @@ type Presenter struct {
 	texW, texH     int // the decoder's surfaces (can be padded)
 	bufW, bufH     int // the swap chain
 	dest           rect
+	// Inset: the title bar covers this much of the top (SetInset).
+	Inset int
 
 	// Decoded counts the frames out of the decoder.
 	Decoded int
@@ -320,15 +322,10 @@ func (p *Presenter) ensureVP() error {
 	comCall(p.vctx, slotVCtxSetOutputBgColor, uintptr(unsafe.Pointer(p.vp)), 0, uintptr(unsafe.Pointer(&black)))
 	src := rect{0, 0, int32(p.frameW), int32(p.frameH)}
 	comCall(p.vctx, slotVCtxSetStreamSourceRect, uintptr(unsafe.Pointer(p.vp)), 0, 1, uintptr(unsafe.Pointer(&src)))
-	// Letterbox: fit the picture, keep its aspect.
-	bw, bh, fw, fh := p.bufW, p.bufH, p.frameW, p.frameH
-	w, h := bw, fh*bw/fw
-	if h > bh {
-		w, h = fw*bh/fh, bh
-	}
-	p.dest = rect{int32((bw - w) / 2), int32((bh - h) / 2), int32((bw-w)/2 + w), int32((bh-h)/2 + h)}
+	// Letterbox: fit the picture below the title bar (Inset), keep its aspect.
+	p.dest = letterbox(p.bufW, p.bufH, p.Inset, p.frameW, p.frameH)
 	comCall(p.vctx, slotVCtxSetStreamDestRect, uintptr(unsafe.Pointer(p.vp)), 0, 1, uintptr(unsafe.Pointer(&p.dest)))
-	full := rect{0, 0, int32(bw), int32(bh)}
+	full := rect{0, 0, int32(p.bufW), int32(p.bufH)}
 	comCall(p.vctx, slotVCtxSetOutputTargetRect, uintptr(unsafe.Pointer(p.vp)), 1, uintptr(unsafe.Pointer(&full)))
 	return nil
 }
@@ -431,4 +428,31 @@ func (p *Presenter) Close() {
 	release(p.ctx)
 	release(p.device)
 	*p = Presenter{}
+}
+
+// letterbox fits a fw×fh picture into a bw×bh client area below its top
+// inset pixels (the title bar), keeping the aspect: where it goes.
+func letterbox(bw, bh, inset, fw, fh int) rect {
+	ah := bh - inset
+	if fw <= 0 || fh <= 0 || bw <= 0 || ah <= 0 {
+		return rect{0, int32(inset), int32(bw), int32(bh)}
+	}
+	w, h := bw, fh*bw/fw
+	if h > ah {
+		w, h = fw*ah/fh, ah
+	}
+	x, y := (bw-w)/2, inset+(ah-h)/2
+	return rect{int32(x), int32(y), int32(x + w), int32(y + h)}
+}
+
+// SetInset moves the picture below a title bar of n pixels (redrawn).
+func (p *Presenter) SetInset(n int) {
+	if n == p.Inset {
+		return
+	}
+	p.Inset = n
+	p.closeVP()
+	if p.last != nil {
+		p.show()
+	}
 }

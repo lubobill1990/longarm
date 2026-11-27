@@ -109,7 +109,11 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 			switch v := m.Msg.(type) {
 			case *pb.DesktopServerMessage_Started:
 				s := v.Started
-				p = screen.VideoPacket{Config: true, Width: int(s.Width), Height: int(s.Height), Codec: s.Codec}
+				p = screen.VideoPacket{Config: true, Width: int(s.Width), Height: int(s.Height), Codec: s.Codec,
+					Display: int(s.GetDisplay().GetIndex()), Can: s.Can}
+				for _, d := range s.Displays {
+					p.Displays = append(p.Displays, screen.Display{Index: int(d.Index), Name: d.Name, X: int(d.X), Y: int(d.Y), W: int(d.Width), H: int(d.Height)})
+				}
 				info.Store(fmt.Sprintf("%s (%s) %dx%d", s.Codec, s.Encoder, s.Width, s.Height))
 			case *pb.DesktopServerMessage_Frame:
 				f := v.Frame
@@ -133,6 +137,16 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 				}
 				continue
 			case *pb.DesktopServerMessage_State:
+				if o := v.State.GetOptions(); o != nil {
+					// The options in force (an answer to ours): nothing else.
+					p.Options = map[string]bool{}
+					for name, on := range map[string]*bool{"privacy": o.Privacy, "lock_on_leave": o.LockOnLeave, "sound": o.Sound, "microphone": o.Microphone} {
+						if on != nil {
+							p.Options[name] = *on
+						}
+					}
+					break
+				}
 				p.SecureHidden, p.SecureHiddenOK = v.State.SecureHidden, true
 				if v.State.SecureHidden {
 					fmt.Fprintf(os.Stderr, "longarm: %s shows a secure screen (UAC prompt or lock screen) that cannot be captured without the Longarm Desktop service\n", worker)
@@ -188,6 +202,27 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 			out += fmt.Sprintf("%.0f fps, %.2f Mbit/s", float64(f-lastFrames)/s, float64(b-lastBytes)*8/1e6/s)
 			lastBytes, lastFrames, lastAt = b, f, now
 			return out
+		},
+	}
+	// The title bar: how the worker is reached, its options and displays.
+	vo.Chrome = &screen.Chrome{
+		Security: func() string { return string(conn.Path().Kind) + " · end-to-end TLS · owner only" },
+		SetOption: func(name string, on bool) {
+			opt := &pb.DesktopOptions{}
+			switch name {
+			case "privacy":
+				opt.Privacy = &on
+			case "lock_on_leave":
+				opt.LockOnLeave = &on
+			case "sound":
+				opt.Sound = &on
+			case "microphone":
+				opt.Microphone = &on
+			}
+			send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Options{Options: opt}})
+		},
+		SwitchDisplay: func(i int) {
+			send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_SwitchDisplay{SwitchDisplay: int32(i)}})
 		},
 	}
 	if !o.viewOnly {

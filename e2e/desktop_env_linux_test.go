@@ -24,7 +24,7 @@ func desktopTestEnv(t *testing.T) []string {
 		t.Fatal(err)
 	}
 	// -displayfd: Xvfb writes the display number once it accepts clients.
-	cmd := exec.Command(xvfb, "-displayfd", "3", "-screen", "0", "1280x800x24", "-nolisten", "tcp")
+	cmd := exec.Command(xvfb, "-displayfd", "3", "-screen", "0", "1280x800x24", "-nolisten", "tcp", "-noreset")
 	cmd.ExtraFiles = []*os.File{w}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
