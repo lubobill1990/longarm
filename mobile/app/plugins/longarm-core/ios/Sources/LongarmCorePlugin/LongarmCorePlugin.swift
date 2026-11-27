@@ -13,25 +13,17 @@ public class LongarmCorePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise)
     ]
 
-    // Spike diagnostics: with the Go runtime in the process, the WebView's
-    // first load failed (NSCocoaErrorDomain 256): do file reads fail, and why?
     override public func load() {
-        setvbuf(stdout, nil, _IONBF, 0) // Capacitor's log (print) reaches simctl's --stdout file
-        NSLog("LongarmCore: app location %@", bridge?.config.appLocation.path ?? "?")
-        guard let u = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "public") else {
-            NSLog("LongarmCore: no public/index.html")
-            return
+        // The Go runtime's iOS start-up (gomobile) makes the app bundle the
+        // working directory. Capacitor's router resolves the empty path
+        // against it - URL(fileURLWithPath: "") - sees an "app" extension
+        // and serves the public directory itself: the first load fails
+        // ("The file "public" couldn't be opened"). Back to "/" before it.
+        let cwd = FileManager.default.currentDirectoryPath
+        if cwd != "/" {
+            NSLog("LongarmCore: working directory %@: back to /", cwd)
+            FileManager.default.changeCurrentDirectoryPath("/")
         }
-        var fails = 0
-        for _ in 0..<200 {
-            do {
-                _ = try Data(contentsOf: u)
-            } catch {
-                fails += 1
-                if fails <= 3 { NSLog("LongarmCore: read failed: %@", String(describing: error)) }
-            }
-        }
-        NSLog("LongarmCore: %d of 200 reads of index.html failed", fails)
     }
 
     @objc func start(_ call: CAPPluginCall) {
