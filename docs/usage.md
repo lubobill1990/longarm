@@ -1612,7 +1612,9 @@ sends Ctrl+Alt+Del. The window's title bar is the viewer's own: on the
 left how the worker is reached (direct or relay; end-to-end TLS; owner
 only), on the right privacy mode (Windows workers: their own screen
 shows black while you work, the picture here does not), lock the worker
-when you disconnect, a display picker when the worker has several,
+when you disconnect, the worker's sound (Windows workers with speakers
+and viewers: it plays here unless `--no-sound` or the button turns it
+off), a display picker when the worker has several,
 minimize, full screen and close; drag it to move the window. In full
 screen it is a bar at the top (as Remote Desktop's) with a pin; unpinned
 it hides and comes back when the pointer touches the top of the screen. Text copied on

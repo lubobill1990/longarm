@@ -71,17 +71,24 @@ Screen Recording and Accessibility for the runner). Left out:
 
 Asked for (2026-11-27). Done on Windows (internal/screen/bar_windows.go,
 privacy_windows.go): the security status, privacy mode, lock on leave,
-the display picker. Left:
+the display picker, the worker's sound played here (audio_windows.go).
+Left:
 
 - **Privacy mode and lock on leave on Linux and macOS**: neither offers
   them yet (rdesk's `can`; screen.NewCurtain and LockSession are
   Windows-only). Locking: `loginctl lock-session` on Linux; macOS has no
   supported call since CGSession went.
 - **All displays at once** (now one at a time, the picker switches).
-- **Audio**: the worker's sound played here (WASAPI loopback on the
-  worker, playback here; a codec without cgo: PCM / ADPCM first). The
-  local microphone on the worker needs a virtual audio device there
-  (a driver): to be decided.
+- **The local microphone on the worker**: the proto has it
+  (DesktopOptions.microphone, DesktopClientMessage.microphone); the
+  worker needs a virtual audio device whose input programs can choose,
+  fed with what comes. Candidates: VB-CABLE (donationware; companies are
+  asked to buy licences), the MIT-licensed Virtual-Audio-Driver
+  (github.com/VirtualDrivers), or our own (needs Microsoft's driver
+  signing). To be decided.
+- **Sound on Linux and macOS** (PulseAudio/PipeWire monitor source;
+  ScreenCaptureKit captures audio too), and a codec better than ADPCM
+  (Opus) once one exists without cgo.
 - A "being viewed" border on the worker.
 
 ## Native remote desktop: clipboard on Linux and macOS
