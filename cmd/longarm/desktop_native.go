@@ -415,6 +415,13 @@ func screenshot(ctx context.Context, packets <-chan screen.VideoPacket, recvErr 
 		}
 		switch {
 		case p.Config:
+			if waitVirtual && vdOn && !ready {
+				// Windows draws the desktop on a new display a moment after
+				// it is up (black, then a fade in as its mode is set): the picture
+				// from 4 s on
+				after = time.Now().Add(4 * time.Second)
+				time.AfterFunc(4100*time.Millisecond, keyframe)
+			}
 			ready = !waitVirtual || vdOn
 			cfg = p
 			img = make([]byte, p.Width*p.Height*4)
