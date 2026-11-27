@@ -9,6 +9,9 @@
     <SkipPackageVerification>true</SkipPackageVerification>
     <ApiValidator_Enable>false</ApiValidator_Enable>
     <InfToolPath>$(MSBuildThisFileDirectory)packages\Microsoft.Windows.WDK.x64.10.0.28000.2526\c\bin\10.0.28000.0\x64\</InfToolPath>
+    <DrvCatToolPath>$(InfToolPath)</DrvCatToolPath>
+    <Inf2CatToolPath>$(MSBuildThisFileDirectory)packages\Microsoft.Windows.WDK.x64.10.0.28000.2526\c\bin\10.0.28000.0\x86\</Inf2CatToolPath>
+    <SignToolPath>$(MSBuildThisFileDirectory)packages\Microsoft.Windows.SDK.CPP.x64.10.0.28000.2526\c\bin\10.0.28000.0\x64\</SignToolPath>
   </PropertyGroup>
   <!-- The WDK and SDK from NuGet (packages.config, `nuget restore -PackagesDirectory packages`):
        no Windows Driver Kit install needed (as microsoft/Windows-driver-samples builds). -->
