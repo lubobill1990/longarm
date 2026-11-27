@@ -1606,8 +1606,13 @@ and this machine has the viewer (Windows, Linux on X11, macOS): a window of its 
 the worker's screen - the one someone sitting there sees - as H.264 (the
 GPU's encoder where there is one; JPEG tiles where H.264 is missing),
 with your mouse and keyboard. Win, Alt+Tab and Ctrl+Esc go to the worker
-while the window is in front; Ctrl+Alt+Enter toggles full screen,
-Ctrl+Alt+End sends Ctrl+Alt+Del. Only the worker's owner may connect
+while the window is in front; Ctrl+Alt+Enter toggles full screen (so do
+the maximize button and a double click on the title bar), Ctrl+Alt+End
+sends Ctrl+Alt+Del. In full screen a bar at the top (as Remote Desktop's)
+has a pin, minimize, leave full screen and close; unpinned it hides and
+comes back when the pointer touches the top of the screen. Text copied on
+either side can be pasted on the other (Windows workers and viewers; not
+while only watching). Only the worker's owner may connect
 (an admin certificate of somebody else is refused); every connection is
 audited. One viewer at a time: a second one takes the desktop over.
 

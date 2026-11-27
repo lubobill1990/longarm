@@ -193,3 +193,18 @@ func RunViewer(o ViewerOptions) error { return runViewer(o) }
 
 // CanView: this OS has the viewer window (RunViewer).
 func CanView() bool { return canView }
+
+// Clipboard is this desktop's clipboard (text): the remote desktop copies
+// and pastes both ways with it.
+type Clipboard interface {
+	// Changes delivers the text when somebody copies (not what Set put
+	// there); closed when the clipboard is closed.
+	Changes() <-chan string
+	// Set puts text on the clipboard.
+	Set(text string) error
+	Close()
+}
+
+// OpenClipboard watches the clipboard of this process's desktop (one per
+// process).
+func OpenClipboard() (Clipboard, error) { return openClipboard() }
