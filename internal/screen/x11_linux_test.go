@@ -23,7 +23,9 @@ func xvfb(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(bin, "-displayfd", "3", "-screen", "0", "640x480x24", "-nolisten", "tcp")
+	// -noreset: Xvfb otherwise restarts when its last client goes, and the
+	// next connection (Available's, then Displays') hits the restart.
+	cmd := exec.Command(bin, "-displayfd", "3", "-screen", "0", "640x480x24", "-nolisten", "tcp", "-noreset")
 	cmd.ExtraFiles = []*os.File{w}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
