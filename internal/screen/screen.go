@@ -144,6 +144,7 @@ type VideoPacket struct {
 	Displays []Display
 	Display  int
 	Can      []string
+	Sessions []Session // the machine's Windows sessions (can "sessions")
 	// Options: the options in force changed (privacy, lock_on_leave, sound,
 	// microphone).
 	Options map[string]bool
@@ -248,4 +249,9 @@ type Chrome struct {
 	SetOption func(name string, on bool)
 	// SwitchDisplay shows another display.
 	SwitchDisplay func(index int)
+	// Sessions: the worker's Windows sessions, the shown one Console
+	// (can "sessions"); SwitchSession shows another (the window stays,
+	// the viewer connects again).
+	Sessions      []Session
+	SwitchSession func(id uint32)
 }

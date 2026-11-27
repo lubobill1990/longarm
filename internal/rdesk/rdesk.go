@@ -45,6 +45,12 @@ const (
 	refreshes    = 2
 )
 
+// SwitchSessions: this process may move Windows sessions to the console
+// (the Longarm Desktop service's agent, SYSTEM on the console): the
+// viewer's session menu, and on connect the one disconnected session when
+// nobody is signed in at the console (screen.ReattachCandidate).
+var SwitchSessions bool
+
 // Serve runs a viewer's session after its start message, until the
 // stream ends.
 func Serve(st Stream, start *pb.DesktopStart, log *slog.Logger) error {
@@ -54,6 +60,18 @@ func Serve(st Stream, start *pb.DesktopStart, log *slog.Logger) error {
 	ctx, cancel := context.WithCancel(st.Context())
 	defer cancel()
 	s := &session{st: st, start: start, log: log, ackCh: make(chan struct{}, 1), kfCh: make(chan struct{}, 1)}
+	// Nobody signed in at the console and one session of the machine's
+	// waiting disconnected (its Remote Desktop window was closed): show
+	// that one instead of the sign-in screen.
+	if SwitchSessions && !start.GetViewOnly() {
+		if ss, err := screen.Sessions(); err == nil {
+			if c, ok := screen.ReattachCandidate(ss); ok {
+				if s.switchSession(c.ID, c.User) {
+					return nil
+				}
+			}
+		}
+	}
 	s.fps = int(start.GetMaxFps())
 	if s.fps <= 0 {
 		s.fps = defaultFPS
@@ -261,6 +279,59 @@ func (s *session) leave() {
 	}
 }
 
+// switchSession moves session id (user's) to the console and tells the
+// viewer, which connects again: the Longarm Desktop service moves its
+// agent - this process - to the new console session. false: it did not
+// move (said in the state's note).
+func (s *session) switchSession(id uint32, user string) bool {
+	who := user
+	if who == "" {
+		who = fmt.Sprintf("session %d", id)
+	}
+	if err := screen.ConnectToConsole(id); err != nil {
+		s.log.Info("remote desktop: switch session", "session", id, "err", err)
+		s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_State{State: &pb.DesktopState{
+			Note: fmt.Sprintf("could not show %s: %v", who, err)}}})
+		return false
+	}
+	s.log.Info("remote desktop: moved a session to the console", "session", id, "user", user)
+	s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_State{State: &pb.DesktopState{
+		SwitchingSession: true, Note: "showing " + who}}})
+	// The service ends this agent once it sees the console's new session;
+	// until then there is nothing to show.
+	for i := 0; i < 40 && screen.ConsoleSession() != id; i++ {
+		time.Sleep(100 * time.Millisecond)
+	}
+	return true
+}
+
+// sessionUser: who is signed in to session id ("" = nobody or not known).
+func sessionUser(id uint32) string {
+	ss, _ := screen.Sessions()
+	for _, x := range ss {
+		if x.ID == id {
+			return x.User
+		}
+	}
+	return ""
+}
+
+// sessionsPB: the machine's sessions for DesktopStarted (can "sessions").
+func sessionsPB() []*pb.DesktopSession {
+	if !SwitchSessions {
+		return nil
+	}
+	ss, err := screen.Sessions()
+	if err != nil {
+		return nil
+	}
+	out := make([]*pb.DesktopSession, 0, len(ss))
+	for _, x := range ss {
+		out = append(out, &pb.DesktopSession{Id: x.ID, User: x.User, State: x.State, Station: x.Station, Console: x.Console})
+	}
+	return out
+}
+
 // can: what this worker offers (DesktopStarted.can).
 func (s *session) can() []string {
 	var out []string
@@ -269,6 +340,9 @@ func (s *session) can() []string {
 	}
 	if s.clip != nil {
 		out = append(out, "clipboard")
+	}
+	if SwitchSessions && !s.start.GetViewOnly() {
+		out = append(out, "sessions")
 	}
 	if s.canSound {
 		out = append(out, "sound")
@@ -307,6 +381,11 @@ func (s *session) recv(ctx context.Context) error {
 			s.setOptions(v.Options)
 		case *pb.DesktopClientMessage_Microphone:
 			s.micPacket(v.Microphone)
+		case *pb.DesktopClientMessage_SwitchSession:
+			// the session menu: this stream ends once it moved (the viewer connects again)
+			if SwitchSessions && !s.start.GetViewOnly() && s.switchSession(v.SwitchSession, sessionUser(v.SwitchSession)) {
+				return nil
+			}
 		case *pb.DesktopClientMessage_SwitchDisplay:
 			s.display.Store(v.SwitchDisplay)
 			signal(s.switchCh)
@@ -421,7 +500,7 @@ func (s *session) open() (*pipeline, error) {
 	}
 	return p, s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_Started{Started: &pb.DesktopStarted{
 		Width: int32(p.w), Height: int32(p.h), Codec: p.codec, Encoder: encoder,
-		Displays: displays(), Can: s.can(),
+		Displays: displays(), Can: s.can(), Sessions: sessionsPB(),
 		Display: &pb.DesktopDisplay{Index: int32(d.Index), Name: d.Name, X: int32(d.X), Y: int32(d.Y), Width: int32(d.W), Height: int32(d.H)},
 	}}})
 }

@@ -1232,6 +1232,7 @@ message DesktopClientMessage {
     DesktopOptions options = 6; // the viewer turns something on or off
     int32 switch_display = 7; // show another display (DesktopDisplay.index)
     DesktopAudio microphone = 8; // the viewer's microphone (DesktopOptions.microphone)
+    uint32 switch_session = 9; // show this session: move it to the console (DesktopSession.id)
   }
 }
 
@@ -1292,8 +1293,22 @@ message DesktopStarted {
   DesktopDisplay display = 5;
   repeated DesktopDisplay displays = 6; // every display (switch_display)
   // what this worker can do: "privacy", "lock_on_leave", "sound",
-  // "microphone", "clipboard", "secure_desktop" (UAC, lock screen)
+  // "microphone", "clipboard", "secure_desktop" (UAC, lock screen),
+  // "sessions" (switch_session)
   repeated string can = 7;
+  // The machine's Windows sessions (can "sessions": the Longarm Desktop
+  // service's agent): the console's, which is shown, and the users' others
+  // (Remote Desktop sign-ins, disconnected ones) the viewer may switch to.
+  repeated DesktopSession sessions = 8;
+}
+
+// DesktopSession is a Windows session (screen.Session).
+message DesktopSession {
+  uint32 id = 1;
+  string user = 2; // DOMAIN\user; "" = nobody (the sign-in screen)
+  string state = 3; // "active", "disconnected", ...
+  string station = 4; // "Console", "RDP-Tcp#3"; "" = disconnected
+  bool console = 5; // the one shown
 }
 
 message DesktopFrame {
@@ -1335,6 +1350,11 @@ message DesktopState {
   // which the worker has)
   DesktopOptions options = 3;
   string note = 2;
+  // The worker is moving another session to the console (switch_session,
+  // or the one disconnected session when nobody was signed in there): this
+  // stream ends in a moment, and the viewer connects again (note says to
+  // whom).
+  bool switching_session = 4;
 }
 
 // DesktopOptions: what the viewer switches on and off (unset: unchanged).

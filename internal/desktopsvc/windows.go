@@ -195,6 +195,9 @@ func RunAgent(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("%s: %w", AgentPipe, err)
 	}
 	screen.SecureAttentionVia = requestSAS
+	// As SYSTEM on the console the agent can move sessions there (the
+	// viewer's session menu; the one disconnected session on connect).
+	rdesk.SwitchSessions = true
 	g := grpc.NewServer()
 	pb.RegisterRemoteDesktopServer(g, &agentServer{log: log})
 	go func() { <-ctx.Done(); g.Stop() }()

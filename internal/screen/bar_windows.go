@@ -41,6 +41,7 @@ var (
 	procTrackPopupMenu   = modUser32.NewProc("TrackPopupMenu")
 	procDestroyMenu      = modUser32.NewProc("DestroyMenu")
 	procClientToScreen   = modUser32.NewProc("ClientToScreen")
+	procMessageBoxW      = modUser32.NewProc("MessageBoxW")
 )
 
 const (
@@ -70,6 +71,7 @@ const (
 	glyphPrivacy    = string(rune(0xED1A))
 	glyphLock       = string(rune(0xE72E))
 	glyphDisplay    = string(rune(0xE7F4))
+	glyphSession    = string(rune(0xE748)) // SwitchUser
 	glyphSound      = string(rune(0xE767))
 	glyphMic        = string(rune(0xE720))
 	glyphPin        = string(rune(0xE718))
@@ -232,6 +234,9 @@ func (b *bar) layout() {
 		if c.Can["sound"] {
 			add("sound", glyphSound, c.On["sound"], onOff(c.On["sound"], "The worker's sound plays here"))
 		}
+		if c.Can["sessions"] && len(c.Sessions) > 1 {
+			add("session", glyphSession, false, "Windows sessions: show another (Remote Desktop sign-ins, disconnected ones)")
+		}
 		if len(c.Displays) > 1 {
 			add("display", glyphDisplay, false, fmt.Sprintf("Display %d of %d: choose another", c.Display+1, len(c.Displays)))
 		}
@@ -357,6 +362,8 @@ func (b *bar) click(id string) {
 		if c != nil && c.SetOption != nil {
 			c.SetOption(id, !c.On[id]) // the worker answers with what is in force (Refresh)
 		}
+	case "session":
+		b.sessionMenu()
 	case "display":
 		b.displayMenu()
 	}
@@ -387,6 +394,63 @@ func (b *bar) displayMenu() {
 	if sel > 0 && int(sel)-1 != c.Display {
 		c.SwitchDisplay(int(sel) - 1)
 	}
+}
+
+// sessionMenu offers the worker's Windows sessions: the one shown (the
+// console's) checked; choosing another moves it to the console. One in
+// use over Remote Desktop would lose that connection: asked first.
+func (b *bar) sessionMenu() {
+	c := b.owner.Chrome
+	if c == nil || c.SwitchSession == nil {
+		return
+	}
+	m, _, _ := procCreatePopupMenu.Call()
+	defer procDestroyMenu.Call(m)
+	for i, s := range c.Sessions {
+		flags := uintptr(0)
+		if s.Console {
+			flags = 0x8 // MF_CHECKED
+		}
+		label, _ := windows.UTF16PtrFromString(sessionLabel(s))
+		procAppendMenuW.Call(m, flags, uintptr(i+1), uintptr(unsafe.Pointer(label)))
+	}
+	var p point
+	procGetCursorPos.Call(uintptr(unsafe.Pointer(&p)))
+	const tpmReturnCmd, tpmNonotify = 0x0100, 0x0080
+	sel, _, _ := procTrackPopupMenu.Call(m, tpmReturnCmd|tpmNonotify, uintptr(p.X), uintptr(p.Y), 0, b.hwnd, 0)
+	if sel == 0 || int(sel) > len(c.Sessions) {
+		return
+	}
+	s := c.Sessions[sel-1]
+	if s.Console {
+		return
+	}
+	if s.State == "active" { // somebody is connected to it over Remote Desktop
+		text, _ := windows.UTF16PtrFromString(fmt.Sprintf("%s is in use over Remote Desktop (%s): showing it here disconnects that window. Show it?", s.User, s.Station))
+		title, _ := windows.UTF16PtrFromString("Longarm")
+		const mbYesNo, mbIconQuestion, idYes = 0x4, 0x20, 6
+		if r, _, _ := procMessageBoxW.Call(uintptr(b.owner.HWND), uintptr(unsafe.Pointer(text)), uintptr(unsafe.Pointer(title)), mbYesNo|mbIconQuestion); r != idYes {
+			return
+		}
+	}
+	c.SwitchSession(s.ID)
+}
+
+// sessionLabel: "CPC\alice - disconnected", "the sign-in screen", ...
+func sessionLabel(s Session) string {
+	who := s.User
+	if who == "" {
+		who = "the sign-in screen"
+	}
+	switch {
+	case s.Console:
+		return who + "  (shown)"
+	case s.State == "disconnected":
+		return who + "  (disconnected)"
+	case s.Station != "":
+		return who + "  (over Remote Desktop: " + s.Station + ")"
+	}
+	return who + "  (" + s.State + ")"
 }
 
 // Refresh redraws the title bar after the viewer changed Chrome.
