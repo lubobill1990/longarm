@@ -59,8 +59,20 @@ func openH264Decoder(w, h int, mgr *comObj) (*comObj, error) {
 		}
 		procCoTaskMemFree.Call(uintptr(unsafe.Pointer(acts)))
 	}()
+	// The first decoder that activates (a CI runner's once answered S_OK
+	// with no object: the next one, or an error, not a crash).
 	var dec *comObj
-	if err := hr("ActivateObject(decoder)", comCall(list[0], slotActivateObj, uintptr(unsafe.Pointer(&iidIMFTransform)), uintptr(unsafe.Pointer(&dec)))); err != nil {
+	err := errors.New("ActivateObject(decoder): no object")
+	for _, a := range list {
+		if a == nil {
+			continue
+		}
+		if err = hr("ActivateObject(decoder)", comCall(a, slotActivateObj, uintptr(unsafe.Pointer(&iidIMFTransform)), uintptr(unsafe.Pointer(&dec)))); err == nil && dec != nil {
+			break
+		}
+		dec = nil
+	}
+	if dec == nil {
 		return nil, err
 	}
 	var attrs *comObj
