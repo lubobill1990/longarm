@@ -66,18 +66,18 @@ const (
 
 // Segoe MDL2 Assets glyphs.
 const (
-	glyphShield     = ""
-	glyphPrivacy    = ""
-	glyphLock       = ""
-	glyphDisplay    = ""
-	glyphSound      = ""
-	glyphMic        = ""
-	glyphPin        = ""
-	glyphPinned     = ""
-	glyphMinimize   = ""
-	glyphFullscreen = ""
-	glyphWindow     = ""
-	glyphClose      = ""
+	glyphShield     = string(rune(0xEA18))
+	glyphPrivacy    = string(rune(0xED1A))
+	glyphLock       = string(rune(0xE72E))
+	glyphDisplay    = string(rune(0xE7F4))
+	glyphSound      = string(rune(0xE767))
+	glyphMic        = string(rune(0xE720))
+	glyphPin        = string(rune(0xE718))
+	glyphPinned     = string(rune(0xE840))
+	glyphMinimize   = string(rune(0xE921))
+	glyphFullscreen = string(rune(0xE740))
+	glyphWindow     = string(rune(0xE73F))
+	glyphClose      = string(rune(0xE8BB))
 )
 
 type paintStruct struct {
