@@ -38,8 +38,6 @@ const (
 	cfUnicodeText     = 13
 	gmemMoveable      = 0x0002
 	hwndMessage       = ^uintptr(2) // HWND_MESSAGE (-3)
-	// MaxClipboardText caps what crosses the wire (UTF-8 bytes).
-	MaxClipboardText = 1 << 20
 )
 
 type winClipboard struct {

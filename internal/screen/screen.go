@@ -208,3 +208,6 @@ type Clipboard interface {
 // OpenClipboard watches the clipboard of this process's desktop (one per
 // process).
 func OpenClipboard() (Clipboard, error) { return openClipboard() }
+
+// MaxClipboardText caps the clipboard text that crosses the wire (UTF-8 bytes).
+const MaxClipboardText = 1 << 20
