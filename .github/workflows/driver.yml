@@ -37,6 +37,13 @@ jobs:
       - name: Package
         run: |
           Get-ChildItem -Recurse -Include *.sys,*.inf,*.cat -Path x64 | Select-Object FullName, Length
+      - name: InfVerif
+        run: |
+          $iv = Get-ChildItem packages -Recurse -Filter infverif.exe | Where-Object { $_.DirectoryName -match '\\x64$' } | Select-Object -First 1
+          $inf = Get-ChildItem x64\Release -Recurse -Filter LongarmAudio.inf | Select-Object -First 1
+          "$($iv.FullName) $($inf.FullName)"
+          & $iv.FullName /w /v $inf.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
           name: longarm-audio-driver-x64-unsigned
