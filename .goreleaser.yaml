@@ -21,6 +21,9 @@ project_name: longarm
 before:
   hooks:
     - go mod download
+    # the Windows exes' icon resources (cmd/<tool>/rsrc_windows_<arch>.syso): generated, not
+    # checked in (packaging/icons/README.md)
+    - go run ./packaging/icons
 
 env:
   - CGO_ENABLED=0
