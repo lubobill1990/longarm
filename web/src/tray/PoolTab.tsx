@@ -160,7 +160,7 @@ export function PoolTab({
   const actions: CardActions = {
     attach: (name) => run(() => trayApi.attach(name), `opening a terminal: longarm attach ${name}`),
     ssh: (name) => run(() => trayApi.ssh(name), `opening longarm ssh ${name}`),
-    desktop: (name) => run(() => trayApi.desktop(name), `opening the desktop of ${name}`),
+    desktop: (name, rdp) => run(() => trayApi.desktop(name, rdp), rdp ? `signing in to ${name} with Remote Desktop / Windows App` : `opening the desktop of ${name}`),
     // drain needs an admin certificate (the hub's Admin API)
     drain: hubUp && admin ? (name, on) => run(() => longarmApi.drainWorker(name, on), `${name} ${on ? 'drained' : 'resumed'}`) : undefined,
     remove: hubUp

@@ -328,6 +328,11 @@ message NodeHello {
   // it follows a rename (renews its certificate and restarts when the hub
   // asks).
   repeated string capabilities = 18;
+  // How Remote Desktop / Windows App reaches this machine (DesktopInfo):
+  // "devbox" (Windows App through its Dev Center), "cloudpc" (Windows 365),
+  // "rdp" (Remote Desktop is on: mstsc through a forward); "" = it doesn't.
+  // The tray shows a "Remote Desktop" item on the cards that have one.
+  string remote_desktop = 19;
 }
 
 message NodeState {
@@ -799,6 +804,9 @@ message NodeInfo {
   // Workers: an update of the node's machine in progress, or how the last
   // one ended until it is resolved (NodeUpdate); unset = none.
   NodeUpdate update = 39;
+  // Workers: how Remote Desktop / Windows App reaches the machine, as its
+  // hello said (NodeHello.remote_desktop); "" = it doesn't.
+  string remote_desktop = 40;
 }
 
 // NodeUpdate is the hub's view of an update of a worker's machine

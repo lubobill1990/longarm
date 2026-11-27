@@ -59,7 +59,7 @@ function devboxPool(identity = 'client/alice-cpc'): PoolView {
     workers: [
       old('old-pair', 20),
       old('old-pc', 21),
-      w('cpc-alice-x7k2q', {}, { labels: { pool: 'devbox', os: 'windows' } }),
+      w('cpc-alice-x7k2q', {}, { labels: { pool: 'devbox', os: 'windows' }, remote_desktop: 'devbox' }),
       w('cpc-alice-x7k2q-admin', {}, { admin_worker: true, labels: { 'longarm.io/admin': 'true' } }),
       old('e2e-worker', 22),
       w('fleet-1', {}, { owner: '' }),
@@ -196,6 +196,13 @@ describe('PoolTab', () => {
     fireEvent.click(within(card).getByLabelText('more actions')) // desktop: in the menu
     fireEvent.click(within(card).getByText('Desktop'))
     await waitFor(() => expect(calls.filter((c) => c.url === '/trayapi/desktop').map((c) => JSON.parse(String(c.init?.body)).worker)).toEqual(['cpc-alice-x7k2q']))
+    // and Windows App for the Dev Box (its hello said remote_desktop: devbox): longarm desktop --rdp
+    fireEvent.click(within(card).getByLabelText('more actions'))
+    fireEvent.click(within(card).getByText('Windows App (Dev Box sign-in)'))
+    await waitFor(() => expect(calls.filter((c) => c.url === '/trayapi/desktop').map((c) => JSON.parse(String(c.init?.body)))).toEqual([
+      { worker: 'cpc-alice-x7k2q', rdp: false },
+      { worker: 'cpc-alice-x7k2q', rdp: true },
+    ]))
     // not an admin: no drain; the fleet worker isn't hers to remove (its menu: ssh only)
     expect(within(card).queryByText('drain')).toBeNull()
     const fleet = screen.getByTestId('worker-fleet-1')

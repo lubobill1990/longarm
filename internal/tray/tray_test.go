@@ -407,6 +407,11 @@ func TestServer(t *testing.T) {
 	if len(term) != 2 || len(gui) != 1 || strings.Join(gui[0], " ") != "longarm --config-dir "+cfg+" desktop w1" {
 		t.Fatalf("desktop: terminals %v, windows %v", term, gui)
 	}
+	// the card's Remote Desktop / Windows App item: no terminal either
+	post("/trayapi/desktop", "application/json", `{"worker":"w1","rdp":true}`)
+	if len(term) != 2 || len(gui) != 2 || strings.Join(gui[1], " ") != "longarm --config-dir "+cfg+" desktop --rdp w1" {
+		t.Fatalf("desktop --rdp: terminals %v, windows %v", term, gui)
+	}
 	if code, _ := post("/trayapi/open", "application/json", `{"url":"file:///etc/passwd"}`); code != 400 {
 		t.Fatalf("file url opened: %d", code)
 	}

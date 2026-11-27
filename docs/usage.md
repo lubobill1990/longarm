@@ -1667,9 +1667,14 @@ longarmd desktop-service uninstall
 
 Its logs: `%ProgramData%\Longarm\desktop\service.log` and `agent.log`.
 
-Otherwise, what the worker is decides how its desktop opens (longarmd
-reports it in `Node.Info`; workers before this release don't, update them
-first):
+Otherwise, or with `--rdp`, what the worker is decides how its desktop
+opens (longarmd reports it in `Node.Info`; workers before this release
+don't, update them first). The tray's card menu has this too, next to
+"Desktop", on workers where it works (their hello tells the hub:
+`NodeInfo.remote_desktop`): "Windows App (Dev Box sign-in)", "Windows App
+(Cloud PC sign-in)" or "Remote Desktop (sign in)" - the way in to a Cloud
+PC or Dev Box nobody is signed in to at its console, since Windows App and
+Remote Desktop sign you in themselves (Entra):
 
 - **Microsoft Dev Box**: opens in **Windows App**, which connects through
   Azure Virtual Desktop itself - RDP Shortpath, Entra sign-in, the Dev
@@ -1689,7 +1694,7 @@ first):
   without reaching the worker, so a stopped or hibernated Dev Box starts as
   Windows App connects. Without the Azure CLI it opens
   https://devbox.microsoft.com.
-- **Windows 365 Cloud PC** (not a Dev Box): opens https://windows365.microsoft.com.
+- **Windows 365 Cloud PC** (not a Dev Box): opens https://windows.cloud.microsoft (Connect there opens it in Windows App or the browser).
 - **Any other Windows worker with Remote Desktop on**: a forward to its
   Remote Desktop port (like `longarm forward`, listed by `forward --list`)
   opened in mstsc on Windows, Windows App on macOS, FreeRDP on Linux; it

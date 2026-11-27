@@ -341,6 +341,9 @@ type Node struct {
 	Pairing *TrustPairing `json:"pairing,omitempty"`
 	// Capabilities the worker reported in its hello (NodeHello).
 	Capabilities []string `json:"capabilities,omitempty"`
+	// RemoteDesktop: how Remote Desktop / Windows App reaches the worker,
+	// as its hello said (NodeHello.remote_desktop); "" = it doesn't.
+	RemoteDesktop string `json:"remote_desktop,omitempty"`
 	// RetirePending: the node was renamed and got (or will get) a
 	// certificate with its new name; once it presents one, every other
 	// certificate of it is revoked. Renewals keep it set.

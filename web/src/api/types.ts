@@ -94,6 +94,8 @@ export interface NodeInfo {
   update_available?: UpdateAvailable
   /** workers: an update of the machine in progress, or how the last one ended (lib/update.ts) */
   update?: NodeUpdate
+  /** workers: how Remote Desktop / Windows App reaches the machine: devbox, cloudpc, rdp ("" / unset: it doesn't) */
+  remote_desktop?: string
 }
 
 /** The hub's view of an update of a worker's machine (internal/hub/updatestate.go). */
