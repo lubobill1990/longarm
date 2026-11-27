@@ -93,7 +93,7 @@ func cursorFrom(cur *Cursor) uintptr {
 
 func runViewer(o ViewerOptions) error {
 	SetDPIAware()
-	win, err := NewWindow(o.Title, 1600, 940, o.Input != nil)
+	win, err := NewWindow(o.Title+fullscreenHint, 1600, 940, o.Input != nil)
 	if err != nil {
 		return err
 	}
@@ -273,7 +273,7 @@ func runViewer(o ViewerOptions) error {
 		if o.Status != nil && time.Since(lastTick) >= time.Second {
 			lastTick = time.Now()
 			if s := o.Status(); s != "" {
-				win.SetTitle(o.Title + " - " + s)
+				win.SetTitle(o.Title + " - " + s + fullscreenHint)
 			}
 		}
 		if done {
@@ -286,3 +286,7 @@ func runViewer(o ViewerOptions) error {
 
 // The viewer window exists on Windows.
 const canView = true
+
+// fullscreenHint: the title says how to get in and out of full screen (the
+// maximize button goes in too; out is the keys).
+const fullscreenHint = "   (Ctrl+Alt+Enter: full screen)"

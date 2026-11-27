@@ -77,7 +77,11 @@ func comCall(obj *comObj, slot int, args ...uintptr) uintptr {
 }
 
 // comObj is a COM interface pointer's target: its vtable comes first.
-type comObj struct{ vtbl *[64]uintptr }
+type comObj struct{ vtbl *[vtableSlots]uintptr }
+
+// vtableSlots bounds the slot numbers comCall may use: ID3D11DeviceContext,
+// the largest interface here, has 115 methods (TestVtableSlots).
+const vtableSlots = 256
 
 func release(obj *comObj) {
 	if obj != nil {

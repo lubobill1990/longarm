@@ -71,6 +71,9 @@ type Server struct {
 	runCmd  func(name string, args ...string) ([]byte, error) // for tests
 	openURL func(string) error
 	term    func(argv []string) error
+	// gui starts a command that shows a window of its own (longarm desktop):
+	// no terminal around it (RunWindowed).
+	gui func(argv []string) error
 	// sign-in (signin.go); hooks for tests
 	signin           signinRun
 	signIn           func(context.Context, signin.Options, signin.Events) (*signin.Result, error)
@@ -167,7 +170,7 @@ func NewServer(opts Options, desk Desktop, addr string) (*Server, error) {
 			cmd := hiddenCommand(ctx, name, args...)
 			return cmd.CombinedOutput()
 		},
-		openURL: OpenURL, term: OpenTerminal,
+		openURL: OpenURL, term: OpenTerminal, gui: RunWindowed,
 		installedRolesFn: signin.InstalledRoles, installedWorker: longarmd.InstalledWorker, runElevated: RunElevated}
 	s.workerLink, s.clientLink = s.localWorkerLink, s.localClientLink
 	if runtime.GOOS == "windows" {
@@ -576,7 +579,8 @@ func (s *Server) desktop(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "bad worker name")
 		return
 	}
-	if err := s.term(s.longarmArgs("desktop", body.Worker)); err != nil {
+	// The viewer is a window of its own: no terminal (CLAUDE.md "The tray").
+	if err := s.gui(s.longarmArgs("desktop", body.Worker)); err != nil {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

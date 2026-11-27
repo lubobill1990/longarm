@@ -41,3 +41,6 @@ var ErrElevationCanceled = errors.New("canceled at the administrator prompt")
 func RunElevatedWait(string, ...string) error {
 	return errors.New("elevated actions are Windows-only")
 }
+
+// hideConsole: nothing to hide here (the tray starts commands without a terminal).
+func hideConsole(*exec.Cmd) {}
