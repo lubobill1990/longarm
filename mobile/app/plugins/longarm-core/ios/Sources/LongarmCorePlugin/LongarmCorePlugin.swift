@@ -13,6 +13,25 @@ public class LongarmCorePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise)
     ]
 
+    // Spike diagnostics: with the Go runtime in the process, the WebView's
+    // first load failed (NSCocoaErrorDomain 256): do file reads fail, and why?
+    override public func load() {
+        guard let u = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "public") else {
+            NSLog("LongarmCore: no public/index.html")
+            return
+        }
+        var fails = 0
+        for _ in 0..<200 {
+            do {
+                _ = try Data(contentsOf: u)
+            } catch {
+                fails += 1
+                if fails <= 3 { NSLog("LongarmCore: read failed: %@", String(describing: error)) }
+            }
+        }
+        NSLog("LongarmCore: %d of 200 reads of index.html failed", fails)
+    }
+
     @objc func start(_ call: CAPPluginCall) {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
