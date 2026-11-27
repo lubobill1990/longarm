@@ -28,6 +28,7 @@ import (
 	"longarm/internal/rdesk"
 	"longarm/internal/screen"
 	"longarm/internal/updatesvc"
+	"longarm/internal/vdisplay"
 	pb "longarm/proto/longarm/v1"
 )
 
@@ -198,6 +199,7 @@ func RunAgent(ctx context.Context, log *slog.Logger) error {
 	// As SYSTEM on the console the agent can move sessions there (the
 	// viewer's session menu; the one disconnected session on connect).
 	rdesk.SwitchSessions = true
+	rdesk.VirtualDisplays = true
 	g := grpc.NewServer()
 	pb.RegisterRemoteDesktopServer(g, &agentServer{log: log})
 	go func() { <-ctx.Done(); g.Stop() }()
@@ -382,6 +384,10 @@ func Uninstall() error {
 		if err := registry.DeleteKey(registry.LOCAL_MACHINE, RegKey); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	// the virtual display's driver, if a viewer ever added one
+	if err := vdisplay.Remove(); err != nil {
+		errs = append(errs, fmt.Errorf("virtual display: %w", err))
 	}
 	return errors.Join(errs...)
 }

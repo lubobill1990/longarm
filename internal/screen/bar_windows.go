@@ -237,8 +237,8 @@ func (b *bar) layout() {
 		if c.Can["sessions"] && len(c.Sessions) > 1 {
 			add("session", glyphSession, false, "Windows sessions: show another (Remote Desktop sign-ins, disconnected ones)")
 		}
-		if len(c.Displays) > 1 {
-			add("display", glyphDisplay, false, fmt.Sprintf("Display %d of %d: choose another", c.Display+1, len(c.Displays)))
+		if len(c.Displays) > 1 || c.Can["virtual_display"] {
+			add("display", glyphDisplay, false, fmt.Sprintf("Display %d of %d: choose another, or add a virtual display", c.Display+1, len(c.Displays)))
 		}
 		if c.Can["lock_on_leave"] {
 			add("lock_on_leave", glyphLock, c.On["lock_on_leave"], onOff(c.On["lock_on_leave"], "Lock the worker when you disconnect"))
@@ -387,13 +387,41 @@ func (b *bar) displayMenu() {
 		label, _ := windows.UTF16PtrFromString(fmt.Sprintf("Display %d  (%d×%d)", i+1, d.W, d.H))
 		procAppendMenuW.Call(m, flags, uintptr(i+1), uintptr(unsafe.Pointer(label)))
 	}
+	// A virtual display of this screen's size (the worker's
+	// internal/vdisplay): on until this viewer leaves.
+	const addVirtual, removeVirtual = 1000, 1001
+	w, h := b.screenSize()
+	if c.Can["virtual_display"] && c.SetVirtualDisplay != nil {
+		procAppendMenuW.Call(m, 0x0800 /* MF_SEPARATOR */, 0, 0)
+		label, id := fmt.Sprintf("Add a virtual display  (%d×%d, this screen's size)", w, h), uintptr(addVirtual)
+		if c.On["virtual_display"] {
+			label, id = "Remove the virtual display", removeVirtual
+		}
+		l, _ := windows.UTF16PtrFromString(label)
+		procAppendMenuW.Call(m, 0, id, uintptr(unsafe.Pointer(l)))
+	}
 	var p point
 	procGetCursorPos.Call(uintptr(unsafe.Pointer(&p)))
 	const tpmReturnCmd, tpmNonotify = 0x0100, 0x0080
 	sel, _, _ := procTrackPopupMenu.Call(m, tpmReturnCmd|tpmNonotify, uintptr(p.X), uintptr(p.Y), 0, b.hwnd, 0)
-	if sel > 0 && int(sel)-1 != c.Display {
+	switch {
+	case sel == addVirtual:
+		c.SetVirtualDisplay(true, w, h)
+	case sel == removeVirtual:
+		c.SetVirtualDisplay(false, 0, 0)
+	case sel > 0 && int(sel)-1 != c.Display:
 		c.SwitchDisplay(int(sel) - 1)
 	}
+}
+
+// screenSize: the monitor the viewer is on, in physical pixels (what a
+// virtual display should be to fill it in full screen).
+func (b *bar) screenSize() (int, int) {
+	mon, _, _ := procMonitorFromWindow.Call(uintptr(b.owner.HWND), 2 /* MONITOR_DEFAULTTONEAREST */)
+	mi := monitorInfo{}
+	mi.Size = uint32(unsafe.Sizeof(mi))
+	procGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi)))
+	return int(mi.Monitor.Right - mi.Monitor.Left), int(mi.Monitor.Bottom - mi.Monitor.Top)
 }
 
 // sessionMenu offers the worker's Windows sessions: the one shown (the

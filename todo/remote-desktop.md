@@ -103,6 +103,21 @@ Text goes both ways between Windows workers and viewers
 (X11 CLIPBOARD selection) and macOS (NSPasteboard) say ErrUnsupported
 (clipboard_other.go). Images and files are not carried.
 
+## Native remote desktop: virtual display follow-ups
+
+internal/vdisplay adds one virtual display (Virtual-Display-Driver
+25.7.23, embedded). Left:
+
+- **Several at once** (vdd_settings.xml's count), and a size other than
+  the viewer's screen (a picker in the menu).
+- **The publisher certificate** (SignPath Foundation, driver/publisher.cer)
+  expires 2027-09-08: the catalog is timestamped, so installs keep working,
+  but a newer driver release brings a new one - update both together.
+- **Kept on after the viewer leaves** (an option), e.g. for a VM whose
+  programs need a screen while nobody watches.
+- **Linux** (a dummy X screen: Xvfb or xf86-video-dummy) and **macOS**
+  (CGVirtualDisplay, private API).
+
 ## Turning Remote Desktop on for a worker
 
 A non-Dev Box Windows worker with Remote Desktop off reports

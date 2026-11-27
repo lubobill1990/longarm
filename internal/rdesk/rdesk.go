@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"longarm/internal/screen"
+	"longarm/internal/vdisplay"
 	pb "longarm/proto/longarm/v1"
 )
 
@@ -149,6 +151,8 @@ type session struct {
 	micFeed     screen.AudioPlayer  // opened with the first packet's format
 	micFormat   screen.AudioFormat
 	canMic      bool // the Longarm audio driver is here (screen.MicFeedAvailable)
+	vdisp       bool // a virtual display is on for this viewer
+	vdMu        sync.Mutex
 }
 
 // micPacket plays a packet of the viewer's microphone into the Longarm
@@ -250,10 +254,61 @@ func (s *session) setOptions(o *pb.DesktopOptions) {
 			s.micFeed = nil
 		}
 	}
-	privacy, lock, sound, mic := s.curtain != nil, s.lockOnLeave, s.sound != nil, s.mic
+	privacy, lock, sound, mic, vd := s.curtain != nil, s.lockOnLeave, s.sound != nil, s.mic, s.vdisp
 	s.optMu.Unlock()
 	s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_State{State: &pb.DesktopState{
-		Options: &pb.DesktopOptions{Privacy: &privacy, LockOnLeave: &lock, Sound: &sound, Microphone: &mic}}}})
+		Options: &pb.DesktopOptions{Privacy: &privacy, LockOnLeave: &lock, Sound: &sound, Microphone: &mic, VirtualDisplay: &vd}}}})
+}
+
+// VirtualDisplays: this process may add a virtual display (the Longarm
+// Desktop service's agent: SYSTEM, on the console; internal/vdisplay).
+var VirtualDisplays bool
+
+// virtualDisplay turns the worker's virtual display on (at the viewer's
+// size, then shows it) or off (back to the first display).
+func (s *session) virtualDisplay(v *pb.DesktopVirtualDisplay) {
+	s.vdMu.Lock() // one at a time: turning it on takes seconds
+	defer s.vdMu.Unlock()
+	if !v.On {
+		if err := vdisplay.Disable(); err != nil {
+			s.log.Info("remote desktop: virtual display off", "err", err)
+		}
+		s.optMu.Lock()
+		s.vdisp = false
+		s.optMu.Unlock()
+		s.display.Store(0)
+		signal(s.switchCh)
+		s.setOptions(&pb.DesktopOptions{})
+		return
+	}
+	m := vdisplay.Mode{W: int(v.Width), H: int(v.Height)}
+	if m.W <= 0 || m.H <= 0 {
+		m = vdisplay.Mode{W: 1920, H: 1080}
+	}
+	name, err := vdisplay.Enable(m)
+	if err != nil {
+		s.log.Info("remote desktop: virtual display", "err", err)
+		s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_State{State: &pb.DesktopState{
+			Note: fmt.Sprintf("no virtual display: %v", err)}}})
+		if name == "" {
+			return
+		}
+	}
+	s.log.Info("remote desktop: virtual display on", "display", name, "width", m.W, "height", m.H)
+	s.optMu.Lock()
+	s.vdisp = true
+	s.optMu.Unlock()
+	// show it once the capture lists it
+	for i := 0; i < 20; i++ {
+		ds, _ := screen.Displays()
+		if idx := slices.IndexFunc(ds, func(d screen.Display) bool { return strings.EqualFold(d.Name, name) }); idx >= 0 {
+			s.display.Store(int32(ds[idx].Index))
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	signal(s.switchCh)
+	s.setOptions(&pb.DesktopOptions{})
 }
 
 // leave: the viewer went - privacy mode ends, the session locks if asked.
@@ -271,6 +326,13 @@ func (s *session) leave() {
 	if s.micFeed != nil {
 		s.micFeed.Close()
 		s.micFeed = nil
+	}
+	// the virtual display was for this viewer: nobody else sees it
+	if s.vdisp {
+		if err := vdisplay.Disable(); err != nil {
+			s.log.Info("remote desktop: virtual display off", "err", err)
+		}
+		s.vdisp = false
 	}
 	if s.lockOnLeave {
 		if err := screen.LockSession(); err != nil {
@@ -344,6 +406,9 @@ func (s *session) can() []string {
 	if SwitchSessions && !s.start.GetViewOnly() {
 		out = append(out, "sessions")
 	}
+	if VirtualDisplays && vdisplay.Supported() && !s.start.GetViewOnly() {
+		out = append(out, "virtual_display")
+	}
 	if s.canSound {
 		out = append(out, "sound")
 	}
@@ -381,6 +446,10 @@ func (s *session) recv(ctx context.Context) error {
 			s.setOptions(v.Options)
 		case *pb.DesktopClientMessage_Microphone:
 			s.micPacket(v.Microphone)
+		case *pb.DesktopClientMessage_VirtualDisplay:
+			if VirtualDisplays && !s.start.GetViewOnly() {
+				go s.virtualDisplay(v.VirtualDisplay)
+			}
 		case *pb.DesktopClientMessage_SwitchSession:
 			// the session menu: this stream ends once it moved (the viewer connects again)
 			if SwitchSessions && !s.start.GetViewOnly() && s.switchSession(v.SwitchSession, sessionUser(v.SwitchSession)) {
