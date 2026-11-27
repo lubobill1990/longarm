@@ -21,6 +21,8 @@ let package = Package(
                 .product(name: "Capacitor", package: "capacitor-swift-pm"),
                 "Longarm",
             ],
-            path: "ios/Sources/LongarmCorePlugin")
+            path: "ios/Sources/LongarmCorePlugin",
+            // Go's resolver on darwin calls res_9_n* (cgo)
+            linkerSettings: [.linkedLibrary("resolv")])
     ]
 )
