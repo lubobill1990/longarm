@@ -36,6 +36,20 @@ type AudioPlayer interface {
 // OpenAudioPlayer opens the default speakers for f.
 func OpenAudioPlayer(f AudioFormat) (AudioPlayer, error) { return openAudioPlayer(f) }
 
+// OpenMicCapture captures what this machine's default microphone hears.
+func OpenMicCapture() (AudioCapture, error) { return openMicCapture() }
+
+// The viewer's microphone on a worker: the Longarm audio driver
+// (drivers/windows/audio) has a playback device whose sound comes out of its
+// microphone, "Longarm Microphone", which programs there record.
+const MicFeedDevice = "Longarm Microphone Feed"
+
+// MicFeedAvailable: the Longarm audio driver is installed and working here.
+func MicFeedAvailable() bool { return audioOutputExists(MicFeedDevice) }
+
+// OpenMicFeed plays the viewer's microphone into the Longarm audio driver.
+func OpenMicFeed(f AudioFormat) (AudioPlayer, error) { return openAudioPlayerOn(MicFeedDevice, f) }
+
 // AudioCodec is the codec name on the wire (DesktopAudio.codec).
 const AudioCodec = "ima-adpcm"
 

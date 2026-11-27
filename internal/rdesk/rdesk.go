@@ -89,6 +89,7 @@ func Serve(st Stream, start *pb.DesktopStart, log *slog.Logger) error {
 		c.Close()
 		s.canSound = true
 	}
+	s.canMic = screen.MicFeedAvailable()
 	defer s.leave()
 	if o := start.GetOptions(); o != nil {
 		s.setOptions(o)
@@ -126,6 +127,43 @@ type session struct {
 	lockOnLeave bool
 	sound       screen.AudioCapture // sound on: this machine's sound to the viewer
 	canSound    bool                // there are speakers to capture
+	mic         bool                // microphone on: the viewer's goes to micFeed
+	micFeed     screen.AudioPlayer  // opened with the first packet's format
+	micFormat   screen.AudioFormat
+	canMic      bool // the Longarm audio driver is here (screen.MicFeedAvailable)
+}
+
+// micPacket plays a packet of the viewer's microphone into the Longarm
+// audio driver (programs here record it from "Longarm Microphone").
+func (s *session) micPacket(a *pb.DesktopAudio) {
+	if a.Codec != screen.AudioCodec {
+		return
+	}
+	f := screen.AudioFormat{Rate: int(a.Rate), Channels: int(a.Channels)}
+	pcm, err := screen.DecodeADPCM(a.Data, f.Channels)
+	if err != nil {
+		return
+	}
+	s.optMu.Lock()
+	defer s.optMu.Unlock()
+	if !s.mic {
+		return
+	}
+	if s.micFeed == nil || f != s.micFormat {
+		if s.micFeed != nil {
+			s.micFeed.Close()
+			s.micFeed = nil
+		}
+		p, err := screen.OpenMicFeed(f)
+		if err != nil {
+			s.log.Info("remote desktop: microphone", "err", err)
+			s.mic = false // say so below, once
+			go s.setOptions(&pb.DesktopOptions{})
+			return
+		}
+		s.micFeed, s.micFormat = p, f
+	}
+	s.micFeed.Write(pcm)
 }
 
 // startSound sends what this machine's speakers play until the capture is
@@ -187,10 +225,17 @@ func (s *session) setOptions(o *pb.DesktopOptions) {
 			s.sound = nil
 		}
 	}
-	privacy, lock, sound := s.curtain != nil, s.lockOnLeave, s.sound != nil
+	if o.Microphone != nil && !s.start.GetViewOnly() {
+		s.mic = *o.Microphone && s.canMic
+		if !s.mic && s.micFeed != nil {
+			s.micFeed.Close()
+			s.micFeed = nil
+		}
+	}
+	privacy, lock, sound, mic := s.curtain != nil, s.lockOnLeave, s.sound != nil, s.mic
 	s.optMu.Unlock()
 	s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_State{State: &pb.DesktopState{
-		Options: &pb.DesktopOptions{Privacy: &privacy, LockOnLeave: &lock, Sound: &sound}}}})
+		Options: &pb.DesktopOptions{Privacy: &privacy, LockOnLeave: &lock, Sound: &sound, Microphone: &mic}}}})
 }
 
 // leave: the viewer went - privacy mode ends, the session locks if asked.
@@ -204,6 +249,10 @@ func (s *session) leave() {
 	if s.sound != nil {
 		s.sound.Close()
 		s.sound = nil
+	}
+	if s.micFeed != nil {
+		s.micFeed.Close()
+		s.micFeed = nil
 	}
 	if s.lockOnLeave {
 		if err := screen.LockSession(); err != nil {
@@ -223,6 +272,11 @@ func (s *session) can() []string {
 	}
 	if s.canSound {
 		out = append(out, "sound")
+	}
+	// Your microphone here: only with the Longarm audio driver installed
+	// (it needs Microsoft's signature to load; without it no microphone).
+	if s.canMic && !s.start.GetViewOnly() {
+		out = append(out, "microphone")
 	}
 	return out
 }
@@ -251,6 +305,8 @@ func (s *session) recv(ctx context.Context) error {
 			signal(s.kfCh)
 		case *pb.DesktopClientMessage_Options:
 			s.setOptions(v.Options)
+		case *pb.DesktopClientMessage_Microphone:
+			s.micPacket(v.Microphone)
 		case *pb.DesktopClientMessage_SwitchDisplay:
 			s.display.Store(v.SwitchDisplay)
 			signal(s.switchCh)

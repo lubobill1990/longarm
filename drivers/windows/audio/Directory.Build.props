@@ -3,6 +3,8 @@
        newest Windows SDK installed and looks there. -->
   <PropertyGroup>
     <WindowsTargetPlatformVersion>10.0.28000.0</WindowsTargetPlatformVersion>
+    <!-- stampinf and inf2cat: the WDK's targets look for them in an installed kit's bin otherwise -->
+    <InfToolPath>$(MSBuildThisFileDirectory)packages\Microsoft.Windows.WDK.x64.10.0.28000.2526\c\bin\10.0.28000.0\x64\</InfToolPath>
   </PropertyGroup>
   <!-- The WDK and SDK from NuGet (packages.config, `nuget restore -PackagesDirectory packages`):
        no Windows Driver Kit install needed (as microsoft/Windows-driver-samples builds). -->
