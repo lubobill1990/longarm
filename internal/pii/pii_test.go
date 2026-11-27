@@ -33,8 +33,8 @@ func TestScrub(t *testing.T) {
 		{"tskey-auth-kAbc123CNTRL-xyzxyzxyz", "<secret>"},
 		{"header map[Authorization:[Bearer abcdefghijklmnop] Accept:[*/*]]", "header map[Authorization:[<secret>] Accept:[*/*]]"},
 		{"map[Authorization:[Basic dXNlcjpwYXNzd29yZA==]]", "map[Authorization:[<secret>]]"},
-		// (split: gitleaks would flag the fixtures)
-		{"tokens glpat" + "-abcdefghij0123456789 AKIAIOSFODNN7EXAMPLE AIzaSyA-abcdefghijklmnopqrstuvwxyz01234", "tokens <secret> <secret> <secret>"},
+		// (split: secret scanners - gitleaks, Azure DevOps push protection - would flag the fixtures)
+		{"tokens glpat" + "-abcdefghij0123456789 AKIAIOSFODNN7EXAMPLE AIza" + "SyA-abcdefghijklmnopqrstuvwxyz01234", "tokens <secret> <secret> <secret>"},
 		{"sk_live" + "_abcdefghijABCDEF1234 npm_abcdefghijklmnopqrstuvwxyz0123456789 hf_abcdefghijklmnopqrstuvwxyzABCD", "<secret> <secret> <secret>"},
 		{"xoxe-1-abcdefghij xapp-1-A0123-abcdefghij", "<secret> <secret>"},
 		{"AKIA and npm_ci and hf_ stay", "AKIA and npm_ci and hf_ stay"},
