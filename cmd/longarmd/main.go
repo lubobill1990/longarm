@@ -77,7 +77,7 @@ func main() {
 	root.AddCommand(updateCmd(), updateWatchCmd(), installHelperCmd())
 	root.AddCommand(uiCmds()...)
 	root.AddCommand(userHelperCmd(), sftpServerCmd(), trustCmd(), diagCmd(), doctorCmd(), notices.Cmd())
-	root.AddCommand(runCmd(), joinCmd(), loginCmd(), shimCmd(), conhostCmd(), serviceCmd(), sessionModeCmd(), adminWorkerCmd(), desktopServiceCmd(), desktopAgentCmd(), gcCmd(), auditCmd(), &cobra.Command{
+	root.AddCommand(runCmd(), joinCmd(), loginCmd(), shimCmd(), conhostCmd(), serviceCmd(), sessionModeCmd(), adminWorkerCmd(), desktopServiceCmd(), desktopAgentCmd(), audioDriverCmd(), gcCmd(), auditCmd(), &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",
 		Run:   func(*cobra.Command, []string) { fmt.Println(version.Version) },

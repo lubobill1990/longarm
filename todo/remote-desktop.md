@@ -79,13 +79,18 @@ Left:
   Windows-only). Locking: `loginctl lock-session` on Linux; macOS has no
   supported call since CGSession went.
 - **All displays at once** (now one at a time, the picker switches).
-- **The local microphone on the worker**: the proto has it
-  (DesktopOptions.microphone, DesktopClientMessage.microphone); the
-  worker needs a virtual audio device whose input programs can choose,
-  fed with what comes. Candidates: VB-CABLE (donationware; companies are
-  asked to buy licences), the MIT-licensed Virtual-Audio-Driver
-  (github.com/VirtualDrivers), or our own (needs Microsoft's driver
-  signing). To be decided.
+- **The microphone's driver signed, and shipped**: the Longarm audio
+  driver (drivers/windows/audio, docs/remote-desktop.md "Sound and
+  microphone") builds in CI unsigned. Left: Microsoft attestation signing
+  (an EV code-signing certificate and a Partner Center hardware account:
+  the owner is getting them), a release job that submits the package and
+  takes the signed one back, the MSI installing it beside longarmd
+  (`<install dir>\audio`, `longarmd audio-driver install` from a custom
+  action) on workers. Until then a worker offers no microphone.
+- **The microphone driver tested on a test-signing machine** (a VM with
+  Secure Boot off and `bcdedit /set testsigning on`): install, "Longarm
+  Microphone" in Sound settings, the viewer's microphone heard by a
+  recorder there.
 - **Sound on Linux and macOS** (PulseAudio/PipeWire monitor source;
   ScreenCaptureKit captures audio too), and a codec better than ADPCM
   (Opus) once one exists without cgo.
