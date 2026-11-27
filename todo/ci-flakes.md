@@ -22,6 +22,8 @@ failing assertion.
 | `e2e TestPortLinks/hub_restart_and_down` | windows-latest, ubuntu-latest (#174) | `the 1m link closed before its TTL`: the test's deadline was taken before `link create`, the grant expires on a whole second from the request; fixed in #174 with a few seconds' slack (`job_bound` then failed only because the hub was left down) |
 | `e2e TestLocalAPI` | windows-latest (#174) | `security info of \\.\pipe\longarm-longarmd-…: All pipe instances are busy` (localapi_test.go:27): the test reads the pipe's ACL while the daemon serves a client |
 | `.github/scripts/msi-install-test.ps1` "still running after the upgrade" | windows-latest (#127) | a new process got the pid of one the upgrade ended; fixed in #128 (processes compared by id and start time) |
+| `.github/scripts/msi-install-test.ps1` "service X ran before the upgrade and does not run again as a new process" | windows-latest, "service worker as a user" (#192: LongarmDesktop; #195: LongarmUpdate) | within 90 s no new pid for the service after the upgrade; both changes were elsewhere. Look at when the restart step starts the services and whether one is still stopping |
+| `e2e TestHubRestartMeasured` | windows-latest (#193) | `workers back 12.8s after the hub answered (bound 12s)` |
 
 ## Seen on Windows workers under load (cpc, several jobs at once)
 
