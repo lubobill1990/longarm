@@ -14,8 +14,7 @@ to 48 kHz 16-bit stereo, the INF's OEM format).
 
 #pragma once
 
-#include <wdm.h>
-#include <mmreg.h>
+#include "definitions.h"  // the driver's kernel and audio headers, in their order
 
 // LoopbackInitialize: once, in DriverEntry.
 VOID LoopbackInitialize();
