@@ -81,6 +81,8 @@ jobs:
         run: |
           dev=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in d.items() if "iOS" in k for x in v if x["name"].startswith("iPhone")))')
           xcrun simctl bootstatus "$dev" -b
+          app=build/Build/Products/Debug-iphonesimulator/App.app
+          ls "$app" "$app/public"; cat "$app/capacitor.config.json"; head -c 400 "$app/public/index.html"; echo
           xcrun simctl install "$dev" build/Build/Products/Debug-iphonesimulator/App.app
           xcrun simctl launch --stdout="$PWD/app-stdout.log" --stderr="$PWD/app-stderr.log" "$dev" com.weavejam.longarm
           for s in 20 60 120; do
