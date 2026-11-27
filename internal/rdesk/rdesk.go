@@ -66,6 +66,20 @@ func Serve(st Stream, start *pb.DesktopStart, log *slog.Logger) error {
 		defer in.Close()
 		s.in = in
 	}
+	// The clipboard both ways (where this OS has one): what is copied here
+	// goes to the viewer.
+	if cb, err := screen.OpenClipboard(); err == nil {
+		defer cb.Close()
+		s.clip = cb
+		go func() {
+			for text := range cb.Changes() {
+				if ctx.Err() != nil {
+					return
+				}
+				s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_Clipboard{Clipboard: text}})
+			}
+		}()
+	}
 	go func() { s.recv(ctx); cancel() }()
 	err := s.capture(ctx)
 	if ctx.Err() != nil {
@@ -87,6 +101,9 @@ type session struct {
 
 	mu     sync.Mutex
 	origin [2]int // the display's desktop coordinates (input is relative to it)
+
+	sendMu sync.Mutex       // frames and clipboard text come from two goroutines
+	clip   screen.Clipboard // nil: no clipboard here
 }
 
 // recv takes the viewer's acks, keyframe requests and input.
@@ -102,6 +119,13 @@ func (s *session) recv(ctx context.Context) error {
 				s.acked.Store(v.Ack)
 			}
 			signal(s.ackCh)
+		case *pb.DesktopClientMessage_Clipboard:
+			// The viewer copied: paste-able here (not when only watching).
+			if s.clip != nil && !s.start.GetViewOnly() && len(v.Clipboard) <= screen.MaxClipboardText {
+				if err := s.clip.Set(v.Clipboard); err != nil {
+					s.log.Debug("remote desktop: clipboard", "err", err)
+				}
+			}
 		case *pb.DesktopClientMessage_Keyframe:
 			signal(s.kfCh)
 		case *pb.DesktopClientMessage_Input:
@@ -213,7 +237,7 @@ func (s *session) open() (*pipeline, error) {
 	if p.enc != nil {
 		encoder = p.enc.Name()
 	}
-	return p, s.st.Send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_Started{Started: &pb.DesktopStarted{
+	return p, s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_Started{Started: &pb.DesktopStarted{
 		Width: int32(p.w), Height: int32(p.h), Codec: p.codec, Encoder: encoder,
 		Display: &pb.DesktopDisplay{Index: int32(d.Index), Name: d.Name, X: int32(d.X), Y: int32(d.Y), Width: int32(d.W), Height: int32(d.H)},
 	}}})
@@ -244,7 +268,7 @@ func (s *session) capture(ctx context.Context) error {
 				if !hidden {
 					hidden = true
 					s.log.Debug("remote desktop: cannot capture", "err", err)
-					if err := s.st.Send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_State{State: &pb.DesktopState{SecureHidden: true, Note: err.Error()}}}); err != nil {
+					if err := s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_State{State: &pb.DesktopState{SecureHidden: true, Note: err.Error()}}}); err != nil {
 						return err
 					}
 				}
@@ -256,7 +280,7 @@ func (s *session) capture(ctx context.Context) error {
 			}
 			if hidden {
 				hidden = false
-				if err := s.st.Send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_State{State: &pb.DesktopState{}}}); err != nil {
+				if err := s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_State{State: &pb.DesktopState{}}}); err != nil {
 					return err
 				}
 			}
@@ -323,7 +347,7 @@ func (s *session) sendCursor(p *pipeline, last *screen.Cursor) error {
 	}
 	*last = c
 	last.BGRA = nil
-	return s.st.Send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_Cursor{Cursor: m}})
+	return s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_Cursor{Cursor: m}})
 }
 
 func (s *session) sendFrame(p *pipeline, keyframe bool) error {
@@ -374,7 +398,7 @@ func (s *session) sendFrame(p *pipeline, keyframe bool) error {
 	}
 	f.Seq = s.sent.Add(1)
 	p.sentAt = time.Now()
-	return s.st.Send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_Frame{Frame: f}})
+	return s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_Frame{Frame: f}})
 }
 
 // isIDR: the access unit holds an IDR picture (NAL type 5).
@@ -417,4 +441,10 @@ func (h Host) Serve(st Stream, start *pb.DesktopStart) error {
 		return status.Error(codes.Unimplemented, err.Error())
 	}
 	return err
+}
+
+func (s *session) send(m *pb.DesktopServerMessage) error {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	return s.st.Send(m)
 }

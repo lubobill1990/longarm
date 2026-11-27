@@ -67,14 +67,34 @@ Screen Recording and Accessibility for the runner). Left out:
 - **The login window and lock screen** cannot be captured from a
   LaunchAgent; longarmd as a LaunchDaemon says so (`Available`).
 
-## Native remote desktop: clipboard, displays, tray
+## Native remote desktop: the viewer's own title bar (UU Remote's features)
 
-The proto carries clipboard text both ways, but neither side uses it yet.
-The viewer has no display picker (`--display` only) and no "being viewed"
-border on the worker. The tray's "Desktop" item still says "Remote
-Desktop / Windows App" and is offered for Windows workers only
-(web/src/components/WorkerCard.tsx): show it for any worker with
-`desktop-native`.
+Asked for (2026-11-27): in a window too, not only in full screen, the
+title bar is the viewer's own (drawn by it, like the full-screen bar in
+internal/screen/bar_windows.go), with:
+
+- **Security status**: the path (direct / relay), the encryption (mTLS,
+  end-to-end keys), that only the owner can connect.
+- **Privacy mode** (防窥): the worker's own monitor shows black while you
+  work on it. On Windows 10 2004+ the agent can cover the screen with a
+  click-through topmost window marked WDA_EXCLUDEFROMCAPTURE: the person
+  at the machine sees black, the capture sees the desktop under it.
+- **Auto-lock**: lock the worker's session when the viewer disconnects
+  (LockWorkStation from the agent in the console session).
+- **Several displays**: a picker in the bar (now `--display` only; the
+  proto has DesktopStart.display), later all displays at once.
+- **Audio**: the worker's sound played here (WASAPI loopback on the
+  worker, playback here; a codec without cgo: PCM / ADPCM first). The
+  local microphone on the worker needs a virtual audio device there
+  (a driver): to be decided.
+- A "being viewed" border on the worker.
+
+## Native remote desktop: clipboard on Linux and macOS
+
+Text goes both ways between Windows workers and viewers
+(internal/screen/clipboard_windows.go, rdesk, longarm desktop); Linux
+(X11 CLIPBOARD selection) and macOS (NSPasteboard) say ErrUnsupported
+(clipboard_other.go). Images and files are not carried.
 
 ## Turning Remote Desktop on for a worker
 

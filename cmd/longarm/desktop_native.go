@@ -69,6 +69,25 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 		return usagef("--input: %v", err)
 	}
 
+	// The clipboard both ways in the window (not for a screenshot): what
+	// is copied here goes to the worker unless only watching.
+	var clip screen.Clipboard
+	if o.screenshot == "" {
+		if c, err := screen.OpenClipboard(); err == nil {
+			clip = c
+			defer c.Close()
+			if !o.viewOnly {
+				go func() {
+					for text := range c.Changes() {
+						if ctx.Err() != nil {
+							return
+						}
+						send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Clipboard{Clipboard: text}})
+					}
+				}()
+			}
+		}
+	}
 	packets := make(chan screen.VideoPacket, 8)
 	var received atomic.Int64
 	var frames atomic.Int64
@@ -105,6 +124,14 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 				c := v.Cursor
 				p.Cursor = &screen.Cursor{X: int(c.X), Y: int(c.Y), Visible: c.Visible, ShapeID: c.ShapeId,
 					W: int(c.Width), H: int(c.Height), HotX: int(c.HotX), HotY: int(c.HotY), BGRA: c.Bgra}
+			case *pb.DesktopServerMessage_Clipboard:
+				// Copied on the worker: paste-able here.
+				if clip != nil {
+					if err := clip.Set(v.Clipboard); err != nil {
+						fmt.Fprintf(os.Stderr, "longarm: clipboard: %v\n", err)
+					}
+				}
+				continue
 			case *pb.DesktopServerMessage_State:
 				p.SecureHidden, p.SecureHiddenOK = v.State.SecureHidden, true
 				if v.State.SecureHidden {

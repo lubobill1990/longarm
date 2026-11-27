@@ -44,6 +44,9 @@ var (
 	procReleaseCapture        = modUser32.NewProc("ReleaseCapture")
 	procDestroyWindow         = modUser32.NewProc("DestroyWindow")
 	procSetCursor             = modUser32.NewProc("SetCursor")
+	procGetMessageW           = modUser32.NewProc("GetMessageW")
+	procPostMessageW          = modUser32.NewProc("PostMessageW")
+	procPostThreadMessageW    = modUser32.NewProc("PostThreadMessageW")
 	procGetSystemMenu         = modUser32.NewProc("GetSystemMenu")
 	procAppendMenuW           = modUser32.NewProc("AppendMenuW")
 )
@@ -62,6 +65,7 @@ const (
 	wmSysKeyUp   = 0x0105
 	wmSysChar    = 0x0106
 	wmSysCommand = 0x0112
+	wmAppKey     = 0x8000 + 1 // WM_APP+1: a key from the hook (wParam scan, lParam down)
 	scMaximize   = 0xF030
 	// menuFullscreen: our item in the window menu (system command ids are
 	// below 0xF000 and multiples of 16)
@@ -136,6 +140,8 @@ const (
 // Window is the viewer window (see the comment above).
 type Window struct {
 	HWND windows.HWND
+	// Name is what the full-screen bar shows (the worker).
+	Name string
 
 	// Callbacks, on the window's thread. x and y are client coordinates.
 	OnMouse  func(kind, x, y, button, dx, dy int)
@@ -146,6 +152,7 @@ type Window struct {
 	OnCursor func() uintptr
 
 	hook       uintptr
+	hookThread uint32
 	fullscreen bool
 	saved      rect
 	down       map[uint16]bool // keys held on the other side
@@ -187,9 +194,12 @@ func NewWindow(title string, w, h int, takeKeys bool) (*Window, error) {
 		procAppendMenuW.Call(m, 0x0800 /* MF_SEPARATOR */, 0, 0)
 		procAppendMenuW.Call(m, 0, menuFullscreen, uintptr(unsafe.Pointer(label)))
 	}
+	// Twice: the first ShowWindow of a process takes its start-up show state
+	// (a launcher's SW_HIDE, say), the second does what it is asked.
+	procShowWindow.Call(hwnd, swShow)
 	procShowWindow.Call(hwnd, swShow)
 	if takeKeys {
-		win.hook, _, _ = procSetWindowsHookExW.Call(whKeyboardLL, windows.NewCallback(keyboardHook), 0, 0)
+		win.startHook()
 	}
 	return win, nil
 }
@@ -203,11 +213,7 @@ func (w *Window) SetTitle(s string) {
 // Run handles the window's messages until it is closed, calling wake
 // whenever ev is signaled (frames arrived) and after every batch of messages.
 func (w *Window) Run(ev windows.Handle, wake func()) {
-	defer func() {
-		if w.hook != 0 {
-			procUnhookWindowsHookEx.Call(w.hook)
-		}
-	}()
+	defer w.stopHook() // the hook thread unhooks itself
 	for {
 		procMsgWaitForMultipleObj.Call(1, uintptr(unsafe.Pointer(&ev)), windows.INFINITE, qsAllInput, mwmoInputAvail)
 		var m msg
@@ -248,6 +254,11 @@ func (w *Window) ToggleFullscreen() {
 		procSetWindowPos.Call(h, 0, uintptr(r.Left), uintptr(r.Top), uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpFrameChange|swpNoOwnerZ)
 	}
 	w.fullscreen = !w.fullscreen
+	if w.fullscreen {
+		newBar(w).show()
+	} else if theBar != nil {
+		theBar.hide()
+	}
 }
 
 func (w *Window) key(scan uint16, down bool) {
@@ -259,7 +270,7 @@ func (w *Window) key(scan uint16, down bool) {
 	}
 	if down && w.ctrl && w.alt {
 		switch scan {
-		case scanEnter:
+		case scanEnter, 0xE000 | scanEnter: // either Enter key
 			w.ToggleFullscreen()
 			return
 		case 0xE000 | scanEnd:
@@ -293,6 +304,41 @@ func (w *Window) releaseKeys() {
 	w.ctrl, w.alt = false, false
 }
 
+// hookProc: one callback for the process (NewCallback's slots are few).
+var hookProc = windows.NewCallback(keyboardHook)
+
+// startHook installs the keyboard hook on a thread of its own that does
+// nothing else. Windows drops a low-level hook that answers late (a few
+// hundred ms), and the window's thread decodes and draws video: on that
+// thread the hook went, and with it Win, Alt+Tab and Ctrl+Alt+Enter.
+func (w *Window) startHook() {
+	ready := make(chan struct{})
+	go func() {
+		runtime.LockOSThread()
+		w.hookThread = windows.GetCurrentThreadId()
+		w.hook, _, _ = procSetWindowsHookExW.Call(whKeyboardLL, hookProc, 0, 0)
+		close(ready)
+		var m msg
+		for {
+			if r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0); int32(r) <= 0 {
+				break
+			}
+		}
+		if w.hook != 0 {
+			procUnhookWindowsHookEx.Call(w.hook)
+		}
+	}()
+	<-ready
+}
+
+func (w *Window) stopHook() {
+	if w.hookThread != 0 {
+		procPostThreadMessageW.Call(uintptr(w.hookThread), wmQuit, 0, 0)
+	}
+}
+
+// keyboardHook runs on the hook's thread: it only hands the key to the
+// window (wmAppKey) and swallows it.
 func keyboardHook(code int, wParam, lParam uintptr) uintptr {
 	w := theWindow
 	if code == 0 && w != nil {
@@ -301,11 +347,15 @@ func keyboardHook(code int, wParam, lParam uintptr) uintptr {
 		// Injected keys are someone's SendInput - ours, when the viewer
 		// shows its own machine: leave them alone.
 		if fg == uintptr(w.HWND) && k.Flags&llkhfInjected == 0 && k.Scan != 0 {
-			scan := uint16(k.Scan & 0xFF)
+			scan := uintptr(k.Scan & 0xFF)
 			if k.Flags&llkhfExtended != 0 {
 				scan |= 0xE000
 			}
-			w.key(scan, k.Flags&llkhfUp == 0)
+			down := uintptr(0)
+			if k.Flags&llkhfUp == 0 {
+				down = 1
+			}
+			procPostMessageW.Call(uintptr(w.HWND), wmAppKey, scan, down)
 			return 1 // swallowed: the local system does not see it
 		}
 	}
@@ -340,6 +390,10 @@ func wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 	case wmMouseMove, wmLButtonDown, wmLButtonUp, wmRButtonDown, wmRButtonUp, wmMButtonDown, wmMButtonUp:
 		x, y := lparamXY(lParam)
 		kind, button := MouseMoved, 0
+		// Full screen: the pointer at the top edge brings the bar back.
+		if w.fullscreen && message == wmMouseMove && y <= 1 {
+			newBar(w).show()
+		}
 		switch message {
 		case wmLButtonDown, wmRButtonDown, wmMButtonDown:
 			kind = MouseDown
@@ -369,6 +423,9 @@ func wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		if w.OnMouse != nil {
 			w.OnMouse(MouseWheeled, 0, 0, 0, dx, dy)
 		}
+		return 0
+	case wmAppKey: // from the hook's thread
+		w.key(uint16(wParam), lParam != 0)
 		return 0
 	case wmKeyDown, wmKeyUp, wmSysKeyDown, wmSysKeyUp:
 		// Only without the hook (it takes keys first while we are in front).

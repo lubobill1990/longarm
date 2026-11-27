@@ -94,6 +94,9 @@ func cursorFrom(cur *Cursor) uintptr {
 func runViewer(o ViewerOptions) error {
 	SetDPIAware()
 	win, err := NewWindow(o.Title+fullscreenHint, 1600, 940, o.Input != nil)
+	if err == nil {
+		win.Name = o.Title
+	}
 	if err != nil {
 		return err
 	}

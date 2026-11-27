@@ -9,6 +9,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/jezek/xgb"
 	"github.com/jezek/xgb/randr"
@@ -30,7 +33,7 @@ func wayland() bool {
 }
 
 // xConnect connects to $DISPLAY. longarmd usually runs without one (a
-// systemd user service): then it tries :0, with the display manager's
+// systemd user service): then it tries the local X servers (:0, :1, ...), with the display manager's
 // Xauthority file when $XAUTHORITY is not set either.
 func xConnect() (*xgb.Conn, error) {
 	if wayland() {
@@ -54,11 +57,38 @@ func xConnect() (*xgb.Conn, error) {
 			}
 		}
 	}
-	c, err := xgb.NewConnDisplay(":0")
-	if err != nil {
-		return nil, fmt.Errorf("no X display ($DISPLAY is not set, and :0: %v)", err)
+	// The session's display is not always :0: GDM gives the login screen :0
+	// and the user's session the next one (:1). The first local X server
+	// that lets this account in is the session's.
+	var tried []string
+	for _, d := range xSockets() {
+		c, err := xgb.NewConnDisplay(d)
+		if err == nil {
+			return c, nil
+		}
+		tried = append(tried, fmt.Sprintf("%s: %v", d, err))
 	}
-	return c, nil
+	if len(tried) == 0 {
+		return nil, errors.New("no X display: $DISPLAY is not set and no X server runs here (nobody is logged in to a desktop?)")
+	}
+	return nil, fmt.Errorf("no X display this account may use ($DISPLAY is not set; %s)", strings.Join(tried, "; "))
+}
+
+// xSockets are the local X servers' displays (":0", ":1", ...), in order.
+func xSockets() []string {
+	ents, _ := os.ReadDir("/tmp/.X11-unix")
+	var ds []int
+	for _, e := range ents {
+		if n, err := strconv.Atoi(strings.TrimPrefix(e.Name(), "X")); err == nil && strings.HasPrefix(e.Name(), "X") {
+			ds = append(ds, n)
+		}
+	}
+	slices.Sort(ds)
+	out := make([]string, len(ds))
+	for i, n := range ds {
+		out[i] = ":" + strconv.Itoa(n)
+	}
+	return out
 }
 
 // xFormat checks the screen is 24/32-bit true colour with 32-bit pixels in
