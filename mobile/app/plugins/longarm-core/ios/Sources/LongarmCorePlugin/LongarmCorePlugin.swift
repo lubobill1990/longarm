@@ -16,6 +16,8 @@ public class LongarmCorePlugin: CAPPlugin, CAPBridgedPlugin {
     // Spike diagnostics: with the Go runtime in the process, the WebView's
     // first load failed (NSCocoaErrorDomain 256): do file reads fail, and why?
     override public func load() {
+        setvbuf(stdout, nil, _IONBF, 0) // Capacitor's log (print) reaches simctl's --stdout file
+        NSLog("LongarmCore: app location %@", bridge?.config.appLocation.path ?? "?")
         guard let u = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "public") else {
             NSLog("LongarmCore: no public/index.html")
             return
