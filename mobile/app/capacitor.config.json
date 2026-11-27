@@ -1,0 +1,11 @@
+{
+  "appId": "dev.longarm.app",
+  "appName": "Longarm",
+  "webDir": "www",
+  "server": {
+    "allowNavigation": ["127.0.0.1"]
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

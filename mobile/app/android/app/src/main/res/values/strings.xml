@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Longarm</string>
+    <string name="title_activity_main">Longarm</string>
+    <string name="package_name">dev.longarm.app</string>
+    <string name="custom_url_scheme">dev.longarm.app</string>
+</resources>

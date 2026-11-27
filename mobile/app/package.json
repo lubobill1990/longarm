@@ -1,0 +1,15 @@
+{
+  "name": "longarm-app",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The Longarm phone app's shell (docs/mobile.md): Capacitor around the Go core (../core)",
+  "dependencies": {
+    "@capacitor/android": "8.6.3",
+    "@capacitor/core": "8.6.3",
+    "@capacitor/ios": "8.6.3",
+    "longarm-core": "file:plugins/longarm-core"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.3"
+  }
+}
