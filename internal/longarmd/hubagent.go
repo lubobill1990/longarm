@@ -375,7 +375,24 @@ func (a *hubAgent) hello() *pb.NodeHello {
 	if !legacyRelay() {
 		h.Capabilities = append(h.Capabilities, capRelaySet)
 	}
+	if a.srv != nil && a.srv.Desktop != nil {
+		h.RemoteDesktop = remoteDesktopKind(a.srv.Desktop.Info(context.Background()))
+	}
 	return h
+}
+
+// remoteDesktopKind: how Remote Desktop / Windows App reaches this machine
+// (NodeHello.remote_desktop), "" = it doesn't.
+func remoteDesktopKind(d *pb.DesktopInfo) string {
+	switch {
+	case d == nil:
+		return ""
+	case d.Kind != "":
+		return d.Kind // devbox, cloudpc
+	case d.RdpPort != 0:
+		return "rdp"
+	}
+	return ""
 }
 
 // noteEndpoints logs the endpoints a hello reports to the hub - what other

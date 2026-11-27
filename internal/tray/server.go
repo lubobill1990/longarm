@@ -567,11 +567,15 @@ func (s *Server) ssh(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// desktop opens a terminal running `longarm desktop <worker>`: it says what
-// it does, asks which Dev Box the worker is the first time and keeps a
-// Remote Desktop forward open while mstsc runs.
+// desktop runs `longarm desktop <worker>` without a terminal: Longarm's own
+// remote desktop, or (rdp, the card's Remote Desktop / Windows App item)
+// Windows App for a Dev Box or Cloud PC, mstsc through a forward that stays
+// open while it runs; a failure comes back to the tray as a message.
 func (s *Server) desktop(w http.ResponseWriter, r *http.Request) {
-	var body struct{ Worker string }
+	var body struct {
+		Worker string
+		RDP    bool // Remote Desktop / Windows App, also where Longarm's own works
+	}
 	if !readBody(w, r, &body) {
 		return
 	}
@@ -579,8 +583,13 @@ func (s *Server) desktop(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "bad worker name")
 		return
 	}
-	// The viewer is a window of its own: no terminal (CLAUDE.md "The tray").
-	if err := s.gui(s.longarmArgs("desktop", body.Worker)); err != nil {
+	args := []string{"desktop", body.Worker}
+	if body.RDP {
+		args = []string{"desktop", "--rdp", body.Worker}
+	}
+	// The viewer, mstsc and Windows App are windows of their own: no
+	// terminal (CLAUDE.md "The tray").
+	if err := s.gui(s.longarmArgs(args...)); err != nil {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -135,7 +135,8 @@ export const trayApi = {
   licenses: () => get<string>('/trayapi/licenses'),
   attach: (worker: string, session?: string) => post('/trayapi/attach', { worker, session }),
   ssh: (worker: string) => post('/trayapi/ssh', { worker }),
-  desktop: (worker: string) => post('/trayapi/desktop', { worker }),
+  /** rdp: Remote Desktop / Windows App even where Longarm's own remote desktop works */
+  desktop: (worker: string, rdp?: boolean) => post('/trayapi/desktop', { worker, rdp: !!rdp }),
   open: (url: string) => post('/trayapi/open', { url }),
   openPanel: (path = '/') => post('/trayapi/panel', { path }),
   /** opens (or focuses) the Sessions window, filtered to a worker and agent, or at a session */

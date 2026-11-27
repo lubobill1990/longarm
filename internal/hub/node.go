@@ -207,6 +207,7 @@ func (h *Hub) applyHelloLocked(n *node, hello *pb.NodeHello) {
 	}
 	r.Channel, r.UpdateEnabled = hello.Channel, hello.UpdateEnabled
 	r.Capabilities = hello.Capabilities
+	r.RemoteDesktop = hello.RemoteDesktop
 	h.applyTailnetLocked(n, hello.Tailnet)
 	if hello.Update != nil {
 		if b, err := protojson.Marshal(legacyUpdateStatus(hello.Update)); err == nil {
@@ -482,6 +483,7 @@ func (h *Hub) nodeInfoLocked(n *node) *pb.NodeInfo {
 		MaxJobs: n.maxJobs, ReservedMemGb: n.reservedGB, Tailnet: n.tailnet, Isolation: r.Isolation,
 		UpdateAvailable: n.updateAvail,
 		Id:              r.ID, CertName: r.DialName(), LegacySerials: h.legacySerials[r.ID],
+		RemoteDesktop: r.RemoteDesktop,
 	}
 	if r.Role != string(pki.RoleWorker) {
 		info.User = nodeUser(r)

@@ -281,8 +281,9 @@ var DefaultResolver Resolver = net.DefaultResolver
 // PortalURL is the Dev Box portal (the fallback when the API can't be used).
 const PortalURL = "https://devbox.microsoft.com"
 
-// CloudPCPortalURL is the Windows 365 portal.
-const CloudPCPortalURL = "https://windows365.microsoft.com"
+// CloudPCPortalURL is the Windows 365 portal (windows365.microsoft.com is
+// deprecated): the Cloud PC opens from there in Windows App or the browser.
+const CloudPCPortalURL = "https://windows.cloud.microsoft"
 
 // Facts about a worker that tell which Dev Box it is: the Dev Center API
 // knows no host names (DesktopInfo.os_installed, last_remote_logon;

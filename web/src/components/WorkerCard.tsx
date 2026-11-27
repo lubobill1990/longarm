@@ -39,8 +39,9 @@ const AGENTS: [string, string, string][] = [
 export interface CardActions {
   attach?: (w: string) => void
   ssh?: (w: string) => void
-  /** longarm desktop: Longarm's own remote desktop, else Windows App (Dev Box) / Remote Desktop */
-  desktop?: (w: string) => void
+  /** longarm desktop: Longarm's own remote desktop, else Windows App (Dev Box) / Remote Desktop;
+   *  rdp: Remote Desktop / Windows App even where Longarm's own works (longarm desktop --rdp) */
+  desktop?: (w: string, rdp?: boolean) => void
   /** longarm admin drain / undrain: admins only (leave it unset for others) */
   drain?: (w: string, on: boolean) => void
   /** remove (revoke) workers on the hub; the caller confirms */
@@ -58,6 +59,19 @@ export interface CardActions {
 }
 
 /** "0.1.8" (a leading v dropped), "" when unknown. */
+/** The menu item for Remote Desktop / Windows App (NodeInfo.remote_desktop), "" = none. */
+export function remoteDesktopLabel(kind?: string): string {
+  switch (kind) {
+    case 'devbox':
+      return 'Windows App (Dev Box sign-in)'
+    case 'cloudpc':
+      return 'Windows App (Cloud PC sign-in)'
+    case 'rdp':
+      return 'Remote Desktop (sign in)'
+  }
+  return ''
+}
+
 export function fmtVersion(v?: string): string {
   return (v ?? '').replace(/^v/, '')
 }
@@ -236,8 +250,13 @@ export function WorkerCard({ w, m, actions, now = Date.now() }: { w?: PoolWorker
   // login for scp, port forwards, editors' remote - is in the menu
   if (session && actions?.ssh) menuItems.push([`SSH ${session.name} (a plain SSH login)`, () => actions.ssh!(session.name)])
   // Longarm's own remote desktop on every OS (else Remote Desktop / Windows App)
-  if (session && actions?.desktop)
+  if (session && actions?.desktop) {
     menuItems.push(['Desktop', () => actions.desktop!(session.name)])
+    // and Microsoft's way in where the machine has one (its hello says): it
+    // signs in itself, e.g. to a Cloud PC nobody is signed in to at its console
+    const rd = remoteDesktopLabel(session.node?.remote_desktop)
+    if (rd) menuItems.push([rd, () => actions.desktop!(session.name, true)])
+  }
   if (session && actions?.drain)
     menuItems.push([session.node?.admin_drain ? 'Resume (take jobs again)' : 'Drain (no new jobs)', () => actions.drain!(session.name, !session.node?.admin_drain)])
   if (admin && actions?.attach) menuItems.push([`Run as admin (attach ${admin.name})`, () => actions.attach!(admin.name)])

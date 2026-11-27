@@ -1582,7 +1582,12 @@ type NodeHello struct {
 	// and HubCommand.relays (listens on every relay of the set); "node-id" =
 	// it follows a rename (renews its certificate and restarts when the hub
 	// asks).
-	Capabilities  []string `protobuf:"bytes,18,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
+	Capabilities []string `protobuf:"bytes,18,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
+	// How Remote Desktop / Windows App reaches this machine (DesktopInfo):
+	// "devbox" (Windows App through its Dev Center), "cloudpc" (Windows 365),
+	// "rdp" (Remote Desktop is on: mstsc through a forward); "" = it doesn't.
+	// The tray shows a "Remote Desktop" item on the cards that have one.
+	RemoteDesktop string `protobuf:"bytes,19,opt,name=remote_desktop,json=remoteDesktop,proto3" json:"remote_desktop,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1741,6 +1746,13 @@ func (x *NodeHello) GetCapabilities() []string {
 		return x.Capabilities
 	}
 	return nil
+}
+
+func (x *NodeHello) GetRemoteDesktop() string {
+	if x != nil {
+		return x.RemoteDesktop
+	}
+	return ""
 }
 
 type NodeState struct {
@@ -4307,7 +4319,10 @@ type NodeInfo struct {
 	LegacySerials []string `protobuf:"bytes,38,rep,name=legacy_serials,json=legacySerials,proto3" json:"legacy_serials,omitempty"`
 	// Workers: an update of the node's machine in progress, or how the last
 	// one ended until it is resolved (NodeUpdate); unset = none.
-	Update        *NodeUpdate `protobuf:"bytes,39,opt,name=update,proto3" json:"update,omitempty"`
+	Update *NodeUpdate `protobuf:"bytes,39,opt,name=update,proto3" json:"update,omitempty"`
+	// Workers: how Remote Desktop / Windows App reaches the machine, as its
+	// hello said (NodeHello.remote_desktop); "" = it doesn't.
+	RemoteDesktop string `protobuf:"bytes,40,opt,name=remote_desktop,json=remoteDesktop,proto3" json:"remote_desktop,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4613,6 +4628,13 @@ func (x *NodeInfo) GetUpdate() *NodeUpdate {
 		return x.Update
 	}
 	return nil
+}
+
+func (x *NodeInfo) GetRemoteDesktop() string {
+	if x != nil {
+		return x.RemoteDesktop
+	}
+	return ""
 }
 
 // NodeUpdate is the hub's view of an update of a worker's machine
@@ -12671,7 +12693,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x03job\x18\x04 \x01(\v2\x0f.longarm.v1.JobR\x03job\x12&\n" +
 	"\x03log\x18\x05 \x01(\v2\x14.longarm.v1.LogChunkR\x03log\x12\x19\n" +
 	"\blog_size\x18\x06 \x01(\x03R\alogSize\x12\x17\n" +
-	"\alog_eof\x18\a \x01(\bR\x06logEof\"\xb9\x05\n" +
+	"\alog_eof\x18\a \x01(\bR\x06logEof\"\xe0\x05\n" +
 	"\tNodeHello\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x0e\n" +
 	"\x02os\x18\x02 \x01(\tR\x02os\x12\x12\n" +
@@ -12692,7 +12714,8 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\atailnet\x18\x0f \x01(\v2\x18.longarm.v1.TailnetStateR\atailnet\x12\x1c\n" +
 	"\tisolation\x18\x10 \x01(\tR\tisolation\x12'\n" +
 	"\x0ftenancy_version\x18\x11 \x01(\x03R\x0etenancyVersion\x12\"\n" +
-	"\fcapabilities\x18\x12 \x03(\tR\fcapabilities\x1a9\n" +
+	"\fcapabilities\x18\x12 \x03(\tR\fcapabilities\x12%\n" +
+	"\x0eremote_desktop\x18\x13 \x01(\tR\rremoteDesktop\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xca\x01\n" +
@@ -12886,7 +12909,7 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\x06points\x18\x02 \x03(\v2\x18.longarm.v1.MetricsPointR\x06points\x12\x17\n" +
 	"\anode_id\x18\x03 \x01(\tR\x06nodeId\"@\n" +
 	"\x0fHistoryResponse\x12-\n" +
-	"\x05nodes\x18\x01 \x03(\v2\x17.longarm.v1.NodeHistoryR\x05nodes\"\xa3\v\n" +
+	"\x05nodes\x18\x01 \x03(\v2\x17.longarm.v1.NodeHistoryR\x05nodes\"\xca\v\n" +
 	"\bNodeInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04role\x18\x02 \x01(\tR\x04role\x12\x14\n" +
@@ -12931,7 +12954,8 @@ const file_longarm_v1_hub_proto_rawDesc = "" +
 	"\tcert_name\x18$ \x01(\tR\bcertName\x12!\n" +
 	"\fcompanion_id\x18% \x01(\tR\vcompanionId\x12%\n" +
 	"\x0elegacy_serials\x18& \x03(\tR\rlegacySerials\x12.\n" +
-	"\x06update\x18' \x01(\v2\x16.longarm.v1.NodeUpdateR\x06update\x1a9\n" +
+	"\x06update\x18' \x01(\v2\x16.longarm.v1.NodeUpdateR\x06update\x12%\n" +
+	"\x0eremote_desktop\x18( \x01(\tR\rremoteDesktop\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb6\x05\n" +
