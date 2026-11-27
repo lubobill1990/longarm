@@ -81,34 +81,18 @@ jobs:
         run: |
           dev=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in d.items() if "iOS" in k for x in v if x["name"].startswith("iPhone")))')
           xcrun simctl bootstatus "$dev" -b
-          app=build/Build/Products/Debug-iphonesimulator/App.app
-          ls "$app" "$app/public"; cat "$app/capacitor.config.json"; head -c 400 "$app/public/index.html"; echo
           xcrun simctl install "$dev" build/Build/Products/Debug-iphonesimulator/App.app
           xcrun simctl launch --stdout="$PWD/app-stdout.log" --stderr="$PWD/app-stderr.log" "$dev" com.weavejam.longarm
-          for s in 20 60 120; do
+          for s in 20 60; do
             sleep $(( s - ${prev:-0} )); prev=$s
             xcrun simctl io "$dev" screenshot "ios-simulator-${s}s.png"
           done
           xcrun simctl spawn "$dev" launchctl list | grep -i longarm || echo "the app is not running"
           xcrun simctl spawn "$dev" log show --last 4m --style compact \
             --predicate 'process == "App" OR process CONTAINS "WebContent" OR eventMessage CONTAINS "longarm"' > app.log || true
-          grep -iE "LongarmCore|didFail|code=" app.log | tail -40
+          grep -E "LongarmCore|didFail" app.log | tail -20
           echo "--- stdout"; cat app-stdout.log || true; echo "--- stderr"; tail -50 app-stderr.log || true
           ls ~/Library/Logs/DiagnosticReports 2>/dev/null | tail; cp ~/Library/Logs/DiagnosticReports/App* . 2>/dev/null || true
-      - name: Control - the app without the Go core
-        working-directory: mobile/app
-        run: |
-          # spike diagnostics: does the WebView load the loader page without Longarm.xcframework?
-          dev=$(xcrun simctl list devices booted -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for v in d.values() for x in v))')
-          xcrun simctl uninstall "$dev" com.weavejam.longarm || true
-          npm uninstall longarm-core --no-audit --no-fund
-          npx cap sync ios
-          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' -derivedDataPath build-plain CODE_SIGNING_ALLOWED=NO build -quiet
-          xcrun simctl install "$dev" build-plain/Build/Products/Debug-iphonesimulator/App.app
-          xcrun simctl launch "$dev" com.weavejam.longarm
-          sleep 40
-          xcrun simctl io "$dev" screenshot ios-simulator-plain.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:

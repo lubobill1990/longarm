@@ -60,7 +60,7 @@ attach to their terminal sessions, see and use their desktops. TestFlight
 
 | Phase | What | State |
 |---|---|---|
-| 0. Spike | the Go core bound for Android and iOS, its size, longnet and the relay on a phone, sign-in | Android: bound (arm64 12 MB compressed, 35 MB installed), emulator; iOS: to do |
+| 0. Spike | the Go core bound for Android and iOS, its size, longnet and the relay on a phone, sign-in | done (2026-11-28): Android emulator - machines from the hub, terminal attach to a Windows worker; iOS simulator - the core starts, the page loads (mobile.yml). Android core 12 MB compressed / 35 MB installed (arm64). Left for a device: the browser sign-in, longnet on mobile data |
 | 1. MVP | the app shell, machines, terminal with a key bar (Esc, Tab, Ctrl, Alt, arrows); TestFlight, APK | |
 | 2. Desktop | the native viewer: touch modes (trackpad, direct), zoom, keyboard, options; mobile data: lower fps and bitrate | |
 | 3. Polish | Face ID / fingerprint lock, notifications (APNs/FCM through the hub), sound | |
@@ -72,5 +72,11 @@ attach to their terminal sessions, see and use their desktops. TestFlight
 - gomobile builds with cgo (the NDK, Xcode's clang): purego (gopsutil on
   darwin, internal/screen on Linux) needs it there; the rest of Longarm
   stays `CGO_ENABLED=0`.
+- gomobile's iOS start-up makes the app bundle the working directory;
+  Capacitor's router resolves the empty path against it and served the
+  `public` directory itself (a white screen, "The file "public" couldn't
+  be opened"): the LongarmCore plugin sets it back to `/` in `load()`. The
+  framework also needs `-lresolv` (Go's DNS resolver; the plugin's
+  Package.swift).
 - iOS suspends an app soon after it leaves the screen: connections end;
   the app reconnects when it comes back (no background connection).
