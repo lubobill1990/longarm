@@ -1,0 +1,21 @@
+<Project>
+  <!-- The kit's version: its tools (stampinf, inf2cat) are in bin\<this>; without it MSBuild takes the
+       newest Windows SDK installed and looks there. -->
+  <PropertyGroup>
+    <WindowsTargetPlatformVersion>10.0.28000.0</WindowsTargetPlatformVersion>
+    <!-- stampinf and inf2cat: the WDK's targets look for them in an installed kit's bin otherwise -->
+    <!-- The in-build InfVerif and ApiValidator want the kit's x86 tools, which the x64 NuGet package
+         doesn't have: driver.yml runs InfVerif (x64) on the package instead. -->
+    <SkipPackageVerification>true</SkipPackageVerification>
+    <ApiValidator_Enable>false</ApiValidator_Enable>
+    <InfToolPath>$(MSBuildThisFileDirectory)packages\Microsoft.Windows.WDK.x64.10.0.28000.2526\c\bin\10.0.28000.0\x64\</InfToolPath>
+    <DrvCatToolPath>$(InfToolPath)</DrvCatToolPath>
+    <Inf2CatToolPath>$(MSBuildThisFileDirectory)packages\Microsoft.Windows.WDK.x64.10.0.28000.2526\c\bin\10.0.28000.0\x86\</Inf2CatToolPath>
+    <SignToolPath>$(MSBuildThisFileDirectory)packages\Microsoft.Windows.SDK.CPP.x64.10.0.28000.2526\c\bin\10.0.28000.0\x64\</SignToolPath>
+  </PropertyGroup>
+  <!-- The WDK and SDK from NuGet (packages.config, `nuget restore -PackagesDirectory packages`):
+       no Windows Driver Kit install needed (as microsoft/Windows-driver-samples builds). -->
+  <Import Project="packages\Microsoft.Windows.WDK.x64.10.0.28000.2526\build\native\Microsoft.Windows.WDK.x64.props" Condition="Exists('packages\Microsoft.Windows.WDK.x64.10.0.28000.2526\build\native\Microsoft.Windows.WDK.x64.props') and '$(Platform)' == 'x64'"/>
+  <Import Project="packages\Microsoft.Windows.SDK.CPP.x64.10.0.28000.2526\build\native\Microsoft.Windows.SDK.cpp.x64.props" Condition="Exists('packages\Microsoft.Windows.SDK.CPP.x64.10.0.28000.2526\build\native\Microsoft.Windows.SDK.cpp.x64.props') and '$(Platform)' == 'x64'"/>
+  <Import Project="packages\Microsoft.Windows.SDK.CPP.10.0.28000.2526\build\native\Microsoft.Windows.SDK.cpp.props" Condition="Exists('packages\Microsoft.Windows.SDK.CPP.10.0.28000.2526\build\native\Microsoft.Windows.SDK.cpp.props')"/>
+</Project>

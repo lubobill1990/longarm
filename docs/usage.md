@@ -1638,6 +1638,7 @@ longarm desktop w1                          # Longarm's remote desktop where it 
 longarm desktop w1 --view-only              # watch only
 longarm desktop w1 --display 1              # the second display
 longarm desktop w1 --privacy --lock-on-leave  # its screen black meanwhile, locked when you go
+longarm desktop w1 --microphone            # your microphone there ("Longarm Microphone"; needs the Longarm audio driver)
 longarm desktop w1 --screenshot w1.png      # save a picture of its screen (no window)
 longarm desktop w1 --screenshot after.png --input "click:400,300;text:hello;key:0x1C"
 longarm desktop w1 --rdp                    # Remote Desktop / Windows App instead

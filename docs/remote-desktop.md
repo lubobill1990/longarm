@@ -243,6 +243,30 @@ page and no WebSocket.
 - Also: clipboard text both ways, a display picker, the bandwidth and
   latency in the title, and a reconnect that keeps the window.
 
+### Sound and microphone
+
+- **Sound** (the worker's speakers here): WASAPI loopback capture on the
+  worker, IMA ADPCM packets (`DesktopAudio`, each decodes on its own),
+  WASAPI playback here with 40-150 ms queued (late sound is dropped).
+- **Microphone** (yours on the worker): Windows has no way for a program
+  to be a microphone, so it takes a driver: the Longarm audio driver
+  (`drivers/windows/audio`, from VirtualDrivers/Virtual-Audio-Driver, MIT,
+  itself Microsoft's SYSVAD sample, MS-PL). It has a virtual speaker,
+  "Longarm Microphone Feed", and a virtual microphone, "Longarm
+  Microphone"; a ring in the driver (`loopback.cpp`) gives the microphone
+  what the speaker played. Both default to 48 kHz 16-bit stereo (the INF's
+  OEM format), so the ring copies bytes. The viewer captures its default
+  microphone while the worker says the option is on; the worker plays the
+  packets into the feed; programs there choose "Longarm Microphone".
+  `longarmd audio-driver install | uninstall | status` (internal/audiodrv:
+  what devcon does, with SetupAPI) installs it; driver.yml builds it with
+  the WDK from NuGet.
+- **Signing:** a kernel driver loads with Secure Boot on (every Cloud PC)
+  only when Microsoft signed it (attestation signing: an EV code-signing
+  certificate and a Partner Center hardware account). Until then it loads
+  only on test-signing machines, and a worker without the driver offers no
+  microphone: the bar shows no button (rdesk's `can`).
+
 ## Security
 
 - **Who.** Only the worker's owner (`WorkerAccess.Owner`), from their own

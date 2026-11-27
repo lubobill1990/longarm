@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sync"
 
 	"longarm/internal/screen"
 	pb "longarm/proto/longarm/v1"
@@ -39,6 +40,51 @@ func (s *soundPlayer) play(a *pb.DesktopAudio) {
 		return
 	}
 	s.p.Write(pcm)
+}
+
+// micSender sends this machine's microphone to the worker while the worker
+// says the microphone option is on (DesktopState.options.microphone).
+type micSender struct {
+	mu     sync.Mutex
+	c      screen.AudioCapture // capturing
+	send   func(*pb.DesktopClientMessage) error
+	failed bool
+}
+
+func (m *micSender) set(on bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	switch {
+	case on && m.c == nil:
+		c, err := screen.OpenMicCapture()
+		if err != nil {
+			if !m.failed {
+				m.failed = true
+				fmt.Fprintf(os.Stderr, "longarm: your microphone: %v\n", err)
+			}
+			return
+		}
+		m.c = c
+		go func() {
+			f := c.Format()
+			enc := screen.NewADPCMEncoder(f.Channels)
+			var seq uint64
+			for {
+				pcm, err := c.Read()
+				if err != nil {
+					return // closed
+				}
+				seq++
+				if m.send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Microphone{Microphone: &pb.DesktopAudio{
+					Codec: screen.AudioCodec, Rate: int32(f.Rate), Channels: int32(f.Channels), Data: enc.Encode(pcm), Seq: seq}}}) != nil {
+					return
+				}
+			}
+		}()
+	case !on && m.c != nil:
+		m.c.Close()
+		m.c = nil
+	}
 }
 
 func (s *soundPlayer) close() {

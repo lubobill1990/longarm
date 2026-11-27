@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -53,6 +54,36 @@ const (
 	hns                = 10_000_000 // 100-ns units a second
 )
 
+var (
+	procPropVariantClear = modOle32.NewProc("PropVariantClear")
+	// PKEY_Device_FriendlyName
+	pkeyDeviceFriendlyName = propertyKey{guid(0xA45C254E, 0xDF1C, 0x4EFD, 0x80, 0x20, 0x67, 0xD1, 0x46, 0xA8, 0x50, 0xE0), 14}
+)
+
+const (
+	slotEnumAudioEndpoints      = 3 // IMMDeviceEnumerator::EnumAudioEndpoints
+	slotCollGetCount            = 3 // IMMDeviceCollection::GetCount
+	slotCollItem                = 4 //   ::Item
+	slotDeviceOpenPropertyStore = 4 // IMMDevice::OpenPropertyStore
+	slotStoreGetValue           = 5 // IPropertyStore::GetValue
+	deviceStateActive           = 1
+	eCapture                    = 1
+	vtLPWSTR                    = 31
+)
+
+type propertyKey struct {
+	FmtID windows.GUID
+	PID   uint32
+}
+
+// propVariant is PROPVARIANT as far as a string goes.
+type propVariant struct {
+	VT  uint16
+	_   [3]uint16
+	Val *uint16
+	_   uintptr
+}
+
 // waveFormat is WAVEFORMATEXTENSIBLE (WAVEFORMATEX and what follows it).
 type waveFormat struct {
 	Tag         uint16
@@ -67,8 +98,10 @@ type waveFormat struct {
 	SubFormat   windows.GUID
 }
 
-// audioClient opens the default speakers' IAudioClient.
-func audioClient() (*comObj, error) {
+// audioClient opens an IAudioClient: of the default speakers (flow
+// eRender) or microphone (eCapture), or of the active device of that flow
+// named name.
+func audioClient(flow uintptr, name string) (*comObj, error) {
 	procCoInitializeEx.Call(0, 0)
 	var en, dev, ac *comObj
 	if err := hr("CoCreateInstance(MMDeviceEnumerator)", callProc(procCoCreateInstance, uintptr(unsafe.Pointer(&clsidMMDeviceEnumerator)), 0, clsctxAll,
@@ -76,7 +109,15 @@ func audioClient() (*comObj, error) {
 		return nil, err
 	}
 	defer release(en)
-	if err := hr("GetDefaultAudioEndpoint", comCall(en, slotEnumGetDefaultEndpoint, eRender, eConsole, uintptr(unsafe.Pointer(&dev)))); err != nil {
+	if name != "" {
+		dev = deviceNamed(en, flow, name)
+		if dev == nil {
+			return nil, fmt.Errorf("no audio device %q", name)
+		}
+	} else if err := hr("GetDefaultAudioEndpoint", comCall(en, slotEnumGetDefaultEndpoint, flow, eConsole, uintptr(unsafe.Pointer(&dev)))); err != nil {
+		if flow == eCapture {
+			return nil, fmt.Errorf("no microphone: %w", err)
+		}
 		return nil, fmt.Errorf("no speakers: %w", err)
 	}
 	defer release(dev)
@@ -84,6 +125,57 @@ func audioClient() (*comObj, error) {
 		return nil, err
 	}
 	return ac, nil
+}
+
+// deviceNamed finds the active device of flow whose friendly name has name
+// in it ("Speakers (Longarm Microphone Feed)": endpoint (device)); nil: none.
+func deviceNamed(en *comObj, flow uintptr, name string) *comObj {
+	var coll *comObj
+	if hr("EnumAudioEndpoints", comCall(en, slotEnumAudioEndpoints, flow, deviceStateActive, uintptr(unsafe.Pointer(&coll)))) != nil {
+		return nil
+	}
+	defer release(coll)
+	var n uint32
+	comCall(coll, slotCollGetCount, uintptr(unsafe.Pointer(&n)))
+	for i := range n {
+		var dev *comObj
+		if hr("IMMDeviceCollection::Item", comCall(coll, slotCollItem, uintptr(i), uintptr(unsafe.Pointer(&dev)))) != nil {
+			continue
+		}
+		if strings.Contains(deviceName(dev), name) {
+			return dev
+		}
+		release(dev)
+	}
+	return nil
+}
+
+// deviceName is a device's friendly name ("Speakers (Realtek(R) Audio)").
+func deviceName(dev *comObj) string {
+	var store *comObj
+	if hr("OpenPropertyStore", comCall(dev, slotDeviceOpenPropertyStore, 0 /* STGM_READ */, uintptr(unsafe.Pointer(&store)))) != nil {
+		return ""
+	}
+	defer release(store)
+	var v propVariant
+	if hr("IPropertyStore::GetValue", comCall(store, slotStoreGetValue, uintptr(unsafe.Pointer(&pkeyDeviceFriendlyName)), uintptr(unsafe.Pointer(&v)))) != nil {
+		return ""
+	}
+	defer procPropVariantClear.Call(uintptr(unsafe.Pointer(&v)))
+	if v.VT != vtLPWSTR || v.Val == nil {
+		return ""
+	}
+	return windows.UTF16PtrToString(v.Val)
+}
+
+// AudioOutputExists: an active playback device named name is here.
+func audioOutputExists(name string) bool {
+	ac, err := audioClient(eRender, name)
+	if err != nil {
+		return false
+	}
+	release(ac)
+	return true
 }
 
 func callProc(p *windows.LazyProc, args ...uintptr) uintptr {
@@ -101,8 +193,14 @@ type wasapiCapture struct {
 	closed bool
 }
 
-func openAudioCapture() (AudioCapture, error) {
-	ac, err := audioClient()
+func openAudioCapture() (AudioCapture, error) { return openCapture(eRender, streamLoopback) }
+
+func openMicCapture() (AudioCapture, error) { return openCapture(eCapture, 0) }
+
+// openCapture captures what the default speakers play (eRender, loopback)
+// or what the default microphone hears (eCapture).
+func openCapture(flow uintptr, flags uintptr) (AudioCapture, error) {
+	ac, err := audioClient(flow, "")
 	if err != nil {
 		return nil, err
 	}
@@ -120,11 +218,11 @@ func openAudioCapture() (AudioCapture, error) {
 	c.float = mix.Tag == waveFormatFloat || mix.Tag == waveFormatExtended && mix.SubFormat == subtypeIEEEFloat
 	if !c.float && mix.Bits != 16 && mix.Bits != 32 {
 		release(ac)
-		return nil, fmt.Errorf("speakers' mix format: %d-bit PCM", mix.Bits)
+		return nil, fmt.Errorf("audio mix format: %d-bit PCM", mix.Bits)
 	}
 	c.inCh = int(mix.Channels)
 	c.f = AudioFormat{Rate: int(mix.Rate), Channels: min(c.inCh, 2)}
-	if err := hr("IAudioClient::Initialize(loopback)", comCall(ac, slotACInitialize, 0, streamLoopback, hns/5, 0, uintptr(unsafe.Pointer(mix)), 0)); err != nil {
+	if err := hr("IAudioClient::Initialize(capture)", comCall(ac, slotACInitialize, 0, flags, hns/5, 0, uintptr(unsafe.Pointer(mix)), 0)); err != nil {
 		release(ac)
 		return nil, err
 	}
@@ -236,11 +334,16 @@ const (
 	playCushion = 40 * time.Millisecond
 )
 
-func openAudioPlayer(f AudioFormat) (AudioPlayer, error) {
+func openAudioPlayer(f AudioFormat) (AudioPlayer, error) { return openPlayer("", f) }
+
+func openAudioPlayerOn(name string, f AudioFormat) (AudioPlayer, error) { return openPlayer(name, f) }
+
+// openPlayer plays on the default speakers, or on the device named name.
+func openPlayer(name string, f AudioFormat) (AudioPlayer, error) {
 	if f.Rate <= 0 || f.Channels < 1 || f.Channels > 2 {
 		return nil, fmt.Errorf("audio format %+v", f)
 	}
-	ac, err := audioClient()
+	ac, err := audioClient(eRender, name)
 	if err != nil {
 		return nil, err
 	}

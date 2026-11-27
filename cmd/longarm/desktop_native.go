@@ -34,18 +34,23 @@ type nativeOpts struct {
 	privacy    bool // start in privacy mode (the worker's own screen black)
 	lockLeave  bool // lock the worker when the viewer goes
 	noSound    bool // the worker's sound stays there
+	microphone bool // start with your microphone on the worker
 }
 
 // startOptions: the options asked for on the command line (nil: none).
 // The window plays the worker's sound unless told not to.
 func startOptions(o nativeOpts) *pb.DesktopOptions {
 	sound := o.screenshot == "" && !o.noSound
-	if !o.privacy && !o.lockLeave && !sound {
+	mic := o.screenshot == "" && o.microphone && !o.viewOnly
+	if !o.privacy && !o.lockLeave && !sound && !mic {
 		return nil
 	}
 	out := &pb.DesktopOptions{}
 	if sound {
 		out.Sound = &sound
+	}
+	if mic {
+		out.Microphone = &mic
 	}
 	if o.privacy {
 		out.Privacy = &o.privacy
@@ -65,6 +70,7 @@ func hasFeature(info *pb.InfoResponse, f string) bool { return slices.Contains(i
 func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nativeOpts) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	screenshotPath := o.screenshot // o is shadowed by the options in force below
 	st, err := conn.RemoteDesktop().Stream(ctx, grpc.WaitForReady(true))
 	if err != nil {
 		return err
@@ -113,6 +119,9 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 	}
 	player := &soundPlayer{}
 	defer player.close()
+	// Your microphone, while the worker says it's on (never for a screenshot).
+	mic := &micSender{send: send}
+	defer mic.set(false)
 	packets := make(chan screen.VideoPacket, 8)
 	var received atomic.Int64
 	var frames atomic.Int64
@@ -173,6 +182,9 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 						if on != nil {
 							p.Options[name] = *on
 						}
+					}
+					if o.Microphone != nil && screenshotPath == "" {
+						mic.set(*o.Microphone)
 					}
 					if o.Privacy != nil {
 						state := "off"
