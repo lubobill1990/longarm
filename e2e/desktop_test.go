@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +102,22 @@ func TestRemoteDesktop(t *testing.T) {
 		t.Errorf("the click landed at %d,%d, sent to %d,%d", cx, cy, w/2, h/2)
 	}
 	checkPattern(t, "after input", filepath.Join(e.root, "after-input.png"), w, h, true)
+
+	// Privacy mode (Windows): the worker's own screen goes black, the viewer
+	// still sees the desktop - the curtain is not in the capture. Elsewhere
+	// the worker answers that it is off.
+	r = e.longarm(e.client, "desktop", "w1", "--native", "--privacy", "--screenshot", filepath.Join(e.root, "privacy.png"))
+	if r.code != 0 {
+		t.Fatalf("privacy: exit %d\n%s%s", r.code, r.stdout, r.stderr)
+	}
+	want := "privacy mode off"
+	if runtime.GOOS == "windows" {
+		want = "privacy mode on"
+	}
+	if !strings.Contains(r.stderr, want) {
+		t.Fatalf("privacy: want %q from the worker:\n%s", want, r.stderr)
+	}
+	checkPattern(t, "privacy mode", filepath.Join(e.root, "privacy.png"), w, h, true)
 
 	// Only the owner: an admin certificate of somebody else is refused.
 	r = e.longarm(e.admin, "desktop", "w1", "--native", "--screenshot", filepath.Join(e.root, "root.png"))

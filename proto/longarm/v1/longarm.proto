@@ -1229,6 +1229,9 @@ message DesktopClientMessage {
     uint64 ack = 3; // the newest frame seq shown
     bool keyframe = 4; // send a keyframe (the decoder lost its state)
     string clipboard = 5; // text copied on the viewer's side
+    DesktopOptions options = 6; // the viewer turns something on or off
+    int32 switch_display = 7; // show another display (DesktopDisplay.index)
+    DesktopAudio microphone = 8; // the viewer's microphone (DesktopOptions.microphone)
   }
 }
 
@@ -1239,6 +1242,7 @@ message DesktopStart {
   int32 max_fps = 3; // 0 = 30
   int32 bitrate_kbps = 4; // 0 = the worker picks
   bool view_only = 5; // input is refused
+  DesktopOptions options = 6; // the options to start with
 }
 
 message DesktopInput {
@@ -1276,6 +1280,7 @@ message DesktopServerMessage {
     DesktopCursor cursor = 3;
     string clipboard = 4; // text copied on the worker
     DesktopState state = 5;
+    DesktopAudio sound = 6; // the worker's sound (DesktopOptions.sound)
   }
 }
 
@@ -1285,6 +1290,10 @@ message DesktopStarted {
   string codec = 3; // "h264" | "jpeg"
   string encoder = 4; // e.g. "hardware", "software"
   DesktopDisplay display = 5;
+  repeated DesktopDisplay displays = 6; // every display (switch_display)
+  // what this worker can do: "privacy", "lock_on_leave", "sound",
+  // "microphone", "clipboard", "secure_desktop" (UAC, lock screen)
+  repeated string can = 7;
 }
 
 message DesktopFrame {
@@ -1322,5 +1331,33 @@ message DesktopState {
   // the worker shows a secure screen (UAC prompt, lock, Ctrl+Alt+Del) that
   // this capturer cannot see or drive (no Longarm Desktop service)
   bool secure_hidden = 1;
+  // the options in force (after DesktopOptions; DesktopStarted.can says
+  // which the worker has)
+  DesktopOptions options = 3;
   string note = 2;
+}
+
+// DesktopOptions: what the viewer switches on and off (unset: unchanged).
+message DesktopOptions {
+  // privacy mode: the worker's own monitors show black while it is
+  // watched; the picture here is the desktop under it
+  optional bool privacy = 1;
+  // lock the worker's session when this viewer leaves
+  optional bool lock_on_leave = 2;
+  // the worker's sound plays here (DesktopServerMessage.sound)
+  optional bool sound = 3;
+  // the viewer's microphone is the worker's (Longarm's virtual microphone
+  // there; DesktopClientMessage.microphone)
+  optional bool microphone = 4;
+}
+
+// DesktopAudio is a slice of sound, about 20 ms.
+message DesktopAudio {
+  // "pcm16" (little-endian signed 16-bit, interleaved) or "adpcm" (IMA
+  // ADPCM, one block per message)
+  string codec = 1;
+  int32 rate = 2; // samples per second (48000)
+  int32 channels = 3;
+  bytes data = 4;
+  uint64 seq = 5; // consecutive: a gap is lost sound
 }

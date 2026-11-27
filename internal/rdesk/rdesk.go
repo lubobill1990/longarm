@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -80,6 +81,18 @@ func Serve(st Stream, start *pb.DesktopStart, log *slog.Logger) error {
 			}
 		}()
 	}
+	s.display.Store(start.GetDisplay())
+	s.switchCh = make(chan struct{}, 1)
+	// Speakers to capture (a machine without any - a Cloud PC nobody is
+	// connected to over RDP, say - offers no sound).
+	if c, err := screen.OpenAudioCapture(); err == nil {
+		c.Close()
+		s.canSound = true
+	}
+	defer s.leave()
+	if o := start.GetOptions(); o != nil {
+		s.setOptions(o)
+	}
 	go func() { s.recv(ctx); cancel() }()
 	err := s.capture(ctx)
 	if ctx.Err() != nil {
@@ -104,6 +117,114 @@ type session struct {
 
 	sendMu sync.Mutex       // frames and clipboard text come from two goroutines
 	clip   screen.Clipboard // nil: no clipboard here
+
+	display  atomic.Int32  // the display being shown
+	switchCh chan struct{} // switch_display: the capture loop opens it
+
+	optMu       sync.Mutex
+	curtain     screen.Curtain // privacy mode on
+	lockOnLeave bool
+	sound       screen.AudioCapture // sound on: this machine's sound to the viewer
+	canSound    bool                // there are speakers to capture
+}
+
+// startSound sends what this machine's speakers play until the capture is
+// closed (sound off, the viewer gone). Under optMu.
+func (s *session) startSound() error {
+	c, err := screen.OpenAudioCapture()
+	if err != nil {
+		return err
+	}
+	s.sound = c
+	go func() {
+		f := c.Format()
+		enc := screen.NewADPCMEncoder(f.Channels)
+		var seq uint64
+		for {
+			pcm, err := c.Read()
+			if err != nil {
+				return // closed
+			}
+			seq++
+			if err := s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_Sound{Sound: &pb.DesktopAudio{
+				Codec: screen.AudioCodec, Rate: int32(f.Rate), Channels: int32(f.Channels), Data: enc.Encode(pcm), Seq: seq}}}); err != nil {
+				return
+			}
+		}
+	}()
+	return nil
+}
+
+// setOptions applies what the viewer switched (unset fields stay) and tells
+// it what is in force.
+func (s *session) setOptions(o *pb.DesktopOptions) {
+	s.optMu.Lock()
+	if o.Privacy != nil && !s.start.GetViewOnly() {
+		switch {
+		case *o.Privacy && s.curtain == nil:
+			c, err := screen.NewCurtain("This computer is being used remotely (Longarm)")
+			if err != nil {
+				s.log.Info("remote desktop: privacy mode", "err", err)
+			} else {
+				s.curtain = c
+			}
+		case !*o.Privacy && s.curtain != nil:
+			s.curtain.Close()
+			s.curtain = nil
+		}
+	}
+	if o.LockOnLeave != nil {
+		s.lockOnLeave = *o.LockOnLeave
+	}
+	if o.Sound != nil {
+		switch {
+		case *o.Sound && s.sound == nil && s.canSound:
+			if err := s.startSound(); err != nil {
+				s.log.Info("remote desktop: sound", "err", err)
+			}
+		case !*o.Sound && s.sound != nil:
+			s.sound.Close()
+			s.sound = nil
+		}
+	}
+	privacy, lock, sound := s.curtain != nil, s.lockOnLeave, s.sound != nil
+	s.optMu.Unlock()
+	s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_State{State: &pb.DesktopState{
+		Options: &pb.DesktopOptions{Privacy: &privacy, LockOnLeave: &lock, Sound: &sound}}}})
+}
+
+// leave: the viewer went - privacy mode ends, the session locks if asked.
+func (s *session) leave() {
+	s.optMu.Lock()
+	defer s.optMu.Unlock()
+	if s.curtain != nil {
+		s.curtain.Close()
+		s.curtain = nil
+	}
+	if s.sound != nil {
+		s.sound.Close()
+		s.sound = nil
+	}
+	if s.lockOnLeave {
+		if err := screen.LockSession(); err != nil {
+			s.log.Info("remote desktop: lock on leave", "err", err)
+		}
+	}
+}
+
+// can: what this worker offers (DesktopStarted.can).
+func (s *session) can() []string {
+	var out []string
+	if runtime.GOOS == "windows" { // elsewhere: todo/remote-desktop.md
+		out = append(out, "privacy", "lock_on_leave")
+	}
+	if s.clip != nil {
+		out = append(out, "clipboard")
+	}
+	if s.canSound {
+		out = append(out, "sound")
+	}
+	return out
 }
 
 // recv takes the viewer's acks, keyframe requests and input.
@@ -128,6 +249,11 @@ func (s *session) recv(ctx context.Context) error {
 			}
 		case *pb.DesktopClientMessage_Keyframe:
 			signal(s.kfCh)
+		case *pb.DesktopClientMessage_Options:
+			s.setOptions(v.Options)
+		case *pb.DesktopClientMessage_SwitchDisplay:
+			s.display.Store(v.SwitchDisplay)
+			signal(s.switchCh)
 		case *pb.DesktopClientMessage_Input:
 			if s.in != nil {
 				if err := s.input(v.Input); err != nil {
@@ -192,7 +318,7 @@ func (p *pipeline) close() {
 }
 
 func (s *session) open() (*pipeline, error) {
-	src, err := screen.OpenSource(int(s.start.GetDisplay()))
+	src, err := screen.OpenSource(int(s.display.Load()))
 	if err != nil {
 		return nil, err
 	}
@@ -239,6 +365,7 @@ func (s *session) open() (*pipeline, error) {
 	}
 	return p, s.send(&pb.DesktopServerMessage{Msg: &pb.DesktopServerMessage_Started{Started: &pb.DesktopStarted{
 		Width: int32(p.w), Height: int32(p.h), Codec: p.codec, Encoder: encoder,
+		Displays: displays(), Can: s.can(),
 		Display: &pb.DesktopDisplay{Index: int32(d.Index), Name: d.Name, X: int32(d.X), Y: int32(d.Y), Width: int32(d.W), Height: int32(d.H)},
 	}}})
 }
@@ -304,6 +431,13 @@ func (s *session) capture(ctx context.Context) error {
 		timeout := 100 * time.Millisecond
 		if refresh > 0 {
 			timeout = refreshAfter
+		}
+		select {
+		case <-s.switchCh: // another display: open it (a new started, a key frame)
+			p.close()
+			p = nil
+			continue
+		default:
 		}
 		changed, err := p.src.Next(timeout)
 		if err != nil {
@@ -447,4 +581,14 @@ func (s *session) send(m *pb.DesktopServerMessage) error {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
 	return s.st.Send(m)
+}
+
+// displays: the displays for DesktopStarted (a viewer's picker).
+func displays() []*pb.DesktopDisplay {
+	ds, _ := screen.Displays()
+	out := make([]*pb.DesktopDisplay, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, &pb.DesktopDisplay{Index: int32(d.Index), Name: d.Name, X: int32(d.X), Y: int32(d.Y), Width: int32(d.W), Height: int32(d.H)})
+	}
+	return out
 }

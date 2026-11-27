@@ -139,6 +139,14 @@ type VideoPacket struct {
 	Cursor         *Cursor // a pointer update (no picture)
 	SecureHidden   bool    // the worker shows a screen the capturer cannot
 	SecureHiddenOK bool    // SecureHidden is set in this packet
+	// Config: the worker's displays, the one shown, what it offers
+	// (DesktopStarted.can).
+	Displays []Display
+	Display  int
+	Can      []string
+	// Options: the options in force changed (privacy, lock_on_leave, sound,
+	// microphone).
+	Options map[string]bool
 }
 
 // Tile is a JPEG part of a frame.
@@ -184,6 +192,9 @@ type ViewerOptions struct {
 	NeedKeyframe func()
 	// Status is shown in the title (bandwidth, latency), polled.
 	Status func() string
+	// Chrome: the title bar's state and actions (security, privacy mode,
+	// lock on leave, displays, sound, microphone); nil: none.
+	Chrome *Chrome
 }
 
 // RunViewer opens the viewer window and runs it until the user closes it
@@ -211,3 +222,30 @@ func OpenClipboard() (Clipboard, error) { return openClipboard() }
 
 // MaxClipboardText caps the clipboard text that crosses the wire (UTF-8 bytes).
 const MaxClipboardText = 1 << 20
+
+// Curtain is privacy mode: this machine's monitors show black to somebody
+// sitting at it while the viewer sees and drives the desktop under it.
+type Curtain interface{ Close() }
+
+// NewCurtain puts the privacy curtain up, with text in the middle.
+func NewCurtain(text string) (Curtain, error) { return newCurtain(text) }
+
+// LockSession locks this machine's session (the viewer leaves with lock on
+// leave).
+func LockSession() error { return lockSession() }
+
+// Chrome is what the viewer's title bar shows and does; the viewer fills it
+// in.
+type Chrome struct {
+	// Security describes the connection ("direct · end-to-end TLS · owner
+	// only"); asked again whenever the bar is drawn (the path changes).
+	Security func() string
+	Can      map[string]bool // what the worker offers (DesktopStarted.can)
+	On       map[string]bool // privacy, lock_on_leave, sound, microphone
+	Displays []Display
+	Display  int // the one shown
+	// SetOption switches privacy, lock_on_leave, sound or microphone.
+	SetOption func(name string, on bool)
+	// SwitchDisplay shows another display.
+	SwitchDisplay func(index int)
+}

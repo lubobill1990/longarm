@@ -54,6 +54,7 @@ var (
 const (
 	wmDestroy    = 0x0002
 	wmSize       = 0x0005
+	wmMove       = 0x0003
 	wmKillFocus  = 0x0008
 	wmClose      = 0x0010
 	wmEraseBkgnd = 0x0014
@@ -80,6 +81,9 @@ const (
 	wmMouseWheel   = 0x020A
 	wmMouseHWheel  = 0x020E
 	wsOverlappedWn = 0x00CF0000
+	// wsWindowed: a window without Windows' caption - the viewer's own title
+	// bar (bar_windows.go) - that can still be resized and minimized
+	wsWindowed     = 0x80000000 | 0x00040000 | 0x00020000 | 0x00010000 | 0x00080000 // popup, thick frame, min, max, system menu
 	wsPopup        = 0x80000000
 	wsVisible      = 0x10000000
 	cwUseDefault   = 0x80000000
@@ -142,6 +146,9 @@ type Window struct {
 	HWND windows.HWND
 	// Name is what the full-screen bar shows (the worker).
 	Name string
+	// Chrome is the title bar's state and actions (bar_windows.go); Refresh
+	// after changing it.
+	Chrome *Chrome
 
 	// Callbacks, on the window's thread. x and y are client coordinates.
 	OnMouse  func(kind, x, y, button, dx, dy int)
@@ -182,7 +189,7 @@ func NewWindow(title string, w, h int, takeKeys bool) (*Window, error) {
 	if w > 0 && h > 0 {
 		ww, wh = uintptr(w), uintptr(h)
 	}
-	hwnd, _, err := procCreateWindowExW.Call(0, uintptr(unsafe.Pointer(cls)), uintptr(unsafe.Pointer(t)), wsOverlappedWn,
+	hwnd, _, err := procCreateWindowExW.Call(0, uintptr(unsafe.Pointer(cls)), uintptr(unsafe.Pointer(t)), wsWindowed,
 		cwUseDefault, cwUseDefault, ww, wh, 0, 0, 0, 0)
 	if hwnd == 0 {
 		return nil, err
@@ -201,6 +208,8 @@ func NewWindow(title string, w, h int, takeKeys bool) (*Window, error) {
 	if takeKeys {
 		win.startHook()
 	}
+	// The window's own title bar, at once (bar_windows.go).
+	newBar(win).place()
 	return win, nil
 }
 
@@ -239,7 +248,9 @@ func (w *Window) Close() { procDestroyWindow.Call(uintptr(w.HWND)) }
 // monitor and the normal window.
 func (w *Window) ToggleFullscreen() {
 	h := uintptr(w.HWND)
-	if !w.fullscreen {
+	// The flag first: the resize below asks TopInset.
+	w.fullscreen = !w.fullscreen
+	if w.fullscreen {
 		procGetWindowRect.Call(h, uintptr(unsafe.Pointer(&w.saved)))
 		mon, _, _ := procMonitorFromWindow.Call(h, 2)
 		mi := monitorInfo{}
@@ -248,16 +259,12 @@ func (w *Window) ToggleFullscreen() {
 		procSetWindowLongPtrW.Call(h, gwlStyle, wsPopup|wsVisible)
 		r := mi.Monitor
 		procSetWindowPos.Call(h, 0, uintptr(r.Left), uintptr(r.Top), uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpFrameChange|swpNoOwnerZ)
+		newBar(w).show()
 	} else {
-		procSetWindowLongPtrW.Call(h, gwlStyle, wsOverlappedWn|wsVisible)
+		procSetWindowLongPtrW.Call(h, gwlStyle, wsWindowed|wsVisible)
 		r := w.saved
 		procSetWindowPos.Call(h, 0, uintptr(r.Left), uintptr(r.Top), uintptr(r.Right-r.Left), uintptr(r.Bottom-r.Top), swpFrameChange|swpNoOwnerZ)
-	}
-	w.fullscreen = !w.fullscreen
-	if w.fullscreen {
-		newBar(w).show()
-	} else if theBar != nil {
-		theBar.hide()
+		newBar(w).place()
 	}
 }
 
@@ -380,7 +387,15 @@ func wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		}
 	case wmEraseBkgnd:
 		return 1
+	case wmMove:
+		if theBar != nil && !w.fullscreen {
+			theBar.place() // the title bar goes with the window
+		}
+		return 0
 	case wmSize:
+		if theBar != nil && !w.fullscreen && wParam != 1 /* SIZE_MINIMIZED */ {
+			theBar.place()
+		}
 		if w.OnResize != nil {
 			w.OnResize()
 		}

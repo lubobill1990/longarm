@@ -31,6 +31,29 @@ type nativeOpts struct {
 	screenshot string // save the screen as this PNG and exit (no window)
 	input      string // --input: events to send first (tests, scripts)
 	fps        int
+	privacy    bool // start in privacy mode (the worker's own screen black)
+	lockLeave  bool // lock the worker when the viewer goes
+	noSound    bool // the worker's sound stays there
+}
+
+// startOptions: the options asked for on the command line (nil: none).
+// The window plays the worker's sound unless told not to.
+func startOptions(o nativeOpts) *pb.DesktopOptions {
+	sound := o.screenshot == "" && !o.noSound
+	if !o.privacy && !o.lockLeave && !sound {
+		return nil
+	}
+	out := &pb.DesktopOptions{}
+	if sound {
+		out.Sound = &sound
+	}
+	if o.privacy {
+		out.Privacy = &o.privacy
+	}
+	if o.lockLeave {
+		out.LockOnLeave = &o.lockLeave
+	}
+	return out
 }
 
 // canViewNatively: this client can open the viewer window.
@@ -61,7 +84,7 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 		return st.Send(m)
 	}
 	if err := send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Start{Start: &pb.DesktopStart{
-		Display: int32(o.display), Codecs: codecs, MaxFps: int32(fps), ViewOnly: o.viewOnly}}}); err != nil {
+		Display: int32(o.display), Codecs: codecs, MaxFps: int32(fps), ViewOnly: o.viewOnly, Options: startOptions(o)}}}); err != nil {
 		return err
 	}
 	events, err := parseInputScript(o.input)
@@ -88,6 +111,8 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 			}
 		}
 	}
+	player := &soundPlayer{}
+	defer player.close()
 	packets := make(chan screen.VideoPacket, 8)
 	var received atomic.Int64
 	var frames atomic.Int64
@@ -109,7 +134,11 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 			switch v := m.Msg.(type) {
 			case *pb.DesktopServerMessage_Started:
 				s := v.Started
-				p = screen.VideoPacket{Config: true, Width: int(s.Width), Height: int(s.Height), Codec: s.Codec}
+				p = screen.VideoPacket{Config: true, Width: int(s.Width), Height: int(s.Height), Codec: s.Codec,
+					Display: int(s.GetDisplay().GetIndex()), Can: s.Can}
+				for _, d := range s.Displays {
+					p.Displays = append(p.Displays, screen.Display{Index: int(d.Index), Name: d.Name, X: int(d.X), Y: int(d.Y), W: int(d.Width), H: int(d.Height)})
+				}
 				info.Store(fmt.Sprintf("%s (%s) %dx%d", s.Codec, s.Encoder, s.Width, s.Height))
 			case *pb.DesktopServerMessage_Frame:
 				f := v.Frame
@@ -124,6 +153,10 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 				c := v.Cursor
 				p.Cursor = &screen.Cursor{X: int(c.X), Y: int(c.Y), Visible: c.Visible, ShapeID: c.ShapeId,
 					W: int(c.Width), H: int(c.Height), HotX: int(c.HotX), HotY: int(c.HotY), BGRA: c.Bgra}
+			case *pb.DesktopServerMessage_Sound:
+				received.Add(int64(len(v.Sound.Data)))
+				player.play(v.Sound)
+				continue
 			case *pb.DesktopServerMessage_Clipboard:
 				// Copied on the worker: paste-able here.
 				if clip != nil {
@@ -133,6 +166,23 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 				}
 				continue
 			case *pb.DesktopServerMessage_State:
+				if o := v.State.GetOptions(); o != nil {
+					// The options in force (an answer to ours): nothing else.
+					p.Options = map[string]bool{}
+					for name, on := range map[string]*bool{"privacy": o.Privacy, "lock_on_leave": o.LockOnLeave, "sound": o.Sound, "microphone": o.Microphone} {
+						if on != nil {
+							p.Options[name] = *on
+						}
+					}
+					if o.Privacy != nil {
+						state := "off"
+						if *o.Privacy {
+							state = "on"
+						}
+						fmt.Fprintf(os.Stderr, "longarm: %s: privacy mode %s\n", worker, state)
+					}
+					break
+				}
 				p.SecureHidden, p.SecureHiddenOK = v.State.SecureHidden, true
 				if v.State.SecureHidden {
 					fmt.Fprintf(os.Stderr, "longarm: %s shows a secure screen (UAC prompt or lock screen) that cannot be captured without the Longarm Desktop service\n", worker)
@@ -188,6 +238,27 @@ func nativeDesktop(ctx context.Context, conn *client.Conn, worker string, o nati
 			out += fmt.Sprintf("%.0f fps, %.2f Mbit/s", float64(f-lastFrames)/s, float64(b-lastBytes)*8/1e6/s)
 			lastBytes, lastFrames, lastAt = b, f, now
 			return out
+		},
+	}
+	// The title bar: how the worker is reached, its options and displays.
+	vo.Chrome = &screen.Chrome{
+		Security: func() string { return string(conn.Path().Kind) + " · end-to-end TLS · owner only" },
+		SetOption: func(name string, on bool) {
+			opt := &pb.DesktopOptions{}
+			switch name {
+			case "privacy":
+				opt.Privacy = &on
+			case "lock_on_leave":
+				opt.LockOnLeave = &on
+			case "sound":
+				opt.Sound = &on
+			case "microphone":
+				opt.Microphone = &on
+			}
+			send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_Options{Options: opt}})
+		},
+		SwitchDisplay: func(i int) {
+			send(&pb.DesktopClientMessage{Msg: &pb.DesktopClientMessage_SwitchDisplay{SwitchDisplay: int32(i)}})
 		},
 	}
 	if !o.viewOnly {
@@ -255,7 +326,7 @@ func screenshot(ctx context.Context, packets <-chan screen.VideoPacket, recvErr 
 				}
 			}
 			continue
-		case p.Cursor != nil || p.SecureHiddenOK:
+		case p.Cursor != nil || p.SecureHiddenOK || p.Options != nil:
 			continue
 		}
 		if img == nil {
